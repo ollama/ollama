@@ -1,0 +1,267 @@
+name: full_build
+
+on:
+  pull_request:
+    types: [ labeled ]
+
+jobs:
+  # Full build of the Mac assets
+  build-darwin:
+    if: ${{ github.event.label.name == 'full_build' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+      - name: Build Darwin
+        run: |
+          ./scripts/build_darwin.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-darwin
+          path: |
+            dist/*arwin*
+            !dist/*-cov
+
+
+  # Windows builds take a long time to both install the dependencies and build, so parallelize
+  # CPU generation step
+  generate-windows-cpu:
+    if: ${{ github.event.label.name == 'full_build' }}
+    runs-on: windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+      - run: go get ./...
+      - run: |
+          $gopath=(get-command go).source | split-path -parent
+          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
+          cd $env:GITHUB_WORKSPACE
+          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
+          $env:PATH="$gopath;$env:PATH"
+          go generate -x ./...
+        name: go generate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generate-windows-cpu
+          path: llm/llama.cpp/build/**/lib/*
+
+  # ROCm generation step
+  generate-windows-rocm:
+    if: ${{ github.event.label.name == 'full_build' }}
+    runs-on: windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+      - name: "Install ROCm"
+        run: |
+          $ErrorActionPreference = "Stop"
+          write-host "downloading AMD HIP Installer"
+          Invoke-WebRequest -Uri "https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-23.Q4-WinSvr2022-For-HIP.exe" -OutFile "${env:RUNNER_TEMP}\rocm-install.exe"
+          write-host "Installing AMD HIP"
+          Start-Process "${env:RUNNER_TEMP}\rocm-install.exe" -ArgumentList '-install' -NoNewWindow -Wait
+          write-host "Completed AMD HIP"
+      - name: "Verify ROCm"
+        run: |
+          & 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' --version
+      - run: go get ./...
+      - run: |
+          $gopath=(get-command go).source | split-path -parent
+          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
+          cd $env:GITHUB_WORKSPACE
+          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
+          $env:PATH="$gopath;$env:PATH"
+          $env:OLLAMA_SKIP_CPU_GENERATE="1"
+          $env:HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
+          go generate -x ./...
+        name: go generate
+      - name: "gather rocm dependencies"
+        run: |
+          $HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
+          md "dist\deps\bin\rocblas\library"
+          cp "${HIP_PATH}\bin\hipblas.dll" "dist\deps\bin\"
+          cp "${HIP_PATH}\bin\rocblas.dll" "dist\deps\bin\"
+          cp "${HIP_PATH}\bin\rocblas\library\*" "dist\deps\bin\rocblas\library\"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generate-windows-rocm
+          path: llm/llama.cpp/build/**/lib/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-rocm-deps
+          path: dist/deps/*
+
+  # CUDA generation step
+  generate-windows-cuda:
+    if: ${{ github.event.label.name == 'full_build' }}
+    runs-on: windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+      - name: "Install CUDA"
+        run: |
+          $ErrorActionPreference = "Stop"
+          write-host "downloading CUDA Installer"
+          Invoke-WebRequest -Uri "https://developer.download.nvidia.com/compute/cuda/11.3.1/local_installers/cuda_11.3.1_465.89_win10.exe" -OutFile "${env:RUNNER_TEMP}\cuda-install.exe"
+          write-host "Installing CUDA"
+          Start-Process "${env:RUNNER_TEMP}\cuda-install.exe" -ArgumentList '-s' -NoNewWindow -Wait
+          write-host "Completed CUDA"
+          $cudaPath=((resolve-path "c:\Program Files\NVIDIA*\CUDA\v*\bin\nvcc.exe")[0].path | split-path | split-path)
+          $cudaVer=($cudaPath | split-path -leaf ) -replace 'v(\d+).(\d+)', '$1_$2' 
+          echo "$cudaPath\bin" >> $env:GITHUB_PATH
+          echo "CUDA_PATH=$cudaPath" >> $env:GITHUB_ENV
+          echo "CUDA_PATH_V${cudaVer}=$cudaPath" >> $env:GITHUB_ENV
+          echo "CUDA_PATH_VX_Y=CUDA_PATH_V${cudaVer}" >> $env:GITHUB_ENV
+      - name: "Verify CUDA"
+        run: nvcc -V
+      - run: go get ./...
+      - name: go generate
+        run: |
+          $gopath=(get-command go).source | split-path -parent
+          $cudabin=(get-command nvcc).source | split-path
+          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
+          cd $env:GITHUB_WORKSPACE
+          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
+          $env:PATH="$gopath;$cudabin;$env:PATH"
+          $env:OLLAMA_SKIP_CPU_GENERATE="1"
+          go generate -x ./...
+      - name: "gather cuda dependencies"
+        run: |
+          $NVIDIA_DIR=(resolve-path 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*\bin\')[0]
+          md "dist\deps"
+          cp "${NVIDIA_DIR}\cudart64_*.dll" "dist\deps\"
+          cp "${NVIDIA_DIR}\cublas64_*.dll" "dist\deps\"
+          cp "${NVIDIA_DIR}\cublasLt64_*.dll" "dist\deps\"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generate-windows-cuda
+          path: llm/llama.cpp/build/**/lib/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-cuda-deps
+          path: dist/deps/*
+
+  # Import the prior generation steps and build the final windows assets
+  build-windows:
+    if: ${{ github.event.label.name == 'full_build' }}
+    runs-on: windows
+    needs:
+      - generate-windows-cuda
+      - generate-windows-rocm
+      - generate-windows-cpu
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+      - run: go get
+      - uses: actions/download-artifact@v4
+        with:
+          name: generate-windows-cpu
+          path: llm/llama.cpp/build
+      - uses: actions/download-artifact@v4
+        with:
+          name: generate-windows-cuda
+          path: llm/llama.cpp/build
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-cuda-deps
+          path: dist/deps
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-rocm-deps
+          path: dist/deps
+      - uses: actions/download-artifact@v4
+        with:
+          name: generate-windows-rocm
+          path: llm/llama.cpp/build
+      - run: dir llm/llama.cpp/build
+      - run: |
+          $gopath=(get-command go).source | split-path -parent
+          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
+          cd $env:GITHUB_WORKSPACE
+          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
+          $env:PATH="$gopath;$env:PATH"
+          $env:OLLAMA_SKIP_GENERATE="1"
+          $env:NVIDIA_DIR=$(resolve-path ".\dist\deps")
+          $env:HIP_PATH=$(resolve-path ".\dist\deps")
+          & .\scripts\build_windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-windows
+          path: dist/*.exe
+
+  # Linux x86 assets built using the container based build 
+  build-linux-amd64:
+    if: ${{ github.event.label.name == 'full_build' }}
+    runs-on: linux
+    env:
+      BUILD_ARCH: amd64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - run: |
+          ./scripts/build_linux.sh
+          mv dist/deps/* dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux-amd64
+          path: |
+            dist/*linux*
+            !dist/*-cov
+
+  # Linux ARM assets built using the container based build
+  # (at present, docker isn't pre-installed on arm ubunutu images)
+  build-linux-arm64:
+    if: ${{ github.event.label.name == 'full_build' }}
+    runs-on: linux-arm64
+    env:
+      BUILD_ARCH: arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: "Install Docker"
+        run: |
+          # Add Docker's official GPG key:
+          env
+          uname -a
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates curl
+          sudo install -m 0755 -d /etc/apt/keyrings
+          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+          # Add the repository to Apt sources:
+          echo \
+            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+            $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+            sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+          sudo usermod -aG docker $USER
+          sudo apt-get install acl
+          sudo setfacl --modify user:$USER:rw /var/run/docker.sock
+      - run: |
+          ./scripts/build_linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux-arm64
+          path: |
+            dist/*linux*
+            !dist/*-cov
