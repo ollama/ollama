@@ -5,7 +5,7 @@ from typing import List
 from multiprocessing import Pool
 from tqdm import tqdm
 
-from langchain.document_loaders import (
+from langchain_community.document_loaders import (
     CSVLoader,
     EverNoteLoader,
     PyMuPDFLoader,
@@ -20,9 +20,9 @@ from langchain.document_loaders import (
 )
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.vectorstores import Chroma
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.docstore.document import Document
+from langchain_community.vectorstores import Chroma
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.docstore.document import Document
 from constants import CHROMA_SETTINGS
 
 
