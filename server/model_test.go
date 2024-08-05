@@ -139,14 +139,8 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
 
 func TestParseFromFileFromLayer(t *testing.T) {
 	tempModels := t.TempDir()
-	t.Setenv("OLLAMA_MODELS", tempModels)
-	digest := "sha256-fb9d435dc2c4fe681ce63917c062c91022524e9ce57474c9b10ef5169495d902"
 
-	if _, err := GetBlobsPath(digest); err != nil {
-		t.Fatalf("failed to get blobs path: %v", err)
-	}
-
-	file, err := os.CreateTemp(tempModels+"/blobs", digest)
+	file, err := os.CreateTemp(tempModels, "")
 	if err != nil {
 		t.Fatalf("failed to open file: %v", err)
 	}
@@ -159,7 +153,7 @@ func TestParseFromFileFromLayer(t *testing.T) {
 		t.Fatalf("failed to seek to start: %v", err)
 	}
 
-	layers, err := parseFromFile(context.Background(), file, digest, func(api.ProgressResponse) {})
+	layers, err := parseFromFile(context.Background(), file, "", func(api.ProgressResponse) {})
 	if err != nil {
 		t.Fatalf("failed to parse from file: %v", err)
 	}
@@ -168,14 +162,32 @@ func TestParseFromFileFromLayer(t *testing.T) {
 		t.Fatalf("got %d != want 1", len(layers))
 	}
 
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		t.Fatalf("failed to seek to start: %v", err)
+	}
+
+	layers2, err := parseFromFile(context.Background(), file, layers[0].Digest, func(api.ProgressResponse) {})
+	if err != nil {
+		t.Fatalf("failed to parse from file: %v", err)
+	}
+	if len(layers2) != 1 {
+		t.Fatalf("got %d != want 1", len(layers2))
+	}
+
+	if layers[0].Digest != layers2[0].Digest {
+		t.Fatalf("got %s != want %s", layers[0].Digest, layers2[0].Digest)
+	}
+
+	if layers[0].Size != layers2[0].Size {
+		t.Fatalf("got %d != want %d", layers[0].Size, layers2[0].Size)
+	}
+
+	if layers[0].MediaType != layers2[0].MediaType {
+		t.Fatalf("got %v != want %v", layers[0].MediaType, layers2[0].MediaType)
+	}
+
 	t.Run("2x gguf", func(t *testing.T) {
-		digest := "sha256-fb9d435dc2c4fe681ce63917c062c91022524e9ce57474c9b10ef5169495d903"
-
-		if _, err := GetBlobsPath(digest); err != nil {
-			t.Fatalf("failed to get blobs path: %v", err)
-		}
-
-		file2, err := os.CreateTemp(tempModels+"/blobs", digest)
+		file2, err := os.CreateTemp(tempModels, "")
 		if err != nil {
 			t.Fatalf("failed to open file: %v", err)
 		}
@@ -191,7 +203,7 @@ func TestParseFromFileFromLayer(t *testing.T) {
 			t.Fatalf("failed to seek to start: %v", err)
 		}
 
-		layers, err := parseFromFile(context.Background(), file2, digest, func(api.ProgressResponse) {})
+		layers, err := parseFromFile(context.Background(), file2, "", func(api.ProgressResponse) {})
 		if err != nil {
 			t.Fatalf("failed to parse from file: %v", err)
 		}

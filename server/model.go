@@ -178,6 +178,7 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 
 		var layer *Layer
 		if digest != "" && n == stat.Size() && offset == 0 {
+			fmt.Println("creating layer from layer")
 			layer, err = NewLayerFromLayer(digest, mediatype, file.Name())
 			if err != nil {
 				slog.Debug("could not create new layer from layer", "error", err)
@@ -186,6 +187,7 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 
 		// Fallback to creating layer from file copy (either NewLayerFromLayer failed, or digest empty/n != stat.Size())
 		if layer == nil {
+			fmt.Println("creating layer from file copy")
 			layer, err = NewLayer(io.NewSectionReader(file, offset, n), mediatype)
 			if err != nil {
 				return nil, err
