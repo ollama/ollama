@@ -3,9 +3,9 @@ package server
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -139,11 +139,10 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
 
 func TestParseFromFileFromLayer(t *testing.T) {
 	tempModels := t.TempDir()
-	t.Setenv("OLLAMA_MODELS",tempModels)
+	t.Setenv("OLLAMA_MODELS", tempModels)
 	digest := "sha256-fb9d435dc2c4fe681ce63917c062c91022524e9ce57474c9b10ef5169495d902"
 
-	_, err := GetBlobsPath(digest)
-	if err != nil {
+	if _, err := GetBlobsPath(digest); err != nil {
 		t.Fatalf("failed to get blobs path: %v", err)
 	}
 
@@ -152,18 +151,11 @@ func TestParseFromFileFromLayer(t *testing.T) {
 		t.Fatalf("failed to open file: %v", err)
 	}
 	defer file.Close()
-
-	sGGUF := llm.NewGGUFV3(binary.LittleEndian)
-	kv := make(llm.KV)
-	kv["general.architecture"] = "gemma"
-	tensors := []llm.Tensor{}
-
-	if err := sGGUF.Encode(file, kv, tensors); err != nil {
-		t.Fatalf("failed to encode gguf: %v", err)
+	if err := llm.WriteGGUF(file, llm.KV{"general.architecture": "gemma"}, []llm.Tensor{}); err != nil {
+		t.Fatalf("failed to write gguf: %v", err)
 	}
 
-	_, err = file.Seek(0, io.SeekStart)
-	if err != nil {
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		t.Fatalf("failed to seek to start: %v", err)
 	}
 
@@ -179,8 +171,7 @@ func TestParseFromFileFromLayer(t *testing.T) {
 	t.Run("2x gguf", func(t *testing.T) {
 		digest := "sha256-fb9d435dc2c4fe681ce63917c062c91022524e9ce57474c9b10ef5169495d903"
 
-		_, err := GetBlobsPath(digest)
-		if err != nil {
+		if _, err := GetBlobsPath(digest); err != nil {
 			t.Fatalf("failed to get blobs path: %v", err)
 		}
 
@@ -190,14 +181,13 @@ func TestParseFromFileFromLayer(t *testing.T) {
 		}
 		defer file2.Close()
 
-		for i := range(5) {
-			if err := sGGUF.Encode(file2, kv, tensors); err != nil {
-				t.Fatalf("failed to encode gguf%d: %v", i, err)
+		for range 5 {
+			if err := llm.WriteGGUF(file2, llm.KV{"general.architecture": "gemma"}, []llm.Tensor{}); err != nil {
+				t.Fatalf("failed to write gguf: %v", err)
 			}
 		}
 
-		_, err = file2.Seek(0, io.SeekStart)
-		if err != nil {
+		if _, err := file2.Seek(0, io.SeekStart); err != nil {
 			t.Fatalf("failed to seek to start: %v", err)
 		}
 
