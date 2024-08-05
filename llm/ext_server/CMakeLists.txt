@@ -9,5 +9,6 @@ target_compile_definitions(${TARGET} PRIVATE
 target_link_libraries(${TARGET} PRIVATE ggml llama common llava ${CMAKE_THREAD_LIBS_INIT})
 if (WIN32)
     TARGET_LINK_LIBRARIES(${TARGET} PRIVATE ws2_32)
+    target_link_options(${TARGET} PRIVATE -municode -Wl,--subsystem,console)
 endif()
 target_compile_features(${TARGET} PRIVATE cxx_std_11)

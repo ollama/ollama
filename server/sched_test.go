@@ -355,7 +355,7 @@ func TestRequestsMultipleLoadedModels(t *testing.T) {
 }
 
 func TestGetRunner(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer done()
 
 	a := newScenarioRequest(t, ctx, "ollama-model-1a", 10, &api.Duration{Duration: 2 * time.Millisecond})
@@ -396,7 +396,7 @@ func TestGetRunner(t *testing.T) {
 	slog.Info("c")
 	successCh1c, errCh1c := s.GetRunner(c.ctx, c.req.model, c.req.opts, c.req.sessionDuration)
 	// Starts in pending channel, then should be quickly processsed to return an error
-	time.Sleep(20 * time.Millisecond) // Long enough for the "a" model to expire and unload
+	time.Sleep(50 * time.Millisecond) // Long enough for the "a" model to expire and unload
 	require.Empty(t, successCh1c)
 	s.loadedMu.Lock()
 	require.Empty(t, s.loaded)

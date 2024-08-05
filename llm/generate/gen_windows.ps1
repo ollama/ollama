@@ -165,7 +165,7 @@ function cleanup {
         }
 
         # Checkout each file
-        foreach ($file in $filePaths) {            
+        foreach ($file in $filePaths) {
             git -C "${script:llamacppDir}" checkout $file
         }
         git -C "${script:llamacppDir}" checkout CMakeLists.txt
@@ -211,11 +211,11 @@ function build_static() {
     }
 }
 
-function build_cpu($gen_arch) {
+function build_cpu_x64 {
     if ((-not "${env:OLLAMA_SKIP_CPU_GENERATE}" ) -and ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu"))) {
-        # remaining llama.cpp builds use MSVC 
+        # remaining llama.cpp builds use MSVC
         init_vars
-        $script:cmakeDefs = $script:commonCpuDefs + @("-A", $gen_arch, "-DGGML_AVX=off", "-DGGML_AVX2=off", "-DGGML_AVX512=off", "-DGGML_FMA=off", "-DGGML_F16C=off") + $script:cmakeDefs
+        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DGGML_AVX=off", "-DGGML_AVX2=off", "-DGGML_AVX512=off", "-DGGML_FMA=off", "-DGGML_F16C=off") + $script:cmakeDefs
         $script:buildDir="../build/windows/${script:ARCH}/cpu"
         $script:distDir="$script:DIST_BASE\cpu"
         write-host "Building LCD CPU"
@@ -226,6 +226,30 @@ function build_cpu($gen_arch) {
         write-host "Skipping CPU generation step as requested"
     }
 }
+
+function build_cpu_arm64 {
+    if ((-not "${env:OLLAMA_SKIP_CPU_GENERATE}" ) -and ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu"))) {
+        init_vars
+        $env:CFLAGS="-march=armv8.7-a -fvectorize -ffp-model=fast -fno-finite-math-only -Wno-format -Wno-unused-variable -Wno-unused-function -Wno-gnu-zero-variadic-macro-arguments"
+        $env:CXXFLAGS="$env:CFLAGS"
+        $env:LDFLAGS="-static-libstdc++"
+        $script:cmakeDefs = $script:commonCpuDefs + @(
+            "-G", "Ninja",
+            "-DCMAKE_C_COMPILER=clang.exe",
+            "-DCMAKE_CXX_COMPILER=clang++.exe",
+            "-DMSVC_RUNTIME_LIBRARY=MultiThreaded"
+        ) + $script:cmakeDefs
+        $script:buildDir="../build/windows/${script:ARCH}/cpu"
+        $script:distDir="$script:DIST_BASE\cpu"
+        write-host "Building LCD CPU"
+        build
+        sign
+        install
+    } else {
+        write-host "Skipping CPU generation step as requested"
+    }
+}
+
 
 function build_cpu_avx() {
     if ((-not "${env:OLLAMA_SKIP_CPU_GENERATE}" ) -and ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu_avx"))) {
@@ -353,7 +377,7 @@ function build_rocm() {
         $script:buildDir="../build/windows/${script:ARCH}/rocm$script:ROCM_VARIANT"
         $script:distDir="$script:DIST_BASE\rocm$script:ROCM_VARIANT"
         $script:cmakeDefs += @(
-            "-G", "Ninja", 
+            "-G", "Ninja",
             "-DCMAKE_C_COMPILER=clang.exe",
             "-DCMAKE_CXX_COMPILER=clang++.exe",
             "-DGGML_HIPBLAS=on",
@@ -403,9 +427,9 @@ if ($($args.count) -eq 0) {
     apply_patches
     build_static
     if ($script:ARCH -eq "arm64") {
-        build_cpu("ARM64")
+        build_cpu_arm64
     } else { # amd64
-        build_cpu("x64")
+        build_cpu_x64
         build_cpu_avx
         build_cpu_avx2
         build_cuda
@@ -419,5 +443,5 @@ if ($($args.count) -eq 0) {
     for ( $i = 0; $i -lt $args.count; $i++ ) {
         write-host "performing $($args[$i])"
         & $($args[$i])
-    } 
+    }
 }

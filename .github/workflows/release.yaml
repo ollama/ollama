@@ -265,7 +265,132 @@ jobs:
           name: windows-cuda-deps
           path: dist/deps/*
 
-  # Import the prior generation steps and build the final windows assets
+  # windows arm64 generate, go build, and zip file (no installer)
+  # Output of this build is aggregated into the final x86 build
+  # for a unified windows installer
+  windows-arm64:
+    runs-on: windows-arm64
+    environment: release
+    env:
+      KEY_CONTAINER: ${{ vars.KEY_CONTAINER }}
+    steps:
+      - name: Set Version
+        run: |
+          $ver=${env:GITHUB_REF_NAME}.trim("v")
+          write-host VERSION=$ver | Out-File -FilePath ${env:GITHUB_ENV} -Encoding utf8 -Append
+      - uses: 'google-github-actions/auth@v2'
+        with:
+          project_id: 'ollama'
+          credentials_json: '${{ secrets.GOOGLE_SIGNING_CREDENTIALS }}'
+      - run: echo "${{ vars.OLLAMA_CERT }}" | Out-File -FilePath ollama_inc.crt -Encoding utf8
+      - name: install Windows SDK 8.1 to get signtool
+        run: |
+          $ErrorActionPreference = "Stop"
+          write-host "downloading SDK"
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=323507" -OutFile "${env:RUNNER_TEMP}\sdksetup.exe"
+          Start-Process "${env:RUNNER_TEMP}\sdksetup.exe" -ArgumentList @("/q") -NoNewWindow -Wait
+          write-host "Win SDK 8.1 installed"
+          gci -path 'C:\Program Files (x86)\Windows Kits\' -r -fi 'signtool.exe'
+      - name: install signing plugin
+        run: |
+          $ErrorActionPreference = "Stop"
+          write-host "downloading plugin"
+          Invoke-WebRequest -Uri "https://github.com/GoogleCloudPlatform/kms-integrations/releases/download/cng-v1.0/kmscng-1.0-windows-amd64.zip" -OutFile "${env:RUNNER_TEMP}\plugin.zip"
+          Expand-Archive -Path "${env:RUNNER_TEMP}\plugin.zip" -DestinationPath ${env:RUNNER_TEMP}\plugin\
+          write-host "Installing plugin"
+          & "${env:RUNNER_TEMP}\plugin\*\kmscng.msi" /quiet
+          write-host "plugin installed"
+      # The current Windows arm64 beta image has effectively zero dev tools installed...
+      - name: Install git and gzip
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+          iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+          choco install -y --no-progress git gzip
+          echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install Visual Studio 2022
+        run: |
+          $components = @(
+            "Microsoft.VisualStudio.Component.CoreEditor",
+            "Microsoft.VisualStudio.Workload.CoreEditor",
+            "Microsoft.VisualStudio.Component.Roslyn.Compiler",
+            "Microsoft.Component.MSBuild",
+            "Microsoft.VisualStudio.Component.TextTemplating",
+            "Microsoft.VisualStudio.Component.Debugger.JustInTime",
+            "Microsoft.VisualStudio.Component.VC.CoreIde",
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            "Microsoft.VisualStudio.Component.Windows11SDK.22621",
+            "Microsoft.VisualStudio.Component.VC.Tools.ARM64EC",
+            "Microsoft.VisualStudio.Component.VC.Tools.ARM64",
+            "Microsoft.VisualStudio.Component.VC.ATL",
+            "Microsoft.VisualStudio.Component.VC.ATL.ARM64",
+            "Microsoft.VisualStudio.Component.Graphics",
+            "Microsoft.VisualStudio.Component.VC.Redist.14.Latest",
+            "Microsoft.VisualStudio.ComponentGroup.NativeDesktop.Core",
+            "Microsoft.VisualStudio.Component.Windows11Sdk.WindowsPerformanceToolkit",
+            "Microsoft.VisualStudio.Component.CppBuildInsights",
+            "Microsoft.VisualStudio.Component.VC.DiagnosticTools",
+            "Microsoft.VisualStudio.ComponentGroup.WebToolsExtensions.CMake",
+            "Microsoft.VisualStudio.Component.VC.CMake.Project",
+            "Microsoft.VisualStudio.Component.VC.ASAN",
+            "Microsoft.VisualStudio.Component.Vcpkg",
+            "Microsoft.VisualStudio.Workload.NativeDesktop"
+          )
+          $config = @{
+                "version" = "1.0"
+                "components"  = $components
+                "extensions"  = @()
+            }
+          $configPath = "${env:RUNNER_TEMP}\vsconfig"
+          $config | ConvertTo-Json | Out-File -FilePath $configPath
+          $bootstrapperFilePath = "${env:RUNNER_TEMP}\vs_community.exe"
+          write-host "Downloading Visual Studio 2022"
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_community.exe" -outfile $bootstrapperFilePath
+          $bootstrapperArgumentList = ('/c', $bootstrapperFilePath, '--config', $configPath, '--quiet', '--wait' )
+          write-host "Installing Visual Studio 2022"
+          $process = Start-Process -FilePath cmd.exe -ArgumentList $bootstrapperArgumentList -Wait -PassThru
+          $exitCode = $process.ExitCode
+          write-host $exitCode
+      # pacman in mingw/msys2 is ~broken on windows arm right now - hangs consistently during attempts to install
+      # so we'll use this alternative GCC binary
+      - name: Install llvm-mingw GCC
+        run: |
+          $gcc_url="https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-aarch64.zip"
+          write-host "Downloading llvm-mingw"
+          Invoke-WebRequest -Uri "${gcc_url}" -OutFile "${env:RUNNER_TEMP}\gcc.zip"
+          write-host "Unpacking llvm-mingw"
+          expand-archive -path "${env:RUNNER_TEMP}\gcc.zip" -destinationpath "c:\"
+          mv c:\llvm-mingw-* c:\llvm-mingw
+          echo "c:\llvm-mingw\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Verify GCC
+        run: |
+          echo $env:PATH
+          gcc --version
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go get ./...
+      - run: |
+          $gopath=(get-command go).source | split-path -parent
+          $gccpath=(get-command gcc).source | split-path -parent
+          & "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1"
+          cd $env:GITHUB_WORKSPACE
+          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
+          $env:PATH="$gopath;$gccpath;$env:PATH"
+          echo $env:PATH
+          .\scripts\build_windows.ps1 buildOllama buildApp gatherDependencies distZip
+        name: 'Windows Build'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-arm64
+          path: |
+            dist/windows-arm64/**
+            dist/windows-arm64-app.exe
+            dist/ollama-windows-arm64.zip
+
+  # Import the prior generation steps plus the full arm64 build, and build the final windows assets
   build-windows:
     environment: release
     runs-on: windows
@@ -273,6 +398,7 @@ jobs:
       - generate-windows-cuda
       - generate-windows-rocm
       - generate-windows-cpu
+      - windows-arm64
     env:
       KEY_CONTAINER: ${{ vars.KEY_CONTAINER }}
     steps:
@@ -324,6 +450,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-rocm
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-arm64
       - run: dir llm/build
       - run: |
           $gopath=(get-command go).source | split-path -parent

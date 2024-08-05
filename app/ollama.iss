@@ -28,8 +28,8 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-ArchitecturesAllowed=x64 arm64
-ArchitecturesInstallIn64BitMode=x64 arm64
+ArchitecturesAllowed=x64compatible arm64
+ArchitecturesInstallIn64BitMode=x64compatible arm64
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
@@ -48,6 +48,7 @@ OutputDir=..\dist\
 SetupLogging=yes
 CloseApplications=yes
 RestartApplications=no
+RestartIfNeededByRun=no
 
 ; https://jrsoftware.org/ishelp/index.php?topic=setup_wizardimagefile
 WizardSmallImageFile=.\assets\setup.bmp
@@ -86,19 +87,29 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 DialogFontSize=12
 
 [Files]
-Source: ".\app.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ; Flags: ignoreversion 64bit
-Source: "..\ollama.exe"; DestDir: "{app}"; Flags: ignoreversion 64bit
-Source: "..\dist\windows-{#ARCH}\ollama_runners\*"; DestDir: "{app}\ollama_runners"; Flags: ignoreversion 64bit recursesubdirs
+#if DirExists("..\dist\windows-amd64")
+Source: "..\dist\windows-amd64-app.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ;Check: not IsArm64();  Flags: ignoreversion 64bit
+Source: "..\dist\windows-amd64\ollama.exe"; DestDir: "{app}"; Check: not IsArm64(); Flags: ignoreversion 64bit
+Source: "..\dist\windows-amd64\ollama_runners\*"; DestDir: "{app}\ollama_runners"; Check: not IsArm64(); Flags: ignoreversion 64bit recursesubdirs
+#endif
+
+#if DirExists("..\dist\windows-arm64")
+Source: "..\dist\windows-arm64\vc_redist.arm64.exe"; DestDir: "{tmp}"; Check: IsArm64 and RTL_IsNeeded; Flags: deleteafterinstall
+Source: "..\dist\windows-arm64-app.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ;Check: IsArm64();  Flags: ignoreversion 64bit
+Source: "..\dist\windows-arm64\ollama.exe"; DestDir: "{app}"; Check: IsArm64(); Flags: ignoreversion 64bit
+Source: "..\dist\windows-arm64\ollama_runners\*"; DestDir: "{app}\ollama_runners"; Check: IsArm64(); Flags: ignoreversion 64bit recursesubdirs
+#endif
+
 Source: "..\dist\ollama_welcome.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: ".\assets\app.ico"; DestDir: "{app}"; Flags: ignoreversion
 #if DirExists("..\dist\windows-amd64\cuda")
-  Source: "..\dist\windows-amd64\cuda\*"; DestDir: "{app}\cuda\"; Flags: ignoreversion recursesubdirs
+  Source: "..\dist\windows-amd64\cuda\*"; DestDir: "{app}\cuda\"; Check: not IsArm64(); Flags: ignoreversion recursesubdirs
 #endif
 #if DirExists("..\dist\windows-amd64\oneapi")
-  Source: "..\dist\windows-amd64\oneapi\*"; DestDir: "{app}\oneapi\"; Flags: ignoreversion recursesubdirs
+  Source: "..\dist\windows-amd64\oneapi\*"; DestDir: "{app}\oneapi\"; Check: not IsArm64(); Flags: ignoreversion recursesubdirs
 #endif
 #if DirExists("..\dist\windows-amd64\rocm")
-  Source: "..\dist\windows-amd64\rocm\*"; DestDir: "{app}\rocm\"; Flags: ignoreversion recursesubdirs
+  Source: "..\dist\windows-amd64\rocm\*"; DestDir: "{app}\rocm\"; Check: not IsArm64(); Flags: ignoreversion recursesubdirs
 #endif
 
 
@@ -108,6 +119,9 @@ Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilen
 Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app.ico"
 
 [Run]
+#if DirExists("..\dist\windows-arm64")
+Filename: "{tmp}\vc_redist.arm64.exe"; Parameters: "/install /passive /norestart"; Check: IsArm64 and RTL_IsNeeded; StatusMsg: "Installing VC++ Redistributables..."; Flags: waituntilterminated
+#endif
 Filename: "{cmd}"; Parameters: "/C set PATH={app};%PATH% & ""{app}\{#MyAppExeName}"""; Flags: postinstall nowait runhidden
 
 [UninstallRun]
@@ -162,4 +176,40 @@ begin
   { look for the path with leading and trailing semicolon }
   { Pos() returns 0 if not found }
   Result := Pos(';' + ExpandConstant(Param) + ';', ';' + OrigPath + ';') = 0;
+end;
+
+{ ---- VCRedist processing code ----- }
+const VCRTL_MIN_V1 = 14;
+const VCRTL_MIN_V2 = 40;
+const VCRTL_MIN_V3 = 33807;
+const VCRTL_MIN_V4 = 0;
+
+ // check if the needed RTL is installed (by looking the registry)
+function RTL_IsNeeded (): Boolean;
+var
+  sRegKey: string;
+  v1: Cardinal;
+  v2: Cardinal;
+  v3: Cardinal;
+  v4: Cardinal;
+begin
+  sRegKey := 'SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\arm64';
+  if (RegQueryDWordValue (HKEY_LOCAL_MACHINE, sRegKey, 'Major', v1)  and
+      RegQueryDWordValue (HKEY_LOCAL_MACHINE, sRegKey, 'Minor', v2) and
+      RegQueryDWordValue (HKEY_LOCAL_MACHINE, sRegKey, 'Bld', v3) and
+      RegQueryDWordValue (HKEY_LOCAL_MACHINE, sRegKey, 'RBld', v4)) then
+  begin
+    Log ('VC Redist version: ' + IntToStr (v1) +
+        '.' + IntToStr (v2) + '.' + IntToStr (v3) +
+        '.' + IntToStr (v4));
+    { Version info was found. Return true if later or equal to our
+       minimal required version RTL_MIN_Vx }
+    Result := not (
+        (v1 > VCRTL_MIN_V1) or ((v1 = VCRTL_MIN_V1) and
+         ((v2 > VCRTL_MIN_V2) or ((v2 = VCRTL_MIN_V2) and
+          ((v3 > VCRTL_MIN_V3) or ((v3 = VCRTL_MIN_V3) and
+           (v4 >= VCRTL_MIN_V4)))))));
+  end
+  else
+    Result := TRUE;
 end;
