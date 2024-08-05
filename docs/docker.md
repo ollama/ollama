@@ -26,19 +26,19 @@ sudo apt-get install -y nvidia-container-toolkit
 
 #### Install with Yum or Dnf
 1.  Configure the repository
-    
+
 ```bash
 curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo \
     | sudo tee /etc/yum.repos.d/nvidia-container-toolkit.repo
 ```
-    
+
 2. Install the NVIDIA Container Toolkit packages
-    
+
 ```bash
 sudo yum install -y nvidia-container-toolkit
 ```
 
-#### Configure Docker to use Nvidia driver 
+#### Configure Docker to use Nvidia driver
 ```
 sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
