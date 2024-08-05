@@ -109,7 +109,15 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []Capabil
 	return runner.llama, model, &opts, nil
 }
 
-func runWhisperServer(c *gin.Context, portCh chan int) {
+func (s *Server) runWhisperServer(c *gin.Context, portCh chan int) {
+	s.sched.whisperMu.Lock()
+	if s.sched.whisperPort != nil {
+		slog.Info("whisper server already running", "port", *s.sched.whisperPort)
+		portCh <- *s.sched.whisperPort
+		s.sched.whisperMu.Unlock()
+		return
+	}
+
 	whisperServer := "/Users/royhan-ollama/ollama/llm/whisper.cpp/server"
 
 	// Find an available port for whisper
@@ -126,7 +134,7 @@ func runWhisperServer(c *gin.Context, portCh chan int) {
 		slog.Debug("ResolveTCPAddr failed")
 		port = rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
 	}
-	finalParams := append(params, "--port", strconv.Itoa(port), "--model", "/Users/royhan-ollama/ollama/llm/whisper.cpp/models/ggml-base.en.bin")
+	finalParams := append(params, "--port", strconv.Itoa(port), "--model", "/Users/royhan-ollama/.ollama/whisper/ggml-base.en.bin")
 
 	cmd := exec.Command(whisperServer, finalParams...)
 	slog.Info("starting whisper server", "cmd", cmd.String())
@@ -138,18 +146,32 @@ func runWhisperServer(c *gin.Context, portCh chan int) {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to start whisper server"})
 	}
 
-	// wait for server to start
-	time.Sleep(250 * time.Millisecond)
-
-	portCh <- port
-
-	// Wait for the whisper server to exit
-	err = cmd.Wait()
-	if err != nil {
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "whisper server exited"})
+	retries := 10
+	for range retries {
+		time.Sleep(25 * time.Millisecond)
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", port), time.Second)
+		if err == nil {
+			conn.Close()
+			break
+		}
 	}
 
+	if err != nil {
+		slog.Error("failed to connect to whisper server", "error", err)
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to connect to whisper server"})
+	}
+
+	portCh <- port
+	s.sched.whisperPort = &port
+
+	s.sched.whisperMu.Unlock()
+
+	// Wait for the whisper server to exit
 	defer func() {
+		err = cmd.Wait()
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "whisper server exited"})
+		}
 		err := cmd.Process.Kill()
 		if err != nil {
 			slog.Error("failed to kill whisper server", "error", err)
@@ -232,7 +254,6 @@ func whisperInference(c *gin.Context, filePath string, port int) (*api.WhisperCo
 }
 
 func (s *Server) GenerateHandler(c *gin.Context) {
-	slog.Info("generate request", "method", c.Request.Method, "url", c.Request.URL.String())
 	checkpointStart := time.Now()
 	var req api.GenerateRequest
 	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
@@ -258,7 +279,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	if req.Audio != "" {
 		port := make(chan int, 1)
-		go runWhisperServer(c, port)
+		go s.runWhisperServer(c, port)
 
 		w, err := whisperInference(c, req.Audio, <-port)
 		if err != nil {

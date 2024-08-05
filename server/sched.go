@@ -46,6 +46,9 @@ type Scheduler struct {
 	getGpuFn     func() gpu.GpuInfoList
 	getCpuFn     func() gpu.GpuInfoList
 	reschedDelay time.Duration
+
+	whisperPort *int
+	whisperMu   sync.Mutex
 }
 
 // Default automatic value for number of models we allow per GPU
