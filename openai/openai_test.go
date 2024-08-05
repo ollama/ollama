@@ -13,11 +13,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
 	"github.com/ollama/ollama/api"
 )
 
-const prefix = `data:image/jpeg;base64,`
-const image = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
+const (
+	prefix = `data:image/jpeg;base64,`
+	image  = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
+)
 
 var False = false
 
