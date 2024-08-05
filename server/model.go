@@ -180,8 +180,7 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 		if digest != "" && n == stat.Size() && offset == 0 {
 			layer, err = NewLayerFromLayer(digest, mediatype, file.Name())
 			if err != nil {
-				layer = nil
-				slog.Warn(fmt.Sprintf("NewLayerFromLayer failed: %v", err))
+				slog.Debug("could not create new layer from layer", "error", err)			
 			}
 		} 
 		
