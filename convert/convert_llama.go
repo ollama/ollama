@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ollama/ollama/llm"
 	"github.com/pdevine/tensor"
 	"github.com/pdevine/tensor/native"
+
+	"github.com/ollama/ollama/llm"
 )
 
 type llama struct {

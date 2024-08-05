@@ -54,6 +54,7 @@ Here are some example models that can be downloaded:
 | Llama 3.1          | 405B       | 231GB | `ollama run llama3.1:405b`     |
 | Phi 3 Mini         | 3.8B       | 2.3GB | `ollama run phi3`              |
 | Phi 3 Medium       | 14B        | 7.9GB | `ollama run phi3:medium`       |
+| Gemma 2            | 2B         | 1.6GB | `ollama run gemma2:2b`         |
 | Gemma 2            | 9B         | 5.5GB | `ollama run gemma2`            |
 | Gemma 2            | 27B        | 16GB  | `ollama run gemma2:27b`        |
 | Mistral            | 7B         | 4.1GB | `ollama run mistral`           |
@@ -300,6 +301,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Sidellama](https://github.com/gyopak/sidellama) (browser-based LLM client)
 - [LLMStack](https://github.com/trypromptly/LLMStack) (No-code multi-agent framework to build LLM agents and workflows)
 - [BoltAI for Mac](https://boltai.com) (AI Chat Client for Mac)
+- [Harbor](https://github.com/av/harbor) (Containerized LLM Toolkit with Ollama as default backend)
 
 ### Terminal
 

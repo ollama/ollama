@@ -10,8 +10,8 @@ import (
 )
 
 type ZipReader struct {
-	r     *zip.Reader
-	p     string
+	r *zip.Reader
+	p string
 
 	// limit is the maximum size of a file that can be read directly
 	// from the zip archive. Files larger than this size will be extracted

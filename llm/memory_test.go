@@ -6,10 +6,11 @@ import (
 	"os"
 	"testing"
 
-	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/gpu"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/gpu"
 )
 
 func TestEstimateGPULayers(t *testing.T) {

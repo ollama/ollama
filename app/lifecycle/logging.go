@@ -27,7 +27,7 @@ func InitLogging() {
 		// TODO - write one-line to the app.log file saying we're running in console mode to help avoid confusion
 	} else {
 		rotateLogs(AppLogFile)
-		logFile, err = os.OpenFile(AppLogFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0755)
+		logFile, err = os.OpenFile(AppLogFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o755)
 		if err != nil {
 			slog.Error(fmt.Sprintf("failed to create server log %v", err))
 			return

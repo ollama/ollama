@@ -55,8 +55,10 @@ func init() {
 	gin.SetMode(mode)
 }
 
-var errRequired = errors.New("is required")
-var errBadTemplate = errors.New("template error")
+var (
+	errRequired    = errors.New("is required")
+	errBadTemplate = errors.New("template error")
+)
 
 func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options, error) {
 	opts := api.DefaultOptions()
@@ -369,7 +371,6 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		input[i] = s
 	}
 	embeddings, err := r.Embed(c.Request.Context(), input)
-
 	if err != nil {
 		slog.Error("embedding generation failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
@@ -430,7 +431,6 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	}
 
 	embeddings, err := r.Embed(c.Request.Context(), []string{req.Prompt})
-
 	if err != nil {
 		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
@@ -556,7 +556,7 @@ func checkNameExists(name model.Name) error {
 
 	for n := range names {
 		if strings.EqualFold(n.Filepath(), name.Filepath()) && n != name {
-			return fmt.Errorf("a model with that name already exists")
+			return errors.New("a model with that name already exists")
 		}
 	}
 
@@ -729,7 +729,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 
 	n := model.ParseName(req.Model)
 	if !n.IsValid() {
-		return nil, fmt.Errorf("invalid model name")
+		return nil, errors.New("invalid model name")
 	}
 
 	manifest, err := ParseNamedManifest(n)
@@ -993,7 +993,7 @@ func allowedHost(host string) bool {
 		return true
 	}
 
-	var tlds = []string{
+	tlds := []string{
 		"localhost",
 		"local",
 		"internal",
