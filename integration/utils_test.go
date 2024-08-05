@@ -334,10 +334,10 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 			},
 		},
 		[][]string{
-			[]string{"sunlight"},
-			[]string{"soil", "organic", "earth", "black", "tan"},
-			[]string{"england", "english", "massachusetts", "pilgrims", "british"},
-			[]string{"fourth", "july", "declaration", "independence"},
-			[]string{"nitrogen", "oxygen", "carbon", "dioxide"},
+			{"sunlight"},
+			{"soil", "organic", "earth", "black", "tan"},
+			{"england", "english", "massachusetts", "pilgrims", "british"},
+			{"fourth", "july", "declaration", "independence"},
+			{"nitrogen", "oxygen", "carbon", "dioxide"},
 		}
 }
