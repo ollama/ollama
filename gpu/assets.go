@@ -49,13 +49,9 @@ func PayloadsDir() (string, error) {
 		}
 
 		// Track our pid so we can clean up orphaned tmpdirs
-		pidFilePath := filepath.Join(tmpDir, "ollama.pid")
-		pidFile, err := os.OpenFile(pidFilePath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
-		if err != nil {
-			return "", err
-		}
-		if _, err := pidFile.Write([]byte(strconv.Itoa(os.Getpid()))); err != nil {
-			return "", err
+		n := filepath.Join(tmpDir, "ollama.pid")
+		if err := os.WriteFile(n, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+			return "", fmt.Errorf("failed to write pid file %s: %w", n, err)
 		}
 
 		// We create a distinct subdirectory for payloads within the tmpdir
