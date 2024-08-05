@@ -44,6 +44,7 @@
 #include <errhandlingapi.h>
 #endif
 
+#include <algorithm>
 #include <cstddef>
 #include <thread>
 #include <chrono>
@@ -1220,6 +1221,7 @@ struct llama_server_context
 
                 res.result_json = json
                 {
+                    {"id", res.id},
                     {"embedding", std::vector<float>(embd, embd + n_embd)},
                     {"timings",             slot.get_formated_timings()},
                 };
@@ -3203,6 +3205,10 @@ int main(int argc, char **argv) {
                     }
 
                     responses = result.result_json.value("results", std::vector<json>{result.result_json});
+                    std::sort(responses.begin(), responses.end(), [](const json& a, const json& b) {
+                        return a["id"] < b["id"];
+                    });
+
                     json embeddings = json::array();
 
                     int prompt_n = 0;
