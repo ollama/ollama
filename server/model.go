@@ -179,19 +179,20 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 		var layer *Layer
 		if digest != "" && n == stat.Size() && offset == 0 {
 			layer, err = NewLayerFromLayer(digest, mediatype, file.Name())
+			if err != nil {
+				layer = nil
+				slog.Warn(fmt.Sprintf("NewLayerFromLayer failed: %v", err))
+			}
 		} 
-		if err != nil {
-			layer = nil
-			slog.Warn(fmt.Sprintf("NewLayerFromLayer failed: %v", err))
-		}
-
+		
 		// Fallback to creating layer from file copy (either NewLayerFromLayer failed, or digest empty/n != stat.Size())
 		if layer == nil {
 			layer, err = NewLayer(io.NewSectionReader(file, offset, n), mediatype)
+			if err != nil {
+				return nil, err
+			}
 		}
-		if err != nil {
-			return nil, err
-		}
+		
 
 		layers = append(layers, &layerGGML{layer, ggml})
 		offset = n
