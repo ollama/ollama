@@ -231,7 +231,6 @@ type Options struct {
 
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
-	UseNUMA   bool  `json:"numa,omitempty"`
 	NumCtx    int   `json:"num_ctx,omitempty"`
 	NumBatch  int   `json:"num_batch,omitempty"`
 	NumGPU    int   `json:"num_gpu,omitempty"`
@@ -615,7 +614,6 @@ func DefaultOptions() Options {
 			F16KV:     true,
 			UseMLock:  false,
 			UseMMap:   nil,
-			UseNUMA:   false,
 		},
 	}
 }

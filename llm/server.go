@@ -256,8 +256,14 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--mlock")
 	}
 
-	if opts.UseNUMA {
-		params = append(params, "--numa")
+	if gpu.IsNUMA() {
+		numaMode := "distribute"
+		if runtime.GOOS == "linux" {
+			if _, err := exec.LookPath("numactl"); err == nil {
+				numaMode = "numactl"
+			}
+		}
+		params = append(params, "--numa", numaMode)
 	}
 
 	params = append(params, "--parallel", strconv.Itoa(numParallel))
