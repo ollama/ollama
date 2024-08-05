@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -60,9 +61,9 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 
 	// Determine if the user has already pre-selected which GPUs to look at, then ignore the others
 	var visibleDevices []string
-	hipVD := envconfig.HipVisibleDevices   // zero based index only
-	rocrVD := envconfig.RocrVisibleDevices // zero based index or UUID, but consumer cards seem to not support UUID
-	gpuDO := envconfig.GpuDeviceOrdinal    // zero based index
+	hipVD := envconfig.HipVisibleDevices()   // zero based index only
+	rocrVD := envconfig.RocrVisibleDevices() // zero based index or UUID, but consumer cards seem to not support UUID
+	gpuDO := envconfig.GpuDeviceOrdinal()    // zero based index
 	switch {
 	// TODO is this priorty order right?
 	case hipVD != "":
@@ -75,13 +76,27 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 		visibleDevices = strings.Split(gpuDO, ",")
 	}
 
-	gfxOverride := envconfig.HsaOverrideGfxVersion
+	gfxOverride := envconfig.HsaOverrideGfxVersion()
 	var supported []string
 	libDir := ""
 
 	// The amdgpu driver always exposes the host CPU(s) first, but we have to skip them and subtract
 	// from the other IDs to get alignment with the HIP libraries expectations (zero is the first GPU, not the CPU)
 	matches, _ := filepath.Glob(GPUPropertiesFileGlob)
+	sort.Slice(matches, func(i, j int) bool {
+		// /sys/class/kfd/kfd/topology/nodes/<number>/properties
+		a, err := strconv.ParseInt(filepath.Base(filepath.Dir(matches[i])), 10, 64)
+		if err != nil {
+			slog.Debug("parse err", "error", err, "match", matches[i])
+			return false
+		}
+		b, err := strconv.ParseInt(filepath.Base(filepath.Dir(matches[j])), 10, 64)
+		if err != nil {
+			slog.Debug("parse err", "error", err, "match", matches[i])
+			return false
+		}
+		return a < b
+	})
 	cpuCount := 0
 	for _, match := range matches {
 		slog.Debug("evaluating amdgpu node " + match)
@@ -378,7 +393,7 @@ func AMDValidateLibDir() (string, error) {
 
 	// If we still haven't found a usable rocm, the user will have to install it on their own
 	slog.Warn("amdgpu detected, but no compatible rocm library found.  Either install rocm v6, or follow manual install instructions at https://github.com/ollama/ollama/blob/main/docs/linux.md#manual-install")
-	return "", fmt.Errorf("no suitable rocm found, falling back to CPU")
+	return "", errors.New("no suitable rocm found, falling back to CPU")
 }
 
 func AMDDriverVersion() (driverMajor, driverMinor int, err error) {

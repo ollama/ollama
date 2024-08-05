@@ -18,9 +18,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -63,13 +63,8 @@ func checkError(resp *http.Response, body []byte) error {
 // If the variable is not specified, a default ollama host and port will be
 // used.
 func ClientFromEnvironment() (*Client, error) {
-	ollamaHost := envconfig.Host
-
 	return &Client{
-		base: &url.URL{
-			Scheme: ollamaHost.Scheme,
-			Host:   net.JoinHostPort(ollamaHost.Host, ollamaHost.Port),
-		},
+		base: envconfig.Host(),
 		http: http.DefaultClient,
 	}, nil
 }
@@ -178,7 +173,7 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 		}
 
 		if errorResponse.Error != "" {
-			return fmt.Errorf(errorResponse.Error)
+			return errors.New(errorResponse.Error)
 		}
 
 		if response.StatusCode >= http.StatusBadRequest {

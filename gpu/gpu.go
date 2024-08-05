@@ -7,9 +7,9 @@ package gpu
 #cgo windows LDFLAGS: -lpthread
 
 #include "gpu_info.h"
-
 */
 import "C"
+
 import (
 	"fmt"
 	"log/slog"
@@ -70,7 +70,6 @@ var CudaTegra string = os.Getenv("JETSON_JETPACK")
 
 // Note: gpuMutex must already be held
 func initCudaHandles() *cudaHandles {
-
 	// TODO - if the ollama build is CPU only, don't do these checks as they're irrelevant and confusing
 
 	cHandles := &cudaHandles{}
@@ -211,14 +210,16 @@ func GetGPUInfo() GpuInfoList {
 		if err != nil {
 			slog.Warn("error looking up system memory", "error", err)
 		}
-		cpus = []CPUInfo{CPUInfo{
-			GpuInfo: GpuInfo{
-				memInfo: mem,
-				Library: "cpu",
-				Variant: cpuCapability,
-				ID:      "0",
+		cpus = []CPUInfo{
+			{
+				GpuInfo: GpuInfo{
+					memInfo: mem,
+					Library: "cpu",
+					Variant: cpuCapability,
+					ID:      "0",
+				},
 			},
-		}}
+		}
 
 		// Fallback to CPU mode if we're lacking required vector extensions on x86
 		if cpuCapability < GPURunnerCPUCapability && runtime.GOARCH == "amd64" {
@@ -230,8 +231,8 @@ func GetGPUInfo() GpuInfoList {
 
 		// On windows we bundle the nvidia library one level above the runner dir
 		depPath := ""
-		if runtime.GOOS == "windows" && envconfig.RunnersDir != "" {
-			depPath = filepath.Join(filepath.Dir(envconfig.RunnersDir), "cuda")
+		if runtime.GOOS == "windows" && envconfig.RunnersDir() != "" {
+			depPath = filepath.Join(filepath.Dir(envconfig.RunnersDir()), "cuda")
 		}
 
 		// Load ALL libraries
@@ -302,12 +303,12 @@ func GetGPUInfo() GpuInfoList {
 		}
 
 		// Intel
-		if envconfig.IntelGpu {
+		if envconfig.IntelGPU() {
 			oHandles = initOneAPIHandles()
 			// On windows we bundle the oneapi library one level above the runner dir
 			depPath = ""
-			if runtime.GOOS == "windows" && envconfig.RunnersDir != "" {
-				depPath = filepath.Join(filepath.Dir(envconfig.RunnersDir), "oneapi")
+			if runtime.GOOS == "windows" && envconfig.RunnersDir() != "" {
+				depPath = filepath.Join(filepath.Dir(envconfig.RunnersDir()), "oneapi")
 			}
 
 			for d := range oHandles.oneapi.num_drivers {
@@ -611,7 +612,7 @@ func LoadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string) {
 }
 
 func getVerboseState() C.uint16_t {
-	if envconfig.Debug {
+	if envconfig.Debug() {
 		return C.uint16_t(1)
 	}
 	return C.uint16_t(0)

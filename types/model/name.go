@@ -258,7 +258,7 @@ func (n Name) IsValid() bool {
 // IsFullyQualified returns true if all parts of the name are present and
 // valid without the digest.
 func (n Name) IsFullyQualified() bool {
-	var parts = []string{
+	parts := []string{
 		n.Host,
 		n.Namespace,
 		n.Model,

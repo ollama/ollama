@@ -6,8 +6,10 @@ import (
 	"strings"
 )
 
-const UnknownOllamaKeyErrMsg = "unknown ollama key"
-const InvalidModelNameErrMsg = "invalid model name"
+const (
+	UnknownOllamaKeyErrMsg = "unknown ollama key"
+	InvalidModelNameErrMsg = "invalid model name"
+)
 
 // TODO: This should have a structured response from the API
 type UnknownOllamaKey struct {

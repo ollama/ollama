@@ -54,6 +54,8 @@ type registryOptions struct {
 	Username string
 	Password string
 	Token    string
+
+	CheckRedirect func(req *http.Request, via []*http.Request) error
 }
 
 type Model struct {
@@ -68,7 +70,7 @@ type Model struct {
 	License        []string
 	Digest         string
 	Options        map[string]interface{}
-	Messages       []Message
+	Messages       []api.Message
 
 	Template *template.Template
 }
@@ -182,16 +184,11 @@ func (m *Model) String() string {
 	for _, msg := range m.Messages {
 		modelfile.Commands = append(modelfile.Commands, parser.Command{
 			Name: "message",
-			Args: fmt.Sprintf("%s %s", msg.Role, msg.Content),
+			Args: fmt.Sprintf("%s: %s", msg.Role, msg.Content),
 		})
 	}
 
 	return modelfile.String()
-}
-
-type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
 }
 
 type ConfigV2 struct {
@@ -644,7 +641,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 		return err
 	}
 
-	if !envconfig.NoPrune && old != nil {
+	if !envconfig.NoPrune() && old != nil {
 		if err := old.RemoveLayers(); err != nil {
 			return err
 		}
@@ -831,7 +828,7 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	fn(api.ProgressResponse{Status: "retrieving manifest"})
 
 	if mp.ProtocolScheme == "http" && !regOpts.Insecure {
-		return fmt.Errorf("insecure protocol http")
+		return errors.New("insecure protocol http")
 	}
 
 	manifest, _, err := GetManifest(mp)
@@ -883,7 +880,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	// build deleteMap to prune unused layers
 	deleteMap := make(map[string]struct{})
 
-	if !envconfig.NoPrune {
+	if !envconfig.NoPrune() {
 		manifest, _, err = GetManifest(mp)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
@@ -898,7 +895,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	}
 
 	if mp.ProtocolScheme == "http" && !regOpts.Insecure {
-		return fmt.Errorf("insecure protocol http")
+		return errors.New("insecure protocol http")
 	}
 
 	fn(api.ProgressResponse{Status: "pulling manifest"})
@@ -1013,7 +1010,7 @@ func GetSHA256Digest(r io.Reader) (string, int64) {
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), n
 }
 
-var errUnauthorized = fmt.Errorf("unauthorized: access denied")
+var errUnauthorized = errors.New("unauthorized: access denied")
 
 // getTokenSubject returns the subject of a JWT token, it does not validate the token
 func getTokenSubject(token string) string {
@@ -1131,7 +1128,9 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 		req.ContentLength = contentLength
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := (&http.Client{
+		CheckRedirect: regOpts.CheckRedirect,
+	}).Do(req)
 	if err != nil {
 		return nil, err
 	}

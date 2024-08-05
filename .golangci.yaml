@@ -7,22 +7,32 @@ linters:
     - bodyclose
     - containedctx
     - contextcheck
+    - errcheck
     - exportloopref
+    - gci
     - gocheckcompilerdirectives
-    # conditionally enable this on linux/macos
-    # - gofmt
-    # - goimports
+    - gofmt
+    - gofumpt
+    - gosimple
+    - govet
+    - ineffassign
     - intrange
+    - makezero
     - misspell
     - nilerr
     - nolintlint
     - nosprintfhostport
+    - staticcheck
+    - tenv
     - testifylint
     - unconvert
     - unused
+    - usestdlibvars
     - wastedassign
     - whitespace
-    - usestdlibvars
+linters-settings:
+  gci:
+    sections: [standard, default, localmodule]
 severity:
   default-severity: error
   rules:
