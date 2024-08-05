@@ -82,6 +82,8 @@ type GenerateRequest struct {
 	Options map[string]interface{} `json:"options"`
 
 	Audio string `json:"audio,omitempty"`
+
+	Transcribe bool `json:"transcribe,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].

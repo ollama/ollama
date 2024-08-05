@@ -287,7 +287,17 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			return
 		}
 
-		req.Prompt = w.Text
+		if req.Transcribe {
+			c.JSON(http.StatusOK, api.GenerateResponse{
+				Model:      req.Model,
+				CreatedAt:  time.Now().UTC(),
+				Response:   w.Text,
+				Done:       true,
+				DoneReason: "stop",
+			})
+		}
+
+		req.Prompt += w.Text
 	}
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, caps, req.Options, req.KeepAlive)
