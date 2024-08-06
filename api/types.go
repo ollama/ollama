@@ -506,7 +506,7 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 	for key, val := range m {
 		opt, ok := jsonOpts[key]
 		if !ok {
-			slog.Warn("invalid option provided", "option", opt.Name)
+			slog.Warn("invalid option provided", "option", key)
 			continue
 		}
 

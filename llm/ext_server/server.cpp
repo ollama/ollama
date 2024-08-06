@@ -403,7 +403,9 @@ struct llama_server_context
             }
         }
 
-        std::tie(model, ctx) = llama_init_from_gpt_params(params);
+        auto init_result = llama_init_from_gpt_params(params);
+        model = init_result.model;
+        ctx = init_result.context;
         if (model == nullptr)
         {
             LOG_ERROR("unable to load model", {{"model", params.model}});
@@ -2422,7 +2424,10 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
                 invalid_param = true;
                 break;
             }
-            params.lora_adapter.emplace_back(argv[i], 1.0f);
+            params.lora_adapters.push_back({
+                std::string(argv[i]),
+                1.0,
+            });
             params.use_mmap = false;
         }
         else if (arg == "--lora-scaled")
@@ -2438,7 +2443,10 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
                 invalid_param = true;
                 break;
             }
-            params.lora_adapter.emplace_back(lora_adapter, std::stof(argv[i]));
+            params.lora_adapters.push_back({
+                lora_adapter,
+                std::stof(argv[i])
+            });
             params.use_mmap = false;
         }
         else if (arg == "-v" || arg == "--verbose")
