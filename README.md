@@ -338,7 +338,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Guix channel](https://codeberg.org/tusharhero/ollama-guix)
 
 ### Libraries
-
+- [Spring AI](https://github.com/spring-projects/spring-ai) with [reference](https://docs.spring.io/spring-ai/reference/api/chat/ollama-chat.html) and [example](https://github.com/tzolov/ollama-tools)
 - [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/modules/model_io/models/llms/integrations/ollama) with [example](https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa)
 - [Firebase Genkit](https://firebase.google.com/docs/genkit/plugins/ollama)
 - [LangChainGo](https://github.com/tmc/langchaingo/) with [example](https://github.com/tmc/langchaingo/tree/main/examples/ollama-completion-example)
