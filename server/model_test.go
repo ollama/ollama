@@ -185,31 +185,33 @@ func TestParseFromFileFromLayer(t *testing.T) {
 	if layers[0].MediaType != layers2[0].MediaType {
 		t.Fatalf("got %v != want %v", layers[0].MediaType, layers2[0].MediaType)
 	}
+}
 
-	t.Run("2x gguf", func(t *testing.T) {
-		file2, err := os.CreateTemp(tempModels, "")
-		if err != nil {
-			t.Fatalf("failed to open file: %v", err)
-		}
-		defer file2.Close()
+func TestParseLayerFromCopy(t *testing.T) {
+	tempModels := t.TempDir()
 
-		for range 5 {
-			if err := llm.WriteGGUF(file2, llm.KV{"general.architecture": "gemma"}, []llm.Tensor{}); err != nil {
-				t.Fatalf("failed to write gguf: %v", err)
-			}
-		}
+	file2, err := os.CreateTemp(tempModels, "")
+	if err != nil {
+		t.Fatalf("failed to open file: %v", err)
+	}
+	defer file2.Close()
 
-		if _, err := file2.Seek(0, io.SeekStart); err != nil {
-			t.Fatalf("failed to seek to start: %v", err)
+	for range 5 {
+		if err := llm.WriteGGUF(file2, llm.KV{"general.architecture": "gemma"}, []llm.Tensor{}); err != nil {
+			t.Fatalf("failed to write gguf: %v", err)
 		}
+	}
 
-		layers, err := parseFromFile(context.Background(), file2, "", func(api.ProgressResponse) {})
-		if err != nil {
-			t.Fatalf("failed to parse from file: %v", err)
-		}
+	if _, err := file2.Seek(0, io.SeekStart); err != nil {
+		t.Fatalf("failed to seek to start: %v", err)
+	}
 
-		if len(layers) != 5 {
-			t.Fatalf("got %d != want 5", len(layers))
-		}
-	})
+	layers, err := parseFromFile(context.Background(), file2, "", func(api.ProgressResponse) {})
+	if err != nil {
+		t.Fatalf("failed to parse from file: %v", err)
+	}
+
+	if len(layers) != 5 {
+		t.Fatalf("got %d != want 5", len(layers))
+	}
 }
