@@ -824,17 +824,20 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 
 	models := []api.ListModelResponse{}
 	for n, m := range ms {
-		f, err := m.Config.Open()
-		if err != nil {
-			slog.Warn("bad manifest filepath", "name", n, "error", err)
-			continue
-		}
-		defer f.Close()
-
 		var cf ConfigV2
-		if err := json.NewDecoder(f).Decode(&cf); err != nil {
-			slog.Warn("bad manifest config", "name", n, "error", err)
-			continue
+
+		if m.Config.Digest != "" {
+			f, err := m.Config.Open()
+			if err != nil {
+				slog.Warn("bad manifest filepath", "name", n, "error", err)
+				continue
+			}
+			defer f.Close()
+
+			if err := json.NewDecoder(f).Decode(&cf); err != nil {
+				slog.Warn("bad manifest config", "name", n, "error", err)
+				continue
+			}
 		}
 
 		// tag should never be masked
