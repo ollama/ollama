@@ -29,7 +29,7 @@ func TestMaxQueue(t *testing.T) {
 	// Also note that by default Darwin can't sustain > ~128 connections without adjusting limits
 	threadCount := 32
 	if maxQueue := envconfig.MaxQueue(); maxQueue != 0 {
-		threadCount = maxQueue
+		threadCount = int(maxQueue)
 	} else {
 		t.Setenv("OLLAMA_MAX_QUEUE", strconv.Itoa(threadCount))
 	}
