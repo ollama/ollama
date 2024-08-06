@@ -47,16 +47,16 @@ var (
 )
 
 func AMDGetGPUInfo() []RocmGPUInfo {
-	resp := AMDGetGPUInfoFromSys()
+	resp := AMDGetGPUInfoFromDriver()
 	if len(resp) != 0 {
 		return resp
 	}
 
-	return AMDGetGPUInfoFromHip()
+	return AMDGetGPUInfoFromRuntime()
 }
 
 // Gather GPU information from the amdgpu driver if any supported GPUs are detected
-func AMDGetGPUInfoFromSys() []RocmGPUInfo {
+func AMDGetGPUInfoFromDriver() []RocmGPUInfo {
 	resp := []RocmGPUInfo{}
 	if !AMDDetected() {
 		return resp
@@ -466,7 +466,7 @@ func getFreeMemory(usedFile string) (uint64, error) {
 	return usedMemory, nil
 }
 
-func AMDGetGPUInfoFromHip() []RocmGPUInfo {
+func AMDGetGPUInfoFromRuntime() []RocmGPUInfo {
 	resp := []RocmGPUInfo{}
 	hl, err := NewHipLib()
 	if err != nil {

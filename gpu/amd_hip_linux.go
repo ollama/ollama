@@ -33,21 +33,8 @@ import (
 	"unsafe"
 )
 
-const (
-	hipSuccess       = 0
-	hipErrorNoDevice = 100
-)
-
-type hipDevicePropMinimal struct {
-	Name        [256]byte
-	unused1     [140]byte
-	GcnArchName [256]byte // gfx####
-	iGPU        int       // Doesn't seem to actually report correctly
-	unused2     [128]byte
-}
-
-// Wrap the amdhip64.dll library for GPU discovery
-type HipLib struct {
+// Wrap the libamdhip64.so library for GPU discovery
+type HipLibImpl struct {
 	dll                    unsafe.Pointer
 	hipGetDeviceCount      unsafe.Pointer
 	hipGetDeviceProperties unsafe.Pointer
@@ -56,7 +43,7 @@ type HipLib struct {
 	hipDriverGetVersion    unsafe.Pointer
 }
 
-func NewHipLib() (*HipLib, error) {
+func NewHipLib() (HipLib, error) {
 	libDir, err := AMDValidateLibDir()
 	if err != nil {
 		return nil, fmt.Errorf("unable to verify rocm library, will use cpu %w", err)
@@ -67,7 +54,7 @@ func NewHipLib() (*HipLib, error) {
 	if h == nil {
 		return nil, fmt.Errorf("unable to load libamdhip64.so")
 	}
-	hl := &HipLib{}
+	hl := &HipLibImpl{}
 	hl.dll = h
 	hl.hipGetDeviceCount = C.dlsym(hl.dll, C.CString("hipGetDeviceCount"))
 	if hl.hipGetDeviceCount == nil {
@@ -95,12 +82,12 @@ func NewHipLib() (*HipLib, error) {
 // The hip library only evaluates the HIP_VISIBLE_DEVICES variable at startup
 // so we have to unload/reset the library after we do our initial discovery
 // to make sure our updates to that variable are processed by llama.cpp
-func (hl *HipLib) Release() {
+func (hl *HipLibImpl) Release() {
 	C.dlclose(hl.dll)
 	hl.dll = nil
 }
 
-func (hl *HipLib) AMDDriverVersion() (driverMajor, driverMinor int, err error) {
+func (hl *HipLibImpl) AMDDriverVersion() (driverMajor, driverMinor int, err error) {
 	if hl.dll == nil {
 		return 0, 0, errors.New("dll has been unloaded")
 	}
@@ -117,7 +104,7 @@ func (hl *HipLib) AMDDriverVersion() (driverMajor, driverMinor int, err error) {
 	return driverMajor, driverMinor, nil
 }
 
-func (hl *HipLib) HipGetDeviceCount() int {
+func (hl *HipLibImpl) HipGetDeviceCount() int {
 	if hl.dll == nil {
 		slog.Error("dll has been unloaded")
 		return 0
@@ -134,7 +121,7 @@ func (hl *HipLib) HipGetDeviceCount() int {
 	return int(count)
 }
 
-func (hl *HipLib) HipSetDevice(device int) error {
+func (hl *HipLibImpl) HipSetDevice(device int) error {
 	if hl.dll == nil {
 		return errors.New("dll has been unloaded")
 	}
@@ -145,7 +132,7 @@ func (hl *HipLib) HipSetDevice(device int) error {
 	return nil
 }
 
-func (hl *HipLib) HipGetDeviceProperties(device int) (*hipDevicePropMinimal, error) {
+func (hl *HipLibImpl) HipGetDeviceProperties(device int) (*hipDevicePropMinimal, error) {
 	if hl.dll == nil {
 		return nil, errors.New("dll has been unloaded")
 	}
@@ -158,7 +145,7 @@ func (hl *HipLib) HipGetDeviceProperties(device int) (*hipDevicePropMinimal, err
 }
 
 // free, total, err
-func (hl *HipLib) HipMemGetInfo() (uint64, uint64, error) {
+func (hl *HipLibImpl) HipMemGetInfo() (uint64, uint64, error) {
 	if hl.dll == nil {
 		return 0, 0, errors.New("dll has been unloaded")
 	}
