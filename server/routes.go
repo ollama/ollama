@@ -112,7 +112,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []Capabil
 func (s *Server) runWhisperServer(c *gin.Context, portCh chan int, modelPath string) {
 	s.sched.whisperMu.Lock()
 	if s.sched.whisperLoaded[modelPath] != nil {
-		slog.Info("whisper server already running %s on port %d", modelPath, *s.sched.whisperLoaded[modelPath])
+		slog.Info(fmt.Sprintf("whisper server already running %s on port %d", modelPath, *s.sched.whisperLoaded[modelPath]))
 		portCh <- *s.sched.whisperLoaded[modelPath]
 		s.sched.whisperMu.Unlock()
 		return
@@ -239,15 +239,15 @@ func whisperInference(c *gin.Context, filePath string, port int) (*api.WhisperCo
 		return nil, err
 	}
 
-	if res.StatusCode >= 400 {
-		slog.Error("error response from whisper server", "status", res.Status, "body", string(body))
-		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error response from whisper server"})
-	}
-
 	var w api.WhisperCompletion
 	if err := json.Unmarshal(body, &w); err != nil {
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to unmarshal response"})
 		return nil, err
+	}
+
+	if w.Error != "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": w.Error})
+		return nil, fmt.Errorf(w.Error)
 	}
 
 	return &w, nil

@@ -457,7 +457,8 @@ type GenerateResponse struct {
 }
 
 type WhisperCompletion struct {
-	Text string `json:"text"`
+	Text  string `json:"text"`
+	Error string `json:"error,omitempty"`
 }
 
 // ModelDetails provides details about a model.

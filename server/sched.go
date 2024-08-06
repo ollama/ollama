@@ -75,6 +75,7 @@ func InitScheduler(ctx context.Context) *Scheduler {
 		getGpuFn:      gpu.GetGPUInfo,
 		getCpuFn:      gpu.GetCPUInfo,
 		reschedDelay:  250 * time.Millisecond,
+		whisperLoaded: make(map[string]*int),
 	}
 	sched.loadFn = sched.load
 	return sched
