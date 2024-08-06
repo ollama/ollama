@@ -111,6 +111,8 @@ type ChatRequest struct {
 
 	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
+
+	WhisperModel string `json:"whisper_model,omitempty"`
 }
 
 type Tools []Tool
@@ -133,6 +135,7 @@ type Message struct {
 	Content   string      `json:"content"`
 	Images    []ImageData `json:"images,omitempty"`
 	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
+	Audio     string      `json:"audio,omitempty"`
 }
 
 func (m *Message) UnmarshalJSON(b []byte) error {
