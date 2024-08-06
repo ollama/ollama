@@ -81,6 +81,8 @@ type GenerateRequest struct {
 	// set through this field, if the model supports it.
 	Options map[string]interface{} `json:"options"`
 
+	WhisperModel string `json:"whisper_model,omitempty"`
+
 	Audio string `json:"audio,omitempty"`
 
 	Transcribe bool `json:"transcribe,omitempty"`
