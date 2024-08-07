@@ -888,7 +888,7 @@ type EmbeddingRequest struct {
 
 type EmbeddingResponse struct {
 	Embedding       []float32 `json:"embedding"`
-	PromptEvalCount int         `json:"prompt_n"`
+	PromptEvalCount int       `json:"prompt_n"`
 }
 
 func (s *llmServer) Embedding(ctx context.Context, req EmbeddingRequest) (*EmbeddingResponse, error) {
