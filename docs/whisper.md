@@ -12,3 +12,9 @@
     - "whisper_model" (required): path to whisper model
     - "transcribe" (optional): if true, will transcribe and return the audio file
     - "prompt" (optional): if not null, passed in with the transcribed audio
+
+## api/chat
+### Request fields
+    - "whisper_model" (required): path to whisper model
+    - "message" object
+        - "audio" (required): contains path to audio file
