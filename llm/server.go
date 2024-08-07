@@ -33,7 +33,7 @@ type LlamaServer interface {
 	Ping(ctx context.Context) error
 	WaitUntilRunning(ctx context.Context) error
 	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
-	Embedding(ctx context.Context, req EmbeddingRequest) (*EmbeddingResponse, error)
+	Embedding(ctx context.Context, input string) ([]float32, error)
 	Tokenize(ctx context.Context, content string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error
@@ -888,10 +888,9 @@ type EmbeddingRequest struct {
 
 type EmbeddingResponse struct {
 	Embedding       []float32 `json:"embedding"`
-	PromptEvalCount int       `json:"prompt_n"`
 }
 
-func (s *llmServer) Embedding(ctx context.Context, req EmbeddingRequest) (*EmbeddingResponse, error) {
+func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, error) {
 	if err := s.sem.Acquire(ctx, 1); err != nil {
 		slog.Error("Failed to acquire semaphore", "error", err)
 		return nil, err
@@ -906,7 +905,7 @@ func (s *llmServer) Embedding(ctx context.Context, req EmbeddingRequest) (*Embed
 		return nil, fmt.Errorf("unexpected server status: %s", status.ToString())
 	}
 
-	data, err := json.Marshal(EmbeddingRequest{Content: req.Content})
+	data, err := json.Marshal(EmbeddingRequest{Content: input})
 	if err != nil {
 		return nil, fmt.Errorf("error marshaling embed data: %w", err)
 	}
@@ -938,7 +937,7 @@ func (s *llmServer) Embedding(ctx context.Context, req EmbeddingRequest) (*Embed
 		return nil, fmt.Errorf("unmarshal tokenize response: %w", err)
 	}
 
-	return &e, nil
+	return e.Embedding, nil
 }
 
 type TokenizeRequest struct {

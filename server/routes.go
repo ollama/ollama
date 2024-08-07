@@ -347,6 +347,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
+	var count int
 	for i, s := range input {
 		tokens, err := r.Tokenize(c.Request.Context(), s)
 		if err != nil {
@@ -369,19 +370,21 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			}
 		}
 
+		count += len(tokens)
+
 		input[i] = s
 	}
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	responses := make([]*llm.EmbeddingResponse, len(input))
+	responses := make([][]float32, len(input))
 	errors := make(chan error, len(input))
 
 	for i, text := range input {
 		wg.Add(1)
 		go func(i int, text string) {
 			defer wg.Done()
-			embedding, err := r.Embedding(c.Request.Context(), llm.EmbeddingRequest{Content: text})
+			embedding, err := r.Embedding(c.Request.Context(), text)
 			if err != nil {
 				errors <- err
 				return
@@ -402,11 +405,9 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	var count int
 	var embeddings [][]float32
-	for _, e := range responses {
-		embeddings = append(embeddings, e.Embedding)
-		count += e.PromptEvalCount
+	for _, r := range responses {
+		embeddings = append(embeddings, r)
 	}
 
 	resp := api.EmbedResponse{
@@ -458,7 +459,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	embedding, err := r.Embedding(c.Request.Context(), llm.EmbeddingRequest{Content: req.Prompt})
+	embedding, err := r.Embedding(c.Request.Context(), req.Prompt)
 	if err != nil {
 		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
@@ -466,7 +467,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	}
 
 	var e []float64
-	for _, v := range embedding.Embedding {
+	for _, v := range embedding {
 		e = append(e, float64(v))
 	}
 
