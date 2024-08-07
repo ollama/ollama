@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -370,23 +371,50 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 
 		input[i] = s
 	}
-	embeddings, err := r.Embed(c.Request.Context(), input)
-	if err != nil {
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	responses := make([]*llm.EmbeddingResponse, len(input))
+	errors := make(chan error, len(input))
+
+	for i, text := range input {
+		wg.Add(1)
+		go func(i int, text string) {
+			defer wg.Done()
+			embedding, err := r.Embedding(c.Request.Context(), llm.EmbeddingRequest{Content: text})
+			if err != nil {
+				errors <- err
+				return
+			}
+			mu.Lock()
+			responses[i] = embedding
+			mu.Unlock()
+		}(i, text)
+	}
+
+	wg.Wait()
+	close(errors)
+
+	if len(errors) > 0 {
+		err := <-errors
 		slog.Error("embedding generation failed", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Errorf("failed to generate embeddings: %v", err)})
 		return
 	}
 
-	for i, e := range embeddings.Embedding {
-		embeddings.Embedding[i] = normalize(e)
+	var count int
+	var embeddings [][]float32
+	for _, e := range responses {
+		embeddings = append(embeddings, e.Embedding)
+		count += e.PromptEvalCount
 	}
 
 	resp := api.EmbedResponse{
 		Model:           req.Model,
-		Embeddings:      embeddings.Embedding,
+		Embeddings:      embeddings,
 		TotalDuration:   time.Since(checkpointStart),
 		LoadDuration:    checkpointLoaded.Sub(checkpointStart),
-		PromptEvalCount: embeddings.PromptEvalCount,
+		PromptEvalCount: count,
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -430,21 +458,20 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	embeddings, err := r.Embed(c.Request.Context(), []string{req.Prompt})
+	embedding, err := r.Embedding(c.Request.Context(), llm.EmbeddingRequest{Content: req.Prompt})
 	if err != nil {
 		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
 		return
 	}
 
-	embedding := make([]float64, len(embeddings.Embedding[0]))
-
-	for i, v := range embeddings.Embedding[0] {
-		embedding[i] = float64(v)
+	var e []float64
+	for _, v := range embedding.Embedding {
+		e = append(e, float64(v))
 	}
 
 	resp := api.EmbeddingResponse{
-		Embedding: embedding,
+		Embedding: e,
 	}
 	c.JSON(http.StatusOK, resp)
 }
