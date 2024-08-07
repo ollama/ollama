@@ -1223,9 +1223,7 @@ struct llama_server_context
 
                 res.result_json = json
                 {
-                    {"id", res.id},
                     {"embedding", std::vector<float>(embd, embd + n_embd)},
-                    {"timings",             slot.get_formated_timings()},
                 };
             }
         }

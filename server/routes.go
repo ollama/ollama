@@ -399,6 +399,10 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
+	for i, embedding := range embeddings {
+		embeddings[i] = normalize(embedding)
+	}
+
 	resp := api.EmbedResponse{
 		Model:           req.Model,
 		Embeddings:      embeddings,
