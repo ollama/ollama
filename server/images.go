@@ -250,19 +250,21 @@ func GetModel(name string) (*Model, error) {
 		Template:  template.DefaultTemplate,
 	}
 
-	filename, err := GetBlobsPath(manifest.Config.Digest)
-	if err != nil {
-		return nil, err
-	}
+	if manifest.Config.Digest != "" {
+		filename, err := GetBlobsPath(manifest.Config.Digest)
+		if err != nil {
+			return nil, err
+		}
 
-	configFile, err := os.Open(filename)
-	if err != nil {
-		return nil, err
-	}
-	defer configFile.Close()
+		configFile, err := os.Open(filename)
+		if err != nil {
+			return nil, err
+		}
+		defer configFile.Close()
 
-	if err := json.NewDecoder(configFile).Decode(&model.Config); err != nil {
-		return nil, err
+		if err := json.NewDecoder(configFile).Decode(&model.Config); err != nil {
+			return nil, err
+		}
 	}
 
 	for _, layer := range manifest.Layers {
@@ -714,8 +716,7 @@ func deleteUnusedLayers(skipModelPath *ModelPath, deleteMap map[string]struct{})
 		// save (i.e. delete from the deleteMap) any files used in other manifests
 		manifest, _, err := GetManifest(fmp)
 		if err != nil {
-			//nolint:nilerr
-			return nil
+			return err
 		}
 
 		for _, layer := range manifest.Layers {
@@ -782,7 +783,8 @@ func PruneLayers() error {
 
 	err = deleteUnusedLayers(nil, deleteMap)
 	if err != nil {
-		return err
+		slog.Error(fmt.Sprintf("couldn't remove unused layers: %v", err))
+		return nil
 	}
 
 	slog.Info(fmt.Sprintf("total unused blobs removed: %d", len(deleteMap)))
@@ -839,7 +841,9 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	var layers []*Layer
 	layers = append(layers, manifest.Layers...)
-	layers = append(layers, manifest.Config)
+	if manifest.Config.Digest != "" {
+		layers = append(layers, &manifest.Config)
+	}
 
 	for _, layer := range layers {
 		if err := uploadBlob(ctx, mp, layer, regOpts, fn); err != nil {
@@ -890,7 +894,9 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 			for _, l := range manifest.Layers {
 				deleteMap[l.Digest] = struct{}{}
 			}
-			deleteMap[manifest.Config.Digest] = struct{}{}
+			if manifest.Config.Digest != "" {
+				deleteMap[manifest.Config.Digest] = struct{}{}
+			}
 		}
 	}
 
@@ -907,7 +913,9 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	var layers []*Layer
 	layers = append(layers, manifest.Layers...)
-	layers = append(layers, manifest.Config)
+	if manifest.Config.Digest != "" {
+		layers = append(layers, &manifest.Config)
+	}
 
 	skipVerify := make(map[string]bool)
 	for _, layer := range layers {
@@ -971,7 +979,8 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		fn(api.ProgressResponse{Status: "removing any unused layers"})
 		err = deleteUnusedLayers(nil, deleteMap)
 		if err != nil {
-			return err
+			slog.Error(fmt.Sprintf("couldn't remove unused layers: %v", err))
+			fn(api.ProgressResponse{Status: fmt.Sprintf("couldn't remove unused layers: %v", err)})
 		}
 	}
 

@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -61,6 +62,10 @@ func NewLayer(r io.Reader, mediatype string) (*Layer, error) {
 }
 
 func NewLayerFromLayer(digest, mediatype, from string) (*Layer, error) {
+	if digest == "" {
+		return nil, errors.New("creating new layer from layer with empty digest")
+	}
+
 	blob, err := GetBlobsPath(digest)
 	if err != nil {
 		return nil, err
@@ -81,6 +86,10 @@ func NewLayerFromLayer(digest, mediatype, from string) (*Layer, error) {
 }
 
 func (l *Layer) Open() (io.ReadSeekCloser, error) {
+	if l.Digest == "" {
+		return nil, errors.New("opening layer with empty digest")
+	}
+
 	blob, err := GetBlobsPath(l.Digest)
 	if err != nil {
 		return nil, err
@@ -90,13 +99,17 @@ func (l *Layer) Open() (io.ReadSeekCloser, error) {
 }
 
 func (l *Layer) Remove() error {
+	if l.Digest == "" {
+		return nil
+	}
+
 	ms, err := Manifests()
 	if err != nil {
 		return err
 	}
 
 	for _, m := range ms {
-		for _, layer := range append(m.Layers, m.Config) {
+		for _, layer := range append(m.Layers, &m.Config) {
 			if layer.Digest == l.Digest {
 				// something is using this layer
 				return nil
