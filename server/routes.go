@@ -377,18 +377,14 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	}
 
 	var g errgroup.Group
-	var mu sync.Mutex
 	embeddings := make([][]float32, len(input))
 	for i, text := range input {
-		i, text := i, text
 		g.Go(func() error {
 			embedding, err := r.Embedding(c.Request.Context(), text)
 			if err != nil {
 				return err
 			}
-			mu.Lock()
 			embeddings[i] = normalize(embedding)
-			mu.Unlock()
 			return nil
 		})
 	}
