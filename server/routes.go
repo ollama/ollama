@@ -377,7 +377,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	responses := make([][]float32, len(input))
+	embeddings := make([][]float32, len(input))
 	errors := make(chan error, len(input))
 
 	for i, text := range input {
@@ -390,7 +390,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 				return
 			}
 			mu.Lock()
-			responses[i] = embedding
+			embeddings[i] = embedding
 			mu.Unlock()
 		}(i, text)
 	}
@@ -403,11 +403,6 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		slog.Error("embedding generation failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Errorf("failed to generate embeddings: %v", err)})
 		return
-	}
-
-	var embeddings [][]float32
-	for _, r := range responses {
-		embeddings = append(embeddings, r)
 	}
 
 	resp := api.EmbedResponse{
