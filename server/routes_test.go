@@ -345,26 +345,41 @@ func Test_Routes(t *testing.T) {
 		{
 			Name:   "Authenticated Route Success",
 			Method: http.MethodGet,
-			Path:   "/api/protected", // replace with your protected route
+			Path:   "/api/version",
 			Setup: func(t *testing.T, req *http.Request) {
-				req.SetBasicAuth("username", "password")
+				t.Setenv("OLLAMA_BASIC_AUTH_KEY", "password")
+				req.SetBasicAuth("ollama", "password")
 			},
 			Expected: func(t *testing.T, resp *http.Response) {
-				assert.Equal(t, http.StatusOK, resp.StatusCode) // replace with your expected status code
+				assert.Equal(t, http.StatusOK, resp.StatusCode)
 				_, err := io.ReadAll(resp.Body)
 				require.NoError(t, err)
-				// Add more assertions based on the expected response body
 			},
 		},
 		{
 			Name:   "Authenticated Route Failure",
 			Method: http.MethodGet,
-			Path:   "/api/protected", // replace with your protected route
+			Path:   "/api/version",
 			Setup: func(t *testing.T, req *http.Request) {
-				req.SetBasicAuth("wronguser", "wrongpass")
+				t.Setenv("OLLAMA_BASIC_AUTH_KEY", "password")
+				req.SetBasicAuth("ollama", "wrongpassword")
 			},
 			Expected: func(t *testing.T, resp *http.Response) {
 				assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+			},
+		},
+		{
+			Name:   "BasicAuthKey not set",
+			Method: http.MethodGet,
+			Path:   "/api/version",
+			Setup: func(t *testing.T, req *http.Request) {
+				t.Setenv("OLLAMA_BASIC_AUTH_KEY", "")
+				req.SetBasicAuth("ollama", "wrongpassword")
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				assert.Equal(t, http.StatusOK, resp.StatusCode)
+				_, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
 			},
 		},
 	}

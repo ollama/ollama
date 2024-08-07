@@ -1064,12 +1064,13 @@ func (s *Server) GenerateRoutes() http.Handler {
 		allowedHostsMiddleware(s.addr),
 	)
 
-	auth := envconfig.BasicAuth()
-	// Check if the auth map contains the default credentials
-	isDefaultAuth := len(auth) == 1 && auth["username"] == "password"
-
-	if !isDefaultAuth {
-		r.Use(gin.BasicAuth(auth))
+	ollamaAuthKey := envconfig.BasicAuthKey()
+	if ollamaAuthKey != "" {
+		r.Use(
+			gin.BasicAuth(gin.Accounts{
+				"ollama": ollamaAuthKey,
+			}),
+		)
 	}
 
 	r.POST("/api/pull", s.PullModelHandler)
