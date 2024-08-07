@@ -887,7 +887,7 @@ type EmbeddingRequest struct {
 }
 
 type EmbeddingResponse struct {
-	Embedding       []float32 `json:"embedding"`
+	Embedding []float32 `json:"embedding"`
 }
 
 func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, error) {
