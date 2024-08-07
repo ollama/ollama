@@ -3195,7 +3195,7 @@ int main(int argc, char **argv) {
                 // create and queue the task
                 const int task_id = llama.queue_tasks.get_new_id();
                 llama.queue_results.add_waiting_task_id(task_id);
-                llama.request_completion(task_id, { {"prompt", prompt}, { "n_predict", 0} }, true, -1);
+                llama.request_completion(task_id, {{"prompt", prompt}}, true, -1);
 
                 // get the result
                 task_result result = llama.queue_results.recv(task_id);
