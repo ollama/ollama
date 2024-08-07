@@ -24,6 +24,7 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
@@ -375,31 +376,24 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		input[i] = s
 	}
 
-	var wg sync.WaitGroup
+	var g errgroup.Group
 	var mu sync.Mutex
 	embeddings := make([][]float32, len(input))
-	errors := make(chan error, len(input))
-
 	for i, text := range input {
-		wg.Add(1)
-		go func(i int, text string) {
-			defer wg.Done()
+		i, text := i, text
+		g.Go(func() error {
 			embedding, err := r.Embedding(c.Request.Context(), text)
 			if err != nil {
-				errors <- err
-				return
+				return err
 			}
 			mu.Lock()
 			embeddings[i] = embedding
 			mu.Unlock()
-		}(i, text)
+			return nil
+		})
 	}
 
-	wg.Wait()
-	close(errors)
-
-	if len(errors) > 0 {
-		err := <-errors
+	if err := g.Wait(); err != nil {
 		slog.Error("embedding generation failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Errorf("failed to generate embeddings: %v", err)})
 		return
