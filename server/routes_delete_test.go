@@ -98,7 +98,7 @@ func TestDeleteDuplicateLayers(t *testing.T) {
 	}
 
 	// create a manifest with duplicate layers
-	if err := WriteManifest(n, config, []*Layer{config}); err != nil {
+	if err := WriteManifest(n, config, []Layer{config}); err != nil {
 		t.Fatal(err)
 	}
 
