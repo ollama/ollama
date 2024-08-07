@@ -57,6 +57,24 @@ func Host() *url.URL {
 	}
 }
 
+func BasicAuth() (basicAuth map[string]string) {
+	basicAuthString := Var("OLLAMA_BASIC_AUTH")
+	parts := strings.Split(basicAuthString, ":")
+
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		// Return a default value if the split result is not as expected
+		basicAuth = map[string]string{
+			"username": "password",
+		}
+	} else {
+		basicAuth = map[string]string{
+			parts[0]: parts[1],
+		}
+	}
+
+	return basicAuth
+}
+
 // Origins returns a list of allowed origins. Origins can be configured via the OLLAMA_ORIGINS environment variable.
 func Origins() (origins []string) {
 	if s := Var("OLLAMA_ORIGINS"); s != "" {
@@ -258,6 +276,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_RUNNERS_DIR":       {"OLLAMA_RUNNERS_DIR", RunnersDir(), "Location for runners"},
 		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
 		"OLLAMA_TMPDIR":            {"OLLAMA_TMPDIR", TmpDir(), "Location for temporary files"},
+		"OLLAMA_BASIC_AUTH":        {"OLLAMA_BASIC_AUTH", BasicAuth(), "Basic auth (default username:password, will allow all request if empty)"},
 	}
 	if runtime.GOOS != "darwin" {
 		ret["CUDA_VISIBLE_DEVICES"] = EnvVar{"CUDA_VISIBLE_DEVICES", CudaVisibleDevices(), "Set which NVIDIA devices are visible"}

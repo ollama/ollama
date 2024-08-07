@@ -342,6 +342,31 @@ func Test_Routes(t *testing.T) {
 				}
 			},
 		},
+		{
+			Name:   "Authenticated Route Success",
+			Method: http.MethodGet,
+			Path:   "/api/protected", // replace with your protected route
+			Setup: func(t *testing.T, req *http.Request) {
+				req.SetBasicAuth("username", "password")
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				assert.Equal(t, http.StatusOK, resp.StatusCode) // replace with your expected status code
+				_, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+				// Add more assertions based on the expected response body
+			},
+		},
+		{
+			Name:   "Authenticated Route Failure",
+			Method: http.MethodGet,
+			Path:   "/api/protected", // replace with your protected route
+			Setup: func(t *testing.T, req *http.Request) {
+				req.SetBasicAuth("wronguser", "wrongpass")
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+			},
+		},
 	}
 
 	t.Setenv("OLLAMA_MODELS", t.TempDir())

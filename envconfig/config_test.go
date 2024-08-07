@@ -233,3 +233,29 @@ func TestVar(t *testing.T) {
 		})
 	}
 }
+
+func TestBasicAuth(t *testing.T) {
+	cases := map[string]struct {
+		value          string
+		expectUser     string
+		expectPassword string
+	}{
+		"empty":           {"", "username", "password"},
+		"valid":           {"user1:password1", "user1", "password1"},
+		"missingPassword": {"user2:", "username", "password"},
+		"missingUser":     {":password2", "username", "password"},
+		"noColon":         {"user3password3", "username", "password"},
+	}
+
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("OLLAMA_BASIC_AUTH", tt.value)
+			basicAuth := BasicAuth()
+
+			password, exists := basicAuth[tt.expectUser]
+			if !exists || password != tt.expectPassword {
+				t.Errorf("%s: expected map[%s:%s], got %v", name, tt.expectUser, tt.expectPassword, basicAuth)
+			}
+		})
+	}
+}

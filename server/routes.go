@@ -1064,6 +1064,14 @@ func (s *Server) GenerateRoutes() http.Handler {
 		allowedHostsMiddleware(s.addr),
 	)
 
+	auth := envconfig.BasicAuth()
+	// Check if the auth map contains the default credentials
+	isDefaultAuth := len(auth) == 1 && auth["username"] == "password"
+
+	if !isDefaultAuth {
+		r.Use(gin.BasicAuth(auth))
+	}
+
 	r.POST("/api/pull", s.PullModelHandler)
 	r.POST("/api/generate", s.GenerateHandler)
 	r.POST("/api/chat", s.ChatHandler)
