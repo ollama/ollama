@@ -46,7 +46,7 @@ Generate a response for a given prompt with a provided model. This is a streamin
 Advanced parameters (optional):
 
 - `format`: the format to return a response in. Currently the only accepted value is `json`
-- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
+- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`. Other options are passed through to [Llama.cpp](https://github.com/ggerganov/llama.cpp). For info on those read the relevant [Docs](https://github.com/ggerganov/llama.cpp/blob/master/examples/main/README.md#generation-flags)
 - `system`: system message to (overrides what is defined in the `Modelfile`)
 - `template`: the prompt template to use (overrides what is defined in the `Modelfile`)
 - `context`: the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
