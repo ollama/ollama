@@ -652,7 +652,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		case "modelfile":
 			fmt.Println(resp.Modelfile)
 		case "parameters":
-			fmt.Println(resp.Parameters)
+			fmt.Println(formatParams(resp.Parameters, false))
 		case "system":
 			fmt.Println(resp.System)
 		case "template":
@@ -680,7 +680,7 @@ func showInfo(resp *api.ShowResponse) {
 
 	mainTableData := [][]string{
 		{"Model"},
-		{renderSubTable(modelData, false)},
+		{renderSubTable(modelData, false, true)},
 	}
 
 	if resp.ProjectorInfo != nil {
@@ -700,20 +700,20 @@ func showInfo(resp *api.ShowResponse) {
 
 		mainTableData = append(mainTableData,
 			[]string{"Projector"},
-			[]string{renderSubTable(projectorData, false)},
+			[]string{renderSubTable(projectorData, false, true)},
 		)
 	}
 
 	if resp.Parameters != "" {
-		mainTableData = append(mainTableData, []string{"Parameters"}, []string{formatParams(resp.Parameters)})
+		mainTableData = append(mainTableData, []string{"Parameters"}, []string{formatParams(resp.Parameters, true)})
 	}
 
 	if resp.System != "" {
-		mainTableData = append(mainTableData, []string{"System"}, []string{renderSubTable(twoLines(resp.System), true)})
+		mainTableData = append(mainTableData, []string{"System"}, []string{renderSubTable(twoLines(resp.System), true, true)})
 	}
 
 	if resp.License != "" {
-		mainTableData = append(mainTableData, []string{"License"}, []string{renderSubTable(twoLines(resp.License), true)})
+		mainTableData = append(mainTableData, []string{"License"}, []string{renderSubTable(twoLines(resp.License), true, true)})
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
@@ -728,7 +728,7 @@ func showInfo(resp *api.ShowResponse) {
 	table.Render()
 }
 
-func renderSubTable(data [][]string, file bool) string {
+func renderSubTable(data [][]string, file bool, tab bool) string {
 	var buf bytes.Buffer
 	table := tablewriter.NewWriter(&buf)
 	table.SetAutoWrapText(!file)
@@ -742,6 +742,10 @@ func renderSubTable(data [][]string, file bool) string {
 	}
 
 	table.Render()
+
+	if !tab {
+		return buf.String()
+	}
 
 	renderedTable := buf.String()
 	lines := strings.Split(renderedTable, "\n")
@@ -770,14 +774,16 @@ func twoLines(s string) [][]string {
 	return res
 }
 
-func formatParams(s string) string {
+func formatParams(s string, tab bool) string {
 	lines := strings.Split(s, "\n")
 	table := [][]string{}
 
 	for _, line := range lines {
-		table = append(table, strings.Fields(line))
+		fields := strings.Fields(line)
+		fields[1] = strings.TrimPrefix(strings.TrimSuffix(fields[1], `"`), `"`)
+		table = append(table, fields)
 	}
-	return renderSubTable(table, false)
+	return renderSubTable(table, false, tab)
 }
 
 func CopyHandler(cmd *cobra.Command, args []string) error {
