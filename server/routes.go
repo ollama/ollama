@@ -160,7 +160,7 @@ func (s *Server) runWhisperServer(c *gin.Context, portCh chan int, errCh chan er
 	}
 
 	// Wait for server connection
-	retries := 10
+	retries := 25
 	var connErr error
 	for range retries {
 		time.Sleep(50 * time.Millisecond)
@@ -1509,9 +1509,9 @@ func (s *Server) ProcessHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, api.ProcessResponse{Models: models})
 }
 
-func processAudio(c *gin.Context, s *Server, msgs []api.Message, req *api.WhisperRequest) {
+func processAudio(c *gin.Context, s *Server, msgs []api.Message, req *api.WhisperRequest) error {
 	if req.Model == "" {
-		return
+		return nil
 	}
 	portCh := make(chan int, 1)
 	errCh := make(chan error, 1)
@@ -1522,7 +1522,7 @@ func processAudio(c *gin.Context, s *Server, msgs []api.Message, req *api.Whispe
 	case port = <-portCh:
 	case err := <-errCh:
 		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+		return err
 	}
 
 	// could parallelize this
@@ -1531,11 +1531,12 @@ func processAudio(c *gin.Context, s *Server, msgs []api.Message, req *api.Whispe
 			w, err := whisperInference(c, msg.Audio, port)
 			if err != nil {
 				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to generate completion"})
-				return
+				return err
 			}
 			msgs[i].Content += "\n" + w.Text
 		}
 	}
+	return nil
 }
 
 func (s *Server) ChatHandler(c *gin.Context) {
@@ -1583,7 +1584,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	if req.Speech != nil {
-		processAudio(c, s, msgs, req.Speech)
+		if err := processAudio(c, s, msgs, req.Speech); err != nil {
+			slog.Error("failed to process audio", "error", err)
+			return
+		}
 	}
 
 	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, req.Tools)
