@@ -387,7 +387,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 				return err
 			}
 			mu.Lock()
-			embeddings[i] = embedding
+			embeddings[i] = normalize(embedding)
 			mu.Unlock()
 			return nil
 		})
@@ -397,10 +397,6 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		slog.Error("embedding generation failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Errorf("failed to generate embeddings: %v", err)})
 		return
-	}
-
-	for i, embedding := range embeddings {
-		embeddings[i] = normalize(embedding)
 	}
 
 	resp := api.EmbedResponse{
