@@ -625,12 +625,12 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 		return err
 	}
 
-	layer, err := NewLayer(&b, "application/vnd.docker.container.image.v1+json")
+	configLayer, err := NewLayer(&b, "application/vnd.docker.container.image.v1+json")
 	if err != nil {
 		return err
 	}
 
-	for _, layer := range append(layers, layer) {
+	for _, layer := range append(layers, configLayer) {
 		if layer.status != "" {
 			fn(api.ProgressResponse{Status: layer.status})
 		}
@@ -639,7 +639,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 	old, _ := ParseNamedManifest(name)
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
-	if err := WriteManifest(name, layer, layers); err != nil {
+	if err := WriteManifest(name, configLayer, layers); err != nil {
 		return err
 	}
 
