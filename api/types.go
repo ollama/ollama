@@ -36,6 +36,13 @@ func (e StatusError) Error() string {
 // ImageData represents the raw binary data of an image file.
 type ImageData []byte
 
+type WhisperRequest struct {
+	Model      string    `json:"model"`
+	Audio      string    `json:"audio,omitempty"`
+	Transcribe bool      `json:"transcribe,omitempty"`
+	KeepAlive  *Duration `json:"keep_alive,omitempty"`
+}
+
 // GenerateRequest describes a request sent by [Client.Generate]. While you
 // have to specify the Model and Prompt fields, all the other fields have
 // reasonable defaults for basic uses.
@@ -81,11 +88,7 @@ type GenerateRequest struct {
 	// set through this field, if the model supports it.
 	Options map[string]interface{} `json:"options"`
 
-	WhisperModel string `json:"whisper_model,omitempty"`
-
-	Audio string `json:"audio,omitempty"`
-
-	Transcribe bool `json:"transcribe,omitempty"`
+	Speech *WhisperRequest `json:"speech,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
@@ -112,7 +115,7 @@ type ChatRequest struct {
 	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
 
-	WhisperModel string `json:"whisper_model,omitempty"`
+	Speech *WhisperRequest `json:"speech,omitempty"`
 }
 
 type Tools []Tool
