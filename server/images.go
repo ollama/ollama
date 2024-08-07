@@ -373,7 +373,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 	var messages []*api.Message
 	parameters := make(map[string]any)
 
-	var layers []*Layer
+	var layers []Layer
 	for _, c := range modelfile.Commands {
 		mediatype := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
 
@@ -499,7 +499,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 
 			if c.Name != "license" {
 				// replace
-				layers = slices.DeleteFunc(layers, func(layer *Layer) bool {
+				layers = slices.DeleteFunc(layers, func(layer Layer) bool {
 					if layer.MediaType != mediatype {
 						return false
 					}
@@ -545,7 +545,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 	}
 
 	var err2 error
-	layers = slices.DeleteFunc(layers, func(layer *Layer) bool {
+	layers = slices.DeleteFunc(layers, func(layer Layer) bool {
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.message":
 			// if there are new messages, remove the inherited ones
@@ -839,10 +839,10 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return err
 	}
 
-	var layers []*Layer
+	var layers []Layer
 	layers = append(layers, manifest.Layers...)
 	if manifest.Config.Digest != "" {
-		layers = append(layers, &manifest.Config)
+		layers = append(layers, manifest.Config)
 	}
 
 	for _, layer := range layers {
@@ -911,10 +911,10 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return fmt.Errorf("pull model manifest: %s", err)
 	}
 
-	var layers []*Layer
+	var layers []Layer
 	layers = append(layers, manifest.Layers...)
 	if manifest.Config.Digest != "" {
-		layers = append(layers, &manifest.Config)
+		layers = append(layers, manifest.Config)
 	}
 
 	skipVerify := make(map[string]bool)
