@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
 )
@@ -94,6 +95,7 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 	// Overflow that didn't fit into the GPU
 	var overflow uint64
 
+	overhead := envconfig.GpuOverhead()
 	availableList := make([]string, len(gpus))
 	for i, gpu := range gpus {
 		availableList[i] = format.HumanBytes2(gpu.FreeMemory)
@@ -164,7 +166,7 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 			gzo = gpuZeroOverhead
 		}
 		// Only include GPUs that can fit the graph, gpu minimum, the layer buffer and at least more layer
-		if gpus[i].FreeMemory < gzo+max(graphPartialOffload, graphFullOffload)+gpus[i].MinimumMemory+2*layerSize {
+		if (gpus[i].FreeMemory - overhead) < gzo+max(graphPartialOffload, graphFullOffload)+gpus[i].MinimumMemory+2*layerSize {
 			slog.Debug("gpu has too little memory to allocate any layers", "gpu", gpus[i])
 			continue
 		}
@@ -196,7 +198,7 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 		for j := len(gpusWithSpace); j > 0; j-- {
 			g := gpusWithSpace[i%j]
 			used := gpuAllocations[g.i] + max(graphPartialOffload, graphFullOffload)
-			if g.g.FreeMemory > used+layerSize {
+			if (g.g.FreeMemory - overhead) > used+layerSize {
 				gpuAllocations[g.i] += layerSize
 				layerCounts[g.i]++
 				layerCount++
@@ -219,7 +221,7 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 		for j := len(gpusWithSpace); j > 0; j-- {
 			g := gpusWithSpace[layerCount%j]
 			used := gpuAllocations[g.i] + max(graphPartialOffload, graphFullOffload)
-			if g.g.FreeMemory > used+memoryLayerOutput {
+			if (g.g.FreeMemory - overhead) > used+memoryLayerOutput {
 				gpuAllocations[g.i] += memoryLayerOutput
 				layerCounts[g.i]++
 				layerCount++
@@ -306,6 +308,7 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 }
 
 func (m MemoryEstimate) log() {
+	overhead := envconfig.GpuOverhead()
 	slog.Info(
 		"offload to "+m.inferenceLibrary,
 		slog.Group(
@@ -323,6 +326,7 @@ func (m MemoryEstimate) log() {
 			"memory",
 			// memory available by GPU for offloading
 			"available", m.availableList,
+			"gpu_overhead", format.HumanBytes2(overhead),
 			slog.Group(
 				"required",
 				// memory required for full offloading
