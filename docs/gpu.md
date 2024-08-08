@@ -54,6 +54,11 @@ Ollama supports the following AMD GPUs:
 | AMD Radeon PRO | `W7900` `W7800` `W7700` `W7600` `W7500` `W6900X` `W6800X Duo` `W6800X` `W6800` `V620` `V420` `V340` `V320` `Vega II Duo` `Vega II` `VII` `SSG` |
 | AMD Instinct   | `MI300X` `MI300A` `MI300` `MI250X` `MI250` `MI210` `MI200` `MI100` `MI60` `MI50`                                                               |
 
+The following Ryzen Integrated GPUs are supported, but you must dedicate over 1G of system memory to VRAM.  In your BIOS settings, under AMD CBS find GFX configurations for the Integrated Graphics, and set the UMA Mode to UMA_SPECIFIED, then dedicate system memory to VRAM. (e.g. `8G`)
+
+Radeon `740M`, `760M`, `780M`, `880M`, `890M`
+
+
 ### Windows Support
 With ROCm v6.1, the following GPUs are supported on Windows.
 
