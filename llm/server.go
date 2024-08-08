@@ -216,6 +216,10 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 	if opts.NumThread > 0 {
 		params = append(params, "--threads", strconv.Itoa(opts.NumThread))
+	} else if runtime.GOOS == "linux" {
+		if cpus, err := gpu.ParseCpuInfo(); err == nil {
+			params = append(params, "--threads", strconv.Itoa(cpus.CoreCount()))
+		}
 	}
 
 	if !opts.F16KV {
