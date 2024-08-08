@@ -32,7 +32,7 @@ const logger = winston.createLogger({
   format: winston.format.printf(info => info.message),
 })
 
-app.on('ready', () => {
+app.on('ready', async () => {
   const gotTheLock = app.requestSingleInstanceLock()
   if (!gotTheLock) {
     app.exit(0)
@@ -54,10 +54,10 @@ app.on('ready', () => {
 
   app.focus({ steal: true })
 
-  init()
+  await init()
 })
 
-function firstRunWindow() {
+function firstRunWindow(isInstalled: boolean) {
   // Create the browser window.
   welcomeWindow = new BrowserWindow({
     width: 400,
@@ -75,7 +75,11 @@ function firstRunWindow() {
 
   require('@electron/remote/main').enable(welcomeWindow.webContents)
 
-  welcomeWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY)
+  let url = MAIN_WINDOW_WEBPACK_ENTRY
+  if (isInstalled) {
+    url += '?step=2' // set the window to the finish screen
+  }
+  welcomeWindow.loadURL(url);
   welcomeWindow.on('ready-to-show', () => welcomeWindow.show())
   welcomeWindow.on('closed', () => {
     if (process.platform === 'darwin') {
@@ -207,7 +211,7 @@ async function checkUpdate() {
   }
 }
 
-function init() {
+async function init() {
   if (app.isPackaged) {
     checkUpdate()
     setInterval(() => {
@@ -217,44 +221,42 @@ function init() {
 
   updateTray()
 
-  if (process.platform === 'darwin') {
-    if (app.isPackaged) {
-      if (!app.isInApplicationsFolder()) {
-        const chosen = dialog.showMessageBoxSync({
-          type: 'question',
-          buttons: ['Move to Applications', 'Do Not Move'],
-          message: 'Ollama works best when run from the Applications directory.',
-          defaultId: 0,
-          cancelId: 1,
-        })
+  const isInstalled = await installed();
 
-        if (chosen === 0) {
-          try {
-            app.moveToApplicationsFolder({
-              conflictHandler: conflictType => {
-                if (conflictType === 'existsAndRunning') {
-                  dialog.showMessageBoxSync({
-                    type: 'info',
-                    message: 'Cannot move to Applications directory',
-                    detail:
-                      'Another version of Ollama is currently running from your Applications directory. Close it first and try again.',
-                  })
-                }
-                return true
-              },
-            })
-            return
-          } catch (e) {
-            logger.error(`[Move to Applications] Failed to move to applications folder - ${e.message}}`)
-          }
-        }
+  if (process.platform === 'darwin' && app.isPackaged && !app.isInApplicationsFolder() && !isInstalled) {
+    const chosen = dialog.showMessageBoxSync({
+      type: 'question',
+      buttons: ['Move to Applications', 'Do Not Move'],
+      message: 'Ollama works best when run from the Applications directory.',
+      defaultId: 0,
+      cancelId: 1,
+    })
+
+    if (chosen === 0) {
+      try {
+        app.moveToApplicationsFolder({
+          conflictHandler: conflictType => {
+            if (conflictType === 'existsAndRunning') {
+              dialog.showMessageBoxSync({
+                type: 'info',
+                message: 'Cannot move to Applications directory',
+                detail:
+                  'Another version of Ollama is currently running from your Applications directory. Close it first and try again.',
+              })
+            }
+            return true
+          },
+        })
+        return
+      } catch (e) {
+        logger.error(`[Move to Applications] Failed to move to applications folder - ${e.message}}`)
       }
     }
   }
 
   server()
 
-  if (store.get('first-time-run') && installed()) {
+  if (store.get('first-time-run') && isInstalled) {
     if (process.platform === 'darwin') {
       app.dock.hide()
     }
@@ -265,7 +267,7 @@ function init() {
 
   // This is the first run or the CLI is no longer installed
   app.setLoginItemSettings({ openAtLogin: true })
-  firstRunWindow()
+  firstRunWindow(isInstalled)
 }
 
 // Quit when all windows are closed, except on macOS. There, it's common
