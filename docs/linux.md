@@ -102,7 +102,7 @@ sudo chmod +x /usr/bin/ollama
 
 ## Installing specific versions
 
-Use `OLLAMA_VERSION` environment variable with the install script to install a specific version of Ollama, including pre-releases. You can find the version numbers in the [releases page](https://github.com/ollama/ollama/releases). 
+Use `OLLAMA_VERSION` environment variable with the install script to install a specific version of Ollama, including pre-releases. You can find the version numbers in the [releases page](https://github.com/ollama/ollama/releases).
 
 For example:
 
@@ -140,4 +140,9 @@ Remove the downloaded models and Ollama service user and group:
 sudo rm -r /usr/share/ollama
 sudo userdel ollama
 sudo groupdel ollama
+```
+
+Remove the config
+```bash
+sudo rm -rf /etc/ollama
 ```
