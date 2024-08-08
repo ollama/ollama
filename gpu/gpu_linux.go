@@ -47,7 +47,7 @@ var (
 	CudartMgmtName = "libcudart.so*"
 	NvcudaMgmtName = "libcuda.so*"
 	NvmlMgmtName   = "" // not currently wired on linux
-	OneapiMgmtName = "libze_intel_gpu.so"
+	OneapiMgmtName = "libze_intel_gpu.so*"
 )
 
 func GetCPUMem() (memInfo, error) {

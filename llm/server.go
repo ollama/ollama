@@ -305,20 +305,18 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		if runtime.GOOS == "windows" {
 			pathEnv = "PATH"
 		}
-		// prepend the server directory to LD_LIBRARY_PATH/PATH and the parent dir for common dependencies
-		libraryPaths := []string{dir, filepath.Dir(dir)}
+		// Start with the server directory for the LD_LIBRARY_PATH/PATH
+		libraryPaths := []string{dir}
 
 		if libraryPath, ok := os.LookupEnv(pathEnv); ok {
-			// Append our runner directory to the path
-			// This will favor system libraries over our bundled library dependencies
+			// favor our bundled library dependencies over system libraries
 			libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
 		}
 
 		// Note: we always put the dependency path first
-		// since this was the exact version we verified for AMD GPUs
-		// and we favor what the user had in their path
+		// since this was the exact version we compiled/linked against
 		if gpus[0].DependencyPath != "" {
-			// TODO refine for multi-gpu support
+			// assume gpus from the same library have the same dependency path
 			libraryPaths = append([]string{gpus[0].DependencyPath}, libraryPaths...)
 		}
 
