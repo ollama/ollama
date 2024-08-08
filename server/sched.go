@@ -46,6 +46,10 @@ type Scheduler struct {
 	getGpuFn     func() gpu.GpuInfoList
 	getCpuFn     func() gpu.GpuInfoList
 	reschedDelay time.Duration
+
+	whisperLoaded    map[string]*int
+	whisperExpiresAt map[string]time.Time
+	whisperMu        sync.Mutex
 }
 
 // Default automatic value for number of models we allow per GPU
@@ -63,15 +67,17 @@ var ErrMaxQueue = errors.New("server busy, please try again.  maximum pending re
 func InitScheduler(ctx context.Context) *Scheduler {
 	maxQueue := envconfig.MaxQueue()
 	sched := &Scheduler{
-		pendingReqCh:  make(chan *LlmRequest, maxQueue),
-		finishedReqCh: make(chan *LlmRequest, maxQueue),
-		expiredCh:     make(chan *runnerRef, maxQueue),
-		unloadedCh:    make(chan interface{}, maxQueue),
-		loaded:        make(map[string]*runnerRef),
-		newServerFn:   llm.NewLlamaServer,
-		getGpuFn:      gpu.GetGPUInfo,
-		getCpuFn:      gpu.GetCPUInfo,
-		reschedDelay:  250 * time.Millisecond,
+		pendingReqCh:     make(chan *LlmRequest, maxQueue),
+		finishedReqCh:    make(chan *LlmRequest, maxQueue),
+		expiredCh:        make(chan *runnerRef, maxQueue),
+		unloadedCh:       make(chan interface{}, maxQueue),
+		loaded:           make(map[string]*runnerRef),
+		newServerFn:      llm.NewLlamaServer,
+		getGpuFn:         gpu.GetGPUInfo,
+		getCpuFn:         gpu.GetCPUInfo,
+		reschedDelay:     250 * time.Millisecond,
+		whisperLoaded:    make(map[string]*int),
+		whisperExpiresAt: make(map[string]time.Time),
 	}
 	sched.loadFn = sched.load
 	return sched
@@ -110,6 +116,10 @@ func (s *Scheduler) Run(ctx context.Context) {
 	go func() {
 		s.processCompleted(ctx)
 	}()
+
+	// go func() {
+	// 	could clean up whisper servers in init thread
+	// }
 }
 
 func (s *Scheduler) processPending(ctx context.Context) {

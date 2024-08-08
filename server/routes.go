@@ -10,13 +10,17 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"math/rand"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/netip"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -105,6 +109,181 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []Capabil
 	return runner.llama, model, &opts, nil
 }
 
+func (s *Server) runWhisperServer(c *gin.Context, portCh chan int, errCh chan error, speech *api.WhisperRequest) {
+	modelPath := speech.Model
+
+	// default to 5 minutes
+	var sessionDuration time.Duration
+	if speech.KeepAlive != nil {
+		sessionDuration = speech.KeepAlive.Duration
+	} else {
+		sessionDuration = 5 * time.Minute
+	}
+
+	s.sched.whisperMu.Lock()
+	if s.sched.whisperLoaded[modelPath] != nil {
+		slog.Info(fmt.Sprintf("whisper server already running %s on port %d", modelPath, *s.sched.whisperLoaded[modelPath]))
+		portCh <- *s.sched.whisperLoaded[modelPath]
+		// Renew the expiration time
+		s.sched.whisperExpiresAt[modelPath] = time.Now().Add(sessionDuration)
+		s.sched.whisperMu.Unlock()
+		return
+	}
+
+	whisperServer := "/Users/royhan-ollama/ollama/llm/whisper.cpp/server"
+
+	// Find an available port for whisper
+	port := 0
+	params := []string{}
+	if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
+		var l *net.TCPListener
+		if l, err = net.ListenTCP("tcp", a); err == nil {
+			port = l.Addr().(*net.TCPAddr).Port
+			l.Close()
+		}
+	}
+	if port == 0 {
+		slog.Debug("ResolveTCPAddr failed")
+		port = rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
+	}
+	finalParams := append(params, "--port", strconv.Itoa(port), "--model", modelPath)
+
+	cmd := exec.Command(whisperServer, finalParams...)
+	slog.Info("starting whisper server", "cmd", cmd.String())
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	err := cmd.Start()
+	if err != nil {
+		slog.Error("failed to start whisper server", "error", err)
+		errCh <- err
+		return
+	}
+
+	// Wait for server connection
+	retries := 25
+	var connErr error
+	for range retries {
+		time.Sleep(50 * time.Millisecond)
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", port), time.Second)
+		if err == nil {
+			conn.Close()
+			connErr = nil
+			break
+		}
+		connErr = err
+	}
+
+	if connErr != nil {
+		slog.Error("failed to connect to whisper server", "error", connErr)
+		errCh <- connErr
+		return
+	}
+
+	portCh <- port
+	s.sched.whisperLoaded[modelPath] = &port
+	s.sched.whisperExpiresAt[modelPath] = time.Now().Add(sessionDuration)
+
+	s.sched.whisperMu.Unlock()
+
+	// Wait for the whisper server to exit
+	defer func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			s.sched.whisperMu.Lock()
+			if time.Now().After(s.sched.whisperExpiresAt[modelPath]) {
+				slog.Info("exiting whisper server")
+				delete(s.sched.whisperLoaded, modelPath)
+				delete(s.sched.whisperExpiresAt, modelPath)
+				s.sched.whisperMu.Unlock()
+
+				if err := cmd.Process.Kill(); err != nil {
+					c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err})
+					return
+				}
+
+				slog.Debug("whisper server stopped")
+				return
+			}
+			s.sched.whisperMu.Unlock()
+		}
+	}()
+}
+
+func whisperInference(c *gin.Context, filePath string, port int) (*api.WhisperCompletion, error) {
+	// Open the file
+	file, err := os.Open(filePath)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to open file"})
+		return nil, err
+	}
+	defer file.Close()
+
+	// Create a buffer to hold the multipart form data
+	buffer := &bytes.Buffer{}
+	writer := multipart.NewWriter(buffer)
+
+	// Add the file to the multipart form
+	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to create form file"})
+		return nil, err
+	}
+
+	if _, err := io.Copy(part, file); err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to copy file"})
+		return nil, err
+	}
+
+	// Add other fields to the form
+	if err := writer.WriteField("temperature", "0.0"); err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to write field"})
+		return nil, err
+	}
+
+	// Close the writer to finalize the multipart form
+	if err := writer.Close(); err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to close writer"})
+		return nil, err
+	}
+
+	endpoint := fmt.Sprintf("http://localhost:%s/inference", strconv.Itoa(port))
+
+	serverReq, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, endpoint, buffer)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to create request"})
+		return nil, err
+	}
+
+	serverReq.Header.Set("Content-Type", writer.FormDataContentType())
+
+	res, err := http.DefaultClient.Do(serverReq)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to send request"})
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to read response"})
+		return nil, err
+	}
+
+	var w api.WhisperCompletion
+	if err := json.Unmarshal(body, &w); err != nil {
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to unmarshal response"})
+		return nil, err
+	}
+
+	if w.Error != "" {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": w.Error})
+		return nil, fmt.Errorf(w.Error)
+	}
+
+	return &w, nil
+}
+
 func (s *Server) GenerateHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 	var req api.GenerateRequest
@@ -127,6 +306,40 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	caps := []Capability{CapabilityCompletion}
 	if req.Suffix != "" {
 		caps = append(caps, CapabilityInsert)
+	}
+
+	if req.Speech != nil {
+		portCh := make(chan int, 1)
+		errCh := make(chan error, 1)
+		go s.runWhisperServer(c, portCh, errCh, req.Speech)
+
+		var port int
+
+		select {
+		case port = <-portCh:
+		case err := <-errCh:
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err})
+			return
+		}
+
+		w, err := whisperInference(c, req.Speech.Audio, port)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to generate completion"})
+			return
+		}
+
+		if req.Speech.Transcribe {
+			c.JSON(http.StatusOK, api.GenerateResponse{
+				Model:      req.Model,
+				CreatedAt:  time.Now().UTC(),
+				Response:   w.Text,
+				Done:       true,
+				DoneReason: "transcribe",
+			})
+			return
+		}
+
+		req.Prompt += "\n" + w.Text
 	}
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, caps, req.Options, req.KeepAlive)
@@ -1296,6 +1509,36 @@ func (s *Server) ProcessHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, api.ProcessResponse{Models: models})
 }
 
+func processAudio(c *gin.Context, s *Server, msgs []api.Message, req *api.WhisperRequest) error {
+	if req.Model == "" {
+		return nil
+	}
+	portCh := make(chan int, 1)
+	errCh := make(chan error, 1)
+	go s.runWhisperServer(c, portCh, errCh, req)
+
+	var port int
+	select {
+	case port = <-portCh:
+	case err := <-errCh:
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return err
+	}
+
+	// could parallelize this
+	for i, msg := range msgs {
+		if msg.Audio != "" {
+			w, err := whisperInference(c, msg.Audio, port)
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "failed to generate completion"})
+				return err
+			}
+			msgs[i].Content += "\n" + w.Text
+		}
+	}
+	return nil
+}
+
 func (s *Server) ChatHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 
@@ -1338,6 +1581,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	msgs := append(m.Messages, req.Messages...)
 	if req.Messages[0].Role != "system" && m.System != "" {
 		msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
+	}
+
+	if req.Speech != nil {
+		if err := processAudio(c, s, msgs, req.Speech); err != nil {
+			slog.Error("failed to process audio", "error", err)
+			return
+		}
 	}
 
 	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, req.Tools)

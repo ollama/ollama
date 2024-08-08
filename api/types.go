@@ -36,6 +36,13 @@ func (e StatusError) Error() string {
 // ImageData represents the raw binary data of an image file.
 type ImageData []byte
 
+type WhisperRequest struct {
+	Model      string    `json:"model"`
+	Audio      string    `json:"audio,omitempty"`
+	Transcribe bool      `json:"transcribe,omitempty"`
+	KeepAlive  *Duration `json:"keep_alive,omitempty"`
+}
+
 // GenerateRequest describes a request sent by [Client.Generate]. While you
 // have to specify the Model and Prompt fields, all the other fields have
 // reasonable defaults for basic uses.
@@ -80,6 +87,8 @@ type GenerateRequest struct {
 	// Options lists model-specific options. For example, temperature can be
 	// set through this field, if the model supports it.
 	Options map[string]interface{} `json:"options"`
+
+	Speech *WhisperRequest `json:"speech,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
@@ -105,6 +114,8 @@ type ChatRequest struct {
 
 	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
+
+	Speech *WhisperRequest `json:"speech,omitempty"`
 }
 
 type Tools []Tool
@@ -127,6 +138,7 @@ type Message struct {
 	Content   string      `json:"content"`
 	Images    []ImageData `json:"images,omitempty"`
 	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
+	Audio     string      `json:"audio,omitempty"`
 }
 
 func (m *Message) UnmarshalJSON(b []byte) error {
@@ -448,6 +460,11 @@ type GenerateResponse struct {
 	Context []int `json:"context,omitempty"`
 
 	Metrics
+}
+
+type WhisperCompletion struct {
+	Text  string `json:"text"`
+	Error string `json:"error,omitempty"`
 }
 
 // ModelDetails provides details about a model.
