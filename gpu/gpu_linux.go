@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"reflect"
+	"regexp"
 	"strings"
 
 	"github.com/ollama/ollama/format"
@@ -89,4 +91,96 @@ func GetCPUMem() (memInfo, error) {
 		mem.FreeMemory = (free + buffers + cached) * format.KibiByte
 	}
 	return mem, nil
+}
+
+const CpuInfoFilename = "/proc/cpuinfo"
+
+type linuxCpuInfo struct {
+	ID         string `cpuinfo:"processor"`
+	VendorID   string `cpuinfo:"vendor_id"`
+	ModelName  string `cpuinfo:"model name"`
+	PhysicalID string `cpuinfo:"physical id"`
+	Siblings   string `cpuinfo:"siblings"`
+	CoreID     string `cpuinfo:"core id"`
+}
+
+func GetCPUDetails() ([]CPU, error) {
+	file, err := os.Open(CpuInfoFilename)
+	if err != nil {
+		return nil, err
+	}
+	reColumns := regexp.MustCompile("\t+: ")
+	scanner := bufio.NewScanner(file)
+	cpuInfos := []linuxCpuInfo{}
+	cpu := &linuxCpuInfo{}
+	for scanner.Scan() {
+		line := scanner.Text()
+		if sl := reColumns.Split(line, 2); len(sl) > 1 {
+			t := reflect.TypeOf(cpu).Elem()
+			s := reflect.ValueOf(cpu).Elem()
+			for i := range t.NumField() {
+				field := t.Field(i)
+				tag := field.Tag.Get("cpuinfo")
+				if tag == sl[0] {
+					s.FieldByName(field.Name).SetString(sl[1])
+					break
+				}
+			}
+		} else if strings.TrimSpace(line) == "" && cpu.ID != "" {
+			cpuInfos = append(cpuInfos, *cpu)
+			cpu = &linuxCpuInfo{}
+		}
+	}
+
+	// Process the sockets/cores/threads
+	socketByID := map[string]*CPU{}
+	coreBySocket := map[string]map[string]struct{}{}
+	threadsByCoreBySocket := map[string]map[string]int{}
+	for _, c := range cpuInfos {
+		if _, found := socketByID[c.PhysicalID]; !found {
+			socketByID[c.PhysicalID] = &CPU{
+				ID:        c.PhysicalID,
+				VendorID:  c.VendorID,
+				ModelName: c.ModelName,
+			}
+			coreBySocket[c.PhysicalID] = map[string]struct{}{}
+			threadsByCoreBySocket[c.PhysicalID] = map[string]int{}
+		}
+		if c.CoreID != "" {
+			coreBySocket[c.PhysicalID][c.PhysicalID+":"+c.CoreID] = struct{}{}
+			threadsByCoreBySocket[c.PhysicalID][c.PhysicalID+":"+c.CoreID]++
+		} else {
+			coreBySocket[c.PhysicalID][c.PhysicalID+":"+c.ID] = struct{}{}
+			threadsByCoreBySocket[c.PhysicalID][c.PhysicalID+":"+c.ID]++
+		}
+	}
+
+	// Tally up the values from the tracking maps
+	for id, s := range socketByID {
+		s.CoreCount = len(coreBySocket[id])
+		s.ThreadCount = 0
+		for _, tc := range threadsByCoreBySocket[id] {
+			s.ThreadCount += tc
+		}
+
+		// This only works if HT is enabled, consider a more reliable model, maybe cache size comparisons?
+		efficiencyCoreCount := 0
+		for _, threads := range threadsByCoreBySocket[id] {
+			if threads == 1 {
+				efficiencyCoreCount++
+			}
+		}
+		if efficiencyCoreCount == s.CoreCount {
+			// 1:1 mapping means they're not actually efficiency cores, but regular cores
+			s.EfficiencyCoreCount = 0
+		} else {
+			s.EfficiencyCoreCount = efficiencyCoreCount
+		}
+	}
+
+	result := []CPU{}
+	for _, c := range socketByID {
+		result = append(result, *c)
+	}
+	return result, nil
 }

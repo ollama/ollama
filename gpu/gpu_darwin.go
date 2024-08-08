@@ -10,7 +10,9 @@ package gpu
 import "C"
 
 import (
+	"log/slog"
 	"runtime"
+	"syscall"
 
 	"github.com/ollama/ollama/format"
 )
@@ -69,10 +71,29 @@ func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
 
 func GetSystemInfo() SystemInfo {
 	mem, _ := GetCPUMem()
+	query := "hw.perflevel0.physicalcpu"
+	perfCores, err := syscall.SysctlUint32(query)
+	if err != nil {
+		slog.Warn("failed to discover physical CPU details", "query", query, "error", err)
+	}
+	query = "hw.perflevel1.physicalcpu"
+	efficiencyCores, _ := syscall.SysctlUint32(query) // On x86 xeon this wont return data
+
+	// Determine thread count
+	query = "hw.logicalcpu"
+	logicalCores, _ := syscall.SysctlUint32(query)
+
 	return SystemInfo{
 		System: CPUInfo{
 			GpuInfo: GpuInfo{
 				memInfo: mem,
+			},
+			CPUs: []CPU{
+				{
+					CoreCount:           int(perfCores + efficiencyCores),
+					EfficiencyCoreCount: int(efficiencyCores),
+					ThreadCount:         int(logicalCores),
+				},
 			},
 		},
 		GPUs: GetGPUInfo(),
