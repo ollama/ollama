@@ -102,6 +102,13 @@ ifneq ($(HIPCC),)
 endif
 endif
 
+COMMON_SRCS := \
+	$(wildcard *.c) \
+	$(wildcard *.cpp)
+COMMON_HDRS := \
+	$(wildcard *.h) \
+	$(wildcard *.hpp)
+
 CUDA_SRCS := \
 	ggml-cuda.cu \
 	$(wildcard ggml-cuda/*.cu) \
@@ -111,6 +118,8 @@ CUDA_SRCS := \
 	$(wildcard ggml-cuda/template-instances/fattn-vec*q8_0-q8_0.cu) \
 	$(wildcard ggml-cuda/template-instances/fattn-vec*f16-f16.cu) \
 	ggml.c ggml-backend.c ggml-alloc.c ggml-quants.c sgemm.cpp
+CUDA_HDRS := \
+	$(wildcard ggml-cuda/*.cuh)
 
 CUDA_11_OBJS := $(CUDA_SRCS:.cu=.cuda.$(OBJ_EXT))
 CUDA_11_OBJS := $(CUDA_11_OBJS:.c=.cuda.$(OBJ_EXT))
@@ -285,11 +294,11 @@ $(RUNNERS_PAYLOAD_DIR)/cuda_v11/bin/ollama_runner$(EXE_EXT).gz: $(RUNNERS_PAYLOA
 $(RUNNERS_DIST_DIR)/cuda_v12/ollama_runner$(EXE_EXT): $(RUNNERS_DIST_DIR)/cuda_v12/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT)
 $(RUNNERS_PAYLOAD_DIR)/cuda_v12/bin/ollama_runner$(EXE_EXT).gz: $(RUNNERS_PAYLOAD_DIR)/cuda_v12/bin/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT).gz
 
-$(RUNNERS_BUILD_DIR)/cuda_v11/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT): $(CUDA_11_OBJS) $(CUDA_11_LIB_DEPS)
+$(RUNNERS_BUILD_DIR)/cuda_v11/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT): $(CUDA_11_OBJS) $(CUDA_11_LIB_DEPS) $(COMMON_HDRS) $(CUDA_HDRS)
 	@-mkdir -p $(dir $@)
 	$(NVCC_11) --shared -lcuda -L${CUDA_DEPS_DIR} $(foreach lib, $(CUDA_LIBS_SHORT), -l$(lib)) $(CUDA_FLAGS) $(CUDA_11_FLAGS) $(CUDA_11_OBJS) -o $@
 
-$(RUNNERS_BUILD_DIR)/cuda_v12/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT): $(CUDA_12_OBJS) $(CUDA_12_LIB_DEPS)
+$(RUNNERS_BUILD_DIR)/cuda_v12/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT): $(CUDA_12_OBJS) $(CUDA_12_LIB_DEPS) $(COMMON_HDRS) $(CUDA_HDRS)
 	@-mkdir -p $(dir $@)
 	$(NVCC_12) --shared -lcuda -L${CUDA_DEPS_DIR} $(foreach lib, $(CUDA_LIBS_SHORT), -l$(lib)) $(CUDA_FLAGS) $(CUDA_12_FLAGS) $(CUDA_12_OBJS) -o $@
 
@@ -316,7 +325,7 @@ $(BUILD_DIR)/%.hip.$(OBJ_EXT): %.cpp
 $(RUNNERS_DIST_DIR)/rocm$(ROCM_VARIANT)/ollama_runner$(EXE_EXT): $(RUNNERS_DIST_DIR)/rocm$(ROCM_VARIANT)/$(SHARED_PREFIX)ggml_hipblas.$(SHARED_EXT)
 $(RUNNERS_PAYLOAD_DIR)/rocm$(ROCM_VARIANT)/bin/ollama_runner$(EXE_EXT).gz: $(RUNNERS_PAYLOAD_DIR)/rocm$(ROCM_VARIANT)/bin/$(SHARED_PREFIX)ggml_hipblas.$(SHARED_EXT).gz
 
-$(RUNNERS_BUILD_DIR)/rocm$(ROCM_VARIANT)/$(SHARED_PREFIX)ggml_hipblas.$(SHARED_EXT): $(HIP_OBJS) $(ROCM_LIB_DEPS)
+$(RUNNERS_BUILD_DIR)/rocm$(ROCM_VARIANT)/$(SHARED_PREFIX)ggml_hipblas.$(SHARED_EXT): $(HIP_OBJS) $(ROCM_LIB_DEPS) $(COMMON_HDRS) $(CUDA_HDRS)
 	@-mkdir -p $(dir $@)
 	$(HIPCC) --shared -lamdhip64 -L${ROCM_DEPS_DIR} $(foreach lib, $(ROCM_LIBS_SHORT), -l$(lib)) $(HIP_OBJS) -o $@
 
@@ -324,27 +333,27 @@ $(ROCM_LIB_DEPS):
 	@-mkdir -p $(dir $@)
 	$(CP) $(HIP_LIB_DIR)/$(notdir $@)* $(dir $@)
 
-$(RUNNERS_BUILD_DIR)/$(DEFAULT_RUNNER)/ollama_runner$(EXE_EXT): *.go ./runner/*.go
+$(RUNNERS_BUILD_DIR)/$(DEFAULT_RUNNER)/ollama_runner$(EXE_EXT): *.go ./runner/*.go $(COMMON_SRCS) $(COMMON_HDRS)
 	@-mkdir -p $(dir $@)
 	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -o $@ ./runner
 
-$(RUNNERS_BUILD_DIR)/cpu_avx/ollama_runner$(EXE_EXT): *.go ./runner/*.go
+$(RUNNERS_BUILD_DIR)/cpu_avx/ollama_runner$(EXE_EXT): *.go ./runner/*.go $(COMMON_SRCS) $(COMMON_HDRS)
 	@-mkdir -p $(dir $@)
 	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -tags avx -o $@ ./runner
 
-$(RUNNERS_BUILD_DIR)/cpu_avx2/ollama_runner$(EXE_EXT): *.go ./runner/*.go
+$(RUNNERS_BUILD_DIR)/cpu_avx2/ollama_runner$(EXE_EXT): *.go ./runner/*.go $(COMMON_SRCS) $(COMMON_HDRS)
 	@-mkdir -p $(dir $@)
 	CGO_ENABLED=1 GOARCH=$(ARCH) go build -ldflags "-s -w" -tags avx,avx2 -o $@ ./runner
 
-$(RUNNERS_BUILD_DIR)/cuda_v11/ollama_runner$(EXE_EXT): $(RUNNERS_BUILD_DIR)/cuda_v11/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT) *.go ./runner/*.go
+$(RUNNERS_BUILD_DIR)/cuda_v11/ollama_runner$(EXE_EXT): $(RUNNERS_BUILD_DIR)/cuda_v11/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT) *.go ./runner/*.go $(COMMON_SRCS) $(COMMON_HDRS)
 	@-mkdir -p $(dir $@)
 	CGO_ENABLED=1 GOARCH=$(ARCH) CGO_LDFLAGS=-L"$(RUNNERS_BUILD_DIR)/cuda_v11/" go build -ldflags "-s -w" -tags avx,cuda -o $@ ./runner
 
-$(RUNNERS_BUILD_DIR)/cuda_v12/ollama_runner$(EXE_EXT): $(RUNNERS_BUILD_DIR)/cuda_v12/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT) *.go ./runner/*.go
+$(RUNNERS_BUILD_DIR)/cuda_v12/ollama_runner$(EXE_EXT): $(RUNNERS_BUILD_DIR)/cuda_v12/$(SHARED_PREFIX)ggml_cuda.$(SHARED_EXT) *.go ./runner/*.go $(COMMON_SRCS) $(COMMON_HDRS)
 	@-mkdir -p $(dir $@)
 	CGO_ENABLED=1 GOARCH=$(ARCH) CGO_LDFLAGS=-L"$(RUNNERS_BUILD_DIR)/cuda_v12/" go build -ldflags "-s -w" -tags avx,cuda -o $@ ./runner
 
-$(RUNNERS_BUILD_DIR)/rocm$(ROCM_VARIANT)/ollama_runner$(EXE_EXT): $(RUNNERS_BUILD_DIR)/rocm$(ROCM_VARIANT)/$(SHARED_PREFIX)ggml_hipblas.$(SHARED_EXT) *.go ./runner/*.go 
+$(RUNNERS_BUILD_DIR)/rocm$(ROCM_VARIANT)/ollama_runner$(EXE_EXT): $(RUNNERS_BUILD_DIR)/rocm$(ROCM_VARIANT)/$(SHARED_PREFIX)ggml_hipblas.$(SHARED_EXT) *.go ./runner/*.go $(COMMON_SRCS) $(COMMON_HDRS)
 	@-mkdir -p $(dir $@)
 	CGO_ENABLED=1 GOARCH=$(ARCH) CGO_LDFLAGS=-L"$(RUNNERS_BUILD_DIR)/rocm$(ROCM_VARIANT)/" go build -ldflags "-s -w" -tags avx,rocm -o $@ ./runner
 
