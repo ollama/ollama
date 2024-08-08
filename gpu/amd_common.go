@@ -54,7 +54,7 @@ func commonAMDValidateLibDir() (string, error) {
 	// Installer payload location if we're running the installed binary
 	exe, err := os.Executable()
 	if err == nil {
-		rocmTargetDir := filepath.Join(filepath.Dir(exe), "rocm")
+		rocmTargetDir := filepath.Join(filepath.Dir(exe), "ollama_libs")
 		if rocmLibUsable(rocmTargetDir) {
 			slog.Debug("detected ROCM next to ollama executable " + rocmTargetDir)
 			return rocmTargetDir, nil
