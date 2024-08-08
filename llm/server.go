@@ -98,15 +98,11 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	var systemFreeMemory uint64
 	var systemSwapFreeMemory uint64
 
-	systemMemInfo, err := gpu.GetCPUMem()
-	if err != nil {
-		slog.Error("failed to lookup system memory", "error", err)
-	} else {
-		systemTotalMemory = systemMemInfo.TotalMemory
-		systemFreeMemory = systemMemInfo.FreeMemory
-		systemSwapFreeMemory = systemMemInfo.FreeSwap
-		slog.Info("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
-	}
+	systemInfo := gpu.GetSystemInfo()
+	systemTotalMemory = systemInfo.System.TotalMemory
+	systemFreeMemory = systemInfo.System.FreeMemory
+	systemSwapFreeMemory = systemInfo.System.FreeSwap
+	slog.Info("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
 
 	// If the user wants zero GPU layers, reset the gpu list to be CPU/system ram info
 	if opts.NumGPU == 0 {
@@ -217,8 +213,11 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--mmproj", projectors[0])
 	}
 
+	defaultThreads := systemInfo.GetOptimalThreadCount()
 	if opts.NumThread > 0 {
 		params = append(params, "--threads", strconv.Itoa(opts.NumThread))
+	} else if defaultThreads > 0 {
+		params = append(params, "--threads", strconv.Itoa(defaultThreads))
 	}
 
 	if !opts.F16KV {
@@ -260,15 +259,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--mlock")
 	}
 
-	if gpu.IsNUMA() && gpus[0].Library == "cpu" {
-		numaMode := "distribute"
-		if runtime.GOOS == "linux" {
-			if _, err := exec.LookPath("numactl"); err == nil {
-				numaMode = "numactl"
-			}
-		}
-		params = append(params, "--numa", numaMode)
-	}
+	// TODO - NUMA support currently doesn't work properly
 
 	params = append(params, "--parallel", strconv.Itoa(numParallel))
 
