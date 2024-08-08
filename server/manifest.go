@@ -19,6 +19,7 @@ type Manifest struct {
 	Config        Layer   `json:"config"`
 	Layers        []Layer `json:"layers"`
 
+	name     model.Name
 	filepath string
 	fi       os.FileInfo
 	digest   string
@@ -71,7 +72,6 @@ func ParseNamedManifest(n model.Name) (*Manifest, error) {
 
 	p := filepath.Join(manifests, n.Filepath())
 
-	var m Manifest
 	f, err := os.Open(p)
 	if err != nil {
 		return nil, err
@@ -83,11 +83,13 @@ func ParseNamedManifest(n model.Name) (*Manifest, error) {
 		return nil, err
 	}
 
+	var m Manifest
 	sha256sum := sha256.New()
 	if err := json.NewDecoder(io.TeeReader(f, sha256sum)).Decode(&m); err != nil {
 		return nil, err
 	}
 
+	m.name = n
 	m.filepath = p
 	m.fi = fi
 	m.digest = hex.EncodeToString(sha256sum.Sum(nil))
