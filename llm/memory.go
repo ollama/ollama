@@ -17,7 +17,7 @@ func PredictServerFit(allGpus gpu.GpuInfoList, ggml *GGML, adapters, projectors 
 	var estimatedVRAM uint64
 	for _, gpus := range allGpus.ByLibrary() {
 		var layerCount int
-		estimate := EstimateGPULayers(gpus, ggml, projectors, opts)
+		estimate := EstimateGPULayers(gpus, ggml, projectors, &opts)
 		layerCount, estimatedVRAM = estimate.Layers, estimate.VRAMSize
 		if opts.NumGPU < 0 {
 			if layerCount > 0 && layerCount >= int(ggml.KV().BlockCount()+1) {
@@ -66,7 +66,7 @@ type MemoryEstimate struct {
 
 // Given a model and one or more GPU targets, predict how many layers and bytes we can load, and the total size
 // The GPUs provided must all be the same Library
-func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts api.Options) MemoryEstimate {
+func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts *api.Options) MemoryEstimate {
 	// Graph size for a partial offload, applies to all GPUs
 	var graphPartialOffload uint64
 
@@ -311,33 +311,24 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 func estimateKvCacheSize(cacheType string, numCtx, blockCount, embeddingHeadCount, headCountKV uint64) uint64 {
 	var bytesPerElement float64
 
-	// fp16 k,v = sizeof(float16) * n_ctx * n_layer * (n_embd_head_k + n_embd_head_v) * n_head_kv
 	switch cacheType {
-	case "":
-		bytesPerElement = 2
-		// fp16
-	case "fp16":
-		bytesPerElement = 2
-	case "q4_0", "q4_1":
-		bytesPerElement = 0.5
-		// approx 1/4 of fp16
+	case "", "f16", "fp16":
+		bytesPerElement = 2 // fp16
+	case "q4_0", "q4_1", "iq4_nl":
+		bytesPerElement = 0.5 // 1/4 of fp16
 	case "q5_0", "q5_1":
-		bytesPerElement = 0.625
-		// approx 5/8 of fp16
+		bytesPerElement = 0.625 // 5/8 of fp16
 	case "q8_0":
-		bytesPerElement = 1
-		// approx 1/2 of fp16
-	case "iq4_nl":
-		bytesPerElement = 0.5
-		// approx 1/4 of fp16
+		bytesPerElement = 1 // 1/2 of fp16
 	default:
 		// Default to fp16 if unknown
 		bytesPerElement = 2
 		slog.Warn("Unknown cache type, defaulting to fp16", "type", cacheType)
 	}
+
 	estimate := uint64(float64(numCtx*blockCount*embeddingHeadCount*headCountKV) * bytesPerElement)
 	// round up to the nearest multiple of 64 bytes
-	return estimate
+	return ((estimate + 63) / 64) * 64
 }
 
 func (m MemoryEstimate) log() {

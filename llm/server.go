@@ -110,6 +110,7 @@ func setCacheTypeParams(params *[]string, opts *api.Options, flashAttnEnabled bo
 
 		if cacheType == "f16" || cacheType == "f32" || flashAttnEnabled {
 			*params = append(*params, paramName, cacheType)
+			slog.Debug("Setting cache type param", "param", paramName, "type", cacheType)
 		} else {
 			slog.Warn("cache type not set: requires flash attention to be enabled",
 				"param", paramName, "type", cacheType)
@@ -147,9 +148,9 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	}
 	if len(gpus) == 1 && gpus[0].Library == "cpu" {
 		cpuRunner = serverForCpu()
-		estimate = EstimateGPULayers(gpus, ggml, projectors, opts)
+		estimate = EstimateGPULayers(gpus, ggml, projectors, &opts)
 	} else {
-		estimate = EstimateGPULayers(gpus, ggml, projectors, opts)
+		estimate = EstimateGPULayers(gpus, ggml, projectors, &opts)
 
 		switch {
 		case gpus[0].Library == "metal" && estimate.VRAMSize > systemTotalMemory:
@@ -278,9 +279,6 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	if flashAttnEnabled {
 		params = append(params, "--flash-attn")
 	}
-
-	opts.CacheTypeK = selectStr(opts.CacheTypeK, envconfig.CacheTypeK())
-	opts.CacheTypeV = selectStr(opts.CacheTypeV, envconfig.CacheTypeV())
 
 	setCacheTypeParams(&params, &opts, flashAttnEnabled)
 
