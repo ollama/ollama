@@ -62,6 +62,15 @@ func TestEstimateGPULayers(t *testing.T) {
 		estimate := EstimateGPULayers(gpus, ggml, projectors, opts)
 		assert.Equal(t, 0, estimate.Layers)
 		assert.Equal(t, uint64(0), estimate.Graph)
+
+		// 5 layers * 4 bytes per layer
+		if estimate.memoryWeights != 20 {
+			t.Errorf("expected memoryWeights 20, got %d", estimate.memoryWeights)
+		}
+
+		if estimate.memoryLayerOutput != 4 {
+			t.Errorf("expected memoryLayerOutput 4, got %d", estimate.memoryLayerOutput)
+		}
 	})
 
 	// derived from the dummy ggml file above
@@ -123,6 +132,15 @@ func TestEstimateGPULayers(t *testing.T) {
 			} else {
 				assert.Equal(t, estimate.VRAMSize, estimate.TotalSize, "scenario %d: %v %+v", i, s, estimate)
 				assert.Equal(t, estimate.TotalSize, layerSums, "scenario %d: %v %+v", i, s, estimate)
+			}
+
+			// 5 layers * 4 bytes per layer
+			if estimate.memoryWeights != 20 {
+				t.Errorf("expected memoryWeights 20, got %d", estimate.memoryWeights)
+			}
+
+			if estimate.memoryLayerOutput != 4 {
+				t.Errorf("expected memoryLayerOutput 4, got %d", estimate.memoryLayerOutput)
 			}
 		})
 	}
