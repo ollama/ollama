@@ -8,6 +8,7 @@ package llm
 // #cgo windows,arm64 LDFLAGS: -static-libstdc++ -static-libgcc -static -L${SRCDIR}/build/windows/arm64_static -L${SRCDIR}/build/windows/arm64_static/src -L${SRCDIR}/build/windows/arm64_static/ggml/src
 // #cgo linux,amd64 LDFLAGS: -L${SRCDIR}/build/linux/x86_64_static -L${SRCDIR}/build/linux/x86_64_static/src -L${SRCDIR}/build/linux/x86_64_static/ggml/src
 // #cgo linux,arm64 LDFLAGS: -L${SRCDIR}/build/linux/arm64_static -L${SRCDIR}/build/linux/arm64_static/src -L${SRCDIR}/build/linux/arm64_static/ggml/src
+// #cgo linux,riscv64 LDFLAGS: -L${SRCDIR}/build/linux/riscv64_static -L${SRCDIR}/build/linux/riscv64_static/src -L${SRCDIR}/build/linux/riscv64_static/ggml/src
 // #include <stdlib.h>
 // #include "llama.h"
 import "C"

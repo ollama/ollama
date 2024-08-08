@@ -8,6 +8,9 @@ init_vars() {
     "arm64")
         ARCH="arm64"
         ;;
+    "riscv64")
+        ARCH="riscv64"
+        ;;
     *)
         ARCH=$(uname -m | sed -e "s/aarch64/arm64/g")
     esac
