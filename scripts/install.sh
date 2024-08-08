@@ -145,7 +145,7 @@ fi
 
 # Install GPU dependencies on Linux
 if ! available lspci && ! available lshw; then
-    warning "Unable to detect NVIDIA/AMD GPU. Install lspci or lshw to automatically detect and install GPU dependencies."
+    warning "Unable to detect NVIDIA/AMD/ASCEND GPU. Install lspci or lshw to automatically detect and install GPU dependencies."
     exit 0
 fi
 
@@ -156,24 +156,32 @@ check_gpu() {
             case $2 in
                 nvidia) available lspci && lspci -d '10de:' | grep -q 'NVIDIA' || return 1 ;;
                 amdgpu) available lspci && lspci -d '1002:' | grep -q 'AMD' || return 1 ;;
+                ascend) available lspci && lspci -d '19e5:' | grep -q 'HUAWEI' || return 1 ;;
             esac ;;
         lshw)
             case $2 in
                 nvidia) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
                 amdgpu) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[1002\]' || return 1 ;;
+                ascend) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[19E5\]' || return 1 ;;
             esac ;;
         nvidia-smi) available nvidia-smi || return 1 ;;
+        npu-smi) available npu-smi || return 1 ;;
     esac
 }
+
+if check_gpu npu-smi; then
+    status "ASCEND GPU installed."
+    exit 0
+fi
 
 if check_gpu nvidia-smi; then
     status "NVIDIA GPU installed."
     exit 0
 fi
 
-if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu; then
+if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu ; check_gpu lspci ascend && ! check_gpu lshw ascend; then
     install_success
-    warning "No NVIDIA/AMD GPU detected. Ollama will run in CPU-only mode."
+    warning "No NVIDIA/AMD/ASCEND GPU detected. Ollama will run in CPU-only mode."
     exit 0
 fi
 
@@ -334,6 +342,83 @@ if command -v nvidia-persistenced > /dev/null 2>&1; then
             echo "$MODULE" | sudo tee -a /etc/modules-load.d/nvidia.conf > /dev/null
         fi
     done
+fi
+
+install_ascend_driver_yum() {
+    status 'Installing ASCNED driver version: $ASCEND_DRIVER_VERSION ,firmware version: $ASCEND_FIRMWARE_VERSION...'
+    $SUDO $PACKAGE_MANAGER -y install gcc gcc-c++ make cmake unzip zlib-devel libffi-devel openssl-devel pciutils net-tools sqlite-devel lapack-devel gcc-gfortran python3-devel
+    $SUDO groupadd -g HwHiAiUser
+    $SUDO useradd -g HwHiAiUser -d /home/HwHiAiUser -m HwHiAiUser -s /bin/bash
+    $SUDO usermod -aG HwHiAiUser $USER
+
+    # driver version, mabey get from it
+    # npu-smi info
+    # +------------------------------------------------------------------------------------------------+
+    # | npu-smi 24.1.rc1.b060            Version: 24.1.rc1.b060                                        |
+    wget "https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/Ascend HDK/Ascend HDK $ASCEND_DRIVER_VERSION/Ascend-hdk-$1-npu-driver_$(echo "$ASCEND_DRIVER_VERSION" | tr '[:upper:]' '[:lower:]')_linux-$(uname -m).run"
+    $SUDO sh Ascend-hdk-$1-npu-driver_$(echo "$ASCEND_DRIVER_VERSION" | tr '[:upper:]' '[:lower:]')_linux-$(uname -m).run --full --install-for-all
+    rm -rf ./Ascend-hdk-$1-npu-driver_$(echo "$ASCEND_DRIVER_VERSION" | tr '[:upper:]' '[:lower:]')_linux-$(uname -m).run
+
+    wget "https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/Ascend HDK/Ascend HDK $ASCEND_DRIVER_VERSION/Ascend-hdk-$1-npu-firmware_$ASCEND_FIRMWARE_VERSION.220.run"
+    sudo sh Ascend-hdk-$1-npu-firmware_$ASCEND_FIRMWARE_VERSION.220.run --full
+    rm -rf ./Ascend-hdk-$1-npu-firmware_$ASCEND_FIRMWARE_VERSION.220.run
+}
+
+install_ascend_driver_apt() {
+    status 'Installing ASCNED driver version: $ASCEND_DRIVER_VERSION ,firmware version: $ASCEND_FIRMWARE_VERSION...'
+    $SUDO_E apt-get -y install gcc g++ make cmake zlib1g zlib1g-dev openssl libsqlite3-dev libssl-dev libffi-dev unzip pciutils net-tools libblas-dev gfortran libblas3 python3-dev
+    $SUDO groupadd -g HwHiAiUser
+    $SUDO useradd -g HwHiAiUser -d /home/HwHiAiUser -m HwHiAiUser -s /bin/bash
+    $SUDO usermod -aG HwHiAiUser $USER
+
+    # driver version,mabey get from it
+    # npu-smi info
+    # +------------------------------------------------------------------------------------------------+
+    # | npu-smi 24.1.rc1.b060            Version: 24.1.rc1.b060                                        |
+    wget "https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/Ascend HDK/Ascend HDK $ASCEND_DRIVER_VERSION/Ascend-hdk-$1-npu-driver_$(echo "$ASCEND_DRIVER_VERSION" | tr '[:upper:]' '[:lower:]')_linux-$(uname -m).run"
+    $SUDO sh Ascend-hdk-$1-npu-driver_$(echo "$ASCEND_DRIVER_VERSION" | tr '[:upper:]' '[:lower:]')_linux-$(uname -m).run --full --install-for-all
+    rm -rf ./Ascend-hdk-$1-npu-driver_$(echo "$ASCEND_DRIVER_VERSION" | tr '[:upper:]' '[:lower:]')_linux-$(uname -m).run
+
+    wget "https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/Ascend HDK/Ascend HDK $ASCEND_DRIVER_VERSION/Ascend-hdk-$1-npu-firmware_$ASCEND_FIRMWARE_VERSION.220.run"
+    sudo sh Ascend-hdk-$1-npu-firmware_$ASCEND_FIRMWARE_VERSION.220.run --full
+    rm -rf ./Ascend-hdk-$1-npu-firmware_$ASCEND_FIRMWARE_VERSION.220.run
+}
+
+install_ascend_cann() {
+    status 'Installing ASCNED CANN version: $ASCEND_CANN_VERSION...'
+    pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple attrs numpy decorator sympy cffi pyyaml pathlib2 psutil protobuf scipy requests absl-py wheel typing_extensions
+    wget "https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/CANN/CANN $ASCEND_CANN_VERSION/Ascend-cann-toolkit_$(ASCEND_CANN_VERSION)_linux-$(uname -m).run"
+    sh Ascend-cann-toolkit_$(ASCEND_CANN_VERSION)_linux-$(uname -m).run --install
+    rm -rf ./Ascend-cann-toolkit_$(ASCEND_CANN_VERSION)_linux-$(uname -m).run
+
+    wget "https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/CANN/CANN $ASCEND_CANN_VERSION/Ascend-cann-kernels-$1_$(ASCEND_CANN_VERSION)_linux.run"
+    sh Ascend-cann-kernels-$1_$(ASCEND_CANN_VERSION)_linux.run --install
+    rm -rf ./Ascend-cann-kernels-$1_$(ASCEND_CANN_VERSION)_linux.run
+}
+
+# use env val: ASCEND_DRIVER_VERSION ASCEND_FIRMWARE_VERSIO and ASCEND_CANN_VERSION to get version 
+# ref:https://ascend.github.io/docs/sources/ascend/quick_install.html
+if check_gpu lspci ascend || check_gpu lshw ascend; then
+    if "x$ASCEND_DRIVER_VERSION" == "x"; then
+        ASCEND_DRIVER_VERSION="24.1.RC1"
+    fi
+    if "x$ASCEND_FIRMWARE_VERSION" == "x"; then
+        ASCEND_FIRMWARE_VERSION="7.1.0.6"
+    fi
+    if "x$ASCEND_CANN_VERSION" == "x"; then
+        ASCEND_CANN_VERSION="8.0.RC1"
+    fi
+    type=$(npu-smi info -m | grep 'Ascend' | awk '{print $5}' | head -n 1 | tr '[:upper:]' '[:lower:]')
+    case $OS_NAME in
+        openeuler) install_ascend_driver_yum $type ;;
+        ubuntu) install_ascend_driver_apt $type ;;
+        *) exit ;;
+    esac
+
+    install_ascend_cann $type
+
+    echo "source ~/Ascend/ascend-toolkit/set_env.sh" >> ~/.bashrc
+    source ~/.bashrc
 fi
 
 status "NVIDIA GPU ready."

@@ -1,0 +1,13 @@
+diff --git a/src/llama.cpp b/src/llama.cpp
+index 8fe51971..7349b953 100644
+--- a/src/llama.cpp
++++ b/src/llama.cpp
+@@ -18913,7 +18913,7 @@ bool llama_supports_mlock(void) {
+ 
+ bool llama_supports_gpu_offload(void) {
+ #if defined(GGML_USE_CUDA) || defined(GGML_USE_METAL)   || defined(GGML_USE_VULKAN) || \
+-    defined(GGML_USE_SYCL) || defined(GGML_USE_KOMPUTE) || defined(GGML_USE_RPC)
++    defined(GGML_USE_SYCL) || defined(GGML_USE_KOMPUTE) || defined(GGML_USE_RPC) || defined(GGML_USE_CANN)
+     // Defined when llama.cpp is compiled with support for offloading model layers to GPU.
+     return true;
+ #else

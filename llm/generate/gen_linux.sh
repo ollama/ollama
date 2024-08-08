@@ -10,6 +10,9 @@
 # Then if we detect ROCm, we build a dynamically loaded ROCm lib.  The ROCM
 # libraries are quite large, and also dynamically load data files at runtime
 # which in turn are large, so we don't attempt to cary them as payload
+#
+# Then if we detect Ascend, we build a Ascend dynamic library, and carry the required
+# library dependencies
 
 set -ex
 set -o pipefail
@@ -273,6 +276,36 @@ if [ -z "${OLLAMA_SKIP_ROCM_GENERATE}" -a -d "${ROCM_PATH}" ]; then
     done
     # bomb out if for some reason we didn't get a few deps
     if [ $(cat "${BUILD_DIR}/bin/deps.txt" | wc -l ) -lt 8 ] ; then
+        cat "${BUILD_DIR}/bin/deps.txt"
+        echo "ERROR: deps file short"
+        exit 1
+    fi
+    compress
+fi
+
+if [ -z "${ASCNED_ROOT}" ]; then
+    # Try the default location in case it exists
+    ASCNED_ROOT=/usr/local/Ascend/ascend-toolkit
+fi
+
+if [ -z "${OLLAMA_SKIP_ASCEND_GENERATE}" -a -d "${ASCNED_ROOT}" ]; then
+    echo "Ascned libraries detected - building dynamic Ascend library"
+    init_vars
+    source ${ASCNED_ROOT}/set_env.sh --force # set up environment variables for Ascned
+    export LIBRARY_PATH=${ASCEND_TOOLKIT_HOME}/lib64:${LIBRARY_PATH}
+    CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DGGML_CANN=ON -DBUILD_SHARED_LIBS=OFF -DCMAKE_LIBRARY_PATH=${ASCEND_TOOLKIT_HOME}/lib64"
+    BUILD_DIR="../build/linux/${ARCH}/ascend"
+    build
+
+    # Record the ascend dependencies
+    rm -f "${BUILD_DIR}/bin/deps.txt"
+    touch "${BUILD_DIR}/bin/deps.txt"
+
+    for dep in $(ldd "${BUILD_DIR}/bin/ollama_llama_server" | grep "=>" | cut -f2 -d= | cut -f2 -d' ' | grep -e Ascend ); do
+        echo "${dep}" >> "${BUILD_DIR}/bin/deps.txt"
+    done
+    # bomb out if for some reason we didn't get a few deps
+    if [ $(cat "${BUILD_DIR}/bin/deps.txt" | wc -l ) -lt 33 ] ; then
         cat "${BUILD_DIR}/bin/deps.txt"
         echo "ERROR: deps file short"
         exit 1

@@ -54,6 +54,7 @@ var (
 	nvmlLibPath   string
 	rocmGPUs      []RocmGPUInfo
 	oneapiGPUs    []OneapiGPUInfo
+	ascendGPUs    []AscendGPUInfo
 )
 
 // With our current CUDA compile flags, older than 5.0 will not work properly
@@ -180,6 +181,7 @@ func GetGPUInfo() GpuInfoList {
 	needRefresh := true
 	var cHandles *cudaHandles
 	var oHandles *oneapiHandles
+	var aHandles *ascendHandles
 	defer func() {
 		if cHandles != nil {
 			if cHandles.cudart != nil {
@@ -197,6 +199,10 @@ func GetGPUInfo() GpuInfoList {
 				// TODO - is this needed?
 				C.oneapi_release(*oHandles.oneapi)
 			}
+		}
+
+		if aHandles.ascend != nil {
+			C.ascend_release(*aHandles.ascend)
 		}
 	}()
 
@@ -342,8 +348,31 @@ func GetGPUInfo() GpuInfoList {
 		}
 
 		rocmGPUs = AMDGetGPUInfo()
+
+		// Then Ascend
+		aHandles = initAscendHandles()
+
+		for i := range aHandles.deviceCount {
+			if aHandles.ascend != nil {
+				gpuInfo := AscendGPUInfo{
+					GpuInfo: GpuInfo{
+						Library: "ascend",
+					},
+					index: i,
+				}
+				C.ascend_bootstrap(*aHandles.ascend, C.int(i), &memInfo)
+				gpuInfo.TotalMemory = uint64(memInfo.total)
+				gpuInfo.FreeMemory = uint64(memInfo.free)
+				gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
+				gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
+				ascendGPUs = append(ascendGPUs, gpuInfo)
+
+				slog.Info(fmt.Sprintf("[%d] Name:%s: FreeMemory:%d, TotalMemory: %d", gpuInfo.ID, gpuInfo.Name, gpuInfo.FreeMemory, gpuInfo.TotalMemory))
+			}
+		}
+
 		bootstrapped = true
-		if len(cudaGPUs) == 0 && len(rocmGPUs) == 0 && len(oneapiGPUs) == 0 {
+		if len(cudaGPUs) == 0 && len(rocmGPUs) == 0 && len(oneapiGPUs) == 0 && len(ascendGPUs) == 0 {
 			slog.Info("no compatible GPUs were discovered")
 		}
 	}
@@ -443,6 +472,20 @@ func GetGPUInfo() GpuInfoList {
 		if err != nil {
 			slog.Debug("problem refreshing ROCm free memory", "error", err)
 		}
+
+		if aHandles == nil && len(ascendGPUs) > 0 {
+			aHandles = initAscendHandles()
+		}
+
+		for i, gpu := range ascendGPUs {
+			if aHandles.ascend == nil {
+				// shouldn't happen
+				slog.Warn("nil ascend handle with device count", "count", aHandles.deviceCount)
+				continue
+			}
+			C.ascend_bootstrap(*aHandles.ascend, C.int(gpu.index), &memInfo)
+			ascendGPUs[i].FreeMemory = uint64(memInfo.free)
+		}
 	}
 
 	resp := []GpuInfo{}
@@ -453,6 +496,9 @@ func GetGPUInfo() GpuInfoList {
 		resp = append(resp, gpu.GpuInfo)
 	}
 	for _, gpu := range oneapiGPUs {
+		resp = append(resp, gpu.GpuInfo)
+	}
+	for _, gpu := range ascendGPUs {
 		resp = append(resp, gpu.GpuInfo)
 	}
 	if len(resp) == 0 {
