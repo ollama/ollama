@@ -65,6 +65,8 @@ func TestConvertFull(t *testing.T) {
 		"Mistral-7B-Instruct-v0.2",
 		"Mixtral-8x7B-Instruct-v0.1",
 		"gemma-2b-it",
+		// microsoft/Phi-3-mini-128-instruct@d548c233192db00165d842bf8edff054bb3212f8
+		"Phi-3-mini-128k-instruct",
 	}
 
 	for i := range cases {

@@ -27,6 +27,10 @@ func (Parameters) KV(t *Tokenizer) llm.KV {
 		"tokenizer.ggml.token_type":    t.Vocabulary.Types,
 	}
 
+	if len(t.Merges) > 0 {
+		kv["tokenizer.ggml.merges"] = t.Merges
+	}
+
 	if t.Template != "" {
 		kv["tokenizer.chat_template"] = t.Template
 	}
@@ -89,6 +93,8 @@ func Convert(fsys fs.FS, ws io.WriteSeeker) error {
 		conv = &mixtral{}
 	case "GemmaForCausalLM":
 		conv = &gemma{}
+	case "Phi3ForCausalLM":
+		conv = &phi3{}
 	default:
 		return errors.New("unsupported architecture")
 	}

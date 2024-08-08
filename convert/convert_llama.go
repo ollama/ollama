@@ -90,10 +90,6 @@ func (p *llama) KV(t *Tokenizer) llm.KV {
 		kv["llama.attention.value_length"] = p.HeadDim
 	}
 
-	if len(t.Merges) > 0 {
-		kv["tokenizer.ggml.merges"] = t.Merges
-	}
-
 	return kv
 }
 
