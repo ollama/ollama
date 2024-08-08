@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -63,9 +64,24 @@ func checkError(resp *http.Response, body []byte) error {
 // If the variable is not specified, a default ollama host and port will be
 // used.
 func ClientFromEnvironment() (*Client, error) {
+	ollamaHost := envconfig.Host()
+	var httpClient *http.Client
+	if clientTlsConfig := envconfig.ClientTlsConfig(); clientTlsConfig != nil {
+		slog.Debug("Using TLS configuration for client")
+		httpClient = &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: clientTlsConfig,
+			},
+		}
+	} else {
+		httpClient = http.DefaultClient
+	}
 	return &Client{
-		base: envconfig.Host(),
-		http: http.DefaultClient,
+		base: &url.URL{
+			Scheme: ollamaHost.Scheme,
+			Host:   ollamaHost.Host,
+		},
+		http: httpClient,
 	}, nil
 }
 

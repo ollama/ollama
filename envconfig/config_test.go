@@ -1,11 +1,14 @@
 package envconfig
 
 import (
+	"crypto/tls"
 	"math"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/ollama/ollama/envconfig/configtest"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestHost(t *testing.T) {
@@ -232,4 +235,69 @@ func TestVar(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Test that config is parsed correctly if all TLS config is given
+func TestTlsConfigFromEnvironment(t *testing.T) {
+	tlsTestData := configtest.NewTLSTestData(t.TempDir())
+	t.Setenv("OLLAMA_HOST", "https://localhost:12345")
+	t.Setenv("OLLAMA_TLS_SERVER_KEY", tlsTestData.ServerKey)
+	t.Setenv("OLLAMA_TLS_SERVER_CERT", tlsTestData.ServerCert)
+	t.Setenv("OLLAMA_TLS_SERVER_CA", tlsTestData.ServerCA)
+	t.Setenv("OLLAMA_TLS_CLIENT_KEY", tlsTestData.ClientKey)
+	t.Setenv("OLLAMA_TLS_CLIENT_CERT", tlsTestData.ClientCert)
+	t.Setenv("OLLAMA_TLS_CLIENT_CA", tlsTestData.ClientCA)
+	assert.NotNil(t, ServerTlsConfig())
+	assert.NotNil(t, ClientTlsConfig())
+}
+
+// Test that server TLS config is parsed correctly if only server config is given
+func TestTlsConfigServerOnly(t *testing.T) {
+	tlsTestData := configtest.NewTLSTestData(t.TempDir())
+	t.Setenv("OLLAMA_HOST", "https://localhost:12345")
+	t.Setenv("OLLAMA_TLS_SERVER_KEY", tlsTestData.ServerKey)
+	t.Setenv("OLLAMA_TLS_SERVER_CERT", tlsTestData.ServerCert)
+	t.Setenv("OLLAMA_TLS_CLIENT_CA", tlsTestData.ClientCA)
+	assert.NotNil(t, ServerTlsConfig())
+	// NOTE: The client TLS config will be configured to use system certs in
+	//   this case
+}
+
+// Test that client TLS config is parsed correctly if only client config is given
+func TestTlsConfigClientOnly(t *testing.T) {
+	tlsTestData := configtest.NewTLSTestData(t.TempDir())
+	t.Setenv("OLLAMA_HOST", "https://localhost:12345")
+	t.Setenv("OLLAMA_TLS_CLIENT_KEY", tlsTestData.ClientKey)
+	t.Setenv("OLLAMA_TLS_CLIENT_CERT", tlsTestData.ClientCert)
+	t.Setenv("OLLAMA_TLS_SERVER_CA", tlsTestData.ServerCA)
+	assert.Nil(t, ServerTlsConfig())
+	assert.NotNil(t, ClientTlsConfig())
+}
+
+// Test that no TLS config is parsed, even if env vars set, when scheme is http
+func TestTlsConfigHTTPOnlyScheme(t *testing.T) {
+	tlsTestData := configtest.NewTLSTestData(t.TempDir())
+	t.Setenv("OLLAMA_HOST", "http://localhost:12345")
+	t.Setenv("OLLAMA_TLS_SERVER_KEY", tlsTestData.ServerKey)
+	t.Setenv("OLLAMA_TLS_SERVER_CERT", tlsTestData.ServerCert)
+	t.Setenv("OLLAMA_TLS_SERVER_CA", tlsTestData.ServerCA)
+	t.Setenv("OLLAMA_TLS_CLIENT_KEY", tlsTestData.ClientKey)
+	t.Setenv("OLLAMA_TLS_CLIENT_CERT", tlsTestData.ClientCert)
+	t.Setenv("OLLAMA_TLS_CLIENT_CA", tlsTestData.ClientCA)
+	assert.Nil(t, ServerTlsConfig())
+	assert.Nil(t, ClientTlsConfig())
+}
+
+// Test non-mutual TLS config
+func TestTlsConfigNonMutual(t *testing.T) {
+	tlsTestData := configtest.NewTLSTestData(t.TempDir())
+	t.Setenv("OLLAMA_HOST", "https://localhost:12345")
+	t.Setenv("OLLAMA_TLS_SERVER_KEY", tlsTestData.ServerKey)
+	t.Setenv("OLLAMA_TLS_SERVER_CERT", tlsTestData.ServerCert)
+	t.Setenv("OLLAMA_TLS_SERVER_CA", tlsTestData.ServerCA)
+	assert.NotNil(t, ServerTlsConfig())
+	assert.Nil(t, ServerTlsConfig().ClientCAs)
+	assert.Equal(t, ServerTlsConfig().ClientAuth, tls.NoClientCert)
+	assert.NotNil(t, ClientTlsConfig())
+	assert.Nil(t, ClientTlsConfig().Certificates)
 }

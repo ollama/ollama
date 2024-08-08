@@ -1,6 +1,8 @@
 package envconfig
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"math"
@@ -210,6 +212,103 @@ func RunnersDir() (p string) {
 	return p
 }
 
+// Get the configuration for the server-side (m)TLS
+func ServerTlsConfig() *tls.Config {
+	// If the host scheme is set to http, no TLS should be enabled
+	if Host().Scheme != "https" {
+		return nil
+	}
+
+	// Read the config from the env
+	keyEnvVar := "OLLAMA_TLS_SERVER_KEY"
+	certEnvVar := "OLLAMA_TLS_SERVER_CERT"
+	caCertEnvVar := "OLLAMA_TLS_CLIENT_CA"
+	keyFile := Var(keyEnvVar)
+	certFile := Var(certEnvVar)
+	caCertFile := Var(caCertEnvVar)
+
+	// If configuring for the server, we need a key and cert pair
+	if keyFile == "" && certFile == "" {
+		slog.Debug("Configuring server without TLS")
+		return nil
+	}
+
+	// If one but not both of key/cert are specified, return an error
+	if (keyFile != "" && certFile == "") || (keyFile == "" && certFile != "") {
+		slog.Error(fmt.Sprintf("both %s and %s must be specified together", keyEnvVar, certEnvVar))
+	}
+
+	// Parse key/cert pair if given
+	tlsConfig := &tls.Config{}
+	if keyFile != "" && certFile != "" {
+		slog.Debug("Configuring server for TLS")
+		if keyCertPair, err := tls.LoadX509KeyPair(certFile, keyFile); err != nil {
+			slog.Error(fmt.Sprintf("failed to load server key/cert pair from %v/%v: %v", keyFile, certFile, err))
+		} else {
+			tlsConfig.Certificates = []tls.Certificate{keyCertPair}
+		}
+	}
+
+	// Parse the CA to enable mTLS
+	if caCertFile != "" {
+		certPool := x509.NewCertPool()
+		if caCert, err := os.ReadFile(caCertFile); err != nil {
+			slog.Error(fmt.Sprintf("failed to load CA from %v: %v", caCertFile, err))
+		} else if !certPool.AppendCertsFromPEM(caCert) {
+			slog.Error(fmt.Sprintf("failed to append CAs from %v", caCertFile))
+		}
+		slog.Debug("Configuring server for mTLS")
+		tlsConfig.ClientCAs = certPool
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+	}
+	return tlsConfig
+}
+
+// Get the configuration for the client-side (m)TLS
+func ClientTlsConfig() *tls.Config {
+	// If the host scheme is set to http, no TLS should be enabled
+	if Host().Scheme != "https" {
+		return nil
+	}
+
+	// Read the config from the env
+	keyEnvVar := "OLLAMA_TLS_CLIENT_KEY"
+	certEnvVar := "OLLAMA_TLS_CLIENT_CERT"
+	caCertEnvVar := "OLLAMA_TLS_SERVER_CA"
+	keyFile := Var(keyEnvVar)
+	certFile := Var(certEnvVar)
+	caCertFile := Var(caCertEnvVar)
+
+	// If one but not both of key/cert are specified, return an error
+	if (keyFile != "" && certFile == "") || (keyFile == "" && certFile != "") {
+		slog.Error(fmt.Sprintf("both %s and %s must be specified together", keyEnvVar, certEnvVar))
+	}
+
+	// Parse key/cert pair if given
+	tlsConfig := &tls.Config{}
+	if keyFile != "" && certFile != "" {
+		slog.Debug("Configuring client for mTLS")
+		if keyCertPair, err := tls.LoadX509KeyPair(certFile, keyFile); err != nil {
+			slog.Error(fmt.Sprintf("failed to load server key/cert pair from %v/%v: %v", keyFile, certFile, err))
+		} else {
+			tlsConfig.Certificates = []tls.Certificate{keyCertPair}
+		}
+	}
+
+	// Parse the CA to enable non-standard CA
+	if caCertFile != "" {
+		certPool := x509.NewCertPool()
+		if caCert, err := os.ReadFile(caCertFile); err != nil {
+			slog.Error(fmt.Sprintf("failed to load CA from %v: %v", caCertFile, err))
+		} else if !certPool.AppendCertsFromPEM(caCert) {
+			slog.Error(fmt.Sprintf("failed to append CAs from %v", caCertFile))
+		}
+		slog.Debug("Configuring client for non-standard CA")
+		tlsConfig.RootCAs = certPool
+	}
+	return tlsConfig
+}
+
 func Uint(key string, defaultValue uint) func() uint {
 	return func() uint {
 		if s := Var(key); s != "" {
@@ -258,6 +357,18 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_RUNNERS_DIR":       {"OLLAMA_RUNNERS_DIR", RunnersDir(), "Location for runners"},
 		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
 		"OLLAMA_TMPDIR":            {"OLLAMA_TMPDIR", TmpDir(), "Location for temporary files"},
+		// (m)TLS configuration for the server:
+		// - Key/Cert pair: Used to serve TLS requests
+		// - Client CA: Used to validate certs from clients for mTLS
+		"OLLAMA_TLS_SERVER_KEY":  {"OLLAMA_TLS_SERVER_KEY", ServerTlsConfig, "PEM-encoded file with the private key for serving TLS"},
+		"OLLAMA_TLS_SERVER_CERT": {"OLLAMA_TLS_SERVER_CERT", ServerTlsConfig, "PEM-encoded file with the public certificate for serving TLS"},
+		"OLLAMA_TLS_CLIENT_CA":   {"OLLAMA_TLS_CLIENT_CA", ServerTlsConfig, "PEM-encoded file with the public certificate authority for validating clients with mutual TLS"},
+		// (m)TLS configuration for clients
+		// - Key/Cert pair: Used to make mTLS requests to the server
+		// - Server CA: Used to validate the cert from the server for TLS. System CAs used if omitted.
+		"OLLAMA_TLS_CLIENT_KEY":  {"OLLAMA_TLS_CLIENT_KEY", ClientTlsConfig, "PEM-encoded file with the private key for mTLS client calls"},
+		"OLLAMA_TLS_CLIENT_CERT": {"OLLAMA_TLS_CLIENT_CERT", ClientTlsConfig, "PEM-encoded file with the public certificate for mTLS client calls"},
+		"OLLAMA_TLS_SERVER_CA":   {"OLLAMA_TLS_SERVER_CA", ClientTlsConfig, "PEM-encoded file with the public certificate authority for validating the server cert on the client side"},
 	}
 	if runtime.GOOS != "darwin" {
 		ret["CUDA_VISIBLE_DEVICES"] = EnvVar{"CUDA_VISIBLE_DEVICES", CudaVisibleDevices(), "Set which NVIDIA devices are visible"}
