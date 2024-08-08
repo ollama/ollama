@@ -351,6 +351,10 @@ type CopyRequest struct {
 	Destination string `json:"destination"`
 }
 
+type ExportRequest struct {
+	Model string `json:"model"`
+}
+
 // PullRequest is the request passed to [Client.Pull].
 type PullRequest struct {
 	Model    string `json:"model"`
