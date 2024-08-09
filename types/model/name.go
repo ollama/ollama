@@ -219,7 +219,7 @@ func (n Name) String() string {
 	return b.String()
 }
 
-// DisplayShort returns a short string version of the name.
+// DisplayShortest returns a short string version of the name.
 func (n Name) DisplayShortest() string {
 	var sb strings.Builder
 
