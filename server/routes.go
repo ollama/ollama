@@ -94,7 +94,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []Capabil
 		return nil, nil, nil, err
 	}
 
-	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive)
+	runnerCh, errCh := s.sched.GetRunner(ctx, model, &opts, keepAlive)
 	var runner *runnerRef
 	select {
 	case runner = <-runnerCh:

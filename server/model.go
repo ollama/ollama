@@ -26,7 +26,7 @@ import (
 var intermediateBlobs map[string]string = make(map[string]string)
 
 type layerGGML struct {
-	*Layer
+	Layer
 	*llm.GGML
 }
 

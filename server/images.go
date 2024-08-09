@@ -373,7 +373,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 	var messages []*api.Message
 	parameters := make(map[string]any)
 
-	var layers []*Layer
+	var layers []Layer
 	for _, c := range modelfile.Commands {
 		mediatype := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
 
@@ -499,7 +499,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 
 			if c.Name != "license" {
 				// replace
-				layers = slices.DeleteFunc(layers, func(layer *Layer) bool {
+				layers = slices.DeleteFunc(layers, func(layer Layer) bool {
 					if layer.MediaType != mediatype {
 						return false
 					}
@@ -545,7 +545,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 	}
 
 	var err2 error
-	layers = slices.DeleteFunc(layers, func(layer *Layer) bool {
+	layers = slices.DeleteFunc(layers, func(layer Layer) bool {
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.message":
 			// if there are new messages, remove the inherited ones
@@ -625,12 +625,12 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 		return err
 	}
 
-	layer, err := NewLayer(&b, "application/vnd.docker.container.image.v1+json")
+	configLayer, err := NewLayer(&b, "application/vnd.docker.container.image.v1+json")
 	if err != nil {
 		return err
 	}
 
-	for _, layer := range append(layers, layer) {
+	for _, layer := range append(layers, configLayer) {
 		if layer.status != "" {
 			fn(api.ProgressResponse{Status: layer.status})
 		}
@@ -639,7 +639,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 	old, _ := ParseNamedManifest(name)
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
-	if err := WriteManifest(name, layer, layers); err != nil {
+	if err := WriteManifest(name, configLayer, layers); err != nil {
 		return err
 	}
 
@@ -839,10 +839,10 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return err
 	}
 
-	var layers []*Layer
+	var layers []Layer
 	layers = append(layers, manifest.Layers...)
 	if manifest.Config.Digest != "" {
-		layers = append(layers, &manifest.Config)
+		layers = append(layers, manifest.Config)
 	}
 
 	for _, layer := range layers {
@@ -911,10 +911,10 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return fmt.Errorf("pull model manifest: %s", err)
 	}
 
-	var layers []*Layer
+	var layers []Layer
 	layers = append(layers, manifest.Layers...)
 	if manifest.Config.Digest != "" {
-		layers = append(layers, &manifest.Config)
+		layers = append(layers, manifest.Config)
 	}
 
 	skipVerify := make(map[string]bool)

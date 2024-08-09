@@ -136,6 +136,10 @@ var (
 	Debug = Bool("OLLAMA_DEBUG")
 	// FlashAttention enables the experimental flash attention feature.
 	FlashAttention = Bool("OLLAMA_FLASH_ATTENTION")
+	// CacheTypeK is the quantization type for the K/V cache keys.
+	CacheTypeK = String("OLLAMA_CACHE_TYPE_K")
+	// CacheTypeV is the quantization type for the K/V cache values.
+	CacheTypeV = String("OLLAMA_CACHE_TYPE_V")
 	// NoHistory disables readline history.
 	NoHistory = Bool("OLLAMA_NOHISTORY")
 	// NoPrune disables pruning of model blobs on startup.
@@ -245,6 +249,8 @@ func AsMap() map[string]EnvVar {
 	ret := map[string]EnvVar{
 		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", Debug(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(), "Enabled flash attention"},
+		"OLLAMA_CACHE_TYPE_K":      {"OLLAMA_CACHE_TYPE_K", CacheTypeK(), "Type of cache for keys (default: f16)"},
+		"OLLAMA_CACHE_TYPE_V":      {"OLLAMA_CACHE_TYPE_V", CacheTypeV(), "Type of cache for values (default: f16)"},
 		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
