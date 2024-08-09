@@ -10,6 +10,12 @@ Install Ollama running this one-liner:
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
+Alternatively, if you want to do a containerized install, it's:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ericcurtin/podman-ollama/s/install.sh | sudo bash
+```
+
 ## AMD Radeon GPU support
 
 While AMD has contributed the `amdgpu` driver upstream to the official linux
