@@ -38,6 +38,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
+	"github.com/ollama/ollama/recorder"
 	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -380,6 +381,14 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 			}
 		}
 
+		speech, err := cmd.Flags().GetBool("speech")
+		if err != nil {
+			return err
+		}
+
+		if speech {
+			return generateInteractiveAudio(cmd, opts)
+		}
 		return generateInteractive(cmd, opts)
 	}
 	return generate(cmd, opts)
@@ -862,6 +871,7 @@ type runOptions struct {
 	Options     map[string]interface{}
 	MultiModal  bool
 	KeepAlive   *api.Duration
+	Audio       bool
 }
 
 type displayResponseState struct {
@@ -970,6 +980,10 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		req.KeepAlive = opts.KeepAlive
 	}
 
+	if opts.Audio {
+		req.RunSpeech = true
+	}
+
 	if err := client.Chat(cancelCtx, req, fn); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil, nil
@@ -1055,6 +1069,30 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		KeepAlive: opts.KeepAlive,
 	}
 
+	speech, err := cmd.Flags().GetBool("speech")
+	if err != nil {
+		return err
+	}
+
+	// create temp wav file with the recorder package
+	if speech {
+		tempFile, err := os.CreateTemp("", "recording-*.wav")
+		if err != nil {
+			return err
+		}
+		defer os.Remove(tempFile.Name())
+
+		fmt.Print("Speech Mode\n\n")
+
+		err = recorder.RecordAudio(tempFile)
+		if err != nil {
+			return err
+		}
+
+		request.Speech = &api.WhisperRequest{
+			Audio: tempFile.Name(),
+		}
+	}
 	if err := client.Generate(ctx, &request, fn); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return nil
@@ -1262,6 +1300,7 @@ func NewCLI() *cobra.Command {
 		RunE:    RunHandler,
 	}
 
+	runCmd.Flags().Bool("speech", false, "Speech to text mode")
 	runCmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
 	runCmd.Flags().Bool("verbose", false, "Show timings for response")
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")

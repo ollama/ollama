@@ -20,6 +20,7 @@ import (
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/readline"
+	"github.com/ollama/ollama/recorder"
 	"github.com/ollama/ollama/types/errtypes"
 )
 
@@ -49,6 +50,40 @@ func loadModel(cmd *cobra.Command, opts *runOptions) error {
 	}
 
 	return client.Chat(cmd.Context(), chatReq, func(api.ChatResponse) error { return nil })
+}
+
+func generateInteractiveAudio(cmd *cobra.Command, opts runOptions) error {
+	for {
+		p := progress.NewProgress(os.Stderr)
+		spinner := progress.NewSpinner("")
+		p.Add("", spinner)
+
+		// create temp wav file with the recorder package
+		tempFile, err := os.CreateTemp("", "recording-*.wav")
+		if err != nil {
+			return err
+		}
+		defer os.Remove(tempFile.Name())
+
+		err = recorder.RecordAudio(tempFile)
+		if err != nil {
+			return err
+		}
+
+		p.StopAndClear()
+
+		newMessage := api.Message{Role: "user", Audio: tempFile.Name()}
+		opts.Audio = true
+		opts.Messages = append(opts.Messages, newMessage)
+
+		assistant, err := chat(cmd, opts)
+		if err != nil {
+			return err
+		}
+		if assistant != nil {
+			opts.Messages = append(opts.Messages, *assistant)
+		}
+	}
 }
 
 func generateInteractive(cmd *cobra.Command, opts runOptions) error {

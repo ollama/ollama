@@ -37,7 +37,7 @@ func (e StatusError) Error() string {
 type ImageData []byte
 
 type WhisperRequest struct {
-	Model      string    `json:"model"`
+	Model      string    `json:"model,omitempty"`
 	Audio      string    `json:"audio,omitempty"`
 	Transcribe bool      `json:"transcribe,omitempty"`
 	KeepAlive  *Duration `json:"keep_alive,omitempty"`
@@ -116,6 +116,8 @@ type ChatRequest struct {
 	Options map[string]interface{} `json:"options"`
 
 	Speech *WhisperRequest `json:"speech,omitempty"`
+
+	RunSpeech bool `json:"run_speech,omitempty"`
 }
 
 type Tools []Tool

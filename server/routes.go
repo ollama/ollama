@@ -110,7 +110,12 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []Capabil
 }
 
 func (s *Server) runWhisperServer(c *gin.Context, portCh chan int, errCh chan error, speech *api.WhisperRequest) {
-	modelPath := speech.Model
+	var modelPath string
+	if speech.Model == "" {
+		modelPath = "/Users/royhan-ollama/.ollama/whisper/ggml-base.en.bin"
+	} else {
+		modelPath = speech.Model
+	}
 
 	// default to 5 minutes
 	var sessionDuration time.Duration
@@ -130,7 +135,7 @@ func (s *Server) runWhisperServer(c *gin.Context, portCh chan int, errCh chan er
 		return
 	}
 
-	whisperServer := "/Users/royhan-ollama/ollama/llm/whisper.cpp/server"
+	whisperServer := "/Users/royhan-ollama/.ollama/server"
 
 	// Find an available port for whisper
 	port := 0
@@ -1510,8 +1515,9 @@ func (s *Server) ProcessHandler(c *gin.Context) {
 }
 
 func processAudio(c *gin.Context, s *Server, msgs []api.Message, req *api.WhisperRequest) error {
-	if req.Model == "" {
-		return nil
+	slog.Info("processing audio")
+	if req == nil {
+		req = &api.WhisperRequest{}
 	}
 	portCh := make(chan int, 1)
 	errCh := make(chan error, 1)
@@ -1583,7 +1589,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
 	}
 
-	if req.Speech != nil {
+	if req.Speech != nil || req.RunSpeech {
 		if err := processAudio(c, s, msgs, req.Speech); err != nil {
 			slog.Error("failed to process audio", "error", err)
 			return
