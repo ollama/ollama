@@ -85,6 +85,26 @@ Start Ollama using `systemd`:
 sudo systemctl start ollama
 ```
 
+## Manual install (**NO** sudo privileges)
+
+### Download the `ollama` binary
+
+Ollama is distributed as a self-contained binary. Download it to a directory in your **local** PATH:
+
+```bash
+curl -L https://ollama.com/download/ollama-linux-amd64 -o ~/.local/bin/ollama
+chmod +x ~/.local/bin/ollama
+```
+
+### Start
+
+Start the ollama server in the background and run a local model afterwards:
+
+```bash
+./ollama serve&
+./ollama run llama3
+```
+
 ## Update
 
 Update ollama by running the install script again:
