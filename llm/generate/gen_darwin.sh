@@ -6,6 +6,7 @@
 
 set -ex
 set -o pipefail
+compress_pids=""
 echo "Starting darwin generate script"
 source $(dirname $0)/gen_common.sh
 init_vars
@@ -98,4 +99,5 @@ case "${GOARCH}" in
 esac
 
 cleanup
+wait_for_compress
 echo "go generate completed.  LLM runners: $(cd ${BUILD_DIR}/..; echo *)"
