@@ -196,11 +196,11 @@ function build_static() {
             "-DCMAKE_CXX_COMPILER=g++.exe",
             "-DBUILD_SHARED_LIBS=off",
             "-DLLAMA_NATIVE=off",
-            "-DLLAMA_AVX=off",
-            "-DLLAMA_AVX2=off",
-            "-DLLAMA_AVX512=off",
-            "-DLLAMA_F16C=off",
-            "-DLLAMA_FMA=off",
+            "-DGGML_AVX=off",
+            "-DGGML_AVX2=off",
+            "-DGGML_AVX512=off",
+            "-DGGML_F16C=off",
+            "-DGGML_FMA=off",
             "-DGGML_OPENMP=off")
         $script:buildDir="../build/windows/${script:ARCH}_static"
         write-host "Building static library"
