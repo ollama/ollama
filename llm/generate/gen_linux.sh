@@ -13,6 +13,7 @@
 
 set -ex
 set -o pipefail
+compress_pids=""
 
 # See https://llvm.org/docs/AMDGPUUsage.html#processors for reference
 amdGPUs() {
@@ -274,4 +275,5 @@ if [ -z "${OLLAMA_SKIP_ROCM_GENERATE}" -a -d "${ROCM_PATH}" ]; then
 fi
 
 cleanup
+wait_for_compress
 echo "go generate completed.  LLM runners: $(cd ${BUILD_DIR}/..; echo *)"

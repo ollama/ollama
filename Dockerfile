@@ -19,7 +19,8 @@ COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
 ENV GOARCH amd64 
-RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
+RUN --mount=type=cache,target=/root/.ccache \
+    OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_SKIP_CPU_GENERATE=1 bash gen_linux.sh
 
 FROM --platform=linux/arm64 nvidia/cuda:$CUDA_VERSION-devel-rockylinux8 AS cuda-build-arm64
 ARG CMAKE_VERSION
@@ -30,7 +31,12 @@ COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
 ENV GOARCH arm64 
-RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
+RUN --mount=type=cache,target=/root/.ccache \
+    OLLAMA_SKIP_STATIC_GENERATE=1 \
+    OLLAMA_SKIP_CPU_GENERATE=1 \
+    CMAKE_CUDA_ARCHITECTURES="${CUDA_V11_ARCHITECTURES}" \
+    CUDA_VARIANT="_v11" \
+    bash gen_linux.sh
 
 FROM --platform=linux/amd64 rocm/dev-centos-7:${ROCM_VERSION}-complete AS rocm-build-amd64
 ARG CMAKE_VERSION
@@ -43,7 +49,8 @@ WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
 ARG AMDGPU_TARGETS
 ENV GOARCH amd64 
-RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
+RUN --mount=type=cache,target=/root/.ccache \
+    OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_SKIP_CPU_GENERATE=1 bash gen_linux.sh
 RUN mkdir -p ../../dist/linux-amd64/ollama_libs && \
     (cd /opt/rocm/lib && tar cf - rocblas/library) | (cd ../../dist/linux-amd64/ollama_libs && tar xf - )
 
@@ -60,13 +67,17 @@ ENV GOARCH amd64
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 
 FROM --platform=linux/amd64 cpu-builder-amd64 AS static-build-amd64
-RUN OLLAMA_CPU_TARGET="static" sh gen_linux.sh
+RUN --mount=type=cache,target=/root/.ccache \
+    OLLAMA_CPU_TARGET="static" bash gen_linux.sh
 FROM --platform=linux/amd64 cpu-builder-amd64 AS cpu-build-amd64
-RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu" sh gen_linux.sh
+RUN --mount=type=cache,target=/root/.ccache \
+    OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu" bash gen_linux.sh
 FROM --platform=linux/amd64 cpu-builder-amd64 AS cpu_avx-build-amd64
-RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu_avx" sh gen_linux.sh
+RUN --mount=type=cache,target=/root/.ccache \
+    OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu_avx" bash gen_linux.sh
 FROM --platform=linux/amd64 cpu-builder-amd64 AS cpu_avx2-build-amd64
-RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu_avx2" sh gen_linux.sh
+RUN --mount=type=cache,target=/root/.ccache \
+    OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu_avx2" bash gen_linux.sh
 
 FROM --platform=linux/arm64 rockylinux:8 AS cpu-builder-arm64
 ARG CMAKE_VERSION
@@ -81,9 +92,11 @@ ENV GOARCH arm64
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 
 FROM --platform=linux/arm64 cpu-builder-arm64 AS static-build-arm64
-RUN OLLAMA_CPU_TARGET="static" sh gen_linux.sh
+RUN --mount=type=cache,target=/root/.ccache \
+    OLLAMA_CPU_TARGET="static" bash gen_linux.sh
 FROM --platform=linux/arm64 cpu-builder-arm64 AS cpu-build-arm64
-RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu" sh gen_linux.sh
+RUN --mount=type=cache,target=/root/.ccache \
+    OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu" bash gen_linux.sh
 
 
 # Intermediate stage used for ./scripts/build_linux.sh
@@ -100,7 +113,8 @@ COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/dist/ dist/
 COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 ARG GOFLAGS
 ARG CGO_CFLAGS
-RUN go build -trimpath -o dist/linux-amd64/ollama .
+RUN --mount=type=cache,target=/root/.ccache \
+    go build -trimpath -o dist/linux-amd64/ollama .
 
 # Intermediate stage used for ./scripts/build_linux.sh
 FROM --platform=linux/arm64 cpu-build-arm64 AS build-arm64
@@ -113,7 +127,8 @@ COPY --from=cuda-build-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
 COPY --from=cuda-build-arm64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 ARG GOFLAGS
 ARG CGO_CFLAGS
-RUN go build -trimpath -o dist/linux-arm64/ollama .
+RUN --mount=type=cache,target=/root/.ccache \
+    go build -trimpath -o dist/linux-arm64/ollama .
 
 # Runtime stages
 FROM --platform=linux/amd64 ubuntu:22.04 as runtime-amd64
