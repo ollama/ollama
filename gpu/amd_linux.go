@@ -41,7 +41,7 @@ const (
 
 var (
 	// Used to validate if the given ROCm lib is usable
-	ROCmLibGlobs          = []string{"libhipblas.so.2*", "rocblas"} // TODO - probably include more coverage of files here...
+	ROCmLibGlobs          = []string{"libhipblas.so*", "rocblas"} // TODO - probably include more coverage of files here...
 	RocmStandardLocations = []string{"/opt/rocm/lib", "/usr/lib64"}
 )
 
@@ -98,6 +98,7 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 		return a < b
 	})
 	cpuCount := 0
+	gpuID := -1
 	for _, match := range matches {
 		slog.Debug("evaluating amdgpu node " + match)
 		fp, err := os.Open(match)
@@ -179,6 +180,12 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 			// Other metrics that may help us understand relative performance between multiple GPUs
 		}
 
+		err = scanner.Err()
+		if err != nil {
+			slog.Debug("failed to read sysfs node", "file", match, "error", err)
+			continue
+		}
+
 		// Note: while ./mem_banks/*/used_memory exists, it doesn't appear to take other VRAM consumers
 		// into consideration, so we instead map the device over to the DRM driver sysfs nodes which
 		// do reliably report VRAM usage.
@@ -188,12 +195,12 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 			continue
 		}
 
-		// CPUs are always first in the list
-		gpuID := nodeID - cpuCount
+		// Found an accessible GPU, increment GPU counter (assuming that non-accessible GPUs are cgroup-ed out of ROCr views)
+		gpuID++
 
 		// Shouldn't happen, but just in case...
-		if gpuID < 0 {
-			slog.Error("unexpected amdgpu sysfs data resulted in negative GPU ID, please set OLLAMA_DEBUG=1 and report an issue")
+		if gpuID > nodeID - cpuCount {
+			slog.Error("unexpected amdgpu sysfs data resulted in too large GPU ID, please set OLLAMA_DEBUG=1 and report an issue")
 			return nil
 		}
 
