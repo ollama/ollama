@@ -2,15 +2,24 @@
 
 ### To run
 `make {/path/to/whisper.cpp/server}`
+- replace `whisperServer` in `routes.go` with path to server
 
-### Update routes.go
-- replace `whisperServer` with path to server
+## CLI
+`./ollama run llama3 [PROMPT] --speech`
+- processes voice audio with the provided prompt
+
+`./ollama run llama3 --speech`
+- enters interactive mode for continuous voice chat
+- TODO: fix exiting interactive mode
+
+Notes: uses default model
+
 
 ## api/generate
 ### Request fields
 - `speech` (required):
     - `audio` (required): path to audio file
-    - `model` (required): path to whisper model
+    - `model` (optional): path to whisper model, uses default if null
     - `transcribe` (optional): if true, will transcribe and return the audio file
     - `keep_alive`: (optional): sets how long the model is stored in memory (default: `5m`)
 - `prompt` (optional): if not null, passed in with the transcribed audio
@@ -45,9 +54,10 @@ curl http://localhost:11434/api/generate -d '{
 ## api/chat
 ### Request fields
 - `model` (required): language model to chat with
-- `speech` (required):
-    - `model` (required): path to whisper model
+- `speech` (optional):
+    - `model` (optional): path to whisper model, uses default if null
     - `keep_alive`: (optional): sets how long the model is stored in memory (default: `5m`)
+-  `run_speech` (optional): either this flag must be true or `speech` must be passed in for speech mode to run
 - `messages`/`message`/`audio` (required): path to audio file
 
 ```
