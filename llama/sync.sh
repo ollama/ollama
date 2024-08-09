@@ -68,9 +68,11 @@ cp $src_dir/ggml/src/ggml-aarch64.c $dst_dir/ggml-aarch64.c
 
 # ggml-cuda
 mkdir -p $dst_dir/ggml-cuda/template-instances
+mkdir -p $dst_dir/ggml-cuda/vendors
 cp $src_dir/ggml/src/ggml-cuda/*.cu $dst_dir/ggml-cuda/
 cp $src_dir/ggml/src/ggml-cuda/*.cuh $dst_dir/ggml-cuda/
 cp $src_dir/ggml/src/ggml-cuda/template-instances/*.cu $dst_dir/ggml-cuda/template-instances/
+cp $src_dir/ggml/src/ggml-cuda/vendors/*.h $dst_dir/ggml-cuda/vendors/
 
 # llava
 cp $src_dir/examples/llava/clip.cpp $dst_dir/clip.cpp
