@@ -276,4 +276,27 @@ Note: Windows with Radeon GPUs currently default to 1 model maximum due to limit
 
 ## How does Ollama load models on multiple GPUs?
 
-Installing multiple GPUs of the same brand can be a great way to increase your available VRAM to load larger models.  When you load a new model, Ollama evaluates the required VRAM for the model against what is currently available.  If the model will entirely fit on any single GPU, Ollama will load the model on that GPU.  This typically provides the best performance as it reduces the amount of data transfering across the PCI bus during inference.  If the model does not fit entirely on one GPU, then it will be spread across all the available GPUs.
+Installing multiple GPUs of the same brand can be a great way to increase your available VRAM to load larger models.  When you load a new model, Ollama evaluates the required VRAM for the model against what is currently available.  If the model will entirely fit on any single GPU, Ollama will load the model on that GPU.  This typically provides the best performance as it reduces the amount of data transferring across the PCI bus during inference.  If the model does not fit entirely on one GPU, then it will be spread across all the available GPUs.
+
+## How can I set the quantization type for the K/V cache?
+
+The K/V context cache can be quantised to significantly reduce memory usage.
+
+You can set the quantization type in a number of ways:
+
+1. In the environment using `OLLAMA_CACHE_TYPE_K` and `OLLAMA_CACHE_TYPE_V` which will be the default vault for all models loaded.
+2. In a model's Modelfile using the `cache_type_k` and `cache_type_v` parameters which will be loaded with the model.
+3. In an API request to Ollama's native API using the `cache_type_k` and `cache_type_v` parameters which will be used for that request.
+4. In the CLI with `/set parameter cache_type_k <value>` and `/set parameter cache_type_v <value>` which will be used for that session.
+
+While there are [a number of quantization types available](https://github.com/ggerganov/llama.cpp/pull/7527), the most common you might want to choose are:
+
+- `f16` - high precision and memory usage (default).
+- `q8_0` - 8-bit quantization, uses approximately 1/2 the memory of `f16` with a very small loss in precision.
+- `q4_0` - 4-bit quantization, uses approximately 1/4 the memory of `f16` with a small-medium loss in precision.
+
+If you're using an uncommon quant type, you may benefit from build Ollama with `LLAMA_CUDA_FA_ALL_QUANTS=1` to make llama.cpp build all flash attention quantization types.
+
+How much the cache quantization impacts the model's response quality will depend on the model and the task.  Models have a high GQA count (e.g. Qwen2) may see a larger impact on precision from quantization than models with a low GQA count.
+
+You may need to experiment with different quantization types to find the best balance between memory usage and quality.

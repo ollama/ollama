@@ -255,7 +255,7 @@ curl http://localhost:11434/api/generate -d '{
 
 #### Response
 
-```
+```json
 {
   "model": "llava",
   "created_at": "2023-11-03T15:36:02.583064Z",
@@ -355,7 +355,8 @@ curl http://localhost:11434/api/generate -d '{
     "num_gpu": 1,
     "main_gpu": 0,
     "low_vram": false,
-    "f16_kv": true,
+    "cache_type_k": "q8_0",
+    "cache_type_v": "q8_0",
     "vocab_only": false,
     "use_mmap": true,
     "use_mlock": false,
