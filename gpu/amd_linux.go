@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"os/exec"
 
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
@@ -32,18 +33,66 @@ const (
 	DRMDeviceDirGlob   = "/sys/class/drm/card*/device"
 	DRMTotalMemoryFile = "mem_info_vram_total"
 	DRMUsedMemoryFile  = "mem_info_vram_used"
+	DRMTotalMemoryFileGTT = "mem_info_gtt_total"
+	DRMUsedMemoryFileGTT  = "mem_info_gtt_used"
 
 	// In hex; properties file is in decimal
 	DRMUniqueIDFile = "unique_id"
 	DRMVendorFile   = "vendor"
 	DRMDeviceFile   = "device"
+
+	//AMD APU RDNA2 and RDNA3 for GTT memory
+	GFX1103 = "gfx1103"
+    GFX1030 = "gfx1030"
 )
 
 var (
 	// Used to validate if the given ROCm lib is usable
 	ROCmLibGlobs          = []string{"libhipblas.so.2*", "rocblas"} // TODO - probably include more coverage of files here...
 	RocmStandardLocations = []string{"/opt/rocm/lib", "/usr/lib64"}
+	// Used to validate if supported APU for GTT memory allocation
+	validGfxValues = []string{GFX1103, GFX1030}
 )
+
+// Check for valid APU an linux kenel version to use GTT memory insted VRAM memory
+func checkGTTmemoryOnAPU(gfx string) (bool, error) {
+	// Check kernel version
+	cmd := exec.Command("uname", "-r")
+	output, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("error executing uname command: %w", err)
+	}
+	
+	fullKernelVersion := strings.TrimSpace(string(output))
+	parts := strings.Split(fullKernelVersion, ".")
+	if len(parts) < 2 {
+		return false, fmt.Errorf("unable to parse kernel version: %s", fullKernelVersion)
+	}
+
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return false, fmt.Errorf("error parsing major version: %w", err)
+	}
+
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return false, fmt.Errorf("error parsing minor version: %w", err)
+	}
+
+	kernelVersionValid := (major > 6 || (major == 6 && minor > 10))
+
+	// Check GFX value
+	gfxValid := false
+	for _, validGfx := range validGfxValues {
+		if strings.Contains(gfx, validGfx) {
+			gfxValid = true
+			break
+		}
+	}
+
+	// Return true only if both conditions are met
+	return kernelVersionValid && gfxValid, nil
+}
 
 // Gather GPU information from the amdgpu driver if any supported GPUs are detected
 func AMDGetGPUInfo() []RocmGPUInfo {
@@ -246,10 +295,20 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 			if !matched {
 				continue
 			}
-
+			
+			GTTisValid, err := checkGTTmemoryOnAPU(fmt.Sprintf("gfx%d%x%x", major, minor, patch))
+			if err != nil {
+				slog.Debug("Error:", err)
+				continue
+			}
+		
 			// Found the matching DRM directory
 			slog.Debug("matched", "amdgpu", match, "drm", devDir)
 			totalFile := filepath.Join(devDir, DRMTotalMemoryFile)
+			if GTTisValid {
+				slog.Debug("AMD APU valid to use GTT memory")
+				totalFile = filepath.Join(devDir, DRMTotalMemoryFileGTT)
+			}
 			buf, err := os.ReadFile(totalFile)
 			if err != nil {
 				slog.Debug("failed to read sysfs node", "file", totalFile, "error", err)
@@ -260,8 +319,11 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 				slog.Debug("failed to parse sysfs node", "file", totalFile, "error", err)
 				break
 			}
-
 			usedFile = filepath.Join(devDir, DRMUsedMemoryFile)
+			if GTTisValid {
+				slog.Debug("AMD APU valid to use GTT memory")
+				usedFile = filepath.Join(devDir, DRMUsedMemoryFileGTT)
+			}
 			usedMemory, err = getFreeMemory(usedFile)
 			if err != nil {
 				slog.Debug("failed to update used memory", "error", err)
