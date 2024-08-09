@@ -22,7 +22,7 @@ Get up and running with large language models.
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-[Manual install instructions](https://github.com/ollama/ollama/blob/main/docs/linux.md)
+[Manual install instructions](https://github.com/ollama/ollama/blob/main/docs/linux.md), or you can also try [package managers](#package-managers).
 
 ### Docker
 
