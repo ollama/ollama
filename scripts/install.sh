@@ -70,6 +70,15 @@ for BINDIR in /usr/local/bin /usr/bin /bin; do
     echo $PATH | grep -q $BINDIR && break || continue
 done
 
+# In an OSTree system, since it's immutable, /usr/local is writable but
+# /usr is read-only, the best way to complete this is to package this
+# in an rpm for OSTree systems, but this works too. But regardless if we use
+# /usr/local/bin, it kinda makes sense to use /usr/local/share .
+SHAREDIR="/usr/share"
+if [ "$BINDIR" = "/usr/local/bin" ] && [ -e "/usr/local/share" ]; then
+    SHAREDIR="/usr/local/share"
+fi
+
 status "Installing ollama to $BINDIR..."
 $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 $TEMP_DIR/ollama $BINDIR/ollama
@@ -85,7 +94,7 @@ trap install_success EXIT
 configure_systemd() {
     if ! id ollama >/dev/null 2>&1; then
         status "Creating ollama user..."
-        $SUDO useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama
+        $SUDO useradd -r -s /bin/false -U -m -d $SHAREDIR/ollama ollama
     fi
     if getent group render >/dev/null 2>&1; then
         status "Adding ollama user to render group..."
@@ -188,11 +197,11 @@ if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
     done
 
     status "Downloading AMD GPU dependencies..."
-    $SUDO rm -rf /usr/share/ollama/lib
-    $SUDO chmod o+x /usr/share/ollama
-    $SUDO install -o ollama -g ollama -m 755 -d /usr/share/ollama/lib/rocm
+    $SUDO rm -rf $SHAREDIR/ollama/lib
+    $SUDO chmod o+x $SHAREDIR/ollama
+    $SUDO install -o ollama -g ollama -m 755 -d $SHAREDIR/ollama/lib/rocm
     curl --fail --show-error --location --progress-bar "https://ollama.com/download/ollama-linux-amd64-rocm.tgz${VER_PARAM}" \
-        | $SUDO tar zx --owner ollama --group ollama -C /usr/share/ollama/lib/rocm .
+        | $SUDO tar zx --owner ollama --group ollama -C $SHAREDIR/ollama/lib/rocm .
     install_success
     status "AMD GPU ready."
     exit 0
