@@ -49,13 +49,9 @@ func PayloadsDir() (string, error) {
 		}
 
 		// Track our pid so we can clean up orphaned tmpdirs
-		pidFilePath := filepath.Join(tmpDir, "ollama.pid")
-		pidFile, err := os.OpenFile(pidFilePath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.ModePerm)
-		if err != nil {
-			return "", err
-		}
-		if _, err := pidFile.Write([]byte(strconv.Itoa(os.Getpid()))); err != nil {
-			return "", err
+		n := filepath.Join(tmpDir, "ollama.pid")
+		if err := os.WriteFile(n, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+			return "", fmt.Errorf("failed to write pid file %s: %w", n, err)
 		}
 
 		// We create a distinct subdirectory for payloads within the tmpdir
@@ -67,37 +63,44 @@ func PayloadsDir() (string, error) {
 
 // Best effort to clean up prior tmpdirs
 func cleanupTmpDirs() {
-	dirs, err := filepath.Glob(filepath.Join(os.TempDir(), "ollama*"))
+	matches, err := filepath.Glob(filepath.Join(os.TempDir(), "ollama*", "ollama.pid"))
 	if err != nil {
 		return
 	}
-	for _, d := range dirs {
-		info, err := os.Stat(d)
-		if err != nil || !info.IsDir() {
+
+	for _, match := range matches {
+		raw, err := os.ReadFile(match)
+		if errors.Is(err, os.ErrNotExist) {
+			slog.Debug("not a ollama runtime directory, skipping", "path", match)
 			continue
-		}
-		raw, err := os.ReadFile(filepath.Join(d, "ollama.pid"))
-		if err != nil {
-			slog.Warn("failed to read ollama.pid", "path", d, "error", err)
-			// No pid, ignore this tmpdir
+		} else if err != nil {
+			slog.Warn("could not read ollama.pid, skipping", "path", match, "error", err)
 			continue
 		}
 
 		pid, err := strconv.Atoi(string(raw))
 		if err != nil {
-			slog.Warn("failed to parse pid", "path", d, "error", err)
+			slog.Warn("invalid pid, skipping", "path", match, "error", err)
 			continue
 		}
 
-		proc, err := os.FindProcess(pid)
-		if err == nil && !errors.Is(proc.Signal(syscall.Signal(0)), os.ErrProcessDone) {
-			slog.Warn("found running ollama", "pid", pid, "path", d)
-			// Another running ollama, ignore this tmpdir
+		p, err := os.FindProcess(pid)
+		if err == nil && !errors.Is(p.Signal(syscall.Signal(0)), os.ErrProcessDone) {
+			slog.Warn("process still running, skipping", "pid", pid, "path", match)
 			continue
 		}
 
-		if err := os.Remove(d); err != nil {
-			slog.Warn("unable to cleanup stale tmpdir", "path", d, "error", err)
+		if err := os.Remove(match); err != nil {
+			slog.Warn("could not cleanup stale pidfile", "path", match, "error", err)
+		}
+
+		runners := filepath.Join(filepath.Dir(match), "runners")
+		if err := os.RemoveAll(runners); err != nil {
+			slog.Warn("could not cleanup stale runners", "path", runners, "error", err)
+		}
+
+		if err := os.Remove(filepath.Dir(match)); err != nil {
+			slog.Warn("could not cleanup stale tmpdir", "path", filepath.Dir(match), "error", err)
 		}
 	}
 }
