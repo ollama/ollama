@@ -4,6 +4,5 @@ package server
 
 import "os"
 
-func setSparse(file *os.File) error {
-	return nil
+func setSparse(*os.File) {
 }
