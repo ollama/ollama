@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -34,11 +35,24 @@ func Unqualified(n Name) error {
 // spot in logs.
 const MissingPart = "!MISSING!"
 
-const (
+var (
 	defaultHost      = "registry.ollama.ai"
 	defaultNamespace = "library"
 	defaultTag       = "latest"
 )
+
+func init() {
+	// Overwrite default Host/Namespace/Tag if they are set in the env
+	if host := os.Getenv("REGISTRY_DEFAULT_HOST"); host != "" {
+		defaultHost = host
+	}
+	if namespace := os.Getenv("REGISTRY_DEFAULT_NAMESPACE"); namespace != "" {
+		defaultNamespace = namespace
+	}
+	if tag := os.Getenv("REGISTRY_DEFAULT_TAG"); tag != "" {
+		defaultTag = tag
+	}
+}
 
 // DefaultName returns a name with the default values for the host, namespace,
 // and tag parts. The model and digest parts are empty.
