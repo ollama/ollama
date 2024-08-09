@@ -74,6 +74,20 @@ func Test_Routes(t *testing.T) {
 
 	testCases := []testCase{
 		{
+			Name:   "Metrics Handler",
+			Method: http.MethodGet,
+			Path:   "/metrics",
+			Setup: func(t *testing.T, req *http.Request) {
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, contentType, "text/plain; version=0.0.4; charset=utf-8; escaping=values")
+				body, err := io.ReadAll(resp.Body)
+				assert.Nil(t, err)
+				assert.Contains(t, string(body), "go_memstats")
+			},
+		},
+		{
 			Name:   "Version Handler",
 			Method: http.MethodGet,
 			Path:   "/api/version",
