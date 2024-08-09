@@ -3,6 +3,7 @@ ARG CMAKE_VERSION=3.22.1
 # this CUDA_VERSION corresponds with the one specified in docs/gpu.md
 ARG CUDA_VERSION=11.3.1
 ARG ROCM_VERSION=6.1.2
+ARG MUSA_VERSION=1.5.1
 
 # Copy the minimal context we need to run the generate scripts
 FROM scratch AS llm-code
@@ -25,6 +26,15 @@ ARG CMAKE_VERSION
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
 ENV PATH /opt/rh/gcc-toolset-10/root/usr/bin:$PATH
+COPY --from=llm-code / /go/src/github.com/ollama/ollama/
+WORKDIR /go/src/github.com/ollama/ollama/llm/generate
+ARG CGO_CFLAGS
+RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
+
+FROM --platform=linux/amd64 mthreads/musa:$MUSA_VERSION-mp_22-devel-ubuntu20.04 AS musa-build-amd64
+ARG CMAKE_VERSION
+COPY ./scripts/ubuntu_linux_deps.sh /
+RUN CMAKE_VERSION=${CMAKE_VERSION} sh /ubuntu_linux_deps.sh
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
@@ -96,6 +106,7 @@ COPY --from=static-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/
 COPY --from=cpu_avx-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=cpu_avx2-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=cuda-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
+COPY --from=musa-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/dist/deps/ ./dist/deps/
 ARG GOFLAGS
@@ -116,10 +127,12 @@ RUN go build -trimpath .
 
 # Runtime stages
 FROM --platform=linux/amd64 ubuntu:22.04 as runtime-amd64
-RUN apt-get update && apt-get install -y ca-certificates
+RUN apt-get update && apt-get install -y ca-certificates libelf1 libnuma1 && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY --from=build-amd64 /go/src/github.com/ollama/ollama/ollama /bin/ollama
 FROM --platform=linux/arm64 ubuntu:22.04 as runtime-arm64
-RUN apt-get update && apt-get install -y ca-certificates
+RUN apt-get update && apt-get install -y ca-certificates && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY --from=build-arm64 /go/src/github.com/ollama/ollama/ollama /bin/ollama
 
 # Radeon images are much larger so we keep it distinct from the CPU/CUDA image
@@ -136,9 +149,10 @@ FROM runtime-$TARGETARCH
 EXPOSE 11434
 ENV OLLAMA_HOST 0.0.0.0
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
+ENV MTHREADS_DRIVER_CAPABILITIES=compute,utility
+ENV MTHREADS_VISIBLE_DEVICES=all
 
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]

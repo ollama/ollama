@@ -51,6 +51,14 @@ if [ -z "${CUDACXX}" ]; then
         export CUDACXX=$(command -v nvcc)
     fi
 fi
+if [ -z "${MUSACXX}" ]; then
+    if [ -x /usr/local/musa/bin/mcc ]; then
+        export MUSACXX=/usr/local/musa/bin/mcc
+    else
+        # Try the default location in case it exists
+        export MUSACXX=$(command -v mcc)
+    fi
+fi
 COMMON_CMAKE_DEFS="-DBUILD_SHARED_LIBS=off -DCMAKE_POSITION_INDEPENDENT_CODE=on -DGGML_NATIVE=off -DGGML_AVX=on -DGGML_AVX2=off -DGGML_AVX512=off -DGGML_FMA=off -DGGML_F16C=off -DGGML_OPENMP=off"
 source $(dirname $0)/gen_common.sh
 init_vars
@@ -203,7 +211,56 @@ if [ -z "${OLLAMA_SKIP_CUDA_GENERATE}" -a -d "${CUDA_LIB_DIR}" ]; then
         fi
     done
     compress
+fi
 
+# If needed, look for the default MUSA toolkit location
+if [ -z "${MUSA_LIB_DIR}" ] && [ -d /usr/local/musa/lib ]; then
+    MUSA_LIB_DIR=/usr/local/musa/lib
+fi
+
+# Allow override in case libmusart is in the wrong place
+if [ -z "${MUSART_LIB_DIR}" ]; then
+    MUSART_LIB_DIR="${MUSA_LIB_DIR}"
+fi
+
+if [ -z "${OLLAMA_SKIP_MUSA_GENERATE}" -a -d "${MUSA_LIB_DIR}" ]; then
+    echo "MUSA libraries detected - building dynamic MUSA library"
+    init_vars
+    MUSA_MAJOR=$(ls "${MUSA_LIB_DIR}"/libmusart.so.* | head -1 | cut -f3 -d. || true)
+    if [ -n "${MUSA_MAJOR}" ]; then
+        MUSA_VARIANT=_v${MUSA_MAJOR}
+    fi
+    # Users building from source can tune the exact flags we pass to cmake for configuring llama.cpp
+    if [ -n "${OLLAMA_CUSTOM_MUSA_DEFS}" ]; then
+        echo "OLLAMA_CUSTOM_MUSA_DEFS=\"${OLLAMA_CUSTOM_MUSA_DEFS}\""
+        CMAKE_MUSA_DEFS="-DGGML_MUSA=on ${OLLAMA_CUSTOM_MUSA_DEFS}"
+        echo "Building custom MUSA GPU"
+    else
+        CMAKE_MUSA_DEFS="-DGGML_MUSA=on"
+    fi
+    CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} ${ARM64_DEFS} ${CMAKE_MUSA_DEFS}"
+    BUILD_DIR="../build/linux/${ARCH}/musa${MUSA_VARIANT}"
+    EXTRA_LIBS="-L${MUSA_LIB_DIR} -lmusart -lmublas -lmusa"
+    build
+
+    # Carry the MUSA libs as payloads to help reduce dependency burden on users
+    #
+    # TODO - in the future we may shift to packaging these separately and conditionally
+    #        downloading them in the install script.
+    DEPS="$(ldd ${BUILD_DIR}/bin/ollama_llama_server )"
+    for lib in libmusa.so libmusart.so libmublas.so ; do
+        DEP=$(echo "${DEPS}" | grep ${lib} | cut -f1 -d' ' | xargs || true)
+        if [ -n "${DEP}" -a -e "${MUSA_LIB_DIR}/${DEP}" ]; then
+            cp "${MUSA_LIB_DIR}/${DEP}" "${BUILD_DIR}/bin/"
+        elif [ -e "${MUSA_LIB_DIR}/${lib}.${MUSA_MAJOR}" ]; then
+            cp "${MUSA_LIB_DIR}/${lib}.${MUSA_MAJOR}" "${BUILD_DIR}/bin/"
+        elif [ -e "${MUSART_LIB_DIR}/${lib}" ]; then
+            cp -d ${MUSART_LIB_DIR}/${lib}* "${BUILD_DIR}/bin/"
+        else
+            cp -d "${MUSA_LIB_DIR}/${lib}*" "${BUILD_DIR}/bin/"
+        fi
+    done
+    compress
 fi
 
 if [ -z "${ONEAPI_ROOT}" ]; then

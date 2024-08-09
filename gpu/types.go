@@ -51,6 +51,13 @@ type CPUInfo struct {
 	GpuInfo
 }
 
+type MusaGPUInfo struct {
+	GpuInfo
+	memoryFilepath string //nolint:unused,nolintlint
+	index          int    //nolint:unused,nolintlint
+}
+type MusaGPUInfoList []MusaGPUInfo
+
 type CudaGPUInfo struct {
 	GpuInfo
 	OSOverhead uint64 // Memory overhead between the driver library and management library

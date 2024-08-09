@@ -156,11 +156,13 @@ var (
 	LLMLibrary = String("OLLAMA_LLM_LIBRARY")
 	TmpDir     = String("OLLAMA_TMPDIR")
 
-	CudaVisibleDevices    = String("CUDA_VISIBLE_DEVICES")
-	HipVisibleDevices     = String("HIP_VISIBLE_DEVICES")
-	RocrVisibleDevices    = String("ROCR_VISIBLE_DEVICES")
-	GpuDeviceOrdinal      = String("GPU_DEVICE_ORDINAL")
-	HsaOverrideGfxVersion = String("HSA_OVERRIDE_GFX_VERSION")
+	CudaVisibleDevices     = String("CUDA_VISIBLE_DEVICES")
+	HipVisibleDevices      = String("HIP_VISIBLE_DEVICES")
+	RocrVisibleDevices     = String("ROCR_VISIBLE_DEVICES")
+	GpuDeviceOrdinal       = String("GPU_DEVICE_ORDINAL")
+	HsaOverrideGfxVersion  = String("HSA_OVERRIDE_GFX_VERSION")
+	MthreadsVisibleDevices = String("MTHREADS_VISIBLE_DEVICES")
+	MusaVisibleDevices     = String("MUSA_VISIBLE_DEVICES")
 )
 
 func RunnersDir() (p string) {
@@ -266,6 +268,8 @@ func AsMap() map[string]EnvVar {
 		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal(), "Set which AMD devices are visible"}
 		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion(), "Override the gfx used for all detected AMD GPUs"}
 		ret["OLLAMA_INTEL_GPU"] = EnvVar{"OLLAMA_INTEL_GPU", IntelGPU(), "Enable experimental Intel GPU detection"}
+		ret["MTHREADS_VISIBLE_DEVICES"] = EnvVar{"HIP_VISIBLE_DEVICES", HipVisibleDevices(), "Set which Moore Threads devices are visible"}
+		ret["MUSA_VISIBLE_DEVICES"] = EnvVar{"ROCR_VISIBLE_DEVICES", RocrVisibleDevices(), "Set which Moore Threads devices are visible"}
 	}
 	return ret
 }
