@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/klauspost/cpuid/v2"
 	"golang.org/x/sys/cpu"
 )
 
@@ -34,4 +35,8 @@ func IsNUMA() bool {
 		}
 	}
 	return len(ids) > 1
+}
+
+func IsIntelCoreUltraCpus() bool {
+	return strings.Contains(cpuid.CPU.BrandName, "Core(TM) Ultra")
 }

@@ -160,6 +160,8 @@ var (
 	SchedSpread = Bool("OLLAMA_SCHED_SPREAD")
 	// IntelGPU enables experimental Intel GPU detection.
 	IntelGPU = Bool("OLLAMA_INTEL_GPU")
+	// Set via OLLAMA_FORCE_ENABLE_INTEL_IGPU in the environment
+	ForceEnableIntelIGPU = Bool("OLLAMA_FORCE_ENABLE_INTEL_IGPU")
 )
 
 func String(s string) func() string {
@@ -301,6 +303,7 @@ func AsMap() map[string]EnvVar {
 		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal(), "Set which AMD devices are visible"}
 		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion(), "Override the gfx used for all detected AMD GPUs"}
 		ret["OLLAMA_INTEL_GPU"] = EnvVar{"OLLAMA_INTEL_GPU", IntelGPU(), "Enable experimental Intel GPU detection"}
+		ret["OLLAMA_FORCE_ENABLE_INTEL_IGPU"] = EnvVar{"OLLAMA_FORCE_ENABLE_INTEL_IGPU", ForceEnableIntelIGPU(), "froce enable Intel iGPUs"}
 	}
 	return ret
 }
