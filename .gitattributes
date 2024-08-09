@@ -2,3 +2,4 @@ llm/ext_server/* linguist-vendored
 * text eol=lf
 *.png binary
 *.ico binary
+*.icns binary
