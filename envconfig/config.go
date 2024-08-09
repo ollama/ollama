@@ -57,6 +57,11 @@ func Host() *url.URL {
 	}
 }
 
+// HasCustomOrigins returns true if custom origins are configured. Origins can be configured via the OLLAMA_ORIGINS environment variable.
+func HasCustomOrigins() bool {
+	return Var("OLLAMA_ORIGINS") != ""
+}
+
 // Origins returns a list of allowed origins. Origins can be configured via the OLLAMA_ORIGINS environment variable.
 func Origins() (origins []string) {
 	if s := Var("OLLAMA_ORIGINS"); s != "" {
