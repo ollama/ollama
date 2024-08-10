@@ -17,6 +17,8 @@ func TestHost(t *testing.T) {
 		"only address":        {"1.2.3.4", "1.2.3.4:11434"},
 		"only port":           {":1234", ":1234"},
 		"address and port":    {"1.2.3.4:1234", "1.2.3.4:1234"},
+		"expose and port":     {"0.0.0.0:1234", "0.0.0.0:1234"},
+		"expose without port": {"0.0.0.0", "0.0.0.0:11434"},
 		"hostname":            {"example.com", "example.com:11434"},
 		"hostname and port":   {"example.com:1234", "example.com:1234"},
 		"zero port":           {":0", ":0"},
