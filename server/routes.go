@@ -308,14 +308,6 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		truncate = false
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, []Capability{}, req.Options, req.KeepAlive)
-	if err != nil {
-		handleScheduleError(c, req.Model, err)
-		return
-	}
-
-	checkpointLoaded := time.Now()
-
 	var input []string
 
 	switch i := req.Input.(type) {
@@ -337,6 +329,14 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			return
 		}
 	}
+
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, []Capability{}, req.Options, req.KeepAlive)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+
+	checkpointLoaded := time.Now()
 
 	if len(input) == 0 {
 		c.JSON(http.StatusOK, api.EmbedResponse{Model: req.Model, Embeddings: [][]float32{}})
