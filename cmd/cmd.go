@@ -137,7 +137,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			}
 
 			bar.Set(resp.Completed)
-		} else if resp.Type == "quantize" {
+		} else if strings.Contains(resp.Status, "quantizing") {
 			spinner.Stop()
 	
 			if quantizeSpin != nil {
