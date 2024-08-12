@@ -42,6 +42,10 @@ func (p *gemma) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
+func (p *gemma) AdapterKV(baseKV llm.KV) llm.KV {
+	return llm.KV{}
+}
+
 func (p *gemma) Tensors(ts []Tensor) []llm.Tensor {
 	out := make([]llm.Tensor, 0, len(ts))
 	for _, t := range ts {
