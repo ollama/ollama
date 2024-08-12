@@ -38,7 +38,7 @@ func (s *Spinner) SetMessage(message string) {
 
 func (s *Spinner) String() string {
 	var sb strings.Builder
-	
+
 	if message, ok := s.message.Load().(string); ok && len(message) > 0 {
 		message := strings.TrimSpace(message)
 		if s.messageWidth > 0 && len(message) > s.messageWidth {

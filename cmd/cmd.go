@@ -317,7 +317,7 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, spinner *pr
 }
 
 type progressWriter struct {
-	n atomic.Int64	
+	n atomic.Int64
 }
 
 func (w *progressWriter) Write(p []byte) (n int, err error) {
