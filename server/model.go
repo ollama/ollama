@@ -176,7 +176,7 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 			mediatype = "application/vnd.ollama.image.projector"
 		}
 
-		var layer *Layer
+		var layer Layer
 		if digest != "" && n == stat.Size() && offset == 0 {
 			layer, err = NewLayerFromLayer(digest, mediatype, file.Name())
 			if err != nil {
@@ -185,7 +185,7 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 		}
 
 		// Fallback to creating layer from file copy (either NewLayerFromLayer failed, or digest empty/n != stat.Size())
-		if layer == nil {
+		if layer.Digest == "" {
 			layer, err = NewLayer(io.NewSectionReader(file, offset, n), mediatype)
 			if err != nil {
 				return nil, err
