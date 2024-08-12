@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -78,6 +79,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	status := "transferring model data"
 	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
+	defer p.Stop()
 
 	for i := range modelfile.Commands {
 		switch modelfile.Commands[i].Name {
@@ -112,7 +114,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				path = tempfile
 			}
 
-			digest, err := createBlob(cmd, client, path)
+			digest, err := createBlob(cmd, client, path, spinner)
 			if err != nil {
 				return err
 			}
@@ -263,12 +265,19 @@ func tempZipFiles(path string) (string, error) {
 	return tempfile.Name(), nil
 }
 
-func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, error) {
+func createBlob(cmd *cobra.Command, client *api.Client, path string, spinner *progress.Spinner) (string, error) {
 	bin, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
 	defer bin.Close()
+
+	// Get file info to retrieve the size
+	fileInfo, err := bin.Stat()
+	if err != nil {
+		return "", err
+	}
+	fileSize := fileInfo.Size()
 
 	hash := sha256.New()
 	if _, err := io.Copy(hash, bin); err != nil {
@@ -279,11 +288,41 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 		return "", err
 	}
 
+	var pw progressWriter
+	status := "transferring model data 0%"
+	spinner.SetMessage(status)
+
+	done := make(chan struct{})
+	defer close(done)
+
+	go func() {
+		ticker := time.NewTicker(60 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				spinner.SetMessage(fmt.Sprintf("transferring model data %d%%", int(100*pw.n.Load()/fileSize)))
+			case <-done:
+				spinner.SetMessage("transferring model data 100%")
+				return
+			}
+		}
+	}()
+
 	digest := fmt.Sprintf("sha256:%x", hash.Sum(nil))
-	if err = client.CreateBlob(cmd.Context(), digest, bin); err != nil {
+	if err = client.CreateBlob(cmd.Context(), digest, io.TeeReader(bin, &pw)); err != nil {
 		return "", err
 	}
 	return digest, nil
+}
+
+type progressWriter struct {
+	n atomic.Int64
+}
+
+func (w *progressWriter) Write(p []byte) (n int, err error) {
+	w.n.Add(int64(len(p)))
+	return len(p), nil
 }
 
 func RunHandler(cmd *cobra.Command, args []string) error {
