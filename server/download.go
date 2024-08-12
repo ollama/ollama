@@ -216,9 +216,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 		return err
 	}
 	defer file.Close()
-	if err := setSparse(file); err != nil {
-		return err
-	}
+	setSparse(file)
 
 	_ = file.Truncate(b.Total)
 
@@ -235,7 +233,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 
 			newOpts.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 				if len(via) > 10 {
-					return errors.New("maxium redirects exceeded (10) for directURL")
+					return errors.New("maximum redirects exceeded (10) for directURL")
 				}
 
 				// if the hostname is the same, allow the redirect

@@ -326,6 +326,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [podman-ollama](https://github.com/ericcurtin/podman-ollama)
 - [gollama](https://github.com/sammcj/gollama)
 - [Ingest](https://github.com/sammcj/ingest)
+- [Ollama eBook Summary](https://github.com/cognitivetech/ollama-ebook-summary/)
 
 ### Database
 
