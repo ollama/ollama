@@ -442,7 +442,6 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 					} else if want != ft {
 						fn(api.ProgressResponse{
 							Status: "quantizing model tensors",
-							Type: "quantize",
 						})
 
 						blob, err := GetBlobsPath(baseLayer.Digest)

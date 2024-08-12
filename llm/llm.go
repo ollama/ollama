@@ -65,13 +65,11 @@ func Quantize(infile, outfile string, ftype fileType, fn func(resp api.ProgressR
 				progressInt := atomic.LoadInt32(store)
 				progress := *(*float32)(unsafe.Pointer(&progressInt))
 				fn(api.ProgressResponse{
-					Status: fmt.Sprintf("quantizing model %d/%d", int(progress), tensorCount),
-					Type:   "quantize",
+					Status: fmt.Sprintf("quantizing model %d%%", 100*int(progress)/tensorCount),
 				})
 			case <-done:
 				fn(api.ProgressResponse{
-					Status: fmt.Sprintf("quantizing model %d/%d", tensorCount, tensorCount),
-					Type:   "quantize",
+					Status: fmt.Sprintf("quantizing model 100%%"),
 				})
 				return
 			}
