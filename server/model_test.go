@@ -153,7 +153,7 @@ func TestParseFromFileFromLayer(t *testing.T) {
 		t.Fatalf("failed to seek to start: %v", err)
 	}
 
-	layers, err := parseFromFile(context.Background(), file, "", func(api.ProgressResponse) {})
+	layers, err := parseFromFile(context.Background(), "model", []*layerGGML{}, file, "", func(api.ProgressResponse) {})
 	if err != nil {
 		t.Fatalf("failed to parse from file: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestParseFromFileFromLayer(t *testing.T) {
 		t.Fatalf("failed to seek to start: %v", err)
 	}
 
-	layers2, err := parseFromFile(context.Background(), file, layers[0].Digest, func(api.ProgressResponse) {})
+	layers2, err := parseFromFile(context.Background(), "model", []*layerGGML{}, file, layers[0].Digest, func(api.ProgressResponse) {})
 	if err != nil {
 		t.Fatalf("failed to parse from file: %v", err)
 	}
@@ -206,7 +206,7 @@ func TestParseLayerFromCopy(t *testing.T) {
 		t.Fatalf("failed to seek to start: %v", err)
 	}
 
-	layers, err := parseFromFile(context.Background(), file2, "", func(api.ProgressResponse) {})
+	layers, err := parseFromFile(context.Background(), "model", []*layerGGML{}, file2, "", func(api.ProgressResponse) {})
 	if err != nil {
 		t.Fatalf("failed to parse from file: %v", err)
 	}
