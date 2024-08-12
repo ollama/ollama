@@ -93,6 +93,17 @@ func (p *llama) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
+func (p *llama) AdapterKV(baseKV llm.KV) llm.KV {
+	kv := p.Parameters.AdapterKV()
+
+	kv["llama.attention.head_count"] = baseKV["llama.attention.head_count"]
+	kv["llama.attention.head_count_kv"] = baseKV["llama.attention.head_count_kv"]
+
+	p.NumAttentionHeads = baseKV["llama.attention.head_count"].(uint32)
+
+	return kv
+}
+
 func (p *llama) Tensors(ts []Tensor) []llm.Tensor {
 	var out []llm.Tensor
 	for _, t := range ts {
@@ -102,10 +113,19 @@ func (p *llama) Tensors(ts []Tensor) []llm.Tensor {
 			t.SetRepacker(p.repack)
 		}
 
+		// llamacpp expects these to be transposed
+		shape := t.Shape()
+		if strings.HasSuffix(name, "weight.lora_a") || strings.HasSuffix(name, "weight.lora_b") {
+			tmp := shape[0]
+			shape[0] = shape[1]
+			shape[1] = tmp
+			t.SetRepacker(p.loraRepack)
+		}
+
 		out = append(out, llm.Tensor{
 			Name:     name,
 			Kind:     t.Kind(),
-			Shape:    t.Shape(),
+			Shape:    shape,
 			WriterTo: t,
 		})
 	}
@@ -130,7 +150,61 @@ func (p *llama) tensorName(n string) string {
 		"post_attention_layernorm", "ffn_norm",
 		// mixtral
 		"block_sparse_moe.gate", "ffn_gate_inp",
+		// loras
+		"lora_a", "weight.lora_a",
+		"lora_b", "weight.lora_b",
 	).Replace(n)
+}
+
+func (p *llama) loraRepack(name string, data []float32, shape []uint64) ([]float32, error) {
+	dims := []int{int(shape[1]), int(shape[0])}
+
+	n := tensor.New(tensor.WithShape(dims...), tensor.WithBacking(data))
+
+	// we may need to include the k_proj.lora_a tensor if a user decides to include it in the finetune
+	if strings.HasSuffix(name, "self_attn.q_proj.lora_a") {
+		heads := p.NumAttentionHeads
+
+		if err := n.Reshape(append([]int{int(heads), 2, dims[0] / int(heads) / 2}, dims[1:]...)...); err != nil {
+			return nil, err
+		}
+
+		if err := n.T(0, 2, 1, 3); err != nil {
+			return nil, err
+		}
+
+		if err := n.Reshape(dims...); err != nil {
+			return nil, err
+		}
+
+		if err := n.Transpose(); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := n.T(1, 0); err != nil {
+		return nil, err
+	}
+
+	if err := n.Reshape(dims...); err != nil {
+		return nil, err
+	}
+
+	if err := n.Transpose(); err != nil {
+		return nil, err
+	}
+
+	ts, err := native.SelectF32(n, 1)
+	if err != nil {
+		return nil, err
+	}
+
+	var f32s []float32
+	for _, t := range ts {
+		f32s = append(f32s, t...)
+	}
+
+	return f32s, nil
 }
 
 func (p *llama) repack(name string, data []float32, shape []uint64) ([]float32, error) {

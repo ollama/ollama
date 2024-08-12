@@ -14,6 +14,13 @@ import (
 type Parameters struct {
 	Architectures []string `json:"architectures"`
 	VocabSize     uint32   `json:"vocab_size"`
+
+	LoraLayers     uint32 `json:"lora_layers"`
+	LoraParameters struct {
+		Rank  uint32  `json:"rank"`
+		Alpha float32 `json:"alpha"`
+		Scale float32 `json:"scale"`
+	} `json:"lora_parameters"`
 }
 
 func (Parameters) KV(t *Tokenizer) llm.KV {
@@ -43,6 +50,19 @@ func (Parameters) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
+func (p Parameters) AdapterKV() llm.KV {
+	kv := llm.KV{
+		"general.architecture": "llama",
+		"adapter.lora.alpha":   p.LoraParameters.Alpha,
+		"adapter.type":         "lora",
+		"general.file_type":    uint32(1),
+		"general.type":         "adapter",
+		"general.version":      "v0.2",
+	}
+
+	return kv
+}
+
 func (Parameters) specialTokenTypes() []string {
 	return []string{
 		"bos", "eos", "unk", "sep", "pad", "cls", "mask",
@@ -56,6 +76,7 @@ func (Parameters) writeFile(ws io.WriteSeeker, kv llm.KV, ts []llm.Tensor) error
 type Converter interface {
 	// KV maps parameters to LLM key-values
 	KV(*Tokenizer) llm.KV
+	AdapterKV(llm.KV) llm.KV
 	// Tensors maps input tensors to LLM tensors. Model specific modifications can be done here.
 	Tensors([]Tensor) []llm.Tensor
 
@@ -66,11 +87,48 @@ type Converter interface {
 	writeFile(io.WriteSeeker, llm.KV, []llm.Tensor) error
 }
 
+func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseLayer *llm.GGML) error {
+	bts, err := fs.ReadFile(fsys, "adapter_config.json")
+	if err != nil {
+		return err
+	}
+
+	var p Parameters
+	if err := json.Unmarshal(bts, &p); err != nil {
+		return err
+	}
+
+	ts, err := parseTensors(fsys)
+	if err != nil {
+		return err
+	}
+
+	baseKV := baseLayer.KV()
+	arch, ok := baseKV["general.architecture"]
+	if !ok {
+		return errors.New("architecture not set for the base model")
+	}
+
+	var conv Converter
+	switch arch {
+	case "llama":
+		conv = &llama{}
+	default:
+		return errors.New("unsupported architecture")
+	}
+
+	if err := json.Unmarshal(bts, conv); err != nil {
+		return err
+	}
+
+	return conv.writeFile(ws, conv.AdapterKV(baseKV), conv.Tensors(ts))
+}
+
 // Convert writes an Ollama compatible model to the provided io.WriteSeeker based on configurations
 // and files it finds in the input path.
 // Supported input model formats include safetensors.
 // Supported input tokenizers files include tokenizer.json (preferred) and tokenizer.model.
-func Convert(fsys fs.FS, ws io.WriteSeeker) error {
+func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 	bts, err := fs.ReadFile(fsys, "config.json")
 	if err != nil {
 		return err

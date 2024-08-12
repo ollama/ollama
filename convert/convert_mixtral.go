@@ -31,6 +31,10 @@ func (p *mixtral) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
+func (p *mixtral) AdapterKV(baseKV llm.KV) llm.KV {
+	return llm.KV{}
+}
+
 func (p *mixtral) Tensors(ts []Tensor) []llm.Tensor {
 	oldnew := []string{
 		"model.layers", "blk",
