@@ -182,7 +182,6 @@ curl http://localhost:11434/v1/embeddings \
 - [x] Reproducible outputs
 - [x] Vision
 - [x] Tools (streaming support coming soon)
-- [ ] Vision
 - [ ] Logprobs
 
 #### Supported request fields
