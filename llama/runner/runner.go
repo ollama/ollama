@@ -91,6 +91,7 @@ func (s *Server) NewSequence(prompt string, numPredict int, stop []string, param
 	return &Sequence{
 		tokens:          tokens,
 		n_prompt_tokens: len(tokens),
+		numPredict:      numPredict,
 		responses:       make(chan string, 1),
 		embedding:       make(chan []float32, 1),
 		samplingCtx:     sc,
