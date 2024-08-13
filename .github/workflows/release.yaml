@@ -31,7 +31,7 @@ jobs:
           security set-keychain-settings -lut 3600 build.keychain
       - uses: actions/setup-go@v5
         with:
-          go-version: "stable"
+          go-version-file: go.mod
           cache: true
       - name: Build Darwin
         env:
@@ -87,7 +87,7 @@ jobs:
           write-host "plugin installed"
       - uses: actions/setup-go@v5
         with:
-          go-version: "stable"
+          go-version-file: go.mod
           cache: true
       - run: go get ./...
       - run: |
@@ -141,7 +141,7 @@ jobs:
           write-host "plugin installed"
       - uses: actions/setup-go@v5
         with:
-          go-version: "stable"
+          go-version-file: go.mod
           cache: true
       - name: 'Install ROCm'
         run: |
@@ -218,7 +218,7 @@ jobs:
           write-host "plugin installed"
       - uses: actions/setup-go@v5
         with:
-          go-version: "stable"
+          go-version-file: go.mod
           cache: true
       - name: 'Install CUDA'
         run: |
@@ -306,7 +306,7 @@ jobs:
           write-host "plugin installed"
       - uses: actions/setup-go@v5
         with:
-          go-version: "stable"
+          go-version-file: go.mod
           cache: true
       - run: go get
       - uses: actions/download-artifact@v4
