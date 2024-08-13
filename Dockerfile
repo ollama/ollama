@@ -5,9 +5,6 @@ ARG CUDA_V11_ARCHITECTURES="50;52;53;60;61;62;70;72;75;80;86"
 ARG CUDA_VERSION_12=12.4.0
 ARG CUDA_V12_ARCHITECTURES="60;61;62;70;72;75;80;86;87;89;90;90a"
 ARG ROCM_VERSION=6.1.2
-ARG JETPACK_6=r36.2.0
-ARG JETPACK_5=r35.4.1
-ARG JETPACK_4=r32.7.1
 
 # Copy the minimal context we need to run the generate scripts
 FROM scratch AS llm-code
@@ -84,39 +81,6 @@ RUN --mount=type=cache,target=/root/.ccache \
     OLLAMA_CUSTOM_CUDA_DEFS="-DGGML_CUDA_USE_GRAPHS=on" \
     bash gen_linux.sh
 
-FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK_6} AS cuda-build-jetpack6-arm64
-ARG CMAKE_VERSION
-RUN apt-get update && apt-get install -y git curl && \
-    curl -s -L https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-$(uname -m).tar.gz | tar -zx -C /usr --strip-components 1
-COPY --from=llm-code / /go/src/github.com/ollama/ollama/
-WORKDIR /go/src/github.com/ollama/ollama/llm/generate
-ARG CGO_CFLAGS
-ENV GOARCH arm64
-ENV LIBRARY_PATH /usr/local/cuda/lib64/stubs
-RUN --mount=type=cache,target=/root/.ccache \
-    OLLAMA_SKIP_STATIC_GENERATE=1 \
-    OLLAMA_SKIP_CPU_GENERATE=1 \
-    CUDA_VARIANT="_jetpack6" \
-    CUDA_DIST_DIR="/go/src/github.com/ollama/ollama/dist/linux-arm64/ollama_libs/cuda_jetpack6" \
-    CMAKE_CUDA_ARCHITECTURES="87" \
-    bash gen_linux.sh
-
-FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK_5} AS cuda-build-jetpack5-arm64
-ARG CMAKE_VERSION
-RUN apt-get update && apt-get install -y git curl && \
-    curl -s -L https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-$(uname -m).tar.gz | tar -zx -C /usr --strip-components 1
-COPY --from=llm-code / /go/src/github.com/ollama/ollama/
-WORKDIR /go/src/github.com/ollama/ollama/llm/generate
-ARG CGO_CFLAGS
-ENV GOARCH arm64
-ENV LIBRARY_PATH /usr/local/cuda/lib64/stubs
-RUN --mount=type=cache,target=/root/.ccache \
-    OLLAMA_SKIP_STATIC_GENERATE=1 \
-    OLLAMA_SKIP_CPU_GENERATE=1 \
-    CUDA_VARIANT="_jetpack5" \
-    CUDA_DIST_DIR="/go/src/github.com/ollama/ollama/dist/linux-arm64/ollama_libs/cuda_jetpack5" \
-    CMAKE_CUDA_ARCHITECTURES="72;87" \
-    bash gen_linux.sh
 
 FROM --platform=linux/amd64 rocm/dev-centos-7:${ROCM_VERSION}-complete AS rocm-build-amd64
 ARG CMAKE_VERSION
@@ -209,12 +173,6 @@ COPY --from=cuda-11-build-server-arm64 /go/src/github.com/ollama/ollama/dist/ di
 COPY --from=cuda-11-build-server-arm64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
 COPY --from=cuda-12-build-server-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
 COPY --from=cuda-12-build-server-arm64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
-## arm binary += 381M 
-COPY --from=cuda-build-jetpack6-arm64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
-COPY --from=cuda-build-jetpack6-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
-## arm binary += 330M
-COPY --from=cuda-build-jetpack5-arm64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
-COPY --from=cuda-build-jetpack5-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
 ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN --mount=type=cache,target=/root/.ccache \
