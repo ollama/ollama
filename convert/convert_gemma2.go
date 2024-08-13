@@ -4,14 +4,14 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-type gemma2 struct {
-	gemma
+type gemma2Model struct {
+	gemmaModel
 	SlidingWindow         uint32  `json:"sliding_window"`
 	AttentionLogitSoftcap float32 `json:"attn_logit_softcapping"`
 	FinalLogitSoftcap     float32 `json:"final_logit_softcapping"`
 }
 
-func (p *gemma2) KV(t *Tokenizer) llm.KV {
+func (p *gemma2Model) KV(t *Tokenizer) llm.KV {
 	kv := p.Parameters.KV(t)
 	kv["general.architecture"] = "gemma2"
 	kv["gemma2.context_length"] = p.MaxPositionEmbeddings
@@ -33,7 +33,7 @@ func (p *gemma2) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *gemma2) Replacements() []string {
+func (p *gemma2Model) Replacements() []string {
 	return append(
 		p.gemma.Replacements(),
 		"post_attention_layernorm", "post_attention_norm",

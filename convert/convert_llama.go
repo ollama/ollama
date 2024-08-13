@@ -12,9 +12,8 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-type llama struct {
-	Parameters
-	AdapterParameters
+type llamaModel struct {
+	ModelParameters
 	NLayers               uint32  `json:"n_layers"`
 	NumHiddenLayers       uint32  `json:"num_hidden_layers"`
 	NLayer                uint32  `json:"n_layer"`
@@ -45,10 +44,16 @@ type llama struct {
 	HeadDim          uint32  `json:"head_dim"`
 }
 
-var _ Converter = (*llama)(nil)
+type llamaAdapter struct {
+	AdapterParameters
+	NumAttentionHeads uint32 `json:"num_attention_heads"`
+}
 
-func (p *llama) KV(t *Tokenizer) llm.KV {
-	kv := p.Parameters.KV(t)
+var _ ModelConverter = (*llamaModel)(nil)
+var _ AdapterConverter = (*llamaAdapter)(nil)
+
+func (p *llamaModel) KV(t *Tokenizer) llm.KV {
+	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "llama"
 	kv["llama.vocab_size"] = p.VocabSize
 
@@ -121,7 +126,7 @@ func (p *llama) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *llama) AdapterKV(baseKV llm.KV) llm.KV {
+func (p *llamaAdapter) KV(baseKV llm.KV) llm.KV {
 	kv := p.AdapterParameters.KV()
 	kv["general.architecture"] = "llama"
 	kv["llama.attention.head_count"] = baseKV["llama.attention.head_count"]
@@ -132,7 +137,7 @@ func (p *llama) AdapterKV(baseKV llm.KV) llm.KV {
 	return kv
 }
 
-func (p *llama) Tensors(ts []Tensor) []llm.Tensor {
+func (p *llamaModel) Tensors(ts []Tensor) []llm.Tensor {
 	var out []llm.Tensor
 
 	if p.RopeScaling.factors != nil {
@@ -150,13 +155,28 @@ func (p *llama) Tensors(ts []Tensor) []llm.Tensor {
 			t.SetRepacker(p.repack)
 		}
 
+		out = append(out, llm.Tensor{
+			Name:     name,
+			Kind:     t.Kind(),
+			Shape:    t.Shape(),
+			WriterTo: t,
+		})
+	}
+
+	return out
+}
+
+func (p *llamaAdapter) Tensors(ts []Tensor) []llm.Tensor {
+	var out []llm.Tensor
+	for _, t := range ts {
+		name := p.tensorName(t.Name())
 		// llamacpp expects these to be transposed
 		shape := t.Shape()
 		if strings.HasSuffix(name, "weight.lora_a") || strings.HasSuffix(name, "weight.lora_b") {
 			tmp := shape[0]
 			shape[0] = shape[1]
 			shape[1] = tmp
-			t.SetRepacker(p.loraRepack)
+			t.SetRepacker(p.repack)
 		}
 
 		out = append(out, llm.Tensor{
@@ -170,7 +190,7 @@ func (p *llama) Tensors(ts []Tensor) []llm.Tensor {
 	return out
 }
 
-func (p *llama) Replacements() []string {
+func (p *llamaModel) Replacements() []string {
 	return []string{
 		"lm_head", "output",
 		"model.embed_tokens", "token_embd",
@@ -188,58 +208,7 @@ func (p *llama) Replacements() []string {
 	}
 }
 
-func (p *llama) loraRepack(name string, data []float32, shape []uint64) ([]float32, error) {
-	dims := []int{int(shape[1]), int(shape[0])}
-
-	n := tensor.New(tensor.WithShape(dims...), tensor.WithBacking(data))
-
-	// we may need to include the k_proj.lora_a tensor if a user decides to include it in the finetune
-	if strings.HasSuffix(name, "self_attn.q_proj.lora_a") {
-		heads := p.NumAttentionHeads
-
-		if err := n.Reshape(append([]int{int(heads), 2, dims[0] / int(heads) / 2}, dims[1:]...)...); err != nil {
-			return nil, err
-		}
-
-		if err := n.T(0, 2, 1, 3); err != nil {
-			return nil, err
-		}
-
-		if err := n.Reshape(dims...); err != nil {
-			return nil, err
-		}
-
-		if err := n.Transpose(); err != nil {
-			return nil, err
-		}
-	}
-
-	if err := n.T(1, 0); err != nil {
-		return nil, err
-	}
-
-	if err := n.Reshape(dims...); err != nil {
-		return nil, err
-	}
-
-	if err := n.Transpose(); err != nil {
-		return nil, err
-	}
-
-	ts, err := native.SelectF32(n, 1)
-	if err != nil {
-		return nil, err
-	}
-
-	var f32s []float32
-	for _, t := range ts {
-		f32s = append(f32s, t...)
-	}
-
-	return f32s, nil
-}
-
-func (p *llama) repack(name string, data []float32, shape []uint64) ([]float32, error) {
+func (p *llamaModel) repack(name string, data []float32, shape []uint64) ([]float32, error) {
 	var dims []int
 	for _, dim := range shape {
 		dims = append(dims, int(dim))
