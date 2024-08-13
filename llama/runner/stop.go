@@ -14,7 +14,10 @@ func findStop(sequence string, stops []string) (bool, string) {
 	return false, ""
 }
 
-func containsStopSuffix(sequence string, stops []string) bool {
+// maybeStop returns true if the provided sequence ends with
+// the start of any of the provided stop sequences, meaning
+// a stop sequence is likely to follow
+func maybeStop(sequence string, stops []string) bool {
 	for _, stop := range stops {
 		for i := 1; i <= len(stop); i++ {
 			if strings.HasSuffix(sequence, stop[:i]) {
