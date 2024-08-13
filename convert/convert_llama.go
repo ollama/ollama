@@ -42,8 +42,10 @@ type llamaAdapter struct {
 	NumAttentionHeads uint32 `json:"num_attention_heads"`
 }
 
-var _ ModelConverter = (*llamaModel)(nil)
-var _ AdapterConverter = (*llamaAdapter)(nil)
+var (
+	_ ModelConverter   = (*llamaModel)(nil)
+	_ AdapterConverter = (*llamaAdapter)(nil)
+)
 
 func (p *llamaModel) KV(t *Tokenizer) llm.KV {
 	kv := p.ModelParameters.KV(t)
