@@ -220,10 +220,8 @@ func (s *Server) waiting() bool {
 
 // processImage processes an image embedding if it's next in any sequence
 func (s *Server) processImage() bool {
-	for i, seq := range s.seqs {
-		fmt.Println("seq", i, "inputs", len(seq.inputs))
+	for _, seq := range s.seqs {
 		if len(seq.inputs) > 0 && seq.inputs[0].embd != nil {
-			slog.Info("processing image", "seq", i, "nPast", seq.nPast)
 			llama.LlavaEvalImageEmbed(s.lc, seq.inputs[0].embd, s.batchSize, &seq.nPast)
 			llama.LlavaImageEmbedFree(seq.inputs[0].embd)
 			seq.iBatch = seq.inputs[0].embd.Tokens() - 1
@@ -244,7 +242,6 @@ func (s *Server) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
-			slog.Info("Processing batch", "seqs", len(s.seqs))
 			s.mu.Lock()
 			for s.waiting() {
 				s.cond.Wait()
@@ -290,7 +287,6 @@ func (s *Server) run(ctx context.Context) {
 						break
 					}
 
-					slog.Info("adding token to batch", "token", t.token, "seq", i)
 					batch.Add(t.token, seq.nPast, []int{i}, !seq.isPromptProcessing())
 					seq.nPast++
 				}
