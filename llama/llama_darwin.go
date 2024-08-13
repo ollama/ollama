@@ -3,6 +3,7 @@ package llama
 // extern const char *ggml_metallib_start;
 // extern const char *ggml_metallib_end;
 import "C"
+
 import (
 	_ "embed"
 	"strings"

@@ -44,6 +44,7 @@ package llama
 bool llamaProgressCallback(float progress, void *user_data);
 */
 import "C"
+
 import (
 	_ "embed"
 	"errors"
@@ -405,7 +406,6 @@ func (s *SamplingContext) Sample(ctxMain *Context, ctxConfig *Context, idx int) 
 	}
 
 	return int(C.llama_sampling_csample(s.c, ctxMain.c, ctxConfig.c, C.int(idx)))
-
 }
 
 func (s *SamplingContext) Accept(ctxMain *Context, id int, applyGrammar bool) {
