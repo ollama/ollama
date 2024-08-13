@@ -11,7 +11,7 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-type Parameters struct {
+type ModelParameters struct {
 	Architectures []string `json:"architectures"`
 	VocabSize     uint32   `json:"vocab_size"`
 }
@@ -25,7 +25,7 @@ type AdapterParameters struct {
 	} `json:"lora_parameters"`
 }
 
-func (Parameters) KV(t *Tokenizer) llm.KV {
+func (ModelParameters) KV(t *Tokenizer) llm.KV {
 	kv := llm.KV{
 		"general.file_type":            uint32(1),
 		"general.quantization_version": uint32(2),
@@ -52,16 +52,6 @@ func (Parameters) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (Parameters) specialTokenTypes() []string {
-	return []string{
-		"bos", "eos", "unk", "sep", "pad", "cls", "mask",
-	}
-}
-
-func (Parameters) writeFile(ws io.WriteSeeker, kv llm.KV, ts []llm.Tensor) error {
-	return llm.WriteGGUF(ws, kv, ts)
-}
-
 func (p AdapterParameters) KV() llm.KV {
 	kv := llm.KV{
 		"adapter.lora.alpha": p.LoraParameters.Alpha,
@@ -74,10 +64,23 @@ func (p AdapterParameters) KV() llm.KV {
 	return kv
 }
 
-type Converter interface {
+func (ModelParameters) specialTokenTypes() []string {
+	return []string{
+		"bos", "eos", "unk", "sep", "pad", "cls", "mask",
+	}
+}
+
+func (ModelParameters) writeFile(ws io.WriteSeeker, kv llm.KV, ts []llm.Tensor) error {
+	return llm.WriteGGUF(ws, kv, ts)
+}
+
+func (AdapterParameters) writeFile(ws io.WriteSeeker, kv llm.KV, ts []llm.Tensor) error {
+	return llm.WriteGGUF(ws, kv, ts)
+}
+
+type ModelConverter interface {
 	// KV maps parameters to LLM key-values
 	KV(*Tokenizer) llm.KV
-	AdapterKV(llm.KV) llm.KV
 	// Tensors maps input tensors to LLM tensors. Model specific modifications can be done here.
 	Tensors([]Tensor) []llm.Tensor
 
@@ -85,6 +88,14 @@ type Converter interface {
 	tensorName(string) string
 	// specialTokenTypes returns any special token types the model uses
 	specialTokenTypes() []string
+	writeFile(io.WriteSeeker, llm.KV, []llm.Tensor) error
+}
+
+type AdapterConverter interface {
+	KV(llm.KV) llm.KV
+	Tensors([]Tensor) []llm.Tensor
+
+	tensorName(string) string
 	writeFile(io.WriteSeeker, llm.KV, []llm.Tensor) error
 }
 
@@ -110,10 +121,10 @@ func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseLayer *llm.GGML) error {
 		return errors.New("architecture not set for the base model")
 	}
 
-	var conv Converter
+	var conv AdapterConverter
 	switch arch {
 	case "llama":
-		conv = &llama{}
+		conv = &llamaAdapter{}
 	default:
 		return errors.New("unsupported architecture")
 	}
@@ -122,7 +133,7 @@ func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseLayer *llm.GGML) error {
 		return err
 	}
 
-	return conv.writeFile(ws, conv.AdapterKV(baseKV), conv.Tensors(ts))
+	return conv.writeFile(ws, conv.KV(baseKV), conv.Tensors(ts))
 }
 
 // Convert writes an Ollama compatible model to the provided io.WriteSeeker based on configurations
@@ -135,7 +146,7 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 		return err
 	}
 
-	var p Parameters
+	var p ModelParameters
 	if err := json.Unmarshal(bts, &p); err != nil {
 		return err
 	}
@@ -144,16 +155,16 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 		return errors.New("unknown architecture")
 	}
 
-	var conv Converter
+	var conv ModelConverter
 	switch p.Architectures[0] {
 	case "LlamaForCausalLM", "MistralForCausalLM":
-		conv = &llama{}
+		conv = &llamaModel{}
 	case "MixtralForCausalLM":
-		conv = &mixtral{}
+		conv = &mixtralModel{}
 	case "GemmaForCausalLM":
-		conv = &gemma{}
+		conv = &gemmaModel{}
 	case "Phi3ForCausalLM":
-		conv = &phi3{}
+		conv = &phi3Model{}
 	default:
 		return errors.New("unsupported architecture")
 	}
