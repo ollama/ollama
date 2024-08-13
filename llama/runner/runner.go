@@ -178,7 +178,7 @@ func (s *Server) run(ctx context.Context) {
 
 				for j, t := range seq.tokens {
 					// todo: make this n_batch
-					if j > s.batchSize {
+					if j >= s.batchSize {
 						break
 					}
 					batch.Add(t, seq.nPast, []int{i}, !seq.prompt())
