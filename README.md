@@ -302,6 +302,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LLMStack](https://github.com/trypromptly/LLMStack) (No-code multi-agent framework to build LLM agents and workflows)
 - [BoltAI for Mac](https://boltai.com) (AI Chat Client for Mac)
 - [Harbor](https://github.com/av/harbor) (Containerized LLM Toolkit with Ollama as default backend)
+- [LLMChat](https://github.com/trendy-design/llmchat) (Explore the capabilites of multiple LLMs including Ollama)
 
 ### Terminal
 
