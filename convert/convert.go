@@ -14,7 +14,9 @@ import (
 type Parameters struct {
 	Architectures []string `json:"architectures"`
 	VocabSize     uint32   `json:"vocab_size"`
+}
 
+type AdapterParameters struct {
 	LoraLayers     uint32 `json:"lora_layers"`
 	LoraParameters struct {
 		Rank  uint32  `json:"rank"`
@@ -50,19 +52,6 @@ func (Parameters) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p Parameters) AdapterKV() llm.KV {
-	kv := llm.KV{
-		"general.architecture": "llama",
-		"adapter.lora.alpha":   p.LoraParameters.Alpha,
-		"adapter.type":         "lora",
-		"general.file_type":    uint32(1),
-		"general.type":         "adapter",
-		"general.version":      "v0.2",
-	}
-
-	return kv
-}
-
 func (Parameters) specialTokenTypes() []string {
 	return []string{
 		"bos", "eos", "unk", "sep", "pad", "cls", "mask",
@@ -71,6 +60,18 @@ func (Parameters) specialTokenTypes() []string {
 
 func (Parameters) writeFile(ws io.WriteSeeker, kv llm.KV, ts []llm.Tensor) error {
 	return llm.WriteGGUF(ws, kv, ts)
+}
+
+func (p AdapterParameters) KV() llm.KV {
+	kv := llm.KV{
+		"adapter.lora.alpha": p.LoraParameters.Alpha,
+		"adapter.type":       "lora",
+		"general.file_type":  uint32(1),
+		"general.type":       "adapter",
+		"general.version":    "v0.2",
+	}
+
+	return kv
 }
 
 type Converter interface {
@@ -93,7 +94,7 @@ func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseLayer *llm.GGML) error {
 		return err
 	}
 
-	var p Parameters
+	var p AdapterParameters
 	if err := json.Unmarshal(bts, &p); err != nil {
 		return err
 	}

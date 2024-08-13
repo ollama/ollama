@@ -13,6 +13,7 @@ import (
 
 type llama struct {
 	Parameters
+	AdapterParameters
 	NLayers               uint32  `json:"n_layers"`
 	NumHiddenLayers       uint32  `json:"num_hidden_layers"`
 	NLayer                uint32  `json:"n_layer"`
@@ -94,8 +95,8 @@ func (p *llama) KV(t *Tokenizer) llm.KV {
 }
 
 func (p *llama) AdapterKV(baseKV llm.KV) llm.KV {
-	kv := p.Parameters.AdapterKV()
-
+	kv := p.AdapterParameters.KV()
+	kv["general.architecture"] = "llama"
 	kv["llama.attention.head_count"] = baseKV["llama.attention.head_count"]
 	kv["llama.attention.head_count_kv"] = baseKV["llama.attention.head_count_kv"]
 
