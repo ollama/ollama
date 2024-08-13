@@ -69,6 +69,10 @@ func (p *phi3) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
+func (p *phi3) AdapterKV(baseKV llm.KV) llm.KV {
+	return llm.KV{}
+}
+
 func (p *phi3) Tensors(ts []Tensor) []llm.Tensor {
 	var addRopeFactors sync.Once
 
