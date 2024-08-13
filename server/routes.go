@@ -324,13 +324,10 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			input = append(input, v.(string))
 		}
 	default:
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid input type"})
-		return
-	}
-
-	if len(input) == 0 {
-		c.JSON(http.StatusOK, api.EmbedResponse{Model: req.Model, Embeddings: [][]float32{}})
-		return
+		if req.Input != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid input type"})
+			return
+		}
 	}
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, []Capability{}, req.Options, req.KeepAlive)
@@ -340,6 +337,11 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	}
 
 	checkpointLoaded := time.Now()
+
+	if len(input) == 0 {
+		c.JSON(http.StatusOK, api.EmbedResponse{Model: req.Model, Embeddings: [][]float32{}})
+		return
+	}
 
 	kvData, err := getKVData(m.ModelPath, false)
 	if err != nil {
