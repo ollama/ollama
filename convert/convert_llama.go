@@ -3,12 +3,15 @@ package convert
 import (
 	"cmp"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
+	"unsafe"
 
 	"github.com/pdevine/tensor"
 	"github.com/pdevine/tensor/native"
 
+	cllama "github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/llm"
 )
 
@@ -182,32 +185,78 @@ func (p *llamaModel) repack(name string, data []float32, shape []uint64) ([]floa
 		return nil, fmt.Errorf("unknown tensor for repack: %s", name)
 	}
 
+	// name = "model.layers.6.self_attn.k_proj.weight"
+	// data = [41943004]float32
+	// dims = [2]int{1024,4096}
+	// heads = 0x8
+
 	n := tensor.New(tensor.WithShape(dims...), tensor.WithBacking(data))
+
+	overhead := cllama.GGMLTensorOverhead()
+	tensorCount := (uintptr)(5)
+	tensorSize := unsafe.Sizeof(float32(0)) * (uintptr)(len(data))
+	memSize := overhead + tensorSize*tensorCount
+	params := cllama.NewGGMLInitParams(memSize)
+	ctx := cllama.GGMLInit(params)
+	// TODO error handling
+	defer cllama.GGMLFree(ctx)
+	dims64 := make([]int64, len(dims))
+	for i, d := range dims {
+		dims64[i] = (int64)(d)
+	}
+	a := cllama.GGMLNewTensor(ctx, cllama.GGML_TYPE_F32, len(dims64), dims64)
+	cllama.LoadData(*a, unsafe.Pointer(&data[0]), unsafe.Sizeof(data))
+
 	if err := n.Reshape(append([]int{int(heads), 2, dims[0] / int(heads) / 2}, dims[1:]...)...); err != nil {
 		return nil, err
 	}
+
+	b := cllama.GGMLReshape4d(ctx, *a, (int64)(heads), 2, dims64[0]/(int64)(heads)/2, dims64[1])
 
 	if err := n.T(0, 2, 1, 3); err != nil {
 		return nil, err
 	}
 
+	c := cllama.GGMLCont(ctx, *cllama.GGMLPermute(ctx, *b, 0, 2, 1, 3))
+
 	if err := n.Reshape(dims...); err != nil {
 		return nil, err
 	}
 
+	// TODO - this crashes with ggml_is_contiguous false assert
+	d := cllama.GGMLReshape2d(ctx, *c, dims64[0], dims64[1])
+
 	if err := n.Transpose(); err != nil {
 		return nil, err
 	}
+
+	e := cllama.GGMLTranspose(ctx, *d)
+	g := cllama.GGMLNewGraph(ctx)
+	cllama.GGMLBuildForwardExpand(*g, *e)
+	cllama.GGMLGraphComputeWithCtx(ctx, *g, 4)
 
 	ts, err := native.SelectF32(n, 1)
 	if err != nil {
 		return nil, err
 	}
 
+	ts2 := cllama.GGMLGetDataF32(*e)
+
 	var f32s []float32
 	for _, t := range ts {
 		f32s = append(f32s, t...)
 	}
+
+	slog.Info("first 3 items:",
+		slog.Group(
+			"old",
+			"0", f32s[0], "1", f32s[1], "2", f32s[2],
+		),
+		slog.Group(
+			"new",
+			"0", ts2[0], "1", ts2[1], "2", ts2[2],
+		),
+	)
 
 	return f32s, nil
 }
