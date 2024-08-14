@@ -150,7 +150,7 @@ func Manifests() (map[model.Name]*Manifest, error) {
 
 			n := model.ParseNameFromFilepath(rel)
 			if !n.IsValid() {
-				slog.Warn("bad manifest name", "path", rel, "error", err)
+				slog.Warn("bad manifest name", "path", rel)
 				continue
 			}
 

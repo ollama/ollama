@@ -687,43 +687,18 @@ func CopyModel(src, dst model.Name) error {
 	return err
 }
 
-func deleteUnusedLayers(skipModelPath *ModelPath, deleteMap map[string]struct{}) error {
-	fp, err := GetManifestPath()
+func deleteUnusedLayers(deleteMap map[string]struct{}) error {
+	manifests, err := Manifests()
 	if err != nil {
 		return err
 	}
 
-	walkFunc := func(path string, info os.FileInfo, _ error) error {
-		if info.IsDir() {
-			return nil
-		}
-
-		dir, file := filepath.Split(path)
-		dir = strings.Trim(strings.TrimPrefix(dir, fp), string(os.PathSeparator))
-		tag := strings.Join([]string{dir, file}, ":")
-		fmp := ParseModelPath(tag)
-
-		// skip the manifest we're trying to delete
-		if skipModelPath != nil && skipModelPath.GetFullTagname() == fmp.GetFullTagname() {
-			return nil
-		}
-
-		// save (i.e. delete from the deleteMap) any files used in other manifests
-		manifest, _, err := GetManifest(fmp)
-		if err != nil {
-			return fmt.Errorf("error reading manifest %s: %w", path, err)
-		}
-
+	for _, manifest := range manifests {
 		for _, layer := range manifest.Layers {
 			delete(deleteMap, layer.Digest)
 		}
 
 		delete(deleteMap, manifest.Config.Digest)
-		return nil
-	}
-
-	if err := filepath.Walk(fp, walkFunc); err != nil {
-		return err
 	}
 
 	// only delete the files which are still in the deleteMap
@@ -776,7 +751,7 @@ func PruneLayers() error {
 
 	slog.Info(fmt.Sprintf("total blobs: %d", len(deleteMap)))
 
-	if err := deleteUnusedLayers(nil, deleteMap); err != nil {
+	if err := deleteUnusedLayers(deleteMap); err != nil {
 		slog.Error(fmt.Sprintf("couldn't remove unused layers: %v", err))
 		return nil
 	}
@@ -964,7 +939,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	if !envconfig.NoPrune() && len(deleteMap) > 0 {
 		fn(api.ProgressResponse{Status: "removing unused layers"})
-		if err := deleteUnusedLayers(nil, deleteMap); err != nil {
+		if err := deleteUnusedLayers(deleteMap); err != nil {
 			fn(api.ProgressResponse{Status: fmt.Sprintf("couldn't remove unused layers: %v", err)})
 		}
 	}
