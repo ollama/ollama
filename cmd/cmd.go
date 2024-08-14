@@ -1125,7 +1125,7 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 	return nil
 }
 
-func RunServer(cmd *cobra.Command, _ []string) error {
+func RunServer(_ *cobra.Command, _ []string) error {
 	if err := initializeKeypair(); err != nil {
 		return err
 	}
