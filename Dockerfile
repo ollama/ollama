@@ -51,8 +51,8 @@ ARG AMDGPU_TARGETS
 ENV GOARCH amd64 
 RUN --mount=type=cache,target=/root/.ccache \
     OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_SKIP_CPU_GENERATE=1 bash gen_linux.sh
-RUN mkdir -p ../../dist/linux-amd64/ollama_libs && \
-    (cd /opt/rocm/lib && tar cf - rocblas/library) | (cd ../../dist/linux-amd64/ollama_libs && tar xf - )
+RUN mkdir -p ../../dist/linux-amd64/lib/ollama && \
+    (cd /opt/rocm/lib && tar cf - rocblas/library) | (cd ../../dist/linux-amd64/lib/ollama && tar xf - )
 
 FROM --platform=linux/amd64 centos:7 AS cpu-builder-amd64
 ARG CMAKE_VERSION
@@ -114,7 +114,7 @@ COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ l
 ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN --mount=type=cache,target=/root/.ccache \
-    go build -trimpath -o dist/linux-amd64/ollama .
+    go build -trimpath -o dist/linux-amd64/bin/ollama .
 
 # Intermediate stage used for ./scripts/build_linux.sh
 FROM --platform=linux/arm64 cpu-build-arm64 AS build-arm64
@@ -128,7 +128,7 @@ COPY --from=cuda-build-arm64 /go/src/github.com/ollama/ollama/llm/build/linux/ l
 ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN --mount=type=cache,target=/root/.ccache \
-    go build -trimpath -o dist/linux-arm64/ollama .
+    go build -trimpath -o dist/linux-arm64/bin/ollama .
 
 # Runtime stages
 FROM --platform=linux/amd64 ubuntu:22.04 as runtime-amd64
