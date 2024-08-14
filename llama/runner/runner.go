@@ -184,6 +184,10 @@ func (s *Server) run(ctx context.Context) {
 				seq.iBatch = batch.NumTokens() - 1
 			}
 
+			if batch.NumTokens() == 0 {
+				continue
+			}
+
 			err := s.lc.Decode(batch)
 			if err != nil {
 				slog.Error("failed to decode batch", "error", err)
