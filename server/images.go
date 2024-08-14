@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
@@ -209,13 +210,25 @@ type RootFS struct {
 	DiffIDs []string `json:"diff_ids"`
 }
 
+var manifestCache struct {
+	sync.Mutex
+	cache map[string]*Manifest
+}
+
 func GetManifest(mp ModelPath) (*Manifest, string, error) {
-	fp, err := mp.GetManifestPath()
-	if err != nil {
-		return nil, "", err
+	manifestCache.Lock()
+	defer manifestCache.Unlock()
+
+	if manifestCache.cache == nil {
+		manifestCache.cache = make(map[string]*Manifest)
 	}
 
-	if _, err = os.Stat(fp); err != nil {
+	if manifest, ok := manifestCache.cache[mp.GetFullTagname()]; ok {
+		return manifest, "", nil
+	}
+
+	fp, err := mp.GetManifestPath()
+	if err != nil {
 		return nil, "", err
 	}
 
@@ -232,6 +245,8 @@ func GetManifest(mp ModelPath) (*Manifest, string, error) {
 	if err := json.Unmarshal(bts, &manifest); err != nil {
 		return nil, "", err
 	}
+
+	manifestCache.cache[mp.GetFullTagname()] = manifest
 
 	return manifest, shaStr, nil
 }
