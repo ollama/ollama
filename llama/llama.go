@@ -157,6 +157,10 @@ func (c *Context) SampleTokenGreedy(logits []float32) int {
 	}))
 }
 
+func (c *Context) KvCacheSeqAdd(seqId int, p0 int, p1 int, delta int) {
+	C.llama_kv_cache_seq_add(c.c, C.int(seqId), C.int(p0), C.int(p1), C.int(delta))
+}
+
 func (c *Context) KvCacheSeqRm(seqId int, p0 int, p1 int) bool {
 	return bool(C.llama_kv_cache_seq_rm(c.c, C.int(seqId), C.int(p0), C.int(p1)))
 }
@@ -189,6 +193,16 @@ func (m *Model) NumVocab() int {
 
 func (m *Model) TokenIsEog(token int) bool {
 	return bool(C.llama_token_is_eog(m.c, C.llama_token(token)))
+}
+
+func (m *Model) ShouldAddBOSToken() bool {
+	addBos := int(C.llama_add_bos_token(m.c))
+
+	if addBos != -1 {
+		return addBos != 0
+	} else {
+		return C.llama_vocab_type(m.c) == C.LLAMA_VOCAB_TYPE_SPM
+	}
 }
 
 func (m *Model) ApplyLoraFromFile(loraPath string, scale float32, baseModelPath string, threads int) error {
