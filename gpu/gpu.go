@@ -653,8 +653,8 @@ func GetDepDir() string {
 		slog.Warn("failed to lookup working directory", "error", err)
 	}
 	// Scan for any of our dependeices, and pick first match
-	for _, root := range []string{filepath.Dir(appExe), cwd} {
-		libDep := "ollama_libs"
+	for _, root := range []string{filepath.Dir(appExe), filepath.Join(filepath.Dir(appExe), ".."), cwd} {
+		libDep := filepath.Join("lib", "ollama")
 		if _, err := os.Stat(filepath.Join(root, libDep)); err == nil {
 			return filepath.Join(root, libDep)
 		}

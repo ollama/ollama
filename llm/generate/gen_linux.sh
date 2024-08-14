@@ -189,7 +189,7 @@ if [ -z "${OLLAMA_SKIP_CUDA_GENERATE}" -a -d "${CUDA_LIB_DIR}" ]; then
     CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} ${ARM64_DEFS} ${CMAKE_CUDA_DEFS} -DGGML_STATIC=off"
     BUILD_DIR="../build/linux/${ARCH}/cuda${CUDA_VARIANT}"
     export LLAMA_SERVER_LDFLAGS="-L${CUDA_LIB_DIR} -lcudart -lcublas -lcublasLt -lcuda"
-    CUDA_DIST_DIR="${CUDA_DIST_DIR:-${DIST_BASE}/ollama_libs}"
+    CUDA_DIST_DIR="${CUDA_DIST_DIR:-${DIST_BASE}/lib/ollama}"
     build
     install
     echo "Installing CUDA dependencies in ${CUDA_DIST_DIR}"
@@ -213,7 +213,7 @@ if [ -z "${OLLAMA_SKIP_ONEAPI_GENERATE}" -a -d "${ONEAPI_ROOT}" ]; then
     CC=icx
     CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx -DGGML_SYCL=ON -DGGML_SYCL_F16=OFF"
     BUILD_DIR="../build/linux/${ARCH}/oneapi"
-    ONEAPI_DIST_DIR="${DIST_BASE}/ollama_libs"
+    ONEAPI_DIST_DIR="${DIST_BASE}/lib/ollama"
     export LLAMA_SERVER_LDFLAGS="-fsycl -lOpenCL -lmkl_core -lmkl_sycl_blas -lmkl_intel_ilp64 -lmkl_tbb_thread -ltbb"
     DEBUG_FLAGS="" # icx compiles with -O0 if we pass -g, so we must remove it
     build
@@ -260,7 +260,7 @@ if [ -z "${OLLAMA_SKIP_ROCM_GENERATE}" -a -d "${ROCM_PATH}" ]; then
         echo "Building custom ROCM GPU"
     fi
     BUILD_DIR="../build/linux/${ARCH}/rocm${ROCM_VARIANT}"
-    ROCM_DIST_DIR="${DIST_BASE}/ollama_libs"
+    ROCM_DIST_DIR="${DIST_BASE}/lib/ollama"
     # TODO figure out how to disable runpath (rpath)
     # export CMAKE_HIP_FLAGS="-fno-rtlib-add-rpath" # doesn't work
     export LLAMA_SERVER_LDFLAGS="-L${ROCM_PATH}/lib -L/opt/amdgpu/lib/x86_64-linux-gnu/ -lhipblas -lrocblas -lamdhip64 -lrocsolver -lamd_comgr -lhsa-runtime64 -lrocsparse -ldrm -ldrm_amdgpu"

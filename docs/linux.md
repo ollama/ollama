@@ -20,13 +20,12 @@ GPU.
 
 ## Manual install
 
-### Download the `ollama` binary
+### Download the `ollama` tar file
 
-Ollama is distributed as a self-contained binary. Download it to a directory in your PATH:
+Ollama is distributed as a tar file including GPU library dependencies.
 
 ```bash
-sudo curl -L https://ollama.com/download/ollama-linux-amd64 -o /usr/bin/ollama
-sudo chmod +x /usr/bin/ollama
+curl -fsSL https://ollama.com/download/ollama-linux-amd64.tgz | sudo tar -C /usr -zxf -
 ```
 
 ### Adding Ollama as a startup service (recommended)
@@ -96,8 +95,7 @@ curl -fsSL https://ollama.com/install.sh | sh
 Or by downloading the ollama binary:
 
 ```bash
-sudo curl -L https://ollama.com/download/ollama-linux-amd64 -o /usr/bin/ollama
-sudo chmod +x /usr/bin/ollama
+curl -fsSL https://ollama.com/download/ollama-linux-amd64.tgz | sudo tar -C /usr -zxf -
 ```
 
 ## Installing specific versions
