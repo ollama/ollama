@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -155,9 +156,11 @@ func Manifests() (map[model.Name]*Manifest, error) {
 			}
 
 			m, err := ParseNamedManifest(n)
-			if err != nil {
+			if syntax := &(json.SyntaxError{}); errors.As(err, &syntax) {
 				slog.Warn("bad manifest", "name", n, "error", err)
 				continue
+			} else if err != nil {
+				return nil, fmt.Errorf("%s: %w", n, err)
 			}
 
 			ms[n] = m
