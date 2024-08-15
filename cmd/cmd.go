@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/charmbracelet/glamour"
 	"github.com/containerd/console"
 	"github.com/mattn/go-runewidth"
 	"github.com/olekukonko/tablewriter"
@@ -908,51 +909,43 @@ type displayResponseState struct {
 	wordBuffer string
 }
 
+func displayLine(content string) {
+	out, _ := glamour.Render(content, "light")
+
+	out = strings.ReplaceAll(out, "\n", "")
+
+	a := runewidth.StringWidth(out)
+	if a > 0 {
+		fmt.Printf("\x1b[%dD", a)
+	}
+	fmt.Printf("\x1b[K")
+	fmt.Print(out)
+}
+
 func displayResponse(content string, wordWrap bool, state *displayResponseState) {
-	termWidth, _, _ := term.GetSize(int(os.Stdout.Fd()))
-	if wordWrap && termWidth >= 10 {
-		for _, ch := range content {
-			if state.lineLength+1 > termWidth-5 {
-				if runewidth.StringWidth(state.wordBuffer) > termWidth-10 {
-					fmt.Printf("%s%c", state.wordBuffer, ch)
-					state.wordBuffer = ""
-					state.lineLength = 0
-					continue
-				}
+	/*
 
-				// backtrack the length of the last word and clear to the end of the line
-				a := runewidth.StringWidth(state.wordBuffer)
-				if a > 0 {
-					fmt.Printf("\x1b[%dD", a)
-				}
-				fmt.Printf("\x1b[K\n")
-				fmt.Printf("%s%c", state.wordBuffer, ch)
-				chWidth := runewidth.RuneWidth(ch)
+		This is a hack. I should prolly use glamor more directly instead of peace-mealing it like this.
+		Also, this doesn't support word-wrap.
 
-				state.lineLength = runewidth.StringWidth(state.wordBuffer) + chWidth
-			} else {
-				fmt.Print(string(ch))
-				state.lineLength += runewidth.RuneWidth(ch)
-				if runewidth.RuneWidth(ch) >= 2 {
-					state.wordBuffer = ""
-					continue
-				}
+	*/
 
-				switch ch {
-				case ' ':
-					state.wordBuffer = ""
-				case '\n':
-					state.lineLength = 0
-				default:
-					state.wordBuffer += string(ch)
-				}
-			}
-		}
-	} else {
-		fmt.Printf("%s%s", state.wordBuffer, content)
-		if len(state.wordBuffer) > 0 {
+	for _, ch := range content {
+		switch ch {
+		case '\n':
+			displayLine(state.wordBuffer)
+			fmt.Print("\n")
+
 			state.wordBuffer = ""
+			state.lineLength = 0
+		default:
+			state.wordBuffer += string(ch)
+			state.lineLength += runewidth.RuneWidth(ch)
 		}
+	}
+
+	if state.lineLength > 0 {
+		displayLine(state.wordBuffer)
 	}
 }
 
