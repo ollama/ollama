@@ -309,7 +309,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [PyOllaMx](https://github.com/kspviswa/pyOllaMx) - macOS application capable of chatting with both Ollama and Apple MLX models.
 - [Claude Dev](https://github.com/saoudrizwan/claude-dev) - VSCode extension for multi-file/whole-repo coding
 - [Cherry Studio](https://github.com/kangfenmao/cherry-studio) (Desktop client with Ollama support)
-  
+- [ConfiChat](https://github.com/1runeberg/confichat) (Lightweight, standalone, multi-platform, and privacy focused LLM chat interface with optional encryption)
+
 ### Terminal
 
 - [oterm](https://github.com/ggozad/oterm)
@@ -386,6 +387,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 - [Enchanted](https://github.com/AugustDev/enchanted)
 - [Maid](https://github.com/Mobile-Artificial-Intelligence/maid)
+- [ConfiChat](https://github.com/1runeberg/confichat) (Lightweight, standalone, multi-platform, and privacy focused LLM chat interface with optional encryption)
 
 ### Extensions & Plugins
 
