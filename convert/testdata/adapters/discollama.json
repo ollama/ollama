@@ -1,0 +1,19 @@
+{
+  "general.architecture": "llama",
+  "general.file_type": "1",
+  "general.parameter_count": "212992",
+  "general.type": "adapter",
+  "general.version": "v0.2",
+  "adapter.lora.alpha": "16",
+  "adapter.type": "lora",
+  "llama.attention.head_count": "32",
+  "llama.attention.head_count_kv": "8",
+  "blk.30.attn_q.weight.lora_a": "3da8806194760ad3c1becd7beeb3c017c52209009477768d4786305d779090ed",
+  "blk.30.attn_q.weight.lora_b": "43865212d61fd66cf8036e0af38b245d637199d4a4e773114b0696a697ef29fb",
+  "blk.30.attn_v.weight.lora_a": "9baac5df3d690018a16a6a4acca44da539acdecfd4144747e563360c4335e969",
+  "blk.30.attn_v.weight.lora_b": "33f877cd53ef6f63377566375ec563f9324302a7ac82432b284a35cd8ddbf428",
+  "blk.31.attn_q.weight.lora_a": "fdfc97751ffd8f400cc62ce1da4357c518f6422268dc5d664e097ff54042ae67",
+  "blk.31.attn_q.weight.lora_b": "b7f93c2359803b92b1a37a151f60cbbf01c6346cac25c19415768432305b7b8d",
+  "blk.31.attn_v.weight.lora_a": "61e417801b9e36ab57c3cb8fe83d539ec746dc98b8f888bf299c41a323273492",
+  "blk.31.attn_v.weight.lora_b": "3cbf45027280d07d0859e31f311b2059c2c239fd0efcc46aacfcbd6eb67c90d7"
+}
