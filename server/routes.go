@@ -1362,9 +1362,14 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	slog.Debug("chat request", "images", len(images), "prompt", prompt)
 
+	toolCallsCh := make(chan []api.ToolCall, 1)
+	doneCh := make(chan bool, 1)
 	ch := make(chan any)
 	go func() {
+		var sb strings.Builder
 		defer close(ch)
+		defer close(toolCallsCh)
+		defer close(doneCh)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
@@ -1384,8 +1389,21 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					EvalDuration:       r.EvalDuration,
 				},
 			}
+			sb.WriteString(r.Content)
 
 			if r.Done {
+				doneCh <- true
+				if len(req.Tools) > 0 {
+					slog.Warn("ollama resp", "content", sb.String())
+					if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
+						slog.Warn("ollama resp", "tool_calls", fmt.Sprintf("%+v", toolCalls))
+						// res.Message.ToolCalls = toolCalls
+						// go func() {
+						toolCallsCh <- toolCalls
+						// }()
+					}
+				}
+
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
@@ -1419,7 +1437,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 
 		resp.Message.Content = sb.String()
-
+		// TODO: 可以简化
 		if len(req.Tools) > 0 {
 			if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
 				resp.Message.ToolCalls = toolCalls
@@ -1429,6 +1447,44 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 		c.JSON(http.StatusOK, resp)
 		return
+	}
+
+	// change stream response with tool calls
+	// slog.Warn("tool_calls", "len", len(toolCallsCh), "toolCallsResp", fmt.Sprintf("%+v", toolCallsCh))
+	var toolCalls []api.ToolCall
+LOOP:
+	for {
+		select {
+		case tc := <-toolCallsCh:
+			toolCalls = tc
+			slog.Warn("tool_calls-1", "len", len(toolCalls), "toolCallsResp", fmt.Sprintf("%+v", toolCalls))
+			break LOOP
+
+		case done, ok := <-doneCh:
+			slog.Warn("done", "done", done, "ok", ok)
+		case <-ch:
+			continue
+		}
+	}
+	slog.Warn("tool_calls-2", "len", len(toolCalls), "toolCallsResp", fmt.Sprintf("%+v", toolCalls))
+	if len(toolCalls) > 0 {
+		// reset the channel
+		ch = make(chan any, len(toolCalls))
+		for i, toolCall := range toolCalls {
+			res := api.ChatResponse{
+				Model:     req.Model,
+				CreatedAt: time.Now().UTC(),
+				Message:   api.Message{Role: "assistant", ToolCalls: []api.ToolCall{toolCall}},
+			}
+			if i == len(toolCalls)-1 {
+				// TODO: metrics
+				res.Done = true
+				res.DoneReason = "tool_calls"
+			}
+			slog.Warn("add tool calls resp", "resp", fmt.Sprintf("%+v", res))
+			ch <- res
+		}
+		close(ch)
 	}
 
 	streamResponse(c, ch)
