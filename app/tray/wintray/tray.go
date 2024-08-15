@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -433,7 +434,12 @@ func (t *winTray) setIcon(src string) error {
 	t.muNID.Lock()
 	defer t.muNID.Unlock()
 	t.nid.Icon = h
-	t.nid.Flags |= NIF_ICON
+	t.nid.Flags |= NIF_ICON | NIF_TIP
+	if toolTipUTF16, err := syscall.UTF16FromString(commontray.ToolTip); err == nil {
+		copy(t.nid.Tip[:], toolTipUTF16)
+	} else {
+		return err
+	}
 	t.nid.Size = uint32(unsafe.Sizeof(*t.nid))
 
 	return t.nid.modify()
