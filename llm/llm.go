@@ -69,19 +69,26 @@ func tokenize(model *loadedModel, content string) ([]int, error) {
 	ccontent := C.CString(content)
 	defer C.free(unsafe.Pointer(ccontent))
 
-	len := len(content) + 2
-	tokens := make([]C.int32_t, len)
+	tokenCount := len(content) + 2
+	tokens := make([]C.int32_t, tokenCount)
 
-	tokenCount := C.llama_tokenize(model.model, ccontent, C.int32_t(len), &tokens[0], C.int32_t(len), true, true)
+	tokenCount = int(C.llama_tokenize(model.model, ccontent, C.int32_t(len(content)),
+		&tokens[0], C.int32_t(tokenCount), true, true))
 	if tokenCount < 0 {
+		tokenCount = -tokenCount
 		slog.Info("XXX got negative response", "count", tokenCount)
-		tokens = make([]C.int32_t, int(tokenCount))
-		tokenCount = C.llama_tokenize(model.model, ccontent, C.int32_t(len), &tokens[0], tokenCount, true, true)
+		tokens = make([]C.int32_t, tokenCount)
+		tokenCount = int(C.llama_tokenize(model.model, ccontent, C.int32_t(len(content)), &tokens[0],
+			C.int32_t(tokenCount), true, true))
+
+		if tokenCount < 0 {
+			return nil, fmt.Errorf("failed to tokenize: %d", tokenCount)
+		}
 	} else if tokenCount == 0 {
 		return nil, nil
 	}
 	ret := make([]int, tokenCount)
-	for i := range int(tokenCount) {
+	for i := range tokenCount {
 		ret[i] = int(tokens[i])
 	}
 	slog.Debug("XXX tokenized", "tokens", tokens, "content", content)
