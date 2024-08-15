@@ -55,7 +55,7 @@ func start(ctx context.Context, command string) (*exec.Cmd, error) {
 	}
 
 	rotateLogs(ServerLogFile)
-	logFile, err := os.OpenFile(ServerLogFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0755)
+	logFile, err := os.OpenFile(ServerLogFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o755)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create server log: %w", err)
 	}

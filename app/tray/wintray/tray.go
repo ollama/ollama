@@ -13,8 +13,9 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/ollama/ollama/app/tray/commontray"
 	"golang.org/x/sys/windows"
+
+	"github.com/ollama/ollama/app/tray/commontray"
 )
 
 // Helpful sources: https://github.com/golang/exp/blob/master/shiny/driver/internal/win32
@@ -414,7 +415,7 @@ func iconBytesToFilePath(iconBytes []byte) (string, error) {
 	iconFilePath := filepath.Join(os.TempDir(), "ollama_temp_icon_"+dataHash)
 
 	if _, err := os.Stat(iconFilePath); os.IsNotExist(err) {
-		if err := os.WriteFile(iconFilePath, iconBytes, 0644); err != nil {
+		if err := os.WriteFile(iconFilePath, iconBytes, 0o644); err != nil {
 			return "", err
 		}
 	}

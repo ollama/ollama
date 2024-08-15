@@ -47,6 +47,9 @@ type GenerateRequest struct {
 	// Prompt is the textual prompt to send to the model.
 	Prompt string `json:"prompt"`
 
+	// Suffix is the text that comes after the inserted text.
+	Suffix string `json:"suffix"`
+
 	// System overrides the model's default system message/prompt.
 	System string `json:"system"`
 
@@ -97,17 +100,85 @@ type ChatRequest struct {
 	// followin the request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
+	// Tools is an optional list of tools the model has access to.
+	Tools `json:"tools,omitempty"`
+
 	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
+}
+
+type Tools []Tool
+
+func (t Tools) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
+}
+
+func (t Tool) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
 }
 
 // Message is a single message in a chat sequence. The message contains the
 // role ("system", "user", or "assistant"), the content and an optional list
 // of images.
 type Message struct {
-	Role    string      `json:"role"`
-	Content string      `json:"content"`
-	Images  []ImageData `json:"images,omitempty"`
+	Role      string      `json:"role"`
+	Content   string      `json:"content"`
+	Images    []ImageData `json:"images,omitempty"`
+	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
+}
+
+func (m *Message) UnmarshalJSON(b []byte) error {
+	type Alias Message
+	var a Alias
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+
+	*m = Message(a)
+	m.Role = strings.ToLower(m.Role)
+	return nil
+}
+
+type ToolCall struct {
+	Function ToolCallFunction `json:"function"`
+}
+
+type ToolCallFunction struct {
+	Name      string                    `json:"name"`
+	Arguments ToolCallFunctionArguments `json:"arguments"`
+}
+
+type ToolCallFunctionArguments map[string]any
+
+func (t *ToolCallFunctionArguments) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
+}
+
+type Tool struct {
+	Type     string       `json:"type"`
+	Function ToolFunction `json:"function"`
+}
+
+type ToolFunction struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Parameters  struct {
+		Type       string   `json:"type"`
+		Required   []string `json:"required"`
+		Properties map[string]struct {
+			Type        string   `json:"type"`
+			Description string   `json:"description"`
+			Enum        []string `json:"enum,omitempty"`
+		} `json:"properties"`
+	} `json:"parameters"`
+}
+
+func (t *ToolFunction) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
 }
 
 // ChatResponse is the response returned by [Client.Chat]. Its fields are
@@ -143,6 +214,7 @@ type Options struct {
 	NumPredict       int      `json:"num_predict,omitempty"`
 	TopK             int      `json:"top_k,omitempty"`
 	TopP             float32  `json:"top_p,omitempty"`
+	MinP             float32  `json:"min_p,omitempty"`
 	TFSZ             float32  `json:"tfs_z,omitempty"`
 	TypicalP         float32  `json:"typical_p,omitempty"`
 	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
@@ -159,49 +231,45 @@ type Options struct {
 
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
-	UseNUMA   bool     `json:"numa,omitempty"`
-	NumCtx    int      `json:"num_ctx,omitempty"`
-	NumBatch  int      `json:"num_batch,omitempty"`
-	NumGPU    int      `json:"num_gpu,omitempty"`
-	MainGPU   int      `json:"main_gpu,omitempty"`
-	LowVRAM   bool     `json:"low_vram,omitempty"`
-	F16KV     bool     `json:"f16_kv,omitempty"`
-	LogitsAll bool     `json:"logits_all,omitempty"`
-	VocabOnly bool     `json:"vocab_only,omitempty"`
-	UseMMap   TriState `json:"use_mmap,omitempty"`
-	UseMLock  bool     `json:"use_mlock,omitempty"`
-	NumThread int      `json:"num_thread,omitempty"`
+	NumCtx    int   `json:"num_ctx,omitempty"`
+	NumBatch  int   `json:"num_batch,omitempty"`
+	NumGPU    int   `json:"num_gpu,omitempty"`
+	MainGPU   int   `json:"main_gpu,omitempty"`
+	LowVRAM   bool  `json:"low_vram,omitempty"`
+	F16KV     bool  `json:"f16_kv,omitempty"`
+	LogitsAll bool  `json:"logits_all,omitempty"`
+	VocabOnly bool  `json:"vocab_only,omitempty"`
+	UseMMap   *bool `json:"use_mmap,omitempty"`
+	UseMLock  bool  `json:"use_mlock,omitempty"`
+	NumThread int   `json:"num_thread,omitempty"`
 }
 
-type TriState int
+// EmbedRequest is the request passed to [Client.Embed].
+type EmbedRequest struct {
+	// Model is the model name.
+	Model string `json:"model"`
 
-const (
-	TriStateUndefined TriState = -1
-	TriStateFalse     TriState = 0
-	TriStateTrue      TriState = 1
-)
+	// Input is the input to embed.
+	Input any `json:"input"`
 
-func (b *TriState) UnmarshalJSON(data []byte) error {
-	var v bool
-	if err := json.Unmarshal(data, &v); err != nil {
-		return err
-	}
-	if v {
-		*b = TriStateTrue
-	}
-	*b = TriStateFalse
-	return nil
+	// KeepAlive controls how long the model will stay loaded in memory following
+	// this request.
+	KeepAlive *Duration `json:"keep_alive,omitempty"`
+
+	Truncate *bool `json:"truncate,omitempty"`
+
+	// Options lists model-specific options.
+	Options map[string]interface{} `json:"options"`
 }
 
-func (b *TriState) MarshalJSON() ([]byte, error) {
-	if *b == TriStateUndefined {
-		return nil, nil
-	}
-	var v bool
-	if *b == TriStateTrue {
-		v = true
-	}
-	return json.Marshal(v)
+// EmbedResponse is the response from [Client.Embed].
+type EmbedResponse struct {
+	Model      string      `json:"model"`
+	Embeddings [][]float32 `json:"embeddings"`
+
+	TotalDuration   time.Duration `json:"total_duration,omitempty"`
+	LoadDuration    time.Duration `json:"load_duration,omitempty"`
+	PromptEvalCount int           `json:"prompt_eval_count,omitempty"`
 }
 
 // EmbeddingRequest is the request passed to [Client.Embeddings].
@@ -250,8 +318,10 @@ type DeleteRequest struct {
 
 // ShowRequest is the request passed to [Client.Show].
 type ShowRequest struct {
-	Model    string `json:"model"`
-	System   string `json:"system"`
+	Model  string `json:"model"`
+	System string `json:"system"`
+
+	// Template is deprecated
 	Template string `json:"template"`
 	Verbose  bool   `json:"verbose"`
 
@@ -345,6 +415,13 @@ type ProcessModelResponse struct {
 	SizeVRAM  int64        `json:"size_vram"`
 }
 
+type RetrieveModelResponse struct {
+	Id      string `json:"id"`
+	Object  string `json:"object"`
+	Created int64  `json:"created"`
+	OwnedBy string `json:"owned_by"`
+}
+
 type TokenResponse struct {
 	Token string `json:"token"`
 }
@@ -427,26 +504,13 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 	for key, val := range m {
 		opt, ok := jsonOpts[key]
 		if !ok {
-			slog.Warn("invalid option provided", "option", opt.Name)
+			slog.Warn("invalid option provided", "option", key)
 			continue
 		}
 
 		field := valueOpts.FieldByName(opt.Name)
 		if field.IsValid() && field.CanSet() {
 			if val == nil {
-				continue
-			}
-
-			if reflect.PointerTo(field.Type()) == reflect.TypeOf((*TriState)(nil)) {
-				val, ok := val.(bool)
-				if !ok {
-					return fmt.Errorf("option %q must be of type boolean", key)
-				}
-				if val {
-					field.SetInt(int64(TriStateTrue))
-				} else {
-					field.SetInt(int64(TriStateFalse))
-				}
 				continue
 			}
 
@@ -496,6 +560,17 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 					slice[i] = str
 				}
 				field.Set(reflect.ValueOf(slice))
+			case reflect.Pointer:
+				var b bool
+				if field.Type() == reflect.TypeOf(&b) {
+					val, ok := val.(bool)
+					if !ok {
+						return fmt.Errorf("option %q must be of type boolean", key)
+					}
+					field.Set(reflect.ValueOf(&val))
+				} else {
+					return fmt.Errorf("unknown type loading config params: %v %v", field.Kind(), field.Type())
+				}
 			default:
 				return fmt.Errorf("unknown type loading config params: %v", field.Kind())
 			}
@@ -538,8 +613,7 @@ func DefaultOptions() Options {
 			LowVRAM:   false,
 			F16KV:     true,
 			UseMLock:  false,
-			UseMMap:   TriStateUndefined,
-			UseNUMA:   false,
+			UseMMap:   nil,
 		},
 	}
 }
@@ -608,19 +682,6 @@ func FormatParams(params map[string][]string) (map[string]interface{}, error) {
 		} else {
 			field := valueOpts.FieldByName(opt.Name)
 			if field.IsValid() && field.CanSet() {
-				if reflect.PointerTo(field.Type()) == reflect.TypeOf((*TriState)(nil)) {
-					boolVal, err := strconv.ParseBool(vals[0])
-					if err != nil {
-						return nil, fmt.Errorf("invalid bool value %s", vals)
-					}
-					if boolVal {
-						out[key] = TriStateTrue
-					} else {
-						out[key] = TriStateFalse
-					}
-					continue
-				}
-
 				switch field.Kind() {
 				case reflect.Float32:
 					floatVal, err := strconv.ParseFloat(vals[0], 32)
@@ -648,6 +709,17 @@ func FormatParams(params map[string][]string) (map[string]interface{}, error) {
 				case reflect.Slice:
 					// TODO: only string slices are supported right now
 					out[key] = vals
+				case reflect.Pointer:
+					var b bool
+					if field.Type() == reflect.TypeOf(&b) {
+						boolVal, err := strconv.ParseBool(vals[0])
+						if err != nil {
+							return nil, fmt.Errorf("invalid bool value %s", vals)
+						}
+						out[key] = &boolVal
+					} else {
+						return nil, fmt.Errorf("unknown type %s for %s", field.Kind(), key)
+					}
 				default:
 					return nil, fmt.Errorf("unknown type %s for %s", field.Kind(), key)
 				}

@@ -104,7 +104,7 @@ like to use. For example, to compile an optimized binary for an Intel i9-9880H,
 you might use:
 
 ```
-OLLAMA_CUSTOM_CPU_DEFS="-DLLAMA_AVX=on -DLLAMA_AVX2=on -DLLAMA_F16C=on -DLLAMA_FMA=on" go generate ./...
+OLLAMA_CUSTOM_CPU_DEFS="-DGGML_AVX=on -DGGML_AVX2=on -DGGML_F16C=on -DGGML_FMA=on" go generate ./...
 go build .
 ```
 

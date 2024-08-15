@@ -1,0 +1,350 @@
+diff --git a/common/common.cpp b/common/common.cpp
+index 2e8374d5..70d0afde 100644
+--- a/common/common.cpp
++++ b/common/common.cpp
+@@ -2110,9 +2110,21 @@ struct llama_init_result llama_init_from_gpt_params(gpt_params & params) {
+         loaded_la.adapter = llama_lora_adapter_init(model, la.path.c_str());
+         if (loaded_la.adapter == nullptr) {
+             fprintf(stderr, "%s: error: failed to apply lora adapter '%s'\n", __func__, la.path.c_str());
+-            llama_free(lctx);
+-            llama_free_model(model);
+-            return iparams;
++
++            // if that fails, try loading as ggla for compatibility
++            int err = llama_model_apply_lora_from_file(model,
++                                                    la.path.c_str(),
++                                                    la.scale,
++                                                    nullptr,
++                                                    params.n_threads);
++            if (err != 0) {
++                fprintf(stderr, "%s: error: failed to apply lora adapter\n", __func__);
++                llama_free(lctx);
++                llama_free_model(model);
++                return iparams;
++            } else {
++                break;
++            }
+         }
+         iparams.lora_adapters.push_back(loaded_la); // copy to list of loaded adapters
+     }
+diff --git a/include/llama.h b/include/llama.h
+index 93fd77ca..b0fb37a6 100644
+--- a/include/llama.h
++++ b/include/llama.h
+@@ -1160,6 +1160,20 @@ extern "C" {
+ 
+     LLAMA_API void llama_dump_timing_info_yaml(FILE * stream, const struct llama_context * ctx);
+ 
++    // Apply a LoRA adapter to a loaded model
++    // path_base_model is the path to a higher quality model to use as a base for
++    // the layers modified by the adapter. Can be NULL to use the current loaded model.
++    // The model needs to be reloaded before applying a new adapter, otherwise the adapter
++    // will be applied on top of the previous one
++    // Returns 0 on success
++    LLAMA_API int32_t llama_model_apply_lora_from_file(
++            const struct llama_model * model,
++                            const char * path_lora,
++                                float   scale,
++                            const char * path_base_model,
++                                int32_t   n_threads);
++
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/src/llama.cpp b/src/llama.cpp
+index 80a0dd0f..9d7b0e17 100644
+--- a/src/llama.cpp
++++ b/src/llama.cpp
+@@ -21880,3 +21880,290 @@ static void llama_log_callback_default(ggml_log_level level, const char * text,
+     fputs(text, stderr);
+     fflush(stderr);
+ }
++
++static int llama_apply_lora_from_file_internal(
++    const struct llama_model & model, const char * path_lora, float scale, const char * path_base_model, int n_threads
++) {
++    LLAMA_LOG_INFO("%s: applying lora adapter from '%s' - please wait ...\n", __func__, path_lora);
++
++    const int64_t t_start_lora_us = ggml_time_us();
++
++    llama_file fin(path_lora, "rb");
++
++    // verify magic and version
++    {
++        uint32_t magic = fin.read_u32();
++        if (magic != LLAMA_FILE_MAGIC_GGLA) {
++            LLAMA_LOG_ERROR("%s: bad file magic\n", __func__);
++            return 1;
++        }
++
++        uint32_t format_version = fin.read_u32();
++        if (format_version != 1) {
++            LLAMA_LOG_ERROR("%s: unsupported file version\n", __func__ );
++            return 1;
++        }
++    }
++
++    int32_t lora_r = fin.read_u32();
++    int32_t lora_alpha = fin.read_u32();
++    float scaling = scale * (float)lora_alpha / (float)lora_r;
++
++    LLAMA_LOG_INFO("%s: r = %d, alpha = %d, scaling = %.2f\n", __func__, lora_r, lora_alpha, scaling);
++
++    // load base model
++    std::unique_ptr<llama_model_loader> ml;
++    if (path_base_model) {
++        LLAMA_LOG_INFO("%s: loading base model from '%s'\n", __func__, path_base_model);
++        ml.reset(new llama_model_loader(path_base_model, /*use_mmap*/ true, /*check_tensors*/ false, /*kv_overrides*/ nullptr));
++        ml->init_mappings(/*prefetch*/ false); // no prefetching
++    }
++
++    struct tensor_meta {
++        std::string name;
++        ggml_type type;
++        int32_t ne[2];
++        size_t offset;
++    };
++    std::map<std::string, tensor_meta> tensor_meta_map;
++
++    // load all tensor meta
++    while (true) {
++        if (fin.tell() == fin.size) {
++            // eof
++            break;
++        }
++
++        int32_t n_dims;
++        int32_t name_len;
++        int32_t ftype;
++
++        fin.read_raw(&n_dims, sizeof(n_dims));
++        fin.read_raw(&name_len, sizeof(name_len));
++        fin.read_raw(&ftype, sizeof(ftype));
++
++        if (n_dims != 1 && n_dims != 2) {
++            LLAMA_LOG_ERROR("%s: unsupported tensor dimension %d\n", __func__, n_dims);
++            return 1;
++        }
++
++        int32_t ne[2] = { 1, 1 };
++        for (int i = 0; i < n_dims; ++i) {
++            fin.read_raw(&ne[i], sizeof(ne[i]));
++        }
++
++        std::string name;
++        {
++            GGML_ASSERT(name_len < GGML_MAX_NAME);
++            char buf[GGML_MAX_NAME];
++            fin.read_raw(buf, name_len);
++            name = std::string(buf, name_len);
++        }
++
++        // check for lora suffix
++        std::string lora_suffix;
++        if (name.length() > 6) {
++            lora_suffix = name.substr(name.length() - 6);
++        }
++        if (lora_suffix != ".loraA" && lora_suffix != ".loraB") {
++            LLAMA_LOG_ERROR("%s: error: '%s' is not a lora tensor\n", __func__, name.c_str());
++            return 1;
++        }
++
++        // tensor type
++        ggml_type wtype;
++        switch (ftype) {
++            case 0: wtype = GGML_TYPE_F32;  break;
++            case 1: wtype = GGML_TYPE_F16;  break;
++            default:
++                    {
++                        LLAMA_LOG_ERROR("%s: invalid tensor data type '%d'\n",
++                                __func__, ftype);
++                        return 1;
++                    }
++        }
++
++        // data offset
++        size_t offset = fin.tell();
++        offset = (offset + 31) & -32;
++
++        // skip tensor data
++        fin.seek(offset + ggml_row_size(wtype, ne[0]) * ne[1], SEEK_SET);
++
++        tensor_meta_map.emplace(name, tensor_meta{ name, wtype, { ne[0], ne[1] }, offset });
++    }
++
++    bool warned = false;
++    int n_tensors = 0;
++
++    // apply
++    ggml_backend_t backend_cpu = ggml_backend_cpu_init();
++    if (backend_cpu == nullptr) {
++        LLAMA_LOG_ERROR("%s: error: failed to initialize cpu backend\n", __func__);
++        return 1;
++    }
++    ggml_backend_cpu_set_n_threads(backend_cpu, n_threads);
++
++    std::vector<no_init<uint8_t>> read_buf;
++    for (const auto & it : model.tensors_by_name) {
++        const std::string & base_name = it.first;
++        ggml_tensor * model_t = it.second;
++
++        if (tensor_meta_map.find(base_name + ".loraA") == tensor_meta_map.end() ||
++            tensor_meta_map.find(base_name + ".loraB") == tensor_meta_map.end()) {
++            continue;
++        }
++
++        tensor_meta & metaA = tensor_meta_map.at(base_name + ".loraA");
++        tensor_meta & metaB = tensor_meta_map.at(base_name + ".loraB");
++
++        ggml_init_params lora_init_params = {
++            /* .mem_size   */ ggml_tensor_overhead()*128 + ggml_graph_overhead(),
++            /* .mem_buffer */ nullptr,
++            /* .no_alloc   */ true,
++        };
++        ggml_context * lora_ctx = ggml_init(lora_init_params);
++        if (lora_ctx == nullptr) {
++            LLAMA_LOG_ERROR("%s: error: failed to initialize lora context\n", __func__);
++            ggml_backend_free(backend_cpu);
++            return 1;
++        }
++
++        // create tensors
++        ggml_tensor * loraA = ggml_new_tensor_2d(lora_ctx, metaA.type, metaA.ne[0], metaA.ne[1]);
++        ggml_tensor * loraB = ggml_new_tensor_2d(lora_ctx, metaB.type, metaB.ne[0], metaB.ne[1]);
++        ggml_set_name(loraA, metaA.name.c_str());
++        ggml_set_name(loraB, metaB.name.c_str());
++
++        ggml_tensor * base_t;
++        if (ml) {
++            if (!ml->get_tensor_meta(base_name.c_str())) {
++                LLAMA_LOG_ERROR("%s: error: tensor '%s' not found in base model\n", __func__, base_name.c_str());
++                return 1;
++            }
++            base_t = ggml_dup_tensor(lora_ctx, ml->get_tensor_meta(base_name.c_str()));
++        } else {
++            base_t = ggml_dup_tensor(lora_ctx, model_t);
++        }
++        ggml_set_name(base_t, base_name.c_str());
++
++        // allocate in backend buffer
++        ggml_backend_buffer_t lora_buf = ggml_backend_alloc_ctx_tensors_from_buft(lora_ctx, ggml_backend_cpu_buffer_type());
++        if (lora_buf == nullptr) {
++            LLAMA_LOG_ERROR("%s: error: failed to allocate lora tensors\n", __func__);
++            return 1;
++        }
++
++        // load tensor data
++        auto load_tensor = [&read_buf, &fin](const tensor_meta & tensor_meta, ggml_tensor * tensor) {
++            read_buf.resize(ggml_nbytes(tensor));
++            fin.seek(tensor_meta.offset, SEEK_SET);
++            fin.read_raw(read_buf.data(), ggml_nbytes(tensor));
++            ggml_backend_tensor_set(tensor, read_buf.data(), 0, read_buf.size());
++        };
++        load_tensor(metaA, loraA);
++        load_tensor(metaB, loraB);
++
++        // load base model tensor data
++        if (ml) {
++            ml->load_data_for(base_t);
++        } else {
++            ggml_backend_tensor_copy(model_t, base_t);
++        }
++
++        if (ggml_is_quantized(base_t->type) && !warned) {
++            LLAMA_LOG_WARN("%s: warning: using a lora adapter with a quantized model may result in poor quality, "
++                            "use a f16 or f32 base model with --lora-base\n", __func__);
++            warned = true;
++        }
++
++        if (base_t->ne[0] != loraA->ne[1] || base_t->ne[1] != loraB->ne[1]) {
++            LLAMA_LOG_ERROR("%s: incompatible tensor dimensions (%" PRId64 " and %" PRId64 ");"
++                            " are you sure that this adapter is for this model?\n", __func__, base_t->ne[0], loraA->ne[1]);
++            ggml_free(lora_ctx);
++            ggml_backend_buffer_free(lora_buf);
++            ggml_backend_free(backend_cpu);
++            return 1;
++        }
++
++        auto build_lora_graph = [&]() {
++            // w = w + BA*s
++            ggml_tensor * BA = ggml_mul_mat(lora_ctx, loraA, loraB);
++            ggml_set_name(BA, "BA");
++
++            if (scaling != 1.0f) {
++                BA = ggml_scale(lora_ctx, BA, scaling);
++                ggml_set_name(BA, "BA_scaled");
++            }
++
++            ggml_tensor * r;
++            r = ggml_add_inplace(lora_ctx, base_t, BA);
++            ggml_set_name(r, "r_add");
++
++            if (base_t->type != model_t->type) {
++                // convert the result to the model type
++                r = ggml_cast(lora_ctx, r, model_t->type);
++                ggml_set_name(r, "r_cast");
++            }
++
++            return r;
++        };
++
++        ggml_cgraph * gf = ggml_new_graph(lora_ctx);
++        ggml_tensor * r = build_lora_graph();
++        ggml_build_forward_expand(gf, r);
++
++        ggml_backend_buffer_t graph_buf = ggml_backend_alloc_ctx_tensors_from_buft(lora_ctx, ggml_backend_cpu_buffer_type());
++        if (graph_buf == nullptr) {
++            LLAMA_LOG_ERROR("%s: error: failed to allocate graph tensors\n", __func__);
++            ggml_free(lora_ctx);
++            ggml_backend_buffer_free(lora_buf);
++            ggml_backend_free(backend_cpu);
++            return 1;
++        }
++
++        ggml_backend_graph_compute(backend_cpu, gf);
++
++        ggml_backend_tensor_set(model_t, r->data, 0, ggml_nbytes(r));
++
++#if 0
++        // TODO: use scheduler with fallback to CPU for less copies between CPU and GPU
++        //ggml_backend_sched_t sched = ggml_backend_sched_new(backends.data(), backends.size(), GGML_DEFAULT_GRAPH_SIZE);
++
++        // sched compute
++        ggml_build_forward_expand(gf, build_graph());
++        ggml_backend_sched_init_measure(sched, gf);
++
++        // create the graph again, since the previous one was destroyed by the measure
++        ggml_graph_clear(gf);
++        ggml_build_forward_expand(gf, build_graph());
++        ggml_backend_sched_graph_compute(sched, gf);
++        ggml_backend_sched_free(sched);
++#endif
++
++        ggml_backend_buffer_free(lora_buf);
++        ggml_backend_buffer_free(graph_buf);
++        ggml_free(lora_ctx);
++
++        n_tensors++;
++        if (n_tensors % 4 == 0) {
++            LLAMA_LOG_INFO(".");
++        }
++    }
++
++    ggml_backend_free(backend_cpu);
++
++    const int64_t t_lora_us = ggml_time_us() - t_start_lora_us;
++    LLAMA_LOG_INFO(" done (%.2f ms)\n", t_lora_us / 1000.0);
++
++    return 0;
++}
++
++int32_t llama_model_apply_lora_from_file(const struct llama_model * model, const char * path_lora, float scale, const char * path_base_model, int32_t n_threads) {
++    try {
++        return llama_apply_lora_from_file_internal(*model, path_lora, scale, path_base_model, n_threads);
++    } catch (const std::exception & err) {
++        LLAMA_LOG_ERROR("%s: failed to apply lora adapter: %s\n", __func__, err.what());
++        return 1;
++    }
++}
+\ No newline at end of file

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/ollama/ollama/util/bufioutil"
 )
 
 type GGML struct {
@@ -110,11 +112,14 @@ func (kv KV) ChatTemplate() string {
 	return s
 }
 
-type Tensors []*Tensor
+type Tensors struct {
+	Items  []*Tensor
+	Offset uint64
+}
 
 func (ts Tensors) Layers() map[string]Layer {
 	layers := make(map[string]Layer)
-	for _, t := range ts {
+	for _, t := range ts.Items {
 		parts := strings.Split(t.Name, ".")
 		if parts[0] == "blk" {
 			// join first and second part, e.g. blk.%d
@@ -150,6 +155,14 @@ type Tensor struct {
 	Shape []uint64 `json:"shape"`
 
 	io.WriterTo `json:"-"`
+}
+
+func (t Tensor) block() (n int) {
+	if _, err := fmt.Sscanf(t.Name, "blk.%d.", &n); err != nil {
+		return -1
+	}
+
+	return
 }
 
 func (t Tensor) blockSize() uint64 {
@@ -278,7 +291,18 @@ func DetectGGMLType(b []byte) string {
 	}
 }
 
-func DecodeGGML(rs io.ReadSeeker) (*GGML, int64, error) {
+// DecodeGGML decodes a GGML model from the given reader.
+//
+// It collects array values for arrays with a size less than or equal to
+// maxArraySize. If maxArraySize is 0, the default value of 1024 is used. If
+// the maxArraySize is negative, all arrays are collected.
+func DecodeGGML(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
+	if maxArraySize == 0 {
+		maxArraySize = 1024
+	}
+
+	rs = bufioutil.NewBufferedSeeker(rs, 32<<10)
+
 	var magic uint32
 	if err := binary.Read(rs, binary.LittleEndian, &magic); err != nil {
 		return nil, 0, err
@@ -291,17 +315,15 @@ func DecodeGGML(rs io.ReadSeeker) (*GGML, int64, error) {
 	case FILE_MAGIC_GGLA:
 		c = &containerGGLA{}
 	case FILE_MAGIC_GGUF_LE:
-		c = &containerGGUF{ByteOrder: binary.LittleEndian}
+		c = &containerGGUF{ByteOrder: binary.LittleEndian, maxArraySize: maxArraySize}
 	case FILE_MAGIC_GGUF_BE:
-		c = &containerGGUF{ByteOrder: binary.BigEndian}
+		c = &containerGGUF{ByteOrder: binary.BigEndian, maxArraySize: maxArraySize}
 	default:
 		return nil, 0, errors.New("invalid file magic")
 	}
 
 	model, err := c.Decode(rs)
-	if errors.Is(err, io.EOF) {
-		// noop
-	} else if err != nil {
+	if err != nil {
 		return nil, 0, err
 	}
 
@@ -321,7 +343,7 @@ func (llm GGML) GraphSize(context, batch uint64) (partialOffload, fullOffload ui
 	embedding := llm.KV().EmbeddingLength()
 	heads := llm.KV().HeadCount()
 	headsKV := llm.KV().HeadCountKV()
-	vocab := uint64(len(llm.KV()["tokenizer.ggml.tokens"].([]any)))
+	vocab := uint64(llm.KV()["tokenizer.ggml.tokens"].(*array).size)
 
 	embeddingHeads := llm.KV().EmbeddingHeadCount()
 	embeddingHeadsK := llm.KV().EmbeddingHeadCountK()
@@ -355,9 +377,18 @@ func (llm GGML) GraphSize(context, batch uint64) (partialOffload, fullOffload ui
 				4*batch*(1+2*embedding+context*(1+heads))+embedding*(6*context*headsKV/heads+embedding*9/16),
 			)
 		}
-	case "gemma":
-		fullOffload = 4 * batch * (embedding + vocab)
-		partialOffload = 4*batch*(2*embedding+vocab+1) + embedding*vocab*105/128
+	case "gemma", "gemma2":
+		fullOffload = max(
+			4*batch*(embedding+vocab),
+			4*batch*(2+context+context*heads+2*embedding+2*embeddingHeadsK*heads),
+		)
+
+		partialOffload = max(
+			4*embedding*batch+embedding*vocab*105/128+4*vocab*batch,
+			4*batch*(2*embedding+1+2*embeddingHeadsK*heads+context+context*heads)+
+				4*embeddingHeadsK*context*8+
+				embedding*embeddingHeadsK*heads*9/16,
+		)
 	case "command-r":
 		fullOffload = max(
 			4*batch*(embedding+vocab),
@@ -404,6 +435,32 @@ func (llm GGML) GraphSize(context, batch uint64) (partialOffload, fullOffload ui
 			4*batch*(3*embedding+vocab)+embedding*vocab*105/128,
 			4*batch*(2*embedding+1+2*embeddingHeadsK*headsKV+context+context*headsKV)+4*embeddingHeadsK*context*headsKV+embedding*embeddingHeadsK*headsKV*9/16,
 		)
+	case "chatglm":
+		fullOffload = 4 * batch * (embedding + vocab)
+		partialOffload = 4*batch*(embedding+vocab) + embedding*vocab*105/128
+		if qkvBias, ok := layers["blk.0"]["attn_qkv.bias"]; ok {
+			fullOffload = max(
+				fullOffload,
+				4*batch*(2+
+					2*embedding+
+					context+
+					context*heads+
+					embeddingHeadsK*heads+
+					qkvBias.Shape[0]),
+			)
+
+			partialOffload = max(
+				partialOffload,
+				4*batch*(1+
+					2*embedding+
+					embeddingHeadsK*heads+
+					context+
+					context*heads)+
+					4*embeddingHeadsK*context+
+					4*context*embeddingHeadsK+
+					4*qkvBias.Shape[0],
+			)
+		}
 	}
 
 	return

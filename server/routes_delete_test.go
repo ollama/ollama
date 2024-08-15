@@ -8,15 +8,17 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/gin-gonic/gin"
+
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/types/model"
 )
 
 func TestDelete(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 
 	var s Server
 
@@ -77,6 +79,8 @@ func TestDelete(t *testing.T) {
 }
 
 func TestDeleteDuplicateLayers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
 	var s Server
@@ -94,7 +98,7 @@ func TestDeleteDuplicateLayers(t *testing.T) {
 	}
 
 	// create a manifest with duplicate layers
-	if err := WriteManifest(n, config, []*Layer{config}); err != nil {
+	if err := WriteManifest(n, config, []Layer{config}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -8,6 +8,7 @@ package gpu
 #include "gpu_info_darwin.h"
 */
 import "C"
+
 import (
 	"runtime"
 
@@ -56,7 +57,8 @@ func GetCPUInfo() GpuInfoList {
 func GetCPUMem() (memInfo, error) {
 	return memInfo{
 		TotalMemory: uint64(C.getPhysicalMemory()),
-		FreeMemory:  0,
+		FreeMemory:  uint64(C.getFreeMemory()),
+		// FreeSwap omitted as Darwin uses dynamic paging
 	}, nil
 }
 
