@@ -106,7 +106,7 @@ type AdapterConverter interface {
 	writeFile(io.WriteSeeker, llm.KV, []llm.Tensor) error
 }
 
-func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseLayer *llm.GGML) error {
+func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseKV llm.KV) error {
 	bts, err := fs.ReadFile(fsys, "adapter_config.json")
 	if err != nil {
 		return err
@@ -122,7 +122,6 @@ func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseLayer *llm.GGML) error {
 		return err
 	}
 
-	baseKV := baseLayer.KV()
 	arch, ok := baseKV["general.architecture"]
 	if !ok {
 		return errors.New("architecture not set for the base model")
