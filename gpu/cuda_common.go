@@ -28,7 +28,7 @@ func cudaGetVisibleDevicesEnv(gpuInfo []GpuInfo) (string, string) {
 	return "CUDA_VISIBLE_DEVICES", strings.Join(ids, ",")
 }
 
-func cudaGetVariant(gpuInfo CudaGPUInfo) string {
+func cudaVariant(gpuInfo CudaGPUInfo) string {
 	if runtime.GOARCH == "arm64" && runtime.GOOS == "linux" {
 		if CudaTegra != "" {
 			ver := strings.Split(CudaTegra, ".")
