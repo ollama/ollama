@@ -10,6 +10,7 @@ package llm
 // #include <stdlib.h>
 // #include "llama.h"
 import "C"
+
 import (
 	"fmt"
 	"log/slog"
