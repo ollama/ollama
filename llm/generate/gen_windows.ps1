@@ -117,7 +117,7 @@ function build {
     if ($cmakeDefs -contains "-G") {
         $extra=@("-j8")
     } else {
-        $extra= @("--", "/p:CL_MPcount=8")
+        $extra= @("--", "/maxCpuCount:8")
     }
     write-host "building with: cmake --build $script:buildDir --config $script:config $($script:cmakeTargets | ForEach-Object { `"--target`", $_ }) $extra"
     & cmake --build $script:buildDir --config $script:config ($script:cmakeTargets | ForEach-Object { "--target", $_ }) $extra
@@ -273,7 +273,7 @@ function build_cuda() {
             "-DGGML_CUDA=ON",
             "-DGGML_AVX=on",
             "-DGGML_AVX2=off",
-            "-DCMAKE_CUDA_FLAGS=-t8",
+            "-DCMAKE_CUDA_FLAGS=-t6",
             "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}",
             "-DCMAKE_CUDA_COMPILER_TOOLKIT_ROOT=$env:CUDA_PATH"
             )

@@ -225,7 +225,7 @@ func GetGPUInfo() GpuInfoList {
 			return GpuInfoList{cpus[0].GpuInfo}
 		}
 
-		depPath := GetDepDir()
+		depPath := LibraryDir()
 
 		// Load ALL libraries
 		cHandles = initCudaHandles()
@@ -264,20 +264,20 @@ func GetGPUInfo() GpuInfoList {
 				gpuInfo.computeMajor = int(memInfo.major)
 				gpuInfo.computeMinor = int(memInfo.minor)
 				gpuInfo.MinimumMemory = cudaMinimumMemory
-				cudaVariant := cudaGetVariant(gpuInfo)
+				variant := cudaVariant(gpuInfo)
 				if depPath != "" {
 					gpuInfo.DependencyPath = depPath
 					// Check for variant specific directory
-					if cudaVariant != "" {
-						if _, err := os.Stat(filepath.Join(depPath, "cuda_"+cudaVariant)); err == nil {
-							gpuInfo.DependencyPath = filepath.Join(depPath, "cuda_"+cudaVariant)
+					if variant != "" {
+						if _, err := os.Stat(filepath.Join(depPath, "cuda_"+variant)); err == nil {
+							gpuInfo.DependencyPath = filepath.Join(depPath, "cuda_"+variant)
 						}
 					}
 				}
 				gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
 				gpuInfo.DriverMajor = driverMajor
 				gpuInfo.DriverMinor = driverMinor
-				gpuInfo.Variant = cudaGetVariant(gpuInfo)
+				gpuInfo.Variant = variant
 
 				// query the management library as well so we can record any skew between the two
 				// which represents overhead on the GPU we must set aside on subsequent updates
@@ -468,7 +468,7 @@ func FindGPULibs(baseLibName string, defaultPatterns []string) []string {
 	slog.Debug("Searching for GPU library", "name", baseLibName)
 
 	// Start with our bundled libraries
-	patterns := []string{filepath.Join(GetDepDir(), baseLibName)}
+	patterns := []string{filepath.Join(LibraryDir(), baseLibName)}
 
 	switch runtime.GOOS {
 	case "windows":
@@ -642,7 +642,7 @@ func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
 	}
 }
 
-func GetDepDir() string {
+func LibraryDir() string {
 	// On Windows/linux we bundle the dependencies at the same level as the executable
 	appExe, err := os.Executable()
 	if err != nil {
