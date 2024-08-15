@@ -51,6 +51,34 @@ func convertFull(t *testing.T, fsys fs.FS) (*os.File, llm.KV, llm.Tensors) {
 	return r, m.KV(), m.Tensors()
 }
 
+func generateResultsJSON(t *testing.T, f *os.File, kv llm.KV, tensors llm.Tensors) map[string]string {
+	actual := make(map[string]string)
+	for k, v := range kv {
+		if s, ok := v.(json.Marshaler); !ok {
+			actual[k] = fmt.Sprintf("%v", v)
+		} else {
+			bts, err := json.Marshal(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			actual[k] = fmt.Sprintf("%x", sha256.Sum256(bts))
+		}
+	}
+
+	for _, tensor := range tensors.Items {
+		sha256sum := sha256.New()
+		sr := io.NewSectionReader(f, int64(tensors.Offset+tensor.Offset), int64(tensor.Size()))
+		if _, err := io.Copy(sha256sum, sr); err != nil {
+			t.Fatal(err)
+		}
+
+		actual[tensor.Name] = hex.EncodeToString(sha256sum.Sum(nil))
+	}
+
+	return actual
+}
+
 func TestMain(m *testing.M) {
 	var level slog.Level
 	flag.TextVar(&level, "level", slog.LevelInfo, "log level")
@@ -82,31 +110,85 @@ func TestConvertFull(t *testing.T) {
 			}
 
 			f, kv, tensors := convertFull(t, os.DirFS(p))
-			actual := make(map[string]string)
-			for k, v := range kv {
-				if s, ok := v.(json.Marshaler); !ok {
-					actual[k] = fmt.Sprintf("%v", v)
-				} else {
-					bts, err := json.Marshal(s)
-					if err != nil {
-						t.Fatal(err)
-					}
-
-					actual[k] = fmt.Sprintf("%x", sha256.Sum256(bts))
-				}
-			}
-
-			for _, tensor := range tensors.Items {
-				sha256sum := sha256.New()
-				sr := io.NewSectionReader(f, int64(tensors.Offset+tensor.Offset), int64(tensor.Size()))
-				if _, err := io.Copy(sha256sum, sr); err != nil {
-					t.Fatal(err)
-				}
-
-				actual[tensor.Name] = hex.EncodeToString(sha256sum.Sum(nil))
-			}
+			actual := generateResultsJSON(t, f, kv, tensors)
 
 			expectFile, err := os.Open(filepath.Join("testdata", fmt.Sprintf("%s.json", tt)))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var expect map[string]string
+			if err := json.NewDecoder(expectFile).Decode(&expect); err != nil {
+				t.Fatal(err)
+			}
+
+			keys := maps.Keys(expect)
+			slices.Sort(keys)
+			for _, k := range keys {
+				if v, ok := actual[k]; !ok {
+					t.Errorf("missing %s", k)
+				} else if v != expect[k] {
+					t.Errorf("unexpected %s: want %s, got %s", k, expect[k], v)
+				}
+			}
+		})
+	}
+}
+
+func TestConvertAdapter(t *testing.T) {
+	type AdapterCase struct {
+		Name   string
+		BaseKV map[string]any
+	}
+
+	cases := []AdapterCase{
+		{
+			Name: "discollama",
+			BaseKV: map[string]any{
+				"general.architecture":          "llama",
+				"llama.attention.head_count":    uint32(32),
+				"llama.attention.head_count_kv": uint32(8),
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.Name, func(t *testing.T) {
+			t.Parallel()
+
+			p := filepath.Join("testdata", "adapters", c.Name)
+			if _, err := os.Stat(p); err != nil {
+				t.Fatal(err)
+			}
+
+			f, err := os.CreateTemp(t.TempDir(), "f16")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer f.Close()
+
+			if err := ConvertAdapter(os.DirFS(p), f, c.BaseKV); err != nil {
+				t.Fatal(err)
+			}
+
+			r, err := os.Open(f.Name())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer r.Close()
+
+			m, _, err := llm.DecodeGGML(r, math.MaxInt)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := r.Seek(0, io.SeekStart); err != nil {
+				t.Fatal(err)
+			}
+
+			actual := generateResultsJSON(t, r, m.KV(), m.Tensors())
+
+			expectFile, err := os.Open(filepath.Join("testdata", "adapters", fmt.Sprintf("%s.json", c.Name)))
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -124,7 +124,7 @@ func parseFromZipFile(_ context.Context, command string, baseLayers []*layerGGML
 			return nil, fmt.Errorf("no base model specified for the adapter")
 		}
 
-		if err := convert.ConvertAdapter(convert.NewZipReader(r, p, 32<<20), t, baseModel); err != nil {
+		if err := convert.ConvertAdapter(convert.NewZipReader(r, p, 32<<20), t, baseModel.KV()); err != nil {
 			return nil, err
 		}
 		layerType = "application/vnd.ollama.image.adapter"
