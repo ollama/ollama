@@ -211,11 +211,11 @@ function build_static() {
     }
 }
 
-function build_cpu($gen_arch) {
+function build_cpu() {
     if ((-not "${env:OLLAMA_SKIP_CPU_GENERATE}" ) -and ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu"))) {
         # remaining llama.cpp builds use MSVC 
         init_vars
-        $script:cmakeDefs = $script:commonCpuDefs + @("-A", $gen_arch, "-DGGML_AVX=off", "-DGGML_AVX2=off", "-DGGML_AVX512=off", "-DGGML_FMA=off", "-DGGML_F16C=off") + $script:cmakeDefs
+        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DGGML_AVX=off", "-DGGML_AVX2=off", "-DGGML_AVX512=off", "-DGGML_FMA=off", "-DGGML_F16C=off") + $script:cmakeDefs
         $script:buildDir="../build/windows/${script:ARCH}/cpu"
         $script:distDir="$script:DIST_BASE\cpu"
         write-host "Building LCD CPU"
@@ -397,15 +397,85 @@ function build_rocm() {
     }
 }
 
+function build_arm64_cpu() {
+    if ((-not "${env:OLLAMA_SKIP_CPU_GENERATE}" ) -and ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu"))) {
+        # ARM64 builds have a much better codegen with Clang
+        init_vars
+        $script:buildDir="../build/windows/${script:ARCH}/cpu"
+        $script:distDir="$script:DIST_BASE\cpu"
+        $script:cmakeDefs += @(
+            "-G", "MinGW Makefiles", 
+            "-DCMAKE_C_COMPILER=clang.exe",
+            "-DCMAKE_CXX_COMPILER=clang++.exe",
+            "-DCMAKE_C_FLAGS_INIT=-march=armv8.2-a -fvectorize -ffp-model=fast -fno-finite-math-only",
+            "-DCMAKE_CXX_FLAGS_INIT=-static-libstdc++ -march=armv8.2-a -fvectorize -ffp-model=fast -fno-finite-math-only",
+            "-DCMAKE_EXE_LINKER_FLAGS_INIT=-municode",
+            "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY",
+            "-DCMAKE_POSITION_INDEPENDENT_CODE=on",
+            "-DGGML_AVX=off",
+            "-DGGML_AVX2=off",
+            "-DGGML_FMA=off",
+            "-DGGML_F16C=off",
+            "-DGGML_LLAMAFILE=on"
+            )
+        write-host "Building LCD CPU"
+        build
+        # Makefiles don't prefix with config name
+        ${script:config}=""
+        if ($null -ne $script:DUMPBIN) {
+            & "$script:DUMPBIN" /dependents "${script:buildDir}/bin/ollama_llama_server.exe" | select-string ".dll"
+        }
+        sign
+        install
+    } else {
+        write-host "Skipping CPU generation step as requested"
+    }
+}
+
+function build_arm64_cpu_armv87a() {
+    if ((-not "${env:OLLAMA_SKIP_CPU_GENERATE}" ) -and ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu_armv87a"))) {
+        # ARM64 builds have a much better codegen with Clang
+        init_vars
+        $script:buildDir="../build/windows/${script:ARCH}/cpu_armv87a"
+        $script:distDir="$script:DIST_BASE\cpu_armv87"
+        $script:cmakeDefs += @(
+            "-G", "MinGW Makefiles", 
+            "-DCMAKE_C_COMPILER=clang.exe",
+            "-DCMAKE_CXX_COMPILER=clang++.exe",
+            "-DCMAKE_C_FLAGS_INIT=-march=armv8.7-a -fvectorize -ffp-model=fast -fno-finite-math-only",
+            "-DCMAKE_CXX_FLAGS_INIT=-static-libstdc++ -march=armv8.7-a -fvectorize -ffp-model=fast -fno-finite-math-only",
+            "-DCMAKE_EXE_LINKER_FLAGS_INIT=-municode",
+            "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY",
+            "-DCMAKE_POSITION_INDEPENDENT_CODE=on",
+            "-DGGML_AVX=off",
+            "-DGGML_AVX2=off",
+            "-DGGML_FMA=off",
+            "-DGGML_F16C=off"
+            )
+        write-host "Building ARMv8.7-A CPU"
+        build
+        # Makefiles don't prefix with config name
+        ${script:config}=""
+        if ($null -ne $script:DUMPBIN) {
+            & "$script:DUMPBIN" /dependents "${script:buildDir}/bin/ollama_llama_server.exe" | select-string ".dll"
+        }
+        sign
+        install
+    } else {
+        write-host "Skipping ARMv8.7-A CPU generation step as requested"
+    }
+}
+
 init_vars
 if ($($args.count) -eq 0) {
     git_module_setup
     apply_patches
     build_static
     if ($script:ARCH -eq "arm64") {
-        build_cpu("ARM64")
+        build_arm64_cpu
+        build_arm64_cpu_armv87a
     } else { # amd64
-        build_cpu("x64")
+        build_cpu
         build_cpu_avx
         build_cpu_avx2
         build_cuda
