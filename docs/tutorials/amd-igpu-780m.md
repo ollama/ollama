@@ -39,7 +39,7 @@ The iGPU is not detected by Ollama at default. We need extra steps to enable it.
 
 	Then restart ollama.service with new settings.
 
-	  `sudo system restart ollama.service`
+	  `sudo systemctl restart ollama.service`
 
 3. Run llm with ollama
    
