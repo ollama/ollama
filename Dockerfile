@@ -130,18 +130,27 @@ ARG CGO_CFLAGS
 RUN --mount=type=cache,target=/root/.ccache \
     go build -trimpath -o dist/linux-arm64/bin/ollama .
 
+# Strip out ROCm dependencies to keep the primary image lean
+FROM --platform=linux/amd64 ubuntu:22.04 as amd64-libs-without-rocm
+COPY --from=build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /scratch/
+RUN cd /scratch/ollama/ && rm -rf rocblas libamd* libdrm* libroc* libhip* libhsa* 
+
 # Runtime stages
 FROM --platform=linux/amd64 ubuntu:22.04 as runtime-amd64
+COPY --from=amd64-libs-without-rocm /scratch/ /lib/
 RUN apt-get update && apt-get install -y ca-certificates
-COPY --from=build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/ollama /bin/ollama
+COPY --from=build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/bin/ /bin/
+
 FROM --platform=linux/arm64 ubuntu:22.04 as runtime-arm64
+COPY --from=build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
 RUN apt-get update && apt-get install -y ca-certificates
-COPY --from=build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/ollama /bin/ollama
+COPY --from=build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/bin/ /bin/
 
 # Radeon images are much larger so we keep it distinct from the CPU/CUDA image
 FROM --platform=linux/amd64 rocm/dev-centos-7:${ROCM_VERSION}-complete as runtime-rocm
 RUN update-pciids
-COPY --from=build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/ollama /bin/ollama
+COPY --from=build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/bin/ /bin/
+RUN ln -s /opt/rocm/lib /lib/ollama
 EXPOSE 11434
 ENV OLLAMA_HOST 0.0.0.0
 
