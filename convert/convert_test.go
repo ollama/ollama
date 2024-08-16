@@ -275,7 +275,7 @@ func generateLoraTestData(t *testing.T, tempDir string) {
 		ones[i] = float32(1)
 	}
 
-	for _ = range 3 {
+	for range 3 {
 		err = binary.Write(&buf, binary.LittleEndian, ones)
 		if err != nil {
 			t.Fatal(err)
