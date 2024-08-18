@@ -736,6 +736,7 @@ func pickBestFullFitByLibrary(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoL
 func pickBestPartialFitByLibrary(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numParallel *int) gpu.GpuInfoList {
 	if *numParallel <= 0 {
 		*numParallel = 1
+                req.opts.NumCtx = req.origNumCtx
         }
 	byLibrary := gpus.ByLibrary()
 	if len(byLibrary) <= 1 {
