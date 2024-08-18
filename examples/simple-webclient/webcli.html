@@ -157,6 +157,7 @@
         }
 
         function send_form(event) {
+            event.preventDefault();
             const data = JSON.parse(document.getElementById("parameters").value) || {};
             data.prompt = document.getElementById("textfield").value;
             document.getElementById("textfield").value = "";
@@ -170,6 +171,8 @@
             // remove the context
             if (data.prompt == "/clear") {
                 document.getElementById("context").value = "[]";
+                append_text("Context has been cleared.");
+                return;
             }
 
             const xhr = new XMLHttpRequest();
