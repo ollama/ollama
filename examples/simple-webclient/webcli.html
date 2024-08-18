@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>My<CR>Ollama</title>
+    <style>
+        // first, format the input and output divs
+        #outputdiv {
+            overflow-y: auto;
+            padding: 10px;
+            border-bottom: 1px solid #ccc;
+        }
+
+        .header {
+            padding: 0.5em;
+            border-radius: 0.5em 0.5em 0 0;
+            background-color: #f9f9fb;
+            left: 1em;
+            right: 1em;
+            //width: calc(100% - 1em);
+            border: 1px solid;
+            border-color: #ccc;
+        }
+
+        .content {
+            padding: 0.5em;
+            border-radius: 0 0 0.5em 0.5em;
+            background-color: #ffffff;
+            left: 1em;
+            right: 1em;
+            //width: calc(100% - 1em);
+            border: 1px solid;
+            border-color: #ccc;
+            margin-bottom: 1em;
+        }
+
+        #inputdiv {
+            border-radius: 0.5em 0.5em 0.5em 0.5em;
+            bottom: 1em;
+            left: 1em;
+            right: 1em;
+            padding: 1em;
+            font-size: 16px;
+            border:1px solid #ccc;
+            background-color: #ebebf9;
+        }
+
+        #inputdiv input[type="text"] {
+            width:20em;
+        }
+
+        #inputdiv label {
+            display:inline-block;
+            width: 10em;
+        }
+
+        pre {
+            left: 1em;
+            right: 1em;
+            padding: 1em;
+            font-size: 16px;
+            border:1px solid #ccc;
+            background-color: #f0f0fc;
+        }
+
+    </style>
+</head>
+<body>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <div id="outputdiv"></div>
+    <div id="inputdiv">
+    <form id="inputform" onsubmit="send_form(event)">
+        <textarea id="textfield" name="text" style="width:calc(100% - 8em);height:5em;"></textarea>
+        <input type="submit" value="Senden" id="sendenButton" style>
+        <hr/>
+        <a onclick="toggle_visibility('config')">Configure</a>
+        <div id="config" style="display:none">
+            <!-- todo: save to cookie -->
+            <label for="hostname">Hostname</label> <input type="text" id="hostname" value=""/><br>
+            <label for="port">Port</label> <input type="text" id="port" value=""/><br>
+            <label for="https">HTTPS</label> <input type="checkbox" id="https" /><br>
+            <label for="model">Model</label> <input type="text" id="model" value=""/><br>
+            <label for="parameters">Parameters</label><textarea id="parameters">{"stream":false}</textarea><br>
+            <label for="system">System</label><textarea id="system"></textarea><br>
+            <input type="hidden" id="context" value="[]" />
+        </div>
+    </form>
+    </div>
+    <script>
+        const searchParams = new URLSearchParams(window.location.search);
+        const ollama_host=searchParams.get("host") || new URL(window.location.href).hostname || "localhost";
+        const ollama_port=searchParams.get("port") || "11434";
+        const ollama_https=searchParams.get("https") || null;
+        const ollama_model=searchParams.get("model") || "llama3.1";
+
+        document.getElementById("hostname").value=ollama_host;
+        document.getElementById("port").value=ollama_port;
+        document.getElementById("https").checked=ollama_https;
+        document.getElementById("model").value=ollama_model;
+
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Enter' && event.shiftKey) {
+                const cursorPosition = textarea.selectionStart;
+                const textBeforeCursor = textarea.value.substring(0, cursorPosition);
+                textarea.value = textBeforeCursor + '\n';
+                textarea.scrollTop = textarea.scrollHeight - textarea.offsetHeight;
+            } else if (event.key === 'Enter') {
+                send_form(event);
+            }}
+        );
+
+        function toggle_visibility(field) {
+            item = document.getElementById(field);
+            item.style.display = (item.style.display == "block") ? "none" : "block";
+        }
+
+        function append_question(text) {
+            parent = document.getElementById("outputdiv");
+            header = document.createElement("div");
+            header.classList.add("header");
+            header.innerText="You said";
+
+            data = document.createElement("div");
+            data.classList.add("content");
+            data.innerHTML = marked.parse(text);
+            parent.appendChild(header);
+            parent.appendChild(data);
+
+            document.getElementById("inputdiv").scrollIntoView();
+        }
+
+        function append_text(text) {
+            parent = document.getElementById("outputdiv");
+            header = document.createElement("div");
+            header.classList.add("header");
+
+            data = document.createElement("div");
+            data.classList.add("content");
+            data.innerHTML = marked.parse(text);
+
+            hd = document.createElement("input");
+            hd.type = "hidden";
+            hd.textContent = text;
+            copy = document.createElement("button");
+            copy.textContent = "Copy";
+            copy.addEventListener('click', () => {
+                const textinhalt = hd.textContent;
+                navigator.clipboard.writeText(textinhalt);
+            });
+
+            parent.appendChild(header);
+            header.appendChild(copy);
+            header.appendChild(hd);
+            parent.appendChild(data);
+
+            document.getElementById("inputdiv").scrollIntoView();
+        }
+
+        function send_form(event) {
+            const data = JSON.parse(document.getElementById("parameters").value) || {};
+            data.prompt = document.getElementById("textfield").value;
+            document.getElementById("textfield").value = "";
+            data.system = document.getElementById("system").value;
+            data.model = document.getElementById("model").value;
+            let ctx = document.getElementById("context").value;
+            data.context = JSON.parse(ctx);
+
+            append_question(data.prompt);
+
+            // remove the context
+            if (data.prompt == "/clear") {
+                document.getElementById("context").value = "[]";
+            }
+
+            const xhr = new XMLHttpRequest();
+            let url = (ollama_https == null) ? "http://" : "https://";
+            url += ollama_host + ":" + ollama_port +"/api/generate";
+            xhr.open("POST", url, true);
+            xhr.setRequestHeader('Access-Control-Allow-Origin', '*');
+            xhr.setRequestHeader('Content-type', 'application/json');
+            xhr.onload = function () {
+                if (xhr.status === 200) {
+                    resp = JSON.parse(xhr.responseText);
+                    document.getElementById("context").value = JSON.stringify(resp.context);
+                    append_text(resp.response);
+
+                } else {
+                    console.error(xhr.statusText);
+                }
+            };
+            xhr.send(JSON.stringify(data));
+        }
+    </script>
+</body>
+</html>
