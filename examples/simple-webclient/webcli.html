@@ -63,6 +63,7 @@
             background-color: #f0f0fc;
         }
 
+        // todo: format marked
     </style>
 </head>
 <body>
@@ -75,7 +76,6 @@
         <hr/>
         <a onclick="toggle_visibility('config')">Configure</a>
         <div id="config" style="display:none">
-            <!-- todo: save to cookie -->
             <label for="hostname">Hostname</label> <input type="text" id="hostname" value=""/><br>
             <label for="port">Port</label> <input type="text" id="port" value=""/><br>
             <label for="https">HTTPS</label> <input type="checkbox" id="https" /><br>
@@ -99,12 +99,7 @@
         document.getElementById("model").value=ollama_model;
 
         document.addEventListener('keydown', function(event) {
-            if (event.key === 'Enter' && event.shiftKey) {
-                const cursorPosition = textarea.selectionStart;
-                const textBeforeCursor = textarea.value.substring(0, cursorPosition);
-                textarea.value = textBeforeCursor + '\n';
-                textarea.scrollTop = textarea.scrollHeight - textarea.offsetHeight;
-            } else if (event.key === 'Enter') {
+            if (event.key === 'Enter' && ! event.shiftKey) {
                 send_form(event);
             }}
         );
@@ -157,9 +152,9 @@
         }
 
         function send_form(event) {
-            event.preventDefault();
+	    event.preventDefault();
             const data = JSON.parse(document.getElementById("parameters").value) || {};
-            data.prompt = document.getElementById("textfield").textContent;
+            data.prompt = document.getElementById("textfield").value;
             document.getElementById("textfield").value = "";
             data.system = document.getElementById("system").value;
             data.model = document.getElementById("model").value;
@@ -171,8 +166,8 @@
             // remove the context
             if (data.prompt == "/clear") {
                 document.getElementById("context").value = "[]";
-                append_text("Context has been cleared.");
-                return;
+		append_text("Context has been cleared.");
+		return;
             }
 
             const xhr = new XMLHttpRequest();
