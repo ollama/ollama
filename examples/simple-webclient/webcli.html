@@ -159,7 +159,7 @@
         function send_form(event) {
             event.preventDefault();
             const data = JSON.parse(document.getElementById("parameters").value) || {};
-            data.prompt = document.getElementById("textfield").value;
+            data.prompt = document.getElementById("textfield").textContent;
             document.getElementById("textfield").value = "";
             data.system = document.getElementById("system").value;
             data.model = document.getElementById("model").value;
