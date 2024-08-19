@@ -45,7 +45,7 @@ type blobUpload struct {
 }
 
 const (
-	numUploadParts          = 64
+	numUploadParts          = 16
 	minUploadPartSize int64 = 100 * format.MegaByte
 	maxUploadPartSize int64 = 1000 * format.MegaByte
 )
