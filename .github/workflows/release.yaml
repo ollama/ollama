@@ -269,7 +269,7 @@ jobs:
             dist/windows-amd64/**
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-cuda-deps
+          name: windows-cuda-deps-${{ matrix.cuda.version }}
           path: dist/deps/*
 
 
@@ -328,7 +328,10 @@ jobs:
           name: generate-windows-cuda-12
       - uses: actions/download-artifact@v4
         with:
-          name: windows-cuda-deps
+          name: windows-cuda-deps-11
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-cuda-deps-12
       - uses: actions/download-artifact@v4
         with:
           name: windows-rocm-deps
