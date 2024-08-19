@@ -378,6 +378,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [PromptingTools.jl](https://github.com/svilupp/PromptingTools.jl) with an [example](https://svilupp.github.io/PromptingTools.jl/dev/examples/working_with_ollama)
 - [LlamaScript](https://github.com/Project-Llama/llamascript)
 - [Ollamaclient for Golang](https://github.com/xyproto/ollamaclient)
+- [High-level function abstraction in Go](https://gitlab.com/tozd/go/fun)
 
 ### Mobile
 
