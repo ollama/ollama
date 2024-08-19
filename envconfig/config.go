@@ -174,7 +174,7 @@ func RunnersDir() (p string) {
 
 	defer func() {
 		if p == "" {
-			slog.Error("unable to locate llm runner directory. Set OLLAMA_RUNNERS_DIR to the location of 'ollama_runners'")
+			slog.Error("unable to locate llm runner directory. Set OLLAMA_RUNNERS_DIR to the location of 'ollama/runners'")
 		}
 	}()
 
@@ -190,17 +190,17 @@ func RunnersDir() (p string) {
 	}
 
 	var paths []string
-	for _, root := range []string{filepath.Dir(exe), cwd} {
+	for _, root := range []string{filepath.Dir(exe), filepath.Join(filepath.Dir(exe), ".."), cwd} {
 		paths = append(paths,
 			root,
-			filepath.Join(root, "windows-"+runtime.GOARCH),
-			filepath.Join(root, "dist", "windows-"+runtime.GOARCH),
+			filepath.Join(root, runtime.GOOS+"-"+runtime.GOARCH),
+			filepath.Join(root, "dist", runtime.GOOS+"-"+runtime.GOARCH),
 		)
 	}
 
 	// Try a few variations to improve developer experience when building from source in the local tree
 	for _, path := range paths {
-		candidate := filepath.Join(path, "ollama_runners")
+		candidate := filepath.Join(path, "lib", "ollama", "runners")
 		if _, err := os.Stat(candidate); err == nil {
 			p = candidate
 			break

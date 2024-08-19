@@ -9,11 +9,14 @@ init_vars() {
         ARCH="arm64"
         ;;
     *)
-        ARCH=$(uname -m | sed -e "s/aarch64/arm64/g")
+        echo "GOARCH must be set"
+        echo "this script is meant to be run from within go generate"
+        exit 1
+        ;;
     esac
 
     LLAMACPP_DIR=../llama.cpp
-    CMAKE_DEFS=""
+    CMAKE_DEFS="-DCMAKE_SKIP_RPATH=on"
     CMAKE_TARGETS="--target ollama_llama_server"
     if echo "${CGO_CFLAGS}" | grep -- '-g' >/dev/null; then
         CMAKE_DEFS="-DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_VERBOSE_MAKEFILE=on -DLLAMA_GPROF=on -DLLAMA_SERVER_VERBOSE=on ${CMAKE_DEFS}"
@@ -27,6 +30,7 @@ init_vars() {
         WHOLE_ARCHIVE="-Wl,-force_load"
         NO_WHOLE_ARCHIVE=""
         GCC_ARCH="-arch ${ARCH}"
+        DIST_BASE=../../dist/darwin-${GOARCH}/
         ;;
     "Linux")
         LIB_EXT="so"
@@ -35,6 +39,7 @@ init_vars() {
 
         # Cross compiling not supported on linux - Use docker
         GCC_ARCH=""
+        DIST_BASE=../../dist/linux-${GOARCH}/
         ;;
     *)
         ;;
@@ -42,6 +47,7 @@ init_vars() {
     if [ -z "${CMAKE_CUDA_ARCHITECTURES}" ] ; then
         CMAKE_CUDA_ARCHITECTURES="50;52;61;70;75;80"
     fi
+    GZIP=$(which pigz 2>/dev/null || echo "gzip")
 }
 
 git_module_setup() {
@@ -85,24 +91,34 @@ build() {
 
 compress() {
     echo "Compressing payloads to reduce overall binary size..."
-    pids=""
     rm -rf ${BUILD_DIR}/bin/*.gz
     for f in ${BUILD_DIR}/bin/* ; do
-        gzip -n --best -f ${f} &
-        pids+=" $!"
+        ${GZIP} -n --best -f ${f} &
+        compress_pids+=" $!"
     done
     # check for lib directory
     if [ -d ${BUILD_DIR}/lib ]; then
         for f in ${BUILD_DIR}/lib/* ; do
-            gzip -n --best -f ${f} &
-            pids+=" $!"
+            ${GZIP} -n --best -f ${f} &
+            compress_pids+=" $!"
         done
     fi
     echo
-    for pid in ${pids}; do
+}
+
+wait_for_compress() {
+    for pid in ${compress_pids}; do
         wait $pid
     done
     echo "Finished compression"
+}
+
+install() {
+    echo "Installing libraries to bin dir ${BUILD_DIR}/bin/"
+    for lib in $(find ${BUILD_DIR} -name \*.${LIB_EXT}); do
+        rm -f "${BUILD_DIR}/bin/$(basename ${lib})"
+        cp -af "${lib}" "${BUILD_DIR}/bin/"
+    done
 }
 
 # Keep the local tree clean after we're done with the build
