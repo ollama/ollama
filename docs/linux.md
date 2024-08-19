@@ -30,10 +30,11 @@ curl -fsSL https://ollama.com/download/ollama-linux-amd64.tgz | sudo tar zx -C /
 
 ### Adding Ollama as a startup service (recommended)
 
-Create a user for Ollama:
+Create a user and group for Ollama:
 
 ```bash
-sudo useradd -r -s /bin/false -m -d /usr/share/ollama ollama
+sudo useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama
+sudo usermod -a -G ollama $(whoami)
 ```
 
 Create a service file in `/etc/systemd/system/ollama.service`:
@@ -49,16 +50,18 @@ User=ollama
 Group=ollama
 Restart=always
 RestartSec=3
+Environment="PATH=$PATH"
 
 [Install]
 WantedBy=default.target
 ```
 
-Then start the service:
+Then start and check the service:
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable ollama
+sudo systemctl status ollama
 ```
 
 ### Install CUDA drivers (optional – for Nvidia GPUs)
