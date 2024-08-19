@@ -472,7 +472,8 @@ jobs:
           merge-multiple: true
       - run: |
           ls -lh dist/
-          (cd dist; sha256sum * > sha256sum.txt)
+          (cd dist; find . -type f | xargs sha256sum > ../sha256sum.txt)
+          mv sha256sum.txt dist/
           cat dist/sha256sum.txt
       - name: Create or update Release
         run: |
