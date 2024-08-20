@@ -260,15 +260,29 @@ type Model struct {
 }
 
 func (m *Model) TokenToPiece(token int) string {
-	buf := make([]byte, 12)
-	C.llama_token_to_piece(
+	tokenLen := 12
+	buf := make([]byte, tokenLen)
+	tokenLen = int(C.llama_token_to_piece(
 		m.c,
 		C.int32_t(token),
 		(*C.char)(unsafe.Pointer(&buf[0])),
-		C.int32_t(12),
+		C.int32_t(tokenLen),
 		C.int32_t(0),
 		C.bool(true),
-	)
+	))
+	if tokenLen < 0 {
+		tokenLen = -tokenLen
+
+		buf = make([]byte, tokenLen)
+		C.llama_token_to_piece(
+			m.c,
+			C.int32_t(token),
+			(*C.char)(unsafe.Pointer(&buf[0])),
+			C.int32_t(tokenLen),
+			C.int32_t(0),
+			C.bool(true),
+		)
+	}
 	return strings.TrimRight(string(buf), "\x00")
 }
 
