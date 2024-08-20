@@ -260,7 +260,8 @@ if [ -z "${OLLAMA_SKIP_ROCM_GENERATE}" -a -d "${ROCM_PATH}" ]; then
         echo "Building custom ROCM GPU"
     fi
     BUILD_DIR="../build/linux/${ARCH}/rocm${ROCM_VARIANT}"
-    ROCM_DIST_DIR="${DIST_BASE}/lib/ollama"
+    # ROCm dependencies are too large to fit into a unified bundle
+    ROCM_DIST_DIR="${DIST_BASE}/../linux-${GOARCH}-rocm/lib/ollama"
     # TODO figure out how to disable runpath (rpath)
     # export CMAKE_HIP_FLAGS="-fno-rtlib-add-rpath" # doesn't work
     export LLAMA_SERVER_LDFLAGS="-L${ROCM_PATH}/lib -L/opt/amdgpu/lib/x86_64-linux-gnu/ -lhipblas -lrocblas -lamdhip64 -lrocsolver -lamd_comgr -lhsa-runtime64 -lrocsparse -ldrm -ldrm_amdgpu"
