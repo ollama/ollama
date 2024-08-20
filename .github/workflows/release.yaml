@@ -475,6 +475,7 @@ jobs:
           (cd dist; find . -type f | xargs sha256sum > ../sha256sum.txt)
           mv sha256sum.txt dist/
           mv dist/linux-???64 .
+          mv dist/linux-amd64-rocm .
           cat dist/sha256sum.txt
       - name: Create or update Release
         run: |

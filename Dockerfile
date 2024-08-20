@@ -95,8 +95,8 @@ ARG AMDGPU_TARGETS
 ENV GOARCH amd64 
 RUN --mount=type=cache,target=/root/.ccache \
     OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_SKIP_CPU_GENERATE=1 bash gen_linux.sh
-RUN mkdir -p ../../dist/linux-amd64/lib/ollama && \
-    (cd /opt/rocm/lib && tar cf - rocblas/library) | (cd ../../dist/linux-amd64/lib/ollama && tar xf - )
+RUN mkdir -p ../../dist/linux-amd64-rocm/lib/ollama && \
+    (cd /opt/rocm/lib && tar cf - rocblas/library) | (cd ../../dist/linux-amd64-rocm/lib/ollama && tar xf - )
 
 FROM --platform=linux/amd64 centos:7 AS cpu-builder-amd64
 ARG CMAKE_VERSION
