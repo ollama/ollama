@@ -1040,6 +1040,7 @@ struct llama_server_context
             img.request_encode_image = false;
         }
 
+        LOG_TEE("slot has images: %d\n", slot.images.size());
         return slot.images.size() > 0;
     }
 
@@ -1269,6 +1270,71 @@ struct llama_server_context
             }
             queue_tasks.post(task);
         }
+    }
+
+    bool process_images_paligemma(server_slot &slot, int n_batch)
+    {
+        int n_past = 0;
+        int image_idx = 0;
+        slot_image &img = slot.images[image_idx];
+
+        // rescale image embeddings
+        float *data = img.image_embedding;
+        for (int i = 0; i < 2048 * 256; i++)
+        {
+            data[i] = data[i] / sqrt(2048);
+        }
+
+        set_image_embeds(ctx, data);
+
+        // generate user_prompt -> this should contain image tokens prepended and a new line appended:
+        // batch.n_tokens += (int)slot.images.size() * llama_n_embd(model);
+
+        std::vector<llama_token> tokens;
+        std::string prompt = "What is in this image";
+        std::vector<llama_token> text = ::llama_tokenize(ctx, prompt, false, true);
+
+        for (int i = 0; i < (int)slot.images.size() * 256; i++)
+        {
+            tokens.push_back(257152);
+        }
+
+        tokens.push_back(2);
+
+        printf("btach.n_tokens %d\n", batch.n_tokens);
+
+        for (int i = 0; i < text.size(); i++)
+        {
+            // printf("token [%d]: %d\n", text[i]);
+            tokens.push_back(text[i]);
+        }
+
+        tokens.push_back(108);
+
+        batch.n_tokens = (int)slot.images.size() * 256 + 2 + text.size();
+
+        for (int i = 0; i < batch.n_tokens; i++)
+        {
+            printf("token %d: %d\n", i, tokens[i]);
+        }
+
+        for (int i = 0; i < batch.n_tokens; i += n_batch)
+        {
+            printf("calling decode\n");
+            int n_eval = (int)batch.n_tokens - i;
+            if (n_eval > n_batch)
+            {
+                n_eval = n_batch;
+            }
+            printf("n_eval: %d, n_past: %d", n_eval, n_past);
+            if (llama_decode(ctx, llama_batch_get_one(&tokens[i], n_eval, 0, 0)))
+            {
+                printf("%s : failed to eval. token %d/%d (batch size %d, n_past %d)\n", __func__, i, batch.n_tokens, n_batch, n_past);
+                return false;
+            }
+            n_past += n_eval;
+        }
+        return true;
     }
 
     // for multiple images processing
@@ -1833,12 +1899,17 @@ struct llama_server_context
                         slot_npast++;
                     }
 
-                    if (has_images && !ingest_images(slot, n_batch))
+                    LOG_ERROR("checking has images", {
+                                                         {"has images", has_images},
+                                                         {"task_id", slot.task_id},
+                                                     });
+                    // if (has_images && !ingest_images(slot, n_batch))
+                    if (has_images && !process_images_paligemma(slot, n_batch))
                     {
                         LOG_ERROR("failed processing images", {
-                            {"slot_id", slot.id},
-                            {"task_id", slot.task_id},
-                        });
+                                                                  {"slot_id", slot.id},
+                                                                  {"task_id", slot.task_id},
+                                                              });
                         // FIXME @phymbert: to be properly tested
                         //  early returning without changing the slot state will block the slot for ever
                         // no one at the moment is checking the return value
