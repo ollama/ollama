@@ -245,7 +245,6 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 	}
 }
 
-// TODO: 修改这里兼容 /chal/completion stream
 func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
 	toolCalls := make([]ToolCall, len(r.Message.ToolCalls))
 	for i, tc := range r.Message.ToolCalls {
@@ -263,7 +262,6 @@ func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
 
 		toolCalls[i].Function.Arguments = string(args)
 	}
-	slog.Warn("toChunk", "toolCalls", toolCalls)
 
 	message := Message{Role: "assistant", Content: r.Message.Content}
 	hasToolCalls := len(toolCalls) > 0
@@ -618,7 +616,6 @@ func (w *BaseWriter) writeError(code int, data []byte) (int, error) {
 }
 
 func (w *ChatWriter) writeResponse(data []byte) (int, error) {
-	// slog.Warn("writeResponse", "data", string(data))
 	var chatResponse api.ChatResponse
 	err := json.Unmarshal(data, &chatResponse)
 	if err != nil {
@@ -627,12 +624,10 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 
 	// chat chunk
 	if w.stream {
-		// slog.Warn("writeResponse chunk", "resp", chatResponse)
 		d, err := json.Marshal(toChunk(w.id, chatResponse))
 		if err != nil {
 			return 0, err
 		}
-		// slog.Warn("writeResponse chunk", "data", string(d))
 
 		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
 		_, err = w.ResponseWriter.Write([]byte(fmt.Sprintf("data: %s\n\n", d)))
@@ -647,9 +642,6 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 				return 0, err
 			}
 		}
-		slog.Warn("writeResponse chunk", "done", chatResponse.Done, "len", len(data))
-
-		// slog.Warn("writeResponse stream", "done", chatResponse.Done, "data", string(data), "len", len(data))
 
 		return len(data), nil
 	}
