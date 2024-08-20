@@ -402,6 +402,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	samplingParams.TfsZ = req.TFSZ
 	samplingParams.TypicalP = req.TypicalP
 	samplingParams.Temp = req.Temperature
+	samplingParams.RepeatLastN = req.RepeatLastN
 	samplingParams.PenaltyRepeat = req.RepeatPenalty
 	samplingParams.PenaltyFreq = req.FrequencyPenalty
 	samplingParams.PenaltyPresent = req.PresencePenalty
