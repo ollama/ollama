@@ -199,6 +199,11 @@ fi
 
 if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
     if [ $BUNDLE -ne 0 ]; then
+        status "Downloading Linux ROCm ${ARCH} bundle"
+        curl --fail --show-error --location --progress-bar \
+            "https://ollama.com/download/ollama-linux-${ARCH}-rocm.tgz${VER_PARAM}" | \
+            $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+
         install_success
         status "AMD GPU ready."
         exit 0
