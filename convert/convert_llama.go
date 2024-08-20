@@ -47,6 +47,7 @@ type llamaModel struct {
 type llamaAdapter struct {
 	AdapterParameters
 	NumAttentionHeads uint32 `json:"num_attention_heads"`
+	NumKeyValueHeads  uint32 `json:"num_key_value_heads"`
 }
 
 var (
@@ -172,12 +173,14 @@ func (p *llamaAdapter) Tensors(ts []Tensor) []llm.Tensor {
 	var out []llm.Tensor
 	for _, t := range ts {
 		name := p.tensorName(t.Name())
-		// llamacpp expects these to be transposed
 		shape := t.Shape()
-		if strings.HasSuffix(name, "weight.lora_a") || strings.HasSuffix(name, "weight.lora_b") {
+		if (strings.HasSuffix(name, "weight.lora_a") && shape[0] > shape[1]) ||
+			(strings.HasSuffix(name, "weight.lora_b") && shape[0] < shape[1]) {
 			tmp := shape[0]
 			shape[0] = shape[1]
 			shape[1] = tmp
+			t.SetRepacker(p.repackAndTranspose)
+		} else {
 			t.SetRepacker(p.repack)
 		}
 

@@ -18,6 +18,7 @@ type ModelParameters struct {
 }
 
 type AdapterParameters struct {
+	Alpha          uint32 `json:"lora_alpha"`
 	LoraLayers     uint32 `json:"lora_layers"`
 	LoraParameters struct {
 		Rank  uint32  `json:"rank"`
@@ -54,8 +55,13 @@ func (ModelParameters) KV(t *Tokenizer) llm.KV {
 }
 
 func (p AdapterParameters) KV() llm.KV {
+	var alpha float32
+	if p.LoraParameters.Alpha == 0 {
+		alpha = float32(p.Alpha)
+	}
+
 	kv := llm.KV{
-		"adapter.lora.alpha": p.LoraParameters.Alpha,
+		"adapter.lora.alpha": alpha,
 		"adapter.type":       "lora",
 		"general.file_type":  uint32(1),
 		"general.type":       "adapter",
