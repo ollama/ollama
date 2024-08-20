@@ -192,7 +192,7 @@ func parseFromFile(ctx context.Context, command string, baseLayers []*layerGGML,
 		}
 
 		mediatype := "application/vnd.ollama.image.model"
-		if ggml.Name() == "ggla" {
+		if ggml.Name() == "ggla" || ggml.KV().IsAdapter() {
 			mediatype = "application/vnd.ollama.image.adapter"
 		} else if ggml.KV().Architecture() == "clip" {
 			mediatype = "application/vnd.ollama.image.projector"
