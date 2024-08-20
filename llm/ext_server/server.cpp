@@ -1285,13 +1285,20 @@ struct llama_server_context
             data[i] = data[i] / sqrt(2048);
         }
 
-        set_image_embeds(ctx, data);
+        if (ctx)
+        {
+            set_image_embeds(ctx, data);
+            print_image_embeds(ctx);
+        }
+        else
+        {
+            printf("ctx is null");
+        }
 
         // generate user_prompt -> this should contain image tokens prepended and a new line appended:
         // batch.n_tokens += (int)slot.images.size() * llama_n_embd(model);
-
         std::vector<llama_token> tokens;
-        std::string prompt = "What is in this image";
+        std::string prompt = "What is this image";
         std::vector<llama_token> text = ::llama_tokenize(ctx, prompt, false, true);
 
         for (int i = 0; i < (int)slot.images.size() * 256; i++)
@@ -1300,8 +1307,6 @@ struct llama_server_context
         }
 
         tokens.push_back(2);
-
-        printf("btach.n_tokens %d\n", batch.n_tokens);
 
         for (int i = 0; i < text.size(); i++)
         {
@@ -1312,6 +1317,7 @@ struct llama_server_context
         tokens.push_back(108);
 
         batch.n_tokens = (int)slot.images.size() * 256 + 2 + text.size();
+        printf("btach.n_tokens %d\n", batch.n_tokens);
 
         for (int i = 0; i < batch.n_tokens; i++)
         {
@@ -1327,12 +1333,14 @@ struct llama_server_context
                 n_eval = n_batch;
             }
             printf("n_eval: %d, n_past: %d", n_eval, n_past);
+            llama_set_causal_attn(ctx, false);
             if (llama_decode(ctx, llama_batch_get_one(&tokens[i], n_eval, 0, 0)))
             {
                 printf("%s : failed to eval. token %d/%d (batch size %d, n_past %d)\n", __func__, i, batch.n_tokens, n_batch, n_past);
                 return false;
             }
-            n_past += n_eval;
+            llama_set_causal_attn(ctx, true);
+            slot.n_past += n_eval;
         }
         return true;
     }
@@ -1878,6 +1886,11 @@ struct llama_server_context
 
                     // process the prefix of first image
                     std::vector<llama_token> prefix_tokens = has_images ? tokenize(slot.images[0].prefix_prompt, add_bos_token) : prompt_tokens;
+                    printf("\nprinting prefix tokens");
+                    for (int i = 0; i < prefix_tokens.size(); i++)
+                    {
+                        printf("prefix token[%d]: %d", i, prefix_tokens[i]);
+                    }
 
                     int32_t slot_npast = slot.n_past_se > 0 ? slot.n_past_se : slot.n_past;
 
