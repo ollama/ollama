@@ -16,6 +16,7 @@ extern "C"
         float tfs_z;
         float typical_p;
         float temp;
+        int32_t penalty_last_n;
         float penalty_repeat;
         float penalty_freq;
         float penalty_present;

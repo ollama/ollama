@@ -390,6 +390,7 @@ type SamplingParams struct {
 	TfsZ           float32
 	TypicalP       float32
 	Temp           float32
+	RepeatLastN    int
 	PenaltyRepeat  float32
 	PenaltyFreq    float32
 	PenaltyPresent float32
@@ -408,6 +409,7 @@ func NewSamplingContext(params SamplingParams) *SamplingContext {
 	cparams.tfs_z = C.float(params.TfsZ)
 	cparams.typical_p = C.float(params.TypicalP)
 	cparams.temp = C.float(params.Temp)
+	cparams.penalty_last_n = C.int32_t(params.RepeatLastN)
 	cparams.penalty_repeat = C.float(params.PenaltyRepeat)
 	cparams.penalty_freq = C.float(params.PenaltyFreq)
 	cparams.penalty_present = C.float(params.PenaltyFreq)
