@@ -524,21 +524,21 @@ components:
           type: number
           description: Total duration of the request
         load_duration:
-          type: string
+          type: number
           description: Load duration of the request
         prompt_eval_count:
           type: integer
           description: Count of prompt evaluations
         prompt_eval_duration:
-          type: string
+          type: number
           description: Duration of prompt evaluations
         eval_count:
           type: integer
           description: Count of evaluations
         eval_duration:
-          type: string
+          type: number
           description: Duration of evaluations
-          
+
     CreateRequest:
       type: object
       description: Request to create a model
