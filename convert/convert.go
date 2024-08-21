@@ -58,6 +58,8 @@ func (p AdapterParameters) KV() llm.KV {
 	var alpha float32
 	if p.LoraParameters.Alpha == 0 {
 		alpha = float32(p.Alpha)
+	} else {
+		alpha = p.LoraParameters.Alpha
 	}
 
 	kv := llm.KV{
