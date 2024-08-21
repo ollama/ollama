@@ -1363,11 +1363,14 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	slog.Debug("chat request", "images", len(images), "prompt", prompt)
 
 	toolCallsCh := make(chan []api.ToolCall, 1)
+	contentCh := make(chan string, 1)
+
 	ch := make(chan any)
 	go func() {
 		var sb strings.Builder
 		defer close(ch)
 		defer close(toolCallsCh)
+		defer close(contentCh)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
@@ -1390,10 +1393,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			sb.WriteString(r.Content)
 
 			if r.Done {
+				content := sb.String()
+				contentCh <- content
 				if len(req.Tools) > 0 {
-					// slog.Warn("ollama resp", "content", sb.String())
-					if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
-						// slog.Warn("ollama resp", "tool_calls", fmt.Sprintf("%+v", toolCalls))
+					if toolCalls, ok := m.parseToolCalls(content); ok {
 						toolCallsCh <- toolCalls
 					}
 				}
@@ -1408,13 +1411,15 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}()
 
+	toolsRequired := len(req.Tools) > 0
+	// no stream response
 	if req.Stream != nil && !*req.Stream {
 		var resp api.ChatResponse
-		var sb strings.Builder
+		// var sb strings.Builder
 		for rr := range ch {
 			switch t := rr.(type) {
 			case api.ChatResponse:
-				sb.WriteString(t.Message.Content)
+				// sb.WriteString(t.Message.Content)
 				resp = t
 			case gin.H:
 				msg, ok := t["error"].(string)
@@ -1430,11 +1435,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 		}
 
-		resp.Message.Content = sb.String()
-		if len(req.Tools) > 0 {
+		// resp.Message.Content = sb.String()
+		content := <-contentCh
+		resp.Message.Content = content
+		if toolsRequired {
 			// if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
-			toolCalls := <-toolCallsCh
-			resp.Message.ToolCalls = toolCalls
+			resp.Message.ToolCalls = <-toolCallsCh
 			resp.Message.Content = ""
 			// }
 		}
@@ -1443,8 +1449,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	// change stream response with tool calls
-	// slog.Warn("tool_calls", "len", len(toolCallsCh), "toolCallsResp", fmt.Sprintf("%+v", toolCallsCh))
+	// stream response
 	streamCh := make(chan any)
 	for rr := range ch {
 		switch t := rr.(type) {
@@ -1452,6 +1457,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			go func() {
 				// slog.Warn("reassign chat response", "content", t.Message.Content)
 				streamCh <- t
+				if t.Done {
+					// slog.Warn("close stream channel")
+					close(streamCh)
+				}
 			}()
 		case gin.H:
 			msg, ok := t["error"].(string)
@@ -1466,13 +1475,14 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}
 
-	// if request tool calls
-	if len(req.Tools) > 0 {
+	// if tools are required
+	if toolsRequired {
 		toolCalls := <-toolCallsCh
+		// if tool calls are present, use different channel respose
 		hasToolCalls := len(toolCalls) > 0
 		if hasToolCalls {
 			// reset the channel
-			toolCallRespCh := make(chan any, 1)
+			toolCallsCh := make(chan any, 1)
 			res := api.ChatResponse{
 				Model:      req.Model,
 				CreatedAt:  time.Now().UTC(),
@@ -1480,18 +1490,17 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				Done:       true,
 				DoneReason: "tool_calls",
 			}
-			toolCallRespCh <- res
-			close(toolCallRespCh)
-			slog.Info("#1 tool calls stream response")
-			streamResponse(c, toolCallRespCh)
+			toolCallsCh <- res
+			close(toolCallsCh)
+			slog.Info("[tools] stream response")
+			streamResponse(c, toolCallsCh)
 			return
 		} else {
-			slog.Info("#1 no tool calls")
+			slog.Info("[tools] no call")
 		}
 	}
 
-	slog.Info("#2 stream response")
-	defer close(streamCh)
+	slog.Info("stream response")
 	streamResponse(c, streamCh)
 }
 
