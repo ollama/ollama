@@ -44,15 +44,8 @@ type llamaModel struct {
 	HeadDim          uint32  `json:"head_dim"`
 }
 
-type llamaAdapter struct {
-	AdapterParameters
-	NumAttentionHeads uint32 `json:"num_attention_heads"`
-	NumKeyValueHeads  uint32 `json:"num_key_value_heads"`
-}
-
 var (
-	_ ModelConverter   = (*llamaModel)(nil)
-	_ AdapterConverter = (*llamaAdapter)(nil)
+	_ ModelConverter = (*llamaModel)(nil)
 )
 
 func (p *llamaModel) KV(t *Tokenizer) llm.KV {
@@ -129,17 +122,6 @@ func (p *llamaModel) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *llamaAdapter) KV(baseKV llm.KV) llm.KV {
-	kv := p.AdapterParameters.KV()
-	kv["general.architecture"] = "llama"
-	kv["llama.attention.head_count"] = baseKV["llama.attention.head_count"]
-	kv["llama.attention.head_count_kv"] = baseKV["llama.attention.head_count_kv"]
-
-	p.NumAttentionHeads = baseKV["llama.attention.head_count"].(uint32)
-
-	return kv
-}
-
 func (p *llamaModel) Tensors(ts []Tensor) []llm.Tensor {
 	var out []llm.Tensor
 
@@ -162,32 +144,6 @@ func (p *llamaModel) Tensors(ts []Tensor) []llm.Tensor {
 			Name:     name,
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),
-			WriterTo: t,
-		})
-	}
-
-	return out
-}
-
-func (p *llamaAdapter) Tensors(ts []Tensor) []llm.Tensor {
-	var out []llm.Tensor
-	for _, t := range ts {
-		name := p.tensorName(t.Name())
-		shape := t.Shape()
-		if (strings.HasSuffix(name, "weight.lora_a") && shape[0] > shape[1]) ||
-			(strings.HasSuffix(name, "weight.lora_b") && shape[0] < shape[1]) {
-			tmp := shape[0]
-			shape[0] = shape[1]
-			shape[1] = tmp
-			t.SetRepacker(p.repackAndTranspose)
-		} else {
-			t.SetRepacker(p.repack)
-		}
-
-		out = append(out, llm.Tensor{
-			Name:     t.Name(),
-			Kind:     t.Kind(),
-			Shape:    shape,
 			WriterTo: t,
 		})
 	}
