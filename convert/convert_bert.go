@@ -144,9 +144,8 @@ func (p *bert) Tensors(ts []Tensor) []llm.Tensor {
 			continue
 		}
 
-		name := p.tensorName(t.Name())
 		out = append(out, llm.Tensor{
-			Name:     name,
+			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),
 			WriterTo: t,
@@ -156,8 +155,8 @@ func (p *bert) Tensors(ts []Tensor) []llm.Tensor {
 	return out
 }
 
-func (bert) tensorName(n string) string {
-	return strings.NewReplacer(
+func (bert) Replacements() []string {
+	return []string{
 		"encoder.layer", "blk",
 		"encoder.layers", "blk",
 		"embeddings.word_embeddings", "token_embd",
@@ -172,5 +171,5 @@ func (bert) tensorName(n string) string {
 		"intermediate.dense", "ffn_up",
 		"output.dense", "ffn_down",
 		"output.LayerNorm", "layer_output_norm",
-	).Replace(n)
+	}
 }
