@@ -14,7 +14,6 @@ type gemma2 struct {
 func (p *gemma2) KV(t *Tokenizer) llm.KV {
 	kv := p.Parameters.KV(t)
 	kv["general.architecture"] = "gemma2"
-	kv["general.name"] = "gemma2"
 	kv["gemma2.context_length"] = p.MaxPositionEmbeddings
 	kv["gemma2.embedding_length"] = p.HiddenSize
 	kv["gemma2.block_count"] = p.HiddenLayers

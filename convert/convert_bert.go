@@ -88,7 +88,6 @@ func (p *bert) parseMore(fsys fs.FS) error {
 func (p *bert) KV(t *Tokenizer) llm.KV {
 	kv := p.Parameters.KV(t)
 	kv["general.architecture"] = "bert"
-	kv["general.name"] = "bert"
 	kv["bert.attention.causal"] = false
 	kv["bert.pooling_type"] = p.PoolingType
 

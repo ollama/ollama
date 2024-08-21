@@ -3,6 +3,7 @@ package convert
 import (
 	"cmp"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/pdevine/tensor"
@@ -27,8 +28,14 @@ type llama struct {
 	NumKeyValueHeads      uint32  `json:"num_key_value_heads"`
 	RopeTheta             float32 `json:"rope_theta"`
 	RopeScaling           struct {
-		Type   string  `json:"type"`
-		Factor float32 `json:"factor"`
+		Type                            string  `json:"type"`
+		RopeType                        string  `json:"rope_type"`
+		Factor                          float32 `json:"factor"`
+		LowFrequencyFactor              float32 `json:"low_freq_factor"`
+		HighFrequencyFactor             float32 `json:"high_freq_factor"`
+		OriginalMaxPositionalEmbeddings uint32  `json:"original_max_positional_embeddings"`
+
+		factors ropeFactor
 	} `json:"rope_scaling"`
 	RMSNormEPS       float32 `json:"rms_norm_eps"`
 	LayerNormEPS     float32 `json:"layer_norm_eps"`
@@ -42,7 +49,6 @@ var _ Converter = (*llama)(nil)
 func (p *llama) KV(t *Tokenizer) llm.KV {
 	kv := p.Parameters.KV(t)
 	kv["general.architecture"] = "llama"
-	kv["general.name"] = "llama"
 	kv["llama.vocab_size"] = p.VocabSize
 
 	kv["llama.block_count"] = cmp.Or(p.NLayers, p.NumHiddenLayers, p.NLayer)
@@ -71,6 +77,27 @@ func (p *llama) KV(t *Tokenizer) llm.KV {
 	if p.RopeScaling.Type == "linear" {
 		kv["llama.rope.scaling.type"] = p.RopeScaling.Type
 		kv["llama.rope.scaling.factor"] = p.RopeScaling.Factor
+	} else if p.RopeScaling.RopeType == "llama3" {
+		dim := p.HiddenSize / p.NumAttentionHeads
+		for i := uint32(0); i < dim; i += 2 {
+			factor := cmp.Or(p.RopeScaling.Factor, 8.0)
+			factorLow := cmp.Or(p.RopeScaling.LowFrequencyFactor, 1.0)
+			factorHigh := cmp.Or(p.RopeScaling.HighFrequencyFactor, 4.0)
+
+			original := cmp.Or(p.RopeScaling.OriginalMaxPositionalEmbeddings, 8192)
+			lambdaLow := float32(original) / factorLow
+			lambdaHigh := float32(original) / factorHigh
+
+			lambda := 2 * math.Pi * math.Pow(float64(p.RopeTheta), float64(i)/float64(dim))
+			if lambda < float64(lambdaHigh) {
+				p.RopeScaling.factors = append(p.RopeScaling.factors, 1.0)
+			} else if lambda > float64(lambdaLow) {
+				p.RopeScaling.factors = append(p.RopeScaling.factors, factor)
+			} else {
+				smooth := (float32(original)/float32(lambda) - factorLow) / (factorHigh - factorLow)
+				p.RopeScaling.factors = append(p.RopeScaling.factors, 1.0/((1-smooth)/factor+smooth))
+			}
+		}
 	}
 
 	if p.NumKeyValueHeads > 0 {
@@ -95,6 +122,16 @@ func (p *llama) KV(t *Tokenizer) llm.KV {
 
 func (p *llama) Tensors(ts []Tensor) []llm.Tensor {
 	var out []llm.Tensor
+
+	if p.RopeScaling.factors != nil {
+		out = append(out, llm.Tensor{
+			Name:     "rope_freqs.weight",
+			Kind:     0,
+			Shape:    []uint64{uint64(len(p.RopeScaling.factors))},
+			WriterTo: p.RopeScaling.factors,
+		})
+	}
+
 	for _, t := range ts {
 		if strings.HasSuffix(t.Name(), "attn_q.weight") ||
 			strings.HasSuffix(t.Name(), "attn_k.weight") {
