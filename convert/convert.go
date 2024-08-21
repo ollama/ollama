@@ -107,10 +107,14 @@ type moreParser interface {
 }
 
 type AdapterConverter interface {
+	// KV maps parameters to LLM key-values
 	KV(llm.KV) llm.KV
+	// Tensors maps input tensors to LLM tensors. Adapter specific modifications can be done here.
 	Tensors([]Tensor) []llm.Tensor
+	// Replacements returns a list of string pairs to replace in tensor names.
+	// See [strings.Replacer](https://pkg.go.dev/strings#Replacer) for details
+	Replacements() []string
 
-	tensorName(string) string
 	writeFile(io.WriteSeeker, llm.KV, []llm.Tensor) error
 }
 
@@ -125,11 +129,6 @@ func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseKV llm.KV) error {
 		return err
 	}
 
-	ts, err := parseTensors(fsys)
-	if err != nil {
-		return err
-	}
-
 	arch, ok := baseKV["general.architecture"]
 	if !ok {
 		return errors.New("architecture not set for the base model")
@@ -141,6 +140,11 @@ func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseKV llm.KV) error {
 		conv = &llamaAdapter{}
 	default:
 		return errors.New("unsupported architecture")
+	}
+
+	ts, err := parseTensors(fsys, strings.NewReplacer(conv.Replacements()...))
+	if err != nil {
+		return err
 	}
 
 	if err := json.Unmarshal(bts, conv); err != nil {

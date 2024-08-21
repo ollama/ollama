@@ -141,7 +141,7 @@ func (p *llamaModel) Tensors(ts []Tensor) []llm.Tensor {
 		}
 
 		out = append(out, llm.Tensor{
-			Name:     name,
+			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),
 			WriterTo: t,

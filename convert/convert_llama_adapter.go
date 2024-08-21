@@ -34,10 +34,9 @@ func (p *llamaAdapter) KV(baseKV llm.KV) llm.KV {
 func (p *llamaAdapter) Tensors(ts []Tensor) []llm.Tensor {
 	var out []llm.Tensor
 	for _, t := range ts {
-		name := p.tensorName(t.Name())
 		shape := t.Shape()
-		if (strings.HasSuffix(name, "weight.lora_a") && shape[0] > shape[1]) ||
-			(strings.HasSuffix(name, "weight.lora_b") && shape[0] < shape[1]) {
+		if (strings.HasSuffix(t.Name(), "weight.lora_a") && shape[0] > shape[1]) ||
+			(strings.HasSuffix(t.Name(), "weight.lora_b") && shape[0] < shape[1]) {
 			tmp := shape[0]
 			shape[0] = shape[1]
 			shape[1] = tmp
@@ -47,7 +46,7 @@ func (p *llamaAdapter) Tensors(ts []Tensor) []llm.Tensor {
 		}
 
 		out = append(out, llm.Tensor{
-			Name:     name,
+			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    shape,
 			WriterTo: t,
@@ -57,8 +56,8 @@ func (p *llamaAdapter) Tensors(ts []Tensor) []llm.Tensor {
 	return out
 }
 
-func (p *llamaAdapter) tensorName(n string) string {
-	return strings.NewReplacer(
+func (p *llamaAdapter) Replacements() []string {
+	return []string{
 		"base_model.model.", "",
 		"model.layers", "blk",
 		"self_attn.q_proj", "attn_q",
@@ -72,16 +71,17 @@ func (p *llamaAdapter) tensorName(n string) string {
 		"lora_B.weight", "weight.lora_b",
 		"lora_a", "weight.lora_a",
 		"lora_b", "weight.lora_b",
-	).Replace(n)
+	}
 }
 
 func (p *llamaAdapter) repack(name string, data []float32, shape []uint64) ([]float32, error) {
 	dims := []int{int(shape[1]), int(shape[0])}
 
 	var heads uint32
-	if strings.HasSuffix(name, "q_proj.lora_A.weight") {
+	if strings.HasSuffix(name, "attn_q.weight.lora_a") {
 		heads = p.NumAttentionHeads
 	} else if strings.HasSuffix(name, "k_proj.lora_A.weight") {
+	} else if strings.HasSuffix(name, "attn_k.weight.lora_a") {
 		heads = cmp.Or(p.NumKeyValueHeads, p.NumAttentionHeads)
 	} else {
 		return data, nil

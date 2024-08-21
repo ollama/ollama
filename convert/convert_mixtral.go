@@ -70,9 +70,9 @@ func (p *mixtralModel) Tensors(ts []Tensor) []llm.Tensor {
 	return append(out, p.llamaModel.Tensors(ts)...)
 }
 
-func (p *mixtral) Replacements() []string {
+func (p *mixtralModel) Replacements() []string {
 	return append(
-		p.llama.Replacements(),
+		p.llamaModel.Replacements(),
 		"block_sparse_moe.gate", "ffn_gate_inp",
 	)
 }
