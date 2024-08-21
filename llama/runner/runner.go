@@ -434,6 +434,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	var samplingParams llama.SamplingParams
 	samplingParams.TopK = req.TopK
 	samplingParams.TopP = req.TopP
+	samplingParams.MinP = req.MinP
 	samplingParams.TfsZ = req.TFSZ
 	samplingParams.TypicalP = req.TypicalP
 	samplingParams.Temp = req.Temperature
