@@ -15,15 +15,8 @@ func main() {
 	}
 
 	req := &api.GenerateRequest{
-<<<<<<< ours
 		Model:  "gemma2",
 		Prompt: "how many planets are there?",
-=======
-		// Model:  "gemma",
-		Model: "llama3ch",
-		// Prompt: "how many planets are there?",
-		Prompt: "有多少行星？",
->>>>>>> theirs
 
 		// set streaming to false
 		Stream: new(bool),
