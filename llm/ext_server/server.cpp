@@ -1274,6 +1274,7 @@ struct llama_server_context
 
     bool process_images_paligemma(server_slot &slot, int n_batch)
     {
+        // set_off_embeds(ctx);
         int n_past = 0;
         int image_idx = 0;
         slot_image &img = slot.images[image_idx];
@@ -1288,7 +1289,7 @@ struct llama_server_context
         if (ctx)
         {
             set_image_embeds(ctx, data);
-            print_image_embeds(ctx);
+            // print_image_embeds(ctx);
         }
         else
         {
@@ -1298,7 +1299,7 @@ struct llama_server_context
         // generate user_prompt -> this should contain image tokens prepended and a new line appended:
         // batch.n_tokens += (int)slot.images.size() * llama_n_embd(model);
         std::vector<llama_token> tokens;
-        std::string prompt = "What is this image";
+        std::string prompt = "caption es";
         std::vector<llama_token> text = ::llama_tokenize(ctx, prompt, false, true);
 
         for (int i = 0; i < (int)slot.images.size() * 256; i++)
@@ -1317,7 +1318,7 @@ struct llama_server_context
         tokens.push_back(108);
 
         batch.n_tokens = (int)slot.images.size() * 256 + 2 + text.size();
-        printf("btach.n_tokens %d\n", batch.n_tokens);
+        printf("\nbatch.n_tokens %d\n", batch.n_tokens);
 
         for (int i = 0; i < batch.n_tokens; i++)
         {
@@ -1332,8 +1333,29 @@ struct llama_server_context
             {
                 n_eval = n_batch;
             }
-            printf("n_eval: %d, n_past: %d", n_eval, n_past);
+            printf("n_eval: %d, n_past: %d, slot.n_past: %d\n", n_eval, n_past, slot.n_past);
             llama_set_causal_attn(ctx, false);
+
+            printf("DEBUGGING DECODE BATCH:\n");
+            for (int j = 0; j < n_eval; j++)
+            {
+                printf("token[%d]: %d\n", j, tokens[j]);
+            }
+
+            llama_batch my_batch = llama_batch_get_one(&tokens[i], n_eval, 0, 0);
+            printf("%s: viewing batch: n_tokens = %d, batch.token %d, batch.pos = %d, batch.logits = %d\n", __func__, n_eval, batch.token + i, batch.pos + i, batch.logits + i);
+            for (int j = 0; j < n_eval; j++)
+            {
+                // printf("new batch view token [%d]: %d\n", j, (batch.token[i + j]));
+            }
+
+            printf("%s: viewing batch: n_tokens = %d, batch.token %d, batch.pos = %d, batch.logits = %d\n", __func__, n_eval, my_batch.token + i, my_batch.pos + i, my_batch.logits + i);
+            for (int j = 0; j < n_eval; j++)
+            {
+                // printf("new batch view token [%d]: %d\n", j, (my_batch.token[i + j]));
+            }
+
+            printf("n_eval: %d, llama_pos: %d, llama_seq_id: %d\n", n_eval, 0, 0);
             if (llama_decode(ctx, llama_batch_get_one(&tokens[i], n_eval, 0, 0)))
             {
                 printf("%s : failed to eval. token %d/%d (batch size %d, n_past %d)\n", __func__, i, batch.n_tokens, n_batch, n_past);
@@ -1342,6 +1364,64 @@ struct llama_server_context
             llama_set_causal_attn(ctx, true);
             slot.n_past += n_eval;
         }
+        printf("done processing images paligemma\n");
+        // llama_batch_clear(batch);
+        return true;
+    }
+
+    bool prepare_pali(server_slot &slot, int n_batch)
+    {
+        // set_off_embeds(ctx);
+        int n_past = 0;
+        int image_idx = 0;
+        slot_image &img = slot.images[image_idx];
+
+        // rescale image embeddings
+        float *data = img.image_embedding;
+        for (int i = 0; i < 2048 * 256; i++)
+        {
+            data[i] = data[i] / sqrt(2048);
+        }
+
+        if (ctx)
+        {
+            set_image_embeds(ctx, data);
+            // print_image_embeds(ctx);
+        }
+        else
+        {
+            printf("ctx is null");
+        }
+
+        // generate user_prompt -> this should contain image tokens prepended and a new line appended:
+        // batch.n_tokens += (int)slot.images.size() * llama_n_embd(model);
+        std::vector<llama_token> tokens;
+        std::string prompt = "caption es";
+        std::vector<llama_token> text = ::llama_tokenize(ctx, prompt, false, true);
+
+        for (int i = 0; i < (int)slot.images.size() * 256; i++)
+        {
+            tokens.push_back(257152);
+        }
+
+        tokens.push_back(2);
+
+        for (int i = 0; i < text.size(); i++)
+        {
+            // printf("token [%d]: %d\n", text[i]);
+            tokens.push_back(text[i]);
+        }
+
+        tokens.push_back(108);
+
+        printf("currently, system_tokens.size %d\n", system_tokens.size());
+        for (int i = 0; i < (int)tokens.size(); ++i)
+        {
+            llama_batch_add(batch, tokens[i], system_tokens.size() + slot.n_past, {slot.id}, true);
+            slot.n_past += 1;
+        }
+        // llama_set_causal_attn(ctx, false);
+        printf("slot.n_past == %d\n", slot.n_past);
         return true;
     }
 
@@ -1625,6 +1705,15 @@ struct llama_server_context
     }
 
     bool update_slots() {
+        /*  gpt_params params;
+         params.model = "/Users/joshyan/Projects/PaliGemma/paligemma-3b-pt-224-text-model-f16.gguf";
+         llama_model_params model_params = llama_model_params_from_gpt_params(params);
+
+         llama_model *model = llama_load_model_from_file(params.model.c_str(), model_params);
+         llama_context_params ctx_params = llama_context_params_from_gpt_params(params);
+         llama_context *ctx_llama = llama_new_context_with_model(model, ctx_params);
+         ctx = ctx_llama; */
+
         if (system_need_update)
         {
             LOG_DEBUG("updating system prompt", {});
@@ -1885,14 +1974,15 @@ struct llama_server_context
                     const bool has_images = process_images(slot);
 
                     // process the prefix of first image
-                    std::vector<llama_token> prefix_tokens = has_images ? tokenize(slot.images[0].prefix_prompt, add_bos_token) : prompt_tokens;
-                    printf("\nprinting prefix tokens");
+                    std::vector<llama_token> prefix_tokens = has_images ? tokenize(slot.images[0].prefix_prompt, false) : prompt_tokens;
+                    printf("\nprinting prefix tokens\n");
                     for (int i = 0; i < prefix_tokens.size(); i++)
                     {
-                        printf("prefix token[%d]: %d", i, prefix_tokens[i]);
+                        printf("prefix token[%d]: %d\n", i, prefix_tokens[i]);
                     }
 
                     int32_t slot_npast = slot.n_past_se > 0 ? slot.n_past_se : slot.n_past;
+                    printf("slot_npast = %d\n", slot_npast);
 
                     int32_t ga_i = slot.ga_i;
                     int32_t ga_n = slot.ga_n;
@@ -1917,7 +2007,7 @@ struct llama_server_context
                                                          {"task_id", slot.task_id},
                                                      });
                     // if (has_images && !ingest_images(slot, n_batch))
-                    if (has_images && !process_images_paligemma(slot, n_batch))
+                    if (has_images && !prepare_pali(slot, n_batch))
                     {
                         LOG_ERROR("failed processing images", {
                                                                   {"slot_id", slot.id},
@@ -1928,7 +2018,9 @@ struct llama_server_context
                         // no one at the moment is checking the return value
                         return false;
                     }
+                    print_causal(ctx);
 
+                    printf("batch.n_tokens here for setting logits: %d\n", batch.n_tokens);
                     // extract the logits only for the last token
                     if (batch.n_tokens > 0)
                     {
@@ -1943,18 +2035,58 @@ struct llama_server_context
 
         if (batch.n_tokens == 0)
         {
+            /* completion_token_output result;
+            const llama_token id = llama_sampling_sample(slots[0].ctx_sampling, ctx, NULL, slots[0].i_batch);
+
+            llama_sampling_accept(slots[0].ctx_sampling, ctx, id, true);
+
+            slots[0].n_decoded += 1;
+            if (slots[0].n_decoded == 1)
+            {
+                slots[0].t_start_genereration = ggml_time_us();
+                slots[0].t_prompt_processing = (slots[0].t_start_genereration - slots[0].t_start_process_prompt) / 1e3;
+                metrics.on_prompt_eval(slots[0]);
+            }
+
+            llama_token_data_array cur_p = {slots[0].ctx_sampling->cur.data(), slots[0].ctx_sampling->cur.size(), false};
+            result.tok = id;
+
+            const int32_t n_probs = slots[0].sparams.n_probs;
+            if (slots[0].sparams.temp <= 0 && n_probs > 0)
+            {
+                // for llama_sample_token_greedy we need to sort candidates
+                llama_sample_softmax(ctx, &cur_p);
+            }
+
+            for (size_t i = 0; i < std::min(cur_p.size, (size_t)n_probs); ++i)
+            {
+                result.probs.push_back({cur_p.data[i].id, cur_p.data[i].p});
+            }
+
+            if (!process_token(result, slots[0]))
+            {
+                slots[0].release();
+                slots[0].print_timings();
+                send_final_response(slots[0]);
+                metrics.on_prediction(slots[0]);
+            }
+
+            slots[0].i_batch = -1; */
             all_slots_are_idle = true;
             return true;
         }
 
+        printf("batch.n_tokens = %d\n", batch.n_tokens);
         for (int32_t i = 0; i < (int32_t) batch.n_tokens; i += n_batch)
         {
+            printf("i = %d\n", i);
             const int32_t n_tokens = std::min(n_batch, batch.n_tokens - i);
 
             for (auto & slot : slots)
             {
                 if (slot.ga_n != 1)
                 {
+                    printf("slot.ga_n = %d\n", slot.ga_n);
                     // context extension via Self-Extend
                     while (slot.n_past_se >= slot.ga_i + slot.ga_w)
                     {
@@ -1981,20 +2113,30 @@ struct llama_server_context
                 }
             }
 
+            printf("batching\n");
+
             llama_batch batch_view =
+                {
+                    n_tokens,
+                    batch.token + i,
+                    nullptr,
+                    batch.pos + i,
+                    batch.n_seq_id + i,
+                    batch.seq_id + i,
+                    batch.logits + i,
+                    0, 0, 0, // unused
+                };
+            // llama_batch batch_view = prepare_pali(slots[0], n_batch);
+            printf("%s: viewing batch: n_tokens = %d, batch.token %d, batch.pos = %d, batch.logits = %d\n", __func__, n_tokens, batch.token + i, batch.pos + i, batch.logits + i);
+            for (int j = 0; j < n_tokens; j++)
             {
-                n_tokens,
-                batch.token    + i,
-                nullptr,
-                batch.pos      + i,
-                batch.n_seq_id + i,
-                batch.seq_id   + i,
-                batch.logits   + i,
-                0, 0, 0, // unused
-            };
-
+                printf("new batch view token [%d]: %d\n", j, (batch.token[i + j]));
+            }
+            printf("current state of causal attn: ");
+            print_causal(ctx);
             const int ret = llama_decode(ctx, batch_view);
-
+            llama_set_causal_attn(ctx, true);
+            print_causal(ctx);
             if (ret != 0)
             {
                 if (n_batch == 1 || ret < 0)
@@ -2014,6 +2156,7 @@ struct llama_server_context
 
             for (auto & slot : slots)
             {
+                printf("there are currently n slots\n");
                 if (slot.i_batch < (int) i || slot.i_batch >= (int) (i + n_tokens))
                 {
                     continue;
@@ -2022,6 +2165,7 @@ struct llama_server_context
                 // prompt evaluated for embedding
                 if (slot.embedding)
                 {
+                    printf("slot.embedding is true\n");
                     send_embedding(slot, batch_view);
                     slot.release();
                     slot.i_batch = -1;
@@ -2029,8 +2173,10 @@ struct llama_server_context
                 }
 
                 completion_token_output result;
+                printf("sampling for the ith token: %d\n", slot.i_batch - i);
+                // batch.logits[263] = true;
                 const llama_token id = llama_sampling_sample(slot.ctx_sampling, ctx, NULL, slot.i_batch - i);
-
+                printf("got back this token: %d\n", id);
                 llama_sampling_accept(slot.ctx_sampling, ctx, id, true);
 
                 slot.n_decoded += 1;
