@@ -387,6 +387,7 @@ type SamplingContext struct {
 type SamplingParams struct {
 	TopK           int
 	TopP           float32
+	MinP           float32
 	TfsZ           float32
 	TypicalP       float32
 	Temp           float32
@@ -406,6 +407,7 @@ func NewSamplingContext(params SamplingParams) *SamplingContext {
 	var cparams C.struct_llama_sampling_cparams
 	cparams.top_k = C.int32_t(params.TopK)
 	cparams.top_p = C.float(params.TopP)
+	cparams.min_p = C.float(params.MinP)
 	cparams.tfs_z = C.float(params.TfsZ)
 	cparams.typical_p = C.float(params.TypicalP)
 	cparams.temp = C.float(params.Temp)
