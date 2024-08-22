@@ -43,12 +43,12 @@ func (kv KV) Architecture() string {
 	return "unknown"
 }
 
-func (kv KV) IsAdapter() bool {
+func (kv KV) Kind() string {
 	if s, ok := kv["general.type"].(string); ok {
-		return s == "adapter"
+		return s
 	}
 
-	return false
+	return "unknown"
 }
 
 func (kv KV) ParameterCount() uint64 {

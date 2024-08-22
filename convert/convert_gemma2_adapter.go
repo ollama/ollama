@@ -27,9 +27,7 @@ func (p *gemma2Adapter) Tensors(ts []Tensor) []llm.Tensor {
 		shape := t.Shape()
 		if (strings.HasSuffix(t.Name(), "weight.lora_a") && shape[0] > shape[1]) ||
 			(strings.HasSuffix(t.Name(), "weight.lora_b") && shape[0] < shape[1]) {
-			tmp := shape[0]
-			shape[0] = shape[1]
-			shape[1] = tmp
+			shape[0], shape[1] = shape[1], shape[0]
 			t.SetRepacker(p.repack)
 		}
 
