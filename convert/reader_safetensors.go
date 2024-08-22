@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"slices"
+	"strings"
 
 	"github.com/d4l3k/go-bfloat16"
 	"github.com/x448/float16"
@@ -20,7 +21,7 @@ type safetensorMetadata struct {
 	Offsets []int64  `json:"data_offsets"`
 }
 
-func parseSafetensors(fsys fs.FS, ps ...string) ([]Tensor, error) {
+func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]Tensor, error) {
 	var ts []Tensor
 	for _, p := range ps {
 		f, err := fsys.Open(p)
@@ -56,7 +57,7 @@ func parseSafetensors(fsys fs.FS, ps ...string) ([]Tensor, error) {
 					offset: safetensorsPad(n, value.Offsets[0]),
 					size:   safetensorsPad(n, value.Offsets[1]) - safetensorsPad(n, value.Offsets[0]),
 					tensorBase: &tensorBase{
-						name:  key,
+						name:  replacer.Replace(key),
 						shape: value.Shape,
 					},
 				})

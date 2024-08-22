@@ -23,6 +23,7 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
@@ -323,13 +324,10 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			input = append(input, v.(string))
 		}
 	default:
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid input type"})
-		return
-	}
-
-	if len(input) == 0 {
-		c.JSON(http.StatusOK, api.EmbedResponse{Model: req.Model, Embeddings: [][]float32{}})
-		return
+		if req.Input != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid input type"})
+			return
+		}
 	}
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, []Capability{}, req.Options, req.KeepAlive)
@@ -340,12 +338,18 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 
 	checkpointLoaded := time.Now()
 
+	if len(input) == 0 {
+		c.JSON(http.StatusOK, api.EmbedResponse{Model: req.Model, Embeddings: [][]float32{}})
+		return
+	}
+
 	kvData, err := getKVData(m.ModelPath, false)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
+	var count int
 	for i, s := range input {
 		tokens, err := r.Tokenize(c.Request.Context(), s)
 		if err != nil {
@@ -368,25 +372,36 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			}
 		}
 
+		count += len(tokens)
+
 		input[i] = s
 	}
-	embeddings, err := r.Embed(c.Request.Context(), input)
-	if err != nil {
-		slog.Error("embedding generation failed", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
-		return
+
+	var g errgroup.Group
+	embeddings := make([][]float32, len(input))
+	for i, text := range input {
+		g.Go(func() error {
+			embedding, err := r.Embedding(c.Request.Context(), text)
+			if err != nil {
+				return err
+			}
+			embeddings[i] = normalize(embedding)
+			return nil
+		})
 	}
 
-	for i, e := range embeddings.Embedding {
-		embeddings.Embedding[i] = normalize(e)
+	if err := g.Wait(); err != nil {
+		slog.Error("embedding generation failed", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Errorf("failed to generate embeddings: %v", err)})
+		return
 	}
 
 	resp := api.EmbedResponse{
 		Model:           req.Model,
-		Embeddings:      embeddings.Embedding,
+		Embeddings:      embeddings,
 		TotalDuration:   time.Since(checkpointStart),
 		LoadDuration:    checkpointLoaded.Sub(checkpointStart),
-		PromptEvalCount: embeddings.PromptEvalCount,
+		PromptEvalCount: count,
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -430,21 +445,20 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	embeddings, err := r.Embed(c.Request.Context(), []string{req.Prompt})
+	embedding, err := r.Embedding(c.Request.Context(), req.Prompt)
 	if err != nil {
 		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
 		return
 	}
 
-	embedding := make([]float64, len(embeddings.Embedding[0]))
-
-	for i, v := range embeddings.Embedding[0] {
-		embedding[i] = float64(v)
+	var e []float64
+	for _, v := range embedding {
+		e = append(e, float64(v))
 	}
 
 	resp := api.EmbeddingResponse{
-		Embedding: embedding,
+		Embedding: e,
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -824,17 +838,20 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 
 	models := []api.ListModelResponse{}
 	for n, m := range ms {
-		f, err := m.Config.Open()
-		if err != nil {
-			slog.Warn("bad manifest filepath", "name", n, "error", err)
-			continue
-		}
-		defer f.Close()
-
 		var cf ConfigV2
-		if err := json.NewDecoder(f).Decode(&cf); err != nil {
-			slog.Warn("bad manifest config", "name", n, "error", err)
-			continue
+
+		if m.Config.Digest != "" {
+			f, err := m.Config.Open()
+			if err != nil {
+				slog.Warn("bad manifest filepath", "name", n, "error", err)
+				continue
+			}
+			defer f.Close()
+
+			if err := json.NewDecoder(f).Decode(&cf); err != nil {
+				slog.Warn("bad manifest config", "name", n, "error", err)
+				continue
+			}
 		}
 
 		// tag should never be masked

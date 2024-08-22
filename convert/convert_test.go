@@ -62,9 +62,14 @@ func TestMain(m *testing.M) {
 func TestConvertFull(t *testing.T) {
 	cases := []string{
 		"Meta-Llama-3-8B-Instruct",
+		"Meta-Llama-3.1-8B-Instruct",
 		"Mistral-7B-Instruct-v0.2",
 		"Mixtral-8x7B-Instruct-v0.1",
 		"gemma-2b-it",
+		// microsoft/Phi-3-mini-128-instruct@d548c233192db00165d842bf8edff054bb3212f8
+		"Phi-3-mini-128k-instruct",
+		"all-MiniLM-L6-v2",
+		"gemma-2-9b-it",
 	}
 
 	for i := range cases {

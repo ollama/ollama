@@ -1,2 +1,3 @@
 llm/ext_server/* linguist-vendored
-* text eol=lf
+* text=auto
+*.go text eol=lf

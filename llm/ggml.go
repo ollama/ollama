@@ -157,6 +157,14 @@ type Tensor struct {
 	io.WriterTo `json:"-"`
 }
 
+func (t Tensor) block() (n int) {
+	if _, err := fmt.Sscanf(t.Name, "blk.%d.", &n); err != nil {
+		return -1
+	}
+
+	return
+}
+
 func (t Tensor) blockSize() uint64 {
 	switch t.Kind {
 	case 0, 1, 24, 25, 26, 27, 28, 30: // F32, F16, I8, I16, I32, I64, F64, BF16

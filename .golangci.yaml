@@ -24,7 +24,6 @@ linters:
     - nosprintfhostport
     - staticcheck
     - tenv
-    - testifylint
     - unconvert
     - unused
     - usestdlibvars

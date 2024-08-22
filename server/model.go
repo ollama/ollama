@@ -26,7 +26,7 @@ import (
 var intermediateBlobs map[string]string = make(map[string]string)
 
 type layerGGML struct {
-	*Layer
+	Layer
 	*llm.GGML
 }
 
@@ -176,9 +176,20 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 			mediatype = "application/vnd.ollama.image.projector"
 		}
 
-		layer, err := NewLayer(io.NewSectionReader(file, offset, n), mediatype)
-		if err != nil {
-			return nil, err
+		var layer Layer
+		if digest != "" && n == stat.Size() && offset == 0 {
+			layer, err = NewLayerFromLayer(digest, mediatype, file.Name())
+			if err != nil {
+				slog.Debug("could not create new layer from layer", "error", err)
+			}
+		}
+
+		// Fallback to creating layer from file copy (either NewLayerFromLayer failed, or digest empty/n != stat.Size())
+		if layer.Digest == "" {
+			layer, err = NewLayer(io.NewSectionReader(file, offset, n), mediatype)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		layers = append(layers, &layerGGML{layer, ggml})

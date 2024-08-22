@@ -44,6 +44,7 @@
 #include <errhandlingapi.h>
 #endif
 
+#include <algorithm>
 #include <cstddef>
 #include <thread>
 #include <chrono>
@@ -402,7 +403,9 @@ struct llama_server_context
             }
         }
 
-        std::tie(model, ctx) = llama_init_from_gpt_params(params);
+        auto init_result = llama_init_from_gpt_params(params);
+        model = init_result.model;
+        ctx = init_result.context;
         if (model == nullptr)
         {
             LOG_ERROR("unable to load model", {{"model", params.model}});
@@ -1221,7 +1224,6 @@ struct llama_server_context
                 res.result_json = json
                 {
                     {"embedding", std::vector<float>(embd, embd + n_embd)},
-                    {"timings",             slot.get_formated_timings()},
                 };
             }
         }
@@ -1427,7 +1429,13 @@ struct llama_server_context
         switch (task.type)
         {
             case TASK_TYPE_COMPLETION: {
-                server_slot *slot = prefix_slot(task.data["prompt"]);
+                server_slot *slot = nullptr;
+                if (task.embedding_mode) {
+                    // Embedding seq_id (aka slot id) must always be <= token length, so always use slot 0
+                    slot = slots[0].available() ? &slots[0] : nullptr;
+                } else {
+                    slot = prefix_slot(task.data["prompt"]);
+                }
                 if (slot == nullptr)
                 {
                     // if no slot is available, we defer this task for processing later
@@ -2420,7 +2428,10 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
                 invalid_param = true;
                 break;
             }
-            params.lora_adapter.emplace_back(argv[i], 1.0f);
+            params.lora_adapters.push_back({
+                std::string(argv[i]),
+                1.0,
+            });
             params.use_mmap = false;
         }
         else if (arg == "--lora-scaled")
@@ -2436,7 +2447,10 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
                 invalid_param = true;
                 break;
             }
-            params.lora_adapter.emplace_back(lora_adapter, std::stof(argv[i]));
+            params.lora_adapters.push_back({
+                lora_adapter,
+                std::stof(argv[i])
+            });
             params.use_mmap = false;
         }
         else if (arg == "-v" || arg == "--verbose")
@@ -3184,37 +3198,17 @@ int main(int argc, char **argv) {
                     prompt = "";
                 }
 
-                if (prompt.size() == 1) {
-                    prompt = prompt[0];
-                }
-
                 // create and queue the task
-                json responses;
-                {
-                    const int id_task = llama.queue_tasks.get_new_id();
-                    llama.queue_results.add_waiting_task_id(id_task);
-                    llama.request_completion(id_task, {{"prompt", prompt}}, true, -1);
+                const int task_id = llama.queue_tasks.get_new_id();
+                llama.queue_results.add_waiting_task_id(task_id);
+                llama.request_completion(task_id, {{"prompt", prompt}}, true, -1);
 
-                    // get the result
-                    task_result result = llama.queue_results.recv(id_task);
-                    llama.queue_results.remove_waiting_task_id(id_task);
-                    if (result.error) {
-                        return res.set_content(result.result_json.dump(), "application/json; charset=utf-8");
-                    }
+                // get the result
+                task_result result = llama.queue_results.recv(task_id);
+                llama.queue_results.remove_waiting_task_id(task_id);
 
-                    responses = result.result_json.value("results", std::vector<json>{result.result_json});
-                    json embeddings = json::array();
-
-                    int prompt_n = 0;
-                    for (auto & elem : responses) {
-                        embeddings.push_back(elem.at("embedding"));
-                        prompt_n += elem.at("timings").at("prompt_n").get<int>();
-                    }
-
-                    // send the result
-                    json embedding_res = json{{"embedding", embeddings}, {"prompt_n", prompt_n}};
-                    return res.set_content(embedding_res.dump(), "application/json; charset=utf-8");
-                }
+                // send the result
+                return res.set_content(result.result_json.dump(), "application/json; charset=utf-8");
             });
 
     // GG: if I put the main loop inside a thread, it crashes on the first request when build in Debug!?

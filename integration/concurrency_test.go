@@ -5,6 +5,7 @@ package integration
 import (
 	"context"
 	"log/slog"
+	"os"
 	"strconv"
 	"sync"
 	"testing"
@@ -13,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 )
 
@@ -41,8 +41,8 @@ func TestMultiModelConcurrency(t *testing.T) {
 			},
 		}
 		resp = [2][]string{
-			[]string{"sunlight"},
-			[]string{"england", "english", "massachusetts", "pilgrims", "british"},
+			{"sunlight"},
+			{"england", "english", "massachusetts", "pilgrims", "british"},
 		}
 	)
 	var wg sync.WaitGroup
@@ -71,12 +71,11 @@ func TestIntegrationConcurrentPredictOrcaMini(t *testing.T) {
 	reqLimit := len(req)
 	iterLimit := 5
 
-	vram := os.Getenv("OLLAMA_MAX_VRAM") // TODO - discover actual VRAM
-	if vram != "" {
-		max, err := strconv.ParseUint(vram, 10, 64)
+	if s := os.Getenv("OLLAMA_MAX_VRAM"); s != "" {
+		maxVram, err := strconv.ParseUint(s, 10, 64)
 		require.NoError(t, err)
 		// Don't hammer on small VRAM cards...
-		if max < 4*1024*1024*1024 {
+		if maxVram < 4*format.GibiByte {
 			reqLimit = min(reqLimit, 2)
 			iterLimit = 2
 		}
@@ -233,12 +232,12 @@ func TestMultiModelStress(t *testing.T) {
 	consumed := uint64(256 * format.MebiByte) // Assume some baseline usage
 	for i := 0; i < len(req); i++ {
 		// Always get at least 2 models, but dont' overshoot VRAM too much or we'll take too long
-		if i > 1 && consumed > vram {
-			slog.Info("achieved target vram exhaustion", "count", i, "vram", format.HumanBytes2(vram), "models", format.HumanBytes2(consumed))
+		if i > 1 && consumed > maxVram {
+			slog.Info("achieved target vram exhaustion", "count", i, "vram", format.HumanBytes2(maxVram), "models", format.HumanBytes2(consumed))
 			break
 		}
 		consumed += chosenModels[i].size
-		slog.Info("target vram", "count", i, "vram", format.HumanBytes2(vram), "models", format.HumanBytes2(consumed))
+		slog.Info("target vram", "count", i, "vram", format.HumanBytes2(maxVram), "models", format.HumanBytes2(consumed))
 
 		wg.Add(1)
 		go func(i int) {

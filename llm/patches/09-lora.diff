@@ -1,40 +1,32 @@
 diff --git a/common/common.cpp b/common/common.cpp
-index dbb724fb..c26fe6ee 100644
+index 2e8374d5..70d0afde 100644
 --- a/common/common.cpp
 +++ b/common/common.cpp
-@@ -2087,14 +2087,27 @@ std::tuple<struct llama_model *, struct llama_context *> llama_init_from_gpt_par
-     for (unsigned int i = 0; i < params.lora_adapter.size(); ++i) {
-         const std::string & lora_adapter = std::get<0>(params.lora_adapter[i]);
-         float lora_scale = std::get<1>(params.lora_adapter[i]);
-+
-+        // try to load as gguf
-         auto adapter = llama_lora_adapter_init(model, lora_adapter.c_str());
-         if (adapter == nullptr) {
--            fprintf(stderr, "%s: error: failed to apply lora adapter\n", __func__);
+@@ -2110,9 +2110,21 @@ struct llama_init_result llama_init_from_gpt_params(gpt_params & params) {
+         loaded_la.adapter = llama_lora_adapter_init(model, la.path.c_str());
+         if (loaded_la.adapter == nullptr) {
+             fprintf(stderr, "%s: error: failed to apply lora adapter '%s'\n", __func__, la.path.c_str());
 -            llama_free(lctx);
 -            llama_free_model(model);
--            return std::make_tuple(nullptr, nullptr);
-+            fprintf(stderr, "%s: error: failed to apply lora adapter, trying ggla\n", __func__);
+-            return iparams;
 +
 +            // if that fails, try loading as ggla for compatibility
 +            int err = llama_model_apply_lora_from_file(model,
-+                                                    lora_adapter.c_str(),
-+                                                    lora_scale,
++                                                    la.path.c_str(),
++                                                    la.scale,
 +                                                    nullptr,
 +                                                    params.n_threads);
 +            if (err != 0) {
 +                fprintf(stderr, "%s: error: failed to apply lora adapter\n", __func__);
 +                llama_free(lctx);
 +                llama_free_model(model);
-+                return std::make_tuple(nullptr, nullptr);
++                return iparams;
++            } else {
++                break;
 +            }
-+        } else {
-+            llama_lora_adapter_set(lctx, adapter, lora_scale);
          }
--        llama_lora_adapter_set(lctx, adapter, lora_scale);
+         iparams.lora_adapters.push_back(loaded_la); // copy to list of loaded adapters
      }
- 
-     if (params.ignore_eos) {
 diff --git a/include/llama.h b/include/llama.h
 index 93fd77ca..b0fb37a6 100644
 --- a/include/llama.h

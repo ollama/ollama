@@ -215,25 +215,20 @@ func GetManifest(mp ModelPath) (*Manifest, string, error) {
 		return nil, "", err
 	}
 
-	if _, err = os.Stat(fp); err != nil {
-		return nil, "", err
-	}
-
-	var manifest *Manifest
-
-	bts, err := os.ReadFile(fp)
+	f, err := os.Open(fp)
 	if err != nil {
-		return nil, "", fmt.Errorf("couldn't open file '%s'", fp)
+		return nil, "", err
 	}
+	defer f.Close()
 
-	shaSum := sha256.Sum256(bts)
-	shaStr := hex.EncodeToString(shaSum[:])
+	sha256sum := sha256.New()
 
-	if err := json.Unmarshal(bts, &manifest); err != nil {
+	var manifest Manifest
+	if err := json.NewDecoder(io.TeeReader(f, sha256sum)).Decode(&manifest); err != nil {
 		return nil, "", err
 	}
 
-	return manifest, shaStr, nil
+	return &manifest, hex.EncodeToString(sha256sum.Sum(nil)), nil
 }
 
 func GetModel(name string) (*Model, error) {
@@ -250,19 +245,21 @@ func GetModel(name string) (*Model, error) {
 		Template:  template.DefaultTemplate,
 	}
 
-	filename, err := GetBlobsPath(manifest.Config.Digest)
-	if err != nil {
-		return nil, err
-	}
+	if manifest.Config.Digest != "" {
+		filename, err := GetBlobsPath(manifest.Config.Digest)
+		if err != nil {
+			return nil, err
+		}
 
-	configFile, err := os.Open(filename)
-	if err != nil {
-		return nil, err
-	}
-	defer configFile.Close()
+		configFile, err := os.Open(filename)
+		if err != nil {
+			return nil, err
+		}
+		defer configFile.Close()
 
-	if err := json.NewDecoder(configFile).Decode(&model.Config); err != nil {
-		return nil, err
+		if err := json.NewDecoder(configFile).Decode(&model.Config); err != nil {
+			return nil, err
+		}
 	}
 
 	for _, layer := range manifest.Layers {
@@ -371,7 +368,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 	var messages []*api.Message
 	parameters := make(map[string]any)
 
-	var layers []*Layer
+	var layers []Layer
 	for _, c := range modelfile.Commands {
 		mediatype := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
 
@@ -497,7 +494,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 
 			if c.Name != "license" {
 				// replace
-				layers = slices.DeleteFunc(layers, func(layer *Layer) bool {
+				layers = slices.DeleteFunc(layers, func(layer Layer) bool {
 					if layer.MediaType != mediatype {
 						return false
 					}
@@ -543,7 +540,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 	}
 
 	var err2 error
-	layers = slices.DeleteFunc(layers, func(layer *Layer) bool {
+	layers = slices.DeleteFunc(layers, func(layer Layer) bool {
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.message":
 			// if there are new messages, remove the inherited ones
@@ -623,12 +620,12 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 		return err
 	}
 
-	layer, err := NewLayer(&b, "application/vnd.docker.container.image.v1+json")
+	configLayer, err := NewLayer(&b, "application/vnd.docker.container.image.v1+json")
 	if err != nil {
 		return err
 	}
 
-	for _, layer := range append(layers, layer) {
+	for _, layer := range append(layers, configLayer) {
 		if layer.status != "" {
 			fn(api.ProgressResponse{Status: layer.status})
 		}
@@ -637,7 +634,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 	old, _ := ParseNamedManifest(name)
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
-	if err := WriteManifest(name, layer, layers); err != nil {
+	if err := WriteManifest(name, configLayer, layers); err != nil {
 		return err
 	}
 
@@ -690,44 +687,18 @@ func CopyModel(src, dst model.Name) error {
 	return err
 }
 
-func deleteUnusedLayers(skipModelPath *ModelPath, deleteMap map[string]struct{}) error {
-	fp, err := GetManifestPath()
+func deleteUnusedLayers(deleteMap map[string]struct{}) error {
+	manifests, err := Manifests()
 	if err != nil {
 		return err
 	}
 
-	walkFunc := func(path string, info os.FileInfo, _ error) error {
-		if info.IsDir() {
-			return nil
-		}
-
-		dir, file := filepath.Split(path)
-		dir = strings.Trim(strings.TrimPrefix(dir, fp), string(os.PathSeparator))
-		tag := strings.Join([]string{dir, file}, ":")
-		fmp := ParseModelPath(tag)
-
-		// skip the manifest we're trying to delete
-		if skipModelPath != nil && skipModelPath.GetFullTagname() == fmp.GetFullTagname() {
-			return nil
-		}
-
-		// save (i.e. delete from the deleteMap) any files used in other manifests
-		manifest, _, err := GetManifest(fmp)
-		if err != nil {
-			//nolint:nilerr
-			return nil
-		}
-
+	for _, manifest := range manifests {
 		for _, layer := range manifest.Layers {
 			delete(deleteMap, layer.Digest)
 		}
 
 		delete(deleteMap, manifest.Config.Digest)
-		return nil
-	}
-
-	if err := filepath.Walk(fp, walkFunc); err != nil {
-		return err
 	}
 
 	// only delete the files which are still in the deleteMap
@@ -780,9 +751,9 @@ func PruneLayers() error {
 
 	slog.Info(fmt.Sprintf("total blobs: %d", len(deleteMap)))
 
-	err = deleteUnusedLayers(nil, deleteMap)
-	if err != nil {
-		return err
+	if err := deleteUnusedLayers(deleteMap); err != nil {
+		slog.Error(fmt.Sprintf("couldn't remove unused layers: %v", err))
+		return nil
 	}
 
 	slog.Info(fmt.Sprintf("total unused blobs removed: %d", len(deleteMap)))
@@ -837,9 +808,11 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return err
 	}
 
-	var layers []*Layer
+	var layers []Layer
 	layers = append(layers, manifest.Layers...)
-	layers = append(layers, manifest.Config)
+	if manifest.Config.Digest != "" {
+		layers = append(layers, manifest.Config)
+	}
 
 	for _, layer := range layers {
 		if err := uploadBlob(ctx, mp, layer, regOpts, fn); err != nil {
@@ -873,23 +846,18 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
-	var manifest *Manifest
-	var err error
-	var noprune string
-
 	// build deleteMap to prune unused layers
 	deleteMap := make(map[string]struct{})
-
-	if !envconfig.NoPrune() {
-		manifest, _, err = GetManifest(mp)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
+	manifest, _, err := GetManifest(mp)
+	if errors.Is(err, os.ErrNotExist) {
+		// noop
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	} else {
+		for _, l := range manifest.Layers {
+			deleteMap[l.Digest] = struct{}{}
 		}
-
-		if manifest != nil {
-			for _, l := range manifest.Layers {
-				deleteMap[l.Digest] = struct{}{}
-			}
+		if manifest.Config.Digest != "" {
 			deleteMap[manifest.Config.Digest] = struct{}{}
 		}
 	}
@@ -905,9 +873,11 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return fmt.Errorf("pull model manifest: %s", err)
 	}
 
-	var layers []*Layer
+	var layers []Layer
 	layers = append(layers, manifest.Layers...)
-	layers = append(layers, manifest.Config)
+	if manifest.Config.Digest != "" {
+		layers = append(layers, manifest.Config)
+	}
 
 	skipVerify := make(map[string]bool)
 	for _, layer := range layers {
@@ -967,11 +937,10 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return err
 	}
 
-	if noprune == "" {
-		fn(api.ProgressResponse{Status: "removing any unused layers"})
-		err = deleteUnusedLayers(nil, deleteMap)
-		if err != nil {
-			return err
+	if !envconfig.NoPrune() && len(deleteMap) > 0 {
+		fn(api.ProgressResponse{Status: "removing unused layers"})
+		if err := deleteUnusedLayers(deleteMap); err != nil {
+			fn(api.ProgressResponse{Status: fmt.Sprintf("couldn't remove unused layers: %v", err)})
 		}
 	}
 
@@ -991,12 +960,12 @@ func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptio
 	}
 	defer resp.Body.Close()
 
-	var m *Manifest
+	var m Manifest
 	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
 		return nil, err
 	}
 
-	return m, err
+	return &m, err
 }
 
 // GetSHA256Digest returns the SHA256 hash of a given buffer and returns it, and the size of buffer

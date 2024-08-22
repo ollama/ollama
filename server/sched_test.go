@@ -117,7 +117,6 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 
 	require.NoError(t, llm.WriteGGUF(f, llm.KV{
 		"general.architecture":          "llama",
-		"general.name":                  "name",
 		"llama.context_length":          uint32(32),
 		"llama.embedding_length":        uint32(4096),
 		"llama.block_count":             uint32(1),
@@ -708,8 +707,8 @@ type mockLlm struct {
 	pingResp           error
 	waitResp           error
 	completionResp     error
-	embedResp          *llm.EmbedResponse
-	embedRespErr       error
+	embeddingResp      []float32
+	embeddingRespErr   error
 	tokenizeResp       []int
 	tokenizeRespErr    error
 	detokenizeResp     string
@@ -727,8 +726,8 @@ func (s *mockLlm) Completion(ctx context.Context, req llm.CompletionRequest, fn 
 	return s.completionResp
 }
 
-func (s *mockLlm) Embed(ctx context.Context, input []string) (*llm.EmbedResponse, error) {
-	return s.embedResp, s.embedRespErr
+func (s *mockLlm) Embedding(ctx context.Context, input string) ([]float32, error) {
+	return s.embeddingResp, s.embeddingRespErr
 }
 
 func (s *mockLlm) Tokenize(ctx context.Context, content string) ([]int, error) {

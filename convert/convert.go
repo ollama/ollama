@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"strings"
 
 	"github.com/ollama/ollama/llm"
 )
@@ -25,6 +26,10 @@ func (Parameters) KV(t *Tokenizer) llm.KV {
 		"tokenizer.ggml.tokens":        t.Vocabulary.Tokens,
 		"tokenizer.ggml.scores":        t.Vocabulary.Scores,
 		"tokenizer.ggml.token_type":    t.Vocabulary.Types,
+	}
+
+	if len(t.Merges) > 0 {
+		kv["tokenizer.ggml.merges"] = t.Merges
 	}
 
 	if t.Template != "" {
@@ -54,12 +59,18 @@ type Converter interface {
 	KV(*Tokenizer) llm.KV
 	// Tensors maps input tensors to LLM tensors. Model specific modifications can be done here.
 	Tensors([]Tensor) []llm.Tensor
+	// Replacements returns a list of string pairs to replace in tensor names.
+	// See [strings.Replacer](https://pkg.go.dev/strings#Replacer) for details
+	Replacements() []string
 
-	// tensorName returns the LLM tensor name for a specific input name
-	tensorName(string) string
 	// specialTokenTypes returns any special token types the model uses
 	specialTokenTypes() []string
+	// writeFile writes the model to the provided io.WriteSeeker
 	writeFile(io.WriteSeeker, llm.KV, []llm.Tensor) error
+}
+
+type moreParser interface {
+	parseMore(fs.FS) error
 }
 
 // Convert writes an Ollama compatible model to the provided io.WriteSeeker based on configurations
@@ -89,12 +100,24 @@ func Convert(fsys fs.FS, ws io.WriteSeeker) error {
 		conv = &mixtral{}
 	case "GemmaForCausalLM":
 		conv = &gemma{}
+	case "Gemma2ForCausalLM":
+		conv = &gemma2{}
+	case "Phi3ForCausalLM":
+		conv = &phi3{}
+	case "BertModel":
+		conv = &bert{}
 	default:
 		return errors.New("unsupported architecture")
 	}
 
 	if err := json.Unmarshal(bts, conv); err != nil {
 		return err
+	}
+
+	if t, ok := conv.(moreParser); ok {
+		if err := t.parseMore(fsys); err != nil {
+			return err
+		}
 	}
 
 	t, err := parseTokenizer(fsys, conv.specialTokenTypes())
@@ -113,7 +136,7 @@ func Convert(fsys fs.FS, ws io.WriteSeeker) error {
 		slog.Debug("vocabulary", "size", len(t.Vocabulary.Tokens))
 	}
 
-	ts, err := parseTensors(fsys)
+	ts, err := parseTensors(fsys, strings.NewReplacer(conv.Replacements()...))
 	if err != nil {
 		return err
 	}
