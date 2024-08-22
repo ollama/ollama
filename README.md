@@ -373,6 +373,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 - [Enchanted](https://github.com/AugustDev/enchanted)
 - [Maid](https://github.com/Mobile-Artificial-Intelligence/maid)
+- [Ollama App](https://github.com/JHubi1/ollama-app)
 
 ### Extensions & Plugins
 
