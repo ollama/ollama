@@ -1,0 +1,1 @@
+﻿C:\Program Files\Microsoft Visual Studio\2022\Preview\MSBuild\Microsoft\VC\v170\Microsoft.CppBuild.targets(1192,5): error MSB3191: Unable to create directory "B:\New\ollama\build\CMakeFiles\". Could not find a part of the path 'B:\New\ollama\build\CMakeFiles\'.
