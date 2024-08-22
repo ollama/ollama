@@ -16,9 +16,7 @@ type llamaAdapter struct {
 	NumKeyValueHeads  uint32 `json:"num_key_value_heads"`
 }
 
-var (
-	_ AdapterConverter = (*llamaAdapter)(nil)
-)
+var _ AdapterConverter = (*llamaAdapter)(nil)
 
 func (p *llamaAdapter) KV(baseKV llm.KV) llm.KV {
 	kv := p.AdapterParameters.KV()
@@ -80,7 +78,6 @@ func (p *llamaAdapter) repack(name string, data []float32, shape []uint64) ([]fl
 	var heads uint32
 	if strings.HasSuffix(name, "attn_q.weight.lora_a") {
 		heads = p.NumAttentionHeads
-	} else if strings.HasSuffix(name, "k_proj.lora_A.weight") {
 	} else if strings.HasSuffix(name, "attn_k.weight.lora_a") {
 		heads = cmp.Or(p.NumKeyValueHeads, p.NumAttentionHeads)
 	} else {
@@ -124,9 +121,9 @@ func (p *llamaAdapter) repackAndTranspose(name string, data []float32, shape []u
 	n := tensor.New(tensor.WithShape(dims...), tensor.WithBacking(data))
 
 	var heads uint32
-	if strings.HasSuffix(name, "self_attn.q_proj.lora_a") {
+	if strings.HasSuffix(name, "attn_q.weight.lora_a") {
 		heads = p.NumAttentionHeads
-	} else if strings.HasSuffix(name, "self_attn.k_proj.lora_a") {
+	} else if strings.HasSuffix(name, "attn_k.weight.lora_a") {
 		heads = cmp.Or(p.NumKeyValueHeads, p.NumAttentionHeads)
 	}
 

@@ -44,9 +44,7 @@ type llamaModel struct {
 	HeadDim          uint32  `json:"head_dim"`
 }
 
-var (
-	_ ModelConverter = (*llamaModel)(nil)
-)
+var _ ModelConverter = (*llamaModel)(nil)
 
 func (p *llamaModel) KV(t *Tokenizer) llm.KV {
 	kv := p.ModelParameters.KV(t)

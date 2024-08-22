@@ -138,6 +138,8 @@ func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseKV llm.KV) error {
 	switch arch {
 	case "llama":
 		conv = &llamaAdapter{}
+	case "gemma2":
+		conv = &gemma2Adapter{}
 	default:
 		return errors.New("unsupported architecture")
 	}
