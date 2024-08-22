@@ -157,6 +157,10 @@ func (c *Context) SampleTokenGreedy(logits []float32) int {
 	}))
 }
 
+func (c *Context) KvCacheSeqAdd(seqId int, p0 int, p1 int, delta int) {
+	C.llama_kv_cache_seq_add(c.c, C.int(seqId), C.int(p0), C.int(p1), C.int(delta))
+}
+
 func (c *Context) KvCacheSeqRm(seqId int, p0 int, p1 int) bool {
 	return bool(C.llama_kv_cache_seq_rm(c.c, C.int(seqId), C.int(p0), C.int(p1)))
 }
@@ -191,6 +195,16 @@ func (m *Model) TokenIsEog(token int) bool {
 	return bool(C.llama_token_is_eog(m.c, C.llama_token(token)))
 }
 
+func (m *Model) ShouldAddBOSToken() bool {
+	addBos := int(C.llama_add_bos_token(m.c))
+
+	if addBos != -1 {
+		return addBos != 0
+	} else {
+		return C.llama_vocab_type(m.c) == C.LLAMA_VOCAB_TYPE_SPM
+	}
+}
+
 func (m *Model) ApplyLoraFromFile(loraPath string, scale float32, baseModelPath string, threads int) error {
 	cLoraPath := C.CString(loraPath)
 	defer C.free(unsafe.Pointer(cLoraPath))
@@ -209,11 +223,15 @@ func (m *Model) ApplyLoraFromFile(loraPath string, scale float32, baseModelPath 
 }
 
 type Batch struct {
-	c C.struct_llama_batch
+	c         C.struct_llama_batch
+	batchSize int
 }
 
 func NewBatch(nTokens int, embd int, maxSeq int) Batch {
-	return Batch{c: C.llama_batch_init(C.int(nTokens), C.int(embd), C.int(maxSeq))}
+	return Batch{
+		c:         C.llama_batch_init(C.int(nTokens), C.int(embd), C.int(maxSeq)),
+		batchSize: nTokens,
+	}
 }
 
 func (b *Batch) NumTokens() int {
@@ -223,16 +241,16 @@ func (b *Batch) NumTokens() int {
 // Add adds a token to the batch with the given position for the given
 // sequence ids, and optionally instructs to include logits.
 func (b *Batch) Add(token int, pos int, seqIds []int, logits bool) {
-	unsafe.Slice(b.c.token, 512)[b.c.n_tokens] = C.llama_token(token)
-	unsafe.Slice(b.c.pos, 512)[b.c.n_tokens] = C.llama_pos(pos)
-	unsafe.Slice(b.c.n_seq_id, 512)[b.c.n_tokens] = C.int(len(seqIds))
+	unsafe.Slice(b.c.token, b.batchSize)[b.c.n_tokens] = C.llama_token(token)
+	unsafe.Slice(b.c.pos, b.batchSize)[b.c.n_tokens] = C.llama_pos(pos)
+	unsafe.Slice(b.c.n_seq_id, b.batchSize)[b.c.n_tokens] = C.int(len(seqIds))
 
 	for i, s := range seqIds {
-		unsafe.Slice((unsafe.Slice(b.c.seq_id, 512)[b.c.n_tokens]), C.int(len(seqIds)))[i] = C.int32_t(s)
+		unsafe.Slice((unsafe.Slice(b.c.seq_id, b.batchSize)[b.c.n_tokens]), C.int(len(seqIds)))[i] = C.int32_t(s)
 	}
 
 	if logits {
-		unsafe.Slice(b.c.logits, 512)[b.c.n_tokens] = 1
+		unsafe.Slice(b.c.logits, b.batchSize)[b.c.n_tokens] = 1
 	}
 
 	b.c.n_tokens += 1
@@ -243,6 +261,7 @@ func (b *Batch) Clear() {
 }
 
 func (b *Batch) Free() {
+	b.batchSize = 0
 	C.llama_batch_free(b.c)
 }
 
@@ -255,15 +274,29 @@ type Model struct {
 }
 
 func (m *Model) TokenToPiece(token int) string {
-	buf := make([]byte, 12)
-	C.llama_token_to_piece(
+	tokenLen := 12
+	buf := make([]byte, tokenLen)
+	tokenLen = int(C.llama_token_to_piece(
 		m.c,
 		C.int32_t(token),
 		(*C.char)(unsafe.Pointer(&buf[0])),
-		C.int32_t(12),
+		C.int32_t(tokenLen),
 		C.int32_t(0),
 		C.bool(true),
-	)
+	))
+	if tokenLen < 0 {
+		tokenLen = -tokenLen
+
+		buf = make([]byte, tokenLen)
+		C.llama_token_to_piece(
+			m.c,
+			C.int32_t(token),
+			(*C.char)(unsafe.Pointer(&buf[0])),
+			C.int32_t(tokenLen),
+			C.int32_t(0),
+			C.bool(true),
+		)
+	}
 	return strings.TrimRight(string(buf), "\x00")
 }
 
@@ -354,9 +387,11 @@ type SamplingContext struct {
 type SamplingParams struct {
 	TopK           int
 	TopP           float32
+	MinP           float32
 	TfsZ           float32
 	TypicalP       float32
 	Temp           float32
+	RepeatLastN    int
 	PenaltyRepeat  float32
 	PenaltyFreq    float32
 	PenaltyPresent float32
@@ -372,9 +407,11 @@ func NewSamplingContext(params SamplingParams) *SamplingContext {
 	var cparams C.struct_llama_sampling_cparams
 	cparams.top_k = C.int32_t(params.TopK)
 	cparams.top_p = C.float(params.TopP)
+	cparams.min_p = C.float(params.MinP)
 	cparams.tfs_z = C.float(params.TfsZ)
 	cparams.typical_p = C.float(params.TypicalP)
 	cparams.temp = C.float(params.Temp)
+	cparams.penalty_last_n = C.int32_t(params.RepeatLastN)
 	cparams.penalty_repeat = C.float(params.PenaltyRepeat)
 	cparams.penalty_freq = C.float(params.PenaltyFreq)
 	cparams.penalty_present = C.float(params.PenaltyFreq)

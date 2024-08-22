@@ -7,9 +7,11 @@ struct llama_sampling_context *llama_sampling_cinit(struct llama_sampling_cparam
     llama_sampling_params sparams;
     sparams.top_k = params->top_k;
     sparams.top_p = params->top_p;
+    sparams.min_p = params->min_p;
     sparams.tfs_z = params->tfs_z;
     sparams.typical_p = params->typical_p;
     sparams.temp = params->temp;
+    sparams.penalty_last_n = params->penalty_last_n;
     sparams.penalty_repeat = params->penalty_repeat;
     sparams.penalty_freq = params->penalty_freq;
     sparams.penalty_present = params->penalty_present;
