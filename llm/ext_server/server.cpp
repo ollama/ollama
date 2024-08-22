@@ -1429,7 +1429,13 @@ struct llama_server_context
         switch (task.type)
         {
             case TASK_TYPE_COMPLETION: {
-                server_slot *slot = prefix_slot(task.data["prompt"]);
+                server_slot *slot = nullptr;
+                if (task.embedding_mode) {
+                    // Embedding seq_id (aka slot id) must always be <= token length, so always use slot 0
+                    slot = slots[0].available() ? &slots[0] : nullptr;
+                } else {
+                    slot = prefix_slot(task.data["prompt"]);
+                }
                 if (slot == nullptr)
                 {
                     // if no slot is available, we defer this task for processing later
