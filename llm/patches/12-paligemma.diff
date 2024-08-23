@@ -31,7 +31,7 @@ index 54aa822c..45d03982 100644
      if (ctx->proj_type == PROJECTOR_TYPE_MLP_NORM) {
          return ctx->vision_model.mm_3_b->ne[0];
 diff --git a/examples/llava/llava-cli.cpp b/examples/llava/llava-cli.cpp
-index 8c7dd2ae..3fe4759c 100644
+index 8c7dd2ae..38eeb305 100644
 --- a/examples/llava/llava-cli.cpp
 +++ b/examples/llava/llava-cli.cpp
 @@ -18,7 +18,10 @@ static bool eval_tokens(struct llama_context * ctx_llama, std::vector<llama_toke
@@ -66,7 +66,7 @@ index 8c7dd2ae..3fe4759c 100644
 -    llava_eval_image_embed(ctx_llava->ctx_llama, image_embed, params->n_batch, &n_past);
 -    eval_string(ctx_llava->ctx_llama, user_prompt.c_str(), params->n_batch, &n_past, false);
 +    // build user prompt with 256 image tokens
-+    user_prompt = "caption es";
++    user_prompt = "What is in this image?";
 +    std::string image_token_prefix = "";
 +    for (int i = 0; i < 256; i++) {
 +        image_token_prefix += "<image>";
@@ -100,15 +100,17 @@ index 8c7dd2ae..3fe4759c 100644
              process_prompt(ctx_llava, image_embed, &params, params.prompt);
  
 diff --git a/include/llama.h b/include/llama.h
-index ce07f4fa..09cfe207 100644
+index ce07f4fa..c3465d68 100644
 --- a/include/llama.h
 +++ b/include/llama.h
-@@ -444,6 +444,11 @@ extern "C" {
+@@ -444,6 +444,13 @@ extern "C" {
      // Frees all allocated memory
      LLAMA_API void llama_free(struct llama_context * ctx);
  
 +    // save image embeddings
 +    LLAMA_API void set_image_embeds(struct llama_context *ctx, float *data);
++
++    LLAMA_API void print_embeds(struct llama_context *ctx);
 +
 +    LLAMA_API void print_causal(struct llama_context *ctx);
 +
@@ -116,7 +118,7 @@ index ce07f4fa..09cfe207 100644
  
      LLAMA_API size_t llama_max_devices(void);
 diff --git a/src/llama.cpp b/src/llama.cpp
-index 7f2f0003..74498632 100644
+index 7f2f0003..d5926202 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
 @@ -2677,6 +2677,7 @@ struct llama_context {
@@ -127,12 +129,23 @@ index 7f2f0003..74498632 100644
      struct llama_cparams        cparams;
      struct llama_sampling       sampling;
      struct llama_kv_cache       kv_self;
-@@ -2760,6 +2761,22 @@ struct llama_context {
+@@ -2760,6 +2761,33 @@ struct llama_context {
      struct ggml_tensor * inp_KQ_mask_cross; // F32 [n_outputs_enc, n_batch]
  };
  
 +void set_image_embeds(llama_context *ctx, float *data) {
 +    ctx->image_embeds = data;
++}
++
++void print_embeds(struct llama_context *ctx)
++{
++    if (ctx->image_embeds)
++    {
++        for (int i = 0; i < 256; i++)
++        {
++            LLAMA_LOG_INFO("%f ", ctx->image_embeds[i]);
++        }
++    }
 +}
 +
 +void print_causal(llama_context *ctx)
@@ -150,7 +163,7 @@ index 7f2f0003..74498632 100644
  struct llama_lora_weight {
      struct ggml_tensor * a = nullptr;
      struct ggml_tensor * b = nullptr;
-@@ -3021,6 +3038,96 @@ static bool llama_kv_cache_init(
+@@ -3021,6 +3049,96 @@ static bool llama_kv_cache_init(
      return true;
  }
  
@@ -247,7 +260,7 @@ index 7f2f0003..74498632 100644
  // find an empty slot of size "n_tokens" in the cache
  // updates the cache head
  // Note: On success, it's important that cache.head points
-@@ -11660,6 +11767,17 @@ struct llm_build_context {
+@@ -11660,6 +11778,18 @@ struct llm_build_context {
  
          inpL = llm_build_inp_embd(ctx0, lctx, hparams, batch, model.tok_embd, cb);
  
@@ -256,7 +269,8 @@ index 7f2f0003..74498632 100644
 +            struct ggml_tensor *image_embeds = ggml_dup_tensor(ctx0, inpL);
 +            image_embeds->data = lctx.image_embeds;
 +            image_embeds->ne[1] = 256;
-+            llama_log_tensor(image_embeds, "/Users/joshyan/ollama/tensordata");
++            print_embeds(&lctx);
++            // llama_log_tensor(image_embeds, "/Users/joshyan/ollama/tensordata");
 +
 +            inpL = ggml_set_2d_inplace(ctx0, inpL, image_embeds, inpL->nb[1], 0);
 +            lctx.image_embeds = NULL;
@@ -265,7 +279,7 @@ index 7f2f0003..74498632 100644
          inpL = ggml_scale(ctx0, inpL, sqrtf(n_embd));
          cb(inpL, "inp_scaled", -1);
  
-@@ -14678,7 +14796,7 @@ static int llama_decode_internal(
+@@ -14678,7 +14808,7 @@ static int llama_decode_internal(
          }
  
          // non-causal masks do not use the KV cache
@@ -274,7 +288,7 @@ index 7f2f0003..74498632 100644
              llama_kv_cache_update(&lctx);
  
              // if we have enough unused cells before the current head ->
-@@ -18565,6 +18683,12 @@ float * llama_get_logits_ith(struct llama_context * ctx, int32_t i) {
+@@ -18565,6 +18695,12 @@ float * llama_get_logits_ith(struct llama_context * ctx, int32_t i) {
          if (ctx->logits == nullptr) {
              throw std::runtime_error("no logits");
          }
@@ -287,7 +301,7 @@ index 7f2f0003..74498632 100644
  
          if (i < 0) {
              j = ctx->n_outputs + i;
-@@ -18577,6 +18701,7 @@ float * llama_get_logits_ith(struct llama_context * ctx, int32_t i) {
+@@ -18577,6 +18713,7 @@ float * llama_get_logits_ith(struct llama_context * ctx, int32_t i) {
              j = ctx->output_ids[i];
          }
  

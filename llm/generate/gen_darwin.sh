@@ -9,8 +9,8 @@ set -o pipefail
 echo "Starting darwin generate script"
 source $(dirname $0)/gen_common.sh
 init_vars
-git_module_setup
-apply_patches
+#git_module_setup
+#apply_patches
 
 sign() {
     if [ -n "$APPLE_IDENTITY" ]; then
@@ -97,5 +97,5 @@ case "${GOARCH}" in
     ;;
 esac
 
-cleanup
+#cleanup
 echo "go generate completed.  LLM runners: $(cd ${BUILD_DIR}/..; echo *)"

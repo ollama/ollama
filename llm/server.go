@@ -179,7 +179,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			}
 		}
 	}
-
+	opts.NumGPU = 0
 	if len(servers) == 0 {
 		return nil, fmt.Errorf("no servers found for %v", gpus)
 	}
@@ -733,7 +733,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		"n_predict":         req.Options.NumPredict,
 		"n_keep":            req.Options.NumKeep,
 		"main_gpu":          req.Options.MainGPU,
-		"temperature":       req.Options.Temperature,
+		"temperature":       0,
 		"top_k":             req.Options.TopK,
 		"top_p":             req.Options.TopP,
 		"min_p":             req.Options.MinP,

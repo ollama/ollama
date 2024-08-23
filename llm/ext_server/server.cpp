@@ -1272,7 +1272,7 @@ struct llama_server_context
         }
     }
 
-    bool process_images_paligemma(server_slot &slot, int n_batch)
+    /* bool process_images_paligemma(server_slot &slot, int n_batch)
     {
         // set_off_embeds(ctx);
         int n_past = 0;
@@ -1288,8 +1288,8 @@ struct llama_server_context
 
         if (ctx)
         {
-            set_image_embeds(ctx, data);
-            // print_image_embeds(ctx);
+            // set_image_embeds(ctx, data);
+            // print_embeds(ctx);
         }
         else
         {
@@ -1366,8 +1366,8 @@ struct llama_server_context
         }
         printf("done processing images paligemma\n");
         // llama_batch_clear(batch);
-        return true;
-    }
+         return true;
+    } */
 
     bool prepare_pali(server_slot &slot, int n_batch)
     {
@@ -1382,21 +1382,12 @@ struct llama_server_context
         {
             data[i] = data[i] / sqrt(2048);
         }
-
-        if (ctx)
-        {
-            set_image_embeds(ctx, data);
-            // print_image_embeds(ctx);
-        }
-        else
-        {
-            printf("ctx is null");
-        }
+        set_image_embeds(ctx, data);
 
         // generate user_prompt -> this should contain image tokens prepended and a new line appended:
         // batch.n_tokens += (int)slot.images.size() * llama_n_embd(model);
         std::vector<llama_token> tokens;
-        std::string prompt = "caption es";
+        std::string prompt = "How much ketchup is in this image?";
         std::vector<llama_token> text = ::llama_tokenize(ctx, prompt, false, true);
 
         for (int i = 0; i < (int)slot.images.size() * 256; i++)
