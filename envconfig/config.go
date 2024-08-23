@@ -30,9 +30,7 @@ func Host() *url.URL {
 		defaultPort = "443"
 	}
 
-	// trim trailing slashes
-	hostport = strings.TrimRight(hostport, "/")
-
+	hostport, path, _ := strings.Cut(hostport, "/")
 	host, port, err := net.SplitHostPort(hostport)
 	if err != nil {
 		host, port = "127.0.0.1", defaultPort
@@ -45,15 +43,13 @@ func Host() *url.URL {
 
 	if n, err := strconv.ParseInt(port, 10, 32); err != nil || n > 65535 || n < 0 {
 		slog.Warn("invalid port, using default", "port", port, "default", defaultPort)
-		return &url.URL{
-			Scheme: scheme,
-			Host:   net.JoinHostPort(host, defaultPort),
-		}
+		port = defaultPort
 	}
 
 	return &url.URL{
 		Scheme: scheme,
 		Host:   net.JoinHostPort(host, port),
+		Path:   path,
 	}
 }
 
