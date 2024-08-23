@@ -43,6 +43,14 @@ func (kv KV) Architecture() string {
 	return "unknown"
 }
 
+func (kv KV) Kind() string {
+	if s, ok := kv["general.type"].(string); ok {
+		return s
+	}
+
+	return "unknown"
+}
+
 func (kv KV) ParameterCount() uint64 {
 	return kv.u64("general.parameter_count")
 }

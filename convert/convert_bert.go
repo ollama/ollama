@@ -11,8 +11,8 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-type bert struct {
-	Parameters
+type bertModel struct {
+	ModelParameters
 	NLayers               uint32  `json:"n_layers"`
 	NumHiddenLayers       uint32  `json:"num_hidden_layers"`
 	NLayer                uint32  `json:"n_layer"`
@@ -33,11 +33,11 @@ type bert struct {
 }
 
 var (
-	_ Converter  = (*bert)(nil)
-	_ moreParser = (*bert)(nil)
+	_ ModelConverter = (*bertModel)(nil)
+	_ moreParser     = (*bertModel)(nil)
 )
 
-func (p *bert) parseMore(fsys fs.FS) error {
+func (p *bertModel) parseMore(fsys fs.FS) error {
 	bts, err := fs.ReadFile(fsys, "modules.json")
 	if err != nil {
 		return err
@@ -85,8 +85,8 @@ func (p *bert) parseMore(fsys fs.FS) error {
 	return nil
 }
 
-func (p *bert) KV(t *Tokenizer) llm.KV {
-	kv := p.Parameters.KV(t)
+func (p *bertModel) KV(t *Tokenizer) llm.KV {
+	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "bert"
 	kv["bert.attention.causal"] = false
 	kv["bert.pooling_type"] = p.PoolingType
@@ -132,7 +132,7 @@ func (p *bert) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *bert) Tensors(ts []Tensor) []llm.Tensor {
+func (p *bertModel) Tensors(ts []Tensor) []llm.Tensor {
 	var out []llm.Tensor
 	for _, t := range ts {
 		if slices.Contains([]string{
@@ -154,7 +154,7 @@ func (p *bert) Tensors(ts []Tensor) []llm.Tensor {
 	return out
 }
 
-func (bert) Replacements() []string {
+func (bertModel) Replacements() []string {
 	return []string{
 		"encoder.layer", "blk",
 		"encoder.layers", "blk",

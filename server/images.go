@@ -369,13 +369,14 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 	parameters := make(map[string]any)
 
 	var layers []Layer
+	var baseLayers []*layerGGML
 	for _, c := range modelfile.Commands {
 		mediatype := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
+		command := c.Name
 
-		switch c.Name {
+		switch command {
 		case "model", "adapter":
-			var baseLayers []*layerGGML
-			if name := model.ParseName(c.Args); name.IsValid() {
+			if name := model.ParseName(c.Args); name.IsValid() && command == "model" {
 				baseLayers, err = parseFromModel(ctx, name, fn)
 				if err != nil {
 					return err
@@ -409,14 +410,14 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 				}
 				defer blob.Close()
 
-				baseLayers, err = parseFromFile(ctx, blob, digest, fn)
+				baseLayers, err = parseFromFile(ctx, command, baseLayers, blob, digest, fn)
 				if err != nil {
 					return err
 				}
 			} else if file, err := os.Open(realpath(modelFileDir, c.Args)); err == nil {
 				defer file.Close()
 
-				baseLayers, err = parseFromFile(ctx, file, "", fn)
+				baseLayers, err = parseFromFile(ctx, command, baseLayers, file, "", fn)
 				if err != nil {
 					return err
 				}

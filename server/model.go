@@ -81,7 +81,7 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 	return layers, nil
 }
 
-func parseFromZipFile(_ context.Context, f *os.File, digest string, fn func(api.ProgressResponse)) (layers []*layerGGML, err error) {
+func parseFromZipFile(_ context.Context, command string, baseLayers []*layerGGML, f *os.File, digest string, fn func(api.ProgressResponse)) (layers []*layerGGML, err error) {
 	fi, err := f.Stat()
 	if err != nil {
 		return nil, err
@@ -108,16 +108,38 @@ func parseFromZipFile(_ context.Context, f *os.File, digest string, fn func(api.
 	defer t.Close()
 	defer os.Remove(t.Name())
 
-	fn(api.ProgressResponse{Status: "converting model"})
-	if err := convert.Convert(convert.NewZipReader(r, p, 32<<20), t); err != nil {
-		return nil, err
+	var layerType string
+
+	switch command {
+	case "adapter":
+		var baseModel *llm.GGML
+		for _, l := range baseLayers {
+			if l.GGML != nil {
+				baseModel = l.GGML
+				break
+			}
+		}
+
+		if baseModel == nil {
+			return nil, fmt.Errorf("no base model specified for the adapter")
+		}
+
+		if err := convert.ConvertAdapter(convert.NewZipReader(r, p, 32<<20), t, baseModel.KV()); err != nil {
+			return nil, err
+		}
+		layerType = "application/vnd.ollama.image.adapter"
+	case "model":
+		if err := convert.ConvertModel(convert.NewZipReader(r, p, 32<<20), t); err != nil {
+			return nil, err
+		}
+		layerType = "application/vnd.ollama.image.model"
 	}
 
 	if _, err := t.Seek(0, io.SeekStart); err != nil {
 		return nil, err
 	}
 
-	layer, err := NewLayer(t, "application/vnd.ollama.image.model")
+	layer, err := NewLayer(t, layerType)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +161,7 @@ func parseFromZipFile(_ context.Context, f *os.File, digest string, fn func(api.
 	return detectChatTemplate(layers)
 }
 
-func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(api.ProgressResponse)) (layers []*layerGGML, err error) {
+func parseFromFile(ctx context.Context, command string, baseLayers []*layerGGML, file *os.File, digest string, fn func(api.ProgressResponse)) (layers []*layerGGML, err error) {
 	sr := io.NewSectionReader(file, 0, 512)
 	contentType, err := detectContentType(sr)
 	if err != nil {
@@ -150,7 +172,7 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 	case "gguf", "ggla":
 		// noop
 	case "application/zip":
-		return parseFromZipFile(ctx, file, digest, fn)
+		return parseFromZipFile(ctx, command, baseLayers, file, digest, fn)
 	default:
 		return nil, fmt.Errorf("unsupported content type: %s", contentType)
 	}
@@ -170,7 +192,7 @@ func parseFromFile(ctx context.Context, file *os.File, digest string, fn func(ap
 		}
 
 		mediatype := "application/vnd.ollama.image.model"
-		if ggml.Name() == "ggla" {
+		if ggml.Name() == "ggla" || ggml.KV().Kind() == "adapter" {
 			mediatype = "application/vnd.ollama.image.adapter"
 		} else if ggml.KV().Architecture() == "clip" {
 			mediatype = "application/vnd.ollama.image.projector"
