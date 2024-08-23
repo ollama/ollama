@@ -13,34 +13,35 @@ func TestHost(t *testing.T) {
 		value  string
 		expect string
 	}{
-		"empty":               {"", "127.0.0.1:11434"},
-		"only address":        {"1.2.3.4", "1.2.3.4:11434"},
-		"only port":           {":1234", ":1234"},
-		"address and port":    {"1.2.3.4:1234", "1.2.3.4:1234"},
-		"hostname":            {"example.com", "example.com:11434"},
-		"hostname and port":   {"example.com:1234", "example.com:1234"},
-		"zero port":           {":0", ":0"},
-		"too large port":      {":66000", ":11434"},
-		"too small port":      {":-1", ":11434"},
-		"ipv6 localhost":      {"[::1]", "[::1]:11434"},
-		"ipv6 world open":     {"[::]", "[::]:11434"},
-		"ipv6 no brackets":    {"::1", "[::1]:11434"},
-		"ipv6 + port":         {"[::1]:1337", "[::1]:1337"},
-		"extra space":         {" 1.2.3.4 ", "1.2.3.4:11434"},
-		"extra quotes":        {"\"1.2.3.4\"", "1.2.3.4:11434"},
-		"extra space+quotes":  {" \" 1.2.3.4 \" ", "1.2.3.4:11434"},
-		"extra single quotes": {"'1.2.3.4'", "1.2.3.4:11434"},
-		"http":                {"http://1.2.3.4", "1.2.3.4:80"},
-		"http port":           {"http://1.2.3.4:4321", "1.2.3.4:4321"},
-		"https":               {"https://1.2.3.4", "1.2.3.4:443"},
-		"https port":          {"https://1.2.3.4:4321", "1.2.3.4:4321"},
+		"empty":               {"", "http://127.0.0.1:11434"},
+		"only address":        {"1.2.3.4", "http://1.2.3.4:11434"},
+		"only port":           {":1234", "http://:1234"},
+		"address and port":    {"1.2.3.4:1234", "http://1.2.3.4:1234"},
+		"hostname":            {"example.com", "http://example.com:11434"},
+		"hostname and port":   {"example.com:1234", "http://example.com:1234"},
+		"zero port":           {":0", "http://:0"},
+		"too large port":      {":66000", "http://:11434"},
+		"too small port":      {":-1", "http://:11434"},
+		"ipv6 localhost":      {"[::1]", "http://[::1]:11434"},
+		"ipv6 world open":     {"[::]", "http://[::]:11434"},
+		"ipv6 no brackets":    {"::1", "http://[::1]:11434"},
+		"ipv6 + port":         {"[::1]:1337", "http://[::1]:1337"},
+		"extra space":         {" 1.2.3.4 ", "http://1.2.3.4:11434"},
+		"extra quotes":        {"\"1.2.3.4\"", "http://1.2.3.4:11434"},
+		"extra space+quotes":  {" \" 1.2.3.4 \" ", "http://1.2.3.4:11434"},
+		"extra single quotes": {"'1.2.3.4'", "http://1.2.3.4:11434"},
+		"http":                {"http://1.2.3.4", "http://1.2.3.4:80"},
+		"http port":           {"http://1.2.3.4:4321", "http://1.2.3.4:4321"},
+		"https":               {"https://1.2.3.4", "https://1.2.3.4:443"},
+		"https port":          {"https://1.2.3.4:4321", "https://1.2.3.4:4321"},
+		"proxy path":          {"https://example.com/ollama", "https://example.com:443/ollama"},
 	}
 
 	for name, tt := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("OLLAMA_HOST", tt.value)
-			if host := Host(); host.Host != tt.expect {
-				t.Errorf("%s: expected %s, got %s", name, tt.expect, host.Host)
+			if host := Host(); host.String() != tt.expect {
+				t.Errorf("%s: expected %s, got %s", name, tt.expect, host.String())
 			}
 		})
 	}
