@@ -1271,6 +1271,48 @@ struct llama_server_context
         }
     }
 
+    bool prepare_pali(server_slot &slot, int n_batch)
+    {
+        int n_past = 0;
+        int image_idx = 0;
+        slot_image &img = slot.images[image_idx];
+
+        // rescale image embeddings
+        float *data = img.image_embedding;
+        for (int i = 0; i < 2048 * 256; i++)
+        {
+            data[i] = data[i] / sqrt(2048);
+        }
+        set_image_embeds(ctx, data);
+
+        // generate user_prompt -> this should contain image tokens prepended and a new line appended:
+        // batch.n_tokens += (int)slot.images.size() * llama_n_embd(model);
+        std::vector<llama_token> tokens;
+        std::string prompt = "How much ketchup is in this image?";
+        std::vector<llama_token> text = ::llama_tokenize(ctx, prompt, false, true);
+
+        for (int i = 0; i < (int)slot.images.size() * 256; i++)
+        {
+            tokens.push_back(257152);
+        }
+
+        tokens.push_back(2);
+
+        for (int i = 0; i < text.size(); i++)
+        {
+            tokens.push_back(text[i]);
+        }
+
+        tokens.push_back(108);
+
+        for (int i = 0; i < (int)tokens.size(); ++i)
+        {
+            llama_batch_add(batch, tokens[i], system_tokens.size() + slot.n_past, {slot.id}, true);
+            slot.n_past += 1;
+        }
+        return true;
+    }
+
     // for multiple images processing
     bool ingest_images(server_slot &slot, int n_batch)
     {
@@ -1839,7 +1881,8 @@ struct llama_server_context
                         slot_npast++;
                     }
 
-                    if (has_images && !ingest_images(slot, n_batch))
+                    // if (has_images && !ingest_images(slot, n_batch))
+                    if (has_images && !prepare_pali(slot, n_batch))
                     {
                         LOG_ERROR("failed processing images", {
                             {"slot_id", slot.id},

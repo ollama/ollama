@@ -52,7 +52,7 @@ index a7b1c9eb..b0a6bc27 100644
  
      const struct llama_model & model;
  
-+    float *image_embeds;
++    float *image_embeds = nullptr;
      struct llama_cparams        cparams;
      struct llama_sampling       sampling;
      struct llama_kv_cache       kv_self;
