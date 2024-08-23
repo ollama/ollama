@@ -198,8 +198,7 @@ func incompleteUnicode(token string) bool {
 }
 
 func (s *Server) run(ctx context.Context) {
-	// TODO - should this be n_ctx / parallel like the old server.cpp setup?
-	batch := llama.NewBatch(s.batchSize, 0, s.parallel)
+	batch := llama.NewBatch(s.batchSize*len(s.seqs), 0, len(s.seqs))
 	defer batch.Free()
 
 	// build up stop sequences as we recognize them
