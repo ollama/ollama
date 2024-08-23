@@ -264,6 +264,8 @@ func GetGPUInfo() GpuInfoList {
 				gpuInfo.computeMajor = int(memInfo.major)
 				gpuInfo.computeMinor = int(memInfo.minor)
 				gpuInfo.MinimumMemory = cudaMinimumMemory
+				gpuInfo.DriverMajor = driverMajor
+				gpuInfo.DriverMinor = driverMinor
 				variant := cudaVariant(gpuInfo)
 				if depPath != "" {
 					gpuInfo.DependencyPath = depPath
@@ -275,8 +277,6 @@ func GetGPUInfo() GpuInfoList {
 					}
 				}
 				gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
-				gpuInfo.DriverMajor = driverMajor
-				gpuInfo.DriverMinor = driverMinor
 				gpuInfo.Variant = variant
 
 				// query the management library as well so we can record any skew between the two
