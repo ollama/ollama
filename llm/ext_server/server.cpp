@@ -1313,8 +1313,7 @@ struct llama_server_context
         return true;
     }
 
-    // for multiple images processing
-    bool ingest_images(server_slot &slot, int n_batch)
+    bool process_llava(server_slot &slot, int n_batch)
     {
         int image_idx = 0;
 
@@ -1389,6 +1388,20 @@ struct llama_server_context
         }
 
         return true;
+    }
+
+    // for multiple images processing based on model architecture
+    bool ingest_images(server_slot &slot, int n_batch)
+    {
+        switch (llama_get_architecture(model))
+        {
+        case 0:
+            return process_llava(slot, n_batch);
+        case 25:
+            return prepare_pali(slot, n_batch);
+        default:
+            return false;
+        }
     }
 
     void request_cancel(int task_id)
@@ -1880,9 +1893,14 @@ struct llama_server_context
                         llama_batch_add(batch, prefix_tokens[slot.n_past], system_tokens.size() + slot_npast, { slot.id }, false);
                         slot_npast++;
                     }
+                    LOG_DEBUG("hi gpt params processing images", {
+                                                                     {"gpt_params.model", params.model.c_str()},
+                                                                     {"model alias", params.model_alias.c_str()},
+                                                                 });
+                    printf("gpt_params model is %s\n", params.model.c_str());
+                    printf("gpt_params model is %s\n", params.model.c_str());
 
-                    // if (has_images && !ingest_images(slot, n_batch))
-                    if (has_images && !prepare_pali(slot, n_batch))
+                    if (has_images && !ingest_images(slot, n_batch))
                     {
                         LOG_ERROR("failed processing images", {
                             {"slot_id", slot.id},
