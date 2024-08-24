@@ -98,7 +98,6 @@ func parseFromZipFile(_ context.Context, command string, baseLayers []*layerGGML
 	}
 	defer os.RemoveAll(p)
 
-	fn(api.ProgressResponse{Status: "converting model"})
 	// TODO(mxyng): this should write directly into a layer
 	// e.g. NewLayer(arch.Reader(), "application/vnd.ollama.image.model")
 	t, err := os.CreateTemp(p, "fp16")
