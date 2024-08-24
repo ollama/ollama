@@ -15,20 +15,32 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/gpu"
 )
 
 var errPayloadMissing = errors.New("expected payloads not included in this build of ollama")
 
 func Init() error {
-	payloadsDir, err := gpu.PayloadsDir()
+	binGlob := "build/*/*/*/bin/*"
+	extract := true
+
+	// Short circuit if we intentionally have no payloads
+	files, err := fs.Glob(libEmbed, binGlob)
+	if err != nil || len(files) == 0 || (len(files) == 1 && strings.Contains(files[0], "NO_PAYLOAD")) {
+		extract = false
+		slog.Debug("runner payloads intentionally omitted")
+		// Make sure GPU discovery will use the correct payload location
+		gpu.SetRunnersDir(envconfig.GetRelativeRunnerDir())
+	}
+
+	payloadsDir, err := gpu.RunnersDir()
 	if err != nil {
 		return err
 	}
 
-	if runtime.GOOS != "windows" {
+	if runtime.GOOS != "windows" && extract {
 		slog.Info("extracting embedded files", "dir", payloadsDir)
-		binGlob := "build/*/*/*/bin/*"
 
 		// extract server libraries
 		err = extractFiles(payloadsDir, binGlob)
@@ -51,7 +63,7 @@ func Init() error {
 // For example, "ollama_rocm_v6" and "ollama_rocm_v5" or "ollama_cpu" and "ollama_cpu_avx2"
 // Any library without a variant is the lowest common denominator
 func getAvailableServers() map[string]string {
-	payloadsDir, err := gpu.PayloadsDir()
+	payloadsDir, err := gpu.RunnersDir()
 	if err != nil {
 		slog.Error("payload lookup error", "error", err)
 		return nil

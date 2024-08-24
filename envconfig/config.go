@@ -177,16 +177,19 @@ func RunnersDir() (p string) {
 			slog.Error("unable to locate llm runner directory. Set OLLAMA_RUNNERS_DIR to the location of 'ollama/runners'")
 		}
 	}()
+	return GetRelativeRunnerDir()
+}
 
+func GetRelativeRunnerDir() string {
 	// On Windows we do not carry the payloads inside the main executable
 	exe, err := os.Executable()
 	if err != nil {
-		return
+		return ""
 	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		return
+		return ""
 	}
 
 	var paths []string
@@ -202,12 +205,11 @@ func RunnersDir() (p string) {
 	for _, path := range paths {
 		candidate := filepath.Join(path, "lib", "ollama", "runners")
 		if _, err := os.Stat(candidate); err == nil {
-			p = candidate
-			break
+			return candidate
 		}
 	}
 
-	return p
+	return ""
 }
 
 func Uint(key string, defaultValue uint) func() uint {

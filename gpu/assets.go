@@ -17,23 +17,29 @@ import (
 )
 
 var (
-	lock        sync.Mutex
-	payloadsDir = ""
+	lock       sync.Mutex
+	runnersDir = ""
 )
 
-func PayloadsDir() (string, error) {
+func SetRunnersDir(newRunnersDir string) {
+	lock.Lock()
+	defer lock.Unlock()
+	runnersDir = newRunnersDir
+}
+
+func RunnersDir() (string, error) {
 	lock.Lock()
 	defer lock.Unlock()
 	var err error
-	if payloadsDir == "" {
-		runnersDir := envconfig.RunnersDir()
+	if runnersDir == "" {
+		runnersDirEnvConfig := envconfig.RunnersDir()
 
-		if runnersDir != "" {
-			payloadsDir = runnersDir
-			return payloadsDir, nil
+		if runnersDirEnvConfig != "" {
+			runnersDir = runnersDirEnvConfig
+			return runnersDir, nil
 		}
 
-		// The remainder only applies on non-windows where we still carry payloads in the main executable
+		// The remainder only applies on non-windows where we still (typically) carry payloads in the main executable
 		cleanupTmpDirs()
 		tmpDir := envconfig.TmpDir()
 		if tmpDir == "" {
@@ -56,9 +62,9 @@ func PayloadsDir() (string, error) {
 
 		// We create a distinct subdirectory for payloads within the tmpdir
 		// This will typically look like /tmp/ollama3208993108/runners on linux
-		payloadsDir = filepath.Join(tmpDir, "runners")
+		runnersDir = filepath.Join(tmpDir, "runners")
 	}
-	return payloadsDir, nil
+	return runnersDir, nil
 }
 
 // Best effort to clean up prior tmpdirs
@@ -108,10 +114,10 @@ func cleanupTmpDirs() {
 func Cleanup() {
 	lock.Lock()
 	defer lock.Unlock()
-	runnersDir := envconfig.RunnersDir()
-	if payloadsDir != "" && runnersDir == "" && runtime.GOOS != "windows" {
+	runnersDirEnvConfig := envconfig.RunnersDir()
+	if runnersDir != "" && runnersDirEnvConfig == "" && runtime.GOOS != "windows" {
 		// We want to fully clean up the tmpdir parent of the payloads dir
-		tmpDir := filepath.Clean(filepath.Join(payloadsDir, ".."))
+		tmpDir := filepath.Clean(filepath.Join(runnersDir, ".."))
 		slog.Debug("cleaning up", "dir", tmpDir)
 		err := os.RemoveAll(tmpDir)
 		if err != nil {
