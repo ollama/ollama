@@ -48,6 +48,7 @@ init_vars() {
         CMAKE_CUDA_ARCHITECTURES="50;52;61;70;75;80"
     fi
     GZIP=$(which pigz 2>/dev/null || echo "gzip")
+    RUNNER_BASE="${DIST_BASE}/lib/ollama/runners"
 }
 
 git_module_setup() {
@@ -90,6 +91,20 @@ build() {
     # remove unnecessary build artifacts
     rm -f ${BUILD_DIR}/bin/ggml-common.h ${BUILD_DIR}/bin/ggml-metal.metal
 }
+
+dist() {
+    mkdir -p ${DIST_DIR}
+    for f in ${BUILD_DIR}/bin/* ; do
+        cp ${f} ${DIST_DIR}/
+    done
+    # check for lib directory
+    if [ -d ${BUILD_DIR}/lib ]; then
+        for f in ${BUILD_DIR}/lib/* ; do
+            cp ${f} ${DIST_DIR}/
+        done
+    fi
+}
+
 
 compress() {
     echo "Compressing payloads to reduce overall binary size..."
