@@ -449,6 +449,11 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 
 	if r.MaxTokens != nil {
 		options["num_predict"] = *r.MaxTokens
+
+		// Increase context size up to max_tokens
+		if *r.MaxTokens > 2048 {
+			options["num_ctx"] = *r.MaxTokens
+		}
 	}
 
 	if r.Temperature != nil {
