@@ -20,7 +20,7 @@ import (
 func capture(req any) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		body, _ := io.ReadAll(c.Request.Body)
-		json.Unmarshal(body, req)
+		_ = json.Unmarshal(body, req)
 		c.Next()
 	}
 }
@@ -200,7 +200,7 @@ func TestChatMiddleware(t *testing.T) {
 		})
 
 		t.Run(tt.name, func(t *testing.T) {
-			r, _ := http.NewRequest("POST", "/api/chat", strings.NewReader(tt.body))
+			r, _ := http.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(tt.body))
 			r.Header.Set("Content-Type", "application/json")
 			resp := httptest.NewRecorder()
 			router.ServeHTTP(resp, r)
@@ -408,7 +408,8 @@ func TestListMiddleware(t *testing.T) {
 							Name:       "test-model",
 							ModifiedAt: time.Unix(int64(1686935002), 0).UTC(),
 						},
-					}})
+					},
+				})
 			},
 			body: `{
 				"object": "list",
