@@ -1,8 +1,8 @@
 diff --git a/src/llama.cpp b/src/llama.cpp
-index 721b8f4e..cfe7ac40 100644
+index 869b584a..91c7f539 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
-@@ -8420,14 +8420,14 @@ struct llm_build_context {
+@@ -9435,14 +9435,14 @@ struct llm_build_context {
      }
  
      struct ggml_tensor * build_inp_mean() {
@@ -19,7 +19,7 @@ index 721b8f4e..cfe7ac40 100644
          cb(lctx.inp_cls, "inp_cls", -1);
          ggml_set_input(lctx.inp_cls);
          return lctx.inp_cls;
-@@ -13847,19 +13847,16 @@ static void llama_set_inputs(llama_context & lctx, const llama_batch & batch) {
+@@ -15180,7 +15180,7 @@ static void llama_set_inputs(llama_context & lctx, const llama_ubatch & batch) {
          GGML_ASSERT(ggml_backend_buffer_is_host(lctx.inp_mean->buffer));
  
          float * data = (float *) lctx.inp_mean->data;
@@ -27,12 +27,14 @@ index 721b8f4e..cfe7ac40 100644
 +        memset(lctx.inp_mean->data, 0, n_tokens * cparams.n_seq_max * ggml_element_size(lctx.inp_mean));
  
          std::vector<uint64_t> sum(n_tokens, 0);
-         for (int i = 0; i < n_tokens; ++i) {
-             const llama_seq_id seq_id = batch.seq_id[i][0];
--
+ 
+@@ -15188,13 +15188,11 @@ static void llama_set_inputs(llama_context & lctx, const llama_ubatch & batch) {
+             const llama_seq_id seq_id = batch.seq_id[s][0];
+ 
+             // TODO: adapt limits to n_seqs when batch.equal_seqs is true
 -            GGML_ASSERT(seq_id < n_tokens && "seq_id cannot be larger than n_tokens with pooling_type == MEAN");
 -
-             sum[seq_id] += 1;
+             sum[seq_id] += batch.n_seq_tokens;
          }
  
 -        std::vector<float> div(n_tokens, 0.0f);
@@ -42,19 +44,19 @@ index 721b8f4e..cfe7ac40 100644
              const uint64_t s = sum[i];
              if (s > 0) {
                  div[i] = 1.0f/float(s);
-@@ -13879,14 +13876,11 @@ static void llama_set_inputs(llama_context & lctx, const llama_batch & batch) {
+@@ -15219,14 +15217,12 @@ static void llama_set_inputs(llama_context & lctx, const llama_ubatch & batch) {
          GGML_ASSERT(ggml_backend_buffer_is_host(lctx.inp_cls->buffer));
  
          uint32_t * data = (uint32_t *) lctx.inp_cls->data;
 -        memset(lctx.inp_cls->data, 0, n_tokens * ggml_element_size(lctx.inp_cls));
 +        memset(lctx.inp_cls->data, 0, cparams.n_seq_max * ggml_element_size(lctx.inp_cls));
  
-         for (int i = 0; i < n_tokens; ++i) {
-             const llama_seq_id seq_id = batch.seq_id[i][0];
-             const llama_pos    pos    = batch.pos[i];
--
+         for (int s = 0; s < n_seqs; ++s) {
+             const llama_seq_id seq_id = batch.seq_id[s][0];
+ 
+             // TODO: adapt limits to n_seqs when batch.equal_seqs is true
 -            GGML_ASSERT(seq_id < n_tokens && "seq_id cannot be larger than n_tokens with pooling_type == CLS");
 -
-             if (pos == 0) {
-                 data[seq_id] = i;
-             }
+             for (int i = 0; i < n_seq_tokens; ++i) {
+                 const llama_pos pos = batch.pos[s*n_seq_tokens + i];
+ 

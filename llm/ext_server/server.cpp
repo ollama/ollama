@@ -425,7 +425,7 @@ struct llama_server_context
 
         n_ctx = llama_n_ctx(ctx);
 
-        add_bos_token = llama_should_add_bos_token(model);
+        add_bos_token = llama_add_bos_token(model);
 
         return true;
     }
