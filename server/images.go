@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"cmp"
 	"context"
@@ -17,10 +18,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
@@ -1087,7 +1090,7 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 		}
 	}
 
-	req.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
+	req.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version(), deployment()))
 
 	if s := req.Header.Get("Content-Length"); s != "" {
 		contentLength, err := strconv.ParseInt(s, 10, 64)
@@ -1162,3 +1165,22 @@ func verifyBlob(digest string) error {
 
 	return nil
 }
+
+var deployment = sync.OnceValue(func() string {
+	if runtime.GOOS == "linux" {
+		file, err := os.Open("/proc/1/cgroup")
+		if err != nil {
+			return ""
+		}
+		defer file.Close()
+		anchorPoint := regexp.MustCompile("0::/.*/")
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if anchorPoint.MatchString(line) {
+				return " container"
+			}
+		}
+	}
+	return ""
+})
