@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -497,7 +496,7 @@ func TestRetrieveMiddleware(t *testing.T) {
 				  "code": null,
 				  "message": "model not found",
 				  "param": null,
-				  "type": "api_error"
+				  "type": "invalid_request_error"
 				}
 			}`,
 		},
@@ -525,8 +524,8 @@ func TestRetrieveMiddleware(t *testing.T) {
 			t.Fatalf("failed to unmarshal actual response: %v", err)
 		}
 
-		if !reflect.DeepEqual(expected, actual) {
-			t.Errorf("responses did not match\nExpected: %+v\nActual: %+v", expected, actual)
+		if diff := cmp.Diff(expected, actual); diff != "" {
+			t.Errorf("responses did not match (-want +got):\n%s", diff)
 		}
 	}
 }
