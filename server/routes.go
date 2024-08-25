@@ -562,6 +562,41 @@ func (s *Server) PushModelHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
+func (s *Server) ExportModelHandler(c *gin.Context) {
+	var req api.ExportRequest
+	err := c.ShouldBindJSON(&req)
+	switch {
+	case errors.Is(err, io.EOF):
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	case err != nil:
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var model string
+	if req.Model != "" {
+		model = req.Model
+	} else {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+
+	resp, err := ExportModelToTar(model)
+	if err != nil {
+		if os.IsNotExist(err) {
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", model+".tar"))
+	c.Header("Content-Type", "application/x-tar")
+	c.Data(http.StatusOK, "application/x-tar", resp)
+}
+
 func checkNameExists(name model.Name) error {
 	names, err := Manifests()
 	if err != nil {
@@ -1088,6 +1123,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
 	r.POST("/api/create", s.CreateModelHandler)
 	r.POST("/api/push", s.PushModelHandler)
+	r.POST("/api/export", s.ExportModelHandler)
 	r.POST("/api/copy", s.CopyModelHandler)
 	r.DELETE("/api/delete", s.DeleteModelHandler)
 	r.POST("/api/show", s.ShowModelHandler)
