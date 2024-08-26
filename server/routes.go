@@ -1415,11 +1415,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	// no stream response
 	if req.Stream != nil && !*req.Stream {
 		var resp api.ChatResponse
-		// var sb strings.Builder
 		for rr := range ch {
 			switch t := rr.(type) {
 			case api.ChatResponse:
-				// sb.WriteString(t.Message.Content)
 				resp = t
 			case gin.H:
 				msg, ok := t["error"].(string)
@@ -1435,14 +1433,14 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 		}
 
-		// resp.Message.Content = sb.String()
 		content := <-contentCh
 		resp.Message.Content = content
 		if toolsRequired {
-			// if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
-			resp.Message.ToolCalls = <-toolCallsCh
-			resp.Message.Content = ""
-			// }
+			toolCalls := <-toolCallsCh
+			if len(toolCalls) > 0 {
+				resp.Message.ToolCalls = toolCalls
+				resp.Message.Content = ""
+			}
 		}
 
 		c.JSON(http.StatusOK, resp)
