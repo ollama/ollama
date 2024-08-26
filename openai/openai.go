@@ -513,7 +513,7 @@ func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 	}
 
 	if r.Temperature != nil {
-		options["temperature"] = *r.Temperature * 2.0
+		options["temperature"] = *r.Temperature
 	} else {
 		options["temperature"] = 1.0
 	}
@@ -522,9 +522,9 @@ func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 		options["seed"] = *r.Seed
 	}
 
-	options["frequency_penalty"] = r.FrequencyPenalty * 2.0
+	options["frequency_penalty"] = r.FrequencyPenalty
 
-	options["presence_penalty"] = r.PresencePenalty * 2.0
+	options["presence_penalty"] = r.PresencePenalty
 
 	if r.TopP != 0.0 {
 		options["top_p"] = r.TopP
