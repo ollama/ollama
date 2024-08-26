@@ -143,7 +143,7 @@ RUN --mount=type=cache,target=/root/.ccache \
     OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu" bash gen_linux.sh
 
 
-# Intermediate stage used for ./scripts/build_linux.sh
+# Intermediate stages used for ./scripts/build_linux.sh
 FROM --platform=linux/amd64 cpu-build-amd64 AS build-amd64
 ENV CGO_ENABLED 1
 WORKDIR /go/src/github.com/ollama/ollama
@@ -161,8 +161,11 @@ ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN --mount=type=cache,target=/root/.ccache \
     go build -trimpath -o dist/linux-amd64/bin/ollama .
+RUN cd dist/linux-$GOARCH && \
+    tar --exclude runners -cf - . | pigz --best > ../ollama-linux-$GOARCH.tgz
+RUN cd dist/linux-$GOARCH-rocm && \
+    tar -cf - . | pigz --best > ../ollama-linux-$GOARCH-rocm.tgz
 
-# Intermediate stage used for ./scripts/build_linux.sh
 FROM --platform=linux/arm64 cpu-build-arm64 AS build-arm64
 ENV CGO_ENABLED 1
 ARG GOLANG_VERSION
@@ -177,6 +180,15 @@ ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN --mount=type=cache,target=/root/.ccache \
     go build -trimpath -o dist/linux-arm64/bin/ollama .
+RUN cd dist/linux-$GOARCH && \
+    tar --exclude runners -cf - . | pigz --best > ../ollama-linux-$GOARCH.tgz
+
+FROM --platform=linux/amd64 scratch AS dist-amd64
+COPY --from=build-amd64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
+FROM --platform=linux/arm64 scratch AS dist-arm64
+COPY --from=build-arm64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
+FROM dist-$TARGETARCH as dist
+
 
 # Optimized container images do not cary nested payloads
 FROM --platform=linux/amd64 static-build-amd64 as container-build-amd64

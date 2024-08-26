@@ -145,19 +145,14 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		return nil, errors.New("ollama supports only one lora adapter, but multiple were provided")
 	}
 
-	availableServers := getAvailableServers()
+	rDir, err := RunnersDir()
+	if err != nil {
+		return nil, err
+	}
+
+	availableServers := getAvailableServers(rDir)
 	if len(availableServers) == 0 {
-		if runtime.GOOS != "windows" {
-			slog.Warn("llama server binary disappeared, reinitializing payloads")
-			err = Init()
-			if err != nil {
-				slog.Warn("failed to reinitialize payloads", "error", err)
-				return nil, err
-			}
-			availableServers = getAvailableServers()
-		} else {
-			return nil, finalErr
-		}
+		return nil, finalErr
 	}
 	var servers []string
 	if cpuRunner != "" {
@@ -330,7 +325,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		_, err := os.Stat(server)
 		if errors.Is(err, os.ErrNotExist) {
 			slog.Warn("llama server disappeared, reinitializing payloads", "path", server, "error", err)
-			err = Init()
+			_, err = RunnersDir()
 			if err != nil {
 				slog.Warn("failed to reinitialize payloads", "error", err)
 				return nil, err
