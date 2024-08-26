@@ -1190,11 +1190,11 @@ func Serve(ln net.Listener) error {
 		srvr.Close()
 		schedDone()
 		sched.unloadAllRunners()
-		gpu.Cleanup()
+		llm.Cleanup()
 		done()
 	}()
 
-	if err := llm.Init(); err != nil {
+	if _, err := llm.RunnersDir(); err != nil {
 		return fmt.Errorf("unable to initialize llm library %w", err)
 	}
 
