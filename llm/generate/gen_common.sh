@@ -47,7 +47,7 @@ init_vars() {
     if [ -z "${CMAKE_CUDA_ARCHITECTURES}" ] ; then
         CMAKE_CUDA_ARCHITECTURES="50;52;61;70;75;80"
     fi
-    GZIP=$(which pigz 2>/dev/null || echo "gzip")
+    GZIP=$(command -v pigz 2>/dev/null || echo "gzip")
     RUNNER_BASE="${DIST_BASE}/lib/ollama/runners"
 }
 
@@ -107,7 +107,7 @@ dist() {
 
 
 compress() {
-    echo "Compressing payloads to reduce overall binary size..."
+    echo "Compressing payloads with ${GZIP} to reduce overall binary size..."
     rm -rf ${BUILD_DIR}/bin/*.gz
     for f in ${BUILD_DIR}/bin/* ; do
         ${GZIP} -n --best -f ${f} &

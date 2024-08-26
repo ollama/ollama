@@ -30,8 +30,8 @@ for TARGETARCH in ${BUILD_ARCH}; do
     docker rm builder-$TARGETARCH
     echo "Compressing final linux bundle..."
     rm -f ./dist/ollama-linux-$TARGETARCH.tgz
-    (cd dist/linux-$TARGETARCH && tar --exclude runners -cf - . | ${GZIP} --best > ../ollama-linux-$TARGETARCH.tgz )
+    (cd dist/linux-$TARGETARCH && tar cf - . | ${GZIP} --best > ../ollama-linux-$TARGETARCH.tgz )
     if [ -d dist/linux-$TARGETARCH-rocm ]; then
-        (cd dist/linux-$TARGETARCH-rocm && tar  -cf - . | ${GZIP} --best > ../ollama-linux-$TARGETARCH-rocm.tgz )
+        (cd dist/linux-$TARGETARCH-rocm && tar cf - . | ${GZIP} --best > ../ollama-linux-$TARGETARCH-rocm.tgz )
     fi
 done
