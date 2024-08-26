@@ -429,7 +429,9 @@ func NewSamplingContext(params SamplingParams) *SamplingContext {
 }
 
 func (s *SamplingContext) Free() {
-	C.llama_sampling_cfree(s.c)
+	if s.c != nil {
+		C.llama_sampling_cfree(s.c)
+	}
 }
 
 func (s *SamplingContext) Reset() {
