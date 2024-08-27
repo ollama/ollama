@@ -166,7 +166,7 @@ Now that you have created an account and are signed-in, go to the [Ollama Keys S
 
 Follow the directions on the page to determine where your Ollama Public Key is located.
 
-<img src="images/ollama-keys.png" alt="Ollama Keys" width="1524" height="1134">
+<img src="images/ollama-keys.png" alt="Ollama Keys" width="1200" height="893">
 
 Click on the `Add Ollama Public Key` button, and copy and paste the contents of your Ollama Public Key into the text field.
 
