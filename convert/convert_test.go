@@ -89,7 +89,7 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestConvertFull(t *testing.T) {
+func TestConvertModel(t *testing.T) {
 	cases := []string{
 		"Meta-Llama-3-8B-Instruct",
 		"Meta-Llama-3.1-8B-Instruct",

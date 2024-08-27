@@ -154,7 +154,6 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 }
 
 type tokenizer struct {
-	Version     string  `json:"version"`
 	AddedTokens []token `json:"added_tokens"`
 	Model       struct {
 		Type   string         `json:"type"`
@@ -252,7 +251,7 @@ func parseVocabulary(fsys fs.FS) (*Vocabulary, error) {
 		return pattern.Func(fsys)
 	}
 
-	return nil, errors.New("unknown tensor format")
+	return nil, errors.New("unknown tokenizer format")
 }
 
 type SpecialVocabulary struct {
