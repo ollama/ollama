@@ -158,7 +158,7 @@ You can share any model you have created by pushing it to [ollama.com](https://o
 
 First, use your browser to go to the [Ollama Sign-Up](https://ollama.com/signup) page. If you already have an account, you can skip this step.
 
-![Sign-Up](images/signup.png)
+<img src="images/signup.png" alt="Sign-Up" width="756" height="1192">
 
 The `Username` field will be used as part of your model's name (e.g. `jmorganca/mymodel`), so make sure you are comfortable with the username that you have selected.
 
@@ -166,7 +166,7 @@ Now that you have created an account and are signed-in, go to the [Ollama Keys S
 
 Follow the directions on the page to determine where your Ollama Public Key is located.
 
-![Ollama Key](images/ollama-keys.png)
+<img src="images/ollama-keys.png" alt="Ollama Keys" width="1524" height="1134">
 
 Click on the `Add Ollama Public Key` button, and copy and paste the contents of your Ollama Public Key into the text field.
 
