@@ -114,6 +114,24 @@ Quantizing a model allows you to run models faster and with less memory consumpt
 
 Ollama can quantize FP16 and FP32 based models into different quantization levels using the `-q/--quantize` flag with the `ollama create` command.
 
+First, create a Modelfile with the FP16 or FP32 based model you wish to quantize.
+
+```dockerfile
+FROM /path/to/my/gemma/f16/model
+```
+
+Use `ollama create` to then create the quantized model.
+
+```shell
+$ ollama create --quantize q4_K_M mymodel
+transferring model data
+quantizing F16 model to Q4_K_M
+creating new layer sha256:735e246cc1abfd06e9cdcf95504d6789a6cd1ad7577108a70d9902fef503c1bd
+creating new layer sha256:0853f0ad24e5865173bbf9ffcc7b0f5d56b66fd690ab1009867e45e7d2c4db0f
+writing manifest
+success
+```
+
 ### Supported Quantizations
 
 - `q4_0`
@@ -133,23 +151,6 @@ Ollama can quantize FP16 and FP32 based models into different quantization level
 - `q5_K_M`
 - `q6_K`
 
-First, create a Modelfile with the FP16 or FP32 based model you wish to quantize.
-
-```dockerfile
-FROM /path/to/my/gemma/f16/model
-```
-
-Use `ollama create` to then create the quantized model.
-
-```shell
-$ ollama create -q q4_K_M mymodel
-transferring model data
-quantizing F16 model to Q4_K_M
-creating new layer sha256:735e246cc1abfd06e9cdcf95504d6789a6cd1ad7577108a70d9902fef503c1bd
-creating new layer sha256:0853f0ad24e5865173bbf9ffcc7b0f5d56b66fd690ab1009867e45e7d2c4db0f
-writing manifest
-success
-```
 
 ## Sharing your model on ollama.com
 
