@@ -5,7 +5,7 @@
   * [Importing a Safetensors adapter](#Importing-a-fine-tuned-adapter-from-Safetensors-weights)
   * [Importing a Safetensors model](#Importing-a-model-from-Safetensors-weights)
   * [Importing a GGUF file](#Importing-a-GGUF-based-model-or-adapter)
-  * [Sharing models on ollama.com](#Sharing-your-model-on-ollama.com)
+  * [Sharing models on ollama.com](#Sharing-your-model-on-ollamacom)
 
 ## Importing a fine tuned adapter from Safetensors weights
 
