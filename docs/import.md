@@ -1,11 +1,11 @@
-
 # Importing a model
 
-You can import a model or fine tuned adapter into Ollama:
+## Table of Contents
 
-  * from Safetensors weights; or
-
-  * from a GGUF file
+  * [Importing a Safetensors adapter](#Importing-a-fine-tuned-adapter-from-Safetensors-weights)
+  * [Importing a Safetensors model](#Importing-a-model-from-Safetensors-weights)
+  * [Importing a GGUF file](#Importing-a-GGUF-based-model-or-adapter)
+  * [Sharing models on ollama.com](#Sharing-your-model-on-ollama.com)
 
 ## Importing a fine tuned adapter from Safetensors weights
 
@@ -75,7 +75,7 @@ Ollama supports importing models for several different architectures including:
 This includes importing foundation models as well as any fine tuned models which which have been _fused_ with a foundation model.
 
 
-## Importing a GGUF based model
+## Importing a GGUF based model or adapter
 
 If you have a GGUF based model or adapter it is possible to import it into Ollama. You can obtain a GGUF model or adapter by:
 
@@ -102,6 +102,12 @@ When importing a GGUF adapter, it's important to use the same base model as the 
  * a GGUF file
  * a Safetensors based model 
 
+Once you have created your `Modelfile`, use the `ollama create` command to build the model.
+
+```shell
+ollama create my-model
+```
+
 ## Quantizing a Model
 
 Quantizing a model allows you to run models faster and with less memory consumption but at reduced accuracy. This allows you to run a model on more modest hardware.
@@ -110,22 +116,22 @@ Ollama can quantize FP16 and FP32 based models into different quantization level
 
 ### Supported Quantizations
 
-- `Q4_0`
-- `Q4_1`
-- `Q5_0`
-- `Q5_1`
-- `Q8_0`
+- `q4_0`
+- `q4_1`
+- `q5_0`
+- `q5_1`
+- `q8_0`
 
 #### K-means Quantizations
 
-- `Q3_K_S`
-- `Q3_K_M`
-- `Q3_K_L`
-- `Q4_K_S`
-- `Q4_K_M`
-- `Q5_K_S`
-- `Q5_K_M`
-- `Q6_K`
+- `q3_K_S`
+- `q3_K_M`
+- `q3_K_L`
+- `q4_K_S`
+- `q4_K_M`
+- `q5_K_S`
+- `q5_K_M`
+- `q6_K`
 
 First, create a Modelfile with the FP16 or FP32 based model you wish to quantize.
 
@@ -136,7 +142,7 @@ FROM /path/to/my/gemma/f16/model
 Use `ollama create` to then create the quantized model.
 
 ```shell
-$ ollama create -q Q4_K_M mymodel
+$ ollama create -q q4_K_M mymodel
 transferring model data
 quantizing F16 model to Q4_K_M
 creating new layer sha256:735e246cc1abfd06e9cdcf95504d6789a6cd1ad7577108a70d9902fef503c1bd
@@ -145,7 +151,7 @@ writing manifest
 success
 ```
 
-## Sharing your model on [ollama.com](https://ollama.com)
+## Sharing your model on ollama.com
 
 You can share any model you have created by pushing it to [ollama.com](https://ollama.com) so that other users can try it out.
 
