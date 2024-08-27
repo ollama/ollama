@@ -65,10 +65,10 @@ type Sequence struct {
 	doneReason string
 
 	// Metrics
-	t_start_process_prompt time.Time
-	t_start_genereration   time.Time
-	n_decoded              int
-	n_prompt_tokens        int
+	startProcessingTime time.Time
+	startGenerationTime time.Time
+	numDecoded          int
+	numPromptTokens     int
 }
 
 type NewSequenceParams struct {
@@ -110,7 +110,7 @@ func (s *Server) NewSequence(prompt string, params NewSequenceParams) *Sequence 
 
 	return &Sequence{
 		tokens:           tokens,
-		n_prompt_tokens:  len(tokens),
+		numPromptTokens:  len(tokens),
 		numPredict:       params.numPredict,
 		pendingResponses: make([]string, 0),
 		responses:        make(chan string, 1),
@@ -256,8 +256,8 @@ func (s *Server) processBatch() {
 			s.shiftContext(i)
 		}
 
-		if seq.t_start_process_prompt.IsZero() {
-			seq.t_start_process_prompt = time.Now()
+		if seq.startProcessingTime.IsZero() {
+			seq.startProcessingTime = time.Now()
 		}
 
 		var numTokensProcessed int
@@ -294,7 +294,7 @@ func (s *Server) processBatch() {
 			continue
 		}
 
-		// if done processing the prompt, generating an embedding and return
+		// if done processing the prompt, generate an embedding and return
 		if seq.embeddingOnly {
 			embd := s.lc.GetEmbeddingsSeq(i)
 			if embd == nil {
@@ -307,14 +307,12 @@ func (s *Server) processBatch() {
 		}
 
 		// sample a token
-		// logits := s.lc.GetLogitsIth(ibatch[i])
-		// token := s.lc.SampleTokenGreedy(logits)
 		token := seq.samplingCtx.Sample(s.lc, nil, seq.iBatch)
 
 		seq.samplingCtx.Accept(s.lc, token, true)
-		seq.n_decoded += 1
-		if seq.n_decoded == 1 {
-			seq.t_start_genereration = time.Now()
+		seq.numDecoded += 1
+		if seq.numDecoded == 1 {
+			seq.startGenerationTime = time.Now()
 		}
 		piece := s.model.TokenToPiece(token)
 
@@ -505,10 +503,10 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(&CompletionResponse{
 		Stop: true,
 		Timings: Timings{
-			PromptN:     seq.n_prompt_tokens,
-			PromptMS:    float64(seq.t_start_genereration.Sub(seq.t_start_process_prompt).Milliseconds()),
-			PredictedN:  seq.n_decoded,
-			PredictedMS: float64(time.Since(seq.t_start_genereration).Milliseconds()),
+			PromptN:     seq.numPromptTokens,
+			PromptMS:    float64(seq.startGenerationTime.Sub(seq.startProcessingTime).Milliseconds()),
+			PredictedN:  seq.numDecoded,
+			PredictedMS: float64(time.Since(seq.startGenerationTime).Milliseconds()),
 		},
 	}); err != nil {
 		log.Println("Failed to encode result:", err)
@@ -638,7 +636,7 @@ func main() {
 
 	// TODO actually implement...
 	if *embedding {
-		slog.Warn("embeddings not yet support")
+		slog.Warn("embeddings not yet supported")
 	}
 	if *logDisable {
 		slog.Info("ignoring --log-disable")
