@@ -190,7 +190,7 @@ func RunnersDir() (p string) {
 	}
 
 	var paths []string
-	for _, root := range []string{filepath.Dir(exe), filepath.Join(filepath.Dir(exe), ".."), cwd} {
+	for _, root := range []string{filepath.Dir(exe), filepath.Join(filepath.Dir(exe), LibRelativeToExe()), cwd} {
 		paths = append(paths,
 			root,
 			filepath.Join(root, runtime.GOOS+"-"+runtime.GOARCH),
@@ -281,4 +281,13 @@ func Values() map[string]string {
 // Var returns an environment variable stripped of leading and trailing quotes or spaces
 func Var(key string) string {
 	return strings.Trim(strings.TrimSpace(os.Getenv(key)), "\"'")
+}
+
+// On windows, we keep the binary at the top directory, but
+// other platforms use a "bin" directory, so this returns ".."
+func LibRelativeToExe() string {
+	if runtime.GOOS == "windows" {
+		return "."
+	}
+	return ".."
 }
