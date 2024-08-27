@@ -1321,7 +1321,7 @@ struct llama_server_context
             llama_batch_add(batch, append_tokens[i], system_tokens.size() + slot.n_past, {slot.id}, true);
             slot.n_past += 1;
         }
-        // llama_set_causal_attn(ctx, false);
+        llama_set_causal_attn(ctx, false);
         return true;
     }
 

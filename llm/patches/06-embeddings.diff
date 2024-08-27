@@ -7,7 +7,7 @@ index 1fe2b9f7..a43312a7 100644
  
      // TODO: use a per-batch flag for logits presence instead
 -    const bool has_logits = !cparams.embeddings;
-+    const bool has_logits =  cparams.causal_attn;
++    const bool has_logits =  cparams.causal_attn || lctx.image_embeds;
      const bool has_embd   =  lctx.is_encoding || (cparams.embeddings && (cparams.pooling_type == LLAMA_POOLING_TYPE_NONE));
  
      const size_t logits_size = has_logits ? n_vocab*n_outputs_max : 0;
@@ -36,7 +36,7 @@ index 1fe2b9f7..a43312a7 100644
              GGML_ASSERT(strcmp(res->name, "result_output") == 0 && "missing result_output tensor");
          }
 +
-+        if (!cparams.causal_attn) {
++        if (!cparams.causal_attn && !has_image_embeds) {
 +            res = nullptr; // do not extract logits when not needed
 +        }
 +
