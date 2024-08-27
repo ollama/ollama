@@ -11,8 +11,9 @@ A model file is the blueprint to create and share models with Ollama.
 - [Examples](#examples)
 - [Instructions](#instructions)
   - [FROM (Required)](#from-required)
-    - [Build from llama3](#build-from-llama3)
-    - [Build from a bin file](#build-from-a-bin-file)
+    - [Build from llama3.1](#build-from-llama31)
+    - [Build from a Safetensors model](#build-from-a-safetensors-model)
+    - [Build from a GGUF file](#build-from-a-gguf-file)
   - [PARAMETER](#parameter)
     - [Valid Parameters and Values](#valid-parameters-and-values)
   - [TEMPLATE](#template)
@@ -99,22 +100,39 @@ The `FROM` instruction defines the base model to use when creating a model.
 FROM <model name>:<tag>
 ```
 
-#### Build from llama3
+#### Build from llama3.1
 
 ```modelfile
-FROM llama3
+FROM llama3.1
 ```
 
 A list of available base models:
 <https://github.com/ollama/ollama#model-library>
+Additional models can be found at:
+<https://ollama.com/library>
 
-#### Build from a `bin` file
+#### Build from a Safetensors model
+
+```modelfile
+FROM <model directory>
+```
+
+The model directory should contain the Safetensors weights for a supported architecture.
+
+Currently supported model architectures:
+  * Llama (including Llama 2, Llama 3, and Llama 3.1)
+  * Mistral (including Mistral 1, Mistral 2, and Mixtral)
+  * Gemma (including Gemma 1 and Gemma 2)
+  * Phi3
+
+#### Build from a GGUF file
 
 ```modelfile
 FROM ./ollama-model.bin
 ```
 
-This bin file location should be specified as an absolute path or relative to the `Modelfile` location.
+The GGUF bin file location should be specified as an absolute path or relative to the `Modelfile` location.
+
 
 ### PARAMETER
 
@@ -174,7 +192,20 @@ SYSTEM """<system message>"""
 
 ### ADAPTER
 
-The `ADAPTER` instruction is an optional instruction that specifies any LoRA adapter that should apply to the base model. The value of this instruction should be an absolute path or a path relative to the Modelfile and the file must be in a GGML file format. The adapter should be tuned from the base model otherwise the behaviour is undefined.
+The `ADAPTER` instruction specifies a fine tuned LoRA adapter that should apply to the base model. The value of the adapter should be an absolute path or a path relative to the Modelfile. The base model should be specified with a `FROM` instruction. If the base model is not the same as the base model that the adapter was tuned from the behaviour will be erratic.
+
+#### Safetensor adapter
+
+```modelfile
+ADAPTER <path to safetensor adapter>
+```
+
+Currently supported Safetensor adapters:
+  * Llama (including Llama 2, Llama 3, and Llama 3.1)
+  * Mistral (including Mistral 1, Mistral 2, and Mixtral)
+  * Gemma (including Gemma 1 and Gemma 2)
+
+#### GGUF adapter
 
 ```modelfile
 ADAPTER ./ollama-lora.bin
