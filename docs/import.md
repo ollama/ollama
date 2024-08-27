@@ -5,7 +5,7 @@
   * [Importing a Safetensors adapter](#Importing-a-fine-tuned-adapter-from-Safetensors-weights)
   * [Importing a Safetensors model](#Importing-a-model-from-Safetensors-weights)
   * [Importing a GGUF file](#Importing-a-GGUF-based-model-or-adapter)
-  * [Sharing models on ollama.com](#Sharing-your-model-on-ollama.com)
+  * [Sharing models on ollama.com](#Sharing-your-model-on-ollamacom)
 
 ## Importing a fine tuned adapter from Safetensors weights
 
@@ -158,7 +158,7 @@ You can share any model you have created by pushing it to [ollama.com](https://o
 
 First, use your browser to go to the [Ollama Sign-Up](https://ollama.com/signup) page. If you already have an account, you can skip this step.
 
-<img src="images/signup.png" alt="Sign-Up" width="756" height="1192">
+<img src="images/signup.png" alt="Sign-Up" width="40%">
 
 The `Username` field will be used as part of your model's name (e.g. `jmorganca/mymodel`), so make sure you are comfortable with the username that you have selected.
 
@@ -166,7 +166,7 @@ Now that you have created an account and are signed-in, go to the [Ollama Keys S
 
 Follow the directions on the page to determine where your Ollama Public Key is located.
 
-<img src="images/ollama-keys.png" alt="Ollama Keys" width="1524" height="1134">
+<img src="images/ollama-keys.png" alt="Ollama Keys" width="80%">
 
 Click on the `Add Ollama Public Key` button, and copy and paste the contents of your Ollama Public Key into the text field.
 
