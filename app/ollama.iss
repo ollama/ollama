@@ -87,7 +87,7 @@ DialogFontSize=12
 
 [Files]
 Source: ".\app.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ; Flags: ignoreversion 64bit
-Source: "..\ollama.exe"; DestDir: "{app}\bin"; Flags: ignoreversion 64bit
+Source: "..\ollama.exe"; DestDir: "{app}"; Flags: ignoreversion 64bit
 Source: "..\dist\windows-{#ARCH}\lib\ollama\runners\*"; DestDir: "{app}\lib\ollama\runners"; Flags: ignoreversion 64bit recursesubdirs
 Source: "..\dist\ollama_welcome.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: ".\assets\app.ico"; DestDir: "{app}"; Flags: ignoreversion
@@ -99,7 +99,7 @@ Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilen
 Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app.ico"
 
 [Run]
-Filename: "{cmd}"; Parameters: "/C set PATH={app}\bin;%PATH% & ""{app}\{#MyAppExeName}"""; Flags: postinstall nowait runhidden
+Filename: "{cmd}"; Parameters: "/C set PATH={app};%PATH% & ""{app}\{#MyAppExeName}"""; Flags: postinstall nowait runhidden
 
 [UninstallRun]
 ; Filename: "{cmd}"; Parameters: "/C ""taskkill /im ''{#MyAppExeName}'' /f /t"; Flags: runhidden
@@ -134,8 +134,8 @@ SetupAppRunningError=Another Ollama installer is running.%n%nPlease cancel or fi
 
 [Registry]
 Root: HKCU; Subkey: "Environment"; \
-    ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}\bin"; \
-    Check: NeedsAddPath('{app}\bin')
+    ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; \
+    Check: NeedsAddPath('{app}')
 
 [Code]
 
