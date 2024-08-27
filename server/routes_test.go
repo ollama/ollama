@@ -438,6 +438,20 @@ func Test_Routes(t *testing.T) {
 				}
 			},
 		},
+		{
+			Name:   "Metrics Handler",
+			Method: http.MethodGet,
+			Path:   "/metrics",
+			Setup: func(t *testing.T, req *http.Request) {
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				assert.Equal(t, contentType, "text/plain; version=0.0.4; charset=utf-8; escaping=values")
+				body, err := io.ReadAll(resp.Body)
+				assert.Nil(t, err)
+				assert.Contains(t, string(body), "http_requests_total")
+			},
+		},
 	}
 
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
@@ -619,6 +633,30 @@ func TestNormalize(t *testing.T) {
 			if !isNormalized(normalized) {
 				t.Errorf("Vector %v is not normalized", tc.input)
 			}
+		})
+	}
+}
+
+func TestRouteToAction(t *testing.T) {
+	tests := []struct {
+		name           string
+		route          string
+		expectedAction string
+	}{
+		{"Chat completion v1", "/v1/chat/completions", "chat"},
+		{"Chat API", "/api/chat", "chat"},
+		{"Embed v1", "/v1/embeddings", "embed"},
+		{"Embed API", "/api/embed", "embed"},
+		{"Pull API", "/api/pull", "pull"},
+		{"Push API", "/api/push", "push"},
+		{"Root path", "/", "head"},
+		{"Anyother path", "/api/anyother", "anyother"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			action := routeToAction(tt.route)
+			assert.Equal(t, tt.expectedAction, action)
 		})
 	}
 }
