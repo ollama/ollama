@@ -28,6 +28,11 @@ Download and extract the Linux package:
 curl -fsSL https://ollama.com/download/ollama-linux-amd64.tgz | sudo tar zx -C /usr
 ```
 
+If you have an AMD GPU, also download and extract the ROCm package into the same location
+```bash
+curl -fsSL https://ollama.com/download/ollama-linux-amd64-rocm.tgz | sudo tar zx -C /usr
+```
+
 ### Adding Ollama as a startup service (recommended)
 
 Create a user for Ollama:
