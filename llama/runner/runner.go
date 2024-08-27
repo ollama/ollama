@@ -582,7 +582,7 @@ type HealthResponse struct {
 	Progress float32 `json:"progress"`
 }
 
-// TODO (jmorganca): is it safe to do this concurrently with decoding?
+// TODO (jmorganca): is it safe to do this concurrently with updating status?
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(&HealthResponse{
@@ -659,9 +659,11 @@ func main() {
 		batchSize: *batchSize,
 		parallel:  *parallel,
 		seqs:      make([]*Sequence, *parallel),
-		status:    "loading",
+		status:    "loading model",
 	}
 
+	// TODO (jessegross): This should be in a separate goroutine so we can report progress,
+	// otherwise Ollama can timeout for large model loads
 	// load the model
 	llama.BackendInit()
 	params := llama.NewModelParams(*nGpuLayers, *mainGpu, func(progress float32) {
