@@ -35,8 +35,15 @@ type Sequence struct {
 	// tokens left to evaluate
 	tokens []int
 
+	// tokens that have been generated but not returned yet (e.g. for stop sequences)
+	// TODO (jmorganca): simplify this
+	pendingResponses []string
+
 	// channel to send responses over
 	responses chan string
+
+	// channel to stop decoding (such as if the remote connection is closed)
+	quit chan bool
 
 	// number of tokens to predict
 	numPredict int
@@ -102,15 +109,17 @@ func (s *Server) NewSequence(prompt string, params NewSequenceParams) *Sequence 
 	}
 
 	return &Sequence{
-		tokens:          tokens,
-		n_prompt_tokens: len(tokens),
-		numPredict:      params.numPredict,
-		responses:       make(chan string, 1),
-		embedding:       make(chan []float32, 1),
-		samplingCtx:     sc,
-		embeddingOnly:   params.embedding,
-		stop:            params.stop,
-		numKeep:         params.numKeep,
+		tokens:           tokens,
+		n_prompt_tokens:  len(tokens),
+		numPredict:       params.numPredict,
+		pendingResponses: make([]string, 0),
+		responses:        make(chan string, 1),
+		quit:             make(chan bool, 1),
+		embedding:        make(chan []float32, 1),
+		samplingCtx:      sc,
+		embeddingOnly:    params.embedding,
+		stop:             params.stop,
+		numKeep:          params.numKeep,
 	}
 }
 
@@ -197,171 +206,174 @@ func incompleteUnicode(token string) bool {
 	return incomplete
 }
 
+func (s *Server) removeSequence(seqIndex int, reason string) {
+	seq := s.seqs[seqIndex]
+
+	seq.doneReason = reason
+	close(seq.responses)
+	close(seq.embedding)
+	seq.pendingResponses = []string{}
+	seq.samplingCtx.Free()
+	s.lc.KvCacheSeqRm(seqIndex, 0, -1)
+	s.seqs[seqIndex] = nil
+}
+
 func (s *Server) run(ctx context.Context) {
-	// TODO - should this be n_ctx / parallel like the old server.cpp setup?
-	batch := llama.NewBatch(s.batchSize, 0, s.parallel)
-	defer batch.Free()
-
-	// build up stop sequences as we recognize them
-	// TODO (jmorganca): simplify this
-	pieces := make([][]string, s.parallel)
-
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			slog.Debug("Processing batch", "seqs", len(s.seqs))
-			s.mu.Lock()
-			for s.allNil() {
-				s.cond.Wait() // Wait until an item is added
-			}
-			s.mu.Unlock()
-
-			for i, seq := range s.seqs {
-				if seq == nil {
-					continue
-				}
-
-				// if past the num predict limit
-				if seq.numPredict > 0 && seq.numPredicted > seq.numPredict {
-					seq.doneReason = "limit"
-					close(seq.responses)
-					s.lc.KvCacheSeqRm(i, 0, -1)
-					s.seqs[i] = nil
-					continue
-				}
-
-				if seq.nPast+len(seq.tokens) > s.numCtx {
-					s.shiftContext(i)
-				}
-
-				if seq.t_start_process_prompt.IsZero() {
-					seq.t_start_process_prompt = time.Now()
-				}
-
-				var numTokensProcessed int
-				for j, t := range seq.tokens {
-					// todo: make this n_batch
-					if j >= s.batchSize {
-						break
-					}
-					batch.Add(t, seq.nPast, []int{i}, numTokensProcessed+1 == len(seq.tokens))
-					seq.nPast++
-					numTokensProcessed++
-				}
-				seq.tokens = seq.tokens[numTokensProcessed:]
-				seq.iBatch = batch.NumTokens() - 1
-			}
-
-			if batch.NumTokens() == 0 {
-				continue
-			}
-
-			err := s.lc.Decode(batch)
-			if err != nil {
-				slog.Error("failed to decode batch", "error", err)
-				panic("Failed to decode")
-			}
-
-			for i, seq := range s.seqs {
-				if seq == nil {
-					continue
-				}
-
-				// don't sample prompt processing
-				if len(seq.tokens) != 0 {
-					continue
-				}
-
-				// if done processing the prompt, generating an embedding and return
-				if seq.embeddingOnly {
-					embd := s.lc.GetEmbeddingsSeq(i)
-					if embd == nil {
-						embd = s.lc.GetEmbeddingsIth(seq.iBatch)
-					}
-
-					seq.embedding <- embd
-					close(seq.embedding)
-					s.lc.KvCacheSeqRm(i, 0, -1)
-					s.seqs[i] = nil
-					continue
-				}
-
-				// sample a token
-				// logits := s.lc.GetLogitsIth(ibatch[i])
-				// token := s.lc.SampleTokenGreedy(logits)
-				token := seq.samplingCtx.Sample(s.lc, nil, seq.iBatch)
-
-				seq.samplingCtx.Accept(s.lc, token, true)
-				seq.n_decoded += 1
-				if seq.n_decoded == 1 {
-					seq.t_start_genereration = time.Now()
-				}
-				piece := s.model.TokenToPiece(token)
-
-				seq.numPredicted++
-
-				slog.Debug("sampled", "piece", piece)
-
-				// if it's an end of sequence token, break
-				// TODO: just end this sequence
-				if s.model.TokenIsEog(token) {
-					// TODO: end the sequence instead of quitting the pool
-					s.lc.KvCacheSeqRm(i, 0, -1)
-
-					// TODO (jmorganca): we should send this back
-					// as it's important for the /api/generate context
-					// seq.responses <- piece
-
-					seq.doneReason = "stop"
-					close(seq.responses)
-					seq.samplingCtx.Free()
-					pieces[i] = []string{}
-					s.seqs[i] = nil
-					continue
-				}
-
-				seq.tokens = []int{token}
-
-				pieces[i] = append(pieces[i], piece)
-				sequence := strings.Join(pieces[i], "")
-
-				if incompleteUnicode(sequence) {
-					continue
-				}
-
-				if ok, stop := findStop(sequence, seq.stop); ok {
-					slog.Info("hit stop token", "stop", seq.stop)
-
-					truncated := truncateStop(pieces[i], stop)
-
-					for _, p := range truncated {
-						seq.responses <- p
-					}
-
-					s.lc.KvCacheSeqRm(i, 0, -1)
-					seq.doneReason = "stop"
-					close(seq.responses)
-					seq.samplingCtx.Free()
-					pieces[i] = []string{}
-					s.seqs[i] = nil
-					continue
-				}
-
-				if containsStopSuffix(sequence, seq.stop) {
-					continue
-				}
-
-				for _, p := range pieces[i] {
-					seq.responses <- p
-				}
-
-				pieces[i] = []string{}
-			}
-
-			batch.Clear()
+			s.processBatch()
 		}
+	}
+}
+
+func (s *Server) processBatch() {
+	batch := llama.NewBatch(s.batchSize*len(s.seqs), 0, len(s.seqs))
+	defer batch.Free()
+
+	s.mu.Lock()
+	for s.allNil() {
+		s.cond.Wait() // Wait until an item is added
+	}
+	defer s.mu.Unlock()
+
+	slog.Debug("Processing batch", "seqs", len(s.seqs))
+
+	for i, seq := range s.seqs {
+		if seq == nil {
+			continue
+		}
+
+		// if past the num predict limit
+		if seq.numPredict > 0 && seq.numPredicted > seq.numPredict {
+			s.removeSequence(i, "limit")
+			continue
+		}
+
+		if seq.nPast+len(seq.tokens) > s.numCtx {
+			s.shiftContext(i)
+		}
+
+		if seq.t_start_process_prompt.IsZero() {
+			seq.t_start_process_prompt = time.Now()
+		}
+
+		var numTokensProcessed int
+		for j, t := range seq.tokens {
+			// todo: make this n_batch
+			if j >= s.batchSize {
+				break
+			}
+			batch.Add(t, seq.nPast, []int{i}, numTokensProcessed+1 == len(seq.tokens))
+			seq.nPast++
+			numTokensProcessed++
+		}
+		seq.tokens = seq.tokens[numTokensProcessed:]
+		seq.iBatch = batch.NumTokens() - 1
+	}
+
+	if batch.NumTokens() == 0 {
+		return
+	}
+
+	err := s.lc.Decode(batch)
+	if err != nil {
+		slog.Error("failed to decode batch", "error", err)
+		panic("Failed to decode")
+	}
+
+	for i, seq := range s.seqs {
+		if seq == nil {
+			continue
+		}
+
+		// don't sample prompt processing
+		if len(seq.tokens) != 0 {
+			continue
+		}
+
+		// if done processing the prompt, generating an embedding and return
+		if seq.embeddingOnly {
+			embd := s.lc.GetEmbeddingsSeq(i)
+			if embd == nil {
+				embd = s.lc.GetEmbeddingsIth(seq.iBatch)
+			}
+
+			seq.embedding <- embd
+			s.removeSequence(i, "")
+			continue
+		}
+
+		// sample a token
+		// logits := s.lc.GetLogitsIth(ibatch[i])
+		// token := s.lc.SampleTokenGreedy(logits)
+		token := seq.samplingCtx.Sample(s.lc, nil, seq.iBatch)
+
+		seq.samplingCtx.Accept(s.lc, token, true)
+		seq.n_decoded += 1
+		if seq.n_decoded == 1 {
+			seq.t_start_genereration = time.Now()
+		}
+		piece := s.model.TokenToPiece(token)
+
+		seq.numPredicted++
+
+		slog.Debug("sampled", "piece", piece)
+
+		// if it's an end of sequence token, break
+		// TODO: just end this sequence
+		if s.model.TokenIsEog(token) {
+			// TODO (jmorganca): we should send this back
+			// as it's important for the /api/generate context
+			// seq.responses <- piece
+
+			// TODO: end the sequence instead of quitting the pool
+			s.removeSequence(i, "stop")
+			continue
+		}
+
+		seq.tokens = []int{token}
+
+		seq.pendingResponses = append(seq.pendingResponses, piece)
+		sequence := strings.Join(seq.pendingResponses, "")
+
+		if incompleteUnicode(sequence) {
+			continue
+		}
+
+		if ok, stop := findStop(sequence, seq.stop); ok {
+			slog.Info("hit stop token", "stop", seq.stop)
+
+			truncated := truncateStop(seq.pendingResponses, stop)
+
+			for _, p := range truncated {
+				select {
+				case seq.responses <- p:
+				case <-seq.quit:
+					break
+				}
+			}
+
+			s.removeSequence(i, "stop")
+			continue
+		}
+
+		if containsStopSuffix(sequence, seq.stop) {
+			continue
+		}
+
+		for _, p := range seq.pendingResponses {
+			select {
+			case seq.responses <- p:
+			case <-seq.quit:
+				s.removeSequence(i, "connection")
+				break
+			}
+		}
+
+		seq.pendingResponses = []string{}
 	}
 }
 
@@ -475,12 +487,14 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 			Content: content,
 		}); err != nil {
 			log.Println("Failed to encode result:", err)
+			close(seq.quit)
 			return
 		}
 
 		flusher, ok := w.(http.Flusher)
 		if !ok {
 			http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+			close(seq.quit)
 			return
 		}
 
@@ -590,7 +604,7 @@ func main() {
 	nGpuLayers := flag.Int("n-gpu-layers", 0, "Number of layers to offload to GPU")
 	mainGpu := flag.Int("main-gpu", 0, "Main GPU")
 	flashAttention := flag.Bool("flash-attn", false, "Enable flash attention")
-	numCtx := flag.Int("ctx-size", 2048, "Context (or KV cache) size")
+	kvSize := flag.Int("ctx-size", 2048, "Context (or KV cache) size")
 	lpath := flag.String("lora", "", "Path to lora layer file")
 	port := flag.Int("port", 8080, "Port to expose the server on")
 	threads := flag.Int("threads", runtime.NumCPU(), "Number of threads to use during generation")
@@ -643,7 +657,7 @@ func main() {
 	}
 
 	server := &Server{
-		numCtx:    *numCtx,
+		numCtx:    *kvSize / *parallel,
 		batchSize: *batchSize,
 		parallel:  *parallel,
 		seqs:      make([]*Sequence, *parallel),
@@ -665,7 +679,7 @@ func main() {
 		}
 	}
 
-	ctxParams := llama.NewContextParams(*numCtx, *threads, *flashAttention)
+	ctxParams := llama.NewContextParams(*kvSize, *threads, *flashAttention)
 	server.lc = llama.NewContextWithModel(server.model, ctxParams)
 
 	if server.model.ShouldAddBOSToken() {
