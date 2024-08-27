@@ -318,7 +318,7 @@ func TestCase(t *testing.T) {
 	var s Server
 	for _, tt := range cases {
 		t.Run(tt, func(t *testing.T) {
-			w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
+			w := createRequest(t, s.CreateHandler, api.CreateRequest{
 				Name:      tt,
 				Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
 				Stream:    &stream,
@@ -334,7 +334,7 @@ func TestCase(t *testing.T) {
 			}
 
 			t.Run("create", func(t *testing.T) {
-				w = createRequest(t, s.CreateModelHandler, api.CreateRequest{
+				w = createRequest(t, s.CreateHandler, api.CreateRequest{
 					Name:      strings.ToUpper(tt),
 					Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
 					Stream:    &stream,
@@ -350,7 +350,7 @@ func TestCase(t *testing.T) {
 			})
 
 			t.Run("pull", func(t *testing.T) {
-				w := createRequest(t, s.PullModelHandler, api.PullRequest{
+				w := createRequest(t, s.PullHandler, api.PullRequest{
 					Name:   strings.ToUpper(tt),
 					Stream: &stream,
 				})
@@ -365,7 +365,7 @@ func TestCase(t *testing.T) {
 			})
 
 			t.Run("copy", func(t *testing.T) {
-				w := createRequest(t, s.CopyModelHandler, api.CopyRequest{
+				w := createRequest(t, s.CopyHandler, api.CopyRequest{
 					Source:      tt,
 					Destination: strings.ToUpper(tt),
 				})
@@ -387,7 +387,7 @@ func TestShow(t *testing.T) {
 
 	var s Server
 
-	createRequest(t, s.CreateModelHandler, api.CreateRequest{
+	createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name: "show-model",
 		Modelfile: fmt.Sprintf(
 			"FROM %s\nFROM %s",
@@ -396,7 +396,7 @@ func TestShow(t *testing.T) {
 		),
 	})
 
-	w := createRequest(t, s.ShowModelHandler, api.ShowRequest{
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{
 		Name: "show-model",
 	})
 
