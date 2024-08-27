@@ -122,8 +122,8 @@ function buildOllama() {
             /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} ollama.exe
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     }
-    New-Item -ItemType Directory -Path .\dist\windows-${script:TARGET_ARCH}\bin\ -Force
-    cp .\ollama.exe .\dist\windows-${script:TARGET_ARCH}\bin\
+    New-Item -ItemType Directory -Path .\dist\windows-${script:TARGET_ARCH}\ -Force
+    cp .\ollama.exe .\dist\windows-${script:TARGET_ARCH}\
 }
 
 function buildApp() {
