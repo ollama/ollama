@@ -30,7 +30,7 @@ func createBinFile(t *testing.T, kv map[string]any, ti []llm.Tensor) string {
 	}
 	defer f.Close()
 
-	if err := llm.WriteGGUF(f, kv, ti, func(api.ProgressResponse){}); err != nil {
+	if err := llm.WriteGGUF(f, kv, ti, func(api.ProgressResponse) {}); err != nil {
 		t.Fatal(err)
 	}
 

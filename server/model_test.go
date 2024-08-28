@@ -145,7 +145,7 @@ func TestParseFromFileFromLayer(t *testing.T) {
 		t.Fatalf("failed to open file: %v", err)
 	}
 	defer file.Close()
-	if err := llm.WriteGGUF(file, llm.KV{"general.architecture": "gemma"}, []llm.Tensor{}, func(api.ProgressResponse){}); err != nil {
+	if err := llm.WriteGGUF(file, llm.KV{"general.architecture": "gemma"}, []llm.Tensor{}, func(api.ProgressResponse) {}); err != nil {
 		t.Fatalf("failed to write gguf: %v", err)
 	}
 
@@ -197,7 +197,7 @@ func TestParseLayerFromCopy(t *testing.T) {
 	defer file2.Close()
 
 	for range 5 {
-		if err := llm.WriteGGUF(file2, llm.KV{"general.architecture": "gemma"}, []llm.Tensor{}, func(api.ProgressResponse){}); err != nil {
+		if err := llm.WriteGGUF(file2, llm.KV{"general.architecture": "gemma"}, []llm.Tensor{}, func(api.ProgressResponse) {}); err != nil {
 			t.Fatalf("failed to write gguf: %v", err)
 		}
 	}
