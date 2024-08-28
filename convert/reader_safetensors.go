@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -50,6 +51,10 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 
 		for _, key := range keys {
 			if value := headers[key]; value.Type != "" {
+				// bitsandbytes quantized models are unsupported
+				if len(value.Shape) == 0 {
+					return nil, errors.New("unsupported safetensors model")
+				}
 				ts = append(ts, safetensor{
 					fs:     fsys,
 					path:   p,
