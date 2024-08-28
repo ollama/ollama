@@ -148,15 +148,15 @@ FROM --platform=linux/amd64 cpu-build-amd64 AS build-amd64
 ENV CGO_ENABLED=1
 WORKDIR /go/src/github.com/ollama/ollama
 COPY . .
-COPY --from=static-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
-COPY --from=cpu_avx-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
-COPY --from=cpu_avx2-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
+COPY --from=static-build-amd64 /go/src/github.com/ollama/ollama/llm/build/ llm/build/
+COPY --from=cpu_avx-build-amd64 /go/src/github.com/ollama/ollama/payloads/build/ payloads/build/
+COPY --from=cpu_avx2-build-amd64 /go/src/github.com/ollama/ollama/payloads/build/ payloads/build/
 COPY --from=cuda-11-build-amd64 /go/src/github.com/ollama/ollama/dist/ dist/
-COPY --from=cuda-11-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
+COPY --from=cuda-11-build-amd64 /go/src/github.com/ollama/ollama/payloads/build/ payloads/build/
 COPY --from=cuda-12-build-amd64 /go/src/github.com/ollama/ollama/dist/ dist/
-COPY --from=cuda-12-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
+COPY --from=cuda-12-build-amd64 /go/src/github.com/ollama/ollama/payloads/build/ payloads/build/
 COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/dist/ dist/
-COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
+COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/payloads/build/ payloads/build/
 ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN --mount=type=cache,target=/root/.ccache \
@@ -171,11 +171,11 @@ ENV CGO_ENABLED=1
 ARG GOLANG_VERSION
 WORKDIR /go/src/github.com/ollama/ollama
 COPY . .
-COPY --from=static-build-arm64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
+COPY --from=static-build-arm64 /go/src/github.com/ollama/ollama/llm/build/ llm/build/
 COPY --from=cuda-11-build-server-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
-COPY --from=cuda-11-build-server-arm64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
+COPY --from=cuda-11-build-server-arm64 /go/src/github.com/ollama/ollama/payloads/build/ payloads/build/
 COPY --from=cuda-12-build-server-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
-COPY --from=cuda-12-build-server-arm64 /go/src/github.com/ollama/ollama/llm/build/linux/ llm/build/linux/
+COPY --from=cuda-12-build-server-arm64 /go/src/github.com/ollama/ollama/payloads/build/ payloads/build/
 ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN --mount=type=cache,target=/root/.ccache \
@@ -197,8 +197,8 @@ COPY . .
 ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN --mount=type=cache,target=/root/.ccache \
-    mkdir -p llm/build/linux/amd64/NO_PAYLOAD/bin/ && \
-    touch llm/build/linux/amd64/NO_PAYLOAD/bin/NO_PAYLOAD && \
+    mkdir -p payloads/build/linux/amd64/NO_PAYLOAD/ && \
+    touch payloads/build/linux/amd64/NO_PAYLOAD/NO_PAYLOAD && \
     go build -trimpath -o dist/linux-amd64/bin/ollama .
 
 FROM --platform=linux/arm64 static-build-arm64 AS container-build-arm64
@@ -207,8 +207,8 @@ COPY . .
 ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN --mount=type=cache,target=/root/.ccache \
-    mkdir -p llm/build/linux/arm64/NO_PAYLOAD/bin/ && \
-    touch llm/build/linux/arm64/NO_PAYLOAD/bin/NO_PAYLOAD && \
+    mkdir -p payloads/build/linux/arm64/NO_PAYLOAD/ && \
+    touch payloads/build/linux/arm64/NO_PAYLOAD/NO_PAYLOAD && \
     go build -trimpath -o dist/linux-arm64/bin/ollama .
 
 FROM --platform=linux/amd64 ubuntu:22.04 AS runtime-amd64

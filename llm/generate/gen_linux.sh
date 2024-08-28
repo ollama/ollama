@@ -79,8 +79,8 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
         init_vars
         echo "OLLAMA_CUSTOM_CPU_DEFS=\"${OLLAMA_CUSTOM_CPU_DEFS}\""
         CMAKE_DEFS="${OLLAMA_CUSTOM_CPU_DEFS} -DBUILD_SHARED_LIBS=on -DCMAKE_POSITION_INDEPENDENT_CODE=on ${CMAKE_DEFS}"
-        BUILD_DIR="../build/linux/${ARCH}/cpu"
-        DIST_DIR="${RUNNER_BASE}/cpu"
+        RUNNER="cpu"
+        BUILD_DIR="../build/linux/${ARCH}/${RUNNER}"
         echo "Building custom CPU"
         build
         install
@@ -104,8 +104,8 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
             #
             init_vars
             CMAKE_DEFS="${COMMON_CPU_DEFS} -DGGML_AVX=off -DGGML_AVX2=off -DGGML_AVX512=off -DGGML_FMA=off -DGGML_F16C=off ${CMAKE_DEFS}"
-            BUILD_DIR="../build/linux/${ARCH}/cpu"
-            DIST_DIR="${RUNNER_BASE}/cpu"
+            RUNNER=cpu
+            BUILD_DIR="../build/linux/${ARCH}/${RUNNER}"
             echo "Building LCD CPU"
             build
             install
@@ -124,8 +124,8 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
                 #
                 init_vars
                 CMAKE_DEFS="${COMMON_CPU_DEFS} -DGGML_AVX=on -DGGML_AVX2=off -DGGML_AVX512=off -DGGML_FMA=off -DGGML_F16C=off ${CMAKE_DEFS}"
-                BUILD_DIR="../build/linux/${ARCH}/cpu_avx"
-                DIST_DIR="${RUNNER_BASE}/cpu_avx"
+                RUNNER=cpu_avx
+                BUILD_DIR="../build/linux/${ARCH}/${RUNNER}"
                 echo "Building AVX CPU"
                 build
                 install
@@ -140,8 +140,8 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
                 #
                 init_vars
                 CMAKE_DEFS="${COMMON_CPU_DEFS} -DGGML_AVX=on -DGGML_AVX2=on -DGGML_AVX512=off -DGGML_FMA=on -DGGML_F16C=on ${CMAKE_DEFS}"
-                BUILD_DIR="../build/linux/${ARCH}/cpu_avx2"
-                DIST_DIR="${RUNNER_BASE}/cpu_avx2"
+                RUNNER=cpu_avx2
+                BUILD_DIR="../build/linux/${ARCH}/${RUNNER}"
                 echo "Building AVX2 CPU"
                 build
                 install
@@ -195,10 +195,10 @@ if [ -z "${OLLAMA_SKIP_CUDA_GENERATE}" -a -d "${CUDA_LIB_DIR}" ]; then
     fi
     export CUDAFLAGS="-t8"
     CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} ${ARM64_DEFS} ${CMAKE_CUDA_DEFS} -DGGML_STATIC=off"
-    BUILD_DIR="../build/linux/${ARCH}/cuda${CUDA_VARIANT}"
+    RUNNER=cuda${CUDA_VARIANT}
+    BUILD_DIR="../build/linux/${ARCH}/${RUNNER}"
     export LLAMA_SERVER_LDFLAGS="-L${CUDA_LIB_DIR} -lcudart -lcublas -lcublasLt -lcuda"
     CUDA_DIST_DIR="${CUDA_DIST_DIR:-${DIST_BASE}/lib/ollama}"
-    DIST_DIR="${RUNNER_BASE}/cuda${CUDA_VARIANT}"
     build
     install
     dist
@@ -222,8 +222,8 @@ if [ -z "${OLLAMA_SKIP_ONEAPI_GENERATE}" -a -d "${ONEAPI_ROOT}" ]; then
     source ${ONEAPI_ROOT}/setvars.sh --force # set up environment variables for oneAPI
     CC=icx
     CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx -DGGML_SYCL=ON -DGGML_SYCL_F16=OFF"
-    BUILD_DIR="../build/linux/${ARCH}/oneapi"
-    DIST_DIR="${RUNNER_BASE}/oneapi"
+    RUNNER=oneapi
+    BUILD_DIR="../build/linux/${ARCH}/${RUNNER}"
     ONEAPI_DIST_DIR="${DIST_BASE}/lib/ollama"
     export LLAMA_SERVER_LDFLAGS="-fsycl -lOpenCL -lmkl_core -lmkl_sycl_blas -lmkl_intel_ilp64 -lmkl_tbb_thread -ltbb"
     DEBUG_FLAGS="" # icx compiles with -O0 if we pass -g, so we must remove it
@@ -271,8 +271,8 @@ if [ -z "${OLLAMA_SKIP_ROCM_GENERATE}" -a -d "${ROCM_PATH}" ]; then
         CMAKE_DEFS="${CMAKE_DEFS} ${OLLAMA_CUSTOM_ROCM_DEFS}"
         echo "Building custom ROCM GPU"
     fi
-    BUILD_DIR="../build/linux/${ARCH}/rocm${ROCM_VARIANT}"
-    DIST_DIR="${RUNNER_BASE}/rocm${ROCM_VARIANT}"
+    RUNNER=rocm${ROCM_VARIANT}
+    BUILD_DIR="../build/linux/${ARCH}/${RUNNER}"
     # ROCm dependencies are too large to fit into a unified bundle
     ROCM_DIST_DIR="${DIST_BASE}/../linux-${GOARCH}-rocm/lib/ollama"
     # TODO figure out how to disable runpath (rpath)
@@ -295,4 +295,4 @@ fi
 
 cleanup
 wait_for_compress
-echo "go generate completed.  LLM runners: $(cd ${BUILD_DIR}/..; echo *)"
+echo "go generate completed.  LLM runners: $(cd ${PAYLOAD_BASE}; echo *)"

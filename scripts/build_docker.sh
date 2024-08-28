@@ -2,16 +2,7 @@
 
 set -eu
 
-export VERSION=${VERSION:-$(git describe --tags --first-parent --abbrev=7 --long --dirty --always | sed -e "s/^v//g")}
-export GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=$VERSION\" \"-X=github.com/ollama/ollama/server.mode=release\"'"
-
-# We use 2 different image repositories to handle combining architecture images into multiarch manifest
-# (The ROCm image is x86 only and is not a multiarch manifest)
-# For developers, you can override the DOCKER_ORG to generate multiarch manifests
-#  DOCKER_ORG=jdoe PUSH=1 ./scripts/build_docker.sh
-DOCKER_ORG=${DOCKER_ORG:-"ollama"}
-RELEASE_IMAGE_REPO=${RELEASE_IMAGE_REPO:-"${DOCKER_ORG}/release"}
-FINAL_IMAGE_REPO=${FINAL_IMAGE_REPO:-"${DOCKER_ORG}/ollama"}
+. $(dirname $0)/env.sh
 
 BUILD_ARCH=${BUILD_ARCH:-"amd64 arm64"}
 
@@ -34,8 +25,7 @@ if [ -z "${OLLAMA_SKIP_IMAGE_BUILD}" ]; then
         docker build \
             ${LOAD_OR_PUSH} \
             --platform=linux/${TARGETARCH} \
-            --build-arg=VERSION \
-            --build-arg=GOFLAGS \
+            ${OLLAMA_COMMON_BUILD_ARGS} \
             -f Dockerfile \
             -t ${RELEASE_IMAGE_REPO}:$VERSION-${TARGETARCH} \
             .
@@ -45,8 +35,7 @@ if [ -z "${OLLAMA_SKIP_IMAGE_BUILD}" ]; then
         docker build \
             ${LOAD_OR_PUSH} \
             --platform=linux/amd64 \
-            --build-arg=VERSION \
-            --build-arg=GOFLAGS \
+            ${OLLAMA_COMMON_BUILD_ARGS} \
             --target runtime-rocm \
             -f Dockerfile \
             -t ${RELEASE_IMAGE_REPO}:$VERSION-rocm \

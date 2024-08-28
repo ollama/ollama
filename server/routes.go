@@ -31,6 +31,7 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/payloads"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -1190,11 +1191,11 @@ func Serve(ln net.Listener) error {
 		srvr.Close()
 		schedDone()
 		sched.unloadAllRunners()
-		llm.Cleanup()
+		payloads.Cleanup()
 		done()
 	}()
 
-	if _, err := llm.RunnersDir(); err != nil {
+	if _, err := payloads.RunnersDir(); err != nil {
 		return fmt.Errorf("unable to initialize llm library %w", err)
 	}
 
