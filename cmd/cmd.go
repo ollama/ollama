@@ -124,6 +124,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	bars := make(map[string]*progress.Bar)
+	var convertSpin *progress.Spinner
 	fn := func(resp api.ProgressResponse) error {
 		if resp.Digest != "" {
 			spinner.Stop()
@@ -136,6 +137,16 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			}
 
 			bar.Set(resp.Completed)
+		} else if strings.Contains(resp.Status, "converting") {
+			spinner.Stop()
+
+			if convertSpin != nil {
+				convertSpin.SetMessage(resp.Status)
+			} else {
+				status = resp.Status
+				convertSpin = progress.NewSpinner(resp.Status)
+				p.Add("convert", convertSpin)
+			}
 		} else if status != resp.Status {
 			spinner.Stop()
 

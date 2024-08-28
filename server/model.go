@@ -98,7 +98,6 @@ func parseFromZipFile(_ context.Context, command string, baseLayers []*layerGGML
 	}
 	defer os.RemoveAll(p)
 
-	fn(api.ProgressResponse{Status: "converting model"})
 	// TODO(mxyng): this should write directly into a layer
 	// e.g. NewLayer(arch.Reader(), "application/vnd.ollama.image.model")
 	t, err := os.CreateTemp(p, "fp16")
@@ -123,13 +122,18 @@ func parseFromZipFile(_ context.Context, command string, baseLayers []*layerGGML
 		if baseModel == nil {
 			return nil, fmt.Errorf("no base model specified for the adapter")
 		}
-
-		if err := convert.ConvertAdapter(convert.NewZipReader(r, p, 32<<20), t, baseModel.KV()); err != nil {
+		fn(api.ProgressResponse{
+			Status: "converting adapter",
+		})
+		if err := convert.ConvertAdapter(convert.NewZipReader(r, p, 32<<20), t, baseModel.KV(), fn); err != nil {
 			return nil, err
 		}
 		layerType = "application/vnd.ollama.image.adapter"
 	case "model":
-		if err := convert.ConvertModel(convert.NewZipReader(r, p, 32<<20), t); err != nil {
+		fn(api.ProgressResponse{
+			Status: "converting model",
+		})
+		if err := convert.ConvertModel(convert.NewZipReader(r, p, 32<<20), t, fn); err != nil {
 			return nil, err
 		}
 		layerType = "application/vnd.ollama.image.model"

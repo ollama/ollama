@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 )
 
@@ -79,12 +80,12 @@ func (ModelParameters) specialTokenTypes() []string {
 	}
 }
 
-func (ModelParameters) writeFile(ws io.WriteSeeker, kv llm.KV, ts []llm.Tensor) error {
-	return llm.WriteGGUF(ws, kv, ts)
+func (ModelParameters) writeFile(ws io.WriteSeeker, kv llm.KV, ts []llm.Tensor, fn func(api.ProgressResponse)) error {
+	return llm.WriteGGUF(ws, kv, ts, fn)
 }
 
-func (AdapterParameters) writeFile(ws io.WriteSeeker, kv llm.KV, ts []llm.Tensor) error {
-	return llm.WriteGGUF(ws, kv, ts)
+func (AdapterParameters) writeFile(ws io.WriteSeeker, kv llm.KV, ts []llm.Tensor, fn func(api.ProgressResponse)) error {
+	return llm.WriteGGUF(ws, kv, ts, fn)
 }
 
 type ModelConverter interface {
@@ -99,7 +100,7 @@ type ModelConverter interface {
 	// specialTokenTypes returns any special token types the model uses
 	specialTokenTypes() []string
 	// writeFile writes the model to the provided io.WriteSeeker
-	writeFile(io.WriteSeeker, llm.KV, []llm.Tensor) error
+	writeFile(io.WriteSeeker, llm.KV, []llm.Tensor, func(api.ProgressResponse)) error
 }
 
 type moreParser interface {
@@ -115,10 +116,10 @@ type AdapterConverter interface {
 	// See [strings.Replacer](https://pkg.go.dev/strings#Replacer) for details
 	Replacements() []string
 
-	writeFile(io.WriteSeeker, llm.KV, []llm.Tensor) error
+	writeFile(io.WriteSeeker, llm.KV, []llm.Tensor, func(api.ProgressResponse)) error
 }
 
-func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseKV llm.KV) error {
+func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseKV llm.KV, fn func(api.ProgressResponse)) error {
 	bts, err := fs.ReadFile(fsys, "adapter_config.json")
 	if err != nil {
 		return err
@@ -153,14 +154,17 @@ func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseKV llm.KV) error {
 		return err
 	}
 
-	return conv.writeFile(ws, conv.KV(baseKV), conv.Tensors(ts))
+	fn(api.ProgressResponse{
+		Status: fmt.Sprintf("converting adapter 0%%"),
+	})
+	return conv.writeFile(ws, conv.KV(baseKV), conv.Tensors(ts), fn)
 }
 
 // Convert writes an Ollama compatible model to the provided io.WriteSeeker based on configurations
 // and files it finds in the input path.
 // Supported input model formats include safetensors.
 // Supported input tokenizers files include tokenizer.json (preferred) and tokenizer.model.
-func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
+func ConvertModel(fsys fs.FS, ws io.WriteSeeker, fn func(api.ProgressResponse)) error {
 	bts, err := fs.ReadFile(fsys, "config.json")
 	if err != nil {
 		return err
@@ -224,5 +228,8 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 		return err
 	}
 
-	return conv.writeFile(ws, conv.KV(t), conv.Tensors(ts))
+	fn(api.ProgressResponse{
+		Status: fmt.Sprintf("converting model 0%%"),
+	})
+	return conv.writeFile(ws, conv.KV(t), conv.Tensors(ts), fn)
 }
