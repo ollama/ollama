@@ -20,6 +20,7 @@ package llm
 import "C"
 
 import (
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"

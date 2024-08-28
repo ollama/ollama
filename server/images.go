@@ -435,7 +435,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 						return err
 					}
 
-					tensorCount := len(baseLayer.GGML.Tensors())
+					tensorCount := len(baseLayer.GGML.Tensors().Items)
 					ft := baseLayer.GGML.KV().FileType()
 					if !slices.Contains([]string{"F16", "F32"}, ft.String()) {
 						return errors.New("quantization is only supported for F16 and F32 models")
