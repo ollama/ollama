@@ -176,6 +176,8 @@ func (s *Server) shiftContext(seqIndex int) {
 	slog.Debug("context limit hit - shifting", "limit", s.numCtx, "nPast", seq.nPast,
 		"numKeep", seq.numKeep, "numLeft", numLeft, "numDiscard", numDiscard)
 
+	// TODO (jessegross): KV cache removal can fail for certain types of models
+	// server.cpp doesn't handle this, though we can be more graceful
 	s.lc.KvCacheSeqRm(seqIndex, seq.numKeep, seq.numKeep+numDiscard)
 	s.lc.KvCacheSeqAdd(seqIndex, seq.numKeep+numDiscard, seq.nPast, -numDiscard)
 
@@ -327,13 +329,11 @@ func (s *Server) processBatch() {
 		slog.Debug("sampled", "piece", piece)
 
 		// if it's an end of sequence token, break
-		// TODO: just end this sequence
 		if s.model.TokenIsEog(token) {
 			// TODO (jmorganca): we should send this back
 			// as it's important for the /api/generate context
 			// seq.responses <- piece
 
-			// TODO: end the sequence instead of quitting the pool
 			s.removeSequence(i, "stop")
 			continue
 		}
