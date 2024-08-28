@@ -501,7 +501,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 						return false
 					}
 
-					if err := layer.Remove(); err != nil {
+					if err := layer.Prune(); err != nil {
 						return false
 					}
 
@@ -687,113 +687,6 @@ func CopyModel(src, dst model.Name) error {
 
 	_, err = io.Copy(dstfile, srcfile)
 	return err
-}
-
-func deleteUnusedLayers(deleteMap map[string]struct{}) error {
-	manifests, err := Manifests()
-	if err != nil {
-		return err
-	}
-
-	for _, manifest := range manifests {
-		for _, layer := range manifest.Layers {
-			delete(deleteMap, layer.Digest)
-		}
-
-		delete(deleteMap, manifest.Config.Digest)
-	}
-
-	// only delete the files which are still in the deleteMap
-	for k := range deleteMap {
-		fp, err := GetBlobsPath(k)
-		if err != nil {
-			slog.Info(fmt.Sprintf("couldn't get file path for '%s': %v", k, err))
-			continue
-		}
-		if err := os.Remove(fp); err != nil {
-			slog.Info(fmt.Sprintf("couldn't remove file '%s': %v", fp, err))
-			continue
-		}
-	}
-
-	return nil
-}
-
-func PruneLayers() error {
-	deleteMap := make(map[string]struct{})
-	p, err := GetBlobsPath("")
-	if err != nil {
-		return err
-	}
-
-	blobs, err := os.ReadDir(p)
-	if err != nil {
-		slog.Info(fmt.Sprintf("couldn't read dir '%s': %v", p, err))
-		return err
-	}
-
-	for _, blob := range blobs {
-		name := blob.Name()
-		name = strings.ReplaceAll(name, "-", ":")
-
-		_, err := GetBlobsPath(name)
-		if err != nil {
-			if errors.Is(err, ErrInvalidDigestFormat) {
-				// remove invalid blobs (e.g. partial downloads)
-				if err := os.Remove(filepath.Join(p, blob.Name())); err != nil {
-					slog.Error("couldn't remove blob", "blob", blob.Name(), "error", err)
-				}
-			}
-
-			continue
-		}
-
-		deleteMap[name] = struct{}{}
-	}
-
-	slog.Info(fmt.Sprintf("total blobs: %d", len(deleteMap)))
-
-	if err := deleteUnusedLayers(deleteMap); err != nil {
-		slog.Error(fmt.Sprintf("couldn't remove unused layers: %v", err))
-		return nil
-	}
-
-	slog.Info(fmt.Sprintf("total unused blobs removed: %d", len(deleteMap)))
-
-	return nil
-}
-
-func PruneDirectory(path string) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-
-	if info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			return err
-		}
-
-		for _, entry := range entries {
-			if err := PruneDirectory(filepath.Join(path, entry.Name())); err != nil {
-				return err
-			}
-		}
-
-		entries, err = os.ReadDir(path)
-		if err != nil {
-			return err
-		}
-
-		if len(entries) > 0 {
-			return nil
-		}
-
-		return os.Remove(path)
-	}
-
-	return nil
 }
 
 func PushModel(ctx context.Context, name model.Name, opts registryOptions, fn func(api.ProgressResponse)) error {

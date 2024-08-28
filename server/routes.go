@@ -1131,18 +1131,15 @@ func Serve(ln net.Listener) error {
 	}
 
 	if !envconfig.NoPrune() {
-		// clean up unused layers and manifests
-		if err := PruneLayers(); err != nil {
-			return err
-		}
-
-		manifestsPath, err := GetManifestPath()
+		layers, err := Layers()
 		if err != nil {
 			return err
 		}
 
-		if err := PruneDirectory(manifestsPath); err != nil {
-			return err
+		for _, layer := range layers {
+			if err := layer.Prune(); err != nil {
+				return err
+			}
 		}
 	}
 

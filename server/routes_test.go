@@ -5,16 +5,21 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -451,4 +456,85 @@ func TestNormalize(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestServe(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	p := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", p)
+	var s Server
+
+	// seed some models
+	createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:      "test-model",
+		Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
+	})
+
+	createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:      "test-model-2",
+		Modelfile: "FROM test-model\nSYSTEM You are a good robot.",
+	})
+
+	createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:      "test-model-3",
+		Modelfile: "FROM test-model\nSYSTEM You are a bad robot.",
+	})
+
+	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
+		filepath.Join(p, "blobs", "sha256-1c515c46e60f849c6aeffa86e256508ac450464762a31ca08648e418f07c9819"),
+		filepath.Join(p, "blobs", "sha256-461fd034bb72312965d46160399b1b882c6a2f8c7305237ed7dd65f848fba10c"),
+		filepath.Join(p, "blobs", "sha256-66e9776a5bb7e5f6093681aa8ba01a7a6b6ae1dd697281f11fa714eaa948a6a4"),
+		filepath.Join(p, "blobs", "sha256-a4e5e156ddec27e286f75328784d7106b60a4eb1d246e950a001a3f944fbda99"),
+		filepath.Join(p, "blobs", "sha256-b3a5b5b438604c5103ba403a5455af94ea98494b5bbc177f4665716a37b99c1e"),
+		filepath.Join(p, "blobs", "sha256-ca239d7bd8ea90e4a5d2e6bf88f8d74a47b14336e73eb4e18bed4dd325018116"),
+	})
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+
+	//nolint:errcheck
+	go Serve(ln)
+
+	// wait for server to be healthy (GET / => 200)
+	ctx, cancel := context.WithTimeout(context.TODO(), time.Second)
+	defer cancel()
+
+	if err := func() error {
+		tick := time.NewTicker(20 * time.Millisecond)
+		defer tick.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return errors.New("server did not become healthy")
+			case <-tick.C:
+				r, err := http.Get(fmt.Sprintf("http://%s", ln.Addr()))
+				if err != nil {
+					continue
+				}
+
+				if err := r.Body.Close(); err != nil {
+					return err
+				}
+
+				if r.StatusCode == http.StatusOK {
+					return nil
+				}
+			}
+		}
+	}(); err != nil {
+		t.Fatal(err)
+	}
+
+	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
+		filepath.Join(p, "blobs", "sha256-1c515c46e60f849c6aeffa86e256508ac450464762a31ca08648e418f07c9819"),
+		filepath.Join(p, "blobs", "sha256-461fd034bb72312965d46160399b1b882c6a2f8c7305237ed7dd65f848fba10c"),
+		filepath.Join(p, "blobs", "sha256-66e9776a5bb7e5f6093681aa8ba01a7a6b6ae1dd697281f11fa714eaa948a6a4"),
+		filepath.Join(p, "blobs", "sha256-a4e5e156ddec27e286f75328784d7106b60a4eb1d246e950a001a3f944fbda99"),
+		filepath.Join(p, "blobs", "sha256-b3a5b5b438604c5103ba403a5455af94ea98494b5bbc177f4665716a37b99c1e"),
+		filepath.Join(p, "blobs", "sha256-ca239d7bd8ea90e4a5d2e6bf88f8d74a47b14336e73eb4e18bed4dd325018116"),
+	})
 }
