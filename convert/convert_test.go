@@ -32,7 +32,7 @@ func convertFull(t *testing.T, fsys fs.FS) (*os.File, llm.KV, llm.Tensors) {
 	}
 	defer f.Close()
 
-	if err := ConvertModel(fsys, f, func(api.ProgressResponse){}); err != nil {
+	if err := ConvertModel(fsys, f, func(api.ProgressResponse) {}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -151,7 +151,7 @@ func TestConvertInvalidDatatype(t *testing.T) {
 	tempDir := t.TempDir()
 	generateSafetensorTestData(t, tempDir)
 
-	err = ConvertModel(os.DirFS(tempDir), f, func(api.ProgressResponse){})
+	err = ConvertModel(os.DirFS(tempDir), f, func(api.ProgressResponse) {})
 	if err == nil || err.Error() != "unsupported safetensors model" {
 		t.Errorf("expected error but didn't get one")
 	}
@@ -288,7 +288,7 @@ func TestConvertAdapter(t *testing.T) {
 			tempDir := t.TempDir()
 			generateLoraTestData(t, tempDir)
 
-			if err = ConvertAdapter(os.DirFS(tempDir), f, c.BaseKV, func(api.ProgressResponse){}); err != nil {
+			if err = ConvertAdapter(os.DirFS(tempDir), f, c.BaseKV, func(api.ProgressResponse) {}); err != nil {
 				t.Fatal(err)
 			}
 
