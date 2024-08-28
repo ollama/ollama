@@ -139,6 +139,7 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
 
 func TestParseFromFileFromLayer(t *testing.T) {
 	tempModels := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", tempModels)
 
 	file, err := os.CreateTemp(tempModels, "")
 	if err != nil {
@@ -189,6 +190,7 @@ func TestParseFromFileFromLayer(t *testing.T) {
 
 func TestParseLayerFromCopy(t *testing.T) {
 	tempModels := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", tempModels)
 
 	file2, err := os.CreateTemp(tempModels, "")
 	if err != nil {
