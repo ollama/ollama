@@ -16,10 +16,10 @@ type commandr struct {
 	NumKeyValueHeads      uint32  `json:"num_key_value_heads"`
 	LayerNormEPS          float32 `json:"layer_norm_eps"`
 	RopeTheta             float32 `json:"rope_theta"`
-	UseQKNorm		   	  bool 	  `json:"use_qk_norm"`
-	MaxLength 	 		  uint32  `json:"model_max_length"`
-	LogitScale 		  	  float32 `json:"logit_scale"`
-	NCtx 				  uint32  `json:"n_ctx"`
+	UseQKNorm             bool    `json:"use_qk_norm"`
+	MaxLength             uint32  `json:"model_max_length"`
+	LogitScale            float32 `json:"logit_scale"`
+	NCtx                  uint32  `json:"n_ctx"`
 }
 
 var _ ModelConverter = (*commandr)(nil)
