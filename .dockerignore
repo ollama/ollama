@@ -7,3 +7,6 @@ llm/llama.cpp
 .env
 .cache
 test_data
+llm/build
+llama/build
+payloads/build

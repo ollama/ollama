@@ -1,4 +1,4 @@
-package llm
+package payloads
 
 import (
 	"os"
@@ -24,7 +24,7 @@ func TestExtractRunners(t *testing.T) {
 	}
 
 	// spot check results
-	servers := getAvailableServers(rDir)
+	servers := GetAvailableServers(rDir)
 	if len(servers) < 1 {
 		t.Fatalf("expected at least 1 server")
 	}

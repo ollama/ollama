@@ -27,6 +27,7 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
+	"github.com/ollama/ollama/payloads"
 )
 
 type LlamaServer interface {
@@ -106,7 +107,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		gpus = gpu.GetCPUInfo()
 	}
 	if len(gpus) == 1 && gpus[0].Library == "cpu" {
-		cpuRunner = serverForCpu()
+		cpuRunner = payloads.ServerForCpu()
 		estimate = EstimateGPULayers(gpus, ggml, projectors, opts)
 	} else {
 		estimate = EstimateGPULayers(gpus, ggml, projectors, opts)
@@ -118,7 +119,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			opts.NumGPU = 0
 		case gpus[0].Library != "metal" && estimate.Layers == 0:
 			// Don't bother loading into the GPU if no layers can fit
-			cpuRunner = serverForCpu()
+			cpuRunner = payloads.ServerForCpu()
 			gpus = gpu.GetCPUInfo()
 		case opts.NumGPU < 0 && estimate.Layers > 0 && gpus[0].Library != "cpu":
 			opts.NumGPU = estimate.Layers
@@ -145,12 +146,12 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		return nil, errors.New("ollama supports only one lora adapter, but multiple were provided")
 	}
 
-	rDir, err := RunnersDir()
+	rDir, err := payloads.RunnersDir()
 	if err != nil {
 		return nil, err
 	}
 
-	availableServers := getAvailableServers(rDir)
+	availableServers := payloads.GetAvailableServers(rDir)
 	if len(availableServers) == 0 {
 		return nil, finalErr
 	}
@@ -158,7 +159,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	if cpuRunner != "" {
 		servers = []string{cpuRunner}
 	} else {
-		servers = serversForGpu(gpus[0]) // All GPUs in the list are matching Library and Variant
+		servers = payloads.ServersForGpu(gpus[0]) // All GPUs in the list are matching Library and Variant
 	}
 	demandLib := envconfig.LLMLibrary()
 	if demandLib != "" {
@@ -325,7 +326,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		_, err := os.Stat(server)
 		if errors.Is(err, os.ErrNotExist) {
 			slog.Warn("llama server disappeared, reinitializing payloads", "path", server, "error", err)
-			_, err = RunnersDir()
+			_, err = payloads.RunnersDir()
 			if err != nil {
 				slog.Warn("failed to reinitialize payloads", "error", err)
 				return nil, err

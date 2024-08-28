@@ -1,4 +1,4 @@
-package llm
+package payloads
 
 import (
 	"compress/gzip"
@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	binGlob = "build/*/*/*/bin/*"
+	binGlob = "build/*/*/*/*"
 )
 
 var (
@@ -43,7 +43,7 @@ func RunnersDir() (string, error) {
 	if runnersDir == "" {
 		defer func() {
 			var runners []string
-			for v := range getAvailableServers(runnersDir) {
+			for v := range GetAvailableServers(runnersDir) {
 				runners = append(runners, v)
 			}
 			slog.Info("Dynamic LLM libraries", "runners", runners)
@@ -90,7 +90,7 @@ func locateRunners() (string, error) {
 	}
 
 	var paths []string
-	for _, root := range []string{filepath.Dir(exe), filepath.Join(filepath.Dir(exe), ".."), cwd} {
+	for _, root := range []string{filepath.Dir(exe), filepath.Join(filepath.Dir(exe), envconfig.LibRelativeToExe()), cwd} {
 		paths = append(paths,
 			root,
 			filepath.Join(root, runtime.GOOS+"-"+runtime.GOARCH),
@@ -159,13 +159,13 @@ func extractFiles(targetDir string, glob string) error {
 
 	g := new(errgroup.Group)
 
-	// build/$OS/$GOARCH/$RUNNER/bin/$FILE
+	// build/$OS/$GOARCH/$RUNNER/$FILE
 	for _, file := range files {
 		filename := file
 
-		runner := filepath.Base(filepath.Dir(filepath.Dir(filename)))
+		runner := filepath.Base(filepath.Dir(filename))
 
-		slog.Debug("extracting", "runner", runner, "file", filename)
+		slog.Debug("extracting", "runner", runner, "payload", filename)
 
 		g.Go(func() error {
 			srcf, err := libEmbed.Open(filename)
@@ -211,6 +211,7 @@ func extractFiles(targetDir string, glob string) error {
 
 	err = g.Wait()
 	if err != nil {
+		slog.Error("failed to extract files", "error", err)
 		// If we fail to extract, the payload dir is most likely unusable, so cleanup whatever we extracted
 		err := os.RemoveAll(targetDir)
 		if err != nil {
@@ -269,10 +270,10 @@ func cleanupTmpDirs() {
 	}
 }
 
-// binary names may contain an optional variant separated by '_'
-// For example, "ollama_rocm_v6" and "ollama_rocm_v5" or "ollama_cpu" and "ollama_cpu_avx2"
+// directory names may contain an optional variant separated by '_'
+// For example, "cuda_v11" and "cuda_v12" or "cpu" and "cpu_avx2"
 // Any library without a variant is the lowest common denominator
-func getAvailableServers(payloadsDir string) map[string]string {
+func GetAvailableServers(payloadsDir string) map[string]string {
 	if payloadsDir == "" {
 		slog.Error("empty runner dir")
 		return nil
@@ -299,9 +300,9 @@ func getAvailableServers(payloadsDir string) map[string]string {
 // serversForGpu returns a list of compatible servers give the provided GPU
 // info, ordered by performance. assumes Init() has been called
 // TODO - switch to metadata based mapping
-func serversForGpu(info gpu.GpuInfo) []string {
+func ServersForGpu(info gpu.GpuInfo) []string {
 	// glob workDir for files that start with ollama_
-	availableServers := getAvailableServers(runnersDir)
+	availableServers := GetAvailableServers(runnersDir)
 	requested := info.Library
 	if info.Variant != gpu.CPUCapabilityNone.String() {
 		requested += "_" + info.Variant
@@ -365,12 +366,12 @@ func serversForGpu(info gpu.GpuInfo) []string {
 }
 
 // Return the optimal server for this CPU architecture
-func serverForCpu() string {
+func ServerForCpu() string {
 	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
 		return "metal"
 	}
 	variant := gpu.GetCPUCapability()
-	availableServers := getAvailableServers(runnersDir)
+	availableServers := GetAvailableServers(runnersDir)
 	if variant != gpu.CPUCapabilityNone {
 		for cmp := range availableServers {
 			if cmp == "cpu_"+variant.String() {
