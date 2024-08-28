@@ -24,6 +24,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/types/model"
 )
 
 const maxRetries = 6
@@ -451,15 +452,16 @@ func (b *blobDownload) Wait(ctx context.Context, fn func(api.ProgressResponse)) 
 	}
 }
 
-type downloadOpts struct {
-	mp      ModelPath
+type downloadOptions struct {
+	name    model.Name
+	baseURL *url.URL
 	digest  string
 	regOpts *registryOptions
 	fn      func(api.ProgressResponse)
 }
 
 // downloadBlob downloads a blob from the registry and stores it in the blobs directory
-func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ error) {
+func downloadBlob(ctx context.Context, opts downloadOptions) (cacheHit bool, _ error) {
 	fp, err := GetBlobsPath(opts.digest)
 	if err != nil {
 		return false, err
@@ -484,8 +486,7 @@ func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ erro
 	data, ok := blobDownloadManager.LoadOrStore(opts.digest, &blobDownload{Name: fp, Digest: opts.digest})
 	download := data.(*blobDownload)
 	if !ok {
-		requestURL := opts.mp.BaseURL()
-		requestURL = requestURL.JoinPath("v2", opts.mp.GetNamespaceRepository(), "blobs", opts.digest)
+		requestURL := opts.baseURL.JoinPath("blobs", opts.digest)
 		if err := download.Prepare(ctx, requestURL, opts.regOpts); err != nil {
 			blobDownloadManager.Delete(opts.digest)
 			return false, err

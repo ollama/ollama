@@ -797,8 +797,6 @@ func PruneDirectory(path string) error {
 }
 
 func PushModel(ctx context.Context, name model.Name, opts registryOptions, fn func(api.ProgressResponse)) error {
-	fn(api.ProgressResponse{Status: "retrieving manifest"})
-
 	m, err := ParseNamedManifest(name)
 	if err != nil {
 		return err
@@ -842,118 +840,83 @@ func PushModel(ctx context.Context, name model.Name, opts registryOptions, fn fu
 	return nil
 }
 
-func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
-	mp := ParseModelPath(name)
+func PullModel(ctx context.Context, name model.Name, opts *registryOptions, fn func(api.ProgressResponse)) error {
+	mm, _ := ParseNamedManifest(name)
 
-	// build deleteMap to prune unused layers
-	deleteMap := make(map[string]struct{})
-	manifest, _, err := GetManifest(mp)
-	if errors.Is(err, os.ErrNotExist) {
-		// noop
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	} else {
-		for _, l := range manifest.Layers {
-			deleteMap[l.Digest] = struct{}{}
-		}
-		if manifest.Config.Digest != "" {
-			deleteMap[manifest.Config.Digest] = struct{}{}
-		}
+	scheme := "https"
+	if opts.Insecure {
+		scheme = "http"
 	}
 
-	if mp.ProtocolScheme == "http" && !regOpts.Insecure {
-		return errors.New("insecure protocol http")
+	baseURL, err := url.Parse(fmt.Sprintf("%s://%s", scheme, path.Join(name.Host, "v2", name.Namespace, name.Model)))
+	if err != nil {
+		return err
 	}
 
 	fn(api.ProgressResponse{Status: "pulling manifest"})
-
-	manifest, err = pullModelManifest(ctx, mp, regOpts)
+	m, err := pullModelManifest(ctx, name, baseURL, opts)
 	if err != nil {
 		return fmt.Errorf("pull model manifest: %s", err)
 	}
 
-	var layers []Layer
-	layers = append(layers, manifest.Layers...)
-	if manifest.Config.Digest != "" {
-		layers = append(layers, manifest.Config)
-	}
+	layers := append(m.Layers, m.Config)
 
 	skipVerify := make(map[string]bool)
 	for _, layer := range layers {
-		cacheHit, err := downloadBlob(ctx, downloadOpts{
-			mp:      mp,
+		hit, err := downloadBlob(ctx, downloadOptions{
+			name:    name,
+			baseURL: baseURL,
 			digest:  layer.Digest,
-			regOpts: regOpts,
+			regOpts: opts,
 			fn:      fn,
 		})
 		if err != nil {
 			return err
 		}
-		skipVerify[layer.Digest] = cacheHit
-		delete(deleteMap, layer.Digest)
+
+		skipVerify[layer.Digest] = hit
 	}
-	delete(deleteMap, manifest.Config.Digest)
 
 	fn(api.ProgressResponse{Status: "verifying sha256 digest"})
 	for _, layer := range layers {
-		if skipVerify[layer.Digest] {
-			continue
-		}
-		if err := verifyBlob(layer.Digest); err != nil {
-			if errors.Is(err, errDigestMismatch) {
+		if !skipVerify[layer.Digest] {
+			if err := verifyBlob(layer.Digest); errors.Is(err, errDigestMismatch) {
 				// something went wrong, delete the blob
 				fp, err := GetBlobsPath(layer.Digest)
 				if err != nil {
 					return err
 				}
+
 				if err := os.Remove(fp); err != nil {
 					// log this, but return the original error
 					slog.Info(fmt.Sprintf("couldn't remove file with digest mismatch '%s': %v", fp, err))
 				}
+			} else if err != nil {
+				return err
 			}
-			return err
 		}
 	}
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
-
-	manifestJSON, err := json.Marshal(manifest)
-	if err != nil {
+	if err := WriteManifest(name, m.Config, m.Layers); err != nil {
 		return err
 	}
 
-	fp, err := mp.GetManifestPath()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
-		return err
-	}
-
-	err = os.WriteFile(fp, manifestJSON, 0o644)
-	if err != nil {
-		slog.Info(fmt.Sprintf("couldn't write to %s", fp))
-		return err
-	}
-
-	if !envconfig.NoPrune() && len(deleteMap) > 0 {
-		fn(api.ProgressResponse{Status: "removing unused layers"})
-		if err := deleteUnusedLayers(deleteMap); err != nil {
-			fn(api.ProgressResponse{Status: fmt.Sprintf("couldn't remove unused layers: %v", err)})
-		}
+	if !envconfig.NoPrune() && mm != nil {
+		fn(api.ProgressResponse{Status: "pruning old layers"})
+		_ = mm.RemoveLayers()
 	}
 
 	fn(api.ProgressResponse{Status: "success"})
-
 	return nil
 }
 
-func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptions) (*Manifest, error) {
-	requestURL := mp.BaseURL().JoinPath("v2", mp.GetNamespaceRepository(), "manifests", mp.Tag)
+func pullModelManifest(ctx context.Context, name model.Name, baseURL *url.URL, opts *registryOptions) (*Manifest, error) {
+	requestURL := baseURL.JoinPath("manifests", name.Tag)
 
 	headers := make(http.Header)
 	headers.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
-	resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, headers, nil, regOpts)
+	resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, headers, nil, opts)
 	if err != nil {
 		return nil, err
 	}
