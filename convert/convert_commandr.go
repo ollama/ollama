@@ -40,10 +40,6 @@ func (p *commandrModel) KV(t *Tokenizer) llm.KV {
 	kv["command-r.logit_scale"] = p.LogitScale
 	kv["command-r.rope.scaling.type"] = "none"
 
-	if len(t.Merges) > 0 {
-		kv["tokenizer.ggml.merges"] = t.Merges
-	}
-
 	return kv
 }
 
