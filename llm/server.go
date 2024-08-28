@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/semaphore"
@@ -28,6 +29,7 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
+	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/runners"
 )
 
@@ -52,7 +54,9 @@ type llmServer struct {
 	status      *StatusWriter
 	options     api.Options
 	numParallel int
-	model       *loadedModel
+	modelPath   string
+	modelLock   sync.Mutex   // Temporary until we switch fully to Go server
+	model       *llama.Model // If non-nil, the runner is a new Go server
 
 	estimate    MemoryEstimate
 	totalLayers uint64
@@ -320,9 +324,6 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		}
 
 		server := filepath.Join(dir, "ollama_llama_server")
-		if envconfig.NewRunners() {
-			server = filepath.Join(dir, "ollama_runner")
-		}
 		if runtime.GOOS == "windows" {
 			server += ".exe"
 		}
@@ -330,9 +331,6 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		// Detect tmp cleaners wiping out the file
 		_, err := os.Stat(server)
 		if errors.Is(err, os.ErrNotExist) {
-			if envconfig.NewRunners() {
-				return nil, fmt.Errorf("experimental runners enabled, but not present in this build")
-			}
 			slog.Warn("llama server disappeared, reinitializing payloads", "path", server, "error", err)
 			_, err = runners.Refresh(build.EmbedFS)
 			if err != nil {
@@ -341,19 +339,13 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			}
 		}
 
-		var m *loadedModel
-		if envconfig.NewRunners() {
-			m, err = loadModel(model, true)
-			if err != nil {
-				return nil, fmt.Errorf("unable to load model for tokenization %w", err)
-			}
-		}
+		// TODO - once fully switched to the Go runner, load the model here for tokenize/detokenize cgo access
 		s := &llmServer{
 			port:        port,
 			cmd:         exec.Command(server, finalParams...),
 			status:      NewStatusWriter(os.Stderr),
 			options:     opts,
-			model:       m,
+			modelPath:   model,
 			estimate:    estimate,
 			numParallel: numParallel,
 			sem:         semaphore.NewWeighted(int64(numParallel)),
@@ -959,8 +951,10 @@ type TokenizeResponse struct {
 }
 
 func (s *llmServer) Tokenize(ctx context.Context, content string) ([]int, error) {
-	if envconfig.NewRunners() {
-		return tokenize(s.model, content)
+	s.modelLock.Lock()
+	defer s.modelLock.Unlock()
+	if s.model != nil {
+		return s.model.Tokenize(content, true, true)
 	}
 
 	// Make sure the server is ready
@@ -987,6 +981,14 @@ func (s *llmServer) Tokenize(ctx context.Context, content string) ([]int, error)
 		return nil, fmt.Errorf("do encode request: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		if s.model == nil {
+			slog.Debug("new runner detected, loading model for cgo tokenization")
+			m := llama.LoadModelFromFile(s.modelPath, llama.ModelParams{VocabOnly: true})
+			s.model = m
+		}
+		return s.model.Tokenize(content, true, true)
+	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -1015,8 +1017,14 @@ type DetokenizeResponse struct {
 }
 
 func (s *llmServer) Detokenize(ctx context.Context, tokens []int) (string, error) {
-	if envconfig.NewRunners() {
-		return detokenize(s.model, tokens), nil
+	s.modelLock.Lock()
+	defer s.modelLock.Unlock()
+	if s.model != nil {
+		var resp string
+		for _, token := range tokens {
+			resp += s.model.TokenToPiece(token)
+		}
+		return resp, nil
 	}
 	// Make sure the server is ready
 	status, err := s.getServerStatus(ctx)
@@ -1042,6 +1050,18 @@ func (s *llmServer) Detokenize(ctx context.Context, tokens []int) (string, error
 		return "", fmt.Errorf("do decode request: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		if s.model == nil {
+			slog.Debug("new runner detected, loading model for cgo tokenization")
+			m := llama.LoadModelFromFile(s.modelPath, llama.ModelParams{VocabOnly: true})
+			s.model = m
+		}
+		var resp string
+		for _, token := range tokens {
+			resp += s.model.TokenToPiece(token)
+		}
+		return resp, nil
+	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -1063,7 +1083,7 @@ func (s *llmServer) Detokenize(ctx context.Context, tokens []int) (string, error
 
 func (s *llmServer) Close() error {
 	if s.model != nil {
-		freeModel(s.model)
+		llama.FreeModel(s.model)
 		s.model = nil
 	}
 	if s.cmd != nil {
