@@ -11,8 +11,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/ollama/ollama/api"
 	"golang.org/x/exp/maps"
+
+	"github.com/ollama/ollama/api"
 )
 
 type containerGGUF struct {
