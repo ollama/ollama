@@ -239,7 +239,6 @@ func generateSafetensorTestData(t *testing.T, tempDir string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
 }
 
 func TestConvertAdapter(t *testing.T) {
