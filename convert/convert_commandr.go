@@ -6,7 +6,7 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-type commandr struct {
+type commandrModel struct {
 	ModelParameters
 	MaxPositionEmbeddings uint32  `json:"max_position_embeddings"`
 	HiddenSize            uint32  `json:"hidden_size"`
@@ -22,9 +22,9 @@ type commandr struct {
 	NCtx                  uint32  `json:"n_ctx"`
 }
 
-var _ ModelConverter = (*commandr)(nil)
+var _ ModelConverter = (*commandrModel)(nil)
 
-func (p *commandr) KV(t *Tokenizer) llm.KV {
+func (p *commandrModel) KV(t *Tokenizer) llm.KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "command-r"
 	kv["general.name"] = "command-r"
@@ -47,7 +47,7 @@ func (p *commandr) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *commandr) Tensors(ts []Tensor) []llm.Tensor {
+func (p *commandrModel) Tensors(ts []Tensor) []llm.Tensor {
 	var out []llm.Tensor
 	for _, t := range ts {
 		out = append(out, llm.Tensor{
@@ -61,7 +61,7 @@ func (p *commandr) Tensors(ts []Tensor) []llm.Tensor {
 	return out
 }
 
-func (p *commandr) Replacements() []string {
+func (p *commandrModel) Replacements() []string {
 	return []string{
 		"self_attn.q_norm", "attn_q_norm",
 		"self_attn.k_norm", "attn_k_norm",
