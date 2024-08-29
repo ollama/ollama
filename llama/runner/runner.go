@@ -665,15 +665,15 @@ func main() {
 	}
 	server.model = llama.LoadModelFromFile(*mpath, params)
 
+	ctxParams := llama.NewContextParams(*kvSize, *threads, *flashAttention)
+	server.lc = llama.NewContextWithModel(server.model, ctxParams)
+
 	if *lpath != "" {
-		err := server.model.ApplyLoraFromFile(*lpath, 1.0, "", *threads)
+		err := server.model.ApplyLoraFromFile(server.lc, *lpath, 1.0, *threads)
 		if err != nil {
 			panic(err)
 		}
 	}
-
-	ctxParams := llama.NewContextParams(*kvSize, *threads, *flashAttention)
-	server.lc = llama.NewContextWithModel(server.model, ctxParams)
 
 	if server.model.ShouldAddBOSToken() {
 		server.bosToken = 1
