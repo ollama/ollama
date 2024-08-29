@@ -337,6 +337,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Pacman](https://archlinux.org/packages/extra/x86_64/ollama/)
 - [Helm Chart](https://artifacthub.io/packages/helm/ollama-helm/ollama)
 - [Guix channel](https://codeberg.org/tusharhero/ollama-guix)
+- [Nix package](https://search.nixos.org/packages?channel=24.05&show=ollama&from=0&size=50&sort=relevance&type=packages&query=ollama)
+- [Flox](https://flox.dev/blog/ollama-part-one)
 
 ### Libraries
 
