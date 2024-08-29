@@ -163,7 +163,7 @@ type ModelParams struct {
 
 //export llamaProgressCallback
 func llamaProgressCallback(progress C.float, userData unsafe.Pointer) C.bool {
-	handle := cgo.Handle(userData)
+	handle := *(*cgo.Handle)(userData)
 	callback := handle.Value().(func(float32))
 	callback(float32(progress))
 	return true
@@ -190,8 +190,12 @@ func LoadModelFromFile(modelPath string, params ModelParams) *Model {
 		handle := cgo.NewHandle(params.Progress)
 		defer handle.Delete()
 
+		var handlePin runtime.Pinner
+		handlePin.Pin(&handle)
+		defer handlePin.Unpin()
+
 		cparams.progress_callback = C.llama_progress_callback(C.llamaProgressCallback)
-		cparams.progress_callback_user_data = unsafe.Pointer(handle)
+		cparams.progress_callback_user_data = unsafe.Pointer(&handle)
 	}
 
 	return &Model{c: C.llama_load_model_from_file(C.CString(modelPath), cparams)}
