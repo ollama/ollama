@@ -2136,21 +2136,9 @@ struct llama_init_result llama_init_from_gpt_params(gpt_params & params) {
         loaded_la.adapter = llama_lora_adapter_init(model, la.path.c_str());
         if (loaded_la.adapter == nullptr) {
             fprintf(stderr, "%s: error: failed to apply lora adapter '%s'\n", __func__, la.path.c_str());
-
-            // if that fails, try loading as ggla for compatibility
-            int err = llama_model_apply_lora_from_file(model,
-                                                    la.path.c_str(),
-                                                    la.scale,
-                                                    nullptr,
-                                                    params.n_threads);
-            if (err != 0) {
-                fprintf(stderr, "%s: error: failed to apply lora adapter\n", __func__);
-                llama_free(lctx);
-                llama_free_model(model);
-                return iparams;
-            } else {
-                break;
-            }
+            llama_free(lctx);
+            llama_free_model(model);
+            return iparams;
         }
         iparams.lora_adapters.push_back(loaded_la); // copy to list of loaded adapters
     }
