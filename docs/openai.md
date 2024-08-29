@@ -300,3 +300,28 @@ curl http://localhost:11434/v1/chat/completions \
         ]
     }'
 ```
+
+### Setting the context size
+
+The OpenAI API does not have a way of setting the context size for a model. If you need to change the context size, create a `Modelfile` which looks like:
+
+```modelfile
+FROM <some model>
+PARAMETER num_ctx <context size>
+```
+
+Use the `ollama create mymodel` command to create a new model with the updated context size. Call the API with the updated model name:
+
+```shell
+curl http://localhost:11434/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model": "mymodel",
+        "messages": [
+            {
+                "role": "user",
+                "content": "Hello!"
+            }
+        ]
+    }'
+```
