@@ -223,17 +223,17 @@ func (m *Model) ShouldAddBOSToken() bool {
 	}
 }
 
-func (m *Model) ApplyLoraFromFile(loraPath string, scale float32, baseModelPath string, threads int) error {
+func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float32, threads int) error {
 	cLoraPath := C.CString(loraPath)
 	defer C.free(unsafe.Pointer(cLoraPath))
 
-	var cBaseModelPath *C.char
-	if baseModelPath != "" {
-		cBaseModelPath = C.CString(baseModelPath)
-	}
+	loraAdapter := C.llama_lora_adapter_init(m.c, cLoraPath)
 
-	code := int(C.llama_model_apply_lora_from_file(m.c, cLoraPath, C.float(scale), cBaseModelPath, C.int32_t(threads)))
-	if code != 0 {
+	err := -1
+	if loraAdapter != nil {
+		err = int(C.llama_lora_adapter_set(context.c, loraAdapter, C.float(scale)))
+	}
+	if err != 0 {
 		return errors.New("error applying lora from file")
 	}
 
