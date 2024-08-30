@@ -25,7 +25,7 @@ import (
 
 type Sequence struct {
 	// number of tokens evaluated
-	nPast int
+	numPast int
 
 	// batch index
 	iBatch int
@@ -39,6 +39,9 @@ type Sequence struct {
 	// tokens that have been generated but not returned yet (e.g. for stop sequences)
 	// TODO (jmorganca): simplify this
 	pendingResponses []string
+
+	// token cache being used by this sequence
+	cache *TokenCacheSlot
 
 	// channel to send responses over
 	responses chan string
@@ -94,18 +97,18 @@ func (s *Server) NewSequence(prompt string, params NewSequenceParams) *Sequence 
 
 	if !params.embedding {
 		// Subtracting 4 ensures that at least 1 token can be discarded during shift
-		params.numKeep = min(params.numKeep, s.numCtx-4)
+		params.numKeep = min(params.numKeep, s.cache.numCtx-4)
 		params.numKeep += s.bosToken
 	} else {
 		// Embeddings are 1 shot - just truncate to the context window, without ever shifting
-		params.numKeep = min(params.numKeep, s.numCtx)
+		params.numKeep = min(params.numKeep, s.cache.numCtx)
 	}
 
 	// truncate to fit in context window
-	if len(tokens) > s.numCtx {
-		slog.Warn("truncating input prompt", "limit", s.numCtx, "prompt", len(tokens), "numKeep", params.numKeep)
+	if len(tokens) > s.cache.numCtx {
+		slog.Warn("truncating input prompt", "limit", s.cache.numCtx, "prompt", len(tokens), "numKeep", params.numKeep)
 		newTokens := tokens[:params.numKeep]
-		newTokens = append(newTokens, tokens[len(tokens)-s.numCtx+params.numKeep:]...)
+		newTokens = append(newTokens, tokens[len(tokens)-s.cache.numCtx+params.numKeep:]...)
 		tokens = newTokens
 	}
 
@@ -146,8 +149,8 @@ type Server struct {
 	// TODO (jmorganca): this can probably be moved into run()
 	seqs []*Sequence
 
-	// context window size
-	numCtx int
+	// KV cache
+	cache *TokenCache
 
 	// does this model require a beginning of sequence token?
 	bosToken int
@@ -173,21 +176,16 @@ func (s *Server) allNil() bool {
 	return true
 }
 
-func (s *Server) shiftContext(seqIndex int) {
-	seq := s.seqs[seqIndex]
-
-	numLeft := seq.nPast - seq.numKeep
+func (s *Server) shiftContext(seq *Sequence) {
+	numLeft := seq.numPast - seq.numKeep
 	numDiscard := numLeft / 2
 
-	slog.Debug("context limit hit - shifting", "limit", s.numCtx, "nPast", seq.nPast,
+	slog.Debug("context limit hit - shifting", "limit", s.cache.numCtx, "numPast", seq.numPast,
 		"numKeep", seq.numKeep, "numLeft", numLeft, "numDiscard", numDiscard)
 
-	// TODO (jessegross): KV cache removal can fail for certain types of models
-	// server.cpp doesn't handle this, though we can be more graceful
-	s.lc.KvCacheSeqRm(seqIndex, seq.numKeep, seq.numKeep+numDiscard)
-	s.lc.KvCacheSeqAdd(seqIndex, seq.numKeep+numDiscard, seq.nPast, -numDiscard)
+	s.cache.ShiftCacheSlot(seq.cache, seq.numKeep, numDiscard, seq.numPast)
 
-	seq.nPast -= numDiscard
+	seq.numPast -= numDiscard
 }
 
 func incompleteUnicode(token string) bool {
@@ -227,8 +225,8 @@ func (s *Server) removeSequence(seqIndex int, reason string) {
 	close(seq.responses)
 	close(seq.embedding)
 	seq.pendingResponses = []string{}
+	seq.cache.inUse = false
 	seq.samplingCtx.Free()
-	s.lc.KvCacheSeqRm(seqIndex, 0, -1)
 	s.seqs[seqIndex] = nil
 }
 
@@ -266,8 +264,8 @@ func (s *Server) processBatch() {
 			continue
 		}
 
-		if seq.nPast+len(seq.tokens) > s.numCtx {
-			s.shiftContext(i)
+		if seq.numPast+len(seq.tokens) > s.cache.numCtx {
+			s.shiftContext(seq)
 		}
 
 		if seq.startProcessingTime.IsZero() {
@@ -280,10 +278,11 @@ func (s *Server) processBatch() {
 			if j >= s.batchSize {
 				break
 			}
-			batch.Add(t, seq.nPast, []int{i}, numTokensProcessed+1 == len(seq.tokens))
-			seq.nPast++
+			batch.Add(t, seq.numPast, []int{seq.cache.id}, numTokensProcessed+1 == len(seq.tokens))
+			seq.numPast++
 			numTokensProcessed++
 		}
+		seq.cache.tokens = append(seq.cache.tokens, seq.tokens[:numTokensProcessed]...)
 		seq.tokens = seq.tokens[numTokensProcessed:]
 		seq.iBatch = batch.NumTokens() - 1
 	}
@@ -486,6 +485,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	for i, sq := range s.seqs {
 		if sq == nil {
+			seq.cache, seq.tokens, seq.numPast = s.cache.LoadCacheSlot(seq.tokens)
 			s.seqs[i] = seq
 			s.cond.Signal()
 			break
@@ -561,6 +561,7 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	for i, sq := range s.seqs {
 		if sq == nil {
+			seq.cache, seq.tokens, seq.numPast = s.cache.LoadCacheSlot(seq.tokens)
 			s.seqs[i] = seq
 			s.cond.Signal()
 			break
@@ -646,6 +647,8 @@ func (s *Server) loadModel(
 		panic("Vision models are not yet supported")
 	}
 
+	s.cache = NewTokenCache(s.lc, kvSize, s.parallel)
+
 	s.status = ServerStatusReady
 	s.ready.Done()
 }
@@ -691,7 +694,6 @@ func main() {
 	slog.SetDefault(slog.New(handler))
 
 	server := &Server{
-		numCtx:    *kvSize / *parallel,
 		batchSize: *batchSize,
 		parallel:  *parallel,
 		seqs:      make([]*Sequence, *parallel),
