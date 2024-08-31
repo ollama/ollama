@@ -128,10 +128,10 @@ Currently supported model architectures:
 #### Build from a GGUF file
 
 ```modelfile
-FROM ./ollama-model.bin
+FROM ./ollama-model.gguf
 ```
 
-The GGUF bin file location should be specified as an absolute path or relative to the `Modelfile` location.
+The GGUF file location should be specified as an absolute path or relative to the `Modelfile` location.
 
 
 ### PARAMETER
@@ -208,7 +208,7 @@ Currently supported Safetensor adapters:
 #### GGUF adapter
 
 ```modelfile
-ADAPTER ./ollama-lora.bin
+ADAPTER ./ollama-lora.gguf
 ```
 
 ### LICENSE
