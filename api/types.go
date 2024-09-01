@@ -293,6 +293,44 @@ type EmbeddingResponse struct {
 	Embedding []float64 `json:"embedding"`
 }
 
+// TokenizeRequest is the request passed to [Client.Tokenize].
+type TokenizeRequest struct {
+	Model  string `json:"model"`
+	Prompt string `json:"prompt"`
+
+	// KeepAlive controls how long the model will stay loaded in memory following
+	// this request.
+	KeepAlive *Duration `json:"keep_alive,omitempty"`
+
+	// Options lists model-specific options.
+	Options map[string]interface{} `json:"options"`
+}
+
+// TokenizeResponse is the response from [Client.Tokenize].
+type TokenizeResponse struct {
+	Model  string `json:"model"`
+	Tokens []int  `json:"tokens"`
+}
+
+// DetokenizeRequest is the request passed to [Client.Detokenize].
+type DetokenizeRequest struct {
+	Model  string `json:"model"`
+	Tokens []int  `json:"tokens"`
+
+	// KeepAlive controls how long the model will stay loaded in memory following
+	// this request.
+	KeepAlive *Duration `json:"keep_alive,omitempty"`
+
+	// Options lists model-specific options.
+	Options map[string]interface{} `json:"options"`
+}
+
+// DetokenizeResponse is the response from [Client.Detokenize].
+type DetokenizeResponse struct {
+	Model string `json:"model"`
+	Text  string `json:"text"`
+}
+
 // CreateRequest is the request passed to [Client.Create].
 type CreateRequest struct {
 	Model     string `json:"model"`
