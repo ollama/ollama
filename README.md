@@ -35,7 +35,13 @@ The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `olla
 
 ## Quickstart
 
-To run and chat with [Llama 3.1](https://ollama.com/library/llama3.1):
+To run and chat with [Llama 3.1](https://ollama.com/library/llama3.1), first start the server:
+
+```
+ollama serve
+```
+
+Then, in a second shell run: 
 
 ```
 ollama run llama3.1
