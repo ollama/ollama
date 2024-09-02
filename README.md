@@ -302,6 +302,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LLMStack](https://github.com/trypromptly/LLMStack) (No-code multi-agent framework to build LLM agents and workflows)
 - [BoltAI for Mac](https://boltai.com) (AI Chat Client for Mac)
 - [Harbor](https://github.com/av/harbor) (Containerized LLM Toolkit with Ollama as default backend)
+- [Go-CREW](https://www.jonathanhecl.com/go-crew/) (Powerful Offline RAG in Golang)
 
 ### Terminal
 
@@ -370,6 +371,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Portkey](https://portkey.ai/docs/welcome/integration-guides/ollama)
 - [PromptingTools.jl](https://github.com/svilupp/PromptingTools.jl) with an [example](https://svilupp.github.io/PromptingTools.jl/dev/examples/working_with_ollama)
 - [LlamaScript](https://github.com/Project-Llama/llamascript)
+- [Ollamaclient for Golang](https://github.com/xyproto/ollamaclient)
 
 ### Mobile
 
