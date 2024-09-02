@@ -350,6 +350,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LangChainRust](https://github.com/Abraxas-365/langchain-rust) with [example](https://github.com/Abraxas-365/langchain-rust/blob/main/examples/llm_ollama.rs)
 - [LlamaIndex](https://gpt-index.readthedocs.io/en/stable/examples/llm/ollama.html)
 - [LiteLLM](https://github.com/BerriAI/litellm)
+- [OllamaFarm for Go](https://github.com/presbrey/ollamafarm)
 - [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
 - [Ollama for Ruby](https://github.com/gbaptista/ollama-ai)
 - [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs)
