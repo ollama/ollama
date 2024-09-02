@@ -194,6 +194,8 @@ Refer to the section [above](#how-do-i-configure-ollama-server) for how to set e
 
 If a different directory needs to be used, set the environment variable `OLLAMA_MODELS` to the chosen directory.
 
+> Note: on Linux using the standard installer, the `ollama` user needs read and write access to the specified directory. To assign the directory to the `ollama` user run `sudo chown -R ollama:ollama <directory>`.
+
 Refer to the section [above](#how-do-i-configure-ollama-server) for how to set environment variables on your platform.
 
 ## How can I use Ollama in Visual Studio Code?
