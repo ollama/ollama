@@ -56,12 +56,11 @@ Environment="PATH=$PATH"
 WantedBy=default.target
 ```
 
-Then start and check the service:
+Then start the service:
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable ollama
-sudo systemctl status ollama
 ```
 
 ### Install CUDA drivers (optional – for Nvidia GPUs)
@@ -81,10 +80,11 @@ Make sure to install ROCm v6
 
 ### Start Ollama
 
-Start Ollama using `systemd`:
+Start Ollama and verify it is running:
 
 ```bash
 sudo systemctl start ollama
+sudo systemctl status ollama
 ```
 
 ## Update
