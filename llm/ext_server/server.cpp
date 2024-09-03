@@ -262,7 +262,7 @@ struct server_slot {
        char buffer[512];
         double t_token = t_prompt_processing / n_prompt_tokens_processed;
         double n_tokens_second = 1e3 / t_prompt_processing * n_prompt_tokens_processed;
-        sprintf(buffer, "prompt eval time     = %10.2f ms / %5d tokens (%8.2f ms per token, %8.2f tokens per second)",
+        snprintf(buffer, sizeof(buffer), "prompt eval time     = %10.2f ms / %5d tokens (%8.2f ms per token, %8.2f tokens per second)",
                 t_prompt_processing, n_prompt_tokens_processed,
                 t_token, n_tokens_second);
         LOG_DEBUG(buffer, {
@@ -276,7 +276,7 @@ struct server_slot {
 
         t_token = t_token_generation / n_decoded;
         n_tokens_second = 1e3 / t_token_generation * n_decoded;
-        sprintf(buffer, "generation eval time = %10.2f ms / %5d runs   (%8.2f ms per token, %8.2f tokens per second)",
+        snprintf(buffer, sizeof(buffer), "generation eval time = %10.2f ms / %5d runs   (%8.2f ms per token, %8.2f tokens per second)",
                 t_token_generation, n_decoded,
                 t_token, n_tokens_second);
         LOG_DEBUG(buffer, {
@@ -288,7 +288,7 @@ struct server_slot {
             {"n_tokens_second",    n_tokens_second},
         });
 
-        sprintf(buffer, "          total time = %10.2f ms", t_prompt_processing + t_token_generation);
+        snprintf(buffer, sizeof(buffer), "          total time = %10.2f ms", t_prompt_processing + t_token_generation);
         LOG_DEBUG(buffer, {
             {"slot_id",             id},
             {"task_id",             task_id},
