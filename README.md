@@ -304,6 +304,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Harbor](https://github.com/av/harbor) (Containerized LLM Toolkit with Ollama as default backend)
 - [Go-CREW](https://www.jonathanhecl.com/go-crew/) (Powerful Offline RAG in Golang)
 - [PartCAD](https://github.com/openvmp/partcad/) (CAD model generation with OpenSCAD and CadQuery)
+- [Ollama4j Web UI](https://github.com/ollama4j/ollama4j-web-ui) - Java-based Web UI for Ollama built with Vaadin, Spring Boot and Ollama4j
 
 ### Terminal
 
@@ -356,7 +357,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama for Ruby](https://github.com/gbaptista/ollama-ai)
 - [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs)
 - [Ollama-hpp for C++](https://github.com/jmont-dev/ollama-hpp)
-- [Ollama4j for Java](https://github.com/amithkoujalgi/ollama4j)
+- [Ollama4j for Java](https://github.com/ollama4j/ollama4j)
 - [ModelFusion Typescript Library](https://modelfusion.dev/integration/model-provider/ollama)
 - [OllamaKit for Swift](https://github.com/kevinhermawan/OllamaKit)
 - [Ollama for Dart](https://github.com/breitburg/dart-ollama)
