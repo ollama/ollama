@@ -21,7 +21,7 @@ COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
 ARG CUDA_V11_ARCHITECTURES
-ENV GOARCH amd64 
+ENV GOARCH amd64
 RUN --mount=type=cache,target=/root/.ccache \
     OLLAMA_SKIP_STATIC_GENERATE=1 \
     OLLAMA_SKIP_CPU_GENERATE=1 \
@@ -38,7 +38,7 @@ COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
 ARG CUDA_V12_ARCHITECTURES
-ENV GOARCH amd64 
+ENV GOARCH amd64
 RUN --mount=type=cache,target=/root/.ccache \
     OLLAMA_SKIP_STATIC_GENERATE=1 \
     OLLAMA_SKIP_CPU_GENERATE=1 \
@@ -56,7 +56,7 @@ COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
 ARG CUDA_V11_ARCHITECTURES
-ENV GOARCH arm64 
+ENV GOARCH arm64
 RUN OLLAMA_SKIP_STATIC_GENERATE=1 \
     OLLAMA_SKIP_CPU_GENERATE=1 \
     CMAKE_CUDA_ARCHITECTURES="${CUDA_V11_ARCHITECTURES}" \
@@ -72,7 +72,7 @@ COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
 ARG CUDA_V12_ARCHITECTURES
-ENV GOARCH arm64 
+ENV GOARCH arm64
 RUN --mount=type=cache,target=/root/.ccache \
     OLLAMA_SKIP_STATIC_GENERATE=1 \
     OLLAMA_SKIP_CPU_GENERATE=1 \
@@ -92,7 +92,7 @@ COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
 ARG AMDGPU_TARGETS
-ENV GOARCH amd64 
+ENV GOARCH amd64
 RUN --mount=type=cache,target=/root/.ccache \
     OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_SKIP_CPU_GENERATE=1 bash gen_linux.sh
 RUN mkdir -p ../../dist/linux-amd64-rocm/lib/ollama && \
@@ -107,7 +107,7 @@ ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 ARG OLLAMA_CUSTOM_CPU_DEFS
 ARG CGO_CFLAGS
-ENV GOARCH amd64 
+ENV GOARCH amd64
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 
 FROM --platform=linux/amd64 cpu-builder-amd64 AS static-build-amd64
@@ -181,17 +181,19 @@ RUN --mount=type=cache,target=/root/.ccache \
 # Strip out ROCm dependencies to keep the primary image lean
 FROM --platform=linux/amd64 ubuntu:22.04 as amd64-libs-without-rocm
 COPY --from=build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /scratch/
-RUN cd /scratch/ollama/ && rm -rf rocblas libamd* libdrm* libroc* libhip* libhsa* 
+RUN cd /scratch/ollama/ && rm -rf rocblas libamd* libdrm* libroc* libhip* libhsa*
 
 # Runtime stages
 FROM --platform=linux/amd64 ubuntu:22.04 as runtime-amd64
 COPY --from=amd64-libs-without-rocm /scratch/ /lib/
-RUN apt-get update && apt-get install -y ca-certificates
+RUN apt-get update && apt-get install -y ca-certificates && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY --from=build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/bin/ /bin/
 
 FROM --platform=linux/arm64 ubuntu:22.04 as runtime-arm64
 COPY --from=build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
-RUN apt-get update && apt-get install -y ca-certificates
+RUN apt-get update && apt-get install -y ca-certificates && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY --from=build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/bin/ /bin/
 
 # Radeon images are much larger so we keep it distinct from the CPU/CUDA image
