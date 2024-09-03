@@ -81,6 +81,8 @@ type NewSequenceParams struct {
 }
 
 func (s *Server) NewSequence(prompt string, params NewSequenceParams) *Sequence {
+	s.ready.Wait()
+
 	tokens, err := s.lc.Model().Tokenize(prompt, true, true)
 	if err != nil {
 		panic(err)
@@ -150,13 +152,16 @@ type Server struct {
 	// does this model require a beginning of sequence token?
 	bosToken int
 
+	// is the server ready to process requests?
+	ready sync.WaitGroup
+
 	mu sync.Mutex
 
 	cond *sync.Cond
 
 	progress float32
 
-	status string
+	status ServerStatus
 }
 
 func (s *Server) allNil() bool {
@@ -353,11 +358,12 @@ func (s *Server) processBatch() {
 
 			truncated := truncateStop(seq.pendingResponses, stop)
 
+		truncatedLoop:
 			for _, p := range truncated {
 				select {
 				case seq.responses <- p:
 				case <-seq.quit:
-					break
+					break truncatedLoop
 				}
 			}
 
@@ -369,12 +375,13 @@ func (s *Server) processBatch() {
 			continue
 		}
 
+	pendingLoop:
 		for _, p := range seq.pendingResponses {
 			select {
 			case seq.responses <- p:
 			case <-seq.quit:
 				s.removeSequence(i, "connection")
-				break
+				break pendingLoop
 			}
 		}
 
@@ -576,16 +583,69 @@ type HealthResponse struct {
 	Progress float32 `json:"progress"`
 }
 
-// TODO (jmorganca): is it safe to do this concurrently with updating status?
+type ServerStatus int
+
+const (
+	ServerStatusReady ServerStatus = iota
+	ServerStatusLoadingModel
+	ServerStatusError
+)
+
+func (s ServerStatus) ToString() string {
+	switch s {
+	case ServerStatusReady:
+		return "ok"
+	case ServerStatusLoadingModel:
+		return "loading model"
+	default:
+		return "server error"
+	}
+}
+
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(&HealthResponse{
-		Status:   s.status,
+		Status:   s.status.ToString(),
 		Progress: s.progress,
 	}); err != nil {
 		log.Println("Failed to encode result:", err)
 		return
 	}
+}
+
+func (s *Server) loadModel(
+	params llama.ModelParams,
+	mpath string,
+	lpath string,
+	ppath string,
+	kvSize int,
+	flashAttention bool,
+	threads int,
+) {
+	llama.BackendInit()
+
+	s.model = llama.LoadModelFromFile(mpath, params)
+
+	ctxParams := llama.NewContextParams(kvSize, threads, flashAttention)
+	s.lc = llama.NewContextWithModel(s.model, ctxParams)
+
+	if lpath != "" {
+		err := s.model.ApplyLoraFromFile(s.lc, lpath, 1.0, threads)
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	if s.model.ShouldAddBOSToken() {
+		s.bosToken = 1
+	}
+
+	if ppath != "" {
+		s.cc = llama.NewClipContext(ppath)
+	}
+
+	s.status = ServerStatusReady
+	s.ready.Done()
 }
 
 func main() {
@@ -633,13 +693,8 @@ func main() {
 		batchSize: *batchSize,
 		parallel:  *parallel,
 		seqs:      make([]*Sequence, *parallel),
-		status:    "loading model",
+		status:    ServerStatusLoadingModel,
 	}
-
-	// TODO (jessegross): This should be in a separate goroutine so we can report progress,
-	// otherwise Ollama can timeout for large model loads
-	// load the model
-	llama.BackendInit()
 
 	var tensorSplitFloats []float32
 	if *tensorSplit != "" {
@@ -663,25 +718,9 @@ func main() {
 			server.progress = progress
 		},
 	}
-	server.model = llama.LoadModelFromFile(*mpath, params)
 
-	ctxParams := llama.NewContextParams(*kvSize, *threads, *flashAttention)
-	server.lc = llama.NewContextWithModel(server.model, ctxParams)
-
-	if *lpath != "" {
-		err := server.model.ApplyLoraFromFile(server.lc, *lpath, 1.0, *threads)
-		if err != nil {
-			panic(err)
-		}
-	}
-
-	if server.model.ShouldAddBOSToken() {
-		server.bosToken = 1
-	}
-
-	if *ppath != "" {
-		server.cc = llama.NewClipContext(*ppath)
-	}
+	server.ready.Add(1)
+	go server.loadModel(params, *mpath, *lpath, *ppath, *kvSize, *flashAttention, *threads)
 
 	server.cond = sync.NewCond(&server.mu)
 
@@ -704,8 +743,6 @@ func main() {
 	httpServer := http.Server{
 		Handler: mux,
 	}
-
-	server.status = "ok"
 
 	log.Println("Server listening on", addr)
 	if err := httpServer.Serve(listener); err != nil {
