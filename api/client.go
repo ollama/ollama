@@ -378,3 +378,10 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 
 	return version.Version, nil
 }
+
+// BaseURL returns the base URL of the client.
+func (c *Client) BaseURL() *url.URL {
+	// make a copy of the base URL to prevent mutation
+	base := *c.base
+	return &base
+}

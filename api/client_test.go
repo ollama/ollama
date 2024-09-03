@@ -40,6 +40,9 @@ func TestClientFromEnvironment(t *testing.T) {
 			if client.base.String() != v.expect {
 				t.Fatalf("expected %s, got %s", v.expect, client.base.String())
 			}
+			if client.BaseURL().String() != v.expect {
+				t.Fatalf("expected %s, got %s", v.expect, client.BaseURL().String())
+			}
 		})
 	}
 }
