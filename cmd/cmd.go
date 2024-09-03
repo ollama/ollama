@@ -591,30 +591,73 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	models, err := client.ListRunning(cmd.Context())
-	if err != nil {
-		return err
+	watch, _ := cmd.Flags().GetBool("watch")
+	interval, _ := cmd.Flags().GetDuration("interval")
+	filter, _ := cmd.Flags().GetString("filter")
+
+	ctx, cancel := context.WithCancel(cmd.Context())
+	defer cancel()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt)
+	go func() {
+		<-sigChan
+		cmd.Println("\nExiting watch mode...")
+		cancel()
+	}()
+
+	for {
+		response, err := client.ListRunning(ctx)
+		if err != nil {
+			return err
+		}
+
+		filteredModels := filterModels(response.Models, filter)
+		if !watch {
+			return displayModels(filteredModels)
+		}
+		// continuously update the display in watch mode
+		cmd.Printf("\033[2J\033[H") // clear screen and move cursor to top-left
+		err = displayModels(filteredModels)
+		if err != nil {
+			return err
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(interval):
+			// continue to next iteration
+		}
+	}
+}
+
+func filterModels(models []api.ProcessModelResponse, filter string) []api.ProcessModelResponse {
+	if filter == "" {
+		return models
 	}
 
+	var filtered []api.ProcessModelResponse
+	for _, m := range models {
+		if strings.Contains(strings.ToLower(m.Name), strings.ToLower(filter)) {
+			filtered = append(filtered, m)
+		}
+	}
+	return filtered
+}
+func displayModels(models []api.ProcessModelResponse) error {
 	var data [][]string
 
-	for _, m := range models.Models {
-		if len(args) == 0 || strings.HasPrefix(m.Name, args[0]) {
-			var procStr string
-			switch {
-			case m.SizeVRAM == 0:
-				procStr = "100% CPU"
-			case m.SizeVRAM == m.Size:
-				procStr = "100% GPU"
-			case m.SizeVRAM > m.Size || m.Size == 0:
-				procStr = "Unknown"
-			default:
-				sizeCPU := m.Size - m.SizeVRAM
-				cpuPercent := math.Round(float64(sizeCPU) / float64(m.Size) * 100)
-				procStr = fmt.Sprintf("%d%%/%d%% CPU/GPU", int(cpuPercent), int(100-cpuPercent))
-			}
-			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), procStr, format.HumanTime(m.ExpiresAt, "Never")})
-		}
+	for _, m := range models {
+		procStr := getProcessorString(m)
+		expiresStr := format.HumanTime(m.ExpiresAt, "Never")
+		data = append(data, []string{
+			m.Name,
+			m.Digest[:12],
+			format.HumanBytes(m.Size),
+			procStr,
+			expiresStr,
+		})
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
@@ -629,6 +672,21 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 	table.Render()
 
 	return nil
+}
+
+func getProcessorString(m api.ProcessModelResponse) string {
+	switch {
+	case m.SizeVRAM == 0:
+		return "100% CPU"
+	case m.SizeVRAM == m.Size:
+		return "100% GPU"
+	case m.SizeVRAM > m.Size || m.Size == 0:
+		return "Unknown"
+	default:
+		sizeCPU := m.Size - m.SizeVRAM
+		cpuPercent := math.Round(float64(sizeCPU) / float64(m.Size) * 100)
+		return fmt.Sprintf("%d%%/%d%% CPU/GPU", int(cpuPercent), int(100-cpuPercent))
+	}
 }
 
 func DeleteHandler(cmd *cobra.Command, args []string) error {
@@ -1370,6 +1428,10 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListRunningHandler,
 	}
+
+	psCmd.Flags().BoolP("watch", "w", false, "Watch for changes")
+	psCmd.Flags().DurationP("interval", "i", 5*time.Second, "Refresh interval for watch mode")
+	psCmd.Flags().StringP("filter", "f", "", "Filter models by name")
 
 	copyCmd := &cobra.Command{
 		Use:     "cp SOURCE DESTINATION",
