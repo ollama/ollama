@@ -353,11 +353,12 @@ func (s *Server) processBatch() {
 
 			truncated := truncateStop(seq.pendingResponses, stop)
 
+		truncatedLoop:
 			for _, p := range truncated {
 				select {
 				case seq.responses <- p:
 				case <-seq.quit:
-					break
+					break truncatedLoop
 				}
 			}
 
@@ -369,12 +370,13 @@ func (s *Server) processBatch() {
 			continue
 		}
 
+	pendingLoop:
 		for _, p := range seq.pendingResponses {
 			select {
 			case seq.responses <- p:
 			case <-seq.quit:
 				s.removeSequence(i, "connection")
-				break
+				break pendingLoop
 			}
 		}
 
