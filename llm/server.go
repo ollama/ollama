@@ -98,7 +98,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		systemTotalMemory = systemMemInfo.TotalMemory
 		systemFreeMemory = systemMemInfo.FreeMemory
 		systemSwapFreeMemory = systemMemInfo.FreeSwap
-		slog.Debug("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
+		slog.Info("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
 	}
 
 	// If the user wants zero GPU layers, reset the gpu list to be CPU/system ram info
