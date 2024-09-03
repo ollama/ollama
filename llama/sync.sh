@@ -53,7 +53,7 @@ cp $src_dir/ggml/src/ggml-quants.c $dst_dir/ggml-quants.c
 cp $src_dir/ggml/src/ggml-quants.h $dst_dir/ggml-quants.h
 cp $src_dir/ggml/src/ggml-metal.metal $dst_dir/ggml-metal.metal
 cp $src_dir/ggml/include/ggml-metal.h $dst_dir/ggml-metal.h
-cp $src_dir/ggml/src/ggml-metal.m $dst_dir/ggml-metal-darwin_arm64.m
+cp $src_dir/ggml/src/ggml-metal.m $dst_dir/ggml-metal_darwin_arm64.m
 cp $src_dir/ggml/src/ggml-impl.h $dst_dir/ggml-impl.h
 cp $src_dir/ggml/include/ggml-cuda.h $dst_dir/ggml-cuda.h
 cp $src_dir/ggml/src/ggml-cuda.cu $dst_dir/ggml-cuda.cu
