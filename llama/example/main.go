@@ -29,9 +29,14 @@ func main() {
 
 	// load the model
 	llama.BackendInit()
-	params := llama.NewModelParams(999, 0, func(p float32) {
-		fmt.Printf("loading... %f\n", p)
-	})
+	params := llama.ModelParams{
+		NumGpuLayers: 999,
+		MainGpu:      0,
+		UseMmap:      true,
+		Progress: func(p float32) {
+			fmt.Printf("loading... %f\n", p)
+		},
+	}
 	model := llama.LoadModelFromFile(*mpath, params)
 	ctxParams := llama.NewContextParams(2048, runtime.NumCPU(), false)
 

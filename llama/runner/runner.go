@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -599,15 +600,15 @@ func main() {
 	lpath := flag.String("lora", "", "Path to lora layer file")
 	port := flag.Int("port", 8080, "Port to expose the server on")
 	threads := flag.Int("threads", runtime.NumCPU(), "Number of threads to use during generation")
-
-	// TODO not yet implemented but wired to keep the parsing aligned
-	embedding := flag.Bool("embedding", false, "enable embedding vector output (default: disabled)")
-	logDisable := flag.Bool("log-disable", false, "disables logging to a file")
 	verbose := flag.Bool("verbose", false, "verbose output (default: disabled)")
-	f32 := flag.Bool("memory-f32", false, "use f32 instead of f16 for memory key+value (default: disabled) not recommended: doubles context memory required and no measurable increase in quality")
 	noMmap := flag.Bool("no-mmap", false, "do not memory-map model (slower load but may reduce pageouts if not using mlock)")
 	mlock := flag.Bool("mlock", false, "force system to keep model in RAM rather than swapping or compressing")
 	tensorSplit := flag.String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
+
+	// These are either ignored by llama.cpp or have no significance to us
+	_ = flag.Bool("embedding", false, "enable embedding vector output (default: disabled)")
+	_ = flag.Bool("log-disable", false, "disables logging to a file")
+	_ = flag.Bool("memory-f32", false, "use f32 instead of f16 for memory key+value (default: disabled) not recommended: doubles context memory required and no measurable increase in quality")
 
 	flag.Parse()
 	level := slog.LevelInfo
@@ -627,26 +628,6 @@ func main() {
 	})
 	slog.SetDefault(slog.New(handler))
 
-	// TODO actually implement...
-	if *embedding {
-		slog.Warn("embeddings not yet supported")
-	}
-	if *logDisable {
-		slog.Info("ignoring --log-disable")
-	}
-	if *f32 {
-		slog.Warn("memory-f32 not yet supported")
-	}
-	if *noMmap {
-		slog.Warn("no-mmap not yet supported")
-	}
-	if *mlock {
-		slog.Warn("mlock not yet supported")
-	}
-	if *tensorSplit != "" {
-		slog.Warn("tensor-split not yet implemented")
-	}
-
 	server := &Server{
 		numCtx:    *kvSize / *parallel,
 		batchSize: *batchSize,
@@ -659,21 +640,40 @@ func main() {
 	// otherwise Ollama can timeout for large model loads
 	// load the model
 	llama.BackendInit()
-	params := llama.NewModelParams(*nGpuLayers, *mainGpu, func(progress float32) {
-		slog.Debug("Loading model", "progress %", math.Round(float64(progress*100)))
-		server.progress = progress
-	})
+
+	var tensorSplitFloats []float32
+	if *tensorSplit != "" {
+		stringFloats := regexp.MustCompile(",").Split(*tensorSplit, -1)
+
+		tensorSplitFloats = make([]float32, 0, len(stringFloats))
+		for _, s := range stringFloats {
+			f, _ := strconv.ParseFloat(s, 32)
+			tensorSplitFloats = append(tensorSplitFloats, float32(f))
+		}
+	}
+
+	params := llama.ModelParams{
+		NumGpuLayers: *nGpuLayers,
+		MainGpu:      *mainGpu,
+		UseMmap:      !*noMmap && *lpath == "",
+		UseMlock:     *mlock,
+		TensorSplit:  tensorSplitFloats,
+		Progress: func(progress float32) {
+			slog.Debug("Loading model", "progress %", math.Round(float64(progress*100)))
+			server.progress = progress
+		},
+	}
 	server.model = llama.LoadModelFromFile(*mpath, params)
 
+	ctxParams := llama.NewContextParams(*kvSize, *threads, *flashAttention)
+	server.lc = llama.NewContextWithModel(server.model, ctxParams)
+
 	if *lpath != "" {
-		err := server.model.ApplyLoraFromFile(*lpath, 1.0, "", *threads)
+		err := server.model.ApplyLoraFromFile(server.lc, *lpath, 1.0, *threads)
 		if err != nil {
 			panic(err)
 		}
 	}
-
-	ctxParams := llama.NewContextParams(*kvSize, *threads, *flashAttention)
-	server.lc = llama.NewContextWithModel(server.model, ctxParams)
 
 	if server.model.ShouldAddBOSToken() {
 		server.bosToken = 1

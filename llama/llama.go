@@ -78,33 +78,6 @@ func NewContextParams(numCtx int, threads int, flashAttention bool) ContextParam
 	return ContextParams{c: params}
 }
 
-type ModelParams struct {
-	c C.struct_llama_model_params
-}
-
-//export llamaProgressCallback
-func llamaProgressCallback(progress C.float, userData unsafe.Pointer) C.bool {
-	handle := cgo.Handle(userData)
-	callback := handle.Value().(func(float32))
-	callback(float32(progress))
-	return true
-}
-
-func NewModelParams(numGpuLayers int, mainGpu int, callback func(float32)) ModelParams {
-	params := C.llama_model_default_params()
-	params.n_gpu_layers = C.int(numGpuLayers)
-	params.main_gpu = C.int32_t(mainGpu)
-
-	handle := cgo.NewHandle(callback)
-	params.progress_callback = C.llama_progress_callback(C.llamaProgressCallback)
-	params.progress_callback_user_data = unsafe.Pointer(handle)
-	runtime.SetFinalizer(&params, func(p *C.struct_llama_model_params) {
-		handle.Delete()
-	})
-
-	return ModelParams{c: params}
-}
-
 type Context struct {
 	c *C.struct_llama_context
 }
@@ -179,8 +152,53 @@ func (c *Context) GetEmbeddingsIth(i int) []float32 {
 	return unsafe.Slice((*float32)(unsafe.Pointer(C.llama_get_embeddings_ith(c.c, C.int32_t(i)))), c.Model().NEmbd())
 }
 
+type ModelParams struct {
+	NumGpuLayers int
+	MainGpu      int
+	UseMmap      bool
+	UseMlock     bool
+	TensorSplit  []float32
+	Progress     func(float32)
+}
+
+//export llamaProgressCallback
+func llamaProgressCallback(progress C.float, userData unsafe.Pointer) C.bool {
+	handle := *(*cgo.Handle)(userData)
+	callback := handle.Value().(func(float32))
+	callback(float32(progress))
+	return true
+}
+
 func LoadModelFromFile(modelPath string, params ModelParams) *Model {
-	return &Model{c: C.llama_load_model_from_file(C.CString(modelPath), params.c)}
+	cparams := C.llama_model_default_params()
+	cparams.n_gpu_layers = C.int(params.NumGpuLayers)
+	cparams.main_gpu = C.int32_t(params.MainGpu)
+	cparams.use_mmap = C.bool(params.UseMmap)
+	cparams.use_mlock = C.bool(params.UseMlock)
+
+	if len(params.TensorSplit) > 0 {
+		tensorSplitData := &params.TensorSplit[0]
+
+		var tensorSplitPin runtime.Pinner
+		tensorSplitPin.Pin(tensorSplitData)
+		defer tensorSplitPin.Unpin()
+
+		cparams.tensor_split = (*C.float)(unsafe.Pointer(tensorSplitData))
+	}
+
+	if params.Progress != nil {
+		handle := cgo.NewHandle(params.Progress)
+		defer handle.Delete()
+
+		var handlePin runtime.Pinner
+		handlePin.Pin(&handle)
+		defer handlePin.Unpin()
+
+		cparams.progress_callback = C.llama_progress_callback(C.llamaProgressCallback)
+		cparams.progress_callback_user_data = unsafe.Pointer(&handle)
+	}
+
+	return &Model{c: C.llama_load_model_from_file(C.CString(modelPath), cparams)}
 }
 
 func NewContextWithModel(model *Model, params ContextParams) *Context {
@@ -205,17 +223,17 @@ func (m *Model) ShouldAddBOSToken() bool {
 	}
 }
 
-func (m *Model) ApplyLoraFromFile(loraPath string, scale float32, baseModelPath string, threads int) error {
+func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float32, threads int) error {
 	cLoraPath := C.CString(loraPath)
 	defer C.free(unsafe.Pointer(cLoraPath))
 
-	var cBaseModelPath *C.char
-	if baseModelPath != "" {
-		cBaseModelPath = C.CString(baseModelPath)
-	}
+	loraAdapter := C.llama_lora_adapter_init(m.c, cLoraPath)
 
-	code := int(C.llama_model_apply_lora_from_file(m.c, cLoraPath, C.float(scale), cBaseModelPath, C.int32_t(threads)))
-	if code != 0 {
+	err := -1
+	if loraAdapter != nil {
+		err = int(C.llama_lora_adapter_set(context.c, loraAdapter, C.float(scale)))
+	}
+	if err != 0 {
 		return errors.New("error applying lora from file")
 	}
 
