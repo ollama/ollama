@@ -304,6 +304,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Harbor](https://github.com/av/harbor) (Containerized LLM Toolkit with Ollama as default backend)
 - [LLMChat](https://github.com/trendy-design/llmchat) (Explore the capabilites of multiple LLMs including Ollama)
 - [Go-CREW](https://www.jonathanhecl.com/go-crew/) (Powerful Offline RAG in Golang)
+- [PartCAD](https://github.com/openvmp/partcad/) (CAD model generation with OpenSCAD and CadQuery)
 
 ### Terminal
 
