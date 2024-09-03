@@ -296,6 +296,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [OllamaSpring](https://github.com/CrazyNeil/OllamaSpring) (Ollama Client for macOS)
 - [LLocal.in](https://github.com/kartikm7/llocal) (Easy to use Electron Desktop Client for Ollama)
 - [Ollama with Google Mesop](https://github.com/rapidarchitect/ollama_mesop/) (Mesop Chat Client implementation with Ollama)
+- [Painting Droid](https://github.com/mateuszmigas/painting-droid) (Painting app with AI integrations)
 - [Kerlig AI](https://www.kerlig.com/) (AI writing assistant for macOS)
 - [AI Studio](https://github.com/MindWorkAI/AI-Studio)
 - [Sidellama](https://github.com/gyopak/sidellama) (browser-based LLM client)
