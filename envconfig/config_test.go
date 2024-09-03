@@ -215,6 +215,40 @@ func TestKeepAlive(t *testing.T) {
 	}
 }
 
+func TestLoadTimeout(t *testing.T) {
+	defaultTimeout := 5 * time.Minute
+	cases := map[string]time.Duration{
+		"":       defaultTimeout,
+		"1s":     time.Second,
+		"1m":     time.Minute,
+		"1h":     time.Hour,
+		"5m0s":   defaultTimeout,
+		"1h2m3s": 1*time.Hour + 2*time.Minute + 3*time.Second,
+		"0":      time.Duration(math.MaxInt64),
+		"60":     60 * time.Second,
+		"120":    2 * time.Minute,
+		"3600":   time.Hour,
+		"-0":     time.Duration(math.MaxInt64),
+		"-1":     time.Duration(math.MaxInt64),
+		"-1m":    time.Duration(math.MaxInt64),
+		// invalid values
+		" ":   defaultTimeout,
+		"???": defaultTimeout,
+		"1d":  defaultTimeout,
+		"1y":  defaultTimeout,
+		"1w":  defaultTimeout,
+	}
+
+	for tt, expect := range cases {
+		t.Run(tt, func(t *testing.T) {
+			t.Setenv("OLLAMA_LOAD_TIMEOUT", tt)
+			if actual := LoadTimeout(); actual != expect {
+				t.Errorf("%s: expected %s, got %s", tt, expect, actual)
+			}
+		})
+	}
+}
+
 func TestVar(t *testing.T) {
 	cases := map[string]string{
 		"value":       "value",
