@@ -41,6 +41,8 @@ To run and chat with [Llama 3.1](https://ollama.com/library/llama3.1):
 ollama run llama3.1
 ```
 
+If you get an error, `Error: could not connect to ollama app, is it running?`,  you may need to manually start it with `ollama start`.
+
 ## Model library
 
 Ollama supports a list of models available on [ollama.com/library](https://ollama.com/library 'ollama model library')
