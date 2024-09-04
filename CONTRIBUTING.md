@@ -18,7 +18,7 @@ See the [development documentation](./docs/development.md) for instructions on h
 
 * New features: new features (e.g. API fields, environment variables) add surface area to Ollama and make it harder to maintain in the long run as they cannot be removed without potentially breaking users in the future.
 * Refactoring: large code improvements are important, but can be harder or take longer to review and merge.
-* Documentation: small updates to fill in or dorrect missing documentation is helpful, however large documentation additions can be hard to maintain over time.
+* Documentation: small updates to fill in or correct missing documentation is helpful, however large documentation additions can be hard to maintain over time.
 
 ### Issues that may not be accepted
 
