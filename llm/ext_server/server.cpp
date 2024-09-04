@@ -44,6 +44,7 @@
 #include <errhandlingapi.h>
 #endif
 
+#include <algorithm>
 #include <cstddef>
 #include <thread>
 #include <chrono>
@@ -261,7 +262,7 @@ struct server_slot {
        char buffer[512];
         double t_token = t_prompt_processing / n_prompt_tokens_processed;
         double n_tokens_second = 1e3 / t_prompt_processing * n_prompt_tokens_processed;
-        sprintf(buffer, "prompt eval time     = %10.2f ms / %5d tokens (%8.2f ms per token, %8.2f tokens per second)",
+        snprintf(buffer, sizeof(buffer), "prompt eval time     = %10.2f ms / %5d tokens (%8.2f ms per token, %8.2f tokens per second)",
                 t_prompt_processing, n_prompt_tokens_processed,
                 t_token, n_tokens_second);
         LOG_DEBUG(buffer, {
@@ -275,7 +276,7 @@ struct server_slot {
 
         t_token = t_token_generation / n_decoded;
         n_tokens_second = 1e3 / t_token_generation * n_decoded;
-        sprintf(buffer, "generation eval time = %10.2f ms / %5d runs   (%8.2f ms per token, %8.2f tokens per second)",
+        snprintf(buffer, sizeof(buffer), "generation eval time = %10.2f ms / %5d runs   (%8.2f ms per token, %8.2f tokens per second)",
                 t_token_generation, n_decoded,
                 t_token, n_tokens_second);
         LOG_DEBUG(buffer, {
@@ -287,7 +288,7 @@ struct server_slot {
             {"n_tokens_second",    n_tokens_second},
         });
 
-        sprintf(buffer, "          total time = %10.2f ms", t_prompt_processing + t_token_generation);
+        snprintf(buffer, sizeof(buffer), "          total time = %10.2f ms", t_prompt_processing + t_token_generation);
         LOG_DEBUG(buffer, {
             {"slot_id",             id},
             {"task_id",             task_id},
@@ -402,7 +403,9 @@ struct llama_server_context
             }
         }
 
-        std::tie(model, ctx) = llama_init_from_gpt_params(params);
+        auto init_result = llama_init_from_gpt_params(params);
+        model = init_result.model;
+        ctx = init_result.context;
         if (model == nullptr)
         {
             LOG_ERROR("unable to load model", {{"model", params.model}});
@@ -422,7 +425,7 @@ struct llama_server_context
 
         n_ctx = llama_n_ctx(ctx);
 
-        add_bos_token = llama_should_add_bos_token(model);
+        add_bos_token = llama_add_bos_token(model);
 
         return true;
     }
@@ -1028,7 +1031,7 @@ struct llama_server_context
                 continue;
             }
 
-            if (!llava_image_embed_make_with_clip_img(clp_ctx, params.n_threads, img.img_data, &img.image_embedding, &img.image_tokens)) {
+            if (!llava_image_embed_make_with_clip_img(clp_ctx, params.cpuparams.n_threads, img.img_data, &img.image_embedding, &img.image_tokens)) {
                 LOG_TEE("Error processing the given image");
                 return false;
             }
@@ -1221,7 +1224,6 @@ struct llama_server_context
                 res.result_json = json
                 {
                     {"embedding", std::vector<float>(embd, embd + n_embd)},
-                    {"timings",             slot.get_formated_timings()},
                 };
             }
         }
@@ -1427,7 +1429,13 @@ struct llama_server_context
         switch (task.type)
         {
             case TASK_TYPE_COMPLETION: {
-                server_slot *slot = prefix_slot(task.data["prompt"]);
+                server_slot *slot = nullptr;
+                if (task.embedding_mode) {
+                    // Embedding seq_id (aka slot id) must always be <= token length, so always use slot 0
+                    slot = slots[0].available() ? &slots[0] : nullptr;
+                } else {
+                    slot = prefix_slot(task.data["prompt"]);
+                }
                 if (slot == nullptr)
                 {
                     // if no slot is available, we defer this task for processing later
@@ -2006,7 +2014,7 @@ static void server_print_usage(const char *argv0, const gpt_params &params,
     printf("options:\n");
     printf("  -h, --help                show this help message and exit\n");
     printf("  -v, --verbose             verbose output (default: %s)\n", server_verbose ? "enabled" : "disabled");
-    printf("  -t N, --threads N         number of threads to use during computation (default: %d)\n", params.n_threads);
+    printf("  -t N, --threads N         number of threads to use during computation (default: %d)\n", params.cpuparams.n_threads);
     printf("  -tb N, --threads-batch N  number of threads to use during batch and prompt processing (default: same as --threads)\n");
     printf("  --threads-http N          number of threads in the http server pool to process requests (default: max(hardware concurrency - 1, --parallel N + 2))\n");
     printf("  -c N, --ctx-size N        size of the prompt context (default: %d)\n", params.n_ctx);
@@ -2279,7 +2287,7 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
                 invalid_param = true;
                 break;
             }
-            params.n_threads = std::stoi(argv[i]);
+            params.cpuparams.n_threads = std::stoi(argv[i]);
         }
         else if (arg == "--grp-attn-n" || arg == "-gan")
         {
@@ -2307,7 +2315,7 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
                 invalid_param = true;
                 break;
             }
-            params.n_threads_batch = std::stoi(argv[i]);
+            params.cpuparams_batch.n_threads = std::stoi(argv[i]);
         }
         else if (arg == "--threads-http")
         {
@@ -2420,7 +2428,10 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
                 invalid_param = true;
                 break;
             }
-            params.lora_adapter.emplace_back(argv[i], 1.0f);
+            params.lora_adapters.push_back({
+                std::string(argv[i]),
+                1.0,
+            });
             params.use_mmap = false;
         }
         else if (arg == "--lora-scaled")
@@ -2436,7 +2447,10 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
                 invalid_param = true;
                 break;
             }
-            params.lora_adapter.emplace_back(lora_adapter, std::stof(argv[i]));
+            params.lora_adapters.push_back({
+                lora_adapter,
+                std::stof(argv[i])
+            });
             params.use_mmap = false;
         }
         else if (arg == "-v" || arg == "--verbose")
@@ -2612,6 +2626,11 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
         params.kv_overrides.back().key[0] = 0;
     }
 
+    postprocess_cpu_params(params.cpuparams, nullptr);
+    postprocess_cpu_params(params.cpuparams_batch, &params.cpuparams);
+    postprocess_cpu_params(params.draft_cpuparams, &params.cpuparams);
+    postprocess_cpu_params(params.draft_cpuparams_batch, &params.cpuparams_batch);
+
     if (invalid_param)
     {
         fprintf(stderr, "error: invalid parameter for argument: %s\n", arg.c_str());
@@ -2761,8 +2780,8 @@ int main(int argc, char **argv) {
                             {"commit", LLAMA_COMMIT}});
 
     LOG_INFO("system info", {
-                                {"n_threads", params.n_threads},
-                                {"n_threads_batch", params.n_threads_batch},
+                                {"n_threads", params.cpuparams.n_threads},
+                                {"n_threads_batch", params.cpuparams_batch.n_threads},
                                 {"total_threads", std::thread::hardware_concurrency()},
                                 {"system_info", llama_print_system_info()},
                             });
@@ -3184,37 +3203,17 @@ int main(int argc, char **argv) {
                     prompt = "";
                 }
 
-                if (prompt.size() == 1) {
-                    prompt = prompt[0];
-                }
-
                 // create and queue the task
-                json responses;
-                {
-                    const int id_task = llama.queue_tasks.get_new_id();
-                    llama.queue_results.add_waiting_task_id(id_task);
-                    llama.request_completion(id_task, {{"prompt", prompt}}, true, -1);
+                const int task_id = llama.queue_tasks.get_new_id();
+                llama.queue_results.add_waiting_task_id(task_id);
+                llama.request_completion(task_id, {{"prompt", prompt}}, true, -1);
 
-                    // get the result
-                    task_result result = llama.queue_results.recv(id_task);
-                    llama.queue_results.remove_waiting_task_id(id_task);
-                    if (result.error) {
-                        return res.set_content(result.result_json.dump(), "application/json; charset=utf-8");
-                    }
+                // get the result
+                task_result result = llama.queue_results.recv(task_id);
+                llama.queue_results.remove_waiting_task_id(task_id);
 
-                    responses = result.result_json.value("results", std::vector<json>{result.result_json});
-                    json embeddings = json::array();
-
-                    int prompt_n = 0;
-                    for (auto & elem : responses) {
-                        embeddings.push_back(elem.at("embedding"));
-                        prompt_n += elem.at("timings").at("prompt_n").get<int>();
-                    }
-
-                    // send the result
-                    json embedding_res = json{{"embedding", embeddings}, {"prompt_n", prompt_n}};
-                    return res.set_content(embedding_res.dump(), "application/json; charset=utf-8");
-                }
+                // send the result
+                return res.set_content(result.result_json.dump(), "application/json; charset=utf-8");
             });
 
     // GG: if I put the main loop inside a thread, it crashes on the first request when build in Debug!?

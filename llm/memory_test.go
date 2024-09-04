@@ -2,25 +2,24 @@ package llm
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"os"
 	"testing"
 
-	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/gpu"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/gpu"
 )
 
 func TestEstimateGPULayers(t *testing.T) {
-	envconfig.Debug = true
+	t.Setenv("OLLAMA_DEBUG", "1")
+
 	modelName := "dummy"
 	f, err := os.CreateTemp(t.TempDir(), modelName)
 	require.NoError(t, err)
 	defer f.Close()
-	gguf := NewGGUFV3(binary.LittleEndian)
 	inputLayerCount := 5
 
 	tensors := []Tensor{
@@ -32,9 +31,8 @@ func TestEstimateGPULayers(t *testing.T) {
 		{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
 	}
 	assert.Len(t, tensors, inputLayerCount+1)
-	err = gguf.Encode(f, KV{
+	err = WriteGGUF(f, KV{
 		"general.architecture":          "llama",
-		"general.name":                  "name",
 		"llama.context_length":          uint32(32),
 		"llama.embedding_length":        uint32(4096),
 		"llama.block_count":             uint32(inputLayerCount),

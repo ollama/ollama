@@ -28,8 +28,10 @@ import (
 
 const maxRetries = 6
 
-var errMaxRetriesExceeded = errors.New("max retries exceeded")
-var errPartStalled = errors.New("part stalled")
+var (
+	errMaxRetriesExceeded = errors.New("max retries exceeded")
+	errPartStalled        = errors.New("part stalled")
+)
 
 var blobDownloadManager sync.Map
 
@@ -61,8 +63,38 @@ type blobDownloadPart struct {
 	*blobDownload `json:"-"`
 }
 
+type jsonBlobDownloadPart struct {
+	N         int
+	Offset    int64
+	Size      int64
+	Completed int64
+}
+
+func (p *blobDownloadPart) MarshalJSON() ([]byte, error) {
+	return json.Marshal(jsonBlobDownloadPart{
+		N:         p.N,
+		Offset:    p.Offset,
+		Size:      p.Size,
+		Completed: p.Completed.Load(),
+	})
+}
+
+func (p *blobDownloadPart) UnmarshalJSON(b []byte) error {
+	var j jsonBlobDownloadPart
+	if err := json.Unmarshal(b, &j); err != nil {
+		return err
+	}
+	*p = blobDownloadPart{
+		N:      j.N,
+		Offset: j.Offset,
+		Size:   j.Size,
+	}
+	p.Completed.Store(j.Completed)
+	return nil
+}
+
 const (
-	numDownloadParts          = 64
+	numDownloadParts          = 16
 	minDownloadPartSize int64 = 100 * format.MegaByte
 	maxDownloadPartSize int64 = 1000 * format.MegaByte
 )
@@ -184,6 +216,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 		return err
 	}
 	defer file.Close()
+	setSparse(file)
 
 	_ = file.Truncate(b.Total)
 
@@ -200,7 +233,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 
 			newOpts.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 				if len(via) > 10 {
-					return errors.New("maxium redirects exceeded (10) for directURL")
+					return errors.New("maximum redirects exceeded (10) for directURL")
 				}
 
 				// if the hostname is the same, allow the redirect
