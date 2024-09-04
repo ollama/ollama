@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"math"
 	"net"
@@ -1147,6 +1148,8 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 	return nil
 }
 
+var PayloadFS fs.FS
+
 func RunServer(_ *cobra.Command, _ []string) error {
 	if err := initializeKeypair(); err != nil {
 		return err
@@ -1157,7 +1160,7 @@ func RunServer(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	err = server.Serve(ln)
+	err = server.Serve(PayloadFS, ln)
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}

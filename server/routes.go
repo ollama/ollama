@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"math"
 	"net"
@@ -1117,7 +1118,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	return r
 }
 
-func Serve(ln net.Listener) error {
+func Serve(payloadFS fs.FS, ln net.Listener) error {
 	level := slog.LevelInfo
 	if envconfig.Debug() {
 		level = slog.LevelDebug
@@ -1165,7 +1166,7 @@ func Serve(ln net.Listener) error {
 
 	ctx, done := context.WithCancel(context.Background())
 	schedCtx, schedDone := context.WithCancel(ctx)
-	sched := InitScheduler(schedCtx)
+	sched := InitScheduler(payloadFS, schedCtx)
 	s := &Server{addr: ln.Addr(), sched: sched}
 
 	http.Handle("/", s.GenerateRoutes())
@@ -1191,11 +1192,11 @@ func Serve(ln net.Listener) error {
 		srvr.Close()
 		schedDone()
 		sched.unloadAllRunners()
-		payloads.Cleanup()
+		payloads.Cleanup(payloadFS)
 		done()
 	}()
 
-	if _, err := payloads.RunnersDir(); err != nil {
+	if _, err := payloads.RunnersDir(payloadFS); err != nil {
 		return fmt.Errorf("unable to initialize llm library %w", err)
 	}
 

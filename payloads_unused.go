@@ -1,6 +1,6 @@
 //go:build !linux && !darwin
 
-package payloads
+package main
 
 import "embed"
 

@@ -9,5 +9,6 @@ import (
 )
 
 func main() {
+	cmd.PayloadFS = libEmbed
 	cobra.CheckErr(cmd.NewCLI().ExecuteContext(context.Background()))
 }

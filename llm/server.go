@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"log/slog"
 	"math/rand"
@@ -84,7 +85,7 @@ func LoadModel(model string, maxArraySize int) (*GGML, error) {
 
 // NewLlamaServer will run a server for the given GPUs
 // The gpu list must be a single family.
-func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
+func NewLlamaServer(payloadFS fs.FS, gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
 	var err error
 	var cpuRunner string
 	var estimate MemoryEstimate
@@ -146,7 +147,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		return nil, errors.New("ollama supports only one lora adapter, but multiple were provided")
 	}
 
-	rDir, err := payloads.RunnersDir()
+	rDir, err := payloads.RunnersDir(payloadFS)
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +327,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		_, err := os.Stat(server)
 		if errors.Is(err, os.ErrNotExist) {
 			slog.Warn("llama server disappeared, reinitializing payloads", "path", server, "error", err)
-			_, err = payloads.RunnersDir()
+			_, err = payloads.RunnersDir(payloadFS)
 			if err != nil {
 				slog.Warn("failed to reinitialize payloads", "error", err)
 				return nil, err

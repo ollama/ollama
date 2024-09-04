@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"reflect"
@@ -42,7 +43,8 @@ type Scheduler struct {
 	loadedMu sync.Mutex
 
 	loadFn       func(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numParallel int)
-	newServerFn  func(gpus gpu.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error)
+	newServerFn  func(payloadFS fs.FS, gpus gpu.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error)
+	payloadFS    fs.FS
 	getGpuFn     func() gpu.GpuInfoList
 	getCpuFn     func() gpu.GpuInfoList
 	reschedDelay time.Duration
@@ -60,7 +62,7 @@ var defaultParallel = 4
 
 var ErrMaxQueue = errors.New("server busy, please try again.  maximum pending requests exceeded")
 
-func InitScheduler(ctx context.Context) *Scheduler {
+func InitScheduler(payloadFS fs.FS, ctx context.Context) *Scheduler {
 	maxQueue := envconfig.MaxQueue()
 	sched := &Scheduler{
 		pendingReqCh:  make(chan *LlmRequest, maxQueue),
@@ -69,6 +71,7 @@ func InitScheduler(ctx context.Context) *Scheduler {
 		unloadedCh:    make(chan interface{}, maxQueue),
 		loaded:        make(map[string]*runnerRef),
 		newServerFn:   llm.NewLlamaServer,
+		payloadFS:     payloadFS,
 		getGpuFn:      gpu.GetGPUInfo,
 		getCpuFn:      gpu.GetCPUInfo,
 		reschedDelay:  250 * time.Millisecond,
@@ -418,7 +421,7 @@ func (s *Scheduler) load(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, 
 	if req.sessionDuration != nil {
 		sessionDuration = req.sessionDuration.Duration
 	}
-	llama, err := s.newServerFn(gpus, req.model.ModelPath, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, numParallel)
+	llama, err := s.newServerFn(s.payloadFS, gpus, req.model.ModelPath, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, numParallel)
 	if err != nil {
 		// some older models are not compatible with newer versions of llama.cpp
 		// show a generalized compatibility error until there is a better way to
