@@ -35,10 +35,11 @@ curl -fsSL https://ollama.com/download/ollama-linux-amd64-rocm.tgz | sudo tar zx
 
 ### Adding Ollama as a startup service (recommended)
 
-Create a user for Ollama:
+Create a user and group for Ollama:
 
 ```bash
-sudo useradd -r -s /bin/false -m -d /usr/share/ollama ollama
+sudo useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama
+sudo usermod -a -G ollama $(whoami)
 ```
 
 Create a service file in `/etc/systemd/system/ollama.service`:
@@ -54,6 +55,7 @@ User=ollama
 Group=ollama
 Restart=always
 RestartSec=3
+Environment="PATH=$PATH"
 
 [Install]
 WantedBy=default.target
@@ -83,10 +85,11 @@ Make sure to install ROCm v6
 
 ### Start Ollama
 
-Start Ollama using `systemd`:
+Start Ollama and verify it is running:
 
 ```bash
 sudo systemctl start ollama
+sudo systemctl status ollama
 ```
 
 ## Update
