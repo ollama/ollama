@@ -642,6 +642,8 @@ func (s *Server) loadModel(
 
 	if ppath != "" {
 		s.cc = llama.NewClipContext(ppath)
+		// TODO (jessegross): Vision model support
+		panic("Vision models are not yet supported")
 	}
 
 	s.status = ServerStatusReady
