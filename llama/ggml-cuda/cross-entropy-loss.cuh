@@ -24,11 +24,8 @@
  * SOFTWARE.
  */
 
-#pragma once
+#include "common.cuh"
 
-#include "ggml.h"
-// Change JSON_ASSERT from assert() to GGML_ASSERT:
-#define JSON_ASSERT GGML_ASSERT
-#include "json.hpp"
+#define CUDA_CROSS_ENTROPY_LOSS_BLOCK_SIZE 256
 
-std::string json_schema_to_grammar(const nlohmann::ordered_json& schema);
+void ggml_cuda_cross_entropy_loss(ggml_backend_cuda_context & ctx, ggml_tensor * dst);

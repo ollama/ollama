@@ -636,7 +636,7 @@ func (s *Server) loadModel(
 		}
 	}
 
-	if s.model.ShouldAddBOSToken() {
+	if s.model.AddBOSToken() {
 		s.bosToken = 1
 	}
 
