@@ -675,7 +675,7 @@ func main() {
 		}
 	}
 
-	if server.model.ShouldAddBOSToken() {
+	if server.model.AddBOSToken() {
 		server.bosToken = 1
 	}
 
