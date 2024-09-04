@@ -38,7 +38,7 @@ IS_WSL2=false
 KERN=$(uname -r)
 case "$KERN" in
     *icrosoft*WSL2 | *icrosoft*wsl2) IS_WSL2=true;;
-    *icrosoft) error "Microsoft WSL1 is not currently supported. Please upgrade to WSL2 with 'wsl --set-version <distro> 2'" ;;
+    *icrosoft) error "Microsoft WSL1 is not currently supported. Please use WSL2 with 'wsl --set-version <distro> 2'" ;;
     *) ;;
 esac
 
