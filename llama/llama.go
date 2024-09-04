@@ -70,11 +70,10 @@ type ContextParams struct {
 func NewContextParams(numCtx int, threads int, flashAttention bool) ContextParams {
 	params := C.llama_context_default_params()
 	params.n_ctx = C.uint(numCtx)
-	params.n_threads = C.uint(runtime.NumCPU())
+	params.n_threads = C.int(threads)
 	params.n_threads_batch = params.n_threads
 	params.embeddings = C.bool(true)
 	params.flash_attn = C.bool(flashAttention)
-	params.n_threads = C.uint(threads)
 	return ContextParams{c: params}
 }
 
@@ -213,14 +212,8 @@ func (m *Model) TokenIsEog(token int) bool {
 	return bool(C.llama_token_is_eog(m.c, C.llama_token(token)))
 }
 
-func (m *Model) ShouldAddBOSToken() bool {
-	addBos := int(C.llama_add_bos_token(m.c))
-
-	if addBos != -1 {
-		return addBos != 0
-	} else {
-		return C.llama_vocab_type(m.c) == C.LLAMA_VOCAB_TYPE_SPM
-	}
+func (m *Model) AddBOSToken() bool {
+	return bool(C.llama_add_bos_token(m.c))
 }
 
 func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float32, threads int) error {
