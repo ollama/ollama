@@ -186,13 +186,13 @@ RUN cd /scratch/ollama/ && rm -rf rocblas libamd* libdrm* libroc* libhip* libhsa
 # Runtime stages
 FROM --platform=linux/amd64 ubuntu:22.04 as runtime-amd64
 COPY --from=amd64-libs-without-rocm /scratch/ /lib/
-RUN apt-get update && apt-get install -y ca-certificates && \
+RUN apt-get update && apt-get install -y ca-certificates curl && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY --from=build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/bin/ /bin/
 
 FROM --platform=linux/arm64 ubuntu:22.04 as runtime-arm64
 COPY --from=build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
-RUN apt-get update && apt-get install -y ca-certificates && \
+RUN apt-get update && apt-get install -y ca-certificates curl && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY --from=build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/bin/ /bin/
 
