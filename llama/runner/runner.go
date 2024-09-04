@@ -626,7 +626,7 @@ func (s *Server) loadModel(
 
 	s.model = llama.LoadModelFromFile(mpath, params)
 
-	ctxParams := llama.NewContextParams(kvSize, threads, flashAttention)
+	ctxParams := llama.NewContextParams(kvSize, s.batchSize, s.parallel, threads, flashAttention)
 	s.lc = llama.NewContextWithModel(s.model, ctxParams)
 
 	if lpath != "" {

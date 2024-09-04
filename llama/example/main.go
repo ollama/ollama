@@ -38,7 +38,7 @@ func main() {
 		},
 	}
 	model := llama.LoadModelFromFile(*mpath, params)
-	ctxParams := llama.NewContextParams(2048, runtime.NumCPU(), false)
+	ctxParams := llama.NewContextParams(2048, 512, 1, runtime.NumCPU(), false)
 
 	// language model context
 	lc := llama.NewContextWithModel(model, ctxParams)
