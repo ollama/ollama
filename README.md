@@ -382,7 +382,6 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollamaclient for Golang](https://github.com/xyproto/ollamaclient)
 - [High-level function abstraction in Go](https://gitlab.com/tozd/go/fun)
 
-
 ### Mobile
 
 - [Enchanted](https://github.com/AugustDev/enchanted)
