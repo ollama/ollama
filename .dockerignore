@@ -9,4 +9,3 @@ llm/llama.cpp
 test_data
 llm/build
 llama/build
-payloads/build

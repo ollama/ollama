@@ -1,4 +1,4 @@
-package payloads
+package runners
 
 import (
 	"compress/gzip"
@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	binGlob = "build/*/*/*/*"
+	binGlob = "*/*/*/*"
 )
 
 var (
@@ -34,7 +34,7 @@ var (
 // Return the location where runners are stored
 // If runners are payloads, this will either extract them
 // or refresh them if any have disappeared due to tmp cleaners
-func RunnersDir() (string, error) {
+func Refresh(payloadFS fs.FS) (string, error) {
 	lock.Lock()
 	defer lock.Unlock()
 	var err error
@@ -51,11 +51,11 @@ func RunnersDir() (string, error) {
 		}()
 	}
 
-	if hasPayloads() {
+	if hasPayloads(payloadFS) {
 		if runnersDir == "" {
-			runnersDir, err = extractRunners()
+			runnersDir, err = extractRunners(payloadFS)
 		} else {
-			err = refreshRunners(runnersDir)
+			err = refreshRunners(payloadFS, runnersDir)
 		}
 	} else if runnersDir == "" {
 		runnersDir, err = locateRunners()
@@ -64,10 +64,10 @@ func RunnersDir() (string, error) {
 	return runnersDir, err
 }
 
-func Cleanup() {
+func Cleanup(payloadFS fs.FS) {
 	lock.Lock()
 	defer lock.Unlock()
-	if hasPayloads() && runnersDir != "" {
+	if hasPayloads(payloadFS) && runnersDir != "" {
 		// We want to fully clean up the tmpdir parent of the payloads dir
 		tmpDir := filepath.Clean(filepath.Join(runnersDir, ".."))
 		slog.Debug("cleaning up", "dir", tmpDir)
@@ -109,15 +109,15 @@ func locateRunners() (string, error) {
 }
 
 // Return true if we're carying nested payloads for the runners
-func hasPayloads() bool {
-	files, err := fs.Glob(libEmbed, binGlob)
-	if err != nil || len(files) == 0 || (len(files) == 1 && strings.Contains(files[0], "NO_PAYLOAD")) {
+func hasPayloads(payloadFS fs.FS) bool {
+	files, err := fs.Glob(payloadFS, binGlob)
+	if err != nil || len(files) == 0 || (len(files) == 1 && strings.Contains(files[0], "placeholder")) {
 		return false
 	}
 	return true
 }
 
-func extractRunners() (string, error) {
+func extractRunners(payloadFS fs.FS) (string, error) {
 	cleanupTmpDirs()
 	tmpDir, err := os.MkdirTemp(envconfig.TmpDir(), "ollama")
 	if err != nil {
@@ -133,12 +133,12 @@ func extractRunners() (string, error) {
 	rDir := filepath.Join(tmpDir, "runners")
 
 	slog.Info("extracting embedded files", "dir", rDir)
-	return rDir, refreshRunners(rDir)
+	return rDir, refreshRunners(payloadFS, rDir)
 }
 
-func refreshRunners(rDir string) error {
+func refreshRunners(payloadFS fs.FS, rDir string) error {
 	// extract or refresh server libraries
-	err := extractFiles(rDir, binGlob)
+	err := extractFiles(payloadFS, rDir, binGlob)
 	if err != nil {
 		return fmt.Errorf("extract binaries: %v", err)
 	}
@@ -146,8 +146,8 @@ func refreshRunners(rDir string) error {
 }
 
 // extract extracts the embedded files to the target directory
-func extractFiles(targetDir string, glob string) error {
-	files, err := fs.Glob(libEmbed, glob)
+func extractFiles(payloadFS fs.FS, targetDir string, glob string) error {
+	files, err := fs.Glob(payloadFS, glob)
 	if err != nil || len(files) == 0 {
 		// Should not happen
 		return fmt.Errorf("extractFiles called without payload present")
@@ -159,7 +159,7 @@ func extractFiles(targetDir string, glob string) error {
 
 	g := new(errgroup.Group)
 
-	// build/$OS/$GOARCH/$RUNNER/$FILE
+	// $OS/$GOARCH/$RUNNER/$FILE
 	for _, file := range files {
 		filename := file
 
@@ -168,7 +168,7 @@ func extractFiles(targetDir string, glob string) error {
 		slog.Debug("extracting", "runner", runner, "payload", filename)
 
 		g.Go(func() error {
-			srcf, err := libEmbed.Open(filename)
+			srcf, err := payloadFS.Open(filename)
 			if err != nil {
 				return err
 			}
@@ -270,9 +270,10 @@ func cleanupTmpDirs() {
 	}
 }
 
-// directory names may contain an optional variant separated by '_'
-// For example, "cuda_v11" and "cuda_v12" or "cpu" and "cpu_avx2"
-// Any library without a variant is the lowest common denominator
+// directory names are the name of the runner and may contain an optional
+// variant prefixed with '_' as the separator. For example, "cuda_v11" and
+// "cuda_v12" or "cpu" and "cpu_avx2". Any library without a variant is the
+// lowest common denominator
 func GetAvailableServers(payloadsDir string) map[string]string {
 	if payloadsDir == "" {
 		slog.Error("empty runner dir")

@@ -26,12 +26,13 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/build"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
-	"github.com/ollama/ollama/payloads"
+	"github.com/ollama/ollama/runners"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -1191,12 +1192,12 @@ func Serve(ln net.Listener) error {
 		srvr.Close()
 		schedDone()
 		sched.unloadAllRunners()
-		payloads.Cleanup()
+		runners.Cleanup(build.EmbedFS)
 		done()
 	}()
 
-	if _, err := payloads.RunnersDir(); err != nil {
-		return fmt.Errorf("unable to initialize llm library %w", err)
+	if _, err := runners.Refresh(build.EmbedFS); err != nil {
+		return fmt.Errorf("unable to initialize llm runners %w", err)
 	}
 
 	s.sched.Run(schedCtx)

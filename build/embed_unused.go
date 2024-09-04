@@ -1,8 +1,8 @@
 //go:build !linux && !darwin
 
-package payloads
+package build
 
 import "embed"
 
 // unused on windows
-var libEmbed embed.FS
+var EmbedFS embed.FS
