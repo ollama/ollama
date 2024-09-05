@@ -49,7 +49,7 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 		keys := maps.Keys(headers)
 		slices.Sort(keys)
 
-		names := map[string]bool{}
+		names := make(map[string]struct{}, len(keys))
 
 		for _, key := range keys {
 			if value := headers[key]; value.Type != "" {
@@ -61,7 +61,7 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 				if _, ok := names[ggufName]; ok {
 					return nil, fmt.Errorf("duplicate tensor name '%s' was found for this model", ggufName)
 				}
-				names[ggufName] = true
+				names[ggufName] = struct{}{}
 				ts = append(ts, safetensor{
 					fs:     fsys,
 					path:   p,
