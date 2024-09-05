@@ -296,15 +296,17 @@ type EmbeddingResponse struct {
 // CreateRequest is the request passed to [Client.Create].
 type CreateRequest struct {
 	Model     string `json:"model"`
-	Path      string `json:"path"`
 	Modelfile string `json:"modelfile"`
 	Stream    *bool  `json:"stream,omitempty"`
 	Quantize  string `json:"quantize,omitempty"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 
-	// Quantization is deprecated, see Quantize
+	// Deprecated: set the file content with Modelfile instead
+	Path string `json:"path"`
+
+	// Deprecated: use Quantize instead
 	Quantization string `json:"quantization,omitempty"`
 }
 
@@ -312,7 +314,7 @@ type CreateRequest struct {
 type DeleteRequest struct {
 	Model string `json:"model"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
@@ -327,7 +329,7 @@ type ShowRequest struct {
 
 	Options map[string]interface{} `json:"options"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
@@ -359,7 +361,7 @@ type PullRequest struct {
 	Password string `json:"password"`
 	Stream   *bool  `json:"stream,omitempty"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
@@ -380,7 +382,7 @@ type PushRequest struct {
 	Password string `json:"password"`
 	Stream   *bool  `json:"stream,omitempty"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 

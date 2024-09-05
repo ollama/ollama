@@ -98,7 +98,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		systemTotalMemory = systemMemInfo.TotalMemory
 		systemFreeMemory = systemMemInfo.FreeMemory
 		systemSwapFreeMemory = systemMemInfo.FreeSwap
-		slog.Debug("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
+		slog.Info("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
 	}
 
 	// If the user wants zero GPU layers, reset the gpu list to be CPU/system ram info
@@ -258,7 +258,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--mlock")
 	}
 
-	if gpu.IsNUMA() {
+	if gpu.IsNUMA() && gpus[0].Library == "cpu" {
 		numaMode := "distribute"
 		if runtime.GOOS == "linux" {
 			if _, err := exec.LookPath("numactl"); err == nil {
@@ -409,7 +409,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		}
 
 		if err = s.cmd.Start(); err != nil {
-			// Detect permission denied and augment them essage about noexec
+			// Detect permission denied and augment the message about noexec
 			if errors.Is(err, os.ErrPermission) {
 				finalErr = fmt.Errorf("unable to start server %w.  %s may have noexec set.  Set OLLAMA_TMPDIR for server to a writable executable directory", err, dir)
 				continue

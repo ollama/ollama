@@ -32,6 +32,10 @@ linters:
 linters-settings:
   gci:
     sections: [standard, default, localmodule]
+  staticcheck:
+    checks:
+      - all
+      - -SA1019 # omit Deprecated check
 severity:
   default-severity: error
   rules:

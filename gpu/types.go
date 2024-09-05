@@ -94,7 +94,7 @@ func (l GpuInfoList) ByLibrary() []GpuInfoList {
 			}
 		}
 		if !found {
-			libs = append(libs, info.Library)
+			libs = append(libs, requested)
 			resp = append(resp, []GpuInfo{info})
 		}
 	}

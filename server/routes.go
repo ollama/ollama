@@ -463,7 +463,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-func (s *Server) PullModelHandler(c *gin.Context) {
+func (s *Server) PullHandler(c *gin.Context) {
 	var req api.PullRequest
 	err := c.ShouldBindJSON(&req)
 	switch {
@@ -513,7 +513,7 @@ func (s *Server) PullModelHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func (s *Server) PushModelHandler(c *gin.Context) {
+func (s *Server) PushHandler(c *gin.Context) {
 	var req api.PushRequest
 	err := c.ShouldBindJSON(&req)
 	switch {
@@ -577,7 +577,7 @@ func checkNameExists(name model.Name) error {
 	return nil
 }
 
-func (s *Server) CreateModelHandler(c *gin.Context) {
+func (s *Server) CreateHandler(c *gin.Context) {
 	var r api.CreateRequest
 	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
@@ -647,7 +647,7 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func (s *Server) DeleteModelHandler(c *gin.Context) {
+func (s *Server) DeleteHandler(c *gin.Context) {
 	var r api.DeleteRequest
 	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
@@ -680,7 +680,7 @@ func (s *Server) DeleteModelHandler(c *gin.Context) {
 	}
 }
 
-func (s *Server) ShowModelHandler(c *gin.Context) {
+func (s *Server) ShowHandler(c *gin.Context) {
 	var req api.ShowRequest
 	err := c.ShouldBindJSON(&req)
 	switch {
@@ -829,7 +829,7 @@ func getKVData(digest string, verbose bool) (llm.KV, error) {
 	return kv, nil
 }
 
-func (s *Server) ListModelsHandler(c *gin.Context) {
+func (s *Server) ListHandler(c *gin.Context) {
 	ms, err := Manifests()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -879,7 +879,7 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, api.ListResponse{Models: models})
 }
 
-func (s *Server) CopyModelHandler(c *gin.Context) {
+func (s *Server) CopyHandler(c *gin.Context) {
 	var r api.CopyRequest
 	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
@@ -1081,33 +1081,33 @@ func (s *Server) GenerateRoutes() http.Handler {
 		allowedHostsMiddleware(s.addr),
 	)
 
-	r.POST("/api/pull", s.PullModelHandler)
+	r.POST("/api/pull", s.PullHandler)
 	r.POST("/api/generate", s.GenerateHandler)
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
-	r.POST("/api/create", s.CreateModelHandler)
-	r.POST("/api/push", s.PushModelHandler)
-	r.POST("/api/copy", s.CopyModelHandler)
-	r.DELETE("/api/delete", s.DeleteModelHandler)
-	r.POST("/api/show", s.ShowModelHandler)
+	r.POST("/api/create", s.CreateHandler)
+	r.POST("/api/push", s.PushHandler)
+	r.POST("/api/copy", s.CopyHandler)
+	r.DELETE("/api/delete", s.DeleteHandler)
+	r.POST("/api/show", s.ShowHandler)
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
-	r.GET("/api/ps", s.ProcessHandler)
+	r.GET("/api/ps", s.PsHandler)
 
 	// Compatibility endpoints
 	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)
 	r.POST("/v1/completions", openai.CompletionsMiddleware(), s.GenerateHandler)
 	r.POST("/v1/embeddings", openai.EmbeddingsMiddleware(), s.EmbedHandler)
-	r.GET("/v1/models", openai.ListMiddleware(), s.ListModelsHandler)
-	r.GET("/v1/models/:model", openai.RetrieveMiddleware(), s.ShowModelHandler)
+	r.GET("/v1/models", openai.ListMiddleware(), s.ListHandler)
+	r.GET("/v1/models/:model", openai.RetrieveMiddleware(), s.ShowHandler)
 
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		r.Handle(method, "/", func(c *gin.Context) {
 			c.String(http.StatusOK, "Ollama is running")
 		})
 
-		r.Handle(method, "/api/tags", s.ListModelsHandler)
+		r.Handle(method, "/api/tags", s.ListHandler)
 		r.Handle(method, "/api/version", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"version": version.Version})
 		})
@@ -1269,7 +1269,7 @@ func streamResponse(c *gin.Context, ch chan any) {
 	})
 }
 
-func (s *Server) ProcessHandler(c *gin.Context) {
+func (s *Server) PsHandler(c *gin.Context) {
 	models := []api.ProcessModelResponse{}
 
 	for _, v := range s.sched.loaded {

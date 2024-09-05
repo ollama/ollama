@@ -204,6 +204,12 @@ func tempZipFiles(path string) (string, error) {
 		// safetensors files might be unresolved git lfs references; skip if they are
 		// covers model-x-of-y.safetensors, model.fp32-x-of-y.safetensors, model.safetensors
 		files = append(files, st...)
+	} else if st, _ := glob(filepath.Join(path, "adapters.safetensors"), "application/octet-stream"); len(st) > 0 {
+		// covers adapters.safetensors
+		files = append(files, st...)
+	} else if st, _ := glob(filepath.Join(path, "adapter_model.safetensors"), "application/octet-stream"); len(st) > 0 {
+		// covers adapter_model.safetensors
+		files = append(files, st...)
 	} else if pt, _ := glob(filepath.Join(path, "pytorch_model*.bin"), "application/zip"); len(pt) > 0 {
 		// pytorch files might also be unresolved git lfs references; skip if they are
 		// covers pytorch_model-x-of-y.bin, pytorch_model.fp32-x-of-y.bin, pytorch_model.bin
@@ -720,14 +726,17 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 }
 
 func showInfo(resp *api.ShowResponse) {
-	arch := resp.ModelInfo["general.architecture"].(string)
-
 	modelData := [][]string{
-		{"arch", arch},
 		{"parameters", resp.Details.ParameterSize},
 		{"quantization", resp.Details.QuantizationLevel},
-		{"context length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64))},
-		{"embedding length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)].(float64))},
+	}
+	if resp.ModelInfo != nil {
+		arch := resp.ModelInfo["general.architecture"].(string)
+		modelData = append(modelData,
+			[]string{"arch", arch},
+			[]string{"context length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64))},
+			[]string{"embedding length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)].(float64))},
+		)
 	}
 
 	mainTableData := [][]string{
