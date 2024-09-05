@@ -1422,6 +1422,7 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_FLASH_ATTENTION"],
 				envVars["OLLAMA_LLM_LIBRARY"],
 				envVars["OLLAMA_GPU_OVERHEAD"],
+				envVars["OLLAMA_LOAD_TIMEOUT"],
 			})
 		default:
 			appendEnvDocs(cmd, envs)
