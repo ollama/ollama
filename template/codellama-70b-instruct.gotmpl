@@ -1,8 +1,10 @@
-{{ if .System }} Source: system
+{{- range .Messages }}Source:
+{{- if eq .Role "system" }} system
+{{- else if eq .Role "user" }} user
+{{- else if eq .Role "assistant" }} assistant
+{{- end }}
 
- {{ .System }} <step>{{ end }} Source: user
-
- {{ .Prompt }} <step> Source: assistant
+ {{ .Content }} <step> {{ end }}Source: assistant
 Destination: user
 
- {{ .Response }}<step>
+ 

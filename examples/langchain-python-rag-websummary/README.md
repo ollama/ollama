@@ -4,10 +4,10 @@ This example summarizes the website, [https://ollama.com/blog/run-llama2-uncenso
 
 ## Running the Example
 
-1. Ensure you have the `llama2` model installed:
+1. Ensure you have the `llama3.1` model installed:
 
    ```bash
-   ollama pull llama2
+   ollama pull llama3.1
    ```
 
 2. Install the Python Requirements.

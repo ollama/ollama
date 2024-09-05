@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -78,6 +79,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	status := "transferring model data"
 	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
+	defer p.Stop()
 
 	for i := range modelfile.Commands {
 		switch modelfile.Commands[i].Name {
@@ -112,7 +114,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				path = tempfile
 			}
 
-			digest, err := createBlob(cmd, client, path)
+			digest, err := createBlob(cmd, client, path, spinner)
 			if err != nil {
 				return err
 			}
@@ -202,6 +204,12 @@ func tempZipFiles(path string) (string, error) {
 		// safetensors files might be unresolved git lfs references; skip if they are
 		// covers model-x-of-y.safetensors, model.fp32-x-of-y.safetensors, model.safetensors
 		files = append(files, st...)
+	} else if st, _ := glob(filepath.Join(path, "adapters.safetensors"), "application/octet-stream"); len(st) > 0 {
+		// covers adapters.safetensors
+		files = append(files, st...)
+	} else if st, _ := glob(filepath.Join(path, "adapter_model.safetensors"), "application/octet-stream"); len(st) > 0 {
+		// covers adapter_model.safetensors
+		files = append(files, st...)
 	} else if pt, _ := glob(filepath.Join(path, "pytorch_model*.bin"), "application/zip"); len(pt) > 0 {
 		// pytorch files might also be unresolved git lfs references; skip if they are
 		// covers pytorch_model-x-of-y.bin, pytorch_model.fp32-x-of-y.bin, pytorch_model.bin
@@ -216,6 +224,14 @@ func tempZipFiles(path string) (string, error) {
 
 	// add configuration files, json files are detected as text/plain
 	js, err := glob(filepath.Join(path, "*.json"), "text/plain")
+	if err != nil {
+		return "", err
+	}
+	files = append(files, js...)
+
+	// bert models require a nested config.json
+	// TODO(mxyng): merge this with the glob above
+	js, err = glob(filepath.Join(path, "**/*.json"), "text/plain")
 	if err != nil {
 		return "", err
 	}
@@ -250,6 +266,11 @@ func tempZipFiles(path string) (string, error) {
 			return "", err
 		}
 
+		zfi.Name, err = filepath.Rel(path, file)
+		if err != nil {
+			return "", err
+		}
+
 		zf, err := zipfile.CreateHeader(zfi)
 		if err != nil {
 			return "", err
@@ -263,12 +284,19 @@ func tempZipFiles(path string) (string, error) {
 	return tempfile.Name(), nil
 }
 
-func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, error) {
+func createBlob(cmd *cobra.Command, client *api.Client, path string, spinner *progress.Spinner) (string, error) {
 	bin, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
 	defer bin.Close()
+
+	// Get file info to retrieve the size
+	fileInfo, err := bin.Stat()
+	if err != nil {
+		return "", err
+	}
+	fileSize := fileInfo.Size()
 
 	hash := sha256.New()
 	if _, err := io.Copy(hash, bin); err != nil {
@@ -279,11 +307,41 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string) (string, er
 		return "", err
 	}
 
+	var pw progressWriter
+	status := "transferring model data 0%"
+	spinner.SetMessage(status)
+
+	done := make(chan struct{})
+	defer close(done)
+
+	go func() {
+		ticker := time.NewTicker(60 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				spinner.SetMessage(fmt.Sprintf("transferring model data %d%%", int(100*pw.n.Load()/fileSize)))
+			case <-done:
+				spinner.SetMessage("transferring model data 100%")
+				return
+			}
+		}
+	}()
+
 	digest := fmt.Sprintf("sha256:%x", hash.Sum(nil))
-	if err = client.CreateBlob(cmd.Context(), digest, bin); err != nil {
+	if err = client.CreateBlob(cmd.Context(), digest, io.TeeReader(bin, &pw)); err != nil {
 		return "", err
 	}
 	return digest, nil
+}
+
+type progressWriter struct {
+	n atomic.Int64
+}
+
+func (w *progressWriter) Write(p []byte) (n int, err error) {
+	w.n.Add(int64(len(p)))
+	return len(p), nil
 }
 
 func RunHandler(cmd *cobra.Command, args []string) error {
@@ -362,9 +420,24 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 
 	opts.MultiModal = slices.Contains(info.Details.Families, "clip")
 	opts.ParentModel = info.Details.ParentModel
-	opts.Messages = append(opts.Messages, info.Messages...)
 
 	if interactive {
+		if err := loadModel(cmd, &opts); err != nil {
+			return err
+		}
+
+		for _, msg := range info.Messages {
+			switch msg.Role {
+			case "user":
+				fmt.Printf(">>> %s\n", msg.Content)
+			case "assistant":
+				state := &displayResponseState{}
+				displayResponse(msg.Content, opts.WordWrap, state)
+				fmt.Println()
+				fmt.Println()
+			}
+		}
+
 		return generateInteractive(cmd, opts)
 	}
 	return generate(cmd, opts)
@@ -653,14 +726,17 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 }
 
 func showInfo(resp *api.ShowResponse) {
-	arch := resp.ModelInfo["general.architecture"].(string)
-
 	modelData := [][]string{
-		{"arch", arch},
 		{"parameters", resp.Details.ParameterSize},
 		{"quantization", resp.Details.QuantizationLevel},
-		{"context length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64))},
-		{"embedding length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)].(float64))},
+	}
+	if resp.ModelInfo != nil {
+		arch := resp.ModelInfo["general.architecture"].(string)
+		modelData = append(modelData,
+			[]string{"arch", arch},
+			[]string{"context length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64))},
+			[]string{"embedding length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)].(float64))},
+		)
 	}
 
 	mainTableData := [][]string{
@@ -843,7 +919,6 @@ type runOptions struct {
 	WordWrap    bool
 	Format      string
 	System      string
-	Template    string
 	Images      []api.ImageData
 	Options     map[string]interface{}
 	MultiModal  bool
@@ -1037,7 +1112,6 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		Images:    opts.Images,
 		Format:    opts.Format,
 		System:    opts.System,
-		Template:  opts.Template,
 		Options:   opts.Options,
 		KeepAlive: opts.KeepAlive,
 	}
@@ -1073,12 +1147,12 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 	return nil
 }
 
-func RunServer(cmd *cobra.Command, _ []string) error {
+func RunServer(_ *cobra.Command, _ []string) error {
 	if err := initializeKeypair(); err != nil {
 		return err
 	}
 
-	ln, err := net.Listen("tcp", net.JoinHostPort(envconfig.Host.Host, envconfig.Host.Port))
+	ln, err := net.Listen("tcp", envconfig.Host().Host)
 	if err != nil {
 		return err
 	}
@@ -1147,7 +1221,7 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 		if err := startApp(cmd.Context(), client); err != nil {
-			return fmt.Errorf("could not connect to ollama app, is it running?")
+			return errors.New("could not connect to ollama app, is it running?")
 		}
 	}
 	return nil
@@ -1343,10 +1417,10 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_NUM_PARALLEL"],
 				envVars["OLLAMA_NOPRUNE"],
 				envVars["OLLAMA_ORIGINS"],
+				envVars["OLLAMA_SCHED_SPREAD"],
 				envVars["OLLAMA_TMPDIR"],
 				envVars["OLLAMA_FLASH_ATTENTION"],
 				envVars["OLLAMA_LLM_LIBRARY"],
-				envVars["OLLAMA_MAX_VRAM"],
 			})
 		default:
 			appendEnvDocs(cmd, envs)

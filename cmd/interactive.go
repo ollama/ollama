@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -9,13 +10,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/exp/maps"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/readline"
 	"github.com/ollama/ollama/types/errtypes"
@@ -27,7 +29,6 @@ const (
 	MultilineNone MultilineState = iota
 	MultilinePrompt
 	MultilineSystem
-	MultilineTemplate
 )
 
 func loadModel(cmd *cobra.Command, opts *runOptions) error {
@@ -47,29 +48,10 @@ func loadModel(cmd *cobra.Command, opts *runOptions) error {
 		KeepAlive: opts.KeepAlive,
 	}
 
-	return client.Chat(cmd.Context(), chatReq, func(resp api.ChatResponse) error {
-		p.StopAndClear()
-		for _, msg := range opts.Messages {
-			switch msg.Role {
-			case "user":
-				fmt.Printf(">>> %s\n", msg.Content)
-			case "assistant":
-				state := &displayResponseState{}
-				displayResponse(msg.Content, opts.WordWrap, state)
-				fmt.Println()
-				fmt.Println()
-			}
-		}
-		return nil
-	})
+	return client.Chat(cmd.Context(), chatReq, func(api.ChatResponse) error { return nil })
 }
 
 func generateInteractive(cmd *cobra.Command, opts runOptions) error {
-	err := loadModel(cmd, &opts)
-	if err != nil {
-		return err
-	}
-
 	usage := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
 		fmt.Fprintln(os.Stderr, "  /set            Set session variables")
@@ -94,7 +76,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
 		fmt.Fprintln(os.Stderr, "  /set parameter ...     Set a parameter")
 		fmt.Fprintln(os.Stderr, "  /set system <string>   Set system message")
-		fmt.Fprintln(os.Stderr, "  /set template <string> Set prompt template")
 		fmt.Fprintln(os.Stderr, "  /set history           Enable history")
 		fmt.Fprintln(os.Stderr, "  /set nohistory         Disable history")
 		fmt.Fprintln(os.Stderr, "  /set wordwrap          Enable wordwrap")
@@ -140,6 +121,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /set parameter num_predict <int>      Max number of tokens to predict")
 		fmt.Fprintln(os.Stderr, "  /set parameter top_k <int>            Pick from top k num of tokens")
 		fmt.Fprintln(os.Stderr, "  /set parameter top_p <float>          Pick token based on sum of probabilities")
+		fmt.Fprintln(os.Stderr, "  /set parameter min_p <float>          Pick token based on top token probability * min_p")
 		fmt.Fprintln(os.Stderr, "  /set parameter num_ctx <int>          Set the context size")
 		fmt.Fprintln(os.Stderr, "  /set parameter temperature <float>    Set creativity level")
 		fmt.Fprintln(os.Stderr, "  /set parameter repeat_penalty <float> How strongly to penalize repetitions")
@@ -159,7 +141,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		return err
 	}
 
-	if envconfig.NoHistory {
+	if envconfig.NoHistory() {
 		scanner.HistoryDisable()
 	}
 
@@ -203,10 +185,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				opts.System = sb.String()
 				opts.Messages = append(opts.Messages, api.Message{Role: "system", Content: opts.System})
 				fmt.Println("Set system message.")
-				sb.Reset()
-			case MultilineTemplate:
-				opts.Template = sb.String()
-				fmt.Println("Set prompt template.")
 				sb.Reset()
 			}
 
@@ -326,17 +304,13 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					}
 					fmt.Printf("Set parameter '%s' to '%s'\n", args[2], strings.Join(params, ", "))
 					opts.Options[args[2]] = fp[args[2]]
-				case "system", "template":
+				case "system":
 					if len(args) < 3 {
 						usageSet()
 						continue
 					}
 
-					if args[1] == "system" {
-						multiline = MultilineSystem
-					} else if args[1] == "template" {
-						multiline = MultilineTemplate
-					}
+					multiline = MultilineSystem
 
 					line := strings.Join(args[2:], " ")
 					line, ok := strings.CutPrefix(line, `"""`)
@@ -356,23 +330,17 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						continue
 					}
 
-					if args[1] == "system" {
-						opts.System = sb.String() // for display in modelfile
-						newMessage := api.Message{Role: "system", Content: sb.String()}
-						// Check if the slice is not empty and the last message is from 'system'
-						if len(opts.Messages) > 0 && opts.Messages[len(opts.Messages)-1].Role == "system" {
-							// Replace the last message
-							opts.Messages[len(opts.Messages)-1] = newMessage
-						} else {
-							opts.Messages = append(opts.Messages, newMessage)
-						}
-						fmt.Println("Set system message.")
-						sb.Reset()
-					} else if args[1] == "template" {
-						opts.Template = sb.String()
-						fmt.Println("Set prompt template.")
-						sb.Reset()
+					opts.System = sb.String() // for display in modelfile
+					newMessage := api.Message{Role: "system", Content: sb.String()}
+					// Check if the slice is not empty and the last message is from 'system'
+					if len(opts.Messages) > 0 && opts.Messages[len(opts.Messages)-1].Role == "system" {
+						// Replace the last message
+						opts.Messages[len(opts.Messages)-1] = newMessage
+					} else {
+						opts.Messages = append(opts.Messages, newMessage)
 					}
+					fmt.Println("Set system message.")
+					sb.Reset()
 
 					sb.Reset()
 					continue
@@ -391,10 +359,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					return err
 				}
 				req := &api.ShowRequest{
-					Name:     opts.Model,
-					System:   opts.System,
-					Template: opts.Template,
-					Options:  opts.Options,
+					Name:    opts.Model,
+					System:  opts.System,
+					Options: opts.Options,
 				}
 				resp, err := client.Show(cmd.Context(), req)
 				if err != nil {
@@ -437,12 +404,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						fmt.Println("No system message was specified for this model.")
 					}
 				case "template":
-					switch {
-					case opts.Template != "":
-						fmt.Println(opts.Template + "\n")
-					case resp.Template != "":
+					if resp.Template != "" {
 						fmt.Println(resp.Template)
-					default:
+					} else {
 						fmt.Println("No prompt template was specified for this model.")
 					}
 				default:
@@ -526,35 +490,35 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 }
 
 func buildModelfile(opts runOptions) string {
-	var mf strings.Builder
-	model := opts.ParentModel
-	if model == "" {
-		model = opts.Model
-	}
-	fmt.Fprintf(&mf, "FROM %s\n", model)
+	var f parser.File
+	f.Commands = append(f.Commands, parser.Command{Name: "model", Args: cmp.Or(opts.ParentModel, opts.Model)})
+
 	if opts.System != "" {
-		fmt.Fprintf(&mf, "SYSTEM \"\"\"%s\"\"\"\n", opts.System)
+		f.Commands = append(f.Commands, parser.Command{Name: "system", Args: opts.System})
 	}
 
-	if opts.Template != "" {
-		fmt.Fprintf(&mf, "TEMPLATE \"\"\"%s\"\"\"\n", opts.Template)
-	}
-
-	keys := make([]string, 0)
-	for k := range opts.Options {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+	keys := maps.Keys(opts.Options)
+	slices.Sort(keys)
 	for _, k := range keys {
-		fmt.Fprintf(&mf, "PARAMETER %s %v\n", k, opts.Options[k])
+		v := opts.Options[k]
+		var cmds []parser.Command
+		switch t := v.(type) {
+		case []string:
+			for _, s := range t {
+				cmds = append(cmds, parser.Command{Name: k, Args: s})
+			}
+		default:
+			cmds = append(cmds, parser.Command{Name: k, Args: fmt.Sprintf("%v", t)})
+		}
+
+		f.Commands = append(f.Commands, cmds...)
 	}
-	fmt.Fprintln(&mf)
 
 	for _, msg := range opts.Messages {
-		fmt.Fprintf(&mf, "MESSAGE %s \"\"\"%s\"\"\"\n", msg.Role, msg.Content)
+		f.Commands = append(f.Commands, parser.Command{Name: "message", Args: fmt.Sprintf("%s: %s", msg.Role, msg.Content)})
 	}
 
-	return mf.String()
+	return f.String()
 }
 
 func normalizeFilePath(fp string) string {
@@ -640,7 +604,7 @@ func getImageData(filePath string) ([]byte, error) {
 	// Check if the file size exceeds 100MB
 	var maxSize int64 = 100 * 1024 * 1024 // 100MB in bytes
 	if info.Size() > maxSize {
-		return nil, fmt.Errorf("file size exceeds maximum limit (100MB)")
+		return nil, errors.New("file size exceeds maximum limit (100MB)")
 	}
 
 	buf = make([]byte, info.Size())

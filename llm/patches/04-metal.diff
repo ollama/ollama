@@ -1,7 +1,7 @@
-diff --git a/ggml-metal.m b/ggml-metal.m
+diff --git a/ggml/src/ggml-metal.m b/ggml/src/ggml-metal.m
 index 0207b787..b5e9884b 100644
---- a/ggml-metal.m
-+++ b/ggml-metal.m
+--- a/ggml/src/ggml-metal.m
++++ b/ggml/src/ggml-metal.m
 @@ -1396,27 +1396,23 @@ static enum ggml_status ggml_metal_graph_compute(
                          // to the matrix-vector kernel
                          int ne11_mm_min = 1;

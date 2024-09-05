@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,7 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
@@ -275,7 +275,6 @@ func Test_Routes(t *testing.T) {
 	}
 
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	envconfig.LoadConfig()
 
 	s := &Server{}
 	router := s.GenerateRoutes()
@@ -306,7 +305,6 @@ func Test_Routes(t *testing.T) {
 
 func TestCase(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	envconfig.LoadConfig()
 
 	cases := []string{
 		"mistral",
@@ -320,7 +318,7 @@ func TestCase(t *testing.T) {
 	var s Server
 	for _, tt := range cases {
 		t.Run(tt, func(t *testing.T) {
-			w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
+			w := createRequest(t, s.CreateHandler, api.CreateRequest{
 				Name:      tt,
 				Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
 				Stream:    &stream,
@@ -336,7 +334,7 @@ func TestCase(t *testing.T) {
 			}
 
 			t.Run("create", func(t *testing.T) {
-				w = createRequest(t, s.CreateModelHandler, api.CreateRequest{
+				w = createRequest(t, s.CreateHandler, api.CreateRequest{
 					Name:      strings.ToUpper(tt),
 					Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
 					Stream:    &stream,
@@ -352,7 +350,7 @@ func TestCase(t *testing.T) {
 			})
 
 			t.Run("pull", func(t *testing.T) {
-				w := createRequest(t, s.PullModelHandler, api.PullRequest{
+				w := createRequest(t, s.PullHandler, api.PullRequest{
 					Name:   strings.ToUpper(tt),
 					Stream: &stream,
 				})
@@ -367,7 +365,7 @@ func TestCase(t *testing.T) {
 			})
 
 			t.Run("copy", func(t *testing.T) {
-				w := createRequest(t, s.CopyModelHandler, api.CopyRequest{
+				w := createRequest(t, s.CopyHandler, api.CopyRequest{
 					Source:      tt,
 					Destination: strings.ToUpper(tt),
 				})
@@ -386,11 +384,10 @@ func TestCase(t *testing.T) {
 
 func TestShow(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
-	envconfig.LoadConfig()
 
 	var s Server
 
-	createRequest(t, s.CreateModelHandler, api.CreateRequest{
+	createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name: "show-model",
 		Modelfile: fmt.Sprintf(
 			"FROM %s\nFROM %s",
@@ -399,7 +396,7 @@ func TestShow(t *testing.T) {
 		),
 	})
 
-	w := createRequest(t, s.ShowModelHandler, api.ShowRequest{
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{
 		Name: "show-model",
 	})
 
@@ -418,5 +415,40 @@ func TestShow(t *testing.T) {
 
 	if resp.ProjectorInfo["general.architecture"] != "clip" {
 		t.Fatal("Expected projector architecture to be 'clip', but got", resp.ProjectorInfo["general.architecture"])
+	}
+}
+
+func TestNormalize(t *testing.T) {
+	type testCase struct {
+		input []float32
+	}
+
+	testCases := []testCase{
+		{input: []float32{1}},
+		{input: []float32{0, 1, 2, 3}},
+		{input: []float32{0.1, 0.2, 0.3}},
+		{input: []float32{-0.1, 0.2, 0.3, -0.4}},
+		{input: []float32{0, 0, 0}},
+	}
+
+	isNormalized := func(vec []float32) (res bool) {
+		sum := 0.0
+		for _, v := range vec {
+			sum += float64(v * v)
+		}
+		if math.Abs(sum-1) > 1e-6 {
+			return sum == 0
+		} else {
+			return true
+		}
+	}
+
+	for _, tc := range testCases {
+		t.Run("", func(t *testing.T) {
+			normalized := normalize(tc.input)
+			if !isNormalized(normalized) {
+				t.Errorf("Vector %v is not normalized", tc.input)
+			}
+		})
 	}
 }
