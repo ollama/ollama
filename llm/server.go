@@ -693,10 +693,11 @@ type completion struct {
 }
 
 type CompletionRequest struct {
-	Prompt  string
-	Format  string
-	Images  []ImageData
-	Options *api.Options
+	Prompt     string
+	Format     string
+	JsonSchema *api.JsonSchema
+	Images     []ImageData
+	Options    *api.Options
 }
 
 type CompletionResponse struct {
@@ -756,9 +757,13 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	}
 
 	if req.Format == "json" {
-		request["grammar"] = jsonGrammar
-		if !strings.Contains(strings.ToLower(req.Prompt), "json") {
-			slog.Warn("Prompt does not specify that the LLM should response in JSON, but JSON format is expected. For best results specify that JSON is expected in the system prompt.")
+		if req.JsonSchema != nil {
+			request["json_schema"] = req.JsonSchema.Schema
+		} else {
+			request["grammar"] = jsonGrammar
+			if !strings.Contains(strings.ToLower(req.Prompt), "json") {
+				slog.Warn("Prompt does not specify that the LLM should response in JSON, but JSON format is expected. For best results specify that JSON is expected in the system prompt.")
+			}
 		}
 	}
 
