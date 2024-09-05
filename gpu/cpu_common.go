@@ -1,21 +1,37 @@
 package gpu
 
 import (
-	"log/slog"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 
 	"golang.org/x/sys/cpu"
 )
 
-func GetCPUVariant() string {
+func GetCPUCapability() CPUCapability {
 	if cpu.X86.HasAVX2 {
-		slog.Debug("CPU has AVX2")
-		return "avx2"
+		return CPUCapabilityAVX2
 	}
 	if cpu.X86.HasAVX {
-		slog.Debug("CPU has AVX")
-		return "avx"
+		return CPUCapabilityAVX
 	}
-	slog.Debug("CPU does not have vector extensions")
 	// else LCD
-	return ""
+	return CPUCapabilityNone
+}
+
+func IsNUMA() bool {
+	if runtime.GOOS != "linux" {
+		// numa support in llama.cpp is linux only
+		return false
+	}
+	ids := map[string]interface{}{}
+	packageIds, _ := filepath.Glob("/sys/devices/system/cpu/cpu*/topology/physical_package_id")
+	for _, packageId := range packageIds {
+		id, err := os.ReadFile(packageId)
+		if err == nil {
+			ids[strings.TrimSpace(string(id))] = struct{}{}
+		}
+	}
+	return len(ids) > 1
 }

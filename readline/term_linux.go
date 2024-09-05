@@ -7,8 +7,10 @@ import (
 	"unsafe"
 )
 
-const tcgets = 0x5401
-const tcsets = 0x5402
+const (
+	tcgets = 0x5401
+	tcsets = 0x5402
+)
 
 func getTermios(fd uintptr) (*Termios, error) {
 	termios := new(Termios)

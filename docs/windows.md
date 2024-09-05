@@ -19,9 +19,11 @@ Logs will often be helpful in diagnosing the problem (see
 
 ## System Requirements
 
-* Windows 10 or newer, Home or Pro
+* Windows 10 22H2 or newer, Home or Pro
 * NVIDIA 452.39 or newer Drivers if you have an NVIDIA card
 * AMD Radeon Driver https://www.amd.com/en/support if you have a Radeon card
+
+Ollama uses unicode characters for progress indication, which may render as unknown squares in some older terminal fonts in Windows 10. If you see this, try changing your terminal font settings.
 
 ## API Access
 
@@ -39,8 +41,8 @@ server.
 Ollama on Windows stores files in a few different locations.  You can view them in
 the explorer window by hitting `<cmd>+R` and type in:
 - `explorer %LOCALAPPDATA%\Ollama` contains logs, and downloaded updates
-    - *app.log* contains logs from the GUI application
-    - *server.log* contains the server logs
+    - *app.log* contains most resent logs from the GUI application
+    - *server.log* contains the most recent server logs
     - *upgrade.log* contains log output for upgrades
 - `explorer %LOCALAPPDATA%\Programs\Ollama` contains the binaries (The installer adds this to your user PATH)
 - `explorer %HOMEPATH%\.ollama` contains models and configuration

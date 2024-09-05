@@ -47,6 +47,7 @@ typedef struct mem_info {
   char gpu_name[GPU_NAME_LEN];
   uint64_t total;
   uint64_t free;
+  uint64_t used;
 
   // Compute Capability
   int major; 
@@ -62,6 +63,7 @@ void cpu_check_ram(mem_info_t *resp);
 
 #include "gpu_info_cudart.h"
 #include "gpu_info_nvcuda.h"
+#include "gpu_info_nvml.h"
 #include "gpu_info_oneapi.h"
 
 #endif  // __GPU_INFO_H__

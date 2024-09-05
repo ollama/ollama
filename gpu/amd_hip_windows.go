@@ -1,6 +1,7 @@
 package gpu
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"syscall"
@@ -33,9 +34,10 @@ type HipLib struct {
 }
 
 func NewHipLib() (*HipLib, error) {
-	h, err := windows.LoadLibrary("amdhip64.dll")
+	// At runtime we depend on v6, so discover GPUs with the same library for a consistent set of GPUs
+	h, err := windows.LoadLibrary("amdhip64_6.dll")
 	if err != nil {
-		return nil, fmt.Errorf("unable to load amdhip64.dll: %w", err)
+		return nil, fmt.Errorf("unable to load amdhip64_6.dll, please make sure to upgrade to the latest amd driver: %w", err)
 	}
 	hl := &HipLib{}
 	hl.dll = h
@@ -75,7 +77,7 @@ func (hl *HipLib) Release() {
 
 func (hl *HipLib) AMDDriverVersion() (driverMajor, driverMinor int, err error) {
 	if hl.dll == 0 {
-		return 0, 0, fmt.Errorf("dll has been unloaded")
+		return 0, 0, errors.New("dll has been unloaded")
 	}
 	var version int
 	status, _, err := syscall.SyscallN(hl.hipDriverGetVersion, uintptr(unsafe.Pointer(&version)))
@@ -84,9 +86,8 @@ func (hl *HipLib) AMDDriverVersion() (driverMajor, driverMinor int, err error) {
 	}
 
 	slog.Debug("hipDriverGetVersion", "version", version)
-	// TODO - this isn't actually right, but the docs claim hipDriverGetVersion isn't accurate anyway...
-	driverMajor = version / 1000
-	driverMinor = (version - (driverMajor * 1000)) / 10
+	driverMajor = version / 10000000
+	driverMinor = (version - (driverMajor * 10000000)) / 100000
 
 	return driverMajor, driverMinor, nil
 }
@@ -110,7 +111,7 @@ func (hl *HipLib) HipGetDeviceCount() int {
 
 func (hl *HipLib) HipSetDevice(device int) error {
 	if hl.dll == 0 {
-		return fmt.Errorf("dll has been unloaded")
+		return errors.New("dll has been unloaded")
 	}
 	status, _, err := syscall.SyscallN(hl.hipSetDevice, uintptr(device))
 	if status != hipSuccess {
@@ -121,7 +122,7 @@ func (hl *HipLib) HipSetDevice(device int) error {
 
 func (hl *HipLib) HipGetDeviceProperties(device int) (*hipDevicePropMinimal, error) {
 	if hl.dll == 0 {
-		return nil, fmt.Errorf("dll has been unloaded")
+		return nil, errors.New("dll has been unloaded")
 	}
 	var props hipDevicePropMinimal
 	status, _, err := syscall.SyscallN(hl.hipGetDeviceProperties, uintptr(unsafe.Pointer(&props)), uintptr(device))
@@ -134,7 +135,7 @@ func (hl *HipLib) HipGetDeviceProperties(device int) (*hipDevicePropMinimal, err
 // free, total, err
 func (hl *HipLib) HipMemGetInfo() (uint64, uint64, error) {
 	if hl.dll == 0 {
-		return 0, 0, fmt.Errorf("dll has been unloaded")
+		return 0, 0, errors.New("dll has been unloaded")
 	}
 	var totalMemory uint64
 	var freeMemory uint64

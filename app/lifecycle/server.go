@@ -54,8 +54,8 @@ func start(ctx context.Context, command string) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("failed to spawn server stderr pipe: %w", err)
 	}
 
-	// TODO - rotation
-	logFile, err := os.OpenFile(ServerLogFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0755)
+	rotateLogs(ServerLogFile)
+	logFile, err := os.OpenFile(ServerLogFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o755)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create server log: %w", err)
 	}

@@ -4,7 +4,6 @@ package model
 
 import (
 	"cmp"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -92,7 +91,6 @@ type Name struct {
 	Namespace string
 	Model     string
 	Tag       string
-	RawDigest string
 }
 
 // ParseName parses and assembles a Name from a name string. The
@@ -143,11 +141,6 @@ func ParseName(s string) Name {
 func ParseNameBare(s string) Name {
 	var n Name
 	var promised bool
-
-	s, n.RawDigest, promised = cutLast(s, "@")
-	if promised && n.RawDigest == "" {
-		n.RawDigest = MissingPart
-	}
 
 	// "/" is an illegal tag character, so we can use it to split the host
 	if strings.LastIndex(s, ":") > strings.LastIndex(s, "/") {
@@ -223,14 +216,10 @@ func (n Name) String() string {
 		b.WriteByte(':')
 		b.WriteString(n.Tag)
 	}
-	if n.RawDigest != "" {
-		b.WriteByte('@')
-		b.WriteString(n.RawDigest)
-	}
 	return b.String()
 }
 
-// DisplayShort returns a short string version of the name.
+// DisplayShortest returns a short string version of the name.
 func (n Name) DisplayShortest() string {
 	var sb strings.Builder
 
@@ -251,23 +240,25 @@ func (n Name) DisplayShortest() string {
 	return sb.String()
 }
 
-func IsValidNamespace(namespace string) bool {
-	return isValidPart(kindNamespace, namespace)
+// IsValidNamespace reports whether the provided string is a valid
+// namespace.
+func IsValidNamespace(s string) bool {
+	return isValidPart(kindNamespace, s)
 }
 
 // IsValid reports whether all parts of the name are present and valid. The
 // digest is a special case, and is checked for validity only if present.
+//
+// Note: The digest check has been removed as is planned to be added back in
+// at a later time.
 func (n Name) IsValid() bool {
-	if n.RawDigest != "" && !isValidPart(kindDigest, n.RawDigest) {
-		return false
-	}
 	return n.IsFullyQualified()
 }
 
 // IsFullyQualified returns true if all parts of the name are present and
 // valid without the digest.
 func (n Name) IsFullyQualified() bool {
-	var parts = []string{
+	parts := []string{
 		n.Host,
 		n.Namespace,
 		n.Model,
@@ -370,58 +361,4 @@ func cutPromised(s, sep string) (before, after string, ok bool) {
 		return before, after, false
 	}
 	return cmp.Or(before, MissingPart), cmp.Or(after, MissingPart), true
-}
-
-type DigestType byte
-
-const (
-	DigestTypeInvalid DigestType = iota
-	DigestTypeSHA256
-)
-
-func (t DigestType) String() string {
-	switch t {
-	case DigestTypeSHA256:
-		return "sha256"
-	default:
-		return "invalid"
-	}
-}
-
-type Digest struct {
-	Type DigestType
-	Sum  [32]byte
-}
-
-func ParseDigest(s string) (Digest, error) {
-	i := strings.IndexAny(s, "-:")
-	if i < 0 {
-		return Digest{}, fmt.Errorf("invalid digest %q", s)
-	}
-	typ, encSum := s[:i], s[i+1:]
-	if typ != "sha256" {
-		return Digest{}, fmt.Errorf("unsupported digest type %q", typ)
-	}
-	d := Digest{
-		Type: DigestTypeSHA256,
-	}
-	n, err := hex.Decode(d.Sum[:], []byte(encSum))
-	if err != nil {
-		return Digest{}, err
-	}
-	if n != 32 {
-		return Digest{}, fmt.Errorf("digest %q decoded to %d bytes; want 32", encSum, n)
-	}
-	return d, nil
-}
-
-func (d Digest) String() string {
-	if d.Type == DigestTypeInvalid {
-		return ""
-	}
-	return fmt.Sprintf("sha256-%x", d.Sum)
-}
-
-func (d Digest) IsValid() bool {
-	return d.Type != DigestTypeInvalid
 }

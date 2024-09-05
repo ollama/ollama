@@ -36,6 +36,8 @@ type ggla struct {
 
 	kv      KV
 	tensors []*Tensor
+
+	tensorOffset uint64
 }
 
 func newGGLA(container *containerGGLA) *ggla {
@@ -50,10 +52,13 @@ func (llm *ggla) KV() KV {
 }
 
 func (llm *ggla) Tensors() Tensors {
-	return llm.tensors
+	return Tensors{
+		Items:  llm.tensors,
+		Offset: llm.tensorOffset,
+	}
 }
 
-func (llm *ggla) decode(rs io.ReadSeeker) error {
+func (llm *ggla) decode(rs io.ReadSeeker) (retErr error) {
 	var r uint32
 	if err := binary.Read(rs, binary.LittleEndian, &r); err != nil {
 		return err
@@ -66,11 +71,27 @@ func (llm *ggla) decode(rs io.ReadSeeker) error {
 	}
 	llm.kv["alpha"] = alpha
 
+	offset, err := rs.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return err
+	}
+
+	llm.tensorOffset = uint64(offset)
+
 	for {
 		var dims uint32
 		if err := binary.Read(rs, binary.LittleEndian, &dims); err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
 			return err
 		}
+
+		defer func() {
+			if errors.Is(retErr, io.EOF) {
+				retErr = io.ErrUnexpectedEOF
+			}
+		}()
 
 		var namesize uint32
 		if err := binary.Read(rs, binary.LittleEndian, &namesize); err != nil {
@@ -108,7 +129,7 @@ func (llm *ggla) decode(rs io.ReadSeeker) error {
 			return err
 		}
 
-		if _, err := rs.Seek((offset+31)&-32, io.SeekStart); err != nil {
+		if _, err := rs.Seek((offset+31)&-32-offset, io.SeekCurrent); err != nil {
 			return err
 		}
 

@@ -1,0 +1,8 @@
+{
+  "stop": [
+    "<|end|>",
+    "<|system|>",
+    "<|user|>",
+    "<|assistant|>"
+  ]
+}
