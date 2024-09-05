@@ -382,6 +382,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Gollm](https://docs.gollm.co/examples/ollama-example)
 - [Ollamaclient for Golang](https://github.com/xyproto/ollamaclient)
 - [High-level function abstraction in Go](https://gitlab.com/tozd/go/fun)
+- [Ollama PHP](https://github.com/ArdaGnsrn/ollama-php)
 
 ### Mobile
 
