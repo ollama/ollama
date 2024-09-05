@@ -79,7 +79,7 @@ type ChatCompletionRequest struct {
 	Stop             any             `json:"stop"`
 	Temperature      *float64        `json:"temperature"`
 	FrequencyPenalty *float64        `json:"frequency_penalty"`
-	PresencePenalty  *float64        `json:"presence_penalty_penalty"`
+	PresencePenalty  *float64        `json:"presence_penalty"`
 	TopP             *float64        `json:"top_p"`
 	ResponseFormat   *ResponseFormat `json:"response_format"`
 	Tools            []api.Tool      `json:"tools"`
