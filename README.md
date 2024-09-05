@@ -335,6 +335,9 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [gollama](https://github.com/sammcj/gollama)
 - [Ollama eBook Summary](https://github.com/cognitivetech/ollama-ebook-summary/)
 
+### Apple Vision Pro
+- [Enchanted](https://github.com/AugustDev/enchanted)
+
 ### Database
 
 - [MindsDB](https://github.com/mindsdb/mindsdb/blob/staging/mindsdb/integrations/handlers/ollama_handler/README.md) (Connects Ollama models with nearly 200 data platforms and apps)
