@@ -49,12 +49,19 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 		keys := maps.Keys(headers)
 		slices.Sort(keys)
 
+		names := map[string]bool{}
+
 		for _, key := range keys {
 			if value := headers[key]; value.Type != "" {
 				// bitsandbytes quantized models are unsupported
 				if len(value.Shape) == 0 {
 					return nil, errors.New("unsupported safetensors model")
 				}
+				ggufName := replacer.Replace(key)
+				if _, ok := names[ggufName]; ok {
+					return nil, errors.New(fmt.Sprintf("duplicate tensor name '%s' was found for this model", ggufName))
+				}
+				names[ggufName] = true
 				ts = append(ts, safetensor{
 					fs:     fsys,
 					path:   p,
@@ -62,7 +69,7 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 					offset: safetensorsPad(n, value.Offsets[0]),
 					size:   safetensorsPad(n, value.Offsets[1]) - safetensorsPad(n, value.Offsets[0]),
 					tensorBase: &tensorBase{
-						name:  replacer.Replace(key),
+						name:  ggufName,
 						shape: value.Shape,
 					},
 				})
