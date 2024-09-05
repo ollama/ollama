@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -107,25 +108,27 @@ func TestDurationMarshalUnmarshal(t *testing.T) {
 }
 
 func TestUseMmapParsingFromJSON(t *testing.T) {
+	tr := true
+	fa := false
 	tests := []struct {
 		name string
 		req  string
-		exp  TriState
+		exp  *bool
 	}{
 		{
 			name: "Undefined",
 			req:  `{ }`,
-			exp:  TriStateUndefined,
+			exp:  nil,
 		},
 		{
 			name: "True",
 			req:  `{ "use_mmap": true }`,
-			exp:  TriStateTrue,
+			exp:  &tr,
 		},
 		{
 			name: "False",
 			req:  `{ "use_mmap": false }`,
-			exp:  TriStateFalse,
+			exp:  &fa,
 		},
 	}
 
@@ -139,5 +142,92 @@ func TestUseMmapParsingFromJSON(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, test.exp, opts.UseMMap)
 		})
+	}
+}
+
+func TestUseMmapFormatParams(t *testing.T) {
+	tr := true
+	fa := false
+	tests := []struct {
+		name string
+		req  map[string][]string
+		exp  *bool
+		err  error
+	}{
+		{
+			name: "True",
+			req: map[string][]string{
+				"use_mmap": {"true"},
+			},
+			exp: &tr,
+			err: nil,
+		},
+		{
+			name: "False",
+			req: map[string][]string{
+				"use_mmap": {"false"},
+			},
+			exp: &fa,
+			err: nil,
+		},
+		{
+			name: "Numeric True",
+			req: map[string][]string{
+				"use_mmap": {"1"},
+			},
+			exp: &tr,
+			err: nil,
+		},
+		{
+			name: "Numeric False",
+			req: map[string][]string{
+				"use_mmap": {"0"},
+			},
+			exp: &fa,
+			err: nil,
+		},
+		{
+			name: "invalid string",
+			req: map[string][]string{
+				"use_mmap": {"foo"},
+			},
+			exp: nil,
+			err: errors.New("invalid bool value [foo]"),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resp, err := FormatParams(test.req)
+			require.Equal(t, test.err, err)
+			respVal, ok := resp["use_mmap"]
+			if test.exp != nil {
+				assert.True(t, ok, "resp: %v", resp)
+				assert.Equal(t, *test.exp, *respVal.(*bool))
+			}
+		})
+	}
+}
+
+func TestMessage_UnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{`{"role": "USER", "content": "Hello!"}`, "user"},
+		{`{"role": "System", "content": "Initialization complete."}`, "system"},
+		{`{"role": "assistant", "content": "How can I help you?"}`, "assistant"},
+		{`{"role": "TOOl", "content": "Access granted."}`, "tool"},
+	}
+
+	for _, test := range tests {
+		var msg Message
+		if err := json.Unmarshal([]byte(test.input), &msg); err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		if msg.Role != test.expected {
+			t.Errorf("role not lowercased: got %v, expected %v", msg.Role, test.expected)
+		}
 	}
 }

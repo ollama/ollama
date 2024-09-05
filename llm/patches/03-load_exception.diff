@@ -1,17 +1,8 @@
-From 544a2d2e646d39e878d87dfbb3398a356bc560ab Mon Sep 17 00:00:00 2001
-From: Michael Yang <mxyng@pm.me>
-Date: Thu, 23 May 2024 11:18:45 -0700
-Subject: [PATCH] throw exception on load errors
-
----
- llama.cpp | 25 ++++++++++++++++---------
- 1 file changed, 16 insertions(+), 9 deletions(-)
-
-diff --git a/llama.cpp b/llama.cpp
-index 15c66077..8ba90b6a 100644
---- a/llama.cpp
-+++ b/llama.cpp
-@@ -6346,7 +6346,7 @@ static int llama_model_load(const std::string & fname, llama_model & model, llam
+diff --git a/src/llama.cpp b/src/llama.cpp
+index 73f52435..58a00fb1 100644
+--- a/src/llama.cpp
++++ b/src/llama.cpp
+@@ -7241,7 +7241,7 @@ static int llama_model_load(const std::string & fname, llama_model & model, llam
          }
      } catch (const std::exception & err) {
          LLAMA_LOG_ERROR("%s: error loading model: %s\n", __func__, err.what());
@@ -20,7 +11,7 @@ index 15c66077..8ba90b6a 100644
      }
  
      return 0;
-@@ -15600,16 +15600,23 @@ struct llama_model * llama_load_model_from_file(
+@@ -17564,16 +17564,23 @@ struct llama_model * llama_load_model_from_file(
          }
          model->rpc_servers.push_back(servers);
      }
@@ -52,6 +43,3 @@ index 15c66077..8ba90b6a 100644
      }
  
      return model;
--- 
-2.45.1
-
