@@ -193,6 +193,11 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						break
 					}
 
+					// Embedding models should always be loaded with parallel=1
+					if pending.model.CheckCapabilities(CapabilityCompletion) != nil {
+						numParallel = 1
+					}
+
 					// Evaluate if the model will fit in the available system memory, or if we should unload a model first
 					if len(gpus) == 1 && gpus[0].Library == "cpu" {
 						// simplifying assumption of defaultParallel when in CPU mode
@@ -734,7 +739,10 @@ func pickBestFullFitByLibrary(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoL
 
 // If multiple Libraries are detected, pick the Library which loads the most layers for the model
 func pickBestPartialFitByLibrary(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numParallel *int) gpu.GpuInfoList {
-	*numParallel = 1
+	if *numParallel <= 0 {
+		*numParallel = 1
+		req.opts.NumCtx = req.origNumCtx
+	}
 	byLibrary := gpus.ByLibrary()
 	if len(byLibrary) <= 1 {
 		return gpus

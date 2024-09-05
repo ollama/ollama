@@ -117,7 +117,6 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 
 	require.NoError(t, llm.WriteGGUF(f, llm.KV{
 		"general.architecture":          "llama",
-		"general.name":                  "name",
 		"llama.context_length":          uint32(32),
 		"llama.embedding_length":        uint32(4096),
 		"llama.block_count":             uint32(1),

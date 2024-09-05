@@ -6,6 +6,7 @@
 
 set -ex
 set -o pipefail
+compress_pids=""
 echo "Starting darwin generate script"
 source $(dirname $0)/gen_common.sh
 init_vars
@@ -18,7 +19,7 @@ sign() {
     fi
 }
 
-COMMON_DARWIN_DEFS="-DBUILD_SHARED_LIBS=off -DCMAKE_OSX_DEPLOYMENT_TARGET=11.3 -DLLAMA_METAL_MACOSX_VERSION_MIN=11.3 -DCMAKE_SYSTEM_NAME=Darwin -DGGML_METAL_EMBED_LIBRARY=on -DGGML_OPENMP=off"
+COMMON_DARWIN_DEFS="-DBUILD_SHARED_LIBS=off -DCMAKE_OSX_DEPLOYMENT_TARGET=11.3 -DGGML_METAL_MACOSX_VERSION_MIN=11.3 -DCMAKE_SYSTEM_NAME=Darwin -DGGML_METAL_EMBED_LIBRARY=on -DGGML_OPENMP=off"
 
 case "${GOARCH}" in
 "amd64")
@@ -98,4 +99,5 @@ case "${GOARCH}" in
 esac
 
 cleanup
+wait_for_compress
 echo "go generate completed.  LLM runners: $(cd ${BUILD_DIR}/..; echo *)"

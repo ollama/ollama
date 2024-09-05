@@ -3,6 +3,7 @@ package convert
 import (
 	"cmp"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/pdevine/tensor"
@@ -11,8 +12,8 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-type llama struct {
-	Parameters
+type llamaModel struct {
+	ModelParameters
 	NLayers               uint32  `json:"n_layers"`
 	NumHiddenLayers       uint32  `json:"num_hidden_layers"`
 	NLayer                uint32  `json:"n_layer"`
@@ -27,8 +28,14 @@ type llama struct {
 	NumKeyValueHeads      uint32  `json:"num_key_value_heads"`
 	RopeTheta             float32 `json:"rope_theta"`
 	RopeScaling           struct {
-		Type   string  `json:"type"`
-		Factor float32 `json:"factor"`
+		Type                            string  `json:"type"`
+		RopeType                        string  `json:"rope_type"`
+		Factor                          float32 `json:"factor"`
+		LowFrequencyFactor              float32 `json:"low_freq_factor"`
+		HighFrequencyFactor             float32 `json:"high_freq_factor"`
+		OriginalMaxPositionalEmbeddings uint32  `json:"original_max_positional_embeddings"`
+
+		factors ropeFactor
 	} `json:"rope_scaling"`
 	RMSNormEPS       float32 `json:"rms_norm_eps"`
 	LayerNormEPS     float32 `json:"layer_norm_eps"`
@@ -37,12 +44,11 @@ type llama struct {
 	HeadDim          uint32  `json:"head_dim"`
 }
 
-var _ Converter = (*llama)(nil)
+var _ ModelConverter = (*llamaModel)(nil)
 
-func (p *llama) KV(t *Tokenizer) llm.KV {
-	kv := p.Parameters.KV(t)
+func (p *llamaModel) KV(t *Tokenizer) llm.KV {
+	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "llama"
-	kv["general.name"] = "llama"
 	kv["llama.vocab_size"] = p.VocabSize
 
 	kv["llama.block_count"] = cmp.Or(p.NLayers, p.NumHiddenLayers, p.NLayer)
@@ -71,6 +77,27 @@ func (p *llama) KV(t *Tokenizer) llm.KV {
 	if p.RopeScaling.Type == "linear" {
 		kv["llama.rope.scaling.type"] = p.RopeScaling.Type
 		kv["llama.rope.scaling.factor"] = p.RopeScaling.Factor
+	} else if p.RopeScaling.RopeType == "llama3" {
+		dim := p.HiddenSize / p.NumAttentionHeads
+		for i := uint32(0); i < dim; i += 2 {
+			factor := cmp.Or(p.RopeScaling.Factor, 8.0)
+			factorLow := cmp.Or(p.RopeScaling.LowFrequencyFactor, 1.0)
+			factorHigh := cmp.Or(p.RopeScaling.HighFrequencyFactor, 4.0)
+
+			original := cmp.Or(p.RopeScaling.OriginalMaxPositionalEmbeddings, 8192)
+			lambdaLow := float32(original) / factorLow
+			lambdaHigh := float32(original) / factorHigh
+
+			lambda := 2 * math.Pi * math.Pow(float64(p.RopeTheta), float64(i)/float64(dim))
+			if lambda < float64(lambdaHigh) {
+				p.RopeScaling.factors = append(p.RopeScaling.factors, 1.0)
+			} else if lambda > float64(lambdaLow) {
+				p.RopeScaling.factors = append(p.RopeScaling.factors, factor)
+			} else {
+				smooth := (float32(original)/float32(lambda) - factorLow) / (factorHigh - factorLow)
+				p.RopeScaling.factors = append(p.RopeScaling.factors, 1.0/((1-smooth)/factor+smooth))
+			}
+		}
 	}
 
 	if p.NumKeyValueHeads > 0 {
@@ -93,17 +120,26 @@ func (p *llama) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *llama) Tensors(ts []Tensor) []llm.Tensor {
+func (p *llamaModel) Tensors(ts []Tensor) []llm.Tensor {
 	var out []llm.Tensor
+
+	if p.RopeScaling.factors != nil {
+		out = append(out, llm.Tensor{
+			Name:     "rope_freqs.weight",
+			Kind:     0,
+			Shape:    []uint64{uint64(len(p.RopeScaling.factors))},
+			WriterTo: p.RopeScaling.factors,
+		})
+	}
+
 	for _, t := range ts {
-		name := p.tensorName(t.Name())
-		if strings.HasSuffix(name, "attn_q.weight") ||
-			strings.HasSuffix(name, "attn_k.weight") {
+		if strings.HasSuffix(t.Name(), "attn_q.weight") ||
+			strings.HasSuffix(t.Name(), "attn_k.weight") {
 			t.SetRepacker(p.repack)
 		}
 
 		out = append(out, llm.Tensor{
-			Name:     name,
+			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),
 			WriterTo: t,
@@ -113,8 +149,8 @@ func (p *llama) Tensors(ts []Tensor) []llm.Tensor {
 	return out
 }
 
-func (p *llama) tensorName(n string) string {
-	return strings.NewReplacer(
+func (p *llamaModel) Replacements() []string {
+	return []string{
 		"lm_head", "output",
 		"model.embed_tokens", "token_embd",
 		"model.norm", "output_norm",
@@ -128,21 +164,19 @@ func (p *llama) tensorName(n string) string {
 		"mlp.down_proj", "ffn_down",
 		"mlp.up_proj", "ffn_up",
 		"post_attention_layernorm", "ffn_norm",
-		// mixtral
-		"block_sparse_moe.gate", "ffn_gate_inp",
-	).Replace(n)
+	}
 }
 
-func (p *llama) repack(name string, data []float32, shape []uint64) ([]float32, error) {
+func (p *llamaModel) repack(name string, data []float32, shape []uint64) ([]float32, error) {
 	var dims []int
 	for _, dim := range shape {
 		dims = append(dims, int(dim))
 	}
 
 	var heads uint32
-	if strings.HasSuffix(name, "q_proj.weight") {
+	if strings.HasSuffix(name, "attn_q.weight") {
 		heads = p.NumAttentionHeads
-	} else if strings.HasSuffix(name, "k_proj.weight") {
+	} else if strings.HasSuffix(name, "attn_k.weight") {
 		heads = cmp.Or(p.NumKeyValueHeads, p.NumAttentionHeads)
 	} else {
 		return nil, fmt.Errorf("unknown tensor for repack: %s", name)

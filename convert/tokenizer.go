@@ -1,7 +1,6 @@
 package convert
 
 import (
-	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +10,8 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+
+	"golang.org/x/exp/maps"
 )
 
 const (
@@ -99,8 +100,21 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 		}
 
 		if template, ok := p["chat_template"]; ok {
-			if err := json.Unmarshal(template, &t.Template); err != nil {
-				return nil, err
+			var s []struct {
+				Name     string `json:"name"`
+				Template string `json:"template"`
+			}
+			if err := json.Unmarshal(template, &t.Template); err == nil {
+				// noop
+			} else if err := json.Unmarshal(template, &s); err == nil {
+				for _, e := range s {
+					if e.Name == "default" {
+						t.Template = e.Template
+						break
+					}
+				}
+			} else {
+				return nil, fmt.Errorf("invalid chat_template: %w", err)
 			}
 		}
 
@@ -140,7 +154,6 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 }
 
 type tokenizer struct {
-	Version     string  `json:"version"`
 	AddedTokens []token `json:"added_tokens"`
 	Model       struct {
 		Type   string         `json:"type"`
@@ -184,32 +197,32 @@ func parseVocabularyFromTokenizer(fsys fs.FS) (*Vocabulary, error) {
 		return nil, err
 	}
 
-	var tokens []token
+	tokens := make(map[int]token, len(t.Model.Vocab))
 	for k, v := range t.Model.Vocab {
-		tokens = append(tokens, token{
+		tokens[v] = token{
 			ID:      v,
 			Content: k,
-		})
+		}
 	}
 
-	for _, t := range t.AddedTokens {
-		t.UserDefined = true
-		tokens = append(tokens, t)
+	for _, token := range t.AddedTokens {
+		token.UserDefined = true
+		tokens[token.ID] = token
 	}
 
-	slices.SortFunc(tokens, func(i, j token) int {
-		return cmp.Compare(i.ID, j.ID)
-	})
+	keys := maps.Keys(tokens)
+	slices.Sort(keys)
 
 	v := Vocabulary{Model: "gpt2"}
-	for _, t := range tokens {
-		v.Tokens = append(v.Tokens, t.Content)
-		v.Scores = append(v.Scores, float32(t.ID))
+	for _, k := range keys {
+		token := tokens[k]
+		v.Tokens = append(v.Tokens, token.Content)
+		v.Scores = append(v.Scores, float32(token.ID))
 
 		switch {
-		case t.Special:
+		case token.Special:
 			v.Types = append(v.Types, tokenTypeControl)
-		case t.UserDefined:
+		case token.UserDefined:
 			v.Types = append(v.Types, tokenTypeUserDefined)
 		default:
 			v.Types = append(v.Types, tokenTypeNormal)
@@ -238,7 +251,7 @@ func parseVocabulary(fsys fs.FS) (*Vocabulary, error) {
 		return pattern.Func(fsys)
 	}
 
-	return nil, errors.New("unknown tensor format")
+	return nil, errors.New("unknown tokenizer format")
 }
 
 type SpecialVocabulary struct {

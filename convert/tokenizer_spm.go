@@ -15,6 +15,11 @@ import (
 )
 
 func parseSentencePiece(fsys fs.FS) (*Vocabulary, error) {
+	ast, err := parseAdditionalSpecialTokens(fsys)
+	if err != nil {
+		return nil, err
+	}
+
 	bts, err := fs.ReadFile(fsys, "tokenizer.model")
 	if err != nil {
 		return nil, err
@@ -37,7 +42,12 @@ func parseSentencePiece(fsys fs.FS) (*Vocabulary, error) {
 			sentencepiece.ModelProto_SentencePiece_BYTE:
 			v.Types = append(v.Types, int32(t))
 		default:
-			v.Types = append(v.Types, int32(sentencepiece.ModelProto_SentencePiece_NORMAL))
+			tt := int32(sentencepiece.ModelProto_SentencePiece_NORMAL)
+			if slices.Contains(ast, piece.GetPiece()) {
+				tt = int32(sentencepiece.ModelProto_SentencePiece_CONTROL)
+			}
+
+			v.Types = append(v.Types, tt)
 		}
 	}
 
@@ -80,4 +90,24 @@ func parseSentencePiece(fsys fs.FS) (*Vocabulary, error) {
 	}
 
 	return &v, nil
+}
+
+func parseAdditionalSpecialTokens(fsys fs.FS) ([]string, error) {
+	f, err := fsys.Open("special_tokens_map.json")
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var m struct {
+		AdditionalSpecialTokens []string `json:"additional_special_tokens"`
+	}
+
+	if err := json.NewDecoder(f).Decode(&m); err != nil {
+		return nil, err
+	}
+
+	return m.AdditionalSpecialTokens, nil
 }

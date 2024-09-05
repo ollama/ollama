@@ -3,12 +3,13 @@ package convert
 import (
 	"io"
 	"io/fs"
+	"strings"
 
 	"github.com/nlpodyssey/gopickle/pytorch"
 	"github.com/nlpodyssey/gopickle/types"
 )
 
-func parseTorch(fsys fs.FS, ps ...string) ([]Tensor, error) {
+func parseTorch(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]Tensor, error) {
 	var ts []Tensor
 	for _, p := range ps {
 		pt, err := pytorch.Load(p)
@@ -27,7 +28,7 @@ func parseTorch(fsys fs.FS, ps ...string) ([]Tensor, error) {
 			ts = append(ts, torch{
 				storage: t.(*pytorch.Tensor).Source,
 				tensorBase: &tensorBase{
-					name:  k.(string),
+					name:  replacer.Replace(k.(string)),
 					shape: shape,
 				},
 			})

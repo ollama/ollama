@@ -11,8 +11,8 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-type phi3 struct {
-	Parameters
+type phi3Model struct {
+	ModelParameters
 	NumHiddenLayers   uint32  `json:"num_hidden_layers"`
 	NLayers           uint32  `json:"n_layers"`
 	HiddenSize        uint32  `json:"hidden_size"`
@@ -35,12 +35,11 @@ type phi3 struct {
 	SlidingWindow                 uint32  `json:"sliding_window"`
 }
 
-var _ Converter = (*phi3)(nil)
+var _ ModelConverter = (*phi3Model)(nil)
 
-func (p *phi3) KV(t *Tokenizer) llm.KV {
-	kv := p.Parameters.KV(t)
+func (p *phi3Model) KV(t *Tokenizer) llm.KV {
+	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "phi3"
-	kv["general.name"] = "phi3"
 	kv["phi3.context_length"] = p.MaxPositionEmbeddings
 	kv["phi3.embedding_length"] = cmp.Or(p.HiddenSize, p.NEmbd)
 	kv["phi3.feed_forward_length"] = p.IntermediateSize
@@ -69,13 +68,12 @@ func (p *phi3) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *phi3) Tensors(ts []Tensor) []llm.Tensor {
+func (p *phi3Model) Tensors(ts []Tensor) []llm.Tensor {
 	var addRopeFactors sync.Once
 
 	out := make([]llm.Tensor, 0, len(ts)+2)
 	for _, t := range ts {
-		name := p.tensorName(t.Name())
-		if strings.HasPrefix(name, "blk.0.") {
+		if strings.HasPrefix(t.Name(), "blk.0.") {
 			addRopeFactors.Do(func() {
 				out = append(out, llm.Tensor{
 					Name:     "rope_factors_long.weight",
@@ -92,7 +90,7 @@ func (p *phi3) Tensors(ts []Tensor) []llm.Tensor {
 		}
 
 		out = append(out, llm.Tensor{
-			Name:     name,
+			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),
 			WriterTo: t,
@@ -102,8 +100,8 @@ func (p *phi3) Tensors(ts []Tensor) []llm.Tensor {
 	return out
 }
 
-func (p *phi3) tensorName(n string) string {
-	return strings.NewReplacer(
+func (p *phi3Model) Replacements() []string {
+	return []string{
 		"lm_head", "output",
 		"model.embed_tokens", "token_embd",
 		"model.norm", "output_norm",
@@ -114,7 +112,7 @@ func (p *phi3) tensorName(n string) string {
 		"mlp.down_proj", "ffn_down",
 		"mlp.gate_up_proj", "ffn_up",
 		"post_attention_layernorm", "ffn_norm",
-	).Replace(n)
+	}
 }
 
 type ropeFactor []float32

@@ -98,7 +98,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		systemTotalMemory = systemMemInfo.TotalMemory
 		systemFreeMemory = systemMemInfo.FreeMemory
 		systemSwapFreeMemory = systemMemInfo.FreeSwap
-		slog.Debug("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
+		slog.Info("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
 	}
 
 	// If the user wants zero GPU layers, reset the gpu list to be CPU/system ram info
@@ -258,7 +258,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--mlock")
 	}
 
-	if gpu.IsNUMA() {
+	if gpu.IsNUMA() && gpus[0].Library == "cpu" {
 		numaMode := "distribute"
 		if runtime.GOOS == "linux" {
 			if _, err := exec.LookPath("numactl"); err == nil {
@@ -306,20 +306,18 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		if runtime.GOOS == "windows" {
 			pathEnv = "PATH"
 		}
-		// prepend the server directory to LD_LIBRARY_PATH/PATH and the parent dir for common dependencies
-		libraryPaths := []string{dir, filepath.Dir(dir)}
+		// Start with the server directory for the LD_LIBRARY_PATH/PATH
+		libraryPaths := []string{dir}
 
 		if libraryPath, ok := os.LookupEnv(pathEnv); ok {
-			// Append our runner directory to the path
-			// This will favor system libraries over our bundled library dependencies
+			// favor our bundled library dependencies over system libraries
 			libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
 		}
 
 		// Note: we always put the dependency path first
-		// since this was the exact version we verified for AMD GPUs
-		// and we favor what the user had in their path
+		// since this was the exact version we compiled/linked against
 		if gpus[0].DependencyPath != "" {
-			// TODO refine for multi-gpu support
+			// assume gpus from the same library have the same dependency path
 			libraryPaths = append([]string{gpus[0].DependencyPath}, libraryPaths...)
 		}
 
@@ -411,7 +409,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		}
 
 		if err = s.cmd.Start(); err != nil {
-			// Detect permission denied and augment them essage about noexec
+			// Detect permission denied and augment the message about noexec
 			if errors.Is(err, os.ErrPermission) {
 				finalErr = fmt.Errorf("unable to start server %w.  %s may have noexec set.  Set OLLAMA_TMPDIR for server to a writable executable directory", err, dir)
 				continue

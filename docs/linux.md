@@ -20,21 +20,26 @@ GPU.
 
 ## Manual install
 
-### Download the `ollama` binary
+### Download `ollama`
 
-Ollama is distributed as a self-contained binary. Download it to a directory in your PATH:
+Download and extract the Linux package:
 
 ```bash
-sudo curl -L https://ollama.com/download/ollama-linux-amd64 -o /usr/bin/ollama
-sudo chmod +x /usr/bin/ollama
+curl -fsSL https://ollama.com/download/ollama-linux-amd64.tgz | sudo tar zx -C /usr
+```
+
+If you have an AMD GPU, also download and extract the ROCm package into the same location
+```bash
+curl -fsSL https://ollama.com/download/ollama-linux-amd64-rocm.tgz | sudo tar zx -C /usr
 ```
 
 ### Adding Ollama as a startup service (recommended)
 
-Create a user for Ollama:
+Create a user and group for Ollama:
 
 ```bash
-sudo useradd -r -s /bin/false -m -d /usr/share/ollama ollama
+sudo useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama
+sudo usermod -a -G ollama $(whoami)
 ```
 
 Create a service file in `/etc/systemd/system/ollama.service`:
@@ -50,6 +55,7 @@ User=ollama
 Group=ollama
 Restart=always
 RestartSec=3
+Environment="PATH=$PATH"
 
 [Install]
 WantedBy=default.target
@@ -79,10 +85,11 @@ Make sure to install ROCm v6
 
 ### Start Ollama
 
-Start Ollama using `systemd`:
+Start Ollama and verify it is running:
 
 ```bash
 sudo systemctl start ollama
+sudo systemctl status ollama
 ```
 
 ## Update
@@ -96,8 +103,7 @@ curl -fsSL https://ollama.com/install.sh | sh
 Or by downloading the ollama binary:
 
 ```bash
-sudo curl -L https://ollama.com/download/ollama-linux-amd64 -o /usr/bin/ollama
-sudo chmod +x /usr/bin/ollama
+curl -fsSL https://ollama.com/download/ollama-linux-amd64.tgz | sudo tar zx -C /usr
 ```
 
 ## Installing specific versions
