@@ -59,7 +59,7 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 				}
 				ggufName := replacer.Replace(key)
 				if _, ok := names[ggufName]; ok {
-					return nil, errors.New(fmt.Sprintf("duplicate tensor name '%s' was found for this model", ggufName))
+					return nil, fmt.Errorf("duplicate tensor name '%s' was found for this model", ggufName)
 				}
 				names[ggufName] = true
 				ts = append(ts, safetensor{
