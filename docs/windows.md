@@ -48,6 +48,9 @@ the explorer window by hitting `<cmd>+R` and type in:
 - `explorer %HOMEPATH%\.ollama` contains models and configuration
 - `explorer %TEMP%` contains temporary executable files in one or more `ollama*` directories
 
+## Uninstall
+
+The Ollama Windows installer registers an Uninstaller application.  Under `Add or remove programs` in Windows Settings, you can uninstall Ollama.
 
 ## Standalone CLI
 
