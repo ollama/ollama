@@ -181,7 +181,6 @@ func DetectInteliGpuMemStatus(gpuInfo *OneapiGPUInfo) {
 		terminal = "powershell"
 	}
 	output, err := exec.Command(terminal, "-c", cmd).Output()
-
 	if err != nil {
 		slog.Warn(fmt.Sprintf("Error executing command for getting Intel iGPUs system RAM usage: %s", err))
 		return
@@ -193,9 +192,8 @@ func DetectInteliGpuMemStatus(gpuInfo *OneapiGPUInfo) {
 	} else {
 		gpuInfo.GpuInfo.UnreliableFreeMemory = true
 		slog.Warn("failed to get amount of system RAM allocated to Intel iGPU, so there exists OOM risk during inference.  As debugfs can be accessed only as root, please try to run ollama with sudo privilege. Turn UnreliableFreeMemory flag On")
-		gpuInfo.FreeMemory = gpuInfo.TotalMemory - 1024*1024*1024 //leave 1G system RAM for other (CPU and iGPU) tasks.
+		gpuInfo.FreeMemory = gpuInfo.TotalMemory - 1024*1024*1024 // leave 1G system RAM for other (CPU and iGPU) tasks.
 	}
-
 }
 
 func GetGPUInfo() GpuInfoList {
