@@ -22,8 +22,10 @@ const (
 	image  = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
 )
 
-var False = false
-var True = true
+var (
+	False = false
+	True  = true
+)
 
 func captureRequestMiddleware(capturedRequest any) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -97,7 +99,7 @@ func TestChatMiddleware(t *testing.T) {
 					},
 				},
 				Options: map[string]any{
-					"num_predict":       999.0,     // float because JSON doesn't distinguish between float and int
+					"num_predict":       999.0, // float because JSON doesn't distinguish between float and int
 					"seed":              123.0,
 					"stop":              []any{"\n", "stop"},
 					"temperature":       6.0,
@@ -225,7 +227,7 @@ func TestChatMiddleware(t *testing.T) {
 			req, _ := http.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/json")
 
-			defer func(){ capturedRequest = nil }()
+			defer func() { capturedRequest = nil }()
 
 			resp := httptest.NewRecorder()
 			router.ServeHTTP(resp, req)
