@@ -13,7 +13,6 @@ import "C"
 
 import (
 	"fmt"
-	"log/slog"
 	"unsafe"
 )
 
@@ -46,14 +45,12 @@ type loadedModel struct {
 
 func loadModel(modelfile string, vocabOnly bool) (*loadedModel, error) {
 	// TODO figure out how to quiet down the logging so we don't have 2 copies of the model metadata showing up
-	slog.Info("XXX initializing default model params")
 	params := C.llama_model_default_params()
 	params.vocab_only = C.bool(vocabOnly)
 
 	cmodelfile := C.CString(modelfile)
 	defer C.free(unsafe.Pointer(cmodelfile))
 
-	slog.Info("XXX loading model", "model", modelfile)
 	model := C.llama_load_model_from_file(cmodelfile, params)
 	if model == nil {
 		return nil, fmt.Errorf("failed to load model %s", modelfile)
@@ -76,7 +73,6 @@ func tokenize(model *loadedModel, content string) ([]int, error) {
 		&tokens[0], C.int32_t(tokenCount), true, true))
 	if tokenCount < 0 {
 		tokenCount = -tokenCount
-		slog.Info("XXX got negative response", "count", tokenCount)
 		tokens = make([]C.int32_t, tokenCount)
 		tokenCount = int(C.llama_tokenize(model.model, ccontent, C.int32_t(len(content)), &tokens[0],
 			C.int32_t(tokenCount), true, true))
@@ -91,12 +87,11 @@ func tokenize(model *loadedModel, content string) ([]int, error) {
 	for i := range tokenCount {
 		ret[i] = int(tokens[i])
 	}
-	slog.Debug("XXX tokenized", "tokens", tokens, "content", content)
+
 	return ret, nil
 }
 
 func detokenize(model *loadedModel, tokens []int) string {
-	slog.Info("XXX in CGO detokenize")
 	var resp string
 	for _, token := range tokens {
 		buf := make([]C.char, 8)
@@ -108,6 +103,6 @@ func detokenize(model *loadedModel, tokens []int) string {
 		tokString := C.GoStringN(&buf[0], nTokens)
 		resp += tokString
 	}
-	slog.Debug("XXX detokenized", "tokens", tokens, "content", resp)
+
 	return resp
 }
