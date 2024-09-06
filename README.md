@@ -311,6 +311,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Claude Dev](https://github.com/saoudrizwan/claude-dev) - VSCode extension for multi-file/whole-repo coding
 - [Cherry Studio](https://github.com/kangfenmao/cherry-studio) (Desktop client with Ollama support)
 - [ConfiChat](https://github.com/1runeberg/confichat) (Lightweight, standalone, multi-platform, and privacy focused LLM chat interface with optional encryption)
+- [Archyve](https://github.com/nickthecook/archyve) (RAG-enabling document library)
 
 ### Terminal
 
