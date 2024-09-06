@@ -295,6 +295,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Olpaka](https://github.com/Otacon/olpaka) (User-friendly Flutter Web App for Ollama)
 - [OllamaSpring](https://github.com/CrazyNeil/OllamaSpring) (Ollama Client for macOS)
 - [LLocal.in](https://github.com/kartikm7/llocal) (Easy to use Electron Desktop Client for Ollama)
+- [AiLama](https://github.com/zeyoyt/ailama) (A Discord User App that allows you to interact with Ollama anywhere in discord )
 - [Ollama with Google Mesop](https://github.com/rapidarchitect/ollama_mesop/) (Mesop Chat Client implementation with Ollama)
 - [Painting Droid](https://github.com/mateuszmigas/painting-droid) (Painting app with AI integrations)
 - [Kerlig AI](https://www.kerlig.com/) (AI writing assistant for macOS)
@@ -346,6 +347,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ### Package managers
 
 - [Pacman](https://archlinux.org/packages/extra/x86_64/ollama/)
+- [Gentoo](https://github.com/gentoo/guru/tree/master/app-misc/ollama)
 - [Helm Chart](https://artifacthub.io/packages/helm/ollama-helm/ollama)
 - [Guix channel](https://codeberg.org/tusharhero/ollama-guix)
 - [Nix package](https://search.nixos.org/packages?channel=24.05&show=ollama&from=0&size=50&sort=relevance&type=packages&query=ollama)

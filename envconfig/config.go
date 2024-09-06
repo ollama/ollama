@@ -112,6 +112,26 @@ func KeepAlive() (keepAlive time.Duration) {
 	return keepAlive
 }
 
+// LoadTimeout returns the duration for stall detection during model loads. LoadTimeout can be configured via the OLLAMA_LOAD_TIMEOUT environment variable.
+// Zero or Negative values are treated as infinite.
+// Default is 5 minutes.
+func LoadTimeout() (loadTimeout time.Duration) {
+	loadTimeout = 5 * time.Minute
+	if s := Var("OLLAMA_LOAD_TIMEOUT"); s != "" {
+		if d, err := time.ParseDuration(s); err == nil {
+			loadTimeout = d
+		} else if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			loadTimeout = time.Duration(n) * time.Second
+		}
+	}
+
+	if loadTimeout <= 0 {
+		return time.Duration(math.MaxInt64)
+	}
+
+	return loadTimeout
+}
+
 func Bool(k string) func() bool {
 	return func() bool {
 		if s := Var(k); s != "" {
@@ -231,6 +251,23 @@ var (
 	MaxVRAM = Uint("OLLAMA_MAX_VRAM", 0)
 )
 
+func Uint64(key string, defaultValue uint64) func() uint64 {
+	return func() uint64 {
+		if s := Var(key); s != "" {
+			if n, err := strconv.ParseUint(s, 10, 64); err != nil {
+				slog.Warn("invalid environment variable, using default", "key", key, "value", s, "default", defaultValue)
+			} else {
+				return n
+			}
+		}
+
+		return defaultValue
+	}
+}
+
+// Set aside VRAM per GPU
+var GpuOverhead = Uint64("OLLAMA_GPU_OVERHEAD", 0)
+
 type EnvVar struct {
 	Name        string
 	Value       any
@@ -241,9 +278,11 @@ func AsMap() map[string]EnvVar {
 	ret := map[string]EnvVar{
 		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", Debug(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(), "Enabled flash attention"},
+		"OLLAMA_GPU_OVERHEAD":      {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
 		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
+		"OLLAMA_LOAD_TIMEOUT":      {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},
 		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},
 		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueue(), "Maximum number of queued requests"},
 		"OLLAMA_MODELS":            {"OLLAMA_MODELS", Models(), "The path to the models directory"},
