@@ -167,7 +167,21 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 		}
 		// Only include GPUs that can fit the graph, gpu minimum, the layer buffer and at least more layer
 		if (gpus[i].FreeMemory - overhead) < gzo+max(graphPartialOffload, graphFullOffload)+gpus[i].MinimumMemory+2*layerSize {
-			slog.Debug("gpu has too little memory to allocate any layers", "gpu", gpus[i])
+			slog.Debug("gpu has too little memory to allocate any layers",
+				"id", gpus[i].ID,
+				"library", gpus[i].Library,
+				"variant", gpus[i].Variant,
+				"compute", gpus[i].Compute,
+				"driver", fmt.Sprintf("%d.%d", gpus[i].DriverMajor, gpus[i].DriverMinor),
+				"name", gpus[i].Name,
+				"total", format.HumanBytes2(gpus[i].TotalMemory),
+				"available", format.HumanBytes2(gpus[i].FreeMemory),
+				"minimum_memory", gpus[i].MinimumMemory,
+				"layer_size", format.HumanBytes2(layerSize),
+				"gpu_zer_overhead", format.HumanBytes2(gzo),
+				"partial_offload", format.HumanBytes2(graphPartialOffload),
+				"full_offload", format.HumanBytes2(graphFullOffload),
+			)
 			continue
 		}
 		gpusWithSpace = append(gpusWithSpace, gs{i, &gpus[i]})
