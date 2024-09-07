@@ -275,7 +275,7 @@ func TestCompletionsMiddleware(t *testing.T) {
 				Options: map[string]any{
 					"frequency_penalty": 0.0,
 					"presence_penalty":  0.0,
-					"temperature":       1.6,
+					"temperature":       0.8,
 					"top_p":             1.0,
 					"stop":              []any{"\n", "stop"},
 				},
