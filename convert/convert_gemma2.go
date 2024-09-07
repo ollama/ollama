@@ -34,10 +34,20 @@ func (p *gemma2Model) KV(t *Tokenizer) llm.KV {
 }
 
 func (p *gemma2Model) Replacements() []string {
-	return append(
-		p.gemmaModel.Replacements(),
+	return []string{
+		"model.embed_tokens", "token_embd",
+		"model.norm", "output_norm",
+		"model.layers", "blk",
+		"input_layernorm", "attn_norm",
+		"self_attn.q_proj", "attn_q",
+		"self_attn.k_proj", "attn_k",
+		"self_attn.v_proj", "attn_v",
+		"self_attn.o_proj", "attn_output",
+		"mlp.gate_proj", "ffn_gate",
+		"mlp.down_proj", "ffn_down",
+		"mlp.up_proj", "ffn_up",
 		"post_attention_layernorm", "post_attention_norm",
 		"pre_feedforward_layernorm", "ffn_norm",
 		"post_feedforward_layernorm", "post_ffw_norm",
-	)
+	}
 }
