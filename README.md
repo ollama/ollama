@@ -312,6 +312,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Cherry Studio](https://github.com/kangfenmao/cherry-studio) (Desktop client with Ollama support)
 - [ConfiChat](https://github.com/1runeberg/confichat) (Lightweight, standalone, multi-platform, and privacy focused LLM chat interface with optional encryption)
 - [Archyve](https://github.com/nickthecook/archyve) (RAG-enabling document library)
+- [crewAI with Mesop](https://github.com/rapidarchitect/ollama-crew-mesop) (Mesop Web Interface to run crewAI with Ollama)
 
 ### Terminal
 
