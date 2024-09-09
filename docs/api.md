@@ -336,6 +336,7 @@ curl http://localhost:11434/api/generate -d '{
     "num_predict": 100,
     "top_k": 20,
     "top_p": 0.9,
+    "min_p": 0.0,
     "tfs_z": 0.5,
     "typical_p": 0.7,
     "repeat_last_n": 33,
@@ -586,7 +587,7 @@ Final response:
 
 ##### Request
 
-Send a chat message with a conversation history.
+Send a chat message with images. The images should be provided as an array, with the individual images encoded in Base64.
 
 ```shell
 curl http://localhost:11434/api/chat -d '{
@@ -668,7 +669,7 @@ curl http://localhost:11434/api/chat -d '{
 
 ```
 curl http://localhost:11434/api/chat -d '{
-  "model": "mistral",
+  "model": "llama3.1",
   "messages": [
     {
       "role": "user",
@@ -707,7 +708,7 @@ curl http://localhost:11434/api/chat -d '{
 
 ```json
 {
-  "model": "mistral:7b-instruct-v0.3-q4_K_M",
+  "model": "llama3.1",
   "created_at": "2024-07-22T20:33:28.123648Z",
   "message": {
     "role": "assistant",
@@ -1174,7 +1175,10 @@ curl http://localhost:11434/api/embed -d '{
   "embeddings": [[
     0.010071029, -0.0017594862, 0.05007221, 0.04692972, 0.054916814,
     0.008599704, 0.105441414, -0.025878139, 0.12958129, 0.031952348
-  ]]
+  ]],
+  "total_duration": 14143917,
+  "load_duration": 1019500,
+  "prompt_eval_count": 8
 }
 ```
 

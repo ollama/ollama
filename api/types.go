@@ -114,6 +114,11 @@ func (t Tools) String() string {
 	return string(bts)
 }
 
+func (t Tool) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
+}
+
 // Message is a single message in a chat sequence. The message contains the
 // role ("system", "user", or "assistant"), the content and an optional list
 // of images.
@@ -209,6 +214,7 @@ type Options struct {
 	NumPredict       int      `json:"num_predict,omitempty"`
 	TopK             int      `json:"top_k,omitempty"`
 	TopP             float32  `json:"top_p,omitempty"`
+	MinP             float32  `json:"min_p,omitempty"`
 	TFSZ             float32  `json:"tfs_z,omitempty"`
 	TypicalP         float32  `json:"typical_p,omitempty"`
 	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
@@ -225,7 +231,6 @@ type Options struct {
 
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
-	UseNUMA   bool  `json:"numa,omitempty"`
 	NumCtx    int   `json:"num_ctx,omitempty"`
 	NumBatch  int   `json:"num_batch,omitempty"`
 	NumGPU    int   `json:"num_gpu,omitempty"`
@@ -261,6 +266,10 @@ type EmbedRequest struct {
 type EmbedResponse struct {
 	Model      string      `json:"model"`
 	Embeddings [][]float32 `json:"embeddings"`
+
+	TotalDuration   time.Duration `json:"total_duration,omitempty"`
+	LoadDuration    time.Duration `json:"load_duration,omitempty"`
+	PromptEvalCount int           `json:"prompt_eval_count,omitempty"`
 }
 
 // EmbeddingRequest is the request passed to [Client.Embeddings].
@@ -287,15 +296,17 @@ type EmbeddingResponse struct {
 // CreateRequest is the request passed to [Client.Create].
 type CreateRequest struct {
 	Model     string `json:"model"`
-	Path      string `json:"path"`
 	Modelfile string `json:"modelfile"`
 	Stream    *bool  `json:"stream,omitempty"`
 	Quantize  string `json:"quantize,omitempty"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 
-	// Quantization is deprecated, see Quantize
+	// Deprecated: set the file content with Modelfile instead
+	Path string `json:"path"`
+
+	// Deprecated: use Quantize instead
 	Quantization string `json:"quantization,omitempty"`
 }
 
@@ -303,7 +314,7 @@ type CreateRequest struct {
 type DeleteRequest struct {
 	Model string `json:"model"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
@@ -318,7 +329,7 @@ type ShowRequest struct {
 
 	Options map[string]interface{} `json:"options"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
@@ -350,7 +361,7 @@ type PullRequest struct {
 	Password string `json:"password"`
 	Stream   *bool  `json:"stream,omitempty"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
@@ -371,7 +382,7 @@ type PushRequest struct {
 	Password string `json:"password"`
 	Stream   *bool  `json:"stream,omitempty"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
@@ -495,7 +506,7 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 	for key, val := range m {
 		opt, ok := jsonOpts[key]
 		if !ok {
-			slog.Warn("invalid option provided", "option", opt.Name)
+			slog.Warn("invalid option provided", "option", key)
 			continue
 		}
 
@@ -605,7 +616,6 @@ func DefaultOptions() Options {
 			F16KV:     true,
 			UseMLock:  false,
 			UseMMap:   nil,
-			UseNUMA:   false,
 		},
 	}
 }
