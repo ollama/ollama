@@ -41,7 +41,7 @@ typedef struct nvml_compute_capability {
 } nvml_compute_capability_t;
 
 void nvml_init(char *nvml_lib_path, nvml_init_resp_t *resp);
-void nvml_get_free(nvml_handle_t ch, char *uuid, uint64_t *free, uint64_t *total, uint64_t *used);
+nvmlReturn_t nvml_get_free(nvml_handle_t ch, char *uuid, uint64_t *free, uint64_t *total, uint64_t *used);
 void nvml_release(nvml_handle_t ch);
 
 #endif  // __GPU_INFO_NVML_H__

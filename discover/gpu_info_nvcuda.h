@@ -10,6 +10,7 @@ typedef enum cudaError_enum {
   CUDA_ERROR_OUT_OF_MEMORY = 2,
   CUDA_ERROR_NOT_INITIALIZED = 3,
   CUDA_ERROR_INSUFFICIENT_DRIVER = 35,
+  CUDA_ERROR_DEVICES_UNAVAILABLE = 46,
   CUDA_ERROR_NO_DEVICE = 100,
   CUDA_ERROR_SYSTEM_DRIVER_MISMATCH = 803,
   CUDA_ERROR_UNKNOWN = 999,
@@ -71,8 +72,8 @@ typedef struct nvcuda_init_resp {
 } nvcuda_init_resp_t;
 
 void nvcuda_init(char *nvcuda_lib_path, nvcuda_init_resp_t *resp);
-void nvcuda_bootstrap(nvcuda_handle_t ch, int device_id, mem_info_t *resp);
-void nvcuda_get_free(nvcuda_handle_t ch,  int device_id, uint64_t *free, uint64_t *total);
+CUresult nvcuda_bootstrap(nvcuda_handle_t ch, int device_id, mem_info_t *resp);
+CUresult nvcuda_get_free(nvcuda_handle_t ch,  int device_id, uint64_t *free, uint64_t *total);
 void nvcuda_release(nvcuda_handle_t ch);
 
 #endif  // __GPU_INFO_NVCUDA_H__

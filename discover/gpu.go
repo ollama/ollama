@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/ollama/ollama/envconfig"
@@ -67,6 +68,9 @@ var (
 var CudaComputeMin = [2]C.int{5, 0}
 
 var RocmComputeMin = 9
+
+// Maximum time we'll attempt GPU discovery for retryable errors
+const CUDARetryTimeout = 5 * time.Second
 
 // TODO find a better way to detect iGPU instead of minimum memory
 const IGPUMemLimit = 1 * format.GibiByte // 512G is what they typically report, so anything less than 1G must be iGPU
@@ -417,51 +421,64 @@ func GetGPUInfo() GpuInfoList {
 		if cHandles == nil && len(cudaGPUs) > 0 {
 			cHandles = initCudaHandles()
 		}
-		for i, gpu := range cudaGPUs {
-			if cHandles.nvml != nil {
-				uuid := C.CString(gpu.ID)
-				defer C.free(unsafe.Pointer(uuid))
-				C.nvml_get_free(*cHandles.nvml, uuid, &memInfo.free, &memInfo.total, &memInfo.used)
-			} else if cHandles.cudart != nil {
-				C.cudart_bootstrap(*cHandles.cudart, C.int(gpu.index), &memInfo)
-			} else if cHandles.nvcuda != nil {
-				C.nvcuda_get_free(*cHandles.nvcuda, C.int(gpu.index), &memInfo.free, &memInfo.total)
-				memInfo.used = memInfo.total - memInfo.free
-			} else {
-				// shouldn't happen
-				slog.Warn("no valid cuda library loaded to refresh vram usage")
-				break
+		// Some failure scenarios are retryable
+		cudaNeedsRefresh := true
+		expireTime := time.Now().Add(CUDARetryTimeout)
+		for cudaNeedsRefresh && !time.Now().After(expireTime) {
+			cudaNeedsRefresh = false
+			for i, gpu := range cudaGPUs {
+				var response int
+				if cHandles.nvml != nil {
+					uuid := C.CString(gpu.ID)
+					defer C.free(unsafe.Pointer(uuid))
+					response = (int)(C.nvml_get_free(*cHandles.nvml, uuid, &memInfo.free, &memInfo.total, &memInfo.used))
+				} else if cHandles.cudart != nil {
+					response = (int)(C.cudart_bootstrap(*cHandles.cudart, C.int(gpu.index), &memInfo))
+				} else if cHandles.nvcuda != nil {
+					response = (int)(C.nvcuda_get_free(*cHandles.nvcuda, C.int(gpu.index), &memInfo.free, &memInfo.total))
+					memInfo.used = memInfo.total - memInfo.free
+				} else {
+					// shouldn't happen
+					slog.Warn("no valid cuda library loaded to refresh vram usage")
+					break
+				}
+				if response != 0 {
+					if memInfo.err != nil {
+						slog.Warn("error looking up nvidia GPU memory", "error", C.GoString(memInfo.err))
+						C.free(unsafe.Pointer(memInfo.err))
+					}
+					if response == C.CUDA_ERROR_DEVICES_UNAVAILABLE {
+						slog.Warn("CUDA devices busy, unable to look up GPU memory information")
+						time.Sleep(250 * time.Millisecond)
+						cudaNeedsRefresh = true
+						// TODO - should we clobber stale free memory values in this case?
+						break
+					}
+					// TODO - any other retryable error cases?
+					continue
+				}
+				if cHandles.nvml != nil && gpu.OSOverhead > 0 {
+					// When using the management library update based on recorded overhead
+					memInfo.free -= C.uint64_t(gpu.OSOverhead)
+				}
+				slog.Debug("updating cuda memory data",
+					"gpu", gpu.ID,
+					"name", gpu.Name,
+					"overhead", format.HumanBytes2(gpu.OSOverhead),
+					slog.Group(
+						"before",
+						"total", format.HumanBytes2(gpu.TotalMemory),
+						"free", format.HumanBytes2(gpu.FreeMemory),
+					),
+					slog.Group(
+						"now",
+						"total", format.HumanBytes2(uint64(memInfo.total)),
+						"free", format.HumanBytes2(uint64(memInfo.free)),
+						"used", format.HumanBytes2(uint64(memInfo.used)),
+					),
+				)
+				cudaGPUs[i].FreeMemory = uint64(memInfo.free)
 			}
-			if memInfo.err != nil {
-				slog.Warn("error looking up nvidia GPU memory", "error", C.GoString(memInfo.err))
-				C.free(unsafe.Pointer(memInfo.err))
-				continue
-			}
-			if memInfo.free == 0 {
-				slog.Warn("error looking up nvidia GPU memory")
-				continue
-			}
-			if cHandles.nvml != nil && gpu.OSOverhead > 0 {
-				// When using the management library update based on recorded overhead
-				memInfo.free -= C.uint64_t(gpu.OSOverhead)
-			}
-			slog.Debug("updating cuda memory data",
-				"gpu", gpu.ID,
-				"name", gpu.Name,
-				"overhead", format.HumanBytes2(gpu.OSOverhead),
-				slog.Group(
-					"before",
-					"total", format.HumanBytes2(gpu.TotalMemory),
-					"free", format.HumanBytes2(gpu.FreeMemory),
-				),
-				slog.Group(
-					"now",
-					"total", format.HumanBytes2(uint64(memInfo.total)),
-					"free", format.HumanBytes2(uint64(memInfo.free)),
-					"used", format.HumanBytes2(uint64(memInfo.used)),
-				),
-			)
-			cudaGPUs[i].FreeMemory = uint64(memInfo.free)
 		}
 
 		if oHandles == nil && len(oneapiGPUs) > 0 {

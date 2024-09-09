@@ -34,13 +34,7 @@ void nvml_init(char *nvml_lib_path, nvml_init_resp_t *resp) {
     return;
   }
 
-  // TODO once we've squashed the remaining corner cases remove this log
-  // LOG(resp->ch.verbose, "wiring nvidia management library functions in %s\n", nvml_lib_path);
-  
   for (i = 0; l[i].s != NULL; i++) {
-    // TODO once we've squashed the remaining corner cases remove this log
-    // LOG(resp->ch.verbose, "dlsym: %s\n", l[i].s);
-
     *l[i].p = LOAD_SYMBOL(resp->ch.handle, l[i].s);
     if (!*(l[i].p)) {
       resp->ch.handle = NULL;
@@ -67,26 +61,27 @@ void nvml_init(char *nvml_lib_path, nvml_init_resp_t *resp) {
 }
 
 
-void nvml_get_free(nvml_handle_t h, char *uuid, uint64_t *free, uint64_t *total, uint64_t *used) {
+nvmlReturn_t nvml_get_free(nvml_handle_t h, char *uuid, uint64_t *free, uint64_t *total, uint64_t *used) {
     nvmlDevice_t device;
     nvmlMemory_t memInfo = {0};
     nvmlReturn_t ret;
     ret = (*h.nvmlDeviceGetHandleByUUID)((const char *)(uuid), &device);
     if (ret != NVML_SUCCESS) {
-        LOG(1, "unable to get device handle %s: %d", uuid, ret);
+        LOG(1, "unable to get device handle %s: %d\n", uuid, ret);
         *free = 0;
-        return;
+        return ret;
     }
 
     ret = (*h.nvmlDeviceGetMemoryInfo)(device, &memInfo);
     if (ret != NVML_SUCCESS) {
-        LOG(1, "device memory info lookup failure %s: %d", uuid, ret);
+        LOG(1, "device memory info lookup failure %s: %d\n", uuid, ret);
         *free = 0;
-        return;
+        return ret;
     }
     *free = memInfo.free;
     *total = memInfo.total;
     *used = memInfo.used;
+    return NVML_SUCCESS;
 }
 
 
@@ -95,7 +90,7 @@ void nvml_release(nvml_handle_t h) {
   nvmlReturn_t ret;
   ret = (*h.nvmlShutdown)();
   if (ret != NVML_SUCCESS) {
-    LOG(1, "error during nvmlShutdown %d", ret);
+    LOG(1, "error during nvmlShutdown %d\n", ret);
   }
   UNLOAD_LIBRARY(h.handle);
   h.handle = NULL;

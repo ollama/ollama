@@ -94,7 +94,7 @@ void cudart_init(char *cudart_lib_path, cudart_init_resp_t *resp) {
 }
 
 
-void cudart_bootstrap(cudart_handle_t h, int i, mem_info_t *resp) {
+cudartReturn_t cudart_bootstrap(cudart_handle_t h, int i, mem_info_t *resp) {
   resp->err = NULL;
   cudartMemory_t memInfo = {0,0,0};
   cudartReturn_t ret;
@@ -103,14 +103,14 @@ void cudart_bootstrap(cudart_handle_t h, int i, mem_info_t *resp) {
 
   if (h.handle == NULL) {
     resp->err = strdup("cudart handle isn't initialized");
-    return;
+    return CUDART_ERROR_INVALID_VALUE;
   }
 
   ret = (*h.cudaSetDevice)(i);
   if (ret != CUDART_SUCCESS) {
     snprintf(buf, buflen, "cudart device failed to initialize");
     resp->err = strdup(buf);
-    return;
+    return ret;
   }
 
   cudaDeviceProp_t props;
@@ -161,7 +161,7 @@ void cudart_bootstrap(cudart_handle_t h, int i, mem_info_t *resp) {
   if (ret != CUDART_SUCCESS) {
     snprintf(buf, buflen, "cudart device memory info lookup failure %d", ret);
     resp->err = strdup(buf);
-    return;
+    return ret;
   }
 
   resp->total = memInfo.total;
@@ -172,6 +172,7 @@ void cudart_bootstrap(cudart_handle_t h, int i, mem_info_t *resp) {
   LOG(h.verbose, "[%s] CUDA freeMem %lu\n", resp->gpu_id, resp->free);
   LOG(h.verbose, "[%s] CUDA usedMem %lu\n", resp->gpu_id, resp->used);
   LOG(h.verbose, "[%s] Compute Capability %d.%d\n", resp->gpu_id, resp->major, resp->minor);
+  return CUDART_SUCCESS;
 }
 
 void cudart_release(cudart_handle_t h) {
