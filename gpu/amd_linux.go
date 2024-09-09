@@ -41,7 +41,8 @@ const (
 
 var (
 	// Used to validate if the given ROCm lib is usable
-	ROCmLibGlobs          = []string{"libhipblas.so.2*", "rocblas"} // TODO - probably include more coverage of files here...
+	ROCmLib = "libhipblas.so.2*"
+	ROCmLibGlobs          = []string{ROCmLib, "rocblas"} // TODO - probably include more coverage of files here...
 	RocmStandardLocations = []string{"/opt/rocm/lib", "/usr/lib64"}
 )
 

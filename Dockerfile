@@ -39,6 +39,7 @@ ENV LIBRARY_PATH /opt/amdgpu/lib64
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
+ARG GOFLAGS
 ARG AMDGPU_TARGETS
 RUN OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_SKIP_CPU_GENERATE=1 sh gen_linux.sh
 RUN mkdir /tmp/scratch && \
