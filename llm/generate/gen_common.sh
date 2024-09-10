@@ -16,7 +16,7 @@ init_vars() {
     esac
 
     LLAMACPP_DIR=../llama.cpp
-    CMAKE_DEFS="-DCMAKE_SKIP_RPATH=on"
+    CMAKE_DEFS="-DCMAKE_SKIP_RPATH=on -DGGML_RPC=on"
     CMAKE_TARGETS="--target ollama_llama_server"
     if echo "${CGO_CFLAGS}" | grep -- '-g' >/dev/null; then
         CMAKE_DEFS="-DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_VERBOSE_MAKEFILE=on -DLLAMA_GPROF=on -DLLAMA_SERVER_VERBOSE=on ${CMAKE_DEFS}"

@@ -162,6 +162,8 @@ var (
 	IntelGPU = Bool("OLLAMA_INTEL_GPU")
 	// MultiUserCache optimizes prompt caching for multi-user scenarios
 	MultiUserCache = Bool("OLLAMA_MULTIUSER_CACHE")
+	// RPCServers sepecifies a comma seperated list of RPC servers to use for inteference.
+	RPCServers = String("OLLAMA_RPC_SERVERS")
 )
 
 func String(s string) func() string {
