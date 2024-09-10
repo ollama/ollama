@@ -69,7 +69,7 @@ Enable JSON mode by setting the `format` parameter to `json`. This will structur
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
-  "model": "llama3",
+  "model": "llama3.1",
   "prompt": "Why is the sky blue?"
 }'
 ```
@@ -80,7 +80,7 @@ A stream of JSON objects is returned:
 
 ```json
 {
-  "model": "llama3",
+  "model": "llama3.1",
   "created_at": "2023-08-04T08:52:19.385406455-07:00",
   "response": "The",
   "done": false
@@ -102,7 +102,7 @@ To calculate how fast the response is generated in tokens per second (token/s), 
 
 ```json
 {
-  "model": "llama3",
+  "model": "llama3.1",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "response": "",
   "done": true,
@@ -124,7 +124,7 @@ A response can be received in one reply when streaming is off.
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
-  "model": "llama3",
+  "model": "llama3.1",
   "prompt": "Why is the sky blue?",
   "stream": false
 }'
@@ -136,7 +136,7 @@ If `stream` is set to `false`, the response will be a single JSON object:
 
 ```json
 {
-  "model": "llama3",
+  "model": "llama3.1",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "response": "The sky is blue because it is the color of the sky.",
   "done": true,
@@ -194,7 +194,7 @@ curl http://localhost:11434/api/generate -d '{
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
-  "model": "llama3",
+  "model": "llama3.1",
   "prompt": "What color is the sky at different times of the day? Respond using JSON",
   "format": "json",
   "stream": false
@@ -205,7 +205,7 @@ curl http://localhost:11434/api/generate -d '{
 
 ```json
 {
-  "model": "llama3",
+  "model": "llama3.1",
   "created_at": "2023-11-09T21:07:55.186497Z",
   "response": "{\n\"morning\": {\n\"color\": \"blue\"\n},\n\"noon\": {\n\"color\": \"blue-gray\"\n},\n\"afternoon\": {\n\"color\": \"warm gray\"\n},\n\"evening\": {\n\"color\": \"orange\"\n}\n}\n",
   "done": true,
@@ -327,7 +327,7 @@ If you want to set custom options for the model at runtime rather than in the Mo
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
-  "model": "llama3",
+  "model": "llama3.1",
   "prompt": "Why is the sky blue?",
   "stream": false,
   "options": {
@@ -368,7 +368,7 @@ curl http://localhost:11434/api/generate -d '{
 
 ```json
 {
-  "model": "llama3",
+  "model": "llama3.1",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "response": "The sky is blue because it is the color of the sky.",
   "done": true,
@@ -390,7 +390,7 @@ If an empty prompt is provided, the model will be loaded into memory.
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
-  "model": "llama3"
+  "model": "llama3.1"
 }'
 ```
 
@@ -400,7 +400,7 @@ A single JSON object is returned:
 
 ```json
 {
-  "model": "llama3",
+  "model": "llama3.1",
   "created_at": "2023-12-18T19:52:07.071755Z",
   "response": "",
   "done": true
@@ -445,7 +445,7 @@ Send a chat message with a streaming response.
 
 ```shell
 curl http://localhost:11434/api/chat -d '{
-  "model": "llama3",
+  "model": "llama3.1",
   "messages": [
     {
       "role": "user",
@@ -461,7 +461,7 @@ A stream of JSON objects is returned:
 
 ```json
 {
-  "model": "llama3",
+  "model": "llama3.1",
   "created_at": "2023-08-04T08:52:19.385406455-07:00",
   "message": {
     "role": "assistant",
@@ -476,7 +476,7 @@ Final response:
 
 ```json
 {
-  "model": "llama3",
+  "model": "llama3.1",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "done": true,
   "total_duration": 4883583458,
@@ -494,7 +494,7 @@ Final response:
 
 ```shell
 curl http://localhost:11434/api/chat -d '{
-  "model": "llama3",
+  "model": "llama3.1",
   "messages": [
     {
       "role": "user",
@@ -509,7 +509,7 @@ curl http://localhost:11434/api/chat -d '{
 
 ```json
 {
-  "model": "registry.ollama.ai/library/llama3:latest",
+  "model": "llama3.1",
   "created_at": "2023-12-12T14:13:43.416799Z",
   "message": {
     "role": "assistant",
@@ -533,7 +533,7 @@ Send a chat message with a conversation history. You can use this same approach 
 
 ```shell
 curl http://localhost:11434/api/chat -d '{
-  "model": "llama3",
+  "model": "llama3.1",
   "messages": [
     {
       "role": "user",
@@ -557,7 +557,7 @@ A stream of JSON objects is returned:
 
 ```json
 {
-  "model": "llama3",
+  "model": "llama3.1",
   "created_at": "2023-08-04T08:52:19.385406455-07:00",
   "message": {
     "role": "assistant",
@@ -571,7 +571,7 @@ Final response:
 
 ```json
 {
-  "model": "llama3",
+  "model": "llama3.1",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "done": true,
   "total_duration": 8113331500,
@@ -629,7 +629,7 @@ curl http://localhost:11434/api/chat -d '{
 
 ```shell
 curl http://localhost:11434/api/chat -d '{
-  "model": "llama3",
+  "model": "llama3.1",
   "messages": [
     {
       "role": "user",
@@ -647,7 +647,7 @@ curl http://localhost:11434/api/chat -d '{
 
 ```json
 {
-  "model": "registry.ollama.ai/library/llama3:latest",
+  "model": "llama3.1",
   "created_at": "2023-12-12T14:13:43.416799Z",
   "message": {
     "role": "assistant",
@@ -904,7 +904,7 @@ Show information about a model including details, modelfile, template, parameter
 
 ```shell
 curl http://localhost:11434/api/show -d '{
-  "name": "llama3"
+  "name": "llama3.1"
 }'
 ```
 
@@ -965,7 +965,7 @@ Copy a model. Creates a model with another name from an existing model.
 
 ```shell
 curl http://localhost:11434/api/copy -d '{
-  "source": "llama3",
+  "source": "llama3.1",
   "destination": "llama3-backup"
 }'
 ```
@@ -1020,7 +1020,7 @@ Download a model from the ollama library. Cancelled pulls are resumed from where
 
 ```shell
 curl http://localhost:11434/api/pull -d '{
-  "name": "llama3"
+  "name": "llama3.1"
 }'
 ```
 
