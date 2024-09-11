@@ -139,6 +139,10 @@ func (c *Context) KvCacheSeqRm(seqId int, p0 int, p1 int) bool {
 	return bool(C.llama_kv_cache_seq_rm(c.c, C.int(seqId), C.int(p0), C.int(p1)))
 }
 
+func (c *Context) KvCacheSeqCp(srcSeqId int, dstSeqId int, p0 int, p1 int) {
+	C.llama_kv_cache_seq_cp(c.c, C.int(srcSeqId), C.int(dstSeqId), C.int(p0), C.int(p1))
+}
+
 // Get the embeddings for a sequence id
 func (c *Context) GetEmbeddingsSeq(seqId int) []float32 {
 	embeddings := unsafe.Pointer(C.llama_get_embeddings_seq(c.c, C.int(seqId)))
