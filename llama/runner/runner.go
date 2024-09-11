@@ -348,10 +348,6 @@ func (s *Server) processBatch() {
 		seq.pendingResponses = append(seq.pendingResponses, piece)
 		sequence := strings.Join(seq.pendingResponses, "")
 
-		if incompleteUnicode(sequence) {
-			continue
-		}
-
 		if ok, stop := findStop(sequence, seq.stop); ok {
 			slog.Info("hit stop token", "stop", seq.stop)
 
@@ -371,6 +367,10 @@ func (s *Server) processBatch() {
 		}
 
 		if containsStopSuffix(sequence, seq.stop) {
+			continue
+		}
+
+		if incompleteUnicode(sequence) {
 			continue
 		}
 
