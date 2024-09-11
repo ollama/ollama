@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/ed25519"
@@ -21,6 +22,7 @@ import (
 	"regexp"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -578,7 +580,7 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 	table.SetHeaderLine(false)
 	table.SetBorder(false)
 	table.SetNoWhiteSpace(true)
-	table.SetTablePadding("\t")
+	table.SetTablePadding("    ")
 	table.AppendBulk(data)
 	table.Render()
 
@@ -624,7 +626,7 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 	table.SetHeaderLine(false)
 	table.SetBorder(false)
 	table.SetNoWhiteSpace(true)
-	table.SetTablePadding("\t")
+	table.SetTablePadding("    ")
 	table.AppendBulk(data)
 	table.Render()
 
@@ -720,125 +722,89 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	showInfo(resp)
-
-	return nil
+	return showInfo(resp, os.Stdout)
 }
 
-func showInfo(resp *api.ShowResponse) {
-	modelData := [][]string{
-		{"parameters", resp.Details.ParameterSize},
-		{"quantization", resp.Details.QuantizationLevel},
-	}
-	if resp.ModelInfo != nil {
-		arch := resp.ModelInfo["general.architecture"].(string)
-		modelData = append(modelData,
-			[]string{"arch", arch},
-			[]string{"context length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64))},
-			[]string{"embedding length", fmt.Sprintf("%v", resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)].(float64))},
-		)
+func showInfo(resp *api.ShowResponse, w io.Writer) error {
+	tableRender := func(header string, rows func() [][]string) {
+		fmt.Fprintln(w, " ", header)
+		table := tablewriter.NewWriter(w)
+		table.SetAlignment(tablewriter.ALIGN_LEFT)
+		table.SetBorder(false)
+		table.SetNoWhiteSpace(true)
+		table.SetTablePadding("    ")
+
+		switch header {
+		case "Template", "System", "License":
+			table.SetColWidth(100)
+		}
+
+		table.AppendBulk(rows())
+		table.Render()
+		fmt.Fprintln(w)
 	}
 
-	mainTableData := [][]string{
-		{"Model"},
-		{renderSubTable(modelData, false)},
-	}
+	tableRender("Model", func() (rows [][]string) {
+		if resp.ModelInfo != nil {
+			arch := resp.ModelInfo["general.architecture"].(string)
+			rows = append(rows, []string{"", "architecture", arch})
+			rows = append(rows, []string{"", "parameters", format.HumanNumber(uint64(resp.ModelInfo["general.parameter_count"].(float64)))})
+			rows = append(rows, []string{"", "context length", strconv.FormatFloat(resp.ModelInfo[fmt.Sprintf("%s.context_length", arch)].(float64), 'f', -1, 64)})
+			rows = append(rows, []string{"", "embedding length", strconv.FormatFloat(resp.ModelInfo[fmt.Sprintf("%s.embedding_length", arch)].(float64), 'f', -1, 64)})
+		} else {
+			rows = append(rows, []string{"", "architecture", resp.Details.Family})
+			rows = append(rows, []string{"", "parameters", resp.Details.ParameterSize})
+		}
+		rows = append(rows, []string{"", "quantization", resp.Details.QuantizationLevel})
+		return
+	})
 
 	if resp.ProjectorInfo != nil {
-		projectorData := [][]string{
-			{"arch", "clip"},
-			{"parameters", format.HumanNumber(uint64(resp.ProjectorInfo["general.parameter_count"].(float64)))},
-		}
-
-		if projectorType, ok := resp.ProjectorInfo["clip.projector_type"]; ok {
-			projectorData = append(projectorData, []string{"projector type", projectorType.(string)})
-		}
-
-		projectorData = append(projectorData,
-			[]string{"embedding length", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.embedding_length"].(float64))},
-			[]string{"projection dimensionality", fmt.Sprintf("%v", resp.ProjectorInfo["clip.vision.projection_dim"].(float64))},
-		)
-
-		mainTableData = append(mainTableData,
-			[]string{"Projector"},
-			[]string{renderSubTable(projectorData, false)},
-		)
+		tableRender("Projector", func() (rows [][]string) {
+			arch := resp.ProjectorInfo["general.architecture"].(string)
+			rows = append(rows, []string{"", "architecture", arch})
+			rows = append(rows, []string{"", "parameters", format.HumanNumber(uint64(resp.ProjectorInfo["general.parameter_count"].(float64)))})
+			rows = append(rows, []string{"", "embedding length", strconv.FormatFloat(resp.ProjectorInfo[fmt.Sprintf("%s.vision.embedding_length", arch)].(float64), 'f', -1, 64)})
+			rows = append(rows, []string{"", "dimensions", strconv.FormatFloat(resp.ProjectorInfo[fmt.Sprintf("%s.vision.projection_dim", arch)].(float64), 'f', -1, 64)})
+			return
+		})
 	}
 
 	if resp.Parameters != "" {
-		mainTableData = append(mainTableData, []string{"Parameters"}, []string{formatParams(resp.Parameters)})
+		tableRender("Parameters", func() (rows [][]string) {
+			scanner := bufio.NewScanner(strings.NewReader(resp.Parameters))
+			for scanner.Scan() {
+				if text := scanner.Text(); text != "" {
+					rows = append(rows, append([]string{""}, strings.Fields(text)...))
+				}
+			}
+			return
+		})
+	}
+
+	head := func(s string, n int) (rows [][]string) {
+		scanner := bufio.NewScanner(strings.NewReader(s))
+		for scanner.Scan() && (len(rows) < n || n < 0) {
+			if text := scanner.Text(); text != "" {
+				rows = append(rows, []string{"", strings.TrimSpace(text)})
+			}
+		}
+		return
 	}
 
 	if resp.System != "" {
-		mainTableData = append(mainTableData, []string{"System"}, []string{renderSubTable(twoLines(resp.System), true)})
+		tableRender("System", func() [][]string {
+			return head(resp.System, 2)
+		})
 	}
 
 	if resp.License != "" {
-		mainTableData = append(mainTableData, []string{"License"}, []string{renderSubTable(twoLines(resp.License), true)})
+		tableRender("License", func() [][]string {
+			return head(resp.License, 2)
+		})
 	}
 
-	table := tablewriter.NewWriter(os.Stdout)
-	table.SetAutoWrapText(false)
-	table.SetBorder(false)
-	table.SetAlignment(tablewriter.ALIGN_LEFT)
-
-	for _, v := range mainTableData {
-		table.Append(v)
-	}
-
-	table.Render()
-}
-
-func renderSubTable(data [][]string, file bool) string {
-	var buf bytes.Buffer
-	table := tablewriter.NewWriter(&buf)
-	table.SetAutoWrapText(!file)
-	table.SetBorder(false)
-	table.SetNoWhiteSpace(true)
-	table.SetTablePadding("\t")
-	table.SetAlignment(tablewriter.ALIGN_LEFT)
-
-	for _, v := range data {
-		table.Append(v)
-	}
-
-	table.Render()
-
-	renderedTable := buf.String()
-	lines := strings.Split(renderedTable, "\n")
-	for i, line := range lines {
-		lines[i] = "\t" + line
-	}
-
-	return strings.Join(lines, "\n")
-}
-
-func twoLines(s string) [][]string {
-	lines := strings.Split(s, "\n")
-	res := [][]string{}
-
-	count := 0
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			count++
-			res = append(res, []string{line})
-			if count == 2 {
-				return res
-			}
-		}
-	}
-	return res
-}
-
-func formatParams(s string) string {
-	lines := strings.Split(s, "\n")
-	table := [][]string{}
-
-	for _, line := range lines {
-		table = append(table, strings.Fields(line))
-	}
-	return renderSubTable(table, false)
+	return nil
 }
 
 func CopyHandler(cmd *cobra.Command, args []string) error {
