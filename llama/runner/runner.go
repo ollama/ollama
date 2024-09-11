@@ -218,9 +218,22 @@ func incompleteUnicode(token string) bool {
 	return incomplete
 }
 
+func flushPending(seq *Sequence) bool {
+	for _, p := range seq.pendingResponses {
+		select {
+		case seq.responses <- p:
+		case <-seq.quit:
+			return false
+		}
+	}
+
+	return true
+}
+
 func (s *Server) removeSequence(seqIndex int, reason string) {
 	seq := s.seqs[seqIndex]
 
+	flushPending(seq)
 	seq.doneReason = reason
 	close(seq.responses)
 	close(seq.embedding)
@@ -351,17 +364,7 @@ func (s *Server) processBatch() {
 		if ok, stop := findStop(sequence, seq.stop); ok {
 			slog.Info("hit stop token", "stop", seq.stop)
 
-			truncated := truncateStop(seq.pendingResponses, stop)
-
-		truncatedLoop:
-			for _, p := range truncated {
-				select {
-				case seq.responses <- p:
-				case <-seq.quit:
-					break truncatedLoop
-				}
-			}
-
+			seq.pendingResponses = truncateStop(seq.pendingResponses, stop)
 			s.removeSequence(i, "stop")
 			continue
 		}
@@ -374,16 +377,10 @@ func (s *Server) processBatch() {
 			continue
 		}
 
-	pendingLoop:
-		for _, p := range seq.pendingResponses {
-			select {
-			case seq.responses <- p:
-			case <-seq.quit:
-				s.removeSequence(i, "connection")
-				break pendingLoop
-			}
+		if !flushPending(seq) {
+			seq.pendingResponses = []string{}
+			s.removeSequence(i, "connection")
 		}
-
 		seq.pendingResponses = []string{}
 	}
 }
