@@ -218,9 +218,22 @@ func incompleteUnicode(token string) bool {
 	return incomplete
 }
 
+func flushPending(seq *Sequence) bool {
+	for _, p := range seq.pendingResponses {
+		select {
+		case seq.responses <- p:
+		case <-seq.quit:
+			return false
+		}
+	}
+
+	return true
+}
+
 func (s *Server) removeSequence(seqIndex int, reason string) {
 	seq := s.seqs[seqIndex]
 
+	flushPending(seq)
 	seq.doneReason = reason
 	close(seq.responses)
 	close(seq.embedding)
@@ -348,24 +361,10 @@ func (s *Server) processBatch() {
 		seq.pendingResponses = append(seq.pendingResponses, piece)
 		sequence := strings.Join(seq.pendingResponses, "")
 
-		if incompleteUnicode(sequence) {
-			continue
-		}
-
 		if ok, stop := findStop(sequence, seq.stop); ok {
 			slog.Info("hit stop token", "stop", seq.stop)
 
-			truncated := truncateStop(seq.pendingResponses, stop)
-
-		truncatedLoop:
-			for _, p := range truncated {
-				select {
-				case seq.responses <- p:
-				case <-seq.quit:
-					break truncatedLoop
-				}
-			}
-
+			seq.pendingResponses = truncateStop(seq.pendingResponses, stop)
 			s.removeSequence(i, "stop")
 			continue
 		}
@@ -374,16 +373,14 @@ func (s *Server) processBatch() {
 			continue
 		}
 
-	pendingLoop:
-		for _, p := range seq.pendingResponses {
-			select {
-			case seq.responses <- p:
-			case <-seq.quit:
-				s.removeSequence(i, "connection")
-				break pendingLoop
-			}
+		if incompleteUnicode(sequence) {
+			continue
 		}
 
+		if !flushPending(seq) {
+			seq.pendingResponses = []string{}
+			s.removeSequence(i, "connection")
+		}
 		seq.pendingResponses = []string{}
 	}
 }
@@ -515,7 +512,8 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 
 	// Send the stop
 	if err := json.NewEncoder(w).Encode(&CompletionResponse{
-		Stop: true,
+		Stop:         true,
+		StoppedLimit: seq.doneReason == "limit",
 		Timings: Timings{
 			PromptN:     seq.numPromptTokens,
 			PromptMS:    float64(seq.startGenerationTime.Sub(seq.startProcessingTime).Milliseconds()),
