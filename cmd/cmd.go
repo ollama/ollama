@@ -346,6 +346,39 @@ func (w *progressWriter) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
+func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
+	p := progress.NewProgress(os.Stderr)
+	defer p.StopAndClear()
+
+	spinner := progress.NewSpinner("")
+	p.Add("", spinner)
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	req := &api.GenerateRequest{
+		Model:     opts.Model,
+		KeepAlive: opts.KeepAlive,
+	}
+
+	return client.Generate(cmd.Context(), req, func(api.GenerateResponse) error { return nil })
+}
+
+func StopHandler(cmd *cobra.Command, args []string) error {
+	opts := &runOptions{
+		Model:     args[0],
+		KeepAlive: &api.Duration{Duration: 0},
+	}
+	if err := loadOrUnloadModel(cmd, opts); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			return fmt.Errorf("couldn't find model \"%s\" to stop", args[0])
+		}
+	}
+	return nil
+}
+
 func RunHandler(cmd *cobra.Command, args []string) error {
 	interactive := true
 
@@ -424,7 +457,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	opts.ParentModel = info.Details.ParentModel
 
 	if interactive {
-		if err := loadModel(cmd, &opts); err != nil {
+		if err := loadOrUnloadModel(cmd, &opts); err != nil {
 			return err
 		}
 
@@ -615,7 +648,15 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 				cpuPercent := math.Round(float64(sizeCPU) / float64(m.Size) * 100)
 				procStr = fmt.Sprintf("%d%%/%d%% CPU/GPU", int(cpuPercent), int(100-cpuPercent))
 			}
-			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), procStr, format.HumanTime(m.ExpiresAt, "Never")})
+
+			var until string
+			delta := time.Since(m.ExpiresAt)
+			if delta > 0 {
+				until = "Stopping..."
+			} else {
+				until = format.HumanTime(m.ExpiresAt, "Never")
+			}
+			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), procStr, until})
 		}
 	}
 
@@ -1294,6 +1335,15 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
+
+	stopCmd := &cobra.Command{
+		Use:     "stop MODEL",
+		Short:   "Stop a running model",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: checkServerHeartbeat,
+		RunE:    StopHandler,
+	}
+
 	serveCmd := &cobra.Command{
 		Use:     "serve",
 		Aliases: []string{"start"},
@@ -1361,6 +1411,7 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
+		stopCmd,
 		pullCmd,
 		pushCmd,
 		listCmd,
@@ -1400,6 +1451,7 @@ func NewCLI() *cobra.Command {
 		createCmd,
 		showCmd,
 		runCmd,
+		stopCmd,
 		pullCmd,
 		pushCmd,
 		listCmd,

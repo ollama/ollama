@@ -406,6 +406,52 @@ func TestGetRunner(t *testing.T) {
 	b.ctxDone()
 }
 
+func TestExpireRunner(t *testing.T) {
+	ctx, done := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer done()
+	s := InitScheduler(ctx)
+	req := &LlmRequest{
+		ctx:             ctx,
+		model:           &Model{ModelPath: "foo"},
+		opts:            api.DefaultOptions(),
+		successCh:       make(chan *runnerRef, 1),
+		errCh:           make(chan error, 1),
+		sessionDuration: &api.Duration{Duration: 2 * time.Minute},
+	}
+
+	var ggml *llm.GGML
+	gpus := gpu.GpuInfoList{}
+	server := &mockLlm{estimatedVRAM: 10, estimatedVRAMByGPU: map[string]uint64{}}
+	s.newServerFn = func(gpus gpu.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+		return server, nil
+	}
+	s.load(req, ggml, gpus, 0)
+
+	select {
+	case err := <-req.errCh:
+		if err != nil {
+			t.Fatalf("expected no errors when loading, got '%s'", err.Error())
+		}
+	case resp := <-req.successCh:
+		s.loadedMu.Lock()
+		if resp.refCount != uint(1) || len(s.loaded) != 1 {
+			t.Fatalf("expected a model to be loaded")
+		}
+		s.loadedMu.Unlock()
+	}
+
+	s.expireRunner(&Model{ModelPath: "foo"})
+
+	s.finishedReqCh <- req
+	s.processCompleted(ctx)
+
+	s.loadedMu.Lock()
+	if len(s.loaded) != 0 {
+		t.Fatalf("expected model to be unloaded")
+	}
+	s.loadedMu.Unlock()
+}
+
 // TODO - add one scenario that triggers the bogus finished event with positive ref count
 func TestPrematureExpired(t *testing.T) {
 	ctx, done := context.WithTimeout(context.Background(), 500*time.Millisecond)
