@@ -8,10 +8,10 @@ set -eu
 PUSH=${PUSH:-""}
 
 if [ -z "${PUSH}" ] ; then
-    echo "Building ${RELEASE_IMAGE_REPO}:$VERSION locally.  set PUSH=1 to push"
+    echo "Building ${FINAL_IMAGE_REPO}:$VERSION locally.  set PUSH=1 to push"
     LOAD_OR_PUSH="--load"
 else
-    echo "Will be pushing ${RELEASE_IMAGE_REPO}:$VERSION"
+    echo "Will be pushing ${FINAL_IMAGE_REPO}:$VERSION"
     LOAD_OR_PUSH="--push"
 fi
 
@@ -20,7 +20,7 @@ docker buildx build \
     --platform=${PLATFORM} \
     ${OLLAMA_COMMON_BUILD_ARGS} \
     -f Dockerfile \
-    -t ${RELEASE_IMAGE_REPO}:$VERSION \
+    -t ${FINAL_IMAGE_REPO}:$VERSION \
     .
 
 if echo $PLATFORM | grep "amd64" > /dev/null; then
@@ -30,6 +30,6 @@ if echo $PLATFORM | grep "amd64" > /dev/null; then
         ${OLLAMA_COMMON_BUILD_ARGS} \
         --target runtime-rocm \
         -f Dockerfile \
-        -t ${RELEASE_IMAGE_REPO}:$VERSION-rocm \
+        -t ${FINAL_IMAGE_REPO}:$VERSION-rocm \
         .
 fi
