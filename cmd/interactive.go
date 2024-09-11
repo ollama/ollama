@@ -371,7 +371,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 				switch args[1] {
 				case "info":
-					showInfo(resp)
+					_ = showInfo(resp, os.Stderr)
 				case "license":
 					if resp.License == "" {
 						fmt.Println("No license was specified for this model.")
