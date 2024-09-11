@@ -1,25 +1,29 @@
 #!/bin/sh
+#
+# Mac ARM users, rosetta can be flaky, so to use a remote x86 builder
+#
+# docker context create amd64 --docker host=ssh://mybuildhost
+# docker buildx create --name mybuilder amd64 --platform linux/amd64
+# docker buildx create --name mybuilder --append desktop-linux --platform linux/arm64
+# docker buildx use mybuilder
+
 
 set -eu
 
 . $(dirname $0)/env.sh
 
-BUILD_ARCH=${BUILD_ARCH:-"amd64 arm64"}
-export AMDGPU_TARGETS=${AMDGPU_TARGETS:=""}
 mkdir -p dist
 
-for TARGETARCH in ${BUILD_ARCH}; do
-    docker build \
-        --platform=linux/$TARGETARCH \
+docker buildx build \
+        --output type=local,dest=./dist/ \
+        --platform=${PLATFORM} \
         ${OLLAMA_COMMON_BUILD_ARGS} \
-        --target build-$TARGETARCH \
+        --target dist \
         -f Dockerfile \
-        -t builder:$TARGETARCH \
         .
-    docker create --platform linux/$TARGETARCH --name builder-$TARGETARCH builder:$TARGETARCH
-    docker cp builder-$TARGETARCH:/go/src/github.com/ollama/ollama/dist/ollama-linux-$TARGETARCH.tgz ./dist/
-    if echo ${TARGETARCH} | grep "amd64" > /dev/null; then
-        docker cp builder-$TARGETARCH:/go/src/github.com/ollama/ollama/dist/ollama-linux-$TARGETARCH-rocm.tgz ./dist/
-    fi
-    docker rm builder-$TARGETARCH
-done
+
+# buildx behavior changes for single vs. multiplatform
+if echo $PLATFORM | grep "," > /dev/null ; then 
+        mv -f ./dist/linux_*64/ollama* ./dist/
+        rmdir ./dist/linux_*64
+fi
