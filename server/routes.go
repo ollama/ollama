@@ -133,10 +133,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 		s.sched.expireRunner(model)
 
-		c.JSON(http.StatusOK, api.ChatResponse{
+		c.JSON(http.StatusOK, api.GenerateResponse{
 			Model:      req.Model,
 			CreatedAt:  time.Now().UTC(),
-			Message:    api.Message{Role: "assistant"},
+			Response:   "",
 			Done:       true,
 			DoneReason: "unload",
 		})
