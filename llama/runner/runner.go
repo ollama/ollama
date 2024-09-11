@@ -515,7 +515,8 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 
 	// Send the stop
 	if err := json.NewEncoder(w).Encode(&CompletionResponse{
-		Stop: true,
+		Stop:         true,
+		StoppedLimit: seq.doneReason == "limit",
 		Timings: Timings{
 			PromptN:     seq.numPromptTokens,
 			PromptMS:    float64(seq.startGenerationTime.Sub(seq.startProcessingTime).Milliseconds()),
