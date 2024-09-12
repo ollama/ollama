@@ -337,6 +337,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [podman-ollama](https://github.com/ericcurtin/podman-ollama)
 - [gollama](https://github.com/sammcj/gollama)
 - [Ollama eBook Summary](https://github.com/cognitivetech/ollama-ebook-summary/)
+- [Ollama Mixture of Experts (MOE) in 50 lines of code](https://github.com/rapidarchitect/ollama_moe)
 
 ### Apple Vision Pro
 - [Enchanted](https://github.com/AugustDev/enchanted)
