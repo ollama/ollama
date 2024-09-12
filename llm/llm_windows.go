@@ -1,12 +1,8 @@
 package llm
 
 import (
-	"embed"
 	"syscall"
 )
-
-// unused on windows
-var libEmbed embed.FS
 
 const CREATE_DEFAULT_ERROR_MODE = 0x04000000
 

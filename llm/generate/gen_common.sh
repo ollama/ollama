@@ -31,6 +31,7 @@ init_vars() {
         NO_WHOLE_ARCHIVE=""
         GCC_ARCH="-arch ${ARCH}"
         DIST_BASE=../../dist/darwin-${GOARCH}/
+        PAYLOAD_BASE=../../build/darwin/${GOARCH}
         ;;
     "Linux")
         LIB_EXT="so"
@@ -40,6 +41,7 @@ init_vars() {
         # Cross compiling not supported on linux - Use docker
         GCC_ARCH=""
         DIST_BASE=../../dist/linux-${GOARCH}/
+        PAYLOAD_BASE=../../build/linux/${GOARCH}
         ;;
     *)
         ;;
@@ -47,7 +49,8 @@ init_vars() {
     if [ -z "${CMAKE_CUDA_ARCHITECTURES}" ] ; then
         CMAKE_CUDA_ARCHITECTURES="50;52;61;70;75;80"
     fi
-    GZIP=$(which pigz 2>/dev/null || echo "gzip")
+    GZIP=$(command -v pigz 2>/dev/null || echo "gzip")
+    RUNNER_BASE="${DIST_BASE}/lib/ollama/runners"
 }
 
 git_module_setup() {
@@ -91,17 +94,34 @@ build() {
     rm -f ${BUILD_DIR}/bin/ggml-common.h ${BUILD_DIR}/bin/ggml-metal.metal
 }
 
-compress() {
-    echo "Compressing payloads to reduce overall binary size..."
-    rm -rf ${BUILD_DIR}/bin/*.gz
+dist() {
+    [ -z "${RUNNER}" ] && exit 1
+    mkdir -p ${RUNNER_BASE}/${RUNNER}/
     for f in ${BUILD_DIR}/bin/* ; do
-        ${GZIP} -n --best -f ${f} &
+        cp ${f} ${RUNNER_BASE}/${RUNNER}/
+    done
+    # check for lib directory
+    if [ -d ${BUILD_DIR}/lib ]; then
+        for f in ${BUILD_DIR}/lib/* ; do
+            cp ${f} ${RUNNER_BASE}/${RUNNER}/
+        done
+    fi
+}
+
+# Compress from the build $BUILD_DIR into the $PAYLOAD_BASE/$RUNNER dir
+compress() {
+    [ -z "${RUNNER}" ] && exit 1
+    echo "Compressing payloads with ${GZIP} to reduce overall binary size..."
+    rm -rf "${PAYLOAD_BASE}/${RUNNER}/"
+    mkdir -p "${PAYLOAD_BASE}/${RUNNER}/"
+    for f in ${BUILD_DIR}/bin/* ; do
+        ${GZIP} -c --best ${f} > "${PAYLOAD_BASE}/${RUNNER}/$(basename ${f}).gz" &
         compress_pids+=" $!"
     done
     # check for lib directory
     if [ -d ${BUILD_DIR}/lib ]; then
         for f in ${BUILD_DIR}/lib/* ; do
-            ${GZIP} -n --best -f ${f} &
+            ${GZIP} -c --best ${f} > "${PAYLOAD_BASE}/${RUNNER}/$(basename ${f}).gz" &
             compress_pids+=" $!"
         done
     fi
