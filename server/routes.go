@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/coreos/go-systemd/v22/daemon"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/sync/errgroup"
@@ -1237,6 +1238,11 @@ func Serve(ln net.Listener) error {
 	if !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	// Notify systemd that ollama server is ready
+	if _, err := daemon.SdNotify(false, daemon.SdNotifyReady); err != nil {
+		slog.Warn(fmt.Sprintf("failed to notify systemd for readiness: %s", err))
+	}
+
 	<-ctx.Done()
 	return nil
 }
