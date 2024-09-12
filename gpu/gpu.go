@@ -93,10 +93,9 @@ func initCudaHandles() *cudaHandles {
 		localAppData := os.Getenv("LOCALAPPDATA")
 		cudartMgmtPatterns = []string{filepath.Join(localAppData, "Programs", "Ollama", CudartMgmtName)}
 	}
-	tmpDir, _ := PayloadsDir()
-	if tmpDir != "" {
-		// TODO - add "payloads" for subprocess
-		cudartMgmtPatterns = []string{filepath.Join(tmpDir, "cuda*", CudartMgmtName)}
+	libDir := LibraryDir()
+	if libDir != "" {
+		cudartMgmtPatterns = []string{filepath.Join(libDir, CudartMgmtName)}
 	}
 	cudartMgmtPatterns = append(cudartMgmtPatterns, CudartGlobs...)
 

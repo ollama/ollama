@@ -102,8 +102,8 @@ jobs:
         with:
           name: generate-windows-cpu
           path: |
-            llm/build/**/bin/*
-            llm/build/**/*.a
+            build/**/*
+            build/**/*.a
             dist/windows-amd64/**
 
   # ROCm generation step
@@ -176,7 +176,7 @@ jobs:
         with:
           name: generate-windows-rocm
           path: |
-            llm/build/**/bin/*
+            build/**/*
             dist/windows-amd64/**
       - uses: actions/upload-artifact@v4
         with:
@@ -265,7 +265,7 @@ jobs:
         with:
           name: generate-windows-cuda-${{ matrix.cuda.version }}
           path: |
-            llm/build/**/bin/*
+            build/**/*
             dist/windows-amd64/**
       - uses: actions/upload-artifact@v4
         with:
@@ -338,7 +338,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-rocm
-      - run: dir llm/build
+      - run: dir build
       - run: |
           $gopath=(get-command go).source | split-path -parent
           & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
@@ -359,9 +359,7 @@ jobs:
     environment: release
     runs-on: linux
     env:
-      OLLAMA_SKIP_MANIFEST_CREATE: '1'
       BUILD_ARCH: amd64
-      PUSH: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -369,14 +367,8 @@ jobs:
       - name: Set Version
         shell: bash
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ vars.DOCKER_USER }}
-          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
       - run: |
           ./scripts/build_linux.sh
-          ./scripts/build_docker.sh
       - uses: actions/upload-artifact@v4
         with:
           name: dist-linux-amd64
@@ -390,9 +382,7 @@ jobs:
     environment: release
     runs-on: linux-arm64
     env:
-      OLLAMA_SKIP_MANIFEST_CREATE: '1'
       BUILD_ARCH: arm64
-      PUSH: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -421,20 +411,189 @@ jobs:
           sudo usermod -aG docker $USER
           sudo apt-get install acl
           sudo setfacl --modify user:$USER:rw /var/run/docker.sock
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ vars.DOCKER_USER }}
-          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
       - run: |
           ./scripts/build_linux.sh
-          ./scripts/build_docker.sh
       - uses: actions/upload-artifact@v4
         with:
           name: dist-linux-arm64
           path: |
             dist/*linux*
             !dist/*-cov
+
+  # Container image build
+  build-linux:
+    environment: release
+    strategy:
+      matrix:
+        runner:
+          - linux
+          - linux-arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      FINAL_IMAGE_REPO: ollama/ollama
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: 'Install Docker'
+        if: ${{ startsWith(matrix.runner, 'linux-arm64') }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates curl
+          sudo install -m 0755 -d /etc/apt/keyrings
+          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          sudo chmod a+r /etc/apt/keyrings/docker.asc
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+            $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+            sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+          sudo usermod -aG docker $USER
+          sudo apt-get install acl
+          sudo setfacl --modify user:$USER:rw /var/run/docker.sock
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.FINAL_IMAGE_REPO }}
+          flavor: |
+            latest=false
+          tags: |
+            type=ref,event=tag
+            type=ref,enable=true,priority=600,prefix=0.0.0-pr,suffix=,event=pr
+            type=semver,pattern={{version}}
+      - name: Set Version
+        shell: bash
+        run: |
+          machine=$(uname -m)
+          case ${machine} in
+            x86_64) echo ARCH=amd64; echo PLATFORM_PAIR=linux-amd64 ;;
+            aarch64) echo ARCH=arm64; echo PLATFORM_PAIR=linux-arm64 ;;
+          esac >>$GITHUB_ENV
+          echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${{ env.DOCKER_METADATA_OUTPUT_VERSION }}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" >>$GITHUB_ENV
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: "."
+          platforms: linux/${{ env.ARCH }}
+          build-args: |
+            GOFLAGS
+          outputs: type=image,name=${{ env.FINAL_IMAGE_REPO }},push-by-digest=true,name-canonical=true,push=true
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ env.PLATFORM_PAIR }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+  merge:
+    environment: release
+    runs-on: linux
+    needs:
+      - build-linux
+    env:
+      FINAL_IMAGE_REPO: ollama/ollama
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.FINAL_IMAGE_REPO }}
+          flavor: |
+            latest=false
+          tags: |
+            type=ref,event=tag
+            type=ref,enable=true,priority=600,prefix=0.0.0-pr,suffix=,event=pr
+            type=semver,pattern={{version}}
+      - name: Set Version
+        shell: bash
+        run: |
+          machine=$(uname -m)
+          case ${machine} in
+            x86_64) echo ARCH=amd64; echo PLATFORM_PAIR=linux-amd64 ;;
+            aarch64) echo ARCH=arm64; echo PLATFORM_PAIR=linux-arm64 ;;
+          esac >>$GITHUB_ENV
+          echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${{ env.DOCKER_METADATA_OUTPUT_VERSION }}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" >>$GITHUB_ENV
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.FINAL_IMAGE_REPO }}@sha256:%s ' *)
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ${{ env.FINAL_IMAGE_REPO }}:${{ steps.meta.outputs.version }}          
+  build-linux-rocm:
+    environment: release
+    runs-on: linux
+    env:
+      FINAL_IMAGE_REPO: ollama/ollama
+      ARCH: amd64
+      PLATFORM_PAIR: linux-amd64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.FINAL_IMAGE_REPO }}
+          flavor: |
+            latest=false
+          tags: |
+            type=ref,event=tag
+            type=ref,enable=true,priority=600,prefix=0.0.0-pr,suffix=,event=pr
+            type=semver,pattern={{version}}
+      - name: Set Version
+        shell: bash
+        run: |
+          echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${{ env.DOCKER_METADATA_OUTPUT_VERSION }}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" >>$GITHUB_ENV
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: "."
+          target: runtime-rocm
+          build-args: |
+            GOFLAGS
+          tags: ${{ env.FINAL_IMAGE_REPO }}:${{ env.DOCKER_METADATA_OUTPUT_VERSION}}-rocm,${{ env.FINAL_IMAGE_REPO }}:rocm
+          push: true
 
   # Aggregate all the assets and ship a release
   release:
@@ -448,8 +607,6 @@ jobs:
     permissions:
       contents: write
     env:
-      OLLAMA_SKIP_IMAGE_BUILD: '1'
-      PUSH: '1'
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
@@ -458,12 +615,6 @@ jobs:
         run: |
           echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
           echo "RELEASE_VERSION=$(echo ${GITHUB_REF_NAME} | cut -f1 -d-)" >> $GITHUB_ENV
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ vars.DOCKER_USER }}
-          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
-      - run: ./scripts/build_docker.sh
       - name: Retrieve built artifact
         uses: actions/download-artifact@v4
         with:
