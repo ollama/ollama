@@ -137,7 +137,7 @@ wait_for_compress() {
 
 install() {
     echo "Installing libraries to bin dir ${BUILD_DIR}/bin/"
-    for lib in $(find ${BUILD_DIR} -name \*.${LIB_EXT}); do
+    for lib in $(find ${BUILD_DIR} -name \*.${LIB_EXT} | grep -v "${BUILD_DIR}/bin/" ); do
         rm -f "${BUILD_DIR}/bin/$(basename ${lib})"
         cp -af "${lib}" "${BUILD_DIR}/bin/"
     done
