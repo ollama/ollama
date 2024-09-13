@@ -93,11 +93,11 @@ def check(context, claim, model='jmorgan/bespoke-minicheck'):
 if __name__ == "__main__":
     model = SentenceTransformer('all-MiniLM-L6-v2')
     allEmbeddings = []
-    url = "https://www.theverge.com/2024/9/12/24242439/openai-o1-model-reasoning-strawberry-chatgpt"
+    article_url = "https://www.theverge.com/2024/9/12/24242439/openai-o1-model-reasoning-strawberry-chatgpt"
     article={}
     article['embeddings'] = []
-    article['url'] = url
-    text = getArticleText(url)
+    article['url'] = article_url
+    text = getArticleText(article_url)
     # summary = get_summary(text)
     chunks = chunker(text)  # Use the chunk_text function from web_utils
     embeddings = model.encode(chunks)
