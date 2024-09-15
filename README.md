@@ -431,6 +431,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [vnc-lm](https://github.com/jk011ru/vnc-lm) (A containerized Discord bot with support for attachments and web links)
 - [LSP-AI](https://github.com/SilasMarvin/lsp-ai) (Open-source language server for AI-powered functionality)
 - [QodeAssist](https://github.com/Palm1r/QodeAssist) (AI-powered coding assistant plugin for Qt Creator)
+- [Obsidian Quiz Generator plugin](https://github.com/ECuiDev/obsidian-quiz-generator)
 
 ### Supported backends
 
