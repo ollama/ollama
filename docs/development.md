@@ -40,6 +40,10 @@ Now you can run `ollama`:
 ./ollama
 ```
 
+#### Xcode 15 warnings
+
+If you are using Xcode newer than version 14, you may see a warning during `go build` about `ld: warning: ignoring duplicate libraries: '-lobjc'` due to Golang issue https://github.com/golang/go/issues/67799 which can be safely ignored.  You can suppress the warning with `export CGO_LDFLAGS="-Wl,-no_warn_duplicate_libraries"`
+
 ### Linux
 
 #### Linux CUDA (NVIDIA)
