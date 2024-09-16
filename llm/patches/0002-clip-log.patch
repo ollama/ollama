@@ -1,5 +1,14 @@
+From ba4bba80a744f76ac67b8234451c259a3c5da83b Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Mon, 16 Sep 2024 15:53:11 -0700
+Subject: [PATCH] 02-clip-log.diff
+
+---
+ examples/llava/clip.cpp | 1 +
+ 1 file changed, 1 insertion(+)
+
 diff --git a/examples/llava/clip.cpp b/examples/llava/clip.cpp
-index e431c7f7..f077e688 100644
+index 9b890571..cb51793d 100644
 --- a/examples/llava/clip.cpp
 +++ b/examples/llava/clip.cpp
 @@ -3,6 +3,7 @@
@@ -10,3 +19,6 @@ index e431c7f7..f077e688 100644
  #include "log.h"
  #include "ggml.h"
  #include "ggml-alloc.h"
+-- 
+2.46.0
+

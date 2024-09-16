@@ -83,29 +83,9 @@ function git_module_setup {
 }
 
 function apply_patches {
-    # Wire up our CMakefile
-    if (!(Select-String -Path "${script:llamacppDir}/CMakeLists.txt" -Pattern 'ollama')) {
-        Add-Content -Path "${script:llamacppDir}/CMakeLists.txt" -Value 'add_subdirectory(../ext_server ext_server) # ollama'
-    }
-
     # Apply temporary patches until fix is upstream
-    $patches = Get-ChildItem "../patches/*.diff"
-    foreach ($patch in $patches) {
-        # Extract file paths from the patch file
-        $filePaths = Get-Content $patch.FullName | Where-Object { $_ -match '^\+\+\+ ' } | ForEach-Object {
-            $parts = $_ -split ' '
-            ($parts[1] -split '/', 2)[1]
-        }
-
-        # Checkout each file
-        foreach ($file in $filePaths) {
-            git -C "${script:llamacppDir}" checkout $file
-        }
-    }
-
-    # Apply each patch
-    foreach ($patch in $patches) {
-        git -C "${script:llamacppDir}" apply $patch.FullName
+    foreach ($patch in $(Get-ChildItem "../patches/*.patch")) {
+        git -c 'user.name=nobody' -c 'user.email=<>' -C "${script:llamacppDir}" am $patch.FullName
     }
 }
 
