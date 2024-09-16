@@ -22,24 +22,6 @@ def getArticleText(url):
   article.parse()
   return article.text
 
-def get_summary(text):
-  systemPrompt = "Write a concise summary of the text, return your responses with 5 lines that cover the key points of the text given."
-  prompt = text
-  
-  url = "http://localhost:11434/api/generate"
-
-  payload = {
-    "model": "llama3.1",
-    "prompt": prompt, 
-    "system": systemPrompt,
-    "stream": False
-  }
-  payload_json = json.dumps(payload)
-  headers = {"Content-Type": "application/json"}
-  response = requests.post(url, data=payload_json, headers=headers)
-
-  return json.loads(response.text)["response"]
-
 # Perform K-nearest neighbors (KNN) search
 def knn_search(question_embedding, embeddings, k=5):
     X = np.array([item['embedding'] for article in embeddings for item in article['embeddings']])
@@ -75,8 +57,6 @@ def check(context, claim, model='jmorgan/bespoke-minicheck'):
 	stream=True
     )
 
-
-
     r.raise_for_status()
     output = ""
 
@@ -98,7 +78,6 @@ if __name__ == "__main__":
     article['embeddings'] = []
     article['url'] = article_url
     text = getArticleText(article_url)
-    # summary = get_summary(text)
     chunks = chunker(text)  # Use the chunk_text function from web_utils
     embeddings = model.encode(chunks)
     for (chunk, embedding) in zip(chunks, embeddings):
@@ -109,8 +88,6 @@ if __name__ == "__main__":
       article['embeddings'].append(item)
   
     allEmbeddings.append(article)
-
-    # print(f"{summary}\n")
     
     while True:
       context = []
@@ -140,7 +117,7 @@ if __name__ == "__main__":
       url = "http://localhost:11434/api/generate"
 
       payload = {
-      "model": "mistral-openorca",
+      "model": "llama3.1",
       "prompt": question, 
       "system": systemPrompt,
       "stream": False, 
