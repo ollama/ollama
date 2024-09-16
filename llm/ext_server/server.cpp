@@ -22,6 +22,7 @@
 
 #include "common.h"
 #include "llama.h"
+#include "log.h"
 #include "sampling.h"
 #include "utils.hpp"
 
@@ -416,7 +417,7 @@ struct llama_server_context
             const int n_embd_clip = clip_n_mmproj_embd(clp_ctx);
             const int n_embd_llm  = llama_n_embd(model);
             if (n_embd_clip != n_embd_llm) {
-                LOG_TEE("%s: embedding dim of the multimodal projector (%d) is not equal to that of LLaMA (%d). Make sure that you use the correct mmproj file.\n", __func__, n_embd_clip, n_embd_llm);
+                LOG_WRN("%s: embedding dim of the multimodal projector (%d) is not equal to that of LLaMA (%d). Make sure that you use the correct mmproj file.\n", __func__, n_embd_clip, n_embd_llm);
                 llama_free(ctx);
                 llama_free_model(model);
                 return false;
@@ -741,12 +742,12 @@ struct llama_server_context
                                     }
                                 }
                                 if (!found) {
-                                    LOG_TEE("ERROR: Image with id: %i, not found.\n", img_id);
+                                    LOG_WRN("ERROR: Image with id: %i, not found.\n", img_id);
                                     slot->images.clear();
                                     return false;
                                 }
                             } catch (const std::invalid_argument& e) {
-                                LOG_TEE("Invalid image number id in prompt\n");
+                                LOG_WRN("Invalid image number id in prompt\n");
                                 slot->images.clear();
                                 return false;
                             }
@@ -811,7 +812,7 @@ struct llama_server_context
                 };
                 if (llama_decode(ctx, batch_view) != 0)
                 {
-                    LOG_TEE("%s: llama_decode() failed\n", __func__);
+                    LOG_WRN("%s: llama_decode() failed\n", __func__);
                     return;
                 }
             }
@@ -823,7 +824,7 @@ struct llama_server_context
             }
         }
 
-        LOG_TEE("system prompt updated\n");
+        LOG_INF("system prompt updated\n");
         system_need_update = false;
     }
 
@@ -877,9 +878,7 @@ struct llama_server_context
         slot.sampled = result.tok;
 
         // search stop word and delete it
-        if (!llama_token_is_eog(model, result.tok))
-            slot.generated_text += token_str;
-
+        slot.generated_text += token_str;
         slot.has_next_token = true;
 
         // check if there is incomplete UTF-8 character at the end
@@ -914,36 +913,30 @@ struct llama_server_context
         if (!incomplete)
         {
             size_t pos = std::min(slot.n_sent_text, slot.generated_text.size());
+            const std::string str_test = slot.generated_text.substr(pos);
+            bool is_stop_full = false;
+            size_t stop_pos = find_stopping_strings(str_test, token_str.size(), STOP_FULL, slot);
+            if (stop_pos != std::string::npos)
+            {
+                is_stop_full = true;
+                slot.generated_text.erase(
+                    slot.generated_text.begin() + pos + stop_pos,
+                    slot.generated_text.end());
+                pos = std::min(slot.n_sent_text, slot.generated_text.size());
+            }
+            else
+            {
+                is_stop_full = false;
+                stop_pos = find_stopping_strings(str_test, token_str.size(), STOP_PARTIAL, slot);
+            }
 
-            if (!llama_token_is_eog(model, result.tok)) {
-                const std::string str_test = slot.generated_text.substr(pos);
-                bool is_stop_full = false;
-                size_t stop_pos = find_stopping_strings(str_test, token_str.size(), STOP_FULL, slot);
-                if (stop_pos != std::string::npos)
-                {
-                    is_stop_full = true;
-                    slot.generated_text.erase(
-                        slot.generated_text.begin() + pos + stop_pos,
-                        slot.generated_text.end());
-                    pos = std::min(slot.n_sent_text, slot.generated_text.size());
-                }
-                else
-                {
-                    is_stop_full = false;
-                    stop_pos = find_stopping_strings(str_test, token_str.size(), STOP_PARTIAL, slot);
-                }
-
-                // check if there is any token to predict
-                if (stop_pos == std::string::npos || (!slot.has_next_token && !is_stop_full && stop_pos > 0))
-                {
-                    // no send the stop word in the response
-                    result.text_to_send = slot.generated_text.substr(pos, std::string::npos);
-                    slot.n_sent_text += result.text_to_send.size();
-                    // add the token to slot queue and cache
-                }
-            } else {
-                    result.text_to_send = slot.generated_text.substr(pos, std::string::npos);
-                    slot.n_sent_text += result.text_to_send.size();
+            // check if there is any token to predict
+            if (stop_pos == std::string::npos || (!slot.has_next_token && !is_stop_full && stop_pos > 0))
+            {
+                // no send the stop word in the response
+                result.text_to_send = slot.generated_text.substr(pos, std::string::npos);
+                slot.n_sent_text += result.text_to_send.size();
+                // add the token to slot queue and cache
             }
 
             if (slot.params.stream)
@@ -998,7 +991,7 @@ struct llama_server_context
             }
 
             if (!llava_image_embed_make_with_clip_img(clp_ctx, params.cpuparams.n_threads, img.img_data, &img.image_embedding, &img.image_tokens)) {
-                LOG_TEE("Error processing the given image");
+                LOG_WRN("Error processing the given image");
                 return false;
             }
 
@@ -1011,7 +1004,7 @@ struct llama_server_context
 
     void send_error(task_server& task, const std::string &error)
     {
-        LOG_TEE("task %i - error: %s\n", task.id, error.c_str());
+        LOG_WRN("task %i - error: %s\n", task.id, error.c_str());
         task_result res;
         res.id = task.id;
         res.multitask_id = task.multitask_id;
@@ -1078,7 +1071,9 @@ struct llama_server_context
             {"multimodal", multimodal}
         };
 
-        res.result_json["content"] = tkn.text_to_send;
+        if (!llama_token_is_eog(model, tkn.tok)) {
+            res.result_json["content"] = tkn.text_to_send;
+        }
 
         if (slot.sparams.n_probs > 0)
         {
@@ -1255,7 +1250,7 @@ struct llama_server_context
                 };
                 if (llama_decode(ctx, batch_view))
                 {
-                    LOG_TEE("%s : failed to eval\n", __func__);
+                    LOG_WRN("%s : failed to eval\n", __func__);
                     return false;
                 }
             }
@@ -1283,7 +1278,7 @@ struct llama_server_context
                 };
                 if (llama_decode(ctx, batch_img))
                 {
-                    LOG_TEE("%s : failed to eval image\n", __func__);
+                    LOG_WRN("%s : failed to eval image\n", __func__);
                     return false;
                 }
                 slot.n_past += n_eval;
@@ -1843,10 +1838,10 @@ struct llama_server_context
                         const int bd = (slot.ga_w / slot.ga_n) * (slot.ga_n - 1);
                         const int dd = (slot.ga_w / slot.ga_n) - ib * bd - slot.ga_w;
 
-                        LOG_TEE("\n");
-                        LOG_TEE("shift: [%6d, %6d] + %6d -> [%6d, %6d]\n", slot.ga_i, slot.n_past_se, ib * bd, slot.ga_i + ib * bd, slot.n_past_se + ib * bd);
-                        LOG_TEE("div:   [%6d, %6d] / %6d -> [%6d, %6d]\n", slot.ga_i + ib * bd, slot.ga_i + ib * bd + slot.ga_w, slot.ga_n, (slot.ga_i + ib * bd) / slot.ga_n, (slot.ga_i + ib * bd + slot.ga_w) / slot.ga_n);
-                        LOG_TEE("shift: [%6d, %6d] + %6d -> [%6d, %6d]\n", slot.ga_i + ib * bd + slot.ga_w, slot.n_past_se + ib * bd, dd, slot.ga_i + ib * bd + slot.ga_w + dd, slot.n_past_se + ib * bd + dd);
+                        LOG_DBG("\n");
+                        LOG_DBG("shift: [%6d, %6d] + %6d -> [%6d, %6d]\n", slot.ga_i, slot.n_past_se, ib * bd, slot.ga_i + ib * bd, slot.n_past_se + ib * bd);
+                        LOG_DBG("div:   [%6d, %6d] / %6d -> [%6d, %6d]\n", slot.ga_i + ib * bd, slot.ga_i + ib * bd + slot.ga_w, slot.ga_n, (slot.ga_i + ib * bd) / slot.ga_n, (slot.ga_i + ib * bd + slot.ga_w) / slot.ga_n);
+                        LOG_DBG("shift: [%6d, %6d] + %6d -> [%6d, %6d]\n", slot.ga_i + ib * bd + slot.ga_w, slot.n_past_se + ib * bd, dd, slot.ga_i + ib * bd + slot.ga_w + dd, slot.n_past_se + ib * bd + dd);
 
                         llama_kv_cache_seq_add(ctx, slot.id, slot.ga_i, slot.n_past_se, ib * bd);
                         llama_kv_cache_seq_div(ctx, slot.id, slot.ga_i + ib * bd, slot.ga_i + ib * bd + slot.ga_w,slot.ga_n);
@@ -1856,7 +1851,7 @@ struct llama_server_context
 
                         slot.ga_i += slot.ga_w / slot.ga_n;
 
-                        LOG_TEE("\nn_past_old = %d, n_past = %d, ga_i = %d\n\n", slot.n_past_se + bd, slot.n_past_se, slot.ga_i);
+                        LOG_DBG("\nn_past_old = %d, n_past = %d, ga_i = %d\n\n", slot.n_past_se + bd, slot.n_past_se, slot.ga_i);
                     }
                     slot.n_past_se += n_tokens;
                 }
@@ -1881,11 +1876,11 @@ struct llama_server_context
                 if (n_batch == 1 || ret < 0)
                 {
                     // if you get here, it means the KV cache is full - try increasing it via the context size
-                    LOG_TEE("%s : failed to decode the batch, n_batch = %d, ret = %d\n", __func__, n_batch, ret);
+                    LOG_WRN("%s : failed to decode the batch, n_batch = %d, ret = %d\n", __func__, n_batch, ret);
                     return false;
                 }
 
-                LOG_TEE("%s : failed to find free space in the KV cache, retrying with smaller n_batch = %d\n", __func__, n_batch / 2);
+                LOG_WRN("%s : failed to find free space in the KV cache, retrying with smaller n_batch = %d\n", __func__, n_batch / 2);
 
                 // retry with half the batch size to try to find a free slot in the KV cache
                 n_batch /= 2;
@@ -2500,8 +2495,7 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
         }
         else if (arg == "--log-disable")
         {
-            log_set_target(stdout);
-            LOG_DEBUG("logging to file is disabled.", {});
+            LOG_WARNING("DEPRECATED: --log-disable does nothing anymore", {});
         }
         else if (arg == "--slots-endpoint-disable")
         {
@@ -2711,7 +2705,7 @@ int main(int argc, char **argv) {
 #endif
 
 #if SERVER_VERBOSE != 1
-    log_disable();
+    gpt_log_set_verbosity_thold(-1);
 #endif
     // own arguments required by this example
     gpt_params params;

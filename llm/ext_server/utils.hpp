@@ -29,6 +29,7 @@
 #include <condition_variable>
 #include <unordered_map>
 #include <random>
+#include <iostream>
 
 #include "json.hpp"
 
