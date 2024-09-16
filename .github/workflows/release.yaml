@@ -359,7 +359,7 @@ jobs:
     environment: release
     runs-on: linux
     env:
-      BUILD_ARCH: amd64
+      PLATFORM: linux/amd64
     steps:
       - uses: actions/checkout@v4
         with:
@@ -382,7 +382,7 @@ jobs:
     environment: release
     runs-on: linux-arm64
     env:
-      BUILD_ARCH: arm64
+      PLATFORM: linux/arm64
     steps:
       - uses: actions/checkout@v4
         with:
