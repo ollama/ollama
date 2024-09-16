@@ -118,6 +118,7 @@ func (t *TokenCache) findCacheSlot(prompt []int) (*TokenCacheSlot, int) {
 		copy(oldestSlot.tokens, longestSlot.tokens[:longest])
 		// This is only nil for unit tests
 		if t.lc != nil {
+			t.lc.KvCacheSeqRm(oldestSlot.id, 0, -1)
 			t.lc.KvCacheSeqCp(longestSlot.id, oldestSlot.id, 0, longest)
 		}
 	}
