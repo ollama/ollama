@@ -5,7 +5,7 @@ import requests
 
 # NOTE: ollama must be running for this to work, start the ollama app or run `ollama serve`
 
-def check(context, claim, model='jmorgan/bespoke-minicheck:7b-q4_K_M'):
+def check(context, claim, model='jmorgan/bespoke-minicheck'):
     """Checks if the claim is supported by the context by calling bespoke-minicheck.
 
     Returns Yes/yes if the claim is supported by the context, No/no otherwise.

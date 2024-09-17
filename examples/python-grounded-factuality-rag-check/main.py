@@ -40,7 +40,7 @@ def knn_search(question_embedding, embeddings, k=5):
     return best_matches
 
 
-def check(context, claim, model='jmorgan/bespoke-minicheck:7b-q4_K_M'):
+def check(context, claim, model='jmorgan/bespoke-minicheck'):
     """Checks if the claim is supported by the context by calling bespoke-minicheck.
 
     Returns Yes/yes if the claim is supported by the context, No/no otherwise.
