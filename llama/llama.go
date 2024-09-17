@@ -464,13 +464,10 @@ func NewSamplingContext(params SamplingParams) *SamplingContext {
 	defer C.free(unsafe.Pointer(grammar))
 
 	cparams.grammar = grammar
-	return &SamplingContext{c: C.llama_sampling_cinit(&cparams)}
-}
+	context := &SamplingContext{c: C.llama_sampling_cinit(&cparams)}
+	runtime.SetFinalizer(context, func(s *SamplingContext) { C.llama_sampling_cfree(s.c) })
 
-func (s *SamplingContext) Free() {
-	if s != nil {
-		C.llama_sampling_cfree(s.c)
-	}
+	return context
 }
 
 func (s *SamplingContext) Reset() {
