@@ -1,6 +1,6 @@
 # RAG Hallucination Checker using Bespoke-Minicheck
 
-This example allows the user to ask questions related to a document (this can be changed by modifying `article_url` in `main.py`). Relevant chunks are retreived from the document and given to `llama3.1` as context to answer the question. Then each sentence in the answer is checked against the retrieved chunks using `bespoke-minicheck` to ensure that the answer does not contain hallucinations. 
+This example allows the user to ask questions related to a document, which can be specified via an article url. Relevant chunks are retreived from the document and given to `llama3.1` as context to answer the question. Then each sentence in the answer is checked against the retrieved chunks using `bespoke-minicheck` to ensure that the answer does not contain hallucinations. 
 
 ## Running the Example
 
