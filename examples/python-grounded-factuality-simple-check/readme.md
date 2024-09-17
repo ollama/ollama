@@ -10,7 +10,7 @@
    ollama pull jmorgan/bespoke-minicheck
    ```
 
-2. Install the Python Requirements.
+2. Install the dependencies.
 
    ```bash
    pip install -r requirements.txt
@@ -30,10 +30,10 @@ Claim:
 >The Apple I is a 16-bit computer.
 
 Expected output:
->No
+>Is the claim supported by the context according to bespoke-minicheck? No
 
 Claim: 
 >Apple was originally called the Apple Computer Company.
 
 Expected output:
->Yes
+>Is the claim supported by the context according to bespoke-minicheck? Yes

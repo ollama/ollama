@@ -2,50 +2,55 @@ import json
 import requests
 from sentence_transformers import SentenceTransformer
 from mattsollamatools import chunker
-import requests
-import json
 from newspaper import Article
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
-from mattsollamatools import chunker
 import nltk
 
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt')
+nltk.download('punkt_tab')
 
-# Often there are a bunch of ads and menus on pages for a news article. This uses newspaper3k to get just the text of just the article.
+
 def getArticleText(url):
+  """Gets the text of an article from a URL.
+  
+  Often there are a bunch of ads and menus on pages for a news article. 
+  This uses newspaper3k to get just the text of just the article.
+  """
   article = Article(url)
   article.download()
   article.parse()
   return article.text
 
-# Perform K-nearest neighbors (KNN) search
+
 def knn_search(question_embedding, embeddings, k=5):
+    """Performs K-nearest neighbors (KNN) search"""
     X = np.array([item['embedding'] for article in embeddings for item in article['embeddings']])
     source_texts = [item['source'] for article in embeddings for item in article['embeddings']]
-    
+
     # Fit a KNN model on the embeddings
     knn = NearestNeighbors(n_neighbors=k, metric='cosine')
     knn.fit(X)
-    
-    # Find the indices and distances of the k-nearest neighbors
-    distances, indices = knn.kneighbors(question_embedding, n_neighbors=k)
+
+    # Find the indices and distances of the k-nearest neighbors.
+    _, indices = knn.kneighbors(question_embedding, n_neighbors=k)
     
     # Get the indices and source texts of the best matches
     best_matches = [(indices[0][i], source_texts[indices[0][i]]) for i in range(k)]
-    
+
     return best_matches
 
+
 def check(context, claim, model='jmorgan/bespoke-minicheck'):
-    """
+    """Checks if the claim is supported by the context by calling bespoke-minicheck.
+
+    Returns Yes/yes if the claim is supported by the context, No/no otherwise.
+    Support for logits will be added in the future.
+    
     bespoke-minicheck's system prompt is defined as:
-      "Determine whether the provided claim is consistent with the corresponding
+      'Determine whether the provided claim is consistent with the corresponding
       document. Consistency in this context implies that all information presented in the claim
       is substantiated by the document. If not, it should be considered inconsistent. Please 
-      assess the claim's consistency with the document by responding with either "Yes" or "No".
+      assess the claim's consistency with the document by responding with either "Yes" or "No".'
     
     bespoke-minicheck's user prompt is defined as:
       "Document: {context}\nClaim: {claim}"
@@ -53,8 +58,11 @@ def check(context, claim, model='jmorgan/bespoke-minicheck'):
     prompt = f"Document: {context}\nClaim: {claim}"
     r = requests.post(
         "http://0.0.0.0:11434/api/generate",
-        json={"model": model, "prompt": prompt, "stream": True, "temperature": 0.0},
-	stream=True
+        json={"model": model,
+              "prompt": prompt,
+              "stream": True,
+              "options": {"num_predict": 2, "temperature": 0.0}},
+        stream=True
     )
 
     r.raise_for_status()
@@ -74,7 +82,7 @@ if __name__ == "__main__":
     model = SentenceTransformer('all-MiniLM-L6-v2')
     allEmbeddings = []
     article_url = "https://www.theverge.com/2024/9/12/24242439/openai-o1-model-reasoning-strawberry-chatgpt"
-    article={}
+    article = {}
     article['embeddings'] = []
     article['url'] = article_url
     text = getArticleText(article_url)
@@ -90,8 +98,8 @@ if __name__ == "__main__":
     allEmbeddings.append(article)
     
     while True:
-      context = []
       # Input a question from the user
+      # For example, "Who is the chief research officer?"
       question = input("Enter your question or type quit: ")
 
       if question.lower() == 'quit':
@@ -101,14 +109,9 @@ if __name__ == "__main__":
       question_embedding = model.encode([question])
 
       # Perform KNN search to find the best matches (indices and source text)
-      best_matches = knn_search(question_embedding, allEmbeddings, k=10)
+      best_matches = knn_search(question_embedding, allEmbeddings, k=4)
 
-      sourcetext=""
-      # for i, (index, source_text) in enumerate(best_matches, start=1):
-      #     sourcetext += f"{i}. Index: {index}, Source Text: {source_text}\n"
-      
-      for i, (index, source_text) in enumerate(best_matches, start=1):
-          sourcetext += f"{source_text}\n\n"
+      sourcetext = "\n\n".join([source_text for (_, source_text) in best_matches])
 
       print(f"\nRetrieved chunks: \n{sourcetext}")
 
@@ -117,11 +120,10 @@ if __name__ == "__main__":
       url = "http://localhost:11434/api/generate"
 
       payload = {
-      "model": "llama3.1",
-      "prompt": question, 
-      "system": systemPrompt,
-      "stream": False, 
-      "context": context
+        "model": "llama3.1",
+        "prompt": question,
+        "system": systemPrompt,
+        "stream": False,
       }
 
       # Convert the payload to a JSON string
@@ -140,14 +142,12 @@ if __name__ == "__main__":
           output = json.loads(response.text)
           context = output['context']
           answer = output['response']
-          print("LLM Answer: " + answer + "\n")
-          
-
+          print(f"LLM Answer: {answer}\n")
       else:
           print(f"Request failed with status code {response.status_code}")
 
       if answer:
-         for claim in nltk.sent_tokenize(answer):
-           print(f"LLM Claim: {claim}")
-           print(f"Is this claim supported? (Minicheck) {check(source_text, claim)}\n")
+          for claim in nltk.sent_tokenize(answer):
+            print(f"LLM Claim: {claim}")
+            print(f"Is this claim supported by the context according to bespoke-minicheck? {check(sourcetext, claim)}\n")
 
