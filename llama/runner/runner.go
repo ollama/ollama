@@ -254,6 +254,13 @@ func (s *Server) run(ctx context.Context) {
 	}
 }
 
+// TODO (jmorganca): processBatch should be simplified, removing:
+// * sampling
+// * stop token checking
+// * metrics
+// these should instead be handled by the handlers
+// it should only be responsible for accepting tokens or embeddings and
+// processing batches as fast as possible
 func (s *Server) processBatch() {
 	batch := llama.NewBatch(s.batchSize*len(s.seqs), 0, len(s.seqs))
 	defer batch.Free()
@@ -385,6 +392,9 @@ func (s *Server) processBatch() {
 	}
 }
 
+// TODO (jmorganca): use structs from the api package to avoid duplication
+// this way the api acts as a proxy instead of using a different api for the
+// runner
 type Options struct {
 	api.Runner
 
