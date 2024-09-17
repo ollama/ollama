@@ -99,6 +99,7 @@ if __name__ == "__main__":
     
     while True:
       # Input a question from the user
+      # For example, "Who is the chief research officer?"
       question = input("Enter your question or type quit: ")
 
       if question.lower() == 'quit':
