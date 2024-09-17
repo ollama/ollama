@@ -312,7 +312,7 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 		return nil, false
 	}
 
-	var b strings.Builder
+	var b bytes.Buffer
 	if err := tmpl.Execute(&b, map[string][]api.ToolCall{
 		"ToolCalls": {
 			{
