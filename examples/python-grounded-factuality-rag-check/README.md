@@ -11,7 +11,7 @@ This example allows the user to ask questions related to a document (this can be
    ollama pull jmorgan/bespoke-minicheck
    ```
 
-2. Install the Python Requirements.
+2. Install the dependencies.
 
    ```bash
    pip install -r requirements.txt
@@ -25,7 +25,7 @@ This example allows the user to ask questions related to a document (this can be
 
 ## Expected Output
 
-```bash
+```text
 
 Enter your question or type quit: Who is the chief research officer of openai?
 
@@ -54,5 +54,5 @@ With o1 , it trained the model to solve problems on its own using a technique kn
 LLM Answer:  The chief research officer of OpenAI is Bob McGrew.
 
 LLM Claim:  The chief research officer of OpenAI is Bob McGrew.
-Is this claim supported? (Minicheck) Yes
+Is this claim supported by the context according to bespoke-minicheck? No
 ```
