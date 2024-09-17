@@ -372,7 +372,7 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 	}
 
 	var objs []map[string]any
-	for _, p := range parsed {
+	for _, p := range responseObjects {
 		objs = append(objs, collect(p)...)
 	}
 
