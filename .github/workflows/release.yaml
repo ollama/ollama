@@ -104,6 +104,7 @@ jobs:
           path: |
             build/**/*
             build/**/*.a
+            llm/build/**/*.a
             dist/windows-amd64/**
 
   # ROCm generation step
@@ -359,7 +360,7 @@ jobs:
     environment: release
     runs-on: linux
     env:
-      BUILD_ARCH: amd64
+      PLATFORM: linux/amd64
     steps:
       - uses: actions/checkout@v4
         with:
@@ -382,7 +383,7 @@ jobs:
     environment: release
     runs-on: linux-arm64
     env:
-      BUILD_ARCH: arm64
+      PLATFORM: linux/arm64
     steps:
       - uses: actions/checkout@v4
         with:
@@ -421,7 +422,7 @@ jobs:
             !dist/*-cov
 
   # Container image build
-  build-linux:
+  build-container-image:
     environment: release
     strategy:
       matrix:
@@ -459,7 +460,6 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            type=ref,event=tag
             type=ref,enable=true,priority=600,prefix=0.0.0-pr,suffix=,event=pr
             type=semver,pattern={{version}}
       - name: Set Version
@@ -503,7 +503,7 @@ jobs:
     environment: release
     runs-on: linux
     needs:
-      - build-linux
+      - build-container-image
     env:
       FINAL_IMAGE_REPO: ollama/ollama
     steps:
@@ -526,7 +526,6 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            type=ref,event=tag
             type=ref,enable=true,priority=600,prefix=0.0.0-pr,suffix=,event=pr
             type=semver,pattern={{version}}
       - name: Set Version
@@ -551,7 +550,7 @@ jobs:
       - name: Inspect image
         run: |
           docker buildx imagetools inspect ${{ env.FINAL_IMAGE_REPO }}:${{ steps.meta.outputs.version }}          
-  build-linux-rocm:
+  build-container-image-rocm:
     environment: release
     runs-on: linux
     env:
@@ -570,7 +569,6 @@ jobs:
           flavor: |
             latest=false
           tags: |
-            type=ref,event=tag
             type=ref,enable=true,priority=600,prefix=0.0.0-pr,suffix=,event=pr
             type=semver,pattern={{version}}
       - name: Set Version
@@ -592,7 +590,7 @@ jobs:
           target: runtime-rocm
           build-args: |
             GOFLAGS
-          tags: ${{ env.FINAL_IMAGE_REPO }}:${{ env.DOCKER_METADATA_OUTPUT_VERSION}}-rocm,${{ env.FINAL_IMAGE_REPO }}:rocm
+          tags: ${{ env.FINAL_IMAGE_REPO }}:${{ env.DOCKER_METADATA_OUTPUT_VERSION}}-rocm
           push: true
 
   # Aggregate all the assets and ship a release
@@ -625,8 +623,6 @@ jobs:
           ls -lh dist/
           (cd dist; find . -type f | xargs sha256sum > ../sha256sum.txt)
           mv sha256sum.txt dist/
-          mv dist/linux-???64 .
-          mv dist/linux-amd64-rocm .
           cat dist/sha256sum.txt
       - name: Create or update Release
         run: |

@@ -338,6 +338,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [gollama](https://github.com/sammcj/gollama)
 - [Ollama eBook Summary](https://github.com/cognitivetech/ollama-ebook-summary/)
 - [Ollama Mixture of Experts (MOE) in 50 lines of code](https://github.com/rapidarchitect/ollama_moe)
+- [vim-intelligence-bridge](https://github.com/pepo-ec/vim-intelligence-bridge) Simple interaction of "Ollama" with the Vim editor
 
 ### Apple Vision Pro
 - [Enchanted](https://github.com/AugustDev/enchanted)
@@ -392,6 +393,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollamaclient for Golang](https://github.com/xyproto/ollamaclient)
 - [High-level function abstraction in Go](https://gitlab.com/tozd/go/fun)
 - [Ollama PHP](https://github.com/ArdaGnsrn/ollama-php)
+- [Agents-Flex for Java](https://github.com/agents-flex/agents-flex) with [example](https://github.com/agents-flex/agents-flex/tree/main/agents-flex-llm/agents-flex-llm-ollama/src/test/java/com/agentsflex/llm/ollama)
 
 ### Mobile
 
@@ -431,6 +433,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [vnc-lm](https://github.com/jk011ru/vnc-lm) (A containerized Discord bot with support for attachments and web links)
 - [LSP-AI](https://github.com/SilasMarvin/lsp-ai) (Open-source language server for AI-powered functionality)
 - [QodeAssist](https://github.com/Palm1r/QodeAssist) (AI-powered coding assistant plugin for Qt Creator)
+- [Obsidian Quiz Generator plugin](https://github.com/ECuiDev/obsidian-quiz-generator)
 
 ### Supported backends
 
