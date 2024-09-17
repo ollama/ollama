@@ -199,6 +199,8 @@ curl http://localhost:11434/v1/embeddings \
 - [x] `seed`
 - [x] `stop`
 - [x] `stream`
+- [x] `stream_options`
+  - [x] `include_usage`
 - [x] `temperature`
 - [x] `top_p`
 - [x] `max_tokens`
@@ -227,6 +229,8 @@ curl http://localhost:11434/v1/embeddings \
 - [x] `seed`
 - [x] `stop`
 - [x] `stream`
+- [x] `stream_options`
+  - [x] `include_usage`
 - [x] `temperature`
 - [x] `top_p`
 - [x] `max_tokens`
