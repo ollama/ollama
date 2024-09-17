@@ -2,7 +2,7 @@ OS := $(shell uname -s)
 ARCH ?= $(subst aarch64,arm64,$(subst x86_64,amd64,$(shell uname -m)))
 ifneq (,$(findstring MINGW,$(OS))$(findstring MSYS,$(OS)))
 	OS := windows
-	ARCH = $(shell systeminfo 2>/dev/null | grep "System Type" | grep ARM64 > /dev/null && echo "arm64" || echo "amd64" )
+	ARCH := $(shell systeminfo 2>/dev/null | grep "System Type" | grep ARM64 > /dev/null && echo "arm64" || echo "amd64" )
 else ifeq ($(OS),Linux)
 	OS := linux
 else ifeq ($(OS),Darwin)
@@ -426,7 +426,8 @@ clean-payload:
 	rm -rf $(addprefix $(RUNNERS_PAYLOAD_DIR)/, $(RUNNERS))
 	mkdir -p $(addprefix $(RUNNERS_PAYLOAD_DIR)/, $(RUNNERS))
 
-.PHONY: all dist payload runners clean clean-payload $(RUNNERS)
+.NOTPARALLEL: all
+.PHONY: all dist payload runners clean clean-payload $(RUNNERS) .WAIT
 
 # Handy debugging for make variables
 print-%:
