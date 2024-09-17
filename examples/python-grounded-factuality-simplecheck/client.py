@@ -1,3 +1,5 @@
+"""Simple example to demonstrate how to use the bespoke-minicheck model."""
+
 import json
 import requests
 
@@ -5,11 +7,15 @@ import requests
 
 def check(context, claim, model='jmorgan/bespoke-minicheck'):
     """
+    Checks if the claim is supported by the context by calling bespoke-minicheck.
+    Returns Yes/yes if the claim is supported by the context, No/no otherwise.
+    Support for logits will be added in the future.
+    
     bespoke-minicheck's system prompt is defined as:
-      "Determine whether the provided claim is consistent with the corresponding
+      'Determine whether the provided claim is consistent with the corresponding
       document. Consistency in this context implies that all information presented in the claim
       is substantiated by the document. If not, it should be considered inconsistent. Please 
-      assess the claim's consistency with the document by responding with either "Yes" or "No".
+      assess the claim's consistency with the document by responding with either "Yes" or "No".'
     
     bespoke-minicheck's user prompt is defined as:
       "Document: {context}\nClaim: {claim}"
@@ -17,8 +23,11 @@ def check(context, claim, model='jmorgan/bespoke-minicheck'):
     prompt = f"Document: {context}\nClaim: {claim}"
     r = requests.post(
         "http://0.0.0.0:11434/api/generate",
-        json={"model": model, "prompt": prompt, "stream": True},
-	stream=True
+        json={"model": model,
+              "prompt": prompt,
+              "stream": True,
+              "options": {"num_predict": 2, "temperature": 0.0}},
+        stream=True
     )
     
     r.raise_for_status()
@@ -42,12 +51,14 @@ def get_user_input(prompt):
     return user_input
 
 def main():
-    messages = []
     while True:
+        # Get a context from the user (e.g. "Ryan likes running and biking.")
         context = get_user_input("Enter a context: ")
+        # Get a claim from the user (e.g. "Ryan likes to run.")
         claim = get_user_input("Enter a claim: ")
+        # Check if the claim is supported by the context
         grounded_factuality_check = check(context, claim)
-        print(grounded_factuality_check)
+        print(f"Is the claim supported by the context according to bespoke-minicheck? {grounded_factuality_check}")
         print("\n\n")
 
 
