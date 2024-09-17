@@ -328,14 +328,14 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 		return nil, false
 	}
 
-	parsed := parseObjects(b.String())
-	if len(parsed) == 0 {
+	templateObjects := parseObjects(b.String())
+	if len(templateObjects) == 0 {
 		return nil, false
 	}
 
 	// find the keys that correspond to the name and arguments fields
 	var name, arguments string
-	for k, v := range parsed[0] {
+	for k, v := range templateObjects[0] {
 		switch v.(type) {
 		case string:
 			name = k
@@ -348,8 +348,8 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 		return nil, false
 	}
 
-	parsed = parseObjects(s)
-	if len(parsed) == 0 {
+	responseObjects := parseObjects(s)
+	if len(responseObjects) == 0 {
 		return nil, false
 	}
 
