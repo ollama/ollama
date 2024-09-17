@@ -272,7 +272,7 @@ func detectContentType(r io.Reader) (string, error) {
 	return "unknown", nil
 }
 
-func parseObjects(s string) ([]map[string]any, bool) {
+func parseObjects(s string) []map[string]any {
 	var objs []map[string]any
 	for offset := 0; offset < len(s); {
 		var obj map[string]any
@@ -286,14 +286,14 @@ func parseObjects(s string) ([]map[string]any, bool) {
 			// skip over any unmarshalable types
 			offset += int(unmarshalType.Offset)
 		} else if err != nil {
-			return nil, false
+			return nil
 		} else {
 			offset += int(decoder.InputOffset())
 			objs = append(objs, obj)
 		}
 	}
 
-	return objs, true
+	return objs
 }
 
 // parseToolCalls attempts to parse a JSON string into a slice of ToolCalls.
@@ -328,11 +328,7 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 		return nil, false
 	}
 
-	parsed, ok := parseObjects(b.String())
-	if !ok {
-		return nil, false
-	}
-
+	parsed := parseObjects(b.String())
 	if len(parsed) == 0 {
 		return nil, false
 	}
@@ -352,8 +348,8 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 		return nil, false
 	}
 
-	parsed, ok = parseObjects(s)
-	if !ok {
+	parsed = parseObjects(s)
+	if len(parsed) == 0 {
 		return nil, false
 	}
 
