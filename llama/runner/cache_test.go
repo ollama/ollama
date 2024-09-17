@@ -182,8 +182,10 @@ func TestFindCacheSlot(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, resultLen := tt.cache.findCacheSlot(tt.prompt)
-			if result.id != tt.expected || resultLen != tt.expectedLen {
+			result, resultLen, err := tt.cache.findCacheSlot(tt.prompt)
+			if err != nil {
+				t.Errorf("findCacheSlot: err %v", err)
+			} else if result.id != tt.expected || resultLen != tt.expectedLen {
 				t.Errorf("findCacheSlot: slot have %v, want %v len have %v, want %v",
 					result.id, tt.expected, resultLen, tt.expectedLen)
 			}
