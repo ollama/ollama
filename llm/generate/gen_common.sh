@@ -8,6 +8,9 @@ init_vars() {
     "arm64")
         ARCH="arm64"
         ;;
+    "ppc64le")
+        ARCH="ppc64le"
+        ;;
     *)
         echo "GOARCH must be set"
         echo "this script is meant to be run from within go generate"
