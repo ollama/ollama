@@ -51,6 +51,27 @@ type CPUInfo struct {
 	GpuInfo
 }
 
+// RPCServerMemoryResult represents the return value of the RPCServerMemory
+// function.
+type RPCServerMemoryResult struct {
+	// The amount of free memory in bytes available in the RPC endpoint.
+	FreeMem uint64
+	// The total memory available in bytes on the RPC endpoint.
+	TotalMem uint64
+}
+
+// An info about an RPC server/endpoint.
+type RPCServerInfo struct {
+	GpuInfo
+	// The host/ip address of the endpoint.
+	host string //nolint:unused,nolintlint
+	// The port number of the endpoint.
+	port uint16 //nolint:unused,nolintlint
+}
+
+// A list of RPC server/endpoint info.
+type RPCServerInfoList []RPCServerInfo
+
 type CudaGPUInfo struct {
 	GpuInfo
 	OSOverhead   uint64 // Memory overhead between the driver library and management library
