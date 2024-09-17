@@ -1,12 +1,11 @@
 """Simple example to demonstrate how to use the bespoke-minicheck model."""
 
-import json
-import requests
+import ollama
 
 # NOTE: ollama must be running for this to work, start the ollama app or run `ollama serve`
 
 def check(document, claim, model='jmorgan/bespoke-minicheck'):
-    """Checks if the claim is supported by the  by calling bespoke-minicheck.
+    """Checks if the claim is supported by the document by calling bespoke-minicheck.
 
     Returns Yes/yes if the claim is supported by the document, No/no otherwise.
     Support for logits will be added in the future.
@@ -21,27 +20,8 @@ def check(document, claim, model='jmorgan/bespoke-minicheck'):
       "Document: {document}\nClaim: {claim}"
     """
     prompt = f"Document: {document}\nClaim: {claim}"
-    r = requests.post(
-        "http://0.0.0.0:11434/api/generate",
-        json={"model": model,
-              "prompt": prompt,
-              "stream": True,
-              "options": {"num_predict": 2, "temperature": 0.0}},
-        stream=True
-    )
-    
-    r.raise_for_status()
-    output = ""
-
-    for line in r.iter_lines():
-        body = json.loads(line)
-        if "error" in body:
-            raise Exception(body["error"])
-        if body.get("done") is False:
-            content = body.get("response", "")
-            output += content
-        if body.get("done", False):
-            return output
+    response = ollama.generate(model=model, prompt=prompt, options={"num_predict": 2, "temperature": 0.0})
+    return response['response'].strip()
 
 def get_user_input(prompt):
     user_input = input(prompt)
