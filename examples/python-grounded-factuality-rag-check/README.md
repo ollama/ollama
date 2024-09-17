@@ -4,9 +4,10 @@ This example allows the user to ask questions related to a document, which can b
 
 ## Running the Example
 
-1. Ensure you have the `llama3.1` and `bespoke-minicheck` models installed:
+1. Ensure `all-minilm` (embedding) `llama3.1` (chat) and `bespoke-minicheck` (check) models installed:
 
    ```bash
+   ollama pull all-minilm
    ollama pull llama3.1
    ollama pull jmorgan/bespoke-minicheck
    ```
