@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -82,12 +83,14 @@ type NewSequenceParams struct {
 	embedding      bool
 }
 
-func (s *Server) NewSequence(prompt string, params NewSequenceParams) *Sequence {
+func (s *Server) NewSequence(prompt string, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
 
 	tokens, err := s.lc.Model().Tokenize(prompt, true, true)
 	if err != nil {
-		panic(err)
+		return nil, fmt.Errorf("failed to process input: %w", err)
+	} else if tokens == nil {
+		return nil, errors.New("no input provided")
 	}
 
 	if params.numKeep < 0 {
@@ -131,7 +134,7 @@ func (s *Server) NewSequence(prompt string, params NewSequenceParams) *Sequence 
 		embeddingOnly:    params.embedding,
 		stop:             params.stop,
 		numKeep:          params.numKeep,
-	}
+	}, nil
 }
 
 type Server struct {
@@ -240,7 +243,6 @@ func (s *Server) removeSequence(seqIndex int, reason string) {
 	close(seq.responses)
 	close(seq.embedding)
 	seq.cache.inUse = false
-	seq.samplingCtx.Free()
 	s.seqs[seqIndex] = nil
 }
 
@@ -315,7 +317,7 @@ func (s *Server) processBatch() {
 	err := s.lc.Decode(batch)
 	if err != nil {
 		slog.Error("failed to decode batch", "error", err)
-		panic("Failed to decode")
+		return
 	}
 
 	for i, seq := range s.seqs {
@@ -463,7 +465,12 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	// Set the headers to indicate streaming
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Transfer-Encoding", "chunked")
-	w.WriteHeader(http.StatusOK)
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
+		return
+	}
 
 	var samplingParams llama.SamplingParams
 	samplingParams.TopK = req.TopK
@@ -483,20 +490,29 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	samplingParams.Seed = uint32(req.Seed)
 	samplingParams.Grammar = req.Grammar
 
-	seq := s.NewSequence(req.Prompt, NewSequenceParams{
+	seq, err := s.NewSequence(req.Prompt, NewSequenceParams{
 		numPredict:     req.NumPredict,
 		stop:           req.Stop,
 		numKeep:        req.NumKeep,
 		samplingParams: &samplingParams,
 		embedding:      false,
 	})
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
+		return
+	}
 
 	// TODO (jmorganca): add to sequence queue instead of
 	// failing if a slot isn't available
 	s.mu.Lock()
 	for i, sq := range s.seqs {
 		if sq == nil {
-			seq.cache, seq.tokens, seq.numPast = s.cache.LoadCacheSlot(seq.tokens)
+			seq.cache, seq.tokens, seq.numPast, err = s.cache.LoadCacheSlot(seq.tokens)
+			if err != nil {
+				s.mu.Unlock()
+				http.Error(w, fmt.Sprintf("Failed to load cache: %v", err), http.StatusInternalServerError)
+				return
+			}
 			s.seqs[i] = seq
 			s.cond.Signal()
 			break
@@ -504,48 +520,41 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	// stream the response
-	for content := range seq.responses {
-		if err := json.NewEncoder(w).Encode(&CompletionResponse{
-			Content: content,
-		}); err != nil {
-			log.Println("Failed to encode result:", err)
+	for {
+		select {
+		case <-r.Context().Done():
 			close(seq.quit)
 			return
+		case content, ok := <-seq.responses:
+			if ok {
+				if err := json.NewEncoder(w).Encode(&CompletionResponse{
+					Content: content,
+				}); err != nil {
+					http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+					close(seq.quit)
+					return
+				}
+
+				flusher.Flush()
+			} else {
+				// Send the final response
+				if err := json.NewEncoder(w).Encode(&CompletionResponse{
+					Stop:         true,
+					StoppedLimit: seq.doneReason == "limit",
+					Timings: Timings{
+						PromptN:     seq.numPromptTokens,
+						PromptMS:    float64(seq.startGenerationTime.Sub(seq.startProcessingTime).Milliseconds()),
+						PredictedN:  seq.numDecoded,
+						PredictedMS: float64(time.Since(seq.startGenerationTime).Milliseconds()),
+					},
+				}); err != nil {
+					http.Error(w, fmt.Sprintf("failed to encode final response: %v", err), http.StatusInternalServerError)
+				}
+
+				return
+			}
 		}
-
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "Streaming not supported", http.StatusInternalServerError)
-			close(seq.quit)
-			return
-		}
-
-		flusher.Flush()
 	}
-
-	// Send the stop
-	if err := json.NewEncoder(w).Encode(&CompletionResponse{
-		Stop:         true,
-		StoppedLimit: seq.doneReason == "limit",
-		Timings: Timings{
-			PromptN:     seq.numPromptTokens,
-			PromptMS:    float64(seq.startGenerationTime.Sub(seq.startProcessingTime).Milliseconds()),
-			PredictedN:  seq.numDecoded,
-			PredictedMS: float64(time.Since(seq.startGenerationTime).Milliseconds()),
-		},
-	}); err != nil {
-		log.Println("Failed to encode result:", err)
-		return
-	}
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
-		return
-	}
-
-	flusher.Flush()
 }
 
 type EmbeddingRequest struct {
@@ -559,7 +568,7 @@ type EmbeddingResponse struct {
 func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	var req EmbeddingRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Bad request", http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("bad request: %s", err), http.StatusBadRequest)
 		return
 	}
 
@@ -567,13 +576,22 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 
 	slog.Debug("embedding request", "content", req.Content)
 
-	seq := s.NewSequence(req.Content, NewSequenceParams{embedding: true})
+	seq, err := s.NewSequence(req.Content, NewSequenceParams{embedding: true})
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
+		return
+	}
 
 	// TODO (jessegross): Wait for a free slot instead of failing and blocking forever
 	s.mu.Lock()
 	for i, sq := range s.seqs {
 		if sq == nil {
-			seq.cache, seq.tokens, seq.numPast = s.cache.LoadCacheSlot(seq.tokens)
+			seq.cache, seq.tokens, seq.numPast, err = s.cache.LoadCacheSlot(seq.tokens)
+			if err != nil {
+				s.mu.Unlock()
+				http.Error(w, fmt.Sprintf("Failed to load cache: %v", err), http.StatusInternalServerError)
+				return
+			}
 			s.seqs[i] = seq
 			s.cond.Signal()
 			break
@@ -586,8 +604,7 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(&EmbeddingResponse{
 		Embedding: embedding,
 	}); err != nil {
-		log.Println("Failed to encode result:", err)
-		return
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 	}
 }
 
@@ -621,8 +638,7 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		Status:   s.status.ToString(),
 		Progress: s.progress,
 	}); err != nil {
-		log.Println("Failed to encode result:", err)
-		return
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 	}
 }
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log/slog"
 	"time"
 
@@ -52,8 +53,11 @@ type TokenCacheSlot struct {
 	lastUsed time.Time
 }
 
-func (t *TokenCache) LoadCacheSlot(prompt []int) (*TokenCacheSlot, []int, int) {
-	slot, numPast := t.findCacheSlot(prompt)
+func (t *TokenCache) LoadCacheSlot(prompt []int) (*TokenCacheSlot, []int, int, error) {
+	slot, numPast, err := t.findCacheSlot(prompt)
+	if err != nil {
+		return nil, nil, 0, err
+	}
 
 	slot.inUse = true
 	slot.lastUsed = time.Now()
@@ -75,10 +79,10 @@ func (t *TokenCache) LoadCacheSlot(prompt []int) (*TokenCacheSlot, []int, int) {
 	prompt = prompt[numPast:]
 	slot.tokens = slot.tokens[:numPast]
 
-	return slot, prompt, numPast
+	return slot, prompt, numPast, nil
 }
 
-func (t *TokenCache) findCacheSlot(prompt []int) (*TokenCacheSlot, int) {
+func (t *TokenCache) findCacheSlot(prompt []int) (*TokenCacheSlot, int, error) {
 	oldest := time.Now()
 	var oldestSlot *TokenCacheSlot
 
@@ -99,11 +103,11 @@ func (t *TokenCache) findCacheSlot(prompt []int) (*TokenCacheSlot, int) {
 	}
 
 	if longest == len(longestSlot.tokens) && !longestSlot.inUse {
-		return longestSlot, longest
+		return longestSlot, longest, nil
 	}
 
 	if oldestSlot.inUse {
-		panic("no available cache slots")
+		return nil, 0, errors.New("no available cache slots")
 	}
 
 	if len(oldestSlot.tokens) != 0 {
@@ -123,7 +127,7 @@ func (t *TokenCache) findCacheSlot(prompt []int) (*TokenCacheSlot, int) {
 		}
 	}
 
-	return oldestSlot, longest
+	return oldestSlot, longest, nil
 }
 
 func countCommonPrefix(a []int, b []int) int {
