@@ -1,3 +1,5 @@
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning, module="transformers.tokenization_utils_base")
 import json
 import requests
 from sentence_transformers import SentenceTransformer
@@ -7,8 +9,7 @@ import numpy as np
 from sklearn.neighbors import NearestNeighbors
 import nltk
 
-nltk.download('punkt_tab')
-
+nltk.download('punkt', quiet=True)
 
 def getArticleText(url):
   """Gets the text of an article from a URL.
@@ -81,7 +82,9 @@ def check(context, claim, model='jmorgan/bespoke-minicheck'):
 if __name__ == "__main__":
     model = SentenceTransformer('all-MiniLM-L6-v2')
     allEmbeddings = []
-    article_url = "https://www.theverge.com/2024/9/12/24242439/openai-o1-model-reasoning-strawberry-chatgpt"
+    default_url = "https://www.theverge.com/2024/9/12/24242439/openai-o1-model-reasoning-strawberry-chatgpt"
+    user_input = input("Enter the URL of an article you want to chat with, or press Enter for default example: ")
+    article_url = user_input.strip() if user_input.strip() else default_url
     article = {}
     article['embeddings'] = []
     article['url'] = article_url
@@ -96,6 +99,8 @@ if __name__ == "__main__":
       article['embeddings'].append(item)
   
     allEmbeddings.append(article)
+
+    print(f"\nLoaded, chunked, and embedded text from {article_url}.\n") 
     
     while True:
       # Input a question from the user
@@ -113,7 +118,7 @@ if __name__ == "__main__":
 
       sourcetext = "\n\n".join([source_text for (_, source_text) in best_matches])
 
-      print(f"\nRetrieved chunks: \n{sourcetext}")
+      print(f"\nRetrieved chunks: \n{sourcetext}\n")
 
       systemPrompt = f"Only use the following information to answer the question. Do not use anything else: {sourcetext}"
 
@@ -142,7 +147,7 @@ if __name__ == "__main__":
           output = json.loads(response.text)
           context = output['context']
           answer = output['response']
-          print(f"LLM Answer: {answer}\n")
+          print(f"LLM Answer:\n{answer}\n")
       else:
           print(f"Request failed with status code {response.status_code}")
 
