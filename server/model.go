@@ -289,7 +289,6 @@ func parseObjects(s string) ([]map[string]any, bool) {
 			return nil, false
 		} else {
 			offset += int(decoder.InputOffset())
-
 			objs = append(objs, obj)
 		}
 	}
