@@ -238,10 +238,10 @@ func TestParseObjects(t *testing.T) {
 			},
 		},
 		{
-			input: `<toolcall>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </toolcall> <toolcall>{"name": "get_current_weather", "arguments": {"format":"celcius","location":"Toronto, ON"}} </toolcall>`,
+			input: `<toolcall>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </toolcall> <toolcall>{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, ON"}} </toolcall>`,
 			want: []map[string]any{
 				{"name": "get_current_weather", "arguments": map[string]any{"format": "fahrenheit", "location": "San Francisco, CA"}},
-				{"name": "get_current_weather", "arguments": map[string]any{"format": "celcius", "location": "Toronto, ON"}},
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "celsius", "location": "Toronto, ON"}},
 			},
 		},
 		{
