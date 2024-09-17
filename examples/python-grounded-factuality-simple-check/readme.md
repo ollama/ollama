@@ -45,10 +45,10 @@ Claim:
 >The Apple I is a 16-bit computer.
 
 Expected output:
->Is the claim supported by the document according to bespoke-minicheck? No
+>Is the claim supported by the document according to bespoke-minicheck? **No**
 
 Claim: 
 >Apple was originally called the Apple Computer Company.
 
 Expected output:
->Is the claim supported by the document according to bespoke-minicheck? Yes
+>Is the claim supported by the document according to bespoke-minicheck? **Yes**
