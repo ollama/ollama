@@ -130,7 +130,10 @@ ifneq ($(HIPCC),)
 		ROCM_VARIANT = _v$(ROCM_VERSION)
 	endif
 	ROCM_LIBS = $(wildcard $(addsuffix .$(SHARED_EXT),$(addprefix $(HIP_LIB_DIR)/$(SHARED_PREFIX),$(ROCM_LIBS_SHORT))))
-	ROCM_LIB_DEPS = $(addprefix $(ROCM_DEPS_DIR)/,$(notdir $(ROCM_LIBS)))
+	ifeq ($(OS),linux)
+		ROCM_TRANSITIVE_LIBS = $(shell ldd $(ROCM_LIBS) | grep "=>" | cut -f2 -d= | cut -f2 -d' '  | grep -e rocm -e amdgpu -e libtinfo -e libnuma -e libelf | sort -u )
+	endif
+	ROCM_LIB_DEPS = $(addprefix $(ROCM_DEPS_DIR)/,$(notdir $(ROCM_LIBS)) $(notdir $(ROCM_TRANSITIVE_LIBS)))
 	ROCBLAS_DEP_MANIFEST = $(ROCM_DEPS_DIR)/rocblas/library/TensileManifest.txt
 endif
 endif
@@ -367,7 +370,7 @@ $(RUNNERS_BUILD_DIR)/rocm$(ROCM_VARIANT)/$(SHARED_PREFIX)ggml_hipblas.$(SHARED_E
 
 $(ROCM_LIB_DEPS): 
 	@-mkdir -p $(dir $@)
-	$(CP) $(HIP_LIB_DIR)/$(notdir $@)* $(dir $@)
+	$(CP) $(dir $(filter %$(notdir $@),$(ROCM_LIBS) $(ROCM_TRANSITIVE_LIBS)))/$(notdir $@)* $(dir $@)
 
 $(RUNNERS_BUILD_DIR)/$(DEFAULT_RUNNER)/ollama_llama_server$(EXE_EXT): TARGET_CPU_FLAGS=
 $(RUNNERS_BUILD_DIR)/$(DEFAULT_RUNNER)/ollama_llama_server$(EXE_EXT): *.go ./runner/*.go $(COMMON_SRCS) $(COMMON_HDRS)
