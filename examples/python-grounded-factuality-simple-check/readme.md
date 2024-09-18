@@ -7,7 +7,7 @@
 1. Ensure you have the `bespoke-minicheck` model installed:
 
    ```bash
-   ollama pull jmorgan/bespoke-minicheck
+   ollama pull bespoke-minicheck
    ```
 
 2. Install the dependencies:

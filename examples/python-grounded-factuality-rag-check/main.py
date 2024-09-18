@@ -46,7 +46,7 @@ def knn_search(question_embedding, embeddings, k=5):
     return best_matches
 
 
-def check(document, claim, model="jmorgan/bespoke-minicheck"):
+def check(document, claim):
     """Checks if the claim is supported by the document by calling bespoke-minicheck.
 
     Returns Yes/yes if the claim is supported by the document, No/no otherwise.
@@ -63,7 +63,7 @@ def check(document, claim, model="jmorgan/bespoke-minicheck"):
     """
     prompt = f"Document: {document}\nClaim: {claim}"
     response = ollama.generate(
-        model=model, prompt=prompt, options={"num_predict": 2, "temperature": 0.0}
+        model="bespoke-minicheck", prompt=prompt, options={"num_predict": 2, "temperature": 0.0}
     )
     return response["response"].strip()
 

@@ -9,7 +9,7 @@ This example allows the user to ask questions related to a document, which can b
    ```bash
    ollama pull all-minilm
    ollama pull llama3.1
-   ollama pull jmorgan/bespoke-minicheck
+   ollama pull bespoke-minicheck
    ```
 
 2. Install the dependencies.
