@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -15,7 +16,7 @@ func DoUpgrade(cancel context.CancelFunc, done chan int) error {
 		return fmt.Errorf("failed to lookup downloads: %s", err)
 	}
 	if len(files) == 0 {
-		return fmt.Errorf("no update downloads found")
+		return errors.New("no update downloads found")
 	} else if len(files) > 1 {
 		// Shouldn't happen
 		slog.Warn(fmt.Sprintf("multiple downloads found, using first one %v", files))
@@ -64,7 +65,7 @@ func DoUpgrade(cancel context.CancelFunc, done chan int) error {
 		}
 	} else {
 		// TODO - some details about why it didn't start, or is this a pedantic error case?
-		return fmt.Errorf("installer process did not start")
+		return errors.New("installer process did not start")
 	}
 
 	// TODO should we linger for a moment and check to make sure it's actually running by checking the pid?

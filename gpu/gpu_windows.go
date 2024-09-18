@@ -40,10 +40,12 @@ var OneapiGlobs = []string{
 	"c:\\Windows\\System32\\DriverStore\\FileRepository\\*\\ze_intel_gpu64.dll",
 }
 
-var CudartMgmtName = "cudart64_*.dll"
-var NvcudaMgmtName = "nvcuda.dll"
-var NvmlMgmtName = "nvml.dll"
-var OneapiMgmtName = "ze_intel_gpu64.dll"
+var (
+	CudartMgmtName = "cudart64_*.dll"
+	NvcudaMgmtName = "nvcuda.dll"
+	NvmlMgmtName   = "nvml.dll"
+	OneapiMgmtName = "ze_intel_gpu64.dll"
+)
 
 func GetCPUMem() (memInfo, error) {
 	memStatus := MEMORYSTATUSEX{length: sizeofMemoryStatusEx}

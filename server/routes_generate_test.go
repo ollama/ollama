@@ -73,8 +73,8 @@ func TestGenerateChat(t *testing.T) {
 			getCpuFn:      gpu.GetCPUInfo,
 			reschedDelay:  250 * time.Millisecond,
 			loadFn: func(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numParallel int) {
-				// add 10ms delay to simulate loading
-				time.Sleep(10 * time.Millisecond)
+				// add small delay to simulate loading
+				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
 					llama: &mock,
 				}
@@ -84,7 +84,7 @@ func TestGenerateChat(t *testing.T) {
 
 	go s.sched.Run(context.TODO())
 
-	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model: "test",
 		Modelfile: fmt.Sprintf(`FROM %s
 		TEMPLATE """
@@ -144,7 +144,7 @@ func TestGenerateChat(t *testing.T) {
 	})
 
 	t.Run("missing capabilities chat", func(t *testing.T) {
-		w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Model: "bert",
 			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, llm.KV{
 				"general.architecture": "bert",
@@ -270,7 +270,7 @@ func TestGenerateChat(t *testing.T) {
 		checkChatResponse(t, w.Body, "test", "Hi!")
 	})
 
-	w = createRequest(t, s.CreateModelHandler, api.CreateRequest{
+	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model:     "test-system",
 		Modelfile: "FROM test\nSYSTEM You are a helpful assistant.",
 	})
@@ -371,6 +371,8 @@ func TestGenerate(t *testing.T) {
 			getCpuFn:      gpu.GetCPUInfo,
 			reschedDelay:  250 * time.Millisecond,
 			loadFn: func(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numParallel int) {
+				// add small delay to simulate loading
+				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
 					llama: &mock,
 				}
@@ -380,7 +382,7 @@ func TestGenerate(t *testing.T) {
 
 	go s.sched.Run(context.TODO())
 
-	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model: "test",
 		Modelfile: fmt.Sprintf(`FROM %s
 		TEMPLATE """
@@ -440,7 +442,7 @@ func TestGenerate(t *testing.T) {
 	})
 
 	t.Run("missing capabilities generate", func(t *testing.T) {
-		w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Model: "bert",
 			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, llm.KV{
 				"general.architecture": "bert",
@@ -581,7 +583,7 @@ func TestGenerate(t *testing.T) {
 		checkGenerateResponse(t, w.Body, "test", "Hi!")
 	})
 
-	w = createRequest(t, s.CreateModelHandler, api.CreateRequest{
+	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model:     "test-system",
 		Modelfile: "FROM test\nSYSTEM You are a helpful assistant.",
 	})
@@ -650,7 +652,7 @@ func TestGenerate(t *testing.T) {
 		checkGenerateResponse(t, w.Body, "test-system", "Abra kadabra!")
 	})
 
-	w = createRequest(t, s.CreateModelHandler, api.CreateRequest{
+	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model: "test-suffix",
 		Modelfile: `FROM test
 TEMPLATE """{{- if .Suffix }}<PRE> {{ .Prompt }} <SUF>{{ .Suffix }} <MID>

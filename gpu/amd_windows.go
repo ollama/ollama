@@ -2,7 +2,7 @@ package gpu
 
 import (
 	"bytes"
-	"fmt"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -53,7 +53,7 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 	}
 
 	var supported []string
-	gfxOverride := envconfig.HsaOverrideGfxVersion
+	gfxOverride := envconfig.HsaOverrideGfxVersion()
 	if gfxOverride == "" {
 		supported, err = GetSupportedGFX(libDir)
 		if err != nil {
@@ -85,14 +85,15 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 		n = bytes.IndexByte(props.GcnArchName[:], 0)
 		gfx := string(props.GcnArchName[:n])
 		slog.Debug("hip device", "id", i, "name", name, "gfx", gfx)
-		//slog.Info(fmt.Sprintf("[%d] Integrated: %d", i, props.iGPU)) // DOESN'T REPORT CORRECTLY!  Always 0
+		// slog.Info(fmt.Sprintf("[%d] Integrated: %d", i, props.iGPU)) // DOESN'T REPORT CORRECTLY!  Always 0
 		// TODO  Why isn't props.iGPU accurate!?
 		if strings.EqualFold(name, iGPUName) {
 			slog.Info("unsupported Radeon iGPU detected skipping", "id", i, "name", name, "gfx", gfx)
 			continue
 		}
 		if gfxOverride == "" {
-			if !slices.Contains[[]string, string](supported, gfx) {
+			// Strip off Target Features when comparing
+			if !slices.Contains[[]string, string](supported, strings.Split(gfx, ":")[0]) {
 				slog.Warn("amdgpu is not supported", "gpu", i, "gpu_type", gfx, "library", libDir, "supported_types", supported)
 				// TODO - consider discrete markdown just for ROCM troubleshooting?
 				slog.Warn("See https://github.com/ollama/ollama/blob/main/docs/troubleshooting.md for HSA_OVERRIDE_GFX_VERSION usage")
@@ -152,7 +153,7 @@ func AMDValidateLibDir() (string, error) {
 	// Installer payload (if we're running from some other location)
 	localAppData := os.Getenv("LOCALAPPDATA")
 	appDir := filepath.Join(localAppData, "Programs", "Ollama")
-	rocmTargetDir := filepath.Join(appDir, "rocm")
+	rocmTargetDir := filepath.Join(appDir, envconfig.LibRelativeToExe(), "lib", "ollama")
 	if rocmLibUsable(rocmTargetDir) {
 		slog.Debug("detected ollama installed ROCm at " + rocmTargetDir)
 		return rocmTargetDir, nil
@@ -160,7 +161,7 @@ func AMDValidateLibDir() (string, error) {
 
 	// Should not happen on windows since we include it in the installer, but stand-alone binary might hit this
 	slog.Warn("amdgpu detected, but no compatible rocm library found.  Please install ROCm")
-	return "", fmt.Errorf("no suitable rocm found, falling back to CPU")
+	return "", errors.New("no suitable rocm found, falling back to CPU")
 }
 
 func (gpus RocmGPUInfoList) RefreshFreeMemory() error {

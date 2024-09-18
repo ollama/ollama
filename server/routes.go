@@ -23,13 +23,16 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/build"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/runners"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -55,7 +58,10 @@ func init() {
 	gin.SetMode(mode)
 }
 
-var errRequired = errors.New("is required")
+var (
+	errRequired    = errors.New("is required")
+	errBadTemplate = errors.New("template error")
+)
 
 func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options, error) {
 	opts := api.DefaultOptions()
@@ -113,6 +119,32 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	// expire the runner
+	if req.Prompt == "" && req.KeepAlive != nil && int(req.KeepAlive.Seconds()) == 0 {
+		model, err := GetModel(req.Model)
+		if err != nil {
+			switch {
+			case os.IsNotExist(err):
+				c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+			case err.Error() == "invalid model name":
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			default:
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			}
+			return
+		}
+		s.sched.expireRunner(model)
+
+		c.JSON(http.StatusOK, api.GenerateResponse{
+			Model:      req.Model,
+			CreatedAt:  time.Now().UTC(),
+			Response:   "",
+			Done:       true,
+			DoneReason: "unload",
+		})
+		return
+	}
+
 	if req.Format != "" && req.Format != "json" {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "format must be empty or \"json\""})
 		return
@@ -163,17 +195,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 		}
 
-		var b bytes.Buffer
-		if req.Context != nil {
-			s, err := r.Detokenize(c.Request.Context(), req.Context)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-
-			b.WriteString(s)
-		}
-
 		var values template.Values
 		if req.Suffix != "" {
 			values.Prompt = prompt
@@ -186,11 +207,25 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				msgs = append(msgs, api.Message{Role: "system", Content: m.System})
 			}
 
+			if req.Context == nil {
+				msgs = append(msgs, m.Messages...)
+			}
+
 			for _, i := range images {
 				msgs = append(msgs, api.Message{Role: "user", Content: fmt.Sprintf("[img-%d]", i.ID)})
 			}
 
 			values.Messages = append(msgs, api.Message{Role: "user", Content: req.Prompt})
+		}
+
+		var b bytes.Buffer
+		if req.Context != nil {
+			s, err := r.Detokenize(c.Request.Context(), req.Context)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			b.WriteString(s)
 		}
 
 		if err := tmpl.Execute(&b, values); err != nil {
@@ -242,7 +277,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 						ch <- gin.H{"error": err.Error()}
 						return
 					}
-					res.Context = append(req.Context, tokens...)
+					res.Context = tokens
 				}
 			}
 
@@ -283,6 +318,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 }
 
 func (s *Server) EmbedHandler(c *gin.Context) {
+	checkpointStart := time.Now()
 	var req api.EmbedRequest
 	err := c.ShouldBindJSON(&req)
 	switch {
@@ -316,18 +352,22 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			input = append(input, v.(string))
 		}
 	default:
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid input type"})
-		return
-	}
-
-	if len(input) == 0 {
-		c.JSON(http.StatusOK, api.EmbedResponse{Model: req.Model, Embeddings: [][]float32{}})
-		return
+		if req.Input != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid input type"})
+			return
+		}
 	}
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, []Capability{}, req.Options, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
+		return
+	}
+
+	checkpointLoaded := time.Now()
+
+	if len(input) == 0 {
+		c.JSON(http.StatusOK, api.EmbedResponse{Model: req.Model, Embeddings: [][]float32{}})
 		return
 	}
 
@@ -337,6 +377,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
+	var count int
 	for i, s := range input {
 		tokens, err := r.Tokenize(c.Request.Context(), s)
 		if err != nil {
@@ -359,23 +400,36 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			}
 		}
 
+		count += len(tokens)
+
 		input[i] = s
 	}
-	embeddings, err := r.Embed(c.Request.Context(), input)
 
-	if err != nil {
+	var g errgroup.Group
+	embeddings := make([][]float32, len(input))
+	for i, text := range input {
+		g.Go(func() error {
+			embedding, err := r.Embedding(c.Request.Context(), text)
+			if err != nil {
+				return err
+			}
+			embeddings[i] = normalize(embedding)
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
 		slog.Error("embedding generation failed", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Errorf("failed to generate embeddings: %v", err)})
 		return
 	}
 
-	for i, e := range embeddings {
-		embeddings[i] = normalize(e)
-	}
-
 	resp := api.EmbedResponse{
-		Model:      req.Model,
-		Embeddings: embeddings,
+		Model:           req.Model,
+		Embeddings:      embeddings,
+		TotalDuration:   time.Since(checkpointStart),
+		LoadDuration:    checkpointLoaded.Sub(checkpointStart),
+		PromptEvalCount: count,
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -419,27 +473,25 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	embeddings, err := r.Embed(c.Request.Context(), []string{req.Prompt})
-
+	embedding, err := r.Embedding(c.Request.Context(), req.Prompt)
 	if err != nil {
 		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
 		return
 	}
 
-	embedding := make([]float64, len(embeddings[0]))
-
-	for i, v := range embeddings[0] {
-		embedding[i] = float64(v)
+	var e []float64
+	for _, v := range embedding {
+		e = append(e, float64(v))
 	}
 
 	resp := api.EmbeddingResponse{
-		Embedding: embedding,
+		Embedding: e,
 	}
 	c.JSON(http.StatusOK, resp)
 }
 
-func (s *Server) PullModelHandler(c *gin.Context) {
+func (s *Server) PullHandler(c *gin.Context) {
 	var req api.PullRequest
 	err := c.ShouldBindJSON(&req)
 	switch {
@@ -489,7 +541,7 @@ func (s *Server) PullModelHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func (s *Server) PushModelHandler(c *gin.Context) {
+func (s *Server) PushHandler(c *gin.Context) {
 	var req api.PushRequest
 	err := c.ShouldBindJSON(&req)
 	switch {
@@ -546,14 +598,14 @@ func checkNameExists(name model.Name) error {
 
 	for n := range names {
 		if strings.EqualFold(n.Filepath(), name.Filepath()) && n != name {
-			return fmt.Errorf("a model with that name already exists")
+			return errors.New("a model with that name already exists")
 		}
 	}
 
 	return nil
 }
 
-func (s *Server) CreateModelHandler(c *gin.Context) {
+func (s *Server) CreateHandler(c *gin.Context) {
 	var r api.CreateRequest
 	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
@@ -608,7 +660,9 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 		defer cancel()
 
 		quantization := cmp.Or(r.Quantize, r.Quantization)
-		if err := CreateModel(ctx, name, filepath.Dir(r.Path), strings.ToUpper(quantization), f, fn); err != nil {
+		if err := CreateModel(ctx, name, filepath.Dir(r.Path), strings.ToUpper(quantization), f, fn); errors.Is(err, errBadTemplate) {
+			ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+		} else if err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
@@ -621,7 +675,7 @@ func (s *Server) CreateModelHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func (s *Server) DeleteModelHandler(c *gin.Context) {
+func (s *Server) DeleteHandler(c *gin.Context) {
 	var r api.DeleteRequest
 	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
@@ -654,7 +708,7 @@ func (s *Server) DeleteModelHandler(c *gin.Context) {
 	}
 }
 
-func (s *Server) ShowModelHandler(c *gin.Context) {
+func (s *Server) ShowHandler(c *gin.Context) {
 	var req api.ShowRequest
 	err := c.ShouldBindJSON(&req)
 	switch {
@@ -717,7 +771,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 
 	n := model.ParseName(req.Model)
 	if !n.IsValid() {
-		return nil, fmt.Errorf("invalid model name")
+		return nil, errors.New("invalid model name")
 	}
 
 	manifest, err := ParseNamedManifest(n)
@@ -803,7 +857,7 @@ func getKVData(digest string, verbose bool) (llm.KV, error) {
 	return kv, nil
 }
 
-func (s *Server) ListModelsHandler(c *gin.Context) {
+func (s *Server) ListHandler(c *gin.Context) {
 	ms, err := Manifests()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -812,17 +866,20 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 
 	models := []api.ListModelResponse{}
 	for n, m := range ms {
-		f, err := m.Config.Open()
-		if err != nil {
-			slog.Warn("bad manifest filepath", "name", n, "error", err)
-			continue
-		}
-		defer f.Close()
-
 		var cf ConfigV2
-		if err := json.NewDecoder(f).Decode(&cf); err != nil {
-			slog.Warn("bad manifest config", "name", n, "error", err)
-			continue
+
+		if m.Config.Digest != "" {
+			f, err := m.Config.Open()
+			if err != nil {
+				slog.Warn("bad manifest filepath", "name", n, "error", err)
+				continue
+			}
+			defer f.Close()
+
+			if err := json.NewDecoder(f).Decode(&cf); err != nil {
+				slog.Warn("bad manifest config", "name", n, "error", err)
+				continue
+			}
 		}
 
 		// tag should never be masked
@@ -850,7 +907,7 @@ func (s *Server) ListModelsHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, api.ListResponse{Models: models})
 }
 
-func (s *Server) CopyModelHandler(c *gin.Context) {
+func (s *Server) CopyHandler(c *gin.Context) {
 	var r api.CopyRequest
 	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
@@ -981,7 +1038,7 @@ func allowedHost(host string) bool {
 		return true
 	}
 
-	var tlds = []string{
+	tlds := []string{
 		"localhost",
 		"local",
 		"internal",
@@ -1044,7 +1101,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	for _, prop := range openAIProperties {
 		config.AllowHeaders = append(config.AllowHeaders, "x-stainless-"+prop)
 	}
-	config.AllowOrigins = envconfig.AllowOrigins
+	config.AllowOrigins = envconfig.Origins()
 
 	r := gin.Default()
 	r.Use(
@@ -1052,33 +1109,33 @@ func (s *Server) GenerateRoutes() http.Handler {
 		allowedHostsMiddleware(s.addr),
 	)
 
-	r.POST("/api/pull", s.PullModelHandler)
+	r.POST("/api/pull", s.PullHandler)
 	r.POST("/api/generate", s.GenerateHandler)
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
-	r.POST("/api/create", s.CreateModelHandler)
-	r.POST("/api/push", s.PushModelHandler)
-	r.POST("/api/copy", s.CopyModelHandler)
-	r.DELETE("/api/delete", s.DeleteModelHandler)
-	r.POST("/api/show", s.ShowModelHandler)
+	r.POST("/api/create", s.CreateHandler)
+	r.POST("/api/push", s.PushHandler)
+	r.POST("/api/copy", s.CopyHandler)
+	r.DELETE("/api/delete", s.DeleteHandler)
+	r.POST("/api/show", s.ShowHandler)
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
-	r.GET("/api/ps", s.ProcessHandler)
+	r.GET("/api/ps", s.PsHandler)
 
 	// Compatibility endpoints
 	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)
 	r.POST("/v1/completions", openai.CompletionsMiddleware(), s.GenerateHandler)
 	r.POST("/v1/embeddings", openai.EmbeddingsMiddleware(), s.EmbedHandler)
-	r.GET("/v1/models", openai.ListMiddleware(), s.ListModelsHandler)
-	r.GET("/v1/models/:model", openai.RetrieveMiddleware(), s.ShowModelHandler)
+	r.GET("/v1/models", openai.ListMiddleware(), s.ListHandler)
+	r.GET("/v1/models/:model", openai.RetrieveMiddleware(), s.ShowHandler)
 
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		r.Handle(method, "/", func(c *gin.Context) {
 			c.String(http.StatusOK, "Ollama is running")
 		})
 
-		r.Handle(method, "/api/tags", s.ListModelsHandler)
+		r.Handle(method, "/api/tags", s.ListHandler)
 		r.Handle(method, "/api/version", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{"version": version.Version})
 		})
@@ -1089,7 +1146,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 
 func Serve(ln net.Listener) error {
 	level := slog.LevelInfo
-	if envconfig.Debug {
+	if envconfig.Debug() {
 		level = slog.LevelDebug
 	}
 
@@ -1117,7 +1174,7 @@ func Serve(ln net.Listener) error {
 		return err
 	}
 
-	if !envconfig.NoPrune {
+	if !envconfig.NoPrune() {
 		// clean up unused layers and manifests
 		if err := PruneLayers(); err != nil {
 			return err
@@ -1161,12 +1218,12 @@ func Serve(ln net.Listener) error {
 		srvr.Close()
 		schedDone()
 		sched.unloadAllRunners()
-		gpu.Cleanup()
+		runners.Cleanup(build.EmbedFS)
 		done()
 	}()
 
-	if err := llm.Init(); err != nil {
-		return fmt.Errorf("unable to initialize llm library %w", err)
+	if _, err := runners.Refresh(build.EmbedFS); err != nil {
+		return fmt.Errorf("unable to initialize llm runners %w", err)
 	}
 
 	s.sched.Run(schedCtx)
@@ -1196,11 +1253,15 @@ func waitForStream(c *gin.Context, ch chan interface{}) {
 				return
 			}
 		case gin.H:
+			status, ok := r["status"].(int)
+			if !ok {
+				status = http.StatusInternalServerError
+			}
 			if errorMsg, ok := r["error"].(string); ok {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": errorMsg})
+				c.JSON(status, gin.H{"error": errorMsg})
 				return
 			} else {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected error format in progress response"})
+				c.JSON(status, gin.H{"error": "unexpected error format in progress response"})
 				return
 			}
 		default:
@@ -1236,7 +1297,7 @@ func streamResponse(c *gin.Context, ch chan any) {
 	})
 }
 
-func (s *Server) ProcessHandler(c *gin.Context) {
+func (s *Server) PsHandler(c *gin.Context) {
 	models := []api.ProcessModelResponse{}
 
 	for _, v := range s.sched.loaded {
@@ -1289,8 +1350,34 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
+	// expire the runner
+	if len(req.Messages) == 0 && req.KeepAlive != nil && int(req.KeepAlive.Seconds()) == 0 {
+		model, err := GetModel(req.Model)
+		if err != nil {
+			switch {
+			case os.IsNotExist(err):
+				c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+			case err.Error() == "invalid model name":
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			default:
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			}
+			return
+		}
+		s.sched.expireRunner(model)
+
+		c.JSON(http.StatusOK, api.ChatResponse{
+			Model:      req.Model,
+			CreatedAt:  time.Now().UTC(),
+			Message:    api.Message{Role: "assistant"},
+			Done:       true,
+			DoneReason: "unload",
+		})
+		return
+	}
+
 	caps := []Capability{CapabilityCompletion}
-	if req.Tools != nil {
+	if len(req.Tools) > 0 {
 		caps = append(caps, CapabilityTools)
 	}
 
@@ -1316,11 +1403,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
+	msgs := append(m.Messages, req.Messages...)
 	if req.Messages[0].Role != "system" && m.System != "" {
-		req.Messages = append([]api.Message{{Role: "system", Content: m.System}}, req.Messages...)
+		msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
 	}
 
-	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, req.Messages, req.Tools)
+	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, req.Tools)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1385,9 +1473,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 
 		resp.Message.Content = sb.String()
-		if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
-			resp.Message.ToolCalls = toolCalls
-			resp.Message.Content = ""
+
+		if len(req.Tools) > 0 {
+			if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
+				resp.Message.ToolCalls = toolCalls
+				resp.Message.Content = ""
+			}
 		}
 
 		c.JSON(http.StatusOK, resp)

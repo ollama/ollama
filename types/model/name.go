@@ -219,7 +219,7 @@ func (n Name) String() string {
 	return b.String()
 }
 
-// DisplayShort returns a short string version of the name.
+// DisplayShortest returns a short string version of the name.
 func (n Name) DisplayShortest() string {
 	var sb strings.Builder
 
@@ -258,7 +258,7 @@ func (n Name) IsValid() bool {
 // IsFullyQualified returns true if all parts of the name are present and
 // valid without the digest.
 func (n Name) IsFullyQualified() bool {
-	var parts = []string{
+	parts := []string{
 		n.Host,
 		n.Namespace,
 		n.Model,

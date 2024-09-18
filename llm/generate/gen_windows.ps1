@@ -7,8 +7,8 @@ function amdGPUs {
         return $env:AMDGPU_TARGETS
     }
     # Current supported rocblas list from ROCm v6.1.2 on windows
+    # https://rocm.docs.amd.com/projects/install-on-windows/en/latest/reference/system-requirements.html#windows-supported-gpus
     $GPU_LIST = @(
-        "gfx906:xnack-"
         "gfx1030"
         "gfx1100"
         "gfx1101"
@@ -35,7 +35,7 @@ function init_vars {
         )
     $script:commonCpuDefs = @("-DCMAKE_POSITION_INDEPENDENT_CODE=on")
     $script:ARCH = $Env:PROCESSOR_ARCHITECTURE.ToLower()
-    $script:DIST_BASE = "${script:SRC_DIR}\dist\windows-${script:ARCH}\ollama_runners"
+    $script:DIST_BASE = "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\runners"
     md "$script:DIST_BASE" -ea 0 > $null
     if ($env:CGO_CFLAGS -contains "-g") {
         $script:cmakeDefs += @("-DCMAKE_VERBOSE_MAKEFILE=on", "-DLLAMA_SERVER_VERBOSE=on", "-DCMAKE_BUILD_TYPE=RelWithDebInfo")
@@ -83,29 +83,9 @@ function git_module_setup {
 }
 
 function apply_patches {
-    # Wire up our CMakefile
-    if (!(Select-String -Path "${script:llamacppDir}/CMakeLists.txt" -Pattern 'ollama')) {
-        Add-Content -Path "${script:llamacppDir}/CMakeLists.txt" -Value 'add_subdirectory(../ext_server ext_server) # ollama'
-    }
-
     # Apply temporary patches until fix is upstream
-    $patches = Get-ChildItem "../patches/*.diff"
-    foreach ($patch in $patches) {
-        # Extract file paths from the patch file
-        $filePaths = Get-Content $patch.FullName | Where-Object { $_ -match '^\+\+\+ ' } | ForEach-Object {
-            $parts = $_ -split ' '
-            ($parts[1] -split '/', 2)[1]
-        }
-
-        # Checkout each file
-        foreach ($file in $filePaths) {
-            git -C "${script:llamacppDir}" checkout $file
-        }
-    }
-
-    # Apply each patch
-    foreach ($patch in $patches) {
-        git -C "${script:llamacppDir}" apply $patch.FullName
+    foreach ($patch in $(Get-ChildItem "../patches/*.patch")) {
+        git -c 'user.name=nobody' -c 'user.email=<>' -C "${script:llamacppDir}" am $patch.FullName
     }
 }
 
@@ -117,7 +97,7 @@ function build {
     if ($cmakeDefs -contains "-G") {
         $extra=@("-j8")
     } else {
-        $extra= @("--", "/p:CL_MPcount=8")
+        $extra= @("--", "/maxCpuCount:8")
     }
     write-host "building with: cmake --build $script:buildDir --config $script:config $($script:cmakeTargets | ForEach-Object { `"--target`", $_ }) $extra"
     & cmake --build $script:buildDir --config $script:config ($script:cmakeTargets | ForEach-Object { "--target", $_ }) $extra
@@ -261,7 +241,7 @@ function build_cuda() {
     if ((-not "${env:OLLAMA_SKIP_CUDA_GENERATE}") -and ("${script:CUDA_LIB_DIR}")) {
         # Then build cuda as a dynamically loaded library
         $nvcc = "$script:CUDA_LIB_DIR\nvcc.exe"
-        $script:CUDA_VERSION=(get-item ($nvcc | split-path | split-path)).Basename
+        $script:CUDA_VERSION=((get-item ($nvcc | split-path | split-path)).Basename -Split "\.")[0]
         if ($null -ne $script:CUDA_VERSION) {
             $script:CUDA_VARIANT="_"+$script:CUDA_VERSION
         }
@@ -273,9 +253,9 @@ function build_cuda() {
             "-DGGML_CUDA=ON",
             "-DGGML_AVX=on",
             "-DGGML_AVX2=off",
-            "-DCUDAToolkit_INCLUDE_DIR=$script:CUDA_INCLUDE_DIR",
-            "-DCMAKE_CUDA_FLAGS=-t8",
-            "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}"
+            "-DCMAKE_CUDA_FLAGS=-t6",
+            "-DCMAKE_CUDA_ARCHITECTURES=${script:CMAKE_CUDA_ARCHITECTURES}",
+            "-DCMAKE_CUDA_COMPILER_TOOLKIT_ROOT=$env:CUDA_PATH"
             )
         if ($null -ne $env:OLLAMA_CUSTOM_CUDA_DEFS) {
             write-host "OLLAMA_CUSTOM_CUDA_DEFS=`"${env:OLLAMA_CUSTOM_CUDA_DEFS}`""
@@ -286,12 +266,11 @@ function build_cuda() {
         sign
         install
 
-        rm -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\"
-        md "${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\" -ea 0 > $null
-        write-host "copying CUDA dependencies to ${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\"
-        cp "${script:CUDA_LIB_DIR}\cudart64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\"
-        cp "${script:CUDA_LIB_DIR}\cublas64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\"
-        cp "${script:CUDA_LIB_DIR}\cublasLt64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\cuda\"
+        md "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\" -ea 0 > $null
+        write-host "copying CUDA dependencies to ${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\"
+        cp "${script:CUDA_LIB_DIR}\cudart64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\"
+        cp "${script:CUDA_LIB_DIR}\cublas64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\"
+        cp "${script:CUDA_LIB_DIR}\cublasLt64_*.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\"
     } else {
         write-host "Skipping CUDA generation step"
     }
@@ -325,18 +304,17 @@ function build_oneapi() {
     sign
     install
 
-    rm -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
-    md "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\" -ea 0 > $null
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\libirngmd.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\libmmd.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\pi_level_zero.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\pi_unified_runtime.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\pi_win_proxy_loader.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\svml_dispmd.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
-    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\sycl7.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
-    cp "${env:ONEAPI_ROOT}\mkl\latest\bin\mkl_core.2.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
-    cp "${env:ONEAPI_ROOT}\mkl\latest\bin\mkl_sycl_blas.4.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
-    cp "${env:ONEAPI_ROOT}\mkl\latest\bin\mkl_tbb_thread.2.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\oneapi\"
+    md "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\" -ea 0 > $null
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\libirngmd.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\"
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\libmmd.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\"
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\pi_level_zero.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\"
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\pi_unified_runtime.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\"
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\pi_win_proxy_loader.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\"
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\svml_dispmd.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\"
+    cp "${env:ONEAPI_ROOT}\compiler\latest\bin\sycl7.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\"
+    cp "${env:ONEAPI_ROOT}\mkl\latest\bin\mkl_core.2.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\"
+    cp "${env:ONEAPI_ROOT}\mkl\latest\bin\mkl_sycl_blas.4.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\"
+    cp "${env:ONEAPI_ROOT}\mkl\latest\bin\mkl_tbb_thread.2.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\"
   } else {
     Write-Host "Skipping oneAPI generation step"
   }
@@ -357,7 +335,7 @@ function build_rocm() {
             "-DCMAKE_C_COMPILER=clang.exe",
             "-DCMAKE_CXX_COMPILER=clang++.exe",
             "-DGGML_HIPBLAS=on",
-            "-DLLAMA_CUDA_NO_PEER_COPY=on",
+            "-DGGML_CUDA_NO_PEER_COPY=on",
             "-DHIP_PLATFORM=amd",
             "-DGGML_AVX=on",
             "-DGGML_AVX2=off",
@@ -386,12 +364,11 @@ function build_rocm() {
         sign
         install
 
-        rm -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\"
-        md "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\rocblas\library\" -ea 0 > $null
-        cp "${env:HIP_PATH}\bin\hipblas.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\"
-        cp "${env:HIP_PATH}\bin\rocblas.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\"
+        md "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\rocblas\library\" -ea 0 > $null
+        cp "${env:HIP_PATH}\bin\hipblas.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\"
+        cp "${env:HIP_PATH}\bin\rocblas.dll" "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\"
         # amdhip64.dll dependency comes from the driver and must be installed on the host to use AMD GPUs
-        cp "${env:HIP_PATH}\bin\rocblas\library\*" "${script:SRC_DIR}\dist\windows-${script:ARCH}\rocm\rocblas\library\"
+        cp "${env:HIP_PATH}\bin\rocblas\library\*" "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\rocblas\library\"
     } else {
         write-host "Skipping ROCm generation step"
     }
