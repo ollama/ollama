@@ -225,6 +225,9 @@ func (i *Instance) Readline() (string, error) {
 			buf.MoveToEnd()
 			fmt.Println()
 
+			if r == CharCtrlJ {
+				return output, ErrNewLineDetected
+			}
 			return output, nil
 		default:
 			if metaDel {

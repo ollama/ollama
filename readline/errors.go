@@ -5,6 +5,7 @@ import (
 )
 
 var ErrInterrupt = errors.New("Interrupt")
+var ErrNewLineDetected = errors.New("new line detected")
 
 type InterruptError struct {
 	Line []rune
