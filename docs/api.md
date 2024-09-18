@@ -407,6 +407,33 @@ A single JSON object is returned:
 }
 ```
 
+#### Unload a model
+
+If an empty prompt is provided and the `keep_alive` parameter is set to `0`, a model will be unloaded from memory.
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/generate -d '{
+  "model": "llama3.1",
+  "keep_alive": 0
+}'
+```
+
+##### Response
+
+A single JSON object is returned:
+
+```json
+{
+  "model": "llama3.1",
+  "created_at": "2024-09-12T03:54:03.516566Z",
+  "response": "",
+  "done": true,
+  "done_reason": "unload"
+}
+```
+
 ## Generate a chat completion
 
 ```shell
@@ -733,6 +760,64 @@ curl http://localhost:11434/api/chat -d '{
   "prompt_eval_duration": 328493000,
   "eval_count": 33,
   "eval_duration": 552222000
+}
+```
+
+#### Load a model
+
+If the messages array is empty, the model will be loaded into memory.
+
+##### Request
+
+```
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama3.1",
+  "messages": []
+}'
+```
+
+##### Response
+```json
+{
+  "model": "llama3.1",
+  "created_at":"2024-09-12T21:17:29.110811Z",
+  "message": {
+    "role": "assistant",
+    "content": ""
+  },
+  "done_reason": "load",
+  "done": true
+}
+```
+
+#### Unload a model
+
+If the messages array is empty and the `keep_alive` parameter is set to `0`, a model will be unloaded from memory.
+
+##### Request
+
+```
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama3.1",
+  "messages": [],
+  "keep_alive": 0
+}'
+```
+
+##### Response
+
+A single JSON object is returned:
+
+```json
+{
+  "model": "llama3.1",
+  "created_at":"2024-09-12T21:33:17.547535Z",
+  "message": {
+    "role": "assistant",
+    "content": ""
+  },
+  "done_reason": "unload",
+  "done": true
 }
 ```
 

@@ -197,6 +197,18 @@ ollama show llama3.1
 ollama list
 ```
 
+### List which models are currently loaded
+
+```
+ollama ps
+```
+
+### Stop a model which is currently running
+
+```
+ollama stop llama3.1
+```
+
 ### Start Ollama
 
 `ollama serve` is used when you want to start ollama without running the desktop application.
