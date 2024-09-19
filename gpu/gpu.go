@@ -205,13 +205,16 @@ func GetGPUInfo() GpuInfoList {
 		if err != nil {
 			slog.Warn("error looking up system memory", "error", err)
 		}
+		depPath := LibraryDir()
+
 		cpus = []CPUInfo{
 			{
 				GpuInfo: GpuInfo{
-					memInfo: mem,
-					Library: "cpu",
-					Variant: cpuCapability.String(),
-					ID:      "0",
+					memInfo:        mem,
+					Library:        "cpu",
+					Variant:        cpuCapability.String(),
+					ID:             "0",
+					DependencyPath: depPath,
 				},
 			},
 		}
@@ -223,8 +226,6 @@ func GetGPUInfo() GpuInfoList {
 			// No need to do any GPU discovery, since we can't run on them
 			return GpuInfoList{cpus[0].GpuInfo}
 		}
-
-		depPath := LibraryDir()
 
 		// Load ALL libraries
 		cHandles = initCudaHandles()
