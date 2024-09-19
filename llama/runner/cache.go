@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"log/slog"
+	"reflect"
 	"time"
 
 	"github.com/ollama/ollama/llama"
@@ -24,7 +25,7 @@ func NewTokenCache(lc *llama.Context, kvSize int, numSlots int) *TokenCache {
 	for i := range slots {
 		slots[i] = TokenCacheSlot{
 			id:     i,
-			tokens: make([]int, 0),
+			inputs: make([]input, 0),
 		}
 	}
 
@@ -44,7 +45,7 @@ type TokenCacheSlot struct {
 	id int
 
 	// tokens that are stored in the KV cache
-	tokens []int
+	inputs []input
 
 	// is this cache actively being processed as part of a sequence?
 	inUse bool
@@ -53,7 +54,7 @@ type TokenCacheSlot struct {
 	lastUsed time.Time
 }
 
-func (t *TokenCache) LoadCacheSlot(prompt []int) (*TokenCacheSlot, []int, int, error) {
+func (t *TokenCache) LoadCacheSlot(prompt []input) (*TokenCacheSlot, []input, int, error) {
 	slot, numPast, err := t.findCacheSlot(prompt)
 	if err != nil {
 		return nil, nil, 0, err
@@ -73,16 +74,16 @@ func (t *TokenCache) LoadCacheSlot(prompt []int) (*TokenCacheSlot, []int, int, e
 		numPast = 0
 	}
 
-	slog.Debug("loading cache slot", "id", slot.id, "cache", len(slot.tokens), "prompt", len(prompt),
+	slog.Debug("loading cache slot", "id", slot.id, "cache", len(slot.inputs), "prompt", len(prompt),
 		"used", numPast, "remaining", len(prompt)-numPast)
 
 	prompt = prompt[numPast:]
-	slot.tokens = slot.tokens[:numPast]
+	slot.inputs = slot.inputs[:numPast]
 
 	return slot, prompt, numPast, nil
 }
 
-func (t *TokenCache) findCacheSlot(prompt []int) (*TokenCacheSlot, int, error) {
+func (t *TokenCache) findCacheSlot(prompt []input) (*TokenCacheSlot, int, error) {
 	oldest := time.Now()
 	var oldestSlot *TokenCacheSlot
 
@@ -90,7 +91,7 @@ func (t *TokenCache) findCacheSlot(prompt []int) (*TokenCacheSlot, int, error) {
 	var longestSlot *TokenCacheSlot
 
 	for i, s := range t.slots {
-		count := countCommonPrefix(s.tokens, prompt)
+		count := countCommonPrefix(s.inputs, prompt)
 		if count > longest {
 			longest = count
 			longestSlot = &t.slots[i]
@@ -102,7 +103,7 @@ func (t *TokenCache) findCacheSlot(prompt []int) (*TokenCacheSlot, int, error) {
 		}
 	}
 
-	if longest == len(longestSlot.tokens) && !longestSlot.inUse {
+	if longest == len(longestSlot.inputs) && !longestSlot.inUse {
 		return longestSlot, longest, nil
 	}
 
@@ -110,16 +111,16 @@ func (t *TokenCache) findCacheSlot(prompt []int) (*TokenCacheSlot, int, error) {
 		return nil, 0, errors.New("no available cache slots")
 	}
 
-	if len(oldestSlot.tokens) != 0 {
-		slog.Debug("evicting cache slot", "id", oldestSlot.id, "tokens", len(oldestSlot.tokens),
+	if len(oldestSlot.inputs) != 0 {
+		slog.Debug("evicting cache slot", "id", oldestSlot.id, "tokens", len(oldestSlot.inputs),
 			"used", oldestSlot.lastUsed)
 	}
 
 	if longest > 0 && longestSlot != oldestSlot {
 		slog.Debug("forking cache slot", "src", longestSlot.id, "dst", oldestSlot.id, "tokens", longest, "total",
-			len(longestSlot.tokens))
-		oldestSlot.tokens = make([]int, longest)
-		copy(oldestSlot.tokens, longestSlot.tokens[:longest])
+			len(longestSlot.inputs))
+		oldestSlot.inputs = make([]input, longest)
+		copy(oldestSlot.inputs, longestSlot.inputs[:longest])
 		// This is only nil for unit tests
 		if t.lc != nil {
 			t.lc.KvCacheSeqRm(oldestSlot.id, 0, -1)
@@ -130,7 +131,7 @@ func (t *TokenCache) findCacheSlot(prompt []int) (*TokenCacheSlot, int, error) {
 	return oldestSlot, longest, nil
 }
 
-func countCommonPrefix(a []int, b []int) int {
+func countCommonPrefix(a []input, b []input) int {
 	var count int
 
 	for i := range a {
@@ -138,7 +139,7 @@ func countCommonPrefix(a []int, b []int) int {
 			break
 		}
 
-		if a[i] != b[i] {
+		if !reflect.DeepEqual(a[i], b[i]) {
 			break
 		}
 
@@ -154,8 +155,8 @@ func (t *TokenCache) ShiftCacheSlot(slot *TokenCacheSlot, numKeep int, numDiscar
 	t.lc.KvCacheSeqRm(slot.id, numKeep, numKeep+numDiscard)
 	t.lc.KvCacheSeqAdd(slot.id, numKeep+numDiscard, numPast, -numDiscard)
 
-	for i := numKeep + numDiscard; i < len(slot.tokens); i++ {
-		slot.tokens[i-numDiscard] = slot.tokens[i]
+	for i := numKeep + numDiscard; i < len(slot.inputs); i++ {
+		slot.inputs[i-numDiscard] = slot.inputs[i]
 	}
-	slot.tokens = slot.tokens[:len(slot.tokens)-numDiscard]
+	slot.inputs = slot.inputs[:len(slot.inputs)-numDiscard]
 }

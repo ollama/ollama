@@ -38,13 +38,13 @@ func main() {
 		},
 	}
 	model := llama.LoadModelFromFile(*mpath, params)
-	ctxParams := llama.NewContextParams(2048, 512, 1, runtime.NumCPU(), false)
+	ctxParams := llama.NewContextParams(2048, 1024, 1, runtime.NumCPU(), false)
 
 	// language model context
 	lc := llama.NewContextWithModel(model, ctxParams)
 
 	// eval before
-	batch := llama.NewBatch(512, 0, 1)
+	batch := llama.NewBatch(1024, 0, 1)
 	var nPast int
 
 	// clip context
@@ -66,7 +66,7 @@ func main() {
 			log.Fatal(err)
 		}
 
-		embedding := llama.NewLlavaImageEmbed(clipCtx, data)
+		embedding := llama.NewLlavaImageEmbed(lc, clipCtx, data)
 
 		parts := strings.Split(*prompt, "<image>")
 		if len(parts) != 2 {
@@ -79,7 +79,7 @@ func main() {
 		}
 
 		for _, t := range beforeTokens {
-			batch.Add(t, nPast, []int{0}, true)
+			batch.Add(t, nil, nPast, []int{0}, false)
 			nPast++
 		}
 
@@ -87,8 +87,19 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+		batch.Clear()
 
-		llama.LlavaEvalImageEmbed(lc, embedding, 512, &nPast)
+		// set up a separate batch for image embeddings
+		imageBatch := llama.NewBatch(1024, lc.Model().NEmbd(), 1)
+		for _, e := range embedding {
+			imageBatch.Add(0, e, nPast, []int{0}, false)
+			nPast++
+		}
+
+		err = lc.Decode(imageBatch)
+		if err != nil {
+			panic(err)
+		}
 
 		afterTokens, err := lc.Model().Tokenize(parts[1], true, true)
 		if err != nil {
@@ -96,7 +107,7 @@ func main() {
 		}
 
 		for _, t := range afterTokens {
-			batch.Add(t, nPast, []int{0}, true)
+			batch.Add(t, nil, nPast, []int{0}, true)
 			nPast++
 		}
 	} else {
@@ -106,7 +117,7 @@ func main() {
 		}
 
 		for _, t := range tokens {
-			batch.Add(t, nPast, []int{0}, true)
+			batch.Add(t, nil, nPast, []int{0}, true)
 			nPast++
 		}
 	}
@@ -131,6 +142,6 @@ func main() {
 		str := lc.Model().TokenToPiece(token)
 		fmt.Print(str)
 		batch.Clear()
-		batch.Add(token, n, []int{0}, true)
+		batch.Add(token, nil, n, []int{0}, true)
 	}
 }

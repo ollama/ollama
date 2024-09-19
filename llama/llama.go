@@ -83,14 +83,15 @@ func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, fla
 }
 
 type Context struct {
-	c *C.struct_llama_context
+	c          *C.struct_llama_context
+	numThreads int
 }
 
 func (c *Context) KvCacheClear() {
 	C.llama_kv_cache_clear(c.c)
 }
 
-func (c *Context) Decode(batch Batch) error {
+func (c *Context) Decode(batch *Batch) error {
 	// Positive return values does not mean a fatal error, but rather a warning.
 	//   0 - success
 	//   1 - could not find a KV slot for the batch (try reducing the size of the batch or increase the context)
@@ -216,7 +217,10 @@ func FreeModel(model *Model) {
 }
 
 func NewContextWithModel(model *Model, params ContextParams) *Context {
-	return &Context{c: C.llama_new_context_with_model(model.c, params.c)}
+	return &Context{
+		c:          C.llama_new_context_with_model(model.c, params.c),
+		numThreads: int(params.c.n_threads),
+	}
 }
 
 func (m *Model) NumVocab() int {
@@ -251,12 +255,14 @@ func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float
 type Batch struct {
 	c         C.struct_llama_batch
 	batchSize int
+	embedSize int
 }
 
-func NewBatch(nTokens int, embd int, maxSeq int) Batch {
-	return Batch{
+func NewBatch(nTokens int, embd int, maxSeq int) *Batch {
+	return &Batch{
 		c:         C.llama_batch_init(C.int(nTokens), C.int(embd), C.int(maxSeq)),
 		batchSize: nTokens,
+		embedSize: embd,
 	}
 }
 
@@ -264,10 +270,18 @@ func (b *Batch) NumTokens() int {
 	return int(b.c.n_tokens)
 }
 
+func (b *Batch) IsEmbedding() bool {
+	return b.embedSize != 0
+}
+
 // Add adds a token to the batch with the given position for the given
 // sequence ids, and optionally instructs to include logits.
-func (b *Batch) Add(token int, pos int, seqIds []int, logits bool) {
-	unsafe.Slice(b.c.token, b.batchSize)[b.c.n_tokens] = C.llama_token(token)
+func (b *Batch) Add(token int, embed []float32, pos int, seqIds []int, logits bool) {
+	if !b.IsEmbedding() {
+		unsafe.Slice(b.c.token, b.batchSize)[b.c.n_tokens] = C.llama_token(token)
+	} else {
+		copy(unsafe.Slice((*float32)(b.c.embd), b.batchSize*b.embedSize)[int(b.c.n_tokens)*b.embedSize:], embed)
+	}
 	unsafe.Slice(b.c.pos, b.batchSize)[b.c.n_tokens] = C.llama_pos(pos)
 	unsafe.Slice(b.c.n_seq_id, b.batchSize)[b.c.n_tokens] = C.int(len(seqIds))
 
@@ -403,20 +417,29 @@ func NewClipContext(modelPath string) *ClipContext {
 	return &ClipContext{c: cc}
 }
 
-type LlavaContext struct {
-	c *C.struct_llava_context
+func (c *ClipContext) Close() {
+	C.clip_free(c.c)
 }
 
-type LlavaImageEmbed struct {
-	c *C.struct_llava_image_embed
-}
+func NewLlavaImageEmbed(llamaContext *Context, clipContext *ClipContext, data []byte) [][]float32 {
+	c := C.llava_image_embed_make_with_bytes(clipContext.c, C.int(llamaContext.numThreads), (*C.uchar)(unsafe.Pointer(&data[0])), C.int(len(data)))
 
-func NewLlavaImageEmbed(clipContext *ClipContext, data []byte) *LlavaImageEmbed {
-	return &LlavaImageEmbed{c: C.llava_image_embed_make_with_bytes(clipContext.c, C.int(runtime.NumCPU()), (*C.uchar)(unsafe.Pointer(&data[0])), C.int(len(data)))}
-}
+	numTokens := int(c.n_image_pos)
 
-func LlavaEvalImageEmbed(llamaContext *Context, embed *LlavaImageEmbed, nBatch int, nPast *int) {
-	C.llava_eval_image_embed(llamaContext.c, embed.c, C.int(nBatch), (*C.int)(unsafe.Pointer(nPast)))
+	nEmbed := llamaContext.Model().NEmbd()
+	s := unsafe.Slice((*float32)(c.embed), nEmbed*numTokens)
+
+	embed := make([][]float32, numTokens)
+	rows := make([]float32, len(s))
+	copy(rows, s)
+
+	for i := range embed {
+		embed[i] = rows[i*nEmbed : (i+1)*nEmbed]
+	}
+
+	C.llava_image_embed_free(c)
+
+	return embed
 }
 
 // sampling

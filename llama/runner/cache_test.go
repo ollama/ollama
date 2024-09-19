@@ -8,32 +8,44 @@ import (
 func TestCountCommon(t *testing.T) {
 	tests := []struct {
 		name     string
-		t1       []int
-		t2       []int
+		t1       []input
+		t2       []input
 		expected int
 	}{
 		{
 			name:     "Equal",
-			t1:       []int{1, 2, 3},
-			t2:       []int{1, 2, 3},
+			t1:       []input{{token: 1}, {token: 2}, {token: 3}},
+			t2:       []input{{token: 1}, {token: 2}, {token: 3}},
 			expected: 3,
 		},
 		{
 			name:     "Prefix",
-			t1:       []int{1},
-			t2:       []int{1, 2, 3},
+			t1:       []input{{token: 1}},
+			t2:       []input{{token: 1}, {token: 2}, {token: 3}},
 			expected: 1,
 		},
 		{
+			name:     "Embeddings Prefix",
+			t1:       []input{{embd: []float32{0.1, 0.2, 0.3}}},
+			t2:       []input{{embd: []float32{0.1, 0.2, 0.3}}, {embd: []float32{0.4, 0.5, 0.6}}, {embd: []float32{0.7}}},
+			expected: 1,
+		},
+		{
+			name:     "Embeddings Prefix Partial",
+			t1:       []input{{embd: []float32{0.1, 0.2, 0.3}}},
+			t2:       []input{{embd: []float32{0.1, 0.2}}, {embd: []float32{0.4, 0.5, 0.6}}, {embd: []float32{0.7}}},
+			expected: 0,
+		},
+		{
 			name:     "Empty",
-			t1:       []int{},
-			t2:       []int{1, 2, 3},
+			t1:       []input{},
+			t2:       []input{{token: 1}, {token: 2}, {token: 3}},
 			expected: 0,
 		},
 		{
 			name:     "Both Empty",
-			t1:       []int{},
-			t2:       []int{},
+			t1:       []input{},
+			t2:       []input{},
 			expected: 0,
 		},
 	}
@@ -52,7 +64,7 @@ func TestFindCacheSlot(t *testing.T) {
 	tests := []struct {
 		name        string
 		cache       TokenCache
-		prompt      []int
+		prompt      []input
 		expected    int
 		expectedLen int
 	}{
@@ -61,18 +73,18 @@ func TestFindCacheSlot(t *testing.T) {
 			cache: TokenCache{slots: []TokenCacheSlot{
 				{
 					id:       0,
-					tokens:   []int{},
+					inputs:   []input{},
 					inUse:    false,
 					lastUsed: time.Time{},
 				},
 				{
 					id:       1,
-					tokens:   []int{},
+					inputs:   []input{},
 					inUse:    false,
 					lastUsed: time.Time{},
 				},
 			}},
-			prompt:      []int{1},
+			prompt:      []input{},
 			expected:    0,
 			expectedLen: 0,
 		},
@@ -81,18 +93,18 @@ func TestFindCacheSlot(t *testing.T) {
 			cache: TokenCache{slots: []TokenCacheSlot{
 				{
 					id:       0,
-					tokens:   []int{1},
+					inputs:   []input{{token: 1}},
 					inUse:    false,
 					lastUsed: time.Now().Add(-time.Second),
 				},
 				{
 					id:       1,
-					tokens:   []int{1, 2},
+					inputs:   []input{{token: 1}, {token: 2}},
 					inUse:    false,
 					lastUsed: time.Now().Add(-2 * time.Second),
 				},
 			}},
-			prompt:      []int{1, 2},
+			prompt:      []input{{token: 1}, {token: 2}},
 			expected:    1,
 			expectedLen: 2,
 		},
@@ -101,18 +113,18 @@ func TestFindCacheSlot(t *testing.T) {
 			cache: TokenCache{slots: []TokenCacheSlot{
 				{
 					id:       0,
-					tokens:   []int{1, 2},
+					inputs:   []input{{token: 1}, {token: 2}},
 					inUse:    false,
 					lastUsed: time.Now().Add(-time.Second),
 				},
 				{
 					id:       1,
-					tokens:   []int{},
+					inputs:   []input{},
 					inUse:    false,
 					lastUsed: time.Time{},
 				},
 			}},
-			prompt:      []int{2},
+			prompt:      []input{{token: 2}},
 			expected:    1,
 			expectedLen: 0,
 		},
@@ -122,19 +134,19 @@ func TestFindCacheSlot(t *testing.T) {
 				slots: []TokenCacheSlot{
 					{
 						id:       0,
-						tokens:   []int{1, 2},
+						inputs:   []input{{token: 1}, {token: 2}},
 						inUse:    false,
 						lastUsed: time.Now().Add(-time.Second),
 					},
 					{
 						id:       1,
-						tokens:   []int{},
+						inputs:   []input{},
 						inUse:    false,
 						lastUsed: time.Time{},
 					},
 				},
 			},
-			prompt:      []int{1},
+			prompt:      []input{{token: 1}},
 			expected:    1,
 			expectedLen: 1,
 		},
@@ -143,18 +155,18 @@ func TestFindCacheSlot(t *testing.T) {
 			cache: TokenCache{slots: []TokenCacheSlot{
 				{
 					id:       0,
-					tokens:   []int{1},
+					inputs:   []input{{token: 1}},
 					inUse:    false,
 					lastUsed: time.Now().Add(-time.Second),
 				},
 				{
 					id:       1,
-					tokens:   []int{1, 2},
+					inputs:   []input{{token: 1}, {token: 2}},
 					inUse:    false,
 					lastUsed: time.Now().Add(-2 * time.Second),
 				},
 			}},
-			prompt:      []int{2, 3},
+			prompt:      []input{{token: 2}, {token: 3}},
 			expected:    1,
 			expectedLen: 0,
 		},
@@ -163,18 +175,18 @@ func TestFindCacheSlot(t *testing.T) {
 			cache: TokenCache{slots: []TokenCacheSlot{
 				{
 					id:       0,
-					tokens:   []int{1},
+					inputs:   []input{{token: 1}},
 					inUse:    false,
 					lastUsed: time.Now().Add(-time.Second),
 				},
 				{
 					id:       1,
-					tokens:   []int{1, 2},
+					inputs:   []input{{token: 1}, {token: 2}},
 					inUse:    true,
 					lastUsed: time.Now().Add(-2 * time.Second),
 				},
 			}},
-			prompt:      []int{1, 2},
+			prompt:      []input{{token: 1}, {token: 2}},
 			expected:    0,
 			expectedLen: 2,
 		},
