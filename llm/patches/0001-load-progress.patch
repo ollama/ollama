@@ -1,7 +1,7 @@
-From 2cfaa0a04faa9c87ba8f1ac8527eb953e69c6cde Mon Sep 17 00:00:00 2001
-From: Michael Yang <mxyng@pm.me>
-Date: Mon, 16 Sep 2024 15:53:10 -0700
-Subject: [PATCH] 01-load-progress.diff
+From c97ed60c3369294d5551ba099a88ddc509687df1 Mon Sep 17 00:00:00 2001
+From: Gabe Goodhart <ghart@us.ibm.com>
+Date: Thu, 19 Sep 2024 16:55:15 -0600
+Subject: [PATCH] patch load progress
 
 ---
  common/common.cpp | 2 ++
@@ -9,10 +9,10 @@ Subject: [PATCH] 01-load-progress.diff
  2 files changed, 9 insertions(+)
 
 diff --git a/common/common.cpp b/common/common.cpp
-index 9fa18472..48ff41e9 100644
+index 8d0ed4f9..a09e8a53 100644
 --- a/common/common.cpp
 +++ b/common/common.cpp
-@@ -2573,6 +2573,8 @@ struct llama_model_params llama_model_params_from_gpt_params(const gpt_params &
+@@ -955,6 +955,8 @@ struct llama_model_params llama_model_params_from_gpt_params(const gpt_params &
      mparams.use_mmap        = params.use_mmap;
      mparams.use_mlock       = params.use_mlock;
      mparams.check_tensors   = params.check_tensors;
@@ -22,11 +22,11 @@ index 9fa18472..48ff41e9 100644
          mparams.kv_overrides = NULL;
      } else {
 diff --git a/common/common.h b/common/common.h
-index cb5e7f6d..d8f043f7 100644
+index cb87c447..818a4a4a 100644
 --- a/common/common.h
 +++ b/common/common.h
-@@ -204,6 +204,13 @@ struct gpt_params {
-     std::string mmproj = "";        // path to multimodal projector
+@@ -266,6 +266,13 @@ struct gpt_params {
+     std::string mmproj = "";        // path to multimodal projector                                         // NOLINT
      std::vector<std::string> image; // path to image file(s)
  
 +    // Called with a progress value between 0.0 and 1.0. Pass NULL to disable.
@@ -40,5 +40,5 @@ index cb5e7f6d..d8f043f7 100644
      bool embedding         = false; // get only sentence embedding
      int32_t embd_normalize = 2;     // normalisation for embendings (-1=none, 0=max absolute int16, 1=taxicab, 2=euclidean, >2=p-norm)
 -- 
-2.46.0
+2.39.3 (Apple Git-146)
 
