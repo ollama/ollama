@@ -364,7 +364,12 @@ func (s *Server) processBatch() {
 		if ok, stop := findStop(sequence, seq.stop); ok {
 			slog.Info("hit stop token", "stop", seq.stop)
 
+			trimCacheLen := len(seq.pendingResponses) - 1
 			seq.pendingResponses = truncateStop(seq.pendingResponses, stop)
+			trimCacheLen -= len(seq.pendingResponses)
+
+			// remove any tokens from the cache that we don't actually return
+			seq.cache.tokens = seq.cache.tokens[:len(seq.cache.tokens)-trimCacheLen]
 			s.removeSequence(i, "stop")
 			continue
 		}
