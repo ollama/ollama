@@ -283,32 +283,6 @@ jobs:
     env:
       KEY_CONTAINER: ${{ vars.KEY_CONTAINER }}
     steps:
-      - name: Set Version
-        run: |
-          $ver=${env:GITHUB_REF_NAME}.trim("v")
-          write-host VERSION=$ver | Out-File -FilePath ${env:GITHUB_ENV} -Encoding utf8 -Append
-      - uses: 'google-github-actions/auth@v2'
-        with:
-          project_id: 'ollama'
-          credentials_json: '${{ secrets.GOOGLE_SIGNING_CREDENTIALS }}'
-      - run: echo "${{ vars.OLLAMA_CERT }}" | Out-File -FilePath ollama_inc.crt -Encoding utf8
-      - name: install Windows SDK 8.1 to get signtool
-        run: |
-          $ErrorActionPreference = "Stop"
-          write-host "downloading SDK"
-          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=323507" -OutFile "${env:RUNNER_TEMP}\sdksetup.exe"
-          Start-Process "${env:RUNNER_TEMP}\sdksetup.exe" -ArgumentList @("/q") -NoNewWindow -Wait
-          write-host "Win SDK 8.1 installed"
-          gci -path 'C:\Program Files (x86)\Windows Kits\' -r -fi 'signtool.exe'
-      - name: install signing plugin
-        run: |
-          $ErrorActionPreference = "Stop"
-          write-host "downloading plugin"
-          Invoke-WebRequest -Uri "https://github.com/GoogleCloudPlatform/kms-integrations/releases/download/cng-v1.0/kmscng-1.0-windows-amd64.zip" -OutFile "${env:RUNNER_TEMP}\plugin.zip"
-          Expand-Archive -Path "${env:RUNNER_TEMP}\plugin.zip" -DestinationPath ${env:RUNNER_TEMP}\plugin\
-          write-host "Installing plugin"
-          & "${env:RUNNER_TEMP}\plugin\*\kmscng.msi" /quiet
-          write-host "plugin installed"
       # The current Windows arm64 beta image has effectively zero dev tools installed...
       - name: Install git and gzip
         run: |
@@ -376,6 +350,32 @@ jobs:
           echo $env:PATH
           gcc --version
       - uses: actions/checkout@v4
+      - name: Set Version
+        run: |
+          $ver=${env:GITHUB_REF_NAME}.trim("v")
+          write-host VERSION=$ver | Out-File -FilePath ${env:GITHUB_ENV} -Encoding utf8 -Append
+      - uses: 'google-github-actions/auth@v2'
+        with:
+          project_id: 'ollama'
+          credentials_json: '${{ secrets.GOOGLE_SIGNING_CREDENTIALS }}'
+      - run: echo "${{ vars.OLLAMA_CERT }}" | Out-File -FilePath ollama_inc.crt -Encoding utf8
+      - name: install Windows SDK 8.1 to get signtool
+        run: |
+          $ErrorActionPreference = "Stop"
+          write-host "downloading SDK"
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=323507" -OutFile "${env:RUNNER_TEMP}\sdksetup.exe"
+          Start-Process "${env:RUNNER_TEMP}\sdksetup.exe" -ArgumentList @("/q") -NoNewWindow -Wait
+          write-host "Win SDK 8.1 installed"
+          gci -path 'C:\Program Files (x86)\Windows Kits\' -r -fi 'signtool.exe'
+      - name: install signing plugin
+        run: |
+          $ErrorActionPreference = "Stop"
+          write-host "downloading plugin"
+          Invoke-WebRequest -Uri "https://github.com/GoogleCloudPlatform/kms-integrations/releases/download/cng-v1.0/kmscng-1.0-windows-amd64.zip" -OutFile "${env:RUNNER_TEMP}\plugin.zip"
+          Expand-Archive -Path "${env:RUNNER_TEMP}\plugin.zip" -DestinationPath ${env:RUNNER_TEMP}\plugin\
+          write-host "Installing plugin"
+          & "${env:RUNNER_TEMP}\plugin\*\kmscng.msi" /quiet
+          write-host "plugin installed"
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
