@@ -7,12 +7,12 @@
 $ErrorActionPreference = "Stop"
 
 function checkEnv() {
-    $script:ARCH = $Env:PROCESSOR_ARCHITECTURE.ToLower()
-    $script:TARGET_ARCH=$Env:PROCESSOR_ARCHITECTURE.ToLower()
+    $script:ARCH = (([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture).ToString().ToLower()).Replace("x64", "amd64")
+    $script:TARGET_ARCH=$script:ARCH
     Write-host "Building for ${script:TARGET_ARCH}"
     write-host "Locating required tools and paths"
     $script:SRC_DIR=$PWD
-    if (!$env:VCToolsRedistDir) {
+    if ($null -eq $env:VCToolsRedistDir) {
         $MSVC_INSTALL=(Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation
         $env:VCToolsRedistDir=(get-item "${MSVC_INSTALL}\VC\Redist\MSVC\*")[0]
     }
@@ -28,9 +28,12 @@ function checkEnv() {
         $script:CUDA_DIRS=$cudaList
     }
     
-    $script:INNO_SETUP_DIR=(get-item "C:\Program Files*\Inno Setup*\")[0]
+    $inoSetup=(get-item "C:\Program Files*\Inno Setup*\")
+    if ($inoSetup.length -gt 0) {
+        $script:INNO_SETUP_DIR=$inoSetup[0]
+    }
 
-    $script:DEPS_DIR="${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}"
+    $script:DIST_DIR="${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}"
     $env:CGO_ENABLED="1"
     Write-Output "Checking version"
     if (!$env:VERSION) {
@@ -130,7 +133,7 @@ function buildApp() {
     write-host "Building Ollama App"
     cd "${script:SRC_DIR}\app"
     & windres -l 0 -o ollama.syso ollama.rc
-    & go build -trimpath -ldflags "-s -w -H windowsgui -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" .
+    & go build -trimpath -ldflags "-s -w -H windowsgui -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" -o "${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}-app.exe" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     if ("${env:KEY_CONTAINER}") {
         & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
@@ -140,24 +143,40 @@ function buildApp() {
 }
 
 function gatherDependencies() {
-    write-host "Gathering runtime dependencies"
+    if ($null -eq $env:VCToolsRedistDir) {
+        write-error "Unable to locate VC Install location - please use a Developer shell"
+        exit 1
+    }
+    write-host "Gathering runtime dependencies from $env:VCToolsRedistDir"
     cd "${script:SRC_DIR}"
-    md "${script:DEPS_DIR}\lib\ollama" -ea 0 > $null
+    md "${script:DIST_DIR}\lib\ollama" -ea 0 > $null
 
     # TODO - this varies based on host build system and MSVC version - drive from dumpbin output
     # currently works for Win11 + MSVC 2019 + Cuda V11
-    cp "${env:VCToolsRedistDir}\x64\Microsoft.VC*.CRT\msvcp140*.dll" "${script:DEPS_DIR}\lib\ollama\"
-    cp "${env:VCToolsRedistDir}\x64\Microsoft.VC*.CRT\vcruntime140.dll" "${script:DEPS_DIR}\lib\ollama\"
-    cp "${env:VCToolsRedistDir}\x64\Microsoft.VC*.CRT\vcruntime140_1.dll" "${script:DEPS_DIR}\lib\ollama\"
-    foreach ($part in $("runtime", "stdio", "filesystem", "math", "convert", "heap", "string", "time", "locale", "environment")) {
-        cp "$env:VCToolsRedistDir\..\..\..\Tools\Llvm\x64\bin\api-ms-win-crt-${part}*.dll" "${script:DEPS_DIR}\lib\ollama\"
+    if ($script:TARGET_ARCH -eq "amd64") {
+        $depArch="x64"
+    } else {
+        $depArch=$script:TARGET_ARCH
+    }
+    if ($depArch -eq "amd64") {
+        cp "${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\msvcp140*.dll" "${script:DIST_DIR}\lib\ollama\"
+        cp "${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\vcruntime140.dll" "${script:DIST_DIR}\lib\ollama\"
+        cp "${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\vcruntime140_1.dll" "${script:DIST_DIR}\lib\ollama\"
+        $llvmCrtDir="$env:VCToolsRedistDir\..\..\..\Tools\Llvm\${depArch}\bin"
+        foreach ($part in $("runtime", "stdio", "filesystem", "math", "convert", "heap", "string", "time", "locale", "environment")) {
+            write-host "cp ${llvmCrtDir}\api-ms-win-crt-${part}*.dll ${script:DIST_DIR}\lib\ollama\"
+            cp "${llvmCrtDir}\api-ms-win-crt-${part}*.dll" "${script:DIST_DIR}\lib\ollama\"
+        }
+    } else {
+        # Carying the dll's doesn't seem to work, so use the redist installer
+        copy-item -path "${env:VCToolsRedistDir}\vc_redist.arm64.exe" -destination "${script:DIST_DIR}" -verbose
     }
 
 
     cp "${script:SRC_DIR}\app\ollama_welcome.ps1" "${script:SRC_DIR}\dist\"
     if ("${env:KEY_CONTAINER}") {
         write-host "about to sign"
-        foreach ($file in (get-childitem "${script:DEPS_DIR}\lib\ollama\cu*.dll") + @("${script:SRC_DIR}\dist\ollama_welcome.ps1")){
+        foreach ($file in (get-childitem "${script:DIST_DIR}\lib\ollama\cu*.dll") + @("${script:SRC_DIR}\dist\ollama_welcome.ps1")){
             write-host "signing $file"
             & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
                 /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} $file
@@ -167,6 +186,10 @@ function gatherDependencies() {
 }
 
 function buildInstaller() {
+    if ($null -eq ${script:INNO_SETUP_DIR}) {
+        write-host "Inno Setup not present, skipping installer build"
+        return
+    }
     write-host "Building Ollama Installer"
     cd "${script:SRC_DIR}\app"
     $env:PKG_VERSION=$script:PKG_VERSION
@@ -183,13 +206,20 @@ function distZip() {
     Compress-Archive -Path "${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-${script:TARGET_ARCH}.zip" -Force
 }
 
+checkEnv
 try {
-    checkEnv
-    buildOllama
-    buildApp
-    gatherDependencies
-    buildInstaller
-    distZip
+    if ($($args.count) -eq 0) {
+        buildOllama
+        buildApp
+        gatherDependencies
+        buildInstaller
+        distZip
+    } else {
+        for ( $i = 0; $i -lt $args.count; $i++ ) {
+            write-host "performing $($args[$i])"
+            & $($args[$i])
+        } 
+    }
 } catch {
     write-host "Build Failed"
     write-host $_
