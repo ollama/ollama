@@ -291,6 +291,7 @@ jobs:
           iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
           choco install -y --no-progress git gzip
           echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install Visual Studio 2022
         run: |
           $components = @(
@@ -389,6 +390,7 @@ jobs:
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$gccpath;$env:PATH;C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin"
           echo $env:PATH
+          $env:ARCH="arm64"
           .\scripts\build_windows.ps1 buildOllama buildApp gatherDependencies distZip
         name: 'Windows Build'
       - uses: actions/upload-artifact@v4
