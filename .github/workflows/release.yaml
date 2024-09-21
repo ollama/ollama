@@ -470,6 +470,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: windows-arm64
+          path: dist
       - run: dir build
       - run: |
           $gopath=(get-command go).source | split-path -parent
