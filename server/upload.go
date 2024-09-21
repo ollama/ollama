@@ -26,7 +26,7 @@ import (
 var blobUploadManager sync.Map
 
 type blobUpload struct {
-	*Layer
+	Layer
 
 	Total     int64
 	Completed atomic.Int64
@@ -45,7 +45,7 @@ type blobUpload struct {
 }
 
 const (
-	numUploadParts          = 64
+	numUploadParts          = 16
 	minUploadPartSize int64 = 100 * format.MegaByte
 	maxUploadPartSize int64 = 1000 * format.MegaByte
 )
@@ -362,7 +362,7 @@ func (p *progressWriter) Rollback() {
 	p.written = 0
 }
 
-func uploadBlob(ctx context.Context, mp ModelPath, layer *Layer, opts *registryOptions, fn func(api.ProgressResponse)) error {
+func uploadBlob(ctx context.Context, mp ModelPath, layer Layer, opts *registryOptions, fn func(api.ProgressResponse)) error {
 	requestURL := mp.BaseURL()
 	requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "blobs", layer.Digest)
 

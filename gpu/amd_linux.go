@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -369,6 +370,10 @@ func AMDGetGPUInfoFromDriver() []RocmGPUInfo {
 	if len(resp) == 0 {
 		slog.Info("no compatible amdgpu devices detected")
 	}
+	if err := verifyKFDDriverAccess(); err != nil {
+		slog.Error("amdgpu devices detected but permission problems block access", "error", err)
+		return nil
+	}
 	return resp
 }
 
@@ -582,4 +587,20 @@ func AMDGetGPUInfoFromRuntime() []RocmGPUInfo {
 	}
 
 	return resp
+}
+
+func verifyKFDDriverAccess() error {
+	// Verify we have permissions - either running as root, or we have group access to the driver
+	fd, err := os.OpenFile("/dev/kfd", os.O_RDWR, 0o666)
+	if err != nil {
+		if errors.Is(err, fs.ErrPermission) {
+			return fmt.Errorf("permissions not set up properly.  Either run ollama as root, or add you user account to the render group. %w", err)
+		} else if errors.Is(err, fs.ErrNotExist) {
+			// Container runtime failure?
+			return fmt.Errorf("kfd driver not loaded.  If running in a container, remember to include '--device /dev/kfd --device /dev/dri'")
+		}
+		return fmt.Errorf("failed to check permission on /dev/kfd: %w", err)
+	}
+	fd.Close()
+	return nil
 }

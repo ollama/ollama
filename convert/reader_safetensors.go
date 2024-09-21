@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"slices"
+	"strings"
 
 	"github.com/d4l3k/go-bfloat16"
 	"github.com/x448/float16"
@@ -20,7 +22,7 @@ type safetensorMetadata struct {
 	Offsets []int64  `json:"data_offsets"`
 }
 
-func parseSafetensors(fsys fs.FS, ps ...string) ([]Tensor, error) {
+func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]Tensor, error) {
 	var ts []Tensor
 	for _, p := range ps {
 		f, err := fsys.Open(p)
@@ -47,8 +49,19 @@ func parseSafetensors(fsys fs.FS, ps ...string) ([]Tensor, error) {
 		keys := maps.Keys(headers)
 		slices.Sort(keys)
 
+		names := make(map[string]struct{}, len(keys))
+
 		for _, key := range keys {
 			if value := headers[key]; value.Type != "" {
+				// bitsandbytes quantized models are unsupported
+				if len(value.Shape) == 0 {
+					return nil, errors.New("unsupported safetensors model")
+				}
+				ggufName := replacer.Replace(key)
+				if _, ok := names[ggufName]; ok {
+					return nil, fmt.Errorf("duplicate tensor name '%s' was found for this model", ggufName)
+				}
+				names[ggufName] = struct{}{}
 				ts = append(ts, safetensor{
 					fs:     fsys,
 					path:   p,
@@ -56,7 +69,7 @@ func parseSafetensors(fsys fs.FS, ps ...string) ([]Tensor, error) {
 					offset: safetensorsPad(n, value.Offsets[0]),
 					size:   safetensorsPad(n, value.Offsets[1]) - safetensorsPad(n, value.Offsets[0]),
 					tensorBase: &tensorBase{
-						name:  key,
+						name:  ggufName,
 						shape: value.Shape,
 					},
 				})

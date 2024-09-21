@@ -193,6 +193,11 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						break
 					}
 
+					// Embedding models should always be loaded with parallel=1
+					if pending.model.CheckCapabilities(CapabilityCompletion) != nil {
+						numParallel = 1
+					}
+
 					// Evaluate if the model will fit in the available system memory, or if we should unload a model first
 					if len(gpus) == 1 && gpus[0].Library == "cpu" {
 						// simplifying assumption of defaultParallel when in CPU mode
@@ -355,7 +360,6 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			slog.Debug("runner expired event received", "modelPath", runner.modelPath)
 			runner.refMu.Lock()
 			if runner.refCount > 0 {
-				// Shouldn't happen, but safeguard to ensure no leaked runners
 				slog.Debug("expired event with positive ref count, retrying", "modelPath", runner.modelPath, "refCount", runner.refCount)
 				go func(runner *runnerRef) {
 					// We can't unload yet, but want to as soon as the current request completes
@@ -418,7 +422,7 @@ func (s *Scheduler) load(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, 
 		// some older models are not compatible with newer versions of llama.cpp
 		// show a generalized compatibility error until there is a better way to
 		// check for model compatibility
-		if errors.Is(llm.ErrUnsupportedFormat, err) || strings.Contains(err.Error(), "failed to load model") {
+		if errors.Is(err, llm.ErrUnsupportedFormat) || strings.Contains(err.Error(), "failed to load model") {
 			err = fmt.Errorf("%v: this model may be incompatible with your version of Ollama. If you previously pulled this model, try updating it by running `ollama pull %s`", err, req.model.ShortName)
 		}
 		slog.Info("NewLlamaServer failed", "model", req.model.ModelPath, "error", err)
@@ -734,7 +738,10 @@ func pickBestFullFitByLibrary(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoL
 
 // If multiple Libraries are detected, pick the Library which loads the most layers for the model
 func pickBestPartialFitByLibrary(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numParallel *int) gpu.GpuInfoList {
-	*numParallel = 1
+	if *numParallel <= 0 {
+		*numParallel = 1
+		req.opts.NumCtx = req.origNumCtx
+	}
 	byLibrary := gpus.ByLibrary()
 	if len(byLibrary) <= 1 {
 		return gpus
@@ -791,6 +798,25 @@ func (s *Scheduler) unloadAllRunners() {
 			slog.Debug("shutting down runner", "model", model)
 			runner.llama.Close()
 		}
+	}
+}
+
+func (s *Scheduler) expireRunner(model *Model) {
+	s.loadedMu.Lock()
+	defer s.loadedMu.Unlock()
+	runner, ok := s.loaded[model.ModelPath]
+	if ok {
+		runner.refMu.Lock()
+		runner.expiresAt = time.Now()
+		if runner.expireTimer != nil {
+			runner.expireTimer.Stop()
+			runner.expireTimer = nil
+		}
+		runner.sessionDuration = 0
+		if runner.refCount <= 0 {
+			s.expiredCh <- runner
+		}
+		runner.refMu.Unlock()
 	}
 }
 

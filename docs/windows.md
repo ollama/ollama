@@ -29,7 +29,7 @@ Ollama uses unicode characters for progress indication, which may render as unkn
 
 Here's a quick example showing API access from `powershell`
 ```powershell
-(Invoke-WebRequest -method POST -Body '{"model":"llama3", "prompt":"Why is the sky blue?", "stream": false}' -uri http://localhost:11434/api/generate ).Content | ConvertFrom-json
+(Invoke-WebRequest -method POST -Body '{"model":"llama3.1", "prompt":"Why is the sky blue?", "stream": false}' -uri http://localhost:11434/api/generate ).Content | ConvertFrom-json
 ```
 
 ## Troubleshooting
@@ -48,6 +48,9 @@ the explorer window by hitting `<cmd>+R` and type in:
 - `explorer %HOMEPATH%\.ollama` contains models and configuration
 - `explorer %TEMP%` contains temporary executable files in one or more `ollama*` directories
 
+## Uninstall
+
+The Ollama Windows installer registers an Uninstaller application.  Under `Add or remove programs` in Windows Settings, you can uninstall Ollama.
 
 ## Standalone CLI
 

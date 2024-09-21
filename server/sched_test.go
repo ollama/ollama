@@ -117,7 +117,6 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 
 	require.NoError(t, llm.WriteGGUF(f, llm.KV{
 		"general.architecture":          "llama",
-		"general.name":                  "name",
 		"llama.context_length":          uint32(32),
 		"llama.embedding_length":        uint32(4096),
 		"llama.block_count":             uint32(1),
@@ -355,7 +354,7 @@ func TestRequestsMultipleLoadedModels(t *testing.T) {
 }
 
 func TestGetRunner(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer done()
 
 	a := newScenarioRequest(t, ctx, "ollama-model-1a", 10, &api.Duration{Duration: 2 * time.Millisecond})
@@ -396,7 +395,7 @@ func TestGetRunner(t *testing.T) {
 	slog.Info("c")
 	successCh1c, errCh1c := s.GetRunner(c.ctx, c.req.model, c.req.opts, c.req.sessionDuration)
 	// Starts in pending channel, then should be quickly processsed to return an error
-	time.Sleep(20 * time.Millisecond) // Long enough for the "a" model to expire and unload
+	time.Sleep(50 * time.Millisecond) // Long enough for the "a" model to expire and unload
 	require.Empty(t, successCh1c)
 	s.loadedMu.Lock()
 	require.Empty(t, s.loaded)
@@ -405,6 +404,52 @@ func TestGetRunner(t *testing.T) {
 	err = <-errCh1c
 	require.Contains(t, err.Error(), "bad path")
 	b.ctxDone()
+}
+
+func TestExpireRunner(t *testing.T) {
+	ctx, done := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer done()
+	s := InitScheduler(ctx)
+	req := &LlmRequest{
+		ctx:             ctx,
+		model:           &Model{ModelPath: "foo"},
+		opts:            api.DefaultOptions(),
+		successCh:       make(chan *runnerRef, 1),
+		errCh:           make(chan error, 1),
+		sessionDuration: &api.Duration{Duration: 2 * time.Minute},
+	}
+
+	var ggml *llm.GGML
+	gpus := gpu.GpuInfoList{}
+	server := &mockLlm{estimatedVRAM: 10, estimatedVRAMByGPU: map[string]uint64{}}
+	s.newServerFn = func(gpus gpu.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+		return server, nil
+	}
+	s.load(req, ggml, gpus, 0)
+
+	select {
+	case err := <-req.errCh:
+		if err != nil {
+			t.Fatalf("expected no errors when loading, got '%s'", err.Error())
+		}
+	case resp := <-req.successCh:
+		s.loadedMu.Lock()
+		if resp.refCount != uint(1) || len(s.loaded) != 1 {
+			t.Fatalf("expected a model to be loaded")
+		}
+		s.loadedMu.Unlock()
+	}
+
+	s.expireRunner(&Model{ModelPath: "foo"})
+
+	s.finishedReqCh <- req
+	s.processCompleted(ctx)
+
+	s.loadedMu.Lock()
+	if len(s.loaded) != 0 {
+		t.Fatalf("expected model to be unloaded")
+	}
+	s.loadedMu.Unlock()
 }
 
 // TODO - add one scenario that triggers the bogus finished event with positive ref count
@@ -708,8 +753,8 @@ type mockLlm struct {
 	pingResp           error
 	waitResp           error
 	completionResp     error
-	embedResp          *llm.EmbedResponse
-	embedRespErr       error
+	embeddingResp      []float32
+	embeddingRespErr   error
 	tokenizeResp       []int
 	tokenizeRespErr    error
 	detokenizeResp     string
@@ -727,8 +772,8 @@ func (s *mockLlm) Completion(ctx context.Context, req llm.CompletionRequest, fn 
 	return s.completionResp
 }
 
-func (s *mockLlm) Embed(ctx context.Context, input []string) (*llm.EmbedResponse, error) {
-	return s.embedResp, s.embedRespErr
+func (s *mockLlm) Embedding(ctx context.Context, input string) ([]float32, error) {
+	return s.embeddingResp, s.embeddingRespErr
 }
 
 func (s *mockLlm) Tokenize(ctx context.Context, content string) ([]int, error) {

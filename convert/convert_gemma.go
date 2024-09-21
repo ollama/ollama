@@ -9,8 +9,8 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-type gemma struct {
-	Parameters
+type gemmaModel struct {
+	ModelParameters
 	MaxPositionEmbeddings uint32  `json:"max_position_embeddings"`
 	HiddenSize            uint32  `json:"hidden_size"`
 	HiddenLayers          uint32  `json:"num_hidden_layers"`
@@ -21,12 +21,11 @@ type gemma struct {
 	HeadDim               uint32  `json:"head_dim"`
 }
 
-var _ Converter = (*gemma)(nil)
+var _ ModelConverter = (*gemmaModel)(nil)
 
-func (p *gemma) KV(t *Tokenizer) llm.KV {
-	kv := p.Parameters.KV(t)
+func (p *gemmaModel) KV(t *Tokenizer) llm.KV {
+	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "gemma"
-	kv["general.name"] = "gemma"
 	kv["gemma.context_length"] = p.MaxPositionEmbeddings
 	kv["gemma.embedding_length"] = p.HiddenSize
 	kv["gemma.block_count"] = p.HiddenLayers
@@ -43,16 +42,15 @@ func (p *gemma) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *gemma) Tensors(ts []Tensor) []llm.Tensor {
+func (p *gemmaModel) Tensors(ts []Tensor) []llm.Tensor {
 	var out []llm.Tensor
 	for _, t := range ts {
-		name := p.tensorName(t.Name())
-		if strings.HasSuffix(name, "_norm.weight") {
+		if strings.HasSuffix(t.Name(), "_norm.weight") {
 			t.SetRepacker(p.addOne)
 		}
 
 		out = append(out, llm.Tensor{
-			Name:     name,
+			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),
 			WriterTo: t,
@@ -62,8 +60,8 @@ func (p *gemma) Tensors(ts []Tensor) []llm.Tensor {
 	return out
 }
 
-func (p *gemma) tensorName(n string) string {
-	return strings.NewReplacer(
+func (p *gemmaModel) Replacements() []string {
+	return []string{
 		"model.embed_tokens", "token_embd",
 		"model.norm", "output_norm",
 		"model.layers", "blk",
@@ -76,11 +74,10 @@ func (p *gemma) tensorName(n string) string {
 		"mlp.down_proj", "ffn_down",
 		"mlp.up_proj", "ffn_up",
 		"post_attention_layernorm", "ffn_norm",
-		"block_sparse_moe.gate", "ffn_inp",
-	).Replace(n)
+	}
 }
 
-func (*gemma) addOne(_ string, data []float32, shape []uint64) ([]float32, error) {
+func (*gemmaModel) addOne(_ string, data []float32, shape []uint64) ([]float32, error) {
 	n := tensor.New(tensor.WithShape(int(shape[0])), tensor.WithBacking(data))
 	ones := tensor.Ones(tensor.Float32, int(shape[0]))
 
