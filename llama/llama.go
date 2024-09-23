@@ -357,8 +357,6 @@ func (m *Model) Tokenize(text string, addSpecial bool, parseSpecial bool) ([]int
 		if result < 0 {
 			return nil, fmt.Errorf("tokenization failed, required %d tokens", -result)
 		}
-	} else if result == 0 {
-		return nil, nil
 	}
 
 	tokens := make([]int, result)
