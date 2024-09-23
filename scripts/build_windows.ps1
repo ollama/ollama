@@ -59,7 +59,7 @@ function checkEnv() {
     if ($script:VERSION -match $pattern) {
         $script:PKG_VERSION=$matches[1]
     } else {
-        $script:PKG_VERSION="0.0.0"
+        $script:PKG_VERSION="0.3.x"
     }
     write-host "Building Ollama $script:VERSION with package version $script:PKG_VERSION"
 
