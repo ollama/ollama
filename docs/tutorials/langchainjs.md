@@ -15,7 +15,7 @@ import { Ollama } from "@langchain/community/llms/ollama";
 
 const ollama = new Ollama({
   baseUrl: "http://localhost:11434",
-  model: "llama3",
+  model: "llama3.1",
 });
 
 const answer = await ollama.invoke(`why is the sky blue?`);
@@ -23,7 +23,7 @@ const answer = await ollama.invoke(`why is the sky blue?`);
 console.log(answer);
 ```
 
-That will get us the same thing as if we ran `ollama run llama3 "why is the sky blue"` in the terminal. But we want to load a document from the web to ask a question against. **Cheerio** is a great library for ingesting a webpage, and **LangChain** uses it in their **CheerioWebBaseLoader**. So let's install **Cheerio** and build that part of the app.
+That will get us the same thing as if we ran `ollama run llama3.1 "why is the sky blue"` in the terminal. But we want to load a document from the web to ask a question against. **Cheerio** is a great library for ingesting a webpage, and **LangChain** uses it in their **CheerioWebBaseLoader**. So let's install **Cheerio** and build that part of the app.
 
 ```bash
 npm install cheerio

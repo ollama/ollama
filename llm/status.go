@@ -25,7 +25,8 @@ var errorPrefixes = []string{
 	"CUDA error",
 	"cudaMalloc failed",
 	"\"ERR\"",
-	"architecture",
+	"error loading model",
+	"GGML_ASSERT",
 }
 
 func (w *StatusWriter) Write(b []byte) (int, error) {

@@ -43,6 +43,15 @@ var OneapiGlobs = []string{
 	"/usr/lib*/libze_intel_gpu.so*",
 }
 
+var (
+	CudartMgmtName = "libcudart.so*"
+	NvcudaMgmtName = "libcuda.so*"
+	NvmlMgmtName   = "" // not currently wired on linux
+	OneapiMgmtName = "libze_intel_gpu.so*"
+	VulkanMgmtName = "libvulkan.so*"
+	libcapMgmtName = "libcap.so*"
+)
+
 var VulkanGlobs = []string{
 	"/usr/lib/x86_64-linux-gnu/libvulkan.so*",
 	"/usr/lib*/libvulkan.so*",
@@ -53,20 +62,13 @@ var capLinuxGlobs = []string{
 	"/usr/lib*/libcap.so*",
 }
 
-var CudartMgmtName = "libcudart.so*"
-var NvcudaMgmtName = "libcuda.so*"
-var NvmlMgmtName = "" // not currently wired on linux
-var OneapiMgmtName = "libze_intel_gpu.so"
-var VulkanMgmtName = "libvulkan.so*"
-var libcapMgmtName = "libcap.so*"
-
 func FindLibCapLibs() []string {
 	return FindGPULibs(libcapMgmtName, capLinuxGlobs)
 }
 
 func GetCPUMem() (memInfo, error) {
 	var mem memInfo
-	var total, available, free, buffers, cached uint64
+	var total, available, free, buffers, cached, freeSwap uint64
 	f, err := os.Open("/proc/meminfo")
 	if err != nil {
 		return mem, err
@@ -86,20 +88,21 @@ func GetCPUMem() (memInfo, error) {
 			_, err = fmt.Sscanf(line, "Buffers:%d", &buffers)
 		case strings.HasPrefix(line, "Cached:"):
 			_, err = fmt.Sscanf(line, "Cached:%d", &cached)
+		case strings.HasPrefix(line, "SwapFree:"):
+			_, err = fmt.Sscanf(line, "SwapFree:%d", &freeSwap)
 		default:
 			continue
 		}
 		if err != nil {
 			return mem, err
 		}
-
-		if total > 0 && available > 0 {
-			mem.TotalMemory = total * format.KibiByte
-			mem.FreeMemory = available * format.KibiByte
-			return mem, nil
-		}
 	}
 	mem.TotalMemory = total * format.KibiByte
-	mem.FreeMemory = (free + buffers + cached) * format.KibiByte
+	mem.FreeSwap = freeSwap * format.KibiByte
+	if available > 0 {
+		mem.FreeMemory = available * format.KibiByte
+	} else {
+		mem.FreeMemory = (free + buffers + cached) * format.KibiByte
+	}
 	return mem, nil
 }

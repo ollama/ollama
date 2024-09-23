@@ -1,0 +1,8 @@
+{{- range .Messages }}
+{{- if eq .Role "system" }}System: {{ .Content }}
+{{ continue }}
+{{- else if eq .Role "user" }}User:
+{{- else if eq .Role "assistant" }}Falcon:
+{{- end }}
+{{ .Content }}
+{{ end }}Falcon:

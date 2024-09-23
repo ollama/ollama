@@ -1,0 +1,14 @@
+{{- $system := "" }}[INST] {{ range .Messages }}
+{{- if eq .Role "system" }}
+{{- if not $system }}{{ $system = .Content }}
+{{- else }}{{ $system = printf "%s\n\n%s" $system .Content }}
+{{- end }}
+{{- else if eq .Role "user" }}<<SYS>>
+{{- if $system }}
+{{ $system }}
+{{ $system = "" }}
+{{- end }}<</SYS>>
+
+{{ .Content }} [/INST]
+{{- else if eq .Role "assistant" }} {{ .Content }}</s><s>[INST] {{ end }}
+{{- end }}
