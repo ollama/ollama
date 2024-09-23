@@ -234,8 +234,8 @@ if [ -z "${OLLAMA_SKIP_VULKAN_GENERATE}" -a -d "${VULKAN_ROOT}" ] && [ -z "${OLL
     for dep in $(ldd "${BUILD_DIR}/bin/ollama_llama_server" | grep "=>" | cut -f2 -d= | cut -f2 -d' ' | grep -e vulkan -e cap); do
         cp "${dep}" "${BUILD_DIR}/bin/"
     done
-    cp "${VULKAN_ROOT}/libvulkan.so" "${BUILD_DIR}/bin/"
-    cp "${CAP_ROOT}/libcap.so" "${BUILD_DIR}/bin/"
+    cp "${VULKAN_ROOT}/libvulkan.so*" "${BUILD_DIR}/bin/"
+    cp "${CAP_ROOT}/libcap.so*" "${BUILD_DIR}/bin/"
     compress
 fi
 
