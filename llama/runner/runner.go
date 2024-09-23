@@ -37,7 +37,6 @@ type Sequence struct {
 	tokens []int
 
 	// tokens that have been generated but not returned yet (e.g. for stop sequences)
-	// TODO (jmorganca): simplify this
 	pendingResponses []string
 
 	// token cache being used by this sequence
@@ -223,10 +222,12 @@ func flushPending(seq *Sequence) bool {
 		select {
 		case seq.responses <- p:
 		case <-seq.quit:
+			seq.pendingResponses = []string{}
 			return false
 		}
 	}
 
+	seq.pendingResponses = []string{}
 	return true
 }
 
@@ -237,7 +238,6 @@ func (s *Server) removeSequence(seqIndex int, reason string) {
 	seq.doneReason = reason
 	close(seq.responses)
 	close(seq.embedding)
-	seq.pendingResponses = []string{}
 	seq.cache.inUse = false
 	seq.samplingCtx.Free()
 	s.seqs[seqIndex] = nil
@@ -383,10 +383,8 @@ func (s *Server) processBatch() {
 		}
 
 		if !flushPending(seq) {
-			seq.pendingResponses = []string{}
 			s.removeSequence(i, "connection")
 		}
-		seq.pendingResponses = []string{}
 	}
 }
 
