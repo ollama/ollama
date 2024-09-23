@@ -412,6 +412,21 @@ function build_rocm() {
     }
 }
 
+function build_vulkan() {
+    if (-not "${env:OLLAMA_SKIP_VULKAN_GENERATE}") {
+        init_vars
+        $script:buildDir="../build/windows/${script:ARCH}/vulkan"
+        $script:distDir="$script:DIST_BASE\vulkan"
+        $script:cmakeDefs += @("-A", "x64", "-DLLAMA_VULKAN=1")
+        write-host "Building Vulkan"
+        build
+        sign
+        install
+    } else {
+        write-host "Skipping Vulkan generation step"
+    }
+}
+
 init_vars
 if ($($args.count) -eq 0) {
     git_module_setup
@@ -426,6 +441,7 @@ if ($($args.count) -eq 0) {
         build_cuda
         build_oneapi
         build_rocm
+        build_vulkan
     }
 
     cleanup
