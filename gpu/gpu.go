@@ -93,10 +93,9 @@ func initCudaHandles() *cudaHandles {
 		localAppData := os.Getenv("LOCALAPPDATA")
 		cudartMgmtPatterns = []string{filepath.Join(localAppData, "Programs", "Ollama", CudartMgmtName)}
 	}
-	tmpDir, _ := PayloadsDir()
-	if tmpDir != "" {
-		// TODO - add "payloads" for subprocess
-		cudartMgmtPatterns = []string{filepath.Join(tmpDir, "cuda*", CudartMgmtName)}
+	libDir := LibraryDir()
+	if libDir != "" {
+		cudartMgmtPatterns = []string{filepath.Join(libDir, CudartMgmtName)}
 	}
 	cudartMgmtPatterns = append(cudartMgmtPatterns, CudartGlobs...)
 
@@ -206,13 +205,16 @@ func GetGPUInfo() GpuInfoList {
 		if err != nil {
 			slog.Warn("error looking up system memory", "error", err)
 		}
+		depPath := LibraryDir()
+
 		cpus = []CPUInfo{
 			{
 				GpuInfo: GpuInfo{
-					memInfo: mem,
-					Library: "cpu",
-					Variant: cpuCapability.String(),
-					ID:      "0",
+					memInfo:        mem,
+					Library:        "cpu",
+					Variant:        cpuCapability.String(),
+					ID:             "0",
+					DependencyPath: depPath,
 				},
 			},
 		}
@@ -224,8 +226,6 @@ func GetGPUInfo() GpuInfoList {
 			// No need to do any GPU discovery, since we can't run on them
 			return GpuInfoList{cpus[0].GpuInfo}
 		}
-
-		depPath := LibraryDir()
 
 		// Load ALL libraries
 		cHandles = initCudaHandles()
@@ -264,6 +264,8 @@ func GetGPUInfo() GpuInfoList {
 				gpuInfo.computeMajor = int(memInfo.major)
 				gpuInfo.computeMinor = int(memInfo.minor)
 				gpuInfo.MinimumMemory = cudaMinimumMemory
+				gpuInfo.DriverMajor = driverMajor
+				gpuInfo.DriverMinor = driverMinor
 				variant := cudaVariant(gpuInfo)
 				if depPath != "" {
 					gpuInfo.DependencyPath = depPath
@@ -275,8 +277,6 @@ func GetGPUInfo() GpuInfoList {
 					}
 				}
 				gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
-				gpuInfo.DriverMajor = driverMajor
-				gpuInfo.DriverMinor = driverMinor
 				gpuInfo.Variant = variant
 
 				// query the management library as well so we can record any skew between the two
@@ -653,7 +653,7 @@ func LibraryDir() string {
 		slog.Warn("failed to lookup working directory", "error", err)
 	}
 	// Scan for any of our dependeices, and pick first match
-	for _, root := range []string{filepath.Dir(appExe), filepath.Join(filepath.Dir(appExe), ".."), cwd} {
+	for _, root := range []string{filepath.Dir(appExe), filepath.Join(filepath.Dir(appExe), envconfig.LibRelativeToExe()), cwd} {
 		libDep := filepath.Join("lib", "ollama")
 		if _, err := os.Stat(filepath.Join(root, libDep)); err == nil {
 			return filepath.Join(root, libDep)

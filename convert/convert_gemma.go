@@ -9,8 +9,8 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-type gemma struct {
-	Parameters
+type gemmaModel struct {
+	ModelParameters
 	MaxPositionEmbeddings uint32  `json:"max_position_embeddings"`
 	HiddenSize            uint32  `json:"hidden_size"`
 	HiddenLayers          uint32  `json:"num_hidden_layers"`
@@ -21,10 +21,10 @@ type gemma struct {
 	HeadDim               uint32  `json:"head_dim"`
 }
 
-var _ Converter = (*gemma)(nil)
+var _ ModelConverter = (*gemmaModel)(nil)
 
-func (p *gemma) KV(t *Tokenizer) llm.KV {
-	kv := p.Parameters.KV(t)
+func (p *gemmaModel) KV(t *Tokenizer) llm.KV {
+	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "gemma"
 	kv["gemma.context_length"] = p.MaxPositionEmbeddings
 	kv["gemma.embedding_length"] = p.HiddenSize
@@ -42,8 +42,8 @@ func (p *gemma) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *gemma) Tensors(ts []Tensor) []llm.Tensor {
-	out := make([]llm.Tensor, 0, len(ts))
+func (p *gemmaModel) Tensors(ts []Tensor) []llm.Tensor {
+	var out []llm.Tensor
 	for _, t := range ts {
 		if strings.HasSuffix(t.Name(), "_norm.weight") {
 			t.SetRepacker(p.addOne)
@@ -60,7 +60,7 @@ func (p *gemma) Tensors(ts []Tensor) []llm.Tensor {
 	return out
 }
 
-func (p *gemma) Replacements() []string {
+func (p *gemmaModel) Replacements() []string {
 	return []string{
 		"model.embed_tokens", "token_embd",
 		"model.norm", "output_norm",
@@ -77,7 +77,7 @@ func (p *gemma) Replacements() []string {
 	}
 }
 
-func (*gemma) addOne(_ string, data []float32, shape []uint64) ([]float32, error) {
+func (*gemmaModel) addOne(_ string, data []float32, shape []uint64) ([]float32, error) {
 	n := tensor.New(tensor.WithShape(int(shape[0])), tensor.WithBacking(data))
 	ones := tensor.Ones(tensor.Float32, int(shape[0]))
 

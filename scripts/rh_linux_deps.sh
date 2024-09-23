@@ -30,7 +30,7 @@ if grep -i "centos" /etc/system-release >/dev/null; then
         dnf install -y rh-git227-git
         ln -s /opt/rh/rh-git227/root/usr/bin/git /usr/local/bin/git
     fi
-    dnf install -y devtoolset-10-gcc devtoolset-10-gcc-c++ pigz
+    dnf install -y devtoolset-10-gcc devtoolset-10-gcc-c++ pigz findutils
 elif grep -i "rocky" /etc/system-release >/dev/null; then
     # Temporary workaround until rocky 8 AppStream ships GCC 10.4 (10.3 is incompatible with NVCC)
     cat << EOF > /etc/yum.repos.d/Rocky-Vault.repo
@@ -45,6 +45,7 @@ EOF
     dnf install -y git \
         gcc-toolset-10-gcc-10.2.1-8.2.el8 \
         gcc-toolset-10-gcc-c++-10.2.1-8.2.el8 \
+        findutils \
         pigz
 else
     echo "ERROR Unexpected distro"

@@ -91,6 +91,17 @@ If none of those resolve the problem, gather additional information and file an 
 - Check dmesg for any errors `sudo dmesg | grep -i nvrm` and `sudo dmesg | grep -i nvidia`
 
 
+## AMD GPU Discovery
+
+On linux, AMD GPU access typically requires `video` and/or `render` group membership to access the `/dev/kfd` device.  If permissions are not set up correctly, Ollama will detect this and report an error in the server log.
+
+When running in a container, in some Linux distributions and container runtimes, the ollama process may be unable to access the GPU.  Use `ls -ld /dev/kfd /dev/dri /dev/dri/*` on the host system to determine the group assignments on your system, and pass additional `--group-add ...` arguments to the container so it can access the required devices.
+
+If you are experiencing problems getting Ollama to correctly discover or use your GPU for inference, the following may help isolate the failure.
+- `AMD_LOG_LEVEL=3` Enable info log levels in the AMD HIP/ROCm libraries.  This can help show more detailed error codes that can help troubleshoot problems
+- `OLLAMA_DEBUG=1` During GPU discovery additional information will be reported
+- Check dmesg for any errors from amdgpu or kfd drivers `sudo dmesg | grep -i amdgpu` and `sudo dmesg | grep -i kfd`
+
 ## Windows Terminal Errors
 
 Older versions of Windows 10 (e.g., 21H1) are known to have a bug where the standard terminal program does not display control characters correctly.  This can result in a long string of strings like `←[?25h←[?25l` being displayed, sometimes erroring with `The parameter is incorrect`  To resolve this problem, please update to Win 10 22H1 or newer.

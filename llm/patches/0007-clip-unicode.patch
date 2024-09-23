@@ -1,8 +1,17 @@
+From ae2b188a679c83ce105aa1e823499441dfab3c57 Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Mon, 16 Sep 2024 15:53:15 -0700
+Subject: [PATCH] 07-clip-unicode.diff
+
+---
+ examples/llava/clip.cpp | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
 diff --git a/examples/llava/clip.cpp b/examples/llava/clip.cpp
-index 95fbe3d0..5a02a6ec 100644
+index cb51793d..8716472b 100644
 --- a/examples/llava/clip.cpp
 +++ b/examples/llava/clip.cpp
-@@ -32,6 +33,14 @@
+@@ -41,6 +41,14 @@
  #include <cinttypes>
  #include <limits>
  
@@ -17,7 +26,7 @@ index 95fbe3d0..5a02a6ec 100644
  //#define CLIP_DEBUG_FUNCTIONS
  
  // RGB uint8 image
-@@ -1055,7 +1064,22 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
+@@ -1223,7 +1231,22 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
              return nullptr;
          }
  
@@ -40,3 +49,6 @@ index 95fbe3d0..5a02a6ec 100644
          if (!fin) {
              LOG_TEE("cannot open model file for loading tensors\n");
              clip_free(new_clip);
+-- 
+2.46.0
+
