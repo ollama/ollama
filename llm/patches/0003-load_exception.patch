@@ -1,8 +1,17 @@
+From e43bfd3f607a6dfcaba2d490d35f412a52e55e30 Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Mon, 16 Sep 2024 15:53:12 -0700
+Subject: [PATCH] 03-load_exception.diff
+
+---
+ src/llama.cpp | 25 ++++++++++++++++---------
+ 1 file changed, 16 insertions(+), 9 deletions(-)
+
 diff --git a/src/llama.cpp b/src/llama.cpp
-index 73f52435..58a00fb1 100644
+index 88355971..926bb71a 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
-@@ -7241,7 +7241,7 @@ static int llama_model_load(const std::string & fname, llama_model & model, llam
+@@ -8635,7 +8635,7 @@ static int llama_model_load(const std::string & fname, llama_model & model, llam
          }
      } catch (const std::exception & err) {
          LLAMA_LOG_ERROR("%s: error loading model: %s\n", __func__, err.what());
@@ -11,7 +20,7 @@ index 73f52435..58a00fb1 100644
      }
  
      return 0;
-@@ -17564,16 +17564,23 @@ struct llama_model * llama_load_model_from_file(
+@@ -18022,16 +18022,23 @@ struct llama_model * llama_load_model_from_file(
          }
          model->rpc_servers.push_back(servers);
      }
@@ -43,3 +52,6 @@ index 73f52435..58a00fb1 100644
      }
  
      return model;
+-- 
+2.46.0
+

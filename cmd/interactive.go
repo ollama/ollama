@@ -18,7 +18,6 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/parser"
-	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/readline"
 	"github.com/ollama/ollama/types/errtypes"
 )
@@ -30,26 +29,6 @@ const (
 	MultilinePrompt
 	MultilineSystem
 )
-
-func loadModel(cmd *cobra.Command, opts *runOptions) error {
-	p := progress.NewProgress(os.Stderr)
-	defer p.StopAndClear()
-
-	spinner := progress.NewSpinner("")
-	p.Add("", spinner)
-
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
-	chatReq := &api.ChatRequest{
-		Model:     opts.Model,
-		KeepAlive: opts.KeepAlive,
-	}
-
-	return client.Chat(cmd.Context(), chatReq, func(api.ChatResponse) error { return nil })
-}
 
 func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	usage := func() {
@@ -217,7 +196,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			opts.Model = args[1]
 			opts.Messages = []api.Message{}
 			fmt.Printf("Loading model '%s'\n", opts.Model)
-			if err := loadModel(cmd, &opts); err != nil {
+			if err := loadOrUnloadModel(cmd, &opts); err != nil {
 				return err
 			}
 			continue
@@ -371,7 +350,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 				switch args[1] {
 				case "info":
-					showInfo(resp)
+					_ = showInfo(resp, os.Stderr)
 				case "license":
 					if resp.License == "" {
 						fmt.Println("No license was specified for this model.")

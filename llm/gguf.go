@@ -532,15 +532,14 @@ func WriteGGUF(ws io.WriteSeeker, kv KV, ts []Tensor) error {
 		}
 	}
 
-	slices.SortFunc(ts, func(a, b Tensor) int {
-		var i, j int
-		if n, err := fmt.Sscanf(a.Name, "blk.%d", &i); err != nil || n != 1 {
-			return cmp.Compare(a.Name, b.Name)
-		} else if n, err := fmt.Sscanf(b.Name, "blk.%d", &j); err != nil || n != 1 {
-			return cmp.Compare(a.Name, b.Name)
+	slices.SortStableFunc(ts, func(a, b Tensor) int {
+		if i, j := a.block(), b.block(); i < 0 && j > 0 {
+			return 1
+		} else if i > 0 && j < 0 {
+			return -1
+		} else {
+			return cmp.Compare(i, j)
 		}
-
-		return cmp.Compare(i, j)
 	})
 
 	var s uint64

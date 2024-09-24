@@ -273,76 +273,6 @@ func Test_Routes(t *testing.T) {
 			},
 		},
 		{
-			Name:   "Embed Handler Empty Input",
-			Method: http.MethodPost,
-			Path:   "/api/embed",
-			Setup: func(t *testing.T, req *http.Request) {
-				embedReq := api.EmbedRequest{
-					Model: "t-bone",
-					Input: "",
-				}
-				jsonData, err := json.Marshal(embedReq)
-				require.NoError(t, err)
-				req.Body = io.NopCloser(bytes.NewReader(jsonData))
-			},
-			Expected: func(t *testing.T, resp *http.Response) {
-				contentType := resp.Header.Get("Content-Type")
-				if contentType != "application/json; charset=utf-8" {
-					t.Fatalf("expected content type application/json; charset=utf-8, got %s", contentType)
-				}
-				body, err := io.ReadAll(resp.Body)
-				if err != nil {
-					t.Fatal(err)
-				}
-
-				var embedResp api.EmbedResponse
-				err = json.Unmarshal(body, &embedResp)
-				if err != nil {
-					t.Fatal(err)
-				}
-
-				if embedResp.Model != "t-bone" {
-					t.Fatalf("expected model t-bone, got %s", embedResp.Model)
-				}
-
-				if embedResp.Embeddings == nil {
-					t.Fatalf("expected embeddings to not be nil, got %v", embedResp.Embeddings)
-				}
-
-				if len(embedResp.Embeddings) != 0 {
-					t.Fatalf("expected embeddings to be empty, got %v", embedResp.Embeddings)
-				}
-			},
-		},
-		{
-			Name:   "Embed Handler Invalid Input",
-			Method: http.MethodPost,
-			Path:   "/api/embed",
-			Setup: func(t *testing.T, req *http.Request) {
-				embedReq := api.EmbedRequest{
-					Model: "t-bone",
-					Input: 2,
-				}
-				jsonData, err := json.Marshal(embedReq)
-				require.NoError(t, err)
-				req.Body = io.NopCloser(bytes.NewReader(jsonData))
-			},
-			Expected: func(t *testing.T, resp *http.Response) {
-				contentType := resp.Header.Get("Content-Type")
-				if contentType != "application/json; charset=utf-8" {
-					t.Fatalf("expected content type application/json; charset=utf-8, got %s", contentType)
-				}
-				_, err := io.ReadAll(resp.Body)
-				if err != nil {
-					t.Fatal(err)
-				}
-
-				if resp.StatusCode != http.StatusBadRequest {
-					t.Fatalf("expected status code 400, got %d", resp.StatusCode)
-				}
-			},
-		},
-		{
 			Name:   "Authenticated Route Success",
 			Method: http.MethodGet,
 			Path:   "/api/version",
@@ -428,7 +358,7 @@ func TestCase(t *testing.T) {
 	var s Server
 	for _, tt := range cases {
 		t.Run(tt, func(t *testing.T) {
-			w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
+			w := createRequest(t, s.CreateHandler, api.CreateRequest{
 				Name:      tt,
 				Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
 				Stream:    &stream,
@@ -444,7 +374,7 @@ func TestCase(t *testing.T) {
 			}
 
 			t.Run("create", func(t *testing.T) {
-				w = createRequest(t, s.CreateModelHandler, api.CreateRequest{
+				w = createRequest(t, s.CreateHandler, api.CreateRequest{
 					Name:      strings.ToUpper(tt),
 					Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
 					Stream:    &stream,
@@ -460,7 +390,7 @@ func TestCase(t *testing.T) {
 			})
 
 			t.Run("pull", func(t *testing.T) {
-				w := createRequest(t, s.PullModelHandler, api.PullRequest{
+				w := createRequest(t, s.PullHandler, api.PullRequest{
 					Name:   strings.ToUpper(tt),
 					Stream: &stream,
 				})
@@ -475,7 +405,7 @@ func TestCase(t *testing.T) {
 			})
 
 			t.Run("copy", func(t *testing.T) {
-				w := createRequest(t, s.CopyModelHandler, api.CopyRequest{
+				w := createRequest(t, s.CopyHandler, api.CopyRequest{
 					Source:      tt,
 					Destination: strings.ToUpper(tt),
 				})
@@ -497,7 +427,7 @@ func TestShow(t *testing.T) {
 
 	var s Server
 
-	createRequest(t, s.CreateModelHandler, api.CreateRequest{
+	createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name: "show-model",
 		Modelfile: fmt.Sprintf(
 			"FROM %s\nFROM %s",
@@ -506,7 +436,7 @@ func TestShow(t *testing.T) {
 		),
 	})
 
-	w := createRequest(t, s.ShowModelHandler, api.ShowRequest{
+	w := createRequest(t, s.ShowHandler, api.ShowRequest{
 		Name: "show-model",
 	})
 

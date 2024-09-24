@@ -21,6 +21,8 @@ You can try this with the `logtest.logfile` file included in this directory.
 2. Install the Python Requirements.
 
    ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
    pip install -r requirements.txt
    ```
 

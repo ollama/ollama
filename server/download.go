@@ -94,7 +94,7 @@ func (p *blobDownloadPart) UnmarshalJSON(b []byte) error {
 }
 
 const (
-	numDownloadParts          = 64
+	numDownloadParts          = 16
 	minDownloadPartSize int64 = 100 * format.MegaByte
 	maxDownloadPartSize int64 = 1000 * format.MegaByte
 )
@@ -216,9 +216,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 		return err
 	}
 	defer file.Close()
-	if err := setSparse(file); err != nil {
-		return err
-	}
+	setSparse(file)
 
 	_ = file.Truncate(b.Total)
 
@@ -235,7 +233,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 
 			newOpts.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 				if len(via) > 10 {
-					return errors.New("maxium redirects exceeded (10) for directURL")
+					return errors.New("maximum redirects exceeded (10) for directURL")
 				}
 
 				// if the hostname is the same, allow the redirect
@@ -258,7 +256,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 				continue
 			}
 			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusTemporaryRedirect {
+			if resp.StatusCode != http.StatusTemporaryRedirect && resp.StatusCode != http.StatusOK {
 				return nil, fmt.Errorf("unexpected status code %d", resp.StatusCode)
 			}
 			return resp.Location()

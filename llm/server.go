@@ -24,16 +24,18 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/build"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
+	"github.com/ollama/ollama/runners"
 )
 
 type LlamaServer interface {
 	Ping(ctx context.Context) error
 	WaitUntilRunning(ctx context.Context) error
 	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
-	Embed(ctx context.Context, input []string) (*EmbedResponse, error)
+	Embedding(ctx context.Context, input string) ([]float32, error)
 	Tokenize(ctx context.Context, content string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error
@@ -98,7 +100,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		systemTotalMemory = systemMemInfo.TotalMemory
 		systemFreeMemory = systemMemInfo.FreeMemory
 		systemSwapFreeMemory = systemMemInfo.FreeSwap
-		slog.Debug("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
+		slog.Info("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
 	}
 
 	// If the user wants zero GPU layers, reset the gpu list to be CPU/system ram info
@@ -106,7 +108,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		gpus = gpu.GetCPUInfo()
 	}
 	if len(gpus) == 1 && gpus[0].Library == "cpu" {
-		cpuRunner = serverForCpu()
+		cpuRunner = runners.ServerForCpu()
 		estimate = EstimateGPULayers(gpus, ggml, projectors, opts)
 	} else {
 		estimate = EstimateGPULayers(gpus, ggml, projectors, opts)
@@ -118,15 +120,16 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			opts.NumGPU = 0
 		case gpus[0].Library != "metal" && estimate.Layers == 0:
 			// Don't bother loading into the GPU if no layers can fit
-			cpuRunner = serverForCpu()
+			cpuRunner = runners.ServerForCpu()
 			gpus = gpu.GetCPUInfo()
 		case opts.NumGPU < 0 && estimate.Layers > 0 && gpus[0].Library != "cpu":
 			opts.NumGPU = estimate.Layers
 		}
 	}
 
-	// On linux, over-allocating CPU memory will almost always result in an error
-	if runtime.GOOS == "linux" {
+	// On linux and windows, over-allocating CPU memory will almost always result in an error
+	// Darwin has fully dynamic swap so has no direct concept of free swap space
+	if runtime.GOOS != "darwin" {
 		systemMemoryRequired := estimate.TotalSize - estimate.VRAMSize
 		available := systemFreeMemory + systemSwapFreeMemory
 		if systemMemoryRequired > available {
@@ -144,25 +147,20 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		return nil, errors.New("ollama supports only one lora adapter, but multiple were provided")
 	}
 
-	availableServers := getAvailableServers()
+	rDir, err := runners.Refresh(build.EmbedFS)
+	if err != nil {
+		return nil, err
+	}
+
+	availableServers := runners.GetAvailableServers(rDir)
 	if len(availableServers) == 0 {
-		if runtime.GOOS != "windows" {
-			slog.Warn("llama server binary disappeared, reinitializing payloads")
-			err = Init()
-			if err != nil {
-				slog.Warn("failed to reinitialize payloads", "error", err)
-				return nil, err
-			}
-			availableServers = getAvailableServers()
-		} else {
-			return nil, finalErr
-		}
+		return nil, finalErr
 	}
 	var servers []string
 	if cpuRunner != "" {
 		servers = []string{cpuRunner}
 	} else {
-		servers = serversForGpu(gpus[0]) // All GPUs in the list are matching Library and Variant
+		servers = runners.ServersForGpu(gpus[0]) // All GPUs in the list are matching Library and Variant
 	}
 	demandLib := envconfig.LLMLibrary()
 	if demandLib != "" {
@@ -257,7 +255,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--mlock")
 	}
 
-	if gpu.IsNUMA() {
+	if gpu.IsNUMA() && gpus[0].Library == "cpu" {
 		numaMode := "distribute"
 		if runtime.GOOS == "linux" {
 			if _, err := exec.LookPath("numactl"); err == nil {
@@ -273,7 +271,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--tensor-split", estimate.TensorSplit)
 	}
 
-	for i := range len(servers) {
+	for i := range servers {
 		dir := availableServers[servers[i]]
 		if dir == "" {
 			// Shouldn't happen
@@ -305,20 +303,18 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		if runtime.GOOS == "windows" {
 			pathEnv = "PATH"
 		}
-		// prepend the server directory to LD_LIBRARY_PATH/PATH and the parent dir for common dependencies
-		libraryPaths := []string{dir, filepath.Dir(dir)}
+		// Start with the server directory for the LD_LIBRARY_PATH/PATH
+		libraryPaths := []string{dir}
 
 		if libraryPath, ok := os.LookupEnv(pathEnv); ok {
-			// Append our runner directory to the path
-			// This will favor system libraries over our bundled library dependencies
+			// favor our bundled library dependencies over system libraries
 			libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
 		}
 
 		// Note: we always put the dependency path first
-		// since this was the exact version we verified for AMD GPUs
-		// and we favor what the user had in their path
+		// since this was the exact version we compiled/linked against
 		if gpus[0].DependencyPath != "" {
-			// TODO refine for multi-gpu support
+			// assume gpus from the same library have the same dependency path
 			libraryPaths = append([]string{gpus[0].DependencyPath}, libraryPaths...)
 		}
 
@@ -331,7 +327,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		_, err := os.Stat(server)
 		if errors.Is(err, os.ErrNotExist) {
 			slog.Warn("llama server disappeared, reinitializing payloads", "path", server, "error", err)
-			err = Init()
+			_, err = runners.Refresh(build.EmbedFS)
 			if err != nil {
 				slog.Warn("failed to reinitialize payloads", "error", err)
 				return nil, err
@@ -410,7 +406,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		}
 
 		if err = s.cmd.Start(); err != nil {
-			// Detect permission denied and augment them essage about noexec
+			// Detect permission denied and augment the message about noexec
 			if errors.Is(err, os.ErrPermission) {
 				finalErr = fmt.Errorf("unable to start server %w.  %s may have noexec set.  Set OLLAMA_TMPDIR for server to a writable executable directory", err, dir)
 				continue
@@ -585,8 +581,7 @@ func (s *llmServer) Ping(ctx context.Context) error {
 
 func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 	start := time.Now()
-	stallDuration := 5 * time.Minute            // If no progress happens
-	finalLoadDuration := 5 * time.Minute        // After we hit 100%, give the runner more time to come online
+	stallDuration := envconfig.LoadTimeout()    // If no progress happens
 	stallTimer := time.Now().Add(stallDuration) // give up if we stall
 
 	slog.Info("waiting for llama runner to start responding")
@@ -638,7 +633,7 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 				stallTimer = time.Now().Add(stallDuration)
 			} else if !fullyLoaded && int(s.loadProgress*100.0) >= 100 {
 				slog.Debug("model load completed, waiting for server to become available", "status", status.ToString())
-				stallTimer = time.Now().Add(finalLoadDuration)
+				stallTimer = time.Now().Add(stallDuration)
 				fullyLoaded = true
 			}
 			time.Sleep(time.Millisecond * 250)
@@ -882,24 +877,20 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	return nil
 }
 
-type EmbedRequest struct {
-	Content []string `json:"content"`
+type EmbeddingRequest struct {
+	Content string `json:"content"`
 }
 
-type EmbedResponse struct {
-	Embedding       [][]float32 `json:"embedding"`
-	PromptEvalCount int         `json:"prompt_n"`
+type EmbeddingResponse struct {
+	Embedding []float32 `json:"embedding"`
 }
 
-func (s *llmServer) Embed(ctx context.Context, input []string) (*EmbedResponse, error) {
-	// each input will use a slot, so we need to acquire the semaphore for
-	// the number of inputs up to numParallel
-	slots := int64(min(len(input), s.numParallel))
-	if err := s.sem.Acquire(ctx, slots); err != nil {
+func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, error) {
+	if err := s.sem.Acquire(ctx, 1); err != nil {
 		slog.Error("Failed to acquire semaphore", "error", err)
 		return nil, err
 	}
-	defer s.sem.Release(slots)
+	defer s.sem.Release(1)
 
 	// Make sure the server is ready
 	status, err := s.getServerStatusRetry(ctx)
@@ -909,18 +900,18 @@ func (s *llmServer) Embed(ctx context.Context, input []string) (*EmbedResponse, 
 		return nil, fmt.Errorf("unexpected server status: %s", status.ToString())
 	}
 
-	data, err := json.Marshal(EmbedRequest{Content: input})
+	data, err := json.Marshal(EmbeddingRequest{Content: input})
 	if err != nil {
 		return nil, fmt.Errorf("error marshaling embed data: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/embedding", s.port), bytes.NewBuffer(data))
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/embedding", s.port), bytes.NewBuffer(data))
 	if err != nil {
 		return nil, fmt.Errorf("error creating embed request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(r)
 	if err != nil {
 		return nil, fmt.Errorf("do embedding request: %w", err)
 	}
@@ -936,12 +927,12 @@ func (s *llmServer) Embed(ctx context.Context, input []string) (*EmbedResponse, 
 		return nil, fmt.Errorf("%s", body)
 	}
 
-	var e EmbedResponse
+	var e EmbeddingResponse
 	if err := json.Unmarshal(body, &e); err != nil {
 		return nil, fmt.Errorf("unmarshal tokenize response: %w", err)
 	}
 
-	return &e, nil
+	return e.Embedding, nil
 }
 
 type TokenizeRequest struct {
