@@ -325,6 +325,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ConfiChat](https://github.com/1runeberg/confichat) (Lightweight, standalone, multi-platform, and privacy focused LLM chat interface with optional encryption)
 - [Archyve](https://github.com/nickthecook/archyve) (RAG-enabling document library)
 - [crewAI with Mesop](https://github.com/rapidarchitect/ollama-crew-mesop) (Mesop Web Interface to run crewAI with Ollama)
+- [LLMChat](https://github.com/trendy-design/llmchat) (Privacy focused, 100% local, intuitive all-in-one chat interface)
 
 ### Terminal
 
