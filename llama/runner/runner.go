@@ -288,7 +288,7 @@ func (s *Server) removeSequence(seqIndex int, reason string) {
 	seq.doneReason = reason
 	close(seq.responses)
 	close(seq.embedding)
-	seq.cache.inUse = false
+	seq.cache.InUse = false
 	s.seqs[seqIndex] = nil
 }
 
@@ -364,13 +364,13 @@ func (s *Server) processBatch() {
 				break
 			}
 
-			batch.Add(input.token, input.embed, seq.numPast, []int{seq.cache.id}, numInputsProcessed+1 == len(seq.inputs))
+			batch.Add(input.token, input.embed, seq.numPast, []int{seq.cache.Id}, numInputsProcessed+1 == len(seq.inputs))
 			seq.numPast++
 			numInputsProcessed++
 		}
 
 		if numInputsProcessed > 0 {
-			seq.cache.inputs = append(seq.cache.inputs, seq.inputs[:numInputsProcessed]...)
+			seq.cache.Inputs = append(seq.cache.Inputs, seq.inputs[:numInputsProcessed]...)
 			seq.inputs = seq.inputs[numInputsProcessed:]
 			seq.iBatch = batch.NumTokens() - 1
 		}
@@ -445,7 +445,7 @@ func (s *Server) processBatch() {
 			trimCacheLen -= len(seq.pendingResponses)
 
 			// remove any tokens from the cache that we don't actually return
-			seq.cache.inputs = seq.cache.inputs[:len(seq.cache.inputs)-trimCacheLen]
+			seq.cache.Inputs = seq.cache.Inputs[:len(seq.cache.Inputs)-trimCacheLen]
 			s.removeSequence(i, "stop")
 			continue
 		}
