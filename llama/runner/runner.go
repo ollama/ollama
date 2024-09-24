@@ -86,6 +86,8 @@ type NewSequenceParams struct {
 func (s *Server) NewSequence(prompt string, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
 
+	startTime := time.Now()
+
 	tokens, err := s.lc.Model().Tokenize(prompt, true, true)
 	if err != nil {
 		return nil, fmt.Errorf("failed to process input: %w", err)
@@ -123,17 +125,18 @@ func (s *Server) NewSequence(prompt string, params NewSequenceParams) (*Sequence
 	}
 
 	return &Sequence{
-		tokens:           tokens,
-		numPromptTokens:  len(tokens),
-		numPredict:       params.numPredict,
-		pendingResponses: make([]string, 0),
-		responses:        make(chan string, 1),
-		quit:             make(chan bool, 1),
-		embedding:        make(chan []float32, 1),
-		samplingCtx:      sc,
-		embeddingOnly:    params.embedding,
-		stop:             params.stop,
-		numKeep:          params.numKeep,
+		tokens:              tokens,
+		numPromptTokens:     len(tokens),
+		startProcessingTime: startTime,
+		numPredict:          params.numPredict,
+		pendingResponses:    make([]string, 0),
+		responses:           make(chan string, 1),
+		quit:                make(chan bool, 1),
+		embedding:           make(chan []float32, 1),
+		samplingCtx:         sc,
+		embeddingOnly:       params.embedding,
+		stop:                params.stop,
+		numKeep:             params.numKeep,
 	}, nil
 }
 
@@ -291,10 +294,6 @@ func (s *Server) processBatch() {
 			s.shiftContext(seq)
 		}
 
-		if seq.startProcessingTime.IsZero() {
-			seq.startProcessingTime = time.Now()
-		}
-
 		var numTokensProcessed int
 		for j, t := range seq.tokens {
 			// todo: make this n_batch
@@ -330,6 +329,11 @@ func (s *Server) processBatch() {
 			continue
 		}
 
+		seq.numDecoded += 1
+		if seq.numDecoded == 1 {
+			seq.startGenerationTime = time.Now()
+		}
+
 		// if done processing the prompt, generate an embedding and return
 		if seq.embeddingOnly {
 			embd := s.lc.GetEmbeddingsSeq(i)
@@ -344,12 +348,7 @@ func (s *Server) processBatch() {
 
 		// sample a token
 		token := seq.samplingCtx.Sample(s.lc, nil, seq.iBatch)
-
 		seq.samplingCtx.Accept(s.lc, token, true)
-		seq.numDecoded += 1
-		if seq.numDecoded == 1 {
-			seq.startGenerationTime = time.Now()
-		}
 		piece := s.model.TokenToPiece(token)
 
 		seq.numPredicted++
