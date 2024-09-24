@@ -62,3 +62,33 @@ func truncateStop(pieces []string, stop string) []string {
 
 	return result
 }
+
+func incompleteUnicode(token string) bool {
+	incomplete := false
+
+	// check if there is incomplete UTF-8 character at the end
+	for i := 1; i < 5 && i <= len(token); i++ {
+		c := token[len(token)-i]
+
+		if (c & 0xc0) == 0x80 {
+			// continuation byte: 10xxxxxx
+			continue
+		}
+
+		if (c & 0xe0) == 0xc0 {
+			// 2-byte character: 110xxxxx ...
+			incomplete = i < 2
+		} else if (c & 0xf0) == 0xe0 {
+			// 3-byte character: 1110xxxx ...
+			incomplete = i < 3
+		} else if (c & 0xf8) == 0xf0 {
+			// 4-byte character: 11110xxx ...
+			incomplete = i < 4
+		}
+
+		// else 1-byte character or invalid byte
+		break
+	}
+
+	return incomplete
+}
