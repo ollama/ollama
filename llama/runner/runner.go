@@ -190,9 +190,15 @@ func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 				return nil, fmt.Errorf("invalid image index: %d", n)
 			}
 
+			hash := s.cache.HashImage(images[imageIndex].Data)
+
 			// Vision models cannot be accessed concurrently
 			s.clip.mu.Lock()
-			embed := llama.NewLlavaImageEmbed(s.lc, s.clip.cc, images[imageIndex].Data)
+			embed, err := s.cache.FindImage(hash)
+			if err != nil {
+				embed = llama.NewLlavaImageEmbed(s.lc, s.clip.cc, images[imageIndex].Data)
+				s.cache.AddImage(hash, embed)
+			}
 			s.clip.mu.Unlock()
 
 			for _, e := range embed {

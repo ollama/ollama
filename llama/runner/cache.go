@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"hash/maphash"
 	"log/slog"
 	"reflect"
 	"time"
@@ -13,8 +14,12 @@ type InputCache struct {
 	// context window size (per slot)
 	numCtx int
 
-	// individual caches
+	// individual KV caches
 	slots []InputCacheSlot
+
+	// cache of images to embeddings
+	images    []imageCache
+	imageHash maphash.Hash
 
 	lc *llama.Context
 }
@@ -32,6 +37,7 @@ func NewInputCache(lc *llama.Context, kvSize int, numSlots int) *InputCache {
 	return &InputCache{
 		numCtx: kvSize / numSlots,
 		slots:  slots,
+		images: make([]imageCache, numSlots),
 		lc:     lc,
 	}
 }
@@ -159,4 +165,56 @@ func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int, numDiscar
 		slot.Inputs[i-numDiscard] = slot.Inputs[i]
 	}
 	slot.Inputs = slot.Inputs[:len(slot.Inputs)-numDiscard]
+}
+
+// Locking: Lookup and store operations on imageCache require a lock
+// to be held that serializes these with each other. Hash does not
+// require a lock nor they need to be serialized with InputCacheSlot.
+
+type imageCache struct {
+	key      uint64
+	val      [][]float32
+	lastUsed time.Time
+}
+
+func (c *InputCache) HashImage(image []byte) uint64 {
+	c.imageHash.Reset()
+	_, _ = c.imageHash.Write(image)
+	return c.imageHash.Sum64()
+}
+
+var ErrImageNotFound = errors.New("image not found in cache")
+
+func (c *InputCache) FindImage(hash uint64) ([][]float32, error) {
+	for i := range c.images {
+		if c.images[i].key == hash {
+			slog.Debug("loading image embeddings from cache", "entry", i)
+			c.images[i].lastUsed = time.Now()
+			return c.images[i].val, nil
+		}
+	}
+
+	return nil, ErrImageNotFound
+}
+
+func (c *InputCache) AddImage(hash uint64, embed [][]float32) {
+	best := time.Now()
+	var bestImage int
+
+	for i := range c.images {
+		if c.images[i].key == hash {
+			bestImage = i
+			break
+		}
+
+		if c.images[i].lastUsed.Compare(best) < 0 {
+			best = c.images[i].lastUsed
+			bestImage = i
+		}
+	}
+
+	slog.Debug("storing image embeddings in cache", "entry", bestImage, "used", c.images[bestImage].lastUsed)
+	c.images[bestImage].key = hash
+	c.images[bestImage].val = embed
+	c.images[bestImage].lastUsed = time.Now()
 }
