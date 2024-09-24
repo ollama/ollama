@@ -1,11 +1,13 @@
 # Note: once we have fully transitioned to the Go server, this will replace the old Dockerfile at the top of the tree
 ARG GOLANG_VERSION=1.22.5
-ARG CMAKE_VERSION=3.22.1
 ARG CUDA_VERSION_11=11.3.1
 ARG CUDA_V11_ARCHITECTURES="50;52;53;60;61;62;70;72;75;80;86"
 ARG CUDA_VERSION_12=12.4.0
 ARG CUDA_V12_ARCHITECTURES="60;61;62;70;72;75;80;86;87;89;90;90a"
 ARG ROCM_VERSION=6.1.2
+ARG JETPACK_6=r36.2.0
+ARG JETPACK_5=r35.4.1
+
 
 ### To create a local image for building linux binaries on mac or windows with efficient incremental builds
 #
@@ -17,7 +19,6 @@ ARG ROCM_VERSION=6.1.2
 # make -C llama -j 10 && go build -trimpath -o dist/linux-amd64/ollama .
 #
 FROM --platform=linux/amd64 rocm/dev-centos-7:${ROCM_VERSION}-complete AS unified-builder-amd64
-ARG CMAKE_VERSION
 ARG GOLANG_VERSION
 ARG CUDA_VERSION_11
 ARG CUDA_VERSION_12
@@ -25,7 +26,7 @@ COPY ./scripts/rh_linux_deps.sh /
 ENV PATH /opt/rh/devtoolset-10/root/usr/bin:/usr/local/cuda/bin:$PATH
 ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/usr/local/cuda/lib64
 ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs:/opt/amdgpu/lib64
-RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
+RUN GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
 RUN yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-rhel7.repo && \
     dnf clean all && \
     dnf install -y \
@@ -45,12 +46,11 @@ ENTRYPOINT [ "zsh" ]
 # docker run --platform linux/arm64 --rm -it -v $(pwd):/go/src/github.com/ollama/ollama/ builder-arm64
 #
 FROM --platform=linux/arm64 rockylinux:8 AS unified-builder-arm64
-ARG CMAKE_VERSION
 ARG GOLANG_VERSION
 ARG CUDA_VERSION_11
 ARG CUDA_VERSION_12
 COPY ./scripts/rh_linux_deps.sh /
-RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
+RUN GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
 RUN yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/sbsa/cuda-rhel8.repo && \
     dnf config-manager --set-enabled appstream && \
     dnf clean all && \
@@ -93,7 +93,43 @@ ARG OLLAMA_FAST_BUILD
 RUN --mount=type=cache,target=/root/.ccache \
     make -C llama -j 8
 
+# Jetsons need to be built in discrete stages
+FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK_5} AS runners-jetpack5-arm64
+ARG GOLANG_VERSION
+RUN apt-get update && apt-get install -y git curl ccache && \
+    curl -s -L https://dl.google.com/go/go${GOLANG_VERSION}.linux-arm64.tar.gz | tar xz -C /usr/local && \
+    ln -s /usr/local/go/bin/go /usr/local/bin/go && \
+    ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+WORKDIR /go/src/github.com/ollama/ollama/
+COPY . .
+ARG CGO_CFLAGS
+ENV GOARCH arm64
+RUN --mount=type=cache,target=/root/.ccache \
+    make -C llama -j 5 cuda_v11 \
+        CUDA_ARCHITECTURES="72;87" \
+        GPU_RUNNER_VARIANT=_jetpack5 \
+        CGO_EXTRA_LDFLAGS_LINUX=-L/usr/local/cuda/lib64/stubs \
+        DIST_GPU_RUNNER_DEPS_DIR=/go/src/github.com/ollama/ollama/dist/linux-arm64-jetpack5/lib/ollama/cuda_jetpack5
 
+FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK_6} AS runners-jetpack6-arm64
+ARG GOLANG_VERSION
+RUN apt-get update && apt-get install -y git curl ccache && \
+    curl -s -L https://dl.google.com/go/go${GOLANG_VERSION}.linux-arm64.tar.gz | tar xz -C /usr/local && \
+    ln -s /usr/local/go/bin/go /usr/local/bin/go && \
+    ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+WORKDIR /go/src/github.com/ollama/ollama/
+COPY . .
+ARG CGO_CFLAGS
+ENV GOARCH arm64
+RUN --mount=type=cache,target=/root/.ccache \
+    make -C llama -j 5 cuda_v12 \
+        CUDA_ARCHITECTURES="87" \
+        GPU_RUNNER_VARIANT=_jetpack6 \
+        CGO_EXTRA_LDFLAGS_LINUX=-L/usr/local/cuda/lib64/stubs \
+        DIST_GPU_RUNNER_DEPS_DIR=/go/src/github.com/ollama/ollama/dist/linux-arm64-jetpack6/lib/ollama/cuda_jetpack6
+    
 # Intermediate stages used for ./scripts/build_linux.sh
 FROM --platform=linux/amd64 centos:7 AS builder-amd64
 ARG CMAKE_VERSION
@@ -135,12 +171,20 @@ FROM --platform=linux/arm64 builder-arm64 AS build-arm64
 COPY . .
 COPY --from=runners-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
 COPY --from=runners-arm64 /go/src/github.com/ollama/ollama/build/ build/
+COPY --from=runners-jetpack5-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
+COPY --from=runners-jetpack5-arm64 /go/src/github.com/ollama/ollama/build/ build/
+COPY --from=runners-jetpack6-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
+COPY --from=runners-jetpack6-arm64 /go/src/github.com/ollama/ollama/build/ build/
 ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN --mount=type=cache,target=/root/.ccache \
     go build -trimpath -o dist/linux-arm64/bin/ollama .
 RUN cd dist/linux-$GOARCH && \
     tar --exclude runners -cf - . | pigz --best > ../ollama-linux-$GOARCH.tgz
+RUN cd dist/linux-$GOARCH-jetpack5 && \
+    tar -cf - . | pigz --best > ../ollama-linux-$GOARCH-jetpack5.tgz
+RUN cd dist/linux-$GOARCH-jetpack6 && \
+    tar -cf - . | pigz --best > ../ollama-linux-$GOARCH-jetpack6.tgz
 
 FROM --platform=linux/amd64 scratch AS dist-amd64
 COPY --from=build-amd64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
@@ -188,7 +232,7 @@ COPY --from=runners-cuda-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64
 FROM --platform=linux/arm64 ubuntu:22.04 AS runtime-arm64
 RUN apt-get update && \
     apt-get install -y ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY --from=container-build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/bin/ /bin/
 COPY --from=runners-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
 
@@ -199,7 +243,7 @@ FROM --platform=linux/amd64 ubuntu:22.04 AS runtime-rocm
 COPY --from=build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64-rocm/lib/ /lib/
 RUN apt-get update && \
     apt-get install -y ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY --from=container-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/bin/ /bin/
 COPY --from=runners-rocm-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
 

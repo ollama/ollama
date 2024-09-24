@@ -128,7 +128,7 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 				UnreliableFreeMemory: true,
 
 				ID:             strconv.Itoa(i), // TODO this is probably wrong if we specify visible devices
-				DependencyPath: libDir,
+				DependencyPath: []string{libDir},
 				MinimumMemory:  rocmMinimumMemory,
 				Name:           name,
 				Compute:        gfx,
