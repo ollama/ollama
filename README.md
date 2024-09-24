@@ -378,7 +378,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LangChainGo](https://github.com/tmc/langchaingo/) with [example](https://github.com/tmc/langchaingo/tree/main/examples/ollama-completion-example)
 - [LangChain4j](https://github.com/langchain4j/langchain4j) with [example](https://github.com/langchain4j/langchain4j-examples/tree/main/ollama-examples/src/main/java)
 - [LangChainRust](https://github.com/Abraxas-365/langchain-rust) with [example](https://github.com/Abraxas-365/langchain-rust/blob/main/examples/llm_ollama.rs)
-- [LlamaIndex](https://gpt-index.readthedocs.io/en/stable/examples/llm/ollama.html)
+- [LlamaIndex](https://docs.llamaindex.ai/en/stable/examples/llm/ollama/) and [LlamaIndexTS](https://ts.llamaindex.ai/modules/llms/available_llms/ollama)
 - [LiteLLM](https://github.com/BerriAI/litellm)
 - [OllamaFarm for Go](https://github.com/presbrey/ollamafarm)
 - [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
