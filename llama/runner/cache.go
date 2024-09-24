@@ -24,8 +24,8 @@ func NewInputCache(lc *llama.Context, kvSize int, numSlots int) *InputCache {
 
 	for i := range slots {
 		slots[i] = InputCacheSlot{
-			id:     i,
-			inputs: make([]input, 0),
+			Id:     i,
+			Inputs: make([]input, 0),
 		}
 	}
 
@@ -42,13 +42,13 @@ func NewInputCache(lc *llama.Context, kvSize int, numSlots int) *InputCache {
 
 type InputCacheSlot struct {
 	// Index in the KV cache
-	id int
+	Id int
 
-	// inputs that are stored in the KV cache
-	inputs []input
+	// Inputs that are stored in the KV cache
+	Inputs []input
 
 	// is this cache actively being processed as part of a sequence?
-	inUse bool
+	InUse bool
 
 	// last time this cache was used (as of start of processing)
 	lastUsed time.Time
@@ -60,7 +60,7 @@ func (c *InputCache) LoadCacheSlot(prompt []input) (*InputCacheSlot, []input, in
 		return nil, nil, 0, err
 	}
 
-	slot.inUse = true
+	slot.InUse = true
 	slot.lastUsed = time.Now()
 
 	if numPast == len(prompt) {
@@ -68,17 +68,17 @@ func (c *InputCache) LoadCacheSlot(prompt []input) (*InputCacheSlot, []input, in
 		numPast--
 	}
 
-	if !c.lc.KvCacheSeqRm(slot.id, numPast, -1) {
+	if !c.lc.KvCacheSeqRm(slot.Id, numPast, -1) {
 		// Some models don't support partial erasure
-		c.lc.KvCacheSeqRm(slot.id, 0, -1)
+		c.lc.KvCacheSeqRm(slot.Id, 0, -1)
 		numPast = 0
 	}
 
-	slog.Debug("loading cache slot", "id", slot.id, "cache", len(slot.inputs), "prompt", len(prompt),
+	slog.Debug("loading cache slot", "id", slot.Id, "cache", len(slot.Inputs), "prompt", len(prompt),
 		"used", numPast, "remaining", len(prompt)-numPast)
 
 	prompt = prompt[numPast:]
-	slot.inputs = slot.inputs[:numPast]
+	slot.Inputs = slot.Inputs[:numPast]
 
 	return slot, prompt, numPast, nil
 }
@@ -91,40 +91,40 @@ func (c *InputCache) findCacheSlot(prompt []input) (*InputCacheSlot, int, error)
 	var longestSlot *InputCacheSlot
 
 	for i, s := range c.slots {
-		count := countCommonPrefix(s.inputs, prompt)
+		count := countCommonPrefix(s.Inputs, prompt)
 		if count > longest {
 			longest = count
 			longestSlot = &c.slots[i]
 		}
 
-		if s.lastUsed.Compare(oldest) < 0 && !s.inUse {
+		if s.lastUsed.Compare(oldest) < 0 && !s.InUse {
 			oldest = s.lastUsed
 			oldestSlot = &c.slots[i]
 		}
 	}
 
-	if longest == len(longestSlot.inputs) && !longestSlot.inUse {
+	if longest == len(longestSlot.Inputs) && !longestSlot.InUse {
 		return longestSlot, longest, nil
 	}
 
-	if oldestSlot.inUse {
+	if oldestSlot.InUse {
 		return nil, 0, errors.New("no available cache slots")
 	}
 
-	if len(oldestSlot.inputs) != 0 {
-		slog.Debug("evicting cache slot", "id", oldestSlot.id, "inputs", len(oldestSlot.inputs),
+	if len(oldestSlot.Inputs) != 0 {
+		slog.Debug("evicting cache slot", "id", oldestSlot.Id, "inputs", len(oldestSlot.Inputs),
 			"used", oldestSlot.lastUsed)
 	}
 
 	if longest > 0 && longestSlot != oldestSlot {
-		slog.Debug("forking cache slot", "src", longestSlot.id, "dst", oldestSlot.id, "inputs", longest, "total",
-			len(longestSlot.inputs))
-		oldestSlot.inputs = make([]input, longest)
-		copy(oldestSlot.inputs, longestSlot.inputs[:longest])
+		slog.Debug("forking cache slot", "src", longestSlot.Id, "dst", oldestSlot.Id, "inputs", longest, "total",
+			len(longestSlot.Inputs))
+		oldestSlot.Inputs = make([]input, longest)
+		copy(oldestSlot.Inputs, longestSlot.Inputs[:longest])
 		// This is only nil for unit tests
 		if c.lc != nil {
-			c.lc.KvCacheSeqRm(oldestSlot.id, 0, -1)
-			c.lc.KvCacheSeqCp(longestSlot.id, oldestSlot.id, 0, longest)
+			c.lc.KvCacheSeqRm(oldestSlot.Id, 0, -1)
+			c.lc.KvCacheSeqCp(longestSlot.Id, oldestSlot.Id, 0, longest)
 		}
 	}
 
@@ -152,11 +152,11 @@ func countCommonPrefix(a []input, b []input) int {
 func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int, numDiscard int, numPast int) {
 	// TODO (jessegross): KV cache removal can fail for certain types of models
 	// server.cpp doesn't handle this, though we can be more graceful
-	c.lc.KvCacheSeqRm(slot.id, numKeep, numKeep+numDiscard)
-	c.lc.KvCacheSeqAdd(slot.id, numKeep+numDiscard, numPast, -numDiscard)
+	c.lc.KvCacheSeqRm(slot.Id, numKeep, numKeep+numDiscard)
+	c.lc.KvCacheSeqAdd(slot.Id, numKeep+numDiscard, numPast, -numDiscard)
 
-	for i := numKeep + numDiscard; i < len(slot.inputs); i++ {
-		slot.inputs[i-numDiscard] = slot.inputs[i]
+	for i := numKeep + numDiscard; i < len(slot.Inputs); i++ {
+		slot.Inputs[i-numDiscard] = slot.Inputs[i]
 	}
-	slot.inputs = slot.inputs[:len(slot.inputs)-numDiscard]
+	slot.Inputs = slot.Inputs[:len(slot.Inputs)-numDiscard]
 }
