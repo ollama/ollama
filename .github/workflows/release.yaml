@@ -354,7 +354,7 @@ jobs:
       - name: Set Version
         run: |
           $ver=${env:GITHUB_REF_NAME}.trim("v")
-          write-host VERSION=$ver | Out-File -FilePath ${env:GITHUB_ENV} -Encoding utf8 -Append
+          echo VERSION=$ver | Out-File -FilePath ${env:GITHUB_ENV} -Encoding utf8 -Append
       - uses: 'google-github-actions/auth@v2'
         with:
           project_id: 'ollama'
