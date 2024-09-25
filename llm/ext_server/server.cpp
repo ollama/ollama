@@ -1032,6 +1032,18 @@ struct llama_server_context
 
     bool process_images(server_slot &slot) const
     {
+        // Set cross attention state for mllama models
+        // TODO (jmorganca): this should be provided via the API
+        // TODO (jmorganca): generalize this beyond mllama models
+        char arch_str[256];
+        llama_model_meta_val_str(model, "general.architecture", arch_str, 256);
+        if (strcmp(arch_str, "mllama") == 0) {
+            // TODO (jmorganca): this should be passed in via the llama_decode api
+            // or similar, maybe using the llama_batch struct
+            // llama_reset_cross_attn_state(ctx);
+            // llama_set_cross_attn_state(ctx, (float*)cross_attn_state);
+        }
+
         for (slot_image &img : slot.images)
         {
             if (!img.request_encode_image)
