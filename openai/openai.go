@@ -884,13 +884,19 @@ func ChatMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Optionally check for more tokens to ensure the entire body has been read
+		// Check for unexpected additional fields
 		if decoder.More() {
 			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, "Unexpected additional fields"))
 			return
 		}
 
-		// Encode back to buffer if needed (as in original middleware)
+		// Validate that the 'messages' field is not empty
+		if len(req.Messages) == 0 {
+			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, "[] is too short - 'messages'"))
+			return
+		}
+
+		// Encode the validated request back to a buffer
 		var b bytes.Buffer
 		chatReq, err := fromChatRequest(req)
 		if err != nil {
@@ -903,8 +909,10 @@ func ChatMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// Replace the request body with the new buffer
 		c.Request.Body = io.NopCloser(&b)
 
+		// Initialize the custom ResponseWriter
 		w := &ChatWriter{
 			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
 			stream:     req.Stream,
@@ -913,6 +921,7 @@ func ChatMiddleware() gin.HandlerFunc {
 
 		c.Writer = w
 
+		// Proceed to the next handler
 		c.Next()
 	}
 }
