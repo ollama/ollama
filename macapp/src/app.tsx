@@ -19,7 +19,7 @@ export default function () {
   const [step, setStep] = useState<Step>(Step.WELCOME)
   const [commandCopied, setCommandCopied] = useState<boolean>(false)
 
-  const command = 'ollama run llama3.1'
+  const command = 'ollama run llama3.2'
 
   return (
     <div className='drag'>
