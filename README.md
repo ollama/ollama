@@ -326,6 +326,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Archyve](https://github.com/nickthecook/archyve) (RAG-enabling document library)
 - [crewAI with Mesop](https://github.com/rapidarchitect/ollama-crew-mesop) (Mesop Web Interface to run crewAI with Ollama)
 - [LLMChat](https://github.com/trendy-design/llmchat) (Privacy focused, 100% local, intuitive all-in-one chat interface)
+- [Langfuse](https://github.com/langfuse/langfuse) (Open-source observability platform for AI applications)
 
 ### Terminal
 
