@@ -1,48 +1,41 @@
-From 4f8a65ed30a804c669a2863b26578482627d3900 Mon Sep 17 00:00:00 2001
+From e53f8505bbeff9fe8628dbe353b933751c90680c Mon Sep 17 00:00:00 2001
 From: Michael Yang <mxyng@pm.me>
 Date: Mon, 16 Sep 2024 15:53:16 -0700
 Subject: [PATCH] add solar-pro support
 
-solar-pro introduces block skip connections where blocks are connected
-to other, non-sequential blocks with a scale multiple
-
-this change adds 4 new keys to store the skip connections and one new
-tensor to store the scalar. the scalar is implemented a 1-dimensional
-tensor with 2 elements dervied from the model's bskcn_tv configuration.
-in general, the values are (bskcn_tv, 1 - bskcn_tv)
 ---
  src/llama.cpp | 269 +++++++++++++++++++++++++++++++++++++++++++++++---
  1 file changed, 255 insertions(+), 14 deletions(-)
 
 diff --git a/src/llama.cpp b/src/llama.cpp
-index af8afd84..f1331be1 100644
+index 0accb149..19cd22ca 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
-@@ -215,6 +215,7 @@ enum llm_arch {
-     LLM_ARCH_EXAONE,
+@@ -216,6 +216,7 @@ enum llm_arch {
      LLM_ARCH_RWKV6,
      LLM_ARCH_GRANITE,
+     LLM_ARCH_GRANITE_MOE,
 +    LLM_ARCH_SOLAR,
      LLM_ARCH_UNKNOWN,
  };
  
-@@ -266,6 +267,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
-     { LLM_ARCH_EXAONE,          "exaone"       },
+@@ -268,6 +269,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
      { LLM_ARCH_RWKV6,           "rwkv6"        },
      { LLM_ARCH_GRANITE,         "granite"      },
+     { LLM_ARCH_GRANITE_MOE,     "granitemoe"   },
 +    { LLM_ARCH_SOLAR,           "solar"        },
      { LLM_ARCH_UNKNOWN,         "(unknown)"    },
  };
  
-@@ -321,6 +323,7 @@ enum llm_kv {
-     LLM_KV_ATTENTION_KV_LORA_RANK,
+@@ -324,6 +326,7 @@ enum llm_kv {
      LLM_KV_ATTENTION_RELATIVE_BUCKETS_COUNT,
      LLM_KV_ATTENTION_SLIDING_WINDOW,
-+    LLM_KV_ATTENTION_BLOCK_SKIP_CONNECTION,
      LLM_KV_ATTENTION_SCALE,
++    LLM_KV_ATTENTION_BLOCK_SKIP_CONNECTION,
  
      LLM_KV_ROPE_DIMENSION_COUNT,
-@@ -415,20 +418,21 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
+     LLM_KV_ROPE_FREQ_BASE,
+@@ -417,20 +420,21 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
      { LLM_KV_RESIDUAL_SCALE,                    "%s.residual_scale"                    },
      { LLM_KV_EMBEDDING_SCALE,                   "%s.embedding_scale"                   },
  
@@ -73,12 +66,12 @@ index af8afd84..f1331be1 100644
 +    { LLM_KV_ATTENTION_KV_LORA_RANK,           "%s.attention.kv_lora_rank"             },
 +    { LLM_KV_ATTENTION_RELATIVE_BUCKETS_COUNT, "%s.attention.relative_buckets_count"   },
 +    { LLM_KV_ATTENTION_SLIDING_WINDOW,         "%s.attention.sliding_window"           },
-+    { LLM_KV_ATTENTION_BLOCK_SKIP_CONNECTION,  "%s.attention.block_skip_connection.%d" },
 +    { LLM_KV_ATTENTION_SCALE,                  "%s.attention.scale"                    },
++    { LLM_KV_ATTENTION_BLOCK_SKIP_CONNECTION,  "%s.attention.block_skip_connection.%d" },
  
      { LLM_KV_ROPE_DIMENSION_COUNT,          "%s.rope.dimension_count"                 },
      { LLM_KV_ROPE_FREQ_BASE,                "%s.rope.freq_base"                       },
-@@ -600,6 +604,7 @@ enum llm_tensor {
+@@ -602,6 +606,7 @@ enum llm_tensor {
      LLM_TENSOR_ENC_FFN_DOWN,
      LLM_TENSOR_ENC_FFN_UP,
      LLM_TENSOR_ENC_OUTPUT_NORM,
@@ -86,8 +79,8 @@ index af8afd84..f1331be1 100644
  };
  
  static const std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NAMES = {
-@@ -1478,6 +1483,24 @@ static const std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NA
-             { LLM_TENSOR_FFN_UP,          "blk.%d.ffn_up" },
+@@ -1499,6 +1504,24 @@ static const std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NA
+             { LLM_TENSOR_FFN_UP_EXPS,     "blk.%d.ffn_up_exps" },
          },
      },
 +    {
@@ -111,7 +104,7 @@ index af8afd84..f1331be1 100644
      {
          LLM_ARCH_UNKNOWN,
          {
-@@ -2311,6 +2334,7 @@ enum e_model {
+@@ -2332,6 +2355,7 @@ enum e_model {
      MODEL_15B,
      MODEL_16B,
      MODEL_20B,
@@ -119,7 +112,7 @@ index af8afd84..f1331be1 100644
      MODEL_30B,
      MODEL_34B,
      MODEL_35B,
-@@ -2359,6 +2383,8 @@ struct llama_hparams {
+@@ -2380,6 +2404,8 @@ struct llama_hparams {
      std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_kv_arr;
      std::array<uint32_t, LLAMA_MAX_LAYERS> n_ff_arr;
  
@@ -128,7 +121,7 @@ index af8afd84..f1331be1 100644
      uint32_t n_layer_dense_lead = 0;
      uint32_t n_lora_q = 0;
      uint32_t n_lora_kv = 0;
-@@ -2429,6 +2455,7 @@ struct llama_hparams {
+@@ -2450,6 +2476,7 @@ struct llama_hparams {
          if (this->n_head_arr    != other.n_head_arr)    return true;
          if (this->n_head_kv_arr != other.n_head_kv_arr) return true;
          if (this->n_ff_arr      != other.n_ff_arr)      return true;
@@ -136,7 +129,7 @@ index af8afd84..f1331be1 100644
  
          if (this->n_rel_attn_bkts    != other.n_rel_attn_bkts)    return true;
          if (this->n_layer_dense_lead != other.n_layer_dense_lead) return true;
-@@ -2538,6 +2565,14 @@ struct llama_hparams {
+@@ -2559,6 +2586,14 @@ struct llama_hparams {
              return ssm_d_state * ssm_d_inner;
          }
      }
@@ -151,7 +144,7 @@ index af8afd84..f1331be1 100644
  };
  
  static_assert(std::is_trivially_copyable<llama_hparams>::value, "llama_hparams must be trivially copyable");
-@@ -2719,6 +2754,8 @@ struct llama_layer {
+@@ -2740,6 +2775,8 @@ struct llama_layer {
      struct ggml_tensor * ffn_gate_scale;
      struct ggml_tensor * ffn_up_scale;
      struct ggml_tensor * ffn_down_scale;
@@ -160,7 +153,7 @@ index af8afd84..f1331be1 100644
  };
  
  // very similar to llama_batch,
-@@ -6065,6 +6102,21 @@ static void llm_load_hparams(
+@@ -6084,6 +6121,21 @@ static void llm_load_hparams(
                      default: model.type = e_model::MODEL_UNKNOWN;
                  }
              } break;
@@ -182,7 +175,7 @@ index af8afd84..f1331be1 100644
          default: (void)0;
      }
  
-@@ -8665,6 +8717,38 @@ static bool llm_load_tensors(
+@@ -8728,6 +8780,38 @@ static bool llm_load_tensors(
                      }
  
                  } break;
@@ -221,7 +214,7 @@ index af8afd84..f1331be1 100644
              default:
                  throw std::runtime_error("unknown architecture");
          }
-@@ -15790,6 +15874,158 @@ struct llm_build_context {
+@@ -15872,6 +15956,158 @@ struct llm_build_context {
  
          return gf;
      }
@@ -380,7 +373,7 @@ index af8afd84..f1331be1 100644
  };
  
  static struct ggml_cgraph * llama_build_graph_defrag(llama_context & lctx, const std::vector<uint32_t> & ids) {
-@@ -16049,6 +16285,10 @@ static struct ggml_cgraph * llama_build_graph(
+@@ -16132,6 +16368,10 @@ static struct ggml_cgraph * llama_build_graph(
              {
                  result = llm.build_rwkv6();
              } break;
@@ -391,10 +384,10 @@ index af8afd84..f1331be1 100644
          default:
              GGML_ABORT("fatal error");
      }
-@@ -19173,6 +19413,7 @@ enum llama_rope_type llama_rope_type(const struct llama_model * model) {
-         case LLM_ARCH_DEEPSEEK2:
+@@ -19257,6 +19497,7 @@ enum llama_rope_type llama_rope_type(const struct llama_model * model) {
          case LLM_ARCH_CHATGLM:
          case LLM_ARCH_GRANITE:
+         case LLM_ARCH_GRANITE_MOE:
 +        case LLM_ARCH_SOLAR:
              return LLAMA_ROPE_TYPE_NORM;
  
