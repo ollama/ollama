@@ -7,6 +7,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/server/imageproc"
 	"github.com/ollama/ollama/template"
 )
 
@@ -61,14 +62,37 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 		return "", nil, err
 	}
 
+	preprocess := checkMllamaModelFamily(m)
+
 	for _, m := range msgs[n:] {
 		for _, i := range m.Images {
-			images = append(images, llm.ImageData{
-				ID:   len(images),
-				Data: i,
-			})
+			if preprocess {
+				data, aspectRatioID, err := imageproc.Preprocess(i)
+				if err != nil {
+					return "", nil, err
+				}
+				images = append(images, llm.ImageData{
+					ID:            len(images),
+					ImageData:     data,
+					AspectRatioID: aspectRatioID,
+				})
+			} else {
+				images = append(images, llm.ImageData{
+					ID:   len(images),
+					Data: i,
+				})
+			}
 		}
 	}
 
 	return b.String(), images, nil
+}
+
+func checkMllamaModelFamily(m *Model) bool {
+	for _, arch := range m.Config.ModelFamilies {
+		if arch == "mllama" {
+			return true
+		}
+	}
+	return false
 }

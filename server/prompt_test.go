@@ -203,7 +203,7 @@ func TestChatPrompt(t *testing.T) {
 				}
 
 				if !bytes.Equal(images[i].Data, tt.images[i]) {
-					t.Errorf("expected %q, got %q", tt.images[i], images[i])
+					t.Errorf("expected %q, got %q", tt.images[i], images[i].Data)
 				}
 			}
 		})
