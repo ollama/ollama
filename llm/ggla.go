@@ -51,8 +51,8 @@ func (llm *ggla) KV() KV {
 	return llm.kv
 }
 
-func (llm *ggla) Tensors() Tensors {
-	return Tensors{
+func (llm *ggla) Tensors() *Tensors {
+	return &Tensors{
 		Items:  llm.tensors,
 		Offset: llm.tensorOffset,
 	}
