@@ -68,12 +68,17 @@ func TestCountCommon(t *testing.T) {
 }
 
 func TestFindCacheSlot(t *testing.T) {
+	type expected struct {
+		result int
+		len    int
+	}
+
 	tests := []struct {
-		name        string
-		cache       InputCache
-		prompt      []input
-		expected    int
-		expectedLen int
+		name    string
+		cache   InputCache
+		prompt  []input
+		longest expected
+		best    expected
 	}{
 		{
 			name: "Empty",
@@ -91,9 +96,9 @@ func TestFindCacheSlot(t *testing.T) {
 					lastUsed: time.Time{},
 				},
 			}},
-			prompt:      []input{{token: 1}},
-			expected:    0,
-			expectedLen: 0,
+			prompt:  []input{{token: 1}},
+			longest: expected{result: 0, len: 0},
+			best:    expected{result: 0, len: 0},
 		},
 		{
 			name: "Extend",
@@ -111,9 +116,9 @@ func TestFindCacheSlot(t *testing.T) {
 					lastUsed: time.Now().Add(-2 * time.Second),
 				},
 			}},
-			prompt:      []input{{token: 1}, {token: 2}},
-			expected:    1,
-			expectedLen: 2,
+			prompt:  []input{{token: 1}, {token: 2}},
+			longest: expected{result: 1, len: 2},
+			best:    expected{result: 1, len: 2},
 		},
 		{
 			name: "New",
@@ -131,9 +136,9 @@ func TestFindCacheSlot(t *testing.T) {
 					lastUsed: time.Time{},
 				},
 			}},
-			prompt:      []input{{token: 2}},
-			expected:    1,
-			expectedLen: 0,
+			prompt:  []input{{token: 2}},
+			longest: expected{result: 0, len: 0},
+			best:    expected{result: 1, len: 0},
 		},
 		{
 			name: "Fork",
@@ -153,9 +158,9 @@ func TestFindCacheSlot(t *testing.T) {
 					},
 				},
 			},
-			prompt:      []input{{token: 1}},
-			expected:    1,
-			expectedLen: 1,
+			prompt:  []input{{token: 1}},
+			longest: expected{result: 0, len: 1},
+			best:    expected{result: 1, len: 1},
 		},
 		{
 			name: "Evict",
@@ -173,47 +178,59 @@ func TestFindCacheSlot(t *testing.T) {
 					lastUsed: time.Now().Add(-2 * time.Second),
 				},
 			}},
-			prompt:      []input{{token: 2}, {token: 3}},
-			expected:    1,
-			expectedLen: 0,
+			prompt:  []input{{token: 2}, {token: 3}},
+			longest: expected{result: 0, len: 0},
+			best:    expected{result: 1, len: 0},
 		},
 		{
 			name: "In use",
 			cache: InputCache{slots: []InputCacheSlot{
 				{
 					Id:       0,
-					Inputs:   []input{{token: 1}},
-					InUse:    false,
+					Inputs:   []input{{token: 1}, {token: 2}},
+					InUse:    true,
 					lastUsed: time.Now().Add(-time.Second),
 				},
 				{
 					Id:       1,
-					Inputs:   []input{{token: 1}, {token: 2}},
-					InUse:    true,
+					Inputs:   []input{{token: 1}},
+					InUse:    false,
 					lastUsed: time.Now().Add(-2 * time.Second),
 				},
 			}},
-			prompt:      []input{{token: 1}, {token: 2}},
-			expected:    0,
-			expectedLen: 2,
+			prompt:  []input{{token: 1}, {token: 2}},
+			longest: expected{result: 1, len: 1},
+			best:    expected{result: 1, len: 2},
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, resultLen, err := tt.cache.findCacheSlot(tt.prompt)
+		t.Run("Longest-"+tt.name, func(t *testing.T) {
+			result, resultLen, err := tt.cache.findLongestCacheSlot(tt.prompt)
 			if err != nil {
-				t.Errorf("findCacheSlot: err %v", err)
-			} else if result.Id != tt.expected || resultLen != tt.expectedLen {
-				t.Errorf("findCacheSlot: slot have %v, want %v len have %v, want %v",
-					result.Id, tt.expected, resultLen, tt.expectedLen)
+				t.Errorf("findLongestCacheSlot: err %v", err)
+			} else if result.Id != tt.longest.result || resultLen != tt.longest.len {
+				t.Errorf("findLongestCacheSlot: slot have %v, want %v len have %v, want %v",
+					result.Id, tt.longest.result, resultLen, tt.longest.len)
+			}
+		})
+	}
+
+	for _, tt := range tests {
+		t.Run("Best-"+tt.name, func(t *testing.T) {
+			result, resultLen, err := tt.cache.findBestCacheSlot(tt.prompt)
+			if err != nil {
+				t.Errorf("findBestCacheSlot: err %v", err)
+			} else if result.Id != tt.best.result || resultLen != tt.best.len {
+				t.Errorf("findBestCacheSlot: slot have %v, want %v len have %v, want %v",
+					result.Id, tt.best.result, resultLen, tt.best.len)
 			}
 		})
 	}
 }
 
 func TestImageCache(t *testing.T) {
-	cache := NewInputCache(nil, 2048, 4)
+	cache := NewInputCache(nil, 2048, 4, false)
 
 	valA := [][]float32{{0.1, 0.2}, {0.3}}
 	valB := [][]float32{{0.4}, {0.5}, {0.6}}

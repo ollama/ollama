@@ -17,6 +17,9 @@ type InputCache struct {
 	// individual KV caches
 	slots []InputCacheSlot
 
+	// optimize cache eviction for multiple users
+	multiUserCache bool
+
 	// cache of images to embeddings
 	images    []imageCache
 	imageHash maphash.Hash
@@ -24,7 +27,7 @@ type InputCache struct {
 	lc *llama.Context
 }
 
-func NewInputCache(lc *llama.Context, kvSize int, numSlots int) *InputCache {
+func NewInputCache(lc *llama.Context, kvSize int, numSlots int, multiUserCache bool) *InputCache {
 	slots := make([]InputCacheSlot, numSlots)
 
 	for i := range slots {
@@ -35,10 +38,11 @@ func NewInputCache(lc *llama.Context, kvSize int, numSlots int) *InputCache {
 	}
 
 	return &InputCache{
-		numCtx: kvSize / numSlots,
-		slots:  slots,
-		images: make([]imageCache, numSlots),
-		lc:     lc,
+		numCtx:         kvSize / numSlots,
+		slots:          slots,
+		multiUserCache: multiUserCache,
+		images:         make([]imageCache, numSlots),
+		lc:             lc,
 	}
 }
 
@@ -61,7 +65,21 @@ type InputCacheSlot struct {
 }
 
 func (c *InputCache) LoadCacheSlot(prompt []input) (*InputCacheSlot, []input, int, error) {
-	slot, numPast, err := c.findCacheSlot(prompt)
+	var slot *InputCacheSlot
+	var numPast int
+	var err error
+
+	// In single-user scenarios, the longest cache slot works fine for getting good input
+	// cache hit rates and it reuses the same VRAM over and over again, which is good for
+	// GPU performance in situations where we miss the input cache.
+	// For multiple users, the "best" cache slot produces better input cache hit rates
+	// at the cost of worse performance when we miss the input cache (because it causes
+	// GPU L2 cache misses due to spreading out accesses across VRAM).
+	if !c.multiUserCache {
+		slot, numPast, err = c.findLongestCacheSlot(prompt)
+	} else {
+		slot, numPast, err = c.findBestCacheSlot(prompt)
+	}
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -89,7 +107,30 @@ func (c *InputCache) LoadCacheSlot(prompt []input) (*InputCacheSlot, []input, in
 	return slot, prompt, numPast, nil
 }
 
-func (c *InputCache) findCacheSlot(prompt []input) (*InputCacheSlot, int, error) {
+func (c *InputCache) findLongestCacheSlot(prompt []input) (*InputCacheSlot, int, error) {
+	longest := -1
+	var longestSlot *InputCacheSlot
+
+	for i, s := range c.slots {
+		if s.InUse {
+			continue
+		}
+
+		count := countCommonPrefix(s.Inputs, prompt)
+		if count > longest {
+			longest = count
+			longestSlot = &c.slots[i]
+		}
+	}
+
+	if longestSlot == nil {
+		return nil, 0, errors.New("no available cache slots")
+	}
+
+	return longestSlot, longest, nil
+}
+
+func (c *InputCache) findBestCacheSlot(prompt []input) (*InputCacheSlot, int, error) {
 	oldest := time.Now()
 	var oldestSlot *InputCacheSlot
 

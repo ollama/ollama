@@ -276,6 +276,10 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--tensor-split", estimate.TensorSplit)
 	}
 
+	if envconfig.MultiUserCache() {
+		params = append(params, "--multiuser-cache")
+	}
+
 	for i := range servers {
 		dir := availableServers[servers[i]]
 		if dir == "" {

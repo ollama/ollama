@@ -738,6 +738,7 @@ func (s *Server) loadModel(
 	kvSize int,
 	flashAttention bool,
 	threads int,
+	multiUserCache bool,
 ) {
 	llama.BackendInit()
 
@@ -761,7 +762,7 @@ func (s *Server) loadModel(
 		s.clip.cc = llama.NewClipContext(ppath)
 	}
 
-	s.cache = NewInputCache(s.lc, kvSize, s.parallel)
+	s.cache = NewInputCache(s.lc, kvSize, s.parallel, multiUserCache)
 
 	s.status = ServerStatusReady
 	s.ready.Done()
@@ -783,6 +784,7 @@ func main() {
 	noMmap := flag.Bool("no-mmap", false, "do not memory-map model (slower load but may reduce pageouts if not using mlock)")
 	mlock := flag.Bool("mlock", false, "force system to keep model in RAM rather than swapping or compressing")
 	tensorSplit := flag.String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
+	multiUserCache := flag.Bool("multiuser-cache", false, "optimize input cache algorithm for multiple users")
 	// Expose requirements as a JSON output to stdout
 	requirements := flag.Bool("requirements", false, "print json requirement information")
 
@@ -845,7 +847,7 @@ func main() {
 	}
 
 	server.ready.Add(1)
-	go server.loadModel(params, *mpath, *lpath, *ppath, *kvSize, *flashAttention, *threads)
+	go server.loadModel(params, *mpath, *lpath, *ppath, *kvSize, *flashAttention, *threads, *multiUserCache)
 
 	server.cond = sync.NewCond(&server.mu)
 
