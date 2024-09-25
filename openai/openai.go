@@ -875,12 +875,30 @@ func ChatMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req ChatCompletionRequest
 
-		// Create a new decoder and disallow unknown fields
+		// Create a new decoder and use DisallowUnknownFields to catch unknown fields
 		decoder := json.NewDecoder(c.Request.Body)
 		decoder.DisallowUnknownFields()
 
 		if err := decoder.Decode(&req); err != nil {
-			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, err.Error()))
+			var unmarshalTypeError *json.UnmarshalTypeError
+			var jsonSyntaxError *json.SyntaxError
+
+			switch {
+			case errors.As(err, &unmarshalTypeError):
+				errMsg := fmt.Sprintf("Invalid type for field %s. Expected %s, got %s", unmarshalTypeError.Field, unmarshalTypeError.Type, unmarshalTypeError.Value)
+				c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, errMsg))
+			case errors.As(err, &jsonSyntaxError):
+				c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, "Invalid JSON syntax"))
+			default:
+				// Check if it's an unknown field error
+				if strings.HasPrefix(err.Error(), "json: unknown field ") {
+					fieldName := strings.TrimPrefix(err.Error(), "json: unknown field ")
+					errMsg := fmt.Sprintf("Unsupported parameter: %s", fieldName)
+					c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, errMsg))
+				} else {
+					c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, err.Error()))
+				}
+			}
 			return
 		}
 
