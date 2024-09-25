@@ -874,19 +874,24 @@ func EmbeddingsMiddleware() gin.HandlerFunc {
 func ChatMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req ChatCompletionRequest
-		err := c.ShouldBindJSON(&req)
-		if err != nil {
+
+		// Create a new decoder and disallow unknown fields
+		decoder := json.NewDecoder(c.Request.Body)
+		decoder.DisallowUnknownFields()
+
+		if err := decoder.Decode(&req); err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, err.Error()))
 			return
 		}
 
-		if len(req.Messages) == 0 {
-			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, "[] is too short - 'messages'"))
+		// Optionally check for more tokens to ensure the entire body has been read
+		if decoder.More() {
+			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, "Unexpected additional fields"))
 			return
 		}
 
+		// Encode back to buffer if needed (as in original middleware)
 		var b bytes.Buffer
-
 		chatReq, err := fromChatRequest(req)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, err.Error()))
