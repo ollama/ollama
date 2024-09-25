@@ -229,7 +229,7 @@ func Preprocess(imageData []byte) ([]float32, int, error) {
 	var aspectRatioIndex int
 	for n, r := range supportedRatios {
 		if r == aspectRatio {
-			aspectRatioIndex = n+1
+			aspectRatioIndex = n + 1
 			break
 		}
 	}
