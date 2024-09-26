@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -300,12 +301,18 @@ func GetAvailableServers(payloadsDir string) map[string]string {
 
 // serversForGpu returns a list of compatible servers give the provided GPU
 // info, ordered by performance. assumes Init() has been called
-// TODO - switch to metadata based mapping
-func ServersForGpu(info gpu.GpuInfo) []string {
+// If multiple variants are present, oldest is chosen
+func ServersForGpu(gl []gpu.GpuInfo) []string {
 	// glob workDir for files that start with ollama_
 	availableServers := GetAvailableServers(runnersDir)
+
+	// Sort by variant, which will yield the oldest variant first
+	sgl := append(make(gpu.GpuInfoList, 0, len(gl)), gl...)
+	sort.Sort(gpu.ByVariant(sgl))
+	info := sgl[0]
+
 	requested := info.Library
-	if info.Variant != gpu.CPUCapabilityNone.String() {
+	if info.Variant != "" && info.Variant != gpu.CPUCapabilityNone.String() {
 		requested += "_" + info.Variant
 	}
 
