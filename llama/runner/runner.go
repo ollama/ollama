@@ -1,10 +1,9 @@
-package main
+package runner
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"log"
 	"log/slog"
@@ -24,6 +23,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llama"
+	"github.com/spf13/cobra"
 )
 
 // input is an element of the prompt to process, either
@@ -844,6 +844,10 @@ func (m *multiLPath) String() string {
 	return strings.Join(*m, ", ")
 }
 
+func (m *multiLPath) Type() string {
+	return "stringSlice"
+}
+
 func (s *Server) loadModel(
 	params llama.ModelParams,
 	mpath string,
@@ -894,34 +898,46 @@ func (s *Server) loadModel(
 	s.ready.Done()
 }
 
-func main() {
-	mpath := flag.String("model", "", "Path to model binary file")
-	ppath := flag.String("mmproj", "", "Path to projector binary file")
-	parallel := flag.Int("parallel", 1, "Number of sequences to handle simultaneously")
-	batchSize := flag.Int("batch-size", 512, "Batch size")
-	nGpuLayers := flag.Int("n-gpu-layers", 0, "Number of layers to offload to GPU")
-	mainGpu := flag.Int("main-gpu", 0, "Main GPU")
-	flashAttention := flag.Bool("flash-attn", false, "Enable flash attention")
-	kvSize := flag.Int("ctx-size", 2048, "Context (or KV cache) size")
-	port := flag.Int("port", 8080, "Port to expose the server on")
-	threads := flag.Int("threads", runtime.NumCPU(), "Number of threads to use during generation")
-	verbose := flag.Bool("verbose", false, "verbose output (default: disabled)")
-	noMmap := flag.Bool("no-mmap", false, "do not memory-map model (slower load but may reduce pageouts if not using mlock)")
-	mlock := flag.Bool("mlock", false, "force system to keep model in RAM rather than swapping or compressing")
-	tensorSplit := flag.String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
-	multiUserCache := flag.Bool("multiuser-cache", false, "optimize input cache algorithm for multiple users")
-	requirements := flag.Bool("requirements", false, "print json requirement information")
+func AddRunnerFlags(cmd *cobra.Command) {
+	cmd.Flags().String("model", "", "Path to model binary file")
+	cmd.Flags().String("mmproj", "", "Path to projector binary file")
+	cmd.Flags().Int("parallel", 1, "Number of sequences to handle simultaneously")
+	cmd.Flags().Int("batch-size", 512, "Batch size")
+	cmd.Flags().Int("n-gpu-layers", 0, "Number of layers to offload to GPU")
+	cmd.Flags().Int("main-gpu", 0, "Main GPU")
+	cmd.Flags().Bool("flash-attn", false, "Enable flash attention")
+	cmd.Flags().Int("ctx-size", 2048, "Context (or KV cache) size")
+	cmd.Flags().Int("port", 8080, "Port to expose the server on")
+	cmd.Flags().Int("threads", runtime.NumCPU(), "Number of threads to use during generation")
+	cmd.Flags().Bool("verbose", false, "verbose output (default: disabled)")
+	cmd.Flags().Bool("no-mmap", false, "do not memory-map model (slower load but may reduce pageouts if not using mlock)")
+	cmd.Flags().Bool("mlock", false, "force system to keep model in RAM rather than swapping or compressing")
+	cmd.Flags().String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
+	cmd.Flags().Bool("multiuser-cache", false, "optimize input cache algorithm for multiple users")
+	cmd.Flags().Var(&lpaths, "lora", "Path to lora layer file (can be specified multiple times)")
+}
 
-	var lpaths multiLPath
-	flag.Var(&lpaths, "lora", "Path to lora layer file (can be specified multiple times)")
+var lpaths = multiLPath{}
 
-	flag.Parse()
-	if *requirements {
-		printRequirements(os.Stdout)
-		return
-	}
+func RunnerMain(cmd *cobra.Command) {
+	mpath, _ := cmd.Flags().GetString("model")
+	ppath, _ := cmd.Flags().GetString("mmproj")
+	parallel, _ := cmd.Flags().GetInt("parallel")
+	batchSize, _ := cmd.Flags().GetInt("batch-size")
+	nGpuLayers, _ := cmd.Flags().GetInt("n-gpu-layers")
+	mainGpu, _ := cmd.Flags().GetInt("main-gpu")
+	flashAttention, _ := cmd.Flags().GetBool("flash-attn")
+	kvSize, _ := cmd.Flags().GetInt("ctx-size")
+	port, _ := cmd.Flags().GetInt("port")
+	threads, _ := cmd.Flags().GetInt("threads")
+	verbose, _ := cmd.Flags().GetBool("verbose")
+	noMmap, _ := cmd.Flags().GetBool("no-mmap")
+	mlock, _ := cmd.Flags().GetBool("mlock")
+	tensorSplit, _ := cmd.Flags().GetString("tensor-split")
+	multiUserCache, _ := cmd.Flags().GetBool("multiuser-cache")
+
 	level := slog.LevelInfo
-	if *verbose {
+	if verbose {
 		level = slog.LevelDebug
 	}
 	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
@@ -937,19 +953,19 @@ func main() {
 	})
 	slog.SetDefault(slog.New(handler))
 	slog.Info("starting go runner")
-	slog.Info("system", "info", llama.PrintSystemInfo(), "threads", *threads)
+	slog.Info("system", "info", llama.PrintSystemInfo(), "threads", threads)
 
 	server := &Server{
-		batchSize: *batchSize,
-		parallel:  *parallel,
-		seqs:      make([]*Sequence, *parallel),
-		seqsSem:   semaphore.NewWeighted(int64(*parallel)),
+		batchSize: batchSize,
+		parallel:  parallel,
+		seqs:      make([]*Sequence, parallel),
+		seqsSem:   semaphore.NewWeighted(int64(parallel)),
 		status:    ServerStatusLoadingModel,
 	}
 
 	var tensorSplitFloats []float32
-	if *tensorSplit != "" {
-		stringFloats := regexp.MustCompile(",").Split(*tensorSplit, -1)
+	if tensorSplit != "" {
+		stringFloats := regexp.MustCompile(",").Split(tensorSplit, -1)
 
 		tensorSplitFloats = make([]float32, 0, len(stringFloats))
 		for _, s := range stringFloats {
@@ -959,10 +975,10 @@ func main() {
 	}
 
 	params := llama.ModelParams{
-		NumGpuLayers: *nGpuLayers,
-		MainGpu:      *mainGpu,
-		UseMmap:      !*noMmap && lpaths.String() == "",
-		UseMlock:     *mlock,
+		NumGpuLayers: nGpuLayers,
+		MainGpu:      mainGpu,
+		UseMmap:      !noMmap && lpaths.String() == "",
+		UseMlock:     mlock,
 		TensorSplit:  tensorSplitFloats,
 		Progress: func(progress float32) {
 			server.progress = progress
@@ -970,17 +986,18 @@ func main() {
 	}
 
 	server.ready.Add(1)
-	go server.loadModel(params, *mpath, lpaths, *ppath, *kvSize, *flashAttention, *threads, *multiUserCache)
+	go server.loadModel(params, mpath, lpaths, ppath, kvSize, flashAttention, threads, multiUserCache)
 
 	server.cond = sync.NewCond(&server.mu)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go server.run(ctx)
 
-	addr := "127.0.0.1:" + strconv.Itoa(*port)
+	addr := "127.0.0.1:" + strconv.Itoa(port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		fmt.Println("Listen error:", err)
+		cancel()
 		return
 	}
 	defer listener.Close()

@@ -154,7 +154,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		return nil, finalErr
 	}
 	var servers []string
-	if cpuRunner != "" {
+	if cpuRunner != "" && rDir != "" {
 		servers = []string{cpuRunner}
 	} else {
 		servers = runners.ServersForGpu(gpus[0]) // All GPUs in the list are matching Library and Variant
@@ -262,6 +262,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 	}
 
 	for i := range servers {
+		builtin := servers[i] == "builtin"
 		dir := availableServers[servers[i]]
 		if dir == "" {
 			// Shouldn't happen
@@ -270,7 +271,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 			continue
 		}
 
-		if strings.HasPrefix(servers[i], "cpu") {
+		if strings.HasPrefix(servers[i], "cpu") || (builtin && !(runtime.GOOS == "darwin" && runtime.GOARCH == "arm64")) {
 			gpus = discover.GetCPUInfo()
 		}
 
@@ -287,7 +288,12 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 			slog.Debug("ResolveTCPAddr failed ", "error", err)
 			port = rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
 		}
-		finalParams := append(params, "--port", strconv.Itoa(port))
+		finalParams := []string{}
+		if builtin {
+			finalParams = []string{"runner"}
+		}
+		finalParams = append(finalParams, params...)
+		finalParams = append(finalParams, "--port", strconv.Itoa(port))
 
 		pathEnv := "LD_LIBRARY_PATH"
 		if runtime.GOOS == "windows" {
@@ -308,9 +314,19 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 			libraryPaths = append(gpus[0].DependencyPath, libraryPaths...)
 		}
 
-		server := filepath.Join(dir, "ollama_llama_server")
-		if runtime.GOOS == "windows" {
-			server += ".exe"
+		var server string
+		if builtin {
+			exe, err := os.Executable()
+			if err != nil {
+				slog.Warn("executable lookup failure", "error", err)
+				continue
+			}
+			server = exe
+		} else {
+			server = filepath.Join(dir, "ollama_llama_server")
+			if runtime.GOOS == "windows" {
+				server += ".exe"
+			}
 		}
 
 		// Detect tmp cleaners wiping out the file

@@ -105,7 +105,9 @@ func locateRunners() (string, error) {
 			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("unable to locate runners in any search path %v", paths)
+	// Fall back to built-in
+	slog.Debug("unable to locate runners, using built-in")
+	return "", nil
 }
 
 // Return true if we're carying nested payloads for the runners
@@ -276,6 +278,11 @@ func cleanupTmpDirs() {
 // lowest common denominator
 func GetAvailableServers(payloadsDir string) map[string]string {
 	if payloadsDir == "" {
+		exe, err := os.Executable()
+		if err == nil {
+			slog.Debug("Wiring up built-in runner")
+			return map[string]string{"builtin": filepath.Dir(exe)}
+		}
 		slog.Error("empty runner dir")
 		return nil
 	}
@@ -304,6 +311,12 @@ func GetAvailableServers(payloadsDir string) map[string]string {
 func ServersForGpu(info discover.GpuInfo) []string {
 	// glob workDir for files that start with ollama_
 	availableServers := GetAvailableServers(runnersDir)
+
+	// Short circuit if the only option is built-in
+	if _, ok := availableServers["builtin"]; ok {
+		return []string{"builtin"}
+	}
+
 	requested := info.Library
 	if info.Variant != discover.CPUCapabilityNone.String() {
 		requested += "_" + info.Variant
