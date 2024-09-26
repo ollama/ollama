@@ -46,7 +46,6 @@ clean:
 
 clean-payload:
 	rm -rf $(addprefix $(RUNNERS_PAYLOAD_DIR)/, $(RUNNER_TARGETS) metal cpu cpu_avx cpu_avx2)
-	mkdir -p $(addprefix $(RUNNERS_PAYLOAD_DIR)/, $(RUNNER_TARGETS) metal cpu cpu_avx cpu_avx2)
 
 .PHONY: all runners clean clean-payload $(RUNNER_TARGETS) .WAIT
 
