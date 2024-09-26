@@ -57,7 +57,7 @@ The `Processor` column will show which memory the model was loaded in to:
 
 ## How do I configure Ollama server?
 
-Ollama server can be configured with environment variables.
+Ollama server can be optionally configured with environment variables.
 
 ### Setting environment variables on Mac
 
@@ -66,7 +66,7 @@ If Ollama is run as a macOS application, environment variables should be set usi
 1. For each environment variable, call `launchctl setenv`.
 
     ```bash
-    launchctl setenv OLLAMA_HOST "0.0.0.0"
+    launchctl setenv OLLAMA_HOST "127.0.0.1"
     ```
 
 2. Restart Ollama application.
@@ -81,7 +81,7 @@ If Ollama is run as a systemd service, environment variables should be set using
 
     ```ini
     [Service]
-    Environment="OLLAMA_HOST=0.0.0.0"
+    Environment="OLLAMA_HOST=127.0.0.1"
     ```
 
 3. Save and exit.
@@ -143,7 +143,9 @@ No. Ollama runs locally, and conversation data does not leave your machine.
 
 ## How can I expose Ollama on my network?
 
-Ollama binds 127.0.0.1 port 11434 by default. Change the bind address with the `OLLAMA_HOST` environment variable.
+Ollama binds by default to `127.0.0.1` on port `11434` by default. To change the bind address, you can set the `OLLAMA_HOST` environment variable to something else following the format `<scheme>://<host>:<port>`.
+
+_Warning: You should not set `OLLAMA_HOST` to `0.0.0.0` if Ollama is exposed to the internet._
 
 Refer to the section [above](#how-do-i-configure-ollama-server) for how to set environment variables on your platform.
 
