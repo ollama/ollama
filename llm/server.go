@@ -673,9 +673,9 @@ ws ::= ([ \t\n] ws)?
 const maxBufferSize = 512 * format.KiloByte
 
 type ImageData struct {
-	Data          []byte    `json:"data"`
-	ID            int       `json:"id"`
-	AspectRatioID int       `json:"aspect_ratio_id"`
+	Data          []byte `json:"data"`
+	ID            int    `json:"id"`
+	AspectRatioID int    `json:"aspect_ratio_id"`
 }
 
 type completion struct {
