@@ -159,11 +159,7 @@ func PadImage(img image.Image, outputSize, aspectRatio image.Point) image.Image 
 	}
 
 	dst := image.NewRGBA(image.Rect(0, 0, paddedSize.X, paddedSize.Y))
-	centerX := (paddedSize.X - img.Bounds().Max.X) / 2
-	centerY := (paddedSize.Y - img.Bounds().Max.Y) / 2
-	pos := image.Rect(centerX, centerY, centerX+img.Bounds().Max.X, centerY+img.Bounds().Max.Y)
-
-	draw.Draw(dst, pos, img, image.Point{0, 0}, draw.Over)
+	draw.Draw(dst, img.Bounds(), img, image.Point{0, 0}, draw.Over)
 
 	return dst
 }
