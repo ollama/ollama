@@ -1,4 +1,4 @@
-package main
+package runner
 
 import (
 	"context"
@@ -827,7 +827,7 @@ func (s *Server) loadModel(
 	s.ready.Done()
 }
 
-func main() {
+func RunnerMain() {
 	mpath := flag.String("model", "", "Path to model binary file")
 	ppath := flag.String("mmproj", "", "Path to projector binary file")
 	parallel := flag.Int("parallel", 1, "Number of sequences to handle simultaneously")
@@ -917,6 +917,7 @@ func main() {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		fmt.Println("Listen error:", err)
+		cancel()
 		return
 	}
 	defer listener.Close()
