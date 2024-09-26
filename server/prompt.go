@@ -84,25 +84,25 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 			msgs[lastMsgIdx].Content = strings.TrimSpace("<|image|>" + msgs[lastMsgIdx].Content)
 			images = append(images, imgData)
 		}
-	}
+	} else {
+		for cnt, msg := range msgs[currMsgIdx:] {
+			for _, i := range msg.Images {
+				imgData := llm.ImageData{
+					ID:   len(images),
+					Data: i,
+				}
 
-	for cnt, msg := range msgs[currMsgIdx:] {
-		for _, i := range msg.Images {
-			imgData := llm.ImageData{
-				ID:   len(images),
-				Data: i,
+				imageTag := fmt.Sprintf("[img-%d]", imgData.ID)
+				prompt := msg.Content
+
+				if !strings.Contains(prompt, "[img]") {
+					prompt = strings.TrimSpace("[img] " + prompt)
+				}
+				prompt = strings.Replace(prompt, "[img]", imageTag, 1)
+				msgs[currMsgIdx+cnt].Content = prompt
+
+				images = append(images, imgData)
 			}
-
-			imageTag := fmt.Sprintf("[img-%d]", imgData.ID)
-			prompt := msg.Content
-
-			if !strings.Contains(prompt, "[img]") {
-				prompt = strings.TrimSpace("[img] " + prompt)
-			}
-			prompt = strings.Replace(prompt, "[img]", imageTag, 1)
-			msgs[currMsgIdx+cnt].Content = prompt
-
-			images = append(images, imgData)
 		}
 	}
 
