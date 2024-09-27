@@ -286,3 +286,8 @@ Note: Windows with Radeon GPUs currently default to 1 model maximum due to limit
 ## How does Ollama load models on multiple GPUs?
 
 Installing multiple GPUs of the same brand can be a great way to increase your available VRAM to load larger models.  When you load a new model, Ollama evaluates the required VRAM for the model against what is currently available.  If the model will entirely fit on any single GPU, Ollama will load the model on that GPU.  This typically provides the best performance as it reduces the amount of data transfering across the PCI bus during inference.  If the model does not fit entirely on one GPU, then it will be spread across all the available GPUs.
+
+
+## Why does Ollama need AVX support to use my GPU?
+
+The official builds of Ollama for both Linux and Windows on x86 compile GPU runners with the AVX vector feature enabled.  This provides a good performance balance when loading large models that split across GPU and CPU with broad compatibility.  If you are using a hypervisor that masks CPU features for portability or compatibility, try setting the CPU to "host" mode or allow CPU features to be exposed.  If this isn't possible, or your CPU doesn't have AVX support, you can build Ollama from source to customize this setting.  See [development.md](./development.md#custom-cpu-flags-for-gpu-runners) for instructions.
