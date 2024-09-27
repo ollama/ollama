@@ -173,6 +173,8 @@ struct server_slot {
     double t_prompt_processing; // ms
     double t_token_generation; // ms
 
+    float *cross_attn_state = nullptr;
+
     // multitasks
     int multitask_id = -1;
 
@@ -198,6 +200,11 @@ struct server_slot {
                 clip_image_u8_free(img.img_data);
             }
             img.prefix_prompt = "";
+        }
+
+        if (cross_attn_state) {
+            free(cross_attn_state);
+            cross_attn_state = nullptr;
         }
 
         images.clear();
@@ -730,6 +737,27 @@ struct llama_server_context
                 for (const auto &img : *images_data)
                 {
                     const std::vector<uint8_t> image_buffer = base64_decode(img["data"].get<std::string>());
+
+                    // Check for mllama architecture, which processes images differently than llava
+                    char arch_str[256];
+                    llama_model_meta_val_str(model, "general.architecture", arch_str, 256);
+                    bool is_mllama = strcmp(arch_str, "mllama") == 0;
+
+                    if (is_mllama) {
+                        LOG_INFO("MLLAMA architecture detected, processing first image", {{"slot_id", slot->id}});
+
+                        struct clip_image_f32 *img = clip_image_f32_init();
+                        clip_image_load_from_data(image_buffer.data(), image_buffer.size(), 560, 560, 3, 4, img);
+
+                        const int n = clip_embd_nbytes(clp_ctx);
+                        printf("%s: nbytes %d\n", __func__, n);
+
+                        slot->cross_attn_state = (float *)malloc(n);
+                        printf("%s: nbytes %d image_embd: %p\n", __func__, n, slot->cross_attn_state);
+                        clip_image_encode(clp_ctx, 1, img, slot->cross_attn_state);
+                        llama_set_cross_attn_state(ctx, slot->cross_attn_state);
+                        break;
+                    }
 
                     slot_image img_sl;
                     img_sl.id = img.count("id") != 0 ? img["id"].get<int>() : slot->images.size();
