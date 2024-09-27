@@ -1,7 +1,9 @@
 package imageproc
 
 import (
+	"bytes"
 	"image"
+	"image/png"
 	"reflect"
 	"testing"
 )
@@ -27,12 +29,12 @@ func testEq(a, b any) bool {
 }
 
 func TestAspectRatios(t *testing.T) {
-	type AspectCase struct {
+	type aspectCase struct {
 		MaxTiles int
 		Expected []image.Point
 	}
 
-	cases := []AspectCase{
+	cases := []aspectCase{
 		{
 			MaxTiles: 1,
 			Expected: []image.Point{{1, 1}},
@@ -61,14 +63,14 @@ func TestAspectRatios(t *testing.T) {
 }
 
 func TestGetImageSizeFitToCanvas(t *testing.T) {
-	type ImageSizeCase struct {
+	type imageSizeCase struct {
 		ImageRect  image.Point
 		CanvasRect image.Point
 		TileSize   int
 		Expected   image.Point
 	}
 
-	cases := []ImageSizeCase{
+	cases := []imageSizeCase{
 		{
 			ImageRect:  image.Point{400, 400},
 			CanvasRect: image.Point{640, 480},
@@ -108,7 +110,7 @@ func TestGetImageSizeFitToCanvas(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		actual := GetImageSizeFitToCanvas(c.ImageRect, c.CanvasRect, c.TileSize)
+		actual := getImageSizeFitToCanvas(c.ImageRect, c.CanvasRect, c.TileSize)
 
 		if actual != c.Expected {
 			t.Errorf("incorrect image rect: '%#v'. expected: '%#v'", actual, c.Expected)
@@ -117,19 +119,19 @@ func TestGetImageSizeFitToCanvas(t *testing.T) {
 }
 
 func TestGetOptimalTiledCanvas(t *testing.T) {
-	type TiledCanvasSizeCase struct {
+	type tiledCanvasSizeCase struct {
 		ImageSize     image.Point
 		MaxImageTiles int
 		TileSize      int
 		Expected      image.Point
 	}
 
-	cases := []TiledCanvasSizeCase{
+	cases := []tiledCanvasSizeCase{
 		{
 			ImageSize:     image.Point{1024, 768},
 			MaxImageTiles: 4,
 			TileSize:      1000,
-			Expected:      image.Point{4000, 1000},
+			Expected:      image.Point{2000, 1000},
 		},
 		{
 			ImageSize:     image.Point{1024, 768},
@@ -140,7 +142,7 @@ func TestGetOptimalTiledCanvas(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		actual := GetOptimalTiledCanvas(c.ImageSize, c.MaxImageTiles, c.TileSize)
+		actual := getOptimalTiledCanvas(c.ImageSize, c.MaxImageTiles, c.TileSize)
 
 		if actual != c.Expected {
 			t.Errorf("incorrect tiled canvas: '%#v'. expected: '%#v'", actual, c.Expected)
@@ -149,13 +151,13 @@ func TestGetOptimalTiledCanvas(t *testing.T) {
 }
 
 func TestSplitToTiles(t *testing.T) {
-	type SplitCase struct {
+	type splitCase struct {
 		TestImage    image.Image
 		NumTilesSize image.Point
 		Expected     []image.Image
 	}
 
-	cases := []SplitCase{
+	cases := []splitCase{
 		{
 			TestImage:    image.NewRGBA(image.Rect(0, 0, 1024, 768)),
 			NumTilesSize: image.Point{1, 1},
@@ -182,7 +184,7 @@ func TestSplitToTiles(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		actual := SplitToTiles(c.TestImage, c.NumTilesSize)
+		actual := splitToTiles(c.TestImage, c.NumTilesSize)
 
 		if len(actual) != len(c.Expected) {
 			t.Errorf("incorrect number of images '%d': expected: '%d'", len(actual), len(c.Expected))
@@ -197,7 +199,7 @@ func TestSplitToTiles(t *testing.T) {
 }
 
 func TestResize(t *testing.T) {
-	type ResizeCase struct {
+	type resizeCase struct {
 		TestImage           image.Image
 		OutputSize          image.Point
 		MaxImageTiles       int
@@ -205,7 +207,7 @@ func TestResize(t *testing.T) {
 		ExpectedAspectRatio image.Point
 	}
 
-	cases := []ResizeCase{
+	cases := []resizeCase{
 		{
 			TestImage:           image.NewRGBA(image.Rect(0, 0, 200, 200)),
 			OutputSize:          image.Point{100, 100},
@@ -218,7 +220,14 @@ func TestResize(t *testing.T) {
 			OutputSize:          image.Point{100, 100},
 			MaxImageTiles:       2,
 			ExpectedImage:       image.NewRGBA(image.Rect(0, 0, 100, 100)),
-			ExpectedAspectRatio: image.Point{1, 2},
+			ExpectedAspectRatio: image.Point{1, 1},
+		},
+		{
+			TestImage:           image.NewRGBA(image.Rect(0, 0, 10, 10)),
+			OutputSize:          image.Point{560, 560},
+			MaxImageTiles:       4,
+			ExpectedImage:       image.NewRGBA(image.Rect(0, 0, 560, 560)),
+			ExpectedAspectRatio: image.Point{1, 1},
 		},
 		{
 			TestImage:           image.NewRGBA(image.Rect(0, 0, 2560, 1920)),
@@ -244,20 +253,20 @@ func TestResize(t *testing.T) {
 		}
 
 		if actualAspectRatio != c.ExpectedAspectRatio {
-			t.Errorf("canvas size incorrect: '%#v': expected: '%#v'", actualAspectRatio, c.ExpectedAspectRatio)
+			t.Errorf("aspect ratio incorrect: '%#v': expected: '%#v'", actualAspectRatio, c.ExpectedAspectRatio)
 		}
 	}
 }
 
 func TestPad(t *testing.T) {
-	type PadCase struct {
+	type padCase struct {
 		TestImage   image.Image
 		OutputSize  image.Point
 		AspectRatio image.Point
 		Expected    image.Image
 	}
 
-	cases := []PadCase{
+	cases := []padCase{
 		{
 			TestImage:   image.NewRGBA(image.Rect(0, 0, 1000, 667)),
 			OutputSize:  image.Point{560, 560},
@@ -276,30 +285,79 @@ func TestPad(t *testing.T) {
 }
 
 func TestPackImages(t *testing.T) {
-	type PackCase struct {
-		TestImage   image.Image
-		AspectRatio image.Point
+	type packCase struct {
+		TestImage    image.Image
+		AspectRatio  image.Point
+		ExpectedVals int
 	}
 
 	mean := [3]float32{0.48145466, 0.4578275, 0.40821073}
 	std := [3]float32{0.26862954, 0.26130258, 0.27577711}
 
-	cases := []PackCase{
+	cases := []packCase{
 		{
-			TestImage:   image.NewRGBA(image.Rect(0, 0, 1120, 1120)),
-			AspectRatio: image.Point{2, 2},
+			TestImage:    image.NewRGBA(image.Rect(0, 0, 1120, 1120)),
+			AspectRatio:  image.Point{2, 2},
+			ExpectedVals: 2 * 2 * 3 * 560 * 560,
 		},
 		{
-			TestImage:   image.NewRGBA(image.Rect(0, 0, 560, 560)),
-			AspectRatio: image.Point{1, 1},
+			TestImage:    image.NewRGBA(image.Rect(0, 0, 560, 560)),
+			AspectRatio:  image.Point{1, 1},
+			ExpectedVals: 1 * 1 * 3 * 560 * 560,
 		},
 		{
-			TestImage:   image.NewRGBA(image.Rect(0, 0, 1120, 560)),
-			AspectRatio: image.Point{1, 2},
+			TestImage:    image.NewRGBA(image.Rect(0, 0, 1120, 560)),
+			AspectRatio:  image.Point{1, 2},
+			ExpectedVals: 1 * 2 * 3 * 560 * 560,
 		},
 	}
 
 	for _, c := range cases {
-		PackImages(c.TestImage, c.AspectRatio, mean, std)
+		actualVals := PackImages(c.TestImage, c.AspectRatio, mean, std)
+		if len(actualVals) != c.ExpectedVals {
+			t.Errorf("packed image size incorrect: '%d': expected: '%d'", len(actualVals), c.ExpectedVals)
+		}
+	}
+}
+
+func TestPreprocess(t *testing.T) {
+	type preprocessCase struct {
+		TestImage             image.Image
+		ExpectedVals          int
+		ExpectedAspectRatioID int
+	}
+
+	cases := []preprocessCase{
+		{
+			TestImage:             image.NewRGBA(image.Rect(0, 0, 10, 10)),
+			ExpectedVals:          0,
+			ExpectedAspectRatioID: 1,
+		},
+		{
+			TestImage:             image.NewRGBA(image.Rect(0, 0, 1024, 768)),
+			ExpectedVals:          0,
+			ExpectedAspectRatioID: 6,
+		},
+	}
+
+	for _, c := range cases {
+		var buf bytes.Buffer
+		err := png.Encode(&buf, c.TestImage)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		imgData, aspectRatioID, err := Preprocess(buf.Bytes())
+		if err != nil {
+			t.Fatalf("error processing: %q", err)
+		}
+
+		if len(imgData) == 0 {
+			t.Errorf("no image data returned")
+		}
+
+		if aspectRatioID != c.ExpectedAspectRatioID {
+			t.Errorf("aspect ratio incorrect: '%d': expected: '%d'", aspectRatioID, c.ExpectedAspectRatioID)
+		}
 	}
 }

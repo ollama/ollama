@@ -42,7 +42,7 @@ func min(a, b int) int {
 	return b
 }
 
-func GetImageSizeFitToCanvas(imageSize, canvasSize image.Point, tileSize int) image.Point {
+func getImageSizeFitToCanvas(imageSize, canvasSize image.Point, tileSize int) image.Point {
 	targetWidth := clip(imageSize.X, tileSize, canvasSize.X)
 	targetHeight := clip(imageSize.Y, tileSize, canvasSize.Y)
 
@@ -62,7 +62,7 @@ func GetImageSizeFitToCanvas(imageSize, canvasSize image.Point, tileSize int) im
 	return image.Point{w, h}
 }
 
-func GetOptimalTiledCanvas(imageSize image.Point, maxImageTiles, tileSize int) image.Point {
+func getOptimalTiledCanvas(imageSize image.Point, maxImageTiles, tileSize int) image.Point {
 	possibleTileArrangements := GetSupportedAspectRatios(maxImageTiles)
 	possibleCanvasSizes := []image.Point{}
 	for _, pta := range possibleTileArrangements {
@@ -104,11 +104,13 @@ func GetOptimalTiledCanvas(imageSize image.Point, maxImageTiles, tileSize int) i
 		selectedScale = minUpscale
 	}
 
-	selectedCanvas := possibleCanvasSizes[0]
+	var selectedCanvas image.Point
 	for n, pcs := range possibleCanvasSizes {
 		if scales[n] == selectedScale {
-			// choose the largest possible canvas
-			if pcs.X*pcs.Y > selectedCanvas.X*selectedCanvas.Y {
+			// choose the smallest possible canvas
+			if selectedCanvas.X == 0 && selectedCanvas.Y == 0 {
+				selectedCanvas = pcs
+			} else if pcs.X*pcs.Y < selectedCanvas.X*selectedCanvas.Y {
 				selectedCanvas = pcs
 			}
 		}
@@ -116,7 +118,7 @@ func GetOptimalTiledCanvas(imageSize image.Point, maxImageTiles, tileSize int) i
 	return selectedCanvas
 }
 
-func SplitToTiles(img image.Image, numTilesSize image.Point) []image.Image {
+func splitToTiles(img image.Image, numTilesSize image.Point) []image.Image {
 	b := img.Bounds()
 	width := b.Max.X - b.Min.X
 	height := b.Max.Y - b.Min.Y
@@ -141,10 +143,9 @@ func ResizeImage(img image.Image, outputSize image.Point, maxImageTiles int) (im
 	b := img.Bounds()
 	tileSize := outputSize.Y
 
-	canvasSize := GetOptimalTiledCanvas(b.Max, maxImageTiles, tileSize)
+	canvasSize := getOptimalTiledCanvas(b.Max, maxImageTiles, tileSize)
 	aspectRatio := image.Point{canvasSize.X / tileSize, canvasSize.Y / tileSize}
-
-	newSize := GetImageSizeFitToCanvas(b.Max, canvasSize, tileSize)
+	newSize := getImageSizeFitToCanvas(b.Max, canvasSize, tileSize)
 
 	dst := image.NewRGBA(image.Rect(0, 0, newSize.X, newSize.Y))
 	draw.ApproxBiLinear.Scale(dst, dst.Rect, img, b, draw.Over, nil)
@@ -165,7 +166,7 @@ func PadImage(img image.Image, outputSize, aspectRatio image.Point) image.Image 
 }
 
 func PackImages(img image.Image, aspectRatio image.Point, mean, std [3]float32) []float32 {
-	subImages := SplitToTiles(img, aspectRatio)
+	subImages := splitToTiles(img, aspectRatio)
 
 	var pixelVals []float32
 
@@ -217,8 +218,6 @@ func Preprocess(imageData []byte) ([]float32, int, error) {
 
 	newImage, aspectRatio := ResizeImage(img, outputSize, maxTiles)
 	newImage = PadImage(newImage, outputSize, aspectRatio)
-
-	// todo: need to scale (dim) by 1/256
 
 	data := PackImages(newImage, aspectRatio, mean, std)
 	supportedRatios := GetSupportedAspectRatios(maxTiles)
