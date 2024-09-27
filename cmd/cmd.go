@@ -894,6 +894,9 @@ func getAPIPuller(insecure bool) (p pullFn, err error) {
 		return p, err
 	}
 	p = func(ctx context.Context, name string, fn api.PullProgressFunc) error {
+		if err := preflightCheck(ctx, client); err != nil {
+			return err
+		}
 		req := api.PullRequest{Name: name, Insecure: insecure}
 		return client.Pull(ctx, &req, fn)
 	}
@@ -1274,11 +1277,15 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if err := client.Heartbeat(cmd.Context()); err != nil {
+	return preflightCheck(cmd.Context(), client)
+}
+
+func preflightCheck(ctx context.Context, client *api.Client) error {
+	if err := client.Heartbeat(ctx); err != nil {
 		if !strings.Contains(err.Error(), " refused") {
 			return err
 		}
-		if err := startApp(cmd.Context(), client); err != nil {
+		if err := startApp(ctx, client); err != nil {
 			return errors.New("could not connect to ollama app, is it running?")
 		}
 	}
@@ -1404,11 +1411,10 @@ func NewCLI() *cobra.Command {
 	}
 
 	pullCmd := &cobra.Command{
-		Use:     "pull MODEL",
-		Short:   "Pull a model from a registry",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    PullHandler,
+		Use:   "pull MODEL",
+		Short: "Pull a model from a registry",
+		Args:  cobra.ExactArgs(1),
+		RunE:  PullHandler,
 	}
 
 	pullCmd.Flags().Bool("insecure", false, "Use an insecure registry")
