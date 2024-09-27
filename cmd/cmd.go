@@ -873,15 +873,56 @@ func CopyHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+type pullFn func(ctx context.Context, name string, fn api.PullProgressFunc) error
+
+func getLocalPuller(insecure bool) (p pullFn, err error) {
+	p = func(ctx context.Context, name string, fn api.PullProgressFunc) error {
+		opts := &server.RegistryOptions{
+			Insecure: insecure,
+		}
+		f := func(r api.ProgressResponse) {
+			fn(r)
+		}
+		return server.PullModel(ctx, name, opts, f)
+	}
+	return p, nil
+}
+
+func getAPIPuller(insecure bool) (p pullFn, err error) {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return p, err
+	}
+	p = func(ctx context.Context, name string, fn api.PullProgressFunc) error {
+		req := api.PullRequest{Name: name, Insecure: insecure}
+		return client.Pull(ctx, &req, fn)
+	}
+	return p, nil
+}
+
 func PullHandler(cmd *cobra.Command, args []string) error {
 	insecure, err := cmd.Flags().GetBool("insecure")
 	if err != nil {
 		return err
 	}
-
-	client, err := api.ClientFromEnvironment()
+	local, err := cmd.Flags().GetBool("local")
 	if err != nil {
 		return err
+	}
+
+	var pf pullFn
+	if local {
+		fmt.Println("pulling to local machine")
+		pf, err = getLocalPuller(insecure)
+	} else {
+		fmt.Println("requesting pull from server")
+		pf, err = getAPIPuller(insecure)
+	}
+	if err != nil {
+		return err
+	}
+	if pf == nil {
+		return fmt.Errorf("could not get puller: %w", err)
 	}
 
 	p := progress.NewProgress(os.Stderr)
@@ -919,8 +960,7 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	request := api.PullRequest{Name: args[0], Insecure: insecure}
-	if err := client.Pull(cmd.Context(), &request, fn); err != nil {
+	if err := pf(cmd.Context(), args[0], fn); err != nil {
 		return err
 	}
 
@@ -1372,6 +1412,7 @@ func NewCLI() *cobra.Command {
 	}
 
 	pullCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	pullCmd.Flags().Bool("local", false, "Pull to the local machine instead of making a server request")
 
 	pushCmd := &cobra.Command{
 		Use:     "push MODEL",

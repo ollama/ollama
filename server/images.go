@@ -49,7 +49,7 @@ const (
 	CapabilityInsert     = Capability("insert")
 )
 
-type registryOptions struct {
+type RegistryOptions struct {
 	Insecure bool
 	Username string
 	Password string
@@ -795,7 +795,7 @@ func PruneDirectory(path string) error {
 	return nil
 }
 
-func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 	fn(api.ProgressResponse{Status: "retrieving manifest"})
 
@@ -844,7 +844,7 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	return nil
 }
 
-func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
 	// build deleteMap to prune unused layers
@@ -950,7 +950,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	return nil
 }
 
-func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptions) (*Manifest, error) {
+func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *RegistryOptions) (*Manifest, error) {
 	requestURL := mp.BaseURL().JoinPath("v2", mp.GetNamespaceRepository(), "manifests", mp.Tag)
 
 	headers := make(http.Header)
@@ -1011,7 +1011,7 @@ func getTokenSubject(token string) string {
 	return fmt.Sprintf("%s", sub)
 }
 
-func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *registryOptions) (*http.Response, error) {
+func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *RegistryOptions) (*http.Response, error) {
 	anonymous := true // access will default to anonymous if no user is found associated with the public key
 	for range 2 {
 		resp, err := makeRequest(ctx, method, requestURL, headers, body, regOpts)
@@ -1069,7 +1069,7 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 	return nil, errUnauthorized
 }
 
-func makeRequest(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.Reader, regOpts *registryOptions) (*http.Response, error) {
+func makeRequest(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.Reader, regOpts *RegistryOptions) (*http.Response, error) {
 	if requestURL.Scheme != "http" && regOpts != nil && regOpts.Insecure {
 		requestURL.Scheme = "http"
 	}
