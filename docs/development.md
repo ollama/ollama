@@ -2,14 +2,19 @@
 
 Install required tools:
 
-- cmake version 3.24 or higher
+- cmake version 3.24 or higher (only required for legacy C++ runner build)
 - go version 1.22 or higher
 - gcc version 11.4.0 or higher
+
+
+## Transitional new Go llama Runner
+
+The Ollama team is working on moving to a new Go based llama runner subprocess.  During a transition period, this new Go runner is "opt in" at build time, and requires using a different approach to build.  When you run `go generate ./...` you will build the C++ based runner.  To build the new Go runner, use `make` as described below. Once either the C++ or Go runners are built, simply run `go build .` as before.  After we complete the transition to use the Go server exclusively, both `make` and `go generate` will build the Go Runner.  The instructions below assume an "opt in" build of the new Go server.
 
 ### MacOS
 
 ```bash
-brew install go cmake gcc
+brew install go gcc
 ```
 
 Optionally enable debugging and more verbose logging:
@@ -22,10 +27,10 @@ export CGO_CFLAGS="-g"
 export OLLAMA_DEBUG=1
 ```
 
-Get the required libraries and build the native LLM code:
+Get the required libraries and build the native LLM code:  (Adjust the job count based on your number of processors for a faster build)
 
 ```bash
-go generate ./...
+make -C llama -j 5
 ```
 
 Then build ollama:
@@ -50,7 +55,7 @@ If you are using Xcode newer than version 14, you may see a warning during `go b
 
 _Your operating system distribution may already have packages for NVIDIA CUDA. Distro packages are often preferable, but instructions are distro-specific. Please consult distro-specific docs for dependencies if available!_
 
-Install `cmake` and `golang` as well as [NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads)
+Install `make`, `gcc` and `golang` as well as [NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads)
 development and runtime packages.
 
 Typically the build scripts will auto-detect CUDA, however, if your Linux distro
@@ -59,10 +64,10 @@ specifying an environment variable `CUDA_LIB_DIR` to the location of the shared
 libraries, and `CUDACXX` to the location of the nvcc compiler. You can customize
 a set of target CUDA architectures by setting `CMAKE_CUDA_ARCHITECTURES` (e.g. "50;60;70")
 
-Then generate dependencies:
+Then generate dependencies:  (Adjust the job count based on your number of processors for a faster build)
 
 ```
-go generate ./...
+make -C llama -j 5
 ```
 
 Then build the binary:
@@ -75,7 +80,7 @@ go build .
 
 _Your operating system distribution may already have packages for AMD ROCm and CLBlast. Distro packages are often preferable, but instructions are distro-specific. Please consult distro-specific docs for dependencies if available!_
 
-Install [CLBlast](https://github.com/CNugteren/CLBlast/blob/master/doc/installation.md) and [ROCm](https://rocm.docs.amd.com/en/latest/) development packages first, as well as `cmake` and `golang`.
+Install [CLBlast](https://github.com/CNugteren/CLBlast/blob/master/doc/installation.md) and [ROCm](https://rocm.docs.amd.com/en/latest/) development packages first, as well as `make`, `gcc`, and `golang`.
 
 Typically the build scripts will auto-detect ROCm, however, if your Linux distro
 or installation approach uses unusual paths, you can specify the location by
@@ -84,8 +89,10 @@ install (typically `/opt/rocm`), and `CLBlast_DIR` to the location of the
 CLBlast install (typically `/usr/lib/cmake/CLBlast`). You can also customize
 the AMD GPU targets by setting AMDGPU_TARGETS (e.g. `AMDGPU_TARGETS="gfx1101;gfx1102"`)
 
+Then generate dependencies:  (Adjust the job count based on your number of processors for a faster build)
+
 ```
-go generate ./...
+make -C llama -j 5
 ```
 
 Then build the binary:
@@ -98,57 +105,57 @@ ROCm requires elevated privileges to access the GPU at runtime. On most distros 
 
 #### Advanced CPU Settings
 
-By default, running `go generate ./...` will compile a few different variations
+By default, running `make` will compile a few different variations
 of the LLM library based on common CPU families and vector math capabilities,
 including a lowest-common-denominator which should run on almost any 64 bit CPU
 somewhat slowly. At runtime, Ollama will auto-detect the optimal variation to
-load. If you would like to build a CPU-based build customized for your
-processor, you can set `OLLAMA_CUSTOM_CPU_DEFS` to the llama.cpp flags you would
-like to use. For example, to compile an optimized binary for an Intel i9-9880H,
-you might use:
+load. 
 
-```
-OLLAMA_CUSTOM_CPU_DEFS="-DGGML_AVX=on -DGGML_AVX2=on -DGGML_F16C=on -DGGML_FMA=on" go generate ./...
-go build .
-```
+Custom CPU settings are not currently supported in the new Go server build but will be added back after we complete the transition.
 
 #### Containerized Linux Build
 
-If you have Docker available, you can build linux binaries with `./scripts/build_linux.sh` which has the CUDA and ROCm dependencies included. The resulting binary is placed in `./dist`
+If you have Docker available, you can build linux binaries with `OLLAMA_NEW_RUNNERS=1 ./scripts/build_linux.sh` which has the CUDA and ROCm dependencies included. The resulting binary is placed in `./dist`
 
 ### Windows
 
-Note: The Windows build for Ollama is still under development.
+The following tools are required as a minimal development environment to build CPU inference support.
 
-First, install required tools:
-
-- MSVC toolchain - C/C++ and cmake as minimal requirements
 - Go version 1.22 or higher
-- MinGW (pick one variant) with GCC.
-  - [MinGW-w64](https://www.mingw-w64.org/)
+  - https://go.dev/dl/
+- Git
+  - https://git-scm.com/download/win
+- GCC and Make.  There are multiple options on how to go about installing these tools on Windows.  We have verified the following, but others may work as well:  
   - [MSYS2](https://www.msys2.org/)
-- The `ThreadJob` Powershell module: `Install-Module -Name ThreadJob -Scope CurrentUser`
+    - After installing, from an MSYS2 terminal, run `pacman -S mingw-w64-ucrt-x86_64-gcc make` to install the required tools
+  - Assuming you used the default install prefix for msys2 above, add `c:\msys64\ucrt64\bin` and `c:\msys64\usr\bin` to your environment variable `PATH` where you will perform the build steps below (e.g. system-wide, account-level, powershell, cmd, etc.)
 
 Then, build the `ollama` binary:
 
 ```powershell
 $env:CGO_ENABLED="1"
-go generate ./...
+make -C llama -j 8
 go build .
 ```
 
+#### GPU Support
+
+The GPU tools require the Microsoft native build tools.  To build either CUDA or ROCm, you must first install MSVC via Visual Studio:
+
+- Make sure to select `Desktop development with C++` as a Workload during the Visual Studio install
+- You must complete the Visual Studio install and run it once **BEFORE** installing CUDA or ROCm for the tools to properly register
+- Add the location of the **64 bit (x64)** compiler (`cl.exe`) to your `PATH`
+- Note: the default Developer Shell may configure the 32 bit (x86) compiler which will lead to build failures.  Ollama requires a 64 bit toolchain.
+
 #### Windows CUDA (NVIDIA)
 
-In addition to the common Windows development tools described above, install CUDA after installing MSVC.
+In addition to the common Windows development tools and MSVC described above:
 
 - [NVIDIA CUDA](https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html)
 
-
 #### Windows ROCm (AMD Radeon)
 
-In addition to the common Windows development tools described above, install AMDs HIP package after installing MSVC.
+In addition to the common Windows development tools and MSVC described above:
 
 - [AMD HIP](https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html)
-- [Strawberry Perl](https://strawberryperl.com/)
 
-Lastly, add `ninja.exe` included with MSVC to the system path (e.g. `C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja`).
