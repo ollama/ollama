@@ -729,6 +729,10 @@ struct llama_server_context
             slot->sparams.samplers_sequence = default_sparams.samplers_sequence;
         }
 
+        // Check for mllama architecture, which processes images differently than llava
+        char arch_str[256];
+        llama_model_meta_val_str(model, "general.architecture", arch_str, 256);
+        bool is_mllama = strcmp(arch_str, "mllama") == 0;
         if (multimodal)
         {
             const auto &images_data = data.find("image_data");
@@ -737,11 +741,6 @@ struct llama_server_context
                 for (const auto &img : *images_data)
                 {
                     const std::vector<uint8_t> image_buffer = base64_decode(img["data"].get<std::string>());
-
-                    // Check for mllama architecture, which processes images differently than llava
-                    char arch_str[256];
-                    llama_model_meta_val_str(model, "general.architecture", arch_str, 256);
-                    bool is_mllama = strcmp(arch_str, "mllama") == 0;
 
                     if (is_mllama) {
                         LOG_INFO("MLLAMA architecture detected, processing first image", {{"slot_id", slot->id}});
@@ -820,6 +819,8 @@ struct llama_server_context
                     slot->params.input_suffix = prompt.substr(begin_prefix);
                     slot->params.cache_prompt = false; // multimodal doesn't support cache prompt
                 }
+            } else {
+                llama_set_cross_attn_state(ctx, nullptr);
             }
         }
 
@@ -1496,6 +1497,7 @@ struct llama_server_context
                 {
                     if (slot.task_id == task.target_id)
                     {
+                        slot.reset();
                         slot.release();
                         break;
                     }
