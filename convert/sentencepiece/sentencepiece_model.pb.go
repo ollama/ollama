@@ -331,7 +331,7 @@ type TrainerSpec struct {
 	// Reserved special meta tokens.
 	// * -1 is not used.
 	// * unk_id must not be -1.
-	// Id must starts with 0 and be contigous.
+	// Id must start with 0 and be contiguous.
 	UnkId    *int32  `protobuf:"varint,40,opt,name=unk_id,json=unkId,def=0" json:"unk_id,omitempty"`  // <unk>
 	BosId    *int32  `protobuf:"varint,41,opt,name=bos_id,json=bosId,def=1" json:"bos_id,omitempty"`  // <s>
 	EosId    *int32  `protobuf:"varint,42,opt,name=eos_id,json=eosId,def=2" json:"eos_id,omitempty"`  // </s>

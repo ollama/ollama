@@ -353,7 +353,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [OpenTalkGpt](https://github.com/adarshM84/OpenTalkGpt)
 - [VT](https://github.com/vinhnx/vt.ai) (A minimal multimodal AI chat app, with dynamic conversation routing. Supports local models via Ollama)
 - [Nosia](https://github.com/nosia-ai/nosia) (Easy to install and use RAG platform based on Ollama)
-- [Witsy](https://github.com/nbonamy/witsy) (An AI Desktop application avaiable for Mac/Windows/Linux)
+- [Witsy](https://github.com/nbonamy/witsy) (An AI Desktop application available for Mac/Windows/Linux)
 - [Abbey](https://github.com/US-Artificial-Intelligence/abbey) (A configurable AI interface server with notebooks, document storage, and YouTube support)
 
 ### Cloud
