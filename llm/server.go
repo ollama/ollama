@@ -169,7 +169,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	}
 	demandLib := envconfig.LLMLibrary()
 	if demandLib != "" {
-		serverPath := availableServers[demandLib]
+		serverPath := availableServers[demandLib].Dir
 		if serverPath == "" {
 			slog.Info(fmt.Sprintf("Invalid OLLAMA_LLM_LIBRARY %s - not found", demandLib))
 		} else {
@@ -281,7 +281,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	}
 
 	for i := range servers {
-		dir := availableServers[servers[i]]
+		dir := availableServers[servers[i]].Dir
 		if dir == "" {
 			// Shouldn't happen
 			finalErr = fmt.Errorf("[%d] server %s not listed in available servers %v", i, servers[i], availableServers)

@@ -25,7 +25,6 @@ func GetGPUInfo() GpuInfoList {
 		return []GpuInfo{
 			{
 				Library: "cpu",
-				Variant: GetCPUCapability().String(),
 				memInfo: mem,
 			},
 		}
@@ -48,7 +47,6 @@ func GetCPUInfo() GpuInfoList {
 	return []GpuInfo{
 		{
 			Library: "cpu",
-			Variant: GetCPUCapability().String(),
 			memInfo: mem,
 		},
 	}
@@ -65,4 +63,8 @@ func GetCPUMem() (memInfo, error) {
 func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
 	// No-op on darwin
 	return "", ""
+}
+
+func LibraryDir() string {
+	return ""
 }

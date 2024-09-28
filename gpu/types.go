@@ -83,7 +83,7 @@ func (l GpuInfoList) ByLibrary() []GpuInfoList {
 	for _, info := range l {
 		found := false
 		requested := info.Library
-		if info.Variant != CPUCapabilityNone.String() {
+		if info.Variant != "" {
 			requested += "_" + info.Variant
 		}
 		for i, lib := range libs {
@@ -123,26 +123,3 @@ type ByFreeMemory []GpuInfo
 func (a ByFreeMemory) Len() int           { return len(a) }
 func (a ByFreeMemory) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByFreeMemory) Less(i, j int) bool { return a[i].FreeMemory < a[j].FreeMemory }
-
-type CPUCapability uint32
-
-// Override at build time when building base GPU runners
-var GPURunnerCPUCapability = CPUCapabilityAVX
-
-const (
-	CPUCapabilityNone CPUCapability = iota
-	CPUCapabilityAVX
-	CPUCapabilityAVX2
-	// TODO AVX512
-)
-
-func (c CPUCapability) String() string {
-	switch c {
-	case CPUCapabilityAVX:
-		return "avx"
-	case CPUCapabilityAVX2:
-		return "avx2"
-	default:
-		return "no vector extensions"
-	}
-}

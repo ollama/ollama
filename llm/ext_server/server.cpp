@@ -2762,6 +2762,23 @@ int wmain(int argc, wchar_t **wargv) {
 int main(int argc, char **argv) {
 #endif
 
+    // Short circuit for requirements reporting
+    if (argc == 2 && std::string("--requirements").compare(argv[1]) == 0) {
+        std::cout << "{\"system_info\":\"" << llama_print_system_info() << "\",\"cpu_features\":[";
+        std::string maybeComma = "";
+        if (ggml_cpu_has_avx() != 0) {
+            std::cout << "\"avx\"";
+            maybeComma = ",";
+        }
+        if (ggml_cpu_has_avx2() != 0) {
+            std::cout << maybeComma << "\"avx2\"";
+            maybeComma = ",";  
+        }
+        // TODO if we ever support more cpu features expand this to cover them
+        std::cout << "]}" << std::endl;
+        return 0;
+    }
+
 #if SERVER_VERBOSE != 1
     log_disable();
 #endif
