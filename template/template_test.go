@@ -193,6 +193,12 @@ func TestParse(t *testing.T) {
 			if diff := cmp.Diff(tmpl.Vars(), tt.vars); diff != "" {
 				t.Errorf("mismatch (-got +want):\n%s", diff)
 			}
+
+			for _, v := range tt.vars {
+				if diff := cmp.Diff(tmpl.Supports(v), true); diff != "" {
+					t.Errorf("mismatch (-got +want):\n%s", diff)
+				}
+			}
 		})
 	}
 }
