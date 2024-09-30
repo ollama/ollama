@@ -299,12 +299,24 @@ func (s *Server) removeSequence(seqIndex int, reason string) {
 }
 
 func (s *Server) run(ctx context.Context) {
+	s.ready.Wait()
+
+	// logically these batches are used only within the context of processBatch
+	// but it is better for performance to allocate them once here
+	tokenBatch := llama.NewBatch(s.batchSize*len(s.seqs), 0, len(s.seqs))
+	defer tokenBatch.Free()
+
+	embedBatch := llama.NewBatch(s.batchSize*len(s.seqs), s.lc.Model().NEmbd(), len(s.seqs))
+	defer embedBatch.Free()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
-			s.processBatch()
+			s.processBatch(tokenBatch, embedBatch)
+			tokenBatch.Clear()
+			embedBatch.Clear()
 		}
 	}
 }
@@ -316,7 +328,7 @@ func (s *Server) run(ctx context.Context) {
 // these should instead be handled by the handlers
 // it should only be responsible for accepting tokens or embeddings and
 // processing batches as fast as possible
-func (s *Server) processBatch() {
+func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) {
 	s.mu.Lock()
 	for s.allNil() {
 		s.cond.Wait() // Wait until an item is added
@@ -349,17 +361,16 @@ func (s *Server) processBatch() {
 		for i, input := range seq.inputs {
 			embedding := input.embed != nil
 
-			// If we don't currently have a batch, allocate one of the correct type and
+			// If we don't currently have a batch, use one of the correct type and
 			// fill it up as much as possible across all sequences. If we encounter an
 			// input of the opppsite type, stop for that sequence but then pick up from
 			// there for the next batch, ensuring that we alternate types
 			if batch == nil {
-				numEmbed := 0
-				if embedding {
-					numEmbed = s.lc.Model().NEmbd()
+				if !embedding {
+					batch = tokenBatch
+				} else {
+					batch = embedBatch
 				}
-				batch = llama.NewBatch(s.batchSize*len(s.seqs), numEmbed, len(s.seqs))
-				defer batch.Free()
 			} else if embedding != batch.IsEmbedding() {
 				s.nextSeq = seqIdx
 				break
