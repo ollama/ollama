@@ -45,6 +45,8 @@ cp $src_dir/src/llama-sampling.h $dst_dir/llama-sampling.h
 cp $src_dir/include/llama.h $dst_dir/llama.h
 cp $src_dir/ggml/src/llamafile/sgemm.cpp $dst_dir/sgemm.cpp
 cp $src_dir/ggml/src/llamafile/sgemm.h $dst_dir/sgemm.h
+mkdir -p $dst_dir/llamafile
+cp $src_dir/ggml/src/llamafile/sgemm.h $dst_dir/llamafile/sgemm.h
 
 # ggml
 cp $src_dir/ggml/src/ggml.c $dst_dir/ggml.c
@@ -65,6 +67,8 @@ cp $src_dir/ggml/include/ggml-alloc.h $dst_dir/ggml-alloc.h
 cp $src_dir/ggml/src/ggml-alloc.c $dst_dir/ggml-alloc.c
 cp $src_dir/ggml/src/ggml-aarch64.h $dst_dir/ggml-aarch64.h
 cp $src_dir/ggml/src/ggml-aarch64.c $dst_dir/ggml-aarch64.c
+cp $src_dir/ggml/include/ggml-blas.h $dst_dir/ggml-blas.h
+cp $src_dir/ggml/src/ggml-blas.cpp $dst_dir/ggml-blas.cpp
 
 # ggml-cuda
 mkdir -p $dst_dir/ggml-cuda/template-instances
