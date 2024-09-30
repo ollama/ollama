@@ -47,7 +47,7 @@ ROCM_DIST_DEPS_LIBS = $(addprefix $(ROCM_DIST_DEPS_DIR)/,$(notdir $(ROCM_LIBS)) 
 ROCBLAS_DIST_DEP_MANIFEST = $(ROCM_DIST_DEPS_DIR)/rocblas/library/TensileManifest.txt
 
 ifeq ($(OS),linux)
-	GPU_COMPILER_FPIC := -fPIC -Wno-unused-function
+	GPU_COMPILER_FPIC := -fPIC -Wno-unused-function -std=gnu++11
 	GPU_RUNNER_ARCH_FLAGS := $(foreach arch, $(HIP_ARCHS_COMMON) $(HIP_ARCHS_LINUX), --offload-arch=$(arch))
 else ifeq ($(OS),windows)
 	GPU_COMPILER_FPIC := -Xclang --dependent-lib=msvcrt
@@ -69,11 +69,15 @@ GPU_COMPILER_CUFLAGS = \
 	-DGGML_USE_HIPBLAS \
 	-DGGML_USE_LLAMAFILE \
 	-DHIP_FAST_MATH \
+	-D__HIP_PLATFORM_AMD__=1 \
+	-D__HIP_ROCclr__=1 \
 	-DNDEBUG \
 	-DK_QUANTS_PER_ITERATION=2 \
 	-D_CRT_SECURE_NO_WARNINGS \
-	-DCMAKE_POSITION_INDEPENDENT_CODE=on \
 	-D_GNU_SOURCE \
+	-D_XOPEN_SOURCE=600 \
+	-mllvm=-amdgpu-early-inline-all=true \
+	-mllvm=-amdgpu-function-calls=false \
 	-Wno-expansion-to-defined \
 	-Wno-invalid-noreturn \
 	-Wno-ignored-attributes \
