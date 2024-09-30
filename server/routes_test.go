@@ -148,6 +148,56 @@ func Test_Routes(t *testing.T) {
 			},
 		},
 		{
+			Name:   "Delete Model Handler",
+			Method: http.MethodDelete,
+			Path:   "/api/delete",
+			Setup: func(t *testing.T, req *http.Request) {
+				createTestModel(t, "model-to-delete")
+
+				deleteReq := api.DeleteRequest{
+					Name: "model-to-delete",
+				}
+				jsonData, err := json.Marshal(deleteReq)
+				require.NoError(t, err)
+
+				req.Body = io.NopCloser(bytes.NewReader(jsonData))
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+				// Verify the model was deleted
+				_, err := GetModel("model-to-delete")
+				assert.Error(t, err)
+				assert.True(t, os.IsNotExist(err))
+			},
+		},
+		{
+			Name:   "Delete Non-existent Model",
+			Method: http.MethodDelete,
+			Path:   "/api/delete",
+			Setup: func(t *testing.T, req *http.Request) {
+				deleteReq := api.DeleteRequest{
+					Name: "non-existent-model",
+				}
+				jsonData, err := json.Marshal(deleteReq)
+				require.NoError(t, err)
+
+				req.Body = io.NopCloser(bytes.NewReader(jsonData))
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+
+				body, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+
+				var errorResp map[string]string
+				err = json.Unmarshal(body, &errorResp)
+				require.NoError(t, err)
+
+				assert.Contains(t, errorResp["error"], "not found")
+			},
+		},
+		{
 			Name:   "openai list models with tags",
 			Method: http.MethodGet,
 			Path:   "/v1/models",

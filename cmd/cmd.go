@@ -687,7 +687,7 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 	}
 	if err := loadOrUnloadModel(cmd, opts); err != nil {
 		if !strings.Contains(err.Error(), "not found") {
-			return fmt.Errorf("unable to stop existing running model \"%s\"", args[0])
+			return fmt.Errorf("unable to stop existing running model \"%s\": %s", args[0], err)
 		}
 	}
 
