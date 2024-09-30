@@ -927,9 +927,6 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if pf == nil {
-		return fmt.Errorf("could not get puller: %w", err)
-	}
 
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
