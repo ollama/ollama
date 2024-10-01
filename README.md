@@ -15,7 +15,7 @@ It is free and open-source and serves as a wrapper by providing a simple API for
 
 ### Table of Contents
 
-- 🛠️ [Getting Started](#-getting-started)
+- 🛠️ [Getting Started](#%EF%B8%8F-getting-started)
   - 📥 [Installation](#-installation)
   - 🚀 [Quickstart](#-quickstart)
 - 📚 [Model Library](#-model-library)
@@ -24,9 +24,9 @@ It is free and open-source and serves as a wrapper by providing a simple API for
   - 🧩 [Model Management](#-model-management)
   - ✨ [Customize a Model](#-customize-a-model)
   - 🎨 [Customize a Prompt](#-customize-a-prompt)
-  - 🖥️ [Start Ollama Service](#-start-ollama-service) 
+  - 🖥️ [Start Ollama Service](#%EF%B8%8F-start-ollama-service) 
   - 🌟 [Special Cases](#-special-cases)
-- 🧱️ [Building](#-building)
+- 🧱️ [Building](#%EF%B8%8F-building)
 - 🔗 [REST API](#-rest-api)
 - 🌐 [Community Integrations](#-community-integrations)
 - 🔄 [Contributing](#-contributing)
