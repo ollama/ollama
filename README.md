@@ -8,9 +8,21 @@
 
 Get up and running with large language models.
 
-### macOS
+### Table of Contents
 
-[Download](https://ollama.com/download/Ollama-darwin.zip)
+- 🛠️ [Getting Started](#getting-started)
+  - [Installation](#installation)
+  - [Quickstart](#quickstart)
+- 📦 [Features](#features)
+  - [Creating a Model](#creating-a-model)
+  - [Pulling a Model](#pulling-a-model)
+  - [Using a Model](#using-a-model)
+  - [Customizing a Model](#customizing-a-model)
+  - [CLI Reference](#cli-reference)
+- 🔄 [Contributing](#contributing)
+- 🤝 [Acknowledgments](#acknowledgments)
+- 🐞 [Issues](#issues)
+- 📜 [License](#license)
 
 ### Windows preview
 
