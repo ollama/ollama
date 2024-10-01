@@ -24,34 +24,48 @@ Get up and running with large language models.
 - 🐞 [Issues](#issues)
 - 📜 [License](#license)
 
-### Windows preview
 
-[Download](https://ollama.com/download/OllamaSetup.exe)
+---
 
-### Linux
+## Getting Started
 
-```
-curl -fsSL https://ollama.com/install.sh | sh
-```
+Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models
 
-[Manual install instructions](https://github.com/ollama/ollama/blob/main/docs/linux.md)
+### Installation
 
-### Docker
+#### macOS
+- 🍏  [Download](https://ollama.com/download/Ollama-darwin.zip) for macOS.
 
-The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
+#### Windows
+- 🪟 [Download](https://ollama.com/download/OllamaSetup.exe) for a Windows.
 
-### Libraries
+#### Linux
+- 🐧 Install via command line:
+  ```bash
+  curl -fsSL https://ollama.com/install.sh | sh
+  ```
+- 📖 [Manual install instructions](https://github.com/ollama/ollama/blob/main/docs/linux.md).
 
-- [ollama-python](https://github.com/ollama/ollama-python)
-- [ollama-js](https://github.com/ollama/ollama-js)
+#### Docker
+- 📦 **Pull** the official Ollama Docker image:
+  ```bash
+  docker pull ollama/ollama
+  ```
+  🐳 **Run** the Docker container with the following command:
+  ```bash
+  docker run -it ollama/ollama
+  ```
+- 🌐 [Explore the Ollama Docker Hub page](https://hub.docker.com/r/ollama/ollama).
 
-## Quickstart
+### Quickstart
 
-To run and chat with [Llama 3.2](https://ollama.com/library/llama3.2):
+To run and chat with [Llama 3.2](https://ollama.com/library/llama3.2) :
 
 ```
 ollama run llama3.2
 ```
+
+🦙💥 Happy llama
 
 ## Model library
 
