@@ -8,7 +8,7 @@ on:
 jobs:
   # Full build of the Mac assets
   build-darwin:
-    runs-on: macos-12
+    runs-on: ppc64le
     environment: release
     steps:
       - uses: actions/checkout@v4
