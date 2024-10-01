@@ -9,9 +9,8 @@
 
 [![Discord](https://dcbadge.vercel.app/api/server/ollama?style=flat&compact=true)](https://discord.gg/ollama)
 
-Ollama is a lightweight, extensible framework that enables you to effortlessly run a variety of open-source LLMs. With Ollama, you can explore the capabilities of LLMs, whether for development, research, or just for fun.
-
-It is free and open-source and serves as a wrapper by providing a simple API for creating, running, and managing models
+Ollama is a lightweight, extensible framework designed for effortless execution of open-source Large Language Models (LLMs). 
+This free and open-source tool serves as an isolated wrapper, also providing a simple API for creating, running, and managing models.
 
 ---
 
