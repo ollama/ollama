@@ -9,7 +9,7 @@ init_vars() {
         ARCH="arm64"
         ;;
     "pp64le")
-        ARCH="ppc64le"  # power ARCH
+        ARCH="ppc64le"  # power ARCH support
         ;;
     *)
         echo "GOARCH must be set"
