@@ -72,6 +72,11 @@
     #define NOMINMAX
 #endif
 #include <windows.h>
+#if __GLIBCXX__
+#include <cstdio>
+#include <ext/stdio_filebuf.h>
+#include <fcntl.h>
+#endif
 #endif
 
 //#define CLIP_DEBUG_FUNCTIONS
@@ -1267,7 +1272,14 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
             free(wbuf);
             return NULL;
         }
+#if __GLIBCXX__
+        int fd = _wopen(wbuf, _O_RDONLY | _O_BINARY);
+        __gnu_cxx::stdio_filebuf<char> buffer(fd, std::ios_base::in);
+        std::istream fin(&buffer);
+#else // MSVC
+        // unused in our current build
         auto fin = std::ifstream(wbuf, std::ios::binary);
+#endif
         free(wbuf);
 #else
         auto fin = std::ifstream(fname, std::ios::binary);
@@ -1311,7 +1323,11 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
                 ggml_backend_tensor_set(cur, read_buf.data(), 0, num_bytes);
             }
         }
+#if defined(_WIN32) && defined(__GLIBCXX__)
+        close(fd);
+#else
         fin.close();
+#endif
     }
 
     // vision model
