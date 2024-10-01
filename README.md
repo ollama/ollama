@@ -40,8 +40,8 @@ It is free and open-source and serves as a wrapper by providing a simple API for
 
 ---
 
-## Getting Started
-### Installation
+## 🛠️ Getting Started
+### 📥 Installation
 
 | Platform    | Installation Instructions                                                                                                                                                                                                                                                    |
 |-------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -51,7 +51,7 @@ It is free and open-source and serves as a wrapper by providing a simple API for
 | **Docker**  | 📦 **Pull** the official Ollama Docker image: <br> ```bash docker pull ollama/ollama``` <br> <br/> 🐳 **Run** the Docker container: <br> ```bash docker run -it ollama/ollama ``` <br> <br/>🌐 [Explore the Ollama Docker Hub page](https://hub.docker.com/r/ollama/ollama). |
 
 
-### Quickstart
+### 🚀 Quickstart
 
 To run and chat with [Llama 3.2](https://ollama.com/library/llama3.2) :
 
@@ -61,7 +61,7 @@ ollama run llama3.2
 
 🦙💥 Happy llama
 
-## Model library
+## 📚 Model library
 
 Ollama supports a list of models available on [ollama.com/library](https://ollama.com/library 'ollama model library')
 
@@ -91,9 +91,102 @@ Here are some example models that can be downloaded:
 > [!NOTE]
 > You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
 
-## Customize a model
 
-### Import from GGUF
+## 📦 Features 
+
+### ⚡ Model execution
+
+#### Launch a model
+
+2. Create the model in Ollama
+
+   ```
+   ollama create example -f Modelfile
+   ```
+
+3. Run the model
+
+   ```
+   ollama run example
+   ```
+
+### Import from PyTorch or Safetensors
+
+See the [guide](docs/import.md) on importing models for more information.
+
+### Customize a prompt
+
+Models from the Ollama library can be customized with a prompt. For example, to customize the `llama3.2` model:
+
+```
+ollama pull llama3.2
+```
+ollama run llama3.2
+```
+FROM llama3.2
+
+# set the temperature to 1 [higher is more creative, lower is more coherent]
+PARAMETER temperature 1
+
+#### Terminate a running model
+
+```
+ollama stop llama3.2
+```
+
+---
+
+### 🧩 Model management
+#### Create a new model
+
+`ollama create` is used to create a model from a _Modelfile_.
+
+```
+ollama create mymodel -f ./Modelfile
+```
+
+#### Pull (retrieve) a model
+
+```
+ollama pull llama3.2
+```
+
+> This command can also be used to update a local model. Only the diff will be pulled.
+
+#### Remove a model
+
+```
+ollama rm llama3.2
+```
+
+#### Copy a model
+
+```
+ollama cp llama3.2 my-model
+```
+
+#### List all models on your system
+
+```
+ollama list
+```
+
+#### Show model information
+
+```
+ollama show llama3.2
+```
+
+#### List which models are currently loaded
+
+```
+ollama ps
+```
+---
+
+### ✨ Customize a model
+
+#### Import from GGUF
 
 Ollama supports importing GGUF models in the Modelfile:
 
@@ -115,11 +208,12 @@ Ollama supports importing GGUF models in the Modelfile:
    ollama run example
    ```
 
-### Import from PyTorch or Safetensors
+#### Import from PyTorch or Safetensors
 
 See the [guide](docs/import.md) on importing models for more information.
 
-### Customize a prompt
+---
+### 🎨 Customize a prompt
 
 Models from the Ollama library can be customized with a prompt. For example, to customize the `llama3.2` model:
 
@@ -152,37 +246,18 @@ Hello! It's your friend Mario.
 
 For more examples, see the [examples](examples) directory. For more information on working with a Modelfile, see the [Modelfile](docs/modelfile.md) documentation.
 
-## CLI Reference
+---
 
-### Create a model
+### 🖥️ Start Ollama Service
 
-`ollama create` is used to create a model from a Modelfile.
-
+When you want to start ollama without running the desktop application:
 ```
-ollama create mymodel -f ./Modelfile
+ollama serve
 ```
+---
 
-### Pull a model
-
-```
-ollama pull llama3.2
-```
-
-> This command can also be used to update a local model. Only the diff will be pulled.
-
-### Remove a model
-
-```
-ollama rm llama3.2
-```
-
-### Copy a model
-
-```
-ollama cp llama3.2 my-model
-```
-
-### Multiline input
+### 🌟 Special cases
+#### 📜 Multiline input
 
 For multiline input, you can wrap text with `"""`:
 
@@ -193,49 +268,23 @@ For multiline input, you can wrap text with `"""`:
 I'm a basic program that prints the famous "Hello, world!" message to the console.
 ```
 
-### Multimodal models
+#### 🖼️ Multimodal models
 
 ```
 ollama run llava "What's in this image? /Users/jmorgan/Desktop/smile.png"
 The image features a yellow smiley face, which is likely the central focus of the picture.
 ```
 
-### Pass the prompt as an argument
+#### 📨 Pass the prompt as an argument
 
 ```
 $ ollama run llama3.2 "Summarize this file: $(cat README.md)"
  Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models, as well as a library of pre-built models that can be easily used in a variety of applications.
 ```
 
-### Show model information
 
-```
-ollama show llama3.2
-```
 
-### List models on your computer
-
-```
-ollama list
-```
-
-### List which models are currently loaded
-
-```
-ollama ps
-```
-
-### Stop a model which is currently running
-
-```
-ollama stop llama3.2
-```
-
-### Start Ollama
-
-`ollama serve` is used when you want to start ollama without running the desktop application.
-
-## Building
+## 🧱️ Building
 
 See the [developer guide](https://github.com/ollama/ollama/blob/main/docs/development.md)
 
@@ -253,7 +302,7 @@ Finally, in a separate shell, run a model:
 ./ollama run llama3.2
 ```
 
-## REST API
+## 🔗 REST API
 
 Ollama has a REST API for running and managing models.
 
@@ -279,7 +328,7 @@ curl http://localhost:11434/api/chat -d '{
 
 See the [API documentation](./docs/api.md) for all endpoints.
 
-## Community Integrations
+## 🌐 Community Integrations
 
 ### **Web Applications**
 - [Open WebUI](https://github.com/open-webui/open-webui)
