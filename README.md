@@ -1,3 +1,5 @@
+<a name="readme-top"></a>  
+
 <div align="center">
  <img alt="ollama" height="200px" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
 </div>
@@ -87,6 +89,7 @@ Here are some example models that can be downloaded:
 > [!NOTE]
 > You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## 📦 Features 
 
@@ -253,7 +256,7 @@ $ ollama run llama3.2 "Summarize this file: $(cat README.md)"
  Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models, as well as a library of pre-built models that can be easily used in a variety of applications.
 ```
 
-
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## 🧱️ Building
 
@@ -298,6 +301,8 @@ curl http://localhost:11434/api/chat -d '{
 ```
 
 See the [API documentation](./docs/api.md) for all endpoints.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## 🌐 Community Integrations
 
@@ -495,6 +500,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov.
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ## 🔄 Contributing
 We welcome contributions from the community! If you’d like to help improve this project, please refer to our [CONTRIBUTING.md](CONTRIBUTING.md) document.
 
@@ -529,3 +536,5 @@ Your feedback is valuable and helps us improve the project—thank you!
 ## 📜 License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) for details.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
