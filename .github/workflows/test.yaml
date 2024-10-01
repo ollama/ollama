@@ -322,3 +322,15 @@ jobs:
       - run: go generate ./...
       - run: go build
       - run: go test -v ./...
+
+  patches:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.RUNNERS == 'True' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Verify patches carry all the changes
+        run: |
+          cd llama && ./sync.sh && git diff --compact-summary --exit-code .
