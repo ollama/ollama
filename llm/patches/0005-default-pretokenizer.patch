@@ -1,4 +1,4 @@
-From b298ac8614d1e38da28f760eb1d2ae8af0fbbe62 Mon Sep 17 00:00:00 2001
+From 0e531d69786c4a96a3a2bcf7b2d576bd6f7edf25 Mon Sep 17 00:00:00 2001
 From: Michael Yang <mxyng@pm.me>
 Date: Mon, 16 Sep 2024 15:53:13 -0700
 Subject: [PATCH] 05-default-pretokenizer.diff
@@ -8,10 +8,10 @@ Subject: [PATCH] 05-default-pretokenizer.diff
  1 file changed, 3 insertions(+), 11 deletions(-)
 
 diff --git a/src/llama.cpp b/src/llama.cpp
-index 926bb71a..d1e959fc 100644
+index 4c0a1bb6..800dfb95 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
-@@ -6083,16 +6083,7 @@ static void llm_load_vocab(
+@@ -6287,16 +6287,7 @@ static void llm_load_vocab(
          if (vocab.type == LLAMA_VOCAB_TYPE_BPE) {
              vocab.tokenizer_add_space_prefix = false;
              vocab.tokenizer_clean_spaces = true;
@@ -29,9 +29,9 @@ index 926bb71a..d1e959fc 100644
                  vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
              } else if (
                      tokenizer_pre == "llama3"   ||
-@@ -6188,7 +6179,8 @@ static void llm_load_vocab(
-                 tokenizer_pre == "exaone") {
-                 vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_EXAONE;
+@@ -6398,7 +6389,8 @@ static void llm_load_vocab(
+                 vocab.tokenizer_add_bos = true;
+                 vocab.tokenizer_clean_spaces = false;
              } else {
 -                throw std::runtime_error(format("unknown pre-tokenizer type: '%s'", tokenizer_pre.c_str()));
 +                LLAMA_LOG_WARN("%s: missing or unrecognized pre-tokenizer type, using: 'default'\n", __func__);
@@ -40,5 +40,5 @@ index 926bb71a..d1e959fc 100644
          } else if (vocab.type == LLAMA_VOCAB_TYPE_SPM) {
              vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
 -- 
-2.46.0
+2.39.3 (Apple Git-146)
 
