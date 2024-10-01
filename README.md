@@ -37,7 +37,6 @@ It is free and open-source and serves as a wrapper by providing a simple API for
 - 🐞 [Issues](#issues)
 - 📜 [License](#license)
 
-
 ---
 
 ## 🛠️ Getting Started
@@ -98,35 +97,10 @@ Here are some example models that can be downloaded:
 
 #### Launch a model
 
-2. Create the model in Ollama
-
-   ```
-   ollama create example -f Modelfile
-   ```
-
-3. Run the model
-
-   ```
-   ollama run example
-   ```
-
-### Import from PyTorch or Safetensors
-
-See the [guide](docs/import.md) on importing models for more information.
-
-### Customize a prompt
-
-Models from the Ollama library can be customized with a prompt. For example, to customize the `llama3.2` model:
-
-```
-ollama pull llama3.2
 ```
 ollama run llama3.2
 ```
-FROM llama3.2
 
-# set the temperature to 1 [higher is more creative, lower is more coherent]
-PARAMETER temperature 1
 
 #### Terminate a running model
 
@@ -731,11 +705,12 @@ See the [API documentation](./docs/api.md) for all endpoints.
     </div>
 </div>
 
+### 🔄 Contributing
+We welcome contributions from the community! If you’d like to help improve this project, please refer to our [CONTRIBUTING.md](CONTRIBUTING.md) document.
 
-### Supported backends
+### 🤝 Acknowledgments
 
-- [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov.
-
+A big thank you to all the contributors who have supported this project. Your feedback, suggestions, and contributions are greatly appreciated!
 
 ### 🐞 Issues
 
