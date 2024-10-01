@@ -1,7 +1,7 @@
-diff --git a/src/llama.cpp b/src/llama.cpp
+diff --git a/llama/llama.cpp b/llama/llama.cpp
 index f79bd782..b7771f53 100644
---- a/src/llama.cpp
-+++ b/src/llama.cpp
+--- a/llama/llama.cpp
++++ b/llama/llama.cpp
 @@ -213,6 +213,7 @@ enum llm_arch {
      LLM_ARCH_NEMOTRON,
      LLM_ARCH_EXAONE,
