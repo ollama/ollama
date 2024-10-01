@@ -56,8 +56,7 @@ To run and chat with [Llama 3.2](https://ollama.com/library/llama3.2) :
 ```
 ollama run llama3.2
 ```
-
-🦙💥 Happy llama
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## 📚 Model library
 
@@ -156,6 +155,8 @@ ollama show llama3.2
 ```
 ollama ps
 ```
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
 ---
 
 ### ✨ Customize a model
@@ -219,6 +220,7 @@ Hello! It's your friend Mario.
 ```
 
 For more examples, see the [examples](examples) directory. For more information on working with a Modelfile, see the [Modelfile](docs/modelfile.md) documentation.
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ---
 
@@ -400,6 +402,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama eBook Summary](https://github.com/cognitivetech/ollama-ebook-summary/)
 - [Ollama Mixture of Experts (MOE) in 50 lines of code](https://github.com/rapidarchitect/ollama_moe)
 - [vim-intelligence-bridge](https://github.com/pepo-ec/vim-intelligence-bridge) Simple interaction of "Ollama" with the Vim editor
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ### Apple Vision Pro
 - [Enchanted](https://github.com/AugustDev/enchanted)
