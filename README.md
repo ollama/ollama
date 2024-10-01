@@ -38,29 +38,13 @@ It is free and open-source and serves as a wrapper by providing a simple API for
 ## Getting Started
 ### Installation
 
-#### macOS
-- 🍏  [Download](https://ollama.com/download/Ollama-darwin.zip) for macOS.
+| Platform    | Installation Instructions                                                                                                                                                                                                                                                    |
+|-------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **macOS**   | 🍏 [Download](https://ollama.com/download/Ollama-darwin.zip)                                                                                                                                                                                                                 |
+| **Windows** | 🪟 [Download](https://ollama.com/download/OllamaSetup.exe)                                                                                                                                                                                                                   |
+| **Linux**   | 🐧 Install via command line: <br/> ```bash curl -fsSL https://ollama.com/install. &#124; sh ``` <br/> <br/> 📖 [Manual install instructions](https://github.com/ollama/ollama/blob/main/docs/linux.md).                                                                           |
+| **Docker**  | 📦 **Pull** the official Ollama Docker image: <br> ```bash docker pull ollama/ollama``` <br> <br/> 🐳 **Run** the Docker container: <br> ```bash docker run -it ollama/ollama ``` <br> <br/>🌐 [Explore the Ollama Docker Hub page](https://hub.docker.com/r/ollama/ollama). |
 
-#### Windows
-- 🪟 [Download](https://ollama.com/download/OllamaSetup.exe) for a Windows.
-
-#### Linux
-- 🐧 Install via command line:
-  ```bash
-  curl -fsSL https://ollama.com/install.sh | sh
-  ```
-- 📖 [Manual install instructions](https://github.com/ollama/ollama/blob/main/docs/linux.md).
-
-#### Docker
-- 📦 **Pull** the official Ollama Docker image:
-  ```bash
-  docker pull ollama/ollama
-  ```
-  🐳 **Run** the Docker container with the following command:
-  ```bash
-  docker run -it ollama/ollama
-  ```
-- 🌐 [Explore the Ollama Docker Hub page](https://hub.docker.com/r/ollama/ollama).
 
 ### Quickstart
 
@@ -292,74 +276,71 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ## Community Integrations
 
-### Web & Desktop
-
+### **Web Applications**
 - [Open WebUI](https://github.com/open-webui/open-webui)
-- [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
-- [Hollama](https://github.com/fmaclen/hollama)
 - [Lollms-Webui](https://github.com/ParisNeo/lollms-webui)
-- [LibreChat](https://github.com/danny-avila/LibreChat)
-- [Bionic GPT](https://github.com/bionic-gpt/bionic-gpt)
-- [HTML UI](https://github.com/rtcfirefly/ollama-ui)
-- [Saddle](https://github.com/jikkuatwork/saddle)
 - [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama)
 - [Chatbot UI v2](https://github.com/mckaywrigley/chatbot-ui)
 - [Typescript UI](https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file)
 - [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
-- [Ollamac](https://github.com/kevinhermawan/Ollamac)
-- [big-AGI](https://github.com/enricoros/big-AGI/blob/main/docs/config-local-ollama.md)
-- [Cheshire Cat assistant framework](https://github.com/cheshire-cat-ai/core)
-- [Amica](https://github.com/semperai/amica)
-- [chatd](https://github.com/BruceMacD/chatd)
 - [Ollama-SwiftUI](https://github.com/kghandour/Ollama-SwiftUI)
-- [Dify.AI](https://github.com/langgenius/dify)
-- [MindMac](https://mindmac.app)
 - [NextJS Web Interface for Ollama](https://github.com/jakobhoeg/nextjs-ollama-llm-ui)
-- [Msty](https://msty.app)
-- [Chatbox](https://github.com/Bin-Huang/Chatbox)
-- [WinForm Ollama Copilot](https://github.com/tgraupmann/WinForm_Ollama_Copilot)
 - [NextChat](https://github.com/ChatGPTNextWeb/ChatGPT-Next-Web) with [Get Started Doc](https://docs.nextchat.dev/models/ollama)
 - [Alpaca WebUI](https://github.com/mmo80/alpaca-webui)
 - [OllamaGUI](https://github.com/enoch1118/ollamaGUI)
 - [OpenAOE](https://github.com/InternLM/OpenAOE)
-- [Odin Runes](https://github.com/leonid20000/OdinRunes)
-- [LLM-X](https://github.com/mrdjohnson/llm-x) (Progressive Web App)
-- [AnythingLLM (Docker + MacOs/Windows/Linux native app)](https://github.com/Mintplex-Labs/anything-llm)
-- [Ollama Basic Chat: Uses HyperDiv Reactive UI](https://github.com/rapidarchitect/ollama_basic_chat)
-- [Ollama-chats RPG](https://github.com/drazdra/ollama-chats)
-- [QA-Pilot](https://github.com/reid41/QA-Pilot) (Chat with Code Repository)
+- [Lobe Chat](https://github.com/lobehub/lobe-chat) with [Integrating Doc](https://lobehub.com/docs/self-hosting/examples/ollama)
 - [ChatOllama](https://github.com/sugarforever/chat-ollama) (Open Source Chatbot based on Ollama with Knowledge Bases)
 - [CRAG Ollama Chat](https://github.com/Nagi-ovo/CRAG-Ollama-Chat) (Simple Web Search with Corrective RAG)
 - [RAGFlow](https://github.com/infiniflow/ragflow) (Open-source Retrieval-Augmented Generation engine based on deep document understanding)
 - [StreamDeploy](https://github.com/StreamDeploy-DevRel/streamdeploy-llm-app-scaffold) (LLM Application Scaffold)
 - [chat](https://github.com/swuecho/chat) (chat web app for teams)
-- [Lobe Chat](https://github.com/lobehub/lobe-chat) with [Integrating Doc](https://lobehub.com/docs/self-hosting/examples/ollama)
 - [Ollama RAG Chatbot](https://github.com/datvodinh/rag-chatbot.git) (Local Chat with multiple PDFs using Ollama and RAG)
-- [BrainSoup](https://www.nurgo-software.com/products/brainsoup) (Flexible native client with RAG & multi-agent automation)
-- [macai](https://github.com/Renset/macai) (macOS client for Ollama, ChatGPT, and other compatible API back-ends)
-- [Olpaka](https://github.com/Otacon/olpaka) (User-friendly Flutter Web App for Ollama)
-- [OllamaSpring](https://github.com/CrazyNeil/OllamaSpring) (Ollama Client for macOS)
-- [LLocal.in](https://github.com/kartikm7/llocal) (Easy to use Electron Desktop Client for Ollama)
-- [AiLama](https://github.com/zeyoyt/ailama) (A Discord User App that allows you to interact with Ollama anywhere in discord )
-- [Ollama with Google Mesop](https://github.com/rapidarchitect/ollama_mesop/) (Mesop Chat Client implementation with Ollama)
-- [Painting Droid](https://github.com/mateuszmigas/painting-droid) (Painting app with AI integrations)
-- [Kerlig AI](https://www.kerlig.com/) (AI writing assistant for macOS)
+- [Archyve](https://github.com/nickthecook/archyve) (RAG-enabling document library)
+
+### **Desktop Applications**
+
+#### **Chat Interfaces**
+- [Amica](https://github.com/semperai/amica)
+- [Chatbox](https://github.com/Bin-Huang/Chatbox)
+- [Dify.AI](https://github.com/langgenius/dify)
+- [Hollama](https://github.com/fmaclen/hollama)
+- [LibreChat](https://github.com/danny-avila/LibreChat)
+- [Msty](https://msty.app)
+- [Saddle](https://github.com/jikkuatwork/saddle)
 - [AI Studio](https://github.com/MindWorkAI/AI-Studio)
-- [Sidellama](https://github.com/gyopak/sidellama) (browser-based LLM client)
-- [LLMStack](https://github.com/trypromptly/LLMStack) (No-code multi-agent framework to build LLM agents and workflows)
-- [BoltAI for Mac](https://boltai.com) (AI Chat Client for Mac)
+- [LLMChat](https://github.com/trendy-design/llmchat) (Privacy focused, 100% local, intuitive all-in-one chat interface)
+- [ConfiChat](https://github.com/1runeberg/confichat) (Lightweight, standalone, multi-platform, and privacy focused LLM chat interface with optional encryption)
+
+#### **Development Tools**
+- [Claude Dev](https://github.com/saoudrizwan/claude-dev) - VSCode extension for multi-file/whole-repo coding
+- [QA-Pilot](https://github.com/reid41/QA-Pilot) (Chat with Code Repository)
 - [Harbor](https://github.com/av/harbor) (Containerized LLM Toolkit with Ollama as default backend)
+- [LLMStack](https://github.com/trypromptly/LLMStack) (No-code multi-agent framework to build LLM agents and workflows)
+- [LLocal.in](https://github.com/kartikm7/llocal) (Easy to use Electron Desktop Client for Ollama)
+- [crewAI with Mesop](https://github.com/rapidarchitect/ollama-crew-mesop) (Mesop Web Interface to run crewAI with Ollama)
+
+#### **AI Tools**
+- [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
+- [Bionic GPT](https://github.com/bionic-gpt/bionic-gpt)
+- [BrainSoup](https://www.nurgo-software.com/products/brainsoup) (Flexible native client with RAG & multi-agent automation)
+- [Odin Runes](https://github.com/leonid20000/OdinRunes)
+- [AnythingLLM (Docker + MacOs/Windows/Linux native app)](https://github.com/Mintplex-Labs/anything-llm)
+- [Ollama Basic Chat: Uses HyperDiv Reactive UI](https://github.com/rapidarchitect/ollama_basic_chat)
+- [OllamaSpring](https://github.com/CrazyNeil/OllamaSpring) (Ollama Client for macOS)
+- [Sidellama](https://github.com/gyopak/sidellama) (browser-based LLM client)
 - [Go-CREW](https://www.jonathanhecl.com/go-crew/) (Powerful Offline RAG in Golang)
-- [PartCAD](https://github.com/openvmp/partcad/) (CAD model generation with OpenSCAD and CadQuery)
 - [Ollama4j Web UI](https://github.com/ollama4j/ollama4j-web-ui) - Java-based Web UI for Ollama built with Vaadin, Spring Boot and Ollama4j
 - [PyOllaMx](https://github.com/kspviswa/pyOllaMx) - macOS application capable of chatting with both Ollama and Apple MLX models.
-- [Claude Dev](https://github.com/saoudrizwan/claude-dev) - VSCode extension for multi-file/whole-repo coding
+
+#### **Creative Applications**
+- [Painting Droid](https://github.com/mateuszmigas/painting-droid) (Painting app with AI integrations)
+- [Kerlig AI](https://www.kerlig.com/) (AI writing assistant for macOS)
+- [BoltAI for Mac](https://boltai.com) (AI Chat Client for Mac)
 - [Cherry Studio](https://github.com/kangfenmao/cherry-studio) (Desktop client with Ollama support)
-- [ConfiChat](https://github.com/1runeberg/confichat) (Lightweight, standalone, multi-platform, and privacy focused LLM chat interface with optional encryption)
-- [Archyve](https://github.com/nickthecook/archyve) (RAG-enabling document library)
-- [crewAI with Mesop](https://github.com/rapidarchitect/ollama-crew-mesop) (Mesop Web Interface to run crewAI with Ollama)
-- [LLMChat](https://github.com/trendy-design/llmchat) (Privacy focused, 100% local, intuitive all-in-one chat interface)
-- [ARGO](https://github.com/xark-argo/argo) (Locally download and run Ollama and Huggingface models with RAG on Mac/Windows/Linux)
+- [PartCAD](https://github.com/openvmp/partcad/) (CAD model generation with OpenSCAD and CadQuery)
+- [LLM-X](https://github.com/mrdjohnson/llm-x) (Progressive Web App)
+- [Dify.AI](https://github.com/langgenius/dify)
 
 ### Terminal
 
@@ -481,6 +462,221 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LSP-AI](https://github.com/SilasMarvin/lsp-ai) (Open-source language server for AI-powered functionality)
 - [QodeAssist](https://github.com/Palm1r/QodeAssist) (AI-powered coding assistant plugin for Qt Creator)
 - [Obsidian Quiz Generator plugin](https://github.com/ECuiDev/obsidian-quiz-generator)
+
+
+
+---
+
+<div style="max-width: 800px; margin: auto; text-align: left;">
+    <h2>Community Integrations</h2>
+    <div style="display: flex; flex-wrap: wrap; gap: 20px;">
+        <div style="flex: 1; min-width: 250px;">
+            <h3>Chat Interfaces</h3>
+            <ul>
+                <li><a href="https://github.com/semperai/amica">Amica</a></li>
+                <li><a href="https://github.com/Bin-Huang/Chatbox">Chatbox</a></li>
+                <li><a href="https://github.com/langgenius/dify">Dify.AI</a></li>
+                <li><a href="https://github.com/fmaclen/hollama">Hollama</a></li>
+                <li><a href="https://github.com/danny-avila/LibreChat">LibreChat</a></li>
+                <li><a href="https://msty.app">Msty</a></li>
+                <li><a href="https://github.com/jikkuatwork/saddle">Saddle</a></li>
+                <li><a href="https://github.com/MindWorkAI/AI-Studio">AI Studio</a></li>
+                <li><a href="https://github.com/trendy-design/llmchat">LLMChat</a> (Privacy focused, 100% local, intuitive all-in-one chat interface)</li>
+                <li><a href="https://github.com/1runeberg/confichat">ConfiChat</a> (Lightweight, standalone, multi-platform, and privacy focused LLM chat interface with optional encryption)</li>
+            </ul>
+        </div>
+        <div style="flex: 1; min-width: 250px;">
+            <h3>Development Tools</h3>
+            <ul>
+                <li><a href="https://github.com/saoudrizwan/claude-dev">Claude Dev</a> - VSCode extension for multi-file/whole-repo coding</li>
+                <li><a href="https://github.com/reid41/QA-Pilot">QA-Pilot</a> (Chat with Code Repository)</li>
+                <li><a href="https://github.com/av/harbor">Harbor</a> (Containerized LLM Toolkit with Ollama as default backend)</li>
+                <li><a href="https://github.com/trypromptly/LLMStack">LLMStack</a> (No-code multi-agent framework to build LLM agents and workflows)</li>
+                <li><a href="https://github.com/kartikm7/llocal">LLocal.in</a> (Easy to use Electron Desktop Client for Ollama)</li>
+                <li><a href="https://github.com/rapidarchitect/ollama-crew-mesop">crewAI with Mesop</a> (Mesop Web Interface to run crewAI with Ollama)</li>
+            </ul>
+        </div>
+        <div style="flex: 1; min-width: 250px;">
+            <h3>Clients</h3>
+            <ul>
+                <li><a href="https://github.com/AugustDev/enchanted">Enchanted (macOS native)</a></li>
+                <li><a href="https://github.com/bionic-gpt/bionic-gpt">Bionic GPT</a></li>
+                <li><a href="https://www.nurgo-software.com/products/brainsoup">BrainSoup</a> (Flexible native client with RAG & multi-agent automation)</li>
+                <li><a href="https://github.com/leonid20000/OdinRunes">Odin Runes</a></li>
+                <li><a href="https://github.com/Mintplex-Labs/anything-llm">AnythingLLM (Docker + MacOs/Windows/Linux native app)</a></li>
+                <li><a href="https://github.com/rapidarchitect/ollama_basic_chat">Ollama Basic Chat</a> (Uses HyperDiv Reactive UI)</li>
+                <li><a href="https://github.com/CrazyNeil/OllamaSpring">OllamaSpring</a> (Ollama Client for macOS)</li>
+                <li><a href="https://github.com/gyopak/sidellama">Sidellama</a> (browser-based LLM client)</li>
+                <li><a href="https://www.jonathanhecl.com/go-crew/">Go-CREW</a> (Powerful Offline RAG in Golang)</li>
+                <li><a href="https://github.com/ollama4j/ollama4j-web-ui">Ollama4j Web UI</a> - Java-based Web UI for Ollama built with Vaadin, Spring Boot and Ollama4j</li>
+                <li><a href="https://github.com/kspviswa/pyOllaMx">PyOllaMx</a> - macOS application capable of chatting with both Ollama and Apple MLX models.</li>
+            </ul>
+        </div>
+        <div style="flex: 1; min-width: 250px;">
+            <h3>Creative Applications</h3>
+            <ul>
+                <li><a href="https://github.com/mateuszmigas/painting-droid">Painting Droid</a> (Painting app with AI integrations)</li>
+                <li><a href="https://www.kerlig.com/">Kerlig AI</a> (AI writing assistant for macOS)</li>
+                <li><a href="https://boltai.com">BoltAI for Mac</a> (AI Chat Client for Mac)</li>
+                <li><a href="https://github.com/kangfenmao/cherry-studio">Cherry Studio</a> (Desktop client with Ollama support)</li>
+                <li><a href="https://github.com/openvmp/partcad/">PartCAD</a> (CAD model generation with OpenSCAD and CadQuery)</li>
+                <li><a href="https://github.com/mrdjohnson/llm-x">LLM-X</a> (Progressive Web App)</li>
+                <li><a href="https://github.com/langgenius/dify">Dify.AI</a></li>
+            </ul>
+        </div>
+        <div style="flex: 1; min-width: 250px;">
+            <h3>Web Applications</h3>
+            <ul>
+                <li><a href="https://github.com/open-webui/open-webui">Open WebUI</a></li>
+                <li><a href="https://github.com/ParisNeo/lollms-webui">Lollms-Webui</a></li>
+                <li><a href="https://github.com/ivanfioravanti/chatbot-ollama">Chatbot UI</a></li>
+                <li><a href="https://github.com/mckaywrigley/chatbot-ui">Chatbot UI v2</a></li>
+                <li><a href="https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file">Typescript UI</a></li>
+                <li><a href="https://github.com/richawo/minimal-llm-ui">Minimalistic React UI for Ollama Models</a></li>
+                <li><a href="https://github.com/kghandour/Ollama-SwiftUI">Ollama-SwiftUI</a></li>
+                <li><a href="https://github.com/jakobhoeg/nextjs-ollama-llm-ui">NextJS Web Interface for Ollama</a></li>
+                <li><a href="https://github.com/ChatGPTNextWeb/ChatGPT-Next-Web">NextChat</a> with <a href="https://docs.nextchat.dev/models/ollama">Get Started Doc</a></li>
+                <li><a href="https://github.com/mmo80/alpaca-webui">Alpaca WebUI</a></li>
+                <li><a href="https://github.com/enoch1118/ollamaGUI">OllamaGUI</a></li>
+                <li><a href="https://github.com/InternLM/OpenAOE">OpenAOE</a></li>
+                <li><a href="https://github.com/lobehub/lobe-chat">Lobe Chat</a> with <a href="https://lobehub.com/docs/self-hosting/examples/ollama">Integrating Doc</a></li>
+                <li><a href="https://github.com/sugarforever/chat-ollama">ChatOllama</a> (Open Source Chatbot based on Ollama with Knowledge Bases)</li>
+                <li><a href="https://github.com/Nagi-ovo/CRAG-Ollama-Chat">CRAG Ollama Chat</a> (Simple Web Search with Corrective RAG)</li>
+                <li><a href="https://github.com/infiniflow/ragflow">RAGFlow</a> (Open-source Retrieval-Augmented Generation engine based on deep document understanding)</li>
+                <li><a href="https://github.com/StreamDeploy-DevRel/streamdeploy-llm-app-scaffold">StreamDeploy</a> (LLM Application Scaffold)</li>
+                <li><a href="https://github.com/swuecho/chat">chat</a> (chat web app for teams)</li>
+                <li><a href="https://github.com/datvodinh/rag-chatbot.git">Ollama RAG Chatbot</a> (Local Chat with multiple PDFs using Ollama and RAG)</li>
+                <li><a href="https://github.com/nickthecook/archyve">Archyve</a> (RAG-enabling document library)</li>
+            </ul>
+        </div>
+        <div style="flex: 1; min-width: 250px;">
+            <h3>Terminal Applications</h3>
+            <ul>
+                <li><a href="https://github.com/ggozad/oterm">oterm</a></li>
+                <li><a href="https://github.com/s-kostyaev/ellama">Ellama Emacs client</a></li>
+                <li><a href="https://github.com/zweifisch/ollama">Emacs client</a></li>
+                <li><a href="https://github.com/David-Kunz/gen.nvim">gen.nvim</a></li>
+                <li><a href="https://github.com/nomnivore/ollama.nvim">ollama.nvim</a></li>
+                <li><a href="https://github.com/marco-souza/ollero.nvim">ollero.nvim</a></li>
+                <li><a href="https://github.com/gerazov/ollama-chat.nvim">ollama-chat.nvim</a></li>
+                <li><a href="https://github.com/huynle/ogpt.nvim">ogpt.nvim</a></li>
+                <li><a href="https://github.com/karthink/gptel">gptel Emacs client</a></li>
+                <li><a href="https://github.com/dustinblackman/oatmeal">Oatmeal</a></li>
+                <li><a href="https://github.com/pgibler/cmdh">cmdh</a></li>
+                <li><a href="https://github.com/npahlfer/ooo">ooo</a></li>
+                <li><a href="https://github.com/reid41/shell-pilot">shell-pilot</a></li>
+                <li><a href="https://github.com/pythops/tenere">tenere</a></li>
+                <li><a href="https://github.com/taketwo/llm-ollama">llm-ollama</a> for <a href="https://llm.datasette.io/en/stable/">Datasette's LLM CLI</a></li>
+                <li><a href="https://github.com/anaisbetts/typechat-cli">typechat-cli</a></li>
+                <li><a href="https://github.com/djcopley/ShellOracle">ShellOracle</a></li>
+                <li><a href="https://github.com/yusufcanb/tlm">tlm</a></li>
+                <li><a href="https://github.com/ericcurtin/podman-ollama">podman-ollama</a></li>
+                <li><a href="https://github.com/sammcj/gollama">gollama</a></li>
+                <li><a href="https://github.com/cognitivetech/ollama-ebook-summary/">Ollama eBook Summary</a></li>
+                <li><a href="https://github.com/rapidarchitect/ollama_moe">Ollama Mixture of Experts (MOE) in 50 lines of code</a></li>
+                <li><a href="https://github.com/pepo-ec/vim-intelligence-bridge">vim-intelligence-bridge</a> Simple interaction of "Ollama" with the Vim editor</li>
+            </ul>
+        </div>
+        <div style="flex: 1; min-width: 250px;">
+            <h3>Apple Vision Pro</h3>
+            <ul>
+                <li><a href="https://github.com/AugustDev/enchanted">Enchanted</a>: A native application for Apple Vision Pro.</li>
+                <li><a href="https://github.com/mmo80/alpaca-webui">Alpaca WebUI</a>: A web-based user interface for Ollama models.</li>
+            </ul>
+        </div>
+        <div style="flex: 1; min-width: 250px;">
+            <h3>Database Integrations</h3>
+            <ul>
+                <li><a href="https://github.com/mindsdb/mindsdb/blob/staging/mindsdb/integrations/handlers/ollama_handler/README.md">MindsDB</a>: Connects Ollama models with various data platforms.</li>
+                <li><a href="https://github.com/philippgille/chromem-go/blob/v0.5.0/embed_ollama.go">chromem-go</a>: Integration for embedding Ollama in applications.</li>
+            </ul>
+        </div>
+        <div style="flex: 1; min-width: 250px;">
+            <h3>Package Managers</h3>
+            <ul>
+                <li><a href="https://archlinux.org/packages/extra/x86_64/ollama/">Pacman</a>: Ollama package for Arch Linux.</li>
+                <li><a href="https://github.com/gentoo/guru/tree/master/app-misc/ollama">Gentoo</a>: Ollama package for Gentoo Linux.</li>
+            </ul>
+        </div>
+        <div style="flex: 1; min-width: 250px;">
+            <h3>Libraries</h3>
+            <ul>
+                <li><a href="https://python.langchain.com/docs/integrations/llms/ollama">LangChain</a>: Integrates Ollama with various programming languages.</li>
+                <li><a href="https://github.com/tmc/langchaingo/">LangChainGo</a>: Go library for integrating with Ollama.</li>
+            </ul>
+        </div>
+        <div style="flex: 1; min-width: 250px;">
+            <h3>Mobile Applications</h3>
+            <ul>
+                <li><a href="https://github.com/AugustDev/enchanted">Enchanted</a>: Mobile application for interacting with Ollama.</li>
+                <li><a href="https://github.com/Mobile-Artificial-Intelligence/maid">Maid</a>: A mobile assistant application using Ollama.</li>
+            </ul>
+        </div>
+        <div style="flex: 1; min-width: 250px;">
+            <h3>Extensions & Plugins</h3>
+            <ul>
+                <li><a href="https://github.com/MassimilianoPasquini97/raycast_ollama">Raycast extension</a>: Integration with Raycast for using Ollama.</li>
+                <li><a href="https://github.com/hinterdupfinger/obsidian-ollama">Obsidian Ollama plugin</a>: Plugin for integrating Ollama into Obsidian.</li>
+            </ul>
+        </div>
+        <div style="flex: 1; min-width: 250px;">
+            <h3>Supported Backends</h3>
+            <ul>
+                <li><a href="https://github.com/ggerganov/llama.cpp">llama.cpp</a>: Project for implementing Ollama models.</li>
+                <li><a href="https://github.com/rapidarchitect/ollama">Ollama API</a>: Backend API for integrating with Ollama.</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+
+
+<div style="max-width: 800px; margin: auto; text-align: left;">
+    <h2>Terminal Applications</h2>
+    <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+        <div style="flex: 1 1 45%; min-width: 200px; border: 1px solid #ccc; padding: 10px;">
+            <ul>
+                <li><a href="https://github.com/ggozad/oterm">oterm</a></li>
+                <li><a href="https://github.com/s-kostyaev/ellama">Ellama Emacs client</a></li>
+                <li><a href="https://github.com/zweifisch/ollama">Emacs client</a></li>
+                <li><a href="https://github.com/David-Kunz/gen.nvim">gen.nvim</a></li>
+                <li><a href="https://github.com/nomnivore/ollama.nvim">ollama.nvim</a></li>
+            </ul>
+        </div>
+        <div style="flex: 1 1 45%; min-width: 200px; border: 1px solid #ccc; padding: 10px;">
+            <ul>
+                <li><a href="https://github.com/marco-souza/ollero.nvim">ollero.nvim</a></li>
+                <li><a href="https://github.com/gerazov/ollama-chat.nvim">ollama-chat.nvim</a></li>
+            </ul>
+        </div>
+        <div style="flex: 1 1 45%; min-width: 200px; border: 1px solid #ccc; padding: 10px;">
+            <ul>
+                <li><a href="https://github.com/pgibler/cmdh">cmdh</a></li>
+                <li><a href="https://github.com/npahlfer/ooo">ooo</a></li>
+                <li><a href="https://github.com/reid41/shell-pilot">shell-pilot</a></li>
+                <li><a href="https://github.com/pythops/tenere">tenere</a></li>
+                <li><a href="https://github.com/taketwo/llm-ollama">llm-ollama</a> for <a href="https://llm.datasette.io/en/stable/">Datasette's LLM CLI</a></li>
+            </ul>
+        </div>
+        <div style="flex: 1 1 45%; min-width: 200px; border: 1px solid #ccc; padding: 10px;">
+            <ul>
+                <li><a href="https://github.com/anaisbetts/typechat-cli">typechat-cli</a></li>
+                <li><a href="https://github.com/djcopley/ShellOracle">ShellOracle</a></li>
+                <li><a href="https://github.com/yusufcanb/tlm">tlm</a></li>
+                <li><a href="https://github.com/ericcurtin/podman-ollama">podman-ollama</a></li>
+                <li><a href="https://github.com/sammcj/gollama">gollama</a></li>
+            </ul>
+        </div>
+        <div style="flex: 1 1 45%; min-width: 200px; border: 1px solid #ccc; padding: 10px;">
+            <ul>
+                <li><a href="https://github.com/cognitivetech/ollama-ebook-summary/">Ollama eBook Summary</a></li>
+                <li><a href="https://github.com/rapidarchitect/ollama_moe">Ollama Mixture of Experts (MOE) in 50 lines of code</a></li>
+                <li><a href="https://github.com/pepo-ec/vim-intelligence-bridge">vim-intelligence-bridge</a> Simple interaction of "Ollama" with the Vim editor</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
 
 ### Supported backends
 
