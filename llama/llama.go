@@ -17,7 +17,7 @@ package llama
 #cgo linux,arm64 LDFLAGS: -L${SRCDIR}/build/Linux/arm64
 #cgo linux,amd64 LDFLAGS: -L${SRCDIR}/build/Linux/amd64
 #cgo windows CFLAGS: -Wno-discarded-qualifiers
-#cgo windows LDFLAGS: -lmsvcrt
+#cgo windows LDFLAGS: -lmsvcrt -static-libstdc++ -static-libgcc -static
 #cgo windows,arm64 LDFLAGS: -L${SRCDIR}/build/Windows/arm64
 #cgo windows,amd64 LDFLAGS: -L${SRCDIR}/build/Windows/amd64
 #cgo avx CFLAGS: -mavx

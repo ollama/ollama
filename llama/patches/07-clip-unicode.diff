@@ -1,8 +1,8 @@
 diff --git a/examples/llava/clip.cpp b/examples/llava/clip.cpp
-index cb51793d..8716472b 100644
+index dcc65f02..1a990306 100644
 --- a/examples/llava/clip.cpp
 +++ b/examples/llava/clip.cpp
-@@ -41,6 +41,14 @@
+@@ -66,6 +66,19 @@
  #include <cinttypes>
  #include <limits>
  
@@ -12,12 +12,17 @@ index cb51793d..8716472b 100644
 +    #define NOMINMAX
 +#endif
 +#include <windows.h>
++#if __GLIBCXX__
++#include <cstdio>
++#include <ext/stdio_filebuf.h>
++#include <fcntl.h>
++#endif
 +#endif
 +
  //#define CLIP_DEBUG_FUNCTIONS
  
  // RGB uint8 image
-@@ -1223,7 +1231,22 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
+@@ -1248,7 +1261,29 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
              return nullptr;
          }
  
@@ -32,7 +37,14 @@ index cb51793d..8716472b 100644
 +            free(wbuf);
 +            return NULL;
 +        }
++#if __GLIBCXX__
++        int fd = _wopen(wbuf, _O_RDONLY | _O_BINARY);
++        __gnu_cxx::stdio_filebuf<char> buffer(fd, std::ios_base::in);
++        std::istream fin(&buffer);
++#else // MSVC
++        // unused in our current build
 +        auto fin = std::ifstream(wbuf, std::ios::binary);
++#endif
 +        free(wbuf);
 +#else
          auto fin = std::ifstream(fname, std::ios::binary);
@@ -40,6 +52,15 @@ index cb51793d..8716472b 100644
          if (!fin) {
              LOG_TEE("cannot open model file for loading tensors\n");
              clip_free(new_clip);
--- 
-2.46.0
-
+@@ -1288,7 +1323,11 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
+                 ggml_backend_tensor_set(cur, read_buf.data(), 0, num_bytes);
+             }
+         }
++#if defined(_WIN32) && defined(__GLIBCXX__)
++        close(fd);
++#else
+         fin.close();
++#endif
+     }
+ 
+     // vision model
