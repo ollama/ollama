@@ -3,10 +3,18 @@
 </div>
 
 # Ollama
+#### Get up and running with large language models.
 
 [![Discord](https://dcbadge.vercel.app/api/server/ollama?style=flat&compact=true)](https://discord.gg/ollama)
 
-Get up and running with large language models.
+
+
+
+Ollama is a lightweight, extensible framework that enables you to effortlessly run a variety of open-source LLMs. With Ollama, you can explore the capabilities of LLMs, whether for development, research, or just for fun.
+
+It is free and open-source and serves as a wrapper by providing a simple API for creating, running, and managing models
+
+---
 
 ### Table of Contents
 
@@ -28,9 +36,6 @@ Get up and running with large language models.
 ---
 
 ## Getting Started
-
-Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models
-
 ### Installation
 
 #### macOS
