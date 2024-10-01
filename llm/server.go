@@ -958,7 +958,7 @@ func (s *llmServer) Tokenize(ctx context.Context, content string) ([]int, error)
 	s.modelLock.Lock()
 	defer s.modelLock.Unlock()
 	if s.model != nil {
-		return s.model.Tokenize(content, true, true)
+		return s.model.Tokenize(content, false, true)
 	}
 
 	// Make sure the server is ready
@@ -991,7 +991,7 @@ func (s *llmServer) Tokenize(ctx context.Context, content string) ([]int, error)
 			m := llama.LoadModelFromFile(s.modelPath, llama.ModelParams{VocabOnly: true})
 			s.model = m
 		}
-		return s.model.Tokenize(content, true, true)
+		return s.model.Tokenize(content, false, true)
 	}
 
 	body, err := io.ReadAll(resp.Body)
