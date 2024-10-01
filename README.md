@@ -481,3 +481,31 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov.
 
+
+### 🐞 Issues
+
+If you encounter any issues while using the project, please follow these steps:
+
+<div style="max-width: 700px;">
+  <table style="width: 100%; border-spacing: 20px; border-collapse: separate;">
+    <tr>
+      <td style="text-align: center; padding: 20px; vertical-align: middle;">
+        <strong>1. Check Existing Issues</strong><br>
+        Start by checking the link below to see if your problem has already been reported:<br>
+        <a href="https://github.com/ollama/ollama/issues" style="display: inline-block; padding: 10px 16px; margin: 16px; background-color: #007BFF; color: white; text-decoration: none; border-radius: 5px; font-size: 14px; height: 40px; line-height: 20px;">🔍 View Existing Issues</a>
+      </td>
+      <td style="text-align: center; padding: 20px; vertical-align: middle;">
+        <strong>2. Report a New Issue</strong><br>
+        If you don't find a match, please open a new issue using the link below:<br>
+        <a href="https://github.com/ollama/ollama/issues/new" style="display: inline-block; padding: 10px 16px; margin: 16px; background-color: #FF0000; color: white; text-decoration: none; border-radius: 5px; font-size: 14px; height: 40px; line-height: 20px;">📝 Open a New Issue</a>
+      </td>
+    </tr>
+  </table>
+</div>
+
+Your feedback is valuable and helps us improve the project—thank you!
+
+
+## 📜 License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) for details.
