@@ -15,10 +15,10 @@ Supported:
 
 Extra build steps are required for CUDA and ROCm on Windows since `nvcc` and `hipcc` both require using msvc as the host compiler. For these shared libraries are created:
 
-- `ggml_cuda.dll` on Windows or `ggml_cuda.so` on Linux
-- `ggml_hipblas.dll` on Windows or `ggml_hipblas.so` on Linux
+- `ggml_cuda.dll` on Windows or `libggml_cuda.so` on Linux
+- `ggml_hipblas.dll` on Windows or `libggml_hipblas.so` on Linux
 
-> Note: it's important that memory is allocated and freed by the same compiler (e.g. entirely by code compiled with msvc or mingw). Issues from this should be rare, but there are some places where pointers are returned by the CUDA or HIP runtimes and freed elsewhere, causing a a crash. In a future change the same runtime should be used in both cases to avoid crashes.
+> Note: it's important that memory is allocated and freed by the same compiler (e.g. entirely by code compiled with msvc or mingw). Issues from this should be rare, but there are some places where pointers are returned by the CUDA or HIP runtimes and freed elsewhere, causing a crash. In a future change the same runtime should be used in both cases to avoid crashes.
 
 ## Building
 
@@ -93,8 +93,30 @@ make -j
 
 ## Syncing with llama.cpp
 
-To update this package to the latest llama.cpp code, use the `sync.sh` script:
+To update this package to the latest llama.cpp code, use the `sync.sh` script.
+
+> Note: the upstream commit is defined by HEAD in ./llm/llama.cpp today, but will be adjusted to a manifest file soon.  You must update this before running the sync script.
 
 ```
-./sync.sh ../../llama.cpp
+./sync.sh 
 ```
+
+When updating, sometimes the existing patches wont apply cleanly due to upstream changes.  The general sequence to rebase a patch is:
+
+1. Rename the offending `./patches/NN-xxx.diff` patch so it doesn't end with ".diff" temporarily which will result in the sync script ignoring it
+2. Run the sync script so it completes successfully (disable all patches necessary for a clean run)
+3. Manually apply the patch (e.g. `patch -p1 < ./patches/NN-xxx.tmp`) and resolve the conflicts
+4. Build and test without committing the changes in the native code
+5. Generate a replacement diff `git diff file1.cpp file2.cpp > ./patches/NN-xxx.diff`
+6. Repeat for additional patches until all are cleaned up
+7. Re-run the sync script to verify everything worked correctly.
+
+## Modifying the native code
+
+If you are fixing a bug or adding a capability which impacts the vendored code from llama.cpp, you'll need to generate a patch for the native code.  Changes should be contributed upstream where possible to reduce the number of patches we carry.  The general approach is:
+
+1. Edit the relevant native code, without committing the changes
+2. Build and test until the code is working properly and ready for an ollama PR
+3. Generate a new diff, with a prefix number larger than the existing numbers. e.g. `git diff file1.ccp file2.cpp > ./patches/42-something.diff`
+4. Commit the changes to the native files, but don't let them drift from the patch content
+5. Post the PR to Ollama - CI will verify the patch reproduces the same content as what is committed to the file to ensure all changes have patches.

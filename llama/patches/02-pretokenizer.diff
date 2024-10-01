@@ -1,7 +1,7 @@
-diff --git a/src/llama.cpp b/src/llama.cpp
+diff --git a/llama/llama.cpp b/llama/llama.cpp
 index 88355971..dd7d41ed 100644
---- a/src/llama.cpp
-+++ b/src/llama.cpp
+--- a/llama/llama.cpp
++++ b/llama/llama.cpp
 @@ -6083,16 +6083,7 @@ static void llm_load_vocab(
          if (vocab.type == LLAMA_VOCAB_TYPE_BPE) {
              vocab.tokenizer_add_space_prefix = false;

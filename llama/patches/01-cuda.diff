@@ -1,7 +1,7 @@
-diff --git a/ggml/src/ggml-backend.c b/ggml/src/ggml-backend.c
+diff --git a/llama/ggml-backend.c b/llama/ggml-backend.c
 index 9e35ce98..179be840 100644
---- a/ggml/src/ggml-backend.c
-+++ b/ggml/src/ggml-backend.c
+--- a/llama/ggml-backend.c
++++ b/llama/ggml-backend.c
 @@ -87,7 +87,12 @@ void ggml_backend_buffer_free(ggml_backend_buffer_t buffer) {
      if (buffer->iface.free_buffer != NULL) {
          buffer->iface.free_buffer(buffer);
@@ -15,10 +15,10 @@ index 9e35ce98..179be840 100644
  }
  
  size_t ggml_backend_buffer_get_size(ggml_backend_buffer_t buffer) {
-diff --git a/ggml/src/ggml-cuda.cu b/ggml/src/ggml-cuda.cu
+diff --git a/llama/ggml-cuda.cu b/llama/ggml-cuda.cu
 index 04b6e528..43b12bdf 100644
---- a/ggml/src/ggml-cuda.cu
-+++ b/ggml/src/ggml-cuda.cu
+--- a/llama/ggml-cuda.cu
++++ b/llama/ggml-cuda.cu
 @@ -392,6 +392,10 @@ GGML_CALL static bool ggml_backend_buffer_is_cuda(ggml_backend_buffer_t buffer)
  GGML_CALL static void ggml_backend_cuda_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
@@ -39,10 +39,10 @@ index 04b6e528..43b12bdf 100644
  GGML_CALL int ggml_backend_cuda_reg_devices() {
      int device_count = ggml_backend_cuda_get_device_count();
      //int device_count = 1; // DEBUG: some tools require delaying CUDA initialization
-diff --git a/ggml/include/ggml-cuda.h b/ggml/include/ggml-cuda.h
+diff --git a/llama/ggml-cuda.h b/llama/ggml-cuda.h
 index 5eb4af40..50b91009 100644
---- a/ggml/include/ggml-cuda.h
-+++ b/ggml/include/ggml-cuda.h
+--- a/llama/ggml-cuda.h
++++ b/llama/ggml-cuda.h
 @@ -31,6 +31,8 @@ GGML_API GGML_CALL ggml_backend_buffer_type_t ggml_backend_cuda_split_buffer_typ
  // pinned host buffer for use with the CPU backend for faster copies between CPU and GPU
  GGML_API GGML_CALL ggml_backend_buffer_type_t ggml_backend_cuda_host_buffer_type(void);
