@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/containerd/console"
+	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/mattn/go-runewidth"
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
@@ -1170,7 +1171,8 @@ func RunServer(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	ln, err := net.Listen("tcp", envconfig.Host().Host)
+	ln, err := obtainListener()
+
 	if err != nil {
 		return err
 	}
@@ -1227,6 +1229,20 @@ func initializeKeypair() error {
 		fmt.Printf("Your new public key is: \n\n%s\n", publicKeyBytes)
 	}
 	return nil
+}
+
+func obtainListener() (net.Listener, error) {
+	listeners, err := activation.Listeners()
+
+	if err == nil && len(listeners) == 1 {
+		return listeners[0], nil
+	}
+
+	if err == nil && len(listeners) > 1 {
+		fmt.Printf("Activation via systemd sockets returned %d listeners. Cannot handle more than one listener and fall back to standard behavior of binding to the port myself.", len(listeners))
+	}
+
+	return net.Listen("tcp", envconfig.Host().Host)
 }
 
 func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {

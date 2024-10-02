@@ -136,6 +136,16 @@ Environment="PATH=$PATH"
 [Install]
 WantedBy=default.target
 EOF
+
+    status "Creating ollama systemd socket..."
+    cat <<EOF | $SUDO tee /etc/systemd/system/ollama.socket >/dev/null
+[Unit]
+Description=Ollama Socket
+
+[Socket]
+ListenStream=11434
+EOF
+
     SYSTEMCTL_RUNNING="$(systemctl is-system-running || true)"
     case $SYSTEMCTL_RUNNING in
         running|degraded)
@@ -235,7 +245,7 @@ CUDA_REPO_ERR_MSG="NVIDIA GPU detected, but your OS and Architecture are not sup
 # ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#fedora
 install_cuda_driver_yum() {
     status 'Installing NVIDIA repository...'
-    
+
     case $PACKAGE_MANAGER in
         yum)
             $SUDO $PACKAGE_MANAGER -y install yum-utils
