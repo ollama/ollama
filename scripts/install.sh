@@ -119,6 +119,51 @@ configure_systemd() {
     status "Adding current user to ollama group..."
     $SUDO usermod -a -G ollama $(whoami)
 
+    status "Creating Ollama environment configuration ..."
+    cat <<EOF |$SUDO tee /etc/default/ollama >/dev/null
+# Show additional debug information (e.g. OLLAMA_DEBUG=1)
+# OLLAMA_DEBUG=
+
+# IP Address for the ollama server (default 127.0.0.1:11434)
+# OLLAMA_HOST=
+
+# The duration that models stay loaded in memory (default "5m")
+# OLLAMA_KEEP_ALIVE=
+
+# Maximum number of loaded models per GPU
+# OLLAMA_MAX_LOADED_MODELS=
+
+# Maximum number of queued requests
+# OLLAMA_MAX_QUEUE=
+
+# The path to the models directory
+# OLLAMA_MODELS=
+
+# Maximum number of parallel requests
+# OLLAMA_NUM_PARALLEL=
+
+# Do not prune model blobs on startup
+# OLLAMA_NOPRUNE=
+
+# A comma separated list of allowed origins
+# OLLAMA_ORIGINS=
+
+# Always schedule model across all GPUs
+# OLLAMA_SCHED_SPREAD=
+
+# Location for temporary files
+# OLLAMA_TMPDIR=
+
+# Enabled flash attention
+# OLLAMA_FLASH_ATTENTION=
+
+# Set LLM library to bypass autodetection
+# OLLAMA_LLM_LIBRARY=
+
+# comma separated list of GPU or empy
+# CUDA_VISIBLE_DEVICES=
+EOF
+
     status "Creating ollama systemd service..."
     cat <<EOF | $SUDO tee /etc/systemd/system/ollama.service >/dev/null
 [Unit]
@@ -131,6 +176,7 @@ User=ollama
 Group=ollama
 Restart=always
 RestartSec=3
+EnvironmentFile=-/etc/default/ollama
 Environment="PATH=$PATH"
 
 [Install]
