@@ -264,6 +264,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ### Web & Desktop
 
 - [Open WebUI](https://github.com/open-webui/open-webui)
+- [multi LLMs](https://github.com/greenido/multi-LLM-at-once)
 - [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
 - [Hollama](https://github.com/fmaclen/hollama)
 - [Lollms-Webui](https://github.com/ParisNeo/lollms-webui)
