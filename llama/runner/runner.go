@@ -513,9 +513,10 @@ type ImageData struct {
 }
 
 type CompletionRequest struct {
-	Prompt  string      `json:"prompt"`
-	Images  []ImageData `json:"image_data"`
-	Grammar string      `json:"grammar"`
+	Prompt      string      `json:"prompt"`
+	Images      []ImageData `json:"image_data"`
+	Grammar     string      `json:"grammar"`
+	CachePrompt bool        `json:"cache_prompt"`
 
 	Options
 }
@@ -595,7 +596,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	for i, sq := range s.seqs {
 		if sq == nil {
-			seq.cache, seq.inputs, seq.numPast, err = s.cache.LoadCacheSlot(seq.inputs)
+			seq.cache, seq.inputs, seq.numPast, err = s.cache.LoadCacheSlot(seq.inputs, req.CachePrompt)
 			if err != nil {
 				s.mu.Unlock()
 				http.Error(w, fmt.Sprintf("Failed to load cache: %v", err), http.StatusInternalServerError)
@@ -646,7 +647,8 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 }
 
 type EmbeddingRequest struct {
-	Content string `json:"content"`
+	Content     string `json:"content"`
+	CachePrompt bool   `json:"cache_prompt"`
 }
 
 type EmbeddingResponse struct {
@@ -674,7 +676,7 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	for i, sq := range s.seqs {
 		if sq == nil {
-			seq.cache, seq.inputs, seq.numPast, err = s.cache.LoadCacheSlot(seq.inputs)
+			seq.cache, seq.inputs, seq.numPast, err = s.cache.LoadCacheSlot(seq.inputs, req.CachePrompt)
 			if err != nil {
 				s.mu.Unlock()
 				http.Error(w, fmt.Sprintf("Failed to load cache: %v", err), http.StatusInternalServerError)
