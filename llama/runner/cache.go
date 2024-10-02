@@ -64,7 +64,7 @@ type InputCacheSlot struct {
 	lastUsed time.Time
 }
 
-func (c *InputCache) LoadCacheSlot(prompt []input) (*InputCacheSlot, []input, int, error) {
+func (c *InputCache) LoadCacheSlot(prompt []input, cachePrompt bool) (*InputCacheSlot, []input, int, error) {
 	var slot *InputCacheSlot
 	var numPast int
 	var err error
@@ -82,6 +82,10 @@ func (c *InputCache) LoadCacheSlot(prompt []input) (*InputCacheSlot, []input, in
 	}
 	if err != nil {
 		return nil, nil, 0, err
+	}
+
+	if !cachePrompt {
+		numPast = 0
 	}
 
 	slot.InUse = true
