@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
-	"math"
 	"net"
 	"net/http"
 	"os"
@@ -335,7 +334,6 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 	}
 	defer s.mu.Unlock()
 
-	slog.Debug("Processing batch", "seqs", len(s.seqs))
 	var batch *llama.Batch
 
 	seqIdx := s.nextSeq - 1
@@ -437,8 +435,6 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 
 		seq.numPredicted++
 
-		slog.Debug("sampled", "piece", piece)
-
 		// if it's an end of sequence token, break
 		if s.model.TokenIsEog(token) {
 			// TODO (jmorganca): we should send this back
@@ -455,7 +451,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		sequence := strings.Join(seq.pendingResponses, "")
 
 		if ok, stop := findStop(sequence, seq.stop); ok {
-			slog.Info("hit stop token", "stop", seq.stop)
+			slog.Debug("hit stop token", "stop", seq.stop)
 
 			trimCacheLen := len(seq.pendingResponses) - 1
 			seq.pendingResponses = truncateStop(seq.pendingResponses, stop)
@@ -817,6 +813,7 @@ func main() {
 	})
 	slog.SetDefault(slog.New(handler))
 	slog.Info("starting go runner")
+	slog.Debug("system info", "cpu", llama.PrintSystemInfo(), "threads", *threads)
 
 	server := &Server{
 		batchSize: *batchSize,
@@ -843,7 +840,6 @@ func main() {
 		UseMlock:     *mlock,
 		TensorSplit:  tensorSplitFloats,
 		Progress: func(progress float32) {
-			slog.Debug("Loading model", "progress %", math.Round(float64(progress*100)))
 			server.progress = progress
 		},
 	}
