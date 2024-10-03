@@ -1127,7 +1127,6 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
 	r.GET("/api/ps", s.PsHandler)
-	r.GET("/api/gpus", s.GpusHandler)
 
 	// Compatibility endpoints
 	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)
@@ -1342,10 +1341,6 @@ func (s *Server) PsHandler(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusOK, api.ProcessResponse{Models: models})
-}
-
-func (s *Server) GpusHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, gpu.GetSystemInfo())
 }
 
 func (s *Server) ChatHandler(c *gin.Context) {
