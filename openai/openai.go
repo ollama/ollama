@@ -647,7 +647,7 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 		if chatResponse.Done {
 			if w.streamUsage {
 				u := toUsage(chatResponse)
-				d, err := json.Marshal(ChatCompletionChunk{Usage: &u})
+				d, err := json.Marshal(ChatCompletionChunk{Choices: []ChunkChoice{}, Usage: &u})
 				if err != nil {
 					return 0, err
 				}
@@ -711,7 +711,7 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 		if generateResponse.Done {
 			if w.streamUsage {
 				u := toUsageGenerate(generateResponse)
-				d, err := json.Marshal(CompletionChunk{Usage: &u})
+				d, err := json.Marshal(CompletionChunk{Choices: []CompleteChunkChoice{}, Usage: &u})
 				if err != nil {
 					return 0, err
 				}
