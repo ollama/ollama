@@ -204,59 +204,82 @@ func (p *llamaModel) repack(name string, data []float32, shape []uint64) ([]floa
 	for i, d := range dims {
 		dims64[i] = (int64)(d)
 	}
-	a := cllama.GGMLNewTensor(ctx, cllama.GGML_TYPE_F32, len(dims64), dims64)
-	cllama.LoadData(*a, unsafe.Pointer(&data[0]), unsafe.Sizeof(data))
+	n2 := cllama.GGMLNewTensor(ctx, cllama.GGML_TYPE_F32, len(dims64), dims64)
+	cllama.LoadData(n2, unsafe.Pointer(&data[0]), unsafe.Sizeof(float32(0))*uintptr(len(data)))
 
 	if err := n.Reshape(append([]int{int(heads), 2, dims[0] / int(heads) / 2}, dims[1:]...)...); err != nil {
 		return nil, err
 	}
+	// slog.Info("XXX rehape old", "0", int(heads), "1", 2, "2", dims[0]/int(heads)/2, "3", dims[1:])
+	// slog.Info("XXX rehape new", "0", (int64)(heads), "1", 2, "2", dims64[0]/(int64)(heads)/2, "3", dims64[1])
 
-	b := cllama.GGMLReshape4d(ctx, *a, (int64)(heads), 2, dims64[0]/(int64)(heads)/2, dims64[1])
+	n2 = cllama.GGMLReshape4d(ctx, n2, 2, (int64)(heads), dims64[0]/(int64)(heads)/2, dims64[1])
+
+	// Good up to here
+
+	// Goes bad here...
 
 	if err := n.T(0, 2, 1, 3); err != nil {
 		return nil, err
 	}
 
-	c := cllama.GGMLCont(ctx, *cllama.GGMLPermute(ctx, *b, 0, 2, 1, 3))
+	// n2 = cllama.GGMLCont(ctx, *cllama.GGMLPermute(ctx, *n2, 0, 2, 1, 3))
+	n2 = cllama.GGMLCont(ctx, cllama.GGMLPermute(ctx, n2, 2, 0, 1, 3))
 
 	if err := n.Reshape(dims...); err != nil {
 		return nil, err
 	}
 
-	// TODO - this crashes with ggml_is_contiguous false assert
-	d := cllama.GGMLReshape2d(ctx, *c, dims64[0], dims64[1])
+	// n2 = cllama.GGMLReshape2d(ctx, n2, dims64[0], dims64[1])
+	n2 = cllama.GGMLReshape2d(ctx, n2, dims64[1], dims64[0])
 
-	if err := n.Transpose(); err != nil {
-		return nil, err
-	}
+	// if err := n.Transpose(); err != nil {
+	// 	return nil, err
+	// }
+	// n2 = cllama.GGMLCont(ctx, *cllama.GGMLTranspose(ctx, *n2))
 
-	e := cllama.GGMLTranspose(ctx, *d)
+	// n2 = cllama.GGMLTranspose(ctx, *n2)
+
 	g := cllama.GGMLNewGraph(ctx)
-	cllama.GGMLBuildForwardExpand(*g, *e)
-	cllama.GGMLGraphComputeWithCtx(ctx, *g, 4)
+	cllama.GGMLBuildForwardExpand(g, n2)
+	cllama.GGMLGraphComputeWithCtx(ctx, g, 4)
 
 	ts, err := native.SelectF32(n, 1)
 	if err != nil {
 		return nil, err
 	}
 
-	ts2 := cllama.GGMLGetDataF32(*e)
+	// Only the first 6 items are correct, then it's all nulls
+	ts2 := cllama.GGMLGetDataF32(n2)
 
 	var f32s []float32
 	for _, t := range ts {
 		f32s = append(f32s, t...)
 	}
 
-	slog.Info("first 3 items:",
-		slog.Group(
-			"old",
-			"0", f32s[0], "1", f32s[1], "2", f32s[2],
-		),
-		slog.Group(
-			"new",
-			"0", ts2[0], "1", ts2[1], "2", ts2[2],
-		),
-	)
+	f32s2 := make([]float32, len(ts2))
+	for i, t := range ts2 {
+		f32s2[i] = (float32)(t)
+	}
 
-	return f32s, nil
+	slog.Info("old", "len", len(f32s),
+		"0", f32s[0], "1", f32s[1], "2", f32s[2],
+		"-2", f32s[len(f32s)-3],
+		"-1", f32s[len(f32s)-2],
+		"-0", f32s[len(f32s)-1],
+	)
+	slog.Info("new", "len", len(f32s2),
+		"0", f32s2[0], "1", f32s2[1], "2", f32s2[2],
+		"-2", f32s2[len(f32s2)-3],
+		"-1", f32s2[len(f32s2)-2],
+		"-0", f32s2[len(f32s2)-1],
+	)
+	for i := range f32s {
+		if f32s[i] != f32s2[i] {
+			slog.Error("MISMATCH", "i", i, "old", f32s[i], "new", f32s2[i])
+			panic("abort")
+		}
+	}
+
+	return f32s2, nil
 }
