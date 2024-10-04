@@ -70,11 +70,11 @@ app.on('ready', () => {
 function firstRunWindow() {
   // Create the browser window.
   welcomeWindow = new BrowserWindow({
-    width: 400,
+    width: 440,
     height: 500,
     frame: false,
     fullscreenable: false,
-    resizable: false,
+    resizable: true,
     movable: true,
     show: false,
     webPreferences: {
