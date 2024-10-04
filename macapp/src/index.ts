@@ -150,7 +150,6 @@ function updateTray() {
   const menu = Menu.buildFromTemplate([
     ...(updateAvailable ? updateItems : []),
     toggleAutoStartupItem,
-    { role: 'about' },
     { role: 'quit', accelerator: 'Command+Q' },
   ])
 
