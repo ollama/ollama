@@ -109,7 +109,7 @@ export default function () {
                   className='rounded-lg bg-blue-50 p-4 text-start text-sm text-blue-800 dark:bg-gray-800 dark:text-blue-400'
                   role='alert'
                 >
-                  <span className='font-medium'>
+                  <span className='font-semibold'>
                     {app.getLoginItemSettings().openAtLogin
                       ? 'Autostart is enabled by default.'
                       : 'Autostart is disabled by default.'}
