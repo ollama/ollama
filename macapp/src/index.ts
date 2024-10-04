@@ -65,7 +65,6 @@ app.on('ready', () => {
   app.focus({ steal: true })
 
   init()
-  updateTray()
 })
 
 function firstRunWindow() {
