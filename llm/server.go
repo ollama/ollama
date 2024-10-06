@@ -643,8 +643,8 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 }
 
 const jsonGrammar = `
-root   ::= object
 value  ::= object | array | string | number | ("true" | "false" | "null") ws
+root   ::= value
 
 object ::=
   "{" ws (
