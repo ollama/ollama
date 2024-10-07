@@ -20,9 +20,9 @@ OLLAMA_COMMON_BUILD_ARGS="--build-arg=VERSION \
     --build-arg=AMDGPU_TARGETS"
 OLLAMA_NEW_RUNNERS=${OLLAMA_NEW_RUNNERS:-""}
 if [ -n "${OLLAMA_NEW_RUNNERS}" ]; then
-    NEW_MAKEFILE=".new"
+    DOCKERFILE_DIR="./llama/"
 else
-    NEW_MAKEFILE=""
+    DOCKERFILE_DIR="./"
 fi
 
 echo "Building Ollama"
