@@ -148,7 +148,13 @@ func ResizeImage(img image.Image, outputSize image.Point, maxImageTiles int) (im
 	newSize := getImageSizeFitToCanvas(b.Max, canvasSize, tileSize)
 
 	dst := image.NewRGBA(image.Rect(0, 0, newSize.X, newSize.Y))
-	draw.ApproxBiLinear.Scale(dst, dst.Rect, img, b, draw.Over, nil)
+
+	// scaling choices:
+	//   NearestNeighbor	fast, blocky output
+	//   ApproxBiLinear	fast, medium quality
+	//   BiLinear		slow, high quality
+	//   CatmullRom		very slow, very high quality
+	draw.BiLinear.Scale(dst, dst.Rect, img, b, draw.Over, nil)
 
 	return dst, aspectRatio
 }
