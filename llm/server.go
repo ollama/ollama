@@ -24,9 +24,11 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/build"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/gpu"
+	"github.com/ollama/ollama/runners"
 )
 
 type LlamaServer interface {
@@ -106,7 +108,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		gpus = gpu.GetCPUInfo()
 	}
 	if len(gpus) == 1 && gpus[0].Library == "cpu" {
-		cpuRunner = serverForCpu()
+		cpuRunner = runners.ServerForCpu()
 		estimate = EstimateGPULayers(gpus, ggml, projectors, opts)
 	} else {
 		estimate = EstimateGPULayers(gpus, ggml, projectors, opts)
@@ -118,7 +120,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			opts.NumGPU = 0
 		case gpus[0].Library != "metal" && estimate.Layers == 0:
 			// Don't bother loading into the GPU if no layers can fit
-			cpuRunner = serverForCpu()
+			cpuRunner = runners.ServerForCpu()
 			gpus = gpu.GetCPUInfo()
 		case opts.NumGPU < 0 && estimate.Layers > 0 && gpus[0].Library != "cpu":
 			opts.NumGPU = estimate.Layers
@@ -145,25 +147,20 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		return nil, errors.New("ollama supports only one lora adapter, but multiple were provided")
 	}
 
-	availableServers := getAvailableServers()
+	rDir, err := runners.Refresh(build.EmbedFS)
+	if err != nil {
+		return nil, err
+	}
+
+	availableServers := runners.GetAvailableServers(rDir)
 	if len(availableServers) == 0 {
-		if runtime.GOOS != "windows" {
-			slog.Warn("llama server binary disappeared, reinitializing payloads")
-			err = Init()
-			if err != nil {
-				slog.Warn("failed to reinitialize payloads", "error", err)
-				return nil, err
-			}
-			availableServers = getAvailableServers()
-		} else {
-			return nil, finalErr
-		}
+		return nil, finalErr
 	}
 	var servers []string
 	if cpuRunner != "" {
 		servers = []string{cpuRunner}
 	} else {
-		servers = serversForGpu(gpus[0]) // All GPUs in the list are matching Library and Variant
+		servers = runners.ServersForGpu(gpus[0]) // All GPUs in the list are matching Library and Variant
 	}
 	demandLib := envconfig.LLMLibrary()
 	if demandLib != "" {
@@ -274,7 +271,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--tensor-split", estimate.TensorSplit)
 	}
 
-	for i := range len(servers) {
+	for i := range servers {
 		dir := availableServers[servers[i]]
 		if dir == "" {
 			// Shouldn't happen
@@ -330,7 +327,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		_, err := os.Stat(server)
 		if errors.Is(err, os.ErrNotExist) {
 			slog.Warn("llama server disappeared, reinitializing payloads", "path", server, "error", err)
-			err = Init()
+			_, err = runners.Refresh(build.EmbedFS)
 			if err != nil {
 				slog.Warn("failed to reinitialize payloads", "error", err)
 				return nil, err
@@ -584,8 +581,7 @@ func (s *llmServer) Ping(ctx context.Context) error {
 
 func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 	start := time.Now()
-	stallDuration := 5 * time.Minute            // If no progress happens
-	finalLoadDuration := 5 * time.Minute        // After we hit 100%, give the runner more time to come online
+	stallDuration := envconfig.LoadTimeout()    // If no progress happens
 	stallTimer := time.Now().Add(stallDuration) // give up if we stall
 
 	slog.Info("waiting for llama runner to start responding")
@@ -637,7 +633,7 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 				stallTimer = time.Now().Add(stallDuration)
 			} else if !fullyLoaded && int(s.loadProgress*100.0) >= 100 {
 				slog.Debug("model load completed, waiting for server to become available", "status", status.ToString())
-				stallTimer = time.Now().Add(finalLoadDuration)
+				stallTimer = time.Now().Add(stallDuration)
 				fullyLoaded = true
 			}
 			time.Sleep(time.Millisecond * 250)

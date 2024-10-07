@@ -79,7 +79,7 @@ type ChatCompletionRequest struct {
 	Stop             any             `json:"stop"`
 	Temperature      *float64        `json:"temperature"`
 	FrequencyPenalty *float64        `json:"frequency_penalty"`
-	PresencePenalty  *float64        `json:"presence_penalty_penalty"`
+	PresencePenalty  *float64        `json:"presence_penalty"`
 	TopP             *float64        `json:"top_p"`
 	ResponseFormat   *ResponseFormat `json:"response_format"`
 	Tools            []api.Tool      `json:"tools"`
@@ -452,7 +452,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	}
 
 	if r.Temperature != nil {
-		options["temperature"] = *r.Temperature * 2.0
+		options["temperature"] = *r.Temperature
 	} else {
 		options["temperature"] = 1.0
 	}
@@ -462,11 +462,11 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	}
 
 	if r.FrequencyPenalty != nil {
-		options["frequency_penalty"] = *r.FrequencyPenalty * 2.0
+		options["frequency_penalty"] = *r.FrequencyPenalty
 	}
 
 	if r.PresencePenalty != nil {
-		options["presence_penalty"] = *r.PresencePenalty * 2.0
+		options["presence_penalty"] = *r.PresencePenalty
 	}
 
 	if r.TopP != nil {
@@ -513,7 +513,7 @@ func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 	}
 
 	if r.Temperature != nil {
-		options["temperature"] = *r.Temperature * 2.0
+		options["temperature"] = *r.Temperature
 	} else {
 		options["temperature"] = 1.0
 	}
@@ -522,9 +522,9 @@ func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 		options["seed"] = *r.Seed
 	}
 
-	options["frequency_penalty"] = r.FrequencyPenalty * 2.0
+	options["frequency_penalty"] = r.FrequencyPenalty
 
-	options["presence_penalty"] = r.PresencePenalty * 2.0
+	options["presence_penalty"] = r.PresencePenalty
 
 	if r.TopP != 0.0 {
 		options["top_p"] = r.TopP

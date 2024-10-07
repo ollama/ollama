@@ -272,6 +272,30 @@ func detectContentType(r io.Reader) (string, error) {
 	return "unknown", nil
 }
 
+func parseObjects(s string) []map[string]any {
+	var objs []map[string]any
+	for offset := 0; offset < len(s); {
+		var obj map[string]any
+		decoder := json.NewDecoder(strings.NewReader(s[offset:]))
+		if err := decoder.Decode(&obj); errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			break
+		} else if syntax := &(json.SyntaxError{}); errors.As(err, &syntax) {
+			// skip over any syntax errors
+			offset += int(syntax.Offset)
+		} else if unmarshalType := &(json.UnmarshalTypeError{}); errors.As(err, &unmarshalType) {
+			// skip over any unmarshalable types
+			offset += int(unmarshalType.Offset)
+		} else if err != nil {
+			return nil
+		} else {
+			offset += int(decoder.InputOffset())
+			objs = append(objs, obj)
+		}
+	}
+
+	return objs
+}
+
 // parseToolCalls attempts to parse a JSON string into a slice of ToolCalls.
 // mxyng: this only really works if the input contains tool calls in some JSON format
 func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
@@ -304,16 +328,14 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 		return nil, false
 	}
 
-	var kv map[string]any
-	// execute the subtree with placeholders to identify the keys
-	// trim any commands that might exist in the template
-	if err := json.Unmarshal(bytes.TrimSuffix(b.Bytes(), []byte(",")), &kv); err != nil {
+	templateObjects := parseObjects(b.String())
+	if len(templateObjects) == 0 {
 		return nil, false
 	}
 
 	// find the keys that correspond to the name and arguments fields
 	var name, arguments string
-	for k, v := range kv {
+	for k, v := range templateObjects[0] {
 		switch v.(type) {
 		case string:
 			name = k
@@ -326,43 +348,32 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 		return nil, false
 	}
 
-	var objs []map[string]any
-	for offset := 0; offset < len(s); {
-		var obj map[string]any
-		decoder := json.NewDecoder(strings.NewReader(s[offset:]))
-		if err := decoder.Decode(&obj); errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-			break
-		} else if syntax := &(json.SyntaxError{}); errors.As(err, &syntax) {
-			// skip over any syntax errors
-			offset += int(syntax.Offset)
-		} else if unmarshalType := &(json.UnmarshalTypeError{}); errors.As(err, &unmarshalType) {
-			// skip over any unmarshalable types
-			offset += int(unmarshalType.Offset)
-		} else if err != nil {
-			slog.Error("parseToolCalls", "error", err)
-			return nil, false
-		} else {
-			offset += int(decoder.InputOffset())
+	responseObjects := parseObjects(s)
+	if len(responseObjects) == 0 {
+		return nil, false
+	}
 
-			// collect all nested objects
-			var collect func(any) []map[string]any
-			collect = func(obj any) (all []map[string]any) {
-				switch o := obj.(type) {
-				case map[string]any:
-					all = append(all, o)
-					for _, v := range o {
-						all = append(all, collect(v)...)
-					}
-				case []any:
-					for _, v := range o {
-						all = append(all, collect(v)...)
-					}
-				}
-
-				return all
+	// collect all nested objects
+	var collect func(any) []map[string]any
+	collect = func(obj any) (all []map[string]any) {
+		switch o := obj.(type) {
+		case map[string]any:
+			all = append(all, o)
+			for _, v := range o {
+				all = append(all, collect(v)...)
 			}
-			objs = append(objs, collect(obj)...)
+		case []any:
+			for _, v := range o {
+				all = append(all, collect(v)...)
+			}
 		}
+
+		return all
+	}
+
+	var objs []map[string]any
+	for _, p := range responseObjects {
+		objs = append(objs, collect(p)...)
 	}
 
 	var toolCalls []api.ToolCall

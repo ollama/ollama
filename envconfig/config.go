@@ -112,6 +112,26 @@ func KeepAlive() (keepAlive time.Duration) {
 	return keepAlive
 }
 
+// LoadTimeout returns the duration for stall detection during model loads. LoadTimeout can be configured via the OLLAMA_LOAD_TIMEOUT environment variable.
+// Zero or Negative values are treated as infinite.
+// Default is 5 minutes.
+func LoadTimeout() (loadTimeout time.Duration) {
+	loadTimeout = 5 * time.Minute
+	if s := Var("OLLAMA_LOAD_TIMEOUT"); s != "" {
+		if d, err := time.ParseDuration(s); err == nil {
+			loadTimeout = d
+		} else if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			loadTimeout = time.Duration(n) * time.Second
+		}
+	}
+
+	if loadTimeout <= 0 {
+		return time.Duration(math.MaxInt64)
+	}
+
+	return loadTimeout
+}
+
 func Bool(k string) func() bool {
 	return func() bool {
 		if s := Var(k); s != "" {
@@ -159,53 +179,6 @@ var (
 	HsaOverrideGfxVersion = String("HSA_OVERRIDE_GFX_VERSION")
 )
 
-func RunnersDir() (p string) {
-	if p := Var("OLLAMA_RUNNERS_DIR"); p != "" {
-		return p
-	}
-
-	if runtime.GOOS != "windows" {
-		return
-	}
-
-	defer func() {
-		if p == "" {
-			slog.Error("unable to locate llm runner directory. Set OLLAMA_RUNNERS_DIR to the location of 'ollama/runners'")
-		}
-	}()
-
-	// On Windows we do not carry the payloads inside the main executable
-	exe, err := os.Executable()
-	if err != nil {
-		return
-	}
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		return
-	}
-
-	var paths []string
-	for _, root := range []string{filepath.Dir(exe), filepath.Join(filepath.Dir(exe), LibRelativeToExe()), cwd} {
-		paths = append(paths,
-			root,
-			filepath.Join(root, runtime.GOOS+"-"+runtime.GOARCH),
-			filepath.Join(root, "dist", runtime.GOOS+"-"+runtime.GOARCH),
-		)
-	}
-
-	// Try a few variations to improve developer experience when building from source in the local tree
-	for _, path := range paths {
-		candidate := filepath.Join(path, "lib", "ollama", "runners")
-		if _, err := os.Stat(candidate); err == nil {
-			p = candidate
-			break
-		}
-	}
-
-	return p
-}
-
 func Uint(key string, defaultValue uint) func() uint {
 	return func() uint {
 		if s := Var(key); s != "" {
@@ -231,6 +204,23 @@ var (
 	MaxVRAM = Uint("OLLAMA_MAX_VRAM", 0)
 )
 
+func Uint64(key string, defaultValue uint64) func() uint64 {
+	return func() uint64 {
+		if s := Var(key); s != "" {
+			if n, err := strconv.ParseUint(s, 10, 64); err != nil {
+				slog.Warn("invalid environment variable, using default", "key", key, "value", s, "default", defaultValue)
+			} else {
+				return n
+			}
+		}
+
+		return defaultValue
+	}
+}
+
+// Set aside VRAM per GPU
+var GpuOverhead = Uint64("OLLAMA_GPU_OVERHEAD", 0)
+
 type EnvVar struct {
 	Name        string
 	Value       any
@@ -241,9 +231,11 @@ func AsMap() map[string]EnvVar {
 	ret := map[string]EnvVar{
 		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", Debug(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(), "Enabled flash attention"},
+		"OLLAMA_GPU_OVERHEAD":      {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
 		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
+		"OLLAMA_LOAD_TIMEOUT":      {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},
 		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},
 		"OLLAMA_MAX_QUEUE":         {"OLLAMA_MAX_QUEUE", MaxQueue(), "Maximum number of queued requests"},
 		"OLLAMA_MODELS":            {"OLLAMA_MODELS", Models(), "The path to the models directory"},
@@ -251,10 +243,22 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
 		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
 		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", Origins(), "A comma separated list of allowed origins"},
-		"OLLAMA_RUNNERS_DIR":       {"OLLAMA_RUNNERS_DIR", RunnersDir(), "Location for runners"},
 		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
 		"OLLAMA_TMPDIR":            {"OLLAMA_TMPDIR", TmpDir(), "Location for temporary files"},
+
+		// Informational
+		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},
+		"HTTPS_PROXY": {"HTTPS_PROXY", String("HTTPS_PROXY")(), "HTTPS proxy"},
+		"NO_PROXY":    {"NO_PROXY", String("NO_PROXY")(), "No proxy"},
 	}
+
+	if runtime.GOOS != "windows" {
+		// Windows environment variables are case-insensitive so there's no need to duplicate them
+		ret["http_proxy"] = EnvVar{"http_proxy", String("http_proxy")(), "HTTP proxy"}
+		ret["https_proxy"] = EnvVar{"https_proxy", String("https_proxy")(), "HTTPS proxy"}
+		ret["no_proxy"] = EnvVar{"no_proxy", String("no_proxy")(), "No proxy"}
+	}
+
 	if runtime.GOOS != "darwin" {
 		ret["CUDA_VISIBLE_DEVICES"] = EnvVar{"CUDA_VISIBLE_DEVICES", CudaVisibleDevices(), "Set which NVIDIA devices are visible"}
 		ret["HIP_VISIBLE_DEVICES"] = EnvVar{"HIP_VISIBLE_DEVICES", HipVisibleDevices(), "Set which AMD devices are visible"}
@@ -263,6 +267,7 @@ func AsMap() map[string]EnvVar {
 		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion(), "Override the gfx used for all detected AMD GPUs"}
 		ret["OLLAMA_INTEL_GPU"] = EnvVar{"OLLAMA_INTEL_GPU", IntelGPU(), "Enable experimental Intel GPU detection"}
 	}
+
 	return ret
 }
 

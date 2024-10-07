@@ -2,7 +2,7 @@ import requests
 import json
 import random
 
-model = "llama3.1"
+model = "llama3.2"
 template = {
   "firstName": "",
   "lastName": "",

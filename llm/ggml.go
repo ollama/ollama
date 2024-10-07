@@ -360,11 +360,13 @@ func (llm GGML) GraphSize(context, batch uint64) (partialOffload, fullOffload ui
 
 	switch llm.KV().Architecture() {
 	case "llama":
-		fullOffload = 4 * batch * (1 + 4*embedding + context*(1+heads))
+		fullOffload = max(
+			4*batch*(1+4*embedding+context*(1+heads)),
+			4*batch*(embedding+vocab),
+		)
 
 		partialOffload = 4 * batch * embedding
 		partialOffload += max(
-			// 4*batch*(4+6*embedding+context*(2*heads)+llm.KV().GQA()),
 			4*batch*(1+embedding+max(context, embedding))+embedding*embedding*9/16+4*context*(batch*heads+embeddingHeads*headsKV),
 			4*batch*(embedding+vocab)+embedding*vocab*105/128,
 		)

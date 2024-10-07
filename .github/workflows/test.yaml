@@ -81,12 +81,6 @@ jobs:
         if: ${{ ! startsWith(matrix.os, 'windows-') }}
         name: 'Unix Go Generate'
       - run: go build .
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.os }}-${{ matrix.arch }}-libraries
-          path: |
-            llm/build/**/bin/*
-            llm/build/**/*.a
   generate-cuda:
     needs: [changes]
     if: ${{ needs.changes.outputs.GENERATE_CUDA == 'True' }}
@@ -114,12 +108,6 @@ jobs:
           go generate -x ./...
         env:
           OLLAMA_SKIP_CPU_GENERATE: '1'
-      - uses: actions/upload-artifact@v4
-        with:
-          name: cuda-${{ matrix.cuda-version }}-libraries
-          path: |
-            llm/build/**/bin/*
-            dist/windows-amd64/**
   generate-rocm:
     needs: [changes]
     if: ${{ needs.changes.outputs.GENERATE_ROCM == 'True' }}
@@ -147,12 +135,6 @@ jobs:
           go generate -x ./...
         env:
           OLLAMA_SKIP_CPU_GENERATE: '1'
-      - uses: actions/upload-artifact@v4
-        with:
-          name: rocm-${{ matrix.rocm-version }}-libraries
-          path: |
-            llm/build/**/bin/*
-            dist/windows-amd64/**
 
   # ROCm generation step
   generate-windows-rocm:
@@ -189,7 +171,6 @@ jobs:
         name: go generate
         env:
           OLLAMA_SKIP_CPU_GENERATE: '1'
-      # TODO - do we need any artifacts?
 
   # CUDA generation step
   generate-windows-cuda:
@@ -231,7 +212,6 @@ jobs:
           go generate -x ./...
         env:
           OLLAMA_SKIP_CPU_GENERATE: '1'
-      # TODO - do we need any artifacts?
 
   lint:
     strategy:
@@ -263,14 +243,6 @@ jobs:
             arm64) echo ARCH=arm64 ;;
           esac >>$GITHUB_ENV
         shell: bash
-      - run: |
-          mkdir -p llm/build/linux/$ARCH/stub/bin
-          touch llm/build/linux/$ARCH/stub/bin/ollama_llama_server
-        if: ${{ startsWith(matrix.os, 'ubuntu-') }}
-      - run: |
-          mkdir -p llm/build/darwin/$ARCH/stub/bin
-          touch llm/build/darwin/$ARCH/stub/bin/ollama_llama_server
-        if: ${{ startsWith(matrix.os, 'macos-') }}
       - uses: golangci/golangci-lint-action@v6
         with:
           args: --timeout 8m0s -v
@@ -301,23 +273,10 @@ jobs:
           cache: true
       - run: |
           case ${{ matrix.arch }} in
-            amd64) echo ARCH=x86_64 ;;
+            amd64) echo ARCH=amd64 ;;
             arm64) echo ARCH=arm64 ;;
           esac >>$GITHUB_ENV
-        shell: bash
-      - run: |
-          mkdir -p llm/build/linux/$ARCH/stub/bin
-          touch llm/build/linux/$ARCH/stub/bin/ollama_llama_server
-        if: ${{ startsWith(matrix.os, 'ubuntu-') }}
-      - run: |
-          mkdir -p llm/build/darwin/$ARCH/stub/bin
-          touch llm/build/darwin/$ARCH/stub/bin/ollama_llama_server
-        if: ${{ startsWith(matrix.os, 'macos-') }}
         shell: bash
       - run: go generate ./...
       - run: go build
       - run: go test -v ./...
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.os }}-binaries
-          path: ollama
