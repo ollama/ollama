@@ -568,7 +568,7 @@ PARAMETER param1 value1
 PARAMETER param2 value2
 TEMPLATE template1
 MESSAGE system """
-You are a store greeter. Always responded with "Hello!".
+You are a store greeter. Always respond with "Hello!".
 """
 MESSAGE user Hey there!
 MESSAGE assistant Hello, I want to parse all the things!
@@ -586,7 +586,7 @@ PARAMETER param1 value1
 PARAMETER param2 value2
 TEMPLATE template1
 MESSAGE system """
-You are a store greeter. Always responded with "Hello!".
+You are a store greeter. Always respond with "Hello!".
 """
 MESSAGE user Hey there!
 MESSAGE assistant Hello, I want to parse all the things!
