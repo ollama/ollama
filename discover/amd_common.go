@@ -1,6 +1,6 @@
 //go:build linux || windows
 
-package gpu
+package discover
 
 import (
 	"errors"

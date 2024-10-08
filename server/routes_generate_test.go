@@ -15,7 +15,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/gpu"
+	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/llm"
 )
 
@@ -41,8 +41,8 @@ func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error
 	return
 }
 
-func newMockServer(mock *mockRunner) func(gpu.GpuInfoList, string, *llm.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
-	return func(gpus gpu.GpuInfoList, model string, ggml *llm.GGML, projectors, system []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+func newMockServer(mock *mockRunner) func(discover.GpuInfoList, string, *llm.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
+	return func(gpus discover.GpuInfoList, model string, ggml *llm.GGML, projectors, system []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 		return mock, nil
 	}
 }
@@ -69,10 +69,10 @@ func TestGenerateChat(t *testing.T) {
 			unloadedCh:    make(chan any, 1),
 			loaded:        make(map[string]*runnerRef),
 			newServerFn:   newMockServer(&mock),
-			getGpuFn:      gpu.GetGPUInfo,
-			getCpuFn:      gpu.GetCPUInfo,
+			getGpuFn:      discover.GetGPUInfo,
+			getCpuFn:      discover.GetCPUInfo,
 			reschedDelay:  250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numParallel int) {
+			loadFn: func(req *LlmRequest, ggml *llm.GGML, gpus discover.GpuInfoList, numParallel int) {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -367,10 +367,10 @@ func TestGenerate(t *testing.T) {
 			unloadedCh:    make(chan any, 1),
 			loaded:        make(map[string]*runnerRef),
 			newServerFn:   newMockServer(&mock),
-			getGpuFn:      gpu.GetGPUInfo,
-			getCpuFn:      gpu.GetCPUInfo,
+			getGpuFn:      discover.GetGPUInfo,
+			getCpuFn:      discover.GetCPUInfo,
 			reschedDelay:  250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numParallel int) {
+			loadFn: func(req *LlmRequest, ggml *llm.GGML, gpus discover.GpuInfoList, numParallel int) {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
