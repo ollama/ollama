@@ -1,4 +1,4 @@
-package llm
+package modelfile
 
 import (
 	"encoding/binary"
