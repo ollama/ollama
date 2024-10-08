@@ -9,7 +9,7 @@ import (
 	"github.com/pdevine/tensor"
 	"github.com/pdevine/tensor/native"
 
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/fileutils"
 )
 
 type llamaModel struct {
@@ -46,7 +46,7 @@ type llamaModel struct {
 
 var _ ModelConverter = (*llamaModel)(nil)
 
-func (p *llamaModel) KV(t *Tokenizer) llm.KV {
+func (p *llamaModel) KV(t *Tokenizer) fileutils.KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "llama"
 	kv["llama.vocab_size"] = p.VocabSize
@@ -120,11 +120,11 @@ func (p *llamaModel) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *llamaModel) Tensors(ts []Tensor) []llm.Tensor {
-	var out []llm.Tensor
+func (p *llamaModel) Tensors(ts []Tensor) []fileutils.Tensor {
+	var out []fileutils.Tensor
 
 	if p.RopeScaling.factors != nil {
-		out = append(out, llm.Tensor{
+		out = append(out, fileutils.Tensor{
 			Name:     "rope_freqs.weight",
 			Kind:     0,
 			Shape:    []uint64{uint64(len(p.RopeScaling.factors))},
@@ -138,7 +138,7 @@ func (p *llamaModel) Tensors(ts []Tensor) []llm.Tensor {
 			t.SetRepacker(p.repack)
 		}
 
-		out = append(out, llm.Tensor{
+		out = append(out, fileutils.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),

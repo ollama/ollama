@@ -14,8 +14,9 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/lifecycle"
 	"github.com/ollama/ollama/discover"
+	"github.com/ollama/ollama/fileutils"
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/runners"
 )
 
 func TestMain(m *testing.M) {
@@ -37,7 +38,7 @@ func TestLoad(t *testing.T) {
 	ctx, done := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer done()
 	s := InitScheduler(ctx)
-	var ggml *llm.GGML // value not used in tests
+	var ggml *fileutils.GGML // value not used in tests
 	req := &LlmRequest{
 		ctx:             ctx,
 		model:           &Model{ModelPath: "foo"},
@@ -47,7 +48,7 @@ func TestLoad(t *testing.T) {
 		sessionDuration: &api.Duration{Duration: 2 * time.Second},
 	}
 	// Fail to load model first
-	s.newServerFn = func(gpus discover.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(gpus discover.GpuInfoList, model string, ggml *fileutils.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (runners.LLMServer, error) {
 		return nil, errors.New("something failed to load model blah")
 	}
 	gpus := discover.GpuInfoList{}
@@ -61,7 +62,7 @@ func TestLoad(t *testing.T) {
 	require.Contains(t, err.Error(), "this model may be incompatible")
 
 	server := &mockLlm{estimatedVRAM: 10, estimatedVRAMByGPU: map[string]uint64{}}
-	s.newServerFn = func(gpus discover.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(gpus discover.GpuInfoList, model string, ggml *fileutils.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (runners.LLMServer, error) {
 		return server, nil
 	}
 	s.load(req, ggml, gpus, 0)
@@ -99,10 +100,10 @@ type reqBundle struct {
 	ctxDone func()
 	srv     *mockLlm
 	req     *LlmRequest
-	ggml    *llm.GGML
+	ggml    *fileutils.GGML
 }
 
-func (scenario *reqBundle) newServer(gpus discover.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+func (scenario *reqBundle) newServer(gpus discover.GpuInfoList, model string, ggml *fileutils.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (runners.LLMServer, error) {
 	return scenario.srv, nil
 }
 
@@ -115,7 +116,7 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 	require.NoError(t, err)
 	defer f.Close()
 
-	require.NoError(t, llm.WriteGGUF(f, llm.KV{
+	require.NoError(t, fileutils.WriteGGUF(f, fileutils.KV{
 		"general.architecture":          "llama",
 		"llama.context_length":          uint32(32),
 		"llama.embedding_length":        uint32(4096),
@@ -125,7 +126,7 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 		"tokenizer.ggml.tokens":         []string{" "},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []llm.Tensor{
+	}, []fileutils.Tensor{
 		{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
 		{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
 	}))
@@ -133,7 +134,7 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 
 	fname := f.Name()
 	model := &Model{Name: modelName, ModelPath: fname}
-	b.ggml, err = llm.LoadModel(model.ModelPath, 0)
+	b.ggml, err = fileutils.LoadModel(model.ModelPath, 0)
 	require.NoError(t, err)
 
 	if duration == nil {
@@ -419,10 +420,10 @@ func TestExpireRunner(t *testing.T) {
 		sessionDuration: &api.Duration{Duration: 2 * time.Minute},
 	}
 
-	var ggml *llm.GGML
+	var ggml *fileutils.GGML
 	gpus := discover.GpuInfoList{}
 	server := &mockLlm{estimatedVRAM: 10, estimatedVRAMByGPU: map[string]uint64{}}
-	s.newServerFn = func(gpus discover.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(gpus discover.GpuInfoList, model string, ggml *fileutils.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (runners.LLMServer, error) {
 		return server, nil
 	}
 	s.load(req, ggml, gpus, 0)
@@ -729,7 +730,7 @@ func TestHomogeneousGPUs(t *testing.T) {
 	}
 	s.getCpuFn = getCpuFn
 	a := newScenarioRequest(t, ctx, "ollama-model-1", 10, &api.Duration{Duration: 5 * time.Millisecond})
-	s.newServerFn = func(gpus discover.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(gpus discover.GpuInfoList, model string, ggml *fileutils.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (runners.LLMServer, error) {
 		require.Len(t, gpus, 1)
 		return a.newServer(gpus, model, ggml, adapters, projectors, opts, numParallel)
 	}
@@ -768,7 +769,7 @@ type mockLlm struct {
 
 func (s *mockLlm) Ping(ctx context.Context) error             { return s.pingResp }
 func (s *mockLlm) WaitUntilRunning(ctx context.Context) error { return s.waitResp }
-func (s *mockLlm) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+func (s *mockLlm) Completion(ctx context.Context, req runners.CompletionRequest, fn func(runners.CompletionResponse)) error {
 	return s.completionResp
 }
 

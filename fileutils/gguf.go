@@ -1,4 +1,4 @@
-package llm
+package fileutils
 
 import (
 	"bytes"

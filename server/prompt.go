@@ -6,7 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/runners"
 	"github.com/ollama/ollama/template"
 )
 
@@ -15,7 +15,7 @@ type tokenizeFunc func(context.Context, string) ([]int, error)
 // chatPrompt accepts a list of messages and returns the prompt and images that should be used for the next chat turn.
 // chatPrompt truncates any messages that exceed the context window of the model, making sure to always include 1) the
 // latest message and 2) system messages
-func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool) (prompt string, images []llm.ImageData, _ error) {
+func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool) (prompt string, images []runners.ImageData, _ error) {
 	var system []api.Message
 	// always include the last message
 	n := len(msgs) - 1
@@ -63,7 +63,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 	for _, m := range msgs[n:] {
 		for _, i := range m.Images {
-			images = append(images, llm.ImageData{
+			images = append(images, runners.ImageData{
 				ID:   len(images),
 				Data: i,
 			})

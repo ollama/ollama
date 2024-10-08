@@ -1,8 +1,9 @@
-package llm
+package fileutils
 
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 
@@ -321,7 +322,7 @@ func EstimateGPULayers(gpus []discover.GpuInfo, ggml *GGML, projectors []string,
 	return estimate
 }
 
-func (m MemoryEstimate) log() {
+func (m MemoryEstimate) Log() {
 	overhead := envconfig.GpuOverhead()
 	slog.Info(
 		"offload to "+m.inferenceLibrary,
@@ -370,4 +371,24 @@ func (m MemoryEstimate) log() {
 			),
 		),
 	)
+}
+
+func projectorMemoryRequirements(filename string) uint64 {
+	file, err := os.Open(filename)
+	if err != nil {
+		return 0
+	}
+	defer file.Close()
+
+	ggml, _, err := DecodeGGML(file, 0)
+	if err != nil {
+		return 0
+	}
+
+	var mem uint64
+	for _, layer := range ggml.Tensors().Layers() {
+		mem += layer.size()
+	}
+
+	return mem
 }
