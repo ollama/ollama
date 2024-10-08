@@ -93,10 +93,9 @@ func initCudaHandles() *cudaHandles {
 		localAppData := os.Getenv("LOCALAPPDATA")
 		cudartMgmtPatterns = []string{filepath.Join(localAppData, "Programs", "Ollama", CudartMgmtName)}
 	}
-	tmpDir, _ := PayloadsDir()
-	if tmpDir != "" {
-		// TODO - add "payloads" for subprocess
-		cudartMgmtPatterns = []string{filepath.Join(tmpDir, "cuda*", CudartMgmtName)}
+	libDir := LibraryDir()
+	if libDir != "" {
+		cudartMgmtPatterns = []string{filepath.Join(libDir, CudartMgmtName)}
 	}
 	cudartMgmtPatterns = append(cudartMgmtPatterns, CudartGlobs...)
 
@@ -206,13 +205,16 @@ func GetGPUInfo() GpuInfoList {
 		if err != nil {
 			slog.Warn("error looking up system memory", "error", err)
 		}
+		depPath := LibraryDir()
+
 		cpus = []CPUInfo{
 			{
 				GpuInfo: GpuInfo{
-					memInfo: mem,
-					Library: "cpu",
-					Variant: cpuCapability.String(),
-					ID:      "0",
+					memInfo:        mem,
+					Library:        "cpu",
+					Variant:        cpuCapability.String(),
+					ID:             "0",
+					DependencyPath: depPath,
 				},
 			},
 		}
@@ -224,8 +226,6 @@ func GetGPUInfo() GpuInfoList {
 			// No need to do any GPU discovery, since we can't run on them
 			return GpuInfoList{cpus[0].GpuInfo}
 		}
-
-		depPath := LibraryDir()
 
 		// Load ALL libraries
 		cHandles = initCudaHandles()

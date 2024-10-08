@@ -360,7 +360,6 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			slog.Debug("runner expired event received", "modelPath", runner.modelPath)
 			runner.refMu.Lock()
 			if runner.refCount > 0 {
-				// Shouldn't happen, but safeguard to ensure no leaked runners
 				slog.Debug("expired event with positive ref count, retrying", "modelPath", runner.modelPath, "refCount", runner.refCount)
 				go func(runner *runnerRef) {
 					// We can't unload yet, but want to as soon as the current request completes
@@ -799,6 +798,25 @@ func (s *Scheduler) unloadAllRunners() {
 			slog.Debug("shutting down runner", "model", model)
 			runner.llama.Close()
 		}
+	}
+}
+
+func (s *Scheduler) expireRunner(model *Model) {
+	s.loadedMu.Lock()
+	defer s.loadedMu.Unlock()
+	runner, ok := s.loaded[model.ModelPath]
+	if ok {
+		runner.refMu.Lock()
+		runner.expiresAt = time.Now()
+		if runner.expireTimer != nil {
+			runner.expireTimer.Stop()
+			runner.expireTimer = nil
+		}
+		runner.sessionDuration = 0
+		if runner.refCount <= 0 {
+			s.expiredCh <- runner
+		}
+		runner.refMu.Unlock()
 	}
 }
 
