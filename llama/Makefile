@@ -42,7 +42,7 @@ $(RUNNER_TARGETS):
 	$(MAKE) -f make/Makefile.$@
 
 clean:
-	rm -rf $(BUILD_DIR) $(DIST_RUNNERS) $(PAYLOAD_RUNNERS) $(RUNNERS_PAYLOAD_DIR)
+	rm -rf $(BUILD_DIR) $(DIST_RUNNERS) $(PAYLOAD_RUNNERS)
 
 clean-payload:
 	rm -rf $(addprefix $(RUNNERS_PAYLOAD_DIR)/, $(RUNNER_TARGETS) metal cpu cpu_avx cpu_avx2)

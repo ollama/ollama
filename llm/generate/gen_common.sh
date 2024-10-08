@@ -133,13 +133,5 @@ install() {
 
 # Keep the local tree clean after we're done with the build
 cleanup() {
-    (cd ${LLAMACPP_DIR}/ && git checkout CMakeLists.txt)
-
-    if [ -n "$(ls -A ../patches/*.diff)" ]; then
-        for patch in ../patches/*.diff; do
-            for file in $(grep "^+++ " ${patch} | cut -f2 -d' ' | cut -f2- -d/); do
-                (cd ${LLAMACPP_DIR}; git checkout ${file})
-            done
-        done
-    fi
+    git submodule update --force ${LLAMACPP_DIR}
 }
