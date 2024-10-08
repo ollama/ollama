@@ -177,6 +177,8 @@ var (
 	RocrVisibleDevices    = String("ROCR_VISIBLE_DEVICES")
 	GpuDeviceOrdinal      = String("GPU_DEVICE_ORDINAL")
 	HsaOverrideGfxVersion = String("HSA_OVERRIDE_GFX_VERSION")
+
+	BasicAuthKey = String("OLLAMA_BASIC_AUTH_KEY")
 )
 
 func Uint(key string, defaultValue uint) func() uint {
@@ -245,6 +247,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", Origins(), "A comma separated list of allowed origins"},
 		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
 		"OLLAMA_TMPDIR":            {"OLLAMA_TMPDIR", TmpDir(), "Location for temporary files"},
+		"OLLAMA_BASIC_AUTH_KEY":    {"OLLAMA_BASIC_AUTH_KEY", BasicAuthKey(), "Basic auth key for user ollama, will allow all request if empty"},
 
 		// Informational
 		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},

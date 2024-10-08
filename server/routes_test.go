@@ -438,6 +438,46 @@ func Test_Routes(t *testing.T) {
 				}
 			},
 		},
+		{
+			Name:   "Authenticated Route Success",
+			Method: http.MethodGet,
+			Path:   "/api/version",
+			Setup: func(t *testing.T, req *http.Request) {
+				t.Setenv("OLLAMA_BASIC_AUTH_KEY", "password")
+				req.SetBasicAuth("ollama", "password")
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				assert.Equal(t, http.StatusOK, resp.StatusCode)
+				_, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+			},
+		},
+		{
+			Name:   "Authenticated Route Failure",
+			Method: http.MethodGet,
+			Path:   "/api/version",
+			Setup: func(t *testing.T, req *http.Request) {
+				t.Setenv("OLLAMA_BASIC_AUTH_KEY", "password")
+				req.SetBasicAuth("ollama", "wrongpassword")
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
+			},
+		},
+		{
+			Name:   "BasicAuthKey not set",
+			Method: http.MethodGet,
+			Path:   "/api/version",
+			Setup: func(t *testing.T, req *http.Request) {
+				t.Setenv("OLLAMA_BASIC_AUTH_KEY", "")
+				req.SetBasicAuth("ollama", "wrongpassword")
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				assert.Equal(t, http.StatusOK, resp.StatusCode)
+				_, err := io.ReadAll(resp.Body)
+				require.NoError(t, err)
+			},
+		},
 	}
 
 	t.Setenv("OLLAMA_MODELS", t.TempDir())

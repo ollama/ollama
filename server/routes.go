@@ -1114,6 +1114,15 @@ func (s *Server) GenerateRoutes() http.Handler {
 		allowedHostsMiddleware(s.addr),
 	)
 
+	ollamaAuthKey := envconfig.BasicAuthKey()
+	if ollamaAuthKey != "" {
+		r.Use(
+			gin.BasicAuth(gin.Accounts{
+				"ollama": ollamaAuthKey,
+			}),
+		)
+	}
+
 	r.POST("/api/pull", s.PullHandler)
 	r.POST("/api/generate", s.GenerateHandler)
 	r.POST("/api/chat", s.ChatHandler)
