@@ -63,26 +63,32 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	currMsgIdx := n
 
 	if checkMllamaModelFamily(m) {
+		// Mllama only supports a single image so include the first one of the most recent message
 		lastMsgIdx := len(msgs) - 1
-		if len(msgs[lastMsgIdx].Images) == 1 {
-			data, aspectRatioID, err := imageproc.Preprocess(msgs[lastMsgIdx].Images[0])
-			if err != nil {
-				return "", nil, err
-			}
+		for cnt := lastMsgIdx; cnt >= currMsgIdx; cnt-- {
+			msg := msgs[cnt]
+			if len(msg.Images) >= 1 {
+				data, aspectRatioID, err := imageproc.Preprocess(msg.Images[0])
+				if err != nil {
+					return "", nil, err
+				}
 
-			buf := new(bytes.Buffer)
-			err = binary.Write(buf, binary.LittleEndian, data)
-			if err != nil {
-				return "", nil, err
-			}
+				buf := new(bytes.Buffer)
+				err = binary.Write(buf, binary.LittleEndian, data)
+				if err != nil {
+					return "", nil, err
+				}
 
-			imgData := llm.ImageData{
-				Data:          buf.Bytes(),
-				AspectRatioID: aspectRatioID,
-			}
+				imgData := llm.ImageData{
+					Data:          buf.Bytes(),
+					AspectRatioID: aspectRatioID,
+				}
 
-			msgs[lastMsgIdx].Content = strings.TrimSpace("<|image|>" + msgs[lastMsgIdx].Content)
-			images = append(images, imgData)
+				msgs[cnt].Content = strings.TrimSpace("<|image|>" + msg.Content)
+				images = append(images, imgData)
+
+				break
+			}
 		}
 	} else {
 		for cnt, msg := range msgs[currMsgIdx:] {
