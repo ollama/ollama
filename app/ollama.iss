@@ -9,7 +9,7 @@
 #if GetEnv("PKG_VERSION") != ""
   #define MyAppVersion GetEnv("PKG_VERSION")
 #else
-  #define MyAppVersion "0.0.0"
+  #define MyAppVersion "0.3.x"
 #endif
 #define MyAppPublisher "Ollama"
 #define MyAppURL "https://ollama.com/"
