@@ -357,6 +357,7 @@ func (m *Model) Tokenize(text string, addSpecial bool, parseSpecial bool) ([]int
 		C.bool(parseSpecial),
 	)
 
+	// if the result is negative, reallocate and retry with the correct buffer size
 	if result < 0 {
 		maxTokens = int(-result)
 		cTokens = make([]C.llama_token, maxTokens)
