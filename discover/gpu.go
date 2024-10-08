@@ -1,6 +1,6 @@
 //go:build linux || windows
 
-package gpu
+package discover
 
 /*
 #cgo linux LDFLAGS: -lrt -lpthread -ldl -lstdc++ -lm

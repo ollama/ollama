@@ -7,13 +7,13 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/gpu"
 )
 
 // This algorithm looks for a complete fit to determine if we need to unload other models
-func PredictServerFit(allGpus gpu.GpuInfoList, ggml *GGML, adapters, projectors []string, opts api.Options) (bool, uint64) {
+func PredictServerFit(allGpus discover.GpuInfoList, ggml *GGML, adapters, projectors []string, opts api.Options) (bool, uint64) {
 	// Split up the GPUs by type and try them
 	var estimatedVRAM uint64
 	for _, gpus := range allGpus.ByLibrary() {
@@ -67,7 +67,7 @@ type MemoryEstimate struct {
 
 // Given a model and one or more GPU targets, predict how many layers and bytes we can load, and the total size
 // The GPUs provided must all be the same Library
-func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts api.Options) MemoryEstimate {
+func EstimateGPULayers(gpus []discover.GpuInfo, ggml *GGML, projectors []string, opts api.Options) MemoryEstimate {
 	// Graph size for a partial offload, applies to all GPUs
 	var graphPartialOffload uint64
 
@@ -157,7 +157,7 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 	gpuAllocations := make([]uint64, len(gpus))
 	type gs struct {
 		i int
-		g *gpu.GpuInfo
+		g *discover.GpuInfo
 	}
 	gpusWithSpace := []gs{}
 	for i := range gpus {

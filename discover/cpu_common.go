@@ -1,4 +1,4 @@
-package gpu
+package discover
 
 import (
 	"os"
