@@ -654,9 +654,10 @@ func (runner *runnerRef) waitForVRAMRecovery() chan interface{} {
 				totalMemoryNow += gpu.TotalMemory
 				freeMemoryNow += gpu.FreeMemory
 			}
-			// If we're within ~80% of the estimated memory usage recovered, bail out
-			if float32(freeMemoryNow-freeMemoryBefore) > float32(runner.estimatedVRAM)*0.8 {
-				slog.Debug(fmt.Sprintf("gpu VRAM free memory converged after %0.2f seconds", time.Since(start).Seconds()), "model", runner.modelPath)
+			// If we're within ~80% of the estimated memory usage recovered for larger models or ~50% for smaller, bail out
+			if (runner.estimatedVRAM < 2*format.GibiByte && float32(freeMemoryNow-freeMemoryBefore) > float32(runner.estimatedVRAM)*0.5) ||
+				float32(freeMemoryNow-freeMemoryBefore) > float32(runner.estimatedVRAM)*0.8 {
+				slog.Debug(fmt.Sprintf("gpu VRAM free memory converged after %0.2f seconds", time.Since(start).Seconds()), "recovered", format.HumanBytes2(freeMemoryNow-freeMemoryBefore), "model", runner.modelPath)
 				finished <- struct{}{}
 				return
 			}
