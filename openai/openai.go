@@ -452,7 +452,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	}
 
 	if r.Temperature != nil {
-		options["temperature"] = *r.Temperature * 2.0
+		options["temperature"] = *r.Temperature
 	} else {
 		options["temperature"] = 1.0
 	}
@@ -462,11 +462,11 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	}
 
 	if r.FrequencyPenalty != nil {
-		options["frequency_penalty"] = *r.FrequencyPenalty * 2.0
+		options["frequency_penalty"] = *r.FrequencyPenalty
 	}
 
 	if r.PresencePenalty != nil {
-		options["presence_penalty"] = *r.PresencePenalty * 2.0
+		options["presence_penalty"] = *r.PresencePenalty
 	}
 
 	if r.TopP != nil {

@@ -1025,6 +1025,8 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 
 		switch {
 		case resp.StatusCode == http.StatusUnauthorized:
+			resp.Body.Close()
+
 			// Handle authentication error with one retry
 			challenge := parseRegistryChallenge(resp.Header.Get("www-authenticate"))
 			token, err := getAuthorizationToken(ctx, challenge)
@@ -1040,8 +1042,10 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 				}
 			}
 		case resp.StatusCode == http.StatusNotFound:
+			resp.Body.Close()
 			return nil, os.ErrNotExist
 		case resp.StatusCode >= http.StatusBadRequest:
+			defer resp.Body.Close()
 			responseBody, err := io.ReadAll(resp.Body)
 			if err != nil {
 				return nil, fmt.Errorf("%d: %s", resp.StatusCode, err)

@@ -79,10 +79,12 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
         init_vars
         echo "OLLAMA_CUSTOM_CPU_DEFS=\"${OLLAMA_CUSTOM_CPU_DEFS}\""
         CMAKE_DEFS="${OLLAMA_CUSTOM_CPU_DEFS} -DBUILD_SHARED_LIBS=on -DCMAKE_POSITION_INDEPENDENT_CODE=on ${CMAKE_DEFS}"
-        BUILD_DIR="../build/linux/${ARCH}/cpu"
+        RUNNER="cpu"
+        BUILD_DIR="../build/linux/${GOARCH}/${RUNNER}"
         echo "Building custom CPU"
         build
         install
+        dist
         compress
     else
         # Darwin Rosetta x86 emulation does NOT support AVX, AVX2, AVX512
@@ -102,10 +104,12 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
             #
             init_vars
             CMAKE_DEFS="${COMMON_CPU_DEFS} -DGGML_AVX=off -DGGML_AVX2=off -DGGML_AVX512=off -DGGML_FMA=off -DGGML_F16C=off ${CMAKE_DEFS}"
-            BUILD_DIR="../build/linux/${ARCH}/cpu"
+            RUNNER=cpu
+            BUILD_DIR="../build/linux/${GOARCH}/${RUNNER}"
             echo "Building LCD CPU"
             build
             install
+            dist
             compress
         fi
 
@@ -120,10 +124,12 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
                 #
                 init_vars
                 CMAKE_DEFS="${COMMON_CPU_DEFS} -DGGML_AVX=on -DGGML_AVX2=off -DGGML_AVX512=off -DGGML_FMA=off -DGGML_F16C=off ${CMAKE_DEFS}"
-                BUILD_DIR="../build/linux/${ARCH}/cpu_avx"
+                RUNNER=cpu_avx
+                BUILD_DIR="../build/linux/${GOARCH}/${RUNNER}"
                 echo "Building AVX CPU"
                 build
                 install
+                dist
                 compress
             fi
 
@@ -134,10 +140,12 @@ if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
                 #
                 init_vars
                 CMAKE_DEFS="${COMMON_CPU_DEFS} -DGGML_AVX=on -DGGML_AVX2=on -DGGML_AVX512=off -DGGML_FMA=on -DGGML_F16C=on ${CMAKE_DEFS}"
-                BUILD_DIR="../build/linux/${ARCH}/cpu_avx2"
+                RUNNER=cpu_avx2
+                BUILD_DIR="../build/linux/${GOARCH}/${RUNNER}"
                 echo "Building AVX2 CPU"
                 build
                 install
+                dist
                 compress
             fi
         fi
@@ -187,11 +195,13 @@ if [ -z "${OLLAMA_SKIP_CUDA_GENERATE}" -a -d "${CUDA_LIB_DIR}" ]; then
     fi
     export CUDAFLAGS="-t8"
     CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} ${ARM64_DEFS} ${CMAKE_CUDA_DEFS} -DGGML_STATIC=off"
-    BUILD_DIR="../build/linux/${ARCH}/cuda${CUDA_VARIANT}"
+    RUNNER=cuda${CUDA_VARIANT}
+    BUILD_DIR="../build/linux/${GOARCH}/${RUNNER}"
     export LLAMA_SERVER_LDFLAGS="-L${CUDA_LIB_DIR} -lcudart -lcublas -lcublasLt -lcuda"
     CUDA_DIST_DIR="${CUDA_DIST_DIR:-${DIST_BASE}/lib/ollama}"
     build
     install
+    dist
     echo "Installing CUDA dependencies in ${CUDA_DIST_DIR}"
     mkdir -p "${CUDA_DIST_DIR}"
     for lib in ${CUDA_LIB_DIR}/libcudart.so* ${CUDA_LIB_DIR}/libcublas.so* ${CUDA_LIB_DIR}/libcublasLt.so* ; do
@@ -212,7 +222,8 @@ if [ -z "${OLLAMA_SKIP_ONEAPI_GENERATE}" -a -d "${ONEAPI_ROOT}" ]; then
     source ${ONEAPI_ROOT}/setvars.sh --force # set up environment variables for oneAPI
     CC=icx
     CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx -DGGML_SYCL=ON -DGGML_SYCL_F16=OFF"
-    BUILD_DIR="../build/linux/${ARCH}/oneapi"
+    RUNNER=oneapi
+    BUILD_DIR="../build/linux/${GOARCH}/${RUNNER}"
     ONEAPI_DIST_DIR="${DIST_BASE}/lib/ollama"
     export LLAMA_SERVER_LDFLAGS="-fsycl -lOpenCL -lmkl_core -lmkl_sycl_blas -lmkl_intel_ilp64 -lmkl_tbb_thread -ltbb"
     DEBUG_FLAGS="" # icx compiles with -O0 if we pass -g, so we must remove it
@@ -231,6 +242,7 @@ if [ -z "${OLLAMA_SKIP_ONEAPI_GENERATE}" -a -d "${ONEAPI_ROOT}" ]; then
     cp "${ONEAPI_ROOT}/compiler/latest/lib/libsvml.so" "${ONEAPI_DIST_DIR}"
     cp "${ONEAPI_ROOT}/compiler/latest/lib/libur_loader.so.0" "${ONEAPI_DIST_DIR}"
     install
+    dist
     compress
 fi
 
@@ -259,7 +271,8 @@ if [ -z "${OLLAMA_SKIP_ROCM_GENERATE}" -a -d "${ROCM_PATH}" ]; then
         CMAKE_DEFS="${CMAKE_DEFS} ${OLLAMA_CUSTOM_ROCM_DEFS}"
         echo "Building custom ROCM GPU"
     fi
-    BUILD_DIR="../build/linux/${ARCH}/rocm${ROCM_VARIANT}"
+    RUNNER=rocm${ROCM_VARIANT}
+    BUILD_DIR="../build/linux/${GOARCH}/${RUNNER}"
     # ROCm dependencies are too large to fit into a unified bundle
     ROCM_DIST_DIR="${DIST_BASE}/../linux-${GOARCH}-rocm/lib/ollama"
     # TODO figure out how to disable runpath (rpath)
@@ -269,13 +282,17 @@ if [ -z "${OLLAMA_SKIP_ROCM_GENERATE}" -a -d "${ROCM_PATH}" ]; then
 
     # copy the ROCM dependencies
     mkdir -p "${ROCM_DIST_DIR}"
-    for dep in $(ldd "${BUILD_DIR}/bin/ollama_llama_server" | grep "=>" | cut -f2 -d= | cut -f2 -d' ' | grep -v "${ARCH}/rocm${ROCM_VARIANT}" | grep -e rocm -e amdgpu -e libtinfo ); do
+    for dep in $(ldd "${BUILD_DIR}/bin/ollama_llama_server" | grep "=>" | cut -f2 -d= | cut -f2 -d' ' | grep -v "${GOARCH}/rocm${ROCM_VARIANT}" | grep -e rocm -e amdgpu -e libtinfo -e libnuma -e libelf ); do
         cp -a "${dep}"* "${ROCM_DIST_DIR}"
+        if [ $(readlink -f "${dep}") != "${dep}" ] ; then
+            cp $(readlink -f "${dep}") "${ROCM_DIST_DIR}"
+        fi
     done
     install
+    dist
     compress
 fi
 
 cleanup
 wait_for_compress
-echo "go generate completed.  LLM runners: $(cd ${BUILD_DIR}/..; echo *)"
+echo "go generate completed.  LLM runners: $(cd ${PAYLOAD_BASE}; echo *)"

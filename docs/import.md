@@ -38,7 +38,7 @@ Ollama supports importing adapters based on several different model architecture
 
 You can create the adapter using a fine tuning framework or tool which can output adapters in the Safetensors format, such as:
 
-  * Hugging Face [fine tuning framework] (https://huggingface.co/docs/transformers/en/training)
+  * Hugging Face [fine tuning framework](https://huggingface.co/docs/transformers/en/training)
   * [Unsloth](https://github.com/unslothai/unsloth)
   * [MLX](https://github.com/ml-explore/mlx)
 

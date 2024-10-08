@@ -1,0 +1,22 @@
+From 8b8d83ffca775840acc5dc700f3b3703e9f5cfe4 Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Fri, 23 Aug 2024 11:27:48 -0700
+Subject: [PATCH] patch cmakelist
+
+---
+ CMakeLists.txt | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a3132063..6a2a9912 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -199,3 +199,5 @@ if (LLAMA_BUILD_EXAMPLES)
+     add_subdirectory(examples)
+     add_subdirectory(pocs)
+ endif()
++
++add_subdirectory(../ext_server ext_server) # ollama
+-- 
+2.45.2
+

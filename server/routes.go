@@ -26,11 +26,13 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/build"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/runners"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -114,6 +116,32 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	} else if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// expire the runner
+	if req.Prompt == "" && req.KeepAlive != nil && int(req.KeepAlive.Seconds()) == 0 {
+		model, err := GetModel(req.Model)
+		if err != nil {
+			switch {
+			case os.IsNotExist(err):
+				c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+			case err.Error() == "invalid model name":
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			default:
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			}
+			return
+		}
+		s.sched.expireRunner(model)
+
+		c.JSON(http.StatusOK, api.GenerateResponse{
+			Model:      req.Model,
+			CreatedAt:  time.Now().UTC(),
+			Response:   "",
+			Done:       true,
+			DoneReason: "unload",
+		})
 		return
 	}
 
@@ -665,7 +693,12 @@ func (s *Server) DeleteHandler(c *gin.Context) {
 
 	m, err := ParseNamedManifest(n)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		switch {
+		case os.IsNotExist(err):
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", cmp.Or(r.Model, r.Name))})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
 		return
 	}
 
@@ -1190,12 +1223,12 @@ func Serve(ln net.Listener) error {
 		srvr.Close()
 		schedDone()
 		sched.unloadAllRunners()
-		gpu.Cleanup()
+		runners.Cleanup(build.EmbedFS)
 		done()
 	}()
 
-	if err := llm.Init(); err != nil {
-		return fmt.Errorf("unable to initialize llm library %w", err)
+	if _, err := runners.Refresh(build.EmbedFS); err != nil {
+		return fmt.Errorf("unable to initialize llm runners %w", err)
 	}
 
 	s.sched.Run(schedCtx)
@@ -1319,6 +1352,32 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	} else if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// expire the runner
+	if len(req.Messages) == 0 && req.KeepAlive != nil && int(req.KeepAlive.Seconds()) == 0 {
+		model, err := GetModel(req.Model)
+		if err != nil {
+			switch {
+			case os.IsNotExist(err):
+				c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+			case err.Error() == "invalid model name":
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			default:
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			}
+			return
+		}
+		s.sched.expireRunner(model)
+
+		c.JSON(http.StatusOK, api.ChatResponse{
+			Model:      req.Model,
+			CreatedAt:  time.Now().UTC(),
+			Message:    api.Message{Role: "assistant"},
+			Done:       true,
+			DoneReason: "unload",
+		})
 		return
 	}
 
