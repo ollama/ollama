@@ -26,9 +26,9 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/build"
+	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/runners"
 )
@@ -61,8 +61,8 @@ type llmServer struct {
 	estimate    MemoryEstimate
 	totalLayers uint64
 	// gpuCount     int
-	gpus         gpu.GpuInfoList // Recorded just before the model loaded, free space will be incorrect
-	loadDuration time.Duration   // Record how long it took the model to load
+	gpus         discover.GpuInfoList // Recorded just before the model loaded, free space will be incorrect
+	loadDuration time.Duration        // Record how long it took the model to load
 	loadProgress float32
 
 	sem *semaphore.Weighted
@@ -90,7 +90,7 @@ func LoadModel(model string, maxArraySize int) (*GGML, error) {
 
 // NewLlamaServer will run a server for the given GPUs
 // The gpu list must be a single family.
-func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
+func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
 	var err error
 	var cpuRunner string
 	var estimate MemoryEstimate
@@ -98,7 +98,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	var systemFreeMemory uint64
 	var systemSwapFreeMemory uint64
 
-	systemMemInfo, err := gpu.GetCPUMem()
+	systemMemInfo, err := discover.GetCPUMem()
 	if err != nil {
 		slog.Error("failed to lookup system memory", "error", err)
 	} else {
@@ -110,7 +110,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 	// If the user wants zero GPU layers, reset the gpu list to be CPU/system ram info
 	if opts.NumGPU == 0 {
-		gpus = gpu.GetCPUInfo()
+		gpus = discover.GetCPUInfo()
 	}
 	if len(gpus) == 1 && gpus[0].Library == "cpu" {
 		cpuRunner = runners.ServerForCpu()
@@ -126,7 +126,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		case gpus[0].Library != "metal" && estimate.Layers == 0:
 			// Don't bother loading into the GPU if no layers can fit
 			cpuRunner = runners.ServerForCpu()
-			gpus = gpu.GetCPUInfo()
+			gpus = discover.GetCPUInfo()
 		case opts.NumGPU < 0 && estimate.Layers > 0 && gpus[0].Library != "cpu":
 			opts.NumGPU = estimate.Layers
 		}
@@ -260,7 +260,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--mlock")
 	}
 
-	if gpu.IsNUMA() && gpus[0].Library == "cpu" {
+	if discover.IsNUMA() && gpus[0].Library == "cpu" {
 		numaMode := "distribute"
 		if runtime.GOOS == "linux" {
 			if _, err := exec.LookPath("numactl"); err == nil {
@@ -290,7 +290,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		}
 
 		if strings.HasPrefix(servers[i], "cpu") {
-			gpus = gpu.GetCPUInfo()
+			gpus = discover.GetCPUInfo()
 		}
 
 		// Find an availableServers  port, retry on each iteration in case the failure was a port conflict race
