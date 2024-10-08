@@ -376,7 +376,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Libraries
 
-- [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/modules/model_io/models/llms/integrations/ollama) with [example](https://js.langchain.com/docs/use_cases/question_answering/local_retrieval_qa)
+- [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/integrations/chat/ollama/) with [example](https://js.langchain.com/docs/tutorials/local_rag/)
 - [Firebase Genkit](https://firebase.google.com/docs/genkit/plugins/ollama)
 - [crewAI](https://github.com/crewAIInc/crewAI)
 - [LangChainGo](https://github.com/tmc/langchaingo/) with [example](https://github.com/tmc/langchaingo/tree/main/examples/ollama-completion-example)
