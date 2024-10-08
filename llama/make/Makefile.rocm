@@ -1,0 +1,101 @@
+# Build rules for ROCm runner
+#
+# Note: at present we only support a single ROCm version (whichever is default on the build system)
+# unlike CUDA where we'll build both a v11 and v12 variant.
+
+include make/common-defs.make
+
+HIP_ARCHS_COMMON := gfx900 gfx940 gfx941 gfx942 gfx1010 gfx1012 gfx1030 gfx1100 gfx1101 gfx1102
+HIP_ARCHS_LINUX := gfx906:xnack- gfx908:xnack- gfx90a:xnack+ gfx90a:xnack-
+
+ifeq ($(OS),windows)
+	GPU_LIB_DIR_WIN := $(shell cygpath -m -s "$(HIP_PATH)\bin")
+	# If HIP_PATH has spaces, hipcc trips over them when subprocessing
+	HIP_PATH := $(shell cygpath -m -s "$(HIP_PATH)\")
+	CGO_EXTRA_LDFLAGS_WIN := -L$(shell cygpath -m -s "$(HIP_PATH)\lib")
+	export HIP_PATH
+	GPU_COMPILER_WIN := $(HIP_PATH)bin/hipcc.bin.exe
+	GPU_COMPILER:=$(GPU_COMPILER_WIN)
+else ifeq ($(OS),linux)
+	HIP_PATH?=/opt/rocm
+	GPU_LIB_DIR_LINUX := $(HIP_PATH)/lib
+	GPU_COMPILER_LINUX := $(shell X=$$(which hipcc 2>/dev/null) && echo $$X)
+	GPU_COMPILER:=$(GPU_COMPILER_LINUX)
+	ROCM_TRANSITIVE_LIBS = $(shell ldd $(ROCM_LIBS) | grep "=>" | cut -f2 -d= | cut -f2 -d' '  | grep -e rocm -e amdgpu -e libtinfo -e libnuma -e libelf | sort -u )
+endif
+
+# TODO future multi-variant support for ROCm
+# ROCM_VERSION = $(subst $(space),.,$(wordlist 1,2,$(subst .,$(space),$(word 3,$(subst -,$(space),$(filter HIP version: %,$(shell $(GPU_COMPILER) --version)))))))
+# ifneq (,$(ROCM_VERSION))
+# 	GPU_RUNNER_VARIANT = _v$(ROCM_VERSION)
+# endif
+
+GPU_RUNNER_GO_TAGS := rocm
+GPU_RUNNER_NAME := rocm$(GPU_RUNNER_VARIANT)
+GPU_RUNNER_DRIVER_LIB_LINK := -lamdhip64
+GPU_RUNNER_LIBS_SHORT := hipblas rocblas
+GPU_PATH_ROOT_WIN=$(dir $(GPU_LIB_DIR_WIN))
+GPU_PATH_ROOT_LINUX=$(dir $(GPU_LIB_DIR_LINUX))
+GPU_COMPILER_CFLAGS_WIN = $(CFLAGS)
+GPU_COMPILER_CFLAGS_LINUX = $(CFLAGS) -fPIC -D_GNU_SOURCE
+GPU_COMPILER_CXXFLAGS_WIN = $(CXXFLAGS)
+GPU_COMPILER_CXXFLAGS_LINUX = $(CXXFLAGS) -fPIC -D_GNU_SOURCE
+
+ROCM_LIBS = $(wildcard $(addsuffix .$(SHARED_EXT),$(addprefix $(GPU_LIB_DIR)/$(SHARED_PREFIX),$(GPU_RUNNER_LIBS_SHORT))))
+ROCM_DIST_DEPS_DIR = $(abspath $(SRC_DIR)/../dist/$(OS)-$(ARCH)-rocm)/lib/ollama
+ROCM_DIST_DEPS_LIBS = $(addprefix $(ROCM_DIST_DEPS_DIR)/,$(notdir $(ROCM_LIBS)) $(notdir $(ROCM_TRANSITIVE_LIBS)))
+ROCBLAS_DIST_DEP_MANIFEST = $(ROCM_DIST_DEPS_DIR)/rocblas/library/TensileManifest.txt
+
+ifeq ($(OS),linux)
+	GPU_COMPILER_FPIC := -fPIC -Wno-unused-function -std=gnu++11
+	GPU_RUNNER_ARCH_FLAGS := $(foreach arch, $(HIP_ARCHS_COMMON) $(HIP_ARCHS_LINUX), --offload-arch=$(arch))
+else ifeq ($(OS),windows)
+	GPU_COMPILER_FPIC := -Xclang --dependent-lib=msvcrt
+	GPU_RUNNER_ARCH_FLAGS := $(foreach arch, $(HIP_ARCHS_COMMON), --offload-arch=$(arch))
+endif
+
+GPU_COMPILER_CUFLAGS = \
+	$(GPU_COMPILER_FPIC) \
+	$(addprefix -m,$(GPU_RUNNER_CPU_FLAGS)) \
+	-parallel-jobs=2 \
+	-c \
+	-O3 \
+	-DGGML_USE_CUDA \
+	-DGGML_BUILD=1 \
+	-DGGML_SHARED=1 \
+	-DGGML_CUDA_DMMV_X=32 \
+	-DGGML_CUDA_MMV_Y=1 \
+	-DGGML_SCHED_MAX_COPIES=4 \
+	-DGGML_USE_HIPBLAS \
+	-DGGML_USE_LLAMAFILE \
+	-DHIP_FAST_MATH \
+	-D__HIP_PLATFORM_AMD__=1 \
+	-D__HIP_ROCclr__=1 \
+	-DNDEBUG \
+	-DK_QUANTS_PER_ITERATION=2 \
+	-D_CRT_SECURE_NO_WARNINGS \
+	-D_GNU_SOURCE \
+	-D_XOPEN_SOURCE=600 \
+	-mllvm=-amdgpu-early-inline-all=true \
+	-mllvm=-amdgpu-function-calls=false \
+	-Wno-expansion-to-defined \
+	-Wno-invalid-noreturn \
+	-Wno-ignored-attributes \
+	-Wno-pass-failed \
+	-Wno-deprecated-declarations \
+	-Wno-unused-result \
+	-I. \
+	$(foreach arch, $(HIP_ARCHS_COMMON), --offload-arch=$(arch))
+
+include make/gpu.make
+
+# Adjust the rules from gpu.make to handle the ROCm dependencies properly
+$(RUNNERS_DIST_DIR)/$(GPU_RUNNER_NAME)/ollama_llama_server$(EXE_EXT): $(ROCBLAS_DIST_DEP_MANIFEST) $(ROCM_DIST_DEPS_LIBS)
+$(ROCBLAS_DIST_DEP_MANIFEST):
+	@-mkdir -p $(dir $@)
+	@echo "Copying rocblas library..."
+	cd $(GPU_LIB_DIR)/rocblas/library/ && tar cf - . | (cd $(dir $@) && tar xf - )
+	@echo "rocblas library copy complete"
+$(ROCM_DIST_DEPS_LIBS): 
+	@-mkdir -p $(dir $@)
+	$(CP) $(dir $(filter %$(notdir $@),$(ROCM_LIBS) $(ROCM_TRANSITIVE_LIBS)))/$(notdir $@)* $(dir $@)
