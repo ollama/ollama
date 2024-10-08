@@ -14,7 +14,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/fileutils"
 )
 
 func TestNamed(t *testing.T) {
@@ -33,7 +33,7 @@ func TestNamed(t *testing.T) {
 
 		for k, v := range ss {
 			t.Run(k, func(t *testing.T) {
-				kv := llm.KV{"tokenizer.chat_template": v}
+				kv := fileutils.KV{"tokenizer.chat_template": v}
 				s := kv.ChatTemplate()
 				r, err := Named(s)
 				if err != nil {

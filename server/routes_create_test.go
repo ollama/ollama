@@ -16,12 +16,12 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/fileutils"
 )
 
 var stream bool = false
 
-func createBinFile(t *testing.T, kv map[string]any, ti []llm.Tensor) string {
+func createBinFile(t *testing.T, kv map[string]any, ti []fileutils.Tensor) string {
 	t.Helper()
 
 	f, err := os.CreateTemp(t.TempDir(), "")
@@ -30,7 +30,7 @@ func createBinFile(t *testing.T, kv map[string]any, ti []llm.Tensor) string {
 	}
 	defer f.Close()
 
-	if err := llm.WriteGGUF(f, kv, ti); err != nil {
+	if err := fileutils.WriteGGUF(f, kv, ti); err != nil {
 		t.Fatal(err)
 	}
 
@@ -581,7 +581,7 @@ func TestCreateDetectTemplate(t *testing.T) {
 	t.Run("matched", func(t *testing.T) {
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Name: "test",
-			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, llm.KV{
+			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, fileutils.KV{
 				"tokenizer.chat_template": "{{ bos_token }}{% for message in messages %}{{'<|' + message['role'] + '|>' + '\n' + message['content'] + '<|end|>\n' }}{% endfor %}{% if add_generation_prompt %}{{ '<|assistant|>\n' }}{% else %}{{ eos_token }}{% endif %}",
 			}, nil)),
 			Stream: &stream,
