@@ -160,6 +160,8 @@ var (
 	SchedSpread = Bool("OLLAMA_SCHED_SPREAD")
 	// IntelGPU enables experimental Intel GPU detection.
 	IntelGPU = Bool("OLLAMA_INTEL_GPU")
+	// RPCServers sepecifies a comma seperated list of RPC servers to use for inteference.
+	RPCServers = String("OLLAMA_RPC_SERVERS")
 )
 
 func String(s string) func() string {
