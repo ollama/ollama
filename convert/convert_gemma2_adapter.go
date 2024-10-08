@@ -6,7 +6,7 @@ import (
 	"github.com/pdevine/tensor"
 	"github.com/pdevine/tensor/native"
 
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/fileutils"
 )
 
 type gemma2Adapter struct {
@@ -15,14 +15,14 @@ type gemma2Adapter struct {
 
 var _ AdapterConverter = (*gemma2Adapter)(nil)
 
-func (p *gemma2Adapter) KV(baseKV llm.KV) llm.KV {
+func (p *gemma2Adapter) KV(baseKV fileutils.KV) fileutils.KV {
 	kv := p.AdapterParameters.KV()
 	kv["general.architecture"] = "gemma2"
 	return kv
 }
 
-func (p *gemma2Adapter) Tensors(ts []Tensor) []llm.Tensor {
-	var out []llm.Tensor
+func (p *gemma2Adapter) Tensors(ts []Tensor) []fileutils.Tensor {
+	var out []fileutils.Tensor
 	for _, t := range ts {
 		shape := t.Shape()
 		if (strings.HasSuffix(t.Name(), "weight.lora_a") && shape[0] > shape[1]) ||
@@ -31,7 +31,7 @@ func (p *gemma2Adapter) Tensors(ts []Tensor) []llm.Tensor {
 			t.SetRepacker(p.repack)
 		}
 
-		out = append(out, llm.Tensor{
+		out = append(out, fileutils.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),

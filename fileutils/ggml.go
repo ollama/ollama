@@ -1,10 +1,11 @@
-package llm
+package fileutils
 
 import (
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -526,4 +527,24 @@ func (llm GGML) GraphSize(context, batch uint64) (kv, partialOffload, fullOffloa
 	}
 
 	return
+}
+
+// LoadModel will load a model from disk. The model must be in the GGML format.
+//
+// It collects array values for arrays with a size less than or equal to
+// maxArraySize. If maxArraySize is 0, the default value of 1024 is used. If
+// the maxArraySize is negative, all arrays are collected.
+func LoadModel(model string, maxArraySize int) (*GGML, error) {
+	if _, err := os.Stat(model); err != nil {
+		return nil, err
+	}
+
+	f, err := os.Open(model)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	ggml, _, err := DecodeGGML(f, maxArraySize)
+	return ggml, err
 }

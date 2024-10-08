@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/runners"
 	"github.com/ollama/ollama/server/imageproc"
 	"github.com/ollama/ollama/template"
 )
@@ -22,7 +22,7 @@ var errTooManyImages = errors.New("vision model only supports a single image per
 // chatPrompt accepts a list of messages and returns the prompt and images that should be used for the next chat turn.
 // chatPrompt truncates any messages that exceed the context window of the model, making sure to always include 1) the
 // latest message and 2) system messages
-func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool) (prompt string, images []llm.ImageData, _ error) {
+func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool) (prompt string, images []runners.ImageData, _ error) {
 	var system []api.Message
 
 	isMllama := checkMllamaModelFamily(m)
@@ -89,7 +89,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 		prompt := msg.Content
 
 		for _, i := range msg.Images {
-			var imgData llm.ImageData
+			var imgData runners.ImageData
 
 			if isMllama {
 				data, aspectRatioID, err := imageproc.Preprocess(i)
@@ -103,14 +103,14 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 					return "", nil, err
 				}
 
-				imgData = llm.ImageData{
+				imgData = runners.ImageData{
 					ID:            len(images),
 					Data:          buf.Bytes(),
 					AspectRatioID: aspectRatioID,
 				}
 				imgPrompt = "<|image|>"
 			} else {
-				imgData = llm.ImageData{
+				imgData = runners.ImageData{
 					ID:   len(images),
 					Data: i,
 				}
