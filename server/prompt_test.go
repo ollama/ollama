@@ -18,6 +18,7 @@ func TestChatPrompt(t *testing.T) {
 		prompt        string
 		images        [][]byte
 		aspectRatioID int
+		error         error
 	}
 
 	tmpl, err := template.Parse(`
@@ -30,15 +31,26 @@ func TestChatPrompt(t *testing.T) {
 	visionModel := Model{Template: tmpl, ProjectorPaths: []string{"vision"}}
 	mllamaModel := Model{Template: tmpl, ProjectorPaths: []string{"vision"}, Config: ConfigV2{ModelFamilies: []string{"mllama"}}}
 
-	img := image.NewRGBA(image.Rect(0, 0, 5, 5))
-	var buf bytes.Buffer
+	createImg := func(width, height int) ([]byte, error) {
+		img := image.NewRGBA(image.Rect(0, 0, 5, 5))
+		var buf bytes.Buffer
 
-	err = png.Encode(&buf, img)
+		if err := png.Encode(&buf, img); err != nil {
+			return nil, err
+		}
+
+		return buf.Bytes(), nil
+	}
+
+	imgBuf, err := createImg(5, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	imgBuf := buf.Bytes()
+	imgBuf2, err := createImg(6, 6)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	cases := []struct {
 		name  string
@@ -232,6 +244,34 @@ func TestChatPrompt(t *testing.T) {
 				aspectRatioID: 1,
 			},
 		},
+		{
+			name:  "multiple messages with mllama",
+			model: mllamaModel,
+			limit: 2048,
+			msgs: []api.Message{
+				{Role: "user", Content: "You're a test, Harry!", Images: []api.ImageData{imgBuf}},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{imgBuf2}},
+			},
+			expect: expect{
+				prompt:        "You're a test, Harry! I-I'm a what? <|image|>A test. And a thumping good one at that, I'd wager. ",
+				images:        [][]byte{imgBuf2},
+				aspectRatioID: 1,
+			},
+		},
+		{
+			name:  "too many images with mllama",
+			model: mllamaModel,
+			limit: 2048,
+			msgs: []api.Message{
+				{Role: "user", Content: "You're a test, Harry!"},
+				{Role: "assistant", Content: "I-I'm a what?"},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{imgBuf, imgBuf}},
+			},
+			expect: expect{
+				error: errTooManyImages,
+			},
+		},
 	}
 
 	for _, tt := range cases {
@@ -239,8 +279,10 @@ func TestChatPrompt(t *testing.T) {
 			model := tt.model
 			opts := api.Options{Runner: api.Runner{NumCtx: tt.limit}}
 			prompt, images, err := chatPrompt(context.TODO(), &model, mockRunner{}.Tokenize, &opts, tt.msgs, nil)
-			if err != nil {
+			if tt.error == nil && err != nil {
 				t.Fatal(err)
+			} else if tt.error != nil && err != tt.error {
+				t.Fatalf("expected err '%q', got '%q'", tt.error, err)
 			}
 
 			if diff := cmp.Diff(prompt, tt.prompt); diff != "" {

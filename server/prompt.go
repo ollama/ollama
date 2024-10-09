@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -16,16 +17,28 @@ import (
 
 type tokenizeFunc func(context.Context, string) ([]int, error)
 
+var errTooManyImages = errors.New("vision model only supports a single image per message")
+
 // chatPrompt accepts a list of messages and returns the prompt and images that should be used for the next chat turn.
 // chatPrompt truncates any messages that exceed the context window of the model, making sure to always include 1) the
 // latest message and 2) system messages
 func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool) (prompt string, images []llm.ImageData, _ error) {
 	var system []api.Message
 
-	// always include the last message
+	isMllama := checkMllamaModelFamily(m)
+
 	n := len(msgs) - 1
 	// in reverse, find all messages that fit into context window
-	for i := n - 1; i >= 0; i-- {
+	for i := n; i >= 0; i-- {
+		if isMllama && len(msgs[i].Images) > 1 {
+			return "", nil, errTooManyImages
+		}
+
+		// always include the last message
+		if i == n {
+			continue
+		}
+
 		system = make([]api.Message, 0)
 		for j := range i {
 			if msgs[j].Role == "system" {
@@ -62,27 +75,30 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 	currMsgIdx := n
 
-	if checkMllamaModelFamily(m) {
+	if isMllama {
 		lastMsgIdx := len(msgs) - 1
-		if len(msgs[lastMsgIdx].Images) == 1 {
-			data, aspectRatioID, err := imageproc.Preprocess(msgs[lastMsgIdx].Images[0])
-			if err != nil {
-				return "", nil, err
-			}
+		for i := lastMsgIdx; i > currMsgIdx; i-- {
+			if len(msgs[i].Images) > 0 {
+				data, aspectRatioID, err := imageproc.Preprocess(msgs[i].Images[0])
+				if err != nil {
+					return "", nil, err
+				}
 
-			buf := new(bytes.Buffer)
-			err = binary.Write(buf, binary.LittleEndian, data)
-			if err != nil {
-				return "", nil, err
-			}
+				buf := new(bytes.Buffer)
+				err = binary.Write(buf, binary.LittleEndian, data)
+				if err != nil {
+					return "", nil, err
+				}
 
-			imgData := llm.ImageData{
-				Data:          buf.Bytes(),
-				AspectRatioID: aspectRatioID,
-			}
+				imgData := llm.ImageData{
+					Data:          buf.Bytes(),
+					AspectRatioID: aspectRatioID,
+				}
 
-			msgs[lastMsgIdx].Content = strings.TrimSpace("<|image|>" + msgs[lastMsgIdx].Content)
-			images = append(images, imgData)
+				msgs[i].Content = strings.TrimSpace("<|image|>" + msgs[i].Content)
+				images = append(images, imgData)
+				break
+			}
 		}
 	} else {
 		for cnt, msg := range msgs[currMsgIdx:] {
