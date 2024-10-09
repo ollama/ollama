@@ -1086,10 +1086,13 @@ func (s *llmServer) Detokenize(ctx context.Context, tokens []int) (string, error
 }
 
 func (s *llmServer) Close() error {
+	s.modelLock.Lock()
 	if s.model != nil {
 		llama.FreeModel(s.model)
 		s.model = nil
 	}
+	s.modelLock.Unlock()
+
 	if s.cmd != nil {
 		slog.Debug("stopping llama server")
 		if err := s.cmd.Process.Kill(); err != nil {
@@ -1100,7 +1103,6 @@ func (s *llmServer) Close() error {
 			slog.Debug("waiting for llama server to exit")
 			<-s.done
 		}
-		s.cmd = nil
 
 		slog.Debug("llama server stopped")
 	}
