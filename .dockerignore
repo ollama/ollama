@@ -2,10 +2,11 @@
 ollama
 app
 macapp
-dist
+dist/
 llm/llama.cpp
 .env
 .cache
 test_data
 llm/build
 llama/build
+build/**/*.gz
