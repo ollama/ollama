@@ -106,6 +106,15 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
 
+	if envconfig.Debug() {
+		proxy, err := http.ProxyFromEnvironment(request)
+		if err != nil {
+			fmt.Println("proxy parse error: " + err.Error())
+		} else {
+			fmt.Println("proxy found: " + proxy.String())
+		}
+	}
+
 	respObj, err := c.http.Do(request)
 	if err != nil {
 		return err
