@@ -7,15 +7,9 @@ set -e
 mkdir -p dist
 
 for TARGETARCH in arm64 amd64; do
-    if [ -n "${OLLAMA_NEW_RUNNERS}" ]; then
-        echo "Building Go runner darwin $TARGETARCH"
-        rm -rf llama/build
-        GOOS=darwin ARCH=$TARGETARCH GOARCH=$TARGETARCH make -C llama -j 8
-    else
-        echo "Building C++ runner darwin $TARGETARCH"
-        rm -rf llm/build
-        GOOS=darwin GOARCH=$TARGETARCH go generate ./...
-    fi
+    echo "Building Go runner darwin $TARGETARCH"
+    rm -rf llama/build
+    GOOS=darwin ARCH=$TARGETARCH GOARCH=$TARGETARCH make -C llama -j 8
     CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -trimpath -o dist/ollama-darwin-$TARGETARCH
     CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -trimpath -cover -o dist/ollama-darwin-$TARGETARCH-cov
 done

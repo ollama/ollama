@@ -1,4 +1,3 @@
-llm/ext_server/* linguist-vendored
 llama/**/*.cpp linguist-vendored
 llama/**/*.hpp linguist-vendored
 llama/**/*.h linguist-vendored

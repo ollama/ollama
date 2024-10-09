@@ -96,15 +96,14 @@ jobs:
           cd $env:GITHUB_WORKSPACE
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$env:PATH"
-          go generate -x ./...
-        name: go generate
+          make -j 8
+        name: make
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-cpu
           path: |
             build/**/*
             build/**/*.a
-            llm/build/**/*.a
             dist/windows-amd64/**
 
   # ROCm generation step
@@ -164,8 +163,8 @@ jobs:
           $env:PATH="$gopath;$env:PATH"
           $env:OLLAMA_SKIP_CPU_GENERATE="1"
           $env:HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
-          go generate -x ./...
-        name: go generate
+          make -j 8
+        name: make
       - name: 'gather rocm dependencies'
         run: |
           $HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
@@ -245,7 +244,7 @@ jobs:
       - name: 'Verify CUDA'
         run: nvcc -V
       - run: go get ./...
-      - name: go generate
+      - name: make
         run: |
           $gopath=(get-command go).source | split-path -parent
           $cudabin=(get-command nvcc).source | split-path
@@ -254,7 +253,7 @@ jobs:
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$cudabin;$env:PATH"
           $env:OLLAMA_SKIP_CPU_GENERATE="1"
-          go generate -x ./...
+          make -j 8
       - name: 'gather cuda dependencies'
         run: |
           $NVIDIA_DIR=(resolve-path 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*\bin\')[0]
