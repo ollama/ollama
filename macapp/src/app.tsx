@@ -16,7 +16,10 @@ enum Step {
 }
 
 export default function () {
-  const [step, setStep] = useState<Step>(Step.WELCOME)
+  const urlParams = new URLSearchParams(window.location.search);
+  const stepParam = urlParams.get('step');
+  const initialStep = stepParam ? Number(stepParam) : Step.WELCOME;
+  const [step, setStep] = useState<Step>(initialStep);
   const [commandCopied, setCommandCopied] = useState<boolean>(false)
 
   const command = 'ollama run llama3.2'
