@@ -91,6 +91,7 @@ ENV LIBRARY_PATH=/opt/amdgpu/lib64
 COPY --from=llm-code / /go/src/github.com/ollama/ollama/
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 ARG CGO_CFLAGS
+ARG GOFLAGS
 ARG AMDGPU_TARGETS
 ENV GOARCH=amd64
 RUN --mount=type=cache,target=/root/.ccache \
