@@ -77,7 +77,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 	if isMllama {
 		lastMsgIdx := len(msgs) - 1
-		for i := lastMsgIdx; i > currMsgIdx; i-- {
+		for i := lastMsgIdx; i >= currMsgIdx; i-- {
 			if len(msgs[i].Images) > 0 {
 				data, aspectRatioID, err := imageproc.Preprocess(msgs[i].Images[0])
 				if err != nil {
