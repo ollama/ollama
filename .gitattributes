@@ -6,6 +6,7 @@ llama/**/*.c linguist-vendored
 llama/**/*.cu linguist-vendored
 llama/**/*.cuh linguist-vendored
 llama/**/*.m linguist-vendored
+llama/**/*.metal linguist-vendored
 
 * text=auto
 *.go text eol=lf
