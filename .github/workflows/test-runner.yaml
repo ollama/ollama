@@ -6,6 +6,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ARCH: $(uname -m | sed -e "s/aarch64/arm64/g")
+      VAR1 :  100
+
     steps:
       - run: echo "🎉 The job was automatically triggered by a ${{ github.event_name }} event."
       - run: echo "🐧 This job is now running on a ${{ runner.os }} server hosted by GitHub!"
@@ -14,7 +16,7 @@ jobs:
         uses: actions/checkout@v4
       - run: echo "💡 The ${{ github.repository }} repository has been cloned to the runner."
       - run: echo "🖥️ The workflow is now ready to test your code on the runner."
-      - run: echo " ${{ ARCH }}"
+      - run: echo  $VAR1
       - name: List files in the repository
         run: |
           ls ${{ github.workspace }}
