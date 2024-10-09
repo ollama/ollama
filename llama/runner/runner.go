@@ -451,14 +451,27 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		sequence := strings.Join(seq.pendingResponses, "")
 
 		if ok, stop := findStop(sequence, seq.stop); ok {
-			slog.Debug("hit stop token", "stop", seq.stop)
+			slog.Debug("hit stop token", "pending", seq.pendingResponses, "stop", stop)
 
-			trimCacheLen := len(seq.pendingResponses) - 1
-			seq.pendingResponses = truncateStop(seq.pendingResponses, stop)
-			trimCacheLen -= len(seq.pendingResponses)
+			var tokenTruncated bool
+			origLen := len(seq.pendingResponses)
+			seq.pendingResponses, tokenTruncated = truncateStop(seq.pendingResponses, stop)
+			newLen := len(seq.pendingResponses)
 
-			// remove any tokens from the cache that we don't actually return
-			seq.cache.Inputs = seq.cache.Inputs[:len(seq.cache.Inputs)-trimCacheLen]
+			// Update the cache based on the tokens that will be returned:
+			// - We have 1 token more than is currently in the cache because
+			// the last one generated wasn't submitted to Decode
+			// - Remove any stop sequences that we stripped out
+			// - If truncateStop removed a portion of a token, drop that
+			// - As defense-in-depth, if truncatedToken didn't find a stop token
+			// remove the extra one that we added to the cache len
+			tokenLen := len(seq.cache.Inputs) + 1
+			tokenLen -= origLen - newLen
+			if tokenTruncated || origLen == newLen {
+				tokenLen--
+			}
+			seq.cache.Inputs = seq.cache.Inputs[:tokenLen]
+
 			s.removeSequence(i, "stop")
 			continue
 		}
