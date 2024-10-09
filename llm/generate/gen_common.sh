@@ -10,7 +10,7 @@ init_vars() {
         ;;
     *)
         echo "GOARCH must be set"
-        echo "this script is meant to be run from within go generate"
+        echo "this script is meant to be run from within go generate test-runner"
         exit 1
         ;;
     esac
