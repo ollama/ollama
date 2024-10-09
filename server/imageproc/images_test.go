@@ -246,7 +246,7 @@ func TestResize(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		actualImage, actualAspectRatio := ResizeImage(c.TestImage, c.OutputSize, c.MaxImageTiles)
+		actualImage, actualAspectRatio := ResizeImage(c.TestImage, "png", c.OutputSize, c.MaxImageTiles)
 
 		if actualImage.Bounds() != c.ExpectedImage.Bounds() {
 			t.Errorf("image size incorrect: '%#v': expected: '%#v'", actualImage.Bounds(), c.ExpectedImage.Bounds())

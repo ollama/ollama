@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"image"
+	"image/color"
 	_ "image/jpeg"
 	_ "image/png"
 	"math"
@@ -139,7 +140,22 @@ func splitToTiles(img image.Image, numTilesSize image.Point) []image.Image {
 	return images
 }
 
-func ResizeImage(img image.Image, outputSize image.Point, maxImageTiles int) (image.Image, image.Point) {
+// remove the "alpha" channel by drawing over a prefilled image
+func compositeImage(img image.Image) image.Image {
+	dst := image.NewRGBA(img.Bounds())
+
+	white := color.RGBA{255, 255, 255, 255}
+	draw.Draw(dst, dst.Bounds(), &image.Uniform{white}, image.Point{}, draw.Src)
+	draw.Draw(dst, dst.Bounds(), img, img.Bounds().Min, draw.Over)
+
+	return dst
+}
+
+func ResizeImage(img image.Image, format string, outputSize image.Point, maxImageTiles int) (image.Image, image.Point) {
+	if format == "png" {
+		img = compositeImage(img)
+	}
+
 	b := img.Bounds()
 	tileSize := outputSize.Y
 
@@ -217,12 +233,12 @@ func Preprocess(imageData []byte) ([]float32, int, error) {
 	mean := [3]float32{0.48145466, 0.4578275, 0.40821073}
 	std := [3]float32{0.26862954, 0.26130258, 0.27577711}
 
-	img, _, err := image.Decode(bytes.NewReader(imageData))
+	img, format, err := image.Decode(bytes.NewReader(imageData))
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to decode image: %w", err)
 	}
 
-	newImage, aspectRatio := ResizeImage(img, outputSize, maxTiles)
+	newImage, aspectRatio := ResizeImage(img, format, outputSize, maxTiles)
 	newImage = PadImage(newImage, outputSize, aspectRatio)
 
 	data := PackImages(newImage, aspectRatio, mean, std)
