@@ -1,5 +1,7 @@
 package llama
 
+//go:generate make -j 8
+
 /*
 #cgo CFLAGS: -O2 -std=c11 -DGGML_BUILD=1 -DNDEBUG -DLOG_DISABLE_LOGS -DGGML_USE_LLAMAFILE
 #cgo CXXFLAGS: -O2 -std=c++11 -DGGML_BUILD=1 -DNDEBUG -DLOG_DISABLE_LOGS -DGGML_USE_LLAMAFILE
@@ -44,8 +46,8 @@ package llama
 #cgo rocm CFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIPBLAS -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 #cgo rocm CXXFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIPBLAS -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 #cgo rocm LDFLAGS: -L${SRCDIR} -lggml_rocm -lhipblas -lamdhip64 -lrocblas
-#cgo windows CFLAGS: -Wno-discarded-qualifiers
-#cgo windows CFLAGS: -Wno-discarded-qualifiers
+#cgo windows CFLAGS: -Wno-discarded-qualifiers -D_WIN32_WINNT=0x602
+#cgo windows CXXFLAGS: -D_WIN32_WINNT=0x602
 #cgo windows LDFLAGS: -lmsvcrt
 #cgo windows LDFLAGS: -lmsvcrt -static-libstdc++ -static-libgcc -static
 #cgo windows,amd64 LDFLAGS: -L${SRCDIR}/build/Windows/amd64
