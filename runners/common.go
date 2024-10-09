@@ -2,6 +2,7 @@ package runners
 
 import (
 	"compress/gzip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -15,11 +16,13 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/gpu"
 )
 
 const (
@@ -30,6 +33,40 @@ var (
 	lock       sync.Mutex
 	runnersDir = ""
 )
+
+type ImageData struct {
+	Data []byte `json:"data"`
+	ID   int    `json:"id"`
+}
+type CompletionRequest struct {
+	Prompt  string
+	Format  string
+	Images  []ImageData
+	Options *api.Options
+}
+
+type CompletionResponse struct {
+	Content            string
+	DoneReason         string
+	Done               bool
+	PromptEvalCount    int
+	PromptEvalDuration time.Duration
+	EvalCount          int
+	EvalDuration       time.Duration
+}
+
+type LLMServer interface {
+	Ping(ctx context.Context) error
+	WaitUntilRunning(ctx context.Context) error
+	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
+	Embedding(ctx context.Context, input string) ([]float32, error)
+	Tokenize(ctx context.Context, content string) ([]int, error)
+	Detokenize(ctx context.Context, tokens []int) (string, error)
+	Close() error
+	EstimatedVRAM() uint64 // Total VRAM across all GPUs
+	EstimatedTotal() uint64
+	EstimatedVRAMByGPU(gpuID string) uint64
+}
 
 // Return the location where runners are stored
 // If runners are payloads, this will either extract them
@@ -301,11 +338,11 @@ func GetAvailableServers(payloadsDir string) map[string]string {
 // serversForGpu returns a list of compatible servers give the provided GPU
 // info, ordered by performance. assumes Init() has been called
 // TODO - switch to metadata based mapping
-func ServersForGpu(info gpu.GpuInfo) []string {
+func ServersForGpu(info discover.GpuInfo) []string {
 	// glob workDir for files that start with ollama_
 	availableServers := GetAvailableServers(runnersDir)
 	requested := info.Library
-	if info.Variant != gpu.CPUCapabilityNone.String() {
+	if info.Variant != discover.CPUCapabilityNone.String() {
 		requested += "_" + info.Variant
 	}
 
@@ -341,12 +378,12 @@ func ServersForGpu(info gpu.GpuInfo) []string {
 	if !(runtime.GOOS == "darwin" && runtime.GOARCH == "arm64") {
 		// Load up the best CPU variant if not primary requested
 		if info.Library != "cpu" {
-			variant := gpu.GetCPUCapability()
+			variant := discover.GetCPUCapability()
 			// If no variant, then we fall back to default
 			// If we have a variant, try that if we find an exact match
 			// Attempting to run the wrong CPU instructions will panic the
 			// process
-			if variant != gpu.CPUCapabilityNone {
+			if variant != discover.CPUCapabilityNone {
 				for cmp := range availableServers {
 					if cmp == "cpu_"+variant.String() {
 						servers = append(servers, cmp)
@@ -371,9 +408,9 @@ func ServerForCpu() string {
 	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
 		return "metal"
 	}
-	variant := gpu.GetCPUCapability()
+	variant := discover.GetCPUCapability()
 	availableServers := GetAvailableServers(runnersDir)
-	if variant != gpu.CPUCapabilityNone {
+	if variant != discover.CPUCapabilityNone {
 		for cmp := range availableServers {
 			if cmp == "cpu_"+variant.String() {
 				return cmp

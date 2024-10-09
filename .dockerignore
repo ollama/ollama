@@ -3,9 +3,7 @@ ollama
 app
 macapp
 dist
-llm/llama.cpp
 .env
 .cache
 test_data
-llm/build
 llama/build
