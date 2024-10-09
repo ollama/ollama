@@ -28,13 +28,13 @@ func containsStopSuffix(sequence string, stops []string) bool {
 
 // truncateStop removes the provided stop string from pieces,
 // returning the partial pieces with stop removed, including truncating
-// the last piece if required
-func truncateStop(pieces []string, stop string) []string {
+// the last piece if required (and signalling if this was the case)
+func truncateStop(pieces []string, stop string) ([]string, bool) {
 	joined := strings.Join(pieces, "")
 
 	index := strings.Index(joined, stop)
 	if index == -1 {
-		return pieces
+		return pieces, false
 	}
 
 	joined = joined[:index]
@@ -46,6 +46,7 @@ func truncateStop(pieces []string, stop string) []string {
 	}
 
 	var result []string
+	tokenTruncated := false
 	start := 0
 	for _, length := range lengths {
 		if start >= len(joined) {
@@ -55,12 +56,13 @@ func truncateStop(pieces []string, stop string) []string {
 		end := start + length
 		if end > len(joined) {
 			end = len(joined)
+			tokenTruncated = true
 		}
 		result = append(result, joined[start:end])
 		start = end
 	}
 
-	return result
+	return result, tokenTruncated
 }
 
 func incompleteUnicode(token string) bool {
