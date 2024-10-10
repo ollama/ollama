@@ -1,17 +1,17 @@
-From c9a6ca9fc039233dee746a4da9705762cd9e515d Mon Sep 17 00:00:00 2001
-From: Michael Yang <mxyng@pm.me>
-Date: Mon, 16 Sep 2024 15:53:14 -0700
-Subject: [PATCH] 06-embeddings.diff
+From 235b6d876a74cb09abe26985fa89ebe5bfc9f562 Mon Sep 17 00:00:00 2001
+From: Gabe Goodhart <ghart@us.ibm.com>
+Date: Thu, 19 Sep 2024 17:06:17 -0600
+Subject: [PATCH] embeddings
 
 ---
- src/llama.cpp | 17 ++++++++++-------
- 1 file changed, 10 insertions(+), 7 deletions(-)
+ src/llama.cpp | 15 +++++++++------
+ 1 file changed, 9 insertions(+), 6 deletions(-)
 
 diff --git a/src/llama.cpp b/src/llama.cpp
-index d1e959fc..f79bd782 100644
+index 1a8e0c51..e55ec3f8 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
-@@ -15898,7 +15898,7 @@ static size_t llama_output_reserve(llama_context & lctx, size_t n_outputs) {
+@@ -16516,7 +16516,7 @@ static size_t llama_output_reserve(llama_context & lctx, size_t n_outputs) {
      const auto n_embd  = hparams.n_embd;
  
      // TODO: use a per-batch flag for logits presence instead
@@ -20,7 +20,7 @@ index d1e959fc..f79bd782 100644
      const bool has_embd   =  cparams.embeddings && (cparams.pooling_type == LLAMA_POOLING_TYPE_NONE);
  
      const size_t logits_size = has_logits ? n_vocab*n_outputs_max : 0;
-@@ -16167,20 +16167,23 @@ static int llama_decode_internal(
+@@ -16794,20 +16794,23 @@ static int llama_decode_internal(
              // no output
              res  = nullptr;
              embd = nullptr;
@@ -30,11 +30,10 @@ index d1e959fc..f79bd782 100644
 +        }
 +
 +        if (cparams.embeddings) {
-             for (int i = gf->n_nodes - 1; i >= 0; --i) {
--                if (strcmp(gf->nodes[i]->name, "result_embd_pooled") == 0) {
--                    embd = gf->nodes[i];
-+                embd = gf->nodes[i];
-+                if (strcmp(embd->name, "result_embd_pooled") == 0) {
+             for (int i = ggml_graph_n_nodes(gf) - 1; i >= 0; --i) {
++                embd = ggml_graph_node(gf, i);
+                 if (strcmp(ggml_graph_node(gf, i)->name, "result_embd_pooled") == 0) {
+-                    embd = ggml_graph_node(gf, i);
                      break;
                  }
              }
@@ -51,5 +50,5 @@ index d1e959fc..f79bd782 100644
  
          ggml_backend_sched_alloc_graph(lctx.sched, gf);
 -- 
-2.46.0
+2.39.3 (Apple Git-146)
 
