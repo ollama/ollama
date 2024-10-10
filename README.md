@@ -1,47 +1,63 @@
+<a name="readme-top"></a>  
+
 <div align="center">
  <img alt="ollama" height="200px" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
 </div>
 
 # Ollama
+#### Get up and running with large language models.
 
 [![Discord](https://dcbadge.vercel.app/api/server/ollama?style=flat&compact=true)](https://discord.gg/ollama)
 
-Get up and running with large language models.
+Ollama is a lightweight, extensible framework designed for effortless execution of open-source Large Language Models (LLMs). 
+This free and open-source tool serves as an isolated wrapper, also providing a simple API for creating, running, and managing models.
 
-### macOS
+---
 
-[Download](https://ollama.com/download/Ollama-darwin.zip)
+### Table of Contents
 
-### Windows preview
+- 🛠️ [Getting Started](#%EF%B8%8F-getting-started)
+  - 📥 [Installation](#-installation)
+  - 🚀 [Quickstart](#-quickstart)
+- 📚 [Model Library](#-model-library)
+- 📦 [Features](#-features)
+  - ⚡ [Model Execution](#-model-execution)
+  - 🧩 [Model Management](#-model-management)
+  - ✨ [Customize a Model](#-customize-a-model)
+  - 🎨 [Customize a Prompt](#-customize-a-prompt)
+  - 🖥️ [Start Ollama Service](#%EF%B8%8F-start-ollama-service) 
+  - 🌟 [Special Cases](#-special-cases)
+- 🧱️ [Building](#%EF%B8%8F-building)
+- 🔗 [REST API](#-rest-api)
+- 🌐 [Community Integrations](#-community-integrations)
+- 🔄 [Contributing](#-contributing)
+- 🤝 [Acknowledgments](#-acknowledgments)
+- 🐞 [Issues](#-issues)
+- 📜 [License](#-license)
 
-[Download](https://ollama.com/download/OllamaSetup.exe)
+---
 
-### Linux
+## 🛠️ Getting Started
+### 📥 Installation
 
-```
-curl -fsSL https://ollama.com/install.sh | sh
-```
+| Platform    | Installation Instructions                                                                                                                                                                                                                                                    |
+|-------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **macOS**   | 🍏 [Download](https://ollama.com/download/Ollama-darwin.zip)                                                                                                                                                                                                                 |
+| **Windows** | 🪟 [Download](https://ollama.com/download/OllamaSetup.exe)                                                                                                                                                                                                                   |
+| **Linux**   | 🐧 Install via command line: <br/> ```bash curl -fsSL https://ollama.com/install. &#124; sh ``` <br/> <br/> 📖 [Manual install instructions](https://github.com/ollama/ollama/blob/main/docs/linux.md).                                                                           |
+| **Docker**  | 📦 **Pull** the official Ollama Docker image: <br> ```bash docker pull ollama/ollama``` <br> <br/> 🐳 **Run** the Docker container: <br> ```bash docker run -it ollama/ollama ``` <br> <br/>🌐 [Explore the Ollama Docker Hub page](https://hub.docker.com/r/ollama/ollama). |
 
-[Manual install instructions](https://github.com/ollama/ollama/blob/main/docs/linux.md)
 
-### Docker
+### 🚀 Quickstart
 
-The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
-
-### Libraries
-
-- [ollama-python](https://github.com/ollama/ollama-python)
-- [ollama-js](https://github.com/ollama/ollama-js)
-
-## Quickstart
-
-To run and chat with [Llama 3.2](https://ollama.com/library/llama3.2):
+To run and chat with [Llama 3.2](https://ollama.com/library/llama3.2) :
 
 ```
 ollama run llama3.2
 ```
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## Model library
+## 📚 Model library
 
 Ollama supports a list of models available on [ollama.com/library](https://ollama.com/library 'ollama model library')
 
@@ -71,9 +87,80 @@ Here are some example models that can be downloaded:
 > [!NOTE]
 > You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
 
-## Customize a model
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-### Import from GGUF
+## 📦 Features 
+
+### ⚡ Model execution
+
+#### Launch a model
+
+```
+ollama run llama3.2
+```
+
+
+#### Terminate a running model
+
+```
+ollama stop llama3.2
+```
+
+---
+
+### 🧩 Model management
+#### Create a new model
+
+`ollama create` is used to create a model from a _Modelfile_.
+
+```
+ollama create mymodel -f ./Modelfile
+```
+
+#### Pull (retrieve) a model
+
+```
+ollama pull llama3.2
+```
+
+> This command can also be used to update a local model. Only the diff will be pulled.
+
+#### Remove a model
+
+```
+ollama rm llama3.2
+```
+
+#### Copy a model
+
+```
+ollama cp llama3.2 my-model
+```
+
+#### List all models on your system
+
+```
+ollama list
+```
+
+#### Show model information
+
+```
+ollama show llama3.2
+```
+
+#### List which models are currently loaded
+
+```
+ollama ps
+```
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+---
+
+### ✨ Customize a model
+
+#### Import from GGUF
 
 Ollama supports importing GGUF models in the Modelfile:
 
@@ -95,11 +182,12 @@ Ollama supports importing GGUF models in the Modelfile:
    ollama run example
    ```
 
-### Import from PyTorch or Safetensors
+#### Import from PyTorch or Safetensors
 
 See the [guide](docs/import.md) on importing models for more information.
 
-### Customize a prompt
+---
+### 🎨 Customize a prompt
 
 Models from the Ollama library can be customized with a prompt. For example, to customize the `llama3.2` model:
 
@@ -131,38 +219,20 @@ Hello! It's your friend Mario.
 ```
 
 For more examples, see the [examples](examples) directory. For more information on working with a Modelfile, see the [Modelfile](docs/modelfile.md) documentation.
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## CLI Reference
+---
 
-### Create a model
+### 🖥️ Start Ollama Service
 
-`ollama create` is used to create a model from a Modelfile.
-
+When you want to start ollama without running the desktop application:
 ```
-ollama create mymodel -f ./Modelfile
+ollama serve
 ```
+---
 
-### Pull a model
-
-```
-ollama pull llama3.2
-```
-
-> This command can also be used to update a local model. Only the diff will be pulled.
-
-### Remove a model
-
-```
-ollama rm llama3.2
-```
-
-### Copy a model
-
-```
-ollama cp llama3.2 my-model
-```
-
-### Multiline input
+### 🌟 Special cases
+#### 📜 Multiline input
 
 For multiline input, you can wrap text with `"""`:
 
@@ -173,49 +243,23 @@ For multiline input, you can wrap text with `"""`:
 I'm a basic program that prints the famous "Hello, world!" message to the console.
 ```
 
-### Multimodal models
+#### 🖼️ Multimodal models
 
 ```
 ollama run llava "What's in this image? /Users/jmorgan/Desktop/smile.png"
 The image features a yellow smiley face, which is likely the central focus of the picture.
 ```
 
-### Pass the prompt as an argument
+#### 📨 Pass the prompt as an argument
 
 ```
 $ ollama run llama3.2 "Summarize this file: $(cat README.md)"
  Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models, as well as a library of pre-built models that can be easily used in a variety of applications.
 ```
 
-### Show model information
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-```
-ollama show llama3.2
-```
-
-### List models on your computer
-
-```
-ollama list
-```
-
-### List which models are currently loaded
-
-```
-ollama ps
-```
-
-### Stop a model which is currently running
-
-```
-ollama stop llama3.2
-```
-
-### Start Ollama
-
-`ollama serve` is used when you want to start ollama without running the desktop application.
-
-## Building
+## 🧱️ Building
 
 See the [developer guide](https://github.com/ollama/ollama/blob/main/docs/development.md)
 
@@ -233,7 +277,7 @@ Finally, in a separate shell, run a model:
 ./ollama run llama3.2
 ```
 
-## REST API
+## 🔗 REST API
 
 Ollama has a REST API for running and managing models.
 
@@ -259,7 +303,9 @@ curl http://localhost:11434/api/chat -d '{
 
 See the [API documentation](./docs/api.md) for all endpoints.
 
-## Community Integrations
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## 🌐 Community Integrations
 
 ### Web & Desktop
 
@@ -356,6 +402,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama eBook Summary](https://github.com/cognitivetech/ollama-ebook-summary/)
 - [Ollama Mixture of Experts (MOE) in 50 lines of code](https://github.com/rapidarchitect/ollama_moe)
 - [vim-intelligence-bridge](https://github.com/pepo-ec/vim-intelligence-bridge) Simple interaction of "Ollama" with the Vim editor
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ### Apple Vision Pro
 - [Enchanted](https://github.com/AugustDev/enchanted)
@@ -456,3 +504,41 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov.
 
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## 🔄 Contributing
+We welcome contributions from the community! If you’d like to help improve this project, please refer to our [CONTRIBUTING.md](CONTRIBUTING.md) document.
+
+## 🤝 Acknowledgments
+
+A big thank you to all the contributors who have supported this project. Your feedback, suggestions, and contributions are greatly appreciated!
+
+## 🐞 Issues
+
+If you encounter any issues while using the project, please follow these steps:
+
+<div style="max-width: 700px;">
+  <table style="width: 100%; border-spacing: 20px; border-collapse: separate;">
+    <tr>
+      <td style="text-align: center; padding: 20px; vertical-align: middle;">
+        <strong>1. Check Existing Issues</strong><br>
+        Start by checking the link below to see if your problem has already been reported:<br>
+        <a href="https://github.com/ollama/ollama/issues" style="display: inline-block; padding: 10px 16px; margin: 16px; background-color: #007BFF; color: white; text-decoration: none; border-radius: 5px; font-size: 14px; height: 40px; line-height: 20px;">🔍 View Existing Issues</a>
+      </td>
+      <td style="text-align: center; padding: 20px; vertical-align: middle;">
+        <strong>2. Report a New Issue</strong><br>
+        If you don't find a match, please open a new issue using the link below:<br>
+        <a href="https://github.com/ollama/ollama/issues/new" style="display: inline-block; padding: 10px 16px; margin: 16px; background-color: #FF0000; color: white; text-decoration: none; border-radius: 5px; font-size: 14px; height: 40px; line-height: 20px;">📝 Open a New Issue</a>
+      </td>
+    </tr>
+  </table>
+</div>
+
+Your feedback is valuable and helps us improve the project—thank you!
+
+
+## 📜 License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) for details.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
