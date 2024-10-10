@@ -249,9 +249,18 @@ if [ -z "${OLLAMA_SKIP_ROCM_GENERATE}" -a -d "${ROCM_PATH}" ]; then
     echo "ROCm libraries detected - building dynamic ROCm library"
     if [ -f ${ROCM_PATH}/lib/librocblas.so.*.*.????? ]; then
         ROCM_VARIANT=_v$(ls ${ROCM_PATH}/lib/librocblas.so.*.*.????? | cut -f5 -d. || true)
+    elif [-f ${ROCM_PATH}/lib64/librocblas.*.*.????? ]; then
+        ROCM_VARIANT=_v$(ls ${ROCM_PATH}/lib64/librocblas.so.*.*.????? | cut -f5 -d. || true)
     fi
     init_vars
-    CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DGGML_HIPBLAS=on -DGGML_CUDA_NO_PEER_COPY=on -DCMAKE_C_COMPILER=$ROCM_PATH/llvm/bin/clang -DCMAKE_CXX_COMPILER=$ROCM_PATH/llvm/bin/clang++ -DAMDGPU_TARGETS=$(amdGPUs) -DGPU_TARGETS=$(amdGPUs)"
+
+    if [ -f $ROCM_PATH/llvm/bin/clang ]; then
+        ROCM_BUILD_BIN="$ROCM_PATH/llvm/bin"
+    elif [ -f $ROCM_PATH/bin/clang ]; then
+        ROCM_BUILD_BIN="$ROCM_PATH/bin"
+    fi
+
+    CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DGGML_HIPBLAS=on -DGGML_CUDA_NO_PEER_COPY=on -DCMAKE_C_COMPILER=$ROCM_BUILD_BIN/clang -DCMAKE_CXX_COMPILER=$ROCM_BUILD_BIN/clang++ -DAMDGPU_TARGETS=$(amdGPUs) -DGPU_TARGETS=$(amdGPUs)"
     # Users building from source can tune the exact flags we pass to cmake for configuring llama.cpp
     if [ -n "${OLLAMA_CUSTOM_ROCM_DEFS}" ]; then
         echo "OLLAMA_CUSTOM_ROCM_DEFS=\"${OLLAMA_CUSTOM_ROCM_DEFS}\""
@@ -264,7 +273,7 @@ if [ -z "${OLLAMA_SKIP_ROCM_GENERATE}" -a -d "${ROCM_PATH}" ]; then
     ROCM_DIST_DIR="${DIST_BASE}/../linux-${GOARCH}-rocm/lib/ollama"
     # TODO figure out how to disable runpath (rpath)
     # export CMAKE_HIP_FLAGS="-fno-rtlib-add-rpath" # doesn't work
-    export LLAMA_SERVER_LDFLAGS="-L${ROCM_PATH}/lib -L/opt/amdgpu/lib/x86_64-linux-gnu/ -lhipblas -lrocblas -lamdhip64 -lrocsolver -lamd_comgr -lhsa-runtime64 -lrocsparse -ldrm -ldrm_amdgpu"
+    export LLAMA_SERVER_LDFLAGS="-L${ROCM_PATH}/lib -L${ROCM_PATH}/lib64 -L/opt/amdgpu/lib/x86_64-linux-gnu/ -lhipblas -lrocblas -lamdhip64 -lrocsolver -lamd_comgr -lhsa-runtime64 -lrocsparse -ldrm -ldrm_amdgpu"
     build
 
     # copy the ROCM dependencies
