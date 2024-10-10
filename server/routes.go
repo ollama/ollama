@@ -1421,9 +1421,15 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	slog.Debug("chat request", "images", len(images), "prompt", prompt)
 
+	toolCallsCh := make(chan []api.ToolCall, 1)
+	contentCh := make(chan string, 1)
+
 	ch := make(chan any)
 	go func() {
+		var sb strings.Builder
 		defer close(ch)
+		defer close(toolCallsCh)
+		defer close(contentCh)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
@@ -1443,8 +1449,17 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					EvalDuration:       r.EvalDuration,
 				},
 			}
+			sb.WriteString(r.Content)
 
 			if r.Done {
+				content := sb.String()
+				contentCh <- content
+				if len(req.Tools) > 0 {
+					if toolCalls, ok := m.parseToolCalls(content); ok {
+						toolCallsCh <- toolCalls
+					}
+				}
+
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
@@ -1455,13 +1470,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}()
 
+	toolsRequired := len(req.Tools) > 0
+	// no stream response
 	if req.Stream != nil && !*req.Stream {
 		var resp api.ChatResponse
-		var sb strings.Builder
 		for rr := range ch {
 			switch t := rr.(type) {
 			case api.ChatResponse:
-				sb.WriteString(t.Message.Content)
 				resp = t
 			case gin.H:
 				msg, ok := t["error"].(string)
@@ -1477,10 +1492,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 		}
 
-		resp.Message.Content = sb.String()
-
-		if len(req.Tools) > 0 {
-			if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
+		content := <-contentCh
+		resp.Message.Content = content
+		if toolsRequired {
+			toolCalls := <-toolCallsCh
+			if len(toolCalls) > 0 {
 				resp.Message.ToolCalls = toolCalls
 				resp.Message.Content = ""
 			}
@@ -1490,7 +1506,59 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	streamResponse(c, ch)
+	// stream response
+	streamCh := make(chan any)
+	for rr := range ch {
+		switch t := rr.(type) {
+		case api.ChatResponse:
+			go func() {
+				// slog.Warn("reassign chat response", "content", t.Message.Content)
+				streamCh <- t
+				if t.Done {
+					// slog.Warn("close stream channel")
+					close(streamCh)
+				}
+			}()
+		case gin.H:
+			msg, ok := t["error"].(string)
+			if !ok {
+				msg = "unexpected error format in response"
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
+			return
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected response"})
+			return
+		}
+	}
+
+	// if tools are required
+	if toolsRequired {
+		toolCalls := <-toolCallsCh
+		// if tool calls are present, use different channel respose
+		hasToolCalls := len(toolCalls) > 0
+		if hasToolCalls {
+			// reset the channel
+			toolCallsCh := make(chan any, 1)
+			res := api.ChatResponse{
+				Model:      req.Model,
+				CreatedAt:  time.Now().UTC(),
+				Message:    api.Message{Role: "assistant", ToolCalls: toolCalls},
+				Done:       true,
+				DoneReason: "tool_calls",
+			}
+			toolCallsCh <- res
+			close(toolCallsCh)
+			slog.Info("[tools] stream response")
+			streamResponse(c, toolCallsCh)
+			return
+		} else {
+			slog.Info("[tools] no call")
+		}
+	}
+
+	slog.Info("stream response")
+	streamResponse(c, streamCh)
 }
 
 func handleScheduleError(c *gin.Context, name string, err error) {

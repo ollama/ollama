@@ -32,8 +32,8 @@ type ErrorResponse struct {
 }
 
 type Message struct {
-	Role      string     `json:"role"`
-	Content   any        `json:"content"`
+	Role      string     `json:"role,omitempty"`
+	Content   any        `json:"content,omitempty"`
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 }
 
@@ -45,7 +45,7 @@ type Choice struct {
 
 type ChunkChoice struct {
 	Index        int     `json:"index"`
-	Delta        Message `json:"delta"`
+	Delta        Message `json:"delta,omitempty"`
 	FinishReason *string `json:"finish_reason"`
 }
 
@@ -139,6 +139,8 @@ type CompletionChunk struct {
 }
 
 type ToolCall struct {
+	// Index is not nil only in chat completion chunk object
+	Index    *int   `json:"index,omitempty"`
 	ID       string `json:"id"`
 	Type     string `json:"type"`
 	Function struct {
@@ -244,6 +246,28 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 }
 
 func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
+	toolCalls := make([]ToolCall, len(r.Message.ToolCalls))
+	for i, tc := range r.Message.ToolCalls {
+		idx := i
+		toolCalls[i].Index = &idx
+		toolCalls[i].ID = toolCallId()
+		toolCalls[i].Type = "function"
+		toolCalls[i].Function.Name = tc.Function.Name
+
+		args, err := json.Marshal(tc.Function.Arguments)
+		if err != nil {
+			slog.Error("could not marshall function arguments to json", "error", err)
+			continue
+		}
+
+		toolCalls[i].Function.Arguments = string(args)
+	}
+
+	message := Message{Role: "assistant", Content: r.Message.Content}
+	hasToolCalls := len(toolCalls) > 0
+	if hasToolCalls {
+		message = Message{ToolCalls: toolCalls}
+	}
 	return ChatCompletionChunk{
 		Id:                id,
 		Object:            "chat.completion.chunk",
@@ -252,8 +276,12 @@ func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
 		SystemFingerprint: "fp_ollama",
 		Choices: []ChunkChoice{{
 			Index: 0,
-			Delta: Message{Role: "assistant", Content: r.Message.Content},
+			// Delta: Message{Role: "assistant", Content: r.Message.Content},
+			Delta: message,
 			FinishReason: func(reason string) *string {
+				// if hasToolCalls {
+				// 	reason = "tool_calls"
+				// }
 				if len(reason) > 0 {
 					return &reason
 				}
@@ -610,6 +638,7 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 		if chatResponse.Done {
 			_, err = w.ResponseWriter.Write([]byte("data: [DONE]\n\n"))
 			if err != nil {
+				slog.Error("writeResponse done", "err", err)
 				return 0, err
 			}
 		}
