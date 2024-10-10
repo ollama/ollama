@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/wk8/go-ordered-map/v2"
 )
 
 // StatusError is an error with and HTTP status code.
@@ -31,6 +33,28 @@ func (e StatusError) Error() string {
 		// this should not happen
 		return "something went wrong, please see the ollama server logs for details"
 	}
+}
+
+// JsonSchemaObject represents an Object within a JSON Schema.
+type JsonSchemaObject struct {
+	Type                 *string                                          `json:"type,omitempty"`
+	Format               *string                                          `json:"format,omitempty"`
+	Properties           *orderedmap.OrderedMap[string, JsonSchemaObject] `json:"properties,omitempty"`
+	Required             *[]string                                        `json:"required,omitempty"`
+	AdditionalProperties *bool                                            `json:"additionalProperties,omitempty"`
+	Items                *JsonSchemaObject                                `json:"items,omitempty"`
+	MinItems             *int                                             `json:"minItems,omitempty"`
+	MaxItems             *int                                             `json:"maxItems,omitempty"`
+	Minimum              *int                                             `json:"minimum,omitempty"`
+	Maximum              *int                                             `json:"maximum,omitempty"`
+	Enum                 *[]string                                        `json:"enum,omitempty"`
+}
+
+// JsonSchema represents a JSON Schema.
+type JsonSchema struct {
+	Name   string            `json:"name"`
+	Strict bool              `json:"strict"`
+	Schema *JsonSchemaObject `json:"schema,omitempty"`
 }
 
 // ImageData represents the raw binary data of an image file.
@@ -95,6 +119,9 @@ type ChatRequest struct {
 
 	// Format is the format to return the response in (e.g. "json").
 	Format string `json:"format"`
+
+	// JsonSchema is the strict JSON Schema when format is "json".
+	JsonSchema *JsonSchema `json:"json_schema"`
 
 	// KeepAlive controls how long the model will stay loaded into memory
 	// followin the request.

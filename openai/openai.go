@@ -62,7 +62,8 @@ type Usage struct {
 }
 
 type ResponseFormat struct {
-	Type string `json:"type"`
+	Type       string          `json:"type"`
+	JsonSchema *api.JsonSchema `json:"json_schema"`
 }
 
 type EmbedRequest struct {
@@ -476,17 +477,23 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	}
 
 	var format string
-	if r.ResponseFormat != nil && r.ResponseFormat.Type == "json_object" {
+	var jsonSchema *api.JsonSchema
+	if r.ResponseFormat != nil && (r.ResponseFormat.Type == "json_object" || r.ResponseFormat.Type == "json_schema") {
 		format = "json"
+
+		if r.ResponseFormat.JsonSchema != nil && r.ResponseFormat.JsonSchema.Strict {
+			jsonSchema = r.ResponseFormat.JsonSchema
+		}
 	}
 
 	return &api.ChatRequest{
-		Model:    r.Model,
-		Messages: messages,
-		Format:   format,
-		Options:  options,
-		Stream:   &r.Stream,
-		Tools:    r.Tools,
+		Model:      r.Model,
+		Messages:   messages,
+		Format:     format,
+		JsonSchema: jsonSchema,
+		Options:    options,
+		Stream:     &r.Stream,
+		Tools:      r.Tools,
 	}, nil
 }
 

@@ -33,7 +33,7 @@
 
 #include "../llava/clip.h"
 
-using json = nlohmann::json;
+using json = nlohmann::ordered_json;
 
 extern bool server_verbose;
 extern bool server_log_json;
