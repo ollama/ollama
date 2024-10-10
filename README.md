@@ -330,6 +330,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LLMChat](https://github.com/trendy-design/llmchat) (Privacy focused, 100% local, intuitive all-in-one chat interface)
 - [ARGO](https://github.com/xark-argo/argo) (Locally download and run Ollama and Huggingface models with RAG on Mac/Windows/Linux)
 - [G1](https://github.com/bklieger-groq/g1) (Prototype of using prompting strategies to improve the LLM's reasoning through o1-like reasoning chains.)
+- [Promptery](https://github.com/promptery/promptery) (Open source native desktop client for Ollama.)
 
 ### Terminal
 
