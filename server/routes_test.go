@@ -562,7 +562,7 @@ func TestShow(t *testing.T) {
 		Modelfile: fmt.Sprintf(
 			"FROM %s\nFROM %s",
 			createBinFile(t, llm.KV{"general.architecture": "test"}, nil),
-			createBinFile(t, llm.KV{"general.architecture": "clip"}, nil),
+			createBinFile(t, llm.KV{"general.type": "projector", "general.architecture": "clip"}, nil),
 		),
 	})
 

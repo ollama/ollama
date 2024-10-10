@@ -206,6 +206,26 @@ func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 		}
 	}
 
+	if s.clip.cc != nil {
+		var embed [][]float32
+
+		if s.clip.cc.IsMllama && len(images) >= 1 {
+			hash := s.cache.HashImage(images[0].Data)
+
+			s.clip.mu.Lock()
+			var err error
+			embed, err = s.cache.FindImage(hash)
+			if err != nil {
+				embed = llama.NewMllamaImageEmbed(s.lc, s.clip.cc, images[0].Data, images[0].AspectRatioID)
+				s.cache.AddImage(hash, embed)
+			}
+			s.clip.mu.Unlock()
+		}
+		s.mu.Lock()
+		llama.MllamaSetCrossAttn(s.lc, s.clip.cc, embed)
+		s.mu.Unlock()
+	}
+
 	return inputs, nil
 }
 
@@ -294,6 +314,9 @@ func (s *Server) removeSequence(seqIndex int, reason string) {
 	close(seq.responses)
 	close(seq.embedding)
 	seq.cache.InUse = false
+	if s.clip.cc != nil {
+		llama.MllamaSetCrossAttn(s.lc, s.clip.cc, nil)
+	}
 	s.seqs[seqIndex] = nil
 }
 
@@ -517,8 +540,9 @@ type Options struct {
 }
 
 type ImageData struct {
-	Data []byte `json:"data"`
-	ID   int    `json:"id"`
+	Data          []byte `json:"data"`
+	ID            int    `json:"id"`
+	AspectRatioID int    `json:"aspect_ratio_id"`
 }
 
 type CompletionRequest struct {
@@ -770,7 +794,11 @@ func (s *Server) loadModel(
 	}
 
 	if ppath != "" {
-		s.clip.cc = llama.NewClipContext(ppath)
+		var err error
+		s.clip.cc, err = llama.NewClipContext(ppath)
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	s.cache = NewInputCache(s.lc, kvSize, s.parallel, multiUserCache)
