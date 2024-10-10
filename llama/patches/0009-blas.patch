@@ -1,7 +1,7 @@
-From ca371881888f3d069bf7c2953a9f24cee44bede5 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Jesse Gross <jesse@ollama.com>
 Date: Mon, 30 Sep 2024 16:31:04 -0700
-Subject: [PATCH 9/9] blas
+Subject: [PATCH] blas
 
 ---
  ggml/src/ggml-blas.cpp | 4 ++++
@@ -23,6 +23,3 @@ index 6d99c6be..8e1ab99d 100644
  }
 +
 +#endif
--- 
-2.30.1 (Apple Git-130)
-
