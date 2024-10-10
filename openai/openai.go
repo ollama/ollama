@@ -107,7 +107,7 @@ type ChatCompletionChunk struct {
 // TODO (https://github.com/ollama/ollama/issues/5259): support []string, []int and [][]int
 type CompletionRequest struct {
 	Model            string   `json:"model"`
-	Prompt           string   `json:"prompt"`
+	Prompt           any      `json:"prompt"`
 	FrequencyPenalty float32  `json:"frequency_penalty"`
 	MaxTokens        *int     `json:"max_tokens"`
 	PresencePenalty  float32  `json:"presence_penalty"`
@@ -508,6 +508,24 @@ func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 		options["stop"] = stops
 	}
 
+	var prompts []string
+	switch prompt := r.Prompt.(type) {
+	case string:
+		prompts = []string{prompt}
+	case []any:
+		for _, p := range prompt {
+			if str, ok := p.(string); ok {
+				prompts = append(prompts, str)
+			} else {
+				return api.GenerateRequest{}, fmt.Errorf("invalid type for 'prompt' field")
+			}
+		}
+
+		if len(prompts) != 1 {
+			return api.GenerateRequest{}, fmt.Errorf("invalid size of 'prompt' field: must be 1")
+		}
+	}
+
 	if r.MaxTokens != nil {
 		options["num_predict"] = *r.MaxTokens
 	}
@@ -534,7 +552,7 @@ func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 
 	return api.GenerateRequest{
 		Model:   r.Model,
-		Prompt:  r.Prompt,
+		Prompt:  prompts[0],
 		Options: options,
 		Stream:  &r.Stream,
 		Suffix:  r.Suffix,

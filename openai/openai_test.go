@@ -299,6 +299,76 @@ func TestCompletionsMiddleware(t *testing.T) {
 				},
 			},
 		},
+		{
+			Name: "completions handler",
+			Setup: func(t *testing.T, req *http.Request) {
+				temp := float32(0.8)
+				body := CompletionRequest{
+					Model:       "test-model",
+					Prompt:      []string{"Hello"},
+					Temperature: &temp,
+					Stop:        []string{"\n", "stop"},
+					Suffix:      "suffix",
+				}
+				prepareRequest(req, body)
+			},
+			Expected: func(t *testing.T, req *api.GenerateRequest, resp *httptest.ResponseRecorder) {
+				if resp.Code != http.StatusOK {
+					t.Fatalf("expected 200, got %d", resp.Code)
+				}
+
+				if req.Prompt != "Hello" {
+					t.Fatalf("expected 'Hello', got %s", req.Prompt)
+				}
+			},
+		},
+
+		{
+			Name: "completions handler prompt error forwarding",
+			Setup: func(t *testing.T, req *http.Request) {
+				temp := float32(0.8)
+				body := CompletionRequest{
+					Model:       "test-model",
+					Prompt:      []string{},
+					Temperature: &temp,
+					Stop:        []string{"\n", "stop"},
+					Suffix:      "suffix",
+				}
+				prepareRequest(req, body)
+			},
+			Expected: func(t *testing.T, req *api.GenerateRequest, resp *httptest.ResponseRecorder) {
+				if resp.Code != http.StatusBadRequest {
+					t.Fatalf("expected 400, got %d", resp.Code)
+				}
+
+				if !strings.Contains(resp.Body.String(), "invalid size of 'prompt' field: must be 1") {
+					t.Fatalf("error was not forwarded")
+				}
+			},
+		},
+		{
+			Name: "completions handler prompt error forwarding",
+			Setup: func(t *testing.T, req *http.Request) {
+				temp := float32(0.8)
+				body := CompletionRequest{
+					Model:       "test-model",
+					Prompt:      []int{1},
+					Temperature: &temp,
+					Stop:        []string{"\n", "stop"},
+					Suffix:      "suffix",
+				}
+				prepareRequest(req, body)
+			},
+			Expected: func(t *testing.T, req *api.GenerateRequest, resp *httptest.ResponseRecorder) {
+				if resp.Code != http.StatusBadRequest {
+					t.Fatalf("expected 400, got %d", resp.Code)
+				}
+
+				if !strings.Contains(resp.Body.String(), "invalid type for 'prompt' field") {
+					t.Fatalf("error was not forwarded")
+				}
+			},
+		},
 	}
 
 	endpoint := func(c *gin.Context) {
