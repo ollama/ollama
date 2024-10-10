@@ -17,6 +17,7 @@ require (
 
 require (
 	github.com/agnivade/levenshtein v1.1.1
+	github.com/coreos/go-systemd/v22 v22.5.0
 	github.com/d4l3k/go-bfloat16 v0.0.0-20211005043715-690c3bdd05f1
 	github.com/google/go-cmp v0.6.0
 	github.com/mattn/go-runewidth v0.0.14
