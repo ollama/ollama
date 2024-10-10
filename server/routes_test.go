@@ -16,7 +16,7 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/modelfile"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/types/model"
@@ -561,8 +561,8 @@ func TestShow(t *testing.T) {
 		Name: "show-model",
 		Modelfile: fmt.Sprintf(
 			"FROM %s\nFROM %s",
-			createBinFile(t, llm.KV{"general.architecture": "test"}, nil),
-			createBinFile(t, llm.KV{"general.architecture": "clip"}, nil),
+			createBinFile(t, modelfile.KV{"general.architecture": "test"}, nil),
+			createBinFile(t, modelfile.KV{"general.architecture": "clip"}, nil),
 		),
 	})
 
