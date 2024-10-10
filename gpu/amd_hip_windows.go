@@ -10,21 +10,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-const (
-	hipSuccess       = 0
-	hipErrorNoDevice = 100
-)
-
-type hipDevicePropMinimal struct {
-	Name        [256]byte
-	unused1     [140]byte
-	GcnArchName [256]byte // gfx####
-	iGPU        int       // Doesn't seem to actually report correctly
-	unused2     [128]byte
-}
-
 // Wrap the amdhip64.dll library for GPU discovery
-type HipLib struct {
+type HipLibImpl struct {
 	dll                    windows.Handle
 	hipGetDeviceCount      uintptr
 	hipGetDeviceProperties uintptr
@@ -33,13 +20,13 @@ type HipLib struct {
 	hipDriverGetVersion    uintptr
 }
 
-func NewHipLib() (*HipLib, error) {
+func NewHipLib() (HipLib, error) {
 	// At runtime we depend on v6, so discover GPUs with the same library for a consistent set of GPUs
 	h, err := windows.LoadLibrary("amdhip64_6.dll")
 	if err != nil {
 		return nil, fmt.Errorf("unable to load amdhip64_6.dll, please make sure to upgrade to the latest amd driver: %w", err)
 	}
-	hl := &HipLib{}
+	hl := &HipLibImpl{}
 	hl.dll = h
 	hl.hipGetDeviceCount, err = windows.GetProcAddress(hl.dll, "hipGetDeviceCount")
 	if err != nil {
@@ -67,7 +54,7 @@ func NewHipLib() (*HipLib, error) {
 // The hip library only evaluates the HIP_VISIBLE_DEVICES variable at startup
 // so we have to unload/reset the library after we do our initial discovery
 // to make sure our updates to that variable are processed by llama.cpp
-func (hl *HipLib) Release() {
+func (hl *HipLibImpl) Release() {
 	err := windows.FreeLibrary(hl.dll)
 	if err != nil {
 		slog.Warn("failed to unload amdhip64.dll", "error", err)
@@ -75,7 +62,7 @@ func (hl *HipLib) Release() {
 	hl.dll = 0
 }
 
-func (hl *HipLib) AMDDriverVersion() (driverMajor, driverMinor int, err error) {
+func (hl *HipLibImpl) AMDDriverVersion() (driverMajor, driverMinor int, err error) {
 	if hl.dll == 0 {
 		return 0, 0, errors.New("dll has been unloaded")
 	}
@@ -92,7 +79,7 @@ func (hl *HipLib) AMDDriverVersion() (driverMajor, driverMinor int, err error) {
 	return driverMajor, driverMinor, nil
 }
 
-func (hl *HipLib) HipGetDeviceCount() int {
+func (hl *HipLibImpl) HipGetDeviceCount() int {
 	if hl.dll == 0 {
 		slog.Error("dll has been unloaded")
 		return 0
@@ -109,7 +96,7 @@ func (hl *HipLib) HipGetDeviceCount() int {
 	return count
 }
 
-func (hl *HipLib) HipSetDevice(device int) error {
+func (hl *HipLibImpl) HipSetDevice(device int) error {
 	if hl.dll == 0 {
 		return errors.New("dll has been unloaded")
 	}
@@ -120,7 +107,7 @@ func (hl *HipLib) HipSetDevice(device int) error {
 	return nil
 }
 
-func (hl *HipLib) HipGetDeviceProperties(device int) (*hipDevicePropMinimal, error) {
+func (hl *HipLibImpl) HipGetDeviceProperties(device int) (*hipDevicePropMinimal, error) {
 	if hl.dll == 0 {
 		return nil, errors.New("dll has been unloaded")
 	}
@@ -133,7 +120,7 @@ func (hl *HipLib) HipGetDeviceProperties(device int) (*hipDevicePropMinimal, err
 }
 
 // free, total, err
-func (hl *HipLib) HipMemGetInfo() (uint64, uint64, error) {
+func (hl *HipLibImpl) HipMemGetInfo() (uint64, uint64, error) {
 	if hl.dll == 0 {
 		return 0, 0, errors.New("dll has been unloaded")
 	}
