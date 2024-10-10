@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -796,45 +797,42 @@ func PruneDirectory(path string) error {
 	return nil
 }
 
-func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
-	mp := ParseModelPath(name)
+func PushModel(ctx context.Context, name model.Name, opts registryOptions, fn func(api.ProgressResponse)) error {
 	fn(api.ProgressResponse{Status: "retrieving manifest"})
 
-	if mp.ProtocolScheme == "http" && !regOpts.Insecure {
-		return errors.New("insecure protocol http")
-	}
-
-	manifest, _, err := GetManifest(mp)
+	m, err := ParseNamedManifest(name)
 	if err != nil {
-		fn(api.ProgressResponse{Status: "couldn't retrieve manifest"})
 		return err
 	}
 
-	var layers []Layer
-	layers = append(layers, manifest.Layers...)
-	if manifest.Config.Digest != "" {
-		layers = append(layers, manifest.Config)
+	scheme := "https"
+	if opts.Insecure {
+		scheme = "http"
 	}
 
-	for _, layer := range layers {
-		if err := uploadBlob(ctx, mp, layer, regOpts, fn); err != nil {
+	baseURL, err := url.Parse(fmt.Sprintf("%s://%s", scheme, path.Join(name.Host, "v2", name.Namespace, name.Model)))
+	if err != nil {
+		return err
+	}
+
+	for _, layer := range append(m.Layers, m.Config) {
+		if err := uploadBlob(ctx, uploadOptions{name: name, baseURL: baseURL, layer: layer, regOpts: &opts, fn: fn}); err != nil {
 			slog.Info(fmt.Sprintf("error uploading blob: %v", err))
 			return err
 		}
 	}
 
 	fn(api.ProgressResponse{Status: "pushing manifest"})
-	requestURL := mp.BaseURL()
-	requestURL = requestURL.JoinPath("v2", mp.GetNamespaceRepository(), "manifests", mp.Tag)
+	requestURL := baseURL.JoinPath("manifests", name.Tag)
 
-	manifestJSON, err := json.Marshal(manifest)
+	manifestJSON, err := json.Marshal(m)
 	if err != nil {
 		return err
 	}
 
 	headers := make(http.Header)
 	headers.Set("Content-Type", "application/vnd.docker.distribution.manifest.v2+json")
-	resp, err := makeRequestWithRetry(ctx, http.MethodPut, requestURL, headers, bytes.NewReader(manifestJSON), regOpts)
+	resp, err := makeRequestWithRetry(ctx, http.MethodPut, requestURL, headers, bytes.NewReader(manifestJSON), &opts)
 	if err != nil {
 		return err
 	}
@@ -1110,6 +1108,8 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 		return nil, err
 	}
 
+	// omit requestURL.Query() which may contain sensitive information
+	slog.Debug("request upstream", "method", method, "request.scheme", requestURL.Scheme, "request.host", requestURL.Host, "request.path", requestURL.Path, "status", resp.StatusCode)
 	return resp, nil
 }
 
