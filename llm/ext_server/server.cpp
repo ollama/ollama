@@ -27,6 +27,8 @@
 
 #include "../llava/clip.h"
 #include "../llava/llava.h"
+#include "mllama.h"
+#include "ggml.h"
 
 #include "stb_image.h"
 
@@ -162,6 +164,7 @@ struct server_slot {
 
     // multimodal
     std::vector<slot_image> images;
+    std::vector<float> cross_attn_state;
 
     // stats
     size_t n_sent_text = 0; // number of sent text character
@@ -172,8 +175,6 @@ struct server_slot {
 
     double t_prompt_processing; // ms
     double t_token_generation; // ms
-
-    float *cross_attn_state = nullptr;
 
     // multitasks
     int multitask_id = -1;
@@ -200,11 +201,6 @@ struct server_slot {
                 clip_image_u8_free(img.img_data);
             }
             img.prefix_prompt = "";
-        }
-
-        if (cross_attn_state) {
-            free(cross_attn_state);
-            cross_attn_state = nullptr;
         }
 
         images.clear();
@@ -344,6 +340,7 @@ struct llama_server_context
     llama_context *ctx = nullptr;
 
     clip_ctx *clp_ctx = nullptr;
+    struct mllama_ctx *mllama_ctx = nullptr;
 
     gpt_params params;
 
@@ -381,6 +378,10 @@ struct llama_server_context
             clip_free(clp_ctx);
             clp_ctx = nullptr;
         }
+        if (mllama_ctx != nullptr) {
+            mllama_free(mllama_ctx);
+            mllama_ctx = nullptr;
+        }
         if (ctx)
         {
             llama_free(ctx);
@@ -397,13 +398,45 @@ struct llama_server_context
     {
         params = params_;
         if (!params.mmproj.empty()) {
-            multimodal = true;
-            LOG_DEBUG("Multi Modal Mode Enabled", {});
-            clp_ctx = clip_model_load(params.mmproj.c_str(), /*verbosity=*/ 1);
-            if(clp_ctx == nullptr) {
-                LOG_ERROR("unable to load clip model", {{"model", params.mmproj}});
-                return false;
+            struct ggml_context *ggml_ctx = nullptr;
+            struct gguf_context *gguf_ctx = gguf_init_from_file(params.mmproj.c_str(), {true, &ggml_ctx});
+            if (gguf_ctx != nullptr) {
+                const int arch_index = gguf_find_key(gguf_ctx, "general.architecture");
+                if (arch_index == -1) {
+                    LOG_ERROR("unknown vision model architecture", {{"model", params.mmproj}});
+                    gguf_free(gguf_ctx);
+                    return false;
+                }
+
+                const std::string arch = gguf_get_val_str(gguf_ctx, arch_index);
+                if (arch == "mllama") {
+                    mllama_ctx = mllama_model_load(params.mmproj.c_str(), /*verbosity=*/ 1);
+                    if (mllama_ctx == nullptr) {
+                        LOG_ERROR("unable to load mllama model", {{"model", params.mmproj}});
+                        gguf_free(gguf_ctx);
+                        ggml_free(ggml_ctx);
+                        return false;
+                    }
+                } else if (arch == "clip") {
+                    clp_ctx = clip_model_load(params.mmproj.c_str(), /*verbosity=*/ 1);
+                    if (clp_ctx == nullptr) {
+                        LOG_ERROR("unable to load clip model", {{"model", params.mmproj}});
+                        gguf_free(gguf_ctx);
+                        ggml_free(ggml_ctx);
+                        return false;
+                    }
+                } else {
+                    LOG_ERROR("unknown vision model architecture", {{"model", params.mmproj}});
+                    gguf_free(gguf_ctx);
+                    ggml_free(ggml_ctx);
+                    return false;
+                }
             }
+
+            multimodal = true;
+
+            gguf_free(gguf_ctx);
+            ggml_free(ggml_ctx);
 
             if (params.n_ctx < 2048) { // request larger context for the image embedding
                 params.n_ctx = 2048;
@@ -420,10 +453,16 @@ struct llama_server_context
         }
 
         if (multimodal) {
-            const int n_embd_clip = clip_n_mmproj_embd(clp_ctx);
+            int n_embd_vision = 0;
+            if (mllama_ctx != nullptr) {
+                n_embd_vision = mllama_n_embd(mllama_ctx);
+            } else if (clp_ctx != nullptr) {
+                n_embd_vision = clip_n_mmproj_embd(clp_ctx);
+            }
+
             const int n_embd_llm  = llama_n_embd(model);
-            if (n_embd_clip != n_embd_llm) {
-                LOG_TEE("%s: embedding dim of the multimodal projector (%d) is not equal to that of LLaMA (%d). Make sure that you use the correct mmproj file.\n", __func__, n_embd_clip, n_embd_llm);
+            if (n_embd_vision != n_embd_llm) {
+                LOG_TEE("%s: embedding dim of the multimodal projector (%d) is not equal to that of LLaMA (%d). Make sure that you use the correct mmproj file.\n", __func__, n_embd_vision, n_embd_llm);
                 llama_free(ctx);
                 llama_free_model(model);
                 return false;
@@ -730,9 +769,6 @@ struct llama_server_context
         }
 
         // Check for mllama architecture, which processes images differently than llava
-        char arch_str[256];
-        llama_model_meta_val_str(model, "general.architecture", arch_str, 256);
-        bool is_mllama = strcmp(arch_str, "mllama") == 0;
         if (multimodal)
         {
             const auto &images_data = data.find("image_data");
@@ -742,39 +778,37 @@ struct llama_server_context
                 {
                     const std::vector<uint8_t> image_buffer = base64_decode(img["data"].get<std::string>());
 
-                    if (is_mllama) {
-                        LOG_INFO("MLLAMA architecture detected, processing first image", {{"slot_id", slot->id}});
+                    if (mllama_ctx != nullptr) {
+                        const auto &aspect_ratio_id = img["aspect_ratio_id"].get<int>();
 
-                        struct clip_image_f32 *img = clip_image_f32_init();
-                        clip_image_load_from_data(image_buffer.data(), image_buffer.size(), 560, 560, 3, 4, img);
-
-                        const int n = clip_embd_nbytes(clp_ctx);
-                        printf("%s: nbytes %d\n", __func__, n);
-
-                        slot->cross_attn_state = (float *)malloc(n);
-                        printf("%s: nbytes %d image_embd: %p\n", __func__, n, slot->cross_attn_state);
-                        clip_image_encode(clp_ctx, 1, img, slot->cross_attn_state);
-                        llama_set_cross_attn_state(ctx, slot->cross_attn_state);
+                        struct mllama_image *img = mllama_image_init();
+                        mllama_image_load_from_data(image_buffer.data(), image_buffer.size(), 560, 560, 3, 4, aspect_ratio_id, img);
+                        slot->cross_attn_state.resize(mllama_n_embd_bytes(mllama_ctx));
+                        mllama_image_encode(mllama_ctx, params.cpuparams.n_threads, img, slot->cross_attn_state.data());
+                        llama_set_cross_attn_state(ctx, slot->cross_attn_state.data());
                         break;
-                    }
-
-                    slot_image img_sl;
-                    img_sl.id = img.count("id") != 0 ? img["id"].get<int>() : slot->images.size();
-                    img_sl.img_data = clip_image_u8_init();
-                    if (!clip_image_load_from_bytes(image_buffer.data(), image_buffer.size(), img_sl.img_data))
-                    {
-                        LOG_ERROR("failed to load image", {
+                    } else if (clp_ctx != nullptr) {
+                        slot_image img_sl;
+                        img_sl.id = img.count("id") != 0 ? img["id"].get<int>() : slot->images.size();
+                        img_sl.img_data = clip_image_u8_init();
+                        if (!clip_image_load_from_bytes(image_buffer.data(), image_buffer.size(), img_sl.img_data))
+                        {
+                            LOG_ERROR("failed to load image", {
+                                {"slot_id",   slot->id},
+                                {"img_sl_id", img_sl.id}
+                            });
+                            return false;
+                        }
+                        LOG_VERBOSE("image loaded", {
                             {"slot_id",   slot->id},
                             {"img_sl_id", img_sl.id}
                         });
+                        img_sl.request_encode_image = true;
+                        slot->images.push_back(img_sl);
+                    } else {
+                        LOG_ERROR("no multimodal model loaded", {{"slot_id", slot->id}});
                         return false;
                     }
-                    LOG_VERBOSE("image loaded", {
-                        {"slot_id",   slot->id},
-                        {"img_sl_id", img_sl.id}
-                    });
-                    img_sl.request_encode_image = true;
-                    slot->images.push_back(img_sl);
                 }
                 // process prompt
                 // example: system prompt [img-102] user [img-103] describe [img-134] -> [{id: 102, prefix: 'system prompt '}, {id: 103, prefix: ' user '}, {id: 134, prefix: ' describe '}]}
