@@ -20,11 +20,11 @@ from git import Repo
 # - force flag becomes optional
 # - generate, build or test ...
 
-# Note: remote repo will need this run once:
+# Note: remote repo will need to run this once:
 # git config --local receive.denyCurrentBranch updateInstead
 repo = Repo(".")
 
-# On linux, add links in /usr/local/bin to the go binaries to avoid needing this
+# On linux, add links in /usr/local/bin to the go binaries to avoid the need of this
 # GoCmd = "/usr/local/go/bin/go" 
 GoCmd = "go" 
 
@@ -52,7 +52,7 @@ print("Force pushing content to remote...")
 # Use with care given the force push
 remote.push(force=True).raise_if_error()
 
-print("Ensuring correct branch checked out on remote via ssh...")
+print("Ensuring the correct branch checked out on remote via ssh...")
 subprocess.check_call(['ssh', netloc, 'cd', path, ';', 'git', 'checkout', branch_name])
 
 
