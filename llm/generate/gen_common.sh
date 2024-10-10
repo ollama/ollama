@@ -77,7 +77,7 @@ apply_patches() {
 
 build() {
     cmake -S ${LLAMACPP_DIR} -B ${BUILD_DIR} ${CMAKE_DEFS}
-    cmake --build ${BUILD_DIR} ${CMAKE_TARGETS} -j8
+    cmake --build ${BUILD_DIR} ${CMAKE_TARGETS} --parallel
     # remove unnecessary build artifacts
     rm -f ${BUILD_DIR}/bin/ggml-common.h ${BUILD_DIR}/bin/ggml-metal.metal
 }
