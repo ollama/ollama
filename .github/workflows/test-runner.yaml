@@ -3,7 +3,7 @@ run-name: ${{ github.actor }} is testing out GitHub Actions 🚀
 on: [push]
 jobs:
   Explore-GitHub-Actions:
-    runs-on: ubuntu-20.04-ppc64le
+    runs-on: ubuntu-latest-ppc64le
     env:
       ARCH: $(uname -m )
       VAR1 :  100
