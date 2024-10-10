@@ -97,7 +97,7 @@ type ChatRequest struct {
 	Format string `json:"format"`
 
 	// KeepAlive controls how long the model will stay loaded into memory
-	// followin the request.
+	// following the request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
 	// Tools is an optional list of tools the model has access to.

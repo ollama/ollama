@@ -55,7 +55,7 @@ func checkError(resp *http.Response, body []byte) error {
 
 // ClientFromEnvironment creates a new [Client] using configuration from the
 // environment variable OLLAMA_HOST, which points to the network host and
-// port on which the ollama service is listenting. The format of this variable
+// port on which the ollama service is listening. The format of this variable
 // is:
 //
 //	<scheme>://<host>:<port>

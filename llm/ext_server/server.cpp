@@ -168,7 +168,7 @@ struct server_slot {
     size_t n_sent_token_probs = 0;
 
     int64_t t_start_process_prompt;
-    int64_t t_start_genereration;
+    int64_t t_start_generation;
 
     double t_prompt_processing; // ms
     double t_token_generation; // ms
@@ -238,12 +238,12 @@ struct server_slot {
     void release() {
         if (state == PROCESSING)
         {
-            t_token_generation = (ggml_time_us() - t_start_genereration) / 1e3;
+            t_token_generation = (ggml_time_us() - t_start_generation) / 1e3;
             command = RELEASE;
         }
     }
 
-    json get_formated_timings() {
+    json get_formatted_timings() {
         return json
         {
             {"prompt_n",               n_prompt_tokens_processed},
@@ -1063,7 +1063,7 @@ struct llama_server_context
         queue_results.send(res);
     }
 
-    json get_formated_generation(server_slot &slot)
+    json get_formatted_generation(server_slot &slot)
     {
         const auto eos_bias = slot.sparams.logit_bias.find(llama_token_eos(model));
         const bool ignore_eos = eos_bias != slot.sparams.logit_bias.end() &&
@@ -1166,7 +1166,7 @@ struct llama_server_context
             {"stopped_limit",       slot.stopped_limit},
             {"stopping_word",       slot.stopping_word},
             {"tokens_cached",       slot.n_past},
-            {"timings",             slot.get_formated_timings()}
+            {"timings",             slot.get_formatted_timings()}
         };
 
         if (slot.sparams.n_probs > 0)
@@ -1482,7 +1482,7 @@ struct llama_server_context
                 int n_processing_slots = 0;
 
                 for (server_slot &slot: slots) {
-                    json slot_data = get_formated_generation(slot);
+                    json slot_data = get_formatted_generation(slot);
                     slot_data["id"] = slot.id;
                     slot_data["task_id"] = slot.task_id;
                     slot_data["state"] = slot.state;
@@ -1692,7 +1692,7 @@ struct llama_server_context
                     slot.command = NONE;
                     std::vector<llama_token> prompt_tokens;
                     slot.t_start_process_prompt = ggml_time_us();
-                    slot.t_start_genereration = 0;
+                    slot.t_start_generation = 0;
 
                     prompt_tokens = tokenize(slot.prompt, system_prompt.empty());  // add BOS if there isn't system prompt
 
@@ -1964,8 +1964,8 @@ struct llama_server_context
                 slot.n_decoded += 1;
                 if (slot.n_decoded == 1)
                 {
-                    slot.t_start_genereration = ggml_time_us();
-                    slot.t_prompt_processing = (slot.t_start_genereration - slot.t_start_process_prompt) / 1e3;
+                    slot.t_start_generation = ggml_time_us();
+                    slot.t_prompt_processing = (slot.t_start_generation - slot.t_start_process_prompt) / 1e3;
                     metrics.on_prompt_eval(slot);
                 }
 

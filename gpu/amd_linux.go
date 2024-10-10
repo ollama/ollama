@@ -66,7 +66,7 @@ func AMDGetGPUInfo() []RocmGPUInfo {
 	rocrVD := envconfig.RocrVisibleDevices() // zero based index or UUID, but consumer cards seem to not support UUID
 	gpuDO := envconfig.GpuDeviceOrdinal()    // zero based index
 	switch {
-	// TODO is this priorty order right?
+	// TODO is this priority order right?
 	case hipVD != "":
 		visibleDevices = strings.Split(hipVD, ",")
 	case rocrVD != "":

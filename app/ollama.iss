@@ -53,7 +53,7 @@ RestartIfNeededByRun=no
 ; https://jrsoftware.org/ishelp/index.php?topic=setup_wizardimagefile
 WizardSmallImageFile=.\assets\setup.bmp
 
-; TODO verifty actual min windows version...
+; TODO verify actual min windows version...
 ; OG Win 10
 MinVersion=10.0.10240
 

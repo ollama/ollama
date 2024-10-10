@@ -8,7 +8,7 @@ to other, non-sequential blocks with a scale multiple
 
 this change adds 4 new keys to store the skip connections and one new
 tensor to store the scalar. the scalar is implemented a 1-dimensional
-tensor with 2 elements dervied from the model's bskcn_tv configuration.
+tensor with 2 elements derived from the model's bskcn_tv configuration.
 in general, the values are (bskcn_tv, 1 - bskcn_tv)
 ---
  src/llama.cpp | 267 +++++++++++++++++++++++++++++++++++++++++++++++---

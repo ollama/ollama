@@ -115,7 +115,7 @@ if __name__ == "__main__":
 
         print(f"\nRetrieved chunks: \n{sourcetext}\n")
 
-        # Give the retreived chunks and question to the chat model
+        # Give the retrieved chunks and question to the chat model
         system_prompt = f"Only use the following information to answer the question. Do not use anything else: {sourcetext}"
 
         ollama_response = ollama.generate(

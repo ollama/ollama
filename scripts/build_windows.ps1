@@ -89,7 +89,7 @@ function buildOllama() {
             powershell -Command { $env:OLLAMA_SKIP_CUDA_GENERATE="1"; & go generate ./... }
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}    
 
-            # Then skip everyhting else and build all the CUDA variants
+            # Then skip everything else and build all the CUDA variants
             foreach ($env:CUDA_LIB_DIR in $script:CUDA_DIRS) {
                 write-host "Building CUDA ${env:CUDA_LIB_DIR} runner"
 

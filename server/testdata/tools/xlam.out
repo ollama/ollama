@@ -1,4 +1,4 @@
-You are a knowledgable assistant. You can answer questions and perform tasks.
+You are a knowledgeable assistant. You can answer questions and perform tasks.
 ### Instruction:
 What's the weather like today in Paris?
 ### Response:
@@ -16,7 +16,7 @@ If the given question lacks the parameters required by the function, also point 
 [END OF TASK INSTRUCTION]
 
 [BEGIN OF AVAILABLE TOOLS]
-[{"type":"function","function":{"name":"get_current_weather","description":"Get the current weather","parameters":{"type":"object","required":["location","format"],"properties":{"format":{"type":"string","description":"The temperature unit to use. Infer this from the users location.","enum":["celsius","fahrenheit"]},"location":{"type":"string","description":"The city and state, e.g. San Francisco, CA"}}}}}]
+[{"type":"function","function":{"name":"get_current_weather","description":"Get the current weather","parameters":{"type":"object","required":["location","format"],"properties":{"format":{"type":"string","description":"The temperature unit to use. Infer this from the user's location.","enum":["celsius","fahrenheit"]},"location":{"type":"string","description":"The city and state, e.g. San Francisco, CA"}}}}}]
 [END OF AVAILABLE TOOLS]
 
 [BEGIN OF FORMAT INSTRUCTION]
