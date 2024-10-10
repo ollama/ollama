@@ -18,51 +18,116 @@ on:
       - '!README.md'
 
 jobs:
-  changes:
-    runs-on: ubuntu-latest
-    outputs:
-      GENERATE: ${{ steps.changes.outputs.GENERATE }}
-      GENERATE_CUDA: ${{ steps.changes.outputs.GENERATE_CUDA }}
-      GENERATE_ROCM: ${{ steps.changes.outputs.GENERATE_ROCM }}
-      RUNNERS: ${{ steps.changes.outputs.RUNNERS }}
+  windows-arm64:
+    runs-on: windows-arm64
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - id: changes
+      # The current Windows arm64 beta image has effectively zero dev tools installed...
+      - name: Install git and gzip
         run: |
-          changed() {
-            git diff-tree -r --no-commit-id --name-only \
-              $(git merge-base ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }}) \
-              ${{ github.event.pull_request.head.sha }} \
-              | xargs python3 -c "import sys; from pathlib import Path; print(any(Path(x).match(glob) for x in sys.argv[1:] for glob in '$*'.split(' ')))"
-          }
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+          iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+          choco install -y --no-progress git gzip
+          echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install Visual Studio 2022
+        run: |
+          $components = @(
+            "Microsoft.VisualStudio.Component.CoreEditor",
+            "Microsoft.VisualStudio.Workload.CoreEditor",
+            "Microsoft.VisualStudio.Component.Roslyn.Compiler",
+            "Microsoft.Component.MSBuild",
+            "Microsoft.VisualStudio.Component.TextTemplating",
+            "Microsoft.VisualStudio.Component.Debugger.JustInTime",
+            "Microsoft.VisualStudio.Component.VC.CoreIde",
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            "Microsoft.VisualStudio.Component.Windows11SDK.22621",
+            "Microsoft.VisualStudio.Component.VC.Tools.ARM64EC",
+            "Microsoft.VisualStudio.Component.VC.Tools.ARM64",
+            "Microsoft.VisualStudio.Component.VC.ATL",
+            "Microsoft.VisualStudio.Component.VC.ATL.ARM64",
+            "Microsoft.VisualStudio.Component.Graphics",
+            "Microsoft.VisualStudio.Component.VC.Redist.14.Latest",
+            "Microsoft.VisualStudio.ComponentGroup.NativeDesktop.Core",
+            "Microsoft.VisualStudio.Component.Windows11Sdk.WindowsPerformanceToolkit",
+            "Microsoft.VisualStudio.Component.CppBuildInsights",
+            "Microsoft.VisualStudio.Component.VC.DiagnosticTools",
+            "Microsoft.VisualStudio.ComponentGroup.WebToolsExtensions.CMake",
+            "Microsoft.VisualStudio.Component.VC.CMake.Project",
+            "Microsoft.VisualStudio.Component.VC.ASAN",
+            "Microsoft.VisualStudio.Component.Vcpkg",
+            "Microsoft.VisualStudio.Workload.NativeDesktop"
+          )
+          $config = @{
+                "version" = "1.0"
+                "components"  = $components
+                "extensions"  = @()
+            }
+          $configPath = "${env:RUNNER_TEMP}\vsconfig"
+          $config | ConvertTo-Json | Out-File -FilePath $configPath
+          $bootstrapperFilePath = "${env:RUNNER_TEMP}\vs_community.exe"
+          write-host "Downloading Visual Studio 2022"
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vs_community.exe" -outfile $bootstrapperFilePath
+          $bootstrapperArgumentList = ('/c', $bootstrapperFilePath, '--config', $configPath, '--quiet', '--wait' )
+          write-host "Installing Visual Studio 2022"
+          $process = Start-Process -FilePath cmd.exe -ArgumentList $bootstrapperArgumentList -Wait -PassThru
+          $exitCode = $process.ExitCode
+          write-host $exitCode
+      - name: DEBUGGING output
+        run: |
+          dir "C:\Program Files*\"
+          dir "C:\Program Files\"
+          dir "c:\Program Files (Arm)\"
+          dir "c:\Program Files (x86)\"
+          dir "C:\Program Files\Microsoft Visual Studio\"
+          dir "C:\Program Files\Microsoft Visual Studio\2022\"
+          dir "C:\Program Files\Microsoft Visual Studio\2022\Community\"
+          dir "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\"
+          dir "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\"
+          dir "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1"
 
-          {
-            echo GENERATE=$(changed 'llm/llama.cpp' 'llm/patches/**' 'llm/ext_server/**' 'llm/generate/**')
-            echo GENERATE_CUDA=$(changed 'llm/llama.cpp' 'llm/patches/**' 'llm/ext_server/**' 'llm/generate/**')
-            echo GENERATE_ROCM=$(changed 'llm/llama.cpp' 'llm/patches/**' 'llm/ext_server/**' 'llm/generate/**')
-            echo RUNNERS=$(changed 'llama/**')
-          } >>$GITHUB_OUTPUT
-
-  generate:
-    needs: [changes]
-    if: ${{ needs.changes.outputs.GENERATE == 'True' }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-2019]
-        arch: [amd64, arm64]
-        exclude:
-          - os: ubuntu-latest
-            arch: arm64
-          - os: windows-2019
-            arch: arm64
-    runs-on: ${{ matrix.os }}
-    env:
-      GOARCH: ${{ matrix.arch }}
-      CGO_ENABLED: '1'
-    steps:
+      # pacman in mingw/msys2 is ~broken on windows arm right now - hangs consistently during attempts to install
+      # so we'll use this alternative GCC binary
+      - name: Install llvm-mingw GCC
+        run: |
+          $gcc_url="https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-aarch64.zip"
+          write-host "Downloading llvm-mingw"
+          Invoke-WebRequest -Uri "${gcc_url}" -OutFile "${env:RUNNER_TEMP}\gcc.zip"
+          write-host "Unpacking llvm-mingw"
+          expand-archive -path "${env:RUNNER_TEMP}\gcc.zip" -destinationpath "c:\"
+          mv c:\llvm-mingw-* c:\llvm-mingw
+          echo "c:\llvm-mingw\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Verify GCC
+        run: |
+          echo $env:PATH
+          gcc --version
       - uses: actions/checkout@v4
+      - name: Set Version
+        run: |
+          $ver=${env:GITHUB_REF_NAME}.trim("v")
+          echo VERSION=$ver | Out-File -FilePath ${env:GITHUB_ENV} -Encoding utf8 -Append
+      - uses: 'google-github-actions/auth@v2'
+        with:
+          project_id: 'ollama'
+          credentials_json: '${{ secrets.GOOGLE_SIGNING_CREDENTIALS }}'
+      - run: echo "${{ vars.OLLAMA_CERT }}" | Out-File -FilePath ollama_inc.crt -Encoding utf8
+      - name: install Windows SDK 8.1 to get signtool
+        run: |
+          $ErrorActionPreference = "Stop"
+          write-host "downloading SDK"
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=323507" -OutFile "${env:RUNNER_TEMP}\sdksetup.exe"
+          Start-Process "${env:RUNNER_TEMP}\sdksetup.exe" -ArgumentList @("/q") -NoNewWindow -Wait
+          write-host "Win SDK 8.1 installed"
+          gci -path 'C:\Program Files (x86)\Windows Kits\' -r -fi 'signtool.exe'
+      - name: install signing plugin
+        run: |
+          $ErrorActionPreference = "Stop"
+          write-host "downloading plugin"
+          Invoke-WebRequest -Uri "https://github.com/GoogleCloudPlatform/kms-integrations/releases/download/cng-v1.0/kmscng-1.0-windows-amd64.zip" -OutFile "${env:RUNNER_TEMP}\plugin.zip"
+          Expand-Archive -Path "${env:RUNNER_TEMP}\plugin.zip" -DestinationPath ${env:RUNNER_TEMP}\plugin\
+          write-host "Installing plugin"
+          & "${env:RUNNER_TEMP}\plugin\*\kmscng.msi" /quiet
+          write-host "plugin installed"
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -71,266 +136,18 @@ jobs:
       - run: |
           $gopath=(get-command go).source | split-path -parent
           $gccpath=(get-command gcc).source | split-path -parent
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
+          & "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1"
           cd $env:GITHUB_WORKSPACE
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
-          $env:PATH="$gopath;$gccpath;$env:PATH"
+          $env:PATH="$gopath;$gccpath;$env:PATH;C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin"
           echo $env:PATH
-          go generate -x ./...
-        if: ${{ startsWith(matrix.os, 'windows-') }}
-        name: 'Windows Go Generate'
-      - run: go generate -x ./...
-        if: ${{ ! startsWith(matrix.os, 'windows-') }}
-        name: 'Unix Go Generate'
-      - run: go build .
-  generate-cuda:
-    needs: [changes]
-    if: ${{ needs.changes.outputs.GENERATE_CUDA == 'True' }}
-    strategy:
-      matrix:
-        cuda-version:
-          - '11.8.0'
-    runs-on: linux
-    container: nvidia/cuda:${{ matrix.cuda-version }}-devel-ubuntu20.04
-    steps:
-      - run: |
-          apt-get update && apt-get install -y git build-essential curl
-          curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.28.1/cmake-3.28.1-linux-x86_64.tar.gz \
-            | tar -zx -C /usr --strip-components 1
-        env:
-          DEBIAN_FRONTEND: noninteractive
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v4
+          $env:ARCH="arm64"
+          .\scripts\build_windows.ps1 buildOllama buildApp gatherDependencies distZip
+        name: 'Windows Build'
+      - uses: actions/upload-artifact@v4
         with:
-          go-version-file: go.mod
-          cache: true
-      - run: go get ./...
-      - run: |
-          git config --global --add safe.directory /__w/ollama/ollama
-          go generate -x ./...
-        env:
-          OLLAMA_SKIP_CPU_GENERATE: '1'
-  generate-rocm:
-    needs: [changes]
-    if: ${{ needs.changes.outputs.GENERATE_ROCM == 'True' }}
-    strategy:
-      matrix:
-        rocm-version:
-          - '6.1.2'
-    runs-on: linux
-    container: rocm/dev-ubuntu-20.04:${{ matrix.rocm-version }}
-    steps:
-      - run: |
-          apt-get update && apt-get install -y git build-essential curl rocm-libs
-          curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.28.1/cmake-3.28.1-linux-x86_64.tar.gz \
-            | tar -zx -C /usr --strip-components 1
-        env:
-          DEBIAN_FRONTEND: noninteractive
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v4
-        with:
-          go-version-file: go.mod
-          cache: true
-      - run: go get ./...
-      - run: |
-          git config --global --add safe.directory /__w/ollama/ollama
-          go generate -x ./...
-        env:
-          OLLAMA_SKIP_CPU_GENERATE: '1'
-
-  # ROCm generation step
-  generate-windows-rocm:
-    needs: [changes]
-    if: ${{ needs.changes.outputs.GENERATE_ROCM == 'True' }}
-    runs-on: windows
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: 'Install ROCm'
-        run: |
-          $ErrorActionPreference = "Stop"
-          write-host "downloading AMD HIP Installer"
-          Invoke-WebRequest -Uri "https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q3-WinSvr2022-For-HIP.exe" -OutFile "${env:RUNNER_TEMP}\rocm-install.exe"
-          write-host "Installing AMD HIP"
-          Start-Process "${env:RUNNER_TEMP}\rocm-install.exe" -ArgumentList '-install' -NoNewWindow -Wait
-          write-host "Completed AMD HIP"
-      - name: 'Verify ROCm'
-        run: |
-          & 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' --version
-      - run: go get ./...
-      - run: |
-          $gopath=(get-command go).source | split-path -parent
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
-          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
-          $env:PATH="$gopath;$env:PATH"
-          $env:OLLAMA_SKIP_CPU_GENERATE="1"
-          $env:HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
-          go generate -x ./...
-        name: go generate
-        env:
-          OLLAMA_SKIP_CPU_GENERATE: '1'
-
-  # CUDA generation step
-  generate-windows-cuda:
-    needs: [changes]
-    if: ${{ needs.changes.outputs.GENERATE_CUDA == 'True' }}
-    runs-on: windows
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: 'Install CUDA'
-        run: |
-          $ErrorActionPreference = "Stop"
-          write-host "downloading CUDA Installer"
-          Invoke-WebRequest -Uri "https://developer.download.nvidia.com/compute/cuda/11.3.1/local_installers/cuda_11.3.1_465.89_win10.exe" -OutFile "${env:RUNNER_TEMP}\cuda-install.exe"
-          write-host "Installing CUDA"
-          Start-Process "${env:RUNNER_TEMP}\cuda-install.exe" -ArgumentList '-s' -NoNewWindow -Wait
-          write-host "Completed CUDA"
-          $cudaPath=((resolve-path "c:\Program Files\NVIDIA*\CUDA\v*\bin\nvcc.exe")[0].path | split-path | split-path)
-          $cudaVer=($cudaPath | split-path -leaf ) -replace 'v(\d+).(\d+)', '$1_$2' 
-          echo "$cudaPath\bin" >> $env:GITHUB_PATH
-          echo "CUDA_PATH=$cudaPath" >> $env:GITHUB_ENV
-          echo "CUDA_PATH_V${cudaVer}=$cudaPath" >> $env:GITHUB_ENV
-          echo "CUDA_PATH_VX_Y=CUDA_PATH_V${cudaVer}" >> $env:GITHUB_ENV
-      - name: 'Verify CUDA'
-        run: nvcc -V
-      - run: go get ./...
-      - name: go generate
-        run: |
-          $gopath=(get-command go).source | split-path -parent
-          $cudabin=(get-command nvcc).source | split-path
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
-          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
-          $env:PATH="$gopath;$cudabin;$env:PATH"
-          $env:OLLAMA_SKIP_CPU_GENERATE="1"
-          go generate -x ./...
-        env:
-          OLLAMA_SKIP_CPU_GENERATE: '1'
-
-  runners:
-    needs: [changes]
-    if: ${{ needs.changes.outputs.RUNNERS == 'True' }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-2019]
-        arch: [amd64, arm64]
-        exclude:
-          - os: ubuntu-latest
-            arch: arm64
-          - os: windows-2019
-            arch: arm64
-    runs-on: ${{ matrix.os }}
-    env:
-      GOARCH: ${{ matrix.arch }}
-      ARCH: ${{ matrix.arch }}
-      CGO_ENABLED: '1'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - run: go get ./...
-      - name: 'Build Windows Go Runners'
-        if: ${{ startsWith(matrix.os, 'windows-') }}
-        run: |
-          $gopath=(get-command go).source | split-path -parent
-          $gccpath=(get-command gcc).source | split-path -parent
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
-          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
-          $env:PATH="$gopath;$gccpath;$env:PATH"
-          echo $env:PATH
-          make -C llama -j 4      
-      - name: 'Build Unix Go Runners'
-        if: ${{ ! startsWith(matrix.os, 'windows-') }}
-        run: make -C llama -j 4
-      - run: go build .
-
-  lint:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-2019]
-        arch: [amd64, arm64]
-        exclude:
-          - os: ubuntu-latest
-            arch: arm64
-          - os: windows-2019
-            arch: arm64
-          - os: macos-latest
-            arch: amd64
-    runs-on: ${{ matrix.os }}
-    env:
-      GOARCH: ${{ matrix.arch }}
-      CGO_ENABLED: '1'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: false
-      - run: |
-          case ${{ matrix.arch }} in
-            amd64) echo ARCH=x86_64 ;;
-            arm64) echo ARCH=arm64 ;;
-          esac >>$GITHUB_ENV
-        shell: bash
-      - uses: golangci/golangci-lint-action@v6
-        with:
-          args: --timeout 8m0s -v
-  test:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-2019]
-        arch: [amd64]
-        exclude:
-          - os: ubuntu-latest
-            arch: arm64
-          - os: windows-2019
-            arch: arm64
-    runs-on: ${{ matrix.os }}
-    env:
-      GOARCH: ${{ matrix.arch }}
-      CGO_ENABLED: '1'
-      OLLAMA_CPU_TARGET: 'static'
-      OLLAMA_SKIP_CPU_GENERATE: '1'
-      OLLAMA_SKIP_METAL_GENERATE: '1'
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - run: |
-          case ${{ matrix.arch }} in
-            amd64) echo ARCH=amd64 ;;
-            arm64) echo ARCH=arm64 ;;
-          esac >>$GITHUB_ENV
-        shell: bash
-      - run: go generate ./...
-      - run: go build
-      - run: go test -v ./...
-
-  patches:
-    needs: [changes]
-    if: ${{ needs.changes.outputs.RUNNERS == 'True' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Verify patches carry all the changes
-        run: |
-          cd llama && ./sync.sh && git diff --compact-summary --exit-code .
+          name: windows-arm64
+          path: |
+            dist/windows-arm64/**
+            dist/windows-arm64-app.exe
+            dist/ollama-windows-arm64.zip
