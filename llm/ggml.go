@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/ollama/ollama/util/bufioutil"
@@ -471,6 +472,8 @@ func (llm GGML) GraphSize(context, batch uint64) (partialOffload, fullOffload ui
 					4*qkvBias.Shape[0],
 			)
 		}
+	default:
+		slog.Debug("memory prediction may be incorrect", "architecture", llm.KV().Architecture())
 	}
 
 	return
