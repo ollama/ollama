@@ -72,6 +72,9 @@ func Origins() (origins []string) {
 		"app://*",
 		"file://*",
 		"tauri://*",
+		"chrome-extension://*",
+		"moz-extension://*",
+		"safari-web-extension://*",
 	)
 
 	return origins
