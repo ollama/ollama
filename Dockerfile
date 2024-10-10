@@ -239,6 +239,7 @@ ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
 
 FROM runtime-$TARGETARCH
+LABEL org.opencontainers.image.source="https://github.com/ollama/ollama"
 EXPOSE 11434
 ENV OLLAMA_HOST=0.0.0.0
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
