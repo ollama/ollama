@@ -1,3 +1,14 @@
+From 94546b65bb8de9213a6e3e94af8027912600e5ca Mon Sep 17 00:00:00 2001
+From: jmorganca <jmorganca@gmail.com>
+Date: Thu, 6 Jun 2024 23:55:47 -0700
+Subject: [PATCH 1/9] cuda
+
+---
+ ggml/include/ggml-cuda.h | 2 ++
+ ggml/src/ggml-backend.c  | 5 +++++
+ ggml/src/ggml-cuda.cu    | 6 ++++--
+ 3 files changed, 11 insertions(+), 2 deletions(-)
+
 diff --git a/ggml/include/ggml-cuda.h b/ggml/include/ggml-cuda.h
 index 71bb6dcf..08be0895 100644
 --- a/ggml/include/ggml-cuda.h
@@ -12,7 +23,7 @@ index 71bb6dcf..08be0895 100644
  GGML_API GGML_CALL void ggml_backend_cuda_get_device_description(int device, char * description, size_t description_size);
  GGML_API GGML_CALL void ggml_backend_cuda_get_device_memory(int device, size_t * free, size_t * total);
 diff --git a/ggml/src/ggml-backend.c b/ggml/src/ggml-backend.c
-index ba280e06..d5c3fe49 100644
+index 5b877db3..629c4239 100644
 --- a/ggml/src/ggml-backend.c
 +++ b/ggml/src/ggml-backend.c
 @@ -83,7 +83,12 @@ void ggml_backend_buffer_free(ggml_backend_buffer_t buffer) {
@@ -29,10 +40,10 @@ index ba280e06..d5c3fe49 100644
  
  size_t ggml_backend_buffer_get_size(ggml_backend_buffer_t buffer) {
 diff --git a/ggml/src/ggml-cuda.cu b/ggml/src/ggml-cuda.cu
-index 6efdab14..809d6ab1 100644
+index 8a844b02..54ac3215 100644
 --- a/ggml/src/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda.cu
-@@ -469,6 +469,10 @@ GGML_CALL static bool ggml_backend_buffer_is_cuda(ggml_backend_buffer_t buffer)
+@@ -465,6 +465,10 @@ GGML_CALL static bool ggml_backend_buffer_is_cuda(ggml_backend_buffer_t buffer)
  GGML_CALL static void ggml_backend_cuda_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
      delete ctx;
@@ -43,7 +54,7 @@ index 6efdab14..809d6ab1 100644
  }
  
  GGML_CALL static void * ggml_backend_cuda_buffer_get_base(ggml_backend_buffer_t buffer) {
-@@ -3204,8 +3208,6 @@ GGML_CALL static ggml_backend_t ggml_backend_reg_cuda_init(const char * params,
+@@ -3103,8 +3107,6 @@ GGML_CALL static ggml_backend_t ggml_backend_reg_cuda_init(const char * params,
      GGML_UNUSED(params);
  }
  
@@ -52,3 +63,6 @@ index 6efdab14..809d6ab1 100644
  GGML_CALL int ggml_backend_cuda_reg_devices() {
      int device_count = ggml_backend_cuda_get_device_count();
      //int device_count = 1; // DEBUG: some tools require delaying CUDA initialization
+-- 
+2.30.1 (Apple Git-130)
+
