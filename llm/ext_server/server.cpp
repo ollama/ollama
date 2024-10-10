@@ -21,6 +21,7 @@
 // SOFTWARE.
 
 #include "common.h"
+#include "json-schema-to-grammar.h"
 #include "llama.h"
 #include "grammar-parser.h"
 #include "utils.hpp"
@@ -549,9 +550,10 @@ struct llama_server_context
         return last_used;
     }
 
-    bool launch_slot_with_data(server_slot* &slot, json data) {
+    bool launch_slot_with_task(server_slot* &slot, task_server &task) {
         slot_params default_params;
         llama_sampling_params default_sparams;
+        auto &data = task.data;
 
         slot->params.stream             = json_value(data, "stream",            false);
         slot->params.cache_prompt       = json_value(data, "cache_prompt",      false);
@@ -574,9 +576,24 @@ struct llama_server_context
         slot->sparams.penalize_nl       = json_value(data, "penalize_nl",       default_sparams.penalize_nl);
         slot->params.n_keep             = json_value(data, "n_keep",            slot->params.n_keep);
         slot->sparams.seed              = json_value(data, "seed",              default_params.seed);
-        slot->sparams.grammar           = json_value(data, "grammar",           default_sparams.grammar);
         slot->sparams.n_probs           = json_value(data, "n_probs",           default_sparams.n_probs);
         slot->sparams.min_keep          = json_value(data, "min_keep",          default_sparams.min_keep);
+
+        // process "json_schema" and "grammar"
+        if (data.contains("json_schema") && !data.at("json_schema").is_null() && data.contains("grammar") && !data.at("grammar").is_null()) {
+            send_error(task, "Either \"json_schema\" or \"grammar\" can be specified, but not both");
+            return false;
+        } else if (data.contains("json_schema") && !data.contains("grammar")) {
+            try {
+                auto schema                = json_value(data, "json_schema", json::object());
+                slot->sparams.grammar       = json_schema_to_grammar(schema);
+            } catch (const std::exception & e) {
+                send_error(task, std::string("\"json_schema\": ") + e.what());
+                return false;
+            }
+        } else {
+            slot->sparams.grammar       = json_value(data, "grammar",           default_sparams.grammar);
+        }
 
         if (slot->n_predict > 0 && slot->params.n_predict > slot->n_predict) {
             // Might be better to reject the request with a 400 ?
@@ -1456,7 +1473,7 @@ struct llama_server_context
                 slot->task_id      = task.id;
                 slot->multitask_id = task.multitask_id;
 
-                if (!launch_slot_with_data(slot, task.data))
+                if (!launch_slot_with_task(slot, task))
                 {
                     // send error result
                     send_error(task, "internal_error");
