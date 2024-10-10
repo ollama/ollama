@@ -98,7 +98,7 @@ function git_module_setup {
 function apply_patches {
     # Apply temporary patches until fix is upstream
     foreach ($patch in $(Get-ChildItem "../patches/*.patch")) {
-        git -c 'user.name=nobody' -c 'user.email=<>' -C "${script:llamacppDir}" am $patch.FullName
+        git -c 'user.name=nobody' -c 'user.email=<>' -c 'commit.gpgsign=false' -C "${script:llamacppDir}" am $patch.FullName
     }
 }
 

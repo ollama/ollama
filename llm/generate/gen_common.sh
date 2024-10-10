@@ -71,7 +71,7 @@ git_module_setup() {
 apply_patches() {
     # apply temporary patches until fix is upstream
     for patch in ../patches/*.patch; do
-        git -c 'user.name=nobody' -c 'user.email=<>' -C ${LLAMACPP_DIR} am ${patch}
+        git -c 'user.name=nobody' -c 'user.email=<>' -c 'commit.gpgsign=false' -C ${LLAMACPP_DIR} am ${patch}
     done
 }
 
