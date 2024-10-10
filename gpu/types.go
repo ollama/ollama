@@ -10,11 +10,11 @@ import (
 type memInfo struct {
 	TotalMemory uint64 `json:"total_memory,omitempty"`
 	FreeMemory  uint64 `json:"free_memory,omitempty"`
-	FreeSwap    uint64 `json:"free_swap,omitempty"`
+	FreeSwap    uint64 `json:"free_swap,omitempty"` // TODO split this out for system only
 }
 
 // Beginning of an `ollama info` command
-type GpuInfo struct {
+type GpuInfo struct { // TODO better name maybe "InferenceProcessor"?
 	memInfo
 	Library string `json:"library,omitempty"`
 
@@ -49,6 +49,17 @@ type GpuInfo struct {
 
 type CPUInfo struct {
 	GpuInfo
+	CPUs []CPU
+}
+
+// CPU type represents a CPU Package occupying a socket
+type CPU struct {
+	ID                  string `cpuinfo:"processor"`
+	VendorID            string `cpuinfo:"vendor_id"`
+	ModelName           string `cpuinfo:"model name"`
+	CoreCount           int
+	EfficiencyCoreCount int // Performance = CoreCount - Efficiency
+	ThreadCount         int
 }
 
 type CudaGPUInfo struct {
@@ -75,6 +86,11 @@ type OneapiGPUInfo struct {
 type OneapiGPUInfoList []OneapiGPUInfo
 
 type GpuInfoList []GpuInfo
+
+type UnsupportedGPUInfo struct {
+	GpuInfo
+	Reason string `json:"reason"`
+}
 
 // Split up the set of gpu info's by Library and variant
 func (l GpuInfoList) ByLibrary() []GpuInfoList {
@@ -145,4 +161,20 @@ func (c CPUCapability) String() string {
 	default:
 		return "no vector extensions"
 	}
+}
+
+type SystemInfo struct {
+	System          CPUInfo              `json:"system"`
+	GPUs            []GpuInfo            `json:"gpus"`
+	UnsupportedGPUs []UnsupportedGPUInfo `json:"unsupported_gpus"`
+	DiscoveryErrors []string             `json:"discovery_errors"`
+}
+
+// Return the optimal number of threads to use for inference
+func (si SystemInfo) GetOptimalThreadCount() int {
+	if len(si.System.CPUs) == 0 {
+		return 0
+	}
+	// Allocate thread count matching the performance cores on a single socket
+	return si.System.CPUs[0].CoreCount - si.System.CPUs[0].EfficiencyCoreCount
 }
