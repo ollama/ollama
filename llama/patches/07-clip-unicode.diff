@@ -1,7 +1,7 @@
-diff --git a/examples/llava/clip.cpp b/examples/llava/clip.cpp
+diff --git a/llama/clip.cpp b/llama/clip.cpp
 index dcc65f02..1a990306 100644
---- a/examples/llava/clip.cpp
-+++ b/examples/llava/clip.cpp
+--- a/llama/clip.cpp
++++ b/llama/clip.cpp
 @@ -66,6 +66,19 @@
  #include <cinttypes>
  #include <limits>
