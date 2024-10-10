@@ -444,7 +444,43 @@ func GetGPUInfo() GpuInfoList {
 			slog.Debug("problem refreshing ROCm free memory", "error", err)
 		}
 	}
+	// Don't use  AMD APU if system has discrete graphics
+	if len(cudaGPUs)+len(rocmGPUs)+len(oneapiGPUs) > 1 {
+		// Filter CUDA GPUs
+		filteredCudaGPUs := make([]CudaGPUInfo, 0, len(cudaGPUs))
+		for i := range cudaGPUs {
+			if !cudaGPUs[i].ApuUseGTT {
+				filteredCudaGPUs = append(filteredCudaGPUs, cudaGPUs[i])
+			}
+		}
+		if len(filteredCudaGPUs) > 0 {
+			cudaGPUs = filteredCudaGPUs
+		}
 
+		// Filter ROCm GPUs
+		filteredRocmGPUs := make([]RocmGPUInfo, 0, len(rocmGPUs))
+		for i := range rocmGPUs {
+			if !rocmGPUs[i].ApuUseGTT {
+				filteredRocmGPUs = append(filteredRocmGPUs, rocmGPUs[i])
+			}
+		}
+		if len(filteredRocmGPUs) > 0 {
+			rocmGPUs = filteredRocmGPUs
+		}
+
+		// Filter OneAPI GPUs
+		filteredOneapiGPUs := make([]OneapiGPUInfo, 0, len(oneapiGPUs))
+		for i := range oneapiGPUs {
+			if !oneapiGPUs[i].ApuUseGTT {
+				filteredOneapiGPUs = append(filteredOneapiGPUs, oneapiGPUs[i])
+			}
+		}
+		if len(filteredOneapiGPUs) > 0 {
+			oneapiGPUs = filteredOneapiGPUs
+		}
+	}
+
+	// Combine all GPUs into the response
 	resp := []GpuInfo{}
 	for _, gpu := range cudaGPUs {
 		resp = append(resp, gpu.GpuInfo)

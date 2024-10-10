@@ -88,5 +88,14 @@ func GetCPUMem() (memInfo, error) {
 	} else {
 		mem.FreeMemory = (free + buffers + cached) * format.KibiByte
 	}
+
+	//Don'r try to load model to RAM that is already used By GTT
+	amdGPUs := AMDGetGPUInfo()
+	for _, gpuInfo := range amdGPUs {
+		if gpuInfo.ApuUseGTT {
+			mem.TotalMemory -= gpuInfo.TotalMemory
+			mem.FreeMemory -= gpuInfo.TotalMemory
+		}
+	}
 	return mem, nil
 }
