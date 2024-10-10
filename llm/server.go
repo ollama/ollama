@@ -364,8 +364,12 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		s.cmd.SysProcAttr = LlamaServerSysProcAttr
 
 		envWorkarounds := [][2]string{}
+		envWorkaroundNeeded := map[string]bool{}
 		for _, gpu := range gpus {
 			envWorkarounds = append(envWorkarounds, gpu.EnvWorkarounds...)
+		}
+		for _, ew := range envWorkarounds {
+			envWorkaroundNeeded[ew[0]] = true
 		}
 		visibleDevicesEnv, visibleDevicesEnvVal := gpus.GetVisibleDevicesEnv()
 		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
@@ -384,6 +388,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 			} else if len(envWorkarounds) != 0 {
 				for _, kv := range envWorkarounds {
 					if strings.EqualFold(cmp[0], kv[0]) {
+						envWorkaroundNeeded[kv[0]] = false
 						s.cmd.Env[i] = kv[0] + "=" + kv[1]
 					}
 				}
@@ -394,6 +399,11 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		}
 		if devicesNeeded {
 			s.cmd.Env = append(s.cmd.Env, visibleDevicesEnv+"="+visibleDevicesEnvVal)
+		}
+		for _, kv := range envWorkarounds {
+			if envWorkaroundNeeded[kv[0]] {
+				s.cmd.Env = append(s.cmd.Env, kv[0]+"="+kv[1])
+			}
 		}
 
 		slog.Info("starting llama server", "cmd", s.cmd.String())
