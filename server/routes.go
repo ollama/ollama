@@ -1073,7 +1073,7 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 
 		host, _, err := net.SplitHostPort(c.Request.Host)
 		if err != nil {
-			host = c.Request.Host
+			host = strings.ToLower(c.Request.Host)
 		}
 
 		if addr, err := netip.ParseAddr(host); err == nil {
