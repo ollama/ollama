@@ -3,6 +3,7 @@ package gpu
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/ollama/ollama/format"
 )
@@ -76,25 +77,24 @@ type OneapiGPUInfoList []OneapiGPUInfo
 
 type GpuInfoList []GpuInfo
 
-// Split up the set of gpu info's by Library and variant
+// Split up the set of gpu info's by Library
+// This assumes the oldest version is compatible with the newest card, which may
+// not be the case if the user has a very new and very old GPU
+// TODO - use metadata from the runner to match exact compatibility matrix
 func (l GpuInfoList) ByLibrary() []GpuInfoList {
 	resp := []GpuInfoList{}
 	libs := []string{}
 	for _, info := range l {
 		found := false
-		requested := info.Library
-		if info.Variant != CPUCapabilityNone.String() {
-			requested += "_" + info.Variant
-		}
 		for i, lib := range libs {
-			if lib == requested {
+			if lib == info.Library {
 				resp[i] = append(resp[i], info)
 				found = true
 				break
 			}
 		}
 		if !found {
-			libs = append(libs, requested)
+			libs = append(libs, info.Library)
 			resp = append(resp, []GpuInfo{info})
 		}
 	}
@@ -123,6 +123,13 @@ type ByFreeMemory []GpuInfo
 func (a ByFreeMemory) Len() int           { return len(a) }
 func (a ByFreeMemory) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByFreeMemory) Less(i, j int) bool { return a[i].FreeMemory < a[j].FreeMemory }
+
+// Sort by Variant
+type ByVariant []GpuInfo
+
+func (a ByVariant) Len() int           { return len(a) }
+func (a ByVariant) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByVariant) Less(i, j int) bool { return strings.Compare(a[i].Variant, a[j].Variant) < 0 } // TODO do better than alpha sort
 
 type CPUCapability uint32
 
