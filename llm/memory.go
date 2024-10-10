@@ -117,8 +117,16 @@ func EstimateGPULayers(gpus []gpu.GpuInfo, ggml *GGML, projectors []string, opts
 		slog.Warn("model missing blk.0 layer size")
 	}
 
-	// fp16 k,v = sizeof(float16) * n_ctx * n_layer * (n_embd_head_k + n_embd_head_v) * n_head_kv
-	var kv uint64 = 2 * uint64(opts.NumCtx) * ggml.KV().BlockCount() * (ggml.KV().EmbeddingHeadCountK() + ggml.KV().EmbeddingHeadCountV()) * ggml.KV().HeadCountKV()
+	// Check if the model is an embedding model
+	isEmbeddingModel := false
+	if _, ok := ggml.KV()[fmt.Sprintf("%s.pooling_type", ggml.KV().Architecture())]; ok {
+		isEmbeddingModel = true
+	}
+
+	// Estimate the memory required for K and V caches separately as they can have different quantization types
+	kSize := estimateKvCacheSize(envconfig.CacheTypeK(), uint64(opts.NumCtx), ggml.KV().BlockCount(), ggml.KV().EmbeddingHeadCountK(), ggml.KV().HeadCountKV(), isEmbeddingModel)
+	vSize := estimateKvCacheSize(envconfig.CacheTypeV(), uint64(opts.NumCtx), ggml.KV().BlockCount(), ggml.KV().EmbeddingHeadCountV(), ggml.KV().HeadCountKV(), isEmbeddingModel)
+	kv := kSize + vSize
 
 	// KV is proportional to the number of layers
 	layerSize += kv / ggml.KV().BlockCount()
@@ -370,4 +378,32 @@ func (m MemoryEstimate) log() {
 			),
 		),
 	)
+}
+
+// estimateKvCacheSize determines the memory required for K or V cache based on the quantization type
+func estimateKvCacheSize(cacheType string, numCtx, blockCount, embeddingHeadCount, headCountKV uint64, isEmbeddingModel bool) uint64 {
+	var bytesPerElement float64
+
+	if isEmbeddingModel && cacheType != "f16" && cacheType != "f32" {
+		cacheType = "f16" // Default to f16 for embedding models if an unsupported type is specified
+	}
+
+	switch cacheType {
+	case "f32", "fp32":
+		bytesPerElement = 4 // fp32
+	case "", "f16", "fp16":
+		bytesPerElement = 2 // fp16
+	case "q4_0":
+		bytesPerElement = 0.5 // 1/4 of fp16
+	case "q8_0":
+		bytesPerElement = 1 // 1/2 of fp16
+	default:
+		// Default to fp16 if unknown
+		bytesPerElement = 2
+		slog.Warn("Unknown cache type, defaulting to fp16", "type", cacheType)
+	}
+
+	estimate := uint64(float64(numCtx*blockCount*embeddingHeadCount*headCountKV) * bytesPerElement)
+	// round up to the nearest multiple of 64 bytes
+	return ((estimate + 63) / 64) * 64
 }

@@ -2515,10 +2515,28 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
             params.n_predict = std::stoi(argv[i]);
         }
         else if (arg == "-ctk" || arg == "--cache-type-k") {
-            params.cache_type_k = argv[++i];
+            // ignore if flash attention is not enabled
+            if (params.flash_attn)
+            {
+                if (++i >= argc)
+                {
+                    invalid_param = true;
+                    break;
+                }
+                params.cache_type_k = argv[i];
+            }
         }
         else if (arg == "-ctv" || arg == "--cache-type-v") {
-            params.cache_type_v = argv[++i];
+            // ignore if flash attention is not enabled
+            if (params.flash_attn)
+            {
+                if (++i >= argc)
+                {
+                    invalid_param = true;
+                    break;
+                }
+                params.cache_type_v = argv[i];
+            }
         }
         else if(arg == "--mmproj")
         {
