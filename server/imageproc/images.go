@@ -8,6 +8,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"math"
+	"slices"
 
 	"golang.org/x/image/draw"
 )
@@ -194,9 +195,7 @@ func PackImages(img image.Image, aspectRatio image.Point, mean, std [3]float32) 
 
 	for _, subImg := range subImages {
 		bounds := subImg.Bounds()
-		rVals := []float32{}
-		gVals := []float32{}
-		bVals := []float32{}
+		var rVals, gVals, bVals []float32
 		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 			for x := bounds.Min.X; x < bounds.Max.X; x++ {
 				c := subImg.At(x, y)
@@ -242,14 +241,7 @@ func Preprocess(imageData []byte) ([]float32, int, error) {
 	newImage = PadImage(newImage, outputSize, aspectRatio)
 
 	data := PackImages(newImage, aspectRatio, mean, std)
-	supportedRatios := GetSupportedAspectRatios(maxTiles)
-	var aspectRatioIndex int
-	for n, r := range supportedRatios {
-		if r == aspectRatio {
-			aspectRatioIndex = n + 1
-			break
-		}
-	}
+	aspectRatioIndex := slices.Index(GetSupportedAspectRatios(maxTiles), aspectRatio) + 1
 
 	return data, aspectRatioIndex, nil
 }

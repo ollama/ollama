@@ -4,29 +4,10 @@ import (
 	"bytes"
 	"image"
 	"image/png"
-	"reflect"
 	"testing"
+
+	"github.com/google/go-cmp/cmp"
 )
-
-func testEq(a, b any) bool {
-	va := reflect.ValueOf(a)
-	vb := reflect.ValueOf(b)
-
-	if va.Kind() != reflect.Slice || vb.Kind() != reflect.Slice {
-		return false
-	}
-
-	if va.Len() != vb.Len() {
-		return false
-	}
-
-	for i := range va.Len() {
-		if !reflect.DeepEqual(va.Index(i).Interface(), vb.Index(i).Interface()) {
-			return false
-		}
-	}
-	return true
-}
 
 func TestAspectRatios(t *testing.T) {
 	type aspectCase struct {
@@ -56,8 +37,8 @@ func TestAspectRatios(t *testing.T) {
 	for _, c := range cases {
 		actual := GetSupportedAspectRatios(c.MaxTiles)
 
-		if !testEq(actual, c.Expected) {
-			t.Errorf("incorrect aspect ratio: '%#v'. expected: '%#v'", actual, c.Expected)
+		if diff := cmp.Diff(actual, c.Expected); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	}
 }
