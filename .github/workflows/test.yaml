@@ -301,11 +301,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: false
       - run: |
+          yum instll wget`
+          export GO_VERSION=${GO_VERSION:-1.22.5}
+          export GOROOT=${GOROOT:-"/usr/local/go"}
+          export GOPATH=${GOPATH:-$HOME/go}
           case ${{ env.GOARCH }} in
             ppc64le) echo ARCH=ppc64le ;;
           esac >>$GITHUB_ENV
