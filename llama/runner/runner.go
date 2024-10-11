@@ -193,13 +193,13 @@ func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 			hash := s.cache.HashImage(images[imageIndex].Data)
 
 			// Vision models cannot be accessed concurrently
-			s.clip.mu.Lock()
+			s.image.Mu.Lock()
 			embed, err := s.cache.FindImage(hash)
 			if err != nil {
-				embed = llama.NewLlavaImageEmbed(s.lc, s.clip.cc, images[imageIndex].Data)
+				embed = s.image.NewEmbed(s.lc, images[imageIndex].Data, images[imageIndex].AspectRatioID)
 				s.cache.AddImage(hash, embed)
 			}
-			s.clip.mu.Unlock()
+			s.image.Mu.Unlock()
 
 			for _, e := range embed {
 				inputs = append(inputs, input{embed: e})
@@ -207,32 +207,7 @@ func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 		}
 	}
 
-	if s.clip.cc != nil {
-		var embed [][]float32
-
-		if s.clip.cc.IsMllama && len(images) >= 1 {
-			hash := s.cache.HashImage(images[0].Data)
-
-			s.clip.mu.Lock()
-			var err error
-			embed, err = s.cache.FindImage(hash)
-			if err != nil {
-				embed = llama.NewMllamaImageEmbed(s.lc, s.clip.cc, images[0].Data, images[0].AspectRatioID)
-				s.cache.AddImage(hash, embed)
-			}
-			s.clip.mu.Unlock()
-		}
-		s.mu.Lock()
-		llama.MllamaSetCrossAttn(s.lc, s.clip.cc, embed)
-		s.mu.Unlock()
-	}
-
 	return inputs, nil
-}
-
-type clip struct {
-	cc *llama.ClipContext
-	mu sync.Mutex
 }
 
 type Server struct {
@@ -240,7 +215,7 @@ type Server struct {
 	lc    *llama.Context
 
 	// required for image embeddings
-	clip clip
+	image *ImageContext
 
 	batchSize int
 
@@ -327,9 +302,6 @@ func (s *Server) removeSequence(seqIndex int, reason string) {
 	close(seq.responses)
 	close(seq.embedding)
 	seq.cache.InUse = false
-	if s.clip.cc != nil {
-		llama.MllamaSetCrossAttn(s.lc, s.clip.cc, nil)
-	}
 	s.seqs[seqIndex] = nil
 }
 
@@ -341,7 +313,7 @@ func (s *Server) run(ctx context.Context) {
 	tokenBatch := llama.NewBatch(s.batchSize*len(s.seqs), 0, len(s.seqs))
 	defer tokenBatch.Free()
 
-	embedBatch := llama.NewBatch(s.batchSize*len(s.seqs), s.lc.Model().NEmbd(), len(s.seqs))
+	embedBatch := llama.NewBatch(s.batchSize*len(s.seqs), s.image.EmbedSize(s.lc), len(s.seqs))
 	defer embedBatch.Free()
 
 	for {
@@ -808,7 +780,7 @@ func (s *Server) loadModel(
 
 	if ppath != "" {
 		var err error
-		s.clip.cc, err = llama.NewClipContext(ppath)
+		s.image, err = NewImageContext(s.lc, ppath)
 		if err != nil {
 			panic(err)
 		}

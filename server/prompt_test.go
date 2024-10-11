@@ -249,7 +249,7 @@ func TestChatPrompt(t *testing.T) {
 				{Role: "user", Content: "How many hotdogs are in this image?", Images: []api.ImageData{imgBuf}},
 			},
 			expect: expect{
-				prompt:        "<|image|>How many hotdogs are in this image? ",
+				prompt:        "[img-0]<|image|>How many hotdogs are in this image? ",
 				images:        [][]byte{imgBuf},
 				aspectRatioID: 1,
 			},
@@ -264,7 +264,7 @@ func TestChatPrompt(t *testing.T) {
 				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{imgBuf}},
 			},
 			expect: expect{
-				prompt:        "You're a test, Harry! I-I'm a what? <|image|>A test. And a thumping good one at that, I'd wager. ",
+				prompt:        "You're a test, Harry! I-I'm a what? [img-0]<|image|>A test. And a thumping good one at that, I'd wager. ",
 				images:        [][]byte{imgBuf},
 				aspectRatioID: 1,
 			},
@@ -279,8 +279,8 @@ func TestChatPrompt(t *testing.T) {
 				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{imgBuf2}},
 			},
 			expect: expect{
-				prompt:        "You're a test, Harry! I-I'm a what? <|image|>A test. And a thumping good one at that, I'd wager. ",
-				images:        [][]byte{imgBuf2},
+				prompt:        "[img-0]<|image|>You're a test, Harry! I-I'm a what? [img-1]<|image|>A test. And a thumping good one at that, I'd wager. ",
+				images:        [][]byte{imgBuf, imgBuf2},
 				aspectRatioID: 1,
 			},
 		},
@@ -294,7 +294,7 @@ func TestChatPrompt(t *testing.T) {
 				{Role: "user", Content: "Which ones have mustard?"},
 			},
 			expect: expect{
-				prompt:        "<|image|>How many hotdogs are in this image? There are four hotdogs. Which ones have mustard? ",
+				prompt:        "[img-0]<|image|>How many hotdogs are in this image? There are four hotdogs. Which ones have mustard? ",
 				images:        [][]byte{imgBuf},
 				aspectRatioID: 1,
 			},

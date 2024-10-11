@@ -2909,6 +2909,7 @@ struct llama_ubatch {
 
     llama_token  *  token;    // [n_tokens]
     float        *  embd;     // [n_embd, n_tokens]
+    size_t          n_embd;
     llama_pos    *  pos;      // [n_tokens]
     int32_t      *  n_seq_id; // [n_seqs]
     llama_seq_id ** seq_id;   // [n_seqs]
@@ -3143,7 +3144,7 @@ struct llama_sbatch {
     std::vector<llama_seq_id *> ubatch_seq_id;
     std::vector<int8_t>         ubatch_output;
 
-    llama_ubatch reserve_ubatch(size_t n_ubatch, bool has_embd = false) {
+    llama_ubatch reserve_ubatch(size_t n_ubatch, bool has_embd = false, int32_t n_embed = 0) {
         // clear empty sequences
         // the previous ubatch is assumed to be gone,
         // so nothing should refer to values in these sequences anymore.
@@ -3167,6 +3168,7 @@ struct llama_sbatch {
             /*n_seqs       =*/ 0,
             /*token        =*/ !has_embd ? ubatch_token.data() : nullptr,
             /*embd         =*/ has_embd  ? ubatch_embd.data()  : nullptr,
+            /*n_embd       =*/ n_embd,
             /*pos          =*/ ubatch_pos.data(),
             /*n_seq_id     =*/ ubatch_n_seq_id.data(),
             /*seq_id       =*/ ubatch_seq_id.data(),
@@ -3296,7 +3298,7 @@ struct llama_sbatch {
     // simple split, unknown number of sequences of unequal lengths
     llama_ubatch split_simple(size_t n_ubatch) {
         n_ubatch = n_tokens < n_ubatch ? n_tokens : n_ubatch;
-        llama_ubatch ubatch = reserve_ubatch(n_ubatch, /* has_embd */ batch->embd != nullptr);
+        llama_ubatch ubatch = reserve_ubatch(n_ubatch, /* has_embd */ batch->embd != nullptr, n_embd);
         ubatch.equal_seqs = false;
         if (!seq.empty()) {
             llama_sbatch_seq & s = seq[0];
@@ -3310,7 +3312,7 @@ struct llama_sbatch {
     // make batches of equal-length sequences
     llama_ubatch split_equal(size_t n_ubatch) {
         n_ubatch = n_tokens < n_ubatch ? n_tokens : n_ubatch;
-        llama_ubatch ubatch = reserve_ubatch(n_ubatch, /* has_embd */ batch->embd != nullptr);
+        llama_ubatch ubatch = reserve_ubatch(n_ubatch, /* has_embd */ batch->embd != nullptr, n_embd);
         if (!seq.empty()) {
             size_t length = 0;
             size_t n_tokens_in_ubatch = 0;
@@ -3338,7 +3340,7 @@ struct llama_sbatch {
     // sequence-wise split
     llama_ubatch split_seq(size_t n_ubatch) {
         n_ubatch = n_tokens < n_ubatch ? n_tokens : n_ubatch;
-        llama_ubatch ubatch = reserve_ubatch(n_ubatch, /* has_embd */ batch->embd != nullptr);
+        llama_ubatch ubatch = reserve_ubatch(n_ubatch, /* has_embd */ batch->embd != nullptr, n_embd);
         if (!seq.empty()) {
             llama_sbatch_seq & s = seq[seq.size() - 1];
             size_t length = s.length < n_ubatch ? s.length : n_ubatch;
@@ -3542,10 +3544,6 @@ struct llama_context {
     struct ggml_tensor * inp_embd_enc;      // F32 [n_embd, n_outputs_enc]
     struct ggml_tensor * inp_KQ_mask_cross; // F32 [n_outputs_enc, n_batch]
 
-    // TODO (jmorganca): this should most likely be passed in as part of a batch
-    // and not set on the context for all batches.
-    float * cross_attn_state = nullptr;
-    bool cross_attn_state_first_pass = true;
     struct ggml_tensor * inp_cross_attn_state; // F32 [4, n_embd, 1061]
 };
 
@@ -10980,9 +10978,9 @@ struct llm_build_context {
             cb(cur, "attn_norm", il);
 
             if (hparams.cross_attention_layer(il)) {
-                if (!lctx.cross_attn_state) {
+                /*if (!lctx.cross_attn_state) {
                     continue;
-                }
+                }*/
 
                 // cross attention layer
                 struct ggml_tensor * Qcur = ggml_mul_mat(ctx0, model.layers[il].cross_attn_q_proj, cur);
@@ -11002,7 +11000,7 @@ struct llm_build_context {
                 cb(Qcur, "Qcur", il);
 
                 struct ggml_tensor * Kcur;
-                if (lctx.cross_attn_state_first_pass) {
+                if (batch.embd) {
                     Kcur = ggml_mul_mat(ctx0, model.layers[il].cross_attn_k_proj, inpCAS);
                     cb(Kcur, "Kcur", il);
 
@@ -11026,7 +11024,7 @@ struct llm_build_context {
                 }
 
                 struct ggml_tensor * Vcur;
-                if (lctx.cross_attn_state_first_pass) {
+                if (batch.embd) {
                     Vcur = ggml_mul_mat(ctx0, model.layers[il].cross_attn_v_proj, inpCAS);
                     cb(Vcur, "Vcur", il);
 
@@ -17197,24 +17195,18 @@ static void llama_set_inputs(llama_context & lctx, const llama_ubatch & batch) {
     }
 
     if (batch.embd) {
-        const int64_t n_embd   = hparams.n_embd;
-        const int64_t n_tokens = batch.n_tokens;
-
-        ggml_backend_tensor_set(lctx.inp_embd, batch.embd, 0, n_tokens*n_embd*ggml_element_size(lctx.inp_embd));
+        if (lctx.inp_cross_attn_state &&
+            lctx.inp_cross_attn_state->buffer) {
+            ggml_backend_tensor_set(lctx.inp_cross_attn_state, batch.embd, 0, batch.n_tokens*batch.n_embd*ggml_element_size(lctx.inp_cross_attn_state));
+        } else {
+            ggml_backend_tensor_set(lctx.inp_embd, batch.embd, 0, batch.n_tokens*batch.n_embd*ggml_element_size(lctx.inp_embd));
+        }
     }
 
     if (batch.pos && lctx.inp_pos) {
         const int64_t n_tokens = batch.n_tokens;
 
         ggml_backend_tensor_set(lctx.inp_pos, batch.pos, 0, n_tokens*ggml_element_size(lctx.inp_pos));
-    }
-
-    // TODO (jmorganca): this might copy a lot of data on every request of a
-    // single generation even though it doesn't change, so we should
-    // find a way to not set this more than one time per image
-    if (lctx.inp_cross_attn_state &&
-        lctx.inp_cross_attn_state->buffer) {
-        ggml_backend_tensor_set(lctx.inp_cross_attn_state, lctx.cross_attn_state, 0, hparams.n_embd * 1601 * 4 * ggml_element_size(lctx.inp_cross_attn_state));
     }
 
     if (hparams.causal_attn || cparams.pooling_type == LLAMA_POOLING_TYPE_NONE) {
@@ -17789,7 +17781,7 @@ static int llama_decode_internal(
         n_outputs = 1;
     }
 
-    lctx.sbatch.from_batch(batch_all, n_embd,
+    lctx.sbatch.from_batch(batch_all, batch_all.n_embd,
         /* simple_split */ !kv_self.recurrent,
         /* logits_all   */ n_outputs == n_tokens_all);
 
@@ -17898,10 +17890,6 @@ static int llama_decode_internal(
         ggml_backend_sched_alloc_graph(lctx.sched, gf);
 
         llama_set_inputs(lctx, ubatch);
-
-        // TODO: replace with something better to find out if its
-        // our first actual pass
-        lctx.cross_attn_state_first_pass = false;
 
         llama_graph_compute(lctx, gf, n_threads, threadpool);
 
@@ -18086,7 +18074,7 @@ static int llama_encode_internal(
 
     const int64_t n_embd = hparams.n_embd;
 
-    lctx.sbatch.from_batch(batch, n_embd, /* simple_split */ true, /* logits_all */ true);
+    lctx.sbatch.from_batch(batch, batch.n_embd, /* simple_split */ true, /* logits_all */ true);
 
     const llama_ubatch ubatch = lctx.sbatch.split_simple(n_tokens);
 
@@ -18484,7 +18472,7 @@ static void llama_kv_cache_update_internal(struct llama_context & lctx) {
         uint32_t n_seqs = 1; // TODO: worst-case number of sequences
         uint32_t n_tokens = std::min(lctx.cparams.n_ctx, lctx.cparams.n_ubatch);
         llama_token token = llama_token_bos(&lctx.model); // not actually used by llama_build_graph, but required to choose between token and embedding inputs graph
-        llama_ubatch ubatch = { true, n_tokens, n_tokens / n_seqs, n_seqs, &token, nullptr, nullptr, nullptr, nullptr, nullptr};
+        llama_ubatch ubatch = { true, n_tokens, n_tokens / n_seqs, n_seqs, &token, nullptr, 0, nullptr, nullptr, nullptr, nullptr};
         ggml_cgraph * gf = llama_build_graph(lctx, ubatch, true);
 
         // initialize scheduler with the worst-case graph
@@ -20163,7 +20151,7 @@ struct llama_context * llama_new_context_with_model(
             uint32_t n_seqs = 1; // TODO: worst-case number of sequences
             uint32_t n_tokens = std::min(cparams.n_ctx, cparams.n_ubatch);
             llama_token token = llama_token_bos(&ctx->model); // not actually used by llama_build_graph, but required to choose between token and embedding inputs graph
-            llama_ubatch ubatch = { true, n_tokens, n_tokens / n_seqs, n_seqs, &token, nullptr, nullptr, nullptr, nullptr, nullptr};
+            llama_ubatch ubatch = { true, n_tokens, n_tokens / n_seqs, n_seqs, &token, nullptr, 0, nullptr, nullptr, nullptr, nullptr};
             ggml_cgraph * gf = llama_build_graph(*ctx, ubatch, true);
 
             // initialize scheduler with the worst-case graph
@@ -20192,11 +20180,6 @@ struct llama_context * llama_new_context_with_model(
     }
 
     return ctx;
-}
-
-void llama_set_cross_attn_state(struct llama_context * ctx, float * cross_attn_state) {
-    ctx->cross_attn_state_first_pass = true;
-    ctx->cross_attn_state = cross_attn_state;
 }
 
 void llama_free(struct llama_context * ctx) {
@@ -21695,6 +21678,7 @@ struct llama_batch llama_batch_get_one(
         /*n_tokens       =*/ n_tokens,
         /*tokens         =*/ tokens,
         /*embd           =*/ nullptr,
+        /*n_embd         =*/ 0,
         /*pos            =*/ nullptr,
         /*n_seq_id       =*/ nullptr,
         /*seq_id         =*/ nullptr,
@@ -21710,6 +21694,7 @@ struct llama_batch llama_batch_init(int32_t n_tokens_alloc, int32_t embd, int32_
         /*n_tokens       =*/ 0,
         /*tokens         =*/ nullptr,
         /*embd           =*/ nullptr,
+        /*n_embd         =*/ 0,
         /*pos            =*/ nullptr,
         /*n_seq_id       =*/ nullptr,
         /*seq_id         =*/ nullptr,
@@ -21721,6 +21706,7 @@ struct llama_batch llama_batch_init(int32_t n_tokens_alloc, int32_t embd, int32_
 
     if (embd) {
         batch.embd = (float *) malloc(sizeof(float) * n_tokens_alloc * embd);
+        batch.n_embd = embd;
     } else {
         batch.token = (llama_token *) malloc(sizeof(llama_token) * n_tokens_alloc);
     }
