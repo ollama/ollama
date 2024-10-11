@@ -298,6 +298,9 @@ jobs:
       GOARCH: $(uname -m )
       CGO_ENABLED: '1'  
     steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
