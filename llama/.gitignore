@@ -1,0 +1,3 @@
+*.bin
+*.gguf
+build/

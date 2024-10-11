@@ -442,13 +442,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					return err
 				}
 
-				// clear all previous images for better responses
-				if len(images) > 0 {
-					for i := range opts.Messages {
-						opts.Messages[i].Images = nil
-					}
-				}
-
 				newMessage.Content = msg
 				newMessage.Images = images
 			}
