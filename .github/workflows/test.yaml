@@ -307,7 +307,7 @@ jobs:
           #export GOROOT=${GOROOT:-"/usr/local/go"}
           #export GOPATH=${GOPATH:-$HOME/go}
           wget https://golang.org/dl/go${GO_VERSION}.linux-ppc64le.tar.gz
-          mkdir $HOME/go
+          sudo mkdir $HOME/go
           sudo tar xvzf go${GO_VERSION}.linux-ppc64le.tar.gz -C $HOME/
           #sudo rm -rf go${GO_VERSION}.linux-ppc64le.tar.gz
           export GOPATH=${GOPATH:-$HOME/go}
