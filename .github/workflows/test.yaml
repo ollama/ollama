@@ -10,13 +10,13 @@ concurrency:
   group: ${{ github.workflow }}-$${{ github.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
-on:
-  pull_request:
-    paths:
-      - '**/*'
-      - '!docs/**'
-      - '!README.md'
-
+on: [push]
+  #pull_request:
+  # paths:
+  #   - '**/*'
+  #   - '!docs/**'
+  #   - '!README.md'
+   
 jobs:
   changes:
     runs-on: ubuntu-latest
