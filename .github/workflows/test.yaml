@@ -288,6 +288,12 @@ jobs:
       - uses: golangci/golangci-lint-action@v6
         with:
           args: --timeout 8m0s -v
+  lint-ppc64le:
+    strategy:
+      matrix:
+        os: ubuntu-latest
+        arch: [ppc64le]
+    runs-on: ubuntu-22.04-ppc64le
   test:
     strategy:
       matrix:
