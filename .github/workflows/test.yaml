@@ -298,6 +298,10 @@ jobs:
       GOARCH: $(uname -m )
       CGO_ENABLED: '1'  
     steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
   test:
     strategy:
       matrix:
