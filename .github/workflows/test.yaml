@@ -291,7 +291,7 @@ jobs:
   lint-ppc64le:
     strategy:
       matrix:
-        os: ubuntu-latest
+        os: [ubuntu-latest]
         arch: [ppc64le]
     runs-on: ubuntu-22.04-ppc64le
     env:
