@@ -253,7 +253,7 @@ jobs:
         arch: ppc64le
     runs-on: ubuntu-22.04-ppc64le
     env:
-      GOARCH: ${{ matrix.arch }}
+      GOARCH: $(uname -m )
       CGO_ENABLED: '1'
     steps:
       - uses: actions/checkout@v4
@@ -263,10 +263,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - run: |
-          case ${{ matrix.arch }} in
-            ppc64le) echo ARCH=ppc64le ;;
-          esac >>$GITHUB_ENV
+      - run: echo ${{ env.GOARCH }}
+          
         shell: bash
       - uses: golangci/golangci-lint-action@v6
         with:
