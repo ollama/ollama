@@ -302,7 +302,7 @@ jobs:
         with:
           submodules: recursive
       - run: |
-          apt-get install wget
+          sudo apt-get install wget
           export GO_VERSION=${GO_VERSION:-1.22.5}
           export GOROOT=${GOROOT:-"/usr/local/go"}
           export GOPATH=${GOPATH:-$HOME/go}
