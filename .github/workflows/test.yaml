@@ -307,8 +307,8 @@ jobs:
           export GOROOT=${GOROOT:-"/usr/local/go"}
           export GOPATH=${GOPATH:-$HOME/go}
           wget https://golang.org/dl/go${GO_VERSION}.linux-ppc64le.tar.gz
-          tar -C /usr/local -xvzf go${GO_VERSION}.linux-ppc64le.tar.gz
-          rm -rf go${GO_VERSION}.linux-ppc64le.tar.gz
+          sudo tar -C /usr/local -xvzf go${GO_VERSION}.linux-ppc64le.tar.gz
+          sudo rm -rf go${GO_VERSION}.linux-ppc64le.tar.gz
           go version
           case ${{ env.GOARCH }} in
             ppc64le) echo ARCH=ppc64le ;;
