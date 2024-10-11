@@ -312,7 +312,8 @@ jobs:
           #sudo rm -rf go${GO_VERSION}.linux-ppc64le.tar.gz
           echo "go installed"
           export GOPATH=$HOME/go
-          echo $GOPATH
+          export GOROOT=$HOME/go
+          echo  $GOPATH
           #sudo apt-get install -y git golang 1.22.5
           go version
           case ${{ env.GOARCH }} in
