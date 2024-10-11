@@ -305,6 +305,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - run: |
+          case ${{ env.GOARCH }} in
+            ppc64le) echo ARCH=ppc64le ;;
+          esac >>$GITHUB_ENV
+        shell: bash
   test:
     strategy:
       matrix:
