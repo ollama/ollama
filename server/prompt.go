@@ -75,11 +75,16 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 	currMsgIdx := n
 
-	if isMllama {
-		lastMsgIdx := len(msgs) - 1
-		for i := lastMsgIdx; i >= currMsgIdx; i-- {
-			if len(msgs[i].Images) > 0 {
-				data, aspectRatioID, err := imageproc.Preprocess(msgs[i].Images[0])
+	for cnt, msg := range msgs[currMsgIdx:] {
+		prefix := ""
+		imgPrompt := ""
+		prompt := msg.Content
+
+		for _, i := range msg.Images {
+			var imgData llm.ImageData
+
+			if isMllama {
+				data, aspectRatioID, err := imageproc.Preprocess(i)
 				if err != nil {
 					return "", nil, err
 				}
@@ -90,37 +95,30 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 					return "", nil, err
 				}
 
-				imgData := llm.ImageData{
+				imgData = llm.ImageData{
+					ID:            len(images),
 					Data:          buf.Bytes(),
 					AspectRatioID: aspectRatioID,
 				}
-
-				msgs[i].Content = strings.TrimSpace("<|image|>" + msgs[i].Content)
-				images = append(images, imgData)
-				break
-			}
-		}
-	} else {
-		for cnt, msg := range msgs[currMsgIdx:] {
-			prefix := ""
-			prompt := msg.Content
-			for _, i := range msg.Images {
-				imgData := llm.ImageData{
+				imgPrompt = "<|image|>"
+			} else {
+				imgData = llm.ImageData{
 					ID:   len(images),
 					Data: i,
 				}
-
-				imgTag := fmt.Sprintf("[img-%d]", imgData.ID)
-				if !strings.Contains(prompt, "[img]") {
-					prefix += imgTag
-				} else {
-					prompt = strings.Replace(prompt, "[img]", imgTag, 1)
-				}
-
-				images = append(images, imgData)
+				imgPrompt = " "
 			}
-			msgs[currMsgIdx+cnt].Content = strings.TrimSpace(prefix + " " + prompt)
+
+			imgTag := fmt.Sprintf("[img-%d]", imgData.ID)
+			if !strings.Contains(prompt, "[img]") {
+				prefix += imgTag
+			} else {
+				prompt = strings.Replace(prompt, "[img]", imgTag, 1)
+			}
+
+			images = append(images, imgData)
 		}
+		msgs[currMsgIdx+cnt].Content = strings.TrimSpace(prefix + imgPrompt + prompt)
 	}
 
 	// truncate any messages that do not fit into the context window

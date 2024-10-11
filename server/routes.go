@@ -205,7 +205,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				return
 			}
 
-			images[i] = llm.ImageData{Data: buf.Bytes(), AspectRatioID: aspectRatioID}
+			images[i] = llm.ImageData{ID: i, Data: buf.Bytes(), AspectRatioID: aspectRatioID}
 		} else {
 			images[i] = llm.ImageData{ID: i, Data: req.Images[i]}
 		}
@@ -239,11 +239,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 
 			for _, i := range images {
+				imgPrompt := ""
 				if isMllama {
-					msgs = append(msgs, api.Message{Role: "user", Content: "<|image|>"})
-				} else {
-					msgs = append(msgs, api.Message{Role: "user", Content: fmt.Sprintf("[img-%d]", i.ID)})
+					imgPrompt = "<|image|>"
 				}
+				msgs = append(msgs, api.Message{Role: "user", Content: fmt.Sprintf("[img-%d]"+imgPrompt, i.ID)})
 			}
 
 			values.Messages = append(msgs, api.Message{Role: "user", Content: req.Prompt})
