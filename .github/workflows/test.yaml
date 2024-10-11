@@ -19,7 +19,7 @@ on:
 
 jobs:
   changes:
-    runs-on: ubuntu-20.04-ppc64le
+    runs-on: ubuntu-22.04-ppc64le
     outputs:
       GENERATE: ${{ steps.changes.outputs.GENERATE }}
       GENERATE_CUDA: ${{ steps.changes.outputs.GENERATE_CUDA }}
