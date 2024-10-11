@@ -1,0 +1,12 @@
+# Build rules for CUDA v11 runner
+
+include make/common-defs.make
+
+
+GPU_RUNNER_VARIANT := _v11
+GPU_PATH_ROOT_WIN=$(shell ls -d $(dir $(shell cygpath -m -s "$(CUDA_PATH)\.."))/v11.? 2>/dev/null)
+GPU_PATH_ROOT_LINUX=$(shell ls -d $(CUDA_PATH)-11 2>/dev/null)
+CUDA_ARCHITECTURES?=50;52;53;60;61;62;70;72;75;80;86
+
+include make/cuda.make
+include make/gpu.make

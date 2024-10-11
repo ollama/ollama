@@ -680,6 +680,17 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Unload the model if it's running before deletion
+	opts := &runOptions{
+		Model:     args[0],
+		KeepAlive: &api.Duration{Duration: 0},
+	}
+	if err := loadOrUnloadModel(cmd, opts); err != nil {
+		if !strings.Contains(err.Error(), "not found") {
+			return fmt.Errorf("unable to stop existing running model \"%s\": %s", args[0], err)
+		}
+	}
+
 	for _, name := range args {
 		req := api.DeleteRequest{Name: name}
 		if err := client.Delete(cmd.Context(), &req); err != nil {

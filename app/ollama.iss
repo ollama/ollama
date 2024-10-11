@@ -142,7 +142,7 @@ SetupAppRunningError=Another Ollama installer is running.%n%nPlease cancel or fi
 
 
 ;FinishedHeadingLabel=Run your first model
-;FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama3.1
+;FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama3.2
 ;ClickFinish=%n
 
 [Registry]

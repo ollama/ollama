@@ -2,11 +2,17 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/spf13/cobra"
 
 	"github.com/ollama/ollama/api"
 )
@@ -203,4 +209,64 @@ Weigh anchor!
 			t.Errorf("unexpected output (-want +got):\n%s", diff)
 		}
 	})
+}
+
+func TestDeleteHandler(t *testing.T) {
+	stopped := false
+	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/delete" && r.Method == http.MethodDelete {
+			var req api.DeleteRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if req.Name == "test-model" {
+				w.WriteHeader(http.StatusOK)
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+			}
+			return
+		}
+		if r.URL.Path == "/api/generate" && r.Method == http.MethodPost {
+			var req api.GenerateRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if req.Model == "test-model" {
+				w.WriteHeader(http.StatusOK)
+				if err := json.NewEncoder(w).Encode(api.GenerateResponse{
+					Done: true,
+				}); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+				}
+				stopped = true
+				return
+			} else {
+				w.WriteHeader(http.StatusNotFound)
+				if err := json.NewEncoder(w).Encode(api.GenerateResponse{
+					Done: false,
+				}); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+				}
+			}
+		}
+	}))
+
+	t.Setenv("OLLAMA_HOST", mockServer.URL)
+	t.Cleanup(mockServer.Close)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.TODO())
+	if err := DeleteHandler(cmd, []string{"test-model"}); err != nil {
+		t.Fatalf("DeleteHandler failed: %v", err)
+	}
+	if !stopped {
+		t.Fatal("Model was not stopped before deletion")
+	}
+
+	err := DeleteHandler(cmd, []string{"test-model-not-found"})
+	if err == nil || !strings.Contains(err.Error(), "unable to stop existing running model \"test-model-not-found\"") {
+		t.Fatalf("DeleteHandler failed: expected error about stopping non-existent model, got %v", err)
+	}
 }
