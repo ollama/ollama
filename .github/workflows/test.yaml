@@ -298,9 +298,6 @@ jobs:
       GOARCH: $(uname -m )
       CGO_ENABLED: '1'  
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
   test:
     strategy:
       matrix:
