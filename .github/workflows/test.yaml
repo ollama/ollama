@@ -246,6 +246,31 @@ jobs:
       - uses: golangci/golangci-lint-action@v6
         with:
           args: --timeout 8m0s -v
+  lint-ppc64le:
+    strategy:
+      matrix:
+        os: ubuntu-latest
+        arch: ppc64le
+    runs-on: ubuntu-22.04-ppc64le
+    env:
+      GOARCH: ${{ matrix.arch }}
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: |
+          case ${{ matrix.arch }} in
+            ppc64le) echo ARCH=ppc64le ;;
+          esac >>$GITHUB_ENV
+        shell: bash
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          args: --timeout 8m0s -v
   test:
     strategy:
       matrix:
