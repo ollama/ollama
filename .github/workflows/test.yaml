@@ -294,6 +294,13 @@ jobs:
         os: ubuntu-latest
         arch: [ppc64le]
     runs-on: ubuntu-22.04-ppc64le
+    env:
+      GOARCH: $(uname -m )
+      CGO_ENABLED: '1'  
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
   test:
     strategy:
       matrix:
