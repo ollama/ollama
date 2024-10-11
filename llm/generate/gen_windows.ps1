@@ -340,7 +340,6 @@ function build_rocm() {
             "-DCMAKE_C_COMPILER=clang.exe",
             "-DCMAKE_CXX_COMPILER=clang++.exe",
             "-DGGML_HIPBLAS=on",
-            "-DGGML_CUDA_NO_PEER_COPY=on",
             "-DHIP_PLATFORM=amd",
             "-DGGML_AVX=on",
             "-DGGML_AVX2=off",
