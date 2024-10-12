@@ -2,7 +2,9 @@
 
 Ollama supports distributed using llama.cpp RPC servers.
 
-## Usage
+# Usage
+
+## Using Environment Varable
 
 The RPC servers can be specified using the `OLLAMA_RPC_SERVERS` environment variable.
 This environment variable contains a comma seperated lists of the RPC servers, e.g. `OLLAMA_RPC_SERVERS="127.0.0.1:50052,192.168.0.69:50053`.
@@ -14,3 +16,20 @@ See [llama.cpp RPC example](https://github.com/ggerganov/llama.cpp/tree/master/e
 ```sh
 OLLAMA_RPC_SERVERS="127.0.0.1:50052,192.168.0.69:50053 ollama serve
 ```
+
+## Change RPC Servers Using Request Options
+
+The RPC servers can be changed using the `rpc_servers` options when generating a response.
+
+```sh
+curl http://localhost:11434/api/chat --json '{
+  "model": "llama3.1",
+  "prompt": "hello",
+  "stream": false,
+  "options": {
+    "rpc_servers": "127.0.0.1:50053"
+  }
+}'
+```
+
+Ollama will use the RPC server `127.0.0.1:50053` instead of the servers set by `OLLAMA_RPC_SERVERS` environment variable.

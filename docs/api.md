@@ -359,7 +359,8 @@ curl http://localhost:11434/api/generate -d '{
     "vocab_only": false,
     "use_mmap": true,
     "use_mlock": false,
-    "num_thread": 8
+    "num_thread": 8,
+    "rpc_servers": "127.0.0.1:50052"
   }
 }'
 ```
