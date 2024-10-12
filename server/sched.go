@@ -162,6 +162,24 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						gpus = s.getCpuFn()
 					} else {
 						gpus = s.getGpuFn()
+                        slog.Debug("RPC options", "options", pending.opts.RPCServers)
+                        // Removing Existing Servers
+                        if pending.opts.RPCServers != "" {
+                            slog.Debug("removing system RPC servers", "gpus", gpus)
+                            // Removing RPC Servers from system
+                            for _, rpcServer := range gpus {
+                                if rpcServer.Library == "rpc" {
+                                    gpus = gpus[1:]
+                                }
+                            }
+                            slog.Debug("adding request RPC servers", "gpus", gpus)
+                            // Adding RPC Servers from request
+                            newServers := gpu.CheckRPCServers(pending.opts.RPCServers)
+                            for _, rpcServer := range newServers {
+                                gpus = append(gpu.GpuInfoList{rpcServer.GpuInfo}, gpus...)
+                            }
+                            slog.Debug("new gpus", "gpus", gpus)
+                        }
 					}
 
 					if envconfig.MaxRunners() <= 0 {
@@ -598,9 +616,21 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	if !reflect.DeepEqual(runner.Options.RPCServers, req.opts.RPCServers) {
+		slog.Info(
+			"RPC servers changed",
+			"model", runner.model.Name,
+			"new", req.opts.RPCServers,
+			"previous", runner.Options.RPCServers,
+		)
+		return true
+	}
+
 	if !reflect.DeepEqual(runner.model.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
 		!reflect.DeepEqual(runner.model.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
 		!reflect.DeepEqual(optsExisting, optsNew) || // have the runner options changed?
+
 		runner.llama.Ping(ctx) != nil {
 		return true
 	}
