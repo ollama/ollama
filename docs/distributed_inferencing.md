@@ -22,7 +22,7 @@ OLLAMA_RPC_SERVERS="127.0.0.1:50052,192.168.0.69:50053 ollama serve
 The RPC servers can be changed using the `rpc_servers` options when generating a response.
 
 ```sh
-curl http://localhost:11434/api/chat --json '{
+curl http://localhost:11434/api/generate --json '{
   "model": "llama3.1",
   "prompt": "hello",
   "stream": false,
