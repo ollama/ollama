@@ -19,6 +19,19 @@ function amdGPUs {
 
 
 function init_vars {
+    write-host "Checking for cmake..."
+    get-command cmake
+    write-host "Checking for ninja..."
+    $d=(get-command -ea 'silentlycontinue' ninja).path
+    if ($null -eq $d) {
+        $MSVC_INSTALL=(Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation
+        $matches=(gci -path $MSVC_INSTALL -r -fi ninja.exe)
+        if ($matches.count -eq 0) {
+            throw "Unable to locate ninja"
+        }
+        $ninjaDir=($matches[0].FullName | split-path -parent)
+        $env:PATH="$env:PATH;$ninjaDir"
+    }
     if (!$script:SRC_DIR) {
         $script:SRC_DIR = $(resolve-path "..\..\")
     }
@@ -83,29 +96,9 @@ function git_module_setup {
 }
 
 function apply_patches {
-    # Wire up our CMakefile
-    if (!(Select-String -Path "${script:llamacppDir}/CMakeLists.txt" -Pattern 'ollama')) {
-        Add-Content -Path "${script:llamacppDir}/CMakeLists.txt" -Value 'add_subdirectory(../ext_server ext_server) # ollama'
-    }
-
     # Apply temporary patches until fix is upstream
-    $patches = Get-ChildItem "../patches/*.diff"
-    foreach ($patch in $patches) {
-        # Extract file paths from the patch file
-        $filePaths = Get-Content $patch.FullName | Where-Object { $_ -match '^\+\+\+ ' } | ForEach-Object {
-            $parts = $_ -split ' '
-            ($parts[1] -split '/', 2)[1]
-        }
-
-        # Checkout each file
-        foreach ($file in $filePaths) {
-            git -C "${script:llamacppDir}" checkout $file
-        }
-    }
-
-    # Apply each patch
-    foreach ($patch in $patches) {
-        git -C "${script:llamacppDir}" apply $patch.FullName
+    foreach ($patch in $(Get-ChildItem "../patches/*.patch")) {
+        git -c 'user.name=nobody' -c 'user.email=<>' -C "${script:llamacppDir}" am $patch.FullName
     }
 }
 
@@ -165,7 +158,7 @@ function cleanup {
         }
 
         # Checkout each file
-        foreach ($file in $filePaths) {            
+        foreach ($file in $filePaths) {
             git -C "${script:llamacppDir}" checkout $file
         }
         git -C "${script:llamacppDir}" checkout CMakeLists.txt
@@ -178,44 +171,10 @@ function cleanup {
 # -DGGML_FMA (FMA3) -- 2013 Intel Haswell & 2012 AMD Piledriver
 
 
-function build_static() {
-    if ((-not "${env:OLLAMA_SKIP_STATIC_GENERATE}") -and ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "static"))) {
-        # GCC build for direct linking into the Go binary
-        init_vars
-        # cmake will silently fallback to msvc compilers if mingw isn't in the path, so detect and fail fast
-        # as we need this to be compiled by gcc for golang to be able to link with itx
-        write-host "Checking for MinGW..."
-        # error action ensures we exit on failure
-        get-command gcc
-        get-command mingw32-make
-        $oldTargets = $script:cmakeTargets
-        $script:cmakeTargets = @("llama", "ggml")
-        $script:cmakeDefs = @(
-            "-G", "MinGW Makefiles"
-            "-DCMAKE_C_COMPILER=gcc.exe",
-            "-DCMAKE_CXX_COMPILER=g++.exe",
-            "-DBUILD_SHARED_LIBS=off",
-            "-DGGML_NATIVE=off",
-            "-DGGML_AVX=off",
-            "-DGGML_AVX2=off",
-            "-DGGML_AVX512=off",
-            "-DGGML_F16C=off",
-            "-DGGML_FMA=off",
-            "-DGGML_OPENMP=off")
-        $script:buildDir="../build/windows/${script:ARCH}_static"
-        write-host "Building static library"
-        build
-        $script:cmakeTargets = $oldTargets
-    } else {
-        write-host "Skipping CPU generation step as requested"
-    }
-}
-
-function build_cpu($gen_arch) {
+function build_cpu_x64 {
     if ((-not "${env:OLLAMA_SKIP_CPU_GENERATE}" ) -and ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu"))) {
-        # remaining llama.cpp builds use MSVC 
         init_vars
-        $script:cmakeDefs = $script:commonCpuDefs + @("-A", $gen_arch, "-DGGML_AVX=off", "-DGGML_AVX2=off", "-DGGML_AVX512=off", "-DGGML_FMA=off", "-DGGML_F16C=off") + $script:cmakeDefs
+        $script:cmakeDefs = $script:commonCpuDefs + @("-A", "x64", "-DGGML_AVX=off", "-DGGML_AVX2=off", "-DGGML_AVX512=off", "-DGGML_FMA=off", "-DGGML_F16C=off") + $script:cmakeDefs
         $script:buildDir="../build/windows/${script:ARCH}/cpu"
         $script:distDir="$script:DIST_BASE\cpu"
         write-host "Building LCD CPU"
@@ -226,6 +185,32 @@ function build_cpu($gen_arch) {
         write-host "Skipping CPU generation step as requested"
     }
 }
+
+function build_cpu_arm64 {
+    if ((-not "${env:OLLAMA_SKIP_CPU_GENERATE}" ) -and ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu"))) {
+        init_vars
+        write-host "Checking for clang..."
+        get-command clang
+        $env:CFLAGS="-march=armv8.7-a -fvectorize -ffp-model=fast -fno-finite-math-only"
+        $env:CXXFLAGS="$env:CFLAGS"
+        $env:LDFLAGS="-static-libstdc++"
+        $script:cmakeDefs = $script:commonCpuDefs + @(
+            "-DCMAKE_VERBOSE_MAKEFILE=on",
+            "-DCMAKE_C_COMPILER=clang.exe",
+            "-DCMAKE_CXX_COMPILER=clang++.exe",
+            "-DMSVC_RUNTIME_LIBRARY=MultiThreaded"
+        ) + $script:cmakeDefs
+        $script:buildDir="../build/windows/${script:ARCH}/cpu"
+        $script:distDir="$script:DIST_BASE\cpu"
+        write-host "Building LCD CPU"
+        build
+        sign
+        install
+    } else {
+        write-host "Skipping CPU generation step as requested"
+    }
+}
+
 
 function build_cpu_avx() {
     if ((-not "${env:OLLAMA_SKIP_CPU_GENERATE}" ) -and ((-not "${env:OLLAMA_CPU_TARGET}") -or ("${env:OLLAMA_CPU_TARGET}" -eq "cpu_avx"))) {
@@ -351,11 +336,10 @@ function build_rocm() {
         $script:buildDir="../build/windows/${script:ARCH}/rocm$script:ROCM_VARIANT"
         $script:distDir="$script:DIST_BASE\rocm$script:ROCM_VARIANT"
         $script:cmakeDefs += @(
-            "-G", "Ninja", 
+            "-G", "Ninja",
             "-DCMAKE_C_COMPILER=clang.exe",
             "-DCMAKE_CXX_COMPILER=clang++.exe",
             "-DGGML_HIPBLAS=on",
-            "-DLLAMA_CUDA_NO_PEER_COPY=on",
             "-DHIP_PLATFORM=amd",
             "-DGGML_AVX=on",
             "-DGGML_AVX2=off",
@@ -398,11 +382,10 @@ init_vars
 if ($($args.count) -eq 0) {
     git_module_setup
     apply_patches
-    build_static
     if ($script:ARCH -eq "arm64") {
-        build_cpu("ARM64")
+        build_cpu_arm64
     } else { # amd64
-        build_cpu("x64")
+        build_cpu_x64
         build_cpu_avx
         build_cpu_avx2
         build_cuda
@@ -416,5 +399,5 @@ if ($($args.count) -eq 0) {
     for ( $i = 0; $i -lt $args.count; $i++ ) {
         write-host "performing $($args[$i])"
         & $($args[$i])
-    } 
+    }
 }

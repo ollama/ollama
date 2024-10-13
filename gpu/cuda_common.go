@@ -57,7 +57,7 @@ func cudaVariant(gpuInfo CudaGPUInfo) string {
 		}
 	}
 
-	if gpuInfo.computeMajor < 6 || gpuInfo.DriverMajor < 12 {
+	if gpuInfo.computeMajor < 6 || gpuInfo.DriverMajor < 12 || (gpuInfo.DriverMajor == 12 && gpuInfo.DriverMinor == 0) {
 		return "v11"
 	}
 	return "v12"

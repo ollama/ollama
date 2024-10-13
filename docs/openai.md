@@ -25,7 +25,7 @@ chat_completion = client.chat.completions.create(
             'content': 'Say this is a test',
         }
     ],
-    model='llama3',
+    model='llama3.2',
 )
 
 response = client.chat.completions.create(
@@ -46,13 +46,13 @@ response = client.chat.completions.create(
 )
 
 completion = client.completions.create(
-    model="llama3",
+    model="llama3.2",
     prompt="Say this is a test",
 )
 
 list_completion = client.models.list()
 
-model = client.models.retrieve("llama3")
+model = client.models.retrieve("llama3.2")
 
 embeddings = client.embeddings.create(
     model="all-minilm",
@@ -74,7 +74,7 @@ const openai = new OpenAI({
 
 const chatCompletion = await openai.chat.completions.create({
     messages: [{ role: 'user', content: 'Say this is a test' }],
-    model: 'llama3',
+    model: 'llama3.2',
 })
 
 const response = await openai.chat.completions.create({
@@ -94,13 +94,13 @@ const response = await openai.chat.completions.create({
 })
 
 const completion = await openai.completions.create({
-    model: "llama3",
+    model: "llama3.2",
     prompt: "Say this is a test.",
 })
 
 const listCompletion = await openai.models.list()
 
-const model = await openai.models.retrieve("llama3")
+const model = await openai.models.retrieve("llama3.2")
 
 const embedding = await openai.embeddings.create({
   model: "all-minilm",
@@ -114,7 +114,7 @@ const embedding = await openai.embeddings.create({
 curl http://localhost:11434/v1/chat/completions \
     -H "Content-Type: application/json" \
     -d '{
-        "model": "llama3",
+        "model": "llama3.2",
         "messages": [
             {
                 "role": "system",
@@ -154,13 +154,13 @@ curl http://localhost:11434/v1/chat/completions \
 curl http://localhost:11434/v1/completions \
     -H "Content-Type: application/json" \
     -d '{
-        "model": "llama3",
+        "model": "llama3.2",
         "prompt": "Say this is a test"
     }'
 
 curl http://localhost:11434/v1/models
 
-curl http://localhost:11434/v1/models/llama3
+curl http://localhost:11434/v1/models/llama3.2
 
 curl http://localhost:11434/v1/embeddings \
     -H "Content-Type: application/json" \
@@ -274,7 +274,7 @@ curl http://localhost:11434/v1/embeddings \
 Before using a model, pull it locally `ollama pull`:
 
 ```shell
-ollama pull llama3
+ollama pull llama3.2
 ```
 
 ### Default model names
@@ -282,7 +282,7 @@ ollama pull llama3
 For tooling that relies on default OpenAI model names such as `gpt-3.5-turbo`, use `ollama cp` to copy an existing model name to a temporary name:
 
 ```
-ollama cp llama3 gpt-3.5-turbo
+ollama cp llama3.2 gpt-3.5-turbo
 ```
 
 Afterwards, this new model name can be specified the `model` field:
@@ -292,6 +292,31 @@ curl http://localhost:11434/v1/chat/completions \
     -H "Content-Type: application/json" \
     -d '{
         "model": "gpt-3.5-turbo",
+        "messages": [
+            {
+                "role": "user",
+                "content": "Hello!"
+            }
+        ]
+    }'
+```
+
+### Setting the context size
+
+The OpenAI API does not have a way of setting the context size for a model. If you need to change the context size, create a `Modelfile` which looks like:
+
+```modelfile
+FROM <some model>
+PARAMETER num_ctx <context size>
+```
+
+Use the `ollama create mymodel` command to create a new model with the updated context size. Call the API with the updated model name:
+
+```shell
+curl http://localhost:11434/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model": "mymodel",
         "messages": [
             {
                 "role": "user",

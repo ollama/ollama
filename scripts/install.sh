@@ -38,7 +38,7 @@ IS_WSL2=false
 KERN=$(uname -r)
 case "$KERN" in
     *icrosoft*WSL2 | *icrosoft*wsl2) IS_WSL2=true;;
-    *icrosoft) error "Microsoft WSL1 is not currently supported. Please upgrade to WSL2 with 'wsl --set-version <distro> 2'" ;;
+    *icrosoft) error "Microsoft WSL1 is not currently supported. Please use WSL2 with 'wsl --set-version <distro> 2'" ;;
     *) ;;
 esac
 
@@ -356,12 +356,12 @@ if ! lsmod | grep -q nvidia || ! lsmod | grep -q nvidia_uvm; then
 fi
 
 # make sure the NVIDIA modules are loaded on boot with nvidia-persistenced
-if command -v nvidia-persistenced > /dev/null 2>&1; then
+if available nvidia-persistenced; then
     $SUDO touch /etc/modules-load.d/nvidia.conf
     MODULES="nvidia nvidia-uvm"
     for MODULE in $MODULES; do
         if ! grep -qxF "$MODULE" /etc/modules-load.d/nvidia.conf; then
-            echo "$MODULE" | sudo tee -a /etc/modules-load.d/nvidia.conf > /dev/null
+            echo "$MODULE" | $SUDO tee -a /etc/modules-load.d/nvidia.conf > /dev/null
         fi
     done
 fi

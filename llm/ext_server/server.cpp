@@ -262,7 +262,7 @@ struct server_slot {
        char buffer[512];
         double t_token = t_prompt_processing / n_prompt_tokens_processed;
         double n_tokens_second = 1e3 / t_prompt_processing * n_prompt_tokens_processed;
-        sprintf(buffer, "prompt eval time     = %10.2f ms / %5d tokens (%8.2f ms per token, %8.2f tokens per second)",
+        snprintf(buffer, sizeof(buffer), "prompt eval time     = %10.2f ms / %5d tokens (%8.2f ms per token, %8.2f tokens per second)",
                 t_prompt_processing, n_prompt_tokens_processed,
                 t_token, n_tokens_second);
         LOG_DEBUG(buffer, {
@@ -276,7 +276,7 @@ struct server_slot {
 
         t_token = t_token_generation / n_decoded;
         n_tokens_second = 1e3 / t_token_generation * n_decoded;
-        sprintf(buffer, "generation eval time = %10.2f ms / %5d runs   (%8.2f ms per token, %8.2f tokens per second)",
+        snprintf(buffer, sizeof(buffer), "generation eval time = %10.2f ms / %5d runs   (%8.2f ms per token, %8.2f tokens per second)",
                 t_token_generation, n_decoded,
                 t_token, n_tokens_second);
         LOG_DEBUG(buffer, {
@@ -288,7 +288,7 @@ struct server_slot {
             {"n_tokens_second",    n_tokens_second},
         });
 
-        sprintf(buffer, "          total time = %10.2f ms", t_prompt_processing + t_token_generation);
+        snprintf(buffer, sizeof(buffer), "          total time = %10.2f ms", t_prompt_processing + t_token_generation);
         LOG_DEBUG(buffer, {
             {"slot_id",             id},
             {"task_id",             task_id},
@@ -425,7 +425,7 @@ struct llama_server_context
 
         n_ctx = llama_n_ctx(ctx);
 
-        add_bos_token = llama_should_add_bos_token(model);
+        add_bos_token = llama_add_bos_token(model);
 
         return true;
     }
@@ -913,7 +913,9 @@ struct llama_server_context
         slot.sampled = result.tok;
 
         // search stop word and delete it
-        slot.generated_text += token_str;
+        if (!llama_token_is_eog(model, result.tok))
+            slot.generated_text += token_str;
+
         slot.has_next_token = true;
 
         if (slot.ctx_sampling->params.use_penalty_prompt_tokens && result.tok != -1)
@@ -954,30 +956,36 @@ struct llama_server_context
         if (!incomplete)
         {
             size_t pos = std::min(slot.n_sent_text, slot.generated_text.size());
-            const std::string str_test = slot.generated_text.substr(pos);
-            bool is_stop_full = false;
-            size_t stop_pos = find_stopping_strings(str_test, token_str.size(), STOP_FULL, slot);
-            if (stop_pos != std::string::npos)
-            {
-                is_stop_full = true;
-                slot.generated_text.erase(
-                    slot.generated_text.begin() + pos + stop_pos,
-                    slot.generated_text.end());
-                pos = std::min(slot.n_sent_text, slot.generated_text.size());
-            }
-            else
-            {
-                is_stop_full = false;
-                stop_pos = find_stopping_strings(str_test, token_str.size(), STOP_PARTIAL, slot);
-            }
 
-            // check if there is any token to predict
-            if (stop_pos == std::string::npos || (!slot.has_next_token && !is_stop_full && stop_pos > 0))
-            {
-                // no send the stop word in the response
-                result.text_to_send = slot.generated_text.substr(pos, std::string::npos);
-                slot.n_sent_text += result.text_to_send.size();
-                // add the token to slot queue and cache
+            if (!llama_token_is_eog(model, result.tok)) {
+                const std::string str_test = slot.generated_text.substr(pos);
+                bool is_stop_full = false;
+                size_t stop_pos = find_stopping_strings(str_test, token_str.size(), STOP_FULL, slot);
+                if (stop_pos != std::string::npos)
+                {
+                    is_stop_full = true;
+                    slot.generated_text.erase(
+                        slot.generated_text.begin() + pos + stop_pos,
+                        slot.generated_text.end());
+                    pos = std::min(slot.n_sent_text, slot.generated_text.size());
+                }
+                else
+                {
+                    is_stop_full = false;
+                    stop_pos = find_stopping_strings(str_test, token_str.size(), STOP_PARTIAL, slot);
+                }
+
+                // check if there is any token to predict
+                if (stop_pos == std::string::npos || (!slot.has_next_token && !is_stop_full && stop_pos > 0))
+                {
+                    // no send the stop word in the response
+                    result.text_to_send = slot.generated_text.substr(pos, std::string::npos);
+                    slot.n_sent_text += result.text_to_send.size();
+                    // add the token to slot queue and cache
+                }
+            } else {
+                    result.text_to_send = slot.generated_text.substr(pos, std::string::npos);
+                    slot.n_sent_text += result.text_to_send.size();
             }
 
             if (slot.params.stream)
@@ -1031,7 +1039,7 @@ struct llama_server_context
                 continue;
             }
 
-            if (!llava_image_embed_make_with_clip_img(clp_ctx, params.n_threads, img.img_data, &img.image_embedding, &img.image_tokens)) {
+            if (!llava_image_embed_make_with_clip_img(clp_ctx, params.cpuparams.n_threads, img.img_data, &img.image_embedding, &img.image_tokens)) {
                 LOG_TEE("Error processing the given image");
                 return false;
             }
@@ -1117,9 +1125,7 @@ struct llama_server_context
             {"multimodal", multimodal}
         };
 
-        if (!llama_token_is_eog(model, tkn.tok)) {
-            res.result_json["content"] = tkn.text_to_send;
-        }
+        res.result_json["content"] = tkn.text_to_send;
 
         if (slot.sparams.n_probs > 0)
         {
@@ -1429,7 +1435,13 @@ struct llama_server_context
         switch (task.type)
         {
             case TASK_TYPE_COMPLETION: {
-                server_slot *slot = prefix_slot(task.data["prompt"]);
+                server_slot *slot = nullptr;
+                if (task.embedding_mode) {
+                    // Embedding seq_id (aka slot id) must always be <= token length, so always use slot 0
+                    slot = slots[0].available() ? &slots[0] : nullptr;
+                } else {
+                    slot = prefix_slot(task.data["prompt"]);
+                }
                 if (slot == nullptr)
                 {
                     // if no slot is available, we defer this task for processing later
@@ -2008,7 +2020,7 @@ static void server_print_usage(const char *argv0, const gpt_params &params,
     printf("options:\n");
     printf("  -h, --help                show this help message and exit\n");
     printf("  -v, --verbose             verbose output (default: %s)\n", server_verbose ? "enabled" : "disabled");
-    printf("  -t N, --threads N         number of threads to use during computation (default: %d)\n", params.n_threads);
+    printf("  -t N, --threads N         number of threads to use during computation (default: %d)\n", params.cpuparams.n_threads);
     printf("  -tb N, --threads-batch N  number of threads to use during batch and prompt processing (default: same as --threads)\n");
     printf("  --threads-http N          number of threads in the http server pool to process requests (default: max(hardware concurrency - 1, --parallel N + 2))\n");
     printf("  -c N, --ctx-size N        size of the prompt context (default: %d)\n", params.n_ctx);
@@ -2281,7 +2293,7 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
                 invalid_param = true;
                 break;
             }
-            params.n_threads = std::stoi(argv[i]);
+            params.cpuparams.n_threads = std::stoi(argv[i]);
         }
         else if (arg == "--grp-attn-n" || arg == "-gan")
         {
@@ -2309,7 +2321,7 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
                 invalid_param = true;
                 break;
             }
-            params.n_threads_batch = std::stoi(argv[i]);
+            params.cpuparams_batch.n_threads = std::stoi(argv[i]);
         }
         else if (arg == "--threads-http")
         {
@@ -2620,6 +2632,11 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
         params.kv_overrides.back().key[0] = 0;
     }
 
+    postprocess_cpu_params(params.cpuparams, nullptr);
+    postprocess_cpu_params(params.cpuparams_batch, &params.cpuparams);
+    postprocess_cpu_params(params.draft_cpuparams, &params.cpuparams);
+    postprocess_cpu_params(params.draft_cpuparams_batch, &params.cpuparams_batch);
+
     if (invalid_param)
     {
         fprintf(stderr, "error: invalid parameter for argument: %s\n", arg.c_str());
@@ -2765,12 +2782,13 @@ int main(int argc, char **argv) {
     llama_backend_init();
     llama_numa_init(params.numa);
 
+    LOG_INFO("starting c++ runner", {});
     LOG_INFO("build info", {{"build", LLAMA_BUILD_NUMBER},
                             {"commit", LLAMA_COMMIT}});
 
     LOG_INFO("system info", {
-                                {"n_threads", params.n_threads},
-                                {"n_threads_batch", params.n_threads_batch},
+                                {"n_threads", params.cpuparams.n_threads},
+                                {"n_threads_batch", params.cpuparams_batch.n_threads},
                                 {"total_threads", std::thread::hardware_concurrency()},
                                 {"system_info", llama_print_system_info()},
                             });
