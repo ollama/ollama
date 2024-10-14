@@ -402,7 +402,7 @@ jobs:
             ppc64le) echo GOARCH=ppc64le ;;
           esac >>$GITHUB_ENV
         shell: bash
-      - run: 
+      - run: | 
           export GOPATH=$HOME/go
           export GOROOT=$HOME/go
           export PATH=$PATH:$GOPATH/go/bin
