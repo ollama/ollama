@@ -307,15 +307,15 @@ jobs:
           #export GOROOT=${GOROOT:-"/usr/local/go"}
           #export GOPATH=${GOPATH:-$HOME/go}
           wget https://golang.org/dl/go${GO_VERSION}.linux-ppc64le.tar.gz
-          # sudo mkdir $HOME/go
-          sudo tar xvzf go${GO_VERSION}.linux-ppc64le.tar.gz -C $HOME
+          sudo mkdir $HOME/go
+          sudo tar xvzf go${GO_VERSION}.linux-ppc64le.tar.gz -C $HOME/go
           #sudo rm -rf go${GO_VERSION}.linux-ppc64le.tar.gz
           echo "go installed"
           export GOPATH=$HOME/go
           export GOROOT=$HOME/go
-          export PATH=$PATH:$GOROOT/bin:$GOPATH/bin
+          export PATH=$PATH:$GOPATH/go/bin
           echo $PATH
-          cd /go/bin
+          cd /go/go/bin
           echo " Go version check"
           #sudo apt-get install -y git golang 1.22.5
           go version
