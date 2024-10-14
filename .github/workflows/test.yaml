@@ -410,6 +410,7 @@ jobs:
           echo " verify Go version "
           go version 
           sudo chmod +777 /go
+          yum install -y cmake gcc-c++
           go generate ./...
       - run: go build
       - run: go test -v ./...
