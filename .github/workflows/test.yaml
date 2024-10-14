@@ -315,7 +315,8 @@ jobs:
           export GOROOT=$HOME/go
           export PATH=$PATH:$GOROOT/bin:$GOPATH/bin
           echo $PATH
-          ls $HOME/go
+          cd /go/bin
+          echo " Go version check"
           #sudo apt-get install -y git golang 1.22.5
           go version
           case ${{ env.GOARCH }} in
