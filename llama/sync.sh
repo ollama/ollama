@@ -93,8 +93,6 @@ cp $src_dir/common/common.cpp $dst_dir/common.cpp
 cp $src_dir/common/common.h $dst_dir/common.h
 cp $src_dir/common/sampling.cpp $dst_dir/sampling.cpp
 cp $src_dir/common/sampling.h $dst_dir/sampling.h
-cp $src_dir/common/grammar-parser.cpp $dst_dir/grammar-parser.cpp
-cp $src_dir/common/grammar-parser.h $dst_dir/grammar-parser.h
 cp $src_dir/common/json.hpp $dst_dir/json.hpp
 cp $src_dir/common/json-schema-to-grammar.cpp $dst_dir/json-schema-to-grammar.cpp
 cp $src_dir/common/json-schema-to-grammar.h $dst_dir/json-schema-to-grammar.h
