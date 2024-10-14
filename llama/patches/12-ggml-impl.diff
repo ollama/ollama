@@ -1,0 +1,12 @@
+diff --git a/src/llama.cpp b/src/llama.cpp
+index 4c0a1bb6..2c745d16 100644
+--- a/src/llama.cpp
++++ b/src/llama.cpp
+@@ -5,6 +5,7 @@
+ #include "unicode.h"
+ 
+ #include "ggml.h"
++#include "ggml-impl.h"
+ #include "ggml-alloc.h"
+ #include "ggml-backend.h"
+ 
