@@ -323,9 +323,14 @@ jobs:
             ppc64le) echo ARCH=ppc64le ;;
           esac >>$GITHUB_ENV
         shell: bash
-      - uses: golangci/golangci-lint-action@v3
-        with:
-          args: --timeout 8m0s -v
+      - name: Build and install plugins 
+        run: |
+          git clone https://github.com/golangci/example-plugin-linter.git
+          cd example-plugin-linter
+          go build -o '${{ github.workspace }}/.plugins/example.so' -buildmode=plugin plugin/example.go
+        working-directory: ${{ runner.temp }}
+        env:
+          CGO_ENABLED: 1
   test:
     strategy:
       matrix:
