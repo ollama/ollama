@@ -403,7 +403,7 @@ jobs:
           esac >>$GITHUB_ENV
         shell: bash
       - run: 
-          export GOARCH=$(uname -m )
+          export GOARCH=ppc64le
           export GOPATH=$HOME/go
           export GOROOT=$HOME/go
           export PATH=$PATH:$GOPATH/go/bin
