@@ -396,15 +396,19 @@ jobs:
           cd /go/go/bin
           echo " Go version check"
           #sudo apt-get install -y git golang 1.22.5
-          go version
-          with:
-            cache: true
+          go version      
       - run: |
           case ${{ env.GOARCH }} in
             ppc64le) echo ARCH=ppc64le ;;
           esac >>$GITHUB_ENV
         shell: bash
-      - run: go generate ./...
+      - run: | 
+          export GOPATH=$HOME/go
+          export GOROOT=$HOME/go
+          export PATH=$PATH:$GOPATH/go/bin
+          echo $PATH
+          pwd
+          go generate ./...
       - run: go build
       - run: go test -v ./...
 
