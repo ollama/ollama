@@ -409,7 +409,7 @@ jobs:
           echo $PATH
           echo " verify Go "
           go version 
-          pwd
+          chmod +777 pwd
           go generate ./...
       - run: go build
       - run: go test -v ./...
