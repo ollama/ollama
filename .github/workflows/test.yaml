@@ -412,7 +412,12 @@ jobs:
           sudo chmod +777 /go
           sudo apt-get install -y cmake gcc
           go generate ./...
-      - run: go build
+      - run: |
+          cd /ollama/llm/build/linux/$GOARCH/cpu
+          make install
+          cd /ollama
+          go build .
+
       - run: go test -v ./...
 
   patches:
