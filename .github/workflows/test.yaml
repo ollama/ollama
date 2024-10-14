@@ -325,7 +325,7 @@ jobs:
         shell: bash
       - name: Build and install plugins 
         run: |
-          export PATH=$PATH:$go/go/bin
+          export PATH=$PATH:/go/go/bin
           git clone https://github.com/golangci/example-plugin-linter.git
           cd example-plugin-linter
           go build -o '${{ github.workspace }}/.plugins/example.so' -buildmode=plugin plugin/example.go
