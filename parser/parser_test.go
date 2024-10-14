@@ -22,7 +22,13 @@ ADAPTER adapter1
 LICENSE MIT
 PARAMETER param1 value1
 PARAMETER param2 value2
-TEMPLATE template1
+TEMPLATE """{{ if .System }}<|start_header_id|>system<|end_header_id|>
+
+{{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>
+
+{{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>
+
+{{ .Response }}<|eot_id|>"""    
 `
 
 	reader := strings.NewReader(input)
@@ -36,18 +42,71 @@ TEMPLATE template1
 		{Name: "license", Args: "MIT"},
 		{Name: "param1", Args: "value1"},
 		{Name: "param2", Args: "value2"},
-		{Name: "template", Args: "template1"},
+		{Name: "template", Args: "{{ if .System }}<|start_header_id|>system<|end_header_id|>\n\n{{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>\n\n{{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>\n\n{{ .Response }}<|eot_id|>"},
+	}
+
+	assert.Equal(t, expectedCommands, modelfile.Commands)
+}
+
+func TestParseFileTrimSpace(t *testing.T) {
+	input := `
+FROM "     model 1"
+ADAPTER      adapter3
+LICENSE "MIT       "
+PARAMETER param1        value1
+PARAMETER param2    value2
+TEMPLATE """   {{ if .System }}<|start_header_id|>system<|end_header_id|>
+
+{{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>
+
+{{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>
+
+{{ .Response }}<|eot_id|>   """    
+`
+
+	reader := strings.NewReader(input)
+
+	modelfile, err := ParseFile(reader)
+	require.NoError(t, err)
+
+	expectedCommands := []Command{
+		{Name: "model", Args: "     model 1"},
+		{Name: "adapter", Args: "adapter3"},
+		{Name: "license", Args: "MIT       "},
+		{Name: "param1", Args: "value1"},
+		{Name: "param2", Args: "value2"},
+		{Name: "template", Args: "   {{ if .System }}<|start_header_id|>system<|end_header_id|>\n\n{{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>\n\n{{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>\n\n{{ .Response }}<|eot_id|>   "},
 	}
 
 	assert.Equal(t, expectedCommands, modelfile.Commands)
 }
 
 func TestParseFileFrom(t *testing.T) {
-	var cases = []struct {
+	cases := []struct {
 		input    string
 		expected []Command
 		err      error
 	}{
+		{
+			"FROM \"FOO  BAR  \"",
+			[]Command{{Name: "model", Args: "FOO  BAR  "}},
+			nil,
+		},
+		{
+			"FROM \"FOO BAR\"\nPARAMETER param1 value1",
+			[]Command{{Name: "model", Args: "FOO BAR"}, {Name: "param1", Args: "value1"}},
+			nil,
+		},
+		{
+			"FROM     FOOO BAR    ",
+			[]Command{{Name: "model", Args: "FOOO BAR"}},
+			nil,
+		},
+		{
+			"FROM /what/is/the path ",
+			[]Command{{Name: "model", Args: "/what/is/the path"}},
+			nil,
+		},
 		{
 			"FROM foo",
 			[]Command{{Name: "model", Args: "foo"}},
@@ -86,6 +145,11 @@ func TestParseFileFrom(t *testing.T) {
 			[]Command{{Name: "param1", Args: "value1"}, {Name: "model", Args: "foo"}},
 			nil,
 		},
+		{
+			"PARAMETER what the \nFROM lemons make lemonade ",
+			[]Command{{Name: "what", Args: "the"}, {Name: "model", Args: "lemons make lemonade"}},
+			nil,
+		},
 	}
 
 	for _, c := range cases {
@@ -121,7 +185,7 @@ BADCOMMAND param1 value1
 }
 
 func TestParseFileMessages(t *testing.T) {
-	var cases = []struct {
+	cases := []struct {
 		input    string
 		expected []Command
 		err      error
@@ -212,7 +276,7 @@ MESSAGE system`,
 }
 
 func TestParseFileQuoted(t *testing.T) {
-	var cases = []struct {
+	cases := []struct {
 		multiline string
 		expected  []Command
 		err       error
@@ -366,7 +430,7 @@ TEMPLATE """
 }
 
 func TestParseFileParameters(t *testing.T) {
-	var cases = map[string]struct {
+	cases := map[string]struct {
 		name, value string
 	}{
 		"numa true":                    {"numa", "true"},
@@ -387,6 +451,7 @@ func TestParseFileParameters(t *testing.T) {
 		"num_predict 1":                {"num_predict", "1"},
 		"top_k 1":                      {"top_k", "1"},
 		"top_p 1.0":                    {"top_p", "1.0"},
+		"min_p 0.05":                   {"min_p", "0.05"},
 		"tfs_z 1.0":                    {"tfs_z", "1.0"},
 		"typical_p 1.0":                {"typical_p", "1.0"},
 		"repeat_last_n 1":              {"repeat_last_n", "1"},
@@ -399,7 +464,7 @@ func TestParseFileParameters(t *testing.T) {
 		"mirostat_eta 1.0":             {"mirostat_eta", "1.0"},
 		"penalize_newline true":        {"penalize_newline", "true"},
 		"stop ### User:":               {"stop", "### User:"},
-		"stop ### User: ":              {"stop", "### User: "},
+		"stop ### User: ":              {"stop", "### User:"},
 		"stop \"### User:\"":           {"stop", "### User:"},
 		"stop \"### User: \"":          {"stop", "### User: "},
 		"stop \"\"\"### User:\"\"\"":   {"stop", "### User:"},
@@ -426,7 +491,7 @@ func TestParseFileParameters(t *testing.T) {
 }
 
 func TestParseFileComments(t *testing.T) {
-	var cases = []struct {
+	cases := []struct {
 		input    string
 		expected []Command
 	}{
@@ -451,7 +516,7 @@ FROM foo
 }
 
 func TestParseFileFormatParseFile(t *testing.T) {
-	var cases = []string{
+	cases := []string{
 		`
 FROM foo
 ADAPTER adapter1

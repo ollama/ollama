@@ -1,0 +1,6 @@
+[INST] {{ range $index, $_ := .Messages }}
+{{- if eq .Role "system" }}{{ .Content }}
+
+{{ else if eq .Role "user" }}{{ .Content }}[/INST]
+{{- else if eq .Role "assistant" }} {{ .Content }}</s>[INST] {{ end }}
+{{- end }}

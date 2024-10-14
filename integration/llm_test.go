@@ -35,8 +35,8 @@ var (
 		},
 	}
 	resp = [2][]string{
-		[]string{"sunlight"},
-		[]string{"england", "english", "massachusetts", "pilgrims"},
+		{"sunlight"},
+		{"england", "english", "massachusetts", "pilgrims"},
 	}
 )
 

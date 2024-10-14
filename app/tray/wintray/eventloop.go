@@ -11,9 +11,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var (
-	quitOnce sync.Once
-)
+var quitOnce sync.Once
 
 func (t *winTray) Run() {
 	nativeLoop()

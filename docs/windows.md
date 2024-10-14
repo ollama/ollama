@@ -19,15 +19,17 @@ Logs will often be helpful in diagnosing the problem (see
 
 ## System Requirements
 
-* Windows 10 or newer, Home or Pro
+* Windows 10 22H2 or newer, Home or Pro
 * NVIDIA 452.39 or newer Drivers if you have an NVIDIA card
 * AMD Radeon Driver https://www.amd.com/en/support if you have a Radeon card
+
+Ollama uses unicode characters for progress indication, which may render as unknown squares in some older terminal fonts in Windows 10. If you see this, try changing your terminal font settings.
 
 ## API Access
 
 Here's a quick example showing API access from `powershell`
 ```powershell
-(Invoke-WebRequest -method POST -Body '{"model":"llama3", "prompt":"Why is the sky blue?", "stream": false}' -uri http://localhost:11434/api/generate ).Content | ConvertFrom-json
+(Invoke-WebRequest -method POST -Body '{"model":"llama3.2", "prompt":"Why is the sky blue?", "stream": false}' -uri http://localhost:11434/api/generate ).Content | ConvertFrom-json
 ```
 
 ## Troubleshooting
@@ -46,6 +48,9 @@ the explorer window by hitting `<cmd>+R` and type in:
 - `explorer %HOMEPATH%\.ollama` contains models and configuration
 - `explorer %TEMP%` contains temporary executable files in one or more `ollama*` directories
 
+## Uninstall
+
+The Ollama Windows installer registers an Uninstaller application.  Under `Add or remove programs` in Windows Settings, you can uninstall Ollama.
 
 ## Standalone CLI
 
