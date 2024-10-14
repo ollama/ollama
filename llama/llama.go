@@ -128,11 +128,21 @@ func (c *Context) SampleTokenGreedy(logits []float32) int {
 		ptr.p = 0.0
 	}
 
-	return int(C.llama_sample_token_greedy(c.c, &C.llama_token_data_array{
+	// Since the logits are provided externally, we unbox the
+	// llama_sampler_sample implementation here
+	// CITE: https://github.com/ggerganov/llama.cpp/blob/master/include/llama.h#L1154
+	sampler := C.llama_sampler_init_greedy()
+	cur_p := &C.llama_token_data_array{
 		data:   candidates,
 		size:   C.size_t(len(logits)),
 		sorted: C.bool(false),
-	}))
+	}
+	C.llama_sampler_apply(sampler, cur_p)
+	tokenPtr := (*C.struct_llama_token_data)(unsafe.Pointer(uintptr(unsafe.Pointer(candidates)) + uintptr(cur_p.selected)*unsafe.Sizeof(C.struct_llama_token_data{})))
+	token := tokenPtr.id
+	C.llama_sampler_accept(sampler, token)
+	C.llama_sampler_free(sampler)
+	return int(token)
 }
 
 func (c *Context) KvCacheSeqAdd(seqId int, p0 int, p1 int, delta int) {
