@@ -1,8 +1,9 @@
 #!/bin/bash
 
-# Run in the llama directory
-
 set -e
+
+# Run in the llama directory
+cd $(dirname ${BASH_SOURCE[0]})
 
 # Set the source directory
 # TODO in the future: src_dir=$1
@@ -25,7 +26,7 @@ if [ -z "${OLLAMA_SKIP_PATCHING}" ]; then
     echo "Applying $patch"
     git -C $src_dir apply "$patch"
   done
-else 
+else
   echo "Skipping patching"
 fi
 
