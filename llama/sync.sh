@@ -86,6 +86,7 @@ cp $src_dir/examples/llava/clip.h $dst_dir/clip.h
 cp $src_dir/examples/llava/llava.cpp $dst_dir/llava.cpp
 cp $src_dir/examples/llava/llava.h $dst_dir/llava.h
 cp $src_dir/common/log.h $dst_dir/log.h
+cp $src_dir/common/log.cpp $dst_dir/log.cpp
 cp $src_dir/common/stb_image.h $dst_dir/stb_image.h
 
 # These files are mostly used by the llava code
