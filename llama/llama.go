@@ -445,7 +445,7 @@ func NewLlavaImageEmbed(llamaContext *Context, clipContext *ClipContext, data []
 // sampling
 // TODO: this is a temporary wrapper to allow calling C++ code from CGo
 type SamplingContext struct {
-	c *C.struct_llama_sampling_context
+	c *C.struct_llama_sampler
 }
 
 type SamplingParams struct {
@@ -467,7 +467,8 @@ type SamplingParams struct {
 	Grammar        string
 }
 
-func NewSamplingContext(params SamplingParams) *SamplingContext {
+func NewSamplingContext(model *Model, params SamplingParams) *SamplingContext {
+
 	var cparams C.struct_llama_sampling_cparams
 	cparams.top_k = C.int32_t(params.TopK)
 	cparams.top_p = C.float(params.TopP)
@@ -489,7 +490,7 @@ func NewSamplingContext(params SamplingParams) *SamplingContext {
 	defer C.free(unsafe.Pointer(grammar))
 
 	cparams.grammar = grammar
-	context := &SamplingContext{c: C.llama_sampling_cinit(&cparams)}
+	context := &SamplingContext{c: C.llama_sampling_cinit(model.c, &cparams)}
 	runtime.SetFinalizer(context, func(s *SamplingContext) { C.llama_sampling_cfree(s.c) })
 
 	return context
@@ -499,15 +500,10 @@ func (s *SamplingContext) Reset() {
 	C.llama_sampling_creset(s.c)
 }
 
-func (s *SamplingContext) Sample(ctxMain *Context, ctxConfig *Context, idx int) int {
-	// TODO (jmorganca): handle nil for all args
-	if ctxConfig == nil {
-		return int(C.llama_sampling_csample(s.c, ctxMain.c, nil, C.int(idx)))
-	}
-
-	return int(C.llama_sampling_csample(s.c, ctxMain.c, ctxConfig.c, C.int(idx)))
+func (s *SamplingContext) Sample(ctxMain *Context, idx int) int {
+	return int(C.llama_sampling_csample(s.c, ctxMain.c, C.int(idx)))
 }
 
-func (s *SamplingContext) Accept(ctxMain *Context, id int, applyGrammar bool) {
-	C.llama_sampling_caccept(s.c, ctxMain.c, C.llama_token(id), C.bool(applyGrammar))
+func (s *SamplingContext) Accept(id int, applyGrammar bool) {
+	C.llama_sampling_caccept(s.c, C.llama_token(id), C.bool(applyGrammar))
 }

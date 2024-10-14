@@ -126,10 +126,10 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 
 	var sc *llama.SamplingContext
 	if params.samplingParams != nil {
-		sc = llama.NewSamplingContext(*params.samplingParams)
+		sc = llama.NewSamplingContext(s.model, *params.samplingParams)
 		for _, input := range inputs {
 			if input.embed == nil {
-				sc.Accept(s.lc, input.token, false)
+				sc.Accept(input.token, false)
 			}
 		}
 	}
@@ -429,8 +429,8 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		}
 
 		// sample a token
-		token := seq.samplingCtx.Sample(s.lc, nil, seq.iBatch)
-		seq.samplingCtx.Accept(s.lc, token, true)
+		token := seq.samplingCtx.Sample(s.lc, seq.iBatch)
+		seq.samplingCtx.Accept(token, true)
 		piece := s.model.TokenToPiece(token)
 
 		seq.numPredicted++

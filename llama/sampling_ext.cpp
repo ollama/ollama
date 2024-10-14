@@ -2,14 +2,15 @@
 #include "sampling.h"
 #include "sampling_ext.h"
 
-struct llama_sampling_context *llama_sampling_cinit(struct llama_sampling_cparams *params)
+struct llama_sampler *llama_sampling_cinit(
+    const struct llama_model *model, struct llama_sampling_cparams *params)
 {
-    llama_sampling_params sparams;
+    gpt_sampler_params sparams;
     sparams.top_k = params->top_k;
     sparams.top_p = params->top_p;
     sparams.min_p = params->min_p;
     sparams.tfs_z = params->tfs_z;
-    sparams.typical_p = params->typical_p;
+    sparams.typ_p = params->typical_p;
     sparams.temp = params->temp;
     sparams.penalty_last_n = params->penalty_last_n;
     sparams.penalty_repeat = params->penalty_repeat;
@@ -21,33 +22,32 @@ struct llama_sampling_context *llama_sampling_cinit(struct llama_sampling_cparam
     sparams.penalize_nl = params->penalize_nl;
     sparams.seed = params->seed;
     sparams.grammar = params->grammar;
-    return llama_sampling_init(sparams);
+    return (llama_sampler*)gpt_sampler_init(model, sparams);
 }
 
-void llama_sampling_cfree(struct llama_sampling_context *ctx)
+void llama_sampling_cfree(struct llama_sampler *sampler)
 {
-    llama_sampling_free(ctx);
+    gpt_sampler_free((gpt_sampler*)sampler);
 }
 
-void llama_sampling_creset(struct llama_sampling_context *ctx)
+void llama_sampling_creset(struct llama_sampler *sampler)
 {
-    llama_sampling_reset(ctx);
+    gpt_sampler_reset((gpt_sampler*)sampler);
 }
 
 llama_token llama_sampling_csample(
-    struct llama_sampling_context *ctx_sampling,
+    struct llama_sampler *sampler,
     struct llama_context *ctx_main,
-    struct llama_context *ctx_cfg,
     int idx)
 {
-    return llama_sampling_sample(ctx_sampling, ctx_main, ctx_cfg, idx);
+    // TODO (ggoodhart): Do we need to support grammar_first?
+    return gpt_sampler_sample((gpt_sampler*)sampler, ctx_main, idx);
 }
 
 void llama_sampling_caccept(
-    struct llama_sampling_context *ctx_sampling,
-    struct llama_context *ctx_main,
+    struct llama_sampler *sampler,
     llama_token id,
     bool apply_grammar)
 {
-    llama_sampling_accept(ctx_sampling, ctx_main, id, apply_grammar);
+    gpt_sampler_accept((gpt_sampler*)sampler, id, apply_grammar);
 }

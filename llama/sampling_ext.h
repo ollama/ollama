@@ -29,19 +29,19 @@ extern "C"
         char *grammar;
     };
 
-    struct llama_sampling_context *llama_sampling_cinit(struct llama_sampling_cparams *params);
-    void llama_sampling_cfree(struct llama_sampling_context *ctx);
-    void llama_sampling_creset(struct llama_sampling_context *ctx);
+    struct llama_sampler *llama_sampling_cinit(
+        const struct llama_model *model,
+        struct llama_sampling_cparams *params);
+    void llama_sampling_cfree(struct llama_sampler *sampler);
+    void llama_sampling_creset(struct llama_sampler *sampler);
 
     llama_token llama_sampling_csample(
-        struct llama_sampling_context *ctx_sampling,
+        struct llama_sampler *sampler,
         struct llama_context *ctx_main,
-        struct llama_context *ctx_cfg,
         int idx);
 
     void llama_sampling_caccept(
-        struct llama_sampling_context *ctx_sampling,
-        struct llama_context *ctx_main,
+        struct llama_sampler *sampler,
         llama_token id,
         bool apply_grammar);
 
