@@ -407,7 +407,7 @@ jobs:
           export GOROOT=$HOME/go
           export PATH=$PATH:$GOPATH/go/bin
           echo $PATH
-          echo " verify Go "
+          echo " verify Go version "
           go version 
           sudo chmod +777 /go
           go generate ./...
