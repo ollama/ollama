@@ -398,7 +398,6 @@ jobs:
           #sudo apt-get install -y git golang 1.22.5
           go version
           with:
-            go-version-file: go.mod
             cache: true
       - run: |
           case ${{ env.GOARCH }} in
