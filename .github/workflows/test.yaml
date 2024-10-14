@@ -323,7 +323,7 @@ jobs:
             ppc64le) echo ARCH=ppc64le ;;
           esac >>$GITHUB_ENV
         shell: bash
-      - uses: golangci/golangci-lint-action@v6
+      - uses: golangci/golangci-lint-action@v3
         with:
           args: --timeout 8m0s -v
   test:
