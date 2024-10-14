@@ -407,11 +407,10 @@ jobs:
           export GOROOT=$HOME/go
           export PATH=$PATH:$GOPATH/go/bin
           echo $PATH
-          cd $GOPATH/go/bin
           echo " verify Go "
           go version 
           pwd
-          go generate ./...
+          sudo go generate ./...
       - run: go build
       - run: go test -v ./...
 
