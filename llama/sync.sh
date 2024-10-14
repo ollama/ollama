@@ -68,6 +68,7 @@ cp $src_dir/ggml/include/ggml-alloc.h $dst_dir/ggml-alloc.h
 cp $src_dir/ggml/src/ggml-alloc.c $dst_dir/ggml-alloc.c
 cp $src_dir/ggml/src/ggml-aarch64.h $dst_dir/ggml-aarch64.h
 cp $src_dir/ggml/src/ggml-aarch64.c $dst_dir/ggml-aarch64.c
+cp $src_dir/ggml/src/ggml-cpu-impl.h $dst_dir/ggml-cpu-impl.h
 cp $src_dir/ggml/include/ggml-blas.h $dst_dir/ggml-blas.h
 cp $src_dir/ggml/src/ggml-blas.cpp $dst_dir/ggml-blas.cpp
 
