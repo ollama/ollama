@@ -403,6 +403,7 @@ jobs:
           esac >>$GITHUB_ENV
         shell: bash
       - run: | 
+          OLLAMA_HOME=`pwd`
           export GOPATH=$HOME/go
           export GOROOT=$HOME/go
           export PATH=$PATH:$GOPATH/go/bin
@@ -412,9 +413,9 @@ jobs:
           sudo chmod +777 /go
           sudo apt-get install -y cmake gcc
           go generate ./...
-          pwd
+          echo $OLLAMA_HOME
       - run: |
-          cd /ollama/llm/build/linux/$GOARCH/cpu
+          cd $OLLAMA_HOME/llm/build/linux/$GOARCH/cpu
           make install
           cd /ollama
           go build .
