@@ -399,11 +399,10 @@ jobs:
           go version      
       - run: |
           case ${{ env.GOARCH }} in
-            ppc64le) echo ARCH=ppc64le ;;
+            ppc64le) echo GOARCH=ppc64le ;;
           esac >>$GITHUB_ENV
         shell: bash
       - run: 
-          export GOARCH=ppc64le
           export GOPATH=$HOME/go
           export GOROOT=$HOME/go
           export PATH=$PATH:$GOPATH/go/bin
