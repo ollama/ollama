@@ -256,10 +256,14 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 				continue
 			}
 			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusTemporaryRedirect && resp.StatusCode != http.StatusOK {
-				return nil, fmt.Errorf("unexpected status code %d", resp.StatusCode)
+			statusClass := resp.StatusCode / 100
+			if statusClass == 3 {
+				return resp.Location()
 			}
-			return resp.Location()
+			if statusClass == 2 {
+				return requestURL, nil
+			}
+			return nil, fmt.Errorf("unexpected status code %d", resp.StatusCode)
 		}
 	}()
 	if err != nil {
