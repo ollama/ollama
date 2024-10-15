@@ -244,6 +244,8 @@ func (t Tensor) typeSize() uint64 {
 		return 8
 	case 29: // IQ1_M
 		return blockSize/8 + blockSize/16 + blockSize/32
+	case 30: // BF16
+		return 2
 	default:
 		return 0
 	}
