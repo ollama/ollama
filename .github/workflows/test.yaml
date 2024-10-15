@@ -414,7 +414,7 @@ jobs:
           go generate ./...
       - run: |
           OLLAMA_HOME=`pwd`
-          chmod +777 /usr/local/lib
+          sudo chmod +777 /usr/local/lib
           cd $OLLAMA_HOME/llm/build/linux/$GOARCH/cpu
           make install
           cd  $OLLAMA_HOME
