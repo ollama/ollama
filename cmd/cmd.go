@@ -121,7 +121,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				path = filepath.Join("/tmp", filepath.Base(hfModelPath))
 			}
 
-			log.Println("Path:", path)
 			if path == "~" {
 				path = home
 			} else if strings.HasPrefix(path, "~/") {
@@ -132,13 +131,16 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				path = filepath.Join(filepath.Dir(filename), path)
 			}
 
-			// Check if it's a directory and zip it if necessary
 			fi, err := os.Stat(path)
-			if err != nil {
+			if errors.Is(err, os.ErrNotExist) && modelfile.Commands[i].Name == "model" {
+				continue
+			} else if err != nil {
 				return err
 			}
 
 			if fi.IsDir() {
+				// this is likely a safetensors or pytorch directory
+				// TODO make this work w/ adapters
 				tempfile, err := tempZipFiles(path)
 				if err != nil {
 					return err
@@ -148,7 +150,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				path = tempfile
 			}
 
-			// Create the blob for the model
 			digest, err := createBlob(cmd, client, path, spinner)
 			if err != nil {
 				return err
@@ -158,77 +159,37 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	bars := make(map[string]*progress.Bar)
+	fn := func(resp api.ProgressResponse) error {
+		if resp.Digest != "" {
+			spinner.Stop()
+
+			bar, ok := bars[resp.Digest]
+			if !ok {
+				bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
+				bars[resp.Digest] = bar
+				p.Add(resp.Digest, bar)
+			}
+
+			bar.Set(resp.Completed)
+		} else if status != resp.Status {
+			spinner.Stop()
+
+			status = resp.Status
+			spinner = progress.NewSpinner(status)
+			p.Add(status, spinner)
+		}
+
+		return nil
+	}
+
 	quantize, _ := cmd.Flags().GetString("quantize")
 
 	request := api.CreateRequest{Name: args[0], Modelfile: modelfile.String(), Quantize: quantize}
-	if err := client.Create(cmd.Context(), &request, nil); err != nil {
+	if err := client.Create(cmd.Context(), &request, fn); err != nil {
 		return err
 	}
 
-	return nil
-}
-
-// downloadFromHuggingFace downloads the model from Hugging Face
-func downloadFromHuggingFace(url, destPath string) error {
-	// Check if the file already exists
-	if _, err := os.Stat(destPath); err == nil {
-		fmt.Println("Model already exists, skipping download.")
-		return nil
-	}
-	resp, err := http.Get(url)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to download the model, status code: %d", resp.StatusCode)
-	}
-
-	// Get the file size if available
-	totalSize, err := strconv.Atoi(resp.Header.Get("Content-Length"))
-	if err != nil {
-		fmt.Println("Unable to get content length:", err)
-		totalSize = -1 // If the size cannot be retrieved
-	}
-
-	out, err := os.Create(destPath)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	// Copy the content and show progress
-	buffer := make([]byte, 1024) // 1 KB buffer
-	var downloadedSize int
-	for {
-		// Read from the response body
-		n, err := resp.Body.Read(buffer)
-		if n > 0 {
-			// Write to the file
-			if _, err := out.Write(buffer[:n]); err != nil {
-				return err
-			}
-
-			// Update the progress
-			downloadedSize += n
-			if totalSize > 0 {
-				progress := float64(downloadedSize) / float64(totalSize) * 100
-				fmt.Printf("\rDownloading: %.2f%% complete", progress)
-			} else {
-				fmt.Printf("\rDownloaded: %d bytes", downloadedSize)
-			}
-		}
-		// Check if the download has finished
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-	}
-
-	fmt.Println("\nDownload complete.")
 	return nil
 }
 
@@ -1351,6 +1312,70 @@ Environment Variables:
 	}
 
 	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
+}
+
+// downloadFromHuggingFace downloads the model from Hugging Face
+func downloadFromHuggingFace(url, destPath string) error {
+	// Check if the file already exists
+	if _, err := os.Stat(destPath); err == nil {
+		fmt.Println("Model already exists, skipping download.")
+		return nil
+	}
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to download the model, status code: %d", resp.StatusCode)
+	}
+
+	// Get the file size if available
+	totalSize, err := strconv.Atoi(resp.Header.Get("Content-Length"))
+	if err != nil {
+		fmt.Println("Unable to get content length:", err)
+		totalSize = -1 // If the size cannot be retrieved
+	}
+
+	out, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	// Copy the content and show progress
+	buffer := make([]byte, 1024) // 1 KB buffer
+	var downloadedSize int
+	for {
+		// Read from the response body
+		n, err := resp.Body.Read(buffer)
+		if n > 0 {
+			// Write to the file
+			if _, err := out.Write(buffer[:n]); err != nil {
+				return err
+			}
+
+			// Update the progress
+			downloadedSize += n
+			if totalSize > 0 {
+				progress := float64(downloadedSize) / float64(totalSize) * 100
+				fmt.Printf("\rDownloading: %.2f%% complete", progress)
+			} else {
+				fmt.Printf("\rDownloaded: %d bytes", downloadedSize)
+			}
+		}
+		// Check if the download has finished
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	fmt.Println("\nDownload complete.")
+	return nil
 }
 
 func NewCLI() *cobra.Command {
