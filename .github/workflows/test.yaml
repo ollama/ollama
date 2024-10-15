@@ -375,6 +375,7 @@ jobs:
     env:
       GOARCH: $(uname -m )
       CGO_ENABLED: '1'
+      GOPROXY: https://proxy.golang.org,direct
     steps:
       - uses: actions/checkout@v4
         with:
