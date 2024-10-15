@@ -420,11 +420,14 @@ jobs:
           sudo chmod -R 777 /usr/local
           #sudo chmod +777 /usr/local/
           cd $OLLAMA_HOME/llm/build/linux/$GOARCH/cpu
+          echo "Running make install"
           make install
           cd  $OLLAMA_HOME
+          echo "Running go Build ."
           go build .
 
       - run: |
+          echo "Running go test -v ./..."
           export GOPATH=$HOME/go
           export GOROOT=$HOME/go
           export PATH=$PATH:$GOPATH/go/bin
