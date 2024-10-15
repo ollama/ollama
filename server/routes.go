@@ -18,7 +18,6 @@ import (
 	"os"
 	"os/signal"
 	"slices"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -37,7 +36,6 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/openai"
-	"github.com/ollama/ollama/runners"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/server/internal/registry"
 	"github.com/ollama/ollama/template"
@@ -1537,12 +1535,6 @@ func (s *Server) PsHandler(c *gin.Context) {
 }
 
 func (s *Server) InfoHandler(c *gin.Context) {
-	availRunners := []string{}
-	for k := range runners.GetAvailableServers(s.runnerDir) {
-		availRunners = append(availRunners, k)
-	}
-	sort.Strings(availRunners)
-
 	sysInfo := discover.GetSystemInfo()
 	ms, _ := Manifests(true)
 	fsUsed := uint64(0)
@@ -1593,7 +1585,6 @@ func (s *Server) InfoHandler(c *gin.Context) {
 			VRAMUsed:       vramUsed,
 		},
 		ComputeInfo: api.ComputeInfo{
-			AvailableRunners: availRunners,
 			SystemCompute: api.SystemComputeInfo{
 				CPUCores:    cores,
 				TotalMemory: sysInfo.System.TotalMemory,

@@ -1037,9 +1037,6 @@ type UnsupportedGPUInfo struct {
 	Error string `json:"error"`
 }
 type ComputeInfo struct {
-	// AvailableRunners is the current available LLM runners in the server
-	AvailableRunners []string `json:"available_runners"`
-
 	SystemCompute SystemComputeInfo `json:"system_compute"`
 
 	SupportedGPUs []GPUInfo `json:"supported_gpus"`

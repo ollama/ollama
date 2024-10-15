@@ -428,3 +428,12 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 
 	return version.Version, nil
 }
+
+// Info retrieves server information.
+func (c *Client) Info(ctx context.Context) (*InfoResponse, error) {
+	var resp InfoResponse
+	if err := c.do(ctx, http.MethodGet, "/api/info", nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
