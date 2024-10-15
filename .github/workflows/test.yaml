@@ -413,6 +413,7 @@ jobs:
           sudo apt-get install -y cmake gcc
           go generate ./...
       - run: |
+          echo "Running go build "
           OLLAMA_HOME=`pwd`
           export GOPATH=$HOME/go
           export GOROOT=$HOME/go
@@ -423,6 +424,7 @@ jobs:
           echo "Running make install"
           make install
           cd  $OLLAMA_HOME
+          echo $GOPROXY
           echo "Running go Build ."
           go build .
 
