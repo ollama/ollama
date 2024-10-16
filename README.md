@@ -331,6 +331,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ARGO](https://github.com/xark-argo/argo) (Locally download and run Ollama and Huggingface models with RAG on Mac/Windows/Linux)
 - [G1](https://github.com/bklieger-groq/g1) (Prototype of using prompting strategies to improve the LLM's reasoning through o1-like reasoning chains.)
 - [Ollama App](https://github.com/JHubi1/ollama-app) (Modern and easy-to-use multi-platform client for Ollama)
+- [ollama-chat-app](https://github.com/anan1213095357/ollama-chat-app) (Modern and easy-to-use multi-platform client for Ollama)
 
 ### Terminal
 
@@ -419,6 +420,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Maid](https://github.com/Mobile-Artificial-Intelligence/maid)
 - [Ollama App](https://github.com/JHubi1/ollama-app) (Modern and easy-to-use multi-platform client for Ollama)
 - [ConfiChat](https://github.com/1runeberg/confichat) (Lightweight, standalone, multi-platform, and privacy focused LLM chat interface with optional encryption)
+- [ollama-chat-app](https://github.com/anan1213095357/ollama-chat-app) (Modern and easy-to-use multi-platform client for Ollama)
 
 ### Extensions & Plugins
 
