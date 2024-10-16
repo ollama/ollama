@@ -3,7 +3,6 @@
 set -e
 
 # Run in the llama directory
-cd $(dirname ${BASH_SOURCE[0]})
 
 # Set the source directory
 # TODO in the future: src_dir=$1
