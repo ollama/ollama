@@ -450,7 +450,6 @@ type SamplingParams struct {
 }
 
 func NewSamplingContext(model *Model, params SamplingParams) *SamplingContext {
-
 	var cparams C.struct_llama_sampling_cparams
 	cparams.top_k = C.int32_t(params.TopK)
 	cparams.top_p = C.float(params.TopP)
