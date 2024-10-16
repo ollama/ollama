@@ -40,7 +40,6 @@ llama_token llama_sampling_csample(
     struct llama_context *ctx_main,
     int idx)
 {
-    // TODO (ggoodhart): Do we need to support grammar_first?
     return gpt_sampler_sample((gpt_sampler*)sampler, ctx_main, idx);
 }
 
