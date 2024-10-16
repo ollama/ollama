@@ -117,34 +117,6 @@ func (c *Context) GetLogitsIth(i int) []float32 {
 	return unsafe.Slice((*float32)(unsafe.Pointer(C.llama_get_logits_ith(c.c, C.int(i)))), c.Model().NumVocab())
 }
 
-func (c *Context) SampleTokenGreedy(logits []float32) int {
-	candidates := (*C.struct_llama_token_data)(C.malloc(C.size_t(len(logits)) * C.size_t(unsafe.Sizeof(C.struct_llama_token_data{}))))
-	defer C.free(unsafe.Pointer(candidates))
-
-	for i, logit := range logits {
-		ptr := (*C.struct_llama_token_data)(unsafe.Pointer(uintptr(unsafe.Pointer(candidates)) + uintptr(i)*unsafe.Sizeof(C.struct_llama_token_data{})))
-		ptr.id = C.int(i)
-		ptr.logit = C.float(logit)
-		ptr.p = 0.0
-	}
-
-	// Since the logits are provided externally, we unbox the
-	// llama_sampler_sample implementation here
-	// CITE: https://github.com/ggerganov/llama.cpp/blob/master/include/llama.h#L1154
-	sampler := C.llama_sampler_init_greedy()
-	cur_p := &C.llama_token_data_array{
-		data:   candidates,
-		size:   C.size_t(len(logits)),
-		sorted: C.bool(false),
-	}
-	C.llama_sampler_apply(sampler, cur_p)
-	tokenPtr := (*C.struct_llama_token_data)(unsafe.Pointer(uintptr(unsafe.Pointer(candidates)) + uintptr(cur_p.selected)*unsafe.Sizeof(C.struct_llama_token_data{})))
-	token := tokenPtr.id
-	C.llama_sampler_accept(sampler, token)
-	C.llama_sampler_free(sampler)
-	return int(token)
-}
-
 func (c *Context) KvCacheSeqAdd(seqId int, p0 int, p1 int, delta int) {
 	C.llama_kv_cache_seq_add(c.c, C.int(seqId), C.int(p0), C.int(p1), C.int(delta))
 }
