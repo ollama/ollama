@@ -1,194 +1,186 @@
-# Import a model
+# Importing a model
 
-This guide walks through importing a GGUF, PyTorch or Safetensors model.
+## Table of Contents
 
-## Importing (GGUF)
+  * [Importing a Safetensors adapter](#Importing-a-fine-tuned-adapter-from-Safetensors-weights)
+  * [Importing a Safetensors model](#Importing-a-model-from-Safetensors-weights)
+  * [Importing a GGUF file](#Importing-a-GGUF-based-model-or-adapter)
+  * [Sharing models on ollama.com](#Sharing-your-model-on-ollamacom)
 
-### Step 1: Write a `Modelfile`
+## Importing a fine tuned adapter from Safetensors weights
 
-Start by creating a `Modelfile`. This file is the blueprint for your model, specifying weights, parameters, prompt templates and more.
+First, create a `Modelfile` with a `FROM` command pointing at the base model you used for fine tuning, and an `ADAPTER` command which points to the directory with your Safetensors adapter:
 
-```
-FROM ./mistral-7b-v0.1.Q4_0.gguf
-```
-
-(Optional) many chat models require a prompt template in order to answer correctly. A default prompt template can be specified with the `TEMPLATE` instruction in the `Modelfile`:
-
-```
-FROM ./q4_0.bin
-TEMPLATE "[INST] {{ .Prompt }} [/INST]"
+```dockerfile
+FROM <base model name>
+ADAPTER /path/to/safetensors/adapter/directory
 ```
 
-### Step 2: Create the Ollama model
+Make sure that you use the same base model in the `FROM` command as you used to create the adapter otherwise you will get erratic results. Most frameworks use different quantization methods, so it's best to use non-quantized (i.e. non-QLoRA) adapters. If your adapter is in the same directory as your `Modelfile`, use `ADAPTER .` to specify the adapter path.
 
-Finally, create a model from your `Modelfile`:
+Now run `ollama create` from the directory where the `Modelfile` was created:
 
-```
-ollama create example -f Modelfile
-```
-
-### Step 3: Run your model
-
-Next, test the model with `ollama run`:
-
-```
-ollama run example "What is your favourite condiment?"
+```bash
+ollama create my-model
 ```
 
-## Importing (PyTorch & Safetensors)
+Lastly, test the model:
 
-### Supported models
-
-Ollama supports a set of model architectures, with support for more coming soon:
-
-- Llama & Mistral
-- Falcon & RW
-- BigCode
-
-To view a model's architecture, check the `config.json` file in its HuggingFace repo. You should see an entry under `architectures` (e.g. `LlamaForCausalLM`).
-
-### Step 1: Clone the HuggingFace repository (optional)
-
-If the model is currently hosted in a HuggingFace repository, first clone that repository to download the raw model.
-
-```
-git lfs install
-git clone https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.1
-cd Mistral-7B-Instruct-v0.1
+```bash
+ollama run my-model
 ```
 
-### Step 2: Convert and quantize to a `.bin` file (optional, for PyTorch and Safetensors)
+Ollama supports importing adapters based on several different model architectures including:
 
-If the model is in PyTorch or Safetensors format, a [Docker image](https://hub.docker.com/r/ollama/quantize) with the tooling required to convert and quantize models is available.
+  * Llama (including Llama 2, Llama 3, and Llama 3.1);
+  * Mistral (including Mistral 1, Mistral 2, and Mixtral); and
+  * Gemma (including Gemma 1 and Gemma 2)
 
-First, Install [Docker](https://www.docker.com/get-started/).
+You can create the adapter using a fine tuning framework or tool which can output adapters in the Safetensors format, such as:
 
-Next, to convert and quantize your model, run:
+  * Hugging Face [fine tuning framework](https://huggingface.co/docs/transformers/en/training)
+  * [Unsloth](https://github.com/unslothai/unsloth)
+  * [MLX](https://github.com/ml-explore/mlx)
 
-```
-docker run --rm -v .:/model ollama/quantize -q q4_0 /model
-```
 
-This will output two files into the directory:
+## Importing a model from Safetensors weights
 
-- `f16.bin`: the model converted to GGUF
-- `q4_0.bin` the model quantized to a 4-bit quantization (Ollama will use this file to create the Ollama model)
+First, create a `Modelfile` with a `FROM` command which points to the directory containing your Safetensors weights:
 
-### Step 3: Write a `Modelfile`
-
-Next, create a `Modelfile` for your model:
-
-```
-FROM ./q4_0.bin
+```dockerfile
+FROM /path/to/safetensors/directory
 ```
 
-(Optional) many chat models require a prompt template in order to answer correctly. A default prompt template can be specified with the `TEMPLATE` instruction in the `Modelfile`:
+If you create the Modelfile in the same directory as the weights, you can use the command `FROM .`.
 
-```
-FROM ./q4_0.bin
-TEMPLATE "[INST] {{ .Prompt }} [/INST]"
-```
+Now run the `ollama create` command from the directory where you created the `Modelfile`:
 
-### Step 4: Create the Ollama model
-
-Finally, create a model from your `Modelfile`:
-
-```
-ollama create example -f Modelfile
+```shell
+ollama create my-model
 ```
 
-### Step 5: Run your model
+Lastly, test the model:
 
-Next, test the model with `ollama run`:
-
-```
-ollama run example "What is your favourite condiment?"
+```shell
+ollama run my-model
 ```
 
-## Publishing your model (optional – early alpha)
+Ollama supports importing models for several different architectures including:
 
-Publishing models is in early alpha. If you'd like to publish your model to share with others, follow these steps:
+  * Llama (including Llama 2, Llama 3, and Llama 3.1);
+  * Mistral (including Mistral 1, Mistral 2, and Mixtral);
+  * Gemma (including Gemma 1 and Gemma 2); and
+  * Phi3
 
-1. Create [an account](https://ollama.ai/signup)
-2. Run `cat ~/.ollama/id_ed25519.pub` to view your Ollama public key. Copy this to the clipboard.
-3. Add your public key to your [Ollama account](https://ollama.ai/settings/keys)
+This includes importing foundation models as well as any fine tuned models which which have been _fused_ with a foundation model.
 
-Next, copy your model to your username's namespace:
 
+## Importing a GGUF based model or adapter
+
+If you have a GGUF based model or adapter it is possible to import it into Ollama. You can obtain a GGUF model or adapter by:
+
+  * converting a Safetensors model with the `convert_hf_to_gguf.py` from Llama.cpp; 
+  * converting a Safetensors adapter with the `convert_lora_to_gguf.py` from Llama.cpp; or
+  * downloading a model or adapter from a place such as HuggingFace
+
+To import a GGUF model, create a `Modelfile` containg:
+
+```dockerfile
+FROM /path/to/file.gguf
 ```
-ollama cp example <your username>/example
+
+For a GGUF adapter, create the `Modelfile` with:
+
+```dockerfile
+FROM <model name>
+ADAPTER /path/to/file.gguf
 ```
 
-Then push the model:
+When importing a GGUF adapter, it's important to use the same base model as the base model that the adapter was created with. You can use:
 
+ * a model from Ollama
+ * a GGUF file
+ * a Safetensors based model 
+
+Once you have created your `Modelfile`, use the `ollama create` command to build the model.
+
+```shell
+ollama create my-model
 ```
-ollama push <your username>/example
+
+## Quantizing a Model
+
+Quantizing a model allows you to run models faster and with less memory consumption but at reduced accuracy. This allows you to run a model on more modest hardware.
+
+Ollama can quantize FP16 and FP32 based models into different quantization levels using the `-q/--quantize` flag with the `ollama create` command.
+
+First, create a Modelfile with the FP16 or FP32 based model you wish to quantize.
+
+```dockerfile
+FROM /path/to/my/gemma/f16/model
 ```
 
-After publishing, your model will be available at `https://ollama.ai/<your username>/example`.
+Use `ollama create` to then create the quantized model.
 
-## Quantization reference
+```shell
+$ ollama create --quantize q4_K_M mymodel
+transferring model data
+quantizing F16 model to Q4_K_M
+creating new layer sha256:735e246cc1abfd06e9cdcf95504d6789a6cd1ad7577108a70d9902fef503c1bd
+creating new layer sha256:0853f0ad24e5865173bbf9ffcc7b0f5d56b66fd690ab1009867e45e7d2c4db0f
+writing manifest
+success
+```
 
-The quantization options are as follow (from highest highest to lowest levels of quantization). Note: some architectures such as Falcon do not support K quants.
+### Supported Quantizations
 
-- `q2_K`
-- `q3_K`
+- `q4_0`
+- `q4_1`
+- `q5_0`
+- `q5_1`
+- `q8_0`
+
+#### K-means Quantizations
+
 - `q3_K_S`
 - `q3_K_M`
 - `q3_K_L`
-- `q4_0` (recommended)
-- `q4_1`
-- `q4_K`
 - `q4_K_S`
 - `q4_K_M`
-- `q5_0`
-- `q5_1`
-- `q5_K`
 - `q5_K_S`
 - `q5_K_M`
 - `q6_K`
-- `q8_0`
 
-## Manually converting & quantizing models
 
-### Prerequisites
+## Sharing your model on ollama.com
 
-Start by cloning the `llama.cpp` repo to your machine in another directory:
+You can share any model you have created by pushing it to [ollama.com](https://ollama.com) so that other users can try it out.
 
-```
-git clone https://github.com/ggerganov/llama.cpp.git
-cd llama.cpp
-```
+First, use your browser to go to the [Ollama Sign-Up](https://ollama.com/signup) page. If you already have an account, you can skip this step.
 
-Next, install the Python dependencies:
+<img src="images/signup.png" alt="Sign-Up" width="40%">
 
-```
-pip install -r requirements.txt
-```
+The `Username` field will be used as part of your model's name (e.g. `jmorganca/mymodel`), so make sure you are comfortable with the username that you have selected.
 
-Finally, build the `quantize` tool:
+Now that you have created an account and are signed-in, go to the [Ollama Keys Settings](https://ollama.com/settings/keys) page.
 
-```
-make quantize
-```
+Follow the directions on the page to determine where your Ollama Public Key is located.
 
-### Convert the model
+<img src="images/ollama-keys.png" alt="Ollama Keys" width="80%">
 
-Run the correct conversion script for your model architecture:
+Click on the `Add Ollama Public Key` button, and copy and paste the contents of your Ollama Public Key into the text field.
+
+To push a model to [ollama.com](https://ollama.com), first make sure that it is named correctly with your username. You may have to use the `ollama cp` command to copy
+your model to give it the correct name. Once you're happy with your model's name, use the `ollama push` command to push it to [ollama.com](https://ollama.com).
 
 ```shell
-# LlamaForCausalLM or MistralForCausalLM
-python convert.py <path to model directory>
-
-# FalconForCausalLM
-python convert-falcon-hf-to-gguf.py <path to model directory>
-
-# GPTBigCodeForCausalLM
-python convert-starcoder-hf-to-gguf.py <path to model directory>
+ollama cp mymodel myuser/mymodel
+ollama push myuser/mymodel
 ```
 
-### Quantize the model
+Once your model has been pushed, other users can pull and run it by using the command:
 
+```shell
+ollama run myuser/mymodel
 ```
-quantize <path to model dir>/ggml-model-f32.bin <path to model dir>/q4_0.bin q4_0
-```
+

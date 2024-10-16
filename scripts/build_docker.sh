@@ -2,16 +2,34 @@
 
 set -eu
 
-export VERSION=${VERSION:-0.0.0}
-export GOFLAGS="'-ldflags=-w -s \"-X=github.com/jmorganca/ollama/version.Version=$VERSION\" \"-X=github.com/jmorganca/ollama/server.mode=release\"'"
+. $(dirname $0)/env.sh
+
+# Set PUSH to a non-empty string to trigger push instead of load
+PUSH=${PUSH:-""}
+
+if [ -z "${PUSH}" ] ; then
+    echo "Building ${FINAL_IMAGE_REPO}:$VERSION locally.  set PUSH=1 to push"
+    LOAD_OR_PUSH="--load"
+else
+    echo "Will be pushing ${FINAL_IMAGE_REPO}:$VERSION"
+    LOAD_OR_PUSH="--push"
+fi
 
 docker buildx build \
-    --load \
-    --platform=linux/arm64,linux/amd64 \
-    --build-arg=VERSION \
-    --build-arg=GOFLAGS \
-    --cache-from type=local,src=.cache \
-    --cache-to type=local,dest=.cache \
-    -f Dockerfile \
-    -t ollama/ollama:$VERSION \
+    ${LOAD_OR_PUSH} \
+    --platform=${PLATFORM} \
+    ${OLLAMA_COMMON_BUILD_ARGS} \
+    -f ${DOCKERFILE_DIR}Dockerfile \
+    -t ${FINAL_IMAGE_REPO}:$VERSION \
     .
+
+if echo $PLATFORM | grep "amd64" > /dev/null; then
+    docker buildx build \
+        ${LOAD_OR_PUSH} \
+        --platform=linux/amd64 \
+        ${OLLAMA_COMMON_BUILD_ARGS} \
+        --target runtime-rocm \
+        -f ${DOCKERFILE_DIR}Dockerfile \
+        -t ${FINAL_IMAGE_REPO}:$VERSION-rocm \
+        .
+fi

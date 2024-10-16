@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"syscall"
 )
 
 type Prompt struct {
@@ -16,8 +15,24 @@ type Prompt struct {
 	UseAlt         bool
 }
 
+func (p *Prompt) prompt() string {
+	if p.UseAlt {
+		return p.AltPrompt
+	}
+	return p.Prompt
+}
+
+func (p *Prompt) placeholder() string {
+	if p.UseAlt {
+		return p.AltPlaceholder
+	}
+	return p.Placeholder
+}
+
 type Terminal struct {
 	outchan chan rune
+	rawmode bool
+	termios any
 }
 
 type Instance struct {
@@ -46,18 +61,29 @@ func New(prompt Prompt) (*Instance, error) {
 }
 
 func (i *Instance) Readline() (string, error) {
-	prompt := i.Prompt.Prompt
-	if i.Prompt.UseAlt || i.Pasting {
+	if !i.Terminal.rawmode {
+		fd := os.Stdin.Fd()
+		termios, err := SetRawMode(fd)
+		if err != nil {
+			return "", err
+		}
+		i.Terminal.rawmode = true
+		i.Terminal.termios = termios
+	}
+
+	prompt := i.Prompt.prompt()
+	if i.Pasting {
+		// force alt prompt when pasting
 		prompt = i.Prompt.AltPrompt
 	}
 	fmt.Print(prompt)
 
-	fd := int(syscall.Stdin)
-	termios, err := SetRawMode(fd)
-	if err != nil {
-		return "", err
-	}
-	defer UnsetRawMode(fd, termios)
+	defer func() {
+		fd := os.Stdin.Fd()
+		//nolint:errcheck
+		UnsetRawMode(fd, i.Terminal.termios)
+		i.Terminal.rawmode = false
+	}()
 
 	buf, _ := NewBuffer(i.Prompt)
 
@@ -71,11 +97,8 @@ func (i *Instance) Readline() (string, error) {
 		// don't show placeholder when pasting unless we're in multiline mode
 		showPlaceholder := !i.Pasting || i.Prompt.UseAlt
 		if buf.IsEmpty() && showPlaceholder {
-			ph := i.Prompt.Placeholder
-			if i.Prompt.UseAlt {
-				ph = i.Prompt.AltPlaceholder
-			}
-			fmt.Printf(ColorGrey + ph + fmt.Sprintf(CursorLeftN, len(ph)) + ColorDefault)
+			ph := i.Prompt.placeholder()
+			fmt.Print(ColorGrey + ph + CursorLeftN(len(ph)) + ColorDefault)
 		}
 
 		r, err := i.Terminal.Read()
@@ -112,7 +135,7 @@ func (i *Instance) Readline() (string, error) {
 				buf.MoveRight()
 			case CharBracketedPaste:
 				var code string
-				for cnt := 0; cnt < 3; cnt++ {
+				for range 3 {
 					r, err = i.Terminal.Read()
 					if err != nil {
 						return "", io.EOF
@@ -126,7 +149,7 @@ func (i *Instance) Readline() (string, error) {
 					i.Pasting = false
 				}
 			case KeyDel:
-				if buf.Size() > 0 {
+				if buf.DisplaySize() > 0 {
 					buf.Delete()
 				}
 				metaDel = true
@@ -174,11 +197,11 @@ func (i *Instance) Readline() (string, error) {
 			buf.Remove()
 		case CharTab:
 			// todo: convert back to real tabs
-			for cnt := 0; cnt < 8; cnt++ {
+			for range 8 {
 				buf.Add(' ')
 			}
 		case CharDelete:
-			if buf.Size() > 0 {
+			if buf.DisplaySize() > 0 {
 				buf.Delete()
 			} else {
 				return "", io.EOF
@@ -192,8 +215,9 @@ func (i *Instance) Readline() (string, error) {
 		case CharCtrlW:
 			buf.DeleteWord()
 		case CharCtrlZ:
-			return handleCharCtrlZ(fd, termios)
-		case CharEnter:
+			fd := os.Stdin.Fd()
+			return handleCharCtrlZ(fd, i.Terminal.termios)
+		case CharEnter, CharCtrlJ:
 			output := buf.String()
 			if output != "" {
 				i.History.Add([]rune(output))
@@ -207,7 +231,7 @@ func (i *Instance) Readline() (string, error) {
 				metaDel = false
 				continue
 			}
-			if r >= CharSpace || r == CharEnter {
+			if r >= CharSpace || r == CharEnter || r == CharCtrlJ {
 				buf.Add(r)
 			}
 		}
@@ -223,8 +247,16 @@ func (i *Instance) HistoryDisable() {
 }
 
 func NewTerminal() (*Terminal, error) {
+	fd := os.Stdin.Fd()
+	termios, err := SetRawMode(fd)
+	if err != nil {
+		return nil, err
+	}
+
 	t := &Terminal{
 		outchan: make(chan rune),
+		rawmode: true,
+		termios: termios,
 	}
 
 	go t.ioloop()

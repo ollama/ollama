@@ -1,0 +1,6 @@
+You are a helpful assistant.
+
+USER: Hello, how are you?
+ASSISTANT: I'm doing great. How can I help you today?</s>
+USER: I'd like to show off how chat templating works!
+ASSISTANT:

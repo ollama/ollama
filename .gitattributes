@@ -1,0 +1,12 @@
+llm/ext_server/* linguist-vendored
+llama/**/*.cpp linguist-vendored
+llama/**/*.hpp linguist-vendored
+llama/**/*.h linguist-vendored
+llama/**/*.c linguist-vendored
+llama/**/*.cu linguist-vendored
+llama/**/*.cuh linguist-vendored
+llama/**/*.m linguist-vendored
+llama/**/*.metal linguist-vendored
+
+* text=auto
+*.go text eol=lf

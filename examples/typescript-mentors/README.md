@@ -4,10 +4,10 @@ This example demonstrates how one would create a set of 'mentors' you can have a
 
 ## Usage
 
-1. Add llama2 to have the mentors ask your questions:
+1. Add llama3 to have the mentors ask your questions:
 
    ```bash
-   ollama pull llama2
+   ollama pull llama3
    ```
 
 2. Install prerequisites:
@@ -29,9 +29,9 @@ You can also add your own character to be chosen at random when you ask a questi
    ```bash
    ollama pull stablebeluga2:70b-q4_K_M
    ```
-  
+
 2. Create a new character:
-  
+
    ```bash
    npm run charactergen "Lorne Greene"
    ```
@@ -41,15 +41,15 @@ You can also add your own character to be chosen at random when you ask a questi
 3. Now you can create a model with this command:
 
    ```bash
-   ollama create <YourNamespace>/lornegreene -f lornegreene/Modelfile
+   ollama create <username>/lornegreene -f lornegreene/Modelfile
    ```
 
-   `YourNamespace` is whatever name you set up when you signed up at [https://ollama.ai/signup](https://ollama.ai/signup).
+   `username` is whatever name you set up when you signed up at [https://ollama.com/signup](https://ollama.com/signup).
 
-4. To add this to your mentors, you will have to update the code as follows. On line 8 of `mentors.ts`, add an object to the array, replacing `<YourNamespace>` with the namespace you used above.
+4. To add this to your mentors, you will have to update the code as follows. On line 8 of `mentors.ts`, add an object to the array, replacing `<username>` with the username you used above.
 
    ```bash
-   {ns: "<YourNamespace>", char: "Lorne Greene"}
+   {ns: "<username>", char: "Lorne Greene"}
    ```
 
 ## Review the Code

@@ -1,15 +1,29 @@
 #!/bin/sh
+#
+# Mac ARM users, rosetta can be flaky, so to use a remote x86 builder
+#
+# docker context create amd64 --docker host=ssh://mybuildhost
+# docker buildx create --name mybuilder amd64 --platform linux/amd64
+# docker buildx create --name mybuilder --append desktop-linux --platform linux/arm64
+# docker buildx use mybuilder
+
 
 set -eu
 
-export VERSION=${VERSION:-0.0.0}
-export GOFLAGS="'-ldflags=-w -s \"-X=github.com/jmorganca/ollama/version.Version=$VERSION\" \"-X=github.com/jmorganca/ollama/server.mode=release\"'"
+. $(dirname $0)/env.sh
 
 mkdir -p dist
 
-for TARGETARCH in amd64 arm64; do
-    docker buildx build --load --platform=linux/$TARGETARCH --build-arg=VERSION --build-arg=GOFLAGS --build-arg=CGO_CFLAGS --cache-from type=local,src=.cache --cache-to type=local,dest=.cache -f Dockerfile.build -t builder:$TARGETARCH .
-    docker create --platform linux/$TARGETARCH --name builder-$TARGETARCH builder:$TARGETARCH
-    docker cp builder-$TARGETARCH:/go/src/github.com/jmorganca/ollama/ollama ./dist/ollama-linux-$TARGETARCH
-    docker rm builder-$TARGETARCH
-done
+docker buildx build \
+        --output type=local,dest=./dist/ \
+        --platform=${PLATFORM} \
+        ${OLLAMA_COMMON_BUILD_ARGS} \
+        --target dist \
+        -f ${DOCKERFILE_DIR}Dockerfile \
+        .
+
+# buildx behavior changes for single vs. multiplatform
+if echo $PLATFORM | grep "," > /dev/null ; then 
+        mv -f ./dist/linux_*64/ollama* ./dist/
+        rmdir ./dist/linux_*64
+fi

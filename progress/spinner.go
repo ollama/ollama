@@ -3,11 +3,12 @@ package progress
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
 type Spinner struct {
-	message      string
+	message      atomic.Value
 	messageWidth int
 
 	parts []string
@@ -21,20 +22,25 @@ type Spinner struct {
 
 func NewSpinner(message string) *Spinner {
 	s := &Spinner{
-		message: message,
 		parts: []string{
 			"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
 		},
 		started: time.Now(),
 	}
+	s.SetMessage(message)
 	go s.start()
 	return s
 }
 
+func (s *Spinner) SetMessage(message string) {
+	s.message.Store(message)
+}
+
 func (s *Spinner) String() string {
 	var sb strings.Builder
-	if len(s.message) > 0 {
-		message := strings.TrimSpace(s.message)
+
+	if message, ok := s.message.Load().(string); ok && len(message) > 0 {
+		message := strings.TrimSpace(message)
 		if s.messageWidth > 0 && len(message) > s.messageWidth {
 			message = message[:s.messageWidth]
 		}
