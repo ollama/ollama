@@ -419,7 +419,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Maid](https://github.com/Mobile-Artificial-Intelligence/maid)
 - [Ollama App](https://github.com/JHubi1/ollama-app) (Modern and easy-to-use multi-platform client for Ollama)
 - [ConfiChat](https://github.com/1runeberg/confichat) (Lightweight, standalone, multi-platform, and privacy focused LLM chat interface with optional encryption)
-
+- [ollama-chat-app](https://github.com/anan1213095357/ollama-chat-app) (Modern and easy-to-use multi-platform client for Ollama)
+  
 ### Extensions & Plugins
 
 - [Raycast extension](https://github.com/MassimilianoPasquini97/raycast_ollama)
