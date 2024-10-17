@@ -133,6 +133,13 @@ FROM ./ollama-model.gguf
 
 The GGUF file location should be specified as an absolute path or relative to the `Modelfile` location.
 
+#### Build from HuggingFace model
+
+```modelfile
+FROM hg://Qwen/Qwen2.5-1.5B-Instruct-GGUF/qwen2.5-1.5b-instruct-q8_0
+```
+
+The HuggingFace model should be specified as `hg://<model_name>/<model_id>`.
 
 ### PARAMETER
 
