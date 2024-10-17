@@ -1,6 +1,6 @@
 // TODO: this is a temporary wrapper to allow calling C++ code from CGo
-#ifndef LLAMA_SAMPLING_EXT_H
-#define LLAMA_SAMPLING_EXT_H
+#ifndef gpt_sampler_EXT_H
+#define gpt_sampler_EXT_H
 
 #include "llama.h"
 
@@ -9,7 +9,7 @@ extern "C"
 {
 #endif
 
-    struct llama_sampling_cparams
+    struct gpt_sampler_cparams
     {
         int32_t top_k;
         float top_p;
@@ -29,18 +29,18 @@ extern "C"
         char *grammar;
     };
 
-    struct llama_sampler *llama_sampling_cinit(
+    struct llama_sampler *gpt_sampler_cinit(
         const struct llama_model *model,
-        struct llama_sampling_cparams *params);
-    void llama_sampling_cfree(struct llama_sampler *sampler);
-    void llama_sampling_creset(struct llama_sampler *sampler);
+        struct gpt_sampler_cparams *params);
+    void gpt_sampler_cfree(struct llama_sampler *sampler);
+    void gpt_sampler_creset(struct llama_sampler *sampler);
 
-    llama_token llama_sampling_csample(
+    llama_token gpt_sampler_csample(
         struct llama_sampler *sampler,
         struct llama_context *ctx_main,
         int idx);
 
-    void llama_sampling_caccept(
+    void gpt_sampler_caccept(
         struct llama_sampler *sampler,
         llama_token id,
         bool apply_grammar);
@@ -49,4 +49,4 @@ extern "C"
 }
 #endif
 
-#endif // LLAMA_SAMPLING_EXT_H
+#endif // gpt_sampler_EXT_H

@@ -2,8 +2,8 @@
 #include "sampling.h"
 #include "sampling_ext.h"
 
-struct llama_sampler *llama_sampling_cinit(
-    const struct llama_model *model, struct llama_sampling_cparams *params)
+struct llama_sampler *gpt_sampler_cinit(
+    const struct llama_model *model, struct gpt_sampler_cparams *params)
 {
     gpt_sampler_params sparams;
     sparams.top_k = params->top_k;
@@ -25,17 +25,17 @@ struct llama_sampler *llama_sampling_cinit(
     return (llama_sampler*)gpt_sampler_init(model, sparams);
 }
 
-void llama_sampling_cfree(struct llama_sampler *sampler)
+void gpt_sampler_cfree(struct llama_sampler *sampler)
 {
     gpt_sampler_free((gpt_sampler*)sampler);
 }
 
-void llama_sampling_creset(struct llama_sampler *sampler)
+void gpt_sampler_creset(struct llama_sampler *sampler)
 {
     gpt_sampler_reset((gpt_sampler*)sampler);
 }
 
-llama_token llama_sampling_csample(
+llama_token gpt_sampler_csample(
     struct llama_sampler *sampler,
     struct llama_context *ctx_main,
     int idx)
@@ -43,7 +43,7 @@ llama_token llama_sampling_csample(
     return gpt_sampler_sample((gpt_sampler*)sampler, ctx_main, idx);
 }
 
-void llama_sampling_caccept(
+void gpt_sampler_caccept(
     struct llama_sampler *sampler,
     llama_token id,
     bool apply_grammar)

@@ -450,7 +450,7 @@ type SamplingParams struct {
 }
 
 func NewSamplingContext(model *Model, params SamplingParams) *SamplingContext {
-	var cparams C.struct_llama_sampling_cparams
+	var cparams C.struct_gpt_sampler_cparams
 	cparams.top_k = C.int32_t(params.TopK)
 	cparams.top_p = C.float(params.TopP)
 	cparams.min_p = C.float(params.MinP)
@@ -471,20 +471,20 @@ func NewSamplingContext(model *Model, params SamplingParams) *SamplingContext {
 	defer C.free(unsafe.Pointer(grammar))
 
 	cparams.grammar = grammar
-	context := &SamplingContext{c: C.llama_sampling_cinit(model.c, &cparams)}
-	runtime.SetFinalizer(context, func(s *SamplingContext) { C.llama_sampling_cfree(s.c) })
+	context := &SamplingContext{c: C.gpt_sampler_cinit(model.c, &cparams)}
+	runtime.SetFinalizer(context, func(s *SamplingContext) { C.gpt_sampler_cfree(s.c) })
 
 	return context
 }
 
 func (s *SamplingContext) Reset() {
-	C.llama_sampling_creset(s.c)
+	C.gpt_sampler_creset(s.c)
 }
 
-func (s *SamplingContext) Sample(ctxMain *Context, idx int) int {
-	return int(C.llama_sampling_csample(s.c, ctxMain.c, C.int(idx)))
+func (s *SamplingContext) Sample(llamaContext *Context, idx int) int {
+	return int(C.gpt_sampler_csample(s.c, llamaContext.c, C.int(idx)))
 }
 
 func (s *SamplingContext) Accept(id int, applyGrammar bool) {
-	C.llama_sampling_caccept(s.c, C.llama_token(id), C.bool(applyGrammar))
+	C.gpt_sampler_caccept(s.c, C.llama_token(id), C.bool(applyGrammar))
 }
