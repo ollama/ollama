@@ -430,6 +430,7 @@ jobs:
           cd  $OLLAMA_HOME
           echo $GOPROXY
           echo "Running go Build ."
+          go mod tidy
           go build .
 
       - run: |
