@@ -1,0 +1,1 @@
+extends: ["spectral:oas", "spectral:asyncapi"]
