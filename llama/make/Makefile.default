@@ -24,17 +24,17 @@ all: $(BUILD_RUNNERS) $(DIST_RUNNERS) $(PAYLOAD_RUNNERS)
 $(RUNNERS_BUILD_DIR)/$(DEFAULT_RUNNER)/ollama_llama_server$(EXE_EXT): TARGET_CPU_FLAGS=$(CUSTOM_CPU_FLAGS)
 $(RUNNERS_BUILD_DIR)/$(DEFAULT_RUNNER)/ollama_llama_server$(EXE_EXT): *.go ./runner/*.go $(COMMON_SRCS) $(COMMON_HDRS)
 	@-mkdir -p $(dir $@)
-	GOARCH=$(ARCH) go build -buildmode=pie $(CPU_GOFLAGS) $(if $(CUSTOM_CPU_FLAGS),-tags $(subst $(space),$(comma),$(CUSTOM_CPU_FLAGS))) -o $@ ./runner
+	GOARCH=$(ARCH) go build -buildmode=pie $(CPU_GOFLAGS) -trimpath $(if $(CUSTOM_CPU_FLAGS),-tags $(subst $(space),$(comma),$(CUSTOM_CPU_FLAGS)))  -o $@ ./runner
 
 $(RUNNERS_BUILD_DIR)/cpu_avx/ollama_llama_server$(EXE_EXT): TARGET_CPU_FLAGS="avx"
 $(RUNNERS_BUILD_DIR)/cpu_avx/ollama_llama_server$(EXE_EXT): *.go ./runner/*.go $(COMMON_SRCS) $(COMMON_HDRS)
 	@-mkdir -p $(dir $@)
-	GOARCH=$(ARCH) go build -buildmode=pie $(CPU_GOFLAGS) -tags $(subst $(space),$(comma),$(TARGET_CPU_FLAGS)) -o $@ ./runner
+	GOARCH=$(ARCH) go build -buildmode=pie $(CPU_GOFLAGS) -trimpath -tags $(subst $(space),$(comma),$(TARGET_CPU_FLAGS)) -o $@ ./runner
 
 $(RUNNERS_BUILD_DIR)/cpu_avx2/ollama_llama_server$(EXE_EXT): TARGET_CPU_FLAGS="avx avx2"
 $(RUNNERS_BUILD_DIR)/cpu_avx2/ollama_llama_server$(EXE_EXT): *.go ./runner/*.go $(COMMON_SRCS) $(COMMON_HDRS)
 	@-mkdir -p $(dir $@)
-	GOARCH=$(ARCH) go build -buildmode=pie $(CPU_GOFLAGS) -tags $(subst $(space),$(comma),$(TARGET_CPU_FLAGS)) -o $@ ./runner
+	GOARCH=$(ARCH) go build -buildmode=pie $(CPU_GOFLAGS) -trimpath -tags $(subst $(space),$(comma),$(TARGET_CPU_FLAGS)) -o $@ ./runner
 
 $(RUNNERS_DIST_DIR)/%: $(RUNNERS_BUILD_DIR)/%
 	@-mkdir -p $(dir $@)
@@ -49,3 +49,6 @@ clean:
 
 .PHONY: clean all
 
+# Handy debugging for make variables
+print-%:
+	@echo '$*=$($*)'

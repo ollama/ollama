@@ -1,4 +1,4 @@
-package llm
+package runners
 
 import (
 	"syscall"
