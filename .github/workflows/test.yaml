@@ -407,7 +407,7 @@ jobs:
       - run: | 
           export GOPATH=$HOME/go
           export GOROOT=$HOME/go
-          export PATH=$PATH:$HOME/go/bin
+          export PATH=$PATH:/usr/local/go/bin
           echo $PATH
           echo " verify Go version "
           go version 
@@ -419,7 +419,7 @@ jobs:
           OLLAMA_HOME=`pwd`
           export GOPATH=$HOME/go
           export GOROOT=$HOME/go
-          export PATH=$PATH:$HOME/go/bin
+          export PATH=$PATH:/usr/local/go/bin
           sudo chmod -R 777 /usr/local
           sudo chmod -R 777 $HOME/go
           #sudo chmod +777 /usr/local/
@@ -437,7 +437,7 @@ jobs:
           echo "Running go test -v ./..."
           export GOPATH=$HOME/go
           export GOROOT=$HOME/go
-          export PATH=$PATH:$GOPATH/go/bin
+          export PATH=$PATH:/usr/local/go/bin
           go test -v ./...
 
   patches:
