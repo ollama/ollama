@@ -17462,7 +17462,7 @@ static int llama_decode_internal(
         }
 
         if (cparams.embeddings) {
-            for (int i = gf->n_nodes - 1; i >= 0; --i) {
+            for (int i = ggml_graph_n_nodes(gf) - 1; i >= 0; --i) {
                 embd = ggml_graph_node(gf, i);
                 if (strcmp(ggml_graph_node(gf, i)->name, "result_embd_pooled") == 0) {
                     break;
