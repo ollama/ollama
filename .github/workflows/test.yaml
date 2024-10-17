@@ -430,6 +430,7 @@ jobs:
           cd  $OLLAMA_HOME
           echo $GOROOT
           sudo mkdir $HOME/.cache
+          sudo chmod -R 777 $HOME/.cache
           export GOCACHE=$HOME/.cache
           echo "Running go Build ."
           go mod tidy
