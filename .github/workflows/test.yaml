@@ -406,7 +406,7 @@ jobs:
         shell: bash
       - run: | 
           export GOPATH=$HOME/go
-          export GOROOT=$HOME/go
+          export GOROOT=/usr/local/go
           export PATH=$PATH:/usr/local/go/bin
           echo $PATH
           echo " verify Go version "
@@ -418,10 +418,10 @@ jobs:
           echo "Running go build "
           OLLAMA_HOME=`pwd`
           export GOPATH=$HOME/go
-          export GOROOT=$HOME/go
+          export GOROOT=/usr/local/go
           export PATH=$PATH:/usr/local/go/bin
           sudo chmod -R 777 /usr/local
-          sudo chmod -R 777 $HOME/go
+          sudo chmod -R 777 /usr/local/go
           #sudo chmod +777 /usr/local/
           cd $OLLAMA_HOME/llm/build/linux/$GOARCH/cpu
           echo "Running make install"
@@ -436,7 +436,7 @@ jobs:
       - run: |
           echo "Running go test -v ./..."
           export GOPATH=$HOME/go
-          export GOROOT=$HOME/go
+          export GOROOT=/usr/local/go
           export PATH=$PATH:/usr/local/go/bin
           go test -v ./...
 
