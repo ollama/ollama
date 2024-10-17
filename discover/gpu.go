@@ -240,7 +240,7 @@ func GetGPUInfo() GpuInfoList {
 					Library:        "cpu",
 					Variant:        cpuCapability.String(),
 					ID:             "0",
-					DependencyPath: depPath,
+					DependencyPath: []string{depPath},
 				},
 				CPUs: details,
 			},
@@ -293,11 +293,11 @@ func GetGPUInfo() GpuInfoList {
 				gpuInfo.DriverMinor = driverMinor
 				variant := cudaVariant(gpuInfo)
 				if depPath != "" {
-					gpuInfo.DependencyPath = depPath
+					gpuInfo.DependencyPath = []string{depPath}
 					// Check for variant specific directory
 					if variant != "" {
 						if _, err := os.Stat(filepath.Join(depPath, "cuda_"+variant)); err == nil {
-							gpuInfo.DependencyPath = filepath.Join(depPath, "cuda_"+variant)
+							gpuInfo.DependencyPath = []string{filepath.Join(depPath, "cuda_"+variant), depPath}
 						}
 					}
 				}
@@ -368,7 +368,7 @@ func GetGPUInfo() GpuInfoList {
 						gpuInfo.FreeMemory = uint64(memInfo.free)
 						gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
 						gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
-						gpuInfo.DependencyPath = depPath
+						gpuInfo.DependencyPath = []string{depPath}
 						oneapiGPUs = append(oneapiGPUs, gpuInfo)
 					}
 				}
