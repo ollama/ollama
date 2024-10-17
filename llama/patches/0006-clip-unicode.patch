@@ -1,3 +1,12 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Mon, 16 Sep 2024 15:53:15 -0700
+Subject: [PATCH] clip-unicode
+
+---
+ examples/llava/clip.cpp | 40 +++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 39 insertions(+), 1 deletion(-)
+
 diff --git a/examples/llava/clip.cpp b/examples/llava/clip.cpp
 index 14e02c8d..6e849d8e 100644
 --- a/examples/llava/clip.cpp

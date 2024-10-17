@@ -1,5 +1,21 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Mon, 16 Sep 2024 15:53:16 -0700
+Subject: [PATCH] solar-pro
+
+solar-pro introduces block skip connections where blocks are connected
+to other, non-sequential blocks with a scale multiple
+
+this change adds 4 new keys to store the skip connections and one new
+tensor to store the scalar. the scalar is implemented a 1-dimensional
+tensor with 2 elements dervied from the model's bskcn_tv configuration.
+in general, the values are (bskcn_tv, 1 - bskcn_tv)
+---
+ src/llama.cpp | 269 +++++++++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 255 insertions(+), 14 deletions(-)
+
 diff --git a/src/llama.cpp b/src/llama.cpp
-index bdad28b3..1fe6189a 100644
+index a639522d..83b80b59 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
 @@ -217,6 +217,7 @@ enum llm_arch {

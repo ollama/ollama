@@ -1,3 +1,12 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Mon, 16 Sep 2024 15:53:13 -0700
+Subject: [PATCH] pretokenizer
+
+---
+ src/llama.cpp | 14 +++-----------
+ 1 file changed, 3 insertions(+), 11 deletions(-)
+
 diff --git a/src/llama.cpp b/src/llama.cpp
 index 4c0a1bb6..800dfb95 100644
 --- a/src/llama.cpp

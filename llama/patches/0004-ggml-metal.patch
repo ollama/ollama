@@ -1,3 +1,12 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: jmorganca <jmorganca@gmail.com>
+Date: Wed, 12 Jun 2024 12:18:40 -0700
+Subject: [PATCH] ggml-metal
+
+---
+ ggml/src/ggml-metal.m | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
 diff --git a/ggml/src/ggml-metal.m b/ggml/src/ggml-metal.m
 index 3a433703..829c5e39 100644
 --- a/ggml/src/ggml-metal.m

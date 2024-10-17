@@ -1,3 +1,14 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: jmorganca <jmorganca@gmail.com>
+Date: Thu, 6 Jun 2024 23:55:47 -0700
+Subject: [PATCH] cuda
+
+---
+ ggml/include/ggml-cuda.h | 2 ++
+ ggml/src/ggml-backend.c  | 5 +++++
+ ggml/src/ggml-cuda.cu    | 6 ++++--
+ 3 files changed, 11 insertions(+), 2 deletions(-)
+
 diff --git a/ggml/include/ggml-cuda.h b/ggml/include/ggml-cuda.h
 index 71bb6dcf..08be0895 100644
 --- a/ggml/include/ggml-cuda.h

@@ -41,6 +41,9 @@ runners: $(RUNNER_TARGETS)
 $(RUNNER_TARGETS):
 	$(MAKE) -f make/Makefile.$@
 
+help-sync apply-patches create-patches sync:
+	$(MAKE) -f make/Makefile.sync $@
+
 clean:
 	rm -rf $(BUILD_DIR) $(DIST_RUNNERS) $(PAYLOAD_RUNNERS)
 	go clean -cache

@@ -1,3 +1,12 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Mon, 16 Sep 2024 15:53:12 -0700
+Subject: [PATCH] metal
+
+---
+ ggml/src/ggml-metal.m | 30 +++++++++++++-----------------
+ 1 file changed, 13 insertions(+), 17 deletions(-)
+
 diff --git a/ggml/src/ggml-metal.m b/ggml/src/ggml-metal.m
 index 9da08fe2..3a433703 100644
 --- a/ggml/src/ggml-metal.m
