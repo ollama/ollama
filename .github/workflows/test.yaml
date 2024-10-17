@@ -387,13 +387,13 @@ jobs:
           #export GOROOT=${GOROOT:-"/usr/local/go"}
           #export GOPATH=${GOPATH:-$HOME/go}
           wget https://golang.org/dl/go${GO_VERSION}.linux-ppc64le.tar.gz
-          sudo mkdir $HOME/goroot
-          sudo tar xvzf go${GO_VERSION}.linux-ppc64le.tar.gz -C $HOME/goroot
+          sudo mkdir $HOME/go
+          sudo tar xvzf go${GO_VERSION}.linux-ppc64le.tar.gz -C $HOME/go
           #sudo rm -rf go${GO_VERSION}.linux-ppc64le.tar.gz
           echo "go installed"
           export GOPATH=$HOME/go
-          export GOROOT=$HOME/goroot
-          export PATH=$PATH:$GOPATH/go/bin
+          export GOROOT=$HOME/go
+          export PATH=$PATH:$HOME/go/bin
           echo $PATH
           cd /go/go/bin
           echo " Go version check"
@@ -406,20 +406,20 @@ jobs:
         shell: bash
       - run: | 
           export GOPATH=$HOME/go
-          export GOROOT=$HOME/goroot
-          export PATH=$PATH:$GOPATH/go/bin
+          export GOROOT=$HOME/go
+          export PATH=$PATH:$HOME/go/bin
           echo $PATH
           echo " verify Go version "
           go version 
-          sudo chmod +777 /go
+          sudo chmod +777 $HOME/go
           sudo apt-get install -y cmake gcc
           go generate ./...
       - run: |
           echo "Running go build "
           OLLAMA_HOME=`pwd`
           export GOPATH=$HOME/go
-          export GOROOT=$HOME/goroot
-          export PATH=$PATH:$GOPATH/go/bin
+          export GOROOT=$HOME/go
+          export PATH=$PATH:$HOME/go/bin
           sudo chmod -R 777 /usr/local
           sudo chmod -R 777 $HOME/go
           #sudo chmod +777 /usr/local/
