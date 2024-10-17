@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Run in the llama directory
-
 set -e
+
+# Run in the llama directory
 
 # Set the source directory
 # TODO in the future: src_dir=$1
@@ -25,7 +25,7 @@ if [ -z "${OLLAMA_SKIP_PATCHING}" ]; then
     echo "Applying $patch"
     git -C $src_dir apply "$patch"
   done
-else 
+else
   echo "Skipping patching"
 fi
 
@@ -67,6 +67,7 @@ cp $src_dir/ggml/include/ggml-alloc.h $dst_dir/ggml-alloc.h
 cp $src_dir/ggml/src/ggml-alloc.c $dst_dir/ggml-alloc.c
 cp $src_dir/ggml/src/ggml-aarch64.h $dst_dir/ggml-aarch64.h
 cp $src_dir/ggml/src/ggml-aarch64.c $dst_dir/ggml-aarch64.c
+cp $src_dir/ggml/src/ggml-cpu-impl.h $dst_dir/ggml-cpu-impl.h
 cp $src_dir/ggml/include/ggml-blas.h $dst_dir/ggml-blas.h
 cp $src_dir/ggml/src/ggml-blas.cpp $dst_dir/ggml-blas.cpp
 
@@ -84,6 +85,7 @@ cp $src_dir/examples/llava/clip.h $dst_dir/clip.h
 cp $src_dir/examples/llava/llava.cpp $dst_dir/llava.cpp
 cp $src_dir/examples/llava/llava.h $dst_dir/llava.h
 cp $src_dir/common/log.h $dst_dir/log.h
+cp $src_dir/common/log.cpp $dst_dir/log.cpp
 cp $src_dir/common/stb_image.h $dst_dir/stb_image.h
 
 # These files are mostly used by the llava code
@@ -92,8 +94,6 @@ cp $src_dir/common/common.cpp $dst_dir/common.cpp
 cp $src_dir/common/common.h $dst_dir/common.h
 cp $src_dir/common/sampling.cpp $dst_dir/sampling.cpp
 cp $src_dir/common/sampling.h $dst_dir/sampling.h
-cp $src_dir/common/grammar-parser.cpp $dst_dir/grammar-parser.cpp
-cp $src_dir/common/grammar-parser.h $dst_dir/grammar-parser.h
 cp $src_dir/common/json.hpp $dst_dir/json.hpp
 cp $src_dir/common/json-schema-to-grammar.cpp $dst_dir/json-schema-to-grammar.cpp
 cp $src_dir/common/json-schema-to-grammar.h $dst_dir/json-schema-to-grammar.h

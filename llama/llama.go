@@ -117,24 +117,6 @@ func (c *Context) GetLogitsIth(i int) []float32 {
 	return unsafe.Slice((*float32)(unsafe.Pointer(C.llama_get_logits_ith(c.c, C.int(i)))), c.Model().NumVocab())
 }
 
-func (c *Context) SampleTokenGreedy(logits []float32) int {
-	candidates := (*C.struct_llama_token_data)(C.malloc(C.size_t(len(logits)) * C.size_t(unsafe.Sizeof(C.struct_llama_token_data{}))))
-	defer C.free(unsafe.Pointer(candidates))
-
-	for i, logit := range logits {
-		ptr := (*C.struct_llama_token_data)(unsafe.Pointer(uintptr(unsafe.Pointer(candidates)) + uintptr(i)*unsafe.Sizeof(C.struct_llama_token_data{})))
-		ptr.id = C.int(i)
-		ptr.logit = C.float(logit)
-		ptr.p = 0.0
-	}
-
-	return int(C.llama_sample_token_greedy(c.c, &C.llama_token_data_array{
-		data:   candidates,
-		size:   C.size_t(len(logits)),
-		sorted: C.bool(false),
-	}))
-}
-
 func (c *Context) KvCacheSeqAdd(seqId int, p0 int, p1 int, delta int) {
 	C.llama_kv_cache_seq_add(c.c, C.int(seqId), C.int(p0), C.int(p1), C.int(delta))
 }
@@ -445,7 +427,7 @@ func NewLlavaImageEmbed(llamaContext *Context, clipContext *ClipContext, data []
 // sampling
 // TODO: this is a temporary wrapper to allow calling C++ code from CGo
 type SamplingContext struct {
-	c *C.struct_llama_sampling_context
+	c *C.struct_gpt_sampler
 }
 
 type SamplingParams struct {
@@ -467,8 +449,8 @@ type SamplingParams struct {
 	Grammar        string
 }
 
-func NewSamplingContext(params SamplingParams) *SamplingContext {
-	var cparams C.struct_llama_sampling_cparams
+func NewSamplingContext(model *Model, params SamplingParams) *SamplingContext {
+	var cparams C.struct_gpt_sampler_cparams
 	cparams.top_k = C.int32_t(params.TopK)
 	cparams.top_p = C.float(params.TopP)
 	cparams.min_p = C.float(params.MinP)
@@ -489,25 +471,20 @@ func NewSamplingContext(params SamplingParams) *SamplingContext {
 	defer C.free(unsafe.Pointer(grammar))
 
 	cparams.grammar = grammar
-	context := &SamplingContext{c: C.llama_sampling_cinit(&cparams)}
-	runtime.SetFinalizer(context, func(s *SamplingContext) { C.llama_sampling_cfree(s.c) })
+	context := &SamplingContext{c: C.gpt_sampler_cinit(model.c, &cparams)}
+	runtime.SetFinalizer(context, func(s *SamplingContext) { C.gpt_sampler_cfree(s.c) })
 
 	return context
 }
 
 func (s *SamplingContext) Reset() {
-	C.llama_sampling_creset(s.c)
+	C.gpt_sampler_creset(s.c)
 }
 
-func (s *SamplingContext) Sample(ctxMain *Context, ctxConfig *Context, idx int) int {
-	// TODO (jmorganca): handle nil for all args
-	if ctxConfig == nil {
-		return int(C.llama_sampling_csample(s.c, ctxMain.c, nil, C.int(idx)))
-	}
-
-	return int(C.llama_sampling_csample(s.c, ctxMain.c, ctxConfig.c, C.int(idx)))
+func (s *SamplingContext) Sample(llamaContext *Context, idx int) int {
+	return int(C.gpt_sampler_csample(s.c, llamaContext.c, C.int(idx)))
 }
 
-func (s *SamplingContext) Accept(ctxMain *Context, id int, applyGrammar bool) {
-	C.llama_sampling_caccept(s.c, ctxMain.c, C.llama_token(id), C.bool(applyGrammar))
+func (s *SamplingContext) Accept(id int, applyGrammar bool) {
+	C.gpt_sampler_caccept(s.c, C.llama_token(id), C.bool(applyGrammar))
 }
