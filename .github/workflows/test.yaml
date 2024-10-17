@@ -387,12 +387,12 @@ jobs:
           #export GOROOT=${GOROOT:-"/usr/local/go"}
           #export GOPATH=${GOPATH:-$HOME/go}
           wget https://golang.org/dl/go${GO_VERSION}.linux-ppc64le.tar.gz
-          sudo mkdir $HOME/go
-          sudo tar xvzf go${GO_VERSION}.linux-ppc64le.tar.gz -C $HOME/go
+          sudo mkdir $HOME/goroot
+          sudo tar xvzf go${GO_VERSION}.linux-ppc64le.tar.gz -C $HOME/goroot
           #sudo rm -rf go${GO_VERSION}.linux-ppc64le.tar.gz
           echo "go installed"
           export GOPATH=$HOME/go
-          export GOROOT=$HOME/go
+          export GOROOT=$HOME/goroot
           export PATH=$PATH:$GOPATH/go/bin
           echo $PATH
           cd /go/go/bin
@@ -406,7 +406,7 @@ jobs:
         shell: bash
       - run: | 
           export GOPATH=$HOME/go
-          export GOROOT=$HOME/go
+          export GOROOT=$HOME/goroot
           export PATH=$PATH:$GOPATH/go/bin
           echo $PATH
           echo " verify Go version "
@@ -418,7 +418,7 @@ jobs:
           echo "Running go build "
           OLLAMA_HOME=`pwd`
           export GOPATH=$HOME/go
-          export GOROOT=$HOME/go
+          export GOROOT=$HOME/goroot
           export PATH=$PATH:$GOPATH/go/bin
           sudo chmod -R 777 /usr/local
           sudo chmod -R 777 $HOME/go
@@ -428,7 +428,7 @@ jobs:
           make install
           export LD_LIBRARY_PATH=$OLLAMA_HOME/llm/build/linux/$GOARCH/cpu/bin
           cd  $OLLAMA_HOME
-          echo $GOPROXY
+          echo $GOROOT
           echo "Running go Build ."
           go mod tidy
           go build .
