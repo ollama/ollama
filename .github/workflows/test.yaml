@@ -24,6 +24,7 @@ jobs:
       GENERATE: ${{ steps.changes.outputs.GENERATE }}
       GENERATE_CUDA: ${{ steps.changes.outputs.GENERATE_CUDA }}
       GENERATE_ROCM: ${{ steps.changes.outputs.GENERATE_ROCM }}
+      RUNNERS: ${{ steps.changes.outputs.RUNNERS }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,6 +42,7 @@ jobs:
             echo GENERATE=$(changed 'llm/llama.cpp' 'llm/patches/**' 'llm/ext_server/**' 'llm/generate/**')
             echo GENERATE_CUDA=$(changed 'llm/llama.cpp' 'llm/patches/**' 'llm/ext_server/**' 'llm/generate/**')
             echo GENERATE_ROCM=$(changed 'llm/llama.cpp' 'llm/patches/**' 'llm/ext_server/**' 'llm/generate/**')
+            echo RUNNERS=$(changed 'llama/**')
           } >>$GITHUB_OUTPUT
 
   generate:
@@ -213,6 +215,46 @@ jobs:
         env:
           OLLAMA_SKIP_CPU_GENERATE: '1'
 
+  runners:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.RUNNERS == 'True' }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-2019]
+        arch: [amd64, arm64]
+        exclude:
+          - os: ubuntu-latest
+            arch: arm64
+          - os: windows-2019
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    env:
+      GOARCH: ${{ matrix.arch }}
+      ARCH: ${{ matrix.arch }}
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go get ./...
+      - name: 'Build Windows Go Runners'
+        if: ${{ startsWith(matrix.os, 'windows-') }}
+        run: |
+          $gopath=(get-command go).source | split-path -parent
+          $gccpath=(get-command gcc).source | split-path -parent
+          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
+          cd $env:GITHUB_WORKSPACE
+          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
+          $env:PATH="$gopath;$gccpath;$env:PATH"
+          echo $env:PATH
+          make -C llama -j 4      
+      - name: 'Build Unix Go Runners'
+        if: ${{ ! startsWith(matrix.os, 'windows-') }}
+        run: make -C llama -j 4
+      - run: go build .
+
   lint:
     strategy:
       matrix:
@@ -280,3 +322,15 @@ jobs:
       - run: go generate ./...
       - run: go build
       - run: go test -v ./...
+
+  patches:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.RUNNERS == 'True' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Verify patches carry all the changes
+        run: |
+          cd llama && ./sync.sh && git diff --compact-summary --exit-code .

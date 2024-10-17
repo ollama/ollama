@@ -27,8 +27,8 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/build"
+	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
@@ -1235,7 +1235,7 @@ func Serve(ln net.Listener) error {
 
 	// At startup we retrieve GPU information so we can get log messages before loading a model
 	// This will log warnings to the log in case we have problems with detected GPUs
-	gpus := gpu.GetGPUInfo()
+	gpus := discover.GetGPUInfo()
 	gpus.LogDetails()
 
 	err = srvr.Serve(ln)

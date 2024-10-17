@@ -81,49 +81,52 @@ function checkEnv() {
 
 function buildOllama() {
     if ($null -eq ${env:OLLAMA_SKIP_GENERATE}) {
-        Remove-Item -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}"
-
-        # TODO - consider trying to parallelize this with Start-ThreadJob, but env vars can't be used to toggle
-        #        which targets to build
-
-        # Start by skipping CUDA to build everything else
         write-host "Building ollama runners"
-        powershell -Command { $env:OLLAMA_SKIP_CUDA_GENERATE="1"; & go generate ./... }
-        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}    
+        Remove-Item -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}"
+        if ($null -eq ${env:OLLAMA_NEW_RUNNERS}) {
+            # Start by skipping CUDA to build everything else
+            write-host "Building ollama runners"
+            powershell -Command { $env:OLLAMA_SKIP_CUDA_GENERATE="1"; & go generate ./... }
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}    
 
-        # Then skip everyhting else and build all the CUDA variants
-        foreach ($env:CUDA_LIB_DIR in $script:CUDA_DIRS) {
-            write-host "Building CUDA ${env:CUDA_LIB_DIR} runner"
+            # Then skip everyhting else and build all the CUDA variants
+            foreach ($env:CUDA_LIB_DIR in $script:CUDA_DIRS) {
+                write-host "Building CUDA ${env:CUDA_LIB_DIR} runner"
 
-            if ($env:CUDA_LIB_DIR.Contains("v12")) {
-                powershell -Command {
-                    $env:OLLAMA_SKIP_CUDA_GENERATE=""
-                    $env:OLLAMA_SKIP_STATIC_GENERATE="1"
-                    $env:OLLAMA_SKIP_CPU_GENERATE="1"
-                    $env:OLLAMA_SKIP_ONEAPI_GENERATE="1"
-                    $env:OLLAMA_SKIP_ROCM_GENERATE="1"
-                    $env:CMAKE_CUDA_ARCHITECTURES="60;61;62;70;72;75;80;86;87;89;90;90a"
-                    $env:OLLAMA_CUSTOM_CUDA_DEFS="-DGGML_CUDA_USE_GRAPHS=on"
-                    $env:CUDA_PATH=split-path -path $env:CUDA_LIB_DIR -parent
-                    $env:PATH="$envs:CUDA_LIB_DIR;$env:PATH"
-                    & go generate ./...
+                if ($env:CUDA_LIB_DIR.Contains("v12")) {
+                    powershell -Command {
+                        $env:OLLAMA_SKIP_CUDA_GENERATE=""
+                        $env:OLLAMA_SKIP_STATIC_GENERATE="1"
+                        $env:OLLAMA_SKIP_CPU_GENERATE="1"
+                        $env:OLLAMA_SKIP_ONEAPI_GENERATE="1"
+                        $env:OLLAMA_SKIP_ROCM_GENERATE="1"
+                        $env:CMAKE_CUDA_ARCHITECTURES="60;61;62;70;72;75;80;86;87;89;90;90a"
+                        $env:OLLAMA_CUSTOM_CUDA_DEFS="-DGGML_CUDA_USE_GRAPHS=on"
+                        $env:CUDA_PATH=split-path -path $env:CUDA_LIB_DIR -parent
+                        $env:PATH="$envs:CUDA_LIB_DIR;$env:PATH"
+                        & go generate ./...
+                    }
+                } else {
+                    powershell -Command {
+                        $env:OLLAMA_SKIP_CUDA_GENERATE=""
+                        $env:OLLAMA_SKIP_STATIC_GENERATE="1"
+                        $env:OLLAMA_SKIP_CPU_GENERATE="1"
+                        $env:OLLAMA_SKIP_ONEAPI_GENERATE="1"
+                        $env:OLLAMA_SKIP_ROCM_GENERATE="1"
+                        $env:CMAKE_CUDA_ARCHITECTURES="50;52;53;60;61;62;70;72;75;80;86"
+                        $env:OLLAMA_CUSTOM_CUDA_DEFS=""
+                        $env:CUDA_PATH=split-path -path $env:CUDA_LIB_DIR -parent
+                        $env:PATH="$envs:CUDA_LIB_DIR;$env:PATH"
+                        & go generate ./...
+                    }
                 }
-            } else {
-                powershell -Command {
-                    $env:OLLAMA_SKIP_CUDA_GENERATE=""
-                    $env:OLLAMA_SKIP_STATIC_GENERATE="1"
-                    $env:OLLAMA_SKIP_CPU_GENERATE="1"
-                    $env:OLLAMA_SKIP_ONEAPI_GENERATE="1"
-                    $env:OLLAMA_SKIP_ROCM_GENERATE="1"
-                    $env:CMAKE_CUDA_ARCHITECTURES="50;52;53;60;61;62;70;72;75;80;86"
-                    $env:OLLAMA_CUSTOM_CUDA_DEFS=""
-                    $env:CUDA_PATH=split-path -path $env:CUDA_LIB_DIR -parent
-                    $env:PATH="$envs:CUDA_LIB_DIR;$env:PATH"
-                    & go generate ./...
-                }
+                if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             }
+        } else {
+            & make -C llama -j 12
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
+        
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}    
     } else {
         write-host "Skipping generate step with OLLAMA_SKIP_GENERATE set"
