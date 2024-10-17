@@ -43,6 +43,7 @@ $(RUNNER_TARGETS):
 
 clean:
 	rm -rf $(BUILD_DIR) $(DIST_RUNNERS) $(PAYLOAD_RUNNERS)
+	go clean -cache
 
 clean-payload:
 	rm -rf $(addprefix $(RUNNERS_PAYLOAD_DIR)/, $(RUNNER_TARGETS) metal cpu cpu_avx cpu_avx2)
