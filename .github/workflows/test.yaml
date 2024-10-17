@@ -393,7 +393,7 @@ jobs:
           echo "go installed"
           #export GOPATH=$HOME/go
           #export GOROOT=$HOME/go
-          export PATH=$PATH:/usr/local/bin
+          export PATH=$PATH:/usr/local/go/bin
           echo $PATH
           # cd /go/go/bin
           echo " Go version check"
