@@ -429,6 +429,8 @@ jobs:
           export LD_LIBRARY_PATH=$OLLAMA_HOME/llm/build/linux/$GOARCH/cpu/bin
           cd  $OLLAMA_HOME
           echo $GOROOT
+          mkdir $HOME/.cache
+          export GOCACHE=$HOME/.cache
           echo "Running go Build ."
           go mod tidy
           go build .
