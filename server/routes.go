@@ -33,10 +33,12 @@ import (
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/runners"
+	"github.com/ollama/ollama/telemetry"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var mode string = gin.DebugMode
@@ -1108,10 +1110,16 @@ func (s *Server) GenerateRoutes() http.Handler {
 	}
 	config.AllowOrigins = envconfig.Origins()
 
+	m, err := telemetry.InitMetrics()
+	if err != nil {
+		slog.Warn(fmt.Sprintf("Metrics initialization failed with %s", err))
+	}
+
 	r := gin.Default()
 	r.Use(
 		cors.New(config),
 		allowedHostsMiddleware(s.addr),
+		prometheusMetricsMiddleware(m),
 	)
 
 	r.POST("/api/pull", s.PullHandler)
@@ -1127,6 +1135,8 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
 	r.GET("/api/ps", s.PsHandler)
+
+	r.GET("/metrics", s.MetricsHandler)
 
 	// Compatibility endpoints
 	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)
@@ -1506,4 +1516,48 @@ func handleScheduleError(c *gin.Context, name string, err error) {
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 	}
+}
+
+func prometheusMetricsMiddleware(m *telemetry.Metrics) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Call the next middleware/handler
+		c.Next()
+
+		responseStatus := c.Writer.Status()
+		statusText := http.StatusText(responseStatus)
+
+		route := c.FullPath()
+
+		m.RecordRequests(c.Request.Context(), "all", int64(responseStatus), statusText)
+
+		// Record the specific route action metric
+		if route != "" {
+			action := routeToAction(route)
+			m.RecordRequests(c.Request.Context(), action, int64(responseStatus), statusText)
+		}
+	}
+}
+
+// routeToAction converts a route pattern to an action string (e.g., `/api/pull` -> "pull").
+func routeToAction(route string) string {
+	// Customized mapping goes in the case statements.
+	switch route {
+	case "/api/chat", "/v1/chat/completions":
+		return "chat"
+	case "/api/embed", "/v1/embeddings":
+		return "embed"
+	default:
+		// Default action derived from the route itself (e.g., `/api/pull` -> "pull")
+		parts := strings.Split(route, "/")
+		if len(parts) > 2 {
+			return parts[len(parts)-1] // Use the last part of the route as the action
+		}
+
+		return "head"
+	}
+}
+
+// MetricsHandler returns the gin.HandlerFunc that provides the Prometheus metrics format on GET requests
+func (s *Server) MetricsHandler(c *gin.Context) {
+	promhttp.Handler().ServeHTTP(c.Writer, c.Request)
 }
