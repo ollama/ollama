@@ -427,7 +427,7 @@ func NewLlavaImageEmbed(llamaContext *Context, clipContext *ClipContext, data []
 // sampling
 // TODO: this is a temporary wrapper to allow calling C++ code from CGo
 type SamplingContext struct {
-	c *C.struct_llama_sampler
+	c *C.struct_gpt_sampler
 }
 
 type SamplingParams struct {
