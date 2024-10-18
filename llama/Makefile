@@ -4,26 +4,20 @@ include make/common-defs.make
 RUNNER_TARGETS := default
 
 # Determine which if any GPU runners we should build
+include make/cuda-v11-defs.make
+include make/cuda-v12-defs.make
+
 ifeq ($(OS),windows)
-	CUDA_PATH?=$(shell cygpath -m -s "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\" 2>/dev/null)unknown
-	CUDA_BASE_DIR := $(dir $(shell cygpath -m -s "$(CUDA_PATH)\\.." 2>/dev/null))
-	CUDA_11:=$(shell ls -d $(CUDA_BASE_DIR)/v11.? 2>/dev/null)
-	CUDA_11_COMPILER:=$(wildcard $(CUDA_11)/bin/nvcc.exe)
-	CUDA_12:=$(shell ls -d $(CUDA_BASE_DIR)/v12.? 2>/dev/null)
-	CUDA_12_COMPILER:=$(wildcard $(CUDA_12)/bin/nvcc.exe)
 	HIP_LIB_DIR := $(shell ls -d $(HIP_PATH)/lib 2>/dev/null)
 	HIP_COMPILER:=$(wildcard $(HIP_PATH)/bin/hipcc.bin.exe)
 else ifeq ($(OS),linux)
-	CUDA_PATH?=/usr/local/cuda
-	CUDA_11:=$(shell ls -d $(CUDA_PATH)-11 2>/dev/null)
-	CUDA_11_COMPILER:=$(wildcard $(CUDA_11)/bin/nvcc)
-	CUDA_12:=$(shell ls -d $(CUDA_PATH)-12 2>/dev/null)
-	CUDA_12_COMPILER:=$(wildcard $(CUDA_11)/bin/nvcc)
 	HIP_PATH?=/opt/rocm
 	HIP_LIB_DIR := $(shell ls -d $(HIP_PATH)/lib 2>/dev/null)
 	HIP_COMPILER:=$(wildcard $(HIP_PATH)/bin/hipcc)
 endif
 
+# Without CUSTOM_CPU_FLAGS we default to build both v11 and v12 if present
+ifeq ($(CUSTOM_CPU_FLAGS),)
 ifeq ($(OLLAMA_SKIP_CUDA_GENERATE),)
 ifneq ($(CUDA_11_COMPILER),)
 	RUNNER_TARGETS += cuda_v11
@@ -32,6 +26,14 @@ ifneq ($(CUDA_12_COMPILER),)
 	RUNNER_TARGETS += cuda_v12
 endif
 endif
+else # CUSTOM_CPU_FLAGS is set, we'll build only the latest cuda version detected
+ifneq ($(CUDA_12),)
+	RUNNER_TARGETS += cuda_v12
+else ifneq ($(CUDA_11),)
+	RUNNER_TARGETS += cuda_v11
+endif
+endif
+
 ifeq ($(OLLAMA_SKIP_ROCM_GENERATE),)
 ifneq ($(HIP_COMPILER),)
 	RUNNER_TARGETS += rocm
@@ -46,10 +48,10 @@ dist: $(addprefix dist_, $(RUNNER_TARGETS))
 dist_%:
 	@$(MAKE) --no-print-directory -f make/Makefile.$* dist
 
-payload: clean-payload .WAIT $(addprefix payload_, $(RUNNER_TARGETS))
+payload: $(addprefix payload_, $(RUNNER_TARGETS))
 
 payload_%:
-	@$(MAKE) --no-print-directory f make/Makefile.$* dist
+	@$(MAKE) --no-print-directory -f make/Makefile.$* payload
 
 runners: $(RUNNER_TARGETS)
 
@@ -65,8 +67,8 @@ help-sync apply-patches create-patches sync:
 test integration lint:
 	@$(MAKE) --no-print-directory -f make/Makefile.test $@
 
-clean:
-	rm -rf $(BUILD_DIR) $(DIST_RUNNERS) $(PAYLOAD_RUNNERS)
+clean: clean-payload
+	rm -rf "$(BUILD_DIR)" "$(DIST_LIB_DIR)"
 	go clean -cache
 
 clean-payload:
@@ -75,9 +77,9 @@ clean-payload:
 help:
 	@echo "The following make targets will help you BUILD Ollama"
 	@echo ""
-	@echo "	make all   		# (default) Build Ollama llm subprocess runners, and the primary ollama executable"
+	@echo "	make all   		# (default target) Build Ollama llm subprocess runners, and the primary ollama executable"
 	@echo "	make runners		# Build Ollama llm subprocess runners; after you may use 'go build .' to build the primary ollama exectuable"
-	@echo "	make <runner>		# Build specific runners. Enabled: $(RUNNER_TARGETS)"
+	@echo "	make <runner>		# Build specific runners. Enabled: '$(RUNNER_TARGETS)'"
 	@echo "	make payload		# Build the runners as payloads (Linux/Mac only)"
 	@echo "	make dist		# Build the runners for distribution and gather dependencies"
 	@echo "	make help-sync 		# Help information on vendor update targets"
@@ -94,8 +96,10 @@ help:
 
 
 help-runners:
-	@echo "The following runners will be built based on discovered GPU libraries: $(RUNNER_TARGETS)"
+	@echo "The following runners will be built based on discovered GPU libraries: '$(RUNNER_TARGETS)'"
 	@echo "(On MacOS arm64 'default' is the metal runner.  For all other platforms 'default' is one or more CPU runners)"
+	@echo ""
+	@echo "GPU Runner CPU Flags: '$(GPU_RUNNER_CPU_FLAGS)'  (Override with CUSTOM_CPU_FLAGS)"
 	@echo ""
 	@echo "# CUDA_PATH sets the location where CUDA toolkits are present"
 	@echo "CUDA_PATH=$(CUDA_PATH)"
@@ -108,7 +112,7 @@ help-runners:
 	@echo "HIP_PATH=$(HIP_PATH)"
 	@echo "	HIP_COMPILER=$(HIP_COMPILER)"
 
-.PHONY: all exe dist payload help help-sync help-runners test integration lint runners clean clean-payload $(RUNNER_TARGETS) $(addprefix dist_, $(RUNNER_TARGETS)) $(addprefix payload_, $(RUNNER_TARGETS)) .WAIT
+.PHONY: all exe dist payload help help-sync help-runners test integration lint runners clean clean-payload $(RUNNER_TARGETS)
 
 # Handy debugging for make variables
 print-%:

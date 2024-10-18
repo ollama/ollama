@@ -1,9 +1,7 @@
 ARG GOLANG_VERSION=1.22.8
 ARG CMAKE_VERSION=3.22.1
 ARG CUDA_VERSION_11=11.3.1
-ARG CUDA_V11_ARCHITECTURES="50;52;53;60;61;62;70;72;75;80;86"
 ARG CUDA_VERSION_12=12.4.0
-ARG CUDA_V12_ARCHITECTURES="60;61;62;70;72;75;80;86;87;89;90;90a"
 ARG ROCM_VERSION=6.1.2
 ARG JETPACK_6=r36.2.0
 ARG JETPACK_5=r35.4.1
@@ -62,7 +60,7 @@ RUN yum-config-manager --add-repo https://developer.download.nvidia.com/compute/
 ENV PATH /opt/rh/gcc-toolset-10/root/usr/bin:$PATH:/usr/local/cuda/bin
 ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/usr/local/cuda/lib64
 ENV LIBRARY_PATH=/usr/local/cuda/lib64/stubs:/opt/amdgpu/lib64
-ENV GOARCH amd64
+ENV GOARCH arm64
 ENV CGO_ENABLED 1
 WORKDIR /go/src/github.com/ollama/ollama/
 ENTRYPOINT [ "zsh" ]
@@ -70,29 +68,21 @@ ENTRYPOINT [ "zsh" ]
 FROM --platform=linux/amd64 unified-builder-amd64 AS runners-amd64
 COPY . .
 ARG OLLAMA_SKIP_CUDA_GENERATE
-ARG OLLAMA_SKIP_CUDA_11_GENERATE
-ARG OLLAMA_SKIP_CUDA_12_GENERATE
 ARG OLLAMA_SKIP_ROCM_GENERATE
-ARG CUDA_V11_ARCHITECTURES
-ARG CUDA_V12_ARCHITECTURES
 ARG OLLAMA_FAST_BUILD
 RUN --mount=type=cache,target=/root/.ccache \
     if grep "^flags" /proc/cpuinfo|grep avx>/dev/null; then \
-        make -j $(expr $(nproc) / 2 ) ; \
+        make -j $(expr $(nproc) / 2 ) dist payload ; \
     else \
-        make -j 5 ; \
+        make -j 5 dist payload ; \
     fi
 
 FROM --platform=linux/arm64 unified-builder-arm64 AS runners-arm64
 COPY . .
 ARG OLLAMA_SKIP_CUDA_GENERATE
-ARG OLLAMA_SKIP_CUDA_11_GENERATE
-ARG OLLAMA_SKIP_CUDA_12_GENERATE
-ARG CUDA_V11_ARCHITECTURES
-ARG CUDA_V12_ARCHITECTURES
 ARG OLLAMA_FAST_BUILD
 RUN --mount=type=cache,target=/root/.ccache \
-    make -j 5
+    make -j 5 dist payload
 
 # Jetsons need to be built in discrete stages
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK_5} AS runners-jetpack5-arm64
@@ -107,7 +97,7 @@ COPY . .
 ARG CGO_CFLAGS
 ENV GOARCH arm64
 RUN --mount=type=cache,target=/root/.ccache \
-    make -j 5 cuda_v11 \
+    make -j 5 dist_cuda_v11 payload_cuda_v11 \
         CUDA_ARCHITECTURES="72;87" \
         GPU_RUNNER_VARIANT=_jetpack5 \
         CGO_EXTRA_LDFLAGS_LINUX=-L/usr/local/cuda/lib64/stubs \
@@ -126,7 +116,7 @@ COPY . .
 ARG CGO_CFLAGS
 ENV GOARCH arm64
 RUN --mount=type=cache,target=/root/.ccache \
-    make -j 5 cuda_v12 \
+    make -j 5 dist_cuda_v12 payload_cuda_v12 \
         CUDA_ARCHITECTURES="87" \
         GPU_RUNNER_VARIANT=_jetpack6 \
         CGO_EXTRA_LDFLAGS_LINUX=-L/usr/local/cuda/lib64/stubs \
