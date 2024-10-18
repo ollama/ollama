@@ -17,6 +17,7 @@ import (
 	"syscall"
 
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sys/cpu"
 
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
@@ -295,7 +296,16 @@ func GetAvailableServers(payloadsDir string) map[string]string {
 	servers := make(map[string]string)
 	for _, file := range files {
 		slog.Debug("availableServers : found", "file", file)
-		servers[filepath.Base(filepath.Dir(file))] = filepath.Dir(file)
+		runnerName := filepath.Base(filepath.Dir(file))
+		// Special case for our GPU runners - if compiled with standard AVX flag
+		// detect incompatible system
+		// Custom builds will omit this and its up to the user to ensure compatibility
+		parsed := strings.Split(runnerName, "_")
+		if len(parsed) == 3 && parsed[2] == "avx" && !cpu.X86.HasAVX {
+			slog.Info("GPU runner incompatible with host system, CPU does not have AVX", "runner", runnerName)
+			continue
+		}
+		servers[runnerName] = filepath.Dir(file)
 	}
 
 	return servers

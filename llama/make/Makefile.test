@@ -11,7 +11,7 @@ integration: $(OLLAMA_EXE)
 lint:
 	cd $(abspath $(SRC_DIR)/..) && golangci-lint run -v
 
-# Note: in this makefile we error instead of building to allow more fine-grain control if testing flows
+# Note: in this makefile we error instead of building to allow more fine-grain control of testing flows
 $(OLLAMA_EXE):
 	@echo ""
 	@echo "ERROR: You must build ollama first - use 'make all' to build the ollama binaries"

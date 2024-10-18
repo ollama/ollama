@@ -56,9 +56,12 @@ else ifeq ($(OS),windows)
 endif
 GPU_RUNNER_ARCH_FLAGS := $(foreach arch,$(subst ;,$(space),$(HIP_ARCHS)),--offload-arch=$(arch))
 
+# HIPCC uses clang which requires avx512 -> -mavx512f -mavx512dq -mavx512bw
+GPU_VECTOR_FLAGS=$(if $(filter avx512,$(GPU_RUNNER_CPU_FLAGS)),avx512f avx512dq avx512bw) $(filter-out avx512,$(GPU_RUNNER_CPU_FLAGS))
+
 GPU_COMPILER_CUFLAGS = \
 	$(GPU_COMPILER_FPIC) \
-	$(addprefix -m,$(GPU_RUNNER_CPU_FLAGS)) \
+	$(addprefix -m,$(GPU_VECTOR_FLAGS)) \
 	-mf16c \
 	-mfma \
 	-parallel-jobs=2 \
@@ -102,7 +105,7 @@ endif
 include make/gpu.make
 
 # Adjust the rules from gpu.make to handle the ROCm dependencies properly
-$(RUNNERS_DIST_DIR)/$(GPU_RUNNER_NAME)/ollama_llama_server$(EXE_EXT): $(ROCBLAS_DIST_DEP_MANIFEST)
+$(RUNNERS_DIST_DIR)/$(GPU_RUNNER_NAME)$(GPU_RUNNER_EXTRA_VARIANT)/ollama_llama_server$(EXE_EXT): $(ROCBLAS_DIST_DEP_MANIFEST)
 $(ROCBLAS_DIST_DEP_MANIFEST):
 	@-mkdir -p $(dir $@)
 	@echo "Copying rocblas library..."

@@ -8,7 +8,7 @@ CPU_GOFLAGS="-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=$(VERS
 DEFAULT_RUNNER := $(if $(and $(filter darwin,$(OS)),$(filter arm64,$(ARCH))),metal,cpu)
 RUNNERS := $(DEFAULT_RUNNER)
 ifeq ($(ARCH),amd64)
-ifeq ($(CUSTOM_CPU_FLAGS),)
+ifeq ($(origin CUSTOM_CPU_FLAGS),undefined)
 	RUNNERS += cpu_avx cpu_avx2
 endif
 endif
@@ -51,7 +51,7 @@ $(RUNNERS_PAYLOAD_DIR)/%/ollama_llama_server$(EXE_EXT).gz: $(RUNNERS_BUILD_DIR)/
 clean: 
 	rm -f $(BUILD_RUNNERS) $(DIST_RUNNERS) $(PAYLOAD_RUNNERS)
 
-.PHONY: clean default
+.PHONY: clean default dist
 
 # Handy debugging for make variables
 print-%:

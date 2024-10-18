@@ -44,9 +44,14 @@ ifneq ($(CCACHE),)
 endif
 
 
-# Override in environment space separated to tune GPU runner CPU vector flags
+# Override in environment to tune CPU vector flags
 ifeq ($(ARCH),amd64)
-	GPU_RUNNER_CPU_FLAGS ?= avx
+ifeq ($(origin CUSTOM_CPU_FLAGS),undefined)
+	GPU_RUNNER_CPU_FLAGS=avx
+	GPU_RUNNER_EXTRA_VARIANT=_avx
+else
+	GPU_RUNNER_CPU_FLAGS=$(subst $(comma),$(space),$(CUSTOM_CPU_FLAGS))
+endif
 endif
 
 ifeq ($(OS),windows)

@@ -1,7 +1,7 @@
 # Build rules for CUDA v12 runner
 
 include make/common-defs.make
-
+include make/cuda-v12-defs.make
 
 GPU_RUNNER_VARIANT := _v12
 GPU_PATH_ROOT_WIN=$(shell ls -d $(dir $(shell cygpath -m -s "$(CUDA_PATH)\.."))/v12.? 2>/dev/null)
