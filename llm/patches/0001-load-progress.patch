@@ -1,18 +1,18 @@
-From c97ed60c3369294d5551ba099a88ddc509687df1 Mon Sep 17 00:00:00 2001
-From: Gabe Goodhart <ghart@us.ibm.com>
-Date: Thu, 19 Sep 2024 16:55:15 -0600
-Subject: [PATCH] patch load progress
+From 06e9f95ae90a7de7463718a85206d1c85da11213 Mon Sep 17 00:00:00 2001
+From: Liu Yuan <namei.unix@gmail.com>
+Date: Sun, 13 Oct 2024 01:35:50 +0800
+Subject: [PATCH] 01-load-progress.diff
 
 ---
  common/common.cpp | 2 ++
- common/common.h   | 7 +++++++
- 2 files changed, 9 insertions(+)
+ common/common.h   | 6 ++++++
+ 2 files changed, 8 insertions(+)
 
 diff --git a/common/common.cpp b/common/common.cpp
-index 8d0ed4f9..a09e8a53 100644
+index 451307b5..6bc11614 100644
 --- a/common/common.cpp
 +++ b/common/common.cpp
-@@ -955,6 +955,8 @@ struct llama_model_params llama_model_params_from_gpt_params(const gpt_params &
+@@ -999,6 +999,8 @@ struct llama_model_params common_model_params_to_llama(const common_params & par
      mparams.use_mmap        = params.use_mmap;
      mparams.use_mlock       = params.use_mlock;
      mparams.check_tensors   = params.check_tensors;
@@ -22,23 +22,22 @@ index 8d0ed4f9..a09e8a53 100644
          mparams.kv_overrides = NULL;
      } else {
 diff --git a/common/common.h b/common/common.h
-index cb87c447..818a4a4a 100644
+index 71e68615..e54b1f6f 100644
 --- a/common/common.h
 +++ b/common/common.h
-@@ -266,6 +266,13 @@ struct gpt_params {
+@@ -265,6 +265,12 @@ struct common_params {
+     // multimodal models (see examples/llava)
      std::string mmproj = "";        // path to multimodal projector                                         // NOLINT
      std::vector<std::string> image; // path to image file(s)
- 
 +    // Called with a progress value between 0.0 and 1.0. Pass NULL to disable.
 +    // If the provided progress_callback returns true, model loading continues.
 +    // If it returns false, model loading is immediately aborted.
 +    llama_progress_callback progress_callback = NULL;
 +    // context pointer passed to the progress callback
 +    void * progress_callback_user_data;
-+
+ 
      // embedding
      bool embedding         = false; // get only sentence embedding
-     int32_t embd_normalize = 2;     // normalisation for embendings (-1=none, 0=max absolute int16, 1=taxicab, 2=euclidean, >2=p-norm)
 -- 
-2.39.3 (Apple Git-146)
+2.34.1
 

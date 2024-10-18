@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -315,6 +316,103 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	streamResponse(c, ch)
+}
+
+func (s *Server) scheduleReranker(ctx context.Context, name string, requestOpts map[string]any, keepAlive *api.Duration) (llm.LlamaServer, error) {
+	if name == "" {
+		return nil, fmt.Errorf("model %w", errRequired)
+	}
+
+	model, err := GetModel(name)
+	if err != nil {
+		return nil, err
+	}
+
+	opts, err := modelOptions(model, requestOpts)
+	if err != nil {
+		return nil, err
+	}
+
+	if opts.NumCtx < 4 {
+		opts.NumCtx = 4
+	}
+
+	req := &LlmRequest{
+		ctx:             ctx,
+		model:           model,
+		opts:            opts,
+		extraCmd:        "reranking",
+		sessionDuration: keepAlive,
+		successCh:       make(chan *runnerRef),
+		errCh:           make(chan error, 1),
+	}
+
+	select {
+	case s.sched.pendingReqCh <- req:
+	default:
+		req.errCh <- ErrMaxQueue
+	}
+
+	var runner *runnerRef
+	select {
+	case runner = <-req.successCh:
+	case err = <-req.errCh:
+		return nil, err
+	}
+
+	return runner.llama, nil
+}
+
+func (s *Server) RerankHandler(c *gin.Context) {
+	var req api.RerankRequest
+	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	} else if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if req.Documents == nil || req.Query == "" || req.TopN < 1 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+
+	r, err := s.scheduleReranker(c.Request.Context(), req.Model, req.Options, req.KeepAlive)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+
+	err = r.Rerank(c.Request.Context(), req, func(rr llm.RerankResponse) {
+		sort.SliceStable(rr.Results, func(i, j int) bool {
+			return rr.Results[i].RelevanceScore > rr.Results[j].RelevanceScore
+		})
+
+		topn := min(len(rr.Results), req.TopN)
+		topResults := rr.Results[:topn]
+
+		rsp := api.RerankResponse{
+			Model: req.Model,
+			Results: make([]struct {
+				Document       string  `json:"document"`
+				RelevanceScore float32 `json:"relevance_score"`
+			}, topn),
+		}
+
+		for i, result := range topResults {
+			rsp.Results[i].Document = req.Documents[result.Index]
+			rsp.Results[i].RelevanceScore = result.RelevanceScore
+		}
+
+		c.JSON(http.StatusOK, rsp)
+	})
+
+	if err != nil {
+		slog.Info(fmt.Sprintf("rerank failed: %v", err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to rerank"})
+		return
+	}
 }
 
 func (s *Server) EmbedHandler(c *gin.Context) {
@@ -1127,6 +1225,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
 	r.GET("/api/ps", s.PsHandler)
+	r.POST("/api/rerank", s.RerankHandler)
 
 	// Compatibility endpoints
 	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)

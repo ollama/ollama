@@ -1,6 +1,6 @@
-From a8fe40fa7b026d2db9bb6aeecd24fcd2027110ec Mon Sep 17 00:00:00 2001
-From: Michael Yang <mxyng@pm.me>
-Date: Mon, 16 Sep 2024 15:53:16 -0700
+From 90657ba8751c139731f59523f3a716d48acf445f Mon Sep 17 00:00:00 2001
+From: Liu Yuan <namei.unix@gmail.com>
+Date: Fri, 18 Oct 2024 19:42:04 +0800
 Subject: [PATCH] add solar-pro support
 
 solar-pro introduces block skip connections where blocks are connected
@@ -10,15 +10,17 @@ this change adds 4 new keys to store the skip connections and one new
 tensor to store the scalar. the scalar is implemented a 1-dimensional
 tensor with 2 elements dervied from the model's bskcn_tv configuration.
 in general, the values are (bskcn_tv, 1 - bskcn_tv)
+
+Signed-off-by: Liu Yuan <namei.unix@gmail.com>
 ---
- src/llama.cpp | 270 +++++++++++++++++++++++++++++++++++++++++++++++---
- 1 file changed, 255 insertions(+), 15 deletions(-)
+ src/llama.cpp | 242 +++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 241 insertions(+), 1 deletion(-)
 
 diff --git a/src/llama.cpp b/src/llama.cpp
-index 4c0a1bb6..c6fc0c3f 100644
+index 6ae0b715..0752363e 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
-@@ -217,6 +217,7 @@ enum llm_arch {
+@@ -201,6 +201,7 @@ enum llm_arch {
      LLM_ARCH_GRANITE,
      LLM_ARCH_GRANITE_MOE,
      LLM_ARCH_CHAMELEON,
@@ -26,7 +28,7 @@ index 4c0a1bb6..c6fc0c3f 100644
      LLM_ARCH_UNKNOWN,
  };
  
-@@ -270,6 +271,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
+@@ -254,6 +255,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
      { LLM_ARCH_GRANITE,         "granite"      },
      { LLM_ARCH_GRANITE_MOE,     "granitemoe"   },
      { LLM_ARCH_CHAMELEON,       "chameleon"    },
@@ -34,7 +36,7 @@ index 4c0a1bb6..c6fc0c3f 100644
      { LLM_ARCH_UNKNOWN,         "(unknown)"    },
  };
  
-@@ -327,6 +329,7 @@ enum llm_kv {
+@@ -311,6 +313,7 @@ enum llm_kv {
      LLM_KV_ATTENTION_RELATIVE_BUCKETS_COUNT,
      LLM_KV_ATTENTION_SLIDING_WINDOW,
      LLM_KV_ATTENTION_SCALE,
@@ -42,42 +44,14 @@ index 4c0a1bb6..c6fc0c3f 100644
  
      LLM_KV_ROPE_DIMENSION_COUNT,
      LLM_KV_ROPE_FREQ_BASE,
-@@ -421,20 +424,21 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
-     { LLM_KV_RESIDUAL_SCALE,                    "%s.residual_scale"                    },
-     { LLM_KV_EMBEDDING_SCALE,                   "%s.embedding_scale"                   },
- 
--    { LLM_KV_ATTENTION_HEAD_COUNT,             "%s.attention.head_count"             },
--    { LLM_KV_ATTENTION_HEAD_COUNT_KV,          "%s.attention.head_count_kv"          },
--    { LLM_KV_ATTENTION_MAX_ALIBI_BIAS,         "%s.attention.max_alibi_bias"         },
--    { LLM_KV_ATTENTION_CLAMP_KQV,              "%s.attention.clamp_kqv"              },
--    { LLM_KV_ATTENTION_KEY_LENGTH,             "%s.attention.key_length"             },
--    { LLM_KV_ATTENTION_VALUE_LENGTH,           "%s.attention.value_length"           },
--    { LLM_KV_ATTENTION_LAYERNORM_EPS,          "%s.attention.layer_norm_epsilon"     },
--    { LLM_KV_ATTENTION_LAYERNORM_RMS_EPS,      "%s.attention.layer_norm_rms_epsilon" },
--    { LLM_KV_ATTENTION_CAUSAL,                 "%s.attention.causal"                 },
--    { LLM_KV_ATTENTION_Q_LORA_RANK,            "%s.attention.q_lora_rank"            },
--    { LLM_KV_ATTENTION_KV_LORA_RANK,           "%s.attention.kv_lora_rank"           },
--    { LLM_KV_ATTENTION_RELATIVE_BUCKETS_COUNT, "%s.attention.relative_buckets_count" },
--    { LLM_KV_ATTENTION_SLIDING_WINDOW,         "%s.attention.sliding_window"         },
--    { LLM_KV_ATTENTION_SCALE,                  "%s.attention.scale"                  },
-+    { LLM_KV_ATTENTION_HEAD_COUNT,             "%s.attention.head_count"               },
-+    { LLM_KV_ATTENTION_HEAD_COUNT_KV,          "%s.attention.head_count_kv"            },
-+    { LLM_KV_ATTENTION_MAX_ALIBI_BIAS,         "%s.attention.max_alibi_bias"           },
-+    { LLM_KV_ATTENTION_CLAMP_KQV,              "%s.attention.clamp_kqv"                },
-+    { LLM_KV_ATTENTION_KEY_LENGTH,             "%s.attention.key_length"               },
-+    { LLM_KV_ATTENTION_VALUE_LENGTH,           "%s.attention.value_length"             },
-+    { LLM_KV_ATTENTION_LAYERNORM_EPS,          "%s.attention.layer_norm_epsilon"       },
-+    { LLM_KV_ATTENTION_LAYERNORM_RMS_EPS,      "%s.attention.layer_norm_rms_epsilon"   },
-+    { LLM_KV_ATTENTION_CAUSAL,                 "%s.attention.causal"                   },
-+    { LLM_KV_ATTENTION_Q_LORA_RANK,            "%s.attention.q_lora_rank"              },
-+    { LLM_KV_ATTENTION_KV_LORA_RANK,           "%s.attention.kv_lora_rank"             },
-+    { LLM_KV_ATTENTION_RELATIVE_BUCKETS_COUNT, "%s.attention.relative_buckets_count"   },
-+    { LLM_KV_ATTENTION_SLIDING_WINDOW,         "%s.attention.sliding_window"           },
-+    { LLM_KV_ATTENTION_SCALE,                  "%s.attention.scale"                    },
+@@ -427,6 +430,7 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
+     { LLM_KV_ATTENTION_RELATIVE_BUCKETS_COUNT, "%s.attention.relative_buckets_count" },
+     { LLM_KV_ATTENTION_SLIDING_WINDOW,         "%s.attention.sliding_window"         },
+     { LLM_KV_ATTENTION_SCALE,                  "%s.attention.scale"                  },
 +    { LLM_KV_ATTENTION_BLOCK_SKIP_CONNECTION,  "%s.attention.block_skip_connection.%d" },
  
-     { LLM_KV_ROPE_DIMENSION_COUNT,          "%s.rope.dimension_count"                 },
-     { LLM_KV_ROPE_FREQ_BASE,                "%s.rope.freq_base"                       },
+     { LLM_KV_ROPE_DIMENSION_COUNT,             "%s.rope.dimension_count"                 },
+     { LLM_KV_ROPE_FREQ_BASE,                   "%s.rope.freq_base"                       },
 @@ -608,6 +612,7 @@ enum llm_tensor {
      LLM_TENSOR_ENC_OUTPUT_NORM,
      LLM_TENSOR_CLS,
@@ -85,8 +59,8 @@ index 4c0a1bb6..c6fc0c3f 100644
 +    LLM_TENSOR_BSKCN_TV,
  };
  
- static const std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NAMES = {
-@@ -1527,6 +1532,25 @@ static const std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NA
+ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_NAMES = {
+@@ -1527,6 +1532,25 @@ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_N
              { LLM_TENSOR_ATTN_K_NORM,     "blk.%d.attn_k_norm" },
          },
      },
@@ -112,7 +86,7 @@ index 4c0a1bb6..c6fc0c3f 100644
      {
          LLM_ARCH_UNKNOWN,
          {
-@@ -2360,6 +2384,7 @@ enum e_model {
+@@ -2317,6 +2341,7 @@ enum e_model {
      MODEL_15B,
      MODEL_16B,
      MODEL_20B,
@@ -120,7 +94,7 @@ index 4c0a1bb6..c6fc0c3f 100644
      MODEL_30B,
      MODEL_34B,
      MODEL_35B,
-@@ -2409,6 +2434,8 @@ struct llama_hparams {
+@@ -2366,6 +2391,8 @@ struct llama_hparams {
      std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_kv_arr;
      std::array<uint32_t, LLAMA_MAX_LAYERS> n_ff_arr;
  
@@ -129,7 +103,7 @@ index 4c0a1bb6..c6fc0c3f 100644
      uint32_t n_layer_dense_lead = 0;
      uint32_t n_lora_q = 0;
      uint32_t n_lora_kv = 0;
-@@ -2479,6 +2506,7 @@ struct llama_hparams {
+@@ -2436,6 +2463,7 @@ struct llama_hparams {
          if (this->n_head_arr    != other.n_head_arr)    return true;
          if (this->n_head_kv_arr != other.n_head_kv_arr) return true;
          if (this->n_ff_arr      != other.n_ff_arr)      return true;
@@ -137,7 +111,7 @@ index 4c0a1bb6..c6fc0c3f 100644
  
          if (this->n_rel_attn_bkts    != other.n_rel_attn_bkts)    return true;
          if (this->n_layer_dense_lead != other.n_layer_dense_lead) return true;
-@@ -2588,6 +2616,14 @@ struct llama_hparams {
+@@ -2545,6 +2573,14 @@ struct llama_hparams {
              return ssm_d_state * ssm_d_inner;
          }
      }
@@ -152,7 +126,7 @@ index 4c0a1bb6..c6fc0c3f 100644
  };
  
  static_assert(std::is_trivially_copyable<llama_hparams>::value, "llama_hparams must be trivially copyable");
-@@ -2769,6 +2805,8 @@ struct llama_layer {
+@@ -2726,6 +2762,8 @@ struct llama_layer {
      struct ggml_tensor * ffn_gate_scale;
      struct ggml_tensor * ffn_up_scale;
      struct ggml_tensor * ffn_down_scale;
@@ -161,7 +135,7 @@ index 4c0a1bb6..c6fc0c3f 100644
  };
  
  // very similar to llama_batch,
-@@ -6134,6 +6172,21 @@ static void llm_load_hparams(
+@@ -6132,6 +6170,21 @@ static void llm_load_hparams(
                      default: model.type = e_model::MODEL_UNKNOWN;
                 }
              } break;
@@ -183,7 +157,7 @@ index 4c0a1bb6..c6fc0c3f 100644
          default: (void)0;
      }
  
-@@ -8839,6 +8892,37 @@ static bool llm_load_tensors(
+@@ -8924,6 +8977,37 @@ static bool llm_load_tensors(
  
                          layer.ffn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd});
  
@@ -221,7 +195,7 @@ index 4c0a1bb6..c6fc0c3f 100644
                          layer.ffn_gate = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff});
                          layer.ffn_down = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd});
                          layer.ffn_up   = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff});
-@@ -16009,7 +16093,6 @@ struct llm_build_context {
+@@ -16081,7 +16165,6 @@ struct llm_build_context {
  
          return gf;
      }
@@ -229,7 +203,7 @@ index 4c0a1bb6..c6fc0c3f 100644
      // ref: https://github.com/facebookresearch/chameleon
      // based on the original build_llama() function, changes:
      //   * qk-norm
-@@ -16187,6 +16270,158 @@ struct llm_build_context {
+@@ -16259,6 +16342,158 @@ struct llm_build_context {
  
          return gf;
      }
@@ -388,7 +362,7 @@ index 4c0a1bb6..c6fc0c3f 100644
  };
  
  static struct ggml_cgraph * llama_build_graph_defrag(llama_context & lctx, const std::vector<uint32_t> & ids) {
-@@ -16451,6 +16686,10 @@ static struct ggml_cgraph * llama_build_graph(
+@@ -16523,6 +16758,10 @@ static struct ggml_cgraph * llama_build_graph(
              {
                  result = llm.build_chameleon();
              } break;
@@ -399,7 +373,7 @@ index 4c0a1bb6..c6fc0c3f 100644
          default:
              GGML_ABORT("fatal error");
      }
-@@ -19594,6 +19833,7 @@ enum llama_rope_type llama_rope_type(const struct llama_model * model) {
+@@ -19716,6 +19955,7 @@ enum llama_rope_type llama_rope_type(const struct llama_model * model) {
          case LLM_ARCH_GRANITE:
          case LLM_ARCH_GRANITE_MOE:
          case LLM_ARCH_CHAMELEON:
@@ -408,5 +382,5 @@ index 4c0a1bb6..c6fc0c3f 100644
  
          // the pairs of head values are offset by n_rot/2
 -- 
-2.39.3 (Apple Git-146)
+2.34.1
 

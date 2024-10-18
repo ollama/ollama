@@ -1,14 +1,14 @@
-From 6fdf4268e13e56f0050fa6a29b029cbd54be49d2 Mon Sep 17 00:00:00 2001
-From: Gabe Goodhart <ghart@us.ibm.com>
-Date: Thu, 19 Sep 2024 16:58:03 -0600
-Subject: [PATCH] clip log
+From 54bdf794d27951d5172f5b9c7e6097dc4ba76028 Mon Sep 17 00:00:00 2001
+From: Liu Yuan <namei.unix@gmail.com>
+Date: Sun, 13 Oct 2024 01:38:54 +0800
+Subject: [PATCH] 02-clip-log.diff
 
 ---
  examples/llava/clip.cpp | 1 +
  1 file changed, 1 insertion(+)
 
 diff --git a/examples/llava/clip.cpp b/examples/llava/clip.cpp
-index 8aa7b075..b8941c74 100644
+index 14e02c8d..c0acc2ce 100644
 --- a/examples/llava/clip.cpp
 +++ b/examples/llava/clip.cpp
 @@ -3,6 +3,7 @@
@@ -20,5 +20,5 @@ index 8aa7b075..b8941c74 100644
  #include "ggml-alloc.h"
  #include "ggml-backend.h"
 -- 
-2.39.3 (Apple Git-146)
+2.34.1
 
