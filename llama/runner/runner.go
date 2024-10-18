@@ -844,8 +844,6 @@ func main() {
 	mlock := flag.Bool("mlock", false, "force system to keep model in RAM rather than swapping or compressing")
 	tensorSplit := flag.String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
 	multiUserCache := flag.Bool("multiuser-cache", false, "optimize input cache algorithm for multiple users")
-	// Expose requirements as a JSON output to stdout
-	requirements := flag.Bool("requirements", false, "print json requirement information")
 
 	// These are either ignored by llama.cpp or have no significance to us
 	_ = flag.Bool("embedding", false, "enable embedding vector output (default: disabled)")
@@ -853,10 +851,6 @@ func main() {
 	_ = flag.Bool("memory-f32", false, "use f32 instead of f16 for memory key+value (default: disabled) not recommended: doubles context memory required and no measurable increase in quality")
 
 	flag.Parse()
-	if *requirements {
-		printRequirements(os.Stdout)
-		return
-	}
 	level := slog.LevelInfo
 	if *verbose {
 		level = slog.LevelDebug

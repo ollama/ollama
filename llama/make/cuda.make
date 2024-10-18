@@ -22,15 +22,23 @@ GPU_COMPILER_CXXFLAGS_LINUX = $(CXXFLAGS) -Xcompiler -fPIC -D_GNU_SOURCE
 GPU_LIBS = $(sort $(wildcard $(addsuffix *.$(SHARED_EXT)*,$(addprefix $(GPU_LIB_DIR)/$(SHARED_PREFIX),$(GPU_RUNNER_LIBS_SHORT)))))
 GPU_DIST_DEPS_LIBS= $(sort $(addprefix $(DIST_LIB_DIR)/,$(notdir $(GPU_LIBS))))
 
-ifeq ($(OS),linux)
+ifeq ($(OS),windows)
+	# On windows, nvcc uses msvc which does not support avx512vbmi avx512vnni avx512bf16, but macros can turn them on
+	GPU_VECTOR_FLAGS=$(call uc,$(filter-out avx512bf16,$(filter-out avx512vnni,$(filter-out avx512vbmi,$(GPU_RUNNER_CPU_FLAGS)))))
+	GPU_COMPILER_EXTRA_FLAGS=$(if $(filter avx512vbmi,$(GPU_RUNNER_CPU_FLAGS)),-D__AVX512VBMI__)
+	GPU_COMPILER_EXTRA_FLAGS+=$(if $(filter avx512vnni,$(GPU_RUNNER_CPU_FLAGS)),-D__AVX512VNNI__)
+	GPU_COMPILER_EXTRA_FLAGS+=$(if $(filter avx512bf16,$(GPU_RUNNER_CPU_FLAGS)),-D__AVX512BF16__)
+else ifeq ($(OS),linux)
+	# On linux, nvcc requires avx512 -> -mavx512f -mavx512dq -mavx512bw
+	GPU_VECTOR_FLAGS=$(if $(filter avx512,$(GPU_RUNNER_CPU_FLAGS)),avx512f avx512dq avx512bw) $(filter-out avx512,$(GPU_RUNNER_CPU_FLAGS))
 	CUDA_PATH?=/usr/local/cuda
-	GPU_COMPILER_FPIC = -fPIC -Wno-unused-function -std=c++11
+	GPU_COMPILER_EXTRA_FLAGS = -fPIC -Wno-unused-function -std=c++11
 endif
 GPU_RUNNER_ARCH_FLAGS := $(foreach arch,$(subst ;,$(space),$(CUDA_ARCHITECTURES)),--generate-code=arch=compute_$(arch)$(comma)code=[compute_$(arch)$(comma)sm_$(arch)]) \
 	-DGGML_CUDA_USE_GRAPHS=1
 GPU_COMPILER_CUFLAGS = \
-	$(GPU_COMPILER_FPIC) \
-	-Xcompiler "$(addprefix $(CPU_FLAG_PREFIX),$(_OS_GPU_RUNNER_CPU_FLAGS))" \
+	$(GPU_COMPILER_EXTRA_FLAGS) \
+	-Xcompiler "$(addprefix $(CPU_FLAG_PREFIX),$(GPU_VECTOR_FLAGS))" \
 	-t2 \
 	-DGGML_CUDA_DMMV_X=32 \
 	-DGGML_CUDA_MMV_Y=1 \

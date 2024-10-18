@@ -18,6 +18,8 @@ else ifeq ($(OS),linux)
 	CUDA_12:=$(shell ls -d $(CUDA_PATH)-12 2>/dev/null)
 endif
 
+# Without CUSTOM_CPU_FLAGS we default to build both v11 and v12 if present
+ifeq ($(CUSTOM_CPU_FLAGS),)
 ifeq ($(OLLAMA_SKIP_CUDA_GENERATE),)
 ifneq ($(CUDA_11),)
 	RUNNER_TARGETS += cuda_v11
@@ -26,6 +28,14 @@ ifneq ($(CUDA_12),)
 	RUNNER_TARGETS += cuda_v12
 endif
 endif
+else # CUSTOM_CPU_FLAGS is set, we'll build only the latest cuda version detected
+ifneq ($(CUDA_12),)
+	RUNNER_TARGETS += cuda_v12
+else ifneq ($(CUDA_11),)
+	RUNNER_TARGETS += cuda_v11
+endif
+endif
+
 ifeq ($(OLLAMA_SKIP_ROCM_GENERATE),)
 ifneq ($(HIP_LIB_DIR),)
 	RUNNER_TARGETS += rocm
@@ -44,7 +54,7 @@ help-sync apply-patches create-patches sync:
 	$(MAKE) -f make/Makefile.sync $@
 
 clean:
-	rm -rf $(BUILD_DIR) $(DIST_RUNNERS) $(PAYLOAD_RUNNERS)
+	rm -rf $(BUILD_DIR) $(DIST_LIB_DIR)
 	go clean -cache
 
 clean-payload:

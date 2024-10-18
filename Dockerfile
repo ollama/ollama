@@ -1,9 +1,7 @@
 ARG GOLANG_VERSION=1.22.8
 ARG CMAKE_VERSION=3.22.1
 ARG CUDA_VERSION_11=11.3.1
-ARG CUDA_V11_ARCHITECTURES="50;52;53;60;61;62;70;72;75;80;86"
 ARG CUDA_VERSION_12=12.4.0
-ARG CUDA_V12_ARCHITECTURES="60;61;62;70;72;75;80;86;87;89;90;90a"
 ARG ROCM_VERSION=6.1.2
 
 ### To create a local image for building linux binaries on mac or windows with efficient incremental builds
@@ -68,11 +66,7 @@ ENTRYPOINT [ "zsh" ]
 FROM --platform=linux/amd64 unified-builder-amd64 AS runners-amd64
 COPY . .
 ARG OLLAMA_SKIP_CUDA_GENERATE
-ARG OLLAMA_SKIP_CUDA_11_GENERATE
-ARG OLLAMA_SKIP_CUDA_12_GENERATE
 ARG OLLAMA_SKIP_ROCM_GENERATE
-ARG CUDA_V11_ARCHITECTURES
-ARG CUDA_V12_ARCHITECTURES
 ARG OLLAMA_FAST_BUILD
 RUN --mount=type=cache,target=/root/.ccache \
     if grep "^flags" /proc/cpuinfo|grep avx>/dev/null; then \
@@ -84,10 +78,6 @@ RUN --mount=type=cache,target=/root/.ccache \
 FROM --platform=linux/arm64 unified-builder-arm64 AS runners-arm64
 COPY . .
 ARG OLLAMA_SKIP_CUDA_GENERATE
-ARG OLLAMA_SKIP_CUDA_11_GENERATE
-ARG OLLAMA_SKIP_CUDA_12_GENERATE
-ARG CUDA_V11_ARCHITECTURES
-ARG CUDA_V12_ARCHITECTURES
 ARG OLLAMA_FAST_BUILD
 RUN --mount=type=cache,target=/root/.ccache \
     make -C llama -j 8

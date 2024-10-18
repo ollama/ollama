@@ -96,16 +96,6 @@ go build .
 
 ROCm requires elevated privileges to access the GPU at runtime. On most distros you can add your user account to the `render` group, or run as root.
 
-#### Advanced CPU Settings
-
-By default, running `make` will compile a few different variations
-of the LLM library based on common CPU families and vector math capabilities,
-including a lowest-common-denominator which should run on almost any 64 bit CPU
-somewhat slowly. At runtime, Ollama will auto-detect the optimal variation to
-load. 
-
-Custom CPU settings are not currently supported in the new Go server build but will be added back after we complete the transition.
-
 #### Containerized Linux Build
 
 If you have Docker available, you can build linux binaries with `OLLAMA_NEW_RUNNERS=1 ./scripts/build_linux.sh` which has the CUDA and ROCm dependencies included. The resulting binary is placed in `./dist`
@@ -173,3 +163,33 @@ pacman -S mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-gcc-compat mingw
 ```
 
 You will need to ensure your PATH includes go, cmake, gcc and clang mingw32-make to build ollama from source. (typically `C:\msys64\clangarm64\bin\`)
+
+
+## Advanced CPU Vector Settings
+
+For both Windows and Linux on x86, running `make` will compile several CPU runners which can run on different CPU families. At runtime, Ollama will auto-detect the best variation to load.  If GPU libraries are present at build time, Ollama also compiles GPU runners with the `AVX` CPU vector feature enabled.  This provides a good performance balance when loading large models that split across GPU and CPU with broad compatibility.  Some users may prefer no vector extensions (e.g. older Xeon/Celeron processors, or hypervisors that mask the vector features) while other users may prefer turning on many more vector extensions to further improve performance for split model loads.
+
+To customize the set of CPU vector features enabled for a CPU runner and all GPU runners, use CUSTOM_CPU_FLAGS during the build.
+
+To build without any vector flags:
+
+```
+make CUSTOM_CPU_FLAGS=""
+go build .
+```
+
+To build with both AVX and AVX2:
+```
+make CUSTOM_CPU_FLAGS=avx,avx2
+go build .
+```
+
+To build with AVX512 features turned on:
+
+```
+make CUSTOM_CPU_FLAGS=avx,avx2,avx512,avx512vbmi,avx512vnni,avx512bf16
+go build .
+```
+
+> [!NOTE]  
+> If you are experimenting with different flags, make sure to do a `make clean` between each change to ensure everything is rebuilt with the new compiler flags
