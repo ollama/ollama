@@ -194,7 +194,9 @@ func parseFromFile(ctx context.Context, command string, baseLayers []*layerGGML,
 		mediatype := "application/vnd.ollama.image.model"
 		if ggml.Name() == "ggla" || ggml.KV().Kind() == "adapter" {
 			mediatype = "application/vnd.ollama.image.adapter"
-		} else if ggml.KV().Architecture() == "clip" {
+		}
+
+		if _, ok := ggml.KV()[fmt.Sprintf("%s.vision.block_count", ggml.KV().Architecture())]; ok || ggml.KV().Kind() == "projector" {
 			mediatype = "application/vnd.ollama.image.projector"
 		}
 
