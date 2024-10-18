@@ -918,24 +918,24 @@ struct llama_server_context
 
             if (!llama_token_is_eog(model, result.tok)) {
                 const std::string str_test = slot.generated_text.substr(pos);
-                bool is_stop_full = false;
+                bool send_text = true;
+
                 size_t stop_pos = find_stopping_strings(str_test, token_str.size(), STOP_FULL, slot);
                 if (stop_pos != std::string::npos)
                 {
-                    is_stop_full = true;
                     slot.generated_text.erase(
                         slot.generated_text.begin() + pos + stop_pos,
                         slot.generated_text.end());
                     pos = std::min(slot.n_sent_text, slot.generated_text.size());
                 }
-                else
+                else if (slot.has_next_token)
                 {
-                    is_stop_full = false;
                     stop_pos = find_stopping_strings(str_test, token_str.size(), STOP_PARTIAL, slot);
+                    send_text = stop_pos == std::string::npos;
                 }
 
                 // check if there is any token to predict
-                if (stop_pos == std::string::npos || (!slot.has_next_token && !is_stop_full && stop_pos > 0))
+                if (send_text)
                 {
                     // no send the stop word in the response
                     result.text_to_send = slot.generated_text.substr(pos, std::string::npos);
