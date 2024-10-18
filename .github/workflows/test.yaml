@@ -435,17 +435,8 @@ jobs:
           echo "Running go Build ."
           go mod tidy
           go build .
-
-      - run: |
-          echo "Running go test -v ./..."
-          export GOPATH=$HOME/go
-          export GOROOT=/usr/local/go
-          export PATH=$PATH:/usr/local/go/bin
-          export GOCACHE=$HOME/.gocache
-          export LD_LIBRARY_PATH=$OLLAMA_HOME/llm/build/linux/ppc64le/cpu/bin
-          cd $LD_LIBRARY_PATH
-          ls
           go test -v ./...
+
 
   patches:
     needs: [changes]
