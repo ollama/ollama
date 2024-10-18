@@ -520,6 +520,11 @@ func (m *MllamaContext) EmbedSize(llamaContext *Context) int {
 	return numTokens * numEmbed
 }
 
+// This really needs to be set on a batch instead
+func (c *Context) MllamaSetCrossAttn(state bool) {
+	C.llama_set_cross_attn_state(c.c, (C.bool)(state))
+}
+
 // sampling
 // TODO: this is a temporary wrapper to allow calling C++ code from CGo
 type SamplingContext struct {

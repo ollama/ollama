@@ -3544,6 +3544,9 @@ struct llama_context {
     struct ggml_tensor * inp_embd_enc;      // F32 [n_embd, n_outputs_enc]
     struct ggml_tensor * inp_KQ_mask_cross; // F32 [n_outputs_enc, n_batch]
 
+    // TODO (jmorganca): this should most likely be passed in as part of a batch
+    // and not set on the context for all batches.
+    bool cross_attn_state = false;
     struct ggml_tensor * inp_cross_attn_state; // F32 [4, n_embd, 1061]
 };
 
@@ -10978,9 +10981,9 @@ struct llm_build_context {
             cb(cur, "attn_norm", il);
 
             if (hparams.cross_attention_layer(il)) {
-                /*if (!lctx.cross_attn_state) {
+                if (!batch.embd && !lctx.cross_attn_state) {
                     continue;
-                }*/
+                }
 
                 // cross attention layer
                 struct ggml_tensor * Qcur = ggml_mul_mat(ctx0, model.layers[il].cross_attn_q_proj, cur);
@@ -11001,6 +11004,8 @@ struct llm_build_context {
 
                 struct ggml_tensor * Kcur;
                 if (batch.embd) {
+                    lctx.cross_attn_state = true;
+
                     Kcur = ggml_mul_mat(ctx0, model.layers[il].cross_attn_k_proj, inpCAS);
                     cb(Kcur, "Kcur", il);
 
@@ -19780,6 +19785,10 @@ struct llama_model * llama_load_model_from_file(
     }
 
     return model;
+}
+
+void llama_set_cross_attn_state(struct llama_context * ctx, bool cross_attn_state) {
+    ctx->cross_attn_state = cross_attn_state;
 }
 
 void llama_free_model(struct llama_model * model) {
