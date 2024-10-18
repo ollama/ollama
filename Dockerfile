@@ -13,6 +13,7 @@ COPY .gitmodules .gitmodules
 COPY llm llm
 
 FROM --platform=linux/amd64 nvidia/cuda:$CUDA_VERSION_11-devel-centos7 AS cuda-11-build-amd64
+LABEL org.opencontainers.image.source="https://github.com/ollama/ollama"
 ARG CMAKE_VERSION
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
@@ -30,6 +31,7 @@ RUN --mount=type=cache,target=/root/.ccache \
     bash gen_linux.sh
 
 FROM --platform=linux/amd64 nvidia/cuda:$CUDA_VERSION_12-devel-centos7 AS cuda-12-build-amd64
+LABEL org.opencontainers.image.source="https://github.com/ollama/ollama"
 ARG CMAKE_VERSION
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
@@ -48,6 +50,7 @@ RUN --mount=type=cache,target=/root/.ccache \
     bash gen_linux.sh
 
 FROM --platform=linux/arm64 nvidia/cuda:$CUDA_VERSION_11-devel-rockylinux8 AS cuda-11-build-runner-arm64
+LABEL org.opencontainers.image.source="https://github.com/ollama/ollama"
 ARG CMAKE_VERSION
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
@@ -64,6 +67,7 @@ RUN OLLAMA_SKIP_STATIC_GENERATE=1 \
     bash gen_linux.sh
 
 FROM --platform=linux/arm64 nvidia/cuda:$CUDA_VERSION_12-devel-rockylinux8 AS cuda-12-build-runner-arm64
+LABEL org.opencontainers.image.source="https://github.com/ollama/ollama"
 ARG CMAKE_VERSION
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
@@ -83,6 +87,7 @@ RUN --mount=type=cache,target=/root/.ccache \
 
 
 FROM --platform=linux/amd64 rocm/dev-centos-7:${ROCM_VERSION}-complete AS rocm-build-amd64
+LABEL org.opencontainers.image.source="https://github.com/ollama/ollama"
 ARG CMAKE_VERSION
 COPY ./scripts/rh_linux_deps.sh /
 RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
@@ -99,6 +104,7 @@ RUN mkdir -p ../../dist/linux-amd64-rocm/lib/ollama && \
     (cd /opt/rocm/lib && tar cf - rocblas/library) | (cd ../../dist/linux-amd64-rocm/lib/ollama && tar xf - )
 
 FROM --platform=linux/amd64 centos:7 AS cpu-builder-amd64
+LABEL org.opencontainers.image.source="https://github.com/ollama/ollama"
 ARG CMAKE_VERSION
 ARG GOLANG_VERSION
 COPY ./scripts/rh_linux_deps.sh /
@@ -121,6 +127,7 @@ RUN --mount=type=cache,target=/root/.ccache \
     OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu_avx2" bash gen_linux.sh
 
 FROM --platform=linux/arm64 rockylinux:8 AS cpu-builder-arm64
+LABEL org.opencontainers.image.source="https://github.com/ollama/ollama"
 ARG CMAKE_VERSION
 ARG GOLANG_VERSION
 COPY ./scripts/rh_linux_deps.sh /
@@ -200,6 +207,7 @@ RUN --mount=type=cache,target=/root/.ccache \
     go build -trimpath -o dist/linux-arm64/bin/ollama .
 
 FROM --platform=linux/amd64 ubuntu:22.04 AS runtime-amd64
+LABEL org.opencontainers.image.source="https://github.com/ollama/ollama"
 RUN apt-get update && \
     apt-get install -y ca-certificates && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -211,6 +219,7 @@ COPY --from=cuda-11-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd6
 COPY --from=cuda-12-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
 
 FROM --platform=linux/arm64 ubuntu:22.04 AS runtime-arm64
+LABEL org.opencontainers.image.source="https://github.com/ollama/ollama"
 RUN apt-get update && \
     apt-get install -y ca-certificates && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -221,6 +230,7 @@ COPY --from=cuda-12-build-runner-arm64 /go/src/github.com/ollama/ollama/dist/lin
 
 # ROCm libraries larger so we keep it distinct from the CPU/CUDA image
 FROM --platform=linux/amd64 ubuntu:22.04 AS runtime-rocm
+LABEL org.opencontainers.image.source="https://github.com/ollama/ollama"
 # Frontload the rocm libraries which are large, and rarely change to increase chance of a common layer
 # across releases
 COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64-rocm/lib/ /lib/
