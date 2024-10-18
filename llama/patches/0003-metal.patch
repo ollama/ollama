@@ -1,15 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Mon, 16 Sep 2024 15:53:12 -0700
+Subject: [PATCH] metal
+
+---
+ ggml/src/ggml-metal.m | 30 +++++++++++++-----------------
+ 1 file changed, 13 insertions(+), 17 deletions(-)
+
 diff --git a/ggml/src/ggml-metal.m b/ggml/src/ggml-metal.m
-index 0207b787..b5e9884b 100644
+index 9da08fe2..3a433703 100644
 --- a/ggml/src/ggml-metal.m
 +++ b/ggml/src/ggml-metal.m
-@@ -1396,27 +1396,23 @@ static enum ggml_status ggml_metal_graph_compute(
-                         // to the matrix-vector kernel
-                         int ne11_mm_min = 1;
+@@ -1720,27 +1720,23 @@ static void ggml_metal_encode_node(
+                 // to the matrix-vector kernel
+                 int ne11_mm_min = 1;
  
 -#if 0
-                         // the numbers below are measured on M2 Ultra for 7B and 13B models
-                         // these numbers do not translate to other devices or model sizes
-                         // TODO: need to find a better approach
+                 // the numbers below are measured on M2 Ultra for 7B and 13B models
+                 // these numbers do not translate to other devices or model sizes
+                 // TODO: need to find a better approach
 -                        if ([ctx->device.name isEqualToString:@"Apple M2 Ultra"]) {
 -                            switch (src0t) {
 -                                case GGML_TYPE_F16:  ne11_mm_min = 2;  break;

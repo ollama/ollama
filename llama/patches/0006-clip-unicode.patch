@@ -1,10 +1,19 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Mon, 16 Sep 2024 15:53:15 -0700
+Subject: [PATCH] clip-unicode
+
+---
+ examples/llava/clip.cpp | 40 +++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 39 insertions(+), 1 deletion(-)
+
 diff --git a/examples/llava/clip.cpp b/examples/llava/clip.cpp
-index dcc65f02..1a990306 100644
+index 14e02c8d..6e849d8e 100644
 --- a/examples/llava/clip.cpp
 +++ b/examples/llava/clip.cpp
-@@ -66,6 +66,19 @@
- #include <cinttypes>
- #include <limits>
+@@ -44,6 +44,19 @@
+ #define LOG_ERR(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
+ #define LOG_DBG(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
  
 +#if defined(_WIN32)
 +#define WIN32_LEAN_AND_MEAN
@@ -22,10 +31,11 @@ index dcc65f02..1a990306 100644
  //#define CLIP_DEBUG_FUNCTIONS
  
  // RGB uint8 image
-@@ -1248,7 +1261,29 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
+@@ -1225,8 +1238,29 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
+             gguf_free(ctx);
              return nullptr;
          }
- 
+-
 +#ifdef _WIN32
 +        int wlen = MultiByteToWideChar(CP_UTF8, 0, fname, -1, NULL, 0);
 +        if (!wlen) {
@@ -50,9 +60,9 @@ index dcc65f02..1a990306 100644
          auto fin = std::ifstream(fname, std::ios::binary);
 +#endif
          if (!fin) {
-             LOG_TEE("cannot open model file for loading tensors\n");
+             LOG_ERR("cannot open model file for loading tensors\n");
              clip_free(new_clip);
-@@ -1288,7 +1323,11 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
+@@ -1266,7 +1300,11 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
                  ggml_backend_tensor_set(cur, read_buf.data(), 0, num_bytes);
              }
          }

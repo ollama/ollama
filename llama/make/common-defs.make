@@ -46,8 +46,6 @@ endif
 
 # Override in environment space separated to tune GPU runner CPU vector flags
 ifeq ($(ARCH),amd64)
-# TODO may need a bit more work - setting 'GPU_RUNNER_CPU_FLAGS="avx avx2 avx512f avx512bw"' doesn't yield
-# a system_info showing 'AVX512 = 1' so there may be additional macros that are needed in GGML
 	GPU_RUNNER_CPU_FLAGS ?= avx
 endif
 

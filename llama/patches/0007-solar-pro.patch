@@ -1,34 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Mon, 16 Sep 2024 15:53:16 -0700
+Subject: [PATCH] solar-pro
+
+solar-pro introduces block skip connections where blocks are connected
+to other, non-sequential blocks with a scale multiple
+
+this change adds 4 new keys to store the skip connections and one new
+tensor to store the scalar. the scalar is implemented a 1-dimensional
+tensor with 2 elements dervied from the model's bskcn_tv configuration.
+in general, the values are (bskcn_tv, 1 - bskcn_tv)
+---
+ src/llama.cpp | 269 +++++++++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 255 insertions(+), 14 deletions(-)
+
 diff --git a/src/llama.cpp b/src/llama.cpp
-index f79bd782..b7771f53 100644
+index a639522d..83b80b59 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
-@@ -213,6 +213,7 @@ enum llm_arch {
-     LLM_ARCH_NEMOTRON,
-     LLM_ARCH_EXAONE,
-     LLM_ARCH_RWKV6,
+@@ -217,6 +217,7 @@ enum llm_arch {
+     LLM_ARCH_GRANITE,
+     LLM_ARCH_GRANITE_MOE,
+     LLM_ARCH_CHAMELEON,
 +    LLM_ARCH_SOLAR,
      LLM_ARCH_UNKNOWN,
  };
  
-@@ -261,6 +262,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
-     { LLM_ARCH_NEMOTRON,        "nemotron"     },
-     { LLM_ARCH_EXAONE,          "exaone"       },
-     { LLM_ARCH_RWKV6,           "rwkv6"        },
+@@ -270,6 +271,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
+     { LLM_ARCH_GRANITE,         "granite"      },
+     { LLM_ARCH_GRANITE_MOE,     "granitemoe"   },
+     { LLM_ARCH_CHAMELEON,       "chameleon"    },
 +    { LLM_ARCH_SOLAR,           "solar"        },
      { LLM_ARCH_UNKNOWN,         "(unknown)"    },
  };
  
-@@ -314,6 +316,7 @@ enum llm_kv {
-     LLM_KV_ATTENTION_KV_LORA_RANK,
+@@ -327,6 +329,7 @@ enum llm_kv {
      LLM_KV_ATTENTION_RELATIVE_BUCKETS_COUNT,
      LLM_KV_ATTENTION_SLIDING_WINDOW,
+     LLM_KV_ATTENTION_SCALE,
 +    LLM_KV_ATTENTION_BLOCK_SKIP_CONNECTION,
  
      LLM_KV_ROPE_DIMENSION_COUNT,
      LLM_KV_ROPE_FREQ_BASE,
-@@ -405,19 +408,20 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
-     { LLM_KV_TIME_MIX_EXTRA_DIM,                "%s.time_mix_extra_dim"                },
-     { LLM_KV_TIME_DECAY_EXTRA_DIM,              "%s.time_decay_extra_dim"              },
+@@ -421,20 +424,21 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
+     { LLM_KV_RESIDUAL_SCALE,                    "%s.residual_scale"                    },
+     { LLM_KV_EMBEDDING_SCALE,                   "%s.embedding_scale"                   },
  
 -    { LLM_KV_ATTENTION_HEAD_COUNT,             "%s.attention.head_count"             },
 -    { LLM_KV_ATTENTION_HEAD_COUNT_KV,          "%s.attention.head_count_kv"          },
@@ -43,6 +59,7 @@ index f79bd782..b7771f53 100644
 -    { LLM_KV_ATTENTION_KV_LORA_RANK,           "%s.attention.kv_lora_rank"           },
 -    { LLM_KV_ATTENTION_RELATIVE_BUCKETS_COUNT, "%s.attention.relative_buckets_count" },
 -    { LLM_KV_ATTENTION_SLIDING_WINDOW,         "%s.attention.sliding_window"         },
+-    { LLM_KV_ATTENTION_SCALE,                  "%s.attention.scale"                  },
 +    { LLM_KV_ATTENTION_HEAD_COUNT,             "%s.attention.head_count"               },
 +    { LLM_KV_ATTENTION_HEAD_COUNT_KV,          "%s.attention.head_count_kv"            },
 +    { LLM_KV_ATTENTION_MAX_ALIBI_BIAS,         "%s.attention.max_alibi_bias"           },
@@ -56,20 +73,21 @@ index f79bd782..b7771f53 100644
 +    { LLM_KV_ATTENTION_KV_LORA_RANK,           "%s.attention.kv_lora_rank"             },
 +    { LLM_KV_ATTENTION_RELATIVE_BUCKETS_COUNT, "%s.attention.relative_buckets_count"   },
 +    { LLM_KV_ATTENTION_SLIDING_WINDOW,         "%s.attention.sliding_window"           },
++    { LLM_KV_ATTENTION_SCALE,                  "%s.attention.scale"                    },
 +    { LLM_KV_ATTENTION_BLOCK_SKIP_CONNECTION,  "%s.attention.block_skip_connection.%d" },
  
      { LLM_KV_ROPE_DIMENSION_COUNT,          "%s.rope.dimension_count"                 },
      { LLM_KV_ROPE_FREQ_BASE,                "%s.rope.freq_base"                       },
-@@ -589,6 +593,7 @@ enum llm_tensor {
-     LLM_TENSOR_ENC_FFN_DOWN,
-     LLM_TENSOR_ENC_FFN_UP,
+@@ -608,6 +612,7 @@ enum llm_tensor {
      LLM_TENSOR_ENC_OUTPUT_NORM,
+     LLM_TENSOR_CLS,
+     LLM_TENSOR_CLS_OUT,
 +    LLM_TENSOR_BSKCN_TV,
  };
  
  static const std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NAMES = {
-@@ -1408,6 +1413,24 @@ static const std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NA
-             { LLM_TENSOR_CHANNEL_MIX_RECEPTANCE,    "blk.%d.channel_mix_receptance" },
+@@ -1527,6 +1532,24 @@ static const std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NA
+             { LLM_TENSOR_ATTN_K_NORM,     "blk.%d.attn_k_norm" },
          },
      },
 +    {
@@ -93,7 +111,7 @@ index f79bd782..b7771f53 100644
      {
          LLM_ARCH_UNKNOWN,
          {
-@@ -2237,6 +2260,7 @@ enum e_model {
+@@ -2360,6 +2383,7 @@ enum e_model {
      MODEL_15B,
      MODEL_16B,
      MODEL_20B,
@@ -101,7 +119,7 @@ index f79bd782..b7771f53 100644
      MODEL_30B,
      MODEL_34B,
      MODEL_35B,
-@@ -2284,6 +2308,8 @@ struct llama_hparams {
+@@ -2409,6 +2433,8 @@ struct llama_hparams {
      std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_kv_arr;
      std::array<uint32_t, LLAMA_MAX_LAYERS> n_ff_arr;
  
@@ -110,7 +128,7 @@ index f79bd782..b7771f53 100644
      uint32_t n_layer_dense_lead = 0;
      uint32_t n_lora_q = 0;
      uint32_t n_lora_kv = 0;
-@@ -2349,6 +2375,7 @@ struct llama_hparams {
+@@ -2479,6 +2505,7 @@ struct llama_hparams {
          if (this->n_head_arr    != other.n_head_arr)    return true;
          if (this->n_head_kv_arr != other.n_head_kv_arr) return true;
          if (this->n_ff_arr      != other.n_ff_arr)      return true;
@@ -118,7 +136,7 @@ index f79bd782..b7771f53 100644
  
          if (this->n_rel_attn_bkts    != other.n_rel_attn_bkts)    return true;
          if (this->n_layer_dense_lead != other.n_layer_dense_lead) return true;
-@@ -2455,6 +2482,14 @@ struct llama_hparams {
+@@ -2588,6 +2615,14 @@ struct llama_hparams {
              return ssm_d_state * ssm_d_inner;
          }
      }
@@ -133,7 +151,7 @@ index f79bd782..b7771f53 100644
  };
  
  static_assert(std::is_trivially_copyable<llama_hparams>::value, "llama_hparams must be trivially copyable");
-@@ -2635,6 +2670,8 @@ struct llama_layer {
+@@ -2769,6 +2804,8 @@ struct llama_layer {
      struct ggml_tensor * ffn_gate_scale;
      struct ggml_tensor * ffn_up_scale;
      struct ggml_tensor * ffn_down_scale;
@@ -142,9 +160,9 @@ index f79bd782..b7771f53 100644
  };
  
  // very similar to llama_batch,
-@@ -5937,6 +5974,21 @@ static void llm_load_hparams(
+@@ -6134,6 +6171,21 @@ static void llm_load_hparams(
                      default: model.type = e_model::MODEL_UNKNOWN;
-                 }
+                }
              } break;
 +        case LLM_ARCH_SOLAR:
 +            {
@@ -164,10 +182,15 @@ index f79bd782..b7771f53 100644
          default: (void)0;
      }
  
-@@ -8420,6 +8472,38 @@ static bool llm_load_tensors(
-                     }
+@@ -8831,6 +8883,38 @@ static bool llm_load_tensors(
  
-                 } break;
+                         layer.ffn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd});
+ 
++                        layer.ffn_gate = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff});
++                        layer.ffn_down = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd});
++                        layer.ffn_up   = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff});
++                    }
++                } break;
 +            case LLM_ARCH_SOLAR:
 +                {
 +                    model.tok_embd = ml.create_tensor(ctx_input, tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab});
@@ -195,15 +218,10 @@ index f79bd782..b7771f53 100644
 +
 +                        layer.bskcn_tv = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_BSKCN_TV, "weight"), {2}, llama_model_loader::TENSOR_NOT_REQUIRED | (i != 0 ? llama_model_loader::TENSOR_DUPLICATED : 0));
 +
-+                        layer.ffn_gate = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff});
-+                        layer.ffn_down = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd});
-+                        layer.ffn_up   = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff});
-+                    }
-+                } break;
-             default:
-                 throw std::runtime_error("unknown architecture");
-         }
-@@ -15173,6 +15257,158 @@ struct llm_build_context {
+                         layer.ffn_gate = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff});
+                         layer.ffn_down = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd});
+                         layer.ffn_up   = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff});
+@@ -16179,6 +16263,158 @@ struct llm_build_context {
  
          return gf;
      }
@@ -362,9 +380,9 @@ index f79bd782..b7771f53 100644
  };
  
  static struct ggml_cgraph * llama_build_graph_defrag(llama_context & lctx, const std::vector<uint32_t> & ids) {
-@@ -15423,6 +15659,10 @@ static struct ggml_cgraph * llama_build_graph(
+@@ -16443,6 +16679,10 @@ static struct ggml_cgraph * llama_build_graph(
              {
-                 result = llm.build_rwkv6();
+                 result = llm.build_chameleon();
              } break;
 +        case LLM_ARCH_SOLAR:
 +            {
@@ -373,14 +391,11 @@ index f79bd782..b7771f53 100644
          default:
              GGML_ABORT("fatal error");
      }
-@@ -18503,6 +18743,7 @@ enum llama_rope_type llama_rope_type(const struct llama_model * model) {
-         case LLM_ARCH_ARCTIC:
-         case LLM_ARCH_DEEPSEEK2:
-         case LLM_ARCH_CHATGLM:
+@@ -19589,6 +19829,7 @@ enum llama_rope_type llama_rope_type(const struct llama_model * model) {
+         case LLM_ARCH_GRANITE:
+         case LLM_ARCH_GRANITE_MOE:
+         case LLM_ARCH_CHAMELEON:
 +        case LLM_ARCH_SOLAR:
              return LLAMA_ROPE_TYPE_NORM;
  
          // the pairs of head values are offset by n_rot/2
--- 
-2.46.0
-

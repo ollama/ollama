@@ -50,6 +50,7 @@
 
 #include "sgemm.h"
 #include "ggml-impl.h"
+#include "ggml-cpu-impl.h"
 #include "ggml-quants.h"
 
 #ifdef _MSC_VER
@@ -234,6 +235,14 @@ template <> inline __m512 load(const ggml_fp16_t *p) {
     return _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *)p));
 }
 #endif // __AVX512F__
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// CONSTANTS
+
+#if defined(__AVX__) || defined(__AVX2__) || defined(__AVX512F__)
+static const int8_t kvalues_iq4nl[16] = {-127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113};
+static const __m128i iq4nlt = _mm_loadu_si128((const __m128i *) kvalues_iq4nl);
+#endif
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // FLOATING POINT MATRIX MULTIPLICATION
@@ -933,6 +942,20 @@ class tinyBLAS_Q0_AVX {
         return _mm_sub_epi8(_mm_and_si128(_mm_set1_epi8(15), _mm_srli_epi16(x, 4)), _mm_set1_epi8(8));
     }
 
+    inline __m256i load(const block_iq4_nl *b) {
+        return MM256_SET_M128I(load1(b), load0(b));
+    }
+
+    inline __m128i load0(const block_iq4_nl *b) {
+        const __m128i x = _mm_loadu_si128((const __m128i *)(b->qs));
+        return _mm_shuffle_epi8(iq4nlt, _mm_and_si128(_mm_set1_epi8(15), x));
+    }
+
+    inline __m128i load1(const block_iq4_nl *b) {
+        const __m128i x = _mm_loadu_si128((const __m128i *)(b->qs));
+        return _mm_shuffle_epi8(iq4nlt, _mm_and_si128(_mm_set1_epi8(15), _mm_srli_epi16(x, 4)));
+    }
+
     inline __m256 updot(__m256i u, __m256i s) {
         __m256i res;
 #if defined(__AVXVNNI__) || (defined(__AVX512VNNI__) && defined(__AVX512VL__))
@@ -1005,6 +1028,10 @@ bool llamafile_sgemm(int64_t m, int64_t n, int64_t k, const void *A, int64_t lda
     assert(ldc >= m);
     assert(nth > 0);
     assert(ith < nth);
+
+    // only enable sgemm for prompt processing
+    if (n < 2)
+        return false;
 
     if (Ctype != GGML_TYPE_F32)
         return false;
@@ -1145,6 +1172,22 @@ bool llamafile_sgemm(int64_t m, int64_t n, int64_t k, const void *A, int64_t lda
 #elif defined(__ARM_FEATURE_DOTPROD)
         tinyBLAS_Q0_ARM<block_q4_0> tb{
             k, (const block_q4_0 *)A, lda,
+            (const block_q8_0 *)B, ldb,
+            (float *)C, ldc,
+            ith, nth};
+        tb.matmul(m, n);
+        return true;
+#else
+        return false;
+#endif
+    }
+
+    case GGML_TYPE_IQ4_NL: {
+        if (Btype != GGML_TYPE_Q8_0)
+            return false;
+#if defined(__AVX2__) || defined(__AVX512F__) || defined(__AVX__)
+        tinyBLAS_Q0_AVX<block_iq4_nl, block_q8_0, float> tb{
+            k, (const block_iq4_nl *)A, lda,
             (const block_q8_0 *)B, ldb,
             (float *)C, ldc,
             ith, nth};

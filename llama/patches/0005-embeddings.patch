@@ -1,8 +1,17 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Mon, 16 Sep 2024 15:53:14 -0700
+Subject: [PATCH] embeddings
+
+---
+ src/llama.cpp | 15 +++++++++------
+ 1 file changed, 9 insertions(+), 6 deletions(-)
+
 diff --git a/src/llama.cpp b/src/llama.cpp
-index 88355971..d7db689b 100644
+index 800dfb95..a639522d 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
-@@ -15906,7 +15906,7 @@ static size_t llama_output_reserve(llama_context & lctx, size_t n_outputs) {
+@@ -16920,7 +16920,7 @@ static size_t llama_output_reserve(llama_context & lctx, size_t n_outputs) {
      const auto n_embd  = hparams.n_embd;
  
      // TODO: use a per-batch flag for logits presence instead
@@ -11,7 +20,7 @@ index 88355971..d7db689b 100644
      const bool has_embd   =  cparams.embeddings && (cparams.pooling_type == LLAMA_POOLING_TYPE_NONE);
  
      const size_t logits_size = has_logits ? n_vocab*n_outputs_max : 0;
-@@ -16175,20 +16175,23 @@ static int llama_decode_internal(
+@@ -17192,20 +17192,23 @@ static int llama_decode_internal(
              // no output
              res  = nullptr;
              embd = nullptr;
@@ -21,11 +30,10 @@ index 88355971..d7db689b 100644
 +        }
 +
 +        if (cparams.embeddings) {
-             for (int i = gf->n_nodes - 1; i >= 0; --i) {
--                if (strcmp(gf->nodes[i]->name, "result_embd_pooled") == 0) {
--                    embd = gf->nodes[i];
-+                embd = gf->nodes[i];
-+                if (strcmp(embd->name, "result_embd_pooled") == 0) {
+             for (int i = ggml_graph_n_nodes(gf) - 1; i >= 0; --i) {
++                embd = ggml_graph_node(gf, i);
+                 if (strcmp(ggml_graph_node(gf, i)->name, "result_embd_pooled") == 0) {
+-                    embd = ggml_graph_node(gf, i);
                      break;
                  }
              }

@@ -1,8 +1,17 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: jmorganca <jmorganca@gmail.com>
+Date: Wed, 12 Jun 2024 12:18:40 -0700
+Subject: [PATCH] ggml-metal
+
+---
+ ggml/src/ggml-metal.m | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
 diff --git a/ggml/src/ggml-metal.m b/ggml/src/ggml-metal.m
-index b56c3604..400d43f4 100644
+index 3a433703..829c5e39 100644
 --- a/ggml/src/ggml-metal.m
 +++ b/ggml/src/ggml-metal.m
-@@ -377,8 +377,8 @@ static void ggml_metal_log(enum ggml_log_level level, const char * format, ...){
+@@ -392,8 +392,8 @@ static void ggml_metal_log(enum ggml_log_level level, const char * format, ...){
  #if GGML_METAL_EMBED_LIBRARY
              GGML_METAL_LOG_INFO("%s: using embedded metal library\n", __func__);
  

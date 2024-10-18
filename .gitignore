@@ -15,3 +15,4 @@ build/*/*/*
 !build/**/placeholder
 llama/build
 __debug_bin*
+llama/vendor

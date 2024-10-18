@@ -333,4 +333,4 @@ jobs:
           submodules: recursive
       - name: Verify patches carry all the changes
         run: |
-          cd llama && ./sync.sh && git diff --compact-summary --exit-code .
+          cd llama && make apply-patches sync && git diff --compact-summary --exit-code .
