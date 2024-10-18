@@ -449,6 +449,10 @@ extern "C" {
                      struct llama_model * model,
             struct llama_context_params   params);
 
+    // TODO (jmorganca): this should most likely be passed in as part of a batch
+    // and not set on the context for all batches.
+    LLAMA_API void llama_set_cross_attn_state(struct llama_context * ctx, float * cross_attn_state);
+
     // Frees all allocated memory
     LLAMA_API void llama_free(struct llama_context * ctx);
 
