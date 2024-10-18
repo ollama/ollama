@@ -683,6 +683,7 @@ type completion struct {
 	Prompt       string `json:"prompt"`
 	Stop         bool   `json:"stop"`
 	StoppedLimit bool   `json:"stopped_limit"`
+	StopSequence string `json:"stopping_word"`
 
 	Timings struct {
 		PredictedN  int     `json:"predicted_n"`
@@ -702,6 +703,7 @@ type CompletionRequest struct {
 type CompletionResponse struct {
 	Content            string
 	DoneReason         string
+	StopSequence       string
 	Done               bool
 	PromptEvalCount    int
 	PromptEvalDuration time.Duration
@@ -851,6 +853,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 				fn(CompletionResponse{
 					Done:               true,
 					DoneReason:         doneReason,
+					StopSequence:       c.StopSequence,
 					PromptEvalCount:    c.Timings.PromptN,
 					PromptEvalDuration: parseDurationMs(c.Timings.PromptMS),
 					EvalCount:          c.Timings.PredictedN,

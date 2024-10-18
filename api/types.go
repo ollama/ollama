@@ -445,6 +445,9 @@ type GenerateResponse struct {
 	// DoneReason is the reason the model stopped generating text.
 	DoneReason string `json:"done_reason,omitempty"`
 
+	// StopSequence is the stop sequence which triggered the model to stop generating text.
+	StopSequence string `json:"stop_sequence,omitempty"`
+
 	// Context is an encoding of the conversation used in this response; this
 	// can be sent in the next request to keep a conversational memory.
 	Context []int `json:"context,omitempty"`
