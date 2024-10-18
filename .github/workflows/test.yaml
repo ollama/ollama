@@ -443,6 +443,8 @@ jobs:
           export PATH=$PATH:/usr/local/go/bin
           export GOCACHE=$HOME/.gocache
           export LD_LIBRARY_PATH=$OLLAMA_HOME/llm/build/linux/ppc64le/cpu/bin
+          cd $LD_LIBRARY_PATH
+          ls
           go test -v ./...
 
   patches:
