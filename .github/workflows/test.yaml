@@ -429,9 +429,9 @@ jobs:
           export LD_LIBRARY_PATH=$OLLAMA_HOME/llm/build/linux/$GOARCH/cpu/bin
           cd  $OLLAMA_HOME
           echo $GOROOT
-          sudo mkdir $HOME/.cache
-          sudo chmod -R 777 $HOME/.cache
-          export GOCACHE=$HOME/.cache
+          sudo mkdir $HOME/.gocache
+          sudo chmod -R 777 $HOME/.gocache
+          export GOCACHE=$HOME/.gocache
           echo "Running go Build ."
           go mod tidy
           go build .
@@ -441,6 +441,7 @@ jobs:
           export GOPATH=$HOME/go
           export GOROOT=/usr/local/go
           export PATH=$PATH:/usr/local/go/bin
+          export GOCACHE=$HOME/.gocache
           go test -v ./...
 
   patches:
