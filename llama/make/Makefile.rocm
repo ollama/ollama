@@ -9,15 +9,11 @@ HIP_ARCHS_COMMON := gfx900 gfx940 gfx941 gfx942 gfx1010 gfx1012 gfx1030 gfx1100 
 HIP_ARCHS_LINUX := gfx906:xnack- gfx908:xnack- gfx90a:xnack+ gfx90a:xnack-
 
 ifeq ($(OS),windows)
-	GPU_LIB_DIR_WIN := $(shell cygpath -m -s "$(HIP_PATH)\bin")
-	# If HIP_PATH has spaces, hipcc trips over them when subprocessing
-	HIP_PATH := $(shell cygpath -m -s "$(HIP_PATH)\")
-	CGO_EXTRA_LDFLAGS_WIN := -L$(shell cygpath -m -s "$(HIP_PATH)\lib")
-	export HIP_PATH
-	GPU_COMPILER_WIN := $(HIP_PATH)bin/hipcc.bin.exe
+	GPU_LIB_DIR_WIN := $(shell cygpath -m -s "$(HIP_PATH)/bin")
+	CGO_EXTRA_LDFLAGS_WIN := -L$(shell cygpath -m -s "$(HIP_PATH)/lib")
+	GPU_COMPILER_WIN := $(HIP_PATH)/bin/hipcc.bin.exe
 	GPU_COMPILER:=$(GPU_COMPILER_WIN)
 else ifeq ($(OS),linux)
-	HIP_PATH?=/opt/rocm
 	GPU_LIB_DIR_LINUX := $(HIP_PATH)/lib
 	GPU_COMPILER_LINUX := $(shell X=$$(which hipcc 2>/dev/null) && echo $$X)
 	GPU_COMPILER:=$(GPU_COMPILER_LINUX)

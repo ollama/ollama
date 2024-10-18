@@ -7,15 +7,9 @@ set -e
 mkdir -p dist
 
 for TARGETARCH in arm64 amd64; do
-    if [ -n "${OLLAMA_NEW_RUNNERS}" ]; then
-        echo "Building Go runner darwin $TARGETARCH"
-        rm -rf llama/build
-        GOOS=darwin ARCH=$TARGETARCH GOARCH=$TARGETARCH make -C llama -j 8
-    else
-        echo "Building C++ runner darwin $TARGETARCH"
-        rm -rf llm/build
-        GOOS=darwin GOARCH=$TARGETARCH go generate ./...
-    fi
+    echo "Building Go runner darwin $TARGETARCH"
+    rm -rf llama/build
+    GOOS=darwin ARCH=$TARGETARCH GOARCH=$TARGETARCH make -C llama -j 8
     # These require Xcode v13 or older to target MacOS v11
     # If installed to an alternate location use the following to enable
     # export SDKROOT=/Applications/Xcode_12.5.1.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk

@@ -1,8 +1,10 @@
-package llm
+package fileutils
 
 import "fmt"
 
 type fileType uint32
+
+// TODO this should map over to the GGML CGO enum type
 
 const (
 	fileTypeF32 fileType = iota

@@ -92,19 +92,19 @@ jobs:
       - run: go get ./...
       - run: |
           $gopath=(get-command go).source | split-path -parent
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
+          import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$env:PATH"
-          go generate -x ./...
-        name: go generate
+          $cores = (Get-ComputerInfo -Property CsProcessors).CsProcessors.NumberOfCores
+          make -j $cores
+        name: make
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-cpu
           path: |
             build/**/*
             build/**/*.a
-            llm/build/**/*.a
             dist/windows-amd64/**
 
   # ROCm generation step
@@ -158,14 +158,15 @@ jobs:
       - run: go get ./...
       - run: |
           $gopath=(get-command go).source | split-path -parent
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
+          import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$env:PATH"
           $env:OLLAMA_SKIP_CPU_GENERATE="1"
           $env:HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
-          go generate -x ./...
-        name: go generate
+          $cores = (Get-ComputerInfo -Property CsProcessors).CsProcessors.NumberOfCores
+          make -j $cores
+        name: make
       - name: 'gather rocm dependencies'
         run: |
           $HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
@@ -245,16 +246,17 @@ jobs:
       - name: 'Verify CUDA'
         run: nvcc -V
       - run: go get ./...
-      - name: go generate
+      - name: make
         run: |
           $gopath=(get-command go).source | split-path -parent
           $cudabin=(get-command nvcc).source | split-path
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
+          import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$cudabin;$env:PATH"
           $env:OLLAMA_SKIP_CPU_GENERATE="1"
-          go generate -x ./...
+          $cores = (Get-ComputerInfo -Property CsProcessors).CsProcessors.NumberOfCores
+          make -j $cores
       - name: 'gather cuda dependencies'
         run: |
           $NVIDIA_DIR=(resolve-path 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*\bin\')[0]
@@ -289,7 +291,7 @@ jobs:
           Set-ExecutionPolicy Bypass -Scope Process -Force
           [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
           iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-          choco install -y --no-progress git gzip
+          choco install -y --no-progress git gzip make
           echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Install Visual Studio 2022
@@ -385,10 +387,9 @@ jobs:
       - run: |
           $gopath=(get-command go).source | split-path -parent
           $gccpath=(get-command gcc).source | split-path -parent
-          & "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
-          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
-          $env:PATH="$gopath;$gccpath;$env:PATH;C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin"
+          import-module 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -Arch arm64 -vsinstallpath 'C:\Program Files\Microsoft Visual Studio\2022\Community' -skipautomaticlocation
+          $env:PATH="$gopath;$gccpath;$env:PATH"
           echo $env:PATH
           $env:ARCH="arm64"
           .\scripts\build_windows.ps1 buildOllama buildApp gatherDependencies distZip
@@ -474,8 +475,8 @@ jobs:
       - run: dir build
       - run: |
           $gopath=(get-command go).source | split-path -parent
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
+          import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$env:PATH"
           $env:OLLAMA_SKIP_GENERATE="1"
