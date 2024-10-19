@@ -170,20 +170,16 @@ jobs:
       - name: 'gather rocm dependencies'
         run: |
           $HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
-          md "dist\deps\bin\rocblas\library"
-          cp "${HIP_PATH}\bin\hipblas.dll" "dist\deps\bin\"
-          cp "${HIP_PATH}\bin\rocblas.dll" "dist\deps\bin\"
-          cp "${HIP_PATH}\bin\rocblas\library\*" "dist\deps\bin\rocblas\library\"
+          md "dist\windows-amd64\lib\ollama\rocblas\library"
+          cp "${HIP_PATH}\bin\hipblas.dll" "dist\windows-amd64\lib\ollama\"
+          cp "${HIP_PATH}\bin\rocblas.dll" "dist\windows-amd64\lib\ollama\"
+          cp "${HIP_PATH}\bin\rocblas\library\*" "dist\windows-amd64\lib\ollama\rocblas\library\"
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-rocm
           path: |
             build/**/*
             dist/windows-amd64/**
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-rocm-deps
-          path: dist/deps/*
 
   # CUDA generation step
   generate-windows-cuda:
@@ -260,21 +256,15 @@ jobs:
       - name: 'gather cuda dependencies'
         run: |
           $NVIDIA_DIR=(resolve-path 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*\bin\')[0]
-          md "dist\deps"
-          cp "${NVIDIA_DIR}\cudart64_*.dll" "dist\deps\"
-          cp "${NVIDIA_DIR}\cublas64_*.dll" "dist\deps\"
-          cp "${NVIDIA_DIR}\cublasLt64_*.dll" "dist\deps\"
+          cp "${NVIDIA_DIR}\cudart64_*.dll" "dist\windows-amd64\lib\ollama\"
+          cp "${NVIDIA_DIR}\cublas64_*.dll" "dist\windows-amd64\lib\ollama\"
+          cp "${NVIDIA_DIR}\cublasLt64_*.dll" "dist\windows-amd64\lib\ollama\"
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-cuda-${{ matrix.cuda.version }}
           path: |
             build/**/*
             dist/windows-amd64/**
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-cuda-deps-${{ matrix.cuda.version }}
-          path: dist/deps/*
-
 
   # windows arm64 generate, go build, and zip file (no installer)
   # Output of this build is aggregated into the final x86 build
@@ -480,15 +470,6 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-cuda-12
-      - uses: actions/download-artifact@v4
-        with:
-          name: windows-cuda-deps-11
-      - uses: actions/download-artifact@v4
-        with:
-          name: windows-cuda-deps-12
-      - uses: actions/download-artifact@v4
-        with:
-          name: windows-rocm-deps
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-rocm
