@@ -121,7 +121,7 @@ function toggleAutoStartup() {
   app.setLoginItemSettings({ openAtLogin: newOpenAtLogin })
 
   const notification = new Notification({
-    title: 'Auto Startup',
+    title: 'Ollama Auto Startup',
     body: `Auto startup is now ${newOpenAtLogin ? 'enabled' : 'disabled'}`,
   })
   notification.show()
