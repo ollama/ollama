@@ -218,29 +218,103 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		params = append(params, "--threads", strconv.Itoa(defaultThreads))
 	}
 
-	if !opts.F16KV {
+	if !opts.F16KV && envconfig.CacheTypeK() == "" && envconfig.CacheTypeV() == "" {
 		params = append(params, "--memory-f32")
 	}
 
-	flashAttnEnabled := envconfig.FlashAttention()
+	isEmbeddingModel := false
+	if _, ok := ggml.KV()[fmt.Sprintf("%s.pooling_type", ggml.KV().Architecture())]; ok {
+		isEmbeddingModel = true
+	}
 
-	for _, g := range gpus {
-		// only cuda (compute capability 7+) and metal support flash attention
-		if g.Library != "metal" && (g.Library != "cuda" || g.DriverMajor < 7) {
-			flashAttnEnabled = false
+	setCacheTypeParam := func(paramName, cacheType string) {
+		if cacheType == "" {
+			return
 		}
 
-		// mmap has issues with partial offloading on metal
+		validKVCacheTypes := map[string]bool{
+			"f16": true, "f32": true, "q8_0": true, "q4_0": true,
+		}
+
+		if !validKVCacheTypes[cacheType] {
+			slog.Warn("invalid cache type, ignoring", "param", paramName, "type", cacheType)
+			return
+		}
+
+		// For embedding models, only allow f16 and f32
+		if isEmbeddingModel && cacheType != "f16" && cacheType != "f32" {
+			slog.Warn("only f16 and f32 cache types are supported for embedding models, ignoring",
+				"param", paramName, "type", cacheType)
+			return
+		}
+
+		params = append(params, paramName, cacheType)
+		slog.Debug("Setting cache type", "param", paramName, "type", cacheType)
+	}
+
+	// Define cacheTypeK and cacheTypeV
+	cacheTypeK := envconfig.CacheTypeK()
+	cacheTypeV := envconfig.CacheTypeV()
+
+	// Set cache types only if they are not empty
+	supportsFlashAttention := func(ggml *GGML) bool {
+		headCountK := ggml.KV().EmbeddingHeadCountK()
+		headCountV := ggml.KV().EmbeddingHeadCountV()
+
+		if headCountK == 0 || headCountV == 0 {
+			slog.Debug("Model is missing embedding head count for K or V")
+			return false
+		}
+
+		if headCountK != headCountV {
+			slog.Debug("Embedding head count K does not equal V", "K", headCountK, "V", headCountV)
+			return false
+		}
+
+		slog.Debug("Model supports flash attention", "headCountK", headCountK, "headCountV", headCountV)
+		return true
+	}
+
+	flashAttnSupported := supportsFlashAttention(ggml)
+
+	hardwareSupportsFlashAttn := true
+	for _, g := range gpus {
+		if g.Library != "metal" && (g.Library != "cuda" || g.DriverMajor < 7) {
+			hardwareSupportsFlashAttn = false
+			break
+		}
+	}
+
+	flashAttnEnabled := envconfig.FlashAttention() && flashAttnSupported && hardwareSupportsFlashAttn && !isEmbeddingModel
+
+	slog.Debug("Flash attention status",
+		"supported_by_model", flashAttnSupported,
+		"supported_by_hardware", hardwareSupportsFlashAttn,
+		"is_embedding_model", isEmbeddingModel,
+		"enabled", flashAttnEnabled)
+
+	if flashAttnEnabled {
+		params = append(params, "--flash-attn")
+		slog.Info("Enabling flash attention")
+
+		setCacheTypeParam("--cache-type-k", cacheTypeK)
+		setCacheTypeParam("--cache-type-v", cacheTypeV)
+	} else {
+		slog.Info("Flash attention not enabled")
+
+		if !isEmbeddingModel && (cacheTypeK == "q8_0" || cacheTypeK == "q4_0" || cacheTypeV == "q8_0" || cacheTypeV == "q4_0") {
+			slog.Warn("Quantized cache types (q8_0, q4_0) require flash attention. Using default cache types.")
+		}
+	}
+
+	// Handle mmap issues for metal
+	for _, g := range gpus {
 		if g.Library == "metal" &&
 			uint64(opts.NumGPU) > 0 &&
 			uint64(opts.NumGPU) < ggml.KV().BlockCount()+1 {
 			opts.UseMMap = new(bool)
 			*opts.UseMMap = false
 		}
-	}
-
-	if flashAttnEnabled {
-		params = append(params, "--flash-attn")
 	}
 
 	// Windows CUDA should not use mmap for best performance

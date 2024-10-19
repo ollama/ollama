@@ -15,6 +15,8 @@ import (
 
 func TestEstimateGPULayers(t *testing.T) {
 	t.Setenv("OLLAMA_DEBUG", "1")
+	t.Setenv("OLLAMA_CACHE_TYPE_K", "")
+	t.Setenv("OLLAMA_CACHE_TYPE_V", "")
 
 	modelName := "dummy"
 	f, err := os.CreateTemp(t.TempDir(), modelName)
@@ -57,6 +59,7 @@ func TestEstimateGPULayers(t *testing.T) {
 	}
 	projectors := []string{}
 	opts := api.DefaultOptions()
+
 	t.Run("cpu", func(t *testing.T) {
 		estimate := EstimateGPULayers(gpus, ggml, projectors, opts)
 		assert.Equal(t, 0, estimate.Layers)
@@ -70,7 +73,7 @@ func TestEstimateGPULayers(t *testing.T) {
 	projectorSize := uint64(0)
 	memoryLayerOutput := uint64(4)
 
-	// Dual CUDA scenario with assymetry
+	// Dual CUDA scenario with asymmetry
 	gpuMinimumMemory := uint64(2048)
 	gpus = []discover.GpuInfo{
 		{
@@ -123,6 +126,117 @@ func TestEstimateGPULayers(t *testing.T) {
 				assert.Equal(t, estimate.VRAMSize, estimate.TotalSize, "scenario %d: %v %+v", i, s, estimate)
 				assert.Equal(t, estimate.TotalSize, layerSums, "scenario %d: %v %+v", i, s, estimate)
 			}
+		})
+	}
+}
+
+func TestEstimateKvCacheSize(t *testing.T) {
+	tests := []struct {
+		name               string
+		cacheType          string
+		numCtx             uint64
+		blockCount         uint64
+		embeddingHeadCount uint64
+		headCountKV        uint64
+		isEmbeddingModel   bool
+		expected           uint64
+	}{
+		{
+			name:               "f32 cache type",
+			cacheType:          "f32",
+			numCtx:             1024,
+			blockCount:         32,
+			embeddingHeadCount: 32,
+			headCountKV:        32,
+			isEmbeddingModel:   false,
+			expected:           134217728, // 128 MB
+		},
+		{
+			name:               "f16 cache type",
+			cacheType:          "f16",
+			numCtx:             1024,
+			blockCount:         32,
+			embeddingHeadCount: 32,
+			headCountKV:        32,
+			isEmbeddingModel:   false,
+			expected:           67108864, // 64 MB
+		},
+		{
+			name:               "q4_0 cache type",
+			cacheType:          "q4_0",
+			numCtx:             1024,
+			blockCount:         32,
+			embeddingHeadCount: 32,
+			headCountKV:        32,
+			isEmbeddingModel:   false,
+			expected:           16777216, // 16 MB
+		},
+		{
+			name:               "q8_0 cache type",
+			cacheType:          "q8_0",
+			numCtx:             1024,
+			blockCount:         32,
+			embeddingHeadCount: 32,
+			headCountKV:        32,
+			isEmbeddingModel:   false,
+			expected:           33554432, // 32 MB
+		},
+		{
+			name:               "unknown cache type",
+			cacheType:          "unknown",
+			numCtx:             1024,
+			blockCount:         32,
+			embeddingHeadCount: 32,
+			headCountKV:        32,
+			isEmbeddingModel:   false,
+			expected:           67108864, // 64 MB (defaults to f16)
+		},
+		{
+			name:               "empty cache type",
+			cacheType:          "",
+			numCtx:             1024,
+			blockCount:         32,
+			embeddingHeadCount: 32,
+			headCountKV:        32,
+			isEmbeddingModel:   false,
+			expected:           67108864, // 64 MB (defaults to f16)
+		},
+		{
+			name:               "rounding test",
+			cacheType:          "f32",
+			numCtx:             1000,
+			blockCount:         32,
+			embeddingHeadCount: 32,
+			headCountKV:        32,
+			isEmbeddingModel:   false,
+			expected:           131072000, // Rounded up to nearest multiple of 64
+		},
+		{
+			name:               "embedding model with q4_0 (should default to f16)",
+			cacheType:          "q4_0",
+			numCtx:             1024,
+			blockCount:         32,
+			embeddingHeadCount: 32,
+			headCountKV:        32,
+			isEmbeddingModel:   true,
+			expected:           67108864, // 64 MB (defaults to f16)
+		},
+		{
+			name:               "embedding model with f32",
+			cacheType:          "f32",
+			numCtx:             1024,
+			blockCount:         32,
+			embeddingHeadCount: 32,
+			headCountKV:        32,
+			isEmbeddingModel:   true,
+			expected:           134217728, // 128 MB
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := estimateKvCacheSize(tt.cacheType, tt.numCtx, tt.blockCount, tt.embeddingHeadCount, tt.headCountKV, tt.isEmbeddingModel)
+			assert.Equal(t, tt.expected, result, "Estimated KV cache size does not match expected value")
 		})
 	}
 }
