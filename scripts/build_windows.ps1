@@ -143,6 +143,22 @@ function gatherDependencies() {
         copy-item -path "${env:VCToolsRedistDir}\vc_redist.arm64.exe" -destination "${script:DIST_DIR}" -verbose
     }
 
+    foreach ($script:CUDA_LIB_DIR in $script:CUDA_DIRS) {
+        write-host "copying CUDA dependencies to ${script:DIST_DIR}\lib\ollama\"
+        cp "${script:CUDA_LIB_DIR}\cudart64_*.dll" "${script:DIST_DIR}\lib\ollama\"
+        cp "${script:CUDA_LIB_DIR}\cublas64_*.dll" "${script:DIST_DIR}\lib\ollama\"
+        cp "${script:CUDA_LIB_DIR}\cublasLt64_*.dll" "${script:DIST_DIR}\lib\ollama\"
+    }
+
+    if ($null -ne ${env:HIP_PATH}) {
+        md "${script:DIST_DIR}\lib\ollama\rocblas\library\" -ea 0 > $null
+        cp "${env:HIP_PATH}\bin\hipblas.dll" "${script:DIST_DIR}\lib\ollama\"
+        cp "${env:HIP_PATH}\bin\rocblas.dll" "${script:DIST_DIR}\lib\ollama\"
+        # amdhip64.dll dependency comes from the driver and must be installed on the host to use AMD GPUs
+        cp "${env:HIP_PATH}\bin\rocblas\library\*" "${script:DIST_DIR}\lib\ollama\rocblas\library\"
+    }
+
+    # TODO - oneapi
 
     cp "${script:SRC_DIR}\app\ollama_welcome.ps1" "${script:SRC_DIR}\dist\"
     if ("${env:KEY_CONTAINER}") {
