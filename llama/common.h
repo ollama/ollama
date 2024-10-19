@@ -272,7 +272,7 @@ struct gpt_params {
     bool cont_batching     = true;  // insert new sequences for decoding on-the-fly
     bool flash_attn        = false; // flash attention
     bool no_perf           = false; // disable performance metrics
-    bool ctx_shift         = true;  // context shift on inifinite text generation
+    bool ctx_shift         = true;  // context shift on infinite text generation
 
     bool input_prefix_bos  = false; // prefix BOS to user inputs, preceding input_prefix
     bool logits_all        = false; // return logits for all tokens in the batch
