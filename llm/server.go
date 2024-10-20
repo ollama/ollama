@@ -269,6 +269,14 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		params = append(params, "--multiuser-cache")
 	}
 
+	if envconfig.SplitModeRow() {
+		params = append(params, "--split-mode", "row")
+	}
+
+	if envconfig.NoKVOffload() {
+		params = append(params, "--no-kv-offload")
+	}
+
 	for i := range servers {
 		dir := availableServers[servers[i]]
 		if dir == "" {
