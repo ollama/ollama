@@ -142,7 +142,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
 			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
-		case err.Error() == "invalid model name":
+		case err.Error() == errtypes.InvalidModelNameErrMsg:
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -152,6 +152,18 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	// expire the runner
 	if req.Prompt == "" && req.KeepAlive != nil && int(req.KeepAlive.Seconds()) == 0 {
+		model, err := GetModel(req.Model)
+		if err != nil {
+			switch {
+			case os.IsNotExist(err):
+				c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+			case err.Error() == errtypes.InvalidModelNameErrMsg:
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			default:
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			}
+			return
+		}
 		s.sched.expireRunner(model)
 
 		c.JSON(http.StatusOK, api.GenerateResponse{
@@ -568,7 +580,7 @@ func (s *Server) PullHandler(c *gin.Context) {
 
 	name := model.ParseName(cmp.Or(req.Model, req.Name))
 	if !name.IsValid() {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid model name"})
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errtypes.InvalidModelNameErrMsg})
 		return
 	}
 
@@ -829,7 +841,7 @@ func (s *Server) ShowHandler(c *gin.Context) {
 		switch {
 		case os.IsNotExist(err):
 			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
-		case err.Error() == "invalid model name":
+		case err.Error() == errtypes.InvalidModelNameErrMsg:
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -873,7 +885,13 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		msgs[i] = api.Message{Role: msg.Role, Content: msg.Content}
 	}
 
-	manifest, err := ParseNamedManifest(name)
+
+	n := model.ParseName(req.Model)
+	if !n.IsValid() {
+		return nil, errors.New(errtypes.InvalidModelNameErrMsg)
+	}
+
+	manifest, err := ParseNamedManifest(n)
 	if err != nil {
 		return nil, err
 	}
@@ -1470,7 +1488,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			switch {
 			case os.IsNotExist(err):
 				c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
-			case err.Error() == "invalid model name":
+			case err.Error() == errtypes.InvalidModelNameErrMsg:
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			default:
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
