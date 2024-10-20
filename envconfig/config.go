@@ -72,6 +72,7 @@ func Origins() (origins []string) {
 		"app://*",
 		"file://*",
 		"tauri://*",
+		"vscode-webview://*",
 	)
 
 	return origins
