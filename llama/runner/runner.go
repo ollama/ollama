@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llama"
@@ -293,17 +294,29 @@ func (s *Server) shiftContext(seq *Sequence) {
 }
 
 func flushPending(seq *Sequence) bool {
-	for _, p := range seq.pendingResponses {
-		select {
-		case seq.responses <- p:
-		case <-seq.quit:
-			seq.pendingResponses = []string{}
-			return false
-		}
+	joined := strings.Join(seq.pendingResponses, "")
+	seq.pendingResponses = []string{}
+
+	// Check if there are any partial UTF-8 characters remaining.
+	// We already check and queue as we are generating but some may
+	// still make it here:
+	// - Sequence is ending, e.g. generation limit has been hit
+	// - Invalid characters in the middle of a string
+	// This is a stricter check to ensure we never output invalid Unicode.
+	for !utf8.ValidString(joined) {
+		joined = joined[:len(joined)-1]
 	}
 
-	seq.pendingResponses = []string{}
-	return true
+	if len(joined) == 0 {
+		return true
+	}
+
+	select {
+	case seq.responses <- joined:
+		return true
+	case <-seq.quit:
+		return false
+	}
 }
 
 func (s *Server) removeSequence(seqIndex int, reason string) {
