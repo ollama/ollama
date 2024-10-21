@@ -8,7 +8,7 @@ on:
 jobs:
   # Full build of the Mac assets
   build-darwin:
-    runs-on: ubuntu-20.4-ppc64le
+    runs-on: ubuntu-20.04-ppc64le
     environment: release
     steps:
       - uses: actions/checkout@v4
