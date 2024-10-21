@@ -603,6 +603,13 @@ jobs:
             aarch64) echo ARCH=arm64; echo PLATFORM_PAIR=linux-arm64 ;;
           esac >>$GITHUB_ENV
           echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${{ env.DOCKER_METADATA_OUTPUT_VERSION }}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" >>$GITHUB_ENV
+      - name: Verify Docker creds
+        shell: bash
+        run: |
+           echo ${{ vars.DOCKER_USER }}
+           echo ${{ env.DOCKER_USER }}
+           echo ${{ ecrets.DOCKER_ACCESS_TOKEN }}
+           
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Login to Docker Hub
