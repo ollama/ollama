@@ -7,7 +7,7 @@ on:
 jobs:
   update-latest:
     environment: release
-    runs-on: linux
+    runs-on: ubuntu-22.04-ppc64le
     steps:
       - uses: actions/checkout@v4
       - name: Login to Docker Hub
