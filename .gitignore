@@ -5,7 +5,6 @@
 .swp
 dist
 ollama
-ggml-metal.metal
 .cache
 *.exe
 .idea
@@ -17,3 +16,4 @@ build/*/*/*
 llama/build
 __debug_bin*
 .ccls-cache
+llama/vendor

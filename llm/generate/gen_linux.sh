@@ -59,19 +59,6 @@ git_module_setup
 apply_patches
 
 init_vars
-if [ -z "${OLLAMA_SKIP_STATIC_GENERATE}" -o "${OLLAMA_CPU_TARGET}" = "static" ]; then
-    # Builds by default, allows skipping, forces build if OLLAMA_CPU_TARGET="static"
-    # Enables optimized Dockerfile builds using a blanket skip and targeted overrides
-    # Static build for linking into the Go binary
-    init_vars
-    CMAKE_TARGETS="--target llama --target ggml"
-    CMAKE_DEFS="-DBUILD_SHARED_LIBS=off -DGGML_NATIVE=off -DGGML_AVX=off -DGGML_AVX2=off -DGGML_AVX512=off -DGGML_FMA=off -DGGML_F16C=off -DGGML_OPENMP=off ${CMAKE_DEFS}"
-    BUILD_DIR="../build/linux/${ARCH}_static"
-    echo "Building static library"
-    build
-fi
-
-init_vars
 if [ -z "${OLLAMA_SKIP_CPU_GENERATE}" ]; then
     # Users building from source can tune the exact flags we pass to cmake for configuring
     # llama.cpp, and we'll build only 1 CPU variant in that case as the default.
@@ -264,7 +251,7 @@ if [ -z "${OLLAMA_SKIP_ROCM_GENERATE}" -a -d "${ROCM_PATH}" ]; then
         ROCM_VARIANT=_v$(ls ${ROCM_PATH}/lib/librocblas.so.*.*.????? | cut -f5 -d. || true)
     fi
     init_vars
-    CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DGGML_HIPBLAS=on -DGGML_CUDA_NO_PEER_COPY=on -DCMAKE_C_COMPILER=$ROCM_PATH/llvm/bin/clang -DCMAKE_CXX_COMPILER=$ROCM_PATH/llvm/bin/clang++ -DAMDGPU_TARGETS=$(amdGPUs) -DGPU_TARGETS=$(amdGPUs)"
+    CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DGGML_HIPBLAS=on -DCMAKE_C_COMPILER=$ROCM_PATH/llvm/bin/clang -DCMAKE_CXX_COMPILER=$ROCM_PATH/llvm/bin/clang++ -DAMDGPU_TARGETS=$(amdGPUs) -DGPU_TARGETS=$(amdGPUs)"
     # Users building from source can tune the exact flags we pass to cmake for configuring llama.cpp
     if [ -n "${OLLAMA_CUSTOM_ROCM_DEFS}" ]; then
         echo "OLLAMA_CUSTOM_ROCM_DEFS=\"${OLLAMA_CUSTOM_ROCM_DEFS}\""

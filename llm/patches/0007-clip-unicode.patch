@@ -1,17 +1,17 @@
-From ae2b188a679c83ce105aa1e823499441dfab3c57 Mon Sep 17 00:00:00 2001
-From: Michael Yang <mxyng@pm.me>
-Date: Mon, 16 Sep 2024 15:53:15 -0700
-Subject: [PATCH] 07-clip-unicode.diff
+From 01c42149cbdc194644a2f138598029938e0dd447 Mon Sep 17 00:00:00 2001
+From: Gabe Goodhart <ghart@us.ibm.com>
+Date: Thu, 19 Sep 2024 17:09:57 -0600
+Subject: [PATCH] clip unicode
 
 ---
  examples/llava/clip.cpp | 23 +++++++++++++++++++++++
  1 file changed, 23 insertions(+)
 
 diff --git a/examples/llava/clip.cpp b/examples/llava/clip.cpp
-index cb51793d..8716472b 100644
+index b8941c74..3a735f17 100644
 --- a/examples/llava/clip.cpp
 +++ b/examples/llava/clip.cpp
-@@ -41,6 +41,14 @@
+@@ -40,6 +40,14 @@
  #include <cinttypes>
  #include <limits>
  
@@ -23,10 +23,10 @@ index cb51793d..8716472b 100644
 +#include <windows.h>
 +#endif
 +
- //#define CLIP_DEBUG_FUNCTIONS
- 
- // RGB uint8 image
-@@ -1223,7 +1231,22 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
+ #define LOG_INF(...) do { fprintf(stdout, __VA_ARGS__); } while (0)
+ #define LOG_WRN(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
+ #define LOG_ERR(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
+@@ -1227,7 +1235,22 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
              return nullptr;
          }
  
@@ -47,8 +47,8 @@ index cb51793d..8716472b 100644
          auto fin = std::ifstream(fname, std::ios::binary);
 +#endif
          if (!fin) {
-             LOG_TEE("cannot open model file for loading tensors\n");
+             LOG_ERR("cannot open model file for loading tensors\n");
              clip_free(new_clip);
 -- 
-2.46.0
+2.39.3 (Apple Git-146)
 

@@ -29,7 +29,7 @@ type tensorData struct {
 	Shape   []int  `json:"shape"`
 }
 
-func convertFull(t *testing.T, fsys fs.FS) (*os.File, llm.KV, llm.Tensors) {
+func convertFull(t *testing.T, fsys fs.FS) (*os.File, llm.KV, *llm.Tensors) {
 	t.Helper()
 
 	f, err := os.CreateTemp(t.TempDir(), "f16")
@@ -60,7 +60,7 @@ func convertFull(t *testing.T, fsys fs.FS) (*os.File, llm.KV, llm.Tensors) {
 	return r, m.KV(), m.Tensors()
 }
 
-func generateResultsJSON(t *testing.T, f *os.File, kv llm.KV, tensors llm.Tensors) map[string]string {
+func generateResultsJSON(t *testing.T, f *os.File, kv llm.KV, tensors *llm.Tensors) map[string]string {
 	actual := make(map[string]string)
 	for k, v := range kv {
 		if s, ok := v.(json.Marshaler); !ok {
