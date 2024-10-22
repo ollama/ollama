@@ -144,11 +144,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				// TODO make this work w/ adapters
 				tempfile, err := tempZipFiles(path)
 				if err != nil {
-					if errors.Is(err, errModelNotFound) {
-						return errModelNotFound
-					} else {
-						return err
-					}
+					return err
 				}
 				defer os.RemoveAll(tempfile)
 

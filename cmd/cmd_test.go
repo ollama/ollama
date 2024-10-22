@@ -271,7 +271,7 @@ func TestDeleteHandler(t *testing.T) {
 	}
 }
 
-func TestGetModelName(t *testing.T) {
+func TestGetModelfileName(t *testing.T) {
 	tests := []struct {
 		name          string
 		modelfileName string
