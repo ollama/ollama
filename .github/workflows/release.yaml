@@ -552,7 +552,49 @@ jobs:
           path: |
             dist/*linux*
             !dist/*-cov
+  build-linux-ppc64le:
+    environment: release
+    runs-on: ubuntu-22.04-ppc64le
+    env:
+      PLATFORM: linux/ppc64le
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Set Version
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+      - name: 'Install Docker'
+        run: |
+          # Add Docker's official GPG key:
+          env
+          uname -a
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates curl
+          sudo install -m 0755 -d /etc/apt/keyrings
+          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          sudo chmod a+r /etc/apt/keyrings/docker.asc
 
+          # Add the repository to Apt sources:
+          echo \
+            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+            $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+            sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+          sudo usermod -aG docker $USER
+          sudo apt-get install acl
+          sudo setfacl --modify user:$USER:rw /var/run/docker.sock
+      - run: |
+          ./scripts/build_linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux-arm64
+          path: |
+            dist/*linux*
+            !dist/*-cov
+            
+  
   # Container image build
   build-container-image:
     environment: release
@@ -633,7 +675,7 @@ jobs:
           retention-days: 1
   merge:
     environment: release
-    runs-on: ubuntu-latest 
+    runs-on: linux
     needs:
       - build-container-image
     env:
@@ -682,6 +724,7 @@ jobs:
       - name: Inspect image
         run: |
           docker buildx imagetools inspect ${{ env.FINAL_IMAGE_REPO }}:${{ steps.meta.outputs.version }}          
+  
   build-container-image-rocm:
     environment: release
     runs-on: linux
