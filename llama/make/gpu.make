@@ -79,7 +79,7 @@ $(GPU_RUNNER_NAME): $(BUILD_RUNNERS) $(DIST_RUNNERS) $(PAYLOAD_RUNNERS)
 # Build targets
 $(BUILD_DIR)/%.$(GPU_RUNNER_NAME).$(OBJ_EXT): %.cu
 	@-mkdir -p $(dir $@)
-	$(CCACHE) $(GPU_COMPILER) -c $(GPU_COMPILER_CUFLAGS) $(GPU_RUNNER_ARCH_FLAGS) -o $@ $<
+	$(CCACHE) $(GPU_COMPILER) -c $(GPU_COMPILER_CFLAGS) $(GPU_COMPILER_CUFLAGS) $(GPU_RUNNER_ARCH_FLAGS) -o $@ $<
 $(BUILD_DIR)/%.$(GPU_RUNNER_NAME).$(OBJ_EXT): %.c
 	@-mkdir -p $(dir $@)
 	$(CCACHE) $(GPU_COMPILER) -c $(GPU_COMPILER_CFLAGS) -o $@ $<
@@ -97,14 +97,14 @@ $(RUNNERS_BUILD_DIR)/$(GPU_RUNNER_NAME)/$(SHARED_PREFIX)ggml_$(GPU_RUNNER_NAME).
 # Distribution targets
 $(RUNNERS_DIST_DIR)/%: $(RUNNERS_BUILD_DIR)/%
 	@-mkdir -p $(dir $@)
-	cp $< $@
+	$(CP) $< $@
 $(RUNNERS_DIST_DIR)/$(GPU_RUNNER_NAME)/ollama_llama_server$(EXE_EXT): $(DIST_LIB_DIR)/$(SHARED_PREFIX)ggml_$(GPU_RUNNER_NAME).$(SHARED_EXT)
 $(DIST_LIB_DIR)/$(SHARED_PREFIX)ggml_$(GPU_RUNNER_NAME).$(SHARED_EXT): $(RUNNERS_BUILD_DIR)/$(GPU_RUNNER_NAME)/$(SHARED_PREFIX)ggml_$(GPU_RUNNER_NAME).$(SHARED_EXT)
 	@-mkdir -p $(dir $@)
-	cp $< $@
+	$(CP) $< $@
 $(DIST_GPU_RUNNER_LIB_DEPS): 
 	@-mkdir -p $(dir $@)
-	$(CP) $(GPU_LIB_DIR)/$(notdir $@)* $(dir $@)
+	$(CP) $(GPU_LIB_DIR)/$(notdir $@) $(dir $@)
 
 # Payload targets
 $(RUNNERS_PAYLOAD_DIR)/%/ollama_llama_server.gz: $(RUNNERS_BUILD_DIR)/%/ollama_llama_server 

@@ -9,7 +9,7 @@ ARG ROCM_VERSION=6.1.2
 
 ### To create a local image for building linux binaries on mac or windows with efficient incremental builds
 #
-# docker build --platform linux/amd64 -t builder-amd64 -f Dockerfile.new --target unified-builder-amd64 .
+# docker build --platform linux/amd64 -t builder-amd64 -f llama/Dockerfile --target unified-builder-amd64 .
 # docker run --platform linux/amd64 --rm -it -v $(pwd):/go/src/github.com/ollama/ollama/ builder-amd64
 #
 ### Then incremental builds will be much faster in this container
@@ -41,7 +41,7 @@ ENTRYPOINT [ "zsh" ]
 ### To create a local image for building linux binaries on mac or linux/arm64 with efficient incremental builds
 # Note: this does not contain jetson variants
 #
-# docker build --platform linux/arm64 -t builder-arm64 -f Dockerfile.new --target unified-builder-arm64 .
+# docker build --platform linux/arm64 -t builder-arm64 -f llama/Dockerfile --target unified-builder-arm64 .
 # docker run --platform linux/arm64 --rm -it -v $(pwd):/go/src/github.com/ollama/ollama/ builder-arm64
 #
 FROM --platform=linux/arm64 rockylinux:8 AS unified-builder-arm64
