@@ -633,7 +633,7 @@ jobs:
           retention-days: 1
   merge:
     environment: release
-    runs-on: linux
+    runs-on: ubuntu-latest 
     needs:
       - build-container-image
     env:
