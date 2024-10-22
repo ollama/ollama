@@ -790,10 +790,17 @@ func (s *Server) loadModel(
 ) {
 	llama.BackendInit()
 
-	s.model = llama.LoadModelFromFile(mpath, params)
+	var err error
+	s.model, err = llama.LoadModelFromFile(mpath, params)
+	if err != nil {
+		panic(err)
+	}
 
 	ctxParams := llama.NewContextParams(kvSize, s.batchSize*s.parallel, s.parallel, threads, flashAttention)
-	s.lc = llama.NewContextWithModel(s.model, ctxParams)
+	s.lc, err = llama.NewContextWithModel(s.model, ctxParams)
+	if err != nil {
+		panic(err)
+	}
 
 	if lpath != "" {
 		err := s.model.ApplyLoraFromFile(s.lc, lpath, 1.0, threads)

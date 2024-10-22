@@ -136,10 +136,6 @@ func (c *Context) Model() *Model {
 	return &Model{c: C.llama_get_model(c.c)}
 }
 
-func (c *Context) GetLogitsIth(i int) []float32 {
-	return unsafe.Slice((*float32)(unsafe.Pointer(C.llama_get_logits_ith(c.c, C.int(i)))), c.Model().NumVocab())
-}
-
 func (c *Context) KvCacheSeqAdd(seqId int, p0 int, p1 int, delta int) {
 	C.llama_kv_cache_seq_add(c.c, C.int(seqId), C.int(p0), C.int(p1), C.int(delta))
 }
@@ -163,7 +159,12 @@ func (c *Context) GetEmbeddingsSeq(seqId int) []float32 {
 }
 
 func (c *Context) GetEmbeddingsIth(i int) []float32 {
-	return unsafe.Slice((*float32)(unsafe.Pointer(C.llama_get_embeddings_ith(c.c, C.int32_t(i)))), c.Model().NEmbd())
+	embeddings := unsafe.Pointer(C.llama_get_embeddings_ith(c.c, C.int32_t(i)))
+	if embeddings == nil {
+		return nil
+	}
+
+	return unsafe.Slice((*float32)(embeddings), c.Model().NEmbd())
 }
 
 type ModelParams struct {
@@ -184,7 +185,7 @@ func llamaProgressCallback(progress C.float, userData unsafe.Pointer) C.bool {
 	return true
 }
 
-func LoadModelFromFile(modelPath string, params ModelParams) *Model {
+func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
 	cparams := C.llama_model_default_params()
 	cparams.n_gpu_layers = C.int(params.NumGpuLayers)
 	cparams.main_gpu = C.int32_t(params.MainGpu)
@@ -214,18 +215,28 @@ func LoadModelFromFile(modelPath string, params ModelParams) *Model {
 		cparams.progress_callback_user_data = unsafe.Pointer(&handle)
 	}
 
-	return &Model{c: C.llama_load_model_from_file(C.CString(modelPath), cparams)}
+	m := Model{c: C.llama_load_model_from_file(C.CString(modelPath), cparams)}
+	if m.c == (*C.struct_llama_model)(C.NULL) {
+		return nil, fmt.Errorf("unable to load model: %s", modelPath)
+	}
+
+	return &m, nil
 }
 
 func FreeModel(model *Model) {
 	C.llama_free_model(model.c)
 }
 
-func NewContextWithModel(model *Model, params ContextParams) *Context {
-	return &Context{
+func NewContextWithModel(model *Model, params ContextParams) (*Context, error) {
+	c := Context{
 		c:          C.llama_new_context_with_model(model.c, params.c),
 		numThreads: int(params.c.n_threads),
 	}
+	if c.c == (*C.struct_llama_context)(C.NULL) {
+		return nil, errors.New("unable to create llama context")
+	}
+
+	return &c, nil
 }
 
 func (m *Model) NumVocab() int {
