@@ -603,7 +603,7 @@ jobs:
         runner:
           - linux
           - linux-arm64
-          - ubuntu-latest
+          - ubuntu-22.04-ppc64le
     runs-on: ${{ matrix.runner }}
     env:
       FINAL_IMAGE_REPO: ollama/ollama
