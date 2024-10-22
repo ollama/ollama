@@ -603,6 +603,7 @@ jobs:
         runner:
           - linux
           - linux-arm64
+          - ubuntu-latest
     runs-on: ${{ matrix.runner }}
     env:
       FINAL_IMAGE_REPO: ollama/ollama
@@ -643,6 +644,7 @@ jobs:
           case ${machine} in
             x86_64) echo ARCH=amd64; echo PLATFORM_PAIR=linux-amd64 ;;
             aarch64) echo ARCH=arm64; echo PLATFORM_PAIR=linux-arm64 ;;
+            ppc64le) echo ARCH=ppc64le; echo PLATFORM_PAIR=linux-ppc64le ;;
           esac >>$GITHUB_ENV
           echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${{ env.DOCKER_METADATA_OUTPUT_VERSION }}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" >>$GITHUB_ENV
       - name: Set up Docker Buildx
