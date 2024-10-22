@@ -1,0 +1,93 @@
+From 3f7133b3a907b9037e4e34b6deec887380d6ee06 Mon Sep 17 00:00:00 2001
+From: Molly Sophia <mollysophia379@gmail.com>
+Date: Wed, 16 Oct 2024 18:10:21 +0800
+Subject: [PATCH] [PATCH] fix rwkv
+
+Add chat template for RWKV-World
+
+Signed-off-by: Molly Sophia <mollysophia379@gmail.com>
+
+RWKV: Fix the chat template not being used
+
+Signed-off-by: Molly Sophia <mollysophia379@gmail.com>
+
+RWKV v6: Set EOT token to ``\n\n``
+
+Signed-off-by: Molly Sophia <mollysophia379@gmail.com>
+---
+ convert_hf_to_gguf.py        |  2 ++
+ src/llama.cpp                | 13 ++++++++++++-
+ tests/test-chat-template.cpp |  4 ++++
+ 3 files changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/convert_hf_to_gguf.py b/convert_hf_to_gguf.py
+index da5feb25..e0b1b2bf 100755
+--- a/convert_hf_to_gguf.py
++++ b/convert_hf_to_gguf.py
+@@ -2864,6 +2864,8 @@ class Rwkv6Model(Model):
+         self.gguf_writer.add_token_list(tokens)
+         self.gguf_writer.add_token_types(toktypes)
+         special_vocab = gguf.SpecialVocab(self.dir_model, load_merges=False)
++        special_vocab.chat_template = "rwkv-world"
++        special_vocab._set_special_token("eot", 261)
+         special_vocab.add_to_gguf(self.gguf_writer)
+ 
+     def set_gguf_parameters(self):
+diff --git a/src/llama.cpp b/src/llama.cpp
+index 8d44c73c..e5c46664 100644
+--- a/src/llama.cpp
++++ b/src/llama.cpp
+@@ -16095,9 +16095,11 @@ struct llm_build_context {
+         cur = ggml_get_rows(ctx0, cur, inp_out_ids);
+ 
+         cur = llm_build_norm(ctx0, cur, hparams, model.output_norm, model.output_norm_b, LLM_NORM, cb, -1);
+-        cur = llm_build_lora_mm(lctx, ctx0, model.output, cur);
++        cb(cur, "result_norm", -1);
+ 
++        cur = llm_build_lora_mm(lctx, ctx0, model.output, cur);
+         cb(cur, "result_output", -1);
++
+         ggml_build_forward_expand(gf, cur);
+ 
+         return gf;
+@@ -21779,6 +21781,15 @@ static int32_t llama_chat_apply_template_internal(
+         if (add_ass) {
+             ss << "[|assistant|]";
+         }
++    } else if (tmpl == "rwkv-world" || tmpl_contains("rwkv-world") || tmpl_contains("'User: ' + message['content'] + '\n\nAssistant:'")) {
++        for (auto message : chat) {
++            std::string role(message->role);
++            if (role == "user") {
++                ss << "User: " << message->content << "\n\nAssistant:";
++            } else {
++                ss << message->content << "\n\n";
++            }
++        }
+     } else {
+         // template not supported
+         return -1;
+diff --git a/tests/test-chat-template.cpp b/tests/test-chat-template.cpp
+index 6f046249..fdc4a9bc 100644
+--- a/tests/test-chat-template.cpp
++++ b/tests/test-chat-template.cpp
+@@ -65,6 +65,8 @@ int main(void) {
+         u8"{% for message in messages %}{% if message['role'] == 'user' %}{{'<用户>' + message['content'].strip() + '<AI>'}}{% else %}{{message['content'].strip()}}{% endif %}{% endfor %}",
+         // DeepSeek-V2
+         "{% if not add_generation_prompt is defined %}{% set add_generation_prompt = false %}{% endif %}{{ bos_token }}{% for message in messages %}{% if message['role'] == 'user' %}{{ 'User: ' + message['content'] + '\n\n' }}{% elif message['role'] == 'assistant' %}{{ 'Assistant: ' + message['content'] + eos_token }}{% elif message['role'] == 'system' %}{{ message['content'] + '\n\n' }}{% endif %}{% endfor %}{% if add_generation_prompt %}{{ 'Assistant:' }}{% endif %}",
++        // RWKV-World
++        "{% for message in messages %}{% if message['role'] == 'user' %}{{'User: ' + message['content'] + '\n\nAssistant:'}}{% else %}{{message['content'] + '\n\n'}}{% endif %}{% endfor %}",
+     };
+     std::vector<std::string> expected_output = {
+         // teknium/OpenHermes-2.5-Mistral-7B
+@@ -109,6 +111,8 @@ int main(void) {
+         u8"You are a helpful assistant<用户>Hello<AI>Hi there<用户>Who are you<AI>I am an assistant<用户>Another question<AI>",
+         // DeepSeek-V2
+         u8"You are a helpful assistant\n\nUser: Hello\n\nAssistant: Hi there<｜end▁of▁sentence｜>User: Who are you\n\nAssistant:    I am an assistant   <｜end▁of▁sentence｜>User: Another question\n\nAssistant:",
++        // RWKV-World
++        "You are a helpful assistant\n\nUser: Hello\n\nAssistant:Hi there\n\nUser: Who are you\n\nAssistant:   I am an assistant   \n\nUser: Another question\n\nAssistant:",
+     };
+     std::vector<char> formatted_chat(1024);
+     int32_t res;
+-- 
+2.47.0
+
