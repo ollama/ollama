@@ -46,28 +46,58 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
+var (
+	errModelNotFound     = errors.New("no Modelfile or safetensors files found")
+	errModelfileNotFound = errors.New("specified Modelfile wasn't found")
+)
+
+func getModelfileName(cmd *cobra.Command) (string, error) {
+	fn, _ := cmd.Flags().GetString("file")
+
+	filename := fn
+	if filename == "" {
+		filename = "Modelfile"
+	}
+
+	absName, err := filepath.Abs(filename)
+	if err != nil {
+		return "", err
+	}
+
+	_, err = os.Stat(absName)
+	if err != nil {
+		return fn, err
+	}
+
+	return absName, nil
+}
+
 func CreateHandler(cmd *cobra.Command, args []string) error {
-	filename, _ := cmd.Flags().GetString("file")
-	filename, err := filepath.Abs(filename)
-	if err != nil {
-		return err
-	}
-
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
-	f, err := os.Open(filename)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
+	var reader io.Reader
 
-	modelfile, err := parser.ParseFile(f)
+	filename, err := getModelfileName(cmd)
+	if os.IsNotExist(err) {
+		if filename == "" {
+			reader = strings.NewReader("FROM .\n")
+		} else {
+			return errModelfileNotFound
+		}
+	} else if err != nil {
+		return err
+	} else {
+		f, err := os.Open(filename)
+		if err != nil {
+			return err
+		}
+
+		reader = f
+		defer f.Close()
+	}
+
+	modelfile, err := parser.ParseFile(reader)
 	if err != nil {
 		return err
 	}
@@ -81,6 +111,11 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
 	defer p.Stop()
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
 
 	for i := range modelfile.Commands {
 		switch modelfile.Commands[i].Name {
@@ -220,7 +255,7 @@ func tempZipFiles(path string) (string, error) {
 		// covers consolidated.x.pth, consolidated.pth
 		files = append(files, pt...)
 	} else {
-		return "", errors.New("no safetensors or torch files found")
+		return "", errModelNotFound
 	}
 
 	// add configuration files, json files are detected as text/plain
@@ -1315,7 +1350,7 @@ func NewCLI() *cobra.Command {
 		RunE:    CreateHandler,
 	}
 
-	createCmd.Flags().StringP("file", "f", "Modelfile", "Name of the Modelfile")
+	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\"")
 	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_0)")
 
 	showCmd := &cobra.Command{
