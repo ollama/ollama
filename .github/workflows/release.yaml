@@ -8,7 +8,7 @@ on:
 jobs:
   # Full build of the Mac assets
   build-darwin:
-    runs-on: ubuntu-20.04-ppc64le
+    runs-on: macos-12
     environment: release
     steps:
       - uses: actions/checkout@v4
@@ -603,7 +603,6 @@ jobs:
             aarch64) echo ARCH=arm64; echo PLATFORM_PAIR=linux-arm64 ;;
           esac >>$GITHUB_ENV
           echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${{ env.DOCKER_METADATA_OUTPUT_VERSION }}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" >>$GITHUB_ENV
-         
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Login to Docker Hub
