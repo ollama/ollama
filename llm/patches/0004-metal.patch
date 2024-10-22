@@ -1,24 +1,24 @@
-From 29411d9a9d2b6a0af6425ffe88498f17f71f7d5d Mon Sep 17 00:00:00 2001
-From: Michael Yang <mxyng@pm.me>
-Date: Mon, 16 Sep 2024 15:53:12 -0700
-Subject: [PATCH] 04-metal.diff
+From 91d3f886f1645b38d9658c0e125603e8d5338146 Mon Sep 17 00:00:00 2001
+From: nobody <>
+Date: Tue, 1 Oct 2024 13:55:01 -0600
+Subject: [PATCH] metal
 
 ---
  ggml/src/ggml-metal.m | 30 +++++++++++++-----------------
  1 file changed, 13 insertions(+), 17 deletions(-)
 
 diff --git a/ggml/src/ggml-metal.m b/ggml/src/ggml-metal.m
-index 91b5e61b..9cfa72ac 100644
+index 9da08fe2..3a433703 100644
 --- a/ggml/src/ggml-metal.m
 +++ b/ggml/src/ggml-metal.m
-@@ -1734,27 +1734,23 @@ static enum ggml_status ggml_metal_graph_compute(
-                         // to the matrix-vector kernel
-                         int ne11_mm_min = 1;
+@@ -1720,27 +1720,23 @@ static void ggml_metal_encode_node(
+                 // to the matrix-vector kernel
+                 int ne11_mm_min = 1;
  
 -#if 0
-                         // the numbers below are measured on M2 Ultra for 7B and 13B models
-                         // these numbers do not translate to other devices or model sizes
-                         // TODO: need to find a better approach
+                 // the numbers below are measured on M2 Ultra for 7B and 13B models
+                 // these numbers do not translate to other devices or model sizes
+                 // TODO: need to find a better approach
 -                        if ([ctx->device.name isEqualToString:@"Apple M2 Ultra"]) {
 -                            switch (src0t) {
 -                                case GGML_TYPE_F16:  ne11_mm_min = 2;  break;
@@ -53,5 +53,5 @@ index 91b5e61b..9cfa72ac 100644
                          // for now the matrix-matrix multiplication kernel only works on A14+/M1+ SoCs
                          // AMD GPU and older A-chips will reuse matrix-vector multiplication kernel
 -- 
-2.46.0
+2.39.3 (Apple Git-146)
 

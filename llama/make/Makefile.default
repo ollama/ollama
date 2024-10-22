@@ -8,7 +8,9 @@ CPU_GOFLAGS="-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=$(VERS
 DEFAULT_RUNNER := $(if $(and $(filter darwin,$(OS)),$(filter arm64,$(ARCH))),metal,cpu)
 RUNNERS := $(DEFAULT_RUNNER)
 ifeq ($(ARCH),amd64)
+ifeq ($(CUSTOM_CPU_FLAGS),)
 	RUNNERS += cpu_avx cpu_avx2
+endif
 endif
 
 DIST_RUNNERS = $(addprefix $(RUNNERS_DIST_DIR)/,$(addsuffix /ollama_llama_server$(EXE_EXT),$(RUNNERS)))
@@ -19,20 +21,20 @@ BUILD_RUNNERS = $(addprefix $(RUNNERS_BUILD_DIR)/,$(addsuffix /ollama_llama_serv
 
 all: $(BUILD_RUNNERS) $(DIST_RUNNERS) $(PAYLOAD_RUNNERS)
 
-$(RUNNERS_BUILD_DIR)/$(DEFAULT_RUNNER)/ollama_llama_server$(EXE_EXT): TARGET_CPU_FLAGS=
+$(RUNNERS_BUILD_DIR)/$(DEFAULT_RUNNER)/ollama_llama_server$(EXE_EXT): TARGET_CPU_FLAGS=$(CUSTOM_CPU_FLAGS)
 $(RUNNERS_BUILD_DIR)/$(DEFAULT_RUNNER)/ollama_llama_server$(EXE_EXT): *.go ./runner/*.go $(COMMON_SRCS) $(COMMON_HDRS)
 	@-mkdir -p $(dir $@)
-	GOARCH=$(ARCH) go build $(CPU_GOFLAGS) -o $@ ./runner
+	GOARCH=$(ARCH) go build -buildmode=pie $(CPU_GOFLAGS) $(if $(CUSTOM_CPU_FLAGS),-tags $(subst $(space),$(comma),$(CUSTOM_CPU_FLAGS))) -o $@ ./runner
 
 $(RUNNERS_BUILD_DIR)/cpu_avx/ollama_llama_server$(EXE_EXT): TARGET_CPU_FLAGS="avx"
 $(RUNNERS_BUILD_DIR)/cpu_avx/ollama_llama_server$(EXE_EXT): *.go ./runner/*.go $(COMMON_SRCS) $(COMMON_HDRS)
 	@-mkdir -p $(dir $@)
-	GOARCH=$(ARCH) go build $(CPU_GOFLAGS) -tags $(subst $(space),$(comma),$(TARGET_CPU_FLAGS)) -o $@ ./runner
+	GOARCH=$(ARCH) go build -buildmode=pie $(CPU_GOFLAGS) -tags $(subst $(space),$(comma),$(TARGET_CPU_FLAGS)) -o $@ ./runner
 
 $(RUNNERS_BUILD_DIR)/cpu_avx2/ollama_llama_server$(EXE_EXT): TARGET_CPU_FLAGS="avx avx2"
 $(RUNNERS_BUILD_DIR)/cpu_avx2/ollama_llama_server$(EXE_EXT): *.go ./runner/*.go $(COMMON_SRCS) $(COMMON_HDRS)
 	@-mkdir -p $(dir $@)
-	GOARCH=$(ARCH) go build $(CPU_GOFLAGS) -tags $(subst $(space),$(comma),$(TARGET_CPU_FLAGS)) -o $@ ./runner
+	GOARCH=$(ARCH) go build -buildmode=pie $(CPU_GOFLAGS) -tags $(subst $(space),$(comma),$(TARGET_CPU_FLAGS)) -o $@ ./runner
 
 $(RUNNERS_DIST_DIR)/%: $(RUNNERS_BUILD_DIR)/%
 	@-mkdir -p $(dir $@)

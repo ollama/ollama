@@ -126,10 +126,10 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 
 	var sc *llama.SamplingContext
 	if params.samplingParams != nil {
-		sc = llama.NewSamplingContext(*params.samplingParams)
+		sc = llama.NewSamplingContext(s.model, *params.samplingParams)
 		for _, input := range inputs {
 			if input.embed == nil {
-				sc.Accept(s.lc, input.token, false)
+				sc.Accept(input.token, false)
 			}
 		}
 	}
@@ -204,6 +204,26 @@ func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 				inputs = append(inputs, input{embed: e})
 			}
 		}
+	}
+
+	if s.clip.cc != nil {
+		var embed [][]float32
+
+		if s.clip.cc.IsMllama && len(images) >= 1 {
+			hash := s.cache.HashImage(images[0].Data)
+
+			s.clip.mu.Lock()
+			var err error
+			embed, err = s.cache.FindImage(hash)
+			if err != nil {
+				embed = llama.NewMllamaImageEmbed(s.lc, s.clip.cc, images[0].Data, images[0].AspectRatioID)
+				s.cache.AddImage(hash, embed)
+			}
+			s.clip.mu.Unlock()
+		}
+		s.mu.Lock()
+		llama.MllamaSetCrossAttn(s.lc, s.clip.cc, embed)
+		s.mu.Unlock()
 	}
 
 	return inputs, nil
@@ -294,6 +314,9 @@ func (s *Server) removeSequence(seqIndex int, reason string) {
 	close(seq.responses)
 	close(seq.embedding)
 	seq.cache.InUse = false
+	if s.clip.cc != nil {
+		llama.MllamaSetCrossAttn(s.lc, s.clip.cc, nil)
+	}
 	s.seqs[seqIndex] = nil
 }
 
@@ -429,8 +452,8 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		}
 
 		// sample a token
-		token := seq.samplingCtx.Sample(s.lc, nil, seq.iBatch)
-		seq.samplingCtx.Accept(s.lc, token, true)
+		token := seq.samplingCtx.Sample(s.lc, seq.iBatch)
+		seq.samplingCtx.Accept(token, true)
 		piece := s.model.TokenToPiece(token)
 
 		seq.numPredicted++
@@ -517,8 +540,9 @@ type Options struct {
 }
 
 type ImageData struct {
-	Data []byte `json:"data"`
-	ID   int    `json:"id"`
+	Data          []byte `json:"data"`
+	ID            int    `json:"id"`
+	AspectRatioID int    `json:"aspect_ratio_id"`
 }
 
 type CompletionRequest struct {
@@ -770,7 +794,11 @@ func (s *Server) loadModel(
 	}
 
 	if ppath != "" {
-		s.clip.cc = llama.NewClipContext(ppath)
+		var err error
+		s.clip.cc, err = llama.NewClipContext(ppath)
+		if err != nil {
+			panic(err)
+		}
 	}
 
 	s.cache = NewInputCache(s.lc, kvSize, s.parallel, multiUserCache)

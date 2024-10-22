@@ -330,6 +330,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LLMChat](https://github.com/trendy-design/llmchat) (Privacy focused, 100% local, intuitive all-in-one chat interface)
 - [ARGO](https://github.com/xark-argo/argo) (Locally download and run Ollama and Huggingface models with RAG on Mac/Windows/Linux)
 - [G1](https://github.com/bklieger-groq/g1) (Prototype of using prompting strategies to improve the LLM's reasoning through o1-like reasoning chains.)
+- [Ollama App](https://github.com/JHubi1/ollama-app) (Modern and easy-to-use multi-platform client for Ollama)
 
 ### Terminal
 
@@ -412,11 +413,13 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama PHP](https://github.com/ArdaGnsrn/ollama-php)
 - [Agents-Flex for Java](https://github.com/agents-flex/agents-flex) with [example](https://github.com/agents-flex/agents-flex/tree/main/agents-flex-llm/agents-flex-llm-ollama/src/test/java/com/agentsflex/llm/ollama)
 - [🦜🪺 Parakeet](https://github.com/parakeet-nest/parakeet) is a GoLang library, made to simplify the development of small generative AI applications with Ollama 🦙.
+- [Ollama for Swift](https://github.com/mattt/ollama-swift)
 
 ### Mobile
 
 - [Enchanted](https://github.com/AugustDev/enchanted)
 - [Maid](https://github.com/Mobile-Artificial-Intelligence/maid)
+- [Ollama App](https://github.com/JHubi1/ollama-app) (Modern and easy-to-use multi-platform client for Ollama)
 - [ConfiChat](https://github.com/1runeberg/confichat) (Lightweight, standalone, multi-platform, and privacy focused LLM chat interface with optional encryption)
 
 ### Extensions & Plugins

@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jesse Gross <jesse@ollama.com>
+Date: Mon, 30 Sep 2024 16:31:04 -0700
+Subject: [PATCH] blas
+
+---
+ ggml/src/ggml-blas.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/ggml/src/ggml-blas.cpp b/ggml/src/ggml-blas.cpp
+index 6d99c6be..8e1ab99d 100644
+--- a/ggml/src/ggml-blas.cpp
++++ b/ggml/src/ggml-blas.cpp
+@@ -1,3 +1,5 @@
++#ifdef GGML_USE_BLAS
++
+ #include "ggml-impl.h"
+ #include "ggml-blas.h"
+ #include "ggml-backend-impl.h"
+@@ -366,3 +368,5 @@ void ggml_backend_blas_set_n_threads(ggml_backend_t backend_blas, int n_threads)
+     ggml_backend_blas_context * ctx = (ggml_backend_blas_context *)backend_blas->context;
+     ctx->n_threads = n_threads;
+ }
++
++#endif

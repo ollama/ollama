@@ -18,8 +18,8 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/gpu"
 )
 
 const (
@@ -301,11 +301,11 @@ func GetAvailableServers(payloadsDir string) map[string]string {
 // serversForGpu returns a list of compatible servers give the provided GPU
 // info, ordered by performance. assumes Init() has been called
 // TODO - switch to metadata based mapping
-func ServersForGpu(info gpu.GpuInfo) []string {
+func ServersForGpu(info discover.GpuInfo) []string {
 	// glob workDir for files that start with ollama_
 	availableServers := GetAvailableServers(runnersDir)
 	requested := info.Library
-	if info.Variant != gpu.CPUCapabilityNone.String() {
+	if info.Variant != discover.CPUCapabilityNone.String() {
 		requested += "_" + info.Variant
 	}
 
@@ -341,12 +341,12 @@ func ServersForGpu(info gpu.GpuInfo) []string {
 	if !(runtime.GOOS == "darwin" && runtime.GOARCH == "arm64") {
 		// Load up the best CPU variant if not primary requested
 		if info.Library != "cpu" {
-			variant := gpu.GetCPUCapability()
+			variant := discover.GetCPUCapability()
 			// If no variant, then we fall back to default
 			// If we have a variant, try that if we find an exact match
 			// Attempting to run the wrong CPU instructions will panic the
 			// process
-			if variant != gpu.CPUCapabilityNone {
+			if variant != discover.CPUCapabilityNone {
 				for cmp := range availableServers {
 					if cmp == "cpu_"+variant.String() {
 						servers = append(servers, cmp)
@@ -371,9 +371,9 @@ func ServerForCpu() string {
 	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
 		return "metal"
 	}
-	variant := gpu.GetCPUCapability()
+	variant := discover.GetCPUCapability()
 	availableServers := GetAvailableServers(runnersDir)
-	if variant != gpu.CPUCapabilityNone {
+	if variant != discover.CPUCapabilityNone {
 		for cmp := range availableServers {
 			if cmp == "cpu_"+variant.String() {
 				return cmp
