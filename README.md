@@ -1,4 +1,69 @@
-<div align="center">
+import random
+import re
+
+class PersonalizedResponse:
+    def __init__(self, user_name="User"):
+        self.user_name = user_name
+
+    def set_user_name(self, name):
+        self.user_name = name
+
+    def personalize(self, response):
+        return f"{self.user_name}, {response}"
+
+
+class EnhancedIntentRecognition:
+    def __init__(self):
+        self.intents = {
+            "greeting": ["hello", "hi", "hey"],
+            "farewell": ["bye", "goodbye", "see you"],
+            "question": ["what", "how", "why"],
+            "thanks": ["thank you", "thanks"],
+            "help": ["help", "assist"]
+        }
+
+    def recognize_intent(self, query):
+        query_lower = query.lower()
+        for intent, keywords in self.intents.items():
+            if any(re.search(r'\b' + re.escape(keyword) + r'\b', query_lower) for keyword in keywords):
+                return intent
+        return "unknown"
+
+
+# Example usage
+if __name__ == "__main__":
+    # Creating an instance of PersonalizedResponse
+    response_handler = PersonalizedResponse()
+    
+    # Setting a user name
+    response_handler.set_user_name("Douglas")
+
+    # Personalizing a response
+    response = response_handler.personalize("How can I assist you today?")
+    print(response)  # Output: Douglas, How can I assist you today?
+
+    # Creating an instance of EnhancedIntentRecognition
+    intent_recognizer = EnhancedIntentRecognition()
+
+    # Recognizing intent from a query
+    user_queries = [
+        "Hello there! What do you think?",
+        "Can you help me with this?",
+        "Thank you for your assistance!",
+        "Goodbye!"
+    ]
+
+    for user_query in user_queries:
+        intent = intent_recognizer.recognize_intent(user_query)
+        print(f"User query: '{user_query}' => Intent recognized: {intent}")
+
+# Sample Output:
+# Douglas, How can I assist you today?
+# User query: 'Hello there! What do you think?' => Intent recognized: greeting
+# User query: 'Can you help me with this?' => Intent recognized: help
+# User query: 'Thank you for your assistance!' => Intent recognized: thanks
+# User query: 'Goodbye!' => Intent recognized: farewell
+ && <div align="center">
  <img alt="ollama" height="200px" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
 </div>
 
