@@ -291,6 +291,8 @@ type EmbeddingRequest struct {
 // EmbeddingResponse is the response from [Client.Embeddings].
 type EmbeddingResponse struct {
 	Embedding []float64 `json:"embedding"`
+
+	Metrics
 }
 
 // CreateRequest is the request passed to [Client.Create].
