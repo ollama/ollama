@@ -33,14 +33,14 @@ const (
 func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	usage := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
-		fmt.Fprintln(os.Stderr, "  /set            Set session variables")
-		fmt.Fprintln(os.Stderr, "  /show           Show model information")
-		fmt.Fprintln(os.Stderr, "  /load <model>   Load a session or model")
-		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
-		fmt.Fprintln(os.Stderr, "  /clear          Clear session context")
-		fmt.Fprintln(os.Stderr, "  /bye            Exit")
-		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
-		fmt.Fprintln(os.Stderr, "  /? shortcuts    Help for keyboard shortcuts")
+		fmt.Fprintln(os.Stderr, "  /set               Set session variables")
+		fmt.Fprintln(os.Stderr, "  /show              Show model information")
+		fmt.Fprintln(os.Stderr, "  /load <model>      Load a session or model")
+		fmt.Fprintln(os.Stderr, "  /save <model>      Save your current session")
+		fmt.Fprintln(os.Stderr, "  /clear             Clear session context")
+		fmt.Fprintln(os.Stderr, "  /bye /quit /exit   Exit")
+		fmt.Fprintln(os.Stderr, "  /?, /help          Help for a command")
+		fmt.Fprintln(os.Stderr, "  /? shortcuts       Help for keyboard shortcuts")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Use \"\"\" to begin a multi-line message.")
 
@@ -138,7 +138,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			return nil
 		case errors.Is(err, readline.ErrInterrupt):
 			if line == "" {
-				fmt.Println("\nUse Ctrl + d or /bye to exit.")
+				fmt.Println("\nUse Ctrl + d or type /bye, /quit, or /exit to exit.")
 			}
 
 			scanner.Prompt.UseAlt = false
@@ -408,7 +408,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			} else {
 				usage()
 			}
-		case strings.HasPrefix(line, "/exit"), strings.HasPrefix(line, "/bye"):
+		case strings.HasPrefix(line, "/exit"), strings.HasPrefix(line, "/quit"), strings.HasPrefix(line, "/bye"):
 			return nil
 		case strings.HasPrefix(line, "/"):
 			args := strings.Fields(line)
