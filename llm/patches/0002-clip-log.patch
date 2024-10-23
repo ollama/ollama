@@ -1,14 +1,14 @@
-From ba4bba80a744f76ac67b8234451c259a3c5da83b Mon Sep 17 00:00:00 2001
-From: Michael Yang <mxyng@pm.me>
-Date: Mon, 16 Sep 2024 15:53:11 -0700
-Subject: [PATCH] 02-clip-log.diff
+From 6fdf4268e13e56f0050fa6a29b029cbd54be49d2 Mon Sep 17 00:00:00 2001
+From: Gabe Goodhart <ghart@us.ibm.com>
+Date: Thu, 19 Sep 2024 16:58:03 -0600
+Subject: [PATCH] clip log
 
 ---
  examples/llava/clip.cpp | 1 +
  1 file changed, 1 insertion(+)
 
 diff --git a/examples/llava/clip.cpp b/examples/llava/clip.cpp
-index 9b890571..cb51793d 100644
+index 8aa7b075..b8941c74 100644
 --- a/examples/llava/clip.cpp
 +++ b/examples/llava/clip.cpp
 @@ -3,6 +3,7 @@
@@ -16,9 +16,9 @@ index 9b890571..cb51793d 100644
  // Note: Even when using identical normalized image inputs (see normalize_image_u8_to_f32()) we have a significant difference in resulting embeddings compared to pytorch
  #include "clip.h"
 +#include "common.h"
- #include "log.h"
  #include "ggml.h"
  #include "ggml-alloc.h"
+ #include "ggml-backend.h"
 -- 
-2.46.0
+2.39.3 (Apple Git-146)
 

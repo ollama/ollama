@@ -16,6 +16,13 @@ for TARGETARCH in arm64 amd64; do
         rm -rf llm/build
         GOOS=darwin GOARCH=$TARGETARCH go generate ./...
     fi
+    # These require Xcode v13 or older to target MacOS v11
+    # If installed to an alternate location use the following to enable
+    # export SDKROOT=/Applications/Xcode_12.5.1.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
+    # export DEVELOPER_DIR=/Applications/Xcode_12.5.1.app/Contents/Developer
+    export CGO_CFLAGS=-mmacosx-version-min=11.3
+    export CGO_CXXFLAGS=-mmacosx-version-min=11.3
+    export CGO_LDFLAGS=-mmacosx-version-min=11.3
     CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -trimpath -o dist/ollama-darwin-$TARGETARCH
     CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -trimpath -cover -o dist/ollama-darwin-$TARGETARCH-cov
 done
