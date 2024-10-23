@@ -1,6 +1,6 @@
 #!/bin/sh
 # This script installs Ollama on Linux.
-# It detects the current operating system architecture and installs the appropriate version of Ollama.
+# It detects the current operating system architecture and init system and installs the appropriate version of Ollama.
 
 set -eu
 
@@ -149,8 +149,200 @@ EOF
     esac
 }
 
+configure_runit() {
+    if ! id ollama >/dev/null 2>&1; then
+        status "Creating ollama user..."
+        $SUDO useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama
+    fi
+    
+    if getent group render >/dev/null 2>&1; then
+        status "Adding ollama user to render group..."
+        $SUDO usermod -a -G render ollama
+    fi
+    if getent group video >/dev/null 2>&1; then
+        status "Adding ollama user to video group..."
+        $SUDO usermod -a -G video ollama
+    fi
+
+    status "Adding current user to ollama group..."
+    $SUDO usermod -a -G ollama $(whoami)
+
+    
+    status "Creating ollama runit service..."
+    $SUDO mkdir -p /etc/sv/ollama/log
+    $SUDO mkdir -p /var/log/ollama
+
+    # Create run script with environment setup
+    cat <<EOF | $SUDO tee /etc/sv/ollama/run >/dev/null
+#!/bin/sh
+exec 2>&1
+# Ensure proper PATH and environment
+export PATH=$PATH
+# Add a small delay to ensure proper startup
+sleep 1
+exec chpst -u ollama:ollama $BINDIR/ollama serve
+EOF
+    $SUDO chmod +x /etc/sv/ollama/run
+
+    # Create log service
+    cat <<EOF | $SUDO tee /etc/sv/ollama/log/run >/dev/null
+#!/bin/sh
+exec svlogd -tt /var/log/ollama
+EOF
+    $SUDO chmod +x /etc/sv/ollama/log/run
+
+    # Set proper permissions
+    $SUDO chown -R ollama:ollama /var/log/ollama
+    $SUDO chmod 2755 /var/log/ollama
+
+    # Enable service by creating symlink in the appropriate location
+    for SVDIR in /run/runit/service /var/service /service; do
+        if [ -d "$SVDIR" ]; then
+            status "Enabling ollama service in $SVDIR..."
+            $SUDO ln -sf /etc/sv/ollama $SVDIR/
+            break
+        fi
+    done
+
+    # Wait for service to start
+    status "Waiting for service to start..."
+    sleep 2
+    if ! sv status ollama >/dev/null 2>&1; then
+        warning "Service not started automatically. You may need to start it manually with: sv start ollama"
+    fi
+}
+
+configure_s6() {
+    if ! id ollama >/dev/null 2>&1; then
+        status "Creating ollama user..."
+        $SUDO useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama
+    fi
+    
+    if getent group render >/dev/null 2>&1; then
+        status "Adding ollama user to render group..."
+        $SUDO usermod -a -G render ollama
+    fi
+    if getent group video >/dev/null 2>&1; then
+        status "Adding ollama user to video group..."
+        $SUDO usermod -a -G video ollama
+    fi
+
+    status "Adding current user to ollama group..."
+    $SUDO usermod -a -G ollama $(whoami)
+
+    for S6DIR in /etc/s6 /etc/s6-rc; do
+        if [ -d "$(dirname $S6DIR)" ]; then
+            status "Creating ollama s6 service..."
+            $SUDO mkdir -p $S6DIR/sv/ollama/log
+            S6_SV_DIR=$S6DIR
+            break
+        fi
+    done
+
+    cat <<EOF | $SUDO tee $S6_SV_DIR/sv/ollama/run >/dev/null
+#!/bin/execlineb -P
+export PATH "$PATH"
+fdmove -c 2 1
+sleep 1
+exec chpst -u ollama:ollama $BINDIR/ollama serve
+EOF
+    $SUDO chmod +x $S6_SV_DIR/sv/ollama/run
+
+    cat <<EOF | $SUDO tee $S6_SV_DIR/sv/ollama/log/run >/dev/null
+#!/bin/execlineb -P
+exec -c
+s6-setuidgid ollama
+exec s6-log -b n20 s1000000 /var/log/ollama
+EOF
+    $SUDO chmod +x $S6_SV_DIR/sv/ollama/log/run
+
+    # Set proper permissions
+    $SUDO mkdir -p /var/log/ollama
+    $SUDO chown -R ollama:ollama /var/log/ollama
+    $SUDO chmod 2755 /var/log/ollama
+
+    # Create type file
+    echo "longrun" > $S6_SV_DIR/sv/ollama/type
+
+    status "Compiling s6 service database..."
+    s6-rc-compile $S6_SV_DIR/compiled $S6_SV_DIR/sv
+
+    # Wait for service to start
+    status "Waiting for service to start..."
+    sleep 2
+    if ! s6-svstat $S6_SV_DIR/sv/ollama >/dev/null 2>&1; then
+        warning "Service not started automatically. You may need to start it manually."
+    fi
+}
+
+configure_openrc() {
+    if ! id ollama >/dev/null 2>&1; then
+        status "Creating ollama user..."
+        $SUDO useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama
+    fi
+    
+    if getent group render >/dev/null 2>&1; then
+        status "Adding ollama user to render group..."
+        $SUDO usermod -a -G render ollama
+    fi
+    if getent group video >/dev/null 2>&1; then
+        status "Adding ollama user to video group..."
+        $SUDO usermod -a -G video ollama
+    fi
+
+    status "Adding current user to ollama group..."
+    $SUDO usermod -a -G ollama $(whoami)
+
+    status "Creating ollama OpenRC service..."
+    cat <<EOF | $SUDO tee /etc/init.d/ollama >/dev/null
+#!/sbin/openrc-run
+description="Ollama AI Service"
+supervisor="supervise-daemon"
+command="$BINDIR/ollama"
+command_args="serve"
+command_user="ollama:ollama"
+directory="/usr/share/ollama"
+pidfile="/run/ollama.pid"
+
+export PATH="$PATH"
+
+depend() {
+    need net
+    after logger
+}
+
+start_pre() {
+    # Add small delay to ensure proper startup
+    sleep 1
+}
+EOF
+    $SUDO chmod +x /etc/init.d/ollama
+
+    # Set up logging
+    $SUDO mkdir -p /var/log/ollama
+    $SUDO chown -R ollama:ollama /var/log/ollama
+    $SUDO chmod 2755 /var/log/ollama
+
+    status "Enabling ollama service..."
+    $SUDO rc-update add ollama default
+
+    # Wait for service to start
+    status "Waiting for service to start..."
+    sleep 2
+    if ! rc-service ollama status >/dev/null 2>&1; then
+        warning "Service not started automatically. You may need to start it manually with: rc-service ollama start"
+    fi
+}
+
+
 if available systemctl; then
     configure_systemd
+elif available sv; then
+    configure_runit
+elif available s6-rc; then
+    configure_s6
+elif available rc-service; then
+    configure_openrc
 fi
 
 # WSL2 only supports GPUs via nvidia passthrough
@@ -368,3 +560,4 @@ fi
 
 status "NVIDIA GPU ready."
 install_success
+
