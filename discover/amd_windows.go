@@ -43,7 +43,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 		slog.Debug("error looking up amd driver version", "error", err)
 	}
 
-	// Note: the HIP library automatically handles subsetting to any HIP_VISIBLE_DEVICES the user specified
+	// Note: the HIP library automatically handles subsetting to any ROCR_VISIBLE_DEVICES the user specified
 	count := hl.HipGetDeviceCount()
 	if count == 0 {
 		err := fmt.Errorf("no compatible amdgpu devices detected")

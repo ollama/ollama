@@ -64,7 +64,7 @@ func NewHipLib() (*HipLib, error) {
 	return hl, nil
 }
 
-// The hip library only evaluates the HIP_VISIBLE_DEVICES variable at startup
+// The hip library only evaluates the ROCR_VISIBLE_DEVICES variable at startup
 // so we have to unload/reset the library after we do our initial discovery
 // to make sure our updates to that variable are processed by llama.cpp
 func (hl *HipLib) Release() {

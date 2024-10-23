@@ -47,7 +47,11 @@ func rocmGetVisibleDevicesEnv(gpuInfo []GpuInfo) (string, string) {
 		}
 		ids = append(ids, info.ID)
 	}
-	return "HIP_VISIBLE_DEVICES", strings.Join(ids, ",")
+	// There are 3 potential env vars to use to select GPUs.
+	// ROCR_VISIBLE_DEVICES supports UUID or numeric so is our preferred
+	// GPU_DEVICE_ORDINAL supports numeric IDs only
+	// HIP_VISIBLE_DEVICES supports numeric IDs only
+	return "ROCR_VISIBLE_DEVICES", strings.Join(ids, ",")
 }
 
 func commonAMDValidateLibDir() (string, error) {
