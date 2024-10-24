@@ -12,7 +12,7 @@ Get up and running with large language models.
 
 [Download](https://ollama.com/download/Ollama-darwin.zip)
 
-### Windows preview
+### Windows
 
 [Download](https://ollama.com/download/OllamaSetup.exe)
 
