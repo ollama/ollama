@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -622,36 +623,86 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 }
 
 func ListHandler(cmd *cobra.Command, args []string) error {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
+  client, err := api.ClientFromEnvironment()
+  if err != nil {
+    return err
+  }
 
-	models, err := client.List(cmd.Context())
-	if err != nil {
-		return err
-	}
+  models, err := client.List(cmd.Context())
+  if err != nil {
+    return err
+  }
 
-	var data [][]string
+  modelGroups := make(map[string][]api.ListModelResponse)
+  for _, m := range models.Models {
+    model, _ := server.GetModel(m.Name)
+    modelPath := model.ModelPath
+    modelGroups[modelPath] = append(modelGroups[modelPath], m)
+  }
 
-	for _, m := range models.Models {
-		if len(args) == 0 || strings.HasPrefix(m.Name, args[0]) {
-			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), format.HumanTime(m.ModifiedAt, "Never")})
-		}
-	}
+  type ModelGroup struct {
+    BaseModel   api.ListModelResponse
+    Descendants []api.ListModelResponse
+  }
+  var groups []ModelGroup
 
-	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"NAME", "ID", "SIZE", "MODIFIED"})
-	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
-	table.SetAlignment(tablewriter.ALIGN_LEFT)
-	table.SetHeaderLine(false)
-	table.SetBorder(false)
-	table.SetNoWhiteSpace(true)
-	table.SetTablePadding("    ")
-	table.AppendBulk(data)
-	table.Render()
+  for _, group := range modelGroups {
+    sort.Slice(group, func(i, j int) bool {
+      return group[i].ModifiedAt.Before(group[j].ModifiedAt)
+    })
+    baseModel := group[0]
+    descendants := group[1:]
 
-	return nil
+    sort.Slice(descendants, func(i, j int) bool {
+      return descendants[i].ModifiedAt.After(descendants[j].ModifiedAt)
+    })
+
+    groups = append(groups, ModelGroup{
+      BaseModel:   baseModel,
+      Descendants: descendants,
+    })
+  }
+
+  sort.Slice(groups, func(i, j int) bool {
+    return groups[i].BaseModel.ModifiedAt.After(groups[j].BaseModel.ModifiedAt)
+  })
+
+  var data [][]string
+  for _, g := range groups {
+    data = append(data, []string{
+      g.BaseModel.Name,
+      g.BaseModel.Digest[:12],
+      format.HumanBytes(g.BaseModel.Size),
+      format.HumanTime(g.BaseModel.ModifiedAt, "Never"),
+    })
+
+    for i, m := range g.Descendants {
+      prefix := " └── "
+      if i < len(g.Descendants)-1 {
+        prefix = " ├── "
+      }
+      data = append(data, []string{
+        prefix + m.Name,
+        m.Digest[:12],
+        "--", // No size for dependent models
+        format.HumanTime(m.ModifiedAt, "Never"),
+      })
+    }
+  }
+
+  table := tablewriter.NewWriter(os.Stdout)
+  table.SetHeader([]string{"NAME", "ID", "SIZE", "MODIFIED"})
+  table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
+  table.SetAlignment(tablewriter.ALIGN_LEFT)
+  table.SetHeaderLine(false)
+  table.SetBorder(false)
+  table.SetNoWhiteSpace(true)
+  table.SetAutoWrapText(false)
+  table.SetTablePadding("    ")
+  table.AppendBulk(data)
+  table.Render()
+
+  return nil
 }
 
 func ListRunningHandler(cmd *cobra.Command, args []string) error {
