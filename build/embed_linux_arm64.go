@@ -2,5 +2,5 @@ package build
 
 import "embed"
 
-//go:embed linux/*
+//go:embed linux/arm64/*
 var EmbedFS embed.FS
