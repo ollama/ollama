@@ -25,9 +25,9 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/fileutils"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llama"
-	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
@@ -91,7 +91,7 @@ func (m *Model) CheckCapabilities(caps ...Capability) error {
 			defer f.Close()
 
 			// TODO(mxyng): decode the GGML into model to avoid doing this multiple times
-			ggml, _, err := llm.DecodeGGML(f, 0)
+			ggml, _, err := fileutils.DecodeGGML(f, 0)
 			if err != nil {
 				slog.Error("couldn't decode ggml", "error", err)
 				continue
@@ -431,7 +431,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 					baseLayer.MediaType == "application/vnd.ollama.image.model" &&
 					baseLayer.GGML != nil &&
 					baseLayer.GGML.Name() == "gguf" {
-					want, err := llm.ParseFileType(quantization)
+					want, err := fileutils.ParseFileType(quantization)
 					if err != nil {
 						return err
 					}
@@ -467,7 +467,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 							return err
 						}
 
-						ggml, _, err := llm.DecodeGGML(temp, 0)
+						ggml, _, err := fileutils.DecodeGGML(temp, 0)
 						if err != nil {
 							return err
 						}

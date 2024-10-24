@@ -13,7 +13,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/fileutils"
 	"github.com/ollama/ollama/template"
 )
 
@@ -147,7 +147,7 @@ func TestParseFromFileFromLayer(t *testing.T) {
 		t.Fatalf("failed to open file: %v", err)
 	}
 	defer file.Close()
-	if err := llm.WriteGGUF(file, llm.KV{"general.architecture": "gemma"}, []llm.Tensor{}); err != nil {
+	if err := fileutils.WriteGGUF(file, fileutils.KV{"general.architecture": "gemma"}, []fileutils.Tensor{}); err != nil {
 		t.Fatalf("failed to write gguf: %v", err)
 	}
 
@@ -200,7 +200,7 @@ func TestParseLayerFromCopy(t *testing.T) {
 	defer file2.Close()
 
 	for range 5 {
-		if err := llm.WriteGGUF(file2, llm.KV{"general.architecture": "gemma"}, []llm.Tensor{}); err != nil {
+		if err := fileutils.WriteGGUF(file2, fileutils.KV{"general.architecture": "gemma"}, []fileutils.Tensor{}); err != nil {
 			t.Fatalf("failed to write gguf: %v", err)
 		}
 	}

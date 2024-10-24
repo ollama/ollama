@@ -1,4 +1,4 @@
-package llm
+package fileutils
 
 import (
 	"fmt"
@@ -329,7 +329,7 @@ func EstimateGPULayers(gpus []discover.GpuInfo, ggml *GGML, projectors []string,
 	return estimate
 }
 
-func (m MemoryEstimate) log() {
+func (m MemoryEstimate) Log() {
 	overhead := envconfig.GpuOverhead()
 
 	log := slog.With()

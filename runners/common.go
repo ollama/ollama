@@ -2,6 +2,7 @@ package runners
 
 import (
 	"compress/gzip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -15,9 +16,11 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 )
@@ -30,6 +33,36 @@ var (
 	lock       sync.Mutex
 	runnersDir = ""
 )
+
+type CompletionRequest struct {
+	Prompt  string
+	Format  string
+	Images  []ImageData
+	Options *api.Options
+}
+
+type CompletionResponse struct {
+	Content            string
+	DoneReason         string
+	Done               bool
+	PromptEvalCount    int
+	PromptEvalDuration time.Duration
+	EvalCount          int
+	EvalDuration       time.Duration
+}
+
+type LLMServer interface {
+	Ping(ctx context.Context) error
+	WaitUntilRunning(ctx context.Context) error
+	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
+	Embedding(ctx context.Context, input string) ([]float32, error)
+	Tokenize(ctx context.Context, content string) ([]int, error)
+	Detokenize(ctx context.Context, tokens []int) (string, error)
+	Close() error
+	EstimatedVRAM() uint64 // Total VRAM across all GPUs
+	EstimatedTotal() uint64
+	EstimatedVRAMByGPU(gpuID string) uint64
+}
 
 // Return the location where runners are stored
 // If runners are payloads, this will either extract them
