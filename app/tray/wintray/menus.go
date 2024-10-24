@@ -8,18 +8,28 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
 const (
-	updateAvailableMenuID = 1
-	updateMenuID          = updateAvailableMenuID + 1
-	separatorMenuID       = updateMenuID + 1
-	diagLogsMenuID        = separatorMenuID + 1
-	diagSeparatorMenuID   = diagLogsMenuID + 1
-	quitMenuID            = diagSeparatorMenuID + 1
+	_ = iota
+	nonStandardPort
+	updateAvailableMenuID
+	updateMenuID
+	separatorMenuID
+	diagLogsMenuID
+	diagSeparatorMenuID
+	quitMenuID
 )
 
 func (t *winTray) initMenus() error {
+	port := envconfig.Host().Port()
+	if port != "11434" {
+		if err := t.addOrUpdateMenuItem(nonStandardPort, 0, fmt.Sprintf("[%s]", envconfig.Host().String()), true); err != nil {
+			return fmt.Errorf("unable to create menu entries %w\n", err)
+		}
+	}
 	if err := t.addOrUpdateMenuItem(diagLogsMenuID, 0, diagLogsMenuTitle, false); err != nil {
 		return fmt.Errorf("unable to create menu entries %w\n", err)
 	}

@@ -36,8 +36,13 @@ func init() {
 		ServerLogFile = filepath.Join(AppDataDir, "server.log")
 		UpgradeLogFile = filepath.Join(AppDataDir, "upgrade.log")
 
-		// Executables are stored in APPDATA
-		AppDir = filepath.Join(localAppData, "Programs", "Ollama")
+		exe, err := os.Executable()
+		if err != nil {
+			slog.Warn("error discovering executable directory", "error", err)
+			AppDir = filepath.Join(localAppData, "Programs", "Ollama")
+		} else {
+			AppDir = filepath.Dir(exe)
+		}
 
 		// Make sure we have PATH set correctly for any spawned children
 		paths := strings.Split(os.Getenv("PATH"), ";")
@@ -64,7 +69,7 @@ func init() {
 		}
 
 		// Make sure our logging dir exists
-		_, err := os.Stat(AppDataDir)
+		_, err = os.Stat(AppDataDir)
 		if errors.Is(err, os.ErrNotExist) {
 			if err := os.MkdirAll(AppDataDir, 0o755); err != nil {
 				slog.Error(fmt.Sprintf("create ollama dir %s: %v", AppDataDir, err))

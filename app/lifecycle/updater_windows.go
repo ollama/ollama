@@ -32,12 +32,13 @@ func DoUpgrade(cancel context.CancelFunc, done chan int) error {
 		"/LOG=" + filepath.Base(UpgradeLogFile), // Only relative seems reliable, so set pwd
 		"/FORCECLOSEAPPLICATIONS",               // Force close the tray app - might be needed
 	}
-	// make the upgrade as quiet as possible (no GUI, no prompts)
+	// make the upgrade show progress, but non interactive
 	installArgs = append(installArgs,
-		"/SP", // Skip the "This will install... Do you wish to continue" prompt
-		"/SUPPRESSMSGBOXES",
+		"/SP",                                 // Skip the "This will install... Do you wish to continue" prompt
+		"/CLOSEAPPLICATIONS",                  // Quit the tray app if it's still running
+		"/LOG="+filepath.Base(UpgradeLogFile), // Only relative seems reliable, so set pwd
+		"/FORCECLOSEAPPLICATIONS",             // Force close the tray app - might be needed		"/SUPPRESSMSGBOXES",
 		"/SILENT",
-		"/VERYSILENT",
 	)
 
 	// Safeguard in case we have requests in flight that need to drain...
