@@ -3,6 +3,7 @@ package discover
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"reflect"
 	"regexp"
@@ -109,6 +110,10 @@ func GetCPUDetails() ([]CPU, error) {
 	if err != nil {
 		return nil, err
 	}
+	return linuxCPUDetails(file)
+}
+
+func linuxCPUDetails(file io.Reader) ([]CPU, error) {
 	reColumns := regexp.MustCompile("\t+: ")
 	scanner := bufio.NewScanner(file)
 	cpuInfos := []linuxCpuInfo{}

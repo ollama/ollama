@@ -175,6 +175,24 @@ func (si SystemInfo) GetOptimalThreadCount() int {
 	if len(si.System.CPUs) == 0 {
 		return 0
 	}
-	// Allocate thread count matching the performance cores on a single socket
-	return si.System.CPUs[0].CoreCount - si.System.CPUs[0].EfficiencyCoreCount
+
+	// Some virtualization systems may allocate cores asymmetrically across NUMA
+	// nodes, so we try to find the largest core count for our thread count,
+	// however we warn the user as currently we're not NUMA aware, and might
+	// wind up having memory allocated to the wrong socket resulting in poor
+	// performance.
+	var max int
+	var skewed bool
+	max = si.System.CPUs[0].CoreCount - si.System.CPUs[0].EfficiencyCoreCount
+
+	for _, cpu := range si.System.CPUs {
+		if (cpu.CoreCount - cpu.EfficiencyCoreCount) > max {
+			max = cpu.CoreCount - cpu.EfficiencyCoreCount
+			skewed = true
+		}
+	}
+	if skewed {
+		slog.Warn("inconsistent core count detected on multi-socket system - CPU inference speed may be negatively impacted", "sockets", si.System.CPUs)
+	}
+	return max
 }
