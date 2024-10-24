@@ -229,6 +229,8 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			fmt.Printf("Created new model '%s'\n", args[1])
 			continue
 		case strings.HasPrefix(line, "/clear"):
+			// clear the screen
+			fmt.Print("\033[H\033[2J")
 			opts.Messages = []api.Message{}
 			if opts.System != "" {
 				newMessage := api.Message{Role: "system", Content: opts.System}
