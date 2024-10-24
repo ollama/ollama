@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -40,6 +41,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
+	"github.com/ollama/ollama/readline"
 	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -564,6 +566,11 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	username, password, err := getBasicAuth(cmd)
+	if err != nil {
+		return err
+	}
+
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
@@ -598,7 +605,12 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	request := api.PushRequest{Name: args[0], Insecure: insecure}
+	request := api.PushRequest{
+		Name:     args[0],
+		Insecure: insecure,
+		Username: username,
+		Password: password,
+	}
 	if err := client.Push(cmd.Context(), &request, fn); err != nil {
 		if spinner != nil {
 			spinner.Stop()
@@ -913,6 +925,11 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	username, password, err := getBasicAuth(cmd)
+	if err != nil {
+		return err
+	}
+
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
@@ -953,7 +970,12 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	request := api.PullRequest{Name: args[0], Insecure: insecure}
+	request := api.PullRequest{
+		Name:     args[0],
+		Insecure: insecure,
+		Username: username,
+		Password: password,
+	}
 	if err := client.Pull(cmd.Context(), &request, fn); err != nil {
 		return err
 	}
@@ -1314,6 +1336,17 @@ Environment Variables:
 	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
 }
 
+func appendAuthEnvDocs(cmd *cobra.Command) {
+	const authEnvDocs = `
+Environment Variables:
+      OLLAMA_HOST        The host:port or base URL of the Ollama server (e.g. http://localhost:11434)
+      OLLAMA_AUTH        The registry basic auth credentials. Format is "username:password"
+      OLLAMA_AUTH_B64    The registry basic auth credentials base64 encoded. Format is "base64(username:password)"
+`
+
+	cmd.SetUsageTemplate(cmd.UsageTemplate() + authEnvDocs)
+}
+
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
@@ -1380,6 +1413,7 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
+	addBasicAuthFlags(runCmd)
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
@@ -1406,6 +1440,7 @@ func NewCLI() *cobra.Command {
 	}
 
 	pullCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	addBasicAuthFlags(pullCmd)
 
 	pushCmd := &cobra.Command{
 		Use:     "push MODEL",
@@ -1416,6 +1451,7 @@ func NewCLI() *cobra.Command {
 	}
 
 	pushCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	addBasicAuthFlags(pushCmd)
 
 	listCmd := &cobra.Command{
 		Use:     "list",
@@ -1491,6 +1527,14 @@ func NewCLI() *cobra.Command {
 		}
 	}
 
+	for _, cmd := range []*cobra.Command{
+		runCmd,
+		pullCmd,
+		pushCmd,
+	} {
+		appendAuthEnvDocs(cmd)
+	}
+
 	rootCmd.AddCommand(
 		serveCmd,
 		createCmd,
@@ -1506,4 +1550,96 @@ func NewCLI() *cobra.Command {
 	)
 
 	return rootCmd
+}
+
+func addBasicAuthFlags(cmd *cobra.Command) {
+	cmd.Flags().StringP("auth", "a", "", "The registry basic auth credentials. Format is \"username:password\"")
+	cmd.Flags().String("auth-b64", "", "The registry basic auth credentials base64 encoded. Format is \"base64(username:password)\"")
+	cmd.Flags().Bool("auth-stdin", false, "The registry basic auth credentials from stdin. Format is \"username:password\"")
+}
+
+func getBasicAuth(cmd *cobra.Command) (username, password string, err error) {
+
+	// auth from env
+	envAuth := os.Getenv("OLLAMA_AUTH")
+	envAuthBase64 := os.Getenv("OLLAMA_AUTH_B64")
+	if envAuth != "" && envAuthBase64 != "" {
+		return "", "", fmt.Errorf("cannot use both OLLAMA_AUTH and OLLAMA_AUTH_B64")
+	}
+
+	// auth from flags
+	var flagAuth, flagAuthBase64 string
+	var flagAuthStdin bool
+	if flagAuth, err = cmd.Flags().GetString("auth"); err != nil {
+		return "", "", fmt.Errorf("failed to get auth flag: %w", err)
+	}
+	if flagAuthBase64, err = cmd.Flags().GetString("auth-b64"); err != nil {
+		return "", "", fmt.Errorf("failed to get auth-b64 flag: %w", err)
+	}
+	if flagAuthStdin, err = cmd.Flags().GetBool("auth-stdin"); err != nil {
+		return "", "", fmt.Errorf("failed to get auth-stdin flag: %w", err)
+	}
+
+	if flagAuth != "" && flagAuthBase64 != "" ||
+		flagAuth != "" && flagAuthStdin ||
+		flagAuthBase64 != "" && flagAuthStdin {
+		return "", "", fmt.Errorf("cannot use --auth, --auth-stdin and --auth-b64 together")
+	}
+
+	// process
+	var auth, authBase64 string
+	var authStdin bool
+
+	auth = envAuth
+	if flagAuth != "" {
+		auth = flagAuth
+	} else {
+		authBase64 = envAuthBase64
+		if flagAuthBase64 != "" {
+			authBase64 = flagAuthBase64
+		}
+		authStdin = flagAuthStdin
+		if authStdin {
+			rl, err := readline.New(readline.Prompt{
+				Prompt: "Credentials(username:password): ",
+			})
+			if err != nil {
+				return "", "", fmt.Errorf("failed to create readline: %w", err)
+			}
+
+			data, err := rl.Readline()
+			if err != nil && err != io.EOF {
+				return "", "", fmt.Errorf("failed to read from stdin: %w", err)
+			}
+			auth = string(data)
+		}
+	}
+
+	// check auth
+	if auth == "" && authBase64 == "" {
+		return "", "", nil
+	}
+
+	if authBase64 != "" {
+		authByte, err := base64.StdEncoding.DecodeString(authBase64)
+		if err != nil {
+			return "", "", fmt.Errorf("failed to decode --auth-b64: %w", err)
+		}
+		auth = string(authByte)
+	}
+
+	if auth == "" {
+		return "", "", nil
+	}
+
+	// parse auth
+	if strings.ContainsRune(auth, ':') {
+		s := strings.SplitN(auth, ":", 2)
+		username = s[0]
+		password = s[1]
+	} else {
+		return "", "", fmt.Errorf("invalid auth format")
+	}
+
+	return username, password, nil
 }

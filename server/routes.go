@@ -535,6 +535,8 @@ func (s *Server) PullHandler(c *gin.Context) {
 
 		regOpts := &registryOptions{
 			Insecure: req.Insecure,
+			Username: req.Username,
+			Password: req.Password,
 		}
 
 		ctx, cancel := context.WithCancel(c.Request.Context())
@@ -584,6 +586,8 @@ func (s *Server) PushHandler(c *gin.Context) {
 
 		regOpts := &registryOptions{
 			Insecure: req.Insecure,
+			Username: req.Username,
+			Password: req.Password,
 		}
 
 		ctx, cancel := context.WithCancel(c.Request.Context())
