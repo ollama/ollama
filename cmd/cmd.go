@@ -1448,6 +1448,13 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	infoCmd := &cobra.Command{
+		Use:     "info",
+		Short:   "Display system-wide information",
+		PreRunE: checkServerHeartbeat,
+		RunE:    InfoHandler,
+	}
+
 	envVars := envconfig.AsMap()
 
 	envs := []envconfig.EnvVar{envVars["OLLAMA_HOST"]}
@@ -1464,6 +1471,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		serveCmd,
+		infoCmd,
 	} {
 		switch cmd {
 		case runCmd:
@@ -1503,6 +1511,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		infoCmd,
 	)
 
 	return rootCmd
