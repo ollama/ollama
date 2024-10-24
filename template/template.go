@@ -144,6 +144,10 @@ func (t *Template) String() string {
 	return t.raw
 }
 
+func (t *Template) Supports(key string) bool {
+	return slices.Contains(t.Vars(), key)
+}
+
 func (t *Template) Vars() []string {
 	var vars []string
 	for _, tt := range t.Templates() {
