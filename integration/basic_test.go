@@ -30,7 +30,24 @@ func TestOrcaMiniBlueSky(t *testing.T) {
 	GenerateTestHelper(ctx, t, req, []string{"rayleigh", "scattering"})
 }
 
-func TestUnicodeOutput(t *testing.T) {
+func TestUnicode(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	// Set up the test data
+	req := api.GenerateRequest{
+		// DeepSeek has a Unicode tokenizer regex, making it a unicode torture test
+		Model:  "deepseek-coder-v2:16b-lite-instruct-q2_K",
+		Prompt: "天空为什么是蓝色的?",
+		Stream: &stream,
+		Options: map[string]interface{}{
+			"temperature": 0,
+			"seed":        123,
+		},
+	}
+	GenerateTestHelper(ctx, t, req, []string{"散射", "频率"})
+}
+
+func TestExtendedUnicodeOutput(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	// Set up the test data
