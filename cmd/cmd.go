@@ -1482,6 +1482,8 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_SCHED_SPREAD"],
 				envVars["OLLAMA_TMPDIR"],
 				envVars["OLLAMA_FLASH_ATTENTION"],
+				envVars["OLLAMA_CACHE_TYPE_K"],
+				envVars["OLLAMA_CACHE_TYPE_V"],
 				envVars["OLLAMA_LLM_LIBRARY"],
 				envVars["OLLAMA_GPU_OVERHEAD"],
 				envVars["OLLAMA_LOAD_TIMEOUT"],
