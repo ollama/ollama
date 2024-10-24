@@ -335,6 +335,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ### Terminal
 
 - [oterm](https://github.com/ggozad/oterm)
+- [bb7](https://github.com/drunkwcodes/bb7) (A TDD coding bot using ollama, with TTS and local RAG)
 - [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
 - [Emacs client](https://github.com/zweifisch/ollama)
 - [gen.nvim](https://github.com/David-Kunz/gen.nvim)
