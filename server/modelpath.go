@@ -61,6 +61,10 @@ func ParseModelPath(name string) ModelPath {
 		mp.Repository = parts[1]
 	case 1:
 		mp.Repository = parts[0]
+	default:
+		mp.Registry = parts[0]
+		mp.Namespace = strings.Join(parts[1:len(parts)-1], "/")
+		mp.Repository = parts[len(parts)-1]
 	}
 
 	if repo, tag, found := strings.Cut(mp.Repository, ":"); found {
