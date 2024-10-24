@@ -1,6 +1,6 @@
-From 7a3555098d4591c9b329c677654497ed8cee07ec Mon Sep 17 00:00:00 2001
-From: Michael Yang <mxyng@pm.me>
-Date: Fri, 23 Aug 2024 11:27:48 -0700
+From 514a8a8f3e2a74bae93faed0af3b13dc7e63ffa9 Mon Sep 17 00:00:00 2001
+From: Liu Yuan <namei.unix@gmail.com>
+Date: Sun, 13 Oct 2024 01:33:34 +0800
 Subject: [PATCH] patch cmakelist
 
 ---
@@ -8,15 +8,15 @@ Subject: [PATCH] patch cmakelist
  1 file changed, 2 insertions(+)
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 415743c2..aaadd13e 100644
+index 64a33537..38abe806 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -210,3 +210,5 @@ if (LLAMA_BUILD_EXAMPLES)
+@@ -210,3 +210,5 @@ if (LLAMA_BUILD_COMMON AND LLAMA_BUILD_EXAMPLES)
      add_subdirectory(examples)
      add_subdirectory(pocs)
  endif()
 +
 +add_subdirectory(../ext_server ext_server) # ollama
 -- 
-2.39.3 (Apple Git-146)
+2.34.1
 

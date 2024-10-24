@@ -38,6 +38,7 @@ type LlamaServer interface {
 	WaitUntilRunning(ctx context.Context) error
 	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
 	Embedding(ctx context.Context, input string) ([]float32, error)
+	Rerank(ctx context.Context, req api.RerankRequest, fn func(RerankResponse)) error
 	Tokenize(ctx context.Context, content string) ([]int, error)
 	Detokenize(ctx context.Context, tokens []int) (string, error)
 	Close() error
@@ -90,7 +91,7 @@ func LoadModel(model string, maxArraySize int) (*GGML, error) {
 
 // NewLlamaServer will run a server for the given GPUs
 // The gpu list must be a single family.
-func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
+func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapters, projectors []string, opts api.Options, numParallel int, extraCmd string) (LlamaServer, error) {
 	var err error
 	var cpuRunner string
 	var estimate MemoryEstimate
@@ -295,6 +296,21 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 			slog.Debug("ResolveTCPAddr failed ", "error", err)
 			port = rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
 		}
+
+		switch extraCmd {
+		case "reranking": // reranking implicitly enables embedding and can't be set with --embedding
+			for i, p := range params {
+				if p == "--embedding" {
+					params[i] = "--reranking"
+					goto done
+				}
+			}
+			params = append(params, "--reranking")
+		case "":
+		default:
+			slog.Info(fmt.Sprintf("extraCmd %s unhandled\n", extraCmd))
+		}
+	done:
 		finalParams := append(params, "--port", strconv.Itoa(port))
 
 		pathEnv := "LD_LIBRARY_PATH"
@@ -914,6 +930,69 @@ func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, err
 	}
 
 	return e.Embedding, nil
+}
+
+type RerankResponse struct {
+	Model  string `json:"model"`
+	Object string `json:"object"`
+	Usage  struct {
+		PromptTokens int `json:"prompt_tokens"`
+		TotalTokens  int `json:"total_tokens"`
+	} `json:"usage"`
+	Results []struct {
+		Index          int     `json:"index"`
+		RelevanceScore float32 `json:"relevance_score"`
+	} `json:"results"`
+}
+
+func (s *llmServer) Rerank(ctx context.Context, req api.RerankRequest, fn func(RerankResponse)) error {
+	if err := s.sem.Acquire(ctx, 1); err != nil {
+		slog.Error("Failed to acquire semaphore", "error", err)
+		return err
+	}
+	defer s.sem.Release(1)
+
+	status, err := s.getServerStatusRetry(ctx)
+	if err != nil {
+		return err
+	} else if status != ServerStatusReady {
+		return fmt.Errorf("unexpected server status: %s", status.ToString())
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("error marshaling rerank data: %w", err)
+	}
+
+	r, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/rerank", s.port), bytes.NewBuffer(data))
+	if err != nil {
+		return fmt.Errorf("error creating rerank request: %w", err)
+	}
+	r.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(r)
+	if err != nil {
+		return fmt.Errorf("do rerank request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("error reading rerank response: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		log.Printf("llm rerank error: %s", body)
+		return fmt.Errorf("%s", body)
+	}
+
+	var rr RerankResponse
+	if err := json.Unmarshal(body, &rr); err != nil {
+		return fmt.Errorf("unmarshal tokenize response: %w", err)
+	}
+	fn(rr)
+
+	return nil
 }
 
 type TokenizeRequest struct {
