@@ -420,6 +420,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Maid](https://github.com/Mobile-Artificial-Intelligence/maid)
 - [Ollama App](https://github.com/JHubi1/ollama-app) (Modern and easy-to-use multi-platform client for Ollama)
 - [ConfiChat](https://github.com/1runeberg/confichat) (Lightweight, standalone, multi-platform, and privacy focused LLM chat interface with optional encryption)
+- [Emu](https://github.com/Calvicii/emu)
 
 ### Extensions & Plugins
 
