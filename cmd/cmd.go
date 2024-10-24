@@ -121,6 +121,40 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		switch modelfile.Commands[i].Name {
 		case "model", "adapter":
 			path := modelfile.Commands[i].Args
+
+			if strings.HasPrefix(path, "hg://") {
+				// Handle models from Hugging Face
+				hfModelPath := strings.TrimPrefix(path, "hg://")
+
+				// Split the repo and model parts correctly
+				parts := strings.Split(hfModelPath, "/")
+				if len(parts) < 2 {
+					return fmt.Errorf("invalid Hugging Face path format: %s", hfModelPath)
+				}
+
+				repoName := parts[0]
+				modelName := parts[1]
+				modelFile := parts[len(parts)-1]
+
+				// If suffix is gguf, remove it
+				if strings.HasSuffix(modelFile, ".gguf") {
+					modelFile = modelFile[:len(modelFile)-5]
+				}
+
+				fmt.Println("Fetching model from Hugging Face:", modelName)
+
+				// Correct URL format for Hugging Face
+				hfURL := fmt.Sprintf("https://huggingface.co/%s/%s/resolve/main/%s.gguf", repoName, modelName, modelFile)
+
+				err := downloadFromHuggingFace(hfURL, filepath.Join("/tmp", filepath.Base(hfModelPath)))
+				if err != nil {
+					return fmt.Errorf("error downloading model from Hugging Face: %v", err)
+				}
+
+				fmt.Println("Model downloaded successfully from Hugging Face.")
+				path = filepath.Join("/tmp", filepath.Base(hfModelPath))
+			}
+
 			if path == "~" {
 				path = home
 			} else if strings.HasPrefix(path, "~/") {
@@ -1312,6 +1346,70 @@ Environment Variables:
 	}
 
 	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
+}
+
+// downloadFromHuggingFace downloads the model from Hugging Face
+func downloadFromHuggingFace(url, destPath string) error {
+	// Check if the file already exists
+	if _, err := os.Stat(destPath); err == nil {
+		fmt.Println("Model already exists, skipping download.")
+		return nil
+	}
+	resp, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to download the model, status code: %d", resp.StatusCode)
+	}
+
+	// Get the file size if available
+	totalSize, err := strconv.Atoi(resp.Header.Get("Content-Length"))
+	if err != nil {
+		fmt.Println("Unable to get content length:", err)
+		totalSize = -1 // If the size cannot be retrieved
+	}
+
+	out, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	// Copy the content and show progress
+	buffer := make([]byte, 1024) // 1 KB buffer
+	var downloadedSize int
+	for {
+		// Read from the response body
+		n, err := resp.Body.Read(buffer)
+		if n > 0 {
+			// Write to the file
+			if _, err := out.Write(buffer[:n]); err != nil {
+				return err
+			}
+
+			// Update the progress
+			downloadedSize += n
+			if totalSize > 0 {
+				progress := float64(downloadedSize) / float64(totalSize) * 100
+				fmt.Printf("\rDownloading: %.2f%% complete", progress)
+			} else {
+				fmt.Printf("\rDownloaded: %d bytes", downloadedSize)
+			}
+		}
+		// Check if the download has finished
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	fmt.Println("\nDownload complete.")
+	return nil
 }
 
 func NewCLI() *cobra.Command {
