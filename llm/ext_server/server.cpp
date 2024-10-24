@@ -2029,6 +2029,7 @@ static void server_print_usage(const char *argv0, const gpt_params &params,
     printf("  -fa, --flash-attn         enable Flash Attention (default: %s)\n", params.flash_attn ? "enabled" : "disabled");
     printf("  -spf FNAME, --system-prompt-file FNAME\n");
     printf("                            set a file to load a system prompt (initial prompt of all slots), this is useful for chat applications.\n");
+    printf("  -nkvo, --no-kv-offload                  disable KV offload\n");
     printf("  -ctk TYPE, --cache-type-k TYPE\n");
     printf("                            KV cache data type for K (default: f16)\n");
     printf("  -ctv TYPE, --cache-type-v TYPE\n");
@@ -2444,6 +2445,10 @@ static void server_params_parse(int argc, char **argv, server_params &sparams, g
         else if (arg == "-fa" || arg == "--flash-attn")
         {
             params.flash_attn = true;
+        }
+        else if (arg == "-nkvo" || arg == "--no-kv-offload")
+        {
+            params.no_kv_offload = true;
         }
         else if (arg == "-np" || arg == "--parallel")
         {

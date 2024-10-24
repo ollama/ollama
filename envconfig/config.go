@@ -163,6 +163,10 @@ var (
 	IntelGPU = Bool("OLLAMA_INTEL_GPU")
 	// MultiUserCache optimizes prompt caching for multi-user scenarios
 	MultiUserCache = Bool("OLLAMA_MULTIUSER_CACHE")
+	// SplitModeRow splits models accross GPUs as rows.
+	SplitModeRow = Bool("OLLAMA_SPLIT_MODE_ROW")
+	// NoKVOffload prevents KV cache from being offloaded to GPU.
+	NoKVOffload = Bool("OLLAMA_NO_KV_OFFLOAD")
 )
 
 func String(s string) func() string {
@@ -249,6 +253,8 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
 		"OLLAMA_TMPDIR":            {"OLLAMA_TMPDIR", TmpDir(), "Location for temporary files"},
 		"OLLAMA_MULTIUSER_CACHE":   {"OLLAMA_MULTIUSER_CACHE", MultiUserCache(), "Optimize prompt caching for multi-user scenarios"},
+		"OLLAMA_SPLIT_MODE_ROW":    {"OLLAMA_SPLIT_MODE_ROW", SplitModeRow(), "Enable split row mode"},
+		"OLLAMA_NO_KV_OFFLOAD":     {"OLLAMA_NO_KV_OFFLOAD", NoKVOffload(), "Disable KV Cache Offloading to GPU"},
 
 		// Informational
 		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},
