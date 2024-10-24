@@ -298,14 +298,14 @@ The following tools are required as a minimal development environment to build C
   - https://git-scm.com/download/win
 - GCC and Make.  There are multiple options on how to go about installing these tools on Windows.  We have verified the following, but others may work as well:  
   - [MSYS2](https://www.msys2.org/)
-    - After installing, from an MSYS2 terminal, run `pacman -S mingw-w64-ucrt-x86_64-gcc make` to install the required tools
-  - Assuming you used the default install prefix for msys2 above, add `c:\msys64\ucrt64\bin` and `c:\msys64\usr\bin` to your environment variable `PATH` where you will perform the build steps below (e.g. system-wide, account-level, powershell, cmd, etc.)
+    - After installing, from an MSYS2 terminal, run `pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-x86_64-make make` to install the required tools
+  - Assuming you used the default install prefix for msys2 above, add `c:\msys64\mingw64\bin`, `c:\msys64\ucrt64\bin` and `c:\msys64\usr\bin` to your environment variable `PATH` where you will perform the build steps below (e.g. system-wide, account-level, powershell, cmd, etc.)
 
 Then, build the `ollama` binary:
 
 ```powershell
 $env:CGO_ENABLED="1"
-make -C llama -j 8
+mingw32-make -C llama -j 8
 go build .
 ```
 
@@ -317,6 +317,13 @@ The GPU tools require the Microsoft native build tools.  To build either CUDA or
 - You must complete the Visual Studio install and run it once **BEFORE** installing CUDA or ROCm for the tools to properly register
 - Add the location of the **64 bit (x64)** compiler (`cl.exe`) to your `PATH`
 - Note: the default Developer Shell may configure the 32 bit (x86) compiler which will lead to build failures.  Ollama requires a 64 bit toolchain.
+
+This is how you can switch to 64 bit toolchain before build:
+
+```powershell
+import-module 'C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\Common7\\Tools\\Microsoft.VisualStudio.DevShell.dll'
+Enter-VsDevShell -Arch amd64 -vsinstallpath 'C:\\Program Files\\Microsoft Visual Studio\\2022\\Community' -skipautomaticlocation
+```
 
 #### Windows CUDA (NVIDIA)
 
