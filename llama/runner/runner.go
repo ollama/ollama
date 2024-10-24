@@ -475,7 +475,12 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		}
 
 		// sample a token
-		token := seq.samplingCtx.Sample(s.lc, seq.iBatch)
+		token, err := seq.samplingCtx.Sample(s.lc, seq.iBatch)
+		if err != nil {
+			slog.Error("failed to sample token", "error", err)
+			s.removeSequence(i, "error")
+			continue
+		}
 		seq.samplingCtx.Accept(token, true)
 		piece := s.model.TokenToPiece(token)
 

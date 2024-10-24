@@ -47,8 +47,8 @@ create-patches: $(LLAMACPP_REPO)
 	git -C $(LLAMACPP_REPO) format-patch --no-signature --no-numbered --zero-commit -o $(LLAMACPP_PATCH_DIR) $(LLAMACPP_BASE_COMMIT)
 
 # Vendoring template logic
-EXCLUDED_FILES=sgemm.cpp sgemm.h sampling_ext.cpp sampling_ext.h stb_image.h json.hpp llama_darwin.c base64.hpp
-OLLAMA_NATIVE_FILES=mllama.cpp mllama.h llama_darwin.c sampling_ext.cpp sampling_ext.h
+EXCLUDED_FILES=sgemm.cpp sgemm.h stb_image.h json.hpp llama_darwin.c base64.hpp
+OLLAMA_NATIVE_FILES=mllama.cpp mllama.h llama_darwin.c
 define vendor_file
 $(strip $(addprefix $(2),$(notdir $1))) : $(addprefix $(LLAMACPP_REPO),$(1))
 ifneq ($$(filter-out $(EXCLUDED_FILES),$(notdir $1)),)
@@ -149,20 +149,7 @@ LAVA_FILES= \
 	examples/llava/clip.h \
 	examples/llava/llava.cpp \
 	examples/llava/llava.h \
-	common/log.h \
-	common/log.cpp \
 	common/stb_image.h
-# These files are mostly used by the llava code
-# and shouldn't be necessary once we use clip.cpp directly
-LAVA_FILES+= \
-	common/common.cpp \
-	common/common.h \
-	common/sampling.cpp \
-	common/sampling.h \
-	common/json.hpp \
-	common/json-schema-to-grammar.cpp \
-	common/json-schema-to-grammar.h \
-	common/base64.hpp
 $(foreach name,$(LAVA_FILES),$(eval $(call vendor_file,$(name),$(DST_DIR))))
 
 $(DST_DIR)build-info.cpp:
