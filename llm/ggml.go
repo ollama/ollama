@@ -188,7 +188,7 @@ func (t Tensor) blockSize() uint64 {
 	switch t.Kind {
 	case 0, 1, 24, 25, 26, 27, 28, 30: // F32, F16, I8, I16, I32, I64, F64, BF16
 		return 1
-	case 2, 3, 4, 5, 6, 7, 8, 9, 20: // Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q8_1, IQ4_NL
+	case 2, 3, 4, 5, 6, 7, 8, 9, 20, 31, 32, 33: // Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q8_1, IQ4_NL, Q4_0_4_4, Q4_0_4_8, Q4_0_8_8
 		return 32
 	default: // All others
 		return 256
@@ -257,6 +257,16 @@ func (t Tensor) typeSize() uint64 {
 		return blockSize/8 + blockSize/16 + blockSize/32
 	case 30: // BF16
 		return 2
+	case 31: // Q4_0_4_4
+		return 2 + blockSize/2
+	case 32: // Q4_0_4_8
+		return 2 + blockSize/2
+	case 33: // Q4_0_8_8
+		return 2 + blockSize/2
+	case 34: // TQ1_0
+		return 2 + blockSize/64 + (blockSize-4*blockSize/64)/5
+	case 35: // TQ2_0
+		return 2 + blockSize/4
 	default:
 		return 0
 	}
