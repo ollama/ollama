@@ -184,7 +184,7 @@ RUN cd dist/linux-$GOARCH && \
     tar --exclude runners -cf - . | pigz --best > ../ollama-linux-$GOARCH.tgz
 
 FROM --platform=linux/$TARGETARCH scratch AS dist-arch-img
-COPY --from=build-ppc64le /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
+COPY --from=ubuntu:22.04 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
 #FROM --platform=linux/arm64 scratch AS dist-arm64
 #COPY --from=build-arm64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
 FROM dist-arch-img as dist
