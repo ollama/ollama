@@ -76,3 +76,9 @@ else
 	CP := cp -af
 endif
 
+COMMON_SRCS := \
+	$(wildcard *.c) \
+	$(wildcard *.cpp)
+COMMON_HDRS := \
+	$(wildcard *.h) \
+	$(wildcard *.hpp)
