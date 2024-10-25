@@ -67,7 +67,9 @@ fi
 if [ -n "${GOLANG_VERSION}" ]; then
     if [ "${MACHINE}" = "x86_64" ]; then
         GO_ARCH="amd64"
-    else
+    elif [ "${MACHINE}" = "ppc64le" ]; then
+        GO_ARCH="ppc64le"
+    else 
         GO_ARCH="arm64"
     fi
     mkdir -p /usr/local
