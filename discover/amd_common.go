@@ -37,23 +37,6 @@ func GetSupportedGFX(libDir string) ([]string, error) {
 	return ret, nil
 }
 
-func rocmGetVisibleDevicesEnv(gpuInfo []GpuInfo) (string, string) {
-	ids := []string{}
-	for _, info := range gpuInfo {
-		if info.Library != "rocm" {
-			// TODO shouldn't happen if things are wired correctly...
-			slog.Debug("rocmGetVisibleDevicesEnv skipping over non-rocm device", "library", info.Library)
-			continue
-		}
-		ids = append(ids, info.ID)
-	}
-	// There are 3 potential env vars to use to select GPUs.
-	// ROCR_VISIBLE_DEVICES supports UUID or numeric so is our preferred
-	// GPU_DEVICE_ORDINAL supports numeric IDs only
-	// HIP_VISIBLE_DEVICES supports numeric IDs only
-	return "ROCR_VISIBLE_DEVICES", strings.Join(ids, ",")
-}
-
 func commonAMDValidateLibDir() (string, error) {
 	// Favor our bundled version
 
