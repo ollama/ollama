@@ -180,6 +180,7 @@ var (
 	RocrVisibleDevices    = String("ROCR_VISIBLE_DEVICES")
 	GpuDeviceOrdinal      = String("GPU_DEVICE_ORDINAL")
 	HsaOverrideGfxVersion = String("HSA_OVERRIDE_GFX_VERSION")
+	ROCmP2PWorkaround     = String("OLLAMA_NO_PEER_COPY")
 )
 
 func Uint(key string, defaultValue uint) func() uint {
@@ -270,6 +271,7 @@ func AsMap() map[string]EnvVar {
 		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal(), "Set which AMD devices are visible by numeric ID"}
 		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion(), "Override the gfx used for all detected AMD GPUs"}
 		ret["OLLAMA_INTEL_GPU"] = EnvVar{"OLLAMA_INTEL_GPU", IntelGPU(), "Enable experimental Intel GPU detection"}
+		ret["OLLAMA_NO_PEER_COPY"] = EnvVar{"OLLAMA_NO_PEER_COPY", ROCmP2PWorkaround(), "Workaround ROCm P2P copy bugs on multi-GPU"}
 	}
 
 	return ret
