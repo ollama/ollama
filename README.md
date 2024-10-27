@@ -357,6 +357,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama eBook Summary](https://github.com/cognitivetech/ollama-ebook-summary/)
 - [Ollama Mixture of Experts (MOE) in 50 lines of code](https://github.com/rapidarchitect/ollama_moe)
 - [vim-intelligence-bridge](https://github.com/pepo-ec/vim-intelligence-bridge) Simple interaction of "Ollama" with the Vim editor
+- [SwollamaCLI](https://github.com/marcusziade/Swollama) bundled with the Swollama Swift package. [Demo](https://github.com/marcusziade/Swollama?tab=readme-ov-file#cli-usage)
 
 ### Apple Vision Pro
 - [Enchanted](https://github.com/AugustDev/enchanted)
@@ -413,6 +414,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama PHP](https://github.com/ArdaGnsrn/ollama-php)
 - [Agents-Flex for Java](https://github.com/agents-flex/agents-flex) with [example](https://github.com/agents-flex/agents-flex/tree/main/agents-flex-llm/agents-flex-llm-ollama/src/test/java/com/agentsflex/llm/ollama)
 - [Ollama for Swift](https://github.com/mattt/ollama-swift)
+- [Swollama for Swift](https://github.com/marcusziade/Swollama) with [DocC](https://marcusziade.github.io/Swollama/documentation/swollama/)
 
 ### Mobile
 
