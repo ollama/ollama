@@ -43,7 +43,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 		slog.Debug("error looking up amd driver version", "error", err)
 	}
 
-	// Note: the HIP library automatically handles subsetting to any HIP_VISIBLE_DEVICES the user specified
+	// Note: the HIP library automatically handles subsetting to any *_VISIBLE_DEVICES the user specified
 	count := hl.HipGetDeviceCount()
 	if count == 0 {
 		err := fmt.Errorf("no compatible amdgpu devices detected")
@@ -200,4 +200,21 @@ func (gpus RocmGPUInfoList) RefreshFreeMemory() error {
 		gpus[i].FreeMemory = freeMemory
 	}
 	return nil
+}
+
+func rocmGetVisibleDevicesEnv(gpuInfo []GpuInfo) (string, string) {
+	ids := []string{}
+	for _, info := range gpuInfo {
+		if info.Library != "rocm" {
+			// TODO shouldn't happen if things are wired correctly...
+			slog.Debug("rocmGetVisibleDevicesEnv skipping over non-rocm device", "library", info.Library)
+			continue
+		}
+		ids = append(ids, info.ID)
+	}
+	// There are 3 potential env vars to use to select GPUs.
+	// ROCR_VISIBLE_DEVICES supports UUID or numeric but does not work on Windows
+	// HIP_VISIBLE_DEVICES supports numeric IDs only
+	// GPU_DEVICE_ORDINAL supports numeric IDs only
+	return "HIP_VISIBLE_DEVICES", strings.Join(ids, ",")
 }

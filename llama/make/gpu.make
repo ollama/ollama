@@ -34,13 +34,6 @@ endif
 GPU_RUNNER_LIBS = $(wildcard $(addsuffix .$(SHARED_EXT).*,$(addprefix $(GPU_LIB_DIR)/$(SHARED_PREFIX),$(GPU_RUNNER_LIBS_SHORT))))
 DIST_GPU_RUNNER_LIB_DEPS = $(addprefix $(DIST_GPU_RUNNER_DEPS_DIR)/,$(notdir $(GPU_RUNNER_LIBS)))
 
-COMMON_SRCS := \
-	$(wildcard *.c) \
-	$(wildcard *.cpp)
-COMMON_HDRS := \
-	$(wildcard *.h) \
-	$(wildcard *.hpp)
-
 GPU_RUNNER_SRCS := \
 	ggml-cuda.cu \
 	$(filter-out $(wildcard ggml-cuda/fattn*.cu),$(wildcard ggml-cuda/*.cu)) \
