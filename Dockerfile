@@ -256,7 +256,7 @@ COPY . .
 ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN --mount=type=cache,target=/root/.ccache \
-   go build -trimpath -o dist/linux-arm64/bin/ollama .
+   go build -trimpath -o dist/linux-ppc64le/bin/ollama .
 
 FROM --platform=linux/amd64 ubuntu:22.04 AS runtime-amd64
 RUN apt-get update && \
