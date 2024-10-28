@@ -410,18 +410,14 @@ func (s *Server) RerankHandler(c *gin.Context) {
 			}
 
 			docTokens = docTokens[:(ctxLen - 4 - len(queryTokens))]
-			// _, err = r.Detokenize(c.Request.Context(), docTokens)
-			// if err != nil {
-			// 	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			// 	return
-			// }
 		}
 		// Get the BOS, EOS, and SEP tokens from the GGML
-		BOS := []int{int(kvData["tokenizer.ggml.bos_token_id"].(uint32))}
+		// BOS := []int{int(kvData["tokenizer.ggml.bos_token_id"].(uint32))}
 		EOS := []int{int(kvData["tokenizer.ggml.eos_token_id"].(uint32))}
 		SEP := []int{int(kvData["tokenizer.ggml.seperator_token_id"].(uint32))}
-		// Build the full rerank prompt by concatenating the query and document tokens with the BOS, EOS, and SEP tokens
-		fullPrompt := append(BOS, append(queryTokens, append(SEP, append(docTokens, EOS...)...)...)...)
+		// Embedding is gonna add the initial BOS and trailing EOS for us, so just need to inject the EOS/SEP in the middle.
+		fullPrompt := append(queryTokens, append(EOS, append(SEP, docTokens...)...)...)
+		slog.Debug("rerank tokens", "tokens", fullPrompt)
 		count += len(fullPrompt)
 
 		s, err = r.Detokenize(c.Request.Context(), fullPrompt)
@@ -429,6 +425,7 @@ func (s *Server) RerankHandler(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+		slog.Debug("rerank prompt", "prompt", s)
 		input[i] = s
 	}
 
