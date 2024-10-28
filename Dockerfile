@@ -250,7 +250,7 @@ ARG CGO_CFLAGS
 RUN --mount=type=cache,target=/root/.ccache \
     go build -trimpath -o dist/linux-arm64/bin/ollama .
 
-FROM --platform=linux/arm64 static-build-ppc64le AS container-build-ppc64le
+FROM --platform=linux/ppc64le static-build-ppc64le AS container-build-ppc64le
 WORKDIR /go/src/github.com/ollama/ollama
 COPY . .
 ARG GOFLAGS
