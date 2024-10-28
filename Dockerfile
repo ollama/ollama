@@ -276,6 +276,7 @@ RUN apt-get update && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY --from=container-build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/bin/ /bin/
 COPY --from=cpu-build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
+COPY --from=cpu-build-ppc64le /go/src/github.com/ollama/ollama/dist/linux-ppc64le/lib/ /lib/
 COPY --from=cuda-11-build-runner-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
 COPY --from=cuda-12-build-runner-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
 
