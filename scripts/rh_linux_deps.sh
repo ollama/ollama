@@ -3,7 +3,7 @@
 # Script for common Dockerfile dependency installation in redhat linux based images
 
 set -ex
-set -o pipefail
+#set -o pipefail
 MACHINE=$(uname -m)
 
 if grep -i "centos" /etc/system-release >/dev/null; then
