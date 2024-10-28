@@ -183,12 +183,11 @@ RUN --mount=type=cache,target=/root/.ccache \
 RUN cd dist/linux-$GOARCH && \
     tar --exclude runners -cf - . | pigz --best > ../ollama-linux-$GOARCH.tgz
 
-#FROM --platform=linux/ppc64le scratch AS dist-arch-img
-#COPY --from=build-ppc64le /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
+FROM --platform=linux/amd64 scratch AS dist-amd64
+COPY --from=build-amd64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
 FROM --platform=linux/arm64 scratch AS dist-arm64
 COPY --from=build-arm64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
-FROM dist-arm64 as dist
-
+FROM dist-$TARGETARCH as dist
 
 # Optimized container images do not cary nested payloads
 FROM --platform=linux/amd64 static-build-amd64 AS container-build-amd64
