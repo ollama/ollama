@@ -6,7 +6,7 @@ set -ex
 #set -o pipefail
 MACHINE=$(uname -m)
 if [ "${MACHINE}" = "ppc64le" ]; then
-
+  echo "Installing ppc64le dependencees"
 else
 
 if grep -i "centos" /etc/system-release >/dev/null; then
@@ -67,7 +67,7 @@ if [ -n "${CMAKE_VERSION}" ]; then
     curl -s -L https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-$(uname -m).tar.gz | tar -zx -C /usr --strip-components 1
 fi
 
-fi
+
 
 if [ -n "${GOLANG_VERSION}" ]; then
     if [ "${MACHINE}" = "x86_64" ]; then
@@ -81,4 +81,5 @@ if [ -n "${GOLANG_VERSION}" ]; then
     curl -s -L https://dl.google.com/go/go${GOLANG_VERSION}.linux-${GO_ARCH}.tar.gz | tar xz -C /usr/local
     ln -s /usr/local/go/bin/go /usr/local/bin/go
     ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+fi
 fi
