@@ -7,7 +7,6 @@ set -ex
 MACHINE=$(uname -m)
 if [ "${MACHINE}" = "ppc64le" ]; then
    echo "Install power dependiecies"
-   apt-get remove -y git
    apt-get install -y git gcc curl cmake gcc-cpp
 else
   if grep -i "centos" /etc/system-release >/dev/null; then
