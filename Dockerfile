@@ -207,7 +207,7 @@ RUN cd dist/linux-$GOARCH && \
     tar --exclude runners -cf - . | pigz --best > ../ollama-linux-$GOARCH.tgz
 
 
-FROM --platform=linux/arm64 cpu-build-ppc64le AS build-ppc64le
+FROM --platform=linux/ppc64le cpu-build-ppc64le AS build-ppc64le
 ENV CGO_ENABLED=1
 ARG GOLANG_VERSION
 WORKDIR /go/src/github.com/ollama/ollama
