@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +34,7 @@ import (
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/runners"
+	"github.com/ollama/ollama/server/imageproc"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -189,7 +191,24 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	images := make([]llm.ImageData, len(req.Images))
 	for i := range req.Images {
-		images[i] = llm.ImageData{ID: i, Data: req.Images[i]}
+		if isMllama {
+			data, aspectRatioID, err := imageproc.Preprocess(req.Images[i])
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error processing image"})
+				return
+			}
+
+			buf := new(bytes.Buffer)
+			err = binary.Write(buf, binary.LittleEndian, data)
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error processing image"})
+				return
+			}
+
+			images[i] = llm.ImageData{Data: buf.Bytes(), AspectRatioID: aspectRatioID}
+		} else {
+			images[i] = llm.ImageData{ID: i, Data: req.Images[i]}
+		}
 	}
 
 	prompt := req.Prompt
