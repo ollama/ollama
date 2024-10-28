@@ -1,5 +1,5 @@
 # Note: once we have fully transitioned to the Go server, this will replace the old Dockerfile at the top of the tree
-ARG GOLANG_VERSION=1.22.5
+ARG GOLANG_VERSION=1.22.8
 ARG CMAKE_VERSION=3.22.1
 ARG CUDA_VERSION_11=11.3.1
 ARG CUDA_V11_ARCHITECTURES="50;52;53;60;61;62;70;72;75;80;86"
