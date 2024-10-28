@@ -5,7 +5,7 @@
 set -ex
 #set -o pipefail
 MACHINE=$(uname -m)
-if [ "${MACHINE}" == "ppc64le" ]; then
+if [ "${MACHINE}" = "ppc64le" ]; then
    echo "Install power dependiecies"
 else
   if grep -i "centos" /etc/system-release >/dev/null; then
