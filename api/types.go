@@ -293,6 +293,32 @@ type EmbeddingResponse struct {
 	Embedding []float64 `json:"embedding"`
 }
 
+type RerankRequest struct {
+	Model     string   `json:"model"`
+	Query     string   `json:"query"`
+	TopN      int      `json:"top_n"`     // return top N documents
+	Documents []string `json:"documents"` // list of documents to rerank
+
+	KeepAlive *Duration `json:"keep_alive,omitempty"`
+	Truncate  *bool     `json:"truncate,omitempty"`
+
+	Options map[string]interface{} `json:"options,omitempty"`
+}
+
+type RerankResult struct {
+	Document       string  `json:"document"`
+	RelevanceScore float32 `json:"relevance_score"`
+}
+
+type RerankResponse struct {
+	Model   string         `json:"model"`
+	Results []RerankResult `json:"results"`
+
+	TotalDuration   time.Duration `json:"total_duration,omitempty"`
+	LoadDuration    time.Duration `json:"load_duration,omitempty"`
+	PromptEvalCount int           `json:"prompt_eval_count,omitempty"`
+}
+
 // CreateRequest is the request passed to [Client.Create].
 type CreateRequest struct {
 	Model     string `json:"model"`

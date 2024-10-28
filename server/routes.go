@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -346,6 +347,124 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	streamResponse(c, ch)
+}
+
+func (s *Server) RerankHandler(c *gin.Context) {
+	checkpointStart := time.Now()
+	var req api.RerankRequest
+	err := c.ShouldBindJSON(&req)
+	switch {
+	case errors.Is(err, io.EOF):
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	case err != nil:
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	truncate := true
+
+	if req.Truncate != nil && !*req.Truncate {
+		truncate = false
+	}
+
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, []Capability{}, req.Options, req.KeepAlive)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+
+	checkpointLoaded := time.Now()
+
+	if len(req.Documents) == 0 {
+		c.JSON(http.StatusOK, api.RerankResponse{Model: req.Model, Results: []api.RerankResult{}})
+		return
+	}
+
+	kvData, err := getKVData(m.ModelPath, false)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	input := make([]string, len(req.Documents))
+
+	var count int
+	for i, s := range req.Documents {
+		queryTokens, err := r.Tokenize(c.Request.Context(), req.Query)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		docTokens, err := r.Tokenize(c.Request.Context(), s)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		ctxLen := min(opts.NumCtx, int(kvData.ContextLength()))
+		if (4 + len(queryTokens) + len(docTokens)) > ctxLen {
+			if !truncate {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "input length exceeds maximum context length"})
+				return
+			}
+
+			docTokens = docTokens[:(ctxLen - 4 - len(queryTokens))]
+			// _, err = r.Detokenize(c.Request.Context(), docTokens)
+			// if err != nil {
+			// 	c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			// 	return
+			// }
+		}
+		// Get the BOS, EOS, and SEP tokens from the GGML
+		BOS := []int{int(kvData["tokenizer.ggml.bos_token_id"].(uint32))}
+		EOS := []int{int(kvData["tokenizer.ggml.eos_token_id"].(uint32))}
+		SEP := []int{int(kvData["tokenizer.ggml.seperator_token_id"].(uint32))}
+		// Build the full rerank prompt by concatenating the query and document tokens with the BOS, EOS, and SEP tokens
+		fullPrompt := append(BOS, append(queryTokens, append(SEP, append(docTokens, EOS...)...)...)...)
+		count += len(fullPrompt)
+
+		s, err = r.Detokenize(c.Request.Context(), fullPrompt)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		input[i] = s
+	}
+
+	var g errgroup.Group
+	results := make([]api.RerankResult, len(input))
+	for i, text := range input {
+		g.Go(func() error {
+			result, err := r.Embedding(c.Request.Context(), text)
+			if err != nil {
+				return err
+			}
+			results[i] = api.RerankResult{Document: req.Documents[i], RelevanceScore: result[0]}
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		slog.Error("rerank generation failed", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Errorf("failed to generate reranking: %v", err)})
+		return
+	}
+
+	sort.SliceStable(results, func(i, j int) bool {
+		return results[i].RelevanceScore > results[j].RelevanceScore
+	})
+	topn := min(len(results), req.TopN)
+	topResults := results[:topn]
+
+	rsp := api.RerankResponse{
+		Model:           req.Model,
+		Results:         topResults,
+		TotalDuration:   time.Since(checkpointStart),
+		LoadDuration:    checkpointLoaded.Sub(checkpointStart),
+		PromptEvalCount: count,
+	}
+	c.JSON(http.StatusOK, rsp)
 }
 
 func (s *Server) EmbedHandler(c *gin.Context) {
@@ -1150,6 +1269,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
+	r.POST("/api/rerank", s.RerankHandler)
 	r.POST("/api/create", s.CreateHandler)
 	r.POST("/api/push", s.PushHandler)
 	r.POST("/api/copy", s.CopyHandler)
