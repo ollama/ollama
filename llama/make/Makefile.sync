@@ -1,6 +1,6 @@
 # Helpers for managing our vendored llama.cpp repo and patch set
 
-# TODO - this should include a manifest file at the top of the tree 
+# TODO - this should include a manifest file at the top of the tree
 LLAMACPP_BASE_COMMIT=$(shell cd ../llm/llama.cpp && git rev-parse HEAD)
 
 LLAMACPP_REPO := $(dir $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST))))))vendor/
@@ -33,7 +33,7 @@ apply-patches: $(LLAMACPP_REPO)
 	@echo ""
 	@echo "The tracking repo $(LLAMACPP_REPO) is now in a detached state with all patches applied."
 	@echo "Don't forget to commit any changes you make and run 'make create-patches' "
-	
+
 $(LLAMACPP_REPO):
 	@echo "Cloning llama.cpp to $(LLAMACPP_REPO)"
 	git clone https://github.com/ggerganov/llama.cpp.git $@
@@ -105,7 +105,7 @@ GGML_FILES= \
 	ggml/src/ggml-cuda.cu \
 	ggml/src/ggml-common.h \
 	ggml/include/ggml-backend.h \
-	ggml/src/ggml-backend.c \
+	ggml/src/ggml-backend.cpp \
 	ggml/src/ggml-backend-impl.h \
 	ggml/include/ggml-alloc.h \
 	ggml/src/ggml-alloc.c \
@@ -182,7 +182,7 @@ EXTRA_NATIVE_FILES=$(filter-out $(VENDORED_FILES) $(addprefix $(DST_DIR),$(OLLAM
 remove-stale-files:
 	@rm -f $(EXTRA_NATIVE_FILES)
 
-.PHONY: help-sync apply-patches sync create-patches remove-stale-fails .WAIT 
+.PHONY: help-sync apply-patches sync create-patches remove-stale-fails .WAIT
 
 
 # Handy debugging for make variables

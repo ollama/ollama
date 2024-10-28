@@ -4,47 +4,29 @@ Date: Thu, 6 Jun 2024 23:55:47 -0700
 Subject: [PATCH] cuda
 
 ---
- ggml/include/ggml-cuda.h | 2 ++
- ggml/src/ggml-backend.c  | 5 +++++
- ggml/src/ggml-cuda.cu    | 6 ++++--
- 3 files changed, 11 insertions(+), 2 deletions(-)
+ ggml/include/ggml-cuda.h |  2 ++
+ ggml/src/ggml-cuda.cu    | 76 ++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 78 insertions(+)
 
 diff --git a/ggml/include/ggml-cuda.h b/ggml/include/ggml-cuda.h
-index 71bb6dcf..08be0895 100644
+index f44d8f4e..6114487d 100644
 --- a/ggml/include/ggml-cuda.h
 +++ b/ggml/include/ggml-cuda.h
-@@ -34,6 +34,8 @@ GGML_API GGML_CALL ggml_backend_buffer_type_t ggml_backend_cuda_split_buffer_typ
+@@ -33,6 +33,8 @@ GGML_API ggml_backend_buffer_type_t ggml_backend_cuda_split_buffer_type(const fl
  // pinned host buffer for use with the CPU backend for faster copies between CPU and GPU
- GGML_API GGML_CALL ggml_backend_buffer_type_t ggml_backend_cuda_host_buffer_type(void);
+ GGML_API ggml_backend_buffer_type_t ggml_backend_cuda_host_buffer_type(void);
  
 +GGML_API GGML_CALL int ggml_backend_cuda_reg_devices();
 +
- GGML_API GGML_CALL int  ggml_backend_cuda_get_device_count(void);
- GGML_API GGML_CALL void ggml_backend_cuda_get_device_description(int device, char * description, size_t description_size);
- GGML_API GGML_CALL void ggml_backend_cuda_get_device_memory(int device, size_t * free, size_t * total);
-diff --git a/ggml/src/ggml-backend.c b/ggml/src/ggml-backend.c
-index ba280e06..d5c3fe49 100644
---- a/ggml/src/ggml-backend.c
-+++ b/ggml/src/ggml-backend.c
-@@ -83,7 +83,12 @@ void ggml_backend_buffer_free(ggml_backend_buffer_t buffer) {
-     if (buffer->iface.free_buffer != NULL) {
-         buffer->iface.free_buffer(buffer);
-     }
-+
-+// TODO: this needs to be freed in cuda and hipblas backends because
-+// the cuda backend implementation compiled with msvc
-+#if !defined(GGML_USE_CUDA) && !defined(GGML_USE_HIPBLAS)
-     free(buffer);
-+#endif
- }
- 
- size_t ggml_backend_buffer_get_size(ggml_backend_buffer_t buffer) {
+ GGML_API int  ggml_backend_cuda_get_device_count(void);
+ GGML_API void ggml_backend_cuda_get_device_description(int device, char * description, size_t description_size);
+ GGML_API void ggml_backend_cuda_get_device_memory(int device, size_t * free, size_t * total);
 diff --git a/ggml/src/ggml-cuda.cu b/ggml/src/ggml-cuda.cu
-index 6efdab14..809d6ab1 100644
+index 21c9f5e3..0b08e819 100644
 --- a/ggml/src/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda.cu
-@@ -469,6 +469,10 @@ GGML_CALL static bool ggml_backend_buffer_is_cuda(ggml_backend_buffer_t buffer)
- GGML_CALL static void ggml_backend_cuda_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+@@ -433,6 +433,10 @@ static bool ggml_backend_buffer_is_cuda(ggml_backend_buffer_t buffer) {
+ static void ggml_backend_cuda_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
      delete ctx;
 +
@@ -53,13 +35,80 @@ index 6efdab14..809d6ab1 100644
 +    free(buffer);
  }
  
- GGML_CALL static void * ggml_backend_cuda_buffer_get_base(ggml_backend_buffer_t buffer) {
-@@ -3204,8 +3208,6 @@ GGML_CALL static ggml_backend_t ggml_backend_reg_cuda_init(const char * params,
-     GGML_UNUSED(params);
- }
+ static void * ggml_backend_cuda_buffer_get_base(ggml_backend_buffer_t buffer) {
+@@ -3360,3 +3364,75 @@ ggml_backend_t ggml_backend_cuda_init(int device) {
  
--extern "C" GGML_CALL int ggml_backend_cuda_reg_devices();
--
- GGML_CALL int ggml_backend_cuda_reg_devices() {
-     int device_count = ggml_backend_cuda_get_device_count();
-     //int device_count = 1; // DEBUG: some tools require delaying CUDA initialization
+     return cuda_backend;
+ }
++
++GGML_CALL bool ggml_backend_is_cuda(ggml_backend_t backend) {
++    return backend != NULL && ggml_guid_matches(backend->guid, ggml_backend_cuda_guid());
++}
++
++GGML_CALL int ggml_backend_cuda_get_device_count() {
++    return ggml_cuda_info().device_count;
++}
++
++GGML_CALL void ggml_backend_cuda_get_device_description(int device, char * description, size_t description_size) {
++    cudaDeviceProp prop;
++    CUDA_CHECK(cudaGetDeviceProperties(&prop, device));
++    snprintf(description, description_size, "%s", prop.name);
++}
++
++GGML_CALL void ggml_backend_cuda_get_device_memory(int device, size_t * free, size_t * total) {
++    ggml_cuda_set_device(device);
++
++    CUDA_CHECK(cudaMemGetInfo(free, total));
++}
++
++GGML_CALL bool ggml_backend_cuda_register_host_buffer(void * buffer, size_t size) {
++    if (getenv("GGML_CUDA_REGISTER_HOST") == nullptr) {
++        return false;
++    }
++
++#if CUDART_VERSION >= 11100 || defined(GGML_USE_MUSA)
++    cudaError_t err = cudaHostRegister(buffer, size, cudaHostRegisterPortable | cudaHostRegisterReadOnly);
++    if (err != cudaSuccess) {
++        // clear the error
++        cudaGetLastError();
++
++        GGML_CUDA_LOG_WARN("%s: failed to register %.2f MiB of pinned memory: %s\n", __func__,
++                           size / 1024.0 / 1024.0, cudaGetErrorString(err));
++        return false;
++    }
++    return true;
++#else
++    return false;
++#endif
++}
++
++GGML_CALL void ggml_backend_cuda_unregister_host_buffer(void * buffer) {
++    if (getenv("GGML_CUDA_REGISTER_HOST") == nullptr) {
++        return;
++    }
++
++    cudaError_t err = cudaHostUnregister(buffer);
++    if (err != cudaSuccess) {
++        // clear the error
++        cudaGetLastError();
++    }
++}
++
++// backend registry
++GGML_CALL static ggml_backend_t ggml_backend_reg_cuda_init(const char * params, void * user_data) {
++    ggml_backend_t cuda_backend = ggml_backend_cuda_init((int) (intptr_t) user_data);
++    return cuda_backend;
++
++    GGML_UNUSED(params);
++}
++
++GGML_CALL int ggml_backend_cuda_reg_devices() {
++    int device_count = ggml_backend_cuda_get_device_count();
++    //int device_count = 1; // DEBUG: some tools require delaying CUDA initialization
++    for (int i = 0; i < device_count; i++) {
++        char name[128];
++        snprintf(name, sizeof(name), "%s%d", GGML_CUDA_NAME, i);
++        ggml_backend_register(name, ggml_backend_reg_cuda_init, ggml_backend_cuda_buffer_type(i), (void *) (intptr_t) i);
++    }
++    return device_count;
++}

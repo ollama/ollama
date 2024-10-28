@@ -545,7 +545,7 @@ func MllamaSetCrossAttn(llamaContext *Context, clipContext *ClipContext, embed [
 // sampling
 // TODO: this is a temporary wrapper to allow calling C++ code from CGo
 type SamplingContext struct {
-	c *C.struct_gpt_sampler
+	c *C.struct_common_sampler
 }
 
 type SamplingParams struct {
@@ -568,7 +568,7 @@ type SamplingParams struct {
 }
 
 func NewSamplingContext(model *Model, params SamplingParams) *SamplingContext {
-	var cparams C.struct_gpt_sampler_cparams
+	var cparams C.struct_common_sampler_cparams
 	cparams.top_k = C.int32_t(params.TopK)
 	cparams.top_p = C.float(params.TopP)
 	cparams.min_p = C.float(params.MinP)
@@ -589,20 +589,20 @@ func NewSamplingContext(model *Model, params SamplingParams) *SamplingContext {
 	defer C.free(unsafe.Pointer(grammar))
 
 	cparams.grammar = grammar
-	context := &SamplingContext{c: C.gpt_sampler_cinit(model.c, &cparams)}
-	runtime.SetFinalizer(context, func(s *SamplingContext) { C.gpt_sampler_cfree(s.c) })
+	context := &SamplingContext{c: C.common_sampler_cinit(model.c, &cparams)}
+	runtime.SetFinalizer(context, func(s *SamplingContext) { C.common_sampler_cfree(s.c) })
 
 	return context
 }
 
 func (s *SamplingContext) Reset() {
-	C.gpt_sampler_creset(s.c)
+	C.common_sampler_creset(s.c)
 }
 
 func (s *SamplingContext) Sample(llamaContext *Context, idx int) int {
-	return int(C.gpt_sampler_csample(s.c, llamaContext.c, C.int(idx)))
+	return int(C.common_sampler_csample(s.c, llamaContext.c, C.int(idx)))
 }
 
 func (s *SamplingContext) Accept(id int, applyGrammar bool) {
-	C.gpt_sampler_caccept(s.c, C.llama_token(id), C.bool(applyGrammar))
+	C.common_sampler_caccept(s.c, C.llama_token(id), C.bool(applyGrammar))
 }
