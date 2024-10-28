@@ -7,8 +7,8 @@ set -ex
 MACHINE=$(uname -m)
 if [ "${MACHINE}" = "ppc64le" ]; then
    echo "Install power dependiecies"
-   yum remove -y git
-   yum install -y git gcc curl cmake gcc-cpp
+   apt-get remove -y git
+   apt-get install -y git gcc curl cmake gcc-cpp
 else
   if grep -i "centos" /etc/system-release >/dev/null; then
     # As of 7/1/2024 mirrorlist.centos.org has been taken offline, so adjust accordingly
