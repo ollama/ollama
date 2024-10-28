@@ -74,6 +74,14 @@ var fileTypeMap = map[string]fileType{
 	"BF16":     fileTypeBF16,
 }
 
+func GetSupportedFileTypes() []string {
+	keys := make([]string, 0, len(fileTypeMap))
+	for key := range fileTypeMap {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
 func ParseFileType(s string) (fileType, error) {
 	if ft, exists := fileTypeMap[s]; exists {
 		return ft, nil

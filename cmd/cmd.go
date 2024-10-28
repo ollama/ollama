@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -38,6 +39,7 @@ import (
 	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/server"
@@ -1314,6 +1316,27 @@ Environment Variables:
 	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
 }
 
+func get_supported_filetypes_lines(max_count_per_line int) string {
+	filetypes := llm.GetSupportedFileTypes()
+	sort.Strings(filetypes)
+
+	var builder strings.Builder
+	for i, key := range filetypes {
+		if i%max_count_per_line == 0 {
+			if i > 0 {
+				builder.WriteString("\n")
+			}
+			builder.WriteString("   ")
+		}
+		if i%max_count_per_line != 0 {
+			builder.WriteString(", ")
+		}
+		builder.WriteString(key)
+	}
+
+	return builder.String()
+
+}
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
@@ -1351,7 +1374,7 @@ func NewCLI() *cobra.Command {
 	}
 
 	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\"")
-	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_0)")
+	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_0)\n Supported types:\n"+get_supported_filetypes_lines(6))
 
 	showCmd := &cobra.Command{
 		Use:     "show MODEL",
