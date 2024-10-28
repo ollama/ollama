@@ -5,8 +5,10 @@
 set -ex
 #set -o pipefail
 MACHINE=$(uname -m)
-
-if grep -i "centos" /etc/system-release >/dev/null; then
+if [ "${MACHINE}" == "ppc64le" ]; then
+   echo "Install power dependiecies"
+else
+  if grep -i "centos" /etc/system-release >/dev/null; then
     # As of 7/1/2024 mirrorlist.centos.org has been taken offline, so adjust accordingly
     sed -i s/mirror.centos.org/vault.centos.org/g /etc/yum.repos.d/*.repo
     sed -i s/^#.*baseurl=http/baseurl=http/g /etc/yum.repos.d/*.repo
@@ -64,10 +66,12 @@ fi
 if [ -n "${CMAKE_VERSION}" ]; then
     curl -s -L https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-$(uname -m).tar.gz | tar -zx -C /usr --strip-components 1
 fi
-
+fi
 if [ -n "${GOLANG_VERSION}" ]; then
     if [ "${MACHINE}" = "x86_64" ]; then
         GO_ARCH="amd64"
+    elif [ "${MACHINE}" = "ppc64le" ]; then
+      GO_ARCH="ppc64le"
     else
         GO_ARCH="arm64"
     fi
