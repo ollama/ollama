@@ -521,8 +521,8 @@ func (m *MllamaContext) EmbedSize(llamaContext *Context) int {
 }
 
 // This really needs to be set on a batch instead
-func (c *Context) MllamaSetCrossAttn(state bool) {
-	C.llama_set_cross_attn_state(c.c, (C.bool)(state))
+func (c *Context) SetCrossAttention(state bool) {
+	C.llama_set_cross_attention(c.c, C.bool(state))
 }
 
 // sampling

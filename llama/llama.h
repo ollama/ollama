@@ -452,7 +452,7 @@ extern "C" {
 
     // TODO (jmorganca): this should most likely be passed in as part of a batch
     // and not set on the context for all batches.
-    LLAMA_API void llama_set_cross_attn_state(struct llama_context * ctx, bool cross_attn_state);
+    LLAMA_API void llama_set_cross_attention(struct llama_context * ctx, bool cross_attn_state);
 
     // Frees all allocated memory
     LLAMA_API void llama_free(struct llama_context * ctx);

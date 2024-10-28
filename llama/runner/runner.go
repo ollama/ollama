@@ -296,8 +296,8 @@ func flushPending(seq *Sequence) bool {
 
 func (s *Server) removeSequence(seqIndex int, reason string) {
 	seq := s.seqs[seqIndex]
+	s.lc.SetCrossAttention(false)
 
-	s.lc.MllamaSetCrossAttn(false)
 	flushPending(seq)
 	seq.doneReason = reason
 	close(seq.responses)
@@ -615,17 +615,18 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	for i, sq := range s.seqs {
 		if sq == nil {
+			for _, input := range seq.inputs {
+				if input.embed != nil {
+					s.lc.SetCrossAttention(true)
+					break
+				}
+			}
+
 			seq.cache, seq.inputs, seq.numPast, err = s.cache.LoadCacheSlot(seq.inputs, req.CachePrompt)
 			if err != nil {
 				s.mu.Unlock()
 				http.Error(w, fmt.Sprintf("Failed to load cache: %v", err), http.StatusInternalServerError)
 				return
-			}
-			for _, input := range seq.cache.Inputs {
-				if input.embed != nil {
-					s.lc.MllamaSetCrossAttn(true)
-					break
-				}
 			}
 
 			s.seqs[i] = seq
