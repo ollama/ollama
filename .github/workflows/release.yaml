@@ -586,7 +586,7 @@ jobs:
           ./scripts/build_linux.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: dist-ppc64le
+          name: dist-linux-ppc64le
           path: |
             dist/*linux*
             !dist/*-cov
