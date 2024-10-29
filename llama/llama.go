@@ -140,7 +140,7 @@ type ContextParams struct {
 	c C.struct_llama_context_params
 }
 
-func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, flashAttention bool) ContextParams {
+func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, flashAttention bool, reranking bool) ContextParams {
 	params := C.llama_context_default_params()
 	params.n_ctx = C.uint(numCtx)
 	params.n_batch = C.uint(batchSize)
@@ -149,6 +149,9 @@ func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, fla
 	params.n_threads_batch = params.n_threads
 	params.embeddings = C.bool(true)
 	params.flash_attn = C.bool(flashAttention)
+	if reranking {
+		params.pooling_type = C.LLAMA_POOLING_TYPE_RANK
+	}
 	return ContextParams{c: params}
 }
 
@@ -218,6 +221,18 @@ func (c *Context) GetEmbeddingsIth(i int) []float32 {
 	}
 
 	return unsafe.Slice((*float32)(embeddings), c.Model().NEmbd())
+}
+
+func (c *Context) GetTokenBOS() C.llama_token {
+	return C.llama_token_bos(c.Model().c)
+}
+
+func (c *Context) GetTokenEOS() C.llama_token {
+	return C.llama_token_eos(c.Model().c)
+}
+
+func (c *Context) GetTokenSEP() C.llama_token {
+	return C.llama_token_sep(c.Model().c)
 }
 
 type ModelParams struct {
@@ -302,6 +317,10 @@ func (m *Model) TokenIsEog(token int) bool {
 
 func (m *Model) AddBOSToken() bool {
 	return bool(C.llama_add_bos_token(m.c))
+}
+
+func (m *Model) AddEOSToken() bool {
+	return bool(C.llama_add_eos_token(m.c))
 }
 
 func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float32, threads int) error {
