@@ -180,6 +180,7 @@ var (
 	RocrVisibleDevices    = String("ROCR_VISIBLE_DEVICES")
 	GpuDeviceOrdinal      = String("GPU_DEVICE_ORDINAL")
 	HsaOverrideGfxVersion = String("HSA_OVERRIDE_GFX_VERSION")
+	MusaVisibleDevices    = String("MUSA_VISIBLE_DEVICES")
 )
 
 func Uint(key string, defaultValue uint) func() uint {
@@ -270,6 +271,7 @@ func AsMap() map[string]EnvVar {
 		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal(), "Set which AMD devices are visible by numeric ID"}
 		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion(), "Override the gfx used for all detected AMD GPUs"}
 		ret["OLLAMA_INTEL_GPU"] = EnvVar{"OLLAMA_INTEL_GPU", IntelGPU(), "Enable experimental Intel GPU detection"}
+		ret["MUSA_VISIBLE_DEVICES"] = EnvVar{"MUSA_VISIBLE_DEVICES", MusaVisibleDevices(), "Set which Moore Threads devices are visible"}
 	}
 
 	return ret

@@ -85,6 +85,13 @@ type OneapiGPUInfo struct {
 }
 type OneapiGPUInfoList []OneapiGPUInfo
 
+type MusaGPUInfo struct {
+	GpuInfo
+	memoryFilepath string //nolint:unused,nolintlint
+	index          int    //nolint:unused,nolintlint
+}
+type MusaGPUInfoList []MusaGPUInfo
+
 type GpuInfoList []GpuInfo
 
 type UnsupportedGPUInfo struct {

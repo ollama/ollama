@@ -395,6 +395,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 					strings.HasPrefix(ev, "HIP_") ||
 					strings.HasPrefix(ev, "GPU_") ||
 					strings.HasPrefix(ev, "HSA_") ||
+					strings.HasPrefix(ev, "MUSA_") ||
 					strings.HasPrefix(ev, "GGML_") ||
 					strings.HasPrefix(ev, "PATH=") ||
 					strings.HasPrefix(ev, "LD_LIBRARY_PATH=") {

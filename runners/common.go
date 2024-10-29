@@ -108,7 +108,7 @@ func locateRunners() (string, error) {
 	return "", fmt.Errorf("unable to locate runners in any search path %v", paths)
 }
 
-// Return true if we're carying nested payloads for the runners
+// Return true if we're carrying nested payloads for the runners
 func hasPayloads(payloadFS fs.FS) bool {
 	files, err := fs.Glob(payloadFS, binGlob)
 	if err != nil || len(files) == 0 || (len(files) == 1 && strings.Contains(files[0], "placeholder")) {
