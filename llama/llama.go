@@ -90,7 +90,8 @@ func PrintSystemInfo() string {
 }
 
 type ContextParams struct {
-	c C.struct_llama_context_params
+	c         C.struct_llama_context_params
+	Reranking bool
 }
 
 func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, flashAttention bool, embedding bool, reranking bool) ContextParams {
@@ -105,12 +106,13 @@ func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, fla
 		params.pooling_type = C.LLAMA_POOLING_TYPE_RANK
 	}
 	params.flash_attn = C.bool(flashAttention)
-	return ContextParams{c: params}
+	return ContextParams{c: params, Reranking: reranking}
 }
 
 type Context struct {
 	c          *C.struct_llama_context
 	numThreads int
+	Reranking  bool
 }
 
 func (c *Context) KvCacheClear() {
@@ -157,8 +159,13 @@ func (c *Context) GetEmbeddingsSeq(seqId int) []float32 {
 	if embeddings == nil {
 		return nil
 	}
-
-	return unsafe.Slice((*float32)(embeddings), c.Model().NEmbd())
+	var res []float32
+	if c.Reranking {
+		res = unsafe.Slice((*float32)(embeddings), 1)
+	} else {
+		res = unsafe.Slice((*float32)(embeddings), c.Model().NEmbd())
+	}
+	return res
 }
 
 func (c *Context) GetEmbeddingsIth(i int) []float32 {
@@ -166,8 +173,13 @@ func (c *Context) GetEmbeddingsIth(i int) []float32 {
 	if embeddings == nil {
 		return nil
 	}
-
-	return unsafe.Slice((*float32)(embeddings), c.Model().NEmbd())
+	var res []float32
+	if c.Reranking {
+		res = unsafe.Slice((*float32)(embeddings), 1)
+	} else {
+		res = unsafe.Slice((*float32)(embeddings), c.Model().NEmbd())
+	}
+	return res
 }
 
 type ModelParams struct {
@@ -234,6 +246,7 @@ func NewContextWithModel(model *Model, params ContextParams) (*Context, error) {
 	c := Context{
 		c:          C.llama_new_context_with_model(model.c, params.c),
 		numThreads: int(params.c.n_threads),
+		Reranking:  params.Reranking,
 	}
 	if c.c == (*C.struct_llama_context)(C.NULL) {
 		return nil, errors.New("unable to create llama context")
