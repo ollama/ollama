@@ -430,6 +430,7 @@ func (s *Server) RerankHandler(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+		s = strings.TrimSpace(s)
 		slog.Debug("rerank prompt", "prompt", s)
 		input[i] = s
 	}
