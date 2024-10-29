@@ -159,12 +159,15 @@ func (c *Context) GetEmbeddingsSeq(seqId int) []float32 {
 	if embeddings == nil {
 		return nil
 	}
-	var res []float32
+	var src []float32
 	if c.Reranking {
-		res = unsafe.Slice((*float32)(embeddings), 1)
+		src = unsafe.Slice((*float32)(embeddings), 1)
 	} else {
-		res = unsafe.Slice((*float32)(embeddings), c.Model().NEmbd())
+		src = unsafe.Slice((*float32)(embeddings), c.Model().NEmbd())
 	}
+	// Copy the embeddings to a new slice to avoid the memory being freed by the C code
+	res := make([]float32, len(src))
+	copy(res, src)
 	return res
 }
 
@@ -173,12 +176,15 @@ func (c *Context) GetEmbeddingsIth(i int) []float32 {
 	if embeddings == nil {
 		return nil
 	}
-	var res []float32
+	var src []float32
 	if c.Reranking {
-		res = unsafe.Slice((*float32)(embeddings), 1)
+		src = unsafe.Slice((*float32)(embeddings), 1)
 	} else {
-		res = unsafe.Slice((*float32)(embeddings), c.Model().NEmbd())
+		src = unsafe.Slice((*float32)(embeddings), c.Model().NEmbd())
 	}
+	// Copy the embeddings to a new slice to avoid the memory being freed by the C code
+	res := make([]float32, len(src))
+	copy(res, src)
 	return res
 }
 
