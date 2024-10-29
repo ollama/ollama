@@ -5,6 +5,7 @@ ARG CUDA_V11_ARCHITECTURES="50;52;53;60;61;62;70;72;75;80;86"
 ARG CUDA_VERSION_12=12.4.0
 ARG CUDA_V12_ARCHITECTURES="60;61;62;70;72;75;80;86;87;89;90;90a"
 ARG ROCM_VERSION=6.1.2
+ARG MUSA_VERSION=rc3.1.0
 
 # Copy the minimal context we need to run the generate scripts
 FROM scratch AS llm-code
@@ -82,6 +83,17 @@ RUN --mount=type=cache,target=/root/.ccache \
     bash gen_linux.sh
 
 
+FROM --platform=linux/amd64 mthreads/musa:$MUSA_VERSION-devel-ubuntu22.04 AS musa-build-amd64
+ARG CMAKE_VERSION
+COPY ./scripts/ubuntu_linux_deps.sh /
+RUN CMAKE_VERSION=${CMAKE_VERSION} sh /ubuntu_linux_deps.sh
+COPY --from=llm-code / /go/src/github.com/ollama/ollama/
+WORKDIR /go/src/github.com/ollama/ollama/llm/generate
+ARG CGO_CFLAGS
+ENV GOARCH=amd64
+RUN --mount=type=cache,target=/root/.ccache \
+    OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_SKIP_CPU_GENERATE=1 bash gen_linux.sh
+
 FROM --platform=linux/amd64 rocm/dev-centos-7:${ROCM_VERSION}-complete AS rocm-build-amd64
 ARG CMAKE_VERSION
 COPY ./scripts/rh_linux_deps.sh /
@@ -148,6 +160,8 @@ COPY --from=cuda-11-build-amd64 /go/src/github.com/ollama/ollama/dist/ dist/
 COPY --from=cuda-11-build-amd64 /go/src/github.com/ollama/ollama/build/ build/
 COPY --from=cuda-12-build-amd64 /go/src/github.com/ollama/ollama/dist/ dist/
 COPY --from=cuda-12-build-amd64 /go/src/github.com/ollama/ollama/build/ build/
+COPY --from=musa-build-amd64 /go/src/github.com/ollama/ollama/dist/ dist/
+COPY --from=musa-build-amd64 /go/src/github.com/ollama/ollama/build/ build/
 COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/dist/ dist/
 COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/build/ build/
 ARG GOFLAGS
@@ -179,7 +193,7 @@ FROM --platform=linux/amd64 scratch AS dist-amd64
 COPY --from=build-amd64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
 FROM --platform=linux/arm64 scratch AS dist-arm64
 COPY --from=build-arm64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
-FROM dist-$TARGETARCH as dist
+FROM dist-$TARGETARCH AS dist
 
 
 # Optimized container images do not cary nested payloads
@@ -234,6 +248,24 @@ COPY --from=cpu_avx2-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd
 COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
 EXPOSE 11434
 ENV OLLAMA_HOST=0.0.0.0
+
+ENTRYPOINT ["/bin/ollama"]
+CMD ["serve"]
+
+# MUSA libraries require libelf1 and libnuma1 so we keep it distinct from the CPU/CUDA image
+FROM --platform=linux/amd64 ubuntu:22.04 AS runtime-musa
+RUN apt-get update && \
+    apt-get install -y ca-certificates libelf1 libnuma1 && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+COPY --from=container-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/bin/ /bin/
+COPY --from=cpu-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
+COPY --from=cpu_avx-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
+COPY --from=cpu_avx2-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
+COPY --from=musa-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
+EXPOSE 11434
+ENV OLLAMA_HOST=0.0.0.0
+ENV MTHREADS_DRIVER_CAPABILITIES=compute,utility
+ENV MTHREADS_VISIBLE_DEVICES=all
 
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
