@@ -438,11 +438,19 @@ func (s *Server) RerankHandler(c *gin.Context) {
 	results := make([]api.RerankResult, len(input))
 	for i, text := range input {
 		g.Go(func() error {
-			result, err := r.Embedding(c.Request.Context(), text)
+			embedding, err := r.Embedding(c.Request.Context(), text)
 			if err != nil {
 				return err
 			}
-			results[i] = api.RerankResult{Document: req.Documents[i], RelevanceScore: result[0]}
+			slog.Debug("rerank embedding", "embedding", embedding)
+			if embedding == nil || len(embedding) < 1 {
+				// TODO(hughescr): for some reason, this just fails sometimes because
+				// llama_get_embeddings_ith: invalid embeddings id 90, reason: no embeddings
+				// in that case, we should probably retry, not just dump the document...
+				// This temporary solution just ignores the document if we couldn't get a score.
+				return nil
+			}
+			results[i] = api.RerankResult{Document: req.Documents[i], RelevanceScore: embedding[0]}
 			return nil
 		})
 	}
