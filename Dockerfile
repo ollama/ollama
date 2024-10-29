@@ -229,7 +229,7 @@ FROM --platform=linux/amd64 scratch AS dist-amd64
 COPY --from=build-amd64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
 FROM --platform=linux/arm64 scratch AS dist-arm64
 COPY --from=build-arm64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
-FROM --platform=linux/arm64 scratch AS dist-ppc64le
+FROM --platform=linux/ppc64le scratch AS dist-ppc64le
 COPY --from=build-ppc64le /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
 FROM dist-$TARGETARCH as dist
 
