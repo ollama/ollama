@@ -111,8 +111,24 @@ and force CPU usage, use an invalid GPU ID (e.g., "-1").  When available, use th
 ### Container Permission
 
 In some Linux distributions, SELinux can prevent containers from
-accessing the AMD GPU devices.  On the host system you can run 
+accessing the AMD GPU devices.  On the host system you can run
 `sudo setsebool container_use_devices=1` to allow containers to use devices.
 
-### Metal (Apple GPUs)
+## Metal (Apple GPUs)
 Ollama supports GPU acceleration on Apple devices via the Metal API.
+
+## Moore Threads
+Ollama supports Moore Threads GPUs with compute capability 2.1+.
+
+| Compute Capability | Family   | Cards         |
+| ------------------ | -------- | ------------- |
+| 2.1                | ChunXiao | `S80` `S3000` |
+| 2.2                | QuYuan   | `S4000`       |
+
+### GPU Selection
+
+If you have multiple Moore Threads GPUs in your system and want to limit Ollama to use
+a subset, you can set `MUSA_VISIBLE_DEVICES` to a comma separated list of GPUs.
+Numeric IDs may be used, however ordering may vary, so UUIDs are more reliable.
+You can discover the UUID of your GPUs by running `mthreads-gmi -L` If you want to
+ignore the GPUs and force CPU usage, use an invalid GPU ID (e.g., "-1")

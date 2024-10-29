@@ -58,6 +58,29 @@ To run Ollama using Docker with AMD GPUs, use the `rocm` tag and the following c
 docker run -d --device /dev/kfd --device /dev/dri -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama:rocm
 ```
 
+### Moore Threads GPU
+Install the [MT Container Toolkit](https://developer.mthreads.com/musa/native).
+
+#### Configure Docker to use MT Container Runtime
+```
+(cd /usr/bin/musa && sudo ./docker setup $PWD)
+```
+
+#### Verify the installation
+```
+docker info | grep mthreads
+```
+You should see the following output:
+```
+ Default Runtime: mthreads
+```
+
+#### Start the container
+
+```
+docker run -d -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama:musa
+```
+
 ### Run model locally
 
 Now you can run a model:
