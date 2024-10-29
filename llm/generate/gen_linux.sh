@@ -52,6 +52,14 @@ if [ -z "${CUDACXX}" ]; then
         export CUDACXX=$(command -v nvcc)
     fi
 fi
+if [ -z "${MUSACXX}" ]; then
+    if [ -x /usr/local/musa/bin/mcc ]; then
+        export MUSACXX=/usr/local/musa/bin/mcc
+    else
+        # Try the default location in case it exists
+        export MUSACXX=$(command -v mcc)
+    fi
+fi
 COMMON_CMAKE_DEFS="-DCMAKE_SKIP_RPATH=on -DBUILD_SHARED_LIBS=on -DCMAKE_POSITION_INDEPENDENT_CODE=on -DGGML_NATIVE=off -DGGML_AVX=on -DGGML_AVX2=off -DGGML_AVX512=off -DGGML_FMA=off -DGGML_F16C=off -DGGML_OPENMP=off"
 source $(dirname $0)/gen_common.sh
 init_vars
@@ -195,7 +203,47 @@ if [ -z "${OLLAMA_SKIP_CUDA_GENERATE}" -a -d "${CUDA_LIB_DIR}" ]; then
         cp -a "${lib}" "${CUDA_DIST_DIR}"
     done
     compress
+fi
 
+# If needed, look for the default MUSA toolkit location
+if [ -z "${MUSA_LIB_DIR}" ] && [ -d /usr/local/musa/lib ]; then
+    MUSA_LIB_DIR=/usr/local/musa/lib
+fi
+
+# Allow override in case libmusart is in the wrong place
+if [ -z "${MUSART_LIB_DIR}" ]; then
+    MUSART_LIB_DIR="${MUSA_LIB_DIR}"
+fi
+
+if [ -z "${OLLAMA_SKIP_MUSA_GENERATE}" -a -d "${MUSA_LIB_DIR}" ]; then
+    echo "MUSA libraries detected - building dynamic MUSA library"
+    init_vars
+    MUSA_MAJOR=$(ls "${MUSA_LIB_DIR}"/libmusart.so.* | head -1 | cut -f3 -d. || true)
+    if [ -n "${MUSA_MAJOR}" ]; then
+        MUSA_VARIANT=_v${MUSA_MAJOR}
+    fi
+    # Users building from source can tune the exact flags we pass to cmake for configuring llama.cpp
+    if [ -n "${OLLAMA_CUSTOM_MUSA_DEFS}" ]; then
+        echo "OLLAMA_CUSTOM_MUSA_DEFS=\"${OLLAMA_CUSTOM_MUSA_DEFS}\""
+        CMAKE_MUSA_DEFS="-DGGML_MUSA=on ${OLLAMA_CUSTOM_MUSA_DEFS}"
+        echo "Building custom MUSA GPU"
+    else
+        CMAKE_MUSA_DEFS="-DGGML_MUSA=on"
+    fi
+    CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} ${ARM64_DEFS} ${CMAKE_MUSA_DEFS}"
+    RUNNER=musa${MUSA_VARIANT}
+    BUILD_DIR="../build/linux/${GOARCH}/${RUNNER}"
+    export LLAMA_SERVER_LDFLAGS="-L${MUSA_LIB_DIR} -lmusart -lmublas -lmusa"
+    MUSA_DIST_DIR="${MUSA_DIST_DIR:-${DIST_BASE}/lib/ollama}"
+    build
+    install
+    dist
+    echo "Installing MUSA dependencies in ${MUSA_DIST_DIR}"
+    mkdir -p "${MUSA_DIST_DIR}"
+    for lib in ${MUSA_LIB_DIR}/libmusart.so* ${MUSA_LIB_DIR}/libmublas.so* ${MUSA_LIB_DIR}/libmusa.so* ; do
+        cp -a "${lib}" "${MUSA_DIST_DIR}"
+    done
+    compress
 fi
 
 if [ -z "${ONEAPI_ROOT}" ]; then
