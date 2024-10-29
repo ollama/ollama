@@ -368,6 +368,11 @@ func (s *Server) RerankHandler(c *gin.Context) {
 		truncate = false
 	}
 
+	// Make sure req.Options is not nil then set "reranking" key to have value of true
+	if req.Options == nil {
+		req.Options = make(map[string]any)
+	}
+	req.Options["reranking"] = true
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, []Capability{}, req.Options, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)

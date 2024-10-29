@@ -243,6 +243,16 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		params = append(params, "--flash-attn")
 	}
 
+	if opts.Runner.Reranking {
+		// Remove element "--embedding" from params and instead stick in "--reranking"
+		for i, param := range params {
+			if param == "--embedding" {
+				params[i] = "--reranking"
+				break
+			}
+		}
+	}
+
 	// Windows CUDA should not use mmap for best performance
 	// Linux  with a model larger than free space, mmap leads to thrashing
 	// For CPU loads we want the memory to be allocated, not FS cache
