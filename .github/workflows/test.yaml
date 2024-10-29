@@ -110,6 +110,24 @@ jobs:
       - name: 'Verify ROCm'
         run: |
           & 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' --version
+      - name: Install msys2
+        run: |
+          $msys2_url="https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-x86_64-20240727.exe"
+          write-host "Downloading msys2"
+          Invoke-WebRequest -Uri "${msys2_url}" -OutFile "${env:RUNNER_TEMP}\msys2.exe"
+          write-host "Installing msys2"
+          Start-Process "${env:RUNNER_TEMP}\msys2.exe" -ArgumentList @("in", "--confirm-command", "--accept-messages", "--root", "C:/msys64") -NoNewWindow -Wait
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang", "make") -NoNewWindow -Wait
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: verify tools
+        run: |
+          get-command gcc
+          gcc --version
+          get-command make
+          make --version
       - run: go get ./...
       - run: |
           $gopath=(get-command go).source | split-path -parent
@@ -151,6 +169,24 @@ jobs:
           echo "CUDA_PATH_VX_Y=CUDA_PATH_V${cudaVer}" >> $env:GITHUB_ENV
       - name: 'Verify CUDA'
         run: nvcc -V
+      - name: Install msys2
+        run: |
+          $msys2_url="https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-x86_64-20240727.exe"
+          write-host "Downloading msys2"
+          Invoke-WebRequest -Uri "${msys2_url}" -OutFile "${env:RUNNER_TEMP}\msys2.exe"
+          write-host "Installing msys2"
+          Start-Process "${env:RUNNER_TEMP}\msys2.exe" -ArgumentList @("in", "--confirm-command", "--accept-messages", "--root", "C:/msys64") -NoNewWindow -Wait
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang", "make") -NoNewWindow -Wait
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: verify tools
+        run: |
+          get-command gcc
+          gcc --version
+          get-command make
+          make --version
       - run: go get ./...
       - name: make
         run: |
@@ -190,6 +226,27 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go get ./...
+      - name: Install msys2
+        if: ${{ startsWith(matrix.os, 'windows-') }}
+        run: |
+          $msys2_url="https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-x86_64-20240727.exe"
+          write-host "Downloading msys2"
+          Invoke-WebRequest -Uri "${msys2_url}" -OutFile "${env:RUNNER_TEMP}\msys2.exe"
+          write-host "Installing msys2"
+          Start-Process "${env:RUNNER_TEMP}\msys2.exe" -ArgumentList @("in", "--confirm-command", "--accept-messages", "--root", "C:/msys64") -NoNewWindow -Wait
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        if: ${{ startsWith(matrix.os, 'windows-') }}
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang", "make") -NoNewWindow -Wait
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: verify tools
+        if: ${{ startsWith(matrix.os, 'windows-') }}
+        run: |
+          get-command gcc
+          gcc --version
+          get-command make
+          make --version
       - name: 'Build Windows Go Runners'
         if: ${{ startsWith(matrix.os, 'windows-') }}
         run: |

@@ -85,6 +85,24 @@ jobs:
           write-host "Installing plugin"
           & "${env:RUNNER_TEMP}\plugin\*\kmscng.msi" /quiet
           write-host "plugin installed"
+      - name: Install msys2
+        run: |
+          $msys2_url="https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-x86_64-20240727.exe"
+          write-host "Downloading msys2"
+          Invoke-WebRequest -Uri "${msys2_url}" -OutFile "${env:RUNNER_TEMP}\msys2.exe"
+          write-host "Installing msys2"
+          Start-Process "${env:RUNNER_TEMP}\msys2.exe" -ArgumentList @("in", "--confirm-command", "--accept-messages", "--root", "C:/msys64") -NoNewWindow -Wait
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang", "make") -NoNewWindow -Wait
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: verify tools
+        run: |
+          get-command gcc
+          gcc --version
+          get-command make
+          make --version
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -140,6 +158,24 @@ jobs:
           write-host "Installing plugin"
           & "${env:RUNNER_TEMP}\plugin\*\kmscng.msi" /quiet
           write-host "plugin installed"
+      - name: Install msys2
+        run: |
+          $msys2_url="https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-x86_64-20240727.exe"
+          write-host "Downloading msys2"
+          Invoke-WebRequest -Uri "${msys2_url}" -OutFile "${env:RUNNER_TEMP}\msys2.exe"
+          write-host "Installing msys2"
+          Start-Process "${env:RUNNER_TEMP}\msys2.exe" -ArgumentList @("in", "--confirm-command", "--accept-messages", "--root", "C:/msys64") -NoNewWindow -Wait
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang", "make") -NoNewWindow -Wait
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: verify tools
+        run: |
+          get-command gcc
+          gcc --version
+          get-command make
+          make --version
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -214,6 +250,24 @@ jobs:
           write-host "Installing plugin"
           & "${env:RUNNER_TEMP}\plugin\*\kmscng.msi" /quiet
           write-host "plugin installed"
+      - name: Install msys2
+        run: |
+          $msys2_url="https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-x86_64-20240727.exe"
+          write-host "Downloading msys2"
+          Invoke-WebRequest -Uri "${msys2_url}" -OutFile "${env:RUNNER_TEMP}\msys2.exe"
+          write-host "Installing msys2"
+          Start-Process "${env:RUNNER_TEMP}\msys2.exe" -ArgumentList @("in", "--confirm-command", "--accept-messages", "--root", "C:/msys64") -NoNewWindow -Wait
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang", "make") -NoNewWindow -Wait
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: verify tools
+        run: |
+          get-command gcc
+          gcc --version
+          get-command make
+          make --version
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -443,6 +497,24 @@ jobs:
           write-host "Installing plugin"
           & "${env:RUNNER_TEMP}\plugin\*\kmscng.msi" /quiet
           write-host "plugin installed"
+      - name: Install msys2
+        run: |
+          $msys2_url="https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-x86_64-20240727.exe"
+          write-host "Downloading msys2"
+          Invoke-WebRequest -Uri "${msys2_url}" -OutFile "${env:RUNNER_TEMP}\msys2.exe"
+          write-host "Installing msys2"
+          Start-Process "${env:RUNNER_TEMP}\msys2.exe" -ArgumentList @("in", "--confirm-command", "--accept-messages", "--root", "C:/msys64") -NoNewWindow -Wait
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang", "make") -NoNewWindow -Wait
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: verify tools
+        run: |
+          get-command gcc
+          gcc --version
+          get-command make
+          make --version
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
