@@ -135,7 +135,7 @@ ARG CGO_CFLAGS
 ENV GOARCH=arm64
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 
-FROM --platform=linux/ppc64le ubuntu:22.04 AS cpu-builder-ppc64le
+FROM --platform=linux/ppc64le redhat/ubi9:9.3 AS cpu-builder-ppc64le
 ARG CMAKE_VERSION
 ARG GOLANG_VERSION
 COPY ./scripts/rh_linux_deps.sh /
