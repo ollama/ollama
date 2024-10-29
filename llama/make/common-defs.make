@@ -57,6 +57,10 @@ ifeq ($(OS),windows)
 	EXE_EXT := .exe
 	SHARED_PREFIX := 
 	CPU_FLAG_PREFIX := /arch:
+	_GCC_TEST:=$(findstring clang,$(shell gcc --version))
+	ifneq ($(_GCC_TEST),clang)
+$(error WRONG COMPILER DETECTED $(shell type gcc) - gcc must be a clang compat compiler on windows - see docs/development.md for setup instructions)
+	endif
 ifneq ($(HIP_PATH),)
 	# If HIP_PATH has spaces, hipcc trips over them when subprocessing
 	HIP_PATH := $(shell cygpath -m -s "$(patsubst %\,%,$(HIP_PATH))")
