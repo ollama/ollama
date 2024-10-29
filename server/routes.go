@@ -395,13 +395,13 @@ func (s *Server) RerankHandler(c *gin.Context) {
 	input := make([]string, len(req.Documents))
 
 	var count int
-	for i, s := range req.Documents {
+	for i, doc := range req.Documents {
 		queryTokens, err := r.Tokenize(c.Request.Context(), req.Query)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		docTokens, err := r.Tokenize(c.Request.Context(), s)
+		docTokens, err := r.Tokenize(c.Request.Context(), doc)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -414,6 +414,7 @@ func (s *Server) RerankHandler(c *gin.Context) {
 				return
 			}
 
+			slog.Warn("rerank truncating input", "query_len", len(queryTokens), "doc_len", len(docTokens), "ctxLen", ctxLen)
 			docTokens = docTokens[:(ctxLen - 4 - len(queryTokens))]
 		}
 		// Get the BOS, EOS, and SEP tokens from the GGML
@@ -425,41 +426,38 @@ func (s *Server) RerankHandler(c *gin.Context) {
 		slog.Debug("rerank tokens", "tokens", fullPrompt)
 		count += len(fullPrompt)
 
-		s, err = r.Detokenize(c.Request.Context(), fullPrompt)
+		doc, err = r.Detokenize(c.Request.Context(), fullPrompt)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		s = strings.TrimSpace(s)
-		slog.Debug("rerank prompt", "prompt", s)
-		input[i] = s
+		doc = strings.TrimSpace(doc)
+		slog.Debug("rerank prompt", "prompt", doc)
+		input[i] = doc
 	}
 
-	var g errgroup.Group
-	results := make([]api.RerankResult, len(input))
+	results := make([]api.RerankResult, len(req.Documents))
 	for i, text := range input {
-		g.Go(func() error {
-			embedding, err := r.Embedding(c.Request.Context(), text)
-			if err != nil {
-				return err
+		embedding, err := r.Embedding(c.Request.Context(), text)
+		if err != nil {
+			slog.Error("rerank generation failed", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Errorf("failed to generate reranking: %v", err)})
+			return
+		}
+		if embedding == nil || len(embedding) != 1 {
+			slog.Warn("rerank embedding failed", "doc", req.Documents[i], "embedding", embedding)
+			// TODO(hughescr): This is a temporary workaround for when the model sometimes just fails to return an embedding
+			results[i] = api.RerankResult{
+				Document:       req.Documents[i],
+				RelevanceScore: 0.0,
 			}
-			slog.Debug("rerank embedding", "embedding", embedding)
-			if embedding == nil || len(embedding) < 1 {
-				// TODO(hughescr): for some reason, this just fails sometimes because
-				// llama_get_embeddings_ith: invalid embeddings id 90, reason: no embeddings
-				// in that case, we should probably retry, not just dump the document...
-				// This temporary solution just ignores the document if we couldn't get a score.
-				return nil
-			}
-			results[i] = api.RerankResult{Document: req.Documents[i], RelevanceScore: embedding[0]}
-			return nil
-		})
-	}
-
-	if err := g.Wait(); err != nil {
-		slog.Error("rerank generation failed", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Errorf("failed to generate reranking: %v", err)})
-		return
+			continue
+		}
+		slog.Debug("rerank score", "doc", req.Documents[i], "score", embedding[0])
+		results[i] = api.RerankResult{
+			Document:       req.Documents[i],
+			RelevanceScore: embedding[0],
+		}
 	}
 
 	sort.SliceStable(results, func(i, j int) bool {
