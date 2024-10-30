@@ -202,7 +202,7 @@ FROM --platform=linux/ppc64le cpu-builder-ppc64le AS cpu-build-ppc64le
 WORKDIR /go/src/github.com/ollama/ollama
 RUN go clean -modcache
 RUN go generate ./...
-RUN llm/build/linux/ppc64le/cpu
+RUN cd llm/build/linux/ppc64le/cpu
 RUN make install
 
 
