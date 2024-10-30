@@ -90,6 +90,7 @@ type NewSequenceParams struct {
 	numKeep        int
 	samplingParams *llama.SamplingParams
 	embedding      bool
+	noTruncate     bool
 }
 
 func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequenceParams) (*Sequence, error) {
@@ -119,6 +120,9 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 
 	// truncate to fit in context window
 	if len(inputs) > s.cache.numCtx {
+		if params.embedding && params.noTruncate {
+			return nil, fmt.Errorf("input exceeds context window: %d > %d", len(inputs), s.cache.numCtx)
+		}
 		slog.Warn("truncating input prompt", "limit", s.cache.numCtx, "prompt", len(inputs), "numKeep", params.numKeep)
 		newInputs := inputs[:params.numKeep]
 		newInputs = append(newInputs, inputs[len(inputs)-s.cache.numCtx+params.numKeep:]...)
@@ -694,11 +698,13 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 
 type EmbeddingRequest struct {
 	Content     string `json:"content"`
+	NoTruncate  bool   `json:"no_truncate"`
 	CachePrompt bool   `json:"cache_prompt"`
 }
 
 type EmbeddingResponse struct {
 	Embedding []float32 `json:"embedding"`
+	NumTokens int       `json:"num_tokens"`
 }
 
 func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
@@ -712,11 +718,12 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 
 	slog.Debug("embedding request", "content", req.Content)
 
-	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{embedding: true})
+	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{embedding: true, noTruncate: req.NoTruncate})
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return
 	}
+	numTokens := len(seq.inputs)
 
 	// TODO (jessegross): Wait for a free slot instead of failing and blocking forever
 	s.mu.Lock()
@@ -739,6 +746,7 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewEncoder(w).Encode(&EmbeddingResponse{
 		Embedding: embedding,
+		NumTokens: numTokens,
 	}); err != nil {
 		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 	}

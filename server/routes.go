@@ -361,10 +361,9 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	truncate := true
-
+	noTruncate := false
 	if req.Truncate != nil && !*req.Truncate {
-		truncate = false
+		noTruncate = true
 	}
 
 	var input []string
@@ -389,7 +388,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		}
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, []Capability{}, req.Options, req.KeepAlive)
+	r, _, _, err := s.scheduleRunner(c.Request.Context(), req.Model, []Capability{}, req.Options, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -402,49 +401,22 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	kvData, err := getKVData(m.ModelPath, false)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	var count int
-	for i, s := range input {
-		tokens, err := r.Tokenize(c.Request.Context(), s)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		ctxLen := min(opts.NumCtx, int(kvData.ContextLength()))
-		if len(tokens) > ctxLen {
-			if !truncate {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "input length exceeds maximum context length"})
-				return
-			}
-
-			tokens = tokens[:ctxLen]
-			s, err = r.Detokenize(c.Request.Context(), tokens)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-		}
-
-		count += len(tokens)
-
-		input[i] = s
-	}
-
 	var g errgroup.Group
 	embeddings := make([][]float32, len(input))
+	numTokens := 0
 	for i, text := range input {
 		g.Go(func() error {
-			embedding, err := r.Embedding(c.Request.Context(), text)
+			llmreq := llm.EmbeddingRequest{
+				Content:    text,
+				NoTruncate: noTruncate,
+			}
+			err := r.Embedding(c.Request.Context(), llmreq, func(rsp llm.EmbeddingResponse) {
+				embeddings[i] = normalize(rsp.Embedding)
+				numTokens += rsp.NumTokens
+			})
 			if err != nil {
 				return err
 			}
-			embeddings[i] = normalize(embedding)
 			return nil
 		})
 	}
@@ -460,7 +432,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		Embeddings:      embeddings,
 		TotalDuration:   time.Since(checkpointStart),
 		LoadDuration:    checkpointLoaded.Sub(checkpointStart),
-		PromptEvalCount: count,
+		PromptEvalCount: numTokens,
 	}
 	c.JSON(http.StatusOK, resp)
 }
@@ -504,16 +476,17 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	embedding, err := r.Embedding(c.Request.Context(), req.Prompt)
+	var e []float64
+	err = r.Embedding(c.Request.Context(), llm.EmbeddingRequest{Content: req.Prompt},
+		func(rsp llm.EmbeddingResponse) {
+			for _, v := range rsp.Embedding {
+				e = append(e, float64(v))
+			}
+		})
 	if err != nil {
 		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
 		return
-	}
-
-	var e []float64
-	for _, v := range embedding {
-		e = append(e, float64(v))
 	}
 
 	resp := api.EmbeddingResponse{
