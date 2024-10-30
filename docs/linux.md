@@ -10,14 +10,28 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 ## Manual install
 
-Download and extract the package:
+### Download and extract the package:
 
 ```shell
 curl -L https://ollama.com/download/ollama-linux-amd64.tgz -o ollama-linux-amd64.tgz
 sudo tar -C /usr -xzf ollama-linux-amd64.tgz
 ```
 
-Start Ollama:
+### Non-root install
+
+For those installing without root/sudo access, the install can also be done in user space with the appropriate additions to `PATH` and `LD_LIBRARY_PATH`:
+
+```shell
+curl -L https://ollama.com/download/ollama-linux-amd64.tgz -o ollama-linux-amd64.tgz
+# Substitute any place you have write access for ~/.local
+mkdir -p ~/.local
+tar -C ~/.local -xzf ollama-linux-amd64.tgz
+# Place this in your ~/.bashrc to persist
+export PATH=$HOME/.local/bin:$PATH
+export LD_LIBRARY_PATH=$HOME/.local/lib/ollama:$LD_LIBRARY_PATH
+```
+
+### Start Ollama:
 
 ```shell
 ollama serve
@@ -48,6 +62,8 @@ sudo tar -C /usr -xzf ollama-linux-arm64.tgz
 ```
 
 ### Adding Ollama as a startup service (recommended)
+
+**NOTE**: Root access is required to setup the service
 
 Create a user and group for Ollama:
 
@@ -129,7 +145,7 @@ sudo tar -C /usr -xzf ollama-linux-amd64.tgz
 
 ## Installing specific versions
 
-Use `OLLAMA_VERSION` environment variable with the install script to install a specific version of Ollama, including pre-releases. You can find the version numbers in the [releases page](https://github.com/ollama/ollama/releases). 
+Use `OLLAMA_VERSION` environment variable with the install script to install a specific version of Ollama, including pre-releases. You can find the version numbers in the [releases page](https://github.com/ollama/ollama/releases).
 
 For example:
 
