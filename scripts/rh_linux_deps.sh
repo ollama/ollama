@@ -1,4 +1,4 @@
-#!/bin/sh
+ #!/bin/sh
 
 # Script for common Dockerfile dependency installation in redhat linux based images
 
@@ -8,7 +8,7 @@ MACHINE=$(uname -m)
 if [ "${MACHINE}" = "ppc64le" ]; then
    echo "Install power dependiecies"
 
-   yum install -y git gcc wget cmake
+   yum install -y git gcc wget cmake gcc-cpp
    GO_ARCH="ppc64le"
    mkdir -p /usr/local
    wget https://golang.org/dl/go${GOLANG_VERSION}.linux-ppc64le.tar.gz
