@@ -200,16 +200,16 @@ WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 FROM --platform=linux/ppc64le cpu-builder-ppc64le AS cpu-build-ppc64le
 #RUN --mount=type=cache,target=/root/.ccache  go generate ./...
 WORKDIR /go/src/github.com/ollama/ollama
-RUN go version
 RUN go clean -modcache
-#RUN go mod tidy
-RUN pwd
-RUN ls
 RUN go generate ./...
+RUN llm/build/linux/ppc64le/cpu
+RUN make install
+
 
 
 FROM --platform=linux/ppc64le cpu-build-ppc64le AS build-ppc64le
 ENV CGO_ENABLED=1
+ENV LD_LIBRARY_PATH=/go/src/github.com/ollama/ollama/llm/build/linux/ppc64le/cpu/bin
 ARG GOLANG_VERSION
 WORKDIR /go/src/github.com/ollama/ollama
 COPY . .
