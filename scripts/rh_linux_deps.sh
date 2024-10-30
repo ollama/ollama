@@ -7,8 +7,18 @@ set -ex
 MACHINE=$(uname -m)
 if [ "${MACHINE}" = "ppc64le" ]; then
    echo "Install power dependiecies"
-   
-   yum install -y git gcc curl cmake gcc-c++
+
+   yum install -y git gcc wget cmake
+   GO_ARCH="ppc64le"
+   mkdir -p /usr/local
+   wget https://golang.org/dl/go${GOLANG_VERSION}.linux-ppc64le.tar.gz
+   tar -C /usr/local -xvzf go${GOLANG_VERSION}.linux-ppc64le.tar.gz
+   rm -rf go${GO_VERSION}.linux-ppc64le.tar.gz
+   #export GOROOT=${GOROOT:-"/usr/local/go"}
+   #export PATH=$PATH:$GOROOT/bin:$GOPATH/bin:/usr/local/bin
+    ln -s /usr/local/go/bin/go /usr/local/bin/go
+    ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+
 else
   if grep -i "centos" /etc/system-release >/dev/null; then
     # As of 7/1/2024 mirrorlist.centos.org has been taken offline, so adjust accordingly
@@ -68,7 +78,7 @@ fi
 if [ -n "${CMAKE_VERSION}" ]; then
     curl -s -L https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-$(uname -m).tar.gz | tar -zx -C /usr --strip-components 1
 fi
-fi
+
 if [ -n "${GOLANG_VERSION}" ]; then
     if [ "${MACHINE}" = "x86_64" ]; then
         GO_ARCH="amd64"
@@ -81,4 +91,5 @@ if [ -n "${GOLANG_VERSION}" ]; then
     curl -s -L https://dl.google.com/go/go${GOLANG_VERSION}.linux-${GO_ARCH}.tar.gz | tar xz -C /usr/local
     ln -s /usr/local/go/bin/go /usr/local/bin/go
     ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+fi
 fi
