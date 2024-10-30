@@ -21,9 +21,6 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      GENERATE: ${{ steps.changes.outputs.GENERATE }}
-      GENERATE_CUDA: ${{ steps.changes.outputs.GENERATE_CUDA }}
-      GENERATE_ROCM: ${{ steps.changes.outputs.GENERATE_ROCM }}
       RUNNERS: ${{ steps.changes.outputs.RUNNERS }}
     steps:
       - uses: actions/checkout@v4
@@ -39,53 +36,12 @@ jobs:
           }
 
           {
-            echo GENERATE=$(changed 'llm/llama.cpp' 'llm/patches/**' 'llm/ext_server/**' 'llm/generate/**')
-            echo GENERATE_CUDA=$(changed 'llm/llama.cpp' 'llm/patches/**' 'llm/ext_server/**' 'llm/generate/**')
-            echo GENERATE_ROCM=$(changed 'llm/llama.cpp' 'llm/patches/**' 'llm/ext_server/**' 'llm/generate/**')
             echo RUNNERS=$(changed 'llama/**')
           } >>$GITHUB_OUTPUT
 
-  generate:
+  runners-linux-cuda:
     needs: [changes]
-    if: ${{ needs.changes.outputs.GENERATE == 'True' }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-2019]
-        arch: [amd64, arm64]
-        exclude:
-          - os: ubuntu-latest
-            arch: arm64
-          - os: windows-2019
-            arch: arm64
-    runs-on: ${{ matrix.os }}
-    env:
-      GOARCH: ${{ matrix.arch }}
-      CGO_ENABLED: '1'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - run: go get ./...
-      - run: |
-          $gopath=(get-command go).source | split-path -parent
-          $gccpath=(get-command gcc).source | split-path -parent
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
-          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
-          $env:PATH="$gopath;$gccpath;$env:PATH"
-          echo $env:PATH
-          go generate -x ./...
-        if: ${{ startsWith(matrix.os, 'windows-') }}
-        name: 'Windows Go Generate'
-      - run: go generate -x ./...
-        if: ${{ ! startsWith(matrix.os, 'windows-') }}
-        name: 'Unix Go Generate'
-      - run: go build .
-  generate-cuda:
-    needs: [changes]
-    if: ${{ needs.changes.outputs.GENERATE_CUDA == 'True' }}
+    if: ${{ needs.changes.outputs.RUNNERS == 'True' }}
     strategy:
       matrix:
         cuda-version:
@@ -95,8 +51,6 @@ jobs:
     steps:
       - run: |
           apt-get update && apt-get install -y git build-essential curl
-          curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.28.1/cmake-3.28.1-linux-x86_64.tar.gz \
-            | tar -zx -C /usr --strip-components 1
         env:
           DEBIAN_FRONTEND: noninteractive
       - uses: actions/checkout@v4
@@ -107,12 +61,11 @@ jobs:
       - run: go get ./...
       - run: |
           git config --global --add safe.directory /__w/ollama/ollama
-          go generate -x ./...
-        env:
-          OLLAMA_SKIP_CPU_GENERATE: '1'
-  generate-rocm:
+          cores=$(grep '^core id' /proc/cpuinfo |sort -u|wc -l)
+          make -j $cores cuda_v11
+  runners-linux-rocm:
     needs: [changes]
-    if: ${{ needs.changes.outputs.GENERATE_ROCM == 'True' }}
+    if: ${{ needs.changes.outputs.RUNNERS == 'True' }}
     strategy:
       matrix:
         rocm-version:
@@ -122,8 +75,6 @@ jobs:
     steps:
       - run: |
           apt-get update && apt-get install -y git build-essential curl rocm-libs
-          curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.28.1/cmake-3.28.1-linux-x86_64.tar.gz \
-            | tar -zx -C /usr --strip-components 1
         env:
           DEBIAN_FRONTEND: noninteractive
       - uses: actions/checkout@v4
@@ -134,14 +85,13 @@ jobs:
       - run: go get ./...
       - run: |
           git config --global --add safe.directory /__w/ollama/ollama
-          go generate -x ./...
-        env:
-          OLLAMA_SKIP_CPU_GENERATE: '1'
+          cores=$(grep '^core id' /proc/cpuinfo |sort -u|wc -l)
+          make -j $cores rocm
 
   # ROCm generation step
-  generate-windows-rocm:
+  runners-windows-rocm:
     needs: [changes]
-    if: ${{ needs.changes.outputs.GENERATE_ROCM == 'True' }}
+    if: ${{ needs.changes.outputs.RUNNERS == 'True' }}
     runs-on: windows
     steps:
       - uses: actions/checkout@v4
@@ -160,24 +110,42 @@ jobs:
       - name: 'Verify ROCm'
         run: |
           & 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' --version
+      - name: Install msys2
+        run: |
+          $msys2_url="https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-x86_64-20240727.exe"
+          write-host "Downloading msys2"
+          Invoke-WebRequest -Uri "${msys2_url}" -OutFile "${env:RUNNER_TEMP}\msys2.exe"
+          write-host "Installing msys2"
+          Start-Process "${env:RUNNER_TEMP}\msys2.exe" -ArgumentList @("in", "--confirm-command", "--accept-messages", "--root", "C:/msys64") -NoNewWindow -Wait
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang", "make") -NoNewWindow -Wait
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: verify tools
+        run: |
+          get-command gcc
+          gcc --version
+          get-command make
+          make --version
       - run: go get ./...
       - run: |
           $gopath=(get-command go).source | split-path -parent
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
-          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
+          import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
           $env:PATH="$gopath;$env:PATH"
           $env:OLLAMA_SKIP_CPU_GENERATE="1"
           $env:HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
-          go generate -x ./...
-        name: go generate
-        env:
-          OLLAMA_SKIP_CPU_GENERATE: '1'
+          $cores = (Get-ComputerInfo -Property CsProcessors).CsProcessors.NumberOfCores
+          write-host $env:HIP_PATH
+          make -C llama print-HIP_PATH print-HIP_LIB_DIR
+          make -j $cores rocm
+        name: make
 
   # CUDA generation step
-  generate-windows-cuda:
+  runners-windows-cuda:
     needs: [changes]
-    if: ${{ needs.changes.outputs.GENERATE_CUDA == 'True' }}
+    if: ${{ needs.changes.outputs.RUNNERS == 'True' }}
     runs-on: windows
     steps:
       - uses: actions/checkout@v4
@@ -201,21 +169,40 @@ jobs:
           echo "CUDA_PATH_VX_Y=CUDA_PATH_V${cudaVer}" >> $env:GITHUB_ENV
       - name: 'Verify CUDA'
         run: nvcc -V
+      - name: Install msys2
+        run: |
+          $msys2_url="https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-x86_64-20240727.exe"
+          write-host "Downloading msys2"
+          Invoke-WebRequest -Uri "${msys2_url}" -OutFile "${env:RUNNER_TEMP}\msys2.exe"
+          write-host "Installing msys2"
+          Start-Process "${env:RUNNER_TEMP}\msys2.exe" -ArgumentList @("in", "--confirm-command", "--accept-messages", "--root", "C:/msys64") -NoNewWindow -Wait
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang", "make") -NoNewWindow -Wait
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: verify tools
+        run: |
+          get-command gcc
+          gcc --version
+          get-command make
+          make --version
       - run: go get ./...
-      - name: go generate
+      - name: make
         run: |
           $gopath=(get-command go).source | split-path -parent
           $cudabin=(get-command nvcc).source | split-path
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
+          import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$cudabin;$env:PATH"
           $env:OLLAMA_SKIP_CPU_GENERATE="1"
-          go generate -x ./...
+          $cores = (Get-ComputerInfo -Property CsProcessors).CsProcessors.NumberOfCores
+          make -j $cores cuda_v11
         env:
           OLLAMA_SKIP_CPU_GENERATE: '1'
 
-  runners:
+  runners-cpu:
     needs: [changes]
     if: ${{ needs.changes.outputs.RUNNERS == 'True' }}
     strategy:
@@ -239,20 +226,41 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go get ./...
+      - name: Install msys2
+        if: ${{ startsWith(matrix.os, 'windows-') }}
+        run: |
+          $msys2_url="https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-x86_64-20240727.exe"
+          write-host "Downloading msys2"
+          Invoke-WebRequest -Uri "${msys2_url}" -OutFile "${env:RUNNER_TEMP}\msys2.exe"
+          write-host "Installing msys2"
+          Start-Process "${env:RUNNER_TEMP}\msys2.exe" -ArgumentList @("in", "--confirm-command", "--accept-messages", "--root", "C:/msys64") -NoNewWindow -Wait
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        if: ${{ startsWith(matrix.os, 'windows-') }}
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang", "make") -NoNewWindow -Wait
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: verify tools
+        if: ${{ startsWith(matrix.os, 'windows-') }}
+        run: |
+          get-command gcc
+          gcc --version
+          get-command make
+          make --version
       - name: 'Build Windows Go Runners'
         if: ${{ startsWith(matrix.os, 'windows-') }}
         run: |
           $gopath=(get-command go).source | split-path -parent
           $gccpath=(get-command gcc).source | split-path -parent
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
+          import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$gccpath;$env:PATH"
           echo $env:PATH
-          make -C llama -j 4      
+          make -j 4      
       - name: 'Build Unix Go Runners'
         if: ${{ ! startsWith(matrix.os, 'windows-') }}
-        run: make -C llama -j 4
+        run: make -j 4
       - run: go build .
 
   lint:
@@ -302,9 +310,6 @@ jobs:
     env:
       GOARCH: ${{ matrix.arch }}
       CGO_ENABLED: '1'
-      OLLAMA_CPU_TARGET: 'static'
-      OLLAMA_SKIP_CPU_GENERATE: '1'
-      OLLAMA_SKIP_METAL_GENERATE: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -319,7 +324,6 @@ jobs:
             arm64) echo ARCH=arm64 ;;
           esac >>$GITHUB_ENV
         shell: bash
-      - run: go generate ./...
       - run: go build
       - run: go test -v ./...
 
@@ -333,4 +337,4 @@ jobs:
           submodules: recursive
       - name: Verify patches carry all the changes
         run: |
-          cd llama && make apply-patches sync && git diff --compact-summary --exit-code .
+          make apply-patches sync && git diff --compact-summary --exit-code llama

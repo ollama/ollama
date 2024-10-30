@@ -48,8 +48,8 @@ jobs:
         with:
           name: dist-darwin
           path: |
-            dist/*arwin*
-            !dist/*-cov
+            dist/Ollama-darwin.zip
+            dist/ollama-darwin
 
   # Windows builds take a long time to both install the dependencies and build, so parallelize
   # CPU generation step
@@ -85,6 +85,24 @@ jobs:
           write-host "Installing plugin"
           & "${env:RUNNER_TEMP}\plugin\*\kmscng.msi" /quiet
           write-host "plugin installed"
+      - name: Install msys2
+        run: |
+          $msys2_url="https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-x86_64-20240727.exe"
+          write-host "Downloading msys2"
+          Invoke-WebRequest -Uri "${msys2_url}" -OutFile "${env:RUNNER_TEMP}\msys2.exe"
+          write-host "Installing msys2"
+          Start-Process "${env:RUNNER_TEMP}\msys2.exe" -ArgumentList @("in", "--confirm-command", "--accept-messages", "--root", "C:/msys64") -NoNewWindow -Wait
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang", "make") -NoNewWindow -Wait
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: verify tools
+        run: |
+          get-command gcc
+          gcc --version
+          get-command make
+          make --version
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -92,19 +110,19 @@ jobs:
       - run: go get ./...
       - run: |
           $gopath=(get-command go).source | split-path -parent
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
+          import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$env:PATH"
-          go generate -x ./...
-        name: go generate
+          $cores = (Get-ComputerInfo -Property CsProcessors).CsProcessors.NumberOfCores
+          make -j $cores
+        name: make
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-cpu
           path: |
             build/**/*
             build/**/*.a
-            llm/build/**/*.a
             dist/windows-amd64/**
 
   # ROCm generation step
@@ -140,6 +158,24 @@ jobs:
           write-host "Installing plugin"
           & "${env:RUNNER_TEMP}\plugin\*\kmscng.msi" /quiet
           write-host "plugin installed"
+      - name: Install msys2
+        run: |
+          $msys2_url="https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-x86_64-20240727.exe"
+          write-host "Downloading msys2"
+          Invoke-WebRequest -Uri "${msys2_url}" -OutFile "${env:RUNNER_TEMP}\msys2.exe"
+          write-host "Installing msys2"
+          Start-Process "${env:RUNNER_TEMP}\msys2.exe" -ArgumentList @("in", "--confirm-command", "--accept-messages", "--root", "C:/msys64") -NoNewWindow -Wait
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang", "make") -NoNewWindow -Wait
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: verify tools
+        run: |
+          get-command gcc
+          gcc --version
+          get-command make
+          make --version
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -158,31 +194,21 @@ jobs:
       - run: go get ./...
       - run: |
           $gopath=(get-command go).source | split-path -parent
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
+          import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$env:PATH"
           $env:OLLAMA_SKIP_CPU_GENERATE="1"
           $env:HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
-          go generate -x ./...
-        name: go generate
-      - name: 'gather rocm dependencies'
-        run: |
-          $HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
-          md "dist\deps\bin\rocblas\library"
-          cp "${HIP_PATH}\bin\hipblas.dll" "dist\deps\bin\"
-          cp "${HIP_PATH}\bin\rocblas.dll" "dist\deps\bin\"
-          cp "${HIP_PATH}\bin\rocblas\library\*" "dist\deps\bin\rocblas\library\"
+          $cores = (Get-ComputerInfo -Property CsProcessors).CsProcessors.NumberOfCores
+          make -j $cores
+        name: make
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-rocm
           path: |
             build/**/*
             dist/windows-amd64/**
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-rocm-deps
-          path: dist/deps/*
 
   # CUDA generation step
   generate-windows-cuda:
@@ -224,6 +250,24 @@ jobs:
           write-host "Installing plugin"
           & "${env:RUNNER_TEMP}\plugin\*\kmscng.msi" /quiet
           write-host "plugin installed"
+      - name: Install msys2
+        run: |
+          $msys2_url="https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-x86_64-20240727.exe"
+          write-host "Downloading msys2"
+          Invoke-WebRequest -Uri "${msys2_url}" -OutFile "${env:RUNNER_TEMP}\msys2.exe"
+          write-host "Installing msys2"
+          Start-Process "${env:RUNNER_TEMP}\msys2.exe" -ArgumentList @("in", "--confirm-command", "--accept-messages", "--root", "C:/msys64") -NoNewWindow -Wait
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang", "make") -NoNewWindow -Wait
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: verify tools
+        run: |
+          get-command gcc
+          gcc --version
+          get-command make
+          make --version
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -245,34 +289,23 @@ jobs:
       - name: 'Verify CUDA'
         run: nvcc -V
       - run: go get ./...
-      - name: go generate
+      - name: make
         run: |
           $gopath=(get-command go).source | split-path -parent
           $cudabin=(get-command nvcc).source | split-path
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
+          import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$cudabin;$env:PATH"
           $env:OLLAMA_SKIP_CPU_GENERATE="1"
-          go generate -x ./...
-      - name: 'gather cuda dependencies'
-        run: |
-          $NVIDIA_DIR=(resolve-path 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*\bin\')[0]
-          md "dist\deps"
-          cp "${NVIDIA_DIR}\cudart64_*.dll" "dist\deps\"
-          cp "${NVIDIA_DIR}\cublas64_*.dll" "dist\deps\"
-          cp "${NVIDIA_DIR}\cublasLt64_*.dll" "dist\deps\"
+          $cores = (Get-ComputerInfo -Property CsProcessors).CsProcessors.NumberOfCores
+          make -j $cores
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-cuda-${{ matrix.cuda.version }}
           path: |
             build/**/*
             dist/windows-amd64/**
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-cuda-deps-${{ matrix.cuda.version }}
-          path: dist/deps/*
-
 
   # windows arm64 generate, go build, and zip file (no installer)
   # Output of this build is aggregated into the final x86 build
@@ -292,6 +325,30 @@ jobs:
           choco install -y --no-progress git gzip
           echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      # pacman is buggy on win arm64, so we avoid using it, but rely on the binary artifacts
+      # we download the sfx (7zip bundle) which isn't fully set up, but the binaries we need to build work
+      - name: Install msys2 x64
+        run: |
+          $url="https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-base-x86_64-20240727.sfx.exe"
+          write-host "Downloading MSYS2"
+          Invoke-WebRequest -Uri "$url" -outfile "${env:RUNNER_TEMP}\msys2.exe"
+          write-host "Installing msys2"
+          Start-Process "${env:RUNNER_TEMP}\msys2.exe" -ArgumentList @(
+              '-y', '-oC:\'
+              ) -NoNewWindow -Wait
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      # since pacman isn't reliable, we just download the tar file and extract directly
+      - name: Downloading and extracting msys2 make tar file
+        run: |
+          $url="https://mirror.msys2.org/msys/x86_64/make-4.4.1-2-x86_64.pkg.tar.zst"
+          write-host "Downloading make"
+          Invoke-WebRequest -Uri "$url" -outfile c:\msys64\make.tar.zst
+          cd c:\msys64; tar -xf make.tar.zst
+          rm c:\msys64\make.tar.zst
+      - name: Verify Make works properly
+        run: |
+          echo $env:PATH
+          make --version
       - name: Install Visual Studio 2022
         run: |
           $components = @(
@@ -385,10 +442,9 @@ jobs:
       - run: |
           $gopath=(get-command go).source | split-path -parent
           $gccpath=(get-command gcc).source | split-path -parent
-          & "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
-          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
-          $env:PATH="$gopath;$gccpath;$env:PATH;C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin"
+          import-module 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -Arch arm64 -vsinstallpath 'C:\Program Files\Microsoft Visual Studio\2022\Community' -skipautomaticlocation
+          $env:PATH="$gopath;$gccpath;$env:PATH"
           echo $env:PATH
           $env:ARCH="arm64"
           .\scripts\build_windows.ps1 buildOllama buildApp gatherDependencies distZip
@@ -441,6 +497,24 @@ jobs:
           write-host "Installing plugin"
           & "${env:RUNNER_TEMP}\plugin\*\kmscng.msi" /quiet
           write-host "plugin installed"
+      - name: Install msys2
+        run: |
+          $msys2_url="https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-x86_64-20240727.exe"
+          write-host "Downloading msys2"
+          Invoke-WebRequest -Uri "${msys2_url}" -OutFile "${env:RUNNER_TEMP}\msys2.exe"
+          write-host "Installing msys2"
+          Start-Process "${env:RUNNER_TEMP}\msys2.exe" -ArgumentList @("in", "--confirm-command", "--accept-messages", "--root", "C:/msys64") -NoNewWindow -Wait
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang", "make") -NoNewWindow -Wait
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: verify tools
+        run: |
+          get-command gcc
+          gcc --version
+          get-command make
+          make --version
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -457,15 +531,6 @@ jobs:
           name: generate-windows-cuda-12
       - uses: actions/download-artifact@v4
         with:
-          name: windows-cuda-deps-11
-      - uses: actions/download-artifact@v4
-        with:
-          name: windows-cuda-deps-12
-      - uses: actions/download-artifact@v4
-        with:
-          name: windows-rocm-deps
-      - uses: actions/download-artifact@v4
-        with:
           name: generate-windows-rocm
       - uses: actions/download-artifact@v4
         with:
@@ -474,11 +539,12 @@ jobs:
       - run: dir build
       - run: |
           $gopath=(get-command go).source | split-path -parent
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
+          import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$env:PATH"
           $env:OLLAMA_SKIP_GENERATE="1"
+          $env:ARCH="amd64"
           & .\scripts\build_windows.ps1
       - uses: actions/upload-artifact@v4
         with:
