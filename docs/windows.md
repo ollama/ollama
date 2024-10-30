@@ -1,21 +1,14 @@
-# Ollama Windows Preview
+# Ollama Windows
 
-Welcome to the Ollama Windows preview.
+Welcome to Ollama for Windows.
 
 No more WSL required!
 
 Ollama now runs as a native Windows application, including NVIDIA and AMD Radeon GPU support.
-After installing Ollama Windows Preview, Ollama will run in the background and
+After installing Ollama for Windows, Ollama will run in the background and
 the `ollama` command line is available in `cmd`, `powershell` or your favorite
 terminal application. As usual the Ollama [api](./api.md) will be served on
 `http://localhost:11434`.
-
-As this is a preview release, you should expect a few bugs here and there.  If
-you run into a problem you can reach out on
-[Discord](https://discord.gg/ollama), or file an
-[issue](https://github.com/ollama/ollama/issues).
-Logs will often be helpful in diagnosing the problem (see
-[Troubleshooting](#troubleshooting) below)
 
 ## System Requirements
 
@@ -59,10 +52,6 @@ Here's a quick example showing API access from `powershell`
 ```
 
 ## Troubleshooting
-
-While we're in preview, `OLLAMA_DEBUG` is always enabled, which adds
-a "view logs" menu item to the app, and increases logging for the GUI app and
-server.
 
 Ollama on Windows stores files in a few different locations.  You can view them in
 the explorer window by hitting `<cmd>+R` and type in:
