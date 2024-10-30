@@ -236,7 +236,7 @@ type Runner struct {
 	NumGPU    int   `json:"num_gpu,omitempty"`
 	MainGPU   int   `json:"main_gpu,omitempty"`
 	LowVRAM   bool  `json:"low_vram,omitempty"`
-	F16KV     bool  `json:"f16_kv,omitempty"`
+	F16KV     bool  `json:"f16_kv,omitempty"` // Deprecated: This option is ignored
 	LogitsAll bool  `json:"logits_all,omitempty"`
 	VocabOnly bool  `json:"vocab_only,omitempty"`
 	UseMMap   *bool `json:"use_mmap,omitempty"`
@@ -613,7 +613,6 @@ func DefaultOptions() Options {
 			NumGPU:    -1, // -1 here indicates that NumGPU should be set dynamically
 			NumThread: 0,  // let the runtime decide
 			LowVRAM:   false,
-			F16KV:     true,
 			UseMLock:  false,
 			UseMMap:   nil,
 		},
