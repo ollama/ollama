@@ -296,10 +296,13 @@ The following tools are required as a minimal development environment to build C
   - https://go.dev/dl/
 - Git
   - https://git-scm.com/download/win
-- GCC and Make.  There are multiple options on how to go about installing these tools on Windows.  We have verified the following, but others may work as well:  
+- clang with gcc compat and Make.  There are multiple options on how to go about installing these tools on Windows.  We have verified the following, but others may work as well:  
   - [MSYS2](https://www.msys2.org/)
-    - After installing, from an MSYS2 terminal, run `pacman -S mingw-w64-ucrt-x86_64-gcc make` to install the required tools
-  - Assuming you used the default install prefix for msys2 above, add `c:\msys64\ucrt64\bin` and `c:\msys64\usr\bin` to your environment variable `PATH` where you will perform the build steps below (e.g. system-wide, account-level, powershell, cmd, etc.)
+    - After installing, from an MSYS2 terminal, run `pacman -S mingw-w64-clang-x86_64-gcc-compat mingw-w64-clang-x86_64-clang make` to install the required tools
+  - Assuming you used the default install prefix for msys2 above, add `C:\msys64\clang64\bin` and `c:\msys64\usr\bin` to your environment variable `PATH` where you will perform the build steps below (e.g. system-wide, account-level, powershell, cmd, etc.)
+
+> [!NOTE]  
+> Due to bugs in the GCC C++ library for unicode support, Ollama requires clang on windows.  If the gcc executable in your path is not the clang compatibility wrapper, the build will error.
 
 Then, build the `ollama` binary:
 
