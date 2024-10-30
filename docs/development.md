@@ -124,7 +124,7 @@ The following tools are required as a minimal development environment to build C
   - Assuming you used the default install prefix for msys2 above, add `C:\msys64\clang64\bin` and `c:\msys64\usr\bin` to your environment variable `PATH` where you will perform the build steps below (e.g. system-wide, account-level, powershell, cmd, etc.)
 
 > [!NOTE]  
-> Due to bugs in the GCC C++ library for unicode support, Ollama requires clang on windows.  If the gcc executable in your path is not the clang compatibility wrapper, the build will error.
+> Due to bugs in the GCC C++ library for unicode support, Ollama should be built with clang on windows.
 
 Then, build the `ollama` binary:
 

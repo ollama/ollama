@@ -874,7 +874,7 @@ func main() {
 	})
 	slog.SetDefault(slog.New(handler))
 	slog.Info("starting go runner")
-	slog.Debug("system info", "cpu", llama.PrintSystemInfo(), "threads", *threads)
+	slog.Info("system", "info", llama.PrintSystemInfo(), "threads", *threads)
 
 	server := &Server{
 		batchSize: *batchSize,
