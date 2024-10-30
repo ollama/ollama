@@ -1,4 +1,4 @@
-ARG GOLANG_VERSION=1.22.5
+ARG GOLANG_VERSION=1.22.8
 ARG CMAKE_VERSION=3.22.1
 ARG CUDA_VERSION_11=11.3.1
 ARG CUDA_V11_ARCHITECTURES="50;52;53;60;61;62;70;72;75;80;86"
@@ -9,8 +9,10 @@ ARG ROCM_VERSION=6.1.2
 # Copy the minimal context we need to run the generate scripts
 FROM scratch AS llm-code
 COPY .git .git
+COPY . /
 COPY .gitmodules .gitmodules
 COPY llm llm
+
 
 FROM --platform=linux/amd64 nvidia/cuda:$CUDA_VERSION_11-devel-centos7 AS cuda-11-build-amd64
 ARG CMAKE_VERSION
@@ -110,9 +112,6 @@ ARG CGO_CFLAGS
 ENV GOARCH=amd64
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 
-FROM --platform=linux/amd64 cpu-builder-amd64 AS static-build-amd64
-RUN --mount=type=cache,target=/root/.ccache \
-    OLLAMA_CPU_TARGET="static" bash gen_linux.sh
 FROM --platform=linux/amd64 cpu-builder-amd64 AS cpu-build-amd64
 RUN --mount=type=cache,target=/root/.ccache \
     OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu" bash gen_linux.sh
@@ -135,42 +134,16 @@ ARG CGO_CFLAGS
 ENV GOARCH=arm64
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 
-FROM --platform=linux/ppc64le redhat/ubi9:9.3 AS cpu-builder-ppc64le
-ARG CMAKE_VERSION
-ARG GOLANG_VERSION
-COPY ./scripts/rh_linux_deps.sh /
-RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
-ENV PATH=/opt/rh/gcc-toolset-10/root/usr/bin:$PATH
-COPY --from=llm-code / /go/src/github.com/ollama/ollama/
-ARG OLLAMA_CUSTOM_CPU_DEFS
-ARG CGO_CFLAGS
-ENV GOARCH=ppc64le
-WORKDIR /go/src/github.com/ollama/ollama/llm/generate
-
-
-FROM --platform=linux/arm64 cpu-builder-arm64 AS static-build-arm64
-RUN --mount=type=cache,target=/root/.ccache \
-    OLLAMA_CPU_TARGET="static" bash gen_linux.sh
 FROM --platform=linux/arm64 cpu-builder-arm64 AS cpu-build-arm64
 RUN --mount=type=cache,target=/root/.ccache \
     OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu" bash gen_linux.sh
 
-FROM --platform=linux/ppc64le cpu-builder-ppc64le AS static-build-ppc64le
-RUN --mount=type=cache,target=/root/.ccache \
-    OLLAMA_CPU_TARGET="static" bash gen_linux.sh
-FROM --platform=linux/ppc64le cpu-builder-ppc64le AS cpu-build-ppc64le
-RUN --mount=type=cache,target=/root/.ccache \
-    OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu" bash gen_linux.sh
-
-#kavita
 
 # Intermediate stages used for ./scripts/build_linux.sh
 FROM --platform=linux/amd64 cpu-build-amd64 AS build-amd64
 ENV CGO_ENABLED=1
 WORKDIR /go/src/github.com/ollama/ollama
 COPY . .
-COPY --from=static-build-amd64 /go/src/github.com/ollama/ollama/llm/build/ llm/build/
- COPY --from=static-build-ppc64le /go/src/github.com/ollama/ollama/llm/build/ llm/build/
 COPY --from=cpu_avx-build-amd64 /go/src/github.com/ollama/ollama/build/ build/
 COPY --from=cpu_avx2-build-amd64 /go/src/github.com/ollama/ollama/build/ build/
 COPY --from=cuda-11-build-amd64 /go/src/github.com/ollama/ollama/dist/ dist/
@@ -193,8 +166,6 @@ ENV CGO_ENABLED=1
 ARG GOLANG_VERSION
 WORKDIR /go/src/github.com/ollama/ollama
 COPY . .
-COPY --from=static-build-arm64 /go/src/github.com/ollama/ollama/llm/build/ llm/build/
-COPY --from=static-build-ppc64le /go/src/github.com/ollama/ollama/llm/build/ llm/build/
 COPY --from=cuda-11-build-runner-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
 COPY --from=cuda-11-build-runner-arm64 /go/src/github.com/ollama/ollama/build/ build/
 COPY --from=cuda-12-build-runner-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
@@ -207,23 +178,50 @@ RUN cd dist/linux-$GOARCH && \
     tar --exclude runners -cf - . | pigz --best > ../ollama-linux-$GOARCH.tgz
 
 
+
+FROM --platform=linux/ppc64le redhat/ubi9:9.3 AS cpu-builder-ppc64le
+ARG CMAKE_VERSION
+ARG GOLANG_VERSION
+COPY ./scripts/rh_linux_deps.sh /
+RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
+ENV PATH=/opt/rh/gcc-toolset-10/root/usr/bin:/usr/local/bin:$PATH
+COPY --from=llm-code / /go/src/github.com/ollama/ollama/
+ARG OLLAMA_CUSTOM_CPU_DEFS
+ARG CGO_CFLAGS
+ENV GOARCH=ppc64le
+WORKDIR /go/src/github.com/ollama/ollama/llm/generate
+
+
+
+#FROM --platform=linux/ppc64le cpu-builder-ppc64le AS static-build-ppc64le
+#RUN --mount=type=cache,target=/root/.ccache \
+#    go generate ./...
+
+FROM --platform=linux/ppc64le cpu-builder-ppc64le AS cpu-build-ppc64le
+#RUN --mount=type=cache,target=/root/.ccache  go generate ./...
+WORKDIR /go/src/github.com/ollama/ollama
+RUN go version
+RUN go clean -modcache
+#RUN go mod tidy
+RUN pwd
+RUN ls
+RUN go generate ./...
+
+
 FROM --platform=linux/ppc64le cpu-build-ppc64le AS build-ppc64le
 ENV CGO_ENABLED=1
 ARG GOLANG_VERSION
 WORKDIR /go/src/github.com/ollama/ollama
 COPY . .
-COPY --from=static-build-arm64 /go/src/github.com/ollama/ollama/llm/build/ llm/build/
-COPY --from=static-build-ppc64le /go/src/github.com/ollama/ollama/llm/build/ llm/build/
-COPY --from=cuda-11-build-runner-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
-COPY --from=cuda-11-build-runner-arm64 /go/src/github.com/ollama/ollama/build/ build/
-COPY --from=cuda-12-build-runner-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
-COPY --from=cuda-12-build-runner-arm64 /go/src/github.com/ollama/ollama/build/ build/
+COPY --from=cpu-build-ppc64le /go/src/github.com/ollama/ollama/llm/build/ llm/build/
 ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN --mount=type=cache,target=/root/.ccache \
     go build -trimpath -o dist/linux-ppc64le/bin/ollama .
 RUN cd dist/linux-$GOARCH && \
     tar --exclude runners -cf - . | pigz --best > ../ollama-linux-$GOARCH.tgz
+
+
 
 FROM --platform=linux/amd64 scratch AS dist-amd64
 COPY --from=build-amd64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
@@ -233,8 +231,9 @@ FROM --platform=linux/ppc64le scratch AS dist-ppc64le
 COPY --from=build-ppc64le /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
 FROM dist-$TARGETARCH as dist
 
+
 # Optimized container images do not cary nested payloads
-FROM --platform=linux/amd64 static-build-amd64 AS container-build-amd64
+FROM --platform=linux/amd64 cpu-builder-amd64 AS container-build-amd64
 WORKDIR /go/src/github.com/ollama/ollama
 COPY . .
 ARG GOFLAGS
@@ -242,7 +241,7 @@ ARG CGO_CFLAGS
 RUN --mount=type=cache,target=/root/.ccache \
     go build -trimpath -o dist/linux-amd64/bin/ollama .
 
-FROM --platform=linux/arm64 static-build-arm64 AS container-build-arm64
+FROM --platform=linux/arm64 cpu-builder-arm64 AS container-build-arm64
 WORKDIR /go/src/github.com/ollama/ollama
 COPY . .
 ARG GOFLAGS
@@ -250,20 +249,11 @@ ARG CGO_CFLAGS
 RUN --mount=type=cache,target=/root/.ccache \
     go build -trimpath -o dist/linux-arm64/bin/ollama .
 
-FROM --platform=linux/ppc64le static-build-ppc64le AS container-build-ppc64le
-WORKDIR /go/src/github.com/ollama/ollama
-COPY . .
-ARG GOFLAGS
-ARG CGO_CFLAGS
-RUN --mount=type=cache,target=/root/.ccache \
-   go build -trimpath -o dist/linux-ppc64le/bin/ollama .
-
 FROM --platform=linux/amd64 ubuntu:22.04 AS runtime-amd64
 RUN apt-get update && \
     apt-get install -y ca-certificates && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY --from=container-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/bin/ /bin/
-COPY --from=container-build-ppc64le /go/src/github.com/ollama/ollama/dist/linux-ppc64le/bin/ /bin/
 COPY --from=cpu-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
 COPY --from=cpu_avx-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
 COPY --from=cpu_avx2-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
@@ -276,7 +266,6 @@ RUN apt-get update && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY --from=container-build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/bin/ /bin/
 COPY --from=cpu-build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
-COPY --from=cpu-build-ppc64le /go/src/github.com/ollama/ollama/dist/linux-ppc64le/lib/ /lib/
 COPY --from=cuda-11-build-runner-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
 COPY --from=cuda-12-build-runner-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
 
