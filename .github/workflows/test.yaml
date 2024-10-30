@@ -138,6 +138,7 @@ jobs:
           $env:HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
           $cores = (Get-ComputerInfo -Property CsProcessors).CsProcessors.NumberOfCores
           write-host $env:HIP_PATH
+          if (!(gcc --version | select-string -quiet clang)) { throw "wrong gcc compiler detected - must be clang" }
           make -C llama print-HIP_PATH print-HIP_LIB_DIR
           make -j $cores rocm
         name: make
@@ -198,6 +199,7 @@ jobs:
           $env:PATH="$gopath;$cudabin;$env:PATH"
           $env:OLLAMA_SKIP_CPU_GENERATE="1"
           $cores = (Get-ComputerInfo -Property CsProcessors).CsProcessors.NumberOfCores
+          if (!(gcc --version | select-string -quiet clang)) { throw "wrong gcc compiler detected - must be clang" }
           make -j $cores cuda_v11
         env:
           OLLAMA_SKIP_CPU_GENERATE: '1'
@@ -257,6 +259,7 @@ jobs:
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$gccpath;$env:PATH"
           echo $env:PATH
+          if (!(gcc --version | select-string -quiet clang)) { throw "wrong gcc compiler detected - must be clang" }
           make -j 4      
       - name: 'Build Unix Go Runners'
         if: ${{ ! startsWith(matrix.os, 'windows-') }}

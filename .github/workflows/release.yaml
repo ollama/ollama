@@ -115,6 +115,7 @@ jobs:
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$env:PATH"
           $cores = (Get-ComputerInfo -Property CsProcessors).CsProcessors.NumberOfCores
+          if (!(gcc --version | select-string -quiet clang)) { throw "wrong gcc compiler detected - must be clang" }
           make -j $cores
         name: make
       - uses: actions/upload-artifact@v4
@@ -201,6 +202,7 @@ jobs:
           $env:OLLAMA_SKIP_CPU_GENERATE="1"
           $env:HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
           $cores = (Get-ComputerInfo -Property CsProcessors).CsProcessors.NumberOfCores
+          if (!(gcc --version | select-string -quiet clang)) { throw "wrong gcc compiler detected - must be clang" }
           make -j $cores
         name: make
       - uses: actions/upload-artifact@v4
@@ -299,6 +301,7 @@ jobs:
           $env:PATH="$gopath;$cudabin;$env:PATH"
           $env:OLLAMA_SKIP_CPU_GENERATE="1"
           $cores = (Get-ComputerInfo -Property CsProcessors).CsProcessors.NumberOfCores
+          if (!(gcc --version | select-string -quiet clang)) { throw "wrong gcc compiler detected - must be clang" }
           make -j $cores
       - uses: actions/upload-artifact@v4
         with:
@@ -545,6 +548,7 @@ jobs:
           $env:PATH="$gopath;$env:PATH"
           $env:OLLAMA_SKIP_GENERATE="1"
           $env:ARCH="amd64"
+          if (!(gcc --version | select-string -quiet clang)) { throw "wrong gcc compiler detected - must be clang" }
           & .\scripts\build_windows.ps1
       - uses: actions/upload-artifact@v4
         with:
