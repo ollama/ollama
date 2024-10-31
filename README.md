@@ -413,6 +413,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama PHP](https://github.com/ArdaGnsrn/ollama-php)
 - [Agents-Flex for Java](https://github.com/agents-flex/agents-flex) with [example](https://github.com/agents-flex/agents-flex/tree/main/agents-flex-llm/agents-flex-llm-ollama/src/test/java/com/agentsflex/llm/ollama)
 - [Ollama for Swift](https://github.com/mattt/ollama-swift)
+- [Ollama for Haskell](https://github.com/tusharad/ollama-haskell)
 
 ### Mobile
 
