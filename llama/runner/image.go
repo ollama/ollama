@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/maphash"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -94,6 +95,16 @@ func (c *ImageContext) EmbedSize(llamaContext *llama.Context) int {
 	} else {
 		return llamaContext.Model().NEmbd()
 	}
+}
+
+func (c *ImageContext) NeedCrossAttention(inputs ...input) bool {
+	if c == nil || c.mllama == nil {
+		return false
+	}
+
+	return slices.ContainsFunc(inputs, func(input input) bool {
+		return input.embed != nil
+	})
 }
 
 type imageCache struct {
