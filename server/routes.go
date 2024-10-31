@@ -267,7 +267,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		prompt = b.String()
 	}
 
-	slog.Debug("generate request", "prompt", prompt, "images", images)
+	slog.Debug("generate request", "images", len(images), "prompt", prompt)
 
 	ch := make(chan any)
 	go func() {
