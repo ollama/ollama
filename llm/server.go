@@ -185,6 +185,10 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		"--batch-size", strconv.Itoa(opts.NumBatch),
 	}
 
+	if opts.Reranking {
+		params = append(params, "--reranking")
+	}
+
 	if opts.NumGPU >= 0 {
 		params = append(params, "--n-gpu-layers", strconv.Itoa(opts.NumGPU))
 	}
