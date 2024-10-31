@@ -12,14 +12,28 @@ Get up and running with large language models.
 
 [Download](https://ollama.com/download/Ollama-darwin.zip)
 
+Downloading via [Homebrew](https://formulae.brew.sh/formula/ollama#default):
+```bash
+$ brew install ollama
+```
+
 ### Windows
 
 [Download](https://ollama.com/download/OllamaSetup.exe)
 
 ### Linux
-
+Downloading via [pacman](https://archlinux.org/packages/extra/x86_64/ollama/):
+```bash
+sudo pacman -Sy ollama
 ```
-curl -fsSL https://ollama.com/install.sh | sh
+Downloading via [nix](https://search.nixos.org/packages?channel=24.05&show=ollama&from=0&size=50&sort=relevance&type=packages&query=ollama):
+```bash
+nix-shell -p ollama
+```
+More packages can be found in the [Package Managers](https://github.com/ollama/ollama/tree/main/README.md#package-managers) section.
+#### Manual Install:
+```bash
+$ curl -fsSL https://ollama.com/install.sh | sh
 ```
 
 [Manual install instructions](https://github.com/ollama/ollama/blob/main/docs/linux.md)
@@ -374,6 +388,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Guix channel](https://codeberg.org/tusharhero/ollama-guix)
 - [Nix package](https://search.nixos.org/packages?channel=24.05&show=ollama&from=0&size=50&sort=relevance&type=packages&query=ollama)
 - [Flox](https://flox.dev/blog/ollama-part-one)
+- [Homebrew](https://formulae.brew.sh/formula/ollama#default)
 
 ### Libraries
 
