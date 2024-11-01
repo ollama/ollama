@@ -191,20 +191,19 @@ ARG CGO_CFLAGS
 ENV GOARCH=ppc64le
 WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 
-FROM --platform=linux/arm64 cpu-builder-ppc64le AS cpu-build-ppc64le
-RUN --mount=type=cache,target=/root/.ccache \
+#FROM --platform=linux/arm64 cpu-builder-ppc64le AS cpu-build-ppc64le
+#RUN --mount=type=cache,target=/root/.ccache \
     OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu" bash gen_linux.sh
-RUN cd llm/build/linux/ppc64le/cpu
-RUN make install
-
-#FROM --platform=linux/ppc64le cpu-builder-ppc64le AS cpu-build-ppc64le
-#RUN --mount=type=cache,target=/root/.ccache  go generate ./...
-#WORKDIR /go/src/github.com/ollama/ollama
-#RUN go clean -modcache
-#RUN go generate ./...
 #RUN cd llm/build/linux/ppc64le/cpu
 #RUN make install
 
+FROM --platform=linux/ppc64le cpu-builder-ppc64le AS cpu-build-ppc64le
+RUN --mount=type=cache,target=/root/.ccache  go generate ./...
+WORKDIR /go/src/github.com/ollama/ollama
+#RUN go clean -modcache
+RUN go generate ./...
+RUN cd llm/build/linux/ppc64le/cpu
+RUN make install
 
 
 FROM --platform=linux/ppc64le cpu-build-ppc64le AS build-ppc64le
@@ -216,8 +215,9 @@ COPY . .
 COPY --from=cpu-build-ppc64le /go/src/github.com/ollama/ollama/llm/build/ llm/build/
 ARG GOFLAGS
 ARG CGO_CFLAGS
-RUN --mount=type=cache,target=/root/.ccache \
-    go build -trimpath -o dist/linux-ppc64le/bin/ollama .
+#RUN --mount=type=cache,target=/root/.ccache \
+#    go build -trimpath -o dist/linux-ppc64le/bin/ollama .
+RUN go build .
 RUN cd dist/linux-$GOARCH && \
     tar --exclude runners -cf - . | pigz --best > ../ollama-linux-$GOARCH.tgz
 
