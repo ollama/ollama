@@ -87,6 +87,12 @@ GPU_COMPILER_CUFLAGS = \
 	-Wno-unused-result \
 	-I.
 
+# Workaround buggy P2P copy on some windows multi-GPU setups
+# This workaround breaks linux systems with small system RAM, so only enable on windows
+ifeq ($(OS),windows)
+	GPU_COMPILER_CUFLAGS += -DGGML_CUDA_NO_PEER_COPY=1
+endif
+
 include make/gpu.make
 
 # Adjust the rules from gpu.make to handle the ROCm dependencies properly
