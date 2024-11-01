@@ -58,6 +58,8 @@ endif
 GPU_COMPILER_CUFLAGS = \
 	$(GPU_COMPILER_FPIC) \
 	$(addprefix -m,$(GPU_RUNNER_CPU_FLAGS)) \
+	-mf16c \
+	-mfma \
 	-parallel-jobs=2 \
 	-c \
 	-O3 \
@@ -77,6 +79,9 @@ GPU_COMPILER_CUFLAGS = \
 	-D_CRT_SECURE_NO_WARNINGS \
 	-D_GNU_SOURCE \
 	-D_XOPEN_SOURCE=600 \
+	-DUSE_PROF_API=1 \
+	-std=gnu++14 \
+	-x hip \
 	-mllvm=-amdgpu-early-inline-all=true \
 	-mllvm=-amdgpu-function-calls=false \
 	-Wno-expansion-to-defined \
