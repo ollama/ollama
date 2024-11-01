@@ -18,6 +18,9 @@ if [ "${MACHINE}" = "ppc64le" ]; then
    #export PATH=$PATH:$GOROOT/bin:$GOPATH/bin:/usr/local/bin
     ln -s /usr/local/go/bin/go /usr/local/bin/go
     ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+    ln -s /usr/lib/lggml /usr/lib/lggml
+    ln -s /usr/lib/lggml /usr/lib/lllama
+    
 
 else
   if grep -i "centos" /etc/system-release >/dev/null; then
