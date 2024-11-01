@@ -88,6 +88,7 @@ import (
 	"fmt"
 	"runtime"
 	"runtime/cgo"
+	"slices"
 	"strings"
 	"unsafe"
 )
@@ -260,7 +261,7 @@ func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
 	}
 
 	m := Model{c: C.llama_load_model_from_file(C.CString(modelPath), cparams)}
-	if m.c == (*C.struct_llama_model)(C.NULL) {
+	if m.c == nil {
 		return nil, fmt.Errorf("unable to load model: %s", modelPath)
 	}
 
@@ -276,7 +277,7 @@ func NewContextWithModel(model *Model, params ContextParams) (*Context, error) {
 		c:          C.llama_new_context_with_model(model.c, params.c),
 		numThreads: int(params.c.n_threads),
 	}
-	if c.c == (*C.struct_llama_context)(C.NULL) {
+	if c.c == nil {
 		return nil, errors.New("unable to create llama context")
 	}
 
@@ -300,6 +301,9 @@ func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float
 	defer C.free(unsafe.Pointer(cLoraPath))
 
 	loraAdapter := C.llama_lora_adapter_init(m.c, cLoraPath)
+	if loraAdapter == nil {
+		return errors.New("unable to load lora")
+	}
 
 	err := -1
 	if loraAdapter != nil {
@@ -322,13 +326,25 @@ type Batch struct {
 // Creates a new batch for either word tokens or image embeddings (if embedSize is non-zero).
 // Batches cannot contain both types at the same time. batchSize is the maximum number of entries
 // that can be added per sequence
-func NewBatch(batchSize int, maxSeq int, embedSize int) *Batch {
-	return &Batch{
+func NewBatch(batchSize int, maxSeq int, embedSize int) (*Batch, error) {
+	b := Batch{
 		c:         C.llama_batch_init(C.int(batchSize*maxSeq), C.int(embedSize), C.int(maxSeq)),
 		batchSize: batchSize,
 		maxSeq:    maxSeq,
 		embedSize: embedSize,
 	}
+
+	// Check to see if any of the allocations in llama_batch_init() failed
+	nilPointer := (embedSize == 0 && b.c.token == nil) || (embedSize != 0 && b.c.embd == nil) ||
+		b.c.pos == nil || b.c.n_seq_id == nil || b.c.seq_id == nil || b.c.logits == nil ||
+		slices.Contains(unsafe.Slice(b.c.seq_id, b.allocSize()), nil)
+
+	if nilPointer {
+		C.llama_batch_free(b.c)
+		return nil, fmt.Errorf("unable to allocate batch (batchSize=%v maxSeq=%v embedSize=%v)", batchSize, maxSeq, embedSize)
+	}
+
+	return &b, nil
 }
 
 func (b *Batch) Size() int {
@@ -484,6 +500,9 @@ func NewClipContext(llamaContext *Context, modelPath string) (*ClipContext, erro
 	mp := C.CString(modelPath)
 	defer C.free(unsafe.Pointer(mp))
 	c := C.clip_model_load(mp, 1)
+	if c == nil {
+		return nil, fmt.Errorf("unable to load clip model: %v", modelPath)
+	}
 
 	projEmbedSize := int(C.clip_n_mmproj_embd(c))
 	modelEmbedSize := llamaContext.Model().NEmbd()
@@ -498,8 +517,11 @@ func (c *ClipContext) Free() {
 	C.clip_free(c.c)
 }
 
-func (c *ClipContext) NewEmbed(llamaContext *Context, data []byte) [][]float32 {
+func (c *ClipContext) NewEmbed(llamaContext *Context, data []byte) ([][]float32, error) {
 	l := C.llava_image_embed_make_with_bytes(c.c, C.int(llamaContext.numThreads), (*C.uchar)(unsafe.Pointer(&data[0])), C.int(len(data)))
+	if l == nil {
+		return nil, errors.New("unable to make llava embedding from image")
+	}
 
 	numTokens := int(l.n_image_pos)
 	numEmbed := llamaContext.Model().NEmbd()
@@ -516,7 +538,7 @@ func (c *ClipContext) NewEmbed(llamaContext *Context, data []byte) [][]float32 {
 
 	C.llava_image_embed_free(l)
 
-	return embed
+	return embed, nil
 }
 
 type MllamaContext struct {
@@ -527,6 +549,9 @@ func NewMllamaContext(llamaContext *Context, modelPath string) (*MllamaContext, 
 	mp := C.CString(modelPath)
 	defer C.free(unsafe.Pointer(mp))
 	c := C.mllama_model_load(mp, 1)
+	if c == nil {
+		return nil, fmt.Errorf("unable to load mllama model: %v", modelPath)
+	}
 
 	projEmbedSize := int(C.mllama_n_embd(c))
 	modelEmbedSize := llamaContext.Model().NEmbd()
@@ -541,19 +566,25 @@ func (m *MllamaContext) Free() {
 	C.mllama_free(m.c)
 }
 
-func (m *MllamaContext) NewEmbed(llamaContext *Context, data []byte, aspectRatioId int) [][]float32 {
+func (m *MllamaContext) NewEmbed(llamaContext *Context, data []byte, aspectRatioId int) ([][]float32, error) {
 	img := C.mllama_image_init()
 	defer C.mllama_image_free(img)
 
-	C.mllama_image_load_from_data(unsafe.Pointer(&data[0]), C.int(len(data)), 560, 560, 3, 4, C.int(aspectRatioId), img)
+	ok := bool(C.mllama_image_load_from_data(unsafe.Pointer(&data[0]), C.int(len(data)), 560, 560, 3, 4, C.int(aspectRatioId), img))
+	if !ok {
+		return nil, errors.New("unable to load mllama image data")
+	}
 
 	rows := make([]float32, m.EmbedSize(llamaContext))
-	C.mllama_image_encode(m.c, C.int(llamaContext.numThreads), img, (*C.float)(unsafe.Pointer(&rows[0])))
+	ok = bool(C.mllama_image_encode(m.c, C.int(llamaContext.numThreads), img, (*C.float)(unsafe.Pointer(&rows[0]))))
+	if !ok {
+		return nil, errors.New("unable to make mllama embedding from image")
+	}
 
 	embed := make([][]float32, 1)
 	embed[0] = rows
 
-	return embed
+	return embed, nil
 }
 
 func (m *MllamaContext) EmbedSize(llamaContext *Context) int {
@@ -592,7 +623,7 @@ type SamplingParams struct {
 	Grammar        string
 }
 
-func NewSamplingContext(model *Model, params SamplingParams) *SamplingContext {
+func NewSamplingContext(model *Model, params SamplingParams) (*SamplingContext, error) {
 	var cparams C.struct_gpt_sampler_cparams
 	cparams.top_k = C.int32_t(params.TopK)
 	cparams.top_p = C.float(params.TopP)
@@ -615,9 +646,13 @@ func NewSamplingContext(model *Model, params SamplingParams) *SamplingContext {
 
 	cparams.grammar = grammar
 	context := &SamplingContext{c: C.gpt_sampler_cinit(model.c, &cparams)}
+	if context.c == nil {
+		return nil, errors.New("unable to create sampling context")
+	}
+
 	runtime.SetFinalizer(context, func(s *SamplingContext) { C.gpt_sampler_cfree(s.c) })
 
-	return context
+	return context, nil
 }
 
 func (s *SamplingContext) Reset() {

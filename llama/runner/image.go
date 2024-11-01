@@ -63,9 +63,9 @@ func (c *ImageContext) Free(modelPath string) {
 	}
 }
 
-func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte, aspectRatioId int) [][]float32 {
+func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte, aspectRatioId int) ([][]float32, error) {
 	if c == nil {
-		return nil
+		return nil, nil
 	}
 
 	hash := c.hashImage(data)
@@ -76,17 +76,23 @@ func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte, aspect
 	embed, err := c.findImage(hash)
 	if err != nil {
 		if c.mllama != nil {
-			embed = c.mllama.NewEmbed(llamaContext, data, aspectRatioId)
+			embed, err = c.mllama.NewEmbed(llamaContext, data, aspectRatioId)
+			if err != nil {
+				return nil, err
+			}
 		} else if c.clip != nil {
-			embed = c.clip.NewEmbed(llamaContext, data)
+			embed, err = c.clip.NewEmbed(llamaContext, data)
+			if err != nil {
+				return nil, err
+			}
 		} else {
-			return nil
+			return nil, errors.New("received image but vision model not loaded")
 		}
 
 		c.addImage(hash, embed)
 	}
 
-	return embed
+	return embed, nil
 }
 
 func (c *ImageContext) BatchSize(configuredBatchSize int) int {

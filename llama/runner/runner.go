@@ -131,7 +131,10 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 
 	var sc *llama.SamplingContext
 	if params.samplingParams != nil {
-		sc = llama.NewSamplingContext(s.model, *params.samplingParams)
+		sc, err = llama.NewSamplingContext(s.model, *params.samplingParams)
+		if err != nil {
+			return nil, err
+		}
 		for _, input := range inputs {
 			if input.embed == nil {
 				sc.Accept(input.token, false)
@@ -194,7 +197,11 @@ func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 				return nil, fmt.Errorf("invalid image index: %d", n)
 			}
 
-			embed := s.image.NewEmbed(s.lc, images[imageIndex].Data, images[imageIndex].AspectRatioID)
+			embed, err := s.image.NewEmbed(s.lc, images[imageIndex].Data, images[imageIndex].AspectRatioID)
+			if err != nil {
+				return nil, err
+			}
+
 			for _, e := range embed {
 				inputs = append(inputs, input{embed: e})
 			}
@@ -305,13 +312,19 @@ func (s *Server) run(ctx context.Context) {
 
 	// Logically these batches are used only within the context of processBatch
 	// but it is better for performance to allocate them once here
-	tokenBatch := llama.NewBatch(s.batchSize, len(s.seqs), 0)
+	tokenBatch, err := llama.NewBatch(s.batchSize, len(s.seqs), 0)
+	if err != nil {
+		panic(err)
+	}
 	defer tokenBatch.Free()
 
 	var embedBatch *llama.Batch
 	embedBatchSize := s.image.BatchSize(s.batchSize)
 	if embedBatchSize != 0 {
-		embedBatch = llama.NewBatch(embedBatchSize, len(s.seqs), s.image.EmbedSize(s.lc))
+		embedBatch, err = llama.NewBatch(embedBatchSize, len(s.seqs), s.image.EmbedSize(s.lc))
+		if err != nil {
+			panic(err)
+		}
 		defer embedBatch.Free()
 	} else {
 		embedBatch = &llama.Batch{}
