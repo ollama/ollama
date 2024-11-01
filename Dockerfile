@@ -193,7 +193,7 @@ WORKDIR /go/src/github.com/ollama/ollama/llm/generate
 
 #FROM --platform=linux/arm64 cpu-builder-ppc64le AS cpu-build-ppc64le
 #RUN --mount=type=cache,target=/root/.ccache \
-    OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu" bash gen_linux.sh
+#   OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu" bash gen_linux.sh
 #RUN cd llm/build/linux/ppc64le/cpu
 #RUN make install
 
