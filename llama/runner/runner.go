@@ -211,6 +211,7 @@ type Server struct {
 	// required for image embeddings
 	image *ImageContext
 
+	// TODO (jmorganca): make this n_batch
 	batchSize int
 
 	// parallel is the number of parallel requests to handle
@@ -302,13 +303,19 @@ func (s *Server) removeSequence(seqIndex int, reason string) {
 func (s *Server) run(ctx context.Context) {
 	s.ready.Wait()
 
-	// logically these batches are used only within the context of processBatch
+	// Logically these batches are used only within the context of processBatch
 	// but it is better for performance to allocate them once here
-	tokenBatch := llama.NewBatch(s.batchSize*len(s.seqs), 0, len(s.seqs))
+	tokenBatch := llama.NewBatch(s.batchSize, len(s.seqs), 0)
 	defer tokenBatch.Free()
 
-	embedBatch := llama.NewBatch(s.batchSize*len(s.seqs), s.image.EmbedSize(s.lc), len(s.seqs))
-	defer embedBatch.Free()
+	var embedBatch *llama.Batch
+	embedBatchSize := s.image.BatchSize(s.batchSize)
+	if embedBatchSize != 0 {
+		embedBatch = llama.NewBatch(embedBatchSize, len(s.seqs), s.image.EmbedSize(s.lc))
+		defer embedBatch.Free()
+	} else {
+		embedBatch = &llama.Batch{}
+	}
 
 	for {
 		select {
@@ -378,13 +385,12 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 				break
 			}
 
-			// todo: make this n_batch
-			if i >= s.batchSize {
+			if i >= batch.Size() {
 				break
 			}
 
 			crossAttention = seq.crossAttention
-			batch.Add(input.token, input.embed, seq.numPast, []int{seq.cache.Id}, numInputsProcessed+1 == len(seq.inputs))
+			batch.Add(input.token, input.embed, seq.numPast, numInputsProcessed+1 == len(seq.inputs), seq.cache.Id)
 			seq.numPast++
 			numInputsProcessed++
 		}
