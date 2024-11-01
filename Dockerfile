@@ -203,6 +203,7 @@ WORKDIR /go/src/github.com/ollama/ollama
 #RUN go clean -modcache
 RUN go generate ./...
 RUN cd llm/build/linux/ppc64le/cpu
+RUN ls   
 RUN make install
 
 
