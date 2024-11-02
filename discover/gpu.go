@@ -316,7 +316,9 @@ func GetGPUInfo() GpuInfoList {
 				// query the management library as well so we can record any skew between the two
 				// which represents overhead on the GPU we must set aside on subsequent updates
 				if cHandles.nvml != nil {
-					C.nvml_get_free(*cHandles.nvml, C.int(gpuInfo.index), &memInfo.free, &memInfo.total, &memInfo.used)
+					uuid := C.CString(gpuInfo.ID)
+					defer C.free(unsafe.Pointer(uuid))
+					C.nvml_get_free(*cHandles.nvml, uuid, &memInfo.free, &memInfo.total, &memInfo.used)
 					if memInfo.err != nil {
 						slog.Warn("error looking up nvidia GPU memory", "error", C.GoString(memInfo.err))
 						C.free(unsafe.Pointer(memInfo.err))
@@ -417,7 +419,9 @@ func GetGPUInfo() GpuInfoList {
 		}
 		for i, gpu := range cudaGPUs {
 			if cHandles.nvml != nil {
-				C.nvml_get_free(*cHandles.nvml, C.int(gpu.index), &memInfo.free, &memInfo.total, &memInfo.used)
+				uuid := C.CString(gpu.ID)
+				defer C.free(unsafe.Pointer(uuid))
+				C.nvml_get_free(*cHandles.nvml, uuid, &memInfo.free, &memInfo.total, &memInfo.used)
 			} else if cHandles.cudart != nil {
 				C.cudart_bootstrap(*cHandles.cudart, C.int(gpu.index), &memInfo)
 			} else if cHandles.nvcuda != nil {
