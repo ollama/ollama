@@ -1,0 +1,19 @@
+# Targets to assist in running tests
+
+include make/common-defs.make
+
+test:
+	cd $(abspath $(SRC_DIR)/..) && go test ./... 
+
+integration: $(OLLAMA_EXE)
+	cd $(abspath $(SRC_DIR)/..) && go test --tags=integration ./integration -v
+
+lint:
+	cd $(abspath $(SRC_DIR)/..) && golangci-lint run -v
+
+# Note: in this makefile we error instead of building to allow more fine-grain control if testing flows
+$(OLLAMA_EXE):
+	@echo ""
+	@echo "ERROR: You must build ollama first - use 'make all' to build the ollama binaries"
+	@echo ""
+	@exit 1

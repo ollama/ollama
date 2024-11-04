@@ -19,7 +19,11 @@ PAYLOAD_RUNNERS = $(addprefix $(RUNNERS_PAYLOAD_DIR)/,$(addsuffix /ollama_llama_
 endif
 BUILD_RUNNERS = $(addprefix $(RUNNERS_BUILD_DIR)/,$(addsuffix /ollama_llama_server$(EXE_EXT),$(RUNNERS)))
 
-all: $(BUILD_RUNNERS) $(DIST_RUNNERS) $(PAYLOAD_RUNNERS)
+default: $(BUILD_RUNNERS) 
+
+dist: $(DIST_RUNNERS)
+
+payload: $(PAYLOAD_RUNNERS)
 
 $(RUNNERS_BUILD_DIR)/$(DEFAULT_RUNNER)/ollama_llama_server$(EXE_EXT): TARGET_CPU_FLAGS=$(CUSTOM_CPU_FLAGS)
 $(RUNNERS_BUILD_DIR)/$(DEFAULT_RUNNER)/ollama_llama_server$(EXE_EXT): *.go ./runner/*.go $(COMMON_SRCS) $(COMMON_HDRS)
@@ -47,7 +51,7 @@ $(RUNNERS_PAYLOAD_DIR)/%/ollama_llama_server$(EXE_EXT).gz: $(RUNNERS_BUILD_DIR)/
 clean: 
 	rm -f $(BUILD_RUNNERS) $(DIST_RUNNERS) $(PAYLOAD_RUNNERS)
 
-.PHONY: clean all
+.PHONY: clean default
 
 # Handy debugging for make variables
 print-%:

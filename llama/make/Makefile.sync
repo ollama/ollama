@@ -13,11 +13,11 @@ LLAMACPP_PATCH_DIR := $(DST_DIR)patches/
 help-sync:
 	@echo "The following make targets will help you update llama.cpp to a new base commit, or work on new features/fixes"
 	@echo ""
-	@echo "\tmake apply-patches   # Establish the tracking repo if not already present, reset to the base commit, and apply our patch set"
-	@echo "\tmake sync            # Vendor llama.cpp and ggml from the tracking repo working tree"
-	@echo "\tmake create-patches  # Generate the patch set based on the current commits in the tracking repo since the base commit"
+	@echo "	make apply-patches   # Establish the tracking repo if not already present, reset to the base commit, and apply our patch set"
+	@echo "	make sync            # Vendor llama.cpp and ggml from the tracking repo working tree"
+	@echo "	make create-patches  # Generate the patch set based on the current commits in the tracking repo since the base commit"
 	@echo ""
-	@echo "For more details on the workflow, see the Vendoring section in ../docs/development.md"
+	@echo "For more details on the workflow, see the Vendoring section in 'docs/development.md'"
 
 apply-patches: $(LLAMACPP_REPO)
 	@if ! git -C $(LLAMACPP_REPO) --no-pager diff --exit-code ; then \
