@@ -1,4 +1,4 @@
 GOALS := $(or $(MAKECMDGOALS),all)
 .PHONY: $(GOALS)
 $(GOALS):
-	$(MAKE) -C llama $@
+	@$(MAKE) --no-print-directory -C llama $@

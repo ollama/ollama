@@ -67,7 +67,11 @@ endif
 BUILD_RUNNERS = $(addprefix $(RUNNERS_BUILD_DIR)/,$(addsuffix /ollama_llama_server$(EXE_EXT),$(GPU_RUNNER_NAME)))
 
 
-$(GPU_RUNNER_NAME): $(BUILD_RUNNERS) $(DIST_RUNNERS) $(PAYLOAD_RUNNERS)
+$(GPU_RUNNER_NAME): $(BUILD_RUNNERS) 
+
+dist: $(DIST_RUNNERS)
+
+payload: $(PAYLOAD_RUNNERS)
 
 # Build targets
 $(BUILD_DIR)/%.$(GPU_RUNNER_NAME).$(OBJ_EXT): %.cu

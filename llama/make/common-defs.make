@@ -82,3 +82,5 @@ COMMON_SRCS := \
 COMMON_HDRS := \
 	$(wildcard *.h) \
 	$(wildcard *.hpp)
+
+OLLAMA_EXE=$(abspath $(SRC_DIR)../ollama$(EXE_EXT))

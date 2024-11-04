@@ -3,33 +3,22 @@
 Install required tools:
 
 - go version 1.22 or higher
-- gcc version 11.4.0 or higher
+- OS specific native compiler (see below)
+- GNU Make
 
+
+## Overview
+
+Ollama uses a mix of Go and C/C++ code to interface with GPUs.  The C/C++ code is compiled with both CGO and GPU library specific compilers.  A set of GNU Makefiles are used to compile the project.  GPU Libraries are auto-detected based on the typical environment variables used by the respective libraries, but can be overridden if necessary.  The default make target will build the runners and primary Go Ollama application.  Throughout the examples below '-j 5' is suggested for 5 parallel jobs to speed up the build.  You can adjust the job count based on your CPU Core count to optimize build times. To learn more about the other make targets use 'make help'
+
+Once you have built the GPU/CPU runners, you can compile the main application with `go build .` 
 
 ### MacOS
 
 [Download Go](https://go.dev/dl/)
 
-Optionally enable debugging and more verbose logging:
-
-```bash
-# At build time
-export CGO_CFLAGS="-g"
-
-# At runtime
-export OLLAMA_DEBUG=1
-```
-
-Get the required libraries and build the native LLM code:  (Adjust the job count based on your number of processors for a faster build)
-
 ```bash
 make -j 5
-```
-
-Then build ollama:
-
-```bash
-go build .
 ```
 
 Now you can run `ollama`:
@@ -51,47 +40,31 @@ _Your operating system distribution may already have packages for NVIDIA CUDA. D
 Install `make`, `gcc` and `golang` as well as [NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads)
 development and runtime packages.
 
-Typically the build scripts will auto-detect CUDA, however, if your Linux distro
-or installation approach uses unusual paths, you can specify the location by
-specifying an environment variable `CUDA_LIB_DIR` to the location of the shared
-libraries, and `CUDACXX` to the location of the nvcc compiler. You can customize
-a set of target CUDA architectures by setting `CMAKE_CUDA_ARCHITECTURES` (e.g. "50;60;70")
-
-Then generate dependencies:  (Adjust the job count based on your number of processors for a faster build)
+Typically the makefile will auto-detect CUDA, however, if your Linux distro
+or installation approach uses alternative paths, you can specify the location by
+overriding `CUDA_PATH` to the location of the CUDA toolkit. You can customize
+a set of target CUDA architectures by setting `CUDA_ARCHITECTURES` (e.g. `CUDA_ARCHITECTURES=50;60;70`)
 
 ```
 make -j 5
 ```
 
-Then build the binary:
-
-```
-go build .
-```
+If both v11 and v12 tookkits are detected, runners for both major versions will be built by default.  You can build just v12 with `make cuda_v12`
 
 #### Linux ROCm (AMD)
 
-_Your operating system distribution may already have packages for AMD ROCm and CLBlast. Distro packages are often preferable, but instructions are distro-specific. Please consult distro-specific docs for dependencies if available!_
+_Your operating system distribution may already have packages for AMD ROCm. Distro packages are often preferable, but instructions are distro-specific. Please consult distro-specific docs for dependencies if available!_
 
-Install [CLBlast](https://github.com/CNugteren/CLBlast/blob/master/doc/installation.md) and [ROCm](https://rocm.docs.amd.com/en/latest/) development packages first, as well as `make`, `gcc`, and `golang`.
+Install [ROCm](https://rocm.docs.amd.com/en/latest/) development packages first, as well as `make`, `gcc`, and `golang`.
 
 Typically the build scripts will auto-detect ROCm, however, if your Linux distro
 or installation approach uses unusual paths, you can specify the location by
-specifying an environment variable `ROCM_PATH` to the location of the ROCm
-install (typically `/opt/rocm`), and `CLBlast_DIR` to the location of the
-CLBlast install (typically `/usr/lib/cmake/CLBlast`). You can also customize
-the AMD GPU targets by setting AMDGPU_TARGETS (e.g. `AMDGPU_TARGETS="gfx1101;gfx1102"`)
-
-Then generate dependencies:  (Adjust the job count based on your number of processors for a faster build)
+specifying an environment variable `HIP_PATH` to the location of the ROCm
+install (typically `/opt/rocm`). You can also customize
+the AMD GPU targets by setting HIP_ARCHS (e.g. `HIP_ARCHS=gfx1101;gfx1102`)
 
 ```
 make -j 5
-```
-
-Then build the binary:
-
-```
-go build .
 ```
 
 ROCm requires elevated privileges to access the GPU at runtime. On most distros you can add your user account to the `render` group, or run as root.
@@ -108,7 +81,7 @@ Custom CPU settings are not currently supported in the new Go server build but w
 
 #### Containerized Linux Build
 
-If you have Docker available, you can build linux binaries with `./scripts/build_linux.sh` which has the CUDA and ROCm dependencies included. The resulting binary is placed in `./dist`
+If you have Docker and buildx available, you can build linux binaries with `./scripts/build_linux.sh` which has the CUDA and ROCm dependencies included. The resulting artifacts are placed in `./dist`  and by default the script builds both arm64 and amd64 binaries.  If you want to build only amd64, you can build with `PLATFORM=linux/amd64 ./scripts/build_linux.sh`
 
 ### Windows
 
@@ -126,12 +99,8 @@ The following tools are required as a minimal development environment to build C
 > [!NOTE]  
 > Due to bugs in the GCC C++ library for unicode support, Ollama should be built with clang on windows.
 
-Then, build the `ollama` binary:
-
-```powershell
-$env:CGO_ENABLED="1"
-make -j 8
-go build .
+```
+make -j 5
 ```
 
 #### GPU Support

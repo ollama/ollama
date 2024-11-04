@@ -51,14 +51,18 @@ func Refresh(payloadFS fs.FS) (string, error) {
 		}()
 	}
 
-	if hasPayloads(payloadFS) {
-		if runnersDir == "" {
-			runnersDir, err = extractRunners(payloadFS)
-		} else {
-			err = refreshRunners(payloadFS, runnersDir)
+	// avoid payloads if we're operating off a local build
+	d, err := locateRunners()
+	if err != nil {
+		if hasPayloads(payloadFS) {
+			if runnersDir == "" {
+				runnersDir, err = extractRunners(payloadFS)
+			} else {
+				err = refreshRunners(payloadFS, runnersDir)
+			}
 		}
-	} else if runnersDir == "" {
-		runnersDir, err = locateRunners()
+	} else {
+		runnersDir = d
 	}
 
 	return runnersDir, err
@@ -78,31 +82,23 @@ func Cleanup(payloadFS fs.FS) {
 	}
 }
 
+// locateRunners searches for runners in a prioritized set of locations
+// 1. local build, with executable at the top of the tree
+// 2. lib directory relative to executable
+// 3. payload extracted to OLLAMA_TMPDIR (this routine returns an error)
 func locateRunners() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return "", err
 	}
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", err
+	paths := []string{
+		filepath.Join(filepath.Dir(exe), "llama", "build", runtime.GOOS+"-"+runtime.GOARCH, "runners"),
+		filepath.Join(filepath.Dir(exe), envconfig.LibRelativeToExe(), "lib", "ollama", "runners"),
 	}
-
-	var paths []string
-	for _, root := range []string{filepath.Dir(exe), filepath.Join(filepath.Dir(exe), envconfig.LibRelativeToExe()), cwd} {
-		paths = append(paths,
-			root,
-			filepath.Join(root, runtime.GOOS+"-"+runtime.GOARCH),
-			filepath.Join(root, "dist", runtime.GOOS+"-"+runtime.GOARCH),
-		)
-	}
-
-	// Try a few variations to improve developer experience when building from source in the local tree
 	for _, path := range paths {
-		candidate := filepath.Join(path, "lib", "ollama", "runners")
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
+		if _, err := os.Stat(path); err == nil {
+			return path, nil
 		}
 	}
 	// Fall back to built-in
