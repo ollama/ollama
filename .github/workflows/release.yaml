@@ -12,7 +12,7 @@ on:
 jobs:
   # Full build of the Mac assets
   build-darwin:
-    runs-on: macos-12
+    runs-on: macos-13
     environment: release
     steps:
       - uses: actions/checkout@v4
@@ -43,8 +43,8 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
           APPLE_ID: ${{ vars.APPLE_ID }}
-          SDKROOT: /Applications/Xcode_13.4.1.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
-          DEVELOPER_DIR: /Applications/Xcode_13.4.1.app/Contents/Developer
+          SDKROOT: /Applications/Xcode_14.1.0.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
+          DEVELOPER_DIR: /Applications/Xcode_14.1.0.app/Contents/Developer
         run: |
           ./scripts/build_darwin.sh
 
