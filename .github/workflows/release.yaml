@@ -378,7 +378,7 @@ jobs:
           $env:PATH="$gopath;$gccpath;$env:PATH"
           echo $env:PATH
           $env:ARCH="arm64"
-          .\scripts\build_windows.ps1 buildOllama buildApp gatherDependencies distZip
+          .\scripts\build_windows.ps1 buildOllama buildApp gatherDependencies sign distZip
         name: 'Windows Build'
       - uses: actions/upload-artifact@v4
         with:
