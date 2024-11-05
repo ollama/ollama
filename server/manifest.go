@@ -123,7 +123,7 @@ func WriteManifest(name model.Name, config Layer, layers []Layer) error {
 	return json.NewEncoder(f).Encode(m)
 }
 
-func Manifests() (map[model.Name]*Manifest, error) {
+func Manifests(continueOnError bool) (map[model.Name]*Manifest, error) {
 	manifests, err := GetManifestPath()
 	if err != nil {
 		return nil, err
@@ -145,22 +145,29 @@ func Manifests() (map[model.Name]*Manifest, error) {
 		if !fi.IsDir() {
 			rel, err := filepath.Rel(manifests, match)
 			if err != nil {
+				if !continueOnError {
+					return nil, fmt.Errorf("%s %w", match, err)
+				}
 				slog.Warn("bad filepath", "path", match, "error", err)
 				continue
 			}
 
 			n := model.ParseNameFromFilepath(rel)
 			if !n.IsValid() {
+				if !continueOnError {
+					return nil, fmt.Errorf("%s %w", rel, err)
+				}
 				slog.Warn("bad manifest name", "path", rel)
 				continue
 			}
 
 			m, err := ParseNamedManifest(n)
-			if syntax := &(json.SyntaxError{}); errors.As(err, &syntax) {
+			if err != nil {
+				if !continueOnError {
+					return nil, fmt.Errorf("%s %w", n, err)
+				}
 				slog.Warn("bad manifest", "name", n, "error", err)
 				continue
-			} else if err != nil {
-				return nil, fmt.Errorf("%s: %w", n, err)
 			}
 
 			ms[n] = m

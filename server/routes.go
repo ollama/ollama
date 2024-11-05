@@ -622,7 +622,7 @@ func (s *Server) PushHandler(c *gin.Context) {
 }
 
 func checkNameExists(name model.Name) error {
-	names, err := Manifests()
+	names, err := Manifests(true)
 	if err != nil {
 		return err
 	}
@@ -894,7 +894,7 @@ func getKVData(digest string, verbose bool) (llm.KV, error) {
 }
 
 func (s *Server) ListHandler(c *gin.Context) {
-	ms, err := Manifests()
+	ms, err := Manifests(true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1211,18 +1211,22 @@ func Serve(ln net.Listener) error {
 	}
 
 	if !envconfig.NoPrune() {
-		// clean up unused layers and manifests
-		if err := PruneLayers(); err != nil {
-			return err
-		}
+		if _, err := Manifests(false); err != nil {
+			slog.Warn("corrupt manifests detected, skipping prune operation.  Re-pull or delete to clear", "error", err)
+		} else {
+			// clean up unused layers and manifests
+			if err := PruneLayers(); err != nil {
+				return err
+			}
 
-		manifestsPath, err := GetManifestPath()
-		if err != nil {
-			return err
-		}
+			manifestsPath, err := GetManifestPath()
+			if err != nil {
+				return err
+			}
 
-		if err := PruneDirectory(manifestsPath); err != nil {
-			return err
+			if err := PruneDirectory(manifestsPath); err != nil {
+				return err
+			}
 		}
 	}
 
