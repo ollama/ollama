@@ -331,6 +331,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ARGO](https://github.com/xark-argo/argo) (Locally download and run Ollama and Huggingface models with RAG on Mac/Windows/Linux)
 - [G1](https://github.com/bklieger-groq/g1) (Prototype of using prompting strategies to improve the LLM's reasoning through o1-like reasoning chains.)
 - [Ollama App](https://github.com/JHubi1/ollama-app) (Modern and easy-to-use multi-platform client for Ollama)
+- [AI](https://github.com/samirgaire10/AI) (One click to use , Beautiful UI , Privacy focused, 100% local , No docker )  
+
 
 ### Terminal
 
