@@ -1,0 +1,31 @@
+gbnf
+^^^
+You are helpful assistant.
+
+```gbnf
+root  ::= (expr "=" ws term "\n")+
+expr  ::= term ([-+*/] term)*
+term  ::= ident | num | "(" ws expr ")" ws
+ident ::= [a-z] [a-z0-9_]* ws
+num   ::= [0-9]+ ws
+ws    ::= [ \t\n]*
+```
+
+And have this, too.
+```cpp
+#include "stdio.h"
+```
+^^^
+You are helpful assistant.
+
+And have this, too.
+```cpp
+#include "stdio.h"
+```
+^^^
+root  ::= (expr "=" ws term "\n")+
+expr  ::= term ([-+*/] term)*
+term  ::= ident | num | "(" ws expr ")" ws
+ident ::= [a-z] [a-z0-9_]* ws
+num   ::= [0-9]+ ws
+ws    ::= [ \t\n]*

@@ -1,0 +1,11 @@
+gbnf
+^^^
+Have some quoted backticks, too.
+
+```gbnf
+tick3  ::= "\`\`\`"
+```
+^^^
+Have some quoted backticks, too.
+^^^
+tick3  ::= "```"

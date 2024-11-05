@@ -1,0 +1,36 @@
+gbnf
+^^^
+You are helpful assistant.
+
+```gbnf
+root  ::= (expr "=" ws term "\n")+
+expr  ::= term ([-+*/] term)*
+term  ::= ident | num | "(" ws expr ")" ws
+ident ::= [a-z] [a-z0-9_]* ws
+num   ::= [0-9]+ ws
+ws    ::= [ \t\n]*
+```
+
+And have this, too.
+```gbnf
+root ::= item+
+
+# Excludes various line break characters
+item ::= "- " [^\r\n\x0b\x0c\x85\u2028\u2029]+ "\n"
+```
+^^^
+You are helpful assistant.
+
+And have this, too.
+^^^
+root  ::= (expr "=" ws term "\n")+
+expr  ::= term ([-+*/] term)*
+term  ::= ident | num | "(" ws expr ")" ws
+ident ::= [a-z] [a-z0-9_]* ws
+num   ::= [0-9]+ ws
+ws    ::= [ \t\n]*
+^^^
+root ::= item+
+
+# Excludes various line break characters
+item ::= "- " [^\r\n\x0b\x0c\x85\u2028\u2029]+ "\n"

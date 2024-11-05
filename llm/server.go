@@ -676,6 +676,7 @@ type completion struct {
 type CompletionRequest struct {
 	Prompt  string
 	Format  string
+	Grammar string
 	Images  []ImageData
 	Options *api.Options
 }
@@ -726,6 +727,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		"stop":              req.Options.Stop,
 		"image_data":        req.Images,
 		"cache_prompt":      true,
+		"grammar":           req.Grammar,
 	}
 
 	// Make sure the server is ready

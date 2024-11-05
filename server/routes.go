@@ -212,6 +212,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	prompt := req.Prompt
+	grammar := ""
 	if !req.Raw {
 		tmpl := m.Template
 		if req.Template != "" {
@@ -228,10 +229,18 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			values.Suffix = req.Suffix
 		} else {
 			var msgs []api.Message
+
 			if req.System != "" {
 				msgs = append(msgs, api.Message{Role: "system", Content: req.System})
 			} else if m.System != "" {
 				msgs = append(msgs, api.Message{Role: "system", Content: m.System})
+			}
+
+			grammar, err = wrenchGrammarFrom(msgs)
+			if err != nil {
+				fmt.Println(err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err})
+				return
 			}
 
 			if req.Context == nil {
@@ -279,6 +288,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			Images:  images,
 			Format:  req.Format,
 			Options: opts,
+			Grammar: grammar,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:      req.Model,
@@ -1444,6 +1454,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
 	}
 
+	grammar, err := wrenchGrammarFrom(msgs)
+	if err != nil {
+		fmt.Println(err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err})
+		return
+	}
+
 	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, req.Tools)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1460,6 +1477,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			Images:  images,
 			Format:  req.Format,
 			Options: opts,
+			Grammar: grammar,
 		}, func(r llm.CompletionResponse) {
 			res := api.ChatResponse{
 				Model:      req.Model,
