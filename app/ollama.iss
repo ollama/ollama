@@ -136,7 +136,7 @@ Type: filesandordirs; Name: "{%TEMP}\ollama*"
 Type: filesandordirs; Name: "{%LOCALAPPDATA}\Programs\Ollama"
 
 [Messages]
-WizardReady=Ollama Windows Preview
+WizardReady=Ollama
 ReadyLabel1=%nLet's get you up and running with your own large language models.
 SetupAppRunningError=Another Ollama installer is running.%n%nPlease cancel or finish the other installer, then click OK to continue with this install, or Cancel to exit.
 
