@@ -623,86 +623,113 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 }
 
 func ListHandler(cmd *cobra.Command, args []string) error {
-  client, err := api.ClientFromEnvironment()
-  if err != nil {
-    return err
-  }
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
 
-  models, err := client.List(cmd.Context())
-  if err != nil {
-    return err
-  }
+	showAsTree, err := cmd.Flags().GetBool("dependency-tree")
+	if err != nil {
+		return err
+	}
 
-  modelGroups := make(map[string][]api.ListModelResponse)
-  for _, m := range models.Models {
-    model, _ := server.GetModel(m.Name)
-    modelPath := model.ModelPath
-    modelGroups[modelPath] = append(modelGroups[modelPath], m)
-  }
+	models, err := client.List(cmd.Context())
+	if err != nil {
+		return err
+	}
 
-  type ModelGroup struct {
-    BaseModel   api.ListModelResponse
-    Descendants []api.ListModelResponse
-  }
-  var groups []ModelGroup
+	// Prepare data based on the flag
+	var data [][]string
+	if showAsTree {
+		data = prepareDependencyTreeData(models.Models)
+	} else {
+		data = prepareFlatListData(models.Models, args)
+	}
 
-  for _, group := range modelGroups {
-    sort.Slice(group, func(i, j int) bool {
-      return group[i].ModifiedAt.Before(group[j].ModifiedAt)
-    })
-    baseModel := group[0]
-    descendants := group[1:]
+	// Render the table
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"NAME", "ID", "SIZE", "MODIFIED"})
+	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	table.SetHeaderLine(false)
+	table.SetBorder(false)
+	table.SetNoWhiteSpace(true)
+	table.SetAutoWrapText(false)
+	table.SetTablePadding("    ")
+	table.AppendBulk(data)
+	table.Render()
 
-    sort.Slice(descendants, func(i, j int) bool {
-      return descendants[i].ModifiedAt.After(descendants[j].ModifiedAt)
-    })
+	return nil
+}
 
-    groups = append(groups, ModelGroup{
-      BaseModel:   baseModel,
-      Descendants: descendants,
-    })
-  }
+// prepareFlatListData formats data for the flat list view.
+func prepareFlatListData(models []api.ListModelResponse, args []string) [][]string {
+	var data [][]string
+	for _, m := range models {
+		if len(args) == 0 || strings.HasPrefix(m.Name, args[0]) {
+			data = append(data, []string{
+				m.Name,
+				m.Digest[:12],
+				format.HumanBytes(m.Size),
+				format.HumanTime(m.ModifiedAt, "Never"),
+			})
+		}
+	}
+	return data
+}
 
-  sort.Slice(groups, func(i, j int) bool {
-    return groups[i].BaseModel.ModifiedAt.After(groups[j].BaseModel.ModifiedAt)
-  })
+// prepareDependencyTreeData formats data for the dependency tree view.
+func prepareDependencyTreeData(models []api.ListModelResponse) [][]string {
+	modelGroups := make(map[string][]api.ListModelResponse)
+	for _, m := range models {
+		model, _ := server.GetModel(m.Name)
+		modelPath := model.ModelPath
+		modelGroups[modelPath] = append(modelGroups[modelPath], m)
+	}
 
-  var data [][]string
-  for _, g := range groups {
-    data = append(data, []string{
-      g.BaseModel.Name,
-      g.BaseModel.Digest[:12],
-      format.HumanBytes(g.BaseModel.Size),
-      format.HumanTime(g.BaseModel.ModifiedAt, "Never"),
-    })
+	var groups []struct {
+		BaseModel   api.ListModelResponse
+		Descendants []api.ListModelResponse
+	}
+	for _, group := range modelGroups {
+		sort.Slice(group, func(i, j int) bool { return group[i].ModifiedAt.Before(group[j].ModifiedAt) })
+		baseModel := group[0]
+		descendants := group[1:]
+		sort.Slice(descendants, func(i, j int) bool { return descendants[i].ModifiedAt.After(descendants[j].ModifiedAt) })
+		groups = append(groups, struct {
+			BaseModel   api.ListModelResponse
+			Descendants []api.ListModelResponse
+		}{BaseModel: baseModel, Descendants: descendants})
+	}
 
-    for i, m := range g.Descendants {
-      prefix := " └── "
-      if i < len(g.Descendants)-1 {
-        prefix = " ├── "
-      }
-      data = append(data, []string{
-        prefix + m.Name,
-        m.Digest[:12],
-        "--", // No size for dependent models
-        format.HumanTime(m.ModifiedAt, "Never"),
-      })
-    }
-  }
+	sort.Slice(groups, func(i, j int) bool {
+		return groups[i].BaseModel.ModifiedAt.After(groups[j].BaseModel.ModifiedAt)
+	})
 
-  table := tablewriter.NewWriter(os.Stdout)
-  table.SetHeader([]string{"NAME", "ID", "SIZE", "MODIFIED"})
-  table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
-  table.SetAlignment(tablewriter.ALIGN_LEFT)
-  table.SetHeaderLine(false)
-  table.SetBorder(false)
-  table.SetNoWhiteSpace(true)
-  table.SetAutoWrapText(false)
-  table.SetTablePadding("    ")
-  table.AppendBulk(data)
-  table.Render()
+	var data [][]string
+	for _, g := range groups {
+		data = append(data, []string{
+			g.BaseModel.Name,
+			g.BaseModel.Digest[:12],
+			format.HumanBytes(g.BaseModel.Size),
+			format.HumanTime(g.BaseModel.ModifiedAt, "Never"),
+		})
 
-  return nil
+		for i, m := range g.Descendants {
+			prefix := " └── "
+			if i < len(g.Descendants)-1 {
+				prefix = " ├── "
+			}
+			data = append(data, []string{
+				prefix + m.Name,
+				m.Digest[:12],
+				"--", // No size for dependent models
+				format.HumanTime(m.ModifiedAt, "Never"),
+			})
+		}
+	}
+
+	return data
 }
 
 func ListRunningHandler(cmd *cobra.Command, args []string) error {
@@ -1475,6 +1502,9 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListHandler,
 	}
+
+	listCmd.Flags().BoolP("dependency-tree", "t", false, "Show models as a dependency tree")
+
 
 	psCmd := &cobra.Command{
 		Use:     "ps",
