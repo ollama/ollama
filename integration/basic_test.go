@@ -31,7 +31,7 @@ func TestOrcaMiniBlueSky(t *testing.T) {
 }
 
 func TestUnicode(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	// Set up the test data
 	req := api.GenerateRequest{
@@ -42,9 +42,15 @@ func TestUnicode(t *testing.T) {
 		Options: map[string]interface{}{
 			"temperature": 0,
 			"seed":        123,
+			// Workaround deepseek context shifting bug
+			"num_ctx":     8192,
+			"num_predict": 2048,
 		},
 	}
-	GenerateTestHelper(ctx, t, req, []string{"散射", "频率"})
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+	require.NoError(t, PullIfMissing(ctx, client, req.Model))
+	DoGenerate(ctx, t, client, req, []string{"散射", "频率"}, 120*time.Second, 120*time.Second)
 }
 
 func TestExtendedUnicodeOutput(t *testing.T) {
@@ -60,7 +66,10 @@ func TestExtendedUnicodeOutput(t *testing.T) {
 			"seed":        123,
 		},
 	}
-	GenerateTestHelper(ctx, t, req, []string{"😀", "😊", "😁", "😂", "😄", "😃"})
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+	require.NoError(t, PullIfMissing(ctx, client, req.Model))
+	DoGenerate(ctx, t, client, req, []string{"😀", "😊", "😁", "😂", "😄", "😃"}, 120*time.Second, 120*time.Second)
 }
 
 func TestUnicodeModelDir(t *testing.T) {

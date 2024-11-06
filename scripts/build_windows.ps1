@@ -75,7 +75,6 @@ function checkEnv() {
     } else {
         write-host "Code signing disabled - please set KEY_CONTAINERS to sign and copy ollama_inc.crt to the top of the source tree"
     }
-
 }
 
 
@@ -91,11 +90,6 @@ function buildOllama() {
     write-host "Building ollama CLI"
     & go build -trimpath -ldflags "-s -w -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    if ("${env:KEY_CONTAINER}") {
-        & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
-            /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} ollama.exe
-        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    }
     New-Item -ItemType Directory -Path .\dist\windows-${script:TARGET_ARCH}\ -Force
     cp .\ollama.exe .\dist\windows-${script:TARGET_ARCH}\
 }
@@ -106,11 +100,6 @@ function buildApp() {
     & windres -l 0 -o ollama.syso ollama.rc
     & go build -trimpath -ldflags "-s -w -H windowsgui -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" -o "${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}-app.exe" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    if ("${env:KEY_CONTAINER}") {
-        & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
-            /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} "${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}-app.exe"
-        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    }
 }
 
 function gatherDependencies() {
@@ -143,16 +132,19 @@ function gatherDependencies() {
         copy-item -path "${env:VCToolsRedistDir}\vc_redist.arm64.exe" -destination "${script:DIST_DIR}" -verbose
     }
 
-
     cp "${script:SRC_DIR}\app\ollama_welcome.ps1" "${script:SRC_DIR}\dist\"
+}
+
+function sign() {
     if ("${env:KEY_CONTAINER}") {
-        write-host "about to sign"
-        foreach ($file in (get-childitem "${script:DIST_DIR}\lib\ollama\cu*.dll") + @("${script:SRC_DIR}\dist\ollama_welcome.ps1")){
-            write-host "signing $file"
-            & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
-                /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} $file
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        }
+        write-host "Signing Ollama executables, scripts and libraries"
+        & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
+            /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} `
+            $(get-childitem -path "${script:SRC_DIR}\dist" -r -include @('ollama_welcome.ps1')) `
+            $(get-childitem -path "${script:SRC_DIR}\dist\windows-*" -r -include @('*.exe', '*.dll'))
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    } else {
+        write-host "Signing not enabled"
     }
 }
 
@@ -183,6 +175,7 @@ try {
         buildOllama
         buildApp
         gatherDependencies
+        sign
         buildInstaller
         distZip
     } else {

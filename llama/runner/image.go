@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/maphash"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -62,9 +63,9 @@ func (c *ImageContext) Free(modelPath string) {
 	}
 }
 
-func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte, aspectRatioId int) [][]float32 {
+func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte, aspectRatioId int) ([][]float32, error) {
 	if c == nil {
-		return nil
+		return nil, nil
 	}
 
 	hash := c.hashImage(data)
@@ -75,17 +76,40 @@ func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte, aspect
 	embed, err := c.findImage(hash)
 	if err != nil {
 		if c.mllama != nil {
-			embed = c.mllama.NewEmbed(llamaContext, data, aspectRatioId)
+			embed, err = c.mllama.NewEmbed(llamaContext, data, aspectRatioId)
+			if err != nil {
+				return nil, err
+			}
 		} else if c.clip != nil {
-			embed = c.clip.NewEmbed(llamaContext, data)
+			embed, err = c.clip.NewEmbed(llamaContext, data)
+			if err != nil {
+				return nil, err
+			}
 		} else {
-			return nil
+			return nil, errors.New("received image but vision model not loaded")
 		}
 
 		c.addImage(hash, embed)
 	}
 
-	return embed
+	return embed, nil
+}
+
+func (c *ImageContext) BatchSize(configuredBatchSize int) int {
+	// If images are not supported, we don't need to allocate embedding batches
+	if c == nil {
+		return 0
+	}
+
+	// Mllama maps an image to 1 embedding token (llava creates many tokens)
+	// and doesn't support more than a single image per request.
+	// The embeddings are large (100 MB), so allocating a big batch can fail
+	// on some systems
+	if c.mllama != nil {
+		return 1
+	}
+
+	return configuredBatchSize
 }
 
 func (c *ImageContext) EmbedSize(llamaContext *llama.Context) int {
@@ -94,6 +118,16 @@ func (c *ImageContext) EmbedSize(llamaContext *llama.Context) int {
 	} else {
 		return llamaContext.Model().NEmbd()
 	}
+}
+
+func (c *ImageContext) NeedCrossAttention(inputs ...input) bool {
+	if c == nil || c.mllama == nil {
+		return false
+	}
+
+	return slices.ContainsFunc(inputs, func(input input) bool {
+		return input.embed != nil
+	})
 }
 
 type imageCache struct {
