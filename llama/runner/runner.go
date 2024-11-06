@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llama"
@@ -50,6 +51,10 @@ type Sequence struct {
 
 	// input cache being used by this sequence
 	cache *InputCacheSlot
+
+	// does this sequence require cross-attention layers to be processed? - if we have seen
+	// an image for certain multi-modal models
+	crossAttention bool
 
 	// channel to send responses over
 	responses chan string
@@ -126,7 +131,10 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 
 	var sc *llama.SamplingContext
 	if params.samplingParams != nil {
-		sc = llama.NewSamplingContext(s.model, *params.samplingParams)
+		sc, err = llama.NewSamplingContext(s.model, *params.samplingParams)
+		if err != nil {
+			return nil, err
+		}
 		for _, input := range inputs {
 			if input.embed == nil {
 				sc.Accept(input.token, false)
@@ -189,16 +197,10 @@ func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 				return nil, fmt.Errorf("invalid image index: %d", n)
 			}
 
-			hash := s.cache.HashImage(images[imageIndex].Data)
-
-			// Vision models cannot be accessed concurrently
-			s.clip.mu.Lock()
-			embed, err := s.cache.FindImage(hash)
+			embed, err := s.image.NewEmbed(s.lc, images[imageIndex].Data, images[imageIndex].AspectRatioID)
 			if err != nil {
-				embed = llama.NewLlavaImageEmbed(s.lc, s.clip.cc, images[imageIndex].Data)
-				s.cache.AddImage(hash, embed)
+				return nil, err
 			}
-			s.clip.mu.Unlock()
 
 			for _, e := range embed {
 				inputs = append(inputs, input{embed: e})
@@ -206,32 +208,7 @@ func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 		}
 	}
 
-	if s.clip.cc != nil {
-		var embed [][]float32
-
-		if s.clip.cc.IsMllama && len(images) >= 1 {
-			hash := s.cache.HashImage(images[0].Data)
-
-			s.clip.mu.Lock()
-			var err error
-			embed, err = s.cache.FindImage(hash)
-			if err != nil {
-				embed = llama.NewMllamaImageEmbed(s.lc, s.clip.cc, images[0].Data, images[0].AspectRatioID)
-				s.cache.AddImage(hash, embed)
-			}
-			s.clip.mu.Unlock()
-		}
-		s.mu.Lock()
-		llama.MllamaSetCrossAttn(s.lc, s.clip.cc, embed)
-		s.mu.Unlock()
-	}
-
 	return inputs, nil
-}
-
-type clip struct {
-	cc *llama.ClipContext
-	mu sync.Mutex
 }
 
 type Server struct {
@@ -239,8 +216,9 @@ type Server struct {
 	lc    *llama.Context
 
 	// required for image embeddings
-	clip clip
+	image *ImageContext
 
+	// TODO (jmorganca): make this n_batch
 	batchSize int
 
 	// parallel is the number of parallel requests to handle
@@ -293,17 +271,29 @@ func (s *Server) shiftContext(seq *Sequence) {
 }
 
 func flushPending(seq *Sequence) bool {
-	for _, p := range seq.pendingResponses {
-		select {
-		case seq.responses <- p:
-		case <-seq.quit:
-			seq.pendingResponses = []string{}
-			return false
-		}
+	joined := strings.Join(seq.pendingResponses, "")
+	seq.pendingResponses = []string{}
+
+	// Check if there are any partial UTF-8 characters remaining.
+	// We already check and queue as we are generating but some may
+	// still make it here:
+	// - Sequence is ending, e.g. generation limit has been hit
+	// - Invalid characters in the middle of a string
+	// This is a stricter check to ensure we never output invalid Unicode.
+	for !utf8.ValidString(joined) {
+		joined = joined[:len(joined)-1]
 	}
 
-	seq.pendingResponses = []string{}
-	return true
+	if len(joined) == 0 {
+		return true
+	}
+
+	select {
+	case seq.responses <- joined:
+		return true
+	case <-seq.quit:
+		return false
+	}
 }
 
 func (s *Server) removeSequence(seqIndex int, reason string) {
@@ -314,22 +304,31 @@ func (s *Server) removeSequence(seqIndex int, reason string) {
 	close(seq.responses)
 	close(seq.embedding)
 	seq.cache.InUse = false
-	if s.clip.cc != nil {
-		llama.MllamaSetCrossAttn(s.lc, s.clip.cc, nil)
-	}
 	s.seqs[seqIndex] = nil
 }
 
 func (s *Server) run(ctx context.Context) {
 	s.ready.Wait()
 
-	// logically these batches are used only within the context of processBatch
+	// Logically these batches are used only within the context of processBatch
 	// but it is better for performance to allocate them once here
-	tokenBatch := llama.NewBatch(s.batchSize*len(s.seqs), 0, len(s.seqs))
+	tokenBatch, err := llama.NewBatch(s.batchSize, len(s.seqs), 0)
+	if err != nil {
+		panic(err)
+	}
 	defer tokenBatch.Free()
 
-	embedBatch := llama.NewBatch(s.batchSize*len(s.seqs), s.lc.Model().NEmbd(), len(s.seqs))
-	defer embedBatch.Free()
+	var embedBatch *llama.Batch
+	embedBatchSize := s.image.BatchSize(s.batchSize)
+	if embedBatchSize != 0 {
+		embedBatch, err = llama.NewBatch(embedBatchSize, len(s.seqs), s.image.EmbedSize(s.lc))
+		if err != nil {
+			panic(err)
+		}
+		defer embedBatch.Free()
+	} else {
+		embedBatch = &llama.Batch{}
+	}
 
 	for {
 		select {
@@ -358,6 +357,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 	defer s.mu.Unlock()
 
 	var batch *llama.Batch
+	crossAttention := false
 
 	seqIdx := s.nextSeq - 1
 	for range s.seqs {
@@ -391,18 +391,19 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 					batch = tokenBatch
 				} else {
 					batch = embedBatch
+					seq.crossAttention = s.image.NeedCrossAttention(input)
 				}
-			} else if embedding != batch.IsEmbedding() {
+			} else if embedding != batch.IsEmbedding() || crossAttention != seq.crossAttention {
 				s.nextSeq = seqIdx
 				break
 			}
 
-			// todo: make this n_batch
-			if i >= s.batchSize {
+			if i >= batch.Size() {
 				break
 			}
 
-			batch.Add(input.token, input.embed, seq.numPast, []int{seq.cache.Id}, numInputsProcessed+1 == len(seq.inputs))
+			crossAttention = seq.crossAttention
+			batch.Add(input.token, input.embed, seq.numPast, numInputsProcessed+1 == len(seq.inputs), seq.cache.Id)
 			seq.numPast++
 			numInputsProcessed++
 		}
@@ -417,6 +418,8 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 	if batch == nil || batch.NumTokens() == 0 {
 		return
 	}
+
+	s.lc.SetCrossAttention(crossAttention)
 
 	err := s.lc.Decode(batch)
 	if err != nil {
@@ -635,6 +638,9 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, fmt.Sprintf("Failed to load cache: %v", err), http.StatusInternalServerError)
 				return
 			}
+
+			seq.crossAttention = s.image.NeedCrossAttention(seq.cache.Inputs...)
+
 			s.seqs[i] = seq
 			s.cond.Signal()
 			break
@@ -777,10 +783,17 @@ func (s *Server) loadModel(
 ) {
 	llama.BackendInit()
 
-	s.model = llama.LoadModelFromFile(mpath, params)
+	var err error
+	s.model, err = llama.LoadModelFromFile(mpath, params)
+	if err != nil {
+		panic(err)
+	}
 
 	ctxParams := llama.NewContextParams(kvSize, s.batchSize*s.parallel, s.parallel, threads, flashAttention)
-	s.lc = llama.NewContextWithModel(s.model, ctxParams)
+	s.lc, err = llama.NewContextWithModel(s.model, ctxParams)
+	if err != nil {
+		panic(err)
+	}
 
 	if lpath != "" {
 		err := s.model.ApplyLoraFromFile(s.lc, lpath, 1.0, threads)
@@ -795,7 +808,7 @@ func (s *Server) loadModel(
 
 	if ppath != "" {
 		var err error
-		s.clip.cc, err = llama.NewClipContext(ppath)
+		s.image, err = NewImageContext(s.lc, ppath)
 		if err != nil {
 			panic(err)
 		}
@@ -824,13 +837,7 @@ func main() {
 	mlock := flag.Bool("mlock", false, "force system to keep model in RAM rather than swapping or compressing")
 	tensorSplit := flag.String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
 	multiUserCache := flag.Bool("multiuser-cache", false, "optimize input cache algorithm for multiple users")
-	// Expose requirements as a JSON output to stdout
 	requirements := flag.Bool("requirements", false, "print json requirement information")
-
-	// These are either ignored by llama.cpp or have no significance to us
-	_ = flag.Bool("embedding", false, "enable embedding vector output (default: disabled)")
-	_ = flag.Bool("log-disable", false, "disables logging to a file")
-	_ = flag.Bool("memory-f32", false, "use f32 instead of f16 for memory key+value (default: disabled) not recommended: doubles context memory required and no measurable increase in quality")
 
 	flag.Parse()
 	if *requirements {
@@ -854,7 +861,7 @@ func main() {
 	})
 	slog.SetDefault(slog.New(handler))
 	slog.Info("starting go runner")
-	slog.Debug("system info", "cpu", llama.PrintSystemInfo(), "threads", *threads)
+	slog.Info("system", "info", llama.PrintSystemInfo(), "threads", *threads)
 
 	server := &Server{
 		batchSize: *batchSize,

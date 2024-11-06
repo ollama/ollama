@@ -175,6 +175,11 @@ func (si SystemInfo) GetOptimalThreadCount() int {
 	if len(si.System.CPUs) == 0 {
 		return 0
 	}
-	// Allocate thread count matching the performance cores on a single socket
-	return si.System.CPUs[0].CoreCount - si.System.CPUs[0].EfficiencyCoreCount
+
+	coreCount := 0
+	for _, c := range si.System.CPUs {
+		coreCount += c.CoreCount - c.EfficiencyCoreCount
+	}
+
+	return coreCount
 }

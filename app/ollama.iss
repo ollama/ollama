@@ -53,8 +53,8 @@ RestartIfNeededByRun=no
 ; https://jrsoftware.org/ishelp/index.php?topic=setup_wizardimagefile
 WizardSmallImageFile=.\assets\setup.bmp
 
-; TODO verifty actual min windows version...
-; OG Win 10
+; Ollama requires Windows 10 22H2 or newer for proper unicode rendering
+; TODO: consider setting this to 10.0.19045
 MinVersion=10.0.10240
 
 ; First release that supports WinRT UI Composition for win32 apps

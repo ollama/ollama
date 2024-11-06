@@ -20,12 +20,6 @@ OLLAMA_COMMON_BUILD_ARGS="--build-arg=VERSION \
     --build-arg=CUSTOM_CPU_FLAGS \
     --build-arg=GPU_RUNNER_CPU_FLAGS \
     --build-arg=AMDGPU_TARGETS"
-OLLAMA_NEW_RUNNERS=${OLLAMA_NEW_RUNNERS:-""}
-if [ -n "${OLLAMA_NEW_RUNNERS}" ]; then
-    DOCKERFILE_DIR="./llama/"
-else
-    DOCKERFILE_DIR="./"
-fi
 
 echo "Building Ollama"
 echo "VERSION=$VERSION"
