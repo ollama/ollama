@@ -654,9 +654,13 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 	table.SetHeaderLine(false)
 	table.SetBorder(false)
 	table.SetNoWhiteSpace(true)
-	table.SetAutoWrapText(false)
 	table.SetTablePadding("    ")
 	table.AppendBulk(data)
+
+	if showAsTree {
+		table.SetAutoWrapText(false)
+	}
+
 	table.Render()
 
 	return nil
