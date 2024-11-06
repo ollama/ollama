@@ -68,6 +68,10 @@ func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte, aspect
 		return nil, nil
 	}
 
+	if len(data) <= 0 {
+		return nil, errors.New("received zero length image")
+	}
+
 	hash := c.hashImage(data)
 
 	c.mu.Lock()
