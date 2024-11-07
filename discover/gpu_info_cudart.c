@@ -152,6 +152,8 @@ void cudart_bootstrap(cudart_handle_t h, int i, mem_info_t *resp) {
           props.uuid.bytes[15]
         );
     }
+    strncpy(&resp->gpu_name[0], props.name, GPU_NAME_LEN - 1);
+    resp->gpu_name[GPU_NAME_LEN - 1] = '\0';
     resp->major = props.major;
     resp->minor = props.minor;
 
