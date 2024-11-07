@@ -16,6 +16,8 @@ else ifeq ($(OS),linux)
 	CUDA_PATH?=/usr/local/cuda
 	CUDA_11:=$(shell ls -d $(CUDA_PATH)-11 2>/dev/null)
 	CUDA_12:=$(shell ls -d $(CUDA_PATH)-12 2>/dev/null)
+	MUSA_PATH?=/usr/local/musa
+	MUSA_1:=$(shell ls -d $(MUSA_PATH) 2>/dev/null)
 endif
 
 ifeq ($(OLLAMA_SKIP_CUDA_GENERATE),)
@@ -31,7 +33,11 @@ ifneq ($(HIP_LIB_DIR),)
 	RUNNER_TARGETS += rocm
 endif
 endif
-
+ifeq ($(OLLAMA_SKIP_MUSA_GENERATE),)
+ifneq ($(MUSA_1),)
+	RUNNER_TARGETS += musa_v1
+endif
+endif
 
 all: clean-payload .WAIT runners
 
