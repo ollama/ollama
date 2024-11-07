@@ -2,7 +2,7 @@
 
 > Note: this is a work in progress
 
-A minimial runner for loading a model and running inference via a http web server.
+A minimal runner for loading a model and running inference via a http web server.
 
 ```
 ./runner -model <model binary>
