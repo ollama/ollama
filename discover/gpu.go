@@ -31,6 +31,13 @@ type cudaHandles struct {
 	nvml        *C.nvml_handle_t
 }
 
+type musaHandles struct {
+	deviceCount int
+	musart      *C.musart_handle_t
+	mtmusa      *C.mtmusa_handle_t
+	mtml        *C.mtml_handle_t
+}
+
 type oneapiHandles struct {
 	oneapi      *C.oneapi_handle_t
 	deviceCount int
@@ -39,6 +46,7 @@ type oneapiHandles struct {
 const (
 	cudaMinimumMemory = 457 * format.MebiByte
 	rocmMinimumMemory = 457 * format.MebiByte
+	musaMinimumMemory = 256 * format.MebiByte
 	// TODO OneAPI minimum memory
 )
 
@@ -54,6 +62,10 @@ var (
 	nvmlLibPath   string
 	rocmGPUs      []RocmGPUInfo
 	oneapiGPUs    []OneapiGPUInfo
+	musaGPUs      []MusaGPUInfo
+	mtmusaLibPath string
+	musartLibPath string
+	mtmlLibPath   string
 
 	// If any discovered GPUs are incompatible, report why
 	unsupportedGPUs []UnsupportedGPUInfo
@@ -66,10 +78,97 @@ var (
 // With our current CUDA compile flags, older than 5.0 will not work properly
 var CudaComputeMin = [2]C.int{5, 0}
 
+// With our current MUSA compile flags, older than 2.1 will not work properly
+var MusaComputeMin = [2]C.int{2, 1}
+
 var RocmComputeMin = 9
 
 // TODO find a better way to detect iGPU instead of minimum memory
 const IGPUMemLimit = 1 * format.GibiByte // 512G is what they typically report, so anything less than 1G must be iGPU
+
+// Note: gpuMutex must already be held
+func initMusaHandles() *musaHandles {
+	// TODO - if the ollama build is CPU only, don't do these checks as they're irrelevant and confusing
+
+	mHandles := &musaHandles{}
+	// Short Circuit if we already know which library to use
+	// ignore bootstrap errors in this case since we already recorded them
+	if mtmlLibPath != "" {
+		mHandles.mtml, _, _ = loadMTMLMgmt([]string{mtmlLibPath})
+		return mHandles
+	}
+	if mtmusaLibPath != "" {
+		mHandles.deviceCount, mHandles.mtmusa, _, _ = loadMTMUSAMgmt([]string{mtmusaLibPath})
+		return mHandles
+	}
+	if musartLibPath != "" {
+		mHandles.deviceCount, mHandles.musart, _, _ = loadMUSARTMgmt([]string{cudartLibPath})
+		return mHandles
+	}
+
+	slog.Debug("searching for GPU discovery libraries for Moore Threads")
+	var musartMgmtPatterns []string
+
+	// Aligned with driver, we can't carry as payloads
+	mtmusaMgmtPatterns := MtmusaGlobs
+
+	if runtime.GOOS == "windows" {
+		localAppData := os.Getenv("LOCALAPPDATA")
+		musartMgmtPatterns = []string{filepath.Join(localAppData, "Programs", "Ollama", CudartMgmtName)}
+	}
+	libDir := LibraryDir()
+	if libDir != "" {
+		musartMgmtPatterns = []string{filepath.Join(libDir, MusartMgmtName)}
+	}
+	musartMgmtPatterns = append(musartMgmtPatterns, MusartGlobs...)
+
+	if len(MtmlGlobs) > 0 {
+		mtmlLibPaths := FindGPULibs(MtmlMgmtName, MtmlGlobs)
+		if len(mtmlLibPaths) > 0 {
+			mtml, libPath, err := loadMTMLMgmt(mtmlLibPaths)
+			if mtml != nil {
+				slog.Debug("mtml loaded", "library", libPath)
+				mHandles.mtml = mtml
+				mtmlLibPath = libPath
+			}
+			if err != nil {
+				bootstrapErrors = append(bootstrapErrors, err)
+			}
+		}
+	}
+
+	mtmusaLibPaths := FindGPULibs(MtmusaMgmtName, mtmusaMgmtPatterns)
+	if len(mtmusaLibPaths) > 0 {
+		deviceCount, mtmusa, libPath, err := loadMTMUSAMgmt(mtmusaLibPaths)
+		if mtmusa != nil {
+			slog.Debug("detected GPUs", "count", deviceCount, "library", libPath)
+			mHandles.mtmusa = mtmusa
+			mHandles.deviceCount = deviceCount
+			mtmusaLibPath = libPath
+			return mHandles
+		}
+		if err != nil {
+			bootstrapErrors = append(bootstrapErrors, err)
+		}
+	}
+
+	musartLibPaths := FindGPULibs(MusartMgmtName, musartMgmtPatterns)
+	if len(musartLibPaths) > 0 {
+		deviceCount, musart, libPath, err := loadMUSARTMgmt(musartLibPaths)
+		if musart != nil {
+			slog.Debug("detected GPUs", "library", libPath, "count", deviceCount)
+			mHandles.musart = musart
+			mHandles.deviceCount = deviceCount
+			musartLibPath = libPath
+			return mHandles
+		}
+		if err != nil {
+			bootstrapErrors = append(bootstrapErrors, err)
+		}
+	}
+
+	return mHandles
+}
 
 // Note: gpuMutex must already be held
 func initCudaHandles() *cudaHandles {
@@ -197,6 +296,7 @@ func GetGPUInfo() GpuInfoList {
 	needRefresh := true
 	var cHandles *cudaHandles
 	var oHandles *oneapiHandles
+	var mHandles *musaHandles
 	defer func() {
 		if cHandles != nil {
 			if cHandles.cudart != nil {
@@ -213,6 +313,17 @@ func GetGPUInfo() GpuInfoList {
 			if oHandles.oneapi != nil {
 				// TODO - is this needed?
 				C.oneapi_release(*oHandles.oneapi)
+			}
+		}
+		if mHandles != nil {
+			if mHandles.musart != nil {
+				C.musart_release(*mHandles.musart)
+			}
+			if mHandles.mtmusa != nil {
+				C.mtmusa_release(*mHandles.mtmusa)
+			}
+			if mHandles.mtml != nil {
+				C.mtml_release(*mHandles.mtml)
 			}
 		}
 	}()
@@ -256,7 +367,7 @@ func GetGPUInfo() GpuInfoList {
 			return GpuInfoList{cpus[0].GpuInfo}
 		}
 
-		// Load ALL libraries
+		// Load ALL CUDA libraries
 		cHandles = initCudaHandles()
 
 		// NVIDIA
@@ -381,8 +492,93 @@ func GetGPUInfo() GpuInfoList {
 		if err != nil {
 			bootstrapErrors = append(bootstrapErrors, err)
 		}
+
+		// Load ALL MUSA libraries
+		mHandles = initMusaHandles()
+
+		// Moore Threads
+		for i := range mHandles.deviceCount {
+			if mHandles.mtmusa != nil {
+				gpuInfo := MusaGPUInfo{
+					GpuInfo: GpuInfo{
+						Library: "musa",
+					},
+					index: i,
+				}
+				var driverMajor int
+				var driverMinor int
+				if mHandles.musart != nil {
+					C.musart_bootstrap(*mHandles.musart, C.int(i), &memInfo)
+				} else {
+					C.mtmusa_bootstrap(*mHandles.mtmusa, C.int(i), &memInfo)
+					driverMajor = int(mHandles.mtmusa.driver_major)
+					driverMinor = int(mHandles.mtmusa.driver_minor)
+				}
+				if memInfo.err != nil {
+					slog.Info("error looking up nvidia GPU memory", "error", C.GoString(memInfo.err))
+					C.free(unsafe.Pointer(memInfo.err))
+					continue
+				}
+				gpuInfo.TotalMemory = uint64(memInfo.total)
+				gpuInfo.FreeMemory = uint64(memInfo.free)
+				gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
+				gpuInfo.Compute = fmt.Sprintf("%d.%d", memInfo.major, memInfo.minor)
+				gpuInfo.computeMajor = int(memInfo.major)
+				gpuInfo.computeMinor = int(memInfo.minor)
+				gpuInfo.MinimumMemory = musaMinimumMemory
+				gpuInfo.DriverMajor = driverMajor
+				gpuInfo.DriverMinor = driverMinor
+				variant := musaVariant(gpuInfo)
+				if depPath != "" {
+					gpuInfo.DependencyPath = depPath
+					// Check for variant specific directory
+					if variant != "" {
+						if _, err := os.Stat(filepath.Join(depPath, "musa_"+variant)); err == nil {
+							gpuInfo.DependencyPath = filepath.Join(depPath, "musa_"+variant)
+						}
+					}
+				}
+				gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
+				gpuInfo.Variant = variant
+
+				if memInfo.major < MusaComputeMin[0] || (memInfo.major == MusaComputeMin[0] && memInfo.minor < MusaComputeMin[1]) {
+					unsupportedGPUs = append(unsupportedGPUs,
+						UnsupportedGPUInfo{
+							GpuInfo: gpuInfo.GpuInfo,
+						})
+					slog.Info(fmt.Sprintf("[%d] MUSA GPU is too old. Compute Capability detected: %d.%d", i, memInfo.major, memInfo.minor))
+					continue
+				}
+
+				// query the management library as well so we can record any skew between the two
+				// which represents overhead on the GPU we must set aside on subsequent updates
+				if mHandles.mtml != nil {
+					C.mtml_get_free(*mHandles.mtml, C.int(gpuInfo.index), &memInfo.free, &memInfo.total, &memInfo.used)
+					if memInfo.err != nil {
+						slog.Warn("error looking up Moore Threads GPU memory", "error", C.GoString(memInfo.err))
+						C.free(unsafe.Pointer(memInfo.err))
+					} else {
+						if memInfo.free != 0 && uint64(memInfo.free) > gpuInfo.FreeMemory {
+							gpuInfo.OSOverhead = uint64(memInfo.free) - gpuInfo.FreeMemory
+							slog.Info("detected OS VRAM overhead",
+								"id", gpuInfo.ID,
+								"library", gpuInfo.Library,
+								"compute", gpuInfo.Compute,
+								"driver", fmt.Sprintf("%d.%d", gpuInfo.DriverMajor, gpuInfo.DriverMinor),
+								"name", gpuInfo.Name,
+								"overhead", format.HumanBytes2(gpuInfo.OSOverhead),
+							)
+						}
+					}
+				}
+
+				// TODO potentially sort on our own algorithm instead of what the underlying GPU library does...
+				musaGPUs = append(musaGPUs, gpuInfo)
+			}
+		}
+
 		bootstrapped = true
-		if len(cudaGPUs) == 0 && len(rocmGPUs) == 0 && len(oneapiGPUs) == 0 {
+		if len(cudaGPUs) == 0 && len(rocmGPUs) == 0 && len(oneapiGPUs) == 0 && len(musaGPUs) == 0 {
 			slog.Info("no compatible GPUs were discovered")
 		}
 	}
@@ -484,6 +680,54 @@ func GetGPUInfo() GpuInfoList {
 		if err != nil {
 			slog.Debug("problem refreshing ROCm free memory", "error", err)
 		}
+
+		if mHandles == nil && len(musaGPUs) > 0 {
+			mHandles = initMusaHandles()
+		}
+		for i, gpu := range musaGPUs {
+			if mHandles.mtml != nil {
+				C.mtml_get_free(*mHandles.mtml, C.int(gpu.index), &memInfo.free, &memInfo.total, &memInfo.used)
+			} else if mHandles.musart != nil {
+				C.musart_bootstrap(*mHandles.musart, C.int(gpu.index), &memInfo)
+			} else if mHandles.mtmusa != nil {
+				C.mtmusa_get_free(*mHandles.mtmusa, C.int(gpu.index), &memInfo.free, &memInfo.total)
+				memInfo.used = memInfo.total - memInfo.free
+			} else {
+				// shouldn't happen
+				slog.Warn("no valid musa library loaded to refresh vram usage")
+				break
+			}
+			if memInfo.err != nil {
+				slog.Warn("error looking up Moore Threads GPU memory", "error", C.GoString(memInfo.err))
+				C.free(unsafe.Pointer(memInfo.err))
+				continue
+			}
+			if memInfo.free == 0 {
+				slog.Warn("error looking up Moore Threads GPU memory")
+				continue
+			}
+			if mHandles.mtml != nil && gpu.OSOverhead > 0 {
+				// When using the management library update based on recorded overhead
+				memInfo.free -= C.uint64_t(gpu.OSOverhead)
+			}
+			slog.Debug("updating musa memory data",
+				"gpu", gpu.ID,
+				"name", gpu.Name,
+				"overhead", format.HumanBytes2(gpu.OSOverhead),
+				slog.Group(
+					"before",
+					"total", format.HumanBytes2(gpu.TotalMemory),
+					"free", format.HumanBytes2(gpu.FreeMemory),
+				),
+				slog.Group(
+					"now",
+					"total", format.HumanBytes2(uint64(memInfo.total)),
+					"free", format.HumanBytes2(uint64(memInfo.free)),
+					"used", format.HumanBytes2(uint64(memInfo.used)),
+				),
+			)
+			musaGPUs[i].FreeMemory = uint64(memInfo.free)
+		}
 	}
 
 	resp := []GpuInfo{}
@@ -494,6 +738,9 @@ func GetGPUInfo() GpuInfoList {
 		resp = append(resp, gpu.GpuInfo)
 	}
 	for _, gpu := range oneapiGPUs {
+		resp = append(resp, gpu.GpuInfo)
+	}
+	for _, gpu := range musaGPUs {
 		resp = append(resp, gpu.GpuInfo)
 	}
 	if len(resp) == 0 {
@@ -578,7 +825,7 @@ func loadCUDARTMgmt(cudartLibPaths []string) (int, *C.cudart_handle_t, string, e
 		defer C.free(unsafe.Pointer(lib))
 		C.cudart_init(lib, &resp)
 		if resp.err != nil {
-			err = fmt.Errorf("Unable to load cudart library %s: %s", libPath, C.GoString(resp.err))
+			err = fmt.Errorf("unable to load cudart library %s: %s", libPath, C.GoString(resp.err))
 			slog.Debug(err.Error())
 			C.free(unsafe.Pointer(resp.err))
 		} else {
@@ -616,7 +863,7 @@ func loadNVCUDAMgmt(nvcudaLibPaths []string) (int, *C.nvcuda_handle_t, string, e
 				if strings.Contains(msg, "wrong ELF class") {
 					slog.Debug("skipping 32bit library", "library", libPath)
 				} else {
-					err = fmt.Errorf("Unable to load cudart library %s: %s", libPath, C.GoString(resp.err))
+					err = fmt.Errorf("unable to load cuda driver library %s: %s", libPath, C.GoString(resp.err))
 					slog.Info(err.Error())
 				}
 			}
@@ -640,7 +887,7 @@ func loadNVMLMgmt(nvmlLibPaths []string) (*C.nvml_handle_t, string, error) {
 		defer C.free(unsafe.Pointer(lib))
 		C.nvml_init(lib, &resp)
 		if resp.err != nil {
-			err = fmt.Errorf("Unable to load NVML management library %s: %s", libPath, C.GoString(resp.err))
+			err = fmt.Errorf("unable to load NVML management library %s: %s", libPath, C.GoString(resp.err))
 			slog.Info(err.Error())
 			C.free(unsafe.Pointer(resp.err))
 		} else {
@@ -663,7 +910,7 @@ func loadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string, e
 		defer C.free(unsafe.Pointer(lib))
 		C.oneapi_init(lib, &resp)
 		if resp.err != nil {
-			err = fmt.Errorf("Unable to load oneAPI management library %s: %s", libPath, C.GoString(resp.err))
+			err = fmt.Errorf("unable to load oneAPI management library %s: %s", libPath, C.GoString(resp.err))
 			slog.Debug(err.Error())
 			C.free(unsafe.Pointer(resp.err))
 		} else {
@@ -675,6 +922,90 @@ func loadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string, e
 		}
 	}
 	return 0, nil, "", err
+}
+
+// Bootstrap the runtime library
+// Returns: num devices, handle, libPath, error
+func loadMUSARTMgmt(musartLibPaths []string) (int, *C.musart_handle_t, string, error) {
+	var resp C.musart_init_resp_t
+	resp.ch.verbose = getVerboseState()
+	var err error
+	for _, libPath := range musartLibPaths {
+		lib := C.CString(libPath)
+		defer C.free(unsafe.Pointer(lib))
+		C.musart_init(lib, &resp)
+		if resp.err != nil {
+			err = fmt.Errorf("unable to load musart library %s: %s", libPath, C.GoString(resp.err))
+			slog.Debug(err.Error())
+			C.free(unsafe.Pointer(resp.err))
+		} else {
+			err = nil
+			return int(resp.num_devices), &resp.ch, libPath, err
+		}
+	}
+	return 0, nil, "", err
+}
+
+// Bootstrap the driver library
+// Returns: num devices, handle, libPath, error
+func loadMTMUSAMgmt(mtmusaLibPaths []string) (int, *C.mtmusa_handle_t, string, error) {
+	var resp C.mtmusa_init_resp_t
+	resp.ch.verbose = getVerboseState()
+	var err error
+	for _, libPath := range mtmusaLibPaths {
+		lib := C.CString(libPath)
+		defer C.free(unsafe.Pointer(lib))
+		C.mtmusa_init(lib, &resp)
+		if resp.err != nil {
+			// Decide what log level based on the type of error message to help users understand why
+			switch resp.musaErr {
+			case C.MUSA_ERROR_SYSTEM_DRIVER_MISMATCH:
+				err = fmt.Errorf("version mismatch between driver and musa driver library - reboot or upgrade may be required: library %s", libPath)
+				slog.Warn(err.Error())
+			case C.MUSA_ERROR_NO_DEVICE:
+				err = fmt.Errorf("no moore threads devices detected by library %s", libPath)
+				slog.Info(err.Error())
+			case C.MUSA_ERROR_UNKNOWN:
+				err = fmt.Errorf("unknown error initializing musa driver library %s: %s. see https://github.com/ollama/ollama/blob/main/docs/troubleshooting.md for more information", libPath, C.GoString(resp.err))
+				slog.Warn(err.Error())
+			default:
+				msg := C.GoString(resp.err)
+				if strings.Contains(msg, "wrong ELF class") {
+					slog.Debug("skipping 32bit library", "library", libPath)
+				} else {
+					err = fmt.Errorf("unable to load musa driver library %s: %s", libPath, C.GoString(resp.err))
+					slog.Info(err.Error())
+				}
+			}
+			C.free(unsafe.Pointer(resp.err))
+		} else {
+			err = nil
+			return int(resp.num_devices), &resp.ch, libPath, err
+		}
+	}
+	return 0, nil, "", err
+}
+
+// Bootstrap the management library
+// Returns: handle, libPath, error
+func loadMTMLMgmt(mtmlLibPaths []string) (*C.mtml_handle_t, string, error) {
+	var resp C.mtml_init_resp_t
+	resp.ch.verbose = getVerboseState()
+	var err error
+	for _, libPath := range mtmlLibPaths {
+		lib := C.CString(libPath)
+		defer C.free(unsafe.Pointer(lib))
+		C.mtml_init(lib, &resp)
+		if resp.err != nil {
+			err = fmt.Errorf("unable to load MTML management library %s: %s", libPath, C.GoString(resp.err))
+			slog.Info(err.Error())
+			C.free(unsafe.Pointer(resp.err))
+		} else {
+			err = nil
+			return &resp.ch, libPath, err
+		}
+	}
+	return nil, "", err
 }
 
 func getVerboseState() C.uint16_t {
@@ -699,6 +1030,8 @@ func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
 		return rocmGetVisibleDevicesEnv(l)
 	case "oneapi":
 		return oneapiGetVisibleDevicesEnv(l)
+	case "musa":
+		return musaGetVisibleDevicesEnv(l)
 	default:
 		slog.Debug("no filter required for library " + l[0].Library)
 		return "", ""
