@@ -118,7 +118,7 @@ typedef struct cudaDeviceProp {
     int          maxBlocksPerMultiProcessor; /**< Maximum number of resident blocks per multiprocessor */
     int          accessPolicyMaxWindowSize;  /**< The maximum value of ::cudaAccessPolicyWindow::num_bytes. */
     size_t       reservedSharedMemPerBlock;  /**< Shared memory reserved by CUDA driver per block in bytes */
-  } cudaDeviceProp_t;
+} cudaDeviceProp_t;
 
 typedef struct cudart_handle {
   void *handle;
