@@ -186,7 +186,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		"--model", model,
 		"--ctx-size", strconv.Itoa(opts.NumCtx),
 		"--batch-size", strconv.Itoa(opts.NumBatch),
-		"--embedding",
 	}
 
 	if opts.NumGPU >= 0 {
@@ -216,10 +215,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		params = append(params, "--threads", strconv.Itoa(opts.NumThread))
 	} else if defaultThreads > 0 {
 		params = append(params, "--threads", strconv.Itoa(defaultThreads))
-	}
-
-	if !opts.F16KV {
-		params = append(params, "--memory-f32")
 	}
 
 	flashAttnEnabled := envconfig.FlashAttention()

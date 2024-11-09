@@ -1,11 +1,12 @@
 # Helpers for managing our vendored llama.cpp repo and patch set
 
-# TODO - this should include a manifest file at the top of the tree 
-LLAMACPP_BASE_COMMIT=$(shell cd ../llm/llama.cpp && git rev-parse HEAD)
+REPO_ROOT:=$(dir $(patsubst %/,%,$(dir $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST))))))))
+DST_DIR:=$(dir $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST))))))
 
-LLAMACPP_REPO := $(dir $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST))))))vendor/
+include $(REPO_ROOT)llama/vendoring
 
-DST_DIR=$(dir $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST))))))
+LLAMACPP_REPO := $(REPO_ROOT)llama/vendor/
+
 LLAMACPP_PATCH_DIR := $(DST_DIR)patches/
 
 

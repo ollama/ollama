@@ -27,6 +27,16 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 	isMllama := checkMllamaModelFamily(m)
 
+	var imageNumTokens int
+	// TODO: Ideally we would compute this from the projector metadata but some pieces are implementation dependent
+	if isMllama {
+		// Our mllama implementation packs all of the embeddings into a single token
+		imageNumTokens = 1
+	} else {
+		// Clip images are represented as 768 tokens, each an embedding
+		imageNumTokens = 768
+	}
+
 	n := len(msgs) - 1
 	// in reverse, find all messages that fit into context window
 	for i := n; i >= 0; i-- {
@@ -59,9 +69,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 		ctxLen := len(s)
 		if m.ProjectorPaths != nil {
 			for _, m := range msgs[i:] {
-				// images are represented as 768 sized embeddings
-				// TODO: get embedding length from project metadata
-				ctxLen += 768 * len(m.Images)
+				ctxLen += imageNumTokens * len(m.Images)
 			}
 		}
 
@@ -75,11 +83,16 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 	currMsgIdx := n
 
-	if isMllama {
-		lastMsgIdx := len(msgs) - 1
-		for i := lastMsgIdx; i >= currMsgIdx; i-- {
-			if len(msgs[i].Images) > 0 {
-				data, aspectRatioID, err := imageproc.Preprocess(msgs[i].Images[0])
+	for cnt, msg := range msgs[currMsgIdx:] {
+		prefix := ""
+		imgPrompt := ""
+		prompt := msg.Content
+
+		for _, i := range msg.Images {
+			var imgData llm.ImageData
+
+			if isMllama {
+				data, aspectRatioID, err := imageproc.Preprocess(i)
 				if err != nil {
 					return "", nil, err
 				}
@@ -90,37 +103,30 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 					return "", nil, err
 				}
 
-				imgData := llm.ImageData{
+				imgData = llm.ImageData{
+					ID:            len(images),
 					Data:          buf.Bytes(),
 					AspectRatioID: aspectRatioID,
 				}
-
-				msgs[i].Content = strings.TrimSpace("<|image|>" + msgs[i].Content)
-				images = append(images, imgData)
-				break
-			}
-		}
-	} else {
-		for cnt, msg := range msgs[currMsgIdx:] {
-			prefix := ""
-			prompt := msg.Content
-			for _, i := range msg.Images {
-				imgData := llm.ImageData{
+				imgPrompt = "<|image|>"
+			} else {
+				imgData = llm.ImageData{
 					ID:   len(images),
 					Data: i,
 				}
-
-				imgTag := fmt.Sprintf("[img-%d]", imgData.ID)
-				if !strings.Contains(prompt, "[img]") {
-					prefix += imgTag
-				} else {
-					prompt = strings.Replace(prompt, "[img]", imgTag, 1)
-				}
-
-				images = append(images, imgData)
+				imgPrompt = " "
 			}
-			msgs[currMsgIdx+cnt].Content = strings.TrimSpace(prefix + " " + prompt)
+
+			imgTag := fmt.Sprintf("[img-%d]", imgData.ID)
+			if !strings.Contains(prompt, "[img]") {
+				prefix += imgTag
+			} else {
+				prompt = strings.Replace(prompt, "[img]", imgTag, 1)
+			}
+
+			images = append(images, imgData)
 		}
+		msgs[currMsgIdx+cnt].Content = strings.TrimSpace(prefix + imgPrompt + prompt)
 	}
 
 	// truncate any messages that do not fit into the context window

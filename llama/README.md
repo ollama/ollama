@@ -95,31 +95,17 @@ make -j
 
 Ollama currently vendors [llama.cpp](https://github.com/ggerganov/llama.cpp/) and [ggml](https://github.com/ggerganov/ggml) through a vendoring model.  While we generally strive to contribute changes back upstream to avoid drift, we cary a small set of patches which are applied to the tracking commit.  A set of make targets are available to aid developers in updating to a newer tracking commit, or to work on changes.
 
-> [!IMPORTANT]
-> Prior to merging #7157 we continue to leverage a submodule for llama.cpp which establishes the tracking commit.  After merging that PR a new manifest file we be utilized
-
 If you update the vendoring code, start by running the following command to establish the tracking llama.cpp repo in the `./vendor/` directory.
 
 ```
-make -C llama apply-patches
+make apply-patches
 ```
 
 ### Updating Base Commit
 
 **Pin to new base commit**
 
-To update to a newer base commit, select the upstream git tag or commit
-
-> [!IMPORTANT]
-> After merging #7157 a manifest will be used instead of the submodule
-
-```
-cd llm/llama.cpp
-git fetch
-git checkout NEW_BASE_COMMIT
-cd ..
-git add llama.cpp
-```
+To update to a newer base commit, select the upstream git tag or commit and update `llama/vendoring.env`
 
 #### Applying patches
 
@@ -128,13 +114,13 @@ When updating to a newer base commit, the existing patches may not apply cleanly
 Start by applying the patches.  If any of the patches have conflicts, the `git am` will stop at the first failure.
 
 ```
-make -C llama apply-patches
+make apply-patches
 ```
 
 If you see an error message about a conflict, go into the `./vendor/` directory, and perform merge resolution using your preferred tool to the patch commit which failed.  Save the file(s) and continue the patch series with `git am --continue` .  If any additional patches fail, follow the same pattern until the full patch series is applied.  Once finished, run a final `create-patches` and `sync` target to ensure everything is updated.
 
 ```
-make -C llama create-patches sync
+make create-patches sync
 ```
 
 Build and test Ollama, and make any necessary changes to the Go code based on the new base commit.  Submit your PR to the Ollama repo.
@@ -144,14 +130,14 @@ Build and test Ollama, and make any necessary changes to the Go code based on th
 When working on new fixes or features that impact vendored code, use the following model.  First get a clean tracking repo with all current patches applied:
 
 ```
-make -C llama apply-patches
+make apply-patches
 ```
 
 Now edit the upstream native code in the `./vendor/` directory.  You do not need to commit every change in order to build, a dirty working tree in the tracking repo is OK while developing.  Simply save in your editor, and run the following to refresh the vendored code with your changes, build the backend(s) and build ollama:
 
 ```
-make -C llama sync
-make -C llama -j 8
+make sync
+make -j 8
 go build .
 ```
 
@@ -161,7 +147,7 @@ go build .
 Iterate until you're ready to submit PRs.  Once your code is ready, commit a change in the `./vendor/` directory, then generate the patches for ollama with
 
 ```
-make -C llama create-patches
+make create-patches
 ```
 
 > [!IMPORTANT]
