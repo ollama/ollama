@@ -29,6 +29,7 @@ extern "C"
         bool penalize_nl;
         uint32_t seed;
         char *grammar;
+        char *json_schema;
     };
 
     struct gpt_sampler *gpt_sampler_cinit(

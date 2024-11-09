@@ -61,8 +61,15 @@ type Usage struct {
 	TotalTokens      int `json:"total_tokens"`
 }
 
+type JsonSchema struct {
+	Name   string          `json:"name"`
+	Schema json.RawMessage `json:"schema"`
+	Strict bool            `json:"strict"`
+}
+
 type ResponseFormat struct {
-	Type string `json:"type"`
+	Type       string     `json:"type"`
+	JsonSchema JsonSchema `json:"json_schema"`
 }
 
 type EmbedRequest struct {
@@ -476,17 +483,35 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	}
 
 	var format string
-	if r.ResponseFormat != nil && r.ResponseFormat.Type == "json_object" {
+	var jsonSchema string
+	if r.ResponseFormat != nil {
 		format = "json"
+		if r.ResponseFormat.Type == "json_object" {
+			if len(r.ResponseFormat.JsonSchema.Schema) == 0 {
+				return nil, errors.New("schema must be specified when method is not 'json_schema'")
+			}
+		} else if r.ResponseFormat.Type == "json_schema" {
+			if len(r.ResponseFormat.JsonSchema.Schema) == 0 {
+				return nil, errors.New("schema must be specified when method is 'json_schema'")
+			}
+			jsonSchemaBytes, err := json.Marshal(r.ResponseFormat.JsonSchema.Schema)
+			if err != nil {
+				return nil, errors.New("failed to marshal json_schema")
+			}
+			jsonSchema = string(jsonSchemaBytes)
+		} else {
+			return nil, errors.New("invalid response format type")
+		}
 	}
 
 	return &api.ChatRequest{
-		Model:    r.Model,
-		Messages: messages,
-		Format:   format,
-		Options:  options,
-		Stream:   &r.Stream,
-		Tools:    r.Tools,
+		Model:      r.Model,
+		Messages:   messages,
+		Format:     format,
+		JsonSchema: jsonSchema,
+		Options:    options,
+		Stream:     &r.Stream,
+		Tools:      r.Tools,
 	}, nil
 }
 

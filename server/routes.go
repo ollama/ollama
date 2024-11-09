@@ -275,10 +275,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		var sb strings.Builder
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:  prompt,
-			Images:  images,
-			Format:  req.Format,
-			Options: opts,
+			Prompt:     prompt,
+			Images:     images,
+			Format:     req.Format,
+			Options:    opts,
+			JsonSchema: req.JsonSchema,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:      req.Model,
@@ -1460,10 +1461,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	go func() {
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:  prompt,
-			Images:  images,
-			Format:  req.Format,
-			Options: opts,
+			Prompt:     prompt,
+			Images:     images,
+			Format:     req.Format,
+			Options:    opts,
+			JsonSchema: req.JsonSchema,
 		}, func(r llm.CompletionResponse) {
 			res := api.ChatResponse{
 				Model:      req.Model,

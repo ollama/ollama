@@ -621,6 +621,7 @@ type SamplingParams struct {
 	PenalizeNl     bool
 	Seed           uint32
 	Grammar        string
+	JsonSchema     string
 }
 
 func NewSamplingContext(model *Model, params SamplingParams) (*SamplingContext, error) {
@@ -643,8 +644,12 @@ func NewSamplingContext(model *Model, params SamplingParams) (*SamplingContext, 
 
 	grammar := C.CString(params.Grammar)
 	defer C.free(unsafe.Pointer(grammar))
-
 	cparams.grammar = grammar
+
+	jsonSchema := C.CString(params.JsonSchema)
+	defer C.free(unsafe.Pointer(jsonSchema))
+	cparams.json_schema = jsonSchema
+
 	context := &SamplingContext{c: C.gpt_sampler_cinit(model.c, &cparams)}
 	if context.c == nil {
 		return nil, errors.New("unable to create sampling context")

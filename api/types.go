@@ -80,6 +80,9 @@ type GenerateRequest struct {
 	// Options lists model-specific options. For example, temperature can be
 	// set through this field, if the model supports it.
 	Options map[string]interface{} `json:"options"`
+
+	// JsonSchema is an optional json schema to use for this request.
+	JsonSchema string `json:"json_schema,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
@@ -105,6 +108,9 @@ type ChatRequest struct {
 
 	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
+
+	// JsonSchema is an optional json schema to use for this request.
+	JsonSchema string `json:"json_schema,omitempty"`
 }
 
 type Tools []Tool

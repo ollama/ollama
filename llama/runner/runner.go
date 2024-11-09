@@ -552,6 +552,7 @@ type CompletionRequest struct {
 	Prompt      string      `json:"prompt"`
 	Images      []ImageData `json:"image_data"`
 	Grammar     string      `json:"grammar"`
+	JsonSchema  string      `json:"json_schema"`
 	CachePrompt bool        `json:"cache_prompt"`
 
 	Options
@@ -614,6 +615,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	samplingParams.PenalizeNl = req.PenalizeNewline
 	samplingParams.Seed = uint32(req.Seed)
 	samplingParams.Grammar = req.Grammar
+	samplingParams.JsonSchema = req.JsonSchema
 
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
 		numPredict:     req.NumPredict,

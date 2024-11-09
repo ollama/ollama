@@ -160,6 +160,7 @@ struct gpt_sampler_params {
     };
 
     std::string grammar; // optional BNF-like grammar to constrain sampling
+    std::string json_schema; // optional JSON schema to constrain sampling
 
     std::vector<llama_logit_bias> logit_bias; // logit biases to apply
 

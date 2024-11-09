@@ -25,11 +25,14 @@
  */
 
 #include "sampling.h"
-
 #include "common.h"
+#include "json.hpp"
+
+#include "json-schema-to-grammar.h"
 
 #include <cmath>
 #include <unordered_map>
+#include <iostream>
 
 // the ring buffer works similarly to std::deque, but with a fixed capacity
 // TODO: deduplicate with llama-impl.h
@@ -172,7 +175,7 @@ struct gpt_sampler * gpt_sampler_init(const struct llama_model * model, const st
 
     auto * result = new gpt_sampler {
         /* .params = */ params,
-        /* .grmr   = */ llama_sampler_init_grammar(model, params.grammar.c_str(), "root"),
+        /* .grmr   = */ nullptr,
         /* .chain  = */ llama_sampler_chain_init(lparams),
         /* .prev   = */ ring_buffer<llama_token>(std::max(32, params.n_prev)),
         /* .cur    = */ {},
@@ -245,6 +248,12 @@ struct gpt_sampler * gpt_sampler_init(const struct llama_model * model, const st
             llama_sampler_chain_add(result->chain, llama_sampler_init_softmax());
         }
         llama_sampler_chain_add(result->chain, llama_sampler_init_greedy());
+    }
+    if (params.json_schema != "") {
+        nlohmann::json jsonSchema = nlohmann::json::parse(params.json_schema);
+        result->grmr = llama_sampler_init_grammar(model, json_schema_to_grammar(jsonSchema).c_str(), "root");
+    } else {
+        result->grmr = llama_sampler_init_grammar(model, params.grammar.c_str(), "root");
     }
 
     return result;

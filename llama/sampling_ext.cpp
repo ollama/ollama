@@ -23,6 +23,7 @@ struct gpt_sampler *gpt_sampler_cinit(
         sparams.penalize_nl = params->penalize_nl;
         sparams.seed = params->seed;
         sparams.grammar = params->grammar;
+        sparams.json_schema = params->json_schema;
         return gpt_sampler_init(model, sparams);
     } catch (const std::exception & err) {
         return nullptr;
