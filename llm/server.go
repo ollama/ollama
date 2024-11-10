@@ -168,6 +168,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		serverPath := availableServers[demandLib]
 		if serverPath == "" {
 			slog.Info(fmt.Sprintf("Invalid OLLAMA_LLM_LIBRARY %s - not found", demandLib))
+			return nil, errors.New("Invalid OLLAMA_LLM_LIBRARY")
 		} else {
 			slog.Info("user override", "OLLAMA_LLM_LIBRARY", demandLib, "path", serverPath)
 			servers = []string{demandLib}
