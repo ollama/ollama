@@ -289,7 +289,8 @@ ENV OLLAMA_HOST=0.0.0.0
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
 
-FROM runtime-$TARGETARCH
+#FROM runtime-$TARGETARCH
+FROM redhat/ubi9:9.3
 EXPOSE 11434
 ENV OLLAMA_HOST=0.0.0.0
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
