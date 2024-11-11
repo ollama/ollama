@@ -8,7 +8,7 @@ MACHINE=$(uname -m)
 if [ "${MACHINE}" = "ppc64le" ]; then
    echo "Install power dependiecies"
 
-   yum install -y git gcc wget cmake gcc-c++
+   yum install -y git gcc wget cmake gcc-c++ pigz
    GO_ARCH="ppc64le"
    mkdir -p /usr/local
    wget https://golang.org/dl/go${GOLANG_VERSION}.linux-ppc64le.tar.gz
