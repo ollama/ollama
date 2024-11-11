@@ -289,6 +289,22 @@ ENV OLLAMA_HOST=0.0.0.0
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
 
+FROM --platform=linux/amd64 runtime-$TARGETARCH
+EXPOSE 11434
+ENV OLLAMA_HOST=0.0.0.0
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+ENV NVIDIA_VISIBLE_DEVICES=all
+
+FROM --platform=linux/arm64 runtime-$TARGETARCH
+EXPOSE 11434
+ENV OLLAMA_HOST=0.0.0.0
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+ENV NVIDIA_VISIBLE_DEVICES=all
+
 #FROM runtime-$TARGETARCH
 FROM redhat/ubi9:9.3
 EXPOSE 11434
