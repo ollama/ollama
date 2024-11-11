@@ -554,9 +554,9 @@ jobs:
             !dist/*-cov
   build-linux-ppc64le:
     environment: release
-    runs-on: ubuntu-22.04-ppc64le
+    runs-on: ubuntu-22.04-ppc64le-test
     env:
-      PLATFORM: linux/ppc64le
+      PLATFORM: linux/ppc64le-test
     steps:
       - uses: actions/checkout@v4
         with:
