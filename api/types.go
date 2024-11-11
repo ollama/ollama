@@ -166,10 +166,10 @@ type ToolFunction struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Parameters  struct {
-		Type       string   `json:"type"`
+		Type       any      `json:"type"` // Can be string or []string -> find better way to do this
 		Required   []string `json:"required"`
 		Properties map[string]struct {
-			Type        string   `json:"type"`
+			Type        any      `json:"type"`
 			Description string   `json:"description"`
 			Enum        []string `json:"enum,omitempty"`
 		} `json:"properties"`
