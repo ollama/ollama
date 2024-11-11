@@ -1,6 +1,6 @@
 module github.com/ollama/ollama
 
-go 1.22.0
+go 1.22.8
 
 require (
 	github.com/containerd/console v1.0.3
@@ -22,6 +22,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.14
 	github.com/nlpodyssey/gopickle v0.3.0
 	github.com/pdevine/tensor v0.0.0-20240510204454-f88f4562727c
+	golang.org/x/image v0.14.0
 )
 
 require (

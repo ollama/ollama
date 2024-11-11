@@ -1,0 +1,18 @@
+<extra_id_0>System
+You are a knowledgable assistant. You can answer questions and perform tasks.
+
+
+<tool> {"type":"function","function":{"name":"get_current_weather","description":"Get the current weather","parameters":{"type":"object","required":["location","format"],"properties":{"format":{"type":"string","description":"The temperature unit to use. Infer this from the users location.","enum":["celsius","fahrenheit"]},"location":{"type":"string","description":"The city and state, e.g. San Francisco, CA"}}}}} </tool>
+
+
+<extra_id_1>User
+What's the weather like today in Paris?
+<extra_id_1>Assistant
+<toolcall> {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Paris, France"}} </toolcall> 
+<extra_id_1>Tool
+22
+<extra_id_1>Assistant
+The current temperature in Paris, France is 22 degrees Celsius.
+<extra_id_1>User
+What's the weather like today in San Francisco and Toronto?
+<extra_id_1>Assistant

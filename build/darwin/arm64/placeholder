@@ -1,0 +1,1 @@
+This is here to make sure the build/ directory exists for the go:embed command

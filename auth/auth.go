@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -78,7 +79,7 @@ func Sign(ctx context.Context, bts []byte) (string, error) {
 	publicKey := ssh.MarshalAuthorizedKey(privateKey.PublicKey())
 	parts := bytes.Split(publicKey, []byte(" "))
 	if len(parts) < 2 {
-		return "", fmt.Errorf("malformed public key")
+		return "", errors.New("malformed public key")
 	}
 
 	signedData, err := privateKey.Sign(rand.Reader, bts)

@@ -17,7 +17,7 @@ func TestRotateLogs(t *testing.T) {
 	// No log exists
 	rotateLogs(logFile)
 
-	require.NoError(t, os.WriteFile(logFile, []byte("1"), 0644))
+	require.NoError(t, os.WriteFile(logFile, []byte("1"), 0o644))
 	assert.FileExists(t, logFile)
 	// First rotation
 	rotateLogs(logFile)
@@ -32,7 +32,7 @@ func TestRotateLogs(t *testing.T) {
 	assert.NoFileExists(t, logFile)
 
 	for i := 2; i <= LogRotationCount+1; i++ {
-		require.NoError(t, os.WriteFile(logFile, []byte(strconv.Itoa(i)), 0644))
+		require.NoError(t, os.WriteFile(logFile, []byte(strconv.Itoa(i)), 0o644))
 		assert.FileExists(t, logFile)
 		rotateLogs(logFile)
 		assert.NoFileExists(t, logFile)
