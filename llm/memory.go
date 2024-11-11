@@ -123,19 +123,16 @@ func EstimateGPULayers(gpus []discover.GpuInfo, ggml *GGML, projectors []string,
 		slog.Warn("model missing blk.0 layer size")
 	}
 
-	// fp16 k,v = sizeof(float16) * n_ctx * n_layer * (n_embd_head_k + n_embd_head_v) * n_head_kv
-	var kv uint64 = 2 * uint64(opts.NumCtx) * ggml.KV().BlockCount() * (ggml.KV().EmbeddingHeadCountK() + ggml.KV().EmbeddingHeadCountV()) * ggml.KV().HeadCountKV()
-
-	// KV is proportional to the number of layers
-	layerSize += kv / ggml.KV().BlockCount()
-
-	graphPartialOffload, graphFullOffload = ggml.GraphSize(uint64(opts.NumCtx), uint64(min(opts.NumCtx, opts.NumBatch)))
+	kv, graphPartialOffload, graphFullOffload := ggml.GraphSize(uint64(opts.NumCtx), uint64(min(opts.NumCtx, opts.NumBatch)))
 	if graphPartialOffload == 0 {
 		graphPartialOffload = ggml.KV().GQA() * kv / 6
 	}
 	if graphFullOffload == 0 {
 		graphFullOffload = graphPartialOffload
 	}
+
+	// KV is proportional to the number of layers
+	layerSize += kv / ggml.KV().BlockCount()
 
 	// on metal there's no partial offload overhead
 	if gpus[0].Library == "metal" {

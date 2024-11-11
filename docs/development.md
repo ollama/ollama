@@ -108,7 +108,7 @@ Custom CPU settings are not currently supported in the new Go server build but w
 
 #### Containerized Linux Build
 
-If you have Docker available, you can build linux binaries with `OLLAMA_NEW_RUNNERS=1 ./scripts/build_linux.sh` which has the CUDA and ROCm dependencies included. The resulting binary is placed in `./dist`
+If you have Docker available, you can build linux binaries with `./scripts/build_linux.sh` which has the CUDA and ROCm dependencies included. The resulting binary is placed in `./dist`
 
 ### Windows
 

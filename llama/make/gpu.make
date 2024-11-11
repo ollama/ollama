@@ -85,7 +85,7 @@ $(RUNNERS_BUILD_DIR)/$(GPU_RUNNER_NAME)/ollama_llama_server$(EXE_EXT): $(RUNNERS
 	GOARCH=$(ARCH) CGO_LDFLAGS="$(TARGET_CGO_LDFLAGS)" go build -buildmode=pie  $(GPU_GOFLAGS) -trimpath -tags $(subst $(space),$(comma),$(GPU_RUNNER_CPU_FLAGS) $(GPU_RUNNER_GO_TAGS)) -o $@ ./runner
 $(RUNNERS_BUILD_DIR)/$(GPU_RUNNER_NAME)/$(SHARED_PREFIX)ggml_$(GPU_RUNNER_NAME).$(SHARED_EXT): $(GPU_RUNNER_OBJS) $(DIST_GPU_RUNNER_LIB_DEPS) $(COMMON_HDRS) $(GPU_RUNNER_HDRS)
 	@-mkdir -p $(dir $@)
-	$(CCACHE) $(GPU_COMPILER) --shared $(GPU_RUNNER_DRIVER_LIB_LINK) -L${DIST_GPU_RUNNER_DEPS_DIR} $(foreach lib, $(GPU_RUNNER_LIBS_SHORT), -l$(lib)) $(GPU_RUNNER_OBJS) -o $@
+	$(CCACHE) $(GPU_COMPILER) --shared -L$(GPU_LIB_DIR) $(GPU_RUNNER_DRIVER_LIB_LINK) -L${DIST_GPU_RUNNER_DEPS_DIR} $(foreach lib, $(GPU_RUNNER_LIBS_SHORT), -l$(lib)) $(GPU_RUNNER_OBJS) -o $@
 
 # Distribution targets
 $(RUNNERS_DIST_DIR)/%: $(RUNNERS_BUILD_DIR)/%

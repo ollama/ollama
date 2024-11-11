@@ -10,7 +10,7 @@ This sounds like a typical censored response, but even llama2-uncensored gives a
 
 So let's figure out how we can use **LangChain** with Ollama to ask our question to the actual document, the Odyssey by Homer, using Python.
 
-Let's start by asking a simple question that we can get an answer to from the **Llama2** model using **Ollama**. First, we need to install the **LangChain** package:
+Let's start by asking a simple question that we can get an answer to from the **Llama3** model using **Ollama**. First, we need to install the **LangChain** package:
 
 `pip install langchain_community`
 
