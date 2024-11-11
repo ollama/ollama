@@ -673,9 +673,9 @@ jobs:
           platforms: linux/${{ env.ARCH }}
           build-args: |
             GOFLAGS
-          run: |
-            export DOCKER_BUILDKIT=0
-            export COMPOSE_DOCKER_CLI_BUILD=0
+          secret-envs: |
+            DOCKER_BUILDKIT=0
+            COMPOSE_DOCKER_CLI_BUILD=0
           outputs: type=image,name=${{ env.FINAL_IMAGE_REPO }},push-by-digest=true,name-canonical=true,push=true
       - name: Export digest
         run: |
