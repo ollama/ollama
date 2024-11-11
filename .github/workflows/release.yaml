@@ -625,7 +625,7 @@ jobs:
           sudo apt-get install acl
           sudo setfacl --modify user:$USER:rw /var/run/docker.sock
       - name: 'Install Docker for ppc64le'
-        if: ${{ startsWith(matrix.runner, 'linux-ppc64le') }}
+        if: ${{ startsWith(matrix.runner, 'ubuntu-22.04-ppc64le') }}
         run: |
           # Add Docker's official GPG key:
           sudo DEBIAN_FRONTEND=noninteractive apt-get install ca-certificates curl gnupg lsb-release init -y
