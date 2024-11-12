@@ -11,7 +11,7 @@ jobs:
       matrix:
         runner:
           - linux
-          - linux-arm64
+          - ubuntu-22.04-ppc64le
     runs-on: ${{ matrix.runner }}
     steps:
       - run: |
