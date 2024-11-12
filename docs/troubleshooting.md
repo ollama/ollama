@@ -97,6 +97,8 @@ On linux, AMD GPU access typically requires `video` and/or `render` group member
 
 When running in a container, in some Linux distributions and container runtimes, the ollama process may be unable to access the GPU.  Use `ls -ld /dev/kfd /dev/dri /dev/dri/*` on the host system to determine the group assignments on your system, and pass additional `--group-add ...` arguments to the container so it can access the required devices.
 
+If Ollama initially works on the GPU in a docker container, but then switches to running on CPU after some period of time with errors in the server log reporting GPU discovery failures, this can be resolved by disabling systemd cgroup management in Docker.  Edit `/etc/docker/daemon.json` on the host and add `"exec-opts": ["native.cgroupdriver=cgroupfs"]` to the docker configuration.
+
 If you are experiencing problems getting Ollama to correctly discover or use your GPU for inference, the following may help isolate the failure.
 - `AMD_LOG_LEVEL=3` Enable info log levels in the AMD HIP/ROCm libraries.  This can help show more detailed error codes that can help troubleshoot problems
 - `OLLAMA_DEBUG=1` During GPU discovery additional information will be reported
