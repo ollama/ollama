@@ -7,7 +7,12 @@ on:
 jobs:
   update-latest:
     environment: release
-    runs-on: ubuntu-22.04-ppc64le
+    strategy:
+      matrix:
+        runner:
+          - linux
+          - linux-arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - run: |
           echo ${{ vars.DOCKER_USER }}
