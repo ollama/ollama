@@ -5,6 +5,8 @@ ARG CUDA_V11_ARCHITECTURES="50;52;53;60;61;62;70;72;75;80;86"
 ARG CUDA_VERSION_12=12.4.0
 ARG CUDA_V12_ARCHITECTURES="60;61;62;70;72;75;80;86;87;89;90;90a"
 ARG ROCM_VERSION=6.1.2
+ARG JETPACK_6=r36.2.0
+ARG JETPACK_5=r35.4.1
 
 ### To create a local image for building linux binaries on mac or windows with efficient incremental builds
 #
@@ -13,7 +15,7 @@ ARG ROCM_VERSION=6.1.2
 #
 ### Then incremental builds will be much faster in this container
 #
-# make -C llama -j 10 && go build -trimpath -o dist/linux-amd64/ollama .
+# make -j 10 && go build -trimpath -o dist/linux-amd64/ollama .
 #
 FROM --platform=linux/amd64 rocm/dev-centos-7:${ROCM_VERSION}-complete AS unified-builder-amd64
 ARG CMAKE_VERSION
@@ -76,9 +78,9 @@ ARG CUDA_V12_ARCHITECTURES
 ARG OLLAMA_FAST_BUILD
 RUN --mount=type=cache,target=/root/.ccache \
     if grep "^flags" /proc/cpuinfo|grep avx>/dev/null; then \
-        make -C llama -j $(expr $(nproc) / 2 ) ; \
+        make -j $(expr $(nproc) / 2 ) ; \
     else \
-        make -C llama -j 5 ; \
+        make -j 5 ; \
     fi
 
 FROM --platform=linux/arm64 unified-builder-arm64 AS runners-arm64
@@ -90,7 +92,46 @@ ARG CUDA_V11_ARCHITECTURES
 ARG CUDA_V12_ARCHITECTURES
 ARG OLLAMA_FAST_BUILD
 RUN --mount=type=cache,target=/root/.ccache \
-    make -C llama -j 8
+    make -j 5
+
+# Jetsons need to be built in discrete stages
+FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK_5} AS runners-jetpack5-arm64
+ARG GOLANG_VERSION
+RUN apt-get update && apt-get install -y git curl ccache && \
+    curl -s -L https://dl.google.com/go/go${GOLANG_VERSION}.linux-arm64.tar.gz | tar xz -C /usr/local && \
+    ln -s /usr/local/go/bin/go /usr/local/bin/go && \
+    ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+WORKDIR /go/src/github.com/ollama/ollama/
+COPY . .
+ARG CGO_CFLAGS
+ENV GOARCH arm64
+RUN --mount=type=cache,target=/root/.ccache \
+    make -j 5 cuda_v11 \
+        CUDA_ARCHITECTURES="72;87" \
+        GPU_RUNNER_VARIANT=_jetpack5 \
+        CGO_EXTRA_LDFLAGS_LINUX=-L/usr/local/cuda/lib64/stubs \
+        DIST_LIB_DIR=/go/src/github.com/ollama/ollama/dist/linux-arm64-jetpack5/lib/ollama \
+        DIST_GPU_RUNNER_DEPS_DIR=/go/src/github.com/ollama/ollama/dist/linux-arm64-jetpack5/lib/ollama/cuda_jetpack5
+
+FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK_6} AS runners-jetpack6-arm64
+ARG GOLANG_VERSION
+RUN apt-get update && apt-get install -y git curl ccache && \
+    curl -s -L https://dl.google.com/go/go${GOLANG_VERSION}.linux-arm64.tar.gz | tar xz -C /usr/local && \
+    ln -s /usr/local/go/bin/go /usr/local/bin/go && \
+    ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+WORKDIR /go/src/github.com/ollama/ollama/
+COPY . .
+ARG CGO_CFLAGS
+ENV GOARCH arm64
+RUN --mount=type=cache,target=/root/.ccache \
+    make -j 5 cuda_v12 \
+        CUDA_ARCHITECTURES="87" \
+        GPU_RUNNER_VARIANT=_jetpack6 \
+        CGO_EXTRA_LDFLAGS_LINUX=-L/usr/local/cuda/lib64/stubs \
+        DIST_LIB_DIR=/go/src/github.com/ollama/ollama/dist/linux-arm64-jetpack6/lib/ollama \
+        DIST_GPU_RUNNER_DEPS_DIR=/go/src/github.com/ollama/ollama/dist/linux-arm64-jetpack6/lib/ollama/cuda_jetpack6
 
 
 # Intermediate stages used for ./scripts/build_linux.sh
@@ -134,12 +175,20 @@ FROM --platform=linux/arm64 builder-arm64 AS build-arm64
 COPY . .
 COPY --from=runners-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
 COPY --from=runners-arm64 /go/src/github.com/ollama/ollama/build/ build/
+COPY --from=runners-jetpack5-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
+COPY --from=runners-jetpack5-arm64 /go/src/github.com/ollama/ollama/build/ build/
+COPY --from=runners-jetpack6-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
+COPY --from=runners-jetpack6-arm64 /go/src/github.com/ollama/ollama/build/ build/
 ARG GOFLAGS
 ARG CGO_CFLAGS
 RUN --mount=type=cache,target=/root/.ccache \
     go build -trimpath -o dist/linux-arm64/bin/ollama .
 RUN cd dist/linux-$GOARCH && \
     tar --exclude runners -cf - . | pigz --best > ../ollama-linux-$GOARCH.tgz
+RUN cd dist/linux-$GOARCH-jetpack5 && \
+    tar --exclude runners -cf - . | pigz --best > ../ollama-linux-$GOARCH-jetpack5.tgz
+RUN cd dist/linux-$GOARCH-jetpack6 && \
+    tar --exclude runners -cf - . | pigz --best > ../ollama-linux-$GOARCH-jetpack6.tgz
 
 FROM --platform=linux/amd64 scratch AS dist-amd64
 COPY --from=build-amd64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
@@ -180,16 +229,23 @@ RUN rm -rf \
 FROM --platform=linux/amd64 ubuntu:22.04 AS runtime-amd64
 RUN apt-get update && \
     apt-get install -y ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY --from=container-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/bin/ /bin/
 COPY --from=runners-cuda-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
 
 FROM --platform=linux/arm64 ubuntu:22.04 AS runtime-arm64
+COPY --from=build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64-jetpack5/lib/ /lib/
+COPY --from=build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64-jetpack6/lib/ /lib/
 RUN apt-get update && \
     apt-get install -y ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY --from=container-build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/bin/ /bin/
-COPY --from=runners-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
+COPY --from=cpu-build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
+COPY --from=cuda-11-build-runner-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
+COPY --from=cuda-12-build-runner-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
+COPY --from=cuda-build-jetpack5-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
+COPY --from=cuda-build-jetpack6-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
+
 
 # ROCm libraries larger so we keep it distinct from the CPU/CUDA image
 FROM --platform=linux/amd64 ubuntu:22.04 AS runtime-rocm
@@ -198,7 +254,7 @@ FROM --platform=linux/amd64 ubuntu:22.04 AS runtime-rocm
 COPY --from=build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64-rocm/lib/ /lib/
 RUN apt-get update && \
     apt-get install -y ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY --from=container-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/bin/ /bin/
 COPY --from=runners-rocm-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
 
