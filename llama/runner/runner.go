@@ -345,7 +345,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		}
 
 		// if past the num predict limit
-		if seq.numPredict > 0 && seq.numPredicted > seq.numPredict {
+		if seq.numPredict > 0 && seq.numPredicted >= seq.numPredict {
 			s.removeSequence(seqIdx, "limit")
 			continue
 		}
