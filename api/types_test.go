@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"reflect"
 	"testing"
 	"time"
 
@@ -229,5 +230,88 @@ func TestMessage_UnmarshalJSON(t *testing.T) {
 		if msg.Role != test.expected {
 			t.Errorf("role not lowercased: got %v, expected %v", msg.Role, test.expected)
 		}
+	}
+}
+
+func TestToolFunctionParameters(t *testing.T) {
+	tests := []struct {
+		name     string
+		json     string
+		expected []string
+		wantErr  bool
+	}{
+		{
+			name: "string type",
+			json: `{
+				"type": "object",
+				"required": ["foo"],
+				"properties": {
+					"foo": {
+						"type": "string",
+						"description": "test"
+					}
+				}
+			}`,
+			expected: []string{"object"},
+			wantErr:  false,
+		},
+		{
+			name: "array type",
+			json: `{
+				"type": ["string", "null"],
+				"required": ["foo"],
+				"properties": {
+					"foo": {
+						"type": "string",
+						"description": "test"
+					}
+				}
+			}`,
+			expected: []string{"string", "null"},
+			wantErr:  false,
+		},
+		{
+			name: "nested property with array type",
+			json: `{
+				"type": "object",
+				"required": ["foo"],
+				"properties": {
+					"foo": {
+						"type": ["string", "null"],
+						"description": "test"
+					}
+				}
+			}`,
+			expected: []string{"object"},
+			wantErr:  false,
+		},
+		{
+			name: "invalid type (number)",
+			json: `{
+				"type": 123,
+				"required": ["foo"],
+				"properties": {}
+			}`,
+			expected: nil,
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var tf ToolFunction
+			err := json.Unmarshal([]byte(tt.json), &tf.Parameters)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Unmarshal() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !tt.wantErr {
+				if !reflect.DeepEqual(tf.Parameters.Type.Types, tt.expected) {
+					t.Errorf("Type = %v, want %v", tf.Parameters.Type.Types, tt.expected)
+				}
+			}
+		})
 	}
 }
