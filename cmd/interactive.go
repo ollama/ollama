@@ -63,6 +63,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /set noformat          Disable formatting")
 		fmt.Fprintln(os.Stderr, "  /set verbose           Show LLM stats")
 		fmt.Fprintln(os.Stderr, "  /set quiet             Disable LLM stats")
+		fmt.Fprintln(os.Stderr, "  /set logging           Enable logging")
 		fmt.Fprintln(os.Stderr, "")
 	}
 
@@ -323,6 +324,11 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 					sb.Reset()
 					continue
+				case "logging":
+					if err := cmd.Flags().Set("logging", "true"); err != nil {
+						return err
+					}
+					fmt.Println("Set 'verbose' mode.")
 				default:
 					fmt.Printf("Unknown command '/set %s'. Type /? for help\n", args[1])
 				}
