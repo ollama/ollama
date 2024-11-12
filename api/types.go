@@ -162,48 +162,16 @@ type Tool struct {
 	Function ToolFunction `json:"function"`
 }
 
-// TypeField represents a JSON Schema type that can be either a string or []string
-type TypeField struct {
-	Types []string
-}
-
-func (t *TypeField) UnmarshalJSON(data []byte) error {
-	// Try as string first
-	var s string
-	if err := json.Unmarshal(data, &s); err == nil {
-		t.Types = []string{s}
-		return nil
-	}
-
-	// Try as string array
-	var sa []string
-	if err := json.Unmarshal(data, &sa); err == nil {
-		t.Types = sa
-		return nil
-	}
-
-	return fmt.Errorf("type must be string or array of strings")
-}
-
-func (t TypeField) MarshalJSON() ([]byte, error) {
-	if len(t.Types) == 1 {
-		// Single type, marshal as string
-		return json.Marshal(t.Types[0])
-	}
-	// Multiple types, marshal as array
-	return json.Marshal(t.Types)
-}
-
 type ToolFunction struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Parameters  struct {
-		Type       TypeField `json:"type"`
-		Required   []string  `json:"required"`
+		Type       interface{} `json:"type"`
+		Required   []string    `json:"required"`
 		Properties map[string]struct {
-			Type        TypeField `json:"type"`
-			Description string    `json:"description"`
-			Enum        []string  `json:"enum,omitempty"`
+			Type        interface{} `json:"type"`
+			Description string      `json:"description"`
+			Enum        []string    `json:"enum,omitempty"`
 		} `json:"properties"`
 	} `json:"parameters"`
 }
