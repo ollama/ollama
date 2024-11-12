@@ -679,13 +679,13 @@ jobs:
           mkdir -p /tmp/digests
           digest="${{ steps.build.outputs.digest }}"
           touch "/tmp/digests/${digest#sha256:}"
-      - name: Upload digest
-        uses: actions/upload-artifact@v4
-        with:
-          name: digests-${{ env.PLATFORM_PAIR }}
-          path: /tmp/digests/*
-          if-no-files-found: error
-          retention-days: 1
+      #- name: Upload digest
+      #  uses: actions/upload-artifact@v4
+      #  with:
+      #    name: digests-${{ env.PLATFORM_PAIR }}
+      #    path: /tmp/digests/*
+       #   if-no-files-found: error
+       #   retention-days: 1
   merge:
     environment: release
     runs-on: linux
