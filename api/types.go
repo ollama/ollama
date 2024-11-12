@@ -185,6 +185,15 @@ func (t *TypeField) UnmarshalJSON(data []byte) error {
 	return fmt.Errorf("type must be string or array of strings")
 }
 
+func (t TypeField) MarshalJSON() ([]byte, error) {
+	if len(t.Types) == 1 {
+		// Single type, marshal as string
+		return json.Marshal(t.Types[0])
+	}
+	// Multiple types, marshal as array
+	return json.Marshal(t.Types)
+}
+
 type ToolFunction struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
