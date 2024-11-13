@@ -3,13 +3,13 @@
 include make/common-defs.make
 
 test:
-	cd $(abspath $(SRC_DIR)/..) && go test ./... 
+	cd .. && go test ./... 
 
 integration: $(OLLAMA_EXE)
-	cd $(abspath $(SRC_DIR)/..) && go test --tags=integration ./integration -v
+	cd .. && go test --tags=integration ./integration -v
 
 lint:
-	cd $(abspath $(SRC_DIR)/..) && golangci-lint run -v
+	cd .. && golangci-lint run -v
 
 # Note: in this makefile we error instead of building to allow more fine-grain control of testing flows
 $(OLLAMA_EXE):

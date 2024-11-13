@@ -77,6 +77,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 
 	gfxOverride := envconfig.HsaOverrideGfxVersion()
 	var supported []string
+	depPaths := LibraryDirs()
 	libDir := ""
 
 	// The amdgpu driver always exposes the host CPU(s) first, but we have to skip them and subtract
@@ -349,8 +350,9 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 				})
 				return nil, err
 			}
+			depPaths = append(depPaths, libDir)
 		}
-		gpuInfo.DependencyPath = []string{libDir}
+		gpuInfo.DependencyPath = depPaths
 
 		if gfxOverride == "" {
 			// Only load supported list once

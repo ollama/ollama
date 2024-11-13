@@ -19,7 +19,6 @@ import (
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sys/cpu"
 
-	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 )
 
@@ -31,6 +30,40 @@ var (
 	lock       sync.Mutex
 	runnersDir = ""
 )
+
+type CPUCapability uint32
+
+// Override at build time when building base GPU runners
+// var GPURunnerCPUCapability = CPUCapabilityAVX
+
+const (
+	CPUCapabilityNone CPUCapability = iota
+	CPUCapabilityAVX
+	CPUCapabilityAVX2
+	// TODO AVX512
+)
+
+func (c CPUCapability) String() string {
+	switch c {
+	case CPUCapabilityAVX:
+		return "avx"
+	case CPUCapabilityAVX2:
+		return "avx2"
+	default:
+		return "no vector extensions"
+	}
+}
+
+func GetCPUCapability() CPUCapability {
+	if cpu.X86.HasAVX2 {
+		return CPUCapabilityAVX2
+	}
+	if cpu.X86.HasAVX {
+		return CPUCapabilityAVX
+	}
+	// else LCD
+	return CPUCapabilityNone
+}
 
 // Return the location where runners are stored
 // If runners are payloads, this will either extract them
@@ -311,10 +344,10 @@ func GetAvailableServers(payloadsDir string) map[string]string {
 	return servers
 }
 
-// serversForGpu returns a list of compatible servers give the provided GPU
+// serversForGpu returns a list of compatible servers give the provided GPU library/variant
 // info, ordered by performance. assumes Init() has been called
-// TODO - switch to metadata based mapping
-func ServersForGpu(info discover.GpuInfo) []string {
+// TODO - take string instead of type to break import cycle
+func ServersForGpu(requested string) []string {
 	// glob workDir for files that start with ollama_
 	availableServers := GetAvailableServers(runnersDir)
 
@@ -323,11 +356,7 @@ func ServersForGpu(info discover.GpuInfo) []string {
 		return []string{"builtin"}
 	}
 
-	requested := info.Library
-	if info.Variant != discover.CPUCapabilityNone.String() {
-		requested += "_" + info.Variant
-	}
-
+	requestedLib := strings.Split(requested, "_")[0]
 	servers := []string{}
 
 	// exact match first
@@ -346,9 +375,9 @@ func ServersForGpu(info discover.GpuInfo) []string {
 	alt := []string{}
 
 	// Then for GPUs load alternates and sort the list for consistent load ordering
-	if info.Library != "cpu" {
+	if requestedLib != "cpu" {
 		for a := range availableServers {
-			if info.Library == strings.Split(a, "_")[0] && a != requested {
+			if requestedLib == strings.Split(a, "_")[0] && a != requested {
 				alt = append(alt, a)
 			}
 		}
@@ -359,13 +388,13 @@ func ServersForGpu(info discover.GpuInfo) []string {
 
 	if !(runtime.GOOS == "darwin" && runtime.GOARCH == "arm64") {
 		// Load up the best CPU variant if not primary requested
-		if info.Library != "cpu" {
-			variant := discover.GetCPUCapability()
+		if requestedLib != "cpu" {
+			variant := GetCPUCapability()
 			// If no variant, then we fall back to default
 			// If we have a variant, try that if we find an exact match
 			// Attempting to run the wrong CPU instructions will panic the
 			// process
-			if variant != discover.CPUCapabilityNone {
+			if variant != CPUCapabilityNone {
 				for cmp := range availableServers {
 					if cmp == "cpu_"+variant.String() {
 						servers = append(servers, cmp)
@@ -390,9 +419,9 @@ func ServerForCpu() string {
 	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
 		return "metal"
 	}
-	variant := discover.GetCPUCapability()
+	variant := GetCPUCapability()
 	availableServers := GetAvailableServers(runnersDir)
-	if variant != discover.CPUCapabilityNone {
+	if variant != CPUCapabilityNone {
 		for cmp := range availableServers {
 			if cmp == "cpu_"+variant.String() {
 				return cmp

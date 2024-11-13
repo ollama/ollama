@@ -6,15 +6,7 @@ RUNNER_TARGETS := default
 # Determine which if any GPU runners we should build
 include make/cuda-v11-defs.make
 include make/cuda-v12-defs.make
-
-ifeq ($(OS),windows)
-	HIP_LIB_DIR := $(shell ls -d $(HIP_PATH)/lib 2>/dev/null)
-	HIP_COMPILER:=$(wildcard $(HIP_PATH)/bin/hipcc.bin.exe)
-else ifeq ($(OS),linux)
-	HIP_PATH?=/opt/rocm
-	HIP_LIB_DIR := $(shell ls -d $(HIP_PATH)/lib 2>/dev/null)
-	HIP_COMPILER:=$(wildcard $(HIP_PATH)/bin/hipcc)
-endif
+include make/rocm-defs.make
 
 # Without CUSTOM_CPU_FLAGS we default to build both v11 and v12 if present
 ifeq ($(CUSTOM_CPU_FLAGS),)
@@ -43,7 +35,7 @@ endif
 
 all: runners exe
 
-dist: $(addprefix dist_, $(RUNNER_TARGETS))
+dist: $(addprefix dist_, $(RUNNER_TARGETS)) dist_exe
 
 dist_%:
 	@$(MAKE) --no-print-directory -f make/Makefile.$* dist
@@ -58,8 +50,8 @@ runners: $(RUNNER_TARGETS)
 $(RUNNER_TARGETS):
 	@$(MAKE) --no-print-directory -f make/Makefile.$@
 
-exe:
-	@$(MAKE) --no-print-directory -f make/Makefile.ollama
+exe dist_exe:
+	@$(MAKE) --no-print-directory -f make/Makefile.ollama $@
 
 help-sync apply-patches create-patches sync:
 	@$(MAKE) --no-print-directory -f make/Makefile.sync $@
@@ -68,7 +60,7 @@ test integration lint:
 	@$(MAKE) --no-print-directory -f make/Makefile.test $@
 
 clean: clean-payload
-	rm -rf "$(BUILD_DIR)" "$(DIST_LIB_DIR)"
+	rm -rf $(BUILD_DIR) $(DIST_LIB_DIR)
 	go clean -cache
 
 clean-payload:
@@ -103,9 +95,9 @@ help-runners:
 	@echo ""
 	@echo "# CUDA_PATH sets the location where CUDA toolkits are present"
 	@echo "CUDA_PATH=$(CUDA_PATH)"
-	@echo "	CUDA_11=$(CUDA_11)"
+	@echo "	CUDA_11_PATH=$(CUDA_11_PATH)"
 	@echo "	CUDA_11_COMPILER=$(CUDA_11_COMPILER)"
-	@echo "	CUDA_12=$(CUDA_12)"
+	@echo "	CUDA_12_PATH=$(CUDA_12_PATH)"
 	@echo "	CUDA_12_COMPILER=$(CUDA_12_COMPILER)"
 	@echo ""
 	@echo "# HIP_PATH sets the location where the ROCm toolkit is present"

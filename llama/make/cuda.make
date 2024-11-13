@@ -10,17 +10,6 @@ GPU_RUNNER_NAME := cuda$(GPU_RUNNER_VARIANT)
 GPU_RUNNER_GO_TAGS := cuda cuda$(GPU_RUNNER_VARIANT)
 GPU_RUNNER_DRIVER_LIB_LINK := -lcuda
 GPU_RUNNER_LIBS_SHORT := cublas cudart cublasLt
-GPU_LIB_DIR_WIN = $(GPU_PATH_ROOT_WIN)/bin
-ifneq ($(GPU_PATH_ROOT_LINUX),)
-GPU_LIB_DIR_LINUX=$(strip $(shell ls -d $(GPU_PATH_ROOT_LINUX)/lib64 2>/dev/null || ls -d $(GPU_PATH_ROOT_LINUX)/lib 2>/dev/null))
-GPU_COMPILER_LINUX = $(GPU_PATH_ROOT_LINUX)/bin/nvcc
-endif
-CGO_EXTRA_LDFLAGS_WIN = -L"$(GPU_PATH_ROOT_WIN)/lib/x64"
-GPU_COMPILER_WIN = $(GPU_PATH_ROOT_WIN)/bin/nvcc
-GPU_COMPILER_CFLAGS_WIN = $(CFLAGS) -D_WIN32_WINNT=0x602
-GPU_COMPILER_CFLAGS_LINUX = $(CFLAGS) -Xcompiler -fPIC -D_GNU_SOURCE
-GPU_COMPILER_CXXFLAGS_WIN = $(CXXFLAGS) -D_WIN32_WINNT=0x602
-GPU_COMPILER_CXXFLAGS_LINUX = $(CXXFLAGS) -Xcompiler -fPIC -D_GNU_SOURCE
 
 ifeq ($(OS),windows)
 	# On windows, nvcc uses msvc which does not support avx512vbmi avx512vnni avx512bf16, but macros can turn them on
@@ -29,14 +18,17 @@ ifeq ($(OS),windows)
 	GPU_COMPILER_EXTRA_FLAGS+=$(if $(filter avx512vnni,$(GPU_RUNNER_CPU_FLAGS)),-D__AVX512VNNI__)
 	GPU_COMPILER_EXTRA_FLAGS+=$(if $(filter avx512bf16,$(GPU_RUNNER_CPU_FLAGS)),-D__AVX512BF16__)
 	GPU_LIBS = $(sort $(wildcard $(addsuffix *.$(SHARED_EXT),$(addprefix $(GPU_LIB_DIR)/$(SHARED_PREFIX),$(GPU_RUNNER_LIBS_SHORT)))))
+	GPU_COMPILER_CFLAGS = $(CFLAGS) -D_WIN32_WINNT=0x602
+	GPU_COMPILER_CXXFLAGS = $(CXXFLAGS) -D_WIN32_WINNT=0x602
 else ifeq ($(OS),linux)
 	# On linux, nvcc requires avx512 -> -mavx512f -mavx512dq -mavx512bw
 	GPU_VECTOR_FLAGS=$(if $(filter avx512,$(GPU_RUNNER_CPU_FLAGS)),avx512f avx512dq avx512bw) $(filter-out avx512,$(GPU_RUNNER_CPU_FLAGS))
-	CUDA_PATH?=/usr/local/cuda
 	GPU_COMPILER_EXTRA_FLAGS = -fPIC -Wno-unused-function -std=c++11
 	GPU_LIBS = $(sort $(wildcard $(addsuffix *.$(SHARED_EXT).*,$(addprefix $(GPU_LIB_DIR)/$(SHARED_PREFIX),$(GPU_RUNNER_LIBS_SHORT)))))
+	GPU_COMPILER_CFLAGS = $(CFLAGS) -Xcompiler -fPIC -D_GNU_SOURCE
+	GPU_COMPILER_CXXFLAGS = $(CXXFLAGS) -Xcompiler -fPIC -D_GNU_SOURCE
 endif
-GPU_DIST_DEPS_LIBS= $(sort $(addprefix $(DIST_GPU_RUNNER_DEPS_DIR)/,$(notdir $(GPU_LIBS))))
+GPU_DIST_LIB_DEPS= $(sort $(addprefix $(DIST_GPU_RUNNER_DEPS_DIR)/,$(notdir $(GPU_LIBS))))
 
 GPU_RUNNER_ARCH_FLAGS := $(foreach arch,$(subst ;,$(space),$(CUDA_ARCHITECTURES)),--generate-code=arch=compute_$(arch)$(comma)code=[compute_$(arch)$(comma)sm_$(arch)]) \
 	-DGGML_CUDA_USE_GRAPHS=1

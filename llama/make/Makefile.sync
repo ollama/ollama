@@ -1,13 +1,14 @@
 # Helpers for managing our vendored llama.cpp repo and patch set
 
-REPO_ROOT:=$(dir $(patsubst %/,%,$(dir $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST))))))))
-DST_DIR:=$(dir $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST))))))
+REPO_ROOT:=../../
+DEST_DIR:=./
 
-include $(REPO_ROOT)llama/vendoring
+include $(DEST_DIR)vendoring
 
-LLAMACPP_REPO := $(REPO_ROOT)llama/vendor/
+LLAMACPP_REPO := ./vendor/
 
-LLAMACPP_PATCH_DIR := $(DST_DIR)patches/
+# Relative to the vendor dir
+VENDOR_RELATIVE_PATCH_DIR := ../patches/
 
 
 help-sync:
@@ -29,7 +30,7 @@ apply-patches: $(LLAMACPP_REPO)
 	@git -C $(LLAMACPP_REPO) checkout -q $(LLAMACPP_BASE_COMMIT) || \
 		git -C $(LLAMACPP_REPO) fetch --all && git -C $(LLAMACPP_REPO) checkout -q $(LLAMACPP_BASE_COMMIT)
 	@echo "Applying ollama patches..."
-	@git -c 'user.name=nobody' -c 'user.email=<>' -C $(LLAMACPP_REPO) am -3 $(LLAMACPP_PATCH_DIR)/*.patch || \
+	@cd $(LLAMACPP_REPO) && git -c 'user.name=nobody' -c 'user.email=<>' am -3 $(VENDOR_RELATIVE_PATCH_DIR)*.patch || \
 		echo "Please resolve the conflicts in $(LLAMACPP_REPO), and run 'git am --continue' to continue applying subsequent patches"
 	@echo ""
 	@echo "The tracking repo $(LLAMACPP_REPO) is now in a detached state with all patches applied."
@@ -44,7 +45,7 @@ create-patches: $(LLAMACPP_REPO)
   		echo "ERROR: Your llama.cpp repo is dirty.  You must commit any pending changes for format-patch to generate patches"; \
   		exit 1; \
 	fi
-	git -C $(LLAMACPP_REPO) format-patch --no-signature --no-numbered --zero-commit -o $(LLAMACPP_PATCH_DIR) $(LLAMACPP_BASE_COMMIT)
+	@cd $(LLAMACPP_REPO) && git format-patch --no-signature --no-numbered --zero-commit -o $(VENDOR_RELATIVE_PATCH_DIR) $(LLAMACPP_BASE_COMMIT)
 
 # Vendoring template logic
 EXCLUDED_FILES=sgemm.cpp sgemm.h sampling_ext.cpp sampling_ext.h stb_image.h json.hpp llama_darwin.c base64.hpp
@@ -86,12 +87,12 @@ LLAMACPP_FILES=\
 	include/llama.h \
 	ggml/src/llamafile/sgemm.cpp \
 	ggml/src/llamafile/sgemm.h
-$(foreach name,$(LLAMACPP_FILES),$(eval $(call vendor_file,$(name),$(DST_DIR))))
+$(foreach name,$(LLAMACPP_FILES),$(eval $(call vendor_file,$(name),$(DEST_DIR))))
 
 # llama.cpp files -> llama/llamafile
 LLAMAFILE_FILES= \
 	ggml/src/llamafile/sgemm.h
-$(foreach name,$(LLAMAFILE_FILES),$(eval $(call vendor_file,$(name),$(DST_DIR)llamafile/)))
+$(foreach name,$(LLAMAFILE_FILES),$(eval $(call vendor_file,$(name),$(DEST_DIR)llamafile/)))
 
 # ggml files -> llama/
 GGML_FILES= \
@@ -115,10 +116,10 @@ GGML_FILES= \
 	ggml/src/ggml-cpu-impl.h \
 	ggml/include/ggml-blas.h \
 	ggml/src/ggml-blas.cpp
-$(foreach name,$(GGML_FILES),$(eval $(call vendor_file,$(name),$(DST_DIR))))
+$(foreach name,$(GGML_FILES),$(eval $(call vendor_file,$(name),$(DEST_DIR))))
 
 # TODO generalize renaming pattern if we have more of these
-$(DST_DIR)ggml-metal_darwin_arm64.m : $(LLAMACPP_REPO)ggml/src/ggml-metal.m
+$(DEST_DIR)ggml-metal_darwin_arm64.m : $(LLAMACPP_REPO)ggml/src/ggml-metal.m
 	@echo "vendoring $(subst $(LLAMACPP_REPO),,$<)"; \
 		mkdir -p $(dir $@) && \
 		echo "/**" > $@ && \
@@ -128,20 +129,20 @@ $(DST_DIR)ggml-metal_darwin_arm64.m : $(LLAMACPP_REPO)ggml/src/ggml-metal.m
 		echo " */" >> $@ && \
 		echo "" >> $@ && \
 		cat $< >> $@
-VENDORED_FILES += $(DST_DIR)ggml-metal_darwin_arm64.m
+VENDORED_FILES += $(DEST_DIR)ggml-metal_darwin_arm64.m
 
 # ggml-cuda -> llama/ggml-cuda/
 GGML_CUDA_FILES= ggml/src/ggml-cuda/*.cu ggml/src/ggml-cuda/*.cuh
 GGML_CUDA_FILES_EXPANDED = $(addprefix ggml/src/ggml-cuda/,$(notdir $(wildcard $(addprefix $(LLAMACPP_REPO),$(GGML_CUDA_FILES)))))
-$(foreach name,$(GGML_CUDA_FILES_EXPANDED),$(eval $(call vendor_file,$(name),$(DST_DIR)ggml-cuda/)))
+$(foreach name,$(GGML_CUDA_FILES_EXPANDED),$(eval $(call vendor_file,$(name),$(DEST_DIR)ggml-cuda/)))
 
 GGML_TEMPLATE_FILES= ggml/src/ggml-cuda/template-instances/*.cu
 GGML_TEMPLATE_FILES_EXPANDED = 	$(addprefix ggml/src/ggml-cuda/template-instances/,$(notdir $(wildcard $(addprefix $(LLAMACPP_REPO),$(GGML_TEMPLATE_FILES)))))
-$(foreach name,$(GGML_TEMPLATE_FILES_EXPANDED),$(eval $(call vendor_file,$(name),$(DST_DIR)ggml-cuda/template-instances/)))
+$(foreach name,$(GGML_TEMPLATE_FILES_EXPANDED),$(eval $(call vendor_file,$(name),$(DEST_DIR)ggml-cuda/template-instances/)))
 
 GGML_VENDOR_FILES= ggml/src/ggml-cuda/vendors/*.h
 GGML_VENDOR_FILES_EXPANDED=$(addprefix ggml/src/ggml-cuda/vendors/,$(notdir $(wildcard $(addprefix $(LLAMACPP_REPO),$(GGML_VENDOR_FILES)))))
-$(foreach name,$(GGML_VENDOR_FILES_EXPANDED),$(eval $(call vendor_file,$(name),$(DST_DIR)ggml-cuda/vendors/)))
+$(foreach name,$(GGML_VENDOR_FILES_EXPANDED),$(eval $(call vendor_file,$(name),$(DEST_DIR)ggml-cuda/vendors/)))
 
 # llava -> llama/
 LAVA_FILES= \
@@ -163,23 +164,23 @@ LAVA_FILES+= \
 	common/json-schema-to-grammar.cpp \
 	common/json-schema-to-grammar.h \
 	common/base64.hpp
-$(foreach name,$(LAVA_FILES),$(eval $(call vendor_file,$(name),$(DST_DIR))))
+$(foreach name,$(LAVA_FILES),$(eval $(call vendor_file,$(name),$(DEST_DIR))))
 
-$(DST_DIR)build-info.cpp:
+$(DEST_DIR)build-info.cpp:
 	@echo "Generating $@"
 	@echo "int LLAMA_BUILD_NUMBER = 0;" > $@
 	@echo "char const *LLAMA_COMMIT = \"$(LLAMACPP_BASE_COMMIT)\";" >> $@
 	@echo "char const *LLAMA_COMPILER = \"\";" >> $@
 	@echo "char const *LLAMA_BUILD_TARGET = \"\";" >> $@
-VENDORED_FILES += $(DST_DIR)build-info.cpp
+VENDORED_FILES += $(DEST_DIR)build-info.cpp
 
 
 sync: $(LLAMACPP_REPO) .WAIT $(VENDORED_FILES) .WAIT remove-stale-files
 
 PATS=*.c *.h *.cpp *.m *.metal *.cu *.cuh
-NATIVE_DIRS=$(DST_DIR) $(DST_DIR)llamafile/ $(DST_DIR)ggml-cuda/ $(DST_DIR)ggml-cuda/template-instances/ $(DST_DIR)ggml-cuda/vendors/
+NATIVE_DIRS=$(DEST_DIR) $(DEST_DIR)llamafile/ $(DEST_DIR)ggml-cuda/ $(DEST_DIR)ggml-cuda/template-instances/ $(DEST_DIR)ggml-cuda/vendors/
 ALL_NATIVE_FILES=$(foreach dir,$(NATIVE_DIRS),$(wildcard $(addprefix $(dir),$(PATS))))
-EXTRA_NATIVE_FILES=$(filter-out $(VENDORED_FILES) $(addprefix $(DST_DIR),$(OLLAMA_NATIVE_FILES)), $(ALL_NATIVE_FILES))
+EXTRA_NATIVE_FILES=$(filter-out $(VENDORED_FILES) $(addprefix $(DEST_DIR),$(OLLAMA_NATIVE_FILES)), $(ALL_NATIVE_FILES))
 remove-stale-files:
 	@rm -f $(EXTRA_NATIVE_FILES)
 

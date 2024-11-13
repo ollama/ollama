@@ -21,18 +21,28 @@ export CGO_CXXFLAGS_ALLOW = -mfma|-mf16c
 export HIP_PLATFORM = amd
 export CGO_ENABLED=1
 
-SRC_DIR := $(dir $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST))))))
-BUILD_DIR = $(SRC_DIR)build/$(OS)-$(ARCH)
-DIST_BASE = $(abspath $(SRC_DIR)/../dist/$(OS)-$(ARCH))
+ifeq ($(OS),windows)
+	# Absolute paths with cygpath to convert to 8.3 without spaces
+	PWD="$(shell pwd)"
+	CYGPWD=$(shell cygpath -m -s "$(PWD)")
+	BUILD_DIR = $(CYGPWD)/build/$(OS)-$(ARCH)
+	DIST_BASE = $(CYGPWD)/../dist/$(OS)-$(ARCH)
+	RUNNERS_PAYLOAD_DIR = $(CYGPWD)/../build/$(OS)/$(ARCH)
+	DIST_OLLAMA_EXE=$(DIST_BASE)/ollama$(EXE_EXT)
+else
+	CCACHE:=$(shell command -v ccache 2>/dev/null || echo "")
+	# Relative paths used to avoid tripping over spaces
+	# working directory must be <repo>/llama/
+	BUILD_DIR = ./build/$(OS)-$(ARCH)
+	DIST_BASE = ../dist/$(OS)-$(ARCH)
+	RUNNERS_PAYLOAD_DIR = ../build/$(OS)/$(ARCH)
+	DIST_OLLAMA_EXE=$(DIST_BASE)/bin/ollama$(EXE_EXT)
+endif
 DIST_LIB_DIR = $(DIST_BASE)/lib/ollama
 RUNNERS_DIST_DIR = $(DIST_LIB_DIR)/runners
-RUNNERS_PAYLOAD_DIR = $(abspath $(SRC_DIR)/../build/$(OS)/$(ARCH))
 RUNNERS_BUILD_DIR = $(BUILD_DIR)/runners
 DEFAULT_RUNNER := $(if $(and $(filter darwin,$(OS)),$(filter arm64,$(ARCH))),metal,cpu)
 GZIP:=$(shell command -v pigz 2>/dev/null || echo "gzip")
-ifneq ($(OS),windows)
-	CCACHE:=$(shell command -v ccache 2>/dev/null || echo "")
-endif
 VERSION?=$(shell git describe --tags --first-parent --abbrev=7 --long --dirty --always | sed -e "s/^v//g")
 
 # Conditionally enable ccache for cgo builds too
@@ -56,7 +66,6 @@ endif
 
 ifeq ($(OS),windows)
 	CP := cp
-	SRC_DIR := $(shell cygpath -m -s "$(SRC_DIR)")
 	OBJ_EXT := obj
 	SHARED_EXT := dll
 	EXE_EXT := .exe
@@ -68,17 +77,16 @@ ifneq ($(HIP_PATH),)
 	export HIP_PATH
 endif
 else ifeq ($(OS),linux)
-	CP := cp -af
+	CP := cp -df
 	OBJ_EXT := o
 	SHARED_EXT := so
 	SHARED_PREFIX := lib
 	CPU_FLAG_PREFIX := -m
-	HIP_PATH?=/opt/rocm
 else
 	OBJ_EXT := o
 	SHARED_EXT := so
 	CPU_FLAG_PREFIX := -m
-	CP := cp -af
+	CP := cp -df
 endif
 
 COMMON_SRCS := \
@@ -88,4 +96,4 @@ COMMON_HDRS := \
 	$(wildcard *.h) \
 	$(wildcard *.hpp)
 
-OLLAMA_EXE=$(abspath $(SRC_DIR)../ollama$(EXE_EXT))
+OLLAMA_EXE=../ollama$(EXE_EXT)
