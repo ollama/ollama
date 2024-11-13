@@ -5,20 +5,6 @@ dummy:
 	$(error This makefile is not meant to build directly, but instead included in other Makefiles that set required variables)
 endif
 
-ifeq ($(OS),windows)
-	GPU_COMPILER:=$(GPU_COMPILER_WIN)
-	GPU_LIB_DIR:=$(GPU_LIB_DIR_WIN)
-	CGO_EXTRA_LDFLAGS:=$(CGO_EXTRA_LDFLAGS_WIN)
-	GPU_COMPILER_CFLAGS = $(GPU_COMPILER_CFLAGS_WIN)
-	GPU_COMPILER_CXXFLAGS = $(GPU_COMPILER_CXXFLAGS_WIN)
-else ifeq ($(OS),linux)
-	GPU_COMPILER:=$(GPU_COMPILER_LINUX)
-	GPU_LIB_DIR:=$(GPU_LIB_DIR_LINUX)
-	CGO_EXTRA_LDFLAGS:=$(CGO_EXTRA_LDFLAGS_LINUX)
-	GPU_COMPILER_CFLAGS = $(GPU_COMPILER_CFLAGS_LINUX)
-	GPU_COMPILER_CXXFLAGS = $(GPU_COMPILER_CXXFLAGS_LINUX)
-endif
-
 GPU_GOFLAGS="-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=$(VERSION)\" \"-X=github.com/ollama/ollama/llama.CpuFeatures=$(subst $(space),$(comma),$(GPU_RUNNER_CPU_FLAGS))\" $(TARGET_LDFLAGS)"
 
 # TODO Unify how we handle dependencies in the dist/packaging and install flow
@@ -78,10 +64,10 @@ $(BUILD_DIR)/%.$(GPU_RUNNER_NAME).$(OBJ_EXT): %.cpp
 	@-mkdir -p $(dir $@)
 	$(CCACHE) $(GPU_COMPILER) -c $(GPU_COMPILER_CXXFLAGS) -o $@ $<
 $(RUNNERS_BUILD_DIR)/$(GPU_RUNNER_NAME)$(GPU_RUNNER_EXTRA_VARIANT)/ollama_llama_server$(EXE_EXT): TARGET_CGO_LDFLAGS = -L"$(RUNNERS_BUILD_DIR)/$(GPU_RUNNER_NAME)$(GPU_RUNNER_EXTRA_VARIANT)/" $(CGO_EXTRA_LDFLAGS)
-$(RUNNERS_BUILD_DIR)/$(GPU_RUNNER_NAME)$(GPU_RUNNER_EXTRA_VARIANT)/ollama_llama_server$(EXE_EXT): $(RUNNERS_BUILD_DIR)/$(GPU_RUNNER_NAME)$(GPU_RUNNER_EXTRA_VARIANT)/$(SHARED_PREFIX)ggml_$(GPU_RUNNER_NAME).$(SHARED_EXT) *.go ./runner/*.go $(COMMON_SRCS) $(COMMON_HDRS)
+$(RUNNERS_BUILD_DIR)/$(GPU_RUNNER_NAME)$(GPU_RUNNER_EXTRA_VARIANT)/ollama_llama_server$(EXE_EXT): $(BUILD_DIR)/$(SHARED_PREFIX)ggml_$(GPU_RUNNER_NAME).$(SHARED_EXT) *.go ./runner/*.go $(COMMON_SRCS) $(COMMON_HDRS)
 	@-mkdir -p $(dir $@)
 	cd ../ && GOARCH=$(ARCH) CGO_LDFLAGS="$(TARGET_CGO_LDFLAGS)" go build -buildmode=pie $(GPU_GOFLAGS) -trimpath -tags $(subst $(space),$(comma),$(GPU_RUNNER_CPU_FLAGS) $(GPU_RUNNER_GO_TAGS)) -o $(patsubst ../%,%,$@) ./cmd/runner
-$(RUNNERS_BUILD_DIR)/$(GPU_RUNNER_NAME)$(GPU_RUNNER_EXTRA_VARIANT)/$(SHARED_PREFIX)ggml_$(GPU_RUNNER_NAME).$(SHARED_EXT): $(GPU_RUNNER_OBJS) $(COMMON_HDRS) $(GPU_RUNNER_HDRS)
+$(BUILD_DIR)/$(SHARED_PREFIX)ggml_$(GPU_RUNNER_NAME).$(SHARED_EXT): $(GPU_RUNNER_OBJS) $(COMMON_HDRS) $(GPU_RUNNER_HDRS)
 	@-mkdir -p $(dir $@)
 	$(CCACHE) $(GPU_COMPILER) --shared -L$(GPU_LIB_DIR) $(GPU_RUNNER_DRIVER_LIB_LINK) -L${DIST_GPU_RUNNER_DEPS_DIR} $(foreach lib, $(GPU_RUNNER_LIBS_SHORT), -l$(lib)) $(GPU_RUNNER_OBJS) -o $@
 
@@ -89,13 +75,13 @@ $(RUNNERS_BUILD_DIR)/$(GPU_RUNNER_NAME)$(GPU_RUNNER_EXTRA_VARIANT)/$(SHARED_PREF
 $(RUNNERS_DIST_DIR)/%: $(RUNNERS_BUILD_DIR)/%
 	@-mkdir -p $(dir $@)
 	$(CP) $< $@
-$(RUNNERS_DIST_DIR)/$(GPU_RUNNER_NAME)$(GPU_RUNNER_EXTRA_VARIANT)/ollama_llama_server$(EXE_EXT): $(DIST_LIB_DIR)/$(SHARED_PREFIX)ggml_$(GPU_RUNNER_NAME).$(SHARED_EXT) $(GPU_DIST_DEPS_LIBS)
-$(DIST_LIB_DIR)/$(SHARED_PREFIX)ggml_$(GPU_RUNNER_NAME).$(SHARED_EXT): $(RUNNERS_BUILD_DIR)/$(GPU_RUNNER_NAME)$(GPU_RUNNER_EXTRA_VARIANT)/$(SHARED_PREFIX)ggml_$(GPU_RUNNER_NAME).$(SHARED_EXT)
+$(RUNNERS_DIST_DIR)/$(GPU_RUNNER_NAME)$(GPU_RUNNER_EXTRA_VARIANT)/ollama_llama_server$(EXE_EXT): $(DIST_LIB_DIR)/$(SHARED_PREFIX)ggml_$(GPU_RUNNER_NAME).$(SHARED_EXT) $(GPU_DIST_LIB_DEPS)
+$(DIST_LIB_DIR)/$(SHARED_PREFIX)ggml_$(GPU_RUNNER_NAME).$(SHARED_EXT): $(BUILD_DIR)/$(SHARED_PREFIX)ggml_$(GPU_RUNNER_NAME).$(SHARED_EXT)
 	@-mkdir -p $(dir $@)
 	$(CP) $< $@
-$(GPU_DIST_DEPS_LIBS): 
+$(GPU_DIST_LIB_DEPS):
 	@-mkdir -p $(dir $@)
-	$(CP) $(dir $(filter %$(notdir $@),$(GPU_LIBS) $(GPU_TRANSITIVE_LIBS)))/$(notdir $@) $(dir $@)
+	$(CP) $(GPU_LIB_DIR)/$(notdir $@) $(dir $@)
 
 # Payload targets
 $(RUNNERS_PAYLOAD_DIR)/%/ollama_llama_server.gz: $(RUNNERS_BUILD_DIR)/%/ollama_llama_server 
