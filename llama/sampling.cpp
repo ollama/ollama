@@ -250,7 +250,7 @@ struct gpt_sampler * gpt_sampler_init(const struct llama_model * model, const st
         llama_sampler_chain_add(result->chain, llama_sampler_init_greedy());
     }
     if (params.json_schema != "") {
-        nlohmann::json jsonSchema = nlohmann::json::parse(params.json_schema);
+        nlohmann::ordered_json jsonSchema = nlohmann::ordered_json::parse(params.json_schema);
         result->grmr = llama_sampler_init_grammar(model, json_schema_to_grammar(jsonSchema).c_str(), "root");
     } else {
         result->grmr = llama_sampler_init_grammar(model, params.grammar.c_str(), "root");
