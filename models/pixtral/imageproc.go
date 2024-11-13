@@ -61,7 +61,7 @@ func Preprocess(imageData io.Reader) ([]float32, map[string]any, error) {
 
 	img = resizeImage(img, format, longestEdge, patchSize)
 
-	data := imageproc.Normalize(img, imageproc.ClipDefaultMean, imageproc.ClipDefaultSTD, true, true)	
+	data := imageproc.Normalize(img, imageproc.ClipDefaultMean, imageproc.ClipDefaultSTD, true, true)
 
 	opts := map[string]any{}
 	return data, opts, nil
