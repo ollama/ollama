@@ -9,14 +9,15 @@ extern "C"
 
     // Forward declaration to avoid include of "sampling.h" which has c++
     // includes
-    struct gpt_sampler;
+    struct common_sampler;
 
-    struct gpt_sampler_cparams
+    struct common_sampler_cparams
     {
         int32_t top_k;
         float top_p;
         float min_p;
-        float tfs_z;
+        float xtc_probability; // 0.0 = disabled
+        float xtc_threshold; // > 0.5 disables XTC
         float typical_p;
         float temp;
         int32_t penalty_last_n;
@@ -31,19 +32,19 @@ extern "C"
         char *grammar;
     };
 
-    struct gpt_sampler *gpt_sampler_cinit(
+    struct common_sampler *common_sampler_cinit(
         const struct llama_model *model,
-        struct gpt_sampler_cparams *params);
-    void gpt_sampler_cfree(struct gpt_sampler *sampler);
-    void gpt_sampler_creset(struct gpt_sampler *sampler);
+        struct common_sampler_cparams *params);
+    void common_sampler_cfree(struct common_sampler *sampler);
+    void common_sampler_creset(struct common_sampler *sampler);
 
-    llama_token gpt_sampler_csample(
-        struct gpt_sampler *sampler,
+    llama_token common_sampler_csample(
+        struct common_sampler *sampler,
         struct llama_context *ctx_main,
         int idx);
 
-    void gpt_sampler_caccept(
-        struct gpt_sampler *sampler,
+    void common_sampler_caccept(
+        struct common_sampler *sampler,
         llama_token id,
         bool apply_grammar);
 
