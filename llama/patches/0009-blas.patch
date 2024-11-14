@@ -8,7 +8,7 @@ Subject: [PATCH] blas
  1 file changed, 4 insertions(+)
 
 diff --git a/ggml/src/ggml-blas.cpp b/ggml/src/ggml-blas.cpp
-index 6d99c6be..8e1ab99d 100644
+index 8d96220b..dd870670 100644
 --- a/ggml/src/ggml-blas.cpp
 +++ b/ggml/src/ggml-blas.cpp
 @@ -1,3 +1,5 @@
@@ -17,9 +17,9 @@ index 6d99c6be..8e1ab99d 100644
  #include "ggml-impl.h"
  #include "ggml-blas.h"
  #include "ggml-backend-impl.h"
-@@ -366,3 +368,5 @@ void ggml_backend_blas_set_n_threads(ggml_backend_t backend_blas, int n_threads)
-     ggml_backend_blas_context * ctx = (ggml_backend_blas_context *)backend_blas->context;
-     ctx->n_threads = n_threads;
+@@ -512,3 +514,5 @@ ggml_backend_reg_t ggml_backend_blas_reg(void) {
+ 
+     return &ggml_backend_blas_reg;
  }
 +
 +#endif

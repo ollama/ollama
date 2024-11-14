@@ -8,10 +8,10 @@ Subject: [PATCH] metal
  1 file changed, 13 insertions(+), 17 deletions(-)
 
 diff --git a/ggml/src/ggml-metal.m b/ggml/src/ggml-metal.m
-index 9da08fe2..3a433703 100644
+index 04ec5117..1813b00f 100644
 --- a/ggml/src/ggml-metal.m
 +++ b/ggml/src/ggml-metal.m
-@@ -1720,27 +1720,23 @@ static void ggml_metal_encode_node(
+@@ -1886,27 +1886,23 @@ static void ggml_metal_encode_node(
                  // to the matrix-vector kernel
                  int ne11_mm_min = 1;
  
@@ -19,7 +19,7 @@ index 9da08fe2..3a433703 100644
                  // the numbers below are measured on M2 Ultra for 7B and 13B models
                  // these numbers do not translate to other devices or model sizes
                  // TODO: need to find a better approach
--                        if ([ctx->device.name isEqualToString:@"Apple M2 Ultra"]) {
+-                        if ([device.name isEqualToString:@"Apple M2 Ultra"]) {
 -                            switch (src0t) {
 -                                case GGML_TYPE_F16:  ne11_mm_min = 2;  break;
 -                                case GGML_TYPE_Q8_0: ne11_mm_min = 7;  break;

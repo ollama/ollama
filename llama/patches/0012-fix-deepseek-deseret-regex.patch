@@ -11,7 +11,7 @@ the characters
  2 files changed, 22 insertions(+), 1 deletion(-)
 
 diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
-index d2f34ddd..3ef6af19 100644
+index d1dc9627..05ef0e71 100644
 --- a/src/llama-vocab.cpp
 +++ b/src/llama-vocab.cpp
 @@ -389,7 +389,7 @@ struct llm_tokenizer_bpe : llm_tokenizer {
@@ -24,7 +24,7 @@ index d2f34ddd..3ef6af19 100644
                      "\\s+$",
                      "[一-龥ࠀ-一가-퟿]+",
 diff --git a/src/unicode.cpp b/src/unicode.cpp
-index f4e941cd..9d78ff16 100644
+index 50b35bbb..2b749c52 100644
 --- a/src/unicode.cpp
 +++ b/src/unicode.cpp
 @@ -2,6 +2,11 @@

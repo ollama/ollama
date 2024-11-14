@@ -85,6 +85,7 @@ LLAMACPP_FILES=\
 	src/llama-sampling.cpp \
 	src/llama-sampling.h \
 	include/llama.h \
+	ggml/include/ggml-cpu.h \
 	ggml/src/llamafile/sgemm.cpp \
 	ggml/src/llamafile/sgemm.h
 $(foreach name,$(LLAMACPP_FILES),$(eval $(call vendor_file,$(name),$(DST_DIR))))
@@ -107,15 +108,17 @@ GGML_FILES= \
 	ggml/src/ggml-cuda.cu \
 	ggml/src/ggml-common.h \
 	ggml/include/ggml-backend.h \
-	ggml/src/ggml-backend.c \
+	ggml/src/ggml-backend.cpp \
 	ggml/src/ggml-backend-impl.h \
 	ggml/include/ggml-alloc.h \
 	ggml/src/ggml-alloc.c \
 	ggml/src/ggml-aarch64.h \
 	ggml/src/ggml-aarch64.c \
-	ggml/src/ggml-cpu-impl.h \
 	ggml/include/ggml-blas.h \
-	ggml/src/ggml-blas.cpp
+	ggml/include/ggml-cpp.h \
+	ggml/src/ggml-blas.cpp \
+	ggml/src/ggml-cpu.c \
+	ggml/src/ggml-cpu-impl.h
 $(foreach name,$(GGML_FILES),$(eval $(call vendor_file,$(name),$(DST_DIR))))
 
 # TODO generalize renaming pattern if we have more of these

@@ -9,6 +9,7 @@ ifeq ($(OS),windows)
 	GPU_COMPILER:=$(GPU_COMPILER_WIN)
 	GPU_LIB_DIR:=$(GPU_LIB_DIR_WIN)
 	CGO_EXTRA_LDFLAGS:=$(CGO_EXTRA_LDFLAGS_WIN)
+	GGML_EXTRA_LDFLAGS:=-lAdvapi32
 	GPU_COMPILER_CFLAGS = $(GPU_COMPILER_CFLAGS_WIN)
 	GPU_COMPILER_CXXFLAGS = $(GPU_COMPILER_CXXFLAGS_WIN)
 else ifeq ($(OS),linux)
@@ -38,7 +39,7 @@ GPU_RUNNER_SRCS := \
 	ggml-cuda.cu \
 	$(filter-out $(wildcard ggml-cuda/fattn*.cu),$(wildcard ggml-cuda/*.cu)) \
 	$(wildcard ggml-cuda/template-instances/mmq*.cu) \
-	ggml.c ggml-backend.c ggml-alloc.c ggml-quants.c sgemm.cpp ggml-aarch64.c
+	ggml.c ggml-backend.cpp ggml-alloc.c ggml-quants.c sgemm.cpp ggml-aarch64.c ggml-cpu.c
 GPU_RUNNER_HDRS := \
 	$(wildcard ggml-cuda/*.cuh)
 
@@ -85,7 +86,7 @@ $(RUNNERS_BUILD_DIR)/$(GPU_RUNNER_NAME)/ollama_llama_server$(EXE_EXT): $(RUNNERS
 	GOARCH=$(ARCH) CGO_LDFLAGS="$(TARGET_CGO_LDFLAGS)" go build -buildmode=pie  $(GPU_GOFLAGS) -trimpath -tags $(subst $(space),$(comma),$(GPU_RUNNER_CPU_FLAGS) $(GPU_RUNNER_GO_TAGS)) -o $@ ./runner
 $(RUNNERS_BUILD_DIR)/$(GPU_RUNNER_NAME)/$(SHARED_PREFIX)ggml_$(GPU_RUNNER_NAME).$(SHARED_EXT): $(GPU_RUNNER_OBJS) $(DIST_GPU_RUNNER_LIB_DEPS) $(COMMON_HDRS) $(GPU_RUNNER_HDRS)
 	@-mkdir -p $(dir $@)
-	$(CCACHE) $(GPU_COMPILER) --shared -L$(GPU_LIB_DIR) $(GPU_RUNNER_DRIVER_LIB_LINK) -L${DIST_GPU_RUNNER_DEPS_DIR} $(foreach lib, $(GPU_RUNNER_LIBS_SHORT), -l$(lib)) $(GPU_RUNNER_OBJS) -o $@
+	$(CCACHE) $(GPU_COMPILER) --shared -L$(GPU_LIB_DIR) $(GGML_EXTRA_LDFLAGS) $(GPU_RUNNER_DRIVER_LIB_LINK) -L${DIST_GPU_RUNNER_DEPS_DIR} $(foreach lib, $(GPU_RUNNER_LIBS_SHORT), -l$(lib)) $(GPU_RUNNER_OBJS) -o $@
 
 # Distribution targets
 $(RUNNERS_DIST_DIR)/%: $(RUNNERS_BUILD_DIR)/%

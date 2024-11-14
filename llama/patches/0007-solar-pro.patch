@@ -11,14 +11,14 @@ tensor to store the scalar. the scalar is implemented a 1-dimensional
 tensor with 2 elements dervied from the model's bskcn_tv configuration.
 in general, the values are (bskcn_tv, 1 - bskcn_tv)
 ---
- src/llama.cpp | 269 +++++++++++++++++++++++++++++++++++++++++++++++---
- 1 file changed, 255 insertions(+), 14 deletions(-)
+ src/llama.cpp | 267 +++++++++++++++++++++++++++++++++++++++++++++++---
+ 1 file changed, 253 insertions(+), 14 deletions(-)
 
 diff --git a/src/llama.cpp b/src/llama.cpp
-index a639522d..83b80b59 100644
+index fef74aef..8a799034 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
-@@ -217,6 +217,7 @@ enum llm_arch {
+@@ -194,6 +194,7 @@ enum llm_arch {
      LLM_ARCH_GRANITE,
      LLM_ARCH_GRANITE_MOE,
      LLM_ARCH_CHAMELEON,
@@ -26,7 +26,7 @@ index a639522d..83b80b59 100644
      LLM_ARCH_UNKNOWN,
  };
  
-@@ -270,6 +271,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
+@@ -247,6 +248,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
      { LLM_ARCH_GRANITE,         "granite"      },
      { LLM_ARCH_GRANITE_MOE,     "granitemoe"   },
      { LLM_ARCH_CHAMELEON,       "chameleon"    },
@@ -34,7 +34,7 @@ index a639522d..83b80b59 100644
      { LLM_ARCH_UNKNOWN,         "(unknown)"    },
  };
  
-@@ -327,6 +329,7 @@ enum llm_kv {
+@@ -304,6 +306,7 @@ enum llm_kv {
      LLM_KV_ATTENTION_RELATIVE_BUCKETS_COUNT,
      LLM_KV_ATTENTION_SLIDING_WINDOW,
      LLM_KV_ATTENTION_SCALE,
@@ -42,7 +42,7 @@ index a639522d..83b80b59 100644
  
      LLM_KV_ROPE_DIMENSION_COUNT,
      LLM_KV_ROPE_FREQ_BASE,
-@@ -421,20 +424,21 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
+@@ -406,20 +409,21 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
      { LLM_KV_RESIDUAL_SCALE,                    "%s.residual_scale"                    },
      { LLM_KV_EMBEDDING_SCALE,                   "%s.embedding_scale"                   },
  
@@ -76,17 +76,17 @@ index a639522d..83b80b59 100644
 +    { LLM_KV_ATTENTION_SCALE,                  "%s.attention.scale"                    },
 +    { LLM_KV_ATTENTION_BLOCK_SKIP_CONNECTION,  "%s.attention.block_skip_connection.%d" },
  
-     { LLM_KV_ROPE_DIMENSION_COUNT,          "%s.rope.dimension_count"                 },
-     { LLM_KV_ROPE_FREQ_BASE,                "%s.rope.freq_base"                       },
-@@ -608,6 +612,7 @@ enum llm_tensor {
+     { LLM_KV_ROPE_DIMENSION_COUNT,             "%s.rope.dimension_count"                 },
+     { LLM_KV_ROPE_FREQ_BASE,                   "%s.rope.freq_base"                       },
+@@ -601,6 +605,7 @@ enum llm_tensor {
      LLM_TENSOR_ENC_OUTPUT_NORM,
      LLM_TENSOR_CLS,
      LLM_TENSOR_CLS_OUT,
 +    LLM_TENSOR_BSKCN_TV,
  };
  
- static const std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NAMES = {
-@@ -1527,6 +1532,24 @@ static const std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NA
+ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_NAMES = {
+@@ -1520,6 +1525,24 @@ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_N
              { LLM_TENSOR_ATTN_K_NORM,     "blk.%d.attn_k_norm" },
          },
      },
@@ -111,7 +111,7 @@ index a639522d..83b80b59 100644
      {
          LLM_ARCH_UNKNOWN,
          {
-@@ -2360,6 +2383,7 @@ enum e_model {
+@@ -2319,6 +2342,7 @@ enum e_model {
      MODEL_15B,
      MODEL_16B,
      MODEL_20B,
@@ -119,7 +119,7 @@ index a639522d..83b80b59 100644
      MODEL_30B,
      MODEL_34B,
      MODEL_35B,
-@@ -2409,6 +2433,8 @@ struct llama_hparams {
+@@ -2368,6 +2392,8 @@ struct llama_hparams {
      std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_kv_arr;
      std::array<uint32_t, LLAMA_MAX_LAYERS> n_ff_arr;
  
@@ -128,7 +128,7 @@ index a639522d..83b80b59 100644
      uint32_t n_layer_dense_lead = 0;
      uint32_t n_lora_q = 0;
      uint32_t n_lora_kv = 0;
-@@ -2479,6 +2505,7 @@ struct llama_hparams {
+@@ -2438,6 +2464,7 @@ struct llama_hparams {
          if (this->n_head_arr    != other.n_head_arr)    return true;
          if (this->n_head_kv_arr != other.n_head_kv_arr) return true;
          if (this->n_ff_arr      != other.n_ff_arr)      return true;
@@ -136,7 +136,7 @@ index a639522d..83b80b59 100644
  
          if (this->n_rel_attn_bkts    != other.n_rel_attn_bkts)    return true;
          if (this->n_layer_dense_lead != other.n_layer_dense_lead) return true;
-@@ -2588,6 +2615,14 @@ struct llama_hparams {
+@@ -2547,6 +2574,14 @@ struct llama_hparams {
              return ssm_d_state * ssm_d_inner;
          }
      }
@@ -151,7 +151,7 @@ index a639522d..83b80b59 100644
  };
  
  static_assert(std::is_trivially_copyable<llama_hparams>::value, "llama_hparams must be trivially copyable");
-@@ -2769,6 +2804,8 @@ struct llama_layer {
+@@ -2733,6 +2768,8 @@ struct llama_layer {
      struct ggml_tensor * ffn_gate_scale;
      struct ggml_tensor * ffn_up_scale;
      struct ggml_tensor * ffn_down_scale;
@@ -160,7 +160,7 @@ index a639522d..83b80b59 100644
  };
  
  // very similar to llama_batch,
-@@ -6134,6 +6171,21 @@ static void llm_load_hparams(
+@@ -6106,6 +6143,21 @@ static void llm_load_hparams(
                      default: model.type = e_model::MODEL_UNKNOWN;
                 }
              } break;
@@ -182,46 +182,44 @@ index a639522d..83b80b59 100644
          default: (void)0;
      }
  
-@@ -8831,6 +8883,38 @@ static bool llm_load_tensors(
+@@ -9077,6 +9129,36 @@ static bool llm_load_tensors(
  
-                         layer.ffn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd});
+                         layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
  
-+                        layer.ffn_gate = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff});
-+                        layer.ffn_down = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd});
-+                        layer.ffn_up   = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff});
++                        layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
++                        layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
++                        layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
 +                    }
 +                } break;
 +            case LLM_ARCH_SOLAR:
 +                {
-+                    model.tok_embd = ml.create_tensor(ctx_input, tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab});
++                    model.tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
 +
 +                    // output
 +                    {
-+                        model.output_norm = ml.create_tensor(ctx_output,       tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd});
-+                        model.output      = ml.create_tensor(ctx_output_split, tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, llama_model_loader::TENSOR_NOT_REQUIRED);
++                        model.output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
++                        model.output      = create_tensor(tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, llama_model_loader::TENSOR_NOT_REQUIRED);
 +                    }
 +
 +                    for (int i = 0; i < n_layer; ++i) {
-+                        ggml_context * ctx_layer = ctx_for_layer(i);
-+                        ggml_context * ctx_split = ctx_for_layer_split(i);
 +
 +                        auto & layer = model.layers[i];
 +
-+                        layer.attn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd});
++                        layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), {n_embd}, 0);
 +
-+                        layer.wq = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd_head_k * n_head});
-+                        layer.wk = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k_gqa});
-+                        layer.wv = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_v_gqa});
-+                        layer.wo = ml.create_tensor(ctx_split, tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd});
++                        layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q,   "weight", i), {n_embd, n_embd_head_k * n_head}, 0);
++                        layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K,   "weight", i), {n_embd, n_embd_k_gqa}, 0);
++                        layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V,   "weight", i), {n_embd, n_embd_v_gqa}, 0);
++                        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0);
 +
-+                        layer.ffn_norm = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd});
++                        layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
 +
-+                        layer.bskcn_tv = ml.create_tensor(ctx_layer, tn(LLM_TENSOR_BSKCN_TV, "weight"), {2}, llama_model_loader::TENSOR_NOT_REQUIRED | (i != 0 ? llama_model_loader::TENSOR_DUPLICATED : 0));
++                        layer.bskcn_tv = create_tensor(tn(LLM_TENSOR_BSKCN_TV, "weight"), {2}, llama_model_loader::TENSOR_NOT_REQUIRED | (i != 0 ? llama_model_loader::TENSOR_DUPLICATED : 0));
 +
-                         layer.ffn_gate = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff});
-                         layer.ffn_down = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd});
-                         layer.ffn_up   = ml.create_tensor(ctx_split, tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff});
-@@ -16179,6 +16263,158 @@ struct llm_build_context {
+                         layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
+                         layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
+                         layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
+@@ -16395,6 +16477,158 @@ struct llm_build_context {
  
          return gf;
      }
@@ -380,7 +378,7 @@ index a639522d..83b80b59 100644
  };
  
  static struct ggml_cgraph * llama_build_graph_defrag(llama_context & lctx, const std::vector<uint32_t> & ids) {
-@@ -16443,6 +16679,10 @@ static struct ggml_cgraph * llama_build_graph(
+@@ -16660,6 +16894,10 @@ static struct ggml_cgraph * llama_build_graph(
              {
                  result = llm.build_chameleon();
              } break;
@@ -391,7 +389,7 @@ index a639522d..83b80b59 100644
          default:
              GGML_ABORT("fatal error");
      }
-@@ -19589,6 +19829,7 @@ enum llama_rope_type llama_rope_type(const struct llama_model * model) {
+@@ -19858,6 +20096,7 @@ enum llama_rope_type llama_rope_type(const struct llama_model * model) {
          case LLM_ARCH_GRANITE:
          case LLM_ARCH_GRANITE_MOE:
          case LLM_ARCH_CHAMELEON:
