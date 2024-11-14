@@ -600,6 +600,10 @@ func (c *Context) SetCrossAttention(state bool) {
 	C.llama_set_cross_attention(c.c, C.bool(state))
 }
 
+func (c *Context) Synchronize() {
+	C.llama_synchronize(c.c)
+}
+
 // sampling
 // TODO: this is a temporary wrapper to allow calling C++ code from CGo
 type SamplingContext struct {
