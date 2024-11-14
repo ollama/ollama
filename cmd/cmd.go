@@ -907,13 +907,57 @@ func CopyHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+type pullFn func(ctx context.Context, name string, fn api.PullProgressFunc) error
+
+func getLocalPuller(insecure bool) (p pullFn, err error) {
+	p = func(ctx context.Context, name string, fn api.PullProgressFunc) error {
+		if err := initializeKeypair(); err != nil {
+			return err
+		}
+		opts := &server.RegistryOptions{
+			Insecure: insecure,
+		}
+		f := func(r api.ProgressResponse) {
+			fn(r)
+		}
+		return server.PullModel(ctx, name, opts, f)
+	}
+	return p, nil
+}
+
+func getAPIPuller(insecure bool) (p pullFn, err error) {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return p, err
+	}
+	p = func(ctx context.Context, name string, fn api.PullProgressFunc) error {
+		if err := preflightCheck(ctx, client); err != nil {
+			return err
+		}
+		req := api.PullRequest{Name: name, Insecure: insecure}
+		return client.Pull(ctx, &req, fn)
+	}
+	return p, nil
+}
+
 func PullHandler(cmd *cobra.Command, args []string) error {
 	insecure, err := cmd.Flags().GetBool("insecure")
 	if err != nil {
 		return err
 	}
+	local, err := cmd.Flags().GetBool("local")
+	if err != nil {
+		return err
+	}
 
-	client, err := api.ClientFromEnvironment()
+	var pf pullFn
+	if local {
+		fmt.Println("pulling to local machine")
+		pf, err = getLocalPuller(insecure)
+	} else {
+		fmt.Println("requesting pull from server")
+		pf, err = getAPIPuller(insecure)
+	}
 	if err != nil {
 		return err
 	}
@@ -953,8 +997,7 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	request := api.PullRequest{Name: args[0], Insecure: insecure}
-	if err := client.Pull(cmd.Context(), &request, fn); err != nil {
+	if err := pf(cmd.Context(), args[0], fn); err != nil {
 		return err
 	}
 
@@ -1268,11 +1311,15 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if err := client.Heartbeat(cmd.Context()); err != nil {
+	return preflightCheck(cmd.Context(), client)
+}
+
+func preflightCheck(ctx context.Context, client *api.Client) error {
+	if err := client.Heartbeat(ctx); err != nil {
 		if !strings.Contains(err.Error(), " refused") {
 			return err
 		}
-		if err := startApp(cmd.Context(), client); err != nil {
+		if err := startApp(ctx, client); err != nil {
 			return errors.New("could not connect to ollama app, is it running?")
 		}
 	}
@@ -1398,14 +1445,14 @@ func NewCLI() *cobra.Command {
 	}
 
 	pullCmd := &cobra.Command{
-		Use:     "pull MODEL",
-		Short:   "Pull a model from a registry",
-		Args:    cobra.ExactArgs(1),
-		PreRunE: checkServerHeartbeat,
-		RunE:    PullHandler,
+		Use:   "pull MODEL",
+		Short: "Pull a model from a registry",
+		Args:  cobra.ExactArgs(1),
+		RunE:  PullHandler,
 	}
 
 	pullCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	pullCmd.Flags().Bool("local", false, "Pull to the local machine instead of making a server request")
 
 	pushCmd := &cobra.Command{
 		Use:     "push MODEL",

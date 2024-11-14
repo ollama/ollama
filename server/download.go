@@ -122,7 +122,7 @@ func (p *blobDownloadPart) Write(b []byte) (n int, err error) {
 	return n, nil
 }
 
-func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *registryOptions) error {
+func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *RegistryOptions) error {
 	partFilePaths, err := filepath.Glob(b.Name + "-partial-*")
 	if err != nil {
 		return err
@@ -176,7 +176,7 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *r
 	return nil
 }
 
-func (b *blobDownload) Run(ctx context.Context, requestURL *url.URL, opts *registryOptions) {
+func (b *blobDownload) Run(ctx context.Context, requestURL *url.URL, opts *RegistryOptions) {
 	defer close(b.done)
 	b.err = b.run(ctx, requestURL, opts)
 }
@@ -207,7 +207,7 @@ func newBackoff(maxBackoff time.Duration) func(ctx context.Context) error {
 	}
 }
 
-func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *registryOptions) error {
+func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *RegistryOptions) error {
 	defer blobDownloadManager.Delete(b.Digest)
 	ctx, b.CancelFunc = context.WithCancel(ctx)
 
@@ -228,7 +228,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 		for {
 			// shallow clone opts to be used in the closure
 			// without affecting the outer opts.
-			newOpts := new(registryOptions)
+			newOpts := new(RegistryOptions)
 			*newOpts = *opts
 
 			newOpts.CheckRedirect = func(req *http.Request, via []*http.Request) error {
@@ -454,7 +454,7 @@ func (b *blobDownload) Wait(ctx context.Context, fn func(api.ProgressResponse)) 
 type downloadOpts struct {
 	mp      ModelPath
 	digest  string
-	regOpts *registryOptions
+	regOpts *RegistryOptions
 	fn      func(api.ProgressResponse)
 }
 
