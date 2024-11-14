@@ -209,13 +209,15 @@ type Options struct {
 	Runner
 
 	// Predict options used at runtime
-	NumKeep          int      `json:"num_keep,omitempty"`
-	Seed             int      `json:"seed,omitempty"`
-	NumPredict       int      `json:"num_predict,omitempty"`
-	TopK             int      `json:"top_k,omitempty"`
-	TopP             float32  `json:"top_p,omitempty"`
-	MinP             float32  `json:"min_p,omitempty"`
-	TFSZ             float32  `json:"tfs_z,omitempty"`
+	NumKeep        int     `json:"num_keep,omitempty"`
+	Seed           int     `json:"seed,omitempty"`
+	NumPredict     int     `json:"num_predict,omitempty"`
+	TopK           int     `json:"top_k,omitempty"`
+	TopP           float32 `json:"top_p,omitempty"`
+	MinP           float32 `json:"min_p,omitempty"`
+	XtcProbability float32 `json:"xtc_probability,omitempty"`
+	XtcThreshold   float32 `json:"xtc_threshold,omitempty"`
+	// Prompt options used at runtime
 	TypicalP         float32  `json:"typical_p,omitempty"`
 	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
 	Temperature      float32  `json:"temperature,omitempty"`
@@ -594,7 +596,8 @@ func DefaultOptions() Options {
 		Temperature:      0.8,
 		TopK:             40,
 		TopP:             0.9,
-		TFSZ:             1.0,
+		XtcProbability:   0.0,
+		XtcThreshold:     0.5,
 		TypicalP:         1.0,
 		RepeatLastN:      64,
 		RepeatPenalty:    1.1,

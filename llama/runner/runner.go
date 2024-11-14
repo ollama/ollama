@@ -550,7 +550,8 @@ type Options struct {
 	TopK             int      `json:"top_k"`
 	TopP             float32  `json:"top_p"`
 	MinP             float32  `json:"min_p"`
-	TFSZ             float32  `json:"tfs_z"`
+	XtcProbability   float32  `json:"xtc_probability"`
+	XtcThreshold     float32  `json:"xtc_threshold"`
 	TypicalP         float32  `json:"typical_p"`
 	RepeatLastN      int      `json:"repeat_last_n"`
 	Temperature      float32  `json:"temperature"`
@@ -623,7 +624,8 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	samplingParams.TopK = req.TopK
 	samplingParams.TopP = req.TopP
 	samplingParams.MinP = req.MinP
-	samplingParams.TfsZ = req.TFSZ
+	samplingParams.XtcProbability = req.XtcProbability
+	samplingParams.XtcThreshold = req.XtcThreshold
 	samplingParams.TypicalP = req.TypicalP
 	samplingParams.Temp = req.Temperature
 	samplingParams.RepeatLastN = req.RepeatLastN
