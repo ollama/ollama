@@ -40,7 +40,7 @@ runners: $(RUNNER_TARGETS)
 $(RUNNER_TARGETS):
 	$(MAKE) -f make/Makefile.$@
 
-help-sync apply-patches create-patches sync:
+help-sync apply-patches create-patches sync sync-clean:
 	$(MAKE) -f make/Makefile.sync $@
 
 clean:
