@@ -98,7 +98,7 @@ func (i *Instance) Readline() (string, error) {
 		showPlaceholder := !i.Pasting || i.Prompt.UseAlt
 		if buf.IsEmpty() && showPlaceholder {
 			ph := i.Prompt.placeholder()
-			fmt.Printf(ColorGrey + ph + fmt.Sprintf(CursorLeftN, len(ph)) + ColorDefault)
+			fmt.Print(ColorGrey + ph + CursorLeftN(len(ph)) + ColorDefault)
 		}
 
 		r, err := i.Terminal.Read()

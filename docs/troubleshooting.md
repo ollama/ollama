@@ -9,7 +9,7 @@ cat ~/.ollama/logs/server.log
 On **Linux** systems with systemd, the logs can be found with this command:
 
 ```shell
-journalctl -u ollama
+journalctl -u ollama --no-pager
 ```
 
 When you run Ollama in a **container**, the logs go to stdout/stderr in the container:
@@ -70,14 +70,18 @@ curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION="0.1.29" sh
 
 If your system is configured with the "noexec" flag where Ollama stores its temporary executable files, you can specify an alternate location by setting OLLAMA_TMPDIR to a location writable by the user ollama runs as. For example OLLAMA_TMPDIR=/usr/share/ollama/
 
-## Container fails to run on NVIDIA GPU
+## NVIDIA GPU Discovery
 
-Make sure you've set up the container runtime first as described in [docker.md](./docker.md)
+When Ollama starts up, it takes inventory of the GPUs present in the system to determine compatibility and how much VRAM is available.  Sometimes this discovery can fail to find your GPUs.  In general, running the latest driver will yield the best results.
 
-Sometimes the container runtime can have difficulties initializing the GPU. When you check the server logs, this can show up as various error codes, such as "3" (not initialized), "46" (device unavailable), "100" (no device), "999" (unknown), or others. The following troubleshooting techniques may help resolve the problem
+### Linux NVIDIA Troubleshooting
 
-- Is the container runtime working?  Try `docker run --gpus all ubuntu nvidia-smi` - if this doesn't work, Ollama wont be able to see your NVIDIA GPU.
-- Is the uvm driver not loaded? `sudo nvidia-modprobe -u`
+If you are using a container to run Ollama, make sure you've set up the container runtime first as described in [docker.md](./docker.md)
+
+Sometimes the Ollama can have difficulties initializing the GPU. When you check the server logs, this can show up as various error codes, such as "3" (not initialized), "46" (device unavailable), "100" (no device), "999" (unknown), or others. The following troubleshooting techniques may help resolve the problem
+
+- If you are using a container, is the container runtime working?  Try `docker run --gpus all ubuntu nvidia-smi` - if this doesn't work, Ollama wont be able to see your NVIDIA GPU.
+- Is the uvm driver loaded? `sudo nvidia-modprobe -u`
 - Try reloading the nvidia_uvm driver - `sudo rmmod nvidia_uvm` then `sudo modprobe nvidia_uvm`
 - Try rebooting
 - Make sure you're running the latest nvidia drivers
@@ -85,3 +89,21 @@ Sometimes the container runtime can have difficulties initializing the GPU. When
 If none of those resolve the problem, gather additional information and file an issue:
 - Set `CUDA_ERROR_LEVEL=50` and try again to get more diagnostic logs
 - Check dmesg for any errors `sudo dmesg | grep -i nvrm` and `sudo dmesg | grep -i nvidia`
+
+
+## AMD GPU Discovery
+
+On linux, AMD GPU access typically requires `video` and/or `render` group membership to access the `/dev/kfd` device.  If permissions are not set up correctly, Ollama will detect this and report an error in the server log.
+
+When running in a container, in some Linux distributions and container runtimes, the ollama process may be unable to access the GPU.  Use `ls -lnd /dev/kfd /dev/dri /dev/dri/*` on the host system to determine the **numeric** group IDs on your system, and pass additional `--group-add ...` arguments to the container so it can access the required devices.   For example, in the following output `crw-rw---- 1 0  44 226,   0 Sep 16 16:55 /dev/dri/card0` the group ID column is `44` 
+
+If Ollama initially works on the GPU in a docker container, but then switches to running on CPU after some period of time with errors in the server log reporting GPU discovery failures, this can be resolved by disabling systemd cgroup management in Docker.  Edit `/etc/docker/daemon.json` on the host and add `"exec-opts": ["native.cgroupdriver=cgroupfs"]` to the docker configuration.
+
+If you are experiencing problems getting Ollama to correctly discover or use your GPU for inference, the following may help isolate the failure.
+- `AMD_LOG_LEVEL=3` Enable info log levels in the AMD HIP/ROCm libraries.  This can help show more detailed error codes that can help troubleshoot problems
+- `OLLAMA_DEBUG=1` During GPU discovery additional information will be reported
+- Check dmesg for any errors from amdgpu or kfd drivers `sudo dmesg | grep -i amdgpu` and `sudo dmesg | grep -i kfd`
+
+## Windows Terminal Errors
+
+Older versions of Windows 10 (e.g., 21H1) are known to have a bug where the standard terminal program does not display control characters correctly.  This can result in a long string of strings like `←[?25h←[?25l` being displayed, sometimes erroring with `The parameter is incorrect`  To resolve this problem, please update to Win 10 22H1 or newer.
