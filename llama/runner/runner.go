@@ -161,15 +161,13 @@ func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 
 	for i, part := range parts {
 		// text - tokenize
-		if strings.TrimSpace(part) != "" {
-			tokens, err := s.lc.Model().Tokenize(part, i == 0, true)
-			if err != nil {
-				return nil, err
-			}
+		tokens, err := s.lc.Model().Tokenize(part, i == 0, true)
+		if err != nil {
+			return nil, err
+		}
 
-			for _, t := range tokens {
-				inputs = append(inputs, input{token: t})
-			}
+		for _, t := range tokens {
+			inputs = append(inputs, input{token: t})
 		}
 
 		// image - generate image embedding
