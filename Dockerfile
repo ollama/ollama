@@ -234,17 +234,13 @@ COPY --from=container-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-am
 COPY --from=runners-cuda-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
 
 FROM --platform=linux/arm64 ubuntu:22.04 AS runtime-arm64
-COPY --from=build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64-jetpack5/lib/ /lib/
-COPY --from=build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64-jetpack6/lib/ /lib/
 RUN apt-get update && \
     apt-get install -y ca-certificates && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY --from=container-build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/bin/ /bin/
-COPY --from=cpu-build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
-COPY --from=cuda-11-build-runner-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
-COPY --from=cuda-12-build-runner-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
-COPY --from=cuda-build-jetpack5-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
-COPY --from=cuda-build-jetpack6-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
+COPY --from=runners-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
+COPY --from=runners-jetpack5-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64-jetpack5/lib/ /lib/
+COPY --from=runners-jetpack6-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64-jetpack6/lib/ /lib/
 
 
 # ROCm libraries larger so we keep it distinct from the CPU/CUDA image
