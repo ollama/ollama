@@ -14,7 +14,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -340,15 +339,6 @@ func (s *Server) run(ctx context.Context) {
 // it should only be responsible for accepting tokens or embeddings and
 // processing batches as fast as possible
 func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) {
-	// Try to keep going even if we hit a panic so that corner cases don't take the whole
-	// runner down. In most cases, this will result in dropping the tokens that we are currently
-	// processing and then continuing with what is remaining.
-	defer func() {
-		if err := recover(); err != nil {
-			slog.Error("error while processing batch", "error", err, "stack", debug.Stack())
-		}
-	}()
-
 	s.mu.Lock()
 	for s.allNil() {
 		s.cond.Wait() // Wait until an item is added
