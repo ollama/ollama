@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -23,6 +24,8 @@ import (
 )
 
 type MultilineState int
+
+var LoggingState bool = false
 
 const (
 	MultilineNone MultilineState = iota
@@ -141,13 +144,16 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			if line == "" {
 				fmt.Println("\nUse Ctrl + d or /bye to exit.")
 			}
-
+			
 			scanner.Prompt.UseAlt = false
 			sb.Reset()
-
+			
 			continue
 		case err != nil:
 			return err
+		}
+		if LoggingState {
+			log.Println("User Input: " + line)
 		}
 
 		switch {
@@ -325,10 +331,14 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					sb.Reset()
 					continue
 				case "logging":
-					if err := cmd.Flags().Set("logging", "true"); err != nil {
-						return err
-					}
-					fmt.Println("Set 'verbose' mode.")
+					LoggingState = true
+					file, err := os.OpenFile("app.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+    				if err != nil {
+    				    log.Fatal("Failed to open log file:", err)
+    				}
+    				defer file.Close()
+    				log.SetOutput(file)
+					fmt.Println("Set 'logging' mode.")
 				default:
 					fmt.Printf("Unknown command '/set %s'. Type /? for help\n", args[1])
 				}
