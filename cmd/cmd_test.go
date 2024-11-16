@@ -423,9 +423,12 @@ func TestPushHandler(t *testing.T) {
 				"/api/push": func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusUnauthorized)
-					json.NewEncoder(w).Encode(map[string]string{
+					err := json.NewEncoder(w).Encode(map[string]string{
 						"error": "access denied",
 					})
+					if err != nil {
+						t.Fatal(err)
+					}
 				},
 			},
 			expectedError: "you are not authorized to push to this namespace, create the model under a namespace you own",
@@ -464,7 +467,10 @@ func TestPushHandler(t *testing.T) {
 			// Restore stderr
 			w.Close()
 			os.Stderr = oldStderr
-			io.ReadAll(r) // drain the pipe
+			// drain the pipe
+			if _, err := io.ReadAll(r); err != nil {
+				t.Fatal(err)
+			}
 
 			// Restore stdout and get output
 			outW.Close()
