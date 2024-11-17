@@ -186,7 +186,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		"--model", model,
 		"--ctx-size", strconv.Itoa(opts.NumCtx),
 		"--batch-size", strconv.Itoa(opts.NumBatch),
-		"--embedding",
 	}
 
 	if opts.NumGPU >= 0 {
@@ -216,10 +215,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		params = append(params, "--threads", strconv.Itoa(opts.NumThread))
 	} else if defaultThreads > 0 {
 		params = append(params, "--threads", strconv.Itoa(defaultThreads))
-	}
-
-	if !opts.F16KV {
-		params = append(params, "--memory-f32")
 	}
 
 	flashAttnEnabled := envconfig.FlashAttention()
@@ -311,9 +306,9 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 
 		// Note: we always put the dependency path first
 		// since this was the exact version we compiled/linked against
-		if gpus[0].DependencyPath != "" {
+		if gpus[0].DependencyPath != nil {
 			// assume gpus from the same library have the same dependency path
-			libraryPaths = append([]string{gpus[0].DependencyPath}, libraryPaths...)
+			libraryPaths = append(gpus[0].DependencyPath, libraryPaths...)
 		}
 
 		server := filepath.Join(dir, "ollama_llama_server")

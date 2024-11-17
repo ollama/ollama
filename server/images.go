@@ -690,7 +690,8 @@ func CopyModel(src, dst model.Name) error {
 }
 
 func deleteUnusedLayers(deleteMap map[string]struct{}) error {
-	manifests, err := Manifests()
+	// Ignore corrupt manifests to avoid blocking deletion of layers that are freshly orphaned
+	manifests, err := Manifests(true)
 	if err != nil {
 		return err
 	}
@@ -853,8 +854,8 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	manifest, _, err := GetManifest(mp)
 	if errors.Is(err, os.ErrNotExist) {
 		// noop
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+	} else if err != nil {
+		slog.Warn("pulling model with bad existing manifest", "name", name, "error", err)
 	} else {
 		for _, l := range manifest.Layers {
 			deleteMap[l.Digest] = struct{}{}
