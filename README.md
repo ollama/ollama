@@ -335,6 +335,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama App](https://github.com/JHubi1/ollama-app) (Modern and easy-to-use multi-platform client for Ollama)
 - [Hexabot](https://github.com/hexastack/hexabot) (A conversational AI builder)
 - [Reddit Rate]((https://github.com/rapidarchitect/reddit_analyzer)) (Search and Rate Reddit topics with a weighted summation)
+- [VT](https://github.com/vinhnx/vt.ai) (A minimal multimodal AI chat app with dynamic conversation routing, support both models backend by Ollama)
 
 ### Terminal
 
