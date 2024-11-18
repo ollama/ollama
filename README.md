@@ -337,6 +337,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Hexabot](https://github.com/hexastack/hexabot) (A conversational AI builder)
 - [Reddit Rate]((https://github.com/rapidarchitect/reddit_analyzer)) (Search and Rate Reddit topics with a weighted summation)
 - [VT](https://github.com/vinhnx/vt.ai) (A minimal multimodal AI chat app with dynamic conversation routing, support both models backend by Ollama)
+- [Witsy](https://github.com/nbonamy/witsy) (An AI Desktop application avaiable for Mac/Windows/Linux) 
 
 ### Terminal
 
@@ -422,6 +423,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama for Swift](https://github.com/mattt/ollama-swift)
 - [GoLamify](https://github.com/prasad89/golamify)
 - [Ollama for Haskell](https://github.com/tusharad/ollama-haskell)
+- [multi-llm-ts](https://github.com/nbonamy/multi-llm-ts) (A Typescript/JavaScript library allowing access to different LLM in unified API)
 
 ### Mobile
 
