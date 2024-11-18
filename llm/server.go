@@ -1092,7 +1092,9 @@ func (s *llmServer) EstimatedTotal() uint64 {
 func (s *llmServer) EstimatedVRAMByGPU(gpuID string) uint64 {
 	for i, gpu := range s.gpus {
 		if gpu.ID == gpuID {
-			return s.estimate.GPUSizes[i]
+			if i < len(s.estimate.GPUSizes) {
+				return s.estimate.GPUSizes[i]
+			}
 		}
 	}
 	return 0
