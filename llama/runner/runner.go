@@ -357,6 +357,14 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			continue
 		}
 
+		// If an error occurred during the processing of a previous batch then we may have emptied the inputs
+		// without adding a new one. In this case, end the sequence rather than infinite looping.
+		if len(seq.inputs) == 0 {
+			slog.Error("removing sequence due to no input tokens", "index", seqIdx, "cache id", seq.cache.Id)
+			s.removeSequence(seqIdx, "error")
+			continue
+		}
+
 		// if past the num predict limit
 		if seq.numPredict > 0 && seq.numPredicted >= seq.numPredict {
 			s.removeSequence(seqIdx, "limit")

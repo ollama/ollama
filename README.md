@@ -333,8 +333,11 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ARGO](https://github.com/xark-argo/argo) (Locally download and run Ollama and Huggingface models with RAG on Mac/Windows/Linux)
 - [G1](https://github.com/bklieger-groq/g1) (Prototype of using prompting strategies to improve the LLM's reasoning through o1-like reasoning chains.)
 - [Ollama App](https://github.com/JHubi1/ollama-app) (Modern and easy-to-use multi-platform client for Ollama)
+- [Perfect Memory AI](https://www.perfectmemory.ai/) (Productivity AI assists personalized by what you have seen on your screen, heard and said in the meetings)
 - [Hexabot](https://github.com/hexastack/hexabot) (A conversational AI builder)
-- [Reddit Rate]((https://github.com/rapidarchitect/reddit_analyzer)) (Search and Rate Reddit topics with a weighted summation)
+- [Reddit Rate](https://github.com/rapidarchitect/reddit_analyzer) (Search and Rate Reddit topics with a weighted summation)
+- [VT](https://github.com/vinhnx/vt.ai) (A minimal multimodal AI chat app, with dynamic conversation routing. Supports local models via Ollama)
+- [Witsy](https://github.com/nbonamy/witsy) (An AI Desktop application avaiable for Mac/Windows/Linux)
 - [Nosia](https://github.com/nosia-ai/nosia) (Easy to install and use RAG platform based on Ollama)
 
 ### Terminal
@@ -420,6 +423,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Agents-Flex for Java](https://github.com/agents-flex/agents-flex) with [example](https://github.com/agents-flex/agents-flex/tree/main/agents-flex-llm/agents-flex-llm-ollama/src/test/java/com/agentsflex/llm/ollama)
 - [Ollama for Swift](https://github.com/mattt/ollama-swift)
 - [GoLamify](https://github.com/prasad89/golamify)
+- [Ollama for Haskell](https://github.com/tusharad/ollama-haskell)
+- [multi-llm-ts](https://github.com/nbonamy/multi-llm-ts) (A Typescript/JavaScript library allowing access to different LLM in unified API)
 
 ### Mobile
 
