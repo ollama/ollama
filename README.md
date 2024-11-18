@@ -467,6 +467,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [QodeAssist](https://github.com/Palm1r/QodeAssist) (AI-powered coding assistant plugin for Qt Creator)
 - [Obsidian Quiz Generator plugin](https://github.com/ECuiDev/obsidian-quiz-generator)
 - [TextCraft](https://github.com/suncloudsmoon/TextCraft) (Copilot in Word alternative using Ollama)
+- [Alfred Ollama](https://github.com/zeitlings/alfred-ollama) (Alfred Workflow)
 
 ### Supported backends
 
