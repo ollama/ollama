@@ -414,7 +414,7 @@ func TestPushHandler(t *testing.T) {
 					}
 				},
 			},
-			expectedOutput: "\nModel pushed → https://ollama.com/test-model\n",
+			expectedOutput: "\nModel pushed: https://ollama.com/test-model\n",
 		},
 		{
 			name:      "unauthorized push",

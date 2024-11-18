@@ -579,7 +579,7 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 	if isOllamaHost {
 		destination = "https://ollama.com/" + strings.TrimSuffix(n.DisplayShortest(), ":latest")
 	}
-	fmt.Printf("\nModel pushed → %s\n", destination)
+	fmt.Printf("\nModel pushed: %s\n", destination)
 
 	return nil
 }
