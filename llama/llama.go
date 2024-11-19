@@ -23,10 +23,10 @@ package llama
 #cgo amd64,fma CXXFLAGS: -mfma
 #cgo cuda CFLAGS: -fPIE -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 #cgo cuda CXXFLAGS: -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
-#cgo cuda_jetpack5 LDFLAGS: -lggml_cuda_jetpack5 -L/usr/local/cuda-11/lib64
-#cgo cuda_jetpack6 LDFLAGS: -lggml_cuda_jetpack6 -L/usr/local/cuda-12/lib64
-#cgo cuda_v11 LDFLAGS: -lggml_cuda_v11 -L/usr/local/cuda-11/lib64
-#cgo cuda_v12 LDFLAGS: -lggml_cuda_v12 -L/usr/local/cuda-12/lib64
+#cgo cuda_jetpack5 LDFLAGS: -lggml_cuda_jetpack5
+#cgo cuda_jetpack6 LDFLAGS: -lggml_cuda_jetpack6
+#cgo cuda_v11 LDFLAGS: -lggml_cuda_v11
+#cgo cuda_v12 LDFLAGS: -lggml_cuda_v12
 #cgo darwin,amd64 CFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
 #cgo darwin,amd64 CXXFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
 #cgo darwin,amd64 LDFLAGS: -framework Foundation
@@ -45,7 +45,7 @@ package llama
 #cgo linux,arm64,sve CFLAGS: -march=armv8.6-a+sve
 #cgo linux,arm64,sve CXXFLAGS: -march=armv8.6-a+sve
 #cgo linux,cuda LDFLAGS: -lcuda -lcudart -lcublas -lcublasLt -lpthread -ldl -lrt -lresolv
-#cgo linux,rocm LDFLAGS: -L/opt/rocm/lib -lpthread -ldl -lrt -lresolv
+#cgo linux,rocm LDFLAGS: -lpthread -ldl -lrt -lresolv
 #cgo rocm CFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIPBLAS -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 #cgo rocm CXXFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIPBLAS -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 #cgo rocm LDFLAGS: -L${SRCDIR} -lggml_rocm -lhipblas -lamdhip64 -lrocblas
