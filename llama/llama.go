@@ -384,6 +384,8 @@ func (b *Batch) Add(token int, embed []float32, pos int, logits bool, seqIds ...
 
 	if logits {
 		unsafe.Slice(b.c.logits, b.allocSize())[b.c.n_tokens] = 1
+	} else {
+		unsafe.Slice(b.c.logits, b.allocSize())[b.c.n_tokens] = 0
 	}
 
 	b.c.n_tokens += 1
