@@ -4,8 +4,8 @@
 
 set -eu
 
-red="$( (/usr/bin/tput bold; /usr/bin/tput setaf 1; :) 2>&-)"
-plain="$( (/usr/bin/tput sgr0; :) 2>&-)"
+red="$( (/usr/bin/tput bold || :; /usr/bin/tput setaf 1 || :) 2>&-)"
+plain="$( (/usr/bin/tput sgr0 || :) 2>&-)"
 
 status() { echo ">>> $*" >&2; }
 error() { echo "${red}ERROR:${plain} $*"; exit 1; }
