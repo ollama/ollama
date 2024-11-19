@@ -426,8 +426,15 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 
 	err := s.lc.Decode(batch)
 	if err != nil {
-		slog.Error("failed to decode batch", "error", err)
-		return
+		if errors.Is(err, llama.ErrKvCacheFull) {
+			slog.Debug("defragmenting kv cache")
+			s.cache.lc.KvCacheDefrag()
+			err = s.lc.Decode(batch)
+		}
+		if err != nil {
+			slog.Error("failed to decode batch", "error", err)
+			return
+		}
 	}
 
 	if crossAttention {

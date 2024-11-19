@@ -157,9 +157,7 @@ type Context struct {
 	numThreads int
 }
 
-func (c *Context) KvCacheClear() {
-	C.llama_kv_cache_clear(c.c)
-}
+var ErrKvCacheFull = errors.New("could not find a kv cache slot")
 
 func (c *Context) Decode(batch *Batch) error {
 	// Positive return values does not mean a fatal error, but rather a warning.
@@ -173,7 +171,7 @@ func (c *Context) Decode(batch *Batch) error {
 	}
 
 	if code > 0 {
-		return fmt.Errorf("could not find a KV slot for the batch - try reducing the size of the batch or increase the context. code: %d", code)
+		return ErrKvCacheFull
 	}
 
 	return nil
@@ -193,6 +191,14 @@ func (c *Context) KvCacheSeqRm(seqId int, p0 int, p1 int) bool {
 
 func (c *Context) KvCacheSeqCp(srcSeqId int, dstSeqId int, p0 int, p1 int) {
 	C.llama_kv_cache_seq_cp(c.c, C.int(srcSeqId), C.int(dstSeqId), C.int(p0), C.int(p1))
+}
+
+func (c *Context) KvCacheClear() {
+	C.llama_kv_cache_clear(c.c)
+}
+
+func (c *Context) KvCacheDefrag() {
+	C.llama_kv_cache_defrag(c.c)
 }
 
 // Get the embeddings for a sequence id
