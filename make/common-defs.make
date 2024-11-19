@@ -21,34 +21,26 @@ export CGO_CXXFLAGS_ALLOW = -mfma|-mf16c
 export HIP_PLATFORM = amd
 export CGO_ENABLED=1
 
+BUILD_DIR = ./llama/build/$(OS)-$(ARCH)
+DIST_BASE = ./dist/$(OS)-$(ARCH)
+
 ifeq ($(OS),windows)
 	# Absolute paths with cygpath to convert to 8.3 without spaces
 	PWD="$(shell pwd)"
-	CYGPWD=$(shell cygpath -m -s "$(PWD)")
-	BUILD_DIR = $(CYGPWD)/build/$(OS)-$(ARCH)
-	DIST_BASE = $(CYGPWD)/../dist/$(OS)-$(ARCH)
-	RUNNERS_PAYLOAD_DIR = $(CYGPWD)/../build/$(OS)/$(ARCH)
 	DIST_OLLAMA_EXE=$(DIST_BASE)/ollama$(EXE_EXT)
 else
 	CCACHE:=$(shell command -v ccache 2>/dev/null || echo "")
-	# Relative paths used to avoid tripping over spaces
-	# working directory must be <repo>/llama/
-	BUILD_DIR = ./build/$(OS)-$(ARCH)
-	DIST_BASE = ../dist/$(OS)-$(ARCH)
-	RUNNERS_PAYLOAD_DIR = ../build/$(OS)/$(ARCH)
 	DIST_OLLAMA_EXE=$(DIST_BASE)/bin/ollama$(EXE_EXT)
 endif
 DIST_LIB_DIR = $(DIST_BASE)/lib/ollama
 RUNNERS_DIST_DIR = $(DIST_LIB_DIR)/runners
 RUNNERS_BUILD_DIR = $(BUILD_DIR)/runners
-DEFAULT_RUNNER := $(if $(and $(filter darwin,$(OS)),$(filter arm64,$(ARCH))),metal,cpu)
-GZIP:=$(shell command -v pigz 2>/dev/null || echo "gzip")
 VERSION?=$(shell git describe --tags --first-parent --abbrev=7 --long --dirty --always | sed -e "s/^v//g")
 
 # Conditionally enable ccache for cgo builds too
 ifneq ($(CCACHE),)
-	CC=$(CCACHE) gcc
-	CXX=$(CCACHE) g++
+	CC?=$(CCACHE) gcc
+	CXX?=$(CCACHE) g++
 	export CC
 	export CXX
 endif
@@ -90,10 +82,10 @@ else
 endif
 
 COMMON_SRCS := \
-	$(wildcard *.c) \
-	$(wildcard *.cpp)
+	$(wildcard ./llama/*.c) \
+	$(wildcard ./llama/*.cpp)
 COMMON_HDRS := \
-	$(wildcard *.h) \
-	$(wildcard *.hpp)
+	$(wildcard ./llama/*.h) \
+	$(wildcard ./llama/*.hpp)
 
-OLLAMA_EXE=../ollama$(EXE_EXT)
+OLLAMA_EXE=./ollama$(EXE_EXT)

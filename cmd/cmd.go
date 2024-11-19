@@ -36,6 +36,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/llama/runner"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
@@ -1419,6 +1420,7 @@ func NewCLI() *cobra.Command {
 
 	runnerCmd := &cobra.Command{
 		Use:    "runner",
+		Short:  llama.PrintSystemInfo(),
 		Hidden: true,
 		RunE:   RunnerHandler,
 	}

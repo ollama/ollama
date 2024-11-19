@@ -19,11 +19,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/spf13/cobra"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llama"
-	"github.com/spf13/cobra"
 )
 
 // input is an element of the prompt to process, either

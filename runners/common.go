@@ -1,34 +1,22 @@
 package runners
 
 import (
-	"compress/gzip"
-	"errors"
-	"fmt"
-	"io"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 
-	"golang.org/x/sync/errgroup"
 	"golang.org/x/sys/cpu"
 
 	"github.com/ollama/ollama/envconfig"
 )
 
-const (
-	binGlob = "*/*/*/*"
-)
-
 var (
-	lock       sync.Mutex
 	runnersDir = ""
+	once       = sync.Once{}
 )
 
 type CPUCapability uint32
@@ -65,65 +53,20 @@ func GetCPUCapability() CPUCapability {
 	return CPUCapabilityNone
 }
 
-// Return the location where runners are stored
-// If runners are payloads, this will either extract them
-// or refresh them if any have disappeared due to tmp cleaners
-func Refresh(payloadFS fs.FS) (string, error) {
-	lock.Lock()
-	defer lock.Unlock()
-	var err error
-
-	// Wire up extra logging on our first load
-	if runnersDir == "" {
-		defer func() {
-			var runners []string
-			for v := range GetAvailableServers(runnersDir) {
-				runners = append(runners, v)
-			}
-			slog.Info("Dynamic LLM libraries", "runners", runners)
-			slog.Debug("Override detection logic by setting OLLAMA_LLM_LIBRARY")
-		}()
-	}
-
-	// avoid payloads if we're operating off a local build
-	d, err := locateRunners()
-	if err != nil {
-		if hasPayloads(payloadFS) {
-			if runnersDir == "" {
-				runnersDir, err = extractRunners(payloadFS)
-			} else {
-				err = refreshRunners(payloadFS, runnersDir)
-			}
-		}
-	} else {
-		runnersDir = d
-	}
-
-	return runnersDir, err
+// Return the location where runners were located
+// empty string indicates only builtin is present
+func Locate() string {
+	once.Do(locateRunnersOnce)
+	return runnersDir
 }
 
-func Cleanup(payloadFS fs.FS) {
-	lock.Lock()
-	defer lock.Unlock()
-	if hasPayloads(payloadFS) && runnersDir != "" {
-		// We want to fully clean up the tmpdir parent of the payloads dir
-		tmpDir := filepath.Clean(filepath.Join(runnersDir, ".."))
-		slog.Debug("cleaning up", "dir", tmpDir)
-		err := os.RemoveAll(tmpDir)
-		if err != nil {
-			slog.Warn("failed to clean up", "dir", tmpDir, "err", err)
-		}
-	}
-}
-
-// locateRunners searches for runners in a prioritized set of locations
+// searches for runners in a prioritized set of locations
 // 1. local build, with executable at the top of the tree
 // 2. lib directory relative to executable
-// 3. payload extracted to OLLAMA_TMPDIR (this routine returns an error)
-func locateRunners() (string, error) {
+func locateRunnersOnce() {
 	exe, err := os.Executable()
 	if err != nil {
-		return "", err
+		slog.Debug("runner locate", "error", err)
 	}
 
 	paths := []string{
@@ -132,193 +75,43 @@ func locateRunners() (string, error) {
 	}
 	for _, path := range paths {
 		if _, err := os.Stat(path); err == nil {
-			return path, nil
+			runnersDir = path
+			slog.Debug("runners located", "dir", runnersDir)
+			return
 		}
 	}
 	// Fall back to built-in
-	slog.Debug("unable to locate runners, using built-in")
-	return "", nil
+	slog.Debug("no dynamic runners detected, using only built-in")
+	runnersDir = ""
 }
 
-// Return true if we're carying nested payloads for the runners
-func hasPayloads(payloadFS fs.FS) bool {
-	files, err := fs.Glob(payloadFS, binGlob)
-	if err != nil || len(files) == 0 || (len(files) == 1 && strings.Contains(files[0], "placeholder")) {
-		return false
+// Return the well-known name of the builtin runner for the given platform
+func BuiltinName() string {
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+		return "metal"
 	}
-	return true
-}
-
-func extractRunners(payloadFS fs.FS) (string, error) {
-	cleanupTmpDirs()
-	tmpDir, err := os.MkdirTemp(envconfig.TmpDir(), "ollama")
-	if err != nil {
-		return "", fmt.Errorf("failed to generate tmp dir: %w", err)
-	}
-	// Track our pid so we can clean up orphaned tmpdirs
-	n := filepath.Join(tmpDir, "ollama.pid")
-	if err := os.WriteFile(n, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
-		slog.Warn("failed to write pid file", "file", n, "error", err)
-	}
-	// We create a distinct subdirectory for payloads within the tmpdir
-	// This will typically look like /tmp/ollama3208993108/runners on linux
-	rDir := filepath.Join(tmpDir, "runners")
-
-	slog.Info("extracting embedded files", "dir", rDir)
-	return rDir, refreshRunners(payloadFS, rDir)
-}
-
-func refreshRunners(payloadFS fs.FS, rDir string) error {
-	// extract or refresh server libraries
-	err := extractFiles(payloadFS, rDir, binGlob)
-	if err != nil {
-		return fmt.Errorf("extract binaries: %v", err)
-	}
-	return nil
-}
-
-// extract extracts the embedded files to the target directory
-func extractFiles(payloadFS fs.FS, targetDir string, glob string) error {
-	files, err := fs.Glob(payloadFS, glob)
-	if err != nil || len(files) == 0 {
-		// Should not happen
-		return fmt.Errorf("extractFiles called without payload present")
-	}
-
-	if err := os.MkdirAll(targetDir, 0o755); err != nil {
-		return fmt.Errorf("extractFiles could not mkdir %s: %v", targetDir, err)
-	}
-
-	g := new(errgroup.Group)
-
-	// $OS/$GOARCH/$RUNNER/$FILE
-	for _, file := range files {
-		filename := file
-
-		runner := filepath.Base(filepath.Dir(filename))
-
-		slog.Debug("extracting", "runner", runner, "payload", filename)
-
-		g.Go(func() error {
-			srcf, err := payloadFS.Open(filename)
-			if err != nil {
-				return err
-			}
-			defer srcf.Close()
-
-			src := io.Reader(srcf)
-			if strings.HasSuffix(filename, ".gz") {
-				src, err = gzip.NewReader(src)
-				if err != nil {
-					return fmt.Errorf("decompress payload %s: %v", filename, err)
-				}
-				filename = strings.TrimSuffix(filename, ".gz")
-			}
-
-			runnerDir := filepath.Join(targetDir, runner)
-			if err := os.MkdirAll(runnerDir, 0o755); err != nil {
-				return fmt.Errorf("extractFiles could not mkdir %s: %v", runnerDir, err)
-			}
-
-			base := filepath.Base(filename)
-			destFilename := filepath.Join(runnerDir, base)
-
-			_, err = os.Stat(destFilename)
-			switch {
-			case errors.Is(err, os.ErrNotExist):
-				destFile, err := os.OpenFile(destFilename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
-				if err != nil {
-					return fmt.Errorf("write payload %s: %v", filename, err)
-				}
-				defer destFile.Close()
-				if _, err := io.Copy(destFile, src); err != nil {
-					return fmt.Errorf("copy payload %s: %v", filename, err)
-				}
-			case err != nil:
-				return fmt.Errorf("stat payload %s: %v", filename, err)
-			}
-			return nil
-		})
-	}
-
-	err = g.Wait()
-	if err != nil {
-		slog.Error("failed to extract files", "error", err)
-		// If we fail to extract, the payload dir is most likely unusable, so cleanup whatever we extracted
-		err := os.RemoveAll(targetDir)
-		if err != nil {
-			slog.Warn("failed to cleanup incomplete payload dir", "dir", targetDir, "error", err)
-		}
-		return err
-	}
-	return nil
-}
-
-// Best effort to clean up prior tmpdirs
-func cleanupTmpDirs() {
-	tmpDir := envconfig.TmpDir()
-	if tmpDir == "" {
-		tmpDir = os.TempDir()
-	}
-	matches, err := filepath.Glob(filepath.Join(tmpDir, "ollama*", "ollama.pid"))
-	if err != nil {
-		return
-	}
-
-	for _, match := range matches {
-		raw, err := os.ReadFile(match)
-		if errors.Is(err, os.ErrNotExist) {
-			slog.Debug("not a ollama runtime directory, skipping", "path", match)
-			continue
-		} else if err != nil {
-			slog.Warn("could not read ollama.pid, skipping", "path", match, "error", err)
-			continue
-		}
-
-		pid, err := strconv.Atoi(string(raw))
-		if err != nil {
-			slog.Warn("invalid pid, skipping", "path", match, "error", err)
-			continue
-		}
-
-		p, err := os.FindProcess(pid)
-		if err == nil && !errors.Is(p.Signal(syscall.Signal(0)), os.ErrProcessDone) {
-			slog.Warn("process still running, skipping", "pid", pid, "path", match)
-			continue
-		}
-
-		if err := os.Remove(match); err != nil {
-			slog.Warn("could not cleanup stale pidfile", "path", match, "error", err)
-		}
-
-		runners := filepath.Join(filepath.Dir(match), "runners")
-		if err := os.RemoveAll(runners); err != nil {
-			slog.Warn("could not cleanup stale runners", "path", runners, "error", err)
-		}
-
-		if err := os.Remove(filepath.Dir(match)); err != nil {
-			slog.Warn("could not cleanup stale tmpdir", "path", filepath.Dir(match), "error", err)
-		}
-	}
+	return "cpu"
 }
 
 // directory names are the name of the runner and may contain an optional
 // variant prefixed with '_' as the separator. For example, "cuda_v11" and
 // "cuda_v12" or "cpu" and "cpu_avx2". Any library without a variant is the
 // lowest common denominator
-func GetAvailableServers(payloadsDir string) map[string]string {
-	if payloadsDir == "" {
-		exe, err := os.Executable()
-		if err == nil {
-			slog.Debug("Wiring up built-in runner")
-			return map[string]string{"builtin": filepath.Dir(exe)}
-		}
-		slog.Error("empty runner dir")
-		return nil
+func GetAvailableServers() map[string]string {
+	once.Do(locateRunnersOnce)
+
+	servers := make(map[string]string)
+	exe, err := os.Executable()
+	if err == nil {
+		servers[BuiltinName()] = exe
 	}
 
-	// glob payloadsDir for files that start with ollama_
-	pattern := filepath.Join(payloadsDir, "*", "ollama_*")
+	if runnersDir == "" {
+		return servers
+	}
+
+	// glob runnersDir for files that start with ollama_
+	pattern := filepath.Join(runnersDir, "*", "ollama_*")
 
 	files, err := filepath.Glob(pattern)
 	if err != nil {
@@ -326,7 +119,6 @@ func GetAvailableServers(payloadsDir string) map[string]string {
 		return nil
 	}
 
-	servers := make(map[string]string)
 	for _, file := range files {
 		slog.Debug("availableServers : found", "file", file)
 		runnerName := filepath.Base(filepath.Dir(file))
@@ -338,89 +130,71 @@ func GetAvailableServers(payloadsDir string) map[string]string {
 			slog.Info("GPU runner incompatible with host system, CPU does not have AVX", "runner", runnerName)
 			continue
 		}
-		servers[runnerName] = filepath.Dir(file)
+		servers[runnerName] = file
 	}
 
 	return servers
 }
 
 // serversForGpu returns a list of compatible servers give the provided GPU library/variant
-// info, ordered by performance. assumes Init() has been called
-// TODO - take string instead of type to break import cycle
 func ServersForGpu(requested string) []string {
 	// glob workDir for files that start with ollama_
-	availableServers := GetAvailableServers(runnersDir)
+	availableServers := GetAvailableServers()
 
 	// Short circuit if the only option is built-in
-	if _, ok := availableServers["builtin"]; ok {
-		return []string{"builtin"}
+	if _, ok := availableServers[BuiltinName()]; ok && len(availableServers) == 1 {
+		return []string{BuiltinName()}
 	}
 
+	bestCPUVariant := GetCPUCapability()
 	requestedLib := strings.Split(requested, "_")[0]
 	servers := []string{}
 
 	// exact match first
 	for a := range availableServers {
-		if a == requested {
+		short := a
+		parsed := strings.Split(a, "_")
+		if len(parsed) == 3 {
+			// Strip off optional _avx for comparison
+			short = parsed[0] + "_" + parsed[1]
+		}
+		if a == requested || short == requested {
 			servers = []string{a}
-
-			if a == "metal" {
-				return servers
-			}
-
-			break
 		}
 	}
 
-	alt := []string{}
-
-	// Then for GPUs load alternates and sort the list for consistent load ordering
-	if requestedLib != "cpu" {
+	// If no exact match, then try without variant
+	if len(servers) == 0 {
+		alt := []string{}
 		for a := range availableServers {
 			if requestedLib == strings.Split(a, "_")[0] && a != requested {
 				alt = append(alt, a)
 			}
 		}
-
 		slices.Sort(alt)
 		servers = append(servers, alt...)
 	}
 
-	if !(runtime.GOOS == "darwin" && runtime.GOARCH == "arm64") {
-		// Load up the best CPU variant if not primary requested
-		if requestedLib != "cpu" {
-			variant := GetCPUCapability()
-			// If no variant, then we fall back to default
-			// If we have a variant, try that if we find an exact match
-			// Attempting to run the wrong CPU instructions will panic the
-			// process
-			if variant != CPUCapabilityNone {
-				for cmp := range availableServers {
-					if cmp == "cpu_"+variant.String() {
-						servers = append(servers, cmp)
-						break
-					}
-				}
-			} else {
-				servers = append(servers, "cpu")
+	// Finally append the best CPU option if found, then builtin
+	if bestCPUVariant != CPUCapabilityNone {
+		for cmp := range availableServers {
+			if cmp == "cpu_"+bestCPUVariant.String() {
+				servers = append(servers, cmp)
+				break
 			}
 		}
-
-		if len(servers) == 0 {
-			servers = []string{"cpu"}
-		}
 	}
-
+	servers = append(servers, BuiltinName())
 	return servers
 }
 
 // Return the optimal server for this CPU architecture
 func ServerForCpu() string {
 	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
-		return "metal"
+		return BuiltinName()
 	}
 	variant := GetCPUCapability()
-	availableServers := GetAvailableServers(runnersDir)
+	availableServers := GetAvailableServers()
 	if variant != CPUCapabilityNone {
 		for cmp := range availableServers {
 			if cmp == "cpu_"+variant.String() {
@@ -428,5 +202,5 @@ func ServerForCpu() string {
 			}
 		}
 	}
-	return "cpu"
+	return BuiltinName()
 }

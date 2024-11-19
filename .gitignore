@@ -10,9 +10,6 @@ ollama
 .idea
 test_data
 *.crt
-llm/build
-build/*/*/*
-!build/**/placeholder
 llama/build
 __debug_bin*
 llama/vendor

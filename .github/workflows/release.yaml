@@ -91,7 +91,6 @@ jobs:
         with:
           name: generate-windows-cpu
           path: |
-            build/**/*
             dist/windows-amd64/**
 
   # ROCm generation step
@@ -149,7 +148,6 @@ jobs:
         with:
           name: generate-windows-rocm
           path: |
-            build/**/*
             dist/windows-amd64/**
 
   # CUDA generation step
@@ -231,7 +229,6 @@ jobs:
         with:
           name: generate-windows-cuda-${{ matrix.cuda.version }}
           path: |
-            build/**/*
             dist/windows-amd64/**
 
   # windows arm64 generate, go build, and zip file (no installer)
