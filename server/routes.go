@@ -540,7 +540,8 @@ func (s *Server) PullHandler(c *gin.Context) {
 		return
 	}
 
-	if err := checkNameExists(name); err != nil {
+	name, err = getExistingName(name)
+	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -621,19 +622,20 @@ func (s *Server) PushHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func checkNameExists(name model.Name) error {
-	names, err := Manifests(true)
+// getExistingName returns the original, on disk name if the input name is a
+// case-insensitive match, otherwise it returns the input name.
+func getExistingName(n model.Name) (model.Name, error) {
+	var zero model.Name
+	existing, err := Manifests(true)
 	if err != nil {
-		return err
+		return zero, err
 	}
-
-	for n := range names {
-		if strings.EqualFold(n.Filepath(), name.Filepath()) && n != name {
-			return errors.New("a model with that name already exists")
+	for e := range existing {
+		if n.EqualFold(e) {
+			return e, nil
 		}
 	}
-
-	return nil
+	return n, nil
 }
 
 func (s *Server) CreateHandler(c *gin.Context) {
@@ -652,7 +654,8 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		return
 	}
 
-	if err := checkNameExists(name); err != nil {
+	name, err := getExistingName(name)
+	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -958,14 +961,19 @@ func (s *Server) CopyHandler(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("source %q is invalid", r.Source)})
 		return
 	}
+	src, err := getExistingName(src)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	dst := model.ParseName(r.Destination)
 	if !dst.IsValid() {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("destination %q is invalid", r.Destination)})
 		return
 	}
-
-	if err := checkNameExists(dst); err != nil {
+	dst, err = getExistingName(dst)
+	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
