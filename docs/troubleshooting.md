@@ -104,6 +104,12 @@ If you are experiencing problems getting Ollama to correctly discover or use you
 - `OLLAMA_DEBUG=1` During GPU discovery additional information will be reported
 - Check dmesg for any errors from amdgpu or kfd drivers `sudo dmesg | grep -i amdgpu` and `sudo dmesg | grep -i kfd`
 
+## Multiple AMD GPUs
+
+If you experience gibberish responses when models load across multiple AMD GPUs on Linux, see the following guide.
+
+- https://rocm.docs.amd.com/projects/radeon/en/latest/docs/install/native_linux/mgpu.html#mgpu-known-issues-and-limitations
+
 ## Windows Terminal Errors
 
 Older versions of Windows 10 (e.g., 21H1) are known to have a bug where the standard terminal program does not display control characters correctly.  This can result in a long string of strings like `←[?25h←[?25l` being displayed, sometimes erroring with `The parameter is incorrect`  To resolve this problem, please update to Win 10 22H1 or newer.
