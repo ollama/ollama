@@ -8,7 +8,7 @@ import (
 	"io"
 	"math"
 
-	"github.com/ollama/ollama/models/imageproc"
+	"github.com/ollama/ollama/model/imageproc"
 )
 
 func getNumImageTokens(imageSize, patchSize image.Point) image.Point {

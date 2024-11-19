@@ -2,8 +2,11 @@ package pixtral
 
 import (
 	"bytes"
+	"encoding/binary"
 	"image"
 	"image/png"
+	"math"
+	"os"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -186,5 +189,33 @@ func TestPreprocess(t *testing.T) {
 		default:
 			t.Errorf("unexpected image data length: %d, expected: %d", len(imgData), c.ExpectedLen)
 		}
+	}
+}
+
+func TestPreprocessImages(t *testing.T) {
+
+	for _, testFile := range []string{"flight.png", "sportsball.png"} {
+		f, err := os.Open(testFile)
+		if err != nil {
+			t.Skipf("skipping test, no test image found at %s", testFile)
+		}
+		defer f.Close()
+
+		imgData, _, err := Preprocess(f)
+		if err != nil {
+			t.Fatalf("error processing: %q", err)
+		}
+
+		byteData := make([]byte, len(imgData)*4) // float32 is 4 bytes
+		for i, f := range imgData {
+			binary.LittleEndian.PutUint32(byteData[i*4:], math.Float32bits(f))
+		}
+
+		outputPath := "processed_" + testFile + ".bin"
+		err = os.WriteFile(outputPath, byteData, 0644)
+		if err != nil {
+			t.Fatalf("error writing processed image: %q", err)
+		}
+
 	}
 }
