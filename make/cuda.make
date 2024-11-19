@@ -50,5 +50,5 @@ GPU_COMPILER_CUFLAGS = \
 	-Wno-deprecated-gpu-targets \
 	--forward-unknown-to-host-compiler \
 	-use_fast_math \
-	-I. \
+	-I./llama/  \
 	-O3

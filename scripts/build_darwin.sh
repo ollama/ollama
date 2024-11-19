@@ -14,16 +14,14 @@ export CGO_CFLAGS=-mmacosx-version-min=11.3
 export CGO_CXXFLAGS=-mmacosx-version-min=11.3
 export CGO_LDFLAGS=-mmacosx-version-min=11.3
 
-for TARGETARCH in arm64 amd64; do
-    echo "Building Go runner darwin $TARGETARCH"
-    rm -rf llama/build
-    GOOS=darwin ARCH=$TARGETARCH GOARCH=$TARGETARCH make -C llama -j 8
-    CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -trimpath -o dist/ollama-darwin-$TARGETARCH
-    CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -trimpath -cover -o dist/ollama-darwin-$TARGETARCH-cov
-done
+rm -rf llama/build dist/darwin-*
+echo "Building darwin arm64"
+GOOS=darwin ARCH=arm64 GOARCH=arm64 make -j 8 dist
+echo "Building darwin amd64 with AVX enabled"
+GOOS=darwin ARCH=amd64 GOARCH=amd64 CUSTOM_CPU_FLAGS="avx" make -j 8 dist
 
-lipo -create -output dist/ollama dist/ollama-darwin-arm64 dist/ollama-darwin-amd64
-rm -f dist/ollama-darwin-arm64 dist/ollama-darwin-amd64
+
+lipo -create -output dist/ollama dist/darwin-arm64/bin/ollama dist/darwin-amd64/bin/ollama
 if [ -n "$APPLE_IDENTITY" ]; then
     codesign --deep --force --options=runtime --sign "$APPLE_IDENTITY" --timestamp dist/ollama
 else

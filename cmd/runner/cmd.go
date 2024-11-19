@@ -1,17 +1,15 @@
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/ollama/ollama/llama/runner"
-	"github.com/spf13/cobra"
 )
 
 func main() {
-	rootCmd := &cobra.Command{
-		RunE: func(cmd *cobra.Command, arg []string) error {
-			runner.RunnerMain(cmd)
-			return nil
-		},
+	if err := runner.RunnerMain(os.Args[1:]); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %s\n", err)
+		os.Exit(1)
 	}
-	runner.AddRunnerFlags(rootCmd)
-	rootCmd.Execute()
 }

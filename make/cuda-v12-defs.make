@@ -13,4 +13,5 @@ else ifeq ($(OS),linux)
 	CUDA_12_PATH:=$(shell ls -d $(CUDA_PATH)-12 2>/dev/null)
 	CUDA_12_COMPILER:=$(wildcard $(CUDA_12_PATH)/bin/nvcc)
 	CUDA_12_LIB_DIR=$(strip $(shell ls -d $(CUDA_12_PATH)/lib64 2>/dev/null || ls -d $(CUDA_12_PATH)/lib 2>/dev/null))
+	CUDA_12_CGO_EXTRA_LDFLAGS = -L"$(CUDA_12_LIB_DIR)" -L"$(CUDA_12_LIB_DIR)/stubs" 
 endif

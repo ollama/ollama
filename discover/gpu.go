@@ -16,11 +16,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"unsafe"
 
-	"github.com/ollama/ollama/build"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/runners"
@@ -65,9 +65,13 @@ var (
 )
 
 // With our current CUDA compile flags, older than 5.0 will not work properly
-var CudaComputeMin = [2]C.int{5, 0}
+// (string values used to allow ldflags overrides at build time)
+var (
+	CudaComputeMajorMin = "5"
+	CudaComputeMinorMin = "0"
+)
 
-var RocmComputeMin = 9
+var RocmComputeMajorMin = "9"
 
 // TODO find a better way to detect iGPU instead of minimum memory
 const IGPUMemLimit = 1 * format.GibiByte // 512G is what they typically report, so anything less than 1G must be iGPU
@@ -220,6 +224,14 @@ func GetGPUInfo() GpuInfoList {
 
 	if !bootstrapped {
 		slog.Info("looking for compatible GPUs")
+		cudaComputeMajorMin, err := strconv.Atoi(CudaComputeMajorMin)
+		if err != nil {
+			slog.Error("invalid CudaComputeMajorMin setting", "value", CudaComputeMajorMin, "error", err)
+		}
+		cudaComputeMinorMin, err := strconv.Atoi(CudaComputeMinorMin)
+		if err != nil {
+			slog.Error("invalid CudaComputeMinorMin setting", "value", CudaComputeMinorMin, "error", err)
+		}
 		bootstrapErrors = []error{}
 		needRefresh = false
 		var memInfo C.mem_info_t
@@ -298,7 +310,7 @@ func GetGPUInfo() GpuInfoList {
 				gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
 				gpuInfo.Variant = variant
 
-				if memInfo.major < CudaComputeMin[0] || (memInfo.major == CudaComputeMin[0] && memInfo.minor < CudaComputeMin[1]) {
+				if int(memInfo.major) < cudaComputeMajorMin || (int(memInfo.major) == cudaComputeMajorMin && int(memInfo.minor) < cudaComputeMinorMin) {
 					unsupportedGPUs = append(unsupportedGPUs,
 						UnsupportedGPUInfo{
 							GpuInfo: gpuInfo.GpuInfo,
@@ -717,13 +729,12 @@ func LibraryDirs() []string {
 			paths = append(paths, appRelative)
 		}
 	}
-	rDir, err := runners.Refresh(build.EmbedFS)
+	rDir := runners.Locate()
 	if err != nil {
 		slog.Warn("unable to locate gpu dependency libraries", "error", err)
 	} else {
 		paths = append(paths, filepath.Dir(rDir))
 	}
-	slog.Debug("XXX LibraryDirs", "paths", paths)
 	return paths
 }
 

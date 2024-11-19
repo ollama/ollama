@@ -9,7 +9,7 @@ Install required tools:
 
 ## Overview
 
-Ollama uses a mix of Go and C/C++ code to interface with GPUs.  The C/C++ code is compiled with both CGO and GPU library specific compilers.  A set of GNU Makefiles are used to compile the project.  GPU Libraries are auto-detected based on the typical environment variables used by the respective libraries, but can be overridden if necessary.  The default make target will build the runners and primary Go Ollama application.  Throughout the examples below '-j 5' is suggested for 5 parallel jobs to speed up the build.  You can adjust the job count based on your CPU Core count to optimize build times. To learn more about the other make targets use 'make help'
+Ollama uses a mix of Go and C/C++ code to interface with GPUs.  The C/C++ code is compiled with both CGO and GPU library specific compilers.  A set of GNU Makefiles are used to compile the project.  GPU Libraries are auto-detected based on the typical environment variables used by the respective libraries, but can be overridden if necessary.  The default make target will build the runners and primary Go Ollama application that will run within the repo directory.  Throughout the examples below `-j 5` is suggested for 5 parallel jobs to speed up the build.  You can adjust the job count based on your CPU Core count to reduce build times.  If you want to relocate the built binaries, use the `dist` target and recursively copy the files in `./dist/$OS-$ARCH/` to your desired location. To learn more about the other make targets use `make help`
 
 Once you have built the GPU/CPU runners, you can compile the main application with `go build .` 
 
@@ -50,6 +50,10 @@ make -j 5
 ```
 
 If both v11 and v12 tookkits are detected, runners for both major versions will be built by default.  You can build just v12 with `make cuda_v12`
+
+#### Older Linux CUDA (NVIDIA)
+
+To support older GPUs with Compute Capability 3.5 or 3.7, you will need to use an older version of the Driver from [Unix Driver Archive](https://www.nvidia.com/en-us/drivers/unix/) (tested with 470) and [CUDA Toolkit Archive](https://developer.nvidia.com/cuda-toolkit-archive) (tested with cuda V11).  When you build Ollama, you will need to set two make variable to adjust the minimum compute capability Ollama supports via `make -j 5 CUDA_ARCHITECTURES="35;37;50;52" EXTRA_GOLDLAGS="\"-X=github.com/ollama/ollama/discover.CudaComputeMajorMin=3\" \"-X=github.com/ollama/ollama/discover.CudaComputeMinorMin=5\""`.  To find the Compute Capability of your older GPU, refer to [GPU Compute Capability](https://developer.nvidia.com/cuda-gpus).
 
 #### Linux ROCm (AMD)
 

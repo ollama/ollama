@@ -17,6 +17,7 @@ ifeq ($(OS),windows)
 	GPU_COMPILER_CXXFLAGS = $(CXXFLAGS) -D_WIN32_WINNT=0x602
 else ifeq ($(OS),linux)
 	GPU_LIB_DIR := $(strip $(shell ls -d $(HIP_PATH)/lib64 2>/dev/null || ls -d $(HIP_PATH)/lib 2>/dev/null))
+	CGO_EXTRA_LDFLAGS := -L$(GPU_LIB_DIR)
 	HIP_ARCHS?=$(HIP_ARCHS_COMMON) $(HIP_ARCHS_LINUX)
 	GPU_COMPILER_CFLAGS = $(CFLAGS) -fPIC -D_GNU_SOURCE
 	GPU_COMPILER_CXXFLAGS = $(CXXFLAGS) -fPIC -D_GNU_SOURCE
@@ -36,10 +37,10 @@ GPU_RUNNER_LIBS_SHORT := hipblas rocblas
 
 # Note: ROCm requires an extra step of discovering and copying the transitive dependencies on linux
 ifeq ($(OS),windows)
-	ROCM_DIST_DEPS_DIR = ../dist/$(OS)-$(ARCH)/lib/ollama
+	ROCM_DIST_DEPS_DIR = ./dist/$(OS)-$(ARCH)/lib/ollama
 	GPU_LIBS = $(sort $(wildcard $(addsuffix *.$(SHARED_EXT),$(addprefix $(GPU_LIB_DIR)/$(SHARED_PREFIX),$(GPU_RUNNER_LIBS_SHORT)))))
 else ifeq ($(OS),linux)
-	ROCM_DIST_DEPS_DIR = ../dist/$(OS)-$(ARCH)-rocm/lib/ollama
+	ROCM_DIST_DEPS_DIR = ./dist/$(OS)-$(ARCH)-rocm/lib/ollama
 	GPU_LIBS = $(sort $(wildcard $(addsuffix *.$(SHARED_EXT).*,$(addprefix $(GPU_LIB_DIR)/$(SHARED_PREFIX),$(GPU_RUNNER_LIBS_SHORT)))))
 	ROCM_TRANSITIVE_LIBS_INITIAL = $(sort $(shell ldd $(GPU_LIBS) | grep "=>" | cut -f2 -d= | cut -f2 -d' '  | grep -e rocm -e amdgpu -e libtinfo -e libnuma -e libelf))
 	GPU_TRANSITIVE_LIBS = $(sort $(shell readlink -f $(ROCM_TRANSITIVE_LIBS_INITIAL)) $(ROCM_TRANSITIVE_LIBS_INITIAL))
@@ -93,7 +94,7 @@ GPU_COMPILER_CUFLAGS = \
 	-Wno-pass-failed \
 	-Wno-deprecated-declarations \
 	-Wno-unused-result \
-	-I.
+	-I./llama/
 
 # Workaround buggy P2P copy on some windows multi-GPU setups
 # This workaround breaks linux systems with small system RAM, so only enable on windows
@@ -113,5 +114,4 @@ $(ROCBLAS_DIST_DEP_MANIFEST):
 
 $(GPU_DIST_TRANSITIVE_LIB_DEPS):
 	@-mkdir -p $(dir $@)
-	echo "transitive dist deps libs rule cp: $@"
 	$(CP) $(dir $(filter %$(notdir $@),$(GPU_TRANSITIVE_LIBS)))/$(notdir $@) $(dir $@)
