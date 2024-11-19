@@ -439,7 +439,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 				return nil, err
 			}
 		}
-		gpuInfo.DependencyPath = libDir
+		gpuInfo.DependencyPath = []string{libDir}
 
 		if gfxOverride == "" {
 			// Only load supported list once
