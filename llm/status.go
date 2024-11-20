@@ -27,6 +27,7 @@ var errorPrefixes = []string{
 	"\"ERR\"",
 	"error loading model",
 	"GGML_ASSERT",
+	"Deepseek2 does not support K-shift",
 }
 
 func (w *StatusWriter) Write(b []byte) (int, error) {

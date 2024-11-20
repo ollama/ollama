@@ -32,7 +32,7 @@ func TestChatPrompt(t *testing.T) {
 	mllamaModel := Model{Template: tmpl, ProjectorPaths: []string{"vision"}, Config: ConfigV2{ModelFamilies: []string{"mllama"}}}
 
 	createImg := func(width, height int) ([]byte, error) {
-		img := image.NewRGBA(image.Rect(0, 0, 5, 5))
+		img := image.NewRGBA(image.Rect(0, 0, width, height))
 		var buf bytes.Buffer
 
 		if err := png.Encode(&buf, img); err != nil {
