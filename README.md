@@ -265,7 +265,6 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Web & Desktop
 
-- [OpenTalkGpt](https://github.com/adarshM84/OpenTalkGpt)
 - [Open WebUI](https://github.com/open-webui/open-webui)
 - [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
 - [Hollama](https://github.com/fmaclen/hollama)
@@ -335,7 +334,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [G1](https://github.com/bklieger-groq/g1) (Prototype of using prompting strategies to improve the LLM's reasoning through o1-like reasoning chains.)
 - [Ollama App](https://github.com/JHubi1/ollama-app) (Modern and easy-to-use multi-platform client for Ollama)
 - [Hexabot](https://github.com/hexastack/hexabot) (A conversational AI builder)
-- [Reddit Rate]((https://github.com/rapidarchitect/reddit_analyzer)) (Search and Rate Reddit topics with a weighted summation)
+- [Reddit Rate](https://github.com/rapidarchitect/reddit_analyzer) (Search and Rate Reddit topics with a weighted summation)
+- [OpenTalkGpt](https://github.com/adarshM84/OpenTalkGpt)
 
 ### Terminal
 
