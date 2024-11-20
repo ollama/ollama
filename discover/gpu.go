@@ -530,11 +530,11 @@ func GetGPUInfo() GpuInfoList {
 				gpuInfo.DriverMinor = driverMinor
 				variant := musaVariant(gpuInfo)
 				if depPath != "" {
-					gpuInfo.DependencyPath = depPath
+					gpuInfo.DependencyPath = []string{depPath}
 					// Check for variant specific directory
 					if variant != "" {
-						if _, err := os.Stat(filepath.Join(depPath, "musa_"+variant)); err == nil {
-							gpuInfo.DependencyPath = filepath.Join(depPath, "musa_"+variant)
+						if _, err := os.Stat(filepath.Join(depPath, "cuda_"+variant)); err == nil {
+							gpuInfo.DependencyPath = []string{filepath.Join(depPath, "musa_"+variant), depPath}
 						}
 					}
 				}

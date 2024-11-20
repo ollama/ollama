@@ -283,7 +283,7 @@ CMD ["serve"]
 #
 ### Then incremental builds will be much faster in this container
 #
-# make -C llama -j 10 && go build -trimpath -o dist/linux-amd64/ollama .
+# make -j 10 && go build -trimpath -o dist/linux-amd64/ollama .
 #
 FROM --platform=linux/amd64 mthreads/musa:${MUSA_VERSION_1}-devel-ubuntu22.04 AS musa-builder-amd64
 ARG CMAKE_VERSION
@@ -303,9 +303,9 @@ ARG MUSA_V1_ARCHITECTURES
 ARG OLLAMA_FAST_BUILD
 RUN --mount=type=cache,target=/root/.ccache \
     if grep "^flags" /proc/cpuinfo|grep avx>/dev/null; then \
-        make -C llama -j $(expr $(nproc) / 2 ) ; \
+        make -j $(expr $(nproc) / 2 ) ; \
     else \
-        make -C llama -j 5 ; \
+        make -j 5 ; \
     fi
 
 FROM --platform=linux/amd64 musa-builder-amd64 AS musa-build-amd64
