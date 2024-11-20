@@ -440,6 +440,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Raycast extension](https://github.com/MassimilianoPasquini97/raycast_ollama)
 - [Discollama](https://github.com/mxyng/discollama) (Discord bot inside the Ollama discord channel)
 - [Continue](https://github.com/continuedev/continue)
+- [Vibe](https://github.com/thewh1teagle/vibe) (Transcribe and analyze meetings with Ollama)
 - [Obsidian Ollama plugin](https://github.com/hinterdupfinger/obsidian-ollama)
 - [Logseq Ollama plugin](https://github.com/omagdy7/ollama-logseq)
 - [NotesOllama](https://github.com/andersrex/notesollama) (Apple Notes Ollama plugin)
