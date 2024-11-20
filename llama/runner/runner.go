@@ -122,7 +122,10 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 	params.numKeep = min(params.numKeep, s.cache.numCtx-1)
 
 	if len(inputs) > s.cache.numCtx {
-		slog.Warn("input exceeds context length", "prompt", len(inputs), "limit", s.cache.numCtx)
+		slog.Warn("truncating input prompt", "limit", s.cache.numCtx, "prompt", len(inputs), "numKeep", params.numKeep)
+		newInputs := inputs[:params.numKeep]
+		newInputs = append(newInputs, inputs[len(inputs)-s.cache.numCtx+params.numKeep:]...)
+		inputs = newInputs
 	}
 
 	var sc *llama.SamplingContext
