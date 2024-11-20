@@ -431,7 +431,6 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama for Haskell](https://github.com/tusharad/ollama-haskell)
 - [multi-llm-ts](https://github.com/nbonamy/multi-llm-ts) (A Typescript/JavaScript library allowing access to different LLM in unified API)
 
-
 ### Mobile
 
 - [Enchanted](https://github.com/AugustDev/enchanted)
