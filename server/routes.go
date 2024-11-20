@@ -1398,6 +1398,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
+	// Error if streaming is enabled and tools are present
+	if req.Stream != nil && *req.Stream && len(req.Tools) > 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "streaming is not supported with tools"})
+		return
+	}
+
 	// expire the runner
 	if len(req.Messages) == 0 && req.KeepAlive != nil && int(req.KeepAlive.Seconds()) == 0 {
 		model, err := GetModel(req.Model)
