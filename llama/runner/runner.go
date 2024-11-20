@@ -454,7 +454,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 
 		// if done processing the prompt, generate an embedding and return
 		if seq.embeddingOnly {
-			embed := s.lc.GetEmbeddingsSeq(i)
+			embed := s.lc.GetEmbeddingsSeq(seq.cache.Id)
 			if embed == nil {
 				embed = s.lc.GetEmbeddingsIth(seq.iBatch)
 			}
