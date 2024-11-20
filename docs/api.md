@@ -40,6 +40,7 @@ Generate a response for a given prompt with a provided model. This is a streamin
 
 - `model`: (required) the [model name](#model-names)
 - `prompt`: the prompt to generate a response for
+- `suffix`: the text after the model response
 - `images`: (optional) a list of base64-encoded images (for multimodal models such as `llava`)
 
 Advanced parameters (optional):
@@ -57,7 +58,8 @@ Advanced parameters (optional):
 
 Enable JSON mode by setting the `format` parameter to `json`. This will structure the response as a valid JSON object. See the JSON mode [example](#request-json-mode) below.
 
-> Note: it's important to instruct the model to use JSON in the `prompt`. Otherwise, the model may generate large amounts whitespace.
+> [!IMPORTANT]
+> It's important to instruct the model to use JSON in the `prompt`. Otherwise, the model may generate large amounts whitespace.
 
 ### Examples
 
@@ -67,7 +69,7 @@ Enable JSON mode by setting the `format` parameter to `json`. This will structur
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
-  "model": "llama3",
+  "model": "llama3.2",
   "prompt": "Why is the sky blue?"
 }'
 ```
@@ -78,7 +80,7 @@ A stream of JSON objects is returned:
 
 ```json
 {
-  "model": "llama3",
+  "model": "llama3.2",
   "created_at": "2023-08-04T08:52:19.385406455-07:00",
   "response": "The",
   "done": false
@@ -100,7 +102,7 @@ To calculate how fast the response is generated in tokens per second (token/s), 
 
 ```json
 {
-  "model": "llama3",
+  "model": "llama3.2",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "response": "",
   "done": true,
@@ -122,7 +124,7 @@ A response can be received in one reply when streaming is off.
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
-  "model": "llama3",
+  "model": "llama3.2",
   "prompt": "Why is the sky blue?",
   "stream": false
 }'
@@ -134,7 +136,7 @@ If `stream` is set to `false`, the response will be a single JSON object:
 
 ```json
 {
-  "model": "llama3",
+  "model": "llama3.2",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "response": "The sky is blue because it is the color of the sky.",
   "done": true,
@@ -148,15 +150,51 @@ If `stream` is set to `false`, the response will be a single JSON object:
 }
 ```
 
+#### Request (with suffix)
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/generate -d '{
+  "model": "codellama:code",
+  "prompt": "def compute_gcd(a, b):",
+  "suffix": "    return result",
+  "options": {
+    "temperature": 0
+  },
+  "stream": false
+}'
+```
+
+##### Response
+
+```json
+{
+  "model": "codellama:code",
+  "created_at": "2024-07-22T20:47:51.147561Z",
+  "response": "\n  if a == 0:\n    return b\n  else:\n    return compute_gcd(b % a, a)\n\ndef compute_lcm(a, b):\n  result = (a * b) / compute_gcd(a, b)\n",
+  "done": true,
+  "done_reason": "stop",
+  "context": [...],
+  "total_duration": 1162761250,
+  "load_duration": 6683708,
+  "prompt_eval_count": 17,
+  "prompt_eval_duration": 201222000,
+  "eval_count": 63,
+  "eval_duration": 953997000
+}
+```
+
 #### Request (JSON mode)
 
+> [!IMPORTANT]
 > When `format` is set to `json`, the output will always be a well-formed JSON object. It's important to also instruct the model to respond in JSON.
 
 ##### Request
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
-  "model": "llama3",
+  "model": "llama3.2",
   "prompt": "What color is the sky at different times of the day? Respond using JSON",
   "format": "json",
   "stream": false
@@ -167,7 +205,7 @@ curl http://localhost:11434/api/generate -d '{
 
 ```json
 {
-  "model": "llama3",
+  "model": "llama3.2",
   "created_at": "2023-11-09T21:07:55.186497Z",
   "response": "{\n\"morning\": {\n\"color\": \"blue\"\n},\n\"noon\": {\n\"color\": \"blue-gray\"\n},\n\"afternoon\": {\n\"color\": \"warm gray\"\n},\n\"evening\": {\n\"color\": \"orange\"\n}\n}\n",
   "done": true,
@@ -289,7 +327,7 @@ If you want to set custom options for the model at runtime rather than in the Mo
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
-  "model": "llama3",
+  "model": "llama3.2",
   "prompt": "Why is the sky blue?",
   "stream": false,
   "options": {
@@ -298,6 +336,7 @@ curl http://localhost:11434/api/generate -d '{
     "num_predict": 100,
     "top_k": 20,
     "top_p": 0.9,
+    "min_p": 0.0,
     "tfs_z": 0.5,
     "typical_p": 0.7,
     "repeat_last_n": 33,
@@ -316,7 +355,6 @@ curl http://localhost:11434/api/generate -d '{
     "num_gpu": 1,
     "main_gpu": 0,
     "low_vram": false,
-    "f16_kv": true,
     "vocab_only": false,
     "use_mmap": true,
     "use_mlock": false,
@@ -329,7 +367,7 @@ curl http://localhost:11434/api/generate -d '{
 
 ```json
 {
-  "model": "llama3",
+  "model": "llama3.2",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "response": "The sky is blue because it is the color of the sky.",
   "done": true,
@@ -351,7 +389,7 @@ If an empty prompt is provided, the model will be loaded into memory.
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
-  "model": "llama3"
+  "model": "llama3.2"
 }'
 ```
 
@@ -361,10 +399,37 @@ A single JSON object is returned:
 
 ```json
 {
-  "model": "llama3",
+  "model": "llama3.2",
   "created_at": "2023-12-18T19:52:07.071755Z",
   "response": "",
   "done": true
+}
+```
+
+#### Unload a model
+
+If an empty prompt is provided and the `keep_alive` parameter is set to `0`, a model will be unloaded from memory.
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/generate -d '{
+  "model": "llama3.2",
+  "keep_alive": 0
+}'
+```
+
+##### Response
+
+A single JSON object is returned:
+
+```json
+{
+  "model": "llama3.2",
+  "created_at": "2024-09-12T03:54:03.516566Z",
+  "response": "",
+  "done": true,
+  "done_reason": "unload"
 }
 ```
 
@@ -380,12 +445,14 @@ Generate the next message in a chat with a provided model. This is a streaming e
 
 - `model`: (required) the [model name](#model-names)
 - `messages`: the messages of the chat, this can be used to keep a chat memory
+- `tools`: tools for the model to use if supported. Requires `stream` to be set to `false`
 
 The `message` object has the following fields:
 
-- `role`: the role of the message, either `system`, `user` or `assistant`
+- `role`: the role of the message, either `system`, `user`, `assistant`, or `tool`
 - `content`: the content of the message
 - `images` (optional): a list of images to include in the message (for multimodal models such as `llava`)
+- `tool_calls` (optional): a list of tools the model wants to use
 
 Advanced parameters (optional):
 
@@ -404,7 +471,7 @@ Send a chat message with a streaming response.
 
 ```shell
 curl http://localhost:11434/api/chat -d '{
-  "model": "llama3",
+  "model": "llama3.2",
   "messages": [
     {
       "role": "user",
@@ -420,7 +487,7 @@ A stream of JSON objects is returned:
 
 ```json
 {
-  "model": "llama3",
+  "model": "llama3.2",
   "created_at": "2023-08-04T08:52:19.385406455-07:00",
   "message": {
     "role": "assistant",
@@ -435,7 +502,7 @@ Final response:
 
 ```json
 {
-  "model": "llama3",
+  "model": "llama3.2",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "done": true,
   "total_duration": 4883583458,
@@ -453,7 +520,7 @@ Final response:
 
 ```shell
 curl http://localhost:11434/api/chat -d '{
-  "model": "llama3",
+  "model": "llama3.2",
   "messages": [
     {
       "role": "user",
@@ -468,7 +535,7 @@ curl http://localhost:11434/api/chat -d '{
 
 ```json
 {
-  "model": "registry.ollama.ai/library/llama3:latest",
+  "model": "llama3.2",
   "created_at": "2023-12-12T14:13:43.416799Z",
   "message": {
     "role": "assistant",
@@ -492,7 +559,7 @@ Send a chat message with a conversation history. You can use this same approach 
 
 ```shell
 curl http://localhost:11434/api/chat -d '{
-  "model": "llama3",
+  "model": "llama3.2",
   "messages": [
     {
       "role": "user",
@@ -516,7 +583,7 @@ A stream of JSON objects is returned:
 
 ```json
 {
-  "model": "llama3",
+  "model": "llama3.2",
   "created_at": "2023-08-04T08:52:19.385406455-07:00",
   "message": {
     "role": "assistant",
@@ -530,7 +597,7 @@ Final response:
 
 ```json
 {
-  "model": "llama3",
+  "model": "llama3.2",
   "created_at": "2023-08-04T19:22:45.499127Z",
   "done": true,
   "total_duration": 8113331500,
@@ -546,7 +613,7 @@ Final response:
 
 ##### Request
 
-Send a chat message with a conversation history.
+Send a chat message with images. The images should be provided as an array, with the individual images encoded in Base64.
 
 ```shell
 curl http://localhost:11434/api/chat -d '{
@@ -588,7 +655,7 @@ curl http://localhost:11434/api/chat -d '{
 
 ```shell
 curl http://localhost:11434/api/chat -d '{
-  "model": "llama3",
+  "model": "llama3.2",
   "messages": [
     {
       "role": "user",
@@ -606,7 +673,7 @@ curl http://localhost:11434/api/chat -d '{
 
 ```json
 {
-  "model": "registry.ollama.ai/library/llama3:latest",
+  "model": "llama3.2",
   "created_at": "2023-12-12T14:13:43.416799Z",
   "message": {
     "role": "assistant",
@@ -622,6 +689,137 @@ curl http://localhost:11434/api/chat -d '{
 }
 ```
 
+#### Chat request (with tools)
+
+##### Request
+
+```
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama3.2",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is the weather today in Paris?"
+    }
+  ],
+  "stream": false,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_current_weather",
+        "description": "Get the current weather for a location",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "location": {
+              "type": "string",
+              "description": "The location to get the weather for, e.g. San Francisco, CA"
+            },
+            "format": {
+              "type": "string",
+              "description": "The format to return the weather in, e.g. 'celsius' or 'fahrenheit'",
+              "enum": ["celsius", "fahrenheit"]
+            }
+          },
+          "required": ["location", "format"]
+        }
+      }
+    }
+  ]
+}'
+```
+
+##### Response
+
+```json
+{
+  "model": "llama3.2",
+  "created_at": "2024-07-22T20:33:28.123648Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "function": {
+          "name": "get_current_weather",
+          "arguments": {
+            "format": "celsius",
+            "location": "Paris, FR"
+          }
+        }
+      }
+    ]
+  },
+  "done_reason": "stop",
+  "done": true,
+  "total_duration": 885095291,
+  "load_duration": 3753500,
+  "prompt_eval_count": 122,
+  "prompt_eval_duration": 328493000,
+  "eval_count": 33,
+  "eval_duration": 552222000
+}
+```
+
+#### Load a model
+
+If the messages array is empty, the model will be loaded into memory.
+
+##### Request
+
+```
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama3.2",
+  "messages": []
+}'
+```
+
+##### Response
+```json
+{
+  "model": "llama3.2",
+  "created_at":"2024-09-12T21:17:29.110811Z",
+  "message": {
+    "role": "assistant",
+    "content": ""
+  },
+  "done_reason": "load",
+  "done": true
+}
+```
+
+#### Unload a model
+
+If the messages array is empty and the `keep_alive` parameter is set to `0`, a model will be unloaded from memory.
+
+##### Request
+
+```
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama3.2",
+  "messages": [],
+  "keep_alive": 0
+}'
+```
+
+##### Response
+
+A single JSON object is returned:
+
+```json
+{
+  "model": "llama3.2",
+  "created_at":"2024-09-12T21:33:17.547535Z",
+  "message": {
+    "role": "assistant",
+    "content": ""
+  },
+  "done_reason": "unload",
+  "done": true
+}
+```
+
 ## Create a Model
 
 ```shell
@@ -632,10 +830,30 @@ Create a model from a [`Modelfile`](./modelfile.md). It is recommended to set `m
 
 ### Parameters
 
-- `name`: name of the model to create
+- `model`: name of the model to create
 - `modelfile` (optional): contents of the Modelfile
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 - `path` (optional): path to the Modelfile
+- `quantize` (optional): quantize a non-quantized (e.g. float16) model
+
+#### Quantization types
+
+| Type | Recommended |
+| --- | :-: |
+| q2_K | |
+| q3_K_L | |
+| q3_K_M | |
+| q3_K_S | |
+| q4_0 | |
+| q4_1 | |
+| q4_K_M | * |
+| q4_K_S | |
+| q5_0 | |
+| q5_1 | |
+| q5_K_M | |
+| q5_K_S | |
+| q6_K | |
+| q8_0 | * |
 
 ### Examples
 
@@ -647,14 +865,14 @@ Create a new model from a `Modelfile`.
 
 ```shell
 curl http://localhost:11434/api/create -d '{
-  "name": "mario",
+  "model": "mario",
   "modelfile": "FROM llama3\nSYSTEM You are mario from Super Mario Bros."
 }'
 ```
 
 ##### Response
 
-A stream of JSON objects. Notice that the final JSON object shows a `"status": "success"`.
+A stream of JSON objects is returned:
 
 ```json
 {"status":"reading model metadata"}
@@ -670,13 +888,43 @@ A stream of JSON objects. Notice that the final JSON object shows a `"status": "
 {"status":"success"}
 ```
 
+#### Quantize a model
+
+Quantize a non-quantized model.
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/create -d '{
+  "model": "llama3.1:quantized",
+  "modelfile": "FROM llama3.1:8b-instruct-fp16",
+  "quantize": "q4_K_M"
+}'
+```
+
+##### Response
+
+A stream of JSON objects is returned:
+
+```
+{"status":"quantizing F16 model to Q4_K_M"}
+{"status":"creating new layer sha256:667b0c1932bc6ffc593ed1d03f895bf2dc8dc6df21db3042284a6f4416b06a29"}
+{"status":"using existing layer sha256:11ce4ee3e170f6adebac9a991c22e22ab3f8530e154ee669954c4bc73061c258"}
+{"status":"using existing layer sha256:0ba8f0e314b4264dfd19df045cde9d4c394a52474bf92ed6a3de22a4ca31a177"}
+{"status":"using existing layer sha256:56bb8bd477a519ffa694fc449c2413c6f0e1d3b1c88fa7e3c9d88d3ae49d4dcb"}
+{"status":"creating new layer sha256:455f34728c9b5dd3376378bfb809ee166c145b0b4c1f1a6feca069055066ef9a"}
+{"status":"writing manifest"}
+{"status":"success"}
+```
+
+
 ### Check if a Blob Exists
 
 ```shell
 HEAD /api/blobs/:digest
 ```
 
-Ensures that the file blob used for a FROM or ADAPTER field exists on the server. This is checking your Ollama server and not Ollama.ai.
+Ensures that the file blob used for a FROM or ADAPTER field exists on the server. This is checking your Ollama server and not ollama.com.
 
 #### Query Parameters
 
@@ -781,7 +1029,7 @@ Show information about a model including details, modelfile, template, parameter
 
 ### Parameters
 
-- `name`: name of the model to show
+- `model`: name of the model to show
 - `verbose`: (optional) if set to `true`, returns full data for verbose response fields
 
 ### Examples
@@ -790,7 +1038,7 @@ Show information about a model including details, modelfile, template, parameter
 
 ```shell
 curl http://localhost:11434/api/show -d '{
-  "name": "llama3"
+  "model": "llama3.2"
 }'
 ```
 
@@ -851,7 +1099,7 @@ Copy a model. Creates a model with another name from an existing model.
 
 ```shell
 curl http://localhost:11434/api/copy -d '{
-  "source": "llama3",
+  "source": "llama3.2",
   "destination": "llama3-backup"
 }'
 ```
@@ -870,7 +1118,7 @@ Delete a model and its data.
 
 ### Parameters
 
-- `name`: model name to delete
+- `model`: model name to delete
 
 ### Examples
 
@@ -878,7 +1126,7 @@ Delete a model and its data.
 
 ```shell
 curl -X DELETE http://localhost:11434/api/delete -d '{
-  "name": "llama3:13b"
+  "model": "llama3:13b"
 }'
 ```
 
@@ -896,7 +1144,7 @@ Download a model from the ollama library. Cancelled pulls are resumed from where
 
 ### Parameters
 
-- `name`: name of the model to pull
+- `model`: name of the model to pull
 - `insecure`: (optional) allow insecure connections to the library. Only use this if you are pulling from your own library during development.
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 
@@ -906,7 +1154,7 @@ Download a model from the ollama library. Cancelled pulls are resumed from where
 
 ```shell
 curl http://localhost:11434/api/pull -d '{
-  "name": "llama3"
+  "model": "llama3.2"
 }'
 ```
 
@@ -968,7 +1216,7 @@ Upload a model to a model library. Requires registering for ollama.ai and adding
 
 ### Parameters
 
-- `name`: name of the model to push in the form of `<namespace>/<model>:<tag>`
+- `model`: name of the model to push in the form of `<namespace>/<model>:<tag>`
 - `insecure`: (optional) allow insecure connections to the library. Only use this if you are pushing to your library during development.
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 
@@ -978,7 +1226,7 @@ Upload a model to a model library. Requires registering for ollama.ai and adding
 
 ```shell
 curl http://localhost:11434/api/push -d '{
-  "name": "mattw/pygmalion:latest"
+  "model": "mattw/pygmalion:latest"
 }'
 ```
 
@@ -1061,7 +1309,10 @@ curl http://localhost:11434/api/embed -d '{
   "embeddings": [[
     0.010071029, -0.0017594862, 0.05007221, 0.04692972, 0.054916814,
     0.008599704, 0.105441414, -0.025878139, 0.12958129, 0.031952348
-  ]]
+  ]],
+  "total_duration": 14143917,
+  "load_duration": 1019500,
+  "prompt_eval_count": 8
 }
 ```
 

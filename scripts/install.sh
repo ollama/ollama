@@ -4,9 +4,12 @@
 
 set -eu
 
+red="$( (/usr/bin/tput bold || :; /usr/bin/tput setaf 1 || :) 2>&-)"
+plain="$( (/usr/bin/tput sgr0 || :) 2>&-)"
+
 status() { echo ">>> $*" >&2; }
-error() { echo "ERROR $*"; exit 1; }
-warning() { echo "WARNING: $*"; }
+error() { echo "${red}ERROR:${plain} $*"; exit 1; }
+warning() { echo "${red}WARNING:${plain} $*"; }
 
 TEMP_DIR=$(mktemp -d)
 cleanup() { rm -rf $TEMP_DIR; }
@@ -38,7 +41,7 @@ IS_WSL2=false
 KERN=$(uname -r)
 case "$KERN" in
     *icrosoft*WSL2 | *icrosoft*wsl2) IS_WSL2=true;;
-    *icrosoft) error "Microsoft WSL1 is not currently supported. Please upgrade to WSL2 with 'wsl --set-version <distro> 2'" ;;
+    *icrosoft) error "Microsoft WSL1 is not currently supported. Please use WSL2 with 'wsl --set-version <distro> 2'" ;;
     *) ;;
 esac
 
@@ -63,16 +66,52 @@ if [ -n "$NEEDS" ]; then
     exit 1
 fi
 
-status "Downloading ollama..."
-curl --fail --show-error --location --progress-bar -o $TEMP_DIR/ollama "https://ollama.com/download/ollama-linux-${ARCH}${VER_PARAM}"
-
 for BINDIR in /usr/local/bin /usr/bin /bin; do
     echo $PATH | grep -q $BINDIR && break || continue
 done
+OLLAMA_INSTALL_DIR=$(dirname ${BINDIR})
 
-status "Installing ollama to $BINDIR..."
+status "Installing ollama to $OLLAMA_INSTALL_DIR"
 $SUDO install -o0 -g0 -m755 -d $BINDIR
-$SUDO install -o0 -g0 -m755 $TEMP_DIR/ollama $BINDIR/ollama
+$SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR"
+if curl -I --silent --fail --location "https://ollama.com/download/ollama-linux-${ARCH}.tgz${VER_PARAM}" >/dev/null ; then
+    status "Downloading Linux ${ARCH} bundle"
+    curl --fail --show-error --location --progress-bar \
+        "https://ollama.com/download/ollama-linux-${ARCH}.tgz${VER_PARAM}" | \
+        $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+    BUNDLE=1
+    if [ "$OLLAMA_INSTALL_DIR/bin/ollama" != "$BINDIR/ollama" ] ; then
+        status "Making ollama accessible in the PATH in $BINDIR"
+        $SUDO ln -sf "$OLLAMA_INSTALL_DIR/ollama" "$BINDIR/ollama"
+    fi
+else
+    status "Downloading Linux ${ARCH} CLI"
+    curl --fail --show-error --location --progress-bar -o "$TEMP_DIR/ollama"\
+    "https://ollama.com/download/ollama-linux-${ARCH}${VER_PARAM}"
+    $SUDO install -o0 -g0 -m755 $TEMP_DIR/ollama $OLLAMA_INSTALL_DIR/ollama
+    BUNDLE=0
+    if [ "$OLLAMA_INSTALL_DIR/ollama" != "$BINDIR/ollama" ] ; then
+        status "Making ollama accessible in the PATH in $BINDIR"
+        $SUDO ln -sf "$OLLAMA_INSTALL_DIR/ollama" "$BINDIR/ollama"
+    fi
+fi
+
+# Check for NVIDIA JetPack systems with additional downloads
+if [ -f /etc/nv_tegra_release ] ; then
+    if grep R36 /etc/nv_tegra_release > /dev/null ; then
+        status "Downloading JetPack 6 components"
+        curl --fail --show-error --location --progress-bar \
+            "https://ollama.com/download/ollama-linux-${ARCH}-jetpack6.tgz${VER_PARAM}" | \
+            $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+    elif grep R35 /etc/nv_tegra_release > /dev/null ; then
+        status "Downloading JetPack 5 components"
+        curl --fail --show-error --location --progress-bar \
+            "https://ollama.com/download/ollama-linux-${ARCH}-jetpack5.tgz${VER_PARAM}" | \
+            $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+    else
+        warning "Unsupported JetPack version detected.  GPU may not be supported"
+    fi
+fi
 
 install_success() {
     status 'The Ollama API is now available at 127.0.0.1:11434.'
@@ -126,6 +165,12 @@ EOF
             start_service() { $SUDO systemctl restart ollama; }
             trap start_service EXIT
             ;;
+        *)
+            warning "systemd is not running"
+            if [ "$IS_WSL2" = true ]; then
+                warning "see https://learn.microsoft.com/en-us/windows/wsl/systemd#how-to-enable-systemd to enable it"
+            fi
+            ;;
     esac
 }
 
@@ -139,6 +184,13 @@ if [ "$IS_WSL2" = true ]; then
     if available nvidia-smi && [ -n "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
         status "Nvidia GPU detected."
     fi
+    install_success
+    exit 0
+fi
+
+# Don't attempt to install drivers on Jetson systems
+if [ -f /etc/nv_tegra_release ] ; then
+    status "NVIDIA JetPack ready."
     install_success
     exit 0
 fi
@@ -178,6 +230,16 @@ if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdg
 fi
 
 if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
+    if [ $BUNDLE -ne 0 ]; then
+        status "Downloading Linux ROCm ${ARCH} bundle"
+        curl --fail --show-error --location --progress-bar \
+            "https://ollama.com/download/ollama-linux-${ARCH}-rocm.tgz${VER_PARAM}" | \
+            $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+
+        install_success
+        status "AMD GPU ready."
+        exit 0
+    fi
     # Look for pre-existing ROCm v6 before downloading the dependencies
     for search in "${HIP_PATH:-''}" "${ROCM_PATH:-''}" "/opt/rocm" "/usr/lib64"; do
         if [ -n "${search}" ] && [ -e "${search}/libhipblas.so.2" -o -e "${search}/lib/libhipblas.so.2" ]; then
@@ -198,19 +260,29 @@ if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
     exit 0
 fi
 
+CUDA_REPO_ERR_MSG="NVIDIA GPU detected, but your OS and Architecture are not supported by NVIDIA.  Please install the CUDA driver manually https://docs.nvidia.com/cuda/cuda-installation-guide-linux/"
 # ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#rhel-7-centos-7
 # ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#rhel-8-rocky-8
 # ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#rhel-9-rocky-9
 # ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#fedora
 install_cuda_driver_yum() {
     status 'Installing NVIDIA repository...'
+    
     case $PACKAGE_MANAGER in
         yum)
             $SUDO $PACKAGE_MANAGER -y install yum-utils
-            $SUDO $PACKAGE_MANAGER-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m)/cuda-$1$2.repo
+            if curl -I --silent --fail --location "https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m | sed -e 's/aarch64/sbsa/')/cuda-$1$2.repo" >/dev/null ; then
+                $SUDO $PACKAGE_MANAGER-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m | sed -e 's/aarch64/sbsa/')/cuda-$1$2.repo
+            else
+                error $CUDA_REPO_ERR_MSG
+            fi
             ;;
         dnf)
-            $SUDO $PACKAGE_MANAGER config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m)/cuda-$1$2.repo
+            if curl -I --silent --fail --location "https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m | sed -e 's/aarch64/sbsa/')/cuda-$1$2.repo" >/dev/null ; then
+                $SUDO $PACKAGE_MANAGER config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m | sed -e 's/aarch64/sbsa/')/cuda-$1$2.repo
+            else
+                error $CUDA_REPO_ERR_MSG
+            fi
             ;;
     esac
 
@@ -235,7 +307,11 @@ install_cuda_driver_yum() {
 # ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#debian
 install_cuda_driver_apt() {
     status 'Installing NVIDIA repository...'
-    curl -fsSL -o $TEMP_DIR/cuda-keyring.deb https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m)/cuda-keyring_1.1-1_all.deb
+    if curl -I --silent --fail --location "https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m | sed -e 's/aarch64/sbsa/')/cuda-keyring_1.1-1_all.deb" >/dev/null ; then
+        curl -fsSL -o $TEMP_DIR/cuda-keyring.deb https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m | sed -e 's/aarch64/sbsa/')/cuda-keyring_1.1-1_all.deb
+    else
+        error $CUDA_REPO_ERR_MSG
+    fi
 
     case $1 in
         debian)
@@ -312,12 +388,12 @@ if ! lsmod | grep -q nvidia || ! lsmod | grep -q nvidia_uvm; then
 fi
 
 # make sure the NVIDIA modules are loaded on boot with nvidia-persistenced
-if command -v nvidia-persistenced > /dev/null 2>&1; then
+if available nvidia-persistenced; then
     $SUDO touch /etc/modules-load.d/nvidia.conf
     MODULES="nvidia nvidia-uvm"
     for MODULE in $MODULES; do
         if ! grep -qxF "$MODULE" /etc/modules-load.d/nvidia.conf; then
-            echo "$MODULE" | sudo tee -a /etc/modules-load.d/nvidia.conf > /dev/null
+            echo "$MODULE" | $SUDO tee -a /etc/modules-load.d/nvidia.conf > /dev/null
         fi
     done
 fi

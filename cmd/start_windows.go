@@ -31,7 +31,7 @@ func startApp(ctx context.Context, client *api.Client) error {
 			// Finally look in the path
 			appExe, err = exec.LookPath(AppName)
 			if err != nil {
-				return fmt.Errorf("could not locate ollama app")
+				return errors.New("could not locate ollama app")
 			}
 		}
 	}
