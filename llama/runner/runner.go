@@ -164,10 +164,16 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 // generating image embeddings for each image
 func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 	var inputs []input
+	var parts []string
+	var matches [][]string
 
-	re := regexp.MustCompile(`\[img-(\d+)\]`)
-	parts := re.Split(prompt, -1)
-	matches := re.FindAllStringSubmatch(prompt, -1)
+	if s.image != nil {
+		re := regexp.MustCompile(`\[img-(\d+)\]`)
+		parts = re.Split(prompt, -1)
+		matches = re.FindAllStringSubmatch(prompt, -1)
+	} else {
+		parts = []string{prompt}
+	}
 
 	for i, part := range parts {
 		// text - tokenize
