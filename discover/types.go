@@ -25,7 +25,7 @@ type GpuInfo struct { // TODO better name maybe "InferenceProcessor"?
 	MinimumMemory uint64 `json:"-"`
 
 	// Any extra PATH/LD_LIBRARY_PATH dependencies required for the Library to operate properly
-	DependencyPath string `json:"lib_path,omitempty"`
+	DependencyPath []string `json:"lib_path,omitempty"`
 
 	// Extra environment variables specific to the GPU as list of [key,value]
 	EnvWorkarounds [][2]string `json:"envs,omitempty"`
@@ -175,6 +175,11 @@ func (si SystemInfo) GetOptimalThreadCount() int {
 	if len(si.System.CPUs) == 0 {
 		return 0
 	}
-	// Allocate thread count matching the performance cores on a single socket
-	return si.System.CPUs[0].CoreCount - si.System.CPUs[0].EfficiencyCoreCount
+
+	coreCount := 0
+	for _, c := range si.System.CPUs {
+		coreCount += c.CoreCount - c.EfficiencyCoreCount
+	}
+
+	return coreCount
 }

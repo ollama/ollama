@@ -1,5 +1,7 @@
 package llama
 
+//go:generate make -j 8
+
 /*
 #cgo CFLAGS: -O2 -std=c11 -DGGML_BUILD=1 -DNDEBUG -DLOG_DISABLE_LOGS -DGGML_USE_LLAMAFILE
 #cgo CXXFLAGS: -O2 -std=c++11 -DGGML_BUILD=1 -DNDEBUG -DLOG_DISABLE_LOGS -DGGML_USE_LLAMAFILE
@@ -19,6 +21,8 @@ package llama
 #cgo cuda CFLAGS: -fPIE -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 #cgo cuda CXXFLAGS: -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 #cgo cuda CXXFLAGS: -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
+#cgo cuda_jetpack5 LDFLAGS: -lggml_cuda_jetpack5 -L/usr/local/cuda-11/lib64
+#cgo cuda_jetpack6 LDFLAGS: -lggml_cuda_jetpack6 -L/usr/local/cuda-12/lib64
 #cgo cuda_v11 LDFLAGS: -lggml_cuda_v11 -L/usr/local/cuda-11/lib64
 #cgo cuda_v12 LDFLAGS: -lggml_cuda_v12 -L/usr/local/cuda-12/lib64
 #cgo darwin,amd64 CFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
@@ -34,8 +38,8 @@ package llama
 #cgo linux CXXFLAGS: -D_GNU_SOURCE
 #cgo linux,amd64 LDFLAGS: -L${SRCDIR}/build/Linux/amd64
 #cgo linux,amd64 LDFLAGS: -L${SRCDIR}/build/Linux/amd64
-#cgo linux,arm64 CFLAGS: -D__aarch64__ -D__ARM_NEON -D__ARM_FEATURE_FMA -D__ARM_FEATURE_MATMUL_INT8
-#cgo linux,arm64 CXXFLAGS: -D__aarch64__ -D__ARM_NEON -D__ARM_FEATURE_FMA -D__ARM_FEATURE_MATMUL_INT8
+#cgo linux,arm64 CFLAGS: -D__aarch64__ -D__ARM_NEON -D__ARM_FEATURE_FMA
+#cgo linux,arm64 CXXFLAGS: -D__aarch64__ -D__ARM_NEON -D__ARM_FEATURE_FMA
 #cgo linux,arm64 LDFLAGS: -L${SRCDIR}/build/Linux/arm64
 #cgo linux,arm64,sve CFLAGS: -march=armv8.6-a+sve
 #cgo linux,arm64,sve CXXFLAGS: -march=armv8.6-a+sve
@@ -66,6 +70,17 @@ package llama
 #include "sampling_ext.h"
 
 bool llamaProgressCallback(float progress, void *user_data);
+
+typedef enum {COMP_UNKNOWN,COMP_GCC,COMP_CLANG} COMPILER;
+COMPILER inline get_compiler() {
+#if defined(__clang__)
+	return COMP_CLANG;
+#elif defined(__GNUC__)
+	return COMP_GCC;
+#else
+	return UNKNOWN_COMPILER;
+#endif
+}
 */
 import "C"
 
@@ -75,6 +90,7 @@ import (
 	"fmt"
 	"runtime"
 	"runtime/cgo"
+	"slices"
 	"strings"
 	"unsafe"
 )
@@ -86,7 +102,38 @@ func BackendInit() {
 }
 
 func PrintSystemInfo() string {
-	return C.GoString(C.llama_print_system_info())
+	var compiler string
+	switch C.get_compiler() {
+	case C.COMP_UNKNOWN:
+		compiler = "cgo(unknown_compiler)"
+	case C.COMP_GCC:
+		compiler = "cgo(gcc)"
+	case C.COMP_CLANG:
+		compiler = "cgo(clang)"
+	}
+	return C.GoString(C.llama_print_system_info()) + compiler
+}
+
+func GetModelArch(modelPath string) (string, error) {
+	mp := C.CString(modelPath)
+	defer C.free(unsafe.Pointer(mp))
+
+	gguf_ctx := C.gguf_init_from_file(mp, C.struct_gguf_init_params{no_alloc: true, ctx: (**C.struct_ggml_context)(C.NULL)})
+	if gguf_ctx == nil {
+		return "", errors.New("unable to load model file")
+	}
+	defer C.gguf_free(gguf_ctx)
+
+	key := C.CString("general.architecture")
+	defer C.free(unsafe.Pointer(key))
+	arch_index := C.gguf_find_key(gguf_ctx, key)
+	if int(arch_index) < 0 {
+		return "", errors.New("unknown model architecture")
+	}
+
+	arch := C.gguf_get_val_str(gguf_ctx, arch_index)
+
+	return C.GoString(arch), nil
 }
 
 type ContextParams struct {
@@ -136,10 +183,6 @@ func (c *Context) Model() *Model {
 	return &Model{c: C.llama_get_model(c.c)}
 }
 
-func (c *Context) GetLogitsIth(i int) []float32 {
-	return unsafe.Slice((*float32)(unsafe.Pointer(C.llama_get_logits_ith(c.c, C.int(i)))), c.Model().NumVocab())
-}
-
 func (c *Context) KvCacheSeqAdd(seqId int, p0 int, p1 int, delta int) {
 	C.llama_kv_cache_seq_add(c.c, C.int(seqId), C.int(p0), C.int(p1), C.int(delta))
 }
@@ -163,7 +206,12 @@ func (c *Context) GetEmbeddingsSeq(seqId int) []float32 {
 }
 
 func (c *Context) GetEmbeddingsIth(i int) []float32 {
-	return unsafe.Slice((*float32)(unsafe.Pointer(C.llama_get_embeddings_ith(c.c, C.int32_t(i)))), c.Model().NEmbd())
+	embeddings := unsafe.Pointer(C.llama_get_embeddings_ith(c.c, C.int32_t(i)))
+	if embeddings == nil {
+		return nil
+	}
+
+	return unsafe.Slice((*float32)(embeddings), c.Model().NEmbd())
 }
 
 type ModelParams struct {
@@ -184,7 +232,7 @@ func llamaProgressCallback(progress C.float, userData unsafe.Pointer) C.bool {
 	return true
 }
 
-func LoadModelFromFile(modelPath string, params ModelParams) *Model {
+func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
 	cparams := C.llama_model_default_params()
 	cparams.n_gpu_layers = C.int(params.NumGpuLayers)
 	cparams.main_gpu = C.int32_t(params.MainGpu)
@@ -214,18 +262,28 @@ func LoadModelFromFile(modelPath string, params ModelParams) *Model {
 		cparams.progress_callback_user_data = unsafe.Pointer(&handle)
 	}
 
-	return &Model{c: C.llama_load_model_from_file(C.CString(modelPath), cparams)}
+	m := Model{c: C.llama_load_model_from_file(C.CString(modelPath), cparams)}
+	if m.c == nil {
+		return nil, fmt.Errorf("unable to load model: %s", modelPath)
+	}
+
+	return &m, nil
 }
 
 func FreeModel(model *Model) {
 	C.llama_free_model(model.c)
 }
 
-func NewContextWithModel(model *Model, params ContextParams) *Context {
-	return &Context{
+func NewContextWithModel(model *Model, params ContextParams) (*Context, error) {
+	c := Context{
 		c:          C.llama_new_context_with_model(model.c, params.c),
 		numThreads: int(params.c.n_threads),
 	}
+	if c.c == nil {
+		return nil, errors.New("unable to create llama context")
+	}
+
+	return &c, nil
 }
 
 func (m *Model) NumVocab() int {
@@ -245,6 +303,9 @@ func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float
 	defer C.free(unsafe.Pointer(cLoraPath))
 
 	loraAdapter := C.llama_lora_adapter_init(m.c, cLoraPath)
+	if loraAdapter == nil {
+		return errors.New("unable to load lora")
+	}
 
 	err := -1
 	if loraAdapter != nil {
@@ -260,18 +321,40 @@ func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float
 type Batch struct {
 	c         C.struct_llama_batch
 	batchSize int
+	maxSeq    int
 	embedSize int
 }
 
-// Creates a new batch for either word tokens if embed is 0 or
-// image embeddings if embed is specified. Batches cannot contain
-// both types at the same time
-func NewBatch(nTokens int, embed int, maxSeq int) *Batch {
-	return &Batch{
-		c:         C.llama_batch_init(C.int(nTokens), C.int(embed), C.int(maxSeq)),
-		batchSize: nTokens,
-		embedSize: embed,
+// Creates a new batch for either word tokens or image embeddings (if embedSize is non-zero).
+// Batches cannot contain both types at the same time. batchSize is the maximum number of entries
+// that can be added per sequence
+func NewBatch(batchSize int, maxSeq int, embedSize int) (*Batch, error) {
+	b := Batch{
+		c:         C.llama_batch_init(C.int(batchSize*maxSeq), C.int(embedSize), C.int(maxSeq)),
+		batchSize: batchSize,
+		maxSeq:    maxSeq,
+		embedSize: embedSize,
 	}
+
+	// Check to see if any of the allocations in llama_batch_init() failed
+	nilPointer := (embedSize == 0 && b.c.token == nil) || (embedSize != 0 && b.c.embd == nil) ||
+		b.c.pos == nil || b.c.n_seq_id == nil || b.c.seq_id == nil || b.c.logits == nil ||
+		slices.Contains(unsafe.Slice(b.c.seq_id, b.allocSize()), nil)
+
+	if nilPointer {
+		C.llama_batch_free(b.c)
+		return nil, fmt.Errorf("unable to allocate batch (batchSize=%v maxSeq=%v embedSize=%v)", batchSize, maxSeq, embedSize)
+	}
+
+	return &b, nil
+}
+
+func (b *Batch) Size() int {
+	return b.batchSize
+}
+
+func (b *Batch) allocSize() int {
+	return b.batchSize * b.maxSeq
 }
 
 func (b *Batch) NumTokens() int {
@@ -286,21 +369,23 @@ func (b *Batch) IsEmbedding() bool {
 // when the batch was initialized. The other argument will be ignored. Adds to the
 // batch with the given position for the given sequence ids, and optionally instructs
 // to include logits.
-func (b *Batch) Add(token int, embed []float32, pos int, seqIds []int, logits bool) {
+func (b *Batch) Add(token int, embed []float32, pos int, logits bool, seqIds ...int) {
 	if !b.IsEmbedding() {
-		unsafe.Slice(b.c.token, b.batchSize)[b.c.n_tokens] = C.llama_token(token)
+		unsafe.Slice(b.c.token, b.allocSize())[b.c.n_tokens] = C.llama_token(token)
 	} else {
-		copy(unsafe.Slice((*float32)(b.c.embd), b.batchSize*b.embedSize)[int(b.c.n_tokens)*b.embedSize:], embed)
+		copy(unsafe.Slice((*float32)(b.c.embd), b.allocSize()*b.embedSize)[int(b.c.n_tokens)*b.embedSize:], embed)
 	}
-	unsafe.Slice(b.c.pos, b.batchSize)[b.c.n_tokens] = C.llama_pos(pos)
-	unsafe.Slice(b.c.n_seq_id, b.batchSize)[b.c.n_tokens] = C.int(len(seqIds))
+	unsafe.Slice(b.c.pos, b.allocSize())[b.c.n_tokens] = C.llama_pos(pos)
+	unsafe.Slice(b.c.n_seq_id, b.allocSize())[b.c.n_tokens] = C.int(len(seqIds))
 
 	for i, s := range seqIds {
-		unsafe.Slice((unsafe.Slice(b.c.seq_id, b.batchSize)[b.c.n_tokens]), C.int(len(seqIds)))[i] = C.int32_t(s)
+		unsafe.Slice((unsafe.Slice(b.c.seq_id, b.allocSize())[b.c.n_tokens]), C.int(len(seqIds)))[i] = C.int32_t(s)
 	}
 
 	if logits {
-		unsafe.Slice(b.c.logits, b.batchSize)[b.c.n_tokens] = 1
+		unsafe.Slice(b.c.logits, b.allocSize())[b.c.n_tokens] = 1
+	} else {
+		unsafe.Slice(b.c.logits, b.allocSize())[b.c.n_tokens] = 0
 	}
 
 	b.c.n_tokens += 1
@@ -410,71 +495,42 @@ func Quantize(infile, outfile string, ftype uint32) error {
 	return nil
 }
 
-// llava
+// vision processing
 type ClipContext struct {
-	c        *C.struct_clip_ctx
-	m        *C.struct_mllama_ctx
-	IsMllama bool
-	embedPin runtime.Pinner
-	pinned   bool
+	c *C.struct_clip_ctx
 }
 
-func getVisionArch(mp *C.char) (string, error) {
-	gguf_ctx := C.gguf_init_from_file(mp, C.struct_gguf_init_params{no_alloc: true, ctx: (**C.struct_ggml_context)(C.NULL)})
-	if gguf_ctx == nil {
-		return "", errors.New("unable to load vision projector")
-	}
-	defer C.gguf_free(gguf_ctx)
-
-	arch_index := C.gguf_find_key(gguf_ctx, C.CString("general.architecture"))
-	if int(arch_index) < 0 {
-		return "", errors.New("unknown vision model architecture")
-	}
-
-	arch := C.gguf_get_val_str(gguf_ctx, arch_index)
-
-	return C.GoString(arch), nil
-}
-
-func NewClipContext(modelPath string) (*ClipContext, error) {
+func NewClipContext(llamaContext *Context, modelPath string) (*ClipContext, error) {
 	mp := C.CString(modelPath)
 	defer C.free(unsafe.Pointer(mp))
-
-	arch, err := getVisionArch(mp)
-	if err != nil {
-		return nil, err
+	c := C.clip_model_load(mp, 1)
+	if c == nil {
+		return nil, fmt.Errorf("unable to load clip model: %v", modelPath)
 	}
 
-	var cc ClipContext
-	if arch == "clip" {
-		cc.c = C.clip_model_load(mp, 1)
-	} else if arch == "mllama" {
-		cc.m = C.mllama_model_load(mp, 1)
-		cc.IsMllama = true
-	} else {
-		return nil, fmt.Errorf("unknown vision model architecture: %s", arch)
+	projEmbedSize := int(C.clip_n_mmproj_embd(c))
+	modelEmbedSize := llamaContext.Model().NEmbd()
+	if projEmbedSize != modelEmbedSize {
+		return nil, fmt.Errorf("projector embedding size (%d) does not match model (%d)", projEmbedSize, modelEmbedSize)
 	}
 
-	// XXX: check embedding size?
-	return &cc, nil
+	return &ClipContext{c: c}, nil
 }
 
 func (c *ClipContext) Free() {
-	if c.c != nil {
-		C.clip_free(c.c)
-	}
-	if c.m != nil {
-		C.mllama_free(c.m)
-	}
+	C.clip_free(c.c)
 }
 
-func NewLlavaImageEmbed(llamaContext *Context, clipContext *ClipContext, data []byte) [][]float32 {
-	c := C.llava_image_embed_make_with_bytes(clipContext.c, C.int(llamaContext.numThreads), (*C.uchar)(unsafe.Pointer(&data[0])), C.int(len(data)))
+func (c *ClipContext) NewEmbed(llamaContext *Context, data []byte) ([][]float32, error) {
+	l := C.llava_image_embed_make_with_bytes(c.c, C.int(llamaContext.numThreads), (*C.uchar)(unsafe.Pointer(&data[0])), C.int(len(data)))
+	if l == nil {
+		return nil, errors.New("unable to make llava embedding from image")
+	}
 
-	numTokens := int(c.n_image_pos)
+	numTokens := int(l.n_image_pos)
 	numEmbed := llamaContext.Model().NEmbd()
 
-	s := unsafe.Slice((*float32)(c.embed), numEmbed*numTokens)
+	s := unsafe.Slice((*float32)(l.embed), numEmbed*numTokens)
 
 	embed := make([][]float32, numTokens)
 	rows := make([]float32, len(s))
@@ -484,51 +540,70 @@ func NewLlavaImageEmbed(llamaContext *Context, clipContext *ClipContext, data []
 		embed[i] = rows[i*numEmbed : (i+1)*numEmbed]
 	}
 
-	C.llava_image_embed_free(c)
+	C.llava_image_embed_free(l)
 
-	return embed
+	return embed, nil
 }
 
-func NewMllamaImageEmbed(llamaContext *Context, clipContext *ClipContext, data []byte, aspectRatioId int) [][]float32 {
+type MllamaContext struct {
+	c *C.struct_mllama_ctx
+}
+
+func NewMllamaContext(llamaContext *Context, modelPath string) (*MllamaContext, error) {
+	mp := C.CString(modelPath)
+	defer C.free(unsafe.Pointer(mp))
+	c := C.mllama_model_load(mp, 1)
+	if c == nil {
+		return nil, fmt.Errorf("unable to load mllama model: %v", modelPath)
+	}
+
+	projEmbedSize := int(C.mllama_n_embd(c))
+	modelEmbedSize := llamaContext.Model().NEmbd()
+	if projEmbedSize != modelEmbedSize {
+		return nil, fmt.Errorf("projector embedding size (%d) does not match model (%d)", projEmbedSize, modelEmbedSize)
+	}
+
+	return &MllamaContext{c: c}, nil
+}
+
+func (m *MllamaContext) Free() {
+	C.mllama_free(m.c)
+}
+
+func (m *MllamaContext) NewEmbed(llamaContext *Context, data []byte, aspectRatioId int) ([][]float32, error) {
 	img := C.mllama_image_init()
 	defer C.mllama_image_free(img)
 
-	C.mllama_image_load_from_data(unsafe.Pointer(&data[0]), C.int(len(data)), 560, 560, 3, 4, C.int(aspectRatioId), img)
-
-	numTokens := int(C.mllama_n_positions(clipContext.m) * C.mllama_n_tiles(clipContext.m))
-	numEmbed := llamaContext.Model().NEmbd()
-
-	rows := make([]float32, numEmbed*numTokens)
-	C.mllama_image_encode(clipContext.m, C.int(llamaContext.numThreads), img, (*C.float)(unsafe.Pointer(&rows[0])))
-
-	embed := make([][]float32, numTokens)
-	for i := range embed {
-		embed[i] = rows[i*numEmbed : (i+1)*numEmbed]
+	ok := bool(C.mllama_image_load_from_data(unsafe.Pointer(&data[0]), C.int(len(data)), 560, 560, 3, 4, C.int(aspectRatioId), img))
+	if !ok {
+		return nil, errors.New("unable to load mllama image data")
 	}
 
-	return embed
+	rows := make([]float32, m.EmbedSize(llamaContext))
+	ok = bool(C.mllama_image_encode(m.c, C.int(llamaContext.numThreads), img, (*C.float)(unsafe.Pointer(&rows[0]))))
+	if !ok {
+		return nil, errors.New("unable to make mllama embedding from image")
+	}
+
+	embed := make([][]float32, 1)
+	embed[0] = rows
+
+	return embed, nil
 }
 
-// This really needs to be set on a batch instead
-func MllamaSetCrossAttn(llamaContext *Context, clipContext *ClipContext, embed [][]float32) {
-	if embed != nil {
-		if clipContext.pinned {
-			panic("Cross attention state already pinned")
-		}
+func (m *MllamaContext) EmbedSize(llamaContext *Context) int {
+	numTokens := int(C.mllama_n_positions(m.c) * C.mllama_n_tiles(m.c))
+	numEmbed := llamaContext.Model().NEmbd()
 
-		embedData := &embed[0][0]
-		clipContext.embedPin.Pin(embedData)
-		clipContext.pinned = true
+	return numTokens * numEmbed
+}
 
-		C.llama_set_cross_attn_state(llamaContext.c, (*C.float)(unsafe.Pointer(embedData)))
-	} else {
-		C.llama_set_cross_attn_state(llamaContext.c, (*C.float)(C.NULL))
+func (c *Context) SetCrossAttention(state bool) {
+	C.llama_set_cross_attention(c.c, C.bool(state))
+}
 
-		if clipContext.pinned {
-			clipContext.embedPin.Unpin()
-			clipContext.pinned = false
-		}
-	}
+func (c *Context) Synchronize() {
+	C.llama_synchronize(c.c)
 }
 
 // sampling
@@ -556,7 +631,7 @@ type SamplingParams struct {
 	Grammar        string
 }
 
-func NewSamplingContext(model *Model, params SamplingParams) *SamplingContext {
+func NewSamplingContext(model *Model, params SamplingParams) (*SamplingContext, error) {
 	var cparams C.struct_gpt_sampler_cparams
 	cparams.top_k = C.int32_t(params.TopK)
 	cparams.top_p = C.float(params.TopP)
@@ -579,9 +654,13 @@ func NewSamplingContext(model *Model, params SamplingParams) *SamplingContext {
 
 	cparams.grammar = grammar
 	context := &SamplingContext{c: C.gpt_sampler_cinit(model.c, &cparams)}
+	if context.c == nil {
+		return nil, errors.New("unable to create sampling context")
+	}
+
 	runtime.SetFinalizer(context, func(s *SamplingContext) { C.gpt_sampler_cfree(s.c) })
 
-	return context
+	return context, nil
 }
 
 func (s *SamplingContext) Reset() {

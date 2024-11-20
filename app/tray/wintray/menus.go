@@ -11,12 +11,13 @@ import (
 )
 
 const (
-	updateAvailableMenuID = 1
-	updateMenuID          = updateAvailableMenuID + 1
-	separatorMenuID       = updateMenuID + 1
-	diagLogsMenuID        = separatorMenuID + 1
-	diagSeparatorMenuID   = diagLogsMenuID + 1
-	quitMenuID            = diagSeparatorMenuID + 1
+	_ = iota
+	updateAvailableMenuID
+	updateMenuID
+	separatorMenuID
+	diagLogsMenuID
+	diagSeparatorMenuID
+	quitMenuID
 )
 
 func (t *winTray) initMenus() error {

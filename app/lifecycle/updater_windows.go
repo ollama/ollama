@@ -26,19 +26,15 @@ func DoUpgrade(cancel context.CancelFunc, done chan int) error {
 	slog.Info("starting upgrade with " + installerExe)
 	slog.Info("upgrade log file " + UpgradeLogFile)
 
-	// When running in debug mode, we'll be "verbose" and let the installer pop up and prompt
+	// make the upgrade show progress, but non interactive
 	installArgs := []string{
 		"/CLOSEAPPLICATIONS",                    // Quit the tray app if it's still running
 		"/LOG=" + filepath.Base(UpgradeLogFile), // Only relative seems reliable, so set pwd
 		"/FORCECLOSEAPPLICATIONS",               // Force close the tray app - might be needed
-	}
-	// make the upgrade as quiet as possible (no GUI, no prompts)
-	installArgs = append(installArgs,
-		"/SP", // Skip the "This will install... Do you wish to continue" prompt
-		"/SUPPRESSMSGBOXES",
+		"/SP",                                   // Skip the "This will install... Do you wish to continue" prompt
+		"/NOCANCEL",                             // Disable the ability to cancel upgrade mid-flight to avoid partially installed upgrades
 		"/SILENT",
-		"/VERYSILENT",
-	)
+	}
 
 	// Safeguard in case we have requests in flight that need to drain...
 	slog.Info("Waiting for server to shutdown")
