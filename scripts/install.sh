@@ -71,29 +71,20 @@ for BINDIR in /usr/local/bin /usr/bin /bin; do
 done
 OLLAMA_INSTALL_DIR=$(dirname ${BINDIR})
 
+if [ -d "$OLLAMA_INSTALL_DIR/lib/ollama" ] ; then
+    status "Cleaning up old version at $OLLAMA_INSTALL_DIR/lib/ollama"
+    $SUDO rm -rf "$OLLAMA_INSTALL_DIR/lib/ollama"
+fi
 status "Installing ollama to $OLLAMA_INSTALL_DIR"
 $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR"
-if curl -I --silent --fail --location "https://ollama.com/download/ollama-linux-${ARCH}.tgz${VER_PARAM}" >/dev/null ; then
-    status "Downloading Linux ${ARCH} bundle"
-    curl --fail --show-error --location --progress-bar \
-        "https://ollama.com/download/ollama-linux-${ARCH}.tgz${VER_PARAM}" | \
-        $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
-    BUNDLE=1
-    if [ "$OLLAMA_INSTALL_DIR/bin/ollama" != "$BINDIR/ollama" ] ; then
-        status "Making ollama accessible in the PATH in $BINDIR"
-        $SUDO ln -sf "$OLLAMA_INSTALL_DIR/ollama" "$BINDIR/ollama"
-    fi
-else
-    status "Downloading Linux ${ARCH} CLI"
-    curl --fail --show-error --location --progress-bar -o "$TEMP_DIR/ollama"\
-    "https://ollama.com/download/ollama-linux-${ARCH}${VER_PARAM}"
-    $SUDO install -o0 -g0 -m755 $TEMP_DIR/ollama $OLLAMA_INSTALL_DIR/ollama
-    BUNDLE=0
-    if [ "$OLLAMA_INSTALL_DIR/ollama" != "$BINDIR/ollama" ] ; then
-        status "Making ollama accessible in the PATH in $BINDIR"
-        $SUDO ln -sf "$OLLAMA_INSTALL_DIR/ollama" "$BINDIR/ollama"
-    fi
+status "Downloading Linux ${ARCH} bundle"
+curl --fail --show-error --location --progress-bar \
+    "https://ollama.com/download/ollama-linux-${ARCH}.tgz${VER_PARAM}" | \
+    $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+if [ "$OLLAMA_INSTALL_DIR/bin/ollama" != "$BINDIR/ollama" ] ; then
+    status "Making ollama accessible in the PATH in $BINDIR"
+    $SUDO ln -sf "$OLLAMA_INSTALL_DIR/ollama" "$BINDIR/ollama"
 fi
 
 # Check for NVIDIA JetPack systems with additional downloads
@@ -230,31 +221,11 @@ if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdg
 fi
 
 if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
-    if [ $BUNDLE -ne 0 ]; then
-        status "Downloading Linux ROCm ${ARCH} bundle"
-        curl --fail --show-error --location --progress-bar \
-            "https://ollama.com/download/ollama-linux-${ARCH}-rocm.tgz${VER_PARAM}" | \
-            $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+    status "Downloading Linux ROCm ${ARCH} bundle"
+    curl --fail --show-error --location --progress-bar \
+        "https://ollama.com/download/ollama-linux-${ARCH}-rocm.tgz${VER_PARAM}" | \
+        $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
 
-        install_success
-        status "AMD GPU ready."
-        exit 0
-    fi
-    # Look for pre-existing ROCm v6 before downloading the dependencies
-    for search in "${HIP_PATH:-''}" "${ROCM_PATH:-''}" "/opt/rocm" "/usr/lib64"; do
-        if [ -n "${search}" ] && [ -e "${search}/libhipblas.so.2" -o -e "${search}/lib/libhipblas.so.2" ]; then
-            status "Compatible AMD GPU ROCm library detected at ${search}"
-            install_success
-            exit 0
-        fi
-    done
-
-    status "Downloading AMD GPU dependencies..."
-    $SUDO rm -rf /usr/share/ollama/lib
-    $SUDO chmod o+x /usr/share/ollama
-    $SUDO install -o ollama -g ollama -m 755 -d /usr/share/ollama/lib/rocm
-    curl --fail --show-error --location --progress-bar "https://ollama.com/download/ollama-linux-amd64-rocm.tgz${VER_PARAM}" \
-        | $SUDO tar zx --owner ollama --group ollama -C /usr/share/ollama/lib/rocm .
     install_success
     status "AMD GPU ready."
     exit 0
