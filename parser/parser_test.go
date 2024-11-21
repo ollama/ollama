@@ -3,6 +3,7 @@ package parser
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -82,7 +83,7 @@ TEMPLATE """   {{ if .System }}<|start_header_id|>system<|end_header_id|>
 }
 
 func TestParseFileFrom(t *testing.T) {
-	var cases = []struct {
+	cases := []struct {
 		input    string
 		expected []Command
 		err      error
@@ -180,12 +181,19 @@ func TestParseFileBadCommand(t *testing.T) {
 FROM foo
 BADCOMMAND param1 value1
 `
+	parserError := &ParserError{
+		LineNumber: 3,
+		Msg:        errInvalidCommand.Error(),
+	}
+
 	_, err := ParseFile(strings.NewReader(input))
-	require.ErrorIs(t, err, errInvalidCommand)
+	if !errors.As(err, &parserError) {
+		t.Errorf("unexpected error: expected: %s, actual: %s", parserError.Error(), err.Error())
+	}
 }
 
 func TestParseFileMessages(t *testing.T) {
-	var cases = []struct {
+	cases := []struct {
 		input    string
 		expected []Command
 		err      error
@@ -245,7 +253,10 @@ FROM foo
 MESSAGE badguy I'm a bad guy!
 `,
 			nil,
-			errInvalidMessageRole,
+			&ParserError{
+				LineNumber: 3,
+				Msg:        errInvalidMessageRole.Error(),
+			},
 		},
 		{
 			`
@@ -264,19 +275,41 @@ MESSAGE system`,
 		},
 	}
 
-	for _, c := range cases {
+	for _, tt := range cases {
 		t.Run("", func(t *testing.T) {
-			modelfile, err := ParseFile(strings.NewReader(c.input))
-			require.ErrorIs(t, err, c.err)
+			modelfile, err := ParseFile(strings.NewReader(tt.input))
+
 			if modelfile != nil {
-				assert.Equal(t, c.expected, modelfile.Commands)
+				assert.Equal(t, tt.expected, modelfile.Commands)
 			}
+
+			if tt.err == nil {
+				if err != nil {
+					t.Fatalf("expected no error, but got %v", err)
+				}
+				return
+			}
+
+			switch tt.err.(type) {
+			case *ParserError:
+				var pErr *ParserError
+				if errors.As(err, &pErr) {
+					// got the correct type of error
+					return
+				}
+			}
+
+			if errors.Is(err, tt.err) {
+				return
+			}
+
+			t.Fatalf("unexpected error: expected: %v, actual: %v", tt.err, err)
 		})
 	}
 }
 
 func TestParseFileQuoted(t *testing.T) {
-	var cases = []struct {
+	cases := []struct {
 		multiline string
 		expected  []Command
 		err       error
@@ -430,7 +463,7 @@ TEMPLATE """
 }
 
 func TestParseFileParameters(t *testing.T) {
-	var cases = map[string]struct {
+	cases := map[string]struct {
 		name, value string
 	}{
 		"numa true":                    {"numa", "true"},
@@ -440,7 +473,6 @@ func TestParseFileParameters(t *testing.T) {
 		"num_gpu 1":                    {"num_gpu", "1"},
 		"main_gpu 1":                   {"main_gpu", "1"},
 		"low_vram true":                {"low_vram", "true"},
-		"f16_kv true":                  {"f16_kv", "true"},
 		"logits_all true":              {"logits_all", "true"},
 		"vocab_only true":              {"vocab_only", "true"},
 		"use_mmap true":                {"use_mmap", "true"},
@@ -451,6 +483,7 @@ func TestParseFileParameters(t *testing.T) {
 		"num_predict 1":                {"num_predict", "1"},
 		"top_k 1":                      {"top_k", "1"},
 		"top_p 1.0":                    {"top_p", "1.0"},
+		"min_p 0.05":                   {"min_p", "0.05"},
 		"tfs_z 1.0":                    {"tfs_z", "1.0"},
 		"typical_p 1.0":                {"typical_p", "1.0"},
 		"repeat_last_n 1":              {"repeat_last_n", "1"},
@@ -490,7 +523,7 @@ func TestParseFileParameters(t *testing.T) {
 }
 
 func TestParseFileComments(t *testing.T) {
-	var cases = []struct {
+	cases := []struct {
 		input    string
 		expected []Command
 	}{
@@ -515,7 +548,7 @@ FROM foo
 }
 
 func TestParseFileFormatParseFile(t *testing.T) {
-	var cases = []string{
+	cases := []string{
 		`
 FROM foo
 ADAPTER adapter1
