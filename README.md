@@ -324,6 +324,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LLMStack](https://github.com/trypromptly/LLMStack) (No-code multi-agent framework to build LLM agents and workflows)
 - [BoltAI for Mac](https://boltai.com) (AI Chat Client for Mac)
 - [Harbor](https://github.com/av/harbor) (Containerized LLM Toolkit with Ollama as default backend)
+- [PyGPT](https://github.com/szczyglis-dev/py-gpt) (AI desktop assistant for Linux, Windows and Mac)
 - [AutoGPT](https://github.com/Significant-Gravitas/AutoGPT/blob/master/docs/content/platform/ollama.md) (AutoGPT Ollama integration)
 - [Go-CREW](https://www.jonathanhecl.com/go-crew/) (Powerful Offline RAG in Golang)
 - [PartCAD](https://github.com/openvmp/partcad/) (CAD model generation with OpenSCAD and CadQuery)
