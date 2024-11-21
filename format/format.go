@@ -3,6 +3,7 @@ package format
 import (
 	"fmt"
 	"math"
+	"strconv"
 )
 
 const (
@@ -28,6 +29,6 @@ func HumanNumber(b uint64) string {
 	case b >= Thousand:
 		return fmt.Sprintf("%.0fK", float64(b)/Thousand)
 	default:
-		return fmt.Sprintf("%d", b)
+		return strconv.FormatUint(b, 10)
 	}
 }

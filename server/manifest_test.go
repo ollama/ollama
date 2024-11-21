@@ -14,7 +14,7 @@ func createManifest(t *testing.T, path, name string) {
 	t.Helper()
 
 	p := filepath.Join(path, "manifests", name)
-	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -24,7 +24,7 @@ func createManifest(t *testing.T, path, name string) {
 	}
 	defer f.Close()
 
-	if err := json.NewEncoder(f).Encode(ManifestV2{}); err != nil {
+	if err := json.NewEncoder(f).Encode(Manifest{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -112,7 +112,7 @@ func TestManifests(t *testing.T) {
 				createManifest(t, d, p)
 			}
 
-			ms, err := Manifests()
+			ms, err := Manifests(true)
 			if err != nil {
 				t.Fatal(err)
 			}

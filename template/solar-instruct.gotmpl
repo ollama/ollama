@@ -1,0 +1,11 @@
+{{- range .Messages }}
+{{- if eq .Role "system" }}### System:
+{{- else if eq .Role "user" }}### User:
+{{- else if eq .Role "assistant" }}### Assistant:
+{{ .Content }}</s>
+
+{{ continue }}
+{{- end }}
+{{ .Content }}
+
+{{ end }}### Assistant:

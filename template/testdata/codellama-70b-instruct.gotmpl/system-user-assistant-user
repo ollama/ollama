@@ -1,0 +1,12 @@
+Source: system
+
+ You are a helpful assistant. <step> Source: user
+
+ Hello, how are you? <step> Source: assistant
+
+ I'm doing great. How can I help you today? <step> Source: user
+
+ I'd like to show off how chat templating works! <step> Source: assistant
+Destination: user
+
+ 
