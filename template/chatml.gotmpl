@@ -1,6 +1,3 @@
-{{ if .System }}<|im_start|>system
-{{ .System }}<|im_end|>
-{{ end }}{{ if .Prompt }}<|im_start|>user
-{{ .Prompt }}<|im_end|>
+{{- range .Messages }}<|im_start|>{{ .Role }}
+{{ .Content }}<|im_end|>
 {{ end }}<|im_start|>assistant
-{{ .Response }}<|im_end|>

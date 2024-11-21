@@ -15,7 +15,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/gpu"
+	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/llm"
 )
 
@@ -41,8 +41,8 @@ func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error
 	return
 }
 
-func newMockServer(mock *mockRunner) func(gpu.GpuInfoList, string, *llm.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
-	return func(gpus gpu.GpuInfoList, model string, ggml *llm.GGML, projectors, system []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+func newMockServer(mock *mockRunner) func(discover.GpuInfoList, string, *llm.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
+	return func(gpus discover.GpuInfoList, model string, ggml *llm.GGML, projectors, system []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 		return mock, nil
 	}
 }
@@ -69,10 +69,10 @@ func TestGenerateChat(t *testing.T) {
 			unloadedCh:    make(chan any, 1),
 			loaded:        make(map[string]*runnerRef),
 			newServerFn:   newMockServer(&mock),
-			getGpuFn:      gpu.GetGPUInfo,
-			getCpuFn:      gpu.GetCPUInfo,
+			getGpuFn:      discover.GetGPUInfo,
+			getCpuFn:      discover.GetCPUInfo,
 			reschedDelay:  250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numParallel int) {
+			loadFn: func(req *LlmRequest, ggml *llm.GGML, gpus discover.GpuInfoList, numParallel int) {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -84,7 +84,7 @@ func TestGenerateChat(t *testing.T) {
 
 	go s.sched.Run(context.TODO())
 
-	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model: "test",
 		Modelfile: fmt.Sprintf(`FROM %s
 		TEMPLATE """
@@ -144,7 +144,7 @@ func TestGenerateChat(t *testing.T) {
 	})
 
 	t.Run("missing capabilities chat", func(t *testing.T) {
-		w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Model: "bert",
 			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, llm.KV{
 				"general.architecture": "bert",
@@ -270,7 +270,7 @@ func TestGenerateChat(t *testing.T) {
 		checkChatResponse(t, w.Body, "test", "Hi!")
 	})
 
-	w = createRequest(t, s.CreateModelHandler, api.CreateRequest{
+	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model:     "test-system",
 		Modelfile: "FROM test\nSYSTEM You are a helpful assistant.",
 	})
@@ -367,10 +367,10 @@ func TestGenerate(t *testing.T) {
 			unloadedCh:    make(chan any, 1),
 			loaded:        make(map[string]*runnerRef),
 			newServerFn:   newMockServer(&mock),
-			getGpuFn:      gpu.GetGPUInfo,
-			getCpuFn:      gpu.GetCPUInfo,
+			getGpuFn:      discover.GetGPUInfo,
+			getCpuFn:      discover.GetCPUInfo,
 			reschedDelay:  250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, ggml *llm.GGML, gpus gpu.GpuInfoList, numParallel int) {
+			loadFn: func(req *LlmRequest, ggml *llm.GGML, gpus discover.GpuInfoList, numParallel int) {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -382,7 +382,7 @@ func TestGenerate(t *testing.T) {
 
 	go s.sched.Run(context.TODO())
 
-	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model: "test",
 		Modelfile: fmt.Sprintf(`FROM %s
 		TEMPLATE """
@@ -421,28 +421,28 @@ func TestGenerate(t *testing.T) {
 
 	t.Run("missing body", func(t *testing.T) {
 		w := createRequest(t, s.GenerateHandler, nil)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected status 400, got %d", w.Code)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("expected status 404, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(w.Body.String(), `{"error":"model is required"}`); diff != "" {
+		if diff := cmp.Diff(w.Body.String(), `{"error":"model '' not found"}`); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})
 
 	t.Run("missing model", func(t *testing.T) {
 		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{})
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected status 400, got %d", w.Code)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("expected status 404, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(w.Body.String(), `{"error":"model is required"}`); diff != "" {
+		if diff := cmp.Diff(w.Body.String(), `{"error":"model '' not found"}`); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})
 
 	t.Run("missing capabilities generate", func(t *testing.T) {
-		w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
+		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Model: "bert",
 			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, llm.KV{
 				"general.architecture": "bert",
@@ -583,7 +583,7 @@ func TestGenerate(t *testing.T) {
 		checkGenerateResponse(t, w.Body, "test", "Hi!")
 	})
 
-	w = createRequest(t, s.CreateModelHandler, api.CreateRequest{
+	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model:     "test-system",
 		Modelfile: "FROM test\nSYSTEM You are a helpful assistant.",
 	})
@@ -652,7 +652,7 @@ func TestGenerate(t *testing.T) {
 		checkGenerateResponse(t, w.Body, "test-system", "Abra kadabra!")
 	})
 
-	w = createRequest(t, s.CreateModelHandler, api.CreateRequest{
+	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model: "test-suffix",
 		Modelfile: `FROM test
 TEMPLATE """{{- if .Suffix }}<PRE> {{ .Prompt }} <SUF>{{ .Suffix }} <MID>

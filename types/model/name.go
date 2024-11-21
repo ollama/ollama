@@ -219,7 +219,7 @@ func (n Name) String() string {
 	return b.String()
 }
 
-// DisplayShort returns a short string version of the name.
+// DisplayShortest returns a short string version of the name.
 func (n Name) DisplayShortest() string {
 	var sb strings.Builder
 
@@ -258,7 +258,7 @@ func (n Name) IsValid() bool {
 // IsFullyQualified returns true if all parts of the name are present and
 // valid without the digest.
 func (n Name) IsFullyQualified() bool {
-	var parts = []string{
+	parts := []string{
 		n.Host,
 		n.Namespace,
 		n.Model,
@@ -296,6 +296,13 @@ func (n Name) Filepath() string {
 // LogValue returns a slog.Value that represents the name as a string.
 func (n Name) LogValue() slog.Value {
 	return slog.StringValue(n.String())
+}
+
+func (n Name) EqualFold(o Name) bool {
+	return strings.EqualFold(n.Host, o.Host) &&
+		strings.EqualFold(n.Namespace, o.Namespace) &&
+		strings.EqualFold(n.Model, o.Model) &&
+		strings.EqualFold(n.Tag, o.Tag)
 }
 
 func isValidLen(kind partKind, s string) bool {

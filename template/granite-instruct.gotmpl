@@ -1,9 +1,8 @@
-{{ if .System }}System:
-{{ .System }}
-
-{{ end }}{{ if .Prompt }}Question:
-{{ .Prompt }}
+{{- range .Messages }}
+{{- if eq .Role "system" }}System:
+{{- else if eq .Role "user" }}Question:
+{{- else if eq .Role "assistant" }}Answer:
+{{- end }}
+{{ .Content }}
 
 {{ end }}Answer:
-{{ .Response }}
-

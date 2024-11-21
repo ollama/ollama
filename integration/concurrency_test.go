@@ -11,8 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ollama/ollama/api"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/format"
 )
 
 func TestMultiModelConcurrency(t *testing.T) {
@@ -39,8 +41,8 @@ func TestMultiModelConcurrency(t *testing.T) {
 			},
 		}
 		resp = [2][]string{
-			[]string{"sunlight"},
-			[]string{"england", "english", "massachusetts", "pilgrims", "british"},
+			{"sunlight"},
+			{"england", "english", "massachusetts", "pilgrims", "british", "festival"},
 		}
 	)
 	var wg sync.WaitGroup
@@ -58,7 +60,8 @@ func TestMultiModelConcurrency(t *testing.T) {
 	for i := 0; i < len(req); i++ {
 		go func(i int) {
 			defer wg.Done()
-			DoGenerate(ctx, t, client, req[i], resp[i], 60*time.Second, 10*time.Second)
+			// Note: CPU based inference can crawl so don't give up too quickly
+			DoGenerate(ctx, t, client, req[i], resp[i], 90*time.Second, 30*time.Second)
 		}(i)
 	}
 	wg.Wait()
@@ -69,12 +72,11 @@ func TestIntegrationConcurrentPredictOrcaMini(t *testing.T) {
 	reqLimit := len(req)
 	iterLimit := 5
 
-	vram := os.Getenv("OLLAMA_MAX_VRAM") // TODO - discover actual VRAM
-	if vram != "" {
-		max, err := strconv.ParseUint(vram, 10, 64)
+	if s := os.Getenv("OLLAMA_MAX_VRAM"); s != "" {
+		maxVram, err := strconv.ParseUint(s, 10, 64)
 		require.NoError(t, err)
 		// Don't hammer on small VRAM cards...
-		if max < 4*1024*1024*1024 {
+		if maxVram < 4*format.GibiByte {
 			reqLimit = min(reqLimit, 2)
 			iterLimit = 2
 		}
@@ -106,13 +108,16 @@ func TestIntegrationConcurrentPredictOrcaMini(t *testing.T) {
 
 // Stress the system if we know how much VRAM it has, and attempt to load more models than will fit
 func TestMultiModelStress(t *testing.T) {
-	vram := os.Getenv("OLLAMA_MAX_VRAM") // TODO - discover actual VRAM
-	if vram == "" {
+	s := os.Getenv("OLLAMA_MAX_VRAM") // TODO - discover actual VRAM
+	if s == "" {
 		t.Skip("OLLAMA_MAX_VRAM not specified, can't pick the right models for the stress test")
 	}
-	max, err := strconv.ParseUint(vram, 10, 64)
-	require.NoError(t, err)
-	const MB = uint64(1024 * 1024)
+
+	maxVram, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	type model struct {
 		name string
 		size uint64 // Approximate amount of VRAM they typically use when fully loaded in VRAM
@@ -121,83 +126,82 @@ func TestMultiModelStress(t *testing.T) {
 	smallModels := []model{
 		{
 			name: "orca-mini",
-			size: 2992 * MB,
+			size: 2992 * format.MebiByte,
 		},
 		{
 			name: "phi",
-			size: 2616 * MB,
+			size: 2616 * format.MebiByte,
 		},
 		{
 			name: "gemma:2b",
-			size: 2364 * MB,
+			size: 2364 * format.MebiByte,
 		},
 		{
 			name: "stable-code:3b",
-			size: 2608 * MB,
+			size: 2608 * format.MebiByte,
 		},
 		{
 			name: "starcoder2:3b",
-			size: 2166 * MB,
+			size: 2166 * format.MebiByte,
 		},
 	}
 	mediumModels := []model{
 		{
 			name: "llama2",
-			size: 5118 * MB,
+			size: 5118 * format.MebiByte,
 		},
 		{
 			name: "mistral",
-			size: 4620 * MB,
+			size: 4620 * format.MebiByte,
 		},
 		{
 			name: "orca-mini:7b",
-			size: 5118 * MB,
+			size: 5118 * format.MebiByte,
 		},
 		{
 			name: "dolphin-mistral",
-			size: 4620 * MB,
+			size: 4620 * format.MebiByte,
 		},
 		{
 			name: "gemma:7b",
-			size: 5000 * MB,
+			size: 5000 * format.MebiByte,
 		},
-		// TODO - uncomment this once #3565 is merged and this is rebased on it
-		// {
-		// 	name: "codellama:7b",
-		// 	size: 5118 * MB,
-		// },
+		{
+			name: "codellama:7b",
+			size: 5118 * format.MebiByte,
+		},
 	}
 
 	// These seem to be too slow to be useful...
 	// largeModels := []model{
 	// 	{
 	// 		name: "llama2:13b",
-	// 		size: 7400 * MB,
+	// 		size: 7400 * format.MebiByte,
 	// 	},
 	// 	{
 	// 		name: "codellama:13b",
-	// 		size: 7400 * MB,
+	// 		size: 7400 * format.MebiByte,
 	// 	},
 	// 	{
 	// 		name: "orca-mini:13b",
-	// 		size: 7400 * MB,
+	// 		size: 7400 * format.MebiByte,
 	// 	},
 	// 	{
 	// 		name: "gemma:7b",
-	// 		size: 5000 * MB,
+	// 		size: 5000 * format.MebiByte,
 	// 	},
 	// 	{
 	// 		name: "starcoder2:15b",
-	// 		size: 9100 * MB,
+	// 		size: 9100 * format.MebiByte,
 	// 	},
 	// }
 
 	var chosenModels []model
 	switch {
-	case max < 10000*MB:
+	case maxVram < 10000*format.MebiByte:
 		slog.Info("selecting small models")
 		chosenModels = smallModels
-	// case max < 30000*MB:
+	// case maxVram < 30000*format.MebiByte:
 	default:
 		slog.Info("selecting medium models")
 		chosenModels = mediumModels
@@ -226,15 +230,15 @@ func TestMultiModelStress(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	consumed := uint64(256 * MB) // Assume some baseline usage
+	consumed := uint64(256 * format.MebiByte) // Assume some baseline usage
 	for i := 0; i < len(req); i++ {
 		// Always get at least 2 models, but dont' overshoot VRAM too much or we'll take too long
-		if i > 1 && consumed > max {
-			slog.Info("achieved target vram exhaustion", "count", i, "vramMB", max/1024/1024, "modelsMB", consumed/1024/1024)
+		if i > 1 && consumed > maxVram {
+			slog.Info("achieved target vram exhaustion", "count", i, "vram", format.HumanBytes2(maxVram), "models", format.HumanBytes2(consumed))
 			break
 		}
 		consumed += chosenModels[i].size
-		slog.Info("target vram", "count", i, "vramMB", max/1024/1024, "modelsMB", consumed/1024/1024)
+		slog.Info("target vram", "count", i, "vram", format.HumanBytes2(maxVram), "models", format.HumanBytes2(consumed))
 
 		wg.Add(1)
 		go func(i int) {

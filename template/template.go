@@ -5,7 +5,6 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"math"
 	"slices"
@@ -15,14 +14,16 @@ import (
 	"text/template/parse"
 
 	"github.com/agnivade/levenshtein"
-	"github.com/ollama/ollama/api"
 	"golang.org/x/exp/maps"
+
+	"github.com/ollama/ollama/api"
 )
 
 //go:embed index.json
 var indexBytes []byte
 
 //go:embed *.gotmpl
+//go:embed *.json
 var templatesFS embed.FS
 
 var templatesOnce = sync.OnceValues(func() ([]*named, error) {
@@ -39,6 +40,15 @@ var templatesOnce = sync.OnceValues(func() ([]*named, error) {
 
 		// normalize line endings
 		t.Bytes = bytes.ReplaceAll(bts, []byte("\r\n"), []byte("\n"))
+
+		params, err := templatesFS.ReadFile(t.Name + ".json")
+		if err != nil {
+			continue
+		}
+
+		if err := json.Unmarshal(params, &t.Parameters); err != nil {
+			return nil, err
+		}
 	}
 
 	return templates, nil
@@ -48,6 +58,10 @@ type named struct {
 	Name     string `json:"name"`
 	Template string `json:"template"`
 	Bytes    []byte
+
+	Parameters *struct {
+		Stop []string `json:"stop"`
+	}
 }
 
 func (t named) Reader() io.Reader {
@@ -287,22 +301,10 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 // into a single message. collate also collects and returns all system messages.
 // collate mutates message content adding image tags ([img-%d]) as needed
 func collate(msgs []api.Message) (string, []*api.Message) {
-	var n int
-
 	var system []string
 	var collated []*api.Message
 	for i := range msgs {
 		msg := msgs[i]
-		for range msg.Images {
-			imageTag := fmt.Sprintf("[img-%d]", n)
-			if !strings.Contains(msg.Content, "[img]") {
-				msg.Content = strings.TrimSpace("[img] " + msg.Content)
-			}
-
-			msg.Content = strings.Replace(msg.Content, "[img]", imageTag, 1)
-			n++
-		}
-
 		if msg.Role == "system" {
 			system = append(system, msg.Content)
 		}
