@@ -2,7 +2,9 @@ package server
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,7 +15,10 @@ import (
 )
 
 type Manifest struct {
-	ManifestV2
+	SchemaVersion int     `json:"schemaVersion"`
+	MediaType     string  `json:"mediaType"`
+	Config        Layer   `json:"config"`
+	Layers        []Layer `json:"layers"`
 
 	filepath string
 	fi       os.FileInfo
@@ -43,8 +48,12 @@ func (m *Manifest) Remove() error {
 
 func (m *Manifest) RemoveLayers() error {
 	for _, layer := range append(m.Layers, m.Config) {
-		if err := layer.Remove(); err != nil {
-			return err
+		if layer.Digest != "" {
+			if err := layer.Remove(); errors.Is(err, os.ErrNotExist) {
+				slog.Debug("layer does not exist", "digest", layer.Digest)
+			} else if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -63,7 +72,7 @@ func ParseNamedManifest(n model.Name) (*Manifest, error) {
 
 	p := filepath.Join(manifests, n.Filepath())
 
-	var m ManifestV2
+	var m Manifest
 	f, err := os.Open(p)
 	if err != nil {
 		return nil, err
@@ -80,15 +89,14 @@ func ParseNamedManifest(n model.Name) (*Manifest, error) {
 		return nil, err
 	}
 
-	return &Manifest{
-		ManifestV2: m,
-		filepath:   p,
-		fi:         fi,
-		digest:     fmt.Sprintf("%x", sha256sum.Sum(nil)),
-	}, nil
+	m.filepath = p
+	m.fi = fi
+	m.digest = hex.EncodeToString(sha256sum.Sum(nil))
+
+	return &m, nil
 }
 
-func WriteManifest(name model.Name, config *Layer, layers []*Layer) error {
+func WriteManifest(name model.Name, config Layer, layers []Layer) error {
 	manifests, err := GetManifestPath()
 	if err != nil {
 		return err
@@ -105,7 +113,7 @@ func WriteManifest(name model.Name, config *Layer, layers []*Layer) error {
 	}
 	defer f.Close()
 
-	m := ManifestV2{
+	m := Manifest{
 		SchemaVersion: 2,
 		MediaType:     "application/vnd.docker.distribution.manifest.v2+json",
 		Config:        config,
@@ -115,7 +123,7 @@ func WriteManifest(name model.Name, config *Layer, layers []*Layer) error {
 	return json.NewEncoder(f).Encode(m)
 }
 
-func Manifests() (map[model.Name]*Manifest, error) {
+func Manifests(continueOnError bool) (map[model.Name]*Manifest, error) {
 	manifests, err := GetManifestPath()
 	if err != nil {
 		return nil, err
@@ -137,18 +145,27 @@ func Manifests() (map[model.Name]*Manifest, error) {
 		if !fi.IsDir() {
 			rel, err := filepath.Rel(manifests, match)
 			if err != nil {
+				if !continueOnError {
+					return nil, fmt.Errorf("%s %w", match, err)
+				}
 				slog.Warn("bad filepath", "path", match, "error", err)
 				continue
 			}
 
 			n := model.ParseNameFromFilepath(rel)
 			if !n.IsValid() {
-				slog.Warn("bad manifest name", "path", rel, "error", err)
+				if !continueOnError {
+					return nil, fmt.Errorf("%s %w", rel, err)
+				}
+				slog.Warn("bad manifest name", "path", rel)
 				continue
 			}
 
 			m, err := ParseNamedManifest(n)
 			if err != nil {
+				if !continueOnError {
+					return nil, fmt.Errorf("%s %w", n, err)
+				}
 				slog.Warn("bad manifest", "name", n, "error", err)
 				continue
 			}

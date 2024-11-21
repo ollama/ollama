@@ -11,12 +11,13 @@ import (
 )
 
 const (
-	updatAvailableMenuID = 1
-	updateMenuID         = updatAvailableMenuID + 1
-	separatorMenuID      = updateMenuID + 1
-	diagLogsMenuID       = separatorMenuID + 1
-	diagSeparatorMenuID  = diagLogsMenuID + 1
-	quitMenuID           = diagSeparatorMenuID + 1
+	_ = iota
+	updateAvailableMenuID
+	updateMenuID
+	separatorMenuID
+	diagLogsMenuID
+	diagSeparatorMenuID
+	quitMenuID
 )
 
 func (t *winTray) initMenus() error {
@@ -35,10 +36,10 @@ func (t *winTray) initMenus() error {
 func (t *winTray) UpdateAvailable(ver string) error {
 	if !t.updateNotified {
 		slog.Debug("updating menu and sending notification for new update")
-		if err := t.addOrUpdateMenuItem(updatAvailableMenuID, 0, updateAvailableMenuTitle, true); err != nil {
+		if err := t.addOrUpdateMenuItem(updateAvailableMenuID, 0, updateAvailableMenuTitle, true); err != nil {
 			return fmt.Errorf("unable to create menu entries %w", err)
 		}
-		if err := t.addOrUpdateMenuItem(updateMenuID, 0, updateMenutTitle, false); err != nil {
+		if err := t.addOrUpdateMenuItem(updateMenuID, 0, updateMenuTitle, false); err != nil {
 			return fmt.Errorf("unable to create menu entries %w", err)
 		}
 		if err := t.addSeparatorMenuItem(separatorMenuID, 0); err != nil {

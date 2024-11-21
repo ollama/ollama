@@ -18,8 +18,14 @@ func getCLIFullPath(command string) string {
 	var cmdPath string
 	appExe, err := os.Executable()
 	if err == nil {
+		// Check both the same location as the tray app, as well as ./bin
 		cmdPath = filepath.Join(filepath.Dir(appExe), command)
 		_, err := os.Stat(cmdPath)
+		if err == nil {
+			return cmdPath
+		}
+		cmdPath = filepath.Join(filepath.Dir(appExe), "bin", command)
+		_, err = os.Stat(cmdPath)
 		if err == nil {
 			return cmdPath
 		}
@@ -54,8 +60,8 @@ func start(ctx context.Context, command string) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("failed to spawn server stderr pipe: %w", err)
 	}
 
-	// TODO - rotation
-	logFile, err := os.OpenFile(ServerLogFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0755)
+	rotateLogs(ServerLogFile)
+	logFile, err := os.OpenFile(ServerLogFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o755)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create server log: %w", err)
 	}

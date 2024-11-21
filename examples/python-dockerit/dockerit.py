@@ -4,7 +4,7 @@ imageName = input("Enter the name of the image: ")
 client = docker.from_env()
 s = requests.Session()
 output=""
-with s.post('http://localhost:11434/api/generate', json={'model': 'dockerit', 'prompt': inputDescription}, stream=True) as r:
+with s.post('http://localhost:11434/api/generate', json={'model': 'mattw/dockerit', 'prompt': inputDescription}, stream=True) as r:
   for line in r.iter_lines():
     if line:
       j = json.loads(line)
