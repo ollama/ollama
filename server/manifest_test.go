@@ -7,7 +7,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/types/model"
 )
 
@@ -15,7 +14,7 @@ func createManifest(t *testing.T, path, name string) {
 	t.Helper()
 
 	p := filepath.Join(path, "manifests", name)
-	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -108,13 +107,12 @@ func TestManifests(t *testing.T) {
 		t.Run(n, func(t *testing.T) {
 			d := t.TempDir()
 			t.Setenv("OLLAMA_MODELS", d)
-			envconfig.LoadConfig()
 
 			for _, p := range wants.ps {
 				createManifest(t, d, p)
 			}
 
-			ms, err := Manifests()
+			ms, err := Manifests(true)
 			if err != nil {
 				t.Fatal(err)
 			}
