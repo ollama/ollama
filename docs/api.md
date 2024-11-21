@@ -355,7 +355,6 @@ curl http://localhost:11434/api/generate -d '{
     "num_gpu": 1,
     "main_gpu": 0,
     "low_vram": false,
-    "f16_kv": true,
     "vocab_only": false,
     "use_mmap": true,
     "use_mlock": false,
@@ -831,10 +830,30 @@ Create a model from a [`Modelfile`](./modelfile.md). It is recommended to set `m
 
 ### Parameters
 
-- `name`: name of the model to create
+- `model`: name of the model to create
 - `modelfile` (optional): contents of the Modelfile
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 - `path` (optional): path to the Modelfile
+- `quantize` (optional): quantize a non-quantized (e.g. float16) model
+
+#### Quantization types
+
+| Type | Recommended |
+| --- | :-: |
+| q2_K | |
+| q3_K_L | |
+| q3_K_M | |
+| q3_K_S | |
+| q4_0 | |
+| q4_1 | |
+| q4_K_M | * |
+| q4_K_S | |
+| q5_0 | |
+| q5_1 | |
+| q5_K_M | |
+| q5_K_S | |
+| q6_K | |
+| q8_0 | * |
 
 ### Examples
 
@@ -846,14 +865,14 @@ Create a new model from a `Modelfile`.
 
 ```shell
 curl http://localhost:11434/api/create -d '{
-  "name": "mario",
+  "model": "mario",
   "modelfile": "FROM llama3\nSYSTEM You are mario from Super Mario Bros."
 }'
 ```
 
 ##### Response
 
-A stream of JSON objects. Notice that the final JSON object shows a `"status": "success"`.
+A stream of JSON objects is returned:
 
 ```json
 {"status":"reading model metadata"}
@@ -869,13 +888,43 @@ A stream of JSON objects. Notice that the final JSON object shows a `"status": "
 {"status":"success"}
 ```
 
+#### Quantize a model
+
+Quantize a non-quantized model.
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/create -d '{
+  "model": "llama3.1:quantized",
+  "modelfile": "FROM llama3.1:8b-instruct-fp16",
+  "quantize": "q4_K_M"
+}'
+```
+
+##### Response
+
+A stream of JSON objects is returned:
+
+```
+{"status":"quantizing F16 model to Q4_K_M"}
+{"status":"creating new layer sha256:667b0c1932bc6ffc593ed1d03f895bf2dc8dc6df21db3042284a6f4416b06a29"}
+{"status":"using existing layer sha256:11ce4ee3e170f6adebac9a991c22e22ab3f8530e154ee669954c4bc73061c258"}
+{"status":"using existing layer sha256:0ba8f0e314b4264dfd19df045cde9d4c394a52474bf92ed6a3de22a4ca31a177"}
+{"status":"using existing layer sha256:56bb8bd477a519ffa694fc449c2413c6f0e1d3b1c88fa7e3c9d88d3ae49d4dcb"}
+{"status":"creating new layer sha256:455f34728c9b5dd3376378bfb809ee166c145b0b4c1f1a6feca069055066ef9a"}
+{"status":"writing manifest"}
+{"status":"success"}
+```
+
+
 ### Check if a Blob Exists
 
 ```shell
 HEAD /api/blobs/:digest
 ```
 
-Ensures that the file blob used for a FROM or ADAPTER field exists on the server. This is checking your Ollama server and not Ollama.ai.
+Ensures that the file blob used for a FROM or ADAPTER field exists on the server. This is checking your Ollama server and not ollama.com.
 
 #### Query Parameters
 
@@ -980,7 +1029,7 @@ Show information about a model including details, modelfile, template, parameter
 
 ### Parameters
 
-- `name`: name of the model to show
+- `model`: name of the model to show
 - `verbose`: (optional) if set to `true`, returns full data for verbose response fields
 
 ### Examples
@@ -989,7 +1038,7 @@ Show information about a model including details, modelfile, template, parameter
 
 ```shell
 curl http://localhost:11434/api/show -d '{
-  "name": "llama3.2"
+  "model": "llama3.2"
 }'
 ```
 
@@ -1069,7 +1118,7 @@ Delete a model and its data.
 
 ### Parameters
 
-- `name`: model name to delete
+- `model`: model name to delete
 
 ### Examples
 
@@ -1077,7 +1126,7 @@ Delete a model and its data.
 
 ```shell
 curl -X DELETE http://localhost:11434/api/delete -d '{
-  "name": "llama3:13b"
+  "model": "llama3:13b"
 }'
 ```
 
@@ -1095,7 +1144,7 @@ Download a model from the ollama library. Cancelled pulls are resumed from where
 
 ### Parameters
 
-- `name`: name of the model to pull
+- `model`: name of the model to pull
 - `insecure`: (optional) allow insecure connections to the library. Only use this if you are pulling from your own library during development.
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 
@@ -1105,7 +1154,7 @@ Download a model from the ollama library. Cancelled pulls are resumed from where
 
 ```shell
 curl http://localhost:11434/api/pull -d '{
-  "name": "llama3.2"
+  "model": "llama3.2"
 }'
 ```
 
@@ -1167,7 +1216,7 @@ Upload a model to a model library. Requires registering for ollama.ai and adding
 
 ### Parameters
 
-- `name`: name of the model to push in the form of `<namespace>/<model>:<tag>`
+- `model`: name of the model to push in the form of `<namespace>/<model>:<tag>`
 - `insecure`: (optional) allow insecure connections to the library. Only use this if you are pushing to your library during development.
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 
@@ -1177,7 +1226,7 @@ Upload a model to a model library. Requires registering for ollama.ai and adding
 
 ```shell
 curl http://localhost:11434/api/push -d '{
-  "name": "mattw/pygmalion:latest"
+  "model": "mattw/pygmalion:latest"
 }'
 ```
 
