@@ -421,22 +421,22 @@ func TestGenerate(t *testing.T) {
 
 	t.Run("missing body", func(t *testing.T) {
 		w := createRequest(t, s.GenerateHandler, nil)
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected status 400, got %d", w.Code)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("expected status 404, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(w.Body.String(), `{"error":"model is required"}`); diff != "" {
+		if diff := cmp.Diff(w.Body.String(), `{"error":"model '' not found"}`); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})
 
 	t.Run("missing model", func(t *testing.T) {
 		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{})
-		if w.Code != http.StatusBadRequest {
-			t.Errorf("expected status 400, got %d", w.Code)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("expected status 404, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(w.Body.String(), `{"error":"model is required"}`); diff != "" {
+		if diff := cmp.Diff(w.Body.String(), `{"error":"model '' not found"}`); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})

@@ -46,8 +46,6 @@ endif
 
 # Override in environment space separated to tune GPU runner CPU vector flags
 ifeq ($(ARCH),amd64)
-# TODO may need a bit more work - setting 'GPU_RUNNER_CPU_FLAGS="avx avx2 avx512f avx512bw"' doesn't yield
-# a system_info showing 'AVX512 = 1' so there may be additional macros that are needed in GGML
 	GPU_RUNNER_CPU_FLAGS ?= avx
 endif
 
@@ -59,12 +57,18 @@ ifeq ($(OS),windows)
 	EXE_EXT := .exe
 	SHARED_PREFIX := 
 	CPU_FLAG_PREFIX := /arch:
+ifneq ($(HIP_PATH),)
+	# If HIP_PATH has spaces, hipcc trips over them when subprocessing
+	HIP_PATH := $(shell cygpath -m -s "$(patsubst %\,%,$(HIP_PATH))")
+	export HIP_PATH
+endif
 else ifeq ($(OS),linux)
 	CP := cp -af
 	OBJ_EXT := o
 	SHARED_EXT := so
 	SHARED_PREFIX := lib
 	CPU_FLAG_PREFIX := -m
+	HIP_PATH?=/opt/rocm
 else
 	OBJ_EXT := o
 	SHARED_EXT := so
@@ -72,3 +76,9 @@ else
 	CP := cp -af
 endif
 
+COMMON_SRCS := \
+	$(wildcard *.c) \
+	$(wildcard *.cpp)
+COMMON_HDRS := \
+	$(wildcard *.h) \
+	$(wildcard *.hpp)

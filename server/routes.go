@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +34,7 @@ import (
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/runners"
+	"github.com/ollama/ollama/server/imageproc"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -119,20 +121,21 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	model, err := GetModel(req.Model)
+	if err != nil {
+		switch {
+		case os.IsNotExist(err):
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+		case err.Error() == "invalid model name":
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+
 	// expire the runner
 	if req.Prompt == "" && req.KeepAlive != nil && int(req.KeepAlive.Seconds()) == 0 {
-		model, err := GetModel(req.Model)
-		if err != nil {
-			switch {
-			case os.IsNotExist(err):
-				c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
-			case err.Error() == "invalid model name":
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			default:
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			}
-			return
-		}
 		s.sched.expireRunner(model)
 
 		c.JSON(http.StatusOK, api.GenerateResponse{
@@ -169,6 +172,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	checkpointLoaded := time.Now()
 
+	// load the model
 	if req.Prompt == "" {
 		c.JSON(http.StatusOK, api.GenerateResponse{
 			Model:      req.Model,
@@ -179,9 +183,32 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	isMllama := checkMllamaModelFamily(model)
+	if isMllama && len(req.Images) > 1 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "this model only supports one image: more than one image sent"})
+		return
+	}
+
 	images := make([]llm.ImageData, len(req.Images))
 	for i := range req.Images {
-		images[i] = llm.ImageData{ID: i, Data: req.Images[i]}
+		if isMllama {
+			data, aspectRatioID, err := imageproc.Preprocess(req.Images[i])
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error processing image"})
+				return
+			}
+
+			buf := new(bytes.Buffer)
+			err = binary.Write(buf, binary.LittleEndian, data)
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error processing image"})
+				return
+			}
+
+			images[i] = llm.ImageData{ID: i, Data: buf.Bytes(), AspectRatioID: aspectRatioID}
+		} else {
+			images[i] = llm.ImageData{ID: i, Data: req.Images[i]}
+		}
 	}
 
 	prompt := req.Prompt
@@ -212,7 +239,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 
 			for _, i := range images {
-				msgs = append(msgs, api.Message{Role: "user", Content: fmt.Sprintf("[img-%d]", i.ID)})
+				imgPrompt := ""
+				if isMllama {
+					imgPrompt = "<|image|>"
+				}
+				msgs = append(msgs, api.Message{Role: "user", Content: fmt.Sprintf("[img-%d]"+imgPrompt, i.ID)})
 			}
 
 			values.Messages = append(msgs, api.Message{Role: "user", Content: req.Prompt})
@@ -236,7 +267,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		prompt = b.String()
 	}
 
-	slog.Debug("generate request", "prompt", prompt, "images", images)
+	slog.Debug("generate request", "images", len(images), "prompt", prompt)
 
 	ch := make(chan any)
 	go func() {
@@ -476,7 +507,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	embedding, err := r.Embedding(c.Request.Context(), req.Prompt)
 	if err != nil {
 		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate embedding"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Errorf("failed to generate embedding: %v", err)})
 		return
 	}
 
@@ -509,7 +540,8 @@ func (s *Server) PullHandler(c *gin.Context) {
 		return
 	}
 
-	if err := checkNameExists(name); err != nil {
+	name, err = getExistingName(name)
+	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -590,19 +622,20 @@ func (s *Server) PushHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func checkNameExists(name model.Name) error {
-	names, err := Manifests()
+// getExistingName returns the original, on disk name if the input name is a
+// case-insensitive match, otherwise it returns the input name.
+func getExistingName(n model.Name) (model.Name, error) {
+	var zero model.Name
+	existing, err := Manifests(true)
 	if err != nil {
-		return err
+		return zero, err
 	}
-
-	for n := range names {
-		if strings.EqualFold(n.Filepath(), name.Filepath()) && n != name {
-			return errors.New("a model with that name already exists")
+	for e := range existing {
+		if n.EqualFold(e) {
+			return e, nil
 		}
 	}
-
-	return nil
+	return n, nil
 }
 
 func (s *Server) CreateHandler(c *gin.Context) {
@@ -621,7 +654,8 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		return
 	}
 
-	if err := checkNameExists(name); err != nil {
+	name, err := getExistingName(name)
+	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -863,7 +897,7 @@ func getKVData(digest string, verbose bool) (llm.KV, error) {
 }
 
 func (s *Server) ListHandler(c *gin.Context) {
-	ms, err := Manifests()
+	ms, err := Manifests(true)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -927,14 +961,19 @@ func (s *Server) CopyHandler(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("source %q is invalid", r.Source)})
 		return
 	}
+	src, err := getExistingName(src)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
 	dst := model.ParseName(r.Destination)
 	if !dst.IsValid() {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("destination %q is invalid", r.Destination)})
 		return
 	}
-
-	if err := checkNameExists(dst); err != nil {
+	dst, err = getExistingName(dst)
+	if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -1180,18 +1219,22 @@ func Serve(ln net.Listener) error {
 	}
 
 	if !envconfig.NoPrune() {
-		// clean up unused layers and manifests
-		if err := PruneLayers(); err != nil {
-			return err
-		}
+		if _, err := Manifests(false); err != nil {
+			slog.Warn("corrupt manifests detected, skipping prune operation.  Re-pull or delete to clear", "error", err)
+		} else {
+			// clean up unused layers and manifests
+			if err := PruneLayers(); err != nil {
+				return err
+			}
 
-		manifestsPath, err := GetManifestPath()
-		if err != nil {
-			return err
-		}
+			manifestsPath, err := GetManifestPath()
+			if err != nil {
+				return err
+			}
 
-		if err := PruneDirectory(manifestsPath); err != nil {
-			return err
+			if err := PruneDirectory(manifestsPath); err != nil {
+				return err
+			}
 		}
 	}
 

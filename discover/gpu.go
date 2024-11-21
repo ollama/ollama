@@ -240,7 +240,7 @@ func GetGPUInfo() GpuInfoList {
 					Library:        "cpu",
 					Variant:        cpuCapability.String(),
 					ID:             "0",
-					DependencyPath: depPath,
+					DependencyPath: []string{depPath},
 				},
 				CPUs: details,
 			},
@@ -293,11 +293,11 @@ func GetGPUInfo() GpuInfoList {
 				gpuInfo.DriverMinor = driverMinor
 				variant := cudaVariant(gpuInfo)
 				if depPath != "" {
-					gpuInfo.DependencyPath = depPath
+					gpuInfo.DependencyPath = []string{depPath}
 					// Check for variant specific directory
 					if variant != "" {
 						if _, err := os.Stat(filepath.Join(depPath, "cuda_"+variant)); err == nil {
-							gpuInfo.DependencyPath = filepath.Join(depPath, "cuda_"+variant)
+							gpuInfo.DependencyPath = []string{filepath.Join(depPath, "cuda_"+variant), depPath}
 						}
 					}
 				}
@@ -316,7 +316,9 @@ func GetGPUInfo() GpuInfoList {
 				// query the management library as well so we can record any skew between the two
 				// which represents overhead on the GPU we must set aside on subsequent updates
 				if cHandles.nvml != nil {
-					C.nvml_get_free(*cHandles.nvml, C.int(gpuInfo.index), &memInfo.free, &memInfo.total, &memInfo.used)
+					uuid := C.CString(gpuInfo.ID)
+					defer C.free(unsafe.Pointer(uuid))
+					C.nvml_get_free(*cHandles.nvml, uuid, &memInfo.free, &memInfo.total, &memInfo.used)
 					if memInfo.err != nil {
 						slog.Warn("error looking up nvidia GPU memory", "error", C.GoString(memInfo.err))
 						C.free(unsafe.Pointer(memInfo.err))
@@ -368,7 +370,7 @@ func GetGPUInfo() GpuInfoList {
 						gpuInfo.FreeMemory = uint64(memInfo.free)
 						gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
 						gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
-						gpuInfo.DependencyPath = depPath
+						gpuInfo.DependencyPath = []string{depPath}
 						oneapiGPUs = append(oneapiGPUs, gpuInfo)
 					}
 				}
@@ -417,7 +419,9 @@ func GetGPUInfo() GpuInfoList {
 		}
 		for i, gpu := range cudaGPUs {
 			if cHandles.nvml != nil {
-				C.nvml_get_free(*cHandles.nvml, C.int(gpu.index), &memInfo.free, &memInfo.total, &memInfo.used)
+				uuid := C.CString(gpu.ID)
+				defer C.free(unsafe.Pointer(uuid))
+				C.nvml_get_free(*cHandles.nvml, uuid, &memInfo.free, &memInfo.total, &memInfo.used)
 			} else if cHandles.cudart != nil {
 				C.cudart_bootstrap(*cHandles.cudart, C.int(gpu.index), &memInfo)
 			} else if cHandles.nvcuda != nil {
