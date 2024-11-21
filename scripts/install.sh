@@ -4,9 +4,12 @@
 
 set -eu
 
+red="$( (/usr/bin/tput bold || :; /usr/bin/tput setaf 1 || :) 2>&-)"
+plain="$( (/usr/bin/tput sgr0 || :) 2>&-)"
+
 status() { echo ">>> $*" >&2; }
-error() { echo "ERROR $*"; exit 1; }
-warning() { echo "WARNING: $*"; }
+error() { echo "${red}ERROR:${plain} $*"; exit 1; }
+warning() { echo "${red}WARNING:${plain} $*"; }
 
 TEMP_DIR=$(mktemp -d)
 cleanup() { rm -rf $TEMP_DIR; }
@@ -38,7 +41,7 @@ IS_WSL2=false
 KERN=$(uname -r)
 case "$KERN" in
     *icrosoft*WSL2 | *icrosoft*wsl2) IS_WSL2=true;;
-    *icrosoft) error "Microsoft WSL1 is not currently supported. Please upgrade to WSL2 with 'wsl --set-version <distro> 2'" ;;
+    *icrosoft) error "Microsoft WSL1 is not currently supported. Please use WSL2 with 'wsl --set-version <distro> 2'" ;;
     *) ;;
 esac
 
@@ -93,6 +96,22 @@ else
     fi
 fi
 
+# Check for NVIDIA JetPack systems with additional downloads
+if [ -f /etc/nv_tegra_release ] ; then
+    if grep R36 /etc/nv_tegra_release > /dev/null ; then
+        status "Downloading JetPack 6 components"
+        curl --fail --show-error --location --progress-bar \
+            "https://ollama.com/download/ollama-linux-${ARCH}-jetpack6.tgz${VER_PARAM}" | \
+            $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+    elif grep R35 /etc/nv_tegra_release > /dev/null ; then
+        status "Downloading JetPack 5 components"
+        curl --fail --show-error --location --progress-bar \
+            "https://ollama.com/download/ollama-linux-${ARCH}-jetpack5.tgz${VER_PARAM}" | \
+            $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+    else
+        warning "Unsupported JetPack version detected.  GPU may not be supported"
+    fi
+fi
 
 install_success() {
     status 'The Ollama API is now available at 127.0.0.1:11434.'
@@ -146,6 +165,12 @@ EOF
             start_service() { $SUDO systemctl restart ollama; }
             trap start_service EXIT
             ;;
+        *)
+            warning "systemd is not running"
+            if [ "$IS_WSL2" = true ]; then
+                warning "see https://learn.microsoft.com/en-us/windows/wsl/systemd#how-to-enable-systemd to enable it"
+            fi
+            ;;
     esac
 }
 
@@ -159,6 +184,13 @@ if [ "$IS_WSL2" = true ]; then
     if available nvidia-smi && [ -n "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
         status "Nvidia GPU detected."
     fi
+    install_success
+    exit 0
+fi
+
+# Don't attempt to install drivers on Jetson systems
+if [ -f /etc/nv_tegra_release ] ; then
+    status "NVIDIA JetPack ready."
     install_success
     exit 0
 fi
@@ -356,12 +388,12 @@ if ! lsmod | grep -q nvidia || ! lsmod | grep -q nvidia_uvm; then
 fi
 
 # make sure the NVIDIA modules are loaded on boot with nvidia-persistenced
-if command -v nvidia-persistenced > /dev/null 2>&1; then
+if available nvidia-persistenced; then
     $SUDO touch /etc/modules-load.d/nvidia.conf
     MODULES="nvidia nvidia-uvm"
     for MODULE in $MODULES; do
         if ! grep -qxF "$MODULE" /etc/modules-load.d/nvidia.conf; then
-            echo "$MODULE" | sudo tee -a /etc/modules-load.d/nvidia.conf > /dev/null
+            echo "$MODULE" | $SUDO tee -a /etc/modules-load.d/nvidia.conf > /dev/null
         fi
     done
 fi

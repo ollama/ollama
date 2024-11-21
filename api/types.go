@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// StatusError is an error with and HTTP status code.
+// StatusError is an error with an HTTP status code and message.
 type StatusError struct {
 	StatusCode   int
 	Status       string
@@ -57,7 +57,7 @@ type GenerateRequest struct {
 	Template string `json:"template"`
 
 	// Context is the context parameter returned from a previous call to
-	// Generate call. It can be used to keep a short conversational memory.
+	// [Client.Generate]. It can be used to keep a short conversational memory.
 	Context []int `json:"context,omitempty"`
 
 	// Stream specifies whether the response is streaming; it is true by default.
@@ -90,14 +90,14 @@ type ChatRequest struct {
 	// Messages is the messages of the chat - can be used to keep a chat memory.
 	Messages []Message `json:"messages"`
 
-	// Stream enable streaming of returned response; true by default.
+	// Stream enables streaming of returned responses; true by default.
 	Stream *bool `json:"stream,omitempty"`
 
 	// Format is the format to return the response in (e.g. "json").
 	Format string `json:"format"`
 
 	// KeepAlive controls how long the model will stay loaded into memory
-	// followin the request.
+	// following the request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
 	// Tools is an optional list of tools the model has access to.
@@ -203,8 +203,8 @@ type Metrics struct {
 	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
 }
 
-// Options specified in [GenerateRequest], if you add a new option here add it
-// to the API docs also.
+// Options specified in [GenerateRequest].  If you add a new option here, also
+// add it to the API docs.
 type Options struct {
 	Runner
 
@@ -236,7 +236,7 @@ type Runner struct {
 	NumGPU    int   `json:"num_gpu,omitempty"`
 	MainGPU   int   `json:"main_gpu,omitempty"`
 	LowVRAM   bool  `json:"low_vram,omitempty"`
-	F16KV     bool  `json:"f16_kv,omitempty"`
+	F16KV     bool  `json:"f16_kv,omitempty"` // Deprecated: This option is ignored
 	LogitsAll bool  `json:"logits_all,omitempty"`
 	VocabOnly bool  `json:"vocab_only,omitempty"`
 	UseMMap   *bool `json:"use_mmap,omitempty"`
@@ -296,15 +296,17 @@ type EmbeddingResponse struct {
 // CreateRequest is the request passed to [Client.Create].
 type CreateRequest struct {
 	Model     string `json:"model"`
-	Path      string `json:"path"`
 	Modelfile string `json:"modelfile"`
 	Stream    *bool  `json:"stream,omitempty"`
 	Quantize  string `json:"quantize,omitempty"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 
-	// Quantization is deprecated, see Quantize
+	// Deprecated: set the file content with Modelfile instead
+	Path string `json:"path"`
+
+	// Deprecated: use Quantize instead
 	Quantization string `json:"quantization,omitempty"`
 }
 
@@ -312,7 +314,7 @@ type CreateRequest struct {
 type DeleteRequest struct {
 	Model string `json:"model"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
@@ -327,7 +329,7 @@ type ShowRequest struct {
 
 	Options map[string]interface{} `json:"options"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
@@ -359,7 +361,7 @@ type PullRequest struct {
 	Password string `json:"password"`
 	Stream   *bool  `json:"stream,omitempty"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
@@ -380,7 +382,7 @@ type PushRequest struct {
 	Password string `json:"password"`
 	Stream   *bool  `json:"stream,omitempty"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
@@ -611,7 +613,6 @@ func DefaultOptions() Options {
 			NumGPU:    -1, // -1 here indicates that NumGPU should be set dynamically
 			NumThread: 0,  // let the runtime decide
 			LowVRAM:   false,
-			F16KV:     true,
 			UseMLock:  false,
 			UseMMap:   nil,
 		},

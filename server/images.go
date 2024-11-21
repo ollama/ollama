@@ -13,6 +13,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
@@ -453,7 +455,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 						defer temp.Close()
 						defer os.Remove(temp.Name())
 
-						if err := llm.Quantize(blob, temp.Name(), want); err != nil {
+						if err := llama.Quantize(blob, temp.Name(), uint32(want)); err != nil {
 							return err
 						}
 
@@ -689,7 +691,8 @@ func CopyModel(src, dst model.Name) error {
 }
 
 func deleteUnusedLayers(deleteMap map[string]struct{}) error {
-	manifests, err := Manifests()
+	// Ignore corrupt manifests to avoid blocking deletion of layers that are freshly orphaned
+	manifests, err := Manifests(true)
 	if err != nil {
 		return err
 	}
@@ -852,8 +855,8 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	manifest, _, err := GetManifest(mp)
 	if errors.Is(err, os.ErrNotExist) {
 		// noop
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+	} else if err != nil {
+		slog.Warn("pulling model with bad existing manifest", "name", name, "error", err)
 	} else {
 		for _, l := range manifest.Layers {
 			deleteMap[l.Digest] = struct{}{}
@@ -1025,6 +1028,8 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 
 		switch {
 		case resp.StatusCode == http.StatusUnauthorized:
+			resp.Body.Close()
+
 			// Handle authentication error with one retry
 			challenge := parseRegistryChallenge(resp.Header.Get("www-authenticate"))
 			token, err := getAuthorizationToken(ctx, challenge)
@@ -1040,8 +1045,10 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 				}
 			}
 		case resp.StatusCode == http.StatusNotFound:
+			resp.Body.Close()
 			return nil, os.ErrNotExist
 		case resp.StatusCode >= http.StatusBadRequest:
+			defer resp.Body.Close()
 			responseBody, err := io.ReadAll(resp.Body)
 			if err != nil {
 				return nil, fmt.Errorf("%d: %s", resp.StatusCode, err)
@@ -1064,6 +1071,21 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 	// user is associated with the public key, but is not authorized to make the request
 	return nil, errUnauthorized
 }
+
+// testMakeRequestDialContext specifies the dial function for the http client in
+// makeRequest. It can be used to resolve hosts in model names to local
+// addresses for testing. For example, the model name ("example.com/my/model")
+// can be directed to push/pull from "127.0.0.1:1234".
+//
+// This is not safe to set across goroutines. It should be set in
+// the main test goroutine, and not by tests marked to run in parallel with
+// t.Parallel().
+//
+// It should be cleared after use, otherwise it will affect other tests.
+//
+// Ideally we would have some set this up the stack, but the code is not
+// structured in a way that makes this easy, so this will have to do for now.
+var testMakeRequestDialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 
 func makeRequest(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.Reader, regOpts *registryOptions) (*http.Response, error) {
 	if requestURL.Scheme != "http" && regOpts != nil && regOpts.Insecure {
@@ -1099,6 +1121,9 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 	}
 
 	resp, err := (&http.Client{
+		Transport: &http.Transport{
+			DialContext: testMakeRequestDialContext,
+		},
 		CheckRedirect: regOpts.CheckRedirect,
 	}).Do(req)
 	if err != nil {

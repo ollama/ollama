@@ -100,8 +100,21 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 		}
 
 		if template, ok := p["chat_template"]; ok {
-			if err := json.Unmarshal(template, &t.Template); err != nil {
-				return nil, err
+			var s []struct {
+				Name     string `json:"name"`
+				Template string `json:"template"`
+			}
+			if err := json.Unmarshal(template, &t.Template); err == nil {
+				// noop
+			} else if err := json.Unmarshal(template, &s); err == nil {
+				for _, e := range s {
+					if e.Name == "default" {
+						t.Template = e.Template
+						break
+					}
+				}
+			} else {
+				return nil, fmt.Errorf("invalid chat_template: %w", err)
 			}
 		}
 
@@ -141,7 +154,6 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 }
 
 type tokenizer struct {
-	Version     string  `json:"version"`
 	AddedTokens []token `json:"added_tokens"`
 	Model       struct {
 		Type   string         `json:"type"`
@@ -239,7 +251,7 @@ func parseVocabulary(fsys fs.FS) (*Vocabulary, error) {
 		return pattern.Func(fsys)
 	}
 
-	return nil, errors.New("unknown tensor format")
+	return nil, errors.New("unknown tokenizer format")
 }
 
 type SpecialVocabulary struct {

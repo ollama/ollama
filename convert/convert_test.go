@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"golang.org/x/exp/maps"
@@ -22,7 +23,13 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-func convertFull(t *testing.T, fsys fs.FS) (*os.File, llm.KV, llm.Tensors) {
+type tensorData struct {
+	Offsets []int  `json:"data_offsets"`
+	Type    string `json:"dtype"`
+	Shape   []int  `json:"shape"`
+}
+
+func convertFull(t *testing.T, fsys fs.FS) (*os.File, llm.KV, *llm.Tensors) {
 	t.Helper()
 
 	f, err := os.CreateTemp(t.TempDir(), "f16")
@@ -53,7 +60,7 @@ func convertFull(t *testing.T, fsys fs.FS) (*os.File, llm.KV, llm.Tensors) {
 	return r, m.KV(), m.Tensors()
 }
 
-func generateResultsJSON(t *testing.T, f *os.File, kv llm.KV, tensors llm.Tensors) map[string]string {
+func generateResultsJSON(t *testing.T, f *os.File, kv llm.KV, tensors *llm.Tensors) map[string]string {
 	actual := make(map[string]string)
 	for k, v := range kv {
 		if s, ok := v.(json.Marshaler); !ok {
@@ -89,13 +96,14 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestConvertFull(t *testing.T) {
+func TestConvertModel(t *testing.T) {
 	cases := []string{
 		"Meta-Llama-3-8B-Instruct",
 		"Meta-Llama-3.1-8B-Instruct",
 		"Mistral-7B-Instruct-v0.2",
 		"Mixtral-8x7B-Instruct-v0.1",
 		"gemma-2b-it",
+		"gemma-2-2b-it",
 		// microsoft/Phi-3-mini-128-instruct@d548c233192db00165d842bf8edff054bb3212f8
 		"Phi-3-mini-128k-instruct",
 		"all-MiniLM-L6-v2",
@@ -137,6 +145,132 @@ func TestConvertFull(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestConvertInvalidTensorNames(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "testmodel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	tempDir := t.TempDir()
+
+	td := map[string]*tensorData{}
+	offset := 4096
+
+	td["model.layers.0.self_attn.q_proj.weight"] = &tensorData{
+		Offsets: []int{0, offset},
+		Type:    "F32",
+		Shape:   []int{4096, 4096},
+	}
+	td["blk.0.attn_q.weight"] = &tensorData{
+		Offsets: []int{offset, offset * 2},
+		Type:    "F32",
+		Shape:   []int{4096, 4096},
+	}
+	generateSafetensorTestData(t, tempDir, td)
+
+	err = ConvertModel(os.DirFS(tempDir), f)
+	if err == nil || !strings.HasPrefix(err.Error(), "duplicate tensor name") {
+		t.Errorf("expected error but didn't get one")
+	}
+}
+
+func TestConvertInvalidDatatype(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "testmodel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	tempDir := t.TempDir()
+
+	td := map[string]*tensorData{}
+	offset := 4096 * 14336
+
+	td["model.layers.0.mlp.down_proj.weight"] = &tensorData{
+		Offsets: []int{0, offset},
+		Type:    "I8",
+		Shape:   []int{4096, 14336},
+	}
+	td["model.layers.0.mlp.down_proj.weight_format"] = &tensorData{
+		Offsets: []int{offset, offset},
+		Type:    "U8",
+		Shape:   []int{},
+	}
+	generateSafetensorTestData(t, tempDir, td)
+
+	err = ConvertModel(os.DirFS(tempDir), f)
+	if err == nil || err.Error() != "unsupported safetensors model" {
+		t.Errorf("expected error but didn't get one")
+	}
+}
+
+func generateSafetensorTestData(t *testing.T, tempDir string, tensorData map[string]*tensorData) {
+	data, err := json.Marshal(tensorData)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var buf bytes.Buffer
+
+	l := int64(len(data))
+	err = binary.Write(&buf, binary.LittleEndian, l)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = buf.Write(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fdata, err := os.Create(filepath.Join(tempDir, "model-00001-of-00001.safetensors"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fdata.Close()
+
+	_, err = fdata.Write(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	configData := `
+{
+  "architectures": [
+    "LlamaForCausalLM"
+  ]
+}
+`
+
+	f, err := os.Create(filepath.Join(tempDir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	_, err = f.WriteString(configData)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tokenizerData := `
+{
+}
+`
+
+	f, err = os.Create(filepath.Join(tempDir, "tokenizer.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	_, err = f.WriteString(tokenizerData)
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -221,11 +355,6 @@ func TestConvertAdapter(t *testing.T) {
 }
 
 func generateLoraTestData(t *testing.T, tempDir string) {
-	type tensorData struct {
-		Offsets []int  `json:"data_offsets"`
-		Type    string `json:"dtype"`
-		Shape   []int  `json:"shape"`
-	}
 	offset := 4096 * 8 * 4
 
 	td := map[string]*tensorData{"__metadata__": nil}
