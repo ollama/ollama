@@ -298,6 +298,13 @@ func (n Name) LogValue() slog.Value {
 	return slog.StringValue(n.String())
 }
 
+func (n Name) EqualFold(o Name) bool {
+	return strings.EqualFold(n.Host, o.Host) &&
+		strings.EqualFold(n.Namespace, o.Namespace) &&
+		strings.EqualFold(n.Model, o.Model) &&
+		strings.EqualFold(n.Tag, o.Tag)
+}
+
 func isValidLen(kind partKind, s string) bool {
 	switch kind {
 	case kindHost:
