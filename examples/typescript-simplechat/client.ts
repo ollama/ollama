@@ -1,6 +1,6 @@
 import * as readline from "readline";
 
-const model = "llama2";
+const model = "llama3.2";
 type Message = {
   role: "assistant" | "user" | "system";
   content: string;

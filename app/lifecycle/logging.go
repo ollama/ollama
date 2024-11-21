@@ -5,12 +5,16 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
 func InitLogging() {
 	level := slog.LevelInfo
 
-	if debug := os.Getenv("OLLAMA_DEBUG"); debug != "" {
+	if envconfig.Debug() {
 		level = slog.LevelDebug
 	}
 
@@ -22,7 +26,8 @@ func InitLogging() {
 		logFile = os.Stderr
 		// TODO - write one-line to the app.log file saying we're running in console mode to help avoid confusion
 	} else {
-		logFile, err = os.OpenFile(AppLogFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0755)
+		rotateLogs(AppLogFile)
+		logFile, err = os.OpenFile(AppLogFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o755)
 		if err != nil {
 			slog.Error(fmt.Sprintf("failed to create server log %v", err))
 			return
@@ -43,4 +48,33 @@ func InitLogging() {
 	slog.SetDefault(slog.New(handler))
 
 	slog.Info("ollama app started")
+}
+
+func rotateLogs(logFile string) {
+	if _, err := os.Stat(logFile); os.IsNotExist(err) {
+		return
+	}
+	index := strings.LastIndex(logFile, ".")
+	pre := logFile[:index]
+	post := "." + logFile[index+1:]
+	for i := LogRotationCount; i > 0; i-- {
+		older := pre + "-" + strconv.Itoa(i) + post
+		newer := pre + "-" + strconv.Itoa(i-1) + post
+		if i == 1 {
+			newer = pre + post
+		}
+		if _, err := os.Stat(newer); err == nil {
+			if _, err := os.Stat(older); err == nil {
+				err := os.Remove(older)
+				if err != nil {
+					slog.Warn("Failed to remove older log", "older", older, "error", err)
+					continue
+				}
+			}
+			err := os.Rename(newer, older)
+			if err != nil {
+				slog.Warn("Failed to rotate log", "older", older, "newer", newer, "error", err)
+			}
+		}
+	}
 }

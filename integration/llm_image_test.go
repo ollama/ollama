@@ -5,7 +5,6 @@ package integration
 import (
 	"context"
 	"encoding/base64"
-	"net/http"
 	"testing"
 	"time"
 
@@ -13,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIntegrationMultimodal(t *testing.T) {
+func TestIntegrationLlava(t *testing.T) {
 	image, err := base64.StdEncoding.DecodeString(imageEncoding)
 	require.NoError(t, err)
 	req := api.GenerateRequest{
@@ -29,10 +28,42 @@ func TestIntegrationMultimodal(t *testing.T) {
 		},
 	}
 
-	resp := "the ollamas"
+	// Note: sometimes it returns "the ollamas" sometimes "the ollams"
+	resp := "the ollam"
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	GenerateTestHelper(ctx, t, &http.Client{}, req, []string{resp})
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+	require.NoError(t, PullIfMissing(ctx, client, req.Model))
+	// llava models on CPU can be quite slow to start,
+	DoGenerate(ctx, t, client, req, []string{resp}, 120*time.Second, 30*time.Second)
+}
+
+func TestIntegrationMllama(t *testing.T) {
+	image, err := base64.StdEncoding.DecodeString(imageEncoding)
+	require.NoError(t, err)
+	req := api.GenerateRequest{
+		// TODO fix up once we publish the final image
+		Model:  "x/llama3.2-vision",
+		Prompt: "what does the text in this image say?",
+		Stream: &stream,
+		Options: map[string]interface{}{
+			"seed":        42,
+			"temperature": 0.0,
+		},
+		Images: []api.ImageData{
+			image,
+		},
+	}
+
+	resp := "the ollamas"
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	client, _, cleanup := InitServerConnection(ctx, t)
+	defer cleanup()
+	require.NoError(t, PullIfMissing(ctx, client, req.Model))
+	// mllama models on CPU can be quite slow to start,
+	DoGenerate(ctx, t, client, req, []string{resp}, 240*time.Second, 30*time.Second)
 }
 
 const imageEncoding = `iVBORw0KGgoAAAANSUhEUgAAANIAAAB4CAYAAACHHqzKAAAAAXNSR0IArs4c6QAAAIRlWElmTU0AKgAAAAgABQESAAMAAAABAAEAAAEaAAUAAAABAAAASgEb

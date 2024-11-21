@@ -4,10 +4,10 @@ This example demonstrates how one would create a set of 'mentors' you can have a
 
 ## Usage
 
-1. Add llama2 to have the mentors ask your questions:
+1. Add llama3 to have the mentors ask your questions:
 
    ```bash
-   ollama pull llama2
+   ollama pull llama3
    ```
 
 2. Install prerequisites:

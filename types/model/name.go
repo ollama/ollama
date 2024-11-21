@@ -1,572 +1,371 @@
+// Package model contains types and utilities for parsing, validating, and
+// working with model names and digests.
 package model
 
 import (
 	"cmp"
 	"errors"
-	"hash/maphash"
-	"io"
+	"fmt"
 	"log/slog"
-	"slices"
+	"path/filepath"
 	"strings"
-	"sync"
-
-	"github.com/ollama/ollama/types/structs"
 )
 
 // Errors
 var (
-	// ErrInvalidName, ErrIncompleteName, and ErrInvalidDigest are not
-	// used by this package, but are exported so that other packages can
-	// use them, instead of defining their own errors for them.
-	ErrInvalidName    = errors.New("invalid model name")
-	ErrIncompleteName = errors.New("incomplete model name")
-	ErrInvalidDigest  = errors.New("invalid digest")
+	// ErrUnqualifiedName represents an error where a name is not fully
+	// qualified. It is not used directly in this package, but is here
+	// to avoid other packages inventing their own error type.
+	// Additionally, it can be conveniently used via [Unqualified].
+	ErrUnqualifiedName = errors.New("unqualified name")
 )
 
-// Defaults
-const (
-	// DefaultMask is the default mask used by [Name.DisplayShortest].
-	DefaultMask = "registry.ollama.ai/library/_:latest"
-
-	// DefaultFill is the default fill used by [ParseName].
-	DefaultFill = "registry.ollama.ai/library/_:latest"
-)
-
-const MaxNamePartLen = 128
-
-type PartKind int
-
-// Levels of concreteness
-const (
-	// Each value aligns with its index in the Name.parts array.
-
-	PartHost PartKind = iota
-	PartNamespace
-	PartModel
-	PartTag
-	PartBuild
-	PartDigest
-
-	// Invalid is a special part that is used to indicate that a part is
-	// invalid. It is not a valid part of a Name.
-	//
-	// It should be kept as the last part in the list.
-	PartInvalid
-)
-
-var kindNames = map[PartKind]string{
-	PartHost:      "Host",
-	PartNamespace: "Namespace",
-	PartModel:     "Name",
-	PartTag:       "Tag",
-	PartBuild:     "Build",
-	PartDigest:    "Digest",
-	PartInvalid:   "Invalid",
+// Unqualified is a helper function that returns an error with
+// ErrUnqualifiedName as the cause and the name as the message.
+func Unqualified(n Name) error {
+	return fmt.Errorf("%w: %s", ErrUnqualifiedName, n)
 }
 
-func (k PartKind) String() string {
-	return cmp.Or(kindNames[k], "Unknown")
+// MissingPart is used to indicate any part of a name that was "promised" by
+// the presence of a separator, but is missing.
+//
+// The value was chosen because it is deemed unlikely to be set by a user,
+// not a valid part name valid when checked by [Name.IsValid], and easy to
+// spot in logs.
+const MissingPart = "!MISSING!"
+
+const (
+	defaultHost      = "registry.ollama.ai"
+	defaultNamespace = "library"
+	defaultTag       = "latest"
+)
+
+// DefaultName returns a name with the default values for the host, namespace,
+// and tag parts. The model and digest parts are empty.
+//
+//   - The default host is ("registry.ollama.ai")
+//   - The default namespace is ("library")
+//   - The default tag is ("latest")
+func DefaultName() Name {
+	return Name{
+		Host:      defaultHost,
+		Namespace: defaultNamespace,
+		Tag:       defaultTag,
+	}
 }
 
-// Name is an opaque reference to a model. It holds the parts of a model
-// with the case preserved, but is not directly comparable with other Names
-// since model names can be represented with different casing depending on
-// the use case. For instance, "Mistral" and "mistral" are the same model
-// but each version may have come from different sources (e.g. copied from a
-// Web page, or from a file path).
+type partKind int
+
+const (
+	kindHost partKind = iota
+	kindNamespace
+	kindModel
+	kindTag
+	kindDigest
+)
+
+func (k partKind) String() string {
+	switch k {
+	case kindHost:
+		return "host"
+	case kindNamespace:
+		return "namespace"
+	case kindModel:
+		return "model"
+	case kindTag:
+		return "tag"
+	case kindDigest:
+		return "digest"
+	default:
+		return "unknown"
+	}
+}
+
+// Name is a structured representation of a model name string, as defined by
+// [ParseNameNoDefaults].
 //
-// Valid Names can ONLY be constructed by calling [ParseName].
-//
-// A Name is valid if and only if is have a valid Model part. The other parts
-// are optional.
-//
-// A Name is considered "complete" if it has all parts present. To check if a
-// Name is complete, use [Name.IsComplete].
-//
-// To compare two names in a case-insensitive manner, use [Name.EqualFold].
-//
-// The parts of a Name are:
-//
-//   - Host: the domain of the model (optional)
-//   - Namespace: the namespace of the model (optional)
-//   - Model: the name of the model (required)
-//   - Tag: the tag of the model (optional)
-//   - Build: the build of the model; usually the quantization or "file type" (optional)
-//
-// The parts can be obtained in their original form by calling [Name.Parts].
-//
-// To check if a Name has at minimum a valid model part, use [Name.IsValid].
-//
-// To make a Name by filling in missing parts from another Name, use [Fill].
+// It is not guaranteed to be valid. Use [Name.IsValid] to check if the name
+// is valid.
 type Name struct {
-	_     structs.Incomparable
-	parts [6]string // host, namespace, model, tag, build, digest
-
-	// TODO(bmizerany): track offsets and hold s (raw string) here? We
-	// could pack the offsets all into a single uint64 since the first
-	// parts take less bits since their max offset is less than the max
-	// offset of the next part. This would save a ton of bytes per Name
-	// and mean zero allocations for String.
+	Host      string
+	Namespace string
+	Model     string
+	Tag       string
 }
 
-// ParseNameFill parses s into a Name, and returns the result of filling it with
-// defaults. The input string must be a valid string
-// representation of a model name in the form:
+// ParseName parses and assembles a Name from a name string. The
+// format of a valid name string is:
 //
-//	[host/][namespace/]<model>[:tag][+build][@<digest-type>-<digest>]
+//	  s:
+//		  { host } "/" { namespace } "/" { model } ":" { tag } "@" { digest }
+//		  { host } "/" { namespace } "/" { model } ":" { tag }
+//		  { host } "/" { namespace } "/" { model } "@" { digest }
+//		  { host } "/" { namespace } "/" { model }
+//		  { namespace } "/" { model } ":" { tag } "@" { digest }
+//		  { namespace } "/" { model } ":" { tag }
+//		  { namespace } "/" { model } "@" { digest }
+//		  { namespace } "/" { model }
+//		  { model } ":" { tag } "@" { digest }
+//		  { model } ":" { tag }
+//		  { model } "@" { digest }
+//		  { model }
+//		  "@" { digest }
+//	  host:
+//	      pattern: { alphanum | "_" } { alphanum | "-" | "_" | "." | ":" }*
+//	      length:  [1, 350]
+//	  namespace:
+//	      pattern: { alphanum | "_" } { alphanum | "-" | "_" }*
+//	      length:  [1, 80]
+//	  model:
+//	      pattern: { alphanum | "_" } { alphanum | "-" | "_" | "." }*
+//	      length:  [1, 80]
+//	  tag:
+//	      pattern: { alphanum | "_" } { alphanum | "-" | "_" | "." }*
+//	      length:  [1, 80]
+//	  digest:
+//	      pattern: { alphanum | "_" } { alphanum | "-" | ":" }*
+//	      length:  [1, 80]
 //
-// The name part is required, all others are optional. If a part is missing,
-// it is left empty in the returned Name. If a part is invalid, the zero Ref
-// value is returned.
+// Most users should use [ParseName] instead, unless need to support
+// different defaults than DefaultName.
 //
-// The build part is normalized to uppercase.
-//
-// Examples of valid paths:
-//
-//	"example.com/library/mistral:7b+x"
-//	"example.com/eva/mistral:7b+Q4_0"
-//	"mistral:7b+x"
-//	"example.com/mike/mistral:latest+Q4_0"
-//	"example.com/bruce/mistral:latest"
-//	"example.com/pdevine/thisisfine:7b+Q4_0@sha256-1234567890abcdef"
-//
-// Examples of invalid paths:
-//
-//	"example.com/mistral:7b+"
-//	"example.com/mistral:7b+Q4_0+"
-//	"x/y/z/z:8n+I"
-//	""
-//
-// It returns the zero value if any part is invalid.
-//
-// As a rule of thumb, an valid name is one that can be round-tripped with
-// the [Name.String] method. That means ("x+") is invalid because
-// [Name.String] will not print a "+" if the build is empty.
-//
-// For more about filling in missing parts, see [Fill].
-func ParseNameFill(s, defaults string) Name {
-	var r Name
-	parts(s)(func(kind PartKind, part string) bool {
-		if kind == PartInvalid {
-			r = Name{}
-			return false
-		}
-		if kind == PartDigest && !ParseDigest(part).IsValid() {
-			r = Name{}
-			return false
-		}
-		r.parts[kind] = part
-		return true
-	})
-	if r.IsValid() || r.IsResolved() {
-		if defaults == "" {
-			return r
-		}
-		return Fill(r, ParseNameFill(defaults, ""))
-	}
-	return Name{}
-}
-
-// ParseName is equal to ParseNameFill(s, DefaultFill).
+// The name returned is not guaranteed to be valid. If it is not valid, the
+// field values are left in an undefined state. Use [Name.IsValid] to check
+// if the name is valid.
 func ParseName(s string) Name {
-	return ParseNameFill(s, DefaultFill)
+	return Merge(ParseNameBare(s), DefaultName())
 }
 
-func MustParseNameFill(s, defaults string) Name {
-	r := ParseNameFill(s, "")
-	if !r.IsValid() {
-		panic("model.MustParseName: invalid name: " + s)
+// ParseNameBare parses s as a name string and returns a Name. No merge with
+// [DefaultName] is performed.
+func ParseNameBare(s string) Name {
+	var n Name
+	var promised bool
+
+	// "/" is an illegal tag character, so we can use it to split the host
+	if strings.LastIndex(s, ":") > strings.LastIndex(s, "/") {
+		s, n.Tag, _ = cutPromised(s, ":")
 	}
-	return r
-}
 
-// Fill fills in the missing parts of dst with the parts of src.
-//
-// The returned Name will only be valid if dst is valid.
-func Fill(dst, src Name) Name {
-	var r Name
-	for i := range r.parts {
-		r.parts[i] = cmp.Or(dst.parts[i], src.parts[i])
+	s, n.Model, promised = cutPromised(s, "/")
+	if !promised {
+		n.Model = s
+		return n
 	}
-	return r
-}
 
-// WithBuild returns a copy of r with the build set to the given string.
-func (r Name) WithBuild(build string) Name {
-	r.parts[PartBuild] = build
-	return r
-}
-
-func (r Name) WithDigest(digest Digest) Name {
-	r.parts[PartDigest] = digest.String()
-	return r
-}
-
-var mapHashSeed = maphash.MakeSeed()
-
-// MapHash returns a case insensitive hash for use in maps and equality
-// checks. For a convenient way to compare names, use [Name.EqualFold].
-//
-//nolint:errcheck
-func (r Name) MapHash() uint64 {
-	// correctly hash the parts with case insensitive comparison
-	var h maphash.Hash
-	h.SetSeed(mapHashSeed)
-	for _, part := range r.Parts() {
-		// downcase the part for hashing
-		for i := range part {
-			c := part[i]
-			if c >= 'A' && c <= 'Z' {
-				c = c - 'A' + 'a'
-			}
-			h.WriteByte(c)
-		}
+	s, n.Namespace, promised = cutPromised(s, "/")
+	if !promised {
+		n.Namespace = s
+		return n
 	}
-	return h.Sum64()
+
+	scheme, host, ok := strings.Cut(s, "://")
+	if !ok {
+		host = scheme
+	}
+	n.Host = host
+
+	return n
 }
 
-func (r Name) slice(from, to PartKind) Name {
-	var v Name
-	copy(v.parts[from:to+1], r.parts[from:to+1])
-	return v
+// ParseNameFromFilepath parses a 4-part filepath as a Name. The parts are
+// expected to be in the form:
+//
+// { host } "/" { namespace } "/" { model } "/" { tag }
+func ParseNameFromFilepath(s string) (n Name) {
+	parts := strings.Split(s, string(filepath.Separator))
+	if len(parts) != 4 {
+		return Name{}
+	}
+
+	n.Host = parts[0]
+	n.Namespace = parts[1]
+	n.Model = parts[2]
+	n.Tag = parts[3]
+	if !n.IsFullyQualified() {
+		return Name{}
+	}
+
+	return n
 }
 
-// DisplayShortest returns the shortest possible display string in form:
-//
-//	[host/][<namespace>/]<model>[:<tag>]
-//
-// The host is omitted if it is the mask host is the same as r.
-// The namespace is omitted if the host and the namespace are the same as r.
-// The tag is omitted if it is the mask tag is the same as r.
-func (r Name) DisplayShortest(mask string) string {
-	mask = cmp.Or(mask, DefaultMask)
-	d := ParseName(mask)
-	if !d.IsValid() {
-		panic("mask is an invalid Name")
-	}
-	equalSlice := func(form, to PartKind) bool {
-		return r.slice(form, to).EqualFold(d.slice(form, to))
-	}
-	if equalSlice(PartHost, PartNamespace) {
-		r.parts[PartNamespace] = ""
-	}
-	if equalSlice(PartHost, PartHost) {
-		r.parts[PartHost] = ""
-	}
-	if equalSlice(PartTag, PartTag) {
-		r.parts[PartTag] = ""
-	}
-	return r.slice(PartHost, PartTag).String()
+// Merge merges the host, namespace, and tag parts of the two names,
+// preferring the non-empty parts of a.
+func Merge(a, b Name) Name {
+	a.Host = cmp.Or(a.Host, b.Host)
+	a.Namespace = cmp.Or(a.Namespace, b.Namespace)
+	a.Tag = cmp.Or(a.Tag, b.Tag)
+	return a
 }
 
-var seps = [...]string{
-	PartHost:      "/",
-	PartNamespace: "/",
-	PartModel:     ":",
-	PartTag:       "+",
-	PartBuild:     "@",
-	PartDigest:    "",
-}
-
-// WriteTo implements io.WriterTo. It writes the fullest possible display
-// string in form:
-//
-//	<host>/<namespace>/<model>:<tag>+<build>@<digest-type>-<digest>
-//
-// Missing parts and their separators are not written.
-//
-// The full digest is always prefixed with "@". That is if [Name.IsValid]
-// reports false and [Name.IsResolved] reports true, then the string is
-// returned as "@<digest-type>-<digest>".
-func (r Name) writeTo(w io.StringWriter) error {
-	var partsWritten int
-	for i := range r.parts {
-		if r.parts[i] == "" {
-			continue
-		}
-		if partsWritten > 0 || i == int(PartDigest) {
-			if _, err := w.WriteString(seps[i-1]); err != nil {
-				return err
-			}
-		}
-		if _, err := w.WriteString(r.parts[i]); err != nil {
-			return err
-		}
-		partsWritten++
+// String returns the name string, in the format that [ParseNameNoDefaults]
+// accepts as valid, if [Name.IsValid] reports true; otherwise the empty
+// string is returned.
+func (n Name) String() string {
+	var b strings.Builder
+	if n.Host != "" {
+		b.WriteString(n.Host)
+		b.WriteByte('/')
 	}
-	return nil
-}
-
-var builderPool = sync.Pool{
-	New: func() interface{} {
-		return &strings.Builder{}
-	},
-}
-
-// String returns the fullest possible display string in form:
-//
-//	<host>/<namespace>/<model>:<tag>+<build>
-//
-// If any part is missing, it is omitted from the display string.
-//
-// For the fullest possible display string without the build, use
-// [Name.DisplayFullest].
-func (r Name) String() string {
-	b := builderPool.Get().(*strings.Builder)
-	defer builderPool.Put(b)
-	b.Reset()
-	b.Grow(50) // arbitrarily long enough for most names
-	_ = r.writeTo(b)
+	if n.Namespace != "" {
+		b.WriteString(n.Namespace)
+		b.WriteByte('/')
+	}
+	b.WriteString(n.Model)
+	if n.Tag != "" {
+		b.WriteByte(':')
+		b.WriteString(n.Tag)
+	}
 	return b.String()
 }
 
-// GoString implements fmt.GoStringer. It returns a string suitable for
-// debugging and logging. It is similar to [Name.String] but it always
-// returns a string that includes all parts of the Name, with missing parts
-// replaced with a ("?").
-func (r Name) GoString() string {
-	for i := range r.parts {
-		r.parts[i] = cmp.Or(r.parts[i], "?")
+// DisplayShortest returns a short string version of the name.
+func (n Name) DisplayShortest() string {
+	var sb strings.Builder
+
+	if n.Host != defaultHost {
+		sb.WriteString(n.Host)
+		sb.WriteByte('/')
+		sb.WriteString(n.Namespace)
+		sb.WriteByte('/')
+	} else if n.Namespace != defaultNamespace {
+		sb.WriteString(n.Namespace)
+		sb.WriteByte('/')
 	}
-	return r.String()
+
+	// always include model and tag
+	sb.WriteString(n.Model)
+	sb.WriteString(":")
+	sb.WriteString(n.Tag)
+	return sb.String()
 }
 
-// LogValue implements slog.Valuer.
-func (r Name) LogValue() slog.Value {
-	return slog.StringValue(r.GoString())
+// IsValidNamespace reports whether the provided string is a valid
+// namespace.
+func IsValidNamespace(s string) bool {
+	return isValidPart(kindNamespace, s)
 }
 
-// IsComplete reports whether the Name is fully qualified. That is it has a
-// domain, namespace, name, tag, and build.
-func (r Name) IsComplete() bool {
-	return !slices.Contains(r.parts[:PartDigest], "")
-}
-
-// IsCompleteNoBuild is like [Name.IsComplete] but it does not require the
-// build part to be present.
-func (r Name) IsCompleteNoBuild() bool {
-	return !slices.Contains(r.parts[:PartBuild], "")
-}
-
-// IsResolved reports true if the Name has a valid digest.
+// IsValid reports whether all parts of the name are present and valid. The
+// digest is a special case, and is checked for validity only if present.
 //
-// It is possible to have a valid Name, or a complete Name that is not
-// resolved.
-func (r Name) IsResolved() bool {
-	return r.Digest().IsValid()
+// Note: The digest check has been removed as is planned to be added back in
+// at a later time.
+func (n Name) IsValid() bool {
+	return n.IsFullyQualified()
 }
 
-// Digest returns the digest part of the Name, if any.
-//
-// If Digest returns a non-empty string, then [Name.IsResolved] will return
-// true, and digest is considered valid.
-func (r Name) Digest() Digest {
-	// This was already validated by ParseName, so we can just return it.
-	return Digest{r.parts[PartDigest]}
-}
-
-// EqualFold reports whether r and o are equivalent model names, ignoring
-// case.
-func (r Name) EqualFold(o Name) bool {
-	return r.CompareFold(o) == 0
-}
-
-// CompareFold performs a case-insensitive cmp.Compare on r and o.
-//
-// This can be used with [slices.SortFunc].
-//
-// For simple equality checks, use [Name.EqualFold].
-func (r Name) CompareFold(o Name) int {
-	return slices.CompareFunc(r.parts[:], o.parts[:], compareFold)
-}
-
-func compareFold(a, b string) int {
-	return slices.CompareFunc([]rune(a), []rune(b), func(a, b rune) int {
-		return cmp.Compare(downcase(a), downcase(b))
-	})
-}
-
-func downcase(r rune) rune {
-	if r >= 'A' && r <= 'Z' {
-		return r - 'A' + 'a'
+// IsFullyQualified returns true if all parts of the name are present and
+// valid without the digest.
+func (n Name) IsFullyQualified() bool {
+	parts := []string{
+		n.Host,
+		n.Namespace,
+		n.Model,
+		n.Tag,
 	}
-	return r
-}
-
-// TODO(bmizerany): driver.Value? (MarshalText etc should be enough)
-
-// Parts returns the parts of the Name in order of concreteness.
-//
-// The length of the returned slice is always 5.
-func (r Name) Parts() []string {
-	return slices.Clone(r.parts[:])
-}
-
-// iter_Seq2 is a iter.Seq2 defined here to avoid the current build
-// restrictions in the go1.22 iter package requiring the
-// goexperiment.rangefunc tag to be set via the GOEXPERIMENT=rangefunc flag,
-// which we are not yet ready to support.
-//
-// Once we are ready to support rangefunc, this can be removed and replaced
-// with the iter.Seq2 type.
-type iter_Seq2[A, B any] func(func(A, B) bool)
-
-// Parts returns a sequence of the parts of a Name string from most specific
-// to least specific.
-//
-// It normalizes the input string by removing "http://" and "https://" only.
-// No other normalizations are performed.
-func parts(s string) iter_Seq2[PartKind, string] {
-	return func(yield func(PartKind, string) bool) {
-		//nolint:gosimple
-		if strings.HasPrefix(s, "http://") {
-			s = s[len("http://"):]
-		}
-		//nolint:gosimple
-		if strings.HasPrefix(s, "https://") {
-			s = s[len("https://"):]
-		}
-
-		if len(s) > MaxNamePartLen || len(s) == 0 {
-			return
-		}
-
-		yieldValid := func(kind PartKind, part string) bool {
-			if !isValidPart(kind, part) {
-				yield(PartInvalid, "")
-				return false
-			}
-			return yield(kind, part)
-		}
-
-		numConsecutiveDots := 0
-		partLen := 0
-		state, j := PartDigest, len(s)
-		for i := len(s) - 1; i >= 0; i-- {
-			if partLen++; partLen > MaxNamePartLen {
-				// catch a part that is too long early, so
-				// we don't keep spinning on it, waiting for
-				// an isInValidPart check which would scan
-				// over it again.
-				yield(PartInvalid, "")
-				return
-			}
-
-			switch s[i] {
-			case '@':
-				switch state {
-				case PartDigest:
-					if !yieldValid(PartDigest, s[i+1:j]) {
-						return
-					}
-					if i == 0 {
-						// This is the form
-						// "@<digest>" which is valid.
-						//
-						// We're done.
-						return
-					}
-					state, j, partLen = PartBuild, i, 0
-				default:
-					yield(PartInvalid, "")
-					return
-				}
-			case '+':
-				switch state {
-				case PartBuild, PartDigest:
-					if !yieldValid(PartBuild, s[i+1:j]) {
-						return
-					}
-					state, j, partLen = PartTag, i, 0
-				default:
-					yield(PartInvalid, "")
-					return
-				}
-			case ':':
-				switch state {
-				case PartTag, PartBuild, PartDigest:
-					if !yieldValid(PartTag, s[i+1:j]) {
-						return
-					}
-					state, j, partLen = PartModel, i, 0
-				default:
-					yield(PartInvalid, "")
-					return
-				}
-			case '/':
-				switch state {
-				case PartModel, PartTag, PartBuild, PartDigest:
-					if !yieldValid(PartModel, s[i+1:j]) {
-						return
-					}
-					state, j = PartNamespace, i
-				case PartNamespace:
-					if !yieldValid(PartNamespace, s[i+1:j]) {
-						return
-					}
-					state, j, partLen = PartHost, i, 0
-				default:
-					yield(PartInvalid, "")
-					return
-				}
-			default:
-				if s[i] == '.' {
-					if numConsecutiveDots++; numConsecutiveDots > 1 {
-						yield(PartInvalid, "")
-						return
-					}
-				} else {
-					numConsecutiveDots = 0
-				}
-				if !isValidByteFor(state, s[i]) {
-					yield(PartInvalid, "")
-					return
-				}
-			}
-		}
-
-		if state <= PartNamespace {
-			yieldValid(state, s[:j])
-		} else {
-			yieldValid(PartModel, s[:j])
-		}
-	}
-}
-
-func (r Name) IsZero() bool {
-	return r.parts == [6]string{}
-}
-
-// IsValid reports if a model has at minimum a valid model part.
-func (r Name) IsValid() bool {
-	// Parts ensures we only have valid parts, so no need to validate
-	// them here, only check if we have a name or not.
-	return r.parts[PartModel] != ""
-}
-
-// isValidPart reports if s contains all valid characters for the given
-// part kind.
-func isValidPart(kind PartKind, s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, c := range []byte(s) {
-		if !isValidByteFor(kind, c) {
+	for i, part := range parts {
+		if !isValidPart(partKind(i), part) {
 			return false
 		}
 	}
 	return true
 }
 
-func isValidByteFor(kind PartKind, c byte) bool {
-	if kind == PartNamespace && c == '.' {
+// Filepath returns a canonical filepath that represents the name with each part from
+// host to tag as a directory in the form:
+//
+//	{host}/{namespace}/{model}/{tag}
+//
+// It uses the system's filepath separator and ensures the path is clean.
+//
+// It panics if the name is not fully qualified. Use [Name.IsFullyQualified]
+// to check if the name is fully qualified.
+func (n Name) Filepath() string {
+	if !n.IsFullyQualified() {
+		panic("illegal attempt to get filepath of invalid name")
+	}
+	return filepath.Join(
+		n.Host,
+		n.Namespace,
+		n.Model,
+		n.Tag,
+	)
+}
+
+// LogValue returns a slog.Value that represents the name as a string.
+func (n Name) LogValue() slog.Value {
+	return slog.StringValue(n.String())
+}
+
+func (n Name) EqualFold(o Name) bool {
+	return strings.EqualFold(n.Host, o.Host) &&
+		strings.EqualFold(n.Namespace, o.Namespace) &&
+		strings.EqualFold(n.Model, o.Model) &&
+		strings.EqualFold(n.Tag, o.Tag)
+}
+
+func isValidLen(kind partKind, s string) bool {
+	switch kind {
+	case kindHost:
+		return len(s) >= 1 && len(s) <= 350
+	case kindTag:
+		return len(s) >= 1 && len(s) <= 80
+	default:
+		return len(s) >= 1 && len(s) <= 80
+	}
+}
+
+func isValidPart(kind partKind, s string) bool {
+	if !isValidLen(kind, s) {
 		return false
 	}
-	if c == '.' || c == '-' {
-		return true
+	for i := range s {
+		if i == 0 {
+			if !isAlphanumericOrUnderscore(s[i]) {
+				return false
+			}
+			continue
+		}
+		switch s[i] {
+		case '_', '-':
+		case '.':
+			if kind == kindNamespace {
+				return false
+			}
+		case ':':
+			if kind != kindHost && kind != kindDigest {
+				return false
+			}
+		default:
+			if !isAlphanumericOrUnderscore(s[i]) {
+				return false
+			}
+		}
 	}
-	if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' {
-		return true
+	return true
+}
+
+func isAlphanumericOrUnderscore(c byte) bool {
+	return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_'
+}
+
+func cutLast(s, sep string) (before, after string, ok bool) {
+	i := strings.LastIndex(s, sep)
+	if i >= 0 {
+		return s[:i], s[i+len(sep):], true
 	}
-	return false
+	return s, "", false
+}
+
+// cutPromised cuts the last part of s at the last occurrence of sep. If sep is
+// found, the part before and after sep are returned as-is unless empty, in
+// which case they are returned as MissingPart, which will cause
+// [Name.IsValid] to return false.
+func cutPromised(s, sep string) (before, after string, ok bool) {
+	before, after, ok = cutLast(s, sep)
+	if !ok {
+		return before, after, false
+	}
+	return cmp.Or(before, MissingPart), cmp.Or(after, MissingPart), true
 }

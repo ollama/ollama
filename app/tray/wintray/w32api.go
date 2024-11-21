@@ -61,11 +61,13 @@ const (
 	MIIM_SUBMENU        = 0x00000004
 	MIM_APPLYTOSUBMENUS = 0x80000000
 	NIF_ICON            = 0x00000002
+	NIF_TIP             = 0x00000004
 	NIF_INFO            = 0x00000010
 	NIF_MESSAGE         = 0x00000001
 	SW_HIDE             = 0
 	TPM_BOTTOMALIGN     = 0x0020
 	TPM_LEFTALIGN       = 0x0000
+	TPM_RIGHTBUTTON     = 0x0002
 	WM_CLOSE            = 0x0010
 	WM_USER             = 0x0400
 	WS_CAPTION          = 0x00C00000

@@ -1,6 +1,8 @@
 package api
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestClientFromEnvironment(t *testing.T) {
 	type testCase struct {

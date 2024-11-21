@@ -5,7 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
+	"sync"
+
+	"github.com/ollama/ollama/util/bufioutil"
 )
 
 type GGML struct {
@@ -13,85 +17,9 @@ type GGML struct {
 	model
 }
 
-const (
-	fileTypeF32 uint32 = iota
-	fileTypeF16
-	fileTypeQ4_0
-	fileTypeQ4_1
-	fileTypeQ4_1_F16
-	fileTypeQ8_0 uint32 = iota + 2
-	fileTypeQ5_0
-	fileTypeQ5_1
-	fileTypeQ2_K
-	fileTypeQ3_K_S
-	fileTypeQ3_K_M
-	fileTypeQ3_K_L
-	fileTypeQ4_K_S
-	fileTypeQ4_K_M
-	fileTypeQ5_K_S
-	fileTypeQ5_K_M
-	fileTypeQ6_K
-	fileTypeIQ2_XXS
-	fileTypeIQ2_XS
-	fileTypeQ2_K_S
-	fileTypeQ3_K_XS
-	fileTypeIQ3_XXS
-)
-
-func fileType(fileType uint32) string {
-	switch fileType {
-	case fileTypeF32:
-		return "F32"
-	case fileTypeF16:
-		return "F16"
-	case fileTypeQ4_0:
-		return "Q4_0"
-	case fileTypeQ4_1:
-		return "Q4_1"
-	case fileTypeQ4_1_F16:
-		return "Q4_1_F16"
-	case fileTypeQ8_0:
-		return "Q8_0"
-	case fileTypeQ5_0:
-		return "Q5_0"
-	case fileTypeQ5_1:
-		return "Q5_1"
-	case fileTypeQ2_K:
-		return "Q2_K"
-	case fileTypeQ3_K_S:
-		return "Q3_K_S"
-	case fileTypeQ3_K_M:
-		return "Q3_K_M"
-	case fileTypeQ3_K_L:
-		return "Q3_K_L"
-	case fileTypeQ4_K_S:
-		return "Q4_K_S"
-	case fileTypeQ4_K_M:
-		return "Q4_K_M"
-	case fileTypeQ5_K_S:
-		return "Q5_K_S"
-	case fileTypeQ5_K_M:
-		return "Q5_K_M"
-	case fileTypeQ6_K:
-		return "Q6_K"
-	case fileTypeIQ2_XXS:
-		return "IQ2_XXS"
-	case fileTypeIQ2_XS:
-		return "IQ2_XS"
-	case fileTypeQ2_K_S:
-		return "Q2_K_S"
-	case fileTypeQ3_K_XS:
-		return "Q3_K_XS"
-	case fileTypeIQ3_XXS:
-		return "IQ3_XXS"
-	default:
-		return "unknown"
-	}
-}
-
 type model interface {
 	KV() KV
-	Tensors() Tensors
+	Tensors() *Tensors
 }
 
 type KV map[string]any
@@ -117,16 +45,24 @@ func (kv KV) Architecture() string {
 	return "unknown"
 }
 
+func (kv KV) Kind() string {
+	if s, ok := kv["general.type"].(string); ok {
+		return s
+	}
+
+	return "unknown"
+}
+
 func (kv KV) ParameterCount() uint64 {
 	return kv.u64("general.parameter_count")
 }
 
-func (kv KV) FileType() string {
+func (kv KV) FileType() fileType {
 	if u64 := kv.u64("general.file_type"); u64 > 0 {
 		return fileType(uint32(u64))
 	}
 
-	return "unknown"
+	return fileTypeUnknown
 }
 
 func (kv KV) BlockCount() uint64 {
@@ -145,6 +81,30 @@ func (kv KV) HeadCountKV() uint64 {
 	return 1
 }
 
+func (kv KV) EmbeddingHeadCount() uint64 {
+	if heads := kv.HeadCount(); heads > 0 {
+		return kv.EmbeddingLength() / kv.HeadCount()
+	}
+
+	return 0
+}
+
+func (kv KV) EmbeddingHeadCountK() uint64 {
+	if k := kv.u64(fmt.Sprintf("%s.attention.key_length", kv.Architecture())); k > 0 {
+		return k
+	}
+
+	return kv.EmbeddingHeadCount()
+}
+
+func (kv KV) EmbeddingHeadCountV() uint64 {
+	if v := kv.u64(fmt.Sprintf("%s.attention.value_length", kv.Architecture())); v > 0 {
+		return v
+	}
+
+	return kv.EmbeddingHeadCount()
+}
+
 func (kv KV) GQA() uint64 {
 	return kv.HeadCount() / kv.HeadCountKV()
 }
@@ -157,31 +117,49 @@ func (kv KV) ContextLength() uint64 {
 	return kv.u64(fmt.Sprintf("%s.context_length", kv.Architecture()))
 }
 
-type Tensors []*Tensor
+func (kv KV) ChatTemplate() string {
+	s, _ := kv["tokenizer.chat_template"].(string)
+	return s
+}
 
-func (ts Tensors) Layers() map[string]Layer {
-	layers := make(map[string]Layer)
-	for _, t := range ts {
-		parts := strings.Split(t.Name, ".")
-		if parts[0] == "blk" {
-			parts = parts[1:]
+type Tensors struct {
+	Items  []*Tensor
+	Offset uint64
+
+	layers     map[string]Layer
+	layersOnce sync.Once
+}
+
+func (ts *Tensors) Layers() map[string]Layer {
+	ts.layersOnce.Do(func() {
+		ts.layers = make(map[string]Layer)
+		for _, t := range ts.Items {
+			parts := strings.Split(t.Name, ".")
+			if index := slices.IndexFunc(parts, func(s string) bool { return s == "blk" || s == "mm" }); index != -1 {
+				if len(parts) > index+2 {
+					// blk and mm should have a number after them, join it
+					parts = append(
+						[]string{strings.Join(parts[:index+2], ".")},
+						parts[index+2:]...)
+				}
+			}
+
+			if _, ok := ts.layers[parts[0]]; !ok {
+				ts.layers[parts[0]] = make(Layer)
+			}
+
+			ts.layers[parts[0]][strings.Join(parts[1:], ".")] = t
 		}
+	})
 
-		if _, ok := layers[parts[0]]; !ok {
-			layers[parts[0]] = make(Layer)
-		}
-
-		layers[parts[0]][strings.Join(parts[1:], ".")] = t
-	}
-
-	return layers
+	return ts.layers
 }
 
 type Layer map[string]*Tensor
 
 func (l Layer) size() (size uint64) {
 	for _, t := range l {
-		size += t.size()
+		size += t.Size()
 	}
 
 	return size
@@ -198,13 +176,21 @@ type Tensor struct {
 	io.WriterTo `json:"-"`
 }
 
+func (t Tensor) block() (n int) {
+	if _, err := fmt.Sscanf(t.Name, "blk.%d.", &n); err != nil {
+		return -1
+	}
+
+	return
+}
+
 func (t Tensor) blockSize() uint64 {
-	switch {
-	case t.Kind < 2:
+	switch t.Kind {
+	case 0, 1, 24, 25, 26, 27, 28, 30: // F32, F16, I8, I16, I32, I64, F64, BF16
 		return 1
-	case t.Kind < 10:
+	case 2, 3, 4, 5, 6, 7, 8, 9, 20: // Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q8_1, IQ4_NL
 		return 32
-	default:
+	default: // All others
 		return 256
 	}
 }
@@ -246,7 +232,31 @@ func (t Tensor) typeSize() uint64 {
 	case 17: // IQ2_XS
 		return 2 + 2*blockSize/8 + blockSize/32
 	case 18: // IQ3_XXS
-		return 2 + 3*blockSize/8
+		return 2 + blockSize/4 + blockSize/8
+	case 19: // IQ1_S
+		return 2 + blockSize/8 + blockSize/16
+	case 20: // IQ4_NL
+		return 2 + blockSize/2
+	case 21: // IQ3_S
+		return 2 + blockSize/4 + blockSize/8 + blockSize/32 + 4
+	case 22: // IQ2_S
+		return 2 + blockSize/4 + blockSize/16
+	case 23: // IQ4_XS
+		return 2 + 2 + blockSize/2 + blockSize/64
+	case 24: // I8
+		return 1
+	case 25: // I16
+		return 2
+	case 26: // I32
+		return 4
+	case 27: // I64
+		return 8
+	case 28: // F64
+		return 8
+	case 29: // IQ1_M
+		return blockSize/8 + blockSize/16 + blockSize/32
+	case 30: // BF16
+		return 2
 	default:
 		return 0
 	}
@@ -260,7 +270,7 @@ func (t Tensor) parameters() uint64 {
 	return count
 }
 
-func (t Tensor) size() uint64 {
+func (t Tensor) Size() uint64 {
 	return t.parameters() * t.typeSize() / t.blockSize()
 }
 
@@ -285,7 +295,35 @@ const (
 
 var ErrUnsupportedFormat = errors.New("unsupported model format")
 
-func DecodeGGML(rs io.ReadSeeker) (*GGML, int64, error) {
+func DetectGGMLType(b []byte) string {
+	switch binary.LittleEndian.Uint32(b[:4]) {
+	case FILE_MAGIC_GGML:
+		return "ggml"
+	case FILE_MAGIC_GGMF:
+		return "ggmf"
+	case FILE_MAGIC_GGJT:
+		return "ggjt"
+	case FILE_MAGIC_GGLA:
+		return "ggla"
+	case FILE_MAGIC_GGUF_LE, FILE_MAGIC_GGUF_BE:
+		return "gguf"
+	default:
+		return ""
+	}
+}
+
+// DecodeGGML decodes a GGML model from the given reader.
+//
+// It collects array values for arrays with a size less than or equal to
+// maxArraySize. If maxArraySize is 0, the default value of 1024 is used. If
+// the maxArraySize is negative, all arrays are collected.
+func DecodeGGML(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
+	if maxArraySize == 0 {
+		maxArraySize = 1024
+	}
+
+	rs = bufioutil.NewBufferedSeeker(rs, 32<<10)
+
 	var magic uint32
 	if err := binary.Read(rs, binary.LittleEndian, &magic); err != nil {
 		return nil, 0, err
@@ -298,17 +336,15 @@ func DecodeGGML(rs io.ReadSeeker) (*GGML, int64, error) {
 	case FILE_MAGIC_GGLA:
 		c = &containerGGLA{}
 	case FILE_MAGIC_GGUF_LE:
-		c = &containerGGUF{ByteOrder: binary.LittleEndian}
+		c = &containerGGUF{ByteOrder: binary.LittleEndian, maxArraySize: maxArraySize}
 	case FILE_MAGIC_GGUF_BE:
-		c = &containerGGUF{ByteOrder: binary.BigEndian}
+		c = &containerGGUF{ByteOrder: binary.BigEndian, maxArraySize: maxArraySize}
 	default:
 		return nil, 0, errors.New("invalid file magic")
 	}
 
 	model, err := c.Decode(rs)
-	if errors.Is(err, io.EOF) {
-		// noop
-	} else if err != nil {
+	if err != nil {
 		return nil, 0, err
 	}
 
@@ -324,24 +360,97 @@ func DecodeGGML(rs io.ReadSeeker) (*GGML, int64, error) {
 	}, offset, nil
 }
 
-func (llm GGML) GraphSize(context, batch uint64) (partialOffload, fullOffload uint64) {
+func (llm GGML) GraphSize(context, batch uint64) (kv, partialOffload, fullOffload uint64) {
 	embedding := llm.KV().EmbeddingLength()
 	heads := llm.KV().HeadCount()
 	headsKV := llm.KV().HeadCountKV()
-	vocab := uint64(len(llm.KV()["tokenizer.ggml.tokens"].([]any)))
+	vocab := uint64(llm.KV()["tokenizer.ggml.tokens"].(*array).size)
+
+	embeddingHeads := llm.KV().EmbeddingHeadCount()
+	embeddingHeadsK := llm.KV().EmbeddingHeadCountK()
+	embeddingHeadsV := llm.KV().EmbeddingHeadCountV()
+
+	layers := llm.Tensors().Layers()
+
+	kv = 2 * context * llm.KV().BlockCount() * (embeddingHeadsK + embeddingHeadsV) * headsKV
 
 	switch llm.KV().Architecture() {
 	case "llama":
-		fullOffload = 4 * batch * (1 + 4*embedding + context*(1+heads))
+		fullOffload = max(
+			4*batch*(1+4*embedding+context*(1+heads)),
+			4*batch*(embedding+vocab),
+		)
 
 		partialOffload = 4 * batch * embedding
 		partialOffload += max(
-			4*batch*(1+embedding+max(context, embedding))+embedding*embedding*9/16+4*context*(batch*heads+embedding/heads*headsKV),
+			4*batch*(1+embedding+max(context, embedding))+embedding*embedding*9/16+4*context*(batch*heads+embeddingHeads*headsKV),
 			4*batch*(embedding+vocab)+embedding*vocab*105/128,
 		)
-	case "gemma":
-		fullOffload = 4 * batch * (embedding + vocab)
-		partialOffload = 4*batch*(2*embedding+vocab+1) + embedding*vocab*105/128
+
+		if ffnGateExpsWeight, ok := layers["blk.0"]["ffn_gate_exps.weight"]; ok {
+			// mixtral 8x22b
+			ff := uint64(llm.KV()["llama.feed_forward_length"].(uint32))
+			partialOffload = max(
+				3*ffnGateExpsWeight.Size()+4*batch*(2*ff+headsKV+embedding+context+embeddingHeads*headsKV),
+				4*(context*batch*heads+context*embeddingHeads*headsKV+batch*1024+embeddingHeads*headsKV*batch),
+			)
+		} else if ffnGateWeight, ok := layers["blk.0"]["ffn_gate.0.weight"]; ok {
+			// mixtral 8x7b
+			ffnGateWeight1 := ffnGateWeight.Shape[1]
+			fullOffload = 4 * batch * (2 + 3*embedding + context*(1+heads) + 2*headsKV + ffnGateWeight1)
+			partialOffload = max(
+				4*batch*(3+embeddingHeads*headsKV+embedding+context*(1+heads)+ffnGateWeight1)+(embedding*embedding+3*embedding*headsKV*ffnGateWeight1)*9/16,
+				4*batch*(1+2*embedding+context*(1+heads))+embedding*(6*context*headsKV/heads+embedding*9/16),
+			)
+		}
+	case "mllama":
+		var visionTokens, tiles uint64 = 1601, 4
+
+		if crossAttentionLayers, ok := llm.KV()["mllama.attention.cross_attention_layers"].(*array); ok {
+			kv = headsKV *
+				(embeddingHeadsK + embeddingHeadsV) * // one for K, one for V
+				(2* // sizeof(float16)
+					(llm.KV().BlockCount()-uint64(crossAttentionLayers.size))* // num non-cross attention layers
+					context +
+					4* // sizeof(float32)
+						uint64(crossAttentionLayers.size)* // num cross attention layers
+						visionTokens*
+						tiles)
+		}
+
+		fullOffload = max(
+			4*batch*(2+3*embedding+embeddingHeadsK*heads+context*(1+heads)),
+			// vocab graph
+			4*batch*(embedding+vocab),
+		)
+
+		var ropeFreqsCount uint64
+		if ropeFreqs, ok := llm.Tensors().Layers()["rope_freqs"]; ok {
+			if ropeFreqsWeights, ok := ropeFreqs["weights"]; ok {
+				ropeFreqsCount = ropeFreqsWeights.parameters()
+			}
+		}
+
+		partialOffload = max(
+			4*(batch*
+				(2*embedding+1+context*(1+heads)+embeddingHeadsK*heads)+
+				ropeFreqsCount+
+				embeddingHeadsK*context*headsKV),
+			// vocab graph
+			4*batch*(embedding+vocab)+embedding*vocab*105/128,
+		)
+	case "gemma", "gemma2":
+		fullOffload = max(
+			4*batch*(embedding+vocab),
+			4*batch*(2+context+context*heads+2*embedding+2*embeddingHeadsK*heads),
+		)
+
+		partialOffload = max(
+			4*embedding*batch+embedding*vocab*105/128+4*vocab*batch,
+			4*batch*(2*embedding+1+2*embeddingHeadsK*heads+context+context*heads)+
+				4*embeddingHeadsK*context*8+
+				embedding*embeddingHeadsK*heads*9/16,
+		)
 	case "command-r":
 		fullOffload = max(
 			4*batch*(embedding+vocab),
@@ -350,7 +459,7 @@ func (llm GGML) GraphSize(context, batch uint64) (partialOffload, fullOffload ui
 
 		partialOffload = max(
 			4*batch*(embedding+vocab)+embedding*vocab*105/128,
-			4*batch*(1+2*embedding+context*(1+heads))+ 4*embedding*context+embedding*embedding*9/16,
+			4*batch*(1+2*embedding+context*(1+heads))+4*embedding*context+embedding*embedding*9/16,
 		)
 	case "qwen2":
 		fullOffload = max(
@@ -368,7 +477,52 @@ func (llm GGML) GraphSize(context, batch uint64) (partialOffload, fullOffload ui
 			4*batch*(1+4*embedding+context+context*heads),
 		)
 
-		partialOffload = 4*batch*(2*embedding+vocab) + embedding*vocab*105/128
+		partialOffload = max(
+			4*batch*(2*embedding+vocab)+embedding*vocab*105/128,
+			4*batch*(2+3*embedding+context+context*heads),
+		)
+	case "stablelm":
+		fullOffload = 4 * batch * (context*(1+heads) + 3*embedding + 2)
+		partialOffload = max(
+			4*batch*(vocab+2*embedding),
+			fullOffload,
+		)
+	case "deepseek2":
+		fullOffload = max(
+			4*batch*(3*embedding+vocab),
+			4*batch*(3*embedding+2+context*(1+headsKV)+2*embeddingHeadsK*headsKV),
+		)
+
+		partialOffload = max(
+			4*batch*(3*embedding+vocab)+embedding*vocab*105/128,
+			4*batch*(2*embedding+1+2*embeddingHeadsK*headsKV+context+context*headsKV)+4*embeddingHeadsK*context*headsKV+embedding*embeddingHeadsK*headsKV*9/16,
+		)
+	case "chatglm":
+		fullOffload = 4 * batch * (embedding + vocab)
+		partialOffload = 4*batch*(embedding+vocab) + embedding*vocab*105/128
+		if qkvBias, ok := layers["blk.0"]["attn_qkv.bias"]; ok {
+			fullOffload = max(
+				fullOffload,
+				4*batch*(2+
+					2*embedding+
+					context+
+					context*heads+
+					embeddingHeadsK*heads+
+					qkvBias.Shape[0]),
+			)
+
+			partialOffload = max(
+				partialOffload,
+				4*batch*(1+
+					2*embedding+
+					embeddingHeadsK*heads+
+					context+
+					context*heads)+
+					4*embeddingHeadsK*context+
+					4*context*embeddingHeadsK+
+					4*qkvBias.Shape[0],
+			)
+		}
 	}
 
 	return

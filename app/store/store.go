@@ -29,7 +29,6 @@ func GetID() string {
 		initStore()
 	}
 	return store.ID
-
 }
 
 func GetFirstTimeRun() bool {

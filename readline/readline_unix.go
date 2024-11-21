@@ -6,7 +6,7 @@ import (
 	"syscall"
 )
 
-func handleCharCtrlZ(fd int, termios any) (string, error) {
+func handleCharCtrlZ(fd uintptr, termios any) (string, error) {
 	t := termios.(*Termios)
 	if err := UnsetRawMode(fd, t); err != nil {
 		return "", err
