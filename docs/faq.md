@@ -32,7 +32,7 @@ When using the API, specify the `num_ctx` parameter:
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
-  "model": "llama3.1",
+  "model": "llama3.2",
   "prompt": "Why is the sky blue?",
   "options": {
     "num_ctx": 4096
@@ -232,7 +232,7 @@ curl http://localhost:11434/api/chat -d '{"model": "mistral"}'
 
 To preload a model using the CLI, use the command:
 ```shell
-ollama run llama3.1 ""
+ollama run llama3.2 ""
 ```
 
 ## How do I keep a model loaded in memory or make it unload immediately?
@@ -240,7 +240,7 @@ ollama run llama3.1 ""
 By default models are kept in memory for 5 minutes before being unloaded. This allows for quicker response times if you're making numerous requests to the LLM. If you want to immediately unload a model from memory, use the `ollama stop` command:
 
 ```shell
-ollama stop llama3.1
+ollama stop llama3.2
 ```
 
 If you're using the API, use the `keep_alive` parameter with the `/api/generate` and `/api/chat` endpoints to set the amount of time that a model stays in memory. The `keep_alive` parameter can be set to:
@@ -251,12 +251,12 @@ If you're using the API, use the `keep_alive` parameter with the `/api/generate`
 
 For example, to preload a model and leave it in memory use:
 ```shell
-curl http://localhost:11434/api/generate -d '{"model": "llama3.1", "keep_alive": -1}'
+curl http://localhost:11434/api/generate -d '{"model": "llama3.2", "keep_alive": -1}'
 ```
 
 To unload the model and free up memory use:
 ```shell
-curl http://localhost:11434/api/generate -d '{"model": "llama3.1", "keep_alive": 0}'
+curl http://localhost:11434/api/generate -d '{"model": "llama3.2", "keep_alive": 0}'
 ```
 
 Alternatively, you can change the amount of time all models are loaded into memory by setting the `OLLAMA_KEEP_ALIVE` environment variable when starting the Ollama server. The `OLLAMA_KEEP_ALIVE` variable uses the same parameter types as the `keep_alive` parameter types mentioned above. Refer to the section explaining [how to configure the Ollama server](#how-do-i-configure-ollama-server) to correctly set the environment variable.

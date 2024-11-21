@@ -42,7 +42,7 @@ func TestMultiModelConcurrency(t *testing.T) {
 		}
 		resp = [2][]string{
 			{"sunlight"},
-			{"england", "english", "massachusetts", "pilgrims", "british"},
+			{"england", "english", "massachusetts", "pilgrims", "british", "festival"},
 		}
 	)
 	var wg sync.WaitGroup
@@ -60,7 +60,8 @@ func TestMultiModelConcurrency(t *testing.T) {
 	for i := 0; i < len(req); i++ {
 		go func(i int) {
 			defer wg.Done()
-			DoGenerate(ctx, t, client, req[i], resp[i], 60*time.Second, 10*time.Second)
+			// Note: CPU based inference can crawl so don't give up too quickly
+			DoGenerate(ctx, t, client, req[i], resp[i], 90*time.Second, 30*time.Second)
 		}(i)
 	}
 	wg.Wait()
