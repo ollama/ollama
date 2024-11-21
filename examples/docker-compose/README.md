@@ -1,6 +1,6 @@
 # Ollama Service
 
-This Docker Compose setup deploys the Ollama service, using the main ollama image hosted on dockerhub. Ollama is designed to run seamlessly in a Docker environment, with health checks and volume management. 
+This Docker Compose setup deploys the Ollama service, using the main `ollama/ollama` image hosted on [Docker Hub](https://hub.docker.com/r/ollama/ollama). Ollama is designed to run seamlessly in a Docker environment, with health checks and volume management. 
 
 ## Prerequisites
 
