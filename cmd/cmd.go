@@ -561,7 +561,6 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 	request := api.PushRequest{Name: args[0], Insecure: insecure}
 
 	n := model.ParseName(args[0])
-	isOllamaHost := strings.HasSuffix(n.Host, ".ollama.ai") || strings.HasSuffix(n.Host, ".ollama.com")
 	if err := client.Push(cmd.Context(), &request, fn); err != nil {
 		if spinner != nil {
 			spinner.Stop()
@@ -576,10 +575,11 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 	spinner.Stop()
 
 	destination := n.String()
-	if isOllamaHost {
+	if strings.HasSuffix(n.Host, ".ollama.ai") || strings.HasSuffix(n.Host, ".ollama.com") {
 		destination = "https://ollama.com/" + strings.TrimSuffix(n.DisplayShortest(), ":latest")
 	}
-	fmt.Printf("\nModel pushed: %s\n", destination)
+	fmt.Printf("\nYou can find your model at:\n\n")
+	fmt.Printf("\t%s\n", destination)
 
 	return nil
 }
