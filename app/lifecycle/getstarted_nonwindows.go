@@ -2,8 +2,8 @@
 
 package lifecycle
 
-import "fmt"
+import "errors"
 
 func GetStarted() error {
-	return fmt.Errorf("GetStarted not implemented")
+	return errors.New("not implemented")
 }

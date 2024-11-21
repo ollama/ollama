@@ -1,0 +1,39 @@
+[
+  {
+    "role": "system",
+    "content": "You are a knowledgable assistant. You can answer questions and perform tasks."
+  },
+  {
+    "role": "user",
+    "content": "What's the weather like today in Paris?"
+  },
+  {
+    "role": "assistant",
+    "tool_calls": [
+      {
+        "id": "89a1e453-0bce-4de3-a456-c54bed09c520",
+        "type": "function",
+        "function": {
+          "name": "get_current_weather",
+          "arguments": {
+            "location": "Paris, France",
+            "format": "celsius"
+          }
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "tool_call_id": "89a1e453-0bce-4de3-a456-c54bed09c520",
+    "content": "22"
+  },
+  {
+    "role": "assistant",
+    "content": "The current temperature in Paris, France is 22 degrees Celsius."
+  },
+  {
+    "role": "user",
+    "content": "What's the weather like today in San Francisco and Toronto?"
+  }
+]

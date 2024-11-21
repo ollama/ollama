@@ -1,6 +1,6 @@
-{{ if .System }}<|im_start|>system
-{{ .System }}<|im_end|>
-{{ end }}{{ if .Prompt }}<|im_start|>user
-{{ .Prompt }}<|im_end|>
-{{ end }}<|im_start|>assistant
-{{ .Response }}<|im_end|>
+[INST] {{ range $index, $_ := .Messages }}
+{{- if eq .Role "system" }}{{ .Content }}
+
+{{ else if eq .Role "user" }}{{ .Content }}[/INST]
+{{- else if eq .Role "assistant" }} {{ .Content }}</s>[INST] {{ end }}
+{{- end }}

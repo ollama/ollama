@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// StatusError is an error with and HTTP status code.
+// StatusError is an error with an HTTP status code and message.
 type StatusError struct {
 	StatusCode   int
 	Status       string
@@ -47,6 +47,9 @@ type GenerateRequest struct {
 	// Prompt is the textual prompt to send to the model.
 	Prompt string `json:"prompt"`
 
+	// Suffix is the text that comes after the inserted text.
+	Suffix string `json:"suffix"`
+
 	// System overrides the model's default system message/prompt.
 	System string `json:"system"`
 
@@ -54,7 +57,7 @@ type GenerateRequest struct {
 	Template string `json:"template"`
 
 	// Context is the context parameter returned from a previous call to
-	// Generate call. It can be used to keep a short conversational memory.
+	// [Client.Generate]. It can be used to keep a short conversational memory.
 	Context []int `json:"context,omitempty"`
 
 	// Stream specifies whether the response is streaming; it is true by default.
@@ -87,27 +90,95 @@ type ChatRequest struct {
 	// Messages is the messages of the chat - can be used to keep a chat memory.
 	Messages []Message `json:"messages"`
 
-	// Stream enable streaming of returned response; true by default.
+	// Stream enables streaming of returned responses; true by default.
 	Stream *bool `json:"stream,omitempty"`
 
 	// Format is the format to return the response in (e.g. "json").
 	Format string `json:"format"`
 
 	// KeepAlive controls how long the model will stay loaded into memory
-	// followin the request.
+	// following the request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
+
+	// Tools is an optional list of tools the model has access to.
+	Tools `json:"tools,omitempty"`
 
 	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
+}
+
+type Tools []Tool
+
+func (t Tools) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
+}
+
+func (t Tool) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
 }
 
 // Message is a single message in a chat sequence. The message contains the
 // role ("system", "user", or "assistant"), the content and an optional list
 // of images.
 type Message struct {
-	Role    string      `json:"role"`
-	Content string      `json:"content"`
-	Images  []ImageData `json:"images,omitempty"`
+	Role      string      `json:"role"`
+	Content   string      `json:"content"`
+	Images    []ImageData `json:"images,omitempty"`
+	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
+}
+
+func (m *Message) UnmarshalJSON(b []byte) error {
+	type Alias Message
+	var a Alias
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+
+	*m = Message(a)
+	m.Role = strings.ToLower(m.Role)
+	return nil
+}
+
+type ToolCall struct {
+	Function ToolCallFunction `json:"function"`
+}
+
+type ToolCallFunction struct {
+	Name      string                    `json:"name"`
+	Arguments ToolCallFunctionArguments `json:"arguments"`
+}
+
+type ToolCallFunctionArguments map[string]any
+
+func (t *ToolCallFunctionArguments) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
+}
+
+type Tool struct {
+	Type     string       `json:"type"`
+	Function ToolFunction `json:"function"`
+}
+
+type ToolFunction struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Parameters  struct {
+		Type       string   `json:"type"`
+		Required   []string `json:"required"`
+		Properties map[string]struct {
+			Type        string   `json:"type"`
+			Description string   `json:"description"`
+			Enum        []string `json:"enum,omitempty"`
+		} `json:"properties"`
+	} `json:"parameters"`
+}
+
+func (t *ToolFunction) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
 }
 
 // ChatResponse is the response returned by [Client.Chat]. Its fields are
@@ -132,8 +203,8 @@ type Metrics struct {
 	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
 }
 
-// Options specified in [GenerateRequest], if you add a new option here add it
-// to the API docs also.
+// Options specified in [GenerateRequest].  If you add a new option here, also
+// add it to the API docs.
 type Options struct {
 	Runner
 
@@ -143,6 +214,7 @@ type Options struct {
 	NumPredict       int      `json:"num_predict,omitempty"`
 	TopK             int      `json:"top_k,omitempty"`
 	TopP             float32  `json:"top_p,omitempty"`
+	MinP             float32  `json:"min_p,omitempty"`
 	TFSZ             float32  `json:"tfs_z,omitempty"`
 	TypicalP         float32  `json:"typical_p,omitempty"`
 	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
@@ -159,18 +231,45 @@ type Options struct {
 
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
-	UseNUMA   bool  `json:"numa,omitempty"`
 	NumCtx    int   `json:"num_ctx,omitempty"`
 	NumBatch  int   `json:"num_batch,omitempty"`
 	NumGPU    int   `json:"num_gpu,omitempty"`
 	MainGPU   int   `json:"main_gpu,omitempty"`
 	LowVRAM   bool  `json:"low_vram,omitempty"`
-	F16KV     bool  `json:"f16_kv,omitempty"`
+	F16KV     bool  `json:"f16_kv,omitempty"` // Deprecated: This option is ignored
 	LogitsAll bool  `json:"logits_all,omitempty"`
 	VocabOnly bool  `json:"vocab_only,omitempty"`
 	UseMMap   *bool `json:"use_mmap,omitempty"`
 	UseMLock  bool  `json:"use_mlock,omitempty"`
 	NumThread int   `json:"num_thread,omitempty"`
+}
+
+// EmbedRequest is the request passed to [Client.Embed].
+type EmbedRequest struct {
+	// Model is the model name.
+	Model string `json:"model"`
+
+	// Input is the input to embed.
+	Input any `json:"input"`
+
+	// KeepAlive controls how long the model will stay loaded in memory following
+	// this request.
+	KeepAlive *Duration `json:"keep_alive,omitempty"`
+
+	Truncate *bool `json:"truncate,omitempty"`
+
+	// Options lists model-specific options.
+	Options map[string]interface{} `json:"options"`
+}
+
+// EmbedResponse is the response from [Client.Embed].
+type EmbedResponse struct {
+	Model      string      `json:"model"`
+	Embeddings [][]float32 `json:"embeddings"`
+
+	TotalDuration   time.Duration `json:"total_duration,omitempty"`
+	LoadDuration    time.Duration `json:"load_duration,omitempty"`
+	PromptEvalCount int           `json:"prompt_eval_count,omitempty"`
 }
 
 // EmbeddingRequest is the request passed to [Client.Embeddings].
@@ -197,15 +296,17 @@ type EmbeddingResponse struct {
 // CreateRequest is the request passed to [Client.Create].
 type CreateRequest struct {
 	Model     string `json:"model"`
-	Path      string `json:"path"`
 	Modelfile string `json:"modelfile"`
 	Stream    *bool  `json:"stream,omitempty"`
 	Quantize  string `json:"quantize,omitempty"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 
-	// Quantization is deprecated, see Quantize
+	// Deprecated: set the file content with Modelfile instead
+	Path string `json:"path"`
+
+	// Deprecated: use Quantize instead
 	Quantization string `json:"quantization,omitempty"`
 }
 
@@ -213,20 +314,22 @@ type CreateRequest struct {
 type DeleteRequest struct {
 	Model string `json:"model"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
 // ShowRequest is the request passed to [Client.Show].
 type ShowRequest struct {
-	Model    string `json:"model"`
-	System   string `json:"system"`
+	Model  string `json:"model"`
+	System string `json:"system"`
+
+	// Template is deprecated
 	Template string `json:"template"`
 	Verbose  bool   `json:"verbose"`
 
 	Options map[string]interface{} `json:"options"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
@@ -258,7 +361,7 @@ type PullRequest struct {
 	Password string `json:"password"`
 	Stream   *bool  `json:"stream,omitempty"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
@@ -279,7 +382,7 @@ type PushRequest struct {
 	Password string `json:"password"`
 	Stream   *bool  `json:"stream,omitempty"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
@@ -403,7 +506,7 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 	for key, val := range m {
 		opt, ok := jsonOpts[key]
 		if !ok {
-			slog.Warn("invalid option provided", "option", opt.Name)
+			slog.Warn("invalid option provided", "option", key)
 			continue
 		}
 
@@ -510,10 +613,8 @@ func DefaultOptions() Options {
 			NumGPU:    -1, // -1 here indicates that NumGPU should be set dynamically
 			NumThread: 0,  // let the runtime decide
 			LowVRAM:   false,
-			F16KV:     true,
 			UseMLock:  false,
 			UseMMap:   nil,
-			UseNUMA:   false,
 		},
 	}
 }
