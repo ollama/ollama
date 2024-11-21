@@ -351,7 +351,6 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Witsy](https://github.com/nbonamy/witsy) (An AI Desktop application avaiable for Mac/Windows/Linux) 
 - [Abbey](https://github.com/US-Artificial-Intelligence/abbey) (A configurable AI interface server with notebooks, document storage, and YouTube support)
 
-
 ### Terminal
 
 - [oterm](https://github.com/ggozad/oterm)
