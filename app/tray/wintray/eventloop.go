@@ -11,9 +11,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var (
-	quitOnce sync.Once
-)
+var quitOnce sync.Once
 
 func (t *winTray) Run() {
 	nativeLoop()
@@ -47,7 +45,6 @@ func nativeLoop() {
 		default:
 			pTranslateMessage.Call(uintptr(unsafe.Pointer(m))) //nolint:errcheck
 			pDispatchMessage.Call(uintptr(unsafe.Pointer(m)))  //nolint:errcheck
-
 		}
 	}
 }
@@ -160,8 +157,8 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 		lResult, _, _ = pDefWindowProc.Call(
 			uintptr(hWnd),
 			uintptr(message),
-			uintptr(wParam),
-			uintptr(lParam),
+			wParam,
+			lParam,
 		)
 	}
 	return

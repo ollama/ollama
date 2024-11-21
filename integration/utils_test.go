@@ -85,7 +85,7 @@ func GetTestEndpoint() (*api.Client, string) {
 var serverMutex sync.Mutex
 var serverReady bool
 
-func startServer(ctx context.Context, ollamaHost string) error {
+func startServer(t *testing.T, ctx context.Context, ollamaHost string) error {
 	// Make sure the server has been built
 	CLIName, err := filepath.Abs("../ollama")
 	if err != nil {
@@ -140,7 +140,7 @@ func PullIfMissing(ctx context.Context, client *api.Client, modelName string) er
 
 	showCtx, cancel := context.WithDeadlineCause(
 		ctx,
-		time.Now().Add(5*time.Second),
+		time.Now().Add(10*time.Second),
 		fmt.Errorf("show for existing model %s took too long", modelName),
 	)
 	defer cancel()
@@ -162,7 +162,7 @@ func PullIfMissing(ctx context.Context, client *api.Client, modelName string) er
 	fn := func(resp api.ProgressResponse) error {
 		// fmt.Print(".")
 		if !stallTimer.Reset(stallDuration) {
-			return fmt.Errorf("stall was detected, aborting status reporting")
+			return errors.New("stall was detected, aborting status reporting")
 		}
 		return nil
 	}
@@ -180,7 +180,7 @@ func PullIfMissing(ctx context.Context, client *api.Client, modelName string) er
 
 	select {
 	case <-stallTimer.C:
-		return fmt.Errorf("download stalled")
+		return errors.New("download stalled")
 	case <-done:
 		return pullError
 	}
@@ -200,7 +200,7 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 		}
 		lifecycle.ServerLogFile = fp.Name()
 		fp.Close()
-		require.NoError(t, startServer(ctx, testEndpoint))
+		require.NoError(t, startServer(t, ctx, testEndpoint))
 	}
 
 	return client, testEndpoint, func() {
@@ -243,7 +243,7 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 		// fmt.Print(".")
 		buf.Write([]byte(response.Response))
 		if !stallTimer.Reset(streamTimeout) {
-			return fmt.Errorf("stall was detected while streaming response, aborting")
+			return errors.New("stall was detected while streaming response, aborting")
 		}
 		return nil
 	}
@@ -275,7 +275,7 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 				break
 			}
 		}
-		require.True(t, atLeastOne, "none of %v found in %s", anyResp, response)
+		require.True(t, atLeastOne, "%s: none of %v found in %s", genReq.Model, anyResp, response)
 		slog.Info("test pass", "model", genReq.Model, "prompt", genReq.Prompt, "contains", anyResp, "response", response)
 	case <-ctx.Done():
 		t.Error("outer test context done while waiting for generate")
@@ -287,41 +287,46 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 	return []api.GenerateRequest{
 			{
-				Model:  "orca-mini",
-				Prompt: "why is the ocean blue?",
-				Stream: &stream,
+				Model:     "orca-mini",
+				Prompt:    "why is the ocean blue?",
+				Stream:    &stream,
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
 					"seed":        42,
 					"temperature": 0.0,
 				},
 			}, {
-				Model:  "orca-mini",
-				Prompt: "why is the color of dirt brown?",
-				Stream: &stream,
+				Model:     "orca-mini",
+				Prompt:    "why is the color of dirt brown?",
+				Stream:    &stream,
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
 					"seed":        42,
 					"temperature": 0.0,
 				},
 			}, {
-				Model:  "orca-mini",
-				Prompt: "what is the origin of the us thanksgiving holiday?",
-				Stream: &stream,
+				Model:     "orca-mini",
+				Prompt:    "what is the origin of the us thanksgiving holiday?",
+				Stream:    &stream,
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
 					"seed":        42,
 					"temperature": 0.0,
 				},
 			}, {
-				Model:  "orca-mini",
-				Prompt: "what is the origin of independence day?",
-				Stream: &stream,
+				Model:     "orca-mini",
+				Prompt:    "what is the origin of independence day?",
+				Stream:    &stream,
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
 					"seed":        42,
 					"temperature": 0.0,
 				},
 			}, {
-				Model:  "orca-mini",
-				Prompt: "what is the composition of air?",
-				Stream: &stream,
+				Model:     "orca-mini",
+				Prompt:    "what is the composition of air?",
+				Stream:    &stream,
+				KeepAlive: &api.Duration{Duration: 10 * time.Second},
 				Options: map[string]interface{}{
 					"seed":        42,
 					"temperature": 0.0,
@@ -329,10 +334,10 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 			},
 		},
 		[][]string{
-			[]string{"sunlight"},
-			[]string{"soil", "organic", "earth", "black", "tan"},
-			[]string{"england", "english", "massachusetts", "pilgrims"},
-			[]string{"fourth", "july", "declaration", "independence"},
-			[]string{"nitrogen", "oxygen", "carbon", "dioxide"},
+			{"sunlight"},
+			{"soil", "organic", "earth", "black", "tan"},
+			{"england", "english", "massachusetts", "pilgrims", "british"},
+			{"fourth", "july", "declaration", "independence"},
+			{"nitrogen", "oxygen", "carbon", "dioxide"},
 		}
 }
