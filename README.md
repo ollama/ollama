@@ -313,7 +313,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ConfiChat](https://github.com/1runeberg/confichat) (Lightweight, standalone, multi-platform, and privacy focused LLM chat interface with optional encryption)
 - [Archyve](https://github.com/nickthecook/archyve) (RAG-enabling document library)
 - [crewAI with Mesop](https://github.com/rapidarchitect/ollama-crew-mesop) (Mesop Web Interface to run crewAI with Ollama)
-- [Ollama-GUI](https://github.com/chyok/ollama-gui) (Python tkinter-based Client for Ollama)
+- [Tkinter-based client](https://github.com/chyok/ollama-gui) (Python tkinter-based Client for Ollama)
 
 ### Terminal
 
