@@ -55,7 +55,7 @@ go build -tags avx,cuda .
 
 ### ROCm
 
-Install [ROCm 5.7.1](https://rocm.docs.amd.com/en/docs-5.7.1/).
+Install [ROCm](https://rocm.docs.amd.com/en/latest/).
 
 ```shell
 make ggml_hipblas.so
@@ -77,7 +77,7 @@ go build -tags avx,cuda .
 
 ### ROCm
 
-Install [ROCm 5.7.1](https://rocm.docs.amd.com/en/docs-5.7.1/).
+Install [ROCm](https://rocm.docs.amd.com/en/latest/).
 
 ```shell
 make ggml_hipblas.dll
