@@ -4,9 +4,12 @@
 
 set -eu
 
+red="$( (/usr/bin/tput bold || :; /usr/bin/tput setaf 1 || :) 2>&-)"
+plain="$( (/usr/bin/tput sgr0 || :) 2>&-)"
+
 status() { echo ">>> $*" >&2; }
-error() { echo "ERROR $*"; exit 1; }
-warning() { echo "WARNING: $*"; }
+error() { echo "${red}ERROR:${plain} $*"; exit 1; }
+warning() { echo "${red}WARNING:${plain} $*"; }
 
 TEMP_DIR=$(mktemp -d)
 cleanup() { rm -rf $TEMP_DIR; }
@@ -161,6 +164,12 @@ EOF
 
             start_service() { $SUDO systemctl restart ollama; }
             trap start_service EXIT
+            ;;
+        *)
+            warning "systemd is not running"
+            if [ "$IS_WSL2" = true ]; then
+                warning "see https://learn.microsoft.com/en-us/windows/wsl/systemd#how-to-enable-systemd to enable it"
+            fi
             ;;
     esac
 }
