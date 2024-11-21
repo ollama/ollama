@@ -18,7 +18,6 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/parser"
-	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/readline"
 	"github.com/ollama/ollama/types/errtypes"
 )
@@ -30,26 +29,6 @@ const (
 	MultilinePrompt
 	MultilineSystem
 )
-
-func loadModel(cmd *cobra.Command, opts *runOptions) error {
-	p := progress.NewProgress(os.Stderr)
-	defer p.StopAndClear()
-
-	spinner := progress.NewSpinner("")
-	p.Add("", spinner)
-
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
-	chatReq := &api.ChatRequest{
-		Model:     opts.Model,
-		KeepAlive: opts.KeepAlive,
-	}
-
-	return client.Chat(cmd.Context(), chatReq, func(api.ChatResponse) error { return nil })
-}
 
 func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	usage := func() {
@@ -217,7 +196,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			opts.Model = args[1]
 			opts.Messages = []api.Message{}
 			fmt.Printf("Loading model '%s'\n", opts.Model)
-			if err := loadModel(cmd, &opts); err != nil {
+			if err := loadOrUnloadModel(cmd, &opts); err != nil {
 				return err
 			}
 			continue
@@ -371,7 +350,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 				switch args[1] {
 				case "info":
-					showInfo(resp)
+					_ = showInfo(resp, os.Stderr)
 				case "license":
 					if resp.License == "" {
 						fmt.Println("No license was specified for this model.")
@@ -463,13 +442,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					return err
 				}
 
-				// clear all previous images for better responses
-				if len(images) > 0 {
-					for i := range opts.Messages {
-						opts.Messages[i].Images = nil
-					}
-				}
-
 				newMessage.Content = msg
 				newMessage.Images = images
 			}
@@ -522,28 +494,22 @@ func buildModelfile(opts runOptions) string {
 }
 
 func normalizeFilePath(fp string) string {
-	// Define a map of escaped characters and their replacements
-	replacements := map[string]string{
-		"\\ ":  " ",  // Escaped space
-		"\\(":  "(",  // Escaped left parenthesis
-		"\\)":  ")",  // Escaped right parenthesis
-		"\\[":  "[",  // Escaped left square bracket
-		"\\]":  "]",  // Escaped right square bracket
-		"\\{":  "{",  // Escaped left curly brace
-		"\\}":  "}",  // Escaped right curly brace
-		"\\$":  "$",  // Escaped dollar sign
-		"\\&":  "&",  // Escaped ampersand
-		"\\;":  ";",  // Escaped semicolon
-		"\\'":  "'",  // Escaped single quote
-		"\\\\": "\\", // Escaped backslash
-		"\\*":  "*",  // Escaped asterisk
-		"\\?":  "?",  // Escaped question mark
-	}
-
-	for escaped, actual := range replacements {
-		fp = strings.ReplaceAll(fp, escaped, actual)
-	}
-	return fp
+	return strings.NewReplacer(
+		"\\ ", " ", // Escaped space
+		"\\(", "(", // Escaped left parenthesis
+		"\\)", ")", // Escaped right parenthesis
+		"\\[", "[", // Escaped left square bracket
+		"\\]", "]", // Escaped right square bracket
+		"\\{", "{", // Escaped left curly brace
+		"\\}", "}", // Escaped right curly brace
+		"\\$", "$", // Escaped dollar sign
+		"\\&", "&", // Escaped ampersand
+		"\\;", ";", // Escaped semicolon
+		"\\'", "'", // Escaped single quote
+		"\\\\", "\\", // Escaped backslash
+		"\\*", "*", // Escaped asterisk
+		"\\?", "?", // Escaped question mark
+	).Replace(fp)
 }
 
 func extractFileNames(input string) []string {
@@ -563,10 +529,9 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 	for _, fp := range filePaths {
 		nfp := normalizeFilePath(fp)
 		data, err := getImageData(nfp)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
 			fmt.Fprintf(os.Stderr, "Couldn't process image: %q\n", err)
 			return "", imgs, err
 		}
@@ -574,7 +539,7 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 		input = strings.ReplaceAll(input, fp, "")
 		imgs = append(imgs, data)
 	}
-	return input, imgs, nil
+	return strings.TrimSpace(input), imgs, nil
 }
 
 func getImageData(filePath string) ([]byte, error) {

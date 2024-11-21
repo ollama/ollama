@@ -22,7 +22,10 @@ const (
 	image  = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
 )
 
-var False = false
+var (
+	False = false
+	True  = true
+)
 
 func captureRequestMiddleware(capturedRequest any) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -68,6 +71,44 @@ func TestChatMiddleware(t *testing.T) {
 					"top_p":       1.0,
 				},
 				Stream: &False,
+			},
+		},
+		{
+			name: "chat handler with options",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "Hello"}
+				],
+				"stream":            true,
+				"max_tokens":        999,
+				"seed":              123,
+				"stop":              ["\n", "stop"],
+				"temperature":       3.0,
+				"frequency_penalty": 4.0,
+				"presence_penalty":  5.0,
+				"top_p":             6.0,
+				"response_format":   {"type": "json_object"}
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "Hello",
+					},
+				},
+				Options: map[string]any{
+					"num_predict":       999.0, // float because JSON doesn't distinguish between float and int
+					"seed":              123.0,
+					"stop":              []any{"\n", "stop"},
+					"temperature":       3.0,
+					"frequency_penalty": 4.0,
+					"presence_penalty":  5.0,
+					"top_p":             6.0,
+				},
+				Format: "json",
+				Stream: &True,
 			},
 		},
 		{
@@ -186,6 +227,8 @@ func TestChatMiddleware(t *testing.T) {
 			req, _ := http.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/json")
 
+			defer func() { capturedRequest = nil }()
+
 			resp := httptest.NewRecorder()
 			router.ServeHTTP(resp, req)
 
@@ -202,7 +245,6 @@ func TestChatMiddleware(t *testing.T) {
 			if !reflect.DeepEqual(tc.err, errResp) {
 				t.Fatal("errors did not match")
 			}
-			capturedRequest = nil
 		})
 	}
 }
@@ -233,7 +275,7 @@ func TestCompletionsMiddleware(t *testing.T) {
 				Options: map[string]any{
 					"frequency_penalty": 0.0,
 					"presence_penalty":  0.0,
-					"temperature":       1.6,
+					"temperature":       0.8,
 					"top_p":             1.0,
 					"stop":              []any{"\n", "stop"},
 				},

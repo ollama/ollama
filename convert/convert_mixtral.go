@@ -9,14 +9,14 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-type mixtral struct {
-	llama
+type mixtralModel struct {
+	llamaModel
 	NumLocalExperts    uint32 `json:"num_local_experts"`
 	NumExpertsPerToken uint32 `json:"num_experts_per_tok"`
 }
 
-func (p *mixtral) KV(t *Tokenizer) llm.KV {
-	kv := p.llama.KV(t)
+func (p *mixtralModel) KV(t *Tokenizer) llm.KV {
+	kv := p.llamaModel.KV(t)
 
 	if p.NumLocalExperts > 0 {
 		kv["llama.expert_count"] = p.NumLocalExperts
@@ -29,7 +29,7 @@ func (p *mixtral) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *mixtral) Tensors(ts []Tensor) []llm.Tensor {
+func (p *mixtralModel) Tensors(ts []Tensor) []llm.Tensor {
 	oldnew := []string{
 		"model.layers", "blk",
 		"w1", "ffn_gate_exps",
@@ -67,12 +67,12 @@ func (p *mixtral) Tensors(ts []Tensor) []llm.Tensor {
 		})
 	}
 
-	return append(out, p.llama.Tensors(ts)...)
+	return append(out, p.llamaModel.Tensors(ts)...)
 }
 
-func (p *mixtral) Replacements() []string {
+func (p *mixtralModel) Replacements() []string {
 	return append(
-		p.llama.Replacements(),
+		p.llamaModel.Replacements(),
 		"block_sparse_moe.gate", "ffn_gate_inp",
 	)
 }

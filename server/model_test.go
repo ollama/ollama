@@ -69,6 +69,7 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
 {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}
 </tool_call>`, true},
 		{"xlam", `{"tool_calls": [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]}`, true},
+		{"nemotron", `<toolcall>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]} </toolcall>`, true},
 	}
 
 	var tools []api.Tool
@@ -139,6 +140,7 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
 
 func TestParseFromFileFromLayer(t *testing.T) {
 	tempModels := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", tempModels)
 
 	file, err := os.CreateTemp(tempModels, "")
 	if err != nil {
@@ -153,7 +155,7 @@ func TestParseFromFileFromLayer(t *testing.T) {
 		t.Fatalf("failed to seek to start: %v", err)
 	}
 
-	layers, err := parseFromFile(context.Background(), file, "", func(api.ProgressResponse) {})
+	layers, err := parseFromFile(context.Background(), "model", []*layerGGML{}, file, "", func(api.ProgressResponse) {})
 	if err != nil {
 		t.Fatalf("failed to parse from file: %v", err)
 	}
@@ -166,7 +168,7 @@ func TestParseFromFileFromLayer(t *testing.T) {
 		t.Fatalf("failed to seek to start: %v", err)
 	}
 
-	layers2, err := parseFromFile(context.Background(), file, layers[0].Digest, func(api.ProgressResponse) {})
+	layers2, err := parseFromFile(context.Background(), "model", []*layerGGML{}, file, layers[0].Digest, func(api.ProgressResponse) {})
 	if err != nil {
 		t.Fatalf("failed to parse from file: %v", err)
 	}
@@ -189,6 +191,7 @@ func TestParseFromFileFromLayer(t *testing.T) {
 
 func TestParseLayerFromCopy(t *testing.T) {
 	tempModels := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", tempModels)
 
 	file2, err := os.CreateTemp(tempModels, "")
 	if err != nil {
@@ -206,12 +209,54 @@ func TestParseLayerFromCopy(t *testing.T) {
 		t.Fatalf("failed to seek to start: %v", err)
 	}
 
-	layers, err := parseFromFile(context.Background(), file2, "", func(api.ProgressResponse) {})
+	layers, err := parseFromFile(context.Background(), "model", []*layerGGML{}, file2, "", func(api.ProgressResponse) {})
 	if err != nil {
 		t.Fatalf("failed to parse from file: %v", err)
 	}
 
 	if len(layers) != 5 {
 		t.Fatalf("got %d != want 5", len(layers))
+	}
+}
+
+func TestParseObjects(t *testing.T) {
+	tests := []struct {
+		input string
+		want  []map[string]any
+	}{
+		{
+			input: `[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
+			want: []map[string]any{
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "fahrenheit", "location": "San Francisco, CA"}},
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "celsius", "location": "Toronto, Canada"}},
+			},
+		},
+		{
+			input: `<toolcall>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </toolcall>`,
+			want: []map[string]any{
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "fahrenheit", "location": "San Francisco, CA"}},
+			},
+		},
+		{
+			input: `<toolcall>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </toolcall> <toolcall>{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, ON"}} </toolcall>`,
+			want: []map[string]any{
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "fahrenheit", "location": "San Francisco, CA"}},
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "celsius", "location": "Toronto, ON"}},
+			},
+		},
+		{
+			input: `{"name": "get_current_weather", "arguments": `,
+			want:  nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			got := parseObjects(tc.input)
+
+			if diff := cmp.Diff(got, tc.want); diff != "" {
+				t.Errorf("mismatch (-got +want):\n%s", diff)
+			}
+		})
 	}
 }

@@ -12,8 +12,8 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-type llama struct {
-	Parameters
+type llamaModel struct {
+	ModelParameters
 	NLayers               uint32  `json:"n_layers"`
 	NumHiddenLayers       uint32  `json:"num_hidden_layers"`
 	NLayer                uint32  `json:"n_layer"`
@@ -44,10 +44,10 @@ type llama struct {
 	HeadDim          uint32  `json:"head_dim"`
 }
 
-var _ Converter = (*llama)(nil)
+var _ ModelConverter = (*llamaModel)(nil)
 
-func (p *llama) KV(t *Tokenizer) llm.KV {
-	kv := p.Parameters.KV(t)
+func (p *llamaModel) KV(t *Tokenizer) llm.KV {
+	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "llama"
 	kv["llama.vocab_size"] = p.VocabSize
 
@@ -120,7 +120,7 @@ func (p *llama) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *llama) Tensors(ts []Tensor) []llm.Tensor {
+func (p *llamaModel) Tensors(ts []Tensor) []llm.Tensor {
 	var out []llm.Tensor
 
 	if p.RopeScaling.factors != nil {
@@ -149,7 +149,7 @@ func (p *llama) Tensors(ts []Tensor) []llm.Tensor {
 	return out
 }
 
-func (p *llama) Replacements() []string {
+func (p *llamaModel) Replacements() []string {
 	return []string{
 		"lm_head", "output",
 		"model.embed_tokens", "token_embd",
@@ -167,7 +167,7 @@ func (p *llama) Replacements() []string {
 	}
 }
 
-func (p *llama) repack(name string, data []float32, shape []uint64) ([]float32, error) {
+func (p *llamaModel) repack(name string, data []float32, shape []uint64) ([]float32, error) {
 	var dims []int
 	for _, dim := range shape {
 		dims = append(dims, int(dim))

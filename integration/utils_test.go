@@ -275,7 +275,7 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 				break
 			}
 		}
-		require.True(t, atLeastOne, "none of %v found in %s", anyResp, response)
+		require.True(t, atLeastOne, "%s: none of %v found in %s", genReq.Model, anyResp, response)
 		slog.Info("test pass", "model", genReq.Model, "prompt", genReq.Prompt, "contains", anyResp, "response", response)
 	case <-ctx.Done():
 		t.Error("outer test context done while waiting for generate")
