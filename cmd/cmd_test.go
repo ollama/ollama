@@ -270,3 +270,102 @@ func TestDeleteHandler(t *testing.T) {
 		t.Fatalf("DeleteHandler failed: expected error about stopping non-existent model, got %v", err)
 	}
 }
+
+func TestGetModelfileName(t *testing.T) {
+	tests := []struct {
+		name          string
+		modelfileName string
+		fileExists    bool
+		expectedName  string
+		expectedErr   error
+	}{
+		{
+			name:          "no modelfile specified, no modelfile exists",
+			modelfileName: "",
+			fileExists:    false,
+			expectedName:  "",
+			expectedErr:   os.ErrNotExist,
+		},
+		{
+			name:          "no modelfile specified, modelfile exists",
+			modelfileName: "",
+			fileExists:    true,
+			expectedName:  "Modelfile",
+			expectedErr:   nil,
+		},
+		{
+			name:          "modelfile specified, no modelfile exists",
+			modelfileName: "crazyfile",
+			fileExists:    false,
+			expectedName:  "crazyfile",
+			expectedErr:   os.ErrNotExist,
+		},
+		{
+			name:          "modelfile specified, modelfile exists",
+			modelfileName: "anotherfile",
+			fileExists:    true,
+			expectedName:  "anotherfile",
+			expectedErr:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &cobra.Command{
+				Use: "fakecmd",
+			}
+			cmd.Flags().String("file", "", "path to modelfile")
+
+			var expectedFilename string
+
+			if tt.fileExists {
+				tempDir, err := os.MkdirTemp("", "modelfiledir")
+				defer os.RemoveAll(tempDir)
+				if err != nil {
+					t.Fatalf("temp modelfile dir creation failed: %v", err)
+				}
+				var fn string
+				if tt.modelfileName != "" {
+					fn = tt.modelfileName
+				} else {
+					fn = "Modelfile"
+				}
+
+				tempFile, err := os.CreateTemp(tempDir, fn)
+				if err != nil {
+					t.Fatalf("temp modelfile creation failed: %v", err)
+				}
+
+				expectedFilename = tempFile.Name()
+				err = cmd.Flags().Set("file", expectedFilename)
+				if err != nil {
+					t.Fatalf("couldn't set file flag: %v", err)
+				}
+			} else {
+				if tt.modelfileName != "" {
+					expectedFilename = tt.modelfileName
+					err := cmd.Flags().Set("file", tt.modelfileName)
+					if err != nil {
+						t.Fatalf("couldn't set file flag: %v", err)
+					}
+				}
+			}
+
+			actualFilename, actualErr := getModelfileName(cmd)
+
+			if actualFilename != expectedFilename {
+				t.Errorf("expected filename: '%s' actual filename: '%s'", expectedFilename, actualFilename)
+			}
+
+			if tt.expectedErr != os.ErrNotExist {
+				if actualErr != tt.expectedErr {
+					t.Errorf("expected err: %v actual err: %v", tt.expectedErr, actualErr)
+				}
+			} else {
+				if !os.IsNotExist(actualErr) {
+					t.Errorf("expected err: %v actual err: %v", tt.expectedErr, actualErr)
+				}
+			}
+		})
+	}
+}
