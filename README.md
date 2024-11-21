@@ -315,6 +315,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Shinkai Desktop](https://github.com/dcSpark/shinkai-apps) (Two click install Local AI using Ollama + Files + RAG)
 - [AiLama](https://github.com/zeyoyt/ailama) (A Discord User App that allows you to interact with Ollama anywhere in discord )
 - [Ollama with Google Mesop](https://github.com/rapidarchitect/ollama_mesop/) (Mesop Chat Client implementation with Ollama)
+- [R2R](https://github.com/SciPhi-AI/R2R) (Open-source RAG engine)
 - [Ollama-Kis](https://github.com/elearningshow/ollama-kis) (A simple easy to use GUI with sample custom LLM for Drivers Education) 
 - [OpenGPA](https://opengpa.org) (Open-source offline-first Enterprise Agentic Application) 
 - [Painting Droid](https://github.com/mateuszmigas/painting-droid) (Painting app with AI integrations)
