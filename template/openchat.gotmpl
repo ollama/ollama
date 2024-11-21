@@ -1,11 +1,6 @@
-{{- if .Messages }}
-{{- if .System }}GPT Correct System: {{ .System }}<|end_of_turn|>
-{{- end }}
-{{- range .Messages }}GPT Correct
-{{- if eq .Role "user" }} User:
+{{- range .Messages }}GPT4 Correct
+{{- if eq .Role "system" }} System:
+{{- else if eq .Role "user" }} User:
 {{- else if eq .Role "assistant" }} Assistant:
 {{- end }} {{ .Content }}<|end_of_turn|>
-{{- end }}GPT Correct Assistant:
-{{- else }}
-{{ .System }}<|end_of_turn|>GPT4 Correct User: {{ .Prompt }}<|end_of_turn|>GPT4 Correct Assistant: {{ .Response }}<|end_of_turn|>
-{{- end }}
+{{- end }}GPT4 Correct Assistant:

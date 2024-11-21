@@ -1,23 +1,8 @@
-{{- if .Messages }}
-{{- if .System }}System:
-{{ .System }}
-
-{{ end }}
 {{- range .Messages }}
-{{- if eq .Role "user" }}Question:
+{{- if eq .Role "system" }}System:
+{{- else if eq .Role "user" }}Question:
 {{- else if eq .Role "assistant" }}Answer:
 {{- end }}
 {{ .Content }}
 
 {{ end }}Answer:
-{{ else }}
-{{ if .System }}
-System:
-{{ .System }}
-
-{{ end }}{{ if .Prompt }}Question:
-{{ .Prompt }}
-
-{{ end }}Answer:
-{{ .Response }}
-{{- end }}

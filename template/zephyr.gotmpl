@@ -1,15 +1,3 @@
-{{- if .Messages }}
-{{- if .System }}<|system|>
-{{ .System }}</s>
-{{ end }}
 {{- range .Messages }}<|{{ .Role }}|>
 {{ .Content }}</s>
 {{ end }}<|assistant|>
-{{ else }}
-{{ if .System }}<|system|>
-{{ .System }}</s>
-{{ end }}{{ if .Prompt }}<|user|>
-{{ .Prompt }}</s>
-{{ end }}<|assistant|>
-{{ .Response }}</s>
-{{- end }}

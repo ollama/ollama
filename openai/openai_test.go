@@ -2,270 +2,560 @@ package openai
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
+
 	"github.com/ollama/ollama/api"
-	"github.com/stretchr/testify/assert"
 )
 
-func TestMiddlewareRequests(t *testing.T) {
-	type testCase struct {
-		Name     string
-		Method   string
-		Path     string
-		Handler  func() gin.HandlerFunc
-		Setup    func(t *testing.T, req *http.Request)
-		Expected func(t *testing.T, req *http.Request)
-	}
+const (
+	prefix = `data:image/jpeg;base64,`
+	image  = `iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=`
+)
 
-	var capturedRequest *http.Request
+var (
+	False = false
+	True  = true
+)
 
-	captureRequestMiddleware := func() gin.HandlerFunc {
-		return func(c *gin.Context) {
-			bodyBytes, _ := io.ReadAll(c.Request.Body)
-			c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-			capturedRequest = c.Request
-			c.Next()
+func captureRequestMiddleware(capturedRequest any) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		bodyBytes, _ := io.ReadAll(c.Request.Body)
+		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		err := json.Unmarshal(bodyBytes, capturedRequest)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusInternalServerError, "failed to unmarshal request")
 		}
+		c.Next()
 	}
+}
+
+func TestChatMiddleware(t *testing.T) {
+	type testCase struct {
+		name string
+		body string
+		req  api.ChatRequest
+		err  ErrorResponse
+	}
+
+	var capturedRequest *api.ChatRequest
 
 	testCases := []testCase{
 		{
-			Name:    "chat handler",
-			Method:  http.MethodPost,
-			Path:    "/api/chat",
-			Handler: ChatMiddleware,
-			Setup: func(t *testing.T, req *http.Request) {
-				body := ChatCompletionRequest{
-					Model:    "test-model",
-					Messages: []Message{{Role: "user", Content: "Hello"}},
-				}
-
-				bodyBytes, _ := json.Marshal(body)
-
-				req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-				req.Header.Set("Content-Type", "application/json")
-			},
-			Expected: func(t *testing.T, req *http.Request) {
-				var chatReq api.ChatRequest
-				if err := json.NewDecoder(req.Body).Decode(&chatReq); err != nil {
-					t.Fatal(err)
-				}
-
-				if chatReq.Messages[0].Role != "user" {
-					t.Fatalf("expected 'user', got %s", chatReq.Messages[0].Role)
-				}
-
-				if chatReq.Messages[0].Content != "Hello" {
-					t.Fatalf("expected 'Hello', got %s", chatReq.Messages[0].Content)
-				}
+			name: "chat handler",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "Hello"}
+				]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "Hello",
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
 			},
 		},
 		{
-			Name:    "completions handler",
-			Method:  http.MethodPost,
-			Path:    "/api/generate",
-			Handler: CompletionsMiddleware,
-			Setup: func(t *testing.T, req *http.Request) {
-				temp := float32(0.8)
-				body := CompletionRequest{
-					Model:       "test-model",
-					Prompt:      "Hello",
-					Temperature: &temp,
-					Stop:        []string{"\n", "stop"},
-				}
-
-				bodyBytes, _ := json.Marshal(body)
-
-				req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-				req.Header.Set("Content-Type", "application/json")
+			name: "chat handler with options",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "Hello"}
+				],
+				"stream":            true,
+				"max_tokens":        999,
+				"seed":              123,
+				"stop":              ["\n", "stop"],
+				"temperature":       3.0,
+				"frequency_penalty": 4.0,
+				"presence_penalty":  5.0,
+				"top_p":             6.0,
+				"response_format":   {"type": "json_object"}
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "Hello",
+					},
+				},
+				Options: map[string]any{
+					"num_predict":       999.0, // float because JSON doesn't distinguish between float and int
+					"seed":              123.0,
+					"stop":              []any{"\n", "stop"},
+					"temperature":       3.0,
+					"frequency_penalty": 4.0,
+					"presence_penalty":  5.0,
+					"top_p":             6.0,
+				},
+				Format: "json",
+				Stream: &True,
 			},
-			Expected: func(t *testing.T, req *http.Request) {
-				var genReq api.GenerateRequest
-				if err := json.NewDecoder(req.Body).Decode(&genReq); err != nil {
-					t.Fatal(err)
-				}
+		},
+		{
+			name: "chat handler with image content",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{
+						"role": "user",
+						"content": [
+							{
+								"type": "text",
+								"text": "Hello"
+							},
+							{
+								"type": "image_url",
+								"image_url": {
+									"url": "` + prefix + image + `"
+								}
+							}
+						]
+					}
+				]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "Hello",
+					},
+					{
+						Role: "user",
+						Images: []api.ImageData{
+							func() []byte {
+								img, _ := base64.StdEncoding.DecodeString(image)
+								return img
+							}(),
+						},
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
+			},
+		},
+		{
+			name: "chat handler with tools",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "What's the weather like in Paris Today?"},
+					{"role": "assistant", "tool_calls": [{"id": "id", "type": "function", "function": {"name": "get_current_weather", "arguments": "{\"location\": \"Paris, France\", \"format\": \"celsius\"}"}}]}
+				]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "What's the weather like in Paris Today?",
+					},
+					{
+						Role: "assistant",
+						ToolCalls: []api.ToolCall{
+							{
+								Function: api.ToolCallFunction{
+									Name: "get_current_weather",
+									Arguments: map[string]interface{}{
+										"location": "Paris, France",
+										"format":   "celsius",
+									},
+								},
+							},
+						},
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &False,
+			},
+		},
 
-				if genReq.Prompt != "Hello" {
-					t.Fatalf("expected 'Hello', got %s", genReq.Prompt)
-				}
-
-				if genReq.Options["temperature"] != 1.6 {
-					t.Fatalf("expected 1.6, got %f", genReq.Options["temperature"])
-				}
-
-				stopTokens, ok := genReq.Options["stop"].([]any)
-
-				if !ok {
-					t.Fatalf("expected stop tokens to be a list")
-				}
-
-				if stopTokens[0] != "\n" || stopTokens[1] != "stop" {
-					t.Fatalf("expected ['\\n', 'stop'], got %v", stopTokens)
-				}
+		{
+			name: "chat handler error forwarding",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": 2}
+				]
+			}`,
+			err: ErrorResponse{
+				Error: Error{
+					Message: "invalid message content type: float64",
+					Type:    "invalid_request_error",
+				},
 			},
 		},
 	}
-
-	gin.SetMode(gin.TestMode)
-	router := gin.New()
 
 	endpoint := func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.Name, func(t *testing.T) {
-			router = gin.New()
-			router.Use(captureRequestMiddleware())
-			router.Use(tc.Handler())
-			router.Handle(tc.Method, tc.Path, endpoint)
-			req, _ := http.NewRequest(tc.Method, tc.Path, nil)
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(ChatMiddleware(), captureRequestMiddleware(&capturedRequest))
+	router.Handle(http.MethodPost, "/api/chat", endpoint)
 
-			if tc.Setup != nil {
-				tc.Setup(t, req)
-			}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+
+			defer func() { capturedRequest = nil }()
 
 			resp := httptest.NewRecorder()
 			router.ServeHTTP(resp, req)
 
-			tc.Expected(t, capturedRequest)
+			var errResp ErrorResponse
+			if resp.Code != http.StatusOK {
+				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if capturedRequest != nil && !reflect.DeepEqual(tc.req, *capturedRequest) {
+				t.Fatal("requests did not match")
+			}
+
+			if !reflect.DeepEqual(tc.err, errResp) {
+				t.Fatal("errors did not match")
+			}
 		})
 	}
 }
 
-func TestMiddlewareResponses(t *testing.T) {
+func TestCompletionsMiddleware(t *testing.T) {
 	type testCase struct {
-		Name     string
-		Method   string
-		Path     string
-		TestPath string
-		Handler  func() gin.HandlerFunc
-		Endpoint func(c *gin.Context)
-		Setup    func(t *testing.T, req *http.Request)
-		Expected func(t *testing.T, resp *httptest.ResponseRecorder)
+		name string
+		body string
+		req  api.GenerateRequest
+		err  ErrorResponse
 	}
+
+	var capturedRequest *api.GenerateRequest
 
 	testCases := []testCase{
 		{
-			Name:     "completions handler error forwarding",
-			Method:   http.MethodPost,
-			Path:     "/api/generate",
-			TestPath: "/api/generate",
-			Handler:  CompletionsMiddleware,
-			Endpoint: func(c *gin.Context) {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
-			},
-			Setup: func(t *testing.T, req *http.Request) {
-				body := CompletionRequest{
-					Model:  "test-model",
-					Prompt: "Hello",
-				}
-
-				bodyBytes, _ := json.Marshal(body)
-
-				req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-				req.Header.Set("Content-Type", "application/json")
-			},
-			Expected: func(t *testing.T, resp *httptest.ResponseRecorder) {
-				if resp.Code != http.StatusBadRequest {
-					t.Fatalf("expected 400, got %d", resp.Code)
-				}
-
-				if !strings.Contains(resp.Body.String(), `"invalid request"`) {
-					t.Fatalf("error was not forwarded")
-				}
+			name: "completions handler",
+			body: `{
+				"model": "test-model",
+				"prompt": "Hello",
+				"temperature": 0.8,
+				"stop": ["\n", "stop"],
+				"suffix": "suffix"
+			}`,
+			req: api.GenerateRequest{
+				Model:  "test-model",
+				Prompt: "Hello",
+				Options: map[string]any{
+					"frequency_penalty": 0.0,
+					"presence_penalty":  0.0,
+					"temperature":       0.8,
+					"top_p":             1.0,
+					"stop":              []any{"\n", "stop"},
+				},
+				Suffix: "suffix",
+				Stream: &False,
 			},
 		},
 		{
-			Name:     "list handler",
-			Method:   http.MethodGet,
-			Path:     "/api/tags",
-			TestPath: "/api/tags",
-			Handler:  ListMiddleware,
-			Endpoint: func(c *gin.Context) {
-				c.JSON(http.StatusOK, api.ListResponse{
-					Models: []api.ListModelResponse{
-						{
-							Name: "Test Model",
-						},
-					},
-				})
-			},
-			Expected: func(t *testing.T, resp *httptest.ResponseRecorder) {
-				assert.Equal(t, http.StatusOK, resp.Code)
-
-				var listResp ListCompletion
-				if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
-					t.Fatal(err)
-				}
-
-				if listResp.Object != "list" {
-					t.Fatalf("expected list, got %s", listResp.Object)
-				}
-
-				if len(listResp.Data) != 1 {
-					t.Fatalf("expected 1, got %d", len(listResp.Data))
-				}
-
-				if listResp.Data[0].Id != "Test Model" {
-					t.Fatalf("expected Test Model, got %s", listResp.Data[0].Id)
-				}
+			name: "completions handler error forwarding",
+			body: `{
+				"model": "test-model",
+				"prompt": "Hello",
+				"temperature": null,
+				"stop": [1, 2],
+				"suffix": "suffix"
+			}`,
+			err: ErrorResponse{
+				Error: Error{
+					Message: "invalid type for 'stop' field: float64",
+					Type:    "invalid_request_error",
+				},
 			},
 		},
-		{
-			Name:     "retrieve model",
-			Method:   http.MethodGet,
-			Path:     "/api/show/:model",
-			TestPath: "/api/show/test-model",
-			Handler:  RetrieveMiddleware,
-			Endpoint: func(c *gin.Context) {
-				c.JSON(http.StatusOK, api.ShowResponse{
-					ModifiedAt: time.Date(2024, 6, 17, 13, 45, 0, 0, time.UTC),
-				})
-			},
-			Expected: func(t *testing.T, resp *httptest.ResponseRecorder) {
-				var retrieveResp Model
-				if err := json.NewDecoder(resp.Body).Decode(&retrieveResp); err != nil {
-					t.Fatal(err)
-				}
+	}
 
-				if retrieveResp.Object != "model" {
-					t.Fatalf("Expected object to be model, got %s", retrieveResp.Object)
-				}
-
-				if retrieveResp.Id != "test-model" {
-					t.Fatalf("Expected id to be test-model, got %s", retrieveResp.Id)
-				}
-			},
-		},
+	endpoint := func(c *gin.Context) {
+		c.Status(http.StatusOK)
 	}
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
+	router.Use(CompletionsMiddleware(), captureRequestMiddleware(&capturedRequest))
+	router.Handle(http.MethodPost, "/api/generate", endpoint)
 
 	for _, tc := range testCases {
-		t.Run(tc.Name, func(t *testing.T) {
-			router = gin.New()
-			router.Use(tc.Handler())
-			router.Handle(tc.Method, tc.Path, tc.Endpoint)
-			req, _ := http.NewRequest(tc.Method, tc.TestPath, nil)
-
-			if tc.Setup != nil {
-				tc.Setup(t, req)
-			}
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodPost, "/api/generate", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
 
 			resp := httptest.NewRecorder()
 			router.ServeHTTP(resp, req)
 
-			tc.Expected(t, resp)
+			var errResp ErrorResponse
+			if resp.Code != http.StatusOK {
+				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if capturedRequest != nil && !reflect.DeepEqual(tc.req, *capturedRequest) {
+				t.Fatal("requests did not match")
+			}
+
+			if !reflect.DeepEqual(tc.err, errResp) {
+				t.Fatal("errors did not match")
+			}
+
+			capturedRequest = nil
 		})
+	}
+}
+
+func TestEmbeddingsMiddleware(t *testing.T) {
+	type testCase struct {
+		name string
+		body string
+		req  api.EmbedRequest
+		err  ErrorResponse
+	}
+
+	var capturedRequest *api.EmbedRequest
+
+	testCases := []testCase{
+		{
+			name: "embed handler single input",
+			body: `{
+				"input": "Hello",
+				"model": "test-model"
+			}`,
+			req: api.EmbedRequest{
+				Input: "Hello",
+				Model: "test-model",
+			},
+		},
+		{
+			name: "embed handler batch input",
+			body: `{
+				"input": ["Hello", "World"],
+				"model": "test-model"
+			}`,
+			req: api.EmbedRequest{
+				Input: []any{"Hello", "World"},
+				Model: "test-model",
+			},
+		},
+		{
+			name: "embed handler error forwarding",
+			body: `{
+				"model": "test-model"
+			}`,
+			err: ErrorResponse{
+				Error: Error{
+					Message: "invalid input",
+					Type:    "invalid_request_error",
+				},
+			},
+		},
+	}
+
+	endpoint := func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	}
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(EmbeddingsMiddleware(), captureRequestMiddleware(&capturedRequest))
+	router.Handle(http.MethodPost, "/api/embed", endpoint)
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodPost, "/api/embed", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+
+			var errResp ErrorResponse
+			if resp.Code != http.StatusOK {
+				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if capturedRequest != nil && !reflect.DeepEqual(tc.req, *capturedRequest) {
+				t.Fatal("requests did not match")
+			}
+
+			if !reflect.DeepEqual(tc.err, errResp) {
+				t.Fatal("errors did not match")
+			}
+
+			capturedRequest = nil
+		})
+	}
+}
+
+func TestListMiddleware(t *testing.T) {
+	type testCase struct {
+		name     string
+		endpoint func(c *gin.Context)
+		resp     string
+	}
+
+	testCases := []testCase{
+		{
+			name: "list handler",
+			endpoint: func(c *gin.Context) {
+				c.JSON(http.StatusOK, api.ListResponse{
+					Models: []api.ListModelResponse{
+						{
+							Name:       "test-model",
+							ModifiedAt: time.Unix(int64(1686935002), 0).UTC(),
+						},
+					},
+				})
+			},
+			resp: `{
+				"object": "list",
+				"data": [
+					{
+						"id": "test-model",
+						"object": "model",
+						"created": 1686935002,
+						"owned_by": "library"
+					}
+				]
+			}`,
+		},
+		{
+			name: "list handler empty output",
+			endpoint: func(c *gin.Context) {
+				c.JSON(http.StatusOK, api.ListResponse{})
+			},
+			resp: `{
+				"object": "list",
+				"data": null
+			}`,
+		},
+	}
+
+	gin.SetMode(gin.TestMode)
+
+	for _, tc := range testCases {
+		router := gin.New()
+		router.Use(ListMiddleware())
+		router.Handle(http.MethodGet, "/api/tags", tc.endpoint)
+		req, _ := http.NewRequest(http.MethodGet, "/api/tags", nil)
+
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+
+		var expected, actual map[string]any
+		err := json.Unmarshal([]byte(tc.resp), &expected)
+		if err != nil {
+			t.Fatalf("failed to unmarshal expected response: %v", err)
+		}
+
+		err = json.Unmarshal(resp.Body.Bytes(), &actual)
+		if err != nil {
+			t.Fatalf("failed to unmarshal actual response: %v", err)
+		}
+
+		if !reflect.DeepEqual(expected, actual) {
+			t.Errorf("responses did not match\nExpected: %+v\nActual: %+v", expected, actual)
+		}
+	}
+}
+
+func TestRetrieveMiddleware(t *testing.T) {
+	type testCase struct {
+		name     string
+		endpoint func(c *gin.Context)
+		resp     string
+	}
+
+	testCases := []testCase{
+		{
+			name: "retrieve handler",
+			endpoint: func(c *gin.Context) {
+				c.JSON(http.StatusOK, api.ShowResponse{
+					ModifiedAt: time.Unix(int64(1686935002), 0).UTC(),
+				})
+			},
+			resp: `{
+				"id":"test-model",
+				"object":"model",
+				"created":1686935002,
+				"owned_by":"library"}
+			`,
+		},
+		{
+			name: "retrieve handler error forwarding",
+			endpoint: func(c *gin.Context) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "model not found"})
+			},
+			resp: `{
+				"error": {
+				  "code": null,
+				  "message": "model not found",
+				  "param": null,
+				  "type": "api_error"
+				}
+			}`,
+		},
+	}
+
+	gin.SetMode(gin.TestMode)
+
+	for _, tc := range testCases {
+		router := gin.New()
+		router.Use(RetrieveMiddleware())
+		router.Handle(http.MethodGet, "/api/show/:model", tc.endpoint)
+		req, _ := http.NewRequest(http.MethodGet, "/api/show/test-model", nil)
+
+		resp := httptest.NewRecorder()
+		router.ServeHTTP(resp, req)
+
+		var expected, actual map[string]any
+		err := json.Unmarshal([]byte(tc.resp), &expected)
+		if err != nil {
+			t.Fatalf("failed to unmarshal expected response: %v", err)
+		}
+
+		err = json.Unmarshal(resp.Body.Bytes(), &actual)
+		if err != nil {
+			t.Fatalf("failed to unmarshal actual response: %v", err)
+		}
+
+		if !reflect.DeepEqual(expected, actual) {
+			t.Errorf("responses did not match\nExpected: %+v\nActual: %+v", expected, actual)
+		}
 	}
 }

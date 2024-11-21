@@ -1,22 +1,11 @@
-{{- if .Messages }}
-{{- if .System }}### System:
-{{ .System }}
-
-{{ end }}
 {{- range .Messages }}
-{{- if eq .Role "user" }}### User:
-{{ .Content }}
-{{ else if eq .Role "assistant" }}### Assistant:
+{{- if eq .Role "system" }}### System:
+{{- else if eq .Role "user" }}### User:
+{{- else if eq .Role "assistant" }}### Assistant:
 {{ .Content }}</s>
-{{ end }}
-{{ end }}### Assistant:
-{{ else }}
-{{ if .System }}### System:
-{{ .System }}
 
-{{ end }}{{ if .Prompt }}### User:
-{{ .Prompt }}
-
-{{ end }}### Assistant:
-{{ .Response }}
+{{ continue }}
 {{- end }}
+{{ .Content }}
+
+{{ end }}### Assistant:
