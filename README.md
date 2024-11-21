@@ -340,6 +340,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [VT](https://github.com/vinhnx/vt.ai) (A minimal multimodal AI chat app, with dynamic conversation routing. Supports local models via Ollama)
 - [Witsy](https://github.com/nbonamy/witsy) (An AI Desktop application avaiable for Mac/Windows/Linux) 
 - [Abbey](https://github.com/US-Artificial-Intelligence/abbey) (A configurable AI interface server with notebooks, document storage, and YouTube support)
+- [GPTLocalhost (Word Add-in)](https://gptlocalhost.com/demo#ollama) (Use Ollama in Microsoft Word locally. Alternative to Microsoft's [Colipot in Word](https://support.microsoft.com/en-us/copilot-word))
 
 ### Terminal
 
