@@ -1,5 +1,11 @@
 name: test
 
+env:
+  ROCM_WINDOWS_URL: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q3-WinSvr2022-For-HIP.exe
+  MSYS2_URL: https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-x86_64-20240727.exe
+  CUDA_12_WINDOWS_URL: https://developer.download.nvidia.com/compute/cuda/12.4.0/local_installers/cuda_12.4.0_551.61_windows.exe
+  CUDA_12_WINDOWS_VER: 12.4
+
 concurrency:
   # For PRs, later CI runs preempt previous ones. e.g. a force push on a PR
   # cancels running CI jobs and starts all new ones.
@@ -21,9 +27,7 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      GENERATE: ${{ steps.changes.outputs.GENERATE }}
-      GENERATE_CUDA: ${{ steps.changes.outputs.GENERATE_CUDA }}
-      GENERATE_ROCM: ${{ steps.changes.outputs.GENERATE_ROCM }}
+      RUNNERS: ${{ steps.changes.outputs.RUNNERS }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,14 +42,167 @@ jobs:
           }
 
           {
-            echo GENERATE=$(changed 'llm/llama.cpp' 'llm/patches/**' 'llm/ext_server/**' 'llm/generate/**')
-            echo GENERATE_CUDA=$(changed 'llm/llama.cpp' 'llm/patches/**' 'llm/ext_server/**' 'llm/generate/**')
-            echo GENERATE_ROCM=$(changed 'llm/llama.cpp' 'llm/patches/**' 'llm/ext_server/**' 'llm/generate/**')
+            echo RUNNERS=$(changed 'llama/**')
           } >>$GITHUB_OUTPUT
 
-  generate:
+  runners-linux-cuda:
     needs: [changes]
-    if: ${{ needs.changes.outputs.GENERATE == 'True' }}
+    if: ${{ needs.changes.outputs.RUNNERS == 'True' }}
+    strategy:
+      matrix:
+        cuda-version:
+          - '11.8.0'
+    runs-on: linux
+    container: nvidia/cuda:${{ matrix.cuda-version }}-devel-ubuntu20.04
+    steps:
+      - run: |
+          apt-get update && apt-get install -y git build-essential curl
+        env:
+          DEBIAN_FRONTEND: noninteractive
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v4
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go get ./...
+      - run: |
+          git config --global --add safe.directory /__w/ollama/ollama
+          cores=$(grep '^core id' /proc/cpuinfo |sort -u|wc -l)
+          make -j $cores cuda_v11
+  runners-linux-rocm:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.RUNNERS == 'True' }}
+    strategy:
+      matrix:
+        rocm-version:
+          - '6.1.2'
+    runs-on: linux
+    container: rocm/dev-ubuntu-20.04:${{ matrix.rocm-version }}
+    steps:
+      - run: |
+          apt-get update && apt-get install -y git build-essential curl rocm-libs
+        env:
+          DEBIAN_FRONTEND: noninteractive
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v4
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go get ./...
+      - run: |
+          git config --global --add safe.directory /__w/ollama/ollama
+          cores=$(grep '^core id' /proc/cpuinfo |sort -u|wc -l)
+          make -j $cores rocm
+
+  # ROCm generation step
+  runners-windows-rocm:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.RUNNERS == 'True' }}
+    runs-on: windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set make jobs default
+        run: |
+          echo "MAKEFLAGS=--jobs=$((Get-ComputerInfo -Property CsProcessors).CsProcessors.NumberOfCores)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # ROCM installation steps
+      - name: 'Cache ROCm installer'
+        id: cache-rocm
+        uses: actions/cache@v4
+        with:
+          path: rocm-install.exe
+          key: ${{ env.ROCM_WINDOWS_URL }}
+      - name: 'Conditionally Download ROCm'
+        if: steps.cache-rocm.outputs.cache-hit != 'true'
+        run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest -Uri "${env:ROCM_WINDOWS_URL}" -OutFile "rocm-install.exe"
+      - name: 'Install ROCm'
+        run: |
+          Start-Process "rocm-install.exe" -ArgumentList '-install' -NoNewWindow -Wait
+      - name: 'Verify ROCm'
+        run: |
+          & 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' --version
+          echo "HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path | select -first 1)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Add msys paths
+        run: |
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang") -NoNewWindow -Wait
+
+      - name: make rocm runner
+        run: |
+          import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
+          if (!(gcc --version | select-string -quiet clang)) { throw "wrong gcc compiler detected - must be clang" }
+          make -C llama print-HIP_PATH print-HIP_LIB_DIR
+          make rocm
+
+  # CUDA generation step
+  runners-windows-cuda:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.RUNNERS == 'True' }}
+    runs-on: windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Set make jobs default
+        run: |
+          echo "MAKEFLAGS=--jobs=$((Get-ComputerInfo -Property CsProcessors).CsProcessors.NumberOfCores)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      # CUDA installation steps
+      - name: 'Cache CUDA installer'
+        id: cache-cuda
+        uses: actions/cache@v4
+        with:
+          path: cuda-install.exe
+          key: ${{ env.CUDA_12_WINDOWS_URL }}
+      - name: 'Conditionally Download CUDA'
+        if: steps.cache-cuda.outputs.cache-hit != 'true'
+        run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest -Uri "${env:CUDA_12_WINDOWS_URL}" -OutFile "cuda-install.exe"
+      - name: 'Install CUDA'
+        run: |
+          $subpackages = @("cudart", "nvcc", "cublas", "cublas_dev") | foreach-object {"${_}_${{ env.CUDA_12_WINDOWS_VER }}"}
+          Start-Process "cuda-install.exe" -ArgumentList (@("-s") + $subpackages) -NoNewWindow -Wait
+      - name: 'Verify CUDA'
+        run: |
+          & (resolve-path "c:\Program Files\NVIDIA*\CUDA\v*\bin\nvcc.exe")[0] --version
+          $cudaPath=((resolve-path "c:\Program Files\NVIDIA*\CUDA\v*\bin\nvcc.exe")[0].path | split-path | split-path)
+          $cudaVer=($cudaPath | split-path -leaf ) -replace 'v(\d+).(\d+)', '$1_$2' 
+          echo "$cudaPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "CUDA_PATH=$cudaPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "CUDA_PATH_V${cudaVer}=$cudaPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "CUDA_PATH_VX_Y=CUDA_PATH_V${cudaVer}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Add msys paths
+        run: |
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang") -NoNewWindow -Wait
+      - name: make cuda runner
+        run: |
+          import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
+          if (!(gcc --version | select-string -quiet clang)) { throw "wrong gcc compiler detected - must be clang" }
+          make cuda_v$(($env:CUDA_PATH | split-path -leaf) -replace 'v(\d+).*', '$1')
+
+  runners-cpu:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.RUNNERS == 'True' }}
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-2019]
@@ -58,6 +215,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       GOARCH: ${{ matrix.arch }}
+      ARCH: ${{ matrix.arch }}
       CGO_ENABLED: '1'
     steps:
       - uses: actions/checkout@v4
@@ -65,153 +223,31 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go get ./...
-      - run: |
+      - name: Add msys paths
+        if: ${{ startsWith(matrix.os, 'windows-') }}
+        run: |
+          echo "c:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install msys2 tools
+        if: ${{ startsWith(matrix.os, 'windows-') }}
+        run: |
+          Start-Process "c:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang") -NoNewWindow -Wait
+      - name: 'Build Windows Go Runners'
+        if: ${{ startsWith(matrix.os, 'windows-') }}
+        run: |
           $gopath=(get-command go).source | split-path -parent
           $gccpath=(get-command gcc).source | split-path -parent
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
+          import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
           $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
           $env:PATH="$gopath;$gccpath;$env:PATH"
           echo $env:PATH
-          go generate -x ./...
-        if: ${{ startsWith(matrix.os, 'windows-') }}
-        name: 'Windows Go Generate'
-      - run: go generate -x ./...
+          if (!(gcc --version | select-string -quiet clang)) { throw "wrong gcc compiler detected - must be clang" }
+          make -j 4      
+      - name: 'Build Unix Go Runners'
         if: ${{ ! startsWith(matrix.os, 'windows-') }}
-        name: 'Unix Go Generate'
+        run: make -j 4
       - run: go build .
-  generate-cuda:
-    needs: [changes]
-    if: ${{ needs.changes.outputs.GENERATE_CUDA == 'True' }}
-    strategy:
-      matrix:
-        cuda-version:
-          - '11.8.0'
-    runs-on: linux
-    container: nvidia/cuda:${{ matrix.cuda-version }}-devel-ubuntu20.04
-    steps:
-      - run: |
-          apt-get update && apt-get install -y git build-essential curl
-          curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.28.1/cmake-3.28.1-linux-x86_64.tar.gz \
-            | tar -zx -C /usr --strip-components 1
-        env:
-          DEBIAN_FRONTEND: noninteractive
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v4
-        with:
-          go-version-file: go.mod
-          cache: true
-      - run: go get ./...
-      - run: |
-          git config --global --add safe.directory /__w/ollama/ollama
-          go generate -x ./...
-        env:
-          OLLAMA_SKIP_CPU_GENERATE: '1'
-  generate-rocm:
-    needs: [changes]
-    if: ${{ needs.changes.outputs.GENERATE_ROCM == 'True' }}
-    strategy:
-      matrix:
-        rocm-version:
-          - '6.1.2'
-    runs-on: linux
-    container: rocm/dev-ubuntu-20.04:${{ matrix.rocm-version }}
-    steps:
-      - run: |
-          apt-get update && apt-get install -y git build-essential curl rocm-libs
-          curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.28.1/cmake-3.28.1-linux-x86_64.tar.gz \
-            | tar -zx -C /usr --strip-components 1
-        env:
-          DEBIAN_FRONTEND: noninteractive
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v4
-        with:
-          go-version-file: go.mod
-          cache: true
-      - run: go get ./...
-      - run: |
-          git config --global --add safe.directory /__w/ollama/ollama
-          go generate -x ./...
-        env:
-          OLLAMA_SKIP_CPU_GENERATE: '1'
-
-  # ROCm generation step
-  generate-windows-rocm:
-    needs: [changes]
-    if: ${{ needs.changes.outputs.GENERATE_ROCM == 'True' }}
-    runs-on: windows
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: 'Install ROCm'
-        run: |
-          $ErrorActionPreference = "Stop"
-          write-host "downloading AMD HIP Installer"
-          Invoke-WebRequest -Uri "https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q3-WinSvr2022-For-HIP.exe" -OutFile "${env:RUNNER_TEMP}\rocm-install.exe"
-          write-host "Installing AMD HIP"
-          Start-Process "${env:RUNNER_TEMP}\rocm-install.exe" -ArgumentList '-install' -NoNewWindow -Wait
-          write-host "Completed AMD HIP"
-      - name: 'Verify ROCm'
-        run: |
-          & 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' --version
-      - run: go get ./...
-      - run: |
-          $gopath=(get-command go).source | split-path -parent
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
-          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
-          $env:PATH="$gopath;$env:PATH"
-          $env:OLLAMA_SKIP_CPU_GENERATE="1"
-          $env:HIP_PATH=$(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | split-path | split-path)
-          go generate -x ./...
-        name: go generate
-        env:
-          OLLAMA_SKIP_CPU_GENERATE: '1'
-
-  # CUDA generation step
-  generate-windows-cuda:
-    needs: [changes]
-    if: ${{ needs.changes.outputs.GENERATE_CUDA == 'True' }}
-    runs-on: windows
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: 'Install CUDA'
-        run: |
-          $ErrorActionPreference = "Stop"
-          write-host "downloading CUDA Installer"
-          Invoke-WebRequest -Uri "https://developer.download.nvidia.com/compute/cuda/11.3.1/local_installers/cuda_11.3.1_465.89_win10.exe" -OutFile "${env:RUNNER_TEMP}\cuda-install.exe"
-          write-host "Installing CUDA"
-          Start-Process "${env:RUNNER_TEMP}\cuda-install.exe" -ArgumentList '-s' -NoNewWindow -Wait
-          write-host "Completed CUDA"
-          $cudaPath=((resolve-path "c:\Program Files\NVIDIA*\CUDA\v*\bin\nvcc.exe")[0].path | split-path | split-path)
-          $cudaVer=($cudaPath | split-path -leaf ) -replace 'v(\d+).(\d+)', '$1_$2' 
-          echo "$cudaPath\bin" >> $env:GITHUB_PATH
-          echo "CUDA_PATH=$cudaPath" >> $env:GITHUB_ENV
-          echo "CUDA_PATH_V${cudaVer}=$cudaPath" >> $env:GITHUB_ENV
-          echo "CUDA_PATH_VX_Y=CUDA_PATH_V${cudaVer}" >> $env:GITHUB_ENV
-      - name: 'Verify CUDA'
-        run: nvcc -V
-      - run: go get ./...
-      - name: go generate
-        run: |
-          $gopath=(get-command go).source | split-path -parent
-          $cudabin=(get-command nvcc).source | split-path
-          & "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Launch-VsDevShell.ps1"
-          cd $env:GITHUB_WORKSPACE
-          $env:CMAKE_SYSTEM_VERSION="10.0.22621.0"
-          $env:PATH="$gopath;$cudabin;$env:PATH"
-          $env:OLLAMA_SKIP_CPU_GENERATE="1"
-          go generate -x ./...
-        env:
-          OLLAMA_SKIP_CPU_GENERATE: '1'
 
   lint:
     strategy:
@@ -245,7 +281,7 @@ jobs:
         shell: bash
       - uses: golangci/golangci-lint-action@v6
         with:
-          args: --timeout 8m0s -v
+          args: --timeout 10m0s -v
   test:
     strategy:
       matrix:
@@ -260,9 +296,6 @@ jobs:
     env:
       GOARCH: ${{ matrix.arch }}
       CGO_ENABLED: '1'
-      OLLAMA_CPU_TARGET: 'static'
-      OLLAMA_SKIP_CPU_GENERATE: '1'
-      OLLAMA_SKIP_METAL_GENERATE: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -277,6 +310,17 @@ jobs:
             arm64) echo ARCH=arm64 ;;
           esac >>$GITHUB_ENV
         shell: bash
-      - run: go generate ./...
       - run: go build
       - run: go test -v ./...
+
+  patches:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.RUNNERS == 'True' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Verify patches carry all the changes
+        run: |
+          make apply-patches sync && git diff --compact-summary --exit-code llama
