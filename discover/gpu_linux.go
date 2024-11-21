@@ -3,9 +3,11 @@ package discover
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/ollama/ollama/format"
@@ -109,6 +111,10 @@ func GetCPUDetails() ([]CPU, error) {
 	if err != nil {
 		return nil, err
 	}
+	return linuxCPUDetails(file)
+}
+
+func linuxCPUDetails(file io.Reader) ([]CPU, error) {
 	reColumns := regexp.MustCompile("\t+: ")
 	scanner := bufio.NewScanner(file)
 	cpuInfos := []linuxCpuInfo{}
@@ -130,6 +136,9 @@ func GetCPUDetails() ([]CPU, error) {
 			cpuInfos = append(cpuInfos, *cpu)
 			cpu = &linuxCpuInfo{}
 		}
+	}
+	if cpu.ID != "" {
+		cpuInfos = append(cpuInfos, *cpu)
 	}
 
 	// Process the sockets/cores/threads
@@ -177,10 +186,14 @@ func GetCPUDetails() ([]CPU, error) {
 			s.EfficiencyCoreCount = efficiencyCoreCount
 		}
 	}
-
-	result := []CPU{}
-	for _, c := range socketByID {
-		result = append(result, *c)
+	keys := make([]string, 0, len(socketByID))
+	result := make([]CPU, 0, len(socketByID))
+	for k := range socketByID {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		result = append(result, *socketByID[k])
 	}
 	return result, nil
 }

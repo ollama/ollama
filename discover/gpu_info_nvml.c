@@ -17,7 +17,7 @@ void nvml_init(char *nvml_lib_path, nvml_init_resp_t *resp) {
   } l[] = {
       {"nvmlInit_v2", (void *)&resp->ch.nvmlInit_v2},
       {"nvmlShutdown", (void *)&resp->ch.nvmlShutdown},
-      {"nvmlDeviceGetHandleByIndex", (void *)&resp->ch.nvmlDeviceGetHandleByIndex},
+      {"nvmlDeviceGetHandleByUUID", (void *)&resp->ch.nvmlDeviceGetHandleByUUID},
       {"nvmlDeviceGetMemoryInfo", (void *)&resp->ch.nvmlDeviceGetMemoryInfo},
       {NULL, NULL},
   };
@@ -67,20 +67,20 @@ void nvml_init(char *nvml_lib_path, nvml_init_resp_t *resp) {
 }
 
 
-void nvml_get_free(nvml_handle_t h, int device_id, uint64_t *free, uint64_t *total, uint64_t *used) {
+void nvml_get_free(nvml_handle_t h, char *uuid, uint64_t *free, uint64_t *total, uint64_t *used) {
     nvmlDevice_t device;
     nvmlMemory_t memInfo = {0};
     nvmlReturn_t ret;
-    ret = (*h.nvmlDeviceGetHandleByIndex)(device_id, &device);
+    ret = (*h.nvmlDeviceGetHandleByUUID)((const char *)(uuid), &device);
     if (ret != NVML_SUCCESS) {
-        LOG(1, "unable to get device handle %d: %d", device_id, ret);
+        LOG(1, "unable to get device handle %s: %d", uuid, ret);
         *free = 0;
         return;
     }
 
     ret = (*h.nvmlDeviceGetMemoryInfo)(device, &memInfo);
     if (ret != NVML_SUCCESS) {
-        LOG(1, "device memory info lookup failure %d: %d", device_id, ret);
+        LOG(1, "device memory info lookup failure %s: %d", uuid, ret);
         *free = 0;
         return;
     }

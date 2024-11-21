@@ -19,7 +19,7 @@ docker buildx build \
         --platform=${PLATFORM} \
         ${OLLAMA_COMMON_BUILD_ARGS} \
         --target dist \
-        -f ${DOCKERFILE_DIR}Dockerfile \
+        -f Dockerfile \
         .
 
 # buildx behavior changes for single vs. multiplatform

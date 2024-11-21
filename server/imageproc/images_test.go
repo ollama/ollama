@@ -120,6 +120,78 @@ func TestGetOptimalTiledCanvas(t *testing.T) {
 			TileSize:      560,
 			Expected:      image.Point{1120, 1120},
 		},
+		{
+			ImageSize:     image.Point{800, 600},
+			MaxImageTiles: 4,
+			TileSize:      560,
+			Expected:      image.Point{1120, 1120},
+		},
+		{
+			ImageSize:     image.Point{640, 480},
+			MaxImageTiles: 4,
+			TileSize:      560,
+			Expected:      image.Point{1120, 560},
+		},
+		{
+			ImageSize:     image.Point{320, 200},
+			MaxImageTiles: 4,
+			TileSize:      560,
+			Expected:      image.Point{560, 560},
+		},
+		{
+			ImageSize:     image.Point{1320, 200},
+			MaxImageTiles: 4,
+			TileSize:      560,
+			Expected:      image.Point{1680, 560},
+		},
+		{
+			ImageSize:     image.Point{2000, 200},
+			MaxImageTiles: 4,
+			TileSize:      560,
+			Expected:      image.Point{2240, 560},
+		},
+		{
+			ImageSize:     image.Point{10000, 200},
+			MaxImageTiles: 4,
+			TileSize:      560,
+			Expected:      image.Point{2240, 560},
+		},
+		{
+			ImageSize:     image.Point{480, 640},
+			MaxImageTiles: 4,
+			TileSize:      560,
+			Expected:      image.Point{560, 1120},
+		},
+		{
+			ImageSize:     image.Point{200, 320},
+			MaxImageTiles: 4,
+			TileSize:      560,
+			Expected:      image.Point{560, 560},
+		},
+		{
+			ImageSize:     image.Point{200, 1320},
+			MaxImageTiles: 4,
+			TileSize:      560,
+			Expected:      image.Point{560, 1680},
+		},
+		{
+			ImageSize:     image.Point{200, 2000},
+			MaxImageTiles: 4,
+			TileSize:      560,
+			Expected:      image.Point{560, 2240},
+		},
+		{
+			ImageSize:     image.Point{200, 10000},
+			MaxImageTiles: 4,
+			TileSize:      560,
+			Expected:      image.Point{560, 2240},
+		},
+		{
+			ImageSize:     image.Point{10000, 10000},
+			MaxImageTiles: 4,
+			TileSize:      560,
+			Expected:      image.Point{1120, 1120},
+		},
 	}
 
 	for _, c := range cases {

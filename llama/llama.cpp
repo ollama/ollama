@@ -2699,7 +2699,7 @@ struct llama_hparams {
         GGML_ABORT("fatal error");
     }
 
-    bool cross_attention_layer(uint32_t il) const {
+    bool cross_attention_layers(uint32_t il) const {
         return std::find(cross_attn_layers.begin(), cross_attn_layers.end(), il) != cross_attn_layers.end();
     }
 };
@@ -2731,6 +2731,9 @@ struct llama_cparams {
     bool offload_kqv;
     bool flash_attn;
     bool no_perf;
+    // TODO (jmorganca): this should most likely be passed in as part of a batch
+    // and not set on the context for all batches.
+    bool cross_attn = false;
 
     enum llama_pooling_type pooling_type;
 
@@ -3542,10 +3545,6 @@ struct llama_context {
     struct ggml_tensor * inp_embd_enc;      // F32 [n_embd, n_outputs_enc]
     struct ggml_tensor * inp_KQ_mask_cross; // F32 [n_outputs_enc, n_batch]
 
-    // TODO (jmorganca): this should most likely be passed in as part of a batch
-    // and not set on the context for all batches.
-    float * cross_attn_state = nullptr;
-    bool cross_attn_state_first_pass = true;
     struct ggml_tensor * inp_cross_attn_state; // F32 [4, n_embd, 1061]
 };
 
@@ -3782,7 +3781,7 @@ static bool llama_kv_cache_init(
 
     for (int i = 0; i < (int) n_layer; i++) {
         // for cross attention layers
-        if (model.arch == LLM_ARCH_MLLAMA && hparams.cross_attention_layer(i)) {
+        if (model.arch == LLM_ARCH_MLLAMA && hparams.cross_attention_layers(i)) {
             struct ggml_context * ctx = offload ? ctx_map.at(model.buft_layer[i].buft) : cache.ctxs.front();
             ggml_tensor * k = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, hparams.n_embd_head_k, 6404, hparams.n_head_kv(i));
             ggml_tensor * v = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, hparams.n_embd_head_v, 6404, hparams.n_head_kv(i));
@@ -7389,7 +7388,7 @@ static bool llm_load_tensors(
 
                         auto & layer = model.layers[i];
 
-                        if (hparams.cross_attention_layer(i)) {
+                        if (hparams.cross_attention_layers(i)) {
                             layer.cross_attn_k_norm = ml.create_tensor(ctx_split, tn(LLM_TENSOR_CROSS_ATTN_K_NORM,   "weight", i), {128});
                             layer.cross_attn_k_proj = ml.create_tensor(ctx_split, tn(LLM_TENSOR_CROSS_ATTN_K_PROJ,   "weight", i), {n_embd, 1024});
                             layer.cross_attn_o_proj = ml.create_tensor(ctx_split, tn(LLM_TENSOR_CROSS_ATTN_O_PROJ,   "weight", i), {n_embd, n_embd});
@@ -9346,7 +9345,7 @@ static struct ggml_tensor * llm_build_inp_embd(
 
         inpL = ggml_get_rows(ctx, tok_embd, lctx.inp_tokens);
     } else {
-        lctx.inp_embd = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, batch.n_tokens);
+       lctx.inp_embd = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_embd, batch.n_tokens);
         inpL = lctx.inp_embd;
         ggml_set_input(lctx.inp_embd);
     }
@@ -9368,11 +9367,10 @@ static struct ggml_tensor * llm_build_inp_cross_attn_state(
          const llm_build_cb & cb) {
     const int64_t n_embd = hparams.n_embd;
 
-    struct ggml_tensor * inpCAS;
-    lctx.inp_cross_attn_state = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_embd, 1601, 4);
-    cb(lctx.inp_cross_attn_state, "inp_cross_attn_state", -1);
-    ggml_set_input(lctx.inp_cross_attn_state);
-    inpCAS = lctx.inp_cross_attn_state;
+    struct ggml_tensor * inpCAS = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_embd, 1601, 4);
+    cb(inpCAS, "inp_cross_attn_state", -1);
+    ggml_set_input(inpCAS);
+    lctx.inp_cross_attn_state = inpCAS;
 
     return inpCAS;
 }
@@ -10979,8 +10977,8 @@ struct llm_build_context {
                     LLM_NORM_RMS, cb, il);
             cb(cur, "attn_norm", il);
 
-            if (hparams.cross_attention_layer(il)) {
-                if (!lctx.cross_attn_state) {
+            if (hparams.cross_attention_layers(il)) {
+                if (!batch.embd && !cparams.cross_attn) {
                     continue;
                 }
 
@@ -10991,42 +10989,28 @@ struct llm_build_context {
                 Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head, n_tokens);
                 cb(Qcur, "Qcur", il);
 
-                Qcur = ggml_permute(ctx0, Qcur, 0, 2, 1, 3);
-                cb(Qcur, "Qcur", il);
-
-                // TODO: is this required?
-                Qcur = ggml_cont(ctx0, Qcur);
+                Qcur = ggml_cont(ctx0, ggml_permute(ctx0, Qcur, 0, 2, 1, 3));
                 cb(Qcur, "Qcur", il);
 
                 Qcur = llm_build_norm(ctx0, Qcur, hparams, model.layers[il].cross_attn_q_norm, NULL, LLM_NORM_RMS, cb, il);
                 cb(Qcur, "Qcur", il);
 
-                struct ggml_tensor * Kcur;
-                if (lctx.cross_attn_state_first_pass) {
+                struct ggml_tensor * Kcur, * Vcur;
+                if (batch.embd) {
                     Kcur = ggml_mul_mat(ctx0, model.layers[il].cross_attn_k_proj, inpCAS);
                     cb(Kcur, "Kcur", il);
 
                     Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, 6404);
                     cb(Kcur, "Kcur", il);
 
-                    Kcur = ggml_permute(ctx0, Kcur, 0, 2, 1, 3);
-                    cb(Kcur, "Kcur", il);
-
-                    // TODO: is this required?
-                    Kcur = ggml_cont(ctx0, Kcur);
+                    Kcur = ggml_cont(ctx0, ggml_permute(ctx0, Kcur, 0, 2, 1, 3));
                     cb(Kcur, "Kcur", il);
 
                     Kcur = llm_build_norm(ctx0, Kcur, hparams, model.layers[il].cross_attn_k_norm, NULL, LLM_NORM_RMS, cb, il);
                     cb(Kcur, "Kcur", il);
 
                     ggml_build_forward_expand(gf, ggml_cpy(ctx0, Kcur, kv_self.k_l[il]));
-                } else {
-                    Kcur = ggml_view_tensor(ctx0, kv_self.k_l[il]);
-                    cb(Kcur, "Kcur (view)", il);
-                }
 
-                struct ggml_tensor * Vcur;
-                if (lctx.cross_attn_state_first_pass) {
                     Vcur = ggml_mul_mat(ctx0, model.layers[il].cross_attn_v_proj, inpCAS);
                     cb(Vcur, "Vcur", il);
 
@@ -11038,6 +11022,9 @@ struct llm_build_context {
 
                     ggml_build_forward_expand(gf, ggml_cpy(ctx0, Vcur, kv_self.v_l[il]));
                 } else {
+                    Kcur = ggml_view_tensor(ctx0, kv_self.k_l[il]);
+                    cb(Kcur, "Kcur (view)", il);
+
                     Vcur = ggml_view_tensor(ctx0, kv_self.v_l[il]);
                     cb(Vcur, "Vcur (view)", il);
                 }
@@ -11045,11 +11032,8 @@ struct llm_build_context {
                 struct ggml_tensor * kq = ggml_mul_mat(ctx0, Kcur, Qcur);
                 cb(kq, "kq", il);
 
-                kq = ggml_scale_inplace(ctx0, kq, 1.0f/sqrtf(float(n_embd_head)));
-                cb(kq, "kq_scaled", il);
-
                 // TODO: apply causal masks
-                struct ggml_tensor * kq_soft_max = ggml_soft_max_inplace(ctx0, kq);
+                struct ggml_tensor * kq_soft_max = ggml_soft_max_ext(ctx0, kq, nullptr, 1.f/sqrtf(float(n_embd_head)), hparams.f_max_alibi_bias);
                 cb(kq_soft_max, "kq_soft_max", il);
 
                 Vcur = ggml_cont(ctx0, ggml_transpose(ctx0, Vcur));
@@ -11139,8 +11123,8 @@ struct llm_build_context {
                 cb(Kcur, "Kcur", il);
 
                 cur = llm_build_kv(ctx0, lctx, kv_self, gf,
-                        model.layers[il].wo, model.layers[il].bo,
-                        Kcur, Vcur, Qcur, KQ_mask, n_tokens, kv_head, n_kv, 1.0f/sqrtf(float(n_embd_head)), cb, il);
+                    model.layers[il].wo, model.layers[il].bo,
+                    Kcur, Vcur, Qcur, KQ_mask, n_tokens, kv_head, n_kv, 1.0f/sqrtf(float(n_embd_head)), cb, il);
 
 
                 if (il == n_layer - 1) {
@@ -17197,24 +17181,25 @@ static void llama_set_inputs(llama_context & lctx, const llama_ubatch & batch) {
     }
 
     if (batch.embd) {
-        const int64_t n_embd   = hparams.n_embd;
-        const int64_t n_tokens = batch.n_tokens;
+        if (lctx.inp_cross_attn_state && lctx.inp_cross_attn_state->buffer) {
+            ggml_backend_tensor_set(lctx.inp_cross_attn_state, batch.embd, 0, ggml_nbytes(lctx.inp_cross_attn_state));
+            // zero out inp_embd since it's not used
+            float * inp_embd_data = (float *)lctx.inp_embd->data;
+            for (int i = 0; i < ggml_nelements(lctx.inp_embd); ++i) {
+                inp_embd_data[i] = 0.0f;
+            }
+        } else {
+            const int64_t n_embd   = hparams.n_embd;
+            const int64_t n_tokens = batch.n_tokens;
 
-        ggml_backend_tensor_set(lctx.inp_embd, batch.embd, 0, n_tokens*n_embd*ggml_element_size(lctx.inp_embd));
+            ggml_backend_tensor_set(lctx.inp_embd, batch.embd, 0, n_tokens*n_embd*ggml_element_size(lctx.inp_embd));
+        }
     }
 
     if (batch.pos && lctx.inp_pos) {
         const int64_t n_tokens = batch.n_tokens;
 
         ggml_backend_tensor_set(lctx.inp_pos, batch.pos, 0, n_tokens*ggml_element_size(lctx.inp_pos));
-    }
-
-    // TODO (jmorganca): this might copy a lot of data on every request of a
-    // single generation even though it doesn't change, so we should
-    // find a way to not set this more than one time per image
-    if (lctx.inp_cross_attn_state &&
-        lctx.inp_cross_attn_state->buffer) {
-        ggml_backend_tensor_set(lctx.inp_cross_attn_state, lctx.cross_attn_state, 0, hparams.n_embd * 1601 * 4 * ggml_element_size(lctx.inp_cross_attn_state));
     }
 
     if (hparams.causal_attn || cparams.pooling_type == LLAMA_POOLING_TYPE_NONE) {
@@ -17789,7 +17774,7 @@ static int llama_decode_internal(
         n_outputs = 1;
     }
 
-    lctx.sbatch.from_batch(batch_all, n_embd,
+    lctx.sbatch.from_batch(batch_all, batch_all.n_embd,
         /* simple_split */ !kv_self.recurrent,
         /* logits_all   */ n_outputs == n_tokens_all);
 
@@ -17898,10 +17883,6 @@ static int llama_decode_internal(
         ggml_backend_sched_alloc_graph(lctx.sched, gf);
 
         llama_set_inputs(lctx, ubatch);
-
-        // TODO: replace with something better to find out if its
-        // our first actual pass
-        lctx.cross_attn_state_first_pass = false;
 
         llama_graph_compute(lctx, gf, n_threads, threadpool);
 
@@ -18086,7 +18067,7 @@ static int llama_encode_internal(
 
     const int64_t n_embd = hparams.n_embd;
 
-    lctx.sbatch.from_batch(batch, n_embd, /* simple_split */ true, /* logits_all */ true);
+    lctx.sbatch.from_batch(batch, batch.n_embd, /* simple_split */ true, /* logits_all */ true);
 
     const llama_ubatch ubatch = lctx.sbatch.split_simple(n_tokens);
 
@@ -20194,11 +20175,6 @@ struct llama_context * llama_new_context_with_model(
     return ctx;
 }
 
-void llama_set_cross_attn_state(struct llama_context * ctx, float * cross_attn_state) {
-    ctx->cross_attn_state_first_pass = true;
-    ctx->cross_attn_state = cross_attn_state;
-}
-
 void llama_free(struct llama_context * ctx) {
     delete ctx;
 }
@@ -21686,6 +21662,10 @@ void llama_set_causal_attn(struct llama_context * ctx, bool causal_attn) {
     ctx->cparams.causal_attn = causal_attn;
 }
 
+void llama_set_cross_attention(struct llama_context * ctx, bool cross_attention) {
+    ctx->cparams.cross_attn = cross_attention;
+}
+
 struct llama_batch llama_batch_get_one(
              llama_token * tokens,
                  int32_t   n_tokens,
@@ -21695,6 +21675,7 @@ struct llama_batch llama_batch_get_one(
         /*n_tokens       =*/ n_tokens,
         /*tokens         =*/ tokens,
         /*embd           =*/ nullptr,
+        /*n_embd         =*/ 0,
         /*pos            =*/ nullptr,
         /*n_seq_id       =*/ nullptr,
         /*seq_id         =*/ nullptr,
@@ -21710,6 +21691,7 @@ struct llama_batch llama_batch_init(int32_t n_tokens_alloc, int32_t embd, int32_
         /*n_tokens       =*/ 0,
         /*tokens         =*/ nullptr,
         /*embd           =*/ nullptr,
+        /*n_embd         =*/ 0,
         /*pos            =*/ nullptr,
         /*n_seq_id       =*/ nullptr,
         /*seq_id         =*/ nullptr,
@@ -21721,6 +21703,7 @@ struct llama_batch llama_batch_init(int32_t n_tokens_alloc, int32_t embd, int32_
 
     if (embd) {
         batch.embd = (float *) malloc(sizeof(float) * n_tokens_alloc * embd);
+        batch.n_embd = embd;
     } else {
         batch.token = (llama_token *) malloc(sizeof(llama_token) * n_tokens_alloc);
     }
