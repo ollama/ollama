@@ -120,7 +120,7 @@ FROM <model directory>
 The model directory should contain the Safetensors weights for a supported architecture.
 
 Currently supported model architectures:
-  * Llama (including Llama 2, Llama 3, and Llama 3.1)
+  * Llama (including Llama 2, Llama 3, Llama 3.1, and Llama 3.2)
   * Mistral (including Mistral 1, Mistral 2, and Mixtral)
   * Gemma (including Gemma 1 and Gemma 2)
   * Phi3
