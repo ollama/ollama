@@ -5,7 +5,6 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -982,35 +981,6 @@ func GetSHA256Digest(r io.Reader) (string, int64) {
 }
 
 var errUnauthorized = errors.New("unauthorized: access denied")
-
-// getTokenSubject returns the subject of a JWT token, it does not validate the token
-func getTokenSubject(token string) string {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return ""
-	}
-
-	payload := parts[1]
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(payload)
-	if err != nil {
-		slog.Error(fmt.Sprintf("failed to decode jwt payload: %v", err))
-		return ""
-	}
-
-	var payloadMap map[string]interface{}
-	if err := json.Unmarshal(payloadBytes, &payloadMap); err != nil {
-		slog.Error(fmt.Sprintf("failed to unmarshal payload JSON: %v", err))
-		return ""
-	}
-
-	sub, ok := payloadMap["sub"]
-	if !ok {
-		slog.Error("jwt does not contain 'sub' field")
-		return ""
-	}
-
-	return fmt.Sprintf("%s", sub)
-}
 
 func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *registryOptions) (*http.Response, error) {
 	for range 2 {
