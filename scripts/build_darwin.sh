@@ -2,14 +2,22 @@
 
 set -e
 
-export VERSION=${VERSION:-$(git describe --tags --first-parent --abbrev=7 --long --dirty --always | sed -e "s/^v//g")}
-export GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=$VERSION\" \"-X=github.com/ollama/ollama/server.mode=release\"'"
+. $(dirname $0)/env.sh
 
 mkdir -p dist
 
+# These require Xcode v13 or older to target MacOS v11
+# If installed to an alternate location use the following to enable
+# export SDKROOT=/Applications/Xcode_12.5.1.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
+# export DEVELOPER_DIR=/Applications/Xcode_12.5.1.app/Contents/Developer
+export CGO_CFLAGS=-mmacosx-version-min=11.3
+export CGO_CXXFLAGS=-mmacosx-version-min=11.3
+export CGO_LDFLAGS=-mmacosx-version-min=11.3
+
 for TARGETARCH in arm64 amd64; do
-    rm -rf llm/llama.cpp/build
-    GOOS=darwin GOARCH=$TARGETARCH go generate ./...
+    echo "Building Go runner darwin $TARGETARCH"
+    rm -rf llama/build
+    GOOS=darwin ARCH=$TARGETARCH GOARCH=$TARGETARCH make -C llama -j 8
     CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -trimpath -o dist/ollama-darwin-$TARGETARCH
     CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -trimpath -cover -o dist/ollama-darwin-$TARGETARCH-cov
 done

@@ -2,7 +2,7 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"math"
 	"testing"
 	"time"
@@ -192,7 +192,7 @@ func TestUseMmapFormatParams(t *testing.T) {
 				"use_mmap": {"foo"},
 			},
 			exp: nil,
-			err: fmt.Errorf("invalid bool value [foo]"),
+			err: errors.New("invalid bool value [foo]"),
 		},
 	}
 
@@ -206,5 +206,28 @@ func TestUseMmapFormatParams(t *testing.T) {
 				assert.Equal(t, *test.exp, *respVal.(*bool))
 			}
 		})
+	}
+}
+
+func TestMessage_UnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{`{"role": "USER", "content": "Hello!"}`, "user"},
+		{`{"role": "System", "content": "Initialization complete."}`, "system"},
+		{`{"role": "assistant", "content": "How can I help you?"}`, "assistant"},
+		{`{"role": "TOOl", "content": "Access granted."}`, "tool"},
+	}
+
+	for _, test := range tests {
+		var msg Message
+		if err := json.Unmarshal([]byte(test.input), &msg); err != nil {
+			t.Errorf("Unexpected error: %v", err)
+		}
+
+		if msg.Role != test.expected {
+			t.Errorf("role not lowercased: got %v, expected %v", msg.Role, test.expected)
+		}
 	}
 }

@@ -6,8 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ollama/ollama/format"
 	"golang.org/x/term"
+
+	"github.com/ollama/ollama/format"
 )
 
 type Bar struct {

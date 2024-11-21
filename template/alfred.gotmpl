@@ -1,8 +1,2 @@
-{{- if .Messages }}
-{{- if .System }}<start_system>{{ .System }}<end_message>
-{{- end }}
 {{- range .Messages }}<start_{{ .Role }}>{{ .Content }}<end_message>
 {{- end }}<start_assistant>
-{{- else -}}
-{{ if .System }}<start_system>{{ .System }}<end_message>{{ end }}{{ if .Prompt }}<start_user>{{ .Prompt }}<end_message>{{ end }}<start_assistant>{{ .Response }}<end_message>
-{{- end -}}

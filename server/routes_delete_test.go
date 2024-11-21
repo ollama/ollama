@@ -8,19 +8,21 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/gin-gonic/gin"
+
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/types/model"
 )
 
 func TestDelete(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
-	envconfig.LoadConfig()
 
 	var s Server
 
-	w := createRequest(t, s.CreateModelHandler, api.CreateRequest{
+	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:      "test",
 		Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
 	})
@@ -29,7 +31,7 @@ func TestDelete(t *testing.T) {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	w = createRequest(t, s.CreateModelHandler, api.CreateRequest{
+	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:      "test2",
 		Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ .System }} {{ .Prompt }}", createBinFile(t, nil, nil)),
 	})
@@ -50,7 +52,7 @@ func TestDelete(t *testing.T) {
 		filepath.Join(p, "blobs", "sha256-fe7ac77b725cda2ccad03f88a880ecdfd7a33192d6cae08fce2c0ee1455991ed"),
 	})
 
-	w = createRequest(t, s.DeleteModelHandler, api.DeleteRequest{Name: "test"})
+	w = createRequest(t, s.DeleteHandler, api.DeleteRequest{Name: "test"})
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
@@ -66,7 +68,7 @@ func TestDelete(t *testing.T) {
 		filepath.Join(p, "blobs", "sha256-fe7ac77b725cda2ccad03f88a880ecdfd7a33192d6cae08fce2c0ee1455991ed"),
 	})
 
-	w = createRequest(t, s.DeleteModelHandler, api.DeleteRequest{Name: "test2"})
+	w = createRequest(t, s.DeleteHandler, api.DeleteRequest{Name: "test2"})
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
@@ -77,6 +79,8 @@ func TestDelete(t *testing.T) {
 }
 
 func TestDeleteDuplicateLayers(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
 	p := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", p)
 	var s Server
@@ -94,11 +98,11 @@ func TestDeleteDuplicateLayers(t *testing.T) {
 	}
 
 	// create a manifest with duplicate layers
-	if err := WriteManifest(n, config, []*Layer{config}); err != nil {
+	if err := WriteManifest(n, config, []Layer{config}); err != nil {
 		t.Fatal(err)
 	}
 
-	w := createRequest(t, s.DeleteModelHandler, api.DeleteRequest{Name: "test"})
+	w := createRequest(t, s.DeleteHandler, api.DeleteRequest{Name: "test"})
 	if w.Code != http.StatusOK {
 		t.Errorf("expected status code 200, actual %d", w.Code)
 	}

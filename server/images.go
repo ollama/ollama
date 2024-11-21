@@ -13,6 +13,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
@@ -34,17 +36,28 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
-var errCapabilityCompletion = errors.New("completion")
+var (
+	errCapabilities         = errors.New("does not support")
+	errCapabilityCompletion = errors.New("completion")
+	errCapabilityTools      = errors.New("tools")
+	errCapabilityInsert     = errors.New("insert")
+)
 
 type Capability string
 
-const CapabilityCompletion = Capability("completion")
+const (
+	CapabilityCompletion = Capability("completion")
+	CapabilityTools      = Capability("tools")
+	CapabilityInsert     = Capability("insert")
+)
 
 type registryOptions struct {
 	Insecure bool
 	Username string
 	Password string
 	Token    string
+
+	CheckRedirect func(req *http.Request, via []*http.Request) error
 }
 
 type Model struct {
@@ -59,7 +72,7 @@ type Model struct {
 	License        []string
 	Digest         string
 	Options        map[string]interface{}
-	Messages       []Message
+	Messages       []api.Message
 
 	Template *template.Template
 }
@@ -88,6 +101,15 @@ func (m *Model) CheckCapabilities(caps ...Capability) error {
 			if _, ok := ggml.KV()[fmt.Sprintf("%s.pooling_type", ggml.KV().Architecture())]; ok {
 				errs = append(errs, errCapabilityCompletion)
 			}
+		case CapabilityTools:
+			if !slices.Contains(m.Template.Vars(), "tools") {
+				errs = append(errs, errCapabilityTools)
+			}
+		case CapabilityInsert:
+			vars := m.Template.Vars()
+			if !slices.Contains(vars, "suffix") {
+				errs = append(errs, errCapabilityInsert)
+			}
 		default:
 			slog.Error("unknown capability", "capability", cap)
 			return fmt.Errorf("unknown capability: %s", cap)
@@ -95,7 +117,7 @@ func (m *Model) CheckCapabilities(caps ...Capability) error {
 	}
 
 	if err := errors.Join(errs...); err != nil {
-		return fmt.Errorf("missing capabilities: %w", errors.Join(errs...))
+		return fmt.Errorf("%w %w", errCapabilities, errors.Join(errs...))
 	}
 
 	return nil
@@ -164,16 +186,11 @@ func (m *Model) String() string {
 	for _, msg := range m.Messages {
 		modelfile.Commands = append(modelfile.Commands, parser.Command{
 			Name: "message",
-			Args: fmt.Sprintf("%s %s", msg.Role, msg.Content),
+			Args: fmt.Sprintf("%s: %s", msg.Role, msg.Content),
 		})
 	}
 
 	return modelfile.String()
-}
-
-type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
 }
 
 type ConfigV2 struct {
@@ -200,25 +217,20 @@ func GetManifest(mp ModelPath) (*Manifest, string, error) {
 		return nil, "", err
 	}
 
-	if _, err = os.Stat(fp); err != nil {
-		return nil, "", err
-	}
-
-	var manifest *Manifest
-
-	bts, err := os.ReadFile(fp)
+	f, err := os.Open(fp)
 	if err != nil {
-		return nil, "", fmt.Errorf("couldn't open file '%s'", fp)
+		return nil, "", err
 	}
+	defer f.Close()
 
-	shaSum := sha256.Sum256(bts)
-	shaStr := hex.EncodeToString(shaSum[:])
+	sha256sum := sha256.New()
 
-	if err := json.Unmarshal(bts, &manifest); err != nil {
+	var manifest Manifest
+	if err := json.NewDecoder(io.TeeReader(f, sha256sum)).Decode(&manifest); err != nil {
 		return nil, "", err
 	}
 
-	return manifest, shaStr, nil
+	return &manifest, hex.EncodeToString(sha256sum.Sum(nil)), nil
 }
 
 func GetModel(name string) (*Model, error) {
@@ -235,19 +247,21 @@ func GetModel(name string) (*Model, error) {
 		Template:  template.DefaultTemplate,
 	}
 
-	filename, err := GetBlobsPath(manifest.Config.Digest)
-	if err != nil {
-		return nil, err
-	}
+	if manifest.Config.Digest != "" {
+		filename, err := GetBlobsPath(manifest.Config.Digest)
+		if err != nil {
+			return nil, err
+		}
 
-	configFile, err := os.Open(filename)
-	if err != nil {
-		return nil, err
-	}
-	defer configFile.Close()
+		configFile, err := os.Open(filename)
+		if err != nil {
+			return nil, err
+		}
+		defer configFile.Close()
 
-	if err := json.NewDecoder(configFile).Decode(&model.Config); err != nil {
-		return nil, err
+		if err := json.NewDecoder(configFile).Decode(&model.Config); err != nil {
+			return nil, err
+		}
 	}
 
 	for _, layer := range manifest.Layers {
@@ -356,14 +370,15 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 	var messages []*api.Message
 	parameters := make(map[string]any)
 
-	var layers []*Layer
+	var layers []Layer
+	var baseLayers []*layerGGML
 	for _, c := range modelfile.Commands {
 		mediatype := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
+		command := c.Name
 
-		switch c.Name {
+		switch command {
 		case "model", "adapter":
-			var baseLayers []*layerGGML
-			if name := model.ParseName(c.Args); name.IsValid() {
+			if name := model.ParseName(c.Args); name.IsValid() && command == "model" {
 				baseLayers, err = parseFromModel(ctx, name, fn)
 				if err != nil {
 					return err
@@ -397,14 +412,14 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 				}
 				defer blob.Close()
 
-				baseLayers, err = parseFromFile(ctx, blob, digest, fn)
+				baseLayers, err = parseFromFile(ctx, command, baseLayers, blob, digest, fn)
 				if err != nil {
 					return err
 				}
 			} else if file, err := os.Open(realpath(modelFileDir, c.Args)); err == nil {
 				defer file.Close()
 
-				baseLayers, err = parseFromFile(ctx, file, "", fn)
+				baseLayers, err = parseFromFile(ctx, command, baseLayers, file, "", fn)
 				if err != nil {
 					return err
 				}
@@ -440,7 +455,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 						defer temp.Close()
 						defer os.Remove(temp.Name())
 
-						if err := llm.Quantize(blob, temp.Name(), want); err != nil {
+						if err := llama.Quantize(blob, temp.Name(), uint32(want)); err != nil {
 							return err
 						}
 
@@ -474,9 +489,15 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 				layers = append(layers, baseLayer.Layer)
 			}
 		case "license", "template", "system":
+			if c.Name == "template" {
+				if _, err := template.Parse(c.Args); err != nil {
+					return fmt.Errorf("%w: %s", errBadTemplate, err)
+				}
+			}
+
 			if c.Name != "license" {
 				// replace
-				layers = slices.DeleteFunc(layers, func(layer *Layer) bool {
+				layers = slices.DeleteFunc(layers, func(layer Layer) bool {
 					if layer.MediaType != mediatype {
 						return false
 					}
@@ -522,7 +543,7 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 	}
 
 	var err2 error
-	layers = slices.DeleteFunc(layers, func(layer *Layer) bool {
+	layers = slices.DeleteFunc(layers, func(layer Layer) bool {
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.message":
 			// if there are new messages, remove the inherited ones
@@ -602,12 +623,12 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 		return err
 	}
 
-	layer, err := NewLayer(&b, "application/vnd.docker.container.image.v1+json")
+	configLayer, err := NewLayer(&b, "application/vnd.docker.container.image.v1+json")
 	if err != nil {
 		return err
 	}
 
-	for _, layer := range append(layers, layer) {
+	for _, layer := range append(layers, configLayer) {
 		if layer.status != "" {
 			fn(api.ProgressResponse{Status: layer.status})
 		}
@@ -616,11 +637,11 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 	old, _ := ParseNamedManifest(name)
 
 	fn(api.ProgressResponse{Status: "writing manifest"})
-	if err := WriteManifest(name, layer, layers); err != nil {
+	if err := WriteManifest(name, configLayer, layers); err != nil {
 		return err
 	}
 
-	if !envconfig.NoPrune && old != nil {
+	if !envconfig.NoPrune() && old != nil {
 		if err := old.RemoveLayers(); err != nil {
 			return err
 		}
@@ -669,44 +690,19 @@ func CopyModel(src, dst model.Name) error {
 	return err
 }
 
-func deleteUnusedLayers(skipModelPath *ModelPath, deleteMap map[string]struct{}) error {
-	fp, err := GetManifestPath()
+func deleteUnusedLayers(deleteMap map[string]struct{}) error {
+	// Ignore corrupt manifests to avoid blocking deletion of layers that are freshly orphaned
+	manifests, err := Manifests(true)
 	if err != nil {
 		return err
 	}
 
-	walkFunc := func(path string, info os.FileInfo, _ error) error {
-		if info.IsDir() {
-			return nil
-		}
-
-		dir, file := filepath.Split(path)
-		dir = strings.Trim(strings.TrimPrefix(dir, fp), string(os.PathSeparator))
-		tag := strings.Join([]string{dir, file}, ":")
-		fmp := ParseModelPath(tag)
-
-		// skip the manifest we're trying to delete
-		if skipModelPath != nil && skipModelPath.GetFullTagname() == fmp.GetFullTagname() {
-			return nil
-		}
-
-		// save (i.e. delete from the deleteMap) any files used in other manifests
-		manifest, _, err := GetManifest(fmp)
-		if err != nil {
-			//nolint:nilerr
-			return nil
-		}
-
+	for _, manifest := range manifests {
 		for _, layer := range manifest.Layers {
 			delete(deleteMap, layer.Digest)
 		}
 
 		delete(deleteMap, manifest.Config.Digest)
-		return nil
-	}
-
-	if err := filepath.Walk(fp, walkFunc); err != nil {
-		return err
 	}
 
 	// only delete the files which are still in the deleteMap
@@ -759,9 +755,9 @@ func PruneLayers() error {
 
 	slog.Info(fmt.Sprintf("total blobs: %d", len(deleteMap)))
 
-	err = deleteUnusedLayers(nil, deleteMap)
-	if err != nil {
-		return err
+	if err := deleteUnusedLayers(deleteMap); err != nil {
+		slog.Error(fmt.Sprintf("couldn't remove unused layers: %v", err))
+		return nil
 	}
 
 	slog.Info(fmt.Sprintf("total unused blobs removed: %d", len(deleteMap)))
@@ -807,7 +803,7 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	fn(api.ProgressResponse{Status: "retrieving manifest"})
 
 	if mp.ProtocolScheme == "http" && !regOpts.Insecure {
-		return fmt.Errorf("insecure protocol http")
+		return errors.New("insecure protocol http")
 	}
 
 	manifest, _, err := GetManifest(mp)
@@ -816,9 +812,11 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return err
 	}
 
-	var layers []*Layer
+	var layers []Layer
 	layers = append(layers, manifest.Layers...)
-	layers = append(layers, manifest.Config)
+	if manifest.Config.Digest != "" {
+		layers = append(layers, manifest.Config)
+	}
 
 	for _, layer := range layers {
 		if err := uploadBlob(ctx, mp, layer, regOpts, fn); err != nil {
@@ -852,29 +850,24 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
-	var manifest *Manifest
-	var err error
-	var noprune string
-
 	// build deleteMap to prune unused layers
 	deleteMap := make(map[string]struct{})
-
-	if !envconfig.NoPrune {
-		manifest, _, err = GetManifest(mp)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
+	manifest, _, err := GetManifest(mp)
+	if errors.Is(err, os.ErrNotExist) {
+		// noop
+	} else if err != nil {
+		slog.Warn("pulling model with bad existing manifest", "name", name, "error", err)
+	} else {
+		for _, l := range manifest.Layers {
+			deleteMap[l.Digest] = struct{}{}
 		}
-
-		if manifest != nil {
-			for _, l := range manifest.Layers {
-				deleteMap[l.Digest] = struct{}{}
-			}
+		if manifest.Config.Digest != "" {
 			deleteMap[manifest.Config.Digest] = struct{}{}
 		}
 	}
 
 	if mp.ProtocolScheme == "http" && !regOpts.Insecure {
-		return fmt.Errorf("insecure protocol http")
+		return errors.New("insecure protocol http")
 	}
 
 	fn(api.ProgressResponse{Status: "pulling manifest"})
@@ -884,9 +877,11 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return fmt.Errorf("pull model manifest: %s", err)
 	}
 
-	var layers []*Layer
+	var layers []Layer
 	layers = append(layers, manifest.Layers...)
-	layers = append(layers, manifest.Config)
+	if manifest.Config.Digest != "" {
+		layers = append(layers, manifest.Config)
+	}
 
 	skipVerify := make(map[string]bool)
 	for _, layer := range layers {
@@ -946,11 +941,10 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return err
 	}
 
-	if noprune == "" {
-		fn(api.ProgressResponse{Status: "removing any unused layers"})
-		err = deleteUnusedLayers(nil, deleteMap)
-		if err != nil {
-			return err
+	if !envconfig.NoPrune() && len(deleteMap) > 0 {
+		fn(api.ProgressResponse{Status: "removing unused layers"})
+		if err := deleteUnusedLayers(deleteMap); err != nil {
+			fn(api.ProgressResponse{Status: fmt.Sprintf("couldn't remove unused layers: %v", err)})
 		}
 	}
 
@@ -970,12 +964,12 @@ func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptio
 	}
 	defer resp.Body.Close()
 
-	var m *Manifest
+	var m Manifest
 	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
 		return nil, err
 	}
 
-	return m, err
+	return &m, err
 }
 
 // GetSHA256Digest returns the SHA256 hash of a given buffer and returns it, and the size of buffer
@@ -989,7 +983,7 @@ func GetSHA256Digest(r io.Reader) (string, int64) {
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), n
 }
 
-var errUnauthorized = fmt.Errorf("unauthorized: access denied")
+var errUnauthorized = errors.New("unauthorized: access denied")
 
 // getTokenSubject returns the subject of a JWT token, it does not validate the token
 func getTokenSubject(token string) string {
@@ -1034,6 +1028,8 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 
 		switch {
 		case resp.StatusCode == http.StatusUnauthorized:
+			resp.Body.Close()
+
 			// Handle authentication error with one retry
 			challenge := parseRegistryChallenge(resp.Header.Get("www-authenticate"))
 			token, err := getAuthorizationToken(ctx, challenge)
@@ -1049,8 +1045,10 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 				}
 			}
 		case resp.StatusCode == http.StatusNotFound:
+			resp.Body.Close()
 			return nil, os.ErrNotExist
 		case resp.StatusCode >= http.StatusBadRequest:
+			defer resp.Body.Close()
 			responseBody, err := io.ReadAll(resp.Body)
 			if err != nil {
 				return nil, fmt.Errorf("%d: %s", resp.StatusCode, err)
@@ -1073,6 +1071,21 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 	// user is associated with the public key, but is not authorized to make the request
 	return nil, errUnauthorized
 }
+
+// testMakeRequestDialContext specifies the dial function for the http client in
+// makeRequest. It can be used to resolve hosts in model names to local
+// addresses for testing. For example, the model name ("example.com/my/model")
+// can be directed to push/pull from "127.0.0.1:1234".
+//
+// This is not safe to set across goroutines. It should be set in
+// the main test goroutine, and not by tests marked to run in parallel with
+// t.Parallel().
+//
+// It should be cleared after use, otherwise it will affect other tests.
+//
+// Ideally we would have some set this up the stack, but the code is not
+// structured in a way that makes this easy, so this will have to do for now.
+var testMakeRequestDialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 
 func makeRequest(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.Reader, regOpts *registryOptions) (*http.Response, error) {
 	if requestURL.Scheme != "http" && regOpts != nil && regOpts.Insecure {
@@ -1107,7 +1120,12 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 		req.ContentLength = contentLength
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := (&http.Client{
+		Transport: &http.Transport{
+			DialContext: testMakeRequestDialContext,
+		},
+		CheckRedirect: regOpts.CheckRedirect,
+	}).Do(req)
 	if err != nil {
 		return nil, err
 	}

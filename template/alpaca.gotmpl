@@ -1,21 +1,18 @@
-{{- if .Messages }}
-{{- if .System }}{{ .System }}
-
-{{ end }}
+{{- $system := "" }}
 {{- range .Messages }}
-{{- if eq .Role "user" }}### Instruction:
-{{- else if eq .Role "assistant" }}### Response:
+{{- if eq .Role "system" }}
+{{- if not $system }}{{ $system = .Content }}
+{{- else }}{{ $system = printf "%s\n\n%s" $system .Content }}
 {{- end }}
+{{- else if eq .Role "user" }}
+{{- if $system }}{{ $system }}
+
+{{ $system = "" }}
+{{- end }}### Instruction:
 {{ .Content }}
 
-{{ end }}### Response:
-{{ else -}}
-{{ if .System }}{{ .System }}
+{{ else if eq .Role "assistant" }}### Response:
+{{ .Content }}
 
-{{ end }}{{ if .Prompt }}### Instruction:
-{{ .Prompt }}
-
-{{ end }}### Response:
-{{ .Response }}
-
-{{ end -}}
+{{ end }}
+{{- end }}### Response:
