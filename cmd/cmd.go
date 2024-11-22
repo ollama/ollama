@@ -456,6 +456,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	if len(prompts) > 0 {
 		interactive = false
 	}
+	// Be quiet if we're redirecting to a pipe or file
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		interactive = false
+	}
 
 	nowrap, err := cmd.Flags().GetBool("nowordwrap")
 	if err != nil {
