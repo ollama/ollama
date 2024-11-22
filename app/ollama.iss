@@ -53,8 +53,8 @@ RestartIfNeededByRun=no
 ; https://jrsoftware.org/ishelp/index.php?topic=setup_wizardimagefile
 WizardSmallImageFile=.\assets\setup.bmp
 
-; TODO verifty actual min windows version...
-; OG Win 10
+; Ollama requires Windows 10 22H2 or newer for proper unicode rendering
+; TODO: consider setting this to 10.0.19045
 MinVersion=10.0.10240
 
 ; First release that supports WinRT UI Composition for win32 apps
@@ -136,13 +136,13 @@ Type: filesandordirs; Name: "{%TEMP}\ollama*"
 Type: filesandordirs; Name: "{%LOCALAPPDATA}\Programs\Ollama"
 
 [Messages]
-WizardReady=Ollama Windows Preview
+WizardReady=Ollama
 ReadyLabel1=%nLet's get you up and running with your own large language models.
 SetupAppRunningError=Another Ollama installer is running.%n%nPlease cancel or finish the other installer, then click OK to continue with this install, or Cancel to exit.
 
 
 ;FinishedHeadingLabel=Run your first model
-;FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama3.1
+;FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama3.2
 ;ClickFinish=%n
 
 [Registry]

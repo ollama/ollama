@@ -119,7 +119,7 @@ if __name__ == "__main__":
         system_prompt = f"Only use the following information to answer the question. Do not use anything else: {sourcetext}"
 
         ollama_response = ollama.generate(
-            model="llama3.1",
+            model="llama3.2",
             prompt=question,
             system=system_prompt,
             options={"stream": False},

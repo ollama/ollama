@@ -1,21 +1,14 @@
-# Ollama Windows Preview
+# Ollama Windows
 
-Welcome to the Ollama Windows preview.
+Welcome to Ollama for Windows.
 
 No more WSL required!
 
 Ollama now runs as a native Windows application, including NVIDIA and AMD Radeon GPU support.
-After installing Ollama Windows Preview, Ollama will run in the background and
+After installing Ollama for Windows, Ollama will run in the background and
 the `ollama` command line is available in `cmd`, `powershell` or your favorite
 terminal application. As usual the Ollama [api](./api.md) will be served on
 `http://localhost:11434`.
-
-As this is a preview release, you should expect a few bugs here and there.  If
-you run into a problem you can reach out on
-[Discord](https://discord.gg/ollama), or file an
-[issue](https://github.com/ollama/ollama/issues).
-Logs will often be helpful in diagnosing the problem (see
-[Troubleshooting](#troubleshooting) below)
 
 ## System Requirements
 
@@ -25,18 +18,40 @@ Logs will often be helpful in diagnosing the problem (see
 
 Ollama uses unicode characters for progress indication, which may render as unknown squares in some older terminal fonts in Windows 10. If you see this, try changing your terminal font settings.
 
+## Filesystem Requirements
+
+The Ollama install does not require Administrator, and installs in your home directory by default.  You'll need at least 4GB of space for the binary install.  Once you've installed Ollama, you'll need additional space for storing the Large Language models, which can be tens to hundreds of GB in size.  If your home directory doesn't have enough space, you can change where the binaries are installed, and where the models are stored.
+
+### Changing Install Location
+
+To install the Ollama application in a location different than your home directory, start the installer with the following flag
+
+```powershell
+OllamaSetup.exe /DIR="d:\some\location"
+```
+
+### Changing Model Location
+
+To change where Ollama stores the downloaded models instead of using your home directory, set the environment variable `OLLAMA_MODELS` in your user account.
+
+1. Start the Settings (Windows 11) or Control Panel (Windows 10) application and search for _environment variables_.
+
+2. Click on _Edit environment variables for your account_.
+
+3. Edit or create a new variable for your user account for `OLLAMA_MODELS` where you want the models stored
+
+4. Click OK/Apply to save.
+
+If Ollama is already running, Quit the tray application and relaunch it from the Start menu, or a new terminal started after you saved the environment variables.
+
 ## API Access
 
 Here's a quick example showing API access from `powershell`
 ```powershell
-(Invoke-WebRequest -method POST -Body '{"model":"llama3.1", "prompt":"Why is the sky blue?", "stream": false}' -uri http://localhost:11434/api/generate ).Content | ConvertFrom-json
+(Invoke-WebRequest -method POST -Body '{"model":"llama3.2", "prompt":"Why is the sky blue?", "stream": false}' -uri http://localhost:11434/api/generate ).Content | ConvertFrom-json
 ```
 
 ## Troubleshooting
-
-While we're in preview, `OLLAMA_DEBUG` is always enabled, which adds
-a "view logs" menu item to the app, and increases logging for the GUI app and
-server.
 
 Ollama on Windows stores files in a few different locations.  You can view them in
 the explorer window by hitting `<cmd>+R` and type in:
@@ -51,6 +66,10 @@ the explorer window by hitting `<cmd>+R` and type in:
 ## Uninstall
 
 The Ollama Windows installer registers an Uninstaller application.  Under `Add or remove programs` in Windows Settings, you can uninstall Ollama.
+
+> [!NOTE]
+> If you have [changed the OLLAMA_MODELS location](#changing-model-location), the installer will not remove your downloaded models
+
 
 ## Standalone CLI
 

@@ -50,6 +50,9 @@ sudo systemctl restart docker
 docker run -d --gpus=all -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama
 ```
 
+> [!NOTE]  
+> If you're running on an NVIDIA JetPack system, Ollama can't automatically discover the correct JetPack version. Pass the environment variable JETSON_JETPACK=5 or JETSON_JETPACK=6 to the container to select version 5 or 6.
+
 ### AMD GPU
 
 To run Ollama using Docker with AMD GPUs, use the `rocm` tag and the following command:
@@ -63,7 +66,7 @@ docker run -d --device /dev/kfd --device /dev/dri -v ollama:/root/.ollama -p 114
 Now you can run a model:
 
 ```
-docker exec -it ollama ollama run llama3.1
+docker exec -it ollama ollama run llama3.2
 ```
 
 ### Try different models

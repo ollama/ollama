@@ -6,10 +6,10 @@ There are two python scripts in this example. `randomaddresses.py` generates ran
 
 ## Running the Example
 
-1. Ensure you have the `llama3.1` model installed:
+1. Ensure you have the `llama3.2` model installed:
 
    ```bash
-   ollama pull llama3.1
+   ollama pull llama3.2
    ```
 
 2. Install the Python Requirements.
