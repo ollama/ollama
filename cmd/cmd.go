@@ -800,9 +800,9 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		case "parameters":
 			fmt.Println(resp.Parameters)
 		case "system":
-			fmt.Println(resp.System)
+			fmt.Print(resp.System)
 		case "template":
-			fmt.Println(resp.Template)
+			fmt.Print(resp.Template)
 		}
 
 		return nil
@@ -1318,7 +1318,7 @@ func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
 
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" && term.IsTerminal(int(os.Stdout.Fd())) {
 		console.ConsoleFromFile(os.Stdin) //nolint:errcheck
 	}
 

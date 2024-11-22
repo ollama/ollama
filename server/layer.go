@@ -106,7 +106,8 @@ func (l *Layer) Remove() error {
 		return nil
 	}
 
-	ms, err := Manifests()
+	// Ignore corrupt manifests to avoid blocking deletion of layers that are freshly orphaned
+	ms, err := Manifests(true)
 	if err != nil {
 		return err
 	}

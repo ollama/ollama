@@ -130,11 +130,11 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				continue
 			}
 			numParallel := int(envconfig.NumParallel())
-			// TODO (jmorganca): multimodal models don't support parallel yet
+			// TODO (jmorganca): mllama doesn't support parallel yet
 			// see https://github.com/ollama/ollama/issues/4165
-			if len(pending.model.ProjectorPaths) > 0 && numParallel != 1 {
+			if checkMllamaModelFamily(pending.model) && numParallel != 1 {
 				numParallel = 1
-				slog.Warn("multimodal models don't support parallel requests yet")
+				slog.Warn("mllama doesn't support parallel requests yet")
 			}
 
 			for {
