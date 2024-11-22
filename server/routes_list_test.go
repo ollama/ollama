@@ -31,9 +31,10 @@ func TestList(t *testing.T) {
 
 	var s Server
 	for _, n := range expectNames {
+		fname, _ := createBinFile(t, nil, nil)
 		createRequest(t, s.CreateHandler, api.CreateRequest{
 			Name:      n,
-			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
+			Modelfile: fmt.Sprintf("FROM %s", fname),
 		})
 	}
 

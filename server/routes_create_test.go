@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -21,8 +22,13 @@ import (
 
 var stream bool = false
 
-func createBinFile(t *testing.T, kv map[string]any, ti []llm.Tensor) string {
+func createBinFile(t *testing.T, kv map[string]any, ti []llm.Tensor) (string, string) {
 	t.Helper()
+
+	modelDir := os.Getenv("OLLAMA_MODELS")
+	if modelDir == "" {
+		t.Fatalf("OLLAMA_MODELS not specified")
+	}
 
 	f, err := os.CreateTemp(t.TempDir(), "")
 	if err != nil {
@@ -33,8 +39,21 @@ func createBinFile(t *testing.T, kv map[string]any, ti []llm.Tensor) string {
 	if err := llm.WriteGGUF(f, kv, ti); err != nil {
 		t.Fatal(err)
 	}
+	// Calculate sha256 of file
+	if _, err := f.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
 
-	return f.Name()
+	digest, _ := GetSHA256Digest(f)
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := createLink(f.Name(), filepath.Join(modelDir, "blobs", fmt.Sprintf("sha256-%s", strings.TrimPrefix(digest, "sha256:")))); err != nil {
+		t.Fatal(err)
+	}
+
+	return f.Name(), digest
 }
 
 type responseRecorder struct {
@@ -93,13 +112,21 @@ func TestCreateFromBin(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", p)
 
 	var s Server
+
+	_, digest := createBinFile(t, nil, nil)
+	cfr := api.CreateFromRequest{
+		Type:  "gguf",
+		Files: []api.File{{Path: "test.gguf", Digest: digest}},
+	}
+
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
-		Stream:    &stream,
+		Name:   "test",
+		From:   cfr,
+		Stream: &stream,
 	})
 
 	if w.Code != http.StatusOK {
+		fmt.Println(w)
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
@@ -120,10 +147,16 @@ func TestCreateFromModel(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", p)
 	var s Server
 
+	_, digest := createBinFile(t, nil, nil)
+	cfr := api.CreateFromRequest{
+		Type:  "gguf",
+		Files: []api.File{{Path: "test.gguf", Digest: digest}},
+	}
+
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
-		Stream:    &stream,
+		Name:   "test",
+		From:   cfr,
+		Stream: &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -135,9 +168,9 @@ func TestCreateFromModel(t *testing.T) {
 	})
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test2",
-		Modelfile: "FROM test",
-		Stream:    &stream,
+		Name:   "test2",
+		From:   "test",
+		Stream: &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -162,10 +195,16 @@ func TestCreateRemovesLayers(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", p)
 	var s Server
 
+	_, digest := createBinFile(t, nil, nil)
+	cfr := api.CreateFromRequest{
+		Type:  "gguf",
+		Files: []api.File{{Path: "test.gguf", Digest: digest}},
+	}
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ .Prompt }}", createBinFile(t, nil, nil)),
-		Stream:    &stream,
+		Name:     "test",
+		From:     cfr,
+		Template: "{{ .Prompt }}",
+		Stream:   &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -183,9 +222,10 @@ func TestCreateRemovesLayers(t *testing.T) {
 	})
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ .System }} {{ .Prompt }}", createBinFile(t, nil, nil)),
-		Stream:    &stream,
+		Name:     "test",
+		From:     cfr,
+		Template: "{{ .System }} {{ .Prompt }}",
+		Stream:   &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -210,10 +250,16 @@ func TestCreateUnsetsSystem(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", p)
 	var s Server
 
+	_, digest := createBinFile(t, nil, nil)
+	cfr := api.CreateFromRequest{
+		Type:  "gguf",
+		Files: []api.File{{Path: "test.gguf", Digest: digest}},
+	}
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		Modelfile: fmt.Sprintf("FROM %s\nSYSTEM Say hi!", createBinFile(t, nil, nil)),
-		Stream:    &stream,
+		Name:   "test",
+		From:   cfr,
+		System: "Say hi!",
+		Stream: &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -231,9 +277,10 @@ func TestCreateUnsetsSystem(t *testing.T) {
 	})
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		Modelfile: fmt.Sprintf("FROM %s\nSYSTEM \"\"", createBinFile(t, nil, nil)),
-		Stream:    &stream,
+		Name:   "test",
+		From:   cfr,
+		System: "",
+		Stream: &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -245,19 +292,9 @@ func TestCreateUnsetsSystem(t *testing.T) {
 	})
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
-		filepath.Join(p, "blobs", "sha256-67d4b8d106af2a5b100a46e9bdc038c71eef2a35c9abac784092654212f97cf5"),
 		filepath.Join(p, "blobs", "sha256-a4e5e156ddec27e286f75328784d7106b60a4eb1d246e950a001a3f944fbda99"),
-		filepath.Join(p, "blobs", "sha256-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+		filepath.Join(p, "blobs", "sha256-ca239d7bd8ea90e4a5d2e6bf88f8d74a47b14336e73eb4e18bed4dd325018116"),
 	})
-
-	bts, err := os.ReadFile(filepath.Join(p, "blobs", "sha256-e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if string(bts) != "" {
-		t.Fatalf("expected empty string, actual %s", string(bts))
-	}
 }
 
 func TestCreateMergeParameters(t *testing.T) {
@@ -267,10 +304,21 @@ func TestCreateMergeParameters(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", p)
 	var s Server
 
+	_, digest := createBinFile(t, nil, nil)
+	cfr := api.CreateFromRequest{
+		Type:  "gguf",
+		Files: []api.File{{Path: "test.gguf", Digest: digest}},
+	}
+
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		Modelfile: fmt.Sprintf("FROM %s\nPARAMETER temperature 1\nPARAMETER top_k 10\nPARAMETER stop USER:\nPARAMETER stop ASSISTANT:", createBinFile(t, nil, nil)),
-		Stream:    &stream,
+		Name: "test",
+		From: cfr,
+		Parameters: map[string]any{
+			"temperature": 1,
+			"top_k":       10,
+			"stop":        []string{"USER:", "ASSISTANT:"},
+		},
+		Stream: &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -289,9 +337,13 @@ func TestCreateMergeParameters(t *testing.T) {
 
 	// in order to merge parameters, the second model must be created FROM the first
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test2",
-		Modelfile: "FROM test\nPARAMETER temperature 0.6\nPARAMETER top_p 0.7",
-		Stream:    &stream,
+		Name: "test2",
+		From: "test",
+		Parameters: map[string]any{
+			"temperature": 0.6,
+			"top_p":       0.7,
+		},
+		Stream: &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -327,9 +379,14 @@ func TestCreateMergeParameters(t *testing.T) {
 
 	// slices are replaced
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test2",
-		Modelfile: "FROM test\nPARAMETER temperature 0.6\nPARAMETER top_p 0.7\nPARAMETER stop <|endoftext|>",
-		Stream:    &stream,
+		Name: "test2",
+		From: "test",
+		Parameters: map[string]any{
+			"temperature": 0.6,
+			"top_p":       0.7,
+			"stop":        []string{"<|endoftext|>"},
+		},
+		Stream: &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -371,10 +428,35 @@ func TestCreateReplacesMessages(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", p)
 	var s Server
 
+	_, digest := createBinFile(t, nil, nil)
+	cfr := api.CreateFromRequest{
+		Type: "gguf",
+		Files: []api.File{
+			{
+				Path:   "test.gguf",
+				Digest: digest,
+			},
+		},
+	}
+
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		Modelfile: fmt.Sprintf("FROM %s\nMESSAGE assistant \"What is my purpose?\"\nMESSAGE user \"You run tests.\"\nMESSAGE assistant \"Oh, my god.\"", createBinFile(t, nil, nil)),
-		Stream:    &stream,
+		Name: "test",
+		From: cfr,
+		Messages: []api.Message{
+			{
+				Role:    "assistant",
+				Content: "What is my purpose?",
+			},
+			{
+				Role:    "user",
+				Content: "You run tests.",
+			},
+			{
+				Role:    "assistant",
+				Content: "Oh, my god.",
+			},
+		},
+		Stream: &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -392,9 +474,23 @@ func TestCreateReplacesMessages(t *testing.T) {
 	})
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test2",
-		Modelfile: "FROM test\nMESSAGE assistant \"You're a test, Harry.\"\nMESSAGE user \"I-I'm a what?\"\nMESSAGE assistant \"A test. And a thumping good one at that, I'd wager.\"",
-		Stream:    &stream,
+		Name: "test2",
+		From: "test",
+		Messages: []api.Message{
+			{
+				Role:    "assistant",
+				Content: "You're a test, Harry.",
+			},
+			{
+				Role:    "user",
+				Content: "I-I'm a what?",
+			},
+			{
+				Role:    "assistant",
+				Content: "A test. And a thumping good one at that, I'd wager.",
+			},
+		},
+		Stream: &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -405,6 +501,32 @@ func TestCreateReplacesMessages(t *testing.T) {
 		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test", "latest"),
 		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
 	})
+
+	f1, err := os.Open(filepath.Join(p, "blobs", "sha256-4f48b25fe9969564c82f58eb1cedbdff6484cc0baf474bc6c2a9b37c8da3362a"))
+	if err != nil {
+		t.Log("Could not open first file:", err)
+	} else {
+		defer f1.Close()
+		content1, err := io.ReadAll(f1)
+		if err != nil {
+			t.Log("Could not read first file:", err)
+		} else {
+			t.Logf("Contents of first file: %s", content1)
+		}
+	}
+
+	f2, err := os.Open(filepath.Join(p, "blobs", "sha256-f4e2c3690efef1b4b63ba1e1b2744ffeb6a7438a0110b86596069f6d9999c80b"))
+	if err != nil {
+		t.Log("Could not open second file:", err)
+	} else {
+		defer f2.Close()
+		content2, err := io.ReadAll(f2)
+		if err != nil {
+			t.Log("Could not read second file:", err)
+		} else {
+			t.Logf("Contents of second file: %s", content2)
+		}
+	}
 
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-298baeaf6928a60cf666d88d64a1ba606feb43a2865687c39e40652e407bffc4"),
@@ -448,9 +570,10 @@ func TestCreateTemplateSystem(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", p)
 	var s Server
 
+	fname, _ := createBinFile(t, nil, nil)
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:      "test",
-		Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ .Prompt }}\nSYSTEM Say hello!\nTEMPLATE {{ .System }} {{ .Prompt }}\nSYSTEM Say bye!", createBinFile(t, nil, nil)),
+		Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ .Prompt }}\nSYSTEM Say hello!\nTEMPLATE {{ .System }} {{ .Prompt }}\nSYSTEM Say bye!", fname),
 		Stream:    &stream,
 	})
 
@@ -488,9 +611,10 @@ func TestCreateTemplateSystem(t *testing.T) {
 	}
 
 	t.Run("incomplete template", func(t *testing.T) {
+		fname, _ := createBinFile(t, nil, nil)
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Name:      "test",
-			Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ .Prompt", createBinFile(t, nil, nil)),
+			Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ .Prompt", fname),
 			Stream:    &stream,
 		})
 
@@ -500,9 +624,10 @@ func TestCreateTemplateSystem(t *testing.T) {
 	})
 
 	t.Run("template with unclosed if", func(t *testing.T) {
+		fname, _ := createBinFile(t, nil, nil)
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Name:      "test",
-			Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ if .Prompt }}", createBinFile(t, nil, nil)),
+			Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ if .Prompt }}", fname),
 			Stream:    &stream,
 		})
 
@@ -512,9 +637,10 @@ func TestCreateTemplateSystem(t *testing.T) {
 	})
 
 	t.Run("template with undefined function", func(t *testing.T) {
+		fname, _ := createBinFile(t, nil, nil)
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Name:      "test",
-			Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{  Prompt }}", createBinFile(t, nil, nil)),
+			Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{  Prompt }}", fname),
 			Stream:    &stream,
 		})
 
@@ -531,9 +657,10 @@ func TestCreateLicenses(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", p)
 	var s Server
 
+	fname, _ := createBinFile(t, nil, nil)
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:      "test",
-		Modelfile: fmt.Sprintf("FROM %s\nLICENSE MIT\nLICENSE Apache-2.0", createBinFile(t, nil, nil)),
+		Modelfile: fmt.Sprintf("FROM %s\nLICENSE MIT\nLICENSE Apache-2.0", fname),
 		Stream:    &stream,
 	})
 
@@ -579,12 +706,13 @@ func TestCreateDetectTemplate(t *testing.T) {
 	var s Server
 
 	t.Run("matched", func(t *testing.T) {
+		fname, _ := createBinFile(t, llm.KV{
+			"tokenizer.chat_template": "{{ bos_token }}{% for message in messages %}{{'<|' + message['role'] + '|>' + '\n' + message['content'] + '<|end|>\n' }}{% endfor %}{% if add_generation_prompt %}{{ '<|assistant|>\n' }}{% else %}{{ eos_token }}{% endif %}",
+		}, nil)
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Name: "test",
-			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, llm.KV{
-				"tokenizer.chat_template": "{{ bos_token }}{% for message in messages %}{{'<|' + message['role'] + '|>' + '\n' + message['content'] + '<|end|>\n' }}{% endfor %}{% if add_generation_prompt %}{{ '<|assistant|>\n' }}{% else %}{{ eos_token }}{% endif %}",
-			}, nil)),
-			Stream: &stream,
+			Name:      "test",
+			Modelfile: fmt.Sprintf("FROM %s", fname),
+			Stream:    &stream,
 		})
 
 		if w.Code != http.StatusOK {
@@ -600,9 +728,10 @@ func TestCreateDetectTemplate(t *testing.T) {
 	})
 
 	t.Run("unmatched", func(t *testing.T) {
+		fname, _ := createBinFile(t, nil, nil)
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Name:      "test",
-			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
+			Modelfile: fmt.Sprintf("FROM %s", fname),
 			Stream:    &stream,
 		})
 

@@ -22,18 +22,20 @@ func TestDelete(t *testing.T) {
 
 	var s Server
 
+	fname, _ := createBinFile(t, nil, nil)
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:      "test",
-		Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
+		Modelfile: fmt.Sprintf("FROM %s", fname),
 	})
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
+	fname, _ = createBinFile(t, nil, nil)
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:      "test2",
-		Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ .System }} {{ .Prompt }}", createBinFile(t, nil, nil)),
+		Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ .System }} {{ .Prompt }}", fname),
 	})
 
 	if w.Code != http.StatusOK {

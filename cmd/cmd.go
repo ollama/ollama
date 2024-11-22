@@ -97,6 +97,15 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		defer f.Close()
 	}
 
+	request := api.CreateRequest{Name: args[0]}
+	quantize, _ := cmd.Flags().GetString("quantize")
+	if quantize != "" {
+		request.Quantize = quantize
+	}
+	var licenses []string
+	var messages []api.Message
+	parameters := make(map[string]any)
+
 	modelfile, err := parser.ParseFile(reader)
 	if err != nil {
 		return err
@@ -138,26 +147,65 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
+			var files []string
 			if fi.IsDir() {
 				// this is likely a safetensors or pytorch directory
 				// TODO make this work w/ adapters
-				tempfile, err := tempZipFiles(path)
+				files, err = getFileList(path)
 				if err != nil {
 					return err
 				}
-				defer os.RemoveAll(tempfile)
+				var apiFiles []api.File
+				for _, file := range files {
+					relPath, err := filepath.Rel(path, file)
+					if err != nil {
+						return err
+					}
 
-				path = tempfile
+					digest, err := createBlob(cmd, client, file, spinner)
+					if err != nil {
+						return err
+					}
+					apiFiles = append(apiFiles, api.File{Path: relPath, Digest: digest})
+				}
+				if modelfile.Commands[i].Name == "model" {
+					cfr := api.CreateFromRequest{Type: "safetensors"}
+					cfr.Files = apiFiles
+					request.From = cfr
+				} else {
+					request.Adapters = apiFiles
+				}
+			} else {
+				digest, err := createBlob(cmd, client, path, spinner)
+				if err != nil {
+					return err
+				}
+				apiFile := []api.File{{Path: filepath.Base(path), Digest: digest}}
+				if modelfile.Commands[i].Name == "model" {
+					cfr := api.CreateFromRequest{Type: "gguf"}
+					cfr.Files = apiFile
+					request.From = cfr
+				} else {
+					request.Adapters = apiFile
+				}
 			}
-
-			digest, err := createBlob(cmd, client, path, spinner)
-			if err != nil {
-				return err
-			}
-
-			modelfile.Commands[i].Args = "@" + digest
+		case "template":
+			request.Template = modelfile.Commands[i].Args
+		case "system":
+			request.System = modelfile.Commands[i].Args
+		case "license":
+			licenses = append(licenses, modelfile.Commands[i].Args)
+		case "message":
+			role, msg, _ := strings.Cut(modelfile.Commands[i].Args, ": ")
+			messages = append(messages, api.Message{Role: role, Content: msg})
+		default:
+			parameters[modelfile.Commands[i].Name] = modelfile.Commands[i].Args
 		}
 	}
+
+	request.License = licenses
+	request.Messages = messages
+	request.Parameters = parameters
 
 	bars := make(map[string]*progress.Bar)
 	fn := func(resp api.ProgressResponse) error {
@@ -183,14 +231,97 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	quantize, _ := cmd.Flags().GetString("quantize")
-
-	request := api.CreateRequest{Name: args[0], Modelfile: modelfile.String(), Quantize: quantize}
 	if err := client.Create(cmd.Context(), &request, fn); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func getFileList(path string) ([]string, error) {
+	detectContentType := func(path string) (string, error) {
+		f, err := os.Open(path)
+		if err != nil {
+			return "", err
+		}
+		defer f.Close()
+
+		var b bytes.Buffer
+		b.Grow(512)
+
+		if _, err := io.CopyN(&b, f, 512); err != nil && !errors.Is(err, io.EOF) {
+			return "", err
+		}
+
+		contentType, _, _ := strings.Cut(http.DetectContentType(b.Bytes()), ";")
+		return contentType, nil
+	}
+
+	glob := func(pattern, contentType string) ([]string, error) {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, safetensor := range matches {
+			if ct, err := detectContentType(safetensor); err != nil {
+				return nil, err
+			} else if ct != contentType {
+				return nil, fmt.Errorf("invalid content type: expected %s for %s", ct, safetensor)
+			}
+		}
+
+		return matches, nil
+	}
+
+	var files []string
+	if st, _ := glob(filepath.Join(path, "model*.safetensors"), "application/octet-stream"); len(st) > 0 {
+		// safetensors files might be unresolved git lfs references; skip if they are
+		// covers model-x-of-y.safetensors, model.fp32-x-of-y.safetensors, model.safetensors
+		files = append(files, st...)
+	} else if st, _ := glob(filepath.Join(path, "adapters.safetensors"), "application/octet-stream"); len(st) > 0 {
+		// covers adapters.safetensors
+		files = append(files, st...)
+	} else if st, _ := glob(filepath.Join(path, "adapter_model.safetensors"), "application/octet-stream"); len(st) > 0 {
+		// covers adapter_model.safetensors
+		files = append(files, st...)
+	} else if pt, _ := glob(filepath.Join(path, "pytorch_model*.bin"), "application/zip"); len(pt) > 0 {
+		// pytorch files might also be unresolved git lfs references; skip if they are
+		// covers pytorch_model-x-of-y.bin, pytorch_model.fp32-x-of-y.bin, pytorch_model.bin
+		files = append(files, pt...)
+	} else if pt, _ := glob(filepath.Join(path, "consolidated*.pth"), "application/zip"); len(pt) > 0 {
+		// pytorch files might also be unresolved git lfs references; skip if they are
+		// covers consolidated.x.pth, consolidated.pth
+		files = append(files, pt...)
+	} else {
+		return nil, errModelNotFound
+	}
+
+	// add configuration files, json files are detected as text/plain
+	js, err := glob(filepath.Join(path, "*.json"), "text/plain")
+	if err != nil {
+		return nil, err
+	}
+	files = append(files, js...)
+
+	// bert models require a nested config.json
+	// TODO(mxyng): merge this with the glob above
+	js, err = glob(filepath.Join(path, "**/*.json"), "text/plain")
+	if err != nil {
+		return nil, err
+	}
+	files = append(files, js...)
+
+	if tks, _ := glob(filepath.Join(path, "tokenizer.model"), "application/octet-stream"); len(tks) > 0 {
+		// add tokenizer.model if it exists, tokenizer.json is automatically picked up by the previous glob
+		// tokenizer.model might be a unresolved git lfs reference; error if it is
+		files = append(files, tks...)
+	} else if tks, _ := glob(filepath.Join(path, "**/tokenizer.model"), "text/plain"); len(tks) > 0 {
+		// some times tokenizer.model is in a subdirectory (e.g. meta-llama/Meta-Llama-3-8B)
+		files = append(files, tks...)
+	}
+
+	return files, nil
 }
 
 func tempZipFiles(path string) (string, error) {
@@ -321,7 +452,12 @@ func tempZipFiles(path string) (string, error) {
 }
 
 func createBlob(cmd *cobra.Command, client *api.Client, path string, spinner *progress.Spinner) (string, error) {
-	bin, err := os.Open(path)
+	realPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+
+	bin, err := os.Open(realPath)
 	if err != nil {
 		return "", err
 	}
@@ -364,6 +500,7 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, spinner *pr
 		}
 	}()
 
+	fmt.Println("finished copying files")
 	digest := fmt.Sprintf("sha256:%x", hash.Sum(nil))
 	if err = client.CreateBlob(cmd.Context(), digest, io.TeeReader(bin, &pw)); err != nil {
 		return "", err

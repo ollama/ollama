@@ -300,6 +300,14 @@ type CreateRequest struct {
 	Stream    *bool  `json:"stream,omitempty"`
 	Quantize  string `json:"quantize,omitempty"`
 
+	From       any            `json:"from"`
+	Adapters   any            `json:"adapters,omitempty"`
+	Template   string         `json:"template,omitempty"`
+	License    any            `json:"license,omitempty"`
+	System     string         `json:"system,omitempty"`
+	Parameters map[string]any `json:"parameters,omitempty"`
+	Messages   []Message      `json:"messages,omitempty"`
+
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 
@@ -308,6 +316,16 @@ type CreateRequest struct {
 
 	// Deprecated: use Quantize instead
 	Quantization string `json:"quantization,omitempty"`
+}
+
+type CreateFromRequest struct {
+	Type  string `json:"type"`
+	Files []File `json:"files"`
+}
+
+type File struct {
+	Path   string `json:"path"`
+	Digest string `json:"digest"`
 }
 
 // DeleteRequest is the request passed to [Client.Delete].
