@@ -651,7 +651,11 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 
 	// Ensure that a place to put the sequence is available
 	if err := s.seqsSem.Acquire(r.Context(), 1); err != nil {
-		slog.Error("Failed to acquire semaphore", "error", err)
+		if errors.Is(err, context.Canceled) {
+			slog.Info("aborting completion request due to client closing the connection")
+		} else {
+			slog.Error("Failed to acquire semaphore", "error", err)
+		}
 		return
 	}
 	defer s.seqsSem.Release(1)
@@ -740,7 +744,11 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 
 	// Ensure that a place to put the sequence is available
 	if err := s.seqsSem.Acquire(r.Context(), 1); err != nil {
-		slog.Error("Failed to acquire semaphore", "error", err)
+		if errors.Is(err, context.Canceled) {
+			slog.Info("aborting embeddings request due to client closing the connection")
+		} else {
+			slog.Error("Failed to acquire semaphore", "error", err)
+		}
 		return
 	}
 	defer s.seqsSem.Release(1)

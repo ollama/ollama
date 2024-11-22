@@ -687,7 +687,11 @@ type CompletionResponse struct {
 
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
 	if err := s.sem.Acquire(ctx, 1); err != nil {
-		slog.Error("Failed to acquire semaphore", "error", err)
+		if errors.Is(err, context.Canceled) {
+			slog.Info("aborting completion request due to client closing the connection")
+		} else {
+			slog.Error("Failed to acquire semaphore", "error", err)
+		}
 		return err
 	}
 	defer s.sem.Release(1)
@@ -865,7 +869,11 @@ type EmbeddingResponse struct {
 
 func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, error) {
 	if err := s.sem.Acquire(ctx, 1); err != nil {
-		slog.Error("Failed to acquire semaphore", "error", err)
+		if errors.Is(err, context.Canceled) {
+			slog.Info("aborting embedding request due to client closing the connection")
+		} else {
+			slog.Error("Failed to acquire semaphore", "error", err)
+		}
 		return nil, err
 	}
 	defer s.sem.Release(1)
