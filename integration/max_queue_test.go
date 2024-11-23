@@ -16,7 +16,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/envconfig"
 )
 
 func TestMaxQueue(t *testing.T) {
@@ -27,12 +26,8 @@ func TestMaxQueue(t *testing.T) {
 
 	// Note: This test can be quite slow when running in CPU mode, so keep the threadCount low unless your on GPU
 	// Also note that by default Darwin can't sustain > ~128 connections without adjusting limits
-	threadCount := 32
-	if maxQueue := envconfig.MaxQueue(); maxQueue != 0 {
-		threadCount = int(maxQueue)
-	} else {
-		t.Setenv("OLLAMA_MAX_QUEUE", strconv.Itoa(threadCount))
-	}
+	threadCount := 16
+	t.Setenv("OLLAMA_MAX_QUEUE", strconv.Itoa(threadCount))
 
 	req := api.GenerateRequest{
 		Model:  "orca-mini",

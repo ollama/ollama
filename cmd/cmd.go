@@ -19,9 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -36,39 +34,66 @@ import (
 	"golang.org/x/term"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/server"
-	"github.com/ollama/ollama/types/errtypes"
-	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
 
+var (
+	errModelNotFound     = errors.New("no Modelfile or safetensors files found")
+	errModelfileNotFound = errors.New("specified Modelfile wasn't found")
+)
+
+func getModelfileName(cmd *cobra.Command) (string, error) {
+	fn, _ := cmd.Flags().GetString("file")
+
+	filename := fn
+	if filename == "" {
+		filename = "Modelfile"
+	}
+
+	absName, err := filepath.Abs(filename)
+	if err != nil {
+		return "", err
+	}
+
+	_, err = os.Stat(absName)
+	if err != nil {
+		return fn, err
+	}
+
+	return absName, nil
+}
+
 func CreateHandler(cmd *cobra.Command, args []string) error {
-	filename, _ := cmd.Flags().GetString("file")
-	filename, err := filepath.Abs(filename)
-	if err != nil {
-		return err
-	}
-
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
-	f, err := os.Open(filename)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
+	var reader io.Reader
 
-	modelfile, err := parser.ParseFile(f)
+	filename, err := getModelfileName(cmd)
+	if os.IsNotExist(err) {
+		if filename == "" {
+			reader = strings.NewReader("FROM .\n")
+		} else {
+			return errModelfileNotFound
+		}
+	} else if err != nil {
+		return err
+	} else {
+		f, err := os.Open(filename)
+		if err != nil {
+			return err
+		}
+
+		reader = f
+		defer f.Close()
+	}
+
+	modelfile, err := parser.ParseFile(reader)
 	if err != nil {
 		return err
 	}
@@ -82,6 +107,11 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
 	defer p.Stop()
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
 
 	for i := range modelfile.Commands {
 		switch modelfile.Commands[i].Name {
@@ -221,7 +251,7 @@ func tempZipFiles(path string) (string, error) {
 		// covers consolidated.x.pth, consolidated.pth
 		files = append(files, pt...)
 	} else {
-		return "", errors.New("no safetensors or torch files found")
+		return "", errModelNotFound
 	}
 
 	// add configuration files, json files are detected as text/plain
@@ -422,6 +452,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	if len(prompts) > 0 {
 		interactive = false
 	}
+	// Be quiet if we're redirecting to a pipe or file
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		interactive = false
+	}
 
 	nowrap, err := cmd.Flags().GetBool("nowordwrap")
 	if err != nil {
@@ -453,7 +487,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	opts.MultiModal = slices.Contains(info.Details.Families, "clip")
+	opts.MultiModal = len(info.ProjectorInfo) != 0
 	opts.ParentModel = info.Details.ParentModel
 
 	if interactive {
@@ -476,47 +510,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return generateInteractive(cmd, opts)
 	}
 	return generate(cmd, opts)
-}
-
-func errFromUnknownKey(unknownKeyErr error) error {
-	// find SSH public key in the error message
-	sshKeyPattern := `ssh-\w+ [^\s"]+`
-	re := regexp.MustCompile(sshKeyPattern)
-	matches := re.FindStringSubmatch(unknownKeyErr.Error())
-
-	if len(matches) > 0 {
-		serverPubKey := matches[0]
-
-		localPubKey, err := auth.GetPublicKey()
-		if err != nil {
-			return unknownKeyErr
-		}
-
-		if runtime.GOOS == "linux" && serverPubKey != localPubKey {
-			// try the ollama service public key
-			svcPubKey, err := os.ReadFile("/usr/share/ollama/.ollama/id_ed25519.pub")
-			if err != nil {
-				return unknownKeyErr
-			}
-			localPubKey = strings.TrimSpace(string(svcPubKey))
-		}
-
-		// check if the returned public key matches the local public key, this prevents adding a remote key to the user's account
-		if serverPubKey != localPubKey {
-			return unknownKeyErr
-		}
-
-		var msg strings.Builder
-		msg.WriteString(unknownKeyErr.Error())
-		msg.WriteString("\n\nYour ollama key is:\n")
-		msg.WriteString(localPubKey)
-		msg.WriteString("\nAdd your key at:\n")
-		msg.WriteString("https://ollama.com/settings/keys")
-
-		return errors.New(msg.String())
-	}
-
-	return unknownKeyErr
 }
 
 func PushHandler(cmd *cobra.Command, args []string) error {
@@ -572,14 +565,6 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		if strings.Contains(err.Error(), "access denied") {
 			return errors.New("you are not authorized to push to this namespace, create the model under a namespace you own")
 		}
-		host := model.ParseName(args[0]).Host
-		isOllamaHost := strings.HasSuffix(host, ".ollama.ai") || strings.HasSuffix(host, ".ollama.com")
-		if strings.Contains(err.Error(), errtypes.UnknownOllamaKeyErrMsg) && isOllamaHost {
-			// the user has not added their ollama key to ollama.com
-			// re-throw an error with a more user-friendly message
-			return errFromUnknownKey(err)
-		}
-
 		return err
 	}
 
@@ -766,9 +751,9 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		case "parameters":
 			fmt.Println(resp.Parameters)
 		case "system":
-			fmt.Println(resp.System)
+			fmt.Print(resp.System)
 		case "template":
-			fmt.Println(resp.Template)
+			fmt.Print(resp.Template)
 		}
 
 		return nil
@@ -1284,7 +1269,7 @@ func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
 
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" && term.IsTerminal(int(os.Stdout.Fd())) {
 		console.ConsoleFromFile(os.Stdin) //nolint:errcheck
 	}
 
@@ -1316,7 +1301,7 @@ func NewCLI() *cobra.Command {
 		RunE:    CreateHandler,
 	}
 
-	createCmd.Flags().StringP("file", "f", "Modelfile", "Name of the Modelfile")
+	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\"")
 	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_0)")
 
 	showCmd := &cobra.Command{

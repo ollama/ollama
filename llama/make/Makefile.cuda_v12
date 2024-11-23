@@ -1,0 +1,12 @@
+# Build rules for CUDA v12 runner
+
+include make/common-defs.make
+
+
+GPU_RUNNER_VARIANT := _v12
+GPU_PATH_ROOT_WIN=$(shell ls -d $(dir $(shell cygpath -m -s "$(CUDA_PATH)\.."))/v12.? 2>/dev/null)
+GPU_PATH_ROOT_LINUX=$(shell ls -d $(CUDA_PATH)-12 2>/dev/null)
+CUDA_ARCHITECTURES?=60;61;62;70;72;75;80;86;87;89;90;90a
+
+include make/cuda.make
+include make/gpu.make
