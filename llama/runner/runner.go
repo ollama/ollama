@@ -45,6 +45,9 @@ type Sequence struct {
 	// prompt inputs left to evaluate
 	inputs []input
 
+	// inputs that have been added to a batch but not yet submitted to Decode
+	pendingInputs []input
+
 	// tokens that have been generated but not returned yet (e.g. for stop sequences)
 	pendingResponses []string
 
@@ -119,7 +122,10 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 	params.numKeep = min(params.numKeep, s.cache.numCtx-1)
 
 	if len(inputs) > s.cache.numCtx {
-		slog.Warn("input exceeds context length", "prompt", len(inputs), "limit", s.cache.numCtx)
+		slog.Warn("truncating input prompt", "limit", s.cache.numCtx, "prompt", len(inputs), "numKeep", params.numKeep)
+		newInputs := inputs[:params.numKeep]
+		newInputs = append(newInputs, inputs[len(inputs)-s.cache.numCtx+params.numKeep:]...)
+		inputs = newInputs
 	}
 
 	var sc *llama.SamplingContext
@@ -294,6 +300,7 @@ func (s *Server) removeSequence(seqIndex int, reason string) {
 	close(seq.embedding)
 	seq.cache.InUse = false
 	s.seqs[seqIndex] = nil
+	s.seqsSem.Release(1)
 }
 
 func (s *Server) run(ctx context.Context) {
@@ -324,7 +331,11 @@ func (s *Server) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
-			s.processBatch(tokenBatch, embedBatch)
+			err := s.processBatch(tokenBatch, embedBatch)
+			if err != nil {
+				panic(err)
+			}
+
 			tokenBatch.Clear()
 			embedBatch.Clear()
 		}
@@ -338,7 +349,7 @@ func (s *Server) run(ctx context.Context) {
 // these should instead be handled by the handlers
 // it should only be responsible for accepting tokens or embeddings and
 // processing batches as fast as possible
-func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) {
+func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) error {
 	s.mu.Lock()
 	for s.allNil() {
 		s.cond.Wait() // Wait until an item is added
@@ -357,28 +368,19 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			continue
 		}
 
-		// If an error occurred during the processing of a previous batch then we may have emptied the inputs
-		// without adding a new one. In this case, end the sequence rather than infinite looping.
-		if len(seq.inputs) == 0 {
-			slog.Error("removing sequence due to no input tokens", "index", seqIdx, "cache id", seq.cache.Id)
-			s.removeSequence(seqIdx, "error")
-			continue
-		}
-
 		// if past the num predict limit
 		if seq.numPredict > 0 && seq.numPredicted >= seq.numPredict {
 			s.removeSequence(seqIdx, "limit")
 			continue
 		}
 
-		var numInputsProcessed int
-		shifted := false
-
 		for i, input := range seq.inputs {
-			if len(seq.cache.Inputs)+1 > s.cache.numCtx {
-				if !shifted {
-					s.cache.ShiftCacheSlot(seq.cache, seq.numKeep)
-					shifted = true
+			if len(seq.cache.Inputs)+len(seq.pendingInputs)+1 > s.cache.numCtx {
+				if len(seq.pendingInputs) == 0 {
+					err := s.cache.ShiftCacheSlot(seq.cache, seq.numKeep)
+					if err != nil {
+						return err
+					}
 				} else {
 					break
 				}
@@ -407,27 +409,30 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			}
 
 			crossAttention = seq.crossAttention
-			batch.Add(input.token, input.embed, len(seq.cache.Inputs), i+1 == len(seq.inputs), seq.cache.Id)
-			seq.cache.Inputs = append(seq.cache.Inputs, input)
-			numInputsProcessed++
-		}
-
-		if numInputsProcessed > 0 {
-			seq.inputs = seq.inputs[numInputsProcessed:]
+			batch.Add(input.token, input.embed, len(seq.cache.Inputs)+len(seq.pendingInputs), i+1 == len(seq.inputs), seq.cache.Id)
+			seq.pendingInputs = append(seq.pendingInputs, input)
 			seq.iBatch = batch.NumTokens() - 1
 		}
+
+		seq.inputs = seq.inputs[len(seq.pendingInputs):]
 	}
 
 	if batch == nil || batch.NumTokens() == 0 {
-		return
+		return nil
 	}
 
 	s.lc.SetCrossAttention(crossAttention)
 
 	err := s.lc.Decode(batch)
 	if err != nil {
-		slog.Error("failed to decode batch", "error", err)
-		return
+		if errors.Is(err, llama.ErrKvCacheFull) {
+			slog.Debug("defragmenting kv cache")
+			s.cache.lc.KvCacheDefrag()
+			err = s.lc.Decode(batch)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to decode batch: %w", err)
+		}
 	}
 
 	if crossAttention {
@@ -442,6 +447,12 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			continue
 		}
 
+		// After calling Decode, pending inputs are now in the cache
+		if len(seq.pendingInputs) > 0 {
+			seq.cache.Inputs = append(seq.cache.Inputs, seq.pendingInputs...)
+			seq.pendingInputs = []input{}
+		}
+
 		// don't sample prompt processing
 		if len(seq.inputs) != 0 {
 			continue
@@ -454,7 +465,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 
 		// if done processing the prompt, generate an embedding and return
 		if seq.embeddingOnly {
-			embed := s.lc.GetEmbeddingsSeq(i)
+			embed := s.lc.GetEmbeddingsSeq(seq.cache.Id)
 			if embed == nil {
 				embed = s.lc.GetEmbeddingsIth(seq.iBatch)
 			}
@@ -524,6 +535,8 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			s.removeSequence(i, "connection")
 		}
 	}
+
+	return nil
 }
 
 // TODO (jmorganca): use structs from the api package to avoid duplication
@@ -637,14 +650,18 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Ensure that a place to put the sequence is available
+	// Ensure there is a place to put the sequence, released when removed from s.seqs
 	if err := s.seqsSem.Acquire(r.Context(), 1); err != nil {
-		slog.Error("Failed to acquire semaphore", "error", err)
+		if errors.Is(err, context.Canceled) {
+			slog.Info("aborting completion request due to client closing the connection")
+		} else {
+			slog.Error("Failed to acquire semaphore", "error", err)
+		}
 		return
 	}
-	defer s.seqsSem.Release(1)
 
 	s.mu.Lock()
+	found := false
 	for i, sq := range s.seqs {
 		if sq == nil {
 			seq.cache, seq.inputs, err = s.cache.LoadCacheSlot(seq.inputs, req.CachePrompt)
@@ -658,10 +675,16 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 
 			s.seqs[i] = seq
 			s.cond.Signal()
+			found = true
 			break
 		}
 	}
 	s.mu.Unlock()
+
+	if !found {
+		http.Error(w, "could not find an available sequence", http.StatusInternalServerError)
+		return
+	}
 
 	for {
 		select {
@@ -726,14 +749,18 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Ensure that a place to put the sequence is available
+	// Ensure there is a place to put the sequence, released when removed from s.seqs
 	if err := s.seqsSem.Acquire(r.Context(), 1); err != nil {
-		slog.Error("Failed to acquire semaphore", "error", err)
+		if errors.Is(err, context.Canceled) {
+			slog.Info("aborting embeddings request due to client closing the connection")
+		} else {
+			slog.Error("Failed to acquire semaphore", "error", err)
+		}
 		return
 	}
-	defer s.seqsSem.Release(1)
 
 	s.mu.Lock()
+	found := false
 	for i, sq := range s.seqs {
 		if sq == nil {
 			seq.cache, seq.inputs, err = s.cache.LoadCacheSlot(seq.inputs, req.CachePrompt)
@@ -744,10 +771,16 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 			}
 			s.seqs[i] = seq
 			s.cond.Signal()
+			found = true
 			break
 		}
 	}
 	s.mu.Unlock()
+
+	if !found {
+		http.Error(w, "could not find an available sequence", http.StatusInternalServerError)
+		return
+	}
 
 	embedding := <-seq.embedding
 

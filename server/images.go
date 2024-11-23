@@ -5,7 +5,6 @@ import (
 	"cmp"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,6 +12,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,14 +23,12 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
-	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
@@ -984,37 +982,7 @@ func GetSHA256Digest(r io.Reader) (string, int64) {
 
 var errUnauthorized = errors.New("unauthorized: access denied")
 
-// getTokenSubject returns the subject of a JWT token, it does not validate the token
-func getTokenSubject(token string) string {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return ""
-	}
-
-	payload := parts[1]
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(payload)
-	if err != nil {
-		slog.Error(fmt.Sprintf("failed to decode jwt payload: %v", err))
-		return ""
-	}
-
-	var payloadMap map[string]interface{}
-	if err := json.Unmarshal(payloadBytes, &payloadMap); err != nil {
-		slog.Error(fmt.Sprintf("failed to unmarshal payload JSON: %v", err))
-		return ""
-	}
-
-	sub, ok := payloadMap["sub"]
-	if !ok {
-		slog.Error("jwt does not contain 'sub' field")
-		return ""
-	}
-
-	return fmt.Sprintf("%s", sub)
-}
-
 func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *registryOptions) (*http.Response, error) {
-	anonymous := true // access will default to anonymous if no user is found associated with the public key
 	for range 2 {
 		resp, err := makeRequest(ctx, method, requestURL, headers, body, regOpts)
 		if err != nil {
@@ -1035,7 +1003,6 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 			if err != nil {
 				return nil, err
 			}
-			anonymous = getTokenSubject(token) == "anonymous"
 			regOpts.Token = token
 			if body != nil {
 				_, err = body.Seek(0, io.SeekStart)
@@ -1058,18 +1025,23 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 		}
 	}
 
-	if anonymous {
-		// no user is associated with the public key, and the request requires non-anonymous access
-		pubKey, nestedErr := auth.GetPublicKey()
-		if nestedErr != nil {
-			slog.Error(fmt.Sprintf("couldn't get public key: %v", nestedErr))
-			return nil, errUnauthorized
-		}
-		return nil, &errtypes.UnknownOllamaKey{Key: pubKey}
-	}
-	// user is associated with the public key, but is not authorized to make the request
 	return nil, errUnauthorized
 }
+
+// testMakeRequestDialContext specifies the dial function for the http client in
+// makeRequest. It can be used to resolve hosts in model names to local
+// addresses for testing. For example, the model name ("example.com/my/model")
+// can be directed to push/pull from "127.0.0.1:1234".
+//
+// This is not safe to set across goroutines. It should be set in
+// the main test goroutine, and not by tests marked to run in parallel with
+// t.Parallel().
+//
+// It should be cleared after use, otherwise it will affect other tests.
+//
+// Ideally we would have some set this up the stack, but the code is not
+// structured in a way that makes this easy, so this will have to do for now.
+var testMakeRequestDialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 
 func makeRequest(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.Reader, regOpts *registryOptions) (*http.Response, error) {
 	if requestURL.Scheme != "http" && regOpts != nil && regOpts.Insecure {
@@ -1105,6 +1077,9 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 	}
 
 	resp, err := (&http.Client{
+		Transport: &http.Transport{
+			DialContext: testMakeRequestDialContext,
+		},
 		CheckRedirect: regOpts.CheckRedirect,
 	}).Do(req)
 	if err != nil {
