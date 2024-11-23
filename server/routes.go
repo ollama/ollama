@@ -1388,6 +1388,7 @@ func (s *Server) PsHandler(c *gin.Context) {
 
 func (s *Server) ChatHandler(c *gin.Context) {
 	checkpointStart := time.Now()
+	// slog.Info("chat request", "request", c.Request.Body)
 
 	var req api.ChatRequest
 	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
@@ -1467,6 +1468,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
+		var accumulatedContent strings.Builder
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
@@ -1485,6 +1487,21 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					EvalCount:          r.EvalCount,
 					EvalDuration:       r.EvalDuration,
 				},
+			}
+
+			if len(req.Tools) > 0 {
+				// When tools are present, accumulate content and only parse at the end
+				accumulatedContent.WriteString(r.Content)
+				if toolCalls, ok := m.parseToolCalls(accumulatedContent.String()); ok {
+					res.Message.ToolCalls = toolCalls
+					res.Message.Content = accumulatedContent.String()
+					accumulatedContent.Reset()
+				} else {
+					// res.Message.Content = accumulatedContent.String()
+				}
+			} else {
+				slog.Info("no tools", "content", r.Content)
+				res.Message.Content = r.Content
 			}
 
 			if r.Done {
