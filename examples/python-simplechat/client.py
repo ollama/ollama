@@ -2,13 +2,14 @@ import json
 import requests
 
 # NOTE: ollama must be running for this to work, start the ollama app or run `ollama serve`
-model = "llama3"  # TODO: update this for whatever model you wish to use
+model = "llama3.2"  # TODO: update this for whatever model you wish to use
 
 
 def chat(messages):
     r = requests.post(
         "http://0.0.0.0:11434/api/chat",
         json={"model": model, "messages": messages, "stream": True},
+	stream=True
     )
     r.raise_for_status()
     output = ""

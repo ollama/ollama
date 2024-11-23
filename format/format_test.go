@@ -5,7 +5,6 @@ import (
 )
 
 func TestHumanNumber(t *testing.T) {
-
 	type testCase struct {
 		input    uint64
 		expected string

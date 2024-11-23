@@ -18,16 +18,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"runtime"
-	"strconv"
-	"strings"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/version"
 )
@@ -57,7 +55,7 @@ func checkError(resp *http.Response, body []byte) error {
 
 // ClientFromEnvironment creates a new [Client] using configuration from the
 // environment variable OLLAMA_HOST, which points to the network host and
-// port on which the ollama service is listenting. The format of this variable
+// port on which the ollama service is listening. The format of this variable
 // is:
 //
 //	<scheme>://<host>:<port>
@@ -65,63 +63,9 @@ func checkError(resp *http.Response, body []byte) error {
 // If the variable is not specified, a default ollama host and port will be
 // used.
 func ClientFromEnvironment() (*Client, error) {
-	ollamaHost, err := GetOllamaHost()
-	if err != nil {
-		return nil, err
-	}
-
 	return &Client{
-		base: &url.URL{
-			Scheme: ollamaHost.Scheme,
-			Host:   net.JoinHostPort(ollamaHost.Host, ollamaHost.Port),
-		},
+		base: envconfig.Host(),
 		http: http.DefaultClient,
-	}, nil
-}
-
-type OllamaHost struct {
-	Scheme string
-	Host   string
-	Port   string
-}
-
-func GetOllamaHost() (OllamaHost, error) {
-	defaultPort := "11434"
-
-	hostVar := os.Getenv("OLLAMA_HOST")
-	hostVar = strings.TrimSpace(strings.Trim(strings.TrimSpace(hostVar), "\"'"))
-
-	scheme, hostport, ok := strings.Cut(hostVar, "://")
-	switch {
-	case !ok:
-		scheme, hostport = "http", hostVar
-	case scheme == "http":
-		defaultPort = "80"
-	case scheme == "https":
-		defaultPort = "443"
-	}
-
-	// trim trailing slashes
-	hostport = strings.TrimRight(hostport, "/")
-
-	host, port, err := net.SplitHostPort(hostport)
-	if err != nil {
-		host, port = "127.0.0.1", defaultPort
-		if ip := net.ParseIP(strings.Trim(hostport, "[]")); ip != nil {
-			host = ip.String()
-		} else if hostport != "" {
-			host = hostport
-		}
-	}
-
-	if portNum, err := strconv.ParseInt(port, 10, 32); err != nil || portNum > 65535 || portNum < 0 {
-		return OllamaHost{}, ErrInvalidHostPort
-	}
-
-	return OllamaHost{
-		Scheme: scheme,
-		Host:   host,
-		Port:   port,
 	}, nil
 }
 
@@ -229,7 +173,7 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 		}
 
 		if errorResponse.Error != "" {
-			return fmt.Errorf(errorResponse.Error)
+			return errors.New(errorResponse.Error)
 		}
 
 		if response.StatusCode >= http.StatusBadRequest {
@@ -354,6 +298,15 @@ func (c *Client) List(ctx context.Context) (*ListResponse, error) {
 	return &lr, nil
 }
 
+// ListRunning lists running models.
+func (c *Client) ListRunning(ctx context.Context) (*ProcessResponse, error) {
+	var lr ProcessResponse
+	if err := c.do(ctx, http.MethodGet, "/api/ps", nil, &lr); err != nil {
+		return nil, err
+	}
+	return &lr, nil
+}
+
 // Copy copies a model - creating a model with another name from an existing
 // model.
 func (c *Client) Copy(ctx context.Context, req *CopyRequest) error {
@@ -380,7 +333,7 @@ func (c *Client) Show(ctx context.Context, req *ShowRequest) (*ShowResponse, err
 	return &resp, nil
 }
 
-// Hearbeat checks if the server has started and is responsive; if yes, it
+// Heartbeat checks if the server has started and is responsive; if yes, it
 // returns nil, otherwise an error.
 func (c *Client) Heartbeat(ctx context.Context) error {
 	if err := c.do(ctx, http.MethodHead, "/", nil, nil); err != nil {
@@ -389,7 +342,16 @@ func (c *Client) Heartbeat(ctx context.Context) error {
 	return nil
 }
 
-// Embeddings generates embeddings from a model.
+// Embed generates embeddings from a model.
+func (c *Client) Embed(ctx context.Context, req *EmbedRequest) (*EmbedResponse, error) {
+	var resp EmbedResponse
+	if err := c.do(ctx, http.MethodPost, "/api/embed", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// Embeddings generates an embedding from a model.
 func (c *Client) Embeddings(ctx context.Context, req *EmbeddingRequest) (*EmbeddingResponse, error) {
 	var resp EmbeddingResponse
 	if err := c.do(ctx, http.MethodPost, "/api/embeddings", req, &resp); err != nil {

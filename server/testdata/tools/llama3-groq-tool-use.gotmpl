@@ -1,0 +1,43 @@
+{{- if .Messages }}
+{{- if or .System .Tools }}<|start_header_id|>system<|end_header_id|>
+
+{{ .System }}
+{{- if .Tools }} You are provided with function signatures within <tools></tools> XML tags. You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug into functions. For each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:
+<tool_call>
+{"name": <function-name>,"arguments": <args-dict>}
+</tool_call>
+
+Here are the available tools:
+<tools>
+{{- range .Tools }} {{ .Function }}
+{{- end }} </tools>
+{{- end }}
+{{- end }}<|eot_id|>
+{{- range .Messages }}
+{{- if ne .Role "system" }}<|start_header_id|>{{ .Role }}<|end_header_id|>
+
+{{ if eq .Role "user" }}{{ .Content }}
+{{- else if eq .Role "assistant" }}
+{{- if .Content }}{{ .Content }}
+{{- else if .ToolCalls }}<tool_call>
+{{ range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
+{{- end }}
+</tool_call>
+{{- end }}
+{{- else if eq .Role "tool" }}<tool_response>
+{{ .Content }}
+</tool_response>
+{{- end }}<|eot_id|>
+{{- end }}
+{{- end }}<|start_header_id|>assistant<|end_header_id|>
+
+{{ else }}
+{{ if .System }}<|start_header_id|>system<|end_header_id|>
+
+{{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>
+
+{{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>
+
+{{ end }}{{ .Response }}
+{{- if .Response }}<|eot_id|>
+{{- end }}
