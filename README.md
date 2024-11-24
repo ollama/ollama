@@ -514,3 +514,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ### Supported backends
 
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov.
+
+### Observability
+
+- [OpenLIT](https://github.com/openlit/openlit) is an OpenTelemetry-native tool for monitoring Ollama Applications & GPUs using traces and metrics.
