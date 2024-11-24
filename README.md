@@ -314,7 +314,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Oatmeal](https://github.com/dustinblackman/oatmeal)
 - [cmdh](https://github.com/pgibler/cmdh)
 - [ooo](https://github.com/npahlfer/ooo)
-- [shell-pilot](https://github.com/reid41/shell-pilot)(Interact with LLM using Ollama models(or openAI, mistralAI)via pure shell scripts on your Linux(or MacOS) system, enhancing intelligent system management without any dependencies)
+- [shell-pilot](https://github.com/reid41/shell-pilot)(Interact with models via pure shell scripts on Linux or macOS)
 - [tenere](https://github.com/pythops/tenere)
 - [llm-ollama](https://github.com/taketwo/llm-ollama) for [Datasette's LLM CLI](https://llm.datasette.io/en/stable/).
 - [typechat-cli](https://github.com/anaisbetts/typechat-cli)
