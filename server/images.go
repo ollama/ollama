@@ -1076,17 +1076,15 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 		req.ContentLength = contentLength
 	}
 
-	resp, err := (&http.Client{
-		Transport: &http.Transport{
-			DialContext: testMakeRequestDialContext,
-		},
+	c := &http.Client{
 		CheckRedirect: regOpts.CheckRedirect,
-	}).Do(req)
-	if err != nil {
-		return nil, err
 	}
-
-	return resp, nil
+	if testMakeRequestDialContext != nil {
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.DialContext = testMakeRequestDialContext
+		c.Transport = tr
+	}
+	return c.Do(req)
 }
 
 func getValue(header, key string) string {
