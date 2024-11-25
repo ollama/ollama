@@ -112,10 +112,22 @@ function updateTray() {
       click: () => autoUpdater.quitAndInstall(),
     },
     { type: 'separator' },
-  ]
-
+  ];
+  const aboutItem: MenuItemConstructorOptions = {
+    label: 'About Ollama',
+    click: () => {
+      dialog.showMessageBox({
+        type: 'info',
+        title: 'Ollama',
+        message: 'Ollama',
+        detail: `Version: ${app.getVersion()}`,
+        icon: path.join(assetPath, '../assets/iconTemplate@2x.png'), 
+        buttons: ['OK'], 
+      });
+    },
+  };
   const menu = Menu.buildFromTemplate([
-    ...(updateAvailable ? updateItems : []),
+    ...(updateAvailable ? updateItems : []), aboutItem, 
     { role: 'quit', label: 'Quit Ollama', accelerator: 'Command+Q' },
   ])
 
