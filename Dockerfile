@@ -320,7 +320,6 @@ RUN cd dist/linux-$GOARCH && \
     tar --exclude runners -cf - . | pigz --best > ../ollama-linux-$GOARCH.tgz
 
 FROM --platform=linux/amd64 ubuntu:22.04 AS runtime-musa
-COPY --from=musa-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
 RUN apt-get update && \
     apt-get install -y ca-certificates libelf1 libnuma1 && \
     rm -rf /var/lib/apt/lists/*
