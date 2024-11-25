@@ -1074,11 +1074,13 @@ func isLocalIP(ip netip.Addr) bool {
 }
 
 func allowedHost(host string) bool {
+	host = strings.ToLower(host)
+
 	if host == "" || host == "localhost" {
 		return true
 	}
 
-	if hostname, err := os.Hostname(); err == nil && host == hostname {
+	if hostname, err := os.Hostname(); err == nil && host == strings.ToLower(hostname) {
 		return true
 	}
 
@@ -1112,7 +1114,7 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 
 		host, _, err := net.SplitHostPort(c.Request.Host)
 		if err != nil {
-			host = strings.ToLower(c.Request.Host)
+			host = c.Request.Host
 		}
 
 		if addr, err := netip.ParseAddr(host); err == nil {
