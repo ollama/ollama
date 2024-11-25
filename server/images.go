@@ -1076,10 +1076,16 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 		req.ContentLength = contentLength
 	}
 
+	// Create transport based on default transport to preserve proxy settings
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	
+	// Only override DialContext if test function is provided
+	if testMakeRequestDialContext != nil {
+		transport.DialContext = testMakeRequestDialContext
+	}
+
 	resp, err := (&http.Client{
-		Transport: &http.Transport{
-			DialContext: testMakeRequestDialContext,
-		},
+		Transport:     transport,
 		CheckRedirect: regOpts.CheckRedirect,
 	}).Do(req)
 	if err != nil {
