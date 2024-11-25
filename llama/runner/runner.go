@@ -122,9 +122,11 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 	params.numKeep = min(params.numKeep, s.cache.numCtx-1)
 
 	if len(inputs) > s.cache.numCtx {
-		slog.Warn("truncating input prompt", "limit", s.cache.numCtx, "prompt", len(inputs), "numKeep", params.numKeep)
+		discard := len(inputs) - s.cache.numCtx
 		newInputs := inputs[:params.numKeep]
-		newInputs = append(newInputs, inputs[len(inputs)-s.cache.numCtx+params.numKeep:]...)
+		newInputs = append(newInputs, inputs[params.numKeep+discard:]...)
+
+		slog.Warn("truncating input prompt", "limit", s.cache.numCtx, "prompt", len(inputs), "keep", params.numKeep, "new", len(newInputs))
 		inputs = newInputs
 	}
 
