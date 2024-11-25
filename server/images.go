@@ -1078,6 +1078,7 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 
 	resp, err := (&http.Client{
 		Transport: &http.Transport{
+			Proxy:       http.ProxyFromEnvironment,
 			DialContext: testMakeRequestDialContext,
 		},
 		CheckRedirect: regOpts.CheckRedirect,
