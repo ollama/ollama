@@ -1388,7 +1388,6 @@ func (s *Server) PsHandler(c *gin.Context) {
 
 func (s *Server) ChatHandler(c *gin.Context) {
 	checkpointStart := time.Now()
-	// slog.Info("chat request", "request", c.Request.Body)
 
 	var req api.ChatRequest
 	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
@@ -1469,6 +1468,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	go func() {
 		defer close(ch)
 		var accumulatedContent strings.Builder
+		flushContentForTools := false
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
@@ -1492,16 +1492,16 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			if len(req.Tools) > 0 {
 				// When tools are present, accumulate content and only parse at the end
 				accumulatedContent.WriteString(r.Content)
+				// Check if there's a potential tool call by looking for {"name": pattern
 				if toolCalls, ok := m.parseToolCalls(accumulatedContent.String()); ok {
 					res.Message.ToolCalls = toolCalls
-					res.Message.Content = accumulatedContent.String()
+					res.Message.Content = ""
 					accumulatedContent.Reset()
-				} else {
-					// res.Message.Content = accumulatedContent.String()
+					flushContentForTools = true
 				}
 			} else {
 				slog.Info("no tools", "content", r.Content)
-				res.Message.Content = r.Content
+				// res.Message.Content = r.Content
 			}
 
 			if r.Done {
@@ -1509,7 +1509,21 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
 
-			ch <- res
+			if len(req.Tools) > 0 && res.Message.ToolCalls != nil {
+				ch <- res
+			} else if len(req.Tools) == 0 {
+				ch <- res
+			} else if r.Done {
+				if !flushContentForTools {
+					res.Message.Content = accumulatedContent.String()
+				} else {
+					res.Message.Content = ""
+				}
+				res.TotalDuration = time.Since(checkpointStart)
+				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+				ch <- res
+			}
+
 		}); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
