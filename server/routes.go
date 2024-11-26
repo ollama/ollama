@@ -1468,7 +1468,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	go func() {
 		defer close(ch)
 		var accumulatedContent strings.Builder
-		flushContentForTools := false
+		flushContent := false
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
@@ -1490,45 +1490,47 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 
 			if len(req.Tools) > 0 {
-				// When tools are present, accumulate content and only parse at the end
 				accumulatedContent.WriteString(r.Content)
-				// Check if there's a potential tool call by looking for {"name": pattern
 				if toolCalls, ok := m.parseToolCalls(accumulatedContent.String()); ok {
 					res.Message.ToolCalls = toolCalls
 					res.Message.Content = ""
 					accumulatedContent.Reset()
-					flushContentForTools = true
+					flushContent = true
 				}
-			} else {
-				slog.Info("no tools", "content", r.Content)
-				// res.Message.Content = r.Content
 			}
-
 			if r.Done {
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
 
-			if len(req.Tools) > 0 && res.Message.ToolCalls != nil {
+			// Always return if not streaming - handling logic is outside
+			if req.Stream != nil && !*req.Stream {
+				res.Message.Content = r.Content
 				ch <- res
-			} else if len(req.Tools) == 0 {
-				ch <- res
-			} else if r.Done {
-				if !flushContentForTools {
-					res.Message.Content = accumulatedContent.String()
-				} else {
-					res.Message.Content = ""
-				}
-				res.TotalDuration = time.Since(checkpointStart)
-				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
-				ch <- res
+				return
 			}
 
+			// For streaming requests send response if:
+			// 1. Tool calls found
+			// 2. No tools in request (no tools returned)
+			// 3. Final output with metrics, flush contents if it was a tool request
+			if len(req.Tools) > 0 && res.Message.ToolCalls != nil ||
+				len(req.Tools) == 0 ||
+				(r.Done && len(req.Tools) > 0) {
+				if r.Done {
+					res.Message.Content = accumulatedContent.String()
+					if flushContent {
+						res.Message.Content = ""
+					}
+				}
+				ch <- res
+			}
 		}); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
 
+	// TODO: Consolidate with streaming and non streaming better
 	if req.Stream != nil && !*req.Stream {
 		var resp api.ChatResponse
 		var sb strings.Builder
