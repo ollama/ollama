@@ -558,6 +558,14 @@ func WriteGGUF(ws io.WriteSeeker, kv KV, ts []Tensor) error {
 		}
 	}
 
+	offset, err := ws.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return err
+	}
+	if err := binary.Write(ws, binary.LittleEndian, bytes.Repeat([]byte{0}, int(ggufPadding(offset, alignment)))); err != nil {
+		return err
+	}
+
 	return nil
 }
 
