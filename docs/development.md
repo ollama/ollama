@@ -23,7 +23,7 @@ export OLLAMA_DEBUG=1
 Get the required libraries and build the native LLM code:  (Adjust the job count based on your number of processors for a faster build)
 
 ```bash
-make -j 5
+make -j $(expr $(nproc) / 2)
 ```
 
 Then build ollama:
@@ -60,7 +60,7 @@ a set of target CUDA architectures by setting `CMAKE_CUDA_ARCHITECTURES` (e.g. "
 Then generate dependencies:  (Adjust the job count based on your number of processors for a faster build)
 
 ```
-make -j 5
+make -j $(expr $(nproc) / 2)
 ```
 
 Then build the binary:
@@ -85,7 +85,7 @@ the AMD GPU targets by setting AMDGPU_TARGETS (e.g. `AMDGPU_TARGETS="gfx1101;gfx
 Then generate dependencies:  (Adjust the job count based on your number of processors for a faster build)
 
 ```
-make -j 5
+make -j $(expr $(nproc) / 2)
 ```
 
 Then build the binary:
@@ -130,7 +130,7 @@ Then, build the `ollama` binary:
 
 ```powershell
 $env:CGO_ENABLED="1"
-make -j 8
+make -j $(expr $(nproc) / 2)
 go build .
 ```
 
