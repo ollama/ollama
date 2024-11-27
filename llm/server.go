@@ -214,25 +214,29 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		params = append(params, "--threads", strconv.Itoa(defaultThreads))
 	}
 
-	flashAttnEnabled := envconfig.FlashAttention()
+	// Check flash attention support and determine KV cache type
+	flashAttnEnabled, reason := checkFlashAttentionSupport(ggml)
+	if flashAttnEnabled {
+		params = append(params, "--flash-attn")
+		slog.Info("enabling flash attention")
 
-	for _, g := range gpus {
-		// only cuda (compute capability 7+) and metal support flash attention
-		if g.Library != "metal" && (g.Library != "cuda" || g.DriverMajor < 7) {
-			flashAttnEnabled = false
+		kvCacheType := kVCacheQuantization(envconfig.KvCacheType(), ggml)
+		if kvCacheType != "" {
+			params = append(params, "--kv-cache-type", kvCacheType)
+			slog.Debug("setting cache type", "type", kvCacheType)
 		}
+	} else if envconfig.FlashAttention() {
+		slog.Info("flash attention not enabled", "reason", reason)
+	}
 
-		// mmap has issues with partial offloading on metal
+	// mmap has issues with partial offloading on metal
+	for _, g := range gpus {
 		if g.Library == "metal" &&
 			uint64(opts.NumGPU) > 0 &&
 			uint64(opts.NumGPU) < ggml.KV().BlockCount()+1 {
 			opts.UseMMap = new(bool)
 			*opts.UseMMap = false
 		}
-	}
-
-	if flashAttnEnabled {
-		params = append(params, "--flash-attn")
 	}
 
 	// Windows CUDA should not use mmap for best performance
@@ -1114,4 +1118,36 @@ func parseDurationMs(ms float64) time.Duration {
 	}
 
 	return dur
+}
+
+// modelSupportsFlashAttention checks if the model supports flash attention
+func modelSupportsFlashAttention(ggml GGMLModel) bool {
+	_, isEmbedding := ggml.KV()[fmt.Sprintf("%s.pooling_type", ggml.KV().Architecture())]
+	if isEmbedding {
+		return false
+	}
+
+	// Check head counts match and are non-zero
+	headCountK := ggml.KV().EmbeddingHeadCountK()
+	headCountV := ggml.KV().EmbeddingHeadCountV()
+	return headCountK != 0 && headCountV != 0 && headCountK == headCountV
+}
+
+// checkFlashAttentionSupport returns whether flash attention should be enabled and a reason if it's not
+func checkFlashAttentionSupport(ggml GGMLModel) (bool, string) {
+	gpus := discover.GpuInfoList{}
+	flashAttnRequested := envconfig.FlashAttention()
+	if !flashAttnRequested {
+		return false, "not requested"
+	}
+
+	if !gpus.FlashAttentionSupported() {
+		return false, "not supported by GPU"
+	}
+
+	if !modelSupportsFlashAttention(ggml) {
+		return false, "not supported by model"
+	}
+
+	return true, ""
 }

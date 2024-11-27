@@ -15,6 +15,7 @@ import (
 
 func TestEstimateGPULayers(t *testing.T) {
 	t.Setenv("OLLAMA_DEBUG", "1")
+	t.Setenv("OLLAMA_KV_CACHE_TYPE", "")
 
 	modelName := "dummy"
 	f, err := os.CreateTemp(t.TempDir(), modelName)
@@ -57,6 +58,7 @@ func TestEstimateGPULayers(t *testing.T) {
 	}
 	projectors := []string{}
 	opts := api.DefaultOptions()
+
 	t.Run("cpu", func(t *testing.T) {
 		estimate := EstimateGPULayers(gpus, ggml, projectors, opts)
 		assert.Equal(t, 0, estimate.Layers)
@@ -70,7 +72,7 @@ func TestEstimateGPULayers(t *testing.T) {
 	projectorSize := uint64(0)
 	memoryLayerOutput := uint64(4)
 
-	// Dual CUDA scenario with assymetry
+	// Dual CUDA scenario with asymmetry
 	gpuMinimumMemory := uint64(2048)
 	gpus = []discover.GpuInfo{
 		{
@@ -123,6 +125,100 @@ func TestEstimateGPULayers(t *testing.T) {
 				assert.Equal(t, estimate.VRAMSize, estimate.TotalSize, "scenario %d: %v %+v", i, s, estimate)
 				assert.Equal(t, estimate.TotalSize, layerSums, "scenario %d: %v %+v", i, s, estimate)
 			}
+		})
+	}
+}
+
+func TestEstimateKvCacheSize(t *testing.T) {
+	const (
+		baseSize = 0x10000000 // Base size for standard model with 1024 context using f32
+		baseCtx  = uint64(1024)
+	)
+
+	var (
+		tokenizer = []string{" "}
+		scores    = []float32{0}
+		tokenType = []int32{0}
+	)
+
+	// Helper to create a test model with given architecture
+	createTestModel := func(arch string, poolingType string) *GGML {
+		f, err := os.CreateTemp(t.TempDir(), "dummy")
+		require.NoError(t, err)
+		defer f.Close()
+
+		tensor := Tensor{
+			Name:     "output.weight",
+			Kind:     uint32(0),
+			Offset:   uint64(0),
+			Shape:    []uint64{1, 1, 1, 1},
+			WriterTo: bytes.NewReader(make([]byte, 32)),
+		}
+
+		kv := KV{
+			"general.architecture":            arch,
+			arch + ".context_length":          uint32(32),
+			arch + ".embedding_length":        uint32(4096),
+			arch + ".block_count":             uint32(32),
+			arch + ".attention.head_count":    uint32(32),
+			arch + ".attention.head_count_kv": uint32(32),
+			"tokenizer.ggml.tokens":           tokenizer,
+			"tokenizer.ggml.scores":           scores,
+			"tokenizer.ggml.token_type":       tokenType,
+		}
+
+		if poolingType != "" {
+			kv[arch+".pooling_type"] = poolingType
+		}
+
+		require.NoError(t, WriteGGUF(f, kv, []Tensor{tensor}))
+
+		ggml, err := LoadModel(f.Name(), 0)
+		require.NoError(t, err)
+		return ggml
+	}
+
+	tests := []struct {
+		name        string
+		ctx         uint64
+		cacheType   string
+		isEmbedding bool
+		want        uint64
+	}{
+		// Standard test cases (all non-f32 should fall back to f16 without flash attention)
+		{"f32 standard", baseCtx, "f32", false, baseSize * 4},     // f32 stays f32
+		{"f16 standard", baseCtx, "f16", false, baseSize * 2},     // f16 stays f16
+		{"q8_0 standard", baseCtx, "q8_0", false, baseSize * 2},   // falls back to f16
+		{"q4_0 standard", baseCtx, "q4_0", false, baseSize * 2},   // falls back to f16
+		{"empty type", baseCtx, "", false, baseSize * 2},          // defaults to f16
+		{"unknown type", baseCtx, "unknown", false, baseSize * 2}, // defaults to f16
+
+		// Embedding model cases
+		{"q4_0 embedding", baseCtx, "q4_0", true, baseSize * 2}, // forces f16
+		{"q8_0 embedding", baseCtx, "q8_0", true, baseSize * 2}, // forces f16
+		{"f32 embedding", baseCtx, "f32", true, baseSize * 4},   // keeps f32
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			arch := "llama"
+			poolingType := ""
+			if tt.isEmbedding {
+				arch = "bert"
+				poolingType = "mean"
+			}
+
+			ggml := createTestModel(arch, poolingType)
+			t.Setenv("OLLAMA_FLASH_ATTENTION", "false") // Ensure flash attention is disabled
+
+			// First get the actual cache type that will be used
+			actualCacheType := kVCacheQuantization(tt.cacheType, ggml)
+			// Then estimate size using the actual type that will be used
+			got := estimateKvCacheSize(actualCacheType, tt.ctx, ggml)
+
+			assert.Equal(t, tt.want, got,
+				fmt.Sprintf("ctx=%d requested_cache=%s actual_cache=%s embedding=%v",
+					tt.ctx, tt.cacheType, actualCacheType, tt.isEmbedding))
 		})
 	}
 }

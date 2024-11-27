@@ -88,6 +88,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"log/slog"
 	"runtime"
 	"runtime/cgo"
 	"slices"
@@ -140,7 +141,7 @@ type ContextParams struct {
 	c C.struct_llama_context_params
 }
 
-func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, flashAttention bool) ContextParams {
+func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, flashAttention bool, kvCacheType string) ContextParams {
 	params := C.llama_context_default_params()
 	params.n_ctx = C.uint(numCtx)
 	params.n_batch = C.uint(batchSize)
@@ -149,7 +150,34 @@ func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, fla
 	params.n_threads_batch = params.n_threads
 	params.embeddings = C.bool(true)
 	params.flash_attn = C.bool(flashAttention)
+	params.type_k = kvCacheTypeFromStr(strings.ToLower(kvCacheType))
+	params.type_v = kvCacheTypeFromStr(strings.ToLower(kvCacheType))
+
 	return ContextParams{c: params}
+}
+
+// kvCacheTypeFromStr converts a string cache type to the corresponding GGML type value
+func kvCacheTypeFromStr(s string) C.enum_ggml_type {
+	if s == "" {
+		return C.GGML_TYPE_F16
+	}
+
+	switch s {
+	case "f32":
+		return C.GGML_TYPE_F32
+	case "f16", "fp16":
+		return C.GGML_TYPE_F16
+	case "q8_0":
+		return C.GGML_TYPE_Q8_0
+	case "q4_0":
+		return C.GGML_TYPE_Q4_0
+	default:
+		// Only warn if non-default type was specified
+		if s != "" && s != "f16" && s != "fp16" {
+			slog.Warn("unsupported quantization type, defaulting to f16", "type", s)
+		}
+		return C.GGML_TYPE_F16
+	}
 }
 
 type Context struct {
