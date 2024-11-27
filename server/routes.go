@@ -1495,7 +1495,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
 
-			// TODO: Consolidate streaming and non-streaming request patterns
+			// TODO: tool call checking and filtering should be moved outside of this callback once streaming
+			// however this was a simple change for now without reworking streaming logic of this (and other)
+			// handlers
 			if req.Stream != nil && !*req.Stream {
 				ch <- res
 				return
