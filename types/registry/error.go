@@ -19,7 +19,6 @@ type Errs struct {
 	Errors []Err `json:"errors"`
 }
 
-// Error implements the error interface for RegistryError
 func (e Errs) Error() string {
 	if len(e.Errors) == 0 {
 		return "unknown registry error"
