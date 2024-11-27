@@ -450,10 +450,8 @@ func TestGenerateChat(t *testing.T) {
 			},
 		}
 
-		if len(resp.Message.ToolCalls) > 0 {
-			if diff := cmp.Diff(resp.Message.ToolCalls[0], expectedToolCall); diff != "" {
-				t.Errorf("tool call mismatch (-got +want):\n%s", diff)
-			}
+		if diff := cmp.Diff(resp.Message.ToolCalls[0], expectedToolCall); diff != "" {
+			t.Errorf("tool call mismatch (-got +want):\n%s", diff)
 		}
 	})
 
@@ -555,7 +553,7 @@ func TestGenerateChat(t *testing.T) {
 		decoder := json.NewDecoder(w.Body)
 		var finalToolCall api.ToolCall
 
-		for i := 0; ; i++ {
+		for {
 			var resp api.ChatResponse
 			if err := decoder.Decode(&resp); err == io.EOF {
 				break

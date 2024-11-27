@@ -1431,11 +1431,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, caps, req.Options, req.KeepAlive)
 	if errors.Is(err, errCapabilityCompletion) {
-		slog.Error("capability error", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support chat", req.Model)})
 		return
 	} else if err != nil {
-		slog.Error("schedule error", "error", err)
 		handleScheduleError(c, req.Model, err)
 		return
 	}
@@ -1471,7 +1469,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	go func() {
 		defer close(ch)
 		var sb strings.Builder
-		flushContent := false
+		toolCallSent := false
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
@@ -1497,38 +1495,33 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
 
-			// Always return if not streaming - handling logic is outside
+			// TODO: Consolidate streaming and non-streaming request patterns
 			if req.Stream != nil && !*req.Stream {
 				res.Message.Content = r.Content
 				ch <- res
 				return
 			}
 
-			if len(req.Tools) > 0 {
-				sb.WriteString(r.Content)
-				if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
-					slog.Info("found tool call!")
-					res.Message.ToolCalls = toolCalls
-					res.Message.Content = ""
-					sb.Reset()
-					flushContent = true
-				}
+			if len(req.Tools) == 0 {
+				ch <- res
+				return
 			}
 
-			// Send response in three cases:
-			// 1. Tool calls were found and parsed
-			// 2. Regular streaming (no tools involved)
-			// 3. Final response for tool requests
-			shouldSend := len(req.Tools) > 0 && res.Message.ToolCalls != nil || // Tool calls found
-				len(req.Tools) == 0 || // Regular streaming
-				r.Done
+			// If tools are recognized, use a flag to track the sending of a tool downstream
+			// This ensures that content is cleared from the message on the last chunk sent
+			sb.WriteString(r.Content)
+			if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
+				res.Message.ToolCalls = toolCalls
+				res.Message.Content = ""
+				sb.Reset()
+				toolCallSent = true
+				ch <- res
+				return
+			}
 
-			if shouldSend {
-				if len(req.Tools) > 0 && r.Done {
+			if r.Done {
+				if !toolCallSent {
 					res.Message.Content = sb.String()
-					if flushContent {
-						res.Message.Content = ""
-					}
 				}
 				ch <- res
 			}
@@ -1537,7 +1530,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}()
 
-	// TODO: Consolidate with streaming and non streaming better
 	if req.Stream != nil && !*req.Stream {
 		var resp api.ChatResponse
 		var sb strings.Builder
