@@ -571,7 +571,7 @@ type EmbedWriter struct {
 	model string
 }
 
-func (w *BaseWriter) writeError(code int, data []byte) (int, error) {
+func (w *BaseWriter) writeError(data []byte) (int, error) {
 	var serr api.StatusError
 	err := json.Unmarshal(data, &serr)
 	if err != nil {
@@ -630,7 +630,7 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 func (w *ChatWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
-		return w.writeError(code, data)
+		return w.writeError(data)
 	}
 
 	return w.writeResponse(data)
@@ -679,7 +679,7 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 func (w *CompleteWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
-		return w.writeError(code, data)
+		return w.writeError(data)
 	}
 
 	return w.writeResponse(data)
@@ -704,7 +704,7 @@ func (w *ListWriter) writeResponse(data []byte) (int, error) {
 func (w *ListWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
-		return w.writeError(code, data)
+		return w.writeError(data)
 	}
 
 	return w.writeResponse(data)
@@ -730,7 +730,7 @@ func (w *RetrieveWriter) writeResponse(data []byte) (int, error) {
 func (w *RetrieveWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
-		return w.writeError(code, data)
+		return w.writeError(data)
 	}
 
 	return w.writeResponse(data)
@@ -755,7 +755,7 @@ func (w *EmbedWriter) writeResponse(data []byte) (int, error) {
 func (w *EmbedWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
-		return w.writeError(code, data)
+		return w.writeError(data)
 	}
 
 	return w.writeResponse(data)
