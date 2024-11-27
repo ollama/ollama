@@ -1508,6 +1508,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				return
 			}
 
+			// Streaming tool calls:
 			// If tools are recognized, use a flag to track the sending of a tool downstream
 			// This ensures that content is cleared from the message on the last chunk sent
 			sb.WriteString(r.Content)
@@ -1521,6 +1522,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 
 			if r.Done {
+				// Send any remaining content if no tool calls were detected
 				if !toolCallSent {
 					res.Message.Content = sb.String()
 				}
