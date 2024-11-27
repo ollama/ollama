@@ -200,9 +200,9 @@ func toolCallId() string {
 	return "call_" + strings.ToLower(string(b))
 }
 
-func toToolCalls(message api.Message) []ToolCall {
-	toolCalls := make([]ToolCall, len(message.ToolCalls))
-	for i, tc := range message.ToolCalls {
+func toToolCalls(tc []api.ToolCall) []ToolCall {
+	toolCalls := make([]ToolCall, len(tc))
+	for i, tc := range tc {
 		toolCalls[i].ID = toolCallId()
 		toolCalls[i].Type = "function"
 		toolCalls[i].Function.Name = tc.Function.Name
@@ -219,7 +219,7 @@ func toToolCalls(message api.Message) []ToolCall {
 }
 
 func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
-	toolCalls := toToolCalls(r.Message)
+	toolCalls := toToolCalls(r.Message.ToolCalls)
 	return ChatCompletion{
 		Id:                id,
 		Object:            "chat.completion",
@@ -248,7 +248,7 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 }
 
 func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
-	toolCalls := toToolCalls(r.Message)
+	toolCalls := toToolCalls(r.Message.ToolCalls)
 	return ChatCompletionChunk{
 		Id:                id,
 		Object:            "chat.completion.chunk",

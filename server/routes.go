@@ -1498,12 +1498,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			// TODO: tool call checking and filtering should be moved outside of this callback once streaming
 			// however this was a simple change for now without reworking streaming logic of this (and other)
 			// handlers
-			if req.Stream != nil && !*req.Stream {
-				ch <- res
-				return
-			}
-
-			if len(req.Tools) == 0 {
+			if req.Stream != nil && !*req.Stream || len(req.Tools) == 0 {
 				ch <- res
 				return
 			}
@@ -1516,14 +1511,14 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				res.Message.ToolCalls = toolCalls
 				res.Message.Content = ""
 				sb.Reset()
-				toolCallSent = true
+				hasToolCalls = true
 				ch <- res
 				return
 			}
 
 			if r.Done {
 				// Send any remaining content if no tool calls were detected
-				if !toolCallSent {
+				if !hasToolCalls {
 					res.Message.Content = sb.String()
 				}
 				ch <- res

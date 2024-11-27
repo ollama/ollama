@@ -20,8 +20,6 @@ import (
 	"github.com/ollama/ollama/llm"
 )
 
-var toolStream = true
-
 type mockRunner struct {
 	llm.LlamaServer
 
@@ -407,13 +405,15 @@ func TestGenerateChat(t *testing.T) {
 			EvalDuration:       1,
 		}
 
+		streamRequest := true
+
 		w := createRequest(t, s.ChatHandler, api.ChatRequest{
 			Model: "test-system",
 			Messages: []api.Message{
 				{Role: "user", Content: "What's the weather in Seattle?"},
 			},
 			Tools:  tools,
-			Stream: &toolStream,
+			Stream: &streamRequest,
 		})
 
 		if w.Code != http.StatusOK {
