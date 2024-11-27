@@ -118,7 +118,7 @@ func DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) error {
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status attempting to download update %d", resp.StatusCode)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	etag := strings.Trim(resp.Header.Get("etag"), "\"")
 	if etag == "" {
 		slog.Debug("no etag detected, falling back to filename based dedup")
@@ -157,7 +157,7 @@ func DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) error {
 
 	_, err = os.Stat(filepath.Dir(stageFilename))
 	if errors.Is(err, os.ErrNotExist) {
-		if err := os.MkdirAll(filepath.Dir(stageFilename), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(stageFilename), 0o750); err != nil {
 			return fmt.Errorf("create ollama dir %s: %v", filepath.Dir(stageFilename), err)
 		}
 	}

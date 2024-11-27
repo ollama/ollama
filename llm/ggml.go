@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -58,7 +59,7 @@ func (kv KV) ParameterCount() uint64 {
 }
 
 func (kv KV) FileType() fileType {
-	if u64 := kv.u64("general.file_type"); u64 > 0 {
+	if u64 := kv.u64("general.file_type"); u64 > 0 && u64 < math.MaxUint32 {
 		return fileType(uint32(u64))
 	}
 

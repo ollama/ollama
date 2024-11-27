@@ -61,7 +61,7 @@ func start(ctx context.Context, command string) (*exec.Cmd, error) {
 	}
 
 	rotateLogs(ServerLogFile)
-	logFile, err := os.OpenFile(ServerLogFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o755)
+	logFile, err := os.OpenFile(ServerLogFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create server log: %w", err)
 	}
@@ -73,18 +73,18 @@ func start(ctx context.Context, command string) (*exec.Cmd, error) {
 			return nil, fmt.Errorf("stat ollama server log dir %s: %v", logDir, err)
 		}
 
-		if err := os.MkdirAll(logDir, 0o755); err != nil {
+		if err := os.MkdirAll(logDir, 0o750); err != nil {
 			return nil, fmt.Errorf("create ollama server log dir %s: %v", logDir, err)
 		}
 	}
 
 	go func() {
 		defer logFile.Close()
-		io.Copy(logFile, stdout) //nolint:errcheck
+		_, _ = io.Copy(logFile, stdout)
 	}()
 	go func() {
 		defer logFile.Close()
-		io.Copy(logFile, stderr) //nolint:errcheck
+		_, _ = io.Copy(logFile, stderr)
 	}()
 
 	// Re-wire context done behavior to attempt a graceful shutdown of the server
@@ -147,7 +147,7 @@ func SpawnServer(ctx context.Context, command string) (chan int, error) {
 				continue
 			}
 
-			cmd.Wait() //nolint:errcheck
+			_ = cmd.Wait()
 			var code int
 			if cmd.ProcessState != nil {
 				code = cmd.ProcessState.ExitCode()

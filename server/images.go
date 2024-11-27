@@ -666,7 +666,7 @@ func CopyModel(src, dst model.Name) error {
 	}
 
 	dstpath := filepath.Join(manifests, dst.Filepath())
-	if err := os.MkdirAll(filepath.Dir(dstpath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dstpath), 0o750); err != nil {
 		return err
 	}
 
@@ -932,7 +932,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return err
 	}
 
-	err = os.WriteFile(fp, manifestJSON, 0o644)
+	err = os.WriteFile(fp, manifestJSON, 0o600)
 	if err != nil {
 		slog.Info(fmt.Sprintf("couldn't write to %s", fp))
 		return err
@@ -995,7 +995,7 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 
 		switch {
 		case resp.StatusCode == http.StatusUnauthorized:
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			// Handle authentication error with one retry
 			challenge := parseRegistryChallenge(resp.Header.Get("www-authenticate"))
@@ -1011,7 +1011,7 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 				}
 			}
 		case resp.StatusCode == http.StatusNotFound:
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, os.ErrNotExist
 		case resp.StatusCode >= http.StatusBadRequest:
 			defer resp.Body.Close()

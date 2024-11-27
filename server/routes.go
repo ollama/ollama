@@ -1263,7 +1263,7 @@ func Serve(ln net.Listener) error {
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-signals
-		srvr.Close()
+		_ = srvr.Close()
 		schedDone()
 		sched.unloadAllRunners()
 		runners.Cleanup(build.EmbedFS)
