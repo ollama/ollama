@@ -1497,7 +1497,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 			// TODO: Consolidate streaming and non-streaming request patterns
 			if req.Stream != nil && !*req.Stream {
-				res.Message.Content = r.Content
 				ch <- res
 				return
 			}
