@@ -15,6 +15,7 @@ void nvml_init(char *nvml_lib_path, nvml_init_resp_t *resp) {
     char *s;
     void **p;
   } l[] = {
+      {"nvmlErrorString", (void *)&resp->ch.nvmlErrorString},
       {"nvmlInit_v2", (void *)&resp->ch.nvmlInit_v2},
       {"nvmlShutdown", (void *)&resp->ch.nvmlShutdown},
       {"nvmlDeviceGetHandleByUUID", (void *)&resp->ch.nvmlDeviceGetHandleByUUID},
@@ -51,10 +52,11 @@ void nvml_init(char *nvml_lib_path, nvml_init_resp_t *resp) {
 
   ret = (*resp->ch.nvmlInit_v2)();
   if (ret != NVML_SUCCESS) {
-    LOG(resp->ch.verbose, "nvmlInit_v2 err: %d\n", ret);
+    const char *err = (*resp->ch.nvmlErrorString)(ret);
+    LOG(resp->ch.verbose, "nvmlInit_v2 err: %s (%d)\n", err, ret);
     UNLOAD_LIBRARY(resp->ch.handle);
     resp->ch.handle = NULL;
-    snprintf(buf, buflen, "nvml vram init failure: %d", ret);
+    snprintf(buf, buflen, "nvml vram init failure: %s (%d)", err, ret);
     resp->err = strdup(buf);
     return;
   }
@@ -67,14 +69,14 @@ nvmlReturn_t nvml_get_free(nvml_handle_t h, char *uuid, uint64_t *free, uint64_t
     nvmlReturn_t ret;
     ret = (*h.nvmlDeviceGetHandleByUUID)((const char *)(uuid), &device);
     if (ret != NVML_SUCCESS) {
-        LOG(1, "unable to get device handle %s: %d\n", uuid, ret);
+        LOG(1, "unable to get device handle %s: %s (%d)\n", uuid, (*h.nvmlErrorString)(ret), ret);
         *free = 0;
         return ret;
     }
 
     ret = (*h.nvmlDeviceGetMemoryInfo)(device, &memInfo);
     if (ret != NVML_SUCCESS) {
-        LOG(1, "device memory info lookup failure %s: %d\n", uuid, ret);
+        LOG(1, "device memory info lookup failure %s: %s (%d)\n", uuid, (*h.nvmlErrorString)(ret), ret);
         *free = 0;
         return ret;
     }
@@ -90,7 +92,7 @@ void nvml_release(nvml_handle_t h) {
   nvmlReturn_t ret;
   ret = (*h.nvmlShutdown)();
   if (ret != NVML_SUCCESS) {
-    LOG(1, "error during nvmlShutdown %d\n", ret);
+    LOG(1, "error during nvmlShutdown %s (%d)\n", (*h.nvmlErrorString)(ret), ret);
   }
   UNLOAD_LIBRARY(h.handle);
   h.handle = NULL;

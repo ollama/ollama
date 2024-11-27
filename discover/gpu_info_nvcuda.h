@@ -50,6 +50,7 @@ typedef struct nvcuda_handle {
   uint16_t verbose;
   int driver_major;
   int driver_minor;
+  CUresult (*cuGetErrorString)(CUresult error, const char** pStr);
   CUresult (*cuInit)(unsigned int Flags);
   CUresult (*cuDriverGetVersion)(int *driverVersion);
   CUresult (*cuDeviceGetCount)(int *);

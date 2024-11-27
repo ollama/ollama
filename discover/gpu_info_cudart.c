@@ -15,6 +15,7 @@ void cudart_init(char *cudart_lib_path, cudart_init_resp_t *resp) {
     char *s;
     void **p;
   } l[] = {
+      {"cudaGetErrorString", (void *)&resp->ch.cudaGetErrorString},
       {"cudaSetDevice", (void *)&resp->ch.cudaSetDevice},
       {"cudaDeviceSynchronize", (void *)&resp->ch.cudaDeviceSynchronize},
       {"cudaDeviceReset", (void *)&resp->ch.cudaDeviceReset},
@@ -55,14 +56,15 @@ void cudart_init(char *cudart_lib_path, cudart_init_resp_t *resp) {
 
   ret = (*resp->ch.cudaSetDevice)(0);
   if (ret != CUDART_SUCCESS) {
-    LOG(resp->ch.verbose, "cudaSetDevice err: %d\n", ret);
+    const char *err = (*resp->ch.cudaGetErrorString)(ret);
+    LOG(resp->ch.verbose, "cudaSetDevice err: %s (%d)\n", err, ret);
     UNLOAD_LIBRARY(resp->ch.handle);
     resp->ch.handle = NULL;
     if (ret == CUDA_ERROR_INSUFFICIENT_DRIVER) {
       resp->err = strdup("your nvidia driver is too old or missing.  If you have a CUDA GPU please upgrade to run ollama");
       return;
     }
-    snprintf(buf, buflen, "cudart init failure: %d", ret);
+    snprintf(buf, buflen, "cudart init failure: %s (%d)", err, ret);
     resp->err = strdup(buf);
     return;
   }
@@ -75,7 +77,7 @@ void cudart_init(char *cudart_lib_path, cudart_init_resp_t *resp) {
   // Report driver version if we're in verbose mode, ignore errors
   ret = (*resp->ch.cudaDriverGetVersion)(&version);
   if (ret != CUDART_SUCCESS) {
-    LOG(resp->ch.verbose, "cudaDriverGetVersion failed: %d\n", ret);
+    LOG(resp->ch.verbose, "cudaDriverGetVersion failed: %s (%d)\n", (*resp->ch.cudaGetErrorString)(ret), ret);
   } else {
     driverVersion.major = version / 1000;
     driverVersion.minor = (version - (driverVersion.major * 1000)) / 10;
@@ -84,10 +86,11 @@ void cudart_init(char *cudart_lib_path, cudart_init_resp_t *resp) {
 
   ret = (*resp->ch.cudaGetDeviceCount)(&resp->num_devices);
   if (ret != CUDART_SUCCESS) {
-    LOG(resp->ch.verbose, "cudaGetDeviceCount err: %d\n", ret);
+    const char *err = (*resp->ch.cudaGetErrorString)(ret);
+    LOG(resp->ch.verbose, "cudaGetDeviceCount err: %s (%d)\n", err, ret);
     UNLOAD_LIBRARY(resp->ch.handle);
     resp->ch.handle = NULL;
-    snprintf(buf, buflen, "unable to get device count: %d", ret);
+    snprintf(buf, buflen, "unable to get device count: %s (%d)", err, ret);
     resp->err = strdup(buf);
     return;
   }
@@ -108,7 +111,7 @@ cudartReturn_t cudart_bootstrap(cudart_handle_t h, int i, mem_info_t *resp) {
 
   ret = (*h.cudaSetDevice)(i);
   if (ret != CUDART_SUCCESS) {
-    snprintf(buf, buflen, "cudart device failed to initialize");
+    snprintf(buf, buflen, "cudart device failed to initialize: %s", (*h.cudaGetErrorString)(ret));
     resp->err = strdup(buf);
     return ret;
   }
@@ -116,7 +119,7 @@ cudartReturn_t cudart_bootstrap(cudart_handle_t h, int i, mem_info_t *resp) {
   cudaDeviceProp_t props;
   ret = (*h.cudaGetDeviceProperties)(&props, i);
   if (ret != CUDART_SUCCESS) {
-    LOG(h.verbose, "[%d] device properties lookup failure: %d\n", i, ret);
+    LOG(h.verbose, "[%d] device properties lookup failure: %s (%d)\n", i, (*h.cudaGetErrorString)(ret), ret);
     snprintf(&resp->gpu_id[0], GPU_ID_LEN, "%d", i);
     resp->major = 0;
     resp->minor = 0;
@@ -159,7 +162,7 @@ cudartReturn_t cudart_bootstrap(cudart_handle_t h, int i, mem_info_t *resp) {
   }
   ret = (*h.cudaMemGetInfo)(&memInfo.free, &memInfo.total);
   if (ret != CUDART_SUCCESS) {
-    snprintf(buf, buflen, "cudart device memory info lookup failure %d", ret);
+    snprintf(buf, buflen, "cudart device memory info lookup failure: %s (%d)", (*h.cudaGetErrorString)(ret), ret);
     resp->err = strdup(buf);
     return ret;
   }

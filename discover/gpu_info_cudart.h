@@ -123,6 +123,7 @@ typedef struct cudaDeviceProp {
 typedef struct cudart_handle {
   void *handle;
   uint16_t verbose;
+  const char* (*cudaGetErrorString)(cudartReturn_t error);
   cudartReturn_t (*cudaSetDevice)(int device);
   cudartReturn_t (*cudaDeviceSynchronize)(void);
   cudartReturn_t (*cudaDeviceReset)(void);

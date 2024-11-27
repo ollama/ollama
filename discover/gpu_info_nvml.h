@@ -23,6 +23,7 @@ typedef enum nvmlBrandType_enum
 typedef struct nvml_handle {
   void *handle;
   uint16_t verbose;
+  const char* (*nvmlErrorString)(nvmlReturn_t result);
   nvmlReturn_t (*nvmlInit_v2)(void);
   nvmlReturn_t (*nvmlShutdown)(void);
   nvmlReturn_t (*nvmlDeviceGetHandleByUUID)(const char *, nvmlDevice_t *);
