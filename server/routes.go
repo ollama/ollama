@@ -1431,9 +1431,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, caps, req.Options, req.KeepAlive)
 	if errors.Is(err, errCapabilityCompletion) {
+		slog.Error("capability error", "error", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support chat", req.Model)})
 		return
 	} else if err != nil {
+		slog.Error("schedule error", "error", err)
 		handleScheduleError(c, req.Model, err)
 		return
 	}
@@ -1458,6 +1460,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, req.Tools)
 	if err != nil {
+		slog.Error("chat prompt error", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -1467,7 +1470,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
-		var accumulatedContent strings.Builder
+		var sb strings.Builder
 		flushContent := false
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
@@ -1489,15 +1492,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				},
 			}
 
-			if len(req.Tools) > 0 {
-				accumulatedContent.WriteString(r.Content)
-				if toolCalls, ok := m.parseToolCalls(accumulatedContent.String()); ok {
-					res.Message.ToolCalls = toolCalls
-					res.Message.Content = ""
-					accumulatedContent.Reset()
-					flushContent = true
-				}
-			}
 			if r.Done {
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
@@ -1510,15 +1504,28 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				return
 			}
 
-			// For streaming requests send response if:
-			// 1. Tool calls found
-			// 2. No tools in request (no tools returned)
-			// 3. Final output with metrics, flush contents if it was a tool request
-			if len(req.Tools) > 0 && res.Message.ToolCalls != nil ||
-				len(req.Tools) == 0 ||
-				(r.Done && len(req.Tools) > 0) {
-				if r.Done {
-					res.Message.Content = accumulatedContent.String()
+			if len(req.Tools) > 0 {
+				sb.WriteString(r.Content)
+				if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
+					slog.Info("found tool call!")
+					res.Message.ToolCalls = toolCalls
+					res.Message.Content = ""
+					sb.Reset()
+					flushContent = true
+				}
+			}
+
+			// Send response in three cases:
+			// 1. Tool calls were found and parsed
+			// 2. Regular streaming (no tools involved)
+			// 3. Final response for tool requests
+			shouldSend := len(req.Tools) > 0 && res.Message.ToolCalls != nil || // Tool calls found
+				len(req.Tools) == 0 || // Regular streaming
+				r.Done
+
+			if shouldSend {
+				if len(req.Tools) > 0 && r.Done {
+					res.Message.Content = sb.String()
 					if flushContent {
 						res.Message.Content = ""
 					}
