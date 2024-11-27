@@ -144,10 +144,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 	// Loop through potential servers
 	finalErr := errors.New("no suitable llama servers found")
 
-	if len(adapters) > 1 {
-		return nil, errors.New("ollama supports only one lora adapter, but multiple were provided")
-	}
-
 	rDir, err := runners.Refresh(build.EmbedFS)
 	if err != nil {
 		return nil, err
@@ -201,8 +197,9 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 	}
 
 	if len(adapters) > 0 {
-		// TODO: applying multiple adapters is not supported by the llama.cpp server yet
-		params = append(params, "--lora", adapters[0])
+		for _, adapter := range adapters {
+			params = append(params, "--lora", adapter)
+		}
 	}
 
 	if len(projectors) > 0 {
