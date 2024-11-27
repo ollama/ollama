@@ -12,6 +12,11 @@ Get up and running with large language models.
 
 [Download](https://ollama.com/download/Ollama-darwin.zip)
 
+Or using Homebrew 
+  ```
+  brew install ollama
+  ```
+
 ### Windows
 
 [Download](https://ollama.com/download/OllamaSetup.exe)
@@ -136,6 +141,14 @@ For more examples, see the [examples](examples) directory. For more information 
 
 ## CLI Reference
 
+### Start Ollama
+
+When you want to start ollama without running the desktop application . Or see this "Error: could not connect to ollama app, is it running?"
+
+```
+ollama serve
+```
+
 ### Create a model
 
 `ollama create` is used to create a model from a Modelfile.
@@ -213,9 +226,6 @@ ollama ps
 ollama stop llama3.2
 ```
 
-### Start Ollama
-
-`ollama serve` is used when you want to start ollama without running the desktop application.
 
 ## Building
 
