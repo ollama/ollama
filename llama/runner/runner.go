@@ -93,17 +93,6 @@ type NewSequenceParams struct {
 	embedding      bool
 }
 
-type multiLPath []string
-
-func (m *multiLPath) Set(value string) error {
-	*m = append(*m, value)
-	return nil
-}
-
-func (m *multiLPath) String() string {
-	return strings.Join(*m, ", ")
-}
-
 func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
 
@@ -762,6 +751,17 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 	}
+}
+
+type multiLPath []string
+
+func (m *multiLPath) Set(value string) error {
+	*m = append(*m, value)
+	return nil
+}
+
+func (m *multiLPath) String() string {
+	return strings.Join(*m, ", ")
 }
 
 func (s *Server) loadModel(
