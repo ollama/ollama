@@ -1469,7 +1469,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	go func() {
 		defer close(ch)
 		var sb strings.Builder
-		toolCallSent := false
+		var hasToolCalls bool
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
