@@ -200,9 +200,9 @@ func toolCallId() string {
 	return "call_" + strings.ToLower(string(b))
 }
 
-func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
-	toolCalls := make([]ToolCall, len(r.Message.ToolCalls))
-	for i, tc := range r.Message.ToolCalls {
+func toToolCalls(message api.Message) []ToolCall {
+	toolCalls := make([]ToolCall, len(message.ToolCalls))
+	for i, tc := range message.ToolCalls {
 		toolCalls[i].ID = toolCallId()
 		toolCalls[i].Type = "function"
 		toolCalls[i].Function.Name = tc.Function.Name
@@ -215,7 +215,11 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 
 		toolCalls[i].Function.Arguments = string(args)
 	}
+	return toolCalls
+}
 
+func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
+	toolCalls := toToolCalls(r.Message)
 	return ChatCompletion{
 		Id:                id,
 		Object:            "chat.completion",
@@ -244,20 +248,7 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 }
 
 func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
-	toolCalls := make([]ToolCall, len(r.Message.ToolCalls))
-	for i, tc := range r.Message.ToolCalls {
-		toolCalls[i].ID = toolCallId()
-		toolCalls[i].Type = "function"
-		toolCalls[i].Function.Name = tc.Function.Name
-
-		args, err := json.Marshal(tc.Function.Arguments)
-		if err != nil {
-			slog.Error("could not marshall function arguments to json", "error", err)
-			continue
-		}
-
-		toolCalls[i].Function.Arguments = string(args)
-	}
+	toolCalls := toToolCalls(r.Message)
 	return ChatCompletionChunk{
 		Id:                id,
 		Object:            "chat.completion.chunk",
