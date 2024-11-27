@@ -17,9 +17,12 @@ import (
 func TestMakeRequestWithRetry(t *testing.T) {
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
+		err := json.NewEncoder(w).Encode(map[string]string{
 			"token": "test-token",
 		})
+		if err != nil {
+			t.Errorf("failed to encode response: %v", err)
+		}
 	}))
 	defer authServer.Close()
 
@@ -35,7 +38,9 @@ func TestMakeRequestWithRetry(t *testing.T) {
 			name: "successful request",
 			serverHandler: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
-				w.Write([]byte("success"))
+				if _, err := w.Write([]byte("success")); err != nil {
+					t.Errorf("failed to write response: %v", err)
+				}
 			},
 			method:     http.MethodGet,
 			wantStatus: http.StatusOK,
@@ -57,7 +62,9 @@ func TestMakeRequestWithRetry(t *testing.T) {
 					return
 				}
 				buf := new(bytes.Buffer)
-				buf.ReadFrom(r.Body)
+				if _, err := buf.ReadFrom(r.Body); err != nil {
+					t.Errorf("failed to read request body: %v", err)
+				}
 				if buf.String() != `{"key": "value"}` {
 					t.Errorf("body not preserved on retry, got %s", buf.String())
 				}
