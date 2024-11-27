@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/errtypes"
 )
 
 func TestShowInfo(t *testing.T) {
@@ -373,15 +374,13 @@ func TestGetModelfileName(t *testing.T) {
 
 func TestPushHandler(t *testing.T) {
 	tests := []struct {
-		name           string
 		modelName      string
 		serverResponse map[string]func(w http.ResponseWriter, r *http.Request)
 		expectedError  string
 		expectedOutput string
 	}{
 		{
-			name:      "successful push",
-			modelName: "test-model",
+			modelName: "successful-push",
 			serverResponse: map[string]func(w http.ResponseWriter, r *http.Request){
 				"/api/push": func(w http.ResponseWriter, r *http.Request) {
 					if r.Method != http.MethodPost {
@@ -394,8 +393,8 @@ func TestPushHandler(t *testing.T) {
 						return
 					}
 
-					if req.Name != "test-model" {
-						t.Errorf("expected model name 'test-model', got %s", req.Name)
+					if req.Name != "successful-push" {
+						t.Errorf("expected model name 'successful-push', got %s", req.Name)
 					}
 
 					// Simulate progress updates
@@ -414,11 +413,10 @@ func TestPushHandler(t *testing.T) {
 					}
 				},
 			},
-			expectedOutput: "\nYou can find your model at:\n\n\thttps://ollama.com/test-model\n",
+			expectedOutput: "\nYou can find your model at:\n\n\thttps://ollama.com/successful-push\n",
 		},
 		{
-			name:      "unauthorized push",
-			modelName: "unauthorized-model",
+			modelName: "unauthorized-push",
 			serverResponse: map[string]func(w http.ResponseWriter, r *http.Request){
 				"/api/push": func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
@@ -433,10 +431,29 @@ func TestPushHandler(t *testing.T) {
 			},
 			expectedError: "you are not authorized to push to this namespace, create the model under a namespace you own",
 		},
+		{
+			modelName: "unknown-key-err",
+			serverResponse: map[string]func(w http.ResponseWriter, r *http.Request){
+				"/api/push": func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusUnauthorized)
+					uerr := errtypes.UnknownOllamaKey{
+						Key: "aaa",
+					}
+					err := json.NewEncoder(w).Encode(map[string]string{
+						"error": uerr.Error(),
+					})
+					if err != nil {
+						t.Fatal(err)
+					}
+				},
+			},
+			expectedError: "unauthorized: unknown ollama key \"aaa\"",
+		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run(tt.modelName, func(t *testing.T) {
 			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if handler, ok := tt.serverResponse[r.URL.Path]; ok {
 					handler(w, r)

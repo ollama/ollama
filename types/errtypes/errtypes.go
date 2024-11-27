@@ -16,6 +16,6 @@ type UnknownOllamaKey struct {
 	Key string
 }
 
-func (e *UnknownOllamaKey) Error() string {
+func (e UnknownOllamaKey) Error() string {
 	return fmt.Sprintf("unauthorized: %s %q", UnknownOllamaKeyErrMsg, strings.TrimSpace(e.Key))
 }
