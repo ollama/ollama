@@ -688,6 +688,26 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	forceDelte, _ := cmd.Flags().GetBool("force")
+	if !forceDelte {
+		reader := bufio.NewReader(os.Stdin)
+
+		fmt.Printf("Deleting '%s'? [y/N]: ", strings.Join(args, ", "))
+		input, _ := reader.ReadString('\n')
+		input = strings.ToUpper(strings.TrimSpace(input))
+
+		for input != "Y" && input != "N" {
+			fmt.Printf("Is this ok [y/N]: ")
+			input, _ = reader.ReadString('\n')
+			input = strings.ToUpper(strings.TrimSpace(input))
+		}
+
+		if input == "N" {
+			fmt.Println("Operation aborted.")
+			return nil
+		}
+	}
+
 	for _, name := range args {
 		req := api.DeleteRequest{Name: name}
 		if err := client.Delete(cmd.Context(), &req); err != nil {
@@ -1410,6 +1430,8 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    DeleteHandler,
 	}
+
+	deleteCmd.Flags().BoolP("force", "f", false, "Force delete model/s")
 
 	envVars := envconfig.AsMap()
 
