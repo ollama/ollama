@@ -559,7 +559,6 @@ type Options struct {
 	TopK             int      `json:"top_k"`
 	TopP             float32  `json:"top_p"`
 	MinP             float32  `json:"min_p"`
-	TFSZ             float32  `json:"tfs_z"`
 	TypicalP         float32  `json:"typical_p"`
 	RepeatLastN      int      `json:"repeat_last_n"`
 	Temperature      float32  `json:"temperature"`
@@ -632,7 +631,6 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	samplingParams.TopK = req.TopK
 	samplingParams.TopP = req.TopP
 	samplingParams.MinP = req.MinP
-	samplingParams.TfsZ = req.TFSZ
 	samplingParams.TypicalP = req.TypicalP
 	samplingParams.Temp = req.Temperature
 	samplingParams.RepeatLastN = req.RepeatLastN
@@ -908,6 +906,7 @@ func main() {
 	level := slog.LevelInfo
 	if *verbose {
 		level = slog.LevelDebug
+		llama.EnableDebug()
 	}
 	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level:     level,

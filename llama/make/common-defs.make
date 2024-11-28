@@ -49,6 +49,7 @@ ifeq ($(ARCH),amd64)
 	GPU_RUNNER_CPU_FLAGS ?= avx
 endif
 
+
 ifeq ($(OS),windows)
 	CP := cp
 	SRC_DIR := $(shell cygpath -m -s "$(SRC_DIR)")
