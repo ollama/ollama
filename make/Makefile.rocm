@@ -51,7 +51,7 @@ GPU_DIST_LIB_DEPS= $(sort $(addprefix $(ROCM_DIST_DEPS_DIR)/,$(notdir $(GPU_LIBS
 ROCBLAS_DIST_DEP_MANIFEST = $(ROCM_DIST_DEPS_DIR)/rocblas/library/TensileManifest.txt
 
 ifeq ($(OS),linux)
-	GPU_COMPILER_FPIC := -fPIC -Wno-unused-function -std=gnu++11
+	GPU_COMPILER_FPIC := -fPIC -Wno-unused-function -std=gnu++17
 else ifeq ($(OS),windows)
 	GPU_COMPILER_FPIC := -Xclang --dependent-lib=msvcrt
 endif
@@ -69,11 +69,13 @@ GPU_COMPILER_CUFLAGS = \
 	-O3 \
 	-DGGML_USE_CUDA \
 	-DGGML_BUILD=1 \
+	-DGGML_BACKEND_BUILD=1 \
 	-DGGML_SHARED=1 \
+	-DGGML_BACKEND_SHARED=1 \
 	-DGGML_CUDA_DMMV_X=32 \
 	-DGGML_CUDA_MMV_Y=1 \
 	-DGGML_SCHED_MAX_COPIES=4 \
-	-DGGML_USE_HIPBLAS \
+	-DGGML_USE_HIP \
 	-DGGML_USE_LLAMAFILE \
 	-DHIP_FAST_MATH \
 	-D__HIP_PLATFORM_AMD__=1 \

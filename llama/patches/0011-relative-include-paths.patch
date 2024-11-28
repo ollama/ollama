@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: jmorganca <jmorganca@gmail.com>
+Date: Tue, 3 Dec 2024 21:30:51 -0800
+Subject: [PATCH] relative include paths
+
+---
+ ggml/src/ggml-cpu/ggml-cpu-aarch64.c | 2 +-
+ ggml/src/ggml-cpu/ggml-cpu.c         | 2 +-
+ ggml/src/ggml-cpu/ggml-cpu.cpp       | 2 +-
+ ggml/src/ggml-quants.c               | 2 +-
+ 4 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/ggml/src/ggml-cpu/ggml-cpu-aarch64.c b/ggml/src/ggml-cpu/ggml-cpu-aarch64.c
+index 11152385..bbf8934e 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu-aarch64.c
++++ b/ggml/src/ggml-cpu/ggml-cpu-aarch64.c
+@@ -4,7 +4,7 @@
+ #include "ggml-quants.h"
+ #include "ggml-impl.h"
+ #include "ggml-cpu.h"
+-#include "ggml-cpu/ggml-cpu-impl.h"
++#include "ggml-cpu-impl.h"
+ 
+ #include <math.h>
+ #include <string.h>
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
+index 111ff3b0..df0bd3c6 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -10,7 +10,7 @@
+ #include "ggml-quants.h"
+ #include "ggml-cpu-quants.h"
+ #include "ggml-threading.h"
+-#include "amx/amx.h"
++#include "amx.h"
+ #include "ggml.h"
+ 
+ #if defined(_MSC_VER) || defined(__MINGW32__)
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.cpp b/ggml/src/ggml-cpu/ggml-cpu.cpp
+index 77e5d87a..91476ad0 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.cpp
++++ b/ggml/src/ggml-cpu/ggml-cpu.cpp
+@@ -3,7 +3,7 @@
+ #include "ggml-cpu.h"
+ #include "ggml-cpu-aarch64.h"
+ #include "ggml-impl.h"
+-#include "amx/amx.h"
++#include "amx.h"
+ #include <cctype>
+ #include <string>
+ #include <vector>
+diff --git a/ggml/src/ggml-quants.c b/ggml/src/ggml-quants.c
+index 7301a9c6..49ab3daf 100644
+--- a/ggml/src/ggml-quants.c
++++ b/ggml/src/ggml-quants.c
+@@ -3,7 +3,7 @@
+ 
+ #include "ggml-quants.h"
+ #include "ggml-impl.h"
+-#include "ggml-cpu/ggml-cpu-impl.h"
++#include "ggml-cpu-impl.h"
+ #include "ggml-cpu.h"
+ 
+ #include <math.h>

@@ -4,14 +4,14 @@ Date: Wed, 9 Oct 2024 17:26:23 -0700
 Subject: [PATCH] conditional-fattn
 
 ---
- ggml/src/ggml-cuda.cu | 2 ++
+ ggml/src/ggml-cuda/ggml-cuda.cu | 2 ++
  1 file changed, 2 insertions(+)
 
-diff --git a/ggml/src/ggml-cuda.cu b/ggml/src/ggml-cuda.cu
-index 809d6ab1..fe77b81c 100644
---- a/ggml/src/ggml-cuda.cu
-+++ b/ggml/src/ggml-cuda.cu
-@@ -2347,9 +2347,11 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index 52aec229..cbf4fddf 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -2162,9 +2162,11 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
          case GGML_OP_ARGSORT:
              ggml_cuda_op_argsort(ctx, dst);
              break;

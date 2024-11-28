@@ -387,7 +387,6 @@ curl http://localhost:11434/api/generate -d '{
     "top_k": 20,
     "top_p": 0.9,
     "min_p": 0.0,
-    "tfs_z": 0.5,
     "typical_p": 0.7,
     "repeat_last_n": 33,
     "temperature": 0.8,

@@ -699,7 +699,6 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		"top_k":             req.Options.TopK,
 		"top_p":             req.Options.TopP,
 		"min_p":             req.Options.MinP,
-		"tfs_z":             req.Options.TFSZ,
 		"typical_p":         req.Options.TypicalP,
 		"repeat_last_n":     req.Options.RepeatLastN,
 		"repeat_penalty":    req.Options.RepeatPenalty,
