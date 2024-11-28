@@ -164,10 +164,16 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 // generating image embeddings for each image
 func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 	var inputs []input
+	var parts []string
+	var matches [][]string
 
-	re := regexp.MustCompile(`\[img-(\d+)\]`)
-	parts := re.Split(prompt, -1)
-	matches := re.FindAllStringSubmatch(prompt, -1)
+	if s.image != nil {
+		re := regexp.MustCompile(`\[img-(\d+)\]`)
+		parts = re.Split(prompt, -1)
+		matches = re.FindAllStringSubmatch(prompt, -1)
+	} else {
+		parts = []string{prompt}
+	}
 
 	for i, part := range parts {
 		// text - tokenize
@@ -827,10 +833,21 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type multiLPath []string
+
+func (m *multiLPath) Set(value string) error {
+	*m = append(*m, value)
+	return nil
+}
+
+func (m *multiLPath) String() string {
+	return strings.Join(*m, ", ")
+}
+
 func (s *Server) loadModel(
 	params llama.ModelParams,
 	mpath string,
-	lpath string,
+	lpath multiLPath,
 	ppath string,
 	kvSize int,
 	flashAttention bool,
@@ -851,10 +868,12 @@ func (s *Server) loadModel(
 		panic(err)
 	}
 
-	if lpath != "" {
-		err := s.model.ApplyLoraFromFile(s.lc, lpath, 1.0, threads)
-		if err != nil {
-			panic(err)
+	if lpath.String() != "" {
+		for _, path := range lpath {
+			err := s.model.ApplyLoraFromFile(s.lc, path, 1.0, threads)
+			if err != nil {
+				panic(err)
+			}
 		}
 	}
 
@@ -884,7 +903,6 @@ func main() {
 	mainGpu := flag.Int("main-gpu", 0, "Main GPU")
 	flashAttention := flag.Bool("flash-attn", false, "Enable flash attention")
 	kvSize := flag.Int("ctx-size", 2048, "Context (or KV cache) size")
-	lpath := flag.String("lora", "", "Path to lora layer file")
 	port := flag.Int("port", 8080, "Port to expose the server on")
 	threads := flag.Int("threads", runtime.NumCPU(), "Number of threads to use during generation")
 	verbose := flag.Bool("verbose", false, "verbose output (default: disabled)")
@@ -893,6 +911,9 @@ func main() {
 	tensorSplit := flag.String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
 	multiUserCache := flag.Bool("multiuser-cache", false, "optimize input cache algorithm for multiple users")
 	requirements := flag.Bool("requirements", false, "print json requirement information")
+
+	var lpaths multiLPath
+	flag.Var(&lpaths, "lora", "Path to lora layer file (can be specified multiple times)")
 
 	flag.Parse()
 	if *requirements {
@@ -940,7 +961,7 @@ func main() {
 	params := llama.ModelParams{
 		NumGpuLayers: *nGpuLayers,
 		MainGpu:      *mainGpu,
-		UseMmap:      !*noMmap && *lpath == "",
+		UseMmap:      !*noMmap && lpaths.String() == "",
 		UseMlock:     *mlock,
 		TensorSplit:  tensorSplitFloats,
 		Progress: func(progress float32) {
@@ -949,7 +970,7 @@ func main() {
 	}
 
 	server.ready.Add(1)
-	go server.loadModel(params, *mpath, *lpath, *ppath, *kvSize, *flashAttention, *threads, *multiUserCache)
+	go server.loadModel(params, *mpath, lpaths, *ppath, *kvSize, *flashAttention, *threads, *multiUserCache)
 
 	server.cond = sync.NewCond(&server.mu)
 

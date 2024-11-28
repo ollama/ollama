@@ -1458,6 +1458,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, req.Tools)
 	if err != nil {
+		slog.Error("chat prompt error", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -1467,6 +1468,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
+		var sb strings.Builder
+		var hasToolCalls bool
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
@@ -1492,7 +1495,34 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
 
-			ch <- res
+			// TODO: tool call checking and filtering should be moved outside of this callback once streaming
+			// however this was a simple change for now without reworking streaming logic of this (and other)
+			// handlers
+			if req.Stream != nil && !*req.Stream || len(req.Tools) == 0 {
+				ch <- res
+				return
+			}
+
+			// Streaming tool calls:
+			// If tools are recognized, use a flag to track the sending of a tool downstream
+			// This ensures that content is cleared from the message on the last chunk sent
+			sb.WriteString(r.Content)
+			if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
+				res.Message.ToolCalls = toolCalls
+				res.Message.Content = ""
+				sb.Reset()
+				hasToolCalls = true
+				ch <- res
+				return
+			}
+
+			if r.Done {
+				// Send any remaining content if no tool calls were detected
+				if !hasToolCalls {
+					res.Message.Content = sb.String()
+				}
+				ch <- res
+			}
 		}); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
