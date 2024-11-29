@@ -173,7 +173,7 @@ func kvCacheTypeFromStr(s string) C.enum_ggml_type {
 		return C.GGML_TYPE_Q4_0
 	default:
 		// Only warn if non-default type was specified
-		if s != "" && s != "f16" && s != "fp16" {
+		if s != "f16" && s != "fp16" {
 			slog.Warn("unsupported quantization type, defaulting to f16", "type", s)
 		}
 		return C.GGML_TYPE_F16
