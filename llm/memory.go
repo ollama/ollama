@@ -123,14 +123,23 @@ func EstimateGPULayers(gpus []discover.GpuInfo, ggml *GGML, projectors []string,
 		slog.Warn("model missing blk.0 layer size")
 	}
 
-	// Estimate the memory required for KV cache quantization
-	kv := estimateKvCacheSize(kVCacheQuantization(envconfig.KvCacheType(), ggml), uint64(opts.NumCtx), ggml)
+	fa := envconfig.FlashAttention() &&
+		discover.GetGPUInfo().FlashAttentionSupported() &&
+		ggml.SupportsFlashAttention()
+
+	var kvct string
+	if fa {
+		requested := envconfig.KvCacheType()
+		if ggml.SupportsKVCacheType(requested) {
+			kvct = requested
+		}
+	}
+
+	// Get graph sizes from ggml
+	kv, graphPartialOffload, graphFullOffload := ggml.GraphSize(uint64(opts.NumCtx), uint64(min(opts.NumCtx, opts.NumBatch)), kvct)
 
 	// KV is proportional to the number of layers
 	layerSize += kv / ggml.KV().BlockCount()
-
-	// Get graph sizes from ggml
-	_, graphPartialOffload, graphFullOffload = ggml.GraphSize(uint64(opts.NumCtx), uint64(min(opts.NumCtx, opts.NumBatch)))
 
 	if graphPartialOffload == 0 {
 		graphPartialOffload = ggml.KV().GQA() * kv / 6

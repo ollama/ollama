@@ -303,7 +303,6 @@ To use quantized K/V cache with Ollama you can set the following environment var
 
 The currently available K/V cache quantization types are:
 
-- `f32` - full precision and memory usage.
 - `f16` - high precision and memory usage (default).
 - `q8_0` - 8-bit quantization, uses approximately 1/2 the memory of `f16` with a very small loss in precision, this usually has no noticeable impact on the model's quality (recommended if not using f16).
 - `q4_0` - 4-bit quantization, uses approximately 1/4 the memory of `f16` with a small-medium loss in precision that may be more noticeable at higher context sizes.

@@ -15,7 +15,7 @@ import (
 
 func TestEstimateGPULayers(t *testing.T) {
 	t.Setenv("OLLAMA_DEBUG", "1")
-	t.Setenv("OLLAMA_KV_CACHE_TYPE", "")
+	t.Setenv("OLLAMA_KV_CACHE_TYPE", "") // Ensure default f16
 
 	modelName := "dummy"
 	f, err := os.CreateTemp(t.TempDir(), modelName)
@@ -185,18 +185,14 @@ func TestEstimateKvCacheSize(t *testing.T) {
 		isEmbedding bool
 		want        uint64
 	}{
-		// Standard test cases (all non-f32 should fall back to f16 without flash attention)
-		{"f32 standard", baseCtx, "f32", false, baseSize * 4},     // f32 stays f32
-		{"f16 standard", baseCtx, "f16", false, baseSize * 2},     // f16 stays f16
-		{"q8_0 standard", baseCtx, "q8_0", false, baseSize * 2},   // falls back to f16
-		{"q4_0 standard", baseCtx, "q4_0", false, baseSize * 2},   // falls back to f16
+		{"f16 standard", baseCtx, "f16", false, baseSize * 2},     // f16 uses 2 bytes
+		{"q8_0 standard", baseCtx, "q8_0", false, baseSize},       // q8_0 uses 1 byte
+		{"q4_0 standard", baseCtx, "q4_0", false, baseSize / 2},   // q4_0 uses 0.5 bytes
 		{"empty type", baseCtx, "", false, baseSize * 2},          // defaults to f16
 		{"unknown type", baseCtx, "unknown", false, baseSize * 2}, // defaults to f16
-
-		// Embedding model cases
-		{"q4_0 embedding", baseCtx, "q4_0", true, baseSize * 2}, // forces f16
-		{"q8_0 embedding", baseCtx, "q8_0", true, baseSize * 2}, // forces f16
-		{"f32 embedding", baseCtx, "f32", true, baseSize * 4},   // keeps f32
+		{"f16 embedding", baseCtx, "f16", true, baseSize * 2},     // embedding models still use same memory
+		{"q8_0 embedding", baseCtx, "q8_0", true, baseSize},       // q8_0 still uses 1 byte
+		{"q4_0 embedding", baseCtx, "q4_0", true, baseSize / 2},   // q4_0 still uses 0.5 bytes
 	}
 
 	for _, tt := range tests {
@@ -204,21 +200,16 @@ func TestEstimateKvCacheSize(t *testing.T) {
 			arch := "llama"
 			poolingType := ""
 			if tt.isEmbedding {
-				arch = "bert"
 				poolingType = "mean"
 			}
 
 			ggml := createTestModel(arch, poolingType)
-			t.Setenv("OLLAMA_FLASH_ATTENTION", "false") // Ensure flash attention is disabled
 
-			// First get the actual cache type that will be used
-			actualCacheType := kVCacheQuantization(tt.cacheType, ggml)
-			// Then estimate size using the actual type that will be used
-			got := estimateKvCacheSize(actualCacheType, tt.ctx, ggml)
+			got := estimateKvCacheSize(tt.cacheType, tt.ctx, ggml)
 
 			assert.Equal(t, tt.want, got,
-				fmt.Sprintf("ctx=%d requested_cache=%s actual_cache=%s embedding=%v",
-					tt.ctx, tt.cacheType, actualCacheType, tt.isEmbedding))
+				fmt.Sprintf("ctx=%d requested_cache=%s embedding=%v",
+					tt.ctx, tt.cacheType, tt.isEmbedding))
 		})
 	}
 }

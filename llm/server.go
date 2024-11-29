@@ -214,19 +214,29 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		params = append(params, "--threads", strconv.Itoa(defaultThreads))
 	}
 
-	// Check flash attention support and determine KV cache type
-	flashAttnEnabled, reason := checkFlashAttentionSupport(ggml)
-	if flashAttnEnabled {
-		params = append(params, "--flash-attn")
-		slog.Info("enabling flash attention")
+	fa := envconfig.FlashAttention()
+	if fa && !gpus.FlashAttentionSupported() {
+		slog.Warn("flash attention enabled but not supported by gpu")
+		fa = false
+	}
 
-		kvCacheType := kVCacheQuantization(envconfig.KvCacheType(), ggml)
-		if kvCacheType != "" {
-			params = append(params, "--kv-cache-type", kvCacheType)
-			slog.Debug("setting cache type", "type", kvCacheType)
+	if fa && !ggml.SupportsFlashAttention() {
+		slog.Warn("flash attention enabled but not supported by model")
+		fa = false
+	}
+
+	if fa {
+		slog.Info("enabling flash attention")
+		params = append(params, "--flash-attn")
+
+		// Flash Attention also supports kv cache quantization
+		// Enable if the requested and kv cache type is supported by the model
+		kvct := envconfig.KvCacheType()
+		if ggml.SupportsKVCacheType(kvct) {
+			params = append(params, "--kv-cache-type", kvct)
+		} else {
+			slog.Warn("kv cache type not supported by model", "type", kvct)
 		}
-	} else if envconfig.FlashAttention() {
-		slog.Info("flash attention not enabled", "reason", reason)
 	}
 
 	// mmap has issues with partial offloading on metal
@@ -1118,36 +1128,4 @@ func parseDurationMs(ms float64) time.Duration {
 	}
 
 	return dur
-}
-
-// modelSupportsFlashAttention checks if the model supports flash attention
-func modelSupportsFlashAttention(ggml GGMLModel) bool {
-	_, isEmbedding := ggml.KV()[fmt.Sprintf("%s.pooling_type", ggml.KV().Architecture())]
-	if isEmbedding {
-		return false
-	}
-
-	// Check head counts match and are non-zero
-	headCountK := ggml.KV().EmbeddingHeadCountK()
-	headCountV := ggml.KV().EmbeddingHeadCountV()
-	return headCountK != 0 && headCountV != 0 && headCountK == headCountV
-}
-
-// checkFlashAttentionSupport returns whether flash attention should be enabled and a reason if it's not
-func checkFlashAttentionSupport(ggml GGMLModel) (bool, string) {
-	gpus := discover.GpuInfoList{}
-	flashAttnRequested := envconfig.FlashAttention()
-	if !flashAttnRequested {
-		return false, "not requested"
-	}
-
-	if !gpus.FlashAttentionSupported() {
-		return false, "not supported by GPU"
-	}
-
-	if !modelSupportsFlashAttention(ggml) {
-		return false, "not supported by model"
-	}
-
-	return true, ""
 }
