@@ -251,6 +251,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 		var b bytes.Buffer
 		if req.Context != nil {
+			slog.Warn("the context field is deprecated and will be removed in a future version of Ollama")
 			s, err := r.Detokenize(c.Request.Context(), req.Context)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
