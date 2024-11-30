@@ -58,7 +58,6 @@ func TestEstimateGPULayers(t *testing.T) {
 	}
 	projectors := []string{}
 	opts := api.DefaultOptions()
-
 	t.Run("cpu", func(t *testing.T) {
 		estimate := EstimateGPULayers(gpus, ggml, projectors, opts)
 		assert.Equal(t, 0, estimate.Layers)
