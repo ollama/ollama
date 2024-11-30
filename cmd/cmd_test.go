@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -180,18 +179,14 @@ Weigh anchor!
 
 	t.Run("license", func(t *testing.T) {
 		var b bytes.Buffer
-		license, err := os.ReadFile(filepath.Join("..", "LICENSE"))
-		if err != nil {
-			t.Fatal(err)
-		}
-
+		license := "MIT License\nCopyright (c) Ollama\n"
 		if err := showInfo(&api.ShowResponse{
 			Details: api.ModelDetails{
 				Family:            "test",
 				ParameterSize:     "7B",
 				QuantizationLevel: "FP16",
 			},
-			License: string(license),
+			License: license,
 		}, &b); err != nil {
 			t.Fatal(err)
 		}
