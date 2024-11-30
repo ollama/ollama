@@ -281,11 +281,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			Options: opts,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
-				Model:      req.Model,
-				CreatedAt:  time.Now().UTC(),
-				Response:   cr.Content,
-				Done:       cr.Done,
-				DoneReason: cr.DoneReason,
+				Model:        req.Model,
+				CreatedAt:    time.Now().UTC(),
+				Response:     cr.Content,
+				Done:         cr.Done,
+				DoneReason:   cr.DoneReason,
+				StopSequence: cr.StopSequence,
 				Metrics: api.Metrics{
 					PromptEvalCount:    cr.PromptEvalCount,
 					PromptEvalDuration: cr.PromptEvalDuration,
