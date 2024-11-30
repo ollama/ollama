@@ -195,7 +195,86 @@ func TestChatMiddleware(t *testing.T) {
 				Stream: &False,
 			},
 		},
-
+		{
+			name: "chat handler with streaming tools",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "What's the weather like in Paris?"}
+				],
+				"stream": true,
+				"tools": [{
+					"type": "function",
+					"function": {
+						"name": "get_weather",
+						"description": "Get the current weather",
+						"parameters": {
+							"type": "object",
+							"required": ["location"],
+							"properties": {
+								"location": {
+									"type": "string",
+									"description": "The city and state"
+								},
+								"unit": {
+									"type": "string",
+									"enum": ["celsius", "fahrenheit"]
+								}
+							}
+						}
+					}
+				}]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "What's the weather like in Paris?",
+					},
+				},
+				Tools: []api.Tool{
+					{
+						Type: "function",
+						Function: api.ToolFunction{
+							Name:        "get_weather",
+							Description: "Get the current weather",
+							Parameters: struct {
+								Type       string   `json:"type"`
+								Required   []string `json:"required"`
+								Properties map[string]struct {
+									Type        string   `json:"type"`
+									Description string   `json:"description"`
+									Enum        []string `json:"enum,omitempty"`
+								} `json:"properties"`
+							}{
+								Type:     "object",
+								Required: []string{"location"},
+								Properties: map[string]struct {
+									Type        string   `json:"type"`
+									Description string   `json:"description"`
+									Enum        []string `json:"enum,omitempty"`
+								}{
+									"location": {
+										Type:        "string",
+										Description: "The city and state",
+									},
+									"unit": {
+										Type: "string",
+										Enum: []string{"celsius", "fahrenheit"},
+									},
+								},
+							},
+						},
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &True,
+			},
+		},
 		{
 			name: "chat handler error forwarding",
 			body: `{

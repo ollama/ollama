@@ -1469,7 +1469,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	go func() {
 		defer close(ch)
 		var sb strings.Builder
-		var hasToolCalls bool
+		var toolCallIndex int = 0
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
@@ -1509,16 +1509,19 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			sb.WriteString(r.Content)
 			if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
 				res.Message.ToolCalls = toolCalls
+				for i := range toolCalls {
+					toolCalls[i].Function.Index = toolCallIndex
+					toolCallIndex++
+				}
 				res.Message.Content = ""
 				sb.Reset()
-				hasToolCalls = true
 				ch <- res
 				return
 			}
 
 			if r.Done {
 				// Send any remaining content if no tool calls were detected
-				if !hasToolCalls {
+				if toolCallIndex == 0 {
 					res.Message.Content = sb.String()
 				}
 				ch <- res

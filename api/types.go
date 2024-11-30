@@ -146,6 +146,7 @@ type ToolCall struct {
 }
 
 type ToolCallFunction struct {
+	Index     int                       `json:"index,omitempty"`
 	Name      string                    `json:"name"`
 	Arguments ToolCallFunctionArguments `json:"arguments"`
 }
