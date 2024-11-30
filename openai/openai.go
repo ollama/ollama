@@ -140,6 +140,7 @@ type CompletionChunk struct {
 
 type ToolCall struct {
 	ID       string `json:"id"`
+	Index    int    `json:"index"`
 	Type     string `json:"type"`
 	Function struct {
 		Name      string `json:"name"`
@@ -206,6 +207,7 @@ func toToolCalls(tc []api.ToolCall) []ToolCall {
 		toolCalls[i].ID = toolCallId()
 		toolCalls[i].Type = "function"
 		toolCalls[i].Function.Name = tc.Function.Name
+		toolCalls[i].Index = tc.Function.Index
 
 		args, err := json.Marshal(tc.Function.Arguments)
 		if err != nil {
