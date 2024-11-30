@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"slices"
 	"strings"
 	"sync"
@@ -546,4 +547,22 @@ func (ggml GGML) SupportsFlashAttention() bool {
 	headCountK := ggml.KV().EmbeddingHeadCountK()
 	headCountV := ggml.KV().EmbeddingHeadCountV()
 	return headCountK != 0 && headCountV != 0 && headCountK == headCountV
+}
+
+// kvCacheBytesPerElement returns the number of bytes per element for a given KV cache type
+func kvCacheBytesPerElement(cacheType string) float64 {
+	switch cacheType {
+	case "", "f16", "fp16":
+		return 2 // fp16 is the default
+	case "q8_0":
+		return 1 // 1/2 of fp16
+	case "q4_0":
+		return 0.5 // 1/4 of fp16
+	default:
+		// Only log a warning if an explicit type was provided but not recognized
+		if cacheType != "" {
+			slog.Warn("unknown cache type, defaulting to fp16", "type", cacheType)
+		}
+		return 2
+	}
 }
