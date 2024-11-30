@@ -325,7 +325,7 @@ func TestRequestsMultipleLoadedModels(t *testing.T) {
 	require.Len(t, s.loaded, 3)
 	s.loadedMu.Unlock()
 
-	// Try to load a model that wont fit
+	// Try to load a model that won't fit
 	s.newServerFn = d.newServer
 	slog.Info("d")
 	s.loadedMu.Lock()
@@ -394,7 +394,7 @@ func TestGetRunner(t *testing.T) {
 	c.req.model.ModelPath = "bad path"
 	slog.Info("c")
 	successCh1c, errCh1c := s.GetRunner(c.ctx, c.req.model, c.req.opts, c.req.sessionDuration)
-	// Starts in pending channel, then should be quickly processsed to return an error
+	// Starts in pending channel, then should be quickly processed to return an error
 	time.Sleep(50 * time.Millisecond) // Long enough for the "a" model to expire and unload
 	require.Empty(t, successCh1c)
 	s.loadedMu.Lock()

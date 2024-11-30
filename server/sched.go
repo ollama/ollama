@@ -54,7 +54,7 @@ type Scheduler struct {
 var defaultModelsPerGPU = 3
 
 // Default automatic value for parallel setting
-// Model will still need to fit in VRAM.  If this setting wont fit
+// Model will still need to fit in VRAM.  If this setting won't fit
 // we'll back off down to 1 to try to get it to fit
 var defaultParallel = 4
 
@@ -501,7 +501,7 @@ func (s *Scheduler) updateFreeSpace(allGpus discover.GpuInfoList) {
 			} else if (allGpus[i].TotalMemory - p) < allGpus[i].FreeMemory { // predicted free is smaller than reported free, use it
 				// TODO maybe we should just always trust our numbers, since cuda's free memory reporting is laggy
 				// and we might unload models we didn't actually need to.  The risk is if some other GPU intensive app is loaded
-				// after we start our first runner, then we'll never acount for that, so picking the smallest free value seems prudent.
+				// after we start our first runner, then we'll never account for that, so picking the smallest free value seems prudent.
 				allGpus[i].FreeMemory = allGpus[i].TotalMemory - p
 			}
 			slog.Info("updated VRAM based on existing loaded models", "gpu", allGpus[i].ID, "library", allGpus[i].Library, "total", format.HumanBytes2(allGpus[i].TotalMemory), "available", format.HumanBytes2(allGpus[i].FreeMemory))
@@ -683,7 +683,7 @@ func (a ByDuration) Less(i, j int) bool {
 // pickBestFullFitByLibrary will try to find the optimal placement of the model in the available GPUs where the model fully fits
 // The list of GPUs returned will always be the same brand (library)
 // If the model can not be fit fully within the available GPU(s) nil is returned
-// If numParallel is <= 0, this will attempt try to optimize parallism based on available VRAM, and adjust
+// If numParallel is <= 0, this will attempt try to optimize parallelism based on available VRAM, and adjust
 // opts.NumCtx accordingly
 func pickBestFullFitByLibrary(req *LlmRequest, ggml *llm.GGML, gpus discover.GpuInfoList, numParallel *int) discover.GpuInfoList {
 	var estimatedVRAM uint64

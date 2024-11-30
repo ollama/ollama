@@ -20,7 +20,7 @@ import (
 
 func TestMaxQueue(t *testing.T) {
 	if os.Getenv("OLLAMA_TEST_EXISTING") != "" {
-		t.Skip("Max Queue test requires spawing a local server so we can adjust the queue size")
+		t.Skip("Max Queue test requires spawning a local server so we can adjust the queue size")
 		return
 	}
 
@@ -67,7 +67,7 @@ func TestMaxQueue(t *testing.T) {
 	busyCount := 0
 	resetByPeerCount := 0
 	canceledCount := 0
-	succesCount := 0
+	successCount := 0
 	counterMu := sync.Mutex{}
 	var embedwg sync.WaitGroup
 	for i := 0; i < threadCount; i++ {
@@ -88,7 +88,7 @@ func TestMaxQueue(t *testing.T) {
 			defer counterMu.Unlock()
 			switch {
 			case genErr == nil:
-				succesCount++
+				successCount++
 				require.Greater(t, len(resp.Embedding), 5) // somewhat arbitrary, but sufficient to be reasonable
 			case errors.Is(genErr, context.Canceled):
 				canceledCount++
@@ -107,7 +107,7 @@ func TestMaxQueue(t *testing.T) {
 	slog.Info("generate done, waiting for embeds")
 	embedwg.Wait()
 
-	slog.Info("embeds completed", "success", succesCount, "busy", busyCount, "reset", resetByPeerCount, "canceled", canceledCount)
+	slog.Info("embeds completed", "success", successCount, "busy", busyCount, "reset", resetByPeerCount, "canceled", canceledCount)
 	require.Equal(t, resetByPeerCount, 0, "Connections reset by peer, have you updated your fd and socket limits?")
 	require.True(t, busyCount > 0, "no requests hit busy error but some should have")
 	require.True(t, canceledCount == 0, "no requests should have been canceled due to timeout")
