@@ -86,6 +86,7 @@ import "C"
 
 import (
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"runtime"
@@ -679,4 +680,18 @@ func (s *SamplingContext) Sample(llamaContext *Context, idx int) int {
 
 func (s *SamplingContext) Accept(id int, applyGrammar bool) {
 	C.gpt_sampler_caccept(s.c, C.llama_token(id), C.bool(applyGrammar))
+}
+
+func JsonSchemaToGrammar(jsonSchema map[string]interface{}) string {
+	// Convert the JSON schema to a string representation
+	jsonBytes, err := json.Marshal(jsonSchema)
+	if err != nil {
+		return "" // Return empty string on error
+	}
+	jsonStr := string(jsonBytes)
+
+	// Convert to C string and get grammar
+	cStr := C.CString(jsonStr)
+	defer C.free(unsafe.Pointer(cStr))
+	return C.GoString(C.ollama_json_schema_to_grammar(cStr))
 }

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
 )
@@ -71,6 +72,7 @@ func TestChatMiddleware(t *testing.T) {
 					"top_p":       1.0,
 				},
 				Stream: &False,
+				Format: "",
 			},
 		},
 		{
@@ -155,6 +157,7 @@ func TestChatMiddleware(t *testing.T) {
 					"top_p":       1.0,
 				},
 				Stream: &False,
+				Format: "",
 			},
 		},
 		{
@@ -193,6 +196,7 @@ func TestChatMiddleware(t *testing.T) {
 					"top_p":       1.0,
 				},
 				Stream: &False,
+				Format: "",
 			},
 		},
 		{
@@ -273,6 +277,7 @@ func TestChatMiddleware(t *testing.T) {
 					"top_p":       1.0,
 				},
 				Stream: &True,
+				Format: "",
 			},
 		},
 		{
@@ -318,6 +323,7 @@ func TestChatMiddleware(t *testing.T) {
 				}
 			}
 			if capturedRequest != nil && !reflect.DeepEqual(tc.req, *capturedRequest) {
+				t.Logf("  diff: %+v", cmp.Diff(tc.req, *capturedRequest))
 				t.Fatal("requests did not match")
 			}
 

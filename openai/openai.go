@@ -62,7 +62,14 @@ type Usage struct {
 }
 
 type ResponseFormat struct {
-	Type string `json:"type"`
+	Type       string      `json:"type"`
+	JsonSchema *JsonSchema `json:"json_schema,omitempty"`
+}
+
+type JsonSchema struct {
+	Schema map[string]interface{} `json:"schema"`
+	Name   string                 `json:"name"`
+	Strict bool                   `json:"strict"`
 }
 
 type EmbedRequest struct {
@@ -483,8 +490,19 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	}
 
 	var format string
-	if r.ResponseFormat != nil && r.ResponseFormat.Type == "json_object" {
-		format = "json"
+	if r.ResponseFormat != nil {
+		switch r.ResponseFormat.Type {
+		// Support the old "json_object" type for OpenAI compatibility
+		case "json_object":
+			format = "json"
+		case "json_schema":
+			if r.ResponseFormat.JsonSchema != nil {
+				schemaBytes, err := json.Marshal(r.ResponseFormat.JsonSchema.Schema)
+				if err == nil {
+					format = string(schemaBytes)
+				}
+			}
+		}
 	}
 
 	return &api.ChatRequest{

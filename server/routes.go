@@ -1470,10 +1470,16 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		defer close(ch)
 		var sb strings.Builder
 		var toolCallIndex int = 0
+		formatStr, formatSchema := req.GetFormat()
+		var format any = formatStr
+		if formatSchema != nil {
+			format = formatSchema
+		}
+
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
-			Format:  req.Format,
+			Format:  format,
 			Options: opts,
 		}, func(r llm.CompletionResponse) {
 			res := api.ChatResponse{

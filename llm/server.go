@@ -667,9 +667,26 @@ type completion struct {
 
 type CompletionRequest struct {
 	Prompt  string
-	Format  string
+	Format  any
 	Images  []ImageData
 	Options *api.Options
+}
+
+// GetFormat returns either a string format or a JSON schema format.
+// Returns (formatStr, nil) for string formats or (nil, schema) for JSON formats.
+func (r *CompletionRequest) GetFormat() (string, map[string]interface{}) {
+	if r.Format == nil {
+		return "", nil
+	}
+
+	switch f := r.Format.(type) {
+	case string:
+		return f, nil
+	case map[string]interface{}:
+		return "", f
+	default:
+		return "", nil
+	}
 }
 
 type CompletionResponse struct {
@@ -732,10 +749,20 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		return fmt.Errorf("unexpected server status: %s", status.ToString())
 	}
 
-	if req.Format == "json" {
-		request["grammar"] = jsonGrammar
-		if !strings.Contains(strings.ToLower(req.Prompt), "json") {
-			slog.Warn("Prompt does not specify that the LLM should response in JSON, but JSON format is expected. For best results specify that JSON is expected in the system prompt.")
+	formatStr, formatSchema := req.GetFormat()
+	switch {
+	case formatSchema != nil:
+		// get json grammar here from cpp
+		// cache conversion?
+		// check performance
+		// request["json_schema"] = formatSchema
+		slog.Info("generating grammar from schema", "schema", formatSchema)
+		request["grammar"] = llama.JsonSchemaToGrammar(formatSchema)
+	case formatStr != "":
+		if formatStr == "json" {
+			request["grammar"] = jsonGrammar
+		} else {
+			slog.Warn("unsupported format", "format", formatStr)
 		}
 	}
 
