@@ -156,9 +156,26 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	var reqTmpl *template.Template
+	if req.Template != "" {
+		var err error
+		reqTmpl, err = template.Parse(req.Template)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
 	caps := []Capability{CapabilityCompletion}
 	if req.Suffix != "" {
-		caps = append(caps, CapabilityInsert)
+		if reqTmpl == nil {
+			caps = append(caps, CapabilityInsert)
+		} else {
+			if !reqTmpl.Supports("suffix") {
+				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "provided template does not support insert"})
+				return
+			}
+		}
 	}
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, caps, req.Options, req.KeepAlive)
@@ -214,12 +231,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	prompt := req.Prompt
 	if !req.Raw {
 		tmpl := m.Template
-		if req.Template != "" {
-			tmpl, err = template.Parse(req.Template)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
+		if reqTmpl != nil {
+			tmpl = reqTmpl
 		}
 
 		var values template.Values

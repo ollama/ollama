@@ -99,12 +99,11 @@ func (m *Model) CheckCapabilities(caps ...Capability) error {
 				errs = append(errs, errCapabilityCompletion)
 			}
 		case CapabilityTools:
-			if !slices.Contains(m.Template.Vars(), "tools") {
+			if !m.Template.Supports("tools") {
 				errs = append(errs, errCapabilityTools)
 			}
 		case CapabilityInsert:
-			vars := m.Template.Vars()
-			if !slices.Contains(vars, "suffix") {
+			if !m.Template.Supports("suffix") {
 				errs = append(errs, errCapabilityInsert)
 			}
 		default:

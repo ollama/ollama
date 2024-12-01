@@ -724,6 +724,36 @@ func TestGenerate(t *testing.T) {
 		}
 	})
 
+	t.Run("no missing capabilities insert with template override supports suffix", func(t *testing.T) {
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:    "test",
+			Prompt:   "def add(",
+			Suffix:   "    return c",
+			Template: "{{- if .Suffix }}<|fim_prefix|>{{ .Prompt }}<|fim_suffix|>{{ .Suffix }}<|fim_middle|>{{- else }}{{ .Prompt }}{{- end }}",
+		})
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", w.Code)
+		}
+	})
+
+	t.Run("missing capabilities suffix with template override not supporting suffix", func(t *testing.T) {
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:    "test",
+			Prompt:   "def add(",
+			Suffix:   "    return c",
+			Template: "{{ .Prompt }}",
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"provided template does not support insert"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
 	t.Run("load model", func(t *testing.T) {
 		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
 			Model: "test",
@@ -916,6 +946,23 @@ TEMPLATE """{{- if .Suffix }}<PRE> {{ .Prompt }} <SUF>{{ .Suffix }} <MID>
 		}
 
 		if diff := cmp.Diff(mock.CompletionRequest.Prompt, "<PRE> def add( <SUF>    return c <MID>"); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("prompt with suffix and template override", func(t *testing.T) {
+		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
+			Model:    "test-suffix",
+			Prompt:   "def add(",
+			Suffix:   "    return c",
+			Template: "{{- if .Suffix }}<|fim_pre|>{{ .Prompt }}<|fim_suf|>{{ .Suffix }}<|fim_mid|>{{- else }}{{ .Prompt }}{{- end }}",
+		})
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(mock.CompletionRequest.Prompt, "<|fim_pre|>def add(<|fim_suf|>    return c<|fim_mid|>"); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})
