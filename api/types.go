@@ -107,26 +107,17 @@ type ChatRequest struct {
 	Options map[string]interface{} `json:"options"`
 }
 
-// GetFormat returns either a string format or a JSON schema format.
+// GetOutputFormat returns either a string format or a JSON schema format.
 // Returns (formatStr, nil) for string formats or (nil, schema) for JSON formats.
-func (r *ChatRequest) GetFormat() (string, map[string]interface{}) {
+func (r *ChatRequest) GetOutputFormat() (string, map[string]interface{}) {
 	if r.Format == nil {
-		slog.Info("format is nil")
 		return "", nil
 	}
 
 	switch f := r.Format.(type) {
 	case string:
-		// Try to parse string as JSON into map
-		var jsonMap map[string]interface{}
-		if err := json.Unmarshal([]byte(f), &jsonMap); err == nil {
-			slog.Info("parsed string format as JSON map", "format", f)
-			return "", jsonMap
-		}
-		slog.Info("using string format", "format", f)
 		return f, nil
 	case map[string]interface{}:
-		slog.Info("using map format", "format", f)
 		return "", f
 	default:
 		slog.Info("unknown format type", "type", fmt.Sprintf("%T", f))

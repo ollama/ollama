@@ -614,34 +614,6 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 	}
 }
 
-const jsonGrammar = `
-root   ::= object
-value  ::= object | array | string | number | ("true" | "false" | "null") ws
-
-object ::=
-  "{" ws (
-            string ":" ws value
-    ("," ws string ":" ws value)*
-  )? "}" ws
-
-array  ::=
-  "[" ws (
-            value
-    ("," ws value)*
-  )? "]" ws
-
-string ::=
-  "\"" (
-    [^"\\\x7F\x00-\x1F] |
-    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) # escapes
-  )* "\"" ws
-
-number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)? ws
-
-# Optional space: by convention, applied in this grammar after literal chars when allowed
-ws ::= ([ \t\n] ws)?
-`
-
 const maxBufferSize = 512 * format.KiloByte
 
 type ImageData struct {
@@ -667,26 +639,9 @@ type completion struct {
 
 type CompletionRequest struct {
 	Prompt  string
-	Format  any
+	Grammar string
 	Images  []ImageData
 	Options *api.Options
-}
-
-// GetFormat returns either a string format or a JSON schema format.
-// Returns (formatStr, nil) for string formats or (nil, schema) for JSON formats.
-func (r *CompletionRequest) GetFormat() (string, map[string]interface{}) {
-	if r.Format == nil {
-		return "", nil
-	}
-
-	switch f := r.Format.(type) {
-	case string:
-		return f, nil
-	case map[string]interface{}:
-		return "", f
-	default:
-		return "", nil
-	}
 }
 
 type CompletionResponse struct {
@@ -738,6 +693,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		"seed":              req.Options.Seed,
 		"stop":              req.Options.Stop,
 		"image_data":        req.Images,
+		"grammar":           req.Grammar,
 		"cache_prompt":      true,
 	}
 
@@ -747,23 +703,6 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		return err
 	} else if status != ServerStatusReady {
 		return fmt.Errorf("unexpected server status: %s", status.ToString())
-	}
-
-	formatStr, formatSchema := req.GetFormat()
-	switch {
-	case formatSchema != nil:
-		// get json grammar here from cpp
-		// cache conversion?
-		// check performance
-		// request["json_schema"] = formatSchema
-		slog.Info("generating grammar from schema", "schema", formatSchema)
-		request["grammar"] = llama.JsonSchemaToGrammar(formatSchema)
-	case formatStr != "":
-		if formatStr == "json" {
-			request["grammar"] = jsonGrammar
-		} else {
-			slog.Warn("unsupported format", "format", formatStr)
-		}
 	}
 
 	// Handling JSON marshaling with special characters unescaped.

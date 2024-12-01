@@ -72,7 +72,6 @@ func TestChatMiddleware(t *testing.T) {
 					"top_p":       1.0,
 				},
 				Stream: &False,
-				Format: "",
 			},
 		},
 		{
@@ -157,7 +156,6 @@ func TestChatMiddleware(t *testing.T) {
 					"top_p":       1.0,
 				},
 				Stream: &False,
-				Format: "",
 			},
 		},
 		{
@@ -196,7 +194,6 @@ func TestChatMiddleware(t *testing.T) {
 					"top_p":       1.0,
 				},
 				Stream: &False,
-				Format: "",
 			},
 		},
 		{
@@ -277,7 +274,6 @@ func TestChatMiddleware(t *testing.T) {
 					"top_p":       1.0,
 				},
 				Stream: &True,
-				Format: "",
 			},
 		},
 		{

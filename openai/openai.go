@@ -489,7 +489,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		options["top_p"] = 1.0
 	}
 
-	var format string
+	var format any
 	if r.ResponseFormat != nil {
 		switch r.ResponseFormat.Type {
 		// Support the old "json_object" type for OpenAI compatibility
@@ -497,10 +497,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 			format = "json"
 		case "json_schema":
 			if r.ResponseFormat.JsonSchema != nil {
-				schemaBytes, err := json.Marshal(r.ResponseFormat.JsonSchema.Schema)
-				if err == nil {
-					format = string(schemaBytes)
-				}
+				format = r.ResponseFormat.JsonSchema.Schema
 			}
 		}
 	}
