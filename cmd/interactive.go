@@ -30,6 +30,11 @@ const (
 	MultilineSystem
 )
 
+const (
+	scannerPrompt    = ">>> "
+	scannerAltPrompt = "... "
+)
+
 func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	usage := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
@@ -111,8 +116,8 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	}
 
 	scanner, err := readline.New(readline.Prompt{
-		Prompt:         ">>> ",
-		AltPrompt:      "... ",
+		Prompt:         scannerPrompt,
+		AltPrompt:      scannerAltPrompt,
 		Placeholder:    "Send a message (/? for help)",
 		AltPlaceholder: `Use """ to end multi-line input`,
 	})
@@ -145,6 +150,11 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			sb.Reset()
 
 			continue
+		case errors.Is(err, readline.ErrNewLineDetected):
+			sb.WriteString(line)
+			fmt.Fprintln(&sb)
+			scanner.Prompt.Prompt = scannerAltPrompt
+			continue
 		case err != nil:
 			return err
 		}
@@ -169,7 +179,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 			multiline = MultilineNone
 			scanner.Prompt.UseAlt = false
-		case strings.HasPrefix(line, `"""`):
+		case strings.HasPrefix(line, `"""`) && !scanner.Pasting:
 			line := strings.TrimPrefix(line, `"""`)
 			line, ok := strings.CutSuffix(line, `"""`)
 			sb.WriteString(line)
@@ -431,7 +441,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			sb.WriteString(line)
 		}
 
-		if sb.Len() > 0 && multiline == MultilineNone {
+		if sb.Len() > 0 && strings.TrimSpace(sb.String()) != "" && multiline == MultilineNone {
 			newMessage := api.Message{Role: "user", Content: sb.String()}
 
 			if opts.MultiModal {
@@ -455,6 +465,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			}
 
 			sb.Reset()
+			scanner.Prompt.Prompt = scannerPrompt
 		}
 	}
 }
