@@ -1506,16 +1506,17 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		var toolCallIndex int = 0
 		var grammar string
 
-		outputFormatStr, outputFormatSchema := req.GetOutputFormat()
-		if outputFormatSchema != nil {
-			grammar = llama.JsonSchemaToGrammar(outputFormatSchema)
-		} else if outputFormatStr == "json" {
+		switch outputFormat, schema := req.GetOutputFormat(); {
+		case schema != nil:
+			grammar = llama.JsonSchemaToGrammar(schema)
+		case strings.TrimSpace(strings.ToLower(outputFormat)) == "json":
 			grammar = jsonGrammar
 			if !strings.Contains(strings.ToLower(prompt), "json") {
-				slog.Warn("Prompt does not specify that the LLM should response in JSON, but JSON format is expected. For best results specify that JSON is expected in the system prompt.")
+				slog.Warn("JSON response format requested but not specified in prompt",
+					"suggestion", "specify JSON output format in system prompt for best results")
 			}
-		} else {
-			slog.Warn("unsupported format", "format", outputFormatStr)
+		default:
+			slog.Warn("unsupported output format", "format", outputFormat)
 		}
 
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{

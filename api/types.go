@@ -120,7 +120,7 @@ func (r *ChatRequest) GetOutputFormat() (string, map[string]interface{}) {
 	case map[string]interface{}:
 		return "", f
 	default:
-		slog.Info("unknown format type", "type", fmt.Sprintf("%T", f))
+		slog.Warn("unknown format type", "type", fmt.Sprintf("%T", f))
 		return "", nil
 	}
 }

@@ -584,7 +584,7 @@ func TestGenerateChat(t *testing.T) {
 			t.Errorf("final tool call mismatch (-got +want):\n%s", diff)
 		}
 	})
-	t.Run("json schema to grammar conversion", func(t *testing.T) {
+	t.Run("format is json schema - grammar conversion", func(t *testing.T) {
 		var wg sync.WaitGroup
 
 		mock.CompletionResponse = llm.CompletionResponse{
@@ -641,7 +641,7 @@ func TestGenerateChat(t *testing.T) {
 		}
 	})
 
-	t.Run("json schema to grammar - complex schema streaming", func(t *testing.T) {
+	t.Run("json chema  to grammar- complex schema streaming", func(t *testing.T) {
 		var wg sync.WaitGroup
 		responses := []llm.CompletionResponse{
 			{
@@ -774,6 +774,125 @@ func TestGenerateChat(t *testing.T) {
 		})
 		if diff := cmp.Diff(mock.CompletionRequest.Grammar, expectedGrammar); diff != "" {
 			t.Errorf("grammar mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("format is json - pass through", func(t *testing.T) {
+		var wg sync.WaitGroup
+		mock.CompletionResponse = llm.CompletionResponse{
+			Content:            `{"message": "The weather is sunny"}`,
+			Done:               true,
+			DoneReason:         "done",
+			PromptEvalCount:    1,
+			PromptEvalDuration: 1,
+			EvalCount:          1,
+			EvalDuration:       1,
+		}
+
+		stream := false
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+			defer wg.Done()
+			fn(mock.CompletionResponse)
+			return nil
+		}
+
+		wg.Add(1)
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test-system",
+			Messages: []api.Message{
+				{Role: "user", Content: "What's the weather like?"},
+			},
+			Format: "json",
+			Stream: &stream,
+		})
+
+		wg.Wait()
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", w.Code)
+		}
+
+		// Verify the grammar was set correctly for JSON format
+		if diff := cmp.Diff(mock.CompletionRequest.Grammar, jsonGrammar); diff != "" {
+			t.Errorf("grammar mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("format is unknown - warn and do not pass through", func(t *testing.T) {
+		var wg sync.WaitGroup
+		mock.CompletionResponse = llm.CompletionResponse{
+			Content:            `{"message": "The weather is sunny"}`,
+			Done:               true,
+			DoneReason:         "done",
+			PromptEvalCount:    1,
+			PromptEvalDuration: 1,
+			EvalCount:          1,
+			EvalDuration:       1,
+		}
+
+		stream := false
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+			defer wg.Done()
+			fn(mock.CompletionResponse)
+			return nil
+		}
+
+		wg.Add(1)
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test-system",
+			Messages: []api.Message{
+				{Role: "user", Content: "What's the weather like?"},
+			},
+			Format: "sql",
+			Stream: &stream,
+		})
+
+		wg.Wait()
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", w.Code)
+		}
+
+		// Verify no grammar was set for unknown format
+		if mock.CompletionRequest.Grammar != "" {
+			t.Errorf("expected empty grammar for unknown format, got %q", mock.CompletionRequest.Grammar)
+		}
+	})
+
+	t.Run("format is case insensitive and trimmed", func(t *testing.T) {
+		var wg sync.WaitGroup
+
+		mock.CompletionResponse = llm.CompletionResponse{
+			Content:    `{"message": "The weather is sunny"}`,
+			Done:       true,
+			DoneReason: "done",
+		}
+
+		stream := false
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+			defer wg.Done()
+			fn(mock.CompletionResponse)
+			return nil
+		}
+
+		wg.Add(1)
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test-system",
+			Messages: []api.Message{
+				{Role: "user", Content: "What's the weather like?"},
+			},
+			Format: "JSON  ",
+			Stream: &stream,
+		})
+
+		wg.Wait()
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(mock.CompletionRequest.Grammar, jsonGrammar); diff != "" {
+			t.Errorf("format mismatch (-got +want):\n%s", diff)
 		}
 	})
 }
