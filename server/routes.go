@@ -30,10 +30,10 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/model/mllama"
 	"github.com/ollama/ollama/openai"
-	"github.com/ollama/ollama/runners"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -861,7 +861,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	return resp, nil
 }
 
-func getKVData(digest string, verbose bool) (llm.KV, error) {
+func getKVData(digest string, verbose bool) (ggml.KV, error) {
 	maxArraySize := 0
 	if verbose {
 		maxArraySize = -1
@@ -1258,14 +1258,6 @@ func Serve(ln net.Listener) error {
 		sched.unloadAllRunners()
 		done()
 	}()
-
-	// Locate and log what runners are present at startup
-	var runnerNames []string
-	for v := range runners.GetAvailableServers() {
-		runnerNames = append(runnerNames, v)
-	}
-	slog.Info("Dynamic LLM libraries", "runners", runnerNames)
-	slog.Debug("Override detection logic by setting OLLAMA_LLM_LIBRARY")
 
 	s.sched.Run(schedCtx)
 

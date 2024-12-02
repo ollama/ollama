@@ -19,7 +19,7 @@ import (
 	"golang.org/x/text/encoding/unicode"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/fs/ggml"
 )
 
 func TestParseFileFile(t *testing.T) {
@@ -770,7 +770,7 @@ func getSHA256Digest(t *testing.T, r io.Reader) (string, int64) {
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), n
 }
 
-func createBinFile(t *testing.T, kv map[string]any, ti []llm.Tensor) (string, string) {
+func createBinFile(t *testing.T, kv map[string]any, ti []ggml.Tensor) (string, string) {
 	t.Helper()
 
 	f, err := os.CreateTemp(t.TempDir(), "testbin.*.gguf")
@@ -779,7 +779,7 @@ func createBinFile(t *testing.T, kv map[string]any, ti []llm.Tensor) (string, st
 	}
 	defer f.Close()
 
-	if err := llm.WriteGGUF(f, kv, ti); err != nil {
+	if err := ggml.WriteGGUF(f, kv, ti); err != nil {
 		t.Fatal(err)
 	}
 	// Calculate sha256 of file

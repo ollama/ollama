@@ -18,12 +18,12 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/fs/ggml"
 )
 
 var stream bool = false
 
-func createBinFile(t *testing.T, kv map[string]any, ti []llm.Tensor) (string, string) {
+func createBinFile(t *testing.T, kv map[string]any, ti []ggml.Tensor) (string, string) {
 	t.Helper()
 	t.Setenv("OLLAMA_MODELS", cmp.Or(os.Getenv("OLLAMA_MODELS"), t.TempDir()))
 
@@ -35,7 +35,7 @@ func createBinFile(t *testing.T, kv map[string]any, ti []llm.Tensor) (string, st
 	}
 	defer f.Close()
 
-	if err := llm.WriteGGUF(f, kv, ti); err != nil {
+	if err := ggml.WriteGGUF(f, kv, ti); err != nil {
 		t.Fatal(err)
 	}
 	// Calculate sha256 of file
@@ -671,7 +671,7 @@ func TestCreateDetectTemplate(t *testing.T) {
 	var s Server
 
 	t.Run("matched", func(t *testing.T) {
-		_, digest := createBinFile(t, llm.KV{
+		_, digest := createBinFile(t, ggml.KV{
 			"tokenizer.chat_template": "{{ bos_token }}{% for message in messages %}{{'<|' + message['role'] + '|>' + '\n' + message['content'] + '<|end|>\n' }}{% endfor %}{% if add_generation_prompt %}{{ '<|assistant|>\n' }}{% else %}{{ eos_token }}{% endif %}",
 		}, nil)
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
