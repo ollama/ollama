@@ -17,6 +17,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
+	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/llm"
 )
 
@@ -581,6 +582,198 @@ func TestGenerateChat(t *testing.T) {
 
 		if diff := cmp.Diff(finalToolCall, expectedToolCall); diff != "" {
 			t.Errorf("final tool call mismatch (-got +want):\n%s", diff)
+		}
+	})
+	t.Run("json schema to grammar conversion", func(t *testing.T) {
+		var wg sync.WaitGroup
+
+		mock.CompletionResponse = llm.CompletionResponse{
+			Content:            `{"name":"get_weather","arguments":{"location":"Seattle, WA","unit":"celsius"}}`,
+			Done:               true,
+			DoneReason:         "done",
+			PromptEvalCount:    1,
+			PromptEvalDuration: 1,
+			EvalCount:          1,
+			EvalDuration:       1,
+		}
+
+		stream := false
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+			defer wg.Done()
+			fn(mock.CompletionResponse)
+			return nil
+		}
+
+		wg.Add(1)
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test-system",
+			Messages: []api.Message{
+				{Role: "user", Content: "What's the weather in Seattle?"},
+			},
+			Format: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"location": map[string]any{
+						"type": "string",
+					},
+				},
+			},
+			Stream: &stream,
+		})
+
+		wg.Wait()
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", w.Code)
+		}
+
+		// Verify the grammar was set correctly from the JSON schema
+		expectedGrammar := llama.JsonSchemaToGrammar(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"location": map[string]any{
+					"type": "string",
+				},
+			},
+		})
+		if diff := cmp.Diff(mock.CompletionRequest.Grammar, expectedGrammar); diff != "" {
+			t.Errorf("grammar mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("json schema to grammar - complex schema streaming", func(t *testing.T) {
+		var wg sync.WaitGroup
+		responses := []llm.CompletionResponse{
+			{
+				Content:            `{"location":"Se`,
+				Done:               false,
+				PromptEvalCount:    1,
+				PromptEvalDuration: 1,
+				EvalCount:          1,
+				EvalDuration:       1,
+			},
+			{
+				Content:            `attle","temperature":72`,
+				Done:               false,
+				PromptEvalCount:    1,
+				PromptEvalDuration: 1,
+				EvalCount:          2,
+				EvalDuration:       1,
+			},
+			{
+				Content:            `.5,"conditions":["sunny","warm"],"details":{"humidity":65,"wind_speed":10}}`,
+				Done:               true,
+				DoneReason:         "stop",
+				PromptEvalCount:    1,
+				PromptEvalDuration: 1,
+				EvalCount:          3,
+				EvalDuration:       1,
+			},
+		}
+
+		stream := true
+		mock.CompletionFn = func(ctx context.Context, r llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
+			defer wg.Done()
+			for _, resp := range responses {
+				fn(resp)
+			}
+			return nil
+		}
+
+		wg.Add(1)
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test-system",
+			Messages: []api.Message{
+				{Role: "user", Content: "What's the detailed weather in Seattle?"},
+			},
+			Format: map[string]any{
+				"type":     "object",
+				"required": []string{"location", "temperature"},
+				"properties": map[string]any{
+					"location": map[string]any{
+						"type": "string",
+					},
+					"temperature": map[string]any{
+						"type": "number",
+					},
+					"conditions": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "string",
+						},
+					},
+					"details": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"humidity": map[string]any{
+								"type": "number",
+							},
+							"wind_speed": map[string]any{
+								"type": "number",
+							},
+						},
+					},
+				},
+			},
+			Stream: &stream,
+		})
+
+		wg.Wait()
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", w.Code)
+		}
+
+		// Read and validate the streamed responses
+		decoder := json.NewDecoder(w.Body)
+		var streamedContent string
+
+		for {
+			var resp api.ChatResponse
+			if err := decoder.Decode(&resp); err == io.EOF {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			streamedContent += resp.Message.Content
+		}
+
+		expectedContent := `{"location":"Seattle","temperature":72.5,"conditions":["sunny","warm"],"details":{"humidity":65,"wind_speed":10}}`
+		if diff := cmp.Diff(streamedContent, expectedContent); diff != "" {
+			t.Errorf("streamed content mismatch (-got +want):\n%s", diff)
+		}
+
+		expectedGrammar := llama.JsonSchemaToGrammar(map[string]any{
+			"type":     "object",
+			"required": []string{"location", "temperature"},
+			"properties": map[string]any{
+				"location": map[string]any{
+					"type": "string",
+				},
+				"temperature": map[string]any{
+					"type": "number",
+				},
+				"conditions": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type": "string",
+					},
+				},
+				"details": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"humidity": map[string]any{
+							"type": "number",
+						},
+						"wind_speed": map[string]any{
+							"type": "number",
+						},
+					},
+				},
+			},
+		})
+		if diff := cmp.Diff(mock.CompletionRequest.Grammar, expectedGrammar); diff != "" {
+			t.Errorf("grammar mismatch (-got +want):\n%s", diff)
 		}
 	})
 }
