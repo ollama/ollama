@@ -59,7 +59,7 @@ void gpt_sampler_caccept(
     gpt_sampler_accept(sampler, id, apply_grammar);
 }
 
-char *ollama_json_schema_to_grammar(const char *json_schema)
+char *schema_to_grammar(const char *json_schema)
 {
     try
     {

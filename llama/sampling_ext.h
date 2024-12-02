@@ -47,7 +47,7 @@ extern "C"
         llama_token id,
         bool apply_grammar);
 
-    char *ollama_json_schema_to_grammar(const char *json_schema);
+    char *schema_to_grammar(const char *json_schema);
 
 #ifdef __cplusplus
 }

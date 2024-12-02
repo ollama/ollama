@@ -693,5 +693,5 @@ func JsonSchemaToGrammar(jsonSchema map[string]interface{}) string {
 	// Convert to C string and get grammar
 	cStr := C.CString(jsonStr)
 	defer C.free(unsafe.Pointer(cStr))
-	return C.GoString(C.ollama_json_schema_to_grammar(cStr))
+	return C.GoString(C.schema_to_grammar(cStr))
 }
