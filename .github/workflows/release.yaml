@@ -478,243 +478,77 @@ jobs:
             dist/OllamaSetup.exe
             dist/ollama-windows-*.zip
 
-  # Linux x86 assets built using the container based build
-  build-linux-amd64:
+  build-linux:
     environment: release
     runs-on: linux
-    env:
-      PLATFORM: linux/amd64
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Set Version
-        shell: bash
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-      - run: |
-          ./scripts/build_linux.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist-linux-amd64
-          path: |
-            dist/*linux*
-            !dist/*-cov
-
-  # Linux ARM assets built using the container based build
-  # (at present, docker isn't pre-installed on arm ubunutu images)
-  build-linux-arm64:
-    environment: release
-    runs-on: linux-arm64
-    env:
-      PLATFORM: linux/arm64
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Set Version
-        shell: bash
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-      - name: 'Install Docker'
-        run: |
-          # Add Docker's official GPG key:
-          env
-          uname -a
-          sudo apt-get update
-          sudo apt-get install -y ca-certificates curl
-          sudo install -m 0755 -d /etc/apt/keyrings
-          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-          sudo chmod a+r /etc/apt/keyrings/docker.asc
-
-          # Add the repository to Apt sources:
-          echo \
-            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-            $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-            sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-          sudo apt-get update
-          sudo apt-get install -y docker-ce docker-ce-cli containerd.io
-          sudo usermod -aG docker $USER
-          sudo apt-get install acl
-          sudo setfacl --modify user:$USER:rw /var/run/docker.sock
-      - run: |
-          ./scripts/build_linux.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist-linux-arm64
-          path: |
-            dist/*linux*
-            !dist/*-cov
-
-  # Container image build
-  build-container-image:
-    environment: release
     strategy:
       matrix:
-        runner:
-          - linux
-          - linux-arm64
-    runs-on: ${{ matrix.runner }}
-    env:
-      FINAL_IMAGE_REPO: ollama/ollama
+        include:
+          - os: linux
+            arch: amd64
+            targets: [archive, rocm]
+          - os: linux
+            arch: arm64
+            targets: [archive]
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - run: |
+          apt-get update && apt-get install pigz
+          for TARGET in ${{ matrix.targets }}; do docker buildx build --platform $PLATFORM --target $TARGET --output type=local,dest=dist/$PLATFORM .; done
+          tar c -C dist/$PLATFORM . | pigz -9cv >dist/ollama-${PLATFORM//\//-}.tar.gz
+        env:
+          PLATFORM: ${{ matrix.os }}/${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
         with:
-          submodules: recursive
-      - name: 'Install Docker'
-        if: ${{ startsWith(matrix.runner, 'linux-arm64') }}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ca-certificates curl
-          sudo install -m 0755 -d /etc/apt/keyrings
-          sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-          sudo chmod a+r /etc/apt/keyrings/docker.asc
-          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-            $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-            sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-          sudo apt-get update
-          sudo apt-get install -y docker-ce docker-ce-cli containerd.io
-          sudo usermod -aG docker $USER
-          sudo apt-get install acl
-          sudo setfacl --modify user:$USER:rw /var/run/docker.sock
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.FINAL_IMAGE_REPO }}
-          flavor: |
-            latest=false
-          tags: |
-            type=ref,enable=true,priority=600,prefix=0.0.0-pr,suffix=,event=pr
-            type=semver,pattern={{version}}
-      - name: Set Version
-        shell: bash
-        run: |
-          machine=$(uname -m)
-          case ${machine} in
-            x86_64) echo ARCH=amd64; echo PLATFORM_PAIR=linux-amd64 ;;
-            aarch64) echo ARCH=arm64; echo PLATFORM_PAIR=linux-arm64 ;;
-          esac >>$GITHUB_ENV
-          echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${{ env.DOCKER_METADATA_OUTPUT_VERSION }}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" >>$GITHUB_ENV
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ vars.DOCKER_USER }}
-          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
-      - name: Build and push by digest
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: "."
-          platforms: linux/${{ env.ARCH }}
-          build-args: |
-            GOFLAGS
-          outputs: type=image,name=${{ env.FINAL_IMAGE_REPO }},push-by-digest=true,name-canonical=true,push=true
-      - name: Export digest
-        run: |
-          mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
-      - name: Upload digest
-        uses: actions/upload-artifact@v4
-        with:
-          name: digests-${{ env.PLATFORM_PAIR }}
-          path: /tmp/digests/*
-          if-no-files-found: error
-          retention-days: 1
-  merge:
+          name: dist-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            dist/ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
+
+  build-docker:
     environment: release
     runs-on: linux
-    needs:
-      - build-container-image
-    env:
-      FINAL_IMAGE_REPO: ollama/ollama
+    strategy:
+      matrix:
+        include:
+          - flavor: |
+              latest=auto
+            platforms: linux/amd64,linux/arm64
+            build-args: [GOFLAGS]
+          - flavor: |
+              suffix=-rocm,onlatest=false
+            platforms: linux/amd64
+            build-args: [GOFLAGS, FLAVOR=rocm]
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Download digests
-        uses: actions/download-artifact@v4
-        with:
-          path: /tmp/digests
-          pattern: digests-*
-          merge-multiple: true
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.FINAL_IMAGE_REPO }}
-          flavor: |
-            latest=false
-          tags: |
-            type=ref,enable=true,priority=600,prefix=0.0.0-pr,suffix=,event=pr
-            type=semver,pattern={{version}}
-      - name: Set Version
-        shell: bash
-        run: |
-          machine=$(uname -m)
-          case ${machine} in
-            x86_64) echo ARCH=amd64; echo PLATFORM_PAIR=linux-amd64 ;;
-            aarch64) echo ARCH=arm64; echo PLATFORM_PAIR=linux-arm64 ;;
-          esac >>$GITHUB_ENV
-          echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${{ env.DOCKER_METADATA_OUTPUT_VERSION }}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" >>$GITHUB_ENV
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
+      - uses: docker/setup-qemu-action@v2
+      - uses: docker/setup-buildx-action@v2
+      - uses: docker/login-action@v3
         with:
           username: ${{ vars.DOCKER_USER }}
           password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
-      - name: Create manifest list and push
-        working-directory: /tmp/digests
-        run: |
-          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ env.FINAL_IMAGE_REPO }}@sha256:%s ' *)
-      - name: Inspect image
-        run: |
-          docker buildx imagetools inspect ${{ env.FINAL_IMAGE_REPO }}:${{ steps.meta.outputs.version }}          
-  build-container-image-rocm:
-    environment: release
-    runs-on: linux
-    env:
-      FINAL_IMAGE_REPO: ollama/ollama
-      ARCH: amd64
-      PLATFORM_PAIR: linux-amd64
-    steps:
-      - uses: actions/checkout@v4
+      - id: metadata
+        uses: docker/metadata-action@v4
         with:
-          submodules: recursive
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.FINAL_IMAGE_REPO }}
-          flavor: |
-            latest=false
+          flavor: ${{ matrix.flavor }}
+          images: |
+            ollama/ollama
           tags: |
-            type=ref,enable=true,priority=600,prefix=0.0.0-pr,suffix=,event=pr
             type=semver,pattern={{version}}
-      - name: Set Version
-        shell: bash
-        run: |
-          echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${{ env.DOCKER_METADATA_OUTPUT_VERSION }}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" >>$GITHUB_ENV
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
+      - uses: docker/build-push-action@v6
         with:
-          username: ${{ vars.DOCKER_USER }}
-          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
-      - name: Build and push by digest
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: "."
-          target: runtime-rocm
-          build-args: |
-            GOFLAGS
-          tags: ${{ env.FINAL_IMAGE_REPO }}:${{ env.DOCKER_METADATA_OUTPUT_VERSION}}-rocm
+          context: .
           push: true
+          platforms: ${{ matrix.platforms }}
+          build-args: ${{ matrix.build-args }}
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          cache-from: type=registry,ref=ollama/ollama:latest
+          cache-to: type=inline
+          provenance: false
+        env:
+          GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${{ steps.metadata.outputs.version }}\" \"-X=github.com/ollama/ollama/server.mode=release\"'"
 
   # Aggregate all the assets and ship a release
   release:
