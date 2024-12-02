@@ -1,0 +1,46 @@
+UPSTREAM=https://github.com/ggerganov/llama.cpp.git
+WORKDIR=llama/vendor
+FETCH_HEAD=46e3556e01b824e52395fb050b29804b6cff2a7c
+
+all: sync
+
+.PHONY: sync
+sync: llama/llama.cpp ml/backend/ggml/ggml
+
+.PHONY: llama/llama.cpp
+llama/llama.cpp: llama/vendor/ apply_patches
+	rsync -arvzc -f "merge $@/.rsync-filter" $< $@
+
+.PHONY: ml/backend/ggml/ggml apply_patches
+ml/backend/ggml/ggml: llama/vendor/ggml/ apply_patches
+	rsync -arvzc -f "merge $@/.rsync-filter" $< $@
+
+PATCHES=$(wildcard llama/patches/*.patch)
+
+.PHONY: apply_patches
+.NOTPARALLEL:
+apply_patches: $(addsuffix ed, $(PATCHES))
+
+%.patched: %.patch
+	@if git -c user.name=nobody -c 'user.email=<>' -C $(WORKDIR) am -3 $(realpath $<); then touch $@; else git -C $(WORKDIR) am --abort; exit 1; fi
+
+.PHONY: checkout
+checkout: $(WORKDIR)
+	git -C $(WORKDIR) fetch
+	git -C $(WORKDIR) checkout -f $(FETCH_HEAD)
+
+$(WORKDIR):
+	git clone $(UPSTREAM) $(WORKDIR)
+
+.PHONE: format_patches
+format_patches: llama/patches
+	git -C $(WORKDIR) format-patch \
+		--no-signature \
+		--no-numbered \
+		--zero-commit \
+		-o $(realpath $<) \
+		$(FETCH_HEAD)
+
+.PHONE: clean
+clean: checkout
+	$(RM) $(addsuffix ed, $(PATCHES))
