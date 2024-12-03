@@ -18,16 +18,16 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/convert"
-	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/fs/ggml"
 )
 
 var intermediateBlobs map[string]string = make(map[string]string)
 
 type layerGGML struct {
 	Layer
-	*llm.GGML
+	*ggml.GGML
 }
 
 func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressResponse)) (layers []*layerGGML, err error) {
@@ -67,7 +67,7 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 			}
 			defer blob.Close()
 
-			ggml, _, err := llm.DecodeGGML(blob, 0)
+			ggml, _, err := ggml.Decode(blob, 0)
 			if err != nil {
 				return nil, err
 			}
@@ -112,7 +112,7 @@ func parseFromZipFile(_ context.Context, command string, baseLayers []*layerGGML
 
 	switch command {
 	case "adapter":
-		var baseModel *llm.GGML
+		var baseModel *ggml.GGML
 		for _, l := range baseLayers {
 			if l.GGML != nil {
 				baseModel = l.GGML
@@ -150,7 +150,7 @@ func parseFromZipFile(_ context.Context, command string, baseLayers []*layerGGML
 	}
 	defer bin.Close()
 
-	ggml, _, err := llm.DecodeGGML(bin, 0)
+	ggml, _, err := ggml.Decode(bin, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +184,7 @@ func parseFromFile(ctx context.Context, command string, baseLayers []*layerGGML,
 
 	var offset int64
 	for offset < stat.Size() {
-		ggml, n, err := llm.DecodeGGML(file, 0)
+		ggml, n, err := ggml.Decode(file, 0)
 		if errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
@@ -263,7 +263,7 @@ func detectContentType(r io.Reader) (string, error) {
 		return "", err
 	}
 
-	if contentType := llm.DetectGGMLType(b.Bytes()); contentType != "" {
+	if contentType := ggml.DetectContentType(b.Bytes()); contentType != "" {
 		return contentType, nil
 	}
 
