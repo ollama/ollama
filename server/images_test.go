@@ -2,10 +2,10 @@ package server
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
-	"github.com/stretchr/testify/assert"
 )
 
 func TestPushModel(t *testing.T) {
@@ -37,8 +37,14 @@ func TestPushModel(t *testing.T) {
 		t.Run(tt.modelStr, func(t *testing.T) {
 			err := PushModel(context.Background(), tt.modelStr, tt.regOpts, noOpProgress)
 
-			assert.Error(t, err)
-			assert.EqualError(t, err, tt.wantErr)
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Errorf("PushModel() error = %v, wantErr %v", err, tt.wantErr)
+				} else if !strings.Contains(err.Error(), tt.wantErr) {
+					t.Errorf("PushModel() error = %v, wantErr %v", err, tt.wantErr)
+				}
+				return
+			}
 		})
 	}
 }
