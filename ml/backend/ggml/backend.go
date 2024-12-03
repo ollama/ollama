@@ -29,7 +29,7 @@ type Backend struct {
 }
 
 func New(r io.ReadSeeker) (ml.Backend, error) {
-	f, _, err := ggml.DecodeGGML(r, -1)
+	f, _, err := ggml.Decode(r, -1)
 	if err != nil {
 		return nil, err
 	}
