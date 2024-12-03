@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"io"
+	"os"
 	"strings"
 )
 
@@ -24,9 +24,9 @@ type Backend interface {
 	NewContext() Context
 }
 
-var backends = make(map[string]func(io.ReadSeeker) (Backend, error))
+var backends = make(map[string]func(*os.File) (Backend, error))
 
-func RegisterBackend(name string, f func(io.ReadSeeker) (Backend, error)) {
+func RegisterBackend(name string, f func(*os.File) (Backend, error)) {
 	if _, ok := backends[name]; ok {
 		panic("backend: backend already registered")
 	}
@@ -34,9 +34,9 @@ func RegisterBackend(name string, f func(io.ReadSeeker) (Backend, error)) {
 	backends[name] = f
 }
 
-func NewBackend(r io.ReadSeeker) (Backend, error) {
+func NewBackend(f *os.File) (Backend, error) {
 	if backend, ok := backends["ggml"]; ok {
-		return backend(r)
+		return backend(f)
 	}
 
 	return nil, fmt.Errorf("unsupported backend")
