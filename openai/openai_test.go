@@ -290,6 +290,102 @@ func TestChatMiddleware(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "chat handler with unsupported parameter",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "Hello"}
+				],
+				"n": 2
+			}`,
+			err: ErrorResponse{
+				Error: Error{
+					Message: "Unsupported parameter: \"n\"",
+					Type:    "invalid_request_error",
+				},
+			},
+		},
+		{
+			name: "chat handler with multiple unsupported parameters",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "Hello"}
+				],
+				"n": 2,
+				"best_of": 3
+			}`,
+			err: ErrorResponse{
+				Error: Error{
+					Message: "Unsupported parameter: \"n\"",
+					Type:    "invalid_request_error",
+				},
+			},
+		},
+		{
+			name: "chat handler with unsupported nested parameter",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "Hello"}
+				],
+				"options": {
+					"unsupported_option": true
+				}
+			}`,
+			err: ErrorResponse{
+				Error: Error{
+					Message: "Unsupported parameter: \"options\"",
+					Type:    "invalid_request_error",
+				},
+			},
+		},
+		{
+			name: "chat handler with empty messages array",
+			body: `{
+				"model": "test-model",
+				"messages": []
+			}`,
+			err: ErrorResponse{
+				Error: Error{
+					Message: "[] is too short - 'messages'",
+					Type:    "invalid_request_error",
+				},
+			},
+		},
+		{
+			name: "chat handler with invalid JSON",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "Hello"}
+				],
+				"temperature": 0.7,
+			}`,
+			err: ErrorResponse{
+				Error: Error{
+					Message: "Invalid JSON syntax",
+					Type:    "invalid_request_error",
+				},
+			},
+		},
+		{
+			name: "chat handler with invalid type for known field",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "Hello"}
+				],
+				"temperature": "not a number"
+			}`,
+			err: ErrorResponse{
+				Error: Error{
+					Message: "Invalid type for field temperature. Expected float64, got string",
+					Type:    "invalid_request_error",
+				},
+			},
+		},
 	}
 
 	endpoint := func(c *gin.Context) {
@@ -314,15 +410,15 @@ func TestChatMiddleware(t *testing.T) {
 			var errResp ErrorResponse
 			if resp.Code != http.StatusOK {
 				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
-					t.Fatal(err)
+					t.Fatalf("Failed to unmarshal error response: %v", err)
 				}
 			}
 			if capturedRequest != nil && !reflect.DeepEqual(tc.req, *capturedRequest) {
-				t.Fatal("requests did not match")
+				t.Fatalf("Requests did not match.\nExpected: %+v\nGot: %+v", tc.req, *capturedRequest)
 			}
 
 			if !reflect.DeepEqual(tc.err, errResp) {
-				t.Fatal("errors did not match")
+				t.Fatalf("Errors did not match.\nExpected: %+v\nGot: %+v\nResponse body: %s", tc.err, errResp, resp.Body.String())
 			}
 		})
 	}
