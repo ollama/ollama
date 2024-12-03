@@ -2,6 +2,7 @@
 
 REPO_ROOT:=./
 DEST_DIR:=./llama/
+DEST_DIR_GGML=./ml/backend/ggml/
 
 include $(DEST_DIR)vendoring
 
@@ -50,7 +51,7 @@ create-patches: $(LLAMACPP_REPO)
 
 # Vendoring template logic
 EXCLUDED_FILES=sgemm.cpp sgemm.h sampling_ext.cpp sampling_ext.h stb_image.h json.hpp llama_darwin.c base64.hpp
-OLLAMA_NATIVE_FILES=mllama.cpp mllama.h llama_darwin.c sampling_ext.cpp sampling_ext.h
+OLLAMA_NATIVE_FILES=mllama.cpp mllama.h llama_darwin.c sampling_ext.cpp sampling_ext.h ggml-debug.h ggml-debug.c ggml-metal-embed.metal
 define vendor_file
 $(strip $(addprefix $(2),$(notdir $1))) : $(addprefix $(LLAMACPP_REPO),$(1))
 ifneq ($$(filter-out $(EXCLUDED_FILES),$(notdir $1)),)
@@ -86,14 +87,19 @@ LLAMACPP_FILES=\
 	src/llama-sampling.cpp \
 	src/llama-sampling.h \
 	include/llama.h \
-	ggml/src/llamafile/sgemm.cpp \
-	ggml/src/llamafile/sgemm.h
+	ggml/src/llamafile/sgemm.cpp
 $(foreach name,$(LLAMACPP_FILES),$(eval $(call vendor_file,$(name),$(DEST_DIR))))
 
 # llama.cpp files -> llama/llamafile
 LLAMAFILE_FILES= \
 	ggml/src/llamafile/sgemm.h
 $(foreach name,$(LLAMAFILE_FILES),$(eval $(call vendor_file,$(name),$(DEST_DIR)llamafile/)))
+
+# ggml files -> ml/backend/ggml
+GGML_FILES_OLD= \
+	ggml/src/ggml-cuda.cu \
+	ggml/src/ggml-blas.cpp
+$(foreach name,$(GGML_FILES_OLD),$(eval $(call vendor_file,$(name),$(DEST_DIR))))
 
 # ggml files -> llama/
 GGML_FILES= \
@@ -104,8 +110,6 @@ GGML_FILES= \
 	ggml/src/ggml-metal.metal \
 	ggml/include/ggml-metal.h \
 	ggml/src/ggml-impl.h \
-	ggml/include/ggml-cuda.h \
-	ggml/src/ggml-cuda.cu \
 	ggml/src/ggml-common.h \
 	ggml/include/ggml-backend.h \
 	ggml/src/ggml-backend.c \
@@ -115,12 +119,13 @@ GGML_FILES= \
 	ggml/src/ggml-aarch64.h \
 	ggml/src/ggml-aarch64.c \
 	ggml/src/ggml-cpu-impl.h \
-	ggml/include/ggml-blas.h \
-	ggml/src/ggml-blas.cpp
-$(foreach name,$(GGML_FILES),$(eval $(call vendor_file,$(name),$(DEST_DIR))))
+	ggml/include/ggml-cuda.h \
+	ggml/src/llamafile/sgemm.h \
+	ggml/include/ggml-blas.h
+$(foreach name,$(GGML_FILES),$(eval $(call vendor_file,$(name),$(DEST_DIR_GGML))))
 
 # TODO generalize renaming pattern if we have more of these
-$(DEST_DIR)ggml-metal_darwin_arm64.m : $(LLAMACPP_REPO)ggml/src/ggml-metal.m
+$(DEST_DIR_GGML)ggml-metal_darwin_arm64.m : $(LLAMACPP_REPO)ggml/src/ggml-metal.m
 	@echo "vendoring $(subst $(LLAMACPP_REPO),,$<)"; \
 		mkdir -p $(dir $@) && \
 		echo "/**" > $@ && \
@@ -130,7 +135,7 @@ $(DEST_DIR)ggml-metal_darwin_arm64.m : $(LLAMACPP_REPO)ggml/src/ggml-metal.m
 		echo " */" >> $@ && \
 		echo "" >> $@ && \
 		cat $< >> $@
-VENDORED_FILES += $(DEST_DIR)ggml-metal_darwin_arm64.m
+VENDORED_FILES += $(DEST_DIR_GGML)ggml-metal_darwin_arm64.m
 
 # ggml-cuda -> llama/ggml-cuda/
 GGML_CUDA_FILES= ggml/src/ggml-cuda/*.cu ggml/src/ggml-cuda/*.cuh
@@ -182,9 +187,9 @@ sync-clean:
 	rm -f $(VENDORED_FILES) $(EXTRA_NATIVE_FILES)
 
 PATS=*.c *.h *.cpp *.m *.metal *.cu *.cuh
-NATIVE_DIRS=$(DEST_DIR) $(DEST_DIR)llamafile/ $(DEST_DIR)ggml-cuda/ $(DEST_DIR)ggml-cuda/template-instances/ $(DEST_DIR)ggml-cuda/vendors/
+NATIVE_DIRS=$(DEST_DIR) $(DEST_DIR_GGML) $(DEST_DIR)llamafile/ $(DEST_DIR)ggml-cuda/ $(DEST_DIR)ggml-cuda/template-instances/ $(DEST_DIR)ggml-cuda/vendors/
 ALL_NATIVE_FILES=$(foreach dir,$(NATIVE_DIRS),$(wildcard $(addprefix $(dir),$(PATS))))
-EXTRA_NATIVE_FILES=$(filter-out $(VENDORED_FILES) $(addprefix $(DEST_DIR),$(OLLAMA_NATIVE_FILES)), $(ALL_NATIVE_FILES))
+EXTRA_NATIVE_FILES=$(filter-out $(VENDORED_FILES) $(addprefix $(DEST_DIR_GGML),$(OLLAMA_NATIVE_FILES)) $(addprefix $(DEST_DIR),$(OLLAMA_NATIVE_FILES)), $(ALL_NATIVE_FILES))
 remove-stale-files:
 	@rm -f $(EXTRA_NATIVE_FILES)
 

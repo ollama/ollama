@@ -94,6 +94,7 @@ GPU_COMPILER_CUFLAGS = \
 	-Wno-pass-failed \
 	-Wno-deprecated-declarations \
 	-Wno-unused-result \
+	-I./ml/backend/ggml/ \
 	-I./llama/
 
 # Workaround buggy P2P copy on some windows multi-GPU setups

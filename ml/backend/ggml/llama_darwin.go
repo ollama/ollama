@@ -1,4 +1,4 @@
-package llama
+package ggml
 
 // extern const char *ggml_metallib_start;
 // extern const char *ggml_metallib_end;

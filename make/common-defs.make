@@ -83,9 +83,11 @@ endif
 
 COMMON_SRCS := \
 	$(wildcard ./llama/*.c) \
+	$(wildcard ./ml/backend/ggml/*.c) \
 	$(wildcard ./llama/*.cpp)
 COMMON_HDRS := \
 	$(wildcard ./llama/*.h) \
+	$(wildcard ./ml/backend/ggml/*.h) \
 	$(wildcard ./llama/*.hpp)
 
 OLLAMA_EXE=./ollama$(EXE_EXT)

@@ -3,8 +3,8 @@ package llama
 //go:generate make -j 8
 
 /*
-#cgo CFLAGS: -O2 -std=c11 -DGGML_BUILD=1 -DNDEBUG -DLOG_DISABLE_LOGS -DGGML_USE_LLAMAFILE
-#cgo CXXFLAGS: -O2 -std=c++11 -DGGML_BUILD=1 -DNDEBUG -DLOG_DISABLE_LOGS -DGGML_USE_LLAMAFILE
+#cgo CFLAGS: -O2 -I../ml/backend/ggml -std=c11 -DGGML_BUILD=1 -DNDEBUG -DLOG_DISABLE_LOGS -DGGML_USE_LLAMAFILE
+#cgo CXXFLAGS: -O2 -I../ml/backend/ggml -std=c++11 -DGGML_BUILD=1 -DNDEBUG -DLOG_DISABLE_LOGS -DGGML_USE_LLAMAFILE
 #cgo amd64,avx CFLAGS: -mavx
 #cgo amd64,avx CXXFLAGS: -mavx
 #cgo amd64,avx2 CFLAGS: -mavx2 -mfma
@@ -91,6 +91,8 @@ import (
 	"slices"
 	"strings"
 	"unsafe"
+
+	_ "github.com/ollama/ollama/ml/backend/ggml"
 )
 
 var CpuFeatures = ""
