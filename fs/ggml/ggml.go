@@ -1,12 +1,12 @@
 package ggml
 
 import (
-	"cmp"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/fs/util/bufioutil"
@@ -25,7 +25,15 @@ type model interface {
 type KV map[string]any
 
 func (kv KV) Architecture() string {
-	return cmp.Or(kv.String("general.architecture"), "unknown")
+	return kv.String("general.architecture", "unknown")
+}
+
+func (kv KV) Kind() string {
+	return kv.String("general.kind", "unknown")
+}
+
+func (kv KV) ParameterCount() uint64 {
+	return keyValue[uint64](kv, "general.parameter_count")
 }
 
 func (kv KV) FileType() fileType {
@@ -34,6 +42,50 @@ func (kv KV) FileType() fileType {
 	}
 
 	return fileTypeUnknown
+}
+
+func (kv KV) BlockCount() uint64 {
+	return uint64(kv.Uint("block_count"))
+}
+
+func (kv KV) EmbeddingLength() uint64 {
+	return uint64(kv.Uint("embedding_length"))
+}
+
+func (kv KV) HeadCount() uint64 {
+	return uint64(kv.Uint("attention.head_count"))
+}
+
+func (kv KV) HeadCountKV() uint64 {
+	return uint64(kv.Uint("attention.head_count_kv", 1))
+}
+
+func (kv KV) EmbeddingHeadCount() uint64 {
+	if heads := kv.HeadCount(); heads > 0 {
+		return kv.EmbeddingLength() / heads
+	}
+
+	return 0
+}
+
+func (kv KV) EmbeddingHeadCountK() uint64 {
+	return uint64(kv.Uint("attention.key_length", uint32(kv.EmbeddingHeadCount())))
+}
+
+func (kv KV) EmbeddingHeadCountV() uint64 {
+	return uint64(kv.Uint("attention.value_length", uint32(kv.EmbeddingHeadCount())))
+}
+
+func (kv KV) GQA() uint64 {
+	return kv.HeadCount() / kv.HeadCountKV()
+}
+
+func (kv KV) ContextLength() uint64 {
+	return uint64(kv.Uint("context_length"))
+}
+
+func (kv KV) ChatTemplate() string {
+	return kv.String("tokenizer.chat_template")
 }
 
 func (kv KV) String(key string, defaultValue ...string) string {
@@ -68,7 +120,7 @@ func (kv KV) Uints(key string, defaultValue ...[]uint32) []uint32 {
 	return s
 }
 
-func keyValue[T string | uint32 | float32 | *array](kv KV, key string, defaultValue ...T) T {
+func keyValue[T string | uint32 | uint64 | float32 | *array](kv KV, key string, defaultValue ...T) T {
 	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") {
 		key = kv.Architecture() + "." + key
 	}
@@ -107,7 +159,7 @@ func (ts Tensors) Layers() map[string]Layer {
 
 type Layer map[string]*Tensor
 
-func (l Layer) size() (size uint64) {
+func (l Layer) Size() (size uint64) {
 	for _, t := range l {
 		size += t.Size()
 	}
@@ -243,7 +295,7 @@ const (
 
 var ErrUnsupportedFormat = errors.New("unsupported model format")
 
-func DetectGGMLType(b []byte) string {
+func DetectContentType(b []byte) string {
 	switch binary.LittleEndian.Uint32(b[:4]) {
 	case FILE_MAGIC_GGML:
 		return "ggml"
@@ -260,12 +312,12 @@ func DetectGGMLType(b []byte) string {
 	}
 }
 
-// DecodeGGML decodes a GGML model from the given reader.
+// Decode decodes a GGML model from the given reader.
 //
 // It collects array values for arrays with a size less than or equal to
 // maxArraySize. If maxArraySize is 0, the default value of 1024 is used. If
 // the maxArraySize is negative, all arrays are collected.
-func DecodeGGML(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
+func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
 	if maxArraySize == 0 {
 		maxArraySize = 1024
 	}
@@ -302,4 +354,203 @@ func DecodeGGML(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
 		container: c,
 		model:     model,
 	}, offset, nil
+}
+
+func (llm GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialOffload, fullOffload uint64) {
+	embedding := llm.KV().EmbeddingLength()
+	heads := llm.KV().HeadCount()
+	headsKV := llm.KV().HeadCountKV()
+	vocab := uint64(llm.KV()["tokenizer.ggml.tokens"].(*array).size)
+
+	embeddingHeads := llm.KV().EmbeddingHeadCount()
+	embeddingHeadsK := llm.KV().EmbeddingHeadCountK()
+	embeddingHeadsV := llm.KV().EmbeddingHeadCountV()
+
+	layers := llm.Tensors().Layers()
+
+	bytesPerElement := kvCacheBytesPerElement(kvCacheType)
+	kv = uint64(float64(context*llm.KV().BlockCount()*(embeddingHeadsK+embeddingHeadsV)*headsKV) * bytesPerElement)
+
+	switch llm.KV().Architecture() {
+	case "llama":
+		fullOffload = max(
+			4*batch*(1+4*embedding+context*(1+heads)),
+			4*batch*(embedding+vocab),
+		)
+
+		partialOffload = 4 * batch * embedding
+		partialOffload += max(
+			4*batch*(1+embedding+max(context, embedding))+embedding*embedding*9/16+4*context*(batch*heads+embeddingHeads*headsKV),
+			4*batch*(embedding+vocab)+embedding*vocab*105/128,
+		)
+
+		if ffnGateExpsWeight, ok := layers["blk.0"]["ffn_gate_exps.weight"]; ok {
+			// mixtral 8x22b
+			ff := uint64(llm.KV()["llama.feed_forward_length"].(uint32))
+			partialOffload = max(
+				3*ffnGateExpsWeight.Size()+4*batch*(2*ff+headsKV+embedding+context+embeddingHeads*headsKV),
+				4*(context*batch*heads+context*embeddingHeads*headsKV+batch*1024+embeddingHeads*headsKV*batch),
+			)
+		} else if ffnGateWeight, ok := layers["blk.0"]["ffn_gate.0.weight"]; ok {
+			// mixtral 8x7b
+			ffnGateWeight1 := ffnGateWeight.Shape[1]
+			fullOffload = 4 * batch * (2 + 3*embedding + context*(1+heads) + 2*headsKV + ffnGateWeight1)
+			partialOffload = max(
+				4*batch*(3+embeddingHeads*headsKV+embedding+context*(1+heads)+ffnGateWeight1)+(embedding*embedding+3*embedding*headsKV*ffnGateWeight1)*9/16,
+				4*batch*(1+2*embedding+context*(1+heads))+embedding*(6*context*headsKV/heads+embedding*9/16),
+			)
+		}
+	case "mllama":
+		var visionTokens, tiles uint64 = 1601, 4
+
+		if crossAttentionLayers, ok := llm.KV()["mllama.attention.cross_attention_layers"].(*array); ok {
+			kv = headsKV *
+				(embeddingHeadsK + embeddingHeadsV) * // one for K, one for V
+				(2* // sizeof(float16)
+					(llm.KV().BlockCount()-uint64(crossAttentionLayers.size))* // num non-cross attention layers
+					context +
+					4* // sizeof(float32)
+						uint64(crossAttentionLayers.size)* // num cross attention layers
+						visionTokens*
+						tiles)
+		}
+
+		fullOffload = max(
+			4*batch*(2+3*embedding+embeddingHeadsK*heads+context*(1+heads)),
+			// vocab graph
+			4*batch*(embedding+vocab),
+		)
+
+		var ropeFreqsCount uint64
+		if ropeFreqs, ok := llm.Tensors().Layers()["rope_freqs"]; ok {
+			if ropeFreqsWeights, ok := ropeFreqs["weights"]; ok {
+				ropeFreqsCount = ropeFreqsWeights.parameters()
+			}
+		}
+
+		partialOffload = max(
+			4*(batch*
+				(2*embedding+1+context*(1+heads)+embeddingHeadsK*heads)+
+				ropeFreqsCount+
+				embeddingHeadsK*context*headsKV),
+			// vocab graph
+			4*batch*(embedding+vocab)+embedding*vocab*105/128,
+		)
+	case "gemma", "gemma2":
+		fullOffload = max(
+			4*batch*(embedding+vocab),
+			4*batch*(2+context+context*heads+2*embedding+2*embeddingHeadsK*heads),
+		)
+
+		partialOffload = max(
+			4*embedding*batch+embedding*vocab*105/128+4*vocab*batch,
+			4*batch*(2*embedding+1+2*embeddingHeadsK*heads+context+context*heads)+
+				4*embeddingHeadsK*context*8+
+				embedding*embeddingHeadsK*heads*9/16,
+		)
+	case "command-r":
+		fullOffload = max(
+			4*batch*(embedding+vocab),
+			4*batch*(2+4*embedding+context*(1+heads)),
+		)
+
+		partialOffload = max(
+			4*batch*(embedding+vocab)+embedding*vocab*105/128,
+			4*batch*(1+2*embedding+context*(1+heads))+4*embedding*context+embedding*embedding*9/16,
+		)
+	case "qwen2":
+		fullOffload = max(
+			4*batch*(embedding+vocab),
+			4*batch*(1+2*embedding+context+context*heads),
+		)
+
+		partialOffload = max(
+			4*batch*(embedding+vocab)+embedding*vocab*105/128,
+			4*(batch*(1+2*embedding+context*(1+heads))+embedding*(1+context)),
+		)
+	case "phi2":
+		fullOffload = max(
+			4*batch*(embedding+vocab),
+			4*batch*(1+4*embedding+context+context*heads),
+		)
+
+		partialOffload = max(
+			4*batch*(2*embedding+vocab)+embedding*vocab*105/128,
+			4*batch*(2+3*embedding+context+context*heads),
+		)
+	case "stablelm":
+		fullOffload = 4 * batch * (context*(1+heads) + 3*embedding + 2)
+		partialOffload = max(
+			4*batch*(vocab+2*embedding),
+			fullOffload,
+		)
+	case "deepseek2":
+		fullOffload = max(
+			4*batch*(3*embedding+vocab),
+			4*batch*(3*embedding+2+context*(1+headsKV)+2*embeddingHeadsK*headsKV),
+		)
+
+		partialOffload = max(
+			4*batch*(3*embedding+vocab)+embedding*vocab*105/128,
+			4*batch*(2*embedding+1+2*embeddingHeadsK*headsKV+context+context*headsKV)+4*embeddingHeadsK*context*headsKV+embedding*embeddingHeadsK*headsKV*9/16,
+		)
+	case "chatglm":
+		fullOffload = 4 * batch * (embedding + vocab)
+		partialOffload = 4*batch*(embedding+vocab) + embedding*vocab*105/128
+		if qkvBias, ok := layers["blk.0"]["attn_qkv.bias"]; ok {
+			fullOffload = max(
+				fullOffload,
+				4*batch*(2+
+					2*embedding+
+					context+
+					context*heads+
+					embeddingHeadsK*heads+
+					qkvBias.Shape[0]),
+			)
+
+			partialOffload = max(
+				partialOffload,
+				4*batch*(1+
+					2*embedding+
+					embeddingHeadsK*heads+
+					context+
+					context*heads)+
+					4*embeddingHeadsK*context+
+					4*context*embeddingHeadsK+
+					4*qkvBias.Shape[0],
+			)
+		}
+	}
+
+	return
+}
+
+// SupportsKVCacheType checks if the requested cache type is supported
+func (llm GGML) SupportsKVCacheType(cacheType string) bool {
+	return slices.Contains([]string{"f16", "q8_0", "q4_0"}, cacheType)
+}
+
+// SupportsFlashAttention checks if the model supports flash attention
+func (llm GGML) SupportsFlashAttention() bool {
+	_, isEmbedding := llm.KV()[fmt.Sprintf("%s.pooling_type", llm.KV().Architecture())]
+	if isEmbedding {
+		return false
+	}
+
+	// Check head counts match and are non-zero
+	headCountK := llm.KV().EmbeddingHeadCountK()
+	headCountV := llm.KV().EmbeddingHeadCountV()
+	return headCountK != 0 && headCountV != 0 && headCountK == headCountV
+}
+
+// kvCacheBytesPerElement returns the number of bytes per element for a given KV cache type
+func kvCacheBytesPerElement(cacheType string) float64 {
+	switch cacheType {
+	case "q8_0":
+		return 1 // 1/2 of fp16
+	case "q4_0":
+		return 0.5 // 1/4 of fp16
+	default:
+		return 2 // f16 (default)
+	}
 }
