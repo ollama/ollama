@@ -130,12 +130,11 @@ func EstimateGPULayers(gpus []discover.GpuInfo, ggml *GGML, projectors []string,
 	var kvct string
 	if fa {
 		requested := envconfig.KvCacheType()
-		if ggml.SupportsKVCacheType(requested) {
+		if requested != "" && ggml.SupportsKVCacheType(requested) {
 			kvct = requested
 		}
 	}
 
-	// Get graph sizes from ggml
 	kv, graphPartialOffload, graphFullOffload := ggml.GraphSize(uint64(opts.NumCtx), uint64(min(opts.NumCtx, opts.NumBatch)), kvct)
 
 	// KV is proportional to the number of layers

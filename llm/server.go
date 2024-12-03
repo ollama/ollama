@@ -225,18 +225,21 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		fa = false
 	}
 
+	kvct := envconfig.KvCacheType()
+
 	if fa {
 		slog.Info("enabling flash attention")
 		params = append(params, "--flash-attn")
 
 		// Flash Attention also supports kv cache quantization
 		// Enable if the requested and kv cache type is supported by the model
-		kvct := envconfig.KvCacheType()
-		if ggml.SupportsKVCacheType(kvct) {
+		if kvct != "" && ggml.SupportsKVCacheType(kvct) {
 			params = append(params, "--kv-cache-type", kvct)
 		} else {
 			slog.Warn("kv cache type not supported by model", "type", kvct)
 		}
+	} else if kvct != "" && kvct != "f16" {
+		slog.Warn("quantized kv cache requested but flash attention disabled", "type", kvct)
 	}
 
 	// mmap has issues with partial offloading on metal
