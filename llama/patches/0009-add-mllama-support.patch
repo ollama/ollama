@@ -20,7 +20,7 @@ remaining is to implement the cross attention mask
  5 files changed, 468 insertions(+), 22 deletions(-)
 
 diff --git a/examples/llava/llava.cpp b/examples/llava/llava.cpp
-index be698854..0e294ae7 100644
+index be698854..b9747e2d 100644
 --- a/examples/llava/llava.cpp
 +++ b/examples/llava/llava.cpp
 @@ -408,7 +408,7 @@ struct llava_embd_batch {
@@ -45,7 +45,7 @@ index be698854..0e294ae7 100644
          }
          float * embd = image_embed->embed+i*n_embd;
 -        llava_embd_batch llava_batch = llava_embd_batch(embd, n_eval, *n_past, 0);
-+        llava_embd_batch llava_batch = llava_embd_batch(embd, n_embd, n_eval, *n_past, 0);
++        llava_embd_batch llava_batch = llava_embd_batch(embd, n_eval, n_eval, *n_past, 0);
          if (llama_decode(ctx_llama, llava_batch.batch)) {
              LOG_ERR("%s : failed to eval\n", __func__);
              return false;
