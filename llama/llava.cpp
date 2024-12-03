@@ -470,7 +470,7 @@ bool llava_eval_image_embed(llama_context * ctx_llama, const struct llava_image_
             n_eval = n_batch;
         }
         float * embd = image_embed->embed+i*n_embd;
-        llava_embd_batch llava_batch = llava_embd_batch(embd, n_embd, n_eval, *n_past, 0);
+        llava_embd_batch llava_batch = llava_embd_batch(embd, n_eval, n_eval, *n_past, 0);
         if (llama_decode(ctx_llama, llava_batch.batch)) {
             LOG_ERR("%s : failed to eval\n", __func__);
             return false;
