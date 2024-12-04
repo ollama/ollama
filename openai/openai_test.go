@@ -317,17 +317,14 @@ func TestChatMiddleware(t *testing.T) {
 				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
 					t.Fatal(err)
 				}
+				return
 			}
-			if capturedRequest != nil {
-				if diff := cmp.Diff(tc.req, *capturedRequest); diff != "" {
-					t.Fatalf("requests did not match: %+v", diff)
-				}
+			if diff := cmp.Diff(&tc.req, capturedRequest); diff != "" {
+				t.Fatalf("requests did not match: %+v", diff)
 			}
 
-			if !reflect.DeepEqual(tc.err, errResp) {
-				t.Logf("tc.name: %s", tc.name)
-				t.Logf("  diff: %+v", cmp.Diff(tc.err, errResp))
-				t.Fatal("errors did not match")
+			if diff := cmp.Diff(tc.err, errResp); diff != "" {
+				t.Fatalf("errors did not match for %s:\n%s", tc.name, diff)
 			}
 		})
 	}
@@ -410,7 +407,7 @@ func TestCompletionsMiddleware(t *testing.T) {
 			}
 
 			if capturedRequest != nil && !reflect.DeepEqual(tc.req, *capturedRequest) {
-				t.Fatal("requests did not match")
+				t.Fatal("requests did not match", cmp.Diff(tc.req, *capturedRequest))
 			}
 
 			if !reflect.DeepEqual(tc.err, errResp) {
