@@ -59,15 +59,17 @@ void gpt_sampler_caccept(
     gpt_sampler_accept(sampler, id, apply_grammar);
 }
 
-char *schema_to_grammar(const char *json_schema)
+void schema_to_grammar(const char *json_schema, char *grammar, int32_t max_len)
 {
     try
     {
         nlohmann::json schema = nlohmann::json::parse(json_schema);
-        return strdup(json_schema_to_grammar(schema).c_str());
+        strncpy(grammar, json_schema_to_grammar(schema).c_str(), max_len - 1);
+        grammar[max_len - 1] = '\0';
     }
     catch (const std::exception &e)
     {
-        return strdup("");
+        strncpy(grammar, "", max_len - 1);
+        grammar[max_len - 1] = '\0';
     }
 }

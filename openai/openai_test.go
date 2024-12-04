@@ -72,6 +72,7 @@ func TestChatMiddleware(t *testing.T) {
 					"top_p":       1.0,
 				},
 				Stream: &False,
+				Format: json.RawMessage("null"),
 			},
 		},
 		{
@@ -108,7 +109,7 @@ func TestChatMiddleware(t *testing.T) {
 					"presence_penalty":  5.0,
 					"top_p":             6.0,
 				},
-				Format: "json",
+				Format: json.RawMessage(`"json"`),
 				Stream: &True,
 			},
 		},
@@ -156,6 +157,7 @@ func TestChatMiddleware(t *testing.T) {
 					"top_p":       1.0,
 				},
 				Stream: &False,
+				Format: json.RawMessage("null"),
 			},
 		},
 		{
@@ -194,6 +196,7 @@ func TestChatMiddleware(t *testing.T) {
 					"top_p":       1.0,
 				},
 				Stream: &False,
+				Format: json.RawMessage("null"),
 			},
 		},
 		{
@@ -274,6 +277,7 @@ func TestChatMiddleware(t *testing.T) {
 					"top_p":       1.0,
 				},
 				Stream: &True,
+				Format: json.RawMessage("null"),
 			},
 		},
 		{
@@ -324,6 +328,8 @@ func TestChatMiddleware(t *testing.T) {
 			}
 
 			if !reflect.DeepEqual(tc.err, errResp) {
+				t.Logf("tc.name: %s", tc.name)
+				t.Logf("  diff: %+v", cmp.Diff(tc.err, errResp))
 				t.Fatal("errors did not match")
 			}
 		})

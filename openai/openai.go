@@ -489,15 +489,19 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		options["top_p"] = 1.0
 	}
 
-	var format any
+	var format json.RawMessage = nil
 	if r.ResponseFormat != nil {
-		switch r.ResponseFormat.Type {
+		switch strings.ToLower(strings.TrimSpace(r.ResponseFormat.Type)) {
 		// Support the old "json_object" type for OpenAI compatibility
 		case "json_object":
-			format = "json"
+			format = json.RawMessage(`"json"`)
 		case "json_schema":
 			if r.ResponseFormat.JsonSchema != nil {
-				format = r.ResponseFormat.JsonSchema.Schema
+				if schema, err := json.Marshal(r.ResponseFormat.JsonSchema.Schema); err == nil {
+					format = schema
+				} else {
+					return nil, fmt.Errorf("failed to marshal json schema: %w", err)
+				}
 			}
 		}
 	}

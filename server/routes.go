@@ -30,7 +30,6 @@ import (
 	"github.com/ollama/ollama/build"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
@@ -65,34 +64,6 @@ var (
 	errRequired    = errors.New("is required")
 	errBadTemplate = errors.New("template error")
 )
-
-const jsonGrammar = `
-root   ::= object
-value  ::= object | array | string | number | ("true" | "false" | "null") ws
-
-object ::=
-  "{" ws (
-            string ":" ws value
-    ("," ws string ":" ws value)*
-  )? "}" ws
-
-array  ::=
-  "[" ws (
-            value
-    ("," ws value)*
-  )? "]" ws
-
-string ::=
-  "\"" (
-    [^"\\\x7F\x00-\x1F] |
-    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) # escapes
-  )* "\"" ws
-
-number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)? ws
-
-# Optional space: by convention, applied in this grammar after literal chars when allowed
-ws ::= ([ \t\n] ws)?
-`
 
 func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options, error) {
 	opts := api.DefaultOptions()
@@ -304,14 +275,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		var sb strings.Builder
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt: prompt,
-			Images: images,
-			Grammar: func() string {
-				if req.Format == "json" {
-					return jsonGrammar
-				}
-				return ""
-			}(),
+			Prompt:  prompt,
+			Images:  images,
+			Format:  json.RawMessage(req.Format),
 			Options: opts,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
@@ -1504,25 +1470,15 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		defer close(ch)
 		var sb strings.Builder
 		var toolCallIndex int = 0
-		var grammar string
-
-		switch outputFormat, schema := req.GetOutputFormat(); {
-		case schema != nil:
-			grammar = llama.JsonSchemaToGrammar(schema)
-		case strings.TrimSpace(strings.ToLower(outputFormat)) == "json":
-			grammar = jsonGrammar
-			if !strings.Contains(strings.ToLower(prompt), "json") {
-				slog.Warn("JSON response format requested but not specified in prompt",
-					"suggestion", "specify JSON output format in system prompt for best results")
-			}
-		default:
-			slog.Warn("unsupported output format", "format", outputFormat)
-		}
+		// Move down
+		// Talk to Jesse about sampling with grammars
+		// Is this token right in grammar? do scan and then sample
+		// handle empty grammar
 
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
-			Grammar: grammar,
+			Format:  req.Format,
 			Options: opts,
 		}, func(r llm.CompletionResponse) {
 			res := api.ChatResponse{

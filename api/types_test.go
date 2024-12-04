@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -230,77 +229,5 @@ func TestMessage_UnmarshalJSON(t *testing.T) {
 		if msg.Role != test.expected {
 			t.Errorf("role not lowercased: got %v, expected %v", msg.Role, test.expected)
 		}
-	}
-}
-
-func TestGetOutputFormat(t *testing.T) {
-	tests := []struct {
-		input    any
-		expected any
-	}{
-		{
-			input:    ChatRequest{Format: "json"},
-			expected: "json",
-		},
-		{
-			input:    ChatRequest{Format: "JSON"},
-			expected: "JSON",
-		},
-		{
-			input:    ChatRequest{Format: ""},
-			expected: "",
-		},
-		{
-			input:    ChatRequest{Format: "invalid"},
-			expected: "invalid",
-		},
-		{
-			input:    nil,
-			expected: "",
-		},
-		{
-			input: ChatRequest{
-				Format: map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"name": map[string]interface{}{
-							"type": "string",
-						},
-						"age": map[string]interface{}{
-							"type": "number",
-						},
-					},
-				},
-			},
-			expected: map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"name": map[string]interface{}{
-						"type": "string",
-					},
-					"age": map[string]interface{}{
-						"type": "number",
-					},
-				},
-			},
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(fmt.Sprintf("%v", test.input), func(t *testing.T) {
-			var req ChatRequest
-			if test.input != nil {
-				req = test.input.(ChatRequest)
-			}
-			outputFormat, schema := req.GetOutputFormat()
-			switch test.expected.(type) {
-			case string:
-				assert.Equal(t, test.expected, outputFormat)
-			case map[string]interface{}:
-				assert.Equal(t, test.expected, schema)
-			default:
-				t.Errorf("unknown type: %T", test.expected)
-			}
-		})
 	}
 }

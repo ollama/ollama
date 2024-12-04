@@ -682,16 +682,45 @@ func (s *SamplingContext) Accept(id int, applyGrammar bool) {
 	C.gpt_sampler_caccept(s.c, C.llama_token(id), C.bool(applyGrammar))
 }
 
-func JsonSchemaToGrammar(jsonSchema map[string]interface{}) string {
-	// Convert the JSON schema to a string representation
-	jsonBytes, err := json.Marshal(jsonSchema)
-	if err != nil {
-		return "" // Return empty string on error
-	}
-	jsonStr := string(jsonBytes)
+type JsonSchema struct {
+	Defs map[string]struct {
+		Properties map[string]struct {
+			Title string `json:"title,omitempty"`
+			Type  string `json:"type,omitempty"`
+		} `json:"properties,omitempty"`
+		Required []string `json:"required,omitempty"`
+		Title    string   `json:"title,omitempty"`
+		Type     string   `json:"type,omitempty"`
+	} `json:"$defs,omitempty"`
+	Properties map[string]struct {
+		Items struct {
+			Ref string `json:"$ref,omitempty"`
+		} `json:"items,omitempty"`
+		Title string `json:"title,omitempty"`
+		Type  string `json:"type,omitempty"`
+	} `json:"properties,omitempty"`
+	Required []string `json:"required,omitempty"`
+	Title    string   `json:"title,omitempty"`
+	Type     string   `json:"type,omitempty"`
+}
 
-	// Convert to C string and get grammar
-	cStr := C.CString(jsonStr)
+func (js JsonSchema) AsGrammar() string {
+	// Convert the JSON schema to a string representation
+	jsonBytes, err := json.Marshal(js)
+	if err != nil {
+		return ""
+	}
+
+	cStr := C.CString(string(jsonBytes))
 	defer C.free(unsafe.Pointer(cStr))
-	return C.GoString(C.schema_to_grammar(cStr))
+
+	// Allocate buffer for grammar output with reasonable size
+	const maxLen = 32768 // 32KB
+	buf := make([]byte, maxLen)
+
+	// Call C function to convert schema to grammar
+	C.schema_to_grammar(cStr, (*C.char)(unsafe.Pointer(&buf[0])), C.int32_t(maxLen))
+
+	// Convert from C string to Go string - needs to be null-terminated
+	return C.GoString((*C.char)(unsafe.Pointer(&buf[0])))
 }

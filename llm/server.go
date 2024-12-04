@@ -614,6 +614,29 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 	}
 }
 
+const jsonGrammar = `
+root   ::= object
+value  ::= object | array | string | number | ("true" | "false" | "null") ws
+object ::=
+  "{" ws (
+            string ":" ws value
+    ("," ws string ":" ws value)*
+  )? "}" ws
+array  ::=
+  "[" ws (
+            value
+    ("," ws value)*
+  )? "]" ws
+string ::=
+  "\"" (
+    [^"\\\x7F\x00-\x1F] |
+    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) # escapes
+  )* "\"" ws
+number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)? ws
+# Optional space: by convention, applied in this grammar after literal chars when allowed
+ws ::= ([ \t\n] ws)?
+`
+
 const maxBufferSize = 512 * format.KiloByte
 
 type ImageData struct {
@@ -639,7 +662,7 @@ type completion struct {
 
 type CompletionRequest struct {
 	Prompt  string
-	Grammar string
+	Format  json.RawMessage
 	Images  []ImageData
 	Options *api.Options
 }
@@ -693,7 +716,6 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		"seed":              req.Options.Seed,
 		"stop":              req.Options.Stop,
 		"image_data":        req.Images,
-		"grammar":           req.Grammar,
 		"cache_prompt":      true,
 	}
 
@@ -703,6 +725,23 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		return err
 	} else if status != ServerStatusReady {
 		return fmt.Errorf("unexpected server status: %s", status.ToString())
+	}
+
+	// TODO (parthsareen): Move closer with sampling logic
+	var schema llama.JsonSchema
+	if req.Format != nil {
+		var formatStr string
+		if err := json.Unmarshal(req.Format, &formatStr); err == nil && formatStr != "" {
+			if strings.ToLower(strings.TrimSpace(formatStr)) == "json" {
+				request["grammar"] = jsonGrammar
+			} else {
+				slog.Warn("unsupported format string", "format", formatStr)
+			}
+		} else if err := json.Unmarshal(req.Format, &schema); err == nil {
+			request["grammar"] = schema.AsGrammar()
+		} else {
+			slog.Warn("format is neither a schema nor a string")
+		}
 	}
 
 	// Handling JSON marshaling with special characters unescaped.
