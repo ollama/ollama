@@ -67,7 +67,7 @@ type GenerateRequest struct {
 	Raw bool `json:"raw,omitempty"`
 
 	// Format specifies the format to return a response in.
-	Format json.RawMessage `json:"format,omitempty"`
+	Format string `json:"format"`
 
 	// KeepAlive controls how long the model will stay loaded in memory following
 	// this request.
@@ -93,7 +93,7 @@ type ChatRequest struct {
 	// Stream enables streaming of returned responses; true by default.
 	Stream *bool `json:"stream,omitempty"`
 
-	// Format is the format to return the response in (e.g. "json", or a schema).
+	// Format is the format to return the response in (e.g. "json").
 	Format json.RawMessage `json:"format,omitempty"`
 
 	// KeepAlive controls how long the model will stay loaded into memory
