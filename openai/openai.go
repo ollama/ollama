@@ -495,11 +495,11 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 			format = json.RawMessage(`"json"`)
 		case "json_schema":
 			if r.ResponseFormat.JsonSchema != nil {
-				if schema, err := json.Marshal(r.ResponseFormat.JsonSchema.Schema); err == nil {
-					format = schema
-				} else {
+				schema, err := json.Marshal(r.ResponseFormat.JsonSchema.Schema)
+				if err != nil {
 					return nil, fmt.Errorf("failed to marshal json schema: %w", err)
 				}
+				format = schema
 			}
 		}
 	}

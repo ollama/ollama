@@ -318,8 +318,10 @@ func TestChatMiddleware(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if diff := cmp.Diff(tc.req, *capturedRequest); diff != "" {
-				t.Fatalf("requests did not match: %+v", diff)
+			if capturedRequest != nil {
+				if diff := cmp.Diff(tc.req, *capturedRequest); diff != "" {
+					t.Fatalf("requests did not match: %+v", diff)
+				}
 			}
 
 			if !reflect.DeepEqual(tc.err, errResp) {
