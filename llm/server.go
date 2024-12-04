@@ -225,7 +225,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		fa = false
 	}
 
-	kvct := envconfig.KvCacheType()
+	kvct := strings.ToLower(envconfig.KvCacheType())
 
 	if fa {
 		slog.Info("enabling flash attention")

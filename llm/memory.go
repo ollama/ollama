@@ -129,7 +129,7 @@ func EstimateGPULayers(gpus []discover.GpuInfo, ggml *GGML, projectors []string,
 
 	var kvct string
 	if fa {
-		requested := envconfig.KvCacheType()
+		requested := strings.ToLower(envconfig.KvCacheType())
 		if requested != "" && ggml.SupportsKVCacheType(requested) {
 			kvct = requested
 		}
