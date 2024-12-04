@@ -15,7 +15,7 @@ in general, the values are (bskcn_tv, 1 - bskcn_tv)
  1 file changed, 238 insertions(+)
 
 diff --git a/src/llama.cpp b/src/llama.cpp
-index 29a4835a..42b3c1b1 100644
+index 47a28147..48aa6beb 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
 @@ -195,6 +195,7 @@ enum llm_arch {
@@ -75,7 +75,7 @@ index 29a4835a..42b3c1b1 100644
      {
          LLM_ARCH_UNKNOWN,
          {
-@@ -2340,6 +2362,7 @@ enum e_model {
+@@ -2401,6 +2423,7 @@ enum e_model {
      MODEL_15B,
      MODEL_16B,
      MODEL_20B,
@@ -83,7 +83,7 @@ index 29a4835a..42b3c1b1 100644
      MODEL_30B,
      MODEL_32B,
      MODEL_34B,
-@@ -2390,6 +2413,8 @@ struct llama_hparams {
+@@ -2451,6 +2474,8 @@ struct llama_hparams {
      std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_kv_arr;
      std::array<uint32_t, LLAMA_MAX_LAYERS> n_ff_arr;
  
@@ -92,7 +92,7 @@ index 29a4835a..42b3c1b1 100644
      uint32_t n_layer_dense_lead = 0;
      uint32_t n_lora_q = 0;
      uint32_t n_lora_kv = 0;
-@@ -2460,6 +2485,7 @@ struct llama_hparams {
+@@ -2521,6 +2546,7 @@ struct llama_hparams {
          if (this->n_head_arr    != other.n_head_arr)    return true;
          if (this->n_head_kv_arr != other.n_head_kv_arr) return true;
          if (this->n_ff_arr      != other.n_ff_arr)      return true;
@@ -100,7 +100,7 @@ index 29a4835a..42b3c1b1 100644
  
          if (this->n_rel_attn_bkts    != other.n_rel_attn_bkts)    return true;
          if (this->n_layer_dense_lead != other.n_layer_dense_lead) return true;
-@@ -2569,6 +2595,14 @@ struct llama_hparams {
+@@ -2630,6 +2656,14 @@ struct llama_hparams {
              return ssm_d_state * ssm_d_inner;
          }
      }
@@ -115,7 +115,7 @@ index 29a4835a..42b3c1b1 100644
  };
  
  static_assert(std::is_trivially_copyable<llama_hparams>::value, "llama_hparams must be trivially copyable");
-@@ -2755,6 +2789,8 @@ struct llama_layer {
+@@ -2816,6 +2850,8 @@ struct llama_layer {
      struct ggml_tensor * ffn_gate_scale;
      struct ggml_tensor * ffn_up_scale;
      struct ggml_tensor * ffn_down_scale;
@@ -124,7 +124,7 @@ index 29a4835a..42b3c1b1 100644
  };
  
  // very similar to llama_batch,
-@@ -6148,6 +6184,21 @@ static void llm_load_hparams(
+@@ -6209,6 +6245,21 @@ static void llm_load_hparams(
                      default: model.type = e_model::MODEL_UNKNOWN;
                 }
              } break;
@@ -146,7 +146,7 @@ index 29a4835a..42b3c1b1 100644
          default: (void)0;
      }
  
-@@ -7137,6 +7188,7 @@ static const std::map<llm_tensor, llm_tensor_info> llm_tensor_info_mapping = {
+@@ -7198,6 +7249,7 @@ static const std::map<llm_tensor, llm_tensor_info> llm_tensor_info_mapping = {
      {LLM_TENSOR_FFN_UP_EXPS,                {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT_ID}},
      // this tensor is loaded for T5, but never used
      {LLM_TENSOR_DEC_CROSS_ATTN_REL_B,       {LLM_TENSOR_LAYER_REPEATING, GGML_OP_NONE}},
@@ -154,7 +154,7 @@ index 29a4835a..42b3c1b1 100644
  };
  
  // checks if the weight tensor can be used with the specified buffer type and device
-@@ -9144,6 +9196,35 @@ static bool llm_load_tensors(
+@@ -9205,6 +9257,35 @@ static bool llm_load_tensors(
  
                          layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
  
@@ -190,7 +190,7 @@ index 29a4835a..42b3c1b1 100644
                          layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
                          layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
                          layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
-@@ -16591,6 +16672,158 @@ struct llm_build_context {
+@@ -16652,6 +16733,158 @@ struct llm_build_context {
  
          return gf;
      }
@@ -349,7 +349,7 @@ index 29a4835a..42b3c1b1 100644
  };
  
  static struct ggml_cgraph * llama_build_graph_defrag(llama_context & lctx, const std::vector<uint32_t> & ids) {
-@@ -16860,6 +17093,10 @@ static struct ggml_cgraph * llama_build_graph(
+@@ -16921,6 +17154,10 @@ static struct ggml_cgraph * llama_build_graph(
              {
                  result = llm.build_chameleon();
              } break;
@@ -360,7 +360,7 @@ index 29a4835a..42b3c1b1 100644
          default:
              GGML_ABORT("fatal error");
      }
-@@ -20072,6 +20309,7 @@ enum llama_rope_type llama_rope_type(const struct llama_model * model) {
+@@ -20133,6 +20370,7 @@ enum llama_rope_type llama_rope_type(const struct llama_model * model) {
          case LLM_ARCH_GRANITE:
          case LLM_ARCH_GRANITE_MOE:
          case LLM_ARCH_CHAMELEON:

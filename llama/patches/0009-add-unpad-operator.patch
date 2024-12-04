@@ -43,10 +43,10 @@ index 65cb92c4..acbcccc6 100644
      // timesteps: [N,]
      // return: [N, dim]
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index 1c88e5d8..1476d4d6 100644
+index 23ae2e10..111ff3b0 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
-@@ -10447,6 +10447,58 @@ static void ggml_compute_forward_pad(
+@@ -10439,6 +10439,58 @@ static void ggml_compute_forward_pad(
      }
  }
  
@@ -105,7 +105,7 @@ index 1c88e5d8..1476d4d6 100644
  
  // ggml_compute_forward_arange
  
-@@ -12543,6 +12595,10 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
+@@ -12535,6 +12587,10 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
              {
                  ggml_compute_forward_pad(params, tensor);
              } break;
@@ -116,7 +116,7 @@ index 1c88e5d8..1476d4d6 100644
          case GGML_OP_ARANGE:
              {
                  ggml_compute_forward_arange(params, tensor);
-@@ -12885,6 +12941,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
+@@ -12877,6 +12933,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
              } break;
          case GGML_OP_UPSCALE:
          case GGML_OP_PAD:
@@ -210,26 +210,26 @@ index 8fd386b0..e2ededc3 100644
  void ggml_cuda_op_pad(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 +void ggml_cuda_op_unpad(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 diff --git a/ggml/src/ggml-metal/ggml-metal.m b/ggml/src/ggml-metal/ggml-metal.m
-index 6656deb4..0e4ef884 100644
+index 093ae900..cb9a1307 100644
 --- a/ggml/src/ggml-metal/ggml-metal.m
 +++ b/ggml/src/ggml-metal/ggml-metal.m
-@@ -268,6 +268,7 @@ static void ggml_backend_metal_device_rel(struct ggml_backend_metal_device_conte
-     GGML_METAL_KERNEL_TYPE_IM2COL_EXT_F32,
+@@ -310,6 +310,7 @@ static void ggml_backend_metal_device_rel(struct ggml_backend_metal_device_conte
+     GGML_METAL_KERNEL_TYPE_CONV_TRANSPOSE_1D_F16_F32,
      GGML_METAL_KERNEL_TYPE_UPSCALE_F32,
      GGML_METAL_KERNEL_TYPE_PAD_F32,
 +    GGML_METAL_KERNEL_TYPE_UNPAD_F32,
      GGML_METAL_KERNEL_TYPE_ARANGE_F32,
      GGML_METAL_KERNEL_TYPE_TIMESTEP_EMBEDDING_F32,
      GGML_METAL_KERNEL_TYPE_ARGSORT_F32_I32_ASC,
-@@ -792,6 +793,7 @@ @implementation GGMLMetalClass
-         GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_IM2COL_EXT_F32,                im2col_ext_f32,                 true);
+@@ -877,6 +878,7 @@ @implementation GGMLMetalClass
+         GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_CONV_TRANSPOSE_1D_F16_F32,     conv_transpose_1d_f16_f32,      true);
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_UPSCALE_F32,                   upscale_f32,                    true);
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_PAD_F32,                       pad_f32,                        true);
 +        GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_UNPAD_F32,                     unpad_f32,                        true);
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_TIMESTEP_EMBEDDING_F32,        timestep_embedding_f32,         true);
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_ARANGE_F32,                    arange_f32,                     true);
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_ARGSORT_F32_I32_ASC,           argsort_f32_i32_asc,            true);
-@@ -1011,6 +1013,7 @@ static bool ggml_metal_supports_op(const struct ggml_backend_metal_device_contex
+@@ -1099,6 +1101,7 @@ static bool ggml_metal_supports_op(const struct ggml_backend_metal_device_contex
          case GGML_OP_POOL_2D:
          case GGML_OP_UPSCALE:
          case GGML_OP_PAD:
@@ -237,7 +237,7 @@ index 6656deb4..0e4ef884 100644
          case GGML_OP_ARANGE:
          case GGML_OP_TIMESTEP_EMBEDDING:
          case GGML_OP_ARGSORT:
-@@ -2973,6 +2976,36 @@ static void ggml_metal_encode_node(
+@@ -3258,6 +3261,36 @@ static void ggml_metal_encode_node(
  
                  const int nth = MIN(1024, ne0);
  
@@ -275,10 +275,10 @@ index 6656deb4..0e4ef884 100644
              } break;
          case GGML_OP_ARANGE:
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index eaca3886..2f8d29dc 100644
+index 5caa0846..47038c31 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -2354,6 +2354,51 @@ kernel void kernel_pad_f32(
+@@ -2897,6 +2897,51 @@ kernel void kernel_pad_f32(
      }
  }
  

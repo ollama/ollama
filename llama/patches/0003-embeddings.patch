@@ -8,10 +8,10 @@ Subject: [PATCH] embeddings
  1 file changed, 6 insertions(+), 2 deletions(-)
 
 diff --git a/src/llama.cpp b/src/llama.cpp
-index d773f31a..29a4835a 100644
+index fa09f3b3..47a28147 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
-@@ -17337,7 +17337,7 @@ static size_t llama_output_reserve(llama_context & lctx, size_t n_outputs) {
+@@ -17398,7 +17398,7 @@ static size_t llama_output_reserve(llama_context & lctx, size_t n_outputs) {
      const auto n_embd  = hparams.n_embd;
  
      // TODO: use a per-batch flag for logits presence instead
@@ -20,7 +20,7 @@ index d773f31a..29a4835a 100644
      const bool has_embd   =  cparams.embeddings && (cparams.pooling_type == LLAMA_POOLING_TYPE_NONE);
  
      const size_t logits_size = has_logits ? n_vocab*n_outputs_max : 0;
-@@ -17632,7 +17632,6 @@ static int llama_decode_internal(
+@@ -17693,7 +17693,6 @@ static int llama_decode_internal(
              res  = nullptr;
              embd = nullptr;
          } else if (cparams.embeddings) {
@@ -28,7 +28,7 @@ index d773f31a..29a4835a 100644
              embd = nullptr;
              for (int i = ggml_graph_n_nodes(gf) - 1; i >= 0; --i) {
                  if (strcmp(ggml_graph_node(gf, i)->name, "result_embd_pooled") == 0) {
-@@ -17645,6 +17644,11 @@ static int llama_decode_internal(
+@@ -17706,6 +17705,11 @@ static int llama_decode_internal(
              embd = nullptr; // do not extract embeddings when not needed
              GGML_ASSERT(strcmp(res->name, "result_output") == 0 && "missing result_output tensor");
          }

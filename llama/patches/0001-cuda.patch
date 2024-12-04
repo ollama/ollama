@@ -9,7 +9,7 @@ Subject: [PATCH] cuda
  2 files changed, 9 insertions(+)
 
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index 45da0c27..ff5d0c5f 100644
+index fdb4b986..9b80fe07 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -106,7 +106,12 @@ void ggml_backend_buffer_free(ggml_backend_buffer_t buffer) {

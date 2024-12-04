@@ -8,12 +8,12 @@ Subject: [PATCH] clip-unicode
  1 file changed, 39 insertions(+), 1 deletion(-)
 
 diff --git a/examples/llava/clip.cpp b/examples/llava/clip.cpp
-index aae49c96..92d4e508 100644
+index d7c94352..427d5e02 100644
 --- a/examples/llava/clip.cpp
 +++ b/examples/llava/clip.cpp
-@@ -45,6 +45,19 @@
- #define LOG_ERR(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
- #define LOG_DBG(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
+@@ -56,6 +56,19 @@
+ #   define LOG_DBG(...) do { fprintf(stdout, __VA_ARGS__); } while (0)
+ #endif // defined(LLAVA_LOG_OFF)
  
 +#if defined(_WIN32)
 +#define WIN32_LEAN_AND_MEAN
@@ -31,7 +31,7 @@ index aae49c96..92d4e508 100644
  //#define CLIP_DEBUG_FUNCTIONS
  
  // RGB uint8 image
-@@ -1226,8 +1239,29 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
+@@ -1242,8 +1255,29 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
              gguf_free(ctx);
              return nullptr;
          }
@@ -62,7 +62,7 @@ index aae49c96..92d4e508 100644
          if (!fin) {
              LOG_ERR("cannot open model file for loading tensors\n");
              clip_free(new_clip);
-@@ -1267,7 +1301,11 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
+@@ -1283,7 +1317,11 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
                  ggml_backend_tensor_set(cur, read_buf.data(), 0, num_bytes);
              }
          }

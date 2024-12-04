@@ -126,7 +126,11 @@ GGML_FILES= \
 	ggml/src/ggml-cpu/ggml-cpu-aarch64.h \
 	ggml/src/ggml-cpu/ggml-cpu-quants.h \
 	ggml/src/ggml-cpu/ggml-cpu-quants.c \
-	ggml/src/ggml-cpu/ggml-cpu-impl.h
+	ggml/src/ggml-cpu/ggml-cpu-impl.h \
+	ggml/src/ggml-cpu/amx/amx.h \
+	ggml/src/ggml-cpu/amx/amx.cpp \
+	ggml/src/ggml-cpu/amx/mmq.cpp \
+	ggml/src/ggml-cpu/amx/mmq.h
 $(foreach name,$(GGML_FILES),$(eval $(call vendor_file,$(name),$(DST_DIR))))
 
 $(DST_DIR)ggml-metal-embed.metal: $(DST_DIR)ggml-common.h $(DST_DIR)ggml-metal-impl.h
