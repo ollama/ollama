@@ -693,7 +693,6 @@ type JsonSchema struct {
 }
 
 func (js JsonSchema) AsGrammar() string {
-	// Convert the JSON schema to a string representation
 	var b bytes.Buffer
 	if err := json.NewEncoder(&b).Encode(js); err != nil {
 		return ""
