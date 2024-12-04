@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// StatusError is an error with and HTTP status code.
+// StatusError is an error with an HTTP status code and message.
 type StatusError struct {
 	StatusCode   int
 	Status       string
@@ -57,7 +57,7 @@ type GenerateRequest struct {
 	Template string `json:"template"`
 
 	// Context is the context parameter returned from a previous call to
-	// Generate call. It can be used to keep a short conversational memory.
+	// [Client.Generate]. It can be used to keep a short conversational memory.
 	Context []int `json:"context,omitempty"`
 
 	// Stream specifies whether the response is streaming; it is true by default.
@@ -90,14 +90,14 @@ type ChatRequest struct {
 	// Messages is the messages of the chat - can be used to keep a chat memory.
 	Messages []Message `json:"messages"`
 
-	// Stream enable streaming of returned response; true by default.
+	// Stream enables streaming of returned responses; true by default.
 	Stream *bool `json:"stream,omitempty"`
 
 	// Format is the format to return the response in (e.g. "json").
 	Format string `json:"format"`
 
 	// KeepAlive controls how long the model will stay loaded into memory
-	// followin the request.
+	// following the request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
 	// Tools is an optional list of tools the model has access to.
@@ -146,6 +146,7 @@ type ToolCall struct {
 }
 
 type ToolCallFunction struct {
+	Index     int                       `json:"index,omitempty"`
 	Name      string                    `json:"name"`
 	Arguments ToolCallFunctionArguments `json:"arguments"`
 }
@@ -203,8 +204,8 @@ type Metrics struct {
 	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
 }
 
-// Options specified in [GenerateRequest], if you add a new option here add it
-// to the API docs also.
+// Options specified in [GenerateRequest].  If you add a new option here, also
+// add it to the API docs.
 type Options struct {
 	Runner
 

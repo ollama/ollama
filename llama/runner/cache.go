@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"reflect"
 	"time"
@@ -22,7 +23,11 @@ type InputCache struct {
 	lc *llama.Context
 }
 
-func NewInputCache(lc *llama.Context, kvSize int, numSlots int, multiUserCache bool) *InputCache {
+func NewInputCache(lc *llama.Context, kvSize int, numSlots int, multiUserCache bool) (*InputCache, error) {
+	if kvSize/numSlots < 1 {
+		return nil, fmt.Errorf("must have at least one kv cache entry per parallel sequence (kv: %v parallel: %v)", kvSize, numSlots)
+	}
+
 	slots := make([]InputCacheSlot, numSlots)
 
 	for i := range slots {
@@ -37,7 +42,7 @@ func NewInputCache(lc *llama.Context, kvSize int, numSlots int, multiUserCache b
 		slots:          slots,
 		multiUserCache: multiUserCache,
 		lc:             lc,
-	}
+	}, nil
 }
 
 // Locking: Operations on InputCacheSlot (including finding one
@@ -58,7 +63,7 @@ type InputCacheSlot struct {
 	lastUsed time.Time
 }
 
-func (c *InputCache) LoadCacheSlot(prompt []input, cachePrompt bool) (*InputCacheSlot, []input, int, error) {
+func (c *InputCache) LoadCacheSlot(prompt []input, cachePrompt bool) (*InputCacheSlot, []input, error) {
 	var slot *InputCacheSlot
 	var numPast int
 	var err error
@@ -75,7 +80,7 @@ func (c *InputCache) LoadCacheSlot(prompt []input, cachePrompt bool) (*InputCach
 		slot, numPast, err = c.findBestCacheSlot(prompt)
 	}
 	if err != nil {
-		return nil, nil, 0, err
+		return nil, nil, err
 	}
 
 	if !cachePrompt {
@@ -102,7 +107,7 @@ func (c *InputCache) LoadCacheSlot(prompt []input, cachePrompt bool) (*InputCach
 	prompt = prompt[numPast:]
 	slot.Inputs = slot.Inputs[:numPast]
 
-	return slot, prompt, numPast, nil
+	return slot, prompt, nil
 }
 
 func (c *InputCache) findLongestCacheSlot(prompt []input) (*InputCacheSlot, int, error) {
@@ -194,14 +199,48 @@ func countCommonPrefix(a []input, b []input) int {
 	return count
 }
 
-func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int, numDiscard int, numPast int) {
-	// TODO (jessegross): KV cache removal can fail for certain types of models
-	// server.cpp doesn't handle this, though we can be more graceful
-	c.lc.KvCacheSeqRm(slot.Id, numKeep, numKeep+numDiscard)
-	c.lc.KvCacheSeqAdd(slot.Id, numKeep+numDiscard, numPast, -numDiscard)
+func (c *InputCache) ShiftDiscard(inputLen int, numKeep int) int {
+	targetFree := (c.numCtx - numKeep) / 2
+	targetFree = max(targetFree, 1)
 
-	for i := numKeep + numDiscard; i < len(slot.Inputs); i++ {
-		slot.Inputs[i-numDiscard] = slot.Inputs[i]
+	currentFree := c.numCtx - inputLen
+	discard := targetFree - currentFree
+
+	if discard < 0 {
+		discard = 0
 	}
-	slot.Inputs = slot.Inputs[:len(slot.Inputs)-numDiscard]
+
+	return discard
+}
+
+// Frees up space in the KV cache by deleting the oldest half of history and shifting
+// the newest half into that space (saving numKeep inputs at the beginning).
+//
+// Assumes that at least 1 entry can be freed up by shifting (i.e. numKeep < numCtx)
+func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int) error {
+	if numKeep >= c.numCtx {
+		return fmt.Errorf("unable to shift context - keep exceeds context (keep: %v context: %v)", numKeep, c.numCtx)
+	}
+
+	discard := c.ShiftDiscard(len(slot.Inputs), numKeep)
+
+	if discard <= 0 {
+		return nil
+	}
+
+	slog.Debug("context limit hit - shifting", "id", slot.Id, "limit", c.numCtx, "input", len(slot.Inputs),
+		"keep", numKeep, "discard", discard)
+
+	// TODO (jessegross): KV cache removal can fail for certain types of models
+	if !c.lc.KvCacheSeqRm(slot.Id, numKeep, numKeep+discard) {
+		return fmt.Errorf("unable to remove old kv cache entries (id: %v, keep: %v discard: %v)", slot.Id, numKeep, discard)
+	}
+	c.lc.KvCacheSeqAdd(slot.Id, numKeep+discard, len(slot.Inputs), -discard)
+
+	for i := numKeep + discard; i < len(slot.Inputs); i++ {
+		slot.Inputs[i-discard] = slot.Inputs[i]
+	}
+	slot.Inputs = slot.Inputs[:len(slot.Inputs)-discard]
+
+	return nil
 }

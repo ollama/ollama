@@ -140,6 +140,7 @@ type CompletionChunk struct {
 
 type ToolCall struct {
 	ID       string `json:"id"`
+	Index    int    `json:"index"`
 	Type     string `json:"type"`
 	Function struct {
 		Name      string `json:"name"`
@@ -200,12 +201,13 @@ func toolCallId() string {
 	return "call_" + strings.ToLower(string(b))
 }
 
-func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
-	toolCalls := make([]ToolCall, len(r.Message.ToolCalls))
-	for i, tc := range r.Message.ToolCalls {
+func toToolCalls(tc []api.ToolCall) []ToolCall {
+	toolCalls := make([]ToolCall, len(tc))
+	for i, tc := range tc {
 		toolCalls[i].ID = toolCallId()
 		toolCalls[i].Type = "function"
 		toolCalls[i].Function.Name = tc.Function.Name
+		toolCalls[i].Index = tc.Function.Index
 
 		args, err := json.Marshal(tc.Function.Arguments)
 		if err != nil {
@@ -215,7 +217,11 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 
 		toolCalls[i].Function.Arguments = string(args)
 	}
+	return toolCalls
+}
 
+func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
+	toolCalls := toToolCalls(r.Message.ToolCalls)
 	return ChatCompletion{
 		Id:                id,
 		Object:            "chat.completion",
@@ -244,6 +250,7 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 }
 
 func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
+	toolCalls := toToolCalls(r.Message.ToolCalls)
 	return ChatCompletionChunk{
 		Id:                id,
 		Object:            "chat.completion.chunk",
@@ -252,7 +259,7 @@ func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
 		SystemFingerprint: "fp_ollama",
 		Choices: []ChunkChoice{{
 			Index: 0,
-			Delta: Message{Role: "assistant", Content: r.Message.Content},
+			Delta: Message{Role: "assistant", Content: r.Message.Content, ToolCalls: toolCalls},
 			FinishReason: func(reason string) *string {
 				if len(reason) > 0 {
 					return &reason
@@ -571,7 +578,7 @@ type EmbedWriter struct {
 	model string
 }
 
-func (w *BaseWriter) writeError(code int, data []byte) (int, error) {
+func (w *BaseWriter) writeError(data []byte) (int, error) {
 	var serr api.StatusError
 	err := json.Unmarshal(data, &serr)
 	if err != nil {
@@ -630,7 +637,7 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 func (w *ChatWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
-		return w.writeError(code, data)
+		return w.writeError(data)
 	}
 
 	return w.writeResponse(data)
@@ -679,7 +686,7 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 func (w *CompleteWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
-		return w.writeError(code, data)
+		return w.writeError(data)
 	}
 
 	return w.writeResponse(data)
@@ -704,7 +711,7 @@ func (w *ListWriter) writeResponse(data []byte) (int, error) {
 func (w *ListWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
-		return w.writeError(code, data)
+		return w.writeError(data)
 	}
 
 	return w.writeResponse(data)
@@ -730,7 +737,7 @@ func (w *RetrieveWriter) writeResponse(data []byte) (int, error) {
 func (w *RetrieveWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
-		return w.writeError(code, data)
+		return w.writeError(data)
 	}
 
 	return w.writeResponse(data)
@@ -755,7 +762,7 @@ func (w *EmbedWriter) writeResponse(data []byte) (int, error) {
 func (w *EmbedWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
-		return w.writeError(code, data)
+		return w.writeError(data)
 	}
 
 	return w.writeResponse(data)

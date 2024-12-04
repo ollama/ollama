@@ -383,8 +383,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						log.Printf("System message content: %s", opts.System)
 					}
 					sb.Reset()
-
-					sb.Reset()
 					continue
 				case "logging":
 					LoggingState = true
@@ -653,7 +651,7 @@ func extractFileNames(input string) []string {
 	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
 	// and followed by more characters and a file extension
 	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|svg)\b`
+	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png)\b`
 	re := regexp.MustCompile(regexPattern)
 
 	return re.FindAllString(input, -1)

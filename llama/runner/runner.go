@@ -20,6 +20,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"golang.org/x/sync/semaphore"
+
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llama"
 )
@@ -34,9 +36,6 @@ type input struct {
 }
 
 type Sequence struct {
-	// number of inputs evaluated
-	numPast int
-
 	// batch index
 	iBatch int
 
@@ -45,6 +44,9 @@ type Sequence struct {
 
 	// prompt inputs left to evaluate
 	inputs []input
+
+	// inputs that have been added to a batch but not yet submitted to Decode
+	pendingInputs []input
 
 	// tokens that have been generated but not returned yet (e.g. for stop sequences)
 	pendingResponses []string
@@ -112,20 +114,19 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 		params.numKeep = len(inputs)
 	}
 
-	if !params.embedding {
-		// Subtracting 4 ensures that at least 1 input can be discarded during shift
-		params.numKeep = min(params.numKeep, s.cache.numCtx-4)
-		params.numKeep += s.bosToken
-	} else {
-		// Embeddings are 1 shot - just truncate to the context window, without ever shifting
-		params.numKeep = min(params.numKeep, s.cache.numCtx)
+	if s.model.AddBOSToken() {
+		params.numKeep += 1
 	}
 
-	// truncate to fit in context window
+	// Ensure that at least 1 input can be discarded during shift
+	params.numKeep = min(params.numKeep, s.cache.numCtx-1)
+
 	if len(inputs) > s.cache.numCtx {
-		slog.Warn("truncating input prompt", "limit", s.cache.numCtx, "prompt", len(inputs), "numKeep", params.numKeep)
+		discard := len(inputs) - s.cache.numCtx
 		newInputs := inputs[:params.numKeep]
-		newInputs = append(newInputs, inputs[len(inputs)-s.cache.numCtx+params.numKeep:]...)
+		newInputs = append(newInputs, inputs[params.numKeep+discard:]...)
+
+		slog.Warn("truncating input prompt", "limit", s.cache.numCtx, "prompt", len(inputs), "keep", params.numKeep, "new", len(newInputs))
 		inputs = newInputs
 	}
 
@@ -163,22 +164,26 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 // generating image embeddings for each image
 func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 	var inputs []input
+	var parts []string
+	var matches [][]string
 
-	re := regexp.MustCompile(`\[img-(\d+)\]`)
-	parts := re.Split(prompt, -1)
-	matches := re.FindAllStringSubmatch(prompt, -1)
+	if s.image != nil {
+		re := regexp.MustCompile(`\[img-(\d+)\]`)
+		parts = re.Split(prompt, -1)
+		matches = re.FindAllStringSubmatch(prompt, -1)
+	} else {
+		parts = []string{prompt}
+	}
 
 	for i, part := range parts {
 		// text - tokenize
-		if strings.TrimSpace(part) != "" {
-			tokens, err := s.lc.Model().Tokenize(part, i == 0, true)
-			if err != nil {
-				return nil, err
-			}
+		tokens, err := s.lc.Model().Tokenize(part, i == 0, true)
+		if err != nil {
+			return nil, err
+		}
 
-			for _, t := range tokens {
-				inputs = append(inputs, input{token: t})
-			}
+		for _, t := range tokens {
+			inputs = append(inputs, input{token: t})
 		}
 
 		// image - generate image embedding
@@ -212,41 +217,51 @@ func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 }
 
 type Server struct {
-	model *llama.Model
-	lc    *llama.Context
+	// is the server ready to process requests?
+	// protects access to model and image
+	ready sync.WaitGroup
 
-	// required for image embeddings
+	// loaded model
+	model *llama.Model
+
+	// image model context for multi-modal models
 	image *ImageContext
 
+	// status for external health reporting - loading, ready to serve, etc.
+	status ServerStatus
+
+	// current progress on loading the model
+	progress float32
+
+	// number of simultaneous requests to handle
+	parallel int
+
+	// maximum number of elements in a batch (per sequence)
 	// TODO (jmorganca): make this n_batch
 	batchSize int
 
-	// parallel is the number of parallel requests to handle
-	parallel int
+	// protects access to everything below this line
+	// this is context state needed for decoding
+	mu sync.Mutex
 
-	// seqs is the list of parallel sequences being evaluated
-	// TODO (jmorganca): this can probably be moved into run()
+	// indicates that data is ready for processing
+	cond *sync.Cond
+
+	// decoding state
+	lc *llama.Context
+
+	// the list of simultaneous sequences being evaluated
 	seqs []*Sequence
+
+	// seqs can have a maximum of parallel entries, which
+	// is enfoced by seqSem
+	seqsSem *semaphore.Weighted
 
 	// KV cache
 	cache *InputCache
 
-	// does this model require a beginning of sequence token?
-	bosToken int
-
 	// next sequence for prompt processing to avoid starvation
 	nextSeq int
-
-	// is the server ready to process requests?
-	ready sync.WaitGroup
-
-	mu sync.Mutex
-
-	cond *sync.Cond
-
-	progress float32
-
-	status ServerStatus
 }
 
 func (s *Server) allNil() bool {
@@ -256,18 +271,6 @@ func (s *Server) allNil() bool {
 		}
 	}
 	return true
-}
-
-func (s *Server) shiftContext(seq *Sequence) {
-	numLeft := seq.numPast - seq.numKeep
-	numDiscard := numLeft / 2
-
-	slog.Debug("context limit hit - shifting", "limit", s.cache.numCtx, "numPast", seq.numPast,
-		"numKeep", seq.numKeep, "numLeft", numLeft, "numDiscard", numDiscard)
-
-	s.cache.ShiftCacheSlot(seq.cache, seq.numKeep, numDiscard, seq.numPast)
-
-	seq.numPast -= numDiscard
 }
 
 func flushPending(seq *Sequence) bool {
@@ -305,6 +308,7 @@ func (s *Server) removeSequence(seqIndex int, reason string) {
 	close(seq.embedding)
 	seq.cache.InUse = false
 	s.seqs[seqIndex] = nil
+	s.seqsSem.Release(1)
 }
 
 func (s *Server) run(ctx context.Context) {
@@ -335,7 +339,11 @@ func (s *Server) run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		default:
-			s.processBatch(tokenBatch, embedBatch)
+			err := s.processBatch(tokenBatch, embedBatch)
+			if err != nil {
+				panic(err)
+			}
+
 			tokenBatch.Clear()
 			embedBatch.Clear()
 		}
@@ -349,7 +357,7 @@ func (s *Server) run(ctx context.Context) {
 // these should instead be handled by the handlers
 // it should only be responsible for accepting tokens or embeddings and
 // processing batches as fast as possible
-func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) {
+func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) error {
 	s.mu.Lock()
 	for s.allNil() {
 		s.cond.Wait() // Wait until an item is added
@@ -369,17 +377,23 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		}
 
 		// if past the num predict limit
-		if seq.numPredict > 0 && seq.numPredicted > seq.numPredict {
+		if seq.numPredict > 0 && seq.numPredicted >= seq.numPredict {
 			s.removeSequence(seqIdx, "limit")
 			continue
 		}
 
-		if seq.numPast+len(seq.inputs) > s.cache.numCtx {
-			s.shiftContext(seq)
-		}
-
-		var numInputsProcessed int
 		for i, input := range seq.inputs {
+			if len(seq.cache.Inputs)+len(seq.pendingInputs)+1 > s.cache.numCtx {
+				if len(seq.pendingInputs) == 0 {
+					err := s.cache.ShiftCacheSlot(seq.cache, seq.numKeep)
+					if err != nil {
+						return err
+					}
+				} else {
+					break
+				}
+			}
+
 			embedding := input.embed != nil
 
 			// If we don't currently have a batch, use one of the correct type and
@@ -403,33 +417,48 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			}
 
 			crossAttention = seq.crossAttention
-			batch.Add(input.token, input.embed, seq.numPast, numInputsProcessed+1 == len(seq.inputs), seq.cache.Id)
-			seq.numPast++
-			numInputsProcessed++
-		}
-
-		if numInputsProcessed > 0 {
-			seq.cache.Inputs = append(seq.cache.Inputs, seq.inputs[:numInputsProcessed]...)
-			seq.inputs = seq.inputs[numInputsProcessed:]
+			batch.Add(input.token, input.embed, len(seq.cache.Inputs)+len(seq.pendingInputs), i+1 == len(seq.inputs), seq.cache.Id)
+			seq.pendingInputs = append(seq.pendingInputs, input)
 			seq.iBatch = batch.NumTokens() - 1
 		}
+
+		seq.inputs = seq.inputs[len(seq.pendingInputs):]
 	}
 
 	if batch == nil || batch.NumTokens() == 0 {
-		return
+		return nil
 	}
 
 	s.lc.SetCrossAttention(crossAttention)
 
 	err := s.lc.Decode(batch)
 	if err != nil {
-		slog.Error("failed to decode batch", "error", err)
-		return
+		if errors.Is(err, llama.ErrKvCacheFull) {
+			slog.Debug("defragmenting kv cache")
+			s.cache.lc.KvCacheDefrag()
+			err = s.lc.Decode(batch)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to decode batch: %w", err)
+		}
+	}
+
+	if crossAttention {
+		// synchronize state to ensure the cross attention batch is complete.
+		// needed specifically for multi-GPU systems otherwise an inflight
+		// task may be incorrectly invalidated causing a crash
+		s.lc.Synchronize()
 	}
 
 	for i, seq := range s.seqs {
 		if seq == nil {
 			continue
+		}
+
+		// After calling Decode, pending inputs are now in the cache
+		if len(seq.pendingInputs) > 0 {
+			seq.cache.Inputs = append(seq.cache.Inputs, seq.pendingInputs...)
+			seq.pendingInputs = []input{}
 		}
 
 		// don't sample prompt processing
@@ -444,7 +473,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 
 		// if done processing the prompt, generate an embedding and return
 		if seq.embeddingOnly {
-			embed := s.lc.GetEmbeddingsSeq(i)
+			embed := s.lc.GetEmbeddingsSeq(seq.cache.Id)
 			if embed == nil {
 				embed = s.lc.GetEmbeddingsIth(seq.iBatch)
 			}
@@ -514,6 +543,8 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			s.removeSequence(i, "connection")
 		}
 	}
+
+	return nil
 }
 
 // TODO (jmorganca): use structs from the api package to avoid duplication
@@ -627,12 +658,21 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO (jmorganca): add to sequence queue instead of
-	// failing if a slot isn't available
+	// Ensure there is a place to put the sequence, released when removed from s.seqs
+	if err := s.seqsSem.Acquire(r.Context(), 1); err != nil {
+		if errors.Is(err, context.Canceled) {
+			slog.Info("aborting completion request due to client closing the connection")
+		} else {
+			slog.Error("Failed to acquire semaphore", "error", err)
+		}
+		return
+	}
+
 	s.mu.Lock()
+	found := false
 	for i, sq := range s.seqs {
 		if sq == nil {
-			seq.cache, seq.inputs, seq.numPast, err = s.cache.LoadCacheSlot(seq.inputs, req.CachePrompt)
+			seq.cache, seq.inputs, err = s.cache.LoadCacheSlot(seq.inputs, req.CachePrompt)
 			if err != nil {
 				s.mu.Unlock()
 				http.Error(w, fmt.Sprintf("Failed to load cache: %v", err), http.StatusInternalServerError)
@@ -643,10 +683,16 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 
 			s.seqs[i] = seq
 			s.cond.Signal()
+			found = true
 			break
 		}
 	}
 	s.mu.Unlock()
+
+	if !found {
+		http.Error(w, "could not find an available sequence", http.StatusInternalServerError)
+		return
+	}
 
 	for {
 		select {
@@ -711,11 +757,21 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO (jessegross): Wait for a free slot instead of failing and blocking forever
+	// Ensure there is a place to put the sequence, released when removed from s.seqs
+	if err := s.seqsSem.Acquire(r.Context(), 1); err != nil {
+		if errors.Is(err, context.Canceled) {
+			slog.Info("aborting embeddings request due to client closing the connection")
+		} else {
+			slog.Error("Failed to acquire semaphore", "error", err)
+		}
+		return
+	}
+
 	s.mu.Lock()
+	found := false
 	for i, sq := range s.seqs {
 		if sq == nil {
-			seq.cache, seq.inputs, seq.numPast, err = s.cache.LoadCacheSlot(seq.inputs, req.CachePrompt)
+			seq.cache, seq.inputs, err = s.cache.LoadCacheSlot(seq.inputs, req.CachePrompt)
 			if err != nil {
 				s.mu.Unlock()
 				http.Error(w, fmt.Sprintf("Failed to load cache: %v", err), http.StatusInternalServerError)
@@ -723,10 +779,16 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 			}
 			s.seqs[i] = seq
 			s.cond.Signal()
+			found = true
 			break
 		}
 	}
 	s.mu.Unlock()
+
+	if !found {
+		http.Error(w, "could not find an available sequence", http.StatusInternalServerError)
+		return
+	}
 
 	embedding := <-seq.embedding
 
@@ -771,12 +833,24 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type multiLPath []string
+
+func (m *multiLPath) Set(value string) error {
+	*m = append(*m, value)
+	return nil
+}
+
+func (m *multiLPath) String() string {
+	return strings.Join(*m, ", ")
+}
+
 func (s *Server) loadModel(
 	params llama.ModelParams,
 	mpath string,
-	lpath string,
+	lpath multiLPath,
 	ppath string,
 	kvSize int,
+	kvCacheType string,
 	flashAttention bool,
 	threads int,
 	multiUserCache bool,
@@ -789,21 +863,19 @@ func (s *Server) loadModel(
 		panic(err)
 	}
 
-	ctxParams := llama.NewContextParams(kvSize, s.batchSize*s.parallel, s.parallel, threads, flashAttention)
+	ctxParams := llama.NewContextParams(kvSize, s.batchSize*s.parallel, s.parallel, threads, flashAttention, kvCacheType)
 	s.lc, err = llama.NewContextWithModel(s.model, ctxParams)
 	if err != nil {
 		panic(err)
 	}
 
-	if lpath != "" {
-		err := s.model.ApplyLoraFromFile(s.lc, lpath, 1.0, threads)
-		if err != nil {
-			panic(err)
+	if lpath.String() != "" {
+		for _, path := range lpath {
+			err := s.model.ApplyLoraFromFile(s.lc, path, 1.0, threads)
+			if err != nil {
+				panic(err)
+			}
 		}
-	}
-
-	if s.model.AddBOSToken() {
-		s.bosToken = 1
 	}
 
 	if ppath != "" {
@@ -814,7 +886,10 @@ func (s *Server) loadModel(
 		}
 	}
 
-	s.cache = NewInputCache(s.lc, kvSize, s.parallel, multiUserCache)
+	s.cache, err = NewInputCache(s.lc, kvSize, s.parallel, multiUserCache)
+	if err != nil {
+		panic(err)
+	}
 
 	s.status = ServerStatusReady
 	s.ready.Done()
@@ -829,7 +904,7 @@ func main() {
 	mainGpu := flag.Int("main-gpu", 0, "Main GPU")
 	flashAttention := flag.Bool("flash-attn", false, "Enable flash attention")
 	kvSize := flag.Int("ctx-size", 2048, "Context (or KV cache) size")
-	lpath := flag.String("lora", "", "Path to lora layer file")
+	kvCacheType := flag.String("kv-cache-type", "", "quantization type for KV cache (default: f16)")
 	port := flag.Int("port", 8080, "Port to expose the server on")
 	threads := flag.Int("threads", runtime.NumCPU(), "Number of threads to use during generation")
 	verbose := flag.Bool("verbose", false, "verbose output (default: disabled)")
@@ -838,6 +913,9 @@ func main() {
 	tensorSplit := flag.String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
 	multiUserCache := flag.Bool("multiuser-cache", false, "optimize input cache algorithm for multiple users")
 	requirements := flag.Bool("requirements", false, "print json requirement information")
+
+	var lpaths multiLPath
+	flag.Var(&lpaths, "lora", "Path to lora layer file (can be specified multiple times)")
 
 	flag.Parse()
 	if *requirements {
@@ -867,6 +945,7 @@ func main() {
 		batchSize: *batchSize,
 		parallel:  *parallel,
 		seqs:      make([]*Sequence, *parallel),
+		seqsSem:   semaphore.NewWeighted(int64(*parallel)),
 		status:    ServerStatusLoadingModel,
 	}
 
@@ -884,7 +963,7 @@ func main() {
 	params := llama.ModelParams{
 		NumGpuLayers: *nGpuLayers,
 		MainGpu:      *mainGpu,
-		UseMmap:      !*noMmap && *lpath == "",
+		UseMmap:      !*noMmap && lpaths.String() == "",
 		UseMlock:     *mlock,
 		TensorSplit:  tensorSplitFloats,
 		Progress: func(progress float32) {
@@ -893,7 +972,7 @@ func main() {
 	}
 
 	server.ready.Add(1)
-	go server.loadModel(params, *mpath, *lpath, *ppath, *kvSize, *flashAttention, *threads, *multiUserCache)
+	go server.loadModel(params, *mpath, lpaths, *ppath, *kvSize, *kvCacheType, *flashAttention, *threads, *multiUserCache)
 
 	server.cond = sync.NewCond(&server.mu)
 
