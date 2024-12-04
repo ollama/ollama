@@ -59,7 +59,7 @@ void gpt_sampler_caccept(
     gpt_sampler_accept(sampler, id, apply_grammar);
 }
 
-int schema_to_grammar(const char *json_schema, char *grammar, int32_t max_len)
+int schema_to_grammar(const char *json_schema, char *grammar, size_t max_len)
 {
     try
     {

@@ -72,7 +72,6 @@ func TestChatMiddleware(t *testing.T) {
 					"top_p":       1.0,
 				},
 				Stream: &False,
-				Format: json.RawMessage("null"),
 			},
 		},
 		{
@@ -157,7 +156,6 @@ func TestChatMiddleware(t *testing.T) {
 					"top_p":       1.0,
 				},
 				Stream: &False,
-				Format: json.RawMessage("null"),
 			},
 		},
 		{
@@ -196,7 +194,6 @@ func TestChatMiddleware(t *testing.T) {
 					"top_p":       1.0,
 				},
 				Stream: &False,
-				Format: json.RawMessage("null"),
 			},
 		},
 		{
@@ -277,7 +274,6 @@ func TestChatMiddleware(t *testing.T) {
 					"top_p":       1.0,
 				},
 				Stream: &True,
-				Format: json.RawMessage("null"),
 			},
 		},
 		{

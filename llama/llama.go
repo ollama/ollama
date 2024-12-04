@@ -85,6 +85,7 @@ COMPILER inline get_compiler() {
 import "C"
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -693,12 +694,12 @@ type JsonSchema struct {
 
 func (js JsonSchema) AsGrammar() string {
 	// Convert the JSON schema to a string representation
-	jsonBytes, err := json.Marshal(js)
-	if err != nil {
+	var b bytes.Buffer
+	if err := json.NewEncoder(&b).Encode(js); err != nil {
 		return ""
 	}
 
-	cStr := C.CString(string(jsonBytes))
+	cStr := C.CString(b.String())
 	defer C.free(unsafe.Pointer(cStr))
 
 	// Allocate buffer for grammar output with reasonable size
@@ -706,11 +707,10 @@ func (js JsonSchema) AsGrammar() string {
 	buf := make([]byte, maxLen)
 
 	// Call C function to convert schema to grammar
-	length := C.schema_to_grammar(cStr, (*C.char)(unsafe.Pointer(&buf[0])), C.int32_t(maxLen))
-	if length <= 0 {
+	length := C.schema_to_grammar(cStr, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(maxLen))
+	if length == 0 {
 		slog.Warn("unable to convert schema to grammar")
-		return ""
 	}
 
-	return string(C.GoBytes(unsafe.Pointer(&buf[0]), length))
+	return string(buf[:length])
 }

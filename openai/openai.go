@@ -68,8 +68,6 @@ type ResponseFormat struct {
 
 type JsonSchema struct {
 	Schema map[string]any `json:"schema"`
-	Name   string         `json:"name"`
-	Strict bool           `json:"strict"`
 }
 
 type EmbedRequest struct {

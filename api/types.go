@@ -94,7 +94,7 @@ type ChatRequest struct {
 	Stream *bool `json:"stream,omitempty"`
 
 	// Format is the format to return the response in (e.g. "json").
-	Format json.RawMessage `json:"format"`
+	Format json.RawMessage `json:"format,omitempty"`
 
 	// KeepAlive controls how long the model will stay loaded into memory
 	// following the request.
