@@ -10660,6 +10660,7 @@ struct llm_build_context {
         lctx.inp_pos_bucket    = nullptr;
         lctx.inp_embd_enc      = nullptr;
         lctx.inp_KQ_mask_cross = nullptr;
+        lctx.inp_cross_attn_state = nullptr;
     }
 
     void free() {
@@ -18324,9 +18325,7 @@ static int llama_decode_internal(
             // no output
             res  = nullptr;
             embd = nullptr;
-        }
-        
-        if (cparams.embeddings) {
+        } else if (cparams.embeddings) {
             embd = nullptr;
             for (int i = ggml_graph_n_nodes(gf) - 1; i >= 0; --i) {
                 if (strcmp(ggml_graph_node(gf, i)->name, "result_embd_pooled") == 0) {
@@ -18334,6 +18333,7 @@ static int llama_decode_internal(
                     break;
                 }
             }
+            GGML_ASSERT(embd != nullptr && "missing embeddings tensor");
         } else {
             embd = nullptr; // do not extract embeddings when not needed
             GGML_ASSERT(strcmp(res->name, "result_output") == 0 && "missing result_output tensor");
