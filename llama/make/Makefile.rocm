@@ -48,7 +48,7 @@ GPU_DIST_DEPS_LIBS= $(sort $(addprefix $(ROCM_DIST_DEPS_DIR)/,$(notdir $(GPU_LIB
 ROCBLAS_DIST_DEP_MANIFEST = $(ROCM_DIST_DEPS_DIR)/rocblas/library/TensileManifest.txt
 
 ifeq ($(OS),linux)
-	GPU_COMPILER_FPIC := -fPIC -Wno-unused-function -std=gnu++11
+	GPU_COMPILER_FPIC := -fPIC -Wno-unused-function -std=gnu++17
 	GPU_RUNNER_ARCH_FLAGS := $(foreach arch, $(HIP_ARCHS_COMMON) $(HIP_ARCHS_LINUX), --offload-arch=$(arch))
 else ifeq ($(OS),windows)
 	GPU_COMPILER_FPIC := -Xclang --dependent-lib=msvcrt

@@ -24,7 +24,7 @@ GPU_DIST_DEPS_LIBS= $(sort $(addprefix $(DIST_GPU_RUNNER_DEPS_DIR)/,$(notdir $(G
 
 ifeq ($(OS),linux)
 	CUDA_PATH?=/usr/local/cuda
-	GPU_COMPILER_FPIC = -fPIC -Wno-unused-function -std=c++11
+	GPU_COMPILER_FPIC = -fPIC -Wno-unused-function -std=c++17
 endif
 GPU_RUNNER_ARCH_FLAGS := $(foreach arch,$(subst ;,$(space),$(CUDA_ARCHITECTURES)),--generate-code=arch=compute_$(arch)$(comma)code=[compute_$(arch)$(comma)sm_$(arch)]) \
 	-DGGML_CUDA_USE_GRAPHS=1
