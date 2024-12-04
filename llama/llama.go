@@ -89,6 +89,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"runtime"
 	"runtime/cgo"
 	"slices"
@@ -705,8 +706,11 @@ func (js JsonSchema) AsGrammar() string {
 	buf := make([]byte, maxLen)
 
 	// Call C function to convert schema to grammar
-	C.schema_to_grammar(cStr, (*C.char)(unsafe.Pointer(&buf[0])), C.int32_t(maxLen))
+	length := C.schema_to_grammar(cStr, (*C.char)(unsafe.Pointer(&buf[0])), C.int32_t(maxLen))
+	if length <= 0 {
+		slog.Warn("unable to convert schema to grammar")
+		return ""
+	}
 
-	// Convert from C string to Go string - needs to be null-terminated
-	return C.GoString((*C.char)(unsafe.Pointer(&buf[0])))
+	return string(C.GoBytes(unsafe.Pointer(&buf[0]), length))
 }

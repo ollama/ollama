@@ -1470,11 +1470,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		defer close(ch)
 		var sb strings.Builder
 		var toolCallIndex int = 0
-		// Move down
-		// Talk to Jesse about sampling with grammars
-		// Is this token right in grammar? do scan and then sample
-		// handle empty grammar
-
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,

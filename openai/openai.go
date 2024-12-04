@@ -67,9 +67,9 @@ type ResponseFormat struct {
 }
 
 type JsonSchema struct {
-	Schema map[string]interface{} `json:"schema"`
-	Name   string                 `json:"name"`
-	Strict bool                   `json:"strict"`
+	Schema map[string]any `json:"schema"`
+	Name   string         `json:"name"`
+	Strict bool           `json:"strict"`
 }
 
 type EmbedRequest struct {
@@ -489,7 +489,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		options["top_p"] = 1.0
 	}
 
-	var format json.RawMessage = nil
+	var format json.RawMessage
 	if r.ResponseFormat != nil {
 		switch strings.ToLower(strings.TrimSpace(r.ResponseFormat.Type)) {
 		// Support the old "json_object" type for OpenAI compatibility
