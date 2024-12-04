@@ -683,25 +683,11 @@ func (s *SamplingContext) Accept(id int, applyGrammar bool) {
 }
 
 type JsonSchema struct {
-	Defs map[string]struct {
-		Properties map[string]struct {
-			Title string `json:"title,omitempty"`
-			Type  string `json:"type,omitempty"`
-		} `json:"properties,omitempty"`
-		Required []string `json:"required,omitempty"`
-		Title    string   `json:"title,omitempty"`
-		Type     string   `json:"type,omitempty"`
-	} `json:"$defs,omitempty"`
-	Properties map[string]struct {
-		Items struct {
-			Ref string `json:"$ref,omitempty"`
-		} `json:"items,omitempty"`
-		Title string `json:"title,omitempty"`
-		Type  string `json:"type,omitempty"`
-	} `json:"properties,omitempty"`
-	Required []string `json:"required,omitempty"`
-	Title    string   `json:"title,omitempty"`
-	Type     string   `json:"type,omitempty"`
+	Defs       map[string]any `json:"$defs,omitempty"`
+	Properties map[string]any `json:"properties,omitempty"`
+	Required   []string       `json:"required,omitempty"`
+	Title      string         `json:"title,omitempty"`
+	Type       string         `json:"type,omitempty"`
 }
 
 func (js JsonSchema) AsGrammar() string {
