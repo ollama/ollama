@@ -15,7 +15,7 @@ in general, the values are (bskcn_tv, 1 - bskcn_tv)
  1 file changed, 238 insertions(+)
 
 diff --git a/src/llama.cpp b/src/llama.cpp
-index bed48f1b..72665b78 100644
+index 29a4835a..42b3c1b1 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
 @@ -195,6 +195,7 @@ enum llm_arch {
@@ -360,7 +360,7 @@ index bed48f1b..72665b78 100644
          default:
              GGML_ABORT("fatal error");
      }
-@@ -20073,6 +20310,7 @@ enum llama_rope_type llama_rope_type(const struct llama_model * model) {
+@@ -20072,6 +20309,7 @@ enum llama_rope_type llama_rope_type(const struct llama_model * model) {
          case LLM_ARCH_GRANITE:
          case LLM_ARCH_GRANITE_MOE:
          case LLM_ARCH_CHAMELEON:

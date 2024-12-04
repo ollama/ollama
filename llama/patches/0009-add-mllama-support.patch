@@ -16,11 +16,11 @@ remaining is to implement the cross attention mask
  ggml/src/ggml-cpu/ggml-cpu-aarch64.c |   2 +-
  ggml/src/ggml-quants.c               |   2 +-
  include/llama.h                      |   5 +
- src/llama.cpp                        | 476 ++++++++++++++++++++++++++-
- 5 files changed, 468 insertions(+), 22 deletions(-)
+ src/llama.cpp                        | 477 ++++++++++++++++++++++++++-
+ 5 files changed, 469 insertions(+), 22 deletions(-)
 
 diff --git a/examples/llava/llava.cpp b/examples/llava/llava.cpp
-index be698854..b9747e2d 100644
+index be698854..0e294ae7 100644
 --- a/examples/llava/llava.cpp
 +++ b/examples/llava/llava.cpp
 @@ -408,7 +408,7 @@ struct llava_embd_batch {
@@ -45,7 +45,7 @@ index be698854..b9747e2d 100644
          }
          float * embd = image_embed->embed+i*n_embd;
 -        llava_embd_batch llava_batch = llava_embd_batch(embd, n_eval, *n_past, 0);
-+        llava_embd_batch llava_batch = llava_embd_batch(embd, n_eval, n_eval, *n_past, 0);
++        llava_embd_batch llava_batch = llava_embd_batch(embd, n_embd, n_eval, *n_past, 0);
          if (llama_decode(ctx_llama, llava_batch.batch)) {
              LOG_ERR("%s : failed to eval\n", __func__);
              return false;
@@ -99,7 +99,7 @@ index ab5e376e..ee426cd4 100644
      LLAMA_API void llama_free(struct llama_context * ctx);
  
 diff --git a/src/llama.cpp b/src/llama.cpp
-index 72665b78..54c74e38 100644
+index 42b3c1b1..71a0ff53 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
 @@ -146,6 +146,7 @@ static std::string format(const char * fmt, ...) {
@@ -457,7 +457,15 @@ index 72665b78..54c74e38 100644
  static void llm_build_kv_store(
          struct ggml_context * ctx,
          const llama_hparams & hparams,
-@@ -10930,6 +11113,240 @@ struct llm_build_context {
+@@ -10451,6 +10634,7 @@ struct llm_build_context {
+         lctx.inp_pos_bucket    = nullptr;
+         lctx.inp_embd_enc      = nullptr;
+         lctx.inp_KQ_mask_cross = nullptr;
++        lctx.inp_cross_attn_state = nullptr;
+     }
+ 
+     void free() {
+@@ -10930,6 +11114,240 @@ struct llm_build_context {
          return gf;
      }
  
@@ -698,7 +706,7 @@ index 72665b78..54c74e38 100644
      struct ggml_cgraph * build_baichuan() {
          struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, llama_model_max_nodes(model), false);
  
-@@ -16911,6 +17328,10 @@ static struct ggml_cgraph * llama_build_graph(
+@@ -16911,6 +17329,10 @@ static struct ggml_cgraph * llama_build_graph(
              {
                  result = llm.build_llama();
              } break;
@@ -709,7 +717,7 @@ index 72665b78..54c74e38 100644
          case LLM_ARCH_BAICHUAN:
              {
                  result = llm.build_baichuan();
-@@ -17175,10 +17596,19 @@ static void llama_set_inputs(llama_context & lctx, const llama_ubatch & ubatch)
+@@ -17175,10 +17597,19 @@ static void llama_set_inputs(llama_context & lctx, const llama_ubatch & ubatch)
      }
  
      if (ubatch.embd) {
@@ -732,7 +740,7 @@ index 72665b78..54c74e38 100644
      }
  
      if (ubatch.pos && lctx.inp_pos) {
-@@ -17779,7 +18209,7 @@ static int llama_decode_internal(
+@@ -17779,7 +18210,7 @@ static int llama_decode_internal(
          n_outputs = 1;
      }
  
@@ -741,7 +749,7 @@ index 72665b78..54c74e38 100644
          /* simple_split */ !kv_self.recurrent,
          /* logits_all   */ n_outputs == n_tokens_all);
  
-@@ -18091,7 +18521,7 @@ static int llama_encode_internal(
+@@ -18090,7 +18521,7 @@ static int llama_encode_internal(
  
      const int64_t n_embd = hparams.n_embd;
  
@@ -750,7 +758,7 @@ index 72665b78..54c74e38 100644
  
      const llama_ubatch ubatch = lctx.sbatch.split_simple(n_tokens);
  
-@@ -19129,7 +19559,9 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
+@@ -19128,7 +19559,9 @@ static void llama_model_quantize_internal(const std::string & fname_inp, const s
          if (llama_model_has_encoder(&model)) {
              n_attn_layer *= 3;
          }
@@ -761,7 +769,7 @@ index 72665b78..54c74e38 100644
      }
  
      size_t total_size_org = 0;
-@@ -20295,6 +20727,7 @@ enum llama_rope_type llama_rope_type(const struct llama_model * model) {
+@@ -20294,6 +20727,7 @@ enum llama_rope_type llama_rope_type(const struct llama_model * model) {
  
          // use what we call a normal RoPE, operating on pairs of consecutive head values
          case LLM_ARCH_LLAMA:
@@ -769,7 +777,7 @@ index 72665b78..54c74e38 100644
          case LLM_ARCH_BAICHUAN:
          case LLM_ARCH_STARCODER:
          case LLM_ARCH_PLAMO:
-@@ -21722,6 +22155,10 @@ void llama_set_causal_attn(struct llama_context * ctx, bool causal_attn) {
+@@ -21721,6 +22155,10 @@ void llama_set_causal_attn(struct llama_context * ctx, bool causal_attn) {
      ctx->cparams.causal_attn = causal_attn;
  }
  
@@ -780,7 +788,7 @@ index 72665b78..54c74e38 100644
  struct llama_batch llama_batch_get_one(
               llama_token * tokens,
                   int32_t   n_tokens) {
-@@ -21729,6 +22166,7 @@ struct llama_batch llama_batch_get_one(
+@@ -21728,6 +22166,7 @@ struct llama_batch llama_batch_get_one(
          /*n_tokens       =*/ n_tokens,
          /*tokens         =*/ tokens,
          /*embd           =*/ nullptr,
@@ -788,7 +796,7 @@ index 72665b78..54c74e38 100644
          /*pos            =*/ nullptr,
          /*n_seq_id       =*/ nullptr,
          /*seq_id         =*/ nullptr,
-@@ -21741,6 +22179,7 @@ struct llama_batch llama_batch_init(int32_t n_tokens_alloc, int32_t embd, int32_
+@@ -21740,6 +22179,7 @@ struct llama_batch llama_batch_init(int32_t n_tokens_alloc, int32_t embd, int32_
          /*n_tokens       =*/ 0,
          /*tokens         =*/ nullptr,
          /*embd           =*/ nullptr,
@@ -796,7 +804,7 @@ index 72665b78..54c74e38 100644
          /*pos            =*/ nullptr,
          /*n_seq_id       =*/ nullptr,
          /*seq_id         =*/ nullptr,
-@@ -21749,6 +22188,7 @@ struct llama_batch llama_batch_init(int32_t n_tokens_alloc, int32_t embd, int32_
+@@ -21748,6 +22188,7 @@ struct llama_batch llama_batch_init(int32_t n_tokens_alloc, int32_t embd, int32_
  
      if (embd) {
          batch.embd = (float *) malloc(sizeof(float) * n_tokens_alloc * embd);
