@@ -107,6 +107,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /set parameter repeat_last_n <int>    Set how far back to look for repetitions")
 		fmt.Fprintln(os.Stderr, "  /set parameter num_gpu <int>          The number of layers to send to the GPU")
 		fmt.Fprintln(os.Stderr, "  /set parameter stop <string> <string> ...   Set the stop parameters")
+		fmt.Fprintln(os.Stderr, "  /set parameter kv_cache_type <string>  Set the K/V cache type")
 		fmt.Fprintln(os.Stderr, "")
 	}
 
