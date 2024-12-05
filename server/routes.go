@@ -278,7 +278,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
-			Format:  req.Format,
+			Format:  json.RawMessage(req.Format),
 			Options: opts,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{

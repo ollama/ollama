@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
 )
@@ -107,7 +108,7 @@ func TestChatMiddleware(t *testing.T) {
 					"presence_penalty":  5.0,
 					"top_p":             6.0,
 				},
-				Format: "json",
+				Format: json.RawMessage(`"json"`),
 				Stream: &True,
 			},
 		},
@@ -316,13 +317,13 @@ func TestChatMiddleware(t *testing.T) {
 				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
 					t.Fatal(err)
 				}
+				return
 			}
-			if capturedRequest != nil && !reflect.DeepEqual(tc.req, *capturedRequest) {
-				t.Fatal("requests did not match")
+			if diff := cmp.Diff(&tc.req, capturedRequest); diff != "" {
+				t.Fatalf("requests did not match: %+v", diff)
 			}
-
-			if !reflect.DeepEqual(tc.err, errResp) {
-				t.Fatal("errors did not match")
+			if diff := cmp.Diff(tc.err, errResp); diff != "" {
+				t.Fatalf("errors did not match for %s:\n%s", tc.name, diff)
 			}
 		})
 	}

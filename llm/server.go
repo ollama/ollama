@@ -634,27 +634,22 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 const jsonGrammar = `
 root   ::= object
 value  ::= object | array | string | number | ("true" | "false" | "null") ws
-
 object ::=
   "{" ws (
             string ":" ws value
     ("," ws string ":" ws value)*
   )? "}" ws
-
 array  ::=
   "[" ws (
             value
     ("," ws value)*
   )? "]" ws
-
 string ::=
   "\"" (
     [^"\\\x7F\x00-\x1F] |
     "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) # escapes
   )* "\"" ws
-
 number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)? ws
-
 # Optional space: by convention, applied in this grammar after literal chars when allowed
 ws ::= ([ \t\n] ws)?
 `
@@ -684,7 +679,7 @@ type completion struct {
 
 type CompletionRequest struct {
 	Prompt  string
-	Format  string
+	Format  json.RawMessage
 	Images  []ImageData
 	Options *api.Options
 }
@@ -749,10 +744,22 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		return fmt.Errorf("unexpected server status: %s", status.ToString())
 	}
 
-	if req.Format == "json" {
-		request["grammar"] = jsonGrammar
-		if !strings.Contains(strings.ToLower(req.Prompt), "json") {
-			slog.Warn("Prompt does not specify that the LLM should response in JSON, but JSON format is expected. For best results specify that JSON is expected in the system prompt.")
+	// TODO (parthsareen): Move conversion to grammar with sampling logic
+	// API should do error handling for invalid formats
+	if req.Format != nil {
+		if strings.ToLower(strings.TrimSpace(string(req.Format))) == `"json"` {
+			request["grammar"] = jsonGrammar
+			if !strings.Contains(strings.ToLower(req.Prompt), "json") {
+				slog.Warn("prompt does not specify that the LLM should response in JSON, but JSON format is expected. For best results specify that JSON is expected in the system prompt.")
+			}
+		} else if schema, err := func() (llama.JsonSchema, error) {
+			var schema llama.JsonSchema
+			err := json.Unmarshal(req.Format, &schema)
+			return schema, err
+		}(); err == nil {
+			request["grammar"] = schema.AsGrammar()
+		} else {
+			slog.Warn(`format is neither a schema or "json"`, "format", req.Format)
 		}
 	}
 
