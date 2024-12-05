@@ -26,9 +26,9 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/build"
+	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/gpu"
 	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/runners"
 )
@@ -61,8 +61,8 @@ type llmServer struct {
 	estimate    MemoryEstimate
 	totalLayers uint64
 	// gpuCount     int
-	gpus         gpu.GpuInfoList // Recorded just before the model loaded, free space will be incorrect
-	loadDuration time.Duration   // Record how long it took the model to load
+	gpus         discover.GpuInfoList // Recorded just before the model loaded, free space will be incorrect
+	loadDuration time.Duration        // Record how long it took the model to load
 	loadProgress float32
 
 	sem *semaphore.Weighted
@@ -90,7 +90,7 @@ func LoadModel(model string, maxArraySize int) (*GGML, error) {
 
 // NewLlamaServer will run a server for the given GPUs
 // The gpu list must be a single family.
-func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
+func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
 	var err error
 	var cpuRunner string
 	var estimate MemoryEstimate
@@ -98,19 +98,15 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	var systemFreeMemory uint64
 	var systemSwapFreeMemory uint64
 
-	systemMemInfo, err := gpu.GetCPUMem()
-	if err != nil {
-		slog.Error("failed to lookup system memory", "error", err)
-	} else {
-		systemTotalMemory = systemMemInfo.TotalMemory
-		systemFreeMemory = systemMemInfo.FreeMemory
-		systemSwapFreeMemory = systemMemInfo.FreeSwap
-		slog.Info("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
-	}
+	systemInfo := discover.GetSystemInfo()
+	systemTotalMemory = systemInfo.System.TotalMemory
+	systemFreeMemory = systemInfo.System.FreeMemory
+	systemSwapFreeMemory = systemInfo.System.FreeSwap
+	slog.Info("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
 
 	// If the user wants zero GPU layers, reset the gpu list to be CPU/system ram info
 	if opts.NumGPU == 0 {
-		gpus = gpu.GetCPUInfo()
+		gpus = discover.GetCPUInfo()
 	}
 	if len(gpus) == 1 && gpus[0].Library == "cpu" {
 		cpuRunner = runners.ServerForCpu()
@@ -126,7 +122,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		case gpus[0].Library != "metal" && estimate.Layers == 0:
 			// Don't bother loading into the GPU if no layers can fit
 			cpuRunner = runners.ServerForCpu()
-			gpus = gpu.GetCPUInfo()
+			gpus = discover.GetCPUInfo()
 		case opts.NumGPU < 0 && estimate.Layers > 0 && gpus[0].Library != "cpu":
 			opts.NumGPU = estimate.Layers
 		}
@@ -147,10 +143,6 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 	// Loop through potential servers
 	finalErr := errors.New("no suitable llama servers found")
-
-	if len(adapters) > 1 {
-		return nil, errors.New("ollama supports only one lora adapter, but multiple were provided")
-	}
 
 	rDir, err := runners.Refresh(build.EmbedFS)
 	if err != nil {
@@ -190,10 +182,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		"--model", model,
 		"--ctx-size", strconv.Itoa(opts.NumCtx),
 		"--batch-size", strconv.Itoa(opts.NumBatch),
-		"--embedding",
 	}
-
-	params = append(params, "--log-disable")
 
 	if opts.NumGPU >= 0 {
 		params = append(params, "--n-gpu-layers", strconv.Itoa(opts.NumGPU))
@@ -208,8 +197,9 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 	}
 
 	if len(adapters) > 0 {
-		// TODO: applying multiple adapters is not supported by the llama.cpp server yet
-		params = append(params, "--lora", adapters[0])
+		for _, adapter := range adapters {
+			params = append(params, "--lora", adapter)
+		}
 	}
 
 	if len(projectors) > 0 {
@@ -217,33 +207,49 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--mmproj", projectors[0])
 	}
 
+	defaultThreads := systemInfo.GetOptimalThreadCount()
 	if opts.NumThread > 0 {
 		params = append(params, "--threads", strconv.Itoa(opts.NumThread))
+	} else if defaultThreads > 0 {
+		params = append(params, "--threads", strconv.Itoa(defaultThreads))
 	}
 
-	if !opts.F16KV {
-		params = append(params, "--memory-f32")
+	fa := envconfig.FlashAttention()
+	if fa && !gpus.FlashAttentionSupported() {
+		slog.Warn("flash attention enabled but not supported by gpu")
+		fa = false
 	}
 
-	flashAttnEnabled := envconfig.FlashAttention()
+	if fa && !ggml.SupportsFlashAttention() {
+		slog.Warn("flash attention enabled but not supported by model")
+		fa = false
+	}
 
-	for _, g := range gpus {
-		// only cuda (compute capability 7+) and metal support flash attention
-		if g.Library != "metal" && (g.Library != "cuda" || g.DriverMajor < 7) {
-			flashAttnEnabled = false
+	kvct := strings.ToLower(envconfig.KvCacheType())
+
+	if fa {
+		slog.Info("enabling flash attention")
+		params = append(params, "--flash-attn")
+
+		// Flash Attention also supports kv cache quantization
+		// Enable if the requested and kv cache type is supported by the model
+		if kvct != "" && ggml.SupportsKVCacheType(kvct) {
+			params = append(params, "--kv-cache-type", kvct)
+		} else {
+			slog.Warn("kv cache type not supported by model", "type", kvct)
 		}
+	} else if kvct != "" && kvct != "f16" {
+		slog.Warn("quantized kv cache requested but flash attention disabled", "type", kvct)
+	}
 
-		// mmap has issues with partial offloading on metal
+	// mmap has issues with partial offloading on metal
+	for _, g := range gpus {
 		if g.Library == "metal" &&
 			uint64(opts.NumGPU) > 0 &&
 			uint64(opts.NumGPU) < ggml.KV().BlockCount()+1 {
 			opts.UseMMap = new(bool)
 			*opts.UseMMap = false
 		}
-	}
-
-	if flashAttnEnabled {
-		params = append(params, "--flash-attn")
 	}
 
 	// Windows CUDA should not use mmap for best performance
@@ -260,15 +266,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		params = append(params, "--mlock")
 	}
 
-	if gpu.IsNUMA() && gpus[0].Library == "cpu" {
-		numaMode := "distribute"
-		if runtime.GOOS == "linux" {
-			if _, err := exec.LookPath("numactl"); err == nil {
-				numaMode = "numactl"
-			}
-		}
-		params = append(params, "--numa", numaMode)
-	}
+	// TODO - NUMA support currently doesn't work properly
 
 	params = append(params, "--parallel", strconv.Itoa(numParallel))
 
@@ -290,7 +288,7 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 		}
 
 		if strings.HasPrefix(servers[i], "cpu") {
-			gpus = gpu.GetCPUInfo()
+			gpus = discover.GetCPUInfo()
 		}
 
 		// Find an availableServers  port, retry on each iteration in case the failure was a port conflict race
@@ -322,9 +320,9 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 		// Note: we always put the dependency path first
 		// since this was the exact version we compiled/linked against
-		if gpus[0].DependencyPath != "" {
+		if gpus[0].DependencyPath != nil {
 			// assume gpus from the same library have the same dependency path
-			libraryPaths = append([]string{gpus[0].DependencyPath}, libraryPaths...)
+			libraryPaths = append(gpus[0].DependencyPath, libraryPaths...)
 		}
 
 		server := filepath.Join(dir, "ollama_llama_server")
@@ -451,26 +449,6 @@ func NewLlamaServer(gpus gpu.GpuInfoList, model string, ggml *GGML, adapters, pr
 
 	slog.Error("unable to load any llama server", "error", finalErr)
 	return nil, finalErr
-}
-
-func projectorMemoryRequirements(filename string) uint64 {
-	file, err := os.Open(filename)
-	if err != nil {
-		return 0
-	}
-	defer file.Close()
-
-	ggml, _, err := DecodeGGML(file, 0)
-	if err != nil {
-		return 0
-	}
-
-	var mem uint64
-	for _, layer := range ggml.Tensors().Layers() {
-		mem += layer.size()
-	}
-
-	return mem
 }
 
 type ServerStatus int
@@ -656,27 +634,22 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 const jsonGrammar = `
 root   ::= object
 value  ::= object | array | string | number | ("true" | "false" | "null") ws
-
 object ::=
   "{" ws (
             string ":" ws value
     ("," ws string ":" ws value)*
   )? "}" ws
-
 array  ::=
   "[" ws (
             value
     ("," ws value)*
   )? "]" ws
-
 string ::=
   "\"" (
     [^"\\\x7F\x00-\x1F] |
     "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) # escapes
   )* "\"" ws
-
 number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)? ws
-
 # Optional space: by convention, applied in this grammar after literal chars when allowed
 ws ::= ([ \t\n] ws)?
 `
@@ -684,8 +657,9 @@ ws ::= ([ \t\n] ws)?
 const maxBufferSize = 512 * format.KiloByte
 
 type ImageData struct {
-	Data []byte `json:"data"`
-	ID   int    `json:"id"`
+	Data          []byte `json:"data"`
+	ID            int    `json:"id"`
+	AspectRatioID int    `json:"aspect_ratio_id"`
 }
 
 type completion struct {
@@ -705,7 +679,7 @@ type completion struct {
 
 type CompletionRequest struct {
 	Prompt  string
-	Format  string
+	Format  json.RawMessage
 	Images  []ImageData
 	Options *api.Options
 }
@@ -722,7 +696,11 @@ type CompletionResponse struct {
 
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
 	if err := s.sem.Acquire(ctx, 1); err != nil {
-		slog.Error("Failed to acquire semaphore", "error", err)
+		if errors.Is(err, context.Canceled) {
+			slog.Info("aborting completion request due to client closing the connection")
+		} else {
+			slog.Error("Failed to acquire semaphore", "error", err)
+		}
 		return err
 	}
 	defer s.sem.Release(1)
@@ -766,10 +744,22 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		return fmt.Errorf("unexpected server status: %s", status.ToString())
 	}
 
-	if req.Format == "json" {
-		request["grammar"] = jsonGrammar
-		if !strings.Contains(strings.ToLower(req.Prompt), "json") {
-			slog.Warn("Prompt does not specify that the LLM should response in JSON, but JSON format is expected. For best results specify that JSON is expected in the system prompt.")
+	// TODO (parthsareen): Move conversion to grammar with sampling logic
+	// API should do error handling for invalid formats
+	if req.Format != nil {
+		if strings.ToLower(strings.TrimSpace(string(req.Format))) == `"json"` {
+			request["grammar"] = jsonGrammar
+			if !strings.Contains(strings.ToLower(req.Prompt), "json") {
+				slog.Warn("prompt does not specify that the LLM should response in JSON, but JSON format is expected. For best results specify that JSON is expected in the system prompt.")
+			}
+		} else if schema, err := func() (llama.JsonSchema, error) {
+			var schema llama.JsonSchema
+			err := json.Unmarshal(req.Format, &schema)
+			return schema, err
+		}(); err == nil {
+			request["grammar"] = schema.AsGrammar()
+		} else {
+			slog.Warn(`format is neither a schema or "json"`, "format", req.Format)
 		}
 	}
 
@@ -873,13 +863,15 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	}
 
 	if err := scanner.Err(); err != nil {
-		if strings.Contains(err.Error(), "unexpected EOF") {
+		if strings.Contains(err.Error(), "unexpected EOF") || strings.Contains(err.Error(), "forcibly closed") {
 			s.Close()
-			msg := ""
+			var msg string
 			if s.status != nil && s.status.LastErrMsg != "" {
 				msg = s.status.LastErrMsg
+			} else {
+				msg = err.Error()
 			}
-			return fmt.Errorf("an unknown error was encountered while running the model %s", msg)
+			return fmt.Errorf("an error was encountered while running the model: %s", msg)
 		}
 
 		return fmt.Errorf("error reading llm response: %v", err)
@@ -898,7 +890,11 @@ type EmbeddingResponse struct {
 
 func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, error) {
 	if err := s.sem.Acquire(ctx, 1); err != nil {
-		slog.Error("Failed to acquire semaphore", "error", err)
+		if errors.Is(err, context.Canceled) {
+			slog.Info("aborting embedding request due to client closing the connection")
+		} else {
+			slog.Error("Failed to acquire semaphore", "error", err)
+		}
 		return nil, err
 	}
 	defer s.sem.Release(1)
@@ -988,7 +984,10 @@ func (s *llmServer) Tokenize(ctx context.Context, content string) ([]int, error)
 	if resp.StatusCode == http.StatusNotFound {
 		if s.model == nil {
 			slog.Debug("new runner detected, loading model for cgo tokenization")
-			m := llama.LoadModelFromFile(s.modelPath, llama.ModelParams{VocabOnly: true})
+			m, err := llama.LoadModelFromFile(s.modelPath, llama.ModelParams{VocabOnly: true})
+			if err != nil {
+				return nil, err
+			}
 			s.model = m
 		}
 		return s.model.Tokenize(content, false, true)
@@ -1057,7 +1056,10 @@ func (s *llmServer) Detokenize(ctx context.Context, tokens []int) (string, error
 	if resp.StatusCode == http.StatusNotFound {
 		if s.model == nil {
 			slog.Debug("new runner detected, loading model for cgo tokenization")
-			m := llama.LoadModelFromFile(s.modelPath, llama.ModelParams{VocabOnly: true})
+			m, err := llama.LoadModelFromFile(s.modelPath, llama.ModelParams{VocabOnly: true})
+			if err != nil {
+				return "", err
+			}
 			s.model = m
 		}
 		var resp string
@@ -1086,10 +1088,13 @@ func (s *llmServer) Detokenize(ctx context.Context, tokens []int) (string, error
 }
 
 func (s *llmServer) Close() error {
+	s.modelLock.Lock()
 	if s.model != nil {
 		llama.FreeModel(s.model)
 		s.model = nil
 	}
+	s.modelLock.Unlock()
+
 	if s.cmd != nil {
 		slog.Debug("stopping llama server")
 		if err := s.cmd.Process.Kill(); err != nil {
@@ -1100,7 +1105,6 @@ func (s *llmServer) Close() error {
 			slog.Debug("waiting for llama server to exit")
 			<-s.done
 		}
-		s.cmd = nil
 
 		slog.Debug("llama server stopped")
 	}
@@ -1119,7 +1123,9 @@ func (s *llmServer) EstimatedTotal() uint64 {
 func (s *llmServer) EstimatedVRAMByGPU(gpuID string) uint64 {
 	for i, gpu := range s.gpus {
 		if gpu.ID == gpuID {
-			return s.estimate.GPUSizes[i]
+			if i < len(s.estimate.GPUSizes) {
+				return s.estimate.GPUSizes[i]
+			}
 		}
 	}
 	return 0
