@@ -7,11 +7,11 @@ On windows compiled with gcc the c++ regex library failed to handle
 the characters
 ---
  src/llama-vocab.cpp |  2 +-
- src/unicode.cpp     | 21 +++++++++++++++++++++
- 2 files changed, 22 insertions(+), 1 deletion(-)
+ src/unicode.cpp     | 22 ++++++++++++++++++++++
+ 2 files changed, 23 insertions(+), 1 deletion(-)
 
 diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
-index d2f34ddd..3ef6af19 100644
+index d1dc9627..05ef0e71 100644
 --- a/src/llama-vocab.cpp
 +++ b/src/llama-vocab.cpp
 @@ -389,7 +389,7 @@ struct llm_tokenizer_bpe : llm_tokenizer {
@@ -24,7 +24,7 @@ index d2f34ddd..3ef6af19 100644
                      "\\s+$",
                      "[一-龥ࠀ-一가-퟿]+",
 diff --git a/src/unicode.cpp b/src/unicode.cpp
-index f4e941cd..9d78ff16 100644
+index 3d459263..51dd81fb 100644
 --- a/src/unicode.cpp
 +++ b/src/unicode.cpp
 @@ -2,6 +2,11 @@
@@ -39,7 +39,7 @@ index f4e941cd..9d78ff16 100644
  #include "unicode.h"
  #include "unicode-data.h"
  
-@@ -201,8 +206,24 @@ static std::unordered_map<std::string, uint8_t> unicode_utf8_to_byte_map() {
+@@ -201,6 +206,22 @@ static std::unordered_map<std::string, uint8_t> unicode_utf8_to_byte_map() {
  }
  
  static inline std::wstring unicode_wstring_from_utf8(const std::string & s) {
@@ -58,7 +58,13 @@ index f4e941cd..9d78ff16 100644
 +    free(wbuf);
 +    return ret;
 +#else
-     std::wstring_convert<std::codecvt_utf8<wchar_t>> conv;
++
+ #if defined(__clang__)
+     // disable C++17 deprecation warning for std::codecvt_utf8
+ #    pragma clang diagnostic push
+@@ -214,6 +235,7 @@ static inline std::wstring unicode_wstring_from_utf8(const std::string & s) {
+ #endif
+ 
      return conv.from_bytes(s);
 +#endif
  }
