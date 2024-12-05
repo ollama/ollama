@@ -181,7 +181,7 @@ curl http://localhost:11434/v1/embeddings \
 - [x] JSON mode
 - [x] Reproducible outputs
 - [x] Vision
-- [x] Tools (streaming support coming soon)
+- [x] Tools
 - [ ] Logprobs
 
 #### Supported request fields
