@@ -78,25 +78,33 @@ type Model struct {
 // any missing or unknown capabilities
 func (m *Model) CheckCapabilities(caps ...Capability) error {
 	var errs []error
+
+	checkFunc := func() error {
+		f, err := os.Open(m.ModelPath)
+		if err != nil {
+			slog.Error("couldn't open model file", "error", err)
+			return err
+		}
+		defer f.Close()
+
+		// TODO(mxyng): decode the GGML into model to avoid doing this multiple times
+		ggml, _, err := llm.DecodeGGML(f, 0)
+		if err != nil {
+			slog.Error("couldn't decode ggml", "error", err)
+			return err
+		}
+
+		if _, ok := ggml.KV()[fmt.Sprintf("%s.pooling_type", ggml.KV().Architecture())]; ok {
+			errs = append(errs, errCapabilityCompletion)
+		}
+		return nil
+	}
+
 	for _, cap := range caps {
 		switch cap {
 		case CapabilityCompletion:
-			f, err := os.Open(m.ModelPath)
-			if err != nil {
-				slog.Error("couldn't open model file", "error", err)
-				continue
-			}
-			defer f.Close()
-
-			// TODO(mxyng): decode the GGML into model to avoid doing this multiple times
-			ggml, _, err := llm.DecodeGGML(f, 0)
-			if err != nil {
-				slog.Error("couldn't decode ggml", "error", err)
-				continue
-			}
-
-			if _, ok := ggml.KV()[fmt.Sprintf("%s.pooling_type", ggml.KV().Architecture())]; ok {
-				errs = append(errs, errCapabilityCompletion)
+			if err := checkFunc(); err != nil {
+				return err
 			}
 		case CapabilityTools:
 			if !slices.Contains(m.Template.Vars(), "tools") {
