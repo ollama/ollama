@@ -109,7 +109,7 @@ include make/gpu.make
 # Adjust the rules from gpu.make to handle the ROCm dependencies properly
 $(RUNNERS_DIST_DIR)/$(GPU_RUNNER_NAME)$(GPU_RUNNER_EXTRA_VARIANT)/ollama_llama_server$(EXE_EXT): $(ROCBLAS_DIST_DEP_MANIFEST) $(GPU_DIST_TRANSITIVE_LIB_DEPS)
 $(ROCBLAS_DIST_DEP_MANIFEST):
-	@-mkdir -p $(dir $@)
+	@-mkdir -p $(@D)
 	@echo "Copying rocblas library..."
 	(cd $(GPU_LIB_DIR)/rocblas/library/ && tar cf - . ) | (cd $(dir $@) && tar xf - )
 	@echo "rocblas library copy complete"
