@@ -1126,7 +1126,7 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		Prompt:    opts.Prompt,
 		Context:   generateContext,
 		Images:    opts.Images,
-		Format:    opts.Format,
+		Format:    json.RawMessage(opts.Format),
 		System:    opts.System,
 		Options:   opts.Options,
 		KeepAlive: opts.KeepAlive,

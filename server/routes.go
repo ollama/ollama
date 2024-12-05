@@ -148,10 +148,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	if req.Format != "" && req.Format != "json" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "format must be empty or \"json\""})
-		return
-	} else if req.Raw && (req.Template != "" || req.System != "" || len(req.Context) > 0) {
+	if req.Raw && (req.Template != "" || req.System != "" || len(req.Context) > 0) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "raw mode does not support template, system, or context"})
 		return
 	}
@@ -278,7 +275,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
-			Format:  json.RawMessage(req.Format),
+			Format:  req.Format,
 			Options: opts,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
