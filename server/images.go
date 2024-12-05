@@ -802,6 +802,12 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	if mp.ProtocolScheme == "http" && !regOpts.Insecure {
 		return errors.New("insecure protocol http")
 	}
+	if mp.Namespace != strings.ToLower(mp.Namespace) {
+		return fmt.Errorf("namespace must be lowercase, but is %s", mp.Namespace)
+	}
+	if mp.Repository != strings.ToLower(mp.Repository) {
+		return fmt.Errorf("model name must be lowercase, but is %s", mp.Repository)
+	}
 
 	manifest, _, err := GetManifest(mp)
 	if err != nil {
