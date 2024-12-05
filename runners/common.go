@@ -31,7 +31,7 @@ var (
 	runnersDir = ""
 )
 
-// Return the location where runners are stored
+// Refresh Return the location where runners are stored
 // If runners are payloads, this will either extract them
 // or refresh them if any have disappeared due to tmp cleaners
 func Refresh(payloadFS fs.FS) (string, error) {
@@ -125,7 +125,7 @@ func extractRunners(payloadFS fs.FS) (string, error) {
 	}
 	// Track our pid so we can clean up orphaned tmpdirs
 	n := filepath.Join(tmpDir, "ollama.pid")
-	if err := os.WriteFile(n, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+	if err := os.WriteFile(n, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
 		slog.Warn("failed to write pid file", "file", n, "error", err)
 	}
 	// We create a distinct subdirectory for payloads within the tmpdir
@@ -153,7 +153,7 @@ func extractFiles(payloadFS fs.FS, targetDir string, glob string) error {
 		return fmt.Errorf("extractFiles called without payload present")
 	}
 
-	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+	if err := os.MkdirAll(targetDir, 0o750); err != nil {
 		return fmt.Errorf("extractFiles could not mkdir %s: %v", targetDir, err)
 	}
 
@@ -184,7 +184,7 @@ func extractFiles(payloadFS fs.FS, targetDir string, glob string) error {
 			}
 
 			runnerDir := filepath.Join(targetDir, runner)
-			if err := os.MkdirAll(runnerDir, 0o755); err != nil {
+			if err := os.MkdirAll(runnerDir, 0o750); err != nil {
 				return fmt.Errorf("extractFiles could not mkdir %s: %v", runnerDir, err)
 			}
 
@@ -194,7 +194,7 @@ func extractFiles(payloadFS fs.FS, targetDir string, glob string) error {
 			_, err = os.Stat(destFilename)
 			switch {
 			case errors.Is(err, os.ErrNotExist):
-				destFile, err := os.OpenFile(destFilename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+				destFile, err := os.OpenFile(destFilename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 				if err != nil {
 					return fmt.Errorf("write payload %s: %v", filename, err)
 				}

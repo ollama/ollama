@@ -80,8 +80,7 @@ func (i *Instance) Readline() (string, error) {
 
 	defer func() {
 		fd := os.Stdin.Fd()
-		//nolint:errcheck
-		UnsetRawMode(fd, i.Terminal.termios)
+		_ = UnsetRawMode(fd, i.Terminal.termios)
 		i.Terminal.rawmode = false
 	}()
 

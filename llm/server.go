@@ -297,7 +297,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 			var l *net.TCPListener
 			if l, err = net.ListenTCP("tcp", a); err == nil {
 				port = l.Addr().(*net.TCPAddr).Port
-				l.Close()
+				_ = l.Close()
 			}
 		}
 		if port == 0 {
@@ -864,7 +864,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 
 	if err := scanner.Err(); err != nil {
 		if strings.Contains(err.Error(), "unexpected EOF") || strings.Contains(err.Error(), "forcibly closed") {
-			s.Close()
+			_ = s.Close()
 			var msg string
 			if s.status != nil && s.status.LastErrMsg != "" {
 				msg = s.status.LastErrMsg

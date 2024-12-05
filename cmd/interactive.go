@@ -530,10 +530,10 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		} else if err != nil {
-			fmt.Fprintf(os.Stderr, "Couldn't process image: %q\n", err)
+			_, _ = fmt.Fprintf(os.Stderr, "Couldn't process image: %q\n", err)
 			return "", imgs, err
 		}
-		fmt.Fprintf(os.Stderr, "Added image '%s'\n", nfp)
+		_, _ = fmt.Fprintf(os.Stderr, "Added image '%s'\n", nfp)
 		input = strings.ReplaceAll(input, fp, "")
 		imgs = append(imgs, data)
 	}

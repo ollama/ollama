@@ -71,7 +71,7 @@ func init() {
 		// Make sure our logging dir exists
 		_, err = os.Stat(AppDataDir)
 		if errors.Is(err, os.ErrNotExist) {
-			if err := os.MkdirAll(AppDataDir, 0o755); err != nil {
+			if err := os.MkdirAll(AppDataDir, 0o750); err != nil {
 				slog.Error(fmt.Sprintf("create ollama dir %s: %v", AppDataDir, err))
 			}
 		}
