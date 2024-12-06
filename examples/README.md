@@ -10,5 +10,5 @@ Ollama Python examples at [ollama-python/examples](https://github.com/ollama/oll
 Ollama JavaScript examples at [ollama-js/examples](https://github.com/ollama/ollama-js/tree/main/examples)
 
 
-## OpenAI Compatibility Examples
+## OpenAI compatibility examples
 Ollama OpenAI compatibility examples at [ollama/examples/openai](../docs/openai.md)
