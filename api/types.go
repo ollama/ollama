@@ -216,7 +216,6 @@ type Options struct {
 	TopK             int      `json:"top_k,omitempty"`
 	TopP             float32  `json:"top_p,omitempty"`
 	MinP             float32  `json:"min_p,omitempty"`
-	TFSZ             float32  `json:"tfs_z,omitempty"`
 	TypicalP         float32  `json:"typical_p,omitempty"`
 	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
 	Temperature      float32  `json:"temperature,omitempty"`
@@ -595,7 +594,6 @@ func DefaultOptions() Options {
 		Temperature:      0.8,
 		TopK:             40,
 		TopP:             0.9,
-		TFSZ:             1.0,
 		TypicalP:         1.0,
 		RepeatLastN:      64,
 		RepeatPenalty:    1.1,
