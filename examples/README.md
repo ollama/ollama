@@ -6,7 +6,7 @@ This directory contains different examples of using Ollama.
 Ollama Python examples at [ollama-python/examples](https://github.com/ollama/ollama-python/tree/main/examples)
 
 
-## JavaScript Examples
+## JavaScript examples
 Ollama JavaScript examples at [ollama-js/examples](https://github.com/ollama/ollama-js/tree/main/examples)
 
 
