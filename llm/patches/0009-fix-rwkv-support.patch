@@ -1,0 +1,118 @@
+From 85be989f942918cfb2a92944e900da25e6193e9c Mon Sep 17 00:00:00 2001
+From: Molly Sophia <mollysophia379@gmail.com>
+Date: Wed, 16 Oct 2024 18:10:21 +0800
+Subject: [PATCH] fix rwkv support
+
+llama : add tensor name for "result_norm" (#9907)
+
+Signed-off-by: Molly Sophia <mollysophia379@gmail.com>
+
+llama : add chat template for RWKV-World + fix EOT (#9968)
+
+* Add chat template for RWKV-World
+
+Signed-off-by: Molly Sophia <mollysophia379@gmail.com>
+
+* RWKV: Fix the chat template not being used
+
+Signed-off-by: Molly Sophia <mollysophia379@gmail.com>
+
+* RWKV v6: Set EOT token to ``\n\n``
+
+Signed-off-by: Molly Sophia <mollysophia379@gmail.com>
+
+* readme: add rwkv into supported model list
+
+Signed-off-by: Molly Sophia <mollysophia379@gmail.com>
+
+---------
+
+Signed-off-by: Molly Sophia <mollysophia379@gmail.com>
+
+Rwkv chat template fix (#10001)
+
+* llama: remove useless template matching for rwkv-world
+
+Signed-off-by: Molly Sophia <mollysophia379@gmail.com>
+
+* converter: Add comment about the hack for rwkv models
+
+Signed-off-by: Molly Sophia <mollysophia379@gmail.com>
+
+* Update src/llama.cpp
+
+Co-authored-by: Xuan Son Nguyen <thichthat@gmail.com>
+
+---------
+
+Signed-off-by: Molly Sophia <mollysophia379@gmail.com>
+Co-authored-by: Xuan Son Nguyen <thichthat@gmail.com>
+---
+ README.md             |  1 +
+ convert_hf_to_gguf.py |  3 +++
+ src/llama.cpp         | 14 +++++++++++++-
+ 3 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/README.md b/README.md
+index 08fe8cc9..db3b699a 100644
+--- a/README.md
++++ b/README.md
+@@ -93,6 +93,7 @@ Typically finetunes of the base models below are supported as well.
+ - [x] [FalconMamba Models](https://huggingface.co/collections/tiiuae/falconmamba-7b-66b9a580324dd1598b0f6d4a)
+ - [x] [Jais](https://huggingface.co/inceptionai/jais-13b-chat)
+ - [x] [Bielik-11B-v2.3](https://huggingface.co/collections/speakleash/bielik-11b-v23-66ee813238d9b526a072408a)
++- [x] [RWKV-6](https://github.com/BlinkDL/RWKV-LM)
+ 
+ (instructions for supporting more models: [HOWTO-add-model.md](./docs/development/HOWTO-add-model.md))
+ 
+diff --git a/convert_hf_to_gguf.py b/convert_hf_to_gguf.py
+index da5feb25..7e552a71 100755
+--- a/convert_hf_to_gguf.py
++++ b/convert_hf_to_gguf.py
+@@ -2864,6 +2864,9 @@ class Rwkv6Model(Model):
+         self.gguf_writer.add_token_list(tokens)
+         self.gguf_writer.add_token_types(toktypes)
+         special_vocab = gguf.SpecialVocab(self.dir_model, load_merges=False)
++        special_vocab.chat_template = "rwkv-world"
++        # hack: Add '\n\n' as the EOT token to make it chat normally
++        special_vocab._set_special_token("eot", 261)
+         special_vocab.add_to_gguf(self.gguf_writer)
+ 
+     def set_gguf_parameters(self):
+diff --git a/src/llama.cpp b/src/llama.cpp
+index 8d44c73c..038f0b94 100644
+--- a/src/llama.cpp
++++ b/src/llama.cpp
+@@ -16095,9 +16095,11 @@ struct llm_build_context {
+         cur = ggml_get_rows(ctx0, cur, inp_out_ids);
+ 
+         cur = llm_build_norm(ctx0, cur, hparams, model.output_norm, model.output_norm_b, LLM_NORM, cb, -1);
+-        cur = llm_build_lora_mm(lctx, ctx0, model.output, cur);
++        cb(cur, "result_norm", -1);
+ 
++        cur = llm_build_lora_mm(lctx, ctx0, model.output, cur);
+         cb(cur, "result_output", -1);
++
+         ggml_build_forward_expand(gf, cur);
+ 
+         return gf;
+@@ -21779,6 +21781,16 @@ static int32_t llama_chat_apply_template_internal(
+         if (add_ass) {
+             ss << "[|assistant|]";
+         }
++    } else if (tmpl == "rwkv-world" || tmpl_contains("rwkv-world")) {
++        // this template requires the model to have "\n\n" as EOT token
++        for (auto message : chat) {
++            std::string role(message->role);
++            if (role == "user") {
++                ss << "User: " << message->content << "\n\nAssistant:";
++            } else {
++                ss << message->content << "\n\n";
++            }
++        }
+     } else {
+         // template not supported
+         return -1;
+-- 
+2.47.0
+
