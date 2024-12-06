@@ -2,7 +2,7 @@
 
 This directory contains different examples of using Ollama.
 
-## Python Examples
+## Python examples
 Ollama Python examples at [ollama-python/examples](https://github.com/ollama/ollama-python/tree/main/examples)
 
 
