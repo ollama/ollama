@@ -746,7 +746,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 
 	// TODO (parthsareen): Move conversion to grammar with sampling logic
 	// API should do error handling for invalid formats
-	if req.Format != nil {
+	if req.Format != nil && strings.TrimSpace(string(req.Format)) != "null" {
 		if strings.ToLower(strings.TrimSpace(string(req.Format))) == `"json"` {
 			request["grammar"] = jsonGrammar
 			if !strings.Contains(strings.ToLower(req.Prompt), "json") {
