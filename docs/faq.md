@@ -32,7 +32,7 @@ When using the API, specify the `num_ctx` parameter:
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
-  "model": "llama3.1",
+  "model": "llama3.2",
   "prompt": "Why is the sky blue?",
   "options": {
     "num_ctx": 4096
@@ -151,7 +151,7 @@ Refer to the section [above](#how-do-i-configure-ollama-server) for how to set e
 
 Ollama runs an HTTP server and can be exposed using a proxy server such as Nginx. To do so, configure the proxy to forward requests and optionally set required headers (if not exposing Ollama on the network). For example, with Nginx:
 
-```
+```nginx
 server {
     listen 80;
     server_name example.com;  # Replace with your domain or IP
@@ -232,14 +232,18 @@ curl http://localhost:11434/api/chat -d '{"model": "mistral"}'
 
 To preload a model using the CLI, use the command:
 ```shell
-ollama run llama3.1 ""
+ollama run llama3.2 ""
 ```
 
 ## How do I keep a model loaded in memory or make it unload immediately?
 
-By default models are kept in memory for 5 minutes before being unloaded. This allows for quicker response times if you are making numerous requests to the LLM. You may, however, want to free up the memory before the 5 minutes have elapsed or keep the model loaded indefinitely. Use the `keep_alive` parameter with either the `/api/generate` and `/api/chat` API endpoints to control how long the model is left in memory.
+By default models are kept in memory for 5 minutes before being unloaded. This allows for quicker response times if you're making numerous requests to the LLM. If you want to immediately unload a model from memory, use the `ollama stop` command:
 
-The `keep_alive` parameter can be set to:
+```shell
+ollama stop llama3.2
+```
+
+If you're using the API, use the `keep_alive` parameter with the `/api/generate` and `/api/chat` endpoints to set the amount of time that a model stays in memory. The `keep_alive` parameter can be set to:
 * a duration string (such as "10m" or "24h")
 * a number in seconds (such as 3600)
 * any negative number which will keep the model loaded in memory (e.g. -1 or "-1m")
@@ -247,17 +251,17 @@ The `keep_alive` parameter can be set to:
 
 For example, to preload a model and leave it in memory use:
 ```shell
-curl http://localhost:11434/api/generate -d '{"model": "llama3.1", "keep_alive": -1}'
+curl http://localhost:11434/api/generate -d '{"model": "llama3.2", "keep_alive": -1}'
 ```
 
 To unload the model and free up memory use:
 ```shell
-curl http://localhost:11434/api/generate -d '{"model": "llama3.1", "keep_alive": 0}'
+curl http://localhost:11434/api/generate -d '{"model": "llama3.2", "keep_alive": 0}'
 ```
 
-Alternatively, you can change the amount of time all models are loaded into memory by setting the `OLLAMA_KEEP_ALIVE` environment variable when starting the Ollama server. The `OLLAMA_KEEP_ALIVE` variable uses the same parameter types as the `keep_alive` parameter types mentioned above. Refer to section explaining [how to configure the Ollama server](#how-do-i-configure-ollama-server) to correctly set the environment variable.
+Alternatively, you can change the amount of time all models are loaded into memory by setting the `OLLAMA_KEEP_ALIVE` environment variable when starting the Ollama server. The `OLLAMA_KEEP_ALIVE` variable uses the same parameter types as the `keep_alive` parameter types mentioned above. Refer to the section explaining [how to configure the Ollama server](#how-do-i-configure-ollama-server) to correctly set the environment variable.
 
-If you wish to override the `OLLAMA_KEEP_ALIVE` setting, use the `keep_alive` API parameter with the `/api/generate` or `/api/chat` API endpoints.
+The `keep_alive` API parameter with the `/api/generate` and `/api/chat` API endpoints will override the `OLLAMA_KEEP_ALIVE` setting.
 
 ## How do I manage the maximum number of requests the Ollama server can queue?
 
@@ -281,4 +285,28 @@ Note: Windows with Radeon GPUs currently default to 1 model maximum due to limit
 
 ## How does Ollama load models on multiple GPUs?
 
-Installing multiple GPUs of the same brand can be a great way to increase your available VRAM to load larger models.  When you load a new model, Ollama evaluates the required VRAM for the model against what is currently available.  If the model will entirely fit on any single GPU, Ollama will load the model on that GPU.  This typically provides the best performance as it reduces the amount of data transfering across the PCI bus during inference.  If the model does not fit entirely on one GPU, then it will be spread across all the available GPUs.
+When loading a new model, Ollama evaluates the required VRAM for the model against what is currently available.  If the model will entirely fit on any single GPU, Ollama will load the model on that GPU.  This typically provides the best performance as it reduces the amount of data transferring across the PCI bus during inference.  If the model does not fit entirely on one GPU, then it will be spread across all the available GPUs.
+
+## How can I enable Flash Attention?
+
+Flash Attention is a feature of most modern models that can significantly reduce memory usage as the context size grows.  To enable Flash Attention, set the `OLLAMA_FLASH_ATTENTION` environment variable to `1` when starting the Ollama server.
+
+## How can I set the quantization type for the K/V cache?
+
+The K/V context cache can be quantized to significantly reduce memory usage when Flash Attention is enabled.
+
+To use quantized K/V cache with Ollama you can set the following environment variable:
+
+- `OLLAMA_KV_CACHE_TYPE` - The quantization type for the K/V cache.  Default is `f16`.
+
+> Note: Currently this is a global option - meaning all models will run with the specified quantization type.
+
+The currently available K/V cache quantization types are:
+
+- `f16` - high precision and memory usage (default).
+- `q8_0` - 8-bit quantization, uses approximately 1/2 the memory of `f16` with a very small loss in precision, this usually has no noticeable impact on the model's quality (recommended if not using f16).
+- `q4_0` - 4-bit quantization, uses approximately 1/4 the memory of `f16` with a small-medium loss in precision that may be more noticeable at higher context sizes.
+
+How much the cache quantization impacts the model's response quality will depend on the model and the task.  Models that have a high GQA count (e.g. Qwen2) may see a larger impact on precision from quantization than models with a low GQA count.
+
+You may need to experiment with different quantization types to find the best balance between memory usage and quality.

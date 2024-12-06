@@ -10,11 +10,12 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/gpu"
+	"github.com/ollama/ollama/discover"
 )
 
 func TestEstimateGPULayers(t *testing.T) {
 	t.Setenv("OLLAMA_DEBUG", "1")
+	t.Setenv("OLLAMA_KV_CACHE_TYPE", "") // Ensure default f16
 
 	modelName := "dummy"
 	f, err := os.CreateTemp(t.TempDir(), modelName)
@@ -50,7 +51,7 @@ func TestEstimateGPULayers(t *testing.T) {
 	}
 
 	// Simple CPU scenario
-	gpus := []gpu.GpuInfo{
+	gpus := []discover.GpuInfo{
 		{
 			Library: "cpu",
 		},
@@ -72,7 +73,7 @@ func TestEstimateGPULayers(t *testing.T) {
 
 	// Dual CUDA scenario with assymetry
 	gpuMinimumMemory := uint64(2048)
-	gpus = []gpu.GpuInfo{
+	gpus = []discover.GpuInfo{
 		{
 			Library:       "cuda",
 			MinimumMemory: gpuMinimumMemory,

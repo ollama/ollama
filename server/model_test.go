@@ -39,6 +39,7 @@ func TestExecuteWithTools(t *testing.T) {
 		{"mistral", `[TOOL_CALLS]  [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]
 
 The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`, true},
+		{"mistral", `[TOOL_CALLS]  [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"To }]`, false},
 		{"mistral", `I'm not aware of that information. However, I can suggest searching for the weather using the "get_current_weather" function:
 
 		[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`, true},
@@ -69,6 +70,7 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
 {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}
 </tool_call>`, true},
 		{"xlam", `{"tool_calls": [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]}`, true},
+		{"nemotron", `<toolcall>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]} </toolcall>`, true},
 	}
 
 	var tools []api.Tool
@@ -215,5 +217,47 @@ func TestParseLayerFromCopy(t *testing.T) {
 
 	if len(layers) != 5 {
 		t.Fatalf("got %d != want 5", len(layers))
+	}
+}
+
+func TestParseObjects(t *testing.T) {
+	tests := []struct {
+		input string
+		want  []map[string]any
+	}{
+		{
+			input: `[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
+			want: []map[string]any{
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "fahrenheit", "location": "San Francisco, CA"}},
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "celsius", "location": "Toronto, Canada"}},
+			},
+		},
+		{
+			input: `<toolcall>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </toolcall>`,
+			want: []map[string]any{
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "fahrenheit", "location": "San Francisco, CA"}},
+			},
+		},
+		{
+			input: `<toolcall>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </toolcall> <toolcall>{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, ON"}} </toolcall>`,
+			want: []map[string]any{
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "fahrenheit", "location": "San Francisco, CA"}},
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "celsius", "location": "Toronto, ON"}},
+			},
+		},
+		{
+			input: `{"name": "get_current_weather", "arguments": `,
+			want:  nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			got := parseObjects(tc.input)
+
+			if diff := cmp.Diff(got, tc.want); diff != "" {
+				t.Errorf("mismatch (-got +want):\n%s", diff)
+			}
+		})
 	}
 }

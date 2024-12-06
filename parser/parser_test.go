@@ -3,6 +3,7 @@ package parser
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -180,8 +181,15 @@ func TestParseFileBadCommand(t *testing.T) {
 FROM foo
 BADCOMMAND param1 value1
 `
+	parserError := &ParserError{
+		LineNumber: 3,
+		Msg:        errInvalidCommand.Error(),
+	}
+
 	_, err := ParseFile(strings.NewReader(input))
-	require.ErrorIs(t, err, errInvalidCommand)
+	if !errors.As(err, &parserError) {
+		t.Errorf("unexpected error: expected: %s, actual: %s", parserError.Error(), err.Error())
+	}
 }
 
 func TestParseFileMessages(t *testing.T) {
@@ -245,7 +253,10 @@ FROM foo
 MESSAGE badguy I'm a bad guy!
 `,
 			nil,
-			errInvalidMessageRole,
+			&ParserError{
+				LineNumber: 3,
+				Msg:        errInvalidMessageRole.Error(),
+			},
 		},
 		{
 			`
@@ -264,13 +275,35 @@ MESSAGE system`,
 		},
 	}
 
-	for _, c := range cases {
+	for _, tt := range cases {
 		t.Run("", func(t *testing.T) {
-			modelfile, err := ParseFile(strings.NewReader(c.input))
-			require.ErrorIs(t, err, c.err)
+			modelfile, err := ParseFile(strings.NewReader(tt.input))
+
 			if modelfile != nil {
-				assert.Equal(t, c.expected, modelfile.Commands)
+				assert.Equal(t, tt.expected, modelfile.Commands)
 			}
+
+			if tt.err == nil {
+				if err != nil {
+					t.Fatalf("expected no error, but got %v", err)
+				}
+				return
+			}
+
+			switch tt.err.(type) {
+			case *ParserError:
+				var pErr *ParserError
+				if errors.As(err, &pErr) {
+					// got the correct type of error
+					return
+				}
+			}
+
+			if errors.Is(err, tt.err) {
+				return
+			}
+
+			t.Fatalf("unexpected error: expected: %v, actual: %v", tt.err, err)
 		})
 	}
 }
@@ -440,7 +473,6 @@ func TestParseFileParameters(t *testing.T) {
 		"num_gpu 1":                    {"num_gpu", "1"},
 		"main_gpu 1":                   {"main_gpu", "1"},
 		"low_vram true":                {"low_vram", "true"},
-		"f16_kv true":                  {"f16_kv", "true"},
 		"logits_all true":              {"logits_all", "true"},
 		"vocab_only true":              {"vocab_only", "true"},
 		"use_mmap true":                {"use_mmap", "true"},

@@ -320,8 +320,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					}
 					fmt.Println("Set system message.")
 					sb.Reset()
-
-					sb.Reset()
 					continue
 				default:
 					fmt.Printf("Unknown command '/set %s'. Type /? for help\n", args[1])
@@ -442,13 +440,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					return err
 				}
 
-				// clear all previous images for better responses
-				if len(images) > 0 {
-					for i := range opts.Messages {
-						opts.Messages[i].Images = nil
-					}
-				}
-
 				newMessage.Content = msg
 				newMessage.Images = images
 			}
@@ -501,35 +492,29 @@ func buildModelfile(opts runOptions) string {
 }
 
 func normalizeFilePath(fp string) string {
-	// Define a map of escaped characters and their replacements
-	replacements := map[string]string{
-		"\\ ":  " ",  // Escaped space
-		"\\(":  "(",  // Escaped left parenthesis
-		"\\)":  ")",  // Escaped right parenthesis
-		"\\[":  "[",  // Escaped left square bracket
-		"\\]":  "]",  // Escaped right square bracket
-		"\\{":  "{",  // Escaped left curly brace
-		"\\}":  "}",  // Escaped right curly brace
-		"\\$":  "$",  // Escaped dollar sign
-		"\\&":  "&",  // Escaped ampersand
-		"\\;":  ";",  // Escaped semicolon
-		"\\'":  "'",  // Escaped single quote
-		"\\\\": "\\", // Escaped backslash
-		"\\*":  "*",  // Escaped asterisk
-		"\\?":  "?",  // Escaped question mark
-	}
-
-	for escaped, actual := range replacements {
-		fp = strings.ReplaceAll(fp, escaped, actual)
-	}
-	return fp
+	return strings.NewReplacer(
+		"\\ ", " ", // Escaped space
+		"\\(", "(", // Escaped left parenthesis
+		"\\)", ")", // Escaped right parenthesis
+		"\\[", "[", // Escaped left square bracket
+		"\\]", "]", // Escaped right square bracket
+		"\\{", "{", // Escaped left curly brace
+		"\\}", "}", // Escaped right curly brace
+		"\\$", "$", // Escaped dollar sign
+		"\\&", "&", // Escaped ampersand
+		"\\;", ";", // Escaped semicolon
+		"\\'", "'", // Escaped single quote
+		"\\\\", "\\", // Escaped backslash
+		"\\*", "*", // Escaped asterisk
+		"\\?", "?", // Escaped question mark
+	).Replace(fp)
 }
 
 func extractFileNames(input string) []string {
 	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
 	// and followed by more characters and a file extension
 	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|svg)\b`
+	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png)\b`
 	re := regexp.MustCompile(regexPattern)
 
 	return re.FindAllString(input, -1)
@@ -542,10 +527,9 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 	for _, fp := range filePaths {
 		nfp := normalizeFilePath(fp)
 		data, err := getImageData(nfp)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
 			fmt.Fprintf(os.Stderr, "Couldn't process image: %q\n", err)
 			return "", imgs, err
 		}
@@ -553,7 +537,7 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 		input = strings.ReplaceAll(input, fp, "")
 		imgs = append(imgs, data)
 	}
-	return input, imgs, nil
+	return strings.TrimSpace(input), imgs, nil
 }
 
 func getImageData(filePath string) ([]byte, error) {
