@@ -1278,6 +1278,68 @@ Environment Variables:
 	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
 }
 
+func createCompletionCommand() *cobra.Command {
+	var completionCmd = &cobra.Command{
+		Use:   "completion [bash|zsh|fish|powershell]",
+		Short: "Generate completion script",
+		Long: `To load completions:
+
+Bash:
+
+  $ source <(ollama completion bash)
+
+  # To load completions for each session, execute once:
+  # Linux:
+  $ ollama completion bash > /etc/bash_completion.d/ollama
+  # macOS:
+  $ ollama completion bash > /usr/local/etc/bash_completion.d/ollama
+
+Zsh:
+
+  # If shell completion is not already enabled in your environment,
+  # you will need to enable it.  You can execute the following once:
+
+  $ echo "autoload -U compinit; compinit" >> ~/.zshrc
+
+  # To load completions for each session, execute once:
+  $ ollama completion zsh > "${fpath[1]}/_ollama"
+
+  # You will need to start a new shell for this setup to take effect.
+
+fish:
+
+  $ ollama completion fish | source
+
+  # To load completions for each session, execute once:
+  $ ollama completion fish > ~/.config/fish/completions/ollama.fish
+
+PowerShell:
+
+  PS> ollama completion powershell | Out-String | Invoke-Expression
+
+  # To load completions for every new session, run:
+  PS> ollama completion powershell > ollama.ps1
+  # and source this file from your PowerShell profile.
+`,
+		DisableFlagsInUseLine: true,
+		ValidArgs:             []string{"bash", "zsh", "fish", "powershell"},
+		Args:                  cobra.MatchAll(cobra.ExactArgs(1), cobra.OnlyValidArgs),
+		Run: func(cmd *cobra.Command, args []string) {
+			switch args[0] {
+			case "bash":
+				cmd.Root().GenBashCompletion(os.Stdout)
+			case "zsh":
+				cmd.Root().GenZshCompletion(os.Stdout)
+			case "fish":
+				cmd.Root().GenFishCompletion(os.Stdout, true)
+			case "powershell":
+				cmd.Root().GenPowerShellCompletionWithDesc(os.Stdout)
+			}
+		},
+	}
+	return completionCmd
+}
+
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
@@ -1412,6 +1474,8 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	completionCmd := createCompletionCommand()
+
 	envVars := envconfig.AsMap()
 
 	envs := []envconfig.EnvVar{envVars["OLLAMA_HOST"]}
@@ -1428,6 +1492,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		serveCmd,
+		completionCmd,
 	} {
 		switch cmd {
 		case runCmd:
@@ -1468,6 +1533,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		completionCmd,
 	)
 
 	return rootCmd
