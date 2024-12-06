@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"path/filepath"
 	"testing"
@@ -22,20 +21,24 @@ func TestDelete(t *testing.T) {
 
 	var s Server
 
-	fname, _ := createBinFile(t, nil, nil)
+	_, digest := createBinFile(t, nil, nil)
+	cfr := api.CreateFromRequest{
+		Type:  "gguf",
+		Files: []api.File{{Path: "test.gguf", Digest: digest}},
+	}
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		Modelfile: fmt.Sprintf("FROM %s", fname),
+		Name: "test",
+		From: cfr,
 	})
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected status code 200, actual %d", w.Code)
 	}
 
-	fname, _ = createBinFile(t, nil, nil)
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test2",
-		Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ .System }} {{ .Prompt }}", fname),
+		Name:     "test2",
+		From:     cfr,
+		Template: "{{ .System }} {{ .Prompt }}",
 	})
 
 	if w.Code != http.StatusOK {

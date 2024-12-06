@@ -17,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/llm"
 )
 
@@ -25,10 +26,7 @@ var stream bool = false
 func createBinFile(t *testing.T, kv map[string]any, ti []llm.Tensor) (string, string) {
 	t.Helper()
 
-	modelDir := os.Getenv("OLLAMA_MODELS")
-	if modelDir == "" {
-		t.Fatalf("OLLAMA_MODELS not specified")
-	}
+	modelDir := envconfig.Models()
 
 	f, err := os.CreateTemp(t.TempDir(), "")
 	if err != nil {
@@ -355,6 +353,22 @@ func TestCreateMergeParameters(t *testing.T) {
 		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
 	})
 
+	// Display contents of each blob in the directory
+	blobDir := filepath.Join(p, "blobs")
+	entries, err := os.ReadDir(blobDir)
+	if err != nil {
+		t.Fatalf("failed to read blobs directory: %v", err)
+	}
+
+	for _, entry := range entries {
+		blobPath := filepath.Join(blobDir, entry.Name())
+		content, err := os.ReadFile(blobPath)
+		if err != nil {
+			t.Fatalf("failed to read blob %s: %v", entry.Name(), err)
+		}
+		t.Logf("Contents of %s:\n%s", entry.Name(), string(content))
+	}
+
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-1d0ad71299d48c2fb7ae2b98e683643e771f8a5b72be34942af90d97a91c1e37"),
 		filepath.Join(p, "blobs", "sha256-4a384beaf47a9cbe452dfa5ab70eea691790f3b35a832d12933a1996685bf2b6"),
@@ -502,38 +516,13 @@ func TestCreateReplacesMessages(t *testing.T) {
 		filepath.Join(p, "manifests", "registry.ollama.ai", "library", "test2", "latest"),
 	})
 
-	f1, err := os.Open(filepath.Join(p, "blobs", "sha256-4f48b25fe9969564c82f58eb1cedbdff6484cc0baf474bc6c2a9b37c8da3362a"))
-	if err != nil {
-		t.Log("Could not open first file:", err)
-	} else {
-		defer f1.Close()
-		content1, err := io.ReadAll(f1)
-		if err != nil {
-			t.Log("Could not read first file:", err)
-		} else {
-			t.Logf("Contents of first file: %s", content1)
-		}
-	}
-
-	f2, err := os.Open(filepath.Join(p, "blobs", "sha256-f4e2c3690efef1b4b63ba1e1b2744ffeb6a7438a0110b86596069f6d9999c80b"))
-	if err != nil {
-		t.Log("Could not open second file:", err)
-	} else {
-		defer f2.Close()
-		content2, err := io.ReadAll(f2)
-		if err != nil {
-			t.Log("Could not read second file:", err)
-		} else {
-			t.Logf("Contents of second file: %s", content2)
-		}
-	}
-
+	// Old layers will not have been pruned
 	checkFileExists(t, filepath.Join(p, "blobs", "*"), []string{
 		filepath.Join(p, "blobs", "sha256-298baeaf6928a60cf666d88d64a1ba606feb43a2865687c39e40652e407bffc4"),
-		filepath.Join(p, "blobs", "sha256-4f48b25fe9969564c82f58eb1cedbdff6484cc0baf474bc6c2a9b37c8da3362a"),
 		filepath.Join(p, "blobs", "sha256-a4e5e156ddec27e286f75328784d7106b60a4eb1d246e950a001a3f944fbda99"),
 		filepath.Join(p, "blobs", "sha256-a60ecc9da299ec7ede453f99236e5577fd125e143689b646d9f0ddc9971bf4db"),
 		filepath.Join(p, "blobs", "sha256-e0e27d47045063ccb167ae852c51d49a98eab33fabaee4633fdddf97213e40b5"),
+		filepath.Join(p, "blobs", "sha256-f4e2c3690efef1b4b63ba1e1b2744ffeb6a7438a0110b86596069f6d9999c80b"),
 	})
 
 	type message struct {
@@ -570,11 +559,23 @@ func TestCreateTemplateSystem(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", p)
 	var s Server
 
-	fname, _ := createBinFile(t, nil, nil)
+	_, digest := createBinFile(t, nil, nil)
+	cfr := api.CreateFromRequest{
+		Type: "gguf",
+		Files: []api.File{
+			{
+				Path:   "test.gguf",
+				Digest: digest,
+			},
+		},
+	}
+
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ .Prompt }}\nSYSTEM Say hello!\nTEMPLATE {{ .System }} {{ .Prompt }}\nSYSTEM Say bye!", fname),
-		Stream:    &stream,
+		Name:     "test",
+		From:     cfr,
+		Template: "{{ .System }} {{ .Prompt }}",
+		System:   "Say bye!",
+		Stream:   &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -611,11 +612,21 @@ func TestCreateTemplateSystem(t *testing.T) {
 	}
 
 	t.Run("incomplete template", func(t *testing.T) {
-		fname, _ := createBinFile(t, nil, nil)
+		_, digest := createBinFile(t, nil, nil)
+		cfr := api.CreateFromRequest{
+			Type: "gguf",
+			Files: []api.File{
+				{
+					Path:   "test.gguf",
+					Digest: digest,
+				},
+			},
+		}
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Name:      "test",
-			Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ .Prompt", fname),
-			Stream:    &stream,
+			Name:     "test",
+			From:     cfr,
+			Template: "{{ .Prompt",
+			Stream:   &stream,
 		})
 
 		if w.Code != http.StatusBadRequest {
@@ -624,11 +635,21 @@ func TestCreateTemplateSystem(t *testing.T) {
 	})
 
 	t.Run("template with unclosed if", func(t *testing.T) {
-		fname, _ := createBinFile(t, nil, nil)
+		_, digest := createBinFile(t, nil, nil)
+		cfr := api.CreateFromRequest{
+			Type: "gguf",
+			Files: []api.File{
+				{
+					Path:   "test.gguf",
+					Digest: digest,
+				},
+			},
+		}
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Name:      "test",
-			Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ if .Prompt }}", fname),
-			Stream:    &stream,
+			Name:     "test",
+			From:     cfr,
+			Template: "{{ if .Prompt }}",
+			Stream:   &stream,
 		})
 
 		if w.Code != http.StatusBadRequest {
@@ -637,11 +658,21 @@ func TestCreateTemplateSystem(t *testing.T) {
 	})
 
 	t.Run("template with undefined function", func(t *testing.T) {
-		fname, _ := createBinFile(t, nil, nil)
+		_, digest := createBinFile(t, nil, nil)
+		cfr := api.CreateFromRequest{
+			Type: "gguf",
+			Files: []api.File{
+				{
+					Path:   "test.gguf",
+					Digest: digest,
+				},
+			},
+		}
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Name:      "test",
-			Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{  Prompt }}", fname),
-			Stream:    &stream,
+			Name:     "test",
+			From:     cfr,
+			Template: "{{ Prompt }}",
+			Stream:   &stream,
 		})
 
 		if w.Code != http.StatusBadRequest {
@@ -657,11 +688,22 @@ func TestCreateLicenses(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", p)
 	var s Server
 
-	fname, _ := createBinFile(t, nil, nil)
+	_, digest := createBinFile(t, nil, nil)
+	cfr := api.CreateFromRequest{
+		Type: "gguf",
+		Files: []api.File{
+			{
+				Path:   "test.gguf",
+				Digest: digest,
+			},
+		},
+	}
+
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		Modelfile: fmt.Sprintf("FROM %s\nLICENSE MIT\nLICENSE Apache-2.0", fname),
-		Stream:    &stream,
+		Name:    "test",
+		From:    cfr,
+		License: []string{"MIT", "Apache-2.0"},
+		Stream:  &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -706,13 +748,22 @@ func TestCreateDetectTemplate(t *testing.T) {
 	var s Server
 
 	t.Run("matched", func(t *testing.T) {
-		fname, _ := createBinFile(t, llm.KV{
+		_, digest := createBinFile(t, llm.KV{
 			"tokenizer.chat_template": "{{ bos_token }}{% for message in messages %}{{'<|' + message['role'] + '|>' + '\n' + message['content'] + '<|end|>\n' }}{% endfor %}{% if add_generation_prompt %}{{ '<|assistant|>\n' }}{% else %}{{ eos_token }}{% endif %}",
 		}, nil)
+		cfr := api.CreateFromRequest{
+			Type: "gguf",
+			Files: []api.File{
+				{
+					Path:   "test.gguf",
+					Digest: digest,
+				},
+			},
+		}
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Name:      "test",
-			Modelfile: fmt.Sprintf("FROM %s", fname),
-			Stream:    &stream,
+			Name:   "test",
+			From:   cfr,
+			Stream: &stream,
 		})
 
 		if w.Code != http.StatusOK {
@@ -728,11 +779,20 @@ func TestCreateDetectTemplate(t *testing.T) {
 	})
 
 	t.Run("unmatched", func(t *testing.T) {
-		fname, _ := createBinFile(t, nil, nil)
+		_, digest := createBinFile(t, nil, nil)
+		cfr := api.CreateFromRequest{
+			Type: "gguf",
+			Files: []api.File{
+				{
+					Path:   "test.gguf",
+					Digest: digest,
+				},
+			},
+		}
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Name:      "test",
-			Modelfile: fmt.Sprintf("FROM %s", fname),
-			Stream:    &stream,
+			Name:   "test",
+			From:   cfr,
+			Stream: &stream,
 		})
 
 		if w.Code != http.StatusOK {

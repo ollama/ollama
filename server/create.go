@@ -104,6 +104,10 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		}
 
 		if err := createModel(r, name, baseLayers, fn); err != nil {
+			if errors.Is(err, errBadTemplate) {
+				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				return
+			}
 			ch <- gin.H{"error": err.Error()}
 			return
 		}
@@ -449,6 +453,9 @@ func setTemplate(layers []Layer, t string) ([]Layer, error) {
 	if _, err := template.Parse(t); err != nil {
 		return nil, fmt.Errorf("%w: %s", errBadTemplate, err)
 	}
+	if _, err := template.Parse(t); err != nil {
+		return nil, fmt.Errorf("%w: %s", errBadTemplate, err)
+	}
 
 	blob := strings.NewReader(t)
 	layer, err := NewLayer(blob, "application/vnd.ollama.image.template")
@@ -484,8 +491,11 @@ func setLicense(layers []Layer, l string) ([]Layer, error) {
 }
 
 func setParameters(layers []Layer, p map[string]any) ([]Layer, error) {
+	if p == nil {
+		p = make(map[string]any)
+	}
 	for _, layer := range layers {
-		if layer.MediaType != "application/vnd.ollama.image.parameters" {
+		if layer.MediaType != "application/vnd.ollama.image.params" {
 			continue
 		}
 
@@ -517,13 +527,13 @@ func setParameters(layers []Layer, p map[string]any) ([]Layer, error) {
 		return layers, nil
 	}
 
-	layers = removeLayer(layers, "application/vnd.ollama.image.parameters")
+	layers = removeLayer(layers, "application/vnd.ollama.image.params")
 
 	var b bytes.Buffer
 	if err := json.NewEncoder(&b).Encode(p); err != nil {
 		return nil, err
 	}
-	layer, err := NewLayer(&b, "application/vnd.ollama.image.parameters")
+	layer, err := NewLayer(&b, "application/vnd.ollama.image.params")
 	if err != nil {
 		return nil, err
 	}
@@ -557,6 +567,9 @@ func setMessages(layers []Layer, m []api.Message) ([]Layer, error) {
 			m = append(existing, m...)
 		}
 	*/
+	for _, layer := range layers {
+		fmt.Printf("layer mediatype: %s\n", layer.MediaType)
+	}
 
 	// this leaves the old messages intact if no new messages were specified
 	// which may not be the correct behaviour
@@ -564,6 +577,7 @@ func setMessages(layers []Layer, m []api.Message) ([]Layer, error) {
 		return layers, nil
 	}
 
+	fmt.Printf("removing old messages\n")
 	layers = removeLayer(layers, "application/vnd.ollama.image.messages")
 	var b bytes.Buffer
 	if err := json.NewEncoder(&b).Encode(m); err != nil {
