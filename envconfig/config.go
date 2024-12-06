@@ -2,6 +2,7 @@ package envconfig
 
 import (
 	"fmt"
+	"golang.org/x/exp/maps"
 	"log/slog"
 	"math"
 	"net"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -278,12 +280,14 @@ func AsMap() map[string]EnvVar {
 	return ret
 }
 
-func Values() map[string]string {
-	vals := make(map[string]string)
-	for k, v := range AsMap() {
-		vals[k] = fmt.Sprintf("%v", v.Value)
+func SlogPrint(header string) {
+	m := AsMap()
+	names := maps.Keys(m)
+	slices.Sort(names)
+	slog.Info(header)
+	for _, name := range names {
+		slog.Info(fmt.Sprintf("env: %v=%q", name, m[name]))
 	}
-	return vals
 }
 
 // Var returns an environment variable stripped of leading and trailing quotes or spaces
