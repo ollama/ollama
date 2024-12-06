@@ -4,10 +4,10 @@ This example provides an interface for asking questions to a PDF document.
 
 ## Setup
 
-1. Ensure you have the `llama3.2` model installed:
+1. Ensure you have the `llama3.3` model installed:
 
 ```
-ollama pull llama3.2
+ollama pull llama3.3
 ```
 
 2. Install the Python Requirements.
