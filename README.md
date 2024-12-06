@@ -49,12 +49,12 @@ Here are some example models that can be downloaded:
 
 | Model              | Parameters | Size  | Download                         |
 | ------------------ | ---------- | ----- | -------------------------------- |
+| Llama 3.3          | 70B        | 43GB  | `ollama run llama3.3`            |
 | Llama 3.2          | 3B         | 2.0GB | `ollama run llama3.2`            |
 | Llama 3.2          | 1B         | 1.3GB | `ollama run llama3.2:1b`         |
 | Llama 3.2 Vision   | 11B        | 7.9GB | `ollama run llama3.2-vision`     |
 | Llama 3.2 Vision   | 90B        | 55GB  | `ollama run llama3.2-vision:90b` |
 | Llama 3.1          | 8B         | 4.7GB | `ollama run llama3.1`            |
-| Llama 3.1          | 70B        | 40GB  | `ollama run llama3.1:70b`        |
 | Llama 3.1          | 405B       | 231GB | `ollama run llama3.1:405b`       |
 | Phi 3 Mini         | 3.8B       | 2.3GB | `ollama run phi3`                |
 | Phi 3 Medium       | 14B        | 7.9GB | `ollama run phi3:medium`         |
