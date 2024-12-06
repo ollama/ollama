@@ -44,9 +44,8 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 			return "", nil, errTooManyImages
 		}
 
-		// always include the last message
-		if i == n {
-			continue
+		if i == 0 && msgs[i].Role == "system" {
+			break
 		}
 
 		system = make([]api.Message, 0)
@@ -54,6 +53,11 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 			if msgs[j].Role == "system" {
 				system = append(system, msgs[j])
 			}
+		}
+
+		// always include the last message
+		if i == n {
+			continue
 		}
 
 		var b bytes.Buffer
