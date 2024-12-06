@@ -114,5 +114,13 @@ In some Linux distributions, SELinux can prevent containers from
 accessing the AMD GPU devices.  On the host system you can run 
 `sudo setsebool container_use_devices=1` to allow containers to use devices.
 
-### Metal (Apple GPUs)
+### Multiple GPU Workarounds
+
+In some configurations, multiple AMD GPUs can generate gibberish responses due
+to bugs in peer-to-peer copy.  If you experience this behavior, set
+`OLLAMA_NO_PEER_COPY=1` for the server to disable peer-to-peer copying between
+the GPUs.  This will cause slower memory copy performance, so only enable if you
+experience gibberish responses.
+
+## Metal (Apple GPUs)
 Ollama supports GPU acceleration on Apple devices via the Metal API.
