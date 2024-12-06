@@ -25,7 +25,7 @@ chat_completion = client.chat.completions.create(
             'content': 'Say this is a test',
         }
     ],
-    model='llama3.2',
+    model='llama3.3',
 )
 
 response = client.chat.completions.create(
@@ -46,13 +46,13 @@ response = client.chat.completions.create(
 )
 
 completion = client.completions.create(
-    model="llama3.2",
+    model="llama3.3",
     prompt="Say this is a test",
 )
 
 list_completion = client.models.list()
 
-model = client.models.retrieve("llama3.2")
+model = client.models.retrieve("llama3.3")
 
 embeddings = client.embeddings.create(
     model="all-minilm",
@@ -108,7 +108,7 @@ const openai = new OpenAI({
 
 const chatCompletion = await openai.chat.completions.create({
     messages: [{ role: 'user', content: 'Say this is a test' }],
-    model: 'llama3.2',
+    model: 'llama3.3',
 })
 
 const response = await openai.chat.completions.create({
@@ -128,13 +128,13 @@ const response = await openai.chat.completions.create({
 })
 
 const completion = await openai.completions.create({
-    model: "llama3.2",
+    model: "llama3.3",
     prompt: "Say this is a test.",
 })
 
 const listCompletion = await openai.models.list()
 
-const model = await openai.models.retrieve("llama3.2")
+const model = await openai.models.retrieve("llama3.3")
 
 const embedding = await openai.embeddings.create({
   model: "all-minilm",
@@ -148,7 +148,7 @@ const embedding = await openai.embeddings.create({
 curl http://localhost:11434/v1/chat/completions \
     -H "Content-Type: application/json" \
     -d '{
-        "model": "llama3.2",
+        "model": "llama3.3",
         "messages": [
             {
                 "role": "system",
@@ -188,13 +188,13 @@ curl http://localhost:11434/v1/chat/completions \
 curl http://localhost:11434/v1/completions \
     -H "Content-Type: application/json" \
     -d '{
-        "model": "llama3.2",
+        "model": "llama3.3",
         "prompt": "Say this is a test"
     }'
 
 curl http://localhost:11434/v1/models
 
-curl http://localhost:11434/v1/models/llama3.2
+curl http://localhost:11434/v1/models/llama3.3
 
 curl http://localhost:11434/v1/embeddings \
     -H "Content-Type: application/json" \
@@ -308,7 +308,7 @@ curl http://localhost:11434/v1/embeddings \
 Before using a model, pull it locally `ollama pull`:
 
 ```shell
-ollama pull llama3.2
+ollama pull llama3.3
 ```
 
 ### Default model names
@@ -316,7 +316,7 @@ ollama pull llama3.2
 For tooling that relies on default OpenAI model names such as `gpt-3.5-turbo`, use `ollama cp` to copy an existing model name to a temporary name:
 
 ```
-ollama cp llama3.2 gpt-3.5-turbo
+ollama cp llama3.3 gpt-3.5-turbo
 ```
 
 Afterwards, this new model name can be specified the `model` field:

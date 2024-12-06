@@ -66,7 +66,7 @@ docker run -d --device /dev/kfd --device /dev/dri -v ollama:/root/.ollama -p 114
 Now you can run a model:
 
 ```
-docker exec -it ollama ollama run llama3.2
+docker exec -it ollama ollama run llama3.3
 ```
 
 ### Try different models
