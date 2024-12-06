@@ -23,13 +23,16 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
+	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/types/registry"
 	"github.com/ollama/ollama/version"
 )
 
@@ -980,8 +983,6 @@ func GetSHA256Digest(r io.Reader) (string, int64) {
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), n
 }
 
-var errUnauthorized = errors.New("unauthorized: access denied")
-
 func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *registryOptions) (*http.Response, error) {
 	for range 2 {
 		resp, err := makeRequest(ctx, method, requestURL, headers, body, regOpts)
@@ -1019,13 +1020,33 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 			if err != nil {
 				return nil, fmt.Errorf("%d: %s", resp.StatusCode, err)
 			}
+
+			var re registry.Errs
+			if err := json.Unmarshal(responseBody, &re); err == nil && len(re.Errors) > 0 {
+				if re.HasCode(registry.ErrCodeAnonymous) {
+					// if the error is due to anonymous access return a custom error
+					// this error is used by the CLI to direct a user to add their key to an account
+					pubKey, nestedErr := auth.GetPublicKey()
+					if nestedErr != nil {
+						slog.Error(fmt.Sprintf("couldn't get public key: %v", nestedErr))
+						return nil, re
+					}
+					return nil, errtypes.UnknownOllamaKey{
+						Key: pubKey,
+					}
+				}
+				return nil, re
+			}
+
+			// Fallback to returning the raw response if parsing fails
 			return nil, fmt.Errorf("%d: %s", resp.StatusCode, responseBody)
 		default:
 			return resp, nil
 		}
 	}
 
-	return nil, errUnauthorized
+	// should never be reached
+	return nil, fmt.Errorf("failed to make upload request")
 }
 
 // testMakeRequestDialContext specifies the dial function for the http client in
