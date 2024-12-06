@@ -1036,6 +1036,10 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		return nil
 	}
 
+	if opts.Format == "json" {
+		opts.Format = `"` + opts.Format + `"`
+	}
+
 	req := &api.ChatRequest{
 		Model:    opts.Model,
 		Messages: opts.Messages,
@@ -1119,6 +1123,10 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		if err != nil {
 			return err
 		}
+	}
+
+	if opts.Format == "json" {
+		opts.Format = `"` + opts.Format + `"`
 	}
 
 	request := api.GenerateRequest{
