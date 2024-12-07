@@ -141,6 +141,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 			fi, err := os.Stat(path)
 			if errors.Is(err, os.ErrNotExist) && modelfile.Commands[i].Name == "model" {
+				request.From = modelfile.Commands[i].Args
 				continue
 			} else if err != nil {
 				return err
@@ -198,7 +199,21 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			role, msg, _ := strings.Cut(modelfile.Commands[i].Args, ": ")
 			messages = append(messages, api.Message{Role: role, Content: msg})
 		default:
-			parameters[modelfile.Commands[i].Name] = modelfile.Commands[i].Args
+			c := modelfile.Commands[i]
+                        ps, err := api.FormatParams(map[string][]string{c.Name: {c.Args}})
+                        if err != nil {
+                                return err
+                        }
+
+                        for k, v := range ps {
+                                if ks, ok := parameters[k].([]string); ok {
+                                        parameters[k] = append(ks, v.([]string)...)
+                                } else if vs, ok := v.([]string); ok {
+                                        parameters[k] = vs
+                                } else {
+                                        parameters[k] = v
+                                }
+                        }
 		}
 	}
 

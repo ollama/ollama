@@ -97,10 +97,13 @@ func (s *Server) CreateHandler(c *gin.Context) {
 						return
 					}
 				default:
-					ch <- gin.H{"error": fmt.Sprintf("unknown type: %s", cfr.Type), "status": http.StatusBadRequest}
+					ch <- gin.H{"error": fmt.Sprintf("unknown from type: %s", cfr.Type), "status": http.StatusBadRequest}
 					return
 				}
 			}
+		default:
+			ch <- gin.H{"error": fmt.Sprintf("unknown from type: %T", v), "status": http.StatusBadRequest}
+			return
 		}
 
 		if err := createModel(r, name, baseLayers, fn); err != nil {
