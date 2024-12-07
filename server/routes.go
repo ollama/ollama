@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -44,8 +45,9 @@ import (
 var mode string = gin.DebugMode
 
 type Server struct {
-	addr  net.Addr
-	sched *Scheduler
+	addr      net.Addr
+	sched     *Scheduler
+	runnerDir string
 }
 
 func init() {
@@ -1164,6 +1166,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
 	r.GET("/api/ps", s.PsHandler)
+	r.GET("/api/info", s.InfoHandler)
 
 	// Compatibility endpoints
 	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)
@@ -1268,9 +1271,11 @@ func Serve(ln net.Listener) error {
 		done()
 	}()
 
-	if _, err := runners.Refresh(build.EmbedFS); err != nil {
+	runnerDir, err := runners.Refresh(build.EmbedFS)
+	if err != nil {
 		return fmt.Errorf("unable to initialize llm runners %w", err)
 	}
+	s.runnerDir = runnerDir
 
 	s.sched.Run(schedCtx)
 
@@ -1346,6 +1351,7 @@ func streamResponse(c *gin.Context, ch chan any) {
 func (s *Server) PsHandler(c *gin.Context) {
 	models := []api.ProcessModelResponse{}
 
+	s.sched.loadedMu.Lock()
 	for _, v := range s.sched.loaded {
 		model := v.model
 		modelDetails := api.ModelDetails{
@@ -1375,6 +1381,7 @@ func (s *Server) PsHandler(c *gin.Context) {
 
 		models = append(models, mr)
 	}
+	s.sched.loadedMu.Unlock()
 
 	slices.SortStableFunc(models, func(i, j api.ProcessModelResponse) int {
 		// longest duration remaining listed first
@@ -1382,6 +1389,96 @@ func (s *Server) PsHandler(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusOK, api.ProcessResponse{Models: models})
+}
+
+func (s *Server) InfoHandler(c *gin.Context) {
+	availRunners := []string{}
+	for k := range runners.GetAvailableServers(s.runnerDir) {
+		availRunners = append(availRunners, k)
+	}
+	sort.Strings(availRunners)
+
+	sysInfo := discover.GetSystemInfo()
+	ms, _ := Manifests(true)
+	fsUsed := uint64(0)
+	layers := map[string]interface{}{}
+	for _, m := range ms {
+		for _, l := range m.Layers {
+			if _, counted := layers[l.Digest]; !counted {
+				layers[l.Digest] = struct{}{}
+				fsUsed += uint64(l.Size)
+			}
+		}
+	}
+	vramUsed := uint64(0)
+	s.sched.loadedMu.Lock()
+	runningCount := len(s.sched.loaded)
+	for _, r := range s.sched.loaded {
+		vramUsed += r.estimatedVRAM
+	}
+	s.sched.loadedMu.Unlock()
+	supportedGPUs := make([]api.GPUInfo, len(sysInfo.GPUs))
+	for i, gpu := range sysInfo.GPUs {
+		supportedGPUs[i].ID = gpu.ID
+		supportedGPUs[i].Name = gpu.Name
+		supportedGPUs[i].TotalMemory = gpu.TotalMemory
+		supportedGPUs[i].FreeMemory = gpu.FreeMemory
+		supportedGPUs[i].Compute = gpu.Compute
+		if gpu.DriverMajor > 0 {
+			supportedGPUs[i].Driver = fmt.Sprintf("%d.%d", gpu.DriverMajor, gpu.DriverMinor)
+		} else {
+			supportedGPUs[i].Driver = "upstream driver"
+		}
+		supportedGPUs[i].Runner = gpu.Library
+		if gpu.Variant != "" {
+			supportedGPUs[i].Runner += "_" + gpu.Variant
+		}
+	}
+	unsupportedGPUs := make([]api.UnsupportedGPUInfo, len(sysInfo.UnsupportedGPUs))
+	for i, gpu := range sysInfo.UnsupportedGPUs {
+		unsupportedGPUs[i].Error = gpu.Reason
+		unsupportedGPUs[i].ID = gpu.ID
+		unsupportedGPUs[i].Name = gpu.Name
+		unsupportedGPUs[i].TotalMemory = gpu.TotalMemory
+		unsupportedGPUs[i].FreeMemory = gpu.FreeMemory
+		unsupportedGPUs[i].Compute = gpu.Compute
+		if gpu.DriverMajor > 0 {
+			unsupportedGPUs[i].Driver = fmt.Sprintf("%d.%d", gpu.DriverMajor, gpu.DriverMinor)
+		} else {
+			unsupportedGPUs[i].Driver = "upstream driver"
+		}
+		unsupportedGPUs[i].Runner = gpu.Library
+		if gpu.Variant != "" {
+			unsupportedGPUs[i].Runner += "_" + gpu.Variant
+		}
+	}
+	cores := 0
+	for _, cpu := range sysInfo.System.CPUs {
+		cores += cpu.CoreCount
+	}
+	info := api.InfoResponse{
+		Version: version.Version,
+		Models: api.SystemModelInfo{
+			Store:          envconfig.Models(),
+			Count:          len(ms),
+			FilesystemUsed: fsUsed,
+			Running:        runningCount,
+			VRAMUsed:       vramUsed,
+		},
+		ComputeInfo: api.ComputeInfo{
+			AvailableRunners: availRunners,
+			SystemCompute: api.SystemComputeInfo{
+				CPUCores:    cores,
+				TotalMemory: sysInfo.System.TotalMemory,
+				FreeMemory:  sysInfo.System.FreeMemory,
+				FreeSwap:    sysInfo.System.FreeSwap,
+			},
+			SupportedGPUs:   supportedGPUs,
+			UnsupportedGPUs: unsupportedGPUs,
+			DiscoveryErrors: sysInfo.DiscoveryErrors,
+		},
+	}
+	c.JSON(http.StatusOK, info)
 }
 
 func (s *Server) ChatHandler(c *gin.Context) {
