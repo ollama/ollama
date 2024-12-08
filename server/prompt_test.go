@@ -95,7 +95,7 @@ func TestChatPrompt(t *testing.T) {
 				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{[]byte("something")}},
 			},
 			expect: expect{
-				prompt: "[img-0] A test. And a thumping good one at that, I'd wager. ",
+				prompt: "[img-0]A test. And a thumping good one at that, I'd wager. ",
 				images: [][]byte{
 					[]byte("something"),
 				},
@@ -111,7 +111,7 @@ func TestChatPrompt(t *testing.T) {
 				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{[]byte("somethingelse")}},
 			},
 			expect: expect{
-				prompt: "[img-0] A test. And a thumping good one at that, I'd wager. ",
+				prompt: "[img-0]A test. And a thumping good one at that, I'd wager. ",
 				images: [][]byte{
 					[]byte("somethingelse"),
 				},
@@ -127,7 +127,7 @@ func TestChatPrompt(t *testing.T) {
 				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{[]byte("somethingelse")}},
 			},
 			expect: expect{
-				prompt: "[img-0] You're a test, Harry! I-I'm a what? [img-1] A test. And a thumping good one at that, I'd wager. ",
+				prompt: "[img-0]You're a test, Harry! I-I'm a what? [img-1]A test. And a thumping good one at that, I'd wager. ",
 				images: [][]byte{
 					[]byte("something"),
 					[]byte("somethingelse"),
@@ -144,7 +144,7 @@ func TestChatPrompt(t *testing.T) {
 				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager.", Images: []api.ImageData{[]byte("somethingelse")}},
 			},
 			expect: expect{
-				prompt: "You're a test, Harry! [img-0] I-I'm a what? [img-1] A test. And a thumping good one at that, I'd wager. ",
+				prompt: "You're a test, Harry! [img-0] I-I'm a what? [img-1]A test. And a thumping good one at that, I'd wager. ",
 				images: [][]byte{
 					[]byte("something"),
 					[]byte("somethingelse"),
@@ -224,7 +224,7 @@ func TestChatPrompt(t *testing.T) {
 				{Role: "user", Content: "Compare these two pictures of hotdogs", Images: []api.ImageData{[]byte("one hotdog"), []byte("two hotdogs")}},
 			},
 			expect: expect{
-				prompt: "[img-0][img-1] Compare these two pictures of hotdogs ",
+				prompt: "[img-0][img-1]Compare these two pictures of hotdogs ",
 				images: [][]byte{[]byte("one hotdog"), []byte("two hotdogs")},
 			},
 		},
