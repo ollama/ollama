@@ -61,7 +61,7 @@ embeddings = client.embeddings.create(
 ```
 #### Structured outputs
 ```py
-rom pydantic import BaseModel
+from pydantic import BaseModel
 from openai import OpenAI
 
 client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
