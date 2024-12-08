@@ -25,7 +25,6 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/build"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
@@ -144,20 +143,13 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 	// Loop through potential servers
 	finalErr := errors.New("no suitable llama servers found")
 
-	rDir, err := runners.Refresh(build.EmbedFS)
-	if err != nil {
-		return nil, err
-	}
+	availableServers := runners.GetAvailableServers()
 
-	availableServers := runners.GetAvailableServers(rDir)
-	if len(availableServers) == 0 {
-		return nil, finalErr
-	}
 	var servers []string
 	if cpuRunner != "" {
 		servers = []string{cpuRunner}
 	} else {
-		servers = runners.ServersForGpu(gpus[0]) // All GPUs in the list are matching Library and Variant
+		servers = runners.ServersForGpu(gpus[0].RunnerName()) // All GPUs in the list are matching Library and Variant
 	}
 	demandLib := envconfig.LLMLibrary()
 	if demandLib != "" {
@@ -167,7 +159,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		} else {
 			slog.Info("user override", "OLLAMA_LLM_LIBRARY", demandLib, "path", serverPath)
 			servers = []string{demandLib}
-			if strings.HasPrefix(demandLib, "cpu") {
+			if strings.HasPrefix(demandLib, "cpu") || (!(runtime.GOOS == "darwin" && runtime.GOARCH == "arm64") && demandLib == runners.BuiltinName()) {
 				// Omit the GPU flag to silence the warning
 				opts.NumGPU = -1
 			}
@@ -279,15 +271,16 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 	}
 
 	for i := range servers {
-		dir := availableServers[servers[i]]
-		if dir == "" {
+		builtin := servers[i] == runners.BuiltinName()
+		server := availableServers[servers[i]]
+		if server == "" {
 			// Shouldn't happen
 			finalErr = fmt.Errorf("[%d] server %s not listed in available servers %v", i, servers[i], availableServers)
 			slog.Error("server list inconsistent", "error", finalErr)
 			continue
 		}
 
-		if strings.HasPrefix(servers[i], "cpu") {
+		if strings.HasPrefix(servers[i], "cpu") || (builtin && !(runtime.GOOS == "darwin" && runtime.GOARCH == "arm64")) {
 			gpus = discover.GetCPUInfo()
 		}
 
@@ -304,14 +297,16 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 			slog.Debug("ResolveTCPAddr failed ", "error", err)
 			port = rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
 		}
-		finalParams := append(params, "--port", strconv.Itoa(port))
+		finalParams := []string{"runner"}
+		finalParams = append(finalParams, params...)
+		finalParams = append(finalParams, "--port", strconv.Itoa(port))
 
 		pathEnv := "LD_LIBRARY_PATH"
 		if runtime.GOOS == "windows" {
 			pathEnv = "PATH"
 		}
 		// Start with the server directory for the LD_LIBRARY_PATH/PATH
-		libraryPaths := []string{dir}
+		libraryPaths := []string{filepath.Dir(server)}
 
 		if libraryPath, ok := os.LookupEnv(pathEnv); ok {
 			// favor our bundled library dependencies over system libraries
@@ -323,22 +318,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		if gpus[0].DependencyPath != nil {
 			// assume gpus from the same library have the same dependency path
 			libraryPaths = append(gpus[0].DependencyPath, libraryPaths...)
-		}
-
-		server := filepath.Join(dir, "ollama_llama_server")
-		if runtime.GOOS == "windows" {
-			server += ".exe"
-		}
-
-		// Detect tmp cleaners wiping out the file
-		_, err := os.Stat(server)
-		if errors.Is(err, os.ErrNotExist) {
-			slog.Warn("llama server disappeared, reinitializing payloads", "path", server, "error", err)
-			_, err = runners.Refresh(build.EmbedFS)
-			if err != nil {
-				slog.Warn("failed to reinitialize payloads", "error", err)
-				return nil, err
-			}
 		}
 
 		// TODO - once fully switched to the Go runner, load the model here for tokenize/detokenize cgo access
@@ -417,7 +396,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		if err = s.cmd.Start(); err != nil {
 			// Detect permission denied and augment the message about noexec
 			if errors.Is(err, os.ErrPermission) {
-				finalErr = fmt.Errorf("unable to start server %w.  %s may have noexec set.  Set OLLAMA_TMPDIR for server to a writable executable directory", err, dir)
+				finalErr = fmt.Errorf("unable to start server %w.  %s may have noexec set.  Set OLLAMA_TMPDIR for server to a writable executable directory", err, server)
 				continue
 			}
 			msg := ""
