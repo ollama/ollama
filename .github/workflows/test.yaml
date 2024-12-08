@@ -69,6 +69,7 @@ jobs:
           git config --global --add safe.directory /__w/ollama/ollama
           cores=$(grep '^core id' /proc/cpuinfo |sort -u|wc -l)
           make -j $cores cuda_v11
+
   runners-linux-rocm:
     needs: [changes]
     if: ${{ needs.changes.outputs.RUNNERS == 'True' }}
@@ -93,6 +94,31 @@ jobs:
           git config --global --add safe.directory /__w/ollama/ollama
           cores=$(grep '^core id' /proc/cpuinfo |sort -u|wc -l)
           make -j $cores rocm
+
+  runners-linux-musa:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.RUNNERS == 'True' }}
+    strategy:
+      matrix:
+        musa-version:
+          - 'rc3.1.0'
+    runs-on: linux
+    container: mthreads/musa:${{ matrix.musa-version }}-devel-ubuntu22.04
+    steps:
+      - run: |
+          apt-get update && apt-get install -y git build-essential curl
+        env:
+          DEBIAN_FRONTEND: noninteractive
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v4
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go get ./...
+      - run: |
+          git config --global --add safe.directory /__w/ollama/ollama
+          cores=$(grep '^core id' /proc/cpuinfo |sort -u|wc -l)
+          make -j $cores musa_v1
 
   # ROCm generation step
   runners-windows-rocm:
@@ -180,7 +206,7 @@ jobs:
         run: |
           & (resolve-path "c:\Program Files\NVIDIA*\CUDA\v*\bin\nvcc.exe")[0] --version
           $cudaPath=((resolve-path "c:\Program Files\NVIDIA*\CUDA\v*\bin\nvcc.exe")[0].path | split-path | split-path)
-          $cudaVer=($cudaPath | split-path -leaf ) -replace 'v(\d+).(\d+)', '$1_$2' 
+          $cudaVer=($cudaPath | split-path -leaf ) -replace 'v(\d+).(\d+)', '$1_$2'
           echo "$cudaPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "CUDA_PATH=$cudaPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           echo "CUDA_PATH_V${cudaVer}=$cudaPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
