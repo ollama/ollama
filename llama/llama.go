@@ -85,12 +85,9 @@ COMPILER inline get_compiler() {
 import "C"
 
 import (
-	"bytes"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"runtime"
 	"runtime/cgo"
 	"slices"
@@ -703,21 +700,10 @@ func (s *SamplingContext) Accept(id int, applyGrammar bool) {
 	C.gpt_sampler_caccept(s.c, C.llama_token(id), C.bool(applyGrammar))
 }
 
-type JsonSchema struct {
-	Defs       map[string]any `json:"$defs,omitempty"`
-	Properties map[string]any `json:"properties,omitempty"`
-	Required   []string       `json:"required,omitempty"`
-	Title      string         `json:"title,omitempty"`
-	Type       string         `json:"type,omitempty"`
-}
-
-func (js JsonSchema) AsGrammar() string {
-	var b bytes.Buffer
-	if err := json.NewEncoder(&b).Encode(js); err != nil {
-		return ""
-	}
-
-	cStr := C.CString(b.String())
+// SchemaToGrammar converts the provided JSON schema to a grammar. It returns
+// nil if the provided schema is invalid JSON or an invalid JSON schema.
+func SchemaToGrammar(schema []byte) []byte {
+	cStr := C.CString(string(schema))
 	defer C.free(unsafe.Pointer(cStr))
 
 	// Allocate buffer for grammar output with reasonable size
@@ -725,10 +711,10 @@ func (js JsonSchema) AsGrammar() string {
 	buf := make([]byte, maxLen)
 
 	// Call C function to convert schema to grammar
-	length := C.schema_to_grammar(cStr, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(maxLen))
-	if length == 0 {
-		slog.Warn("unable to convert schema to grammar")
+	n := C.schema_to_grammar(cStr, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(maxLen))
+	if n == 0 {
+		// preserve nil
+		return nil
 	}
-
-	return string(buf[:length])
+	return buf[:n]
 }

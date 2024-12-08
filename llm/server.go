@@ -631,7 +631,7 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 	}
 }
 
-const jsonGrammar = `
+var grammarJSON = `
 root   ::= object
 value  ::= object | array | string | number | ("true" | "false" | "null") ws
 object ::=
@@ -744,22 +744,19 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		return fmt.Errorf("unexpected server status: %s", status.ToString())
 	}
 
-	// TODO (parthsareen): Move conversion to grammar with sampling logic
-	// API should do error handling for invalid formats
-	if req.Format != nil && strings.TrimSpace(string(req.Format)) != "null" {
-		if strings.ToLower(strings.TrimSpace(string(req.Format))) == `"json"` {
-			request["grammar"] = jsonGrammar
-			if !strings.Contains(strings.ToLower(req.Prompt), "json") {
-				slog.Warn("prompt does not specify that the LLM should response in JSON, but JSON format is expected. For best results specify that JSON is expected in the system prompt.")
+	if len(req.Format) > 0 {
+		switch {
+		case bytes.Equal(req.Format, []byte(`"json"`)):
+			request["grammar"] = grammarJSON
+		case bytes.HasPrefix(req.Format, []byte("{")):
+			// User provided a JSON schema
+			g := llama.SchemaToGrammar(req.Format)
+			if g == nil {
+				return fmt.Errorf("invalid JSON schema in format")
 			}
-		} else if schema, err := func() (llama.JsonSchema, error) {
-			var schema llama.JsonSchema
-			err := json.Unmarshal(req.Format, &schema)
-			return schema, err
-		}(); err == nil {
-			request["grammar"] = schema.AsGrammar()
-		} else {
-			slog.Warn(`format is neither a schema or "json"`, "format", req.Format)
+			request["grammar"] = string(g)
+		default:
+			return errors.New(`invalid format: expected "json" or a JSON schema`)
 		}
 	}
 
