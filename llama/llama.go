@@ -709,6 +709,7 @@ type JsonSchema struct {
 	Required   []string       `json:"required,omitempty"`
 	Title      string         `json:"title,omitempty"`
 	Type       string         `json:"type,omitempty"`
+	Ref        string         `json:"$ref,omitempty"`
 }
 
 func (js JsonSchema) AsGrammar() string {
