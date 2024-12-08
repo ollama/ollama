@@ -7,6 +7,8 @@ ARG CUDA_V12_ARCHITECTURES="60;61;62;70;72;75;80;86;87;89;90;90a"
 ARG ROCM_VERSION=6.1.2
 ARG JETPACK_6=r36.2.0
 ARG JETPACK_5=r35.4.1
+ARG MUSA_VERSION_1=rc3.1.0
+ARG MUSA_V1_ARCHITECTURES="21;22"
 
 ### To create a local image for building linux binaries on mac or windows with efficient incremental builds
 #
@@ -197,7 +199,7 @@ COPY --from=build-arm64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz
 FROM dist-$TARGETARCH AS dist
 
 
-# Optimized container images do not cary nested payloads
+# Optimized container images do not carry nested payloads
 FROM --platform=linux/amd64 builder-amd64 AS container-build-amd64
 WORKDIR /go/src/github.com/ollama/ollama
 COPY . .
@@ -267,6 +269,67 @@ ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
+
+ENTRYPOINT ["/bin/ollama"]
+CMD ["serve"]
+
+
+# Moore Threads (MUSA) specific build stages
+
+### To create a local image for building linux binaries on mac or windows with efficient incremental builds
+#
+# docker build --platform linux/amd64 -t musa-builder-amd64 -f Dockerfile --target musa-builder-amd64 .
+# docker run --platform linux/amd64 --rm -it -v $(pwd):/go/src/github.com/ollama/ollama/ musa-builder-amd64
+#
+### Then incremental builds will be much faster in this container
+#
+# make -j 10 && go build -trimpath -o dist/linux-amd64/ollama .
+#
+FROM --platform=linux/amd64 mthreads/musa:${MUSA_VERSION_1}-devel-ubuntu22.04 AS musa-builder-amd64
+ARG CMAKE_VERSION
+ARG GOLANG_VERSION
+COPY ./scripts/ubuntu_linux_deps.sh /
+RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /ubuntu_linux_deps.sh
+ENV GOARCH amd64
+ENV CGO_ENABLED 1
+WORKDIR /go/src/github.com/ollama/ollama/
+ENTRYPOINT [ "bash" ]
+
+FROM --platform=linux/amd64 musa-builder-amd64 AS runners-musa-amd64
+COPY . .
+ARG OLLAMA_SKIP_MUSA_GENERATE
+ARG OLLAMA_SKIP_MUSA_1_GENERATE
+ARG MUSA_V1_ARCHITECTURES
+ARG OLLAMA_FAST_BUILD
+RUN --mount=type=cache,target=/root/.ccache \
+    if grep "^flags" /proc/cpuinfo|grep avx>/dev/null; then \
+        make -j $(expr $(nproc) / 2 ) ; \
+    else \
+        make -j 5 ; \
+    fi
+
+FROM --platform=linux/amd64 musa-builder-amd64 AS musa-build-amd64
+COPY . .
+COPY --from=runners-musa-amd64 /go/src/github.com/ollama/ollama/dist/ dist/
+COPY --from=runners-musa-amd64 /go/src/github.com/ollama/ollama/build/ build/
+ARG GOFLAGS
+ARG CGO_CFLAGS
+RUN --mount=type=cache,target=/root/.ccache \
+    go build -trimpath -o dist/linux-amd64/bin/ollama .
+RUN cd dist/linux-$GOARCH && \
+    tar --exclude runners -cf - . | pigz --best > ../ollama-linux-$GOARCH.tgz
+
+FROM --platform=linux/amd64 ubuntu:22.04 AS runtime-musa
+RUN apt-get update && \
+    apt-get install -y ca-certificates libelf1 libnuma1 && \
+    rm -rf /var/lib/apt/lists/*
+COPY --from=container-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/bin/ /bin/
+COPY --from=runners-musa-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
+
+EXPOSE 11434
+ENV OLLAMA_HOST 0.0.0.0
+ENV MTHREADS_DRIVER_CAPABILITIES=compute,utility
+ENV MTHREADS_VISIBLE_DEVICES=all
 
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
