@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"archive/zip"
 	"bufio"
 	"bytes"
 	"context"
@@ -95,6 +94,15 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		defer f.Close()
 	}
 
+	request := api.CreateRequest{Name: args[0]}
+	quantize, _ := cmd.Flags().GetString("quantize")
+	if quantize != "" {
+		request.Quantize = quantize
+	}
+	var licenses []string
+	var messages []api.Message
+	parameters := make(map[string]any)
+
 	modelfile, err := parser.ParseFile(reader)
 	if err != nil {
 		return err
@@ -131,31 +139,85 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 			fi, err := os.Stat(path)
 			if errors.Is(err, os.ErrNotExist) && modelfile.Commands[i].Name == "model" {
+				request.From = modelfile.Commands[i].Args
 				continue
 			} else if err != nil {
 				return err
 			}
 
+			var files []string
 			if fi.IsDir() {
 				// this is likely a safetensors or pytorch directory
 				// TODO make this work w/ adapters
-				tempfile, err := tempZipFiles(path)
+				files, err = getFileList(path)
 				if err != nil {
 					return err
 				}
-				defer os.RemoveAll(tempfile)
+				var apiFiles []api.File
+				for _, file := range files {
+					relPath, err := filepath.Rel(path, file)
+					if err != nil {
+						return err
+					}
 
-				path = tempfile
+					digest, err := createBlob(cmd, client, file, spinner)
+					if err != nil {
+						return err
+					}
+					apiFiles = append(apiFiles, api.File{Path: relPath, Digest: digest})
+				}
+				if modelfile.Commands[i].Name == "model" {
+					cfr := api.CreateFromRequest{Type: "safetensors"}
+					cfr.Files = apiFiles
+					request.From = cfr
+				} else {
+					request.Adapters = apiFiles
+				}
+			} else {
+				digest, err := createBlob(cmd, client, path, spinner)
+				if err != nil {
+					return err
+				}
+				apiFile := []api.File{{Path: filepath.Base(path), Digest: digest}}
+				if modelfile.Commands[i].Name == "model" {
+					cfr := api.CreateFromRequest{Type: "gguf"}
+					cfr.Files = apiFile
+					request.From = cfr
+				} else {
+					request.Adapters = apiFile
+				}
 			}
+		case "template":
+			request.Template = modelfile.Commands[i].Args
+		case "system":
+			request.System = modelfile.Commands[i].Args
+		case "license":
+			licenses = append(licenses, modelfile.Commands[i].Args)
+		case "message":
+			role, msg, _ := strings.Cut(modelfile.Commands[i].Args, ": ")
+			messages = append(messages, api.Message{Role: role, Content: msg})
+		default:
+			c := modelfile.Commands[i]
+                        ps, err := api.FormatParams(map[string][]string{c.Name: {c.Args}})
+                        if err != nil {
+                                return err
+                        }
 
-			digest, err := createBlob(cmd, client, path, spinner)
-			if err != nil {
-				return err
-			}
-
-			modelfile.Commands[i].Args = "@" + digest
+                        for k, v := range ps {
+                                if ks, ok := parameters[k].([]string); ok {
+                                        parameters[k] = append(ks, v.([]string)...)
+                                } else if vs, ok := v.([]string); ok {
+                                        parameters[k] = vs
+                                } else {
+                                        parameters[k] = v
+                                }
+                        }
 		}
 	}
+
+	request.License = licenses
+	request.Messages = messages
+	request.Parameters = parameters
 
 	bars := make(map[string]*progress.Bar)
 	fn := func(resp api.ProgressResponse) error {
@@ -181,9 +243,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	quantize, _ := cmd.Flags().GetString("quantize")
-
-	request := api.CreateRequest{Name: args[0], Modelfile: modelfile.String(), Quantize: quantize}
 	if err := client.Create(cmd.Context(), &request, fn); err != nil {
 		return err
 	}
@@ -191,13 +250,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func tempZipFiles(path string) (string, error) {
-	tempfile, err := os.CreateTemp("", "ollama-tf")
-	if err != nil {
-		return "", err
-	}
-	defer tempfile.Close()
-
+func getFileList(path string) ([]string, error) {
 	detectContentType := func(path string) (string, error) {
 		f, err := os.Open(path)
 		if err != nil {
@@ -253,13 +306,13 @@ func tempZipFiles(path string) (string, error) {
 		// covers consolidated.x.pth, consolidated.pth
 		files = append(files, pt...)
 	} else {
-		return "", errModelNotFound
+		return nil, errModelNotFound
 	}
 
 	// add configuration files, json files are detected as text/plain
 	js, err := glob(filepath.Join(path, "*.json"), "text/plain")
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	files = append(files, js...)
 
@@ -267,7 +320,7 @@ func tempZipFiles(path string) (string, error) {
 	// TODO(mxyng): merge this with the glob above
 	js, err = glob(filepath.Join(path, "**/*.json"), "text/plain")
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	files = append(files, js...)
 
@@ -280,46 +333,16 @@ func tempZipFiles(path string) (string, error) {
 		files = append(files, tks...)
 	}
 
-	zipfile := zip.NewWriter(tempfile)
-	defer zipfile.Close()
-
-	for _, file := range files {
-		f, err := os.Open(file)
-		if err != nil {
-			return "", err
-		}
-		defer f.Close()
-
-		fi, err := f.Stat()
-		if err != nil {
-			return "", err
-		}
-
-		zfi, err := zip.FileInfoHeader(fi)
-		if err != nil {
-			return "", err
-		}
-
-		zfi.Name, err = filepath.Rel(path, file)
-		if err != nil {
-			return "", err
-		}
-
-		zf, err := zipfile.CreateHeader(zfi)
-		if err != nil {
-			return "", err
-		}
-
-		if _, err := io.Copy(zf, f); err != nil {
-			return "", err
-		}
-	}
-
-	return tempfile.Name(), nil
+	return files, nil
 }
 
 func createBlob(cmd *cobra.Command, client *api.Client, path string, spinner *progress.Spinner) (string, error) {
-	bin, err := os.Open(path)
+	realPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+
+	bin, err := os.Open(realPath)
 	if err != nil {
 		return "", err
 	}
@@ -362,6 +385,7 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, spinner *pr
 		}
 	}()
 
+	fmt.Println("finished copying files")
 	digest := fmt.Sprintf("sha256:%x", hash.Sum(nil))
 	if err = client.CreateBlob(cmd.Context(), digest, io.TeeReader(bin, &pw)); err != nil {
 		return "", err
