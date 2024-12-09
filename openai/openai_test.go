@@ -113,6 +113,45 @@ func TestChatMiddleware(t *testing.T) {
 			},
 		},
 		{
+			name: "chat handler with streaming usage",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "Hello"}
+				],
+				"stream":            true,
+				"stream_options":    {"include_usage": true},
+				"max_tokens":        999,
+				"seed":              123,
+				"stop":              ["\n", "stop"],
+				"temperature":       3.0,
+				"frequency_penalty": 4.0,
+				"presence_penalty":  5.0,
+				"top_p":             6.0,
+				"response_format":   {"type": "json_object"}
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "Hello",
+					},
+				},
+				Options: map[string]any{
+					"num_predict":       999.0, // float because JSON doesn't distinguish between float and int
+					"seed":              123.0,
+					"stop":              []any{"\n", "stop"},
+					"temperature":       3.0,
+					"frequency_penalty": 4.0,
+					"presence_penalty":  5.0,
+					"top_p":             6.0,
+				},
+				Format: json.RawMessage(`"json"`),
+				Stream: &True,
+			},
+		},
+		{
 			name: "chat handler with image content",
 			body: `{
 				"model": "test-model",
@@ -361,6 +400,55 @@ func TestCompletionsMiddleware(t *testing.T) {
 				},
 				Suffix: "suffix",
 				Stream: &False,
+			},
+		},
+		{
+			name: "completions handler stream",
+			body: `{
+				"model": "test-model",
+				"prompt": "Hello",
+				"stream": true,
+				"temperature": 0.8,
+				"stop": ["\n", "stop"],
+				"suffix": "suffix"
+			}`,
+			req: api.GenerateRequest{
+				Model:  "test-model",
+				Prompt: "Hello",
+				Options: map[string]any{
+					"frequency_penalty": 0.0,
+					"presence_penalty":  0.0,
+					"temperature":       0.8,
+					"top_p":             1.0,
+					"stop":              []any{"\n", "stop"},
+				},
+				Suffix: "suffix",
+				Stream: &True,
+			},
+		},
+		{
+			name: "completions handler stream with usage",
+			body: `{
+				"model": "test-model",
+				"prompt": "Hello",
+				"stream": true,
+				"stream_options": {"include_usage": true},
+				"temperature": 0.8,
+				"stop": ["\n", "stop"],
+				"suffix": "suffix"
+			}`,
+			req: api.GenerateRequest{
+				Model:  "test-model",
+				Prompt: "Hello",
+				Options: map[string]any{
+					"frequency_penalty": 0.0,
+					"presence_penalty":  0.0,
+					"temperature":       0.8,
+					"top_p":             1.0,
+					"stop":              []any{"\n", "stop"},
+				},
+				Suffix: "suffix",
+				Stream: &True,
 			},
 		},
 		{
