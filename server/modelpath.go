@@ -116,12 +116,11 @@ func GetManifestPath() (string, error) {
 	return path, nil
 }
 
-func GetBlobsPath(digest string) (string, error) {
-	// only accept actual sha256 digests
-	pattern := "^sha256[:-][0-9a-fA-F]{64}$"
-	re := regexp.MustCompile(pattern)
+// only accept actual sha256 digests
+var isValidDigest = regexp.MustCompile("^sha256[:-][0-9a-fA-F]{64}$").MatchString
 
-	if digest != "" && !re.MatchString(digest) {
+func GetBlobsPath(digest string) (string, error) {
+	if digest != "" && !isValidDigest(digest) {
 		return "", ErrInvalidDigestFormat
 	}
 
@@ -132,7 +131,7 @@ func GetBlobsPath(digest string) (string, error) {
 		dirPath = path
 	}
 
-	if err := os.MkdirAll(dirPath, 0o755); err != nil {
+	if err := os.MkdirAll(dirPath, 0o750); err != nil {
 		return "", err
 	}
 

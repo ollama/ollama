@@ -3,6 +3,7 @@ package readline
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -43,7 +44,7 @@ func (h *History) Init() error {
 	}
 
 	path := filepath.Join(home, ".ollama", "history")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return err
 	}
 
@@ -136,7 +137,10 @@ func (h *History) Save() error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+		_ = os.Remove(tmpFile)
+	}()
 
 	buf := bufio.NewWriter(f)
 	for cnt := range h.Size() {
@@ -146,8 +150,12 @@ func (h *History) Save() error {
 			return err
 		}
 	}
-	buf.Flush()
-	f.Close()
+	if err := buf.Flush(); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close history file: %w", err)
+	}
 
 	if err = os.Rename(tmpFile, h.Filename); err != nil {
 		return err

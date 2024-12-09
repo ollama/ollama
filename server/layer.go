@@ -51,7 +51,7 @@ func NewLayer(r io.Reader, mediatype string) (Layer, error) {
 		if err := os.Rename(temp.Name(), blob); err != nil {
 			return Layer{}, err
 		}
-		if err := os.Chmod(blob, 0o644); err != nil {
+		if err := os.Chmod(blob, 0o600); err != nil {
 			return Layer{}, err
 		}
 	}

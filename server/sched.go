@@ -177,11 +177,11 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						}
 						if allReliable {
 							// HACK
-							os.Setenv("OLLAMA_MAX_LOADED_MODELS", strconv.Itoa(defaultModelsPerGPU*len(gpus)))
+							_ = os.Setenv("OLLAMA_MAX_LOADED_MODELS", strconv.Itoa(defaultModelsPerGPU*len(gpus)))
 							slog.Debug("updating default concurrency", "OLLAMA_MAX_LOADED_MODELS", envconfig.MaxRunners, "gpu_count", len(gpus))
 						} else {
 							// HACK
-							os.Setenv("OLLAMA_MAX_LOADED_MODELS", strconv.Itoa(len(gpus)))
+							_ = os.Setenv("OLLAMA_MAX_LOADED_MODELS", strconv.Itoa(len(gpus)))
 							slog.Info("one or more GPUs detected that are unable to accurately report free memory - disabling default concurrency")
 						}
 					}
@@ -563,7 +563,7 @@ func (runner *runnerRef) unload() {
 		runner.expireTimer = nil
 	}
 	if runner.llama != nil {
-		runner.llama.Close()
+		_ = runner.llama.Close()
 	}
 	runner.model = nil
 	runner.llama = nil
@@ -796,7 +796,7 @@ func (s *Scheduler) unloadAllRunners() {
 	for model, runner := range s.loaded {
 		if runner.llama != nil {
 			slog.Debug("shutting down runner", "model", model)
-			runner.llama.Close()
+			_ = runner.llama.Close()
 		}
 	}
 }

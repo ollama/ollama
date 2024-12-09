@@ -1226,7 +1226,7 @@ func initializeKeypair() error {
 
 		publicKeyBytes := ssh.MarshalAuthorizedKey(sshPublicKey)
 
-		if err := os.WriteFile(pubKeyPath, publicKeyBytes, 0o644); err != nil {
+		if err := os.WriteFile(pubKeyPath, publicKeyBytes, 0o600); err != nil {
 			return err
 		}
 
@@ -1291,7 +1291,7 @@ func NewCLI() *cobra.Command {
 	cobra.EnableCommandSorting = false
 
 	if runtime.GOOS == "windows" && term.IsTerminal(int(os.Stdout.Fd())) {
-		console.ConsoleFromFile(os.Stdin) //nolint:errcheck
+		_, _ = console.ConsoleFromFile(os.Stdin)
 	}
 
 	rootCmd := &cobra.Command{

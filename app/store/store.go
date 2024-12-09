@@ -82,7 +82,7 @@ func writeStore(storeFilename string) {
 		slog.Error(fmt.Sprintf("failed to marshal store: %s", err))
 		return
 	}
-	fp, err := os.OpenFile(storeFilename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o755)
+	fp, err := os.OpenFile(storeFilename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		slog.Error(fmt.Sprintf("write store payload %s: %v", storeFilename, err))
 		return
