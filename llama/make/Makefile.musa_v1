@@ -1,0 +1,11 @@
+# Build rules for MUSA v1 runner
+
+include make/common-defs.make
+
+
+GPU_RUNNER_VARIANT := _v1
+GPU_PATH_ROOT_LINUX=$(shell ls -d $(MUSA_PATH) 2>/dev/null)
+MUSA_ARCHITECTURES?=21;22
+
+include make/musa.make
+include make/gpu.make
