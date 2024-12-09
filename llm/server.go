@@ -68,6 +68,15 @@ type llmServer struct {
 	sem *semaphore.Weighted
 }
 
+func selectStr(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // LoadModel will load a model from disk. The model must be in the GGML format.
 //
 // It collects array values for arrays with a size less than or equal to
@@ -225,18 +234,21 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		fa = false
 	}
 
-	kvct := strings.ToLower(envconfig.KvCacheType())
+	// First, pick kvct from opts if provided, otherwise fallback to envconfig
+	kvct := selectStr(opts.KVCacheType, envconfig.KvCacheType())
+	kvct = strings.ToLower(kvct)
 
 	if fa {
 		slog.Info("enabling flash attention")
 		params = append(params, "--flash-attn")
 
 		// Flash Attention also supports kv cache quantization
-		// Enable if the requested and kv cache type is supported by the model
+		// Enable if the requested kv_cache_type is supported by the model
 		if kvct != "" && ggml.SupportsKVCacheType(kvct) {
+			slog.Info("using kv_cache_type", "type", kvct)
 			params = append(params, "--kv-cache-type", kvct)
-		} else {
-			slog.Warn("kv cache type not supported by model", "type", kvct)
+		} else if kvct != "" && kvct != "f16" {
+			slog.Warn("kv cache type not supported by model or flash attention", "type", kvct)
 		}
 	} else if kvct != "" && kvct != "f16" {
 		slog.Warn("quantized kv cache requested but flash attention disabled", "type", kvct)
@@ -732,6 +744,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		"penalize_nl":       req.Options.PenalizeNewline,
 		"seed":              req.Options.Seed,
 		"stop":              req.Options.Stop,
+		"kv_cache_type":     req.Options.KVCacheType,
 		"image_data":        req.Images,
 		"cache_prompt":      true,
 	}
