@@ -1,4 +1,4 @@
-package imageproc
+package mllama
 
 import (
 	"bytes"
@@ -35,7 +35,7 @@ func TestAspectRatios(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		actual := GetSupportedAspectRatios(c.MaxTiles)
+		actual := getSupportedAspectRatios(c.MaxTiles)
 
 		if diff := cmp.Diff(actual, c.Expected); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
@@ -299,7 +299,7 @@ func TestResize(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		actualImage, actualAspectRatio := ResizeImage(c.TestImage, "png", c.OutputSize, c.MaxImageTiles)
+		actualImage, actualAspectRatio := resizeImage(c.TestImage, "png", c.OutputSize, c.MaxImageTiles)
 
 		if actualImage.Bounds() != c.ExpectedImage.Bounds() {
 			t.Errorf("image size incorrect: '%#v': expected: '%#v'", actualImage.Bounds(), c.ExpectedImage.Bounds())
@@ -329,7 +329,7 @@ func TestPad(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		actual := PadImage(c.TestImage, c.OutputSize, c.AspectRatio)
+		actual := padImage(c.TestImage, c.OutputSize, c.AspectRatio)
 
 		if actual.Bounds() != c.Expected.Bounds() {
 			t.Errorf("image size incorrect: '%#v': expected: '%#v'", actual.Bounds(), c.Expected.Bounds())
@@ -343,9 +343,6 @@ func TestPackImages(t *testing.T) {
 		AspectRatio  image.Point
 		ExpectedVals int
 	}
-
-	mean := [3]float32{0.48145466, 0.4578275, 0.40821073}
-	std := [3]float32{0.26862954, 0.26130258, 0.27577711}
 
 	cases := []packCase{
 		{
@@ -366,7 +363,7 @@ func TestPackImages(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		actualVals := PackImages(c.TestImage, c.AspectRatio, mean, std)
+		actualVals := packImages(c.TestImage, c.AspectRatio)
 		if len(actualVals) != c.ExpectedVals {
 			t.Errorf("packed image size incorrect: '%d': expected: '%d'", len(actualVals), c.ExpectedVals)
 		}
@@ -400,7 +397,7 @@ func TestPreprocess(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		imgData, aspectRatioID, err := Preprocess(buf.Bytes())
+		imgData, opts, err := Preprocess(&buf)
 		if err != nil {
 			t.Fatalf("error processing: %q", err)
 		}
@@ -408,6 +405,13 @@ func TestPreprocess(t *testing.T) {
 		if len(imgData) == 0 {
 			t.Errorf("no image data returned")
 		}
+
+		ar, ok := opts["aspectRatioIndex"]
+		if !ok {
+			t.Fatalf("no aspect ratio found")
+		}
+
+		aspectRatioID := ar.(int)
 
 		if aspectRatioID != c.ExpectedAspectRatioID {
 			t.Errorf("aspect ratio incorrect: '%d': expected: '%d'", aspectRatioID, c.ExpectedAspectRatioID)
