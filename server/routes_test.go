@@ -208,7 +208,7 @@ func Test_Routes(t *testing.T) {
 		},
 		{
 			Name:   "Delete Model Handler",
-			Method: http.MethodDelete,
+			Method: http.MethodPost,
 			Path:   "/api/delete",
 			Setup: func(t *testing.T, req *http.Request) {
 				createTestModel(t, "model-to-delete")
@@ -237,7 +237,7 @@ func Test_Routes(t *testing.T) {
 		},
 		{
 			Name:   "Delete Non-existent Model",
-			Method: http.MethodDelete,
+			Method: http.MethodPost,
 			Path:   "/api/delete",
 			Setup: func(t *testing.T, req *http.Request) {
 				deleteReq := api.DeleteRequest{

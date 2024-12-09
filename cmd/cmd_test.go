@@ -210,7 +210,7 @@ Weigh anchor!
 func TestDeleteHandler(t *testing.T) {
 	stopped := false
 	mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/delete" && r.Method == http.MethodDelete {
+		if r.URL.Path == "/api/delete" && r.Method == http.MethodPost {
 			var req api.DeleteRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
