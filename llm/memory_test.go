@@ -11,6 +11,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
+	"github.com/ollama/ollama/fs/ggml"
 )
 
 func TestEstimateGPULayers(t *testing.T) {
@@ -23,7 +24,7 @@ func TestEstimateGPULayers(t *testing.T) {
 	defer f.Close()
 	inputLayerCount := 5
 
-	tensors := []Tensor{
+	tensors := []ggml.Tensor{
 		{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
 		{Name: "blk.1.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
 		{Name: "blk.2.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
@@ -32,7 +33,7 @@ func TestEstimateGPULayers(t *testing.T) {
 		{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
 	}
 	assert.Len(t, tensors, inputLayerCount+1)
-	err = WriteGGUF(f, KV{
+	err = ggml.WriteGGUF(f, ggml.KV{
 		"general.architecture":          "llama",
 		"llama.context_length":          uint32(32),
 		"llama.embedding_length":        uint32(4096),

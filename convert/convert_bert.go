@@ -8,7 +8,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/fs/ggml"
 )
 
 type bertModel struct {
@@ -85,7 +85,7 @@ func (p *bertModel) parseMore(fsys fs.FS) error {
 	return nil
 }
 
-func (p *bertModel) KV(t *Tokenizer) llm.KV {
+func (p *bertModel) KV(t *Tokenizer) ggml.KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "bert"
 	kv["bert.attention.causal"] = false
@@ -132,8 +132,8 @@ func (p *bertModel) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *bertModel) Tensors(ts []Tensor) []llm.Tensor {
-	var out []llm.Tensor
+func (p *bertModel) Tensors(ts []Tensor) []ggml.Tensor {
+	var out []ggml.Tensor
 	for _, t := range ts {
 		if slices.Contains([]string{
 			"embeddings.position_ids",
@@ -143,7 +143,7 @@ func (p *bertModel) Tensors(ts []Tensor) []llm.Tensor {
 			continue
 		}
 
-		out = append(out, llm.Tensor{
+		out = append(out, ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),
