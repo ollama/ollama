@@ -37,8 +37,7 @@ go build -tags avx .
 ```shell
 # go doesn't recognize `-mfma` as a valid compiler flag
 # see https://github.com/golang/go/issues/17895
-go env -w "CGO_CFLAGS_ALLOW=-mfma|-mf16c"
-go env -w "CGO_CXXFLAGS_ALLOW=-mfma|-mf16c"
+go env -w "CGO_CPPFLAGS_ALLOW=-mfma|-mf16c"
 go build -tags=avx,avx2 .
 ```
 

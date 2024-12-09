@@ -94,4 +94,3 @@ CPPFLAGS += \
 	-I../ml/backend/ggml/ggml/include \
 	-I../ml/backend/ggml/ggml/ggml-cpu \
 	-I../ml/backend/ggml/ggml/ggml-cpu/amx \
->>>>>>> 22320f09 (preserve vendor directory structure):llama/make/common-defs.make
