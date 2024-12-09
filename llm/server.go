@@ -747,10 +747,14 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	// TODO (parthsareen): Move conversion to grammar with sampling logic
 	// API should do error handling for invalid formats
 	if req.Format != nil && strings.TrimSpace(string(req.Format)) != "null" {
+
+		promptMissingJson := !strings.Contains(strings.ToLower(req.Prompt), "json")
+		promptWarning := "prompt does not specify that the LLM should respond in JSON, but JSON format is expected. For best results specify that JSON is expected in the system prompt."
+
 		if strings.ToLower(strings.TrimSpace(string(req.Format))) == `"json"` {
 			request["grammar"] = jsonGrammar
-			if !strings.Contains(strings.ToLower(req.Prompt), "json") {
-				slog.Warn("prompt does not specify that the LLM should response in JSON, but JSON format is expected. For best results specify that JSON is expected in the system prompt.")
+			if promptMissingJson {
+				slog.Warn(promptWarning)
 			}
 		} else if schema, err := func() (llama.JsonSchema, error) {
 			var schema llama.JsonSchema
@@ -758,6 +762,9 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			return schema, err
 		}(); err == nil {
 			request["grammar"] = schema.AsGrammar()
+			if promptMissingJson {
+				slog.Error(promptWarning)
+			}
 		} else {
 			slog.Warn(`format is neither a schema or "json"`, "format", req.Format)
 		}
