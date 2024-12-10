@@ -1071,11 +1071,13 @@ func isLocalIP(ip netip.Addr) bool {
 }
 
 func allowedHost(host string) bool {
+	host = strings.ToLower(host)
+
 	if host == "" || host == "localhost" {
 		return true
 	}
 
-	if hostname, err := os.Hostname(); err == nil && host == hostname {
+	if hostname, err := os.Hostname(); err == nil && host == strings.ToLower(hostname) {
 		return true
 	}
 
