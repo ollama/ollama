@@ -138,5 +138,9 @@
   {
     "template": "{% for message in messages %}{% if message['role'] == 'system' %}{% if message['content']%}{{'### System:\n' + message['content']+'\n\n'}}{% endif %}{% elif message['role'] == 'user' %}{{'### User:\n' + message['content']+'\n\n'}}{% elif message['role'] == 'assistant' %}{{'### Assistant:\n'  + message['content']}}{% endif %}{% if loop.last and add_generation_prompt %}{{ '### Assistant:\n' }}{% endif %}{% endfor %}",
     "name": "solar-instruct"
+  },
+  {
+    "template": "{% for message in messages %}{% if message['role'] == 'user' %}{{ 'User: ' }}{% elif message['role'] == 'assistant' %}{{ 'Assistant:' }}{% endif %}{{ message['content'] }}{% endfor %}",
+    "name": "rwkv-world"
   }
 ]
