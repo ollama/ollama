@@ -406,9 +406,9 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Database
 
+- [PostgreSQL extension pgai](https://github.com/timescale/pgai/blob/main/docs/vectorizer-quick-start.md) (Create and search embeddings from Ollama models using pgvector)
 - [MindsDB](https://github.com/mindsdb/mindsdb/blob/staging/mindsdb/integrations/handlers/ollama_handler/README.md) (Connects Ollama models with nearly 200 data platforms and apps)
 - [chromem-go](https://github.com/philippgille/chromem-go/blob/v0.5.0/embed_ollama.go) with [example](https://github.com/philippgille/chromem-go/tree/v0.5.0/examples/rag-wikipedia-ollama)
-- [PostgreSQL extension pgai](https://github.com/timescale/pgai) (Create and search embeddings from Ollama models using pgvector)
 
 ### Package managers
 
