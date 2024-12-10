@@ -5,7 +5,7 @@ dummy:
 	$(error This makefile is not meant to build directly, but instead included in other Makefiles that set required variables)
 endif
 
-GPU_GOFLAGS="-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=$(VERSION)\" \"-X=github.com/ollama/ollama/llama.CpuFeatures=$(subst $(space),$(comma),$(GPU_RUNNER_CPU_FLAGS))\" $(EXTRA_GOLDLAGS) $(TARGET_LDFLAGS)"
+GPU_GOFLAGS="-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=$(VERSION)\" \"-X=github.com/ollama/ollama/llama.CpuFeatures=$(subst $(space),$(comma),$(GPU_RUNNER_CPU_FLAGS))\" $(EXTRA_GOLDFLAGS) $(TARGET_LDFLAGS)"
 
 # TODO Unify how we handle dependencies in the dist/packaging and install flow
 # today, cuda is bundled, but rocm is split out.  Should split them each out by runner
