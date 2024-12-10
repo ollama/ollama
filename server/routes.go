@@ -27,7 +27,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/build"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/llm"
@@ -1264,13 +1263,16 @@ func Serve(ln net.Listener) error {
 		srvr.Close()
 		schedDone()
 		sched.unloadAllRunners()
-		runners.Cleanup(build.EmbedFS)
 		done()
 	}()
 
-	if _, err := runners.Refresh(build.EmbedFS); err != nil {
-		return fmt.Errorf("unable to initialize llm runners %w", err)
+	// Locate and log what runners are present at startup
+	var runnerNames []string
+	for v := range runners.GetAvailableServers() {
+		runnerNames = append(runnerNames, v)
 	}
+	slog.Info("Dynamic LLM libraries", "runners", runnerNames)
+	slog.Debug("Override detection logic by setting OLLAMA_LLM_LIBRARY")
 
 	s.sched.Run(schedCtx)
 

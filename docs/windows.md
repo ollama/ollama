@@ -83,3 +83,6 @@ If you'd like to install or integrate Ollama as a service, a standalone
 and GPU library dependencies for Nvidia and AMD. This allows for embedding
 Ollama in existing applications, or running it as a system service via `ollama
 serve` with tools such as [NSSM](https://nssm.cc/).
+
+> [!NOTE]  
+> If you are upgrading from a prior version, you should remove the old directories first.
