@@ -10,6 +10,6 @@ const (
 
 	quitMenuTitle            = "Quit Ollama"
 	updateAvailableMenuTitle = "An update is available"
-	updateMenutTitle         = "Restart to update"
+	updateMenuTitle          = "Restart to update"
 	diagLogsMenuTitle        = "View logs"
 )

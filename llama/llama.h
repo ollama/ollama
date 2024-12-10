@@ -266,6 +266,7 @@ extern "C" {
 
         llama_token  *  token;
         float        *  embd;
+        int32_t         n_embd;
         llama_pos    *  pos;
         int32_t      *  n_seq_id;
         llama_seq_id ** seq_id;
@@ -448,6 +449,10 @@ extern "C" {
     LLAMA_API struct llama_context * llama_new_context_with_model(
                      struct llama_model * model,
             struct llama_context_params   params);
+
+    // TODO (jmorganca): this should most likely be passed in as part of a batch
+    // and not set on the context for all batches.
+    LLAMA_API void llama_set_cross_attention(struct llama_context * ctx, bool cross_attn_state);
 
     // Frees all allocated memory
     LLAMA_API void llama_free(struct llama_context * ctx);

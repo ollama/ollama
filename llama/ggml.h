@@ -532,6 +532,7 @@ extern "C" {
         GGML_OP_POOL_2D_BACK,
         GGML_OP_UPSCALE, // nearest interpolate
         GGML_OP_PAD,
+        GGML_OP_UNPAD,
         GGML_OP_ARANGE,
         GGML_OP_TIMESTEP_EMBEDDING,
         GGML_OP_ARGSORT,
@@ -1783,6 +1784,15 @@ extern "C" {
 
     // pad each dimension with zeros: [x, ..., x] -> [x, ..., x, 0, ..., 0]
     GGML_API struct ggml_tensor * ggml_pad(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            int                  p0,
+            int                  p1,
+            int                  p2,
+            int                  p3);
+
+    // unpad each dimension: [x, ..., x, y, ..., y] -> [x, ..., x]
+    GGML_API struct ggml_tensor * ggml_unpad(
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
             int                  p0,

@@ -361,7 +361,7 @@ func (t *winTray) showMenu() error {
 
 	boolRet, _, err = pTrackPopupMenu.Call(
 		uintptr(t.menus[0]),
-		TPM_BOTTOMALIGN|TPM_LEFTALIGN,
+		TPM_BOTTOMALIGN|TPM_LEFTALIGN|TPM_RIGHTBUTTON,
 		uintptr(p.X),
 		uintptr(p.Y),
 		0,

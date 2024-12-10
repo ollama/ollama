@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/runners"
 )
 
 type memInfo struct {
@@ -25,7 +26,7 @@ type GpuInfo struct { // TODO better name maybe "InferenceProcessor"?
 	MinimumMemory uint64 `json:"-"`
 
 	// Any extra PATH/LD_LIBRARY_PATH dependencies required for the Library to operate properly
-	DependencyPath string `json:"lib_path,omitempty"`
+	DependencyPath []string `json:"lib_path,omitempty"`
 
 	// Extra environment variables specific to the GPU as list of [key,value]
 	EnvWorkarounds [][2]string `json:"envs,omitempty"`
@@ -45,6 +46,13 @@ type GpuInfo struct { // TODO better name maybe "InferenceProcessor"?
 	DriverMinor int `json:"driver_minor,omitempty"`
 
 	// TODO other performance capability info to help in scheduling decisions
+}
+
+func (gpu GpuInfo) RunnerName() string {
+	if gpu.Variant != "" {
+		return gpu.Library + "_" + gpu.Variant
+	}
+	return gpu.Library
 }
 
 type CPUInfo struct {
@@ -99,7 +107,7 @@ func (l GpuInfoList) ByLibrary() []GpuInfoList {
 	for _, info := range l {
 		found := false
 		requested := info.Library
-		if info.Variant != CPUCapabilityNone.String() {
+		if info.Variant != runners.CPUCapabilityNone.String() {
 			requested += "_" + info.Variant
 		}
 		for i, lib := range libs {
@@ -140,29 +148,6 @@ func (a ByFreeMemory) Len() int           { return len(a) }
 func (a ByFreeMemory) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByFreeMemory) Less(i, j int) bool { return a[i].FreeMemory < a[j].FreeMemory }
 
-type CPUCapability uint32
-
-// Override at build time when building base GPU runners
-var GPURunnerCPUCapability = CPUCapabilityAVX
-
-const (
-	CPUCapabilityNone CPUCapability = iota
-	CPUCapabilityAVX
-	CPUCapabilityAVX2
-	// TODO AVX512
-)
-
-func (c CPUCapability) String() string {
-	switch c {
-	case CPUCapabilityAVX:
-		return "avx"
-	case CPUCapabilityAVX2:
-		return "avx2"
-	default:
-		return "no vector extensions"
-	}
-}
-
 type SystemInfo struct {
 	System          CPUInfo              `json:"system"`
 	GPUs            []GpuInfo            `json:"gpus"`
@@ -175,6 +160,25 @@ func (si SystemInfo) GetOptimalThreadCount() int {
 	if len(si.System.CPUs) == 0 {
 		return 0
 	}
-	// Allocate thread count matching the performance cores on a single socket
-	return si.System.CPUs[0].CoreCount - si.System.CPUs[0].EfficiencyCoreCount
+
+	coreCount := 0
+	for _, c := range si.System.CPUs {
+		coreCount += c.CoreCount - c.EfficiencyCoreCount
+	}
+
+	return coreCount
+}
+
+// For each GPU, check if it does NOT support flash attention
+func (l GpuInfoList) FlashAttentionSupported() bool {
+	for _, gpu := range l {
+		supportsFA := gpu.Library == "metal" ||
+			(gpu.Library == "cuda" && gpu.DriverMajor >= 7) ||
+			gpu.Library == "rocm"
+
+		if !supportsFA {
+			return false
+		}
+	}
+	return true
 }

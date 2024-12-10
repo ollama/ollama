@@ -5,7 +5,6 @@ export GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=$V
 # TODO - consider `docker buildx ls --format=json` to autodiscover platform capability
 PLATFORM=${PLATFORM:-"linux/arm64,linux/amd64"}
 DOCKER_ORG=${DOCKER_ORG:-"ollama"}
-RELEASE_IMAGE_REPO=${RELEASE_IMAGE_REPO:-"${DOCKER_ORG}/release"}
 FINAL_IMAGE_REPO=${FINAL_IMAGE_REPO:-"${DOCKER_ORG}/ollama"}
 OLLAMA_COMMON_BUILD_ARGS="--build-arg=VERSION \
     --build-arg=GOFLAGS \
@@ -20,12 +19,6 @@ OLLAMA_COMMON_BUILD_ARGS="--build-arg=VERSION \
     --build-arg=CUSTOM_CPU_FLAGS \
     --build-arg=GPU_RUNNER_CPU_FLAGS \
     --build-arg=AMDGPU_TARGETS"
-OLLAMA_NEW_RUNNERS=${OLLAMA_NEW_RUNNERS:-""}
-if [ -n "${OLLAMA_NEW_RUNNERS}" ]; then
-    DOCKERFILE_DIR="./llama/"
-else
-    DOCKERFILE_DIR="./"
-fi
 
 echo "Building Ollama"
 echo "VERSION=$VERSION"

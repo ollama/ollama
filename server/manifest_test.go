@@ -112,7 +112,7 @@ func TestManifests(t *testing.T) {
 				createManifest(t, d, p)
 			}
 
-			ms, err := Manifests()
+			ms, err := Manifests(true)
 			if err != nil {
 				t.Fatal(err)
 			}

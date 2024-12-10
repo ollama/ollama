@@ -1,7 +1,6 @@
-package main
+package runner
 
 import (
-	"reflect"
 	"testing"
 	"time"
 )
@@ -229,76 +228,65 @@ func TestFindCacheSlot(t *testing.T) {
 	}
 }
 
-func TestImageCache(t *testing.T) {
-	cache := NewInputCache(nil, 2048, 4, false)
-
-	valA := [][]float32{{0.1, 0.2}, {0.3}}
-	valB := [][]float32{{0.4}, {0.5}, {0.6}}
-	valC := [][]float32{{0.7}}
-	valD := [][]float32{{0.8}}
-	valE := [][]float32{{0.9}}
-
-	// Empty cache
-	result, err := cache.FindImage(0x5adb61d31933a946)
-	if err != ErrImageNotFound {
-		t.Errorf("found result in empty cache: result %v, err %v", result, err)
+func TestShiftDiscard(t *testing.T) {
+	tests := []struct {
+		name     string
+		numCtx   int
+		numKeep  int
+		inputLen int
+		expected int
+	}{
+		{
+			name:     "Shift",
+			numCtx:   2048,
+			numKeep:  5,
+			inputLen: 2048,
+			expected: 1021,
+		},
+		{
+			name:     "Max Keep",
+			numCtx:   2048,
+			numKeep:  2047,
+			inputLen: 2048,
+			expected: 1,
+		},
+		{
+			name:     "No Keep",
+			numCtx:   2048,
+			numKeep:  0,
+			inputLen: 2048,
+			expected: 1024,
+		},
+		{
+			name:     "Truncate",
+			numCtx:   2048,
+			numKeep:  5,
+			inputLen: 5000,
+			expected: 3973,
+		},
+		{
+			name:     "Truncate Keep",
+			numCtx:   2048,
+			numKeep:  2047,
+			inputLen: 5000,
+			expected: 2953,
+		},
+		{
+			name:     "No Op",
+			numCtx:   2048,
+			numKeep:  5,
+			inputLen: 512,
+			expected: 0,
+		},
 	}
 
-	// Insert A
-	cache.AddImage(0x5adb61d31933a946, valA)
-
-	result, err = cache.FindImage(0x5adb61d31933a946)
-	if !reflect.DeepEqual(result, valA) {
-		t.Errorf("failed to find expected value: result %v, err %v", result, err)
-	}
-
-	// Insert B
-	cache.AddImage(0x011551369a34a901, valB)
-
-	result, err = cache.FindImage(0x5adb61d31933a946)
-	if !reflect.DeepEqual(result, valA) {
-		t.Errorf("failed to find expected value: result %v, err %v", result, err)
-	}
-	result, err = cache.FindImage(0x011551369a34a901)
-	if !reflect.DeepEqual(result, valB) {
-		t.Errorf("failed to find expected value: result %v, err %v", result, err)
-	}
-
-	// Replace B with C
-	cache.AddImage(0x011551369a34a901, valC)
-
-	result, err = cache.FindImage(0x5adb61d31933a946)
-	if !reflect.DeepEqual(result, valA) {
-		t.Errorf("failed to find expected value: result %v, err %v", result, err)
-	}
-	result, err = cache.FindImage(0x011551369a34a901)
-	if !reflect.DeepEqual(result, valC) {
-		t.Errorf("failed to find expected value: result %v, err %v", result, err)
-	}
-
-	// Evict A
-	cache.AddImage(0x756b218a517e7353, valB)
-	cache.AddImage(0x75e5e8d35d7e3967, valD)
-	cache.AddImage(0xd96f7f268ca0646e, valE)
-
-	result, err = cache.FindImage(0x5adb61d31933a946)
-	if reflect.DeepEqual(result, valA) {
-		t.Errorf("failed to find expected value: result %v, err %v", result, err)
-	}
-	result, err = cache.FindImage(0x756b218a517e7353)
-	if !reflect.DeepEqual(result, valB) {
-		t.Errorf("failed to find expected value: result %v, err %v", result, err)
-	}
-	result, err = cache.FindImage(0x011551369a34a901)
-	if !reflect.DeepEqual(result, valC) {
-		t.Errorf("failed to find expected value: result %v, err %v", result, err)
-	}
-	result, err = cache.FindImage(0x75e5e8d35d7e3967)
-	if !reflect.DeepEqual(result, valD) {
-		t.Errorf("failed to find expected value: result %v, err %v", result, err)
-	}
-	result, err = cache.FindImage(0xd96f7f268ca0646e)
-	if !reflect.DeepEqual(result, valE) {
-		t.Errorf("failed to find expected value: result %v, err %v", result, err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := InputCache{numCtx: tt.numCtx}
+			result := c.ShiftDiscard(tt.inputLen, tt.numKeep)
+			if result != tt.expected {
+				t.Errorf("shiftDiscard(ctx: %v, keep: %v input: %v): have %v; want %v", tt.numCtx, tt.numKeep, tt.inputLen, result, tt.expected)
+			}
+		})
 	}
 }
