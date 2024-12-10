@@ -96,6 +96,31 @@ go build .
 
 ROCm requires elevated privileges to access the GPU at runtime. On most distros you can add your user account to the `render` group, or run as root.
 
+#### Linux SYCL (Intel)
+
+_Your operating system distribution may already have packages for Intel® OneAPI Basekit and CLBlast. Distro packages are often preferable, but instructions are distro-specific. Please consult distro-specific docs for dependencies if available!_
+
+Install [CLBlast](https://github.com/CNugteren/CLBlast/blob/master/doc/installation.md) and [Intel® OneAPI Basekit](https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit.html) packages first, as well as `cmake` and `golang`.
+
+Export the Intel® OneAPI environment and `OLLAMA_INTEL_GPU` first by:
+
+```bash
+source /opt/intel/oneapi/setvars.sh --force
+export OLLAMA_INTEL_GPU=1
+```
+
+Then generate dependencies:
+
+```bash
+go generate ./...
+```
+
+Then build the binary:
+
+```bash
+go build .
+```
+
 #### Advanced CPU Settings
 
 By default, running `make` will compile a few different variations

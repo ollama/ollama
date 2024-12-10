@@ -114,5 +114,13 @@ In some Linux distributions, SELinux can prevent containers from
 accessing the AMD GPU devices.  On the host system you can run 
 `sudo setsebool container_use_devices=1` to allow containers to use devices.
 
+## Intel
+Ollama supports GPU acceleration on Intel® discrete GPU devices via the Intel® OneAPI SYCL API.
+
+### Linux Support
+| Family         | Cards and accelerators |
+| -------------- | ---------------------- |
+| Intel® Arc™ A-Series Graphics  | `A770` `A750` `A770M` |
+
 ### Metal (Apple GPUs)
 Ollama supports GPU acceleration on Apple devices via the Metal API.
