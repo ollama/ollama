@@ -243,7 +243,7 @@ jobs:
           $env:PATH="$gopath;$gccpath;$env:PATH"
           echo $env:PATH
           if (!(gcc --version | select-string -quiet clang)) { throw "wrong gcc compiler detected - must be clang" }
-          make -j 4      
+          make -j 4
       - name: 'Build Unix Go Runners'
         if: ${{ ! startsWith(matrix.os, 'windows-') }}
         run: make -j 4
@@ -310,8 +310,7 @@ jobs:
             arm64) echo ARCH=arm64 ;;
           esac >>$GITHUB_ENV
         shell: bash
-      - run: go build
-      - run: go test -v ./...
+      - run: go test ./...
 
   patches:
     needs: [changes]

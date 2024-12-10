@@ -114,7 +114,6 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 					ID:   len(images),
 					Data: i,
 				}
-				imgPrompt = " "
 			}
 
 			imgTag := fmt.Sprintf("[img-%d]", imgData.ID)
@@ -126,7 +125,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 			images = append(images, imgData)
 		}
-		msgs[currMsgIdx+cnt].Content = strings.TrimSpace(prefix + imgPrompt + prompt)
+		msgs[currMsgIdx+cnt].Content = prefix + imgPrompt + prompt
 	}
 
 	// truncate any messages that do not fit into the context window

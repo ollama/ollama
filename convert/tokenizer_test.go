@@ -191,6 +191,62 @@ func TestParseTokenizer(t *testing.T) {
 				Pre: "default",
 			},
 		},
+		{
+			name: "list string merges",
+			fsys: createTokenizerFS(t, t.TempDir(), map[string]io.Reader{
+				"tokenizer.json": strings.NewReader(`{
+					"model": {
+						"merges": [
+							"a b",
+							"c d",
+							"e f"
+						]
+					}
+				}`),
+			}),
+			want: &Tokenizer{
+				Vocabulary: &Vocabulary{
+					Model: "gpt2",
+				},
+				Merges: []string{
+					"a b",
+					"c d",
+					"e f",
+				},
+				Pre: "default",
+			},
+		},
+		{
+			name: "list list string merges",
+			fsys: createTokenizerFS(t, t.TempDir(), map[string]io.Reader{
+				"tokenizer.json": strings.NewReader(`{
+					"model": {
+						"merges": [
+							[
+								"a", "b"
+							],
+							[
+								"c", "d"
+							],
+							[
+								"e", "f"
+							]
+						]
+					}
+				}`),
+			}),
+			want: &Tokenizer{
+				Vocabulary: &Vocabulary{
+					Model: "gpt2",
+				},
+				Merges: []string{
+					"a b",
+					"c d",
+					"e f",
+				},
+				Pre: "default",
+			},
+		},
 	}
 
 	for _, tt := range cases {

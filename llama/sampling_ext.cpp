@@ -1,11 +1,13 @@
 // TODO: this is a temporary wrapper to allow calling C++ code from CGo
 #include "sampling.h"
 #include "sampling_ext.h"
+#include "json-schema-to-grammar.h"
 
 struct gpt_sampler *gpt_sampler_cinit(
     const struct llama_model *model, struct gpt_sampler_cparams *params)
 {
-    try {
+    try
+    {
         gpt_sampler_params sparams;
         sparams.top_k = params->top_k;
         sparams.top_p = params->top_p;
@@ -24,7 +26,9 @@ struct gpt_sampler *gpt_sampler_cinit(
         sparams.seed = params->seed;
         sparams.grammar = params->grammar;
         return gpt_sampler_init(model, sparams);
-    } catch (const std::exception & err) {
+    }
+    catch (const std::exception &err)
+    {
         return nullptr;
     }
 }
@@ -53,4 +57,25 @@ void gpt_sampler_caccept(
     bool apply_grammar)
 {
     gpt_sampler_accept(sampler, id, apply_grammar);
+}
+
+int schema_to_grammar(const char *json_schema, char *grammar, size_t max_len)
+{
+    try
+    {
+        nlohmann::json schema = nlohmann::json::parse(json_schema);
+        std::string grammar_str = json_schema_to_grammar(schema);
+        size_t len = grammar_str.length();
+        if (len >= max_len)
+        {
+            len = max_len - 1;
+        }
+        strncpy(grammar, grammar_str.c_str(), len);
+        return len;
+    }
+    catch (const std::exception &e)
+    {
+        strncpy(grammar, "", max_len - 1);
+        return 0;
+    }
 }

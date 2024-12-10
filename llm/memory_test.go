@@ -15,6 +15,7 @@ import (
 
 func TestEstimateGPULayers(t *testing.T) {
 	t.Setenv("OLLAMA_DEBUG", "1")
+	t.Setenv("OLLAMA_KV_CACHE_TYPE", "") // Ensure default f16
 
 	modelName := "dummy"
 	f, err := os.CreateTemp(t.TempDir(), modelName)

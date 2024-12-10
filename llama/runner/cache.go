@@ -1,4 +1,4 @@
-package main
+package runner
 
 import (
 	"errors"
@@ -199,6 +199,20 @@ func countCommonPrefix(a []input, b []input) int {
 	return count
 }
 
+func (c *InputCache) ShiftDiscard(inputLen int, numKeep int) int {
+	targetFree := (c.numCtx - numKeep) / 2
+	targetFree = max(targetFree, 1)
+
+	currentFree := c.numCtx - inputLen
+	discard := targetFree - currentFree
+
+	if discard < 0 {
+		discard = 0
+	}
+
+	return discard
+}
+
 // Frees up space in the KV cache by deleting the oldest half of history and shifting
 // the newest half into that space (saving numKeep inputs at the beginning).
 //
@@ -208,11 +222,7 @@ func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int) error {
 		return fmt.Errorf("unable to shift context - keep exceeds context (keep: %v context: %v)", numKeep, c.numCtx)
 	}
 
-	targetFree := (c.numCtx - numKeep) / 2
-	targetFree = max(targetFree, 1)
-
-	currentFree := c.numCtx - len(slot.Inputs)
-	discard := targetFree - currentFree
+	discard := c.ShiftDiscard(len(slot.Inputs), numKeep)
 
 	if discard <= 0 {
 		return nil

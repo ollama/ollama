@@ -27,7 +27,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/build"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/llm"
@@ -148,10 +147,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	if req.Format != "" && req.Format != "json" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "format must be empty or \"json\""})
-		return
-	} else if req.Raw && (req.Template != "" || req.System != "" || len(req.Context) > 0) {
+	if req.Raw && (req.Template != "" || req.System != "" || len(req.Context) > 0) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "raw mode does not support template, system, or context"})
 		return
 	}
@@ -251,6 +247,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 		var b bytes.Buffer
 		if req.Context != nil {
+			slog.Warn("the context field is deprecated and will be removed in a future version of Ollama")
 			s, err := r.Detokenize(c.Request.Context(), req.Context)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1141,7 +1138,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	config.AllowWildcard = true
 	config.AllowBrowserExtensions = true
 	config.AllowHeaders = []string{"Authorization", "Content-Type", "User-Agent", "Accept", "X-Requested-With"}
-	openAIProperties := []string{"lang", "package-version", "os", "arch", "runtime", "runtime-version", "async"}
+	openAIProperties := []string{"lang", "package-version", "os", "arch", "retry-count", "runtime", "runtime-version", "async"}
 	for _, prop := range openAIProperties {
 		config.AllowHeaders = append(config.AllowHeaders, "x-stainless-"+prop)
 	}
@@ -1266,13 +1263,16 @@ func Serve(ln net.Listener) error {
 		srvr.Close()
 		schedDone()
 		sched.unloadAllRunners()
-		runners.Cleanup(build.EmbedFS)
 		done()
 	}()
 
-	if _, err := runners.Refresh(build.EmbedFS); err != nil {
-		return fmt.Errorf("unable to initialize llm runners %w", err)
+	// Locate and log what runners are present at startup
+	var runnerNames []string
+	for v := range runners.GetAvailableServers() {
+		runnerNames = append(runnerNames, v)
 	}
+	slog.Info("Dynamic LLM libraries", "runners", runnerNames)
+	slog.Debug("Override detection logic by setting OLLAMA_LLM_LIBRARY")
 
 	s.sched.Run(schedCtx)
 
@@ -1458,6 +1458,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, req.Tools)
 	if err != nil {
+		slog.Error("chat prompt error", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -1467,6 +1468,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
+		var sb strings.Builder
+		var toolCallIndex int = 0
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
@@ -1492,7 +1495,37 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
 
-			ch <- res
+			// TODO: tool call checking and filtering should be moved outside of this callback once streaming
+			// however this was a simple change for now without reworking streaming logic of this (and other)
+			// handlers
+			if req.Stream != nil && !*req.Stream || len(req.Tools) == 0 {
+				ch <- res
+				return
+			}
+
+			// Streaming tool calls:
+			// If tools are recognized, use a flag to track the sending of a tool downstream
+			// This ensures that content is cleared from the message on the last chunk sent
+			sb.WriteString(r.Content)
+			if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
+				res.Message.ToolCalls = toolCalls
+				for i := range toolCalls {
+					toolCalls[i].Function.Index = toolCallIndex
+					toolCallIndex++
+				}
+				res.Message.Content = ""
+				sb.Reset()
+				ch <- res
+				return
+			}
+
+			if r.Done {
+				// Send any remaining content if no tool calls were detected
+				if toolCallIndex == 0 {
+					res.Message.Content = sb.String()
+				}
+				ch <- res
+			}
 		}); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}

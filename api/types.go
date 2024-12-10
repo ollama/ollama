@@ -67,7 +67,7 @@ type GenerateRequest struct {
 	Raw bool `json:"raw,omitempty"`
 
 	// Format specifies the format to return a response in.
-	Format string `json:"format"`
+	Format json.RawMessage `json:"format,omitempty"`
 
 	// KeepAlive controls how long the model will stay loaded in memory following
 	// this request.
@@ -94,7 +94,7 @@ type ChatRequest struct {
 	Stream *bool `json:"stream,omitempty"`
 
 	// Format is the format to return the response in (e.g. "json").
-	Format string `json:"format"`
+	Format json.RawMessage `json:"format,omitempty"`
 
 	// KeepAlive controls how long the model will stay loaded into memory
 	// following the request.
@@ -146,6 +146,7 @@ type ToolCall struct {
 }
 
 type ToolCallFunction struct {
+	Index     int                       `json:"index,omitempty"`
 	Name      string                    `json:"name"`
 	Arguments ToolCallFunctionArguments `json:"arguments"`
 }

@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -36,9 +37,12 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/llama"
+	"github.com/ollama/ollama/llama/runner"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/server"
+	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
 
@@ -558,6 +562,8 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	request := api.PushRequest{Name: args[0], Insecure: insecure}
+
+	n := model.ParseName(args[0])
 	if err := client.Push(cmd.Context(), &request, fn); err != nil {
 		if spinner != nil {
 			spinner.Stop()
@@ -568,7 +574,16 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	p.Stop()
 	spinner.Stop()
+
+	destination := n.String()
+	if strings.HasSuffix(n.Host, ".ollama.ai") || strings.HasSuffix(n.Host, ".ollama.com") {
+		destination = "https://ollama.com/" + strings.TrimSuffix(n.DisplayShortest(), ":latest")
+	}
+	fmt.Printf("\nYou can find your model at:\n\n")
+	fmt.Printf("\t%s\n", destination)
+
 	return nil
 }
 
@@ -1023,10 +1038,14 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		return nil
 	}
 
+	if opts.Format == "json" {
+		opts.Format = `"` + opts.Format + `"`
+	}
+
 	req := &api.ChatRequest{
 		Model:    opts.Model,
 		Messages: opts.Messages,
-		Format:   opts.Format,
+		Format:   json.RawMessage(opts.Format),
 		Options:  opts.Options,
 	}
 
@@ -1108,12 +1127,16 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		}
 	}
 
+	if opts.Format == "json" {
+		opts.Format = `"` + opts.Format + `"`
+	}
+
 	request := api.GenerateRequest{
 		Model:     opts.Model,
 		Prompt:    opts.Prompt,
 		Context:   generateContext,
 		Images:    opts.Images,
-		Format:    opts.Format,
+		Format:    json.RawMessage(opts.Format),
 		System:    opts.System,
 		Options:   opts.Options,
 		KeepAlive: opts.KeepAlive,
@@ -1399,6 +1422,19 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	runnerCmd := &cobra.Command{
+		Use:    "runner",
+		Short:  llama.PrintSystemInfo(),
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runner.Execute(os.Args[1:])
+		},
+		FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
+	}
+	runnerCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		_ = runner.Execute(args[1:])
+	})
+
 	envVars := envconfig.AsMap()
 
 	envs := []envconfig.EnvVar{envVars["OLLAMA_HOST"]}
@@ -1433,6 +1469,7 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_SCHED_SPREAD"],
 				envVars["OLLAMA_TMPDIR"],
 				envVars["OLLAMA_FLASH_ATTENTION"],
+				envVars["OLLAMA_KV_CACHE_TYPE"],
 				envVars["OLLAMA_LLM_LIBRARY"],
 				envVars["OLLAMA_GPU_OVERHEAD"],
 				envVars["OLLAMA_LOAD_TIMEOUT"],
@@ -1454,6 +1491,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		runnerCmd,
 	)
 
 	return rootCmd

@@ -49,12 +49,12 @@ Here are some example models that can be downloaded:
 
 | Model              | Parameters | Size  | Download                         |
 | ------------------ | ---------- | ----- | -------------------------------- |
+| Llama 3.3          | 70B        | 43GB  | `ollama run llama3.3`            |
 | Llama 3.2          | 3B         | 2.0GB | `ollama run llama3.2`            |
 | Llama 3.2          | 1B         | 1.3GB | `ollama run llama3.2:1b`         |
 | Llama 3.2 Vision   | 11B        | 7.9GB | `ollama run llama3.2-vision`     |
 | Llama 3.2 Vision   | 90B        | 55GB  | `ollama run llama3.2-vision:90b` |
 | Llama 3.1          | 8B         | 4.7GB | `ollama run llama3.1`            |
-| Llama 3.1          | 70B        | 40GB  | `ollama run llama3.1:70b`        |
 | Llama 3.1          | 405B       | 231GB | `ollama run llama3.1:405b`       |
 | Phi 3 Mini         | 3.8B       | 2.3GB | `ollama run phi3`                |
 | Phi 3 Medium       | 14B        | 7.9GB | `ollama run phi3:medium`         |
@@ -298,7 +298,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [AnythingLLM (Docker + MacOs/Windows/Linux native app)](https://github.com/Mintplex-Labs/anything-llm)
 - [Ollama Basic Chat: Uses HyperDiv Reactive UI](https://github.com/rapidarchitect/ollama_basic_chat)
 - [Ollama-chats RPG](https://github.com/drazdra/ollama-chats)
-- [QA-Pilot](https://github.com/reid41/QA-Pilot) (Chat with Code Repository)
+- [QA-Pilot](https://github.com/reid41/QA-Pilot) (Interactive chat tool that can leverage Ollama models for rapid understanding and navigation of GitHub code repositories)
 - [ChatOllama](https://github.com/sugarforever/chat-ollama) (Open Source Chatbot based on Ollama with Knowledge Bases)
 - [CRAG Ollama Chat](https://github.com/Nagi-ovo/CRAG-Ollama-Chat) (Simple Web Search with Corrective RAG)
 - [RAGFlow](https://github.com/infiniflow/ragflow) (Open-source Retrieval-Augmented Generation engine based on deep document understanding)
@@ -308,6 +308,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama RAG Chatbot](https://github.com/datvodinh/rag-chatbot.git) (Local Chat with multiple PDFs using Ollama and RAG)
 - [BrainSoup](https://www.nurgo-software.com/products/brainsoup) (Flexible native client with RAG & multi-agent automation)
 - [macai](https://github.com/Renset/macai) (macOS client for Ollama, ChatGPT, and other compatible API back-ends)
+- [RWKV-Runner](https://github.com/josStorer/RWKV-Runner) (RWKV offline LLM deployment tool, also usable as a client for ChatGPT and Ollama)
 - [Ollama Grid Search](https://github.com/dezoito/ollama-grid-search) (app to evaluate and compare models)
 - [Olpaka](https://github.com/Otacon/olpaka) (User-friendly Flutter Web App for Ollama)
 - [OllamaSpring](https://github.com/CrazyNeil/OllamaSpring) (Ollama Client for macOS)
@@ -345,16 +346,20 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Web management](https://github.com/lemonit-eric-mao/ollama-web-management) (Web management page)
 - [Promptery](https://github.com/promptery/promptery) (desktop client for Ollama.)
 - [Ollama App](https://github.com/JHubi1/ollama-app) (Modern and easy-to-use multi-platform client for Ollama)
+- [SpaceLlama](https://github.com/tcsenpai/spacellama) (Firefox and Chrome extension to quickly summarize web pages with ollama in a sidebar)
+- [YouLama](https://github.com/tcsenpai/youlama) (Webapp to quickly summarize any YouTube video, supporting Invidious as well)
+- [DualMind](https://github.com/tcsenpai/dualmind) (Experimental app allowing two models to talk to each other in the terminal or in a web interface)
 - [ollamarama-matrix](https://github.com/h1ddenpr0cess20/ollamarama-matrix) (Ollama chatbot for the Matrix chat protocol)
 - [ollama-chat-app](https://github.com/anan1213095357/ollama-chat-app) (Flutter-based chat app)
 - [Perfect Memory AI](https://www.perfectmemory.ai/) (Productivity AI assists personalized by what you have seen on your screen, heard and said in the meetings)
 - [Hexabot](https://github.com/hexastack/hexabot) (A conversational AI builder)
 - [Reddit Rate](https://github.com/rapidarchitect/reddit_analyzer) (Search and Rate Reddit topics with a weighted summation)
-- [OpenTalkGpt](https://github.com/adarshM84/OpenTalkGpt)
+- [OpenTalkGpt](https://github.com/adarshM84/OpenTalkGpt) (Chrome Extension to manage open-source models supported by Ollama, create custom models, and chat with models from a user-friendly UI)
 - [VT](https://github.com/vinhnx/vt.ai) (A minimal multimodal AI chat app, with dynamic conversation routing. Supports local models via Ollama)
 - [Nosia](https://github.com/nosia-ai/nosia) (Easy to install and use RAG platform based on Ollama)
 - [Witsy](https://github.com/nbonamy/witsy) (An AI Desktop application available for Mac/Windows/Linux)
 - [Abbey](https://github.com/US-Artificial-Intelligence/abbey) (A configurable AI interface server with notebooks, document storage, and YouTube support)
+- [Minima](https://github.com/dmayboroda/minima) (RAG with on-premises or fully local workflow)
 
 ### Cloud
 
@@ -376,7 +381,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Oatmeal](https://github.com/dustinblackman/oatmeal)
 - [cmdh](https://github.com/pgibler/cmdh)
 - [ooo](https://github.com/npahlfer/ooo)
-- [shell-pilot](https://github.com/reid41/shell-pilot)
+- [shell-pilot](https://github.com/reid41/shell-pilot)(Interact with models via pure shell scripts on Linux or macOS)
 - [tenere](https://github.com/pythops/tenere)
 - [llm-ollama](https://github.com/taketwo/llm-ollama) for [Datasette's LLM CLI](https://llm.datasette.io/en/stable/).
 - [typechat-cli](https://github.com/anaisbetts/typechat-cli)
@@ -392,6 +397,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [bb7](https://github.com/drunkwcodes/bb7)
 - [SwollamaCLI](https://github.com/marcusziade/Swollama) bundled with the Swollama Swift package. [Demo](https://github.com/marcusziade/Swollama?tab=readme-ov-file#cli-usage)
 - [aichat](https://github.com/sigoden/aichat) All-in-one LLM CLI tool featuring Shell Assistant, Chat-REPL, RAG, AI tools & agents, with access to OpenAI, Claude, Gemini, Ollama, Groq, and more.
+- [PowershAI](https://github.com/rrg92/powershai) PowerShell module that brings AI to terminal on Windows, including support for Ollama
 - [orbiton](https://github.com/xyproto/orbiton) Configuration-free text editor and IDE with support for tab completion with Ollama.
 
 ### Apple Vision Pro
@@ -496,12 +502,13 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [AI Telegram Bot](https://github.com/tusharhero/aitelegrambot) (Telegram bot using Ollama in backend)
 - [AI ST Completion](https://github.com/yaroslavyaroslav/OpenAI-sublime-text) (Sublime Text 4 AI assistant plugin with Ollama support)
 - [Discord-Ollama Chat Bot](https://github.com/kevinthedang/discord-ollama) (Generalized TypeScript Discord Bot w/ Tuning Documentation)
+- [ChatGPTBox: All in one browser extension](https://github.com/josStorer/chatGPTBox) with [Integrating Tutorial](https://github.com/josStorer/chatGPTBox/issues/616#issuecomment-1975186467)
 - [Discord AI chat/moderation bot](https://github.com/rapmd73/Companion) Chat/moderation bot written in python. Uses Ollama to create personalities.
 - [Headless Ollama](https://github.com/nischalj10/headless-ollama) (Scripts to automatically install ollama client & models on any OS for apps that depends on ollama server)
 - [Terraform AWS Ollama & Open WebUI](https://github.com/xuyangbocn/terraform-aws-self-host-llm) (A Terraform module to deploy on AWS a ready-to-use Ollama service, together with its front end Open WebUI service.)
 - [node-red-contrib-ollama](https://github.com/jakubburkiewicz/node-red-contrib-ollama)
 - [Local AI Helper](https://github.com/ivostoykov/localAI) (Chrome and Firefox extensions that enable interactions with the active tab and customisable API endpoints. Includes secure storage for user prompts.)
-- [vnc-lm](https://github.com/jk011ru/vnc-lm) (A containerized Discord bot with support for attachments and web links)
+- [vnc-lm](https://github.com/jake83741/vnc-lm) (Discord bot for messaging with LLMs through Ollama and LiteLLM. Seamlessly move between local and flagship models.)
 - [LSP-AI](https://github.com/SilasMarvin/lsp-ai) (Open-source language server for AI-powered functionality)
 - [QodeAssist](https://github.com/Palm1r/QodeAssist) (AI-powered coding assistant plugin for Qt Creator)
 - [Obsidian Quiz Generator plugin](https://github.com/ECuiDev/obsidian-quiz-generator)
@@ -511,3 +518,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ### Supported backends
 
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov.
+
+### Observability
+
+- [OpenLIT](https://github.com/openlit/openlit) is an OpenTelemetry-native tool for monitoring Ollama Applications & GPUs using traces and metrics.
+- [HoneyHive](https://docs.honeyhive.ai/integrations/ollama) is an AI observability and evaluation platform for AI agents. Use HoneyHive to evaluate agent performance, interrogate failures, and monitor quality in production. 
