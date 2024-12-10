@@ -3,7 +3,7 @@
 
 [pgai](https://github.com/timescale/pgai) is an open-source postgres extension that simplifies the process of building search, retrieval augmented generation (RAG), and other AI applications.
 
-This example demonstrates how to use pgai vectorizer with ollama to automatically create embeddings for text and perform semantic search on them.
+This example demonstrates how to use [pgai vectorizer](https://www.timescale.com/blog/vector-databases-are-the-wrong-abstraction/) with ollama to automatically create embeddings for text and perform semantic search on them. with ollama to automatically create embeddings for text and perform semantic search on them.
 
 ## Prerequisites
 
