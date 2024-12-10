@@ -408,6 +408,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 - [MindsDB](https://github.com/mindsdb/mindsdb/blob/staging/mindsdb/integrations/handlers/ollama_handler/README.md) (Connects Ollama models with nearly 200 data platforms and apps)
 - [chromem-go](https://github.com/philippgille/chromem-go/blob/v0.5.0/embed_ollama.go) with [example](https://github.com/philippgille/chromem-go/tree/v0.5.0/examples/rag-wikipedia-ollama)
+- [Kangaroo](https://github.com/dbkangaroo/kangaroo) (Package and integrate with Ollama, Connects Ollama models via OpenAI protocol, support all Ollama models)
 
 ### Package managers
 
