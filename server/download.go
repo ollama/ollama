@@ -26,7 +26,10 @@ import (
 	"github.com/ollama/ollama/format"
 )
 
-const maxRetries = 6
+const (
+	maxRetries      = 6
+	downloadTimeout = 5
+)
 
 var (
 	errMaxRetriesExceeded = errors.New("max retries exceeded")
@@ -337,7 +340,7 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 		defer resp.Body.Close()
 
 		n, err := io.CopyN(w, io.TeeReader(resp.Body, part), part.Size-part.Completed.Load())
-		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
 			// rollback progress
 			b.Completed.Add(-n)
 			return err
@@ -365,7 +368,7 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 				lastUpdated := part.lastUpdated
 				part.lastUpdatedMu.Unlock()
 
-				if !lastUpdated.IsZero() && time.Since(lastUpdated) > 5*time.Second {
+				if !lastUpdated.IsZero() && time.Since(lastUpdated) > downloadTimeout*time.Second {
 					const msg = "%s part %d stalled; retrying. If this persists, press ctrl-c to exit, then 'ollama pull' to find a faster connection."
 					slog.Info(fmt.Sprintf(msg, b.Digest[7:19], part.N))
 					// reset last updated
