@@ -96,8 +96,6 @@ import (
 	"unsafe"
 )
 
-var CpuFeatures = ""
-
 func BackendInit() {
 	C.llama_backend_init()
 }

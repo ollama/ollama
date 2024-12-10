@@ -2,7 +2,7 @@
 
 include make/common-defs.make
 
-CPU_GOFLAGS="-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=$(VERSION)\" \"-X=github.com/ollama/ollama/llama.CpuFeatures=$(subst $(space),$(comma),$(TARGET_CPU_FLAGS))\" $(TARGET_LDFLAGS)"
+CPU_GOFLAGS="-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=$(VERSION)\"  $(TARGET_LDFLAGS)"
 ifeq ($(ARCH),amd64)
 ifeq ($(origin CUSTOM_CPU_FLAGS),undefined)
 	RUNNERS = cpu_avx cpu_avx2

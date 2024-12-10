@@ -6,7 +6,7 @@ exe: $(OLLAMA_EXE)
 dist_exe dist_ollama: $(DIST_OLLAMA_EXE)
 
 GO_DEPS=$(foreach dir,$(shell go list -deps -f '{{.Dir}}' . ),$(wildcard $(dir)/*.go))
-CPU_GOFLAGS="-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=$(VERSION)\" \"-X=github.com/ollama/ollama/llama.CpuFeatures=$(subst $(space),$(comma),$(TARGET_CPU_FLAGS))\" $(EXTRA_GOLDFLAGS) $(TARGET_LDFLAGS)"
+CPU_GOFLAGS="-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=$(VERSION)\" $(EXTRA_GOLDFLAGS) $(TARGET_LDFLAGS)"
 
 $(OLLAMA_EXE) $(DIST_OLLAMA_EXE): TARGET_CPU_FLAGS=$(CUSTOM_CPU_FLAGS)
 $(OLLAMA_EXE) $(DIST_OLLAMA_EXE): $(COMMON_SRCS) $(COMMON_HDRS) $(GO_DEPS)
