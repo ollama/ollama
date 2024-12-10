@@ -82,7 +82,7 @@ function buildOllama() {
     if ($null -eq ${env:OLLAMA_SKIP_GENERATE}) {
         write-host "Building ollama runners"
         Remove-Item -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}"
-        & make -C llama -j 12
+        & make -j 12 dist
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     } else {
         write-host "Skipping generate step with OLLAMA_SKIP_GENERATE set"

@@ -37,6 +37,8 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/llama"
+	"github.com/ollama/ollama/llama/runner"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/server"
@@ -1420,6 +1422,19 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	runnerCmd := &cobra.Command{
+		Use:    "runner",
+		Short:  llama.PrintSystemInfo(),
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runner.Execute(os.Args[1:])
+		},
+		FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
+	}
+	runnerCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		_ = runner.Execute(args[1:])
+	})
+
 	envVars := envconfig.AsMap()
 
 	envs := []envconfig.EnvVar{envVars["OLLAMA_HOST"]}
@@ -1476,6 +1491,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		runnerCmd,
 	)
 
 	return rootCmd
