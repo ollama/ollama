@@ -98,6 +98,14 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []Capabil
 		return nil, nil, nil, err
 	}
 
+	if _, ok := requestOpts["num_ctx"]; !ok {
+		s.sched.loadedMu.Lock()
+		if runner, ok := s.sched.loaded[model.ModelPath]; ok {
+			opts.NumCtx = runner.llama.NumCtx()
+		}
+		s.sched.loadedMu.Unlock()
+	}
+
 	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive)
 	var runner *runnerRef
 	select {
