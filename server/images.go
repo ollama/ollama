@@ -376,6 +376,10 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 		switch command {
 		case "model", "adapter":
 			if name := model.ParseName(c.Args); name.IsValid() && command == "model" {
+				name, err := getExistingName(name)
+				if err != nil {
+					return err
+				}
 				baseLayers, err = parseFromModel(ctx, name, fn)
 				if err != nil {
 					return err
