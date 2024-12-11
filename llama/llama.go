@@ -47,7 +47,7 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	_ "github.com/ollama/ollama/ml/backend/ggml/ggml"
+	_ "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 )
 
 func BackendInit() {
