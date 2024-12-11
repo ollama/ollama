@@ -29,7 +29,7 @@ var (
 		"phi3.5:latest",
 		"phi3:latest",
 		// "phi:latest", // flaky, sometimes generates no response on first query
-		"stablelm2:latest",
+		"stablelm2:latest", // Predictions are off, crashes on small VRAM GPUs
 		"falcon:latest",
 		"falcon2:latest",
 		"minicpm-v:latest",

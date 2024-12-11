@@ -139,7 +139,7 @@ func TestAPIGenerate(t *testing.T) {
 	if err != nil {
 		t.Errorf("list models API error: %s", err)
 	}
-	if len(resp.Models) == 0 {
+	if resp == nil || len(resp.Models) == 0 {
 		t.Errorf("list models API returned empty list while model should still be loaded")
 	}
 	// Find the model we just loaded and verify some attributes

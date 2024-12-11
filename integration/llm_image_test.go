@@ -13,6 +13,7 @@ import (
 )
 
 func TestIntegrationLlava(t *testing.T) {
+	skipUnderMinVRAM(t, 6)
 	image, err := base64.StdEncoding.DecodeString(imageEncoding)
 	require.NoError(t, err)
 	req := api.GenerateRequest{
@@ -40,6 +41,7 @@ func TestIntegrationLlava(t *testing.T) {
 }
 
 func TestIntegrationMllama(t *testing.T) {
+	skipUnderMinVRAM(t, 8)
 	image, err := base64.StdEncoding.DecodeString(imageEncoding)
 	require.NoError(t, err)
 	req := api.GenerateRequest{
