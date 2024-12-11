@@ -5,10 +5,10 @@ linters:
     - asasalint
     - bidichk
     - bodyclose
+    - copyloopvar
     - containedctx
     - contextcheck
     - errcheck
-    - exportloopref
     - gci
     - gocheckcompilerdirectives
     - gofmt

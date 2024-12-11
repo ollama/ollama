@@ -7,5 +7,14 @@ llama/**/*.cuh linguist-vendored
 llama/**/*.m linguist-vendored
 llama/**/*.metal linguist-vendored
 
+ml/backend/**/*.c linguist-vendored
+ml/backend/**/*.h linguist-vendored
+ml/backend/**/*.cpp linguist-vendored
+ml/backend/**/*.hpp linguist-vendored
+ml/backend/**/*.cu linguist-vendored
+ml/backend/**/*.cuh linguist-vendored
+ml/backend/**/*.m linguist-vendored
+ml/backend/**/*.metal linguist-vendored
+
 * text=auto
 *.go text eol=lf
