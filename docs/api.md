@@ -13,6 +13,8 @@
 - [Push a Model](#push-a-model)
 - [Generate Embeddings](#generate-embeddings)
 - [List Running Models](#list-running-models)
+- [Tokenize Text](#tokenize-text)
+- [Detokenize Text](#detokenize-text)
 
 ## Conventions
 
@@ -1484,6 +1486,83 @@ A single JSON object will be returned.
   ]
 }
 ```
+
+## Tokenize Text
+
+Tokenize text using a model
+
+```shell
+POST /api/tokenize
+```
+
+##### Parameters
+
+- `model`: name of model to generate tokens from
+- `prompt`: text to generate tokens for
+
+##### Advanced parameters:
+
+- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
+- `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
+
+### Examples
+
+#### Request
+
+```shell
+curl -X POST http://localhost:11434/api/tokenize -d '{
+  "model": "llama3.1:8b",
+  "prompt": "Why the sky is blue?"
+}'
+```
+
+#### Response
+
+```json
+{
+  "model": "llama3.1:8b",
+  "tokens": [10445,279,13180,374,6437,30]
+}
+```
+
+## Detokenize Text
+
+Detokenize text using a model
+
+```shell
+POST /api/detokenize
+```
+
+#### Parameters
+
+- `model`: name of model to generate text from
+- `tokens`: list of tokens to generate text from
+
+##### Advanced parameters:
+
+- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
+- `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
+
+### Examples
+
+#### Request
+
+```shell
+curl -X POST http://localhost:11434/api/detokenize -d '{
+  "model": "llama3.1:8b",
+  "tokens": [10445,279,13180,374,6437,30]
+}'
+```
+
+#### Response
+
+```json
+{
+  "model": "llama3.1:8b",
+  "text": "Why the sky is blue?"
+}
+```
+
 
 ## Generate Embedding
 
