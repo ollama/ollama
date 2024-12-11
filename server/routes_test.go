@@ -514,6 +514,8 @@ func TestManifestCaseSensitivity(t *testing.T) {
 
 	wantStableName := name()
 
+	t.Logf("stable name: %s", wantStableName)
+
 	// checkManifestList tests that there is strictly one manifest in the
 	// models directory, and that the manifest is for the model under test.
 	checkManifestList := func() {
@@ -601,6 +603,18 @@ func TestManifestCaseSensitivity(t *testing.T) {
 		Destination: name(),
 	}))
 	checkManifestList()
+
+	t.Logf("pushing")
+	rr := createRequest(t, s.PushHandler, api.PushRequest{
+		Model:    name(),
+		Insecure: true,
+		Username: "alice",
+		Password: "x",
+	})
+	checkOK(rr)
+	if !strings.Contains(rr.Body.String(), `"status":"success"`) {
+		t.Errorf("got = %q, want success", rr.Body.String())
+	}
 }
 
 func TestShow(t *testing.T) {

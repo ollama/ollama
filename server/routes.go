@@ -582,11 +582,11 @@ func (s *Server) PushHandler(c *gin.Context) {
 		return
 	}
 
-	var model string
+	var mname string
 	if req.Model != "" {
-		model = req.Model
+		mname = req.Model
 	} else if req.Name != "" {
-		model = req.Name
+		mname = req.Name
 	} else {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
@@ -606,7 +606,13 @@ func (s *Server) PushHandler(c *gin.Context) {
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := PushModel(ctx, model, regOpts, fn); err != nil {
+		name, err := getExistingName(model.ParseName(mname))
+		if err != nil {
+			ch <- gin.H{"error": err.Error()}
+			return
+		}
+
+		if err := PushModel(ctx, name.DisplayShortest(), regOpts, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
