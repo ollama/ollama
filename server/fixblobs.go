@@ -14,7 +14,6 @@ func fixBlobs(dir string) error {
 			return err
 		}
 
-		//Skip the directory
 		if d.IsDir() {
 			return nil
 		}
