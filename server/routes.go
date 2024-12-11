@@ -129,7 +129,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	// We cannot currently consolidate this into GeModel because all we'll
+	// We cannot currently consolidate this into GetModel because all we'll
 	// induce infinite recursion given the current code structure.
 	name, err := getExistingName(name)
 	if err != nil {
