@@ -265,7 +265,6 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Web & Desktop
 
-- [IntelliBar](https://intellibar.app/)
 - [Open WebUI](https://github.com/open-webui/open-webui)
 - [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
 - [Hollama](https://github.com/fmaclen/hollama)
@@ -299,6 +298,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [AnythingLLM (Docker + MacOs/Windows/Linux native app)](https://github.com/Mintplex-Labs/anything-llm)
 - [Ollama Basic Chat: Uses HyperDiv Reactive UI](https://github.com/rapidarchitect/ollama_basic_chat)
 - [Ollama-chats RPG](https://github.com/drazdra/ollama-chats)
+- [IntelliBar](https://intellibar.app/) (AI-powered assistant for macOS)
 - [QA-Pilot](https://github.com/reid41/QA-Pilot) (Interactive chat tool that can leverage Ollama models for rapid understanding and navigation of GitHub code repositories)
 - [ChatOllama](https://github.com/sugarforever/chat-ollama) (Open Source Chatbot based on Ollama with Knowledge Bases)
 - [CRAG Ollama Chat](https://github.com/Nagi-ovo/CRAG-Ollama-Chat) (Simple Web Search with Corrective RAG)
