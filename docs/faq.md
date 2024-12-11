@@ -295,11 +295,11 @@ Flash Attention is a feature of most modern models that can significantly reduce
 
 The K/V context cache can be quantized to significantly reduce memory usage when Flash Attention is enabled.
 
-To use quantized K/V cache with Ollama you can set the following environment variable:
-
-- `OLLAMA_KV_CACHE_TYPE` - The quantization type for the K/V cache.  Default is `f16`.
-
-> Note: Currently this is a global option - meaning all models will run with the specified quantization type.
+You can set the quantization type in a number of ways:
+1. In the environment using `OLLAMA_KV_CACHE_TYPE` which will be the default vault for all models loaded.
+2. In a model's Modelfile using the `kv_cache_type` parameter which will be loaded with the model.
+3. In an API request to Ollama's native API using the `kv_cache_type` parameter which will be used for that request.
+4. In the CLI with `/set parameter kv_cache_type <value>` which will be used for that session.
 
 The currently available K/V cache quantization types are:
 

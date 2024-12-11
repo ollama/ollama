@@ -127,12 +127,19 @@ func EstimateGPULayers(gpus []discover.GpuInfo, ggml *GGML, projectors []string,
 		discover.GetGPUInfo().FlashAttentionSupported() &&
 		ggml.SupportsFlashAttention()
 
-	var kvct string
-	if fa {
-		requested := strings.ToLower(envconfig.KvCacheType())
-		if requested != "" && ggml.SupportsKVCacheType(requested) {
-			kvct = requested
-		}
+	// Choose kv_cache_type from opts or fallback to environment
+	kvct := selectStr(strings.ToLower(opts.KVCacheType), strings.ToLower(envconfig.KvCacheType()))
+
+	// If flash attention is enabled, ensure kvct is supported by the model.
+	// If it's not supported, default back to f16 by clearing kvct.
+	if fa && kvct != "" && !ggml.SupportsKVCacheType(kvct) {
+		slog.Warn("kv_cache_type not supported by model, defaulting to f16", "type", kvct)
+		kvct = ""
+	} else if !fa && kvct != "" && kvct != "f16" {
+		// If flash attention is disabled, but a quantized kvct is requested,
+		// warn and revert to f16 (no quantization).
+		slog.Warn("quantized kv cache requested but flash attention disabled", "type", kvct)
+		kvct = ""
 	}
 
 	kv, graphPartialOffload, graphFullOffload := ggml.GraphSize(uint64(opts.NumCtx), uint64(min(opts.NumCtx, opts.NumBatch)), kvct)
