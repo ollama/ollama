@@ -1,3 +1,0 @@
-package blas
-
-import "C"
