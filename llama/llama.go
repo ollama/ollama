@@ -38,14 +38,15 @@ package llama
 #cgo darwin,arm64 LDFLAGS: -framework Foundation -framework Metal -framework MetalKit -framework Accelerate
 #cgo linux CFLAGS: -D_GNU_SOURCE
 #cgo linux CXXFLAGS: -D_GNU_SOURCE
+#cgo linux LDFLAGS: -ldl
 #cgo linux,amd64 LDFLAGS: -L${SRCDIR}/build/linux-amd64
 #cgo linux,arm64 CFLAGS: -D__aarch64__ -D__ARM_NEON -D__ARM_FEATURE_FMA
 #cgo linux,arm64 CXXFLAGS: -D__aarch64__ -D__ARM_NEON -D__ARM_FEATURE_FMA
 #cgo linux,arm64 LDFLAGS: -L${SRCDIR}/build/linux-arm64
 #cgo linux,arm64,sve CFLAGS: -march=armv8.6-a+sve
 #cgo linux,arm64,sve CXXFLAGS: -march=armv8.6-a+sve
-#cgo linux,cuda LDFLAGS: -lcuda -lcudart -lcublas -lcublasLt -lpthread -ldl -lrt -lresolv
-#cgo linux,rocm LDFLAGS: -lpthread -ldl -lrt -lresolv
+#cgo linux,cuda LDFLAGS: -lcuda -lcudart -lcublas -lcublasLt -lpthread -lrt -lresolv
+#cgo linux,rocm LDFLAGS: -lpthread -lrt -lresolv
 #cgo rocm CFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIP -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 #cgo rocm CXXFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIP -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 #cgo rocm LDFLAGS: -L${SRCDIR} -lggml_rocm -lhipblas -lamdhip64 -lrocblas
