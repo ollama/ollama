@@ -146,7 +146,15 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 	availableServers := runners.GetAvailableServers()
 
 	var servers []string
-	if cpuRunner != "" {
+
+	ollamaRunnerNameEnv := os.Getenv("OLLAMA_RUNNER_NAME")
+	ollamaRunnerPathEnv := os.Getenv("OLLAMA_RUNNER_PATH")
+
+	if ollamaRunnerNameEnv != "" && ollamaRunnerPathEnv != "" {
+		// Use server specified in environment variable
+		availableServers[ollamaRunnerNameEnv] = ollamaRunnerPathEnv
+		servers = []string{ollamaRunnerNameEnv}
+	} else if cpuRunner != "" {
 		servers = []string{cpuRunner}
 	} else {
 		servers = runners.ServersForGpu(gpus[0].RunnerName()) // All GPUs in the list are matching Library and Variant
