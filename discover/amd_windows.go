@@ -184,7 +184,7 @@ func (gpus RocmGPUInfoList) RefreshFreeMemory() error {
 	hl, err := NewHipLib()
 	if err != nil {
 		slog.Debug(err.Error())
-		return nil
+		return err
 	}
 	defer hl.Release()
 
