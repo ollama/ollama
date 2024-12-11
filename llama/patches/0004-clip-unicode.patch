@@ -1,7 +1,7 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From aa5ad04094458943643df789c5b7fd7d4c68dafb Mon Sep 17 00:00:00 2001
 From: Michael Yang <mxyng@pm.me>
 Date: Mon, 16 Sep 2024 15:53:15 -0700
-Subject: [PATCH] clip-unicode
+Subject: [PATCH 04/11] clip-unicode
 
 ---
  examples/llava/clip.cpp | 40 +++++++++++++++++++++++++++++++++++++++-
@@ -74,3 +74,6 @@ index d7c94352..427d5e02 100644
      }
  
      // vision model
+-- 
+2.46.0
+

@@ -1,7 +1,7 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From c2f0b1c0eda94eea785a1de9098df9eb29d64eb5 Mon Sep 17 00:00:00 2001
 From: jmorganca <jmorganca@gmail.com>
 Date: Thu, 17 Oct 2024 15:18:22 -0700
-Subject: [PATCH] add mllama support
+Subject: [PATCH 08/11] add mllama support
 
 mllama adds cross-attention layers to the standard llama architecture
 it also requires a way to input a new tensor: cross_attention_state
@@ -784,3 +784,6 @@ index b01770d0..46881642 100644
      } else {
          batch.token = (llama_token *) malloc(sizeof(llama_token) * n_tokens_alloc);
      }
+-- 
+2.46.0
+
