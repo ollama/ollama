@@ -217,7 +217,11 @@ func parseFromFile(ctx context.Context, command string, baseLayers []*layerGGML,
 		}
 
 		layers = append(layers, &layerGGML{layer, ggml})
-		offset = n
+
+		alignment := ggml.KV().Alignment()
+		if offset, err = file.Seek(n+(alignment-(n%alignment))%alignment, os.SEEK_SET); err != nil {
+			return nil, err
+		}
 	}
 
 	return detectChatTemplate(layers)
