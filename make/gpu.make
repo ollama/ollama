@@ -15,10 +15,9 @@ DIST_GPU_RUNNER_DEPS_DIR = $(DIST_LIB_DIR)
 GPU_RUNNER_LIBS = $(wildcard $(addsuffix .$(SHARED_EXT).*,$(addprefix $(GPU_LIB_DIR)/$(SHARED_PREFIX),$(GPU_RUNNER_LIBS_SHORT))))
 
 GPU_RUNNER_SRCS := \
-	llama/ggml-cuda.cu \
 	$(filter-out $(wildcard llama/ggml-cuda/fattn*.cu),$(wildcard llama/ggml-cuda/*.cu)) \
 	$(wildcard llama/ggml-cuda/template-instances/mmq*.cu) \
-	llama/ggml.c llama/ggml-backend.c llama/ggml-alloc.c llama/ggml-quants.c llama/sgemm.cpp llama/ggml-aarch64.c
+	llama/ggml.c llama/ggml-backend.cpp llama/ggml-alloc.c llama/ggml-quants.c llama/sgemm.cpp llama/ggml-aarch64.c llama/ggml-threading.cpp
 GPU_RUNNER_HDRS := \
 	$(wildcard llama/ggml-cuda/*.cuh)
 

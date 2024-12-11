@@ -86,13 +86,14 @@ LLAMACPP_FILES=\
 	src/llama-sampling.cpp \
 	src/llama-sampling.h \
 	include/llama.h \
-	ggml/src/llamafile/sgemm.cpp \
-	ggml/src/llamafile/sgemm.h
+	ggml/include/ggml-cpu.h \
+	ggml/src/ggml-cpu/llamafile/sgemm.cpp \
+	ggml/src/ggml-cpu/llamafile/sgemm.h
 $(foreach name,$(LLAMACPP_FILES),$(eval $(call vendor_file,$(name),$(DEST_DIR))))
 
 # llama.cpp files -> llama/llamafile
 LLAMAFILE_FILES= \
-	ggml/src/llamafile/sgemm.h
+	ggml/src/ggml-cpu/llamafile/sgemm.h
 $(foreach name,$(LLAMAFILE_FILES),$(eval $(call vendor_file,$(name),$(DEST_DIR)llamafile/)))
 
 # ggml files -> llama/
@@ -101,26 +102,53 @@ GGML_FILES= \
 	ggml/include/ggml.h \
 	ggml/src/ggml-quants.c \
 	ggml/src/ggml-quants.h \
-	ggml/src/ggml-metal.metal \
+	ggml/src/ggml-metal/ggml-metal.metal \
 	ggml/include/ggml-metal.h \
 	ggml/src/ggml-impl.h \
+	ggml/src/ggml-threading.h \
 	ggml/include/ggml-cuda.h \
-	ggml/src/ggml-cuda.cu \
+	ggml/src/ggml-backend-reg.cpp \
+	ggml/src/ggml-metal/ggml-metal-impl.h \
 	ggml/src/ggml-common.h \
 	ggml/include/ggml-backend.h \
-	ggml/src/ggml-backend.c \
+	ggml/src/ggml-backend.cpp \
 	ggml/src/ggml-backend-impl.h \
 	ggml/include/ggml-alloc.h \
 	ggml/src/ggml-alloc.c \
 	ggml/src/ggml-aarch64.h \
 	ggml/src/ggml-aarch64.c \
-	ggml/src/ggml-cpu-impl.h \
 	ggml/include/ggml-blas.h \
-	ggml/src/ggml-blas.cpp
+	ggml/include/ggml-cpp.h \
+	ggml/src/ggml-threading.cpp \
+	ggml/src/ggml-blas/ggml-blas.cpp \
+	ggml/src/ggml-cpu/ggml-cpu.c \
+	ggml/src/ggml-cpu/ggml-cpu-aarch64.c \
+	ggml/src/ggml-cpu/ggml-cpu.cpp \
+	ggml/src/ggml-cpu/ggml-cpu-aarch64.h \
+	ggml/src/ggml-cpu/ggml-cpu-quants.h \
+	ggml/src/ggml-cpu/ggml-cpu-quants.c \
+	ggml/src/ggml-cpu/ggml-cpu-impl.h \
+	ggml/src/ggml-cpu/amx/amx.h \
+	ggml/src/ggml-cpu/amx/amx.cpp \
+	ggml/src/ggml-cpu/amx/mmq.cpp \
+	ggml/src/ggml-cpu/amx/mmq.h
 $(foreach name,$(GGML_FILES),$(eval $(call vendor_file,$(name),$(DEST_DIR))))
 
+$(DEST_DIR)ggml-metal-embed.metal: $(DEST_DIR)ggml-common.h $(DEST_DIR)ggml-metal-impl.h
+	@sed -e '/__embed_ggml-common.h__/r $(DEST_DIR)/ggml-common.h' \
+	     -e '/__embed_ggml-common.h__/d' \
+	     < $(DEST_DIR)/ggml-metal.metal \
+	     > $(DEST_DIR)/ggml-metal-embed.metal.tmp
+	@sed -e '/#include "ggml-metal-impl.h"/r $(DEST_DIR)/ggml-metal-impl.h' \
+	     -e '/#include "ggml-metal-impl.h"/d' \
+	     < $(DEST_DIR)/ggml-metal-embed.metal.tmp \
+	     > $(DEST_DIR)/ggml-metal-embed.metal
+	@rm $(DEST_DIR)/ggml-metal-embed.metal.tmp
+
+VENDORED_FILES += $(DEST_DIR)ggml-metal-embed.metal
+
 # TODO generalize renaming pattern if we have more of these
-$(DEST_DIR)ggml-metal_darwin_arm64.m : $(LLAMACPP_REPO)ggml/src/ggml-metal.m
+$(DEST_DIR)ggml-metal_darwin_arm64.m : $(LLAMACPP_REPO)ggml/src/ggml-metal/ggml-metal.m
 	@echo "vendoring $(subst $(LLAMACPP_REPO),,$<)"; \
 		mkdir -p $(dir $@) && \
 		echo "/**" > $@ && \
