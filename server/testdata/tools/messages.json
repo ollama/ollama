@@ -1,7 +1,7 @@
 [
   {
     "role": "system",
-    "content": "You are a knowledgable assistant. You can answer questions and perform tasks."
+    "content": "You are a knowledgeable assistant. You can answer questions and perform tasks."
   },
   {
     "role": "user",

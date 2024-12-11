@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -19,9 +20,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -36,39 +35,69 @@ import (
 	"golang.org/x/term"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/llama"
+	"github.com/ollama/ollama/llama/runner"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/server"
-	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
 
+var (
+	errModelNotFound     = errors.New("no Modelfile or safetensors files found")
+	errModelfileNotFound = errors.New("specified Modelfile wasn't found")
+)
+
+func getModelfileName(cmd *cobra.Command) (string, error) {
+	fn, _ := cmd.Flags().GetString("file")
+
+	filename := fn
+	if filename == "" {
+		filename = "Modelfile"
+	}
+
+	absName, err := filepath.Abs(filename)
+	if err != nil {
+		return "", err
+	}
+
+	_, err = os.Stat(absName)
+	if err != nil {
+		return fn, err
+	}
+
+	return absName, nil
+}
+
 func CreateHandler(cmd *cobra.Command, args []string) error {
-	filename, _ := cmd.Flags().GetString("file")
-	filename, err := filepath.Abs(filename)
-	if err != nil {
-		return err
-	}
-
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
-	f, err := os.Open(filename)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
+	var reader io.Reader
 
-	modelfile, err := parser.ParseFile(f)
+	filename, err := getModelfileName(cmd)
+	if os.IsNotExist(err) {
+		if filename == "" {
+			reader = strings.NewReader("FROM .\n")
+		} else {
+			return errModelfileNotFound
+		}
+	} else if err != nil {
+		return err
+	} else {
+		f, err := os.Open(filename)
+		if err != nil {
+			return err
+		}
+
+		reader = f
+		defer f.Close()
+	}
+
+	modelfile, err := parser.ParseFile(reader)
 	if err != nil {
 		return err
 	}
@@ -82,6 +111,11 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
 	defer p.Stop()
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
 
 	for i := range modelfile.Commands {
 		switch modelfile.Commands[i].Name {
@@ -221,7 +255,7 @@ func tempZipFiles(path string) (string, error) {
 		// covers consolidated.x.pth, consolidated.pth
 		files = append(files, pt...)
 	} else {
-		return "", errors.New("no safetensors or torch files found")
+		return "", errModelNotFound
 	}
 
 	// add configuration files, json files are detected as text/plain
@@ -422,6 +456,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	if len(prompts) > 0 {
 		interactive = false
 	}
+	// Be quiet if we're redirecting to a pipe or file
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		interactive = false
+	}
 
 	nowrap, err := cmd.Flags().GetBool("nowordwrap")
 	if err != nil {
@@ -453,7 +491,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	opts.MultiModal = slices.Contains(info.Details.Families, "clip")
+	opts.MultiModal = len(info.ProjectorInfo) != 0
 	opts.ParentModel = info.Details.ParentModel
 
 	if interactive {
@@ -476,47 +514,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return generateInteractive(cmd, opts)
 	}
 	return generate(cmd, opts)
-}
-
-func errFromUnknownKey(unknownKeyErr error) error {
-	// find SSH public key in the error message
-	sshKeyPattern := `ssh-\w+ [^\s"]+`
-	re := regexp.MustCompile(sshKeyPattern)
-	matches := re.FindStringSubmatch(unknownKeyErr.Error())
-
-	if len(matches) > 0 {
-		serverPubKey := matches[0]
-
-		localPubKey, err := auth.GetPublicKey()
-		if err != nil {
-			return unknownKeyErr
-		}
-
-		if runtime.GOOS == "linux" && serverPubKey != localPubKey {
-			// try the ollama service public key
-			svcPubKey, err := os.ReadFile("/usr/share/ollama/.ollama/id_ed25519.pub")
-			if err != nil {
-				return unknownKeyErr
-			}
-			localPubKey = strings.TrimSpace(string(svcPubKey))
-		}
-
-		// check if the returned public key matches the local public key, this prevents adding a remote key to the user's account
-		if serverPubKey != localPubKey {
-			return unknownKeyErr
-		}
-
-		var msg strings.Builder
-		msg.WriteString(unknownKeyErr.Error())
-		msg.WriteString("\n\nYour ollama key is:\n")
-		msg.WriteString(localPubKey)
-		msg.WriteString("\nAdd your key at:\n")
-		msg.WriteString("https://ollama.com/settings/keys")
-
-		return errors.New(msg.String())
-	}
-
-	return unknownKeyErr
 }
 
 func PushHandler(cmd *cobra.Command, args []string) error {
@@ -565,6 +562,8 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	request := api.PushRequest{Name: args[0], Insecure: insecure}
+
+	n := model.ParseName(args[0])
 	if err := client.Push(cmd.Context(), &request, fn); err != nil {
 		if spinner != nil {
 			spinner.Stop()
@@ -572,18 +571,19 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		if strings.Contains(err.Error(), "access denied") {
 			return errors.New("you are not authorized to push to this namespace, create the model under a namespace you own")
 		}
-		host := model.ParseName(args[0]).Host
-		isOllamaHost := strings.HasSuffix(host, ".ollama.ai") || strings.HasSuffix(host, ".ollama.com")
-		if strings.Contains(err.Error(), errtypes.UnknownOllamaKeyErrMsg) && isOllamaHost {
-			// the user has not added their ollama key to ollama.com
-			// re-throw an error with a more user-friendly message
-			return errFromUnknownKey(err)
-		}
-
 		return err
 	}
 
+	p.Stop()
 	spinner.Stop()
+
+	destination := n.String()
+	if strings.HasSuffix(n.Host, ".ollama.ai") || strings.HasSuffix(n.Host, ".ollama.com") {
+		destination = "https://ollama.com/" + strings.TrimSuffix(n.DisplayShortest(), ":latest")
+	}
+	fmt.Printf("\nYou can find your model at:\n\n")
+	fmt.Printf("\t%s\n", destination)
+
 	return nil
 }
 
@@ -766,9 +766,9 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		case "parameters":
 			fmt.Println(resp.Parameters)
 		case "system":
-			fmt.Println(resp.System)
+			fmt.Print(resp.System)
 		case "template":
-			fmt.Println(resp.Template)
+			fmt.Print(resp.Template)
 		}
 
 		return nil
@@ -1038,10 +1038,14 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		return nil
 	}
 
+	if opts.Format == "json" {
+		opts.Format = `"` + opts.Format + `"`
+	}
+
 	req := &api.ChatRequest{
 		Model:    opts.Model,
 		Messages: opts.Messages,
-		Format:   opts.Format,
+		Format:   json.RawMessage(opts.Format),
 		Options:  opts.Options,
 	}
 
@@ -1123,12 +1127,16 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		}
 	}
 
+	if opts.Format == "json" {
+		opts.Format = `"` + opts.Format + `"`
+	}
+
 	request := api.GenerateRequest{
 		Model:     opts.Model,
 		Prompt:    opts.Prompt,
 		Context:   generateContext,
 		Images:    opts.Images,
-		Format:    opts.Format,
+		Format:    json.RawMessage(opts.Format),
 		System:    opts.System,
 		Options:   opts.Options,
 		KeepAlive: opts.KeepAlive,
@@ -1284,7 +1292,7 @@ func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
 
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" && term.IsTerminal(int(os.Stdout.Fd())) {
 		console.ConsoleFromFile(os.Stdin) //nolint:errcheck
 	}
 
@@ -1316,7 +1324,7 @@ func NewCLI() *cobra.Command {
 		RunE:    CreateHandler,
 	}
 
-	createCmd.Flags().StringP("file", "f", "Modelfile", "Name of the Modelfile")
+	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\"")
 	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_0)")
 
 	showCmd := &cobra.Command{
@@ -1414,6 +1422,19 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	runnerCmd := &cobra.Command{
+		Use:    "runner",
+		Short:  llama.PrintSystemInfo(),
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runner.Execute(os.Args[1:])
+		},
+		FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
+	}
+	runnerCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		_ = runner.Execute(args[1:])
+	})
+
 	envVars := envconfig.AsMap()
 
 	envs := []envconfig.EnvVar{envVars["OLLAMA_HOST"]}
@@ -1448,6 +1469,7 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_SCHED_SPREAD"],
 				envVars["OLLAMA_TMPDIR"],
 				envVars["OLLAMA_FLASH_ATTENTION"],
+				envVars["OLLAMA_KV_CACHE_TYPE"],
 				envVars["OLLAMA_LLM_LIBRARY"],
 				envVars["OLLAMA_GPU_OVERHEAD"],
 				envVars["OLLAMA_LOAD_TIMEOUT"],
@@ -1469,6 +1491,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		runnerCmd,
 	)
 
 	return rootCmd
