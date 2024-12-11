@@ -1,42 +1,58 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 702ee500b229e910e3e6cd3c84d87763c51fb411 Mon Sep 17 00:00:00 2001
 From: jmorganca <jmorganca@gmail.com>
 Date: Thu, 6 Jun 2024 23:55:47 -0700
-Subject: [PATCH] cuda
+Subject: [PATCH 01/11] cuda
 
 ---
- ggml/src/ggml-backend.cpp       | 5 +++++
- ggml/src/ggml-cuda/ggml-cuda.cu | 4 ++++
- 2 files changed, 9 insertions(+)
+ ggml/src/ggml-backend.cpp        | 2 +-
+ ggml/src/ggml-cuda/ggml-cuda.cu  | 1 +
+ ggml/src/ggml-metal/ggml-metal.m | 1 +
+ 3 files changed, 3 insertions(+), 1 deletion(-)
 
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index fdb4b986..9b80fe07 100644
+index fdb4b986..731e4078 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
-@@ -106,7 +106,12 @@ void ggml_backend_buffer_free(ggml_backend_buffer_t buffer) {
+@@ -106,7 +106,6 @@ void ggml_backend_buffer_free(ggml_backend_buffer_t buffer) {
      if (buffer->iface.free_buffer != NULL) {
          buffer->iface.free_buffer(buffer);
      }
-+
-+// TODO: this needs to be freed in cuda and hip backends because
-+// the cuda backend implementation compiled with msvc
-+#if !defined(GGML_USE_CUDA) && !defined(GGML_USE_HIP)
-     delete buffer;
-+#endif
+-    delete buffer;
  }
  
  size_t ggml_backend_buffer_get_size(ggml_backend_buffer_t buffer) {
-diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index d6e4bfdd..52aec229 100644
---- a/ggml/src/ggml-cuda/ggml-cuda.cu
-+++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -424,6 +424,10 @@ struct ggml_backend_cuda_buffer_context {
- static void ggml_backend_cuda_buffer_free_buffer(ggml_backend_buffer_t buffer) {
-     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
-     delete ctx;
-+
-+    // TODO: this needs to be freed in cuda and hipblas backends because
-+    // the cuda backend implementation compiled with msvc
+@@ -1862,6 +1861,7 @@ static void * ggml_backend_cpu_buffer_get_base(ggml_backend_buffer_t buffer) {
+ 
+ static void ggml_backend_cpu_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     ggml_aligned_free(buffer->context, buffer->size);
 +    free(buffer);
  }
  
+ static void ggml_backend_cpu_buffer_memset_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, uint8_t value, size_t offset, size_t size) {
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index d6e4bfdd..a2fcfe5d 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -424,6 +424,7 @@ struct ggml_backend_cuda_buffer_context {
+ static void ggml_backend_cuda_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+     ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
+     delete ctx;
++    delete buffer;
+ }
+ 
  static bool ggml_backend_buffer_is_cuda(ggml_backend_buffer_t buffer) {
+diff --git a/ggml/src/ggml-metal/ggml-metal.m b/ggml/src/ggml-metal/ggml-metal.m
+index 093ae900..a0cf4ba4 100644
+--- a/ggml/src/ggml-metal/ggml-metal.m
++++ b/ggml/src/ggml-metal/ggml-metal.m
+@@ -4035,6 +4035,7 @@ static void ggml_backend_metal_buffer_free_buffer(ggml_backend_buffer_t buffer)
+     }
+ 
+     free(ctx);
++    free(buffer);
+ }
+ 
+ static void * ggml_backend_metal_buffer_get_base(ggml_backend_buffer_t buffer) {
+-- 
+2.46.0
+

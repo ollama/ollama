@@ -1,7 +1,7 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 9a5a9479d9cdf2032ff989fd297e50490f53e4c2 Mon Sep 17 00:00:00 2001
 From: Jesse Gross <jesse@ollama.com>
 Date: Mon, 30 Sep 2024 16:31:04 -0700
-Subject: [PATCH] blas
+Subject: [PATCH 07/11] blas
 
 ---
  ggml/src/ggml-blas/ggml-blas.cpp | 4 ++++
@@ -24,3 +24,6 @@ index ec158dfa..b3ac1fa4 100644
 +
 +#endif // GGML_USE_BLAS
 \ No newline at end of file
+-- 
+2.46.0
+

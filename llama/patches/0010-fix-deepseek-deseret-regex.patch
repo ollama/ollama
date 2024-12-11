@@ -1,7 +1,7 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 4236c07fc90fb758b89921fa7ef39dc0482c4bea Mon Sep 17 00:00:00 2001
 From: Daniel Hiltgen <daniel@ollama.com>
 Date: Fri, 25 Oct 2024 16:25:18 -0700
-Subject: [PATCH] fix deepseek deseret regex
+Subject: [PATCH 10/11] fix deepseek deseret regex
 
 On windows compiled with gcc the c++ regex library failed to handle
 the characters
@@ -70,3 +70,6 @@ index 3d459263..51dd81fb 100644
  }
  
  static std::vector<std::string> unicode_byte_encoding_process(const std::vector<std::string> & bpe_words) {
+-- 
+2.46.0
+

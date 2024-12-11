@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ollama/ollama/cache"
 	"github.com/ollama/ollama/ml"
@@ -33,7 +34,17 @@ func temp() error {
 
 	flag.Parse()
 
-	if len(flag.Args()) != 1 {
+	var prompt string
+	if n := len(flag.Args()); n == 1 {
+		bts, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return err
+		}
+
+		prompt = string(bts)
+	} else if n > 1 {
+		prompt = strings.Join(flag.Args()[1:], " ")
+	} else {
 		return fmt.Errorf("usage: %s path/to/file <prompt\n", filepath.Base(os.Args[0]))
 	}
 
@@ -56,11 +67,6 @@ func temp() error {
 	})))
 
 	m, err := model.New(flag.Arg(0))
-	if err != nil {
-		return err
-	}
-
-	prompt, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return err
 	}

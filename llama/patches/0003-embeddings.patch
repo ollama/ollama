@@ -1,7 +1,7 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From a9a7820ae111d70e24d4f7004378b5321e8a29c7 Mon Sep 17 00:00:00 2001
 From: Michael Yang <mxyng@pm.me>
 Date: Mon, 16 Sep 2024 15:53:14 -0700
-Subject: [PATCH] embeddings
+Subject: [PATCH 03/11] embeddings
 
 ---
  src/llama.cpp | 9 ++++++---
@@ -45,3 +45,6 @@ index fa09f3b3..d1791af0 100644
          // LLAMA_LOG_INFO("graph build time: %.3f ms (%d nodes, %d leafs)\n", (ggml_time_us() - t_start_us)/1000.0, gf->n_nodes, gf->n_leafs);
  
          ggml_backend_sched_alloc_graph(lctx.sched.get(), gf);
+-- 
+2.46.0
+

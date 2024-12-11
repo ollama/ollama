@@ -1,7 +1,7 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From 8e07a88fa87f31b6f2245c02a89a4a367ed6013c Mon Sep 17 00:00:00 2001
 From: Michael Yang <mxyng@pm.me>
 Date: Thu, 17 Oct 2024 17:19:25 -0700
-Subject: [PATCH] add unpad operator
+Subject: [PATCH 09/11] add unpad operator
 
 ---
  ggml/include/ggml.h                  | 10 +++++
@@ -125,10 +125,10 @@ index 23ae2e10..111ff3b0 100644
          case GGML_OP_TIMESTEP_EMBEDDING:
          case GGML_OP_ARGSORT:
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index cbf4fddf..9ca6cb77 100644
+index 5eed90da..053e392a 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -2085,6 +2085,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
+@@ -2082,6 +2082,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
          case GGML_OP_PAD:
              ggml_cuda_op_pad(ctx, dst);
              break;
@@ -138,7 +138,7 @@ index cbf4fddf..9ca6cb77 100644
          case GGML_OP_ARANGE:
              ggml_cuda_op_arange(ctx, dst);
              break;
-@@ -3012,6 +3015,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
+@@ -3009,6 +3012,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
          case GGML_OP_GROUP_NORM:
          case GGML_OP_UPSCALE:
          case GGML_OP_PAD:
@@ -210,10 +210,10 @@ index 8fd386b0..e2ededc3 100644
  void ggml_cuda_op_pad(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 +void ggml_cuda_op_unpad(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 diff --git a/ggml/src/ggml-metal/ggml-metal.m b/ggml/src/ggml-metal/ggml-metal.m
-index 093ae900..cb9a1307 100644
+index a0cf4ba4..346dfb5b 100644
 --- a/ggml/src/ggml-metal/ggml-metal.m
 +++ b/ggml/src/ggml-metal/ggml-metal.m
-@@ -310,6 +310,7 @@ static void ggml_backend_metal_device_rel(struct ggml_backend_metal_device_conte
+@@ -310,6 +310,7 @@ enum ggml_metal_kernel_type {
      GGML_METAL_KERNEL_TYPE_CONV_TRANSPOSE_1D_F16_F32,
      GGML_METAL_KERNEL_TYPE_UPSCALE_F32,
      GGML_METAL_KERNEL_TYPE_PAD_F32,
@@ -221,7 +221,7 @@ index 093ae900..cb9a1307 100644
      GGML_METAL_KERNEL_TYPE_ARANGE_F32,
      GGML_METAL_KERNEL_TYPE_TIMESTEP_EMBEDDING_F32,
      GGML_METAL_KERNEL_TYPE_ARGSORT_F32_I32_ASC,
-@@ -877,6 +878,7 @@ @implementation GGMLMetalClass
+@@ -877,6 +878,7 @@ static struct ggml_backend_metal_context * ggml_metal_init(ggml_backend_dev_t de
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_CONV_TRANSPOSE_1D_F16_F32,     conv_transpose_1d_f16_f32,      true);
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_UPSCALE_F32,                   upscale_f32,                    true);
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_PAD_F32,                       pad_f32,                        true);
@@ -394,3 +394,6 @@ index 1a9a7efa..ea2b259b 100644
  // ggml_arange
  
  struct ggml_tensor * ggml_arange(
+-- 
+2.46.0
+
