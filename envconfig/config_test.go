@@ -219,6 +219,39 @@ func TestKeepAlive(t *testing.T) {
 	}
 }
 
+func TestMaxKeepAlive(t *testing.T) {
+	cases := map[string]time.Duration{
+		"":       time.Duration(math.MaxInt64),
+		"1s":     time.Second,
+		"1m":     time.Minute,
+		"1h":     time.Hour,
+		"5m0s":   5 * time.Minute,
+		"1h2m3s": 1*time.Hour + 2*time.Minute + 3*time.Second,
+		"0":      time.Duration(0),
+		"60":     60 * time.Second,
+		"120":    2 * time.Minute,
+		"3600":   time.Hour,
+		"-0":     time.Duration(0),
+		"-1":     time.Duration(math.MaxInt64),
+		"-1m":    time.Duration(math.MaxInt64),
+		// invalid values
+		" ":   time.Duration(math.MaxInt64),
+		"???": time.Duration(math.MaxInt64),
+		"1d":  time.Duration(math.MaxInt64),
+		"1y":  time.Duration(math.MaxInt64),
+		"1w":  time.Duration(math.MaxInt64),
+	}
+
+	for tt, expect := range cases {
+		t.Run(tt, func(t *testing.T) {
+			t.Setenv("OLLAMA_MAX_KEEP_ALIVE", tt)
+			if actual := MaxKeepAlive(); actual != expect {
+				t.Errorf("%s: expected %s, got %s", tt, expect, actual)
+			}
+		})
+	}
+}
+
 func TestLoadTimeout(t *testing.T) {
 	defaultTimeout := 5 * time.Minute
 	cases := map[string]time.Duration{

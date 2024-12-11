@@ -399,7 +399,12 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 		runner.expireTimer = nil
 	}
 	if pending.sessionDuration != nil {
-		runner.sessionDuration = pending.sessionDuration.Duration
+		sessionDuration := pending.sessionDuration.Duration
+		maxSessionDuration := envconfig.MaxKeepAlive()
+		if sessionDuration > maxSessionDuration {
+			sessionDuration = maxSessionDuration
+		}
+		runner.sessionDuration = sessionDuration
 	}
 	pending.successCh <- runner
 	go func() {
@@ -417,6 +422,12 @@ func (s *Scheduler) load(req *LlmRequest, ggml *llm.GGML, gpus discover.GpuInfoL
 	if req.sessionDuration != nil {
 		sessionDuration = req.sessionDuration.Duration
 	}
+
+	maxSessionDuration := envconfig.MaxKeepAlive()
+	if sessionDuration > maxSessionDuration {
+		sessionDuration = maxSessionDuration
+	}
+
 	llama, err := s.newServerFn(gpus, req.model.ModelPath, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, numParallel)
 	if err != nil {
 		// some older models are not compatible with newer versions of llama.cpp
