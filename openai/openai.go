@@ -649,7 +649,9 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 		if chatResponse.Done {
 			if w.streamOptions != nil && w.streamOptions.IncludeUsage {
 				u := toUsage(chatResponse)
-				d, err := json.Marshal(ChatCompletionChunk{Choices: []ChunkChoice{}, Usage: &u})
+				c.Usage = &u
+				c.Choices = []ChunkChoice{}
+				d, err := json.Marshal(c)
 				if err != nil {
 					return 0, err
 				}
@@ -713,7 +715,9 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 		if generateResponse.Done {
 			if w.streamOptions != nil && w.streamOptions.IncludeUsage {
 				u := toUsageGenerate(generateResponse)
-				d, err := json.Marshal(CompletionChunk{Choices: []CompleteChunkChoice{}, Usage: &u})
+				c.Usage = &u
+				c.Choices = []CompleteChunkChoice{}
+				d, err := json.Marshal(c)
 				if err != nil {
 					return 0, err
 				}
