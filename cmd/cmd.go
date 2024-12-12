@@ -37,6 +37,8 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/llama"
+	"github.com/ollama/ollama/llama/runner"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/server"
@@ -599,7 +601,7 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 	var data [][]string
 
 	for _, m := range models.Models {
-		if len(args) == 0 || strings.HasPrefix(m.Name, args[0]) {
+		if len(args) == 0 || strings.HasPrefix(strings.ToLower(m.Name), strings.ToLower(args[0])) {
 			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), format.HumanTime(m.ModifiedAt, "Never")})
 		}
 	}
@@ -1036,6 +1038,10 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		return nil
 	}
 
+	if opts.Format == "json" {
+		opts.Format = `"` + opts.Format + `"`
+	}
+
 	req := &api.ChatRequest{
 		Model:    opts.Model,
 		Messages: opts.Messages,
@@ -1119,6 +1125,10 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		if err != nil {
 			return err
 		}
+	}
+
+	if opts.Format == "json" {
+		opts.Format = `"` + opts.Format + `"`
 	}
 
 	request := api.GenerateRequest{
@@ -1412,6 +1422,19 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	runnerCmd := &cobra.Command{
+		Use:    "runner",
+		Short:  llama.PrintSystemInfo(),
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runner.Execute(os.Args[1:])
+		},
+		FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
+	}
+	runnerCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		_ = runner.Execute(args[1:])
+	})
+
 	envVars := envconfig.AsMap()
 
 	envs := []envconfig.EnvVar{envVars["OLLAMA_HOST"]}
@@ -1468,6 +1491,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		runnerCmd,
 	)
 
 	return rootCmd

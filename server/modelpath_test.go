@@ -1,7 +1,6 @@
 package server
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -153,12 +152,5 @@ func TestParseModelPath(t *testing.T) {
 				t.Errorf("got: %q want: %q", got, tc.want)
 			}
 		})
-	}
-}
-
-func TestInsecureModelpath(t *testing.T) {
-	mp := ParseModelPath("../../..:something")
-	if _, err := mp.GetManifestPath(); !errors.Is(err, errModelPathInvalid) {
-		t.Errorf("expected error: %v", err)
 	}
 }

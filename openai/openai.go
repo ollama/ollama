@@ -82,7 +82,7 @@ type ResponseFormat struct {
 }
 
 type JsonSchema struct {
-	Schema map[string]any `json:"schema"`
+	Schema json.RawMessage `json:"schema"`
 }
 
 type EmbedRequest struct {
@@ -526,11 +526,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 			format = json.RawMessage(`"json"`)
 		case "json_schema":
 			if r.ResponseFormat.JsonSchema != nil {
-				schema, err := json.Marshal(r.ResponseFormat.JsonSchema.Schema)
-				if err != nil {
-					return nil, fmt.Errorf("failed to marshal json schema: %w", err)
-				}
-				format = schema
+				format = r.ResponseFormat.JsonSchema.Schema
 			}
 		}
 	}

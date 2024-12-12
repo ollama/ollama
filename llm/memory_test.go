@@ -71,7 +71,7 @@ func TestEstimateGPULayers(t *testing.T) {
 	projectorSize := uint64(0)
 	memoryLayerOutput := uint64(4)
 
-	// Dual CUDA scenario with assymetry
+	// Dual CUDA scenario with asymmetry
 	gpuMinimumMemory := uint64(2048)
 	gpus = []discover.GpuInfo{
 		{

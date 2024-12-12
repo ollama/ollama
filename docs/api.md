@@ -45,7 +45,7 @@ Generate a response for a given prompt with a provided model. This is a streamin
 
 Advanced parameters (optional):
 
-- `format`: the format to return a response in. Currently the only accepted value is `json`
+- `format`: the format to return a response in. Format can be `json` or a JSON schema
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `system`: system message to (overrides what is defined in the `Modelfile`)
 - `template`: the prompt template to use (overrides what is defined in the `Modelfile`)
@@ -53,6 +53,10 @@ Advanced parameters (optional):
 - `raw`: if `true` no formatting will be applied to the prompt. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 - `context` (deprecated): the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
+
+#### Structured outputs
+
+Structured outputs are supported by providing a JSON schema in the `format` parameter. The model will generate a response that matches the schema. See the [structured outputs](#request-structured-outputs) example below.
 
 #### JSON mode
 
@@ -182,6 +186,52 @@ curl http://localhost:11434/api/generate -d '{
   "prompt_eval_duration": 201222000,
   "eval_count": 63,
   "eval_duration": 953997000
+}
+```
+
+#### Request (Structured outputs)
+
+##### Request
+
+```shell
+curl -X POST http://localhost:11434/api/generate -H "Content-Type: application/json" -d '{
+  "model": "llama3.1:8b",
+  "prompt": "Ollama is 22 years old and is busy saving the world. Respond using JSON",
+  "stream": false,
+  "format": {
+    "type": "object",
+    "properties": {
+      "age": {
+        "type": "integer"
+      },
+      "available": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "age",
+      "available"
+    ]
+  }
+}'
+```
+
+##### Response
+
+```json
+{
+  "model": "llama3.1:8b",
+  "created_at": "2024-12-06T00:48:09.983619Z",
+  "response": "{\n  \"age\": 22,\n  \"available\": true\n}",
+  "done": true,
+  "done_reason": "stop",
+  "context": [1, 2, 3],
+  "total_duration": 1075509083,
+  "load_duration": 567678166,
+  "prompt_eval_count": 28,
+  "prompt_eval_duration": 236000000,
+  "eval_count": 16,
+  "eval_duration": 269000000
 }
 ```
 
@@ -337,7 +387,6 @@ curl http://localhost:11434/api/generate -d '{
     "top_k": 20,
     "top_p": 0.9,
     "min_p": 0.0,
-    "tfs_z": 0.5,
     "typical_p": 0.7,
     "repeat_last_n": 33,
     "temperature": 0.8,
@@ -456,10 +505,14 @@ The `message` object has the following fields:
 
 Advanced parameters (optional):
 
-- `format`: the format to return a response in. Currently the only accepted value is `json`
+- `format`: the format to return a response in. Format can be `json` or a JSON schema. 
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
+
+### Structured outputs
+
+Structured outputs are supported by providing a JSON schema in the `format` parameter. The model will generate a response that matches the schema. See the [Chat request (Structured outputs)](#chat-request-structured-outputs) example below.
 
 ### Examples
 
@@ -548,6 +601,54 @@ curl http://localhost:11434/api/chat -d '{
   "prompt_eval_duration": 383809000,
   "eval_count": 298,
   "eval_duration": 4799921000
+}
+```
+
+#### Chat request (Structured outputs)
+
+##### Request
+
+```shell
+curl -X POST http://localhost:11434/api/chat -H "Content-Type: application/json" -d '{
+  "model": "llama3.1",
+  "messages": [{"role": "user", "content": "Ollama is 22 years old and busy saving the world. Return a JSON object with the age and availability."}],
+  "stream": false,
+  "format": {
+    "type": "object",
+    "properties": {
+      "age": {
+        "type": "integer"
+      },
+      "available": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "age",
+      "available"
+    ]
+  },
+  "options": {
+    "temperature": 0
+  }
+}'
+```
+
+##### Response
+
+```json
+{
+  "model": "llama3.1",
+  "created_at": "2024-12-06T00:46:58.265747Z",
+  "message": { "role": "assistant", "content": "{\"age\": 22, \"available\": false}" },
+  "done_reason": "stop",
+  "done": true,
+  "total_duration": 2254970291,
+  "load_duration": 574751416,
+  "prompt_eval_count": 34,
+  "prompt_eval_duration": 1502000000,
+  "eval_count": 12,
+  "eval_duration": 175000000
 }
 ```
 
