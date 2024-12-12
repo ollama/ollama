@@ -61,21 +61,6 @@ type Usage struct {
 	TotalTokens      int `json:"total_tokens"`
 }
 
-// ChunkUsage is an alias for Usage with the ability to marshal a marker
-// value as null. This is to allow omitting the field in chunks when usage
-// isn't requested, and otherwise return null on non-final chunks when it
-// is requested to follow OpenAI's behavior.
-type ChunkUsage = Usage
-
-// var nullChunkUsage = ChunkUsage{}
-
-// func (u *ChunkUsage) MarshalJSON() ([]byte, error) {
-// 	if u == &nullChunkUsage {
-// 		return []byte("null"), nil
-// 	}
-// 	return json.Marshal(*u)
-// }
-
 type ResponseFormat struct {
 	Type       string      `json:"type"`
 	JsonSchema *JsonSchema `json:"json_schema,omitempty"`
@@ -127,7 +112,7 @@ type ChatCompletionChunk struct {
 	Model             string        `json:"model"`
 	SystemFingerprint string        `json:"system_fingerprint"`
 	Choices           []ChunkChoice `json:"choices"`
-	Usage             *ChunkUsage   `json:"usage,omitempty"`
+	Usage             *Usage        `json:"usage,omitempty"`
 }
 
 // TODO (https://github.com/ollama/ollama/issues/5259): support []string, []int and [][]int
@@ -163,7 +148,7 @@ type CompletionChunk struct {
 	Choices           []CompleteChunkChoice `json:"choices"`
 	Model             string                `json:"model"`
 	SystemFingerprint string                `json:"system_fingerprint"`
-	Usage             *ChunkUsage           `json:"usage,omitempty"`
+	Usage             *Usage                `json:"usage,omitempty"`
 }
 
 type ToolCall struct {
@@ -655,7 +640,7 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 	if w.stream {
 		c := toChunk(w.id, chatResponse)
 		if w.streamOptions != nil && w.streamOptions.IncludeUsage {
-			c.Usage = &ChunkUsage{}
+			c.Usage = &Usage{}
 		}
 		d, err := json.Marshal(c)
 		if err != nil {
@@ -719,7 +704,7 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 	if w.stream {
 		c := toCompleteChunk(w.id, generateResponse)
 		if w.streamOptions != nil && w.streamOptions.IncludeUsage {
-			c.Usage = &ChunkUsage{}
+			c.Usage = &Usage{}
 		}
 		d, err := json.Marshal(c)
 		if err != nil {
