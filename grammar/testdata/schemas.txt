@@ -1,0 +1,76 @@
+# This file holds tests for JSON schema to EBNF grammar conversions.
+#
+# The format is a JSON schema, followed by the expected EBNF grammar. Each test
+# MAY be preceded by a comment that describes the test (e.g. the test name), followed by
+# the JSON schema and the expected EBNF grammar. If no comment is present, the test
+# name the tests number in the file (e.g. "#0", "#1", etc.)
+#
+# Blank lines signify the end or start of a new test. Comments can be added
+# anywhere in the file, but they must be preceded by a '#' character and start at
+# the beginning of the line.
+
+# default
+{}
+root ::= value;
+
+{"properties": {}}
+root ::= value;
+
+# array
+{"properties": {"a": {"type": "array", "items": {"type": "string"}}}}
+root_0_tuple_0 ::= string;
+root_0         ::= "[" ( root_0_tuple_0 )* "]";
+root           ::= "{" "a" ":" root_0 "}";
+
+# array with nested array
+{"type": "array", "items": {"type": "array", "items": {"type": "string"}}}
+root_tuple_0_tuple_0 ::= string;
+root_tuple_0         ::= "[" ( root_tuple_0_tuple_0 )* "]";
+root                 ::= "[" ( root_tuple_0 )* "]";
+
+# object
+{"properties": {"e": {}}}
+root_0 ::= value;
+root   ::= "{" "e" ":" root_0 "}";
+
+# object with nested object
+{"properties": {"o": {"type": "object", "properties": {"e": {}}}}}
+root_0_0 ::= value;
+root_0   ::= "{" "e" ":" root_0_0 "}";
+root     ::= "{" "o" ":" root_0 "}";
+
+# boolean
+{"type": "boolean"}
+root ::= boolean;
+
+# number
+{"properties": {"n": {"type": "number", "minimum": 123, "maximum": 4567}}}
+root_0 ::= number;
+root   ::= "{" "n" ":" root_0 "}";
+
+# string
+{"type": "string"}
+root ::= string;
+
+# string with enum
+{"type": "string", "enum": ["a", "b", "c"]}
+root ::= ( "\"a\"" "|" "\"b\"" "|" "\"c\"" );
+
+# spaces in key
+{"properties": {"a b": {}}}
+root_0 ::= value;
+root   ::= "{" "a b" ":" root_0 "}";
+
+# issue7978
+{ "type": "object", "properties": { "steps": { "type": "array", "items": { "type": "object", "properties": { "explanation": { "type": "string" }, "output": { "type": "string" } }, "required": [ "explanation", "output" ], "additionalProperties": false } }, "final_answer": { "type": "string" } }, "required": [ "steps", "final_answer" ], "additionalProperties": false }
+root_0_tuple_0_0 ::= string;
+root_0_tuple_0_1 ::= string;
+root_0_tuple_0   ::= "{" "explanation" ":" root_0_tuple_0_0 "," "output" ":" root_0_tuple_0_1 "}";
+root_0           ::= "[" ( root_0_tuple_0 )* "]";
+root_1           ::= string;
+root             ::= "{" "steps" ":" root_0 "," "final_answer" ":" root_1 "}";
+
+# !! # special characters in key
+# !! {"properties": {"a!b": {}}}
+# !! !invalid character '!' in key
+# !! 

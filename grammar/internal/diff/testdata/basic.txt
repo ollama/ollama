@@ -1,0 +1,35 @@
+Example from Hunt and McIlroy, “An Algorithm for Differential File Comparison.”
+https://www.cs.dartmouth.edu/~doug/diff.pdf
+
+-- old --
+a
+b
+c
+d
+e
+f
+g
+-- new --
+w
+a
+b
+x
+y
+z
+e
+-- diff --
+diff old new
+--- old
++++ new
+@@ -1,7 +1,7 @@
++w
+ a
+ b
+-c
+-d
++x
++y
++z
+ e
+-f
+-g
