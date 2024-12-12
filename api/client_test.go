@@ -1,6 +1,12 @@
 package api
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
 )
 
@@ -39,6 +45,120 @@ func TestClientFromEnvironment(t *testing.T) {
 
 			if client.base.String() != v.expect {
 				t.Fatalf("expected %s, got %s", v.expect, client.base.String())
+			}
+		})
+	}
+}
+
+func TestStream(t *testing.T) {
+	tests := []struct {
+		name           string
+		serverResponse []string
+		statusCode     int
+		expectedError  error
+	}{
+		{
+			name: "unknown key error",
+			serverResponse: []string{
+				`{"error":"unauthorized access","code":"unknown_key","data":{"key":"test-key"}}`,
+			},
+			statusCode: http.StatusUnauthorized,
+			expectedError: &ErrUnknownOllamaKey{
+				Message: "unauthorized access",
+				Key:     "test-key",
+			},
+		},
+		{
+			name: "general error message",
+			serverResponse: []string{
+				`{"error":"something went wrong"}`,
+			},
+			statusCode:    http.StatusInternalServerError,
+			expectedError: fmt.Errorf("something went wrong"),
+		},
+		{
+			name: "malformed json response",
+			serverResponse: []string{
+				`{invalid-json`,
+			},
+			statusCode:    http.StatusOK,
+			expectedError: fmt.Errorf("unmarshal: invalid character 'i' looking for beginning of object key string"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/x-ndjson")
+				w.WriteHeader(tt.statusCode)
+				for _, resp := range tt.serverResponse {
+					fmt.Fprintln(w, resp)
+				}
+			}))
+			defer server.Close()
+
+			baseURL, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatalf("failed to parse server URL: %v", err)
+			}
+
+			client := &Client{
+				http: server.Client(),
+				base: baseURL,
+			}
+
+			var responses [][]byte
+			err = client.stream(context.Background(), "POST", "/test", "test", func(bts []byte) error {
+				responses = append(responses, bts)
+				return nil
+			})
+
+			// Error checking
+			if tt.expectedError == nil {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatalf("expected error %v, got nil", tt.expectedError)
+			}
+
+			// Check for specific error types
+			var unknownKeyErr ErrUnknownOllamaKey
+			if errors.As(tt.expectedError, &unknownKeyErr) {
+				var gotErr ErrUnknownOllamaKey
+				if !errors.As(err, &gotErr) {
+					t.Fatalf("expected ErrUnknownOllamaKey, got %T", err)
+				}
+				if unknownKeyErr.Key != gotErr.Key {
+					t.Errorf("expected key %q, got %q", unknownKeyErr.Key, gotErr.Key)
+				}
+				if unknownKeyErr.Message != gotErr.Message {
+					t.Errorf("expected message %q, got %q", unknownKeyErr.Message, gotErr.Message)
+				}
+				return
+			}
+
+			var statusErr StatusError
+			if errors.As(tt.expectedError, &statusErr) {
+				var gotErr StatusError
+				if !errors.As(err, &gotErr) {
+					t.Fatalf("expected StatusError, got %T", err)
+				}
+				if statusErr.StatusCode != gotErr.StatusCode {
+					t.Errorf("expected status code %d, got %d", statusErr.StatusCode, gotErr.StatusCode)
+				}
+				if statusErr.ErrorMessage != gotErr.ErrorMessage {
+					t.Errorf("expected error message %q, got %q", statusErr.ErrorMessage, gotErr.ErrorMessage)
+				}
+				return
+			}
+
+			// For other errors, compare error strings
+			if err.Error() != tt.expectedError.Error() {
+				t.Errorf("expected error %q, got %q", tt.expectedError, err)
 			}
 		})
 	}

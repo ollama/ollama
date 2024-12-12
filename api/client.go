@@ -163,24 +163,29 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 	scanBuf := make([]byte, 0, maxBufferSize)
 	scanner.Buffer(scanBuf, maxBufferSize)
 	for scanner.Scan() {
-		var errorResponse struct {
-			Error string `json:"error,omitempty"`
-		}
-
 		bts := scanner.Bytes()
+
+		var errorResponse ErrorResponse
 		if err := json.Unmarshal(bts, &errorResponse); err != nil {
 			return fmt.Errorf("unmarshal: %w", err)
 		}
 
-		if errorResponse.Error != "" {
-			return errors.New(errorResponse.Error)
+		switch errorResponse.Code {
+		case ErrCodeUnknownKey:
+			return ErrUnknownOllamaKey{
+				Message: errorResponse.Message,
+				Key:     errorResponse.Data["key"].(string),
+			}
+		}
+		if errorResponse.Message != "" {
+			return errors.New(errorResponse.Message)
 		}
 
 		if response.StatusCode >= http.StatusBadRequest {
 			return StatusError{
 				StatusCode:   response.StatusCode,
 				Status:       response.Status,
-				ErrorMessage: errorResponse.Error,
+				ErrorMessage: errorResponse.Message,
 			}
 		}
 

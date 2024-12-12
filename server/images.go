@@ -30,7 +30,6 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
-	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/types/registry"
 	"github.com/ollama/ollama/version"
@@ -1031,7 +1030,7 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 						slog.Error(fmt.Sprintf("couldn't get public key: %v", nestedErr))
 						return nil, re
 					}
-					return nil, errtypes.UnknownOllamaKey{
+					return nil, api.ErrUnknownOllamaKey{
 						Key: pubKey,
 					}
 				}

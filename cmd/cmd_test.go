@@ -16,7 +16,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/types/errtypes"
 )
 
 func TestShowInfo(t *testing.T) {
@@ -437,7 +436,7 @@ func TestPushHandler(t *testing.T) {
 				"/api/push": func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusUnauthorized)
-					uerr := errtypes.UnknownOllamaKey{
+					uerr := api.ErrUnknownOllamaKey{
 						Key: "aaa",
 					}
 					err := json.NewEncoder(w).Encode(map[string]string{

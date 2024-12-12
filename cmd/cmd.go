@@ -19,7 +19,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -41,7 +40,6 @@ import (
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/server"
-	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
@@ -516,46 +514,22 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	return generate(cmd, opts)
 }
 
-func errFromUnknownKey(unknownKeyErr error) error {
-	// find SSH public key in the error message
-	// TODO (brucemacd): the API should return structured errors so that this message parsing isn't needed
-	sshKeyPattern := `ssh-\w+ [^\s"]+`
-	re := regexp.MustCompile(sshKeyPattern)
-	matches := re.FindStringSubmatch(unknownKeyErr.Error())
-
-	if len(matches) > 0 {
-		serverPubKey := matches[0]
-
-		localPubKey, err := auth.GetPublicKey()
-		if err != nil {
-			return unknownKeyErr
-		}
-
-		if runtime.GOOS == "linux" && serverPubKey != localPubKey {
-			// try the ollama service public key
-			svcPubKey, err := os.ReadFile("/usr/share/ollama/.ollama/id_ed25519.pub")
-			if err != nil {
-				return unknownKeyErr
-			}
-			localPubKey = strings.TrimSpace(string(svcPubKey))
-		}
-
-		// check if the returned public key matches the local public key, this prevents adding a remote key to the user's account
-		if serverPubKey != localPubKey {
-			return unknownKeyErr
-		}
-
-		var msg strings.Builder
-		msg.WriteString(unknownKeyErr.Error())
-		msg.WriteString("\n\nYour ollama key is:\n")
-		msg.WriteString(localPubKey)
-		msg.WriteString("\nAdd your key at:\n")
-		msg.WriteString("https://ollama.com/settings/keys")
-
-		return errors.New(msg.String())
+func localPubKeys() ([]string, error) {
+	usrKey, err := auth.GetPublicKey()
+	if err != nil {
+		return nil, err
 	}
 
-	return unknownKeyErr
+	keys := []string{usrKey}
+
+	if runtime.GOOS == "linux" {
+		// try the ollama service public key if on Linux
+		if svcKey, err := os.ReadFile("/usr/share/ollama/.ollama/id_ed25519.pub"); err == nil {
+			keys = append(keys, strings.TrimSpace(string(svcKey)))
+		}
+	}
+
+	return keys, nil
 }
 
 func PushHandler(cmd *cobra.Command, args []string) error {
@@ -611,15 +585,18 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		if spinner != nil {
 			spinner.Stop()
 		}
+		var ke api.ErrUnknownOllamaKey
+		if errors.As(err, &ke) && isOllamaHost {
+
+			// the user has not added their ollama key to ollama.com
+			// return an error with a more user-friendly message
+			locals, _ := localPubKeys()
+			return errors.New(ke.FormatUserMessage(locals))
+		}
 		if strings.Contains(err.Error(), "access denied") {
 			return errors.New("you are not authorized to push to this namespace, create the model under a namespace you own")
 		}
-		if strings.Contains(err.Error(), errtypes.UnknownOllamaKeyErrMsg) && isOllamaHost {
-			// the user has not added their ollama key to ollama.com
-			// return an error with a more user-friendly message
-			return errFromUnknownKey(err)
-		}
-		return err
+		return fmt.Errorf("yoyoyo: %w", err)
 	}
 
 	p.Stop()
