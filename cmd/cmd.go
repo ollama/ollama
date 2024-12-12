@@ -587,7 +587,6 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		}
 		var ke api.ErrUnknownOllamaKey
 		if errors.As(err, &ke) && isOllamaHost {
-
 			// the user has not added their ollama key to ollama.com
 			// return an error with a more user-friendly message
 			locals, _ := localPubKeys()

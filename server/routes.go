@@ -1561,11 +1561,11 @@ func newErr(err error) api.ErrorResponse {
 		Message: err.Error(),
 	}
 	// Add additional error specific data, if any
-	var errResp api.ErrUnknownOllamaKey
-	if errors.As(err, &errResp) {
+	var keyErr api.ErrUnknownOllamaKey
+	if errors.As(err, &keyErr) {
 		resp.Code = api.ErrCodeUnknownKey
 		resp.Data = map[string]any{
-			"key": errResp.Key,
+			"key": keyErr.Key,
 		}
 	}
 	return resp
