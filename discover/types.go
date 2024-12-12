@@ -93,6 +93,15 @@ type OneapiGPUInfo struct {
 }
 type OneapiGPUInfoList []OneapiGPUInfo
 
+type MusaGPUInfo struct {
+	GpuInfo
+	OSOverhead   uint64 // Memory overhead between the driver library and management library
+	index        int    //nolint:unused,nolintlint
+	computeMajor int    //nolint:unused,nolintlint
+	computeMinor int    //nolint:unused,nolintlint
+}
+type MusaGPUInfoList []MusaGPUInfo
+
 type GpuInfoList []GpuInfo
 
 type UnsupportedGPUInfo struct {
