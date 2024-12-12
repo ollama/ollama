@@ -61,21 +61,6 @@ type Usage struct {
 	TotalTokens      int `json:"total_tokens"`
 }
 
-// ChunkUsage is an alias for Usage with the ability to marshal a marker
-// value as null. This is to allow omitting the field in chunks when usage
-// isn't requested, and otherwise return null on non-final chunks when it
-// is requested to follow OpenAI's behavior.
-type ChunkUsage = Usage
-
-var nullChunkUsage = ChunkUsage{}
-
-func (u *ChunkUsage) MarshalJSON() ([]byte, error) {
-	if u == &nullChunkUsage {
-		return []byte("null"), nil
-	}
-	return json.Marshal(*u)
-}
-
 type ResponseFormat struct {
 	Type       string      `json:"type"`
 	JsonSchema *JsonSchema `json:"json_schema,omitempty"`
@@ -127,7 +112,7 @@ type ChatCompletionChunk struct {
 	Model             string        `json:"model"`
 	SystemFingerprint string        `json:"system_fingerprint"`
 	Choices           []ChunkChoice `json:"choices"`
-	Usage             *ChunkUsage   `json:"usage,omitempty"`
+	Usage             *Usage        `json:"usage,omitempty"`
 }
 
 // TODO (https://github.com/ollama/ollama/issues/5259): support []string, []int and [][]int
@@ -163,7 +148,7 @@ type CompletionChunk struct {
 	Choices           []CompleteChunkChoice `json:"choices"`
 	Model             string                `json:"model"`
 	SystemFingerprint string                `json:"system_fingerprint"`
-	Usage             *ChunkUsage           `json:"usage,omitempty"`
+	Usage             *Usage                `json:"usage,omitempty"`
 }
 
 type ToolCall struct {
@@ -597,16 +582,16 @@ type BaseWriter struct {
 }
 
 type ChatWriter struct {
-	stream      bool
-	streamUsage bool
-	id          string
+	stream        bool
+	streamOptions *StreamOptions
+	id            string
 	BaseWriter
 }
 
 type CompleteWriter struct {
-	stream      bool
-	streamUsage bool
-	id          string
+	stream        bool
+	streamOptions *StreamOptions
+	id            string
 	BaseWriter
 }
 
@@ -650,9 +635,6 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 	// chat chunk
 	if w.stream {
 		c := toChunk(w.id, chatResponse)
-		if w.streamUsage {
-			c.Usage = &nullChunkUsage
-		}
 		d, err := json.Marshal(c)
 		if err != nil {
 			return 0, err
@@ -665,7 +647,7 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 		}
 
 		if chatResponse.Done {
-			if w.streamUsage {
+			if w.streamOptions != nil && w.streamOptions.IncludeUsage {
 				u := toUsage(chatResponse)
 				d, err := json.Marshal(ChatCompletionChunk{Choices: []ChunkChoice{}, Usage: &u})
 				if err != nil {
@@ -714,8 +696,8 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 	// completion chunk
 	if w.stream {
 		c := toCompleteChunk(w.id, generateResponse)
-		if w.streamUsage {
-			c.Usage = &nullChunkUsage
+		if w.streamOptions != nil && w.streamOptions.IncludeUsage {
+			c.Usage = &Usage{}
 		}
 		d, err := json.Marshal(c)
 		if err != nil {
@@ -729,7 +711,7 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 		}
 
 		if generateResponse.Done {
-			if w.streamUsage {
+			if w.streamOptions != nil && w.streamOptions.IncludeUsage {
 				u := toUsageGenerate(generateResponse)
 				d, err := json.Marshal(CompletionChunk{Choices: []CompleteChunkChoice{}, Usage: &u})
 				if err != nil {
@@ -902,10 +884,10 @@ func CompletionsMiddleware() gin.HandlerFunc {
 		c.Request.Body = io.NopCloser(&b)
 
 		w := &CompleteWriter{
-			BaseWriter:  BaseWriter{ResponseWriter: c.Writer},
-			stream:      req.Stream,
-			id:          fmt.Sprintf("cmpl-%d", rand.Intn(999)),
-			streamUsage: req.StreamOptions != nil && req.StreamOptions.IncludeUsage,
+			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
+			stream:        req.Stream,
+			id:            fmt.Sprintf("cmpl-%d", rand.Intn(999)),
+			streamOptions: req.StreamOptions,
 		}
 
 		c.Writer = w
@@ -985,10 +967,10 @@ func ChatMiddleware() gin.HandlerFunc {
 		c.Request.Body = io.NopCloser(&b)
 
 		w := &ChatWriter{
-			BaseWriter:  BaseWriter{ResponseWriter: c.Writer},
-			stream:      req.Stream,
-			id:          fmt.Sprintf("chatcmpl-%d", rand.Intn(999)),
-			streamUsage: req.StreamOptions != nil && req.StreamOptions.IncludeUsage,
+			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
+			stream:        req.Stream,
+			id:            fmt.Sprintf("chatcmpl-%d", rand.Intn(999)),
+			streamOptions: req.StreamOptions,
 		}
 
 		c.Writer = w
