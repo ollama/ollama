@@ -1,0 +1,40 @@
+Another example from Hunt and McIlroy,
+“An Algorithm for Differential File Comparison.”
+https://www.cs.dartmouth.edu/~doug/diff.pdf
+
+Anchored diff gives up on finding anything,
+since there are no unique lines.
+
+-- old --
+a
+b
+c
+a
+b
+b
+a
+-- new --
+c
+a
+b
+a
+b
+c
+-- diff --
+diff old new
+--- old
++++ new
+@@ -1,7 +1,6 @@
+-a
+-b
+-c
+-a
+-b
+-b
+-a
++c
++a
++b
++a
++b
++c

@@ -1,0 +1,5 @@
+-- old --
+hello world
+-- new --
+hello world
+-- diff --
