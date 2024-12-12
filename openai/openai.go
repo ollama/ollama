@@ -639,9 +639,6 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 	// chat chunk
 	if w.stream {
 		c := toChunk(w.id, chatResponse)
-		if w.streamOptions != nil && w.streamOptions.IncludeUsage {
-			c.Usage = &Usage{}
-		}
 		d, err := json.Marshal(c)
 		if err != nil {
 			return 0, err
