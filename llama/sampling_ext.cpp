@@ -49,7 +49,7 @@ int schema_to_grammar(const char *json_schema, char *grammar, size_t max_len)
 {
     try
     {
-        nlohmann::json schema = nlohmann::json::parse(json_schema);
+        nlohmann::ordered_json schema = nlohmann::ordered_json::parse(json_schema);
         std::string grammar_str = json_schema_to_grammar(schema);
         size_t len = grammar_str.length();
         if (len >= max_len)
