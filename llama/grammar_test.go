@@ -30,8 +30,6 @@ const issue7978JSONSchema = `{
 }`
 
 func TestIssue7978(t *testing.T) {
-	t.Skip("schema_to_grammar is broken; skipping until fixed")
-
 	g := SchemaToGrammar([]byte(issue7978JSONSchema))
 	if g == nil {
 		t.Fatal("failed to convert JSON schema to grammar")
@@ -54,8 +52,6 @@ func TestIssue7978(t *testing.T) {
 }
 
 func TestSchemaToGrammer(t *testing.T) {
-	t.Skip("schema_to_grammar is broken; skipping until fixed")
-
 	cases := []struct {
 		schema string
 		prefix []byte // nil is check as nil
@@ -63,7 +59,7 @@ func TestSchemaToGrammer(t *testing.T) {
 		{`invalid`, nil},
 
 		// Simple heuristic/smoke test
-		{`{"type":"object"}`, []byte("object ::=")},
+		{`{"type":"object"}`, []byte("root ::= object")},
 	}
 
 	for _, c := range cases {

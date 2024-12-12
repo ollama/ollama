@@ -417,7 +417,7 @@ class SchemaConverter {
 private:
     std::function<json(const std::string &)> _fetch_json;
     bool _dotall;
-    std::map<std::string, std::string> _rules;
+    std::unordered_map<std::string, std::string> _rules;
     std::unordered_map<std::string, json> _refs;
     std::unordered_set<std::string> _refs_being_resolved;
     std::vector<std::string> _errors;
