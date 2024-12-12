@@ -28,6 +28,7 @@ import (
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/grammar"
 	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/runners"
 )
@@ -713,9 +714,9 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			}
 
 			// User provided a JSON schema
-			g := llama.SchemaToGrammar(req.Format)
-			if g == nil {
-				return fmt.Errorf("invalid JSON schema in format")
+			g, err := grammar.FromSchema(nil, req.Format)
+			if err != nil {
+				return fmt.Errorf("invalid JSON schema in format: %w", err)
 			}
 			request["grammar"] = string(g)
 		}
@@ -735,7 +736,6 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	if req.Options.NumPredict < 0 || req.Options.NumPredict > 10*s.options.NumCtx {
 		req.Options.NumPredict = 10 * s.options.NumCtx
 	}
-
 	// Make sure the server is ready
 	status, err := s.getServerStatusRetry(ctx)
 	if err != nil {
