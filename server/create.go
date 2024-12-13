@@ -56,15 +56,9 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			ch <- resp
 		}
 
-		ctx, cancel := context.WithCancel(c.Request.Context())
-		defer cancel()
-
-		var baseLayers []*layerGGML
-		var err error
-
 		oldManifest, _ := ParseNamedManifest(name)
 
-		var cfr *api.CreateFromRequest
+		var baseLayers []*layerGGML
 		switch v := r.From.(type) {
 		case string:
 			slog.Debug("create model from model name")
@@ -74,11 +68,15 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				return
 			}
 
+			ctx, cancel := context.WithCancel(c.Request.Context())
+			defer cancel()
+
 			baseLayers, err = parseFromModel(ctx, fromName, fn)
 			if err != nil {
 				ch <- gin.H{"error": err.Error()}
 			}
 		case map[string]any:
+			var cfr *api.CreateFromRequest
 			b, _ := json.Marshal(v) // re-marshal to JSON
 			if err := json.Unmarshal(b, &cfr); err == nil {
 				switch cfr.Type {
@@ -86,6 +84,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 					slog.Debug("create model from safetensors")
 					baseLayers, err = convertModelFromSafetensors(r, cfr, name, fn)
 					if err != nil {
+						slog.Error("error creating from safetensors", "error", err)
 						ch <- gin.H{"error": err.Error()}
 						return
 					}
@@ -93,6 +92,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 					slog.Debug("create model from gguf")
 					baseLayers, err = convertModelFromGGUF(r, cfr, name, fn)
 					if err != nil {
+						slog.Error("error creating from gguf", "error", err)
 						ch <- gin.H{"error": err.Error()}
 						return
 					}
@@ -205,9 +205,9 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 	}
 
 	if r.Adapters != nil {
-		var adapters []api.File
 		switch v := r.Adapters.(type) {
 		case []any:
+			var adapters []api.File
 			b, _ := json.Marshal(v) // re-marshal to JSON
 			if err := json.Unmarshal(b, &adapters); err != nil {
 				return err

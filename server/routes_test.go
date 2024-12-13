@@ -108,10 +108,7 @@ func Test_Routes(t *testing.T) {
 			t.Logf("Status: %s", resp.Status)
 		}
 
-		cfr := api.CreateFromRequest{
-			Type:  "gguf",
-			Files: []api.File{{Path: "test.gguf", Digest: digest}},
-		}
+		cfr := api.CreateFromRequest{Type: "gguf", Files: []api.File{{Path: "test.gguf", Digest: digest}}}
 		r := api.CreateRequest{
 			Name: name,
 			From: cfr,
@@ -456,7 +453,10 @@ func Test_Routes(t *testing.T) {
 			},
 		},
 		{
-			Name:   "openai retrieve model handler",
+			Name: "openai retrieve model handler",
+			Setup: func(t *testing.T, req *http.Request) {
+				createTestModel(t, "show-model")
+			},
 			Method: http.MethodGet,
 			Path:   "/v1/models/show-model",
 			Expected: func(t *testing.T, resp *http.Response) {
@@ -607,26 +607,24 @@ func TestManifestCaseSensitivity(t *testing.T) {
 	}
 	t.Cleanup(func() { testMakeRequestDialContext = nil })
 
-	/*
-		t.Logf("creating")
-		checkOK(createRequest(t, s.CreateHandler, api.CreateRequest{
-			// Start with the stable name, and later use a case-shuffled
-			// version.
-			Name: wantStableName,
+	t.Logf("creating")
+	_, digest := createBinFile(t, nil, nil)
+	checkOK(createRequest(t, s.CreateHandler, api.CreateRequest{
+		// Start with the stable name, and later use a case-shuffled
+		// version.
+		Name:   wantStableName,
+		From:   api.CreateFromRequest{Type: "gguf", Files: []api.File{{Path: "test.gguf", Digest: digest}}},
+		Stream: &stream,
+	}))
+	checkManifestList()
 
-			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
-			Stream:    &stream,
-		}))
-		checkManifestList()
-
-		t.Logf("creating (again)")
-		checkOK(createRequest(t, s.CreateHandler, api.CreateRequest{
-			Name:      name(),
-			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
-			Stream:    &stream,
-		}))
-		checkManifestList()
-	*/
+	t.Logf("creating (again)")
+	checkOK(createRequest(t, s.CreateHandler, api.CreateRequest{
+		Name:   name(),
+		From:   api.CreateFromRequest{Type: "gguf", Files: []api.File{{Path: "test.gguf", Digest: digest}}},
+		Stream: &stream,
+	}))
+	checkManifestList()
 
 	t.Logf("pulling")
 	checkOK(createRequest(t, s.PullHandler, api.PullRequest{
@@ -656,15 +654,15 @@ func TestManifestCaseSensitivity(t *testing.T) {
 	}
 }
 
-/*
 // need to fix this
+/*
 func TestShow(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
 	var s Server
 
-	fname1, _ := createBinFile(t, llm.KV{"general.architecture": "test"}, nil)
-	fname2, _ := createBinFile(t, llm.KV{"general.type": "projector", "general.architecture": "clip"}, nil)
+	_, digest1 := createBinFile(t, llm.KV{"general.architecture": "test"}, nil)
+	_, digest2 := createBinFile(t, llm.KV{"general.type": "projector", "general.architecture": "clip"}, nil)
 
 	_, digest := createTestFile(t, "ollama-model")
 	cfr := api.CreateFromRequest{
@@ -674,6 +672,7 @@ func TestShow(t *testing.T) {
 
 	createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:      "show-model",
+
 		Modelfile: fmt.Sprintf("FROM %s\nFROM %s", fname1, fname2),
 	})
 

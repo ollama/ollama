@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -89,7 +88,7 @@ func TestGenerateChat(t *testing.T) {
 
 	go s.sched.Run(context.TODO())
 
-	fname, _ := createBinFile(t, llm.KV{
+	_, digest := createBinFile(t, llm.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -115,8 +114,8 @@ func TestGenerateChat(t *testing.T) {
 
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model: "test",
-		Modelfile: fmt.Sprintf(`FROM %s
-		TEMPLATE """
+		From:  api.CreateFromRequest{Type: "gguf", Files: []api.File{{Path: "test.gguf", Digest: digest}}},
+		Template: `
 {{- if .Tools }}
 {{ .Tools }}
 {{ end }}
@@ -124,8 +123,7 @@ func TestGenerateChat(t *testing.T) {
 {{- .Role }}: {{ .Content }}
 {{- range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
 {{- end }}
-{{ end }}"""
-`, fname),
+{{ end }}`,
 		Stream: &stream,
 	})
 
@@ -156,14 +154,14 @@ func TestGenerateChat(t *testing.T) {
 	})
 
 	t.Run("missing capabilities chat", func(t *testing.T) {
-		fname, _ := createBinFile(t, llm.KV{
+		_, digest := createBinFile(t, llm.KV{
 			"general.architecture": "bert",
 			"bert.pooling_type":    uint32(0),
 		}, []llm.Tensor{})
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Model:     "bert",
-			Modelfile: fmt.Sprintf("FROM %s", fname),
-			Stream:    &stream,
+			Model:  "bert",
+			From:   api.CreateFromRequest{Type: "gguf", Files: []api.File{{Path: "bert.gguf", Digest: digest}}},
+			Stream: &stream,
 		})
 
 		if w.Code != http.StatusOK {
@@ -284,8 +282,9 @@ func TestGenerateChat(t *testing.T) {
 	})
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
-		Model:     "test-system",
-		Modelfile: "FROM test\nSYSTEM You are a helpful assistant.",
+		Model:  "test-system",
+		From:   "test",
+		System: "You are a helpful assistant.",
 	})
 
 	if w.Code != http.StatusOK {
@@ -625,7 +624,7 @@ func TestGenerate(t *testing.T) {
 
 	go s.sched.Run(context.TODO())
 
-	fname, _ := createBinFile(t, llm.KV{
+	_, digest := createBinFile(t, llm.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -648,14 +647,19 @@ func TestGenerate(t *testing.T) {
 		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 	})
+
+	cfr := api.CreateFromRequest{
+		Type:  "gguf",
+		Files: []api.File{{Path: "file.gguf", Digest: digest}},
+	}
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model: "test",
-		Modelfile: fmt.Sprintf(`FROM %s
-		TEMPLATE """
+		From:  cfr,
+		Template: `
 {{- if .System }}System: {{ .System }} {{ end }}
 {{- if .Prompt }}User: {{ .Prompt }} {{ end }}
-{{- if .Response }}Assistant: {{ .Response }} {{ end }}"""
-`, fname),
+{{- if .Response }}Assistant: {{ .Response }} {{ end }}
+`,
 		Stream: &stream,
 	})
 
@@ -686,15 +690,15 @@ func TestGenerate(t *testing.T) {
 	})
 
 	t.Run("missing capabilities generate", func(t *testing.T) {
-		fname, _ := createBinFile(t, llm.KV{
+		_, digest := createBinFile(t, llm.KV{
 			"general.architecture": "bert",
 			"bert.pooling_type":    uint32(0),
 		}, []llm.Tensor{})
 
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Model:     "bert",
-			Modelfile: fmt.Sprintf("FROM %s", fname),
-			Stream:    &stream,
+			Model:  "bert",
+			From:   api.CreateFromRequest{Type: "gguf", Files: []api.File{{Path: "file.gguf", Digest: digest}}},
+			Stream: &stream,
 		})
 
 		if w.Code != http.StatusOK {
@@ -830,8 +834,9 @@ func TestGenerate(t *testing.T) {
 	})
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
-		Model:     "test-system",
-		Modelfile: "FROM test\nSYSTEM You are a helpful assistant.",
+		Model:  "test-system",
+		From:   "test",
+		System: "You are a helpful assistant.",
 	})
 
 	if w.Code != http.StatusOK {
@@ -900,10 +905,10 @@ func TestGenerate(t *testing.T) {
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model: "test-suffix",
-		Modelfile: `FROM test
-TEMPLATE """{{- if .Suffix }}<PRE> {{ .Prompt }} <SUF>{{ .Suffix }} <MID>
+		Template: `{{- if .Suffix }}<PRE> {{ .Prompt }} <SUF>{{ .Suffix }} <MID>
 {{- else }}{{ .Prompt }}
-{{- end }}"""`,
+{{- end }}`,
+		From: "test",
 	})
 
 	if w.Code != http.StatusOK {
