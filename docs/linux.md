@@ -178,7 +178,7 @@ Remove the ollama binary from your bin directory (either `/usr/local/bin`, `/usr
 ```shell
 sudo rm $(which ollama)
 ```
-Remove the ollama libraries from your lib directory (either `/usr/lib`):
+Remove the ollama libraries from your lib directory (`/usr/lib`):
 ```shell
 sudo rm /usr/lib/ollama
 ```
