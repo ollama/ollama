@@ -737,3 +737,14 @@ func SchemaToGrammar(schema []byte) []byte {
 	}
 	return buf[:n]
 }
+
+// GetLogits returns the logits from the last decode operation.
+// The returned slice has length equal to the vocabulary size.
+func (c *Context) GetLogits() []float32 {
+	logits := unsafe.Pointer(C.llama_get_logits(c.c))
+	if logits == nil {
+		return nil
+	}
+
+	// Get the number of vocabulary tokens to determine array size
+	vocabSize := c.Model().NumVocab()
