@@ -284,10 +284,11 @@ func SlogPrint(header string) {
 	m := AsMap()
 	names := maps.Keys(m)
 	slices.Sort(names)
-	slog.Info(header)
+	data := make([]any, 0, len(names)*2)
 	for _, name := range names {
-		slog.Info(fmt.Sprintf("env: %v=%q", name, m[name]))
+		data = append(data, name, m[name])
 	}
+	slog.Info(header, slog.Group("env", data...))
 }
 
 // Var returns an environment variable stripped of leading and trailing quotes or spaces
