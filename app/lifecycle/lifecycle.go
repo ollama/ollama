@@ -16,7 +16,7 @@ import (
 
 func Run() {
 	InitLogging()
-	envconfig.SlogPrint("app config:")
+	envconfig.SlogPrint("app config")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var done chan int
