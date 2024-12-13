@@ -89,6 +89,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"os"
 	"runtime"
 	"runtime/cgo"
 	"slices"
@@ -131,7 +132,7 @@ func llamaLog(level int32, text *C.char, _ unsafe.Pointer) {
 		return
 	}
 
-	fmt.Print(C.GoString(text))
+	fmt.Fprint(os.Stderr, C.GoString(text))
 }
 
 func GetModelArch(modelPath string) (string, error) {
