@@ -49,6 +49,7 @@ sudo systemctl restart docker
 ```bash
 docker run -d --gpus=all -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama
 ```
+
 ### JETSON DEVICE
 
 > [!NOTE]  
@@ -78,8 +79,10 @@ MD5sum: 05fc4b73de35fd33a535fb887c1947ee
 Description: NVIDIA Jetpack Meta Package
 Description-md5: ad1462289bdbc54909ae109d1d32c0a8
 ```
-set env variable when running docker 
+set env variable for JetPack version when running docker 
+also use --runtime=nvidia on jetson not  --gpus 
 
+#### Start the container
 ```bash
 docker run -d --runtime=nvidia -e JETSON_JETPACK=JetPack-version -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama
 ```
