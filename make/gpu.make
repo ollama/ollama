@@ -17,7 +17,7 @@ GPU_RUNNER_LIBS = $(wildcard $(addsuffix .$(SHARED_EXT).*,$(addprefix $(GPU_LIB_
 GPU_RUNNER_SRCS := \
 	$(filter-out $(wildcard llama/ggml-cuda/fattn*.cu),$(wildcard llama/ggml-cuda/*.cu)) \
 	$(wildcard llama/ggml-cuda/template-instances/mmq*.cu) \
-	llama/ggml.c llama/ggml-backend.cpp llama/ggml-alloc.c llama/ggml-quants.c llama/sgemm.cpp llama/ggml-aarch64.c llama/ggml-threading.cpp
+	llama/ggml.c llama/ggml-backend.cpp llama/ggml-alloc.c llama/ggml-quants.c llama/sgemm.cpp llama/ggml-threading.cpp
 GPU_RUNNER_HDRS := \
 	$(wildcard llama/ggml-cuda/*.cuh)
 

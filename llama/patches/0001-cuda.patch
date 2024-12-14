@@ -26,7 +26,7 @@ index fdb4b986..9b80fe07 100644
  
  size_t ggml_backend_buffer_get_size(ggml_backend_buffer_t buffer) {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index d6e4bfdd..52aec229 100644
+index c180adc8..000f1777 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -424,6 +424,10 @@ struct ggml_backend_cuda_buffer_context {
