@@ -327,31 +327,6 @@ func GetModel(name string) (*Model, error) {
 	return model, nil
 }
 
-func realpath(rel, from string) string {
-	abspath, err := filepath.Abs(from)
-	if err != nil {
-		return from
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return abspath
-	}
-
-	if from == "~" {
-		return home
-	} else if strings.HasPrefix(from, "~/") {
-		return filepath.Join(home, from[2:])
-	}
-
-	if _, err := os.Stat(filepath.Join(rel, from)); err == nil {
-		// this is a file relative to the Modelfile
-		return filepath.Join(rel, from)
-	}
-
-	return abspath
-}
-
 func CopyModel(src, dst model.Name) error {
 	if !dst.IsFullyQualified() {
 		return model.Unqualified(dst)
