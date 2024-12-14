@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/convert"
 	"github.com/ollama/ollama/envconfig"
@@ -614,7 +615,7 @@ func getConfigLayer(layers []Layer, config ConfigV2) (*Layer, error) {
 
 func createLink(src, dst string) error {
 	// make any subdirs for dst
-	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
 

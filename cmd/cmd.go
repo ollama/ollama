@@ -200,20 +200,20 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			messages = append(messages, api.Message{Role: role, Content: msg})
 		default:
 			c := modelfile.Commands[i]
-                        ps, err := api.FormatParams(map[string][]string{c.Name: {c.Args}})
-                        if err != nil {
-                                return err
-                        }
+			ps, err := api.FormatParams(map[string][]string{c.Name: {c.Args}})
+			if err != nil {
+				return err
+			}
 
-                        for k, v := range ps {
-                                if ks, ok := parameters[k].([]string); ok {
-                                        parameters[k] = append(ks, v.([]string)...)
-                                } else if vs, ok := v.([]string); ok {
-                                        parameters[k] = vs
-                                } else {
-                                        parameters[k] = v
-                                }
-                        }
+			for k, v := range ps {
+				if ks, ok := parameters[k].([]string); ok {
+					parameters[k] = append(ks, v.([]string)...)
+				} else if vs, ok := v.([]string); ok {
+					parameters[k] = vs
+				} else {
+					parameters[k] = v
+				}
+			}
 		}
 	}
 
