@@ -80,6 +80,8 @@ type GenerateRequest struct {
 	// Options lists model-specific options. For example, temperature can be
 	// set through this field, if the model supports it.
 	Options map[string]interface{} `json:"options"`
+
+	ReturnLogits bool `json:"return_logits,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
@@ -105,6 +107,8 @@ type ChatRequest struct {
 
 	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
+
+	ReturnLogits bool `json:"return_logits,omitempty"`
 }
 
 type Tools []Tool
@@ -189,6 +193,7 @@ type ChatResponse struct {
 	CreatedAt  time.Time `json:"created_at"`
 	Message    Message   `json:"message"`
 	DoneReason string    `json:"done_reason,omitempty"`
+	Logits     []float32 `json:"logits"`
 
 	Done bool `json:"done"`
 
@@ -202,6 +207,15 @@ type Metrics struct {
 	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty"`
 	EvalCount          int           `json:"eval_count,omitempty"`
 	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
+}
+
+type TokenLogprob struct {
+	Token   string  `json:"token"`
+	Logprob float32 `json:"logprob"`
+}
+
+type LogProbs struct {
+	TopLogprobs []TokenLogprob `json:"top_logprobs"`
 }
 
 // Options specified in [GenerateRequest].  If you add a new option here, also
@@ -450,6 +464,8 @@ type GenerateResponse struct {
 	Context []int `json:"context,omitempty"`
 
 	Metrics
+
+	Logits []float32 `json:"logits"`
 }
 
 // ModelDetails provides details about a model.

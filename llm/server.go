@@ -642,11 +642,12 @@ type ImageData struct {
 }
 
 type completion struct {
-	Content      string `json:"content"`
-	Model        string `json:"model"`
-	Prompt       string `json:"prompt"`
-	Stop         bool   `json:"stop"`
-	StoppedLimit bool   `json:"stopped_limit"`
+	Content      string    `json:"content"`
+	Model        string    `json:"model"`
+	Prompt       string    `json:"prompt"`
+	Stop         bool      `json:"stop"`
+	StoppedLimit bool      `json:"stopped_limit"`
+	Logits       []float32 `json:"logits,omitempty"`
 
 	Timings struct {
 		PredictedN  int     `json:"predicted_n"`
@@ -657,10 +658,11 @@ type completion struct {
 }
 
 type CompletionRequest struct {
-	Prompt  string
-	Format  json.RawMessage
-	Images  []ImageData
-	Options *api.Options
+	Prompt       string
+	Format       json.RawMessage
+	Images       []ImageData
+	Options      *api.Options
+	ReturnLogits bool
 }
 
 type CompletionResponse struct {
@@ -671,6 +673,7 @@ type CompletionResponse struct {
 	PromptEvalDuration time.Duration
 	EvalCount          int
 	EvalDuration       time.Duration
+	Logits             []float32
 }
 
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
@@ -696,6 +699,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		"seed":              req.Options.Seed,
 		"stop":              req.Options.Stop,
 		"image_data":        req.Images,
+		"return_logits":     req.ReturnLogits,
 		"cache_prompt":      true,
 	}
 
@@ -821,6 +825,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			if c.Content != "" {
 				fn(CompletionResponse{
 					Content: c.Content,
+					Logits:  c.Logits,
 				})
 			}
 
@@ -837,6 +842,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 					PromptEvalDuration: parseDurationMs(c.Timings.PromptMS),
 					EvalCount:          c.Timings.PredictedN,
 					EvalDuration:       parseDurationMs(c.Timings.PredictedMS),
+					Logits:             c.Logits,
 				})
 				return nil
 			}

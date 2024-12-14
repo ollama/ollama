@@ -295,10 +295,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		var sb strings.Builder
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:  prompt,
-			Images:  images,
-			Format:  req.Format,
-			Options: opts,
+			Prompt:       prompt,
+			Images:       images,
+			Format:       req.Format,
+			Options:      opts,
+			ReturnLogits: req.ReturnLogits,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:      req.Model,
@@ -312,6 +313,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					EvalCount:          cr.EvalCount,
 					EvalDuration:       cr.EvalDuration,
 				},
+				Logits: cr.Logits,
 			}
 
 			if _, err := sb.WriteString(cr.Content); err != nil {
@@ -1541,16 +1543,19 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	slog.Debug("chat request", "images", len(images), "prompt", prompt)
 
+	slog.Info("chat request", "return_logits", req.ReturnLogits)
+
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
 		var sb strings.Builder
 		var toolCallIndex int = 0
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:  prompt,
-			Images:  images,
-			Format:  req.Format,
-			Options: opts,
+			Prompt:       prompt,
+			Images:       images,
+			Format:       req.Format,
+			Options:      opts,
+			ReturnLogits: true,
 		}, func(r llm.CompletionResponse) {
 			res := api.ChatResponse{
 				Model:      req.Model,
@@ -1558,6 +1563,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				Message:    api.Message{Role: "assistant", Content: r.Content},
 				Done:       r.Done,
 				DoneReason: r.DoneReason,
+				Logits:     r.Logits,
 				Metrics: api.Metrics{
 					PromptEvalCount:    r.PromptEvalCount,
 					PromptEvalDuration: r.PromptEvalDuration,
