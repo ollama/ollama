@@ -115,19 +115,19 @@ GGML_FILES= \
 	ggml/src/ggml-backend-impl.h \
 	ggml/include/ggml-alloc.h \
 	ggml/src/ggml-alloc.c \
-	ggml/src/ggml-aarch64.h \
-	ggml/src/ggml-aarch64.c \
 	ggml/include/ggml-blas.h \
 	ggml/include/ggml-cpp.h \
 	ggml/src/ggml-threading.cpp \
 	ggml/src/ggml-blas/ggml-blas.cpp \
 	ggml/src/ggml-cpu/ggml-cpu.c \
-	ggml/src/ggml-cpu/ggml-cpu-aarch64.c \
 	ggml/src/ggml-cpu/ggml-cpu.cpp \
 	ggml/src/ggml-cpu/ggml-cpu-aarch64.h \
+	ggml/src/ggml-cpu/ggml-cpu-aarch64.cpp \
 	ggml/src/ggml-cpu/ggml-cpu-quants.h \
 	ggml/src/ggml-cpu/ggml-cpu-quants.c \
 	ggml/src/ggml-cpu/ggml-cpu-impl.h \
+	ggml/src/ggml-cpu/ggml-cpu-traits.h \
+	ggml/src/ggml-cpu/ggml-cpu-traits.cpp \
 	ggml/src/ggml-cpu/amx/amx.h \
 	ggml/src/ggml-cpu/amx/amx.cpp \
 	ggml/src/ggml-cpu/amx/mmq.cpp \
