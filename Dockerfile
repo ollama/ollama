@@ -69,7 +69,7 @@ ARG OLLAMA_FAST_BUILD
 ARG VERSION
 RUN --mount=type=cache,target=/root/.ccache \
     if grep "^flags" /proc/cpuinfo|grep avx>/dev/null; then \
-        make -j $(expr $(nproc) / 2 ) dist ; \
+        make -j $(nproc) dist ; \
     else \
         make -j 5 dist ; \
     fi
