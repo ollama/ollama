@@ -193,7 +193,6 @@ func TestPreprocess(t *testing.T) {
 }
 
 func TestPreprocessImages(t *testing.T) {
-
 	for _, testFile := range []string{"flight.png", "sportsball.png"} {
 		f, err := os.Open(testFile)
 		if err != nil {
