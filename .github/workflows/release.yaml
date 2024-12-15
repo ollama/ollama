@@ -85,13 +85,12 @@ jobs:
           import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
           Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
           if (!(gcc --version | select-string -quiet clang)) { throw "wrong gcc compiler detected - must be clang" }
-          make
+          make dist
         name: make
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-cpu
           path: |
-            build/**/*
             dist/windows-amd64/**
 
   # ROCm generation step
@@ -143,13 +142,12 @@ jobs:
           import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
           Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
           if (!(gcc --version | select-string -quiet clang)) { throw "wrong gcc compiler detected - must be clang" }
-          make -C llama print-HIP_PATH print-HIP_LIB_DIR
-          make rocm
+          make help-runners
+          make dist_rocm
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-rocm
           path: |
-            build/**/*
             dist/windows-amd64/**
 
   # CUDA generation step
@@ -226,12 +224,11 @@ jobs:
           import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
           Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'
           if (!(gcc --version | select-string -quiet clang)) { throw "wrong gcc compiler detected - must be clang" }
-          make cuda_v$(($env:CUDA_PATH | split-path -leaf) -replace 'v(\d+).*', '$1')
+          make dist_cuda_v$(($env:CUDA_PATH | split-path -leaf) -replace 'v(\d+).*', '$1')
       - uses: actions/upload-artifact@v4
         with:
           name: generate-windows-cuda-${{ matrix.cuda.version }}
           path: |
-            build/**/*
             dist/windows-amd64/**
 
   # windows arm64 generate, go build, and zip file (no installer)
@@ -450,20 +447,23 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-cpu
+          path: dist/windows-amd64/
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-cuda-11.3
+          path: dist/windows-amd64/
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-cuda-12.4
+          path: dist/windows-amd64/
       - uses: actions/download-artifact@v4
         with:
           name: generate-windows-rocm
+          path: dist/windows-amd64/
       - uses: actions/download-artifact@v4
         with:
           name: windows-arm64
           path: dist
-      - run: dir build
       - run: |
           import-module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
           Enter-VsDevShell -vsinstallpath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -skipautomaticlocation -DevCmdArguments '-arch=x64 -no_logo'

@@ -80,7 +80,7 @@ If you are using a container to run Ollama, make sure you've set up the containe
 
 Sometimes the Ollama can have difficulties initializing the GPU. When you check the server logs, this can show up as various error codes, such as "3" (not initialized), "46" (device unavailable), "100" (no device), "999" (unknown), or others. The following troubleshooting techniques may help resolve the problem
 
-- If you are using a container, is the container runtime working?  Try `docker run --gpus all ubuntu nvidia-smi` - if this doesn't work, Ollama wont be able to see your NVIDIA GPU.
+- If you are using a container, is the container runtime working?  Try `docker run --gpus all ubuntu nvidia-smi` - if this doesn't work, Ollama won't be able to see your NVIDIA GPU.
 - Is the uvm driver loaded? `sudo nvidia-modprobe -u`
 - Try reloading the nvidia_uvm driver - `sudo rmmod nvidia_uvm` then `sudo modprobe nvidia_uvm`
 - Try rebooting

@@ -3,61 +3,60 @@ package llama
 //go:generate make -j 8
 
 /*
-#cgo CFLAGS: -O2 -std=c11 -DGGML_BUILD=1 -DNDEBUG -DLOG_DISABLE_LOGS -DGGML_USE_LLAMAFILE
-#cgo CXXFLAGS: -O2 -std=c++11 -DGGML_BUILD=1 -DNDEBUG -DLOG_DISABLE_LOGS -DGGML_USE_LLAMAFILE
+#cgo CFLAGS: -O3 -std=c17 -DGGML_BUILD=1 -DNDEBUG -DLOG_DISABLE_LOGS -DGGML_USE_LLAMAFILE -DGGML_USE_CPU -DGGML_USE_CPU_AARCH64
+#cgo CXXFLAGS: -O3 -std=c++17 -DGGML_BUILD=1 -DNDEBUG -DLOG_DISABLE_LOGS -DGGML_USE_LLAMAFILE -DGGML_USE_CPU -DGGML_USE_CPU_AARCH64
 #cgo amd64,avx CFLAGS: -mavx
 #cgo amd64,avx CXXFLAGS: -mavx
-#cgo amd64,avx2 CFLAGS: -mavx2 -mfma
-#cgo amd64,avx2 CXXFLAGS: -mavx2 -mfma
+#cgo amd64,avx2 CFLAGS: -mavx2 -mfma -mf16c
+#cgo amd64,avx2 CXXFLAGS: -mavx2 -mfma -mf16c
+#cgo amd64,avx512 CFLAGS: -mavx512f -mavx512dq -mavx512bw
+#cgo amd64,avx512 CXXFLAGS: -mavx512f -mavx512dq -mavx512bw
+#cgo amd64,avx512bf16 CFLAGS: -mavx512bf16 -D__AVX512BF16__
+#cgo amd64,avx512bf16 CXXFLAGS: -mavx512bf16 -D__AVX512BF16__
+#cgo amd64,avx512vbmi CFLAGS: -mavx512vbmi -D__AVX512VBMI__
+#cgo amd64,avx512vbmi CXXFLAGS: -mavx512vbmi -D__AVX512VBMI__
+#cgo amd64,avx512vnni CFLAGS: -mavx512vnni -D__AVX512VNNI__
+#cgo amd64,avx512vnni CXXFLAGS: -mavx512vnni -D__AVX512VNNI__
 #cgo amd64,f16c CFLAGS: -mf16c
 #cgo amd64,f16c CXXFLAGS: -mf16c
 #cgo amd64,fma CFLAGS: -mfma
 #cgo amd64,fma CXXFLAGS: -mfma
-#cgo avx CFLAGS: -mavx
-#cgo avx CXXFLAGS: -mavx
-#cgo avx2 CFLAGS: -mavx2 -mfma -mf16c
-#cgo avx2 CXXFLAGS: -mavx2 -mfma -mf16c
-#cgo cuda CFLAGS: -fPIE -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 #cgo cuda CFLAGS: -fPIE -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 #cgo cuda CXXFLAGS: -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
-#cgo cuda CXXFLAGS: -DGGML_USE_CUDA -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
-#cgo cuda_jetpack5 LDFLAGS: -lggml_cuda_jetpack5 -L/usr/local/cuda-11/lib64
-#cgo cuda_jetpack6 LDFLAGS: -lggml_cuda_jetpack6 -L/usr/local/cuda-12/lib64
-#cgo cuda_v11 LDFLAGS: -lggml_cuda_v11 -L/usr/local/cuda-11/lib64
-#cgo cuda_v12 LDFLAGS: -lggml_cuda_v12 -L/usr/local/cuda-12/lib64
+#cgo cuda_jetpack5 LDFLAGS: -lggml_cuda_jetpack5
+#cgo cuda_jetpack6 LDFLAGS: -lggml_cuda_jetpack6
+#cgo cuda_v11 LDFLAGS: -lggml_cuda_v11
+#cgo cuda_v12 LDFLAGS: -lggml_cuda_v12
 #cgo darwin,amd64 CFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
 #cgo darwin,amd64 CXXFLAGS: -Wno-incompatible-pointer-types-discards-qualifiers
 #cgo darwin,amd64 LDFLAGS: -framework Foundation
 #cgo darwin,amd64,avx2 CFLAGS: -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 #cgo darwin,amd64,avx2 CXXFLAGS: -DGGML_USE_ACCELERATE -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64
 #cgo darwin,amd64,avx2 LDFLAGS: -framework Accelerate
-#cgo darwin,arm64 CFLAGS: -DGGML_USE_METAL -DGGML_USE_ACCELERATE -DGGML_METAL_EMBED_LIBRARY -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64 -DGGML_USE_BLAS
-#cgo darwin,arm64 CXXFLAGS: -DGGML_USE_METAL -DGGML_USE_ACCELERATE -DGGML_METAL_EMBED_LIBRARY -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64 -DGGML_USE_BLAS
+#cgo darwin,arm64 CFLAGS: -DGGML_USE_METAL -DGGML_USE_ACCELERATE -DGGML_METAL_EMBED_LIBRARY -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64 -DGGML_USE_BLAS -DGGML_BLAS_USE_ACCELERATE
+#cgo darwin,arm64 CXXFLAGS: -DGGML_USE_METAL -DGGML_USE_ACCELERATE -DGGML_METAL_EMBED_LIBRARY -DACCELERATE_NEW_LAPACK -DACCELERATE_LAPACK_ILP64 -DGGML_USE_BLAS -DGGML_BLAS_USE_ACCELERATE
 #cgo darwin,arm64 LDFLAGS: -framework Foundation -framework Metal -framework MetalKit -framework Accelerate
 #cgo linux CFLAGS: -D_GNU_SOURCE
 #cgo linux CXXFLAGS: -D_GNU_SOURCE
-#cgo linux,amd64 LDFLAGS: -L${SRCDIR}/build/Linux/amd64
-#cgo linux,amd64 LDFLAGS: -L${SRCDIR}/build/Linux/amd64
+#cgo linux LDFLAGS: -ldl
+#cgo linux,amd64 LDFLAGS: -L${SRCDIR}/build/linux-amd64
 #cgo linux,arm64 CFLAGS: -D__aarch64__ -D__ARM_NEON -D__ARM_FEATURE_FMA
 #cgo linux,arm64 CXXFLAGS: -D__aarch64__ -D__ARM_NEON -D__ARM_FEATURE_FMA
-#cgo linux,arm64 LDFLAGS: -L${SRCDIR}/build/Linux/arm64
+#cgo linux,arm64 LDFLAGS: -L${SRCDIR}/build/linux-arm64
 #cgo linux,arm64,sve CFLAGS: -march=armv8.6-a+sve
 #cgo linux,arm64,sve CXXFLAGS: -march=armv8.6-a+sve
-#cgo linux,cuda LDFLAGS: -lcuda -lcudart -lcublas -lcublasLt -lpthread -ldl -lrt -lresolv
-#cgo linux,rocm LDFLAGS: -L/opt/rocm/lib -lpthread -ldl -lrt -lresolv
-#cgo rocm CFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIPBLAS -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
-#cgo rocm CXXFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIPBLAS -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
+#cgo linux,cuda LDFLAGS: -lcuda -lcudart -lcublas -lcublasLt -lpthread -lrt -lresolv
+#cgo linux,rocm LDFLAGS: -lpthread -lrt -lresolv
+#cgo rocm CFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIP -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
+#cgo rocm CXXFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIP -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 #cgo rocm LDFLAGS: -L${SRCDIR} -lggml_rocm -lhipblas -lamdhip64 -lrocblas
 #cgo windows CFLAGS: -Wno-discarded-qualifiers -D_WIN32_WINNT=0x602
 #cgo windows CXXFLAGS: -D_WIN32_WINNT=0x602
-#cgo windows LDFLAGS: -lmsvcrt
 #cgo windows LDFLAGS: -lmsvcrt -static-libstdc++ -static-libgcc -static
-#cgo windows,amd64 LDFLAGS: -L${SRCDIR}/build/Windows/amd64
-#cgo windows,amd64 LDFLAGS: -L${SRCDIR}/build/Windows/amd64
+#cgo windows,amd64 LDFLAGS: -L${SRCDIR}/build/windows-amd64
 #cgo windows,arm64 CFLAGS: -D__aarch64__ -D__ARM_NEON -D__ARM_FEATURE_FMA
 #cgo windows,arm64 CXXFLAGS: -D__aarch64__ -D__ARM_NEON -D__ARM_FEATURE_FMA
-#cgo windows,arm64 LDFLAGS: -L${SRCDIR}/build/Windows/arm64
-#cgo windows,arm64 LDFLAGS: -L${SRCDIR}/build/Windows/arm64
+#cgo windows,arm64 LDFLAGS: -L${SRCDIR}/build/windows-arm64
 #cgo windows,cuda LDFLAGS: -lcuda -lcudart -lcublas -lcublasLt
 #cgo windows,rocm LDFLAGS: -lggml_rocm -lhipblas -lamdhip64 -lrocblas
 
@@ -69,7 +68,8 @@ package llama
 #include "mllama.h"
 #include "sampling_ext.h"
 
-bool llamaProgressCallback(float progress, void *user_data);
+extern bool llamaProgressCallback(float progress, void *user_data);
+extern void llamaLog(int level, char* text, void* user_data);
 
 typedef enum {COMP_UNKNOWN,COMP_GCC,COMP_CLANG} COMPILER;
 COMPILER inline get_compiler() {
@@ -81,24 +81,22 @@ COMPILER inline get_compiler() {
 	return UNKNOWN_COMPILER;
 #endif
 }
+
 */
 import "C"
 
 import (
-	"bytes"
 	_ "embed"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
+	"os"
 	"runtime"
 	"runtime/cgo"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"unsafe"
 )
-
-var CpuFeatures = ""
 
 func BackendInit() {
 	C.llama_backend_init()
@@ -115,6 +113,26 @@ func PrintSystemInfo() string {
 		compiler = "cgo(clang)"
 	}
 	return C.GoString(C.llama_print_system_info()) + compiler
+}
+
+var logLevel atomic.Int32
+
+func init() {
+	logLevel.Store(int32(C.GGML_LOG_LEVEL_INFO))
+	C.llama_log_set((C.ggml_log_callback)(C.llamaLog), nil)
+}
+
+func EnableDebug() {
+	logLevel.Store(int32(C.GGML_LOG_LEVEL_DEBUG))
+}
+
+//export llamaLog
+func llamaLog(level int32, text *C.char, _ unsafe.Pointer) {
+	if level < logLevel.Load() {
+		return
+	}
+
+	fmt.Fprint(os.Stderr, C.GoString(text))
 }
 
 func GetModelArch(modelPath string) (string, error) {
@@ -637,14 +655,13 @@ func (c *Context) Synchronize() {
 // sampling
 // TODO: this is a temporary wrapper to allow calling C++ code from CGo
 type SamplingContext struct {
-	c *C.struct_gpt_sampler
+	c *C.struct_common_sampler
 }
 
 type SamplingParams struct {
 	TopK           int
 	TopP           float32
 	MinP           float32
-	TfsZ           float32
 	TypicalP       float32
 	Temp           float32
 	RepeatLastN    int
@@ -660,11 +677,10 @@ type SamplingParams struct {
 }
 
 func NewSamplingContext(model *Model, params SamplingParams) (*SamplingContext, error) {
-	var cparams C.struct_gpt_sampler_cparams
+	var cparams C.struct_common_sampler_cparams
 	cparams.top_k = C.int32_t(params.TopK)
 	cparams.top_p = C.float(params.TopP)
 	cparams.min_p = C.float(params.MinP)
-	cparams.tfs_z = C.float(params.TfsZ)
 	cparams.typical_p = C.float(params.TypicalP)
 	cparams.temp = C.float(params.Temp)
 	cparams.penalty_last_n = C.int32_t(params.RepeatLastN)
@@ -681,43 +697,32 @@ func NewSamplingContext(model *Model, params SamplingParams) (*SamplingContext, 
 	defer C.free(unsafe.Pointer(grammar))
 
 	cparams.grammar = grammar
-	context := &SamplingContext{c: C.gpt_sampler_cinit(model.c, &cparams)}
+	context := &SamplingContext{c: C.common_sampler_cinit(model.c, &cparams)}
 	if context.c == nil {
 		return nil, errors.New("unable to create sampling context")
 	}
 
-	runtime.SetFinalizer(context, func(s *SamplingContext) { C.gpt_sampler_cfree(s.c) })
+	runtime.SetFinalizer(context, func(s *SamplingContext) { C.common_sampler_cfree(s.c) })
 
 	return context, nil
 }
 
 func (s *SamplingContext) Reset() {
-	C.gpt_sampler_creset(s.c)
+	C.common_sampler_creset(s.c)
 }
 
 func (s *SamplingContext) Sample(llamaContext *Context, idx int) int {
-	return int(C.gpt_sampler_csample(s.c, llamaContext.c, C.int(idx)))
+	return int(C.common_sampler_csample(s.c, llamaContext.c, C.int(idx)))
 }
 
 func (s *SamplingContext) Accept(id int, applyGrammar bool) {
-	C.gpt_sampler_caccept(s.c, C.llama_token(id), C.bool(applyGrammar))
+	C.common_sampler_caccept(s.c, C.llama_token(id), C.bool(applyGrammar))
 }
 
-type JsonSchema struct {
-	Defs       map[string]any `json:"$defs,omitempty"`
-	Properties map[string]any `json:"properties,omitempty"`
-	Required   []string       `json:"required,omitempty"`
-	Title      string         `json:"title,omitempty"`
-	Type       string         `json:"type,omitempty"`
-}
-
-func (js JsonSchema) AsGrammar() string {
-	var b bytes.Buffer
-	if err := json.NewEncoder(&b).Encode(js); err != nil {
-		return ""
-	}
-
-	cStr := C.CString(b.String())
+// SchemaToGrammar converts the provided JSON schema to a grammar. It returns
+// nil if the provided schema is invalid JSON or an invalid JSON schema.
+func SchemaToGrammar(schema []byte) []byte {
+	cStr := C.CString(string(schema))
 	defer C.free(unsafe.Pointer(cStr))
 
 	// Allocate buffer for grammar output with reasonable size
@@ -725,10 +730,10 @@ func (js JsonSchema) AsGrammar() string {
 	buf := make([]byte, maxLen)
 
 	// Call C function to convert schema to grammar
-	length := C.schema_to_grammar(cStr, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(maxLen))
-	if length == 0 {
-		slog.Warn("unable to convert schema to grammar")
+	n := C.schema_to_grammar(cStr, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(maxLen))
+	if n == 0 {
+		// preserve nil
+		return nil
 	}
-
-	return string(buf[:length])
+	return buf[:n]
 }
