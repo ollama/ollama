@@ -31,7 +31,7 @@ import (
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/models/mllama"
+	"github.com/ollama/ollama/model/mllama"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/runners"
