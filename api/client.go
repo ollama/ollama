@@ -360,7 +360,7 @@ func (c *Client) Embeddings(ctx context.Context, req *EmbeddingRequest) (*Embedd
 	return &resp, nil
 }
 
-// Tokenize tokenizes a string.
+// Tokenize returns the tokens for a given text.
 func (c *Client) Tokenize(ctx context.Context, req *TokenizeRequest) (*TokenizeResponse, error) {
 	var resp TokenizeResponse
 	if err := c.do(ctx, http.MethodPost, "/api/tokenize", req, &resp); err != nil {
@@ -369,7 +369,7 @@ func (c *Client) Tokenize(ctx context.Context, req *TokenizeRequest) (*TokenizeR
 	return &resp, nil
 }
 
-// Detokenize detokenizes a string.
+// Detokenize returns the text for a given list of tokens.
 func (c *Client) Detokenize(ctx context.Context, req *DetokenizeRequest) (*DetokenizeResponse, error) {
 	var resp DetokenizeResponse
 	if err := c.do(ctx, http.MethodPost, "/api/detokenize", req, &resp); err != nil {

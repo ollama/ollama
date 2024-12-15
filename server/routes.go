@@ -548,54 +548,72 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-func (s *Server) TokenizeHandler(c *gin.Context) {
+func (s *Server) TokenizeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	var req api.TokenizeRequest
-	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
-		return
-	} else if err != nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if errors.Is(err, io.EOF) {
+			http.Error(w, "missing request body", http.StatusBadRequest)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	r, _, _, err := s.scheduleRunner(c.Request.Context(), req.Model, []Capability{}, req.Options, req.KeepAlive)
+	runner, _, _, err := s.scheduleRunner(r.Context(), req.Model, []Capability{}, nil, req.KeepAlive)
 	if err != nil {
-		handleScheduleError(c, req.Model, err)
+		http.Error(w, fmt.Sprintf("model '%s' not found", req.Model), http.StatusNotFound)
 		return
 	}
 
-	tokens, err := r.Tokenize(c.Request.Context(), req.Prompt)
+	tokens, err := runner.Tokenize(r.Context(), req.Text)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	c.JSON(http.StatusOK, api.TokenizeResponse{Model: req.Model, Tokens: tokens})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(api.TokenizeResponse{
+		Tokens: tokens,
+	})
 }
 
-func (s *Server) DetokenizeHandler(c *gin.Context) {
+func (s *Server) DetokenizeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
 	var req api.DetokenizeRequest
-	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
-		return
-	} else if err != nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if errors.Is(err, io.EOF) {
+			http.Error(w, "missing request body", http.StatusBadRequest)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	r, _, _, err := s.scheduleRunner(c.Request.Context(), req.Model, []Capability{}, req.Options, req.KeepAlive)
+	runner, _, _, err := s.scheduleRunner(r.Context(), req.Model, []Capability{}, nil, req.KeepAlive)
 	if err != nil {
-		handleScheduleError(c, req.Model, err)
+		http.Error(w, fmt.Sprintf("model '%s' not found", req.Model), http.StatusNotFound)
 		return
 	}
 
-	text, err := r.Detokenize(c.Request.Context(), req.Tokens)
+	text, err := runner.Detokenize(r.Context(), req.Tokens)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	c.JSON(http.StatusOK, api.DetokenizeResponse{Model: req.Model, Text: text})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(api.DetokenizeResponse{
+		Text: text,
+	})
 }
 
 func (s *Server) PullHandler(c *gin.Context) {
@@ -1264,8 +1282,8 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
-	r.POST("/api/tokenize", s.TokenizeHandler)
-	r.POST("/api/detokenize", s.DetokenizeHandler)
+	r.Any("/api/tokenize", gin.WrapF(s.TokenizeHandler))
+	r.Any("/api/detokenize", gin.WrapF(s.DetokenizeHandler))
 	r.POST("/api/create", s.CreateHandler)
 	r.POST("/api/push", s.PushHandler)
 	r.POST("/api/copy", s.CopyHandler)
