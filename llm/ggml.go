@@ -57,6 +57,13 @@ func (kv KV) ParameterCount() uint64 {
 	return kv.u64("general.parameter_count")
 }
 
+func (kv KV) Alignment() int64 {
+	if alignment := int64(kv.u64("general.alignment")); alignment != 0 {
+		return alignment
+	}
+	return 32
+}
+
 func (kv KV) FileType() fileType {
 	if u64 := kv.u64("general.file_type"); u64 > 0 {
 		return fileType(uint32(u64))
