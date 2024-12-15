@@ -212,10 +212,9 @@ func TestPreprocessImages(t *testing.T) {
 		}
 
 		outputPath := "processed_" + testFile + ".bin"
-		err = os.WriteFile(outputPath, byteData, 0644)
+		err = os.WriteFile(outputPath, byteData, 0o644)
 		if err != nil {
 			t.Fatalf("error writing processed image: %q", err)
 		}
-
 	}
 }
