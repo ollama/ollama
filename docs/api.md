@@ -1506,8 +1506,8 @@ POST /api/tokenize
 
 ```shell
 curl -X POST http://localhost:11434/api/tokenize -d '{
-  "model": "llama3.1:8b",
-  "text": "Why the sky is blue?"
+  "model": "llama3.2",
+  "text": "Why is the sky blue?"
 }'
 ```
 
@@ -1538,15 +1538,15 @@ POST /api/detokenize
 
 ```shell
 curl -X POST http://localhost:11434/api/detokenize -d '{
-  "model": "llama3.1:8b",
-  "tokens": [10445,279,13180,374,6437,30]
+  "model": "llama3.2",
+  "tokens": [10445,374,279,13180,6437,30]
 }'
 ```
 
 #### Response
 
 ```json
-{"text":"Why the sky is blue?"}
+{"text":"Why is the sky blue?"}
 ```
 
 

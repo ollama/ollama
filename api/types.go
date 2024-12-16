@@ -297,10 +297,6 @@ type EmbeddingResponse struct {
 type TokenizeRequest struct {
 	Model string `json:"model"`
 	Text  string `json:"text"`
-
-	// KeepAlive controls how long the model will stay loaded in memory following
-	// this request.
-	KeepAlive *Duration `json:"keep_alive,omitempty"`
 }
 
 // TokenizeResponse is the response from [Client.Tokenize].
@@ -312,10 +308,6 @@ type TokenizeResponse struct {
 type DetokenizeRequest struct {
 	Model  string `json:"model"`
 	Tokens []int  `json:"tokens"`
-
-	// KeepAlive controls how long the model will stay loaded in memory following
-	// this request.
-	KeepAlive *Duration `json:"keep_alive,omitempty"`
 }
 
 // DetokenizeResponse is the response from [Client.Detokenize].
