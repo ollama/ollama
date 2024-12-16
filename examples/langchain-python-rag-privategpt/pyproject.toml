@@ -8,9 +8,7 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
-langchain = "0.0.261"
-gpt4all = "^1.0.3"
-chromadb = "^0.3.26"
+langchain = "0.3.12"
 PyMuPDF = "^1.22.5"
 python-dotenv = "^1.0.0"
 unstructured = "^0.8.0"
@@ -20,6 +18,11 @@ pandoc = "^2.3"
 pypandoc = "^1.11"
 tqdm = "^4.65.0"
 sentence-transformers = "^2.2.2"
+langchain-community = "^0.3.12"
+langchain-huggingface = "^0.1.2"
+update = "^0.0.1"
+langchain-chroma = "^0.1.4"
+langchain-ollama = "^0.2.1"
 
 [build-system]
 requires = ["poetry-core"]
