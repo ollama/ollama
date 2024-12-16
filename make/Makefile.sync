@@ -46,6 +46,7 @@ create-patches: $(LLAMACPP_REPO)
   		echo "ERROR: Your llama.cpp repo is dirty.  You must commit any pending changes for format-patch to generate patches"; \
   		exit 1; \
 	fi
+	@rm -f $(DEST_DIR)/patches/*.patch
 	@cd $(LLAMACPP_REPO) && git format-patch --no-signature --no-numbered --zero-commit -o $(VENDOR_RELATIVE_PATCH_DIR) $(LLAMACPP_BASE_COMMIT)
 
 # Vendoring template logic
