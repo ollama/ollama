@@ -4,7 +4,6 @@ import tempfile
 import os
 import subprocess
 import sys
-import select
 import atexit
 from datetime import datetime
 
@@ -25,13 +24,19 @@ def exit_handler():
             wfp.write(f"{msg['content']}\n")
 
 def flush_and_input(prompt):
-    while select.select([sys.stdin], [], [], 0)[0]:
-        sys.stdin.readline()
+    if sys.platform == 'win32':
+        import msvcrt
+        while msvcrt.kbhit():
+            msvcrt.getch()
+    else:
+        import select
+        while select.select([sys.stdin.fileno()], [], [], 0)[0]:
+            sys.stdin.readline()
     return input(prompt)
 
 def chat(messages):
     r = requests.post(
-        "http://0.0.0.0:11434/api/chat",
+        "http://127.0.0.1:11434/api/chat",
         json={"model": model, "messages": messages, "stream": True},
 	stream=True
     )
