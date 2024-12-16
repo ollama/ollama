@@ -564,6 +564,12 @@ func (s *Server) TokenizeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	slog.Info("tokenize request", "text", req.Text, "tokens", req.Text)
+	if req.Text == "" {
+		http.Error(w, "missing text for tokenization", http.StatusBadRequest)
+		return
+	}
+
 	runner, _, _, err := s.scheduleRunner(r.Context(), req.Model, []Capability{}, nil, req.KeepAlive)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("model '%s' not found", req.Model), http.StatusNotFound)
@@ -577,9 +583,12 @@ func (s *Server) TokenizeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(api.TokenizeResponse{
+	if err := json.NewEncoder(w).Encode(api.TokenizeResponse{
 		Tokens: tokens,
-	})
+	}); err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+		return
+	}
 }
 
 func (s *Server) DetokenizeHandler(w http.ResponseWriter, r *http.Request) {
@@ -598,6 +607,11 @@ func (s *Server) DetokenizeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.Tokens == nil {
+		http.Error(w, "missing tokens for detokenization", http.StatusBadRequest)
+		return
+	}
+
 	runner, _, _, err := s.scheduleRunner(r.Context(), req.Model, []Capability{}, nil, req.KeepAlive)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("model '%s' not found", req.Model), http.StatusNotFound)
@@ -611,9 +625,12 @@ func (s *Server) DetokenizeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(api.DetokenizeResponse{
+	if err := json.NewEncoder(w).Encode(api.DetokenizeResponse{
 		Text: text,
-	})
+	}); err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+		return
+	}
 }
 
 func (s *Server) PullHandler(c *gin.Context) {
