@@ -564,9 +564,8 @@ func (s *Server) TokenizeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("tokenize request", "text", req.Text, "tokens", req.Text)
 	if req.Text == "" {
-		http.Error(w, "missing text for tokenization", http.StatusBadRequest)
+		http.Error(w, "missing `text` for tokenization", http.StatusBadRequest)
 		return
 	}
 
