@@ -67,6 +67,110 @@ type llmServer struct {
 	sem *semaphore.Weighted
 }
 
+// CleanupOrphanedLlamaServers terminates orphaned llama server processes.
+// This should be run when starting a new llama server instance to prevent resource conflicts.
+// If ollama crashes or is terminated unexpectedly, it may leave behind orphaned processes that can overwelm the system.
+var activeServerPIDs sync.Map // Tracks active server PIDs
+func CleanupOrphanedLlamaServers() {
+	if runtime.GOOS == "windows" {
+		// Use "tasklist" to list processes and identify orphaned llama server processes.
+		cmd := exec.Command("tasklist", "/FI", "IMAGENAME eq ollama_llama_server.exe")
+		output, err := cmd.Output()
+		if err != nil {
+			slog.Error("failed to execute tasklist command", "error", err)
+			return
+		}
+		// Check for orphaned "ollama_llama_server.exe" processes.
+		lines := strings.Split(string(output), "\n")
+		orphanedPIDs := []string{}
+		for _, line := range lines {
+			if strings.Contains(line, "ollama_llama_server.exe") {
+				fields := strings.Fields(line)
+				if len(fields) > 1 {
+					pid := fields[1]
+					// Skip active PIDs
+					if _, ok := activeServerPIDs.Load(pid); !ok {
+						orphanedPIDs = append(orphanedPIDs, pid)
+					}
+				}
+			}
+		}
+
+		if len(orphanedPIDs) > 0 {
+			slog.Debug("detected orphaned llama server processes", "pids", orphanedPIDs)
+		} else {
+			slog.Debug("no orphaned llama server processes detected")
+			return
+		}
+		// List over the orphaned PIDs and terminate them.
+		var wg sync.WaitGroup
+		for _, pid := range orphanedPIDs {
+			wg.Add(1)
+			go func(pid string) {
+				defer wg.Done()
+				killCmd := exec.Command("taskkill", "/PID", pid, "/F")
+				if err := killCmd.Run(); err != nil {
+					slog.Error("failed to terminate orphaned llama server process", "pid", pid, "error", err)
+				} else {
+					slog.Debug("terminated orphaned llama server process", "pid", pid)
+				}
+			}(pid)
+		}
+		wg.Wait()
+		return
+	} else {
+		// >>>>>>>>>Untested on Linux/macOS<<<<<<<<<<<<<<<<<
+		// TODO: Test on Linux/macOS.
+		// Cross-platform logic for Linux/macOS
+		/*
+			cmd := exec.Command("ps", "-e", "-o", "pid,comm")
+			output, err := cmd.Output()
+			if err != nil {
+				slog.Error("failed to execute ps command", "error", err)
+				return
+			}
+
+			lines := strings.Split(string(output), "\n")
+			orphanedPIDs := []string{}
+			for _, line := range lines {
+				if strings.Contains(line, "ollama_llama_server") {
+					fields := strings.Fields(line)
+					if len(fields) > 1 {
+						pid := fields[0] // First field is the PID
+						// Skip active PIDs
+						if _, ok := activeServerPIDs.Load(pid); !ok {
+							orphanedPIDs = append(orphanedPIDs, pid)
+						}
+					}
+				}
+			}
+
+			if len(orphanedPIDs) > 0 {
+				slog.Debug("detected orphaned llama server processes", "pids", orphanedPIDs)
+			} else {
+				slog.Debug("no orphaned llama server processes detected")
+				return
+			}
+
+			var wg sync.WaitGroup
+			for _, pid := range orphanedPIDs {
+				wg.Add(1)
+				go func(pid string) {
+					defer wg.Done()
+					killCmd := exec.Command("kill", "-9", pid)
+					if err := killCmd.Run(); err != nil {
+						slog.Error("failed to terminate orphaned llama server process", "pid", pid, "error", err)
+					} else {
+						slog.Debug("terminated orphaned llama server process", "pid", pid)
+					}
+				}(pid)
+			}
+			wg.Wait()
+		*/
+		return
+	}
+}
+
 // LoadModel will load a model from disk. The model must be in the GGML format.
 //
 // It collects array values for arrays with a size less than or equal to
@@ -90,6 +194,9 @@ func LoadModel(model string, maxArraySize int) (*GGML, error) {
 // NewLlamaServer will run a server for the given GPUs
 // The gpu list must be a single family.
 func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
+	// Clean up any orphaned llama server processes before starting a new one.
+	CleanupOrphanedLlamaServers()
+
 	var err error
 	var cpuRunner string
 	var estimate MemoryEstimate
@@ -411,6 +518,9 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		// reap subprocess when it exits
 		go func() {
 			err := s.cmd.Wait()
+			pid := fmt.Sprintf("%d", s.cmd.Process.Pid)
+			activeServerPIDs.Delete(pid) // Unregister PID on process exit
+
 			// Favor a more detailed message over the process exit status
 			if err != nil && s.status != nil && s.status.LastErrMsg != "" {
 				slog.Debug("llama runner terminated", "error", err)
@@ -591,7 +701,10 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 		switch status {
 		case ServerStatusReady:
 			s.loadDuration = time.Since(start)
-			slog.Info(fmt.Sprintf("llama runner started in %0.2f seconds", s.loadDuration.Seconds()))
+			// Register the server's PID as active for tracking orphaned servers.
+			pid := fmt.Sprintf("%d", s.cmd.Process.Pid) // Convert PID to string
+			activeServerPIDs.Store(pid, true)           // Register PID
+			slog.Info(fmt.Sprintf("llama runner started in %0.2f seconds", s.loadDuration.Seconds()), "pid", pid)
 			return nil
 		default:
 			lastStatus = status
