@@ -17,18 +17,28 @@ const (
 	separatorMenuID
 	diagLogsMenuID
 	diagSeparatorMenuID
+	guiMenuID
+	settingsMenuID
 	quitMenuID
 )
 
 func (t *winTray) initMenus() error {
+	if err := t.addOrUpdateMenuItem(guiMenuID, 0, guiMenuTitle, false); err != nil {
+		return fmt.Errorf("unable to create gui menu entry %w", err)
+	}
+
+	if err := t.addOrUpdateMenuItem(settingsMenuID, 0, settingsMenuTitle, false); err != nil {
+		return fmt.Errorf("unable to create settings menu entry %w", err)
+	}
+
 	if err := t.addOrUpdateMenuItem(diagLogsMenuID, 0, diagLogsMenuTitle, false); err != nil {
-		return fmt.Errorf("unable to create menu entries %w\n", err)
+		return fmt.Errorf("unable to create menu entries %w", err)
 	}
 	if err := t.addSeparatorMenuItem(diagSeparatorMenuID, 0); err != nil {
 		return fmt.Errorf("unable to create menu entries %w", err)
 	}
 	if err := t.addOrUpdateMenuItem(quitMenuID, 0, quitMenuTitle, false); err != nil {
-		return fmt.Errorf("unable to create menu entries %w\n", err)
+		return fmt.Errorf("unable to create menu entries %w", err)
 	}
 	return nil
 }

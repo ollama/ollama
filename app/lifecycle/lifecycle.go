@@ -47,6 +47,10 @@ func Run() {
 				}
 			case <-callbacks.ShowLogs:
 				ShowLogs()
+			case <-callbacks.ShowSettings:
+				ShowSettings()
+			case <-callbacks.ShowGui:
+				ShowGui()
 			case <-callbacks.DoFirstUse:
 				err := GetStarted()
 				if err != nil {
@@ -82,7 +86,6 @@ func Run() {
 		}
 	}
 
-	// disabled updater uncomment when ready to enable again
 	// StartBackgroundUpdaterChecker(ctx, t.UpdateAvailable)
 
 	t.Run()

@@ -9,10 +9,12 @@ var (
 )
 
 type Callbacks struct {
-	Quit       chan struct{}
-	Update     chan struct{}
-	DoFirstUse chan struct{}
-	ShowLogs   chan struct{}
+	Quit         chan struct{}
+	Update       chan struct{}
+	DoFirstUse   chan struct{}
+	ShowLogs     chan struct{}
+	ShowGui      chan struct{}
+	ShowSettings chan struct{}
 }
 
 type OllamaTray interface {

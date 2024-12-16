@@ -70,23 +70,25 @@ func InitTray(icon, updateIcon []byte) (*winTray, error) {
 	wt.callbacks.Quit = make(chan struct{})
 	wt.callbacks.Update = make(chan struct{})
 	wt.callbacks.ShowLogs = make(chan struct{})
+	wt.callbacks.ShowGui = make(chan struct{})
+	wt.callbacks.ShowSettings = make(chan struct{})
 	wt.callbacks.DoFirstUse = make(chan struct{})
 	wt.normalIcon = icon
 	wt.updateIcon = updateIcon
 	if err := wt.initInstance(); err != nil {
-		return nil, fmt.Errorf("Unable to init instance: %w\n", err)
+		return nil, fmt.Errorf("unable to init instance: %w", err)
 	}
 
 	if err := wt.createMenu(); err != nil {
-		return nil, fmt.Errorf("Unable to create menu: %w\n", err)
+		return nil, fmt.Errorf("unable to create menu: %w", err)
 	}
 
 	iconFilePath, err := iconBytesToFilePath(wt.normalIcon)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to write icon data to temp file: %w", err)
+		return nil, fmt.Errorf("unable to write icon data to temp file: %w", err)
 	}
 	if err := wt.setIcon(iconFilePath); err != nil {
-		return nil, fmt.Errorf("Unable to set icon: %w", err)
+		return nil, fmt.Errorf("unable to set icon: %w", err)
 	}
 
 	return &wt, wt.initMenus()

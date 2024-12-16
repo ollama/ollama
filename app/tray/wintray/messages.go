@@ -12,4 +12,6 @@ const (
 	updateAvailableMenuTitle = "An update is available"
 	updateMenuTitle          = "Restart to update"
 	diagLogsMenuTitle        = "View logs"
+	guiMenuTitle             = "Gui"
+	settingsMenuTitle        = "Settings"
 )

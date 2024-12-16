@@ -88,6 +88,18 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 			default:
 				slog.Error("no listener on ShowLogs")
 			}
+		case guiMenuID:
+			select {
+			case t.callbacks.ShowGui <- struct{}{}:
+			default:
+				slog.Error("no listener on ShowGui")
+			}
+		case settingsMenuID:
+			select {
+			case t.callbacks.ShowSettings <- struct{}{}:
+			default:
+				slog.Error("no listener on ShowSettings")
+			}
 		default:
 			slog.Debug(fmt.Sprintf("Unexpected menu item id: %d", menuItemId))
 		}
@@ -98,7 +110,7 @@ func (t *winTray) wndProc(hWnd windows.Handle, message uint32, wParam, lParam ui
 		}
 		err = t.wcex.unregister()
 		if err != nil {
-			slog.Error(fmt.Sprintf("failed to unregister window %s", err))
+			slog.Error(fmt.Sprintf("failed to unregister window: %s", err))
 		}
 	case WM_DESTROY:
 		// same as WM_ENDSESSION, but throws 0 exit code after all
