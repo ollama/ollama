@@ -65,7 +65,6 @@ FROM --platform=linux/amd64 unified-builder-amd64 AS build-amd64
 COPY . .
 ARG OLLAMA_SKIP_CUDA_GENERATE
 ARG OLLAMA_SKIP_ROCM_GENERATE
-ARG OLLAMA_FAST_BUILD
 ARG VERSION
 RUN --mount=type=cache,target=/root/.ccache \
     if grep "^flags" /proc/cpuinfo|grep avx>/dev/null; then \
@@ -122,7 +121,6 @@ RUN --mount=type=cache,target=/root/.ccache \
 FROM --platform=linux/arm64 unified-builder-arm64 AS build-arm64
 COPY . .
 ARG OLLAMA_SKIP_CUDA_GENERATE
-ARG OLLAMA_FAST_BUILD
 ARG VERSION
 RUN --mount=type=cache,target=/root/.ccache \
     make -j 5 dist
