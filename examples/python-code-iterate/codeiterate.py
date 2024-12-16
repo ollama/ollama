@@ -79,7 +79,7 @@ def main():
     atexit.register(exit_handler)
     code_array = []
     while True:
-        if code_array and (prompt := flush_and_input("Would you like to test the generated code(y/n)? ")) == "y":
+        if code_array and (prompt := flush_and_input("Would you like to test the generated code(y/n)? If you press (n), you can continue prompting the model. ")) == "y":
             code = '\n'.join(code_array)
             fd, path = tempfile.mkstemp(suffix=".py")
             with os.fdopen(fd, 'w') as f:
