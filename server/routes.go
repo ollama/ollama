@@ -110,6 +110,114 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []Capabil
 	return runner.llama, model, &opts, nil
 }
 
+func (s *Server) TokenizerHandler(c *gin.Context) {
+	var req struct {
+		Model string `json:"model" binding:"required"`
+		Text  string `json:"text" binding:"required"`
+	}
+
+	// Parse the request body
+	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	} else if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Retrieve the model
+	model, err := GetModel(req.Model)
+	if err != nil {
+		switch {
+		case os.IsNotExist(err):
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+		case err.Error() == "invalid model name":
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+
+	// expire the runner
+	if req.Model == "" && req.Text == "" {
+		s.sched.expireRunner(model)
+	}
+	// Schedule the runner to tokenize
+	r, _, _, err := s.scheduleRunner(c.Request.Context(), req.Model, []Capability{CapabilityCompletion}, nil, nil)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+
+	// Tokenize the input text
+	tokens, err := r.Tokenize(c.Request.Context(), req.Text)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to tokenize text: %v", err)})
+		return
+	}
+
+	// Return the tokens as a JSON response
+	c.JSON(http.StatusOK, gin.H{
+		"model":  req.Model,
+		"tokens": tokens,
+	})
+}
+
+func (s *Server) DetokenizerHandler(c *gin.Context) {
+	var req struct {
+		Model  string `json:"model" binding:"required"`
+		Tokens []int  `json:"tokens" binding:"required"`
+	}
+
+	// Parse the request body
+	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	} else if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Retrieve the model
+	model, err := GetModel(req.Model)
+	if err != nil {
+		switch {
+		case os.IsNotExist(err):
+			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+		case err.Error() == "invalid model name":
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+
+	// expire the runner
+	if req.Model == "" && len(req.Tokens) <= 0 {
+		s.sched.expireRunner(model)
+	}
+	// Schedule the runner to detokenize
+	r, _, _, err := s.scheduleRunner(c.Request.Context(), req.Model, []Capability{CapabilityCompletion}, nil, nil)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+
+	// Detokenize the input tokens
+	text, err := r.Detokenize(c.Request.Context(), req.Tokens)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to detokenize tokens: %v", err)})
+		return
+	}
+
+	// Return the detokenized text as a JSON response
+	c.JSON(http.StatusOK, gin.H{
+		"model": req.Model,
+		"text":  text,
+	})
+}
+
 func (s *Server) GenerateHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 	var req api.GenerateRequest
@@ -1220,6 +1328,8 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
+	r.POST("/api/tokenize", s.TokenizerHandler)
+	r.POST("/api/detokenize", s.DetokenizerHandler)
 	r.POST("/api/create", s.CreateHandler)
 	r.POST("/api/push", s.PushHandler)
 	r.POST("/api/copy", s.CopyHandler)
@@ -1238,7 +1348,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		r.Handle(method, "/", func(c *gin.Context) {
-			c.String(http.StatusOK, "Ollama is running")
+			c.String(http.StatusOK, "Ollama YonTracks is running")
 		})
 
 		r.Handle(method, "/api/tags", s.ListHandler)

@@ -13,6 +13,8 @@
 - [Push a Model](#push-a-model)
 - [Generate Embeddings](#generate-embeddings)
 - [List Running Models](#list-running-models)
+- [Tokenize](#tokenizer)
+- [Detokenize](#detokenizer)
 
 ## Conventions
 
@@ -479,6 +481,53 @@ A single JSON object is returned:
   "response": "",
   "done": true,
   "done_reason": "unload"
+}
+```
+
+## Tokenizer
+
+```shell
+POST /api/tokenize
+```
+Tokenize a given text using the specified model. The tokenized text `"tokens": [10445,374,279,13180,6437,30]` can then be used as/or added to context `"context": [10445,374,279,13180,6437,30]`
+
+```shell
+curl http://localhost:11434/api/tokenize -d '{
+    "model": "llama3.2",
+    "text": "Why is the sky blue?"
+}'
+```
+##### Response
+
+A single JSON object is returned:
+
+```json
+{
+  "model": "llama3.2",
+  "tokens": [10445,374,279,13180,6437,30]
+}
+```
+
+## Detokenizer
+
+```shell
+POST /api/detokenize
+```
+Detokenize a given text using the specified model. 
+```shell
+curl http://localhost:11434/api/detokenize -d '{
+    "model": "llama3.2",
+    "tokens": [10445,374,279,13180,6437,30]
+}'
+```
+##### Response
+
+A single JSON object is returned:
+
+```json
+{
+  "model": "llama3.2",
+  "text": "Why is the sky blue?"
 }
 ```
 
