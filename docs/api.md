@@ -14,7 +14,7 @@
 - [Generate Embeddings](#generate-embeddings)
 - [List Running Models](#list-running-models)
 - [Tokenize Text](#tokenize-text)
-- [Detokenize Text](#detokenize-text)
+- [Detokenize Tokens](#detokenize-tokens)
 
 ## Conventions
 
@@ -1489,7 +1489,7 @@ A single JSON object will be returned.
 
 ## Tokenize Text
 
-Tokenize text using a model
+Tokenize text to an array of tokens using a specific model.
 
 ```shell
 POST /api/tokenize
@@ -1497,13 +1497,8 @@ POST /api/tokenize
 
 ##### Parameters
 
-- `model`: name of model to generate tokens from
-- `prompt`: text to generate tokens for
-
-##### Advanced parameters:
-
-- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
-- `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
+- `model`: name of model to use for tokenization
+- `text`: text to tokenize
 
 ### Examples
 
@@ -1512,7 +1507,7 @@ POST /api/tokenize
 ```shell
 curl -X POST http://localhost:11434/api/tokenize -d '{
   "model": "llama3.1:8b",
-  "prompt": "Why the sky is blue?"
+  "text": "Why the sky is blue?"
 }'
 ```
 
@@ -1520,14 +1515,13 @@ curl -X POST http://localhost:11434/api/tokenize -d '{
 
 ```json
 {
-  "model": "llama3.1:8b",
   "tokens": [10445,279,13180,374,6437,30]
 }
 ```
 
-## Detokenize Text
+## Detokenize Tokens
 
-Detokenize text using a model
+Detokenize tokens to text using a specific model.
 
 ```shell
 POST /api/detokenize
@@ -1535,13 +1529,8 @@ POST /api/detokenize
 
 #### Parameters
 
-- `model`: name of model to generate text from
-- `tokens`: list of tokens to generate text from
-
-##### Advanced parameters:
-
-- `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
-- `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
+- `model`: name of model to use for detokenization
+- `tokens`: list of tokens to detokenize
 
 ### Examples
 
@@ -1557,10 +1546,7 @@ curl -X POST http://localhost:11434/api/detokenize -d '{
 #### Response
 
 ```json
-{
-  "model": "llama3.1:8b",
-  "text": "Why the sky is blue?"
-}
+{"text":"Why the sky is blue?"}
 ```
 
 
