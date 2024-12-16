@@ -82,7 +82,8 @@ func Run() {
 		}
 	}
 
-	StartBackgroundUpdaterChecker(ctx, t.UpdateAvailable)
+	// disabled updater uncomment when ready to enable again
+	// StartBackgroundUpdaterChecker(ctx, t.UpdateAvailable)
 
 	t.Run()
 	cancel()
