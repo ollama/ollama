@@ -31,10 +31,10 @@ import (
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/model/mllama"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/runners"
-	"github.com/ollama/ollama/server/imageproc"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -205,8 +205,14 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	images := make([]llm.ImageData, len(req.Images))
 	for i := range req.Images {
 		if isMllama {
-			data, aspectRatioID, err := imageproc.Preprocess(req.Images[i])
+			data, opts, err := mllama.Preprocess(bytes.NewReader(req.Images[i]))
 			if err != nil {
+				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error processing image"})
+				return
+			}
+
+			ar, ok := opts["aspectRatioIndex"].(int)
+			if !ok {
 				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error processing image"})
 				return
 			}
@@ -218,7 +224,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				return
 			}
 
-			images[i] = llm.ImageData{ID: i, Data: buf.Bytes(), AspectRatioID: aspectRatioID}
+			images[i] = llm.ImageData{ID: i, Data: buf.Bytes(), AspectRatioID: ar}
 		} else {
 			images[i] = llm.ImageData{ID: i, Data: req.Images[i]}
 		}
