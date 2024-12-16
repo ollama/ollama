@@ -42,7 +42,7 @@ jobs:
           }
 
           {
-            echo RUNNERS=$(changed 'llama/**')
+            echo RUNNERS=$(changed 'llama/*' 'llama/**/*')
           } >>$GITHUB_OUTPUT
 
   runners-linux-cuda:
