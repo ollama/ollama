@@ -722,20 +722,14 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		return fmt.Errorf("unexpected server status: %s", status.ToString())
 	}
 
-	if len(req.Format) > 0 {
-		switch {
-		case bytes.Equal(req.Format, []byte(`"json"`)):
-			request["grammar"] = grammarJSON
-		case bytes.HasPrefix(req.Format, []byte("{")):
-			// User provided a JSON schema
-			g := llama.SchemaToGrammar(req.Format)
-			if g == nil {
-				return fmt.Errorf("invalid JSON schema in format")
-			}
-			request["grammar"] = string(g)
-		default:
-			return errors.New(`invalid format: expected "json" or a JSON schema`)
+	if bytes.Equal(req.Format, []byte(`"json"`)) {
+		request["grammar"] = grammarJSON
+	} else if bytes.HasPrefix(req.Format, []byte("{")) {
+		g := llama.SchemaToGrammar(req.Format)
+		if g == nil {
+			return fmt.Errorf("invalid JSON schema in format")
 		}
+		request["grammar"] = string(g)
 	}
 
 	// Handling JSON marshaling with special characters unescaped.
