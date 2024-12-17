@@ -46,7 +46,7 @@ func TestLLMServerCompletionFormat(t *testing.T) {
 		}
 	}
 
-	valids := []string{`"json"`, `{"type":"object"}`, ``, `""`}
+	valids := []string{`"json"`, `{"type":"object"}`, ``, `""`, `null`}
 	for _, valid := range valids {
 		err := s.Completion(ctx, CompletionRequest{
 			Options: new(api.Options),

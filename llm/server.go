@@ -701,7 +701,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 
 	if len(req.Format) > 0 {
 		switch {
-		case bytes.Equal(req.Format, []byte(`""`)):
+		case bytes.Equal(req.Format, []byte(`""`)) || bytes.Equal(req.Format, []byte(`null`)):
 			// fallthrough
 		case bytes.Equal(req.Format, []byte(`"json"`)):
 			request["grammar"] = grammarJSON
