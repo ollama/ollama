@@ -147,31 +147,15 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
-			var files []string
 			if fi.IsDir() {
 				// this is likely a safetensors or pytorch directory
-				// TODO make this work w/ adapters
-				files, err = getFileList(path)
+				apiFiles, err := createFileBlobs(cmd, client, path, spinner)
 				if err != nil {
 					return err
 				}
-				var apiFiles []api.File
-				for _, file := range files {
-					relPath, err := filepath.Rel(path, file)
-					if err != nil {
-						return err
-					}
 
-					digest, err := createBlob(cmd, client, file, spinner)
-					if err != nil {
-						return err
-					}
-					apiFiles = append(apiFiles, api.File{Path: relPath, Digest: digest})
-				}
 				if modelfile.Commands[i].Name == "model" {
-					cfr := api.CreateFromRequest{Type: "safetensors"}
-					cfr.Files = apiFiles
-					request.From = cfr
+					request.From = api.CreateFromRequest{Type: "safetensors", Files: apiFiles}
 				} else {
 					request.Adapters = apiFiles
 				}
@@ -182,9 +166,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				}
 				apiFile := []api.File{{Path: filepath.Base(path), Digest: digest}}
 				if modelfile.Commands[i].Name == "model" {
-					cfr := api.CreateFromRequest{Type: "gguf"}
-					cfr.Files = apiFile
-					request.From = cfr
+					request.From = api.CreateFromRequest{Type: "gguf", Files: apiFile}
 				} else {
 					request.Adapters = apiFile
 				}
@@ -250,6 +232,27 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func createFileBlobs(cmd *cobra.Command, client *api.Client, path string, spinner *progress.Spinner) ([]api.File, error) {
+	files, err := getFileList(path)
+	if err != nil {
+		return nil, err
+	}
+	var apiFiles []api.File
+	for _, file := range files {
+		relPath, err := filepath.Rel(path, file)
+		if err != nil {
+			return nil, err
+		}
+
+		digest, err := createBlob(cmd, client, file, spinner)
+		if err != nil {
+			return nil, err
+		}
+		apiFiles = append(apiFiles, api.File{Path: relPath, Digest: digest})
+	}
+	return apiFiles, nil
 }
 
 func getFileList(path string) ([]string, error) {
@@ -387,7 +390,6 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, spinner *pr
 		}
 	}()
 
-	fmt.Println("finished copying files")
 	digest := fmt.Sprintf("sha256:%x", hash.Sum(nil))
 	if err = client.CreateBlob(cmd.Context(), digest, io.TeeReader(bin, &pw)); err != nil {
 		return "", err
