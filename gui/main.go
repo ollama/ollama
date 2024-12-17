@@ -1,18 +1,17 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
-	"encoding/json"
+	"context"
 	"fmt"
 	"image/color"
-	"io"
-	"net/http"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ollama/ollama/api"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -27,23 +26,10 @@ import (
 
 // Constants
 const (
-	ollamaEndpoint = "http://localhost:11434/api/chat"
-	modelName      = "llama3.1"
-	httpTimeout    = 30 * time.Second
-	appIconPath    = "../app/assets/app.ico"
+	modelName   = "llama3.1"
+	httpTimeout = 30 * time.Second
+	appIconPath = "../app/assets/app.ico"
 )
-
-// ChatRequest defines the structure of a request to the Ollama API
-type ChatRequest struct {
-	Model    string        `json:"model"`
-	Messages []ChatMessage `json:"messages"`
-}
-
-// ChatMessage represents a single chat message
-type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
 
 var (
 	myApp         fyne.App
@@ -274,11 +260,11 @@ func createInputComponents() (*widget.Entry, *widget.Button) {
 	sendMessage := func() {
 		userMessage := strings.TrimSpace(messageInput.Text)
 		if len(userMessage) > 500 {
-			addAssistantMessage("Error: Message too long. Please limit to 500 characters.")
+			updateChatData("Assistant: " + "Error: Message too long. Please limit to 500 characters.")
 			return
 		}
 		if userMessage != "" {
-			addUserMessage(userMessage)
+			updateChatData("You: " + userMessage)
 			messageInput.SetText("")
 			go handleUserMessage(userMessage)
 		}
@@ -319,119 +305,67 @@ func createChatHistory() *fyne.Container {
 // handleUserMessage processes the user's message
 func handleUserMessage(userMessage string) {
 	if err := streamFromOllama(userMessage); err != nil {
-		addAssistantMessage(fmt.Sprintf("Error: %v", err))
+		updateChatData("Assistant: " + fmt.Sprintf("Error: %v", err))
 	}
-}
-
-// addUserMessage appends a user's message
-func addUserMessage(message string) {
-	updateChatData("You: " + message)
-}
-
-// addAssistantMessage appends an assistant's message
-func addAssistantMessage(message string) {
-	updateChatData("Assistant: " + message)
 }
 
 // updateChatData safely updates the chat data binding
 func updateChatData(message string) {
+
 	mu.Lock()
 	defer mu.Unlock()
 	items, _ := chatData.Get()
 	chatData.Set(append(items, message))
+	// fmt.Print(items)
+	// fmt.Print(message)
 }
 
 // streamFromOllama streams the assistant's response
 func streamFromOllama(userMessage string) error {
-	requestBody := ChatRequest{
-		Model:    modelName,
-		Messages: []ChatMessage{{Role: "user", Content: userMessage}},
-	}
-
-	body, err := json.Marshal(requestBody)
+	// Initialize the Ollama API client
+	client, err := api.ClientFromEnvironment()
 	if err != nil {
-		return fmt.Errorf("failed to marshal request: %w", err)
+		return fmt.Errorf("failed to create Ollama API client: %w", err)
 	}
 
-	client := &http.Client{Timeout: httpTimeout}
-	req, err := http.NewRequest("POST", ollamaEndpoint, bytes.NewReader(body))
+	// Prepare chat messages, including the user's latest message
+	messages := []api.Message{
+		{Role: "user", Content: userMessage},
+	}
+
+	ctx := context.Background()
+
+	// Prepare the chat request
+	req := &api.ChatRequest{
+		Model:    modelName, // Use your specified model name
+		Messages: messages,
+	}
+
+	// We'll accumulate the assistant's tokens here until done
+	var assistantMessageBuilder strings.Builder
+
+	// Callback function to handle streaming responses
+	respFunc := func(resp api.ChatResponse) error {
+		// Print raw response for debugging if desired
+		// fmt.Print(resp)
+
+		// Append the streamed content to the builder
+		assistantMessageBuilder.WriteString(resp.Message.Content)
+
+		// Once the response is done, we have the full assistant message
+		if resp.Done {
+			// Now update the chat data with the complete assistant message
+			updateChatData("Assistant: " + assistantMessageBuilder.String())
+			// Reset the builder for the next response
+			assistantMessageBuilder.Reset()
+		}
+
+		return nil
+	}
+
+	err = client.Chat(ctx, req, respFunc)
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		log.Fatal(err)
 	}
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API error: %s", string(b))
-	}
-
-	return processSSEStream(resp.Body)
-}
-
-// processSSEStream processes the server-sent events stream
-func processSSEStream(body io.ReadCloser) error {
-	scanner := bufio.NewScanner(body)
-	var partialResponse, finalDetails string
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		fmt.Printf("SSE Line: %s\n", line)
-
-		var chatResponse struct {
-			Message struct {
-				Role    string `json:"role"`
-				Content string `json:"content"`
-			} `json:"message"`
-			Done               bool   `json:"done"`
-			DoneReason         string `json:"done_reason,omitempty"`
-			TotalDuration      int64  `json:"total_duration,omitempty"`
-			LoadDuration       int64  `json:"load_duration,omitempty"`
-			PromptEvalCount    int    `json:"prompt_eval_count,omitempty"`
-			PromptEvalDuration int64  `json:"prompt_eval_duration,omitempty"`
-			EvalCount          int    `json:"eval_count,omitempty"`
-			EvalDuration       int64  `json:"eval_duration,omitempty"`
-		}
-
-		if err := json.Unmarshal([]byte(line), &chatResponse); err != nil {
-			fmt.Printf("Failed to unmarshal JSON: %v\n", err)
-			continue
-		}
-
-		partialResponse += chatResponse.Message.Content
-
-		if chatResponse.Done {
-			finalDetails = fmt.Sprintf(
-				"Done Reason: %s\nTotal Duration: %d ms\nLoad Duration: %d ms\nPrompt Eval Count: %d\nPrompt Eval Duration: %d ms\nEval Count: %d\nEval Duration: %d ms",
-				chatResponse.DoneReason,
-				chatResponse.TotalDuration,
-				chatResponse.LoadDuration,
-				chatResponse.PromptEvalCount,
-				chatResponse.PromptEvalDuration,
-				chatResponse.EvalCount,
-				chatResponse.EvalDuration,
-			)
-		}
-
-		// Scroll only if the user is at the bottom
-		if scroll.Offset.Y+scroll.Size().Height >= scroll.Content.Size().Height {
-			scroll.ScrollToBottom()
-		}
-	}
-
-	if partialResponse != "" {
-		updateChatData(fmt.Sprintf("Assistant: %s\n\nModel: %s \n\n%s", partialResponse, modelName, finalDetails))
-	}
-
-	if scanner.Err() != nil {
-		return fmt.Errorf("error reading stream: %w", scanner.Err())
-	}
-
 	return nil
 }
