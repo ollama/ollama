@@ -350,6 +350,61 @@ func (s *Server) run(ctx context.Context) {
 	}
 }
 
+func (s *Server) processToken(token int, seq *Sequence) bool {
+	piece := s.model.TokenToPiece(token)
+
+	seq.numPredicted++
+
+	// if it's an end of sequence token, break
+	if s.model.TokenIsEog(token) {
+		// TODO (jmorganca): we should send this back
+		// as it's important for the /api/generate context
+		// seq.responses <- piece
+
+		return false
+	}
+
+	seq.inputs = []input{{token: token}}
+
+	seq.pendingResponses = append(seq.pendingResponses, piece)
+	sequence := strings.Join(seq.pendingResponses, "")
+
+	if ok, stop := findStop(sequence, seq.stop); ok {
+		slog.Debug("hit stop token", "pending", seq.pendingResponses, "stop", stop)
+
+		var tokenTruncated bool
+		origLen := len(seq.pendingResponses)
+		seq.pendingResponses, tokenTruncated = truncateStop(seq.pendingResponses, stop)
+		newLen := len(seq.pendingResponses)
+
+		// Update the cache based on the tokens that will be returned:
+		// - We have 1 token more than is currently in the cache because
+		// the last one generated wasn't submitted to Decode
+		// - Remove any stop sequences that we stripped out
+		// - If truncateStop removed a portion of a token, drop that
+		// - As defense-in-depth, if truncatedToken didn't find a stop token
+		// remove the extra one that we added to the cache len
+		tokenLen := len(seq.cache.Inputs) + 1
+		tokenLen -= origLen - newLen
+		if tokenTruncated || origLen == newLen {
+			tokenLen--
+		}
+		seq.cache.Inputs = seq.cache.Inputs[:tokenLen]
+
+		return false
+	}
+
+	if containsStopSuffix(sequence, seq.stop) {
+		return true
+	}
+
+	if incompleteUnicode(sequence) {
+		return true
+	}
+
+	return true
+}
+
 // TODO (jmorganca): processBatch should be simplified, removing:
 // * sampling
 // * stop token checking
@@ -486,60 +541,10 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		// sample a token
 		token := seq.samplingCtx.Sample(s.lc, seq.iBatch)
 		seq.samplingCtx.Accept(token, true)
-		piece := s.model.TokenToPiece(token)
 
-		seq.numPredicted++
-
-		// if it's an end of sequence token, break
-		if s.model.TokenIsEog(token) {
-			// TODO (jmorganca): we should send this back
-			// as it's important for the /api/generate context
-			// seq.responses <- piece
-
+		if !s.processToken(token, seq) {
 			s.removeSequence(i, "stop")
-			continue
-		}
-
-		seq.inputs = []input{{token: token}}
-
-		seq.pendingResponses = append(seq.pendingResponses, piece)
-		sequence := strings.Join(seq.pendingResponses, "")
-
-		if ok, stop := findStop(sequence, seq.stop); ok {
-			slog.Debug("hit stop token", "pending", seq.pendingResponses, "stop", stop)
-
-			var tokenTruncated bool
-			origLen := len(seq.pendingResponses)
-			seq.pendingResponses, tokenTruncated = truncateStop(seq.pendingResponses, stop)
-			newLen := len(seq.pendingResponses)
-
-			// Update the cache based on the tokens that will be returned:
-			// - We have 1 token more than is currently in the cache because
-			// the last one generated wasn't submitted to Decode
-			// - Remove any stop sequences that we stripped out
-			// - If truncateStop removed a portion of a token, drop that
-			// - As defense-in-depth, if truncatedToken didn't find a stop token
-			// remove the extra one that we added to the cache len
-			tokenLen := len(seq.cache.Inputs) + 1
-			tokenLen -= origLen - newLen
-			if tokenTruncated || origLen == newLen {
-				tokenLen--
-			}
-			seq.cache.Inputs = seq.cache.Inputs[:tokenLen]
-
-			s.removeSequence(i, "stop")
-			continue
-		}
-
-		if containsStopSuffix(sequence, seq.stop) {
-			continue
-		}
-
-		if incompleteUnicode(sequence) {
-			continue
-		}
-
-		if !flushPending(seq) {
+		} else if !flushPending(seq) {
 			s.removeSequence(i, "connection")
 		}
 	}
