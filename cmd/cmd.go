@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -31,6 +33,7 @@ import (
 	"github.com/containerd/console"
 	"github.com/mattn/go-runewidth"
 	"github.com/olekukonko/tablewriter"
+	"github.com/pkg/browser"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
@@ -519,7 +522,11 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	return generate(cmd, opts)
 }
 
-func errFromUnknownKey(unknownKeyErr error) error {
+// unknownKey handles key validation when a connection fails due to an unknown key.
+// It attempts to open the browser for interactive sessions to let users connect their key,
+// falling back to command-line instructions for non-interactive sessions.
+// Returns nil if browser flow succeeds, or an error with connection instructions otherwise.
+func unknownKey(unknownKeyErr error) error {
 	// find SSH public key in the error message
 	// TODO (brucemacd): the API should return structured errors so that this message parsing isn't needed
 	sshKeyPattern := `ssh-\w+ [^\s"]+`
@@ -546,6 +553,18 @@ func errFromUnknownKey(unknownKeyErr error) error {
 		// check if the returned public key matches the local public key, this prevents adding a remote key to the user's account
 		if serverPubKey != localPubKey {
 			return unknownKeyErr
+		}
+
+		if term.IsTerminal(int(os.Stdout.Fd())) {
+			// URL encode the key and device name for the browser URL
+			encodedKey := base64.RawURLEncoding.EncodeToString([]byte(localPubKey))
+			d, _ := os.Hostname()
+			encodedDevice := url.QueryEscape(d)
+			browserURL := fmt.Sprintf("https://ollama.com/connect?host=%s&key=%s", encodedDevice, encodedKey)
+			if err := browser.OpenURL(browserURL); err == nil {
+				fmt.Println("Opening browser to connect your device...")
+				return nil
+			}
 		}
 
 		var msg strings.Builder
@@ -614,13 +633,16 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		if spinner != nil {
 			spinner.Stop()
 		}
-		if strings.Contains(err.Error(), "access denied") {
-			return errors.New("you are not authorized to push to this namespace, create the model under a namespace you own")
+		if p != nil {
+			p.Stop()
 		}
 		if strings.Contains(err.Error(), errtypes.UnknownOllamaKeyErrMsg) && isOllamaHost {
 			// the user has not added their ollama key to ollama.com
 			// return an error with a more user-friendly message
-			return errFromUnknownKey(err)
+			return unknownKey(err)
+		}
+		if strings.Contains(err.Error(), "access denied") {
+			return errors.New("you are not authorized to push to this namespace, create the model under a namespace you own")
 		}
 		return err
 	}
