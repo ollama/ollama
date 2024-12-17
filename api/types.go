@@ -299,7 +299,7 @@ type CreateRequest struct {
 	Stream   *bool  `json:"stream,omitempty"`
 	Quantize string `json:"quantize,omitempty"`
 
-	From       string           `json:"from",omitempty`
+	From       string           `json:"from,omitempty"`
 	FromModel  *CreateFromModel `json:"from_model,omitempty"`
 	Adapters   []string         `json:"adapters,omitempty"`
 	Template   string           `json:"template,omitempty"`
