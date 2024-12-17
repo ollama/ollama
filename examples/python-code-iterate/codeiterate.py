@@ -34,10 +34,25 @@ def flush_and_input(prompt):
             sys.stdin.readline()
     return input(prompt)
 
+# we shorten the context to three messages:
+# 1. The first user chat message describing the task
+# 2. The last message from the assistant, this contains the newest generated code
+# 3. The final user chat message, this could be the error captured by codeiterate in running the generated code
+def truncate_context(messages):
+    mlen = len(messages)
+    if mlen <= 3:
+        return messages
+    trunc = []
+    trunc.append(messages[0])
+    trunc.append(messages[-2])
+    trunc.append(messages[-1])
+    return trunc
+
 def chat(messages):
+    trunc = truncate_context(messages)
     r = requests.post(
         "http://127.0.0.1:11434/api/chat",
-        json={"model": model, "messages": messages, "stream": True},
+        json={"model": model, "messages": trunc, "stream": True},
 	stream=True
     )
     r.raise_for_status()
@@ -108,6 +123,7 @@ def main():
             datetimes.append(datetime.now())
         message = chat(messages)
         messages.append(message)
+        datetimes.append(datetime.now())
         code_array = extract_code(message)
         print("\n\n")
 
