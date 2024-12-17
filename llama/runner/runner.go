@@ -216,6 +216,16 @@ func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 	return inputs, nil
 }
 
+type DraftModelParams struct {
+	ModelPath    string
+	GPUDevs      string
+	NumGPULayers int
+	MaxTokens    int
+	MinTokens    int
+	PMin         float32
+	CtxSize      int
+}
+
 type Server struct {
 	// is the server ready to process requests?
 	// protects access to model and image
@@ -262,6 +272,16 @@ type Server struct {
 
 	// next sequence for prompt processing to avoid starvation
 	nextSeq int
+
+	// draft model
+	dmodel     *llama.Model
+	dparams    DraftModelParams
+	dctxParams llama.ContextParams
+
+	// draft model state per simultaneous sequence
+	sbatch []*llama.Batch
+	dlc    []*llama.Context
+	spec   []*llama.Speculator
 }
 
 func (s *Server) allNil() bool {
@@ -547,6 +567,89 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		} else if !flushPending(seq) {
 			s.removeSequence(i, "connection")
 		}
+	}
+
+	// do speculative decoding
+	for i, seq := range s.seqs {
+		if seq == nil {
+			continue
+		}
+		if s.dmodel == nil {
+			continue
+		}
+		if seq.numDecoded == 0 || len(seq.inputs) != 1 {
+			continue
+		}
+
+		currentToken := seq.inputs[0].token
+		cachedTokens := make([]int, len(seq.cache.Inputs))
+		for i, ct := range seq.cache.Inputs {
+			cachedTokens[i] = ct.token
+		}
+
+		// determine the max draft that fits
+		draftMax := s.dparams.MaxTokens
+		// note: seq.cache.Inputs does not yet contain the `currrentToken` which was
+		// sampled and processed before. also, need to leave space for 1 extra token to
+		// allow context shifts
+		draftMax = min(draftMax, s.cache.numCtx-len(seq.cache.Inputs)-2)
+		if seq.numPredict > 0 {
+			draftMax = min(draftMax, seq.numPredict-seq.numPredicted-1)
+		}
+		slog.Debug("speculative decoding", "sequence idx", i, "max possible draft", draftMax)
+
+		if draftMax < s.dparams.MinTokens {
+			slog.Debug("speculative decoding - max possible draft is too small", "sequence idx", i)
+			continue
+		}
+
+		s.spec[i].SetPMin(s.dparams.PMin)
+		s.spec[i].SetNDraft(draftMax)
+		s.spec[i].SetNReuse(s.dparams.CtxSize - draftMax)
+		draft, err := s.spec[i].GenDraft(cachedTokens, currentToken)
+		// ignore small drafts
+		if s.dparams.MinTokens > len(draft) {
+			slog.Debug("speculative decoding - ignoring small draft", "sequence idx", i, "draft size", len(draft))
+			continue
+		}
+		// construct speculation batch
+		s.sbatch[i].Clear()
+		s.sbatch[i].Add(currentToken, nil, len(seq.cache.Inputs), true, seq.cache.Id)
+		for j, dt := range draft {
+			s.sbatch[i].Add(dt, nil, len(seq.cache.Inputs)+1+j, true, seq.cache.Id)
+		}
+
+		slog.Debug("speculative decoding - decoding batch", "sequence idx", i, "speculative batch size", s.sbatch[i].Size())
+		err = s.lc.Decode(s.sbatch[i])
+		if err != nil {
+			panic(err)
+		}
+
+		// the accepted tokens from the speculation
+		ids, err := seq.samplingCtx.SampleAndAcceptN(s.lc, draft)
+
+		seq.numDecoded += len(ids)
+		seq.numPredicted += len(ids)
+
+		seq.cache.Inputs = append(seq.cache.Inputs, input{token: currentToken})
+		for j := 0; j < len(ids)-1; j++ {
+			seq.cache.Inputs = append(seq.cache.Inputs, input{token: ids[j]})
+		}
+		// keep only accepted activations
+		s.cache.lc.KvCacheSeqRm(seq.cache.Id, len(seq.cache.Inputs), -1)
+
+		for _, token := range ids {
+			if !s.processToken(token, seq) {
+				s.removeSequence(i, "stop")
+				break
+			} else if !flushPending(seq) {
+				s.removeSequence(i, "connection")
+				break
+			}
+
+		}
+
+		slog.Debug("speculative decoding", "sequence idx", i, "accepted tokens", len(ids)-1, "draft tokens", len(draft), "size of cache inputs", len(seq.cache.Inputs))
 	}
 
 	return nil
@@ -894,6 +997,60 @@ func (s *Server) loadModel(
 		panic(err)
 	}
 
+	if s.dparams.ModelPath != "" {
+		dmParams := params
+		// TODO: override more parameters?
+		// TODO: need to respect GPU settings for draft models!
+		dmParams.NumGpuLayers = s.dparams.NumGPULayers
+
+		s.dmodel, err = llama.LoadModelFromFile(s.dparams.ModelPath, dmParams)
+		if err != nil {
+			panic(err)
+		}
+		dkvSize := kvSize
+		// use context size of target model in case user didn't set a draft model context size
+		if s.dparams.CtxSize > 0 {
+			dkvSize = int(s.dparams.CtxSize)
+		} else {
+			s.dparams.CtxSize = dkvSize
+		}
+		dkvCacheType := "" // force F16 KV cache for extra performance
+		s.dctxParams = llama.NewContextParams(dkvSize, dkvSize, 1, threads, flashAttention, dkvCacheType)
+
+		// need to keep the draft model state separate for each parallel request
+		// also, initialize everything right after model loading for performance reasons
+		s.sbatch = make([]*llama.Batch, s.parallel)
+		s.spec = make([]*llama.Speculator, s.parallel)
+		s.dlc = make([]*llama.Context, s.parallel)
+		for i := 0; i < s.parallel; i++ {
+			var dlc *llama.Context
+			var spec *llama.Speculator
+			var sbatch *llama.Batch
+
+			dlc, err = llama.NewContextWithModel(s.dmodel, s.dctxParams)
+			if err != nil {
+				panic(err)
+			}
+			if i == 0 { // only check compatibility once
+				if !s.lc.SpeculativeAreCompatible(dlc) {
+					panic(errors.New("Incompatible draft model."))
+				}
+			}
+			spec, err = llama.NewSpeculator(dlc)
+			if err != nil {
+				panic(err)
+			}
+			sbatch, err = llama.NewBatch(s.dparams.MaxTokens+1, 1, 0)
+			if err != nil {
+				panic(err)
+			}
+			s.sbatch[i] = sbatch
+			s.spec[i] = spec
+			s.dlc[i] = dlc
+		}
+		slog.Info("speculative decoding - draft model loaded")
+	}
+
 	s.status = ServerStatusReady
 	s.ready.Done()
 }
@@ -919,6 +1076,13 @@ func Execute(args []string) error {
 	mlock := fs.Bool("mlock", false, "force system to keep model in RAM rather than swapping or compressing")
 	tensorSplit := fs.String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
 	multiUserCache := fs.Bool("multiuser-cache", false, "optimize input cache algorithm for multiple users")
+	draftMPath := fs.String("draft-model", "", "draft model for speculative decoding")
+	draftGPULayers := fs.Int("draft-gpu-layers", 99, "number of layers to store in VRAM for the draft model")
+	draftGPUDevs := fs.String("draft-gpu-devs", "", "comma-separated list of devices to use for offloading the draft model (default: same GPU devices as available for target model)")
+	draftCtxSize := fs.Int("draft-ctx-size", 0, "size of the prompt context for the draft model (default: 0, 0 = use same as target model)")
+	draftPMin := fs.String("draft-p-min", "0.9", "minimum speculative decoding probability (greedy) (default: 0.9)")
+	draftMin := fs.Int("draft-min", 5, "minimum number of draft tokens to use for speculative decoding (default: 5)")
+	draftMax := fs.Int("draft-max", 16, "number of tokens to draft for speculative decoding (default: 16)")
 
 	var lpaths multiLPath
 	fs.Var(&lpaths, "lora", "Path to lora layer file (can be specified multiple times)")
@@ -978,6 +1142,22 @@ func Execute(args []string) error {
 		Progress: func(progress float32) {
 			server.progress = progress
 		},
+	}
+
+	var draftPMinFloat float32
+	if *draftPMin != "" {
+		f, _ := strconv.ParseFloat(*draftPMin, 32)
+		draftPMinFloat = float32(f)
+	}
+
+	server.dparams = DraftModelParams{
+		ModelPath:    *draftMPath,
+		GPUDevs:      *draftGPUDevs,
+		NumGPULayers: *draftGPULayers,
+		MaxTokens:    *draftMax,
+		MinTokens:    *draftMin,
+		PMin:         draftPMinFloat,
+		CtxSize:      *draftCtxSize,
 	}
 
 	server.ready.Add(1)

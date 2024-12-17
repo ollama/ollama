@@ -65,6 +65,7 @@ type Model struct {
 	ParentModel    string
 	AdapterPaths   []string
 	ProjectorPaths []string
+	DraftModelPath string
 	System         string
 	License        []string
 	Digest         string
@@ -127,6 +128,14 @@ func (m *Model) String() string {
 		Name: "model",
 		Args: m.ModelPath,
 	})
+
+	if m.DraftModelPath != "" {
+		// for now, a draft model is specified by a second FROM command
+		modelfile.Commands = append(modelfile.Commands, parser.Command{
+			Name: "model",
+			Args: m.DraftModelPath,
+		})
+	}
 
 	for _, adapter := range m.AdapterPaths {
 		modelfile.Commands = append(modelfile.Commands, parser.Command{
@@ -269,8 +278,12 @@ func GetModel(name string) (*Model, error) {
 
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.model":
-			model.ModelPath = filename
-			model.ParentModel = layer.From
+			if model.ModelPath == "" {
+				model.ModelPath = filename
+				model.ParentModel = layer.From
+			} else { // in case of additional model layers, take the last one as draft model
+				model.DraftModelPath = filename
+			}
 		case "application/vnd.ollama.image.embed":
 			// Deprecated in versions  > 0.1.2
 			// TODO: remove this warning in a future version
