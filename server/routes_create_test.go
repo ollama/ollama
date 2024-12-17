@@ -753,13 +753,8 @@ func TestCreateDetectTemplate(t *testing.T) {
 			"tokenizer.chat_template": "{{ bos_token }}{% for message in messages %}{{'<|' + message['role'] + '|>' + '\n' + message['content'] + '<|end|>\n' }}{% endfor %}{% if add_generation_prompt %}{{ '<|assistant|>\n' }}{% else %}{{ eos_token }}{% endif %}",
 		}, nil)
 		cfr := api.CreateFromRequest{
-			Type: "gguf",
-			Files: []api.File{
-				{
-					Path:   "test.gguf",
-					Digest: digest,
-				},
-			},
+			Type:  "gguf",
+			Files: []api.File{{Path: "test.gguf", Digest: digest}},
 		}
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Name:   "test",

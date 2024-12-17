@@ -445,7 +445,8 @@ func removeLayer(layers []Layer, mediatype string) []Layer {
 		}
 
 		if err := layer.Remove(); err != nil {
-			return false
+			slog.Warn("couldn't remove blob", "digest", layer.Digest, "error", err)
+			return true
 		}
 
 		return true
@@ -546,31 +547,6 @@ func setParameters(layers []Layer, p map[string]any) ([]Layer, error) {
 }
 
 func setMessages(layers []Layer, m []api.Message) ([]Layer, error) {
-	/*
-		// this merges the old messages with the new messages
-		for _, layer := range layers {
-			if layer.MediaType != "application/vnd.ollama.image.messages" {
-				continue
-			}
-
-			digestPath, err := GetBlobsPath(layer.Digest)
-			if err != nil {
-				return nil, err
-			}
-
-			fn, err := os.Open(digestPath)
-			if err != nil {
-				return nil, err
-			}
-			defer fn.Close()
-
-			var existing []api.Message
-			if err := json.NewDecoder(fn).Decode(&existing); err != nil {
-				return nil, err
-			}
-			m = append(existing, m...)
-		}
-	*/
 	for _, layer := range layers {
 		fmt.Printf("layer mediatype: %s\n", layer.MediaType)
 	}
