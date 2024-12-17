@@ -72,6 +72,7 @@ func locateRunnersOnce() {
 	paths := []string{
 		filepath.Join(filepath.Dir(exe), "llama", "build", runtime.GOOS+"-"+runtime.GOARCH, "runners"),
 		filepath.Join(filepath.Dir(exe), envconfig.LibRelativeToExe(), "lib", "ollama", "runners"),
+		filepath.Join(filepath.Dir(exe), "lib", "ollama", "runners"),
 	}
 	for _, path := range paths {
 		if _, err := os.Stat(path); err == nil {
