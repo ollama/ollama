@@ -39,25 +39,34 @@ func TestLLMServerCompletionFormat(t *testing.T) {
 
 	cancel() // prevent further processing if request makes it past the format check
 
-	checkCanceled := func(err error) {
+	checkValid := func(err error) {
 		t.Helper()
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("Completion: err = %v; expected context.Canceled", err)
 		}
 	}
 
-	valids := []string{`"json"`, `{"type":"object"}`, ``, `""`}
+	valids := []string{
+		// "missing"
+		``,
+		`""`,
+		`null`,
+
+		// JSON
+		`"json"`,
+		`{"type":"object"}`,
+	}
 	for _, valid := range valids {
 		err := s.Completion(ctx, CompletionRequest{
 			Options: new(api.Options),
 			Format:  []byte(valid),
 		}, nil)
-		checkCanceled(err)
+		checkValid(err)
 	}
 
 	err := s.Completion(ctx, CompletionRequest{
 		Options: new(api.Options),
 		Format:  nil, // missing format
 	}, nil)
-	checkCanceled(err)
+	checkValid(err)
 }
