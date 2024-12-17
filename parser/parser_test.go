@@ -494,7 +494,6 @@ func TestParseFileParameters(t *testing.T) {
 		"mirostat 1":                   {"mirostat", "1"},
 		"mirostat_tau 1.0":             {"mirostat_tau", "1.0"},
 		"mirostat_eta 1.0":             {"mirostat_eta", "1.0"},
-		"penalize_newline true":        {"penalize_newline", "true"},
 		"stop ### User:":               {"stop", "### User:"},
 		"stop ### User: ":              {"stop", "### User:"},
 		"stop \"### User:\"":           {"stop", "### User:"},
