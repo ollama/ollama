@@ -108,10 +108,9 @@ func Test_Routes(t *testing.T) {
 			t.Logf("Status: %s", resp.Status)
 		}
 
-		cfr := api.CreateFromRequest{Type: "gguf", Files: []api.File{{Path: "test.gguf", Digest: digest}}}
 		r := api.CreateRequest{
-			Name: name,
-			From: cfr,
+			Name:      name,
+			FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
 			Parameters: map[string]any{
 				"seed":  42,
 				"top_p": 0.9,
@@ -121,7 +120,7 @@ func Test_Routes(t *testing.T) {
 
 		modelName := model.ParseName(name)
 
-		baseLayers, err := convertModelFromGGUF(r, &cfr, modelName, fn)
+		baseLayers, err := convertModelFromGGUF(r, modelName, fn)
 		if err != nil {
 			t.Fatalf("failed to create model: %v", err)
 		}
@@ -332,16 +331,11 @@ func Test_Routes(t *testing.T) {
 			Path:   "/api/create",
 			Setup: func(t *testing.T, req *http.Request) {
 				_, digest := createTestFile(t, "ollama-model")
-
-				cfr := api.CreateFromRequest{
-					Type:  "gguf",
-					Files: []api.File{{Path: "test.gguf", Digest: digest}},
-				}
 				stream := false
 				createReq := api.CreateRequest{
-					Name:   "t-bone",
-					From:   cfr,
-					Stream: &stream,
+					Name:      "t-bone",
+					FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
+					Stream:    &stream,
 				}
 				jsonData, err := json.Marshal(createReq)
 				if err != nil {
@@ -612,17 +606,17 @@ func TestManifestCaseSensitivity(t *testing.T) {
 	checkOK(createRequest(t, s.CreateHandler, api.CreateRequest{
 		// Start with the stable name, and later use a case-shuffled
 		// version.
-		Name:   wantStableName,
-		From:   api.CreateFromRequest{Type: "gguf", Files: []api.File{{Path: "test.gguf", Digest: digest}}},
-		Stream: &stream,
+		Name:      wantStableName,
+		FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
+		Stream:    &stream,
 	}))
 	checkManifestList()
 
 	t.Logf("creating (again)")
 	checkOK(createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:   name(),
-		From:   api.CreateFromRequest{Type: "gguf", Files: []api.File{{Path: "test.gguf", Digest: digest}}},
-		Stream: &stream,
+		Name:      name(),
+		FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
+		Stream:    &stream,
 	}))
 	checkManifestList()
 
@@ -665,11 +659,7 @@ func TestShow(t *testing.T) {
 	_, digest2 := createBinFile(t, llm.KV{"general.type": "projector", "general.architecture": "clip"}, nil)
 
 	_, digest := createTestFile(t, "ollama-model")
-	cfr := api.CreateFromRequest{
-		Type: "gguf",
-		Files: []api.File{{Path: "test.gguf", Digest: digest}},
-	}
-
+	cfm := &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}}
 	createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:      "show-model",
 

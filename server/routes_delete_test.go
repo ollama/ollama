@@ -22,13 +22,9 @@ func TestDelete(t *testing.T) {
 	var s Server
 
 	_, digest := createBinFile(t, nil, nil)
-	cfr := api.CreateFromRequest{
-		Type:  "gguf",
-		Files: []api.File{{Path: "test.gguf", Digest: digest}},
-	}
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name: "test",
-		From: cfr,
+		Name:      "test",
+		FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
 	})
 
 	if w.Code != http.StatusOK {
@@ -36,9 +32,9 @@ func TestDelete(t *testing.T) {
 	}
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:     "test2",
-		From:     cfr,
-		Template: "{{ .System }} {{ .Prompt }}",
+		Name:      "test2",
+		FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
+		Template:  "{{ .System }} {{ .Prompt }}",
 	})
 
 	if w.Code != http.StatusOK {

@@ -60,10 +60,10 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		oldManifest, _ := ParseNamedManifest(name)
 
 		var baseLayers []*layerGGML
-		switch v := r.From.(type) {
-		case string:
+
+		if r.From != "" {
 			slog.Debug("create model from model name")
-			fromName := model.ParseName(v)
+			fromName := model.ParseName(r.From)
 			if !fromName.IsValid() {
 				ch <- gin.H{"error": errtypes.InvalidModelNameErrMsg, "status": http.StatusBadRequest}
 				return
@@ -76,34 +76,30 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			if err != nil {
 				ch <- gin.H{"error": err.Error()}
 			}
-		case map[string]any:
-			var cfr *api.CreateFromRequest
-			b, _ := json.Marshal(v) // re-marshal to JSON
-			if err := json.Unmarshal(b, &cfr); err == nil {
-				switch cfr.Type {
-				case "safetensors":
-					slog.Debug("create model from safetensors")
-					baseLayers, err = convertModelFromSafetensors(r, cfr, name, fn)
-					if err != nil {
-						slog.Error("error creating from safetensors", "error", err)
-						ch <- gin.H{"error": err.Error()}
-						return
-					}
-				case "gguf":
-					slog.Debug("create model from gguf")
-					baseLayers, err = convertModelFromGGUF(r, cfr, name, fn)
-					if err != nil {
-						slog.Error("error creating from gguf", "error", err)
-						ch <- gin.H{"error": err.Error()}
-						return
-					}
-				default:
-					ch <- gin.H{"error": fmt.Sprintf("unknown from type: %s", cfr.Type), "status": http.StatusBadRequest}
+		} else if r.FromModel != nil {
+			switch r.FromModel.Type {
+			case "safetensors":
+				slog.Debug("create model from safetensors")
+				baseLayers, err = convertModelFromSafetensors(r, name, fn)
+				if err != nil {
+					slog.Error("error creating model from safetensors", "error", err)
+					ch <- gin.H{"error": err.Error()}
 					return
 				}
+			case "gguf":
+				slog.Debug("create model from gguf")
+				baseLayers, err = convertModelFromGGUF(r, name, fn)
+				if err != nil {
+					slog.Error("error creating model from gguf", "error", err)
+					ch <- gin.H{"error": err.Error()}
+					return
+				}
+			default:
+				ch <- gin.H{"error": fmt.Sprintf("unknown from_model type: %s", r.FromModel.Type), "status": http.StatusBadRequest}
+				return
 			}
-		default:
-			ch <- gin.H{"error": fmt.Sprintf("unknown from type: %T", v), "status": http.StatusBadRequest}
+		} else {
+			ch <- gin.H{"error": "neither 'from' or 'from_model' was specified", "status": http.StatusBadRequest}
 			return
 		}
 
@@ -133,19 +129,19 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func convertModelFromSafetensors(r api.CreateRequest, cfr *api.CreateFromRequest, name model.Name, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
+func convertModelFromSafetensors(r api.CreateRequest, name model.Name, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
 	tmpDir, err := os.MkdirTemp("", "ollama-safetensors")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(tmpDir)
 
-	for _, file := range cfr.Files {
-		blobPath, err := GetBlobsPath(file.Digest)
+	for fp, digest := range r.FromModel.Files {
+		blobPath, err := GetBlobsPath(digest)
 		if err != nil {
 			return nil, err
 		}
-		if err := createLink(blobPath, filepath.Join(tmpDir, file.Path)); err != nil {
+		if err := createLink(blobPath, filepath.Join(tmpDir, fp)); err != nil {
 			return nil, err
 		}
 	}
@@ -184,19 +180,22 @@ func convertModelFromSafetensors(r api.CreateRequest, cfr *api.CreateFromRequest
 	return detectChatTemplate(layers)
 }
 
-func convertModelFromGGUF(r api.CreateRequest, cfr *api.CreateFromRequest, name model.Name, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
-	if len(cfr.Files) == 0 {
+func convertModelFromGGUF(r api.CreateRequest, name model.Name, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
+	if len(r.FromModel.Files) == 0 {
 		return nil, fmt.Errorf("no files provided")
-	} else if len(cfr.Files) > 1 {
+	} else if len(r.FromModel.Files) > 1 {
 		return nil, fmt.Errorf("only one file is supported")
 	}
 
-	file := cfr.Files[0]
-	return getGGUFLayers(file, fn)
+	var digest string
+	for _, v := range r.FromModel.Files {
+		digest = v
+	}
+
+	return getGGUFLayers(digest, fn)
 }
 
 func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, fn func(resp api.ProgressResponse)) (err error) {
-	// todo move to the new config type
 	config := ConfigV2{
 		OS:           "linux",
 		Architecture: "amd64",
@@ -205,27 +204,14 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 		},
 	}
 
-	if r.Adapters != nil {
-		switch v := r.Adapters.(type) {
-		case []any:
-			var adapters []api.File
-			b, _ := json.Marshal(v) // re-marshal to JSON
-			if err := json.Unmarshal(b, &adapters); err != nil {
-				return err
-			}
-			if len(adapters) == 0 {
-				return fmt.Errorf("no adapters found")
-			} else if len(adapters) > 1 {
-				return fmt.Errorf("only one adapter is supported")
-			}
-			layers, err := getGGUFLayers(adapters[0], fn)
-			if err != nil {
-				return err
-			}
-			baseLayers = append(baseLayers, layers...)
-		default:
-			return fmt.Errorf("adapters is not a valid type")
+	if len(r.Adapters) > 1 {
+		return fmt.Errorf("only one adapter is supported")
+	} else if len(r.Adapters) == 1 {
+		layers, err := getGGUFLayers(r.Adapters[0], fn)
+		if err != nil {
+			return err
 		}
+		baseLayers = append(baseLayers, layers...)
 	}
 
 	var layers []Layer
@@ -369,11 +355,11 @@ func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.Progr
 	return &layerGGML{newLayer, ggml}, nil
 }
 
-func getGGUFLayers(file api.File, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
+func getGGUFLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
 	var layers []*layerGGML
 
 	fn(api.ProgressResponse{Status: "parsing GGUF"})
-	blobPath, err := GetBlobsPath(file.Digest)
+	blobPath, err := GetBlobsPath(digest)
 	if err != nil {
 		return nil, err
 	}
@@ -416,8 +402,8 @@ func getGGUFLayers(file api.File, fn func(resp api.ProgressResponse)) ([]*layerG
 		}
 
 		var layer Layer
-		if file.Digest != "" && n == stat.Size() && offset == 0 {
-			layer, err = NewLayerFromLayer(file.Digest, mediatype, blob.Name())
+		if digest != "" && n == stat.Size() && offset == 0 {
+			layer, err = NewLayerFromLayer(digest, mediatype, blob.Name())
 			if err != nil {
 				slog.Debug("could not create new layer from layer", "error", err)
 			}
@@ -547,10 +533,6 @@ func setParameters(layers []Layer, p map[string]any) ([]Layer, error) {
 }
 
 func setMessages(layers []Layer, m []api.Message) ([]Layer, error) {
-	for _, layer := range layers {
-		fmt.Printf("layer mediatype: %s\n", layer.MediaType)
-	}
-
 	// this leaves the old messages intact if no new messages were specified
 	// which may not be the correct behaviour
 	if len(m) == 0 {

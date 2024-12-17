@@ -33,8 +33,8 @@ func TestList(t *testing.T) {
 		_, digest := createBinFile(t, nil, nil)
 
 		createRequest(t, s.CreateHandler, api.CreateRequest{
-			Name: n,
-			From: api.CreateFromRequest{Type: "gguf", Files: []api.File{{Path: "test.gguf", Digest: digest}}},
+			Name:      n,
+			FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
 		})
 	}
 

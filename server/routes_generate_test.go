@@ -113,8 +113,8 @@ func TestGenerateChat(t *testing.T) {
 	})
 
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Model: "test",
-		From:  api.CreateFromRequest{Type: "gguf", Files: []api.File{{Path: "test.gguf", Digest: digest}}},
+		Model:     "test",
+		FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"file.gguf": digest}},
 		Template: `
 {{- if .Tools }}
 {{ .Tools }}
@@ -159,9 +159,9 @@ func TestGenerateChat(t *testing.T) {
 			"bert.pooling_type":    uint32(0),
 		}, []llm.Tensor{})
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Model:  "bert",
-			From:   api.CreateFromRequest{Type: "gguf", Files: []api.File{{Path: "bert.gguf", Digest: digest}}},
-			Stream: &stream,
+			Model:     "bert",
+			FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"bert.gguf": digest}},
+			Stream:    &stream,
 		})
 
 		if w.Code != http.StatusOK {
@@ -648,13 +648,9 @@ func TestGenerate(t *testing.T) {
 		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 	})
 
-	cfr := api.CreateFromRequest{
-		Type:  "gguf",
-		Files: []api.File{{Path: "file.gguf", Digest: digest}},
-	}
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Model: "test",
-		From:  cfr,
+		Model:     "test",
+		FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"file.gguf": digest}},
 		Template: `
 {{- if .System }}System: {{ .System }} {{ end }}
 {{- if .Prompt }}User: {{ .Prompt }} {{ end }}
@@ -696,9 +692,9 @@ func TestGenerate(t *testing.T) {
 		}, []llm.Tensor{})
 
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Model:  "bert",
-			From:   api.CreateFromRequest{Type: "gguf", Files: []api.File{{Path: "file.gguf", Digest: digest}}},
-			Stream: &stream,
+			Model:     "bert",
+			FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"file.gguf": digest}},
+			Stream:    &stream,
 		})
 
 		if w.Code != http.StatusOK {

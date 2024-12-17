@@ -96,10 +96,10 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		defer f.Close()
 	}
 
-	request := api.CreateRequest{Name: args[0]}
+	req := api.CreateRequest{Name: args[0]}
 	quantize, _ := cmd.Flags().GetString("quantize")
 	if quantize != "" {
-		request.Quantize = quantize
+		req.Quantize = quantize
 	}
 	var licenses []string
 	var messages []api.Message
@@ -141,7 +141,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 			fi, err := os.Stat(path)
 			if errors.Is(err, os.ErrNotExist) && modelfile.Commands[i].Name == "model" {
-				request.From = modelfile.Commands[i].Args
+				req.From = modelfile.Commands[i].Args
 				continue
 			} else if err != nil {
 				return err
@@ -155,26 +155,24 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 				}
 
 				if modelfile.Commands[i].Name == "model" {
-					request.From = api.CreateFromRequest{Type: "safetensors", Files: apiFiles}
-				} else {
-					request.Adapters = apiFiles
+					req.FromModel = &api.CreateFromModel{Type: "safetensors", Files: apiFiles}
 				}
 			} else {
 				digest, err := createBlob(cmd, client, path, spinner)
 				if err != nil {
 					return err
 				}
-				apiFile := []api.File{{Path: filepath.Base(path), Digest: digest}}
 				if modelfile.Commands[i].Name == "model" {
-					request.From = api.CreateFromRequest{Type: "gguf", Files: apiFile}
+					p := filepath.Base(path)
+					req.FromModel = &api.CreateFromModel{Type: "gguf", Files: map[string]string{p: digest}}
 				} else {
-					request.Adapters = apiFile
+					req.Adapters = []string{digest}
 				}
 			}
 		case "template":
-			request.Template = modelfile.Commands[i].Args
+			req.Template = modelfile.Commands[i].Args
 		case "system":
-			request.System = modelfile.Commands[i].Args
+			req.System = modelfile.Commands[i].Args
 		case "license":
 			licenses = append(licenses, modelfile.Commands[i].Args)
 		case "message":
@@ -199,9 +197,9 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	request.License = licenses
-	request.Messages = messages
-	request.Parameters = parameters
+	req.License = licenses
+	req.Messages = messages
+	req.Parameters = parameters
 
 	bars := make(map[string]*progress.Bar)
 	fn := func(resp api.ProgressResponse) error {
@@ -227,19 +225,19 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if err := client.Create(cmd.Context(), &request, fn); err != nil {
+	if err := client.Create(cmd.Context(), &req, fn); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func createFileBlobs(cmd *cobra.Command, client *api.Client, path string, spinner *progress.Spinner) ([]api.File, error) {
+func createFileBlobs(cmd *cobra.Command, client *api.Client, path string, spinner *progress.Spinner) (map[string]string, error) {
 	files, err := getFileList(path)
 	if err != nil {
 		return nil, err
 	}
-	var apiFiles []api.File
+	apiFiles := make(map[string]string)
 	for _, file := range files {
 		relPath, err := filepath.Rel(path, file)
 		if err != nil {
@@ -250,7 +248,7 @@ func createFileBlobs(cmd *cobra.Command, client *api.Client, path string, spinne
 		if err != nil {
 			return nil, err
 		}
-		apiFiles = append(apiFiles, api.File{Path: relPath, Digest: digest})
+		apiFiles[relPath] = digest
 	}
 	return apiFiles, nil
 }
