@@ -575,36 +575,16 @@ func (s *Server) TokenizeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name := model.ParseName(req.Model)
-	if !name.IsValid() {
-		http.Error(w, fmt.Sprintf("model name `%q` is invalid", req.Model), http.StatusBadRequest)
-		return
-	}
-	name, err := getExistingName(name)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("model `%s` not found", req.Model), http.StatusNotFound)
-		return
-	}
-
-	// Get local model path
-	modelPath, err := GetModel(name.String())
-	if err != nil {
-		http.Error(w, fmt.Sprintf("model `%s` not found", req.Model), http.StatusNotFound)
-		return
-	}
-
-	model, err := llama.LoadModelFromFile(modelPath.ModelPath, llama.ModelParams{
+	loadedModel, err := LoadModel(req.Model, llama.ModelParams{
 		VocabOnly: true,
-		UseMmap:   true,
 	})
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to load model: %v", err), http.StatusInternalServerError)
 		return
 	}
-	defer llama.FreeModel(model)
 
 	// Tokenize the text
-	tokens, err := model.Tokenize(req.Text, false, true)
+	tokens, err := loadedModel.model.Tokenize(req.Text, false, true)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to tokenize text: %v", err), http.StatusInternalServerError)
 		return
@@ -645,37 +625,17 @@ func (s *Server) DetokenizeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name := model.ParseName(req.Model)
-	if !name.IsValid() {
-		http.Error(w, fmt.Sprintf("model name `%q` is invalid", req.Model), http.StatusBadRequest)
-		return
-	}
-	name, err := getExistingName(name)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("model `%s` not found", req.Model), http.StatusNotFound)
-		return
-	}
-
-	// Get local model path
-	modelPath, err := GetModel(name.String())
-	if err != nil {
-		http.Error(w, fmt.Sprintf("model `%s` not found", req.Model), http.StatusNotFound)
-		return
-	}
-
-	model, err := llama.LoadModelFromFile(modelPath.ModelPath, llama.ModelParams{
+	loadedModel, err := LoadModel(req.Model, llama.ModelParams{
 		VocabOnly: true,
-		UseMmap:   true,
 	})
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to load model: %v", err), http.StatusInternalServerError)
 		return
 	}
-	defer llama.FreeModel(model)
 
 	var text string
 	for _, token := range req.Tokens {
-		text += model.TokenToPiece(token)
+		text += loadedModel.model.TokenToPiece(token)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
