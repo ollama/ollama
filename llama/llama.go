@@ -67,6 +67,7 @@ package llama
 #include "llava.h"
 #include "mllama.h"
 #include "sampling_ext.h"
+#include "speculative_ext.h"
 
 extern bool llamaProgressCallback(float progress, void *user_data);
 extern void llamaLog(int level, char* text, void* user_data);
@@ -719,6 +720,34 @@ func (s *SamplingContext) Accept(id int, applyGrammar bool) {
 	C.common_sampler_caccept(s.c, C.llama_token(id), C.bool(applyGrammar))
 }
 
+func (s *SamplingContext) SampleAndAcceptN(llamaContext *Context, draft []int) ([]int, error) {
+	maxResultSize := len(draft) + 1
+	cResult := make([]C.llama_token, maxResultSize)
+	cDraft := make([]C.llama_token, len(draft))
+
+	for i, dt := range draft {
+		cDraft[i] = C.llama_token(dt)
+	}
+
+	rc := C.common_sampler_csample_and_accept_n(s.c,
+		llamaContext.c,
+		&cDraft[0],
+		C.size_t(len(draft)),
+		C.bool(false),
+		&cResult[0],
+		C.size_t(maxResultSize))
+	if rc < 0 {
+		return nil, errors.New("sampling error")
+	}
+
+	result := make([]int, rc)
+	for i := 0; i < int(rc); i++ {
+		result[i] = int(cResult[i])
+	}
+
+	return result, nil
+}
+
 // SchemaToGrammar converts the provided JSON schema to a grammar. It returns
 // nil if the provided schema is invalid JSON or an invalid JSON schema.
 func SchemaToGrammar(schema []byte) []byte {
@@ -736,4 +765,71 @@ func SchemaToGrammar(schema []byte) []byte {
 		return nil
 	}
 	return buf[:n]
+}
+
+func (c *Context) SpeculativeAreCompatible(dft *Context) bool {
+	return bool(C.common_speculative_c_are_compatible(c.c, dft.c))
+}
+
+type Speculator struct {
+	c      *C.struct_common_speculative
+	params C.struct_common_speculative_cparams
+}
+
+func (s *Speculator) SetNDraft(nDraft int) {
+	s.params.n_draft = C.int(nDraft)
+}
+
+func (s *Speculator) SetNReuse(nReuse int) {
+	s.params.n_reuse = C.int(nReuse)
+}
+
+func (s *Speculator) SetPMin(pMin float32) {
+	s.params.p_min = C.float(pMin)
+}
+
+func NewSpeculator(ctx *Context) (*Speculator, error) {
+	spec := &Speculator{c: C.common_speculative_cinit(ctx.c)}
+	if spec.c == nil {
+		return nil, errors.New("unable to create speculator")
+	}
+
+	runtime.SetFinalizer(spec, func(s *Speculator) { C.common_speculative_cfree(s.c) })
+
+	// set defaults from speculative.h
+	spec.params.n_draft = C.int(16)
+	spec.params.n_reuse = C.int(256)
+	spec.params.p_min = C.float(0.9)
+
+	return spec, nil
+}
+
+func (s *Speculator) GenDraft(prompt []int, id_last int) ([]int, error) {
+	maxResultSize := s.params.n_draft
+	cResult := make([]C.llama_token, maxResultSize)
+	cPrompt := make([]C.llama_token, len(prompt))
+
+	for i, pt := range prompt {
+		cPrompt[i] = C.llama_token(pt)
+	}
+
+	rc := C.common_speculative_cgen_draft(
+		s.c,
+		s.params,
+		&cPrompt[0],
+		C.size_t(len(cPrompt)),
+		C.llama_token(id_last),
+		&cResult[0],
+		C.size_t(maxResultSize))
+
+	if rc < 0 {
+		return nil, errors.New("generating draft error")
+	}
+
+	result := make([]int, rc)
+	for i := 0; i < int(rc); i++ {
+		result[i] = int(cResult[i])
+	}
+
+	return result, nil
 }
