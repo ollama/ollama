@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/fs/ggml"
 )
 
 type ModelParameters struct {
@@ -27,8 +27,8 @@ type AdapterParameters struct {
 	} `json:"lora_parameters"`
 }
 
-func (ModelParameters) KV(t *Tokenizer) llm.KV {
-	kv := llm.KV{
+func (ModelParameters) KV(t *Tokenizer) ggml.KV {
+	kv := ggml.KV{
 		"general.file_type":            uint32(1),
 		"general.quantization_version": uint32(2),
 		"tokenizer.ggml.pre":           t.Pre,
@@ -54,7 +54,7 @@ func (ModelParameters) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p AdapterParameters) KV() llm.KV {
+func (p AdapterParameters) KV() ggml.KV {
 	var alpha float32
 	if p.LoraParameters.Alpha == 0 {
 		alpha = float32(p.Alpha)
@@ -62,7 +62,7 @@ func (p AdapterParameters) KV() llm.KV {
 		alpha = p.LoraParameters.Alpha
 	}
 
-	kv := llm.KV{
+	kv := ggml.KV{
 		"adapter.lora.alpha": alpha,
 		"adapter.type":       "lora",
 		"general.file_type":  uint32(1),
@@ -79,19 +79,19 @@ func (ModelParameters) specialTokenTypes() []string {
 	}
 }
 
-func (ModelParameters) writeFile(ws io.WriteSeeker, kv llm.KV, ts []llm.Tensor) error {
-	return llm.WriteGGUF(ws, kv, ts)
+func (ModelParameters) writeFile(ws io.WriteSeeker, kv ggml.KV, ts []ggml.Tensor) error {
+	return ggml.WriteGGUF(ws, kv, ts)
 }
 
-func (AdapterParameters) writeFile(ws io.WriteSeeker, kv llm.KV, ts []llm.Tensor) error {
-	return llm.WriteGGUF(ws, kv, ts)
+func (AdapterParameters) writeFile(ws io.WriteSeeker, kv ggml.KV, ts []ggml.Tensor) error {
+	return ggml.WriteGGUF(ws, kv, ts)
 }
 
 type ModelConverter interface {
 	// KV maps parameters to LLM key-values
-	KV(*Tokenizer) llm.KV
+	KV(*Tokenizer) ggml.KV
 	// Tensors maps input tensors to LLM tensors. Model specific modifications can be done here.
-	Tensors([]Tensor) []llm.Tensor
+	Tensors([]Tensor) []ggml.Tensor
 	// Replacements returns a list of string pairs to replace in tensor names.
 	// See [strings.Replacer](https://pkg.go.dev/strings#Replacer) for details
 	Replacements() []string
@@ -99,7 +99,7 @@ type ModelConverter interface {
 	// specialTokenTypes returns any special token types the model uses
 	specialTokenTypes() []string
 	// writeFile writes the model to the provided io.WriteSeeker
-	writeFile(io.WriteSeeker, llm.KV, []llm.Tensor) error
+	writeFile(io.WriteSeeker, ggml.KV, []ggml.Tensor) error
 }
 
 type moreParser interface {
@@ -108,17 +108,17 @@ type moreParser interface {
 
 type AdapterConverter interface {
 	// KV maps parameters to LLM key-values
-	KV(llm.KV) llm.KV
+	KV(ggml.KV) ggml.KV
 	// Tensors maps input tensors to LLM tensors. Adapter specific modifications can be done here.
-	Tensors([]Tensor) []llm.Tensor
+	Tensors([]Tensor) []ggml.Tensor
 	// Replacements returns a list of string pairs to replace in tensor names.
 	// See [strings.Replacer](https://pkg.go.dev/strings#Replacer) for details
 	Replacements() []string
 
-	writeFile(io.WriteSeeker, llm.KV, []llm.Tensor) error
+	writeFile(io.WriteSeeker, ggml.KV, []ggml.Tensor) error
 }
 
-func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseKV llm.KV) error {
+func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseKV ggml.KV) error {
 	bts, err := fs.ReadFile(fsys, "adapter_config.json")
 	if err != nil {
 		return err
