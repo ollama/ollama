@@ -734,7 +734,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			}
 			request["grammar"] = string(g)
 		default:
-			return errors.New(`invalid format: expected "json" or a JSON schema`)
+			slog.Warn("invalid format: expected \"json\" or a JSON schema")
 		}
 	}
 
