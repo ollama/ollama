@@ -41,6 +41,8 @@ var (
 	mu            sync.Mutex
 )
 
+// TODO: replace You: and Assistant: prefixes with user and assistant roles based on message role and integrate system, tool, and image roles etc.
+
 func main() {
 	initializeApp()
 }
@@ -293,7 +295,7 @@ func createChatHistory() *fyne.Container {
 			if strings.HasPrefix(message, "You:") {
 				chatContent.Add(createChatBubble(message[4:], true))
 			} else if strings.HasPrefix(message, "Assistant:") {
-				chatContent.Add(createChatBubble(message[10:], false))
+				chatContent.Add(createChatBubble(message[11:], false))
 			}
 		}
 		chatContent.Refresh()
@@ -321,6 +323,8 @@ func updateChatData(message string) {
 }
 
 // streamFromOllama streams the assistant's response
+// TODO: Implement the logic to stream messages from Ollama API.
+
 func streamFromOllama(userMessage string) error {
 	// Initialize the Ollama API client
 	client, err := api.ClientFromEnvironment()
@@ -351,7 +355,7 @@ func streamFromOllama(userMessage string) error {
 
 		// Append the streamed content to the builder
 		assistantMessageBuilder.WriteString(resp.Message.Content)
-
+		// updateChatData("Assistant: " + assistantMessageBuilder.String())
 		// Once the response is done, we have the full assistant message
 		if resp.Done {
 			// Now update the chat data with the complete assistant message
@@ -369,3 +373,65 @@ func streamFromOllama(userMessage string) error {
 	}
 	return nil
 }
+
+/*
+func streamFromOllama(userMessage string) error {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return fmt.Errorf("failed to create Ollama API client: %w", err)
+	}
+
+	messages := []api.Message{
+		{Role: "user", Content: userMessage},
+	}
+
+	ctx := context.Background()
+
+	req := &api.ChatRequest{
+		Model:    modelName,
+		Messages: messages,
+	}
+
+	var assistantMessageBuilder strings.Builder
+	var assistantIndex int = -1 // We'll store the index of the assistant message line we are updating
+
+	respFunc := func(resp api.ChatResponse) error {
+		assistantMessageBuilder.WriteString(resp.Message.Content)
+
+		// Update the chat data in real-time
+		mu.Lock()
+		defer mu.Unlock()
+
+		items, _ := chatData.Get()
+
+		// If this is the first token for this response,
+		// we need to insert a new "Assistant:" line and record its index.
+		if assistantIndex == -1 {
+			items = append(items, "Assistant: "+assistantMessageBuilder.String())
+			chatData.Set(items)
+			assistantIndex = len(items) - 1
+		} else {
+			// Update the existing assistant message line with the current accumulated content
+			updatedLine := "Assistant: " + assistantMessageBuilder.String()
+			// Update only if something has changed
+			if updatedLine != items[assistantIndex] {
+				items[assistantIndex] = updatedLine
+				chatData.Set(items)
+			}
+		}
+
+		// When done, we already have the full message. No need for a separate final append.
+		if resp.Done {
+			assistantMessageBuilder.Reset()
+			assistantIndex = -1
+		}
+
+		return nil
+	}
+
+	if err := client.Chat(ctx, req, respFunc); err != nil {
+		log.Fatal(err)
+	}
+	return nil
+}
+*/
