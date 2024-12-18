@@ -180,7 +180,7 @@ sudo rm $(which ollama)
 ```
 Remove the ollama libraries from your lib directory (`/usr/lib`):
 ```shell
-sudo rm /usr/lib/ollama
+sudo rm -rf /usr/lib/$(basename $(which ollama))
 ```
 Remove the downloaded models and Ollama service user and group:
 
