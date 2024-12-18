@@ -142,6 +142,21 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	return b.String(), images, nil
 }
 
+func applyTemplate(m *Model, msgs []api.Message, tools []api.Tool) (string, error) {
+	isMllama := checkMllamaModelFamily(m)
+	for _, msg := range msgs {
+		if isMllama && len(msg.Images) > 1 {
+			return "", errTooManyImages
+		}
+	}
+
+	var b bytes.Buffer
+	if err := m.Template.Execute(&b, template.Values{Messages: msgs, Tools: tools}); err != nil {
+		return "", err
+	}
+	return b.String(), nil
+}
+
 func checkMllamaModelFamily(m *Model) bool {
 	for _, arch := range m.Config.ModelFamilies {
 		if arch == "mllama" {
