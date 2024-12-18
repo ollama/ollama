@@ -23,7 +23,7 @@ import (
 	"github.com/ollama/ollama/ml"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/ollama/ollama/ml/backend/ggml/ggml/src"
+	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 )
 
 type device struct {
@@ -198,10 +198,9 @@ func (b *Backend) Get(name string) ml.Tensor {
 
 func (b *Backend) NewContext() ml.Context {
 	nodes := max(8192, len(b.meta.Tensors().Items())*5)
-	bts := make([]byte, C.size_t(nodes)*C.ggml_tensor_overhead()+C.ggml_graph_overhead_custom(C.size_t(nodes), false))
 	c := C.ggml_init(C.struct_ggml_init_params{
-		mem_buffer: unsafe.Pointer(&bts[0]),
-		mem_size:   C.size_t(len(bts)),
+		mem_buffer: nil,
+		mem_size:   C.size_t(nodes)*C.ggml_tensor_overhead() + C.ggml_graph_overhead_custom(C.size_t(nodes), false),
 		no_alloc:   true,
 	})
 
@@ -244,17 +243,23 @@ func (c *Context) Forward(t ml.Tensor) {
 }
 
 func (c *Context) Compute(t ml.Tensor) ml.Tensor {
-	c.Forward(t)
 	C.ggml_backend_sched_graph_compute_async(c.sched, c.graph)
 
-	backend := C.ggml_backend_sched_get_tensor_backend(c.sched, t.(*Tensor).t)
+	if t != nil && C.ggml_nbytes(t.(*Tensor).t) != 0 {
+		backend := C.ggml_backend_sched_get_tensor_backend(c.sched, t.(*Tensor).t)
 
-	t.(*Tensor).data = make([]byte, C.ggml_nbytes(t.(*Tensor).t))
-	C.ggml_backend_tensor_get_async(backend, t.(*Tensor).t, unsafe.Pointer(&t.(*Tensor).data[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
+		t.(*Tensor).data = make([]byte, C.ggml_nbytes(t.(*Tensor).t))
+		C.ggml_backend_tensor_get_async(backend, t.(*Tensor).t, unsafe.Pointer(&t.(*Tensor).data[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
+	}
+
 	return t
 }
 
-func (c Context) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
+func (c *Context) MaxTensors() int {
+	return c.nodes
+}
+
+func (c Context) Zeros(dtype ml.DType, shape ...int64) ml.Tensor {
 	if len(shape) < 1 || len(shape) > 4 {
 		panic("unsupported number of dimensions")
 	}
@@ -283,6 +288,13 @@ func (c Context) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
 
 func fromSlice[S ~[]E, E float32 | int32](ctx Context, s S, shape []int, dtype uint32) (ml.Tensor, error) {
 	n := len(s)
+
+	if n == 0 {
+		shape := 0
+		t := C.ggml_new_tensor(ctx.ctx, dtype, 1, (*C.int64_t)(unsafe.Pointer(&shape)))
+		return &Tensor{t: t}, nil
+	}
+
 	for _, v := range shape {
 		n /= v
 	}

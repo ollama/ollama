@@ -1,6 +1,9 @@
 package mllama
 
 import (
+	"sync"
+
+	"github.com/ollama/ollama/cache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
 	"github.com/ollama/ollama/model"
@@ -16,6 +19,9 @@ type Model struct {
 
 	ImageProcessor
 	TextProcessor
+
+	start  sync.Once
+	tCache *cache.TensorCache
 }
 
 func New(c ml.Config) (model.Model, error) {
@@ -28,6 +34,10 @@ func New(c ml.Config) (model.Model, error) {
 }
 
 func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
+	m.start.Do(func() {
+		m.tCache = cache.NewTensorCache(m.Backend())
+	})
+
 	var crossAttentionStates ml.Tensor
 	if opts.Images != nil {
 		f32s, aspectRatioID, err := m.ImageProcessor.ProcessImage(opts.Images[0])
@@ -75,9 +85,9 @@ func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
 	}
 
 	// TODO: attention mask, cross attention mask
-	hiddenState := m.TextModel.Forward(ctx, inputs, positions, nil, crossAttentionStates, nil, opts.Cache)
+	hiddenState := m.TextModel.Forward(ctx, inputs, positions, nil, crossAttentionStates, nil, opts.Cache, m.tCache)
 
-	outputs, err := ctx.FromIntSlice([]int32{int32(len(opts.Positions())) - 1}, 1)
+	outputs, err := ctx.FromIntSlice(opts.Outputs(), len(opts.Outputs()))
 	if err != nil {
 		return nil, err
 	}
