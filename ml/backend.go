@@ -50,6 +50,7 @@ type Context interface {
 
 	Forward(Tensor)
 	Compute(...Tensor)
+	MaxTensors() int
 	Close()
 }
 

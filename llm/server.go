@@ -275,6 +275,9 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapt
 			port = rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
 		}
 		finalParams := []string{"runner"}
+		if envconfig.NewRunners() {
+			finalParams = append(finalParams, "--new-runner")
+		}
 		finalParams = append(finalParams, params...)
 		finalParams = append(finalParams, "--port", strconv.Itoa(port))
 

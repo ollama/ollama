@@ -258,6 +258,10 @@ func (c *Context) Compute(tensors ...ml.Tensor) {
 	}
 }
 
+func (c *Context) MaxTensors() int {
+	return c.nodes
+}
+
 func shapeToGGML(shape []int) *C.int64_t {
 	sh := make([]C.int64_t, len(shape))
 	for i, s := range shape {

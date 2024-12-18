@@ -1,4 +1,4 @@
-package runner
+package oldrunner
 
 import (
 	"context"
@@ -24,6 +24,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llama"
+	"github.com/ollama/ollama/runner/common"
 )
 
 // input is an element of the prompt to process, either
@@ -498,12 +499,12 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		seq.pendingResponses = append(seq.pendingResponses, piece)
 		sequence := strings.Join(seq.pendingResponses, "")
 
-		if ok, stop := findStop(sequence, seq.stop); ok {
+		if ok, stop := common.FindStop(sequence, seq.stop); ok {
 			slog.Debug("hit stop token", "pending", seq.pendingResponses, "stop", stop)
 
 			var tokenTruncated bool
 			origLen := len(seq.pendingResponses)
-			seq.pendingResponses, tokenTruncated = truncateStop(seq.pendingResponses, stop)
+			seq.pendingResponses, tokenTruncated = common.TruncateStop(seq.pendingResponses, stop)
 			newLen := len(seq.pendingResponses)
 
 			// Update the cache based on the tokens that will be returned:
@@ -524,11 +525,11 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			continue
 		}
 
-		if containsStopSuffix(sequence, seq.stop) {
+		if common.ContainsStopSuffix(sequence, seq.stop) {
 			continue
 		}
 
-		if incompleteUnicode(sequence) {
+		if common.IncompleteUnicode(sequence) {
 			continue
 		}
 
@@ -885,9 +886,6 @@ func (s *Server) loadModel(
 }
 
 func Execute(args []string) error {
-	if args[0] == "runner" {
-		args = args[1:]
-	}
 	fs := flag.NewFlagSet("runner", flag.ExitOnError)
 	mpath := fs.String("model", "", "Path to model binary file")
 	ppath := fs.String("mmproj", "", "Path to projector binary file")
