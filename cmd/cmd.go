@@ -555,7 +555,7 @@ func unknownKey(unknownKeyErr error) error {
 			return unknownKeyErr
 		}
 
-		if term.IsTerminal(int(os.Stdout.Fd())) {
+		if term.IsTerminal(int(os.Stdout.Fd())) && !envconfig.Noninteractive() {
 			// URL encode the key and device name for the browser URL
 			encodedKey := base64.RawURLEncoding.EncodeToString([]byte(localPubKey))
 			d, _ := os.Hostname()
@@ -1547,6 +1547,8 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_GPU_OVERHEAD"],
 				envVars["OLLAMA_LOAD_TIMEOUT"],
 			})
+		case pushCmd:
+			appendEnvDocs(cmd, []envconfig.EnvVar{envVars["OLLAMA_NONINTERACTIVE"]})
 		default:
 			appendEnvDocs(cmd, envs)
 		}
