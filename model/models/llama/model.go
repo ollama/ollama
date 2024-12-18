@@ -3,6 +3,7 @@ package llama
 import (
 	"math"
 
+	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
 	"github.com/ollama/ollama/model"
@@ -28,7 +29,7 @@ type Model struct {
 }
 
 func New(c ml.Config) (model.Model, error) {
-	return &Model{
+	m := Model{
 		BytePairEncoding: model.NewBytePairEncoding(
 			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
 			&model.Vocabulary{
@@ -49,7 +50,11 @@ func New(c ml.Config) (model.Model, error) {
 			ropeScale:  c.Float("rope.freq_scale", 1),
 			ropeDim:    c.Uint("rope.dimension_count"),
 		},
-	}, nil
+	}
+
+	m.Cache = kvcache.NewCausalCache(m.Shift)
+
+	return &m, nil
 }
 
 type SelfAttention struct {
@@ -59,7 +64,7 @@ type SelfAttention struct {
 	Output *nn.Linear `gguf:"attn_output"`
 }
 
-func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache model.Cache, opts *Options) ml.Tensor {
+func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
 	headDim := opts.hiddenSize / opts.numHeads
 
@@ -74,7 +79,8 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 	v := sa.Value.Forward(ctx, hiddenState)
 	v = v.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 
-	k, v = cache.Put(ctx, k, v, cache.Options)
+	cache.Put(ctx, k, v)
+	k, v, mask := cache.Get(ctx)
 
 	q = q.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 	k = k.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
@@ -82,6 +88,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 
 	kq := k.MulmatFullPrec(ctx, q)
 	kq = kq.Scale(ctx, 1.0/math.Sqrt(float64(headDim)))
+	kq = kq.Add(ctx, mask)
 	kq = kq.Softmax(ctx)
 
 	kqv := v.Mulmat(ctx, kq)
@@ -89,6 +96,10 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 	kqv = kqv.Reshape(ctx, opts.hiddenSize, batchSize)
 
 	return sa.Output.Forward(ctx, kqv)
+}
+
+func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
+	return key.RoPE(ctx, shift, m.Options.RopeFactors, m.Options.ropeDim, m.Options.ropeBase, m.Options.ropeScale), nil
 }
 
 type MLP struct {
@@ -109,7 +120,7 @@ type Layer struct {
 	MLP           *MLP
 }
 
-func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache model.Cache, opts *Options) ml.Tensor {
+func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
 	residual := hiddenState
 
 	hiddenState = l.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
@@ -123,12 +134,12 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cach
 }
 
 func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
-	inputs, err := ctx.FromIntSlice(opts.Inputs(), len(opts.Inputs()))
+	inputs, err := ctx.FromIntSlice(opts.Inputs, len(opts.Inputs))
 	if err != nil {
 		return nil, err
 	}
 
-	positions, err := ctx.FromIntSlice(opts.Positions(), len(opts.Positions()))
+	positions, err := ctx.FromIntSlice(opts.Positions, len(opts.Positions))
 	if err != nil {
 		return nil, err
 	}
@@ -136,13 +147,14 @@ func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
 	hiddenState := m.TokenEmbedding.Forward(ctx, inputs)
 
 	for i, layer := range m.Layers {
-		hiddenState = layer.Forward(ctx, hiddenState, positions, opts.Cache.Sub(i), m.Options)
+		m.Cache.SetLayer(i)
+		hiddenState = layer.Forward(ctx, hiddenState, positions, m.Cache, m.Options)
 	}
 
 	hiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)
 	hiddenState = m.Output.Forward(ctx, hiddenState)
 
-	outputs, err := ctx.FromIntSlice([]int32{int32(len(opts.Positions())) - 1}, 1)
+	outputs, err := ctx.FromIntSlice(opts.Outputs, len(opts.Outputs))
 	if err != nil {
 		return nil, err
 	}
