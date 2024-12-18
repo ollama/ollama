@@ -1,16 +1,21 @@
-package runner
+package ollamarunner
 
 import (
+	"image"
 	"testing"
 	"time"
 )
 
 func TestCountCommon(t *testing.T) {
+	imgA := image.NewRGBA(image.Rect(0, 0, 100, 100))
+	imgB := image.NewRGBA(image.Rect(0, 0, 50, 50))
+	imgC := image.NewRGBA(image.Rect(50, 50, 100, 100))
+
 	tests := []struct {
 		name     string
 		t1       []input
 		t2       []input
-		expected int
+		expected int32
 	}{
 		{
 			name:     "Equal",
@@ -25,21 +30,15 @@ func TestCountCommon(t *testing.T) {
 			expected: 1,
 		},
 		{
-			name:     "Embeddings Prefix",
-			t1:       []input{{embed: []float32{0.1, 0.2, 0.3}}},
-			t2:       []input{{embed: []float32{0.1, 0.2, 0.3}}, {embed: []float32{0.4, 0.5, 0.6}}, {embed: []float32{0.7}}},
+			name:     "Image Prefix",
+			t1:       []input{{image: imgA}},
+			t2:       []input{{image: imgA}, {image: imgB}, {image: imgC}},
 			expected: 1,
 		},
 		{
-			name:     "Embeddings Prefix Partial",
-			t1:       []input{{embed: []float32{0.1, 0.2, 0.3}}},
-			t2:       []input{{embed: []float32{0.1, 0.2}}, {embed: []float32{0.4, 0.5, 0.6}}, {embed: []float32{0.7}}},
-			expected: 0,
-		},
-		{
 			name:     "Mixed",
-			t1:       []input{{token: 1}, {embed: []float32{0.2, 0.3, 0.4}}},
-			t2:       []input{{token: 1}, {embed: []float32{0.2, 0.3, 0.4}}, {token: 5}},
+			t1:       []input{{token: 1}, {image: imgA}},
+			t2:       []input{{token: 1}, {image: imgA}, {token: 5}},
 			expected: 2,
 		},
 		{
@@ -69,7 +68,7 @@ func TestCountCommon(t *testing.T) {
 func TestFindCacheSlot(t *testing.T) {
 	type expected struct {
 		result int
-		len    int
+		len    int32
 	}
 
 	tests := []struct {
@@ -231,10 +230,10 @@ func TestFindCacheSlot(t *testing.T) {
 func TestShiftDiscard(t *testing.T) {
 	tests := []struct {
 		name     string
-		numCtx   int
-		numKeep  int
-		inputLen int
-		expected int
+		numCtx   int32
+		numKeep  int32
+		inputLen int32
+		expected int32
 	}{
 		{
 			name:     "Shift",
