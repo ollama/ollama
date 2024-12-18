@@ -23,9 +23,7 @@ func (ml *mockModelLoader) LoadModel(name string, params llama.ModelParams) (*lo
 		return ml.LoadModelFn(name, params)
 	}
 
-	return &loadedModel{
-		model: mockModel{},
-	}, nil
+	return nil, nil
 }
 
 type mockModel struct {
@@ -34,24 +32,18 @@ type mockModel struct {
 	TokenToPieceFn func(token int) string
 }
 
-func (m *mockModel) Tokenize(text string, addBos bool, addEos bool) ([]int, error) {
+func (mockModel) Tokenize(text string, addBos bool, addEos bool) ([]int, error) {
 	return []int{1, 2, 3}, nil
 }
 
-func (m *mockModel) TokenToPiece(token int) string {
+func (mockModel) TokenToPiece(token int) string {
 	return fmt.Sprint(token)
 }
 
 func TestTokenizeHandler(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	mockLoader := mockModelLoader{
-		LoadModelFn: func(name string, params llama.ModelParams) (*loadedModel, error) {
-			return &loadedModel{
-				model: mockModel{},
-			}, nil
-		},
-	}
+	mockModel := mockModel{}
 
 	s := Server{
 		sched: &Scheduler{
