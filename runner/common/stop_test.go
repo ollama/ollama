@@ -1,4 +1,4 @@
-package runner
+package common
 
 import (
 	"reflect"
@@ -52,7 +52,7 @@ func TestTruncateStop(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, resultTrunc := truncateStop(tt.pieces, tt.stop)
+			result, resultTrunc := TruncateStop(tt.pieces, tt.stop)
 			if !reflect.DeepEqual(result, tt.expected) || resultTrunc != tt.expectedTrunc {
 				t.Errorf("truncateStop(%v, %s): have %v (%v); want %v (%v)", tt.pieces, tt.stop, result, resultTrunc, tt.expected, tt.expectedTrunc)
 			}
@@ -120,7 +120,7 @@ func TestIncompleteUnicode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := incompleteUnicode(tt.input)
+			result := IncompleteUnicode(tt.input)
 			if result != tt.expected {
 				t.Errorf("incompleteUnicode(%s): have %v; want %v", tt.input, result, tt.expected)
 			}
