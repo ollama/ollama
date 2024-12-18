@@ -47,6 +47,7 @@ var mode string = gin.DebugMode
 type Server struct {
 	addr  net.Addr
 	sched *Scheduler
+	ml    modelLoader
 }
 
 func init() {
@@ -575,7 +576,7 @@ func (s *Server) TokenizeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	loadedModel, err := LoadModel(req.Model, llama.ModelParams{
+	loadedModel, err := s.ml.LoadModel(req.Model, llama.ModelParams{
 		VocabOnly: true,
 	})
 	if err != nil {
@@ -625,7 +626,7 @@ func (s *Server) DetokenizeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	loadedModel, err := LoadModel(req.Model, llama.ModelParams{
+	loadedModel, err := s.ml.LoadModel(req.Model, llama.ModelParams{
 		VocabOnly: true,
 	})
 	if err != nil {
