@@ -1038,14 +1038,15 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		return nil
 	}
 
-	if opts.Format == "json" {
-		opts.Format = `"` + opts.Format + `"`
+	var format json.RawMessage
+	if opts.Format != "" {
+		format = json.RawMessage(opts.Format)
 	}
 
 	req := &api.ChatRequest{
 		Model:    opts.Model,
 		Messages: opts.Messages,
-		Format:   json.RawMessage(opts.Format),
+		Format:   format,
 		Options:  opts.Options,
 	}
 
@@ -1127,8 +1128,9 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		}
 	}
 
-	if opts.Format == "json" {
-		opts.Format = `"` + opts.Format + `"`
+	var format json.RawMessage
+	if opts.Format != "" {
+		format = json.RawMessage(opts.Format)
 	}
 
 	request := api.GenerateRequest{
@@ -1136,7 +1138,7 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		Prompt:    opts.Prompt,
 		Context:   generateContext,
 		Images:    opts.Images,
-		Format:    json.RawMessage(opts.Format),
+		Format:    format,
 		System:    opts.System,
 		Options:   opts.Options,
 		KeepAlive: opts.KeepAlive,
@@ -1353,7 +1355,7 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("verbose", false, "Show timings for response")
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
-	runCmd.Flags().String("format", "", "Response format (e.g. json)")
+	runCmd.Flags().String("format", "", `Response format ("json" or a JSON Schema)`)
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
