@@ -617,7 +617,7 @@ func (w *BaseWriter) writeError(data []byte) (int, error) {
 	}
 
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w.ResponseWriter).Encode(NewError(http.StatusInternalServerError, serr.Error()))
+	err = json.NewEncoder(w.ResponseWriter).Encode(NewError(code, serr.Error()))
 	if err != nil {
 		return 0, err
 	}
