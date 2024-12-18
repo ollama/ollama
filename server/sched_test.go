@@ -86,7 +86,7 @@ func TestLoad(t *testing.T) {
 		t.Fatalf("unexpected success %v", resp)
 	}
 	s.loadedMu.Lock()
-	runner := s.loaded["dummy_model_path"]
+	runner := s.loaded["dummy_model_short_name"]
 	s.loadedMu.Unlock()
 	require.NotNil(t, runner)
 	require.Equal(t, uint(0), runner.refCount)

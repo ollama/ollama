@@ -140,7 +140,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 			for {
 				var runnerToExpire *runnerRef
 				s.loadedMu.Lock()
-				runner := s.loaded[pending.model.ModelPath]
+				runner := s.loaded[pending.model.ShortName]
 				loadedCount := len(s.loaded)
 				s.loadedMu.Unlock()
 				if runner != nil {
@@ -319,7 +319,7 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			return
 		case finished := <-s.finishedReqCh:
 			s.loadedMu.Lock()
-			runner := s.loaded[finished.model.ModelPath]
+			runner := s.loaded[finished.model.ShortName]
 			s.loadedMu.Unlock()
 			if runner == nil {
 				slog.Error("finished request signal received after model unloaded", "modelPath", finished.model.ModelPath)
@@ -374,8 +374,9 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 			s.loadedMu.Lock()
 			slog.Debug("got lock to unload", "modelPath", runner.modelPath)
 			finished := runner.waitForVRAMRecovery()
+			modelShortName := runner.model.ShortName
 			runner.unload()
-			delete(s.loaded, runner.modelPath)
+			delete(s.loaded, modelShortName)
 			s.loadedMu.Unlock()
 			slog.Debug("runner released", "modelPath", runner.modelPath)
 			runner.refMu.Unlock()
@@ -445,7 +446,7 @@ func (s *Scheduler) load(req *LlmRequest, ggml *llm.GGML, gpus discover.GpuInfoL
 	runner.refMu.Lock()
 
 	s.loadedMu.Lock()
-	s.loaded[req.model.ModelPath] = runner
+	s.loaded[req.model.ShortName] = runner
 	slog.Info("loaded runners", "count", len(s.loaded))
 	s.loadedMu.Unlock()
 
@@ -793,9 +794,9 @@ func (s *Scheduler) findRunnerToUnload() *runnerRef {
 func (s *Scheduler) unloadAllRunners() {
 	s.loadedMu.Lock()
 	defer s.loadedMu.Unlock()
-	for model, runner := range s.loaded {
+	for _, runner := range s.loaded {
 		if runner.llama != nil {
-			slog.Debug("shutting down runner", "model", model)
+			slog.Debug("shutting down runner", "model", runner.modelPath)
 			runner.llama.Close()
 		}
 	}
@@ -804,7 +805,7 @@ func (s *Scheduler) unloadAllRunners() {
 func (s *Scheduler) expireRunner(model *Model) {
 	s.loadedMu.Lock()
 	defer s.loadedMu.Unlock()
-	runner, ok := s.loaded[model.ModelPath]
+	runner, ok := s.loaded[model.ShortName]
 	if ok {
 		runner.refMu.Lock()
 		runner.expiresAt = time.Now()
