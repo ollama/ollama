@@ -352,7 +352,15 @@ func (m MemoryEstimate) log() {
 			),
 		)
 	}
+	// Check if the total size exceeds the weights size and if layers.model is more than double layers.offload. If so, log a warning.
+	if m.layersModel > 2*m.Layers {
+		log = log.With(slog.String("warning", "not all layers can be offloaded effciently This is might be a problem!"))
+	}
 
+	// Check if the total size exceeds the weights size and if layers.model is more than double layers.offload. If so, log a warning.
+	if m.layersModel > 2*m.Layers && m.TotalSize > m.memoryWeights {
+		log = log.With(slog.String("warning", "layers.model is more than double layers.offload and memory.required.full exceeds memory.weights.total will be slow!"))
+	}
 	log.Info(
 		"offload to "+m.inferenceLibrary,
 		slog.Group(
