@@ -13,6 +13,7 @@
 - [Push a Model](#push-a-model)
 - [Generate Embeddings](#generate-embeddings)
 - [List Running Models](#list-running-models)
+- [App Version](#app-version)
 
 ## Conventions
 
@@ -1526,3 +1527,29 @@ curl http://localhost:11434/api/embeddings -d '{
   ]
 }
 ```
+
+## App Version
+
+```shell
+GET /api/version
+```
+
+This endpoint returns the current version of the Ollama installed on system.
+
+### Examples
+
+#### Request
+
+```shell
+curl http://localhost:11434/api/version
+```
+
+#### Response
+
+```json
+{
+  "version": "0.5.1"
+}
+```
+
+
