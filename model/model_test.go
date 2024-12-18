@@ -78,7 +78,7 @@ func TestPopulateFields(t *testing.T) {
 
 	var m fakeModel
 	v := reflect.ValueOf(&m)
-	v.Elem().Set(populateFields(&fakeBackend{
+	v.Elem().Set(populateFields(Base{b: &fakeBackend{
 		names: []string{
 			"input.weight",
 			"blk.0.attn_q.weight",
@@ -90,7 +90,7 @@ func TestPopulateFields(t *testing.T) {
 			"output_norm.weight",
 			"output.weight",
 		},
-	}, v))
+	}}, v))
 
 	if diff := cmp.Diff(fakeModel{
 		Input:      &nn.Embedding{Weight: &fakeTensor{Name: "input.weight"}},
@@ -121,11 +121,11 @@ func TestPopulateFieldsAlternateName(t *testing.T) {
 
 	m := fakeModel{}
 	v := reflect.ValueOf(&m)
-	v.Elem().Set(populateFields(&fakeBackend{
+	v.Elem().Set(populateFields(Base{b: &fakeBackend{
 		names: []string{
 			"input.weight",
 		},
-	}, v))
+	}}, v))
 
 	if diff := cmp.Diff(fakeModel{
 		Input:  &nn.Embedding{Weight: &fakeTensor{Name: "input.weight"}},

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"image"
 	_ "image/jpeg"
@@ -15,102 +16,42 @@ import (
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
 
-	"github.com/ollama/ollama/cache"
+	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	_ "github.com/ollama/ollama/ml/backend"
 )
 
-type Cache struct {
-	cache.Cache
-	cache.Options
-}
-
-func (c Cache) Sub(i int) Cache {
-	if c.Cache != nil {
-		return Cache{
-			Cache:   c.Cache.Sub(i),
-			Options: c.Options,
-		}
-	}
-
-	return c
-}
-
-func (c Cache) Put(ctx ml.Context, key, value ml.Tensor, opts cache.Options) (ml.Tensor, ml.Tensor) {
-	if c.Cache != nil {
-		return c.Cache.Put(ctx, key, value, opts)
-	}
-
-	return key, value
-}
-
 type Options struct {
-	inputs []int32
-
-	Offset int
+	Inputs    []int32
+	Positions []int32
+	Sequences []int
+	Outputs   []int32
 
 	Images []image.Image
-
-	Cache
 }
 
-func (opts Options) Inputs() []int32 {
-	return opts.inputs[opts.Offset:]
-}
-
-func (opts Options) Positions() []int32 {
-	positions := make([]int32, len(opts.inputs)-opts.Offset)
-	for i := range positions {
-		positions[i] = int32(opts.Offset + i)
-	}
-
-	return positions
-}
-
-type OptionsFunc func(Model, *Options)
-
-func WithInputIDs(ids []int32) OptionsFunc {
-	return func(m Model, opts *Options) {
-		opts.inputs = ids
-	}
-}
-
-func WithOffset(offset int) OptionsFunc {
-	return func(m Model, opts *Options) {
-		opts.Offset = offset
-		opts.Cache.Position = offset
-	}
-}
-
-func WithImage(img image.Image) OptionsFunc {
-	return func(m Model, opts *Options) {
-		opts.Images = append(opts.Images, img)
-	}
-}
-
-func WithCache(c cache.Cache) OptionsFunc {
-	return func(m Model, opts *Options) {
-		opts.Cache = Cache{
-			Cache: c,
-			Options: cache.Options{
-				Position: opts.Offset,
-			},
-		}
-	}
+type config struct {
+	Cache kvcache.Cache
 }
 
 type Base struct {
 	b ml.Backend
+	config
 }
 
 func (m *Base) Backend() ml.Backend {
 	return m.b
 }
 
+func (m *Base) Config() config {
+	return m.config
+}
+
 type Model interface {
 	Forward(ml.Context, Options) (ml.Tensor, error)
 
 	Backend() ml.Backend
+	Config() config
 }
 
 var models = make(map[string]func(ml.Config) (Model, error))
@@ -146,12 +87,14 @@ func New(s string) (Model, error) {
 		return nil, err
 	}
 
+	base := Base{b: b, config: m.Config()}
+
 	v := reflect.ValueOf(m)
-	v.Elem().Set(populateFields(b, v))
+	v.Elem().Set(populateFields(base, v))
 	return m, nil
 }
 
-func populateFields(b ml.Backend, v reflect.Value, tags ...Tag) reflect.Value {
+func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 	var iface bool
 	if v.Kind() == reflect.Interface {
 		iface = true
@@ -179,7 +122,7 @@ func populateFields(b ml.Backend, v reflect.Value, tags ...Tag) reflect.Value {
 			}
 
 			if tt == reflect.TypeOf((*Base)(nil)).Elem() {
-				vv.Set(reflect.ValueOf(Base{b: b}))
+				vv.Set(reflect.ValueOf(base))
 			} else if tt == reflect.TypeOf((*ml.Tensor)(nil)).Elem() {
 				var fn func([]Tag) [][]string
 				fn = func(tags []Tag) (values [][]string) {
@@ -205,7 +148,7 @@ func populateFields(b ml.Backend, v reflect.Value, tags ...Tag) reflect.Value {
 
 				names := fn(tagsCopy)
 				for _, name := range names {
-					if tensor := b.Get(strings.Join(name, ".")); tensor != nil {
+					if tensor := base.Backend().Get(strings.Join(name, ".")); tensor != nil {
 						slog.Debug("found tensor", "", tensor)
 						vv.Set(reflect.ValueOf(tensor))
 						break
@@ -217,12 +160,12 @@ func populateFields(b ml.Backend, v reflect.Value, tags ...Tag) reflect.Value {
 					vvv = reflect.New(tt.Elem())
 				}
 
-				if f := populateFields(b, vvv, tagsCopy...); f.CanAddr() {
+				if f := populateFields(base, vvv, tagsCopy...); f.CanAddr() {
 					vv.Set(f.Addr())
 				}
 			} else if tt.Kind() == reflect.Slice || tt.Kind() == reflect.Array {
 				for i := range vv.Len() {
-					vv.Index(i).Set(populateFields(b, vv.Index(i), append(tagsCopy, Tag{Name: strconv.Itoa(i)})...))
+					vv.Index(i).Set(populateFields(base, vv.Index(i), append(tagsCopy, Tag{Name: strconv.Itoa(i)})...))
 				}
 			}
 
@@ -272,18 +215,27 @@ func canNil(t reflect.Type) bool {
 		t.Kind() == reflect.Slice
 }
 
-func Forward(m Model, optsFuncs ...OptionsFunc) (ml.Tensor, error) {
-	var opts Options
-	for _, optsFunc := range optsFuncs {
-		optsFunc(m, &opts)
+func Forward(ctx ml.Context, m Model, opts Options) (ml.Tensor, error) {
+	if len(opts.Positions) != len(opts.Sequences) {
+		return nil, fmt.Errorf("length of positions (%v) must match length of seqs (%v)", len(opts.Positions), len(opts.Sequences))
 	}
 
-	ctx := m.Backend().NewContext()
+	if len(opts.Positions) < 1 {
+		return nil, errors.New("batch size cannot be less than 1")
+	}
+
+	cache := m.Config().Cache
+	if cache != nil {
+		err := cache.StartForward(ctx, opts.Positions, opts.Sequences)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	t, err := m.Forward(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	defer ctx.Close()
 
 	ctx.Forward(t)
 	return ctx.Compute(t), nil

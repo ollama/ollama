@@ -35,9 +35,9 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llama"
-	"github.com/ollama/ollama/llama/runner"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
+	"github.com/ollama/ollama/runner"
 	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -338,7 +338,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	opts.MultiModal = len(info.ProjectorInfo) != 0
+	// TODO(jessegross): We should either find another way to know if this is
+	// a vision model or remove the logic. Also consider that other modalities will
+	// need different behavior anyways.
+	opts.MultiModal = len(info.ProjectorInfo) != 0 || envconfig.NewRunners()
 	opts.ParentModel = info.Details.ParentModel
 
 	if interactive {
