@@ -1,10 +1,10 @@
-package runner
+package common
 
 import (
 	"strings"
 )
 
-func findStop(sequence string, stops []string) (bool, string) {
+func FindStop(sequence string, stops []string) (bool, string) {
 	for _, stop := range stops {
 		if strings.Contains(sequence, stop) {
 			return true, stop
@@ -14,7 +14,7 @@ func findStop(sequence string, stops []string) (bool, string) {
 	return false, ""
 }
 
-func containsStopSuffix(sequence string, stops []string) bool {
+func ContainsStopSuffix(sequence string, stops []string) bool {
 	for _, stop := range stops {
 		for i := 1; i <= len(stop); i++ {
 			if strings.HasSuffix(sequence, stop[:i]) {
@@ -29,7 +29,7 @@ func containsStopSuffix(sequence string, stops []string) bool {
 // truncateStop removes the provided stop string from pieces,
 // returning the partial pieces with stop removed, including truncating
 // the last piece if required (and signalling if this was the case)
-func truncateStop(pieces []string, stop string) ([]string, bool) {
+func TruncateStop(pieces []string, stop string) ([]string, bool) {
 	joined := strings.Join(pieces, "")
 
 	index := strings.Index(joined, stop)
@@ -65,7 +65,7 @@ func truncateStop(pieces []string, stop string) ([]string, bool) {
 	return result, tokenTruncated
 }
 
-func incompleteUnicode(token string) bool {
+func IncompleteUnicode(token string) bool {
 	incomplete := false
 
 	// check if there is incomplete UTF-8 character at the end

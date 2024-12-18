@@ -258,6 +258,10 @@ func (c *Context) Compute(tensors ...ml.Tensor) {
 	}
 }
 
+func (c *Context) MaxTensors() int {
+	return c.nodes
+}
+
 func shapeToGGML(shape []int) *C.int64_t {
 	sh := make([]C.int64_t, len(shape))
 	for i, s := range shape {
@@ -282,6 +286,8 @@ func (c Context) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
 	switch dtype {
 	case ml.DTypeF32:
 		t = C.ggml_new_tensor(c.ctx, C.GGML_TYPE_F32, C.int(len(shape)), shapeToGGML(shape))
+	case ml.DTypeF16:
+		t = C.ggml_new_tensor(c.ctx, C.GGML_TYPE_F16, C.int(len(shape)), shapeToGGML(shape))
 	case ml.DTypeI32:
 		t = C.ggml_new_tensor(c.ctx, C.GGML_TYPE_I32, C.int(len(shape)), shapeToGGML(shape))
 	default:
@@ -389,6 +395,8 @@ func (t *Tensor) DType() ml.DType {
 	switch t.t._type {
 	case C.GGML_TYPE_F32:
 		return ml.DTypeF32
+	case C.GGML_TYPE_F16:
+		return ml.DTypeF16
 	case C.GGML_TYPE_I32:
 		return ml.DTypeI32
 	default:
@@ -580,9 +588,14 @@ func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDi
 		ropeFactors = &Tensor{}
 	}
 
+	dequant := t.t
+	if C.ggml_is_quantized(t.t._type) {
+		dequant = C.ggml_cast(ctx.(*Context).ctx, t.t, C.GGML_TYPE_F32)
+	}
+
 	return &Tensor{
 		t: C.ggml_rope_ext(
-			ctx.(*Context).ctx, t.t, positionIDs.(*Tensor).t, ropeFactors.(*Tensor).t,
+			ctx.(*Context).ctx, dequant, positionIDs.(*Tensor).t, ropeFactors.(*Tensor).t,
 			C.int(ropeDim),
 			131072,       // YaRN n_ctx_train
 			ropeTypeNorm, // ROPE_TYPE_NORM

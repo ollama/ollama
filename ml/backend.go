@@ -50,6 +50,7 @@ type Context interface {
 
 	Forward(Tensor)
 	Compute(...Tensor)
+	MaxTensors() int
 	Close()
 }
 
@@ -118,7 +119,7 @@ type DumpOptions struct {
 	Precision int
 }
 
-func Dump(t Tensor, opts ...DumpOptions) string {
+func Dump(ctx Context, t Tensor, opts ...DumpOptions) string {
 	if len(opts) < 1 {
 		opts = append(opts, DumpOptions{
 			Items:     3,
@@ -128,11 +129,17 @@ func Dump(t Tensor, opts ...DumpOptions) string {
 
 	switch t.DType() {
 	case DTypeF32:
-		return dump[[]float32](t, opts[0].Items, func(f float32) string {
+		return dump[[]float32](ctx, t, opts[0].Items, func(f float32) string {
+			return strconv.FormatFloat(float64(f), 'f', opts[0].Precision, 32)
+		})
+	case DTypeF16:
+		f32 := ctx.Zeros(DTypeF32, t.Shape()...)
+		f32 = t.Copy(ctx, f32)
+		return dump[[]float32](ctx, f32, opts[0].Items, func(f float32) string {
 			return strconv.FormatFloat(float64(f), 'f', opts[0].Precision, 32)
 		})
 	case DTypeI32:
-		return dump[[]int32](t, opts[0].Items, func(i int32) string {
+		return dump[[]int32](ctx, t, opts[0].Items, func(i int32) string {
 			return strconv.FormatInt(int64(i), 10)
 		})
 	default:
@@ -140,10 +147,10 @@ func Dump(t Tensor, opts ...DumpOptions) string {
 	}
 }
 
-func dump[S ~[]E, E number](t Tensor, items int, fn func(E) string) string {
-	bts := t.Bytes()
-	if bts == nil {
-		return "<nil>"
+func dump[S ~[]E, E number](ctx Context, t Tensor, items int, fn func(E) string) string {
+	if t.Bytes() == nil {
+		ctx.Forward(t)
+		ctx.Compute(t)
 	}
 
 	s := make(S, mul(t.Shape()...))
@@ -191,7 +198,8 @@ func dump[S ~[]E, E number](t Tensor, items int, fn func(E) string) string {
 type DType int
 
 const (
-	DTypeF32 DType = iota
+	DTypeOther DType = iota
+	DTypeF32
+	DTypeF16
 	DTypeI32
-	DTypeOther
 )
