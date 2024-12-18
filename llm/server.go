@@ -813,20 +813,24 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	}
 
 	if len(req.Format) > 0 {
-		switch {
-		case bytes.Equal(req.Format, []byte(`""`)):
-			// fallthrough
-		case bytes.Equal(req.Format, []byte(`"json"`)):
+		switch string(req.Format) {
+		case `null`, `""`:
+			// Field was set, but "missing" a value. We accept
+			// these as "not set".
+			break
+		case `"json"`:
 			request["grammar"] = grammarJSON
-		case bytes.HasPrefix(req.Format, []byte("{")):
+		default:
+			if req.Format[0] != '{' {
+				return fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema object", req.Format)
+			}
+
 			// User provided a JSON schema
 			g := llama.SchemaToGrammar(req.Format)
 			if g == nil {
 				return fmt.Errorf("invalid JSON schema in format")
 			}
 			request["grammar"] = string(g)
-		default:
-			return fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema", req.Format)
 		}
 	}
 
