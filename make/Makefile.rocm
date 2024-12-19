@@ -63,8 +63,6 @@ GPU_VECTOR_FLAGS=$(if $(filter avx512,$(GPU_RUNNER_CPU_FLAGS)),avx512f avx512dq 
 GPU_COMPILER_CUFLAGS = \
 	$(GPU_COMPILER_FPIC) \
 	$(addprefix -m,$(GPU_VECTOR_FLAGS)) \
-	-mf16c \
-	-mfma \
 	-c \
 	-O3 \
 	-DGGML_USE_CUDA \
@@ -97,6 +95,11 @@ GPU_COMPILER_CUFLAGS = \
 	-Wno-deprecated-declarations \
 	-Wno-unused-result \
 	-I./llama/
+
+# These two flags are x86 only
+ifeq ($(ARCH),amd64)
+	GPU_COMPILER_CUFLAGS += -mf16c -mfma
+endif
 
 # Workaround buggy P2P copy on some windows multi-GPU setups
 # This workaround breaks linux systems with small system RAM, so only enable on windows
