@@ -20,6 +20,7 @@ A model file is the blueprint to create and share models with Ollama.
     - [Template Variables](#template-variables)
   - [SYSTEM](#system)
   - [ADAPTER](#adapter)
+  - [CONTROLVECTOR](#controlvector)
   - [LICENSE](#license)
   - [MESSAGE](#message)
 - [Notes](#notes)
@@ -160,6 +161,7 @@ PARAMETER <parameter> <parametervalue>
 | top_k          | Reduces the probability of generating nonsense. A higher value (e.g. 100) will give more diverse answers, while a lower value (e.g. 10) will be more conservative. (Default: 40)                                                                        | int        | top_k 40             |
 | top_p          | Works together with top-k. A higher value (e.g., 0.95) will lead to more diverse text, while a lower value (e.g., 0.5) will generate more focused and conservative text. (Default: 0.9)                                                                 | float      | top_p 0.9            |
 | min_p          | Alternative to the top_p, and aims to ensure a balance of quality and variety. The parameter *p* represents the minimum probability for a token to be considered, relative to the probability of the most likely token. For example, with *p*=0.05 and the most likely token having a probability of 0.9, logits with a value less than 0.045 are filtered out. (Default: 0.0) | float      | min_p 0.05            |
+| control_strength | When a CONTROLVECTOR is applied, this can control the strength of that vector. Negative values are allowed (Default: 0.5)                                                                 | float | control_strength 1.3 |
 
 ### TEMPLATE
 
@@ -210,6 +212,21 @@ Currently supported Safetensor adapters:
 ```modelfile
 ADAPTER ./ollama-lora.gguf
 ```
+
+### CONTROLVECTOR
+
+The `CONTROLVECTOR` instruction allows specifying a control steering vector to be applied to the model. The value of the adapter should be an absolute path or a path relative to the Modelfile. The base model should be specified with a `FROM` instruction. If the base model is not the same as the base model that the control vector was trained from the behaviour will be erratic, most likely not applying the control vector at all.
+
+To specify the stength of the vector (including negative) follow this with a `PARAMETER controlstrength <strength>`, where `<strength>` is a float.
+
+Currently supported Control Vector formats:
+* gguf
+
+```modelfile
+CONTROLVECTOR ./mistral-happy.gguf
+PARAMETER control_strength 1.2
+```
+
 
 ### LICENSE
 

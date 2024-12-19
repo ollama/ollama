@@ -58,18 +58,19 @@ type registryOptions struct {
 }
 
 type Model struct {
-	Name           string `json:"name"`
-	Config         ConfigV2
-	ShortName      string
-	ModelPath      string
-	ParentModel    string
-	AdapterPaths   []string
-	ProjectorPaths []string
-	System         string
-	License        []string
-	Digest         string
-	Options        map[string]interface{}
-	Messages       []api.Message
+	Name               string `json:"name"`
+	Config             ConfigV2
+	ShortName          string
+	ModelPath          string
+	ParentModel        string
+	AdapterPaths       []string
+	ControlVectorPaths []string
+	ProjectorPaths     []string
+	System             string
+	License            []string
+	Digest             string
+	Options            map[string]interface{}
+	Messages           []api.Message
 
 	Template *template.Template
 }
@@ -132,6 +133,13 @@ func (m *Model) String() string {
 		modelfile.Commands = append(modelfile.Commands, parser.Command{
 			Name: "adapter",
 			Args: adapter,
+		})
+	}
+
+	for _, control := range m.ControlVectorPaths {
+		modelfile.Commands = append(modelfile.Commands, parser.Command{
+			Name: "controlvector",
+			Args: control,
 		})
 	}
 
@@ -277,6 +285,8 @@ func GetModel(name string) (*Model, error) {
 			slog.Info("WARNING: model contains embeddings, but embeddings in modelfiles have been deprecated and will be ignored.")
 		case "application/vnd.ollama.image.adapter":
 			model.AdapterPaths = append(model.AdapterPaths, filename)
+		case "application/vnd.ollama.image.controlvector":
+			model.ControlVectorPaths = append(model.ControlVectorPaths, filename)
 		case "application/vnd.ollama.image.projector":
 			model.ProjectorPaths = append(model.ProjectorPaths, filename)
 		case "application/vnd.ollama.image.prompt",
@@ -489,6 +499,25 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 
 				layers = append(layers, baseLayer.Layer)
 			}
+		case "controlvector":
+			// Save the gguf control vector without any conversion
+			path := strings.Trim(c.Args, " \t\r")
+
+			file, err := os.Open(realpath(modelFileDir, path))
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+
+			// TODO validate this is a GGUF control vector
+
+			layer, err := NewLayer(file, mediatype)
+			if err != nil {
+				return err
+			}
+
+			layers = append(layers, layer)
+
 		case "license", "template", "system":
 			if c.Name == "template" {
 				if _, err := template.Parse(c.Args); err != nil {

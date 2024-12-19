@@ -67,6 +67,7 @@ package llama
 #include "llava.h"
 #include "mllama.h"
 #include "sampling_ext.h"
+#include "control_vectors.h"
 
 extern bool llamaProgressCallback(float progress, void *user_data);
 extern void llamaLog(int level, char* text, void* user_data);
@@ -342,6 +343,19 @@ func (m *Model) TokenIsEog(token int) bool {
 
 func (m *Model) AddBOSToken() bool {
 	return bool(C.llama_add_bos_token(m.c))
+}
+
+func (m *Model) ApplyControlVectorFromFile(context *Context, controlvectorPath string, scale float32, threads int) error {
+	strength := C.float(scale)
+	fname := C.CString(controlvectorPath)
+	defer C.free(unsafe.Pointer(fname))
+
+	res := C.llama_apply_control_vector(m.c, context.c, fname, strength)
+
+	if res != 0 {
+		return errors.New("error applying control vector")
+	}
+	return nil
 }
 
 func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float32, threads int) error {

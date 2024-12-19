@@ -89,7 +89,7 @@ func LoadModel(model string, maxArraySize int) (*GGML, error) {
 
 // NewLlamaServer will run a server for the given GPUs
 // The gpu list must be a single family.
-func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
+func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapters, projectors, controlVectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
 	var err error
 	var cpuRunner string
 	var estimate MemoryEstimate
@@ -191,6 +191,18 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 	if len(adapters) > 0 {
 		for _, adapter := range adapters {
 			params = append(params, "--lora", adapter)
+		}
+	}
+
+	if len(controlVectors) > 0 {
+		for i, controlVector := range controlVectors {
+			// Check if there is a stength provided via PARAMETERS
+			if len(opts.ControlStrength) > i {
+				sep := "="
+				controlVector = fmt.Sprintf("%s%s%s", controlVector, sep, opts.ControlStrength[i])
+			}
+
+			params = append(params, "--control-vector", controlVector)
 		}
 	}
 
