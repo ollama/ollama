@@ -189,13 +189,28 @@ LAVA_FILES+= \
 	common/common.h \
 	common/sampling.cpp \
 	common/sampling.h \
-	common/speculative.cpp \
-	common/speculative.h \
 	common/json.hpp \
 	common/json-schema-to-grammar.cpp \
 	common/json-schema-to-grammar.h \
 	common/base64.hpp
 $(foreach name,$(LAVA_FILES),$(eval $(call vendor_file,$(name),$(DEST_DIR))))
+
+# used for speculative decoding
+SPECDEC_FILES+= \
+	common/log.h \
+	common/log.cpp \
+	common/common.cpp \
+	common/common.h \
+	common/sampling.cpp \
+	common/sampling.h \
+	common/speculative.cpp \
+	common/speculative.h \
+	common/json.hpp \
+	common/json-schema-to-grammar.cpp \
+	common/json-schema-to-grammar.h
+# Filter out LAVA_FILES from SPECDEC_FILES as there is overlap
+SPECDEC_FILES := $(filter-out $(LAVA_FILES),$(SPECDEC_FILES))
+$(foreach name,$(SPECDEC_FILES),$(eval $(call vendor_file,$(name),$(DEST_DIR))))
 
 $(DEST_DIR)build-info.cpp:
 	@echo "Generating $@"
