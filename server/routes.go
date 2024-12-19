@@ -634,9 +634,10 @@ func (s *Server) DetokenizeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var text string
-	for _, token := range req.Tokens {
-		text += loadedModel.model.TokenToPiece(token)
+	text, err := loadedModel.model.Detokenize(req.Tokens)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to detokenize text: %v", err), http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
