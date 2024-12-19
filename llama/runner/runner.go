@@ -600,6 +600,9 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		s.spec[i].SetNDraft(draftMax)
 		s.spec[i].SetNReuse(s.dparams.CtxSize - draftMax)
 		draft, err := s.spec[i].GenDraft(cachedTokens, currentToken)
+		if err != nil {
+			panic(err)
+		}
 		// ignore small drafts
 		if s.dparams.MinTokens > len(draft) {
 			slog.Debug("speculative decoding - ignoring small draft", "sequence idx", i, "draft size", len(draft))
@@ -620,12 +623,15 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 
 		// the accepted tokens from the speculation
 		ids, err := seq.samplingCtx.SampleAndAcceptN(s.lc, draft)
+		if err != nil {
+			panic(err)
+		}
 
 		seq.numDecoded += len(ids)
 		seq.numPredicted += len(ids)
 
 		seq.cache.Inputs = append(seq.cache.Inputs, input{token: currentToken})
-		for j := 0; j < len(ids)-1; j++ {
+		for j := 0; j < len(ids)-1; j++ { //nolint:intrange
 			seq.cache.Inputs = append(seq.cache.Inputs, input{token: ids[j]})
 		}
 		// keep only accepted activations
@@ -639,7 +645,6 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 				s.removeSequence(i, "connection")
 				break
 			}
-
 		}
 
 		slog.Debug("speculative decoding", "sequence idx", i, "accepted tokens", len(ids)-1, "draft tokens", len(draft), "size of cache inputs", len(seq.cache.Inputs))
@@ -1003,7 +1008,7 @@ func (s *Server) loadModel(
 		dkvSize := kvSize
 		// use context size of target model in case user didn't set a draft model context size
 		if s.dparams.CtxSize > 0 {
-			dkvSize = int(s.dparams.CtxSize)
+			dkvSize = s.dparams.CtxSize
 		} else {
 			s.dparams.CtxSize = dkvSize
 		}
@@ -1015,7 +1020,7 @@ func (s *Server) loadModel(
 		s.sbatch = make([]*llama.Batch, s.parallel)
 		s.spec = make([]*llama.Speculator, s.parallel)
 		s.dlc = make([]*llama.Context, s.parallel)
-		for i := 0; i < s.parallel; i++ {
+		for i := 0; i < s.parallel; i++ { //nolint:intrange
 			var dlc *llama.Context
 			var spec *llama.Speculator
 			var sbatch *llama.Batch

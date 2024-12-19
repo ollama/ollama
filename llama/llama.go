@@ -741,7 +741,7 @@ func (s *SamplingContext) SampleAndAcceptN(llamaContext *Context, draft []int) (
 	}
 
 	result := make([]int, rc)
-	for i := 0; i < int(rc); i++ {
+	for i := range result {
 		result[i] = int(cResult[i])
 	}
 
@@ -827,7 +827,7 @@ func (s *Speculator) GenDraft(prompt []int, id_last int) ([]int, error) {
 	}
 
 	result := make([]int, rc)
-	for i := 0; i < int(rc); i++ {
+	for i := range result {
 		result[i] = int(cResult[i])
 	}
 
