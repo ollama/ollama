@@ -87,7 +87,7 @@ func Test_Routes(t *testing.T) {
 
 		fname := createTestFile(t, "ollama-model")
 
-		r := strings.NewReader(fmt.Sprintf("FROM %s\nPARAMETER seed 42\nPARAMETER top_p 0.9\nPARAMETER stop foo\nPARAMETER stop bar", fname))
+		r := strings.NewReader(fmt.Sprintf("FROM %s\nPARAMETER seed 42\nPARAMETER top_p 0.9\nPARAMETER stop foo\nPARAMETER stop bar\nPARAMETER cache_prompt false", fname))
 		modelfile, err := parser.ParseFile(r)
 		if err != nil {
 			t.Fatalf("failed to parse file: %v", err)
@@ -401,6 +401,7 @@ func Test_Routes(t *testing.T) {
 				}
 				sort.Strings(params)
 				expectedParams := []string{
+					"cache_prompt false",
 					"seed 42",
 					"stop \"bar\"",
 					"stop \"foo\"",
