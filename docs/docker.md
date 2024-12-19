@@ -50,8 +50,43 @@ sudo systemctl restart docker
 docker run -d --gpus=all -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama
 ```
 
+### JETSON DEVICE
+
 > [!NOTE]  
 > If you're running on an NVIDIA JetPack system, Ollama can't automatically discover the correct JetPack version. Pass the environment variable JETSON_JETPACK=5 or JETSON_JETPACK=6 to the container to select version 5 or 6.
+
+Find  JetPack version 
+```bash
+apt-cache show nvidia-jetpack
+```
+output like this
+
+```
+Package: nvidia-jetpack
+Version: 5.1.4-b17
+Architecture: arm64
+Maintainer: NVIDIA Corporation
+Installed-Size: 194
+Depends: nvidia-jetpack-runtime (= 5.1.4-b17), nvidia-jetpack-dev (= 5.1.4-b17)
+Homepage: http://developer.nvidia.com/jetson
+Priority: standard
+Section: metapackages
+Filename: pool/main/n/nvidia-jetpack/nvidia-jetpack_5.1.4-b17_arm64.deb
+Size: 29298
+SHA256: 5439dabb8d7a097c215602f7cd11773e4745c5e7d5841d9a0a2551a58b82883e
+SHA1: b0c2faa6a9d14e056e394625a11a1a8ed8780327
+MD5sum: 05fc4b73de35fd33a535fb887c1947ee
+Description: NVIDIA Jetpack Meta Package
+Description-md5: ad1462289bdbc54909ae109d1d32c0a8
+```
+set env variable for JetPack version when running docker 
+also use --runtime=nvidia on jetson not  --gpus 
+
+#### Start the container
+```bash
+docker run -d --runtime=nvidia -e JETSON_JETPACK=JetPack-version -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama
+```
+
 
 ### AMD GPU
 
