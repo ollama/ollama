@@ -37,9 +37,10 @@ type GpuInfo struct { // TODO better name maybe "InferenceProcessor"?
 	UnreliableFreeMemory bool
 
 	// GPU information
-	ID      string `json:"gpu_id"`  // string to use for selection of this specific GPU
-	Name    string `json:"name"`    // user friendly name if available
-	Compute string `json:"compute"` // Compute Capability or gfx
+	ID        string `json:"gpu_id"`  // string to use for selection of this specific GPU
+	Name      string `json:"name"`    // user friendly name if available
+	Compute   string `json:"compute"` // Compute Capability or gfx
+	ApuUseGTT bool   //AMD APU using GTT memory used to set -no-mmap to avoid trashing RAM, GTT use RAM
 
 	// Driver Information - TODO no need to put this on each GPU
 	DriverMajor int `json:"driver_major,omitempty"`
