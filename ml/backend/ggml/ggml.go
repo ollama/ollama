@@ -15,18 +15,15 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
-	"runtime"
-	"strings"
 	"sync"
 	"unsafe"
 
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/fs/ggml"
+	fs "github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/ml"
 	"golang.org/x/sync/errgroup"
 
-	_ "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
+	"github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 )
 
 type device struct {
@@ -67,45 +64,7 @@ func (d device) LogValue() slog.Value {
 }
 
 var devices = sync.OnceValue(func() []device {
-	var lib struct{ name, pattern, defaultValue string }
-	if runtime.GOOS == "windows" {
-		lib.name = "PATH"
-		lib.pattern = "ggml-*.dll"
-		lib.defaultValue = "."
-	} else if runtime.GOOS == "linux" {
-		lib.name = "LD_LIBRARY_PATH"
-		lib.pattern = "libggml-*.so"
-		lib.defaultValue = "/usr/local/lib:/usr/lib"
-	}
-
-	if lib.name != "" {
-		paths, ok := os.LookupEnv(lib.name)
-		if !ok {
-			paths = lib.defaultValue
-		}
-
-		for _, path := range filepath.SplitList(paths) {
-			matches, err := filepath.Glob(filepath.Join(path, lib.pattern))
-			if err != nil {
-				slog.Error("failed to glob", "path", path, "error", err)
-				continue
-			}
-
-			for _, match := range matches {
-				if base := filepath.Base(match); strings.HasPrefix(base, "ggml-base") ||
-					strings.HasPrefix(base, "libggml-base") {
-					continue
-				}
-
-				func() {
-					cmatch := C.CString(match)
-					defer C.free(unsafe.Pointer(cmatch))
-
-					C.ggml_backend_load(cmatch)
-				}()
-			}
-		}
-	}
+	ggml.OnceLoad()
 
 	s := make([]device, C.ggml_backend_dev_count())
 	for i := range s {
@@ -116,13 +75,13 @@ var devices = sync.OnceValue(func() []device {
 })
 
 type Backend struct {
-	meta       *ggml.GGML
+	meta       *fs.GGML
 	cpus, gpus []Context
 	tensors    map[string]*Context
 }
 
 func New(r *os.File) (ml.Backend, error) {
-	meta, n, err := ggml.Decode(r, -1)
+	meta, n, err := fs.Decode(r, -1)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +129,7 @@ func New(r *os.File) (ml.Backend, error) {
 		return nil, fmt.Errorf("no devices available")
 	}
 
-	tensors := make(map[*ggml.Tensor]*Context, len(meta.Tensors().Items()))
+	tensors := make(map[*fs.Tensor]*Context, len(meta.Tensors().Items()))
 	for _, t := range meta.Tensors().Items() {
 		c, err := ctxFunc(append(gpus, cpus...))
 		if err != nil {

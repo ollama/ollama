@@ -1,7 +1,7 @@
-From b9d893b5c7c3dcff42bce378ea26587a6c7d1113 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Daniel Hiltgen <daniel@ollama.com>
 Date: Wed, 9 Oct 2024 17:26:23 -0700
-Subject: [PATCH 06/11] conditional-fattn
+Subject: [PATCH] conditional-fattn
 
 ---
  ggml/src/ggml-cuda/ggml-cuda.cu | 2 ++
@@ -23,6 +23,3 @@ index a2fcfe5d..5eed90da 100644
          case GGML_OP_CROSS_ENTROPY_LOSS:
              ggml_cuda_cross_entropy_loss(ctx, dst);
              break;
--- 
-2.46.0
-

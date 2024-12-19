@@ -1,7 +1,7 @@
-From 67eb186ccf062100835d413b1c3e2a0fc58e1c0f Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Michael Yang <mxyng@pm.me>
 Date: Mon, 16 Sep 2024 15:53:13 -0700
-Subject: [PATCH 02/11] pretokenizer
+Subject: [PATCH] pretokenizer
 
 ---
  src/llama.cpp | 14 +++-----------
@@ -39,6 +39,3 @@ index 6a6f4c2a..fa09f3b3 100644
              }
          } else if (vocab.type == LLAMA_VOCAB_TYPE_SPM) {
              vocab.type_pre = LLAMA_VOCAB_PRE_TYPE_DEFAULT;
--- 
-2.46.0
-
