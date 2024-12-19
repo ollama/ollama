@@ -1,18 +1,19 @@
 package llama
 
-//go:generate make -j 8
-
 /*
 #cgo CFLAGS: -std=c11
 #cgo CXXFLAGS: -std=c++11
+#cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/include
+#cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/common
+#cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/examples/llava
 #cgo CPPFLAGS: -I${SRCDIR}/../ml/backend/ggml/ggml/include
-#cgo darwin,arm64 CPPFLAGS: -DGGML_USE_METAL
 
 #include <stdlib.h>
+#include "ggml.h"
 #include "llama.h"
 #include "clip.h"
-#include "ggml.h"
 #include "llava.h"
+
 #include "mllama.h"
 #include "sampling_ext.h"
 
@@ -47,10 +48,14 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	_ "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
+	_ "github.com/ollama/ollama/llama/llama.cpp/common"
+	_ "github.com/ollama/ollama/llama/llama.cpp/examples/llava"
+	_ "github.com/ollama/ollama/llama/llama.cpp/src"
+	"github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 )
 
 func BackendInit() {
+	ggml.OnceLoad()
 	C.llama_backend_init()
 }
 
