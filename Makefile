@@ -6,6 +6,7 @@ include make/common-defs.make
 include make/cuda-v11-defs.make
 include make/cuda-v12-defs.make
 include make/rocm-defs.make
+include make/musa-v1-defs.make
 
 ifeq ($(CUSTOM_CPU_FLAGS),)
 ifeq ($(ARCH),amd64)
@@ -34,6 +35,11 @@ ifneq ($(HIP_COMPILER),)
 endif
 endif
 
+ifeq ($(OLLAMA_SKIP_MUSA_GENERATE),)
+ifneq ($(and $(MUSA_1_PATH),$(MUSA_1_COMPILER)),)
+	RUNNER_TARGETS += musa_v1
+endif
+endif
 
 all: runners exe
 
@@ -95,6 +101,11 @@ help-runners:
 	@echo "# HIP_PATH sets the location where the ROCm toolkit is present"
 	@echo "HIP_PATH=$(HIP_PATH)"
 	@echo "	HIP_COMPILER=$(HIP_COMPILER)"
+	@echo ""
+	@echo "# MUSA_PATH sets the location where MUSA toolkits are present"
+	@echo "MUSA_PATH=$(MUSA_PATH)"
+	@echo "	MUSA_1_PATH=$(MUSA_1_PATH)"
+	@echo "	MUSA_1_COMPILER=$(MUSA_1_COMPILER)"
 
 .PHONY: all exe dist help help-sync help-runners test integration lint runners clean $(RUNNER_TARGETS)
 
