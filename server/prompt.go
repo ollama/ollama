@@ -82,6 +82,10 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	}
 
 	currMsgIdx := n
+	// Warn user if messages are truncated from the input
+	if numTruncatedMessages := len(msgs[0:currMsgIdx]); numTruncatedMessages > 0 {
+		slog.Warn("truncated first messages from input", "num_truncated", numTruncatedMessages)
+	}
 
 	for cnt, msg := range msgs[currMsgIdx:] {
 		prefix := ""
