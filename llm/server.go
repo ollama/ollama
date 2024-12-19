@@ -89,7 +89,7 @@ func LoadModel(model string, maxArraySize int) (*GGML, error) {
 
 // NewLlamaServer will run a server for the given GPUs
 // The gpu list must be a single family.
-func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
+func NewLlamaServer(gpus discover.GpuInfoList, model string, draftModel string, ggml *GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
 	var err error
 	var cpuRunner string
 	var estimate MemoryEstimate
@@ -232,6 +232,19 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		}
 	} else if kvct != "" && kvct != "f16" {
 		slog.Warn("quantized kv cache requested but flash attention disabled", "type", kvct)
+	}
+
+	if draftModel != "" {
+		params = append(params, "--draft-model", draftModel)
+		params = append(params, "--draft-gpu-layers", strconv.FormatUint(uint64(envconfig.DraftGpuLayers()), 10))
+		dd := envconfig.DraftGpuDevs()
+		if dd != "" {
+			params = append(params, "--draft-device", dd)
+		}
+		params = append(params, "--draft-ctx-size", strconv.Itoa(opts.DraftNumCtx))
+		params = append(params, "--draft-p-min", strconv.FormatFloat(float64(opts.DraftPMin), 'f', -1, 32))
+		params = append(params, "--draft-min", strconv.Itoa(opts.DraftMin))
+		params = append(params, "--draft-max", strconv.Itoa(opts.DraftMax))
 	}
 
 	// mmap has issues with partial offloading on metal

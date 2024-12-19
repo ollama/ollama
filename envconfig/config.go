@@ -225,6 +225,13 @@ func Uint64(key string, defaultValue uint64) func() uint64 {
 // Set aside VRAM per GPU
 var GpuOverhead = Uint64("OLLAMA_GPU_OVERHEAD", 0)
 
+var (
+	// Draft model gpu device list
+	DraftGpuDevs = String("OLLAMA_DRAFT_GPU_DEVS")
+	// Draft model gpu number of layers
+	DraftGpuLayers = Uint("OLLAMA_DRAFT_GPU_LAYERS", 99)
+)
+
 type EnvVar struct {
 	Name        string
 	Value       any
@@ -237,6 +244,8 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(), "Enabled flash attention"},
 		"OLLAMA_KV_CACHE_TYPE":     {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
 		"OLLAMA_GPU_OVERHEAD":      {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
+		"OLLAMA_DRAFT_GPU_DEVS":    {"OLLAMA_DRAFT_GPU_DEVS", DraftGpuDevs(), "Comma-separated list of devices to use for offloading the draft model (default: same GPU devices as available for target model)"},
+		"OLLAMA_DRAFT_GPU_LAYERS":  {"OLLAMA_DRAFT_GPU_LAYERS", DraftGpuLayers(), "Number of layers to store in VRAM for the draft model (default: 99)"},
 		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},

@@ -47,7 +47,7 @@ func TestLoad(t *testing.T) {
 		sessionDuration: &api.Duration{Duration: 2 * time.Second},
 	}
 	// Fail to load model first
-	s.newServerFn = func(gpus discover.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(gpus discover.GpuInfoList, model string, draftModel string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 		return nil, errors.New("something failed to load model blah")
 	}
 	gpus := discover.GpuInfoList{}
@@ -61,7 +61,7 @@ func TestLoad(t *testing.T) {
 	require.Contains(t, err.Error(), "this model may be incompatible")
 
 	server := &mockLlm{estimatedVRAM: 10, estimatedVRAMByGPU: map[string]uint64{}}
-	s.newServerFn = func(gpus discover.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(gpus discover.GpuInfoList, model string, draftModel string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 		return server, nil
 	}
 	s.load(req, ggml, gpus, 0)
@@ -77,6 +77,7 @@ func TestLoad(t *testing.T) {
 	}
 
 	req.model.ModelPath = "dummy_model_path"
+	req.model.ShortName = "dummy_model_short_name"
 	server.waitResp = errors.New("wait failure")
 	s.load(req, ggml, gpus, 0)
 	select {
@@ -86,7 +87,7 @@ func TestLoad(t *testing.T) {
 		t.Fatalf("unexpected success %v", resp)
 	}
 	s.loadedMu.Lock()
-	runner := s.loaded["dummy_model_path"]
+	runner := s.loaded["dummy_model_short_name"]
 	s.loadedMu.Unlock()
 	require.NotNil(t, runner)
 	require.Equal(t, uint(0), runner.refCount)
@@ -102,7 +103,7 @@ type reqBundle struct {
 	ggml    *llm.GGML
 }
 
-func (scenario *reqBundle) newServer(gpus discover.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+func (scenario *reqBundle) newServer(gpus discover.GpuInfoList, model string, draftModel string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 	return scenario.srv, nil
 }
 
@@ -132,7 +133,7 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 	require.NoError(t, err)
 
 	fname := f.Name()
-	model := &Model{Name: modelName, ModelPath: fname}
+	model := &Model{Name: modelName, ShortName: modelName, ModelPath: fname}
 	b.ggml, err = llm.LoadModel(model.ModelPath, 0)
 	require.NoError(t, err)
 
@@ -422,7 +423,7 @@ func TestExpireRunner(t *testing.T) {
 	var ggml *llm.GGML
 	gpus := discover.GpuInfoList{}
 	server := &mockLlm{estimatedVRAM: 10, estimatedVRAMByGPU: map[string]uint64{}}
-	s.newServerFn = func(gpus discover.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(gpus discover.GpuInfoList, model string, draftModel string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 		return server, nil
 	}
 	s.load(req, ggml, gpus, 0)
@@ -729,9 +730,9 @@ func TestHomogeneousGPUs(t *testing.T) {
 	}
 	s.getCpuFn = getCpuFn
 	a := newScenarioRequest(t, ctx, "ollama-model-1", 10, &api.Duration{Duration: 5 * time.Millisecond})
-	s.newServerFn = func(gpus discover.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(gpus discover.GpuInfoList, model string, draftModel string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 		require.Len(t, gpus, 1)
-		return a.newServer(gpus, model, ggml, adapters, projectors, opts, numParallel)
+		return a.newServer(gpus, model, draftModel, ggml, adapters, projectors, opts, numParallel)
 	}
 	slog.Info("a")
 	s.pendingReqCh <- a.req

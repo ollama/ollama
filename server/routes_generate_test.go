@@ -46,8 +46,8 @@ func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error
 	return
 }
 
-func newMockServer(mock *mockRunner) func(discover.GpuInfoList, string, *llm.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
-	return func(gpus discover.GpuInfoList, model string, ggml *llm.GGML, projectors, system []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+func newMockServer(mock *mockRunner) func(discover.GpuInfoList, string, string, *llm.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
+	return func(gpus discover.GpuInfoList, model string, draftModel string, ggml *llm.GGML, projectors, system []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 		return mock, nil
 	}
 }
