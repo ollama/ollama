@@ -77,6 +77,7 @@ func TestLoad(t *testing.T) {
 	}
 
 	req.model.ModelPath = "dummy_model_path"
+	req.model.ShortName = "dummy_model_short_name"
 	server.waitResp = errors.New("wait failure")
 	s.load(req, ggml, gpus, 0)
 	select {
@@ -132,7 +133,7 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 	require.NoError(t, err)
 
 	fname := f.Name()
-	model := &Model{Name: modelName, ModelPath: fname}
+	model := &Model{Name: modelName, ShortName: modelName, ModelPath: fname}
 	b.ggml, err = llm.LoadModel(model.ModelPath, 0)
 	require.NoError(t, err)
 
