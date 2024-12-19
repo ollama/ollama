@@ -70,6 +70,7 @@ def chat(messages):
             print(content, end="", flush=True)
 
         if body.get("done", False):
+            print(f"\nPrompt Tokens={body['prompt_eval_count']}, Generated Tokens={body['eval_count']}, Time={body['total_duration']/1000000000} secs")
             message["content"] = output
             datetimes.append(datetime.now())
             return message
