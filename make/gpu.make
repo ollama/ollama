@@ -15,25 +15,11 @@ DIST_GPU_RUNNER_DEPS_DIR = $(DIST_LIB_DIR)
 GPU_RUNNER_LIBS = $(wildcard $(addsuffix .$(SHARED_EXT).*,$(addprefix $(GPU_LIB_DIR)/$(SHARED_PREFIX),$(GPU_RUNNER_LIBS_SHORT))))
 
 GPU_RUNNER_SRCS := \
-	$(filter-out $(wildcard llama/ggml-cuda/fattn*.cu),$(wildcard llama/ggml-cuda/*.cu)) \
-	$(wildcard llama/ggml-cuda/template-instances/mmq*.cu) \
+	$(wildcard llama/ggml-cuda/*.cu) \
+	$(wildcard llama/ggml-cuda/template-instances/*.cu) \
 	llama/ggml.c llama/ggml-backend.cpp llama/ggml-alloc.c llama/ggml-quants.c llama/sgemm.cpp llama/ggml-threading.cpp
 GPU_RUNNER_HDRS := \
 	$(wildcard llama/ggml-cuda/*.cuh)
-
-
-# Conditional flags and components to speed up developer builds
-ifneq ($(OLLAMA_FAST_BUILD),)
-	GPU_COMPILER_CUFLAGS += 	\
-		-DGGML_DISABLE_FLASH_ATTN
-else
-	GPU_RUNNER_SRCS += \
-		$(wildcard llama/ggml-cuda/fattn*.cu) \
-		$(wildcard llama/ggml-cuda/template-instances/fattn-wmma*.cu) \
-		$(wildcard llama/ggml-cuda/template-instances/fattn-vec*q4_0-q4_0.cu) \
-		$(wildcard llama/ggml-cuda/template-instances/fattn-vec*q8_0-q8_0.cu) \
-		$(wildcard llama/ggml-cuda/template-instances/fattn-vec*f16-f16.cu)
-endif
 
 GPU_RUNNER_OBJS := $(GPU_RUNNER_SRCS:.cu=.$(GPU_RUNNER_NAME).$(OBJ_EXT))
 GPU_RUNNER_OBJS := $(GPU_RUNNER_OBJS:.c=.$(GPU_RUNNER_NAME).$(OBJ_EXT))

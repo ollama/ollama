@@ -15,7 +15,6 @@ OLLAMA_COMMON_BUILD_ARGS="--build-arg=VERSION \
     --build-arg=CUDA_V11_ARCHITECTURES \
     --build-arg=CUDA_V12_ARCHITECTURES \
     --build-arg=OLLAMA_SKIP_ROCM_GENERATE \
-    --build-arg=OLLAMA_FAST_BUILD \
     --build-arg=CUSTOM_CPU_FLAGS \
     --build-arg=GPU_RUNNER_CPU_FLAGS \
     --build-arg=AMDGPU_TARGETS"
