@@ -360,14 +360,6 @@ func (c *Client) Embeddings(ctx context.Context, req *EmbeddingRequest) (*Embedd
 	return &resp, nil
 }
 
-func (c *Client) Template(ctx context.Context, req *TemplateRequest) (*TemplateResponse, error) {
-	var resp TemplateResponse
-	if err := c.do(ctx, http.MethodPost, "/api/template", req, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
 // CreateBlob creates a blob from a file on the server. digest is the
 // expected SHA256 digest of the file, and r represents the file.
 func (c *Client) CreateBlob(ctx context.Context, digest string, r io.Reader) error {

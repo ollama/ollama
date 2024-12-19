@@ -1228,7 +1228,6 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
 	r.GET("/api/ps", s.PsHandler)
-	r.Any("/api/template", gin.WrapF(s.TemplateHandler))
 
 	// Compatibility endpoints
 	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)
@@ -1450,38 +1449,6 @@ func (s *Server) PsHandler(c *gin.Context) {
 	})
 
 	c.JSON(http.StatusOK, api.ProcessResponse{Models: models})
-}
-
-func (s *Server) TemplateHandler(w http.ResponseWriter, r *http.Request) {
-	var req api.TemplateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	model, err := GetModel(req.Model)
-	if err != nil {
-		switch {
-		case os.IsNotExist(err):
-			http.Error(w, fmt.Sprintf("model '%s' not found", req.Model), http.StatusNotFound)
-		case err.Error() == "invalid model name":
-			http.Error(w, err.Error(), http.StatusBadRequest)
-		default:
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-		return
-	}
-
-	prompt, err := applyTemplate(model, req.Messages, req.Tools)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if err := json.NewEncoder(w).Encode(api.TemplateResponse{TemplatedPrompt: prompt}); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
 }
 
 func (s *Server) ChatHandler(c *gin.Context) {

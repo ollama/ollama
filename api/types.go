@@ -315,16 +315,6 @@ type CreateRequest struct {
 	Quantization string `json:"quantization,omitempty"`
 }
 
-type TemplateRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
-	Tools    []Tool    `json:"tools"`
-}
-
-type TemplateResponse struct {
-	TemplatedPrompt string `json:"templated_prompt"`
-}
-
 // DeleteRequest is the request passed to [Client.Delete].
 type DeleteRequest struct {
 	Model string `json:"model"`
