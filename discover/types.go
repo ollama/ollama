@@ -3,9 +3,10 @@ package discover
 import (
 	"fmt"
 	"log/slog"
+	"sort"
+	"strings"
 
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/runners"
 )
 
 type memInfo struct {
@@ -100,25 +101,23 @@ type UnsupportedGPUInfo struct {
 	Reason string `json:"reason"`
 }
 
-// Split up the set of gpu info's by Library and variant
+// Split up the set of gpu info's by Library
+// This assumes the oldest version is compatible with the newest card, which may
+// not be the case if the user has a very new and very old GPU
 func (l GpuInfoList) ByLibrary() []GpuInfoList {
 	resp := []GpuInfoList{}
 	libs := []string{}
 	for _, info := range l {
 		found := false
-		requested := info.Library
-		if info.Variant != runners.CPUCapabilityNone.String() {
-			requested += "_" + info.Variant
-		}
 		for i, lib := range libs {
-			if lib == requested {
+			if lib == info.Library {
 				resp[i] = append(resp[i], info)
 				found = true
 				break
 			}
 		}
 		if !found {
-			libs = append(libs, requested)
+			libs = append(libs, info.Library)
 			resp = append(resp, []GpuInfo{info})
 		}
 	}
@@ -147,6 +146,13 @@ type ByFreeMemory []GpuInfo
 func (a ByFreeMemory) Len() int           { return len(a) }
 func (a ByFreeMemory) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByFreeMemory) Less(i, j int) bool { return a[i].FreeMemory < a[j].FreeMemory }
+
+// Sort by Variant
+type ByVariant []GpuInfo
+
+func (a ByVariant) Len() int           { return len(a) }
+func (a ByVariant) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByVariant) Less(i, j int) bool { return strings.Compare(a[i].Variant, a[j].Variant) < 0 } // TODO do better than alpha sort
 
 type SystemInfo struct {
 	System          CPUInfo              `json:"system"`
@@ -181,4 +187,20 @@ func (l GpuInfoList) FlashAttentionSupported() bool {
 		}
 	}
 	return true
+}
+
+func (l GpuInfoList) BestRunnerName() string {
+	if len(l) == 0 {
+		return ""
+	}
+	// Sort by variant, which will yield the oldest variant first
+	sgl := append(make(GpuInfoList, 0, len(l)), l...)
+	sort.Sort(ByVariant(sgl))
+	info := sgl[0]
+
+	requested := info.Library
+	if info.Variant != "" {
+		requested += "_" + info.Variant
+	}
+	return requested
 }
