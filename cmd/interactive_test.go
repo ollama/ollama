@@ -63,17 +63,15 @@ func TestModelfileBuilder(t *testing.T) {
 			{Role: "assistant", Content: "Yes it is true, I am half horse, half shark."},
 		},
 		Options: map[string]any{
-			"temperature":      0.9,
-			"seed":             42,
-			"penalize_newline": false,
-			"stop":             []string{"hi", "there"},
+			"temperature": 0.9,
+			"seed":        42,
+			"stop":        []string{"hi", "there"},
 		},
 	}
 
 	t.Run("model", func(t *testing.T) {
 		expect := `FROM hork
 SYSTEM You are part horse and part shark, but all hork. Do horklike things
-PARAMETER penalize_newline false
 PARAMETER seed 42
 PARAMETER stop hi
 PARAMETER stop there
@@ -92,7 +90,6 @@ MESSAGE assistant Yes it is true, I am half horse, half shark.
 		opts.ParentModel = "horseshark"
 		expect := `FROM horseshark
 SYSTEM You are part horse and part shark, but all hork. Do horklike things
-PARAMETER penalize_newline false
 PARAMETER seed 42
 PARAMETER stop hi
 PARAMETER stop there
