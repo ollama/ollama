@@ -69,8 +69,6 @@ DisableReadyMemo=yes
 DisableReadyPage=yes
 DisableStartupPrompt=yes
 DisableWelcomePage=yes
-
-; TODO - percentage can't be set less than 100, so how to make it shorter?
 WizardSizePercent=100
 
 #if GetEnv("KEY_CONTAINER")

@@ -41,20 +41,16 @@ var (
 	mu            sync.Mutex
 )
 
-// TODO: replace You: and Assistant: prefixes with user and assistant roles based on message role and integrate system, tool, and image roles etc.
-
 func main() {
 	initializeApp()
 }
 
 // loadChatHistory loads the chat history for the selected saved chat
 func loadChatHistory() {
-	mu.Lock()
-	defer mu.Unlock()
 	existingItems, _ := chatData.Get()
 	newItems := []string{
-		fmt.Sprintf("Chat %d loaded.", currentChatID+1),
-		"Assistant: How can I help you?",
+		fmt.Sprintf("system: Chat %d loaded.", currentChatID+1),
+		"assistant: How can I help you?",
 	}
 	chatData.Set(append(existingItems, newItems...))
 }
@@ -102,27 +98,39 @@ func setTheme(isDark bool) {
 	} else {
 		myApp.Settings().SetTheme(theme.LightTheme())
 	}
-	rebuildChatHistory()
+	// rebuildChatHistory()
 }
 
 func rebuildChatHistory() {
 	chatContent := scroll.Content.(*fyne.Container)
 
-	mu.Lock()
-	defer mu.Unlock()
-
 	chatContent.Objects = nil
 
 	items, _ := chatData.Get()
 	for _, message := range items {
-		if strings.HasPrefix(message, "You:") {
-			chatContent.Add(createChatBubble(message[4:], true))
-		} else if strings.HasPrefix(message, "Assistant:") {
-			chatContent.Add(createChatBubble(message[10:], false))
+		role, content := parseRoleAndContent(message)
+		isUser := (role == "user")
+
+		// Only display user and assistant messages in bubbles
+		if role == "user" || role == "assistant" {
+			chatContent.Add(createChatBubble(content, isUser))
 		}
 	}
 
 	chatContent.Refresh()
+}
+
+// parseRoleAndContent splits a string like "assistant: Hello" into ("assistant", "Hello")
+func parseRoleAndContent(line string) (string, string) {
+	parts := strings.SplitN(line, ":", 2)
+	if len(parts) != 2 {
+		// If somehow not formatted correctly, treat entire line as 'system'
+		return "system", line
+	}
+
+	role := strings.TrimSpace(parts[0])
+	content := strings.TrimSpace(parts[1])
+	return role, content
 }
 
 // loadAppIcon loads the application icon
@@ -262,11 +270,12 @@ func createInputComponents() (*widget.Entry, *widget.Button) {
 	sendMessage := func() {
 		userMessage := strings.TrimSpace(messageInput.Text)
 		if len(userMessage) > 500 {
-			updateChatData("Assistant: " + "Error: Message too long. Please limit to 500 characters.")
+			updateChatData("assistant: Error: Message too long. Please limit to 500 characters.")
 			return
 		}
 		if userMessage != "" {
-			updateChatData("You: " + userMessage)
+			// Storing a user message
+			updateChatData("user: " + userMessage)
 			messageInput.SetText("")
 			go handleUserMessage(userMessage)
 		}
@@ -286,16 +295,16 @@ func createChatHistory() *fyne.Container {
 	scroll.SetMinSize(fyne.NewSize(400, 600))
 
 	chatData.AddListener(binding.NewDataListener(func() {
-		mu.Lock()
-		defer mu.Unlock()
-
 		chatContent.Objects = nil
 		items, _ := chatData.Get()
-		for _, message := range items {
-			if strings.HasPrefix(message, "You:") {
-				chatContent.Add(createChatBubble(message[4:], true))
-			} else if strings.HasPrefix(message, "Assistant:") {
-				chatContent.Add(createChatBubble(message[11:], false))
+		for _, line := range items {
+			role, content := parseRoleAndContent(line)
+			switch role {
+			case "user":
+				chatContent.Add(createChatBubble(content, true))
+			case "assistant":
+				chatContent.Add(createChatBubble(content, false))
+				// other roles like "system" can be handled differently if desired
 			}
 		}
 		chatContent.Refresh()
@@ -307,24 +316,17 @@ func createChatHistory() *fyne.Container {
 // handleUserMessage processes the user's message
 func handleUserMessage(userMessage string) {
 	if err := streamFromOllama(userMessage); err != nil {
-		updateChatData("Assistant: " + fmt.Sprintf("Error: %v", err))
+		updateChatData("assistant: Error: " + fmt.Sprintf("%v", err))
 	}
 }
 
 // updateChatData safely updates the chat data binding
 func updateChatData(message string) {
-
-	mu.Lock()
-	defer mu.Unlock()
 	items, _ := chatData.Get()
 	chatData.Set(append(items, message))
-	// fmt.Print(items)
-	// fmt.Print(message)
 }
 
 // streamFromOllama streams the assistant's response
-// TODO: Implement the logic to stream messages from Ollama API.
-
 func streamFromOllama(userMessage string) error {
 	// Initialize the Ollama API client
 	client, err := api.ClientFromEnvironment()
@@ -347,85 +349,31 @@ func streamFromOllama(userMessage string) error {
 
 	// We'll accumulate the assistant's tokens here until done
 	var assistantMessageBuilder strings.Builder
-
-	// Callback function to handle streaming responses
-	respFunc := func(resp api.ChatResponse) error {
-		// Print raw response for debugging if desired
-		// fmt.Print(resp)
-
-		// Append the streamed content to the builder
-		assistantMessageBuilder.WriteString(resp.Message.Content)
-		// updateChatData("Assistant: " + assistantMessageBuilder.String())
-		// Once the response is done, we have the full assistant message
-		if resp.Done {
-			// Now update the chat data with the complete assistant message
-			updateChatData("Assistant: " + assistantMessageBuilder.String())
-			// Reset the builder for the next response
-			assistantMessageBuilder.Reset()
-		}
-
-		return nil
-	}
-
-	err = client.Chat(ctx, req, respFunc)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return nil
-}
-
-/*
-func streamFromOllama(userMessage string) error {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return fmt.Errorf("failed to create Ollama API client: %w", err)
-	}
-
-	messages := []api.Message{
-		{Role: "user", Content: userMessage},
-	}
-
-	ctx := context.Background()
-
-	req := &api.ChatRequest{
-		Model:    modelName,
-		Messages: messages,
-	}
-
-	var assistantMessageBuilder strings.Builder
 	var assistantIndex int = -1 // We'll store the index of the assistant message line we are updating
 
 	respFunc := func(resp api.ChatResponse) error {
 		assistantMessageBuilder.WriteString(resp.Message.Content)
 
-		// Update the chat data in real-time
-		mu.Lock()
-		defer mu.Unlock()
-
 		items, _ := chatData.Get()
 
-		// If this is the first token for this response,
-		// we need to insert a new "Assistant:" line and record its index.
 		if assistantIndex == -1 {
-			items = append(items, "Assistant: "+assistantMessageBuilder.String())
+			// First token for this response, append a new assistant line
+			newLine := "assistant: " + assistantMessageBuilder.String()
+			items = append(items, newLine)
 			chatData.Set(items)
 			assistantIndex = len(items) - 1
 		} else {
 			// Update the existing assistant message line with the current accumulated content
-			updatedLine := "Assistant: " + assistantMessageBuilder.String()
-			// Update only if something has changed
-			if updatedLine != items[assistantIndex] {
-				items[assistantIndex] = updatedLine
-				chatData.Set(items)
-			}
+			updatedLine := "assistant: " + assistantMessageBuilder.String()
+			items[assistantIndex] = updatedLine
+			chatData.Set(items)
+			rebuildChatHistory()
 		}
 
-		// When done, we already have the full message. No need for a separate final append.
 		if resp.Done {
 			assistantMessageBuilder.Reset()
 			assistantIndex = -1
 		}
-
 		return nil
 	}
 
@@ -434,4 +382,3 @@ func streamFromOllama(userMessage string) error {
 	}
 	return nil
 }
-*/
