@@ -56,7 +56,7 @@ func Host() *url.URL {
 // Origins returns a list of allowed origins. Origins can be configured via the OLLAMA_ORIGINS environment variable.
 func Origins() (origins []string) {
 	if s := Var("OLLAMA_ORIGINS"); s != "" {
-		origins = strings.Split(s, ",")
+		return strings.Split(s, ",")
 	}
 
 	for _, origin := range []string{"localhost", "127.0.0.1", "0.0.0.0"} {
