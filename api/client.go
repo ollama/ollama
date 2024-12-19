@@ -318,7 +318,7 @@ func (c *Client) Copy(ctx context.Context, req *CopyRequest) error {
 
 // Delete deletes a model and its data.
 func (c *Client) Delete(ctx context.Context, req *DeleteRequest) error {
-	if err := c.do(ctx, http.MethodDelete, "/api/delete", req, nil); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/api/delete", req, nil); err != nil {
 		return err
 	}
 	return nil
