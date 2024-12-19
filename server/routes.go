@@ -1572,6 +1572,18 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
+	if req.DryRun {
+		c.JSON(http.StatusOK, api.ChatResponse{
+			Model:        req.Model,
+			CreatedAt:    time.Now().UTC(),
+			Message:      api.Message{Role: "assistant", Content: ""},
+			Done:         true,
+			DoneReason:   "dry_run",
+			DryRunOutput: prompt,
+		})
+		return
+	}
+
 	slog.Debug("chat request", "images", len(images), "prompt", prompt)
 
 	ch := make(chan any)
