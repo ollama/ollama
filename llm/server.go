@@ -139,7 +139,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapt
 		}
 	}
 
-	estimate.log()
+	slog.Info("offload", "", estimate)
 
 	// Loop through potential servers
 	finalErr := errors.New("no suitable llama servers found")
