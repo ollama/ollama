@@ -678,7 +678,6 @@ func TestParseMultiByte(t *testing.T) {
 }
 
 func TestCreateRequest(t *testing.T) {
-
 	cases := []struct {
 		input    string
 		expected *api.CreateRequest
