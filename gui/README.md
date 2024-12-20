@@ -28,6 +28,7 @@ ollama-yontracks/
 │   ├── ollama_chats.db          
 │   └── DemoGUI.exe
 ``` 
+gui_backup is used for backup purposes. It contains the refactored GUI code that is not yet integrated into the main app.
 ## DB
 `ollama_chats.db` is a SQLite database that stores chat history. It is used by the GUI to display past conversations. 
  
@@ -40,9 +41,7 @@ ollama-yontracks/
 - Standalone `gui/main.go` is used for running the app in standalone mode developing mode.
 
 - Standalone `gui/ollama_chats.db` is used for running the app in standalone mode developing mode. 
-be sure to backup `ollama_chats.db` before uninstalling or updating the app. 
- 
-gui_backup is used for backup purposes. It contains the refactored GUI code that is not yet integrated into the main app. 
+be sure to backup `ollama_chats.db` before uninstalling or updating the app.  
 
 In the top directory of this repo, run:
 
