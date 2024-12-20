@@ -301,7 +301,7 @@ type CreateRequest struct {
 
 	From       string           `json:"from,omitempty"`
 	FromModel  *CreateFromModel `json:"from_model,omitempty"`
-	Adapters   []string         `json:"adapters,omitempty"`
+	Adapters   *CreateFromModel `json:"adapters,omitempty"`
 	Template   string           `json:"template,omitempty"`
 	License    any              `json:"license,omitempty"`
 	System     string           `json:"system,omitempty"`

@@ -80,7 +80,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			switch r.FromModel.Type {
 			case "safetensors":
 				slog.Debug("create model from safetensors")
-				baseLayers, err = convertModelFromSafetensors(r, name, fn)
+				baseLayers, err = convertModelFromSafetensors(r.FromModel, baseLayers, false, fn)
 				if err != nil {
 					slog.Error("error creating model from safetensors", "error", err)
 					ch <- gin.H{"error": err.Error()}
@@ -101,6 +101,16 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		} else {
 			ch <- gin.H{"error": "neither 'from' or 'from_model' was specified", "status": http.StatusBadRequest}
 			return
+		}
+
+		adapterLayers, err := getAdapters(r.Adapters, baseLayers, fn)
+		if err != nil {
+			ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+			return
+		}
+
+		if len(adapterLayers) > 0 {
+			baseLayers = append(baseLayers, adapterLayers...)
 		}
 
 		if err := createModel(r, name, baseLayers, fn); err != nil {
@@ -129,14 +139,14 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func convertModelFromSafetensors(r api.CreateRequest, name model.Name, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
+func convertModelFromSafetensors(r *api.CreateFromModel, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
 	tmpDir, err := os.MkdirTemp("", "ollama-safetensors")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(tmpDir)
 
-	for fp, digest := range r.FromModel.Files {
+	for fp, digest := range r.Files {
 		blobPath, err := GetBlobsPath(digest)
 		if err != nil {
 			return nil, err
@@ -151,17 +161,31 @@ func convertModelFromSafetensors(r api.CreateRequest, name model.Name, fn func(r
 		return nil, err
 	}
 	defer t.Close()
-	fn(api.ProgressResponse{Status: "converting the model"})
 
-	if err := convert.ConvertModel(os.DirFS(tmpDir), t); err != nil {
-		return nil, err
+	var mediaType string
+	if !isAdapter {
+		fn(api.ProgressResponse{Status: "converting the model"})
+		mediaType = "application/vnd.ollama.image.model"
+		if err := convert.ConvertModel(os.DirFS(tmpDir), t); err != nil {
+			return nil, err
+		}
+	} else {
+		kv, err := getModelLayerKV(baseLayers)
+		if err != nil {
+			return nil, err
+		}
+		fn(api.ProgressResponse{Status: "converting the adapter"})
+		mediaType = "application/vnd.ollama.image.adapter"
+		if err := convert.ConvertAdapter(os.DirFS(tmpDir), t, kv); err != nil {
+			return nil, err
+		}
 	}
 
 	if _, err := t.Seek(0, io.SeekStart); err != nil {
 		return nil, err
 	}
 
-	layer, err := NewLayer(t, "application/vnd.ollama.image.model")
+	layer, err := NewLayer(t, mediaType)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +201,19 @@ func convertModelFromSafetensors(r api.CreateRequest, name model.Name, fn func(r
 	}
 	layers := []*layerGGML{{layer, ggml}}
 
-	return detectChatTemplate(layers)
+	if !isAdapter {
+		return detectChatTemplate(layers)
+	}
+	return layers, nil
+}
+
+func getModelLayerKV(baseLayers []*layerGGML) (llm.KV, error) {
+	for _, l := range baseLayers {
+		if l.GGML != nil {
+			return l.KV(), nil
+		}
+	}
+	return llm.KV{}, fmt.Errorf("no base model was found")
 }
 
 func convertModelFromGGUF(r api.CreateRequest, name model.Name, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
@@ -195,6 +231,30 @@ func convertModelFromGGUF(r api.CreateRequest, name model.Name, fn func(resp api
 	return getGGUFLayers(digest, fn)
 }
 
+func getAdapters(r *api.CreateFromModel, baseLayers []*layerGGML, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
+	if r == nil {
+		return nil, nil
+	}
+
+	switch r.Type {
+	case "safetensors":
+		slog.Debug("safetensors adapter")
+		adapterLayers, err := convertModelFromSafetensors(r, baseLayers, true, fn)
+		if err != nil {
+			slog.Error("error creating model from safetensors", "error", err)
+			return nil, err
+		}
+		return adapterLayers, nil
+	case "gguf":
+		slog.Debug("gguf adapter")
+	default:
+		slog.Error("unknown adapter")
+		return nil, fmt.Errorf("unknown adapter type")
+	}
+
+	return nil, nil
+}
+
 func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, fn func(resp api.ProgressResponse)) (err error) {
 	config := ConfigV2{
 		OS:           "linux",
@@ -202,16 +262,6 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 		RootFS: RootFS{
 			Type: "layers",
 		},
-	}
-
-	if len(r.Adapters) > 1 {
-		return fmt.Errorf("only one adapter is supported")
-	} else if len(r.Adapters) == 1 {
-		layers, err := getGGUFLayers(r.Adapters[0], fn)
-		if err != nil {
-			return err
-		}
-		baseLayers = append(baseLayers, layers...)
 	}
 
 	var layers []Layer

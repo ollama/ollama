@@ -2,11 +2,9 @@ package cmd
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -45,10 +43,7 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
-var (
-	errModelNotFound     = errors.New("no Modelfile or safetensors files found")
-	errModelfileNotFound = errors.New("specified Modelfile wasn't found")
-)
+var errModelfileNotFound = errors.New("specified Modelfile wasn't found")
 
 func getModelfileName(cmd *cobra.Command) (string, error) {
 	fn, _ := cmd.Flags().GetString("file")
@@ -96,116 +91,57 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		defer f.Close()
 	}
 
-	req := api.CreateRequest{Name: args[0]}
-	quantize, _ := cmd.Flags().GetString("quantize")
-	if quantize != "" {
-		req.Quantize = quantize
-	}
-	var licenses []string
-	var messages []api.Message
-	parameters := make(map[string]any)
-
 	modelfile, err := parser.ParseFile(reader)
 	if err != nil {
 		return err
 	}
 
-	home, err := os.UserHomeDir()
+	status := "gathering model components"
+	spinner := progress.NewSpinner(status)
+	p.Add(status, spinner)
+
+	req, err := modelfile.CreateRequest()
 	if err != nil {
 		return err
 	}
+	spinner.Stop()
 
-	status := "transferring model data"
-	spinner := progress.NewSpinner(status)
-	p.Add(status, spinner)
-	defer p.Stop()
+	req.Name = args[0]
+	quantize, _ := cmd.Flags().GetString("quantize")
+	if quantize != "" {
+		req.Quantize = quantize
+	}
 
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	for i := range modelfile.Commands {
-		switch modelfile.Commands[i].Name {
-		case "model", "adapter":
-			path := modelfile.Commands[i].Args
-			if path == "~" {
-				path = home
-			} else if strings.HasPrefix(path, "~/") {
-				path = filepath.Join(home, path[2:])
-			}
-
-			if !filepath.IsAbs(path) {
-				path = filepath.Join(filepath.Dir(filename), path)
-			}
-
-			fi, err := os.Stat(path)
-			if errors.Is(err, os.ErrNotExist) && modelfile.Commands[i].Name == "model" {
-				req.From = modelfile.Commands[i].Args
-				continue
-			} else if err != nil {
+	if req.FromModel != nil && len(req.FromModel.Files) > 0 {
+		fileMap := map[string]string{}
+		for f, digest := range req.FromModel.Files {
+			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
 				return err
 			}
-
-			if fi.IsDir() {
-				// this is likely a safetensors or pytorch directory
-				apiFiles, err := createFileBlobs(cmd, client, path, spinner)
-				if err != nil {
-					return err
-				}
-
-				if modelfile.Commands[i].Name == "model" {
-					req.FromModel = &api.CreateFromModel{Type: "safetensors", Files: apiFiles}
-				}
-			} else {
-				digest, err := createBlob(cmd, client, path, spinner)
-				if err != nil {
-					return err
-				}
-				if modelfile.Commands[i].Name == "model" {
-					p := filepath.Base(path)
-					req.FromModel = &api.CreateFromModel{Type: "gguf", Files: map[string]string{p: digest}}
-				} else {
-					req.Adapters = []string{digest}
-				}
-			}
-		case "template":
-			req.Template = modelfile.Commands[i].Args
-		case "system":
-			req.System = modelfile.Commands[i].Args
-		case "license":
-			licenses = append(licenses, modelfile.Commands[i].Args)
-		case "message":
-			role, msg, _ := strings.Cut(modelfile.Commands[i].Args, ": ")
-			messages = append(messages, api.Message{Role: role, Content: msg})
-		default:
-			c := modelfile.Commands[i]
-			ps, err := api.FormatParams(map[string][]string{c.Name: {c.Args}})
-			if err != nil {
-				return err
-			}
-
-			for k, v := range ps {
-				if ks, ok := parameters[k].([]string); ok {
-					parameters[k] = append(ks, v.([]string)...)
-				} else if vs, ok := v.([]string); ok {
-					parameters[k] = vs
-				} else {
-					parameters[k] = v
-				}
-			}
+			fileMap[filepath.Base(f)] = digest
 		}
+		req.FromModel.Files = fileMap
 	}
 
-	req.License = licenses
-	req.Messages = messages
-	req.Parameters = parameters
+	if req.Adapters != nil && len(req.Adapters.Files) > 0 {
+		fileMap := map[string]string{}
+		for f, digest := range req.Adapters.Files {
+			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
+				return err
+			}
+			fileMap[filepath.Base(f)] = digest
+		}
+		req.Adapters.Files = fileMap
+	}
 
 	bars := make(map[string]*progress.Bar)
 	fn := func(resp api.ProgressResponse) error {
 		if resp.Digest != "" {
-			spinner.Stop()
-
 			bar, ok := bars[resp.Digest]
 			if !ok {
 				bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
@@ -225,121 +161,14 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if err := client.Create(cmd.Context(), &req, fn); err != nil {
+	if err := client.Create(cmd.Context(), req, fn); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func createFileBlobs(cmd *cobra.Command, client *api.Client, path string, spinner *progress.Spinner) (map[string]string, error) {
-	files, err := getFileList(path)
-	if err != nil {
-		return nil, err
-	}
-	apiFiles := make(map[string]string)
-	for _, file := range files {
-		relPath, err := filepath.Rel(path, file)
-		if err != nil {
-			return nil, err
-		}
-
-		digest, err := createBlob(cmd, client, file, spinner)
-		if err != nil {
-			return nil, err
-		}
-		apiFiles[relPath] = digest
-	}
-	return apiFiles, nil
-}
-
-func getFileList(path string) ([]string, error) {
-	detectContentType := func(path string) (string, error) {
-		f, err := os.Open(path)
-		if err != nil {
-			return "", err
-		}
-		defer f.Close()
-
-		var b bytes.Buffer
-		b.Grow(512)
-
-		if _, err := io.CopyN(&b, f, 512); err != nil && !errors.Is(err, io.EOF) {
-			return "", err
-		}
-
-		contentType, _, _ := strings.Cut(http.DetectContentType(b.Bytes()), ";")
-		return contentType, nil
-	}
-
-	glob := func(pattern, contentType string) ([]string, error) {
-		matches, err := filepath.Glob(pattern)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, safetensor := range matches {
-			if ct, err := detectContentType(safetensor); err != nil {
-				return nil, err
-			} else if ct != contentType {
-				return nil, fmt.Errorf("invalid content type: expected %s for %s", ct, safetensor)
-			}
-		}
-
-		return matches, nil
-	}
-
-	var files []string
-	if st, _ := glob(filepath.Join(path, "model*.safetensors"), "application/octet-stream"); len(st) > 0 {
-		// safetensors files might be unresolved git lfs references; skip if they are
-		// covers model-x-of-y.safetensors, model.fp32-x-of-y.safetensors, model.safetensors
-		files = append(files, st...)
-	} else if st, _ := glob(filepath.Join(path, "adapters.safetensors"), "application/octet-stream"); len(st) > 0 {
-		// covers adapters.safetensors
-		files = append(files, st...)
-	} else if st, _ := glob(filepath.Join(path, "adapter_model.safetensors"), "application/octet-stream"); len(st) > 0 {
-		// covers adapter_model.safetensors
-		files = append(files, st...)
-	} else if pt, _ := glob(filepath.Join(path, "pytorch_model*.bin"), "application/zip"); len(pt) > 0 {
-		// pytorch files might also be unresolved git lfs references; skip if they are
-		// covers pytorch_model-x-of-y.bin, pytorch_model.fp32-x-of-y.bin, pytorch_model.bin
-		files = append(files, pt...)
-	} else if pt, _ := glob(filepath.Join(path, "consolidated*.pth"), "application/zip"); len(pt) > 0 {
-		// pytorch files might also be unresolved git lfs references; skip if they are
-		// covers consolidated.x.pth, consolidated.pth
-		files = append(files, pt...)
-	} else {
-		return nil, errModelNotFound
-	}
-
-	// add configuration files, json files are detected as text/plain
-	js, err := glob(filepath.Join(path, "*.json"), "text/plain")
-	if err != nil {
-		return nil, err
-	}
-	files = append(files, js...)
-
-	// bert models require a nested config.json
-	// TODO(mxyng): merge this with the glob above
-	js, err = glob(filepath.Join(path, "**/*.json"), "text/plain")
-	if err != nil {
-		return nil, err
-	}
-	files = append(files, js...)
-
-	if tks, _ := glob(filepath.Join(path, "tokenizer.model"), "application/octet-stream"); len(tks) > 0 {
-		// add tokenizer.model if it exists, tokenizer.json is automatically picked up by the previous glob
-		// tokenizer.model might be a unresolved git lfs reference; error if it is
-		files = append(files, tks...)
-	} else if tks, _ := glob(filepath.Join(path, "**/tokenizer.model"), "text/plain"); len(tks) > 0 {
-		// some times tokenizer.model is in a subdirectory (e.g. meta-llama/Meta-Llama-3-8B)
-		files = append(files, tks...)
-	}
-
-	return files, nil
-}
-
-func createBlob(cmd *cobra.Command, client *api.Client, path string, spinner *progress.Spinner) (string, error) {
+func createBlob(cmd *cobra.Command, client *api.Client, path string, digest string, p *progress.Progress) (string, error) {
 	realPath, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return "", err
@@ -358,18 +187,11 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, spinner *pr
 	}
 	fileSize := fileInfo.Size()
 
-	hash := sha256.New()
-	if _, err := io.Copy(hash, bin); err != nil {
-		return "", err
-	}
-
-	if _, err := bin.Seek(0, io.SeekStart); err != nil {
-		return "", err
-	}
-
 	var pw progressWriter
-	status := "transferring model data 0%"
-	spinner.SetMessage(status)
+	status := fmt.Sprintf("copying file %s 0%%", digest)
+	spinner := progress.NewSpinner(status)
+	p.Add(status, spinner)
+	defer spinner.Stop()
 
 	done := make(chan struct{})
 	defer close(done)
@@ -380,15 +202,14 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, spinner *pr
 		for {
 			select {
 			case <-ticker.C:
-				spinner.SetMessage(fmt.Sprintf("transferring model data %d%%", int(100*pw.n.Load()/fileSize)))
+				spinner.SetMessage(fmt.Sprintf("copying file %s %d%%", digest, int(100*pw.n.Load()/fileSize)))
 			case <-done:
-				spinner.SetMessage("transferring model data 100%")
+				spinner.SetMessage(fmt.Sprintf("copying file %s 100%%", digest))
 				return
 			}
 		}
 	}()
 
-	digest := fmt.Sprintf("sha256:%x", hash.Sum(nil))
 	if err = client.CreateBlob(cmd.Context(), digest, io.TeeReader(bin, &pw)); err != nil {
 		return "", err
 	}
