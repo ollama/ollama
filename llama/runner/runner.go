@@ -563,6 +563,7 @@ type Options struct {
 	MirostatEta      float32  `json:"mirostat_eta"`
 	PenalizeNewline  bool     `json:"penalize_nl"`
 	Stop             []string `json:"stop"`
+	ControlStrength  []string `json:"control_strength"`
 }
 
 type ImageData struct {
@@ -839,6 +840,7 @@ func (s *Server) loadModel(
 	params llama.ModelParams,
 	mpath string,
 	lpath multiLPath,
+	cvpath multiLPath,
 	ppath string,
 	kvSize int,
 	kvCacheType string,
@@ -865,6 +867,31 @@ func (s *Server) loadModel(
 			err := s.model.ApplyLoraFromFile(s.lc, path, 1.0, threads)
 			if err != nil {
 				panic(err)
+			}
+		}
+	}
+
+	if cvpath.String() != "" {
+		// format path=strength
+		for _, path := range cvpath {
+			parts := strings.Split(path, "=")
+			strength := float32(0.5) // Fallback to .5 if not provided
+			if len(parts) == 1 {
+				parts = strings.Split(path, ":")
+			}
+			if len(parts) == 2 {
+				path = parts[0] // We need to trim off the = part reguardless of if it is a valid float to prevent manipulation of the path (ie directory traversal)
+				strength_f64, err := strconv.ParseFloat(parts[1], 32)
+				if err == nil {
+					strength = float32(strength_f64)
+				}
+			}
+
+			slog.Debug("applying control vector", path, strength)
+
+			err := s.model.ApplyControlVectorFromFile(s.lc, path, strength, threads)
+			if err != nil {
+				slog.Debug("failed to apply control vector")
 			}
 		}
 	}
@@ -910,6 +937,9 @@ func Execute(args []string) error {
 
 	var lpaths multiLPath
 	fs.Var(&lpaths, "lora", "Path to lora layer file (can be specified multiple times)")
+
+	var cvpaths multiLPath
+	fs.Var(&cvpaths, "control-vector", "Path to control vector file in gguf format, followed by =<strength>, for example --control-vector /opt/myvec=.5 (can be specified multiple times)")
 
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "Runner usage\n")
@@ -969,7 +999,7 @@ func Execute(args []string) error {
 	}
 
 	server.ready.Add(1)
-	go server.loadModel(params, *mpath, lpaths, *ppath, *kvSize, *kvCacheType, *flashAttention, *threads, *multiUserCache)
+	go server.loadModel(params, *mpath, lpaths, cvpaths, *ppath, *kvSize, *kvCacheType, *flashAttention, *threads, *multiUserCache)
 
 	server.cond = sync.NewCond(&server.mu)
 
