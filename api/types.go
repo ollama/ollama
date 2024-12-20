@@ -103,12 +103,16 @@ type ChatRequest struct {
 	// Tools is an optional list of tools the model has access to.
 	Tools `json:"tools,omitempty"`
 
-	// DryRun when true will prepare and validate the request but stop before sending it to the model.
-	// This allows inspecting how the prompt would be constructed and what parameters would be used.
-	DryRun bool `json:"dry_run,omitempty"`
+	Debug *Debug `json:"debug,omitempty"`
+
+	Dry bool `json:"dry,omitempty"`
 
 	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
+}
+
+type Debug struct {
+	Include []string `json:"include,omitempty"`
 }
 
 type Tools []Tool
@@ -189,11 +193,12 @@ func (t *ToolFunction) String() string {
 // ChatResponse is the response returned by [Client.Chat]. Its fields are
 // similar to [GenerateResponse].
 type ChatResponse struct {
-	Model        string    `json:"model"`
-	CreatedAt    time.Time `json:"created_at"`
-	Message      Message   `json:"message"`
-	DoneReason   string    `json:"done_reason,omitempty"`
-	DryRunOutput string    `json:"dry_run_output,omitempty"`
+	Model      string    `json:"model"`
+	CreatedAt  time.Time `json:"created_at"`
+	Message    Message   `json:"message"`
+	DoneReason string    `json:"done_reason,omitempty"`
+
+	Debug map[string]any `json:"debug,omitempty"`
 
 	Done bool `json:"done"`
 
