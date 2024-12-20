@@ -13,3 +13,5 @@ test_data
 llama/build
 __debug_bin*
 llama/vendor
+ollama_chats.db
+gui_backup

@@ -326,11 +326,8 @@ func deleteChat(chatID int) {
 // makeMainUI creates the primary UI layout
 func makeMainUI(serverList *widget.List) fyne.CanvasObject {
 	chatHistory := createChatHistory()
-	messageInput, sendButton := createInputComponents()
 
-	uploadButton := widget.NewButton("+", func() {
-		dialog.ShowInformation("File Upload", "Feature to upload files will be added.", myWindow)
-	})
+	messageInput, uploadButton, sendButton := createInputComponents()
 
 	inputContainer := container.NewBorder(nil, nil, uploadButton, sendButton, messageInput)
 	messagePane := container.NewBorder(nil, inputContainer, nil, nil, chatHistory)
@@ -567,8 +564,8 @@ func centeredContainer(content fyne.CanvasObject) fyne.CanvasObject {
 	)
 }
 
-// createInputComponents creates the message input field and send button
-func createInputComponents() (*widget.Entry, *widget.Button) {
+// createInputComponents creates the message input field, upload button, and send button
+func createInputComponents() (*widget.Entry, *widget.Button, *widget.Button) {
 	messageInput := widget.NewEntry()
 	messageInput.SetPlaceHolder("Type your message here...")
 
@@ -589,7 +586,14 @@ func createInputComponents() (*widget.Entry, *widget.Button) {
 		sendMessage()
 	}
 
-	return messageInput, widget.NewButton("Send", sendMessage)
+	uploadButton := widget.NewButton("+", func() {
+		dialog.ShowInformation("File Upload", "Feature to upload files will be added.", myWindow)
+	})
+
+	sendButton := widget.NewButton("Send", sendMessage)
+
+	// Return all three so we can arrange them in makeMainUI()
+	return messageInput, uploadButton, sendButton
 }
 
 // createChatHistory sets up the scrollable chat history
