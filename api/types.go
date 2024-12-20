@@ -295,10 +295,21 @@ type EmbeddingResponse struct {
 
 // CreateRequest is the request passed to [Client.Create].
 type CreateRequest struct {
-	Model     string `json:"model"`
+	Model    string `json:"model"`
+	Stream   *bool  `json:"stream,omitempty"`
+	Quantize string `json:"quantize,omitempty"`
+
+	From       string           `json:"from,omitempty"`
+	FromModel  *CreateFromModel `json:"from_model,omitempty"`
+	Adapters   *CreateFromModel `json:"adapters,omitempty"`
+	Template   string           `json:"template,omitempty"`
+	License    any              `json:"license,omitempty"`
+	System     string           `json:"system,omitempty"`
+	Parameters map[string]any   `json:"parameters,omitempty"`
+	Messages   []Message        `json:"messages,omitempty"`
+
+	// Deprecated: set with the other request options
 	Modelfile string `json:"modelfile"`
-	Stream    *bool  `json:"stream,omitempty"`
-	Quantize  string `json:"quantize,omitempty"`
 
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
@@ -308,6 +319,11 @@ type CreateRequest struct {
 
 	// Deprecated: use Quantize instead
 	Quantization string `json:"quantization,omitempty"`
+}
+
+type CreateFromModel struct {
+	Type  string            `json:"type"`
+	Files map[string]string `json:"files"`
 }
 
 // DeleteRequest is the request passed to [Client.Delete].
