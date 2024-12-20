@@ -36,6 +36,13 @@ Hardcoded exe path and main.go to avoid compiling after UI changes. Will integra
 In the top directory of this repo, run:
 
 
+To bypass OllamaSetup.exe and run the app directly, use:
+
+```
+go build -o C:/Users/<username>/AppData/Local/Programs/Ollama/DemoGUI.exe gui/main.go
+```
+add your <username> to the path above. Replace `<username>` with your actual username.
+
 ```
 go build -o gui/DemoGUI.exe gui/main.go
 ```

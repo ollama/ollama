@@ -59,32 +59,29 @@ func initializeDB() {
 	}
 
 	// Create tables if they do not exist
-	createChatsTable := `
+	execSQL(`
 	CREATE TABLE IF NOT EXISTS chats (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		title TEXT,
-		hash TEXT
+		title TEXT NOT NULL,
+		hash TEXT NOT NULL
 	);
-	`
+	`)
 
-	createMessagesTable := `
+	execSQL(`
 	CREATE TABLE IF NOT EXISTS messages (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		chat_id INTEGER,
-		role TEXT,
-		content TEXT,
+		chat_id INTEGER NOT NULL,
+		role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+		content TEXT NOT NULL,
 		FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE
 	);
-	`
+	`)
+}
 
-	_, err = db.Exec(createChatsTable)
+func execSQL(query string) {
+	_, err := db.Exec(query)
 	if err != nil {
-		log.Fatalf("Failed to create chats table: %v", err)
-	}
-
-	_, err = db.Exec(createMessagesTable)
-	if err != nil {
-		log.Fatalf("Failed to create messages table: %v", err)
+		log.Fatalf("Failed to execute SQL: %v", err)
 	}
 }
 
@@ -102,49 +99,98 @@ func saveCurrentChat() {
 	}
 	hash := hashChat(currentChat)
 
-	// Check if chat already exists in DB
-	var existingHash string
-	err := db.QueryRow("SELECT hash FROM chats WHERE id = ?", currentChatID).Scan(&existingHash)
+	stmt, err := db.Prepare("SELECT hash FROM chats WHERE id = ?")
+	if err != nil {
+		log.Printf("Failed to prepare statement: %v", err)
+		return
+	}
+	defer stmt.Close()
 
+	var existingHash string
+	err = stmt.QueryRow(currentChatID).Scan(&existingHash)
 	if err == sql.ErrNoRows {
-		// Insert new chat
 		title := fmt.Sprintf("Chat %d", getNextChatNumber())
-		res, err := db.Exec("INSERT INTO chats (title, hash) VALUES (?, ?)", title, hash)
-		if err != nil {
-			log.Printf("Failed to insert new chat: %v", err)
-			return
-		}
-		newID, _ := res.LastInsertId()
-		currentChatID = int(newID)
+		insertChat(title, hash)
 	} else if err != nil {
 		log.Printf("Error checking chat: %v", err)
-		return
-	} else {
-		// Existing chat, update hash if needed
-		if existingHash != hash {
-			_, err := db.Exec("UPDATE chats SET hash = ? WHERE id = ?", hash, currentChatID)
-			if err != nil {
-				log.Printf("Failed to update chat hash: %v", err)
-			}
-		}
+	} else if existingHash != hash {
+		updateChatHash(hash)
 	}
 
-	// Delete old messages for this chat
-	_, err = db.Exec("DELETE FROM messages WHERE chat_id = ?", currentChatID)
+	deleteOldMessages(currentChatID)
+	insertMessages(currentChat)
+	updateSidebar()
+}
+
+func insertChat(title string, hash string) {
+	stmt, err := db.Prepare("INSERT INTO chats (title, hash) VALUES (?, ?)")
+	if err != nil {
+		log.Printf("Failed to prepare insert chat statement: %v", err)
+		return
+	}
+	defer stmt.Close()
+
+	res, err := stmt.Exec(title, hash)
+	if err != nil {
+		log.Printf("Failed to insert new chat: %v", err)
+		return
+	}
+	newID, _ := res.LastInsertId()
+	currentChatID = int(newID)
+}
+
+func updateChatHash(hash string) {
+	stmt, err := db.Prepare("UPDATE chats SET hash = ? WHERE id = ?")
+	if err != nil {
+		log.Printf("Failed to prepare update chat hash statement: %v", err)
+		return
+	}
+	defer stmt.Close()
+
+	_, err = stmt.Exec(hash, currentChatID)
+	if err != nil {
+		log.Printf("Failed to update chat hash: %v", err)
+	}
+}
+
+func deleteOldMessages(chatID int) {
+	stmt, err := db.Prepare("DELETE FROM messages WHERE chat_id = ?")
+	if err != nil {
+		log.Printf("Failed to prepare delete messages statement: %v", err)
+		return
+	}
+	defer stmt.Close()
+
+	_, err = stmt.Exec(chatID)
 	if err != nil {
 		log.Printf("Failed to delete old messages: %v", err)
 	}
+	updateSidebar()
+}
 
-	// Insert updated messages
-	for _, line := range currentChat {
+func insertMessages(messages []string) {
+	stmt, err := db.Prepare("INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)")
+	if err != nil {
+		log.Printf("Failed to prepare insert messages statement: %v", err)
+		return
+	}
+	defer stmt.Close()
+
+	for _, line := range messages {
 		role, content := parseRoleAndContent(line)
-		_, err := db.Exec("INSERT INTO messages (chat_id, role, content) VALUES (?, ?, ?)", currentChatID, role, content)
+		if !isValidRole(role) {
+			log.Printf("Invalid role detected: %s", role)
+			continue
+		}
+		_, err := stmt.Exec(currentChatID, role, content)
 		if err != nil {
 			log.Printf("Failed to insert message: %v", err)
 		}
 	}
+}
 
-	updateSidebar()
+func isValidRole(role string) bool {
+	return role == "user" || role == "assistant"
 }
 
 func hashChat(chat []string) string {
@@ -164,7 +210,14 @@ func loadChatHistory(chatID int) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	rows, err := db.Query("SELECT role, content FROM messages WHERE chat_id = ?", chatID)
+	stmt, err := db.Prepare("SELECT role, content FROM messages WHERE chat_id = ?")
+	if err != nil {
+		log.Printf("Failed to prepare statement: %v", err)
+		return
+	}
+	defer stmt.Close()
+
+	rows, err := stmt.Query(chatID)
 	if err != nil {
 		log.Printf("Failed to load chat messages: %v", err)
 		return
@@ -183,7 +236,23 @@ func loadChatHistory(chatID int) {
 	chatData.Set(messages)
 }
 
-// updateSidebar refreshes the chat list in the sidebar
+func getNextChatNumber() int {
+	var count int
+	stmt, err := db.Prepare("SELECT COUNT(*) FROM chats")
+	if err != nil {
+		log.Printf("Failed to prepare count chats statement: %v", err)
+		return 1
+	}
+	defer stmt.Close()
+
+	err = stmt.QueryRow().Scan(&count)
+	if err != nil {
+		log.Printf("Failed to count chats: %v", err)
+		return 1
+	}
+	return count + 1
+}
+
 func updateSidebar() {
 	chatsList, err := loadChatList()
 	if err != nil {
@@ -264,22 +333,18 @@ func loadChatList() ([]chatRecord, error) {
 	return result, nil
 }
 
-func getNextChatNumber() int {
-	// Count how many chats are in DB
-	var count int
-	err := db.QueryRow("SELECT COUNT(*) FROM chats").Scan(&count)
-	if err != nil {
-		log.Printf("Failed to count chats: %v", err)
-	}
-	return count + 1
-}
-
 func handleNewChatClick() {
 	saveCurrentChat()
 
-	// Create a new chat
 	newTitle := fmt.Sprintf("Chat %d", getNextChatNumber())
-	res, err := db.Exec("INSERT INTO chats (title, hash) VALUES (?, ?)", newTitle, "")
+	stmt, err := db.Prepare("INSERT INTO chats (title, hash) VALUES (?, ?)")
+	if err != nil {
+		log.Printf("Failed to prepare new chat statement: %v", err)
+		return
+	}
+	defer stmt.Close()
+
+	res, err := stmt.Exec(newTitle, "")
 	if err != nil {
 		log.Printf("Failed to create new chat: %v", err)
 		return
@@ -299,9 +364,15 @@ func handleSavedChatClick(chatID int) {
 	loadChatHistory(chatID)
 }
 
-// Delete a chat from the database
 func deleteChat(chatID int) {
-	_, err := db.Exec("DELETE FROM chats WHERE id = ?", chatID)
+	stmt, err := db.Prepare("DELETE FROM chats WHERE id = ?")
+	if err != nil {
+		log.Printf("Failed to prepare delete chat statement: %v", err)
+		return
+	}
+	defer stmt.Close()
+
+	_, err = stmt.Exec(chatID)
 	if err != nil {
 		log.Printf("Failed to delete chat: %v", err)
 	}
@@ -364,7 +435,6 @@ func rebuildChatHistory() {
 	chatContent.Refresh()
 }
 
-// parseRoleAndContent splits a string like "assistant: Hello" into ("assistant", "Hello")
 func parseRoleAndContent(line string) (string, string) {
 	parts := strings.SplitN(line, ":", 2)
 	if len(parts) != 2 {
@@ -376,7 +446,6 @@ func parseRoleAndContent(line string) (string, string) {
 	return role, content
 }
 
-// loadAppIcon loads the application icon
 func loadAppIcon(relativePath string) fyne.Resource {
 	absPath, err := filepath.Abs(relativePath)
 	if err != nil {
