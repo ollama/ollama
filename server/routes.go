@@ -1415,6 +1415,10 @@ func (s *Server) PsHandler(c *gin.Context) {
 
 	for _, v := range s.sched.loaded {
 		model := v.model
+		contextLength := -1
+		if kvData, err := getKVData(model.ModelPath, false); err == nil {
+			contextLength = int(kvData.ContextLength())
+		}
 		modelDetails := api.ModelDetails{
 			Format:            model.Config.ModelFormat,
 			Family:            model.Config.ModelFamily,
@@ -1424,13 +1428,18 @@ func (s *Server) PsHandler(c *gin.Context) {
 		}
 
 		mr := api.ProcessModelResponse{
-			Model:     model.ShortName,
-			Name:      model.ShortName,
-			Size:      int64(v.estimatedTotal),
-			SizeVRAM:  int64(v.estimatedVRAM),
-			Digest:    model.Digest,
-			Details:   modelDetails,
-			ExpiresAt: v.expiresAt,
+			Model:       model.ShortName,
+			Name:        model.ShortName,
+			Size:        int64(v.estimatedTotal),
+			SizeVRAM:    int64(v.estimatedVRAM),
+			Digest:      model.Digest,
+			Details:     modelDetails,
+			ExpiresAt:   v.expiresAt,
+			NumCtx:      v.llama.NumCtx() / v.numParallel,
+			MaxCtx:      contextLength,
+			NumGPU:      v.llama.NumGPU(),
+			MaxGPU:      v.llama.MaxGPU(),
+			NumParallel: v.numParallel,
 		}
 		// The scheduler waits to set expiresAt, so if a model is loading it's
 		// possible that it will be set to the unix epoch. For those cases, just

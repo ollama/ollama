@@ -408,13 +408,18 @@ type ListModelResponse struct {
 
 // ProcessModelResponse is a single model description in [ProcessResponse].
 type ProcessModelResponse struct {
-	Name      string       `json:"name"`
-	Model     string       `json:"model"`
-	Size      int64        `json:"size"`
-	Digest    string       `json:"digest"`
-	Details   ModelDetails `json:"details,omitempty"`
-	ExpiresAt time.Time    `json:"expires_at"`
-	SizeVRAM  int64        `json:"size_vram"`
+	Name        string       `json:"name"`
+	Model       string       `json:"model"`
+	Size        int64        `json:"size"`
+	Digest      string       `json:"digest"`
+	Details     ModelDetails `json:"details,omitempty"`
+	ExpiresAt   time.Time    `json:"expires_at"`
+	SizeVRAM    int64        `json:"size_vram"`
+	NumCtx      int          `json:"num_ctx"`
+	MaxCtx      int          `json:"max_ctx"`
+	NumGPU      int          `json:"num_gpu"`
+	MaxGPU      int          `json:"max_gpu"`
+	NumParallel int          `json:"num_parallel"`
 }
 
 type RetrieveModelResponse struct {
