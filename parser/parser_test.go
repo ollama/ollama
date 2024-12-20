@@ -10,10 +10,13 @@ import (
 	"testing"
 	"unicode/utf16"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/unicode"
+
+	"github.com/ollama/ollama/api"
 )
 
 func TestParseFileFile(t *testing.T) {
@@ -671,5 +674,84 @@ func TestParseMultiByte(t *testing.T) {
 
 			assert.Equal(t, expect, actual.Commands)
 		})
+	}
+}
+
+func TestCreateRequest(t *testing.T) {
+
+	cases := []struct {
+		input    string
+		expected *api.CreateRequest
+	}{
+		{
+			`FROM test`,
+			&api.CreateRequest{From: "test"},
+		},
+		{
+			`FROM test
+TEMPLATE some template
+`,
+			&api.CreateRequest{
+				From:     "test",
+				Template: "some template",
+			},
+		},
+		{
+			`FROM test
+LICENSE single license
+PARAMETER temperature 0.5
+MESSAGE user Hello
+`,
+			&api.CreateRequest{
+				From:       "test",
+				License:    []string{"single license"},
+				Parameters: map[string]any{"temperature": float32(0.5)},
+				Messages: []api.Message{
+					{Role: "user", Content: "Hello"},
+				},
+			},
+		},
+		{
+			`FROM test
+PARAMETER temperature 0.5
+PARAMETER top_k 1
+SYSTEM You are a bot.
+LICENSE license1
+LICENSE license2
+MESSAGE user Hello there!
+MESSAGE assistant Hi! How are you?
+`,
+			&api.CreateRequest{
+				From:       "test",
+				License:    []string{"license1", "license2"},
+				System:     "You are a bot.",
+				Parameters: map[string]any{"temperature": float32(0.5), "top_k": int64(1)},
+				Messages: []api.Message{
+					{Role: "user", Content: "Hello there!"},
+					{Role: "assistant", Content: "Hi! How are you?"},
+				},
+			},
+		},
+	}
+
+	for _, c := range cases {
+		s, err := unicode.UTF8.NewEncoder().String(c.input)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		p, err := ParseFile(strings.NewReader(s))
+		if err != nil {
+			t.Error(err)
+		}
+
+		actual, err := p.CreateRequest()
+		if err != nil {
+			t.Error(err)
+		}
+
+		if diff := cmp.Diff(actual, c.expected); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
 	}
 }

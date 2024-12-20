@@ -130,10 +130,17 @@ func (f File) CreateRequest() (*api.CreateRequest, error) {
 				}
 			}
 		}
-		req.Parameters = params
 	}
 
-	fmt.Printf("req = %#v\n", req.Adapters)
+	if len(params) > 0 {
+		req.Parameters = params
+	}
+	if len(messages) > 0 {
+		req.Messages = messages
+	}
+	if len(licenses) > 0 {
+		req.License = licenses
+	}
 
 	return req, nil
 }
