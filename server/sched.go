@@ -222,11 +222,6 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					} else if loadedCount == 0 {
 						// No models loaded. Load the model but prefer the best fit.
 						slog.Debug("loading first model", "model", pending.model.ModelPath)
-						// Bug fix vscode continue extension issue for bad configuration. test case 1: Detect nomic-embedded-text model as first model waiting...
-						if strings.Contains(pending.model.ModelPath, "sha256-970aa74c0a90ef7482477cf803618e776e173c007bf957f635f1015bfcfef0e6") {
-							slog.Info("embedding model detected as first model waiting...", "model", pending.model.ModelPath)
-							break
-						}
 						g := pickBestFullFitByLibrary(pending, ggml, gpus, &numParallel)
 						if g != nil {
 							gpus = g
