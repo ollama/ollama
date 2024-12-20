@@ -258,6 +258,9 @@ type EmbedRequest struct {
 
 	Truncate *bool `json:"truncate,omitempty"`
 
+	// Apply normalization to the output (default: true)
+	Normalize *bool `json:"normalize,omitempty"`
+
 	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
 }
@@ -283,6 +286,9 @@ type EmbeddingRequest struct {
 	// KeepAlive controls how long the model will stay loaded in memory following
 	// this request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
+
+	// Apply normalization to the output (default: false)
+	Normalize *bool `json:"normalize,omitempty"`
 
 	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
