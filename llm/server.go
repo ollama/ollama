@@ -674,21 +674,6 @@ type CompletionResponse struct {
 }
 
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
-	if err := s.sem.Acquire(ctx, 1); err != nil {
-		if errors.Is(err, context.Canceled) {
-			slog.Info("aborting completion request due to client closing the connection")
-		} else {
-			slog.Error("Failed to acquire semaphore", "error", err)
-		}
-		return err
-	}
-	defer s.sem.Release(1)
-
-	// put an upper limit on num_predict to avoid the model running on forever
-	if req.Options.NumPredict < 0 || req.Options.NumPredict > 10*s.options.NumCtx {
-		req.Options.NumPredict = 10 * s.options.NumCtx
-	}
-
 	request := map[string]any{
 		"prompt":            req.Prompt,
 		"stream":            true,
@@ -714,28 +699,49 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		"cache_prompt":      true,
 	}
 
-	// Make sure the server is ready
-	status, err := s.getServerStatusRetry(ctx)
-	if err != nil {
-		return err
-	} else if status != ServerStatusReady {
-		return fmt.Errorf("unexpected server status: %s", status.ToString())
-	}
-
 	if len(req.Format) > 0 {
-		switch {
-		case bytes.Equal(req.Format, []byte(`"json"`)):
+		switch string(req.Format) {
+		case `null`, `""`:
+			// Field was set, but "missing" a value. We accept
+			// these as "not set".
+			break
+		case `"json"`:
 			request["grammar"] = grammarJSON
-		case bytes.HasPrefix(req.Format, []byte("{")):
+		default:
+			if req.Format[0] != '{' {
+				return fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema object", req.Format)
+			}
+
 			// User provided a JSON schema
 			g := llama.SchemaToGrammar(req.Format)
 			if g == nil {
 				return fmt.Errorf("invalid JSON schema in format")
 			}
 			request["grammar"] = string(g)
-		default:
-			return errors.New(`invalid format: expected "json" or a JSON schema`)
 		}
+	}
+
+	if err := s.sem.Acquire(ctx, 1); err != nil {
+		if errors.Is(err, context.Canceled) {
+			slog.Info("aborting completion request due to client closing the connection")
+		} else {
+			slog.Error("Failed to acquire semaphore", "error", err)
+		}
+		return err
+	}
+	defer s.sem.Release(1)
+
+	// put an upper limit on num_predict to avoid the model running on forever
+	if req.Options.NumPredict < 0 || req.Options.NumPredict > 10*s.options.NumCtx {
+		req.Options.NumPredict = 10 * s.options.NumCtx
+	}
+
+	// Make sure the server is ready
+	status, err := s.getServerStatusRetry(ctx)
+	if err != nil {
+		return err
+	} else if status != ServerStatusReady {
+		return fmt.Errorf("unexpected server status: %s", status.ToString())
 	}
 
 	// Handling JSON marshaling with special characters unescaped.
