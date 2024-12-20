@@ -30,7 +30,7 @@ import (
 const (
 	modelName   = "llama3.1"
 	httpTimeout = 30 * time.Second
-	appIconPath = "../app/assets/app.ico"
+	appIconPath = "app.ico"
 	dbFile      = "ollama_chats.db"
 )
 
@@ -469,6 +469,7 @@ func initializeApp() {
 	if appIcon != nil {
 		myWindow.SetIcon(appIcon)
 	}
+
 	createMenuBar()
 
 	chatData = binding.NewStringList()
@@ -564,28 +565,34 @@ func createMenuBar() {
 	})
 
 	menu := fyne.NewMainMenu(
-		fyne.NewMenu("Models",
-			fyne.NewMenuItem("Load Model", func() {
-				dialog.ShowInformation("Load Model", "Feature to load a model will be added.", myWindow)
-			}),
-			fyne.NewMenuItem("Switch Model", func() {
-				dialog.ShowInformation("Switch Model", "Feature to switch models will be added.", myWindow)
-			}),
-		),
-		fyne.NewMenu("Tools",
-			fyne.NewMenuItem("Token Counter", func() {
-				dialog.ShowInformation("Token Counter", "Token counter tool coming soon.", myWindow)
-			}),
-			fyne.NewMenuItem("Export Chat", func() {
-				dialog.ShowInformation("Export Chat", "Export functionality will be added.", myWindow)
-			}),
-		),
 		fyne.NewMenu("Settings",
 			fyne.NewMenuItem("Preferences", func() {
 				dialog.ShowInformation("Preferences", "Settings menu under construction.", myWindow)
 			}),
 			fyne.NewMenuItem("About", func() {
 				dialog.ShowInformation("About", "Ollama Chat App Version 1.0", myWindow)
+			}),
+		),
+		fyne.NewMenu("Models",
+			fyne.NewMenuItem("Models", func() {
+				dialog.ShowInformation("View Models", "Feature to view and edit models will be added.", myWindow)
+			}),
+			fyne.NewMenuItem("Download Model", func() {
+				dialog.ShowInformation("Download Model", "Feature to download models will be added.", myWindow)
+			}),
+		),
+		fyne.NewMenu("Tools",
+			fyne.NewMenuItem("Tools", func() {
+				dialog.ShowInformation("Tools", "Tools coming soon.", myWindow)
+			}),
+			fyne.NewMenuItem("Create Tool", func() {
+				dialog.ShowInformation("Create Tool", "Create Tool Feature coming soon.", myWindow)
+			}),
+			fyne.NewMenuItem("Built in Tools", func() {
+				dialog.ShowInformation("Built in Tools", "Built in tools will be added.", myWindow)
+			}),
+			fyne.NewMenuItem("Export Chat", func() {
+				dialog.ShowInformation("Export Chat", "Export functionality will be added.", myWindow)
 			}),
 		),
 		fyne.NewMenu("Theme", themeToggle),
@@ -610,19 +617,26 @@ func createChatBubble(message string, isUser bool) *fyne.Container {
 	}
 }
 
-// canvasWithBackgroundAndCenteredInput creates a styled background
+// canvasWithBackgroundAndCenteredInput creates a styled background with rounded corners
 func canvasWithBackgroundAndCenteredInput(content fyne.CanvasObject, isUser bool) fyne.CanvasObject {
 	var bgColor color.Color
 	if isUser {
-		bgColor = color.RGBA{R: 70, G: 130, B: 180, A: 255}
+		bgColor = color.Gray{Y: 128} // Gray color for user background
 	} else {
 		bgColor = color.Transparent
 	}
 
-	background := canvas.NewRectangle(bgColor)
-	background.SetMinSize(fyne.NewSize(600, content.MinSize().Height+20))
+	// Create a rounded rectangle instead of using circles
+	roundedRect := canvas.NewRectangle(bgColor)
+	roundedRect.SetMinSize(fyne.NewSize(600, content.MinSize().Height+20))
+	roundedRect.StrokeColor = bgColor
+	roundedRect.StrokeWidth = 0
 
-	return centeredContainer(container.NewStack(background, content))
+	// Set CornerRadius (custom container for simulation)
+	roundedRect.CornerRadius = 10 // Adjust for desired corner rounding
+
+	// Combine the background with content
+	return centeredContainer(container.NewStack(roundedRect, content))
 }
 
 func centeredContainer(content fyne.CanvasObject) fyne.CanvasObject {

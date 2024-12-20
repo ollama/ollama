@@ -52,6 +52,9 @@ go build -o gui/DemoGUI.exe gui/main.go
 To bypass OllamaSetup.exe and run the app directly testing the tray menu functionality, use:
 
 add your username to the path below. Replace `<username>` with your actual username.
+!! If DemoGUI.exe exists in the AppData directory, it will be overwritten by this command. !!
+!! If DemoGUI.exe is running when you run this command, a corrupted executable file will be created and need to be deleted the app may not function properly. !!
+
 
 ```
 go build -o C:/Users/<username>/AppData/Local/Programs/Ollama/DemoGUI.exe gui/main.go
