@@ -177,48 +177,26 @@ func parseFromFile(ctx context.Context, command string, baseLayers []*layerGGML,
 		return nil, fmt.Errorf("unsupported content type: %s", contentType)
 	}
 
-	stat, err := file.Stat()
+	ggml, _, err := llm.DecodeGGML(file, 0)
 	if err != nil {
 		return nil, err
 	}
 
-	var offset int64
-	for offset < stat.Size() {
-		ggml, n, err := llm.DecodeGGML(file, 0)
-		if errors.Is(err, io.EOF) {
-			break
-		} else if err != nil {
-			return nil, err
-		}
-
-		mediatype := "application/vnd.ollama.image.model"
-		if ggml.Name() == "ggla" || ggml.KV().Kind() == "adapter" {
-			mediatype = "application/vnd.ollama.image.adapter"
-		}
-
-		if _, ok := ggml.KV()[fmt.Sprintf("%s.vision.block_count", ggml.KV().Architecture())]; ok || ggml.KV().Kind() == "projector" {
-			mediatype = "application/vnd.ollama.image.projector"
-		}
-
-		var layer Layer
-		if digest != "" && n == stat.Size() && offset == 0 {
-			layer, err = NewLayerFromLayer(digest, mediatype, file.Name())
-			if err != nil {
-				slog.Debug("could not create new layer from layer", "error", err)
-			}
-		}
-
-		// Fallback to creating layer from file copy (either NewLayerFromLayer failed, or digest empty/n != stat.Size())
-		if layer.Digest == "" {
-			layer, err = NewLayer(io.NewSectionReader(file, offset, n), mediatype)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		layers = append(layers, &layerGGML{layer, ggml})
-		offset = n
+	mediatype := "application/vnd.ollama.image.model"
+	if ggml.Name() == "ggla" || ggml.KV().Kind() == "adapter" {
+		mediatype = "application/vnd.ollama.image.adapter"
 	}
+
+	if _, ok := ggml.KV()[fmt.Sprintf("%s.vision.block_count", ggml.KV().Architecture())]; ok || ggml.KV().Kind() == "projector" {
+		mediatype = "application/vnd.ollama.image.projector"
+	}
+
+	layer, err := NewLayerFromLayer(digest, mediatype, file.Name())
+	if err != nil {
+		slog.Debug("could not create new layer from layer", "error", err)
+	}
+
+	layers = append(layers, &layerGGML{layer, ggml})
 
 	return detectChatTemplate(layers)
 }
