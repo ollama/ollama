@@ -134,17 +134,38 @@ func keyValue[T string | uint32 | uint64 | float32 | *array](kv KV, key string, 
 }
 
 type Tensors struct {
-	Items  []*Tensor
+	items  []*Tensor
 	Offset uint64
+}
+
+func (s Tensors) Items(prefix ...string) []*Tensor {
+	if len(prefix) == 0 {
+		return s.items
+	}
+
+	var items []*Tensor
+	for _, t := range s.items {
+		if strings.HasPrefix(t.Name, prefix[0]) {
+			items = append(items, t)
+		}
+	}
+
+	return items
 }
 
 func (ts Tensors) Layers() map[string]Layer {
 	layers := make(map[string]Layer)
-	for _, t := range ts.Items {
+	for _, t := range ts.items {
 		parts := strings.Split(t.Name, ".")
-		if parts[0] == "blk" {
-			// join first and second part, e.g. blk.%d
-			parts = append([]string{fmt.Sprintf("%s.%s", parts[0], parts[1])}, parts[2:]...)
+		if i := slices.Index(parts, "blk"); i > 0 {
+			parts = append([]string{
+				strings.Join(parts[:i], "."),
+				strings.Join(parts[i:i+2], "."),
+			}, parts[i+2:]...)
+		} else if i == 0 {
+			parts = append([]string{
+				strings.Join(parts[i:i+2], "."),
+			}, parts[i+2:]...)
 		}
 
 		if _, ok := layers[parts[0]]; !ok {

@@ -111,7 +111,7 @@ func (llm *gguf) KV() KV {
 
 func (llm *gguf) Tensors() Tensors {
 	return Tensors{
-		Items:  llm.tensors,
+		items:  llm.tensors,
 		Offset: llm.tensorOffset,
 	}
 }

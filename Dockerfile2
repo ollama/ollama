@@ -1,0 +1,66 @@
+ARG CUDA_11_VERSION=11.3
+ARG CUDA_12_VERSION=12.4
+ARG ROCM_VERSION=6.1.2
+ARG JETPACK_5_VERSION=r35.4.1
+ARG JETPACK_6_VERSION=r36.2.0
+ARG CMAKE_VERSION=3.31.2
+
+FROM --platform=linux/amd64 rocm/dev-centos-7:${ROCM_VERSION}-complete AS base
+ARG CMAKE_VERSION
+RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-x86_64.tar.gz | tar xz -C /usr --strip-components 1
+RUN sed -i -e 's/mirror.centos.org/vault.centos.org/g' -e 's/^#.*baseurl=http/baseurl=http/g' -e 's/^mirrorlist=http/#mirrorlist=http/g' /etc/yum.repos.d/*.repo \
+    && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-rhel7.repo
+
+# FROM --platform=linux/arm64 rockylinux:8 AS base
+# ARG CMAKE_VERSION
+# RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-aarch64.tar.gz | tar xz -C /usr --strip-components 1
+# RUN yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/sbsa/cuda-rhel8.repo
+
+FROM base AS amd64
+ARG CUDA_11_VERSION
+ARG CUDA_12_VERSION
+RUN yum install -y cuda-toolkit-${CUDA_11_VERSION//./-} \
+    && yum install -y cuda-toolkit-${CUDA_12_VERSION//./-}
+COPY CMakeLists.txt CMakeLists.txt
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+
+FROM --platform=linux/amd64 amd64 AS cuda_11
+ENV PATH=/usr/local/cuda-${CUDA_11_VERSION}/bin:$PATH
+RUN cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES="50;52;53;60;61;62;70;72;75;80;86"
+RUN cmake --build build --target ggml-cuda -j
+
+FROM --platform=linux/amd64 amd64 AS cuda_12
+ENV PATH=/usr/local/cuda-${CUDA_12_VERSION}/bin:$PATH
+RUN cmake -S . -B build -DCMAKE_CUDA_ARCHITECTURES="60;61;62;70;72;75;80;86;87;89;90;90a"
+RUN cmake --build build --target ggml-cuda -j
+
+FROM --platform=linux/amd64 amd64 AS rocm
+RUN cmake -S . -B build -DCMAKE_HIP_ARCHITECTURES="gfx900;gfx940;gfx941;gfx942;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102"
+RUN cmake --build build --target ggml-hip -j
+
+FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK_5_VERSION} AS jetpack_5
+ARG CMAKE_VERSION
+RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-aarch64.tar.gz | tar xz -C /usr --strip-components 1
+COPY CMakeLists.txt .
+COPY ml/backend/ggml/ggml .
+RUN cmake -S . -B build \
+    -DCMAKE_CUDA_ARCHITECTURES="72;87"
+RUN cmake --build build --target ggml-cuda
+
+FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK_6_VERSION} AS jetpack_6
+ARG CMAKE_VERSION
+RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/cmake-${CMAKE_VERSION}-linux-aarch64.tar.gz | tar xz -C /usr --strip-components 1
+COPY CMakeLists.txt .
+COPY ml/backend/ggml/ggml .
+RUN cmake -S . -B build \
+    -DCMAKE_CUDA_ARCHITECTURES="87"
+RUN cmake --build build --target ggml-cuda
+
+FROM --platform=linux/amd64 golang:1.23
+COPY --from=cuda_11 build/ml/backend/ggml/ggml/src/ggml-cuda/libggml-cuda.so libggml-cuda-11.so
+COPY --from=cuda_12 build/ml/backend/ggml/ggml/src/ggml-cuda/libggml-cuda.so libggml-cuda-12.so
+COPY --from=rocm build/ml/backend/ggml/ggml/src/ggml-hip/libggml-hip.so libggml-hip.so
+
+# FROM --platform=linux/arm64 golang:1.23
+# COPY --from=jetpack_5 build/ml/backend/ggml/ggml/src/ggml-cuda/libggml-cuda.so libggml-cuda-jetpack-5.so
+# COPY --from=jetpack_6 build/ml/backend/ggml/ggml/src/ggml-cuda/libggml-cuda.so libggml-cuda-jetpack-6.so
