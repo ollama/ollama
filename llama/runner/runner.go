@@ -217,13 +217,14 @@ func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 }
 
 type DraftModelParams struct {
-	ModelPath    string
-	GPUDevs      string
-	NumGPULayers int
-	MaxTokens    int
-	MinTokens    int
-	PMin         float32
-	CtxSize      int
+	modelPath    string
+	mainGPU      int
+	numGPULayers int
+	maxTokens    int
+	minTokens    int
+	pMin         float32
+	ctxSize      int
+	tensorSplit  []float32
 }
 
 type Server struct {
@@ -581,7 +582,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		}
 
 		// determine the max draft that fits
-		draftMax := s.dparams.MaxTokens
+		draftMax := s.dparams.maxTokens
 		// note: seq.cache.Inputs does not yet contain the `currrentToken` which was
 		// sampled and processed before. also, need to leave space for 1 extra token to
 		// allow context shifts
@@ -591,20 +592,20 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		}
 		slog.Debug("speculative decoding", "sequence idx", i, "max possible draft", draftMax)
 
-		if draftMax < s.dparams.MinTokens {
+		if draftMax < s.dparams.minTokens {
 			slog.Debug("speculative decoding - max possible draft is too small", "sequence idx", i)
 			continue
 		}
 
-		s.spec[i].SetPMin(s.dparams.PMin)
+		s.spec[i].SetPMin(s.dparams.pMin)
 		s.spec[i].SetNDraft(draftMax)
-		s.spec[i].SetNReuse(s.dparams.CtxSize - draftMax)
+		s.spec[i].SetNReuse(s.dparams.ctxSize - draftMax)
 		draft, err := s.spec[i].GenDraft(cachedTokens, currentToken)
 		if err != nil {
 			panic(err)
 		}
 		// ignore small drafts
-		if s.dparams.MinTokens > len(draft) {
+		if s.dparams.minTokens > len(draft) {
 			slog.Debug("speculative decoding - ignoring small draft", "sequence idx", i, "draft size", len(draft))
 			continue
 		}
@@ -995,25 +996,25 @@ func (s *Server) loadModel(
 		panic(err)
 	}
 
-	if s.dparams.ModelPath != "" {
+	if s.dparams.modelPath != "" {
 		dmParams := params
-		// TODO: override more parameters?
-		// TODO: need to respect GPU settings for draft models!
-		dmParams.NumGpuLayers = s.dparams.NumGPULayers
+		dmParams.NumGpuLayers = s.dparams.numGPULayers
+		dmParams.MainGpu = s.dparams.mainGPU
+		dmParams.TensorSplit = s.dparams.tensorSplit
 
-		s.dmodel, err = llama.LoadModelFromFile(s.dparams.ModelPath, dmParams)
+		s.dmodel, err = llama.LoadModelFromFile(s.dparams.modelPath, dmParams)
 		if err != nil {
 			panic(err)
 		}
 		dkvSize := kvSize
 		// use context size of target model in case user didn't set a draft model context size
-		if s.dparams.CtxSize > 0 {
-			dkvSize = s.dparams.CtxSize
+		if s.dparams.ctxSize > 0 {
+			dkvSize = s.dparams.ctxSize
 		} else {
-			s.dparams.CtxSize = dkvSize
+			s.dparams.ctxSize = dkvSize
 		}
 		dkvCacheType := "" // force F16 KV cache for extra performance
-		s.dctxParams = llama.NewContextParams(dkvSize, dkvSize, 1, threads, flashAttention, dkvCacheType)
+		s.dctxParams = llama.NewContextParams(dkvSize, dkvSize, 1, threads, false, dkvCacheType)
 
 		// need to keep the draft model state separate for each parallel request
 		// also, initialize everything right after model loading for performance reasons
@@ -1038,7 +1039,7 @@ func (s *Server) loadModel(
 			if err != nil {
 				panic(err)
 			}
-			sbatch, err = llama.NewBatch(s.dparams.MaxTokens+1, 1, 0)
+			sbatch, err = llama.NewBatch(s.dparams.maxTokens+1, 1, 0)
 			if err != nil {
 				panic(err)
 			}
@@ -1075,12 +1076,13 @@ func Execute(args []string) error {
 	tensorSplit := fs.String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
 	multiUserCache := fs.Bool("multiuser-cache", false, "optimize input cache algorithm for multiple users")
 	draftMPath := fs.String("draft-model", "", "draft model for speculative decoding")
-	draftGPULayers := fs.Int("draft-gpu-layers", 99, "number of layers to store in VRAM for the draft model")
-	draftGPUDevs := fs.String("draft-gpu-devs", "", "comma-separated list of devices to use for offloading the draft model (default: same GPU devices as available for target model)")
+	draftGPULayers := fs.Int("draft-gpu-layers", 0, "Number of draft model layers to offload to GPU")
+	draftMainGPU := fs.Int("draft-main-gpu", 0, "Main GPU for draft model")
 	draftCtxSize := fs.Int("draft-ctx-size", 0, "size of the prompt context for the draft model (default: 0, 0 = use same as target model)")
 	draftPMin := fs.String("draft-p-min", "0.9", "minimum speculative decoding probability (greedy) (default: 0.9)")
 	draftMin := fs.Int("draft-min", 5, "minimum number of draft tokens to use for speculative decoding (default: 5)")
 	draftMax := fs.Int("draft-max", 16, "number of tokens to draft for speculative decoding (default: 16)")
+	draftTensorSplit := fs.String("draft-tensor-split", "", "fraction of the draft model to offload to each GPU, comma-separated list of proportions")
 
 	var lpaths multiLPath
 	fs.Var(&lpaths, "lora", "Path to lora layer file (can be specified multiple times)")
@@ -1130,6 +1132,16 @@ func Execute(args []string) error {
 			tensorSplitFloats = append(tensorSplitFloats, float32(f))
 		}
 	}
+	var draftTensorSplitFloats []float32
+	if *draftTensorSplit != "" {
+		stringFloats := regexp.MustCompile(",").Split(*draftTensorSplit, -1)
+
+		draftTensorSplitFloats = make([]float32, 0, len(stringFloats))
+		for _, s := range stringFloats {
+			f, _ := strconv.ParseFloat(s, 32)
+			draftTensorSplitFloats = append(tensorSplitFloats, float32(f))
+		}
+	}
 
 	params := llama.ModelParams{
 		NumGpuLayers: *nGpuLayers,
@@ -1149,13 +1161,14 @@ func Execute(args []string) error {
 	}
 
 	server.dparams = DraftModelParams{
-		ModelPath:    *draftMPath,
-		GPUDevs:      *draftGPUDevs,
-		NumGPULayers: *draftGPULayers,
-		MaxTokens:    *draftMax,
-		MinTokens:    *draftMin,
-		PMin:         draftPMinFloat,
-		CtxSize:      *draftCtxSize,
+		modelPath:    *draftMPath,
+		mainGPU:      *draftMainGPU,
+		numGPULayers: *draftGPULayers,
+		maxTokens:    *draftMax,
+		minTokens:    *draftMin,
+		pMin:         draftPMinFloat,
+		ctxSize:      *draftCtxSize,
+		tensorSplit:  draftTensorSplitFloats,
 	}
 
 	server.ready.Add(1)

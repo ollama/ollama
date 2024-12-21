@@ -57,8 +57,9 @@ type llmServer struct {
 	modelLock   sync.Mutex   // Temporary until we switch fully to Go server
 	model       *llama.Model // If non-nil, the runner is a new Go server
 
-	estimate    MemoryEstimate
-	totalLayers uint64
+	estimate      MemoryEstimate
+	draftEstimate *MemoryEstimate
+	totalLayers   uint64
 	// gpuCount     int
 	gpus         discover.GpuInfoList // Recorded just before the model loaded, free space will be incorrect
 	loadDuration time.Duration        // Record how long it took the model to load
@@ -89,10 +90,12 @@ func LoadModel(model string, maxArraySize int) (*GGML, error) {
 
 // NewLlamaServer will run a server for the given GPUs
 // The gpu list must be a single family.
-func NewLlamaServer(gpus discover.GpuInfoList, model string, draftModel string, ggml *GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
+func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapters, projectors []string, draftModel string, dggml *GGML, opts api.Options, numParallel int) (LlamaServer, error) {
 	var err error
 	var cpuRunner string
 	var estimate MemoryEstimate
+	var draftEstimate *MemoryEstimate
+	var draftEstimateVRAMSize, draftEstimateTotalSize uint64
 	var systemTotalMemory uint64
 	var systemFreeMemory uint64
 	var systemSwapFreeMemory uint64
@@ -101,6 +104,8 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, draftModel string, 
 	systemTotalMemory = systemInfo.System.TotalMemory
 	systemFreeMemory = systemInfo.System.FreeMemory
 	systemSwapFreeMemory = systemInfo.System.FreeSwap
+	draftEstimateVRAMSize = 0
+	draftEstimateTotalSize = 0
 	slog.Info("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
 
 	// If the user wants zero GPU layers, reset the gpu list to be CPU/system ram info
@@ -109,12 +114,19 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, draftModel string, 
 	}
 	if len(gpus) == 1 && gpus[0].Library == "cpu" {
 		cpuRunner = runners.ServerForCpu()
-		estimate = EstimateGPULayers(gpus, ggml, projectors, opts)
+		estimate, draftEstimate = EstimateGPULayers(gpus, ggml, projectors, dggml, opts)
+		if draftEstimate != nil {
+			draftEstimateVRAMSize, draftEstimateTotalSize = draftEstimate.VRAMSize, draftEstimate.TotalSize
+		}
 	} else {
-		estimate = EstimateGPULayers(gpus, ggml, projectors, opts)
+		estimate, draftEstimate = EstimateGPULayers(gpus, ggml, projectors, dggml, opts)
+
+		if draftEstimate != nil {
+			draftEstimateVRAMSize, draftEstimateTotalSize = draftEstimate.VRAMSize, draftEstimate.TotalSize
+		}
 
 		switch {
-		case gpus[0].Library == "metal" && estimate.VRAMSize > systemTotalMemory:
+		case gpus[0].Library == "metal" && estimate.VRAMSize+draftEstimateVRAMSize > systemTotalMemory:
 			// disable partial offloading when model is greater than total system memory as this
 			// can lead to locking up the system
 			opts.NumGPU = 0
@@ -124,13 +136,16 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, draftModel string, 
 			gpus = discover.GetCPUInfo()
 		case opts.NumGPU < 0 && estimate.Layers > 0 && gpus[0].Library != "cpu":
 			opts.NumGPU = estimate.Layers
+			if draftEstimate != nil && opts.DraftNumGPU < 0 && draftEstimate.Layers > 0 {
+				opts.DraftNumGPU = draftEstimate.Layers
+			}
 		}
 	}
 
 	// On linux and windows, over-allocating CPU memory will almost always result in an error
 	// Darwin has fully dynamic swap so has no direct concept of free swap space
 	if runtime.GOOS != "darwin" {
-		systemMemoryRequired := estimate.TotalSize - estimate.VRAMSize
+		systemMemoryRequired := estimate.TotalSize - estimate.VRAMSize + draftEstimateTotalSize - draftEstimateVRAMSize
 		available := systemFreeMemory + systemSwapFreeMemory
 		if systemMemoryRequired > available {
 			slog.Warn("model request too large for system", "requested", format.HumanBytes2(systemMemoryRequired), "available", available, "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "swap", format.HumanBytes2(systemSwapFreeMemory))
@@ -138,7 +153,12 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, draftModel string, 
 		}
 	}
 
+	slog.Info("target model estimate")
 	estimate.log()
+	if draftEstimate != nil {
+		slog.Info("draft model estimate")
+		draftEstimate.log()
+	}
 
 	// Loop through potential servers
 	finalErr := errors.New("no suitable llama servers found")
@@ -236,10 +256,9 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, draftModel string, 
 
 	if draftModel != "" {
 		params = append(params, "--draft-model", draftModel)
-		params = append(params, "--draft-gpu-layers", strconv.FormatUint(uint64(envconfig.DraftGpuLayers()), 10))
-		dd := envconfig.DraftGpuDevs()
-		if dd != "" {
-			params = append(params, "--draft-device", dd)
+		params = append(params, "--draft-gpu-layers", strconv.Itoa(opts.DraftNumGPU))
+		if opts.DraftMainGPU >= 0 {
+			params = append(params, "--draft-main-gpu", strconv.Itoa(opts.MainGPU))
 		}
 		params = append(params, "--draft-ctx-size", strconv.Itoa(opts.DraftNumCtx))
 		params = append(params, "--draft-p-min", strconv.FormatFloat(float64(opts.DraftPMin), 'f', -1, 32))
@@ -277,6 +296,10 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, draftModel string, 
 
 	if estimate.TensorSplit != "" {
 		params = append(params, "--tensor-split", estimate.TensorSplit)
+	}
+
+	if draftEstimate != nil && draftEstimate.TensorSplit != "" {
+		params = append(params, "--draft-tensor-split", draftEstimate.TensorSplit)
 	}
 
 	if envconfig.MultiUserCache() {
@@ -335,17 +358,18 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, draftModel string, 
 
 		// TODO - once fully switched to the Go runner, load the model here for tokenize/detokenize cgo access
 		s := &llmServer{
-			port:        port,
-			cmd:         exec.Command(server, finalParams...),
-			status:      NewStatusWriter(os.Stderr),
-			options:     opts,
-			modelPath:   model,
-			estimate:    estimate,
-			numParallel: numParallel,
-			sem:         semaphore.NewWeighted(int64(numParallel)),
-			totalLayers: ggml.KV().BlockCount() + 1,
-			gpus:        gpus,
-			done:        make(chan error, 1),
+			port:          port,
+			cmd:           exec.Command(server, finalParams...),
+			status:        NewStatusWriter(os.Stderr),
+			options:       opts,
+			modelPath:     model,
+			estimate:      estimate,
+			draftEstimate: draftEstimate,
+			numParallel:   numParallel,
+			sem:           semaphore.NewWeighted(int64(numParallel)),
+			totalLayers:   ggml.KV().BlockCount() + 1,
+			gpus:          gpus,
+			done:          make(chan error, 1),
 		}
 
 		s.cmd.Env = os.Environ()
@@ -1107,19 +1131,32 @@ func (s *llmServer) Close() error {
 }
 
 func (s *llmServer) EstimatedVRAM() uint64 {
-	return s.estimate.VRAMSize
+	vramSize := s.estimate.VRAMSize
+	if s.draftEstimate != nil {
+		vramSize += s.draftEstimate.VRAMSize
+	}
+	return vramSize
 }
 
 func (s *llmServer) EstimatedTotal() uint64 {
-	return s.estimate.TotalSize
+	totalSize := s.estimate.TotalSize
+	if s.draftEstimate != nil {
+		totalSize += s.draftEstimate.TotalSize
+	}
+	return totalSize
 }
 
 func (s *llmServer) EstimatedVRAMByGPU(gpuID string) uint64 {
 	for i, gpu := range s.gpus {
 		if gpu.ID == gpuID {
+			var result uint64
 			if i < len(s.estimate.GPUSizes) {
-				return s.estimate.GPUSizes[i]
+				result = s.estimate.GPUSizes[i]
 			}
+			if s.draftEstimate != nil && i < len(s.draftEstimate.GPUSizes) {
+				result += s.draftEstimate.GPUSizes[i]
+			}
+			return result
 		}
 	}
 	return 0

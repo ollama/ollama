@@ -327,10 +327,6 @@ FROM qwen2.5-coder:0.5b-instruct-q8_0
 
 Until we have finalized how draft models should be referenced in modelfiles, the first FROM line specifies the target model and the second one the draft model.
 
-Additionally, you can set draft model related paramters as described [here](./modelfile.md#parameter). Currently, these parameters are runner options, however `draft_max`, `draft_min`, `draft_p_min` will probably become request options.
+Additionally, you can set draft model related paramters as described [here](./modelfile.md#parameter). 
 
 Create the customized model (`ollama create qwen2.5-coder:7b-instruct-fp16-with-draftmodel`) and it becomes available for using (`ollama run qwen2.5-coder:7b-instruct-fp16-with-draftmodel`).
-
-The environment variable `OLLAMA_DRAFT_GPU_DEVS` limits loading of the draft model to certain GPU devices (e.g., `OLLAMA_DRAFT_GPU_DEVS="CUDA0,CUDA3"). By default all GPU devices available for the target model are also used for the draft model. **Note: not functional yet!**
-
-The environment variable `OLLAMA_DRAFT_GPU_LAYERS` sets the number of offloaded draft model layers. By default up to 99 layers are offloaded.

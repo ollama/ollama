@@ -58,10 +58,13 @@ func TestEstimateGPULayers(t *testing.T) {
 	}
 	projectors := []string{}
 	opts := api.DefaultOptions()
+	opts.DraftNumCtx = opts.NumCtx
 	t.Run("cpu", func(t *testing.T) {
-		estimate := EstimateGPULayers(gpus, ggml, projectors, opts)
+		estimate, draftEstimate := EstimateGPULayers(gpus, ggml, projectors, ggml, opts)
 		assert.Equal(t, 0, estimate.Layers)
 		assert.Equal(t, uint64(0), estimate.Graph)
+		assert.Equal(t, 0, draftEstimate.Layers)
+		assert.Equal(t, uint64(0), draftEstimate.Graph)
 	})
 
 	// derived from the dummy ggml file above
@@ -70,6 +73,9 @@ func TestEstimateGPULayers(t *testing.T) {
 	layerSize := uint64(33554436)
 	projectorSize := uint64(0)
 	memoryLayerOutput := uint64(4)
+	// draft model graph size is larger because of the larger draft model batch size
+	draftGraphPartialOffload := uint64(680534016)
+	draftGraphFullOffload := uint64(687874048)
 
 	// Dual CUDA scenario with asymmetry
 	gpuMinimumMemory := uint64(2048)
@@ -83,24 +89,39 @@ func TestEstimateGPULayers(t *testing.T) {
 			MinimumMemory: gpuMinimumMemory,
 		},
 	}
-	// Nested array: GPU0 layer space, GPU1 layer space, expected gpu0, expected gpu1
+	// Nested array: GPU0 layer space, GPU1 layer space, expected gpu0, expected gpu1,
+	//               draft expected gpu0, draft expected gpu1, use draft model
 	for i, s := range []struct {
-		layer0, layer1   uint64
-		expect0, expect1 uint64
+		layer0, layer1     uint64
+		expect0, expect1   uint64
+		dExpect0, dExpect1 uint64
+		useDraft           bool
 	}{
-		{1, 1, 1, 1},
-		{2, 1, 2, 1},
-		{2, 2, 2, 2},
-		{1, 2, 1, 2},
-		{3, 3, 3, 3},
-		{4, 4, 3, 3},
-		{6, 6, 3, 3},
-		{0, 3, 0, 3},
+		{1, 1, 1, 1, 0, 0, false},
+		{2, 1, 2, 1, 0, 0, false},
+		{2, 2, 2, 2, 0, 0, false},
+		{1, 2, 1, 2, 0, 0, false},
+		{3, 3, 3, 3, 0, 0, false},
+		{4, 4, 3, 3, 0, 0, false},
+		{6, 6, 3, 3, 0, 0, false},
+		{0, 3, 0, 3, 0, 0, false},
+		// draft model scenarios
+		//  no space on gpu0 for draft model layers, partial offload
+		{1, 4, 1, 5, 0, 0, true},
+		{2, 5, 2, 4, 0, 1, true},
+		{3, 6, 3, 3, 0, 3, true},
+		{6, 6, 3, 3, 0, 3, true},
+		{20, 20, 3, 3, 0, 6, true},
+		//  abundance of space scenario for both models, full offload
+		{200, 200, 3, 3, 3, 3, true},
 	} {
 		t.Run(fmt.Sprintf("%v", s), func(t *testing.T) {
 			gpus[0].FreeMemory = 0
 			gpus[1].FreeMemory = 0
 			gpus[0].FreeMemory += projectorSize
+			if s.useDraft {
+				memoryLayerOutput += memoryLayerOutput
+			}
 			if s.layer0 > 0 {
 				gpus[0].FreeMemory += memoryLayerOutput
 			} else {
@@ -110,9 +131,21 @@ func TestEstimateGPULayers(t *testing.T) {
 			gpus[1].FreeMemory += gpuMinimumMemory + layerSize + s.layer1*layerSize + 1
 			gpus[0].FreeMemory += max(graphFullOffload, graphPartialOffload)
 			gpus[1].FreeMemory += max(graphFullOffload, graphPartialOffload)
-			estimate := EstimateGPULayers(gpus, ggml, projectors, opts)
+			if s.useDraft {
+				gpus[1].FreeMemory += layerSize // buffer for draft model layer
+				gpus[1].FreeMemory += min(draftGraphFullOffload, draftGraphPartialOffload)
+			}
+			estimate, draftEstimate := EstimateGPULayers(gpus, ggml, projectors, ggml, opts)
 			assert.Equal(t, int(s.expect0+s.expect1), estimate.Layers, "scenario %d: %v", i, s)
 			assert.Equal(t, fmt.Sprintf("%d,%d", s.expect0, s.expect1), estimate.TensorSplit, "scenario %d: %v", i, s)
+			if s.useDraft {
+				assert.Equal(t, int(s.dExpect0+s.dExpect1), draftEstimate.Layers, "scenario %d: %v", i, s)
+				if s.dExpect0+s.dExpect1 == 0 { // no offloading
+					assert.Equal(t, "", draftEstimate.TensorSplit, "scenario %d: %v", i, s)
+				} else {
+					assert.Equal(t, fmt.Sprintf("%d,%d", s.dExpect0, s.dExpect1), draftEstimate.TensorSplit, "scenario %d: %v", i, s)
+				}
+			}
 			var layerSums uint64
 			for _, b := range estimate.GPUSizes {
 				layerSums += b

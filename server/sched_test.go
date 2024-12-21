@@ -47,11 +47,11 @@ func TestLoad(t *testing.T) {
 		sessionDuration: &api.Duration{Duration: 2 * time.Second},
 	}
 	// Fail to load model first
-	s.newServerFn = func(gpus discover.GpuInfoList, model string, draftModel string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(gpus discover.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, draftModel string, dggml *llm.GGML, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 		return nil, errors.New("something failed to load model blah")
 	}
 	gpus := discover.GpuInfoList{}
-	s.load(req, ggml, gpus, 0)
+	s.load(req, ggml, nil, gpus, 0)
 	require.Empty(t, req.successCh)
 	require.Len(t, req.errCh, 1)
 	s.loadedMu.Lock()
@@ -61,10 +61,10 @@ func TestLoad(t *testing.T) {
 	require.Contains(t, err.Error(), "this model may be incompatible")
 
 	server := &mockLlm{estimatedVRAM: 10, estimatedVRAMByGPU: map[string]uint64{}}
-	s.newServerFn = func(gpus discover.GpuInfoList, model string, draftModel string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(gpus discover.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, draftModel string, dggml *llm.GGML, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 		return server, nil
 	}
-	s.load(req, ggml, gpus, 0)
+	s.load(req, ggml, nil, gpus, 0)
 	select {
 	case err := <-req.errCh:
 		require.NoError(t, err)
@@ -79,7 +79,7 @@ func TestLoad(t *testing.T) {
 	req.model.ModelPath = "dummy_model_path"
 	req.model.ShortName = "dummy_model_short_name"
 	server.waitResp = errors.New("wait failure")
-	s.load(req, ggml, gpus, 0)
+	s.load(req, ggml, nil, gpus, 0)
 	select {
 	case err := <-req.errCh:
 		require.Contains(t, err.Error(), "wait failure")
@@ -103,7 +103,7 @@ type reqBundle struct {
 	ggml    *llm.GGML
 }
 
-func (scenario *reqBundle) newServer(gpus discover.GpuInfoList, model string, draftModel string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+func (scenario *reqBundle) newServer(gpus discover.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, draftModel string, dggml *llm.GGML, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 	return scenario.srv, nil
 }
 
@@ -423,10 +423,10 @@ func TestExpireRunner(t *testing.T) {
 	var ggml *llm.GGML
 	gpus := discover.GpuInfoList{}
 	server := &mockLlm{estimatedVRAM: 10, estimatedVRAMByGPU: map[string]uint64{}}
-	s.newServerFn = func(gpus discover.GpuInfoList, model string, draftModel string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(gpus discover.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, draftModel string, dggml *llm.GGML, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 		return server, nil
 	}
-	s.load(req, ggml, gpus, 0)
+	s.load(req, ggml, nil, gpus, 0)
 
 	select {
 	case err := <-req.errCh:
@@ -730,9 +730,9 @@ func TestHomogeneousGPUs(t *testing.T) {
 	}
 	s.getCpuFn = getCpuFn
 	a := newScenarioRequest(t, ctx, "ollama-model-1", 10, &api.Duration{Duration: 5 * time.Millisecond})
-	s.newServerFn = func(gpus discover.GpuInfoList, model string, draftModel string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+	s.newServerFn = func(gpus discover.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, draftModel string, dggml *llm.GGML, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 		require.Len(t, gpus, 1)
-		return a.newServer(gpus, model, draftModel, ggml, adapters, projectors, opts, numParallel)
+		return a.newServer(gpus, model, ggml, adapters, projectors, draftModel, dggml, opts, numParallel)
 	}
 	slog.Info("a")
 	s.pendingReqCh <- a.req
