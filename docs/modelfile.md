@@ -14,6 +14,7 @@ A model file is the blueprint to create and share models with Ollama.
     - [Build from existing model](#build-from-existing-model)
     - [Build from a Safetensors model](#build-from-a-safetensors-model)
     - [Build from a GGUF file](#build-from-a-gguf-file)
+  - [DRAFT](#draft)
   - [PARAMETER](#parameter)
     - [Valid Parameters and Values](#valid-parameters-and-values)
   - [TEMPLATE](#template)
@@ -36,6 +37,7 @@ INSTRUCTION arguments
 | Instruction                         | Description                                                    |
 | ----------------------------------- | -------------------------------------------------------------- |
 | [`FROM`](#from-required) (required) | Defines the base model to use.                                 |
+| [`DRAFT`](#draft)                   | Defines the draft model to use for speculative decoding.       |
 | [`PARAMETER`](#parameter)           | Sets the parameters for how Ollama will run the model.         |
 | [`TEMPLATE`](#template)             | The full prompt template to be sent to the model.              |
 | [`SYSTEM`](#system)                 | Specifies the system message that will be set in the template. |
@@ -133,6 +135,13 @@ FROM ./ollama-model.gguf
 
 The GGUF file location should be specified as an absolute path or relative to the `Modelfile` location.
 
+### DRAFT
+
+The `DRAFT` instruction defines the draft model to use for speculative decoding.
+
+```modelfile
+DRAFT <model name>:<tag>
+```
 
 ### PARAMETER
 

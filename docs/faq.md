@@ -318,15 +318,12 @@ You need to have a base model and (regarding this base model) a compatible draft
 * target model `qwen2.5-coder:7b-instruct-fp16`
 * draft model `qwen2.5-coder:0.5b-instruct-q8_0`
 
-Pull both models, then customize the target model (`ollama show qwen2.5-coder:7b-instruct-fp16 --modelfile > Modelfile`) by replacing the FROM command with:
+Pull both models, then customize the target model (`ollama show qwen2.5-coder:7b-instruct-fp16 --modelfile > Modelfile`) by specifying the draft model in the Modelfile:
 
 ```modelfile
-FROM qwen2.5-coder:7b-instruct-fp16
-FROM qwen2.5-coder:0.5b-instruct-q8_0 
+DRAFT qwen2.5-coder:0.5b-instruct-q8_0 
 ```
 
-Until we have finalized how draft models should be referenced in modelfiles, the first FROM line specifies the target model and the second one the draft model.
-
-Additionally, you can set draft model related paramters as described [here](./modelfile.md#parameter). 
+Additionally, you can set draft model related paramters as described [here](./modelfile.md#parameter).
 
 Create the customized model (`ollama create qwen2.5-coder:7b-instruct-fp16-with-draftmodel`) and it becomes available for using (`ollama run qwen2.5-coder:7b-instruct-fp16-with-draftmodel`).
