@@ -18,7 +18,6 @@ struct common_sampler *common_sampler_cinit(const struct llama_model *model, str
         sparams.mirostat = params->mirostat;
         sparams.mirostat_tau = params->mirostat_tau;
         sparams.mirostat_eta = params->mirostat_eta;
-        sparams.penalize_nl = params->penalize_nl;
         sparams.seed = params->seed;
         sparams.grammar = params->grammar;
         sparams.xtc_probability = 0.0;
