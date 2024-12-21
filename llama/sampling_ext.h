@@ -36,6 +36,11 @@ extern "C"
 
     int schema_to_grammar(const char *json_schema, char *grammar, size_t max_len);
 
+
+    int common_sampler_csample_and_accept_n(struct common_sampler * sampler, struct llama_context * ctx,
+    const llama_token *draft, size_t draft_size, bool grammar_first,
+    llama_token *result, size_t max_result_size);
+
 #ifdef __cplusplus
 }
 #endif

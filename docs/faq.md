@@ -310,3 +310,23 @@ The currently available K/V cache quantization types are:
 How much the cache quantization impacts the model's response quality will depend on the model and the task.  Models that have a high GQA count (e.g. Qwen2) may see a larger impact on precision from quantization than models with a low GQA count.
 
 You may need to experiment with different quantization types to find the best balance between memory usage and quality.
+
+## How can I use the work-in-progress/experimental draft model feature?
+
+You need to have a base model and (regarding this base model) a compatible draft model, for example:
+
+* target model `qwen2.5-coder:7b-instruct-fp16`
+* draft model `qwen2.5-coder:0.5b-instruct-q8_0`
+
+Pull both models, then customize the target model (`ollama show qwen2.5-coder:7b-instruct-fp16 --modelfile > Modelfile`) by replacing the FROM command with:
+
+```modelfile
+FROM qwen2.5-coder:7b-instruct-fp16
+FROM qwen2.5-coder:0.5b-instruct-q8_0 
+```
+
+Until we have finalized how draft models should be referenced in modelfiles, the first FROM line specifies the target model and the second one the draft model.
+
+Additionally, you can set draft model related paramters as described [here](./modelfile.md#parameter). 
+
+Create the customized model (`ollama create qwen2.5-coder:7b-instruct-fp16-with-draftmodel`) and it becomes available for using (`ollama run qwen2.5-coder:7b-instruct-fp16-with-draftmodel`).
