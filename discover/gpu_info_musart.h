@@ -1,45 +1,37 @@
 #ifndef __APPLE__
-#ifndef __GPU_INFO_CUDART_H__
-#define __GPU_INFO_CUDART_H__
+#ifndef __GPU_INFO_MUSART_H__
+#define __GPU_INFO_MUSART_H__
 #include "gpu_info.h"
 
 // Just enough typedef's to dlopen/dlsym for memory information
-typedef enum cudartReturn_enum {
-  CUDART_SUCCESS = 0,
-  CUDART_ERROR_INVALID_VALUE = 1,
-  CUDART_ERROR_MEMORY_ALLOCATION = 2,
-  CUDART_ERROR_INSUFFICIENT_DRIVER = 35,
+typedef enum musartReturn_enum {
+  MUSART_SUCCESS = 0,
+  MUSART_ERROR_INSUFFICIENT_DRIVER = 35,
   // Other values omitted for now...
-} cudartReturn_t;
+} musartReturn_t;
 
-typedef enum cudartDeviceAttr_enum {
-  cudartDevAttrComputeCapabilityMajor = 75,
-  cudartDevAttrComputeCapabilityMinor = 76,
+typedef enum musartDeviceAttr_enum {
+  musartDevAttrComputeCapabilityMajor = 75,
+  musartDevAttrComputeCapabilityMinor = 76,
+} musartDeviceAttr_t;
 
-  // TODO - not yet wired up but may be useful for Jetson or other
-  // integrated GPU scenarios with shared memory
-  cudaDevAttrIntegrated = 18
-
-} cudartDeviceAttr_t;
-
-typedef void *cudartDevice_t;  // Opaque is sufficient
-typedef struct cudartMemory_st {
+typedef struct musartMemory_st {
   size_t total;
   size_t free;
   size_t used;
-} cudartMemory_t;
+} musartMemory_t;
 
-typedef struct cudartDriverVersion {
+typedef struct musartDriverVersion {
   int major;
   int minor;
-} cudartDriverVersion_t;
+} musartDriverVersion_t;
 
-typedef struct cudaUUID {
+typedef struct musaUUID {
     unsigned char bytes[16];
-} cudaUUID_t;
-typedef struct cudaDeviceProp {
+} musaUUID_t;
+typedef struct musaDeviceProp {
     char         name[256];                  /**< ASCII string identifying device */
-    cudaUUID_t   uuid;                       /**< 16-byte unique identifier */
+    musaUUID_t   uuid;                       /**< 16-byte unique identifier */
     char         luid[8];                    /**< 8-byte locally unique identifier. Value is undefined on TCC and non-Windows platforms */
     unsigned int luidDeviceNodeMask;         /**< LUID device node mask. Value is undefined on TCC and non-Windows platforms */
     size_t       totalGlobalMem;             /**< Global memory available on device in bytes */
@@ -60,11 +52,11 @@ typedef struct cudaDeviceProp {
     int          multiProcessorCount;        /**< Number of multiprocessors on device */
     int          kernelExecTimeoutEnabled;   /**< Specified whether there is a run time limit on kernels */
     int          integrated;                 /**< Device is integrated as opposed to discrete */
-    int          canMapHostMemory;           /**< Device can map host memory with cudaHostAlloc/cudaHostGetDevicePointer */
-    int          computeMode;                /**< Compute mode (See ::cudaComputeMode) */
+    int          canMapHostMemory;           /**< Device can map host memory with musaHostAlloc/musaHostGetDevicePointer */
+    int          computeMode;                /**< Compute mode (See ::musaComputeMode) */
     int          maxTexture1D;               /**< Maximum 1D texture size */
     int          maxTexture1DMipmap;         /**< Maximum 1D mipmapped texture size */
-    int          maxTexture1DLinear;         /**< Deprecated, do not use. Use cudaDeviceGetTexture1DLinearMaxWidth() or cuDeviceGetTexture1DLinearMaxWidth() instead. */
+    int          maxTexture1DLinear;         /**< Deprecated, do not use. Use musaDeviceGetTexture1DLinearMaxWidth() or muDeviceGetTexture1DLinearMaxWidth() instead. */
     int          maxTexture2D[2];            /**< Maximum 2D texture dimensions */
     int          maxTexture2DMipmap[2];      /**< Maximum 2D mipmapped texture dimensions */
     int          maxTexture2DLinear[3];      /**< Maximum dimensions (width, height, pitch) for 2D textures bound to pitched memory */
@@ -106,43 +98,43 @@ typedef struct cudaDeviceProp {
     int          multiGpuBoardGroupID;       /**< Unique identifier for a group of devices on the same multi-GPU board */
     int          hostNativeAtomicSupported;  /**< Link between the device and the host supports native atomic operations */
     int          singleToDoublePrecisionPerfRatio; /**< Ratio of single precision performance (in floating-point operations per second) to double precision performance */
-    int          pageableMemoryAccess;       /**< Device supports coherently accessing pageable memory without calling cudaHostRegister on it */
+    int          pageableMemoryAccess;       /**< Device supports coherently accessing pageable memory without calling musaHostRegister on it */
     int          concurrentManagedAccess;    /**< Device can coherently access managed memory concurrently with the CPU */
     int          computePreemptionSupported; /**< Device supports Compute Preemption */
     int          canUseHostPointerForRegisteredMem; /**< Device can access host registered memory at the same virtual address as the CPU */
-    int          cooperativeLaunch;          /**< Device supports launching cooperative kernels via ::cudaLaunchCooperativeKernel */
-    int          cooperativeMultiDeviceLaunch; /**< Deprecated, cudaLaunchCooperativeKernelMultiDevice is deprecated. */
+    int          cooperativeLaunch;          /**< Device supports launching cooperative kernels via ::musaLaunchCooperativeKernel */
+    int          cooperativeMultiDeviceLaunch; /**< Deprecated, musaLaunchCooperativeKernelMultiDevice is deprecated. */
     size_t       sharedMemPerBlockOptin;     /**< Per device maximum shared memory per block usable by special opt in */
     int          pageableMemoryAccessUsesHostPageTables; /**< Device accesses pageable memory via the host's page tables */
     int          directManagedMemAccessFromHost; /**< Host can directly access managed memory on the device without migration. */
     int          maxBlocksPerMultiProcessor; /**< Maximum number of resident blocks per multiprocessor */
-    int          accessPolicyMaxWindowSize;  /**< The maximum value of ::cudaAccessPolicyWindow::num_bytes. */
-    size_t       reservedSharedMemPerBlock;  /**< Shared memory reserved by CUDA driver per block in bytes */
-} cudaDeviceProp_t;
+    int          accessPolicyMaxWindowSize;  /**< The maximum value of ::musaAccessPolicyWindow::num_bytes. */
+    size_t       reservedSharedMemPerBlock;  /**< Shared memory reserved by MUSA driver per block in bytes */
+} musaDeviceProp_t;
 
-typedef struct cudart_handle {
+typedef struct musart_handle {
   void *handle;
   uint16_t verbose;
-  cudartReturn_t (*cudaSetDevice)(int device);
-  cudartReturn_t (*cudaDeviceSynchronize)(void);
-  cudartReturn_t (*cudaDeviceReset)(void);
-  cudartReturn_t (*cudaMemGetInfo)(size_t *, size_t *);
-  cudartReturn_t (*cudaGetDeviceCount)(int *);
-  cudartReturn_t (*cudaDeviceGetAttribute)(int* value, cudartDeviceAttr_t attr, int device);
-  cudartReturn_t (*cudaDriverGetVersion) (int *driverVersion);
-  cudartReturn_t (*cudaGetDeviceProperties) (cudaDeviceProp_t* prop, int device);
-} cudart_handle_t;
+  musartReturn_t (*musaSetDevice)(int device);
+  musartReturn_t (*musaDeviceSynchronize)(void);
+  musartReturn_t (*musaDeviceReset)(void);
+  musartReturn_t (*musaMemGetInfo)(size_t *, size_t *);
+  musartReturn_t (*musaGetDeviceCount)(int *);
+  musartReturn_t (*musaDeviceGetAttribute)(int* value, musartDeviceAttr_t attr, int device);
+  musartReturn_t (*musaDriverGetVersion) (int *driverVersion);
+  musartReturn_t (*musaGetDeviceProperties) (musaDeviceProp_t* prop, int device);
+} musart_handle_t;
 
-typedef struct cudart_init_resp {
+typedef struct musart_init_resp {
   char *err;  // If err is non-null handle is invalid
-  cudart_handle_t ch;
+  musart_handle_t ch;
   int num_devices;
-} cudart_init_resp_t;
+} musart_init_resp_t;
 
-void cudart_init(char *cudart_lib_path, cudart_init_resp_t *resp);
-void cudart_bootstrap(cudart_handle_t ch, int device_id, mem_info_t *resp);
-// TODO - if we keep this library longer term, add cudart_get_free
-void cudart_release(cudart_handle_t ch);
+void musart_init(char *musart_lib_path, musart_init_resp_t *resp);
+void musart_bootstrap(musart_handle_t ch, int device_id, mem_info_t *resp);
+// TODO - if we keep this library longer term, add musart_get_free
+void musart_release(musart_handle_t ch);
 
-#endif  // __GPU_INFO_CUDART_H__
+#endif  // __GPU_INFO_MUSART_H__
 #endif  // __APPLE__
