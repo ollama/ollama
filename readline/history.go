@@ -81,11 +81,13 @@ func (h *History) Init() error {
 }
 
 func (h *History) Add(s string) {
-	h.Buf.Add(s)
-	h.Compact()
-	h.Pos = h.Size()
-	if h.Autosave {
-		_ = h.Save()
+	if latest, _ := h.Buf.Get(h.Size() - 1); latest != s {
+		h.Buf.Add(s)
+		h.Compact()
+		h.Pos = h.Size()
+		if h.Autosave {
+			_ = h.Save()
+		}
 	}
 }
 
