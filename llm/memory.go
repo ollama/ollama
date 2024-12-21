@@ -338,7 +338,7 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	return estimate
 }
 
-func (m MemoryEstimate) log() {
+func (m MemoryEstimate) LogValue() slog.Value {
 	overhead := envconfig.GpuOverhead()
 
 	log := slog.With()
@@ -352,8 +352,8 @@ func (m MemoryEstimate) log() {
 		)
 	}
 
-	log.Info(
-		"offload to "+m.inferenceLibrary,
+	return slog.GroupValue(
+		slog.String("library", m.inferenceLibrary),
 		slog.Group(
 			"layers",
 			// requested number of layers to offload
