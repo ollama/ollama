@@ -58,6 +58,25 @@ Create a user and group for Ollama:
 sudo useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama
 sudo usermod -a -G ollama $(whoami)
 ```
+Get sure your user belongs to ollama group:
+'''
+groups $whoami
+'''
+and ollama is in the list of groups.
+
+Probably you have to add in Ubuntu ( you probably would have permission denied problem):
+```
+sudo chmod 770 -R /usr/share/ollama/.ollama
+```
+So you can get access and avoid the problem: 
+```
+dic 17 10:06:23 MiPcLinux systemd[1]: ollama.service: Main process exited, code=exited, status=1/FAILURE
+dic 17 10:06:23 MiPcLinux systemd[1]: ollama.service: Failed with result 'exit-code'.
+dic 17 10:06:26 MiPcLinux systemd[1]: ollama.service: Scheduled restart job, restart counter is at 11.
+dic 17 10:06:26 MiPcLinux systemd[1]: Started ollama.service - Ollama Service.
+dic 17 10:06:26 MiPcLinux ollama[16491]: Couldn't find '/usr/share/ollama/.ollama/id_ed25519'. Generating new private key.
+dic 17 10:06:26 MiPcLinux ollama[16491]: Error: open /usr/share/ollama/.ollama/id_ed25519: permission denied
+```
 
 Create a service file in `/etc/systemd/system/ollama.service`:
 
