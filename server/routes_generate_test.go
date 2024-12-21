@@ -46,6 +46,14 @@ func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error
 	return
 }
 
+func (mockRunner) Detokenize(_ context.Context, tokens []int) (string, error) {
+	var strs []string
+	for _, t := range tokens {
+		strs = append(strs, fmt.Sprint(t))
+	}
+	return strings.Join(strs, " "), nil
+}
+
 func newMockServer(mock *mockRunner) func(discover.GpuInfoList, string, *llm.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
 	return func(gpus discover.GpuInfoList, model string, ggml *llm.GGML, projectors, system []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 		return mock, nil

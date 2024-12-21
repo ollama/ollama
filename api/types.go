@@ -293,6 +293,28 @@ type EmbeddingResponse struct {
 	Embedding []float64 `json:"embedding"`
 }
 
+// TokenizeRequest is the request sent by [Client.Tokenize].
+type TokenizeRequest struct {
+	Model string `json:"model"`
+	Text  string `json:"text"`
+}
+
+// TokenizeResponse is the response from [Client.Tokenize].
+type TokenizeResponse struct {
+	Tokens []int `json:"tokens"`
+}
+
+// DetokenizeRequest is the request sent by [Client.Detokenize].
+type DetokenizeRequest struct {
+	Model  string `json:"model"`
+	Tokens []int  `json:"tokens"`
+}
+
+// DetokenizeResponse is the response from [Client.Detokenize].
+type DetokenizeResponse struct {
+	Text string `json:"text"`
+}
+
 // CreateRequest is the request passed to [Client.Create].
 type CreateRequest struct {
 	Model     string `json:"model"`

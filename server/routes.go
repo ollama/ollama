@@ -30,6 +30,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/model/mllama"
 	"github.com/ollama/ollama/openai"
@@ -46,6 +47,7 @@ var mode string = gin.DebugMode
 type Server struct {
 	addr  net.Addr
 	sched *Scheduler
+	ml    modelLoader
 }
 
 func init() {
@@ -552,6 +554,105 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		Embedding: e,
 	}
 	c.JSON(http.StatusOK, resp)
+}
+
+func (s *Server) TokenizeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req api.TokenizeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if errors.Is(err, io.EOF) {
+			http.Error(w, "missing request body", http.StatusBadRequest)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Text == "" {
+		http.Error(w, "missing `text` for tokenization", http.StatusBadRequest)
+		return
+	}
+
+	if req.Model == "" {
+		http.Error(w, "missing `model` for tokenization", http.StatusBadRequest)
+		return
+	}
+
+	loadedModel, err := s.ml.LoadModel(req.Model, llama.ModelParams{
+		VocabOnly: true,
+	})
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to load model: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Tokenize the text
+	tokens, err := loadedModel.model.Tokenize(req.Text, false, true)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to tokenize text: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(api.TokenizeResponse{
+		Tokens: tokens,
+	}); err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+		return
+	}
+}
+
+func (s *Server) DetokenizeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req api.DetokenizeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if errors.Is(err, io.EOF) {
+			http.Error(w, "missing request body", http.StatusBadRequest)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if req.Tokens == nil {
+		http.Error(w, "missing tokens for detokenization", http.StatusBadRequest)
+		return
+	}
+
+	if req.Model == "" {
+		http.Error(w, "missing `model` for detokenization", http.StatusBadRequest)
+		return
+	}
+
+	loadedModel, err := s.ml.LoadModel(req.Model, llama.ModelParams{
+		VocabOnly: true,
+	})
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to load model: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	text, err := loadedModel.model.Detokenize(req.Tokens)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to detokenize text: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(api.DetokenizeResponse{
+		Text: text,
+	}); err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+		return
+	}
 }
 
 func (s *Server) PullHandler(c *gin.Context) {
@@ -1220,6 +1321,8 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
+	r.Any("/api/tokenize", gin.WrapF(s.TokenizeHandler))
+	r.Any("/api/detokenize", gin.WrapF(s.DetokenizeHandler))
 	r.POST("/api/create", s.CreateHandler)
 	r.POST("/api/push", s.PushHandler)
 	r.POST("/api/copy", s.CopyHandler)

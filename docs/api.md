@@ -13,6 +13,8 @@
 - [Push a Model](#push-a-model)
 - [Generate Embeddings](#generate-embeddings)
 - [List Running Models](#list-running-models)
+- [Tokenize Text](#tokenize-text)
+- [Detokenize Tokens](#detokenize-tokens)
 
 ## Conventions
 
@@ -1484,6 +1486,69 @@ A single JSON object will be returned.
   ]
 }
 ```
+
+## Tokenize Text
+
+Tokenize text to an array of tokens using a specific model.
+
+```shell
+POST /api/tokenize
+```
+
+##### Parameters
+
+- `model`: name of model to use for tokenization
+- `text`: text to tokenize
+
+### Examples
+
+#### Request
+
+```shell
+curl -X POST http://localhost:11434/api/tokenize -d '{
+  "model": "llama3.2",
+  "text": "Why is the sky blue?"
+}'
+```
+
+#### Response
+
+```json
+{
+  "tokens": [10445,279,13180,374,6437,30]
+}
+```
+
+## Detokenize Tokens
+
+Detokenize tokens to text using a specific model.
+
+```shell
+POST /api/detokenize
+```
+
+#### Parameters
+
+- `model`: name of model to use for detokenization
+- `tokens`: list of tokens to detokenize
+
+### Examples
+
+#### Request
+
+```shell
+curl -X POST http://localhost:11434/api/detokenize -d '{
+  "model": "llama3.2",
+  "tokens": [10445,374,279,13180,6437,30]
+}'
+```
+
+#### Response
+
+```json
+{"text":"Why is the sky blue?"}
+```
+
 
 ## Generate Embedding
 
