@@ -57,7 +57,16 @@ if [ "$(id -u)" -ne 0 ]; then
     SUDO="sudo"
 fi
 
-NEEDS=$(require curl awk grep sed tee xargs)
+# Modified to check for either aria2c or curl
+DOWNLOAD_TOOL=""
+if available aria2c; then
+    DOWNLOAD_TOOL="aria2c"
+    NEEDS=$(require awk grep sed tee xargs)
+else
+    DOWNLOAD_TOOL="curl"
+    NEEDS=$(require curl awk grep sed tee xargs)
+fi
+
 if [ -n "$NEEDS" ]; then
     status "ERROR: The following tools are required but missing:"
     for NEED in $NEEDS; do
@@ -75,13 +84,27 @@ if [ -d "$OLLAMA_INSTALL_DIR/lib/ollama" ] ; then
     status "Cleaning up old version at $OLLAMA_INSTALL_DIR/lib/ollama"
     $SUDO rm -rf "$OLLAMA_INSTALL_DIR/lib/ollama"
 fi
+
+download_and_extract() {
+    local URL="$1"
+    local DEST="$2"
+    
+    if [ "$DOWNLOAD_TOOL" = "aria2c" ]; then
+        aria2c --stderr=true --summary-interval=0 --download-result=hide \
+            -d "$TEMP_DIR" -o download.tgz "$URL" && \
+        $SUDO tar -xzf "$TEMP_DIR/download.tgz" -C "$DEST"
+    else
+        curl --fail --show-error --location --progress-bar "$URL" | \
+        $SUDO tar -xzf - -C "$DEST"
+    fi
+}
+
 status "Installing ollama to $OLLAMA_INSTALL_DIR"
 $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR"
 status "Downloading Linux ${ARCH} bundle"
-curl --fail --show-error --location --progress-bar \
-    "https://ollama.com/download/ollama-linux-${ARCH}.tgz${VER_PARAM}" | \
-    $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+download_and_extract "https://ollama.com/download/ollama-linux-${ARCH}.tgz${VER_PARAM}" "$OLLAMA_INSTALL_DIR"
+
 if [ "$OLLAMA_INSTALL_DIR/bin/ollama" != "$BINDIR/ollama" ] ; then
     status "Making ollama accessible in the PATH in $BINDIR"
     $SUDO ln -sf "$OLLAMA_INSTALL_DIR/ollama" "$BINDIR/ollama"
@@ -91,16 +114,12 @@ fi
 if [ -f /etc/nv_tegra_release ] ; then
     if grep R36 /etc/nv_tegra_release > /dev/null ; then
         status "Downloading JetPack 6 components"
-        curl --fail --show-error --location --progress-bar \
-            "https://ollama.com/download/ollama-linux-${ARCH}-jetpack6.tgz${VER_PARAM}" | \
-            $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+        download_and_extract "https://ollama.com/download/ollama-linux-${ARCH}-jetpack6.tgz${VER_PARAM}" "$OLLAMA_INSTALL_DIR"
     elif grep R35 /etc/nv_tegra_release > /dev/null ; then
         status "Downloading JetPack 5 components"
-        curl --fail --show-error --location --progress-bar \
-            "https://ollama.com/download/ollama-linux-${ARCH}-jetpack5.tgz${VER_PARAM}" | \
-            $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+        download_and_extract "https://ollama.com/download/ollama-linux-${ARCH}-jetpack5.tgz${VER_PARAM}" "$OLLAMA_INSTALL_DIR"
     else
-        warning "Unsupported JetPack version detected.  GPU may not be supported"
+        warning "Unsupported JetPack version detected. GPU may not be supported"
     fi
 fi
 
