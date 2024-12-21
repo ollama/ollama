@@ -620,11 +620,7 @@ func DefaultOptions() Options {
 			LowVRAM:     false,
 			UseMLock:    false,
 			UseMMap:     nil,
-			DraftNumCtx: 0,  // 0 = loaded from model
 			DraftNumGPU: -1, // -1 here indicates that NumGPU should be set dynamically
-			DraftMax:    16,
-			DraftMin:    5,
-			DraftPMin:   0.9,
 		},
 	}
 }

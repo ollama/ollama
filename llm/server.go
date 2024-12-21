@@ -257,13 +257,21 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 	if draftModel != "" {
 		params = append(params, "--draft-model", draftModel)
 		params = append(params, "--draft-gpu-layers", strconv.Itoa(opts.DraftNumGPU))
-		if opts.DraftMainGPU >= 0 {
+		if opts.DraftMainGPU > 0 {
 			params = append(params, "--draft-main-gpu", strconv.Itoa(opts.MainGPU))
 		}
-		params = append(params, "--draft-ctx-size", strconv.Itoa(opts.DraftNumCtx))
-		params = append(params, "--draft-p-min", strconv.FormatFloat(float64(opts.DraftPMin), 'f', -1, 32))
-		params = append(params, "--draft-min", strconv.Itoa(opts.DraftMin))
-		params = append(params, "--draft-max", strconv.Itoa(opts.DraftMax))
+		if opts.DraftNumCtx != 0 {
+			params = append(params, "--draft-ctx-size", strconv.Itoa(opts.DraftNumCtx))
+		}
+		if opts.DraftPMin != 0 {
+			params = append(params, "--draft-p-min", strconv.FormatFloat(float64(opts.DraftPMin), 'f', -1, 32))
+		}
+		if opts.DraftMin != 0 {
+			params = append(params, "--draft-min", strconv.Itoa(opts.DraftMin))
+		}
+		if opts.DraftMax != 0 {
+			params = append(params, "--draft-max", strconv.Itoa(opts.DraftMax))
+		}
 	}
 
 	// mmap has issues with partial offloading on metal
