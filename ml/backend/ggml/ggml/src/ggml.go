@@ -5,6 +5,7 @@ package ggml
 // #cgo CPPFLAGS: -I${SRCDIR}/../include -I${SRCDIR}/ggml-cpu
 // #include <stdlib.h>
 // #include "ggml-backend.h"
+// extern void sink(int level, char *text, void *user_data);
 import "C"
 import (
 	"log/slog"
@@ -17,6 +18,13 @@ import (
 
 	_ "github.com/ollama/ollama/ml/backend/ggml/ggml/src/ggml-cpu"
 )
+
+func init() {
+	C.ggml_log_set((C.ggml_log_callback)(C.sink), nil)
+}
+
+//export sink
+func sink(level C.int, text *C.char, _ unsafe.Pointer) {}
 
 var OnceLoad = sync.OnceFunc(func() {
 	var lib struct{ name, pattern, defaultValue string }
