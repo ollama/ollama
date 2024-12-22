@@ -392,6 +392,8 @@ curl --request POST \
 
 ##### Request (Manual Insertion of Image Placeholders in Raw Prompt)
 
+*note: the `[img-0]<image>` tag can be placed anywhere in the prompt, and the `0` corresponds to the index of the image in the `images` array*
+
 ```shell
 curl --request POST \
   --url http://localhost:11434/api/generate \
