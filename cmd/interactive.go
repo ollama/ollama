@@ -485,6 +485,9 @@ func buildModelfile(opts runOptions) string {
 	}
 
 	for _, msg := range opts.Messages {
+		if strings.Contains(msg.Content, "\"") {
+			msg.Content = `"""` + msg.Content + `"""`
+		}
 		f.Commands = append(f.Commands, parser.Command{Name: "message", Args: fmt.Sprintf("%s: %s", msg.Role, msg.Content)})
 	}
 
