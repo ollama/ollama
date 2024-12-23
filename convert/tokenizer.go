@@ -256,8 +256,8 @@ func parseVocabulary(fsys fs.FS) (*Vocabulary, error) {
 		Pattern string
 		Func    func(fs.FS) (*Vocabulary, error)
 	}{
-		{"tokenizer.model", parseSentencePiece},
 		{"tokenizer.json", parseVocabularyFromTokenizer},
+		{"tokenizer.model", parseSentencePiece},
 	}
 
 	for _, pattern := range patterns {
