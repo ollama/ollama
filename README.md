@@ -298,6 +298,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [AnythingLLM (Docker + MacOs/Windows/Linux native app)](https://github.com/Mintplex-Labs/anything-llm)
 - [Ollama Basic Chat: Uses HyperDiv Reactive UI](https://github.com/rapidarchitect/ollama_basic_chat)
 - [Ollama-chats RPG](https://github.com/drazdra/ollama-chats)
+- [IntelliBar](https://intellibar.app/) (AI-powered assistant for macOS)
 - [QA-Pilot](https://github.com/reid41/QA-Pilot) (Interactive chat tool that can leverage Ollama models for rapid understanding and navigation of GitHub code repositories)
 - [ChatOllama](https://github.com/sugarforever/chat-ollama) (Open Source Chatbot based on Ollama with Knowledge Bases)
 - [CRAG Ollama Chat](https://github.com/Nagi-ovo/CRAG-Ollama-Chat) (Simple Web Search with Corrective RAG)
@@ -361,6 +362,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Abbey](https://github.com/US-Artificial-Intelligence/abbey) (A configurable AI interface server with notebooks, document storage, and YouTube support)
 - [Minima](https://github.com/dmayboroda/minima) (RAG with on-premises or fully local workflow)
 - [aidful-ollama-model-delete](https://github.com/AidfulAI/aidful-ollama-model-delete) (User interface for simplified model cleanup)
+- [Perplexica](https://github.com/ItzCrazyKns/Perplexica) (An AI-powered search engine & an open-source alternative to Perplexity AI)
 
 ### Cloud
 
