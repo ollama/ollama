@@ -223,12 +223,12 @@ func (n Name) String() string {
 func (n Name) DisplayShortest() string {
 	var sb strings.Builder
 
-	if n.Host != defaultHost {
+	if !strings.EqualFold(n.Host, defaultHost) {
 		sb.WriteString(n.Host)
 		sb.WriteByte('/')
 		sb.WriteString(n.Namespace)
 		sb.WriteByte('/')
-	} else if n.Namespace != defaultNamespace {
+	} else if !strings.EqualFold(n.Namespace, defaultNamespace) {
 		sb.WriteString(n.Namespace)
 		sb.WriteByte('/')
 	}

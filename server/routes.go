@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"math"
 	"net"
@@ -27,14 +28,13 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/build"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/model/mllama"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/runners"
-	"github.com/ollama/ollama/server/imageproc"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -129,12 +129,28 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	model, err := GetModel(req.Model)
+	name := model.ParseName(req.Model)
+	if !name.IsValid() {
+		// Ideally this is "invalid model name" but we're keeping with
+		// what the API currently returns until we can change it.
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+		return
+	}
+
+	// We cannot currently consolidate this into GetModel because all we'll
+	// induce infinite recursion given the current code structure.
+	name, err := getExistingName(name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+		return
+	}
+
+	model, err := GetModel(name.String())
 	if err != nil {
 		switch {
-		case os.IsNotExist(err):
+		case errors.Is(err, fs.ErrNotExist):
 			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
-		case err.Error() == "invalid model name":
+		case err.Error() == errtypes.InvalidModelNameErrMsg:
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -166,7 +182,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		caps = append(caps, CapabilityInsert)
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, caps, req.Options, req.KeepAlive)
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)
 	if errors.Is(err, errCapabilityCompletion) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support generate", req.Model)})
 		return
@@ -197,8 +213,14 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	images := make([]llm.ImageData, len(req.Images))
 	for i := range req.Images {
 		if isMllama {
-			data, aspectRatioID, err := imageproc.Preprocess(req.Images[i])
+			data, opts, err := mllama.Preprocess(bytes.NewReader(req.Images[i]))
 			if err != nil {
+				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error processing image"})
+				return
+			}
+
+			ar, ok := opts["aspectRatioIndex"].(int)
+			if !ok {
 				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error processing image"})
 				return
 			}
@@ -210,7 +232,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				return
 			}
 
-			images[i] = llm.ImageData{ID: i, Data: buf.Bytes(), AspectRatioID: aspectRatioID}
+			images[i] = llm.ImageData{ID: i, Data: buf.Bytes(), AspectRatioID: ar}
 		} else {
 			images[i] = llm.ImageData{ID: i, Data: req.Images[i]}
 		}
@@ -395,7 +417,13 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		}
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, []Capability{}, req.Options, req.KeepAlive)
+	name, err := getExistingName(model.ParseName(req.Model))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+		return
+	}
+
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), []Capability{}, req.Options, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -498,7 +526,13 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	r, _, _, err := s.scheduleRunner(c.Request.Context(), req.Model, []Capability{}, req.Options, req.KeepAlive)
+	name := model.ParseName(req.Model)
+	if !name.IsValid() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+
+	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []Capability{}, req.Options, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -542,7 +576,7 @@ func (s *Server) PullHandler(c *gin.Context) {
 
 	name := model.ParseName(cmp.Or(req.Model, req.Name))
 	if !name.IsValid() {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "invalid model name"})
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errtypes.InvalidModelNameErrMsg})
 		return
 	}
 
@@ -591,11 +625,11 @@ func (s *Server) PushHandler(c *gin.Context) {
 		return
 	}
 
-	var model string
+	var mname string
 	if req.Model != "" {
-		model = req.Model
+		mname = req.Model
 	} else if req.Name != "" {
-		model = req.Name
+		mname = req.Name
 	} else {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
 		return
@@ -615,7 +649,13 @@ func (s *Server) PushHandler(c *gin.Context) {
 		ctx, cancel := context.WithCancel(c.Request.Context())
 		defer cancel()
 
-		if err := PushModel(ctx, model, regOpts, fn); err != nil {
+		name, err := getExistingName(model.ParseName(mname))
+		if err != nil {
+			ch <- gin.H{"error": err.Error()}
+			return
+		}
+
+		if err := PushModel(ctx, name.DisplayShortest(), regOpts, fn); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
 	}()
@@ -628,17 +668,29 @@ func (s *Server) PushHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-// getExistingName returns the original, on disk name if the input name is a
-// case-insensitive match, otherwise it returns the input name.
+// getExistingName searches the models directory for the longest prefix match of
+// the input name and returns the input name with all existing parts replaced
+// with each part found. If no parts are found, the input name is returned as
+// is.
 func getExistingName(n model.Name) (model.Name, error) {
 	var zero model.Name
 	existing, err := Manifests(true)
 	if err != nil {
 		return zero, err
 	}
+	var set model.Name // tracks parts already canonicalized
 	for e := range existing {
-		if n.EqualFold(e) {
-			return e, nil
+		if set.Host == "" && strings.EqualFold(e.Host, n.Host) {
+			n.Host = e.Host
+		}
+		if set.Namespace == "" && strings.EqualFold(e.Namespace, n.Namespace) {
+			n.Namespace = e.Namespace
+		}
+		if set.Model == "" && strings.EqualFold(e.Model, n.Model) {
+			n.Model = e.Model
+		}
+		if set.Tag == "" && strings.EqualFold(e.Tag, n.Tag) {
+			n.Tag = e.Tag
 		}
 	}
 	return n, nil
@@ -667,7 +719,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	}
 
 	if r.Path == "" && r.Modelfile == "" {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "path or modelfile are required"})
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "path or Modelfile are required"})
 		return
 	}
 
@@ -731,6 +783,12 @@ func (s *Server) DeleteHandler(c *gin.Context) {
 		return
 	}
 
+	n, err := getExistingName(n)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", cmp.Or(r.Model, r.Name))})
+		return
+	}
+
 	m, err := ParseNamedManifest(n)
 	if err != nil {
 		switch {
@@ -779,7 +837,7 @@ func (s *Server) ShowHandler(c *gin.Context) {
 		switch {
 		case os.IsNotExist(err):
 			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
-		case err.Error() == "invalid model name":
+		case err.Error() == errtypes.InvalidModelNameErrMsg:
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		default:
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -791,7 +849,16 @@ func (s *Server) ShowHandler(c *gin.Context) {
 }
 
 func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
-	m, err := GetModel(req.Model)
+	name := model.ParseName(req.Model)
+	if !name.IsValid() {
+		return nil, errModelPathInvalid
+	}
+	name, err := getExistingName(name)
+	if err != nil {
+		return nil, err
+	}
+
+	m, err := GetModel(name.String())
 	if err != nil {
 		return nil, err
 	}
@@ -814,12 +881,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		msgs[i] = api.Message{Role: msg.Role, Content: msg.Content}
 	}
 
-	n := model.ParseName(req.Model)
-	if !n.IsValid() {
-		return nil, errors.New("invalid model name")
-	}
-
-	manifest, err := ParseNamedManifest(n)
+	manifest, err := ParseNamedManifest(name)
 	if err != nil {
 		return nil, err
 	}
@@ -1080,11 +1142,13 @@ func isLocalIP(ip netip.Addr) bool {
 }
 
 func allowedHost(host string) bool {
+	host = strings.ToLower(host)
+
 	if host == "" || host == "localhost" {
 		return true
 	}
 
-	if hostname, err := os.Hostname(); err == nil && host == hostname {
+	if hostname, err := os.Hostname(); err == nil && host == strings.ToLower(hostname) {
 		return true
 	}
 
@@ -1272,13 +1336,16 @@ func Serve(ln net.Listener) error {
 		srvr.Close()
 		schedDone()
 		sched.unloadAllRunners()
-		runners.Cleanup(build.EmbedFS)
 		done()
 	}()
 
-	if _, err := runners.Refresh(build.EmbedFS); err != nil {
-		return fmt.Errorf("unable to initialize llm runners %w", err)
+	// Locate and log what runners are present at startup
+	var runnerNames []string
+	for v := range runners.GetAvailableServers() {
+		runnerNames = append(runnerNames, v)
 	}
+	slog.Info("Dynamic LLM libraries", "runners", runnerNames)
+	slog.Debug("Override detection logic by setting OLLAMA_LLM_LIBRARY")
 
 	s.sched.Run(schedCtx)
 
@@ -1411,7 +1478,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			switch {
 			case os.IsNotExist(err):
 				c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
-			case err.Error() == "invalid model name":
+			case err.Error() == errtypes.InvalidModelNameErrMsg:
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			default:
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1435,7 +1502,18 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		caps = append(caps, CapabilityTools)
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), req.Model, caps, req.Options, req.KeepAlive)
+	name := model.ParseName(req.Model)
+	if !name.IsValid() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+	name, err := getExistingName(name)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)
 	if errors.Is(err, errCapabilityCompletion) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support chat", req.Model)})
 		return

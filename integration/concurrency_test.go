@@ -207,7 +207,7 @@ func TestMultiModelStress(t *testing.T) {
 		chosenModels = mediumModels
 		// default:
 		// 	slog.Info("selecting large models")
-		// 	chosenModels = largModels
+		// 	chosenModels = largeModels
 	}
 
 	req, resp := GenerateRequests()
@@ -232,7 +232,7 @@ func TestMultiModelStress(t *testing.T) {
 	var wg sync.WaitGroup
 	consumed := uint64(256 * format.MebiByte) // Assume some baseline usage
 	for i := 0; i < len(req); i++ {
-		// Always get at least 2 models, but dont' overshoot VRAM too much or we'll take too long
+		// Always get at least 2 models, but don't overshoot VRAM too much or we'll take too long
 		if i > 1 && consumed > maxVram {
 			slog.Info("achieved target vram exhaustion", "count", i, "vram", format.HumanBytes2(maxVram), "models", format.HumanBytes2(consumed))
 			break
