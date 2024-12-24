@@ -103,7 +103,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			return
 		}
 
-		adapterLayers, err := getAdapters(r.Adapters, baseLayers, fn)
+		adapterLayers, err := getAdapters(r, baseLayers, fn)
 		if err != nil {
 			ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
 			return
@@ -218,7 +218,7 @@ func getModelLayerKV(baseLayers []*layerGGML) (llm.KV, error) {
 
 func convertModelFromGGUF(r api.CreateRequest, name model.Name, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
 	if len(r.FromModel.Files) == 0 {
-		return nil, fmt.Errorf("no files provided")
+		return nil, fmt.Errorf("no files provided for the model")
 	} else if len(r.FromModel.Files) > 1 {
 		return nil, fmt.Errorf("only one file is supported")
 	}
@@ -231,15 +231,15 @@ func convertModelFromGGUF(r api.CreateRequest, name model.Name, fn func(resp api
 	return getGGUFLayers(digest, fn)
 }
 
-func getAdapters(r *api.CreateFromModel, baseLayers []*layerGGML, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
-	if r == nil {
+func getAdapters(r api.CreateRequest, baseLayers []*layerGGML, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
+	if r.Adapters == nil {
 		return nil, nil
 	}
 
-	switch r.Type {
+	switch r.Adapters.Type {
 	case "safetensors":
 		slog.Debug("safetensors adapter")
-		adapterLayers, err := convertModelFromSafetensors(r, baseLayers, true, fn)
+		adapterLayers, err := convertModelFromSafetensors(r.Adapters, baseLayers, true, fn)
 		if err != nil {
 			slog.Error("error creating model from safetensors", "error", err)
 			return nil, err
@@ -247,6 +247,18 @@ func getAdapters(r *api.CreateFromModel, baseLayers []*layerGGML, fn func(resp a
 		return adapterLayers, nil
 	case "gguf":
 		slog.Debug("gguf adapter")
+		if len(r.Adapters.Files) == 0 {
+			return nil, fmt.Errorf("no files provided for the adapter")
+		} else if len(r.Adapters.Files) > 1 {
+			return nil, fmt.Errorf("only one adapter is currently supported")
+		}
+
+		var digest string
+		for _, v := range r.Adapters.Files {
+			digest = v
+		}
+
+		return getGGUFLayers(digest, fn)
 	default:
 		slog.Error("unknown adapter")
 		return nil, fmt.Errorf("unknown adapter type")
@@ -343,7 +355,7 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 		return err
 	}
 
-	configLayer, err := getConfigLayer(layers, config)
+	configLayer, err := createConfigLayer(layers, config)
 	if err != nil {
 		return err
 	}
@@ -603,7 +615,7 @@ func setMessages(layers []Layer, m []api.Message) ([]Layer, error) {
 	return layers, nil
 }
 
-func getConfigLayer(layers []Layer, config ConfigV2) (*Layer, error) {
+func createConfigLayer(layers []Layer, config ConfigV2) (*Layer, error) {
 	digests := make([]string, len(layers))
 	for i, layer := range layers {
 		digests[i] = layer.Digest
