@@ -28,6 +28,13 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
+var (
+	errNoFilesProvided         = errors.New("no files provided to convert")
+	errOnlyOneAdapterSupported = errors.New("only one adapter is currently supported")
+	errOnlyGGUFSupported       = errors.New("supplied file was not in GGUF format")
+	errUnknownType             = errors.New("unknown type")
+)
+
 func (s *Server) CreateHandler(c *gin.Context) {
 	var r api.CreateRequest
 	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
@@ -60,7 +67,6 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		oldManifest, _ := ParseNamedManifest(name)
 
 		var baseLayers []*layerGGML
-
 		if r.From != "" {
 			slog.Debug("create model from model name")
 			fromName := model.ParseName(r.From)
@@ -77,25 +83,15 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				ch <- gin.H{"error": err.Error()}
 			}
 		} else if r.FromModel != nil {
-			switch r.FromModel.Type {
-			case "safetensors":
-				slog.Debug("create model from safetensors")
-				baseLayers, err = convertModelFromSafetensors(r.FromModel, baseLayers, false, fn)
-				if err != nil {
-					slog.Error("error creating model from safetensors", "error", err)
-					ch <- gin.H{"error": err.Error()}
-					return
+			baseLayers, err = convertFromModel(r.FromModel, baseLayers, false, fn)
+			if err != nil {
+				for _, badReq := range []error{errNoFilesProvided, errOnlyGGUFSupported, errUnknownType} {
+					if errors.Is(err, badReq) {
+						ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+						return
+					}
 				}
-			case "gguf":
-				slog.Debug("create model from gguf")
-				baseLayers, err = convertModelFromGGUF(r, name, fn)
-				if err != nil {
-					slog.Error("error creating model from gguf", "error", err)
-					ch <- gin.H{"error": err.Error()}
-					return
-				}
-			default:
-				ch <- gin.H{"error": fmt.Sprintf("unknown from_model type: %s", r.FromModel.Type), "status": http.StatusBadRequest}
+				ch <- gin.H{"error": err.Error()}
 				return
 			}
 		} else {
@@ -103,10 +99,19 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			return
 		}
 
-		adapterLayers, err := getAdapters(r, baseLayers, fn)
-		if err != nil {
-			ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
-			return
+		var adapterLayers []*layerGGML
+		if r.Adapters != nil {
+			adapterLayers, err = convertFromModel(r.Adapters, baseLayers, true, fn)
+			if err != nil {
+				for _, badReq := range []error{errNoFilesProvided, errOnlyOneAdapterSupported, errOnlyGGUFSupported, errUnknownType} {
+					if errors.Is(err, badReq) {
+						ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+						return
+					}
+				}
+				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				return
+			}
 		}
 
 		if len(adapterLayers) > 0 {
@@ -139,7 +144,34 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func convertModelFromSafetensors(r *api.CreateFromModel, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
+func convertFromModel(r *api.CreateFromModel, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
+	switch r.Type {
+	case "safetensors":
+		layers, err := convertFromSafetensors(r, baseLayers, isAdapter, fn)
+		if err != nil {
+			slog.Error("error converting from safetensors", "error", err)
+			return nil, err
+		}
+		return layers, nil
+	case "gguf":
+		if len(r.Files) == 0 {
+			return nil, errNoFilesProvided
+		} else if len(r.Files) > 1 && isAdapter {
+			return nil, errOnlyOneAdapterSupported
+		}
+
+		var digest string
+		for _, v := range r.Files {
+			digest = v
+		}
+
+		return ggufLayers(digest, fn)
+	default:
+		return nil, errUnknownType
+	}
+}
+
+func convertFromSafetensors(r *api.CreateFromModel, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
 	tmpDir, err := os.MkdirTemp("", "ollama-safetensors")
 	if err != nil {
 		return nil, err
@@ -170,7 +202,7 @@ func convertModelFromSafetensors(r *api.CreateFromModel, baseLayers []*layerGGML
 			return nil, err
 		}
 	} else {
-		kv, err := getModelLayerKV(baseLayers)
+		kv, err := modelLayerKV(baseLayers)
 		if err != nil {
 			return nil, err
 		}
@@ -207,64 +239,13 @@ func convertModelFromSafetensors(r *api.CreateFromModel, baseLayers []*layerGGML
 	return layers, nil
 }
 
-func getModelLayerKV(baseLayers []*layerGGML) (llm.KV, error) {
+func modelLayerKV(baseLayers []*layerGGML) (llm.KV, error) {
 	for _, l := range baseLayers {
 		if l.GGML != nil {
 			return l.KV(), nil
 		}
 	}
 	return llm.KV{}, fmt.Errorf("no base model was found")
-}
-
-func convertModelFromGGUF(r api.CreateRequest, name model.Name, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
-	if len(r.FromModel.Files) == 0 {
-		return nil, fmt.Errorf("no files provided for the model")
-	} else if len(r.FromModel.Files) > 1 {
-		return nil, fmt.Errorf("only one file is supported")
-	}
-
-	var digest string
-	for _, v := range r.FromModel.Files {
-		digest = v
-	}
-
-	return getGGUFLayers(digest, fn)
-}
-
-func getAdapters(r api.CreateRequest, baseLayers []*layerGGML, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
-	if r.Adapters == nil {
-		return nil, nil
-	}
-
-	switch r.Adapters.Type {
-	case "safetensors":
-		slog.Debug("safetensors adapter")
-		adapterLayers, err := convertModelFromSafetensors(r.Adapters, baseLayers, true, fn)
-		if err != nil {
-			slog.Error("error creating model from safetensors", "error", err)
-			return nil, err
-		}
-		return adapterLayers, nil
-	case "gguf":
-		slog.Debug("gguf adapter")
-		if len(r.Adapters.Files) == 0 {
-			return nil, fmt.Errorf("no files provided for the adapter")
-		} else if len(r.Adapters.Files) > 1 {
-			return nil, fmt.Errorf("only one adapter is currently supported")
-		}
-
-		var digest string
-		for _, v := range r.Adapters.Files {
-			digest = v
-		}
-
-		return getGGUFLayers(digest, fn)
-	default:
-		slog.Error("unknown adapter")
-		return nil, fmt.Errorf("unknown adapter type")
-	}
-
-	return nil, nil
 }
 
 func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, fn func(resp api.ProgressResponse)) (err error) {
@@ -410,14 +391,14 @@ func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.Progr
 
 	ggml, _, err := llm.DecodeGGML(temp, 0)
 	if err != nil {
-		fmt.Printf("error decoding ggml: %s\n", err)
+		slog.Error(fmt.Sprintf("error decoding ggml: %s\n", err))
 		return nil, err
 	}
 
 	return &layerGGML{newLayer, ggml}, nil
 }
 
-func getGGUFLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
+func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
 	var layers []*layerGGML
 
 	fn(api.ProgressResponse{Status: "parsing GGUF"})
@@ -439,7 +420,8 @@ func getGGUFLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerG
 	}
 
 	if contentType != "gguf" {
-		return nil, fmt.Errorf("unsupported content type: %s", contentType)
+		slog.Error(fmt.Sprintf("unsupported content type: %s", contentType))
+		return nil, errOnlyGGUFSupported
 	}
 
 	stat, err := blob.Stat()
@@ -468,6 +450,7 @@ func getGGUFLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerG
 			layer, err = NewLayerFromLayer(digest, mediatype, blob.Name())
 			if err != nil {
 				slog.Debug("could not create new layer from layer", "error", err)
+				return nil, err
 			}
 		}
 

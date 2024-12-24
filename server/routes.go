@@ -35,6 +35,7 @@ import (
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/runners"
 	"github.com/ollama/ollama/template"
+	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
