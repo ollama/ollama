@@ -408,14 +408,14 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 					messages = append(messages, api.Message{Role: msg.Role, Content: text})
 				case "image_url":
 					var url string
-					if urlMap, ok := data["image_url"].(map[string]any); ok {
-						if url, ok = urlMap["url"].(string); !ok {
-							return nil, errors.New("invalid message format")
-						}
-					} else {
-						if url, ok = data["image_url"].(string); !ok {
-							return nil, errors.New("invalid message format")
-						}
+					urlMap, ok := data["image_url"].(map[string]any)
+					if !ok {
+						return nil, errors.New("invalid message format: image_url must be a map")
+					}
+
+					url, ok = urlMap["url"].(string)
+					if !ok {
+						return nil, errors.New("invalid message format: url field missing or not a string")
 					}
 
 					types := []string{"jpeg", "jpg", "png"}
