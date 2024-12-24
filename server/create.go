@@ -161,11 +161,16 @@ func convertFromModel(r *api.CreateFromModel, baseLayers []*layerGGML, isAdapter
 		}
 
 		var digest string
+		var allLayers []*layerGGML
 		for _, v := range r.Files {
 			digest = v
+			layers, err := ggufLayers(digest, fn)
+			if err != nil {
+				return nil, err
+			}
+			allLayers = append(allLayers, layers...)
 		}
-
-		return ggufLayers(digest, fn)
+		return allLayers, nil
 	default:
 		return nil, errUnknownType
 	}

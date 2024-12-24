@@ -79,9 +79,12 @@ func (f File) CreateRequest() (*api.CreateRequest, error) {
 					return nil, err
 				}
 
-				req.FromModel = &api.CreateFromModel{Type: "gguf", Files: map[string]string{filepath.Base(path): digest}}
+				if req.FromModel != nil {
+					req.FromModel.Files[filepath.Base(path)] = digest
+				} else {
+					req.FromModel = &api.CreateFromModel{Type: "gguf", Files: map[string]string{filepath.Base(path): digest}}
+				}
 			}
-
 		case "adapter":
 			path := c.Args
 			fi, err := os.Stat(path)
