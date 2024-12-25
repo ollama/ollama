@@ -376,6 +376,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [oterm](https://github.com/ggozad/oterm)
 - [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
 - [Emacs client](https://github.com/zweifisch/ollama)
+- [neollama](https://github.com/paradoxical-dev/neollama) UI client for interacting with models from within Neovim
 - [gen.nvim](https://github.com/David-Kunz/gen.nvim)
 - [ollama.nvim](https://github.com/nomnivore/ollama.nvim)
 - [ollero.nvim](https://github.com/marco-souza/ollero.nvim)
