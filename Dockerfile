@@ -4,6 +4,7 @@ ARG CUDA_VERSION_12=12.4.0
 ARG ROCM_VERSION=6.1.2
 ARG JETPACK_6=r36.2.0
 ARG JETPACK_5=r35.4.1
+ARG MUSA_VERSION_1=rc3.1.0
 
 ### To create a local image for building linux binaries on mac or windows with efficient incremental builds
 #
@@ -196,6 +197,53 @@ ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
+
+ENTRYPOINT ["/bin/ollama"]
+CMD ["serve"]
+
+
+# Moore Threads (MUSA) specific build stages
+
+### To create a local image for building linux binaries on mac or windows with efficient incremental builds
+#
+# docker build --platform linux/amd64 -t musa-builder-amd64 -f Dockerfile --target musa-builder-amd64 .
+# docker run --platform linux/amd64 --rm -it -v $(pwd):/go/src/github.com/ollama/ollama/ musa-builder-amd64
+#
+### Then incremental builds will be much faster in this container
+#
+# make -j 10 dist
+#
+FROM --platform=linux/amd64 mthreads/musa:${MUSA_VERSION_1}-devel-ubuntu22.04 AS musa-builder-amd64
+ARG GOLANG_VERSION
+COPY ./scripts/ubuntu_linux_deps.sh /
+RUN GOLANG_VERSION=${GOLANG_VERSION} sh /ubuntu_linux_deps.sh
+ENV GOARCH amd64
+ENV CGO_ENABLED 1
+WORKDIR /go/src/github.com/ollama/ollama/
+ENTRYPOINT [ "bash" ]
+
+FROM --platform=linux/amd64 musa-builder-amd64 AS musa-build-amd64
+COPY . .
+ARG OLLAMA_SKIP_MUSA_GENERATE
+ARG OLLAMA_FAST_BUILD
+RUN --mount=type=cache,target=/root/.ccache \
+    if grep "^flags" /proc/cpuinfo|grep avx>/dev/null; then \
+        make -j $(nproc) dist ; \
+    else \
+        make -j 5 dist ; \
+    fi
+
+FROM --platform=linux/amd64 ubuntu:22.04 AS runtime-musa
+RUN apt-get update && \
+    apt-get install -y ca-certificates libelf1 libnuma1 && \
+    rm -rf /var/lib/apt/lists/*
+COPY --from=musa-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/bin/ /bin/
+COPY --from=musa-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
+
+EXPOSE 11434
+ENV OLLAMA_HOST  0.0.0.0
+ENV MTHREADS_DRIVER_CAPABILITIES=compute,utility
+ENV MTHREADS_VISIBLE_DEVICES=all
 
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
