@@ -125,7 +125,7 @@ Tools support can be added to a model by adding a `{{ .Tools }}` node to the tem
 
 Mistral v0.3 and Mixtral 8x22B supports tool calling.
 
-```source.go
+```go
 {{- range $index, $_ := .Messages }}
 {{- if eq .Role "user" }}
 {{- if and (le (len (slice $.Messages $index)) 2) $.Tools }}[AVAILABLE_TOOLS] {{ json $.Tools }}[/AVAILABLE_TOOLS]
