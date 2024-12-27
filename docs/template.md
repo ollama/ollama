@@ -151,7 +151,7 @@ Fill-in-middle support can be added to a model by adding a `{{ .Suffix }}` node 
 
 CodeLlama [7B](https://ollama.com/library/codellama:7b-code) and [13B](https://ollama.com/library/codellama:13b-code) code completion models support fill-in-middle.
 
-```source.go
+```go
 <PRE> {{ .Prompt }} <SUF>{{ .Suffix }} <MID>
 ```
 
