@@ -32,7 +32,7 @@ Omitting a template in these models puts the responsibility of correctly templat
 
 To add templates in your model, you'll need to add a `TEMPLATE` command to the Modelfile. Here's an example using Meta's Llama 3.
 
-```source.dockerfile
+```dockerfile
 FROM llama3.2
 
 TEMPLATE """{{- if .System }}<|start_header_id|>system<|end_header_id|>
