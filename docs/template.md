@@ -111,7 +111,7 @@ Keep the following tips and best practices in mind when working with Go template
 
 ChatML is a popular template format. It can be used for models such as Databrick's DBRX, Intel's Neural Chat, and Microsoft's Orca 2.
 
-```source.go
+```go
 {{- range .Messages }}<|im_start|>{{ .Role }}
 {{ .Content }}<|im_end|>
 {{ end }}<|im_start|>assistant
