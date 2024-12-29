@@ -13,7 +13,7 @@
 - [Push a Model](#push-a-model)
 - [Generate Embeddings](#generate-embeddings)
 - [List Running Models](#list-running-models)
-- [App Version](#app-version)
+- [Version](#version)
 
 ## Conventions
 
