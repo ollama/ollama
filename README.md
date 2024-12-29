@@ -97,7 +97,7 @@ Ollama supports importing GGUF models in the Modelfile:
    ollama run example
    ```
 
-### Import from PyTorch or Safetensors
+### Import from Safetensors
 
 See the [guide](docs/import.md) on importing models for more information.
 
