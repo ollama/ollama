@@ -1534,7 +1534,7 @@ curl http://localhost:11434/api/embeddings -d '{
 GET /api/version
 ```
 
-This endpoint returns the current version of the Ollama installed on system.
+Retrieve the Ollama version
 
 ### Examples
 
