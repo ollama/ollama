@@ -14,6 +14,7 @@ A model file is the blueprint to create and share models with Ollama.
     - [Build from existing model](#build-from-existing-model)
     - [Build from a Safetensors model](#build-from-a-safetensors-model)
     - [Build from a GGUF file](#build-from-a-gguf-file)
+  - [DRAFT](#draft)
   - [PARAMETER](#parameter)
     - [Valid Parameters and Values](#valid-parameters-and-values)
   - [TEMPLATE](#template)
@@ -36,6 +37,7 @@ INSTRUCTION arguments
 | Instruction                         | Description                                                    |
 | ----------------------------------- | -------------------------------------------------------------- |
 | [`FROM`](#from-required) (required) | Defines the base model to use.                                 |
+| [`DRAFT`](#draft)                   | Defines the draft model to use for speculative decoding.       |
 | [`PARAMETER`](#parameter)           | Sets the parameters for how Ollama will run the model.         |
 | [`TEMPLATE`](#template)             | The full prompt template to be sent to the model.              |
 | [`SYSTEM`](#system)                 | Specifies the system message that will be set in the template. |
@@ -133,6 +135,13 @@ FROM ./ollama-model.gguf
 
 The GGUF file location should be specified as an absolute path or relative to the `Modelfile` location.
 
+### DRAFT
+
+The `DRAFT` instruction defines the draft model to use for speculative decoding.
+
+```modelfile
+DRAFT <model name>:<tag>
+```
 
 ### PARAMETER
 
@@ -160,6 +169,10 @@ PARAMETER <parameter> <parametervalue>
 | top_k          | Reduces the probability of generating nonsense. A higher value (e.g. 100) will give more diverse answers, while a lower value (e.g. 10) will be more conservative. (Default: 40)                                                                        | int        | top_k 40             |
 | top_p          | Works together with top-k. A higher value (e.g., 0.95) will lead to more diverse text, while a lower value (e.g., 0.5) will generate more focused and conservative text. (Default: 0.9)                                                                 | float      | top_p 0.9            |
 | min_p          | Alternative to the top_p, and aims to ensure a balance of quality and variety. The parameter *p* represents the minimum probability for a token to be considered, relative to the probability of the most likely token. For example, with *p*=0.05 and the most likely token having a probability of 0.9, logits with a value less than 0.045 are filtered out. (Default: 0.0) | float      | min_p 0.05            |
+| draft_num_ctx  | Sets the size of the prompt context for the draft model (default: 0, 0 = use same as target model)                                                                                                                                                      | int        | draft_num_ctx 0      |
+| draft_max      | Sets the number of tokens to draft for speculative decoding (default: 16)                                                                                                                                                                               | int        | draft_max 16         |
+| draft_min      | Sets the minimum number of draft tokens to use for speculative decoding (default: 5)                                                                                                                                                                    | int        | draft_min 5          |
+| draft_p_min    | Sets the minimum speculative decoding probability (greedy) (default: 0.9)                                                                                                                                                                               | float      | draft_p_min 0.9      |
 
 ### TEMPLATE
 

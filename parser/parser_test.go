@@ -151,6 +151,11 @@ func TestParseFileFrom(t *testing.T) {
 			[]Command{{Name: "what", Args: "the"}, {Name: "model", Args: "lemons make lemonade"}},
 			nil,
 		},
+		{
+			"FROM llama3:7b-instruct-fp16\nDRAFT llama3:7b-instruct-q4_K_M",
+			[]Command{{Name: "model", Args: "llama3:7b-instruct-fp16"}, {Name: "draft", Args: "llama3:7b-instruct-q4_K_M"}},
+			nil,
+		},
 	}
 
 	for _, c := range cases {

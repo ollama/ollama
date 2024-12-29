@@ -36,6 +36,8 @@ func (c Command) String() string {
 	switch c.Name {
 	case "model":
 		fmt.Fprintf(&sb, "FROM %s", c.Args)
+	case "draft":
+		fmt.Fprintf(&sb, "DRAFT %s", c.Args)
 	case "license", "template", "system", "adapter":
 		fmt.Fprintf(&sb, "%s %s", strings.ToUpper(c.Name), quote(c.Args))
 	case "message":
@@ -62,7 +64,7 @@ const (
 var (
 	errMissingFrom        = errors.New("no FROM line")
 	errInvalidMessageRole = errors.New("message role must be one of \"system\", \"user\", or \"assistant\"")
-	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"parameter\", or \"message\"")
+	errInvalidCommand     = errors.New("command must be one of \"from\", \"draft\", \"license\", \"template\", \"system\", \"adapter\", \"parameter\", or \"message\"")
 )
 
 type ParserError struct {
@@ -126,6 +128,8 @@ func ParseFile(r io.Reader) (*File, error) {
 				switch s := strings.ToLower(b.String()); s {
 				case "from":
 					cmd.Name = "model"
+				case "draft":
+					cmd.Name = "draft"
 				case "parameter":
 					// transition to stateParameter which sets command name
 					next = stateParameter
@@ -322,7 +326,7 @@ func isValidMessageRole(role string) bool {
 
 func isValidCommand(cmd string) bool {
 	switch strings.ToLower(cmd) {
-	case "from", "license", "template", "system", "adapter", "parameter", "message":
+	case "from", "draft", "license", "template", "system", "adapter", "parameter", "message":
 		return true
 	default:
 		return false

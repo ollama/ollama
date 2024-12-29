@@ -65,6 +65,7 @@ type Model struct {
 	ParentModel    string
 	AdapterPaths   []string
 	ProjectorPaths []string
+	DraftModelPath string
 	System         string
 	License        []string
 	Digest         string
@@ -127,6 +128,13 @@ func (m *Model) String() string {
 		Name: "model",
 		Args: m.ModelPath,
 	})
+
+	if m.DraftModelPath != "" {
+		modelfile.Commands = append(modelfile.Commands, parser.Command{
+			Name: "draft",
+			Args: m.DraftModelPath,
+		})
+	}
 
 	for _, adapter := range m.AdapterPaths {
 		modelfile.Commands = append(modelfile.Commands, parser.Command{
@@ -271,6 +279,8 @@ func GetModel(name string) (*Model, error) {
 		case "application/vnd.ollama.image.model":
 			model.ModelPath = filename
 			model.ParentModel = layer.From
+		case "application/vnd.ollama.image.model.draft":
+			model.DraftModelPath = filename
 		case "application/vnd.ollama.image.embed":
 			// Deprecated in versions  > 0.1.2
 			// TODO: remove this warning in a future version
@@ -374,8 +384,8 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 		command := c.Name
 
 		switch command {
-		case "model", "adapter":
-			if name := model.ParseName(c.Args); name.IsValid() && command == "model" {
+		case "model", "draft", "adapter":
+			if name := model.ParseName(c.Args); name.IsValid() && (command == "model" || command == "draft") {
 				name, err := getExistingName(name)
 				if err != nil {
 					return err
@@ -479,12 +489,16 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 					}
 				}
 
-				if baseLayer.GGML != nil {
+				if baseLayer.GGML != nil && command != "draft" {
 					config.ModelFormat = cmp.Or(config.ModelFormat, baseLayer.GGML.Name())
 					config.ModelFamily = cmp.Or(config.ModelFamily, baseLayer.GGML.KV().Architecture())
 					config.ModelType = cmp.Or(config.ModelType, format.HumanNumber(baseLayer.GGML.KV().ParameterCount()))
 					config.FileType = cmp.Or(config.FileType, baseLayer.GGML.KV().FileType().String())
 					config.ModelFamilies = append(config.ModelFamilies, baseLayer.GGML.KV().Architecture())
+				}
+
+				if command == "draft" && baseLayer.Layer.MediaType == "application/vnd.ollama.image.model" {
+					baseLayer.Layer.MediaType += ".draft"
 				}
 
 				layers = append(layers, baseLayer.Layer)

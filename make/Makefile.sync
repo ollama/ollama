@@ -49,8 +49,8 @@ create-patches: $(LLAMACPP_REPO)
 	@cd $(LLAMACPP_REPO) && git format-patch --no-signature --no-numbered --zero-commit -o $(VENDOR_RELATIVE_PATCH_DIR) $(LLAMACPP_BASE_COMMIT)
 
 # Vendoring template logic
-EXCLUDED_FILES=sgemm.cpp sgemm.h sampling_ext.cpp sampling_ext.h stb_image.h json.hpp llama_darwin.c base64.hpp
-OLLAMA_NATIVE_FILES=mllama.cpp mllama.h llama_darwin.c sampling_ext.cpp sampling_ext.h
+EXCLUDED_FILES=sgemm.cpp sgemm.h sampling_ext.cpp sampling_ext.h speculative_ext.cpp speculative_ext.h stb_image.h json.hpp llama_darwin.c base64.hpp
+OLLAMA_NATIVE_FILES=mllama.cpp mllama.h llama_darwin.c sampling_ext.cpp sampling_ext.h speculative_ext.cpp speculative_ext.h
 define vendor_file
 $(strip $(addprefix $(2),$(notdir $1))) : $(addprefix $(LLAMACPP_REPO),$(1))
 ifneq ($$(filter-out $(EXCLUDED_FILES),$(notdir $1)),)
@@ -194,6 +194,23 @@ LAVA_FILES+= \
 	common/json-schema-to-grammar.h \
 	common/base64.hpp
 $(foreach name,$(LAVA_FILES),$(eval $(call vendor_file,$(name),$(DEST_DIR))))
+
+# used for speculative decoding
+SPECDEC_FILES+= \
+	common/log.h \
+	common/log.cpp \
+	common/common.cpp \
+	common/common.h \
+	common/sampling.cpp \
+	common/sampling.h \
+	common/speculative.cpp \
+	common/speculative.h \
+	common/json.hpp \
+	common/json-schema-to-grammar.cpp \
+	common/json-schema-to-grammar.h
+# Filter out LAVA_FILES from SPECDEC_FILES as there is overlap
+SPECDEC_FILES := $(filter-out $(LAVA_FILES),$(SPECDEC_FILES))
+$(foreach name,$(SPECDEC_FILES),$(eval $(call vendor_file,$(name),$(DEST_DIR))))
 
 $(DEST_DIR)build-info.cpp:
 	@echo "Generating $@"

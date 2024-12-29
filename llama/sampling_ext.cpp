@@ -1,4 +1,5 @@
 // TODO: this is a temporary wrapper to allow calling C++ code from CGo
+#include <vector>
 #include "sampling.h"
 #include "sampling_ext.h"
 #include "json-schema-to-grammar.h"
@@ -64,4 +65,27 @@ int schema_to_grammar(const char *json_schema, char *grammar, size_t max_len)
         strncpy(grammar, "", max_len - 1);
         return 0;
     }
+}
+
+
+int common_sampler_csample_and_accept_n(struct common_sampler *sampler, struct llama_context * ctx,
+const llama_token *draft, size_t draft_size, bool grammar_first,
+llama_token *result, size_t max_result_size)
+{
+    try {
+        std::vector<llama_token> draft_vec(draft, draft+draft_size);
+
+        std::vector<llama_token> result_vec = common_sampler_sample_and_accept_n(sampler, ctx, draft_vec, grammar_first);
+
+        size_t num_tokens_to_copy = std::min(result_vec.size(), max_result_size);
+
+        for (size_t i = 0; i < num_tokens_to_copy; ++i) {
+            result[i] = result_vec[i];
+        }
+
+        return static_cast<int>(num_tokens_to_copy);
+    } catch (const std::exception &e) {
+        return -1;
+    }
+
 }

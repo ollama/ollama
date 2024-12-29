@@ -119,7 +119,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 
 	for i := range modelfile.Commands {
 		switch modelfile.Commands[i].Name {
-		case "model", "adapter":
+		case "model", "draft", "adapter":
 			path := modelfile.Commands[i].Args
 			if path == "~" {
 				path = home
@@ -132,7 +132,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 			}
 
 			fi, err := os.Stat(path)
-			if errors.Is(err, os.ErrNotExist) && modelfile.Commands[i].Name == "model" {
+			if errors.Is(err, os.ErrNotExist) && (modelfile.Commands[i].Name == "model" || modelfile.Commands[i].Name == "draft") {
 				continue
 			} else if err != nil {
 				return err
