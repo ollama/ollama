@@ -1528,7 +1528,7 @@ curl http://localhost:11434/api/embeddings -d '{
 }
 ```
 
-## App Version
+## Version
 
 ```shell
 GET /api/version
