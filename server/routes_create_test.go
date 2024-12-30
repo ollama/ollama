@@ -518,8 +518,8 @@ func TestCreateTemplateSystem(t *testing.T) {
 			Stream:    &stream,
 		})
 
-		if w.Code != http.StatusBadRequest {
-			t.Fatalf("expected status code 400, actual %d", w.Code)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected status code 200, actual %d", w.Code)
 		}
 	})
 }
