@@ -73,7 +73,7 @@ Here are some example models that can be downloaded:
 | Solar              | 10.7B      | 6.1GB | `ollama run solar`               |
 
 > [!NOTE]
-> You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
+> You should have at least 8 GB of RAM available to run the 9B models, 12 GB to run the 14B models, and 32 GB to run the 33B models.
 
 ## Customize a model
 
