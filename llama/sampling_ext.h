@@ -23,7 +23,6 @@ extern "C"
         int32_t mirostat;
         float mirostat_tau;
         float mirostat_eta;
-        bool penalize_nl;
         uint32_t seed;
         char *grammar;
     };

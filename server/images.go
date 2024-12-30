@@ -355,6 +355,8 @@ func realpath(rel, from string) string {
 	return abspath
 }
 
+var deprecatedParameters = []string{"penalize_newline"}
+
 func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantization string, modelfile *parser.File, fn func(resp api.ProgressResponse)) (err error) {
 	config := ConfigV2{
 		OS:           "linux",
@@ -526,6 +528,11 @@ func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantizatio
 
 			messages = append(messages, &api.Message{Role: role, Content: content})
 		default:
+			if slices.Contains(deprecatedParameters, c.Name) {
+				fn(api.ProgressResponse{Status: fmt.Sprintf("warning: parameter %s is deprecated", c.Name)})
+				break
+			}
+
 			ps, err := api.FormatParams(map[string][]string{c.Name: {c.Args}})
 			if err != nil {
 				return err
