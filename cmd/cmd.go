@@ -193,6 +193,39 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func addToZipFile(zipfile *zip.Writer, path, file string) error {
+	f, err := os.Open(file)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+
+	zfi, err := zip.FileInfoHeader(fi)
+	if err != nil {
+		return err
+	}
+
+	zfi.Name, err = filepath.Rel(path, file)
+	if err != nil {
+		return err
+	}
+
+	zf, err := zipfile.CreateHeader(zfi)
+	if err != nil {
+		return err
+	}
+
+	if _, err := io.Copy(zf, f); err != nil {
+		return err
+	}
+	return nil
+}
+
 func tempZipFiles(path string) (string, error) {
 	tempfile, err := os.CreateTemp("", "ollama-tf")
 	if err != nil {
@@ -286,33 +319,7 @@ func tempZipFiles(path string) (string, error) {
 	defer zipfile.Close()
 
 	for _, file := range files {
-		f, err := os.Open(file)
-		if err != nil {
-			return "", err
-		}
-		defer f.Close()
-
-		fi, err := f.Stat()
-		if err != nil {
-			return "", err
-		}
-
-		zfi, err := zip.FileInfoHeader(fi)
-		if err != nil {
-			return "", err
-		}
-
-		zfi.Name, err = filepath.Rel(path, file)
-		if err != nil {
-			return "", err
-		}
-
-		zf, err := zipfile.CreateHeader(zfi)
-		if err != nil {
-			return "", err
-		}
-
-		if _, err := io.Copy(zf, f); err != nil {
+		if err := addToZipFile(zipfile, path, file); err != nil {
 			return "", err
 		}
 	}
