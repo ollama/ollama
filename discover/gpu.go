@@ -353,11 +353,6 @@ func GetGPUInfo() GpuInfoList {
 			oHandles = initOneAPIHandles()
 			if oHandles != nil && oHandles.oneapi != nil {
 				for d := range oHandles.oneapi.num_drivers {
-					if oHandles.oneapi == nil {
-						// shouldn't happen
-						slog.Warn("nil oneapi handle with driver count", "count", int(oHandles.oneapi.num_drivers))
-						continue
-					}
 					devCount := C.oneapi_get_device_count(*oHandles.oneapi, C.int(d))
 					for i := range devCount {
 						gpuInfo := OneapiGPUInfo{
