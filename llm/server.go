@@ -696,7 +696,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		"seed":              req.Options.Seed,
 		"stop":              req.Options.Stop,
 		"image_data":        req.Images,
-		"cache_prompt":      true,
+		"cache_prompt":      req.Options.CachePrompt,
 	}
 
 	if len(req.Format) > 0 {
