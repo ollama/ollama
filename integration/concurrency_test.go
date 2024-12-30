@@ -117,6 +117,9 @@ func TestMultiModelStress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if maxVram < 2*format.GibiByte {
+		t.Skip("VRAM less than 2G, skipping model stress tests")
+	}
 
 	type model struct {
 		name string

@@ -24,6 +24,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/lifecycle"
+	"github.com/ollama/ollama/format"
 	"github.com/stretchr/testify/require"
 )
 
@@ -140,7 +141,7 @@ func PullIfMissing(ctx context.Context, client *api.Client, modelName string) er
 
 	showCtx, cancel := context.WithDeadlineCause(
 		ctx,
-		time.Now().Add(10*time.Second),
+		time.Now().Add(20*time.Second),
 		fmt.Errorf("show for existing model %s took too long", modelName),
 	)
 	defer cancel()
@@ -157,7 +158,7 @@ func PullIfMissing(ctx context.Context, client *api.Client, modelName string) er
 	}
 	slog.Info("model missing", "model", modelName)
 
-	stallDuration := 30 * time.Second // This includes checksum verification, which can take a while on larger models
+	stallDuration := 60 * time.Second // This includes checksum verification, which can take a while on larger models, and slower systems
 	stallTimer := time.NewTimer(stallDuration)
 	fn := func(resp api.ProgressResponse) error {
 		// fmt.Print(".")
@@ -340,4 +341,16 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 			{"fourth", "july", "declaration", "independence"},
 			{"nitrogen", "oxygen", "carbon", "dioxide"},
 		}
+}
+
+func skipUnderMinVRAM(t *testing.T, gb uint64) {
+	// TODO use info API in the future
+	if s := os.Getenv("OLLAMA_MAX_VRAM"); s != "" {
+		maxVram, err := strconv.ParseUint(s, 10, 64)
+		require.NoError(t, err)
+		// Don't hammer on small VRAM cards...
+		if maxVram < gb*format.GibiByte {
+			t.Skip("skipping with small VRAM to avoid timeouts")
+		}
+	}
 }
