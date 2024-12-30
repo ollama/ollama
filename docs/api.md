@@ -506,7 +506,7 @@ The `message` object has the following fields:
 
 Advanced parameters (optional):
 
-- `format`: the format to return a response in. Format can be `json` or a JSON schema. 
+- `format`: the format to return a response in. Format can be `json` or a JSON schema.
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
@@ -1389,6 +1389,8 @@ Generate embeddings from a model
 Advanced parameters:
 
 - `truncate`: truncates the end of each input to fit within context length. Returns error if `false` and context length is exceeded. Defaults to `true`
+- `normalize`: apply vector normalization to the embedding (default: `true`)
+  - **NOTE**: the default behavior will result in different output than `/api/embeddings` due to the normalization
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 
@@ -1503,6 +1505,8 @@ Generate embeddings from a model
 
 Advanced parameters:
 
+- `normalize`: apply vector normalization to the embedding (default: `false`)
+  - **NOTE**: the default behavior will result in different output than `/api/embed` due to the lack of normalization
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 
