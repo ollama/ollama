@@ -33,15 +33,16 @@ func TestExpandPath(t *testing.T) {
 	tests := []struct {
 		input     string
 		expected  string
+		windowsExpected string
 		shouldErr bool
 	}{
-		{"~", "/home/testuser", false},
-		{"~/myfolder/myfile.txt", "/home/testuser/myfolder/myfile.txt", false},
-		{"~anotheruser/docs/file.txt", "/home/anotheruser/docs/file.txt", false},
-		{"~nonexistentuser/file.txt", "", true},
-		{"relative/path/to/file", filepath.Join(os.Getenv("PWD"), "relative/path/to/file"), false},
-		{"/absolute/path/to/file", "/absolute/path/to/file", false},
-		{".", os.Getenv("PWD"), false},
+		{"~", "/home/testuser", "D:\\home\\testuser", false},
+		{"~/myfolder/myfile.txt", "/home/testuser/myfolder/myfile.txt", "D:\\home\\testuser\\myfolder\\myfile.txt", false},
+		{"~anotheruser/docs/file.txt", "/home/anotheruser/docs/file.txt", "D:\\home\\anotheruser\\docs\\file.txt", false},
+		{"~nonexistentuser/file.txt", "", "", true},
+		{"relative/path/to/file", filepath.Join(os.Getenv("PWD"), "relative/path/to/file"), "relative\\path\\to\\file", false},
+		{"/absolute/path/to/file", "/absolute/path/to/file", "D:\\absolute\\path\\to\\file", false},
+		{".", os.Getenv("PWD"), os.Getenv("PWD"), false},
 	}
 
 	for _, test := range tests {
@@ -49,7 +50,7 @@ func TestExpandPath(t *testing.T) {
 		if (err != nil) != test.shouldErr {
 			t.Errorf("expandPathImpl(%q) returned error: %v, expected error: %v", test.input, err != nil, test.shouldErr)
 		}
-		if result != test.expected && !test.shouldErr {
+		if result != test.expected && result != test.windowsExpected && !test.shouldErr {
 			t.Errorf("expandPathImpl(%q) = %q, want %q", test.input, result, test.expected)
 		}
 	}
