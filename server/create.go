@@ -201,7 +201,7 @@ func convertFromSafetensors(r *api.CreateFromModel, baseLayers []*layerGGML, isA
 
 	var mediaType string
 	if !isAdapter {
-		fn(api.ProgressResponse{Status: "converting the model"})
+		fn(api.ProgressResponse{Status: "converting model"})
 		mediaType = "application/vnd.ollama.image.model"
 		if err := convert.ConvertModel(os.DirFS(tmpDir), t); err != nil {
 			return nil, err
@@ -211,7 +211,7 @@ func convertFromSafetensors(r *api.CreateFromModel, baseLayers []*layerGGML, isA
 		if err != nil {
 			return nil, err
 		}
-		fn(api.ProgressResponse{Status: "converting the adapter"})
+		fn(api.ProgressResponse{Status: "converting adapter"})
 		mediaType = "application/vnd.ollama.image.adapter"
 		if err := convert.ConvertAdapter(os.DirFS(tmpDir), t, kv); err != nil {
 			return nil, err

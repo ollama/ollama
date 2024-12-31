@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -21,11 +22,11 @@ import (
 
 var ErrModelNotFound = errors.New("no Modelfile or safetensors files found")
 
-type File struct {
+type Modelfile struct {
 	Commands []Command
 }
 
-func (f File) String() string {
+func (f Modelfile) String() string {
 	var sb strings.Builder
 	for _, cmd := range f.Commands {
 		fmt.Fprintln(&sb, cmd.String())
@@ -34,26 +35,20 @@ func (f File) String() string {
 	return sb.String()
 }
 
-func (f File) CreateRequest() (*api.CreateRequest, error) {
+// CreateRequest creates a new *api.CreateRequest from an existing Modelfile
+func (f Modelfile) CreateRequest() (*api.CreateRequest, error) {
 	req := &api.CreateRequest{}
 
 	var messages []api.Message
 	var licenses []string
 	params := make(map[string]any)
 
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-
 	for _, c := range f.Commands {
 		switch c.Name {
 		case "model":
-			path := c.Args
-			if path == "~" {
-				path = home
-			} else if strings.HasPrefix(path, "~/") {
-				path = filepath.Join(home, path[2:])
+			path, err := expandPath(c.Args)
+			if err != nil {
+				return nil, err
 			}
 
 			fi, err := os.Stat(path)
@@ -66,15 +61,15 @@ func (f File) CreateRequest() (*api.CreateRequest, error) {
 
 			if fi.IsDir() {
 				// this is likely a safetensors or pytorch directory
-				fl, err := getModelFileList(path)
+				digestMap, err := fileDigestMap(path)
 				if err != nil {
 					return nil, err
 				}
 
-				req.FromModel = &api.CreateFromModel{Type: "safetensors", Files: fl}
+				req.FromModel = &api.CreateFromModel{Type: "safetensors", Files: digestMap}
 			} else {
 				// todo check the ensure that this is actually a gguf
-				digest, err := getDigestForFile(path)
+				digest, err := digestForFile(path)
 				if err != nil {
 					return nil, err
 				}
@@ -94,14 +89,14 @@ func (f File) CreateRequest() (*api.CreateRequest, error) {
 
 			if fi.IsDir() {
 				// this is probably a safetensors directory
-				fl, err := getModelFileList(path)
+				digestMap, err := fileDigestMap(path)
 				if err != nil {
 					return nil, err
 				}
 
-				req.Adapters = &api.CreateFromModel{Type: "safetensors", Files: fl}
+				req.Adapters = &api.CreateFromModel{Type: "safetensors", Files: digestMap}
 			} else {
-				digest, err := getDigestForFile(path)
+				digest, err := digestForFile(path)
 				if err != nil {
 					return nil, err
 				}
@@ -148,16 +143,16 @@ func (f File) CreateRequest() (*api.CreateRequest, error) {
 	return req, nil
 }
 
-func getModelFileList(path string) (map[string]string, error) {
+func fileDigestMap(path string) (map[string]string, error) {
 	fl := make(map[string]string)
 
-	files, err := findFilesForModel(path)
+	files, err := filesForModel(path)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, f := range files {
-		digest, err := getDigestForFile(f)
+		digest, err := digestForFile(f)
 		if err != nil {
 			return nil, err
 		}
@@ -167,7 +162,7 @@ func getModelFileList(path string) (map[string]string, error) {
 	return fl, nil
 }
 
-func getDigestForFile(filename string) (string, error) {
+func digestForFile(filename string) (string, error) {
 	filepath, err := filepath.EvalSymlinks(filename)
 	if err != nil {
 		return "", err
@@ -186,7 +181,7 @@ func getDigestForFile(filename string) (string, error) {
 	return fmt.Sprintf("sha256:%x", hash.Sum(nil)), nil
 }
 
-func findFilesForModel(path string) ([]string, error) {
+func filesForModel(path string) ([]string, error) {
 	detectContentType := func(path string) (string, error) {
 		f, err := os.Open(path)
 		if err != nil {
@@ -323,14 +318,14 @@ func (e *ParserError) Error() string {
 	return e.Msg
 }
 
-func ParseFile(r io.Reader) (*File, error) {
+func ParseFile(r io.Reader) (*Modelfile, error) {
 	var cmd Command
 	var curr state
 	var currLine int = 1
 	var b bytes.Buffer
 	var role string
 
-	var f File
+	var f Modelfile
 
 	tr := unicode.BOMOverride(unicode.UTF8.NewDecoder())
 	br := bufio.NewReader(transform.NewReader(r, tr))
@@ -573,4 +568,41 @@ func isValidCommand(cmd string) bool {
 	default:
 		return false
 	}
+}
+
+func expandPathImpl(path string, currentUserFunc func() (*user.User, error), lookupUserFunc func(string) (*user.User, error)) (string, error) {
+	if strings.HasPrefix(path, "~") {
+		var homeDir string
+
+		if path == "~" || strings.HasPrefix(path, "~/") {
+			// Current user's home directory
+			currentUser, err := currentUserFunc()
+			if err != nil {
+				return "", fmt.Errorf("failed to get current user: %w", err)
+			}
+			homeDir = currentUser.HomeDir
+			path = strings.TrimPrefix(path, "~")
+		} else {
+			// Specific user's home directory
+			parts := strings.SplitN(path[1:], "/", 2)
+			userInfo, err := lookupUserFunc(parts[0])
+			if err != nil {
+				return "", fmt.Errorf("failed to find user '%s': %w", parts[0], err)
+			}
+			homeDir = userInfo.HomeDir
+			if len(parts) > 1 {
+				path = "/" + parts[1]
+			} else {
+				path = ""
+			}
+		}
+
+		path = filepath.Join(homeDir, path)
+	}
+
+	return filepath.Abs(path)
+}
+
+func expandPath(path string) (string, error) {
+	return expandPathImpl(path, user.Current, user.Lookup)
 }

@@ -211,7 +211,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				return err
 			}
 
-			req := buildCreateRequest(args[1], opts)
+			req := NewCreateRequest(args[1], opts)
 			fn := func(resp api.ProgressResponse) error { return nil }
 			err = client.Create(cmd.Context(), req, fn)
 			if err != nil {
@@ -454,7 +454,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	}
 }
 
-func buildCreateRequest(name string, opts runOptions) *api.CreateRequest {
+func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
 	req := &api.CreateRequest{
 		Name: name,
 		From: cmp.Or(opts.ParentModel, opts.Model),

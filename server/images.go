@@ -118,7 +118,7 @@ func (m *Model) CheckCapabilities(caps ...Capability) error {
 }
 
 func (m *Model) String() string {
-	var modelfile parser.File
+	var modelfile parser.Modelfile
 
 	modelfile.Commands = append(modelfile.Commands, parser.Command{
 		Name: "model",
