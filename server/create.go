@@ -178,7 +178,7 @@ func convertModelFromFiles(files map[string]string, baseLayers []*layerGGML, isA
 
 func detectModelTypeFromFiles(files map[string]string) string {
 	// todo make this more robust by actually introspecting the files
-	for fn, _ := range files {
+	for fn := range files {
 		if strings.HasSuffix(fn, ".safetensors") {
 			return "safetensors"
 		} else if strings.HasSuffix(fn, ".bin") || strings.HasSuffix(fn, ".gguf") {
