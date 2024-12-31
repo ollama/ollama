@@ -31,10 +31,10 @@ func mockLookupUser(username string) (*user.User, error) {
 
 func TestExpandPath(t *testing.T) {
 	tests := []struct {
-		input     string
-		expected  string
+		input           string
+		expected        string
 		windowsExpected string
-		shouldErr bool
+		shouldErr       bool
 	}{
 		{"~", "/home/testuser", "D:\\home\\testuser", false},
 		{"~/myfolder/myfile.txt", "/home/testuser/myfolder/myfile.txt", "D:\\home\\testuser\\myfolder\\myfile.txt", false},
