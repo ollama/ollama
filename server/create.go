@@ -82,8 +82,8 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			if err != nil {
 				ch <- gin.H{"error": err.Error()}
 			}
-		} else if r.FromModel != nil {
-			baseLayers, err = convertFromModel(r.FromModel, baseLayers, false, fn)
+		} else if r.Files != nil {
+			baseLayers, err = convertModelFromFiles(r.Files, baseLayers, false, fn)
 			if err != nil {
 				for _, badReq := range []error{errNoFilesProvided, errOnlyGGUFSupported, errUnknownType} {
 					if errors.Is(err, badReq) {
@@ -95,13 +95,13 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				return
 			}
 		} else {
-			ch <- gin.H{"error": "neither 'from' or 'from_model' was specified", "status": http.StatusBadRequest}
+			ch <- gin.H{"error": "neither 'from' or 'files' was specified", "status": http.StatusBadRequest}
 			return
 		}
 
 		var adapterLayers []*layerGGML
 		if r.Adapters != nil {
-			adapterLayers, err = convertFromModel(r.Adapters, baseLayers, true, fn)
+			adapterLayers, err = convertModelFromFiles(r.Adapters, baseLayers, true, fn)
 			if err != nil {
 				for _, badReq := range []error{errNoFilesProvided, errOnlyOneAdapterSupported, errOnlyGGUFSupported, errUnknownType} {
 					if errors.Is(err, badReq) {
@@ -144,25 +144,25 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
-func convertFromModel(r *api.CreateFromModel, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
-	switch r.Type {
+func convertModelFromFiles(files map[string]string, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
+	switch detectModelTypeFromFiles(files) {
 	case "safetensors":
-		layers, err := convertFromSafetensors(r, baseLayers, isAdapter, fn)
+		layers, err := convertFromSafetensors(files, baseLayers, isAdapter, fn)
 		if err != nil {
 			slog.Error("error converting from safetensors", "error", err)
 			return nil, err
 		}
 		return layers, nil
 	case "gguf":
-		if len(r.Files) == 0 {
+		if len(files) == 0 {
 			return nil, errNoFilesProvided
-		} else if len(r.Files) > 1 && isAdapter {
+		} else if len(files) > 1 && isAdapter {
 			return nil, errOnlyOneAdapterSupported
 		}
 
 		var digest string
 		var allLayers []*layerGGML
-		for _, v := range r.Files {
+		for _, v := range files {
 			digest = v
 			layers, err := ggufLayers(digest, fn)
 			if err != nil {
@@ -176,14 +176,27 @@ func convertFromModel(r *api.CreateFromModel, baseLayers []*layerGGML, isAdapter
 	}
 }
 
-func convertFromSafetensors(r *api.CreateFromModel, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
+func detectModelTypeFromFiles(files map[string]string) string {
+	// todo make this more robust by actually introspecting the files
+	for fn, _ := range files {
+		if strings.HasSuffix(fn, ".safetensors") {
+			return "safetensors"
+		} else if strings.HasSuffix(fn, ".bin") || strings.HasSuffix(fn, ".gguf") {
+			return "gguf"
+		}
+	}
+
+	return ""
+}
+
+func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
 	tmpDir, err := os.MkdirTemp("", "ollama-safetensors")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(tmpDir)
 
-	for fp, digest := range r.Files {
+	for fp, digest := range files {
 		blobPath, err := GetBlobsPath(digest)
 		if err != nil {
 			return nil, err

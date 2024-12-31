@@ -21,6 +21,7 @@ import (
 	"unicode"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -109,8 +110,8 @@ func Test_Routes(t *testing.T) {
 		}
 
 		r := api.CreateRequest{
-			Name:      name,
-			FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
+			Name:  name,
+			Files: map[string]string{"test.gguf": digest},
 			Parameters: map[string]any{
 				"seed":  42,
 				"top_p": 0.9,
@@ -333,9 +334,9 @@ func Test_Routes(t *testing.T) {
 				_, digest := createTestFile(t, "ollama-model")
 				stream := false
 				createReq := api.CreateRequest{
-					Name:      "t-bone",
-					FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
-					Stream:    &stream,
+					Name:   "t-bone",
+					Files:  map[string]string{"test.gguf": digest},
+					Stream: &stream,
 				}
 				jsonData, err := json.Marshal(createReq)
 				if err != nil {
@@ -606,17 +607,17 @@ func TestManifestCaseSensitivity(t *testing.T) {
 	checkOK(createRequest(t, s.CreateHandler, api.CreateRequest{
 		// Start with the stable name, and later use a case-shuffled
 		// version.
-		Name:      wantStableName,
-		FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
-		Stream:    &stream,
+		Name:   wantStableName,
+		Files:  map[string]string{"test.gguf": digest},
+		Stream: &stream,
 	}))
 	checkManifestList()
 
 	t.Logf("creating (again)")
 	checkOK(createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      name(),
-		FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
-		Stream:    &stream,
+		Name:   name(),
+		Files:  map[string]string{"test.gguf": digest},
+		Stream: &stream,
 	}))
 	checkManifestList()
 
@@ -648,8 +649,6 @@ func TestManifestCaseSensitivity(t *testing.T) {
 	}
 }
 
-// need to fix this
-/*
 func TestShow(t *testing.T) {
 	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
@@ -658,12 +657,9 @@ func TestShow(t *testing.T) {
 	_, digest1 := createBinFile(t, llm.KV{"general.architecture": "test"}, nil)
 	_, digest2 := createBinFile(t, llm.KV{"general.type": "projector", "general.architecture": "clip"}, nil)
 
-	_, digest := createTestFile(t, "ollama-model")
-	cfm := &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}}
 	createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "show-model",
-
-		Modelfile: fmt.Sprintf("FROM %s\nFROM %s", fname1, fname2),
+		Name:  "show-model",
+		Files: map[string]string{"model.gguf": digest1, "projector.gguf": digest2},
 	})
 
 	w := createRequest(t, s.ShowHandler, api.ShowRequest{
@@ -687,7 +683,6 @@ func TestShow(t *testing.T) {
 		t.Fatal("Expected projector architecture to be 'clip', but got", resp.ProjectorInfo["general.architecture"])
 	}
 }
-*/
 
 func TestNormalize(t *testing.T) {
 	type testCase struct {

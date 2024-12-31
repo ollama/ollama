@@ -51,7 +51,7 @@ func (f Modelfile) CreateRequest() (*api.CreateRequest, error) {
 				return nil, err
 			}
 
-			fi, err := os.Stat(path)
+			_, err = os.Stat(path)
 			if errors.Is(err, os.ErrNotExist) {
 				req.From = c.Args
 				continue
@@ -59,50 +59,25 @@ func (f Modelfile) CreateRequest() (*api.CreateRequest, error) {
 				return nil, err
 			}
 
-			if fi.IsDir() {
-				// this is likely a safetensors or pytorch directory
-				digestMap, err := fileDigestMap(path)
-				if err != nil {
-					return nil, err
-				}
-
-				req.FromModel = &api.CreateFromModel{Type: "safetensors", Files: digestMap}
-			} else {
-				// todo check the ensure that this is actually a gguf
-				digest, err := digestForFile(path)
-				if err != nil {
-					return nil, err
-				}
-
-				if req.FromModel != nil {
-					req.FromModel.Files[filepath.Base(path)] = digest
-				} else {
-					req.FromModel = &api.CreateFromModel{Type: "gguf", Files: map[string]string{filepath.Base(path): digest}}
-				}
-			}
-		case "adapter":
-			path := c.Args
-			fi, err := os.Stat(path)
+			digestMap, err := fileDigestMap(path)
 			if err != nil {
 				return nil, err
 			}
 
-			if fi.IsDir() {
-				// this is probably a safetensors directory
-				digestMap, err := fileDigestMap(path)
-				if err != nil {
-					return nil, err
-				}
-
-				req.Adapters = &api.CreateFromModel{Type: "safetensors", Files: digestMap}
-			} else {
-				digest, err := digestForFile(path)
-				if err != nil {
-					return nil, err
-				}
-
-				req.Adapters = &api.CreateFromModel{Type: "gguf", Files: map[string]string{filepath.Base(path): digest}}
+			req.Files = digestMap
+		case "adapter":
+			path := c.Args
+			_, err := os.Stat(path)
+			if err != nil {
+				return nil, err
 			}
+
+			digestMap, err := fileDigestMap(path)
+			if err != nil {
+				return nil, err
+			}
+
+			req.Adapters = digestMap
 		case "template":
 			req.Template = c.Args
 		case "system":
@@ -236,6 +211,12 @@ func filesForModel(path string) ([]string, error) {
 		// pytorch files might also be unresolved git lfs references; skip if they are
 		// covers consolidated.x.pth, consolidated.pth
 		files = append(files, pt...)
+	} else if gg, _ := glob(filepath.Join(path, "*.gguf"), "application/octet-stream"); len(gg) > 0 {
+		// covers gguf files ending in .gguf
+		files = append(files, gg...)
+	} else if gg, _ := glob(filepath.Join(path, "*.bin"), "application/octet-stream"); len(gg) > 0 {
+		// covers gguf files ending in .bin
+		files = append(files, gg...)
 	} else {
 		return nil, ErrModelNotFound
 	}

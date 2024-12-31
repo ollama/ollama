@@ -117,26 +117,26 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if req.FromModel != nil && len(req.FromModel.Files) > 0 {
+	if len(req.Files) > 0 {
 		fileMap := map[string]string{}
-		for f, digest := range req.FromModel.Files {
+		for f, digest := range req.Files {
 			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
 				return err
 			}
 			fileMap[filepath.Base(f)] = digest
 		}
-		req.FromModel.Files = fileMap
+		req.Files = fileMap
 	}
 
-	if req.Adapters != nil && len(req.Adapters.Files) > 0 {
+	if len(req.Adapters) > 0 {
 		fileMap := map[string]string{}
-		for f, digest := range req.Adapters.Files {
+		for f, digest := range req.Adapters {
 			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
 				return err
 			}
 			fileMap[filepath.Base(f)] = digest
 		}
-		req.Adapters.Files = fileMap
+		req.Adapters = fileMap
 	}
 
 	bars := make(map[string]*progress.Bar)

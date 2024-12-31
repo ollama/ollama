@@ -115,9 +115,9 @@ func TestCreateFromBin(t *testing.T) {
 	_, digest := createBinFile(t, nil, nil)
 
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
-		Stream:    &stream,
+		Name:   "test",
+		Files:  map[string]string{"test.gguf": digest},
+		Stream: &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -145,9 +145,9 @@ func TestCreateFromModel(t *testing.T) {
 	_, digest := createBinFile(t, nil, nil)
 
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
-		Stream:    &stream,
+		Name:   "test",
+		Files:  map[string]string{"test.gguf": digest},
+		Stream: &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -188,10 +188,10 @@ func TestCreateRemovesLayers(t *testing.T) {
 
 	_, digest := createBinFile(t, nil, nil)
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
-		Template:  "{{ .Prompt }}",
-		Stream:    &stream,
+		Name:     "test",
+		Files:    map[string]string{"test.gguf": digest},
+		Template: "{{ .Prompt }}",
+		Stream:   &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -209,10 +209,10 @@ func TestCreateRemovesLayers(t *testing.T) {
 	})
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
-		Template:  "{{ .System }} {{ .Prompt }}",
-		Stream:    &stream,
+		Name:     "test",
+		Files:    map[string]string{"test.gguf": digest},
+		Template: "{{ .System }} {{ .Prompt }}",
+		Stream:   &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -239,10 +239,10 @@ func TestCreateUnsetsSystem(t *testing.T) {
 
 	_, digest := createBinFile(t, nil, nil)
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
-		System:    "Say hi!",
-		Stream:    &stream,
+		Name:   "test",
+		Files:  map[string]string{"test.gguf": digest},
+		System: "Say hi!",
+		Stream: &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -260,10 +260,10 @@ func TestCreateUnsetsSystem(t *testing.T) {
 	})
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
-		System:    "",
-		Stream:    &stream,
+		Name:   "test",
+		Files:  map[string]string{"test.gguf": digest},
+		System: "",
+		Stream: &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -289,8 +289,8 @@ func TestCreateMergeParameters(t *testing.T) {
 
 	_, digest := createBinFile(t, nil, nil)
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
+		Name:  "test",
+		Files: map[string]string{"test.gguf": digest},
 		Parameters: map[string]any{
 			"temperature": 1,
 			"top_k":       10,
@@ -424,8 +424,8 @@ func TestCreateReplacesMessages(t *testing.T) {
 
 	_, digest := createBinFile(t, nil, nil)
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
+		Name:  "test",
+		Files: map[string]string{"test.gguf": digest},
 		Messages: []api.Message{
 			{
 				Role:    "assistant",
@@ -531,11 +531,11 @@ func TestCreateTemplateSystem(t *testing.T) {
 
 	_, digest := createBinFile(t, nil, nil)
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
-		Template:  "{{ .System }} {{ .Prompt }}",
-		System:    "Say bye!",
-		Stream:    &stream,
+		Name:     "test",
+		Files:    map[string]string{"test.gguf": digest},
+		Template: "{{ .System }} {{ .Prompt }}",
+		System:   "Say bye!",
+		Stream:   &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -574,10 +574,10 @@ func TestCreateTemplateSystem(t *testing.T) {
 	t.Run("incomplete template", func(t *testing.T) {
 		_, digest := createBinFile(t, nil, nil)
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Name:      "test",
-			FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
-			Template:  "{{ .Prompt",
-			Stream:    &stream,
+			Name:     "test",
+			Files:    map[string]string{"test.gguf": digest},
+			Template: "{{ .Prompt",
+			Stream:   &stream,
 		})
 
 		if w.Code != http.StatusBadRequest {
@@ -588,10 +588,10 @@ func TestCreateTemplateSystem(t *testing.T) {
 	t.Run("template with unclosed if", func(t *testing.T) {
 		_, digest := createBinFile(t, nil, nil)
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Name:      "test",
-			FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
-			Template:  "{{ if .Prompt }}",
-			Stream:    &stream,
+			Name:     "test",
+			Files:    map[string]string{"test.gguf": digest},
+			Template: "{{ if .Prompt }}",
+			Stream:   &stream,
 		})
 
 		if w.Code != http.StatusBadRequest {
@@ -602,10 +602,10 @@ func TestCreateTemplateSystem(t *testing.T) {
 	t.Run("template with undefined function", func(t *testing.T) {
 		_, digest := createBinFile(t, nil, nil)
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Name:      "test",
-			FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
-			Template:  "{{ Prompt }}",
-			Stream:    &stream,
+			Name:     "test",
+			Files:    map[string]string{"test.gguf": digest},
+			Template: "{{ Prompt }}",
+			Stream:   &stream,
 		})
 
 		if w.Code != http.StatusBadRequest {
@@ -623,10 +623,10 @@ func TestCreateLicenses(t *testing.T) {
 
 	_, digest := createBinFile(t, nil, nil)
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
-		License:   []string{"MIT", "Apache-2.0"},
-		Stream:    &stream,
+		Name:    "test",
+		Files:   map[string]string{"test.gguf": digest},
+		License: []string{"MIT", "Apache-2.0"},
+		Stream:  &stream,
 	})
 
 	if w.Code != http.StatusOK {
@@ -675,9 +675,9 @@ func TestCreateDetectTemplate(t *testing.T) {
 			"tokenizer.chat_template": "{{ bos_token }}{% for message in messages %}{{'<|' + message['role'] + '|>' + '\n' + message['content'] + '<|end|>\n' }}{% endfor %}{% if add_generation_prompt %}{{ '<|assistant|>\n' }}{% else %}{{ eos_token }}{% endif %}",
 		}, nil)
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Name:      "test",
-			FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
-			Stream:    &stream,
+			Name:   "test",
+			Files:  map[string]string{"test.gguf": digest},
+			Stream: &stream,
 		})
 
 		if w.Code != http.StatusOK {
@@ -695,9 +695,9 @@ func TestCreateDetectTemplate(t *testing.T) {
 	t.Run("unmatched", func(t *testing.T) {
 		_, digest := createBinFile(t, nil, nil)
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Name:      "test",
-			FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"test.gguf": digest}},
-			Stream:    &stream,
+			Name:   "test",
+			Files:  map[string]string{"test.gguf": digest},
+			Stream: &stream,
 		})
 
 		if w.Code != http.StatusOK {

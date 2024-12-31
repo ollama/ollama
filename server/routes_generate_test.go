@@ -113,8 +113,8 @@ func TestGenerateChat(t *testing.T) {
 	})
 
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Model:     "test",
-		FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"file.gguf": digest}},
+		Model: "test",
+		Files: map[string]string{"file.gguf": digest},
 		Template: `
 {{- if .Tools }}
 {{ .Tools }}
@@ -159,9 +159,9 @@ func TestGenerateChat(t *testing.T) {
 			"bert.pooling_type":    uint32(0),
 		}, []llm.Tensor{})
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Model:     "bert",
-			FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"bert.gguf": digest}},
-			Stream:    &stream,
+			Model:  "bert",
+			Files:  map[string]string{"bert.gguf": digest},
+			Stream: &stream,
 		})
 
 		if w.Code != http.StatusOK {
@@ -649,8 +649,8 @@ func TestGenerate(t *testing.T) {
 	})
 
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Model:     "test",
-		FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"file.gguf": digest}},
+		Model: "test",
+		Files: map[string]string{"file.gguf": digest},
 		Template: `
 {{- if .System }}System: {{ .System }} {{ end }}
 {{- if .Prompt }}User: {{ .Prompt }} {{ end }}
@@ -692,9 +692,9 @@ func TestGenerate(t *testing.T) {
 		}, []llm.Tensor{})
 
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Model:     "bert",
-			FromModel: &api.CreateFromModel{Type: "gguf", Files: map[string]string{"file.gguf": digest}},
-			Stream:    &stream,
+			Model:  "bert",
+			Files:  map[string]string{"file.gguf": digest},
+			Stream: &stream,
 		})
 
 		if w.Code != http.StatusOK {
