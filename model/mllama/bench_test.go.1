@@ -1,0 +1,50 @@
+package mllama
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/ollama/ollama/model"
+)
+
+func BenchmarkProcessText(b *testing.B) {
+	ours, err := model.New(filepath.Join("testdata", "model.bin"))
+	if errors.Is(err, os.ErrNotExist) {
+		b.Skip("no model.bin")
+	} else if err != nil {
+		b.Fatal(err)
+	}
+
+	var ids []int32
+
+	b.Run("encode", func(b *testing.B) {
+		txt, err := os.ReadFile(filepath.Join("..", "testdata", "war-and-peace.txt"))
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		for i := 0; i < b.N; i++ {
+			b.StopTimer()
+			b.StartTimer()
+
+			ids, err = ours.(model.TextProcessor).Encode(string(txt))
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("decode", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			b.StopTimer()
+			b.StartTimer()
+
+			_, err = ours.(model.TextProcessor).Decode(ids)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}

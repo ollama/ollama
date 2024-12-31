@@ -423,16 +423,28 @@ func (t *Tensor) Mulmat(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Norm(ctx ml.Context, eps float32) ml.Tensor {
-	return &Tensor{
-		t: C.ggml_norm(ctx.(*Context).ctx, t.t, (C.float)(eps)),
+func (t *Tensor) LayerNorm(ctx ml.Context, w, b ml.Tensor, eps float32) ml.Tensor {
+	r := (&Tensor{
+		t: C.ggml_norm(ctx.(*Context).ctx, t.t, C.float(eps)),
+	}).Mul(ctx, w)
+
+	if b != nil {
+		r = r.Add(ctx, b)
 	}
+
+	return r
 }
 
-func (t *Tensor) RMSNorm(ctx ml.Context, eps float32) ml.Tensor {
-	return &Tensor{
+func (t *Tensor) RMSNorm(ctx ml.Context, w, b ml.Tensor, eps float32) ml.Tensor {
+	r := (&Tensor{
 		t: C.ggml_rms_norm(ctx.(*Context).ctx, t.t, C.float(eps)),
+	}).Mul(ctx, w)
+
+	if b != nil {
+		r = r.Add(ctx, b)
 	}
+
+	return r
 }
 
 func (t *Tensor) Pad(ctx ml.Context, shape ...int64) ml.Tensor {
