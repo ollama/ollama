@@ -10,24 +10,13 @@ type LayerNorm struct {
 }
 
 func (m *LayerNorm) Forward(ctx ml.Context, t ml.Tensor, eps float32) ml.Tensor {
-	t = t.Norm(ctx, eps).Mul(ctx, m.Weight)
-	if m.Bias != nil {
-		t = t.Add(ctx, m.Bias)
-	}
-
-	return t
+	return t.LayerNorm(ctx, m.Weight, m.Bias, eps)
 }
 
 type RMSNorm struct {
 	Weight ml.Tensor `ggml:"weight"`
-	Bias   ml.Tensor `ggml:"bias"`
 }
 
 func (m *RMSNorm) Forward(ctx ml.Context, t ml.Tensor, eps float32) ml.Tensor {
-	t = t.RMSNorm(ctx, eps).Mul(ctx, m.Weight)
-	if m.Bias != nil {
-		t = t.Add(ctx, m.Bias)
-	}
-
-	return t
+	return t.RMSNorm(ctx, m.Weight, eps)
 }

@@ -23,7 +23,7 @@ type Model struct {
 	TokenEmbedding *nn.Embedding `ggml:"token_embd"`
 	Layers         []Layer       `ggml:"blk"`
 	OutputNorm     *nn.RMSNorm   `ggml:"output_norm"`
-	Output         *nn.Linear    `ggml:"output"`
+	Output         *nn.Linear    `ggml:"output,alt:token_embd"`
 
 	*Options
 }

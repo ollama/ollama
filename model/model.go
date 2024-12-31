@@ -107,15 +107,10 @@ func (m *Base) Backend() ml.Backend {
 	return m.b
 }
 
-func (m *Base) SetBackend(b ml.Backend) {
-	m.b = b
-}
-
 type Model interface {
 	Forward(ml.Context, Options) (ml.Tensor, error)
 
 	Backend() ml.Backend
-	SetBackend(ml.Backend)
 }
 
 var models = make(map[string]func(ml.Config) (Model, error))
@@ -151,64 +146,120 @@ func New(s string) (Model, error) {
 		return nil, err
 	}
 
-	if err := loadTensors(b, m); err != nil {
-		return nil, err
-	}
-
-	m.SetBackend(b)
+	v := reflect.ValueOf(m)
+	v.Elem().Set(populateFields(b, v))
 	return m, nil
 }
 
-var mlTensorType = reflect.TypeOf((*ml.Tensor)(nil)).Elem()
-
-func loadTensors(b ml.Backend, m any, tensorPath ...string) error {
-	t := reflect.TypeOf(m)
-	v := reflect.ValueOf(m)
-
+func populateFields(b ml.Backend, v reflect.Value, tags ...Tag) reflect.Value {
+	t := v.Type()
 	if t.Kind() == reflect.Pointer {
-		t = t.Elem()
-		v = v.Elem()
+		t, v = t.Elem(), v.Elem()
 	}
 
-	if t.Kind() == reflect.Interface {
-		return loadTensors(b, v.Interface(), tensorPath...)
-	}
-
-	for i := range t.NumField() {
-		f := v.Field(i)
-		fullTensorPath := tensorPath
-		if tag := t.Field(i).Tag.Get("ggml"); tag != "" {
-			tensorName, _, _ := strings.Cut(tag, ",")
-			fullTensorPath = append(tensorPath, tensorName)
-		}
-
-		if !f.CanSet() {
-			continue
-		}
-
-		if f.Kind() == reflect.Ptr && f.IsNil() {
-			f.Set(reflect.New(f.Type().Elem()))
-		} else if f.Kind() == reflect.Interface && f.IsNil() && f.Type().Implements(mlTensorType) {
-			if tensor := b.Get(strings.Join(fullTensorPath, ".")); tensor != nil {
-				f.Set(reflect.ValueOf(tensor))
-				slog.Debug("loaded tensor", "kind", f.Elem().Type(), "", f.Interface())
+	if t.Kind() == reflect.Struct {
+		allNil := true
+		for i := range t.NumField() {
+			tt := t.Field(i).Type
+			vv := v.Field(i)
+			if !vv.CanSet() {
+				continue
 			}
-		}
 
-		if r := reflect.Indirect(f); r.Kind() == reflect.Struct {
-			if err := loadTensors(b, f.Interface(), fullTensorPath...); err != nil {
-				return err
+			// make a copy
+			tagsCopy := tags
+			if tag := t.Field(i).Tag.Get("ggml"); tag != "" {
+				tagsCopy = append(tagsCopy, ParseTags(tag))
 			}
-		} else if r.Kind() == reflect.Slice {
-			for i := range r.Len() {
-				if err := loadTensors(b, f.Index(i).Addr().Interface(), append(fullTensorPath, strconv.Itoa(i))...); err != nil {
-					return err
+
+			if tt == reflect.TypeOf((*Base)(nil)).Elem() {
+				vv.Set(reflect.ValueOf(Base{b: b}))
+			} else if tt == reflect.TypeOf((*ml.Tensor)(nil)).Elem() {
+				var fn func([]Tag) [][]string
+				fn = func(tags []Tag) (values [][]string) {
+					if len(tags) < 1 {
+						return nil
+					}
+
+					values = [][]string{{tags[0].Name}}
+					for _, alt := range tags[0].Alternate {
+						values = append(values, []string{alt})
+					}
+
+					for i, value := range values {
+						for _, rest := range fn(tags[1:]) {
+							value = append(value, rest...)
+						}
+
+						values[i] = value
+					}
+
+					return values
+				}
+
+				names := fn(tagsCopy)
+				for _, name := range names {
+					if tensor := b.Get(strings.Join(name, ".")); tensor != nil {
+						slog.Debug("found tensor", "", tensor)
+						vv.Set(reflect.ValueOf(tensor))
+						break
+					}
+				}
+			} else if tt.Kind() == reflect.Pointer {
+				vvv := vv.Elem()
+				if vv.IsNil() {
+					vvv = reflect.New(tt.Elem())
+				}
+
+				if f := populateFields(b, vvv, tagsCopy...); f.CanAddr() {
+					vv.Set(f.Addr())
+				}
+			} else if tt.Kind() == reflect.Slice || tt.Kind() == reflect.Array {
+				for i := range vv.Len() {
+					vv.Index(i).Set(populateFields(b, vv.Index(i), append(tagsCopy, Tag{Name: strconv.Itoa(i)})...))
 				}
 			}
+
+			if !canNil(tt) || !vv.IsNil() {
+				allNil = false
+			}
+		}
+
+		if allNil {
+			return reflect.Zero(t)
 		}
 	}
 
-	return nil
+	return v
+}
+
+type Tag struct {
+	Name      string
+	Alternate []string
+}
+
+func ParseTags(s string) (tag Tag) {
+	parts := strings.Split(s, ",")
+	if len(parts) > 0 {
+		tag.Name = parts[0]
+
+		for _, part := range parts[1:] {
+			if value, ok := strings.CutPrefix(part, "alt:"); ok {
+				tag.Alternate = append(tag.Alternate, value)
+			}
+		}
+	}
+
+	return
+}
+
+func canNil(t reflect.Type) bool {
+	return t.Kind() == reflect.Chan ||
+		t.Kind() == reflect.Func ||
+		t.Kind() == reflect.Interface ||
+		t.Kind() == reflect.Map ||
+		t.Kind() == reflect.Pointer ||
+		t.Kind() == reflect.Slice
 }
 
 func Forward(m Model, optsFuncs ...OptionsFunc) (ml.Tensor, error) {
