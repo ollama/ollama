@@ -479,6 +479,7 @@ func TestParseFileParameters(t *testing.T) {
 		"num_gpu 1":                    {"num_gpu", "1"},
 		"main_gpu 1":                   {"main_gpu", "1"},
 		"low_vram true":                {"low_vram", "true"},
+		"kv_cache_type f16":            {"kv_cache_type", "f16"},
 		"logits_all true":              {"logits_all", "true"},
 		"vocab_only true":              {"vocab_only", "true"},
 		"use_mmap true":                {"use_mmap", "true"},
