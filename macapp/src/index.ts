@@ -1,5 +1,15 @@
 import { spawn, ChildProcess } from 'child_process'
-import { app, autoUpdater, dialog, Tray, Menu, BrowserWindow, MenuItemConstructorOptions, nativeTheme } from 'electron'
+import {
+  app,
+  autoUpdater,
+  dialog,
+  Tray,
+  Menu,
+  BrowserWindow,
+  MenuItemConstructorOptions,
+  nativeTheme,
+  Notification,
+} from 'electron'
 import Store from 'electron-store'
 import winston from 'winston'
 import 'winston-daily-rotate-file'
@@ -60,11 +70,11 @@ app.on('ready', () => {
 function firstRunWindow() {
   // Create the browser window.
   welcomeWindow = new BrowserWindow({
-    width: 400,
+    width: 440,
     height: 500,
     frame: false,
     fullscreenable: false,
-    resizable: false,
+    resizable: true,
     movable: true,
     show: false,
     webPreferences: {
@@ -104,6 +114,21 @@ function updateTrayIcon() {
   }
 }
 
+function toggleAutoStartup() {
+  const currentSettings = app.getLoginItemSettings()
+  const newOpenAtLogin = !currentSettings.openAtLogin
+
+  app.setLoginItemSettings({ openAtLogin: newOpenAtLogin })
+
+  const notification = new Notification({
+    title: 'Ollama Auto Startup',
+    body: `Auto startup is now ${newOpenAtLogin ? 'enabled' : 'disabled'}`,
+  })
+  notification.show()
+
+  updateTray()
+}
+
 function updateTray() {
   const updateItems: MenuItemConstructorOptions[] = [
     { label: 'An update is available', enabled: false },
@@ -114,13 +139,27 @@ function updateTray() {
     { type: 'separator' },
   ]
 
+  const isAutoStartupEnabled = app.getLoginItemSettings().openAtLogin
+  const toggleAutoStartupItem: MenuItemConstructorOptions = {
+    label: isAutoStartupEnabled ? 'Disable Auto Startup' : 'Enable Auto Startup',
+    click: () => {
+      toggleAutoStartup()
+    },
+  }
+
   const menu = Menu.buildFromTemplate([
     ...(updateAvailable ? updateItems : []),
-    { role: 'quit', label: 'Quit Ollama', accelerator: 'Command+Q' },
+    toggleAutoStartupItem,
+    { role: 'quit', accelerator: 'Command+Q' },
   ])
 
   if (!tray) {
     tray = new Tray(trayIconPath())
+    // make sure the tray is updated when clicked to avoid stale info
+    // e.g. user disables auto startup in system preferences but tray menu still shows it as enabled
+    tray.on('click', () => {
+      updateTray()
+    })
   }
 
   tray.setToolTip(updateAvailable ? 'An update is available' : 'Ollama')
