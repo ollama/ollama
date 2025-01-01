@@ -1467,6 +1467,34 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
+	if req.Dry {
+		var debug map[string]any
+		if req.Debug != nil && req.Debug.Include != nil && slices.Contains(req.Debug.Include, "prompt") {
+			debug = map[string]any{"prompt": prompt}
+		}
+		tokens, err := r.Tokenize(c.Request.Context(), prompt)
+		if err != nil {
+			slog.Error("tokenize error", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, api.ChatResponse{
+			Model:      req.Model,
+			CreatedAt:  time.Now().UTC(),
+			Message:    api.Message{Role: "assistant", Content: ""},
+			Done:       true,
+			DoneReason: "dry_run",
+			Debug:      debug,
+			Metrics: api.Metrics{
+				PromptEvalCount:    len(tokens),
+				PromptEvalDuration: 0,
+				EvalCount:          0,
+				EvalDuration:       0,
+			},
+		})
+		return
+	}
+
 	slog.Debug("chat request", "images", len(images), "prompt", prompt)
 
 	ch := make(chan any)
@@ -1497,6 +1525,16 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			if r.Done {
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+			}
+
+			if req.Debug != nil && req.Debug.Include != nil && slices.Contains(req.Debug.Include, "prompt") {
+				res.Debug = map[string]any{"prompt": prompt}
+				if req.Stream != nil && !*req.Stream {
+					tempMsg := res.Message
+					res.Message = api.Message{Role: "assistant", Content: ""}
+					ch <- res
+					res.Message = tempMsg
+				}
 			}
 
 			// TODO: tool call checking and filtering should be moved outside of this callback once streaming
