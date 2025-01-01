@@ -2,10 +2,12 @@ package parser
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -17,6 +19,7 @@ import (
 	"golang.org/x/text/encoding/unicode"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/llm"
 )
 
 func TestParseFileFile(t *testing.T) {
@@ -730,6 +733,75 @@ MESSAGE assistant Hi! How are you?
 					{Role: "assistant", Content: "Hi! How are you?"},
 				},
 			},
+		},
+	}
+
+	for _, c := range cases {
+		s, err := unicode.UTF8.NewEncoder().String(c.input)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		p, err := ParseFile(strings.NewReader(s))
+		if err != nil {
+			t.Error(err)
+		}
+
+		actual, err := p.CreateRequest()
+		if err != nil {
+			t.Error(err)
+		}
+
+		if diff := cmp.Diff(actual, c.expected); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	}
+}
+
+func getSHA256Digest(t *testing.T, r io.Reader) (string, int64) {
+	t.Helper()
+
+	h := sha256.New()
+	n, err := io.Copy(h, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return fmt.Sprintf("sha256:%x", h.Sum(nil)), n
+}
+
+func createBinFile(t *testing.T, kv map[string]any, ti []llm.Tensor) (string, string) {
+	t.Helper()
+
+	f, err := os.CreateTemp(t.TempDir(), "testbin.*.gguf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	if err := llm.WriteGGUF(f, kv, ti); err != nil {
+		t.Fatal(err)
+	}
+	// Calculate sha256 of file
+	if _, err := f.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	digest, _ := getSHA256Digest(t, f)
+
+	return f.Name(), digest
+}
+
+func TestCreateRequestFiles(t *testing.T) {
+	name, digest := createBinFile(t, nil, nil)
+
+	cases := []struct {
+		input    string
+		expected *api.CreateRequest
+	}{
+		{
+			fmt.Sprintf("FROM %s", name),
+			&api.CreateRequest{Files: map[string]string{name: digest}},
 		},
 	}
 

@@ -51,7 +51,7 @@ func (f Modelfile) CreateRequest() (*api.CreateRequest, error) {
 				return nil, err
 			}
 
-			_, err = os.Stat(path)
+			digestMap, err := fileDigestMap(path)
 			if errors.Is(err, os.ErrNotExist) {
 				req.From = c.Args
 				continue
@@ -59,15 +59,9 @@ func (f Modelfile) CreateRequest() (*api.CreateRequest, error) {
 				return nil, err
 			}
 
-			digestMap, err := fileDigestMap(path)
-			if err != nil {
-				return nil, err
-			}
-
 			req.Files = digestMap
 		case "adapter":
-			path := c.Args
-			_, err := os.Stat(path)
+			path, err := expandPath(c.Args)
 			if err != nil {
 				return nil, err
 			}
@@ -121,9 +115,19 @@ func (f Modelfile) CreateRequest() (*api.CreateRequest, error) {
 func fileDigestMap(path string) (map[string]string, error) {
 	fl := make(map[string]string)
 
-	files, err := filesForModel(path)
+	fi, err := os.Stat(path)
 	if err != nil {
 		return nil, err
+	}
+
+	var files []string
+	if fi.IsDir() {
+		files, err = filesForModel(path)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		files = []string{path}
 	}
 
 	for _, f := range files {

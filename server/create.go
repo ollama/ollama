@@ -220,7 +220,7 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 			return nil, err
 		}
 	} else {
-		kv, err := modelLayerKV(baseLayers)
+		kv, err := kvFromLayers(baseLayers)
 		if err != nil {
 			return nil, err
 		}
@@ -257,7 +257,7 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 	return layers, nil
 }
 
-func modelLayerKV(baseLayers []*layerGGML) (llm.KV, error) {
+func kvFromLayers(baseLayers []*layerGGML) (llm.KV, error) {
 	for _, l := range baseLayers {
 		if l.GGML != nil {
 			return l.KV(), nil

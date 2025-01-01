@@ -7,29 +7,29 @@ import (
 	"testing"
 )
 
-func mockCurrentUser() (*user.User, error) {
-	return &user.User{
-		Username: "testuser",
-		HomeDir:  "/home/testuser",
-	}, nil
-}
-
-func mockLookupUser(username string) (*user.User, error) {
-	fakeUsers := map[string]string{
-		"testuser":    "/home/testuser",
-		"anotheruser": "/home/anotheruser",
-	}
-
-	if homeDir, ok := fakeUsers[username]; ok {
+func TestExpandPath(t *testing.T) {
+	mockCurrentUser := func() (*user.User, error) {
 		return &user.User{
-			Username: username,
-			HomeDir:  homeDir,
+			Username: "testuser",
+			HomeDir:  "/home/testuser",
 		}, nil
 	}
-	return nil, os.ErrNotExist
-}
 
-func TestExpandPath(t *testing.T) {
+	mockLookupUser := func(username string) (*user.User, error) {
+		fakeUsers := map[string]string{
+			"testuser":    "/home/testuser",
+			"anotheruser": "/home/anotheruser",
+		}
+
+		if homeDir, ok := fakeUsers[username]; ok {
+			return &user.User{
+				Username: username,
+				HomeDir:  homeDir,
+			}, nil
+		}
+		return nil, os.ErrNotExist
+	}
+
 	tests := []struct {
 		input           string
 		expected        string
