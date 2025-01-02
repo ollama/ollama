@@ -284,6 +284,14 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 
 		prompt = b.String()
+	} else if req.PrependImagesToRawPrompt {
+		for _, i := range images {
+			imgPrompt := ""
+			if isMllama {
+				imgPrompt = "<|image|>"
+			}
+			prompt = fmt.Sprintf("[img-%d]"+imgPrompt, i.ID) + prompt
+		}
 	}
 
 	slog.Debug("generate request", "images", len(images), "prompt", prompt)
