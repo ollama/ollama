@@ -764,6 +764,7 @@ type mockLlm struct {
 	estimatedVRAM      uint64
 	estimatedTotal     uint64
 	estimatedVRAMByGPU map[string]uint64
+	numCtx             int
 }
 
 func (s *mockLlm) Ping(ctx context.Context) error             { return s.pingResp }
@@ -791,3 +792,4 @@ func (s *mockLlm) Close() error {
 func (s *mockLlm) EstimatedVRAM() uint64                  { return s.estimatedVRAM }
 func (s *mockLlm) EstimatedTotal() uint64                 { return s.estimatedTotal }
 func (s *mockLlm) EstimatedVRAMByGPU(gpuid string) uint64 { return s.estimatedVRAMByGPU[gpuid] }
+func (s *mockLlm) NumCtx() int                            { return s.numCtx }
