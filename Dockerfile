@@ -67,6 +67,7 @@ ARG OLLAMA_SKIP_CUDA_GENERATE
 ARG OLLAMA_SKIP_ROCM_GENERATE
 ARG OLLAMA_FAST_BUILD
 ARG VERSION
+ARG CUSTOM_CPU_FLAGS
 RUN --mount=type=cache,target=/root/.ccache \
     if grep "^flags" /proc/cpuinfo|grep avx>/dev/null; then \
         make -j $(nproc) dist ; \
