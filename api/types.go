@@ -308,15 +308,8 @@ type CreateRequest struct {
 	Parameters map[string]any    `json:"parameters,omitempty"`
 	Messages   []Message         `json:"messages,omitempty"`
 
-	// Deprecated: set with the other request options
-	Modelfile string `json:"modelfile"`
-
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
-
-	// Deprecated: set the file content with Modelfile instead
-	Path string `json:"path"`
-
 	// Deprecated: use Quantize instead
 	Quantization string `json:"quantization,omitempty"`
 }
