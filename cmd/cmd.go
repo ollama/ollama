@@ -1198,7 +1198,7 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("verbose", false, "Show timings for response")
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
-	runCmd.Flags().String("format", "", "Response format (e.g. json)")
+	runCmd.Flags().String("format", "", `Response format ("json" or a JSON Schema)`)
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
