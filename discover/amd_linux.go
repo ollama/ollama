@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -30,9 +31,11 @@ const (
 	GPUTotalMemoryFileGlob = "mem_banks/*/properties" // size_in_bytes line
 
 	// Direct Rendering Manager sysfs location
-	DRMDeviceDirGlob   = "/sys/class/drm/card*/device"
-	DRMTotalMemoryFile = "mem_info_vram_total"
-	DRMUsedMemoryFile  = "mem_info_vram_used"
+	DRMDeviceDirGlob      = "/sys/class/drm/card*/device"
+	DRMTotalMemoryFile    = "mem_info_vram_total"
+	DRMUsedMemoryFile     = "mem_info_vram_used"
+	DRMTotalMemoryFileGTT = "mem_info_gtt_total"
+	DRMUsedMemoryFileGTT  = "mem_info_gtt_used"
 
 	// In hex; properties file is in decimal
 	DRMUniqueIDFile = "unique_id"
@@ -44,7 +47,78 @@ var (
 	// Used to validate if the given ROCm lib is usable
 	ROCmLibGlobs          = []string{"libhipblas.so.2*", "rocblas"} // TODO - probably include more coverage of files here...
 	RocmStandardLocations = []string{"/opt/rocm/lib", "/usr/lib64"}
+
+	// APUvalidForGTT contains the list of GPU architectures that support GTT memory allocation
+	APUvalidForGTT = []string{
+		"gfx1103", // Radeon 890m, 780m, 760m, 740m (RDNA3)
+		"gfx1151", // RDNA3+
+		"gfx1152", // RDNA3+
+		"gfx1037", // Radeon 610M (RDNA2)
+		"gfx1035", // Radeon 680m, 660m (RDNA2)
+		"gfx1033", // Van Gogh (RDNA2)
+		"gfx1036", // Generic RDNA2
+		"gfx940",  // MI300A (CDNA3)
+		"gfx90c",  // Radeon Vega 7 (Ryzen 5600G)
+	}
+
+	// ApuUseGTT indicates whether GTT memory allocation is enabled for the current APU
+	ApuUseGTT bool
 )
+
+// Check for valid APU an linux kenel version to use GTT memory insted VRAM memory
+func GTTmemoryOnAPU(gfx string) (bool, error) {
+	// Check kernel version
+	cmd := exec.Command("uname", "-r")
+	output, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("error executing uname command: %w", err)
+	}
+
+	fullKernelVersion := strings.TrimSpace(string(output))
+
+	// Split by "-" and take the first part, or use the whole string if no "-" is present
+	versionPart := fullKernelVersion
+	if parts := strings.SplitN(fullKernelVersion, "-", 2); len(parts) > 1 {
+		versionPart = parts[0]
+	}
+
+	versionParts := strings.Split(versionPart, ".")
+	if len(versionParts) < 3 {
+		return false, fmt.Errorf("unable to parse kernel version: %s", fullKernelVersion)
+	}
+
+	major, err := strconv.Atoi(versionParts[0])
+	if err != nil {
+		return false, fmt.Errorf("error parsing major version: %w", err)
+	}
+
+	minor, err := strconv.Atoi(versionParts[1])
+	if err != nil {
+		return false, fmt.Errorf("error parsing minor version: %w", err)
+	}
+
+	patch, err := strconv.Atoi(versionParts[2])
+	if err != nil {
+		return false, fmt.Errorf("error parsing patch version: %w", err)
+	}
+
+	kernelVersionValid := (major > 6 || (major == 6 && minor > 9) || (major == 6 && minor == 9 && patch >= 9))
+
+	gfxValid := false
+	for _, validGfx := range APUvalidForGTT {
+		if strings.Contains(gfx, validGfx) {
+			gfxValid = true
+			break
+		}
+	}
+
+	if kernelVersionValid && gfxValid {
+		slog.Debug("AMD APU valid to use GTT memory")
+	}
+
+	return kernelVersionValid && gfxValid, nil
+
+}
 
 // Gather GPU information from the amdgpu driver if any supported GPUs are detected
 // Only called once during bootstrap
@@ -236,10 +310,19 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 			if !matched {
 				continue
 			}
-
+			ApuUseGTT, err = GTTmemoryOnAPU(fmt.Sprintf("gfx%d%x%x", major, minor, patch))
+			if err != nil {
+				slog.Debug("Error:", err)
+				continue
+			}
 			// Found the matching DRM directory
 			slog.Debug("matched", "amdgpu", match, "drm", devDir)
-			totalFile := filepath.Join(devDir, DRMTotalMemoryFile)
+			var totalFile string
+			if ApuUseGTT {
+				totalFile = filepath.Join(devDir, DRMTotalMemoryFileGTT)
+			} else {
+				totalFile = filepath.Join(devDir, DRMTotalMemoryFile)
+			}
 			buf, err := os.ReadFile(totalFile)
 			if err != nil {
 				slog.Debug("failed to read sysfs node", "file", totalFile, "error", err)
@@ -251,7 +334,12 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 				break
 			}
 
-			usedFile = filepath.Join(devDir, DRMUsedMemoryFile)
+			var usedFile string
+			if ApuUseGTT {
+				usedFile = filepath.Join(devDir, DRMUsedMemoryFileGTT)
+			} else {
+				usedFile = filepath.Join(devDir, DRMUsedMemoryFile)
+			}
 			usedMemory, err = getFreeMemory(usedFile)
 			if err != nil {
 				slog.Debug("failed to update used memory", "error", err)
@@ -286,6 +374,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 				MinimumMemory: rocmMinimumMemory,
 				DriverMajor:   driverMajor,
 				DriverMinor:   driverMinor,
+				ApuUseGTT:     ApuUseGTT, //AMD APU use GTT for its memory
 			},
 			usedFilepath: usedFile,
 			index:        gpuID,
