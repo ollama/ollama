@@ -310,12 +310,10 @@ func flushPending(seq *Sequence) bool {
 
 	// Add logits if requested and available
 	if seq.returnLogits && seq.logits != nil {
-		slog.Info("returning logits - flushPending")
 		resp.Logits = seq.logits
 		seq.logits = nil
 	}
 
-	slog.Info("returning logits - flushPending", "logits", resp.Logits[0])
 	select {
 	case seq.responses <- resp:
 		return true
@@ -503,9 +501,11 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 
 		// Before sampling:
 		if seq.returnLogits { // New flag we need to add to Sequence struct
-			slog.Info("returning logits")
-			seq.logits = s.lc.GetLogits() // Using our new GetLogits() method
-
+			logits := s.lc.GetLogits()
+			seq.logits = make([]float32, len(logits))
+			slog.Info("copying logits")
+			copy(seq.logits, logits)
+			slog.Info("copying logits success")
 		}
 
 		// Then sample token
@@ -728,7 +728,6 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 			close(seq.quit)
 			return
 		case content, ok := <-seq.responses:
-			slog.Info("logits in last chan", "content", content.Logits[0])
 			if ok {
 				slog.Info("content", "content", content.Content)
 				if err := json.NewEncoder(w).Encode(&content); err != nil {

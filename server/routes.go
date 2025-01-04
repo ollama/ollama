@@ -1543,8 +1543,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	slog.Debug("chat request", "images", len(images), "prompt", prompt)
 
-	slog.Info("chat request", "return_logits", req.ReturnLogits)
-
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
