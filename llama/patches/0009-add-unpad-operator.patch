@@ -15,7 +15,7 @@ Subject: [PATCH] add unpad operator
  8 files changed, 220 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/include/ggml.h b/ggml/include/ggml.h
-index b0c1ac9c..091e6e6b 100644
+index c714fc8c..1bc50fca 100644
 --- a/ggml/include/ggml.h
 +++ b/ggml/include/ggml.h
 @@ -499,6 +499,7 @@ extern "C" {
@@ -26,7 +26,7 @@ index b0c1ac9c..091e6e6b 100644
          GGML_OP_ARANGE,
          GGML_OP_TIMESTEP_EMBEDDING,
          GGML_OP_ARGSORT,
-@@ -1718,6 +1719,15 @@ extern "C" {
+@@ -1735,6 +1736,15 @@ extern "C" {
              int                   p0,
              int                   p1);
  
@@ -43,7 +43,7 @@ index b0c1ac9c..091e6e6b 100644
      // timesteps: [N,]
      // return: [N, dim]
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index 67e67a08..bebff207 100644
+index b7fefb9d..b307d554 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
 @@ -10588,6 +10588,59 @@ static void ggml_compute_forward_pad_reflect_1d(
@@ -126,7 +126,7 @@ index 67e67a08..bebff207 100644
          case GGML_OP_TIMESTEP_EMBEDDING:
          case GGML_OP_ARGSORT:
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 8fd7c1a3..7c351b89 100644
+index bb425ee8..1e7c2a22 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -2085,6 +2085,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
@@ -139,7 +139,7 @@ index 8fd7c1a3..7c351b89 100644
          case GGML_OP_ARANGE:
              ggml_cuda_op_arange(ctx, dst);
              break;
-@@ -3012,6 +3015,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
+@@ -3013,6 +3016,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
          case GGML_OP_GROUP_NORM:
          case GGML_OP_UPSCALE:
          case GGML_OP_PAD:
@@ -211,7 +211,7 @@ index 8fd386b0..e2ededc3 100644
  void ggml_cuda_op_pad(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 +void ggml_cuda_op_unpad(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 diff --git a/ggml/src/ggml-metal/ggml-metal.m b/ggml/src/ggml-metal/ggml-metal.m
-index 28f590f9..787fc713 100644
+index a85502ee..84e027eb 100644
 --- a/ggml/src/ggml-metal/ggml-metal.m
 +++ b/ggml/src/ggml-metal/ggml-metal.m
 @@ -311,6 +311,7 @@ static void ggml_backend_metal_device_rel(struct ggml_backend_metal_device_conte
@@ -332,7 +332,7 @@ index 8ba43904..204c93e6 100644
      device        char * dst,
      constant   int64_t & ne0,
 diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
-index 51cc8566..0e74e554 100644
+index 2bbe5f48..7ffcd907 100644
 --- a/ggml/src/ggml.c
 +++ b/ggml/src/ggml.c
 @@ -954,6 +954,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
@@ -369,7 +369,7 @@ index 51cc8566..0e74e554 100644
  
  static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
  
-@@ -4180,6 +4182,25 @@ struct ggml_tensor * ggml_pad_reflect_1d(
+@@ -4214,6 +4216,25 @@ struct ggml_tensor * ggml_pad_reflect_1d(
      return result;
  }
  

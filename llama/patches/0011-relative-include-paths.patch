@@ -10,7 +10,7 @@ Subject: [PATCH] relative include paths
  3 files changed, 3 insertions(+), 4 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index bebff207..d6dd5600 100644
+index b307d554..4eb39c52 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
 @@ -10,7 +10,7 @@
@@ -23,7 +23,7 @@ index bebff207..d6dd5600 100644
  
  #if defined(_MSC_VER) || defined(__MINGW32__)
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.cpp b/ggml/src/ggml-cpu/ggml-cpu.cpp
-index c390957a..1af5f7eb 100644
+index f11399cc..2a8b40ce 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.cpp
 +++ b/ggml/src/ggml-cpu/ggml-cpu.cpp
 @@ -4,8 +4,7 @@

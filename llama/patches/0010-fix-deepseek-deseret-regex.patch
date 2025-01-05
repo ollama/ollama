@@ -11,10 +11,10 @@ the characters
  2 files changed, 23 insertions(+), 1 deletion(-)
 
 diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
-index 8c9aaf5a..3e372dc3 100644
+index 3fcfcaa3..8f44705a 100644
 --- a/src/llama-vocab.cpp
 +++ b/src/llama-vocab.cpp
-@@ -389,7 +389,7 @@ struct llm_tokenizer_bpe : llm_tokenizer {
+@@ -375,7 +375,7 @@ struct llm_tokenizer_bpe : llm_tokenizer {
              case LLAMA_VOCAB_PRE_TYPE_DEEPSEEK_LLM:
                  regex_exprs = {
                      "[\r\n]",
@@ -24,7 +24,7 @@ index 8c9aaf5a..3e372dc3 100644
                      "\\s+$",
                      "[一-龥ࠀ-一가-퟿]+",
 diff --git a/src/unicode.cpp b/src/unicode.cpp
-index 3d459263..51dd81fb 100644
+index 7aca6544..6155da80 100644
 --- a/src/unicode.cpp
 +++ b/src/unicode.cpp
 @@ -2,6 +2,11 @@

@@ -19,12 +19,12 @@ multiple batches of processing until everything is complete.
  1 file changed, 46 insertions(+), 53 deletions(-)
 
 diff --git a/src/llama.cpp b/src/llama.cpp
-index 4778a9ed..654e32bc 100644
+index bac66c24..c95da45d 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
-@@ -3025,6 +3025,13 @@ struct llama_kv_cache {
-     }
- };
+@@ -3536,6 +3536,13 @@ static struct ggml_tensor * llm_build_rwkv6_channel_mix(
+     return ggml_mul(ctx, r, llm_build_lora_mm(lctx, ctx, layer->channel_mix_value, k));
+ }
  
 +// block of KV slots to move when defragging
 +struct llama_kv_defrag_move {
@@ -33,10 +33,10 @@ index 4778a9ed..654e32bc 100644
 +    uint32_t len;
 +};
 +
- struct llama_control_vector {
-     std::vector<struct ggml_tensor *> tensors; // per layer
-     std::vector<ggml_context_ptr> ctxs;
-@@ -10802,35 +10809,23 @@ struct llm_build_context {
+ struct llm_build_context {
+     const llama_model    & model;
+           llama_context  & lctx;
+@@ -3712,35 +3719,23 @@ struct llm_build_context {
          return gf;
      }
  
@@ -78,7 +78,7 @@ index 4778a9ed..654e32bc 100644
  
                  ggml_tensor * view_v_src;
                  ggml_tensor * view_v_dst;
-@@ -10838,31 +10833,29 @@ struct llm_build_context {
+@@ -3748,31 +3743,29 @@ struct llm_build_context {
                  if (flash_attn) {
                      // NOTE: the V cache is not transposed when using flash attention
                      view_v_src = ggml_view_2d(ctx0, kv_self.v_l[il],
@@ -118,7 +118,7 @@ index 4778a9ed..654e32bc 100644
          }
  
          //LLAMA_LOG_INFO("gf->n_nodes = %d\n", gf->n_nodes);
-@@ -17325,7 +17318,7 @@ struct llm_build_context {
+@@ -10856,7 +10849,7 @@ struct llm_build_context {
      }
  };
  
@@ -127,7 +127,7 @@ index 4778a9ed..654e32bc 100644
      llama_ubatch dummy = {};
      dummy.equal_seqs = true;
  
-@@ -17335,7 +17328,7 @@ static struct ggml_cgraph * llama_build_graph_defrag(llama_context & lctx, const
+@@ -10866,7 +10859,7 @@ static struct ggml_cgraph * llama_build_graph_defrag(llama_context & lctx, const
  
      llm.init();
  
@@ -136,7 +136,7 @@ index 4778a9ed..654e32bc 100644
  
      llm.free();
  
-@@ -18351,7 +18344,12 @@ static int llama_decode_internal(
+@@ -11329,7 +11322,12 @@ static int llama_decode_internal(
                  kv_self.head = 0;
              }
  
@@ -150,7 +150,7 @@ index 4778a9ed..654e32bc 100644
              if (!slot) {
                  return 1;
              }
-@@ -18756,8 +18754,8 @@ static void llama_kv_cache_defrag_internal(struct llama_context & lctx) {
+@@ -11735,8 +11733,8 @@ static void llama_kv_cache_defrag_internal(struct llama_context & lctx) {
  
      //const int64_t t_start = ggml_time_us();
  
@@ -161,7 +161,7 @@ index 4778a9ed..654e32bc 100644
  
      // each move requires 6*n_layer tensors (see build_defrag)
      //   - source view, destination view, copy operation
-@@ -18821,19 +18819,11 @@ static void llama_kv_cache_defrag_internal(struct llama_context & lctx) {
+@@ -11800,19 +11798,11 @@ static void llama_kv_cache_defrag_internal(struct llama_context & lctx) {
          // are we moving a continuous block of memory?
          bool cont = false;
  
@@ -181,7 +181,7 @@ index 4778a9ed..654e32bc 100644
                  cont = false;
                  continue;
              }
-@@ -18849,8 +18839,10 @@ static void llama_kv_cache_defrag_internal(struct llama_context & lctx) {
+@@ -11828,8 +11818,10 @@ static void llama_kv_cache_defrag_internal(struct llama_context & lctx) {
              kv_self.head = n_used;
  
              if (!cont) {
@@ -193,7 +193,7 @@ index 4778a9ed..654e32bc 100644
              }
  
              nf++;
-@@ -18860,22 +18852,16 @@ static void llama_kv_cache_defrag_internal(struct llama_context & lctx) {
+@@ -11839,22 +11831,16 @@ static void llama_kv_cache_defrag_internal(struct llama_context & lctx) {
              }
          }
  
@@ -218,7 +218,7 @@ index 4778a9ed..654e32bc 100644
  
  #if 0
      // CPU defrag
-@@ -18950,11 +18936,18 @@ static void llama_kv_cache_defrag_internal(struct llama_context & lctx) {
+@@ -11929,11 +11915,18 @@ static void llama_kv_cache_defrag_internal(struct llama_context & lctx) {
  #else
      // ggml_graph defrag
  
