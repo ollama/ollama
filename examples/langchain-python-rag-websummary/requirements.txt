@@ -1,1 +1,3 @@
-langchain==0.0.259
+langchain-ollama==0.2.2
+langchain-community==0.3.14
+beautifulsoup4==4.12.3
