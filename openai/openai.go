@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -978,6 +979,51 @@ func ChatMiddleware() gin.HandlerFunc {
 		}
 
 		c.Writer = w
+
+		c.Next()
+	}
+}
+
+func AuthorizationError(key string) ErrorResponse {
+	code := "invalid_api_key"
+	message := "Incorrect API key provided: "
+	if key != "" {
+		if len(key) <= 4 {
+			message += key
+		} else {
+			message += key[:2] + strings.Repeat("*", 6) + key[len(key)-2:]
+		}
+	} else {
+		message += "null."
+	}
+	return ErrorResponse{Error{
+		Type:    "invalid_request_error",
+		Message: message,
+		Code:    &code,
+	}}
+}
+
+func AuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		expectedKey := os.Getenv("OPENAI_API_KEY")
+		if expectedKey == "" {
+			// If environment variables are not set, allow direct access/pass through
+			c.Next()
+			return
+		}
+
+		// If environment variables are set, perform verification
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.AbortWithStatusJSON(401, AuthorizationError(""))
+			return
+		}
+
+		apiKey := strings.TrimPrefix(authHeader, "Bearer ")
+		if apiKey != expectedKey {
+			c.AbortWithStatusJSON(401, AuthorizationError(apiKey))
+			return
+		}
 
 		c.Next()
 	}

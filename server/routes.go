@@ -1158,11 +1158,11 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.GET("/api/ps", s.PsHandler)
 
 	// Compatibility endpoints
-	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)
-	r.POST("/v1/completions", openai.CompletionsMiddleware(), s.GenerateHandler)
-	r.POST("/v1/embeddings", openai.EmbeddingsMiddleware(), s.EmbedHandler)
-	r.GET("/v1/models", openai.ListMiddleware(), s.ListHandler)
-	r.GET("/v1/models/:model", openai.RetrieveMiddleware(), s.ShowHandler)
+	r.POST("/v1/chat/completions", openai.AuthMiddleware(), openai.ChatMiddleware(), s.ChatHandler)
+	r.POST("/v1/completions", openai.AuthMiddleware(), openai.CompletionsMiddleware(), s.GenerateHandler)
+	r.POST("/v1/embeddings", openai.AuthMiddleware(), openai.EmbeddingsMiddleware(), s.EmbedHandler)
+	r.GET("/v1/models", openai.AuthMiddleware(), openai.ListMiddleware(), s.ListHandler)
+	r.GET("/v1/models/:model", openai.AuthMiddleware(), openai.RetrieveMiddleware(), s.ShowHandler)
 
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		r.Handle(method, "/", func(c *gin.Context) {
