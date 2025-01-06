@@ -23,13 +23,17 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
-	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
 
-func createTestFile(t *testing.T, name string) string {
+func createTestFile(t *testing.T, name string) (string, string) {
 	t.Helper()
+
+	modelDir := os.Getenv("OLLAMA_MODELS")
+	if modelDir == "" {
+		t.Fatalf("OLLAMA_MODELS not specified")
+	}
 
 	f, err := os.CreateTemp(t.TempDir(), name)
 	if err != nil {
@@ -57,7 +61,21 @@ func createTestFile(t *testing.T, name string) string {
 		t.Fatalf("failed to write to file: %v", err)
 	}
 
-	return f.Name()
+	// Calculate sha256 sum of file
+	if _, err := f.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	digest, _ := GetSHA256Digest(f)
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := createLink(f.Name(), filepath.Join(modelDir, "blobs", fmt.Sprintf("sha256-%s", strings.TrimPrefix(digest, "sha256:")))); err != nil {
+		t.Fatal(err)
+	}
+
+	return f.Name(), digest
 }
 
 // equalStringSlices checks if two slices of strings are equal.
@@ -85,19 +103,31 @@ func Test_Routes(t *testing.T) {
 	createTestModel := func(t *testing.T, name string) {
 		t.Helper()
 
-		fname := createTestFile(t, "ollama-model")
+		_, digest := createTestFile(t, "ollama-model")
 
-		r := strings.NewReader(fmt.Sprintf("FROM %s\nPARAMETER seed 42\nPARAMETER top_p 0.9\nPARAMETER stop foo\nPARAMETER stop bar", fname))
-		modelfile, err := parser.ParseFile(r)
-		if err != nil {
-			t.Fatalf("failed to parse file: %v", err)
-		}
 		fn := func(resp api.ProgressResponse) {
 			t.Logf("Status: %s", resp.Status)
 		}
-		err = CreateModel(context.TODO(), model.ParseName(name), "", "", modelfile, fn)
+
+		r := api.CreateRequest{
+			Name:  name,
+			Files: map[string]string{"test.gguf": digest},
+			Parameters: map[string]any{
+				"seed":  42,
+				"top_p": 0.9,
+				"stop":  []string{"foo", "bar"},
+			},
+		}
+
+		modelName := model.ParseName(name)
+
+		baseLayers, err := ggufLayers(digest, fn)
 		if err != nil {
 			t.Fatalf("failed to create model: %v", err)
+		}
+
+		if err := createModel(r, modelName, baseLayers, fn); err != nil {
+			t.Fatal(err)
 		}
 	}
 
@@ -301,13 +331,12 @@ func Test_Routes(t *testing.T) {
 			Method: http.MethodPost,
 			Path:   "/api/create",
 			Setup: func(t *testing.T, req *http.Request) {
-				fname := createTestFile(t, "ollama-model")
-
+				_, digest := createTestFile(t, "ollama-model")
 				stream := false
 				createReq := api.CreateRequest{
-					Name:      "t-bone",
-					Modelfile: fmt.Sprintf("FROM %s", fname),
-					Stream:    &stream,
+					Name:   "t-bone",
+					Files:  map[string]string{"test.gguf": digest},
+					Stream: &stream,
 				}
 				jsonData, err := json.Marshal(createReq)
 				if err != nil {
@@ -419,7 +448,10 @@ func Test_Routes(t *testing.T) {
 			},
 		},
 		{
-			Name:   "openai retrieve model handler",
+			Name: "openai retrieve model handler",
+			Setup: func(t *testing.T, req *http.Request) {
+				createTestModel(t, "show-model")
+			},
 			Method: http.MethodGet,
 			Path:   "/v1/models/show-model",
 			Expected: func(t *testing.T, resp *http.Response) {
@@ -571,21 +603,21 @@ func TestManifestCaseSensitivity(t *testing.T) {
 	t.Cleanup(func() { testMakeRequestDialContext = nil })
 
 	t.Logf("creating")
+	_, digest := createBinFile(t, nil, nil)
 	checkOK(createRequest(t, s.CreateHandler, api.CreateRequest{
 		// Start with the stable name, and later use a case-shuffled
 		// version.
-		Name: wantStableName,
-
-		Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
-		Stream:    &stream,
+		Name:   wantStableName,
+		Files:  map[string]string{"test.gguf": digest},
+		Stream: &stream,
 	}))
 	checkManifestList()
 
 	t.Logf("creating (again)")
 	checkOK(createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      name(),
-		Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
-		Stream:    &stream,
+		Name:   name(),
+		Files:  map[string]string{"test.gguf": digest},
+		Stream: &stream,
 	}))
 	checkManifestList()
 
@@ -622,13 +654,12 @@ func TestShow(t *testing.T) {
 
 	var s Server
 
+	_, digest1 := createBinFile(t, llm.KV{"general.architecture": "test"}, nil)
+	_, digest2 := createBinFile(t, llm.KV{"general.type": "projector", "general.architecture": "clip"}, nil)
+
 	createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name: "show-model",
-		Modelfile: fmt.Sprintf(
-			"FROM %s\nFROM %s",
-			createBinFile(t, llm.KV{"general.architecture": "test"}, nil),
-			createBinFile(t, llm.KV{"general.type": "projector", "general.architecture": "clip"}, nil),
-		),
+		Name:  "show-model",
+		Files: map[string]string{"model.gguf": digest1, "projector.gguf": digest2},
 	})
 
 	w := createRequest(t, s.ShowHandler, api.ShowRequest{

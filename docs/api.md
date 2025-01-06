@@ -13,6 +13,7 @@
 - [Push a Model](#push-a-model)
 - [Generate Embeddings](#generate-embeddings)
 - [List Running Models](#list-running-models)
+- [Version](#version)
 
 ## Conventions
 
@@ -1526,3 +1527,29 @@ curl http://localhost:11434/api/embeddings -d '{
   ]
 }
 ```
+
+## Version
+
+```shell
+GET /api/version
+```
+
+Retrieve the Ollama version
+
+### Examples
+
+#### Request
+
+```shell
+curl http://localhost:11434/api/version
+```
+
+#### Response
+
+```json
+{
+  "version": "0.5.1"
+}
+```
+
+

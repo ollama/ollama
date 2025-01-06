@@ -1,5 +1,7 @@
 <div align="center">
- <img alt="ollama" height="200px" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
+  <a href="https://ollama.com" />
+    <img alt="ollama" height="200px" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
+  </a>
 </div>
 
 # Ollama
@@ -97,7 +99,7 @@ Ollama supports importing GGUF models in the Modelfile:
    ollama run example
    ```
 
-### Import from PyTorch or Safetensors
+### Import from Safetensors
 
 See the [guide](docs/import.md) on importing models for more information.
 
@@ -298,6 +300,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [AnythingLLM (Docker + MacOs/Windows/Linux native app)](https://github.com/Mintplex-Labs/anything-llm)
 - [Ollama Basic Chat: Uses HyperDiv Reactive UI](https://github.com/rapidarchitect/ollama_basic_chat)
 - [Ollama-chats RPG](https://github.com/drazdra/ollama-chats)
+- [IntelliBar](https://intellibar.app/) (AI-powered assistant for macOS)
 - [QA-Pilot](https://github.com/reid41/QA-Pilot) (Interactive chat tool that can leverage Ollama models for rapid understanding and navigation of GitHub code repositories)
 - [ChatOllama](https://github.com/sugarforever/chat-ollama) (Open Source Chatbot based on Ollama with Knowledge Bases)
 - [CRAG Ollama Chat](https://github.com/Nagi-ovo/CRAG-Ollama-Chat) (Simple Web Search with Corrective RAG)
@@ -327,6 +330,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [BoltAI for Mac](https://boltai.com) (AI Chat Client for Mac)
 - [Harbor](https://github.com/av/harbor) (Containerized LLM Toolkit with Ollama as default backend)
 - [PyGPT](https://github.com/szczyglis-dev/py-gpt) (AI desktop assistant for Linux, Windows and Mac)
+- [Alpaca](https://github.com/Jeffser/Alpaca) (An Ollama client application for linux and macos made with GTK4 and Adwaita)
 - [AutoGPT](https://github.com/Significant-Gravitas/AutoGPT/blob/master/docs/content/platform/ollama.md) (AutoGPT Ollama integration)
 - [Go-CREW](https://www.jonathanhecl.com/go-crew/) (Powerful Offline RAG in Golang)
 - [PartCAD](https://github.com/openvmp/partcad/) (CAD model generation with OpenSCAD and CadQuery)
@@ -361,6 +365,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Abbey](https://github.com/US-Artificial-Intelligence/abbey) (A configurable AI interface server with notebooks, document storage, and YouTube support)
 - [Minima](https://github.com/dmayboroda/minima) (RAG with on-premises or fully local workflow)
 - [aidful-ollama-model-delete](https://github.com/AidfulAI/aidful-ollama-model-delete) (User interface for simplified model cleanup)
+- [Perplexica](https://github.com/ItzCrazyKns/Perplexica) (An AI-powered search engine & an open-source alternative to Perplexity AI)
 
 ### Cloud
 
@@ -373,6 +378,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [oterm](https://github.com/ggozad/oterm)
 - [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
 - [Emacs client](https://github.com/zweifisch/ollama)
+- [neollama](https://github.com/paradoxical-dev/neollama) UI client for interacting with models from within Neovim
 - [gen.nvim](https://github.com/David-Kunz/gen.nvim)
 - [ollama.nvim](https://github.com/nomnivore/ollama.nvim)
 - [ollero.nvim](https://github.com/marco-souza/ollero.nvim)
@@ -427,6 +433,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/integrations/chat/ollama/) with [example](https://js.langchain.com/docs/tutorials/local_rag/)
 - [Firebase Genkit](https://firebase.google.com/docs/genkit/plugins/ollama)
 - [crewAI](https://github.com/crewAIInc/crewAI)
+- [Yacana](https://remembersoftwares.github.io/yacana/) (User-friendly multi-agent framework for brainstorming and executing predetermined flows with built-in tool integration)
 - [Spring AI](https://github.com/spring-projects/spring-ai) with [reference](https://docs.spring.io/spring-ai/reference/api/chat/ollama-chat.html) and [example](https://github.com/tzolov/ollama-tools)
 - [LangChainGo](https://github.com/tmc/langchaingo/) with [example](https://github.com/tmc/langchaingo/tree/main/examples/ollama-completion-example)
 - [LangChain4j](https://github.com/langchain4j/langchain4j) with [example](https://github.com/langchain4j/langchain4j-examples/tree/main/ollama-examples/src/main/java)
@@ -519,6 +526,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [AI Summmary Helper plugin](https://github.com/philffm/ai-summary-helper)
 - [TextCraft](https://github.com/suncloudsmoon/TextCraft) (Copilot in Word alternative using Ollama)
 - [Alfred Ollama](https://github.com/zeitlings/alfred-ollama) (Alfred Workflow)
+- [TextLLaMA](https://github.com/adarshM84/TextLLaMA) A Chrome Extension that helps you write emails, correct grammar, and translate into any language
 
 ### Supported backends
 
