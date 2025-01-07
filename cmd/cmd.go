@@ -282,6 +282,7 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 
 	req := &api.GenerateRequest{
 		Model:     opts.Model,
+		Options:   opts.Options,
 		KeepAlive: opts.KeepAlive,
 
 		// pass Think here so we fail before getting to the chat prompt if the model doesn't support it
@@ -308,10 +309,23 @@ func StopHandler(cmd *cobra.Command, args []string) error {
 func RunHandler(cmd *cobra.Command, args []string) error {
 	interactive := true
 
+	rawParams, err := cmd.Flags().GetStringToString("parameter")
+	if err != nil {
+		return err
+	}
+	paramSingletons := make(map[string][]string)
+	for key, rawParam := range rawParams {
+		paramSingletons[key] = []string{rawParam}
+	}
+	parameters, err := api.FormatParams(paramSingletons)
+	if err != nil {
+		return err
+	}
+
 	opts := runOptions{
 		Model:    args[0],
 		WordWrap: os.Getenv("TERM") == "xterm-256color",
-		Options:  map[string]any{},
+		Options:  parameters,
 	}
 
 	format, err := cmd.Flags().GetString("format")
@@ -1513,6 +1527,7 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
 	runCmd.Flags().StringP("system", "s", "", "Set system message")
+	runCmd.Flags().StringToStringP("parameter", "p", map[string]string{}, "Set a parameter (e.g. num_ctx=4096)")
 	runCmd.Flags().String("think", "", "Enable thinking mode: true/false or high/medium/low for supported models")
 	runCmd.Flags().Lookup("think").NoOptDefVal = "true"
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
