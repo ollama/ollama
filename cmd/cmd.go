@@ -276,6 +276,12 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 	opts.Format = format
 
+	system, err := cmd.Flags().GetString("system")
+	if err != nil {
+		return err
+	}
+	opts.System = system
+
 	keepAlive, err := cmd.Flags().GetString("keepalive")
 	if err != nil {
 		return err
@@ -1254,6 +1260,7 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
+	runCmd.Flags().StringP("system", "s", "", "Set system message")
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
