@@ -72,7 +72,7 @@ type Tensor interface {
 	Scale(ctx Context, s float64) Tensor
 
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
-	Rope(ctx Context, positionIDs, ropeFactors Tensor, dim uint32, base, scale float32) Tensor
+	RoPE(ctx Context, positionIDs, ropeFactors Tensor, dim uint32, base, scale float32) Tensor
 
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context) Tensor

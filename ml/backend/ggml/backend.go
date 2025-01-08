@@ -437,7 +437,11 @@ const (
 	ropeTypeNorm C.int = iota
 )
 
-func (t *Tensor) Rope(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim uint32, ropeBase, ropeScale float32) ml.Tensor {
+func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim uint32, ropeBase, ropeScale float32) ml.Tensor {
+	if ropeFactors == nil {
+		ropeFactors = &Tensor{}
+	}
+
 	return &Tensor{
 		C.ggml_rope_ext(
 			ctx.(*Context).c, t.t, positionIDs.(*Tensor).t, ropeFactors.(*Tensor).t,
