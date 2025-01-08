@@ -16,17 +16,17 @@ type TextSelfAttention struct {
 	Output *nn.Linear `ggml:"attn_output"`
 }
 
-func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, positions, mask ml.Tensor, cache model.Cache, opts *TextModelOptions) ml.Tensor {
+func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, mask ml.Tensor, offset int32, cache model.Cache, opts *TextModelOptions) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
 	headDim := opts.hiddenSize / opts.numHeads
 
 	query := sa.Query.Forward(ctx, hiddenState)
 	query = query.Reshape(ctx, headDim, opts.numHeads, batchSize)
-	query = query.Rope(ctx, positions, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
+	query = query.Rope(ctx, 0, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
 
 	key := sa.Key.Forward(ctx, hiddenState)
 	key = key.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-	key = key.Rope(ctx, positions, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
+	key = key.Rope(ctx, 0, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
 
 	value := sa.Value.Forward(ctx, hiddenState)
 	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
@@ -72,11 +72,11 @@ type TextSelfAttentionDecoderLayer struct {
 	MLP     *TextMLP
 }
 
-func (d *TextSelfAttentionDecoderLayer) Forward(ctx ml.Context, hiddenState, positions, mask, _, _ ml.Tensor, cache model.Cache, opts *TextModelOptions) ml.Tensor {
+func (d *TextSelfAttentionDecoderLayer) Forward(ctx ml.Context, hiddenState, mask, _, _ ml.Tensor, offset int32, cache model.Cache, opts *TextModelOptions) ml.Tensor {
 	residual := hiddenState
 
 	hiddenState = d.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
-	hiddenState = d.SelfAttention.Forward(ctx, hiddenState, positions, mask, cache, opts)
+	hiddenState = d.SelfAttention.Forward(ctx, hiddenState, mask, offset, cache, opts)
 	hiddenState = hiddenState.Add(ctx, residual)
 	residual = hiddenState
 
@@ -137,7 +137,7 @@ type TextCrossAttentionDecoderLayer struct {
 	MLPGate ml.Tensor `ggml:"cross_attn_mlp_gate"`
 }
 
-func (d TextCrossAttentionDecoderLayer) Forward(ctx ml.Context, hiddenState, _, _, crossAttentionStates, crossAttentionMask ml.Tensor, cache model.Cache, opts *TextModelOptions) ml.Tensor {
+func (d TextCrossAttentionDecoderLayer) Forward(ctx ml.Context, hiddenState, _, crossAttentionStates, crossAttentionMask ml.Tensor, _ int32, cache model.Cache, opts *TextModelOptions) ml.Tensor {
 	residual := hiddenState
 
 	hiddenState = d.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
@@ -153,17 +153,17 @@ func (d TextCrossAttentionDecoderLayer) Forward(ctx ml.Context, hiddenState, _, 
 }
 
 type TextDecoderLayer interface {
-	Forward(ctx ml.Context, hiddenState, positionIDs, mask, crossAttentionStates, crossAttentionMask ml.Tensor, cache model.Cache, opts *TextModelOptions) ml.Tensor
+	Forward(ctx ml.Context, hiddenState, mask, crossAttentionStates, crossAttentionMask ml.Tensor, offset int32, cache model.Cache, opts *TextModelOptions) ml.Tensor
 }
 
 type TextDecoder struct {
 	Layers []TextDecoderLayer
 }
 
-func (d *TextDecoder) Forward(ctx ml.Context, hiddenState, positionIDs, mask, crossAttentionStates, crossAttentionMask ml.Tensor, cache model.Cache, opts *TextModelOptions) ml.Tensor {
+func (d *TextDecoder) Forward(ctx ml.Context, hiddenState, mask, crossAttentionStates, crossAttentionMask ml.Tensor, offset int32, cache model.Cache, opts *TextModelOptions) ml.Tensor {
 	for i, layer := range d.Layers {
 		if !slices.Contains(opts.crossAttentionLayers, uint32(i)) || crossAttentionStates != nil {
-			hiddenState = layer.Forward(ctx, hiddenState, positionIDs, mask, crossAttentionStates, crossAttentionMask, cache.Sub(i), opts)
+			hiddenState = layer.Forward(ctx, hiddenState, mask, crossAttentionStates, crossAttentionMask, offset, cache.Sub(i), opts)
 		}
 	}
 
@@ -189,9 +189,9 @@ type TextModel struct {
 	*TextModelOptions
 }
 
-func (m *TextModel) Forward(ctx ml.Context, inputIDs, positionIDs, mask, crossAttentionStates, crossAttentionMask ml.Tensor, cache model.Cache) ml.Tensor {
+func (m *TextModel) Forward(ctx ml.Context, inputIDs, mask, crossAttentionStates, crossAttentionMask ml.Tensor, offset int32, cache model.Cache) ml.Tensor {
 	hiddenState := m.TokenEmbedding.Forward(ctx, inputIDs)
-	hiddenState = m.Transformer.Forward(ctx, hiddenState, positionIDs, mask, crossAttentionStates, crossAttentionMask, cache, m.TextModelOptions)
+	hiddenState = m.Transformer.Forward(ctx, hiddenState, mask, crossAttentionStates, crossAttentionMask, offset, cache, m.TextModelOptions)
 	hiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)
 	return m.Output.Forward(ctx, hiddenState)
 }

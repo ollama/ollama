@@ -36,6 +36,7 @@ func RegisterBackend(name string, f func(*os.File) (Backend, error)) {
 
 func NewBackend(f *os.File) (Backend, error) {
 	if backend, ok := backends["mlx"]; ok {
+		// if backend, ok := backends["ggml"]; ok {
 		return backend(f)
 	}
 
@@ -44,8 +45,14 @@ func NewBackend(f *os.File) (Backend, error) {
 
 type Context interface {
 	Zeros(dtype DType, shape ...int) Tensor
+
+	// TODO - the (Tensor, error) return pattern makes this impossible to
+	// one-line in cases where we need to pass a scalar into a function that
+	// requires a Tensor leading to overly verbose impls.  Consider a Must* API.
 	FromFloatSlice(s []float32, shape ...int) (Tensor, error)
 	FromIntSlice(s []int32, shape ...int) (Tensor, error)
+
+	FastScaledDotProductAttention(queries, keys, values Tensor, scale float32, mask Tensor) Tensor
 
 	Forward(Tensor)
 	Compute(Tensor) Tensor
@@ -66,13 +73,13 @@ type Tensor interface {
 	Mul(ctx Context, t2 Tensor) Tensor
 	Mulmat(ctx Context, t2 Tensor) Tensor
 
-	Softmax(ctx Context) Tensor
+	Softmax(ctx Context) Tensor // TODO axis parameter?
 	LayerNorm(ctx Context, weight, bias Tensor, eps float32) Tensor
 	RMSNorm(ctx Context, weight, bias Tensor, eps float32) Tensor
 	Scale(ctx Context, s float64) Tensor
 
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
-	Rope(ctx Context, positionIDs, ropeFactors Tensor, dim uint32, base, scale float32) Tensor
+	Rope(ctx Context, offset int32, ropeFactors Tensor, dim uint32, base, scale float32) Tensor
 
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context) Tensor
@@ -90,6 +97,7 @@ type Tensor interface {
 	Concat(ctx Context, t2 Tensor, dim int) Tensor
 	Rows(ctx Context, t2 Tensor) Tensor
 	Copy(ctx Context, t2 Tensor) Tensor
+	Repeat(ctx Context, repeats, axis int) Tensor
 }
 
 type number interface {

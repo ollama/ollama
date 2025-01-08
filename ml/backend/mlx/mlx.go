@@ -9,6 +9,7 @@ package mlx
 // #include "mlx/c/fast.h"
 // #include "mlx/c/ops.h"
 // #include "mlx/c/stream.h"
+// #include "mlx/c/transforms.h"
 import "C"
 
 import (
@@ -16,7 +17,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
+	"strings"
 	"sync"
 	"unsafe"
 
@@ -29,6 +32,12 @@ func init() {
 	ml.RegisterBackend("mlx", New)
 }
 
+// TODO - find a good pattern for wiring up mlx_set_error_handler so during model development, if things go bad
+// we can get a Go stack trace with the call stack into the model instead of just a one-liner error from MLX that is difficult to trace.
+// e.g. errors like the following with the default setup aren't particularly helpful without copious slog instrumentation in the Model.
+// MLX error: [reshape] Cannot reshape array of size 2565120 into shape (1,626,4096). at /Users/daniel/code/ollama/build/_deps/mlx-c-src/mlx/c/ops.cpp:2337
+// exit status 255
+
 func New(r *os.File) (ml.Backend, error) {
 	meta, n, err := fs.Decode(r, -1)
 	if err != nil {
@@ -38,7 +47,8 @@ func New(r *os.File) (ml.Backend, error) {
 	tensors := make(map[string]*Array, len(meta.Tensors().Items()))
 	sr := io.NewSectionReader(r, int64(meta.Tensors().Offset), n-int64(meta.Tensors().Offset))
 
-	stream := C.mlx_default_cpu_stream_new()
+	slog.Info("initializing MLX GPU backend")
+	stream := C.mlx_default_gpu_stream_new()
 
 	var g errgroup.Group
 	var mu sync.Mutex
@@ -57,9 +67,12 @@ func New(r *os.File) (ml.Backend, error) {
 			cbytes := C.CBytes(b.Bytes())
 			defer C.free(cbytes)
 
+			// Inverted
 			shape := make([]C.int, len(t.Shape))
-			for i, dim := range t.Shape {
+			i := len(t.Shape) - 1
+			for _, dim := range t.Shape {
 				shape[i] = C.int(dim)
+				i--
 			}
 
 			var dtype C.mlx_dtype
@@ -76,16 +89,61 @@ func New(r *os.File) (ml.Backend, error) {
 			defer mu.Unlock()
 
 			var a C.mlx_array
-			C.mlx_transpose_all(
-				&a,
-				C.mlx_array_new_data(
-					cbytes,
-					(*C.int)(&shape[0]),
-					C.int(len(shape)),
-					dtype,
-				),
-				stream,
+			r := C.mlx_array_new_data(
+				cbytes,
+				(*C.int)(&shape[0]),
+				C.int(len(shape)),
+				dtype,
 			)
+
+			// Q/K are are mutated and we need to reverse that mutation
+			// TODO - this is only for llama based models and shouldn't be applied universally
+			// but only applies to some backends at the moment...  maybe?
+			// Need to get the model running on GGML to see if we can have a consistent model definition for both.
+			if strings.HasSuffix(t.Name, "attn_q.weight") || strings.HasSuffix(t.Name, "attn_q.bias") || strings.HasSuffix(t.Name, "attn_k.weight") || strings.HasSuffix(t.Name, "attn_k.bias") {
+
+				// TODO - is this code memory access safe, or does the delayed processing cause potential memory access after Go frees the stack?
+
+				var n_head uint64
+				if strings.Contains(t.Name, "attn_q") {
+					n_head = meta.KV().HeadCount() // Q
+				} else {
+					n_head = meta.KV().HeadCountKV() // K
+				}
+				tmpShape := []C.int{C.int(n_head), C.int(math.Floor(math.Floor(float64(shape[0]) / float64(n_head) / float64(2)))), 2, shape[1]}
+				var shaped C.mlx_array
+				C.mlx_reshape(&shaped, r, (*C.int)(&tmpShape[0]), C.size_t(len(tmpShape)), stream)
+				var swapped C.mlx_array
+				C.mlx_swapaxes(
+					&swapped,
+					shaped,
+					1,
+					2,
+					stream,
+				)
+				var reshaped C.mlx_array
+				C.mlx_reshape(
+					&reshaped,
+					swapped,
+					(*C.int)(&shape[0]),
+					C.size_t(len(shape)),
+					stream,
+				)
+				C.mlx_transpose_all(
+					&a,
+					reshaped,
+					stream,
+				)
+			} else if t.Name == "output.weight" || strings.Contains(t.Name, "token_embd.weight") {
+				// TODO bug in model code?
+				a = r
+			} else {
+				C.mlx_transpose_all(
+					&a,
+					r,
+					stream,
+				)
+			}
 
 			tensors[t.Name] = &Array{
 				name: t.Name,
@@ -126,7 +184,7 @@ func (b *Backend) Get(name string) ml.Tensor {
 
 func (b *Backend) NewContext() ml.Context {
 	return &Context{
-		stream: C.mlx_default_cpu_stream_new(),
+		stream: C.mlx_default_gpu_stream_new(),
 	}
 }
 
@@ -136,22 +194,45 @@ type Context struct {
 
 // Close implements ml.Context.
 func (c *Context) Close() error {
-	panic("unimplemented")
+
+	C.mlx_synchronize(c.stream) // ???
+	C.mlx_stream_free(c.stream)
+
+	// TODO does this leak?
+	// RAM usage during inference seems to be ~stable, but the
+	// example mlx-c code calls mlx_array_free on every array.
+	// Maybe the reference counting within the context is sufficient?
+	return nil
 }
 
 // Compute implements ml.Context.
-func (c *Context) Compute(ml.Tensor) ml.Tensor {
-	panic("unimplemented")
+func (c *Context) Compute(t ml.Tensor) ml.Tensor {
+	c.Forward(t)
+	return t
 }
 
 // Forward implements ml.Context.
-func (c *Context) Forward(ml.Tensor) {
-	panic("unimplemented")
+func (c *Context) Forward(t ml.Tensor) {
+	v := C.mlx_vector_array_new_value(
+		t.(*Array).a,
+	)
+	C.mlx_eval(v)
 }
 
 // FromFloatSlice implements ml.Context.
 func (c *Context) FromFloatSlice(s []float32, shape ...int) (ml.Tensor, error) {
-	panic("unimplemented")
+	cshape := make([]C.int, len(shape))
+	for i, dim := range shape {
+		cshape[i] = C.int(dim)
+	}
+	return &Array{
+		a: C.mlx_array_new_data(
+			unsafe.Pointer(&s[0]),
+			(*C.int)(&cshape[0]),
+			C.int(len(cshape)),
+			C.MLX_FLOAT32,
+		),
+	}, nil
 }
 
 // FromIntSlice implements ml.Context.
@@ -160,7 +241,6 @@ func (c *Context) FromIntSlice(s []int32, shape ...int) (ml.Tensor, error) {
 	for i, dim := range shape {
 		cshape[i] = C.int(dim)
 	}
-
 	return &Array{
 		a: C.mlx_array_new_data(
 			unsafe.Pointer(&s[0]),
@@ -173,7 +253,37 @@ func (c *Context) FromIntSlice(s []int32, shape ...int) (ml.Tensor, error) {
 
 // Zeros implements ml.Context.
 func (c *Context) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
-	panic("unimplemented")
+	if len(shape) < 1 || len(shape) > 4 {
+		panic("unsupported number of dimensions")
+	}
+	for _, dim := range shape {
+		if dim < 1 {
+			panic("invalid shape")
+		}
+	}
+	var dt C.mlx_dtype
+	switch dtype {
+	case 0:
+		dt = C.MLX_FLOAT32
+	case 1:
+		dt = C.MLX_FLOAT16
+	default:
+		panic("unsupported dtype")
+	}
+	sh := make([]C.int, len(shape))
+	for i, s := range shape {
+		sh[i] = (C.int)(s)
+	}
+
+	var r C.mlx_array
+	C.mlx_zeros(
+		&r,
+		&sh[0],
+		(C.size_t)(len(sh)),
+		dt,
+		c.stream,
+	)
+	return &Array{a: r}
 }
 
 type Array struct {
@@ -182,15 +292,29 @@ type Array struct {
 }
 
 func (a *Array) LogValue() slog.Value {
+	// TODO this forces eval on every log message - find a pattern to make this configurable to aid in debugging
+	str := C.mlx_string_new()
+	C.mlx_array_tostring(&str, a.a)
+	s := C.mlx_string_data(str)
+	defer C.mlx_string_free(str)
+
 	return slog.GroupValue(
 		slog.String("name", a.name),
 		slog.Any("shape", a.Shape()),
+		slog.String("values", C.GoString(s)),
 	)
 }
 
 // Add implements ml.Tensor.
 func (a *Array) Add(ctx ml.Context, a2 ml.Tensor) ml.Tensor {
-	panic("unimplemented")
+	var r C.mlx_array
+	C.mlx_add(
+		&r,
+		a.a,
+		a2.(*Array).a,
+		ctx.(*Context).stream,
+	)
+	return &Array{a: r}
 }
 
 // Bytes implements ml.Tensor.
@@ -205,7 +329,14 @@ func (a *Array) Concat(ctx ml.Context, a2 ml.Tensor, dim int) ml.Tensor {
 
 // Contiguous implements ml.Tensor.
 func (a *Array) Contiguous(ctx ml.Context) ml.Tensor {
-	panic("unimplemented")
+	var r C.mlx_array
+	C.mlx_contiguous(
+		&r,
+		a.a,
+		true, // TODO ???
+		ctx.(*Context).stream,
+	)
+	return &Array{a: r}
 }
 
 // Conv2D implements ml.Tensor.
@@ -215,7 +346,13 @@ func (a *Array) Conv2D(ctx ml.Context, weight ml.Tensor, s0 int, s1 int, p0 int,
 
 // Copy implements ml.Tensor.
 func (a *Array) Copy(ctx ml.Context, a2 ml.Tensor) ml.Tensor {
-	panic("unimplemented")
+	C.mlx_copy(
+		&a2.(*Array).a,
+		a.a,
+		ctx.(*Context).stream,
+	)
+	// TODO - view?
+	return &Array{a: a2.(*Array).a}
 }
 
 // DType implements ml.Tensor.
@@ -230,7 +367,13 @@ func (a *Array) Dim(n int) int64 {
 
 // Floats implements ml.Tensor.
 func (a *Array) Floats() []float32 {
-	panic("unimplemented")
+	f32sLen := (int)(C.mlx_array_size(a.a))
+	data := C.mlx_array_data_float32(a.a)
+	if data == nil {
+		panic("nil data, wasn't eval'd")
+	}
+	f32s := unsafe.Slice((*float32)(data), f32sLen)
+	return f32s
 }
 
 // GELU implements ml.Tensor.
@@ -240,14 +383,23 @@ func (a *Array) GELU(ctx ml.Context) ml.Tensor {
 
 // Mul implements ml.Tensor.
 func (a *Array) Mul(ctx ml.Context, a2 ml.Tensor) ml.Tensor {
-	panic("unimplemented")
+	var r C.mlx_array
+	C.mlx_multiply(
+		&r,
+		a.a,
+		a2.(*Array).a,
+		ctx.(*Context).stream,
+	)
+	return &Array{a: r}
 }
 
 // Mulmat implements ml.Tensor.
 func (a *Array) Mulmat(ctx ml.Context, a2 ml.Tensor) ml.Tensor {
-	slog.Info("mulmat", "a", a, "a2", a2)
 	var r C.mlx_array
-	C.mlx_matmul(&r, a2.(*Array).a, a.Permute(1, 0, 2, 3), ctx.(*Context).stream)
+	C.mlx_matmul(&r,
+		a2.(*Array).a,
+		a.a,
+		ctx.(*Context).stream)
 	return &Array{a: r}
 }
 
@@ -272,12 +424,26 @@ func (a *Array) Pad(ctx ml.Context, shape ...int64) ml.Tensor {
 
 // Permute implements ml.Tensor.
 func (a *Array) Permute(ctx ml.Context, shape ...int) ml.Tensor {
-	panic("unimplemented")
+	ndim := min(C.mlx_array_ndim(a.a), C.size_t(len(shape)))
+	var r C.mlx_array
+	sh := make([]C.int, len(shape))
+	for i, s := range shape {
+		sh[i] = (C.int)(s)
+	}
+	C.mlx_transpose(
+		&r,
+		a.a,
+		&sh[0],
+		ndim,
+		ctx.(*Context).stream,
+	)
+	return &Array{a: r}
 }
 
 // RMSNorm implements ml.Tensor.
 func (a *Array) RMSNorm(ctx ml.Context, w, b ml.Tensor, eps float32) ml.Tensor {
 	var r C.mlx_array
+	// slog.Info("MLX RMSNorm", "a", a, "w", w, "b", b)
 	C.mlx_fast_rms_norm(
 		&r,
 		a.a,
@@ -294,33 +460,91 @@ func (a *Array) Reshape(ctx ml.Context, shape ...int64) ml.Tensor {
 	for i, dim := range shape {
 		cshape[i] = C.int(dim)
 	}
-
 	var r C.mlx_array
 	C.mlx_reshape(&r, a.a, (*C.int)(&cshape[0]), C.size_t(len(cshape)), ctx.(*Context).stream)
 	return &Array{a: r}
 }
 
 // Rope implements ml.Tensor.
-func (a *Array) Rope(ctx ml.Context, positionIDs ml.Tensor, ropeFactors ml.Tensor, dim uint32, base float32, scale float32) ml.Tensor {
-	panic("unimplemented")
+func (a *Array) Rope(
+	ctx ml.Context,
+	offset int32,
+	ropeFactors ml.Tensor,
+	dim uint32,
+	base float32,
+	scale float32,
+) ml.Tensor {
+	var r C.mlx_array
+	var b C.mlx_optional_float
+	var rf C.mlx_array
+	if base == 0 {
+		base = 10000
+	}
+	if ropeFactors == nil || len(ropeFactors.Shape()) == 0 {
+		b.value = C.float(base)
+		b.has_value = true
+	} else {
+		rf = ropeFactors.(*Array).a
+	}
+	C.mlx_fast_rope(
+		&r,
+		a.a,
+		C.int(dim),
+		false, // traditional=false
+		b,
+		C.float(scale),
+		C.int(offset),
+		rf,
+		ctx.(*Context).stream,
+	)
+	return &Array{a: r}
 }
 
 // Rows implements ml.Tensor.
 func (a *Array) Rows(ctx ml.Context, a2 ml.Tensor) ml.Tensor {
 	var r C.mlx_array
-	slog.Info("rows", "a", a, "a2", a2)
-	C.mlx_take(&r, a.a, a2.(*Array).a, 0, ctx.(*Context).stream)
+
+	// HACK!
+	// If the indicies is greater than 2 dimensions, assume axis 1
+	var axis C.int
+	if C.mlx_array_ndim(a2.(*Array).a) > 1 {
+		axis = 1
+	} else {
+		axis = 0
+	}
+	C.mlx_take(&r, a.a, a2.(*Array).a, axis, ctx.(*Context).stream)
 	return &Array{a: r}
 }
 
 // SILU implements ml.Tensor.
 func (a *Array) SILU(ctx ml.Context) ml.Tensor {
-	panic("unimplemented")
+	var sig C.mlx_array
+	C.mlx_sigmoid(
+		&sig,
+		a.a,
+		ctx.(*Context).stream,
+	)
+	var r C.mlx_array
+	C.mlx_multiply(
+		&r,
+		a.a,
+		sig,
+		ctx.(*Context).stream,
+	)
+	return &Array{a: r}
 }
 
 // Scale implements ml.Tensor.
 func (a *Array) Scale(ctx ml.Context, s float64) ml.Tensor {
-	panic("unimplemented")
+	scale := C.mlx_array_new_float(C.float(s))
+	var r C.mlx_array
+	C.mlx_multiply(
+		&r,
+		a.a,
+		scale,
+		ctx.(*Context).stream,
+	)
+	return &Array{a: r}
 }
 
 // Shape implements ml.Tensor.
@@ -335,7 +559,17 @@ func (a *Array) Shape() []int64 {
 
 // Softmax implements ml.Tensor.
 func (a *Array) Softmax(ctx ml.Context) ml.Tensor {
-	panic("unimplemented")
+	var r C.mlx_array
+	axes := []C.int{-1}
+	C.mlx_softmax(
+		&r,
+		a.a,
+		&axes[0],
+		C.size_t(len(axes)),
+		false, //TODO - precise?
+		ctx.(*Context).stream,
+	)
+	return &Array{a: r}
 }
 
 // Stack implements ml.Tensor.
@@ -345,7 +579,13 @@ func (a *Array) Stack(ctx ml.Context, dim int, s ...ml.Tensor) ml.Tensor {
 
 // Stride implements ml.Tensor.
 func (a *Array) Stride(n int) int64 {
-	panic("unimplemented")
+	s := uintptr(unsafe.Pointer(C.mlx_array_strides(a.a)))
+	var r int64
+	for n = range n + 1 {
+		x := (s + (uintptr(n) * uintptr(unsafe.Sizeof(C.size_t(0)))))
+		r = (int64)(*(*C.size_t)(unsafe.Pointer(x)))
+	}
+	return r
 }
 
 // Tanh implements ml.Tensor.
@@ -360,5 +600,76 @@ func (a *Array) Unpad(ctx ml.Context, shape ...int64) ml.Tensor {
 
 // View implements ml.Tensor.
 func (a *Array) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
-	panic("unimplemented")
+
+	var r C.mlx_array
+	switch len(shape) {
+	case 1:
+		C.mlx_as_strided(
+			&r,
+			a.a,
+			(*C.int)(unsafe.Pointer(&shape[0])),
+			1,
+			nil,
+			0,
+			C.size_t(offset),
+			ctx.(*Context).stream,
+		)
+	case 3:
+		panic("unsupported number of dimensions 3")
+	case 5:
+		sh := []C.int{
+			C.int(shape[0]),
+			C.int(shape[2]),
+			C.int(shape[4]),
+		}
+		stride := []C.size_t{
+			C.size_t(shape[1]),
+			C.size_t(shape[3]),
+		}
+		C.mlx_as_strided(
+			&r,
+			a.a,
+			(*C.int)(unsafe.Pointer(&sh[0])),
+			C.size_t(len(sh)),
+			(*C.size_t)(unsafe.Pointer(&stride[0])),
+			C.size_t(len(stride)),
+			C.size_t(offset),
+			ctx.(*Context).stream,
+		)
+	case 7:
+		panic("unsupported number of dimensions 5")
+	default:
+		panic("unsupported number of dimensions")
+	}
+	return &Array{a: r}
+}
+
+func (a *Array) Repeat(ctx ml.Context, repeats, axis int) ml.Tensor {
+	var r C.mlx_array
+	C.mlx_repeat(
+		&r,
+		a.a,
+		(C.int)(repeats),
+		(C.int)(axis),
+		ctx.(*Context).stream)
+	return &Array{a: r}
+}
+
+func (ctx *Context) FastScaledDotProductAttention(queries ml.Tensor, keys ml.Tensor, values ml.Tensor, scale float32, mask ml.Tensor) ml.Tensor {
+	var r C.mlx_array
+	var m C.mlx_array
+	if mask != nil {
+		m = mask.(*Array).a
+	}
+	C.mlx_fast_scaled_dot_product_attention(
+		&r,
+		queries.(*Array).a,
+		keys.(*Array).a,
+		values.(*Array).a,
+		C.float(scale),
+		m,
+		C.mlx_optional_int{},
+		ctx.stream,
+	)
+	return &Array{a: r}
 }
