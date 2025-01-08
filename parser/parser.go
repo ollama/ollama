@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -34,6 +35,8 @@ func (f Modelfile) String() string {
 
 	return sb.String()
 }
+
+var deprecatedParameters = []string{"penalize_newline"}
 
 // CreateRequest creates a new *api.CreateRequest from an existing Modelfile
 func (f Modelfile) CreateRequest() (*api.CreateRequest, error) {
@@ -82,6 +85,11 @@ func (f Modelfile) CreateRequest() (*api.CreateRequest, error) {
 			role, msg, _ := strings.Cut(c.Args, ": ")
 			messages = append(messages, api.Message{Role: role, Content: msg})
 		default:
+			if slices.Contains(deprecatedParameters, c.Name) {
+				fmt.Printf("warning: parameter %s is deprecated\n", c.Name)
+				break
+			}
+
 			ps, err := api.FormatParams(map[string][]string{c.Name: {c.Args}})
 			if err != nil {
 				return nil, err
