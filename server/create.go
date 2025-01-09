@@ -33,6 +33,7 @@ var (
 	errOnlyOneAdapterSupported = errors.New("only one adapter is currently supported")
 	errOnlyGGUFSupported       = errors.New("supplied file was not in GGUF format")
 	errUnknownType             = errors.New("unknown type")
+	errNeitherFromOrFiles      = errors.New("neither 'from' or 'files' was specified")
 )
 
 func (s *Server) CreateHandler(c *gin.Context) {
@@ -95,7 +96,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				return
 			}
 		} else {
-			ch <- gin.H{"error": "neither 'from' or 'files' was specified", "status": http.StatusBadRequest}
+			ch <- gin.H{"error": errNeitherFromOrFiles.Error(), "status": http.StatusBadRequest}
 			return
 		}
 

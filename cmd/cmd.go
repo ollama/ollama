@@ -162,6 +162,9 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := client.Create(cmd.Context(), req, fn); err != nil {
+		if strings.Contains(err.Error(), "path or Modelfile are required") {
+			return fmt.Errorf("the ollama server must be updated to use `ollama create` with this client")
+		}
 		return err
 	}
 
