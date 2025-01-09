@@ -2,47 +2,14 @@ package convert
 
 import (
 	"cmp"
-	"fmt"
 	"math"
-	"strings"
-
-	"github.com/pdevine/tensor"
-	"github.com/pdevine/tensor/native"
 
 	"github.com/ollama/ollama/llm"
 )
 
 type graniteModel struct {
-	ModelParameters
-	NLayers               uint32  `json:"n_layers"`
-	NumHiddenLayers       uint32  `json:"num_hidden_layers"`
-	NLayer                uint32  `json:"n_layer"`
-	MaxPositionEmbeddings uint32  `json:"max_position_embeddings"`
-	NCtx                  uint32  `json:"n_ctx"`
-	HiddenSize            uint32  `json:"hidden_size"`
-	NEmbd                 uint32  `json:"n_embd"`
-	IntermediateSize      uint32  `json:"intermediate_size"`
-	NInner                uint32  `json:"n_inner"`
-	NumAttentionHeads     uint32  `json:"num_attention_heads"`
-	NHead                 uint32  `json:"n_head"`
-	NumKeyValueHeads      uint32  `json:"num_key_value_heads"`
-	RopeTheta             float32 `json:"rope_theta"`
-	RopeScaling           struct {
-		Type                            string  `json:"type"`
-		RopeType                        string  `json:"rope_type"`
-		Factor                          float32 `json:"factor"`
-		LowFrequencyFactor              float32 `json:"low_freq_factor"`
-		HighFrequencyFactor             float32 `json:"high_freq_factor"`
-		OriginalMaxPositionalEmbeddings uint32  `json:"original_max_positional_embeddings"`
+	llamaModel
 
-		factors ropeFactor
-	} `json:"rope_scaling"`
-	RMSNormEPS       float32 `json:"rms_norm_eps"`
-	LayerNormEPS     float32 `json:"layer_norm_eps"`
-	LayerNormEpsilon float32 `json:"layer_norm_epsilon"`
-	NormEpsilon      float32 `json:"norm_epsilon"`
-	// Granite specific multipliers; these + head dim not being used are the
-	// main differences between IBM granite and llama
 	ResidualScale  float32 `json:"residual_multiplier"`
 	EmbeddingScale float32 `json:"embedding_multiplier"`
 	AttentionScale float32 `json:"attention_multiplier"`
@@ -131,96 +98,4 @@ func (p *graniteModel) KV(t *Tokenizer) llm.KV {
 		kv["granite.attention.scale"] = p.AttentionScale
 	}
 	return kv
-}
-
-func (p *graniteModel) Tensors(ts []Tensor) []llm.Tensor {
-	var out []llm.Tensor
-
-	if p.RopeScaling.factors != nil {
-		out = append(out, llm.Tensor{
-			Name:     "rope_freqs.weight",
-			Kind:     0,
-			Shape:    []uint64{uint64(len(p.RopeScaling.factors))},
-			WriterTo: p.RopeScaling.factors,
-		})
-	}
-
-	for _, t := range ts {
-		if strings.HasSuffix(t.Name(), "attn_q.weight") ||
-			strings.HasSuffix(t.Name(), "attn_k.weight") {
-			t.SetRepacker(p.repack)
-		}
-
-		out = append(out, llm.Tensor{
-			Name:     t.Name(),
-			Kind:     t.Kind(),
-			Shape:    t.Shape(),
-			WriterTo: t,
-		})
-	}
-
-	return out
-}
-
-func (p *graniteModel) Replacements() []string {
-	return []string{
-		"lm_head", "output",
-		"model.embed_tokens", "token_embd",
-		"model.norm", "output_norm",
-		"model.layers", "blk",
-		"input_layernorm", "attn_norm",
-		"self_attn.q_proj", "attn_q",
-		"self_attn.k_proj", "attn_k",
-		"self_attn.v_proj", "attn_v",
-		"self_attn.o_proj", "attn_output",
-		"mlp.gate_proj", "ffn_gate",
-		"mlp.down_proj", "ffn_down",
-		"mlp.up_proj", "ffn_up",
-		"post_attention_layernorm", "ffn_norm",
-	}
-}
-
-func (p *graniteModel) repack(name string, data []float32, shape []uint64) ([]float32, error) {
-	var dims []int
-	for _, dim := range shape {
-		dims = append(dims, int(dim))
-	}
-
-	var heads uint32
-	if strings.HasSuffix(name, "attn_q.weight") {
-		heads = p.NumAttentionHeads
-	} else if strings.HasSuffix(name, "attn_k.weight") {
-		heads = cmp.Or(p.NumKeyValueHeads, p.NumAttentionHeads)
-	} else {
-		return nil, fmt.Errorf("unknown tensor for repack: %s", name)
-	}
-
-	n := tensor.New(tensor.WithShape(dims...), tensor.WithBacking(data))
-	if err := n.Reshape(append([]int{int(heads), 2, dims[0] / int(heads) / 2}, dims[1:]...)...); err != nil {
-		return nil, err
-	}
-
-	if err := n.T(0, 2, 1, 3); err != nil {
-		return nil, err
-	}
-
-	if err := n.Reshape(dims...); err != nil {
-		return nil, err
-	}
-
-	if err := n.Transpose(); err != nil {
-		return nil, err
-	}
-
-	ts, err := native.SelectF32(n, 1)
-	if err != nil {
-		return nil, err
-	}
-
-	var f32s []float32
-	for _, t := range ts {
-		f32s = append(f32s, t...)
-	}
-
-	return f32s, nil
 }
