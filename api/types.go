@@ -189,11 +189,12 @@ func (t *ToolFunction) String() string {
 // ChatResponse is the response returned by [Client.Chat]. Its fields are
 // similar to [GenerateResponse].
 type ChatResponse struct {
-	Model      string    `json:"model"`
-	CreatedAt  time.Time `json:"created_at"`
-	Message    Message   `json:"message"`
-	DoneReason string    `json:"done_reason,omitempty"`
-	Logits     []float32 `json:"logits"`
+	Model       string         `json:"model"`
+	CreatedAt   time.Time      `json:"created_at"`
+	Message     Message        `json:"message"`
+	DoneReason  string         `json:"done_reason,omitempty"`
+	Logits      []float32      `json:"logits"`
+	TopLogprobs []TokenLogprob `json:"top_logprobs"`
 
 	Done bool `json:"done"`
 
@@ -210,12 +211,8 @@ type Metrics struct {
 }
 
 type TokenLogprob struct {
-	Token   string  `json:"token"`
+	Text    string  `json:"text"`
 	Logprob float32 `json:"logprob"`
-}
-
-type LogProbs struct {
-	TopLogprobs []TokenLogprob `json:"top_logprobs"`
 }
 
 // Options specified in [GenerateRequest].  If you add a new option here, also

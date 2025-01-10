@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -503,9 +502,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		if seq.returnLogits { // New flag we need to add to Sequence struct
 			logits := s.lc.GetLogits()
 			seq.logits = make([]float32, len(logits))
-			slog.Info("copying logits")
 			copy(seq.logits, logits)
-			slog.Info("copying logits success")
 		}
 
 		// Then sample token
@@ -608,7 +605,7 @@ type CompletionRequest struct {
 	Images       []ImageData `json:"image_data"`
 	Grammar      string      `json:"grammar"`
 	CachePrompt  bool        `json:"cache_prompt"`
-	ReturnLogits bool        `json:"return_logits"`
+	ReturnLogits bool        `json:"return_logits,omitempty"` // defaults to false
 
 	Options
 }
@@ -729,7 +726,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 			return
 		case content, ok := <-seq.responses:
 			if ok {
-				slog.Info("content", "content", content.Content)
+				// slog.Info("content", "content", content.Content)
 				if err := json.NewEncoder(w).Encode(&content); err != nil {
 					http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 					close(seq.quit)
@@ -1040,50 +1037,50 @@ func Execute(args []string) error {
 	return nil
 }
 
-// Helper function to get top K logits and convert to log probabilities
-func getTopLogits(logits []float32, k int, model *llama.Model) []api.LogProbs {
-	if k <= 0 {
-		return nil
-	}
+// // Helper function to get top K logits and convert to log probabilities
+// func getTopLogits(logits []float32, k int, model *llama.Model) []api.LogProbs {
+// 	if k <= 0 {
+// 		return nil
+// 	}
 
-	// Convert logits to probabilities using softmax
-	probs := softmax(logits)
+// 	// Convert logits to probabilities using softmax
+// 	probs := softmax(logits)
 
-	// Create slice of index/probability pairs
-	pairs := make([]struct {
-		token int
-		prob  float32
-	}, len(probs))
+// 	// Create slice of index/probability pairs
+// 	pairs := make([]struct {
+// 		token int
+// 		prob  float32
+// 	}, len(probs))
 
-	for i, p := range probs {
-		pairs[i] = struct {
-			token int
-			prob  float32
-		}{i, p}
-	}
+// 	for i, p := range probs {
+// 		pairs[i] = struct {
+// 			token int
+// 			prob  float32
+// 		}{i, p}
+// 	}
 
-	// Sort by probability (descending)
-	sort.Slice(pairs, func(i, j int) bool {
-		return pairs[i].prob > pairs[j].prob
-	})
+// 	// Sort by probability (descending)
+// 	sort.Slice(pairs, func(i, j int) bool {
+// 		return pairs[i].prob > pairs[j].prob
+// 	})
 
-	// Take top K
-	k = min(k, len(pairs))
-	result := make([]api.LogProbs, k)
+// 	// Take top K
+// 	k = min(k, len(pairs))
+// 	result := make([]api.LogProbs, k)
 
-	for i := 0; i < k; i++ {
-		result[i] = api.LogProbs{
-			TopLogprobs: []api.TokenLogprob{
-				{
-					Token:   model.TokenToPiece(pairs[i].token),
-					Logprob: float32(math.Log(float64(pairs[i].prob))),
-				},
-			},
-		}
-	}
+// 	for i := 0; i < k; i++ {
+// 		result[i] = api.LogProbs{
+// 			TopLogprobs: []api.TokenLogprob{
+// 				{
+// 					Token:   model.TokenToPiece(pairs[i].token),
+// 					Logprob: float32(math.Log(float64(pairs[i].prob))),
+// 				},
+// 			},
+// 		}
+// 	}
 
-	return result
-}
+// 	return result
+// }
 
 // Helper function to compute softmax
 func softmax(logits []float32) []float32 {
