@@ -39,7 +39,7 @@ func (f Modelfile) String() string {
 var deprecatedParameters = []string{"penalize_newline"}
 
 // CreateRequest creates a new *api.CreateRequest from an existing Modelfile
-func (f Modelfile) CreateRequest() (*api.CreateRequest, error) {
+func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error) {
 	req := &api.CreateRequest{}
 
 	var messages []api.Message
@@ -49,7 +49,7 @@ func (f Modelfile) CreateRequest() (*api.CreateRequest, error) {
 	for _, c := range f.Commands {
 		switch c.Name {
 		case "model":
-			path, err := expandPath(c.Args)
+			path, err := expandPath(c.Args, relativeDir)
 			if err != nil {
 				return nil, err
 			}
@@ -64,7 +64,7 @@ func (f Modelfile) CreateRequest() (*api.CreateRequest, error) {
 
 			req.Files = digestMap
 		case "adapter":
-			path, err := expandPath(c.Args)
+			path, err := expandPath(c.Args, relativeDir)
 			if err != nil {
 				return nil, err
 			}
@@ -563,7 +563,7 @@ func isValidCommand(cmd string) bool {
 	}
 }
 
-func expandPathImpl(path string, currentUserFunc func() (*user.User, error), lookupUserFunc func(string) (*user.User, error)) (string, error) {
+func expandPathImpl(path, relativeDir string, currentUserFunc func() (*user.User, error), lookupUserFunc func(string) (*user.User, error)) (string, error) {
 	if strings.HasPrefix(path, "~") {
 		var homeDir string
 
@@ -591,11 +591,13 @@ func expandPathImpl(path string, currentUserFunc func() (*user.User, error), loo
 		}
 
 		path = filepath.Join(homeDir, path)
+	} else {
+		path = filepath.Join(relativeDir, path)
 	}
 
 	return filepath.Abs(path)
 }
 
-func expandPath(path string) (string, error) {
-	return expandPathImpl(path, user.Current, user.Lookup)
+func expandPath(path, relativeDir string) (string, error) {
+	return expandPathImpl(path, relativeDir, user.Current, user.Lookup)
 }

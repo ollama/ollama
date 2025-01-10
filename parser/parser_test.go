@@ -747,7 +747,7 @@ MESSAGE assistant Hi! How are you?
 			t.Error(err)
 		}
 
-		actual, err := p.CreateRequest()
+		actual, err := p.CreateRequest("")
 		if err != nil {
 			t.Error(err)
 		}
@@ -816,7 +816,7 @@ func TestCreateRequestFiles(t *testing.T) {
 			t.Error(err)
 		}
 
-		actual, err := p.CreateRequest()
+		actual, err := p.CreateRequest("")
 		if err != nil {
 			t.Error(err)
 		}
