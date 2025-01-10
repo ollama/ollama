@@ -85,10 +85,11 @@ status "Downloading Linux ${ARCH} bundle"
 OLLAMA_INSTALL_TGZ="ollama-linux-${ARCH}.tgz${VER_PARAM}"
 curl --fail --show-error --location --progress-bar -C - -o $DOWNLOAD_DIR/$OLLAMA_INSTALL_TGZ \
     "https://ollama.com/download/$OLLAMA_INSTALL_TGZ"
+    
+status "Unpacking $OLLAMA_INSTALL_TGZ"
 $SUDO tar -xzf $DOWNLOAD_DIR/$OLLAMA_INSTALL_TGZ -C "$OLLAMA_INSTALL_DIR"
 rm -rf $DOWNLOAD_DIR
 
-exit
 if [ "$OLLAMA_INSTALL_DIR/bin/ollama" != "$BINDIR/ollama" ] ; then
     status "Making ollama accessible in the PATH in $BINDIR"
     $SUDO ln -sf "$OLLAMA_INSTALL_DIR/ollama" "$BINDIR/ollama"
