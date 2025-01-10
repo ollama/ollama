@@ -23,7 +23,7 @@ import (
 	"github.com/ollama/ollama/ml"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/ollama/ollama/ml/backend/ggml/ggml/src"
+	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 )
 
 type device struct {
@@ -249,8 +249,8 @@ func (c *Context) Compute(t ml.Tensor) ml.Tensor {
 
 	backend := C.ggml_backend_sched_get_tensor_backend(c.sched, t.(*Tensor).t)
 
-	t.(*Tensor).data = make([]byte, C.ggml_nbytes(t.(*Tensor).t))
-	C.ggml_backend_tensor_get_async(backend, t.(*Tensor).t, unsafe.Pointer(&t.(*Tensor).data[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
+	t.(*Tensor).bytes = make([]byte, C.ggml_nbytes(t.(*Tensor).t))
+	C.ggml_backend_tensor_get_async(backend, t.(*Tensor).t, unsafe.Pointer(&t.(*Tensor).bytes[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
 	return t
 }
 
@@ -313,8 +313,8 @@ func (c *Context) Close() error {
 }
 
 type Tensor struct {
-	t    *C.struct_ggml_tensor
-	data []byte
+	t     *C.struct_ggml_tensor
+	bytes []byte
 }
 
 func (t *Tensor) LogValue() slog.Value {
@@ -343,17 +343,18 @@ func (t *Tensor) Shape() []int64 {
 }
 
 func (t *Tensor) Bytes() []byte {
-	if bts := C.ggml_get_data(t.t); bts != nil {
-		return C.GoBytes(bts, C.int(C.ggml_nbytes(t.t)))
+	if t.bytes == nil {
+		cbytes := C.ggml_get_data(t.t)
+		t.bytes = C.GoBytes(unsafe.Pointer(cbytes), C.int(C.ggml_nbytes(t.t)))
 	}
 
-	return nil
+	return t.bytes
 }
 
 func (t *Tensor) Floats() (f32s []float32) {
-	if t.data != nil {
+	if t.bytes != nil {
 		f32s = make([]float32, C.ggml_nelements(t.t))
-		_ = binary.Read(bytes.NewReader(t.data), binary.LittleEndian, f32s)
+		_ = binary.Read(bytes.NewReader(t.bytes), binary.LittleEndian, f32s)
 	}
 
 	return
