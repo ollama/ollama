@@ -75,7 +75,7 @@ func generateResultsJSON(t *testing.T, f *os.File, kv llm.KV, tensors *llm.Tenso
 		}
 	}
 
-	for _, tensor := range tensors.Items {
+	for _, tensor := range tensors.Items() {
 		sha256sum := sha256.New()
 		sr := io.NewSectionReader(f, int64(tensors.Offset+tensor.Offset), int64(tensor.Size()))
 		if _, err := io.Copy(sha256sum, sr); err != nil {
