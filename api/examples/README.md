@@ -1,20 +1,17 @@
-# Examples
+# Ollama API Examples
 
-This directory contains different examples of using Ollama.
+Run the examples in this directory with:
 
-## Python examples
-Ollama Python examples at [ollama-python/examples](https://github.com/ollama/ollama-python/tree/main/examples)
+```
+go run example_name/main.go
+```
+## Chat - Chat with a model
+- [chat/main.go](chat/main.go)
 
+## Generate - Generate text from a model
+- [generate/main.go](generate/main.go)
+- [generate-streaming/main.go](generate-streaming/main.go)
 
-## JavaScript examples
-Ollama JavaScript examples at [ollama-js/examples](https://github.com/ollama/ollama-js/tree/main/examples)
+## Pull - Pull a model
+- [pull-progress/main.go](pull-progress/main.go)
 
-
-## OpenAI compatibility examples
-Ollama OpenAI compatibility examples at [ollama/examples/openai](../docs/openai.md)
-
-
-## Community examples
-
-- [LangChain Ollama Python](https://python.langchain.com/docs/integrations/chat/ollama/)
-- [LangChain Ollama JS](https://js.langchain.com/docs/integrations/chat/ollama/)
