@@ -20,7 +20,7 @@ curl -L https://ollama.com/download/ollama-linux-amd64.tgz -o ollama-linux-amd64
 sudo tar -C /usr -xzf ollama-linux-amd64.tgz
 ```
 
-Start Ollama:
+Start Ollama （this will start a long-running Ollama server):
 
 ```shell
 ollama serve
