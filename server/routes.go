@@ -1151,6 +1151,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.POST("/api/create", s.CreateHandler)
 	r.POST("/api/push", s.PushHandler)
 	r.POST("/api/copy", s.CopyHandler)
+	r.POST("/api/delete", s.DeleteHandler)
 	r.DELETE("/api/delete", s.DeleteHandler)
 	r.POST("/api/show", s.ShowHandler)
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)

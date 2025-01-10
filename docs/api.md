@@ -103,7 +103,7 @@ The final response in the stream also includes additional data about the generat
 - `context`: an encoding of the conversation used in this response, this can be sent in the next request to keep a conversational memory
 - `response`: empty if the response was streamed, if not streamed, this will contain the full response
 
-To calculate how fast the response is generated in tokens per second (token/s), divide `eval_count` / `eval_duration` * `10^9`.
+To calculate how fast the response is generated in tokens per second (token/s), divide `eval_count` / `eval_duration` \* `10^9`.
 
 ```json
 {
@@ -506,7 +506,7 @@ The `message` object has the following fields:
 
 Advanced parameters (optional):
 
-- `format`: the format to return a response in. Format can be `json` or a JSON schema. 
+- `format`: the format to return a response in. Format can be `json` or a JSON schema.
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
@@ -878,10 +878,11 @@ curl http://localhost:11434/api/chat -d '{
 ```
 
 ##### Response
+
 ```json
 {
   "model": "llama3.2",
-  "created_at":"2024-09-12T21:17:29.110811Z",
+  "created_at": "2024-09-12T21:17:29.110811Z",
   "message": {
     "role": "assistant",
     "content": ""
@@ -912,7 +913,7 @@ A single JSON object is returned:
 ```json
 {
   "model": "llama3.2",
-  "created_at":"2024-09-12T21:33:17.547535Z",
+  "created_at": "2024-09-12T21:33:17.547535Z",
   "message": {
     "role": "assistant",
     "content": ""
@@ -940,22 +941,22 @@ Create a model from a [`Modelfile`](./modelfile.md). It is recommended to set `m
 
 #### Quantization types
 
-| Type | Recommended |
-| --- | :-: |
-| q2_K | |
-| q3_K_L | |
-| q3_K_M | |
-| q3_K_S | |
-| q4_0 | |
-| q4_1 | |
-| q4_K_M | * |
-| q4_K_S | |
-| q5_0 | |
-| q5_1 | |
-| q5_K_M | |
-| q5_K_S | |
-| q6_K | |
-| q8_0 | * |
+| Type   | Recommended |
+| ------ | :---------: |
+| q2_K   |             |
+| q3_K_L |             |
+| q3_K_M |             |
+| q3_K_S |             |
+| q4_0   |             |
+| q4_1   |             |
+| q4_K_M |     \*      |
+| q4_K_S |             |
+| q5_0   |             |
+| q5_1   |             |
+| q5_K_M |             |
+| q5_K_S |             |
+| q6_K   |             |
+| q8_0   |     \*      |
 
 ### Examples
 
@@ -1018,7 +1019,6 @@ A stream of JSON objects is returned:
 {"status":"writing manifest"}
 {"status":"success"}
 ```
-
 
 ### Check if a Blob Exists
 
@@ -1178,11 +1178,11 @@ curl http://localhost:11434/api/show -d '{
     "llama.vocab_size": 128256,
     "tokenizer.ggml.bos_token_id": 128000,
     "tokenizer.ggml.eos_token_id": 128009,
-    "tokenizer.ggml.merges": [],            // populates if `verbose=true`
+    "tokenizer.ggml.merges": [], // populates if `verbose=true`
     "tokenizer.ggml.model": "gpt2",
     "tokenizer.ggml.pre": "llama-bpe",
-    "tokenizer.ggml.token_type": [],        // populates if `verbose=true`
-    "tokenizer.ggml.tokens": []             // populates if `verbose=true`
+    "tokenizer.ggml.token_type": [], // populates if `verbose=true`
+    "tokenizer.ggml.tokens": [] // populates if `verbose=true`
   }
 }
 ```
@@ -1213,7 +1213,7 @@ Returns a 200 OK if successful, or a 404 Not Found if the source model doesn't e
 ## Delete a Model
 
 ```shell
-DELETE /api/delete
+POST /api/delete
 ```
 
 Delete a model and its data.
@@ -1227,7 +1227,7 @@ Delete a model and its data.
 #### Request
 
 ```shell
-curl -X DELETE http://localhost:11434/api/delete -d '{
+curl -X POST http://localhost:11434/api/delete -d '{
   "model": "llama3:13b"
 }'
 ```
@@ -1443,6 +1443,7 @@ curl http://localhost:11434/api/embed -d '{
 ```
 
 ## List Running Models
+
 ```shell
 GET /api/ps
 ```

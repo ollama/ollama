@@ -238,6 +238,35 @@ func Test_Routes(t *testing.T) {
 		},
 		{
 			Name:   "Delete Model Handler",
+			Method: http.MethodPost,
+			Path:   "/api/delete",
+			Setup: func(t *testing.T, req *http.Request) {
+				createTestModel(t, "model-to-delete")
+
+				deleteReq := api.DeleteRequest{
+					Name: "model-to-delete",
+				}
+				jsonData, err := json.Marshal(deleteReq)
+				if err != nil {
+					t.Fatalf("failed to marshal delete request: %v", err)
+				}
+
+				req.Body = io.NopCloser(bytes.NewReader(jsonData))
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				if resp.StatusCode != http.StatusOK {
+					t.Errorf("expected status code 200, got %d", resp.StatusCode)
+				}
+
+				// Verify the model was deleted
+				_, err := GetModel("model-to-delete")
+				if err == nil || !os.IsNotExist(err) {
+					t.Errorf("expected model to be deleted, got error %v", err)
+				}
+			},
+		},
+		{
+			Name:   "Delete Model Handler",
 			Method: http.MethodDelete,
 			Path:   "/api/delete",
 			Setup: func(t *testing.T, req *http.Request) {
@@ -267,7 +296,7 @@ func Test_Routes(t *testing.T) {
 		},
 		{
 			Name:   "Delete Non-existent Model",
-			Method: http.MethodDelete,
+			Method: http.MethodPost,
 			Path:   "/api/delete",
 			Setup: func(t *testing.T, req *http.Request) {
 				deleteReq := api.DeleteRequest{
