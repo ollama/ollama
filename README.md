@@ -6,7 +6,7 @@
 
 # Ollama
 
-[![Discord](https://dcbadge.vercel.app/api/server/ollama?style=flat&compact=true)](https://discord.gg/ollama)
+[Discord](https://discord.gg/ollama)
 
 Get up and running with large language models.
 
