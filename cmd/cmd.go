@@ -99,9 +99,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
 
-	modelfileDir := filepath.Dir(filename)
-
-	req, err := modelfile.CreateRequest(modelfileDir)
+	req, err := modelfile.CreateRequest(filepath.Dir(filename))
 	if err != nil {
 		return err
 	}
