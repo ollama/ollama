@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"path/filepath"
 	"testing"
@@ -22,9 +21,10 @@ func TestDelete(t *testing.T) {
 
 	var s Server
 
+	_, digest := createBinFile(t, nil, nil)
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test",
-		Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
+		Name:  "test",
+		Files: map[string]string{"test.gguf": digest},
 	})
 
 	if w.Code != http.StatusOK {
@@ -32,8 +32,9 @@ func TestDelete(t *testing.T) {
 	}
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      "test2",
-		Modelfile: fmt.Sprintf("FROM %s\nTEMPLATE {{ .System }} {{ .Prompt }}", createBinFile(t, nil, nil)),
+		Name:     "test2",
+		Files:    map[string]string{"test.gguf": digest},
+		Template: "{{ .System }} {{ .Prompt }}",
 	})
 
 	if w.Code != http.StatusOK {

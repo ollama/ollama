@@ -110,8 +110,8 @@ func (llm *gguf) KV() KV {
 	return llm.kv
 }
 
-func (llm *gguf) Tensors() Tensors {
-	return Tensors{
+func (llm *gguf) Tensors() *Tensors {
+	return &Tensors{
 		Items:  llm.tensors,
 		Offset: llm.tensorOffset,
 	}

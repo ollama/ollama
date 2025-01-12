@@ -75,67 +75,21 @@ function checkEnv() {
     } else {
         write-host "Code signing disabled - please set KEY_CONTAINERS to sign and copy ollama_inc.crt to the top of the source tree"
     }
-
 }
 
 
 function buildOllama() {
     if ($null -eq ${env:OLLAMA_SKIP_GENERATE}) {
-        Remove-Item -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}"
-
-        # TODO - consider trying to parallelize this with Start-ThreadJob, but env vars can't be used to toggle
-        #        which targets to build
-
-        # Start by skipping CUDA to build everything else
         write-host "Building ollama runners"
-        powershell -Command { $env:OLLAMA_SKIP_CUDA_GENERATE="1"; & go generate ./... }
-        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}    
-
-        # Then skip everyhting else and build all the CUDA variants
-        foreach ($env:CUDA_LIB_DIR in $script:CUDA_DIRS) {
-            write-host "Building CUDA ${env:CUDA_LIB_DIR} runner"
-
-            if ($env:CUDA_LIB_DIR.Contains("v12")) {
-                powershell -Command {
-                    $env:OLLAMA_SKIP_CUDA_GENERATE=""
-                    $env:OLLAMA_SKIP_STATIC_GENERATE="1"
-                    $env:OLLAMA_SKIP_CPU_GENERATE="1"
-                    $env:OLLAMA_SKIP_ONEAPI_GENERATE="1"
-                    $env:OLLAMA_SKIP_ROCM_GENERATE="1"
-                    $env:CMAKE_CUDA_ARCHITECTURES="60;61;62;70;72;75;80;86;87;89;90;90a"
-                    $env:OLLAMA_CUSTOM_CUDA_DEFS="-DGGML_CUDA_USE_GRAPHS=on"
-                    $env:CUDA_PATH=split-path -path $env:CUDA_LIB_DIR -parent
-                    $env:PATH="$envs:CUDA_LIB_DIR;$env:PATH"
-                    & go generate ./...
-                }
-            } else {
-                powershell -Command {
-                    $env:OLLAMA_SKIP_CUDA_GENERATE=""
-                    $env:OLLAMA_SKIP_STATIC_GENERATE="1"
-                    $env:OLLAMA_SKIP_CPU_GENERATE="1"
-                    $env:OLLAMA_SKIP_ONEAPI_GENERATE="1"
-                    $env:OLLAMA_SKIP_ROCM_GENERATE="1"
-                    $env:CMAKE_CUDA_ARCHITECTURES="50;52;53;60;61;62;70;72;75;80;86"
-                    $env:OLLAMA_CUSTOM_CUDA_DEFS=""
-                    $env:CUDA_PATH=split-path -path $env:CUDA_LIB_DIR -parent
-                    $env:PATH="$envs:CUDA_LIB_DIR;$env:PATH"
-                    & go generate ./...
-                }
-            }
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        }
-        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}    
+        Remove-Item -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}"
+        & make -j 12 dist
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
     } else {
         write-host "Skipping generate step with OLLAMA_SKIP_GENERATE set"
     }
     write-host "Building ollama CLI"
     & go build -trimpath -ldflags "-s -w -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    if ("${env:KEY_CONTAINER}") {
-        & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
-            /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} ollama.exe
-        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    }
     New-Item -ItemType Directory -Path .\dist\windows-${script:TARGET_ARCH}\ -Force
     cp .\ollama.exe .\dist\windows-${script:TARGET_ARCH}\
 }
@@ -146,11 +100,6 @@ function buildApp() {
     & windres -l 0 -o ollama.syso ollama.rc
     & go build -trimpath -ldflags "-s -w -H windowsgui -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" -o "${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}-app.exe" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    if ("${env:KEY_CONTAINER}") {
-        & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
-            /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} "${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}-app.exe"
-        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    }
 }
 
 function gatherDependencies() {
@@ -169,7 +118,7 @@ function gatherDependencies() {
     } else {
         $depArch=$script:TARGET_ARCH
     }
-    if ($depArch -eq "amd64") {
+    if ($depArch -eq "x64") {
         cp "${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\msvcp140*.dll" "${script:DIST_DIR}\lib\ollama\"
         cp "${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\vcruntime140.dll" "${script:DIST_DIR}\lib\ollama\"
         cp "${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\vcruntime140_1.dll" "${script:DIST_DIR}\lib\ollama\"
@@ -183,16 +132,19 @@ function gatherDependencies() {
         copy-item -path "${env:VCToolsRedistDir}\vc_redist.arm64.exe" -destination "${script:DIST_DIR}" -verbose
     }
 
-
     cp "${script:SRC_DIR}\app\ollama_welcome.ps1" "${script:SRC_DIR}\dist\"
+}
+
+function sign() {
     if ("${env:KEY_CONTAINER}") {
-        write-host "about to sign"
-        foreach ($file in (get-childitem "${script:DIST_DIR}\lib\ollama\cu*.dll") + @("${script:SRC_DIR}\dist\ollama_welcome.ps1")){
-            write-host "signing $file"
-            & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
-                /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} $file
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        }
+        write-host "Signing Ollama executables, scripts and libraries"
+        & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
+            /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} `
+            $(get-childitem -path "${script:SRC_DIR}\dist" -r -include @('ollama_welcome.ps1')) `
+            $(get-childitem -path "${script:SRC_DIR}\dist\windows-*" -r -include @('*.exe', '*.dll'))
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    } else {
+        write-host "Signing not enabled"
     }
 }
 
@@ -223,6 +175,7 @@ try {
         buildOllama
         buildApp
         gatherDependencies
+        sign
         buildInstaller
         distZip
     } else {
