@@ -13,3 +13,4 @@ test_data
 llama/build
 __debug_bin*
 llama/vendor
+cmd/convert/out
