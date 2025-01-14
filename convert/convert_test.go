@@ -108,6 +108,7 @@ func TestConvertModel(t *testing.T) {
 		"Phi-3-mini-128k-instruct",
 		"all-MiniLM-L6-v2",
 		"gemma-2-9b-it",
+		"granite-3.0-2b-base",
 	}
 
 	for i := range cases {

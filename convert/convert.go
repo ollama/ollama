@@ -177,6 +177,8 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 
 	var conv ModelConverter
 	switch p.Architectures[0] {
+	case "GraniteForCausalLM":
+		conv = &graniteModel{}
 	case "LlamaForCausalLM", "MistralForCausalLM":
 		conv = &llamaModel{}
 	case "MixtralForCausalLM":
