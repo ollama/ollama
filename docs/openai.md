@@ -59,6 +59,40 @@ embeddings = client.embeddings.create(
     input=["why is the sky blue?", "why is the grass green?"],
 )
 ```
+#### Structured outputs
+```py
+from pydantic import BaseModel
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+
+# Define the schema for the response
+class FriendInfo(BaseModel):
+    name: str
+    age: int 
+    is_available: bool
+
+class FriendList(BaseModel):
+    friends: list[FriendInfo]
+
+try:
+    completion = client.beta.chat.completions.parse(
+        temperature=0,
+        model="llama3.1:8b",
+        messages=[
+            {"role": "user", "content": "I have two friends. The first is Ollama 22 years old busy saving the world, and the second is Alonso 23 years old and wants to hang out. Return a list of friends in JSON format"}
+        ],
+        response_format=FriendList,
+    )
+
+    friends_response = completion.choices[0].message
+    if friends_response.parsed:
+        print(friends_response.parsed)
+    elif friends_response.refusal:
+        print(friends_response.refusal)
+except Exception as e:
+    print(f"Error: {e}")
+```
 
 ### OpenAI JavaScript library
 
@@ -181,7 +215,7 @@ curl http://localhost:11434/v1/embeddings \
 - [x] JSON mode
 - [x] Reproducible outputs
 - [x] Vision
-- [x] Tools (streaming support coming soon)
+- [x] Tools
 - [ ] Logprobs
 
 #### Supported request fields
@@ -199,6 +233,8 @@ curl http://localhost:11434/v1/embeddings \
 - [x] `seed`
 - [x] `stop`
 - [x] `stream`
+- [x] `stream_options`
+  - [x] `include_usage`
 - [x] `temperature`
 - [x] `top_p`
 - [x] `max_tokens`
@@ -227,6 +263,8 @@ curl http://localhost:11434/v1/embeddings \
 - [x] `seed`
 - [x] `stop`
 - [x] `stream`
+- [x] `stream_options`
+  - [x] `include_usage`
 - [x] `temperature`
 - [x] `top_p`
 - [x] `max_tokens`

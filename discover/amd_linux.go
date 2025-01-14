@@ -151,6 +151,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 
 	gfxOverride := envconfig.HsaOverrideGfxVersion()
 	var supported []string
+	depPaths := LibraryDirs()
 	libDir := ""
 
 	// The amdgpu driver always exposes the host CPU(s) first, but we have to skip them and subtract
@@ -389,8 +390,11 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 			})
 			continue
 		}
-
-		if int(major) < RocmComputeMin {
+		minVer, err := strconv.Atoi(RocmComputeMajorMin)
+		if err != nil {
+			slog.Error("invalid RocmComputeMajorMin setting", "value", RocmComputeMajorMin, "error", err)
+		}
+		if int(major) < minVer {
 			reason := fmt.Sprintf("amdgpu too old gfx%d%x%x", major, minor, patch)
 			slog.Warn(reason, "gpu", gpuID)
 			unsupportedGPUs = append(unsupportedGPUs, UnsupportedGPUInfo{
@@ -438,8 +442,9 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 				})
 				return nil, err
 			}
+			depPaths = append(depPaths, libDir)
 		}
-		gpuInfo.DependencyPath = []string{libDir}
+		gpuInfo.DependencyPath = depPaths
 
 		if gfxOverride == "" {
 			// Only load supported list once

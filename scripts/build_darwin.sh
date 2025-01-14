@@ -14,22 +14,36 @@ export CGO_CFLAGS=-mmacosx-version-min=11.3
 export CGO_CXXFLAGS=-mmacosx-version-min=11.3
 export CGO_LDFLAGS=-mmacosx-version-min=11.3
 
-for TARGETARCH in arm64 amd64; do
-    echo "Building Go runner darwin $TARGETARCH"
-    rm -rf llama/build
-    GOOS=darwin ARCH=$TARGETARCH GOARCH=$TARGETARCH make -C llama -j 8
-    CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -trimpath -o dist/ollama-darwin-$TARGETARCH
-    CGO_ENABLED=1 GOOS=darwin GOARCH=$TARGETARCH go build -trimpath -cover -o dist/ollama-darwin-$TARGETARCH-cov
-done
+rm -rf llama/build dist/darwin-*
 
-lipo -create -output dist/ollama dist/ollama-darwin-arm64 dist/ollama-darwin-amd64
-rm -f dist/ollama-darwin-arm64 dist/ollama-darwin-amd64
+# Generate the universal ollama binary for stand-alone usage: metal + avx
+echo "Building binary"
+echo "Building darwin arm64"
+GOOS=darwin ARCH=arm64 GOARCH=arm64 make -j 8 dist
+echo "Building darwin amd64 with AVX enabled"
+GOOS=darwin ARCH=amd64 GOARCH=amd64 CUSTOM_CPU_FLAGS="avx" make -j 8 dist_exe
+lipo -create -output dist/ollama-darwin dist/darwin-arm64/bin/ollama dist/darwin-amd64/bin/ollama
+
+# sign the binary and rename it
 if [ -n "$APPLE_IDENTITY" ]; then
-    codesign --deep --force --options=runtime --sign "$APPLE_IDENTITY" --timestamp dist/ollama
+    codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/ollama-darwin
 else
-    echo "Skipping code signing - set APPLE_IDENTITY"
+    echo "WARNING: Skipping code signing - set APPLE_IDENTITY"
 fi
-chmod +x dist/ollama
+ditto -c -k --keepParent dist/ollama-darwin dist/temp.zip
+if [ -n "$APPLE_IDENTITY" ]; then
+    xcrun notarytool submit dist/temp.zip --wait --timeout 10m --apple-id $APPLE_ID --password $APPLE_PASSWORD --team-id $APPLE_TEAM_ID
+fi
+rm -f dist/temp.zip
+
+# Build the app bundle
+echo "Building app"
+echo "Building darwin amd64 with runners"
+rm dist/darwin-amd64/bin/ollama
+GOOS=darwin ARCH=amd64 GOARCH=amd64 make -j 8 dist
+
+# Generate the universal ollama binary for the app bundle: metal + no-avx
+lipo -create -output dist/ollama dist/darwin-arm64/bin/ollama dist/darwin-amd64/bin/ollama
 
 # build and optionally sign the mac app
 npm install --prefix macapp
@@ -40,15 +54,3 @@ else
 fi
 cp macapp/out/make/zip/darwin/universal/Ollama-darwin-universal-$VERSION.zip dist/Ollama-darwin.zip
 
-# sign the binary and rename it
-if [ -n "$APPLE_IDENTITY" ]; then
-    codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/ollama
-else
-    echo "WARNING: Skipping code signing - set APPLE_IDENTITY"
-fi
-ditto -c -k --keepParent dist/ollama dist/temp.zip
-if [ -n "$APPLE_IDENTITY" ]; then
-    xcrun notarytool submit dist/temp.zip --wait --timeout 10m --apple-id $APPLE_ID --password $APPLE_PASSWORD --team-id $APPLE_TEAM_ID
-fi
-mv dist/ollama dist/ollama-darwin
-rm -f dist/temp.zip

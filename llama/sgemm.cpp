@@ -53,6 +53,8 @@
 #include "ggml-cpu-impl.h"
 #include "ggml-quants.h"
 
+#include <atomic>
+
 #ifdef _MSC_VER
 #define NOINLINE __declspec(noinline)
 #else
@@ -106,6 +108,10 @@ inline float16x8_t sub(float16x8_t x, float16x8_t y) { return vsubq_f16(x, y); }
 inline float16x8_t mul(float16x8_t x, float16x8_t y) { return vmulq_f16(x, y); }
 #endif // __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
 
+#if defined(__MMA__)
+typedef vector unsigned char vec_t;
+typedef __vector_quad acc_t;
+#endif
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // VECTORIZED FUSED MULTIPLY ADD
 
@@ -128,6 +134,16 @@ inline __m256 madd(__m256 a, __m256 b, __m256 c) {
 template <>
 inline __m512 madd(__m512 a, __m512 b, __m512 c) {
     return _mm512_fmadd_ps(a, b, c);
+}
+#endif
+#if defined(__AVX512BF16__)
+template <>
+inline __m512 madd(__m512bh a, __m512bh b, __m512 c) {
+    return _mm512_dpbf16_ps(c, a, b);
+}
+template <>
+inline __m256 madd(__m256bh a, __m256bh b, __m256 c) {
+    return _mm256_dpbf16_ps(c, a, b);
 }
 #endif
 #endif
@@ -200,6 +216,7 @@ template <> inline float32x4_t load(const float *p) {
     return vld1q_f32(p);
 }
 #if !defined(_MSC_VER)
+// FIXME: this should check for __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
 template <> inline float16x8_t load(const ggml_fp16_t *p) {
     return vld1q_f16((const float16_t *)p);
 }
@@ -221,6 +238,13 @@ template <> inline __m256 load(const float *p) {
 }
 #endif // __AVX__
 
+#if defined(__AVX2__) || defined(__AVX512F__)
+template <> inline __m256 load(const ggml_bf16_t *p) {
+    return _mm256_castsi256_ps(
+        _mm256_slli_epi32(_mm256_cvtepu16_epi32(_mm_loadu_si128((const __m128i *)p)), 16));
+}
+#endif // __AVX2__
+
 #if defined(__F16C__)
 template <> inline __m256 load(const ggml_fp16_t *p) {
     return _mm256_cvtph_ps(_mm_loadu_si128((const __m128i *)p));
@@ -234,7 +258,26 @@ template <> inline __m512 load(const float *p) {
 template <> inline __m512 load(const ggml_fp16_t *p) {
     return _mm512_cvtph_ps(_mm256_loadu_si256((const __m256i *)p));
 }
+template <> inline __m512 load(const ggml_bf16_t *p) {
+    return _mm512_castsi512_ps(
+        _mm512_slli_epi32(_mm512_cvtepu16_epi32(_mm256_loadu_si256((const __m256i *)p)), 16));
+}
 #endif // __AVX512F__
+
+#if defined(__AVX512BF16__)
+template <> inline __m512bh load(const ggml_bf16_t *p) {
+    return (__m512bh)_mm512_loadu_ps((const float *)p);
+}
+template <> inline __m256bh load(const ggml_bf16_t *p) {
+    return (__m256bh)_mm256_loadu_ps((const float *)p);
+}
+template <> inline __m512bh load(const float *p) {
+    return _mm512_cvtne2ps_pbh(_mm512_loadu_ps(p + 16), _mm512_loadu_ps(p));
+}
+template <> inline __m256bh load(const float *p) {
+    return _mm512_cvtneps_pbh(_mm512_loadu_ps(p));
+}
+#endif
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // CONSTANTS
@@ -247,199 +290,170 @@ static const __m128i iq4nlt = _mm_loadu_si128((const __m128i *) kvalues_iq4nl);
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // FLOATING POINT MATRIX MULTIPLICATION
 
+template <int M>
+static inline int64_t BLOCK_SIZE(size_t m) {
+    const int64_t NB_BLOC_M = (m + M - 1) / M;
+    return (m % NB_BLOC_M == 0) ? m / NB_BLOC_M : (m / NB_BLOC_M) + 1;
+}
+
+static constexpr inline int64_t BLOC_POS(int64_t ib, int64_t ibN, int64_t bloc_size) {
+    return ib < ibN ? ib * bloc_size : ibN * bloc_size + (ib - ibN) * (bloc_size - 1);
+}
+
 template <int KN, typename D, typename V, typename TA, typename TB, typename TC>
 class tinyBLAS {
   public:
-    tinyBLAS(int64_t k,
+    tinyBLAS(const ggml_compute_params * params, int64_t k,
              const TA *A, int64_t lda,
              const TB *B, int64_t ldb,
-             TC *C, int64_t ldc,
-             int ith, int nth)
-        : A(A), B(B), C(C), k(k), lda(lda), ldb(ldb), ldc(ldc), ith(ith), nth(nth) {
+             TC *C, int64_t ldc)
+        : params(params), A(A), B(B), C(C), k(k), lda(lda), ldb(ldb), ldc(ldc) {
     }
 
-    void matmul(int64_t m, int64_t n) {
-        mnpack(0, m, 0, n);
+    bool matmul(int64_t m, int64_t n) {
+        if (k % KN != 0)
+            return false;
+        // compute RM for only need tile with size RM&RM-1
+#if VECTOR_REGISTERS == 32
+        if (m % 16 == 0 && (m/16 >= params->nth)) {
+            const int64_t SIZE_N = BLOCK_SIZE<6>(n);
+            mnpack<4, 6, 4>(m, n, SIZE_N, 12);
+            return true;
+        }
+        if (m % 8 == 0 ) {
+            const int64_t SIZE_N = BLOCK_SIZE<6>(n);
+            mnpack<4, 6, 2>(m, n, SIZE_N, 12);
+            return true;
+        }
+        if (m % 4 == 0) {
+            const int64_t SIZE_N = BLOCK_SIZE<6>(n);
+            mnpack<4, 6, 1>(m, n, SIZE_N, 12);
+            return true;
+        }
+#else  // VECTOR_REGISTERS == 16
+        if (m % 16 == 0 && (m/16 >= params->nth)) {
+            const int64_t SIZE_N = BLOCK_SIZE<3>(n);
+            mnpack<4, 3, 4>(m, n, SIZE_N, 24);
+            return true;
+        }
+        if (m % 8 == 0 ) {
+            const int64_t SIZE_N = BLOCK_SIZE<3>(n);
+            mnpack<4, 3, 2>(m, n, SIZE_N, 24);
+            return true;
+        }
+        if (m % 4 == 0) {
+            const int64_t SIZE_N = BLOCK_SIZE<3>(n);
+            mnpack<4, 3, 1>(m, n, SIZE_N, 24);
+            return true;
+        }
+#endif
+        return false;
     }
 
   private:
-    NOINLINE void mnpack(int64_t m0, int64_t m, int64_t n0, int64_t n) {
-        int64_t mc, nc, mp, np;
-        switch ((MIN(m - m0, 5) << 4) | MIN(n - n0, 5)) {
-#if VECTOR_REGISTERS == 32
-        case 0x55:
-            mc = 5;
-            nc = 5;
-            gemm<5, 5>(m0, m, n0, n);
-            break;
-        case 0x45:
-            mc = 4;
-            nc = 5;
-            gemm<4, 5>(m0, m, n0, n);
-            break;
-        case 0x54:
-            mc = 5;
-            nc = 4;
-            gemm<5, 4>(m0, m, n0, n);
-            break;
-        case 0x44:
-            mc = 4;
-            nc = 4;
-            gemm<4, 4>(m0, m, n0, n);
-            break;
-        case 0x53:
-            mc = 5;
-            nc = 3;
-            gemm<5, 3>(m0, m, n0, n);
-            break;
-        case 0x35:
-            mc = 3;
-            nc = 5;
-            gemm<3, 5>(m0, m, n0, n);
-            break;
-        case 0x43:
-            mc = 4;
-            nc = 3;
-            gemm<4, 3>(m0, m, n0, n);
-            break;
-#else
-        case 0x55:
-        case 0x54:
-        case 0x53:
-        case 0x45:
-        case 0x44:
-        case 0x43:
-            mc = 4;
-            nc = 3;
-            gemm<4, 3>(m0, m, n0, n);
-            break;
-        case 0x35:
-#endif
-        case 0x34:
-            mc = 3;
-            nc = 4;
-            gemm<3, 4>(m0, m, n0, n);
-            break;
-        case 0x52:
-            mc = 5;
-            nc = 2;
-            gemm<5, 2>(m0, m, n0, n);
-            break;
-        case 0x33:
-            mc = 3;
-            nc = 3;
-            gemm<3, 3>(m0, m, n0, n);
-            break;
-        case 0x25:
-            mc = 2;
-            nc = 5;
-            gemm<2, 5>(m0, m, n0, n);
-            break;
-        case 0x42:
-            mc = 4;
-            nc = 2;
-            gemm<4, 2>(m0, m, n0, n);
-            break;
-        case 0x24:
-            mc = 2;
-            nc = 4;
-            gemm<2, 4>(m0, m, n0, n);
-            break;
-        case 0x32:
-            mc = 3;
-            nc = 2;
-            gemm<3, 2>(m0, m, n0, n);
-            break;
-        case 0x23:
-            mc = 2;
-            nc = 3;
-            gemm<2, 3>(m0, m, n0, n);
-            break;
-        case 0x51:
-            mc = 5;
-            nc = 1;
-            gemm<5, 1>(m0, m, n0, n);
-            break;
-        case 0x41:
-            mc = 4;
-            nc = 1;
-            gemm<4, 1>(m0, m, n0, n);
-            break;
-        case 0x22:
-            mc = 2;
-            nc = 2;
-            gemm<2, 2>(m0, m, n0, n);
-            break;
-        case 0x15:
-            mc = 1;
-            nc = 5;
-            gemm<1, 5>(m0, m, n0, n);
-            break;
-        case 0x14:
-            mc = 1;
-            nc = 4;
-            gemm<1, 4>(m0, m, n0, n);
-            break;
-        case 0x31:
-            mc = 3;
-            nc = 1;
-            gemm<3, 1>(m0, m, n0, n);
-            break;
-        case 0x13:
-            mc = 1;
-            nc = 3;
-            gemm<1, 3>(m0, m, n0, n);
-            break;
-        case 0x21:
-            mc = 2;
-            nc = 1;
-            gemm<2, 1>(m0, m, n0, n);
-            break;
-        case 0x12:
-            mc = 1;
-            nc = 2;
-            gemm<1, 2>(m0, m, n0, n);
-            break;
-        case 0x11:
-            mc = 1;
-            nc = 1;
-            gemm<1, 1>(m0, m, n0, n);
-            break;
-        default:
-            return;
+    template <int RM, int RN, int BM>
+    inline void mnpack(int64_t m, int64_t n, int64_t SIZE_N, int64_t BN) {
+        if (SIZE_N == RN) {
+            return gemm<RM, RN, BM>(m, n, BN);
         }
-        mp = m0 + (m - m0) / mc * mc;
-        np = n0 + (n - n0) / nc * nc;
-        mnpack(mp, m, n0, np);
-        mnpack(m0, m, np, n);
+        if constexpr (RN > 1) {
+            return mnpack<RM, RN-1, BM>(m, n, SIZE_N, BN);
+        } else {
+            GGML_LOG_ERROR("mnpack<%d, %d> bloc size not supported\n", RM, (int)SIZE_N);
+            GGML_ASSERT(false); // we have miss something.
+        }
     }
 
     template <int RM, int RN>
-    NOINLINE void gemm(int64_t m0, int64_t m, int64_t n0, int64_t n) {
-        int64_t ytiles = (m - m0) / RM;
-        int64_t xtiles = (n - n0) / RN;
-        int64_t tiles = xtiles * ytiles;
-        int64_t duty = (tiles + nth - 1) / nth;
-        int64_t start = duty * ith;
-        int64_t end = start + duty;
-        if (end > tiles)
-            end = tiles;
-        for (int64_t job = start; job < end; ++job) {
-            int64_t ii = m0 + job / xtiles * RM;
-            int64_t jj = n0 + job % xtiles * RN;
-            D Cv[RN][RM] = {};
-            for (int64_t l = 0; l < k; l += KN)
-                for (int64_t j = 0; j < RN; ++j)
-                    for (int64_t i = 0; i < RM; ++i)
-                        Cv[j][i] = madd(load<V>(A + lda * (ii + i) + l),
-                                        load<V>(B + ldb * (jj + j) + l),
-                                        Cv[j][i]);
-            for (int64_t j = 0; j < RN; ++j)
-                for (int64_t i = 0; i < RM; ++i)
-                    C[ldc * (jj + j) + (ii + i)] = hsum(Cv[j][i]);
+    inline void gemm_bloc(int64_t ii, int64_t jj) {
+        D Cv[RN][RM] = {};
+        for (int64_t l = 0; l < k; l += KN) {
+            // help compiler for op order.
+            if constexpr (RM <= RN) {
+                V Av[RM];
+                for (int64_t i = 0; i < RM; ++i) {
+                    Av[i] = load<V>(A + lda * (ii + i) + l);
+                }
+                for (int64_t j = 0; j < RN; ++j) {
+                    V Bv = load<V>(B + ldb * (jj + j) + l);
+                    for (int64_t i = 0; i < RM; ++i) {
+                        Cv[j][i] = madd(Av[i], Bv, Cv[j][i]);
+                    }
+                }
+            } else {
+                V Bv[RN];
+                for (int64_t j = 0; j < RN; ++j) {
+                    Bv[j] = load<V>(B + ldb * (jj + j) + l);
+                }
+                for (int64_t i = 0; i < RM; ++i) {
+                    V Av = load<V>(A + lda * (ii + i) + l);
+                    for (int64_t j = 0; j < RN; ++j) {
+                        Cv[j][i] = madd(Av, Bv[j], Cv[j][i]);
+                    }
+                }
+            }
         }
+        for (int64_t j = 0; j < RN; ++j)
+            for (int64_t i = 0; i < RM; ++i)
+                C[ldc * (jj + j) + (ii + i)] = hsum(Cv[j][i]);
     }
 
+    template <int RM, int RN, int BM>
+    NOINLINE void gemm(int64_t m, int64_t n, int64_t BN) {
+        static std::atomic<int64_t> current_chunk;
+
+        GGML_ASSERT(m % (RM * BM) == 0);
+        const int64_t ytiles = m / (RM * BM);
+        const int64_t xtiles = (n + RN -1) / RN;
+        const int64_t jj_RN = (xtiles - (xtiles * RN - n));
+
+        // "round" bloc_size to "nearest" BN
+        const int64_t NB_BN = xtiles < BN ? 1 : (xtiles + BN / 2) / BN;
+        const int64_t SIZE_BN = xtiles % NB_BN == 0 ? xtiles / NB_BN : xtiles / NB_BN + 1;
+        const int64_t jj_BN = (NB_BN - (NB_BN * SIZE_BN - xtiles));
+        const int64_t nb_job = ytiles * NB_BN;
+
+        if (params->ith == 0) {
+            GGML_ASSERT( jj_BN * SIZE_BN + (NB_BN - jj_BN) * (SIZE_BN - 1) == xtiles);
+            // Every thread starts at ith, so the first unprocessed chunk is nth.  This save a bit of coordination right at the start.
+            std::atomic_store_explicit(&current_chunk, (int64_t)params->nth, std::memory_order_relaxed);
+        }
+
+        ggml_barrier(params->threadpool);
+
+        int64_t job = params->ith;
+        while (job < nb_job) {
+            const int64_t ii = (job % ytiles) * RM * BM;
+            const int64_t jb =  job / ytiles;
+            const int64_t jr0 = BLOC_POS(jb  , jj_BN, SIZE_BN);
+            const int64_t jrN = BLOC_POS(jb+1, jj_BN, SIZE_BN);
+
+            const int64_t jj0 = BLOC_POS(jr0, jj_RN, RN);
+            const int64_t jj2 = BLOC_POS(jrN, jj_RN, RN);
+            const int64_t jj1 = jj2 < jj_RN * RN ? jj2 : jj_RN * RN;
+
+            for (int64_t bi = 0; bi < BM * RM; bi += RM) {
+                int64_t jj = jj0;
+                for (; jj < jj1; jj += RN) {
+                    gemm_bloc<RM, RN>(ii + bi, jj);
+                }
+                if constexpr (RN > 1) {
+                    for (; jj < jj2; jj += RN - 1) {
+                        gemm_bloc<RM, RN-1>(ii + bi, jj);
+                    }
+                }
+                GGML_ASSERT(jj == jj2);
+            }
+
+            // next step.
+            job = std::atomic_fetch_add_explicit(&current_chunk, (int64_t)1, std::memory_order_relaxed);
+        }
+
+        ggml_barrier(params->threadpool);
+        return;
+    }
+
+    const ggml_compute_params * params;
     const TA *const A;
     const TB *const B;
     TC *const C;
@@ -447,8 +461,6 @@ class tinyBLAS {
     const int64_t lda;
     const int64_t ldb;
     const int64_t ldc;
-    const int ith;
-    const int nth;
 };
 
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -942,6 +954,36 @@ class tinyBLAS_Q0_AVX {
         return _mm_sub_epi8(_mm_and_si128(_mm_set1_epi8(15), _mm_srli_epi16(x, 4)), _mm_set1_epi8(8));
     }
 
+    inline __m256i load(const block_q5_0 *b) {
+        return _mm256_or_si256(denibble(b->qs), bittobyte(b->qh));
+    }
+
+    inline __m128i load0(const block_q5_0* b) {
+        const __m128i x = _mm_loadu_si128((const __m128i *)(b->qs));
+        uint32_t x32;
+        memcpy(&x32, b->qh, sizeof(uint32_t));
+        __m128i qxl = _mm_and_si128(_mm_set1_epi8(15), x);
+        __m128i bytesl = _mm_cmpeq_epi8(_mm_set1_epi64x(-1),
+                                        _mm_or_si128(_mm_set1_epi64x(0x7fbfdfeff7fbfdfe),
+                                                     _mm_shuffle_epi8(_mm_set1_epi32(x32),
+                                                                      _mm_set_epi64x(0x0101010101010101, 0x0000000000000000))));
+        bytesl = _mm_andnot_si128(bytesl, _mm_set1_epi8((char)0xF0));
+        return _mm_or_si128(qxl, bytesl);
+    }
+
+    inline __m128i load1(const block_q5_0* b) {
+        const __m128i x = _mm_loadu_si128((const __m128i *)(b->qs));
+        uint32_t x32;
+        memcpy(&x32, b->qh, sizeof(uint32_t));
+        __m128i qxh = _mm_and_si128(_mm_set1_epi8(15), _mm_srli_epi16(x, 4));
+        __m128i bytesh = _mm_cmpeq_epi8(_mm_set1_epi64x(-1),
+                                        _mm_or_si128(_mm_set1_epi64x(0x7fbfdfeff7fbfdfe),
+                                                     _mm_shuffle_epi8(_mm_set1_epi32(x32),
+                                                                      _mm_set_epi64x(0x0303030303030303, 0x0202020202020202))));
+        bytesh = _mm_andnot_si128(bytesh, _mm_set1_epi8((char)0xF0));
+        return _mm_or_si128(qxh, bytesh);
+    }
+
     inline __m256i load(const block_iq4_nl *b) {
         return MM256_SET_M128I(load1(b), load0(b));
     }
@@ -958,8 +1000,10 @@ class tinyBLAS_Q0_AVX {
 
     inline __m256 updot(__m256i u, __m256i s) {
         __m256i res;
-#if defined(__AVXVNNI__) || (defined(__AVX512VNNI__) && defined(__AVX512VL__))
+#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
         res = _mm256_dpbusd_epi32(_mm256_setzero_si256(), u, s);
+#elif defined(__AVXVNNI__)
+        res = _mm256_dpbusd_avx_epi32(_mm256_setzero_si256(), u, s);
 #else
         res = _mm256_madd_epi16(_mm256_set1_epi16(1), _mm256_maddubs_epi16(u, s));
 #endif
@@ -971,6 +1015,17 @@ class tinyBLAS_Q0_AVX {
         return _mm256_and_si256(_mm256_set1_epi8(15),
                                 _mm256_insertf128_si256(_mm256_castsi128_si256(x),
                                                         _mm_srli_epi16(x, 4), 1));
+    }
+
+    static inline __m256i bittobyte(const uint8_t *p) {
+        uint32_t x32;
+        memcpy(&x32, p, sizeof(uint32_t));
+        __m256i bytes = _mm256_cmpeq_epi8(_mm256_set1_epi64x(-1),
+                                          _mm256_or_si256(_mm256_set1_epi64x(0x7fbfdfeff7fbfdfe),
+                                                          _mm256_shuffle_epi8(_mm256_set1_epi32(x32),
+                                                                              _mm256_set_epi64x(0x0303030303030303, 0x0202020202020202,
+                                                                                                0x0101010101010101, 0x0000000000000000))));
+        return _mm256_andnot_si256(bytes, _mm256_set1_epi8((char)0xF0));
     }
 
     const TA *const A;
@@ -985,6 +1040,600 @@ class tinyBLAS_Q0_AVX {
 };
 #endif // __AVX__
 
+//PPC Implementation
+#if defined(__MMA__)
+
+#define SAVE_ACC(ACC, ii, jj) \
+   __builtin_mma_disassemble_acc(vec_C, ACC); \
+   for (int I = 0; I < 4; I++) { \
+      for (int J = 0; J < 4; J++) { \
+         *((float*)(C+ii+((jj+J)*ldc)+I)) = *((float*)&vec_C[I]+J); \
+      } \
+   } \
+
+template <typename TA, typename TB, typename TC>
+class tinyBLAS_PPC {
+  public:
+    tinyBLAS_PPC(int64_t k,
+                const TA *A, int64_t lda,
+                const TB *B, int64_t ldb,
+                TC *C, int64_t ldc,
+                int ith, int nth)
+        : A(A), B(B), C(C), k(k), lda(lda), ldb(ldb), ldc(ldc), ith(ith), nth(nth) {
+    }
+
+    void matmul(int64_t m, int64_t n) {
+       mnpack(0, m, 0, n);
+    }
+
+  private:
+
+    void (tinyBLAS_PPC::*kernel)(int64_t, int64_t);
+
+    void READ_BLOCK(const float* a, int64_t lda, int rows, int cols, float* vec) {
+        int64_t i, j;
+        float *aoffset = NULL, *boffset = NULL;
+        float *aoffset1 = NULL, *aoffset2 = NULL, *aoffset3 = NULL, *aoffset4 = NULL;
+        float *aoffset5 = NULL, *aoffset6 = NULL, *aoffset7 = NULL, *aoffset8 = NULL;
+
+        aoffset = const_cast<float*>(a);
+        boffset = vec;
+        j = (rows >> 3);
+        if (j > 0) {
+            do {
+                aoffset1 = aoffset;
+                aoffset2 = aoffset1 + lda;
+                aoffset3 = aoffset2 + lda;
+                aoffset4 = aoffset3 + lda;
+                aoffset5 = aoffset4 + lda;
+                aoffset6 = aoffset5 + lda;
+                aoffset7 = aoffset6 + lda;
+                aoffset8 = aoffset7 + lda;
+                aoffset += 8 * lda;
+                i = (cols >> 3);
+                if (i > 0) {
+                    __vector_pair C1, C2, C3, C4, C5, C6, C7, C8;
+                    vector float c1[2], c2[2], c3[2], c4[2], c5[2], c6[2], c7[2], c8[2];
+                    vector float t1, t2, t3, t4, t5, t6, t7, t8;
+                    do {
+                        C1 = __builtin_vsx_lxvp(0, (__vector_pair*)aoffset1);
+                        C2 = __builtin_vsx_lxvp(0, (__vector_pair*)aoffset2);
+                        C3 = __builtin_vsx_lxvp(0, (__vector_pair*)aoffset3);
+                        C4 = __builtin_vsx_lxvp(0, (__vector_pair*)aoffset4);
+                        C5 = __builtin_vsx_lxvp(0, (__vector_pair*)aoffset5);
+                        C6 = __builtin_vsx_lxvp(0, (__vector_pair*)aoffset6);
+                        C7 = __builtin_vsx_lxvp(0, (__vector_pair*)aoffset7);
+                        C8 = __builtin_vsx_lxvp(0, (__vector_pair*)aoffset8);
+                        __builtin_vsx_disassemble_pair(c1, &C1);
+                        __builtin_vsx_disassemble_pair(c2, &C2);
+                        __builtin_vsx_disassemble_pair(c3, &C3);
+                        __builtin_vsx_disassemble_pair(c4, &C4);
+                        __builtin_vsx_disassemble_pair(c5, &C5);
+                        __builtin_vsx_disassemble_pair(c6, &C6);
+                        __builtin_vsx_disassemble_pair(c7, &C7);
+                        __builtin_vsx_disassemble_pair(c8, &C8);
+
+                        t1 = vec_mergeh(c1[0], c2[0]);
+                        t2 = vec_mergeh(c3[0], c4[0]);
+                        t3 = vec_mergeh(c5[0], c6[0]);
+                        t4 = vec_mergeh(c7[0], c8[0]);
+                        t5 = vec_xxpermdi(t1, t2, 0);
+                        t6 = vec_xxpermdi(t3, t4, 0);
+                        t7 = vec_xxpermdi(t1, t2, 3);
+                        t8 = vec_xxpermdi(t3, t4, 3);
+                        vec_xst(t5, 0, boffset);
+                        vec_xst(t6, 0, boffset+4);
+                        vec_xst(t7, 0, boffset+8);
+                        vec_xst(t8, 0, boffset+12);
+
+                        t1 = vec_mergel(c1[0], c2[0]);
+                        t2 = vec_mergel(c3[0], c4[0]);
+                        t3 = vec_mergel(c5[0], c6[0]);
+                        t4 = vec_mergel(c7[0], c8[0]);
+                        t5 = vec_xxpermdi(t1, t2, 0);
+                        t6 = vec_xxpermdi(t3, t4, 0);
+                        t7 = vec_xxpermdi(t1, t2, 3);
+                        t8 = vec_xxpermdi(t3, t4, 3);
+                        vec_xst(t5, 0, boffset+16);
+                        vec_xst(t6, 0, boffset+20);
+                        vec_xst(t7, 0, boffset+24);
+                        vec_xst(t8, 0, boffset+28);
+
+                        t1 = vec_mergeh(c1[1], c2[1]);
+                        t2 = vec_mergeh(c3[1], c4[1]);
+                        t3 = vec_mergeh(c5[1], c6[1]);
+                        t4 = vec_mergeh(c7[1], c8[1]);
+                        t5 = vec_xxpermdi(t1, t2, 0);
+                        t6 = vec_xxpermdi(t3, t4, 0);
+                        t7 = vec_xxpermdi(t1, t2, 3);
+                        t8 = vec_xxpermdi(t3, t4, 3);
+                        vec_xst(t5, 0, boffset+32);
+                        vec_xst(t6, 0, boffset+36);
+                        vec_xst(t7, 0, boffset+40);
+                        vec_xst(t8, 0, boffset+44);
+
+                        t1 = vec_mergel(c1[1], c2[1]);
+                        t2 = vec_mergel(c3[1], c4[1]);
+                        t3 = vec_mergel(c5[1], c6[1]);
+                        t4 = vec_mergel(c7[1], c8[1]);
+                        t5 = vec_xxpermdi(t1, t2, 0);
+                        t6 = vec_xxpermdi(t3, t4, 0);
+                        t7 = vec_xxpermdi(t1, t2, 3);
+                        t8 = vec_xxpermdi(t3, t4, 3);
+                        vec_xst(t5, 0, boffset+48);
+                        vec_xst(t6, 0, boffset+52);
+                        vec_xst(t7, 0, boffset+56);
+                        vec_xst(t8, 0, boffset+60);
+
+                        aoffset1 += 8*lda;
+                        aoffset2 += 8*lda;
+                        aoffset3 += 8*lda;
+                        aoffset4 += 8*lda;
+                        boffset += 64;
+                        i--;
+                    } while(i > 0);
+                }
+                if (cols & 4) {
+                    vector float c1, c2, c3, c4, c5, c6, c7, c8;
+                    vector float t1, t2, t3, t4, t5, t6, t7, t8;
+                    c1 = vec_xl(0, aoffset1);
+                    c2 = vec_xl(0, aoffset2);
+                    c3 = vec_xl(0, aoffset3);
+                    c4 = vec_xl(0, aoffset4);
+                    c5 = vec_xl(0, aoffset5);
+                    c6 = vec_xl(0, aoffset6);
+                    c7 = vec_xl(0, aoffset7);
+                    c8 = vec_xl(0, aoffset8);
+
+                    t1 = vec_mergeh(c1, c2);
+                    t2 = vec_mergeh(c3, c4);
+                    t3 = vec_mergeh(c5, c6);
+                    t4 = vec_mergeh(c7, c8);
+                    t5 = vec_xxpermdi(t1, t2, 0);
+                    t6 = vec_xxpermdi(t3, t4, 0);
+                    t7 = vec_xxpermdi(t1, t2, 3);
+                    t8 = vec_xxpermdi(t3, t4, 3);
+                    vec_xst(t5, 0, boffset);
+                    vec_xst(t6, 0, boffset+4);
+                    vec_xst(t7, 0, boffset+8);
+                    vec_xst(t8, 0, boffset+12);
+
+                    t1 = vec_mergel(c1, c2);
+                    t2 = vec_mergel(c3, c4);
+                    t3 = vec_mergel(c5, c6);
+                    t4 = vec_mergel(c7, c8);
+                    t5 = vec_xxpermdi(t1, t2, 0);
+                    t6 = vec_xxpermdi(t3, t4, 0);
+                    t7 = vec_xxpermdi(t1, t2, 3);
+                    t8 = vec_xxpermdi(t3, t4, 3);
+                    vec_xst(t5, 0, boffset+16);
+                    vec_xst(t6, 0, boffset+20);
+                    vec_xst(t7, 0, boffset+24);
+                    vec_xst(t8, 0, boffset+28);
+                }
+            j--;
+            } while(j > 0);
+        }
+
+        if (rows & 4) {
+            aoffset1 = aoffset;
+            aoffset2 = aoffset1 + lda;
+            aoffset3 = aoffset2 + lda;
+            aoffset4 = aoffset3 + lda;
+            aoffset += 4 * lda;
+            i = (cols >> 3);
+            if (i > 0) {
+                __vector_pair C1, C2, C3, C4;
+                vector float c1[2], c2[2], c3[2], c4[2];
+                vector float t1, t2, t3, t4, t5, t6, t7, t8;
+                do {
+                    C1 = __builtin_vsx_lxvp(0, (__vector_pair*)aoffset1);
+                    C2 = __builtin_vsx_lxvp(0, (__vector_pair*)aoffset2);
+                    C3 = __builtin_vsx_lxvp(0, (__vector_pair*)aoffset3);
+                    C4 = __builtin_vsx_lxvp(0, (__vector_pair*)aoffset4);
+                    __builtin_vsx_disassemble_pair(c1, &C1);
+                    __builtin_vsx_disassemble_pair(c2, &C2);
+                    __builtin_vsx_disassemble_pair(c3, &C3);
+                    __builtin_vsx_disassemble_pair(c4, &C4);
+
+                    t1 = vec_mergeh(c1[0], c2[0]);
+                    t2 = vec_mergeh(c3[0], c4[0]);
+                    t3 = vec_mergel(c1[0], c2[0]);
+                    t4 = vec_mergel(c3[0], c4[0]);
+                    t5 = vec_xxpermdi(t1, t2, 0);
+                    t6 = vec_xxpermdi(t1, t2, 3);
+                    t7 = vec_xxpermdi(t3, t4, 0);
+                    t8 = vec_xxpermdi(t3, t4, 3);
+                    vec_xst(t5, 0, boffset);
+                    vec_xst(t6, 0, boffset+4);
+                    vec_xst(t7, 0, boffset+8);
+                    vec_xst(t8, 0, boffset+12);
+
+                    t1 = vec_mergeh(c1[1], c2[1]);
+                    t2 = vec_mergeh(c3[1], c4[1]);
+                    t3 = vec_mergel(c1[1], c2[1]);
+                    t4 = vec_mergel(c3[1], c4[1]);
+                    t5 = vec_xxpermdi(t1, t2, 0);
+                    t6 = vec_xxpermdi(t1, t2, 3);
+                    t7 = vec_xxpermdi(t3, t4, 0);
+                    t8 = vec_xxpermdi(t3, t4, 3);
+                    vec_xst(t5, 0, boffset+16);
+                    vec_xst(t6, 0, boffset+20);
+                    vec_xst(t7, 0, boffset+24);
+                    vec_xst(t8, 0, boffset+28);
+
+                    aoffset1 += 8*lda;
+                    aoffset2 += 8*lda;
+                    aoffset3 += 8*lda;
+                    aoffset4 += 8*lda;
+                    boffset += 32;
+                    i--;
+                } while(i > 0);
+            }
+
+            if (cols & 4) {
+                vector float c1, c2, c3, c4;
+                vector float t1, t2, t3, t4;
+                c1 = vec_xl(0, aoffset1);
+                c2 = vec_xl(0, aoffset2);
+                c3 = vec_xl(0, aoffset3);
+                c4 = vec_xl(0, aoffset4);
+
+                t1 = vec_mergeh(c1, c2);
+                t2 = vec_mergeh(c3, c4);
+                t3 = vec_xxpermdi(t1, t2, 0);
+                t4 = vec_xxpermdi(t1, t2, 3);
+                vec_xst(t3, 0, boffset);
+                vec_xst(t4, 0, boffset+4);
+
+                t1 = vec_mergel(c1, c2);
+                t2 = vec_mergel(c3, c4);
+                t3 = vec_xxpermdi(t1, t2, 0);
+                t4 = vec_xxpermdi(t1, t2, 3);
+                vec_xst(t3, 0, boffset+8);
+                vec_xst(t4, 0, boffset+12);
+            }
+        }
+        if (rows & 3) {
+            aoffset1 = aoffset;
+            aoffset2 = aoffset1 + lda;
+            aoffset3 = aoffset2 + lda;
+            if (cols & 4) {
+                vector float c1, c2, c3, c4 = {0};
+                vector float t1, t2, t3, t4;
+                c1 = vec_xl(0, aoffset1);
+                c2 = vec_xl(0, aoffset2);
+                c3 = vec_xl(0, aoffset3);
+
+                t1 = vec_mergeh(c1, c2);
+                t2 = vec_mergeh(c3, c4);
+                t3 = vec_xxpermdi(t1, t2, 0);
+                t4 = vec_xxpermdi(t1, t2, 3);
+                vec_xst(t3, 0, boffset);
+                vec_xst(t4, 0, boffset+4);
+
+                t1 = vec_mergel(c1, c2);
+                t2 = vec_mergel(c3, c4);
+                t3 = vec_xxpermdi(t1, t2, 0);
+                t4 = vec_xxpermdi(t1, t2, 3);
+                vec_xst(t3, 0, boffset+8);
+                vec_xst(t4, 0, boffset+12);
+            }
+        }
+    }
+
+    void KERNEL_4x4(int64_t ii, int64_t jj) {
+        vec_t vec_A[4], vec_B[4], vec_C[4];
+        acc_t acc_0;
+        __builtin_mma_xxsetaccz(&acc_0);
+        for (int l = 0; l < k; l+=4) {
+            READ_BLOCK(A+(ii*lda)+l, lda, 4, 4, (float*)vec_A);
+            READ_BLOCK(B+(jj*ldb)+l, ldb, 4, 4, (float*)vec_B);
+            __builtin_mma_xvf32gerpp(&acc_0, vec_A[0], vec_B[0]);
+            __builtin_mma_xvf32gerpp(&acc_0, vec_A[1], vec_B[1]);
+            __builtin_mma_xvf32gerpp(&acc_0, vec_A[2], vec_B[2]);
+            __builtin_mma_xvf32gerpp(&acc_0, vec_A[3], vec_B[3]);
+        }
+        SAVE_ACC(&acc_0, ii, jj);
+    }
+
+    void KERNEL_4x8(int64_t ii, int64_t jj) {
+        vec_t vec_A[4], vec_B[8], vec_C[4];
+        acc_t acc_0, acc_1;
+        __builtin_mma_xxsetaccz(&acc_0);
+        __builtin_mma_xxsetaccz(&acc_1);
+        for (int64_t l = 0; l < k; l+=4) {
+            READ_BLOCK(A+(ii*lda)+l, lda, 4, 4, (float*)vec_A);
+            READ_BLOCK(B+(jj*ldb)+l, ldb, 8, 4, (float*)vec_B);
+            __builtin_mma_xvf32gerpp(&acc_0, vec_A[0], (vec_t)vec_B[0]);
+            __builtin_mma_xvf32gerpp(&acc_1, vec_A[0], (vec_t)vec_B[1]);
+            __builtin_mma_xvf32gerpp(&acc_0, vec_A[1], (vec_t)vec_B[2]);
+            __builtin_mma_xvf32gerpp(&acc_1, vec_A[1], (vec_t)vec_B[3]);
+            __builtin_mma_xvf32gerpp(&acc_0, vec_A[2], (vec_t)vec_B[4]);
+            __builtin_mma_xvf32gerpp(&acc_1, vec_A[2], (vec_t)vec_B[5]);
+            __builtin_mma_xvf32gerpp(&acc_0, vec_A[3], (vec_t)vec_B[6]);
+            __builtin_mma_xvf32gerpp(&acc_1, vec_A[3], (vec_t)vec_B[7]);
+        }
+        SAVE_ACC(&acc_0, ii, jj);
+        SAVE_ACC(&acc_1, ii, jj+4);
+    }
+
+    void KERNEL_8x4(int64_t ii, int64_t jj) {
+        vec_t vec_A[8], vec_B[4], vec_C[4];
+        acc_t acc_0, acc_1;
+        __builtin_mma_xxsetaccz(&acc_0);
+        __builtin_mma_xxsetaccz(&acc_1);
+        for (int64_t l = 0; l < k; l+=4) {
+            READ_BLOCK(A+(ii*lda)+l, lda, 8, 4, (float*)vec_A);
+            READ_BLOCK(B+(jj*ldb)+l, ldb, 4, 4, (float*)vec_B);
+            __builtin_mma_xvf32gerpp(&acc_0, (vec_t)vec_A[0], vec_B[0]);
+            __builtin_mma_xvf32gerpp(&acc_1, (vec_t)vec_A[1], vec_B[0]);
+            __builtin_mma_xvf32gerpp(&acc_0, (vec_t)vec_A[2], vec_B[1]);
+            __builtin_mma_xvf32gerpp(&acc_1, (vec_t)vec_A[3], vec_B[1]);
+            __builtin_mma_xvf32gerpp(&acc_0, (vec_t)vec_A[4], vec_B[2]);
+            __builtin_mma_xvf32gerpp(&acc_1, (vec_t)vec_A[5], vec_B[2]);
+            __builtin_mma_xvf32gerpp(&acc_0, (vec_t)vec_A[6], vec_B[3]);
+            __builtin_mma_xvf32gerpp(&acc_1, (vec_t)vec_A[7], vec_B[3]);
+        }
+        SAVE_ACC(&acc_0, ii, jj);
+        SAVE_ACC(&acc_1, ii+4, jj);
+    }
+
+    void KERNEL_8x8(int64_t ii, int64_t jj) {
+        vec_t vec_A[16], vec_B[16], vec_C[4];
+        acc_t acc_0, acc_1, acc_2, acc_3;
+        __builtin_mma_xxsetaccz(&acc_0);
+        __builtin_mma_xxsetaccz(&acc_1);
+        __builtin_mma_xxsetaccz(&acc_2);
+        __builtin_mma_xxsetaccz(&acc_3);
+        for (int l = 0; l < k; l+=8) {
+            READ_BLOCK(A+(ii*lda)+l, lda, 8, 8, (float*)vec_A);
+            READ_BLOCK(B+(jj*ldb)+l, ldb, 8, 8, (float*)vec_B);
+            for(int x = 0; x < 16; x+=2) {
+                __builtin_mma_xvf32gerpp(&acc_0, (vec_t)vec_A[x], vec_B[x]);
+                __builtin_mma_xvf32gerpp(&acc_1, (vec_t)vec_A[x], vec_B[x+1]);
+                __builtin_mma_xvf32gerpp(&acc_2, (vec_t)vec_A[x+1], vec_B[x]);
+                __builtin_mma_xvf32gerpp(&acc_3, (vec_t)vec_A[x+1], vec_B[x+1]);
+            }
+        }
+        SAVE_ACC(&acc_0, ii, jj);
+        SAVE_ACC(&acc_1, ii, jj+4);
+        SAVE_ACC(&acc_2, ii+4, jj);
+        SAVE_ACC(&acc_3, ii+4, jj+4);
+    }
+
+    void mnpack(int64_t m0, int64_t m, int64_t n0, int64_t n) {
+        int64_t mc, nc, mp, np;
+        int m_rem = MIN(m - m0, 16);
+        int n_rem = MIN(n - n0, 16);
+        if (m_rem >= 16 && n_rem >= 8) {
+            mc = 8;
+            nc = 8;
+            gemm<8,8>(m0, m, n0, n);
+        } else if(m_rem >= 8 && n_rem >= 16) {
+            mc = 8;
+            nc = 8;
+            gemm<8,8>(m0, m, n0, n);
+        } else if (m_rem >= 8 && n_rem >= 8) {
+            mc = 8;
+            nc = 8;
+            gemm<8,8>(m0, m, n0, n);
+        } else if (m_rem >= 4 && n_rem >= 8) {
+            mc = 4;
+            nc = 8;
+            gemm<4,8>(m0, m, n0, n);
+        } else if (m_rem >= 8 && n_rem >= 4) {
+            mc = 8;
+            nc = 4;
+            gemm<8,4>(m0, m, n0, n);
+        } else if (m_rem >= 4 && n_rem >= 4) {
+            mc = 4;
+            nc = 4;
+            gemm<4,4>(m0, m, n0, n);
+        } else if ((m_rem < 4) && (n_rem > 4)) {
+            nc = 4;
+            switch(m_rem) {
+                case 1:
+                    mc = 1;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                case 2:
+                    mc = 2;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                case 3:
+                    mc = 3;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                default:
+                    return;
+            }
+        } else if ((m_rem > 4) && (n_rem < 4)) {
+            mc = 4;
+            switch(n_rem) {
+                case 1:
+                    nc = 1;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                case 2:
+                    nc = 2;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                case 3:
+                    nc = 3;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                default:
+                    return;
+            }
+        } else {
+            switch((m_rem << 4) | n_rem) {
+                case 0x43:
+                    mc = 4;
+                    nc = 3;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                case 0x42:
+                    mc = 4;
+                    nc = 2;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                case 0x41:
+                    mc = 4;
+                    nc = 1;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                case 0x34:
+                    mc = 3;
+                    nc = 4;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                case 0x33:
+                    mc = 3;
+                    nc = 3;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                case 0x32:
+                    mc = 3;
+                    nc = 2;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                case 0x31:
+                    mc = 3;
+                    nc = 1;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                case 0x24:
+                    mc = 2;
+                    nc = 4;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                case 0x23:
+                    mc = 2;
+                    nc = 3;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                case 0x22:
+                    mc = 2;
+                    nc = 2;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                case 0x21:
+                    mc = 2;
+                    nc = 1;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                case 0x14:
+                    mc = 1;
+                    nc = 4;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                case 0x13:
+                    mc = 1;
+                    nc = 3;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                case 0x12:
+                    mc = 1;
+                    nc = 2;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                case 0x11:
+                    mc = 1;
+                    nc = 1;
+                    gemm_small(m0, m, n0, n, mc, nc);
+                    break;
+                default:
+                    return;
+            }
+        }
+        mp = m0 + (m - m0) / mc * mc;
+        np = n0 + (n - n0) / nc * nc;
+        mnpack(mp, m, n0, np);
+        mnpack(m0, m, np, n);
+    }
+
+     void gemm_small(int64_t m0, int64_t m, int64_t n0, int64_t n, int RM, int RN) {
+        int64_t ytiles = (m - m0) / RM;
+        int64_t xtiles = (n - n0) / RN;
+        int64_t tiles = xtiles * ytiles;
+        int64_t duty = (tiles + nth - 1) / nth;
+        int64_t start = duty * ith;
+        int64_t end = start + duty;
+        if (end > tiles)
+            end = tiles;
+        for (int64_t job = start; job < end; ++job) {
+            int64_t ii = m0 + job / xtiles * RM;
+            int64_t jj = n0 + job % xtiles * RN;
+            vec_t vec_C[4];
+            acc_t acc_0;
+            __builtin_mma_xxsetaccz(&acc_0);
+            vec_t vec_A[4], vec_B[4];
+            for (int l=0; l<k; l+=4) {
+                if (RN >= 4 && RM == 1) {
+                    float* a = const_cast<float*>(A+(ii)*lda+l);
+                    READ_BLOCK(B+(jj*ldb)+l, ldb, 4, 4, (float*)vec_B);
+                    vec_A[0] = (vec_t)vec_xl(0,a);
+                    vec_A[1] = (vec_t)vec_splats(*((float*)&vec_A+1));
+                    vec_A[2] = (vec_t)vec_splats(*((float*)&vec_A+2));
+                    vec_A[3] = (vec_t)vec_splats(*((float*)&vec_A+3));
+                } else {
+                    READ_BLOCK(A+(ii*lda)+l, lda, RM, 4, (float*)vec_A);
+                    READ_BLOCK(B+(jj*ldb)+l, ldb, RN, 4, (float*)vec_B);
+                }
+                __builtin_mma_xvf32gerpp(&acc_0, vec_A[0], vec_B[0]);
+                __builtin_mma_xvf32gerpp(&acc_0, vec_A[1], vec_B[1]);
+                __builtin_mma_xvf32gerpp(&acc_0, vec_A[2], vec_B[2]);
+                __builtin_mma_xvf32gerpp(&acc_0, vec_A[3], vec_B[3]);
+            }
+            __builtin_mma_disassemble_acc(vec_C, &acc_0);
+            for (int I = 0; I < RM; I++) {
+                for (int J = 0; J < RN; J++) {
+                    *((float*)(C+ii+((jj+J)*ldc)+I)) = *((float*)&vec_C[I]+J);
+                }
+            }
+       }
+    }
+
+    template <int RM, int RN>
+    NOINLINE void gemm(int64_t m0, int64_t m, int64_t n0, int64_t n) {
+        int64_t ytiles = (m - m0) / RM;
+        int64_t xtiles = (n - n0) / RN;
+        int64_t tiles = xtiles * ytiles;
+        int64_t duty = (tiles + nth - 1) / nth;
+        int64_t start = duty * ith;
+        int64_t end = start + duty;
+        if (RM == 4 && RN == 4) {
+            kernel = &tinyBLAS_PPC::KERNEL_4x4;
+        } else if (RM == 4 && RN == 8) {
+            kernel = &tinyBLAS_PPC::KERNEL_4x8;
+        } else if (RM == 8 && RN == 4) {
+            kernel = &tinyBLAS_PPC::KERNEL_8x4;
+        } else if (RM == 8 && RN == 8) {
+            kernel = &tinyBLAS_PPC::KERNEL_8x8;
+        }
+        if (end > tiles)
+            end = tiles;
+        for (int64_t job = start; job < end; ++job) {
+            int64_t ii = m0 + job / xtiles * RM;
+            int64_t jj = n0 + job % xtiles * RN;
+            (this->*kernel)(ii, jj);
+        }
+    }
+
+    const TA *const A;
+    const TB *const B;
+    TC *C;
+    TA *At;
+    TB *Bt;
+    const int64_t k;
+    const int64_t lda;
+    const int64_t ldb;
+    const int64_t ldc;
+    const int ith;
+    const int nth;
+};
+#endif
 } // namespace
 
 /**
@@ -1017,8 +1666,9 @@ class tinyBLAS_Q0_AVX {
  * @param Ctype is GGML data type of `C`
  * @return true if this function was able to service the matmul request
  */
-bool llamafile_sgemm(int64_t m, int64_t n, int64_t k, const void *A, int64_t lda, const void *B, int64_t ldb, void *C,
-                     int64_t ldc, int ith, int nth, int Atype, int Btype, int Ctype) {
+bool llamafile_sgemm(const struct ggml_compute_params * params, int64_t m, int64_t n, int64_t k,
+                     const void *A, int64_t lda, const void *B, int64_t ldb, void *C,
+                     int64_t ldc, int Atype, int Btype, int Ctype) {
 
     assert(m >= 0);
     assert(n >= 0);
@@ -1026,8 +1676,8 @@ bool llamafile_sgemm(int64_t m, int64_t n, int64_t k, const void *A, int64_t lda
     assert(lda >= k);
     assert(ldb >= k);
     assert(ldc >= m);
-    assert(nth > 0);
-    assert(ith < nth);
+    assert(params->nth > 0);
+    assert(params->ith < params->nth);
 
     // only enable sgemm for prompt processing
     if (n < 2)
@@ -1042,35 +1692,33 @@ bool llamafile_sgemm(int64_t m, int64_t n, int64_t k, const void *A, int64_t lda
         if (Btype != GGML_TYPE_F32)
             return false;
 #if defined(__AVX512F__)
-        if (k % 16)
-            return false;
-        tinyBLAS<16, __m512, __m512, float, float, float> tb{
+        tinyBLAS<16, __m512, __m512, float, float, float> tb{ params,
             k, (const float *)A, lda,
             (const float *)B, ldb,
-            (float *)C, ldc,
-            ith, nth};
-        tb.matmul(m, n);
-        return true;
+            (float *)C, ldc};
+        return tb.matmul(m, n);
 #elif defined(__AVX__) || defined(__AVX2__)
-        if (k % 8)
-            return false;
-        tinyBLAS<8, __m256, __m256, float, float, float> tb{
+        tinyBLAS<8, __m256, __m256, float, float, float> tb{ params,
             k, (const float *)A, lda,
             (const float *)B, ldb,
-            (float *)C, ldc,
-            ith, nth};
-        tb.matmul(m, n);
-        return true;
+            (float *)C, ldc};
+        return tb.matmul(m, n);
 #elif defined(__ARM_NEON)
         if (n < 4)
             return false;
-        if (k % 4)
+        tinyBLAS<4, float32x4_t, float32x4_t, float, float, float> tb{ params,
+            k, (const float *)A, lda,
+            (const float *)B, ldb,
+            (float *)C, ldc};
+        return tb.matmul(m, n);
+#elif defined(__MMA__)
+        if (k % 8)
             return false;
-        tinyBLAS<4, float32x4_t, float32x4_t, float, float, float> tb{
+        tinyBLAS_PPC<float, float, float> tb{
             k, (const float *)A, lda,
             (const float *)B, ldb,
             (float *)C, ldc,
-            ith, nth};
+            params->ith, params->nth};
         tb.matmul(m, n);
         return true;
 #else
@@ -1078,60 +1726,71 @@ bool llamafile_sgemm(int64_t m, int64_t n, int64_t k, const void *A, int64_t lda
 #endif
     }
 
+    case GGML_TYPE_BF16: {
+#if defined(__AVX512BF16__)
+        if (Btype == GGML_TYPE_BF16) {
+            tinyBLAS<32, __m512, __m512bh, ggml_bf16_t, ggml_bf16_t, float> tb{ params, k,
+                (const ggml_bf16_t *)A, lda,
+                (const ggml_bf16_t *)B, ldb,
+                (float *)C, ldc};
+            return tb.matmul(m, n);
+        }
+#elif defined(__AVX512F__)
+        if (Btype == GGML_TYPE_BF16) {
+            tinyBLAS<16, __m512, __m512, ggml_bf16_t, ggml_bf16_t, float> tb{ params, k,
+                (const ggml_bf16_t *)A, lda,
+                (const ggml_bf16_t *)B, ldb,
+                (float *)C, ldc};
+            return tb.matmul(m, n);
+        }
+#elif defined(__AVX2__)
+        if (Btype == GGML_TYPE_BF16) {
+            tinyBLAS<8, __m256, __m256, ggml_bf16_t, ggml_bf16_t, float> tb{ params, k,
+                (const ggml_bf16_t *)A, lda,
+                (const ggml_bf16_t *)B, ldb,
+                (float *)C, ldc};
+            return tb.matmul(m, n);
+        }
+#endif
+        return false;
+    }
     case GGML_TYPE_F16: {
 #if defined(__AVX512F__)
-        if (k % 16)
-            return false;
-        if (Btype != GGML_TYPE_F32)
-            return false;
-        tinyBLAS<16, __m512, __m512, ggml_fp16_t, float, float> tb{
-            k, (const ggml_fp16_t *)A, lda,
-            (const float *)B, ldb,
-            (float *)C, ldc,
-            ith, nth};
-        tb.matmul(m, n);
-        return true;
+        if (Btype == GGML_TYPE_F16) {
+            tinyBLAS<16, __m512, __m512, ggml_fp16_t, ggml_fp16_t, float> tb{ params, k,
+                (const ggml_fp16_t *)A, lda,
+                (const ggml_fp16_t *)B, ldb,
+                (float *)C, ldc};
+            return tb.matmul(m, n);
+        }
 #elif (defined(__AVX__) || defined(__AVX2__)) && defined(__F16C__)
-        if (k % 8)
-            return false;
-        if (Btype != GGML_TYPE_F32)
-            return false;
-        tinyBLAS<8, __m256, __m256, ggml_fp16_t, float, float> tb{
-            k, (const ggml_fp16_t *)A, lda,
-            (const float *)B, ldb,
-            (float *)C, ldc,
-            ith, nth};
-        tb.matmul(m, n);
-        return true;
+        if (Btype == GGML_TYPE_F16) {
+            tinyBLAS<8, __m256, __m256, ggml_fp16_t, ggml_fp16_t, float> tb{ params, k,
+                (const ggml_fp16_t *)A, lda,
+                (const ggml_fp16_t *)B, ldb,
+                (float *)C, ldc};
+            return tb.matmul(m, n);
+        }
 #elif defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC) && !defined(_MSC_VER)
         if (n < 8)
             return false;
-        if (k % 8)
-            return false;
-        if (Btype != GGML_TYPE_F16)
-            return false;
-        tinyBLAS<8, float16x8_t, float16x8_t, ggml_fp16_t, ggml_fp16_t, float> tb{
-            k, (const ggml_fp16_t *)A, lda,
-            (const ggml_fp16_t *)B, ldb,
-            (float *)C, ldc,
-            ith, nth};
-        tb.matmul(m, n);
-        return true;
+        if (Btype == GGML_TYPE_F16) {
+            tinyBLAS<8, float16x8_t, float16x8_t, ggml_fp16_t, ggml_fp16_t, float> tb{ params,
+                k, (const ggml_fp16_t *)A, lda,
+                (const ggml_fp16_t *)B, ldb,
+                (float *)C, ldc};
+            return tb.matmul(m, n);
+        }
 #elif defined(__ARM_NEON) && !defined(_MSC_VER)
-        if (k % 4)
-            return false;
-        if (Btype != GGML_TYPE_F32)
-            return false;
-        tinyBLAS<4, float32x4_t, float32x4_t, ggml_fp16_t, float, float> tb{
-            k, (const ggml_fp16_t *)A, lda,
-            (const float *)B, ldb,
-            (float *)C, ldc,
-            ith, nth};
-        tb.matmul(m, n);
-        return true;
-#else
-        return false;
+        if (Btype == GGML_TYPE_F32) {
+            tinyBLAS<4, float32x4_t, float32x4_t, ggml_fp16_t, float, float> tb{ params,
+                k, (const ggml_fp16_t *)A, lda,
+                (const float *)B, ldb,
+                (float *)C, ldc};
+            return tb.matmul(m, n);
+        }
 #endif
+        return false;
     }
 
     case GGML_TYPE_Q8_0: {
@@ -1142,7 +1801,7 @@ bool llamafile_sgemm(int64_t m, int64_t n, int64_t k, const void *A, int64_t lda
             k, (const block_q8_0 *)A, lda,
             (const block_q8_0 *)B, ldb,
             (float *)C, ldc,
-            ith, nth};
+            params->ith, params->nth};
         tb.matmul(m, n);
         return true;
 #elif defined(__ARM_FEATURE_DOTPROD)
@@ -1150,7 +1809,7 @@ bool llamafile_sgemm(int64_t m, int64_t n, int64_t k, const void *A, int64_t lda
             k, (const block_q8_0 *)A, lda,
             (const block_q8_0 *)B, ldb,
             (float *)C, ldc,
-            ith, nth};
+            params->ith, params->nth};
         tb.matmul(m, n);
         return true;
 #else
@@ -1166,7 +1825,7 @@ bool llamafile_sgemm(int64_t m, int64_t n, int64_t k, const void *A, int64_t lda
             k, (const block_q4_0 *)A, lda,
             (const block_q8_0 *)B, ldb,
             (float *)C, ldc,
-            ith, nth};
+            params->ith, params->nth};
         tb.matmul(m, n);
         return true;
 #elif defined(__ARM_FEATURE_DOTPROD)
@@ -1174,7 +1833,23 @@ bool llamafile_sgemm(int64_t m, int64_t n, int64_t k, const void *A, int64_t lda
             k, (const block_q4_0 *)A, lda,
             (const block_q8_0 *)B, ldb,
             (float *)C, ldc,
-            ith, nth};
+            params->ith, params->nth};
+        tb.matmul(m, n);
+        return true;
+#else
+        return false;
+#endif
+    }
+
+    case GGML_TYPE_Q5_0: {
+        if (Btype != GGML_TYPE_Q8_0)
+            return false;
+#if defined(__AVX2__) || defined(__AVX512F__) || defined(__AVX__)
+        tinyBLAS_Q0_AVX<block_q5_0, block_q8_0, float> tb{
+            k, (const block_q5_0 *)A, lda,
+            (const block_q8_0 *)B, ldb,
+            (float *)C, ldc,
+            params->ith, params->nth};
         tb.matmul(m, n);
         return true;
 #else
@@ -1190,7 +1865,7 @@ bool llamafile_sgemm(int64_t m, int64_t n, int64_t k, const void *A, int64_t lda
             k, (const block_iq4_nl *)A, lda,
             (const block_q8_0 *)B, ldb,
             (float *)C, ldc,
-            ith, nth};
+            params->ith, params->nth};
         tb.matmul(m, n);
         return true;
 #else
@@ -1202,6 +1877,7 @@ bool llamafile_sgemm(int64_t m, int64_t n, int64_t k, const void *A, int64_t lda
         return false;
     }
 
+    (void)params;
     (void)m;
     (void)n;
     (void)k;
@@ -1211,8 +1887,6 @@ bool llamafile_sgemm(int64_t m, int64_t n, int64_t k, const void *A, int64_t lda
     (void)ldb;
     (void)C;
     (void)ldc;
-    (void)ith;
-    (void)nth;
     (void)Atype;
     (void)Btype;
     (void)Ctype;

@@ -3,33 +3,22 @@
 Install required tools:
 
 - go version 1.22 or higher
-- gcc version 11.4.0 or higher
+- OS specific C/C++ compiler (see below)
+- GNU Make
 
+
+## Overview
+
+Ollama uses a mix of Go and C/C++ code to interface with GPUs.  The C/C++ code is compiled with both CGO and GPU library specific compilers.  A set of GNU Makefiles are used to compile the project.  GPU Libraries are auto-detected based on the typical environment variables used by the respective libraries, but can be overridden if necessary.  The default make target will build the runners and primary Go Ollama application that will run within the repo directory.  Throughout the examples below `-j 5` is suggested for 5 parallel jobs to speed up the build.  You can adjust the job count based on your CPU Core count to reduce build times.  If you want to relocate the built binaries, use the `dist` target and recursively copy the files in `./dist/$OS-$ARCH/` to your desired location. To learn more about the other make targets use `make help`
+
+Once you have built the GPU/CPU runners, you can compile the main application with `go build .` 
 
 ### MacOS
 
 [Download Go](https://go.dev/dl/)
 
-Optionally enable debugging and more verbose logging:
-
-```bash
-# At build time
-export CGO_CFLAGS="-g"
-
-# At runtime
-export OLLAMA_DEBUG=1
-```
-
-Get the required libraries and build the native LLM code:  (Adjust the job count based on your number of processors for a faster build)
-
 ```bash
 make -j 5
-```
-
-Then build ollama:
-
-```bash
-go build .
 ```
 
 Now you can run `ollama`:
@@ -51,64 +40,42 @@ _Your operating system distribution may already have packages for NVIDIA CUDA. D
 Install `make`, `gcc` and `golang` as well as [NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads)
 development and runtime packages.
 
-Typically the build scripts will auto-detect CUDA, however, if your Linux distro
-or installation approach uses unusual paths, you can specify the location by
-specifying an environment variable `CUDA_LIB_DIR` to the location of the shared
-libraries, and `CUDACXX` to the location of the nvcc compiler. You can customize
-a set of target CUDA architectures by setting `CMAKE_CUDA_ARCHITECTURES` (e.g. "50;60;70")
-
-Then generate dependencies:  (Adjust the job count based on your number of processors for a faster build)
+Typically the makefile will auto-detect CUDA, however, if your Linux distro
+or installation approach uses alternative paths, you can specify the location by
+overriding `CUDA_PATH` to the location of the CUDA toolkit. You can customize
+a set of target CUDA architectures by setting `CUDA_ARCHITECTURES` (e.g. `CUDA_ARCHITECTURES=50;60;70`)
 
 ```
 make -j 5
 ```
 
-Then build the binary:
+If both v11 and v12 tookkits are detected, runners for both major versions will be built by default.  You can build just v12 with `make cuda_v12`
 
-```
-go build .
-```
+#### Older Linux CUDA (NVIDIA)
+
+To support older GPUs with Compute Capability 3.5 or 3.7, you will need to use an older version of the Driver from [Unix Driver Archive](https://www.nvidia.com/en-us/drivers/unix/) (tested with 470) and [CUDA Toolkit Archive](https://developer.nvidia.com/cuda-toolkit-archive) (tested with cuda V11).  When you build Ollama, you will need to set two make variable to adjust the minimum compute capability Ollama supports via `make -j 5 CUDA_ARCHITECTURES="35;37;50;52" EXTRA_GOLDFLAGS="\"-X=github.com/ollama/ollama/discover.CudaComputeMajorMin=3\" \"-X=github.com/ollama/ollama/discover.CudaComputeMinorMin=5\""`.  To find the Compute Capability of your older GPU, refer to [GPU Compute Capability](https://developer.nvidia.com/cuda-gpus).
 
 #### Linux ROCm (AMD)
 
-_Your operating system distribution may already have packages for AMD ROCm and CLBlast. Distro packages are often preferable, but instructions are distro-specific. Please consult distro-specific docs for dependencies if available!_
+_Your operating system distribution may already have packages for AMD ROCm. Distro packages are often preferable, but instructions are distro-specific. Please consult distro-specific docs for dependencies if available!_
 
-Install [CLBlast](https://github.com/CNugteren/CLBlast/blob/master/doc/installation.md) and [ROCm](https://rocm.docs.amd.com/en/latest/) development packages first, as well as `make`, `gcc`, and `golang`.
+Install [ROCm](https://rocm.docs.amd.com/en/latest/) development packages first, as well as `make`, `gcc`, and `golang`.
 
 Typically the build scripts will auto-detect ROCm, however, if your Linux distro
 or installation approach uses unusual paths, you can specify the location by
-specifying an environment variable `ROCM_PATH` to the location of the ROCm
-install (typically `/opt/rocm`), and `CLBlast_DIR` to the location of the
-CLBlast install (typically `/usr/lib/cmake/CLBlast`). You can also customize
-the AMD GPU targets by setting AMDGPU_TARGETS (e.g. `AMDGPU_TARGETS="gfx1101;gfx1102"`)
-
-Then generate dependencies:  (Adjust the job count based on your number of processors for a faster build)
+specifying an environment variable `HIP_PATH` to the location of the ROCm
+install (typically `/opt/rocm`). You can also customize
+the AMD GPU targets by setting HIP_ARCHS (e.g. `HIP_ARCHS=gfx1101;gfx1102`)
 
 ```
 make -j 5
-```
-
-Then build the binary:
-
-```
-go build .
 ```
 
 ROCm requires elevated privileges to access the GPU at runtime. On most distros you can add your user account to the `render` group, or run as root.
 
-#### Advanced CPU Settings
-
-By default, running `make` will compile a few different variations
-of the LLM library based on common CPU families and vector math capabilities,
-including a lowest-common-denominator which should run on almost any 64 bit CPU
-somewhat slowly. At runtime, Ollama will auto-detect the optimal variation to
-load. 
-
-Custom CPU settings are not currently supported in the new Go server build but will be added back after we complete the transition.
-
 #### Containerized Linux Build
 
-If you have Docker available, you can build linux binaries with `./scripts/build_linux.sh` which has the CUDA and ROCm dependencies included. The resulting binary is placed in `./dist`
+If you have Docker and buildx available, you can build linux binaries with `./scripts/build_linux.sh` which has the CUDA and ROCm dependencies included. The resulting artifacts are placed in `./dist`  and by default the script builds both arm64 and amd64 binaries.  If you want to build only amd64, you can build with `PLATFORM=linux/amd64 ./scripts/build_linux.sh`
 
 ### Windows
 
@@ -126,12 +93,8 @@ The following tools are required as a minimal development environment to build C
 > [!NOTE]  
 > Due to bugs in the GCC C++ library for unicode support, Ollama should be built with clang on windows.
 
-Then, build the `ollama` binary:
-
-```powershell
-$env:CGO_ENABLED="1"
-make -j 8
-go build .
+```
+make -j 5
 ```
 
 #### GPU Support
@@ -173,3 +136,30 @@ pacman -S mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-gcc-compat mingw
 ```
 
 You will need to ensure your PATH includes go, cmake, gcc and clang mingw32-make to build ollama from source. (typically `C:\msys64\clangarm64\bin\`)
+
+
+## Advanced CPU Vector Settings
+
+On x86, running `make` will compile several CPU runners which can run on different CPU families. At runtime, Ollama will auto-detect the best variation to load.  If GPU libraries are present at build time, Ollama also compiles GPU runners with the `AVX` CPU vector feature enabled.  This provides a good performance balance when loading large models that split across GPU and CPU with broad compatibility.  Some users may prefer no vector extensions (e.g. older Xeon/Celeron processors, or hypervisors that mask the vector features) while other users may prefer turning on many more vector extensions to further improve performance for split model loads.
+
+To customize the set of CPU vector features enabled for a CPU runner and all GPU runners, use CUSTOM_CPU_FLAGS during the build.
+
+To build without any vector flags:
+
+```
+make CUSTOM_CPU_FLAGS=""
+```
+
+To build with both AVX and AVX2:
+```
+make CUSTOM_CPU_FLAGS=avx,avx2
+```
+
+To build with AVX512 features turned on:
+
+```
+make CUSTOM_CPU_FLAGS=avx,avx2,avx512,avx512vbmi,avx512vnni,avx512bf16
+```
+
+> [!NOTE]  
+> If you are experimenting with different flags, make sure to do a `make clean` between each change to ensure everything is rebuilt with the new compiler flags

@@ -50,12 +50,14 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 		slog.Info(err.Error())
 		return nil, err
 	}
+	depPaths := LibraryDirs()
 	libDir, err := AMDValidateLibDir()
 	if err != nil {
 		err = fmt.Errorf("unable to verify rocm library: %w", err)
 		slog.Warn(err.Error())
 		return nil, err
 	}
+	depPaths = append(depPaths, libDir)
 
 	var supported []string
 	gfxOverride := envconfig.HsaOverrideGfxVersion()
@@ -111,7 +113,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 				UnreliableFreeMemory: true,
 
 				ID:             strconv.Itoa(i), // TODO this is probably wrong if we specify visible devices
-				DependencyPath: []string{libDir},
+				DependencyPath: depPaths,
 				MinimumMemory:  rocmMinimumMemory,
 				Name:           name,
 				Compute:        gfx,
@@ -182,7 +184,7 @@ func (gpus RocmGPUInfoList) RefreshFreeMemory() error {
 	hl, err := NewHipLib()
 	if err != nil {
 		slog.Debug(err.Error())
-		return nil
+		return err
 	}
 	defer hl.Release()
 

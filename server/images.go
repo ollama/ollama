@@ -2,10 +2,8 @@ package server
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,6 +11,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,14 +22,10 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
-	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
@@ -123,7 +118,7 @@ func (m *Model) CheckCapabilities(caps ...Capability) error {
 }
 
 func (m *Model) String() string {
-	var modelfile parser.File
+	var modelfile parser.Modelfile
 
 	modelfile.Commands = append(modelfile.Commands, parser.Command{
 		Name: "model",
@@ -330,324 +325,6 @@ func GetModel(name string) (*Model, error) {
 	}
 
 	return model, nil
-}
-
-func realpath(rel, from string) string {
-	abspath, err := filepath.Abs(from)
-	if err != nil {
-		return from
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return abspath
-	}
-
-	if from == "~" {
-		return home
-	} else if strings.HasPrefix(from, "~/") {
-		return filepath.Join(home, from[2:])
-	}
-
-	if _, err := os.Stat(filepath.Join(rel, from)); err == nil {
-		// this is a file relative to the Modelfile
-		return filepath.Join(rel, from)
-	}
-
-	return abspath
-}
-
-func CreateModel(ctx context.Context, name model.Name, modelFileDir, quantization string, modelfile *parser.File, fn func(resp api.ProgressResponse)) (err error) {
-	config := ConfigV2{
-		OS:           "linux",
-		Architecture: "amd64",
-		RootFS: RootFS{
-			Type: "layers",
-		},
-	}
-
-	var messages []*api.Message
-	parameters := make(map[string]any)
-
-	var layers []Layer
-	var baseLayers []*layerGGML
-	for _, c := range modelfile.Commands {
-		mediatype := fmt.Sprintf("application/vnd.ollama.image.%s", c.Name)
-		command := c.Name
-
-		switch command {
-		case "model", "adapter":
-			if name := model.ParseName(c.Args); name.IsValid() && command == "model" {
-				baseLayers, err = parseFromModel(ctx, name, fn)
-				if err != nil {
-					return err
-				}
-			} else if strings.HasPrefix(c.Args, "@") {
-				digest := strings.TrimPrefix(c.Args, "@")
-				if ib, ok := intermediateBlobs[digest]; ok {
-					p, err := GetBlobsPath(ib)
-					if err != nil {
-						return err
-					}
-
-					if _, err := os.Stat(p); errors.Is(err, os.ErrNotExist) {
-						// pass
-					} else if err != nil {
-						return err
-					} else {
-						fn(api.ProgressResponse{Status: fmt.Sprintf("using cached layer %s", ib)})
-						digest = ib
-					}
-				}
-
-				blobpath, err := GetBlobsPath(digest)
-				if err != nil {
-					return err
-				}
-
-				blob, err := os.Open(blobpath)
-				if err != nil {
-					return err
-				}
-				defer blob.Close()
-
-				baseLayers, err = parseFromFile(ctx, command, baseLayers, blob, digest, fn)
-				if err != nil {
-					return err
-				}
-			} else if file, err := os.Open(realpath(modelFileDir, c.Args)); err == nil {
-				defer file.Close()
-
-				baseLayers, err = parseFromFile(ctx, command, baseLayers, file, "", fn)
-				if err != nil {
-					return err
-				}
-			} else {
-				return fmt.Errorf("invalid model reference: %s", c.Args)
-			}
-
-			for _, baseLayer := range baseLayers {
-				if quantization != "" &&
-					baseLayer.MediaType == "application/vnd.ollama.image.model" &&
-					baseLayer.GGML != nil &&
-					baseLayer.GGML.Name() == "gguf" {
-					want, err := llm.ParseFileType(quantization)
-					if err != nil {
-						return err
-					}
-
-					ft := baseLayer.GGML.KV().FileType()
-					if !slices.Contains([]string{"F16", "F32"}, ft.String()) {
-						return errors.New("quantization is only supported for F16 and F32 models")
-					} else if want != ft {
-						fn(api.ProgressResponse{Status: fmt.Sprintf("quantizing %s model to %s", ft, quantization)})
-
-						blob, err := GetBlobsPath(baseLayer.Digest)
-						if err != nil {
-							return err
-						}
-
-						temp, err := os.CreateTemp(filepath.Dir(blob), quantization)
-						if err != nil {
-							return err
-						}
-						defer temp.Close()
-						defer os.Remove(temp.Name())
-
-						if err := llama.Quantize(blob, temp.Name(), uint32(want)); err != nil {
-							return err
-						}
-
-						layer, err := NewLayer(temp, baseLayer.MediaType)
-						if err != nil {
-							return err
-						}
-
-						if _, err := temp.Seek(0, io.SeekStart); err != nil {
-							return err
-						}
-
-						ggml, _, err := llm.DecodeGGML(temp, 0)
-						if err != nil {
-							return err
-						}
-
-						baseLayer.Layer = layer
-						baseLayer.GGML = ggml
-					}
-				}
-
-				if baseLayer.GGML != nil {
-					config.ModelFormat = cmp.Or(config.ModelFormat, baseLayer.GGML.Name())
-					config.ModelFamily = cmp.Or(config.ModelFamily, baseLayer.GGML.KV().Architecture())
-					config.ModelType = cmp.Or(config.ModelType, format.HumanNumber(baseLayer.GGML.KV().ParameterCount()))
-					config.FileType = cmp.Or(config.FileType, baseLayer.GGML.KV().FileType().String())
-					config.ModelFamilies = append(config.ModelFamilies, baseLayer.GGML.KV().Architecture())
-				}
-
-				layers = append(layers, baseLayer.Layer)
-			}
-		case "license", "template", "system":
-			if c.Name == "template" {
-				if _, err := template.Parse(c.Args); err != nil {
-					return fmt.Errorf("%w: %s", errBadTemplate, err)
-				}
-			}
-
-			if c.Name != "license" {
-				// replace
-				layers = slices.DeleteFunc(layers, func(layer Layer) bool {
-					if layer.MediaType != mediatype {
-						return false
-					}
-
-					if err := layer.Remove(); err != nil {
-						return false
-					}
-
-					return true
-				})
-			}
-
-			blob := strings.NewReader(c.Args)
-			layer, err := NewLayer(blob, mediatype)
-			if err != nil {
-				return err
-			}
-
-			layers = append(layers, layer)
-		case "message":
-			role, content, ok := strings.Cut(c.Args, ": ")
-			if !ok {
-				return fmt.Errorf("invalid message: %s", c.Args)
-			}
-
-			messages = append(messages, &api.Message{Role: role, Content: content})
-		default:
-			ps, err := api.FormatParams(map[string][]string{c.Name: {c.Args}})
-			if err != nil {
-				return err
-			}
-
-			for k, v := range ps {
-				if ks, ok := parameters[k].([]string); ok {
-					parameters[k] = append(ks, v.([]string)...)
-				} else if vs, ok := v.([]string); ok {
-					parameters[k] = vs
-				} else {
-					parameters[k] = v
-				}
-			}
-		}
-	}
-
-	var err2 error
-	layers = slices.DeleteFunc(layers, func(layer Layer) bool {
-		switch layer.MediaType {
-		case "application/vnd.ollama.image.message":
-			// if there are new messages, remove the inherited ones
-			if len(messages) > 0 {
-				return true
-			}
-
-			return false
-		case "application/vnd.ollama.image.params":
-			// merge inherited parameters with new ones
-			r, err := layer.Open()
-			if err != nil {
-				err2 = err
-				return false
-			}
-			defer r.Close()
-
-			var ps map[string]any
-			if err := json.NewDecoder(r).Decode(&ps); err != nil {
-				err2 = err
-				return false
-			}
-
-			for k, v := range ps {
-				if _, ok := parameters[k]; !ok {
-					parameters[k] = v
-				}
-			}
-
-			return true
-		default:
-			return false
-		}
-	})
-
-	if err2 != nil {
-		return err2
-	}
-
-	if len(messages) > 0 {
-		var b bytes.Buffer
-		if err := json.NewEncoder(&b).Encode(messages); err != nil {
-			return err
-		}
-
-		layer, err := NewLayer(&b, "application/vnd.ollama.image.messages")
-		if err != nil {
-			return err
-		}
-
-		layers = append(layers, layer)
-	}
-
-	if len(parameters) > 0 {
-		var b bytes.Buffer
-		if err := json.NewEncoder(&b).Encode(parameters); err != nil {
-			return err
-		}
-
-		layer, err := NewLayer(&b, "application/vnd.ollama.image.params")
-		if err != nil {
-			return err
-		}
-
-		layers = append(layers, layer)
-	}
-
-	digests := make([]string, len(layers))
-	for i, layer := range layers {
-		digests[i] = layer.Digest
-	}
-
-	config.RootFS.DiffIDs = digests
-
-	var b bytes.Buffer
-	if err := json.NewEncoder(&b).Encode(config); err != nil {
-		return err
-	}
-
-	configLayer, err := NewLayer(&b, "application/vnd.docker.container.image.v1+json")
-	if err != nil {
-		return err
-	}
-
-	for _, layer := range append(layers, configLayer) {
-		if layer.status != "" {
-			fn(api.ProgressResponse{Status: layer.status})
-		}
-	}
-
-	old, _ := ParseNamedManifest(name)
-
-	fn(api.ProgressResponse{Status: "writing manifest"})
-	if err := WriteManifest(name, configLayer, layers); err != nil {
-		return err
-	}
-
-	if !envconfig.NoPrune() && old != nil {
-		if err := old.RemoveLayers(); err != nil {
-			return err
-		}
-	}
-
-	fn(api.ProgressResponse{Status: "success"})
-	return nil
 }
 
 func CopyModel(src, dst model.Name) error {
@@ -984,37 +661,7 @@ func GetSHA256Digest(r io.Reader) (string, int64) {
 
 var errUnauthorized = errors.New("unauthorized: access denied")
 
-// getTokenSubject returns the subject of a JWT token, it does not validate the token
-func getTokenSubject(token string) string {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return ""
-	}
-
-	payload := parts[1]
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(payload)
-	if err != nil {
-		slog.Error(fmt.Sprintf("failed to decode jwt payload: %v", err))
-		return ""
-	}
-
-	var payloadMap map[string]interface{}
-	if err := json.Unmarshal(payloadBytes, &payloadMap); err != nil {
-		slog.Error(fmt.Sprintf("failed to unmarshal payload JSON: %v", err))
-		return ""
-	}
-
-	sub, ok := payloadMap["sub"]
-	if !ok {
-		slog.Error("jwt does not contain 'sub' field")
-		return ""
-	}
-
-	return fmt.Sprintf("%s", sub)
-}
-
 func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *registryOptions) (*http.Response, error) {
-	anonymous := true // access will default to anonymous if no user is found associated with the public key
 	for range 2 {
 		resp, err := makeRequest(ctx, method, requestURL, headers, body, regOpts)
 		if err != nil {
@@ -1035,7 +682,6 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 			if err != nil {
 				return nil, err
 			}
-			anonymous = getTokenSubject(token) == "anonymous"
 			regOpts.Token = token
 			if body != nil {
 				_, err = body.Seek(0, io.SeekStart)
@@ -1058,18 +704,23 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 		}
 	}
 
-	if anonymous {
-		// no user is associated with the public key, and the request requires non-anonymous access
-		pubKey, nestedErr := auth.GetPublicKey()
-		if nestedErr != nil {
-			slog.Error(fmt.Sprintf("couldn't get public key: %v", nestedErr))
-			return nil, errUnauthorized
-		}
-		return nil, &errtypes.UnknownOllamaKey{Key: pubKey}
-	}
-	// user is associated with the public key, but is not authorized to make the request
 	return nil, errUnauthorized
 }
+
+// testMakeRequestDialContext specifies the dial function for the http client in
+// makeRequest. It can be used to resolve hosts in model names to local
+// addresses for testing. For example, the model name ("example.com/my/model")
+// can be directed to push/pull from "127.0.0.1:1234".
+//
+// This is not safe to set across goroutines. It should be set in
+// the main test goroutine, and not by tests marked to run in parallel with
+// t.Parallel().
+//
+// It should be cleared after use, otherwise it will affect other tests.
+//
+// Ideally we would have some set this up the stack, but the code is not
+// structured in a way that makes this easy, so this will have to do for now.
+var testMakeRequestDialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 
 func makeRequest(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.Reader, regOpts *registryOptions) (*http.Response, error) {
 	if requestURL.Scheme != "http" && regOpts != nil && regOpts.Insecure {
@@ -1104,14 +755,15 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 		req.ContentLength = contentLength
 	}
 
-	resp, err := (&http.Client{
+	c := &http.Client{
 		CheckRedirect: regOpts.CheckRedirect,
-	}).Do(req)
-	if err != nil {
-		return nil, err
 	}
-
-	return resp, nil
+	if testMakeRequestDialContext != nil {
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.DialContext = testMakeRequestDialContext
+		c.Transport = tr
+	}
+	return c.Do(req)
 }
 
 func getValue(header, key string) string {

@@ -39,7 +39,7 @@ func (t *winTray) UpdateAvailable(ver string) error {
 		if err := t.addOrUpdateMenuItem(updateAvailableMenuID, 0, updateAvailableMenuTitle, true); err != nil {
 			return fmt.Errorf("unable to create menu entries %w", err)
 		}
-		if err := t.addOrUpdateMenuItem(updateMenuID, 0, updateMenutTitle, false); err != nil {
+		if err := t.addOrUpdateMenuItem(updateMenuID, 0, updateMenuTitle, false); err != nil {
 			return fmt.Errorf("unable to create menu entries %w", err)
 		}
 		if err := t.addSeparatorMenuItem(separatorMenuID, 0); err != nil {

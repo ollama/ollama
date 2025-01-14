@@ -11,7 +11,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/server/imageproc"
+	"github.com/ollama/ollama/model/mllama"
 	"github.com/ollama/ollama/template"
 )
 
@@ -92,7 +92,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 			var imgData llm.ImageData
 
 			if isMllama {
-				data, aspectRatioID, err := imageproc.Preprocess(i)
+				data, opts, err := mllama.Preprocess(bytes.NewReader(i))
 				if err != nil {
 					return "", nil, err
 				}
@@ -103,10 +103,15 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 					return "", nil, err
 				}
 
+				ar, ok := opts["aspectRatioIndex"].(int)
+				if !ok {
+					return "", nil, fmt.Errorf("missing aspect ratio for image")
+				}
+
 				imgData = llm.ImageData{
 					ID:            len(images),
 					Data:          buf.Bytes(),
-					AspectRatioID: aspectRatioID,
+					AspectRatioID: ar,
 				}
 				imgPrompt = "<|image|>"
 			} else {
@@ -114,7 +119,6 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 					ID:   len(images),
 					Data: i,
 				}
-				imgPrompt = " "
 			}
 
 			imgTag := fmt.Sprintf("[img-%d]", imgData.ID)
@@ -126,7 +130,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 			images = append(images, imgData)
 		}
-		msgs[currMsgIdx+cnt].Content = strings.TrimSpace(prefix + imgPrompt + prompt)
+		msgs[currMsgIdx+cnt].Content = prefix + imgPrompt + prompt
 	}
 
 	// truncate any messages that do not fit into the context window

@@ -1,4 +1,4 @@
-package main
+package runner
 
 import (
 	"errors"
@@ -199,30 +199,48 @@ func countCommonPrefix(a []input, b []input) int {
 	return count
 }
 
+func (c *InputCache) ShiftDiscard(inputLen int, numKeep int) int {
+	targetFree := (c.numCtx - numKeep) / 2
+	targetFree = max(targetFree, 1)
+
+	currentFree := c.numCtx - inputLen
+	discard := targetFree - currentFree
+
+	if discard < 0 {
+		discard = 0
+	}
+
+	return discard
+}
+
 // Frees up space in the KV cache by deleting the oldest half of history and shifting
 // the newest half into that space (saving numKeep inputs at the beginning).
 //
 // Assumes that at least 1 entry can be freed up by shifting (i.e. numKeep < numCtx)
-func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int) {
-	targetFree := (c.numCtx - numKeep) / 2
-	targetFree = max(targetFree, 1)
-
-	currentFree := c.numCtx - len(slot.Inputs)
-	discard := targetFree - currentFree
-
-	if discard <= 0 {
-		return
+func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int) error {
+	if numKeep >= c.numCtx {
+		return fmt.Errorf("unable to shift context - keep exceeds context (keep: %v context: %v)", numKeep, c.numCtx)
 	}
 
-	slog.Debug("context limit hit - shifting", "limit", c.numCtx, "input", len(slot.Inputs),
+	discard := c.ShiftDiscard(len(slot.Inputs), numKeep)
+
+	if discard <= 0 {
+		return nil
+	}
+
+	slog.Debug("context limit hit - shifting", "id", slot.Id, "limit", c.numCtx, "input", len(slot.Inputs),
 		"keep", numKeep, "discard", discard)
 
 	// TODO (jessegross): KV cache removal can fail for certain types of models
-	c.lc.KvCacheSeqRm(slot.Id, numKeep, numKeep+discard)
+	if !c.lc.KvCacheSeqRm(slot.Id, numKeep, numKeep+discard) {
+		return fmt.Errorf("unable to remove old kv cache entries (id: %v, keep: %v discard: %v)", slot.Id, numKeep, discard)
+	}
 	c.lc.KvCacheSeqAdd(slot.Id, numKeep+discard, len(slot.Inputs), -discard)
 
 	for i := numKeep + discard; i < len(slot.Inputs); i++ {
 		slot.Inputs[i-discard] = slot.Inputs[i]
 	}
 	slot.Inputs = slot.Inputs[:len(slot.Inputs)-discard]
+
+	return nil
 }

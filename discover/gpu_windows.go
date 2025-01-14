@@ -209,7 +209,7 @@ func processSystemLogicalProcessorInforationList(buf []byte) []*winPackage {
 		}
 	}
 
-	// Sumarize the results
+	// Summarize the results
 	for i, pkg := range packages {
 		slog.Info("", "package", i, "cores", pkg.coreCount, "efficiency", pkg.efficiencyCoreCount, "threads", pkg.threadCount)
 	}

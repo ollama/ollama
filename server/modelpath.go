@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/types/model"
 )
 
 type ModelPath struct {
@@ -93,11 +95,16 @@ func (mp ModelPath) GetShortTagname() string {
 
 // GetManifestPath returns the path to the manifest file for the given model path, it is up to the caller to create the directory if it does not exist.
 func (mp ModelPath) GetManifestPath() (string, error) {
-	if p := filepath.Join(mp.Registry, mp.Namespace, mp.Repository, mp.Tag); filepath.IsLocal(p) {
-		return filepath.Join(envconfig.Models(), "manifests", p), nil
+	name := model.Name{
+		Host:      mp.Registry,
+		Namespace: mp.Namespace,
+		Model:     mp.Repository,
+		Tag:       mp.Tag,
 	}
-
-	return "", errModelPathInvalid
+	if !name.IsValid() {
+		return "", fs.ErrNotExist
+	}
+	return filepath.Join(envconfig.Models(), "manifests", name.Filepath()), nil
 }
 
 func (mp ModelPath) BaseURL() *url.URL {
