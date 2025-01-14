@@ -438,7 +438,7 @@ func TestConvertValid(t *testing.T) {
 
 	for _, tt := range testCases {
 		t.Run(tt, func(t *testing.T) {
-			// t.Parallel()
+			t.Parallel()
 
 			testDir := filepath.Join("testdata", tt)
 			if testing.Short() {
@@ -468,7 +468,7 @@ func TestConvertValid(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				if err := os.WriteFile(dst, data, 0644); err != nil {
+				if err := os.WriteFile(dst, data, 0o644); err != nil {
 					t.Fatal(err)
 				}
 			}
