@@ -43,6 +43,7 @@ func TestExpandPath(t *testing.T) {
 		{"~nonexistentuser/file.txt", "", "", "", true},
 		{"relative/path/to/file", "", filepath.Join(os.Getenv("PWD"), "relative/path/to/file"), "relative\\path\\to\\file", false},
 		{"/absolute/path/to/file", "", "/absolute/path/to/file", "D:\\absolute\\path\\to\\file", false},
+		{"/absolute/path/to/file", "someotherdir/", "/absolute/path/to/file", "D:\\absolute\\path\\to\\file", false},
 		{".", os.Getenv("PWD"), "", os.Getenv("PWD"), false},
 		{"somefile", "somedir", filepath.Join(os.Getenv("PWD"), "somedir", "somefile"), "somedir\\somefile", false},
 	}

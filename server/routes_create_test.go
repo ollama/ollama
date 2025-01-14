@@ -710,3 +710,51 @@ func TestCreateDetectTemplate(t *testing.T) {
 		})
 	})
 }
+
+func TestDetectModelTypeFromFiles(t *testing.T) {
+	t.Run("gguf file", func(t *testing.T) {
+		_, digest := createBinFile(t, nil, nil)
+		files := map[string]string{
+			"model.gguf": digest,
+		}
+
+		modelType := detectModelTypeFromFiles(files)
+		if modelType != "gguf" {
+			t.Fatalf("expected model type 'gguf', got %q", modelType)
+		}
+	})
+
+	t.Run("gguf file w/o extension", func(t *testing.T) {
+		_, digest := createBinFile(t, nil, nil)
+		files := map[string]string{
+			fmt.Sprintf("%x", digest): digest,
+		}
+
+		modelType := detectModelTypeFromFiles(files)
+		if modelType != "gguf" {
+			t.Fatalf("expected model type 'gguf', got %q", modelType)
+		}
+	})
+
+	t.Run("safetensors file", func(t *testing.T) {
+		files := map[string]string{
+			"model.safetensors": "sha256:abc123",
+		}
+
+		modelType := detectModelTypeFromFiles(files)
+		if modelType != "safetensors" {
+			t.Fatalf("expected model type 'safetensors', got %q", modelType)
+		}
+	})
+
+	t.Run("unsupported file type", func(t *testing.T) {
+		files := map[string]string{
+			"model.bin": "sha256:invalid",
+		}
+
+		modelType := detectModelTypeFromFiles(files)
+		if modelType != "" {
+			t.Fatalf("expected empty model type for unsupported file, got %q", modelType)
+		}
+	})
+}
