@@ -178,12 +178,35 @@ func convertModelFromFiles(files map[string]string, baseLayers []*layerGGML, isA
 }
 
 func detectModelTypeFromFiles(files map[string]string) string {
-	// todo make this more robust by actually introspecting the files
 	for fn := range files {
 		if strings.HasSuffix(fn, ".safetensors") {
 			return "safetensors"
-		} else if strings.HasSuffix(fn, ".bin") || strings.HasSuffix(fn, ".gguf") {
+		} else if strings.HasSuffix(fn, ".gguf") {
 			return "gguf"
+		} else {
+			// try to see if we can find a gguf file even without the file extension
+			blobPath, err := GetBlobsPath(files[fn])
+			if err != nil {
+				slog.Error("error gettings blobs path")
+				return ""
+			}
+
+			f, err := os.Open(blobPath)
+			if err != nil {
+				slog.Error("error reading file", "error", err)
+				return ""
+			}
+			buf := make([]byte, 4)
+			_, err = f.Read(buf)
+			if err != nil {
+				slog.Error("error reading file", "error", err)
+				return ""
+			}
+
+			ct := llm.DetectGGMLType(buf)
+			if ct == "gguf" {
+				return "gguf"
+			}
 		}
 	}
 
