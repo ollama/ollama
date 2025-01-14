@@ -1,0 +1,18 @@
+{
+    "general.architecture": "llama",
+    "general.file_type": "1",
+    "general.quantization_version": "2",
+    "llama.block_count": "32",
+    "llama.context_length": "8192",
+    "llama.embedding_length": "4096",
+    "llama.feed_forward_length": "14336",
+    "llama.rope.dimension_count": "128",
+    "llama.rope.freq_base": "500000",
+    "llama.vocab_size": "128256",
+    "llama.attention.head_count": "32",
+    "llama.attention.head_count_kv": "8",
+    "llama.attention.layer_norm_rms_epsilon": "1e-05",
+    "tokenizer.ggml.model": "gpt2",
+    "tokenizer.ggml.bos_token_id": "128000", 
+    "tokenizer.ggml.eos_token_id": "128009"
+}

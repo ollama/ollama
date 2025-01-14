@@ -96,58 +96,6 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestConvertModel(t *testing.T) {
-	cases := []string{
-		"Meta-Llama-3-8B-Instruct",
-		"Meta-Llama-3.1-8B-Instruct",
-		"Mistral-7B-Instruct-v0.2",
-		"Mixtral-8x7B-Instruct-v0.1",
-		"gemma-2b-it",
-		"gemma-2-2b-it",
-		// microsoft/Phi-3-mini-128-instruct@d548c233192db00165d842bf8edff054bb3212f8
-		"Phi-3-mini-128k-instruct",
-		"all-MiniLM-L6-v2",
-		"gemma-2-9b-it",
-	}
-
-	for i := range cases {
-		tt := cases[i]
-		t.Run(tt, func(t *testing.T) {
-			t.Parallel()
-
-			p := filepath.Join("testdata", tt)
-			if testing.Short() {
-				t.Skip("skipping in short mode")
-			} else if _, err := os.Stat(p); err != nil {
-				t.Skipf("%s not found", p)
-			}
-
-			f, kv, tensors := convertFull(t, os.DirFS(p))
-			actual := generateResultsJSON(t, f, kv, tensors)
-
-			expectFile, err := os.Open(filepath.Join("testdata", fmt.Sprintf("%s.json", tt)))
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			var expect map[string]string
-			if err := json.NewDecoder(expectFile).Decode(&expect); err != nil {
-				t.Fatal(err)
-			}
-
-			keys := maps.Keys(expect)
-			slices.Sort(keys)
-			for _, k := range keys {
-				if v, ok := actual[k]; !ok {
-					t.Errorf("missing %s", k)
-				} else if v != expect[k] {
-					t.Errorf("unexpected %s: want %s, got %s", k, expect[k], v)
-				}
-			}
-		})
-	}
-}
-
 func TestConvertInvalidTensorNames(t *testing.T) {
 	f, err := os.CreateTemp(t.TempDir(), "testmodel")
 	if err != nil {
@@ -472,5 +420,166 @@ func generateLoraTestData(t *testing.T, tempDir string) {
 	_, err = f.WriteString(configData)
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestConvertValid(t *testing.T) {
+	entries, err := os.ReadDir("testdata")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var testCases []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			testCases = append(testCases, entry.Name())
+		}
+	}
+
+	for _, tt := range testCases {
+		t.Run(tt, func(t *testing.T) {
+			// t.Parallel()
+
+			testDir := filepath.Join("testdata", tt)
+			if testing.Short() {
+				t.Skip("skipping in short mode")
+			}
+
+			expectFile, err := os.Open(filepath.Join(testDir, "expected.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer expectFile.Close()
+
+			var expected map[string]string
+			if err := json.NewDecoder(expectFile).Decode(&expected); err != nil {
+				t.Fatal(err)
+			}
+
+			tempDir := t.TempDir()
+
+			// Copy config.json, tokenizer.json, and tokenizer_config.json from testdata to temp directory
+			for _, file := range []string{"config.json", "tokenizer.json", "tokenizer_config.json"} {
+				src := filepath.Join(testDir, file)
+				dst := filepath.Join(tempDir, file)
+
+				data, err := os.ReadFile(src)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if err := os.WriteFile(dst, data, 0644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			// Load tensor configurations
+			type TensorConfig struct {
+				Type  string  `json:"type"`
+				Shape []int   `json:"shape"`
+				Value float32 `json:"value"`
+			}
+
+			type TensorData struct {
+				Tensors map[string]TensorConfig `json:"tensors"`
+			}
+
+			tensorsFile, err := os.Open(filepath.Join(testDir, "tensors.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tensorsFile.Close()
+
+			var tensorData TensorData
+			if err := json.NewDecoder(tensorsFile).Decode(&tensorData); err != nil {
+				t.Fatal(err)
+			}
+
+			// Generate test data with tensor configurations from file
+			td := map[string]*TensorConfig{}
+			var totalOffset int
+
+			// Calculate offsets and create tensor data
+			for name, tensor := range tensorData.Tensors {
+				size := 1
+				for _, dim := range tensor.Shape {
+					size *= dim
+				}
+
+				td[name] = &TensorConfig{
+					Type:  tensor.Type,
+					Shape: tensor.Shape,
+					Value: tensor.Value,
+				}
+
+				totalOffset += size * 4
+			}
+
+			// Generate test safetensor test data
+			data, err := json.Marshal(td)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var buf bytes.Buffer
+
+			// Write header length
+			l := int64(len(data))
+			err = binary.Write(&buf, binary.LittleEndian, l)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Write header data
+			_, err = buf.Write(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Write tensor data for each tensor
+			for _, tensor := range tensorData.Tensors {
+				size := 1
+				for _, dim := range tensor.Shape {
+					size *= dim
+				}
+
+				values := make([]float32, size)
+				for i := range values {
+					values[i] = tensor.Value
+				}
+
+				err = binary.Write(&buf, binary.LittleEndian, values)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			// Write the test safetensor file
+			fdata, err := os.Create(filepath.Join(tempDir, "model.safetensors"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer fdata.Close()
+
+			_, err = fdata.Write(buf.Bytes())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// Convert and verify
+			f, kv, tensors := convertFull(t, os.DirFS(tempDir))
+			actual := generateResultsJSON(t, f, kv, tensors)
+
+			// Verify results
+			keys := maps.Keys(expected)
+			slices.Sort(keys)
+			for _, k := range keys {
+				if v, ok := actual[k]; !ok {
+					t.Errorf("missing %s", k)
+				} else if v != expected[k] {
+					t.Errorf("unexpected %s: want %s, got %s", k, expected[k], v)
+				}
+			}
+		})
 	}
 }

@@ -1,0 +1,10 @@
+{
+    "bos_token": {
+        "content": "<s>"
+    },
+    "eos_token": {
+        "content": "</s>"
+    },
+    "add_bos_token": true,
+    "add_eos_token": true
+}

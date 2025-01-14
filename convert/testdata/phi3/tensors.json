@@ -1,0 +1,19 @@
+{
+    "tensors": {
+        "token_embd.weight": {
+            "type": "F32",
+            "shape": [
+                128256,
+                4096
+            ],
+            "value": 1.0
+        },
+        "blk.0.attn_norm.weight": {
+            "type": "F32",
+            "shape": [
+                4096
+            ],
+            "value": 1.0
+        }
+    }
+}

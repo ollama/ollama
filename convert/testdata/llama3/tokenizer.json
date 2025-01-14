@@ -1,0 +1,46 @@
+{
+    "model": {
+        "type": "gpt2",
+        "pre": "llama-bpe",
+        "vocab_size": 128256,
+        "bos_token_id": 128000,
+        "eos_token_id": 128009,
+        "tokens": [
+            {
+                "id": 128000,
+                "piece": "<|begin_of_text|>"
+            },
+            {
+                "id": 128009,
+                "piece": "<|end_of_text|>"
+            }
+        ]
+    },
+    "added_tokens": [
+        {
+            "id": 128000,
+            "content": "<s>",
+            "single_word": false,
+            "lstrip": false,
+            "rstrip": false,
+            "normalized": false,
+            "special": true
+        },
+        {
+            "id": 128009,
+            "content": "</s>",
+            "single_word": false,
+            "lstrip": false,
+            "rstrip": false,
+            "normalized": false,
+            "special": true
+        }
+    ],
+    "merges": [
+        "#version: 0.2",
+        "Ġ t",
+        "Ġ a",
+        "Ġ i",
+        "Ġ s"
+    ]
+}

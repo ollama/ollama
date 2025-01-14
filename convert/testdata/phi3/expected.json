@@ -1,0 +1,22 @@
+{
+    "general.architecture": "phi3",
+    "general.file_type": "1",
+    "general.quantization_version": "2",
+    "phi3.block_count": "32",
+    "phi3.context_length": "131072",
+    "phi3.embedding_length": "3072",
+    "phi3.feed_forward_length": "8192",
+    "phi3.rope.scaling.original_context_length": "4096",
+    "phi3.rope.dimension_count": "96",
+    "phi3.rope.freq_base": "10000",
+    "phi3.rope.scaling.attn_factor": "1.1902381",
+    "phi3.attention.head_count": "32",
+    "phi3.attention.head_count_kv": "32",
+    "phi3.attention.layer_norm_rms_epsilon": "1e-05",
+    "phi3.attention.sliding_window": "262144",
+    "tokenizer.ggml.pre": "default",
+    "tokenizer.ggml.add_bos_token": "false",
+    "tokenizer.ggml.add_eos_token": "false",
+    "tokenizer.ggml.bos_token_id": "1",
+    "tokenizer.ggml.eos_token_id": "32000"
+}

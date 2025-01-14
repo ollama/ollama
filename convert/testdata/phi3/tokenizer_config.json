@@ -1,0 +1,41 @@
+{
+    "add_bos_token": false,
+    "add_eos_token": false,
+    "added_tokens_decoder": {
+        "0": {
+            "content": "<unk>",
+            "lstrip": false,
+            "normalized": false,
+            "rstrip": false,
+            "single_word": false,
+            "special": true
+        },
+        "1": {
+            "content": "<s>",
+            "lstrip": false,
+            "normalized": false,
+            "rstrip": false,
+            "single_word": false,
+            "special": true
+        },
+        "2": {
+            "content": "</s>",
+            "lstrip": false,
+            "normalized": false,
+            "rstrip": true,
+            "single_word": false,
+            "special": false
+        },
+        "32000": {
+          "content": "<|endoftext|>",
+          "lstrip": false,
+          "normalized": false,
+          "rstrip": false,
+          "single_word": false,
+          "special": true
+        }
+    },
+    "bos_token": "<s>",
+    "eos_token": "<|endoftext|>",
+    "tokenizer_class": "LlamaTokenizer"
+}

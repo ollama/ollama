@@ -1,0 +1,232 @@
+{
+    "version": "1.0",
+    "truncation": null,
+    "padding": null,
+    "added_tokens": [
+        {
+            "id": 0,
+            "content": "<unk>",
+            "single_word": false,
+            "lstrip": false,
+            "rstrip": false,
+            "normalized": false,
+            "special": true
+        },
+        {
+            "id": 1,
+            "content": "<s>",
+            "single_word": false,
+            "lstrip": false,
+            "rstrip": false,
+            "normalized": false,
+            "special": true
+        },
+        {
+            "id": 2,
+            "content": "</s>",
+            "single_word": false,
+            "lstrip": false,
+            "rstrip": true,
+            "normalized": false,
+            "special": false
+        },
+        {
+            "id": 32000,
+            "content": "<|endoftext|>",
+            "single_word": false,
+            "lstrip": false,
+            "rstrip": false,
+            "normalized": false,
+            "special": true
+        },
+        {
+            "id": 32001,
+            "content": "<|assistant|>",
+            "single_word": false,
+            "lstrip": false,
+            "rstrip": true,
+            "normalized": false,
+            "special": true
+        },
+        {
+            "id": 32002,
+            "content": "<|placeholder1|>",
+            "single_word": false,
+            "lstrip": false,
+            "rstrip": true,
+            "normalized": false,
+            "special": true
+        },
+        {
+            "id": 32003,
+            "content": "<|placeholder2|>",
+            "single_word": false,
+            "lstrip": false,
+            "rstrip": true,
+            "normalized": false,
+            "special": true
+        },
+        {
+            "id": 32004,
+            "content": "<|placeholder3|>",
+            "single_word": false,
+            "lstrip": false,
+            "rstrip": true,
+            "normalized": false,
+            "special": true
+        },
+        {
+            "id": 32005,
+            "content": "<|placeholder4|>",
+            "single_word": false,
+            "lstrip": false,
+            "rstrip": true,
+            "normalized": false,
+            "special": true
+        },
+        {
+            "id": 32006,
+            "content": "<|system|>",
+            "single_word": false,
+            "lstrip": false,
+            "rstrip": true,
+            "normalized": false,
+            "special": true
+        },
+        {
+            "id": 32007,
+            "content": "<|end|>",
+            "single_word": false,
+            "lstrip": false,
+            "rstrip": true,
+            "normalized": false,
+            "special": true
+        },
+        {
+            "id": 32008,
+            "content": "<|placeholder5|>",
+            "single_word": false,
+            "lstrip": false,
+            "rstrip": true,
+            "normalized": false,
+            "special": true
+        },
+        {
+            "id": 32009,
+            "content": "<|placeholder6|>",
+            "single_word": false,
+            "lstrip": false,
+            "rstrip": true,
+            "normalized": false,
+            "special": true
+        },
+        {
+            "id": 32010,
+            "content": "<|user|>",
+            "single_word": false,
+            "lstrip": false,
+            "rstrip": true,
+            "normalized": false,
+            "special": true
+        }
+    ],
+    "normalizer": {
+        "type": "Sequence",
+        "normalizers": [
+            {
+                "type": "Prepend",
+                "prepend": "▁"
+            },
+            {
+                "type": "Replace",
+                "pattern": {
+                    "String": " "
+                },
+                "content": "▁"
+            }
+        ]
+    },
+    "pre_tokenizer": null,
+    "post_processor": {
+        "type": "TemplateProcessing",
+        "single": [
+            {
+                "Sequence": {
+                    "id": "A",
+                    "type_id": 0
+                }
+            }
+        ],
+        "pair": [
+            {
+                "Sequence": {
+                    "id": "A",
+                    "type_id": 0
+                }
+            },
+            {
+                "Sequence": {
+                    "id": "B",
+                    "type_id": 1
+                }
+            }
+        ],
+        "special_tokens": {}
+    },
+    "decoder": {
+        "type": "Sequence",
+        "decoders": [
+            {
+                "type": "Replace",
+                "pattern": {
+                    "String": "▁"
+                },
+                "content": " "
+            },
+            {
+                "type": "ByteFallback"
+            },
+            {
+                "type": "Fuse"
+            },
+            {
+                "type": "Strip",
+                "content": " ",
+                "start": 1,
+                "stop": 0
+            }
+        ]
+    },
+    "model": {
+        "type": "BPE",
+        "dropout": null,
+        "unk_token": "<unk>",
+        "continuing_subword_prefix": null,
+        "end_of_word_suffix": null,
+        "fuse_unk": true,
+        "byte_fallback": true,
+        "vocab": {
+            "<unk>": 0,
+            "<s>": 1,
+            "</s>": 2,
+            "<0x00>": 3,
+            "<0x01>": 4,
+            "<0x02>": 5,
+            "<0x03>": 6,
+            "<0x04>": 7,
+            "<0x05>": 8,
+            "<0x06>": 9,
+            "<0x07>": 10,
+            "<0x08>": 11,
+            "<0x09>": 12,
+            "<0x0A>": 13,
+            "<0x0B>": 14,
+            "<0x0C>": 15,
+            "<0x0D>": 16,
+            "<0x0E>": 17,
+            "<0x0F>": 18,
+            "<0x10>": 19,
+            "<0x11>": 20
+        }
+    }
+}

@@ -1,0 +1,23 @@
+{
+    "architectures": [
+        "LlamaForCausalLM"
+    ],
+    "bos_token_id": 128000,
+    "eos_token_id": 128009,
+    "hidden_size": 4096,
+    "intermediate_size": 14336,
+    "max_position_embeddings": 8192,
+    "num_attention_heads": 32,
+    "num_key_value_heads": 8,
+    "num_hidden_layers": 32,
+    "rms_norm_eps": 1e-5,
+    "vocab_size": 128256,
+    "rope_theta": 500000,
+    "rope_scaling": {
+        "factor": 8.0,
+        "low_freq_factor": 1.0,
+        "high_freq_factor": 4.0,
+        "original_max_position_embeddings": 8192,
+        "rope_type": "llama3"
+    }
+}
