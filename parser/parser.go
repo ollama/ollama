@@ -564,7 +564,9 @@ func isValidCommand(cmd string) bool {
 }
 
 func expandPathImpl(path, relativeDir string, currentUserFunc func() (*user.User, error), lookupUserFunc func(string) (*user.User, error)) (string, error) {
-	if strings.HasPrefix(path, "~") {
+	if filepath.IsAbs(path) {
+		return path, nil
+	} else if strings.HasPrefix(path, "~") {
 		var homeDir string
 
 		if path == "~" || strings.HasPrefix(path, "~/") {
@@ -591,8 +593,6 @@ func expandPathImpl(path, relativeDir string, currentUserFunc func() (*user.User
 		}
 
 		path = filepath.Join(homeDir, path)
-	} else if filepath.IsAbs(path) {
-		return path, nil
 	} else {
 		path = filepath.Join(relativeDir, path)
 	}

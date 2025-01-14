@@ -187,7 +187,7 @@ func detectModelTypeFromFiles(files map[string]string) string {
 			// try to see if we can find a gguf file even without the file extension
 			blobPath, err := GetBlobsPath(files[fn])
 			if err != nil {
-				slog.Error("error gettings blobs path")
+				slog.Error("error getting blobs path", "file", fn)
 				return ""
 			}
 
@@ -196,6 +196,8 @@ func detectModelTypeFromFiles(files map[string]string) string {
 				slog.Error("error reading file", "error", err)
 				return ""
 			}
+			defer f.Close()
+
 			buf := make([]byte, 4)
 			_, err = f.Read(buf)
 			if err != nil {

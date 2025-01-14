@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"cmp"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -748,13 +749,62 @@ func TestDetectModelTypeFromFiles(t *testing.T) {
 	})
 
 	t.Run("unsupported file type", func(t *testing.T) {
+		p := t.TempDir()
+		t.Setenv("OLLAMA_MODELS", p)
+
+		data := []byte("12345678")
+		digest := fmt.Sprintf("sha256:%x", sha256.Sum256(data))
+		if err := os.MkdirAll(filepath.Join(p, "blobs"), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		f, err := os.Create(filepath.Join(p, "blobs", fmt.Sprintf("sha256-%s", strings.TrimPrefix(digest, "sha256:"))))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+
+		if _, err := f.Write(data); err != nil {
+			t.Fatal(err)
+		}
+
 		files := map[string]string{
-			"model.bin": "sha256:invalid",
+			"model.bin": digest,
 		}
 
 		modelType := detectModelTypeFromFiles(files)
 		if modelType != "" {
 			t.Fatalf("expected empty model type for unsupported file, got %q", modelType)
+		}
+	})
+
+	t.Run("file with less than 4 bytes", func(t *testing.T) {
+		p := t.TempDir()
+		t.Setenv("OLLAMA_MODELS", p)
+
+		data := []byte("123")
+		digest := fmt.Sprintf("sha256:%x", sha256.Sum256(data))
+		if err := os.MkdirAll(filepath.Join(p, "blobs"), 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		f, err := os.Create(filepath.Join(p, "blobs", fmt.Sprintf("sha256-%s", strings.TrimPrefix(digest, "sha256:"))))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+
+		if _, err := f.Write(data); err != nil {
+			t.Fatal(err)
+		}
+
+		files := map[string]string{
+			"noext": digest,
+		}
+
+		modelType := detectModelTypeFromFiles(files)
+		if modelType != "" {
+			t.Fatalf("expected empty model type for small file, got %q", modelType)
 		}
 	})
 }
