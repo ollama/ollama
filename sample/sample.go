@@ -1,9 +1,10 @@
 package sample
 
 import (
+	"cmp"
 	"errors"
 	"math"
-	"sort"
+	"slices"
 
 	"gonum.org/v1/gonum/floats"
 	"gonum.org/v1/gonum/stat/sampleuv"
@@ -20,13 +21,12 @@ func (s Temperature) Sample(logits []float64) ([]float64, error) {
 		return nil, errors.New("temperature must be between 0 and 1")
 	}
 
-	copiedLogits := append([]float64(nil), logits...)
-	// Greedy sampling
+	// greedy sampling
 	if s == 0 {
-		return []float64{floats.Max(copiedLogits)}, nil
+		return []float64{floats.Max(logits)}, nil
 	}
-	floats.Scale(1.0/float64(s), copiedLogits)
-	return copiedLogits, nil
+	floats.Scale(1.0/float64(s), logits)
+	return logits, nil
 }
 
 type softmax struct{}
@@ -69,8 +69,9 @@ func (k TopK) Sample(logits []float64) ([]float64, error) {
 		indices[i] = i
 	}
 
-	sort.Slice(indices, func(i, j int) bool {
-		return logits[indices[i]] > logits[indices[j]]
+	// sort in descending order
+	slices.SortFunc(indices, func(i, j int) int {
+		return cmp.Compare(logits[j], logits[i])
 	})
 
 	for _, idx := range indices[k:] {
@@ -96,8 +97,10 @@ func (p TopP) Sample(logits []float64) ([]float64, error) {
 	for i := range indices {
 		indices[i] = i
 	}
-	sort.Slice(indices, func(i, j int) bool {
-		return probs[indices[i]] > probs[indices[j]]
+
+	// sort in descending order
+	slices.SortFunc(indices, func(i, j int) int {
+		return cmp.Compare(probs[j], probs[i])
 	})
 
 	cumSum := 0.0
@@ -127,9 +130,9 @@ func (p MinP) Sample(logits []float64) ([]float64, error) {
 	copiedProbs := make([]float64, len(probs))
 	copy(copiedProbs, probs)
 
-	sort.Slice(copiedProbs, func(i, j int) bool { return copiedProbs[i] > copiedProbs[j] })
+	slices.Sort(copiedProbs)
 
-	maxProb := floats.Max(probs)
+	maxProb := copiedProbs[len(copiedProbs)-1]
 	probThreshold := float64(p) * maxProb
 
 	for i := range probs {
@@ -162,20 +165,23 @@ func (s weighed) Sample(logits []float64) ([]float64, error) {
 		return nil, errors.New("no valid tokens found")
 	}
 
+	// usually, a softmax is applied to sample from the logits
+	// in this case the uv sampler normalizes the logits so that the sum of the weights is 1
 	w := sampleuv.NewWeighted(logitsCopy, nil)
 	if v, ok := w.Take(); ok {
+		// returns the token ID
 		return []float64{float64(indices[v])}, nil
 	}
 	return nil, errors.New("weighed sampler failed")
 }
 
-func Sample(tokenID []float64, samplers ...Sampler) ([]float64, error) {
+func Sample(logits []float64, samplers ...Sampler) ([]float64, error) {
 	var err error
 	for _, sampler := range samplers {
-		tokenID, err = sampler.Sample(tokenID)
+		logits, err = sampler.Sample(logits)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return tokenID, nil
+	return logits, nil
 }
