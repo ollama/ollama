@@ -565,7 +565,7 @@ func isValidCommand(cmd string) bool {
 
 func expandPathImpl(path, relativeDir string, currentUserFunc func() (*user.User, error), lookupUserFunc func(string) (*user.User, error)) (string, error) {
 	if filepath.IsAbs(path) || strings.HasPrefix(path, "\\") || strings.HasPrefix(path, "/") {
-		return path, nil
+		return filepath.Abs(path)
 	} else if strings.HasPrefix(path, "~") {
 		var homeDir string
 

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -45,39 +46,78 @@ func TestExpandPath(t *testing.T) {
 		return nil, os.ErrNotExist
 	}
 
-	tests := []struct {
-		path            string
-		relativeDir     string
-		expected        string
-		windowsExpected string
-		shouldErr       bool
-	}{
-		{"~", "", "/home/testuser", "D:\\home\\testuser", false},
-		{"~/myfolder/myfile.txt", "", "/home/testuser/myfolder/myfile.txt", "D:\\home\\testuser\\myfolder\\myfile.txt", false},
-		{"~anotheruser/docs/file.txt", "", "/home/anotheruser/docs/file.txt", "D:\\home\\anotheruser\\docs\\file.txt", false},
-		{"~nonexistentuser/file.txt", "", "", "", true},
-		{"relative/path/to/file", "", filepath.Join(os.Getenv("PWD"), "relative/path/to/file"), "relative\\path\\to\\file", false},
-		{"/absolute/path/to/file", "", "/absolute/path/to/file", "D:\\absolute\\path\\to\\file", false},
-		{"/absolute/path/to/file", "someotherdir/", "/absolute/path/to/file", "D:\\absolute\\path\\to\\file", false},
-		{".", os.Getenv("PWD"), os.Getenv("PWD"), os.Getenv("PWD"), false},
-		{".", "", os.Getenv("PWD"), os.Getenv("PWD"), false},
-		{"somefile", "somedir", filepath.Join(os.Getenv("PWD"), "somedir", "somefile"), "somedir\\somefile", false},
+	pwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	for _, test := range tests {
-		result, err := expandPathImpl(test.path, test.relativeDir, mockCurrentUser, mockLookupUser)
-		if (err != nil) != test.shouldErr {
-			t.Errorf("expandPathImpl(%q) returned error: %v, expected error: %v", test.path, err != nil, test.shouldErr)
+	t.Run("unix tests", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			return
 		}
 
-		if os.PathSeparator == '\\' {
-			if result != test.windowsExpected && !test.shouldErr {
-				t.Errorf("(win) expandPathImpl(%q) = %q, want %q", test.path, result, test.windowsExpected)
+		tests := []struct {
+			path            string
+			relativeDir     string
+			expected        string
+			shouldErr       bool
+		}{
+			{"~", "", "/home/testuser", false},
+			{"~/myfolder/myfile.txt", "", "/home/testuser/myfolder/myfile.txt", false},
+			{"~anotheruser/docs/file.txt", "", "/home/anotheruser/docs/file.txt", false},
+			{"~nonexistentuser/file.txt", "", "", true},
+			{"relative/path/to/file", "", filepath.Join(pwd, "relative/path/to/file"), false},
+			{"/absolute/path/to/file", "", "/absolute/path/to/file", false},
+			{"/absolute/path/to/file", "someotherdir/", "/absolute/path/to/file", false},
+			{".", pwd, pwd, false},
+			{".", "", pwd, false},
+			{"somefile", "somedir", filepath.Join(pwd, "somedir", "somefile"), false},
+		}
+
+		for _, test := range tests {
+			result, err := expandPathImpl(test.path, test.relativeDir, mockCurrentUser, mockLookupUser)
+			if (err != nil) != test.shouldErr {
+				t.Errorf("expandPathImpl(%q) returned error: %v, expected error: %v", test.path, err != nil, test.shouldErr)
 			}
-		} else {
+
 			if result != test.expected && !test.shouldErr {
 				t.Errorf("expandPathImpl(%q) = %q, want %q", test.path, result, test.expected)
 			}
 		}
-	}
+	})
+
+	t.Run("windows tests", func(t *testing.T) {
+		if runtime.GOOS != "windows" {
+			return
+		}
+
+		tests := []struct {
+			path            string
+			relativeDir     string
+			expected        string
+			shouldErr       bool
+		}{
+			{"~", "", "D:\\home\\testuser", false},
+			{"~/myfolder/myfile.txt", "", "D:\\home\\testuser\\myfolder\\myfile.txt", false},
+			{"~anotheruser/docs/file.txt", "", "D:\\home\\anotheruser\\docs\\file.txt", false},
+			{"~nonexistentuser/file.txt", "", "", true},
+			{"relative\\path\\to\\file", "", filepath.Join(pwd, "relative\\path\\to\\file"), false},
+			{"D:\\absolute\\path\\to\\file", "", "D:\\absolute\\path\\to\\file", false},
+			{"D:\\absolute\\path\\to\\file", "someotherdir/", "D:\\absolute\\path\\to\\file", false},
+			{".", pwd, pwd, false},
+			{".", "", pwd, false},
+			{"somefile", "somedir", filepath.Join(pwd, "somedir", "somefile"), false},
+		}
+
+		for _, test := range tests {
+			result, err := expandPathImpl(test.path, test.relativeDir, mockCurrentUser, mockLookupUser)
+			if (err != nil) != test.shouldErr {
+				t.Errorf("expandPathImpl(%q) returned error: %v, expected error: %v", test.path, err != nil, test.shouldErr)
+			}
+
+			if result != test.expected && !test.shouldErr {
+				t.Errorf("expandPathImpl(%q) = %q, want %q", test.path, result, test.expected)
+			}
+		}
+	})
 }
