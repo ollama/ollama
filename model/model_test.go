@@ -90,7 +90,7 @@ func TestPopulateFields(t *testing.T) {
 			"output_norm.weight",
 			"output.weight",
 		},
-	}, v))
+	}, v.Elem()))
 
 	if diff := cmp.Diff(fakeModel{
 		Input:      &nn.Embedding{Weight: &fakeTensor{Name: "input.weight"}},
@@ -125,7 +125,7 @@ func TestPopulateFieldsAlternateName(t *testing.T) {
 		names: []string{
 			"input.weight",
 		},
-	}, v))
+	}, v.Elem()))
 
 	if diff := cmp.Diff(fakeModel{
 		Input:  &nn.Embedding{Weight: &fakeTensor{Name: "input.weight"}},
