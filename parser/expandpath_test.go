@@ -57,10 +57,10 @@ func TestExpandPath(t *testing.T) {
 		}
 
 		tests := []struct {
-			path            string
-			relativeDir     string
-			expected        string
-			shouldErr       bool
+			path        string
+			relativeDir string
+			expected    string
+			shouldErr   bool
 		}{
 			{"~", "", "/home/testuser", false},
 			{"~/myfolder/myfile.txt", "", "/home/testuser/myfolder/myfile.txt", false},
@@ -92,10 +92,10 @@ func TestExpandPath(t *testing.T) {
 		}
 
 		tests := []struct {
-			path            string
-			relativeDir     string
-			expected        string
-			shouldErr       bool
+			path        string
+			relativeDir string
+			expected    string
+			shouldErr   bool
 		}{
 			{"~", "", "D:\\home\\testuser", false},
 			{"~/myfolder/myfile.txt", "", "D:\\home\\testuser\\myfolder\\myfile.txt", false},
