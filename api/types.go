@@ -340,12 +340,13 @@ type Options struct {
 
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
-	NumCtx    int   `json:"num_ctx,omitempty"`
-	NumBatch  int   `json:"num_batch,omitempty"`
-	NumGPU    int   `json:"num_gpu,omitempty"`
-	MainGPU   int   `json:"main_gpu,omitempty"`
-	UseMMap   *bool `json:"use_mmap,omitempty"`
-	NumThread int   `json:"num_thread,omitempty"`
+	NumCtx          int      `json:"num_ctx,omitempty"`
+	NumBatch        int      `json:"num_batch,omitempty"`
+	NumGPU          int      `json:"num_gpu,omitempty"`
+	MainGPU         int      `json:"main_gpu,omitempty"`
+	UseMMap         *bool    `json:"use_mmap,omitempty"`
+	NumThread       int      `json:"num_thread,omitempty"`
+	ControlStrength []string `json:"control_strength,omitempty"`
 }
 
 // EmbedRequest is the request passed to [Client.Embed].
@@ -403,14 +404,15 @@ type CreateRequest struct {
 	Stream   *bool  `json:"stream,omitempty"`
 	Quantize string `json:"quantize,omitempty"`
 
-	From       string            `json:"from,omitempty"`
-	Files      map[string]string `json:"files,omitempty"`
-	Adapters   map[string]string `json:"adapters,omitempty"`
-	Template   string            `json:"template,omitempty"`
-	License    any               `json:"license,omitempty"`
-	System     string            `json:"system,omitempty"`
-	Parameters map[string]any    `json:"parameters,omitempty"`
-	Messages   []Message         `json:"messages,omitempty"`
+	From           string              `json:"from,omitempty"`
+	Files          map[string]string   `json:"files,omitempty"`
+	Adapters       map[string]string   `json:"adapters,omitempty"`
+	ControlVectors []map[string]string `json:"controlVectors,omitempty"`
+	Template       string              `json:"template,omitempty"`
+	License        any                 `json:"license,omitempty"`
+	System         string              `json:"system,omitempty"`
+	Parameters     map[string]any      `json:"parameters,omitempty"`
+	Messages       []Message           `json:"messages,omitempty"`
 
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
@@ -720,11 +722,12 @@ func DefaultOptions() Options {
 
 		Runner: Runner{
 			// options set when the model is loaded
-			NumCtx:    int(envconfig.ContextLength()),
-			NumBatch:  512,
-			NumGPU:    -1, // -1 here indicates that NumGPU should be set dynamically
-			NumThread: 0,  // let the runtime decide
-			UseMMap:   nil,
+			NumCtx:          int(envconfig.ContextLength()),
+			NumBatch:        512,
+			NumGPU:          -1, // -1 here indicates that NumGPU should be set dynamically
+			NumThread:       0,  // let the runtime decide
+			UseMMap:         nil,
+			ControlStrength: []string{},
 		},
 	}
 }

@@ -175,6 +175,21 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	req.Files = files.Items()
 	req.Adapters = adapters.Items()
 
+	if len(req.ControlVectors) > 0 {
+		fileList := []map[string]string{}
+		for _, cv_m := range req.ControlVectors {
+			fileMap := map[string]string{}
+			for f, digest := range cv_m {
+				if _, err := createBlob(cmd, client, f, digest, p); err != nil {
+					return err
+				}
+				fileMap[filepath.Base(f)] = digest
+			}
+			fileList = append(fileList, fileMap)
+		}
+		req.ControlVectors = fileList
+	}
+
 	bars := make(map[string]*progress.Bar)
 	fn := func(resp api.ProgressResponse) error {
 		if resp.Digest != "" {
