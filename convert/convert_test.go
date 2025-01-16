@@ -109,6 +109,7 @@ func TestConvertModel(t *testing.T) {
 		"all-MiniLM-L6-v2",
 		"gemma-2-9b-it",
 		"Qwen2.5-0.5B-Instruct",
+		"c4ai-command-r-v01",
 	}
 
 	for i := range cases {
