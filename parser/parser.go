@@ -62,7 +62,13 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 				return nil, err
 			}
 
-			req.Files = digestMap
+			if req.Files == nil {
+				req.Files = digestMap
+			} else {
+				for k, v := range digestMap {
+					req.Files[k] = v
+				}
+			}
 		case "adapter":
 			path, err := expandPath(c.Args, relativeDir)
 			if err != nil {
