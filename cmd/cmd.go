@@ -59,7 +59,7 @@ func getModelfileName(cmd *cobra.Command) (string, error) {
 
 	_, err = os.Stat(absName)
 	if err != nil {
-		return filename, err
+		return "", err
 	}
 
 	return absName, nil
