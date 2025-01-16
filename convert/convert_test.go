@@ -29,6 +29,8 @@ type tensorData struct {
 	Shape   []int  `json:"shape"`
 }
 
+var generate string
+
 func convertFull(t *testing.T, fsys fs.FS) (*os.File, llm.KV, *llm.Tensors) {
 	t.Helper()
 
@@ -91,6 +93,7 @@ func generateResultsJSON(t *testing.T, f *os.File, kv llm.KV, tensors *llm.Tenso
 func TestMain(m *testing.M) {
 	var level slog.Level
 	flag.TextVar(&level, "level", slog.LevelInfo, "log level")
+	flag.StringVar(&generate, "generate", "", "generate model data")
 	flag.Parse()
 	slog.SetLogLoggerLevel(level)
 	os.Exit(m.Run())
@@ -110,6 +113,7 @@ func TestConvertModel(t *testing.T) {
 		"gemma-2-9b-it",
 		"Qwen2.5-0.5B-Instruct",
 		"c4ai-command-r-v01",
+		"c4ai-command-r7b-12-2024",
 	}
 
 	for i := range cases {
@@ -126,6 +130,19 @@ func TestConvertModel(t *testing.T) {
 
 			f, kv, tensors := convertFull(t, os.DirFS(p))
 			actual := generateResultsJSON(t, f, kv, tensors)
+
+			if generate != "" && generate == tt {
+				outFile := filepath.Join("testdata", fmt.Sprintf("%s.json", tt))
+				data, err := json.MarshalIndent(actual, "", "  ")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(outFile, data, 0644); err != nil {
+					t.Fatal(err)
+				}
+				t.Logf("Generated expected results for %s", tt)
+				return
+			}
 
 			expectFile, err := os.Open(filepath.Join("testdata", fmt.Sprintf("%s.json", tt)))
 			if err != nil {
