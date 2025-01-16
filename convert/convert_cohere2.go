@@ -44,7 +44,7 @@ func (p *cohere2Model) KV(t *Tokenizer) llm.KV {
 	kv["cohere2.attention.value_length"] = p.HeadDim
 	kv["cohere2.max_position_embeddings"] = cmp.Or(p.MaxLength, p.MaxPositionEmbeddings)
 	kv["cohere2.logit_scale"] = p.LogitScale
-	kv["cohere2.rope.dimension_count"] = uint32(p.RotaryPct * float32(p.HiddenSize / p.NumAttentionHeads))
+	kv["cohere2.rope.dimension_count"] = uint32(p.RotaryPct * float32(p.HiddenSize/p.NumAttentionHeads))
 	kv["cohere2.rope.freq_base"] = p.RopeTheta
 	kv["cohere2.rope.scaling.type"] = "none"
 	kv["cohere2.vocab_size"] = p.VocabSize
