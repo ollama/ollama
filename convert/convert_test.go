@@ -137,7 +137,7 @@ func TestConvertModel(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := os.WriteFile(outFile, data, 0644); err != nil {
+				if err := os.WriteFile(outFile, data, 0o644); err != nil {
 					t.Fatal(err)
 				}
 				t.Logf("Generated expected results for %s", tt)
