@@ -94,6 +94,17 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 			}
 
 			req.Adapters = digestMap
+		case "controlvector":
+			path, err := expandPath(c.Args, relativeDir)
+			if err != nil {
+				return nil, err
+			}
+			digestMap, err := fileDigestMap(path)
+			if err != nil {
+				return nil, err
+			}
+
+			req.ControlVectors = append(req.ControlVectors, digestMap)
 		case "template":
 			req.Template = c.Args
 		case "system":
@@ -319,7 +330,7 @@ func (c Command) String() string {
 	switch c.Name {
 	case "model":
 		fmt.Fprintf(&sb, "FROM %s", c.Args)
-	case "license", "template", "system", "adapter":
+	case "license", "template", "system", "adapter", "controlvector":
 		fmt.Fprintf(&sb, "%s %s", strings.ToUpper(c.Name), quote(c.Args))
 	case "message":
 		role, message, _ := strings.Cut(c.Args, ": ")
@@ -605,7 +616,7 @@ func isValidMessageRole(role string) bool {
 
 func isValidCommand(cmd string) bool {
 	switch strings.ToLower(cmd) {
-	case "from", "license", "template", "system", "adapter", "parameter", "message":
+	case "from", "license", "template", "system", "adapter", "parameter", "message", "controlvector":
 		return true
 	default:
 		return false
