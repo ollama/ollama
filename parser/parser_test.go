@@ -793,15 +793,20 @@ func createBinFile(t *testing.T, kv map[string]any, ti []llm.Tensor) (string, st
 }
 
 func TestCreateRequestFiles(t *testing.T) {
-	name, digest := createBinFile(t, nil, nil)
+	n1, d1 := createBinFile(t, nil, nil)
+	n2, d2 := createBinFile(t, map[string]any{"foo": "bar"}, nil)
 
 	cases := []struct {
 		input    string
 		expected *api.CreateRequest
 	}{
 		{
-			fmt.Sprintf("FROM %s", name),
-			&api.CreateRequest{Files: map[string]string{name: digest}},
+			fmt.Sprintf("FROM %s", n1),
+			&api.CreateRequest{Files: map[string]string{n1: d1}},
+		},
+		{
+			fmt.Sprintf("FROM %s\nFROM %s", n1, n2),
+			&api.CreateRequest{Files: map[string]string{n1: d1, n2: d2}},
 		},
 	}
 
