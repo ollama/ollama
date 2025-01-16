@@ -279,7 +279,7 @@ func TestGetModelfileName(t *testing.T) {
 			name:          "no modelfile specified, no modelfile exists",
 			modelfileName: "",
 			fileExists:    false,
-			expectedName:  "Modelfile",
+			expectedName:  "",
 			expectedErr:   os.ErrNotExist,
 		},
 		{
@@ -293,7 +293,7 @@ func TestGetModelfileName(t *testing.T) {
 			name:          "modelfile specified, no modelfile exists",
 			modelfileName: "crazyfile",
 			fileExists:    false,
-			expectedName:  "crazyfile",
+			expectedName:  "",
 			expectedErr:   os.ErrNotExist,
 		},
 		{
