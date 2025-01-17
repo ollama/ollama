@@ -491,7 +491,6 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Extensions & Plugins
 
-- [Rancher Desktop OpenWebUI Extension](https://docs.rancherdesktop.io/tutorials/working-with-llms/#steps-to-install)
 - [Raycast extension](https://github.com/MassimilianoPasquini97/raycast_ollama)
 - [Discollama](https://github.com/mxyng/discollama) (Discord bot inside the Ollama discord channel)
 - [Continue](https://github.com/continuedev/continue)
@@ -522,6 +521,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Discord AI chat/moderation bot](https://github.com/rapmd73/Companion) Chat/moderation bot written in python. Uses Ollama to create personalities.
 - [Headless Ollama](https://github.com/nischalj10/headless-ollama) (Scripts to automatically install ollama client & models on any OS for apps that depends on ollama server)
 - [Terraform AWS Ollama & Open WebUI](https://github.com/xuyangbocn/terraform-aws-self-host-llm) (A Terraform module to deploy on AWS a ready-to-use Ollama service, together with its front end Open WebUI service.)
+- [Rancher Desktop OpenWebUI Extension](https://docs.rancherdesktop.io/tutorials/working-with-llms/#steps-to-install)
 - [node-red-contrib-ollama](https://github.com/jakubburkiewicz/node-red-contrib-ollama)
 - [Local AI Helper](https://github.com/ivostoykov/localAI) (Chrome and Firefox extensions that enable interactions with the active tab and customisable API endpoints. Includes secure storage for user prompts.)
 - [vnc-lm](https://github.com/jake83741/vnc-lm) (Discord bot for messaging with LLMs through Ollama and LiteLLM. Seamlessly move between local and flagship models.)
