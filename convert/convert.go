@@ -187,8 +187,12 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 		conv = &gemma2Model{}
 	case "Phi3ForCausalLM":
 		conv = &phi3Model{}
+	case "Qwen2ForCausalLM":
+		conv = &qwen2Model{}
 	case "BertModel":
 		conv = &bertModel{}
+	case "CohereForCausalLM":
+		conv = &commandrModel{}
 	default:
 		return errors.New("unsupported architecture")
 	}
