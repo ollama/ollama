@@ -197,9 +197,7 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
 
 RUN groupadd -r -g 65532 ollama && \
-    useradd -r -m -u 65532 -g ollama ollama
-
-USER 65532:65532
+    useradd -r -m -u 65532 -g ollama -G video ollama
 
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
