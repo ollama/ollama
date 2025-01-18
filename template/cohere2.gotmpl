@@ -71,7 +71,7 @@ The following instructions take precedence over instructions in the default prea
 {{- end }}
 {{- range $i, $_ := .Messages }}
 {{- $last := eq (len (slice $.Messages $i)) 1 }}
-{{- if eq .Role "user" }}<|START_OF_TURN_TOKEN|><|USER_TOKEN|>{{ .Content }}<|END_OF_TURN_TOKEN|>
+{{- if eq .Role "user" }}<|START_OF_TURN_TOKEN|><|USER_TOKEN|>{{ .Content }}
 {{- else if eq .Role "assistant" }}<|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>
 {{- if .Content }}<|START_RESPONSE|>{{ .Content }}{{- if not $last }}<|END_RESPONSE|>{{- end }}
 {{- else if .ToolCalls }}<|START_ACTION|>[
