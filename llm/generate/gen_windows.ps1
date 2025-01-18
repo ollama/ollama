@@ -417,7 +417,7 @@ function build_vulkan() {
         init_vars
         $script:buildDir="../build/windows/${script:ARCH}/vulkan"
         $script:distDir="$script:DIST_BASE\vulkan"
-        $script:cmakeDefs += @("-A", "x64", "-DLLAMA_VULKAN=1")
+        $script:cmakeDefs += @("-A", "x64", "-DDGGML_VULKAN=1")
         write-host "Building Vulkan"
         build
         sign

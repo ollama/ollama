@@ -30,7 +30,7 @@ init_vars() {
         WHOLE_ARCHIVE="-Wl,-force_load"
         NO_WHOLE_ARCHIVE=""
         GCC_ARCH="-arch ${ARCH}"
-        DIST_BASE=../../dist/darwin-${GOARCH}/
+        DIST_BASE=../../dist/darwin-${GOARCH}
         PAYLOAD_BASE=../../build/darwin/${GOARCH}
         ;;
     "Linux")
@@ -40,7 +40,7 @@ init_vars() {
 
         # Cross compiling not supported on linux - Use docker
         GCC_ARCH=""
-        DIST_BASE=../../dist/linux-${GOARCH}/
+        DIST_BASE=../../dist/linux-${GOARCH}
         PAYLOAD_BASE=../../build/linux/${GOARCH}
         ;;
     *)

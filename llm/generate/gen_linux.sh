@@ -224,9 +224,9 @@ fi
 if [ -z "${OLLAMA_SKIP_VULKAN_GENERATE}" -a -d "${VULKAN_ROOT}" ] && [ -z "${OLLAMA_SKIP_VULKAN_GENERATE}" -a -d "${CAP_ROOT}" ]; then
     echo "Vulkan and capabilities libraries detected - building dynamic Vulkan library"
     init_vars
-
-    CMAKE_DEFS="${COMMON_CMAKE_DEFS} ${CMAKE_DEFS} -DLLAMA_VULKAN=1"
-    BUILD_DIR="../build/linux/${ARCH}/vulkan"
+    RUNNER=vulkan
+    CMAKE_DEFS="-DCMAKE_SKIP_RPATH=on -DBUILD_SHARED_LIBS=on -DCMAKE_POSITION_INDEPENDENT_CODE=on -DGGML_NATIVE=off -DGGML_AVX=off -DGGML_AVX2=off -DGGML_AVX512=off -DGGML_FMA=off -DGGML_F16C=off -DGGML_OPENMP=off"
+    BUILD_DIR="../build/linux/${ARCH}/${RUNNER}"
     EXTRA_LIBS="-L${VULKAN_ROOT} -L${CAP_ROOT} -lvulkan -lcap"
     build
 
@@ -234,8 +234,10 @@ if [ -z "${OLLAMA_SKIP_VULKAN_GENERATE}" -a -d "${VULKAN_ROOT}" ] && [ -z "${OLL
     for dep in $(ldd "${BUILD_DIR}/bin/ollama_llama_server" | grep "=>" | cut -f2 -d= | cut -f2 -d' ' | grep -e vulkan -e cap); do
         cp "${dep}" "${BUILD_DIR}/bin/"
     done
-    cp "${VULKAN_ROOT}/libvulkan.so*" "${BUILD_DIR}/bin/"
-    cp "${CAP_ROOT}/libcap.so*" "${BUILD_DIR}/bin/"
+    cp ${VULKAN_ROOT}/libvulkan.so* "${BUILD_DIR}/bin/"
+    cp ${CAP_ROOT}/libcap.so* "${BUILD_DIR}/bin/"
+    install
+    dist
     compress
 fi
 
