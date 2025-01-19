@@ -455,7 +455,7 @@ func GetGPUInfo() GpuInfoList {
 			bootstrapErrors = append(bootstrapErrors, err)
 		}
 		bootstrapped = true
-		if len(cudaGPUs) == 0 && len(rocmGPUs) == 0 && len(oneapiGPUs) == 0 {
+		if len(cudaGPUs) == 0 && len(rocmGPUs) == 0 && len(oneapiGPUs) == 0 && len(vulkanGPUs) == 0 {
 			slog.Info("no compatible GPUs were discovered")
 		}
 
