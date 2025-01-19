@@ -58,11 +58,13 @@ var (
 
 var VulkanGlobs = []string{
 	"/usr/lib/x86_64-linux-gnu/libvulkan.so*",
+	"/usr/lib/aarch64-linux-gnu/libvulkan.so*",
 	"/usr/lib*/libvulkan.so*",
 }
 
 var capLinuxGlobs = []string{
 	"/usr/lib/x86_64-linux-gnu/libcap.so*",
+	"/usr/lib/aarch64-linux-gnu/libvulkan.so*",
 	"/usr/lib*/libcap.so*",
 }
 
