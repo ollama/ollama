@@ -35,7 +35,7 @@ func main() {
 
 	ctx := context.Background()
 	req := &api.ChatRequest{
-		Model:    "llama3.1",
+		Model:    "llama3.2",
 		Messages: messages,
 	}
 
