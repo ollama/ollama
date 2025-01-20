@@ -249,3 +249,49 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 
 	return toolCalls, len(toolCalls) > 0
 }
+
+// handleNvidiaModel processes the Nvidia Model.
+func handleNvidiaModel(fsys fs.FS, ws io.WriteSeeker) error {
+	bts, err := fs.ReadFile(fsys, "config.json")
+	if err != nil {
+		return err
+	}
+
+	var p api.NvidiaModel
+	if err := json.Unmarshal(bts, &p); err != nil {
+		return err
+	}
+
+	t, err := parseTokenizer(fsys, nil)
+	if err != nil {
+		return err
+	}
+
+	ts, err := parseTensors(fsys, strings.NewReplacer(
+		"model.layers", "blk",
+		"self_attn.q_proj", "attn_q",
+		"self_attn.k_proj", "attn_k",
+		"self_attn.v_proj", "attn_v",
+		"self_attn.o_proj", "attn_output",
+		"mlp.gate_proj", "ffn_gate",
+		"mlp.down_proj", "ffn_down",
+		"mlp.up_proj", "ffn_up",
+		"input_layernorm", "attn_norm",
+		"post_attention_layernorm", "ffn_norm",
+		"model.embed_tokens", "token_embd",
+		"model.norm", "output_norm",
+	))
+	if err != nil {
+		return err
+	}
+
+	kv := llm.KV{
+		"general.architecture": "nvidia",
+		"nvidia.name":          p.Name,
+		"nvidia.description":   p.Description,
+		"nvidia.version":       p.Version,
+		"nvidia.url":           p.URL,
+	}
+
+	return llm.WriteGGUF(ws, kv, ts)
+}

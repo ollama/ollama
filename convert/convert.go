@@ -193,6 +193,8 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 		conv = &bertModel{}
 	case "CohereForCausalLM":
 		conv = &commandrModel{}
+	case "NvidiaModel":
+		conv = &NvidiaModel{}
 	default:
 		return errors.New("unsupported architecture")
 	}
