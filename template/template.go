@@ -121,6 +121,11 @@ var funcs = template.FuncMap{
 		b, _ := json.Marshal(v)
 		return string(b)
 	},
+	"contains":  strings.Contains,
+	"split":     strings.Split,
+	"indexOf":   strings.Index,
+	"hasPrefix": strings.HasPrefix,
+	"hasSuffix": strings.HasSuffix,
 }
 
 func Parse(s string) (*Template, error) {
@@ -285,7 +290,7 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 	})
 
 	tree := parse.Tree{Root: nodes.(*parse.ListNode)}
-	if err := template.Must(template.New("").AddParseTree("", &tree)).Execute(&b, map[string]any{
+	if err := template.Must(template.New("").Funcs(funcs).AddParseTree("", &tree)).Execute(&b, map[string]any{
 		"System":   system,
 		"Prompt":   prompt,
 		"Response": response,

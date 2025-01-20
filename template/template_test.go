@@ -376,3 +376,70 @@ func TestExecuteWithSuffix(t *testing.T) {
 		})
 	}
 }
+
+func TestStringFunctions(t *testing.T) {
+	cases := []struct {
+		name     string
+		template string
+		want     string
+	}{
+		{
+			name:     "contains (true)",
+			template: `{{ if contains "Hello World" "World" }}true{{ else }}false{{ end }}`,
+			want:     "true",
+		},
+		{
+			name:     "contains (false)",
+			template: `{{ if contains "Hello World" "world" }}true{{ else }}false{{ end }}`,
+			want:     "false",
+		},
+		{
+			name:     "split",
+			template: `{{ split "a,b,c" "," }}`,
+			want:     "[a b c]",
+		},
+		{
+			name:     "indexOf",
+			template: `{{ indexOf "Banana" "ana" }}`,
+			want:     "1", // first occurrence in "Banana" is at index 1
+		},
+		{
+			name:     "hasPrefix (true)",
+			template: `{{ if hasPrefix "foobar" "foo" }}yes{{ else }}no{{ end }}`,
+			want:     "yes",
+		},
+		{
+			name:     "hasPrefix (false)",
+			template: `{{ if hasPrefix "foobar" "bar" }}yes{{ else }}no{{ end }}`,
+			want:     "no",
+		},
+		{
+			name:     "hasSuffix (true)",
+			template: `{{ if hasSuffix "foobar" "bar" }}yes{{ else }}no{{ end }}`,
+			want:     "yes",
+		},
+		{
+			name:     "hasSuffix (false)",
+			template: `{{ if hasSuffix "foobar" "oo" }}yes{{ else }}no{{ end }}`,
+			want:     "no",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpl, err := Parse(tt.template)
+			if err != nil {
+				t.Fatal("Parse Error", err)
+			}
+
+			var buf bytes.Buffer
+			if err := tmpl.Execute(&buf, Values{}); err != nil {
+				t.Fatal("Execute Error", err)
+			}
+
+			if diff := cmp.Diff(tt.want, buf.String()); diff != "" {
+				t.Errorf("mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
