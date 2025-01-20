@@ -78,14 +78,40 @@ LLAMACPP_FILES=\
 	src/unicode-data.cpp \
 	src/unicode-data.h \
 	src/llama.cpp \
-	src/llama-impl.h \
-	src/llama-vocab.cpp \
-	src/llama-vocab.h \
+	src/llama-adapter.cpp \
+	src/llama-adapter.h \
+	src/llama-arch.cpp \
+	src/llama-arch.h \
+	src/llama-batch.cpp \
+	src/llama-batch.h \
+	src/llama-chat.cpp \
+	src/llama-chat.h \
+	src/llama-context.cpp \
+	src/llama-context.h \
+	src/llama-cparams.cpp \
+	src/llama-cparams.h \
 	src/llama-grammar.cpp \
 	src/llama-grammar.h \
+	src/llama-hparams.cpp \
+	src/llama-hparams.h \
+	src/llama-impl.cpp \
+	src/llama-impl.h \
+	src/llama-kv-cache.cpp \
+	src/llama-kv-cache.h \
+	src/llama-mmap.cpp \
+	src/llama-mmap.h \
+	src/llama-model-loader.cpp \
+	src/llama-model-loader.h \
+	src/llama-model.cpp \
+	src/llama-model.h \
+	src/llama-quant.cpp \
+	src/llama-quant.h \
 	src/llama-sampling.cpp \
 	src/llama-sampling.h \
+	src/llama-vocab.cpp \
+	src/llama-vocab.h \
 	include/llama.h \
+	include/llama-cpp.h \
 	ggml/include/ggml-cpu.h \
 	ggml/src/ggml-cpu/llamafile/sgemm.cpp \
 	ggml/src/ggml-cpu/llamafile/sgemm.h
