@@ -172,15 +172,15 @@ sudo systemctl stop ollama
 sudo systemctl disable ollama
 sudo rm /etc/systemd/system/ollama.service
 ```
+Remove the ollama libraries from your lib directory (`/usr/lib`):
 
+```shell
+sudo rm -rf /usr/lib/$(basename $(which ollama))
+```
 Remove the ollama binary from your bin directory (either `/usr/local/bin`, `/usr/bin`, or `/bin`):
 
 ```shell
 sudo rm $(which ollama)
-```
-Remove the ollama libraries from your lib directory (`/usr/lib`):
-```shell
-sudo rm -rf /usr/lib/$(basename $(which ollama))
 ```
 Remove the downloaded models and Ollama service user and group:
 
