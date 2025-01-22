@@ -7,7 +7,7 @@ import (
 	"github.com/pdevine/tensor"
 	"github.com/pdevine/tensor/native"
 
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/fs/ggml"
 )
 
 type llamaAdapter struct {
@@ -18,7 +18,7 @@ type llamaAdapter struct {
 
 var _ AdapterConverter = (*llamaAdapter)(nil)
 
-func (p *llamaAdapter) KV(baseKV llm.KV) llm.KV {
+func (p *llamaAdapter) KV(baseKV ggml.KV) ggml.KV {
 	kv := p.AdapterParameters.KV()
 	kv["general.architecture"] = "llama"
 	kv["llama.attention.head_count"] = baseKV["llama.attention.head_count"]
@@ -29,8 +29,8 @@ func (p *llamaAdapter) KV(baseKV llm.KV) llm.KV {
 	return kv
 }
 
-func (p *llamaAdapter) Tensors(ts []Tensor) []llm.Tensor {
-	var out []llm.Tensor
+func (p *llamaAdapter) Tensors(ts []Tensor) []ggml.Tensor {
+	var out []ggml.Tensor
 	for _, t := range ts {
 		shape := t.Shape()
 		if (strings.HasSuffix(t.Name(), "weight.lora_a") && shape[0] > shape[1]) ||
@@ -41,7 +41,7 @@ func (p *llamaAdapter) Tensors(ts []Tensor) []llm.Tensor {
 			t.SetRepacker(p.repack)
 		}
 
-		out = append(out, llm.Tensor{
+		out = append(out, ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    shape,
