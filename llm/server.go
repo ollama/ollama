@@ -28,8 +28,8 @@ import (
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llama"
-	"github.com/ollama/ollama/runners"
 )
 
 type LlamaServer interface {
@@ -72,7 +72,7 @@ type llmServer struct {
 // It collects array values for arrays with a size less than or equal to
 // maxArraySize. If maxArraySize is 0, the default value of 1024 is used. If
 // the maxArraySize is negative, all arrays are collected.
-func LoadModel(model string, maxArraySize int) (*GGML, error) {
+func LoadModel(model string, maxArraySize int) (*ggml.GGML, error) {
 	if _, err := os.Stat(model); err != nil {
 		return nil, err
 	}
@@ -83,35 +83,29 @@ func LoadModel(model string, maxArraySize int) (*GGML, error) {
 	}
 	defer f.Close()
 
-	ggml, _, err := DecodeGGML(f, maxArraySize)
+	ggml, _, err := ggml.Decode(f, maxArraySize)
 	return ggml, err
 }
 
 // NewLlamaServer will run a server for the given GPUs
 // The gpu list must be a single family.
-func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
-	var err error
-	var cpuRunner string
-	var estimate MemoryEstimate
-	var systemTotalMemory uint64
-	var systemFreeMemory uint64
-	var systemSwapFreeMemory uint64
-
+func NewLlamaServer(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
 	systemInfo := discover.GetSystemInfo()
-	systemTotalMemory = systemInfo.System.TotalMemory
-	systemFreeMemory = systemInfo.System.FreeMemory
-	systemSwapFreeMemory = systemInfo.System.FreeSwap
+	systemTotalMemory := systemInfo.System.TotalMemory
+	systemFreeMemory := systemInfo.System.FreeMemory
+	systemSwapFreeMemory := systemInfo.System.FreeSwap
 	slog.Info("system memory", "total", format.HumanBytes2(systemTotalMemory), "free", format.HumanBytes2(systemFreeMemory), "free_swap", format.HumanBytes2(systemSwapFreeMemory))
 
 	// If the user wants zero GPU layers, reset the gpu list to be CPU/system ram info
 	if opts.NumGPU == 0 {
 		gpus = discover.GetCPUInfo()
 	}
+
+	var estimate MemoryEstimate
 	if len(gpus) == 1 && gpus[0].Library == "cpu" {
-		cpuRunner = runners.ServerForCpu()
-		estimate = EstimateGPULayers(gpus, ggml, projectors, opts)
+		estimate = EstimateGPULayers(gpus, f, projectors, opts)
 	} else {
-		estimate = EstimateGPULayers(gpus, ggml, projectors, opts)
+		estimate = EstimateGPULayers(gpus, f, projectors, opts)
 
 		switch {
 		case gpus[0].Library == "metal" && estimate.VRAMSize > systemTotalMemory:
@@ -120,7 +114,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 			opts.NumGPU = 0
 		case gpus[0].Library != "metal" && estimate.Layers == 0:
 			// Don't bother loading into the GPU if no layers can fit
-			cpuRunner = runners.ServerForCpu()
 			gpus = discover.GetCPUInfo()
 		case opts.NumGPU < 0 && estimate.Layers > 0 && gpus[0].Library != "cpu":
 			opts.NumGPU = estimate.Layers
@@ -138,37 +131,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		}
 	}
 
-	estimate.log()
-
-	// Loop through potential servers
-	finalErr := errors.New("no suitable llama servers found")
-
-	availableServers := runners.GetAvailableServers()
-
-	var servers []string
-	if cpuRunner != "" {
-		servers = []string{cpuRunner}
-	} else {
-		servers = runners.ServersForGpu(gpus[0].RunnerName()) // All GPUs in the list are matching Library and Variant
-	}
-	demandLib := envconfig.LLMLibrary()
-	if demandLib != "" {
-		serverPath := availableServers[demandLib]
-		if serverPath == "" {
-			slog.Info(fmt.Sprintf("Invalid OLLAMA_LLM_LIBRARY %s - not found", demandLib))
-		} else {
-			slog.Info("user override", "OLLAMA_LLM_LIBRARY", demandLib, "path", serverPath)
-			servers = []string{demandLib}
-			if strings.HasPrefix(demandLib, "cpu") || (!(runtime.GOOS == "darwin" && runtime.GOARCH == "arm64") && demandLib == runners.BuiltinName()) {
-				// Omit the GPU flag to silence the warning
-				opts.NumGPU = -1
-			}
-		}
-	}
-
-	if len(servers) == 0 {
-		return nil, fmt.Errorf("no servers found for %v", gpus)
-	}
+	slog.Info("offload", "", estimate)
 
 	params := []string{
 		"--model", model,
@@ -212,7 +175,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		fa = false
 	}
 
-	if fa && !ggml.SupportsFlashAttention() {
+	if fa && !f.SupportsFlashAttention() {
 		slog.Warn("flash attention enabled but not supported by model")
 		fa = false
 	}
@@ -225,7 +188,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 
 		// Flash Attention also supports kv cache quantization
 		// Enable if the requested and kv cache type is supported by the model
-		if kvct != "" && ggml.SupportsKVCacheType(kvct) {
+		if kvct != "" && f.SupportsKVCacheType(kvct) {
 			params = append(params, "--kv-cache-type", kvct)
 		} else {
 			slog.Warn("kv cache type not supported by model", "type", kvct)
@@ -238,7 +201,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 	for _, g := range gpus {
 		if g.Library == "metal" &&
 			uint64(opts.NumGPU) > 0 &&
-			uint64(opts.NumGPU) < ggml.KV().BlockCount()+1 {
+			uint64(opts.NumGPU) < f.KV().BlockCount()+1 {
 			opts.UseMMap = new(bool)
 			*opts.UseMMap = false
 		}
@@ -270,164 +233,149 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		params = append(params, "--multiuser-cache")
 	}
 
-	for i := range servers {
-		builtin := servers[i] == runners.BuiltinName()
-		server := availableServers[servers[i]]
-		if server == "" {
-			// Shouldn't happen
-			finalErr = fmt.Errorf("[%d] server %s not listed in available servers %v", i, servers[i], availableServers)
-			slog.Error("server list inconsistent", "error", finalErr)
-			continue
-		}
-
-		if strings.HasPrefix(servers[i], "cpu") || (builtin && !(runtime.GOOS == "darwin" && runtime.GOARCH == "arm64")) {
-			gpus = discover.GetCPUInfo()
-		}
-
-		// Find an availableServers  port, retry on each iteration in case the failure was a port conflict race
-		port := 0
-		if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
-			var l *net.TCPListener
-			if l, err = net.ListenTCP("tcp", a); err == nil {
-				port = l.Addr().(*net.TCPAddr).Port
-				l.Close()
-			}
-		}
-		if port == 0 {
-			slog.Debug("ResolveTCPAddr failed ", "error", err)
-			port = rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
-		}
-		finalParams := []string{"runner"}
-		finalParams = append(finalParams, params...)
-		finalParams = append(finalParams, "--port", strconv.Itoa(port))
-
-		pathEnv := "LD_LIBRARY_PATH"
-		if runtime.GOOS == "windows" {
-			pathEnv = "PATH"
-		}
-		// Start with the server directory for the LD_LIBRARY_PATH/PATH
-		libraryPaths := []string{filepath.Dir(server)}
-
-		if libraryPath, ok := os.LookupEnv(pathEnv); ok {
-			// favor our bundled library dependencies over system libraries
-			libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
-		}
-
-		// Note: we always put the dependency path first
-		// since this was the exact version we compiled/linked against
-		if gpus[0].DependencyPath != nil {
-			// assume gpus from the same library have the same dependency path
-			libraryPaths = append(gpus[0].DependencyPath, libraryPaths...)
-		}
-
-		// TODO - once fully switched to the Go runner, load the model here for tokenize/detokenize cgo access
-		s := &llmServer{
-			port:        port,
-			cmd:         exec.Command(server, finalParams...),
-			status:      NewStatusWriter(os.Stderr),
-			options:     opts,
-			modelPath:   model,
-			estimate:    estimate,
-			numParallel: numParallel,
-			sem:         semaphore.NewWeighted(int64(numParallel)),
-			totalLayers: ggml.KV().BlockCount() + 1,
-			gpus:        gpus,
-			done:        make(chan error, 1),
-		}
-
-		s.cmd.Env = os.Environ()
-		s.cmd.Stdout = os.Stdout
-		s.cmd.Stderr = s.status
-		s.cmd.SysProcAttr = LlamaServerSysProcAttr
-
-		envWorkarounds := [][2]string{}
-		for _, gpu := range gpus {
-			envWorkarounds = append(envWorkarounds, gpu.EnvWorkarounds...)
-		}
-		visibleDevicesEnv, visibleDevicesEnvVal := gpus.GetVisibleDevicesEnv()
-		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
-
-		// Update or add the path and visible devices variable with our adjusted version
-		pathNeeded := true
-		devicesNeeded := visibleDevicesEnv != ""
-		for i := range s.cmd.Env {
-			cmp := strings.SplitN(s.cmd.Env[i], "=", 2)
-			if strings.EqualFold(cmp[0], pathEnv) {
-				s.cmd.Env[i] = pathEnv + "=" + pathEnvVal
-				pathNeeded = false
-			} else if devicesNeeded && strings.EqualFold(cmp[0], visibleDevicesEnv) {
-				s.cmd.Env[i] = visibleDevicesEnv + "=" + visibleDevicesEnvVal
-				devicesNeeded = false
-			} else if len(envWorkarounds) != 0 {
-				for _, kv := range envWorkarounds {
-					if strings.EqualFold(cmp[0], kv[0]) {
-						s.cmd.Env[i] = kv[0] + "=" + kv[1]
-					}
-				}
-			}
-		}
-		if pathNeeded {
-			s.cmd.Env = append(s.cmd.Env, pathEnv+"="+pathEnvVal)
-		}
-		if devicesNeeded {
-			s.cmd.Env = append(s.cmd.Env, visibleDevicesEnv+"="+visibleDevicesEnvVal)
-		}
-
-		slog.Info("starting llama server", "cmd", s.cmd.String())
-		if envconfig.Debug() {
-			filteredEnv := []string{}
-			for _, ev := range s.cmd.Env {
-				if strings.HasPrefix(ev, "CUDA_") ||
-					strings.HasPrefix(ev, "ROCR_") ||
-					strings.HasPrefix(ev, "ROCM_") ||
-					strings.HasPrefix(ev, "HIP_") ||
-					strings.HasPrefix(ev, "GPU_") ||
-					strings.HasPrefix(ev, "HSA_") ||
-					strings.HasPrefix(ev, "GGML_") ||
-					strings.HasPrefix(ev, "PATH=") ||
-					strings.HasPrefix(ev, "LD_LIBRARY_PATH=") {
-					filteredEnv = append(filteredEnv, ev)
-				}
-			}
-			// Log at debug as the environment is inherited and might contain sensitive information
-			slog.Debug("subprocess", "environment", filteredEnv)
-		}
-
-		if err = s.cmd.Start(); err != nil {
-			// Detect permission denied and augment the message about noexec
-			if errors.Is(err, os.ErrPermission) {
-				finalErr = fmt.Errorf("unable to start server %w.  %s may have noexec set.  Set OLLAMA_TMPDIR for server to a writable executable directory", err, server)
-				continue
-			}
-			msg := ""
-			if s.status != nil && s.status.LastErrMsg != "" {
-				msg = s.status.LastErrMsg
-			}
-			err = fmt.Errorf("error starting the external llama server: %v %s", err, msg)
-			finalErr = err
-			continue
-		}
-
-		// reap subprocess when it exits
-		go func() {
-			err := s.cmd.Wait()
-			// Favor a more detailed message over the process exit status
-			if err != nil && s.status != nil && s.status.LastErrMsg != "" {
-				slog.Debug("llama runner terminated", "error", err)
-				if strings.Contains(s.status.LastErrMsg, "unknown model") {
-					s.status.LastErrMsg = "this model is not supported by your version of Ollama. You may need to upgrade"
-				}
-				s.done <- errors.New(s.status.LastErrMsg)
-			} else {
-				s.done <- err
-			}
-		}()
-
-		return s, nil
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, err
 	}
 
-	slog.Error("unable to load any llama server", "error", finalErr)
-	return nil, finalErr
+	// Find an availableServers  port, retry on each iteration in case the failure was a port conflict race
+	port := 0
+	if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
+		var l *net.TCPListener
+		if l, err = net.ListenTCP("tcp", a); err == nil {
+			port = l.Addr().(*net.TCPAddr).Port
+			l.Close()
+		}
+	}
+	if port == 0 {
+		slog.Debug("ResolveTCPAddr failed ", "error", err)
+		port = rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
+	}
+	finalParams := []string{"runner"}
+	finalParams = append(finalParams, params...)
+	finalParams = append(finalParams, "--port", strconv.Itoa(port))
+
+	pathEnv := "LD_LIBRARY_PATH"
+	if runtime.GOOS == "windows" {
+		pathEnv = "PATH"
+	}
+	// Start with the server directory for the LD_LIBRARY_PATH/PATH
+	libraryPaths := []string{filepath.Dir(exe)}
+
+	if libraryPath, ok := os.LookupEnv(pathEnv); ok {
+		// favor our bundled library dependencies over system libraries
+		libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
+	}
+
+	// Note: we always put the dependency path first
+	// since this was the exact version we compiled/linked against
+	if gpus[0].DependencyPath != nil {
+		// assume gpus from the same library have the same dependency path
+		libraryPaths = append(gpus[0].DependencyPath, libraryPaths...)
+	}
+
+	// TODO - once fully switched to the Go runner, load the model here for tokenize/detokenize cgo access
+	s := &llmServer{
+		port:        port,
+		cmd:         exec.Command(exe, finalParams...),
+		status:      NewStatusWriter(os.Stderr),
+		options:     opts,
+		modelPath:   model,
+		estimate:    estimate,
+		numParallel: numParallel,
+		sem:         semaphore.NewWeighted(int64(numParallel)),
+		totalLayers: f.KV().BlockCount() + 1,
+		gpus:        gpus,
+		done:        make(chan error, 1),
+	}
+
+	s.cmd.Env = os.Environ()
+	s.cmd.Stdout = os.Stdout
+	s.cmd.Stderr = s.status
+	s.cmd.SysProcAttr = LlamaServerSysProcAttr
+
+	envWorkarounds := [][2]string{}
+	for _, gpu := range gpus {
+		envWorkarounds = append(envWorkarounds, gpu.EnvWorkarounds...)
+	}
+	visibleDevicesEnv, visibleDevicesEnvVal := gpus.GetVisibleDevicesEnv()
+	pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
+
+	// Update or add the path and visible devices variable with our adjusted version
+	pathNeeded := true
+	devicesNeeded := visibleDevicesEnv != ""
+	for i := range s.cmd.Env {
+		cmp := strings.SplitN(s.cmd.Env[i], "=", 2)
+		if strings.EqualFold(cmp[0], pathEnv) {
+			s.cmd.Env[i] = pathEnv + "=" + pathEnvVal
+			pathNeeded = false
+		} else if devicesNeeded && strings.EqualFold(cmp[0], visibleDevicesEnv) {
+			s.cmd.Env[i] = visibleDevicesEnv + "=" + visibleDevicesEnvVal
+			devicesNeeded = false
+		} else if len(envWorkarounds) != 0 {
+			for _, kv := range envWorkarounds {
+				if strings.EqualFold(cmp[0], kv[0]) {
+					s.cmd.Env[i] = kv[0] + "=" + kv[1]
+				}
+			}
+		}
+	}
+	if pathNeeded {
+		s.cmd.Env = append(s.cmd.Env, pathEnv+"="+pathEnvVal)
+	}
+	if devicesNeeded {
+		s.cmd.Env = append(s.cmd.Env, visibleDevicesEnv+"="+visibleDevicesEnvVal)
+	}
+
+	slog.Info("starting llama server", "cmd", s.cmd.String())
+	if envconfig.Debug() {
+		filteredEnv := []string{}
+		for _, ev := range s.cmd.Env {
+			if strings.HasPrefix(ev, "CUDA_") ||
+				strings.HasPrefix(ev, "ROCR_") ||
+				strings.HasPrefix(ev, "ROCM_") ||
+				strings.HasPrefix(ev, "HIP_") ||
+				strings.HasPrefix(ev, "GPU_") ||
+				strings.HasPrefix(ev, "HSA_") ||
+				strings.HasPrefix(ev, "GGML_") ||
+				strings.HasPrefix(ev, "PATH=") ||
+				strings.HasPrefix(ev, "LD_LIBRARY_PATH=") {
+				filteredEnv = append(filteredEnv, ev)
+			}
+		}
+		// Log at debug as the environment is inherited and might contain sensitive information
+		slog.Debug("subprocess", "environment", filteredEnv)
+	}
+
+	if err = s.cmd.Start(); err != nil {
+		// Detect permission denied and augment the message about noexec
+		if errors.Is(err, os.ErrPermission) {
+			return nil, fmt.Errorf("unable to start server %w.  %s may have noexec set.  Set OLLAMA_TMPDIR for server to a writable executable directory", err, exe)
+		}
+
+		msg := ""
+		if s.status != nil && s.status.LastErrMsg != "" {
+			msg = s.status.LastErrMsg
+		}
+		return nil, fmt.Errorf("error starting the external llama server: %v %s", err, msg)
+	}
+
+	// reap subprocess when it exits
+	go func() {
+		err := s.cmd.Wait()
+		// Favor a more detailed message over the process exit status
+		if err != nil && s.status != nil && s.status.LastErrMsg != "" {
+			slog.Debug("llama runner terminated", "error", err)
+			if strings.Contains(s.status.LastErrMsg, "unknown model") {
+				s.status.LastErrMsg = "this model is not supported by your version of Ollama. You may need to upgrade"
+			}
+			s.done <- errors.New(s.status.LastErrMsg)
+		} else {
+			s.done <- err
+		}
+	}()
+
+	return s, nil
 }
 
 type ServerStatus int
