@@ -1,6 +1,7 @@
 package convert
 
-import "github.com/ollama/ollama/llm"
+import "github.com/ollama/ollama/fs/ggml"
+
 
 type qwen2Model struct {
 	ModelParameters
@@ -21,7 +22,7 @@ type qwen2Model struct {
 
 var _ ModelConverter = (*qwen2Model)(nil)
 
-func (q *qwen2Model) KV(t *Tokenizer) llm.KV {
+func (q *qwen2Model) KV(t *Tokenizer) ggml.KV {
 	kv := q.ModelParameters.KV(t)
 	kv["general.architecture"] = "qwen2"
 	kv["qwen2.block_count"] = q.HiddenLayers
@@ -45,10 +46,10 @@ func (q *qwen2Model) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (q *qwen2Model) Tensors(ts []Tensor) []llm.Tensor {
-	var out []llm.Tensor
+func (q *qwen2Model) Tensors(ts []Tensor) []ggml.Tensor {
+	var out []ggml.Tensor
 	for _, t := range ts {
-		out = append(out, llm.Tensor{
+		out = append(out, ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),
