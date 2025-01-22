@@ -1,4 +1,4 @@
-package llm
+package ggml
 
 import (
 	"bytes"
@@ -8,10 +8,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
-
-	"golang.org/x/exp/maps"
 )
 
 type containerGGUF struct {
@@ -110,9 +109,9 @@ func (llm *gguf) KV() KV {
 	return llm.kv
 }
 
-func (llm *gguf) Tensors() *Tensors {
-	return &Tensors{
-		Items:  llm.tensors,
+func (llm *gguf) Tensors() Tensors {
+	return Tensors{
+		items:  llm.tensors,
 		Offset: llm.tensorOffset,
 	}
 }
@@ -523,7 +522,7 @@ func WriteGGUF(ws io.WriteSeeker, kv KV, ts []Tensor) error {
 		return err
 	}
 
-	keys := maps.Keys(kv)
+	keys := slices.Collect(maps.Keys(kv))
 	slices.Sort(keys)
 
 	for _, key := range keys {
