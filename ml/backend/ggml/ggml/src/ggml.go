@@ -58,6 +58,12 @@ var OnceLoad = sync.OnceFunc(func() {
 		paths = lib.defaultValue
 	}
 
+	if runtime.GOOS == "darwin" {
+		if _, ok := os.LookupEnv("DYLD_LIBRARY_PATH"); !ok {
+			os.Setenv("DYLD_LIBRARY_PATH", paths)
+		}
+	}
+
 	for _, path := range filepath.SplitList(paths) {
 		func() {
 			cpath := C.CString(path)
