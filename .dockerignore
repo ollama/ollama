@@ -7,4 +7,5 @@ build
 .env
 .cache
 test_data
+.git
 
