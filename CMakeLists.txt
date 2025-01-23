@@ -51,4 +51,5 @@ if(CMAKE_HIP_COMPILER)
     set(HIP_PLATFORM "amd")
 
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-hip)
+    list(FILTER AMDGPU_TARGETS INCLUDE REGEX "^(gfx900|gfx94[012]|gfx101[02]|gfx1030|gfx110[012])$")
 endif()
