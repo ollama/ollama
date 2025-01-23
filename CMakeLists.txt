@@ -57,5 +57,6 @@ if(CMAKE_HIP_COMPILER)
 
     if(AMDGPU_TARGETS)
         add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-hip)
+        set_property(TARGET ggml-hip PROPERTY CMAKE_CXX_COMPILER ${CMAKE_HIP_COMPILER})
     endif()
 endif()
