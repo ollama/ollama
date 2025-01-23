@@ -315,6 +315,26 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 			libraryPaths = append(gpus[0].DependencyPath, libraryPaths...)
 		}
 
+		exe, err := os.Executable()
+		if err != nil {
+			return nil, fmt.Errorf("unable to lookup executable path: %w", err)
+		}
+
+		exe, err = filepath.EvalSymlinks(exe)
+		if err != nil {
+			return nil, fmt.Errorf("unable to evaluate symlinks for executable path: %w", err)
+		}
+		libraryPaths = append(libraryPaths, filepath.Dir(exe))
+
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("unable to get current working directory: %w", err)
+		}
+
+		// development library paths
+		libraryPaths = append(libraryPaths, filepath.Join(filepath.Dir(exe), "build", "lib", "ollama"))
+		libraryPaths = append(libraryPaths, filepath.Join(cwd, "build", "lib", "ollama"))
+
 		// TODO - once fully switched to the Go runner, load the model here for tokenize/detokenize cgo access
 		s := &llmServer{
 			port:        port,
