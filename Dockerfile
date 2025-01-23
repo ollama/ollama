@@ -84,13 +84,13 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 FROM --platform=linux/amd64 scratch AS amd64
 COPY --from=cuda-11 --chmod=644 \
-    build/lib/libggml-cuda.so \
+    build/lib/ollama/libggml-cuda.so \
     /usr/local/cuda/lib64/libcublas.so.11 \
     /usr/local/cuda/lib64/libcublasLt.so.11 \
     /usr/local/cuda/lib64/libcudart.so.11.0 \
     /lib/ollama/cuda_v11/
 COPY --from=cuda-12 --chmod=644 \
-    build/lib/libggml-cuda.so \
+    build/lib/ollama/libggml-cuda.so \
     /usr/local/cuda/lib64/libcublas.so.12 \
     /usr/local/cuda/lib64/libcublasLt.so.12 \
     /usr/local/cuda/lib64/libcudart.so.12 \
@@ -98,25 +98,25 @@ COPY --from=cuda-12 --chmod=644 \
 
 FROM --platform=linux/arm64 scratch AS arm64
 COPY --from=cuda-11 --chmod=644 \
-    build/lib/libggml-cuda.so \
+    build/lib/ollama/libggml-cuda.so \
     /usr/local/cuda/lib64/libcublas.so.11 \
     /usr/local/cuda/lib64/libcublasLt.so.11 \
     /usr/local/cuda/lib64/libcudart.so.11.0 \
     /lib/ollama/cuda_v11/
 COPY --from=cuda-12 --chmod=644 \
-    build/lib/libggml-cuda.so \
+    build/lib/ollama/libggml-cuda.so \
     /usr/local/cuda/lib64/libcublas.so.12 \
     /usr/local/cuda/lib64/libcublasLt.so.12 \
     /usr/local/cuda/lib64/libcudart.so.12 \
     /lib/ollama/cuda_v12/
 COPY --from=jetpack-5 --chmod=644 \
-    build/lib/libggml-cuda.so \
+    build/lib/ollama/libggml-cuda.so \
     /usr/local/cuda/lib64/libcublas.so.11 \
     /usr/local/cuda/lib64/libcublasLt.so.11 \
     /usr/local/cuda/lib64/libcudart.so.11.0 \
     /lib/ollama/cuda_jetpack5/
 COPY --from=jetpack-6 --chmod=644 \
-    build/lib/libggml-cuda.so \
+    build/lib/ollama/libggml-cuda.so \
     /usr/local/cuda/lib64/libcublas.so.12 \
     /usr/local/cuda/lib64/libcublasLt.so.12 \
     /usr/local/cuda/lib64/libcudart.so.12 \
@@ -124,7 +124,7 @@ COPY --from=jetpack-6 --chmod=644 \
 
 FROM --platform=linux/arm64 scratch AS rocm
 COPY --from=rocm-6 --chmod=644 \
-    build/lib/libggml-hip.so \
+    build/lib/ollama/libggml-hip.so \
     /opt/rocm/lib/libamdhip64.so.6 \
     /opt/rocm/lib/libhipblas.so.2 \
     /opt/rocm/lib/librocblas.so.4 \
@@ -139,8 +139,8 @@ COPY --from=rocm-6 /opt/rocm/lib/rocblas/ /lib/ollama/rocm/rocblas/
 
 FROM ${FLAVOR} AS archive
 COPY --from=cpu --chmod=644 \
-    build/lib/libggml-base.so \
-    build/lib/libggml-cpu-*.so \
+    build/lib/ollama/libggml-base.so \
+    build/lib/ollama/libggml-cpu-*.so \
     /lib/ollama/
 COPY --from=build /bin/ollama /bin/ollama
 
