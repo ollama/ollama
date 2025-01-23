@@ -58,12 +58,11 @@ jobs:
       - run: |
           apt-get update
           apt-get install -y cmake pkg-config ccache ${{ matrix.extra-packages }}
-          ccache -o cache_dir=${{ github.workspace }}\.ccache
         env:
           DEBIAN_FRONTEND: noninteractive
       - uses: actions/cache@v4
         with:
-          path: ${{ github.workspace }}\.ccache
+          path: /github/home/.cache/ccache
           key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}
       - run: |
           cmake --preset ${{ matrix.preset }} ${{ matrix.flags }}
