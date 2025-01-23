@@ -481,6 +481,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [GoLamify](https://github.com/prasad89/golamify)
 - [Ollama for Haskell](https://github.com/tusharad/ollama-haskell)
 - [multi-llm-ts](https://github.com/nbonamy/multi-llm-ts) (A Typescript/JavaScript library allowing access to different LLM in unified API)
+- [LlmTornado](https://github.com/lofcz/llmtornado) (C# library providing a unified interface for major FOSS & Commercial inference APIs)
 
 ### Mobile
 
