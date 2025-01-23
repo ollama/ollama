@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 )
@@ -35,8 +36,12 @@ func RegisterBackend(name string, f func(*os.File) (Backend, error)) {
 }
 
 func NewBackend(f *os.File) (Backend, error) {
-	if backend, ok := backends["mlx"]; ok {
-		// if backend, ok := backends["ggml"]; ok {
+	be := os.Getenv("OLLAMA_BACKEND")
+	if be == "" {
+		be = "mlx" // or ggml
+		slog.Info("Defaulting to " + be + ". Set OLLAMA_BACKEND to override")
+	}
+	if backend, ok := backends[be]; ok {
 		return backend(f)
 	}
 
@@ -52,11 +57,24 @@ type Context interface {
 	FromFloatSlice(s []float32, shape ...int) (Tensor, error)
 	FromIntSlice(s []int32, shape ...int) (Tensor, error)
 
-	FastScaledDotProductAttention(queries, keys, values Tensor, scale float32, mask Tensor) Tensor
-
 	Forward(Tensor)
 	Compute(Tensor) Tensor
 	Close() error
+
+	// TODO - not sure if there's a better way
+	Abort(Tensor) // Evaluate the graph up to this point, retrieve the data from the tensor and dump it to a json file for comparision
+}
+
+// Usage:
+//
+//	if sdpa, ok := ctx.(ml.FastScaledDotProductAttention); ok {
+//	  hiddenState = sdpa.FastScaledDotProductAttention(...)
+//	} else {
+//
+//	  // manual sdpa
+//	}
+type FastScaledDotProductAttention interface {
+	FastScaledDotProductAttention(queries, keys, values Tensor, scale float32, mask Tensor) Tensor
 }
 
 type Tensor interface {
@@ -79,7 +97,8 @@ type Tensor interface {
 	Scale(ctx Context, s float64) Tensor
 
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
-	Rope(ctx Context, offset int32, ropeFactors Tensor, dim uint32, base, scale float32) Tensor
+
+	Rope(ctx Context, offset int32, ropeFactors Tensor, freqs Tensor, dim uint32, base, scale float32) Tensor
 
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context) Tensor
@@ -197,3 +216,14 @@ const (
 	DTypeI32
 	DTypeOther
 )
+
+func (dt DType) String() string {
+	switch dt {
+	case DTypeF32:
+		return "float32"
+	case DTypeI32:
+		return "int32"
+	default:
+		return "unknon"
+	}
+}

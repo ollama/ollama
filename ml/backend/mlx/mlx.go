@@ -10,10 +10,12 @@ package mlx
 // #include "mlx/c/ops.h"
 // #include "mlx/c/stream.h"
 // #include "mlx/c/transforms.h"
+// static inline size_t stride(const mlx_array a, int i) {return mlx_array_strides(a)[i];}
 import "C"
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -99,10 +101,12 @@ func New(r *os.File) (ml.Backend, error) {
 			// Q/K are are mutated and we need to reverse that mutation
 			// TODO - this is only for llama based models and shouldn't be applied universally
 			// but only applies to some backends at the moment...  maybe?
-			// Need to get the model running on GGML to see if we can have a consistent model definition for both.
 			if strings.HasSuffix(t.Name, "attn_q.weight") || strings.HasSuffix(t.Name, "attn_q.bias") || strings.HasSuffix(t.Name, "attn_k.weight") || strings.HasSuffix(t.Name, "attn_k.bias") {
 
 				// TODO - is this code memory access safe, or does the delayed processing cause potential memory access after Go frees the stack?
+
+				// TODO performance: Since these operations are ~static yet cause a lot of additional nodes in the graph
+				// Ideally these should be applied "on the fly" at load time, so the tensor has the data ready to go.
 
 				var n_head uint64
 				if strings.Contains(t.Name, "attn_q") {
@@ -134,10 +138,11 @@ func New(r *os.File) (ml.Backend, error) {
 					reshaped,
 					stream,
 				)
-			} else if t.Name == "output.weight" || strings.Contains(t.Name, "token_embd.weight") {
-				// TODO bug in model code?
+			} else if strings.Contains(t.Name, "token_embd.weight") {
+				// TODO bug in model code?  Why is this one special compared to all the rest?
 				a = r
 			} else {
+				// TODO performance: this should be done to the data as it's loaded, not add additional operations in the graph
 				C.mlx_transpose_all(
 					&a,
 					r,
@@ -286,6 +291,34 @@ func (c *Context) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
 	return &Array{a: r}
 }
 
+func (c *Context) Abort(t ml.Tensor) {
+	// str := C.mlx_string_new()
+	// C.mlx_array_tostring(&str, t.(*Array).a)
+	// s := C.mlx_string_data(str)
+	// defer C.mlx_string_free(str)
+	// debug.PrintStack()
+	// fmt.Printf("shape%v\n", t.Shape())
+	// fmt.Println(C.GoString(s))
+
+	c.Compute(t)
+	f32 := t.Floats()
+
+	filename := os.Getenv("OLLAMA_BACKEND") + ".json"
+	slog.Info("Writing tensors to", "filename", filename)
+	f, err := os.Create(filename)
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+	encoder := json.NewEncoder(f)
+	err = encoder.Encode(f32)
+	if err != nil {
+		panic(err)
+	}
+
+	os.Exit(1)
+}
+
 type Array struct {
 	name string
 	a    C.mlx_array
@@ -293,15 +326,15 @@ type Array struct {
 
 func (a *Array) LogValue() slog.Value {
 	// TODO this forces eval on every log message - find a pattern to make this configurable to aid in debugging
-	str := C.mlx_string_new()
-	C.mlx_array_tostring(&str, a.a)
-	s := C.mlx_string_data(str)
-	defer C.mlx_string_free(str)
+	// str := C.mlx_string_new()
+	// C.mlx_array_tostring(&str, a.a)
+	// s := C.mlx_string_data(str)
+	// defer C.mlx_string_free(str)
 
 	return slog.GroupValue(
 		slog.String("name", a.name),
 		slog.Any("shape", a.Shape()),
-		slog.String("values", C.GoString(s)),
+		// slog.String("values", C.GoString(s)),
 	)
 }
 
@@ -396,6 +429,16 @@ func (a *Array) Mul(ctx ml.Context, a2 ml.Tensor) ml.Tensor {
 // Mulmat implements ml.Tensor.
 func (a *Array) Mulmat(ctx ml.Context, a2 ml.Tensor) ml.Tensor {
 	var r C.mlx_array
+	s := a.Shape()
+	strides := make([]int64, len(s))
+	for i := range s {
+		strides[i] = a.Stride(i)
+	}
+	sb := a2.Shape()
+	stridesb := make([]int64, len(sb))
+	for i := range sb {
+		stridesb[i] = a2.Stride(i)
+	}
 	C.mlx_matmul(&r,
 		a2.(*Array).a,
 		a.a,
@@ -443,7 +486,6 @@ func (a *Array) Permute(ctx ml.Context, shape ...int) ml.Tensor {
 // RMSNorm implements ml.Tensor.
 func (a *Array) RMSNorm(ctx ml.Context, w, b ml.Tensor, eps float32) ml.Tensor {
 	var r C.mlx_array
-	// slog.Info("MLX RMSNorm", "a", a, "w", w, "b", b)
 	C.mlx_fast_rms_norm(
 		&r,
 		a.a,
@@ -469,22 +511,23 @@ func (a *Array) Reshape(ctx ml.Context, shape ...int64) ml.Tensor {
 func (a *Array) Rope(
 	ctx ml.Context,
 	offset int32,
-	ropeFactors ml.Tensor,
+	ropeFactors ml.Tensor, // Unused in MLX
+	freqs ml.Tensor,
 	dim uint32,
 	base float32,
 	scale float32,
 ) ml.Tensor {
 	var r C.mlx_array
 	var b C.mlx_optional_float
-	var rf C.mlx_array
+	var _freqs C.mlx_array
 	if base == 0 {
 		base = 10000
 	}
-	if ropeFactors == nil || len(ropeFactors.Shape()) == 0 {
+	if freqs == nil || len(freqs.Shape()) == 0 {
 		b.value = C.float(base)
 		b.has_value = true
 	} else {
-		rf = ropeFactors.(*Array).a
+		_freqs = freqs.(*Array).a
 	}
 	C.mlx_fast_rope(
 		&r,
@@ -494,7 +537,7 @@ func (a *Array) Rope(
 		b,
 		C.float(scale),
 		C.int(offset),
-		rf,
+		_freqs,
 		ctx.(*Context).stream,
 	)
 	return &Array{a: r}
@@ -579,13 +622,7 @@ func (a *Array) Stack(ctx ml.Context, dim int, s ...ml.Tensor) ml.Tensor {
 
 // Stride implements ml.Tensor.
 func (a *Array) Stride(n int) int64 {
-	s := uintptr(unsafe.Pointer(C.mlx_array_strides(a.a)))
-	var r int64
-	for n = range n + 1 {
-		x := (s + (uintptr(n) * uintptr(unsafe.Sizeof(C.size_t(0)))))
-		r = (int64)(*(*C.size_t)(unsafe.Pointer(x)))
-	}
-	return r
+	return (int64)(C.stride(a.a, (C.int)(n)))
 }
 
 // Tanh implements ml.Tensor.

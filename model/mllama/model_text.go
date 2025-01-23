@@ -22,11 +22,11 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, mask ml.Tensor
 
 	query := sa.Query.Forward(ctx, hiddenState)
 	query = query.Reshape(ctx, headDim, opts.numHeads, batchSize)
-	query = query.Rope(ctx, 0, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
+	query = query.Rope(ctx, 0, nil, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
 
 	key := sa.Key.Forward(ctx, hiddenState)
 	key = key.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-	key = key.Rope(ctx, 0, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
+	key = key.Rope(ctx, 0, nil, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
 
 	value := sa.Value.Forward(ctx, hiddenState)
 	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)

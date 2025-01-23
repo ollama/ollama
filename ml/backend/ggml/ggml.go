@@ -11,10 +11,14 @@ import "C"
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
+	"runtime/debug"
+	"strings"
 	"sync"
 	"unsafe"
 
@@ -24,6 +28,10 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
+)
+
+var (
+	rev = []C.int{3, 2, 1, 0}
 )
 
 type device struct {
@@ -87,7 +95,7 @@ func New(r *os.File) (ml.Backend, error) {
 	}
 
 	slog.Info(
-		"",
+		"initializing GGML backend",
 		"architecture", meta.KV().Architecture(),
 		"file_type", meta.KV().FileType(),
 		"name", meta.KV().String("general.name"),
@@ -104,7 +112,8 @@ func New(r *os.File) (ml.Backend, error) {
 			slog.Info("cpu", "device", d)
 			cpus = append(cpus, Context{
 				ctx: C.ggml_init(C.struct_ggml_init_params{
-					mem_size: C.size_t(int(C.ggml_tensor_overhead()) * (len(meta.Tensors().Items()) + 1 + int(meta.KV().BlockCount())*2)),
+					// TODO - this extra memory is needed for the normalizing logic below
+					mem_size: C.size_t(int(C.ggml_tensor_overhead()) * (len(meta.Tensors().Items())*3 + 1 + int(meta.KV().BlockCount())*2)),
 					no_alloc: true,
 				}),
 				backend: C.ggml_backend_dev_init(d.d, nil),
@@ -113,7 +122,8 @@ func New(r *os.File) (ml.Backend, error) {
 			slog.Info("gpu", "device", d)
 			gpus = append(gpus, Context{
 				ctx: C.ggml_init(C.struct_ggml_init_params{
-					mem_size: C.size_t(int(C.ggml_tensor_overhead()) * (len(meta.Tensors().Items()) + 1 + int(meta.KV().BlockCount())*2)),
+					// TODO - this extra memory is needed for the normalizing logic below
+					mem_size: C.size_t(int(C.ggml_tensor_overhead()) * (len(meta.Tensors().Items())*3 + 1 + int(meta.KV().BlockCount())*2)),
 					no_alloc: true,
 				}),
 				backend: C.ggml_backend_dev_init(d.d, nil),
@@ -204,7 +214,51 @@ func (b *Backend) Get(name string) ml.Tensor {
 
 	for _, c := range append(b.gpus, b.cpus...) {
 		if t := C.ggml_get_tensor(c.ctx, cname); t != nil {
-			return &Tensor{t: t}
+			// TODO
+			// Theoretically this should be needed to get the tensors
+			// "normalized" so they're consistent between the MLX backend and
+			// GGML, however at present it breaks the implementation. This may
+			// be related to the various 'if !opts.GGML' hacks in the model and
+			// needs further investigation
+			if false {
+				nDims := int(C.ggml_n_dims(t))
+				// Q/K are are mutated and we need to reverse that mutation
+				// TODO - this is only for llama based models and shouldn't be applied universally
+				// but only applies to some backends at the moment...  maybe?
+				if strings.HasSuffix(name, "attn_q.weight") || strings.HasSuffix(name, "attn_q.bias") || strings.HasSuffix(name, "attn_k.weight") || strings.HasSuffix(name, "attn_k.bias") {
+					origShape := t.ne[:nDims]
+					var n_head C.int64_t
+					if strings.Contains(name, "attn_q") {
+						n_head = C.int64_t(b.meta.KV().HeadCount()) // Q
+					} else {
+						n_head = C.int64_t(b.meta.KV().HeadCountKV()) // K
+					}
+					// TODO - order might be wrong here...
+					t = C.ggml_reshape_4d(
+						c.ctx,
+						t,
+						t.ne[0],
+						2,
+						C.int64_t(math.Floor(math.Floor(float64(t.ne[1])/float64(n_head)/float64(2)))),
+						n_head,
+					)
+					t = C.ggml_cont(c.ctx, t)
+					t = C.ggml_permute(c.ctx, t, 0, 2, 1, 3)
+					t = C.ggml_cont(c.ctx, t)
+					switch nDims {
+					case 2:
+						t = C.ggml_reshape_2d(c.ctx, t, origShape[0], origShape[1])
+					default:
+						panic("unexpected shape")
+					}
+					// t = C.ggml_permute(c.ctx, t, 1, 0, 2, 3)
+					// t = C.ggml_cont(c.ctx, t)
+				}
+			}
+			return &Tensor{
+				t:     t,
+				nDims: int(C.ggml_n_dims(t)),
+			}
 		}
 	}
 
@@ -269,15 +323,22 @@ func (c *Context) Compute(t ml.Tensor) ml.Tensor {
 	return t
 }
 
-func (c Context) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
-	if len(shape) < 1 || len(shape) > 4 {
+func (c Context) Zeros(dtype ml.DType, rshape ...int) ml.Tensor {
+	if len(rshape) < 1 || len(rshape) > 4 {
 		panic("unsupported number of dimensions")
 	}
 
-	for _, dim := range shape {
+	for _, dim := range rshape {
 		if dim < 1 {
 			panic("invalid shape")
 		}
+	}
+	// Inverted
+	shape := make([]C.int, len(rshape))
+	i := len(rshape) - 1
+	for _, dim := range rshape {
+		shape[i] = C.int(dim)
+		i--
 	}
 
 	var t *C.struct_ggml_tensor
@@ -296,7 +357,15 @@ func (c Context) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
 	return &Tensor{t: t}
 }
 
-func fromSlice[S ~[]E, E float32 | int32](ctx Context, s S, shape []int, dtype uint32) (ml.Tensor, error) {
+func fromSlice[S ~[]E, E float32 | int32](ctx Context, s S, rshape []int, dtype uint32) (ml.Tensor, error) {
+	// Inverted
+	shape := make([]int, len(rshape))
+	i := len(rshape) - 1
+	for _, dim := range rshape {
+		shape[i] = dim
+		i--
+	}
+
 	n := len(s)
 	for _, v := range shape {
 		n /= v
@@ -310,7 +379,7 @@ func fromSlice[S ~[]E, E float32 | int32](ctx Context, s S, shape []int, dtype u
 	b := C.ggml_backend_alloc_buffer(ctx.backend, C.ggml_nbytes(t))
 	C.ggml_backend_tensor_alloc(b, t, C.ggml_backend_buffer_get_base(b))
 	C.ggml_backend_tensor_set(t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t))
-	return &Tensor{t: t}, nil
+	return &Tensor{t: t, nDims: len(shape)}, nil
 }
 
 func (c Context) FromFloatSlice(s []float32, shape ...int) (ml.Tensor, error) {
@@ -327,8 +396,40 @@ func (c *Context) Close() error {
 	return nil
 }
 
+func (c *Context) Abort(t ml.Tensor) {
+	// Hack to make sure we're f32, otherwise r.Floats will fail due to short read
+	if t.(*Tensor).t._type != C.GGML_TYPE_F32 {
+		t.(*Tensor).t = C.ggml_cast(c.ctx, t.(*Tensor).t, C.GGML_TYPE_F32)
+	}
+
+	c.Compute(t)
+	f32 := t.Floats()
+	debug.PrintStack()
+
+	filename := os.Getenv("OLLAMA_BACKEND") + ".json"
+	slog.Info("Writing tensors to", "filename", filename)
+	f, err := os.Create(filename)
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+	encoder := json.NewEncoder(f)
+	err = encoder.Encode(f32)
+	if err != nil {
+		panic(err)
+	}
+
+	os.Exit(1)
+}
+
 type Tensor struct {
-	t    *C.struct_ggml_tensor
+	t *C.struct_ggml_tensor
+
+	// keep track of the number of dimensions
+	// Since we reverse the shape, GGML considers a trailing "1" dimension as not present
+	// and we can't actually trust the output of ggml_n_dims
+	nDims int
+
 	data []byte
 }
 
@@ -341,19 +442,28 @@ func (t *Tensor) LogValue() slog.Value {
 }
 
 func (t *Tensor) Dim(n int) int64 {
-	return int64(t.t.ne[n])
+	if t.nDims == 0 {
+		// If this hits we likely forgot to copy the dimension to the returned tensor in some operation
+		panic("zero dimension tensor")
+	}
+	r := rev[4-t.nDims:]
+	return int64(t.t.ne[r[n]])
 }
 
 func (t *Tensor) Stride(n int) int64 {
-	return int64(t.t.nb[n])
+	if t.nDims == 0 {
+		panic("zero dimension tensor")
+	}
+	// TODO - this isn't right for single length initial dimensions.  Their stride value in GGML is a very large (garbage?) number
+	r := rev[4-t.nDims:]
+	return int64(t.t.nb[r[n]])
 }
 
 func (t *Tensor) Shape() []int64 {
-	shape := make([]int64, C.ggml_n_dims(t.t))
+	shape := make([]int64, t.nDims)
 	for i := range shape {
 		shape[i] = t.Dim(i)
 	}
-
 	return shape
 }
 
@@ -366,6 +476,7 @@ func (t *Tensor) Bytes() []byte {
 }
 
 func (t *Tensor) Floats() (f32s []float32) {
+	// TODO - this fails silently if the data type isn't f32
 	if t.data != nil {
 		f32s = make([]float32, C.ggml_nelements(t.t))
 		_ = binary.Read(bytes.NewReader(t.data), binary.LittleEndian, f32s)
@@ -387,7 +498,8 @@ func (t *Tensor) DType() ml.DType {
 
 func (t *Tensor) Add(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
-		t: C.ggml_add(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
+		t:     C.ggml_add(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
+		nDims: t.nDims,
 	}
 }
 
@@ -401,31 +513,41 @@ func (t *Tensor) Stack(ctx ml.Context, dim int, s ...ml.Tensor) ml.Tensor {
 
 func (t *Tensor) Concat(ctx ml.Context, t2 ml.Tensor, dim int) ml.Tensor {
 	return &Tensor{
-		t: C.ggml_concat(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.int(dim)),
+		t:     C.ggml_concat(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.int(dim)),
+		nDims: t.nDims,
 	}
 }
 
 func (t *Tensor) Contiguous(ctx ml.Context) ml.Tensor {
 	return &Tensor{
-		t: C.ggml_cont(ctx.(*Context).ctx, t.t),
+		t:     C.ggml_cont(ctx.(*Context).ctx, t.t),
+		nDims: t.nDims,
 	}
 }
 
 func (t *Tensor) Mul(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
-		t: C.ggml_mul(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
+		t:     C.ggml_mul(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
+		nDims: t.nDims, // TODO should this be max(t.nDims, t2.nDims)?
 	}
 }
 
 func (t *Tensor) Mulmat(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
+	if t.t.ne[0] != t2.(*Tensor).t.ne[0] {
+		slog.Error("incorrect tensor shapes for Mulmat", "t", t, "t2", t2)
+		panic("malformed tensors passed to Mulmat")
+	}
+	r := C.ggml_mul_mat(ctx.(*Context).ctx, t.t, t2.(*Tensor).t)
 	return &Tensor{
-		t: C.ggml_mul_mat(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
+		t:     r,
+		nDims: max(t.nDims, t2.(*Tensor).nDims),
 	}
 }
 
 func (t *Tensor) LayerNorm(ctx ml.Context, w, b ml.Tensor, eps float32) ml.Tensor {
 	r := (&Tensor{
-		t: C.ggml_norm(ctx.(*Context).ctx, t.t, C.float(eps)),
+		t:     C.ggml_norm(ctx.(*Context).ctx, t.t, C.float(eps)),
+		nDims: t.nDims,
 	}).Mul(ctx, w)
 
 	if b != nil {
@@ -437,7 +559,8 @@ func (t *Tensor) LayerNorm(ctx ml.Context, w, b ml.Tensor, eps float32) ml.Tenso
 
 func (t *Tensor) RMSNorm(ctx ml.Context, w, b ml.Tensor, eps float32) ml.Tensor {
 	r := (&Tensor{
-		t: C.ggml_rms_norm(ctx.(*Context).ctx, t.t, C.float(eps)),
+		t:     C.ggml_norm(ctx.(*Context).ctx, t.t, C.float(eps)),
+		nDims: t.nDims,
 	}).Mul(ctx, w)
 
 	if b != nil {
@@ -453,7 +576,8 @@ func (t *Tensor) Pad(ctx ml.Context, shape ...int64) ml.Tensor {
 	}
 
 	return &Tensor{
-		t: C.ggml_pad(ctx.(*Context).ctx, t.t, C.int(shape[0]), C.int(shape[1]), C.int(shape[2]), C.int(shape[3])),
+		t:     C.ggml_pad(ctx.(*Context).ctx, t.t, C.int(shape[3]), C.int(shape[2]), C.int(shape[1]), C.int(shape[0])),
+		nDims: t.nDims,
 	}
 }
 
@@ -462,40 +586,69 @@ func (t *Tensor) Permute(ctx ml.Context, shape ...int) ml.Tensor {
 		panic("expected 4 dimensions")
 	}
 
-	return &Tensor{
-		t: C.ggml_permute(ctx.(*Context).ctx, t.t, C.int(shape[0]), C.int(shape[1]), C.int(shape[2]), C.int(shape[3])),
+	r := &Tensor{
+		t:     C.ggml_permute(ctx.(*Context).ctx, t.t, rev[shape[3]], rev[shape[2]], rev[shape[1]], rev[shape[0]]),
+		nDims: t.nDims,
 	}
+	return r
 }
 
 func (t *Tensor) Rows(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
-		t: C.ggml_get_rows(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
+		t:     C.ggml_get_rows(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
+		nDims: t.nDims,
 	}
 }
 
 func (t *Tensor) Copy(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
-		t: C.ggml_cpy(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
+		t:     C.ggml_cpy(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
+		nDims: t.nDims,
 	}
 }
 
 func (t *Tensor) Reshape(ctx ml.Context, shape ...int64) ml.Tensor {
+	// GGML does not handle -1 natively
+	for i, sh := range shape {
+		if sh == -1 {
+			totalElems := int64(1)
+			for d := range t.nDims {
+				totalElems *= int64(t.t.ne[d])
+			}
+			otherElems := int64(1)
+			for _, osh := range shape {
+				if osh != -1 {
+					otherElems *= int64(osh)
+				}
+			}
+			if otherElems > totalElems {
+				slog.Error("Invalid request", "req", shape, "actual", t.Shape(), "totalElems", totalElems, "otherElems", otherElems)
+				panic("impossible -1 shape request")
+			}
+			shape[i] = int64(float64(totalElems) / float64(otherElems))
+			break
+		}
+	}
 	switch len(shape) {
 	case 1:
 		return &Tensor{
-			t: C.ggml_reshape_1d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0])),
+			t:     C.ggml_reshape_1d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0])),
+			nDims: len(shape),
 		}
 	case 2:
 		return &Tensor{
-			t: C.ggml_reshape_2d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0]), C.int64_t(shape[1])),
+			t:     C.ggml_reshape_2d(ctx.(*Context).ctx, t.t, C.int64_t(shape[1]), C.int64_t(shape[0])),
+			nDims: len(shape),
 		}
 	case 3:
 		return &Tensor{
-			t: C.ggml_reshape_3d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0]), C.int64_t(shape[1]), C.int64_t(shape[2])),
+			t:     C.ggml_reshape_3d(ctx.(*Context).ctx, t.t, C.int64_t(shape[2]), C.int64_t(shape[1]), C.int64_t(shape[0])),
+			nDims: len(shape),
 		}
 	case 4:
 		return &Tensor{
-			t: C.ggml_reshape_4d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0]), C.int64_t(shape[1]), C.int64_t(shape[2]), C.int64_t(shape[3])),
+			t:     C.ggml_reshape_4d(ctx.(*Context).ctx, t.t, C.int64_t(shape[3]), C.int64_t(shape[2]), C.int64_t(shape[1]), C.int64_t(shape[0])),
+			nDims: len(shape),
 		}
 	default:
 		panic("unsupported number of dimensions")
@@ -504,19 +657,22 @@ func (t *Tensor) Reshape(ctx ml.Context, shape ...int64) ml.Tensor {
 
 func (t *Tensor) Scale(ctx ml.Context, s float64) ml.Tensor {
 	return &Tensor{
-		t: C.ggml_scale(ctx.(*Context).ctx, t.t, (C.float)(s)),
+		t:     C.ggml_scale(ctx.(*Context).ctx, t.t, (C.float)(s)),
+		nDims: t.nDims,
 	}
 }
 
 func (t *Tensor) Softmax(ctx ml.Context) ml.Tensor {
 	return &Tensor{
-		t: C.ggml_soft_max(ctx.(*Context).ctx, t.t),
+		t:     C.ggml_soft_max(ctx.(*Context).ctx, t.t),
+		nDims: t.nDims,
 	}
 }
 
 func (t *Tensor) Tanh(ctx ml.Context) ml.Tensor {
 	return &Tensor{
-		t: C.ggml_tanh_inplace(ctx.(*Context).ctx, t.t),
+		t:     C.ggml_tanh_inplace(ctx.(*Context).ctx, t.t),
+		nDims: t.nDims,
 	}
 }
 
@@ -526,7 +682,8 @@ func (t *Tensor) Unpad(ctx ml.Context, shape ...int64) ml.Tensor {
 	}
 
 	return &Tensor{
-		t: C.ggml_unpad(ctx.(*Context).ctx, t.t, C.int(shape[0]), C.int(shape[1]), C.int(shape[2]), C.int(shape[3])),
+		t:     C.ggml_unpad(ctx.(*Context).ctx, t.t, C.int(shape[3]), C.int(shape[2]), C.int(shape[1]), C.int(shape[0])),
+		nDims: t.nDims, // TODO is this right?
 	}
 }
 
@@ -534,28 +691,32 @@ func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	switch len(shape) {
 	case 1:
 		return &Tensor{
-			t: C.ggml_view_1d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0]), C.size_t(offset)),
+			t:     C.ggml_view_1d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0]), C.size_t(offset)),
+			nDims: len(shape),
 		}
 	case 3:
 		return &Tensor{
 			t: C.ggml_view_2d(ctx.(*Context).ctx, t.t,
-				C.int64_t(shape[0]), C.int64_t(shape[2]),
+				C.int64_t(shape[2]), C.int64_t(shape[0]),
 				C.size_t(shape[1]),
 				C.size_t(offset)),
+			nDims: len(shape),
 		}
 	case 5:
 		return &Tensor{
 			t: C.ggml_view_3d(ctx.(*Context).ctx, t.t,
-				C.int64_t(shape[0]), C.int64_t(shape[2]), C.int64_t(shape[4]),
-				C.size_t(shape[1]), C.size_t(shape[3]),
+				C.int64_t(shape[4]), C.int64_t(shape[2]), C.int64_t(shape[0]),
+				C.size_t(shape[3]), C.size_t(shape[1]),
 				C.size_t(offset)),
+			nDims: len(shape),
 		}
 	case 7:
 		return &Tensor{
 			t: C.ggml_view_4d(ctx.(*Context).ctx, t.t,
-				C.int64_t(shape[0]), C.int64_t(shape[2]), C.int64_t(shape[4]), C.int64_t(shape[6]),
-				C.size_t(shape[1]), C.size_t(shape[3]), C.size_t(shape[5]),
+				C.int64_t(shape[6]), C.int64_t(shape[4]), C.int64_t(shape[2]), C.int64_t(shape[0]),
+				C.size_t(shape[5]), C.size_t(shape[3]), C.size_t(shape[1]),
 				C.size_t(offset)),
+			nDims: len(shape),
 		}
 	default:
 		panic("unsupported number of dimensions")
@@ -566,14 +727,31 @@ const (
 	ropeTypeNorm C.int = iota
 )
 
-func (t *Tensor) Rope(ctx ml.Context, offset int32, ropeFactors ml.Tensor, ropeDim uint32, ropeBase, ropeScale float32) ml.Tensor {
-	positionIDs, err := ctx.FromIntSlice([]int32{0}, 1) // TODO - actual impl
+func (t *Tensor) Rope(
+	ctx ml.Context,
+	offset int32,
+	ropeFactors ml.Tensor,
+	freqs ml.Tensor, // Unused on GGML
+	ropeDim uint32,
+	ropeBase,
+	ropeScale float32,
+) ml.Tensor {
+	tt := t.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+	p := int(tt.(*Tensor).t.ne[2])
+	positions := make([]int32, p)
+	// TODO - does this need mutation for offsets?
+	for i := range positions {
+		positions[i] = int32(i)
+	}
+
+	positionIDs, err := ctx.FromIntSlice(positions, len(positions))
 	if err != nil {
 		panic(err.Error())
 	}
-	return &Tensor{
+
+	r := &Tensor{
 		t: C.ggml_rope_ext(
-			ctx.(*Context).ctx, t.t, positionIDs.(*Tensor).t, ropeFactors.(*Tensor).t,
+			ctx.(*Context).ctx, tt.(*Tensor).t, positionIDs.(*Tensor).t, ropeFactors.(*Tensor).t,
 			C.int(ropeDim),
 			131072,       // YaRN n_ctx_train
 			ropeTypeNorm, // ROPE_TYPE_NORM
@@ -584,31 +762,44 @@ func (t *Tensor) Rope(ctx ml.Context, offset int32, ropeFactors ml.Tensor, ropeD
 			32., // YaRN beta_fast
 			1.,  // YaRN beta_slow
 		),
+		nDims: t.nDims,
 	}
+	return r.Permute(ctx, 0, 2, 1, 3)
 }
 
 func (t *Tensor) GELU(ctx ml.Context) ml.Tensor {
 	return &Tensor{
-		t: C.ggml_gelu_inplace(ctx.(*Context).ctx, t.t),
+		t:     C.ggml_gelu_inplace(ctx.(*Context).ctx, t.t),
+		nDims: t.nDims,
 	}
 }
 
 func (t *Tensor) SILU(ctx ml.Context) ml.Tensor {
 	return &Tensor{
-		t: C.ggml_silu_inplace(ctx.(*Context).ctx, t.t),
+		t:     C.ggml_silu_inplace(ctx.(*Context).ctx, t.t),
+		nDims: t.nDims,
 	}
 }
 
 func (t *Tensor) Conv2D(ctx ml.Context, t2 ml.Tensor, s0, s1, p0, p1, d0, d1 int) ml.Tensor {
 	return &Tensor{
-		t: C.ggml_conv_2d(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.int(s0), C.int(s1), C.int(p0), C.int(p1), C.int(d0), C.int(d1)),
+		t:     C.ggml_conv_2d(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.int(s0), C.int(s1), C.int(p0), C.int(p1), C.int(d0), C.int(d1)),
+		nDims: t.nDims,
 	}
 }
 
 func (t *Tensor) Repeat(ctx ml.Context, repeats, axis int) ml.Tensor {
-	panic("not yet implemented")
-}
+	rev := []int{3, 2, 1, 0}
+	shape := make([]int64, t.nDims)
+	for i := range shape {
+		shape[i] = int64(t.t.ne[i])
+	}
 
-func (ctx *Context) FastScaledDotProductAttention(queries, keys, values ml.Tensor, scale float32, mask ml.Tensor) ml.Tensor {
-	panic("not yet implemented")
+	shape[rev[axis]] *= int64(repeats)
+	tt := C.ggml_new_tensor(ctx.(*Context).ctx, t.t._type, C.int(len(shape)), (*C.int64_t)(unsafe.Pointer(&shape[0])))
+	r := &Tensor{
+		t:     C.ggml_repeat(ctx.(*Context).ctx, t.t, tt),
+		nDims: t.nDims,
+	}
+	return r
 }

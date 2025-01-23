@@ -75,35 +75,43 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState ml.Tensor, offset i
 	queries = sa.Rope(ctx, queries, offset, opts)
 	keys = sa.Rope(ctx, keys, offset, opts)
 
-	// TODO - when this comes back, the input should be truncated to just the latest token
+	// TODO - The current cache algorithm doesn't work properly on MLX due to stride values being onconsistent with
+	// the GGML backend.  When this caching support comes back, the input should be truncated to just the latest token
 	// keys, values = cache.Put(ctx, keys, values, cache.Options)
 
-	// TODO - some sort of discovery mechanism to know if the backend supports the fast routine
 	var output ml.Tensor
-	if false {
+	if sdpa, ok := ctx.(ml.FastScaledDotProductAttention); ok {
+		output = sdpa.FastScaledDotProductAttention(queries, keys, values, float32(scale), nil)
+	} else {
+		// Note: this "non-fast" flow can work on backends besides GGML, but requires some adjustments called out below
+
 		// Begin scaled dot product attention
 		// Ref: https://github.com/meta-llama/llama-models/blob/main/models/llama3/reference_impl/model.py#L196
-		n_rep := int(n_heads / n_kv_heads)
+		// Note: The mlx python implementation does not have this, since it relies on FastScaledDotProductAttention
 		keys = keys.Permute(ctx, 0, 2, 1, 3)
 		values = values.Permute(ctx, 0, 2, 1, 3)
 		queries = queries.Permute(ctx, 0, 2, 1, 3)
+
 		// repeat k/v heads if n_kv_heads < n_heads
-		// equiv to torch.repeat_interleave(x, dim=2, repeats=n_rep)
-		keys = keys.Repeat(ctx, n_rep, 2).Contiguous(ctx)
-		values = values.Repeat(ctx, n_rep, 2).Contiguous(ctx)
+		// equiv to torch.repeat_interleave(x, dim=2, repeats=int(n_heads / n_kv_heads))
+		// keys = keys.Repeat(ctx, int(n_heads / n_kv_heads), 2).Contiguous(ctx)     // Note: enable this line on !GGML backend
+		// values = values.Repeat(ctx, int(n_heads / n_kv_heads), 2).Contiguous(ctx) // Note: enable this line on !GGML backend
 
 		queries = queries.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx) // (bs, n_heads, L, head_dim)
 		keys = keys.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)       // (bs, n_heads, cache_len + L, head_dim)
-		values = values.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)   // (bs, n_heads, cache_len + L, head_dim)
 
-		kp := keys.Permute(ctx, 0, 1, 3, 2)
-		scores := kp.Mulmat(ctx, queries).Scale(ctx, 1.0/math.Sqrt(float64(head_dim)))
-		// TODO mask here
+		// Note: toggle these on !GGML backend
+		// values = values.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx) // !GGML logic (bs, n_heads, cache_len + L, head_dim)
+		values = values.Permute(ctx, 0, 3, 1, 2).Contiguous(ctx) // Note: GGML requires this to work
+
+		// keys = keys.Permute(ctx, 0, 1, 3, 2).Contiguous(ctx) // Note: enable this line on !GGML backend
+		scores := keys.Mulmat(ctx, queries)
+		scores = scores.Scale(ctx, 1.0/math.Sqrt(float64(head_dim)))
+
+		// TODO implement mask here
 
 		scores = scores.Softmax(ctx) // Without axis=-1 this starts to drift
 		output = values.Mulmat(ctx, scores)
-	} else {
-		output = ctx.FastScaledDotProductAttention(queries, keys, values, float32(scale), nil)
 	}
 
 	output = output.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
@@ -176,13 +184,15 @@ func (sa *SelfAttention) Rope(ctx ml.Context, x ml.Tensor, offset int32, opts *O
 	return x.Rope(
 		ctx,
 		offset,
+		opts.RopeFactors,
 		_freqs,
 		dims,
-		0,   // base unused
-		1.0, // scale
+		500000, // base
+		1.0,    // scale
 	)
 }
 
+// TODO make this a common util
 func arange(start, end, step float32) []float32 {
 	if step == 0 || start >= end {
 		return nil
@@ -216,11 +226,11 @@ type Layer struct {
 
 func (l *Layer) Forward(ctx ml.Context, hiddenState ml.Tensor, offset int32, cache model.Cache, opts *Options) ml.Tensor {
 	residual := hiddenState
+
 	hiddenState = l.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
 	hiddenState = l.SelfAttention.Forward(ctx, hiddenState, offset, cache, opts)
 	hiddenState = hiddenState.Add(ctx, residual)
 	residual = hiddenState
-
 	hiddenState = l.MLPNorm.Forward(ctx, hiddenState, opts.eps)
 	hiddenState = l.MLP.Forward(ctx, hiddenState, opts)
 	out := hiddenState.Add(ctx, residual)
@@ -233,7 +243,8 @@ func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
 		return nil, err
 	}
 	offset := int32(0)
-	hiddenState := m.TokenEmbedding.Forward(ctx, inputs).Reshape(ctx, 1, -1, 4096)
+	hiddenState := m.TokenEmbedding.Forward(ctx, inputs)
+	hiddenState = hiddenState.Reshape(ctx, 1, -1, 4096)
 
 	for i, layer := range m.Layers {
 		hiddenState = layer.Forward(ctx, hiddenState, offset, opts.Cache.Sub(i), m.Options)
@@ -241,18 +252,12 @@ func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
 
 	hiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)
 
-	// TODO this isn't the right solution, but we need to do this only once (there's a bug here someplace...)
-	s := m.Output.Weight.Shape()
-	if s[0] != hiddenState.Shape()[2] {
-		m.Output.Weight = m.Output.Weight.Permute(ctx, 1, 0)
-	}
-
-	outputs, err := ctx.FromIntSlice([]int32{-1}, 1, 1)
+	outputs, err := ctx.FromIntSlice([]int32{int32(hiddenState.Dim(1)) - 1}, 1, 1)
 	if err != nil {
 		return nil, err
 	}
-	t := hiddenState.Rows(ctx, outputs).Reshape(ctx, 1, -1)
 
+	t := hiddenState.Rows(ctx, outputs).Reshape(ctx, 1, -1)
 	hiddenState = m.Output.Forward(ctx, t)
 	return hiddenState, nil
 }
