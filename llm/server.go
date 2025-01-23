@@ -271,17 +271,12 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 	}
 
 	for i := range servers {
-		builtin := servers[i] == runners.BuiltinName()
 		server := availableServers[servers[i]]
 		if server == "" {
 			// Shouldn't happen
 			finalErr = fmt.Errorf("[%d] server %s not listed in available servers %v", i, servers[i], availableServers)
 			slog.Error("server list inconsistent", "error", finalErr)
 			continue
-		}
-
-		if strings.HasPrefix(servers[i], "cpu") || (builtin && !(runtime.GOOS == "darwin" && runtime.GOARCH == "arm64")) {
-			gpus = discover.GetCPUInfo()
 		}
 
 		// Find an availableServers  port, retry on each iteration in case the failure was a port conflict race
