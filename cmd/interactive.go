@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -8,15 +9,15 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/exp/slices"
 
-	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/progress"
-	"github.com/jmorganca/ollama/readline"
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/readline"
+	"github.com/ollama/ollama/types/errtypes"
 )
 
 type MultilineState int
@@ -25,75 +26,16 @@ const (
 	MultilineNone MultilineState = iota
 	MultilinePrompt
 	MultilineSystem
-	MultilineTemplate
 )
 
-func loadModel(cmd *cobra.Command, opts *runOptions) error {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
-	p := progress.NewProgress(os.Stderr)
-	defer p.StopAndClear()
-
-	spinner := progress.NewSpinner("")
-	p.Add("", spinner)
-
-	showReq := api.ShowRequest{Name: opts.Model}
-	showResp, err := client.Show(cmd.Context(), &showReq)
-	if err != nil {
-		return err
-	}
-	opts.MultiModal = slices.Contains(showResp.Details.Families, "clip")
-	opts.ParentModel = showResp.Details.ParentModel
-
-	if len(showResp.Messages) > 0 {
-		opts.Messages = append(opts.Messages, showResp.Messages...)
-	}
-
-	chatReq := &api.ChatRequest{
-		Model:    opts.Model,
-		Messages: []api.Message{},
-	}
-	err = client.Chat(cmd.Context(), chatReq, func(resp api.ChatResponse) error {
-		p.StopAndClear()
-		if len(opts.Messages) > 0 {
-			for _, msg := range opts.Messages {
-				switch msg.Role {
-				case "user":
-					fmt.Printf(">>> %s\n", msg.Content)
-				case "assistant":
-					state := &displayResponseState{}
-					displayResponse(msg.Content, opts.WordWrap, state)
-					fmt.Println()
-					fmt.Println()
-				}
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func generateInteractive(cmd *cobra.Command, opts runOptions) error {
-	opts.Messages = make([]api.Message, 0)
-
-	err := loadModel(cmd, &opts)
-	if err != nil {
-		return err
-	}
-
 	usage := func() {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
 		fmt.Fprintln(os.Stderr, "  /set            Set session variables")
 		fmt.Fprintln(os.Stderr, "  /show           Show model information")
 		fmt.Fprintln(os.Stderr, "  /load <model>   Load a session or model")
 		fmt.Fprintln(os.Stderr, "  /save <model>   Save your current session")
+		fmt.Fprintln(os.Stderr, "  /clear          Clear session context")
 		fmt.Fprintln(os.Stderr, "  /bye            Exit")
 		fmt.Fprintln(os.Stderr, "  /?, /help       Help for a command")
 		fmt.Fprintln(os.Stderr, "  /? shortcuts    Help for keyboard shortcuts")
@@ -111,7 +53,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "Available Commands:")
 		fmt.Fprintln(os.Stderr, "  /set parameter ...     Set a parameter")
 		fmt.Fprintln(os.Stderr, "  /set system <string>   Set system message")
-		fmt.Fprintln(os.Stderr, "  /set template <string> Set prompt template")
 		fmt.Fprintln(os.Stderr, "  /set history           Enable history")
 		fmt.Fprintln(os.Stderr, "  /set nohistory         Disable history")
 		fmt.Fprintln(os.Stderr, "  /set wordwrap          Enable wordwrap")
@@ -131,6 +72,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "   Alt + f            Move forward (right) one word")
 		fmt.Fprintln(os.Stderr, "  Ctrl + k            Delete the sentence after the cursor")
 		fmt.Fprintln(os.Stderr, "  Ctrl + u            Delete the sentence before the cursor")
+		fmt.Fprintln(os.Stderr, "  Ctrl + w            Delete the word before the cursor")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "  Ctrl + l            Clear the screen")
 		fmt.Fprintln(os.Stderr, "  Ctrl + c            Stop the model from responding")
@@ -156,12 +98,13 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /set parameter num_predict <int>      Max number of tokens to predict")
 		fmt.Fprintln(os.Stderr, "  /set parameter top_k <int>            Pick from top k num of tokens")
 		fmt.Fprintln(os.Stderr, "  /set parameter top_p <float>          Pick token based on sum of probabilities")
+		fmt.Fprintln(os.Stderr, "  /set parameter min_p <float>          Pick token based on top token probability * min_p")
 		fmt.Fprintln(os.Stderr, "  /set parameter num_ctx <int>          Set the context size")
 		fmt.Fprintln(os.Stderr, "  /set parameter temperature <float>    Set creativity level")
 		fmt.Fprintln(os.Stderr, "  /set parameter repeat_penalty <float> How strongly to penalize repetitions")
 		fmt.Fprintln(os.Stderr, "  /set parameter repeat_last_n <int>    Set how far back to look for repetitions")
 		fmt.Fprintln(os.Stderr, "  /set parameter num_gpu <int>          The number of layers to send to the GPU")
-		fmt.Fprintln(os.Stderr, "  /set parameter stop \"<string>\", ...   Set the stop parameters")
+		fmt.Fprintln(os.Stderr, "  /set parameter stop <string> <string> ...   Set the stop parameters")
 		fmt.Fprintln(os.Stderr, "")
 	}
 
@@ -173,6 +116,10 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	})
 	if err != nil {
 		return err
+	}
+
+	if envconfig.NoHistory() {
+		scanner.HistoryDisable()
 	}
 
 	fmt.Print(readline.StartBracketedPaste)
@@ -216,10 +163,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				opts.Messages = append(opts.Messages, api.Message{Role: "system", Content: opts.System})
 				fmt.Println("Set system message.")
 				sb.Reset()
-			case MultilineTemplate:
-				opts.Template = sb.String()
-				fmt.Println("Set prompt template.")
-				sb.Reset()
 			}
 
 			multiline = MultilineNone
@@ -251,7 +194,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			opts.Model = args[1]
 			opts.Messages = []api.Message{}
 			fmt.Printf("Loading model '%s'\n", opts.Model)
-			if err := loadModel(cmd, &opts); err != nil {
+			if err := loadOrUnloadModel(cmd, &opts); err != nil {
 				return err
 			}
 			continue
@@ -268,17 +211,25 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				return err
 			}
 
-			req := &api.CreateRequest{
-				Name:      args[1],
-				Modelfile: buildModelfile(opts),
-			}
+			req := NewCreateRequest(args[1], opts)
 			fn := func(resp api.ProgressResponse) error { return nil }
 			err = client.Create(cmd.Context(), req, fn)
 			if err != nil {
-				fmt.Println("error: couldn't save model")
+				if strings.Contains(err.Error(), errtypes.InvalidModelNameErrMsg) {
+					fmt.Printf("error: The model name '%s' is invalid\n", args[1])
+					continue
+				}
 				return err
 			}
 			fmt.Printf("Created new model '%s'\n", args[1])
+			continue
+		case strings.HasPrefix(line, "/clear"):
+			opts.Messages = []api.Message{}
+			if opts.System != "" {
+				newMessage := api.Message{Role: "system", Content: opts.System}
+				opts.Messages = append(opts.Messages, newMessage)
+			}
+			fmt.Println("Cleared session context")
 			continue
 		case strings.HasPrefix(line, "/set"):
 			args := strings.Fields(line)
@@ -295,10 +246,14 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					opts.WordWrap = false
 					fmt.Println("Set 'nowordwrap' mode.")
 				case "verbose":
-					cmd.Flags().Set("verbose", "true")
+					if err := cmd.Flags().Set("verbose", "true"); err != nil {
+						return err
+					}
 					fmt.Println("Set 'verbose' mode.")
 				case "quiet":
-					cmd.Flags().Set("verbose", "false")
+					if err := cmd.Flags().Set("verbose", "false"); err != nil {
+						return err
+					}
 					fmt.Println("Set 'quiet' mode.")
 				case "format":
 					if len(args) < 3 || args[2] != "json" {
@@ -323,17 +278,13 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					}
 					fmt.Printf("Set parameter '%s' to '%s'\n", args[2], strings.Join(params, ", "))
 					opts.Options[args[2]] = fp[args[2]]
-				case "system", "template":
+				case "system":
 					if len(args) < 3 {
 						usageSet()
 						continue
 					}
 
-					if args[1] == "system" {
-						multiline = MultilineSystem
-					} else if args[1] == "template" {
-						multiline = MultilineTemplate
-					}
+					multiline = MultilineSystem
 
 					line := strings.Join(args[2:], " ")
 					line, ok := strings.CutPrefix(line, `"""`)
@@ -353,24 +304,16 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						continue
 					}
 
-					if args[1] == "system" {
-						opts.System = sb.String() // for display in modelfile
-						newMessage := api.Message{Role: "system", Content: sb.String()}
-						// Check if the slice is not empty and the last message is from 'system'
-						if len(opts.Messages) > 0 && opts.Messages[len(opts.Messages)-1].Role == "system" {
-							// Replace the last message
-							opts.Messages[len(opts.Messages)-1] = newMessage
-						} else {
-							opts.Messages = append(opts.Messages, newMessage)
-						}
-						fmt.Println("Set system message.")
-						sb.Reset()
-					} else if args[1] == "template" {
-						opts.Template = sb.String()
-						fmt.Println("Set prompt template.")
-						sb.Reset()
+					opts.System = sb.String() // for display in modelfile
+					newMessage := api.Message{Role: "system", Content: sb.String()}
+					// Check if the slice is not empty and the last message is from 'system'
+					if len(opts.Messages) > 0 && opts.Messages[len(opts.Messages)-1].Role == "system" {
+						// Replace the last message
+						opts.Messages[len(opts.Messages)-1] = newMessage
+					} else {
+						opts.Messages = append(opts.Messages, newMessage)
 					}
-
+					fmt.Println("Set system message.")
 					sb.Reset()
 					continue
 				default:
@@ -388,10 +331,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					return err
 				}
 				req := &api.ShowRequest{
-					Name:     opts.Model,
-					System:   opts.System,
-					Template: opts.Template,
-					Options:  opts.Options,
+					Name:    opts.Model,
+					System:  opts.System,
+					Options: opts.Options,
 				}
 				resp, err := client.Show(cmd.Context(), req)
 				if err != nil {
@@ -401,15 +343,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 				switch args[1] {
 				case "info":
-					fmt.Println("Model details:")
-					if len(resp.Details.Families) > 0 {
-						fmt.Printf("Family              %s\n", strings.Join(resp.Details.Families, ", "))
-					} else if resp.Details.Family != "" {
-						fmt.Printf("Family              %s\n", resp.Details.Family)
-					}
-					fmt.Printf("Parameter Size      %s\n", resp.Details.ParameterSize)
-					fmt.Printf("Quantization Level  %s\n", resp.Details.QuantizationLevel)
-					fmt.Println("")
+					_ = showInfo(resp, os.Stderr)
 				case "license":
 					if resp.License == "" {
 						fmt.Println("No license was specified for this model.")
@@ -442,12 +376,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						fmt.Println("No system message was specified for this model.")
 					}
 				case "template":
-					switch {
-					case opts.Template != "":
-						fmt.Println(opts.Template + "\n")
-					case resp.Template != "":
+					if resp.Template != "" {
 						fmt.Println(resp.Template)
-					default:
+					} else {
 						fmt.Println("No prompt template was specified for this model.")
 					}
 				default:
@@ -504,13 +435,6 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					return err
 				}
 
-				// clear all previous images for better responses
-				if len(images) > 0 {
-					for i := range opts.Messages {
-						opts.Messages[i].Images = nil
-					}
-				}
-
 				newMessage.Content = msg
 				newMessage.Images = images
 			}
@@ -530,68 +454,51 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	}
 }
 
-func buildModelfile(opts runOptions) string {
-	var mf strings.Builder
-	model := opts.ParentModel
-	if model == "" {
-		model = opts.Model
+func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
+	req := &api.CreateRequest{
+		Name: name,
+		From: cmp.Or(opts.ParentModel, opts.Model),
 	}
-	fmt.Fprintf(&mf, "FROM %s\n", model)
+
 	if opts.System != "" {
-		fmt.Fprintf(&mf, "SYSTEM \"\"\"%s\"\"\"\n", opts.System)
+		req.System = opts.System
 	}
 
-	if opts.Template != "" {
-		fmt.Fprintf(&mf, "TEMPLATE \"\"\"%s\"\"\"\n", opts.Template)
+	if len(opts.Options) > 0 {
+		req.Parameters = opts.Options
 	}
 
-	keys := make([]string, 0)
-	for k := range opts.Options {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		fmt.Fprintf(&mf, "PARAMETER %s %v\n", k, opts.Options[k])
-	}
-	fmt.Fprintln(&mf)
-
-	for _, msg := range opts.Messages {
-		fmt.Fprintf(&mf, "MESSAGE %s \"\"\"%s\"\"\"\n", msg.Role, msg.Content)
+	if len(opts.Messages) > 0 {
+		req.Messages = opts.Messages
 	}
 
-	return mf.String()
+	return req
 }
 
 func normalizeFilePath(fp string) string {
-	// Define a map of escaped characters and their replacements
-	replacements := map[string]string{
-		"\\ ":  " ",  // Escaped space
-		"\\(":  "(",  // Escaped left parenthesis
-		"\\)":  ")",  // Escaped right parenthesis
-		"\\[":  "[",  // Escaped left square bracket
-		"\\]":  "]",  // Escaped right square bracket
-		"\\{":  "{",  // Escaped left curly brace
-		"\\}":  "}",  // Escaped right curly brace
-		"\\$":  "$",  // Escaped dollar sign
-		"\\&":  "&",  // Escaped ampersand
-		"\\;":  ";",  // Escaped semicolon
-		"\\'":  "'",  // Escaped single quote
-		"\\\\": "\\", // Escaped backslash
-		"\\*":  "*",  // Escaped asterisk
-		"\\?":  "?",  // Escaped question mark
-	}
-
-	for escaped, actual := range replacements {
-		fp = strings.ReplaceAll(fp, escaped, actual)
-	}
-	return fp
+	return strings.NewReplacer(
+		"\\ ", " ", // Escaped space
+		"\\(", "(", // Escaped left parenthesis
+		"\\)", ")", // Escaped right parenthesis
+		"\\[", "[", // Escaped left square bracket
+		"\\]", "]", // Escaped right square bracket
+		"\\{", "{", // Escaped left curly brace
+		"\\}", "}", // Escaped right curly brace
+		"\\$", "$", // Escaped dollar sign
+		"\\&", "&", // Escaped ampersand
+		"\\;", ";", // Escaped semicolon
+		"\\'", "'", // Escaped single quote
+		"\\\\", "\\", // Escaped backslash
+		"\\*", "*", // Escaped asterisk
+		"\\?", "?", // Escaped question mark
+	).Replace(fp)
 }
 
 func extractFileNames(input string) []string {
 	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
 	// and followed by more characters and a file extension
 	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|svg)\b`
+	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png)\b`
 	re := regexp.MustCompile(regexPattern)
 
 	return re.FindAllString(input, -1)
@@ -604,10 +511,9 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 	for _, fp := range filePaths {
 		nfp := normalizeFilePath(fp)
 		data, err := getImageData(nfp)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
 			fmt.Fprintf(os.Stderr, "Couldn't process image: %q\n", err)
 			return "", imgs, err
 		}
@@ -615,7 +521,7 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 		input = strings.ReplaceAll(input, fp, "")
 		imgs = append(imgs, data)
 	}
-	return input, imgs, nil
+	return strings.TrimSpace(input), imgs, nil
 }
 
 func getImageData(filePath string) ([]byte, error) {
@@ -645,7 +551,7 @@ func getImageData(filePath string) ([]byte, error) {
 	// Check if the file size exceeds 100MB
 	var maxSize int64 = 100 * 1024 * 1024 // 100MB in bytes
 	if info.Size() > maxSize {
-		return nil, fmt.Errorf("file size exceeds maximum limit (100MB)")
+		return nil, errors.New("file size exceeds maximum limit (100MB)")
 	}
 
 	buf = make([]byte, info.Size())

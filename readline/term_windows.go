@@ -1,29 +1,7 @@
 package readline
 
 import (
-	"syscall"
-	"unsafe"
-)
-
-const (
-	enableLineInput       = 2
-	enableWindowInput     = 8
-	enableMouseInput      = 16
-	enableInsertMode      = 32
-	enableQuickEditMode   = 64
-	enableExtendedFlags   = 128
-	enableProcessedOutput = 1
-	enableWrapAtEolOutput = 2
-	enableAutoPosition    = 256 // Cursor position is not affected by writing data to the console.
-	enableEchoInput       = 4   // Characters are written to the console as they're read.
-	enableProcessedInput  = 1   // Enables input processing (like recognizing Ctrl+C).
-)
-
-var kernel32 = syscall.NewLazyDLL("kernel32.dll")
-
-var (
-	procGetConsoleMode = kernel32.NewProc("GetConsoleMode")
-	procSetConsoleMode = kernel32.NewProc("SetConsoleMode")
+	"golang.org/x/sys/windows"
 )
 
 type State struct {
@@ -31,33 +9,30 @@ type State struct {
 }
 
 // IsTerminal checks if the given file descriptor is associated with a terminal
-func IsTerminal(fd int) bool {
+func IsTerminal(fd uintptr) bool {
 	var st uint32
-	r, _, e := syscall.SyscallN(procGetConsoleMode.Addr(), uintptr(fd), uintptr(unsafe.Pointer(&st)), 0)
-	// if the call succeeds and doesn't produce an error, it's a terminal
-	return r != 0 && e == 0
+	err := windows.GetConsoleMode(windows.Handle(fd), &st)
+	return err == nil
 }
 
-func SetRawMode(fd int) (*State, error) {
+func SetRawMode(fd uintptr) (*State, error) {
 	var st uint32
-	// retrieve the current mode of the terminal
-	_, _, e := syscall.SyscallN(procGetConsoleMode.Addr(), uintptr(fd), uintptr(unsafe.Pointer(&st)), 0)
-	if e != 0 {
-		return nil, error(e)
+	if err := windows.GetConsoleMode(windows.Handle(fd), &st); err != nil {
+		return nil, err
 	}
-	// modify the mode to set it to raw
-	raw := st &^ (enableEchoInput | enableProcessedInput | enableLineInput | enableProcessedOutput)
-	// apply the new mode to the terminal
-	_, _, e = syscall.SyscallN(procSetConsoleMode.Addr(), uintptr(fd), uintptr(raw), 0)
-	if e != 0 {
-		return nil, error(e)
+
+	// this enables raw mode by turning off various flags in the console mode: https://pkg.go.dev/golang.org/x/sys/windows#pkg-constants
+	raw := st &^ (windows.ENABLE_ECHO_INPUT | windows.ENABLE_PROCESSED_INPUT | windows.ENABLE_LINE_INPUT | windows.ENABLE_PROCESSED_OUTPUT)
+
+	// turn on ENABLE_VIRTUAL_TERMINAL_INPUT to enable escape sequences
+	raw |= windows.ENABLE_VIRTUAL_TERMINAL_INPUT
+	if err := windows.SetConsoleMode(windows.Handle(fd), raw); err != nil {
+		return nil, err
 	}
-	// return the original state so that it can be restored later
 	return &State{st}, nil
 }
 
-func UnsetRawMode(fd int, state any) error {
+func UnsetRawMode(fd uintptr, state any) error {
 	s := state.(*State)
-	_, _, err := syscall.SyscallN(procSetConsoleMode.Addr(), uintptr(fd), uintptr(s.mode), 0)
-	return err
+	return windows.SetConsoleMode(windows.Handle(fd), s.mode)
 }

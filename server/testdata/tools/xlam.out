@@ -1,0 +1,40 @@
+You are a knowledgeable assistant. You can answer questions and perform tasks.
+### Instruction:
+What's the weather like today in Paris?
+### Response:
+{"tool_calls": [{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Paris, France"}}]}
+<|EOT|>
+### Response:
+The current temperature in Paris, France is 22 degrees Celsius.
+<|EOT|>
+### Instruction:
+[BEGIN OF TASK INSTRUCTION]
+You are an expert in composing functions. You are given a question and a set of possible functions. 
+Based on the question, you will need to make one or more function/tool calls to achieve the purpose. 
+If none of the functions can be used, point it out and refuse to answer. 
+If the given question lacks the parameters required by the function, also point it out.
+[END OF TASK INSTRUCTION]
+
+[BEGIN OF AVAILABLE TOOLS]
+[{"type":"function","function":{"name":"get_current_weather","description":"Get the current weather","parameters":{"type":"object","required":["location","format"],"properties":{"format":{"type":"string","description":"The temperature unit to use. Infer this from the user's location.","enum":["celsius","fahrenheit"]},"location":{"type":"string","description":"The city and state, e.g. San Francisco, CA"}}}}}]
+[END OF AVAILABLE TOOLS]
+
+[BEGIN OF FORMAT INSTRUCTION]
+The output MUST strictly adhere to the following JSON format, and NO other text MUST be included.
+The example format is as follows. Please make sure the parameter type is correct. If no function call is needed, please make tool_calls an empty list '[]'.
+```
+{
+    "tool_calls": [
+    {"name": "func_name1", "arguments": {"argument1": "value1", "argument2": "value2"}},
+    ... (more tool calls as required)
+    ]
+}
+```
+[END OF FORMAT INSTRUCTION]
+
+[BEGIN OF QUERY]
+What's the weather like today in San Francisco and Toronto?
+[END OF QUERY]
+
+
+### Response:

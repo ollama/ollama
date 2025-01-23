@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/jmorganca/ollama/app/assets"
-	"github.com/jmorganca/ollama/app/tray/commontray"
+	"github.com/ollama/ollama/app/assets"
+	"github.com/ollama/ollama/app/tray/commontray"
 )
 
 func NewTray() (commontray.OllamaTray, error) {
@@ -24,10 +24,5 @@ func NewTray() (commontray.OllamaTray, error) {
 		return nil, fmt.Errorf("failed to load icon %s: %w", iconName, err)
 	}
 
-	tray, err := InitPlatformTray(icon, updateIcon)
-	if err != nil {
-		return nil, err
-	}
-
-	return tray, nil
+	return InitPlatformTray(icon, updateIcon)
 }

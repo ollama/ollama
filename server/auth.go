@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jmorganca/ollama/api"
-	"github.com/jmorganca/ollama/auth"
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/auth"
 )
 
 type registryChallenge struct {
@@ -67,7 +67,7 @@ func getAuthorizationToken(ctx context.Context, challenge registryChallenge) (st
 
 	headers.Add("Authorization", signature)
 
-	response, err := makeRequest(ctx, http.MethodGet, redirectURL, headers, nil, nil)
+	response, err := makeRequest(ctx, http.MethodGet, redirectURL, headers, nil, &registryOptions{})
 	if err != nil {
 		return "", err
 	}

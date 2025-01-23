@@ -5,9 +5,11 @@
 .swp
 dist
 ollama
-ggml-metal.metal
 .cache
 *.exe
 .idea
 test_data
 *.crt
+llama/build
+__debug_bin*
+llama/vendor

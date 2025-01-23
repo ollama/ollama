@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Help
+    url: https://discord.com/invite/ollama
+    about: Please join our Discord server for help using Ollama
+  - name: Troubleshooting
+    url: https://github.com/ollama/ollama/blob/main/docs/faq.md#faq
+    about: See the FAQ for common issues and solutions

@@ -7,21 +7,37 @@ linters:
     - bodyclose
     - containedctx
     - contextcheck
-    - exportloopref
+    - errcheck
     - gocheckcompilerdirectives
-    # FIXME: for some reason this errors on windows
-    # - gofmt
-    # - goimports
+    - gofmt
+    - gofumpt
+    - gosimple
+    - govet
+    - ineffassign
+    - intrange
+    - makezero
     - misspell
     - nilerr
+    - nolintlint
+    - nosprintfhostport
+    - staticcheck
+    - tenv
+    - unconvert
     - unused
+    - usestdlibvars
+    - wastedassign
+    - whitespace
 linters-settings:
-  errcheck:
-    # exclude the following functions since we don't generally
-    # need to be concerned with the returned errors
-    exclude-functions:
-      - encoding/binary.Read
-      - (*os.File).Seek
-      - (*bufio.Writer).WriteString
-      - (*github.com/spf13/pflag.FlagSet).Set
-      - (*github.com/jmorganca/ollama/llm.readSeekOffset).Seek
+  staticcheck:
+    checks:
+      - all
+      - -SA1019 # omit Deprecated check
+severity:
+  default-severity: error
+  rules:
+    - linters:
+        - gofmt
+        - goimports
+        - intrange
+        - usestdlibvars
+      severity: info

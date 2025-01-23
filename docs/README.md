@@ -2,11 +2,11 @@
 
 ### Getting Started
 * [Quickstart](../README.md#quickstart)
-* [Examples](../examples)
-* [Importing models](./import.md) from GGUF, Pytorch and Safetensors
+* [Examples](./examples.md)
+* [Importing models](./import.md)
 * [Linux Documentation](./linux.md)
 * [Windows Documentation](./windows.md)
-* [Docker Documentation](https://hub.docker.com/r/ollama/ollama)
+* [Docker Documentation](./docker.md)
 
 ### Reference
 
