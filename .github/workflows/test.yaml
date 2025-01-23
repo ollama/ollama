@@ -46,9 +46,11 @@ jobs:
         include:
           - container: nvidia/cuda:11.8.0-devel-ubuntu22.04
             preset: CUDA
+            flags: '-DCMAKE_CUDA_ARCHITECTURES=87'
           - container: rocm/dev-ubuntu-22.04:6.1.2
             preset: ROCm
             extra-packages: rocm-libs
+            flags: '-DAMDGPU_TARGETS=gfx1012'
     runs-on: ubuntu-latest
     container: ${{ matrix.container }}
     steps:
@@ -64,7 +66,7 @@ jobs:
           path: ${{ github.workspace }}\.ccache
           key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}
       - run: |
-          cmake --preset ${{ matrix.preset }}
+          cmake --preset ${{ matrix.preset }} ${{ matrix.flags }}
           cmake --build --preset ${{ matrix.preset }} --parallel
 
   test:
