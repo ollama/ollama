@@ -86,7 +86,7 @@ GPU_COMPILER_CUFLAGS = \
 	-D_GNU_SOURCE \
 	-D_XOPEN_SOURCE=600 \
 	-DUSE_PROF_API=1 \
-	-std=gnu++14 \
+	-std=gnu++17 \
 	-x hip \
 	-mllvm=-amdgpu-early-inline-all=true \
 	-mllvm=-amdgpu-function-calls=false \

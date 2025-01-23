@@ -17,5 +17,5 @@ curl -X POST -H "Content-Type: application/json" -d '{"prompt": "hi"}' http://lo
 ### Embeddings
 
 ```
-curl -X POST -H "Content-Type: application/json" -d '{"prompt": "turn me into an embedding"}' http://localhost:8080/embeddings
+curl -X POST -H "Content-Type: application/json" -d '{"prompt": "turn me into an embedding"}' http://localhost:8080/embedding
 ```

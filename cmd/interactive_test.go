@@ -3,10 +3,7 @@ package cmd
 import (
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
-
-	"github.com/ollama/ollama/api"
 )
 
 func TestExtractFilenames(t *testing.T) {
@@ -52,57 +49,4 @@ d:\path with\spaces\seven.JPEG inbetween7 c:\users\jdoe\eight.png inbetween8
 	assert.Contains(t, res[8], "d:")
 	assert.Contains(t, res[9], "ten.PNG")
 	assert.Contains(t, res[9], "E:")
-}
-
-func TestModelfileBuilder(t *testing.T) {
-	opts := runOptions{
-		Model:  "hork",
-		System: "You are part horse and part shark, but all hork. Do horklike things",
-		Messages: []api.Message{
-			{Role: "user", Content: "Hey there hork!"},
-			{Role: "assistant", Content: "Yes it is true, I am half horse, half shark."},
-		},
-		Options: map[string]any{
-			"temperature":      0.9,
-			"seed":             42,
-			"penalize_newline": false,
-			"stop":             []string{"hi", "there"},
-		},
-	}
-
-	t.Run("model", func(t *testing.T) {
-		expect := `FROM hork
-SYSTEM You are part horse and part shark, but all hork. Do horklike things
-PARAMETER penalize_newline false
-PARAMETER seed 42
-PARAMETER stop hi
-PARAMETER stop there
-PARAMETER temperature 0.9
-MESSAGE user Hey there hork!
-MESSAGE assistant Yes it is true, I am half horse, half shark.
-`
-
-		actual := buildModelfile(opts)
-		if diff := cmp.Diff(expect, actual); diff != "" {
-			t.Errorf("mismatch (-want +got):\n%s", diff)
-		}
-	})
-
-	t.Run("parent model", func(t *testing.T) {
-		opts.ParentModel = "horseshark"
-		expect := `FROM horseshark
-SYSTEM You are part horse and part shark, but all hork. Do horklike things
-PARAMETER penalize_newline false
-PARAMETER seed 42
-PARAMETER stop hi
-PARAMETER stop there
-PARAMETER temperature 0.9
-MESSAGE user Hey there hork!
-MESSAGE assistant Yes it is true, I am half horse, half shark.
-`
-		actual := buildModelfile(opts)
-		if diff := cmp.Diff(expect, actual); diff != "" {
-			t.Errorf("mismatch (-want +got):\n%s", diff)
-		}
-	})
 }

@@ -8,10 +8,8 @@ include make/cuda-v12-defs.make
 include make/rocm-defs.make
 
 ifeq ($(CUSTOM_CPU_FLAGS),)
-ifneq ($(OS),darwin)
 ifeq ($(ARCH),amd64)
 	RUNNER_TARGETS=cpu
-endif
 endif
 # Without CUSTOM_CPU_FLAGS we default to build both v11 and v12 if present
 ifeq ($(OLLAMA_SKIP_CUDA_GENERATE),)

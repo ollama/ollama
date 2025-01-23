@@ -18,7 +18,6 @@ struct common_sampler *common_sampler_cinit(const struct llama_model *model, str
         sparams.mirostat = params->mirostat;
         sparams.mirostat_tau = params->mirostat_tau;
         sparams.mirostat_eta = params->mirostat_eta;
-        sparams.penalize_nl = params->penalize_nl;
         sparams.seed = params->seed;
         sparams.grammar = params->grammar;
         sparams.xtc_probability = 0.0;
@@ -49,7 +48,7 @@ int schema_to_grammar(const char *json_schema, char *grammar, size_t max_len)
 {
     try
     {
-        nlohmann::json schema = nlohmann::json::parse(json_schema);
+        nlohmann::ordered_json schema = nlohmann::ordered_json::parse(json_schema);
         std::string grammar_str = json_schema_to_grammar(schema);
         size_t len = grammar_str.length();
         if (len >= max_len)

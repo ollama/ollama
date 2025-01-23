@@ -23,7 +23,7 @@ ifeq ($(OS),windows)
 else ifeq ($(OS),linux)
 	# On linux, nvcc requires avx512 -> -mavx512f -mavx512dq -mavx512bw
 	GPU_VECTOR_FLAGS=$(if $(filter avx512,$(GPU_RUNNER_CPU_FLAGS)),avx512f avx512dq avx512bw) $(filter-out avx512,$(GPU_RUNNER_CPU_FLAGS))
-	GPU_COMPILER_EXTRA_FLAGS = -fPIC -Wno-unused-function -std=c++11
+	GPU_COMPILER_EXTRA_FLAGS = -fPIC -Wno-unused-function -std=c++17
 	GPU_LIBS = $(sort $(wildcard $(addsuffix *.$(SHARED_EXT).*,$(addprefix $(GPU_LIB_DIR)/$(SHARED_PREFIX),$(GPU_RUNNER_LIBS_SHORT)))))
 	GPU_COMPILER_CFLAGS = $(CFLAGS) -Xcompiler -fPIC -D_GNU_SOURCE
 	GPU_COMPILER_CXXFLAGS = $(CXXFLAGS) -Xcompiler -fPIC -D_GNU_SOURCE

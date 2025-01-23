@@ -89,6 +89,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"os"
 	"runtime"
 	"runtime/cgo"
 	"slices"
@@ -131,7 +132,7 @@ func llamaLog(level int32, text *C.char, _ unsafe.Pointer) {
 		return
 	}
 
-	fmt.Print(C.GoString(text))
+	fmt.Fprint(os.Stderr, C.GoString(text))
 }
 
 func GetModelArch(modelPath string) (string, error) {
@@ -689,7 +690,6 @@ func NewSamplingContext(model *Model, params SamplingParams) (*SamplingContext, 
 	cparams.mirostat = C.int32_t(params.Mirostat)
 	cparams.mirostat_tau = C.float(params.MirostatTau)
 	cparams.mirostat_eta = C.float(params.MirostatEta)
-	cparams.penalize_nl = C.bool(params.PenalizeNl)
 	cparams.seed = C.uint32_t(params.Seed)
 
 	grammar := C.CString(params.Grammar)

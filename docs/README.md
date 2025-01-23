@@ -2,7 +2,7 @@
 
 ### Getting Started
 * [Quickstart](../README.md#quickstart)
-* [Examples](../examples)
+* [Examples](./examples.md)
 * [Importing models](./import.md)
 * [Linux Documentation](./linux.md)
 * [Windows Documentation](./windows.md)

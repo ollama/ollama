@@ -225,7 +225,6 @@ type Options struct {
 	Mirostat         int      `json:"mirostat,omitempty"`
 	MirostatTau      float32  `json:"mirostat_tau,omitempty"`
 	MirostatEta      float32  `json:"mirostat_eta,omitempty"`
-	PenalizeNewline  bool     `json:"penalize_newline,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
 }
 
@@ -295,17 +294,21 @@ type EmbeddingResponse struct {
 
 // CreateRequest is the request passed to [Client.Create].
 type CreateRequest struct {
-	Model     string `json:"model"`
-	Modelfile string `json:"modelfile"`
-	Stream    *bool  `json:"stream,omitempty"`
-	Quantize  string `json:"quantize,omitempty"`
+	Model    string `json:"model"`
+	Stream   *bool  `json:"stream,omitempty"`
+	Quantize string `json:"quantize,omitempty"`
+
+	From       string            `json:"from,omitempty"`
+	Files      map[string]string `json:"files,omitempty"`
+	Adapters   map[string]string `json:"adapters,omitempty"`
+	Template   string            `json:"template,omitempty"`
+	License    any               `json:"license,omitempty"`
+	System     string            `json:"system,omitempty"`
+	Parameters map[string]any    `json:"parameters,omitempty"`
+	Messages   []Message         `json:"messages,omitempty"`
 
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
-
-	// Deprecated: set the file content with Modelfile instead
-	Path string `json:"path"`
-
 	// Deprecated: use Quantize instead
 	Quantization string `json:"quantization,omitempty"`
 }
@@ -602,7 +605,6 @@ func DefaultOptions() Options {
 		Mirostat:         0,
 		MirostatTau:      5.0,
 		MirostatEta:      0.1,
-		PenalizeNewline:  true,
 		Seed:             -1,
 
 		Runner: Runner{

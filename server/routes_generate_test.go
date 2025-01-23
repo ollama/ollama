@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -89,10 +88,34 @@ func TestGenerateChat(t *testing.T) {
 
 	go s.sched.Run(context.TODO())
 
+	_, digest := createBinFile(t, llm.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []llm.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model: "test",
-		Modelfile: fmt.Sprintf(`FROM %s
-		TEMPLATE """
+		Files: map[string]string{"file.gguf": digest},
+		Template: `
 {{- if .Tools }}
 {{ .Tools }}
 {{ end }}
@@ -100,30 +123,7 @@ func TestGenerateChat(t *testing.T) {
 {{- .Role }}: {{ .Content }}
 {{- range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
 {{- end }}
-{{ end }}"""
-`, createBinFile(t, llm.KV{
-			"general.architecture":          "llama",
-			"llama.block_count":             uint32(1),
-			"llama.context_length":          uint32(8192),
-			"llama.embedding_length":        uint32(4096),
-			"llama.attention.head_count":    uint32(32),
-			"llama.attention.head_count_kv": uint32(8),
-			"tokenizer.ggml.tokens":         []string{""},
-			"tokenizer.ggml.scores":         []float32{0},
-			"tokenizer.ggml.token_type":     []int32{0},
-		}, []llm.Tensor{
-			{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-		})),
+{{ end }}`,
 		Stream: &stream,
 	})
 
@@ -154,12 +154,13 @@ func TestGenerateChat(t *testing.T) {
 	})
 
 	t.Run("missing capabilities chat", func(t *testing.T) {
+		_, digest := createBinFile(t, llm.KV{
+			"general.architecture": "bert",
+			"bert.pooling_type":    uint32(0),
+		}, []llm.Tensor{})
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Model: "bert",
-			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, llm.KV{
-				"general.architecture": "bert",
-				"bert.pooling_type":    uint32(0),
-			}, []llm.Tensor{})),
+			Model:  "bert",
+			Files:  map[string]string{"bert.gguf": digest},
 			Stream: &stream,
 		})
 
@@ -281,8 +282,9 @@ func TestGenerateChat(t *testing.T) {
 	})
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
-		Model:     "test-system",
-		Modelfile: "FROM test\nSYSTEM You are a helpful assistant.",
+		Model:  "test-system",
+		From:   "test",
+		System: "You are a helpful assistant.",
 	})
 
 	if w.Code != http.StatusOK {
@@ -622,36 +624,38 @@ func TestGenerate(t *testing.T) {
 
 	go s.sched.Run(context.TODO())
 
+	_, digest := createBinFile(t, llm.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []llm.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
+
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model: "test",
-		Modelfile: fmt.Sprintf(`FROM %s
-		TEMPLATE """
+		Files: map[string]string{"file.gguf": digest},
+		Template: `
 {{- if .System }}System: {{ .System }} {{ end }}
 {{- if .Prompt }}User: {{ .Prompt }} {{ end }}
-{{- if .Response }}Assistant: {{ .Response }} {{ end }}"""
-`, createBinFile(t, llm.KV{
-			"general.architecture":          "llama",
-			"llama.block_count":             uint32(1),
-			"llama.context_length":          uint32(8192),
-			"llama.embedding_length":        uint32(4096),
-			"llama.attention.head_count":    uint32(32),
-			"llama.attention.head_count_kv": uint32(8),
-			"tokenizer.ggml.tokens":         []string{""},
-			"tokenizer.ggml.scores":         []float32{0},
-			"tokenizer.ggml.token_type":     []int32{0},
-		}, []llm.Tensor{
-			{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-		})),
+{{- if .Response }}Assistant: {{ .Response }} {{ end }}
+`,
 		Stream: &stream,
 	})
 
@@ -682,12 +686,14 @@ func TestGenerate(t *testing.T) {
 	})
 
 	t.Run("missing capabilities generate", func(t *testing.T) {
+		_, digest := createBinFile(t, llm.KV{
+			"general.architecture": "bert",
+			"bert.pooling_type":    uint32(0),
+		}, []llm.Tensor{})
+
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Model: "bert",
-			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, llm.KV{
-				"general.architecture": "bert",
-				"bert.pooling_type":    uint32(0),
-			}, []llm.Tensor{})),
+			Model:  "bert",
+			Files:  map[string]string{"file.gguf": digest},
 			Stream: &stream,
 		})
 
@@ -824,8 +830,9 @@ func TestGenerate(t *testing.T) {
 	})
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
-		Model:     "test-system",
-		Modelfile: "FROM test\nSYSTEM You are a helpful assistant.",
+		Model:  "test-system",
+		From:   "test",
+		System: "You are a helpful assistant.",
 	})
 
 	if w.Code != http.StatusOK {
@@ -894,10 +901,10 @@ func TestGenerate(t *testing.T) {
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model: "test-suffix",
-		Modelfile: `FROM test
-TEMPLATE """{{- if .Suffix }}<PRE> {{ .Prompt }} <SUF>{{ .Suffix }} <MID>
+		Template: `{{- if .Suffix }}<PRE> {{ .Prompt }} <SUF>{{ .Suffix }} <MID>
 {{- else }}{{ .Prompt }}
-{{- end }}"""`,
+{{- end }}`,
+		From: "test",
 	})
 
 	if w.Code != http.StatusOK {
