@@ -21,39 +21,78 @@ func NewNode(state JSONState) *Node {
 }
 
 var (
-	startToken     token
-	endToken       token
-	stringToken    token
-	objectKeyToken token
-	tabToken       token
-	spaceToken     token
-	newlineToken   token
-	newlineSpace   token
-	commaToken     token
-	commaToken2    token
-	commaToken3    token
-	colonToken     token
-	colonToken2    token
+	// startToken             token
+	startTokenVariants []token
+	// endToken               token
+	// stringToken            token
+	// objectKeyToken         token
+	tabToken     token
+	spaceToken   token
+	newlineToken token
+	newlineSpace token
+	// commaToken             token
+	// commaToken2            token
+	// commaToken3            token
+	// colonToken             token
+	// colonToken2            token
+	colonTokenVariants           []token
+	commaTokenVariants           []token
+	stringTokenVariants          []token
+	endTokenVariants             []token
+	objectKeyTokenVariants       []token
+	objKeyToColonVariants        []token
+	stringToObjectKeyVariants    []token
+	stringToCommaVariants        []token
+	stringToObjectVariants       []token
+	stringEndToObjectEndVariants []token
+	stringEndToCommaVariants     []token
 )
 
+func ComputeTokenVariants(variants []string, proc model.TextProcessor) ([]token, error) {
+	var allTokens token
+	for _, variant := range variants {
+		if t, err := proc.Encode(variant); err == nil {
+			allTokens = append(allTokens, t...)
+		}
+	}
+	if len(allTokens) == 0 {
+		return nil, fmt.Errorf("no valid tokens found for variants")
+	}
+	return []token{allTokens}, nil
+}
 func initTokens(proc model.TextProcessor) error {
 	var err error
-	startToken, err = proc.Encode("{")
+
+	s, err := proc.Decode([]int32{761})
+	fmt.Printf("761 decoded %q\n", s)
+
+	// Compute start token variants
+	startVariants := []string{"{", " {", "{\n", " {\n"}
+	startTokenVariants, err = ComputeTokenVariants(startVariants, proc)
 	if err != nil {
 		return err
 	}
-	endToken, err = proc.Encode("}")
+	// Compute end token variants
+	endVariants := []string{"}", " }", "}\n", " }\n"}
+	endTokenVariants, err = ComputeTokenVariants(endVariants, proc)
 	if err != nil {
 		return err
 	}
-	stringToken, err = proc.Encode("\"")
+
+	// Compute string token variants
+	// TODO: removed \n
+	stringVariants := []string{"\"", " \""}
+	stringTokenVariants, err = ComputeTokenVariants(stringVariants, proc)
 	if err != nil {
 		return err
 	}
-	objectKeyToken, err = proc.Encode("\"")
+	stringToObjectKeyVariants, err = ComputeTokenVariants([]string{"\",", ",\n", "\",\n"}, proc)
 	if err != nil {
 		return err
 	}
+	// objectKeyTokenVariants = []token{stringTokenVariants[0], stringTokenVariants[1]}
+	objectKeyTokenVariants = stringTokenVariants
+	// Compute whitespace tokens
 	tabToken, err = proc.Encode("\t")
 	if err != nil {
 		return err
@@ -70,29 +109,35 @@ func initTokens(proc model.TextProcessor) error {
 	if err != nil {
 		return err
 	}
-	// TODO: figure out how to encode colon correctly
-	colonToken, err = proc.Encode("\":")
+
+	// Compute colon variants
+	colonVariants := []string{":"}
+	colonTokenVariants, err = ComputeTokenVariants(colonVariants, proc)
 	if err != nil {
 		return err
 	}
-	fmt.Println("colonToken", colonToken)
-	colonToken2, err = proc.Encode(":")
+	objKeyToColonVariants, err = ComputeTokenVariants([]string{"\":"}, proc)
 	if err != nil {
 		return err
 	}
-	commaToken, err = proc.Encode(",")
+
+	// Compute comma variants
+	commaVariants := []string{",", " ,", ",\n", "\",", "\", "}
+	commaTokenVariants, err = ComputeTokenVariants(commaVariants, proc)
 	if err != nil {
 		return err
 	}
-	commaToken2, err = proc.Encode("\",")
+	fmt.Printf("commaTokenVariants: %v\n", commaTokenVariants)
+	stringToCommaVariants, err = ComputeTokenVariants([]string{"\",", "\","}, proc)
 	if err != nil {
 		return err
 	}
-	fmt.Println("commaToken2", commaToken2)
-	commaToken3, err = proc.Encode("\",\"")
-	if err != nil {
-		return err
-	}
+
+	stringEndToCommaVariants, err = ComputeTokenVariants([]string{",", ",\n"}, proc)
+	stringToObjectKeyVariants, err = ComputeTokenVariants([]string{"\",", ",\n", "\","}, proc)
+	stringToObjectVariants, err = ComputeTokenVariants([]string{"\",\n"}, proc)
+	stringEndToObjectEndVariants, err = ComputeTokenVariants([]string{"\n"}, proc)
+
 	return nil
 }
 
@@ -106,7 +151,7 @@ func buildStateMachine(proc model.TextProcessor) (*Node, error) {
 	objectKeyNode := NewNode(StateInObjectKey)
 	objectKeyEndNode := NewNode(StateInObjectKeyEnd)
 	stringNode := NewNode(StateInString)
-	intNode := NewNode(StateInInt)
+	// intNode := NewNode(StateInInt)
 	commaNode := NewNode(StateInComma)
 	colonNode := NewNode(StateInColon)
 	stringEndNode := NewNode(StateInStringEnd)
@@ -114,44 +159,59 @@ func buildStateMachine(proc model.TextProcessor) (*Node, error) {
 	terminateNode := NewNode(StateTerminate)
 
 	sentinelToken := token([]int32{-1})
-	intSentinelToken := token([]int32{-2})
+	// intSentinelToken := token([]int32{-2})
 
-	startNode.TransitionEdges[objectNode] = []token{startToken}
+	// TODO: cleanup connections of rules
+	startNode.TransitionEdges[objectNode] = startTokenVariants
 
-	objectNode.TransitionEdges[objectKeyNode] = []token{stringToken}
+	objectNode.TransitionEdges[objectKeyNode] = stringTokenVariants
+	objectNode.TransitionEdges[objectNode] = []token{newlineToken}
+	objectNode.TransitionEdges[objectNode] = []token{spaceToken}
+
 	// objectNode.TransitionEdges[objectNode] = []token{newlineToken}
 	// objectNode.TransitionEdges[objectNode] = []token{spaceToken}
 
 	objectKeyNode.TransitionEdges[objectKeyNode] = []token{sentinelToken}
-	objectKeyNode.TransitionEdges[colonNode] = []token{colonToken, colonToken2}
 	// characterize end of object key
-	objectKeyNode.TransitionEdges[objectKeyEndNode] = []token{stringToken}
+	objectKeyNode.TransitionEdges[objectKeyEndNode] = stringTokenVariants
+	objectKeyNode.TransitionEdges[colonNode] = objKeyToColonVariants
 
-	objectKeyEndNode.TransitionEdges[colonNode] = []token{colonToken}
+	// TODO: enable this - key -> object
+	// objectKeyNode.TransitionEdges[objectNode] = startTokenVariants
 
 	// objectKeyNode.TransitionEdges[intNode] = []token{sentinelToken}
 
-	intNode.TransitionEdges[intNode] = []token{intSentinelToken}
-	intNode.TransitionEdges[commaNode] = []token{commaToken, commaToken2}
-	intNode.TransitionEdges[terminateNode] = []token{endToken}
+	// intNode.TransitionEdges[intNode] = []token{intSentinelToken}
+	// intNode.TransitionEdges[commaNode] = commaTokenVariants
+	// TODO: handle
+	// intNode.TransitionEdges[terminateNode] = endTokenVariants
 
-	commaNode.TransitionEdges[objectKeyNode] = []token{newlineToken}
+	commaNode.TransitionEdges[objectKeyNode] = stringTokenVariants
+	// commaNode.TransitionEdges[objectNode] = startTokenVariants
 
-	colonNode.TransitionEdges[stringNode] = []token{stringToken}
-	colonNode.TransitionEdges[intNode] = []token{intSentinelToken}
+	colonNode.TransitionEdges[stringNode] = stringTokenVariants
+	//TODO: enable
+	// colonNode.TransitionEdges[intNode] = []token{intSentinelToken}
+	colonNode.TransitionEdges[objectNode] = startTokenVariants
 
 	stringNode.TransitionEdges[stringNode] = []token{sentinelToken}
-	stringNode.TransitionEdges[stringEndNode] = []token{stringToken}
-	// "\""," Case
-	stringNode.TransitionEdges[commaNode] = []token{commaToken2}
+	stringNode.TransitionEdges[stringEndNode] = stringTokenVariants
+	// TODO: "\""," Case not accounted for
+	stringNode.TransitionEdges[commaNode] = stringToCommaVariants
 
-	// "\"",\"" Case
-	stringNode.TransitionEdges[objectKeyNode] = []token{commaToken3}
+	// TODO: "\"",\"" Case not accounted for
+	stringNode.TransitionEdges[objectNode] = stringToObjectVariants
 
-	stringEndNode.TransitionEdges[commaNode] = []token{commaToken, commaToken2}
-	stringEndNode.TransitionEdges[terminateNode] = []token{endToken}
+	stringEndNode.TransitionEdges[commaNode] = stringEndToCommaVariants
+	stringEndNode.TransitionEdges[objectNode] = stringToObjectKeyVariants
+	stringEndNode.TransitionEdges[endNode] = stringEndToObjectEndVariants
+	// stringEndNode.TransitionEdges[terminateNode] = endTokenVariants
 
-	endNode.TransitionEdges[terminateNode] = []token{endToken}
+	// Should be obj end
+	// TODO: handle
+	endNode.TransitionEdges[terminateNode] = []token{}
+
+	endNode.TransitionEdges[commaNode] = commaTokenVariants
 
 	terminateNode.TransitionEdges[terminateNode] = []token{}
 	return startNode, nil
