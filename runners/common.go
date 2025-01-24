@@ -108,10 +108,7 @@ func GetAvailableServers() map[string]string {
 	once.Do(locateRunnersOnce)
 
 	servers := make(map[string]string)
-	exe, err := os.Executable()
-	if err == nil {
-		servers[BuiltinName()] = exe
-	}
+	servers[BuiltinName()] = runnersDir
 
 	entries, err := os.ReadDir(runnersDir)
 	if err != nil {
