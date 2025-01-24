@@ -330,7 +330,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		}
 
 		// hardware specific paths
-		libraryPaths = append(libraryPaths, filepath.Join(server, "lib", "ollama"))
+		libraryPaths = append(libraryPaths, server)
 
 		// darwin cpu paths
 		libraryPaths = append(libraryPaths, filepath.Dir(exe))
