@@ -480,19 +480,21 @@ jobs:
 
   build-linux:
     environment: release
-    runs-on: linux
     strategy:
       matrix:
         include:
           - os: linux
             arch: amd64
-            targets: [archive, rocm]
+            targets: [archive]
+          - os: linux
+            arch: amd64
+            targets: [rocm]
           - os: linux
             arch: arm64
             targets: [archive]
+    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - run: |
           apt-get update && apt-get install pigz
