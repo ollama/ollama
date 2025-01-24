@@ -50,14 +50,14 @@ jobs:
           - container: rocm/dev-ubuntu-22.04:6.1.2
             preset: ROCm
             extra-packages: rocm-libs
-            flags: '-DAMDGPU_TARGETS=gfx1012'
+            flags: '-DAMDGPU_TARGETS=gfx1010'
     runs-on: ubuntu-latest
     container: ${{ matrix.container }}
     steps:
       - uses: actions/checkout@v4
       - run: |
           apt-get update
-          apt-get install -y cmake pkg-config ccache ${{ matrix.extra-packages }}
+          apt-get install -y cmake ccache ${{ matrix.extra-packages }}
         env:
           DEBIAN_FRONTEND: noninteractive
       - uses: actions/cache@v4

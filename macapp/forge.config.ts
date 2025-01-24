@@ -18,8 +18,8 @@ const config: ForgeConfig = {
     asar: true,
     icon: './assets/icon.icns',
     extraResource: [
-      path.join(__dirname, '../dist/ollama'),
-      ...fs.readdirSync(path.join(__dirname, '../build/lib')).map(f => path.join(__dirname, '../build/lib', f)),
+      path.join(__dirname, '../dist/darwin/ollama'),
+      ...fs.readdirSync(path.join(__dirname, '../dist/darwin/amd64')).map(f => path.join(__dirname, '../dist/darwin/amd64', f)),
       path.join(__dirname, './assets/iconTemplate.png'),
       path.join(__dirname, './assets/iconTemplate@2x.png'),
       path.join(__dirname, './assets/iconUpdateTemplate.png'),
