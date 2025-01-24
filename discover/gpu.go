@@ -716,25 +716,7 @@ func (l GpuInfoList) GetVisibleDevicesEnv() (string, string) {
 }
 
 func LibraryDirs() []string {
-	// dependencies can exist wherever we found the runners (e.g. build tree for developers) and relative to the executable
-	// This can be simplified once we no longer carry runners as payloads
-	paths := []string{}
-	appExe, err := os.Executable()
-	if err != nil {
-		slog.Warn("failed to lookup executable path", "error", err)
-	} else {
-		appRelative := filepath.Join(filepath.Dir(appExe), envconfig.LibRelativeToExe(), "lib", "ollama")
-		if _, err := os.Stat(appRelative); err == nil {
-			paths = append(paths, appRelative)
-		}
-	}
-	rDir := runners.Locate()
-	if err != nil {
-		slog.Warn("unable to locate gpu dependency libraries", "error", err)
-	} else {
-		paths = append(paths, filepath.Dir(rDir))
-	}
-	return paths
+	return []string{runners.Locate()}
 }
 
 func GetSystemInfo() SystemInfo {

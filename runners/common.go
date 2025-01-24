@@ -76,6 +76,8 @@ func locateRunnersOnce() {
 
 	paths := []string{
 		filepath.Join(exe, envconfig.LibRelativeToExe(), "lib", "ollama"),
+
+		// development paths
 		filepath.Join(exe, "build", "lib", "ollama"),
 		filepath.Join(cwd, "build", "lib", "ollama"),
 	}
