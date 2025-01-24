@@ -25,10 +25,13 @@ const (
 	StateInArray
 	StateInColon
 	StateInComma
+	StateInTab
+	StateInSpace
+	StateInNewline
 	StateInStringEnd
 	StateInObjectKeyEnd
 	StateTerminate
-	StateEnd
+	StateInObjectEnd
 )
 
 func (s JSONState) String() string {
@@ -59,12 +62,18 @@ func (s JSONState) String() string {
 		return "StateInNull"
 	case StateInArray:
 		return "StateInArray"
-	case StateEnd:
-		return "StateEnd"
+	case StateInObjectEnd:
+		return "StateInObjectEnd"
 	case StateInComma:
 		return "StateInComma"
+	case StateInTab:
+		return "StateInTab"
 	case StateInObjectKeyEnd:
 		return "StateInObjectKeyEnd"
+	case StateInNewline:
+		return "StateInNewline"
+	case StateInSpace:
+		return "StateInSpace"
 	case StateTerminate:
 		return "StateTerminate"
 	case StateInStringEnd:
@@ -124,13 +133,14 @@ func (s *JSONSampler) UpdateState(tokenSlice []int32) error {
 
 	// fmt.Println("tokenSlice", tokenSlice)
 	// todo: account for strings here
+
 	objectTokens, err := ComputeTokenVariants([]string{"{", " {", "{\n", " {\n"}, s.proc)
 	if err != nil {
 		return err
 	}
 
 	// only move to terminate state if stack is empty
-	if s.curNode.State == StateEnd {
+	if s.curNode.State == StateInObjectEnd {
 		fmt.Println("debug: node.State", s.curNode.State)
 		if len(s.stack) > 0 {
 			s.stack = s.stack[:len(s.stack)-1]
