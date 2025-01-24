@@ -300,8 +300,9 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		if runtime.GOOS == "windows" {
 			pathEnv = "PATH"
 		}
+		// Start with the server directory for the LD_LIBRARY_PATH/PATH
+		libraryPaths := []string{filepath.Dir(server)}
 
-		var libraryPaths []string
 		if libraryPath, ok := os.LookupEnv(pathEnv); ok {
 			// favor our bundled library dependencies over system libraries
 			libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
@@ -323,23 +324,21 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		if err != nil {
 			return nil, fmt.Errorf("unable to evaluate symlinks for executable path: %w", err)
 		}
+		libraryPaths = append(libraryPaths, filepath.Dir(exe))
 
 		cwd, err := os.Getwd()
 		if err != nil {
 			return nil, fmt.Errorf("unable to get current working directory: %w", err)
 		}
 
-		// darwin cpu paths
-		libraryPaths = append(libraryPaths, filepath.Dir(exe))
-
-		// development paths
+		// development library paths
 		libraryPaths = append(libraryPaths, filepath.Join(filepath.Dir(exe), "build", "lib", "ollama"))
 		libraryPaths = append(libraryPaths, filepath.Join(cwd, "build", "lib", "ollama"))
 
 		// TODO - once fully switched to the Go runner, load the model here for tokenize/detokenize cgo access
 		s := &llmServer{
 			port:        port,
-			cmd:         exec.Command(exe, finalParams...),
+			cmd:         exec.Command(server, finalParams...),
 			status:      NewStatusWriter(os.Stderr),
 			options:     opts,
 			modelPath:   model,

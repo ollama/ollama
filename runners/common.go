@@ -69,15 +69,10 @@ func locateRunnersOnce() {
 		slog.Debug("runner locate", "error", err)
 	}
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		slog.Debug("runner locate", "error", err)
-	}
-
 	paths := []string{
-		filepath.Join(exe, envconfig.LibRelativeToExe(), "lib", "ollama"),
-		filepath.Join(exe, "build", "lib", "ollama"),
-		filepath.Join(cwd, "build", "lib", "ollama"),
+		filepath.Join(filepath.Dir(exe), "llama", "build", runtime.GOOS+"-"+runtime.GOARCH, "runners"),
+		filepath.Join(filepath.Dir(exe), envconfig.LibRelativeToExe(), "lib", "ollama", "runners"),
+		filepath.Join(filepath.Dir(exe), "lib", "ollama", "runners"),
 	}
 	for _, path := range paths {
 		if _, err := os.Stat(path); err == nil {
@@ -99,9 +94,10 @@ func BuiltinName() string {
 	return "cpu"
 }
 
-// GetAvailableServers returns the directory names of available gpu libraries and may contain an optional
+// directory names are the name of the runner and may contain an optional
 // variant prefixed with '_' as the separator. For example, "cuda_v11" and
-// "cuda_v12". Any library without a variant is the lowest common denominator
+// "cuda_v12" or "cpu" and "cpu_avx2". Any library without a variant is the
+// lowest common denominator
 func GetAvailableServers() map[string]string {
 	once.Do(locateRunnersOnce)
 
@@ -111,16 +107,31 @@ func GetAvailableServers() map[string]string {
 		servers[BuiltinName()] = exe
 	}
 
-	entries, err := os.ReadDir(runnersDir)
-	if err != nil {
-		slog.Debug("could not read", "dir", runnersDir, "error", err)
+	if runnersDir == "" {
 		return servers
 	}
 
-	for _, entry := range entries {
-		if entry.IsDir() {
-			servers[entry.Name()] = filepath.Join(runnersDir, entry.Name())
+	// glob runnersDir for files that start with ollama_
+	pattern := filepath.Join(runnersDir, "*", "ollama_*")
+
+	files, err := filepath.Glob(pattern)
+	if err != nil {
+		slog.Debug("could not glob", "pattern", pattern, "error", err)
+		return nil
+	}
+
+	for _, file := range files {
+		slog.Debug("availableServers : found", "file", file)
+		runnerName := filepath.Base(filepath.Dir(file))
+		// Special case for our GPU runners - if compiled with standard AVX flag
+		// detect incompatible system
+		// Custom builds will omit this and its up to the user to ensure compatibility
+		parsed := strings.Split(runnerName, "_")
+		if len(parsed) == 3 && parsed[2] == "avx" && !cpu.X86.HasAVX {
+			slog.Info("GPU runner incompatible with host system, CPU does not have AVX", "runner", runnerName)
+			continue
 		}
+		servers[runnerName] = file
 	}
 
 	return servers
