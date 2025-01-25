@@ -64,11 +64,18 @@ var OnceLoad = sync.OnceFunc(func() {
 		}
 	}
 
-	for _, path := range filepath.SplitList(paths) {
-		func() {
-			cpath := C.CString(path)
-			defer C.free(unsafe.Pointer(cpath))
-			C.ggml_backend_load_all_from_path(cpath)
-		}()
+	split := filepath.SplitList(paths)
+	visited := make(map[string]struct{}, len(split))
+	for _, path := range split {
+		abspath, _ := filepath.Abs(path)
+		if _, ok := visited[abspath]; !ok {
+			func() {
+				cpath := C.CString(path)
+				defer C.free(unsafe.Pointer(cpath))
+				C.ggml_backend_load_all_from_path(cpath)
+			}()
+
+			visited[abspath] = struct{}{}
+		}
 	}
 })
