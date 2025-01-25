@@ -40,7 +40,7 @@ jobs:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 1
-          CGO_CPPFLAGS= -mmacosx-version-min=11.3
+          CGO_CPPFLAGS: '-mmacosx-version-min=11.3'
       - if: matrix.arch == 'amd64'
         run: |
           cmake --preset CPU -DCMAKE_OSX_DEPLOYMENT_TARGET=11.3 -DCMAKE_SYSTEM_PROCESSOR=x86_64 -DCMAKE_OSX_ARCHITECTURES=x86_64
@@ -302,13 +302,10 @@ jobs:
         include:
           - os: linux
             arch: amd64
-            targets: [archive]
-          - os: linux
-            arch: amd64
-            targets: [rocm]
+            targets: 'archive rocm'
           - os: linux
             arch: arm64
-            targets: [archive]
+            targets: archive
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     needs: setup-environment
