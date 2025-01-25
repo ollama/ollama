@@ -33,25 +33,33 @@ FROM base AS cpu
 RUN if [ "$(uname -m)" = "x86_64" ]; then yum install -y devtoolset-11-gcc devtoolset-11-gcc-c++; fi
 ENV PATH=/opt/rh/devtoolset-11/root/usr/bin:$PATH
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'CPU' && cmake --build --parallel --preset 'CPU' && cmake --install build
+    cmake --preset 'CPU' \
+        && cmake --build --parallel --preset 'CPU' \
+        && cmake --install build --component CPU --strip
 
 FROM base AS cuda-11
 ARG CUDA11VERSION=11.3
 RUN yum install -y cuda-toolkit-${CUDA11VERSION//./-}
 ENV PATH=/usr/local/cuda-11/bin:$PATH
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'CUDA 11' && cmake --build --parallel --preset 'CUDA 11' && cmake --install build
+    cmake --preset 'CUDA 11' \
+        && cmake --build --parallel --preset 'CUDA 11' \
+        && cmake --install build --component CUDA --strip
 
 FROM base AS cuda-12
 ARG CUDA12VERSION=12.4
 RUN yum install -y cuda-toolkit-${CUDA12VERSION//./-}
 ENV PATH=/usr/local/cuda-12/bin:$PATH
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'CUDA 12' && cmake --build --parallel --preset 'CUDA 12' && cmake --install build
+    cmake --preset 'CUDA 12' \
+        && cmake --build --parallel --preset 'CUDA 12' \
+        && cmake --install build --component CUDA --strip
 
 FROM base AS rocm-6
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'ROCm 6' && cmake --build --parallel --preset 'ROCm 6' && cmake --install build
+    cmake --preset 'ROCm 6' \
+        && cmake --build --parallel --preset 'ROCm 6' \
+        && cmake --install build --component HIP --strip
 
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK5VERSION} AS jetpack-5
 ARG CMAKEVERSION
@@ -60,7 +68,9 @@ RUN apt-get update && apt-get install -y curl ccache \
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'JetPack 5' && cmake --build --parallel --preset 'JetPack 5' && cmake --install build
+    cmake --preset 'JetPack 5' \
+        && cmake --build --parallel --preset 'JetPack 5' \
+        && cmake --install build --component CUDA --strip
 
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK6VERSION} AS jetpack-6
 ARG CMAKEVERSION
@@ -69,7 +79,9 @@ RUN apt-get update && apt-get install -y curl ccache \
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'JetPack 6' && cmake --build --parallel --preset 'JetPack 6' && cmake --install build
+    cmake --preset 'JetPack 6' \
+        && cmake --build --parallel --preset 'JetPack 6' \
+        && cmake --install build --component CUDA --strip
 
 FROM base AS build
 ARG GOVERSION=1.23.4
@@ -83,20 +95,20 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     go build -trimpath -buildmode=pie -o /bin/ollama .
 
 FROM --platform=linux/amd64 scratch AS amd64
-COPY --from=cuda-11 build/lib/ollama/cuda_v11 /lib/ollama/cuda_v11
-COPY --from=cuda-12 build/lib/ollama/cuda_v12 /lib/ollama/cuda_v12
+COPY --from=cuda-11 dist/lib/ollama/cuda_v11 /lib/ollama/cuda_v11
+COPY --from=cuda-12 dist/lib/ollama/cuda_v12 /lib/ollama/cuda_v12
 
 FROM --platform=linux/arm64 scratch AS arm64
-COPY --from=cuda-11 build/lib/ollama/cuda_v11 /lib/ollama/cuda_v11
-COPY --from=cuda-12 build/lib/ollama/cuda_v12 /lib/ollama/cuda_v12
-COPY --from=jetpack-5 build/lib/ollama/cuda_v11 lib/ollama/cuda_jetpack5
-COPY --from=jetpack-6 build/lib/ollama/cuda_v12 lib/ollama/cuda_jetpack6
+COPY --from=cuda-11 dist/lib/ollama/cuda_v11 /lib/ollama/cuda_v11
+COPY --from=cuda-12 dist/lib/ollama/cuda_v12 /lib/ollama/cuda_v12
+COPY --from=jetpack-5 dist/lib/ollama/cuda_v11 lib/ollama/cuda_jetpack5
+COPY --from=jetpack-6 dist/lib/ollama/cuda_v12 lib/ollama/cuda_jetpack6
 
 FROM --platform=linux/arm64 scratch AS rocm
-COPY --from=rocm-6 build/lib/ollama/rocm /lib/ollama/rocm
+COPY --from=rocm-6 dist/lib/ollama/rocm /lib/ollama/rocm
 
 FROM ${FLAVOR} AS archive
-COPY --from=cpu build/lib/ollama /lib/ollama
+COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
 
 FROM ubuntu:20.04
