@@ -222,6 +222,7 @@ func (b *Backend) NewContext() ml.Context {
 			C.size_t(nodes),
 			true,
 		),
+		traceGraph: ml.Graph{},
 	}
 }
 
@@ -232,6 +233,9 @@ type Context struct {
 	sched *C.struct_ggml_backend_sched
 	graph *C.struct_ggml_cgraph
 	nodes int
+
+	debug      bool
+	traceGraph ml.Graph
 }
 
 func (c *Context) Forward(t ml.Tensor) {
@@ -318,6 +322,34 @@ func (c *Context) Close() error {
 	C.ggml_backend_sched_free(c.sched)
 	C.ggml_free(c.ctx)
 	return nil
+}
+
+func (c *Context) SetDebug(debug bool) {
+	c.debug = debug
+}
+
+func (c *Context) Trace(name string, t ml.Tensor) {
+	if !c.debug {
+		return
+	}
+
+	shape := t.Shape()
+	shapeArr := make([]int64, 4)
+	for i := 0; i < len(shape); i++ {
+		shapeArr[i] = shape[i]
+	}
+
+	c.traceGraph.Graph = append(
+		c.traceGraph.Graph,
+		ml.GraphLayer{
+			Name:  name,
+			Shape: shapeArr,
+		},
+	)
+}
+
+func (c *Context) GetTrace() ml.Graph {
+	return c.traceGraph
 }
 
 type Tensor struct {
@@ -555,16 +587,19 @@ func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDi
 
 	return &Tensor{
 		t: C.ggml_rope_ext(
-			ctx.(*Context).ctx, t.t, positionIDs.(*Tensor).t, ropeFactors.(*Tensor).t,
-			C.int(ropeDim),
-			131072,       // YaRN n_ctx_train
-			ropeTypeNorm, // ROPE_TYPE_NORM
-			C.float(ropeBase),
-			C.float(ropeScale),
-			0.,  // YaRN ext_factor
-			1.,  // YaRN attn_factor
-			32., // YaRN beta_fast
-			1.,  // YaRN beta_slow
+			ctx.(*Context).ctx,
+			t.t,                     // a tensor
+			positionIDs.(*Tensor).t, // b tensor with dims [512, 1, 1, 1]
+			nil,                     // c tensor (not shown in log)
+			C.int(64),               // n_dims: 64
+			2,                       // mode: 2 (ropeTypeNeox = 2)
+			C.int(32768),            // n_ctx_orig: 32768
+			C.float(1000000.0),      // freq_base: 1000000.000000
+			C.float(1.0),            // freq_scale: 1.000000
+			C.float(0.0),            // ext_factor: 0.000000
+			C.float(1.0),            // attn_factor: 1.000000
+			C.float(32.0),           // beta_fast: 32.000000
+			C.float(1.0),            // beta_slow: 1.000000
 		),
 	}
 }

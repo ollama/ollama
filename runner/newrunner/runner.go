@@ -32,6 +32,7 @@ import (
 
 	_ "github.com/ollama/ollama/model/llama"
 	_ "github.com/ollama/ollama/model/mllama"
+	_ "github.com/ollama/ollama/model/qwen2"
 )
 
 // input is an element of the prompt to process, either

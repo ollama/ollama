@@ -13,3 +13,5 @@ test_data
 llama/build
 __debug_bin*
 llama/vendor
+model/model_test/testdata/*/
+!model/model_test/testdata/*.*

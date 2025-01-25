@@ -24,6 +24,15 @@ type Backend interface {
 	NewContext() Context
 }
 
+type GraphLayer struct {
+	Name  string  `json:"name"`
+	Shape []int64 `json:"shape"`
+}
+
+type Graph struct {
+	Graph []GraphLayer `json:"graph"`
+}
+
 var backends = make(map[string]func(*os.File) (Backend, error))
 
 func RegisterBackend(name string, f func(*os.File) (Backend, error)) {
@@ -50,6 +59,10 @@ type Context interface {
 	Forward(Tensor)
 	Compute(Tensor) Tensor
 	Close() error
+
+	SetDebug(bool)
+	Trace(string, Tensor)
+	GetTrace() Graph
 }
 
 type Tensor interface {
