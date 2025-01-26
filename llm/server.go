@@ -191,19 +191,17 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		lib = requested
 	}
 
-	var compatible []string
-	if gpus[0].Library != "cpu" {
-		for k := range libs {
-			// exact match first
-			if k == lib {
-				compatible = append([]string{k}, compatible...)
-				continue
-			}
+	compatible := []string{lib}
+	for k := range libs {
+		// exact match first
+		if k == lib {
+			compatible = append([]string{k}, compatible...)
+			continue
+		}
 
-			// then match the family (e.g. 'cuda')
-			if strings.Split(k, "_")[0] == strings.Split(lib, "_")[0] {
-				compatible = append(compatible, k)
-			}
+		// then match the family (e.g. 'cuda')
+		if strings.Split(k, "_")[0] == strings.Split(lib, "_")[0] {
+			compatible = append(compatible, k)
 		}
 	}
 
@@ -308,6 +306,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 	}
 
 	for _, c := range compatible {
+		slog.Info("trying gpu library", "path", c)
 		// Find an availableServers  port, retry on each iteration in case the failure was a port conflict race
 		port := 0
 		if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
