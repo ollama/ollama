@@ -77,8 +77,8 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 
 	gfxOverride := envconfig.HsaOverrideGfxVersion()
 	var supported []string
-	depPaths := LibraryDirs()
-	libDir := ""
+	var depPaths []string
+	var libDir string
 
 	// The amdgpu driver always exposes the host CPU(s) first, but we have to skip them and subtract
 	// from the other IDs to get alignment with the HIP libraries expectations (zero is the first GPU, not the CPU)

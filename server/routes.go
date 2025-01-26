@@ -33,7 +33,6 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/model/mllama"
 	"github.com/ollama/ollama/openai"
-	"github.com/ollama/ollama/runners"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -1258,14 +1257,6 @@ func Serve(ln net.Listener) error {
 		sched.unloadAllRunners()
 		done()
 	}()
-
-	// Locate and log what runners are present at startup
-	var runnerNames []string
-	for v := range runners.GetAvailableServers() {
-		runnerNames = append(runnerNames, v)
-	}
-	slog.Info("Dynamic LLM libraries", "runners", runnerNames)
-	slog.Debug("Override detection logic by setting OLLAMA_LLM_LIBRARY")
 
 	s.sched.Run(schedCtx)
 

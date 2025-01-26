@@ -15,7 +15,6 @@ import (
 	"syscall"
 
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/runners"
 )
 
 const (

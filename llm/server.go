@@ -29,7 +29,6 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llama"
-	"github.com/ollama/ollama/runners"
 )
 
 type LlamaServer interface {
@@ -87,12 +86,45 @@ func LoadModel(model string, maxArraySize int) (*GGML, error) {
 	return ggml, err
 }
 
+// libOllama returns a path to lookup dynamic libraries
+// in development it's usually 'build/lib/ollama'
+// in distribution builds it's often 'lib/ollama', '../lib/ollama'
+// note: distribution builds, additional GPU-specific libraries are
+// found in subdirectories of the returned path, such as
+// 'cuda_v11', 'cuda_v12', 'rocm', etc.
+func libOllama() string {
+	exe, err := os.Executable()
+	if err != nil {
+		slog.Debug("runner locate", "error", err)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		slog.Debug("runner locate", "error", err)
+	}
+
+	dexe := filepath.Dir(exe)
+
+	paths := []string{
+		filepath.Join(dexe, envconfig.LibRelativeToExe(), "lib", "ollama"),
+
+		// development paths
+		filepath.Join(dexe, "build", "lib", "ollama"),
+		filepath.Join(cwd, "build", "lib", "ollama"),
+	}
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+
+	return dexe
+}
+
 // NewLlamaServer will run a server for the given GPUs
 // The gpu list must be a single family.
 func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
 	var err error
-	var cpuRunner string
-	var estimate MemoryEstimate
 	var systemTotalMemory uint64
 	var systemFreeMemory uint64
 	var systemSwapFreeMemory uint64
@@ -107,12 +139,9 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 	if opts.NumGPU == 0 {
 		gpus = discover.GetCPUInfo()
 	}
-	if len(gpus) == 1 && gpus[0].Library == "cpu" {
-		cpuRunner = runners.ServerForCpu()
-		estimate = EstimateGPULayers(gpus, ggml, projectors, opts)
-	} else {
-		estimate = EstimateGPULayers(gpus, ggml, projectors, opts)
 
+	estimate := EstimateGPULayers(gpus, ggml, projectors, opts)
+	if len(gpus) > 1 || gpus[0].Library != "cpu" {
 		switch {
 		case gpus[0].Library == "metal" && estimate.VRAMSize > systemTotalMemory:
 			// disable partial offloading when model is greater than total system memory as this
@@ -120,7 +149,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 			opts.NumGPU = 0
 		case gpus[0].Library != "metal" && estimate.Layers == 0:
 			// Don't bother loading into the GPU if no layers can fit
-			cpuRunner = runners.ServerForCpu()
 			gpus = discover.GetCPUInfo()
 		case opts.NumGPU < 0 && estimate.Layers > 0 && gpus[0].Library != "cpu":
 			opts.NumGPU = estimate.Layers
@@ -140,34 +168,43 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 
 	estimate.log()
 
-	// Loop through potential servers
-	finalErr := errors.New("no suitable llama servers found")
+	// Loop through potential gpu libraries
+	finalErr := errors.New("no suitable gpu libraries found")
 
-	availableServers := runners.GetAvailableServers()
-
-	var servers []string
-	if cpuRunner != "" {
-		servers = []string{cpuRunner}
-	} else {
-		servers = runners.ServersForGpu(gpus[0].RunnerName()) // All GPUs in the list are matching Library and Variant
+	// get available libraries
+	lo := libOllama()
+	entries, err := os.ReadDir(lo)
+	if err != nil {
+		return nil, fmt.Errorf("could not read libollama dir: %w", err)
 	}
-	demandLib := envconfig.LLMLibrary()
-	if demandLib != "" {
-		serverPath := availableServers[demandLib]
-		if serverPath == "" {
-			slog.Info(fmt.Sprintf("Invalid OLLAMA_LLM_LIBRARY %s - not found", demandLib))
-		} else {
-			slog.Info("user override", "OLLAMA_LLM_LIBRARY", demandLib, "path", serverPath)
-			servers = []string{demandLib}
-			if strings.HasPrefix(demandLib, "cpu") || (!(runtime.GOOS == "darwin" && runtime.GOARCH == "arm64") && demandLib == runners.BuiltinName()) {
-				// Omit the GPU flag to silence the warning
-				opts.NumGPU = -1
-			}
+
+	libs := make(map[string]string)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			libs[entry.Name()] = filepath.Join(lo, entry.Name())
 		}
 	}
 
-	if len(servers) == 0 {
-		return nil, fmt.Errorf("no servers found for %v", gpus)
+	lib := gpus[0].RunnerName()
+	requested := envconfig.LLMLibrary()
+	if libs[requested] != "" {
+		lib = requested
+	}
+
+	var compatible []string
+	if gpus[0].Library != "cpu" {
+		for k := range libs {
+			// exact match first
+			if k == lib {
+				compatible = append([]string{k}, compatible...)
+				continue
+			}
+
+			// then match the family (e.g. 'cuda')
+			if strings.Split(k, "_")[0] == strings.Split(lib, "_")[0] {
+				compatible = append(compatible, k)
+			}
+		}
 	}
 
 	params := []string{
@@ -270,15 +307,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		params = append(params, "--multiuser-cache")
 	}
 
-	for i := range servers {
-		server := availableServers[servers[i]]
-		if server == "" {
-			// Shouldn't happen
-			finalErr = fmt.Errorf("[%d] server %s not listed in available servers %v", i, servers[i], availableServers)
-			slog.Error("server list inconsistent", "error", finalErr)
-			continue
-		}
-
+	for _, c := range compatible {
 		// Find an availableServers  port, retry on each iteration in case the failure was a port conflict race
 		port := 0
 		if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
@@ -303,13 +332,18 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 
 		var libraryPaths []string
 		if libraryPath, ok := os.LookupEnv(pathEnv); ok {
-			// favor our bundled library dependencies over system libraries
 			libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
+		}
+
+		if libpath, ok := libs[c]; ok {
+			slog.Info("adding gpu library", "path", libpath)
+			libraryPaths = append(libraryPaths, libpath)
 		}
 
 		// Note: we always put the dependency path first
 		// since this was the exact version we compiled/linked against
 		if gpus[0].DependencyPath != nil {
+			slog.Info("adding gpu dependency paths", "paths", gpus[0].DependencyPath)
 			// assume gpus from the same library have the same dependency path
 			libraryPaths = append(gpus[0].DependencyPath, libraryPaths...)
 		}
@@ -329,13 +363,13 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 			return nil, fmt.Errorf("unable to get current working directory: %w", err)
 		}
 
-		// hardware specific paths
-		libraryPaths = append(libraryPaths, server)
+		// lib/ollama path for cpu libraries
+		libraryPaths = append(libraryPaths, lo)
 
-		// darwin cpu paths
+		// . for cpu libraries on macOS
 		libraryPaths = append(libraryPaths, filepath.Dir(exe))
 
-		// development paths
+		// build/lib/ollama paths for development
 		libraryPaths = append(libraryPaths, filepath.Join(filepath.Dir(exe), "build", "lib", "ollama"))
 		libraryPaths = append(libraryPaths, filepath.Join(cwd, "build", "lib", "ollama"))
 
@@ -415,7 +449,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		if err = s.cmd.Start(); err != nil {
 			// Detect permission denied and augment the message about noexec
 			if errors.Is(err, os.ErrPermission) {
-				finalErr = fmt.Errorf("unable to start server %w.  %s may have noexec set.  Set OLLAMA_TMPDIR for server to a writable executable directory", err, server)
+				finalErr = fmt.Errorf("unable to start server %w.  %s may have noexec set.  Set OLLAMA_TMPDIR for server to a writable executable directory", err, c)
 				continue
 			}
 			msg := ""

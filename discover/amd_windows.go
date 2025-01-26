@@ -50,7 +50,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 		slog.Info(err.Error())
 		return nil, err
 	}
-	depPaths := LibraryDirs()
+	var depPaths []string
 	libDir, err := AMDValidateLibDir()
 	if err != nil {
 		err = fmt.Errorf("unable to verify rocm library: %w", err)
