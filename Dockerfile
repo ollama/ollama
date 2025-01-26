@@ -84,7 +84,7 @@ RUN if [ -z ${OLLAMA_SKIP_ROCM_GENERATE} ] ; then \
 # Jetsons need to be built in discrete stages
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK_5} AS runners-jetpack5-arm64
 ARG GOLANG_VERSION
-RUN apt-get update && apt-get install -y git curl ccache && \
+RUN export http_proxy=http://172.17.0.1:7890 && https_proxy=http://172.17.0.1:7890 && apt-get update && apt-get install -y git curl ccache && \
     curl -s -L https://dl.google.com/go/go${GOLANG_VERSION}.linux-arm64.tar.gz | tar xz -C /usr/local && \
     ln -s /usr/local/go/bin/go /usr/local/bin/go && \
     ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt && \
@@ -103,7 +103,7 @@ RUN --mount=type=cache,target=/root/.ccache \
 
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK_6} AS runners-jetpack6-arm64
 ARG GOLANG_VERSION
-RUN apt-get update && apt-get install -y git curl ccache && \
+RUN export http_proxy=http://172.17.0.1:7890 && https_proxy=http://172.17.0.1:7890 && apt-get update && apt-get install -y git curl ccache && \
     curl -s -L https://dl.google.com/go/go${GOLANG_VERSION}.linux-arm64.tar.gz | tar xz -C /usr/local && \
     ln -s /usr/local/go/bin/go /usr/local/bin/go && \
     ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt && \
@@ -154,7 +154,7 @@ RUN --mount=type=cache,target=/root/.ccache \
         echo "No Ascend Toolkit found"; \
         exit 1; \
     fi && \
-    make --trace dist
+    make dist
 RUN cd dist/linux-$GOARCH && \
     tar -cf - . | pigz --best > ../ollama-linux-$GOARCH-cann.tgz
 
@@ -182,6 +182,7 @@ FROM --platform=linux/amd64 scratch AS dist-amd64
 COPY --from=build-amd64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
 FROM --platform=linux/arm64 scratch AS dist-arm64
 COPY --from=build-arm64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
+COPY --from=cann_build-arm64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
 FROM dist-$TARGETARCH AS dist
 
 

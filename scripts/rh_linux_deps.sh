@@ -68,7 +68,10 @@ if [ "${MACHINE}" = "x86_64" ] ; then
     curl -s -L https://github.com/ccache/ccache/releases/download/v4.10.2/ccache-4.10.2-linux-x86_64.tar.xz | tar -Jx -C /tmp --strip-components 1 && \
     mv /tmp/ccache /usr/local/bin/
 else
-    # yum -y install epel-release
+    # openEuler does not have epel-release
+    if ! grep -i "openEuler" /etc/system-release >/dev/null; then
+        yum -y install epel-release
+    fi
     yum install -y ccache
 fi
 

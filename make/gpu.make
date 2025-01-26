@@ -5,6 +5,11 @@ dummy:
 	$(error This makefile is not meant to build directly, but instead included in other Makefiles that set required variables)
 endif
 
+# Allow specify compiler for c source 
+ifndef GPU_C_COMPILER
+	GPU_C_COMPILER := $(GPU_COMPILER)
+endif
+
 GPU_GOFLAGS="-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=$(VERSION)\" $(EXTRA_GOLDFLAGS) $(TARGET_LDFLAGS)"
 
 # TODO Unify how we handle dependencies in the dist/packaging and install flow
@@ -57,7 +62,7 @@ $(BUILD_DIR)/%.$(GPU_RUNNER_NAME).$(OBJ_EXT): %.cu
 	$(CCACHE) $(GPU_COMPILER) -c $(GPU_COMPILER_CFLAGS) $(GPU_COMPILER_CUFLAGS) $(GPU_RUNNER_ARCH_FLAGS) -o $@ $<
 $(BUILD_DIR)/%.$(GPU_RUNNER_NAME).$(OBJ_EXT): %.c
 	@-mkdir -p $(dir $@)
-	$(CCACHE) gcc -c $(GPU_COMPILER_CFLAGS) -o $@ $<
+	$(CCACHE) $(GPU_C_COMPILER) -c $(GPU_COMPILER_CFLAGS) -o $@ $<
 $(BUILD_DIR)/%.$(GPU_RUNNER_NAME).$(OBJ_EXT): %.cpp
 	@-mkdir -p $(dir $@)
 	$(CCACHE) $(GPU_COMPILER) -c $(GPU_COMPILER_CXXFLAGS) -o $@ $<

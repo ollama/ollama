@@ -3,6 +3,7 @@
 # Note: at present we only support a single CANN version
 
 include make/common-defs.make
+include make/cann-defs.make
 
 ifeq ($(OS),windows)
 	@echo "CANN does not currently support windows."
@@ -38,7 +39,8 @@ CANN_KERNEL_CMAKE_FLAGS = -DCANN_INSTALL_DIR=$(CANN_INSTALL_DIR)
 GGML_SHARED_BUILD_PRE_JOB := $(CANN_BUILD_DIR)/$(SHARED_PREFIX)ascendc_kernels.$(SHARED_EXT)
 
 GPU_COMPILER_LINUX := $(shell X=$$(which g++ 2>/dev/null) && echo $$X)
-GPU_COMPILER:=$(GPU_COMPILER_LINUX)
+GPU_COMPILER:=$(shell X=$$(which g++ 2>/dev/null) && echo $$X)
+GPU_C_COMPILER:=$(shell X=$$(which gcc 2>/dev/null) && echo $$X)
 GPU_RUNNER_LIBS_SHORT := ascendcl nnopbase opapi acl_op_compiler ascendc_kernels
 GPU_LIBS = $(wildcard $(addsuffix .$(SHARED_EXT),$(addprefix $(GPU_LIB_DIR)/$(SHARED_PREFIX),$(GPU_RUNNER_LIBS_SHORT))))
 CANN_DIST_DEPS_DIR = ./dist/$(OS)-$(ARCH)-cann/lib/ollama
@@ -107,8 +109,8 @@ $(CANN_BUILD_DIR)/$(SHARED_PREFIX)ascendc_kernels.$(SHARED_EXT):
 	@rm -rf $(CANN_KERNEL_BUILD_DIR)
 	@-mkdir -p $(CANN_KERNEL_BUILD_DIR)
 	$(info CANN_INSTALL_DIR: $(CANN_INSTALL_DIR))
-	cmake $(CANN_KERNEL_SRC_DIR) -G "Unix Makefiles" $(CANN_KERNEL_CMAKE_FLAGS) -B $(CANN_KERNEL_BUILD_DIR) -C $(CANN_KERNEL_SRC_DIR)/CMakeLists.txt -DCMAKE_BUILD_TYPE=debug
-	cmake --build $(CANN_KERNEL_BUILD_DIR) --config debug
+	@cmake $(CANN_KERNEL_SRC_DIR) -G "Unix Makefiles" $(CANN_KERNEL_CMAKE_FLAGS) -B $(CANN_KERNEL_BUILD_DIR) -C $(CANN_KERNEL_SRC_DIR)/CMakeLists.txt -DCMAKE_BUILD_TYPE=debug
+	@cmake --build $(CANN_KERNEL_BUILD_DIR) --config debug
 	@-mkdir -p $(DIST_LIB_DIR)
 	$(CP) $(CANN_KERNEL_BUILD_DIR)/lib/$(SHARED_PREFIX)ascendc_kernels.$(SHARED_EXT) $(DIST_LIB_DIR)
 	$(CP) $(CANN_KERNEL_BUILD_DIR)/lib/$(SHARED_PREFIX)ascendc_kernels.$(SHARED_EXT) $(RUNNERS_BUILD_DIR)/$(GPU_RUNNER_NAME)/

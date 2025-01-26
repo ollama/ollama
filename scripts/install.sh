@@ -199,13 +199,16 @@ check_gpu() {
             case $2 in
                 nvidia) available lspci && lspci -d '10de:' | grep -q 'NVIDIA' || return 1 ;;
                 amdgpu) available lspci && lspci -d '1002:' | grep -q 'AMD' || return 1 ;;
+                ascend) available lspci && lspci -d '19e5:' | grep -q 'Processing accelerators: Huawei' || return 1 ;;
             esac ;;
         lshw)
             case $2 in
                 nvidia) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
                 amdgpu) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[1002\]' || return 1 ;;
+                ascend) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[19E5\]' || return 1 ;;
             esac ;;
         nvidia-smi) available nvidia-smi || return 1 ;;
+        npu-smi) available npu-smi || return 1 ;;
     esac
 }
 
@@ -213,8 +216,14 @@ if check_gpu nvidia-smi; then
     status "NVIDIA GPU installed."
     exit 0
 fi
+: << 'COMMENT'
+if check_gpu npu-smi; then
+    status "ASCEND GPU installed."
+    exit 0
+fi
+COMMENT
 
-if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu; then
+if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu && ! check_gpu lspci ascend && ! check_gpu lshw ascend; then
     install_success
     warning "No NVIDIA/AMD GPU detected. Ollama will run in CPU-only mode."
     exit 0
@@ -322,51 +331,131 @@ if [ -z "$PACKAGE_MANAGER" ]; then
     error "Unknown package manager. Skipping CUDA installation."
 fi
 
-if ! check_gpu nvidia-smi || [ -z "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
-    case $OS_NAME in
-        centos|rhel) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -d '.' -f 1) ;;
-        rocky) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -c1) ;;
-        fedora) [ $OS_VERSION -lt '39' ] && install_cuda_driver_yum $OS_NAME $OS_VERSION || install_cuda_driver_yum $OS_NAME '39';;
-        amzn) install_cuda_driver_yum 'fedora' '37' ;;
-        debian) install_cuda_driver_apt $OS_NAME $OS_VERSION ;;
-        ubuntu) install_cuda_driver_apt $OS_NAME $(echo $OS_VERSION | sed 's/\.//') ;;
-        *) exit ;;
-    esac
-fi
-
-if ! lsmod | grep -q nvidia || ! lsmod | grep -q nvidia_uvm; then
-    KERNEL_RELEASE="$(uname -r)"
-    case $OS_NAME in
-        rocky) $SUDO $PACKAGE_MANAGER -y install kernel-devel kernel-headers ;;
-        centos|rhel|amzn) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE kernel-headers-$KERNEL_RELEASE ;;
-        fedora) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE ;;
-        debian|ubuntu) $SUDO apt-get -y install linux-headers-$KERNEL_RELEASE ;;
-        *) exit ;;
-    esac
-
-    NVIDIA_CUDA_VERSION=$($SUDO dkms status | awk -F: '/added/ { print $1 }')
-    if [ -n "$NVIDIA_CUDA_VERSION" ]; then
-        $SUDO dkms install $NVIDIA_CUDA_VERSION
+if check_gpu lspci nvidia || check_gpu lshw nvidia; then
+    if ! check_gpu nvidia-smi || [ -z "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
+        case $OS_NAME in
+            centos|rhel) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -d '.' -f 1) ;;
+            rocky) install_cuda_driver_yum 'rhel' $(echo $OS_VERSION | cut -c1) ;;
+            fedora) [ $OS_VERSION -lt '39' ] && install_cuda_driver_yum $OS_NAME $OS_VERSION || install_cuda_driver_yum $OS_NAME '39';;
+            amzn) install_cuda_driver_yum 'fedora' '37' ;;
+            debian) install_cuda_driver_apt $OS_NAME $OS_VERSION ;;
+            ubuntu) install_cuda_driver_apt $OS_NAME $(echo $OS_VERSION | sed 's/\.//') ;;
+            *) exit ;;
+        esac
     fi
 
-    if lsmod | grep -q nouveau; then
-        status 'Reboot to complete NVIDIA CUDA driver install.'
-        exit 0
-    fi
+    if ! lsmod | grep -q nvidia || ! lsmod | grep -q nvidia_uvm; then
+        KERNEL_RELEASE="$(uname -r)"
+        case $OS_NAME in
+            rocky) $SUDO $PACKAGE_MANAGER -y install kernel-devel kernel-headers ;;
+            centos|rhel|amzn) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE kernel-headers-$KERNEL_RELEASE ;;
+            fedora) $SUDO $PACKAGE_MANAGER -y install kernel-devel-$KERNEL_RELEASE ;;
+            debian|ubuntu) $SUDO apt-get -y install linux-headers-$KERNEL_RELEASE ;;
+            *) exit ;;
+        esac
 
-    $SUDO modprobe nvidia
-    $SUDO modprobe nvidia_uvm
-fi
-
-# make sure the NVIDIA modules are loaded on boot with nvidia-persistenced
-if available nvidia-persistenced; then
-    $SUDO touch /etc/modules-load.d/nvidia.conf
-    MODULES="nvidia nvidia-uvm"
-    for MODULE in $MODULES; do
-        if ! grep -qxF "$MODULE" /etc/modules-load.d/nvidia.conf; then
-            echo "$MODULE" | $SUDO tee -a /etc/modules-load.d/nvidia.conf > /dev/null
+        NVIDIA_CUDA_VERSION=$($SUDO dkms status | awk -F: '/added/ { print $1 }')
+        if [ -n "$NVIDIA_CUDA_VERSION" ]; then
+            $SUDO dkms install $NVIDIA_CUDA_VERSION
         fi
-    done
+
+        if lsmod | grep -q nouveau; then
+            status 'Reboot to complete NVIDIA CUDA driver install.'
+            exit 0
+        fi
+
+        $SUDO modprobe nvidia
+        $SUDO modprobe nvidia_uvm
+    fi
+    # make sure the NVIDIA modules are loaded on boot with nvidia-persistenced
+    if available nvidia-persistenced; then
+        $SUDO touch /etc/modules-load.d/nvidia.conf
+        MODULES="nvidia nvidia-uvm"
+        for MODULE in $MODULES; do
+            if ! grep -qxF "$MODULE" /etc/modules-load.d/nvidia.conf; then
+                echo "$MODULE" | $SUDO tee -a /etc/modules-load.d/nvidia.conf > /dev/null
+            fi
+        done
+    fi
+fi
+
+install_ascend_driver_yum() {
+    status 'Installing ASCNED driver version: $ASCEND_DRIVER_VERSION ,firmware version: $ASCEND_FIRMWARE_VERSION...'
+    $SUDO $PACKAGE_MANAGER -y install gcc gcc-c++ make cmake unzip zlib-devel libffi-devel openssl-devel pciutils net-tools sqlite-devel lapack-devel gcc-gfortran python3-devel
+    $SUDO groupadd -g HwHiAiUser
+    $SUDO useradd -g HwHiAiUser -d /home/HwHiAiUser -m HwHiAiUser -s /bin/bash
+    $SUDO usermod -aG HwHiAiUser $USER
+
+    # driver version, mabey get from it
+    # npu-smi info
+    # +------------------------------------------------------------------------------------------------+
+    # | npu-smi 24.1.rc1.b060            Version: 24.1.rc1.b060                                        |
+    wget "https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/Ascend HDK/Ascend HDK $ASCEND_DRIVER_VERSION/Ascend-hdk-$1-npu-driver_$(echo "$ASCEND_DRIVER_VERSION" | tr '[:upper:]' '[:lower:]')_linux-$(uname -m).run"
+    $SUDO sh Ascend-hdk-$1-npu-driver_$(echo "$ASCEND_DRIVER_VERSION" | tr '[:upper:]' '[:lower:]')_linux-$(uname -m).run --full --install-for-all
+    rm -rf ./Ascend-hdk-$1-npu-driver_$(echo "$ASCEND_DRIVER_VERSION" | tr '[:upper:]' '[:lower:]')_linux-$(uname -m).run
+
+    wget "https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/Ascend HDK/Ascend HDK $ASCEND_DRIVER_VERSION/Ascend-hdk-$1-npu-firmware_$ASCEND_FIRMWARE_VERSION.231.run"
+    sudo sh Ascend-hdk-$1-npu-firmware_$ASCEND_FIRMWARE_VERSION.231.run --full
+    rm -rf ./Ascend-hdk-$1-npu-firmware_$ASCEND_FIRMWARE_VERSION.231.run
+}
+
+install_ascend_driver_apt() {
+    status 'Installing ASCNED driver version: $ASCEND_DRIVER_VERSION ,firmware version: $ASCEND_FIRMWARE_VERSION...'
+    apt-get -y install gcc g++ make cmake zlib1g zlib1g-dev openssl libsqlite3-dev libssl-dev libffi-dev unzip pciutils net-tools libblas-dev gfortran libblas3 python3-dev
+    groupadd -g HwHiAiUser
+    useradd -g HwHiAiUser -d /home/HwHiAiUser -m HwHiAiUser -s /bin/bash
+    usermod -aG HwHiAiUser $USER
+
+    # driver version,mabey get from it
+    # npu-smi info
+    # +------------------------------------------------------------------------------------------------+
+    # | npu-smi 24.1.rc1.b060            Version: 24.1.rc1.b060                                        |
+    wget "https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/Ascend HDK/Ascend HDK $ASCEND_DRIVER_VERSION/Ascend-hdk-$1-npu-driver_$(echo "$ASCEND_DRIVER_VERSION" | tr '[:upper:]' '[:lower:]')_linux-$(uname -m).run"
+    sh Ascend-hdk-$1-npu-driver_$(echo "$ASCEND_DRIVER_VERSION" | tr '[:upper:]' '[:lower:]')_linux-$(uname -m).run --full --install-for-all
+    rm -rf ./Ascend-hdk-$1-npu-driver_$(echo "$ASCEND_DRIVER_VERSION" | tr '[:upper:]' '[:lower:]')_linux-$(uname -m).run
+
+    wget "https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/Ascend HDK/Ascend HDK $ASCEND_DRIVER_VERSION/Ascend-hdk-$1-npu-firmware_$ASCEND_FIRMWARE_VERSION.231.run"
+    sudo sh Ascend-hdk-$1-npu-firmware_$ASCEND_FIRMWARE_VERSION.231.run --full
+    rm -rf ./Ascend-hdk-$1-npu-firmware_$ASCEND_FIRMWARE_VERSION.231.run
+}
+
+install_ascend_cann() {
+    status 'Installing ASCNED CANN version: $ASCEND_CANN_VERSION...'
+    echo "ASCEND_CANN_VERSION=$ASCEND_CANN_VERSION, 1st paramenter=$1"
+    pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple attrs numpy==1.24.0 decorator sympy cffi pyyaml pathlib2 psutil protobuf scipy requests absl-py wheel typing_extensions
+    wget "https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/CANN/CANN $ASCEND_CANN_VERSION/Ascend-cann-toolkit_${ASCEND_CANN_VERSION}_linux-$(uname -m).run"
+    bash Ascend-cann-toolkit_${ASCEND_CANN_VERSION}_linux-$(uname -m).run --install
+    rm -rf ./Ascend-cann-toolkit_${ASCEND_CANN_VERSION}_linux-$(uname -m).run
+
+    wget "https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/CANN/CANN $ASCEND_CANN_VERSION/Ascend-cann-kernels-$1_${ASCEND_CANN_VERSION}_linux-$(uname -m).run"
+    bash Ascend-cann-kernels-$1_${ASCEND_CANN_VERSION}_linux-$(uname -m).run --install
+    rm -rf ./Ascend-cann-kernels-$1_${ASCEND_CANN_VERSION}_linux.run
+}
+
+# use env val: ASCEND_DRIVER_VERSION ASCEND_FIRMWARE_VERSIO and ASCEND_CANN_VERSION to get version 
+# ref:https://ascend.github.io/docs/sources/ascend/quick_install.html
+if check_gpu lspci ascend || check_gpu lshw ascend; then
+    if [ -z "$ASCEND_DRIVER_VERSION" ]; then
+        ASCEND_DRIVER_VERSION="24.1.RC2"
+    fi
+    if [ -z "$ASCEND_FIRMWARE_VERSION" ]; then
+        ASCEND_FIRMWARE_VERSION="7.3.0.1"
+    fi
+    if [ -z "$ASCEND_CANN_VERSION" ]; then
+        ASCEND_CANN_VERSION="8.0.RC2"
+    fi
+    echo "after set ASCEND_DRIVER_VERSION=${ASCEND_DRIVER_VERSION}";
+    type=$(npu-smi info -m | grep 'Ascend' | awk '{print $5}' | head -n 1 | tr '[:upper:]' '[:lower:]'|sed 's/[0-9]$//')
+    case $OS_NAME in
+        openeuler) install_ascend_driver_yum $type ;;
+        ubuntu) install_ascend_driver_apt $type ;;
+        *) exit ;;
+    esac
+
+    install_ascend_cann $type
+
+    echo "source ~/Ascend/ascend-toolkit/set_env.sh" >> ~/.bashrc
+    source ~/.bashrc
 fi
 
 status "NVIDIA GPU ready."
