@@ -50,7 +50,7 @@ jobs:
           - container: rocm/dev-ubuntu-22.04:6.1.2
             preset: ROCm
             extra-packages: rocm-libs
-            flags: '-DAMDGPU_TARGETS=gfx1010'
+            flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
     runs-on: ubuntu-latest
     container: ${{ matrix.container }}
     steps:
