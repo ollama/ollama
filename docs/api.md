@@ -497,7 +497,7 @@ Generate the next message in a chat with a provided model. This is a streaming e
 - `messages`: the messages of the chat, this can be used to keep a chat memory
 - `tools`: tools for the model to use if supported. Requires `stream` to be set to `false`
 
-The `message` object has the following fields:
+The `messages` object has the following fields:
 
 - `role`: the role of the message, either `system`, `user`, `assistant`, or `tool`
 - `content`: the content of the message
