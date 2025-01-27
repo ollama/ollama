@@ -2,7 +2,7 @@
 # No rules are defined here so this is safe to include at the beginning of other makefiles
 
 OS := $(shell uname -s)
-ARCH ?= $(subst aarch64,arm64,$(subst x86_64,amd64,$(shell uname -m)))
+ARCH ?= $(subst aarch64,arm64,$(subst x86_64,amd64,$(subst loongarch64,loong64,$(shell uname -m))))
 ifneq (,$(findstring MINGW,$(OS))$(findstring MSYS,$(OS)))
 	OS := windows
 	ARCH := $(shell systeminfo 2>/dev/null | grep "System Type" | grep ARM64 > /dev/null && echo "arm64" || echo "amd64" )
@@ -16,8 +16,8 @@ empty:=
 space:= $(empty) $(empty)
 uc = $(subst a,A,$(subst b,B,$(subst c,C,$(subst d,D,$(subst e,E,$(subst f,F,$(subst g,G,$(subst h,H,$(subst i,I,$(subst j,J,$(subst k,K,$(subst l,L,$(subst m,M,$(subst n,N,$(subst o,O,$(subst p,P,$(subst q,Q,$(subst r,R,$(subst s,S,$(subst t,T,$(subst u,U,$(subst v,V,$(subst w,W,$(subst x,X,$(subst y,Y,$(subst z,Z,$1))))))))))))))))))))))))))
 
-export CGO_CFLAGS_ALLOW = -mfma|-mf16c
-export CGO_CXXFLAGS_ALLOW = -mfma|-mf16c
+export CGO_CFLAGS_ALLOW = -mfma|-mf16c|-mlasx
+export CGO_CXXFLAGS_ALLOW = -mfma|-mf16c|-mlasx
 export HIP_PLATFORM = amd
 export CGO_ENABLED=1
 

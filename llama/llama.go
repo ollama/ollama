@@ -45,6 +45,8 @@ package llama
 #cgo linux,arm64 LDFLAGS: -L${SRCDIR}/build/linux-arm64
 #cgo linux,arm64,sve CFLAGS: -march=armv8.6-a+sve
 #cgo linux,arm64,sve CXXFLAGS: -march=armv8.6-a+sve
+#cgo linux,loong64 CFLAGS: -mlasx
+#cgo linux,loong64 CXXFLAGS: -mlasx
 #cgo linux,cuda LDFLAGS: -lcuda -lcudart -lcublas -lcublasLt -lpthread -lrt -lresolv
 #cgo linux,rocm LDFLAGS: -lpthread -lrt -lresolv
 #cgo rocm CFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIP -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
