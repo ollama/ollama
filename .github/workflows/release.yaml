@@ -194,6 +194,7 @@ jobs:
           name: build-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.preset }}
           path: |
             dist\lib\ollama\*.dll
+            dist\lib\ollama\*\*.dll
 
   windows-build:
     strategy:
@@ -235,24 +236,10 @@ jobs:
           go-version-file: go.mod
       - uses: actions/download-artifact@v4
         with:
-          name: build-${{ matrix.os }}-${{ matrix.arch }}-CPU
+          name: build-${{ matrix.os }}-${{ matrix.arch }}-*
+          merge-multiple: true
           path: |
             dist/${{ matrix.os }}/${{ matrix.arch }}/lib
-      - uses: actions/download-artifact@v4
-        with:
-          name: 'build-${{ matrix.os }}-${{ matrix.arch }}-CUDA 11'
-          path: |
-            dist/${{ matrix.os }}/${{ matrix.arch }}/lib/cuda_v11
-      - uses: actions/download-artifact@v4
-        with:
-          name: 'build-${{ matrix.os }}-${{ matrix.arch }}-CUDA 12'
-          path: |
-            dist/${{ matrix.os }}/${{ matrix.arch }}/lib/cuda_v12
-      - uses: actions/download-artifact@v4
-        with:
-          name: 'build-${{ matrix.os }}-${{ matrix.arch }}-ROCm 6'
-          path: |
-            dist/${{ matrix.os }}/${{ matrix.arch }}/lib/rocm
       - run: |
           go build -o dist/ .
 
