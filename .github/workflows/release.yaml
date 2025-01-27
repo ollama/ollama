@@ -45,7 +45,7 @@ jobs:
         run: |
           cmake --preset CPU -DCMAKE_OSX_DEPLOYMENT_TARGET=11.3 -DCMAKE_SYSTEM_PROCESSOR=x86_64 -DCMAKE_OSX_ARCHITECTURES=x86_64
           cmake --build --parallel --preset CPU
-          cmake --install build --component CPU --strip
+          cmake --install build --component CPU --strip --parallel 8
           zip -9 -j dist/ollama-${{ matrix.os }}-${{ matrix.arch }}.zip dist/lib/ollama/*
       - uses: actions/upload-artifact@v4
         with:
@@ -183,7 +183,7 @@ jobs:
           Enter-VsDevShell -VsInstallPath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
           cmake --preset "${{ matrix.preset }}"
           cmake --build --parallel --preset "${{ matrix.preset }}"
-          cmake --install build --component "${{ startsWith(matrix.preset, 'CUDA ') && 'CUDA' || 'HIP' }}" --strip
+          cmake --install build --component "${{ startsWith(matrix.preset, 'CUDA ') && 'CUDA' || 'HIP' }}" --strip --parallel 8
         env:
           CMAKE_GENERATOR: Ninja
       - uses: actions/upload-artifact@v4

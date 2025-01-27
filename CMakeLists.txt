@@ -94,7 +94,7 @@ if(CMAKE_HIP_COMPILER)
         set(OLLAMA_HIP_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/rocm)
         install(TARGETS ggml-hip
             RUNTIME_DEPENDENCIES
-                DIRECTORIES ${HIP_BIN_INSTALL_DIR} ${HIP_LIBRARY_INSTALL_DIR}
+                DIRECTORIES ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR}
                 PRE_INCLUDE_REGEXES amdhip64 hipblas rocblas amd_comgr hsa_runtime64 rocprofiler-register drm_amdgpu drm numa
                 PRE_EXCLUDE_REGEXES ".*"
                 POST_EXCLUDE_REGEXES "system32"
@@ -103,10 +103,11 @@ if(CMAKE_HIP_COMPILER)
             COMPONENT HIP
         )
 
-        if(LINUX)
-            install(DIRECTORY ${HIP_LIB_INSTALL_DIR}/rocblas DESTINATION ${OLLAMA_HIP_INSTALL_DIR})
-        elseif(WIN32)
-            install(DIRECTORY ${HIP_BIN_INSTALL_DIR}/rocblas DESTINATION ${OLLAMA_HIP_INSTALL_DIR})
-        endif()
+        foreach(HIP_LIB_BIN_INSTALL_DIR IN ITEMS ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR})
+            if(EXISTS ${HIP_LIB_BIN_INSTALL_DIR}/rocblas)
+                install(DIRECTORY ${HIP_LIB_BIN_INSTALL_DIR}/rocblas DESTINATION ${OLLAMA_HIP_INSTALL_DIR} COMPONENT HIP)
+                break()
+            endif()
+        endforeach()
     endif()
 endif()
