@@ -197,5 +197,11 @@ ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
 
+RUN mkdir -p /.ollama && \
+    chown -R 1001:0 /.ollama && \
+    chmod -R g=u /.ollama
+
+USER 1001
+
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
