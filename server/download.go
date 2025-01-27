@@ -173,7 +173,7 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *r
 	}
 
 	blobPartSize := format.HumanBytes(0)
-	if len(b.Parts) >= 1 {
+	if len(b.Parts) > 0 {
 		blobPartSize = format.HumanBytes(b.Parts[0].Size)
 	}
 
