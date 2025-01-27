@@ -156,7 +156,7 @@ function updateTray() {
   if (!tray) {
     tray = new Tray(trayIconPath())
     // make sure the tray is updated when clicked to avoid stale info
-    // e.g. user disables auto startup in system preferences but tray menu still shows it as enabled
+    // e.g. user disables auto startup in OS preferences but tray menu still shows it as enabled
     tray.on('click', () => {
       updateTray()
     })
