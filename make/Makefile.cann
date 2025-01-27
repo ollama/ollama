@@ -1,0 +1,118 @@
+# Build rules for CANN runner
+#
+# Note: at present we only support a single CANN version
+
+include make/common-defs.make
+include make/cann-defs.make
+
+ifeq ($(OS),windows)
+	@echo "CANN does not currently support windows."
+	@exit 0
+endif
+
+# Check if CANN_INSTALL_DIR is unset or empty, and ASCEND_TOOLKIT_HOME is defined
+$(info CANN: CANN_INSTALL_DIR=$(CANN_INSTALL_DIR) ASCEND_TOOLKIT_HOME=$(ASCEND_TOOLKIT_HOME) PATH=$(PATH))
+ifeq ($(strip $(CANN_INSTALL_DIR)),)
+    ifneq ($(strip $(ASCEND_TOOLKIT_HOME)),)
+        CANN_INSTALL_DIR := $(ASCEND_TOOLKIT_HOME)
+        $(info CANN: updated CANN_INSTALL_DIR from ASCEND_TOOLKIT_HOME=$(ASCEND_TOOLKIT_HOME))
+    endif
+endif
+
+GPU_LIB_DIR := $(CANN_INSTALL_DIR)/lib64
+GPU_TRANSITIVE_LIBS = $(empty)
+GPU_RUNNER_GO_TAGS := cann
+GPU_RUNNER_NAME := cann
+
+GPU_RUNNER_SRCS := \
+	$(wildcard llama/ggml-cann/*.cpp) \
+	llama/ggml.c llama/ggml-backend.cpp llama/ggml-alloc.c llama/ggml-quants.c llama/sgemm.cpp llama/ggml-threading.cpp
+
+GPU_RUNNER_HDRS := \
+	$(wildcard ggml-cann/*.h)
+
+# build custom cann kernels
+CANN_KERNEL_SRC_DIR := llama/ggml-cann/kernels
+CANN_BUILD_DIR := $(RUNNERS_BUILD_DIR)/$(GPU_RUNNER_NAME)
+CANN_KERNEL_BUILD_DIR := $(CANN_BUILD_DIR)/kernels
+CANN_KERNEL_CMAKE_FLAGS = -DCANN_INSTALL_DIR=$(CANN_INSTALL_DIR)
+GGML_SHARED_BUILD_PRE_JOB := $(CANN_BUILD_DIR)/$(SHARED_PREFIX)ascendc_kernels.$(SHARED_EXT)
+
+GPU_COMPILER_LINUX := $(shell X=$$(which g++ 2>/dev/null) && echo $$X)
+GPU_COMPILER:=$(shell X=$$(which g++ 2>/dev/null) && echo $$X)
+GPU_C_COMPILER:=$(shell X=$$(which gcc 2>/dev/null) && echo $$X)
+GPU_RUNNER_LIBS_SHORT := ascendcl nnopbase opapi acl_op_compiler ascendc_kernels
+GPU_LIBS = $(wildcard $(addsuffix .$(SHARED_EXT),$(addprefix $(GPU_LIB_DIR)/$(SHARED_PREFIX),$(GPU_RUNNER_LIBS_SHORT))))
+CANN_DIST_DEPS_DIR = ./dist/$(OS)-$(ARCH)-cann/lib/ollama
+GPU_DIST_DEPS_LIBS = $(sort $(addprefix $(CANN_DIST_DEPS_DIR)/,$(notdir $(GPU_LIBS)) $(notdir $(GPU_TRANSITIVE_LIBS))))
+CANN_INCLUDES_DIRS = -I$(CANN_INSTALL_DIR)/include \
+                     -I$(CANN_INSTALL_DIR)/include/aclnn \
+                     -I$(CANN_INSTALL_DIR)/acllib/include \
+                     -I$(CANN_KERNEL_BUILD_DIR)/include/ascendc_kernels 
+
+GPU_COMPILER_FPIC := -fPIC -Wno-unused-function -std=gnu++11
+CANN_COMPILER_CXXFLAGS = \
+	$(GPU_COMPILER_FPIC) \
+	-c \
+	-O3 \
+	-DGGML_USE_CANN=1 \
+	-DGGML_BUILD=1 \
+	-DGGML_NATIVE=OFF \
+	-DGGML_SCHED_MAX_COPIES=4 \
+	-DGGML_USE_LLAMAFILE \
+	-DNDEBUG \
+	-D_CRT_SECURE_NO_WARNINGS \
+	-D_GNU_SOURCE \
+	-D_XOPEN_SOURCE=600 \
+	-DUSE_PROF_API=1 \
+	-std=gnu++14 \
+	-Wno-expansion-to-defined \
+	-Wno-invalid-noreturn \
+	-Wno-ignored-attributes \
+	-Wno-pass-failed \
+	-Wno-deprecated-declarations \
+	-Wno-unused-result \
+	$(CANN_INCLUDES_DIRS) \
+	-I.
+
+GPU_COMPILER_CFLAGS = $(CFLAGS) -fPIC -D_GNU_SOURCE -std=c11
+GPU_COMPILER_CXXFLAGS = $(CXXFLAGS) -fPIC -D_GNU_SOURCE $(CANN_COMPILER_CXXFLAGS)
+
+include make/gpu.make
+
+# MAKEFLAGS += -j1
+# $(GPU_RUNNER_NAME): $(CANN_BUILD_DIR)/$(SHARED_PREFIX)ascendc_kernels.$(SHARED_EXT) WAIT
+# First detect Ascend SOC type
+SOC_VERSION :=
+SOC_TYPE := Ascend910B3
+ifeq ($(SOC_TYPE),)
+	detect_ascend_soc_type = $(shell npu-smi info | awk -F' ' 'NF > 0 && NR==7 {print $$3}')
+	$(info CANN detect_ascend_soc_type auto-detected is $(detect_ascend_soc_type))
+    SOC_VERSION := $(call detect_ascend_soc_type)
+    ifeq ($(SOC_VERSION),)
+        $(error Auto-detect ascend soc type failed, please specify manually or check ascend device working normally.)
+    endif
+    SOC_VERSION := Ascend$(SOC_VERSION)
+    SOC_TYPE := $(SOC_VERSION)
+    $(info CANN SOC_VERSION auto-detected is $(SOC_VERSION))
+endif
+
+SOC_VERSION := $(shell echo $(SOC_TYPE) | tr '[:upper:]' '[:lower:]')
+
+# Construct Soc specify compile option: ASCEND_SOC_MAJOR_SN, Such as ASCEND_910B, ASCEND_310P.
+SOC_TYPE_MAJOR_SN := $(shell echo $(SOC_VERSION) | grep -o [0-9][0-9][0-9][a-zA-Z]*)
+SOC_TYPE_COMPILE_OPTION := ASCEND_$(SOC_TYPE_MAJOR_SN)
+SOC_TYPE_COMPILE_OPTION := $(shell echo $(SOC_TYPE_COMPILE_OPTION) | tr '[:lower:]' '[:upper:]')
+CANN_KERNEL_CMAKE_FLAGS += -DSOC_TYPE=$(SOC_TYPE) -DSOC_VERSION=$(SOC_VERSION) -DSOC_TYPE_COMPILE_OPTION=$(SOC_TYPE_COMPILE_OPTION)
+# Second build cann llama.cpp custom kernel
+$(CANN_BUILD_DIR)/$(SHARED_PREFIX)ascendc_kernels.$(SHARED_EXT):
+	@rm -rf $(CANN_KERNEL_BUILD_DIR)
+	@-mkdir -p $(CANN_KERNEL_BUILD_DIR)
+	$(info CANN_INSTALL_DIR: $(CANN_INSTALL_DIR))
+	@cmake $(CANN_KERNEL_SRC_DIR) -G "Unix Makefiles" $(CANN_KERNEL_CMAKE_FLAGS) -B $(CANN_KERNEL_BUILD_DIR) -C $(CANN_KERNEL_SRC_DIR)/CMakeLists.txt -DCMAKE_BUILD_TYPE=debug
+	@cmake --build $(CANN_KERNEL_BUILD_DIR) --config debug
+	@-mkdir -p $(DIST_LIB_DIR)
+	$(CP) $(CANN_KERNEL_BUILD_DIR)/lib/$(SHARED_PREFIX)ascendc_kernels.$(SHARED_EXT) $(DIST_LIB_DIR)
+	$(CP) $(CANN_KERNEL_BUILD_DIR)/lib/$(SHARED_PREFIX)ascendc_kernels.$(SHARED_EXT) $(RUNNERS_BUILD_DIR)/$(GPU_RUNNER_NAME)/
+
+# endef

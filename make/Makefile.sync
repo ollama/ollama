@@ -157,7 +157,8 @@ GGML_FILES= \
 	ggml/src/ggml-cpu/amx/amx.h \
 	ggml/src/ggml-cpu/amx/amx.cpp \
 	ggml/src/ggml-cpu/amx/mmq.cpp \
-	ggml/src/ggml-cpu/amx/mmq.h
+	ggml/src/ggml-cpu/amx/mmq.h \
+	ggml/include/ggml-cann.h
 $(foreach name,$(GGML_FILES),$(eval $(call vendor_file,$(name),$(DEST_DIR))))
 
 $(DEST_DIR)ggml-metal-embed.metal: $(DEST_DIR)ggml-common.h $(DEST_DIR)ggml-metal-impl.h
@@ -198,6 +199,15 @@ $(foreach name,$(GGML_TEMPLATE_FILES_EXPANDED),$(eval $(call vendor_file,$(name)
 GGML_VENDOR_FILES= ggml/src/ggml-cuda/vendors/*.h
 GGML_VENDOR_FILES_EXPANDED=$(addprefix ggml/src/ggml-cuda/vendors/,$(notdir $(wildcard $(addprefix $(LLAMACPP_REPO),$(GGML_VENDOR_FILES)))))
 $(foreach name,$(GGML_VENDOR_FILES_EXPANDED),$(eval $(call vendor_file,$(name),$(DEST_DIR)ggml-cuda/vendors/)))
+
+# ggml-cann -> llama/ggml-cann/
+GGML_CANN_FILES= ggml/src/ggml-cann.cpp ggml/src/ggml-cann/*.cpp ggml/src/ggml-cann/*.h
+GGML_CANN_FILES_EXPANDED = $(addprefix ggml/src/ggml-cann/,$(notdir $(wildcard $(addprefix $(LLAMACPP_REPO),$(GGML_CANN_FILES)))))
+$(foreach name,$(GGML_CANN_FILES_EXPANDED),$(eval $(call vendor_file,$(name),$(DEST_DIR)ggml-cann/)))
+
+GGML_CANN_KERNEL_FILES= ggml/src/ggml-cann/kernels/*.cpp ggml/src/ggml-cann/kernels/*.h CMakeLists.txt
+GGML_CANN_KERNEL_FILES_EXPANDED = 	$(addprefix ggml/src/ggml-cann/kernels/,$(notdir $(wildcard $(addprefix $(LLAMACPP_REPO),$(GGML_CANN_KERNEL_FILES)))))
+$(foreach name,$(GGML_CANN_KERNEL_FILES_EXPANDED),$(eval $(call vendor_file,$(name),$$(DEST_DIR)ggml-cann/kernels/)))
 
 # llava -> llama/
 LAVA_FILES= \

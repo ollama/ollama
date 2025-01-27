@@ -6,6 +6,7 @@ include make/common-defs.make
 include make/cuda-v11-defs.make
 include make/cuda-v12-defs.make
 include make/rocm-defs.make
+include make/cann-defs.make
 
 ifeq ($(CUSTOM_CPU_FLAGS),)
 ifeq ($(ARCH),amd64)
@@ -34,6 +35,11 @@ ifneq ($(HIP_COMPILER),)
 endif
 endif
 
+ifeq ($(OLLAMA_SKIP_CANN_GENERATE),)
+ifneq ($(CANN_INSTALL_DIR),)
+	RUNNER_TARGETS += cann
+endif
+endif
 
 all: runners exe
 

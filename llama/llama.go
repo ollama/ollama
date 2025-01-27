@@ -51,6 +51,10 @@ package llama
 #cgo rocm CXXFLAGS: -DGGML_USE_CUDA -DGGML_USE_HIP -DGGML_CUDA_DMMV_X=32 -DGGML_CUDA_PEER_MAX_BATCH_SIZE=128 -DGGML_CUDA_MMV_Y=1 -DGGML_BUILD=1
 #cgo rocm LDFLAGS: -L${SRCDIR} -lggml_rocm -lhipblas -lamdhip64 -lrocblas
 #cgo windows CFLAGS: -Wno-discarded-qualifiers -D_WIN32_WINNT=0x602
+#cgo linux,cann LDFLAGS: -lpthread -lrt -lresolv
+#cgo cann CFLAGS: -DGGML_USE_CANN -DGGML_BUILD=1
+#cgo cann CXXFLAGS: -DGGML_USE_CANN -DGGML_BUILD=1
+#cgo cann LDFLAGS: -L${SRCDIR}/build/linux-arm64/runners/cann -lggml_cann -lascendc_kernels
 #cgo windows CXXFLAGS: -D_WIN32_WINNT=0x602
 #cgo windows LDFLAGS: -lmsvcrt -static-libstdc++ -static-libgcc -static
 #cgo windows,amd64 LDFLAGS: -L${SRCDIR}/build/windows-amd64

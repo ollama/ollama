@@ -5,7 +5,8 @@
 set -ex
 set -o pipefail
 MACHINE=$(uname -m)
-
+export HTTP_PROXY=172.17.0.1:7890
+export HTTPS_PROXY=172.17.0.1:7890
 if grep -i "centos" /etc/system-release >/dev/null; then
     # As of 7/1/2024 mirrorlist.centos.org has been taken offline, so adjust accordingly
     sed -i s/mirror.centos.org/vault.centos.org/g /etc/yum.repos.d/*.repo
@@ -31,6 +32,16 @@ if grep -i "centos" /etc/system-release >/dev/null; then
         ln -s /opt/rh/rh-git227/root/usr/bin/git /usr/local/bin/git
     fi
     dnf install -y devtoolset-10-gcc devtoolset-10-gcc-c++ pigz findutils
+elif grep -i "openEuler" /etc/system-release >/dev/null; then
+    # just for openeuler build envrionment, does not need to push to ollama github
+    dnf install -y git \
+        gcc \
+        gcc-c++ \
+        make \
+        cmake \
+        findutils \
+        yum \
+        pigz
 elif grep -i "rocky" /etc/system-release >/dev/null; then
     # Temporary workaround until rocky 8 AppStream ships GCC 10.4 (10.3 is incompatible with NVCC)
     cat << EOF > /etc/yum.repos.d/Rocky-Vault.repo
@@ -57,7 +68,10 @@ if [ "${MACHINE}" = "x86_64" ] ; then
     curl -s -L https://github.com/ccache/ccache/releases/download/v4.10.2/ccache-4.10.2-linux-x86_64.tar.xz | tar -Jx -C /tmp --strip-components 1 && \
     mv /tmp/ccache /usr/local/bin/
 else
-    yum -y install epel-release
+    # openEuler does not have epel-release
+    if ! grep -i "openEuler" /etc/system-release >/dev/null; then
+        yum -y install epel-release
+    fi
     yum install -y ccache
 fi
 

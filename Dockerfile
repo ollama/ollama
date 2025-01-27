@@ -4,6 +4,7 @@ ARG CUDA_VERSION_12=12.4.0
 ARG ROCM_VERSION=6.1.2
 ARG JETPACK_6=r36.2.0
 ARG JETPACK_5=r35.4.1
+ARG ASCEND_VERSION=8.0.rc2.beta1-910b-openeuler22.03-py3.10
 
 ### To create a local image for building linux binaries on mac or windows with efficient incremental builds
 #
@@ -84,7 +85,7 @@ RUN if [ -z ${OLLAMA_SKIP_ROCM_GENERATE} ] ; then \
 # Jetsons need to be built in discrete stages
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK_5} AS runners-jetpack5-arm64
 ARG GOLANG_VERSION
-RUN apt-get update && apt-get install -y git curl ccache && \
+RUN export http_proxy=http://172.17.0.1:7890 && https_proxy=http://172.17.0.1:7890 && apt-get update && apt-get install -y git curl ccache && \
     curl -s -L https://dl.google.com/go/go${GOLANG_VERSION}.linux-arm64.tar.gz | tar xz -C /usr/local && \
     ln -s /usr/local/go/bin/go /usr/local/bin/go && \
     ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt && \
@@ -103,7 +104,7 @@ RUN --mount=type=cache,target=/root/.ccache \
 
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK_6} AS runners-jetpack6-arm64
 ARG GOLANG_VERSION
-RUN apt-get update && apt-get install -y git curl ccache && \
+RUN export http_proxy=http://172.17.0.1:7890 && https_proxy=http://172.17.0.1:7890 && apt-get update && apt-get install -y git curl ccache && \
     curl -s -L https://dl.google.com/go/go${GOLANG_VERSION}.linux-arm64.tar.gz | tar xz -C /usr/local && \
     ln -s /usr/local/go/bin/go /usr/local/bin/go && \
     ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt && \
@@ -119,6 +120,48 @@ RUN --mount=type=cache,target=/root/.ccache \
         GPU_RUNNER_VARIANT=_jetpack6 \
         DIST_LIB_DIR=/go/src/github.com/ollama/ollama/dist/linux-arm64-jetpack6/lib/ollama \
         DIST_GPU_RUNNER_DEPS_DIR=/go/src/github.com/ollama/ollama/dist/linux-arm64-jetpack6/lib/ollama/cuda_jetpack6
+
+FROM quay.io/ascend/cann:8.0.rc2.beta1-910b-openeuler22.03-py3.10 AS cann-builder-arm64
+ARG GOLANG_VERSION
+COPY ./scripts/rh_linux_deps.sh /
+RUN GOLANG_VERSION=${GOLANG_VERSION} sh -x /rh_linux_deps.sh
+RUN dnf clean all && \
+    dnf install -y \
+    zsh
+ARG CANN_INSTALL_DIR
+ENV GOARCH arm64
+ENV CGO_ENABLED 1
+ENTRYPOINT [ "zsh" ]
+
+#ENV LD_LIBRARY_PATH=/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/8.0.RC2/aarch64-linux/devlib/linux/aarch64:${LD_LIBRARY_PATH}
+FROM --platform=linux/arm64 cann-builder-arm64 AS cann_build-arm64
+ARG OLLAMA_SKIP_CUDA_GENERATE=1
+ARG OLLAMA_SKIP_ROCM_GENERATE=1
+ARG OLLAMA_FAST_BUILD=1
+ARG VERSION
+WORKDIR /go/src/github.com/ollama/ollama/
+COPY . .
+ENV CUSTOM_CPU_FLAGS=cann
+RUN --mount=type=cache,target=/root/.ccache \
+    cann_in_sys_path=/usr/local/Ascend/ascend-toolkit; \
+    cann_in_user_path=$HOME/Ascend/ascend-toolkit; \
+    if [ -f "${cann_in_sys_path}/set_env.sh" ]; then \
+        source ${cann_in_sys_path}/set_env.sh; \
+        export LD_LIBRARY_PATH=${cann_in_sys_path}/latest/lib64:${cann_in_sys_path}/latest/aarch64-linux/devlib:${LD_LIBRARY_PATH} ; \
+    elif [ -f "${cann_in_user_path}/set_env.sh" ]; then \
+        source "$HOME/Ascend/ascend-toolkit/set_env.sh"; \
+        export LD_LIBRARY_PATH=${cann_in_user_path}/latest/lib64:${cann_in_user_path}/latest/aarch64-linux/devlib:${LD_LIBRARY_PATH}; \ 
+    else \
+        echo "No Ascend Toolkit found"; \
+        exit 1; \
+    fi && \
+    make dist
+RUN cd dist/linux-$GOARCH && \
+    tar -cf - . | pigz --best > ../ollama-linux-$GOARCH-cann.tgz
+
+FROM --platform=linux/amd64 cann_build-arm64 AS dist-arm64-cann
+COPY --from=cann_build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/bin/ /bin/
+COPY --from=cann_build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
 
 FROM --platform=linux/arm64 unified-builder-arm64 AS build-arm64
 COPY . .
@@ -140,6 +183,7 @@ FROM --platform=linux/amd64 scratch AS dist-amd64
 COPY --from=build-amd64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
 FROM --platform=linux/arm64 scratch AS dist-arm64
 COPY --from=build-arm64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
+COPY --from=cann_build-arm64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
 FROM dist-$TARGETARCH AS dist
 
 
@@ -188,6 +232,16 @@ ENV OLLAMA_HOST 0.0.0.0
 
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
+
+FROM quay.io/ascend/cann:8.0.rc2.beta1-910b-openeuler22.03-py3.10 AS runtime-cann
+EXPOSE 11434
+ENV OLLAMA_HOST 0.0.0.0
+COPY --from=cann_build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/bin/ /bin/
+COPY --from=cann_build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
+ENV LD_LIBRARY_PATH=/lib/ollama:/lib/ollama/runners/cann:${LD_LIBRARY_PATH}
+RUN echo "/bin/ollama serve" >> /usr/local/Ascend/ascend-toolkit/set_env.sh
+ENTRYPOINT ["/bin/bash", "-c", "source /usr/local/Ascend/ascend-toolkit/set_env.sh && exec \"$@\"", "--"]
+CMD ["bash"]
 
 FROM runtime-$TARGETARCH
 EXPOSE 11434
