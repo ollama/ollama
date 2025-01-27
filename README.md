@@ -378,7 +378,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Tutorial
 
-- [handy-ollama](https://github.com/datawhalechina/handy-ollama) (Chinese Tutorial for Ollama by Datawhale - China's Largest Open Source AI Learning Community)
+- [handy-ollama](https://github.com/datawhalechina/handy-ollama) (Chinese Tutorial for Ollama by [Datawhale ](https://github.com/datawhalechina) - China's Largest Open Source AI Learning Community)
 
 ### Terminal
 
