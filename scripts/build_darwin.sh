@@ -25,13 +25,17 @@ shift $(( $OPTIND - 1 ))
 _build_darwin() {
     for ARCH in $ARCHS; do
         status "Building darwin $ARCH"
-        GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 go build -o dist/darwin/$ARCH/ .
+        INSTALL_PREFIX=dist/darwin-$ARCH/
+        GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 go build -o $INSTALL_PREFIX .
 
         if [ "$ARCH" = "amd64" ]; then
             status "Building darwin $ARCH dynamic backends"
-            cmake -B build/darwin/$ARCH -DCMAKE_OSX_DEPLOYMENT_TARGET=11.3 -DCMAKE_SYSTEM_PROCESSOR=x86_64 -DCMAKE_OSX_ARCHITECTURES=x86_64
-            cmake --build build/darwin/$ARCH --target ggml-cpu -j
-            cp -a build/darwin/$ARCH/lib/ollama/* dist/darwin/$ARCH/
+            cmake -B build/darwin-$ARCH \
+                -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
+                -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+                -DCMAKE_OSX_DEPLOYMENT_TARGET=11.3
+            cmake --build build/darwin-$ARCH --target ggml-cpu -j
+            install build/darwin-$ARCH/lib/ollama/*.{dylib,so} $INSTALL_PREFIX
         fi
     done
 }

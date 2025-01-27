@@ -86,13 +86,12 @@ function buildOllama() {
 
         # Default first, then conditionall ROCm and cuda v11
         write-host "Building Default native backend libraries"
-        # $env:CMAKE_GENERATOR="ninja"
+         $env:CMAKE_GENERATOR="ninja"
         & cmake --preset Default
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         & cmake --build --preset Default -j 12
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        # TODO - should we copy instead of move?
-        Move-Item -Path "${script:SRC_DIR}\build\lib\Release\*.dll" -Destination "${script:DIST_DIR}\lib\ollama\"
+        & cmake --install build -j 12
         
         # TODO - add steps for v11 and ROCm
         #

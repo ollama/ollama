@@ -35,7 +35,6 @@ jobs:
           go-version-file: go.mod
       - run: |
           go build -o dist/ .
-          zip -9 -j dist/ollama-${{ matrix.os }}-${{ matrix.arch }}.zip dist/*
         env:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.arch }}
@@ -46,11 +45,10 @@ jobs:
           cmake --preset CPU -DCMAKE_OSX_DEPLOYMENT_TARGET=11.3 -DCMAKE_SYSTEM_PROCESSOR=x86_64 -DCMAKE_OSX_ARCHITECTURES=x86_64
           cmake --build --parallel --preset CPU
           cmake --install build --component CPU --strip --parallel 8
-          zip -9 -j dist/ollama-${{ matrix.os }}-${{ matrix.arch }}.zip dist/lib/ollama/*
       - uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.os }}-${{ matrix.arch }}
-          path: dist/ollama-${{ matrix.os }}-${{ matrix.arch }}.zip
+          name: build-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/*
 
   darwin-sign:
     runs-on: macos-13
@@ -71,16 +69,13 @@ jobs:
           MACOS_SIGNING_KEY_PASSWORD: ${{ secrets.MACOS_SIGNING_KEY_PASSWORD }}
       - uses: actions/download-artifact@v4
         with:
-          name: dist-darwin-*
-          path: dist/
-          merge-multiple: true
+          name: build-darwin-amd64
+          path: dist/darwin-amd64
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-darwin-arm64
+          path: dist/darwin-arm64
       - run: |
-          for ZIPFILE in dist/ollama-darwin-*.zip; do
-            PLATFORM=$(echo ${ZIPFILE//.*} | cut -f2- -d- | tr "-" "/")
-            mkdir -p dist/$PLATFORM
-            unzip -d dist/$PLATFORM $ZIPFILE
-          done
-
           ./scripts/build_darwin.sh
         env:
           APPLE_IDENTITY: ${{ secrets.APPLE_IDENTITY }}
@@ -120,7 +115,6 @@ jobs:
             rocm-version: '6.1'
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
-    needs: setup-environment
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
@@ -186,15 +180,13 @@ jobs:
           Enter-VsDevShell -VsInstallPath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
           cmake --preset "${{ matrix.preset }}"
           cmake --build --parallel --preset "${{ matrix.preset }}"
-          cmake --install build --component "${{ startsWith(matrix.preset, 'CUDA ') && 'CUDA' || 'HIP' }}" --strip --parallel 8
+          cmake --install build --component "${{ startsWith(matrix.preset, 'CUDA ') && 'CUDA' || startsWith(matrix.preset, 'ROCm ') && 'HIP' || 'CPU' }}" --strip --parallel 8
         env:
           CMAKE_GENERATOR: Ninja
       - uses: actions/upload-artifact@v4
         with:
-          name: build-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.preset }}
-          path: |
-            dist\lib\ollama\*.dll
-            dist\lib\ollama\*\*.dll
+          name: depends-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.preset }}
+          path: dist\*
 
   windows-build:
     strategy:
@@ -217,38 +209,30 @@ jobs:
             Set-ExecutionPolicy Bypass -Scope Process -Force
             [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
             iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-            echo "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+            echo "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
             choco install -y --no-progress git gzip
-            echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Append
+            echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
             Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-aarch64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt-aarch64.zip"
-            Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt-aarch64.zip -DestinationPath .
-            $installPath=(Resolve-Path -Path .\llvm-mingw-*-ucrt-aarch64).path
-            echo $installPath\bin
+            Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt-aarch64.zip -DestinationPath "C:\Program Files\"
+            $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt-aarch64").path
             echo $installPath\bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-            echo "CC=$installPath\bin\gcc" | Out-File -FilePath $env:GITHUB_ENV -Append
-            echo "CXX=$installPath\bin\g++" | Out-File -FilePath $env:GITHUB_ENV -Append
           }
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - uses: actions/download-artifact@v4
-        with:
-          name: build-${{ matrix.os }}-${{ matrix.arch }}-*
-          merge-multiple: true
-          path: |
-            dist/${{ matrix.os }}/${{ matrix.arch }}/lib
       - run: |
-          go build -o dist/ .
-
-          Compress-Archive -Path ./dist/* -DestinationPath dist/ollama-${{ matrix.os }}-${{ matrix.arch }}.zip -CompressionLevel Optimal
-          Compress-Archive -Path ./dist/${{ matrix.os }}/${{ matrix.arch }}/lib -DestinationPath dist/ollama-${{ matrix.os }}-${{ matrix.arch }}.zip -CompressionLevel Optimal -Update
+          go build -o dist/${{ matrix.os }}-${{ matrix.arch }}/ .
+      - run: |
+          & .\scripts\build_windows.ps1 buildApp
       - uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.os }}-${{ matrix.arch }}
-          path: dist\ollama-${{ matrix.os }}-${{ matrix.arch }}.zip
+          name: build-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            dist\${{ matrix.os }}-${{ matrix.arch }}\*.exe
+            dist\${{ matrix.os }}-${{ matrix.arch }}-app.exe
 
   windows-sign:
     runs-on: windows
@@ -259,7 +243,7 @@ jobs:
       - uses: google-github-actions/auth@v2
         with:
           project_id: ollama
-          credentials_jsoN: ${{ secrets.GOOGLE_SIGNING_CREDENTIALS }}
+          credentials_json: ${{ secrets.GOOGLE_SIGNING_CREDENTIALS }}
       - run: |
           $ErrorActionPreference = "Stop"
           Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=323507" -OutFile "${{ runner.temp }}\sdksetup.exe"
@@ -273,12 +257,16 @@ jobs:
           echo "${{ vars.OLLAMA_CERT }}" >ollama_inc.crt
       - uses: actions/download-artifact@v4
         with:
-          name: dist-windows-*
+          name: build-windows-*
+          path: dist\
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: depends-windows-amd64-*
+          path: dist\windows-amd64\
+          merge-multiple: true
       - run: |
-          # TODO: build desktop app
-          # TODO: unpack downloaded artifacts
-
-          .\scripts\build_windows.ps1 sign distZip
+          & .\scripts\build_windows.ps1 gatherDependencies sign buildInstaller distZip
       - uses: actions/upload-artifact@v4
         with:
           name: dist-windows
