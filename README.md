@@ -376,6 +376,10 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Fly.io](https://fly.io/docs/python/do-more/add-ollama/)
 - [Koyeb](https://www.koyeb.com/deploy/ollama)
 
+### Tutorial
+
+- [handy-ollama](https://github.com/datawhalechina/handy-ollama) (Chinese Tutorial for Ollama by Datawhale - China's Largest Open Source AI Learning Community)
+
 ### Terminal
 
 - [oterm](https://github.com/ggozad/oterm)
