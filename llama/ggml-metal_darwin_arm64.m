@@ -328,6 +328,10 @@ enum ggml_metal_kernel_type {
     GGML_METAL_KERNEL_TYPE_ROPE_NORM_F16,
     GGML_METAL_KERNEL_TYPE_ROPE_NEOX_F32,
     GGML_METAL_KERNEL_TYPE_ROPE_NEOX_F16,
+    GGML_METAL_KERNEL_TYPE_ROPE_MULTI_F32,
+    GGML_METAL_KERNEL_TYPE_ROPE_MULTI_F16,
+    GGML_METAL_KERNEL_TYPE_ROPE_VISION_F32,
+    GGML_METAL_KERNEL_TYPE_ROPE_VISION_F16,
     GGML_METAL_KERNEL_TYPE_IM2COL_F16,
     GGML_METAL_KERNEL_TYPE_IM2COL_F32,
     GGML_METAL_KERNEL_TYPE_IM2COL_EXT_F16,
@@ -928,6 +932,10 @@ static struct ggml_backend_metal_context * ggml_metal_init(ggml_backend_dev_t de
         GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_ROPE_NORM_F16,                 rope_norm_f16,                  true);
         GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_ROPE_NEOX_F32,                 rope_neox_f32,                  true);
         GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_ROPE_NEOX_F16,                 rope_neox_f16,                  true);
+        GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_ROPE_MULTI_F32,                rope_multi_f32,                 true);
+        GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_ROPE_MULTI_F16,                rope_multi_f16,                 true);
+        GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_ROPE_VISION_F32,               rope_vision_f32,                true);
+        GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_ROPE_VISION_F16,               rope_vision_f16,                true);
         GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_IM2COL_F16,                    im2col_f16,                     true);
         GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_IM2COL_F32,                    im2col_f32,                     true);
         GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_IM2COL_EXT_F16,                im2col_ext_f16,                 true);
@@ -1155,16 +1163,7 @@ static bool ggml_metal_supports_op(const struct ggml_backend_metal_device_contex
         case GGML_OP_NORM:
             return true;
         case GGML_OP_ROPE:
-            {
-                const int mode = ((const int32_t *) op->op_params)[2];
-                if (mode & GGML_ROPE_TYPE_MROPE) {
-                    return false;
-                }
-                if (mode & GGML_ROPE_TYPE_VISION) {
-                    return false;
-                }
-                return true;
-            }
+            return true;
         case GGML_OP_IM2COL:
             return op->src[0]->type == GGML_TYPE_F16;
         case GGML_OP_POOL_1D:
@@ -3083,6 +3082,7 @@ static void ggml_metal_encode_node(
                 float attn_factor;
                 float beta_fast;
                 float beta_slow;
+                int32_t sections[4];
 
                 memcpy(&freq_base,   (const int32_t *) dst->op_params +  5, sizeof(float));
                 memcpy(&freq_scale,  (const int32_t *) dst->op_params +  6, sizeof(float));
@@ -3090,21 +3090,44 @@ static void ggml_metal_encode_node(
                 memcpy(&attn_factor, (const int32_t *) dst->op_params +  8, sizeof(float));
                 memcpy(&beta_fast,   (const int32_t *) dst->op_params +  9, sizeof(float));
                 memcpy(&beta_slow,   (const int32_t *) dst->op_params + 10, sizeof(float));
+                memcpy(&sections,    (const int32_t *) dst->op_params + 11, sizeof(int32_t)*4);
 
                 const bool is_neox = mode & GGML_ROPE_TYPE_NEOX;
+                const bool is_mrope = mode & GGML_ROPE_TYPE_MROPE;
+                const bool is_vision = mode == GGML_ROPE_TYPE_VISION;
+
+                if (is_mrope) {
+                    GGML_ASSERT(sections[0] > 0 || sections[1] > 0 || sections[2] > 0);
+                }
+
+                if (is_vision) {
+                    GGML_ASSERT(n_dims == ne00/2);
+                }
 
                 id<MTLComputePipelineState> pipeline = nil;
 
-                if (!is_neox) {
+                if (is_neox) {
                     switch (src0->type) {
-                        case GGML_TYPE_F32: pipeline = ctx->kernels[GGML_METAL_KERNEL_TYPE_ROPE_NORM_F32].pipeline; break;
-                        case GGML_TYPE_F16: pipeline = ctx->kernels[GGML_METAL_KERNEL_TYPE_ROPE_NORM_F16].pipeline; break;
+                        case GGML_TYPE_F32: pipeline = ctx->kernels[GGML_METAL_KERNEL_TYPE_ROPE_NEOX_F32].pipeline; break;
+                        case GGML_TYPE_F16: pipeline = ctx->kernels[GGML_METAL_KERNEL_TYPE_ROPE_NEOX_F16].pipeline; break;
+                        default: GGML_ABORT("fatal error");
+                    };
+                } else if (is_mrope && !is_vision) {
+                    switch (src0->type) {
+                        case GGML_TYPE_F32: pipeline = ctx->kernels[GGML_METAL_KERNEL_TYPE_ROPE_MULTI_F32].pipeline; break;
+                        case GGML_TYPE_F16: pipeline = ctx->kernels[GGML_METAL_KERNEL_TYPE_ROPE_MULTI_F16].pipeline; break;
+                        default: GGML_ABORT("fatal error");
+                    };
+                } else if (is_vision) {
+                    switch (src0->type) {
+                        case GGML_TYPE_F32: pipeline = ctx->kernels[GGML_METAL_KERNEL_TYPE_ROPE_VISION_F32].pipeline; break;
+                        case GGML_TYPE_F16: pipeline = ctx->kernels[GGML_METAL_KERNEL_TYPE_ROPE_VISION_F16].pipeline; break;
                         default: GGML_ABORT("fatal error");
                     };
                 } else {
                     switch (src0->type) {
-                        case GGML_TYPE_F32: pipeline = ctx->kernels[GGML_METAL_KERNEL_TYPE_ROPE_NEOX_F32].pipeline; break;
-                        case GGML_TYPE_F16: pipeline = ctx->kernels[GGML_METAL_KERNEL_TYPE_ROPE_NEOX_F16].pipeline; break;
+                        case GGML_TYPE_F32: pipeline = ctx->kernels[GGML_METAL_KERNEL_TYPE_ROPE_NORM_F32].pipeline; break;
+                        case GGML_TYPE_F16: pipeline = ctx->kernels[GGML_METAL_KERNEL_TYPE_ROPE_NORM_F16].pipeline; break;
                         default: GGML_ABORT("fatal error");
                     };
                 }
@@ -3135,6 +3158,7 @@ static void ggml_metal_encode_node(
                     /*.attn_factor =*/ attn_factor,
                     /*.beta_fast   =*/ beta_fast,
                     /*.beta_slow   =*/ beta_slow,
+                    /*.sections    =*/ {sections[0], sections[1], sections[2], sections[3]}
                 };
 
                 [encoder setComputePipelineState:pipeline];

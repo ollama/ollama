@@ -169,6 +169,7 @@ typedef struct {
     float    attn_factor;
     float    beta_fast;
     float    beta_slow;
+    int32_t  sections[4];
 } ggml_metal_kargs_rope;
 
 typedef struct {
