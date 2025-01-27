@@ -4,6 +4,7 @@
     {
       "name": "Default",
       "binaryDir": "${sourceDir}/build",
+      "installDir": "${sourceDir}/dist",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }

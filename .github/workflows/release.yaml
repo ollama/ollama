@@ -53,6 +53,9 @@ jobs:
           path: dist/ollama-${{ matrix.os }}-${{ matrix.arch }}.zip
 
   darwin-sign:
+    runs-on: macos-13
+    environment: release
+    needs: darwin-build
     steps:
       - uses: actions/checkout@v4
       - run: |
@@ -63,7 +66,7 @@ jobs:
           security import certificate.p12 -k build.keychain -P $MACOS_SIGNING_KEY_PASSWORD -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k password build.keychain
           security set-keychain-settings -lut 3600 build.keychain
-      - env:
+        env:
           MACOS_SIGNING_KEY: ${{ secrets.MACOS_SIGNING_KEY }}
           MACOS_SIGNING_KEY_PASSWORD: ${{ secrets.MACOS_SIGNING_KEY_PASSWORD }}
       - uses: actions/download-artifact@v4
