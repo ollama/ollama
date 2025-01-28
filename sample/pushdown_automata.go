@@ -8,6 +8,15 @@ import (
 
 var stringInvalidRunes = []rune{'\\', '\n', '\t', '{', '}', ':', ','}
 
+var intInvalidRunes = []rune{'e', 'E', ' ', '\n', '\t', '{', '}', ':', ',', '"'}
+var validIntRunes = []rune{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-'}
+
+var validNumberRunes = []rune{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '-', '+', 'e', 'E'}
+
+var validBoolRunes = []rune{'t', 'r', 'u', 'e', 'f', 'a', 'l', 's', 'e'}
+
+var validNullRunes = []rune{'n', 'u', 'l', 'l'}
+
 type PDANode struct {
 	State             JSONState
 	TransitionEdges   map[rune]*PDANode
@@ -52,6 +61,9 @@ func BuildGraph(proc model.TextProcessor) (*PDANode, map[JSONState]*PDANode, err
 	spaceNode := NewPDANode(StateInSpace)
 	stateToNodeMap[StateInSpace] = spaceNode
 
+	spaceObjNode := NewPDANode(StateInObjSpace)
+	stateToNodeMap[StateInObjSpace] = spaceObjNode
+
 	tabNode := NewPDANode(StateInTab)
 	stateToNodeMap[StateInTab] = tabNode
 
@@ -61,7 +73,31 @@ func BuildGraph(proc model.TextProcessor) (*PDANode, map[JSONState]*PDANode, err
 	stringEndNode := NewPDANode(StateInStringEnd)
 	stateToNodeMap[StateInStringEnd] = stringEndNode
 
-	// terminateNode := NewNode(StateTerminate)
+	listNode := NewPDANode(StateInList)
+	stateToNodeMap[StateInList] = listNode
+
+	listCommaNode := NewPDANode(StateInListComma)
+	stateToNodeMap[StateInListComma] = listCommaNode
+
+	listEndNode := NewPDANode(StateListEnd)
+	stateToNodeMap[StateListEnd] = listEndNode
+
+	numberNode := NewPDANode(StateInNumber)
+	stateToNodeMap[StateInNumber] = numberNode
+
+	boolNode := NewPDANode(StateInBool)
+	stateToNodeMap[StateInBool] = boolNode
+
+	nullNode := NewPDANode(StateInNull)
+	stateToNodeMap[StateInNull] = nullNode
+
+	// Defined with structured outputs only
+	intNode := NewPDANode(StateInInt)
+	stateToNodeMap[StateInInt] = intNode
+
+	// TODO:
+	// consider adding a node to just point to values, could be good to compute that
+	// mask rather than many different nodes
 
 	// Connect nodes
 	// TODO: if all are single tokens then this can just be connected instead of defining the token
@@ -69,34 +105,119 @@ func BuildGraph(proc model.TextProcessor) (*PDANode, map[JSONState]*PDANode, err
 
 	objNode.TransitionEdges['"'] = objKeyNode
 	objNode.TransitionEdges['\n'] = newlineNode
+	// objNode.TransitionEdges['\t'] = tabNode
 
 	newlineNode.TransitionEdges['"'] = objKeyNode
 	newlineNode.TransitionEdges['\t'] = tabNode
 
 	tabNode.TransitionEdges['"'] = objKeyNode
-
-	spaceNode.TransitionEdges['"'] = stringNode
+	// tabNode.TransitionEdges['\t'] = tabNode
 
 	objKeyNode.TransitionEdges[rune(-1)] = objKeyNode
 	objKeyNode.TransitionEdges['"'] = objKeyEndNode
-	objKeyNode.TransitionEdges[' '] = spaceNode
-	// objKeyNode.TransitionEdges['\t'] = tabNode
 
 	objKeyEndNode.TransitionEdges[':'] = colonNode
+	objEndNode.TransitionEdges[' '] = spaceNode
 
-	colonNode.TransitionEdges['"'] = stringNode
+	// where values should be
+	// this could be combined but the probs might change, we're alr doing a skip ahead
 	colonNode.TransitionEdges[' '] = spaceNode
 
+	// Leads to a value
+	spaceNode.TransitionEdges['"'] = stringNode
+	spaceNode.TransitionEdges['['] = listNode
+	spaceNode.TransitionEdges['{'] = objNode
+
+	for _, r := range validNumberRunes {
+		spaceNode.TransitionEdges[r] = numberNode
+	}
+	for _, r := range validBoolRunes {
+		spaceNode.TransitionEdges[r] = boolNode
+	}
+
+	for _, r := range validNullRunes {
+		spaceNode.TransitionEdges[r] = nullNode
+	}
+
+	// Values
+	// string node
 	stringNode.TransitionEdges[rune(-1)] = stringNode
 	stringNode.TransitionEdges['"'] = stringEndNode
 
 	stringEndNode.TransitionEdges[','] = commaNode
 	stringEndNode.TransitionEdges['}'] = objEndNode
+	stringEndNode.TransitionEdges[']'] = listEndNode
+
+	// TODO: add counters for allowable number of decimals, e, E, etc
+	// number node
+	for _, r := range validNumberRunes {
+		numberNode.TransitionEdges[r] = numberNode
+	}
+	numberNode.TransitionEdges[','] = commaNode
+	numberNode.TransitionEdges['}'] = objEndNode
+	numberNode.TransitionEdges[']'] = listEndNode
+
+	for _, r := range validBoolRunes {
+		boolNode.TransitionEdges[r] = boolNode
+	}
+
+	// list node
+	listNode.TransitionEdges[','] = commaNode
+	listNode.TransitionEdges['"'] = stringNode
+	// squash states to a value
+	for _, r := range validNumberRunes {
+		listNode.TransitionEdges[r] = numberNode
+	}
+	for _, r := range validBoolRunes {
+		listNode.TransitionEdges[r] = boolNode
+	}
+	for _, r := range validNullRunes {
+		listNode.TransitionEdges[r] = nullNode
+	}
+
+	// null node
+	for _, r := range validNullRunes {
+		nullNode.TransitionEdges[r] = nullNode
+	}
+	nullNode.TransitionEdges[','] = commaNode
+	nullNode.TransitionEdges['}'] = objEndNode
+	nullNode.TransitionEdges[']'] = listEndNode
+
+	// list comma
+	// should point to values
+	listCommaNode.TransitionEdges['"'] = stringNode
+	listCommaNode.TransitionEdges[' '] = listCommaNode
+	listCommaNode.TransitionEdges['{'] = objNode
+	listCommaNode.TransitionEdges['\n'] = newlineNode
+
+	for _, r := range validNumberRunes {
+		listCommaNode.TransitionEdges[r] = numberNode
+	}
+	for _, r := range validBoolRunes {
+		listCommaNode.TransitionEdges[r] = boolNode
+	}
+	for _, r := range validNullRunes {
+		listCommaNode.TransitionEdges[r] = nullNode
+	}
+
+	// bool node
+	for _, r := range validBoolRunes {
+		boolNode.TransitionEdges[r] = boolNode
+	}
+	boolNode.TransitionEdges['}'] = objEndNode
+	boolNode.TransitionEdges[']'] = listEndNode
+	boolNode.TransitionEdges[','] = commaNode
+
+	listEndNode.TransitionEdges['}'] = objEndNode
+	listEndNode.TransitionEdges[','] = commaNode
 
 	commaNode.TransitionEdges['{'] = objNode
 	commaNode.TransitionEdges['\n'] = newlineNode
 	commaNode.TransitionEdges['\t'] = tabNode
 	commaNode.TransitionEdges['"'] = objKeyNode
+	commaNode.TransitionEdges[' '] = spaceObjNode
+
+	spaceObjNode.TransitionEdges['"'] = objKeyNode
 
 	return startNode, stateToNodeMap, nil
 }

@@ -22,12 +22,18 @@ const (
 	StateInFloat
 	StateInBool
 	StateInNull
-	StateInArray
 	StateInColon
 	StateInComma
 	StateInTab
 	StateInSpace
+	StateInObjSpace
+	StateInList
+	StateInListComma
+	StateListEnd
+	StateInListEnd
 	StateInNewline
+	StateInNumber
+	StateInNumberEnd
 	StateInStringEnd
 	StateInObjectKeyEnd
 	StateTerminate
@@ -42,42 +48,54 @@ func (s JSONState) String() string {
 		return "StateInObject"
 	case StateInObjectKey:
 		return "StateInObjectKey"
-	case StateInString:
-		return "StateInString"
 	case StateNewline:
 		return "StateNewline"
 	case StateTab:
 		return "StateTab"
 	case StateSpace:
 		return "StateSpace"
+	case StateInString:
+		return "StateInString"
 	case StateInInt:
 		return "StateInInt"
 	case StateInFloat:
 		return "StateInFloat"
-	case StateInColon:
-		return "StateInColon"
 	case StateInBool:
 		return "StateInBool"
 	case StateInNull:
 		return "StateInNull"
-	case StateInArray:
-		return "StateInArray"
-	case StateInObjectEnd:
-		return "StateInObjectEnd"
+	case StateInColon:
+		return "StateInColon"
 	case StateInComma:
 		return "StateInComma"
 	case StateInTab:
 		return "StateInTab"
-	case StateInObjectKeyEnd:
-		return "StateInObjectKeyEnd"
-	case StateInNewline:
-		return "StateInNewline"
 	case StateInSpace:
 		return "StateInSpace"
-	case StateTerminate:
-		return "StateTerminate"
+	case StateInObjSpace:
+		return "StateInObjSpace"
+	case StateInList:
+		return "StateInList"
+	case StateInListComma:
+		return "StateInListComma"
+	case StateListEnd:
+		return "StateListEnd"
+	case StateInListEnd:
+		return "StateInListEnd"
+	case StateInNewline:
+		return "StateInNewline"
+	case StateInNumber:
+		return "StateInNumber"
+	case StateInNumberEnd:
+		return "StateInNumberEnd"
 	case StateInStringEnd:
 		return "StateInStringEnd"
+	case StateInObjectKeyEnd:
+		return "StateInObjectKeyEnd"
+	case StateTerminate:
+		return "StateTerminate"
+	case StateInObjectEnd:
+		return "StateInObjectEnd"
 	default:
 		return fmt.Sprintf("Unknown state: %d", s)
 	}
@@ -264,6 +282,7 @@ func getValidStates(node *Node) []int32 {
 
 func (s *JSONSampler) maskLogits(logits []float64, validStates []int32) ([]float64, error) {
 	// fmt.Printf("Masking logits with valid states: %v\n", validStates)
+	// todo: this can prob be more efficient
 	for i := range logits {
 		isValid := false
 		for _, token := range validStates {
