@@ -149,7 +149,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 	if cpuRunner != "" {
 		servers = []string{cpuRunner}
 	} else {
-		servers = runners.ServersForGpu(gpus[0].RunnerName()) // All GPUs in the list are matching Library and Variant
+		servers = runners.ServersForGpu(gpus.BestRunnerName()) // All GPUs in the list are matching Library
 	}
 	demandLib := envconfig.LLMLibrary()
 	if demandLib != "" {
