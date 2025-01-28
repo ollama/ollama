@@ -77,6 +77,9 @@ type GenerateRequest struct {
 	// request, for multimodal models.
 	Images []ImageData `json:"images,omitempty"`
 
+	//PrependImagesToRawPrompt controls whether the images should automatically be prepended to the top of a raw prompt.
+	PrependImagesToRawPrompt bool `json:"prepend_images_to_raw_prompt,omitempty"`
+
 	// Options lists model-specific options. For example, temperature can be
 	// set through this field, if the model supports it.
 	Options map[string]interface{} `json:"options"`
