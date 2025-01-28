@@ -76,7 +76,8 @@ jobs:
           name: build-darwin-arm64
           path: dist/darwin-arm64
       - run: |
-          ./scripts/build_darwin.sh
+          export VERSION=${GITHUB_REF_NAME#v}
+          ./scripts/build_darwin.sh macapp sign
         env:
           APPLE_IDENTITY: ${{ secrets.APPLE_IDENTITY }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -308,11 +309,21 @@ jobs:
             dist/ollama-${{ matrix.os }}-${{ matrix.arch }}.tgz
 
   docker-build:
+    strategy:
+      matrix:
+        include:
+          - flavor: 'latest=false'
+            platforms: linux/amd64,linux/arm64
+            build-args: |
+              GOFLAGS=${{ needs.setup-environment.outputs.GOFLAGS }}
+          - flavor: 'latest=false,suffix=rocm'
+            platforms: linux/amd64
+            build-args: |
+              GOFLAGS=${{ needs.setup-environment.outputs.GOFLAGS }}
+              FLAVOR=rocm
     runs-on: linux
     environment: release
     needs: setup-environment
-    env:
-      GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v2
