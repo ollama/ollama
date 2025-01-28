@@ -197,5 +197,8 @@ ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
 
+RUN groupadd -r -g 65532 ollama && \
+    useradd -r -m -u 65532 -g ollama -G video ollama
+
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
