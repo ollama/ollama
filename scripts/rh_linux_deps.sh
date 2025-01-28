@@ -48,6 +48,9 @@ EOF
         findutils \
         yum-utils \
         pigz
+elif grep -i "alma" /etc/system-release >/dev/null; then
+    dnf install -y gcc-toolset-10-gcc gcc-toolset-10-gcc-c++ yum-utils
+
 else
     echo "ERROR Unexpected distro"
     exit 1
