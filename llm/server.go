@@ -182,28 +182,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		}
 	}
 
-	lib := gpus[0].RunnerName()
-	requested := envconfig.LLMLibrary()
-	if libs[requested] != "" {
-		lib = requested
-	}
-
-	slog.Debug("determining for compatible gpu libraries", "gpus", gpus, "libs", libs)
-	var compatible []string
-	for k := range libs {
-		// exact match first
-		if k == lib {
-			compatible = append([]string{k}, compatible...)
-			continue
-		}
-
-		// then match the family (e.g. 'cuda')
-		if strings.Split(k, "_")[0] == strings.Split(lib, "_")[0] {
-			compatible = append(compatible, k)
-		}
-	}
-	slog.Debug("compatible gpu libraries", "compatible", compatible)
-
 	params := []string{
 		"--model", model,
 		"--ctx-size", strconv.Itoa(opts.NumCtx),
@@ -304,9 +282,33 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		params = append(params, "--multiuser-cache")
 	}
 
-	// iterate through compatible, until none left, then run without any LD_LIBRARY_PATH flags
+	lib := gpus[0].RunnerName()
+	requested := envconfig.LLMLibrary()
+	if libs[requested] != "" {
+		slog.Info("using requested gpu library", "requested", requested)
+		lib = requested
+	}
+
+	slog.Debug("determining for compatible gpu libraries", "gpus", gpus, "libs", libs)
+	var compatible []string
+	for k := range libs {
+		// exact match first
+		if k == lib {
+			compatible = append([]string{k}, compatible...)
+			continue
+		}
+
+		// then match the family (e.g. 'cuda')
+		if strings.Split(k, "_")[0] == strings.Split(lib, "_")[0] {
+			compatible = append(compatible, k)
+		}
+	}
+	slog.Debug("compatible gpu libraries", "compatible", compatible)
+
+	// iterate through compatible GPU libraries such as 'cuda_v12', 'cuda_v11', 'rocm', etc.
+	// adding each library's respective path to the LD_LIBRARY_PATH, until finally running
+	// without any LD_LIBRARY_PATH flags
 	for {
-		// Find an availableServers  port, retry on each iteration in case the failure was a port conflict race
 		port := 0
 		if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
 			var l *net.TCPListener
@@ -359,20 +361,11 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 			return nil, fmt.Errorf("unable to evaluate symlinks for executable path: %w", err)
 		}
 
-		cwd, err := os.Getwd()
-		if err != nil {
-			return nil, fmt.Errorf("unable to get current working directory: %w", err)
-		}
-
-		// lib/ollama path for cpu libraries
+		// add 'root' lib/ollama path for cpu libraries
 		libraryPaths = append(libraryPaths, lo)
 
-		// . for cpu libraries on macOS
+		// add the executable's directory for macOS distributions
 		libraryPaths = append(libraryPaths, filepath.Dir(exe))
-
-		// build/lib/ollama paths for development
-		libraryPaths = append(libraryPaths, filepath.Join(filepath.Dir(exe), "build", "lib", "ollama"))
-		libraryPaths = append(libraryPaths, filepath.Join(cwd, "build", "lib", "ollama"))
 
 		// TODO - once fully switched to the Go runner, load the model here for tokenize/detokenize cgo access
 		s := &llmServer{
