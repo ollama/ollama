@@ -63,18 +63,17 @@ go run . serve
 
 Install the [CUDA SDK](https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_network)
 
-Then, rebuild acceleration libraries:
+Then, rebuild the GPU libraries:
 
 ```
-cmake --build build --target clean
+rm -r build
 cmake -B build
-cmake --build build --config Release
+cmake --build build
 ```
 
 and finally run Ollama:
 
 ```
-$env:PATH = "$env:PATH;build/lib/Release"
 go run . serve
 ```
 
@@ -88,9 +87,9 @@ Install the prerequisites:
 Then, build the GPU libraries:
 
 ```
-rm -rf build
-cmake --preset ROCm -G Ninja -DCMAKE_PREFIX_PATH="$env:HIP_PATH" -DCMAKE_C_COMPILER=clang.exe -DCMAKE_CXX_COMPILER=clang++.exe
-cmake --build build --config Release
+rm -r build
+cmake --preset ROCm -G Ninja
+cmake --build build
 ```
 
 Finally, run Ollama:
@@ -164,8 +163,7 @@ cmake --build build
 Finally, build and run Ollama:
 
 ```
-LD_LIBRARY_PATH=build/lib go build .
-./ollama serve
+go run . serve
 ```
 
 #### ROCm
@@ -180,7 +178,7 @@ cmake --build build
 After building, run Ollama:
 
 ```
-LD_LIBRARY_PATH=build/lib go run .
+go run . serve
 ```
 
 ## Docker
@@ -195,8 +193,10 @@ docker build .
 FLAVOR=rocm docker build .
 ```
 
-### Containerized Linux builds
+## Running tests
 
-If you have Docker and `buildx` available, you can build linux binaries with `./scripts/build_linux.sh` which has the CUDA and ROCm dependencies included.
+To run tests, use `go test`:
 
-The resulting artifacts are placed in `./dist` and by default the script builds both `arm64` and `amd64` binaries. If you want to build only `amd64`, you can build with `PLATFORM=linux/amd64 ./scripts/build_linux.sh`.
+```
+go test ./...
+```
