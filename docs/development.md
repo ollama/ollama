@@ -13,6 +13,8 @@ go run . serve
 
 ## macOS (Apple Silicon)
 
+macOS Apple Silicon supports Metal which is built-in to the Ollama binary.
+
 ## macOS (Intel)
 
 Install prerequisites:
@@ -67,6 +69,8 @@ go run . serve
 ```
 
 ## Windows (ARM)
+
+Windows ARM does not support additional acceleration libraries at this time.
 
 ## Linux
 
