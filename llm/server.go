@@ -458,8 +458,8 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 			}
 
 			slog.Warn("unable to start runner with compatible gpu", "error", err, "compatible", compatible)
-
 			compatible = compatible[1:]
+			continue
 		}
 
 		// reap subprocess when it exits
