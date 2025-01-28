@@ -19,6 +19,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -1137,8 +1138,67 @@ func (s *Server) GenerateRoutes() http.Handler {
 	}
 	config.AllowOrigins = envconfig.Origins()
 
-	r := gin.Default()
+	r := gin.New()
 	r.Use(
+		gin.Recovery(),
+		func(c *gin.Context) {
+			t := time.Now()
+
+			c.Next()
+
+			_, remotePort, err := net.SplitHostPort(c.Request.RemoteAddr)
+			if err != nil {
+				remotePort = "0"
+			}
+
+			logger := slog.Default().With(
+				slog.Duration("duration", time.Since(t)),
+				slog.Group(
+					"http",
+					slog.String("method", c.Request.Method),
+					slog.Group(
+						"url",
+						slog.String("path", c.Request.URL.Path),
+						slog.String("query", c.Request.URL.RawQuery),
+					),
+					slog.Int("status_code", c.Writer.Status()),
+					slog.String("user_agent", c.Request.UserAgent()),
+				),
+				slog.Group(
+					"network",
+					slog.Int("bytes_written", c.Writer.Size()),
+					slog.Int64("bytes_read", c.Request.ContentLength),
+					slog.Group(
+						"remote",
+						slog.String("ip", net.JoinHostPort(c.ClientIP(), remotePort)),
+					),
+					slog.Group(
+						"server",
+						slog.String("ip", c.Request.Host),
+					),
+				),
+			)
+			if len(c.Errors) > 0 {
+				errs := make([]any, len(c.Errors))
+				for i, err := range c.Errors {
+					errs[i] = slog.String(strconv.Itoa(i), err.Error())
+				}
+
+				logger = logger.With(slog.Group("errors", errs...))
+			}
+
+			var level slog.Level
+			switch {
+			case c.Writer.Status() >= http.StatusInternalServerError:
+				level = slog.LevelError
+			case c.Writer.Status() >= http.StatusBadRequest:
+				level = slog.LevelWarn
+			default:
+				level = slog.LevelInfo
+			}
+
+			logger.Log(c.Request.Context(), level, "request complete")
+		},
 		cors.New(config),
 		allowedHostsMiddleware(s.addr),
 	)
