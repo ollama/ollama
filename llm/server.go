@@ -103,22 +103,22 @@ func libOllama() string {
 		slog.Debug("runner locate", "error", err)
 	}
 
-	dexe := filepath.Dir(exe)
+	exeDir := filepath.Dir(exe)
 
 	paths := []string{
-		filepath.Join(dexe, envconfig.LibRelativeToExe(), "lib", "ollama"),
+		filepath.Join(exeDir, envconfig.LibRelativeToExe(), "lib", "ollama"),
 
 		// development paths
-		filepath.Join(dexe, "build", "lib", "ollama"),
+		filepath.Join(exeDir, "build", "lib", "ollama"),
 		filepath.Join(cwd, "build", "lib", "ollama"),
 	}
-	for _, path := range paths {
-		if _, err := os.Stat(path); err == nil {
-			return path
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			return p
 		}
 	}
 
-	return dexe
+	return exeDir
 }
 
 // NewLlamaServer will run a server for the given GPUs
