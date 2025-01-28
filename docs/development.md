@@ -133,7 +133,6 @@ sudo apt-get install cmake
 Then, build the acceleration libraries:
 
 ```
-rm -rf build
 cmake -B build
 cmake --build build
 ```
@@ -155,7 +154,7 @@ export PATH="$PATH:/usr/local/cuda/bin"
 Then, build the acceleration libraries:
 
 ```
-rm -rf build
+rm -r build
 cmake -B build
 cmake --build build
 ```
@@ -171,6 +170,7 @@ go run . serve
 Install [ROCm](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html), then run:
 
 ```
+rm -r build
 cmake -B build
 cmake --build build
 ```
