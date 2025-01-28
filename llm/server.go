@@ -30,6 +30,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/runners"
+	"github.com/ollama/ollama/version"
 )
 
 type LlamaServer interface {
@@ -394,6 +395,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		}
 
 		if err = s.cmd.Start(); err != nil {
+			detectVersionSkew()
 			// Detect permission denied and augment the message about noexec
 			if errors.Is(err, os.ErrPermission) {
 				finalErr = fmt.Errorf("unable to start server %w.  %s may have noexec set.  Set OLLAMA_TMPDIR for server to a writable executable directory", err, server)
@@ -411,6 +413,9 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		// reap subprocess when it exits
 		go func() {
 			err := s.cmd.Wait()
+			if err != nil {
+				detectVersionSkew()
+			}
 			// Favor a more detailed message over the process exit status
 			if err != nil && s.status != nil && s.status.LastErrMsg != "" {
 				slog.Debug("llama runner terminated", "error", err)
@@ -1118,4 +1123,34 @@ func parseDurationMs(ms float64) time.Duration {
 	}
 
 	return dur
+}
+
+// On MacOS, detect if we're in a partially upgraded failure scenario
+// Exit with a non-zero status so the desktop app can restart the newly upgraded binary
+func detectVersionSkew() {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	slog.Debug("checking for potential upgrade skew on runner failure")
+	exe, err := os.Executable()
+	if err != nil {
+		slog.Error("failed to look up executable, assuming upgrade scenario", "error", err)
+		os.Exit(1)
+	}
+	cmd := exec.Command(exe, []string{"--version"}...)
+	out, err := cmd.Output()
+	if err != nil {
+		slog.Error("unable to check version of executable", "exe", exe, "err", err)
+		os.Exit(1)
+	}
+	exeVer := string(out)
+	if strings.Contains(exeVer, "Warning: client version") {
+		if !strings.Contains(exeVer, "client version is "+version.Version) {
+			slog.Error("version mismatch", "running", version.Version, "exe", exeVer)
+			os.Exit(1)
+		}
+	} else if !strings.Contains(exeVer, version.Version) {
+		slog.Error("version mismatch", "running", version.Version, "exe", exeVer)
+		os.Exit(1)
+	}
 }
