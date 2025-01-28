@@ -16,6 +16,8 @@ func NewTray() (commontray.OllamaTray, error) {
 	iconName := commontray.UpdateIconName + extension
 	updateIcon, err := assets.GetIcon(iconName)
 	if err != nil {
+
+		//Aditya
 		return nil, fmt.Errorf("failed to load icon %s: %w", iconName, err)
 	}
 	iconName = commontray.IconName + extension
