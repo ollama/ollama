@@ -92,7 +92,7 @@ func TestLibOllama(t *testing.T) {
 
 	t.Run("adjacent lib dir", func(t *testing.T) {
 		want := filepath.Join(filepath.Dir(exe), envconfig.LibRelativeToExe(), "lib", "ollama")
-		if err := os.MkdirAll(want, 0755); err != nil {
+		if err := os.MkdirAll(want, 0o755); err != nil {
 			t.Fatal(err)
 		}
 		defer os.RemoveAll(want)
@@ -108,7 +108,7 @@ func TestLibOllama(t *testing.T) {
 
 	t.Run("build dir relative to executable", func(t *testing.T) {
 		want := filepath.Join(filepath.Dir(exe), "build", "lib", "ollama")
-		if err := os.MkdirAll(want, 0755); err != nil {
+		if err := os.MkdirAll(want, 0o755); err != nil {
 			t.Fatal(err)
 		}
 		defer os.RemoveAll(want)
