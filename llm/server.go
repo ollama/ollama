@@ -168,9 +168,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 
 	estimate.log()
 
-	// Loop through potential gpu libraries
-	finalErr := errors.New("no suitable gpu libraries found")
-
 	// get available libraries
 	lo := libOllama()
 	entries, err := os.ReadDir(lo)
@@ -191,7 +188,8 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		lib = requested
 	}
 
-	compatible := []string{lib}
+	slog.Debug("determining for compatible gpu libraries", "gpus", gpus, "libs", libs)
+	var compatible []string
 	for k := range libs {
 		// exact match first
 		if k == lib {
@@ -204,6 +202,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 			compatible = append(compatible, k)
 		}
 	}
+	slog.Debug("compatible gpu libraries", "compatible", compatible)
 
 	params := []string{
 		"--model", model,
@@ -305,8 +304,8 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		params = append(params, "--multiuser-cache")
 	}
 
-	for _, c := range compatible {
-		slog.Info("trying gpu library", "path", c)
+	// iterate through compatible, until none left, then run without any LD_LIBRARY_PATH flags
+	for {
 		// Find an availableServers  port, retry on each iteration in case the failure was a port conflict race
 		port := 0
 		if a, err := net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
@@ -334,15 +333,18 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 			libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
 		}
 
-		if libpath, ok := libs[c]; ok {
-			slog.Info("adding gpu library", "path", libpath)
-			libraryPaths = append(libraryPaths, libpath)
+		if len(compatible) > 0 {
+			c := compatible[0]
+			if libpath, ok := libs[c]; ok {
+				slog.Debug("adding gpu library", "path", libpath)
+				libraryPaths = append(libraryPaths, libpath)
+			}
 		}
 
 		// Note: we always put the dependency path first
 		// since this was the exact version we compiled/linked against
 		if gpus[0].DependencyPath != nil {
-			slog.Info("adding gpu dependency paths", "paths", gpus[0].DependencyPath)
+			slog.Debug("adding gpu dependency paths", "paths", gpus[0].DependencyPath)
 			// assume gpus from the same library have the same dependency path
 			libraryPaths = append(gpus[0].DependencyPath, libraryPaths...)
 		}
@@ -446,18 +448,18 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		}
 
 		if err = s.cmd.Start(); err != nil {
-			// Detect permission denied and augment the message about noexec
-			if errors.Is(err, os.ErrPermission) {
-				finalErr = fmt.Errorf("unable to start server %w.  %s may have noexec set.  Set OLLAMA_TMPDIR for server to a writable executable directory", err, c)
-				continue
-			}
-			msg := ""
+			var msg string
 			if s.status != nil && s.status.LastErrMsg != "" {
 				msg = s.status.LastErrMsg
 			}
-			err = fmt.Errorf("error starting the external llama server: %v %s", err, msg)
-			finalErr = err
-			continue
+			err := fmt.Errorf("error starting runner: %v %s", err, msg)
+			if len(compatible) == 0 {
+				return nil, err
+			}
+
+			slog.Warn("unable to start runner with compatible gpu", "error", err, "compatible", compatible)
+
+			compatible = compatible[1:]
 		}
 
 		// reap subprocess when it exits
@@ -465,7 +467,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 			err := s.cmd.Wait()
 			// Favor a more detailed message over the process exit status
 			if err != nil && s.status != nil && s.status.LastErrMsg != "" {
-				slog.Debug("llama runner terminated", "error", err)
+				slog.Error("llama runner terminated", "error", err)
 				if strings.Contains(s.status.LastErrMsg, "unknown model") {
 					s.status.LastErrMsg = "this model is not supported by your version of Ollama. You may need to upgrade"
 				}
@@ -477,9 +479,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 
 		return s, nil
 	}
-
-	slog.Error("unable to load any llama server", "error", finalErr)
-	return nil, finalErr
 }
 
 type ServerStatus int
