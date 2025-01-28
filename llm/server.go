@@ -92,15 +92,15 @@ func LoadModel(model string, maxArraySize int) (*GGML, error) {
 // note: distribution builds, additional GPU-specific libraries are
 // found in subdirectories of the returned path, such as
 // 'cuda_v11', 'cuda_v12', 'rocm', etc.
-func libOllama() string {
+func libOllama() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
-		slog.Debug("runner locate", "error", err)
+		return "", fmt.Errorf("unable to lookup executable path: %w", err)
 	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		slog.Debug("runner locate", "error", err)
+		return "", fmt.Errorf("unable to get current working directory: %w", err)
 	}
 
 	exeDir := filepath.Dir(exe)
@@ -114,11 +114,11 @@ func libOllama() string {
 	}
 	for _, p := range paths {
 		if _, err := os.Stat(p); err == nil {
-			return p
+			return p, nil
 		}
 	}
 
-	return exeDir
+	return exeDir, nil
 }
 
 // NewLlamaServer will run a server for the given GPUs
@@ -167,20 +167,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 	}
 
 	estimate.log()
-
-	// get available libraries
-	lo := libOllama()
-	entries, err := os.ReadDir(lo)
-	if err != nil {
-		return nil, fmt.Errorf("could not read libollama dir: %w", err)
-	}
-
-	libs := make(map[string]string)
-	for _, entry := range entries {
-		if entry.IsDir() {
-			libs[entry.Name()] = filepath.Join(lo, entry.Name())
-		}
-	}
 
 	params := []string{
 		"--model", model,
@@ -282,6 +268,24 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		params = append(params, "--multiuser-cache")
 	}
 
+	// get available libraries
+	lo, err := libOllama()
+	if err != nil {
+		return nil, fmt.Errorf("could not get libollama dir: %w", err)
+	}
+
+	entries, err := os.ReadDir(lo)
+	if err != nil {
+		return nil, fmt.Errorf("could not read libollama dir: %w", err)
+	}
+
+	libs := make(map[string]string)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			libs[entry.Name()] = filepath.Join(lo, entry.Name())
+		}
+	}
+
 	lib := gpus[0].RunnerName()
 	requested := envconfig.LLMLibrary()
 	if libs[requested] != "" {
@@ -289,7 +293,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		lib = requested
 	}
 
-	slog.Debug("determining for compatible gpu libraries", "gpus", gpus, "libs", libs)
 	var compatible []string
 	for k := range libs {
 		// exact match first
