@@ -31,7 +31,6 @@ _build_darwin() {
         if [ "$ARCH" = "amd64" ]; then
             status "Building darwin $ARCH dynamic backends"
             cmake -B build/darwin-$ARCH \
-                -DCMAKE_SYSTEM_PROCESSOR=x86_64 \
                 -DCMAKE_OSX_ARCHITECTURES=x86_64 \
                 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.3
             cmake --build build/darwin-$ARCH --target ggml-cpu -j

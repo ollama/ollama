@@ -195,12 +195,13 @@ jobs:
         arch: [amd64, arm64]
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
-    needs: [setup-environment, windows-depends]
+    needs: [setup-environment]
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
       - name: Install system dependencies
         run: |
+          $ErrorActionPreference = "Stop"
           if ("${{ matrix.arch }}" -eq 'amd64') {
             Start-Process "C:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang") -NoNewWindow -Wait
             echo "C:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
@@ -226,7 +227,10 @@ jobs:
       - run: |
           go build -o dist/${{ matrix.os }}-${{ matrix.arch }}/ .
       - run: |
+          $env:VERSION='${{ github.ref_name }}' -Replace "v(.*)", '$1'
           & .\scripts\build_windows.ps1 buildApp
+        env:
+          VCToolsRedistDir: stub
       - uses: actions/upload-artifact@v4
         with:
           name: build-${{ matrix.os }}-${{ matrix.arch }}
@@ -237,7 +241,7 @@ jobs:
   windows-sign:
     runs-on: windows
     environment: release
-    needs: windows-build
+    needs: [windows-depends, windows-build]
     steps:
       - uses: actions/checkout@v4
       - uses: google-github-actions/auth@v2
@@ -248,7 +252,6 @@ jobs:
           $ErrorActionPreference = "Stop"
           Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=323507" -OutFile "${{ runner.temp }}\sdksetup.exe"
           Start-Process "${{ runner.temp }}\sdksetup.exe" -ArgumentList @("/q") -NoNewWindow -Wait
-          gci -Path "C:\Program Files (x86)\Windows Kits\" -r -fi "signtool.exe"
 
           Invoke-WebRequest -Uri "https://github.com/GoogleCloudPlatform/kms-integrations/releases/download/cng-v1.0/kmscng-1.0-windows-amd64.zip" -OutFile "${{ runner.temp }}\plugin.zip"
           Expand-Archive -Path "${{ runner.temp }}\plugin.zip" -DestinationPath "${{ runner.temp }}\plugin\"
