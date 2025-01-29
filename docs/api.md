@@ -495,7 +495,7 @@ Generate the next message in a chat with a provided model. This is a streaming e
 
 - `model`: (required) the [model name](#model-names)
 - `messages`: the messages of the chat, this can be used to keep a chat memory
-- `tools`: list of tools in JSON for the model to use if supported.
+- `tools`: list of tools in JSON for the model to use if supported
 
 The `message` object has the following fields:
 
