@@ -493,6 +493,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Extensions & Plugins
 
+- [Simple-Discord-AI](https://github.com/zyphixor/simple-discord-ai)
 - [Raycast extension](https://github.com/MassimilianoPasquini97/raycast_ollama)
 - [Discollama](https://github.com/mxyng/discollama) (Discord bot inside the Ollama discord channel)
 - [Continue](https://github.com/continuedev/continue)
