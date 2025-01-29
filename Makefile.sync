@@ -2,24 +2,34 @@ UPSTREAM=https://github.com/ggerganov/llama.cpp.git
 WORKDIR=llama/vendor
 FETCH_HEAD=46e3556e01b824e52395fb050b29804b6cff2a7c
 
-all: sync
+.PHONY: help
+help:
+	@echo "Available targets:"
+	@echo "    sync                 Sync with upstream repositories"
+	@echo "    checkout             Checkout upstream repository"
+	@echo "    apply-patches        Apply patches to local repository"
+	@echo "    format-patches       Format patches from local repository"
+	@echo "    clean                Clean local repository"
+	@echo
+	@echo "Example:"
+	@echo "    make -f $(lastword $(MAKEFILE_LIST)) clean sync"
 
 .PHONY: sync
-sync: llama/llama.cpp ml/backend/ggml/ggml
+sync: llama/llama.cpp ml/backend/ggml/ggml apply-patches
 
 .PHONY: llama/llama.cpp
-llama/llama.cpp: llama/vendor/ apply_patches
+llama/llama.cpp: llama/vendor/ apply-patches
 	rsync -arvzc -f "merge $@/.rsync-filter" $< $@
 
-.PHONY: ml/backend/ggml/ggml apply_patches
-ml/backend/ggml/ggml: llama/vendor/ggml/ apply_patches
+.PHONY: ml/backend/ggml/ggml apply-patches
+ml/backend/ggml/ggml: llama/vendor/ggml/ apply-patches
 	rsync -arvzc -f "merge $@/.rsync-filter" $< $@
 
 PATCHES=$(wildcard llama/patches/*.patch)
 
-.PHONY: apply_patches
+.PHONY: apply-patches
 .NOTPARALLEL:
-apply_patches: $(addsuffix ed, $(PATCHES))
+apply-patches: $(addsuffix ed, $(PATCHES))
 
 %.patched: %.patch
 	@if git -c user.name=nobody -c 'user.email=<>' -C $(WORKDIR) am -3 $(realpath $<); then touch $@; else git -C $(WORKDIR) am --abort; exit 1; fi
@@ -32,8 +42,8 @@ checkout: $(WORKDIR)
 $(WORKDIR):
 	git clone $(UPSTREAM) $(WORKDIR)
 
-.PHONE: format_patches
-format_patches: llama/patches
+.PHONE: format-patches
+format-patches: llama/patches
 	git -C $(WORKDIR) format-patch \
 		--no-signature \
 		--no-numbered \
