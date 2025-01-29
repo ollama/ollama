@@ -1170,10 +1170,11 @@ func (s *Server) GenerateRoutes() http.Handler {
 		})
 
 		r.Handle(method, "/api/tags", s.ListHandler)
-		r.Handle(method, "/api/version", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"version": version.Version})
-		})
 	}
+
+	// Use r.Any to call regular http.Handler handlers
+	// as we transition to a standard http.ServeMux.
+	r.Any("/api/version", gin.WrapF(s.versionHandler))
 
 	return r
 }
@@ -1571,6 +1572,24 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 
 	streamResponse(c, ch)
+}
+
+func (s *Server) versionHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	data := struct {
+		Version string `json:"version"`
+	}{
+		Version: version.Version,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		http.Error(w, "Failed to encode version", http.StatusInternalServerError)
+	}
 }
 
 func handleScheduleError(c *gin.Context, name string, err error) {
