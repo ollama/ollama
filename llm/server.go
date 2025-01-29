@@ -238,7 +238,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		return nil, fmt.Errorf("could not get libollama dir: %w", err)
 	}
 
-	entries, err := os.ReadDir(discover.LibPath)
+	entries, err := os.ReadDir(discover.LibOllamaPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not read libollama dir: %w", err)
 	}
@@ -246,7 +246,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 	libs := make(map[string]string)
 	for _, entry := range entries {
 		if entry.IsDir() {
-			libs[entry.Name()] = filepath.Join(discover.LibPath, entry.Name())
+			libs[entry.Name()] = filepath.Join(discover.LibOllamaPath, entry.Name())
 		}
 	}
 
@@ -319,7 +319,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		}
 
 		// finally, add the root library path
-		libraryPaths = append(libraryPaths, discover.LibPath)
+		libraryPaths = append(libraryPaths, discover.LibOllamaPath)
 
 		exe, err := os.Executable()
 		if err != nil {

@@ -75,52 +75,6 @@ var RocmComputeMajorMin = "9"
 // TODO find a better way to detect iGPU instead of minimum memory
 const IGPUMemLimit = 1 * format.GibiByte // 512G is what they typically report, so anything less than 1G must be iGPU
 
-// LibPath is a path to lookup dynamic libraries
-// in development it's usually 'build/lib/ollama'
-// in distribution builds it's 'lib/ollama' on Windows
-// '../lib/ollama' on Linux and the executable's directory on macOS
-// note: distribution builds, additional GPU-specific libraries are
-// found in subdirectories of the returned path, such as
-// 'cuda_v11', 'cuda_v12', 'rocm', etc.
-var LibPath string = func() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-
-	exe, err = filepath.EvalSymlinks(exe)
-	if err != nil {
-		return ""
-	}
-
-	libPath := filepath.Dir(exe)
-	switch runtime.GOOS {
-	case "windows":
-		libPath = filepath.Join(filepath.Dir(exe), "lib", "ollama")
-	case "linux":
-		libPath = filepath.Join(filepath.Dir(exe), "..", "lib", "ollama")
-	}
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-
-	// build paths for development
-	buildPaths := []string{
-		filepath.Join(filepath.Dir(exe), "build", "lib", "ollama"),
-		filepath.Join(cwd, "build", "lib", "ollama"),
-	}
-
-	for _, p := range buildPaths {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-
-	return libPath
-}()
-
 // Note: gpuMutex must already be held
 func initCudaHandles() *cudaHandles {
 	// TODO - if the ollama build is CPU only, don't do these checks as they're irrelevant and confusing
