@@ -473,6 +473,11 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	base2, err := cmd.Flags().GetBool("base2")
+	if err != nil {
+		return err
+	}
+
 	models, err := client.ListRunning(cmd.Context())
 	if err != nil {
 		return err
@@ -503,7 +508,13 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 			} else {
 				until = format.HumanTime(m.ExpiresAt, "Never")
 			}
-			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), procStr, until})
+			var size string
+			if base2 {
+				size = format.HumanBytes2(uint64(m.Size))
+			} else {
+				size = format.HumanBytes(m.Size)
+			}
+			data = append(data, []string{m.Name, m.Digest[:12], size, procStr, until})
 		}
 	}
 
@@ -1252,6 +1263,8 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListRunningHandler,
 	}
+
+	psCmd.Flags().Bool("base2", false, "Use base 2 units (KiB, MiB, GiB)")
 
 	copyCmd := &cobra.Command{
 		Use:     "cp SOURCE DESTINATION",
