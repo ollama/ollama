@@ -67,12 +67,17 @@ func (s *Server) CreateHandler(c *gin.Context) {
 
 		oldManifest, _ := ParseNamedManifest(name)
 
+		abort := func(err string, code int) {
+			c.AbortWithStatus(code)
+			ch <- gin.H{"error": err, "status": code}
+		}
+
 		var baseLayers []*layerGGML
 		if r.From != "" {
 			slog.Debug("create model from model name")
 			fromName := model.ParseName(r.From)
 			if !fromName.IsValid() {
-				ch <- gin.H{"error": errtypes.InvalidModelNameErrMsg, "status": http.StatusBadRequest}
+				abort(errtypes.InvalidModelNameErrMsg, http.StatusBadRequest)
 				return
 			}
 
@@ -81,22 +86,23 @@ func (s *Server) CreateHandler(c *gin.Context) {
 
 			baseLayers, err = parseFromModel(ctx, fromName, fn)
 			if err != nil {
-				ch <- gin.H{"error": err.Error()}
+				abort(err.Error(), http.StatusInternalServerError)
 			}
 		} else if r.Files != nil {
 			baseLayers, err = convertModelFromFiles(r.Files, baseLayers, false, fn)
 			if err != nil {
 				for _, badReq := range []error{errNoFilesProvided, errOnlyGGUFSupported, errUnknownType} {
 					if errors.Is(err, badReq) {
-						ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+						abort(err.Error(), http.StatusBadRequest)
 						return
 					}
 				}
-				ch <- gin.H{"error": err.Error()}
+				abort(err.Error(), http.StatusInternalServerError)
 				return
 			}
 		} else {
-			ch <- gin.H{"error": errNeitherFromOrFiles.Error(), "status": http.StatusBadRequest}
+			c.AbortWithStatus(http.StatusBadRequest)
+			abort(errNeitherFromOrFiles.Error(), http.StatusBadRequest)
 			return
 		}
 
@@ -106,11 +112,11 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			if err != nil {
 				for _, badReq := range []error{errNoFilesProvided, errOnlyOneAdapterSupported, errOnlyGGUFSupported, errUnknownType} {
 					if errors.Is(err, badReq) {
-						ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+						abort(err.Error(), http.StatusBadRequest)
 						return
 					}
 				}
-				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				abort(err.Error(), http.StatusBadRequest)
 				return
 			}
 		}
@@ -121,16 +127,16 @@ func (s *Server) CreateHandler(c *gin.Context) {
 
 		if err := createModel(r, name, baseLayers, fn); err != nil {
 			if errors.Is(err, errBadTemplate) {
-				ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
+				abort(err.Error(), http.StatusBadRequest)
 				return
 			}
-			ch <- gin.H{"error": err.Error()}
+			abort(err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		if !envconfig.NoPrune() && oldManifest != nil {
 			if err := oldManifest.RemoveLayers(); err != nil {
-				ch <- gin.H{"error": err.Error()}
+				abort(err.Error(), http.StatusInternalServerError)
 			}
 		}
 
