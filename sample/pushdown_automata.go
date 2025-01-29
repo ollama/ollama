@@ -47,6 +47,7 @@ func BuildGraph(proc model.TextProcessor) (*PDANode, map[JSONState]*PDANode, err
 	// Connect nodes
 	// TODO: if all are single tokens then this can just be connected instead of defining the token
 	stateToNodeMap[StateStart].TransitionEdges['{'] = stateToNodeMap[StateInObject]
+	stateToNodeMap[StateStart].TransitionEdges['['] = stateToNodeMap[StateInList]
 
 	stateToNodeMap[StateInObject].TransitionEdges['"'] = stateToNodeMap[StateInObjectKey]
 	stateToNodeMap[StateInObject].TransitionEdges['\n'] = stateToNodeMap[StateInNewline]
@@ -121,7 +122,7 @@ func BuildGraph(proc model.TextProcessor) (*PDANode, map[JSONState]*PDANode, err
 
 	// list object end
 	stateToNodeMap[StateInListObjectEnd].TransitionEdges[','] = stateToNodeMap[StateInListComma]
-	stateToNodeMap[StateInListObjectEnd].TransitionEdges[']'] = stateToNodeMap[StateListEnd]
+	stateToNodeMap[StateInListObjectEnd].TransitionEdges[']'] = stateToNodeMap[StateInListEnd]
 
 	// bool node
 	for _, r := range validBoolRunes {
@@ -129,8 +130,8 @@ func BuildGraph(proc model.TextProcessor) (*PDANode, map[JSONState]*PDANode, err
 	}
 	addEnds(stateToNodeMap[StateInBool], stateToNodeMap)
 
-	stateToNodeMap[StateListEnd].TransitionEdges['}'] = stateToNodeMap[StateInObjectEnd]
-	stateToNodeMap[StateListEnd].TransitionEdges[','] = stateToNodeMap[StateInComma]
+	stateToNodeMap[StateInListEnd].TransitionEdges['}'] = stateToNodeMap[StateInObjectEnd]
+	stateToNodeMap[StateInListEnd].TransitionEdges[','] = stateToNodeMap[StateInComma]
 
 	stateToNodeMap[StateInComma].TransitionEdges['{'] = stateToNodeMap[StateInObject]
 	stateToNodeMap[StateInComma].TransitionEdges['\n'] = stateToNodeMap[StateInList]
@@ -147,7 +148,7 @@ func BuildGraph(proc model.TextProcessor) (*PDANode, map[JSONState]*PDANode, err
 func addEnds(node *PDANode, stateToNodeMap map[JSONState]*PDANode) {
 	node.TransitionEdges[','] = stateToNodeMap[StateInComma]
 	node.TransitionEdges['}'] = stateToNodeMap[StateInObjectEnd]
-	node.TransitionEdges[']'] = stateToNodeMap[StateListEnd]
+	node.TransitionEdges[']'] = stateToNodeMap[StateInListEnd]
 }
 
 func addValueConnections(node *PDANode, stateToNodeMap map[JSONState]*PDANode) {

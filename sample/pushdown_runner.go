@@ -58,6 +58,27 @@ func (s *PushdownSampler) Sample(logits []float64) ([]float64, error) {
 	case StateInString:
 		return s.maskLogits(logits, s.curNode)
 
+	case StateInListEnd:
+		fmt.Println("in list end", s.braceStack)
+		// force finish if no braces left
+		if len(s.braceStack) == 0 {
+			s.curNode = NewPDANode(StateTerminate)
+			for i := range logits {
+				if s.proc.Is(uint32(i), model.SpecialEOS) {
+					logits[i] = 1.0
+				} else {
+					logits[i] = math.NaN()
+				}
+			}
+			return logits, nil
+		}
+
+		logits, err := s.maskLogits(logits, s.curNode)
+		if err != nil {
+			return nil, err
+		}
+		return logits, nil
+
 	case StateInObjectEnd:
 		// force finish if no braces left
 		if len(s.braceStack) == 0 {
@@ -117,11 +138,12 @@ func (s *PushdownSampler) Sample(logits []float64) ([]float64, error) {
 }
 
 func (s *PushdownSampler) UpdateState(tokenSlice []int32) error {
-	// fmt.Println("update state", s.curNode.State)
+	fmt.Println("update state", s.curNode.State)
 	mappedString, err := s.proc.Decode(tokenSlice)
 	if err != nil {
 		return err
 	}
+	fmt.Println("mappedString", mappedString)
 
 	// TODO: should force closing for all braces - not doing square yet
 	for _, r := range mappedString {
