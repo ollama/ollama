@@ -75,15 +75,17 @@ jobs:
       matrix:
         include:
           - preset: CUDA
+            install: https://developer.download.nvidia.com/compute/cuda/11.8.0/local_installers/cuda_11.8.0_522.06_windows.exe
             flags: '-DCMAKE_CUDA_ARCHITECTURES=87'
           - preset: ROCm
+            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q3-WinSvr2022-For-HIP.exe
             flags: '-DAMDGPU_TARGETS=gfx1010'
     runs-on: windows
     steps:
       - run: |
           choco install -y --no-progress ccache ninja
           ccache -o cache_dir=${{ github.workspace }}\.ccache
-      - if: matrix.install != ''
+      - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm'
         id: cache-install-restore
         uses: actions/cache/restore@v4
         with:
@@ -95,17 +97,26 @@ jobs:
         name: Install CUDA ${{ matrix.cuda-version }}
         run: |
           $ErrorActionPreference = "Stop"
-          Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+          if ("${{ steps.cache-install-restore.outputs.cache-hit }}" -ne 'true') {
+            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            Start-Process -FilePath .\install.exe -ArgumentList (@("-s", "cudart_11.8", "nvcc_11.8", "cublas_11.8", "cublas_dev_11.8")) -NoNewWindow -Wait
+          }
 
-          $subpackages = @("cudart", "nvcc", "cublas", "cublas_dev", "visual_studio_integration") | Foreach-Object {"${_}_${{ matrix.cuda-version }}"}
-          Start-Process -FilePath .\install.exe -ArgumentList (@("-s") + $subpackages) -NoNewWindow -Wait
+          $cudaPath = (Resolve-Path "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*").path
+          echo "$cudaPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - if: matrix.preset == 'ROCm'
         name: Install ROCm ${{ matrix.rocm-version }}
         run: |
           $ErrorActionPreference = "Stop"
-          Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+          if ("${{ steps.cache-install-restore.outputs.cache-hit }}" -ne 'true') {
+            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            Start-Process -FilePath .\install.exe -ArgumentList '-install' -NoNewWindow -Wait
+          }
 
-          Start-Process -FilePath .\install.exe -ArgumentList '-install' -NoNewWindow -Wait
+          $hipPath = (Resolve-Path "C:\Program Files\AMD\ROCm\*").path
+          echo "$hipPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "CC=$hipPath\bin\clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "CXX=$hipPath\bin\clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
       - if: ${{ !cancelled() && matrix.install != '' && steps.cache-install-restore.outputs.cache-hit != 'true' }}
         id: cache-install-save
         uses: actions/cache/save@v4
@@ -121,14 +132,18 @@ jobs:
           key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}
       - run: |
           if ("${{ matrix.preset }}" -eq 'CUDA') {
-            $env:CUDA_PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v${{ matrix.cuda-version }}"
+            $cudaPath = (Resolve-Path "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*").path
+            $env:PATH = "$cudaPath\bin;$env:PATH"
           } elseif ("${{ matrix.preset }}" -eq 'ROCm') {
-            $env:HIP_PATH = "C:\Program Files\AMD\ROCm\${{ matrix.rocm-version }}"
+            $hipPath = (Resolve-Path "C:\Program Files\AMD\ROCm\*").path
+            $env:PATH = "$hipPath\bin;$env:PATH"
+            $env:CC = "$hipPath\bin\clang.exe"
+            $env:CXX = "$hipPath\bin\clang++.exe"
           }
 
           Import-Module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
           Enter-VsDevShell -VsInstallPath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
-          cmake --preset "${{ matrix.preset }}"
+          cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }}
           cmake --build --parallel --preset "${{ matrix.preset }}"
         env:
           CMAKE_GENERATOR: Ninja

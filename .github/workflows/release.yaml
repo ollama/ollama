@@ -135,17 +135,27 @@ jobs:
         name: Install CUDA ${{ matrix.cuda-version }}
         run: |
           $ErrorActionPreference = "Stop"
-          Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+          if ("${{ steps.cache-install-restore.outputs.cache-hit }}" -ne 'true') {
+            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            $subpackages = @("cudart", "nvcc", "cublas", "cublas_dev") | Foreach-Object {"${_}_${{ matrix.cuda-version }}"}
+            Start-Process -FilePath .\install.exe -ArgumentList (@("-s") + $subpackages) -NoNewWindow -Wait
+          }
 
-          $subpackages = @("cudart", "nvcc", "cublas", "cublas_dev", "visual_studio_integration") | Foreach-Object {"${_}_${{ matrix.cuda-version }}"}
-          Start-Process -FilePath .\install.exe -ArgumentList (@("-s") + $subpackages) -NoNewWindow -Wait
+          $cudaPath = (Resolve-Path "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*").path
+          echo "$cudaPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - if: matrix.rocm-version != '' && steps.cache-install-restore.outputs.cache-hit != 'true'
         name: Install ROCm ${{ matrix.rocm-version }}
         run: |
           $ErrorActionPreference = "Stop"
-          Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+          if ("${{ steps.cache-install-restore.outputs.cache-hit }}" -ne 'true') {
+            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+            Start-Process -FilePath .\install.exe -ArgumentList '-install' -NoNewWindow -Wait
+          }
 
-          Start-Process -FilePath .\install.exe -ArgumentList '-install' -NoNewWindow -Wait
+          $hipPath = (Resolve-Path "C:\Program Files\AMD\ROCm\*").path
+          echo "$hipPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "CC=$hipPath\bin\clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "CXX=$hipPath\bin\clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
       - if: ${{ !cancelled() && matrix.install != '' && steps.cache-install-restore.outputs.cache-hit != 'true' }}
         id: cache-install-save
         uses: actions/cache/save@v4
@@ -155,22 +165,6 @@ jobs:
             C:\Program Files\AMD\ROCm
           key: ${{ matrix.install }}
       - uses: actions/checkout@v4
-      - name: Setup environment
-        run: |
-          if ("${{ matrix.cuda-version }}") {
-            $cudaPath = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v${{ matrix.cuda-version }}"
-            echo "CUDA_PATH=$cudaPath" | Out-File -FilePath $env:GITHUB_ENV -Append
-          } elseif ("${{ matrix.rocm-version }}") {
-            $hipPath = "C:\Program Files\AMD\ROCm\${{ matrix.rocm-version }}"
-            echo "HIP_PATH=$hipPath" | Out-File -FilePath $env:GITHUB_ENV -Append
-            echo "CMAKE_PREFIX_PATH=$hipPath" | Out-File -FilePath $env:GITHUB_ENV -Append
-            echo "CC=$hipPath\bin\clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
-            echo "CXX=$hipPath\bin\clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
-            echo "HIPCXX=$hipPath\bin\clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
-          } elseif ("${{ matrix.preset }}" -eq 'CPU') {
-            echo "CC=clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
-            echo "CXX=clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
-          }
       - uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}\.ccache
