@@ -5,7 +5,6 @@ import (
 	"log/slog"
 
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/runners"
 )
 
 type memInfo struct {
@@ -107,7 +106,7 @@ func (l GpuInfoList) ByLibrary() []GpuInfoList {
 	for _, info := range l {
 		found := false
 		requested := info.Library
-		if info.Variant != runners.CPUCapabilityNone.String() {
+		if info.Variant != "" {
 			requested += "_" + info.Variant
 		}
 		for i, lib := range libs {
