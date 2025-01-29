@@ -75,6 +75,52 @@ var RocmComputeMajorMin = "9"
 // TODO find a better way to detect iGPU instead of minimum memory
 const IGPUMemLimit = 1 * format.GibiByte // 512G is what they typically report, so anything less than 1G must be iGPU
 
+// LibPath is a path to lookup dynamic libraries
+// in development it's usually 'build/lib/ollama'
+// in distribution builds it's 'lib/ollama' on Windows
+// '../lib/ollama' on Linux and the executable's directory on macOS
+// note: distribution builds, additional GPU-specific libraries are
+// found in subdirectories of the returned path, such as
+// 'cuda_v11', 'cuda_v12', 'rocm', etc.
+var LibPath string = func() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+
+	exe, err = filepath.EvalSymlinks(exe)
+	if err != nil {
+		return ""
+	}
+
+	libPath := filepath.Dir(exe)
+	switch runtime.GOOS {
+	case "windows":
+		libPath = filepath.Join(filepath.Dir(exe), "lib", "ollama")
+	case "linux":
+		libPath = filepath.Join(filepath.Dir(exe), "..", "lib", "ollama")
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+
+	// build paths for development
+	buildPaths := []string{
+		filepath.Join(filepath.Dir(exe), "build", "lib", "ollama"),
+		filepath.Join(cwd, "build", "lib", "ollama"),
+	}
+
+	for _, p := range buildPaths {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+
+	return libPath
+}()
+
 // Note: gpuMutex must already be held
 func initCudaHandles() *cudaHandles {
 	// TODO - if the ollama build is CPU only, don't do these checks as they're irrelevant and confusing
@@ -100,15 +146,7 @@ func initCudaHandles() *cudaHandles {
 
 	// Aligned with driver, we can't carry as payloads
 	nvcudaMgmtPatterns := NvcudaGlobs
-
-	if runtime.GOOS == "windows" {
-		localAppData := os.Getenv("LOCALAPPDATA")
-		cudartMgmtPatterns = []string{filepath.Join(localAppData, "Programs", "Ollama", CudartMgmtName)}
-	}
-	var libDirs []string
-	for _, d := range libDirs {
-		cudartMgmtPatterns = append(cudartMgmtPatterns, filepath.Join(d, CudartMgmtName))
-	}
+	cudartMgmtPatterns = append(cudartMgmtPatterns, filepath.Join(LibPath, "cuda_v*", CudartMgmtName))
 	cudartMgmtPatterns = append(cudartMgmtPatterns, CudartGlobs...)
 
 	if len(NvmlGlobs) > 0 {
@@ -258,12 +296,6 @@ func GetGPUInfo() GpuInfoList {
 		// Load ALL libraries
 		cHandles = initCudaHandles()
 
-		exe, err := os.Executable()
-		if err != nil {
-			slog.Warn("error looking up executable", "error", err)
-		}
-		libDir := filepath.Join(filepath.Dir(exe), envconfig.LibRelativeToExe(), "lib", "ollama")
-
 		// NVIDIA
 		for i := range cHandles.deviceCount {
 			if cHandles.cudart != nil || cHandles.nvcuda != nil {
@@ -300,10 +332,10 @@ func GetGPUInfo() GpuInfoList {
 
 				// Start with our bundled libraries
 				if variant != "" {
-					libDirVariant := filepath.Join(libDir, "cuda_"+variant)
-					if _, err := os.Stat(libDirVariant); err == nil {
+					variantPath := filepath.Join(LibPath, "cuda_"+variant)
+					if _, err := os.Stat(variantPath); err == nil {
 						// Put the variant directory first in the search path to avoid runtime linking to the wrong library
-						gpuInfo.DependencyPath = append([]string{libDirVariant}, gpuInfo.DependencyPath...)
+						gpuInfo.DependencyPath = append([]string{variantPath}, gpuInfo.DependencyPath...)
 					}
 				}
 				gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
@@ -375,7 +407,7 @@ func GetGPUInfo() GpuInfoList {
 						gpuInfo.FreeMemory = uint64(memInfo.free)
 						gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
 						gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
-						gpuInfo.DependencyPath = []string{libDir}
+						gpuInfo.DependencyPath = []string{LibPath}
 						oneapiGPUs = append(oneapiGPUs, gpuInfo)
 					}
 				}
@@ -511,38 +543,32 @@ func GetGPUInfo() GpuInfoList {
 
 func FindGPULibs(baseLibName string, defaultPatterns []string) []string {
 	// Multiple GPU libraries may exist, and some may not work, so keep trying until we exhaust them
-	var ldPaths []string
 	gpuLibPaths := []string{}
 	slog.Debug("Searching for GPU library", "name", baseLibName)
 
-	// Start with our bundled libraries
-	exe, err := os.Executable()
-	if err != nil {
-		return []string{}
-	}
+	// search our bundled libraries first
+	patterns := []string{filepath.Join(LibPath, baseLibName)}
 
-	libDir := filepath.Join(filepath.Dir(exe), envconfig.LibRelativeToExe(), "lib", "ollama")
-	var patterns []string
-	patterns = append(patterns, filepath.Join(libDir, baseLibName))
-
+	var ldPaths []string
 	switch runtime.GOOS {
 	case "windows":
-		ldPaths = strings.Split(os.Getenv("PATH"), ";")
+		ldPaths = strings.Split(os.Getenv("PATH"), string(os.PathListSeparator))
 	case "linux":
-		ldPaths = strings.Split(os.Getenv("LD_LIBRARY_PATH"), ":")
-	default:
-		return gpuLibPaths
+		ldPaths = strings.Split(os.Getenv("LD_LIBRARY_PATH"), string(os.PathListSeparator))
 	}
 
-	// Then with whatever we find in the PATH/LD_LIBRARY_PATH
-	for _, ldPath := range ldPaths {
-		d, err := filepath.Abs(ldPath)
+	// then search the system's LD_LIBRARY_PATH
+	for _, p := range ldPaths {
+		p, err := filepath.Abs(p)
 		if err != nil {
 			continue
 		}
-		patterns = append(patterns, filepath.Join(d, baseLibName))
+		patterns = append(patterns, filepath.Join(p, baseLibName))
 	}
+
+	// finally, search the default patterns provided by the caller
 	patterns = append(patterns, defaultPatterns...)
+
 	slog.Debug("gpu library search", "globs", patterns)
 	for _, pattern := range patterns {
 		// Nvidia PhysX known to return bogus results

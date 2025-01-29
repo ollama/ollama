@@ -86,41 +86,6 @@ func LoadModel(model string, maxArraySize int) (*GGML, error) {
 	return ggml, err
 }
 
-// libOllama returns a path to lookup dynamic libraries
-// in development it's usually 'build/lib/ollama'
-// in distribution builds it's often 'lib/ollama', '../lib/ollama'
-// note: distribution builds, additional GPU-specific libraries are
-// found in subdirectories of the returned path, such as
-// 'cuda_v11', 'cuda_v12', 'rocm', etc.
-func libOllama() (string, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("unable to lookup executable path: %w", err)
-	}
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("unable to get current working directory: %w", err)
-	}
-
-	exeDir := filepath.Dir(exe)
-
-	paths := []string{
-		filepath.Join(exeDir, envconfig.LibRelativeToExe(), "lib", "ollama"),
-
-		// development paths
-		filepath.Join(exeDir, "build", "lib", "ollama"),
-		filepath.Join(cwd, "build", "lib", "ollama"),
-	}
-	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
-		}
-	}
-
-	return exeDir, nil
-}
-
 // NewLlamaServer will run a server for the given GPUs
 // The gpu list must be a single family.
 func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
@@ -269,12 +234,11 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 	}
 
 	// get available libraries
-	lo, err := libOllama()
 	if err != nil {
 		return nil, fmt.Errorf("could not get libollama dir: %w", err)
 	}
 
-	entries, err := os.ReadDir(lo)
+	entries, err := os.ReadDir(discover.LibPath)
 	if err != nil {
 		return nil, fmt.Errorf("could not read libollama dir: %w", err)
 	}
@@ -282,7 +246,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 	libs := make(map[string]string)
 	for _, entry := range entries {
 		if entry.IsDir() {
-			libs[entry.Name()] = filepath.Join(lo, entry.Name())
+			libs[entry.Name()] = filepath.Join(discover.LibPath, entry.Name())
 		}
 	}
 
@@ -354,6 +318,9 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 			libraryPaths = append(gpus[0].DependencyPath, libraryPaths...)
 		}
 
+		// finally, add the root library path
+		libraryPaths = append(libraryPaths, discover.LibPath)
+
 		exe, err := os.Executable()
 		if err != nil {
 			return nil, fmt.Errorf("unable to lookup executable path: %w", err)
@@ -363,12 +330,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		if err != nil {
 			return nil, fmt.Errorf("unable to evaluate symlinks for executable path: %w", err)
 		}
-
-		// add 'root' lib/ollama path for cpu libraries
-		libraryPaths = append(libraryPaths, lo)
-
-		// add the executable's directory for macOS distributions
-		libraryPaths = append(libraryPaths, filepath.Dir(exe))
 
 		// TODO - once fully switched to the Go runner, load the model here for tokenize/detokenize cgo access
 		s := &llmServer{

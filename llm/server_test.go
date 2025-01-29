@@ -4,13 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/envconfig"
 	"golang.org/x/sync/semaphore"
 )
 
@@ -72,53 +69,4 @@ func TestLLMServerCompletionFormat(t *testing.T) {
 		Format:  nil, // missing format
 	}, nil)
 	checkValid(err)
-}
-
-func TestLibOllama(t *testing.T) {
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	t.Run("default executable dir", func(t *testing.T) {
-		got, err := libOllama()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != filepath.Dir(exe) {
-			t.Fatalf("expected %s, got %s", filepath.Dir(exe), got)
-		}
-	})
-
-	t.Run("adjacent lib dir", func(t *testing.T) {
-		want := filepath.Join(filepath.Dir(exe), envconfig.LibRelativeToExe(), "lib", "ollama")
-		if err := os.MkdirAll(want, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		defer os.RemoveAll(want)
-
-		got, err := libOllama()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != want {
-			t.Fatalf("expected %s, got %s", want, got)
-		}
-	})
-
-	t.Run("build dir relative to executable", func(t *testing.T) {
-		want := filepath.Join(filepath.Dir(exe), "build", "lib", "ollama")
-		if err := os.MkdirAll(want, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		defer os.RemoveAll(want)
-
-		got, err := libOllama()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != want {
-			t.Fatalf("expected %s, got %s", want, got)
-		}
-	})
 }
