@@ -28,8 +28,8 @@ import (
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/llama"
 )
 
 type LlamaServer interface {

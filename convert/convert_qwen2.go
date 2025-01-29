@@ -2,7 +2,6 @@ package convert
 
 import "github.com/ollama/ollama/fs/ggml"
 
-
 type qwen2Model struct {
 	ModelParameters
 	MaxPositionEmbeddings uint32  `json:"max_position_embeddings"`
