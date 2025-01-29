@@ -30,7 +30,10 @@ const (
 	StateInList
 	StateInListComma
 	StateListEnd
+	StateInValue
+	StateInValueEnd
 	StateInListEnd
+	StateInListObjectEnd
 	StateInNewline
 	StateInNumber
 	StateInNumberEnd
@@ -38,6 +41,7 @@ const (
 	StateInObjectKeyEnd
 	StateTerminate
 	StateInObjectEnd
+	StateTransitioningToTerminate
 )
 
 func (s JSONState) String() string {
@@ -76,6 +80,8 @@ func (s JSONState) String() string {
 		return "StateInObjSpace"
 	case StateInList:
 		return "StateInList"
+	case StateInListObjectEnd:
+		return "StateInListObjectEnd"
 	case StateInListComma:
 		return "StateInListComma"
 	case StateListEnd:
