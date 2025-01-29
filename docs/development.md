@@ -3,9 +3,9 @@
 Install prerequisites:
 
 - [Go](https://go.dev/doc/install)
-- C/C++ Compiler e.g. Clang on macOS, [TDM-GCC](https://jmeubank.github.io/tdm-gcc/download/) on x86_64 or [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) on ARM on Windows, GCC/Clang on Linux
+- C/C++ Compiler e.g. Clang on macOS, [TDM-GCC](https://jmeubank.github.io/tdm-gcc/download/) (Windows amd64) or [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (Windows arm64), GCC/Clang on Linux.
 
-Then build Ollama from the root directory of the repository:
+Then build and run Ollama from the root directory of the repository:
 
 ```
 go run . serve
@@ -13,7 +13,7 @@ go run . serve
 
 ## macOS (Apple Silicon)
 
-macOS Apple Silicon supports Metal which is built-in to the Ollama binary.
+macOS Apple Silicon supports Metal which is built-in to the Ollama binary. No additional steps are required.
 
 ## macOS (Intel)
 
