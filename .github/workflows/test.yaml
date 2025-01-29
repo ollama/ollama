@@ -40,7 +40,7 @@ jobs:
 
   linux:
     needs: [changes]
-    if: ${{ needs.changes.outputs.changed == 'True' }}
+    if: needs.changes.outputs.changed == 'True'
     strategy:
       matrix:
         include:
@@ -51,7 +51,7 @@ jobs:
             preset: ROCm
             extra-packages: rocm-libs
             flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
-    runs-on: ubuntu-latest
+    runs-on: linux
     container: ${{ matrix.container }}
     steps:
       - uses: actions/checkout@v4
@@ -67,6 +67,71 @@ jobs:
       - run: |
           cmake --preset ${{ matrix.preset }} ${{ matrix.flags }}
           cmake --build --preset ${{ matrix.preset }} --parallel
+
+  windows:
+    needs: [changes]
+    if: needs.changes.outputs.changed == 'True'
+    strategy:
+      matrix:
+        include:
+          - preset: CUDA
+            flags: '-DCMAKE_CUDA_ARCHITECTURES=87'
+          - preset: ROCm
+            flags: '-DAMDGPU_TARGETS=gfx1010'
+    runs-on: windows
+    steps:
+      - run: |
+          choco install -y --no-progress ccache ninja
+          ccache -o cache_dir=${{ github.workspace }}\.ccache
+      - if: matrix.install != ''
+        id: cache-install-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
+            C:\Program Files\AMD\ROCm
+          key: ${{ matrix.install }}
+      - if: matrix.preset == 'CUDA'
+        name: Install CUDA ${{ matrix.cuda-version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+
+          $subpackages = @("cudart", "nvcc", "cublas", "cublas_dev", "visual_studio_integration") | Foreach-Object {"${_}_${{ matrix.cuda-version }}"}
+          Start-Process -FilePath .\install.exe -ArgumentList (@("-s") + $subpackages) -NoNewWindow -Wait
+      - if: matrix.preset == 'ROCm'
+        name: Install ROCm ${{ matrix.rocm-version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+
+          Start-Process -FilePath .\install.exe -ArgumentList '-install' -NoNewWindow -Wait
+      - if: ${{ !cancelled() && matrix.install != '' && steps.cache-install-restore.outputs.cache-hit != 'true' }}
+        id: cache-install-save
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
+            C:\Program Files\AMD\ROCm
+          key: ${{ matrix.install }}
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\.ccache
+          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}
+      - run: |
+          if ("${{ matrix.preset }}" -eq 'CUDA') {
+            $env:CUDA_PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v${{ matrix.cuda-version }}"
+          } elseif ("${{ matrix.preset }}" -eq 'ROCm') {
+            $env:HIP_PATH = "C:\Program Files\AMD\ROCm\${{ matrix.rocm-version }}"
+          }
+
+          Import-Module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -VsInstallPath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
+          cmake --preset "${{ matrix.preset }}"
+          cmake --build --parallel --preset "${{ matrix.preset }}"
+        env:
+          CMAKE_GENERATOR: Ninja
 
   test:
     strategy:
