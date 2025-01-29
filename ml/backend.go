@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 )
@@ -35,7 +36,12 @@ func RegisterBackend(name string, f func(*os.File) (Backend, error)) {
 }
 
 func NewBackend(f *os.File) (Backend, error) {
-	if backend, ok := backends["mlx"]; ok {
+	be := os.Getenv("OLLAMA_BACKEND")
+	if be == "" {
+		be = "mlx" // or ggml
+		slog.Info("Defaulting to " + be + ". Set OLLAMA_BACKEND to override")
+	}
+	if backend, ok := backends[be]; ok {
 		return backend(f)
 	}
 
@@ -44,12 +50,31 @@ func NewBackend(f *os.File) (Backend, error) {
 
 type Context interface {
 	Zeros(dtype DType, shape ...int) Tensor
+
+	// TODO - the (Tensor, error) return pattern makes this impossible to
+	// one-line in cases where we need to pass a scalar into a function that
+	// requires a Tensor leading to overly verbose impls.  Consider a Must* API.
 	FromFloatSlice(s []float32, shape ...int) (Tensor, error)
 	FromIntSlice(s []int32, shape ...int) (Tensor, error)
 
 	Forward(Tensor)
 	Compute(Tensor) Tensor
 	Close() error
+
+	// TODO - not sure if there's a better way
+	Abort(Tensor) // Evaluate the graph up to this point, retrieve the data from the tensor and dump it to a json file for comparision
+}
+
+// Usage:
+//
+//	if sdpa, ok := ctx.(ml.FastScaledDotProductAttention); ok {
+//	  hiddenState = sdpa.FastScaledDotProductAttention(...)
+//	} else {
+//
+//	  // manual sdpa
+//	}
+type FastScaledDotProductAttention interface {
+	FastScaledDotProductAttention(queries, keys, values Tensor, scale float32, mask Tensor) Tensor
 }
 
 type Tensor interface {
@@ -66,13 +91,14 @@ type Tensor interface {
 	Mul(ctx Context, t2 Tensor) Tensor
 	Mulmat(ctx Context, t2 Tensor) Tensor
 
-	Softmax(ctx Context) Tensor
+	Softmax(ctx Context) Tensor // TODO axis parameter?
 	LayerNorm(ctx Context, weight, bias Tensor, eps float32) Tensor
 	RMSNorm(ctx Context, weight, bias Tensor, eps float32) Tensor
 	Scale(ctx Context, s float64) Tensor
 
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
-	Rope(ctx Context, positionIDs, ropeFactors Tensor, dim uint32, base, scale float32) Tensor
+
+	Rope(ctx Context, offset int32, ropeFactors Tensor, freqs Tensor, dim uint32, base, scale float32) Tensor
 
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context) Tensor
@@ -90,6 +116,7 @@ type Tensor interface {
 	Concat(ctx Context, t2 Tensor, dim int) Tensor
 	Rows(ctx Context, t2 Tensor) Tensor
 	Copy(ctx Context, t2 Tensor) Tensor
+	Repeat(ctx Context, repeats, axis int) Tensor
 }
 
 type number interface {
@@ -189,3 +216,14 @@ const (
 	DTypeI32
 	DTypeOther
 )
+
+func (dt DType) String() string {
+	switch dt {
+	case DTypeF32:
+		return "float32"
+	case DTypeI32:
+		return "int32"
+	default:
+		return "unknon"
+	}
+}

@@ -18,5 +18,6 @@ endfunction()
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml)
 
 if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
+    message(STATUS "Setting up MLX (this takes a while...)")
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/mlx)
 endif()

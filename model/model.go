@@ -55,16 +55,14 @@ type Options struct {
 }
 
 func (opts Options) Inputs() []int32 {
-	return opts.inputs[opts.Offset:]
+	// TODO - without the cache, return the whole input
+	// return opts.inputs[opts.Offset:]
+	return opts.inputs
 }
 
-func (opts Options) Positions() []int32 {
-	positions := make([]int32, len(opts.inputs)-opts.Offset)
-	for i := range positions {
-		positions[i] = int32(opts.Offset + i)
-	}
+func (opts Options) Outputs(ctx ml.Context) (ml.Tensor, error) {
+	return ctx.FromIntSlice([]int32{0, int32(len(opts.inputs)-opts.Offset) - 1}, 1, 1)
 
-	return positions
 }
 
 type OptionsFunc func(Model, *Options)
@@ -224,5 +222,6 @@ func Forward(m Model, optsFuncs ...OptionsFunc) (ml.Tensor, error) {
 	}
 	defer ctx.Close()
 
-	return ctx.Compute(t), nil
+	r := ctx.Compute(t)
+	return r, nil
 }
