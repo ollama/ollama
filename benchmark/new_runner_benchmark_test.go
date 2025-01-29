@@ -21,8 +21,9 @@ var runnerMetrics []BenchmarkMetrics
 
 // CompletionRequest represents the request body for the completion endpoint
 type CompletionRequest struct {
-	Prompt     string `json:"prompt"`
-	NumPredict int    `json:"n_predict"`
+	Prompt      string  `json:"prompt"`
+	NumPredict  int     `json:"n_predict"`
+	Temperature float32 `json:"temperature"`
 }
 
 // CompletionResponse represents a single response chunk from the streaming API
@@ -115,8 +116,9 @@ func runCompletion(ctx context.Context, tt TestCase, b *testing.B) BenchmarkMetr
 
 	// Create request body
 	reqBody := CompletionRequest{
-		Prompt:     tt.prompt,
-		NumPredict: tt.maxTokens,
+		Prompt:      tt.prompt,
+		NumPredict:  tt.maxTokens,
+		Temperature: 0.1,
 	}
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
