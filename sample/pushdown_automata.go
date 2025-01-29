@@ -7,7 +7,6 @@ import (
 )
 
 // TODO: / should be valid but an escape character
-
 var stringInvalidRunes = []rune{'\\', '\n', '\t', '{', '}', ':', ',', '/'}
 
 var intInvalidRunes = []rune{'e', 'E', ' ', '\n', '\t', '{', '}', ':', ',', '"'}
@@ -37,172 +36,112 @@ func BuildGraph(proc model.TextProcessor) (*PDANode, map[JSONState]*PDANode, err
 	stateToNodeMap := make(map[JSONState]*PDANode)
 
 	// TODO: make this a loop
-	startNode := NewPDANode(StateStart)
-	stateToNodeMap[StateStart] = startNode
 
-	objNode := NewPDANode(StateInObject)
-	stateToNodeMap[StateInObject] = objNode
-
-	objEndNode := NewPDANode(StateInObjectEnd)
-	stateToNodeMap[StateInObjectEnd] = objEndNode
-
-	objKeyNode := NewPDANode(StateInObjectKey)
-	stateToNodeMap[StateInObjectKey] = objKeyNode
-
-	objKeyEndNode := NewPDANode(StateInObjectKeyEnd)
-	stateToNodeMap[StateInObjectKeyEnd] = objKeyEndNode
-
-	colonNode := NewPDANode(StateInColon)
-	stateToNodeMap[StateInColon] = colonNode
-
-	commaNode := NewPDANode(StateInComma)
-	stateToNodeMap[StateInComma] = commaNode
-
-	newlineNode := NewPDANode(StateInNewline)
-	stateToNodeMap[StateInNewline] = newlineNode
-
-	spaceNode := NewPDANode(StateInSpace)
-	stateToNodeMap[StateInSpace] = spaceNode
-
-	spaceObjNode := NewPDANode(StateInObjSpace)
-	stateToNodeMap[StateInObjSpace] = spaceObjNode
-
-	tabNode := NewPDANode(StateInTab)
-	stateToNodeMap[StateInTab] = tabNode
-
-	stringNode := NewPDANode(StateInString)
-	stateToNodeMap[StateInString] = stringNode
-
-	stringEndNode := NewPDANode(StateInStringEnd)
-	stateToNodeMap[StateInStringEnd] = stringEndNode
-
-	listNode := NewPDANode(StateInList)
-	stateToNodeMap[StateInList] = listNode
-
-	listCommaNode := NewPDANode(StateInListComma)
-	stateToNodeMap[StateInListComma] = listCommaNode
-
-	listEndNode := NewPDANode(StateListEnd)
-	stateToNodeMap[StateListEnd] = listEndNode
-
-	numberNode := NewPDANode(StateInNumber)
-	stateToNodeMap[StateInNumber] = numberNode
-
-	boolNode := NewPDANode(StateInBool)
-	stateToNodeMap[StateInBool] = boolNode
-
-	nullNode := NewPDANode(StateInNull)
-	stateToNodeMap[StateInNull] = nullNode
-
-	// Defined with structured outputs only
-	intNode := NewPDANode(StateInInt)
-	stateToNodeMap[StateInInt] = intNode
-
-	listObjEndNode := NewPDANode(StateInListObjectEnd)
-	stateToNodeMap[StateInListObjectEnd] = listObjEndNode
-
+	for _, state := range JSONStates {
+		stateToNodeMap[state] = NewPDANode(state)
+	}
 	// TODO:
 	// consider adding a node to just point to values, could be good to compute that
 	// mask rather than many different nodes
 
 	// Connect nodes
 	// TODO: if all are single tokens then this can just be connected instead of defining the token
-	startNode.TransitionEdges['{'] = objNode
+	stateToNodeMap[StateStart].TransitionEdges['{'] = stateToNodeMap[StateInObject]
 
-	objNode.TransitionEdges['"'] = objKeyNode
-	objNode.TransitionEdges['\n'] = newlineNode
-	objNode.TransitionEdges[' '] = spaceObjNode
+	stateToNodeMap[StateInObject].TransitionEdges['"'] = stateToNodeMap[StateInObjectKey]
+	stateToNodeMap[StateInObject].TransitionEdges['\n'] = stateToNodeMap[StateInNewline]
+	stateToNodeMap[StateInObject].TransitionEdges[' '] = stateToNodeMap[StateInObjSpace]
 
 	//new line
-	newlineNode.TransitionEdges['"'] = objKeyNode
-	newlineNode.TransitionEdges['\t'] = tabNode
+	stateToNodeMap[StateInNewline].TransitionEdges['"'] = stateToNodeMap[StateInObjectKey]
+	stateToNodeMap[StateInNewline].TransitionEdges['\t'] = stateToNodeMap[StateInTab]
 
-	tabNode.TransitionEdges['"'] = objKeyNode
+	stateToNodeMap[StateInTab].TransitionEdges['"'] = stateToNodeMap[StateInObjectKey]
 
-	objKeyNode.TransitionEdges[rune(-1)] = objKeyNode
-	objKeyNode.TransitionEdges['"'] = objKeyEndNode
+	stateToNodeMap[StateInObjectKey].TransitionEdges[rune(-1)] = stateToNodeMap[StateInObjectKey]
+	stateToNodeMap[StateInObjectKey].TransitionEdges['"'] = stateToNodeMap[StateInObjectKeyEnd]
 
-	objKeyEndNode.TransitionEdges[':'] = colonNode
+	stateToNodeMap[StateInObjectKeyEnd].TransitionEdges[':'] = stateToNodeMap[StateInColon]
 
-	objEndNode.TransitionEdges[','] = commaNode
-	objEndNode.TransitionEdges['}'] = objEndNode
+	stateToNodeMap[StateInObjectEnd].TransitionEdges[','] = stateToNodeMap[StateInComma]
+	stateToNodeMap[StateInObjectEnd].TransitionEdges['}'] = stateToNodeMap[StateInObjectEnd]
 
 	// where values should be
-	// this could be combined but the probs might change, we're alr doing a skip ahead
-	colonNode.TransitionEdges[' '] = spaceNode
-	colonNode.TransitionEdges['['] = listNode
-	colonNode.TransitionEdges['{'] = objNode
-	addValueConnections(colonNode, stateToNodeMap)
+	// this could be combined but the probl might change, we're alr doing a skip ahead
+	stateToNodeMap[StateInColon].TransitionEdges[' '] = stateToNodeMap[StateInSpace]
+	stateToNodeMap[StateInColon].TransitionEdges['['] = stateToNodeMap[StateInList]
+	stateToNodeMap[StateInColon].TransitionEdges['{'] = stateToNodeMap[StateInObject]
+	addValueConnections(stateToNodeMap[StateInColon], stateToNodeMap)
 
 	// Leads to a value
-	spaceNode.TransitionEdges['['] = listNode
-	spaceNode.TransitionEdges['{'] = objNode
-	addValueConnections(spaceNode, stateToNodeMap)
+	stateToNodeMap[StateInSpace].TransitionEdges['['] = stateToNodeMap[StateInList]
+	stateToNodeMap[StateInSpace].TransitionEdges['{'] = stateToNodeMap[StateInObject]
+	addValueConnections(stateToNodeMap[StateInSpace], stateToNodeMap)
 
 	// Values
 	// string node
-	stringNode.TransitionEdges[rune(-1)] = stringNode
-	stringNode.TransitionEdges['"'] = stringEndNode
+	stateToNodeMap[StateInString].TransitionEdges[rune(-1)] = stateToNodeMap[StateInString]
+	stateToNodeMap[StateInString].TransitionEdges['"'] = stateToNodeMap[StateInStringEnd]
 
 	// String end node
-	addEnds(stringEndNode, stateToNodeMap)
+	addEnds(stateToNodeMap[StateInStringEnd], stateToNodeMap)
 
 	// TODO: add counters for allowable number of decimals, e, E, etc
 	// number node
 	for _, r := range validNumberRunes {
-		numberNode.TransitionEdges[r] = numberNode
+		stateToNodeMap[StateInNumber].TransitionEdges[r] = stateToNodeMap[StateInNumber]
 	}
-	addEnds(numberNode, stateToNodeMap)
+	addEnds(stateToNodeMap[StateInNumber], stateToNodeMap)
 
 	// bool node
 	for _, r := range validBoolRunes {
-		boolNode.TransitionEdges[r] = boolNode
+		stateToNodeMap[StateInBool].TransitionEdges[r] = stateToNodeMap[StateInBool]
 	}
-	addEnds(boolNode, stateToNodeMap)
+	addEnds(stateToNodeMap[StateInBool], stateToNodeMap)
 
 	// list node
-	listNode.TransitionEdges[','] = commaNode
-	listNode.TransitionEdges['{'] = objNode
-	listNode.TransitionEdges[' '] = listNode
-	listNode.TransitionEdges['\n'] = listNode
-	addValueConnections(listNode, stateToNodeMap)
+	stateToNodeMap[StateInList].TransitionEdges[','] = stateToNodeMap[StateInComma]
+	stateToNodeMap[StateInList].TransitionEdges['{'] = stateToNodeMap[StateInObject]
+	stateToNodeMap[StateInList].TransitionEdges[' '] = stateToNodeMap[StateInList]
+	stateToNodeMap[StateInList].TransitionEdges['\n'] = stateToNodeMap[StateInList]
+	addValueConnections(stateToNodeMap[StateInList], stateToNodeMap)
 
 	// null node
 	for _, r := range validNullRunes {
-		nullNode.TransitionEdges[r] = nullNode
+		stateToNodeMap[StateInNull].TransitionEdges[r] = stateToNodeMap[StateInNull]
 	}
-	addEnds(nullNode, stateToNodeMap)
+	addEnds(stateToNodeMap[StateInNull], stateToNodeMap)
 
 	// list comma
 	// should point to values
-	listCommaNode.TransitionEdges[' '] = listCommaNode
-	listCommaNode.TransitionEdges['{'] = objNode
-	listCommaNode.TransitionEdges['\n'] = newlineNode
-	addValueConnections(listCommaNode, stateToNodeMap)
+	stateToNodeMap[StateInListComma].TransitionEdges[' '] = stateToNodeMap[StateInListComma]
+	stateToNodeMap[StateInListComma].TransitionEdges['{'] = stateToNodeMap[StateInObject]
+	stateToNodeMap[StateInListComma].TransitionEdges['\n'] = stateToNodeMap[StateInList]
+	addValueConnections(stateToNodeMap[StateInListComma], stateToNodeMap)
 
 	// list object end
-	listObjEndNode.TransitionEdges[','] = listCommaNode
-	listObjEndNode.TransitionEdges[']'] = listEndNode
+	stateToNodeMap[StateInListObjectEnd].TransitionEdges[','] = stateToNodeMap[StateInListComma]
+	stateToNodeMap[StateInListObjectEnd].TransitionEdges[']'] = stateToNodeMap[StateListEnd]
 
 	// bool node
 	for _, r := range validBoolRunes {
-		boolNode.TransitionEdges[r] = boolNode
+		stateToNodeMap[StateInBool].TransitionEdges[r] = stateToNodeMap[StateInBool]
 	}
-	addEnds(boolNode, stateToNodeMap)
+	addEnds(stateToNodeMap[StateInBool], stateToNodeMap)
 
-	listEndNode.TransitionEdges['}'] = objEndNode
-	listEndNode.TransitionEdges[','] = commaNode
+	stateToNodeMap[StateListEnd].TransitionEdges['}'] = stateToNodeMap[StateInObjectEnd]
+	stateToNodeMap[StateListEnd].TransitionEdges[','] = stateToNodeMap[StateInComma]
 
-	commaNode.TransitionEdges['{'] = objNode
-	commaNode.TransitionEdges['\n'] = newlineNode
-	commaNode.TransitionEdges['\t'] = tabNode
-	commaNode.TransitionEdges['"'] = objKeyNode
-	commaNode.TransitionEdges[' '] = spaceObjNode
+	stateToNodeMap[StateInComma].TransitionEdges['{'] = stateToNodeMap[StateInObject]
+	stateToNodeMap[StateInComma].TransitionEdges['\n'] = stateToNodeMap[StateInList]
+	stateToNodeMap[StateInComma].TransitionEdges['\t'] = stateToNodeMap[StateInTab]
+	stateToNodeMap[StateInComma].TransitionEdges['"'] = stateToNodeMap[StateInObjectKey]
+	stateToNodeMap[StateInComma].TransitionEdges[' '] = stateToNodeMap[StateInObjSpace]
 
-	spaceObjNode.TransitionEdges['"'] = objKeyNode
-	spaceObjNode.TransitionEdges['\n'] = newlineNode
+	stateToNodeMap[StateInObjSpace].TransitionEdges['"'] = stateToNodeMap[StateInObjectKey]
+	stateToNodeMap[StateInObjSpace].TransitionEdges['\n'] = stateToNodeMap[StateInNewline]
 
-	return startNode, stateToNodeMap, nil
+	return stateToNodeMap[StateStart], stateToNodeMap, nil
 }
 
 func addEnds(node *PDANode, stateToNodeMap map[JSONState]*PDANode) {

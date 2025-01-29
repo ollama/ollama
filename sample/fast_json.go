@@ -44,6 +44,40 @@ const (
 	StateTransitioningToTerminate
 )
 
+var JSONStates = []JSONState{
+	StateStart,
+	StateInObject,
+	StateInObjectKey,
+	StateNewline,
+	StateTab,
+	StateSpace,
+	StateInString,
+	StateInInt,
+	StateInFloat,
+	StateInBool,
+	StateInNull,
+	StateInColon,
+	StateInComma,
+	StateInTab,
+	StateInSpace,
+	StateInObjSpace,
+	StateInList,
+	StateInListComma,
+	StateListEnd,
+	StateInValue,
+	StateInValueEnd,
+	StateInListEnd,
+	StateInListObjectEnd,
+	StateInNewline,
+	StateInNumber,
+	StateInNumberEnd,
+	StateInStringEnd,
+	StateInObjectKeyEnd,
+	StateTerminate,
+	StateInObjectEnd,
+	StateTransitioningToTerminate,
+}
+
 func (s JSONState) String() string {
 	switch s {
 	case StateStart:
