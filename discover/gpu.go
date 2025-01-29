@@ -522,7 +522,6 @@ func FindGPULibs(baseLibName string, defaultPatterns []string) []string {
 
 	// finally, search the default patterns provided by the caller
 	patterns = append(patterns, defaultPatterns...)
-
 	slog.Debug("gpu library search", "globs", patterns)
 	for _, pattern := range patterns {
 		// Nvidia PhysX known to return bogus results
