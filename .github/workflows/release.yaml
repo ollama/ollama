@@ -123,19 +123,19 @@ jobs:
         run: |
           choco install -y --no-progress ccache ninja
           ccache -o cache_dir=${{ github.workspace }}\.ccache
-      - if: matrix.install != ''
-        id: cache-install-restore
+      - if: startsWith(matrix.preset, 'CUDA ') || startsWith(matrix.preset, 'ROCm ')
+        id: cache-install
         uses: actions/cache/restore@v4
         with:
           path: |
             C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
             C:\Program Files\AMD\ROCm
           key: ${{ matrix.install }}
-      - if: matrix.cuda-version != '' && steps.cache-install-restore.outputs.cache-hit != 'true'
+      - if: startsWith(matrix.preset, 'CUDA ')
         name: Install CUDA ${{ matrix.cuda-version }}
         run: |
           $ErrorActionPreference = "Stop"
-          if ("${{ steps.cache-install-restore.outputs.cache-hit }}" -ne 'true') {
+          if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
             Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
             $subpackages = @("cudart", "nvcc", "cublas", "cublas_dev") | Foreach-Object {"${_}_${{ matrix.cuda-version }}"}
             Start-Process -FilePath .\install.exe -ArgumentList (@("-s") + $subpackages) -NoNewWindow -Wait
@@ -143,11 +143,11 @@ jobs:
 
           $cudaPath = (Resolve-Path "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*").path
           echo "$cudaPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-      - if: matrix.rocm-version != '' && steps.cache-install-restore.outputs.cache-hit != 'true'
+      - if: startsWith(matrix.preset, 'ROCm')
         name: Install ROCm ${{ matrix.rocm-version }}
         run: |
           $ErrorActionPreference = "Stop"
-          if ("${{ steps.cache-install-restore.outputs.cache-hit }}" -ne 'true') {
+          if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
             Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
             Start-Process -FilePath .\install.exe -ArgumentList '-install' -NoNewWindow -Wait
           }
@@ -156,8 +156,7 @@ jobs:
           echo "$hipPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "CC=$hipPath\bin\clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "CXX=$hipPath\bin\clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
-      - if: ${{ !cancelled() && matrix.install != '' && steps.cache-install-restore.outputs.cache-hit != 'true' }}
-        id: cache-install-save
+      - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: |

@@ -44,11 +44,12 @@ jobs:
     strategy:
       matrix:
         include:
-          - container: nvidia/cuda:11.8.0-devel-ubuntu22.04
-            preset: CUDA
+          - preset: CPU
+          - preset: CUDA
+            container: nvidia/cuda:11.8.0-devel-ubuntu22.04
             flags: '-DCMAKE_CUDA_ARCHITECTURES=87'
-          - container: rocm/dev-ubuntu-22.04:6.1.2
-            preset: ROCm
+          - preset: ROCm
+            container: rocm/dev-ubuntu-22.04:6.1.2
             extra-packages: rocm-libs
             flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
     runs-on: linux
@@ -56,8 +57,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          apt-get update
-          apt-get install -y cmake ccache ${{ matrix.extra-packages }}
+          [ -n "${{ matrix.container }}" ] || sudo=sudo
+          $sudo apt-get update
+          $sudo apt-get install -y cmake ccache ${{ matrix.extra-packages }}
         env:
           DEBIAN_FRONTEND: noninteractive
       - uses: actions/cache@v4
@@ -74,6 +76,7 @@ jobs:
     strategy:
       matrix:
         include:
+          - preset: CPU
           - preset: CUDA
             install: https://developer.download.nvidia.com/compute/cuda/11.8.0/local_installers/cuda_11.8.0_522.06_windows.exe
             flags: '-DCMAKE_CUDA_ARCHITECTURES=87'
@@ -86,7 +89,7 @@ jobs:
           choco install -y --no-progress ccache ninja
           ccache -o cache_dir=${{ github.workspace }}\.ccache
       - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm'
-        id: cache-install-restore
+        id: cache-install
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -97,7 +100,7 @@ jobs:
         name: Install CUDA ${{ matrix.cuda-version }}
         run: |
           $ErrorActionPreference = "Stop"
-          if ("${{ steps.cache-install-restore.outputs.cache-hit }}" -ne 'true') {
+          if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
             Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
             Start-Process -FilePath .\install.exe -ArgumentList (@("-s", "cudart_11.8", "nvcc_11.8", "cublas_11.8", "cublas_dev_11.8")) -NoNewWindow -Wait
           }
@@ -108,7 +111,7 @@ jobs:
         name: Install ROCm ${{ matrix.rocm-version }}
         run: |
           $ErrorActionPreference = "Stop"
-          if ("${{ steps.cache-install-restore.outputs.cache-hit }}" -ne 'true') {
+          if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
             Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
             Start-Process -FilePath .\install.exe -ArgumentList '-install' -NoNewWindow -Wait
           }
@@ -117,8 +120,7 @@ jobs:
           echo "$hipPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "CC=$hipPath\bin\clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "CXX=$hipPath\bin\clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
-      - if: ${{ !cancelled() && matrix.install != '' && steps.cache-install-restore.outputs.cache-hit != 'true' }}
-        id: cache-install-save
+      - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: |
@@ -131,16 +133,6 @@ jobs:
           path: ${{ github.workspace }}\.ccache
           key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}
       - run: |
-          if ("${{ matrix.preset }}" -eq 'CUDA') {
-            $cudaPath = (Resolve-Path "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\*").path
-            $env:PATH = "$cudaPath\bin;$env:PATH"
-          } elseif ("${{ matrix.preset }}" -eq 'ROCm') {
-            $hipPath = (Resolve-Path "C:\Program Files\AMD\ROCm\*").path
-            $env:PATH = "$hipPath\bin;$env:PATH"
-            $env:CC = "$hipPath\bin\clang.exe"
-            $env:CXX = "$hipPath\bin\clang++.exe"
-          }
-
           Import-Module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
           Enter-VsDevShell -VsInstallPath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
           cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }}
