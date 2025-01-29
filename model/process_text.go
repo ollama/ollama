@@ -2,6 +2,7 @@ package model
 
 import (
 	"cmp"
+	"iter"
 	"log/slog"
 	"strings"
 	"sync"
@@ -99,23 +100,29 @@ func (v *Vocabulary) Merge(left, right string) int {
 }
 
 type BytePairEncoding struct {
-	Pretokenizer string
-
-	*Vocabulary
+	pre   *regexp2.Regexp
+	vocab *Vocabulary
 }
 
-func (bpe BytePairEncoding) split(s string) ([]string, error) {
-	re, err := regexp2.Compile(bpe.Pretokenizer, regexp2.Unicode|regexp2.RE2)
-	if err != nil {
-		return nil, err
+func NewBytePairEncoding(pre string, vocab *Vocabulary) BytePairEncoding {
+	return BytePairEncoding{
+		pre:   regexp2.MustCompile(pre, regexp2.Unicode|regexp2.RE2),
+		vocab: vocab,
 	}
+}
 
-	var matches []string
-	for m, _ := re.FindStringMatch(s); m != nil; m, _ = re.FindNextMatch(m) {
-		matches = append(matches, m.String())
+func (bpe BytePairEncoding) Is(id uint32, special Special) bool {
+	return bpe.vocab.Is(id, special)
+}
+
+func (bpe *BytePairEncoding) split(s string) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for m, _ := bpe.pre.FindStringMatch(s); m != nil; m, _ = bpe.pre.FindNextMatch(m) {
+			if !yield(m.String()) {
+				break
+			}
+		}
 	}
-
-	return matches, nil
 }
 
 // fragment is a string fragment and their corresponding token IDs
@@ -138,9 +145,9 @@ type merge struct {
 
 func (bpe BytePairEncoding) Encode(s string) ([]int32, error) {
 	fragments := []fragment{{value: s}}
-	for _, special := range bpe.Vocabulary.SpecialVocabulary() {
+	for _, special := range bpe.vocab.SpecialVocabulary() {
 		// TODO: process special tokens concurrently
-		id := bpe.Vocabulary.Encode(special)
+		id := bpe.vocab.Encode(special)
 		for i := 0; i < len(fragments); i++ {
 			frag := fragments[i]
 			if len(frag.ids) > 0 {
@@ -173,13 +180,7 @@ func (bpe BytePairEncoding) Encode(s string) ([]int32, error) {
 			continue
 		}
 
-		// split fragment using pretokenizer
-		splits, err := bpe.split(frag.value)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, split := range splits {
+		for split := range bpe.split(frag.value) {
 			// TODO: process splits concurrently
 			var sb strings.Builder
 			for _, b := range []byte(split) {
@@ -197,7 +198,7 @@ func (bpe BytePairEncoding) Encode(s string) ([]int32, error) {
 			}
 
 			// short circuit if the fragment is in the vocabulary
-			if id := bpe.Vocabulary.Encode(sb.String()); id >= 0 {
+			if id := bpe.vocab.Encode(sb.String()); id >= 0 {
 				ids = append(ids, id)
 				slog.Debug("encoded", "text", sb.String(), "ids", []int32{id})
 				continue
@@ -219,7 +220,7 @@ func (bpe BytePairEncoding) Encode(s string) ([]int32, error) {
 				}
 
 				left, right := string(merges[a].runes), string(merges[b].runes)
-				rank := bpe.Vocabulary.Merge(left, right)
+				rank := bpe.vocab.Merge(left, right)
 				if rank < 0 {
 					return nil
 				}
@@ -271,7 +272,7 @@ func (bpe BytePairEncoding) Encode(s string) ([]int32, error) {
 			for _, merge := range merges {
 				if len(merge.runes) > 0 {
 					// TODO: handle the edge case where the rune isn't in the vocabulary
-					if id := bpe.Vocabulary.Encode(string(merge.runes)); id >= 0 {
+					if id := bpe.vocab.Encode(string(merge.runes)); id >= 0 {
 						ids = append(ids, id)
 						slog.Debug("encoded", "text", string(merge.runes), "ids", []int32{id})
 					}
@@ -286,7 +287,7 @@ func (bpe BytePairEncoding) Encode(s string) ([]int32, error) {
 func (bpe BytePairEncoding) Decode(ids []int32) (string, error) {
 	var sb strings.Builder
 	for _, id := range ids {
-		for _, r := range bpe.Vocabulary.Decode(id) {
+		for _, r := range bpe.vocab.Decode(id) {
 			switch {
 			case r == 0x0100:
 				// this produces 0x00 aka NULL
