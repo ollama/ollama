@@ -8,6 +8,7 @@ import (
 
 type Model struct {
 	model.Base
+	model.BytePairEncoding
 
 	*VisionModel `gguf:"v,vision"`
 	*TextModel
@@ -15,14 +16,22 @@ type Model struct {
 	Projector *nn.Linear `gguf:"mm.0"`
 
 	ImageProcessor
-	TextProcessor
 }
 
 func New(c ml.Config) (model.Model, error) {
 	return &Model{
+		BytePairEncoding: model.NewBytePairEncoding(
+			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
+			&model.Vocabulary{
+				Values: c.Strings("tokenizer.ggml.tokens"),
+				Types:  c.Uints("tokenizer.ggml.token_type"),
+				Merges: c.Strings("tokenizer.ggml.merges"),
+				BOS:    c.Uint("tokenizer.ggml.bos_token_id"),
+				EOS:    c.Uint("tokenizer.ggml.eos_token_id"),
+			},
+		),
 		ImageProcessor: newImageProcessor(c),
 		VisionModel:    newVisionModel(c),
-		TextProcessor:  newTextProcessor(c),
 		TextModel:      newTextModel(c),
 	}, nil
 }
