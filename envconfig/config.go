@@ -93,6 +93,10 @@ func Models() string {
 	return filepath.Join(home, ".ollama", "models")
 }
 
+func LogFormatJSON() bool {
+	return os.Getenv("OLLAMA_LOG_FORMAT_JSON") == "true"
+}
+
 // KeepAlive returns the duration that models stay loaded in memory. KeepAlive can be configured via the OLLAMA_KEEP_ALIVE environment variable.
 // Negative values are treated as infinite. Zero is treated as no keep alive.
 // Default is 5 minutes.
