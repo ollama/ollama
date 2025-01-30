@@ -1,21 +1,21 @@
 package openai
 
 import (
-	"bytes"
-	"encoding/base64"
-	"encoding/json"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"reflect"
-	"strings"
-	"testing"
-	"time"
+    "bytes"
+    "encoding/base64"
+    "encoding/json"
+    "io"
+    "net/http"
+    "net/http/httptest"
+    "reflect"
+    "strings"
+    "testing"
+    "time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/google/go-cmp/cmp"
+    "github.com/gin-gonic/gin"
+    "github.com/google/go-cmp/cmp"
 
-	"github.com/ollama/ollama/api"
+    "github.com/ollama/ollama/api"
 )
 
 const (
@@ -727,3 +727,104 @@ func TestRetrieveMiddleware(t *testing.T) {
 		}
 	}
 }
+
+// Test generated using Keploy
+func TestToolCallId_UniqueID(t *testing.T) {
+    id1 := toolCallId()
+    id2 := toolCallId()
+
+    if !strings.HasPrefix(id1, "call_") || len(id1) != 13 {
+        t.Errorf("Expected ID to have prefix 'call_' and length 13, got %s", id1)
+    }
+
+    if !strings.HasPrefix(id2, "call_") || len(id2) != 13 {
+        t.Errorf("Expected ID to have prefix 'call_' and length 13, got %s", id2)
+    }
+
+    if id1 == id2 {
+        t.Errorf("Expected unique IDs, but got identical IDs: %s and %s", id1, id2)
+    }
+}
+
+
+// Test generated using Keploy
+func TestToToolCalls_Conversion(t *testing.T) {
+    input := []api.ToolCall{
+        {
+            Function: api.ToolCallFunction{
+                Name:      "testFunction",
+                Arguments: map[string]interface{}{"key": "value"},
+            },
+        },
+    }
+
+    result := toToolCalls(input)
+
+    if len(result) != 1 {
+        t.Fatalf("Expected 1 ToolCall, got %d", len(result))
+    }
+
+    if result[0].Function.Name != "testFunction" {
+        t.Errorf("Expected function name 'testFunction', got %s", result[0].Function.Name)
+    }
+
+    expectedArgs := `{"key":"value"}`
+    if result[0].Function.Arguments != expectedArgs {
+        t.Errorf("Expected arguments %s, got %s", expectedArgs, result[0].Function.Arguments)
+    }
+
+    if !strings.HasPrefix(result[0].ID, "call_") {
+        t.Errorf("Expected ID to have prefix 'call_', got %s", result[0].ID)
+    }
+}
+
+
+// Test generated using Keploy
+func TestToChunk_Conversion(t *testing.T) {
+    input := api.ChatResponse{
+        Model: "test-model",
+        Message: api.Message{
+            Content: "Hello",
+            ToolCalls: []api.ToolCall{
+                {
+                    Function: api.ToolCallFunction{
+                        Name:      "testFunction",
+                        Arguments: map[string]interface{}{"key": "value"},
+                    },
+                },
+            },
+        },
+        DoneReason: "completed",
+    }
+
+    result := toChunk("test-id", input)
+
+    if result.Id != "test-id" {
+        t.Errorf("Expected ID 'test-id', got %s", result.Id)
+    }
+
+    if result.Model != "test-model" {
+        t.Errorf("Expected model 'test-model', got %s", result.Model)
+    }
+
+    if len(result.Choices) != 1 {
+        t.Fatalf("Expected 1 choice, got %d", len(result.Choices))
+    }
+
+    if result.Choices[0].Delta.Content != "Hello" {
+        t.Errorf("Expected content 'Hello', got %s", result.Choices[0].Delta.Content)
+    }
+
+    if result.Choices[0].FinishReason == nil || *result.Choices[0].FinishReason != "completed" {
+        t.Errorf("Expected finish reason 'completed', got %v", result.Choices[0].FinishReason)
+    }
+
+    if len(result.Choices[0].Delta.ToolCalls) != 1 {
+        t.Fatalf("Expected 1 tool call, got %d", len(result.Choices[0].Delta.ToolCalls))
+    }
+
+    if result.Choices[0].Delta.ToolCalls[0].Function.Name != "testFunction" {
+        t.Errorf("Expected tool call function name 'testFunction', got %s", result.Choices[0].Delta.ToolCalls[0].Function.Name)
+    }
+}
+
