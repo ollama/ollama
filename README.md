@@ -32,7 +32,7 @@ The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `olla
 
 - [ollama-python](https://github.com/ollama/ollama-python)
 - [ollama-js](https://github.com/ollama/ollama-js)
-
+- [ollama-zig](https://github.com/dravenk/ollama-zig)
 ### Community
 
 - [Discord](https://discord.gg/ollama)
