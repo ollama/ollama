@@ -4,6 +4,7 @@ package discover
 
 /*
 #cgo CFLAGS: -x objective-c
+#cgo CPPFLAGS: -O3
 #cgo LDFLAGS: -framework Foundation -framework CoreGraphics -framework Metal
 #include "gpu_info_darwin.h"
 */
