@@ -44,8 +44,6 @@ func BuildGraph(proc model.TextProcessor) (*PDANode, map[JSONState]*PDANode, err
 	// consider adding a node to just point to values, could be good to compute that
 	// mask rather than many different nodes
 
-	// Connect nodes
-	// TODO: if all are single tokens then this can just be connected instead of defining the token
 	stateToNodeMap[StateStart].TransitionEdges['{'] = stateToNodeMap[StateInObject]
 	stateToNodeMap[StateStart].TransitionEdges['['] = stateToNodeMap[StateInList]
 
@@ -161,6 +159,7 @@ func addValueConnections(node *PDANode, stateToNodeMap map[JSONState]*PDANode) {
 	node.TransitionEdges['n'] = stateToNodeMap[StateInNull]
 }
 
+// TODO: tough life fr. plz fix.
 func PreComputeValidStates(stateToNodeMap map[JSONState]*PDANode, proc model.TextProcessor) error {
 
 	vocab := proc.GetVocabulary()
@@ -176,33 +175,42 @@ func PreComputeValidStates(stateToNodeMap map[JSONState]*PDANode, proc model.Tex
 
 	var err error
 	for _, node := range stateToNodeMap {
-		for i := range vocab.Values {
-			token := decodedToks[i]
-			// Skip EOS/BOS tokens and empty tokens since they are not valid in JSON
-			if proc.Is(uint32(i), model.SpecialEOS) || proc.Is(uint32(i), model.SpecialBOS) || token == "" || token == "\"\"" {
-				continue
-			}
-			valid := true
-			curNode := node
-			consumedSpecialRunes := make(map[rune]bool)
-			for _, r := range token {
-				valid, curNode, err = isRuneValid(r, curNode, consumedSpecialRunes)
-				if err != nil {
-					return err
-				}
-				if !valid {
-					break
-				}
-			}
-			if valid {
-				node.MaskTokenIDToNode[int32(i)] = curNode.State
-			}
+		err = createMask(node, proc, decodedToks, vocab)
+		if err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-// garbage interface plz fix
+func createMask(node *PDANode, proc model.TextProcessor, decodedToks []string, vocab *model.Vocabulary) error {
+	for i := range vocab.Values {
+		token := decodedToks[i]
+		// Skip EOS/BOS tokens and empty tokens since they are not valid in JSON
+		if proc.Is(uint32(i), model.SpecialEOS) || proc.Is(uint32(i), model.SpecialBOS) || token == "" || token == "\"\"" {
+			continue
+		}
+		valid := true
+		curNode := node
+		consumedSpecialRunes := make(map[rune]bool)
+		var err error
+		for _, r := range token {
+			valid, curNode, err = isRuneValid(r, curNode, consumedSpecialRunes)
+			if err != nil {
+				return err
+			}
+			if !valid {
+				break
+			}
+		}
+		if valid {
+			node.MaskTokenIDToNode[int32(i)] = curNode.State
+		}
+	}
+	return nil
+}
+
+// TODO: garbage interface plz fix
 func isRuneValid(r rune, curNode *PDANode, consumedSpecialRunes map[rune]bool) (bool, *PDANode, error) {
 	if consumedSpecialRunes[r] {
 		return false, nil, nil

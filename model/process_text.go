@@ -21,6 +21,7 @@ type TextProcessor interface {
 	Encode(string) ([]int32, error)
 	Decode([]int32) (string, error)
 	Is(uint32, Special) bool
+
 	GetVocabulary() *Vocabulary
 }
 
@@ -99,14 +100,14 @@ func (v *Vocabulary) Merge(left, right string) int {
 	return -1
 }
 
+func (v *Vocabulary) GetVocabulary() *Vocabulary {
+	return v
+}
+
 type BytePairEncoding struct {
 	Pretokenizer string
 
 	*Vocabulary
-}
-
-func (bpe BytePairEncoding) GetVocabulary() *Vocabulary {
-	return bpe.Vocabulary
 }
 
 func (bpe BytePairEncoding) split(s string) ([]string, error) {
