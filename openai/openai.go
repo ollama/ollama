@@ -487,13 +487,13 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	}
 
 	DEFAULT_NUM_CTX := 2048
+	// set num_ctx to max_completion_tokens if it's greater than num_ctx
 	if r.MaxCompletionTokens != nil {
 		options["num_predict"] = *r.MaxCompletionTokens
-
-		if numCtx, ok := options["num_ctx"].(int); ok && *r.MaxCompletionTokens > numCtx {
+		if r.NumCtx != nil && *r.MaxCompletionTokens > *r.NumCtx {
 			options["num_ctx"] = *r.MaxCompletionTokens
 		} else if *r.MaxCompletionTokens > DEFAULT_NUM_CTX {
-			options["num_ctx"] = DEFAULT_NUM_CTX
+			options["num_ctx"] = *r.MaxCompletionTokens
 		}
 	}
 
