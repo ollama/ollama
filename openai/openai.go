@@ -85,6 +85,7 @@ type ChatCompletionRequest struct {
 	Stream              bool            `json:"stream"`
 	StreamOptions       *StreamOptions  `json:"stream_options"`
 	MaxCompletionTokens *int            `json:"max_completion_tokens"`
+	// Deprecated: Use [ChatCompletionRequest.MaxCompletionTokens]
 	MaxTokens           *int            `json:"max_tokens" deprecated:"use max_completion_tokens instead"`
 	Seed                *int            `json:"seed"`
 	Stop                any             `json:"stop"`
