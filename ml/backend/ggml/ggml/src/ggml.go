@@ -1,7 +1,6 @@
 package ggml
 
 // #cgo CXXFLAGS: -std=c++17
-// #cgo CPPFLAGS: -O3
 // #cgo CPPFLAGS: -DNDEBUG -DGGML_USE_CPU
 // #cgo CPPFLAGS: -I${SRCDIR}/../include -I${SRCDIR}/ggml-cpu
 // #cgo windows LDFLAGS: -lmsvcrt -static -static-libgcc -static-libstdc++
