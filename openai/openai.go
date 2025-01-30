@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"math/rand"
 	"net/http"
 	"strings"
@@ -210,109 +209,6 @@ func toUsage(r api.ChatResponse) Usage {
 		PromptTokens:     r.PromptEvalCount,
 		CompletionTokens: r.EvalCount,
 		TotalTokens:      r.PromptEvalCount + r.EvalCount,
-	}
-}
-
-func toolCallId() string {
-	const letterBytes = "abcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, 8)
-	for i := range b {
-		b[i] = letterBytes[rand.Intn(len(letterBytes))]
-	}
-	return "call_" + strings.ToLower(string(b))
-}
-
-func toToolCalls(tc []api.ToolCall) []ToolCall {
-	toolCalls := make([]ToolCall, len(tc))
-	for i, tc := range tc {
-		toolCalls[i].ID = toolCallId()
-		toolCalls[i].Type = "function"
-		toolCalls[i].Function.Name = tc.Function.Name
-		toolCalls[i].Index = tc.Function.Index
-
-		args, err := json.Marshal(tc.Function.Arguments)
-		if err != nil {
-			slog.Error("could not marshall function arguments to json", "error", err)
-			continue
-		}
-
-		toolCalls[i].Function.Arguments = string(args)
-	}
-	return toolCalls
-}
-
-func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
-	toolCalls := toToolCalls(r.Message.ToolCalls)
-	return ChatCompletion{
-		Id:                id,
-		Object:            "chat.completion",
-		Created:           r.CreatedAt.Unix(),
-		Model:             r.Model,
-		SystemFingerprint: "fp_ollama",
-		Choices: []Choice{{
-			Index:   0,
-			Message: Message{Role: r.Message.Role, Content: r.Message.Content, ToolCalls: toolCalls},
-			FinishReason: func(reason string) *string {
-				if len(toolCalls) > 0 {
-					reason = "tool_calls"
-				}
-				if len(reason) > 0 {
-					return &reason
-				}
-				return nil
-			}(r.DoneReason),
-		}},
-		Usage: toUsage(r),
-	}
-}
-
-func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
-	toolCalls := toToolCalls(r.Message.ToolCalls)
-	return ChatCompletionChunk{
-		Id:                id,
-		Object:            "chat.completion.chunk",
-		Created:           time.Now().Unix(),
-		Model:             r.Model,
-		SystemFingerprint: "fp_ollama",
-		Choices: []ChunkChoice{{
-			Index: 0,
-			Delta: Message{Role: "assistant", Content: r.Message.Content, ToolCalls: toolCalls},
-			FinishReason: func(reason string) *string {
-				if len(reason) > 0 {
-					return &reason
-				}
-				return nil
-			}(r.DoneReason),
-		}},
-	}
-}
-
-func toUsageGenerate(r api.GenerateResponse) Usage {
-	return Usage{
-		PromptTokens:     r.PromptEvalCount,
-		CompletionTokens: r.EvalCount,
-		TotalTokens:      r.PromptEvalCount + r.EvalCount,
-	}
-}
-
-func toCompletion(id string, r api.GenerateResponse) Completion {
-	return Completion{
-		Id:                id,
-		Object:            "text_completion",
-		Created:           r.CreatedAt.Unix(),
-		Model:             r.Model,
-		SystemFingerprint: "fp_ollama",
-		Choices: []CompleteChunkChoice{{
-			Text:  r.Response,
-			Index: 0,
-			FinishReason: func(reason string) *string {
-				if len(reason) > 0 {
-					return &reason
-				}
-				return nil
-			}(r.DoneReason),
-		}},
-		Usage: toUsageGenerate(r),
 	}
 }
 
@@ -633,48 +529,9 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 	}
 
 	// chat chunk
-	if w.stream {
-		c := toChunk(w.id, chatResponse)
-		d, err := json.Marshal(c)
-		if err != nil {
-			return 0, err
-		}
-
-		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
-		_, err = w.ResponseWriter.Write([]byte(fmt.Sprintf("data: %s\n\n", d)))
-		if err != nil {
-			return 0, err
-		}
-
-		if chatResponse.Done {
-			if w.streamOptions != nil && w.streamOptions.IncludeUsage {
-				u := toUsage(chatResponse)
-				c.Usage = &u
-				c.Choices = []ChunkChoice{}
-				d, err := json.Marshal(c)
-				if err != nil {
-					return 0, err
-				}
-				_, err = w.ResponseWriter.Write([]byte(fmt.Sprintf("data: %s\n\n", d)))
-				if err != nil {
-					return 0, err
-				}
-			}
-			_, err = w.ResponseWriter.Write([]byte("data: [DONE]\n\n"))
-			if err != nil {
-				return 0, err
-			}
-		}
-
-		return len(data), nil
-	}
 
 	// chat completion
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w.ResponseWriter).Encode(toChatCompletion(w.id, chatResponse))
-	if err != nil {
-		return 0, err
-	}
 
 	return len(data), nil
 }
@@ -712,35 +569,11 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 			return 0, err
 		}
 
-		if generateResponse.Done {
-			if w.streamOptions != nil && w.streamOptions.IncludeUsage {
-				u := toUsageGenerate(generateResponse)
-				c.Usage = &u
-				c.Choices = []CompleteChunkChoice{}
-				d, err := json.Marshal(c)
-				if err != nil {
-					return 0, err
-				}
-				_, err = w.ResponseWriter.Write([]byte(fmt.Sprintf("data: %s\n\n", d)))
-				if err != nil {
-					return 0, err
-				}
-			}
-			_, err = w.ResponseWriter.Write([]byte("data: [DONE]\n\n"))
-			if err != nil {
-				return 0, err
-			}
-		}
-
 		return len(data), nil
 	}
 
 	// completion
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w.ResponseWriter).Encode(toCompletion(w.id, generateResponse))
-	if err != nil {
-		return 0, err
-	}
 
 	return len(data), nil
 }
