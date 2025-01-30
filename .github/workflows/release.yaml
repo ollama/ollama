@@ -5,6 +5,10 @@ on:
     tags:
       - 'v*'
 
+env:
+  CGO_CFLAGS: '-O3'
+  CGO_CXXFLAGS: '-O3'
+
 jobs:
   setup-environment:
     runs-on: ubuntu-latest
@@ -291,7 +295,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
       - run: |
           apt-get update && apt-get install pigz
-          for TARGET in ${{ matrix.targets }}; do docker buildx build --platform $PLATFORM --target $TARGET --build-arg GOFLAGS --output type=local,dest=dist/$PLATFORM .; done
+          for TARGET in ${{ matrix.targets }}; do docker buildx build --platform $PLATFORM --target $TARGET --build-arg GOFLAGS --build-arg CGO_CFLAGS --build-args CGO_CXXFLAGS --output type=local,dest=dist/$PLATFORM .; done
           tar c -C dist/$PLATFORM . | pigz -9cv >dist/ollama-${PLATFORM//\//-}.tgz
         env:
           PLATFORM: ${{ matrix.os }}/${{ matrix.arch }}
@@ -308,12 +312,16 @@ jobs:
           - flavor: 'latest=false'
             platforms: linux/amd64,linux/arm64
             build-args: |
+              CGO_CFLAGS=${{ env.CGO_CFLAGS }}
+              CGO_CXXFLAGS=${{ env.CGO_CXXFLAGS }}
               GOFLAGS=${{ needs.setup-environment.outputs.GOFLAGS }}
           - flavor: 'latest=false,suffix=rocm'
             platforms: linux/amd64
             build-args: |
-              GOFLAGS=${{ needs.setup-environment.outputs.GOFLAGS }}
+              CGO_CFLAGS=${{ env.CGO_CFLAGS }}
+              CGO_CXXFLAGS=${{ env.CGO_CXXFLAGS }}
               FLAVOR=rocm
+              GOFLAGS=${{ needs.setup-environment.outputs.GOFLAGS }}
     runs-on: linux
     environment: release
     needs: setup-environment
