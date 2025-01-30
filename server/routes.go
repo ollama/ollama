@@ -150,6 +150,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	// expire the runner
 	if req.Prompt == "" && req.KeepAlive != nil && int(req.KeepAlive.Seconds()) == 0 {
+		s.sched.expireRunner(model)
 
 		c.JSON(http.StatusOK, api.GenerateResponse{
 			Model:      req.Model,
@@ -1253,6 +1254,7 @@ func Serve(ln net.Listener) error {
 		<-signals
 		srvr.Close()
 		schedDone()
+		sched.unloadAllRunners()
 		done()
 	}()
 
@@ -1382,7 +1384,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	// expire the runner
 	if len(req.Messages) == 0 && req.KeepAlive != nil && int(req.KeepAlive.Seconds()) == 0 {
-		_, err := GetModel(req.Model)
+		model, err := GetModel(req.Model)
 		if err != nil {
 			switch {
 			case os.IsNotExist(err):
@@ -1394,6 +1396,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 			return
 		}
+		s.sched.expireRunner(model)
 
 		c.JSON(http.StatusOK, api.ChatResponse{
 			Model:      req.Model,
