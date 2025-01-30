@@ -24,12 +24,14 @@ var LibOllamaPath string = func() string {
 		return ""
 	}
 
-	libPath := filepath.Dir(exe)
+	var libPath string
 	switch runtime.GOOS {
 	case "windows":
 		libPath = filepath.Join(filepath.Dir(exe), "lib", "ollama")
 	case "linux":
 		libPath = filepath.Join(filepath.Dir(exe), "..", "lib", "ollama")
+	case "darwin":
+		libPath = filepath.Dir(exe)
 	}
 
 	cwd, err := os.Getwd()
@@ -37,17 +39,19 @@ var LibOllamaPath string = func() string {
 		return ""
 	}
 
-	// build paths for development
-	buildPaths := []string{
+	paths := []string{
+		libPath,
+
+		// build paths for development
 		filepath.Join(filepath.Dir(exe), "build", "lib", "ollama"),
 		filepath.Join(cwd, "build", "lib", "ollama"),
 	}
 
-	for _, p := range buildPaths {
+	for _, p := range paths {
 		if _, err := os.Stat(p); err == nil {
 			return p
 		}
 	}
 
-	return libPath
+	return filepath.Dir(exe)
 }()
