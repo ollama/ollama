@@ -477,24 +477,17 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		options["stop"] = stops
 	}
 
+	if r.NumCtx != nil {
+		options["num_ctx"] = *r.NumCtx
+	}
+
 	// Deprecated: MaxTokens is deprecated, use MaxCompletionTokens instead
 	if r.MaxTokens != nil {
 		r.MaxCompletionTokens = r.MaxTokens
 	}
 
-	if r.NumCtx != nil {
-		options["num_ctx"] = *r.NumCtx
-	}
-
-	DEFAULT_NUM_CTX := 2048
-	// set num_ctx to max_completion_tokens if it's greater than num_ctx
 	if r.MaxCompletionTokens != nil {
 		options["num_predict"] = *r.MaxCompletionTokens
-		if r.NumCtx != nil && *r.MaxCompletionTokens > *r.NumCtx {
-			options["num_ctx"] = *r.MaxCompletionTokens
-		} else if *r.MaxCompletionTokens > DEFAULT_NUM_CTX {
-			options["num_ctx"] = *r.MaxCompletionTokens
-		}
 	}
 
 	if r.Temperature != nil {

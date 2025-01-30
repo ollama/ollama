@@ -81,7 +81,7 @@ func TestChatMiddleware(t *testing.T) {
 					{"role": "user", "content": "Hello"}
 				],
 				"stream":            true,
-				"max_completion_tokens":        999,
+				"max_tokens":        999,
 				"seed":              123,
 				"stop":              ["\n", "stop"],
 				"temperature":       3.0,
@@ -333,7 +333,7 @@ func TestChatMiddleware(t *testing.T) {
 			},
 		},
 		{
-			name: "chat handler with max_completion_tokens < num_ctx",
+			name: "chat handler with max_completion_tokens",
 			body: `{
 				"model": "test-model",
 				"messages": [{"role": "user", "content": "Hello"}],
@@ -344,25 +344,6 @@ func TestChatMiddleware(t *testing.T) {
 				Messages: []api.Message{{Role: "user", Content: "Hello"}},
 				Options: map[string]any{
 					"num_predict": 2.0, // float because JSON doesn't distinguish between float and int
-					"temperature": 1.0,
-					"top_p":       1.0,
-				},
-				Stream: &False,
-			},
-		},
-		{
-			name: "chat handler with max_completion_tokens > num_ctx",
-			body: `{
-				"model": "test-model",
-				"messages": [{"role": "user", "content": "Hello"}],
-				"max_completion_tokens": 4096
-			}`,
-			req: api.ChatRequest{
-				Model:    "test-model",
-				Messages: []api.Message{{Role: "user", Content: "Hello"}},
-				Options: map[string]any{
-					"num_predict": 4096.0, // float because JSON doesn't distinguish between float and int
-					"num_ctx":     4096.0,
 					"temperature": 1.0,
 					"top_p":       1.0,
 				},
