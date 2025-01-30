@@ -828,3 +828,78 @@ func TestToChunk_Conversion(t *testing.T) {
     }
 }
 
+// Test generated using Keploy
+func TestToChunk_NoDoneReasonOrToolCalls(t *testing.T) {
+    input := api.ChatResponse{
+        Model: "test-model",
+        Message: api.Message{
+            Content: "Hello",
+            ToolCalls: nil,
+        },
+        DoneReason: "",
+    }
+
+    result := toChunk("test-id", input)
+
+    if result.Id != "test-id" {
+        t.Errorf("Expected ID 'test-id', got %s", result.Id)
+    }
+
+    if result.Model != "test-model" {
+        t.Errorf("Expected model 'test-model', got %s", result.Model)
+    }
+
+    if len(result.Choices) != 1 {
+        t.Fatalf("Expected 1 choice, got %d", len(result.Choices))
+    }
+
+    if result.Choices[0].Delta.Content != "Hello" {
+        t.Errorf("Expected content 'Hello', got %s", result.Choices[0].Delta.Content)
+    }
+
+    if result.Choices[0].FinishReason != nil {
+        t.Errorf("Expected nil finish reason, got %v", result.Choices[0].FinishReason)
+    }
+}
+
+
+// Test generated using Keploy
+func TestToChatCompletion_ToolCallsFinishReason(t *testing.T) {
+    input := api.ChatResponse{
+        Model: "test-model",
+        CreatedAt: time.Now(),
+        Message: api.Message{
+            Role:    "assistant",
+            Content: "Hello",
+            ToolCalls: []api.ToolCall{
+                {
+                    Function: api.ToolCallFunction{
+                        Name:      "testFunction",
+                        Arguments: map[string]interface{}{"key": "value"},
+                    },
+                },
+            },
+        },
+        DoneReason: "",
+    }
+
+    result := toChatCompletion("test-id", input)
+
+    if result.Id != "test-id" {
+        t.Errorf("Expected ID 'test-id', got %s", result.Id)
+    }
+
+    if result.Model != "test-model" {
+        t.Errorf("Expected model 'test-model', got %s", result.Model)
+    }
+
+    if len(result.Choices) != 1 {
+        t.Fatalf("Expected 1 choice, got %d", len(result.Choices))
+    }
+
+    if result.Choices[0].FinishReason == nil || *result.Choices[0].FinishReason != "tool_calls" {
+        t.Errorf("Expected finish reason 'tool_calls', got %v", result.Choices[0].FinishReason)
+    }
+}
+
+
