@@ -104,6 +104,8 @@ func temp() error {
 		}
 	}
 
+	pdaSampler := sample.NewPushdownSampler(m.(model.TextProcessor))
+	var stringBuffer string
 	var offset int
 	for range args.n {
 		logit, err := model.Forward(m, append(opts, model.WithInputIDs(inputIDs), model.WithOffset(offset))...)
@@ -118,7 +120,10 @@ func temp() error {
 		}
 
 		// do sampling
-		f64s, err = sample.Sample(f64s, sample.Greedy())
+		// []ints back
+		// ints map to sampled logits
+		f64s, err = sample.Sample(f64s, pdaSampler, sample.Greedy())
+
 		if err != nil {
 			return err
 		}
@@ -129,6 +134,7 @@ func temp() error {
 				outputIDs = append(outputIDs, int32(f64))
 			}
 		}
+		pdaSampler.UpdateState(outputIDs)
 
 		if len(outputIDs) == 0 {
 			break
@@ -141,8 +147,9 @@ func temp() error {
 			return err
 		}
 
-		fmt.Print(s)
-
+		// fmt.Print(s)
+		stringBuffer += s
+		fmt.Println("--- stringBuffer", stringBuffer)
 		inputIDs = append(inputIDs, outputIDs...)
 		if args.cache {
 			offset = len(inputIDs) - 1

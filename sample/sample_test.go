@@ -3,13 +3,8 @@ package sample
 import (
 	"fmt"
 	"math"
-	"math/rand"
-	"os"
-	"runtime"
 	"slices"
 	"testing"
-
-	"runtime/trace"
 
 	"gonum.org/v1/gonum/floats"
 )

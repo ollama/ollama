@@ -165,26 +165,16 @@ func (s weighed) Sample(logits []float64) ([]float64, error) {
 	if len(logitsCopy) == 0 {
 		return nil, errors.New("no valid tokens found")
 	}
-
-	// usually, a softmax is applied to sample from the logits
-	// in this case the uv sampler normalizes the logits so that the sum of the weights is 1
+	logitsCopy, err := computeSoftmax(logitsCopy)
+	if err != nil {
+		return nil, err
+	}
 	w := sampleuv.NewWeighted(logitsCopy, nil)
 	if v, ok := w.Take(); ok {
 		// returns the token ID
 		return []float64{float64(indices[v])}, nil
 	}
 	return nil, errors.New("weighed sampler failed")
-}
-
-// TODO: remove after next PR merge
-type greedy struct{}
-
-func Greedy() Sampler {
-	return greedy{}
-}
-
-func (greedy) Sample(logits []float64) ([]float64, error) {
-	return []float64{float64(floats.MaxIdx(logits))}, nil
 }
 
 func Sample(logits []float64, samplers ...Sampler) ([]float64, error) {
