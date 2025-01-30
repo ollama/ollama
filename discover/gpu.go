@@ -440,7 +440,7 @@ func GetGPUInfo() GpuInfoList {
 				gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
 				gpuInfo.Compute = fmt.Sprintf("%d.%d", memInfo.major, memInfo.minor)
 				gpuInfo.MinimumMemory = 0
-				gpuInfo.DependencyPath = depPath
+				gpuInfo.DependencyPath = depPaths
 				gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
 				gpuInfo.DriverMajor = int(memInfo.major)
 				gpuInfo.DriverMinor = int(memInfo.minor)
