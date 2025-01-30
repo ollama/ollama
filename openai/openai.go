@@ -80,22 +80,22 @@ type StreamOptions struct {
 }
 
 type ChatCompletionRequest struct {
-	Model               string          `json:"model"`
-	Messages            []Message       `json:"messages"`
-	Stream              bool            `json:"stream"`
-	StreamOptions       *StreamOptions  `json:"stream_options"`
-	MaxCompletionTokens *int            `json:"max_completion_tokens"`
+	Model               string         `json:"model"`
+	Messages            []Message      `json:"messages"`
+	Stream              bool           `json:"stream"`
+	StreamOptions       *StreamOptions `json:"stream_options"`
+	MaxCompletionTokens *int           `json:"max_completion_tokens"`
 	// Deprecated: Use [ChatCompletionRequest.MaxCompletionTokens]
-	MaxTokens           *int            `json:"max_tokens" deprecated:"use max_completion_tokens instead"`
-	Seed                *int            `json:"seed"`
-	Stop                any             `json:"stop"`
-	Temperature         *float64        `json:"temperature"`
-	FrequencyPenalty    *float64        `json:"frequency_penalty"`
-	PresencePenalty     *float64        `json:"presence_penalty"`
-	TopP                *float64        `json:"top_p"`
-	ResponseFormat      *ResponseFormat `json:"response_format"`
-	Tools               []api.Tool      `json:"tools"`
-	NumCtx              *int            `json:"num_ctx"`
+	MaxTokens        *int            `json:"max_tokens" deprecated:"use max_completion_tokens instead"`
+	Seed             *int            `json:"seed"`
+	Stop             any             `json:"stop"`
+	Temperature      *float64        `json:"temperature"`
+	FrequencyPenalty *float64        `json:"frequency_penalty"`
+	PresencePenalty  *float64        `json:"presence_penalty"`
+	TopP             *float64        `json:"top_p"`
+	ResponseFormat   *ResponseFormat `json:"response_format"`
+	Tools            []api.Tool      `json:"tools"`
+	NumCtx           *int            `json:"num_ctx"`
 }
 
 type ChatCompletion struct {
