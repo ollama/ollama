@@ -39,23 +39,9 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
-var mode string = gin.DebugMode
-
 type Server struct {
 	addr  net.Addr
 	sched *Scheduler
-}
-
-func init() {
-	switch mode {
-	case gin.DebugMode:
-	case gin.ReleaseMode:
-	case gin.TestMode:
-	default:
-		mode = gin.DebugMode
-	}
-
-	gin.SetMode(mode)
 }
 
 var (
