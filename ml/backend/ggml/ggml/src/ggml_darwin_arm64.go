@@ -1,5 +1,6 @@
 package ggml
 
+// #cgo CPPFLAGS: -O3
 // #cgo CPPFLAGS: -DGGML_USE_METAL -DGGML_USE_BLAS
 // #cgo LDFLAGS: -framework Foundation
 import "C"
