@@ -1,11 +1,15 @@
 package cmd
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -13,6 +17,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/readline"
+	"github.com/ollama/ollama/types/errtypes"
 )
 
 type MultilineState int
@@ -198,6 +203,23 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			if len(args) != 2 {
 				fmt.Println("Usage:\n  /save <modelname>")
 				continue
+			}
+
+			client, err := api.ClientFromEnvironment()
+			if err != nil {
+				fmt.Println("error: couldn't connect to ollama server")
+				return err
+			}
+
+			req := NewCreateRequest(args[1], opts)
+			fn := func(resp api.ProgressResponse) error { return nil }
+			err = client.Create(cmd.Context(), req, fn)
+			if err != nil {
+				if strings.Contains(err.Error(), errtypes.InvalidModelNameErrMsg) {
+					fmt.Printf("error: The model name '%s' is invalid\n", args[1])
+					continue
+				}
+				return err
 			}
 			fmt.Printf("Created new model '%s'\n", args[1])
 			continue
@@ -385,6 +407,15 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			args := strings.Fields(line)
 			isFile := false
 
+			if opts.MultiModal {
+				for _, f := range extractFileNames(line) {
+					if strings.HasPrefix(f, args[0]) {
+						isFile = true
+						break
+					}
+				}
+			}
+
 			if !isFile {
 				fmt.Printf("Unknown command '%s'. Type /? for help\n", args[0])
 				continue
@@ -397,6 +428,16 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 		if sb.Len() > 0 && multiline == MultilineNone {
 			newMessage := api.Message{Role: "user", Content: sb.String()}
+
+			if opts.MultiModal {
+				msg, images, err := extractFileData(sb.String())
+				if err != nil {
+					return err
+				}
+
+				newMessage.Content = msg
+				newMessage.Images = images
+			}
 
 			opts.Messages = append(opts.Messages, newMessage)
 
@@ -411,4 +452,118 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			sb.Reset()
 		}
 	}
+}
+
+func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
+	req := &api.CreateRequest{
+		Name: name,
+		From: cmp.Or(opts.ParentModel, opts.Model),
+	}
+
+	if opts.System != "" {
+		req.System = opts.System
+	}
+
+	if len(opts.Options) > 0 {
+		req.Parameters = opts.Options
+	}
+
+	if len(opts.Messages) > 0 {
+		req.Messages = opts.Messages
+	}
+
+	return req
+}
+
+func normalizeFilePath(fp string) string {
+	return strings.NewReplacer(
+		"\\ ", " ", // Escaped space
+		"\\(", "(", // Escaped left parenthesis
+		"\\)", ")", // Escaped right parenthesis
+		"\\[", "[", // Escaped left square bracket
+		"\\]", "]", // Escaped right square bracket
+		"\\{", "{", // Escaped left curly brace
+		"\\}", "}", // Escaped right curly brace
+		"\\$", "$", // Escaped dollar sign
+		"\\&", "&", // Escaped ampersand
+		"\\;", ";", // Escaped semicolon
+		"\\'", "'", // Escaped single quote
+		"\\\\", "\\", // Escaped backslash
+		"\\*", "*", // Escaped asterisk
+		"\\?", "?", // Escaped question mark
+	).Replace(fp)
+}
+
+func extractFileNames(input string) []string {
+	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
+	// and followed by more characters and a file extension
+	// This will capture non filename strings, but we'll check for file existence to remove mismatches
+	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png)\b`
+	re := regexp.MustCompile(regexPattern)
+
+	return re.FindAllString(input, -1)
+}
+
+func extractFileData(input string) (string, []api.ImageData, error) {
+	filePaths := extractFileNames(input)
+	var imgs []api.ImageData
+
+	for _, fp := range filePaths {
+		nfp := normalizeFilePath(fp)
+		data, err := getImageData(nfp)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		} else if err != nil {
+			fmt.Fprintf(os.Stderr, "Couldn't process image: %q\n", err)
+			return "", imgs, err
+		}
+		fmt.Fprintf(os.Stderr, "Added image '%s'\n", nfp)
+		input = strings.ReplaceAll(input, fp, "")
+		imgs = append(imgs, data)
+	}
+	return strings.TrimSpace(input), imgs, nil
+}
+
+func getImageData(filePath string) ([]byte, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	buf := make([]byte, 512)
+	_, err = file.Read(buf)
+	if err != nil {
+		return nil, err
+	}
+
+	contentType := http.DetectContentType(buf)
+	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png"}
+	if !slices.Contains(allowedTypes, contentType) {
+		return nil, fmt.Errorf("invalid image type: %s", contentType)
+	}
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if the file size exceeds 100MB
+	var maxSize int64 = 100 * 1024 * 1024 // 100MB in bytes
+	if info.Size() > maxSize {
+		return nil, errors.New("file size exceeds maximum limit (100MB)")
+	}
+
+	buf = make([]byte, info.Size())
+	_, err = file.Seek(0, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = io.ReadFull(file, buf)
+	if err != nil {
+		return nil, err
+	}
+
+	return buf, nil
 }
