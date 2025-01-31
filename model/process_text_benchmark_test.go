@@ -81,7 +81,7 @@ func BenchmarkBytePairEncoding(b *testing.B) {
 		// Benchmark Encoding
 		b.Run("Encode_"+bm.name, func(b *testing.B) {
 			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				tokens, err := bpe.Encode(bm.input)
 				if err != nil {
 					b.Fatal(err)
@@ -99,7 +99,7 @@ func BenchmarkBytePairEncoding(b *testing.B) {
 		// Benchmark Decoding
 		b.Run("Decode_"+bm.name, func(b *testing.B) {
 			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				decoded, err := bpe.Decode(tokens)
 				if err != nil {
 					b.Fatal(err)
@@ -148,7 +148,7 @@ func BenchmarkBytePairEncodingSplit(b *testing.B) {
 	for _, bm := range benchmarks {
 		b.Run("Split_"+bm.name, func(b *testing.B) {
 			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				splits, err := bpe.split(bm.input)
 				if err != nil {
 					b.Fatal(err)
