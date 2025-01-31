@@ -42,6 +42,7 @@ type LlamaServer interface {
 	EstimatedVRAM() uint64 // Total VRAM across all GPUs
 	EstimatedTotal() uint64
 	EstimatedVRAMByGPU(gpuID string) uint64
+	NumCtx() int
 }
 
 // llmServer is an instance of the llama.cpp server
@@ -1126,4 +1127,8 @@ func parseDurationMs(ms float64) time.Duration {
 	}
 
 	return dur
+}
+
+func (s *llmServer) NumCtx() int {
+	return s.options.NumCtx
 }
