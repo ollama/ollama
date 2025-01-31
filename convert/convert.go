@@ -138,8 +138,6 @@ func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseKV llm.KV) error {
 	switch arch {
 	case "llama":
 		conv = &llamaAdapter{}
-	case "gemma2":
-		conv = &gemma2Adapter{}
 	default:
 		return errors.New("unsupported architecture")
 	}
@@ -181,18 +179,10 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 		conv = &llamaModel{}
 	case "MixtralForCausalLM":
 		conv = &mixtralModel{}
-	case "GemmaForCausalLM":
-		conv = &gemmaModel{}
-	case "Gemma2ForCausalLM":
-		conv = &gemma2Model{}
 	case "Phi3ForCausalLM":
 		conv = &phi3Model{}
 	case "Qwen2ForCausalLM":
 		conv = &qwen2Model{}
-	case "BertModel":
-		conv = &bertModel{}
-	case "CohereForCausalLM":
-		conv = &commandrModel{}
 	default:
 		return errors.New("unsupported architecture")
 	}
