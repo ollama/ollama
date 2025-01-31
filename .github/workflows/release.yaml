@@ -312,16 +312,18 @@ jobs:
           - flavor: 'latest=false'
             platforms: linux/amd64,linux/arm64
             build-args: |
-              CGO_CFLAGS=${{ env.CGO_CFLAGS }}
-              CGO_CXXFLAGS=${{ env.CGO_CXXFLAGS }}
-              GOFLAGS=${{ needs.setup-environment.outputs.GOFLAGS }}
+              CGO_CFLAGS
+              CGO_CXXFLAGS
+              GOFLAGS
           - flavor: 'latest=false,suffix=rocm'
             platforms: linux/amd64
             build-args: |
-              CGO_CFLAGS=${{ env.CGO_CFLAGS }}
-              CGO_CXXFLAGS=${{ env.CGO_CXXFLAGS }}
+              CGO_CFLAGS
+              CGO_CXXFLAGS
+              GOFLAGS
               FLAVOR=rocm
-              GOFLAGS=${{ needs.setup-environment.outputs.GOFLAGS }}
+    env:
+      GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     runs-on: linux
     environment: release
     needs: setup-environment
