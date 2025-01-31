@@ -4,6 +4,7 @@ import (
     "testing"
     "time"
 
+    "strings"
 )
 
 
@@ -94,4 +95,41 @@ func TestFormatDuration_OneSecond(t *testing.T) {
         t.Errorf("Expected '1s', got '%s'", result)
     }
 }
+
+// Test generated using Keploy
+func TestBarRate_BarStopped(t *testing.T) {
+    bar := NewBar("Test Message", 100, 0)
+    bar.Set(50)
+    bar.stopped = bar.started.Add(2 * time.Second) // Simulate stopping after 2 seconds
+
+    rate := bar.rate()
+    expectedRate := 25.0 // 50 units over 2 seconds
+    if rate != expectedRate {
+        t.Errorf("Expected rate %f, got %f", expectedRate, rate)
+    }
+}
+
+
+// Test generated using Keploy
+func TestBarRate_NotStarted(t *testing.T) {
+    bar := NewBar("Test Message", 100, 0)
+    rate := bar.rate()
+    if rate != 0 {
+        t.Errorf("Expected rate to be 0 for a bar that has not started, got %f", rate)
+    }
+}
+
+
+// Test generated using Keploy
+func TestBarString_EmptyProgress(t *testing.T) {
+    bar := NewBar("Test Message", 100, 0)
+    result := bar.String()
+    if !strings.Contains(result, "Test Message") {
+        t.Errorf("Expected result to contain 'Test Message', got '%s'", result)
+    }
+    if !strings.Contains(result, "0%") {
+        t.Errorf("Expected result to contain '0%%', got '%s'", result)
+    }
+}
+
 

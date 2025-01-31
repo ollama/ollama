@@ -1,21 +1,21 @@
 package server
 
 import (
-	"bytes"
-	"context"
-	"errors"
-	"log/slog"
-	"os"
-	"testing"
-	"time"
+    "bytes"
+    "context"
+    "errors"
+    "log/slog"
+    "os"
+    "testing"
+    "time"
 
-	"github.com/stretchr/testify/require"
+    "github.com/stretchr/testify/require"
 
-	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/app/lifecycle"
-	"github.com/ollama/ollama/discover"
-	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/llm"
+    "github.com/ollama/ollama/api"
+    "github.com/ollama/ollama/app/lifecycle"
+    "github.com/ollama/ollama/discover"
+    "github.com/ollama/ollama/format"
+    "github.com/ollama/ollama/llm"
 )
 
 func TestMain(m *testing.M) {
@@ -789,5 +789,31 @@ func (s *mockLlm) Close() error {
 	return s.closeResp
 }
 func (s *mockLlm) EstimatedVRAM() uint64                  { return s.estimatedVRAM }
+
+// Test generated using Keploy
+func TestFilterGPUsWithoutLoadingModels_ActiveLoading(t *testing.T) {
+    ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
+    defer done()
+
+    gpus := discover.GpuInfoList{
+        {ID: "0", Library: "cuda"},
+        {ID: "1", Library: "cuda"},
+    }
+
+    r1 := &runnerRef{
+        gpus:    discover.GpuInfoList{gpus[0]},
+        loading: true,
+    }
+
+    s := InitScheduler(ctx)
+    s.loadedMu.Lock()
+    s.loaded["a"] = r1
+    s.loadedMu.Unlock()
+
+    filtered := s.filterGPUsWithoutLoadingModels(gpus)
+    require.Len(t, filtered, 1)
+    require.Equal(t, "1", filtered[0].ID)
+}
+
 func (s *mockLlm) EstimatedTotal() uint64                 { return s.estimatedTotal }
 func (s *mockLlm) EstimatedVRAMByGPU(gpuid string) uint64 { return s.estimatedVRAMByGPU[gpuid] }

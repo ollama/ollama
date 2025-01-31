@@ -39,3 +39,15 @@ func TestStop_SetsStoppedTime(t *testing.T) {
     }
 }
 
+// Test generated using Keploy
+func TestString_MessageTruncation(t *testing.T) {
+    spinner := NewSpinner("This is a very long message that should be truncated")
+    spinner.messageWidth = 20
+    result := spinner.String()
+
+    if !strings.Contains(result, "This is a very long") {
+        t.Errorf("Expected result to contain truncated message 'This is a very long', got '%s'", result)
+    }
+}
+
+
