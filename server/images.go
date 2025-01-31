@@ -55,18 +55,19 @@ type registryOptions struct {
 }
 
 type Model struct {
-	Name           string `json:"name"`
-	Config         ConfigV2
-	ShortName      string
-	ModelPath      string
-	ParentModel    string
-	AdapterPaths   []string
-	ProjectorPaths []string
-	System         string
-	License        []string
-	Digest         string
-	Options        map[string]interface{}
-	Messages       []api.Message
+	Name               string `json:"name"`
+	Config             ConfigV2
+	ShortName          string
+	ModelPath          string
+	ParentModel        string
+	AdapterPaths       []string
+	ControlVectorPaths []string
+	ProjectorPaths     []string
+	System             string
+	License            []string
+	Digest             string
+	Options            map[string]interface{}
+	Messages           []api.Message
 
 	Template *template.Template
 }
@@ -129,6 +130,13 @@ func (m *Model) String() string {
 		modelfile.Commands = append(modelfile.Commands, parser.Command{
 			Name: "adapter",
 			Args: adapter,
+		})
+	}
+
+	for _, control := range m.ControlVectorPaths {
+		modelfile.Commands = append(modelfile.Commands, parser.Command{
+			Name: "controlvector",
+			Args: control,
 		})
 	}
 
@@ -274,6 +282,8 @@ func GetModel(name string) (*Model, error) {
 			slog.Info("WARNING: model contains embeddings, but embeddings in modelfiles have been deprecated and will be ignored.")
 		case "application/vnd.ollama.image.adapter":
 			model.AdapterPaths = append(model.AdapterPaths, filename)
+		case "application/vnd.ollama.image.controlvector":
+			model.ControlVectorPaths = append(model.ControlVectorPaths, filename)
 		case "application/vnd.ollama.image.projector":
 			model.ProjectorPaths = append(model.ProjectorPaths, filename)
 		case "application/vnd.ollama.image.prompt",
