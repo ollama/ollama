@@ -18,24 +18,24 @@ type TextSelfAttention struct {
 }
 
 func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, positions, _ ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
-	batchSize := hiddenState.Dim(1)
+	batchSize := hiddenState.Dim(0)
 	headDim := opts.hiddenSize / opts.numHeads
 	ropeType := uint32(0)
 
 	query := sa.Query.Forward(ctx, hiddenState)
-	query = query.Reshape(ctx, headDim, opts.numHeads, batchSize)
+	query = query.Reshape(ctx, batchSize, opts.numHeads, headDim)
 	query = query.RoPE(ctx, positions, sa.RopeFactors, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
 
 	key := sa.Key.Forward(ctx, hiddenState)
-	key = key.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
+	key = key.Reshape(ctx, batchSize, opts.numKVHeads, headDim)
 	key = key.RoPE(ctx, positions, sa.RopeFactors, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
 
 	value := sa.Value.Forward(ctx, hiddenState)
-	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
+	value = value.Reshape(ctx, batchSize, opts.numKVHeads, headDim)
 
 	scaleFactor := 1.0 / math.Sqrt(float64(headDim))
 	attention := nn.Attention(ctx, query, key, value, scaleFactor, cache)
-	attention = attention.Reshape(ctx, opts.hiddenSize, batchSize)
+	attention = attention.Reshape(ctx, batchSize, opts.hiddenSize)
 
 	return sa.Output.Forward(ctx, attention)
 }
@@ -99,23 +99,23 @@ type TextCrossAttention struct {
 }
 
 func (ca *TextCrossAttention) Forward(ctx ml.Context, hiddenState, crossAttentionStates ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
-	batchSize := hiddenState.Dim(1)
+	batchSize := hiddenState.Dim(0)
 	headDim := opts.hiddenSize / opts.numHeads
 
 	query := ca.Query.Forward(ctx, hiddenState)
-	query = query.Reshape(ctx, headDim, opts.numHeads, batchSize)
+	query = query.Reshape(ctx, batchSize, opts.numHeads, headDim)
 	query = ca.QueryNorm.Forward(ctx, query, opts.eps)
 
 	var key, value ml.Tensor
 	if crossAttentionStates != nil {
-		numVisionTokens, numTiles := crossAttentionStates.Dim(1), crossAttentionStates.Dim(2)
+		numVisionTokens, numTiles := crossAttentionStates.Dim(2), crossAttentionStates.Dim(1)
 
 		key = ca.Key.Forward(ctx, crossAttentionStates)
-		key = key.Reshape(ctx, headDim, opts.numKVHeads, numVisionTokens*numTiles)
+		key = key.Reshape(ctx, numVisionTokens*numTiles, opts.numKVHeads, headDim)
 		key = ca.KeyNorm.Forward(ctx, key, opts.eps)
 
 		value = ca.Value.Forward(ctx, crossAttentionStates)
-		value = value.Reshape(ctx, headDim, opts.numKVHeads, numVisionTokens*numTiles)
+		value = value.Reshape(ctx, numVisionTokens*numTiles, opts.numKVHeads, headDim)
 
 		cache.Put(ctx, key, value)
 	}
@@ -124,8 +124,8 @@ func (ca *TextCrossAttention) Forward(ctx ml.Context, hiddenState, crossAttentio
 
 	scaleFactor := 1.0 / math.Sqrt(float64(headDim))
 
-	query = query.Permute(ctx, 0, 2, 1, 3)
-	key = key.Permute(ctx, 0, 2, 1, 3)
+	query = query.Permute(ctx, 1, 0, 2, 3)
+	key = key.Permute(ctx, 1, 0, 2, 3)
 	value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
 
 	kq := key.MulmatFullPrec(ctx, query)
@@ -134,8 +134,8 @@ func (ca *TextCrossAttention) Forward(ctx ml.Context, hiddenState, crossAttentio
 	kq = kq.Softmax(ctx)
 
 	kqv := value.Mulmat(ctx, kq)
-	attention := kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
-	attention = attention.Reshape(ctx, opts.hiddenSize, batchSize)
+	attention := kqv.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
+	attention = attention.Reshape(ctx, batchSize, opts.hiddenSize)
 
 	return ca.Output.Forward(ctx, attention)
 }
