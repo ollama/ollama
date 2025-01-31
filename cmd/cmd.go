@@ -967,13 +967,6 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		return nil
 	}
 
-	if opts.MultiModal {
-		opts.Prompt, opts.Images, err = extractFileData(opts.Prompt)
-		if err != nil {
-			return err
-		}
-	}
-
 	if opts.Format == "json" {
 		opts.Format = `"` + opts.Format + `"`
 	}
