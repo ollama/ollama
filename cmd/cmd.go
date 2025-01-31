@@ -325,6 +325,13 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	info, err := func() (*api.ShowResponse, error) {
 		showReq := &api.ShowRequest{Name: name}
 		info, err := client.Show(cmd.Context(), showReq)
+		var se api.StatusError
+		if errors.As(err, &se) && se.StatusCode == http.StatusNotFound {
+			if err := PullHandler(cmd, []string{name}); err != nil {
+				return nil, err
+			}
+			return client.Show(cmd.Context(), &api.ShowRequest{Name: name})
+		}
 		return info, err
 	}()
 	if err != nil {
@@ -710,6 +717,60 @@ func CopyHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	fmt.Printf("copied '%s' to '%s'\n", args[0], args[1])
+	return nil
+}
+
+func PullHandler(cmd *cobra.Command, args []string) error {
+	insecure, err := cmd.Flags().GetBool("insecure")
+	if err != nil {
+		return err
+	}
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	p := progress.NewProgress(os.Stderr)
+	defer p.Stop()
+
+	bars := make(map[string]*progress.Bar)
+
+	var status string
+	var spinner *progress.Spinner
+
+	fn := func(resp api.ProgressResponse) error {
+		if resp.Digest != "" {
+			if spinner != nil {
+				spinner.Stop()
+			}
+
+			bar, ok := bars[resp.Digest]
+			if !ok {
+				bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
+				bars[resp.Digest] = bar
+				p.Add(resp.Digest, bar)
+			}
+
+			bar.Set(resp.Completed)
+		} else if status != resp.Status {
+			if spinner != nil {
+				spinner.Stop()
+			}
+
+			status = resp.Status
+			spinner = progress.NewSpinner(status)
+			p.Add(status, spinner)
+		}
+
+		return nil
+	}
+
+	request := api.PullRequest{Name: args[0], Insecure: insecure}
+	if err := client.Pull(cmd.Context(), &request, fn); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -1157,15 +1218,15 @@ func NewCLI() *cobra.Command {
 		RunE:    RunServer,
 	}
 
-	// pullCmd := &cobra.Command{
-	// 	Use:     "pull MODEL",
-	// 	Short:   "Pull a model from a registry",
-	// 	Args:    cobra.ExactArgs(1),
-	// 	PreRunE: checkServerHeartbeat,
-	// 	RunE:    PullHandler,
-	// }
+	pullCmd := &cobra.Command{
+		Use:     "pull MODEL",
+		Short:   "Pull a model from a registry",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: checkServerHeartbeat,
+		RunE:    PullHandler,
+	}
 
-	// pullCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	pullCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 
 	pushCmd := &cobra.Command{
 		Use:     "push MODEL",
@@ -1230,6 +1291,7 @@ func NewCLI() *cobra.Command {
 		showCmd,
 		runCmd,
 		stopCmd,
+		pullCmd,
 		pushCmd,
 		listCmd,
 		psCmd,
@@ -1270,6 +1332,7 @@ func NewCLI() *cobra.Command {
 		showCmd,
 		runCmd,
 		stopCmd,
+		pullCmd,
 		pushCmd,
 		listCmd,
 		psCmd,
