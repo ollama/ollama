@@ -1,20 +1,20 @@
 package cmd
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"os"
-	"strings"
-	"testing"
+    "bytes"
+    "context"
+    "encoding/json"
+    "io"
+    "net/http"
+    "net/http/httptest"
+    "os"
+    "strings"
+    "testing"
 
-	"github.com/google/go-cmp/cmp"
-	"github.com/spf13/cobra"
+    "github.com/google/go-cmp/cmp"
+    "github.com/spf13/cobra"
 
-	"github.com/ollama/ollama/api"
+    "github.com/ollama/ollama/api"
 )
 
 func TestShowInfo(t *testing.T) {
@@ -616,3 +616,133 @@ func TestCreateHandler(t *testing.T) {
 		})
 	}
 }
+
+// Test generated using Keploy
+func TestRunHandler_ValidModel_NoPrompt(t *testing.T) {
+    mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if r.URL.Path == "/api/show" && r.Method == http.MethodPost {
+            w.WriteHeader(http.StatusOK)
+            json.NewEncoder(w).Encode(api.ShowResponse{
+                Details: api.ModelDetails{
+                    Family:            "test",
+                    ParameterSize:     "7B",
+                    QuantizationLevel: "FP16",
+                },
+            })
+            return
+        }
+    }))
+    defer mockServer.Close()
+
+    t.Setenv("OLLAMA_HOST", mockServer.URL)
+
+    cmd := &cobra.Command{}
+    cmd.Flags().String("format", "", "")
+    cmd.Flags().String("keepalive", "", "")
+    cmd.Flags().Bool("nowordwrap", false, "")
+    cmd.SetContext(context.TODO())
+
+    err := RunHandler(cmd, []string{"test-model"})
+    if err != nil {
+        t.Fatalf("RunHandler failed: %v", err)
+    }
+}
+
+
+// Test generated using Keploy
+func TestRunHandler_ValidModel_WithPrompt(t *testing.T) {
+    mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if r.URL.Path == "/api/show" && r.Method == http.MethodPost {
+            w.WriteHeader(http.StatusOK)
+            json.NewEncoder(w).Encode(api.ShowResponse{
+                Details: api.ModelDetails{
+                    Family:            "test",
+                    ParameterSize:     "7B",
+                    QuantizationLevel: "FP16",
+                },
+            })
+            return
+        }
+    }))
+    defer mockServer.Close()
+
+    t.Setenv("OLLAMA_HOST", mockServer.URL)
+
+    cmd := &cobra.Command{}
+    cmd.Flags().String("format", "", "")
+    cmd.Flags().String("keepalive", "", "")
+    cmd.Flags().Bool("nowordwrap", false, "")
+    cmd.SetContext(context.TODO())
+
+    err := RunHandler(cmd, []string{"test-model", "Hello, world!"})
+    if err != nil {
+        t.Fatalf("RunHandler failed: %v", err)
+    }
+}
+
+
+// Test generated using Keploy
+func TestRunHandler_ValidModel_UnexpectedAPIResponse(t *testing.T) {
+    mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if r.URL.Path == "/api/show" && r.Method == http.MethodPost {
+            w.WriteHeader(http.StatusOK)
+            w.Write([]byte("unexpected response"))
+            return
+        }
+    }))
+    defer mockServer.Close()
+
+    t.Setenv("OLLAMA_HOST", mockServer.URL)
+
+    cmd := &cobra.Command{}
+    cmd.Flags().String("format", "", "")
+    cmd.Flags().String("keepalive", "", "")
+    cmd.Flags().Bool("nowordwrap", false, "")
+    cmd.SetContext(context.TODO())
+
+    err := RunHandler(cmd, []string{"test-model"})
+    if err == nil || !strings.Contains(err.Error(), "invalid character") {
+        t.Fatalf("expected JSON parsing error, got: %v", err)
+    }
+}
+
+
+// Test generated using Keploy
+// TestRunHandler_GenerateAPIError tests that RunHandler handles errors from the Generate API
+func TestRunHandler_GenerateAPIError(t *testing.T) {
+    mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if r.URL.Path == "/api/show" && r.Method == http.MethodPost {
+            w.WriteHeader(http.StatusOK)
+            json.NewEncoder(w).Encode(api.ShowResponse{
+                Details: api.ModelDetails{
+                    Family:            "test",
+                    ParameterSize:     "7B",
+                    QuantizationLevel: "FP16",
+                },
+            })
+            return
+        }
+        if r.URL.Path == "/api/generate" && r.Method == http.MethodPost {
+            w.WriteHeader(http.StatusInternalServerError)
+            json.NewEncoder(w).Encode(map[string]string{
+                "error": "generate error",
+            })
+            return
+        }
+    }))
+    defer mockServer.Close()
+
+    t.Setenv("OLLAMA_HOST", mockServer.URL)
+
+    cmd := &cobra.Command{}
+    cmd.Flags().String("format", "", "")
+    cmd.Flags().String("keepalive", "", "")
+    cmd.Flags().Bool("nowordwrap", false, "")
+    cmd.SetContext(context.TODO())
+
+    err := RunHandler(cmd, []string{"test-model", "Hello, world!"})
+    if err == nil || !strings.Contains(err.Error(), "generate error") {
+        t.Fatalf("expected generate error, got: %v", err)
+    }
+}
+
