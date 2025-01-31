@@ -22,16 +22,16 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, positions, _ m
 
 	query := sa.Query.Forward(ctx, hiddenState)
 	query = query.Reshape(ctx, headDim, opts.numHeads, batchSize)
-	query = query.RoPE(ctx, positions, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
+	query = query.RoPE(ctx, positions, nil /* TODO freqs */, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
 
 	key := sa.Key.Forward(ctx, hiddenState)
 	key = key.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-	key = key.RoPE(ctx, positions, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
+	key = key.RoPE(ctx, positions, nil /* TODO freqs */, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
 
 	value := sa.Value.Forward(ctx, hiddenState)
 	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 
-	cache.Put(ctx, key, value)
+	cache.Put(ctx, key, value, 2) // TODO - not right!
 	key, value, mask := cache.Get(ctx)
 
 	query = query.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
@@ -215,7 +215,8 @@ func (m *TextModel) Forward(ctx ml.Context, inputIDs, positionIDs, mask, crossAt
 
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
 	// This will only get called for layers in the cache, which are just the self attention layers
-	return key.RoPE(ctx, shift, m.RopeFactors, m.ropeDim, m.ropeBase, m.ropeScale), nil
+	// return key.RoPE(ctx, shift, m.RopeFactors, m.ropeDim, m.ropeBase, m.ropeScale), nil
+	panic("not yet implemented")
 }
 
 func newTextModel(c ml.Config) *TextModel {
