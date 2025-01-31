@@ -184,8 +184,8 @@ func moveCell(ctx ml.Context, objs []ml.Tensor, src, dst, len int) {
 			continue
 		}
 
-		srcView := obj.View(ctx, obj.Stride(2)*src, obj.Dim(0)*obj.Dim(1)*len)
-		dstView := obj.View(ctx, obj.Stride(2)*dst, obj.Dim(0)*obj.Dim(1)*len)
+		srcView := obj.View(ctx, obj.Stride(0)*src, []int{obj.Dim(0) * obj.Dim(2) * len}, nil)
+		dstView := obj.View(ctx, obj.Stride(0)*dst, []int{obj.Dim(0) * obj.Dim(2) * len}, nil)
 
 		ctx.Forward(srcView.Copy(ctx, dstView))
 	}
@@ -306,33 +306,37 @@ func (c *Causal) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) {
 	key := c.keys[c.curLayer]
 	value := c.values[c.curLayer]
 
-	key = key.View(ctx, key.Stride(2)*c.curCellRange.min,
-		key.Dim(0), key.Stride(1),
-		key.Dim(1), key.Stride(2),
-		c.curMask.Dim(0),
+	key = key.View(ctx, key.Stride(0)*c.curCellRange.min,
+		[]int{c.curMask.Dim(0), key.Dim(1), key.Dim(2)},
+		[]int{key.Stride(0), key.Stride(1)},
 	)
 
-	value = value.View(ctx, key.Stride(2)*c.curCellRange.min,
-		value.Dim(0), value.Stride(1),
-		value.Dim(1), value.Stride(2),
-		c.curMask.Dim(0),
+	value = value.View(ctx, value.Stride(0)*c.curCellRange.min,
+		[]int{c.curMask.Dim(0), value.Dim(1), value.Dim(2)},
+		[]int{value.Stride(0), value.Stride(1)},
 	)
 
+	// TODO The mask changes from X,X to 1,X, and with the Row-order change
+	// the 1 becomes trailing and messes up later operations
+	// This isn't the right solution, but works around it...
+	if c.curMask.Dim(1) == 1 {
+		return key, value, c.curMask.Permute(ctx, 1, 0, 2, 3)
+	}
 	return key, value, c.curMask
 }
 
 func (c *Causal) Put(ctx ml.Context, key, value ml.Tensor) {
-	if c.curBatchSize != key.Dim(2) {
-		panic(fmt.Errorf("inconsistent batch sizes (layer: %v, batch size: %v layer batch size: %v)", c.curLayer, c.curBatchSize, key.Dim(2)))
+	if c.curBatchSize != key.Dim(0) {
+		panic(fmt.Errorf("inconsistent batch sizes (layer: %v, batch size: %v layer batch size: %v)", c.curLayer, c.curBatchSize, key.Dim(0)))
 	}
 
 	if c.keys[c.curLayer] == nil || c.values[c.curLayer] == nil {
-		c.keys[c.curLayer] = c.cacheCtx.Zeros(c.DType, key.Dim(0), key.Dim(1), int(c.Capacity))
-		c.values[c.curLayer] = c.cacheCtx.Zeros(c.DType, value.Dim(0), value.Dim(1), int(c.Capacity))
+		c.keys[c.curLayer] = c.cacheCtx.Zeros(c.DType, int(c.Capacity), key.Dim(1), key.Dim(2))
+		c.values[c.curLayer] = c.cacheCtx.Zeros(c.DType, int(c.Capacity), value.Dim(1), value.Dim(2))
 	}
 
-	ctx.Forward(key.Copy(ctx, c.keys[c.curLayer].View(ctx, key.Stride(2)*c.curLoc, key.Dim(0)*key.Dim(1)*key.Dim(2))))
-	ctx.Forward(value.Copy(ctx, c.values[c.curLayer].View(ctx, value.Stride(2)*c.curLoc, value.Dim(0)*value.Dim(1)*value.Dim(2))))
+	ctx.Forward(key.Copy(ctx, c.keys[c.curLayer].View(ctx, key.Stride(0)*c.curLoc, []int{key.Dim(0) * key.Dim(1) * key.Dim(2)}, nil)))
+	ctx.Forward(value.Copy(ctx, c.values[c.curLayer].View(ctx, value.Stride(0)*c.curLoc, []int{value.Dim(0) * value.Dim(1) * value.Dim(2)}, nil)))
 }
 
 func (c *Causal) CopyPrefix(srcSeq, dstSeq int, len int32) {
@@ -388,10 +392,9 @@ func (c *Causal) shift(seq int, beginIndex, offset int32) error {
 			continue
 		}
 
-		key = key.View(ctx, key.Stride(2)*seqRange.min,
-			key.Dim(0), key.Stride(1),
-			key.Dim(1), key.Stride(2),
-			size,
+		key = key.View(ctx, key.Stride(0)*seqRange.min,
+			[]int{size, key.Dim(0), key.Dim(2)},
+			[]int{key.Stride(0), key.Stride(1)},
 		)
 
 		// TODO(jessegross): dequantize once we support data types other than F32 for the cache
