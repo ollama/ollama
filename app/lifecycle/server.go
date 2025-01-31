@@ -10,8 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"time"
-
-	"github.com/ollama/ollama/api"
 )
 
 func getCLIFullPath(command string) string {
@@ -131,56 +129,56 @@ func start(ctx context.Context, command string) (*exec.Cmd, error) {
 	return cmd, nil
 }
 
-func SpawnServer(ctx context.Context, command string) (chan int, error) {
-	done := make(chan int)
+// func SpawnServer(ctx context.Context, command string) (chan int, error) {
+// 	done := make(chan int)
 
-	go func() {
-		// Keep the server running unless we're shuttind down the app
-		crashCount := 0
-		for {
-			slog.Info("starting server...")
-			cmd, err := start(ctx, command)
-			if err != nil {
-				crashCount++
-				slog.Error(fmt.Sprintf("failed to start server %s", err))
-				time.Sleep(500 * time.Millisecond * time.Duration(crashCount))
-				continue
-			}
+// 	go func() {
+// 		// Keep the server running unless we're shuttind down the app
+// 		crashCount := 0
+// 		for {
+// 			slog.Info("starting server...")
+// 			cmd, err := start(ctx, command)
+// 			if err != nil {
+// 				crashCount++
+// 				slog.Error(fmt.Sprintf("failed to start server %s", err))
+// 				time.Sleep(500 * time.Millisecond * time.Duration(crashCount))
+// 				continue
+// 			}
 
-			cmd.Wait() //nolint:errcheck
-			var code int
-			if cmd.ProcessState != nil {
-				code = cmd.ProcessState.ExitCode()
-			}
+// 			cmd.Wait() //nolint:errcheck
+// 			var code int
+// 			if cmd.ProcessState != nil {
+// 				code = cmd.ProcessState.ExitCode()
+// 			}
 
-			select {
-			case <-ctx.Done():
-				slog.Info(fmt.Sprintf("server shutdown with exit code %d", code))
-				done <- code
-				return
-			default:
-				crashCount++
-				slog.Warn(fmt.Sprintf("server crash %d - exit code %d - respawning", crashCount, code))
-				time.Sleep(500 * time.Millisecond * time.Duration(crashCount))
-				break
-			}
-		}
-	}()
+// 			select {
+// 			case <-ctx.Done():
+// 				slog.Info(fmt.Sprintf("server shutdown with exit code %d", code))
+// 				done <- code
+// 				return
+// 			default:
+// 				crashCount++
+// 				slog.Warn(fmt.Sprintf("server crash %d - exit code %d - respawning", crashCount, code))
+// 				time.Sleep(500 * time.Millisecond * time.Duration(crashCount))
+// 				break
+// 			}
+// 		}
+// 	}()
 
-	return done, nil
-}
+// 	return done, nil
+// }
 
-func IsServerRunning(ctx context.Context) bool {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		slog.Info("unable to connect to server")
-		return false
-	}
-	err = client.Heartbeat(ctx)
-	if err != nil {
-		slog.Debug(fmt.Sprintf("heartbeat from server: %s", err))
-		slog.Info("unable to connect to server")
-		return false
-	}
-	return true
-}
+// func IsServerRunning(ctx context.Context) bool {
+// 	client, err := api.ClientFromEnvironment()
+// 	if err != nil {
+// 		slog.Info("unable to connect to server")
+// 		return false
+// 	}
+// 	err = client.Heartbeat(ctx)
+// 	if err != nil {
+// 		slog.Debug(fmt.Sprintf("heartbeat from server: %s", err))
+// 		slog.Info("unable to connect to server")
+// 		return false
+// 	}
+// 	return true
+// }

@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/ollama/ollama/app/store"
 	"github.com/ollama/ollama/app/tray"
 	"github.com/ollama/ollama/envconfig"
 )
@@ -18,7 +17,7 @@ func Run() {
 	InitLogging()
 	slog.Info("app config", "env", envconfig.Values())
 
-	ctx, cancel := context.WithCancel(context.Background())
+	_, cancel := context.WithCancel(context.Background())
 	var done chan int
 
 	t, err := tray.NewTray()
@@ -57,32 +56,6 @@ func Run() {
 	}()
 
 	// Are we first use?
-	if !store.GetFirstTimeRun() {
-		slog.Debug("First time run")
-		err = t.DisplayFirstUseNotification()
-		if err != nil {
-			slog.Debug(fmt.Sprintf("XXX failed to display first use notification %v", err))
-		}
-		store.SetFirstTimeRun(true)
-	} else {
-		slog.Debug("Not first time, skipping first run notification")
-	}
-
-	if IsServerRunning(ctx) {
-		slog.Info("Detected another instance of ollama running, exiting")
-		os.Exit(1)
-	} else {
-		done, err = SpawnServer(ctx, CLIName)
-		if err != nil {
-			// TODO - should we retry in a backoff loop?
-			// TODO - should we pop up a warning and maybe add a menu item to view application logs?
-			slog.Error(fmt.Sprintf("Failed to spawn ollama server %s", err))
-			done = make(chan int, 1)
-			done <- 1
-		}
-	}
-
-	StartBackgroundUpdaterChecker(ctx, t.UpdateAvailable)
 
 	t.Run()
 	cancel()

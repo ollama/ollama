@@ -239,16 +239,7 @@ type PullProgressFunc func(ProgressResponse) error
 // Pull downloads a model from the ollama library. fn is called each time
 // progress is made on the request and can be used to display a progress bar,
 // etc.
-func (c *Client) Pull(ctx context.Context, req *PullRequest, fn PullProgressFunc) error {
-	return c.stream(ctx, http.MethodPost, "/api/pull", req, func(bts []byte) error {
-		var resp ProgressResponse
-		if err := json.Unmarshal(bts, &resp); err != nil {
-			return err
-		}
 
-		return fn(resp)
-	})
-}
 
 // PushProgressFunc is a function that [Client.Push] invokes when progress is
 // made.
