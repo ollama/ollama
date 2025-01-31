@@ -198,10 +198,9 @@ func (b *Backend) Get(name string) ml.Tensor {
 
 func (b *Backend) NewContext() ml.Context {
 	nodes := max(8192, len(b.meta.Tensors().Items())*5)
-	bts := make([]byte, C.size_t(nodes)*C.ggml_tensor_overhead()+C.ggml_graph_overhead_custom(C.size_t(nodes), false))
 	c := C.ggml_init(C.struct_ggml_init_params{
-		mem_buffer: unsafe.Pointer(&bts[0]),
-		mem_size:   C.size_t(len(bts)),
+		mem_buffer: nil,
+		mem_size:   C.size_t(nodes)*C.ggml_tensor_overhead() + C.ggml_graph_overhead_custom(C.size_t(nodes), false),
 		no_alloc:   true,
 	})
 
