@@ -47,9 +47,18 @@ esac
 
 VER_PARAM="${OLLAMA_VERSION:+?version=$OLLAMA_VERSION}"
 
+# Check if the --user flag is present
+USER_INSTALL=false
+for arg in "$@"; do
+    if [ "$arg" = "--user" ]; then
+        USER_INSTALL=true
+        break
+    fi
+done
+
 SUDO=
-if [ "$(id -u)" -ne 0 ]; then
-    # Running as root, no need for sudo
+if [ "$(id -u)" -ne 0 ] && [ "$USER_INSTALL" = false ]; then
+    # Running as root, no need for sudo and --user flag is NOT present
     if ! available sudo; then
         error "This script requires superuser permissions. Please re-run as root."
     fi
@@ -66,18 +75,30 @@ if [ -n "$NEEDS" ]; then
     exit 1
 fi
 
-for BINDIR in /usr/local/bin /usr/bin /bin; do
-    echo $PATH | grep -q $BINDIR && break || continue
-done
-OLLAMA_INSTALL_DIR=$(dirname ${BINDIR})
+if [ "$USER_INSTALL" = true ]; then
+    BINDIR="$HOME/.local/bin"
+    OLLAMA_INSTALL_DIR="$HOME/.local"
+else
+    for BINDIR in /usr/local/bin /usr/bin /bin; do
+        echo $PATH | grep -q $BINDIR && break || continue
+    done
+    OLLAMA_INSTALL_DIR=$(dirname ${BINDIR})
+fi
+
 
 if [ -d "$OLLAMA_INSTALL_DIR/lib/ollama" ] ; then
     status "Cleaning up old version at $OLLAMA_INSTALL_DIR/lib/ollama"
     $SUDO rm -rf "$OLLAMA_INSTALL_DIR/lib/ollama"
 fi
 status "Installing ollama to $OLLAMA_INSTALL_DIR"
-$SUDO install -o0 -g0 -m755 -d $BINDIR
-$SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR"
+if [ "$USER_INSTALL" = true ]; then
+    mkdir -p "$BINDIR"
+    mkdir -p "$OLLAMA_INSTALL_DIR"
+else
+    $SUDO install -o0 -g0 -m755 -d "$BINDIR"
+    $SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR"
+fi
+
 status "Downloading Linux ${ARCH} bundle"
 curl --fail --show-error --location --progress-bar \
     "https://ollama.com/download/ollama-linux-${ARCH}.tgz${VER_PARAM}" | \
