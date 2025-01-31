@@ -35,20 +35,20 @@ type MultiModalProjector struct {
 }
 
 func (p *MultiModalProjector) Forward(ctx ml.Context, visionOutputs ml.Tensor, imageSize, patchSize int, eps float32) ml.Tensor {
-	l := visionOutputs.Dim(0)
+	l := visionOutputs.Dim(1)
 
 	visionOutputs = visionOutputs.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 	patchesPerImage := imageSize / patchSize
-	visionOutputs = visionOutputs.Reshape(ctx, patchesPerImage, patchesPerImage, l)
+	visionOutputs = visionOutputs.Reshape(ctx, l, patchesPerImage, patchesPerImage)
 
 	kernelSize := patchesPerImage / int(math.Sqrt(float64(p.tokensPerImage)))
 	visionOutputs = visionOutputs.AvgPool2D(ctx, kernelSize, kernelSize, 0)
-	visionOutputs = visionOutputs.Reshape(ctx, visionOutputs.Dim(0)*visionOutputs.Dim(1), l)
+	visionOutputs = visionOutputs.Reshape(ctx, l, visionOutputs.Dim(2)*visionOutputs.Dim(1))
 	visionOutputs = visionOutputs.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 	visionOutputs = p.SoftEmbNorm.Forward(ctx, visionOutputs, eps)
 
 	// TODO: inputProjection must be transposed since they're incompatible with visionOutputs
-	visionOutputs = p.InputProjection.Weight.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx).Mulmat(ctx, visionOutputs)
+	visionOutputs = visionOutputs.Matmul(ctx, p.InputProjection.Weight.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx))
 	return visionOutputs
 }
 
@@ -98,9 +98,9 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 	}
 
 	pixelValues, err := ctx.Input().FromFloatSlice(f32s,
-		m.ImageProcessor.imageSize,
-		m.ImageProcessor.imageSize,
 		m.ImageProcessor.numChannels,
+		m.ImageProcessor.imageSize,
+		m.ImageProcessor.imageSize,
 	)
 	if err != nil {
 		return nil, err
@@ -121,13 +121,13 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 			inputMultimodal := inp.Multimodal.(ml.Tensor)
 
 			result = append(result,
-				input.Input{Token: 108, SameBatch: inputMultimodal.Dim(1) + 3},               // "\n\n"
+				input.Input{Token: 108, SameBatch: inputMultimodal.Dim(0) + 3},               // "\n\n"
 				input.Input{Token: 255999},                                                   // "<start_of_image>""
 				input.Input{Multimodal: inputMultimodal, MultimodalHash: inp.MultimodalHash}, // image data is on the first placeholder
 			)
 
 			// add image token placeholders
-			result = append(result, slices.Repeat([]input.Input{{Token: 0}}, inputMultimodal.Dim(1)-1)...)
+			result = append(result, slices.Repeat([]input.Input{{Token: 0}}, inputMultimodal.Dim(0)-1)...)
 
 			result = append(result,
 				input.Input{Token: 256000}, // <end_of_image>

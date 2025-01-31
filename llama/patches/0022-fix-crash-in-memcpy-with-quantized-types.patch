@@ -1,0 +1,43 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Hiltgen <daniel@ollama.com>
+Date: Fri, 28 Mar 2025 15:23:45 -0700
+Subject: [PATCH] fix crash in memcpy with quantized types
+
+ggml_type_size returns the block size for quantized
+types (e.g. 144) which broke the logic for the memcpy
+---
+ ggml/src/ggml-cpu/ggml-cpu.c | 18 ++++++++++--------
+ 1 file changed, 10 insertions(+), 8 deletions(-)
+
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
+index ec60e8fc..adc745f0 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -2972,17 +2972,19 @@ static void ggml_compute_forward_dup_same_cont(
+     const int ith = params->ith; // thread index
+     const int nth = params->nth; // number of threads
+ 
+-    // parallelize by elements
++    // parallelize by blocks
+     const int ne = ggml_nelements(dst);
+-    const int dr = (ne + nth - 1) / nth;
+-    const int ie0 = dr * ith;
+-    const int ie1 = MIN(ie0 + dr, ne);
++    const size_t blck_size = ggml_blck_size(src0->type);
++    const int num_blcks = ne / blck_size;
++    const int dr = (num_blcks + nth - 1) / nth;
++    const int ib0 = dr * ith;
++    const int ib1 = MIN(ib0 + dr, num_blcks);
+ 
+-    if (ie0 < ie1) {
++    if (ib0 < ib1) {
+         memcpy(
+-            ((char *)  dst->data + ie0*nb0),
+-            ((char *) src0->data + ie0*nb0),
+-            (ie1 - ie0) * nb0);
++            ((char *)  dst->data + ib0*nb0),
++            ((char *) src0->data + ib0*nb0),
++            (ib1 - ib0) * nb0);
+     }
+ }
+ 
