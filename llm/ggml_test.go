@@ -72,6 +72,66 @@ func TestKV(t *testing.T) {
 	}
 }
 
+func TestTensor(t *testing.T) {
+	tests := []struct {
+		name          string
+		tensor        Tensor
+		wantParams    uint64
+		wantTypeSize  uint64
+		wantBlockSize uint64
+		wantSize      uint64
+	}{
+		{
+			name: "F32 Tensor",
+			tensor: Tensor{
+				Name:   "test",
+				Kind:   0, // F32
+				Shape:  []uint64{2, 3, 4},
+				Offset: 0,
+			},
+			wantParams:    24, // 2 * 3 * 4
+			wantBlockSize: 1,
+			wantTypeSize:  4,
+			wantSize:      96, // params * typeSize / blockSize
+		},
+		{
+			name: "Q4_0 Tensor",
+			tensor: Tensor{
+				Name:   "test",
+				Kind:   2, // Q4_0
+				Shape:  []uint64{32, 32},
+				Offset: 0,
+			},
+			wantParams:    1024, // 32 * 32
+			wantBlockSize: 32,
+			wantTypeSize:  18,  // 2 + blockSize/2
+			wantSize:      576, // params * typeSize / blockSize
+		},
+		{
+			name: "Others Tensor",
+			tensor: Tensor{
+				Name:   "test",
+				Kind:   11, // Q3_K
+				Shape:  []uint64{32, 32},
+				Offset: 0,
+			},
+			wantParams:    1024, // 32 * 32
+			wantBlockSize: 256,
+			wantTypeSize:  110, // blockSize/8 + blockSize/4 + 12 + 2
+			wantSize:      440, // params * typeSize / blockSize
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.tensor.parameters(), tt.wantParams)
+			assert.Equal(t, tt.tensor.typeSize(), tt.wantTypeSize)
+			assert.Equal(t, tt.tensor.blockSize(), tt.wantBlockSize)
+			assert.Equal(t, tt.tensor.Size(), tt.wantSize)
+		})
+	}
+}
+
 func TestDecodeGGML(t *testing.T) {
 	tests := []struct {
 		name        string
