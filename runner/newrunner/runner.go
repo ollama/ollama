@@ -904,6 +904,7 @@ func Execute(args []string) error {
 		}
 	}*/
 
+	*kvSize = 2048
 	server.ready.Add(1)
 	go server.loadModel(*mpath, lpaths, *kvCacheType, *kvSize, *multiUserCache)
 

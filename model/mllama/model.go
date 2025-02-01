@@ -1,6 +1,7 @@
 package mllama
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/ollama/ollama/cache"
@@ -96,7 +97,8 @@ func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
 }
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return m.TextModel.Shift(ctx, layer, key, shift)
+	// return key.Rope(ctx, shift, m.TextModel.RopeFactors, m.TextModel.ropeDim, m.TextModel.ropeBase, m.TextModel.ropeScale), nil
+	return nil, fmt.Errorf("not yet implemented")
 }
 
 func init() {

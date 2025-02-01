@@ -61,37 +61,33 @@ type SelfAttention struct {
 }
 
 func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache cache.Cache, opts *Options) ml.Tensor {
-	batchSize := hiddenState.Dim(1)
-	headDim := opts.hiddenSize / opts.numHeads
+	// Ref: https://github.com/ml-explore/mlx-examples/blob/main/llms/mlx_lm/models/llama.py
+	// Batch size dimension(0) removed
+	shape := hiddenState.Shape()
+	L := shape[0]
+	n_heads := opts.numHeads
+	n_kv_heads := opts.numKVHeads
+	head_dim := opts.hiddenSize / opts.numHeads
 
-	q := sa.Query.Forward(ctx, hiddenState)
-	q = q.Reshape(ctx, headDim, opts.numHeads, batchSize)
-	q = q.RoPE(ctx, positionIDs, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
+	queries := sa.Query.Forward(ctx, hiddenState)
+	keys := sa.Key.Forward(ctx, hiddenState)
+	values := sa.Value.Forward(ctx, hiddenState)
 
-	k := sa.Key.Forward(ctx, hiddenState)
-	k = k.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-	k = k.RoPE(ctx, positionIDs, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
+	queries = queries.Reshape(ctx, L, n_heads, -1).Permute(ctx, 0, 2, 1, 3)
+	keys = keys.Reshape(ctx, L, n_kv_heads, -1).Permute(ctx, 0, 2, 1, 3)
+	values = values.Reshape(ctx, L, n_kv_heads, -1).Permute(ctx, 0, 2, 1, 3)
 
-	v := sa.Value.Forward(ctx, hiddenState)
-	v = v.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
+	queries = LlamaRoPE(ctx, queries, positionIDs, opts)
+	keys = LlamaRoPE(ctx, keys, positionIDs, opts)
 
-	cache.Put(ctx, k, v)
-	k, v, mask := cache.Get(ctx)
+	cache.Put(ctx, keys, values, 1)
+	keys, values, mask := cache.Get(ctx)
 
-	q = q.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
-	k = k.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
-	v = v.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
-
-	kq := k.Mulmat(ctx, q)
-	kq = kq.Scale(ctx, 1.0/math.Sqrt(float64(headDim)))
-	kq = kq.Add(ctx, mask)
-	kq = kq.Softmax(ctx)
-
-	kqv := v.Mulmat(ctx, kq)
-	kqv = kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
-	kqv = kqv.Reshape(ctx, opts.hiddenSize, batchSize)
-
-	return sa.Output.Forward(ctx, kqv)
+	output := ScaledDotProductAttention(ctx, queries, keys, values, mask, float32(math.Pow(float64(head_dim), -0.5)))
+	output = output.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+	output = output.Reshape(ctx, L, -1)
+	output = sa.Output.Forward(ctx, output)
+	return output
 }
 
 type MLP struct {
@@ -101,7 +97,9 @@ type MLP struct {
 }
 
 func (mlp *MLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml.Tensor {
-	hiddenState = mlp.Gate.Forward(ctx, hiddenState).SILU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenState))
+	g := mlp.Gate.Forward(ctx, hiddenState)
+	x := mlp.Up.Forward(ctx, hiddenState)
+	hiddenState = g.SILU(ctx).Mul(ctx, x)
 	return mlp.Down.Forward(ctx, hiddenState)
 }
 
@@ -130,13 +128,13 @@ func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	positions, err := ctx.FromIntSlice(opts.Positions(), len(opts.Positions()))
 	if err != nil {
 		return nil, err
 	}
 
 	hiddenState := m.TokenEmbedding.Forward(ctx, inputs)
+	// hiddenState = hiddenState.Reshape(ctx, 1, -1, 4096)
 
 	for i, layer := range m.Layers {
 		opts.Cache.SetLayer(i)
@@ -147,6 +145,7 @@ func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
 	hiddenState = m.Output.Forward(ctx, hiddenState)
 
 	outputs, err := ctx.FromIntSlice(opts.Outputs(), len(opts.Outputs()))
+	// outputs, err := ctx.FromIntSlice([]int32{int32(hiddenState.Dim(1)) - 1}, 1, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +154,7 @@ func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
 }
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return key.RoPE(ctx, shift, m.Options.RopeFactors, m.Options.ropeDim, m.Options.ropeBase, m.Options.ropeScale), nil
+	return LlamaRoPE(ctx, key, shift, m.Options), nil
 }
 
 func init() {

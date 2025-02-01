@@ -1571,6 +1571,14 @@ static struct ggml_tensor * ggml_new_tensor_impl(
         data_size *= ne[i];
     }
 
+    // printf("ne[0]=%lld\n", ne[0]);
+    // printf("view_src=%p\n", view_src);
+    // printf("data_size=%lld\n", data_size);
+    // printf("view_offs=%lld\n", view_offs);
+    // if (view_src != NULL) {
+    //     printf("nbytes=%lld\n", ggml_nbytes(view_src));
+    // }
+
     GGML_ASSERT(view_src == NULL || data_size == 0 || data_size + view_offs <= ggml_nbytes(view_src));
 
     void * data = view_src != NULL ? view_src->data : NULL;

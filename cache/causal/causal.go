@@ -24,10 +24,10 @@ type Causal struct {
 	curLayer int
 
 	// starting location for data storage for this batch
-	curLoc int
+	curLoc int64
 
 	// size of the current batch
-	curBatchSize int
+	curBatchSize int64
 
 	// mask of the cache as used by this batch
 	curMask ml.Tensor
@@ -49,6 +49,12 @@ type Causal struct {
 	model        model.Model
 	cacheCtx     ml.Context
 	keys, values []ml.Tensor
+	needsPermute bool
+	seqDim       int
+	keysShape    []int64
+	valuesShape  []int64
+	keysStride   []int64
+	valuesStride []int64
 }
 
 type cacheCell struct {
@@ -57,8 +63,8 @@ type cacheCell struct {
 }
 
 type cellRange struct {
-	min int
-	max int
+	min int64
+	max int64
 }
 
 func NewCausalCache(model model.Model, dtype ml.DType, capacity int32) cache.Cache {
@@ -81,7 +87,7 @@ func (c *Causal) StartForward(ctx ml.Context, positions []int32, seqs []int) err
 		return fmt.Errorf("length of positions (%v) must match length of seqs (%v)", len(positions), len(seqs))
 	}
 
-	c.curBatchSize = len(positions)
+	c.curBatchSize = int64(len(positions))
 
 	if c.curBatchSize < 1 {
 		return errors.New("batch size cannot be less than 1")
@@ -101,22 +107,22 @@ func (c *Causal) StartForward(ctx ml.Context, positions []int32, seqs []int) err
 	for i, pos := range positions {
 		seq := seqs[i]
 
-		c.cells[c.curLoc+i] = cacheCell{pos: pos, sequences: []int{seq}}
+		c.cells[int(c.curLoc)+i] = cacheCell{pos: pos, sequences: []int{seq}}
 
 		seqRange, ok := c.cellRanges[seq]
 		if !ok {
 			seqRange = newRange()
 		}
 
-		if c.curLoc+i > seqRange.max {
-			seqRange.max = c.curLoc + i
+		if c.curLoc+int64(i) > seqRange.max {
+			seqRange.max = c.curLoc + int64(i)
 		}
 		if seqRange.max > c.curCellRange.max {
 			c.curCellRange.max = seqRange.max
 		}
 
-		if c.curLoc+i < seqRange.min {
-			seqRange.min = c.curLoc + i
+		if c.curLoc+int64(i) < seqRange.min {
+			seqRange.min = c.curLoc + int64(i)
 		}
 		if seqRange.min < c.curCellRange.min {
 			c.curCellRange.min = seqRange.min
@@ -137,11 +143,11 @@ func newRange() cellRange {
 }
 
 // Find the first contiguous block of at least curBatchSize
-func (c *Causal) findStartLoc() (int, error) {
+func (c *Causal) findStartLoc() (int64, error) {
 	// TODO(jessegross): We could be a little more efficient by saving the last location
 	// so we don't need to rescan the cache for every token
 
-	var start, count int
+	var start, count int64
 	for i := range c.cells {
 		if len(c.cells[i].sequences) == 0 {
 			count++
@@ -149,7 +155,7 @@ func (c *Causal) findStartLoc() (int, error) {
 				return start, nil
 			}
 		} else {
-			start = i + 1
+			start = int64(i + 1)
 			count = 0
 		}
 	}
@@ -163,23 +169,25 @@ func (c *Causal) findStartLoc() (int, error) {
 func (c *Causal) buildMask(ctx ml.Context, positions []int32, seqs []int) (ml.Tensor, error) {
 	// TODO(jessegross): This does not do padding, which is required for flash attention
 	len := c.curCellRange.max - c.curCellRange.min + 1
-	mask := make([]float32, c.curBatchSize*len)
+	mask := make([]float32, int(c.curBatchSize*len))
 
 	for i := range c.curBatchSize {
 		for j := c.curCellRange.min; j <= c.curCellRange.max; j++ {
 			if !slices.Contains(c.cells[j].sequences, seqs[i]) || c.cells[j].pos > positions[i] {
-				mask[i*len+(j-c.curCellRange.min)] = float32(math.Inf(-1))
+				mask[int(i*len+(j-c.curCellRange.min))] = float32(math.Inf(-1))
 			}
 		}
 	}
 
-	return ctx.FromFloatSlice(mask, len, c.curBatchSize)
+	// TODO the batch concept here and in the K/V aren't consistent so this is likely a bug
+	// slog.Info("Generating Mask", "curBatchSize", c.curBatchSize, "len", len, "mask", mask)
+	return ctx.FromFloatSlice(mask, 1, int(len), int(c.curBatchSize))
 }
 
-func moveCell(ctx ml.Context, objs []ml.Tensor, src, dst, len int) {
+func moveCell(ctx ml.Context, objs []ml.Tensor, src, dst, len int64) {
 	for _, obj := range objs {
-		srcView := obj.View(ctx, int(obj.Stride(2))*src, int(obj.Dim(0)*obj.Dim(1))*len)
-		dstView := obj.View(ctx, int(obj.Stride(2))*dst, int(obj.Dim(0)*obj.Dim(1))*len)
+		srcView := obj.View(ctx, obj.Stride(2)*src, []int64{obj.Dim(0) * obj.Dim(1) * len}, nil)
+		dstView := obj.View(ctx, obj.Stride(2)*dst, []int64{obj.Dim(0) * obj.Dim(1) * len}, nil)
 
 		ctx.Forward(srcView.Copy(ctx, dstView))
 	}
@@ -209,10 +217,10 @@ func (c *Causal) defrag() {
 	maxMoves := ctx.MaxTensors() / (6 * len(c.keys))
 	moves := 0
 
-	var pendingSrc, pendingDst, pendingLen int
-	src := len(c.cells) - 1
+	var pendingSrc, pendingDst, pendingLen int64
+	src := int64(len(c.cells) - 1)
 
-	for dst := 0; dst < src; dst++ {
+	for dst := int64(0); dst < src; dst++ {
 		if len(c.cells[dst].sequences) == 0 {
 			for ; src > dst; src-- {
 				if len(c.cells[src].sequences) != 0 {
@@ -266,11 +274,11 @@ func (c *Causal) defrag() {
 
 		for i, cell := range c.cells {
 			if slices.Contains(cell.sequences, seq) {
-				if i < seqRange.min {
-					seqRange.min = i
+				if int64(i) < seqRange.min {
+					seqRange.min = int64(i)
 				}
-				if i > seqRange.max {
-					seqRange.max = i
+				if int64(i) > seqRange.max {
+					seqRange.max = int64(i)
 				}
 			}
 		}
@@ -291,34 +299,93 @@ func (c *Causal) SetLayer(layer int) {
 func (c *Causal) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) {
 	key := c.keys[c.curLayer]
 	value := c.values[c.curLayer]
+	kSeqStride := c.keysStride[c.seqDim]
+	vSeqStride := c.valuesStride[c.seqDim]
+	kShape := append([]int64{}, c.keysShape...)
+	kShape[c.seqDim] = c.curMask.Dim(1)
+	kStride := c.keysStride
+	vShape := append([]int64{}, c.valuesShape...)
+	vStride := c.valuesStride
+	vShape[c.seqDim] = c.curMask.Dim(1)
 
-	key = key.View(ctx, int(key.Stride(2))*c.curCellRange.min,
-		int(key.Dim(0)), int(key.Stride(1)),
-		int(key.Dim(1)), int(key.Stride(2)),
-		int(c.curMask.Dim(0)),
-	)
+	key = key.View(ctx, kSeqStride*c.curCellRange.min, kShape, kStride)
+	value = value.View(ctx, vSeqStride*c.curCellRange.min, vShape, vStride)
 
-	value = value.View(ctx, int(key.Stride(2))*c.curCellRange.min,
-		int(value.Dim(0)), int(value.Stride(1)),
-		int(value.Dim(1)), int(value.Stride(2)),
-		int(c.curMask.Dim(0)),
-	)
+	if c.needsPermute {
+		key = key.Permute(ctx, 0, 2, 1, 3)
+		value = value.Permute(ctx, 0, 2, 1, 3)
+	}
+
+	// TODO figure out mask...
+	// HACK!  Something's not always lined up right with the mask
+	if c.curMask.Dim(2) == 1 {
+		return key, value, c.curMask.Permute(ctx, 0, 1, 3, 2)
+	}
 
 	return key, value, c.curMask
 }
 
-func (c *Causal) Put(ctx ml.Context, key, value ml.Tensor) {
-	if c.curBatchSize != int(key.Dim(2)) {
-		panic(fmt.Errorf("inconsistent batch sizes (layer: %v, batch size: %v layer batch size: %v)", c.curLayer, c.curBatchSize, int(key.Dim(2))))
+func (c *Causal) Put(ctx ml.Context, key, value ml.Tensor, seqDim int) {
+	if seqDim == 1 {
+		// TODO - underlying logic doesn't work correctly if the tensor is
+		// Batch, kvheads, seq, embed
+		// so we flip kvHeads and sequence
+		seqDim = 0
+		key = key.Permute(ctx, 0, 2, 1, 3)
+		value = value.Permute(ctx, 0, 2, 1, 3)
+		// slog.Info("Adjusted", "k", key)
+		c.needsPermute = true
+	}
+	if c.curBatchSize != key.Dim(seqDim) {
+		panic(fmt.Errorf("inconsistent batch sizes (layer: %v, batch size: %v layer batch size: %v)", c.curLayer, c.curBatchSize, key.Dim(seqDim)))
+	}
+
+	nDims := len(key.Shape())
+	if seqDim < 0 || seqDim > 3 {
+		panic("invalid sequence dimension")
 	}
 
 	if c.keys[c.curLayer] == nil || c.values[c.curLayer] == nil {
-		c.keys[c.curLayer] = c.cacheCtx.Zeros(c.DType, key.Dim(0), key.Dim(1), int64(c.Capacity))
-		c.values[c.curLayer] = c.cacheCtx.Zeros(c.DType, value.Dim(0), value.Dim(1), int64(c.Capacity))
+		if key.Dim(seqDim) == 1 {
+			// TODO need to find a solution
+			panic("initial sequence of 1 yields invalid stride info")
+		}
+		// Record stride information on initial request with sequence > 1
+		kStride := []int64{}
+		vStride := []int64{}
+		for d := range nDims - 1 {
+			kStride = append(kStride, key.Stride(d))
+			vStride = append(vStride, value.Stride(d))
+		}
+		c.keysStride = kStride
+		c.valuesStride = vStride
+		c.seqDim = seqDim
+		c.keysShape = key.Shape()
+		c.valuesShape = value.Shape()
+		c.keysShape[seqDim] = -1
+		c.valuesShape[seqDim] = -1
 	}
 
-	ctx.Forward(key.Copy(ctx, c.keys[c.curLayer].View(ctx, int(key.Stride(2))*c.curLoc, int(key.Dim(0)*key.Dim(1)*key.Dim(2)))))
-	ctx.Forward(value.Copy(ctx, c.values[c.curLayer].View(ctx, int(value.Stride(2))*c.curLoc, int(value.Dim(0)*value.Dim(1)*value.Dim(2)))))
+	kSize := int64(1)
+	vSize := int64(1)
+	for d := range nDims {
+		if d == seqDim {
+			continue
+		}
+		kSize *= key.Dim(d)
+		vSize *= value.Dim(d)
+	}
+
+	kSeqStride := c.keysStride[seqDim]
+	vSeqStride := c.valuesStride[seqDim]
+
+	if c.keys[c.curLayer] == nil || c.values[c.curLayer] == nil {
+		c.keys[c.curLayer] = c.cacheCtx.Zeros(c.DType, kSize, int64(c.Capacity))
+		c.values[c.curLayer] = c.cacheCtx.Zeros(c.DType, vSize, int64(c.Capacity))
+	}
+
+	ctx.Forward(key.Copy(ctx, c.keys[c.curLayer].View(ctx, kSeqStride*c.curLoc, []int64{kSize * key.Dim(seqDim)}, nil)))
+	ctx.Forward(value.Copy(ctx, c.values[c.curLayer].View(ctx, vSeqStride*c.curLoc, []int64{vSize * value.Dim(seqDim)}, nil)))
 }
 
 func (c *Causal) CopyPrefix(srcSeq, dstSeq int, len int32) {
@@ -332,11 +399,11 @@ func (c *Causal) CopyPrefix(srcSeq, dstSeq int, len int32) {
 
 		if slices.Contains(c.cells[i].sequences, srcSeq) && c.cells[i].pos < len {
 			c.cells[i].sequences = append(c.cells[i].sequences, dstSeq)
-			if i < seqRange.min {
-				seqRange.min = i
+			if int64(i) < seqRange.min {
+				seqRange.min = int64(i)
 			}
-			if i > seqRange.max {
-				seqRange.max = i
+			if int64(i) > seqRange.max {
+				seqRange.max = int64(i)
 			}
 		}
 	}
@@ -358,7 +425,7 @@ func (c *Causal) shift(seq int, beginIndex, offset int32) error {
 
 	offsets := make([]int32, size)
 	for i := range offsets {
-		cell := c.cells[seqRange.min+i]
+		cell := c.cells[int(seqRange.min)+i]
 
 		if slices.Contains(cell.sequences, seq) && cell.pos >= beginIndex {
 			offsets[i] = offset
@@ -375,11 +442,11 @@ func (c *Causal) shift(seq int, beginIndex, offset int32) error {
 			continue
 		}
 
-		key = key.View(ctx, int(key.Stride(2))*seqRange.min,
-			int(key.Dim(0)), int(key.Stride(1)),
-			int(key.Dim(1)), int(key.Stride(2)),
-			size,
-		)
+		kShape := append([]int64{}, c.keysShape...)
+		kShape[c.seqDim] = c.curMask.Dim(1)
+		kSeqStride := c.keysStride[c.seqDim]
+
+		key = key.View(ctx, kSeqStride*seqRange.min, kShape, []int64{kSeqStride, size})
 
 		// TODO(jessegross): dequantize once we support data types other than F32 for the cache
 
@@ -417,11 +484,11 @@ func (c *Causal) Remove(seq int, beginIndex, endIndex int32) error {
 
 					c.cells[i].pos += offset
 				}
-				if i < seqRange.min {
-					seqRange.min = i
+				if int64(i) < seqRange.min {
+					seqRange.min = int64(i)
 				}
-				if i > seqRange.max {
-					seqRange.max = i
+				if int64(i) > seqRange.max {
+					seqRange.max = int64(i)
 				}
 			}
 		}

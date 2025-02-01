@@ -26,7 +26,7 @@ type Cache interface {
 	// Stores a batch of key and value in the cache
 	//
 	// The tensors must be of shape embed dim, kv heads, batch size
-	Put(ctx ml.Context, key, value ml.Tensor)
+	Put(ctx ml.Context, key, value ml.Tensor, seqDim int)
 
 	// ** cache management **
 
