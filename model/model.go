@@ -280,3 +280,14 @@ func Forward(ctx ml.Context, m Model, optsFuncs ...OptionsFunc) (ml.Tensor, erro
 	ctx.Forward(t)
 	return ctx.Compute(t), nil
 }
+
+func ArangeF32(start, end, step float32) []float32 {
+	if step == 0 || start >= end {
+		return nil
+	}
+	var res []float32
+	for i := float32(start); i < end; i += step {
+		res = append(res, i)
+	}
+	return res
+}

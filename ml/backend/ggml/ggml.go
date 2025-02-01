@@ -300,11 +300,9 @@ func (c *Context) Compute(t ml.Tensor) ml.Tensor {
 	C.ggml_backend_sched_graph_compute_async(c.sched, c.graph)
 
 	if t != nil && C.ggml_nbytes(t.(*Tensor).t) != 0 {
-		// slog.Info("XXX", "sched", c.sched, "t", t)
 		backend := C.ggml_backend_sched_get_tensor_backend(c.sched, t.(*Tensor).t)
 
 		t.(*Tensor).data = make([]byte, C.ggml_nbytes(t.(*Tensor).t))
-		// slog.Info("XXX Before async", "backend", backend, "t", t)
 		C.ggml_backend_tensor_get_async(backend, t.(*Tensor).t, unsafe.Pointer(&t.(*Tensor).data[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
 	}
 
@@ -333,7 +331,6 @@ func (c Context) Zeros(dtype ml.DType, rshape ...int64) ml.Tensor {
 		i--
 	}
 
-	// slog.Info("GGML Zeros", "underlying shape", shape, "len", len(shape), "type", dtype)
 	var t *C.struct_ggml_tensor
 	switch dtype {
 	case ml.DTypeF32:
@@ -343,7 +340,6 @@ func (c Context) Zeros(dtype ml.DType, rshape ...int64) ml.Tensor {
 	default:
 		panic("unsupported dtype")
 	}
-	// slog.Info("XXX About to attempt to allocate a tensor", "underlying shape", shape, "size", C.ggml_nbytes(t), "ne", t.ne, "nb", t.nb)
 	b := C.ggml_backend_alloc_buffer(c.backend, C.ggml_nbytes(t))
 	C.ggml_backend_tensor_alloc(b, t, C.ggml_backend_buffer_get_base(b))
 	C.ggml_set_zero(t)

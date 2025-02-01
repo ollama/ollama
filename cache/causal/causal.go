@@ -326,13 +326,14 @@ func (c *Causal) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) {
 }
 
 func (c *Causal) Put(ctx ml.Context, key, value ml.Tensor, seqDim int) {
-	if seqDim == 2 {
+	if seqDim == 1 {
 		// TODO - underlying logic doesn't work correctly if the tensor is
 		// Batch, kvheads, seq, embed
 		// so we flip kvHeads and sequence
-		seqDim = 1
+		seqDim = 0
 		key = key.Permute(ctx, 0, 2, 1, 3)
 		value = value.Permute(ctx, 0, 2, 1, 3)
+		// slog.Info("Adjusted", "k", key)
 		c.needsPermute = true
 	}
 	if c.curBatchSize != key.Dim(seqDim) {
