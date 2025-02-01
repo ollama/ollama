@@ -1,7 +1,7 @@
 package llm
 
 import (
-	"syscall",
+	"syscall"
 
 	"github.com/ollama/ollama/envconfig"
 )
