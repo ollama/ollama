@@ -10,6 +10,8 @@ const (
 	StateStart JSONState = iota
 	StateInObject
 	StateInObjectKey
+	StateInStructuredKey
+	StateInStructuredValue
 	StateNewline
 	StateTab
 	StateSpace
@@ -43,6 +45,7 @@ var JSONStates = []JSONState{
 	StateStart,
 	StateInObject,
 	StateInObjectKey,
+	StateInStructuredKey,
 	StateNewline,
 	StateTab,
 	StateSpace,
@@ -80,6 +83,8 @@ func (s JSONState) String() string {
 		return "StateInObject"
 	case StateInObjectKey:
 		return "StateInObjectKey"
+	case StateInStructuredKey:
+		return "StateInStructuredKey"
 	case StateNewline:
 		return "StateNewline"
 	case StateTab:

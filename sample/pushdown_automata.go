@@ -21,14 +21,14 @@ var validNullRunes = []rune{'n', 'u', 'l', 'l'}
 type PDANode struct {
 	State             JSONState
 	TransitionEdges   map[rune]*PDANode
-	MaskTokenIDToNode map[int32]JSONState
+	MaskTokenIDToNode map[int32]*PDANode
 }
 
 func NewPDANode(state JSONState) *PDANode {
 	return &PDANode{
 		State:             state,
 		TransitionEdges:   make(map[rune]*PDANode),
-		MaskTokenIDToNode: make(map[int32]JSONState),
+		MaskTokenIDToNode: make(map[int32]*PDANode),
 	}
 }
 
@@ -103,6 +103,8 @@ func BuildGraph(proc model.TextProcessor) (*PDANode, map[JSONState]*PDANode, err
 	stateToNodeMap[StateInList].TransitionEdges['{'] = stateToNodeMap[StateInObject]
 	stateToNodeMap[StateInList].TransitionEdges[' '] = stateToNodeMap[StateInList]
 	stateToNodeMap[StateInList].TransitionEdges['\n'] = stateToNodeMap[StateInList]
+	// empty list
+	stateToNodeMap[StateInList].TransitionEdges[']'] = stateToNodeMap[StateInListEnd]
 	addValueConnections(stateToNodeMap[StateInList], stateToNodeMap)
 
 	// null node
@@ -162,6 +164,7 @@ func addValueConnections(node *PDANode, stateToNodeMap map[JSONState]*PDANode) {
 // TODO: tough life fr. plz fix.
 func PreComputeValidStates(stateToNodeMap map[JSONState]*PDANode, proc model.TextProcessor) error {
 
+	// TODO; should come from top level
 	vocab := proc.GetVocabulary()
 
 	decodedToks := make([]string, len(vocab.Values))
@@ -175,7 +178,7 @@ func PreComputeValidStates(stateToNodeMap map[JSONState]*PDANode, proc model.Tex
 
 	var err error
 	for _, node := range stateToNodeMap {
-		err = createMask(node, proc, decodedToks, vocab)
+		err = CreateMask(node, proc, decodedToks, vocab)
 		if err != nil {
 			return err
 		}
@@ -183,7 +186,7 @@ func PreComputeValidStates(stateToNodeMap map[JSONState]*PDANode, proc model.Tex
 	return nil
 }
 
-func createMask(node *PDANode, proc model.TextProcessor, decodedToks []string, vocab *model.Vocabulary) error {
+func CreateMask(node *PDANode, proc model.TextProcessor, decodedToks []string, vocab *model.Vocabulary) error {
 	for i := range vocab.Values {
 		token := decodedToks[i]
 		// Skip EOS/BOS tokens and empty tokens since they are not valid in JSON
@@ -204,7 +207,8 @@ func createMask(node *PDANode, proc model.TextProcessor, decodedToks []string, v
 			}
 		}
 		if valid {
-			node.MaskTokenIDToNode[int32(i)] = curNode.State
+			// cur node allows skipping
+			node.MaskTokenIDToNode[int32(i)] = curNode
 		}
 	}
 	return nil

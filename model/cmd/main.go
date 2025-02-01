@@ -106,11 +106,31 @@ func temp() error {
 		}
 	}
 
-	pushdownSampler := sample.NewPushdownSampler(m.(model.TextProcessor))
+	// pushdownSampler := sample.NewPushdownSampler(m.(model.TextProcessor))
+
+	// simple schema
+	// This schema maps to JSON like:
+	// {
+	//   "name": "some string value"
+	// }
+	schema := &sample.Schema{
+		Name: "root",
+		Type: "object",
+		Properties: []*sample.Schema{
+			{Name: "name", Type: "string"},
+		},
+	}
+
+	pushdownSampler, err := sample.NewSOSampler(schema, m.(model.TextProcessor))
+	if err != nil {
+		return err
+	}
 
 	var offset int
 	var stringBuffer string
 	var firstTokenTime time.Duration
+	var totalSamplingTime time.Duration
+	count := 0
 	for range args.n {
 		logit, err := model.Forward(m, append(opts, model.WithInputIDs(inputIDs), model.WithOffset(offset))...)
 		if err != nil {
@@ -122,7 +142,6 @@ func temp() error {
 		for i, f32 := range f32s {
 			f64s[i] = float64(f32)
 		}
-		sampleTime := time.Now()
 		samplers := []sample.Sampler{
 			pushdownSampler,
 			// sample.Weighed(),
@@ -131,12 +150,16 @@ func temp() error {
 			sample.Greedy(),
 		}
 
+		samplingStart := time.Now()
 		f64s, err = sample.Sample(f64s, samplers...)
 		if err != nil {
 			return err
 		}
-		finishTime := time.Now()
-		fmt.Printf("Sample time: %vms\n", finishTime.Sub(sampleTime).Milliseconds())
+		samplingTime := time.Since(samplingStart)
+		totalSamplingTime += samplingTime
+
+		fmt.Println("sampling time", samplingTime)
+		// fmt.Printf("Sample time: %vms\n", finishTime.Sub(sampleTime).Milliseconds())
 
 		var outputIDs []int32
 		for _, f64 := range f64s {
@@ -164,6 +187,7 @@ func temp() error {
 		// fmt.Printf("--- token: %q\n", s)
 		// fmt.Printf("--- outputIDs: %v\n", outputIDs)
 		stringBuffer += s
+		count++
 		fmt.Println("--- stringBuffer", stringBuffer)
 
 		err = pushdownSampler.UpdateState(outputIDs)
@@ -179,7 +203,7 @@ func temp() error {
 	fmt.Println("\n------ Output: ------")
 	fmt.Println(stringBuffer)
 	fmt.Println("--------------------")
-
+	fmt.Println("sample average time", totalSamplingTime/time.Duration(count))
 	return nil
 }
 
