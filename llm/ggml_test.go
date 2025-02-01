@@ -3,10 +3,10 @@ package llm
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDetectGGMLType(t *testing.T) {
@@ -141,7 +141,7 @@ func TestDecodeGGML(t *testing.T) {
 	}{
 		{
 			name:        "Invalid magic",
-			input:       []byte{0x00, 0x00, 0x00, 0x00},
+			input:       makeTestBytes(0x00000000),
 			wantErr:     true,
 			errContains: "invalid file magic",
 		},
@@ -157,19 +157,48 @@ func TestDecodeGGML(t *testing.T) {
 			wantErr:     true,
 			errContains: "EOF",
 		},
+		{
+			name: "GGLA invalid version",
+			input: makeTestBytes(FILE_MAGIC_GGLA,
+				withGGLAVersion(2)), // only version 1 is valid
+			wantErr:     true,
+			errContains: "invalid version",
+		},
+		{
+			name: "GGLA incomplete header",
+			input: makeTestBytes(FILE_MAGIC_GGLA,
+				withGGLAVersion(1)), // missing r and alpha
+			wantErr:     true,
+			errContains: "EOF",
+		},
+		{
+			name: "GGLA valid minimal",
+			input: makeTestBytes(FILE_MAGIC_GGLA,
+				withGGLAVersion(1),
+				withGGLAHeader(32, 1)),
+			wantErr: false,
+		},
+		{
+			name: "GGLA with tensor",
+			input: makeTestBytes(FILE_MAGIC_GGLA,
+				withGGLAVersion(1),
+				withGGLAHeader(32, 1),
+				withGGLATensor(2, 4, 0, []uint32{2, 3}, "test")),
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reader := bytes.NewReader(tt.input)
-			_, _, err := DecodeGGML(reader, 0)
-
-			fmt.Println(err)
-
-			assert.Equal(t, err != nil, tt.wantErr)
-			if tt.wantErr && err != nil {
-				assert.Contains(t, err.Error(), tt.errContains)
+			r := bytes.NewReader(tt.input)
+			model, _, err := DecodeGGML(r, -1)
+			if tt.wantErr {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.errContains)
+				return
 			}
+			require.NoError(t, err)
+			require.NotNil(t, model)
 		})
 	}
 }
@@ -218,8 +247,51 @@ func TestKVCacheBytesPerElement(t *testing.T) {
 	}
 }
 
-func makeTestBytes(magic uint32) []byte {
-	buf := make([]byte, 4)
-	binary.LittleEndian.PutUint32(buf, magic)
-	return buf
+func makeTestBytes(magic uint32, opts ...testBytesOption) []byte {
+	buf := new(bytes.Buffer)
+	binary.Write(buf, binary.LittleEndian, magic)
+	for _, opt := range opts {
+		opt(buf)
+	}
+	return buf.Bytes()
+}
+
+type testBytesOption func(*bytes.Buffer)
+
+// GGLA options
+func withGGLAVersion(version uint32) testBytesOption {
+	return func(buf *bytes.Buffer) {
+		binary.Write(buf, binary.LittleEndian, version)
+	}
+}
+
+func withGGLAHeader(r, alpha uint32) testBytesOption {
+	return func(buf *bytes.Buffer) {
+		binary.Write(buf, binary.LittleEndian, r)
+		binary.Write(buf, binary.LittleEndian, alpha)
+	}
+}
+
+func withGGLATensor(dims uint32, namesize uint32, kind uint32, shape []uint32, name string) testBytesOption {
+	return func(buf *bytes.Buffer) {
+		binary.Write(buf, binary.LittleEndian, dims)
+		binary.Write(buf, binary.LittleEndian, namesize)
+		binary.Write(buf, binary.LittleEndian, kind)
+		for _, s := range shape {
+			binary.Write(buf, binary.LittleEndian, s)
+		}
+		buf.WriteString(name)
+
+		// Pad to 32-byte boundary
+		padding := make([]byte, (32-buf.Len()%32)%32)
+		buf.Write(padding)
+
+		// Write dummy tensor data
+		var size uint32 = 1
+		for _, s := range shape {
+			size *= s
+		}
+		tensorData := make([]byte, size*4) // assuming float32 (4 bytes)
+		buf.Write(tensorData)
+	}
 }
