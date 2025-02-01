@@ -306,7 +306,7 @@ curl http://localhost:11434/api/generate -d '{
 
 #### Response
 
-```
+```json
 {
   "model": "llava",
   "created_at": "2023-11-03T15:36:02.583064Z",
@@ -795,7 +795,7 @@ curl http://localhost:11434/api/chat -d '{
 
 ##### Request
 
-```
+```shell
 curl http://localhost:11434/api/chat -d '{
   "model": "llama3.2",
   "messages": [
@@ -870,7 +870,7 @@ If the messages array is empty, the model will be loaded into memory.
 
 ##### Request
 
-```
+```shell
 curl http://localhost:11434/api/chat -d '{
   "model": "llama3.2",
   "messages": []
@@ -897,7 +897,7 @@ If the messages array is empty and the `keep_alive` parameter is set to `0`, a m
 
 ##### Request
 
-```
+```shell
 curl http://localhost:11434/api/chat -d '{
   "model": "llama3.2",
   "messages": [],
