@@ -38,5 +38,5 @@ var LlamaServerSysProcAttr = &syscall.SysProcAttr{
 	//
 	// Setting Above Normal priority class ensures when running as a "background service"
 	// with "programs" given best priority, we aren't starved of cpu cycles
-	CreationFlags: CREATE_DEFAULT_ERROR_MODE | getPriorityClass(envconfig.Prio()),
+	CreationFlags: CREATE_DEFAULT_ERROR_MODE | getPriorityClass(envconfig.WindowsProcessPriority()),
 }
