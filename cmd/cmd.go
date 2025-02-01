@@ -1025,7 +1025,12 @@ func RunServer(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	ln, err := net.Listen("tcp", envconfig.Host().Host)
+	host := envconfig.Host()
+	scheme := host.Scheme
+	if scheme != "unix" {
+		scheme = "tcp"
+	}
+	ln, err := net.Listen(scheme, host.Host)
 	if err != nil {
 		return err
 	}

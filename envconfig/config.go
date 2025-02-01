@@ -20,24 +20,26 @@ func Host() *url.URL {
 	defaultPort := "11434"
 
 	s := strings.TrimSpace(Var("OLLAMA_HOST"))
-	scheme, hostport, ok := strings.Cut(s, "://")
+	scheme, addr, ok := strings.Cut(s, "://")
 	switch {
 	case !ok:
-		scheme, hostport = "http", s
+		scheme, addr = "http", s
 	case scheme == "http":
 		defaultPort = "80"
 	case scheme == "https":
 		defaultPort = "443"
+	case scheme == "unix":
+		return &url.URL{Scheme: "unix", Host: addr}
 	}
 
-	hostport, path, _ := strings.Cut(hostport, "/")
-	host, port, err := net.SplitHostPort(hostport)
+	addr, path, _ := strings.Cut(addr, "/")
+	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		host, port = "127.0.0.1", defaultPort
-		if ip := net.ParseIP(strings.Trim(hostport, "[]")); ip != nil {
+		if ip := net.ParseIP(strings.Trim(addr, "[]")); ip != nil {
 			host = ip.String()
-		} else if hostport != "" {
-			host = hostport
+		} else if addr != "" {
+			host = addr
 		}
 	}
 
@@ -237,7 +239,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(), "Enabled flash attention"},
 		"OLLAMA_KV_CACHE_TYPE":     {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
 		"OLLAMA_GPU_OVERHEAD":      {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
-		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
+		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "Address for the ollama server (supports Unix socket paths; default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
 		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
 		"OLLAMA_LOAD_TIMEOUT":      {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},
