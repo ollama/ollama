@@ -122,6 +122,11 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		scanner.HistoryDisable()
 	}
 
+	if opts.System != "" {
+		newMessage := api.Message{Role: "system", Content: opts.System}
+		opts.Messages = append(opts.Messages, newMessage)
+	}
+
 	fmt.Print(readline.StartBracketedPaste)
 	defer fmt.Printf(readline.EndBracketedPaste)
 
