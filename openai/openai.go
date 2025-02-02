@@ -80,11 +80,13 @@ type StreamOptions struct {
 }
 
 type ChatCompletionRequest struct {
-	Model            string          `json:"model"`
-	Messages         []Message       `json:"messages"`
-	Stream           bool            `json:"stream"`
-	StreamOptions    *StreamOptions  `json:"stream_options"`
-	MaxTokens        *int            `json:"max_tokens"`
+	Model               string         `json:"model"`
+	Messages            []Message      `json:"messages"`
+	Stream              bool           `json:"stream"`
+	StreamOptions       *StreamOptions `json:"stream_options"`
+	MaxCompletionTokens *int           `json:"max_completion_tokens"`
+	// Deprecated: Use [ChatCompletionRequest.MaxCompletionTokens]
+	MaxTokens        *int            `json:"max_tokens" deprecated:"use max_completion_tokens instead"`
 	Seed             *int            `json:"seed"`
 	Stop             any             `json:"stop"`
 	Temperature      *float64        `json:"temperature"`
@@ -93,6 +95,7 @@ type ChatCompletionRequest struct {
 	TopP             *float64        `json:"top_p"`
 	ResponseFormat   *ResponseFormat `json:"response_format"`
 	Tools            []api.Tool      `json:"tools"`
+	NumCtx           *int            `json:"num_ctx"`
 }
 
 type ChatCompletion struct {
@@ -475,8 +478,17 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		options["stop"] = stops
 	}
 
+	if r.NumCtx != nil {
+		options["num_ctx"] = *r.NumCtx
+	}
+
+	// Deprecated: MaxTokens is deprecated, use MaxCompletionTokens instead
 	if r.MaxTokens != nil {
-		options["num_predict"] = *r.MaxTokens
+		r.MaxCompletionTokens = r.MaxTokens
+	}
+
+	if r.MaxCompletionTokens != nil {
+		options["num_predict"] = *r.MaxCompletionTokens
 	}
 
 	if r.Temperature != nil {
