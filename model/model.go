@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 	"image"
 	_ "image/jpeg"
@@ -20,51 +21,25 @@ import (
 	_ "github.com/ollama/ollama/ml/backend"
 )
 
-type Cache struct {
-	cache.Cache
-	cache.Options
-}
-
-func (c Cache) Sub(i int) Cache {
-	if c.Cache != nil {
-		return Cache{
-			Cache:   c.Cache.Sub(i),
-			Options: c.Options,
-		}
-	}
-
-	return c
-}
-
-func (c Cache) Put(ctx ml.Context, key, value ml.Tensor, opts cache.Options) (ml.Tensor, ml.Tensor) {
-	if c.Cache != nil {
-		return c.Cache.Put(ctx, key, value, opts)
-	}
-
-	return key, value
-}
-
 type Options struct {
-	inputs []int32
-
-	Offset int
+	inputs    []int32
+	positions []int32
+	sequences []int
+	outputs   []int32
 
 	Images []image.Image
-
-	Cache
 }
 
 func (opts Options) Inputs() []int32 {
-	return opts.inputs[opts.Offset:]
+	return opts.inputs
 }
 
 func (opts Options) Positions() []int32 {
-	positions := make([]int32, len(opts.inputs)-opts.Offset)
-	for i := range positions {
-		positions[i] = int32(opts.Offset + i)
-	}
+	return opts.positions
+}
 
-	return positions
+func (opts Options) Outputs() []int32 {
+	return opts.outputs
 }
 
 type OptionsFunc func(Model, *Options)
@@ -75,10 +50,21 @@ func WithInputIDs(ids []int32) OptionsFunc {
 	}
 }
 
-func WithOffset(offset int) OptionsFunc {
+func WithPositions(pos []int32) OptionsFunc {
 	return func(m Model, opts *Options) {
-		opts.Offset = offset
-		opts.Cache.Position = offset
+		opts.positions = pos
+	}
+}
+
+func WithOutputs(outputs []int32) OptionsFunc {
+	return func(m Model, opts *Options) {
+		opts.outputs = outputs
+	}
+}
+
+func WithSequences(seqs []int) OptionsFunc {
+	return func(m Model, opts *Options) {
+		opts.sequences = seqs
 	}
 }
 
@@ -88,29 +74,24 @@ func WithImage(img image.Image) OptionsFunc {
 	}
 }
 
-func WithCache(c cache.Cache) OptionsFunc {
-	return func(m Model, opts *Options) {
-		opts.Cache = Cache{
-			Cache: c,
-			Options: cache.Options{
-				Position: opts.Offset,
-			},
-		}
-	}
-}
-
 type Base struct {
-	b ml.Backend
+	b       ml.Backend
+	KVCache cache.Cache
 }
 
 func (m *Base) Backend() ml.Backend {
 	return m.b
 }
 
+func (m *Base) Cache() cache.Cache {
+	return m.KVCache
+}
+
 type Model interface {
 	Forward(ml.Context, Options) (ml.Tensor, error)
 
 	Backend() ml.Backend
+	Cache() cache.Cache
 }
 
 var models = make(map[string]func(ml.Config) (Model, error))
@@ -146,12 +127,20 @@ func New(s string) (Model, error) {
 		return nil, err
 	}
 
+	base := Base{b: b, KVCache: m.Cache()}
+
 	v := reflect.ValueOf(m)
-	v.Elem().Set(populateFields(b, v))
+	v.Elem().Set(populateFields(base, v))
 	return m, nil
 }
 
-func populateFields(b ml.Backend, v reflect.Value, tags ...Tag) reflect.Value {
+func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
+	var iface bool
+	if v.Kind() == reflect.Interface {
+		iface = true
+		v = v.Elem()
+	}
+
 	t := v.Type()
 	if t.Kind() == reflect.Pointer {
 		t, v = t.Elem(), v.Elem()
@@ -173,7 +162,7 @@ func populateFields(b ml.Backend, v reflect.Value, tags ...Tag) reflect.Value {
 			}
 
 			if tt == reflect.TypeOf((*Base)(nil)).Elem() {
-				vv.Set(reflect.ValueOf(Base{b: b}))
+				vv.Set(reflect.ValueOf(base))
 			} else if tt == reflect.TypeOf((*ml.Tensor)(nil)).Elem() {
 				var fn func([]Tag) [][]string
 				fn = func(tags []Tag) (values [][]string) {
@@ -199,7 +188,7 @@ func populateFields(b ml.Backend, v reflect.Value, tags ...Tag) reflect.Value {
 
 				names := fn(tagsCopy)
 				for _, name := range names {
-					if tensor := b.Get(strings.Join(name, ".")); tensor != nil {
+					if tensor := base.Backend().Get(strings.Join(name, ".")); tensor != nil {
 						slog.Debug("found tensor", "", tensor)
 						vv.Set(reflect.ValueOf(tensor))
 						break
@@ -211,12 +200,12 @@ func populateFields(b ml.Backend, v reflect.Value, tags ...Tag) reflect.Value {
 					vvv = reflect.New(tt.Elem())
 				}
 
-				if f := populateFields(b, vvv, tagsCopy...); f.CanAddr() {
+				if f := populateFields(base, vvv, tagsCopy...); f.CanAddr() {
 					vv.Set(f.Addr())
 				}
 			} else if tt.Kind() == reflect.Slice || tt.Kind() == reflect.Array {
 				for i := range vv.Len() {
-					vv.Index(i).Set(populateFields(b, vv.Index(i), append(tagsCopy, Tag{Name: strconv.Itoa(i)})...))
+					vv.Index(i).Set(populateFields(base, vv.Index(i), append(tagsCopy, Tag{Name: strconv.Itoa(i)})...))
 				}
 			}
 
@@ -228,6 +217,10 @@ func populateFields(b ml.Backend, v reflect.Value, tags ...Tag) reflect.Value {
 		if allNil {
 			return reflect.Zero(t)
 		}
+	}
+
+	if iface {
+		return v.Addr()
 	}
 
 	return v
@@ -262,18 +255,30 @@ func canNil(t reflect.Type) bool {
 		t.Kind() == reflect.Slice
 }
 
-func Forward(m Model, optsFuncs ...OptionsFunc) (ml.Tensor, error) {
+func Forward(ctx ml.Context, m Model, optsFuncs ...OptionsFunc) (ml.Tensor, error) {
 	var opts Options
 	for _, optsFunc := range optsFuncs {
 		optsFunc(m, &opts)
 	}
 
-	ctx := m.Backend().NewContext()
+	if len(opts.positions) != len(opts.sequences) {
+		return nil, fmt.Errorf("length of positions (%v) must match length of seqs (%v)", len(opts.positions), len(opts.sequences))
+	}
+
+	if len(opts.positions) < 1 {
+		return nil, errors.New("batch size cannot be less than 1")
+	}
+
+	err := m.Cache().StartForward(ctx, opts.positions, opts.sequences)
+	if err != nil {
+		return nil, err
+	}
+
 	t, err := m.Forward(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	defer ctx.Close()
 
+	ctx.Forward(t)
 	return ctx.Compute(t), nil
 }

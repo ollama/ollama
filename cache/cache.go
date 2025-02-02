@@ -1,63 +1,53 @@
 package cache
 
 import (
+	"errors"
+
 	"github.com/ollama/ollama/ml"
 )
 
-type Options struct {
-	Position int
-}
+var (
+	ErrKvCacheFull  = errors.New("could not find a kv cache slot")
+	ErrNotSupported = errors.New("model does not support operation")
+)
 
 type Cache interface {
-	Sub(i int) Cache
-	Put(ctx ml.Context, key, value ml.Tensor, opts Options) (ml.Tensor, ml.Tensor)
-}
+	// ** used by model implementations **
 
-type Simple struct {
-	DType    ml.DType
-	Capacity int
+	// Sets the active layer of the cache
+	SetLayer(layer int)
 
-	keys, values []ml.Tensor
-}
+	// Returns the history of key and value tensors plus a mask
+	//
+	// The tensors are of shape embed dim, kv heads, batch size
+	// The mask is of shape history size, batch size
+	Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor)
 
-func (c *Simple) Sub(i int) Cache {
-	if i >= len(c.keys) {
-		c.keys = append(c.keys, make([]ml.Tensor, i-len(c.keys)+1)...)
-		c.values = append(c.values, make([]ml.Tensor, i-len(c.values)+1)...)
-	}
+	// Stores a batch of key and value in the cache
+	//
+	// The tensors must be of shape embed dim, kv heads, batch size
+	Put(ctx ml.Context, key, value ml.Tensor)
 
-	return &Simple{
-		keys:     c.keys[i : i+1],
-		values:   c.values[i : i+1],
-		Capacity: c.Capacity,
-		DType:    c.DType,
-	}
-}
+	// ** cache management **
 
-func (c *Simple) Put(ctx ml.Context, key, value ml.Tensor, opts Options) (ml.Tensor, ml.Tensor) {
-	if c.keys[0] == nil || c.values[0] == nil {
-		c.keys[0] = ctx.Zeros(c.DType, int(key.Dim(0)*key.Dim(1))*c.Capacity)
-		c.values[0] = ctx.Zeros(c.DType, int(value.Dim(0)*value.Dim(1))*c.Capacity)
-	}
+	// Sets up runtime parameters
+	Init(backend ml.Backend, dtype ml.DType, capacity int32)
 
-	ctx.Forward(key.Copy(ctx, c.keys[0].View(ctx, int(key.Stride(2))*opts.Position, int(key.Dim(0)*key.Dim(1)*key.Dim(2)))))
-	ctx.Forward(value.Copy(ctx, c.values[0].View(ctx, int(value.Stride(2))*opts.Position, int(value.Dim(0)*value.Dim(1)*value.Dim(2)))))
+	// Closes the cache and frees resources associated with it
+	Close()
 
-	n := min(c.Capacity, int(key.Dim(2))+opts.Position)
+	// Called before the start of the model's forward pass. For each
+	// token in the coming batch, there must be a corresponding entry
+	// in positions and seqs.
+	StartForward(ctx ml.Context, positions []int32, seqs []int) error
 
-	key = c.keys[0].View(ctx, 0,
-		int(key.Dim(0)), int(key.Stride(1)),
-		int(key.Dim(1)), int(key.Stride(2)),
-		n,
-	)
+	// Copies tokens in the range [0, len) from srcSeq to dstSeq
+	CopyPrefix(srcSeq, dstSeq int, len int32)
 
-	value = c.values[0].View(ctx, 0,
-		int(value.Dim(0)), int(value.Stride(1)),
-		int(value.Dim(1)), int(value.Stride(2)),
-		n,
-	)
-
-	// TODO shift context if necessary
-
-	return key, value
+	// Removes tokens in the range [beginIndex, endIndex) from seq. Set
+	// endIndex to math.MaxInt32 to remove everything starting at beginIndex.
+	//
+	// If an error occurs, the entire context for the sequence should be
+	// removed by calling Remove(seq, 0, math.MaxInt32)
+	Remove(seq int, beginIndex, endIndex int32) error
 }

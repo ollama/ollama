@@ -1,6 +1,8 @@
 package mllama
 
 import (
+	"github.com/ollama/ollama/cache/causal"
+	"github.com/ollama/ollama/cache/encoder"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
 	"github.com/ollama/ollama/model"
@@ -19,12 +21,16 @@ type Model struct {
 }
 
 func New(c ml.Config) (model.Model, error) {
-	return &Model{
+	m := Model{
 		ImageProcessor: newImageProcessor(c),
 		VisionModel:    newVisionModel(c),
 		TextProcessor:  newTextProcessor(c),
 		TextModel:      newTextModel(c),
-	}, nil
+	}
+
+	m.KVCache = encoder.NewEncDecCache(&encoder.EncoderCache{}, causal.NewCausalCache(m.TextModel.Shift))
+
+	return &m, nil
 }
 
 func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
@@ -75,9 +81,9 @@ func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
 	}
 
 	// TODO: attention mask, cross attention mask
-	hiddenState := m.TextModel.Forward(ctx, inputs, positions, nil, crossAttentionStates, nil, opts.Cache)
+	hiddenState := m.TextModel.Forward(ctx, inputs, positions, nil, crossAttentionStates, nil, m.Cache().(*encoder.EncDecCache))
 
-	outputs, err := ctx.FromIntSlice([]int32{int32(len(opts.Positions())) - 1}, 1)
+	outputs, err := ctx.FromIntSlice(opts.Outputs(), len(opts.Outputs()))
 	if err != nil {
 		return nil, err
 	}

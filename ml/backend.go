@@ -43,12 +43,13 @@ func NewBackend(f *os.File) (Backend, error) {
 }
 
 type Context interface {
-	Zeros(dtype DType, shape ...int) Tensor
+	Zeros(dtype DType, shape ...int64) Tensor
 	FromFloatSlice(s []float32, shape ...int) (Tensor, error)
 	FromIntSlice(s []int32, shape ...int) (Tensor, error)
 
 	Forward(Tensor)
 	Compute(Tensor) Tensor
+	MaxTensors() int
 	Close() error
 }
 
