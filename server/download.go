@@ -170,9 +170,9 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *r
 
 			offset += size
 		}
+	} else {
+		slog.Info(fmt.Sprintf("downloading %s in %d %s part(s)", b.Digest[7:19], len(b.Parts), format.HumanBytes(b.Parts[0].Size)))
 	}
-
-	slog.Info(fmt.Sprintf("downloading %s in %d %s part(s)", b.Digest[7:19], len(b.Parts), format.HumanBytes(b.Parts[0].Size)))
 	return nil
 }
 
