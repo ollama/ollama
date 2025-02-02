@@ -85,6 +85,7 @@ type ChatCompletionRequest struct {
 	Stream           bool            `json:"stream"`
 	StreamOptions    *StreamOptions  `json:"stream_options"`
 	MaxTokens        *int            `json:"max_tokens"`
+	MaxPromptTokens  *int            `json:"max_prompt_tokens"`
 	Seed             *int            `json:"seed"`
 	Stop             any             `json:"stop"`
 	Temperature      *float64        `json:"temperature"`
@@ -477,6 +478,10 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 
 	if r.MaxTokens != nil {
 		options["num_predict"] = *r.MaxTokens
+	}
+
+	if r.MaxPromptTokens != nil {
+		options["num_ctx"] = *r.MaxPromptTokens
 	}
 
 	if r.Temperature != nil {
