@@ -357,6 +357,8 @@ func TestGenerateChat(t *testing.T) {
 	})
 
 	t.Run("messages with tools (non-streaming)", func(t *testing.T) {
+		var stringType = "string"
+
 		if w.Code != http.StatusOK {
 			t.Fatalf("failed to create test-system model: %d", w.Code)
 		}
@@ -371,24 +373,28 @@ func TestGenerateChat(t *testing.T) {
 						Type       string   `json:"type"`
 						Required   []string `json:"required"`
 						Properties map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.TypeField `json:"type"`
+							Description string        `json:"description"`
+							Enum        []string      `json:"enum,omitempty"`
 						} `json:"properties"`
 					}{
 						Type:     "object",
 						Required: []string{"location"},
 						Properties: map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.TypeField `json:"type"`
+							Description string        `json:"description"`
+							Enum        []string      `json:"enum,omitempty"`
 						}{
 							"location": {
-								Type:        "string",
+								Type: api.TypeField{
+									Single: &stringType,
+								},
 								Description: "The city and state",
 							},
 							"unit": {
-								Type: "string",
+								Type: api.TypeField{
+									Single: &stringType,
+								},
 								Enum: []string{"celsius", "fahrenheit"},
 							},
 						},
@@ -458,6 +464,7 @@ func TestGenerateChat(t *testing.T) {
 	})
 
 	t.Run("messages with tools (streaming)", func(t *testing.T) {
+		var stringType = "string"
 		tools := []api.Tool{
 			{
 				Type: "function",
@@ -468,24 +475,28 @@ func TestGenerateChat(t *testing.T) {
 						Type       string   `json:"type"`
 						Required   []string `json:"required"`
 						Properties map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.TypeField `json:"type"`
+							Description string        `json:"description"`
+							Enum        []string      `json:"enum,omitempty"`
 						} `json:"properties"`
 					}{
 						Type:     "object",
 						Required: []string{"location"},
 						Properties: map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.TypeField `json:"type"`
+							Description string        `json:"description"`
+							Enum        []string      `json:"enum,omitempty"`
 						}{
 							"location": {
-								Type:        "string",
+								Type: api.TypeField{
+									Single: &stringType,
+								},
 								Description: "The city and state",
 							},
 							"unit": {
-								Type: "string",
+								Type: api.TypeField{
+									Single: &stringType,
+								},
 								Enum: []string{"celsius", "fahrenheit"},
 							},
 						},
