@@ -12,6 +12,8 @@ include src/ggml-cuda/
 include src/ggml-cuda/template-instances/
 include src/ggml-hip/
 include src/ggml-metal/
+include src/ggml-vulkan/
+include src/ggml-vulkan/vulkan-shaders
 include *.c
 include *.h
 include *.cpp
@@ -19,4 +21,5 @@ include *.cu
 include *.cuh
 include *.m
 include *.metal
+include *.comp
 exclude *
