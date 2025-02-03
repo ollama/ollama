@@ -32,7 +32,7 @@ jobs:
         arch: [amd64]
         include:
           - os: macos-15
-            arch: amd64
+            arch: arm64
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
