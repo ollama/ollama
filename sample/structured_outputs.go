@@ -9,20 +9,20 @@ import (
 )
 
 type SOSampler struct {
-	schema       *Schema
-	propIdx      int
-	propStateMap map[string]*PDANode
-	pdaSampler   *PushdownSampler
+	schema        *Schema
+	propIdx       int
+	propToNodeMap map[string]*PDANode
+	pdaSampler    *PushdownSampler
 }
 
 func NewSOSampler(schema *Schema, proc model.TextProcessor) (*SOSampler, error) {
 	pdaSampler := NewPushdownSampler(proc)
 
 	so := &SOSampler{
-		schema:       schema,
-		propIdx:      -1,
-		propStateMap: make(map[string]*PDANode),
-		pdaSampler:   pdaSampler,
+		schema:        schema,
+		propIdx:       -1,
+		propToNodeMap: make(map[string]*PDANode),
+		pdaSampler:    pdaSampler,
 	}
 
 	so.schemaToGraph()
@@ -47,7 +47,7 @@ func NewSOSampler(schema *Schema, proc model.TextProcessor) (*SOSampler, error) 
 	before := m.Alloc
 
 	// TODO: still messed up
-	for _, node := range so.propStateMap {
+	for _, node := range so.propToNodeMap {
 		// propName -> node
 		curState := node.State
 		fromNode := node
@@ -110,7 +110,7 @@ func (s *SOSampler) schemaToGraph() {
 			// point to end of object key node after all chars are done
 			prevNode.TransitionEdges['"'] = s.pdaSampler.stateToNodeMap[StateInObjectKeyEnd]
 			// points to start of the key
-			s.propStateMap[name] = keyNode
+			s.propToNodeMap[name] = keyNode
 			fmt.Println("name", name, "keyNode", keyNode.State)
 		}
 	}
@@ -124,10 +124,11 @@ func (s *SOSampler) Sample(logits []float64) ([]float64, error) {
 		// TODO: this tracking should probably be coming from a stack to track nested objects
 		// simple case
 		s.propIdx++
+		fmt.Println("propIdx", s.propIdx)
 		prop := s.schema.Properties[s.propIdx]
-		// fmt.Println("prop", prop.Name)
-		s.pdaSampler.curNode = s.propStateMap[prop.Name]
-		// fmt.Println("changed curNode state to", s.pdaSampler.curNode.State)
+		fmt.Println("prop", prop.Name)
+		s.pdaSampler.curNode = s.propToNodeMap[prop.Name]
+		fmt.Println("changed curNode state to", s.pdaSampler.curNode.State)
 		logits, err := s.pdaSampler.maskLogits(logits, s.pdaSampler.curNode)
 		if err != nil {
 			return nil, err

@@ -118,6 +118,7 @@ func temp() error {
 		Type: "object",
 		Properties: []*sample.Schema{
 			{Name: "name", Type: "string"},
+			{Name: "age", Type: "integer"},
 		},
 	}
 
@@ -158,7 +159,7 @@ func temp() error {
 		samplingTime := time.Since(samplingStart)
 		totalSamplingTime += samplingTime
 
-		fmt.Println("sampling time", samplingTime)
+		// fmt.Println("sampling time", samplingTime)
 		// fmt.Printf("Sample time: %vms\n", finishTime.Sub(sampleTime).Milliseconds())
 
 		var outputIDs []int32
