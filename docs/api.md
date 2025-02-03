@@ -306,7 +306,7 @@ curl http://localhost:11434/api/generate -d '{
 
 #### Response
 
-```
+```json
 {
   "model": "llava",
   "created_at": "2023-11-03T15:36:02.583064Z",
@@ -495,14 +495,14 @@ Generate the next message in a chat with a provided model. This is a streaming e
 
 - `model`: (required) the [model name](#model-names)
 - `messages`: the messages of the chat, this can be used to keep a chat memory
-- `tools`: tools for the model to use if supported. Requires `stream` to be set to `false`
+- `tools`: list of tools in JSON for the model to use if supported
 
 The `message` object has the following fields:
 
 - `role`: the role of the message, either `system`, `user`, `assistant`, or `tool`
 - `content`: the content of the message
 - `images` (optional): a list of images to include in the message (for multimodal models such as `llava`)
-- `tool_calls` (optional): a list of tools the model wants to use
+- `tool_calls` (optional): a list of tools in JSON that the model wants to use
 
 Advanced parameters (optional):
 
@@ -795,7 +795,7 @@ curl http://localhost:11434/api/chat -d '{
 
 ##### Request
 
-```
+```shell
 curl http://localhost:11434/api/chat -d '{
   "model": "llama3.2",
   "messages": [
@@ -870,7 +870,7 @@ If the messages array is empty, the model will be loaded into memory.
 
 ##### Request
 
-```
+```shell
 curl http://localhost:11434/api/chat -d '{
   "model": "llama3.2",
   "messages": []
@@ -897,7 +897,7 @@ If the messages array is empty and the `keep_alive` parameter is set to `0`, a m
 
 ##### Request
 
-```
+```shell
 curl http://localhost:11434/api/chat -d '{
   "model": "llama3.2",
   "messages": [],

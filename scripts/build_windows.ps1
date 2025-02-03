@@ -80,18 +80,61 @@ function checkEnv() {
 
 function buildOllama() {
     if ($null -eq ${env:OLLAMA_SKIP_GENERATE}) {
-        write-host "Building ollama runners"
         Remove-Item -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}"
-        & make -j 12 dist
+        New-Item "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\" -ItemType Directory -ea 0
+
+
+        # Default first, then conditionall ROCm and cuda v11
+        write-host "Building Default native backend libraries"
+         $env:CMAKE_GENERATOR="ninja"
+        & cmake --preset Default
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        & cmake --build --preset Default -j 12
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        & cmake --install build -j 12
+        
+        # TODO - add steps for v11 and ROCm
+        #
+        # if ("$script:CUDA_DIRS".Contains("v11") -and "$script:CUDA_DIRS".Contains("v12")) {
+        #     # We assume the default is v12, so override for v11
+        #     $origCUDA_PATH=$env:CUDA_PATH
+        #     $hashEnv = @{}
+        #     Get-ChildItem env: | foreach { $hashEnv[$_.Name] = $_.Value }
+        #     $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V11")) { $v11="$_" }}
+        #     write-host "$v11"
+        #     # $env:CUDA_PATH=$hashEnv[$v11]
+        #     # $env:CUDACXX=$hashEnv[$v11]+"\bin\nvcc.exe"
+        #     $env:CUDAToolkit_ROOT=$hashEnv[$v11]
+        #     # ls env:
+        #     write-host "Building CUDA v11 backend libraries"
+        #     & cmake --preset "CUDA 11"
+        #     $env:CUDA_PATH=$origCUDA_PATH
+        #     exit(1)
+        #     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        #     # & cmake --build --preset "CUDA 11" -j 12
+        #     # if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        # }
+
+        # if ($env:HIP_PATH) {
+        #     write-host "Building ROCm backend libraries"
+        #     $env:HIPCXX="${env:HIP_PATH}\bin\clang++.exe"
+        #     $env:HIP_PLATFORM="amd"
+        #     $env:CMAKE_PREFIX_PATH="${env:HIP_PATH}"
+        #     & cmake --preset "ROCm"
+        #     $env:HIPCXX=""
+        #     $env:HIP_PLATFORM=""
+        #     $env:CMAKE_PREFIX_PATH=""
+        #     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        #     & cmake --build --preset "ROCm" -j 12
+        #     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        # }
     } else {
         write-host "Skipping generate step with OLLAMA_SKIP_GENERATE set"
     }
     write-host "Building ollama CLI"
     & go build -trimpath -ldflags "-s -w -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    New-Item -ItemType Directory -Path .\dist\windows-${script:TARGET_ARCH}\ -Force
-    cp .\ollama.exe .\dist\windows-${script:TARGET_ARCH}\
+    cp .\ollama.exe "${script:DIST_DIR}\"
 }
 
 function buildApp() {

@@ -290,12 +290,3 @@ func Values() map[string]string {
 func Var(key string) string {
 	return strings.Trim(strings.TrimSpace(os.Getenv(key)), "\"'")
 }
-
-// On windows, we keep the binary at the top directory, but
-// other platforms use a "bin" directory, so this returns ".."
-func LibRelativeToExe() string {
-	if runtime.GOOS == "windows" {
-		return "."
-	}
-	return ".."
-}

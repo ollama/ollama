@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -50,14 +49,13 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 		slog.Info(err.Error())
 		return nil, err
 	}
-	depPaths := LibraryDirs()
+
 	libDir, err := AMDValidateLibDir()
 	if err != nil {
 		err = fmt.Errorf("unable to verify rocm library: %w", err)
 		slog.Warn(err.Error())
 		return nil, err
 	}
-	depPaths = append(depPaths, libDir)
 
 	var supported []string
 	gfxOverride := envconfig.HsaOverrideGfxVersion()
@@ -113,7 +111,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 				UnreliableFreeMemory: true,
 
 				ID:             strconv.Itoa(i), // TODO this is probably wrong if we specify visible devices
-				DependencyPath: depPaths,
+				DependencyPath: []string{libDir},
 				MinimumMemory:  rocmMinimumMemory,
 				Name:           name,
 				Compute:        gfx,
@@ -164,9 +162,7 @@ func AMDValidateLibDir() (string, error) {
 	}
 
 	// Installer payload (if we're running from some other location)
-	localAppData := os.Getenv("LOCALAPPDATA")
-	appDir := filepath.Join(localAppData, "Programs", "Ollama")
-	rocmTargetDir := filepath.Join(appDir, envconfig.LibRelativeToExe(), "lib", "ollama")
+	rocmTargetDir := filepath.Join(LibOllamaPath, "rocm")
 	if rocmLibUsable(rocmTargetDir) {
 		slog.Debug("detected ollama installed ROCm at " + rocmTargetDir)
 		return rocmTargetDir, nil

@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-
-	"github.com/ollama/ollama/envconfig"
 )
 
 // Determine if the given ROCm lib directory is usable by checking for existence of some glob patterns
@@ -41,13 +39,10 @@ func commonAMDValidateLibDir() (string, error) {
 	// Favor our bundled version
 
 	// Installer payload location if we're running the installed binary
-	exe, err := os.Executable()
-	if err == nil {
-		rocmTargetDir := filepath.Join(filepath.Dir(exe), envconfig.LibRelativeToExe(), "lib", "ollama")
-		if rocmLibUsable(rocmTargetDir) {
-			slog.Debug("detected ROCM next to ollama executable " + rocmTargetDir)
-			return rocmTargetDir, nil
-		}
+	rocmTargetDir := filepath.Join(LibOllamaPath, "rocm")
+	if rocmLibUsable(rocmTargetDir) {
+		slog.Debug("detected ROCM next to ollama executable " + rocmTargetDir)
+		return rocmTargetDir, nil
 	}
 
 	// Prefer explicit HIP env var
