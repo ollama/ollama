@@ -84,7 +84,7 @@ jobs:
           path: dist/darwin-arm64
       - run: |
           export VERSION=${GITHUB_REF_NAME#v}
-          ./scripts/build_darwin.sh macapp sign
+          ./scripts/build_darwin.sh sign macapp
         env:
           APPLE_IDENTITY: ${{ secrets.APPLE_IDENTITY }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -210,33 +210,38 @@ jobs:
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
-      - name: Install system dependencies
+      - name: Install AMD64 system dependencies
+        if: matrix.arch == 'amd64'
         run: |
           $ErrorActionPreference = "Stop"
-          if ("${{ matrix.arch }}" -eq 'amd64') {
-            Start-Process "C:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang") -NoNewWindow -Wait
-            echo "C:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-            echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          } elseif ("${{ matrix.arch }}" -eq 'arm64') {
-            Set-ExecutionPolicy Bypass -Scope Process -Force
-            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-            iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-            echo "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Start-Process "C:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang") -NoNewWindow -Wait
+          echo "C:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install ARM64 system dependencies
+        if: matrix.arch == 'arm64'
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+          iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+          echo "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-            choco install -y --no-progress git gzip
-            echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          choco install -y --no-progress git gzip
+          echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-            Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-aarch64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt-aarch64.zip"
-            Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt-aarch64.zip -DestinationPath "C:\Program Files\"
-            $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt-aarch64").path
-            echo $installPath\bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          }
+          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-aarch64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt-aarch64.zip"
+          Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt-aarch64.zip -DestinationPath "C:\Program Files\"
+          $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt-aarch64").path
+          echo $installPath\bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - run: |
           go build -o dist/${{ matrix.os }}-${{ matrix.arch }}/ .
+      - if: matrix.arch == 'arm64'
+        run: |
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.arm64.exe" -OutFile "dist\windows-arm64\vc_redist.arm64.exe"
       - run: |
           $env:VERSION='${{ github.ref_name }}' -Replace "v(.*)", '$1'
           & .\scripts\build_windows.ps1 buildApp
@@ -271,16 +276,18 @@ jobs:
           echo "${{ vars.OLLAMA_CERT }}" >ollama_inc.crt
       - uses: actions/download-artifact@v4
         with:
-          name: build-windows-*
+          pattern: build-windows-*
           path: dist\
           merge-multiple: true
       - uses: actions/download-artifact@v4
         with:
-          name: depends-windows-amd64-*
+          pattern: depends-windows-amd64-*
           path: dist\windows-amd64\
           merge-multiple: true
       - run: |
           & .\scripts\build_windows.ps1 gatherDependencies sign buildInstaller distZip
+        env:
+          KEY_CONTAINER: ${{ vars.KEY_CONTAINER }}
       - uses: actions/upload-artifact@v4
         with:
           name: dist-windows
@@ -301,8 +308,17 @@ jobs:
             targets: [ 'archive' ] # Only build archive target on aarch64
           - os: ubuntu-22.04-arm
             arch: aarch64
-            targets: [ 'archive' ] # Only build archive target on aarch64
-    runs-on: ${{ matrix.os }}
+            targets: [ 'archive' ]  # Only build archive target on aarch64
+          - os: linux
+            arch: amd64
+            target: [ 'archive' ] 
+          - os: linux
+            arch: amd64
+            target: rocm
+          - os: linux
+            arch: arm64
+            target: [ 'archive' ] 
+    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     needs: setup-environment
     env:
@@ -311,16 +327,31 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - run: |
-          apt-get update && apt-get install pigz
-          for TARGET in ${{ matrix.targets }}; do docker buildx build --platform $PLATFORM --target $TARGET --build-arg GOFLAGS --build-arg CGO_CFLAGS --build-args CGO_CXXFLAGS --output type=local,dest=dist/$PLATFORM .; done
-          tar c -C dist/$PLATFORM . | pigz -9cv >dist/ollama-${PLATFORM//\//-}.tgz
+          sudo apt-get update && sudo apt-get install pigz
+          docker buildx build --platform $PLATFORM --target ${{ matrix.target }} --build-arg GOFLAGS --build-arg CGO_CFLAGS --build-arg CGO_CXXFLAGS --output type=local,dest=dist/$PLATFORM .
+
+          for COMPONENTS in dist/$PLATFORM/* dist/$PLATFORM/lib/ollama/*; do
+              if [ -d "$COMPONENTS" ]; then
+                  case "$COMPONENTS" in
+                      */bin) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}.tar.in ;;
+                      */lib/ollama) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}.tar.in;;
+                      */lib/ollama/cuda_v11) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}.tar.in;;
+                      */lib/ollama/cuda_v12) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}.tar.in;;
+                      */lib/ollama/cuda_jetpack5) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}-jetpack5.tar.in ;;
+                      */lib/ollama/cuda_jetpack6) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}-jetpack6.tar.in ;;
+                      */lib/ollama/rocm) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}-rocm.tar.in ;;
+                  esac
+              fi
+          done
+
+          for ARCHIVE in dist/*.tar.in; do tar c -T $ARCHIVE --strip-components 3 | pigz -9cv >${ARCHIVE//.*/}.tgz; done
         env:
           PLATFORM: ${{ matrix.os }}/${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.os }}-${{ matrix.arch }}
           path: |
-            dist/ollama-${{ matrix.os }}-${{ matrix.arch }}.tgz
+            dist/*.tgz
 
   docker-build:
     strategy:
@@ -332,7 +363,7 @@ jobs:
               CGO_CFLAGS
               CGO_CXXFLAGS
               GOFLAGS
-          - flavor: 'latest=false,suffix=rocm'
+          - flavor: 'latest=false,suffix=-rocm'
             platforms: linux/amd64
             build-args: |
               CGO_CFLAGS
@@ -388,20 +419,16 @@ jobs:
         run: |
       - uses: actions/download-artifact@v4
         with:
+          name: dist-darwin
           path: dist
-          pattern: dist-darwin
       - uses: actions/download-artifact@v4
         with:
+          name: dist-windows
           path: dist
-          pattern: dist-windows
       - uses: actions/download-artifact@v4
         with:
-          path: dist
           pattern: dist-linux-*
-      - uses: actions/download-artifact@v4
-        with:
           path: dist
-          pattern: dist-windows
       - run: |
           ls -lh dist/
           (cd dist; find . -type f | xargs sha256sum > ../sha256sum.txt)
