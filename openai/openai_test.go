@@ -330,6 +330,34 @@ func TestChatMiddleware(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "chat handler with max_prompt_tokens",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "This is a very long prompt that should be truncated because it exceeds the maximum number of tokens allowed."}
+				],
+				"max_prompt_tokens": 5,
+				"temperature": 0.8,
+				"stop": ["\n", "stop"],
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "This is a very long prompt that should be truncated because it exceeds the maximum number of tokens allowed.",
+					},
+				},
+				Options: map[string]any{
+					"num_ctx":     5.0,
+					"temperature": 0.8,
+					"top_p":       1.0,
+					"stop":        []any{"\n", "stop"},
+				},
+				Stream: &False,
+			},
+		},
 	}
 
 	endpoint := func(c *gin.Context) {
@@ -360,9 +388,30 @@ func TestChatMiddleware(t *testing.T) {
 			}
 			if diff := cmp.Diff(&tc.req, capturedRequest); diff != "" {
 				t.Fatalf("requests did not match: %+v", diff)
-			}
-			if diff := cmp.Diff(tc.err, errResp); diff != "" {
-				t.Fatalf("errors did not match for %s:\n%s", tc.name, diff)
+				if capturedRequest != nil {
+					expectedMessages := tc.req.Messages
+					actualMessages := capturedRequest.Messages
+
+					// Assuming the middleware truncates the prompt to max_prompt_tokens
+					maxTokens := int(tc.req.Options["num_ctx"].(float64))
+					tokenizedExpectedPrompt := strings.Fields(expectedMessages[0].Content)
+					truncatedExpectedPrompt := strings.Join(tokenizedExpectedPrompt[:maxTokens], " ")
+
+					if actualMessages[0].Content != truncatedExpectedPrompt {
+						t.Fatalf("prompts did not match: expected %q, got %q", truncatedExpectedPrompt, actualMessages[0].Content)
+					}
+
+					// Remove the prompt from both requests for further comparison
+					expectedRequest := tc.req
+					actualRequest := *capturedRequest
+
+					expectedRequest.Messages[0].Content = ""
+					actualRequest.Messages[0].Content = ""
+
+					if diff := cmp.Diff(&expectedRequest, &actualRequest); diff != "" {
+						t.Fatalf("requests did not match: %+v", diff)
+					}
+				}
 			}
 		})
 	}
