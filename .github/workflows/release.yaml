@@ -273,6 +273,8 @@ jobs:
           merge-multiple: true
       - run: |
           & .\scripts\build_windows.ps1 gatherDependencies sign buildInstaller distZip
+        env:
+          KEY_CONTAINER: ${{ vars.KEY_CONTAINER }}
       - uses: actions/upload-artifact@v4
         with:
           name: dist-windows
@@ -286,10 +288,13 @@ jobs:
         include:
           - os: linux
             arch: amd64
-            targets: 'archive rocm'
+            target: archive
+          - os: linux
+            arch: amd64
+            target: rocm
           - os: linux
             arch: arm64
-            targets: archive
+            target: archive
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     needs: setup-environment
@@ -300,15 +305,30 @@ jobs:
       - uses: docker/setup-buildx-action@v3
       - run: |
           sudo apt-get update && sudo apt-get install pigz
-          for TARGET in ${{ matrix.targets }}; do docker buildx build --platform $PLATFORM --target $TARGET --build-arg GOFLAGS --build-arg CGO_CFLAGS --build-arg CGO_CXXFLAGS --output type=local,dest=dist/$PLATFORM .; done
-          tar c -C dist/$PLATFORM . | pigz -9cv >dist/ollama-${PLATFORM//\//-}.tgz
+          docker buildx build --platform $PLATFORM --target ${{ matrix.target }} --build-arg GOFLAGS --build-arg CGO_CFLAGS --build-arg CGO_CXXFLAGS --output type=local,dest=dist/$PLATFORM .
+
+          for COMPONENTS in dist/$PLATFORM/* dist/$PLATFORM/lib/ollama/*; do
+              if [ -d "$COMPONENTS" ]; then
+                  case "$COMPONENTS" in
+                      */bin) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}.tar.in ;;
+                      */lib/ollama) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}.tar.in;;
+                      */lib/ollama/cuda_v11) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}.tar.in;;
+                      */lib/ollama/cuda_v12) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}.tar.in;;
+                      */lib/ollama/cuda_jetpack5) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}-jetpack5.tar.in ;;
+                      */lib/ollama/cuda_jetpack6) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}-jetpack6.tar.in ;;
+                      */lib/ollama/rocm) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}-rocm.tar.in ;;
+                  esac
+              fi
+          done
+
+          for ARCHIVE in dist/*.tar.in; do tar c -T $ARCHIVE --strip-components 3 | pigz -9cv >${ARCHIVE//.*/}.tgz; done
         env:
           PLATFORM: ${{ matrix.os }}/${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.os }}-${{ matrix.arch }}
           path: |
-            dist/ollama-${{ matrix.os }}-${{ matrix.arch }}.tgz
+            dist/*.tgz
 
   docker-build:
     strategy:
@@ -320,7 +340,7 @@ jobs:
               CGO_CFLAGS
               CGO_CXXFLAGS
               GOFLAGS
-          - flavor: 'latest=false,suffix=rocm'
+          - flavor: 'latest=false,suffix=-rocm'
             platforms: linux/amd64
             build-args: |
               CGO_CFLAGS
