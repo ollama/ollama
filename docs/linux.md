@@ -152,7 +152,7 @@ Use `OLLAMA_VERSION` environment variable with the install script to install a s
 For example:
 
 ```shell
-curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=6.3.2 sh
+curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=0.5.7 sh
 ```
 
 ## Viewing logs
