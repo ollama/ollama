@@ -34,7 +34,8 @@ _build_darwin() {
                 -DCMAKE_OSX_ARCHITECTURES=x86_64 \
                 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.3
             cmake --build build/darwin-$ARCH --target ggml-cpu -j
-            install build/darwin-$ARCH/lib/ollama/*.{dylib,so} $INSTALL_PREFIX
+            install -d $INSTALL_PREFIX/lib/ollama
+            install build/darwin-$ARCH/lib/ollama/*.{dylib,so} $INSTALL_PREFIX/lib/ollama
         fi
     done
 }
@@ -43,6 +44,7 @@ _sign_darwin() {
     status "Creating universal binary..."
     mkdir -p dist/darwin
     lipo -create -output dist/darwin/ollama dist/darwin-*/ollama
+    chmod +x dist/darwin/ollama
 
     if [ -n "$APPLE_IDENTITY" ]; then
         for F in dist/darwin/ollama dist/darwin-amd64/lib/ollama/*; do

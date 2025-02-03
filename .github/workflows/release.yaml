@@ -326,7 +326,7 @@ jobs:
           PLATFORM: ${{ matrix.os }}/${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.os }}-${{ matrix.arch }}
+          name: dist-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.target }}
           path: |
             dist/*.tgz
 
@@ -391,9 +391,6 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      - name: Set Version
-        shell: bash
-        run: |
       - uses: actions/download-artifact@v4
         with:
           name: dist-darwin
@@ -406,11 +403,9 @@ jobs:
         with:
           pattern: dist-linux-*
           path: dist
-      - run: |
-          ls -lh dist/
-          (cd dist; find . -type f | xargs sha256sum > ../sha256sum.txt)
-          mv sha256sum.txt dist/
-          cat dist/sha256sum.txt
+          merge-multiple: true
+      - run: find . -type f -not -name 'sha256sum.txt' | xargs sha256sum | tee sha256sum.txt
+        working-directory: dist
       - name: Create or update Release
         run: |
           RELEASE_VERSION=$(echo ${GITHUB_REF_NAME} | cut -f1 -d-)"
