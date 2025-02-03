@@ -433,14 +433,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 
 	err := s.lc.Decode(batch)
 	if err != nil {
-		if errors.Is(err, llama.ErrKvCacheFull) {
-			slog.Debug("defragmenting kv cache")
-			s.cache.lc.KvCacheDefrag()
-			err = s.lc.Decode(batch)
-		}
-		if err != nil {
-			return fmt.Errorf("failed to decode batch: %w", err)
-		}
+		return fmt.Errorf("failed to decode batch: %w", err)
 	}
 
 	if crossAttention {
@@ -568,7 +561,6 @@ type Options struct {
 	Mirostat         int      `json:"mirostat"`
 	MirostatTau      float32  `json:"mirostat_tau"`
 	MirostatEta      float32  `json:"mirostat_eta"`
-	PenalizeNewline  bool     `json:"penalize_nl"`
 	Stop             []string `json:"stop"`
 }
 
@@ -640,7 +632,6 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	samplingParams.Mirostat = req.Mirostat
 	samplingParams.MirostatTau = req.MirostatTau
 	samplingParams.MirostatEta = req.MirostatEta
-	samplingParams.PenalizeNl = req.PenalizeNewline
 	samplingParams.Seed = uint32(req.Seed)
 	samplingParams.Grammar = req.Grammar
 

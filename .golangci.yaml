@@ -8,8 +8,6 @@ linters:
     - containedctx
     - contextcheck
     - errcheck
-    - exportloopref
-    - gci
     - gocheckcompilerdirectives
     - gofmt
     - gofumpt
@@ -30,8 +28,6 @@ linters:
     - wastedassign
     - whitespace
 linters-settings:
-  gci:
-    sections: [standard, default, localmodule]
   staticcheck:
     checks:
       - all

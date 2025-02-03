@@ -2,51 +2,92 @@
 
 set -e
 
-. $(dirname $0)/env.sh
+status() { echo >&2 ">>> $@"; }
+usage() {
+    echo "usage: $(basename $0) [build [sign]]"
+    exit 1
+}
 
-mkdir -p dist
+export VERSION=${VERSION:-$(git describe --tags --dirty)}
+export GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${VERSION#v}\" \"-X=github.com/ollama/ollama/server.mode=release\"'"
+export CGO_CPPFLAGS='-mmacosx-version-min=11.3'
 
-# These require Xcode v13 or older to target MacOS v11
-# If installed to an alternate location use the following to enable
-# export SDKROOT=/Applications/Xcode_12.5.1.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
-# export DEVELOPER_DIR=/Applications/Xcode_12.5.1.app/Contents/Developer
-export CGO_CFLAGS=-mmacosx-version-min=11.3
-export CGO_CXXFLAGS=-mmacosx-version-min=11.3
-export CGO_LDFLAGS=-mmacosx-version-min=11.3
+ARCHS="arm64 amd64"
+while getopts "a:h" OPTION; do
+    case $OPTION in
+        a) ARCHS=$OPTARG ;;
+        h) usage ;;
+    esac
+done
 
-rm -rf llama/build dist/darwin-*
-echo "Building darwin arm64"
-GOOS=darwin ARCH=arm64 GOARCH=arm64 make -j 8 dist
-echo "Building darwin amd64 with AVX enabled"
-GOOS=darwin ARCH=amd64 GOARCH=amd64 CUSTOM_CPU_FLAGS="avx" make -j 8 dist
+shift $(( $OPTIND - 1 ))
 
+_build_darwin() {
+    for ARCH in $ARCHS; do
+        status "Building darwin $ARCH"
+        INSTALL_PREFIX=dist/darwin-$ARCH/
+        GOOS=darwin GOARCH=$ARCH CGO_ENABLED=1 go build -o $INSTALL_PREFIX .
 
-lipo -create -output dist/ollama dist/darwin-arm64/bin/ollama dist/darwin-amd64/bin/ollama
-if [ -n "$APPLE_IDENTITY" ]; then
-    codesign --deep --force --options=runtime --sign "$APPLE_IDENTITY" --timestamp dist/ollama
-else
-    echo "Skipping code signing - set APPLE_IDENTITY"
+        if [ "$ARCH" = "amd64" ]; then
+            status "Building darwin $ARCH dynamic backends"
+            cmake -B build/darwin-$ARCH \
+                -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+                -DCMAKE_OSX_DEPLOYMENT_TARGET=11.3
+            cmake --build build/darwin-$ARCH --target ggml-cpu -j
+            install build/darwin-$ARCH/lib/ollama/*.{dylib,so} $INSTALL_PREFIX
+        fi
+    done
+}
+
+_sign_darwin() {
+    status "Creating universal binary..."
+    lipo -create -output dist/darwin/ollama dist/darwin/*/ollama
+
+    if [ -z "$APPLE_IDENTITY" ]; then
+        status "No APPLE_IDENTITY set, skipping code signing"
+        return
+    fi
+
+    for F in dist/darwin/ollama dist/darwin/amd64/lib*; do
+        codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime $F
+    done
+
+    # create a temporary zip for notarization
+    TEMP=$(mktemp -u).zip
+    ditto -c -k --keepParent dist/darwin/ollama "$TEMP"
+    xcrun notarytool submit dist/darwin/temp.zip --wait --timeout 10m --apple-id $APPLE_ID --password $APPLE_PASSWORD --team-id $APPLE_TEAM_ID
+    rm -f "$TEMP"
+
+    # create a universal tarball
+    tar -cf dist/ollama-darwin.tar --strip-components 2 dist/darwin/ollama
+    tar -rf dist/ollama-darwin.tar --strip-components 3 dist/darwin/amd64/lib*
+    gzip -9vc <dist/ollama-darwin.tar >dist/ollama-darwin.tgz
+}
+
+_build_macapp() {
+    # build and optionally sign the mac app
+    npm install --prefix macapp
+    if [ -n "$APPLE_IDENTITY" ]; then
+        npm run --prefix macapp make:sign
+    else
+        npm run --prefix macapp make
+    fi
+
+    mv ./macapp/out/make/zip/darwin/universal/Ollama-darwin-universal-$VERSION.zip dist/Ollama-darwin.zip
+}
+
+if [ "$#" -eq 0 ]; then
+    _build_darwin
+    _sign_darwin
+    _build_macapp
+    exit 0
 fi
-chmod +x dist/ollama
 
-# build and optionally sign the mac app
-npm install --prefix macapp
-if [ -n "$APPLE_IDENTITY" ]; then
-    npm run --prefix macapp make:sign
-else 
-    npm run --prefix macapp make
-fi
-cp macapp/out/make/zip/darwin/universal/Ollama-darwin-universal-$VERSION.zip dist/Ollama-darwin.zip
-
-# sign the binary and rename it
-if [ -n "$APPLE_IDENTITY" ]; then
-    codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime dist/ollama
-else
-    echo "WARNING: Skipping code signing - set APPLE_IDENTITY"
-fi
-ditto -c -k --keepParent dist/ollama dist/temp.zip
-if [ -n "$APPLE_IDENTITY" ]; then
-    xcrun notarytool submit dist/temp.zip --wait --timeout 10m --apple-id $APPLE_ID --password $APPLE_PASSWORD --team-id $APPLE_TEAM_ID
-fi
-mv dist/ollama dist/ollama-darwin
-rm -f dist/temp.zip
+for CMD in "$@"; do
+    case $CMD in
+        build) _build_darwin ;;
+        sign) _sign_darwin ;;
+        macapp) _build_macapp ;;
+        *) usage ;;
+    esac
+done
