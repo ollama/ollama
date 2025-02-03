@@ -11,18 +11,19 @@ import (
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/fs/ggml"
 )
 
 // This algorithm looks for a complete fit to determine if we need to unload other models
-func PredictServerFit(allGpus discover.GpuInfoList, ggml *GGML, adapters, projectors []string, opts api.Options) (bool, uint64) {
+func PredictServerFit(allGpus discover.GpuInfoList, f *ggml.GGML, adapters, projectors []string, opts api.Options) (bool, uint64) {
 	// Split up the GPUs by type and try them
 	var estimatedVRAM uint64
 	for _, gpus := range allGpus.ByLibrary() {
 		var layerCount int
-		estimate := EstimateGPULayers(gpus, ggml, projectors, opts)
+		estimate := EstimateGPULayers(gpus, f, projectors, opts)
 		layerCount, estimatedVRAM = estimate.Layers, estimate.VRAMSize
 		if opts.NumGPU < 0 {
-			if layerCount > 0 && layerCount >= int(ggml.KV().BlockCount()+1) {
+			if layerCount > 0 && layerCount >= int(f.KV().BlockCount()+1) {
 				return true, estimatedVRAM
 			}
 		} else {
@@ -70,7 +71,7 @@ type MemoryEstimate struct {
 
 // Given a model and one or more GPU targets, predict how many layers and bytes we can load, and the total size
 // The GPUs provided must all be the same Library
-func EstimateGPULayers(gpus []discover.GpuInfo, ggml *GGML, projectors []string, opts api.Options) MemoryEstimate {
+func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []string, opts api.Options) MemoryEstimate {
 	// Graph size for a partial offload, applies to all GPUs
 	var graphPartialOffload uint64
 
@@ -115,33 +116,31 @@ func EstimateGPULayers(gpus []discover.GpuInfo, ggml *GGML, projectors []string,
 		opts.NumCtx = max(opts.NumCtx, 2048)
 	}
 
-	layers := ggml.Tensors().Layers()
+	layers := f.Tensors().Layers()
 	// add one layer worth of memory as a buffer
 	if blk0, ok := layers["blk.0"]; ok {
-		layerSize = blk0.size()
+		layerSize = blk0.Size()
 	} else {
 		slog.Warn("model missing blk.0 layer size")
 	}
 
-	fa := envconfig.FlashAttention() &&
-		discover.GetGPUInfo().FlashAttentionSupported() &&
-		ggml.SupportsFlashAttention()
-
 	var kvct string
-	if fa {
+	if envconfig.FlashAttention() &&
+		discover.GetGPUInfo().FlashAttentionSupported() &&
+		f.SupportsFlashAttention() {
 		requested := strings.ToLower(envconfig.KvCacheType())
-		if requested != "" && ggml.SupportsKVCacheType(requested) {
+		if requested != "" && f.SupportsKVCacheType(requested) {
 			kvct = requested
 		}
 	}
 
-	kv, graphPartialOffload, graphFullOffload := ggml.GraphSize(uint64(opts.NumCtx), uint64(min(opts.NumCtx, opts.NumBatch)), kvct)
+	kv, graphPartialOffload, graphFullOffload := f.GraphSize(uint64(opts.NumCtx), uint64(min(opts.NumCtx, opts.NumBatch)), kvct)
 
 	// KV is proportional to the number of layers
-	layerSize += kv / ggml.KV().BlockCount()
+	layerSize += kv / f.KV().BlockCount()
 
 	if graphPartialOffload == 0 {
-		graphPartialOffload = ggml.KV().GQA() * kv / 6
+		graphPartialOffload = f.KV().GQA() * kv / 6
 	}
 	if graphFullOffload == 0 {
 		graphFullOffload = graphPartialOffload
@@ -156,12 +155,12 @@ func EstimateGPULayers(gpus []discover.GpuInfo, ggml *GGML, projectors []string,
 	}
 
 	if layer, ok := layers["output_norm"]; ok {
-		memoryLayerOutput += layer.size()
+		memoryLayerOutput += layer.Size()
 	}
 	if layer, ok := layers["output"]; ok {
-		memoryLayerOutput += layer.size()
+		memoryLayerOutput += layer.Size()
 	} else if layer, ok := layers["token_embd"]; ok {
-		memoryLayerOutput += layer.size()
+		memoryLayerOutput += layer.Size()
 	}
 
 	// Output layer handled at the end if we have space
@@ -211,11 +210,11 @@ func EstimateGPULayers(gpus []discover.GpuInfo, ggml *GGML, projectors []string,
 	}
 
 	// For all the layers, find where they can fit on the GPU(s)
-	for i := range int(ggml.KV().BlockCount()) {
+	for i := range int(f.KV().BlockCount()) {
 		// Some models have inconsistent layer sizes
 		if blk, ok := layers[fmt.Sprintf("blk.%d", i)]; ok {
-			layerSize = blk.size()
-			layerSize += kv / ggml.KV().BlockCount()
+			layerSize = blk.Size()
+			layerSize += kv / f.KV().BlockCount()
 		}
 		memoryWeights += layerSize
 
@@ -238,10 +237,10 @@ func EstimateGPULayers(gpus []discover.GpuInfo, ggml *GGML, projectors []string,
 			}
 		}
 	}
-	if layerCount >= int(ggml.KV().BlockCount()) {
+	if layerCount >= int(f.KV().BlockCount()) {
 		fullyLoaded = true
 	} else {
-		for i := layerCount; i < int(ggml.KV().BlockCount()); i++ {
+		for i := layerCount; i < int(f.KV().BlockCount()); i++ {
 			overflow += layerSize
 		}
 	}
@@ -259,7 +258,7 @@ func EstimateGPULayers(gpus []discover.GpuInfo, ggml *GGML, projectors []string,
 			}
 		}
 
-		if layerCount < int(ggml.KV().BlockCount())+1 {
+		if layerCount < int(f.KV().BlockCount())+1 {
 			fullyLoaded = false
 			overflow += memoryLayerOutput
 		}
@@ -311,7 +310,7 @@ func EstimateGPULayers(gpus []discover.GpuInfo, ggml *GGML, projectors []string,
 
 		inferenceLibrary:    gpus[0].Library,
 		layersRequested:     opts.NumGPU,
-		layersModel:         int(ggml.KV().BlockCount()) + 1,
+		layersModel:         int(f.KV().BlockCount()) + 1,
 		availableList:       availableList,
 		kv:                  kv,
 		allocationsList:     allocationsList,
@@ -339,22 +338,9 @@ func EstimateGPULayers(gpus []discover.GpuInfo, ggml *GGML, projectors []string,
 	return estimate
 }
 
-func (m MemoryEstimate) log() {
-	overhead := envconfig.GpuOverhead()
-
-	log := slog.With()
-	if m.projectorWeights > 0 {
-		log = log.With(
-			slog.Group(
-				"projector",
-				"weights", format.HumanBytes2(m.projectorWeights),
-				"graph", format.HumanBytes2(m.projectorGraph),
-			),
-		)
-	}
-
-	log.Info(
-		"offload to "+m.inferenceLibrary,
+func (m MemoryEstimate) LogValue() slog.Value {
+	attrs := []slog.Attr{
+		slog.String("library", m.inferenceLibrary),
 		slog.Group(
 			"layers",
 			// requested number of layers to offload
@@ -370,7 +356,7 @@ func (m MemoryEstimate) log() {
 			"memory",
 			// memory available by GPU for offloading
 			"available", m.availableList,
-			"gpu_overhead", format.HumanBytes2(overhead),
+			"gpu_overhead", format.HumanBytes2(envconfig.GpuOverhead()),
 			slog.Group(
 				"required",
 				// memory required for full offloading
@@ -399,7 +385,17 @@ func (m MemoryEstimate) log() {
 				"partial", format.HumanBytes2(m.graphPartialOffload),
 			),
 		),
-	)
+	}
+
+	if m.projectorWeights > 0 {
+		attrs = append(attrs, slog.Group(
+			"projector",
+			"weights", format.HumanBytes2(m.projectorWeights),
+			"graph", format.HumanBytes2(m.projectorGraph),
+		))
+	}
+
+	return slog.GroupValue(attrs...)
 }
 
 func projectorMemoryRequirements(filename string) (weights, graphSize uint64) {
@@ -409,13 +405,13 @@ func projectorMemoryRequirements(filename string) (weights, graphSize uint64) {
 	}
 	defer file.Close()
 
-	ggml, _, err := DecodeGGML(file, 0)
+	ggml, _, err := ggml.Decode(file, 0)
 	if err != nil {
 		return 0, 0
 	}
 
 	for _, layer := range ggml.Tensors().Layers() {
-		weights += layer.size()
+		weights += layer.Size()
 	}
 
 	switch arch := ggml.KV().Architecture(); arch {

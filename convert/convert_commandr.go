@@ -3,7 +3,7 @@ package convert
 import (
 	"cmp"
 
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/fs/ggml"
 )
 
 type commandrModel struct {
@@ -24,7 +24,7 @@ type commandrModel struct {
 
 var _ ModelConverter = (*commandrModel)(nil)
 
-func (p *commandrModel) KV(t *Tokenizer) llm.KV {
+func (p *commandrModel) KV(t *Tokenizer) ggml.KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "command-r"
 	kv["general.name"] = "command-r"
@@ -43,10 +43,10 @@ func (p *commandrModel) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *commandrModel) Tensors(ts []Tensor) []llm.Tensor {
-	var out []llm.Tensor
+func (p *commandrModel) Tensors(ts []Tensor) []ggml.Tensor {
+	var out []ggml.Tensor
 	for _, t := range ts {
-		out = append(out, llm.Tensor{
+		out = append(out, ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),

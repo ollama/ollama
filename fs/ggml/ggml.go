@@ -1,15 +1,15 @@
-package llm
+package ggml
 
 import (
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"slices"
 	"strings"
-	"sync"
 
-	"github.com/ollama/ollama/util/bufioutil"
+	"github.com/ollama/ollama/fs/util/bufioutil"
 )
 
 type GGML struct {
@@ -19,145 +19,168 @@ type GGML struct {
 
 type model interface {
 	KV() KV
-	Tensors() *Tensors
+	Tensors() Tensors
 }
 
 type KV map[string]any
 
-func (kv KV) u64(key string) uint64 {
-	switch v := kv[key].(type) {
-	case uint64:
-		return v
-	case uint32:
-		return uint64(v)
-	case float64:
-		return uint64(v)
-	default:
-		return 0
-	}
-}
-
 func (kv KV) Architecture() string {
-	if s, ok := kv["general.architecture"].(string); ok {
-		return s
-	}
-
-	return "unknown"
+	return kv.String("general.architecture", "unknown")
 }
 
 func (kv KV) Kind() string {
-	if s, ok := kv["general.type"].(string); ok {
-		return s
-	}
-
-	return "unknown"
+	return kv.String("general.type", "unknown")
 }
 
 func (kv KV) ParameterCount() uint64 {
-	return kv.u64("general.parameter_count")
+	return keyValue[uint64](kv, "general.parameter_count")
 }
 
 func (kv KV) FileType() fileType {
-	if u64 := kv.u64("general.file_type"); u64 > 0 {
-		return fileType(uint32(u64))
+	if t := kv.Uint("general.file_type"); t > 0 {
+		return fileType(t)
 	}
 
 	return fileTypeUnknown
 }
 
 func (kv KV) BlockCount() uint64 {
-	return kv.u64(fmt.Sprintf("%s.block_count", kv.Architecture()))
+	return uint64(kv.Uint("block_count"))
+}
+
+func (kv KV) EmbeddingLength() uint64 {
+	return uint64(kv.Uint("embedding_length"))
 }
 
 func (kv KV) HeadCount() uint64 {
-	return kv.u64(fmt.Sprintf("%s.attention.head_count", kv.Architecture()))
+	return uint64(kv.Uint("attention.head_count"))
 }
 
 func (kv KV) HeadCountKV() uint64 {
-	if headCountKV := kv.u64(fmt.Sprintf("%s.attention.head_count_kv", kv.Architecture())); headCountKV > 0 {
-		return headCountKV
-	}
-
-	return 1
+	return uint64(kv.Uint("attention.head_count_kv", 1))
 }
 
 func (kv KV) EmbeddingHeadCount() uint64 {
 	if heads := kv.HeadCount(); heads > 0 {
-		return kv.EmbeddingLength() / kv.HeadCount()
+		return kv.EmbeddingLength() / heads
 	}
 
 	return 0
 }
 
 func (kv KV) EmbeddingHeadCountK() uint64 {
-	if k := kv.u64(fmt.Sprintf("%s.attention.key_length", kv.Architecture())); k > 0 {
-		return k
-	}
-
-	return kv.EmbeddingHeadCount()
+	return uint64(kv.Uint("attention.key_length", uint32(kv.EmbeddingHeadCount())))
 }
 
 func (kv KV) EmbeddingHeadCountV() uint64 {
-	if v := kv.u64(fmt.Sprintf("%s.attention.value_length", kv.Architecture())); v > 0 {
-		return v
-	}
-
-	return kv.EmbeddingHeadCount()
+	return uint64(kv.Uint("attention.value_length", uint32(kv.EmbeddingHeadCount())))
 }
 
 func (kv KV) GQA() uint64 {
 	return kv.HeadCount() / kv.HeadCountKV()
 }
 
-func (kv KV) EmbeddingLength() uint64 {
-	return kv.u64(fmt.Sprintf("%s.embedding_length", kv.Architecture()))
-}
-
 func (kv KV) ContextLength() uint64 {
-	return kv.u64(fmt.Sprintf("%s.context_length", kv.Architecture()))
+	return uint64(kv.Uint("context_length"))
 }
 
 func (kv KV) ChatTemplate() string {
-	s, _ := kv["tokenizer.chat_template"].(string)
+	return kv.String("tokenizer.chat_template")
+}
+
+func (kv KV) String(key string, defaultValue ...string) string {
+	return keyValue(kv, key, append(defaultValue, "")...)
+}
+
+func (kv KV) Uint(key string, defaultValue ...uint32) uint32 {
+	return keyValue(kv, key, append(defaultValue, 0)...)
+}
+
+func (kv KV) Float(key string, defaultValue ...float32) float32 {
+	return keyValue(kv, key, append(defaultValue, 0)...)
+}
+
+func (kv KV) Strings(key string, defaultValue ...[]string) []string {
+	r := keyValue(kv, key, &array{})
+	s := make([]string, r.size)
+	for i := range r.size {
+		s[i] = r.values[i].(string)
+	}
+
 	return s
 }
 
-type Tensors struct {
-	Items  []*Tensor
-	Offset uint64
+func (kv KV) Uints(key string, defaultValue ...[]uint32) []uint32 {
+	r := keyValue(kv, key, &array{})
+	s := make([]uint32, r.size)
+	for i := range r.size {
+		s[i] = uint32(r.values[i].(int32))
+	}
 
-	layers     map[string]Layer
-	layersOnce sync.Once
+	return s
 }
 
-func (ts *Tensors) Layers() map[string]Layer {
-	ts.layersOnce.Do(func() {
-		ts.layers = make(map[string]Layer)
-		for _, t := range ts.Items {
-			parts := strings.Split(t.Name, ".")
-			if index := slices.IndexFunc(parts, func(s string) bool { return s == "blk" || s == "mm" }); index != -1 {
-				if len(parts) > index+2 {
-					// blk and mm should have a number after them, join it
-					parts = append(
-						[]string{strings.Join(parts[:index+2], ".")},
-						parts[index+2:]...)
-				}
-			}
+func keyValue[T string | uint32 | uint64 | float32 | *array](kv KV, key string, defaultValue ...T) T {
+	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") {
+		key = kv.Architecture() + "." + key
+	}
 
-			if _, ok := ts.layers[parts[0]]; !ok {
-				ts.layers[parts[0]] = make(Layer)
-			}
+	if val, ok := kv[key]; ok {
+		return val.(T)
+	}
 
-			ts.layers[parts[0]][strings.Join(parts[1:], ".")] = t
+	slog.Warn("key not found", "key", key, "default", defaultValue[0])
+	return defaultValue[0]
+}
+
+type Tensors struct {
+	items  []*Tensor
+	Offset uint64
+}
+
+func (s Tensors) Items(prefix ...string) []*Tensor {
+	if len(prefix) == 0 {
+		return s.items
+	}
+
+	var items []*Tensor
+	for _, t := range s.items {
+		if strings.HasPrefix(t.Name, prefix[0]) {
+			items = append(items, t)
 		}
-	})
+	}
 
-	return ts.layers
+	return items
+}
+
+func (ts Tensors) Layers() map[string]Layer {
+	layers := make(map[string]Layer)
+	for _, t := range ts.items {
+		parts := strings.Split(t.Name, ".")
+		if i := slices.Index(parts, "blk"); i > 0 {
+			parts = append([]string{
+				strings.Join(parts[:i], "."),
+				strings.Join(parts[i:i+2], "."),
+			}, parts[i+2:]...)
+		} else if i == 0 {
+			parts = append([]string{
+				strings.Join(parts[i:i+2], "."),
+			}, parts[i+2:]...)
+		}
+
+		if _, ok := layers[parts[0]]; !ok {
+			layers[parts[0]] = make(Layer)
+		}
+
+		layers[parts[0]][strings.Join(parts[1:], ".")] = t
+	}
+
+	return layers
 }
 
 type Layer map[string]*Tensor
 
-func (l Layer) size() (size uint64) {
+func (l Layer) Size() (size uint64) {
 	for _, t := range l {
 		size += t.Size()
 	}
@@ -255,8 +278,6 @@ func (t Tensor) typeSize() uint64 {
 		return 8
 	case 29: // IQ1_M
 		return blockSize/8 + blockSize/16 + blockSize/32
-	case 30: // BF16
-		return 2
 	default:
 		return 0
 	}
@@ -295,7 +316,7 @@ const (
 
 var ErrUnsupportedFormat = errors.New("unsupported model format")
 
-func DetectGGMLType(b []byte) string {
+func DetectContentType(b []byte) string {
 	switch binary.LittleEndian.Uint32(b[:4]) {
 	case FILE_MAGIC_GGML:
 		return "ggml"
@@ -312,12 +333,12 @@ func DetectGGMLType(b []byte) string {
 	}
 }
 
-// DecodeGGML decodes a GGML model from the given reader.
+// Decode decodes a GGML model from the given reader.
 //
 // It collects array values for arrays with a size less than or equal to
 // maxArraySize. If maxArraySize is 0, the default value of 1024 is used. If
 // the maxArraySize is negative, all arrays are collected.
-func DecodeGGML(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
+func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
 	if maxArraySize == 0 {
 		maxArraySize = 1024
 	}
@@ -331,10 +352,6 @@ func DecodeGGML(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
 
 	var c container
 	switch magic {
-	case FILE_MAGIC_GGML, FILE_MAGIC_GGMF, FILE_MAGIC_GGJT:
-		return nil, 0, ErrUnsupportedFormat
-	case FILE_MAGIC_GGLA:
-		c = &containerGGLA{}
 	case FILE_MAGIC_GGUF_LE:
 		c = &containerGGUF{ByteOrder: binary.LittleEndian, maxArraySize: maxArraySize}
 	case FILE_MAGIC_GGUF_BE:
@@ -530,21 +547,20 @@ func (llm GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partia
 }
 
 // SupportsKVCacheType checks if the requested cache type is supported
-func (ggml GGML) SupportsKVCacheType(cacheType string) bool {
-	validKVCacheTypes := []string{"f16", "q8_0", "q4_0"}
-	return slices.Contains(validKVCacheTypes, cacheType)
+func (llm GGML) SupportsKVCacheType(cacheType string) bool {
+	return slices.Contains([]string{"f16", "q8_0", "q4_0"}, cacheType)
 }
 
 // SupportsFlashAttention checks if the model supports flash attention
-func (ggml GGML) SupportsFlashAttention() bool {
-	_, isEmbedding := ggml.KV()[fmt.Sprintf("%s.pooling_type", ggml.KV().Architecture())]
+func (llm GGML) SupportsFlashAttention() bool {
+	_, isEmbedding := llm.KV()[fmt.Sprintf("%s.pooling_type", llm.KV().Architecture())]
 	if isEmbedding {
 		return false
 	}
 
 	// Check head counts match and are non-zero
-	headCountK := ggml.KV().EmbeddingHeadCountK()
-	headCountV := ggml.KV().EmbeddingHeadCountV()
+	headCountK := llm.KV().EmbeddingHeadCountK()
+	headCountV := llm.KV().EmbeddingHeadCountV()
 	return headCountK != 0 && headCountV != 0 && headCountK == headCountV
 }
 

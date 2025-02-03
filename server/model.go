@@ -15,7 +15,7 @@ import (
 	"text/template/parse"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
 )
@@ -24,7 +24,7 @@ var intermediateBlobs map[string]string = make(map[string]string)
 
 type layerGGML struct {
 	Layer
-	*llm.GGML
+	*ggml.GGML
 }
 
 func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressResponse)) (layers []*layerGGML, err error) {
@@ -64,12 +64,12 @@ func parseFromModel(ctx context.Context, name model.Name, fn func(api.ProgressRe
 			}
 			defer blob.Close()
 
-			ggml, _, err := llm.DecodeGGML(blob, 0)
+			f, _, err := ggml.Decode(blob, 0)
 			if err != nil {
 				return nil, err
 			}
 
-			layers = append(layers, &layerGGML{layer, ggml})
+			layers = append(layers, &layerGGML{layer, f})
 		default:
 			layers = append(layers, &layerGGML{layer, nil})
 		}
@@ -118,7 +118,7 @@ func detectContentType(r io.Reader) (string, error) {
 		return "", err
 	}
 
-	if contentType := llm.DetectGGMLType(b.Bytes()); contentType != "" {
+	if contentType := ggml.DetectContentType(b.Bytes()); contentType != "" {
 		return contentType, nil
 	}
 
