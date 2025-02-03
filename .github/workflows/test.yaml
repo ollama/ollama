@@ -48,8 +48,11 @@ jobs:
           - preset: CUDA
             container: nvidia/cuda:11.8.0-devel-ubuntu22.04
             flags: '-DCMAKE_CUDA_ARCHITECTURES=87'
+          - preset: CUDA
+            container: nvidia/cuda:12.8.0-devel-ubuntu22.04
+            flags: '-DCMAKE_CUDA_ARCHITECTURES=101'
           - preset: ROCm
-            container: rocm/dev-ubuntu-22.04:6.1.2
+            container: rocm/dev-ubuntu-22.04:6.2.4
             extra-packages: rocm-libs
             flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
     runs-on: linux
@@ -80,8 +83,11 @@ jobs:
           - preset: CUDA
             install: https://developer.download.nvidia.com/compute/cuda/11.8.0/local_installers/cuda_11.8.0_522.06_windows.exe
             flags: '-DCMAKE_CUDA_ARCHITECTURES=87'
+          - preset: CUDA
+            install: https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_571.96_windows.exe
+            flags: '-DCMAKE_CUDA_ARCHITECTURES=101'
           - preset: ROCm
-            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q3-WinSvr2022-For-HIP.exe
+            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
             flags: '-DAMDGPU_TARGETS=gfx1010'
     runs-on: windows
     steps:
@@ -143,8 +149,15 @@ jobs:
   test:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+        # Keep ubuntu-latest for general builds, add ubuntu-24.04-arm
+        os: [ ubuntu-latest, windows-latest ]
+        arch: [ amd64 ]
+        include:
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+          - os: macos-latest
+            arch: arm64
+      runs-on: ${{ matrix.os }}
     env:
       CGO_ENABLED: '1'
     steps:

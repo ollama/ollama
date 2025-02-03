@@ -23,13 +23,16 @@ jobs:
           echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${GITHUB_REF_NAME#v}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" >>$GITHUB_OUTPUT
 
   darwin-build:
-    runs-on: macos-13
+    runs-on: ${{ matrix.os }}
     environment: release
     needs: setup-environment
     strategy:
       matrix:
-        os: [darwin]
-        arch: [amd64, arm64]
+        os: [macos-13]
+        arch: [amd64]
+        include:
+          - os: macos-15
+            arch: amd64
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
@@ -99,15 +102,15 @@ jobs:
   windows-depends:
     strategy:
       matrix:
-        os: [windows]
+        os: [windows-2019, windows-2025]
         arch: [amd64]
         preset: ['CPU']
         include:
           - os: windows
             arch: amd64
             preset: 'CUDA 11'
-            install: https://developer.download.nvidia.com/compute/cuda/11.3.1/local_installers/cuda_11.3.1_465.89_win10.exe
-            cuda-version: '11.3'
+            install: https://developer.download.nvidia.com/compute/cuda/11.8.0/local_installers/cuda_11.8.0_522.06_windows.exe
+            cuda-version: '11.8'
           - os: windows
             arch: amd64
             preset: 'CUDA 12'
@@ -115,9 +118,19 @@ jobs:
             cuda-version: '12.4'
           - os: windows
             arch: amd64
+            preset: 'CUDA 12'
+            install: https://developer.download.nvidia.com/compute/cuda/12.6.3/local_installers/cuda_12.6.3_561.17_windows.exe
+            cuda-version: '12.6'
+          - os: windows
+            arch: amd64
+            preset: 'CUDA 12' # Blackwell
+            install: https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_571.96_windows.exe
+            cuda-version: '12.8'
+          - os: windows
+            arch: amd64
             preset: 'ROCm 6'
-            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q3-WinSvr2022-For-HIP.exe
-            rocm-version: '6.1'
+            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
+            rocm-version: '6.2'
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     env:
@@ -189,7 +202,7 @@ jobs:
   windows-build:
     strategy:
       matrix:
-        os: [windows]
+        os: [windows-2019, windows-2025]
         arch: [amd64, arm64]
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
@@ -278,14 +291,18 @@ jobs:
   linux-build:
     strategy:
       matrix:
+        # Keep ubuntu-latest for general builds, add ubuntu-24.04-arm
+        os: [ ubuntu-latest ]
+        arch: [ amd64 ]
+        targets: [ 'archive', 'rocm' ] # Build both targets on amd64
         include:
-          - os: linux
-            arch: amd64
-            targets: 'archive rocm'
-          - os: linux
-            arch: arm64
-            targets: archive
-    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+            targets: [ 'archive' ] # Only build archive target on aarch64
+          - os: ubuntu-22.04-arm
+            arch: aarch64
+            targets: [ 'archive' ] # Only build archive target on aarch64
+    runs-on: ${{ matrix.os }}
     environment: release
     needs: setup-environment
     env:
@@ -329,8 +346,8 @@ jobs:
     needs: setup-environment
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v2
-      - uses: docker/setup-buildx-action@v2
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
           username: ${{ vars.DOCKER_USER }}
