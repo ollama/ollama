@@ -263,6 +263,9 @@ Alternatively, you can change the amount of time all models are loaded into memo
 
 The `keep_alive` API parameter with the `/api/generate` and `/api/chat` API endpoints will override the `OLLAMA_KEEP_ALIVE` setting.
 
+For cooperative server environments, the maximum possible keep alive value for durations specified in the environment via `OLLAMA_KEEP_ALIVE` and the `keep_alive` API parameter can be limited using the `OLLAMA_MAX_KEEP_ALIVE` environment variable.
+All model in memory lifetimes will be limited to this value. Refer to the section explaining [how to configure the Ollama server](#how-do-i-configure-ollama-server) to correctly set the environment variable.
+
 ## How do I manage the maximum number of requests the Ollama server can queue?
 
 If too many requests are sent to the server, it will respond with a 503 error indicating the server is overloaded.  You can adjust how many requests may be queue by setting `OLLAMA_MAX_QUEUE`.
