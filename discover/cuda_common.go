@@ -9,6 +9,9 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+
+	"github.com/ollama/ollama/runners"
 )
 
 // Jetson devices have JETSON_JETPACK="x.y.z" factory set to the Jetpack version installed.
@@ -27,6 +30,12 @@ func cudaGetVisibleDevicesEnv(gpuInfo []GpuInfo) (string, string) {
 	}
 	return "CUDA_VISIBLE_DEVICES", strings.Join(ids, ",")
 }
+
+var (
+	hasv11 = false
+	hasv12 = false
+	once   = sync.Once{}
+)
 
 func cudaVariant(gpuInfo CudaGPUInfo) string {
 	if runtime.GOARCH == "arm64" && runtime.GOOS == "linux" {
@@ -57,8 +66,34 @@ func cudaVariant(gpuInfo CudaGPUInfo) string {
 		}
 	}
 
-	if gpuInfo.computeMajor < 6 || gpuInfo.DriverMajor < 12 || (gpuInfo.DriverMajor == 12 && gpuInfo.DriverMinor == 0) {
+	// Adjust algorithm based on available runners
+	once.Do(func() {
+		noCuda := true
+		for name := range runners.GetAvailableServers() {
+			if strings.Contains(name, "cuda_v11") {
+				slog.Debug("cuda v11 runner detected")
+				hasv11 = true
+				noCuda = false
+			} else if strings.Contains(name, "cuda_v12") {
+				slog.Debug("cuda v12 runner detected")
+				hasv12 = true
+				noCuda = false
+			} else if strings.Contains(name, "cuda") {
+				noCuda = false
+			}
+		}
+		if noCuda {
+			// Detect build from source or other packaging misconfiguration that results in no cuda runners with cuda GPUs detected.
+			slog.Warn("no cuda runners detected, unable to run on cuda GPU")
+			// TODO - bubble this failure mode up through info API as well
+		}
+	})
+
+	if (gpuInfo.computeMajor < 6 || gpuInfo.DriverMajor < 12 || (gpuInfo.DriverMajor == 12 && gpuInfo.DriverMinor == 0)) && hasv11 {
 		return "v11"
 	}
-	return "v12"
+	if hasv12 {
+		return "v12"
+	}
+	return ""
 }
