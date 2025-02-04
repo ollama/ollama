@@ -330,32 +330,71 @@ jobs:
           path: |
             dist/*.tgz
 
-  docker-build:
+  # Build each Docker variant (OS, arch, and flavor) separately. Using QEMU is unreliable and slower.
+  docker-build-push:
     strategy:
       matrix:
         include:
-          - flavor: 'latest=false'
-            platforms: linux/amd64,linux/arm64
+          - os: linux
+            arch: arm64
             build-args: |
               CGO_CFLAGS
               CGO_CXXFLAGS
               GOFLAGS
-          - flavor: 'latest=false,suffix=-rocm'
-            platforms: linux/amd64
+          - os: linux
+            arch: amd64
+            build-args: |
+              CGO_CFLAGS
+              CGO_CXXFLAGS
+              GOFLAGS
+          - os: linux
+            arch: amd64
+            suffix: '-rocm'
             build-args: |
               CGO_CFLAGS
               CGO_CXXFLAGS
               GOFLAGS
               FLAVOR=rocm
-    env:
-      GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
-    runs-on: linux
+    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     needs: setup-environment
+    env:
+      GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v2
       - uses: docker/setup-buildx-action@v2
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
+      - id: build-push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.os }}/${{ matrix.arch }}
+          build-args: ${{ matrix.build-args }}
+          outputs: type=image,name=ollama/ollama,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=registry,ref=ollama/ollama:latest
+          cache-to: type=inline
+      - run: |
+          mkdir -p ${{ matrix.os }}-${{ matrix.arch }}
+          echo "${{ steps.build-push.outputs.digest }}" >${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}.txt
+        working-directory: ${{ runner.temp }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}
+          path: |
+            ${{ runner.temp }}/${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}.txt
+
+  # Merge Docker images for the same flavor into a single multi-arch manifest
+  docker-merge-push:
+    strategy:
+      matrix:
+        suffix: ['', '-rocm']
+    runs-on: linux
+    environment: release
+    needs: [docker-build-push]
+    steps:
       - uses: docker/login-action@v3
         with:
           username: ${{ vars.DOCKER_USER }}
@@ -363,22 +402,23 @@ jobs:
       - id: metadata
         uses: docker/metadata-action@v4
         with:
-          flavor: ${{ matrix.flavor }}
+          flavor: |
+            latest=false
+            suffix=${{ matrix.suffix }}
           images: |
             ollama/ollama
           tags: |
+            type=ref,enable=true,priority=600,prefix=pr-,event=pr
             type=semver,pattern={{version}}
-      - uses: docker/build-push-action@v6
+      - uses: actions/download-artifact@v4
         with:
-          context: .
-          push: true
-          platforms: ${{ matrix.platforms }}
-          build-args: ${{ matrix.build-args }}
-          tags: ${{ steps.metadata.outputs.tags }}
-          labels: ${{ steps.metadata.outputs.labels }}
-          cache-from: type=registry,ref=ollama/ollama:latest
-          cache-to: type=inline
-          provenance: false
+          pattern: digest-*
+          path: ${{ runner.temp }}
+          merge-multiple: true
+      - run: |
+          docker buildx imagetools create $(echo '${{ steps.metadata.outputs.json }}' | jq -cr '.tags | map("-t", .) | join(" ")') $(cat *-${{ matrix.suffix }}.txt | xargs printf 'ollama/ollama@%s ')
+          docker buildx imagetools inspect ollama/ollama:${{ steps.metadata.outputs.version }}
+        working-directory: ${{ runner.temp }}
 
   # Aggregate all the assets and ship a release
   release:
