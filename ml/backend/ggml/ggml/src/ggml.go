@@ -41,27 +41,22 @@ func sink(level C.int, text *C.char, _ unsafe.Pointer) {
 }
 
 var OnceLoad = sync.OnceFunc(func() {
-	var lib struct{ name, defaultValue string }
+	var name, value string
 	switch runtime.GOOS {
-	case "darwin", "linux":
-		lib.name = "LD_LIBRARY_PATH"
-		lib.defaultValue = "/usr/local/lib:/usr/lib"
+	case "darwin":
+		name = "DYLD_LIBRARY_PATH"
+		value = "."
 	case "windows":
-		lib.name = "PATH"
-		lib.defaultValue = "."
+		name = "PATH"
+		value = "."
 	default:
-		return
+		name = "LD_LIBRARY_PATH"
+		value = "/usr/local/lib:/usr/lib"
 	}
 
-	paths, ok := os.LookupEnv(lib.name)
+	paths, ok := os.LookupEnv(name)
 	if !ok {
-		paths = lib.defaultValue
-	}
-
-	if runtime.GOOS == "darwin" {
-		if _, ok := os.LookupEnv("DYLD_LIBRARY_PATH"); !ok {
-			os.Setenv("DYLD_LIBRARY_PATH", paths)
-		}
+		paths = value
 	}
 
 	split := filepath.SplitList(paths)
@@ -70,7 +65,8 @@ var OnceLoad = sync.OnceFunc(func() {
 		abspath, _ := filepath.Abs(path)
 		if _, ok := visited[abspath]; !ok {
 			func() {
-				cpath := C.CString(path)
+				slog.Debug("Loading backend from", "path", abspath)
+				cpath := C.CString(abspath)
 				defer C.free(unsafe.Pointer(cpath))
 				C.ggml_backend_load_all_from_path(cpath)
 			}()
