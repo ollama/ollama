@@ -81,7 +81,7 @@ var OnceLoad = sync.OnceFunc(func() {
 
 		if _, ok := visited[abspath]; !ok {
 			func() {
-				slog.Debug("Loading backend from", "path", abspath)
+				slog.Debug("ggml backend load all from path", "path", abspath)
 				cpath := C.CString(abspath)
 				defer C.free(unsafe.Pointer(cpath))
 				C.ggml_backend_load_all_from_path(cpath)
