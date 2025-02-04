@@ -8,7 +8,7 @@ Subject: [PATCH] clip-unicode
  1 file changed, 39 insertions(+), 1 deletion(-)
 
 diff --git a/examples/llava/clip.cpp b/examples/llava/clip.cpp
-index ba28c07c..46998e4c 100644
+index 3cd0d2fa..b3c1829f 100644
 --- a/examples/llava/clip.cpp
 +++ b/examples/llava/clip.cpp
 @@ -56,6 +56,19 @@
