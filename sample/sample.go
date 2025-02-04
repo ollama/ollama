@@ -10,13 +10,30 @@ import (
 	"gonum.org/v1/gonum/stat/sampleuv"
 )
 
+type Transform interface {
+	Apply([]float64) ([]float64, error)
+}
+
 type Sampler interface {
-	Sample([]float64) ([]float64, error)
+	Sample([]float64) (int, error)
+}
+
+type SamplerConfig struct {
+	transforms []Transform
+	sampler    Sampler
+}
+
+// NewSampler creates a sampler with the given transforms and sampling method
+func NewSampler(transforms []Transform, sampler Sampler) *SamplerConfig {
+	return &SamplerConfig{
+		transforms: transforms,
+		sampler:    sampler,
+	}
 }
 
 type Temperature float64
 
-func (t Temperature) Sample(logits []float64) ([]float64, error) {
+func (t Temperature) Apply(logits []float64) ([]float64, error) {
 	if t < 0 || t > 2 {
 		return nil, errors.New("temperature must be between 0 and 2")
 	}
@@ -34,15 +51,16 @@ func (t Temperature) Sample(logits []float64) ([]float64, error) {
 
 type softmax struct{}
 
-func Softmax() Sampler {
+func Softmax() Transform {
 	return softmax{}
 }
 
-func (softmax) Sample(logits []float64) ([]float64, error) {
-	return computeSoftmax(logits)
+func (softmax) Apply(logits []float64) ([]float64, error) {
+	return computeSoftmax(logits), nil
 }
 
-func computeSoftmax(logits []float64) ([]float64, error) {
+// TODO: cache softmax values
+func computeSoftmax(logits []float64) []float64 {
 	copiedLogits := make([]float64, len(logits))
 	copy(copiedLogits, logits)
 	for i := range copiedLogits {
@@ -52,12 +70,12 @@ func computeSoftmax(logits []float64) ([]float64, error) {
 	floatSum := floats.Sum(copiedLogits)
 	floats.Scale(1.0/floatSum, copiedLogits)
 
-	return copiedLogits, nil
+	return copiedLogits
 }
 
 type TopK int
 
-func (k TopK) Sample(logits []float64) ([]float64, error) {
+func (k TopK) Apply(logits []float64) ([]float64, error) {
 	if k <= 0 {
 		return nil, errors.New("k must be positive")
 	}
@@ -76,23 +94,20 @@ func (k TopK) Sample(logits []float64) ([]float64, error) {
 	})
 
 	for _, idx := range indices[k:] {
-		logits[idx] = math.NaN()
+		logits[idx] = math.Inf(-1)
 	}
 
 	return logits, nil
 }
 
-type TopP float32
+type TopP float64
 
-func (p TopP) Sample(logits []float64) ([]float64, error) {
+func (p TopP) Apply(logits []float64) ([]float64, error) {
 	if p <= 0 || p >= 1 {
 		return nil, errors.New("p must be between 0 and 1")
 	}
 
-	probs, err := computeSoftmax(logits)
-	if err != nil {
-		return nil, err
-	}
+	probs := computeSoftmax(logits)
 
 	indices := make([]int, len(probs))
 	for i := range indices {
@@ -104,12 +119,12 @@ func (p TopP) Sample(logits []float64) ([]float64, error) {
 		return cmp.Compare(probs[j], probs[i])
 	})
 
-	cumSum := 0.0
+	var cumSum float64
 	for i, idx := range indices {
 		cumSum += probs[idx]
 		if cumSum > float64(p) {
 			for _, idx := range indices[i+1:] {
-				logits[idx] = math.NaN()
+				logits[idx] = math.Inf(-1)
 			}
 			break
 		}
@@ -117,17 +132,14 @@ func (p TopP) Sample(logits []float64) ([]float64, error) {
 	return logits, nil
 }
 
-type MinP float32
+type MinP float64
 
-func (p MinP) Sample(logits []float64) ([]float64, error) {
+func (p MinP) Apply(logits []float64) ([]float64, error) {
 	if p <= 0 || p >= 1 {
 		return nil, errors.New("p must be between 0 and 1")
 	}
 
-	probs, err := computeSoftmax(logits)
-	if err != nil {
-		return nil, err
-	}
+	probs := computeSoftmax(logits)
 	copiedProbs := make([]float64, len(probs))
 	copy(copiedProbs, probs)
 
@@ -138,7 +150,7 @@ func (p MinP) Sample(logits []float64) ([]float64, error) {
 
 	for i := range probs {
 		if probs[i] < probThreshold {
-			logits[i] = math.NaN()
+			logits[i] = math.Inf(-1)
 		}
 	}
 
@@ -151,48 +163,51 @@ func Weighed() Sampler {
 	return weighed{}
 }
 
-func (s weighed) Sample(logits []float64) ([]float64, error) {
+// should return single value
+func (s weighed) Sample(logits []float64) (int, error) {
 	logitsCopy := make([]float64, 0, len(logits))
 	indices := make([]int, 0, len(logits))
 	// the uv sampler does not support NaN values
 	for i, logit := range logits {
-		if !math.IsNaN(logit) {
+		if !math.IsInf(logit, -1) {
 			logitsCopy = append(logitsCopy, logit)
 			indices = append(indices, i)
 		}
 	}
 
 	if len(logitsCopy) == 0 {
-		return nil, errors.New("no valid tokens found")
+		return -1, errors.New("no valid tokens found")
 	}
 
-	softmax, err := computeSoftmax(logitsCopy)
-	if err != nil {
-		return nil, err
-	}
+	softmax := computeSoftmax(logitsCopy)
 	w := sampleuv.NewWeighted(softmax, nil)
-	if v, ok := w.Take(); ok {
+	if idx, ok := w.Take(); ok {
 		// returns the token ID
-		return []float64{float64(indices[v])}, nil
+		return indices[idx], nil
 	}
-	return nil, errors.New("weighed sampler failed")
+	return -1, errors.New("weighed sampler failed")
 }
 
-func Sample(logits []float64, samplers ...Sampler) ([]float64, error) {
+// Sample applies transforms and samples a token ID
+func (s *SamplerConfig) Sample(input []float32) (int, error) {
+	logits := make([]float64, len(input))
+	for i, v := range input {
+		logits[i] = float64(v)
+	}
+
 	var err error
-	for _, sampler := range samplers {
-		if sampler == Temperature(0) {
+	for _, t := range s.transforms {
+		if t == Temperature(0) {
 			// early return with greedy if temperature is 0
-			logits, err = Greedy().Sample(logits)
-			if err != nil {
-				return nil, err
-			}
-			return logits, nil
+			s.sampler = Greedy()
+			break
 		}
-		logits, err = sampler.Sample(logits)
+
+		logits, err = t.Apply(logits)
 		if err != nil {
-			return nil, err
+			return -1, err
 		}
 	}
-	return logits, nil
+
+	return s.sampler.Sample(logits)
 }

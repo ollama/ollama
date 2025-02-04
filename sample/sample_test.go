@@ -10,7 +10,7 @@ import (
 )
 
 func TestTemperature(t *testing.T) {
-	logits, err := Temperature(0.5).Sample([]float64{-3, -2, -1, 0, 1, 2, 4})
+	logits, err := Temperature(0.5).Apply([]float64{-3, -2, -1, 0, 1, 2, 4})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -19,16 +19,16 @@ func TestTemperature(t *testing.T) {
 		t.Fatalf("got: %v, want: %v", logits, want)
 	}
 
-	if _, err := Temperature(-1).Sample([]float64{-3, -2, -1, 0, 1, 2, 4}); err == nil {
+	if _, err := Temperature(-1).Apply([]float64{-3, -2, -1, 0, 1, 2, 4}); err == nil {
 		t.Fatalf("expected error for temperature=-1, got %v", logits)
 	}
-	if _, err := Temperature(2.1).Sample([]float64{-3, -2, -1, 0, 1, 2, 4}); err == nil {
+	if _, err := Temperature(2.1).Apply([]float64{-3, -2, -1, 0, 1, 2, 4}); err == nil {
 		t.Fatalf("expected error for temperature=2.1, got %v", logits)
 	}
 }
 
 func TestSoftmax(t *testing.T) {
-	probs, err := Softmax().Sample([]float64{-3, -2, -1, 0, 1, 2, 4})
+	probs, err := Softmax().Apply([]float64{-3, -2, -1, 0, 1, 2, 4})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,95 +40,101 @@ func TestSoftmax(t *testing.T) {
 }
 
 func TestTopK(t *testing.T) {
-	logits, err := TopK(3).Sample([]float64{-3, -2, -1, 0, 1, 2, 4})
+	logits, err := TopK(3).Apply([]float64{-3, -2, -1, 0, 1, 2, 4})
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectedlogits := []float64{math.NaN(), math.NaN(), math.NaN(), math.NaN(), 1, 2, 4}
+	expectedlogits := []float64{math.Inf(-1), math.Inf(-1), math.Inf(-1), math.Inf(-1), 1, 2, 4}
 	if !floats.Same(logits, expectedlogits) {
 		t.Fatalf("logits: %v, expectedlogits: %v", logits, expectedlogits)
 	}
-	logits, err = TopK(0).Sample([]float64{-3, -2, -1, 0, 1, 2, 4})
+	logits, err = TopK(0).Apply([]float64{-3, -2, -1, 0, 1, 2, 4})
 	if err == nil {
 		t.Fatalf("expected error for k=0, got %v", logits)
+	}
+
+	logits, err = TopK(10).Apply([]float64{-3, -2, -1, 0, 1, 2, 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedlogits = []float64{-3, -2, -1, 0, 1, 2, 4}
+	if !floats.Same(logits, expectedlogits) {
+		t.Fatalf("logits: %v, expectedlogits: %v", logits, expectedlogits)
 	}
 }
 
 func TestTopP(t *testing.T) {
-	logits, err := TopP(0.9).Sample([]float64{-3, -2, -1, 0, 1, 2, 4})
+	logits, err := TopP(0.9).Apply([]float64{-3, -2, -1, 0, 1, 2, 4})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []float64{math.NaN(), math.NaN(), math.NaN(), math.NaN(), math.NaN(), 2, 4}
+	want := []float64{math.Inf(-1), math.Inf(-1), math.Inf(-1), math.Inf(-1), math.Inf(-1), 2, 4}
 	if !floats.Same(logits, want) {
 		t.Fatalf("got: %v, want: %v", logits, want)
 	}
-	logits, err = TopP(1.0).Sample([]float64{-3, -2, -1, 0, 1, 2, 4})
+	logits, err = TopP(1.0).Apply([]float64{-3, -2, -1, 0, 1, 2, 4})
 	if err == nil {
 		t.Fatalf("expected error for p=1.0, got %v", logits)
 	}
-	logits, err = TopP(0.0).Sample([]float64{-3, -2, -1, 0, 1, 2, 4})
+	logits, err = TopP(0.0).Apply([]float64{-3, -2, -1, 0, 1, 2, 4})
 	if err == nil {
 		t.Fatalf("expected error for p=0.0, got %v", logits)
 	}
 }
 
 func TestMinP(t *testing.T) {
-	logits, err := MinP(0.2).Sample([]float64{-3, -2, -1, 0, 1, 2, 3, 4})
+	logits, err := MinP(0.2).Apply([]float64{-3, -2, -1, 0, 1, 2, 3, 4})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []float64{math.NaN(), math.NaN(), math.NaN(), math.NaN(), math.NaN(), math.NaN(), 3, 4}
+	want := []float64{math.Inf(-1), math.Inf(-1), math.Inf(-1), math.Inf(-1), math.Inf(-1), math.Inf(-1), 3, 4}
 	if !floats.Same(logits, want) {
 		t.Fatalf("got: %v, want: %v", logits, want)
 	}
-	logits, err = MinP(1.0).Sample([]float64{-3, -2, -1, 0, 1, 2, 3, 4})
+	logits, err = MinP(1.0).Apply([]float64{-3, -2, -1, 0, 1, 2, 3, 4})
 	if err == nil {
 		t.Fatalf("expected error for p=1.0, got %v", logits)
 	}
-	logits, err = MinP(0.0).Sample([]float64{-3, -2, -1, 0, 1, 2, 3, 4})
+	logits, err = MinP(0.0).Apply([]float64{-3, -2, -1, 0, 1, 2, 3, 4})
 	if err == nil {
 		t.Fatalf("expected error for p=0.0, got %v", logits)
 	}
 }
 
 func TestWeighed(t *testing.T) {
-	logits, err := Weighed().Sample([]float64{math.NaN(), 2, math.NaN(), math.NaN()})
+	idx, err := Weighed().Sample([]float64{math.Inf(-1), 2, math.Inf(-1), math.Inf(-1)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []float64{1}
-	if !floats.Equal(logits, want) {
-		t.Fatalf("got: %v, want: %v", logits, want)
+	want := 1
+	if idx != want {
+		t.Fatalf("got: %v, want: %v", idx, want)
 	}
-	logits, err = Weighed().Sample([]float64{math.NaN(), math.NaN(), math.NaN()})
+	idx, err = Weighed().Sample([]float64{math.Inf(-1), math.Inf(-1), math.Inf(-1)})
 	if err == nil {
-		t.Fatalf("expected error for no valid tokens, got %v", logits)
+		t.Fatalf("expected error for no valid tokens, got %v", idx)
 	}
 }
 
 func TestSample(t *testing.T) {
-	input := []float64{1, 2, 3, 4}
-	want := []float64{1, 2, 3, 4}
+	input := []float32{1, 2, 3, 4}
 
 	var callOrder []int
-	mock1 := &testSampler{
-		id:         1,
-		callOrder:  &callOrder,
-		returnVals: want,
+	mock1 := &testTransform{
+		id:        1,
+		callOrder: &callOrder,
 	}
-	mock2 := &testSampler{
-		id:         2,
-		callOrder:  &callOrder,
-		returnVals: want,
+	mock2 := &testTransform{
+		id:        2,
+		callOrder: &callOrder,
 	}
-	mock3 := &testSampler{
-		id:         3,
-		callOrder:  &callOrder,
-		returnVals: want,
+	mock3 := &testTransform{
+		id:        3,
+		callOrder: &callOrder,
 	}
+	sampler := NewSampler([]Transform{mock1, mock2, mock3}, Greedy())
 
-	got, err := Sample(input, mock1, mock2, mock3)
+	got, err := sampler.Sample(input)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,43 +143,45 @@ func TestSample(t *testing.T) {
 		t.Errorf("got %v, want %v", callOrder, []int{1, 2, 3})
 	}
 
-	if !floats.Equal(got, want) {
+	want := 3 // Greedy sampler should pick highest logit
+	if got != want {
 		t.Errorf("got %v, want %v", got, want)
 	}
 
-	errMock := &testSampler{
+	errMock := &testTransform{
 		returnErr: fmt.Errorf("mock error"),
 	}
-	_, err = Sample(input, mock1, errMock, mock2)
+	sampler = NewSampler([]Transform{mock1, errMock, mock2}, Greedy())
+	_, err = sampler.Sample(input)
 	if err == nil {
 		t.Error("Expected error from sampler")
 	}
 }
 
-type testSampler struct {
-	id         int
-	callOrder  *[]int
-	returnVals []float64
-	returnErr  error
+type testTransform struct {
+	id        int
+	callOrder *[]int
+	returnErr error
 }
 
-func (ts *testSampler) Sample(logits []float64) ([]float64, error) {
+func (ts *testTransform) Apply(logits []float64) ([]float64, error) {
 	if ts.callOrder != nil {
 		*ts.callOrder = append(*ts.callOrder, ts.id)
 	}
 	if ts.returnErr != nil {
 		return nil, ts.returnErr
 	}
-	return ts.returnVals, nil
+	return logits, nil
 }
 
 func TestSampleTemperatureZero(t *testing.T) {
-	logits, err := Sample([]float64{1, 2, 3, 4}, Temperature(0))
+	sampler := NewSampler([]Transform{Temperature(0)}, Greedy())
+	got, err := sampler.Sample([]float32{1, 2, 3, 4})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []float64{3}
-	if !floats.Equal(logits, want) {
-		t.Fatalf("got: %v, want: %v", logits, want)
+	want := 3 // Greedy sampler should pick highest logit index
+	if got != want {
+		t.Fatalf("got: %v, want: %v", got, want)
 	}
 }
