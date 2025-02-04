@@ -41,17 +41,28 @@ func sink(level C.int, text *C.char, _ unsafe.Pointer) {
 }
 
 var OnceLoad = sync.OnceFunc(func() {
+	exe, err := os.Executable()
+	if err != nil {
+		slog.Error("failed to get executable path", "error", err)
+		return
+	}
+
+	// PATH, LD_LIBRARY_PATH, and DYLD_LIBRARY_PATH are often
+	// set by the parent process, however, use a default value
+	// if the environment variable is not set.
 	var name, value string
 	switch runtime.GOOS {
 	case "darwin":
+		// On macOS, DYLD_LIBRARY_PATH is often not set, so
+		// we use the directory of the executable as the default.
 		name = "DYLD_LIBRARY_PATH"
-		value = "."
+		value = filepath.Dir(exe)
 	case "windows":
 		name = "PATH"
-		value = "."
+		value = filepath.Join(filepath.Dir(exe), "lib", "ollama")
 	default:
 		name = "LD_LIBRARY_PATH"
-		value = "/usr/local/lib:/usr/lib"
+		value = filepath.Join(filepath.Dir(exe), "..", "lib", "ollama")
 	}
 
 	paths, ok := os.LookupEnv(name)
@@ -62,7 +73,12 @@ var OnceLoad = sync.OnceFunc(func() {
 	split := filepath.SplitList(paths)
 	visited := make(map[string]struct{}, len(split))
 	for _, path := range split {
-		abspath, _ := filepath.Abs(path)
+		abspath, err := filepath.Abs(path)
+		if err != nil {
+			slog.Error("failed to get absolute path", "error", err)
+			continue
+		}
+
 		if _, ok := visited[abspath]; !ok {
 			func() {
 				slog.Debug("Loading backend from", "path", abspath)
