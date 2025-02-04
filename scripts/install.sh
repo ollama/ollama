@@ -129,8 +129,16 @@ configure_systemd() {
     status "Adding current user to ollama group..."
     $SUDO usermod -a -G ollama $(whoami)
 
+    SERVICE_FILE="/etc/systemd/system/ollama.service"
+    BACKUP_FILE="/etc/systemd/system/ollama.service.bak"
+    
+    if [ -f "$SERVICE_FILE" ]; then
+        status "Backing up existing ollama.service file..."
+        $SUDO cp "$SERVICE_FILE" "$BACKUP_FILE"
+    fi
+
     status "Creating ollama systemd service..."
-    cat <<EOF | $SUDO tee /etc/systemd/system/ollama.service >/dev/null
+    cat <<EOF | $SUDO tee "$SERVICE_FILE" >/dev/null
 [Unit]
 Description=Ollama Service
 After=network-online.target
@@ -146,13 +154,14 @@ Environment="PATH=$PATH"
 [Install]
 WantedBy=default.target
 EOF
+
     SYSTEMCTL_RUNNING="$(systemctl is-system-running || true)"
     case $SYSTEMCTL_RUNNING in
         running|degraded)
             status "Enabling and starting ollama service..."
             $SUDO systemctl daemon-reload
             $SUDO systemctl enable ollama
-
+            
             start_service() { $SUDO systemctl restart ollama; }
             trap start_service EXIT
             ;;
@@ -163,6 +172,20 @@ EOF
             fi
             ;;
     esac
+}
+
+restore_service() {
+    SERVICE_FILE="/etc/systemd/system/ollama.service"
+    BACKUP_FILE="/etc/systemd/system/ollama.service.bak"
+    
+    if [ -f "$BACKUP_FILE" ]; then
+        status "Restoring backup of ollama.service..."
+        $SUDO mv "$BACKUP_FILE" "$SERVICE_FILE"
+        $SUDO systemctl daemon-reload
+        $SUDO systemctl restart ollama
+    else
+        warning "No backup found for ollama.service"
+    fi
 }
 
 if available systemctl; then
