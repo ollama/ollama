@@ -31,6 +31,7 @@ endif()
 
 if (CMAKE_OSX_ARCHITECTURES MATCHES "x86_64")
     set(CMAKE_BUILD_RPATH "@loader_path")
+    set(CMAKE_INSTALL_RPATH "@loader_path")
 endif()
 
 set(OLLAMA_BUILD_DIR ${CMAKE_BINARY_DIR}/lib/ollama)
