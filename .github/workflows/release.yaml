@@ -408,7 +408,7 @@ jobs:
         working-directory: dist
       - name: Create or update Release
         run: |
-          RELEASE_VERSION=$(echo ${GITHUB_REF_NAME} | cut -f1 -d-)"
+          RELEASE_VERSION="$(echo ${GITHUB_REF_NAME} | cut -f1 -d-)"
 
           echo "Looking for existing release for ${RELEASE_VERSION}"
           OLD_TAG=$(gh release ls --json name,tagName | jq -r ".[] | select(.name == \"${RELEASE_VERSION}\") | .tagName")
