@@ -43,8 +43,8 @@ func sink(level C.int, text *C.char, _ unsafe.Pointer) {
 var OnceLoad = sync.OnceFunc(func() {
 	exe, err := os.Executable()
 	if err != nil {
-		slog.Error("failed to get executable path", "error", err)
-		return
+		slog.Warn("failed to get executable path", "error", err)
+		exe = "."
 	}
 
 	// PATH, LD_LIBRARY_PATH, and DYLD_LIBRARY_PATH are often
