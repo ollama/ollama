@@ -23,7 +23,7 @@ import (
 	"github.com/ollama/ollama/ml"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/ollama/ollama/ml/backend/ggml/ggml/src"
+	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 )
 
 type device struct {
@@ -255,6 +255,15 @@ func (c *Context) Compute(t ml.Tensor) ml.Tensor {
 	return t
 }
 
+func shapeToGGML(shape []int) *C.int64_t {
+	sh := make([]C.int64_t, len(shape))
+	for i, s := range shape {
+		sh[i] = (C.int64_t)(s)
+	}
+
+	return &sh[0]
+}
+
 func (c Context) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
 	if len(shape) < 1 || len(shape) > 4 {
 		panic("unsupported number of dimensions")
@@ -269,9 +278,9 @@ func (c Context) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
 	var t *C.struct_ggml_tensor
 	switch dtype {
 	case ml.DTypeF32:
-		t = C.ggml_new_tensor(c.ctx, C.GGML_TYPE_F32, C.int(len(shape)), (*C.int64_t)(unsafe.Pointer(&shape[0])))
+		t = C.ggml_new_tensor(c.ctx, C.GGML_TYPE_F32, C.int(len(shape)), shapeToGGML(shape))
 	case ml.DTypeI32:
-		t = C.ggml_new_tensor(c.ctx, C.GGML_TYPE_I32, C.int(len(shape)), (*C.int64_t)(unsafe.Pointer(&shape[0])))
+		t = C.ggml_new_tensor(c.ctx, C.GGML_TYPE_I32, C.int(len(shape)), shapeToGGML(shape))
 	default:
 		panic("unsupported dtype")
 	}
@@ -299,7 +308,7 @@ func fromSlice[S ~[]E, E float32 | int32](ctx Context, s S, shape []int, dtype u
 		return nil, fmt.Errorf("invalid shape %v for %d elements", shape, len(s))
 	}
 
-	t := C.ggml_new_tensor(ctx.ctx, dtype, C.int(len(shape)), (*C.int64_t)(unsafe.Pointer(&shape[0])))
+	t := C.ggml_new_tensor(ctx.ctx, dtype, C.int(len(shape)), shapeToGGML(shape))
 	b := C.ggml_backend_alloc_buffer(ctx.backend, C.ggml_nbytes(t))
 	C.ggml_backend_tensor_alloc(b, t, C.ggml_backend_buffer_get_base(b))
 	C.ggml_backend_tensor_set(t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t))
@@ -332,16 +341,16 @@ func (t *Tensor) LogValue() slog.Value {
 	)
 }
 
-func (t *Tensor) Dim(n int) int64 {
-	return int64(t.t.ne[n])
+func (t *Tensor) Dim(n int) int {
+	return int(t.t.ne[n])
 }
 
-func (t *Tensor) Stride(n int) int64 {
-	return int64(t.t.nb[n])
+func (t *Tensor) Stride(n int) int {
+	return int(t.t.nb[n])
 }
 
-func (t *Tensor) Shape() []int64 {
-	shape := make([]int64, C.ggml_n_dims(t.t))
+func (t *Tensor) Shape() []int {
+	shape := make([]int, C.ggml_n_dims(t.t))
 	for i := range shape {
 		shape[i] = t.Dim(i)
 	}
@@ -424,7 +433,7 @@ func (t *Tensor) RMSNorm(ctx ml.Context, w ml.Tensor, eps float32) ml.Tensor {
 	return (&Tensor{t: C.ggml_norm(ctx.(*Context).ctx, t.t, C.float(eps))}).Mul(ctx, w)
 }
 
-func (t *Tensor) Pad(ctx ml.Context, shape ...int64) ml.Tensor {
+func (t *Tensor) Pad(ctx ml.Context, shape ...int) ml.Tensor {
 	if len(shape) != 4 {
 		panic("expected 4 dimensions")
 	}
@@ -456,7 +465,7 @@ func (t *Tensor) Copy(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Reshape(ctx ml.Context, shape ...int64) ml.Tensor {
+func (t *Tensor) Reshape(ctx ml.Context, shape ...int) ml.Tensor {
 	switch len(shape) {
 	case 1:
 		return &Tensor{
@@ -497,7 +506,7 @@ func (t *Tensor) Tanh(ctx ml.Context) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Unpad(ctx ml.Context, shape ...int64) ml.Tensor {
+func (t *Tensor) Unpad(ctx ml.Context, shape ...int) ml.Tensor {
 	if len(shape) != 4 {
 		panic("expected 4 dimensions")
 	}
