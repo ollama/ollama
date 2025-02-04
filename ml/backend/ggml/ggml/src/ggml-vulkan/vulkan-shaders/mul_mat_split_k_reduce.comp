@@ -1,0 +1,48 @@
+#version 450
+
+#extension GL_EXT_control_flow_attributes : enable
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer A {float data_a[];};
+layout (binding = 0) readonly buffer A4 {vec4 data_a4[];};
+layout (binding = 1) writeonly buffer D {float data_d[];};
+layout (binding = 1) writeonly buffer D4 {vec4 data_d4[];};
+
+layout (push_constant) uniform parameter {
+    uint ne;
+    uint k_num;
+} p;
+
+void main() {
+    // Each invocation handles four consecutive components
+    const uint idx = gl_GlobalInvocationID.x * 4;
+
+    if (idx >= p.ne) {
+        return;
+    }
+
+    // Check if all four components are in bounds and aligned,
+    // then use vector loads
+    if (idx + 3 < p.ne && (p.ne % 4) == 0) {
+        vec4 result = vec4(0.0f);
+
+        [[unroll]] for (uint i = 0; i < p.k_num; i++) {
+            result += data_a4[(i * p.ne + idx) / 4];
+        }
+
+        data_d4[idx / 4] = result;
+    } else {
+        [[unroll]] for (uint j = 0; j < 4; ++j) {
+            if (idx + j < p.ne) {
+                float result = 0.0f;
+
+                [[unroll]] for (uint i = 0; i < p.k_num; i++) {
+                    result += data_a[i * p.ne + idx + j];
+                }
+
+                data_d[idx + j] = result;
+            }
+        }
+    }
+}

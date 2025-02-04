@@ -1,0 +1,118 @@
+#extension GL_EXT_control_flow_attributes : enable
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_shader_8bit_storage : require
+
+#ifdef MUL_MAT_ID
+#define EXPERT_COUNT 8
+#endif
+
+#include "types.comp"
+
+layout (binding = 0) readonly buffer A {A_TYPE data_a[];};
+layout (binding = 1) readonly buffer B {B_TYPE data_b[];};
+layout (binding = 1) readonly buffer BV2 {B_TYPE_VEC2 data_b_v2[];};
+layout (binding = 1) readonly buffer BV4 {B_TYPE_VEC4 data_b_v4[];};
+
+layout (binding = 2) writeonly buffer D {D_TYPE data_d[];};
+#ifdef MUL_MAT_ID
+layout (binding = 3) readonly buffer IDS {int data_ids[];};
+#endif
+
+#include "dequant_funcs.comp"
+
+layout (push_constant) uniform parameter
+{
+    uint ncols;
+    uint stride_a;
+    uint stride_b;
+    uint stride_d;
+
+    uint batch_stride_a;
+    uint batch_stride_b;
+    uint batch_stride_d;
+
+#ifdef MUL_MAT_ID
+    uint nei0;
+    uint ne11;
+#else
+    uint ne02;
+    uint ne12;
+    uint broadcast2;
+    uint broadcast3;
+#endif
+} p;
+
+void get_offsets(out uint a_offset, out uint b_offset, out uint d_offset) {
+#ifdef MUL_MAT_ID
+    const uint expert_idx = gl_GlobalInvocationID.y;
+#else
+    const uint batch_idx = gl_GlobalInvocationID.y;
+#endif
+
+#ifndef MUL_MAT_ID
+    uint batch_idx_a = 0;
+    if (batch_idx != 0) {
+        const uint i13 = batch_idx / p.ne12;
+        const uint i12 = batch_idx % p.ne12;
+
+        const uint i03 = i13 / p.broadcast3;
+        const uint i02 = i12 / p.broadcast2;
+
+        batch_idx_a = i03 * p.ne02 + i02;
+    }
+#else
+    const uint expert_id = data_ids[expert_idx];
+#endif
+
+    a_offset =
+#ifdef MUL_MAT_ID
+            expert_id * p.batch_stride_a;
+#else
+            batch_idx_a * p.batch_stride_a;
+#endif
+    b_offset =
+#ifdef MUL_MAT_ID
+            (expert_idx % p.ne11) * p.stride_b;
+#else
+            batch_idx * p.batch_stride_b;
+#endif
+    d_offset =
+#ifdef MUL_MAT_ID
+            expert_idx * p.stride_d;
+#else
+            batch_idx * p.batch_stride_d;
+#endif
+}
+
+layout (constant_id = 0) const uint BLOCK_SIZE = 32;
+layout (constant_id = 1) const uint NUM_ROWS = 1;
+layout (constant_id = 2) const uint NUM_COLS = 1;
+
+shared FLOAT_TYPE tmpsh[NUM_COLS][NUM_ROWS][BLOCK_SIZE];
+
+void reduce_result(const in FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const in uint32_t d_offset, const in uint32_t first_row, const in uint32_t num_rows, const in uint32_t tid) {
+    // sum up partial sums and write back result
+    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+        [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+            tmpsh[j][n][tid] = temp[j][n];
+        }
+    }
+    barrier();
+    [[unroll]] for (uint s = BLOCK_SIZE/2; s > 0; s >>= 1) {
+        if (tid < s) {
+            [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+                [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+                    tmpsh[j][n][tid] += tmpsh[j][n][tid + s];
+                }
+            }
+        }
+        barrier();
+    }
+    if (tid == 0) {
+        [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+            [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+                data_d[j*p.batch_stride_d + d_offset + first_row + n] = D_TYPE(tmpsh[j][n][0]);
+            }
+        }
+    }
+}
