@@ -281,9 +281,14 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		finalParams = append(finalParams, params...)
 		finalParams = append(finalParams, "--port", strconv.Itoa(port))
 
-		pathEnv := "LD_LIBRARY_PATH"
-		if runtime.GOOS == "windows" {
+		var pathEnv string
+		switch runtime.GOOS {
+		case "windows":
 			pathEnv = "PATH"
+		case "darwin":
+			pathEnv = "DYLD_LIBRARY_PATH"
+		default:
+			pathEnv = "LD_LIBRARY_PATH"
 		}
 
 		var libraryPaths []string
@@ -385,7 +390,8 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 					strings.HasPrefix(ev, "HSA_") ||
 					strings.HasPrefix(ev, "GGML_") ||
 					strings.HasPrefix(ev, "PATH=") ||
-					strings.HasPrefix(ev, "LD_LIBRARY_PATH=") {
+					strings.HasPrefix(ev, "LD_LIBRARY_PATH=") ||
+					strings.HasPrefix(ev, "DYLD_LIBRARY_PATH=") {
 					filteredEnv = append(filteredEnv, ev)
 				}
 			}

@@ -32,10 +32,10 @@ _build_darwin() {
             status "Building darwin $ARCH dynamic backends"
             cmake -B build/darwin-$ARCH \
                 -DCMAKE_OSX_ARCHITECTURES=x86_64 \
-                -DCMAKE_OSX_DEPLOYMENT_TARGET=11.3
+                -DCMAKE_OSX_DEPLOYMENT_TARGET=11.3 \
+                -DCMAKE_INSTALL_PREFIX=$INSTALL_PREFIX
             cmake --build build/darwin-$ARCH --target ggml-cpu -j
-            install -d $INSTALL_PREFIX/lib/ollama
-            install build/darwin-$ARCH/lib/ollama/*.{dylib,so} $INSTALL_PREFIX/lib/ollama
+            cmake --install build/darwin-$ARCH --component CPU
         fi
     done
 }
