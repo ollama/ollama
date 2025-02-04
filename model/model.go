@@ -275,5 +275,8 @@ func Forward(m Model, optsFuncs ...OptionsFunc) (ml.Tensor, error) {
 	}
 	defer ctx.Close()
 
-	return ctx.Compute(t), nil
+	ctx.Forward(t)
+	ctx.Compute(t)
+
+	return t, nil
 }

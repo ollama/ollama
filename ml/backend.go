@@ -49,7 +49,7 @@ type Context interface {
 	FromIntSlice(s []int32, shape ...int) (Tensor, error)
 
 	Forward(Tensor)
-	Compute(Tensor) Tensor
+	Compute(...Tensor)
 	Close()
 }
 
