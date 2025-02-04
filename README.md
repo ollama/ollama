@@ -54,6 +54,14 @@ Here are some example models that can be downloaded:
 
 | Model              | Parameters | Size  | Download                         |
 | ------------------ | ---------- | ----- | -------------------------------- |
+
+| Deepseek R1-1.5b   | 1.5B       | 1.1GB | `ollama run deepseek-r1:1.5b`    |
+| Deepseek R1-7b     | 7B         | 4.7GB | `ollama run deepseek-r1:7b`      |
+| Deepseek R1-8b     | 8B         | 4.9GB | `ollama run deepseek-r1:8b`      |
+| Deepseek R1-14b    | 14B        | 9GB   | `ollama run deepseek-r1:14b`     |
+| Deepseek R1-32b    | 32B        | 20GB  | `ollama run deepseek-r1:32b`     |
+| Deepseek R1-70b    | 70B        | 43GB  | `ollama run deepseek-r1:70b`     |
+| Deepseek R1-671b   | 671B       | 404GB | `ollama run deepseek-r1:671b`    |
 | Llama 3.3          | 70B        | 43GB  | `ollama run llama3.3`            |
 | Llama 3.2          | 3B         | 2.0GB | `ollama run llama3.2`            |
 | Llama 3.2          | 1B         | 1.3GB | `ollama run llama3.2:1b`         |
