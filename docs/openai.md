@@ -94,19 +94,6 @@ except Exception as e:
     print(f"Error: {e}")
 ```
 
-#### Extra Arguments 
-
-- `num_ctx` parameter can be used to set the context window for the model
-- OpenAI Python SDK does not support setting context window size, however this can be set for Ollama through the `extra_body` parameter
-
-```py
-completion = client.beta.chat.completions.create(
-    model="llama3.1:8b",
-    messages=[{"role": "user", "content": "Say this is a test"}],
-    extra_body={"num_ctx": 4096},
-)
-```
-
 ### OpenAI JavaScript library
 
 ```javascript
@@ -152,20 +139,6 @@ const model = await openai.models.retrieve("llama3.2")
 const embedding = await openai.embeddings.create({
   model: "all-minilm",
   input: ["why is the sky blue?", "why is the grass green?"],
-})
-```
-
-#### Extra Arguments 
-
-- `num_ctx` parameter can be used to set the context window for the model
-- OpenAI JS SDK does not support setting context window size, however this can be set for Ollama by passing `num_ctx` directly with a `@ts-expect-error` as an undocumented parameter in the [OpenAI JS SDK](https://github.com/openai/openai-node?tab=readme-ov-file#making-customundocumented-requests)
-
-```js
-const chatCompletion = await openai.chat.completions.create({
-    messages: [{ role: 'user', content: 'Say this is a test' }],
-    model: 'llama3.2',
-    // @ts-expect-error num_ctx is not officially supported
-    num_ctx: 4096,
 })
 ```
 
@@ -228,6 +201,45 @@ curl http://localhost:11434/v1/embeddings \
     -d '{
         "model": "all-minilm",
         "input": ["why is the sky blue?", "why is the grass green?"]
+    }'
+```
+
+## Extra Arguments
+
+### Setting Context Window Size
+- `num_ctx` parameter can be used to set the context window for the model
+
+#### OpenAI Python SDK
+- OpenAI Python SDK does not support setting context window size, however this can be set for Ollama through the `extra_body` parameter
+
+```py
+completion = client.beta.chat.completions.create(
+    model="llama3.1:8b",
+    messages=[{"role": "user", "content": "Say this is a test"}],
+    extra_body={"num_ctx": 4096},
+)
+```
+
+#### OpenAI JS SDK
+- OpenAI JS SDK does not support setting context window size, however this can be set for Ollama by passing `num_ctx` directly with a `@ts-expect-error` as an undocumented parameter in the [OpenAI JS SDK](https://github.com/openai/openai-node?tab=readme-ov-file#making-customundocumented-requests)
+
+```ts
+const chatCompletion = await openai.chat.completions.create({
+    messages: [{ role: 'user', content: 'Say this is a test' }],
+    model: 'llama3.2',
+    // @ts-expect-error num_ctx is not officially supported
+    num_ctx: 4096,
+})
+```
+
+#### `curl`
+```shell
+curl http://localhost:11434/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model": "llama3.2",
+        "messages": [{"role": "user", "content": "Say this is a test"}],
+        "num_ctx": 4096
     }'
 ```
 
@@ -367,27 +379,3 @@ curl http://localhost:11434/v1/chat/completions \
     }'
 ```
 
-### Setting the context size
-
-The OpenAI API does not have a way of setting the context size for a model. If you need to change the context size, create a `Modelfile` which looks like:
-
-```modelfile
-FROM <some model>
-PARAMETER num_ctx <context size>
-```
-
-Use the `ollama create mymodel` command to create a new model with the updated context size. Call the API with the updated model name:
-
-```shell
-curl http://localhost:11434/v1/chat/completions \
-    -H "Content-Type: application/json" \
-    -d '{
-        "model": "mymodel",
-        "messages": [
-            {
-                "role": "user",
-                "content": "Hello!"
-            }
-        ]
-    }'
-```
