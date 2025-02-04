@@ -36,24 +36,24 @@ func (c *Simple) Sub(i int) Cache {
 
 func (c *Simple) Put(ctx ml.Context, key, value ml.Tensor, opts Options) (ml.Tensor, ml.Tensor) {
 	if c.keys[0] == nil || c.values[0] == nil {
-		c.keys[0] = ctx.Zeros(c.DType, int(key.Dim(0)*key.Dim(1))*c.Capacity)
-		c.values[0] = ctx.Zeros(c.DType, int(value.Dim(0)*value.Dim(1))*c.Capacity)
+		c.keys[0] = ctx.Zeros(c.DType, key.Dim(0)*key.Dim(1)*c.Capacity)
+		c.values[0] = ctx.Zeros(c.DType, value.Dim(0)*value.Dim(1)*c.Capacity)
 	}
 
-	ctx.Forward(key.Copy(ctx, c.keys[0].View(ctx, int(key.Stride(2))*opts.Position, int(key.Dim(0)*key.Dim(1)*key.Dim(2)))))
-	ctx.Forward(value.Copy(ctx, c.values[0].View(ctx, int(value.Stride(2))*opts.Position, int(value.Dim(0)*value.Dim(1)*value.Dim(2)))))
+	ctx.Forward(key.Copy(ctx, c.keys[0].View(ctx, key.Stride(2)*opts.Position, key.Dim(0)*key.Dim(1)*key.Dim(2))))
+	ctx.Forward(value.Copy(ctx, c.values[0].View(ctx, value.Stride(2)*opts.Position, value.Dim(0)*value.Dim(1)*value.Dim(2))))
 
-	n := min(c.Capacity, int(key.Dim(2))+opts.Position)
+	n := min(c.Capacity, key.Dim(2)+opts.Position)
 
 	key = c.keys[0].View(ctx, 0,
-		int(key.Dim(0)), int(key.Stride(1)),
-		int(key.Dim(1)), int(key.Stride(2)),
+		key.Dim(0), key.Stride(1),
+		key.Dim(1), key.Stride(2),
 		n,
 	)
 
 	value = c.values[0].View(ctx, 0,
-		int(value.Dim(0)), int(value.Stride(1)),
-		int(value.Dim(1)), int(value.Stride(2)),
+		value.Dim(0), value.Stride(1),
+		value.Dim(1), value.Stride(2),
 		n,
 	)
 
