@@ -8,7 +8,7 @@ import (
 	"github.com/ollama/ollama/ml/nn"
 )
 
-var batchSize int64 = 1
+var batchSize int = 1
 
 type VisionSelfAttention struct {
 	Query  *nn.Linear `gguf:"attn_q"`
@@ -99,7 +99,7 @@ func (e *VisionEncoder) Forward(ctx ml.Context, hiddenState ml.Tensor, intermedi
 	var intermediateHiddenStates []ml.Tensor
 	for i, layer := range e.Layers {
 		if slices.Contains(intermediateLayersIndices, uint32(i)) {
-			intermediateHiddenStates = append(intermediateHiddenStates, hiddenState.Reshape(ctx, append([]int64{1}, hiddenState.Shape()...)...))
+			intermediateHiddenStates = append(intermediateHiddenStates, hiddenState.Reshape(ctx, append([]int{1}, hiddenState.Shape()...)...))
 		}
 
 		hiddenState = layer.Forward(ctx, hiddenState, opts)
@@ -131,7 +131,7 @@ type PrecomputedPositionEmbedding struct {
 	TilePositionEmbeddingGate ml.Tensor     `gguf:"tile_position_embd.gate"`
 }
 
-func (e *PrecomputedPositionEmbedding) Forward(ctx ml.Context, hiddenState, positionIDs, aspectRatioIDs ml.Tensor, numPositions int64, opts *VisionModelOptions) ml.Tensor {
+func (e *PrecomputedPositionEmbedding) Forward(ctx ml.Context, hiddenState, positionIDs, aspectRatioIDs ml.Tensor, numPositions int, opts *VisionModelOptions) ml.Tensor {
 	positionEmbedding := e.PositionEmbedding.Forward(ctx, positionIDs)
 	if e.PositionEmbeddingGate != nil {
 		positionEmbedding = positionEmbedding.Mul(ctx, e.PositionEmbeddingGate)
@@ -149,7 +149,7 @@ func (e *PrecomputedPositionEmbedding) Forward(ctx ml.Context, hiddenState, posi
 }
 
 type VisionModelOptions struct {
-	hiddenSize, numHeads, numTiles int64
+	hiddenSize, numHeads, numTiles int
 	imageSize, patchSize           int
 	eps                            float32
 
@@ -174,7 +174,7 @@ type VisionModel struct {
 }
 
 func (m *VisionModel) Forward(ctx ml.Context, pixelValues, positionIDs, aspectRatioIDs ml.Tensor) ml.Tensor {
-	numPatches := int64((m.imageSize / m.patchSize) * (m.imageSize / m.patchSize))
+	numPatches := (m.imageSize / m.patchSize) * (m.imageSize / m.patchSize)
 	numPositions := numPatches
 	if m.ClassEmbedding != nil {
 		numPositions++
@@ -185,7 +185,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues, positionIDs, aspectRa
 	hiddenState = hiddenState.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 
 	hiddenState = m.PreTilePositionEmbedding.Forward(ctx, hiddenState, aspectRatioIDs, m.VisionModelOptions)
-	hiddenState = m.ClassEmbedding.Stack(ctx, 2, slices.Repeat([]ml.Tensor{m.ClassEmbedding}, int(m.numTiles)-1)...).Concat(ctx, hiddenState, 1)
+	hiddenState = m.ClassEmbedding.Stack(ctx, 2, slices.Repeat([]ml.Tensor{m.ClassEmbedding}, m.numTiles-1)...).Concat(ctx, hiddenState, 1)
 
 	hiddenState = m.PositionEmbedding.Forward(ctx, hiddenState, positionIDs, aspectRatioIDs, numPositions, m.VisionModelOptions)
 	hiddenState = m.PreLayerNorm.Forward(ctx, hiddenState, m.eps)
@@ -205,7 +205,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues, positionIDs, aspectRa
 	hiddenState, _ = m.GlobalTransformer.Forward(ctx, hiddenState, nil, m.VisionModelOptions)
 
 	hiddenStates := intermediateHiddenStates[0].Stack(ctx, 0, intermediateHiddenStates[1:]...)
-	hiddenStates = hiddenStates.Reshape(ctx, int64(len(intermediateHiddenStates))*m.hiddenSize, numPositions+numPaddingPatches, m.numTiles, batchSize)
+	hiddenStates = hiddenStates.Reshape(ctx, len(intermediateHiddenStates)*m.hiddenSize, numPositions+numPaddingPatches, m.numTiles, batchSize)
 	hiddenStates = hiddenStates.Unpad(ctx, 0, numPaddingPatches, 0, 0)
 
 	hiddenState = hiddenState.Reshape(ctx, m.hiddenSize, numPositions+numPaddingPatches, m.numTiles, batchSize)
@@ -219,9 +219,9 @@ func newVisionModel(c ml.Config) *VisionModel {
 		GlobalTransformer: &VisionEncoder{Layers: make([]VisionEncoderLayer, c.Uint("vision.global.block_count"))},
 
 		VisionModelOptions: &VisionModelOptions{
-			hiddenSize: int64(c.Uint("vision.embedding_length")),
-			numHeads:   int64(c.Uint("vision.attention.head_count")),
-			numTiles:   int64(c.Uint("vision.max_num_tiles")),
+			hiddenSize: int(c.Uint("vision.embedding_length")),
+			numHeads:   int(c.Uint("vision.attention.head_count")),
+			numTiles:   int(c.Uint("vision.max_num_tiles")),
 
 			imageSize: int(c.Uint("vision.image_size")),
 			patchSize: int(c.Uint("vision.patch_size")),
