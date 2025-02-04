@@ -57,7 +57,7 @@ func NewPushdownSampler(proc model.TextProcessor) *PushdownSampler {
 
 // TODO: need to add resampling logic if the first sample was not good
 // greedy sample + backtrack?
-func (s *PushdownSampler) Sample(logits []float64) ([]float64, error) {
+func (s *PushdownSampler) Apply(logits []float64) ([]float64, error) {
 	switch s.curNode.State {
 	case StateInString:
 		return s.maskLogits(logits, s.curNode)
@@ -70,7 +70,7 @@ func (s *PushdownSampler) Sample(logits []float64) ([]float64, error) {
 				if s.proc.Is(uint32(i), model.SpecialEOS) {
 					logits[i] = 1.0
 				} else {
-					logits[i] = math.NaN()
+					logits[i] = math.Inf(-1)
 				}
 			}
 			return logits, nil
@@ -90,7 +90,7 @@ func (s *PushdownSampler) Sample(logits []float64) ([]float64, error) {
 				if s.proc.Is(uint32(i), model.SpecialEOS) {
 					logits[i] = 1.0
 				} else {
-					logits[i] = math.NaN()
+					logits[i] = math.Inf(-1)
 				}
 			}
 			return logits, nil
@@ -123,7 +123,7 @@ func (s *PushdownSampler) Sample(logits []float64) ([]float64, error) {
 			if s.proc.Is(uint32(i), model.SpecialEOS) {
 				logits[i] = 1.0
 			} else {
-				logits[i] = math.NaN()
+				logits[i] = math.Inf(-1)
 			}
 		}
 		return logits, nil
@@ -199,15 +199,20 @@ func (s *PushdownSampler) UpdateState(tokenSlice []int32) error {
 
 // greedy sample + backtrack?
 func (s *PushdownSampler) maskLogits(logits []float64, node *PDANode) ([]float64, error) {
-	// TODO: can be optimized by only masking the logits that are not in the node.MaskTokenIDToNode
-	// Should be possible through bitwise ops as well
-	for i := range logits {
-		_, exists := node.MaskTokenIDToNode[int32(i)]
-		if !exists {
-			logits[i] = math.NaN()
+	// Create a new slice with same length as logits, initialized to -Inf
+	maskedLogits := make([]float64, len(logits))
+	for i := range maskedLogits {
+		maskedLogits[i] = math.Inf(-1)
+	}
+
+	// Only update values for valid token IDs from the mask map
+	for tokenID := range node.MaskTokenIDToNode {
+		if int(tokenID) < len(logits) {
+			maskedLogits[tokenID] = logits[tokenID]
 		}
 	}
-	return logits, nil
+
+	return maskedLogits, nil
 }
 
 // TODO: add penalties for string \n stuff

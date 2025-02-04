@@ -54,6 +54,7 @@ func BuildGraph(proc model.TextProcessor) (*PDANode, map[JSONState]*PDANode, err
 	//new line
 	stateToNodeMap[StateInNewline].TransitionEdges['"'] = stateToNodeMap[StateInObjectKey]
 	stateToNodeMap[StateInNewline].TransitionEdges['\t'] = stateToNodeMap[StateInTab]
+	stateToNodeMap[StateInNewline].TransitionEdges['}'] = stateToNodeMap[StateInObjectEnd]
 
 	stateToNodeMap[StateInTab].TransitionEdges['"'] = stateToNodeMap[StateInObjectKey]
 
@@ -76,6 +77,7 @@ func BuildGraph(proc model.TextProcessor) (*PDANode, map[JSONState]*PDANode, err
 	stateToNodeMap[StateInSpace].TransitionEdges['['] = stateToNodeMap[StateInList]
 	stateToNodeMap[StateInSpace].TransitionEdges['{'] = stateToNodeMap[StateInObject]
 	addValueConnections(stateToNodeMap[StateInSpace], stateToNodeMap)
+	stateToNodeMap[StateInSpace].TransitionEdges['}'] = stateToNodeMap[StateInObjectEnd]
 
 	// Values
 	// string node
@@ -97,6 +99,7 @@ func BuildGraph(proc model.TextProcessor) (*PDANode, map[JSONState]*PDANode, err
 		stateToNodeMap[StateInBool].TransitionEdges[r] = stateToNodeMap[StateInBool]
 	}
 	addEnds(stateToNodeMap[StateInBool], stateToNodeMap)
+	stateToNodeMap[StateInBool].TransitionEdges[' '] = stateToNodeMap[StateInSpace]
 
 	// list node
 	stateToNodeMap[StateInList].TransitionEdges[','] = stateToNodeMap[StateInComma]
@@ -128,6 +131,7 @@ func BuildGraph(proc model.TextProcessor) (*PDANode, map[JSONState]*PDANode, err
 	for _, r := range validBoolRunes {
 		stateToNodeMap[StateInBool].TransitionEdges[r] = stateToNodeMap[StateInBool]
 	}
+	stateToNodeMap[StateInBool].TransitionEdges['\n'] = stateToNodeMap[StateInNewline]
 	addEnds(stateToNodeMap[StateInBool], stateToNodeMap)
 
 	stateToNodeMap[StateInListEnd].TransitionEdges['}'] = stateToNodeMap[StateInObjectEnd]
@@ -178,7 +182,7 @@ func PreComputeValidStates(stateToNodeMap map[JSONState]*PDANode, proc model.Tex
 
 	var err error
 	for _, node := range stateToNodeMap {
-		err = CreateMask(node, proc, decodedToks, vocab)
+		err = CreateMask(node, proc, decodedToks)
 		if err != nil {
 			return err
 		}
@@ -186,8 +190,8 @@ func PreComputeValidStates(stateToNodeMap map[JSONState]*PDANode, proc model.Tex
 	return nil
 }
 
-func CreateMask(node *PDANode, proc model.TextProcessor, decodedToks []string, vocab *model.Vocabulary) error {
-	for i := range vocab.Values {
+func CreateMask(node *PDANode, proc model.TextProcessor, decodedToks []string) error {
+	for i := range decodedToks {
 		token := decodedToks[i]
 		// Skip EOS/BOS tokens and empty tokens since they are not valid in JSON
 		if proc.Is(uint32(i), model.SpecialEOS) || proc.Is(uint32(i), model.SpecialBOS) || token == "" || token == "\"\"" {

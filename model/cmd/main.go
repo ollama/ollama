@@ -106,8 +106,6 @@ func temp() error {
 		}
 	}
 
-	// pushdownSampler := sample.NewPushdownSampler(m.(model.TextProcessor))
-
 	// simple schema
 	// This schema maps to JSON like:
 	// {
@@ -119,9 +117,12 @@ func temp() error {
 		Properties: []*sample.Schema{
 			{Name: "name", Type: "string"},
 			{Name: "age", Type: "integer"},
+			{Name: "is_student", Type: "boolean"},
+			// {Name: "is_student", Type: "boolean"},
 		},
 	}
 
+	// pushdownSampler := sample.NewPushdownSampler(m.(model.TextProcessor))
 	pushdownSampler, err := sample.NewSOSampler(schema, m.(model.TextProcessor))
 	if err != nil {
 		return err
@@ -129,44 +130,47 @@ func temp() error {
 
 	var offset int
 	var stringBuffer string
-	var firstTokenTime time.Duration
+	var ttft time.Duration
 	var totalSamplingTime time.Duration
 	count := 0
 	for range args.n {
-		logit, err := model.Forward(m, append(opts, model.WithInputIDs(inputIDs), model.WithOffset(offset))...)
+		logits, err := model.Forward(m, append(opts, model.WithInputIDs(inputIDs), model.WithOffset(offset))...)
 		if err != nil {
 			return err
 		}
 
-		f32s := logit.Floats()
-		f64s := make([]float64, len(f32s))
-		for i, f32 := range f32s {
-			f64s[i] = float64(f32)
-		}
-		samplers := []sample.Sampler{
+		// f64s := make([]float64, len(f32s))
+		// for i, f32 := range f32s {
+		// 	f64s[i] = float64(f32)
+		// }
+		// samplers := []sample.Transform{
+		// pushdownSampler,
+		// sample.Weighed(),
+		// sample.TopP(0.9),
+		// sample.Weighed(),
+		// sample.Greedy(),
+		// }
+		transforms := []sample.Transform{
 			pushdownSampler,
-			// sample.Weighed(),
-			// sample.TopP(0.9),
-			// sample.Weighed(),
-			sample.Greedy(),
 		}
 
 		samplingStart := time.Now()
-		f64s, err = sample.Sample(f64s, samplers...)
+		sampler := sample.NewSampler(transforms, sample.Greedy())
+		sampledIdx, err := sampler.Sample(logits.Floats())
 		if err != nil {
 			return err
 		}
+
 		samplingTime := time.Since(samplingStart)
 		totalSamplingTime += samplingTime
 
-		// fmt.Println("sampling time", samplingTime)
+		fmt.Println("sampling time", samplingTime)
 		// fmt.Printf("Sample time: %vms\n", finishTime.Sub(sampleTime).Milliseconds())
 
 		var outputIDs []int32
-		for _, f64 := range f64s {
-			if !m.(model.TextProcessor).Is(uint32(f64), model.SpecialEOS) {
-				outputIDs = append(outputIDs, int32(f64))
-			}
+
+		if !m.(model.TextProcessor).Is(uint32(sampledIdx), model.SpecialEOS) {
+			outputIDs = append(outputIDs, int32(sampledIdx))
 		}
 
 		if len(outputIDs) == 0 {
@@ -180,9 +184,9 @@ func temp() error {
 			return err
 		}
 
-		if firstTokenTime == 0 {
-			firstTokenTime = time.Since(start)
-			fmt.Printf("Time to first token: %vms\n", firstTokenTime.Milliseconds())
+		if ttft == 0 {
+			ttft = time.Since(start)
+			fmt.Printf("Time to first token: %vms\n", ttft.Milliseconds())
 		}
 
 		// fmt.Printf("--- token: %q\n", s)
@@ -196,6 +200,7 @@ func temp() error {
 			return err
 		}
 
+		// can do fun shifting stuff here if needed
 		inputIDs = append(inputIDs, outputIDs...)
 		if args.cache {
 			offset = len(inputIDs) - 1
