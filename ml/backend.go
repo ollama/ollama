@@ -54,10 +54,10 @@ type Context interface {
 }
 
 type Tensor interface {
-	Dim(n int) int64
-	Stride(n int) int64
+	Dim(n int) int
+	Stride(n int) int
 
-	Shape() []int64
+	Shape() []int
 	DType() DType
 
 	Bytes() []byte
@@ -79,13 +79,13 @@ type Tensor interface {
 	GELU(ctx Context) Tensor
 	SILU(ctx Context) Tensor
 
-	Reshape(ctx Context, shape ...int64) Tensor
+	Reshape(ctx Context, shape ...int) Tensor
 	View(ctx Context, offset int, shape ...int) Tensor
 	Permute(ctx Context, shape ...int) Tensor
 	Contiguous(ctx Context) Tensor
 
-	Pad(ctx Context, shape ...int64) Tensor
-	Unpad(ctx Context, shape ...int64) Tensor
+	Pad(ctx Context, shape ...int) Tensor
+	Unpad(ctx Context, shape ...int) Tensor
 
 	Stack(ctx Context, dim int, s ...Tensor) Tensor
 	Concat(ctx Context, t2 Tensor, dim int) Tensor
@@ -111,7 +111,7 @@ func mul[T number](s ...T) T {
 
 type DumpOptions struct {
 	// Items is the number of elements to print at the beginning and end of each dimension.
-	Items int64
+	Items int
 
 	// Precision is the number of decimal places to print. Applies to float32 and float64.
 	Precision int
@@ -139,7 +139,7 @@ func Dump(t Tensor, opts ...DumpOptions) string {
 	}
 }
 
-func dump[S ~[]E, E number](t Tensor, items int64, fn func(E) string) string {
+func dump[S ~[]E, E number](t Tensor, items int, fn func(E) string) string {
 	bts := t.Bytes()
 	if bts == nil {
 		return "<nil>"
@@ -153,12 +153,12 @@ func dump[S ~[]E, E number](t Tensor, items int64, fn func(E) string) string {
 	shape := t.Shape()
 
 	var sb strings.Builder
-	var f func([]int64, int64)
-	f = func(dims []int64, stride int64) {
+	var f func([]int, int)
+	f = func(dims []int, stride int) {
 		prefix := strings.Repeat(" ", len(shape)-len(dims)+1)
 		fmt.Fprint(&sb, "[")
 		defer func() { fmt.Fprint(&sb, "]") }()
-		for i := int64(0); i < dims[0]; i++ {
+		for i := 0; i < dims[0]; i++ {
 			if i >= items && i < dims[0]-items {
 				fmt.Fprint(&sb, "..., ")
 				// skip to next printable element
