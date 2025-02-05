@@ -11,7 +11,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/model/mllama"
+	"github.com/ollama/ollama/model/models/mllama"
 	"github.com/ollama/ollama/template"
 )
 
