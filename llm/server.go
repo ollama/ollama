@@ -89,7 +89,6 @@ func LoadModel(model string, maxArraySize int) (*GGML, error) {
 // NewLlamaServer will run a server for the given GPUs
 // The gpu list must be a single family.
 func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
-	var err error
 	var systemTotalMemory uint64
 	var systemFreeMemory uint64
 	var systemSwapFreeMemory uint64
@@ -233,19 +232,9 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 		params = append(params, "--multiuser-cache")
 	}
 
-	// get available libraries
-	if err != nil {
-		return nil, fmt.Errorf("could not get libollama dir: %w", err)
-	}
-
-	entries, err := os.ReadDir(discover.LibOllamaPath)
-	if err != nil {
-		return nil, fmt.Errorf("could not read libollama dir: %w", err)
-	}
-
 	libs := make(map[string]string)
-	for _, entry := range entries {
-		if entry.IsDir() {
+	if entries, err := os.ReadDir(discover.LibOllamaPath); err == nil {
+		for _, entry := range entries {
 			libs[entry.Name()] = filepath.Join(discover.LibOllamaPath, entry.Name())
 		}
 	}
@@ -285,16 +274,21 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 			}
 		}
 		if port == 0 {
-			slog.Debug("ResolveTCPAddr failed ", "error", err)
+			slog.Debug("ResolveTCPAddr failed, using random port")
 			port = rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
 		}
 		finalParams := []string{"runner"}
 		finalParams = append(finalParams, params...)
 		finalParams = append(finalParams, "--port", strconv.Itoa(port))
 
-		pathEnv := "LD_LIBRARY_PATH"
-		if runtime.GOOS == "windows" {
+		var pathEnv string
+		switch runtime.GOOS {
+		case "windows":
 			pathEnv = "PATH"
+		case "darwin":
+			pathEnv = "DYLD_LIBRARY_PATH"
+		default:
+			pathEnv = "LD_LIBRARY_PATH"
 		}
 
 		var libraryPaths []string
@@ -396,7 +390,8 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 					strings.HasPrefix(ev, "HSA_") ||
 					strings.HasPrefix(ev, "GGML_") ||
 					strings.HasPrefix(ev, "PATH=") ||
-					strings.HasPrefix(ev, "LD_LIBRARY_PATH=") {
+					strings.HasPrefix(ev, "LD_LIBRARY_PATH=") ||
+					strings.HasPrefix(ev, "DYLD_LIBRARY_PATH=") {
 					filteredEnv = append(filteredEnv, ev)
 				}
 			}
