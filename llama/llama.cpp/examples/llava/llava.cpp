@@ -313,12 +313,19 @@ static bool encode_image_with_clip(clip_ctx * ctx_clip, int n_threads, const cli
         load_image_size->height = img->ny;
         clip_add_load_image_size(ctx_clip, load_image_size);
         LOG_INF("%s: load_image_size %d %d\n", __func__, load_image_size->width, load_image_size->height);
+        // free all img_res_v - not needed anymore
+        delete[] img_res_v.data;
+        img_res_v.size = 0;
+        img_res_v.data = nullptr;
     }
     else if (strcmp(mm_patch_merge_type, "spatial_unpad") != 0) {
         // flat / default llava-1.5 type embedding
         *n_img_pos = clip_n_patches(ctx_clip);
         bool encoded = clip_image_encode(ctx_clip, n_threads, &img_res_v.data[0], image_embd); // image_embd shape is 576 x 4096
+        // free all img_res_v - not needed anymore
         delete[] img_res_v.data;
+        img_res_v.size = 0;
+        img_res_v.data = nullptr;
         if (!encoded) {
             LOG_ERR("Unable to encode image\n");
 
