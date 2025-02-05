@@ -2078,6 +2078,7 @@ static std::vector<std::vector<clip_image_u8 *>> uhd_slice_image(const clip_imag
                 images[images.size()-1].push_back(patch);
             }
         }
+        clip_image_u8_free(refine_image);
     }
     return images;
 }
