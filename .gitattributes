@@ -15,6 +15,10 @@ ml/backend/**/*.cu linguist-vendored
 ml/backend/**/*.cuh linguist-vendored
 ml/backend/**/*.m linguist-vendored
 ml/backend/**/*.metal linguist-vendored
+ml/backend/**/CMakeLists.txt linguist-vendored
+
+llama/build-info.cpp linguist-generated
+ml/backend/ggml/ggml/src/ggml-metal/ggml-metal-embed.s linguist-generated
 
 * text=auto
 *.go text eol=lf
