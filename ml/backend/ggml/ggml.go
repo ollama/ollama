@@ -314,10 +314,9 @@ func (c Context) FromIntSlice(s []int32, shape ...int) (ml.Tensor, error) {
 	return fromSlice(c, s, shape, C.GGML_TYPE_I32)
 }
 
-func (c *Context) Close() error {
+func (c *Context) Close() {
 	C.ggml_backend_sched_free(c.sched)
 	C.ggml_free(c.ctx)
-	return nil
 }
 
 type Tensor struct {
