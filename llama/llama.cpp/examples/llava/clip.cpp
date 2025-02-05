@@ -2114,6 +2114,7 @@ bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, cli
                 normalize_image_u8_to_f32(imgs[i][j], res, ctx->image_mean, ctx->image_std);
                 res_imgs->data[idx++] = *res;
                 clip_image_f32_free(res);
+                clip_image_u8_free(imgs[i][j]);
             }
         }
         return true;
