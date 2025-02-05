@@ -1360,6 +1360,7 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
 #endif
         if (!fin) {
             LOG_ERR("cannot open model file for loading tensors\n");
+            ggml_free(meta);
             clip_free(new_clip);
             gguf_free(ctx);
             return nullptr;
@@ -1382,6 +1383,7 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
             fin.seekg(offset, std::ios::beg);
             if (!fin) {
                 LOG_ERR("%s: failed to seek for tensor %s\n", __func__, name);
+                ggml_free(meta);
                 clip_free(new_clip);
                 gguf_free(ctx);
                 return nullptr;
