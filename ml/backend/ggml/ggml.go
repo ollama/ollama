@@ -243,13 +243,13 @@ func (c *Context) Forward(t ml.Tensor) {
 }
 
 func (c *Context) Compute(t ml.Tensor) ml.Tensor {
-	C.ggml_backend_sched_graph_compute_async(c.sched, c.graph)
-
 	if t != nil && C.ggml_nbytes(t.(*Tensor).t) != 0 {
-		backend := C.ggml_backend_sched_get_tensor_backend(c.sched, t.(*Tensor).t)
+		C.ggml_backend_sched_graph_compute(c.sched, c.graph)
 
 		t.(*Tensor).data = make([]byte, C.ggml_nbytes(t.(*Tensor).t))
-		C.ggml_backend_tensor_get_async(backend, t.(*Tensor).t, unsafe.Pointer(&t.(*Tensor).data[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
+		C.ggml_backend_tensor_get(t.(*Tensor).t, unsafe.Pointer(&t.(*Tensor).data[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
+	} else {
+		C.ggml_backend_sched_graph_compute_async(c.sched, c.graph)
 	}
 
 	return t
