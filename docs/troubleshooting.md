@@ -66,7 +66,7 @@ cat /proc/cpuinfo| grep flags | head -1
 If you run into problems on Linux and want to install an older version, or you'd like to try out a pre-release before it's officially released, you can tell the install script which version to install.
 
 ```shell
-curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION="0.1.29" sh
+curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=0.5.7 sh
 ```
 
 ## Linux tmp noexec 
