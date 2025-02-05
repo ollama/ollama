@@ -32,7 +32,7 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/model/mllama"
+	"github.com/ollama/ollama/model/models/mllama"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
