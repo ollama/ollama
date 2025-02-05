@@ -86,7 +86,7 @@ type ChatCompletionRequest struct {
 	StreamOptions       *StreamOptions `json:"stream_options"`
 	MaxCompletionTokens *int           `json:"max_completion_tokens"`
 	// Deprecated: Use [ChatCompletionRequest.MaxCompletionTokens]
-	MaxTokens        *int            `json:"max_tokens" deprecated:"use max_completion_tokens instead"`
+	MaxTokens        *int            `json:"max_tokens"`
 	Seed             *int            `json:"seed"`
 	Stop             any             `json:"stop"`
 	Temperature      *float64        `json:"temperature"`
@@ -95,7 +95,7 @@ type ChatCompletionRequest struct {
 	TopP             *float64        `json:"top_p"`
 	ResponseFormat   *ResponseFormat `json:"response_format"`
 	Tools            []api.Tool      `json:"tools"`
-	NumCtx           *int            `json:"num_ctx"`
+	ContextWindow    *int            `json:"context_window"`
 }
 
 type ChatCompletion struct {
@@ -478,8 +478,9 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		options["stop"] = stops
 	}
 
-	if r.NumCtx != nil {
-		options["num_ctx"] = *r.NumCtx
+	if r.ContextWindow != nil {
+		slog.Info("context_window in if", "context_window", *r.ContextWindow)
+		options["num_ctx"] = *r.ContextWindow
 	}
 
 	// Deprecated: MaxTokens is deprecated, use MaxCompletionTokens instead
@@ -974,6 +975,7 @@ func ChatMiddleware() gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, err.Error()))
 			return
 		}
+		slog.Info("num_ctx", "num_ctx", chatReq.Options["num_ctx"])
 
 		if err := json.NewEncoder(&b).Encode(chatReq); err != nil {
 			c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
