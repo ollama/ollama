@@ -116,7 +116,7 @@ ollama pull llama3.2
 
 Create a `Modelfile`:
 
-```dockerfile
+```modelfile
 FROM llama3.2
 
 # set the temperature to 1 [higher is more creative, lower is more coherent]

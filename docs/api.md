@@ -1298,7 +1298,7 @@ Delete a model and its data.
 
 #### Request
 
-```
+```shell
 curl -X DELETE http://localhost:11434/api/delete -d '{
   "model": "llama3:13b"
 }'
