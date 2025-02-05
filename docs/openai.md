@@ -59,8 +59,10 @@ embeddings = client.embeddings.create(
     input=["why is the sky blue?", "why is the grass green?"],
 )
 ```
+
 #### Structured outputs
-```py
+
+```python
 from pydantic import BaseModel
 from openai import OpenAI
 
@@ -144,7 +146,7 @@ const embedding = await openai.embeddings.create({
 
 ### `curl`
 
-``` shell
+```shell
 curl http://localhost:11434/v1/chat/completions \
     -H "Content-Type: application/json" \
     -d '{
@@ -319,7 +321,7 @@ ollama pull llama3.2
 
 For tooling that relies on default OpenAI model names such as `gpt-3.5-turbo`, use `ollama cp` to copy an existing model name to a temporary name:
 
-```
+```shell
 ollama cp llama3.2 gpt-3.5-turbo
 ```
 

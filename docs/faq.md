@@ -24,7 +24,7 @@ By default, Ollama uses a context window size of 2048 tokens.
 
 To change this when using `ollama run`, use `/set parameter`:
 
-```
+```shell
 /set parameter num_ctx 4096
 ```
 
@@ -46,14 +46,20 @@ Use the `ollama ps` command to see what models are currently loaded into memory.
 
 ```shell
 ollama ps
-NAME      	ID          	SIZE 	PROCESSOR	UNTIL
-llama3:70b	bcfb190ca3a7	42 GB	100% GPU 	4 minutes from now
 ```
 
-The `Processor` column will show which memory the model was loaded in to:
-* `100% GPU` means the model was loaded entirely into the GPU
-* `100% CPU` means the model was loaded entirely in system memory
-* `48%/52% CPU/GPU` means the model was loaded partially onto both the GPU and into system memory
+> [!NOTE]
+> **Output**:
+>
+> ```
+> NAME      	ID          	SIZE 	PROCESSOR	UNTIL
+> llama3:70b	bcfb190ca3a7	42 GB	100% GPU 	4 minutes from now
+> ```
+>
+> The `Processor` column will show which memory the model was loaded in to:
+> * `100% GPU` means the model was loaded entirely into the GPU
+> * `100% CPU` means the model was loaded entirely in system memory
+> * `48%/52% CPU/GPU` means the model was loaded partially onto both the GPU and into system memory
 
 ## How do I configure Ollama server?
 
@@ -65,7 +71,7 @@ If Ollama is run as a macOS application, environment variables should be set usi
 
 1. For each environment variable, call `launchctl setenv`.
 
-    ```bash
+    ```shell
     launchctl setenv OLLAMA_HOST "0.0.0.0"
     ```
 
@@ -88,7 +94,7 @@ If Ollama is run as a systemd service, environment variables should be set using
 
 4. Reload `systemd` and restart Ollama:
 
-   ```bash
+   ```shell
    systemctl daemon-reload
    systemctl restart ollama
    ```
