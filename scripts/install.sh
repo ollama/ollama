@@ -251,12 +251,12 @@ install_cuda_driver_yum() {
         dnf)
             DNF_VERSION=$(dnf --version | grep -E -o -m 1 "dnf[4-5]")
             if [ "$DNF_VERSION" = "dnf5" ]; then
-                ADD_REPO_FMT="--addrepo"
+                DNF_COMPATIBILITY_FMT="addrepo --from-repofile="
             else
-                ADD_REPO_FMT="--add-repo"
+                DNF_COMPATIBILITY_FMT="--add-repo"
             fi
             if curl -I --silent --fail --location "https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m | sed -e 's/aarch64/sbsa/')/cuda-$1$2.repo" >/dev/null ; then
-                $SUDO $PACKAGE_MANAGER config-manager $ADD_REPO_FMT https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m | sed -e 's/aarch64/sbsa/')/cuda-$1$2.repo
+                $SUDO $PACKAGE_MANAGER config-manager $DNF_COMPATIBILITY_FMT https://developer.download.nvidia.com/compute/cuda/repos/$1$2/$(uname -m | sed -e 's/aarch64/sbsa/')/cuda-$1$2.repo
             else
                 error $CUDA_REPO_ERR_MSG
             fi
