@@ -118,3 +118,14 @@ To run tests, use `go test`:
 ```
 go test ./...
 ```
+
+## Library detection
+
+Ollama looks for acceleration libraries in the following paths relative to the `ollama` executable:
+
+* `./lib/ollama` (Windows)
+* `../lib/ollama` (Linux)
+* `.` (macOS)
+* `build/lib/ollama` (for development)
+
+If the libraries are not found, Ollama will not run with any acceleration libraries.
