@@ -372,8 +372,8 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 					part.lastUpdatedMu.Lock()
 					part.lastUpdated = time.Time{}
 					part.lastUpdatedMu.Unlock()
-				return errPartStalled
-			}
+					return errPartStalled
+				}
 
 			case <-ctx.Done():
 				return ctx.Err()
