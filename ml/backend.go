@@ -50,7 +50,7 @@ type Context interface {
 
 	Forward(Tensor)
 	Compute(Tensor) Tensor
-	Close() error
+	Close()
 }
 
 type Tensor interface {
