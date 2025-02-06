@@ -163,5 +163,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: Verify patches apply cleanly and do not change files
         run: |
-          make -f Makefile.sync clean checkout sync
+          make -f Makefile.sync clean sync
           git diff --compact-summary --exit-code

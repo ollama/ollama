@@ -305,30 +305,27 @@ jobs:
       - uses: docker/setup-buildx-action@v3
       - run: |
           sudo apt-get update && sudo apt-get install pigz
-          docker buildx build --platform $PLATFORM --target ${{ matrix.target }} --build-arg GOFLAGS --build-arg CGO_CFLAGS --build-arg CGO_CXXFLAGS --output type=local,dest=dist/$PLATFORM .
-
-          for COMPONENTS in dist/$PLATFORM/* dist/$PLATFORM/lib/ollama/*; do
-              if [ -d "$COMPONENTS" ]; then
-                  case "$COMPONENTS" in
-                      */bin) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}.tar.in ;;
-                      */lib/ollama) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}.tar.in;;
-                      */lib/ollama/cuda_v11) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}.tar.in;;
-                      */lib/ollama/cuda_v12) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}.tar.in;;
-                      */lib/ollama/cuda_jetpack5) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}-jetpack5.tar.in ;;
-                      */lib/ollama/cuda_jetpack6) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}-jetpack6.tar.in ;;
-                      */lib/ollama/rocm) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}-rocm.tar.in ;;
-                  esac
-              fi
+          docker buildx build --platform ${{ matrix.os }}/${{ matrix.arch }} --target ${{ matrix.target }} --build-arg GOFLAGS --build-arg CGO_CFLAGS --build-arg CGO_CXXFLAGS --output type=local,dest=dist/${{ matrix.os }}-${{ matrix.arch }} .
+      - run: |
+          find . -mindepth 1 -maxdepth 3 -type d | while read COMPONENT; do
+              case "$COMPONENT" in
+                  ./bin)                      echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+                  ./lib/ollama)               echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+                  ./lib/ollama/cuda_v11)      echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+                  ./lib/ollama/cuda_v12)      echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+                  ./lib/ollama/cuda_jetpack5) echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack5.tar.in ;;
+                  ./lib/ollama/cuda_jetpack6) echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack6.tar.in ;;
+                  ./lib/ollama/rocm)          echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
+              esac
           done
-
-          for ARCHIVE in dist/*.tar.in; do tar c -T $ARCHIVE --strip-components 3 | pigz -9cv >${ARCHIVE//.*/}.tgz; done
-        env:
-          PLATFORM: ${{ matrix.os }}/${{ matrix.arch }}
+        working-directory: dist/${{ matrix.os }}-${matrix.arch }}
+      - run: |
+          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in; do tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE | pigz -9vc >$(basenme ${ARCHIVE//.*/}.tgz); done
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.target }}
           path: |
-            dist/*.tgz
+            *.tgz
 
   # Build each Docker variant (OS, arch, and flavor) separately. Using QEMU is unreliable and slower.
   docker-build-push:
