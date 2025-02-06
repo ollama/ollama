@@ -15,7 +15,11 @@ help:
 	@echo "    make -f $(lastword $(MAKEFILE_LIST)) clean sync"
 
 .PHONY: sync
-sync: llama/llama.cpp ml/backend/ggml/ggml apply-patches
+sync: llama/build-info.cpp llama/llama.cpp ml/backend/ggml/ggml apply-patches
+
+.PHONY: llama/build-info.cpp
+llama/build-info.cpp: llama/build-info.cpp.in
+	sed -e 's|@FETCH_HEAD@|$(FETCH_HEAD)|' $< > $@
 
 .PHONY: llama/llama.cpp
 llama/llama.cpp: llama/vendor/ apply-patches
