@@ -536,6 +536,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Alfred Ollama](https://github.com/zeitlings/alfred-ollama) (Alfred Workflow)
 - [TextLLaMA](https://github.com/adarshM84/TextLLaMA) A Chrome Extension that helps you write emails, correct grammar, and translate into any language
 - [Simple-Discord-AI](https://github.com/zyphixor/simple-discord-ai)
+- [Ollama-UI](https://github.com/ollama-ui/ollama-ui) (Chrome Extension & a simple HTML UI for Ollama)
 
 ### Supported backends
 
