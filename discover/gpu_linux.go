@@ -85,12 +85,12 @@ func GetCPUMem() (memInfo, error) {
 			return mem, err
 		}
 	}
-	mem.TotalMemory = total * format.KibiByte
-	mem.FreeSwap = freeSwap * format.KibiByte
+	mem.TotalMemory = total * format.KiB
+	mem.FreeSwap = freeSwap * format.KiB
 	if available > 0 {
-		mem.FreeMemory = available * format.KibiByte
+		mem.FreeMemory = available * format.KiB
 	} else {
-		mem.FreeMemory = (free + buffers + cached) * format.KibiByte
+		mem.FreeMemory = (free + buffers + cached) * format.KiB
 	}
 	return mem, nil
 }

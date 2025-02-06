@@ -46,8 +46,8 @@ type blobUpload struct {
 
 const (
 	numUploadParts          = 16
-	minUploadPartSize int64 = 100 * format.MegaByte
-	maxUploadPartSize int64 = 1000 * format.MegaByte
+	minUploadPartSize int64 = 100 * format.MiB
+	maxUploadPartSize int64 = 1000 * format.MiB
 )
 
 func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *registryOptions) error {

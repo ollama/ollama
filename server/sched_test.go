@@ -153,15 +153,15 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 
 func getGpuFn() discover.GpuInfoList {
 	g := discover.GpuInfo{Library: "metal"}
-	g.TotalMemory = 24 * format.GigaByte
-	g.FreeMemory = 12 * format.GigaByte
+	g.TotalMemory = 24 * format.GiB
+	g.FreeMemory = 12 * format.GiB
 	return []discover.GpuInfo{g}
 }
 
 func getCpuFn() discover.GpuInfoList {
 	g := discover.GpuInfo{Library: "cpu"}
-	g.TotalMemory = 32 * format.GigaByte
-	g.FreeMemory = 26 * format.GigaByte
+	g.TotalMemory = 32 * format.GiB
+	g.FreeMemory = 26 * format.GiB
 	return []discover.GpuInfo{g}
 }
 
@@ -264,8 +264,8 @@ func TestRequestsMultipleLoadedModels(t *testing.T) {
 	s.getCpuFn = getCpuFn
 
 	// Multiple loaded models
-	a := newScenarioRequest(t, ctx, "ollama-model-3a", 1*format.GigaByte, nil)
-	b := newScenarioRequest(t, ctx, "ollama-model-3b", 24*format.GigaByte, nil)
+	a := newScenarioRequest(t, ctx, "ollama-model-3a", 1*format.GiB, nil)
+	b := newScenarioRequest(t, ctx, "ollama-model-3b", 24*format.GiB, nil)
 	c := newScenarioRequest(t, ctx, "ollama-model-4a", 30, nil)
 	c.req.opts.NumGPU = 0                                       // CPU load, will be allowed
 	d := newScenarioRequest(t, ctx, "ollama-model-3c", 30, nil) // Needs prior unloaded
@@ -462,8 +462,8 @@ func TestPrematureExpired(t *testing.T) {
 	s := InitScheduler(ctx)
 	s.getGpuFn = func() discover.GpuInfoList {
 		g := discover.GpuInfo{Library: "metal"}
-		g.TotalMemory = 24 * format.GigaByte
-		g.FreeMemory = 12 * format.GigaByte
+		g.TotalMemory = 24 * format.GiB
+		g.FreeMemory = 12 * format.GiB
 		return []discover.GpuInfo{g}
 	}
 	s.newServerFn = scenario1a.newServer
@@ -721,10 +721,10 @@ func TestHomogeneousGPUs(t *testing.T) {
 			{Library: "cuda"},
 			{Library: "rocm"},
 		}
-		gpus[0].TotalMemory = 1 * format.GibiByte
-		gpus[0].FreeMemory = 256 * format.MebiByte
-		gpus[1].TotalMemory = 1 * format.GibiByte
-		gpus[1].FreeMemory = 256 * format.MebiByte
+		gpus[0].TotalMemory = 1 * format.GiB
+		gpus[0].FreeMemory = 256 * format.MiB
+		gpus[1].TotalMemory = 1 * format.GiB
+		gpus[1].FreeMemory = 256 * format.MiB
 		return gpus
 	}
 	s.getCpuFn = getCpuFn

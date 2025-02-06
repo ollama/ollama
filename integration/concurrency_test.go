@@ -76,7 +76,7 @@ func TestIntegrationConcurrentPredictOrcaMini(t *testing.T) {
 		maxVram, err := strconv.ParseUint(s, 10, 64)
 		require.NoError(t, err)
 		// Don't hammer on small VRAM cards...
-		if maxVram < 4*format.GibiByte {
+		if maxVram < 4*format.GiB {
 			reqLimit = min(reqLimit, 2)
 			iterLimit = 2
 		}
@@ -126,49 +126,49 @@ func TestMultiModelStress(t *testing.T) {
 	smallModels := []model{
 		{
 			name: "orca-mini",
-			size: 2992 * format.MebiByte,
+			size: 2992 * format.MiB,
 		},
 		{
 			name: "phi",
-			size: 2616 * format.MebiByte,
+			size: 2616 * format.MiB,
 		},
 		{
 			name: "gemma:2b",
-			size: 2364 * format.MebiByte,
+			size: 2364 * format.MiB,
 		},
 		{
 			name: "stable-code:3b",
-			size: 2608 * format.MebiByte,
+			size: 2608 * format.MiB,
 		},
 		{
 			name: "starcoder2:3b",
-			size: 2166 * format.MebiByte,
+			size: 2166 * format.MiB,
 		},
 	}
 	mediumModels := []model{
 		{
 			name: "llama2",
-			size: 5118 * format.MebiByte,
+			size: 5118 * format.MiB,
 		},
 		{
 			name: "mistral",
-			size: 4620 * format.MebiByte,
+			size: 4620 * format.MiB,
 		},
 		{
 			name: "orca-mini:7b",
-			size: 5118 * format.MebiByte,
+			size: 5118 * format.MiB,
 		},
 		{
 			name: "dolphin-mistral",
-			size: 4620 * format.MebiByte,
+			size: 4620 * format.MiB,
 		},
 		{
 			name: "gemma:7b",
-			size: 5000 * format.MebiByte,
+			size: 5000 * format.MiB,
 		},
 		{
 			name: "codellama:7b",
-			size: 5118 * format.MebiByte,
+			size: 5118 * format.MiB,
 		},
 	}
 
@@ -198,7 +198,7 @@ func TestMultiModelStress(t *testing.T) {
 
 	var chosenModels []model
 	switch {
-	case maxVram < 10000*format.MebiByte:
+	case maxVram < 10000*format.MiB:
 		slog.Info("selecting small models")
 		chosenModels = smallModels
 	// case maxVram < 30000*format.MebiByte:
@@ -230,7 +230,7 @@ func TestMultiModelStress(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	consumed := uint64(256 * format.MebiByte) // Assume some baseline usage
+	consumed := uint64(256 * format.MiB) // Assume some baseline usage
 	for i := 0; i < len(req); i++ {
 		// Always get at least 2 models, but don't overshoot VRAM too much or we'll take too long
 		if i > 1 && consumed > maxVram {
