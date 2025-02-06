@@ -186,3 +186,9 @@ sudo rm -r /usr/share/ollama
 sudo userdel ollama
 sudo groupdel ollama
 ```
+
+Remove installed libraries:
+
+```shell
+sudo rm -rf /usr/local/lib/ollama
+```
