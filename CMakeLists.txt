@@ -101,7 +101,7 @@ if(CMAKE_HIP_COMPILER)
         install(TARGETS ggml-hip
             RUNTIME_DEPENDENCIES
                 DIRECTORIES ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR}
-                PRE_INCLUDE_REGEXES hipblas rocblas amdhip64 rocsolver amd_comgr hsa-runtime64 rocsparse rocprofiler-register drm drm_amdgpu
+                PRE_INCLUDE_REGEXES hipblas rocblas amdhip64 rocsolver amd_comgr hsa-runtime64 rocsparse tinfo rocprofiler-register drm drm_amdgpu
                 PRE_EXCLUDE_REGEXES ".*"
                 POST_EXCLUDE_REGEXES "system32"
             RUNTIME DESTINATION ${OLLAMA_HIP_INSTALL_DIR} COMPONENT HIP
