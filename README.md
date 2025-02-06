@@ -535,6 +535,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [TextCraft](https://github.com/suncloudsmoon/TextCraft) (Copilot in Word alternative using Ollama)
 - [Alfred Ollama](https://github.com/zeitlings/alfred-ollama) (Alfred Workflow)
 - [TextLLaMA](https://github.com/adarshM84/TextLLaMA) A Chrome Extension that helps you write emails, correct grammar, and translate into any language
+- [Simple-Discord-AI](https://github.com/zyphixor/simple-discord-ai)
 
 ### Supported backends
 
