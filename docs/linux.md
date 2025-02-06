@@ -187,7 +187,7 @@ sudo userdel ollama
 sudo groupdel ollama
 ```
 
-Remove ollama libraries and runners:
+Remove installed libraries:
 
 ```shell
 sudo rm -rf /usr/local/lib/ollama
