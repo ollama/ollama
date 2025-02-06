@@ -750,3 +750,37 @@ func TestGenerateHandler_InvalidJSON(t *testing.T) {
     }
 }
 
+// Test generated using Keploy
+func TestEmbedHandler_InvalidInputType(t *testing.T) {
+    s := &Server{}
+    router := gin.Default()
+    router.POST("/api/embed", s.EmbedHandler)
+
+    invalidRequest := `{
+        "model": "test-model",
+        "input": 12345
+    }`
+    req, err := http.NewRequest(http.MethodPost, "/api/embed", bytes.NewBufferString(invalidRequest))
+    if err != nil {
+        t.Fatalf("failed to create request: %v", err)
+    }
+    req.Header.Set("Content-Type", "application/json")
+
+    w := httptest.NewRecorder()
+    router.ServeHTTP(w, req)
+
+    if w.Code != http.StatusBadRequest {
+        t.Errorf("expected status code 400, got %d", w.Code)
+    }
+
+    var resp map[string]string
+    if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+        t.Fatalf("failed to unmarshal response: %v", err)
+    }
+
+    if resp["error"] != "invalid input type" {
+        t.Errorf("expected error message 'invalid input type', got %s", resp["error"])
+    }
+}
+
+

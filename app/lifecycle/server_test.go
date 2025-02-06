@@ -64,3 +64,40 @@ func TestSpawnServer_ContextCancel(t *testing.T) {
     }
 }
 
+// Test generated using Keploy
+func TestSpawnServer_ServerCrashRespawn(t *testing.T) {
+    ctx, cancel := context.WithCancel(context.Background())
+    defer cancel()
+
+    crashCount := 0
+
+    originalStartFunc := startFunc
+    defer func() { startFunc = originalStartFunc }()
+
+    startFunc = func(ctx context.Context, command string) (*exec.Cmd, error) {
+        if crashCount < 2 {
+            crashCount++
+            return nil, fmt.Errorf("mock crash")
+        }
+        return &exec.Cmd{
+            Process: &os.Process{Pid: os.Getpid()},
+            ProcessState: &os.ProcessState{},
+        }, nil
+    }
+
+    done, err := SpawnServer(ctx, "mock-command")
+    if err != nil {
+        t.Fatalf("SpawnServer returned an error: %v", err)
+    }
+
+    select {
+    case <-done:
+        t.Error("Server should not have exited")
+    case <-time.After(2 * time.Second):
+        if crashCount != 2 {
+            t.Errorf("Expected 2 crashes, got %d", crashCount)
+        }
+    }
+}
+
+

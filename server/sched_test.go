@@ -816,4 +816,25 @@ func TestFilterGPUsWithoutLoadingModels_ActiveLoading(t *testing.T) {
 }
 
 func (s *mockLlm) EstimatedTotal() uint64                 { return s.estimatedTotal }
+
+// Test generated using Keploy
+func TestFindRunnerToUnload_ShortestDuration(t *testing.T) {
+    ctx, cancel := context.WithCancel(context.Background())
+    defer cancel()
+
+    r1 := &runnerRef{sessionDuration: 10 * time.Second}
+    r2 := &runnerRef{sessionDuration: 5 * time.Second}
+    r3 := &runnerRef{sessionDuration: 15 * time.Second}
+
+    s := InitScheduler(ctx)
+    s.loadedMu.Lock()
+    s.loaded["r1"] = r1
+    s.loaded["r2"] = r2
+    s.loaded["r3"] = r3
+    s.loadedMu.Unlock()
+
+    runner := s.findRunnerToUnload()
+    require.Equal(t, r2, runner)
+}
+
 func (s *mockLlm) EstimatedVRAMByGPU(gpuid string) uint64 { return s.estimatedVRAMByGPU[gpuid] }

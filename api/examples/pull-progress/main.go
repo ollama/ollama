@@ -1,31 +1,36 @@
 package main
 
 import (
-	"context"
-	"fmt"
-	"log"
+    "context"
+    "fmt"
+    "log"
 
-	"github.com/ollama/ollama/api"
+    "github.com/ollama/ollama/api"
 )
 
+// Refactored to inject the client dependency for better testability.
 func main() {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		log.Fatal(err)
-	}
+    client, err := api.ClientFromEnvironment()
+    if err != nil {
+        log.Fatal(err)
+    }
 
-	ctx := context.Background()
+    runPullProcess(client)
+}
 
-	req := &api.PullRequest{
-		Model: "mistral",
-	}
-	progressFunc := func(resp api.ProgressResponse) error {
-		fmt.Printf("Progress: status=%v, total=%v, completed=%v\n", resp.Status, resp.Total, resp.Completed)
-		return nil
-	}
+func runPullProcess(client *api.Client) {
+    ctx := context.Background()
 
-	err = client.Pull(ctx, req, progressFunc)
-	if err != nil {
-		log.Fatal(err)
-	}
+    req := &api.PullRequest{
+        Model: "mistral",
+    }
+    progressFunc := func(resp api.ProgressResponse) error {
+        fmt.Printf("Progress: status=%v, total=%v, completed=%v\n", resp.Status, resp.Total, resp.Completed)
+        return nil
+    }
+
+    err := client.Pull(ctx, req, progressFunc)
+    if err != nil {
+        log.Fatal(err)
+    }
 }

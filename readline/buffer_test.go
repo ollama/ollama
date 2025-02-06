@@ -249,3 +249,22 @@ func TestBuffer_MoveRightWord_MovesCursorToStartOfNextWord(t *testing.T) {
     }
 }
 
+
+// Test generated using Keploy
+func TestBuffer_ClearScreen_ClearsBufferCorrectly(t *testing.T) {
+    prompt := &Prompt{Prompt: ">", AltPrompt: ".."}
+    buffer, _ := NewBuffer(prompt)
+    buffer.Replace([]rune("hello"))
+    buffer.ClearScreen()
+
+    if buffer.DisplayPos != 5 {
+        t.Errorf("Expected display position to be 5, got %d", buffer.DisplayPos)
+    }
+    if buffer.Pos != 5 {
+        t.Errorf("Expected cursor position to be 5, got %d", buffer.Pos)
+    }
+    if buffer.String() != "hello" {
+        t.Errorf("Expected buffer content to remain 'hello', got '%s'", buffer.String())
+    }
+}
+

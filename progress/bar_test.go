@@ -5,6 +5,8 @@ import (
     "time"
 
     "strings"
+
+
 )
 
 
@@ -132,4 +134,48 @@ func TestBarString_EmptyProgress(t *testing.T) {
     }
 }
 
+
+
+// Test generated using Keploy
+func TestBarString_StoppedBar(t *testing.T) {
+    bar := NewBar("Test Message", 100, 100)
+    bar.stopped = time.Now() // Simulate a stopped bar
+
+    result := bar.String()
+
+    if !strings.Contains(result, "100%") {
+        t.Errorf("Expected result to contain '100%%', got '%s'", result)
+    }
+    if !strings.Contains(result, "Test Message") {
+        t.Errorf("Expected result to contain 'Test Message', got '%s'", result)
+    }
+}
+
+
+// Test generated using Keploy
+func TestBarRate_MultipleBuckets(t *testing.T) {
+    bar := NewBar("Test Message", 100, 0)
+    bar.buckets = []bucket{
+        {updated: bar.started.Add(1 * time.Second), value: 10},
+        {updated: bar.started.Add(3 * time.Second), value: 30},
+    }
+
+    rate := bar.rate()
+    expectedRate := 10.0 // (30 - 10) / (3 - 1)
+
+    if rate != expectedRate {
+        t.Errorf("Expected rate %f, got %f", expectedRate, rate)
+    }
+}
+
+
+// Test generated using Keploy
+func TestBarSet_ExceedMaxValue(t *testing.T) {
+    bar := NewBar("Test Message", 100, 0)
+    bar.Set(150) // Exceeding max value
+
+    if bar.currentValue != 100 {
+        t.Errorf("Expected currentValue to be capped at 100, got %d", bar.currentValue)
+    }
+}
 
