@@ -15,7 +15,6 @@ import (
 	"syscall"
 
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/runners"
 )
 
 const (
@@ -28,7 +27,6 @@ func GetGPUInfo() GpuInfoList {
 		return []GpuInfo{
 			{
 				Library: "cpu",
-				Variant: runners.GetCPUCapability().String(),
 				memInfo: mem,
 			},
 		}
@@ -51,7 +49,6 @@ func GetCPUInfo() GpuInfoList {
 	return []GpuInfo{
 		{
 			Library: "cpu",
-			Variant: runners.GetCPUCapability().String(),
 			memInfo: mem,
 		},
 	}

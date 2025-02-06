@@ -67,8 +67,6 @@ To use this:
 3. `ollama run choose-a-model-name`
 4. Start using the model!
 
-More examples are available in the [examples directory](../examples).
-
 To view the Modelfile of a given model, use the `ollama show --modelfile` command.
 
   ```bash
@@ -155,7 +153,6 @@ PARAMETER <parameter> <parametervalue>
 | temperature    | The temperature of the model. Increasing the temperature will make the model answer more creatively. (Default: 0.8)                                                                                                                                     | float      | temperature 0.7      |
 | seed           | Sets the random number seed to use for generation. Setting this to a specific number will make the model generate the same text for the same prompt. (Default: 0)                                                                                       | int        | seed 42              |
 | stop           | Sets the stop sequences to use. When this pattern is encountered the LLM will stop generating text and return. Multiple stop patterns may be set by specifying multiple separate `stop` parameters in a modelfile.                                      | string     | stop "AI assistant:" |
-| tfs_z          | Tail free sampling is used to reduce the impact of less probable tokens from the output. A higher value (e.g., 2.0) will reduce the impact more, while a value of 1.0 disables this setting. (default: 1)                                               | float      | tfs_z 1              |
 | num_predict    | Maximum number of tokens to predict when generating text. (Default: -1, infinite generation)                                                                                                                                   | int        | num_predict 42       |
 | top_k          | Reduces the probability of generating nonsense. A higher value (e.g. 100) will give more diverse answers, while a lower value (e.g. 10) will be more conservative. (Default: 40)                                                                        | int        | top_k 40             |
 | top_p          | Works together with top-k. A higher value (e.g., 0.95) will lead to more diverse text, while a lower value (e.g., 0.5) will generate more focused and conservative text. (Default: 0.9)                                                                 | float      | top_p 0.9            |
