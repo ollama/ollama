@@ -61,6 +61,7 @@ Here are some example models that can be downloaded:
 | Llama 3.2 Vision   | 90B        | 55GB  | `ollama run llama3.2-vision:90b` |
 | Llama 3.1          | 8B         | 4.7GB | `ollama run llama3.1`            |
 | Llama 3.1          | 405B       | 231GB | `ollama run llama3.1:405b`       |
+| Deepseek r1        | 7B         | 4.7GB | `ollama run deepseek-r1`       |
 | Phi 4              | 14B        | 9.1GB | `ollama run phi4`                |
 | Phi 3 Mini         | 3.8B       | 2.3GB | `ollama run phi3`                |
 | Gemma 2            | 2B         | 1.6GB | `ollama run gemma2:2b`           |
