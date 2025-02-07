@@ -288,19 +288,19 @@ func (c Context) Zeros(dtype ml.DType, rshape ...int) ml.Tensor {
 		}
 	}
 	// Inverted
-	shape := make([]int, len(rshape))
+	shape := make([]C.int64_t, len(rshape))
 	i := len(rshape) - 1
 	for _, dim := range rshape {
-		shape[i] = dim
+		shape[i] = C.int64_t(dim)
 		i--
 	}
 
 	var t *C.struct_ggml_tensor
 	switch dtype {
 	case ml.DTypeF32:
-		t = C.ggml_new_tensor(c.ctx, C.GGML_TYPE_F32, C.int(len(shape)), shapeToGGML(shape))
+		t = C.ggml_new_tensor(c.ctx, C.GGML_TYPE_F32, C.int(len(shape)), &shape[0])
 	case ml.DTypeI32:
-		t = C.ggml_new_tensor(c.ctx, C.GGML_TYPE_I32, C.int(len(shape)), shapeToGGML(shape))
+		t = C.ggml_new_tensor(c.ctx, C.GGML_TYPE_I32, C.int(len(shape)), &shape[0])
 	default:
 		panic("unsupported dtype")
 	}

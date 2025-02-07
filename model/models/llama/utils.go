@@ -83,7 +83,11 @@ func LlamaRoPE(ctx ml.Context, x, positionIDs ml.Tensor, opts *Options) ml.Tenso
 func ScaledDotProductAttention(ctx ml.Context, q, k, v, mask ml.Tensor, scale float32) ml.Tensor {
 	if sdpa, ok := ctx.(ml.FastScaledDotProductAttention); ok {
 		// MLX support
-		return sdpa.FastScaledDotProductAttention(q, k, v, scale, mask)
+		q = q.Reshape(ctx, append([]int{1}, q.Shape()...)...)
+		k = k.Reshape(ctx, append([]int{1}, k.Shape()...)...)
+		v = v.Reshape(ctx, append([]int{1}, v.Shape()...)...)
+		r := sdpa.FastScaledDotProductAttention(q, k, v, scale, mask)
+		return r.Reshape(ctx, append([]int{}, r.Shape()[1:]...)...)
 	} else {
 		// GGML support
 		kq := k.Mulmat(ctx, q)

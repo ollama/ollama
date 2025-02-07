@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 )
@@ -35,7 +36,13 @@ func RegisterBackend(name string, f func(*os.File) (Backend, error)) {
 }
 
 func NewBackend(f *os.File) (Backend, error) {
-	if backend, ok := backends["ggml"]; ok {
+	be := os.Getenv("OLLAMA_BACKEND")
+	if be == "" {
+		be = "ggml"
+		slog.Info("Defaulting to " + be + ". Set OLLAMA_BACKEND to override")
+	}
+	slog.Info("Loading new engine", "backend", be)
+	if backend, ok := backends[be]; ok {
 		return backend(f)
 	}
 
@@ -65,11 +72,21 @@ type Context interface {
 //	if sdpa, ok := ctx.(ml.FastScaledDotProductAttention); ok {
 //	  hiddenState = sdpa.FastScaledDotProductAttention(...)
 //	} else {
-//
 //	  // manual sdpa
 //	}
 type FastScaledDotProductAttention interface {
 	FastScaledDotProductAttention(queries, keys, values Tensor, scale float32, mask Tensor) Tensor
+}
+
+// Usage:
+//
+//	if su, ok := ctx.(ml.SliceUpdate); ok {
+//	  su.SliceUpdate(...)
+//	} else {
+//	  // view + copy operations
+//	}
+type SliceUpdate interface {
+	SliceUpdate(target, source Tensor, start, stop, strides []int)
 }
 
 type Tensor interface {
@@ -220,5 +237,17 @@ func (dt DType) String() string {
 		return "int32"
 	default:
 		return "unknon"
+	}
+}
+
+func (dt DType) Sizeof() int64 {
+	// TODO call underlying API?
+	switch dt {
+	case DTypeF32:
+		return 4
+	case DTypeI32:
+		return 4
+	default:
+		panic("unrecognized type")
 	}
 }
