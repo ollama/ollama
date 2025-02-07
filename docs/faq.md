@@ -66,7 +66,7 @@ If Ollama is run as a macOS application, environment variables should be set usi
 1. For each environment variable, call `launchctl setenv`.
 
     ```bash
-    launchctl setenv OLLAMA_HOST "0.0.0.0"
+    launchctl setenv OLLAMA_HOST "0.0.0.0:11434"
     ```
 
 2. Restart Ollama application.
@@ -81,7 +81,7 @@ If Ollama is run as a systemd service, environment variables should be set using
 
     ```ini
     [Service]
-    Environment="OLLAMA_HOST=0.0.0.0"
+    Environment="OLLAMA_HOST=0.0.0.0:11434"
     ```
 
 3. Save and exit.
