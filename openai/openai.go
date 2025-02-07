@@ -95,7 +95,7 @@ type ChatCompletionRequest struct {
 	TopP             *float64        `json:"top_p"`
 	ResponseFormat   *ResponseFormat `json:"response_format"`
 	Tools            []api.Tool      `json:"tools"`
-	ContextWindow    *int            `json:"context_window"`
+	ContextLength    *int            `json:"context_length"`
 }
 
 type ChatCompletion struct {
@@ -478,9 +478,8 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		options["stop"] = stops
 	}
 
-	if r.ContextWindow != nil {
-		slog.Info("context_window in if", "context_window", *r.ContextWindow)
-		options["num_ctx"] = *r.ContextWindow
+	if r.ContextLength != nil {
+		options["num_ctx"] = *r.ContextLength
 	}
 
 	// Deprecated: MaxTokens is deprecated, use MaxCompletionTokens instead

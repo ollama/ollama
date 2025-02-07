@@ -315,11 +315,11 @@ func TestChatMiddleware(t *testing.T) {
 			},
 		},
 		{
-			name: "chat handler with context_window",
+			name: "chat handler with context_length",
 			body: `{
 				"model": "test-model",
 				"messages": [{"role": "user", "content": "Hello"}],
-				"context_window": 4096 
+				"context_length": 4096 
 			}`,
 			req: api.ChatRequest{
 				Model:    "test-model",

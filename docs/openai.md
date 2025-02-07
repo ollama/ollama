@@ -206,29 +206,29 @@ curl http://localhost:11434/v1/embeddings \
 
 ## Extra arguments
 
-### Setting context window size
-- `context_window` parameter can be used to set the context window for the model
+### Setting context length
+- `context_length` parameter can be used to set the context length for the model
 
 #### OpenAI python library 
-- OpenAI python library does not support setting context window size, however this can be set for Ollama through the `extra_body` parameter
+- OpenAI python library does not support setting context length, however this can be set for Ollama through the `extra_body` parameter
 
 ```py
 completion = client.chat.completions.create(
     model="llama3.1:8b",
     messages=[{"role": "user", "content": "Say this is a test"}],
-    extra_body={"context_window": 4096},
+    extra_body={"context_length": 4096},
 )
 ```
 
 #### OpenAI JavaScript library
-- OpenAI JavaScript library does not support setting context window size, however this can be set for Ollama by passing `num_ctx` directly with a `@ts-expect-error` as an undocumented parameter in the OpenAI JavaScript library. [See documentation here](https://github.com/openai/openai-node?tab=readme-ov-file#making-customundocumented-requests)
+- OpenAI JavaScript library does not support setting context length, however this can be set for Ollama by passing `context_length` directly with a `@ts-expect-error` as an undocumented parameter in the OpenAI JavaScript library. [See documentation here](https://github.com/openai/openai-node?tab=readme-ov-file#making-customundocumented-requests)
 
 ```ts
 const chatCompletion = await openai.chat.completions.create({
     messages: [{ role: 'user', content: 'Say this is a test' }],
     model: 'llama3.2',
-    // @ts-expect-error context_window is an additional parameter 
-    context_window: 4096,
+    // @ts-expect-error context_length is an additional parameter 
+    context_length: 4096,
 })
 ```
 
@@ -239,7 +239,7 @@ curl http://localhost:11434/v1/chat/completions \
     -d '{
         "model": "llama3.2",
         "messages": [{"role": "user", "content": "Say this is a test"}],
-        "context_window": 4096
+        "context_length": 4096
     }'
 ```
 
