@@ -48,18 +48,17 @@ Use the `ollama ps` command to see what models are currently loaded into memory.
 ollama ps
 ```
 
-> [!NOTE]
 > **Output**:
 >
 > ```
 > NAME      	ID          	SIZE 	PROCESSOR	UNTIL
 > llama3:70b	bcfb190ca3a7	42 GB	100% GPU 	4 minutes from now
 > ```
->
-> The `Processor` column will show which memory the model was loaded in to:
-> * `100% GPU` means the model was loaded entirely into the GPU
-> * `100% CPU` means the model was loaded entirely in system memory
-> * `48%/52% CPU/GPU` means the model was loaded partially onto both the GPU and into system memory
+
+The `Processor` column will show which memory the model was loaded in to:
+* `100% GPU` means the model was loaded entirely into the GPU
+* `100% CPU` means the model was loaded entirely in system memory
+* `48%/52% CPU/GPU` means the model was loaded partially onto both the GPU and into system memory
 
 ## How do I configure Ollama server?
 
@@ -227,16 +226,19 @@ properties.
 If you are using the API you can preload a model by sending the Ollama server an empty request. This works with both the `/api/generate` and `/api/chat` API endpoints.
 
 To preload the mistral model using the generate endpoint, use:
+
 ```shell
 curl http://localhost:11434/api/generate -d '{"model": "mistral"}'
 ```
 
 To use the chat completions endpoint, use:
+
 ```shell
 curl http://localhost:11434/api/chat -d '{"model": "mistral"}'
 ```
 
 To preload a model using the CLI, use the command:
+
 ```shell
 ollama run llama3.2 ""
 ```
@@ -256,11 +258,13 @@ If you're using the API, use the `keep_alive` parameter with the `/api/generate`
 * '0' which will unload the model immediately after generating a response
 
 For example, to preload a model and leave it in memory use:
+
 ```shell
 curl http://localhost:11434/api/generate -d '{"model": "llama3.2", "keep_alive": -1}'
 ```
 
 To unload the model and free up memory use:
+
 ```shell
 curl http://localhost:11434/api/generate -d '{"model": "llama3.2", "keep_alive": 0}'
 ```

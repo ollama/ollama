@@ -73,7 +73,6 @@ To view the Modelfile of a given model, use the `ollama show --modelfile` comman
 ollama show --modelfile llama3.2
 ```
 
-> [!NOTE]
 > **Output**:
 >
 > ```

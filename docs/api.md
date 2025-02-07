@@ -878,6 +878,7 @@ curl http://localhost:11434/api/chat -d '{
 ```
 
 ##### Response
+
 ```json
 {
   "model": "llama3.2",
