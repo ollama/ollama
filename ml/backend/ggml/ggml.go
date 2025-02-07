@@ -272,15 +272,6 @@ func (c *Context) MaxTensors() int {
 	return c.nodes
 }
 
-func shapeToGGML(shape []int) *C.int64_t {
-	sh := make([]C.int64_t, len(shape))
-	for i, s := range shape {
-		sh[i] = (C.int64_t)(s)
-	}
-
-	return &sh[0]
-}
-
 func (c Context) Zeros(dtype ml.DType, rshape ...int) ml.Tensor {
 	if len(rshape) < 1 || len(rshape) > 4 {
 		panic("unsupported number of dimensions")
@@ -292,21 +283,21 @@ func (c Context) Zeros(dtype ml.DType, rshape ...int) ml.Tensor {
 		}
 	}
 	// Inverted
-	shape := make([]int, len(rshape))
+	shape := make([]C.int64_t, len(rshape))
 	i := len(rshape) - 1
 	for _, dim := range rshape {
-		shape[i] = dim
+		shape[i] = C.int64_t(dim)
 		i--
 	}
 
 	var t *C.struct_ggml_tensor
 	switch dtype {
 	case ml.DTypeF32:
-		t = C.ggml_new_tensor(c.ctx, C.GGML_TYPE_F32, C.int(len(shape)), shapeToGGML(shape))
+		t = C.ggml_new_tensor(c.ctx, C.GGML_TYPE_F32, C.int(len(shape)), &shape[0])
 	case ml.DTypeF16:
-		t = C.ggml_new_tensor(c.ctx, C.GGML_TYPE_F16, C.int(len(shape)), shapeToGGML(shape))
+		t = C.ggml_new_tensor(c.ctx, C.GGML_TYPE_F16, C.int(len(shape)), &shape[0])
 	case ml.DTypeI32:
-		t = C.ggml_new_tensor(c.ctx, C.GGML_TYPE_I32, C.int(len(shape)), shapeToGGML(shape))
+		t = C.ggml_new_tensor(c.ctx, C.GGML_TYPE_I32, C.int(len(shape)), &shape[0])
 	default:
 		panic("unsupported dtype")
 	}
@@ -318,19 +309,19 @@ func (c Context) Zeros(dtype ml.DType, rshape ...int) ml.Tensor {
 
 func fromSlice[S ~[]E, E float32 | int32](ctx Context, s S, rshape []int, dtype uint32) (ml.Tensor, error) {
 	// Inverted
-	shape := make([]int, len(rshape))
+	shape := make([]C.int64_t, len(rshape))
 	i := len(rshape) - 1
 	for _, dim := range rshape {
-		shape[i] = dim
+		shape[i] = C.int64_t(dim)
 		i--
 	}
 
-	n := len(s)
+	n := C.int64_t(len(s))
 
 	if n == 0 {
 		var shape C.int64_t = 0
 		t := C.ggml_new_tensor(ctx.ctx, dtype, 1, &shape)
-		return &Tensor{t: t}, nil
+		return &Tensor{t: t, nDims: 0}, nil
 	}
 
 	for _, v := range shape {
@@ -341,7 +332,7 @@ func fromSlice[S ~[]E, E float32 | int32](ctx Context, s S, rshape []int, dtype 
 		return nil, fmt.Errorf("invalid shape %v for %d elements", shape, len(s))
 	}
 
-	t := C.ggml_new_tensor(ctx.ctx, dtype, C.int(len(shape)), shapeToGGML(shape))
+	t := C.ggml_new_tensor(ctx.ctx, dtype, C.int(len(shape)), &shape[0])
 	b := C.ggml_backend_alloc_buffer(ctx.backend, C.ggml_nbytes(t))
 	C.ggml_backend_tensor_alloc(b, t, C.ggml_backend_buffer_get_base(b))
 	C.ggml_backend_tensor_set(t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t))
@@ -703,7 +694,7 @@ func (t *Tensor) RoPE(
 	ropeScale float32,
 ) ml.Tensor {
 	if ropeFactors == nil {
-		ropeFactors = &Tensor{}
+		ropeFactors = &Tensor{nDims: 0}
 	}
 
 	dequant := t.t
