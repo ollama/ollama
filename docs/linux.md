@@ -119,7 +119,7 @@ sudo systemctl status ollama
 
 To customize the installation of Ollama, you can edit the systemd service file or the environment variables by running:
 
-```
+```shell
 sudo systemctl edit ollama
 ```
 

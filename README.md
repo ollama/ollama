@@ -18,7 +18,7 @@ Get up and running with large language models.
 
 ### Linux
 
-```
+```shell
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
@@ -42,7 +42,7 @@ The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `olla
 
 To run and chat with [Llama 3.2](https://ollama.com/library/llama3.2):
 
-```
+```shell
 ollama run llama3.2
 ```
 
@@ -54,6 +54,8 @@ Here are some example models that can be downloaded:
 
 | Model              | Parameters | Size  | Download                         |
 | ------------------ | ---------- | ----- | -------------------------------- |
+| DeepSeek-R1        | 7B         | 4.7GB | `ollama run deepseek-r1`         |
+| DeepSeek-R1        | 671B       | 404GB | `ollama run deepseek-r1:671b`    |
 | Llama 3.3          | 70B        | 43GB  | `ollama run llama3.3`            |
 | Llama 3.2          | 3B         | 2.0GB | `ollama run llama3.2`            |
 | Llama 3.2          | 1B         | 1.3GB | `ollama run llama3.2:1b`         |
@@ -92,13 +94,13 @@ Ollama supports importing GGUF models in the Modelfile:
 
 2. Create the model in Ollama
 
-   ```
+   ```shell
    ollama create example -f Modelfile
    ```
 
 3. Run the model
 
-   ```
+   ```shell
    ollama run example
    ```
 
@@ -110,7 +112,7 @@ See the [guide](docs/import.md) on importing models for more information.
 
 Models from the Ollama library can be customized with a prompt. For example, to customize the `llama3.2` model:
 
-```
+```shell
 ollama pull llama3.2
 ```
 
@@ -145,13 +147,13 @@ For more information on working with a Modelfile, see the [Modelfile](docs/model
 
 `ollama create` is used to create a model from a Modelfile.
 
-```
+```shell
 ollama create mymodel -f ./Modelfile
 ```
 
 ### Pull a model
 
-```
+```shell
 ollama pull llama3.2
 ```
 
@@ -159,13 +161,13 @@ ollama pull llama3.2
 
 ### Remove a model
 
-```
+```shell
 ollama rm llama3.2
 ```
 
 ### Copy a model
 
-```
+```shell
 ollama cp llama3.2 my-model
 ```
 
@@ -184,37 +186,39 @@ I'm a basic program that prints the famous "Hello, world!" message to the consol
 
 ```
 ollama run llava "What's in this image? /Users/jmorgan/Desktop/smile.png"
-The image features a yellow smiley face, which is likely the central focus of the picture.
 ```
+
+> **Output**: The image features a yellow smiley face, which is likely the central focus of the picture.
 
 ### Pass the prompt as an argument
 
+```shell
+ollama run llama3.2 "Summarize this file: $(cat README.md)"
 ```
-$ ollama run llama3.2 "Summarize this file: $(cat README.md)"
- Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models, as well as a library of pre-built models that can be easily used in a variety of applications.
-```
+
+> **Output**: Ollama is a lightweight, extensible framework for building and running language models on the local machine. It provides a simple API for creating, running, and managing models, as well as a library of pre-built models that can be easily used in a variety of applications.
 
 ### Show model information
 
-```
+```shell
 ollama show llama3.2
 ```
 
 ### List models on your computer
 
-```
+```shell
 ollama list
 ```
 
 ### List which models are currently loaded
 
-```
+```shell
 ollama ps
 ```
 
 ### Stop a model which is currently running
 
-```
+```shell
 ollama stop llama3.2
 ```
 
@@ -230,13 +234,13 @@ See the [developer guide](https://github.com/ollama/ollama/blob/main/docs/develo
 
 Next, start the server:
 
-```
+```shell
 ./ollama serve
 ```
 
 Finally, in a separate shell, run a model:
 
-```
+```shell
 ./ollama run llama3.2
 ```
 
@@ -246,7 +250,7 @@ Ollama has a REST API for running and managing models.
 
 ### Generate a response
 
-```
+```shell
 curl http://localhost:11434/api/generate -d '{
   "model": "llama3.2",
   "prompt":"Why is the sky blue?"
@@ -255,7 +259,7 @@ curl http://localhost:11434/api/generate -d '{
 
 ### Chat with a model
 
-```
+```shell
 curl http://localhost:11434/api/chat -d '{
   "model": "llama3.2",
   "messages": [
@@ -353,6 +357,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Web management](https://github.com/lemonit-eric-mao/ollama-web-management) (Web management page)
 - [Promptery](https://github.com/promptery/promptery) (desktop client for Ollama.)
 - [Ollama App](https://github.com/JHubi1/ollama-app) (Modern and easy-to-use multi-platform client for Ollama)
+- [chat-ollama](https://github.com/annilq/chat-ollama) (a React Native client for Ollama)
 - [SpaceLlama](https://github.com/tcsenpai/spacellama) (Firefox and Chrome extension to quickly summarize web pages with ollama in a sidebar)
 - [YouLama](https://github.com/tcsenpai/youlama) (Webapp to quickly summarize any YouTube video, supporting Invidious as well)
 - [DualMind](https://github.com/tcsenpai/dualmind) (Experimental app allowing two models to talk to each other in the terminal or in a web interface)
