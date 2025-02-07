@@ -345,7 +345,7 @@ curl http://localhost:11434/v1/chat/completions \
 
 The OpenAI API does not have a way of setting the context size for a model. If you need to change the context size, create a `Modelfile` which looks like:
 
-```modelfile
+```
 FROM <some model>
 PARAMETER num_ctx <context size>
 ```

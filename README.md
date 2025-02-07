@@ -86,7 +86,7 @@ Ollama supports importing GGUF models in the Modelfile:
 
 1. Create a file named `Modelfile`, with a `FROM` instruction with the local filepath to the model you want to import.
 
-   ```modelfile
+   ```
    FROM ./vicuna-33b.Q4_0.gguf
    ```
 
@@ -116,7 +116,7 @@ ollama pull llama3.2
 
 Create a `Modelfile`:
 
-```modelfile
+```
 FROM llama3.2
 
 # set the temperature to 1 [higher is more creative, lower is more coherent]
