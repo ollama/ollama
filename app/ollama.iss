@@ -70,9 +70,6 @@ DisableReadyPage=yes
 DisableStartupPrompt=yes
 DisableWelcomePage=yes
 
-; TODO - percentage can't be set less than 100, so far 100 with a smaller font?
-WizardSizePercent=100
-
 #if GetEnv("KEY_CONTAINER")
 SignTool=MySignTool
 SignedUninstaller=yes
@@ -82,9 +79,6 @@ SetupMutex=OllamaSetupMutex
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
-
-[LangOptions]
-DialogFontSize=8
 
 [Files]
 #if DirExists("..\dist\windows-amd64")
