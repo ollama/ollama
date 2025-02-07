@@ -209,7 +209,7 @@ func TestLlama(t *testing.T) {
 	})
 }
 
-func Benchmark(b *testing.B) {
+func BenchmarkBytePairEncoding(b *testing.B) {
 	tokenizer := llama(b)
 	bts, err := os.ReadFile(filepath.Join("testdata", "war-and-peace.txt"))
 	if err != nil {
@@ -241,6 +241,13 @@ func Benchmark(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
+			}
+		})
+
+		b.Run("split"+strconv.Itoa(n), func(b *testing.B) {
+			b.ResetTimer()
+			for range b.N {
+				slices.Collect(tokenizer.split(string(bts)))
 			}
 		})
 	}
