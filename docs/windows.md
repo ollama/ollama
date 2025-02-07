@@ -47,6 +47,7 @@ If Ollama is already running, Quit the tray application and relaunch it from the
 ## API Access
 
 Here's a quick example showing API access from `powershell`
+
 ```powershell
 (Invoke-WebRequest -method POST -Body '{"model":"llama3.2", "prompt":"Why is the sky blue?", "stream": false}' -uri http://localhost:11434/api/generate ).Content | ConvertFrom-json
 ```
