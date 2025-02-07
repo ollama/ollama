@@ -353,6 +353,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Web management](https://github.com/lemonit-eric-mao/ollama-web-management) (Web management page)
 - [Promptery](https://github.com/promptery/promptery) (desktop client for Ollama.)
 - [Ollama App](https://github.com/JHubi1/ollama-app) (Modern and easy-to-use multi-platform client for Ollama)
+- [chat-ollama](https://github.com/annilq/chat-ollama) (a React Native client for Ollama)
 - [SpaceLlama](https://github.com/tcsenpai/spacellama) (Firefox and Chrome extension to quickly summarize web pages with ollama in a sidebar)
 - [YouLama](https://github.com/tcsenpai/youlama) (Webapp to quickly summarize any YouTube video, supporting Invidious as well)
 - [DualMind](https://github.com/tcsenpai/dualmind) (Experimental app allowing two models to talk to each other in the terminal or in a web interface)
