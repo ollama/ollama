@@ -124,6 +124,15 @@ func (kv KV) Uints(key string, defaultValue ...[]uint32) []uint32 {
 	return s
 }
 
+func (kv KV) Floats(key string, defaultValue ...[]float32) []float32 {
+	r := keyValue(kv, key, &array{})
+	s := make([]float32, r.size)
+	for i := range r.size {
+		s[i] = float32(r.values[i].(float32))
+	}
+	return s
+}
+
 func keyValue[T string | uint32 | uint64 | float32 | *array | bool](kv KV, key string, defaultValue ...T) T {
 	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") {
 		key = kv.Architecture() + "." + key
@@ -476,7 +485,7 @@ func (f GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialO
 			// vocab graph
 			4*batch*(embedding+vocab)+embedding*vocab*105/128,
 		)
-	case "gemma", "gemma2":
+	case "gemma", "gemma2", "gemma3":
 		fullOffload = max(
 			4*batch*(embedding+vocab),
 			4*batch*(2+context+context*heads+2*embedding+2*embeddingHeadsK*heads),

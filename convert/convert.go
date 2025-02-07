@@ -15,6 +15,11 @@ import (
 type ModelParameters struct {
 	Architectures []string `json:"architectures"`
 	VocabSize     uint32   `json:"vocab_size"`
+	TextModel     TextParameters `json:"text_config"`
+}
+
+type TextParameters struct {
+	VocabSize     uint32   `json:"vocab_size"`
 }
 
 type AdapterParameters struct {
@@ -185,6 +190,8 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 		conv = &gemmaModel{}
 	case "Gemma2ForCausalLM":
 		conv = &gemma2Model{}
+	case "Gemma3ForConditionalGeneration":
+		conv = &gemma3Model{}
 	case "Phi3ForCausalLM":
 		conv = &phi3Model{}
 	case "Qwen2ForCausalLM":
@@ -213,6 +220,11 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 	}
 
 	vocabSize := int(p.VocabSize)
+	if vocabSize == 0 {
+		tVocabSize := int(p.TextModel.VocabSize)
+		vocabSize = tVocabSize
+	}
+
 	switch {
 	case vocabSize > len(t.Vocabulary.Tokens):
 		slog.Warn("vocabulary is smaller than expected, padding with dummy tokens", "expect", vocabSize, "actual", len(t.Vocabulary.Tokens))
