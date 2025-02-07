@@ -6,8 +6,6 @@
 
 # Ollama
 
-[![Discord](https://dcbadge.vercel.app/api/server/ollama?style=flat&compact=true)](https://discord.gg/ollama)
-
 Get up and running with large language models.
 
 ### macOS
@@ -35,6 +33,11 @@ The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `olla
 - [ollama-python](https://github.com/ollama/ollama-python)
 - [ollama-js](https://github.com/ollama/ollama-js)
 
+### Community
+
+- [Discord](https://discord.gg/ollama)
+- [Reddit](https://reddit.com/r/ollama)
+
 ## Quickstart
 
 To run and chat with [Llama 3.2](https://ollama.com/library/llama3.2):
@@ -58,8 +61,8 @@ Here are some example models that can be downloaded:
 | Llama 3.2 Vision   | 90B        | 55GB  | `ollama run llama3.2-vision:90b` |
 | Llama 3.1          | 8B         | 4.7GB | `ollama run llama3.1`            |
 | Llama 3.1          | 405B       | 231GB | `ollama run llama3.1:405b`       |
+| Phi 4              | 14B        | 9.1GB | `ollama run phi4`                |
 | Phi 3 Mini         | 3.8B       | 2.3GB | `ollama run phi3`                |
-| Phi 3 Medium       | 14B        | 7.9GB | `ollama run phi3:medium`         |
 | Gemma 2            | 2B         | 1.6GB | `ollama run gemma2:2b`           |
 | Gemma 2            | 9B         | 5.5GB | `ollama run gemma2`              |
 | Gemma 2            | 27B        | 16GB  | `ollama run gemma2:27b`          |
@@ -134,7 +137,7 @@ ollama run mario
 Hello! It's your friend Mario.
 ```
 
-For more examples, see the [examples](examples) directory. For more information on working with a Modelfile, see the [Modelfile](docs/modelfile.md) documentation.
+For more information on working with a Modelfile, see the [Modelfile](docs/modelfile.md) documentation.
 
 ## CLI Reference
 
@@ -366,6 +369,11 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Minima](https://github.com/dmayboroda/minima) (RAG with on-premises or fully local workflow)
 - [aidful-ollama-model-delete](https://github.com/AidfulAI/aidful-ollama-model-delete) (User interface for simplified model cleanup)
 - [Perplexica](https://github.com/ItzCrazyKns/Perplexica) (An AI-powered search engine & an open-source alternative to Perplexity AI)
+- [Ollama Chat WebUI for Docker ](https://github.com/oslook/ollama-webui) (Support for local docker deployment, lightweight ollama webui)
+- [AI Toolkit for Visual Studio Code](https://aka.ms/ai-tooklit/ollama-docs) (Microsoft-official VSCode extension to chat, test, evaluate models with Ollama support, and use them in your AI applications.)
+- [MinimalNextOllamaChat](https://github.com/anilkay/MinimalNextOllamaChat) (Minimal Web UI for Chat and Model Control)
+- [Chipper](https://github.com/TilmanGriesel/chipper) AI interface for tinkerers (Ollama, Haystack RAG, Python)
+- [ChibiChat](https://github.com/CosmicEventHorizon/ChibiChat) (Kotlin-based Android app to chat with Ollama and Koboldcpp API endpoints)
 
 ### Cloud
 
@@ -438,6 +446,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LangChainGo](https://github.com/tmc/langchaingo/) with [example](https://github.com/tmc/langchaingo/tree/main/examples/ollama-completion-example)
 - [LangChain4j](https://github.com/langchain4j/langchain4j) with [example](https://github.com/langchain4j/langchain4j-examples/tree/main/ollama-examples/src/main/java)
 - [LangChainRust](https://github.com/Abraxas-365/langchain-rust) with [example](https://github.com/Abraxas-365/langchain-rust/blob/main/examples/llm_ollama.rs)
+- [LangChain for .NET](https://github.com/tryAGI/LangChain) with [example](https://github.com/tryAGI/LangChain/blob/main/examples/LangChain.Samples.OpenAI/Program.cs)
 - [LLPhant](https://github.com/theodo-group/LLPhant?tab=readme-ov-file#ollama)
 - [LlamaIndex](https://docs.llamaindex.ai/en/stable/examples/llm/ollama/) and [LlamaIndexTS](https://ts.llamaindex.ai/modules/llms/available_llms/ollama)
 - [LiteLLM](https://github.com/BerriAI/litellm)
@@ -477,6 +486,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [GoLamify](https://github.com/prasad89/golamify)
 - [Ollama for Haskell](https://github.com/tusharad/ollama-haskell)
 - [multi-llm-ts](https://github.com/nbonamy/multi-llm-ts) (A Typescript/JavaScript library allowing access to different LLM in unified API)
+- [LlmTornado](https://github.com/lofcz/llmtornado) (C# library providing a unified interface for major FOSS & Commercial inference APIs)
 
 ### Mobile
 
@@ -527,6 +537,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [TextCraft](https://github.com/suncloudsmoon/TextCraft) (Copilot in Word alternative using Ollama)
 - [Alfred Ollama](https://github.com/zeitlings/alfred-ollama) (Alfred Workflow)
 - [TextLLaMA](https://github.com/adarshM84/TextLLaMA) A Chrome Extension that helps you write emails, correct grammar, and translate into any language
+- [Simple-Discord-AI](https://github.com/zyphixor/simple-discord-ai)
 
 ### Supported backends
 
@@ -535,4 +546,6 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ### Observability
 
 - [OpenLIT](https://github.com/openlit/openlit) is an OpenTelemetry-native tool for monitoring Ollama Applications & GPUs using traces and metrics.
-- [HoneyHive](https://docs.honeyhive.ai/integrations/ollama) is an AI observability and evaluation platform for AI agents. Use HoneyHive to evaluate agent performance, interrogate failures, and monitor quality in production. 
+- [HoneyHive](https://docs.honeyhive.ai/integrations/ollama) is an AI observability and evaluation platform for AI agents. Use HoneyHive to evaluate agent performance, interrogate failures, and monitor quality in production.
+- [Langfuse](https://langfuse.com/docs/integrations/ollama) is an open source LLM observability platform that enables teams to collaboratively monitor, evaluate and debug AI applications.
+- [MLflow Tracing](https://mlflow.org/docs/latest/llms/tracing/index.html#automatic-tracing) is an open source LLM observability tool with a convenient API to log and visualize traces, making it easy to debug and evaluate GenAI applications.

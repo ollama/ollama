@@ -33,7 +33,6 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/model/mllama"
 	"github.com/ollama/ollama/openai"
-	"github.com/ollama/ollama/runners"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -1131,7 +1130,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	config.AllowWildcard = true
 	config.AllowBrowserExtensions = true
 	config.AllowHeaders = []string{"Authorization", "Content-Type", "User-Agent", "Accept", "X-Requested-With"}
-	openAIProperties := []string{"lang", "package-version", "os", "arch", "retry-count", "runtime", "runtime-version", "async"}
+	openAIProperties := []string{"lang", "package-version", "os", "arch", "retry-count", "runtime", "runtime-version", "async", "helper-method", "poll-helper", "custom-poll-interval"}
 	for _, prop := range openAIProperties {
 		config.AllowHeaders = append(config.AllowHeaders, "x-stainless-"+prop)
 	}
@@ -1258,14 +1257,6 @@ func Serve(ln net.Listener) error {
 		sched.unloadAllRunners()
 		done()
 	}()
-
-	// Locate and log what runners are present at startup
-	var runnerNames []string
-	for v := range runners.GetAvailableServers() {
-		runnerNames = append(runnerNames, v)
-	}
-	slog.Info("Dynamic LLM libraries", "runners", runnerNames)
-	slog.Debug("Override detection logic by setting OLLAMA_LLM_LIBRARY")
 
 	s.sched.Run(schedCtx)
 

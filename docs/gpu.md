@@ -38,7 +38,7 @@ Numeric IDs may be used, however ordering may vary, so UUIDs are more reliable.
 You can discover the UUID of your GPUs by running `nvidia-smi -L` If you want to
 ignore the GPUs and force CPU usage, use an invalid GPU ID (e.g., "-1")
 
-### Laptop Suspend Resume
+### Linux Suspend Resume
 
 On linux, after a suspend/resume cycle, sometimes Ollama will fail to discover
 your NVIDIA GPU, and fallback to running on the CPU.  You can workaround this

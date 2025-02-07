@@ -18,8 +18,8 @@ const config: ForgeConfig = {
     asar: true,
     icon: './assets/icon.icns',
     extraResource: [
-      '../dist/ollama',
-      '../dist/darwin-amd64/lib',
+      path.join(__dirname, '../dist/darwin/ollama'),
+      ...fs.readdirSync(path.join(__dirname, '../dist/darwin-amd64/lib/ollama')).map(f => path.join(__dirname, '../dist/darwin-amd64/lib/ollama', f)),
       path.join(__dirname, './assets/iconTemplate.png'),
       path.join(__dirname, './assets/iconTemplate@2x.png'),
       path.join(__dirname, './assets/iconUpdateTemplate.png'),
@@ -43,7 +43,7 @@ const config: ForgeConfig = {
         }
       : {}),
     osxUniversal: {
-      x64ArchFiles: '**/ollama*',
+      x64ArchFiles: '*',
     },
   },
   rebuildConfig: {},

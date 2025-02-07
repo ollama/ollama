@@ -33,6 +33,7 @@ var (
 	errOnlyOneAdapterSupported = errors.New("only one adapter is currently supported")
 	errOnlyGGUFSupported       = errors.New("supplied file was not in GGUF format")
 	errUnknownType             = errors.New("unknown type")
+	errNeitherFromOrFiles      = errors.New("neither 'from' or 'files' was specified")
 )
 
 func (s *Server) CreateHandler(c *gin.Context) {
@@ -95,7 +96,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 				return
 			}
 		} else {
-			ch <- gin.H{"error": "neither 'from' or 'files' was specified", "status": http.StatusBadRequest}
+			ch <- gin.H{"error": errNeitherFromOrFiles.Error(), "status": http.StatusBadRequest}
 			return
 		}
 
@@ -177,12 +178,37 @@ func convertModelFromFiles(files map[string]string, baseLayers []*layerGGML, isA
 }
 
 func detectModelTypeFromFiles(files map[string]string) string {
-	// todo make this more robust by actually introspecting the files
 	for fn := range files {
 		if strings.HasSuffix(fn, ".safetensors") {
 			return "safetensors"
-		} else if strings.HasSuffix(fn, ".bin") || strings.HasSuffix(fn, ".gguf") {
+		} else if strings.HasSuffix(fn, ".gguf") {
 			return "gguf"
+		} else {
+			// try to see if we can find a gguf file even without the file extension
+			blobPath, err := GetBlobsPath(files[fn])
+			if err != nil {
+				slog.Error("error getting blobs path", "file", fn)
+				return ""
+			}
+
+			f, err := os.Open(blobPath)
+			if err != nil {
+				slog.Error("error reading file", "error", err)
+				return ""
+			}
+			defer f.Close()
+
+			buf := make([]byte, 4)
+			_, err = f.Read(buf)
+			if err != nil {
+				slog.Error("error reading file", "error", err)
+				return ""
+			}
+
+			ct := llm.DetectGGMLType(buf)
+			if ct == "gguf" {
+				return "gguf"
+			}
 		}
 	}
 

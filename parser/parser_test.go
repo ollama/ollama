@@ -490,7 +490,6 @@ func TestParseFileParameters(t *testing.T) {
 		"top_k 1":                      {"top_k", "1"},
 		"top_p 1.0":                    {"top_p", "1.0"},
 		"min_p 0.05":                   {"min_p", "0.05"},
-		"tfs_z 1.0":                    {"tfs_z", "1.0"},
 		"typical_p 1.0":                {"typical_p", "1.0"},
 		"repeat_last_n 1":              {"repeat_last_n", "1"},
 		"temperature 1.0":              {"temperature", "1.0"},
@@ -747,7 +746,7 @@ MESSAGE assistant Hi! How are you?
 			t.Error(err)
 		}
 
-		actual, err := p.CreateRequest()
+		actual, err := p.CreateRequest("")
 		if err != nil {
 			t.Error(err)
 		}
@@ -793,15 +792,20 @@ func createBinFile(t *testing.T, kv map[string]any, ti []llm.Tensor) (string, st
 }
 
 func TestCreateRequestFiles(t *testing.T) {
-	name, digest := createBinFile(t, nil, nil)
+	n1, d1 := createBinFile(t, nil, nil)
+	n2, d2 := createBinFile(t, map[string]any{"foo": "bar"}, nil)
 
 	cases := []struct {
 		input    string
 		expected *api.CreateRequest
 	}{
 		{
-			fmt.Sprintf("FROM %s", name),
-			&api.CreateRequest{Files: map[string]string{name: digest}},
+			fmt.Sprintf("FROM %s", n1),
+			&api.CreateRequest{Files: map[string]string{n1: d1}},
+		},
+		{
+			fmt.Sprintf("FROM %s\nFROM %s", n1, n2),
+			&api.CreateRequest{Files: map[string]string{n1: d1, n2: d2}},
 		},
 	}
 
@@ -816,7 +820,7 @@ func TestCreateRequestFiles(t *testing.T) {
 			t.Error(err)
 		}
 
-		actual, err := p.CreateRequest()
+		actual, err := p.CreateRequest("")
 		if err != nil {
 			t.Error(err)
 		}

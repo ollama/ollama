@@ -46,9 +46,8 @@ import (
 var errModelfileNotFound = errors.New("specified Modelfile wasn't found")
 
 func getModelfileName(cmd *cobra.Command) (string, error) {
-	fn, _ := cmd.Flags().GetString("file")
+	filename, _ := cmd.Flags().GetString("file")
 
-	filename := fn
 	if filename == "" {
 		filename = "Modelfile"
 	}
@@ -60,7 +59,7 @@ func getModelfileName(cmd *cobra.Command) (string, error) {
 
 	_, err = os.Stat(absName)
 	if err != nil {
-		return fn, err
+		return "", err
 	}
 
 	return absName, nil
@@ -100,7 +99,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
 
-	req, err := modelfile.CreateRequest()
+	req, err := modelfile.CreateRequest(filepath.Dir(filename))
 	if err != nil {
 		return err
 	}
@@ -162,6 +161,9 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	if err := client.Create(cmd.Context(), req, fn); err != nil {
+		if strings.Contains(err.Error(), "path or Modelfile are required") {
+			return fmt.Errorf("the ollama server must be updated to use `ollama create` with this client")
+		}
 		return err
 	}
 
