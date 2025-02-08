@@ -434,7 +434,6 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Libraries
 
-- [ollama-zig](https://github.com/dravenk/ollama-zig)
 - [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/integrations/chat/ollama/) with [example](https://js.langchain.com/docs/tutorials/local_rag/)
 - [Firebase Genkit](https://firebase.google.com/docs/genkit/plugins/ollama)
 - [crewAI](https://github.com/crewAIInc/crewAI)
@@ -484,6 +483,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama for Haskell](https://github.com/tusharad/ollama-haskell)
 - [multi-llm-ts](https://github.com/nbonamy/multi-llm-ts) (A Typescript/JavaScript library allowing access to different LLM in unified API)
 - [LlmTornado](https://github.com/lofcz/llmtornado) (C# library providing a unified interface for major FOSS & Commercial inference APIs)
+- [Ollama for Zig](https://github.com/dravenk/ollama-zig)
 
 ### Mobile
 
