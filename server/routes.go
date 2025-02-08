@@ -63,9 +63,13 @@ var (
 	errBadTemplate = errors.New("template error")
 )
 
-func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options, error) {
+func modelOptions(model *Model, runnerOpts, requestOpts map[string]interface{}) (api.Options, error) {
 	opts := api.DefaultOptions()
 	if err := opts.FromMap(model.Options); err != nil {
+		return api.Options{}, err
+	}
+
+	if err := opts.FromMap(runnerOpts); err != nil {
 		return api.Options{}, err
 	}
 
@@ -74,6 +78,15 @@ func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options
 	}
 
 	return opts, nil
+}
+
+func commonKeys(m1, m2 map[string]any) bool {
+	for k := range m1 {
+		if _, exists := m2[k]; exists {
+			return true
+		}
+	}
+	return false
 }
 
 // scheduleRunner schedules a runner after validating inputs such as capabilities and model options.
@@ -92,7 +105,18 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []Capabil
 		return nil, nil, nil, fmt.Errorf("%s %w", name, err)
 	}
 
-	opts, err := modelOptions(model, requestOpts)
+	var runnerOpts map[string]any
+	s.sched.loadedMu.Lock()
+	if runner, ok := s.sched.loaded[model.ModelPath]; ok {
+		runnerOpts = runner.llama.RunnerOptions()
+	}
+	s.sched.loadedMu.Unlock()
+
+	if commonKeys(runnerOpts, requestOpts) {
+		runnerOpts = map[string]any{}
+	}
+
+	opts, err := modelOptions(model, runnerOpts, requestOpts)
 	if err != nil {
 		return nil, nil, nil, err
 	}
