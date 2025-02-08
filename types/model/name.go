@@ -34,6 +34,12 @@ func Unqualified(n Name) error {
 // spot in logs.
 const MissingPart = "!MISSING!"
 
+const (
+	defaultHost      = "registry.ollama.ai"
+	defaultNamespace = "library"
+	defaultTag       = "latest"
+)
+
 // DefaultName returns a name with the default values for the host, namespace,
 // and tag parts. The model and digest parts are empty.
 //
@@ -42,9 +48,9 @@ const MissingPart = "!MISSING!"
 //   - The default tag is ("latest")
 func DefaultName() Name {
 	return Name{
-		Host:      "registry.ollama.ai",
-		Namespace: "library",
-		Tag:       "latest",
+		Host:      defaultHost,
+		Namespace: defaultNamespace,
+		Tag:       defaultTag,
 	}
 }
 
@@ -85,7 +91,6 @@ type Name struct {
 	Namespace string
 	Model     string
 	Tag       string
-	RawDigest string
 }
 
 // ParseName parses and assembles a Name from a name string. The
@@ -137,23 +142,49 @@ func ParseNameBare(s string) Name {
 	var n Name
 	var promised bool
 
-	s, n.RawDigest, promised = cutLast(s, "@")
-	if promised && n.RawDigest == "" {
-		n.RawDigest = MissingPart
+	// "/" is an illegal tag character, so we can use it to split the host
+	if strings.LastIndex(s, ":") > strings.LastIndex(s, "/") {
+		s, n.Tag, _ = cutPromised(s, ":")
 	}
 
-	s, n.Tag, _ = cutPromised(s, ":")
 	s, n.Model, promised = cutPromised(s, "/")
 	if !promised {
 		n.Model = s
 		return n
 	}
+
 	s, n.Namespace, promised = cutPromised(s, "/")
 	if !promised {
 		n.Namespace = s
 		return n
 	}
-	n.Host = s
+
+	scheme, host, ok := strings.Cut(s, "://")
+	if !ok {
+		host = scheme
+	}
+	n.Host = host
+
+	return n
+}
+
+// ParseNameFromFilepath parses a 4-part filepath as a Name. The parts are
+// expected to be in the form:
+//
+// { host } "/" { namespace } "/" { model } "/" { tag }
+func ParseNameFromFilepath(s string) (n Name) {
+	parts := strings.Split(s, string(filepath.Separator))
+	if len(parts) != 4 {
+		return Name{}
+	}
+
+	n.Host = parts[0]
+	n.Namespace = parts[1]
+	n.Model = parts[2]
+	n.Tag = parts[3]
+	if !n.IsFullyQualified() {
+		return Name{}
+	}
 
 	return n
 }
@@ -185,26 +216,49 @@ func (n Name) String() string {
 		b.WriteByte(':')
 		b.WriteString(n.Tag)
 	}
-	if n.RawDigest != "" {
-		b.WriteByte('@')
-		b.WriteString(n.RawDigest)
-	}
 	return b.String()
+}
+
+// DisplayShortest returns a short string version of the name.
+func (n Name) DisplayShortest() string {
+	var sb strings.Builder
+
+	if !strings.EqualFold(n.Host, defaultHost) {
+		sb.WriteString(n.Host)
+		sb.WriteByte('/')
+		sb.WriteString(n.Namespace)
+		sb.WriteByte('/')
+	} else if !strings.EqualFold(n.Namespace, defaultNamespace) {
+		sb.WriteString(n.Namespace)
+		sb.WriteByte('/')
+	}
+
+	// always include model and tag
+	sb.WriteString(n.Model)
+	sb.WriteString(":")
+	sb.WriteString(n.Tag)
+	return sb.String()
+}
+
+// IsValidNamespace reports whether the provided string is a valid
+// namespace.
+func IsValidNamespace(s string) bool {
+	return isValidPart(kindNamespace, s)
 }
 
 // IsValid reports whether all parts of the name are present and valid. The
 // digest is a special case, and is checked for validity only if present.
+//
+// Note: The digest check has been removed as is planned to be added back in
+// at a later time.
 func (n Name) IsValid() bool {
-	if n.RawDigest != "" && !isValidPart(kindDigest, n.RawDigest) {
-		return false
-	}
 	return n.IsFullyQualified()
 }
 
 // IsFullyQualified returns true if all parts of the name are present and
 // valid without the digest.
 func (n Name) IsFullyQualified() bool {
-	var parts = []string{
+	parts := []string{
 		n.Host,
 		n.Namespace,
 		n.Model,
@@ -232,16 +286,23 @@ func (n Name) Filepath() string {
 		panic("illegal attempt to get filepath of invalid name")
 	}
 	return filepath.Join(
-		strings.ToLower(n.Host),
-		strings.ToLower(n.Namespace),
-		strings.ToLower(n.Model),
-		strings.ToLower(n.Tag),
+		n.Host,
+		n.Namespace,
+		n.Model,
+		n.Tag,
 	)
 }
 
 // LogValue returns a slog.Value that represents the name as a string.
 func (n Name) LogValue() slog.Value {
 	return slog.StringValue(n.String())
+}
+
+func (n Name) EqualFold(o Name) bool {
+	return strings.EqualFold(n.Host, o.Host) &&
+		strings.EqualFold(n.Namespace, o.Namespace) &&
+		strings.EqualFold(n.Model, o.Model) &&
+		strings.EqualFold(n.Tag, o.Tag)
 }
 
 func isValidLen(kind partKind, s string) bool {

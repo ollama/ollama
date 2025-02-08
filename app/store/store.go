@@ -29,7 +29,6 @@ func GetID() string {
 		initStore()
 	}
 	return store.ID
-
 }
 
 func GetFirstTimeRun() bool {
@@ -65,7 +64,7 @@ func initStore() {
 		slog.Debug(fmt.Sprintf("unexpected error searching for store: %s", err))
 	}
 	slog.Debug("initializing new store")
-	store.ID = uuid.New().String()
+	store.ID = uuid.NewString()
 	writeStore(getStorePath())
 }
 

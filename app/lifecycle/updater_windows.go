@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -15,7 +16,7 @@ func DoUpgrade(cancel context.CancelFunc, done chan int) error {
 		return fmt.Errorf("failed to lookup downloads: %s", err)
 	}
 	if len(files) == 0 {
-		return fmt.Errorf("no update downloads found")
+		return errors.New("no update downloads found")
 	} else if len(files) > 1 {
 		// Shouldn't happen
 		slog.Warn(fmt.Sprintf("multiple downloads found, using first one %v", files))
@@ -25,22 +26,15 @@ func DoUpgrade(cancel context.CancelFunc, done chan int) error {
 	slog.Info("starting upgrade with " + installerExe)
 	slog.Info("upgrade log file " + UpgradeLogFile)
 
-	// When running in debug mode, we'll be "verbose" and let the installer pop up and prompt
+	// make the upgrade show progress, but non interactive
 	installArgs := []string{
 		"/CLOSEAPPLICATIONS",                    // Quit the tray app if it's still running
 		"/LOG=" + filepath.Base(UpgradeLogFile), // Only relative seems reliable, so set pwd
 		"/FORCECLOSEAPPLICATIONS",               // Force close the tray app - might be needed
-	}
-	// When we're not in debug mode, make the upgrade as quiet as possible (no GUI, no prompts)
-	// TODO - temporarily disable since we're pinning in debug mode for the preview
-	// if debug := os.Getenv("OLLAMA_DEBUG"); debug == "" {
-	installArgs = append(installArgs,
-		"/SP", // Skip the "This will install... Do you wish to continue" prompt
-		"/SUPPRESSMSGBOXES",
+		"/SP",                                   // Skip the "This will install... Do you wish to continue" prompt
+		"/NOCANCEL",                             // Disable the ability to cancel upgrade mid-flight to avoid partially installed upgrades
 		"/SILENT",
-		"/VERYSILENT",
-	)
-	// }
+	}
 
 	// Safeguard in case we have requests in flight that need to drain...
 	slog.Info("Waiting for server to shutdown")
@@ -67,7 +61,7 @@ func DoUpgrade(cancel context.CancelFunc, done chan int) error {
 		}
 	} else {
 		// TODO - some details about why it didn't start, or is this a pedantic error case?
-		return fmt.Errorf("installer process did not start")
+		return errors.New("installer process did not start")
 	}
 
 	// TODO should we linger for a moment and check to make sure it's actually running by checking the pid?

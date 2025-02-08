@@ -15,6 +15,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,7 +47,7 @@ func IsNewReleaseAvailable(ctx context.Context) (bool, UpdateResponse) {
 	query.Add("os", runtime.GOOS)
 	query.Add("arch", runtime.GOARCH)
 	query.Add("version", version.Version)
-	query.Add("ts", fmt.Sprintf("%d", time.Now().Unix()))
+	query.Add("ts", strconv.FormatInt(time.Now().Unix(), 10))
 
 	nonce, err := auth.NewNonce(rand.Reader, 16)
 	if err != nil {
@@ -78,7 +79,7 @@ func IsNewReleaseAvailable(ctx context.Context) (bool, UpdateResponse) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == 204 {
+	if resp.StatusCode == http.StatusNoContent {
 		slog.Debug("check update response 204 (current version is up to date)")
 		return false, updateResp
 	}
@@ -87,7 +88,7 @@ func IsNewReleaseAvailable(ctx context.Context) (bool, UpdateResponse) {
 		slog.Warn(fmt.Sprintf("failed to read body response: %s", err))
 	}
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		slog.Info(fmt.Sprintf("check update error %d - %.96s", resp.StatusCode, string(body)))
 		return false, updateResp
 	}
@@ -114,7 +115,7 @@ func DownloadNewRelease(ctx context.Context, updateResp UpdateResponse) error {
 	if err != nil {
 		return fmt.Errorf("error checking update: %w", err)
 	}
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status attempting to download update %d", resp.StatusCode)
 	}
 	resp.Body.Close()

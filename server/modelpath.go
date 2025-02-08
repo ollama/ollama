@@ -3,10 +3,15 @@ package server
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+
+	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/types/model"
 )
 
 type ModelPath struct {
@@ -25,9 +30,10 @@ const (
 )
 
 var (
-	ErrInvalidImageFormat = errors.New("invalid image format")
-	ErrInvalidProtocol    = errors.New("invalid protocol scheme")
-	ErrInsecureProtocol   = errors.New("insecure protocol http")
+	ErrInvalidImageFormat  = errors.New("invalid image format")
+	ErrInvalidProtocol     = errors.New("invalid protocol scheme")
+	ErrInsecureProtocol    = errors.New("insecure protocol http")
+	ErrInvalidDigestFormat = errors.New("invalid digest format")
 )
 
 func ParseModelPath(name string) ModelPath {
@@ -69,18 +75,6 @@ func ParseModelPath(name string) ModelPath {
 
 var errModelPathInvalid = errors.New("invalid model path")
 
-func (mp ModelPath) Validate() error {
-	if mp.Repository == "" {
-		return fmt.Errorf("%w: model repository name is required", errModelPathInvalid)
-	}
-
-	if strings.Contains(mp.Tag, ":") {
-		return fmt.Errorf("%w: ':' (colon) is not allowed in tag names", errModelPathInvalid)
-	}
-
-	return nil
-}
-
 func (mp ModelPath) GetNamespaceRepository() string {
 	return fmt.Sprintf("%s/%s", mp.Namespace, mp.Repository)
 }
@@ -99,27 +93,18 @@ func (mp ModelPath) GetShortTagname() string {
 	return fmt.Sprintf("%s/%s/%s:%s", mp.Registry, mp.Namespace, mp.Repository, mp.Tag)
 }
 
-// modelsDir returns the value of the OLLAMA_MODELS environment variable or the user's home directory if OLLAMA_MODELS is not set.
-// The models directory is where Ollama stores its model files and manifests.
-func modelsDir() (string, error) {
-	if models, exists := os.LookupEnv("OLLAMA_MODELS"); exists {
-		return models, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".ollama", "models"), nil
-}
-
 // GetManifestPath returns the path to the manifest file for the given model path, it is up to the caller to create the directory if it does not exist.
 func (mp ModelPath) GetManifestPath() (string, error) {
-	dir, err := modelsDir()
-	if err != nil {
-		return "", err
+	name := model.Name{
+		Host:      mp.Registry,
+		Namespace: mp.Namespace,
+		Model:     mp.Repository,
+		Tag:       mp.Tag,
 	}
-
-	return filepath.Join(dir, "manifests", mp.Registry, mp.Namespace, mp.Repository, mp.Tag), nil
+	if !name.IsValid() {
+		return "", fs.ErrNotExist
+	}
+	return filepath.Join(envconfig.Models(), "manifests", name.Filepath()), nil
 }
 
 func (mp ModelPath) BaseURL() *url.URL {
@@ -130,12 +115,7 @@ func (mp ModelPath) BaseURL() *url.URL {
 }
 
 func GetManifestPath() (string, error) {
-	dir, err := modelsDir()
-	if err != nil {
-		return "", err
-	}
-
-	path := filepath.Join(dir, "manifests")
+	path := filepath.Join(envconfig.Models(), "manifests")
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return "", err
 	}
@@ -144,13 +124,16 @@ func GetManifestPath() (string, error) {
 }
 
 func GetBlobsPath(digest string) (string, error) {
-	dir, err := modelsDir()
-	if err != nil {
-		return "", err
+	// only accept actual sha256 digests
+	pattern := "^sha256[:-][0-9a-fA-F]{64}$"
+	re := regexp.MustCompile(pattern)
+
+	if digest != "" && !re.MatchString(digest) {
+		return "", ErrInvalidDigestFormat
 	}
 
 	digest = strings.ReplaceAll(digest, ":", "-")
-	path := filepath.Join(dir, "blobs", digest)
+	path := filepath.Join(envconfig.Models(), "blobs", digest)
 	dirPath := filepath.Dir(path)
 	if digest == "" {
 		dirPath = path

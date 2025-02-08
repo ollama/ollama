@@ -40,8 +40,6 @@ func HumanBytes(b int64) string {
 	}
 
 	switch {
-	case value >= 100:
-		return fmt.Sprintf("%d %s", int(value), unit)
 	case value >= 10:
 		return fmt.Sprintf("%d %s", int(value), unit)
 	case value != math.Trunc(value):
@@ -53,6 +51,8 @@ func HumanBytes(b int64) string {
 
 func HumanBytes2(b uint64) string {
 	switch {
+	case b >= GibiByte:
+		return fmt.Sprintf("%.1f GiB", float64(b)/GibiByte)
 	case b >= MebiByte:
 		return fmt.Sprintf("%.1f MiB", float64(b)/MebiByte)
 	case b >= KibiByte:

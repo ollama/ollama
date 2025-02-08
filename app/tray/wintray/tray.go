@@ -11,10 +11,12 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"syscall"
 	"unsafe"
 
-	"github.com/ollama/ollama/app/tray/commontray"
 	"golang.org/x/sys/windows"
+
+	"github.com/ollama/ollama/app/tray/commontray"
 )
 
 // Helpful sources: https://github.com/golang/exp/blob/master/shiny/driver/internal/win32
@@ -186,7 +188,7 @@ func (t *winTray) initInstance() error {
 	t.muNID.Lock()
 	defer t.muNID.Unlock()
 	t.nid = &notifyIconData{
-		Wnd:             windows.Handle(t.window),
+		Wnd:             t.window,
 		ID:              100,
 		Flags:           NIF_MESSAGE,
 		CallbackMessage: t.wmSystrayMessage,
@@ -197,7 +199,6 @@ func (t *winTray) initInstance() error {
 }
 
 func (t *winTray) createMenu() error {
-
 	menuHandle, _, err := pCreatePopupMenu.Call()
 	if menuHandle == 0 {
 		return err
@@ -246,7 +247,7 @@ func (t *winTray) addOrUpdateMenuItem(menuItemId uint32, parentId uint32, title 
 	mi := menuItemInfo{
 		Mask:     MIIM_FTYPE | MIIM_STRING | MIIM_ID | MIIM_STATE,
 		Type:     MFT_STRING,
-		ID:       uint32(menuItemId),
+		ID:       menuItemId,
 		TypeData: titlePtr,
 		Cch:      uint32(len(title)),
 	}
@@ -302,11 +303,10 @@ func (t *winTray) addOrUpdateMenuItem(menuItemId uint32, parentId uint32, title 
 }
 
 func (t *winTray) addSeparatorMenuItem(menuItemId, parentId uint32) error {
-
 	mi := menuItemInfo{
 		Mask: MIIM_FTYPE | MIIM_ID | MIIM_STATE,
 		Type: MFT_SEPARATOR,
-		ID:   uint32(menuItemId),
+		ID:   menuItemId,
 	}
 
 	mi.Size = uint32(unsafe.Sizeof(mi))
@@ -361,7 +361,7 @@ func (t *winTray) showMenu() error {
 
 	boolRet, _, err = pTrackPopupMenu.Call(
 		uintptr(t.menus[0]),
-		TPM_BOTTOMALIGN|TPM_LEFTALIGN,
+		TPM_BOTTOMALIGN|TPM_LEFTALIGN|TPM_RIGHTBUTTON,
 		uintptr(p.X),
 		uintptr(p.Y),
 		0,
@@ -416,7 +416,7 @@ func iconBytesToFilePath(iconBytes []byte) (string, error) {
 	iconFilePath := filepath.Join(os.TempDir(), "ollama_temp_icon_"+dataHash)
 
 	if _, err := os.Stat(iconFilePath); os.IsNotExist(err) {
-		if err := os.WriteFile(iconFilePath, iconBytes, 0644); err != nil {
+		if err := os.WriteFile(iconFilePath, iconBytes, 0o644); err != nil {
 			return "", err
 		}
 	}
@@ -426,7 +426,6 @@ func iconBytesToFilePath(iconBytes []byte) (string, error) {
 // Loads an image from file and shows it in tray.
 // Shell_NotifyIcon: https://msdn.microsoft.com/en-us/library/windows/desktop/bb762159(v=vs.85).aspx
 func (t *winTray) setIcon(src string) error {
-
 	h, err := t.loadIconFrom(src)
 	if err != nil {
 		return err
@@ -435,7 +434,12 @@ func (t *winTray) setIcon(src string) error {
 	t.muNID.Lock()
 	defer t.muNID.Unlock()
 	t.nid.Icon = h
-	t.nid.Flags |= NIF_ICON
+	t.nid.Flags |= NIF_ICON | NIF_TIP
+	if toolTipUTF16, err := syscall.UTF16FromString(commontray.ToolTip); err == nil {
+		copy(t.nid.Tip[:], toolTipUTF16)
+	} else {
+		return err
+	}
 	t.nid.Size = uint32(unsafe.Sizeof(*t.nid))
 
 	return t.nid.modify()
@@ -444,7 +448,6 @@ func (t *winTray) setIcon(src string) error {
 // Loads an image from file to be shown in tray or menu item.
 // LoadImage: https://msdn.microsoft.com/en-us/library/windows/desktop/ms648045(v=vs.85).aspx
 func (t *winTray) loadIconFrom(src string) (windows.Handle, error) {
-
 	// Save and reuse handles of loaded images
 	t.muLoadedImages.RLock()
 	h, ok := t.loadedImages[src]

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"syscall"
 )
 
 type Prompt struct {
@@ -63,7 +62,7 @@ func New(prompt Prompt) (*Instance, error) {
 
 func (i *Instance) Readline() (string, error) {
 	if !i.Terminal.rawmode {
-		fd := int(syscall.Stdin)
+		fd := os.Stdin.Fd()
 		termios, err := SetRawMode(fd)
 		if err != nil {
 			return "", err
@@ -80,8 +79,8 @@ func (i *Instance) Readline() (string, error) {
 	fmt.Print(prompt)
 
 	defer func() {
-		fd := int(syscall.Stdin)
-		// nolint: errcheck
+		fd := os.Stdin.Fd()
+		//nolint:errcheck
 		UnsetRawMode(fd, i.Terminal.termios)
 		i.Terminal.rawmode = false
 	}()
@@ -99,7 +98,7 @@ func (i *Instance) Readline() (string, error) {
 		showPlaceholder := !i.Pasting || i.Prompt.UseAlt
 		if buf.IsEmpty() && showPlaceholder {
 			ph := i.Prompt.placeholder()
-			fmt.Printf(ColorGrey + ph + fmt.Sprintf(CursorLeftN, len(ph)) + ColorDefault)
+			fmt.Print(ColorGrey + ph + CursorLeftN(len(ph)) + ColorDefault)
 		}
 
 		r, err := i.Terminal.Read()
@@ -121,11 +120,11 @@ func (i *Instance) Readline() (string, error) {
 					if i.History.Pos == i.History.Size() {
 						currentLineBuf = []rune(buf.String())
 					}
-					buf.Replace(i.History.Prev())
+					buf.Replace([]rune(i.History.Prev()))
 				}
 			case KeyDown:
 				if i.History.Pos < i.History.Size() {
-					buf.Replace(i.History.Next())
+					buf.Replace([]rune(i.History.Next()))
 					if i.History.Pos == i.History.Size() {
 						buf.Replace(currentLineBuf)
 					}
@@ -136,7 +135,7 @@ func (i *Instance) Readline() (string, error) {
 				buf.MoveRight()
 			case CharBracketedPaste:
 				var code string
-				for cnt := 0; cnt < 3; cnt++ {
+				for range 3 {
 					r, err = i.Terminal.Read()
 					if err != nil {
 						return "", io.EOF
@@ -150,7 +149,7 @@ func (i *Instance) Readline() (string, error) {
 					i.Pasting = false
 				}
 			case KeyDel:
-				if buf.Size() > 0 {
+				if buf.DisplaySize() > 0 {
 					buf.Delete()
 				}
 				metaDel = true
@@ -198,11 +197,11 @@ func (i *Instance) Readline() (string, error) {
 			buf.Remove()
 		case CharTab:
 			// todo: convert back to real tabs
-			for cnt := 0; cnt < 8; cnt++ {
+			for range 8 {
 				buf.Add(' ')
 			}
 		case CharDelete:
-			if buf.Size() > 0 {
+			if buf.DisplaySize() > 0 {
 				buf.Delete()
 			} else {
 				return "", io.EOF
@@ -216,12 +215,12 @@ func (i *Instance) Readline() (string, error) {
 		case CharCtrlW:
 			buf.DeleteWord()
 		case CharCtrlZ:
-			fd := int(syscall.Stdin)
+			fd := os.Stdin.Fd()
 			return handleCharCtrlZ(fd, i.Terminal.termios)
-		case CharEnter:
+		case CharEnter, CharCtrlJ:
 			output := buf.String()
 			if output != "" {
-				i.History.Add([]rune(output))
+				i.History.Add(output)
 			}
 			buf.MoveToEnd()
 			fmt.Println()
@@ -232,7 +231,7 @@ func (i *Instance) Readline() (string, error) {
 				metaDel = false
 				continue
 			}
-			if r >= CharSpace || r == CharEnter {
+			if r >= CharSpace || r == CharEnter || r == CharCtrlJ {
 				buf.Add(r)
 			}
 		}
@@ -248,7 +247,7 @@ func (i *Instance) HistoryDisable() {
 }
 
 func NewTerminal() (*Terminal, error) {
-	fd := int(syscall.Stdin)
+	fd := os.Stdin.Fd()
 	termios, err := SetRawMode(fd)
 	if err != nil {
 		return nil, err
