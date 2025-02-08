@@ -3,7 +3,7 @@
 Install prerequisites:
 
 - [Go](https://go.dev/doc/install)
-- C/C++ Compiler e.g. Clang on macOS, [TDM-GCC](https://jmeubank.github.io/tdm-gcc/download/) (Windows amd64) or [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (Windows arm64), GCC/Clang on Linux.
+- C/C++ Compiler e.g. Clang on macOS, [TDM-GCC](https://github.com/jmeubank/tdm-gcc/releases/latest) (Windows amd64) or [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (Windows arm64), GCC/Clang on Linux.
 
 Then build and run Ollama from the root directory of the repository:
 
