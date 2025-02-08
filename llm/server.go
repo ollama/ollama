@@ -1117,9 +1117,9 @@ func (s *llmServer) EstimatedVRAMByGPU(gpuID string) uint64 {
 
 func (s *llmServer) RunnerOptions() map[string]any {
 	options := map[string]any{
-		"num_ctx": int64(s.options.NumCtx),
+		"num_ctx":    int64(s.options.NumCtx),
 		"num_thread": int64(s.options.NumThread),
-		"use_mlock": s.options.UseMLock,
+		"use_mlock":  s.options.UseMLock,
 	}
 	if s.options.UseMMap != nil {
 		options["use_mmap"] = *s.options.UseMMap
