@@ -43,17 +43,18 @@ type blobDownload struct {
 
 	context.CancelFunc
 
-	done       bool
-	err        error
-	references atomic.Int32
+	done                    bool
+	err                     error
+	references              atomic.Int32
+	checkBlobUpdateInterval time.Duration
 }
 
 type blobDownloadPart struct {
-	N           int
-	Offset      int64
-	Size        int64
-	Completed   int64
-	lastUpdated time.Time
+	N         int
+	Offset    int64
+	Size      int64
+	Completed int64
+	timeoutAt time.Time
 
 	*blobDownload `json:"-"`
 }
@@ -81,7 +82,7 @@ func (p *blobDownloadPart) StopsAt() int64 {
 func (p *blobDownloadPart) Write(b []byte) (n int, err error) {
 	n = len(b)
 	p.blobDownload.Completed.Add(int64(n))
-	p.lastUpdated = time.Now()
+	p.timeoutAt = time.Now().Add(p.checkBlobUpdateInterval)
 	return n, nil
 }
 
@@ -239,6 +240,7 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 
 	g.Go(func() error {
 		ticker := time.NewTicker(time.Second)
+		part.timeoutAt = time.Now().Add(b.checkBlobUpdateInterval)
 		for {
 			select {
 			case <-ticker.C:
@@ -246,11 +248,9 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 					return nil
 				}
 
-				if !part.lastUpdated.IsZero() && time.Since(part.lastUpdated) > 5*time.Second {
+				if time.Now().After(part.timeoutAt) {
 					const msg = "%s part %d stalled; retrying. If this persists, press ctrl-c to exit, then 'ollama pull' to find a faster connection."
 					slog.Info(fmt.Sprintf(msg, b.Digest[7:19], part.N))
-					// reset last updated
-					part.lastUpdated = time.Time{}
 					return errPartStalled
 				}
 			case <-ctx.Done():
@@ -362,7 +362,7 @@ func downloadBlob(ctx context.Context, opts downloadOpts) error {
 		return nil
 	}
 
-	data, ok := blobDownloadManager.LoadOrStore(opts.digest, &blobDownload{Name: fp, Digest: opts.digest})
+	data, ok := blobDownloadManager.LoadOrStore(opts.digest, &blobDownload{Name: fp, Digest: opts.digest, checkBlobUpdateInterval: 5 * time.Second})
 	download := data.(*blobDownload)
 	if !ok {
 		requestURL := opts.mp.BaseURL()
