@@ -242,7 +242,7 @@ jobs:
             dist\${{ matrix.os }}-${{ matrix.arch }}-app.exe
 
   windows-sign:
-    runs-on: windows
+    runs-on: windows-2022
     environment: release
     needs: [windows-depends, windows-build]
     steps:
