@@ -1,21 +1,21 @@
 package server
 
 import (
-	"bytes"
-	"context"
-	"errors"
-	"log/slog"
-	"os"
-	"testing"
-	"time"
+    "bytes"
+    "context"
+    "errors"
+    "log/slog"
+    "os"
+    "testing"
+    "time"
 
-	"github.com/stretchr/testify/require"
+    "github.com/stretchr/testify/require"
 
-	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/app/lifecycle"
-	"github.com/ollama/ollama/discover"
-	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/llm"
+    "github.com/ollama/ollama/api"
+    "github.com/ollama/ollama/app/lifecycle"
+    "github.com/ollama/ollama/discover"
+    "github.com/ollama/ollama/format"
+    "github.com/ollama/ollama/llm"
 )
 
 func TestMain(m *testing.M) {
@@ -789,5 +789,52 @@ func (s *mockLlm) Close() error {
 	return s.closeResp
 }
 func (s *mockLlm) EstimatedVRAM() uint64                  { return s.estimatedVRAM }
+
+// Test generated using Keploy
+func TestFilterGPUsWithoutLoadingModels_ActiveLoading(t *testing.T) {
+    ctx, done := context.WithTimeout(context.Background(), 100*time.Millisecond)
+    defer done()
+
+    gpus := discover.GpuInfoList{
+        {ID: "0", Library: "cuda"},
+        {ID: "1", Library: "cuda"},
+    }
+
+    r1 := &runnerRef{
+        gpus:    discover.GpuInfoList{gpus[0]},
+        loading: true,
+    }
+
+    s := InitScheduler(ctx)
+    s.loadedMu.Lock()
+    s.loaded["a"] = r1
+    s.loadedMu.Unlock()
+
+    filtered := s.filterGPUsWithoutLoadingModels(gpus)
+    require.Len(t, filtered, 1)
+    require.Equal(t, "1", filtered[0].ID)
+}
+
 func (s *mockLlm) EstimatedTotal() uint64                 { return s.estimatedTotal }
+
+// Test generated using Keploy
+func TestFindRunnerToUnload_ShortestDuration(t *testing.T) {
+    ctx, cancel := context.WithCancel(context.Background())
+    defer cancel()
+
+    r1 := &runnerRef{sessionDuration: 10 * time.Second}
+    r2 := &runnerRef{sessionDuration: 5 * time.Second}
+    r3 := &runnerRef{sessionDuration: 15 * time.Second}
+
+    s := InitScheduler(ctx)
+    s.loadedMu.Lock()
+    s.loaded["r1"] = r1
+    s.loaded["r2"] = r2
+    s.loaded["r3"] = r3
+    s.loadedMu.Unlock()
+
+    runner := s.findRunnerToUnload()
+    require.Equal(t, r2, runner)
+}
+
 func (s *mockLlm) EstimatedVRAMByGPU(gpuid string) uint64 { return s.estimatedVRAMByGPU[gpuid] }
