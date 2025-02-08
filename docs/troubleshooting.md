@@ -17,6 +17,7 @@ When you run Ollama in a **container**, the logs go to stdout/stderr in the cont
 ```shell
 docker logs <container-name>
 ```
+
 (Use `docker ps` to find the container name)
 
 If manually running `ollama serve` in a terminal, the logs will be on that terminal.
@@ -28,6 +29,7 @@ When you run Ollama on **Windows**, there are a few different locations. You can
 - `explorer %TEMP%` where temporary executable files are stored in one or more `ollama*` directories
 
 To enable additional debug logging to help troubleshoot problems, first **Quit the running app from the tray menu** then in a powershell terminal
+
 ```powershell
 $env:OLLAMA_DEBUG="1"
 & "ollama app.exe"
@@ -49,12 +51,13 @@ Dynamic LLM libraries [rocm_v6 cpu cpu_avx cpu_avx2 cuda_v11 rocm_v5]
 
 You can set OLLAMA_LLM_LIBRARY to any of the available LLM libraries to bypass autodetection, so for example, if you have a CUDA card, but want to force the CPU LLM library with AVX2 vector support, use:
 
-```
+```shell
 OLLAMA_LLM_LIBRARY="cpu_avx2" ollama serve
 ```
 
 You can see what features your CPU has with the following.
-```
+
+```shell
 cat /proc/cpuinfo| grep flags | head -1
 ```
 
@@ -62,8 +65,8 @@ cat /proc/cpuinfo| grep flags | head -1
 
 If you run into problems on Linux and want to install an older version, or you'd like to try out a pre-release before it's officially released, you can tell the install script which version to install.
 
-```sh
-curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION="0.1.29" sh
+```shell
+curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=0.5.7 sh
 ```
 
 ## Linux tmp noexec 

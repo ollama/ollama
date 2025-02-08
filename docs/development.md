@@ -7,7 +7,7 @@ Install prerequisites:
 
 Then build and run Ollama from the root directory of the repository:
 
-```
+```shell
 go run . serve
 ```
 
@@ -23,14 +23,14 @@ Install prerequisites:
 
 Then, configure and build the project:
 
-```
+```shell
 cmake -B build
 cmake --build build
 ```
 
 Lastly, run Ollama:
 
-```
+```shell
 go run . serve
 ```
 
@@ -57,14 +57,14 @@ Install prerequisites:
 
 Then, configure and build the project:
 
-```
+```shell
 cmake -B build
 cmake --build build --config Release
 ```
 
 Lastly, run Ollama:
 
-```
+```shell
 go run . serve
 ```
 
@@ -88,26 +88,26 @@ Install prerequisites:
 
 Then, configure and build the project:
 
-```
+```shell
 cmake -B build
 cmake --build build
 ```
 
 Lastly, run Ollama:
 
-```
+```shell
 go run . serve
 ```
 
 ## Docker
 
-```
+```shell
 docker build .
 ```
 
 ### ROCm
 
-```
+```shell
 docker build --build-arg FLAVOR=rocm .
 ```
 
@@ -115,6 +115,17 @@ docker build --build-arg FLAVOR=rocm .
 
 To run tests, use `go test`:
 
-```
+```shell
 go test ./...
 ```
+
+## Library detection
+
+Ollama looks for acceleration libraries in the following paths relative to the `ollama` executable:
+
+* `./lib/ollama` (Windows)
+* `../lib/ollama` (Linux)
+* `.` (macOS)
+* `build/lib/ollama` (for development)
+
+If the libraries are not found, Ollama will not run with any acceleration libraries.

@@ -31,7 +31,7 @@ Certain endpoints stream responses as JSON objects. Streaming can be disabled by
 
 ## Generate a completion
 
-```shell
+```
 POST /api/generate
 ```
 
@@ -306,7 +306,7 @@ curl http://localhost:11434/api/generate -d '{
 
 #### Response
 
-```
+```json
 {
   "model": "llava",
   "created_at": "2023-11-03T15:36:02.583064Z",
@@ -485,7 +485,7 @@ A single JSON object is returned:
 
 ## Generate a chat completion
 
-```shell
+```
 POST /api/chat
 ```
 
@@ -795,7 +795,7 @@ curl http://localhost:11434/api/chat -d '{
 
 ##### Request
 
-```
+```shell
 curl http://localhost:11434/api/chat -d '{
   "model": "llama3.2",
   "messages": [
@@ -870,7 +870,7 @@ If the messages array is empty, the model will be loaded into memory.
 
 ##### Request
 
-```
+```shell
 curl http://localhost:11434/api/chat -d '{
   "model": "llama3.2",
   "messages": []
@@ -878,6 +878,7 @@ curl http://localhost:11434/api/chat -d '{
 ```
 
 ##### Response
+
 ```json
 {
   "model": "llama3.2",
@@ -897,7 +898,7 @@ If the messages array is empty and the `keep_alive` parameter is set to `0`, a m
 
 ##### Request
 
-```
+```shell
 curl http://localhost:11434/api/chat -d '{
   "model": "llama3.2",
   "messages": [],
@@ -924,7 +925,7 @@ A single JSON object is returned:
 
 ## Create a Model
 
-```shell
+```
 POST /api/create
 ```
 
@@ -1020,7 +1021,7 @@ curl http://localhost:11434/api/create -d '{
 
 A stream of JSON objects is returned:
 
-```
+```json
 {"status":"quantizing F16 model to Q4_K_M"}
 {"status":"creating new layer sha256:667b0c1932bc6ffc593ed1d03f895bf2dc8dc6df21db3042284a6f4416b06a29"}
 {"status":"using existing layer sha256:11ce4ee3e170f6adebac9a991c22e22ab3f8530e154ee669954c4bc73061c258"}
@@ -1051,7 +1052,7 @@ curl http://localhost:11434/api/create -d '{
 
 A stream of JSON objects is returned:
 
-```
+```json
 {"status":"parsing GGUF"}
 {"status":"using existing layer sha256:432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3"}
 {"status":"writing manifest"}
@@ -1118,7 +1119,7 @@ Return 200 OK if the blob exists, 404 Not Found if it does not.
 
 ## Push a Blob
 
-```shell
+```
 POST /api/blobs/:digest
 ```
 
@@ -1142,7 +1143,7 @@ Return 201 Created if the blob was successfully created, 400 Bad Request if the 
 
 ## List Local Models
 
-```shell
+```
 GET /api/tags
 ```
 
@@ -1195,7 +1196,7 @@ A single JSON object will be returned.
 
 ## Show Model Information
 
-```shell
+```
 POST /api/show
 ```
 
@@ -1261,7 +1262,7 @@ curl http://localhost:11434/api/show -d '{
 
 ## Copy a Model
 
-```shell
+```
 POST /api/copy
 ```
 
@@ -1284,7 +1285,7 @@ Returns a 200 OK if successful, or a 404 Not Found if the source model doesn't e
 
 ## Delete a Model
 
-```shell
+```
 DELETE /api/delete
 ```
 
@@ -1310,7 +1311,7 @@ Returns a 200 OK if successful, 404 Not Found if the model to be deleted doesn't
 
 ## Pull a Model
 
-```shell
+```
 POST /api/pull
 ```
 
@@ -1382,7 +1383,7 @@ if `stream` is set to false, then the response is a single JSON object:
 
 ## Push a Model
 
-```shell
+```
 POST /api/push
 ```
 
@@ -1447,7 +1448,7 @@ If `stream` is set to `false`, then the response is a single JSON object:
 
 ## Generate Embeddings
 
-```shell
+```
 POST /api/embed
 ```
 
@@ -1515,7 +1516,7 @@ curl http://localhost:11434/api/embed -d '{
 ```
 
 ## List Running Models
-```shell
+```
 GET /api/ps
 ```
 
@@ -1562,7 +1563,7 @@ A single JSON object will be returned.
 
 > Note: this endpoint has been superseded by `/api/embed`
 
-```shell
+```
 POST /api/embeddings
 ```
 
@@ -1602,7 +1603,7 @@ curl http://localhost:11434/api/embeddings -d '{
 
 ## Version
 
-```shell
+```
 GET /api/version
 ```
 

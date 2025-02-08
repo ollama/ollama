@@ -3,7 +3,6 @@
 package discover
 
 /*
-#cgo CPPFLAGS: -O3
 #cgo linux LDFLAGS: -lrt -lpthread -ldl -lstdc++ -lm
 #cgo windows LDFLAGS: -lpthread
 

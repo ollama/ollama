@@ -5,6 +5,10 @@ on:
     tags:
       - 'v*'
 
+env:
+  CGO_CFLAGS: '-O3'
+  CGO_CXXFLAGS: '-O3'
+
 jobs:
   setup-environment:
     runs-on: ubuntu-latest
@@ -77,7 +81,7 @@ jobs:
           path: dist/darwin-arm64
       - run: |
           export VERSION=${GITHUB_REF_NAME#v}
-          ./scripts/build_darwin.sh macapp sign
+          ./scripts/build_darwin.sh sign macapp
         env:
           APPLE_IDENTITY: ${{ secrets.APPLE_IDENTITY }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -193,33 +197,38 @@ jobs:
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
-      - name: Install system dependencies
+      - name: Install AMD64 system dependencies
+        if: matrix.arch == 'amd64'
         run: |
           $ErrorActionPreference = "Stop"
-          if ("${{ matrix.arch }}" -eq 'amd64') {
-            Start-Process "C:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang") -NoNewWindow -Wait
-            echo "C:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-            echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          } elseif ("${{ matrix.arch }}" -eq 'arm64') {
-            Set-ExecutionPolicy Bypass -Scope Process -Force
-            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
-            iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-            echo "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Start-Process "C:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang") -NoNewWindow -Wait
+          echo "C:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Install ARM64 system dependencies
+        if: matrix.arch == 'arm64'
+        run: |
+          $ErrorActionPreference = "Stop"
+          Set-ExecutionPolicy Bypass -Scope Process -Force
+          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+          iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+          echo "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-            choco install -y --no-progress git gzip
-            echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          choco install -y --no-progress git gzip
+          echo "C:\Program Files\Git\cmd" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-            Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-aarch64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt-aarch64.zip"
-            Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt-aarch64.zip -DestinationPath "C:\Program Files\"
-            $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt-aarch64").path
-            echo $installPath\bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          }
+          Invoke-WebRequest -Uri "https://github.com/mstorsjo/llvm-mingw/releases/download/20240619/llvm-mingw-20240619-ucrt-aarch64.zip" -OutFile "${{ runner.temp }}\llvm-mingw-ucrt-aarch64.zip"
+          Expand-Archive -Path ${{ runner.temp }}\llvm-mingw-ucrt-aarch64.zip -DestinationPath "C:\Program Files\"
+          $installPath=(Resolve-Path -Path "C:\Program Files\llvm-mingw-*-ucrt-aarch64").path
+          echo $installPath\bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - run: |
           go build -o dist/${{ matrix.os }}-${{ matrix.arch }}/ .
+      - if: matrix.arch == 'arm64'
+        run: |
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.arm64.exe" -OutFile "dist\windows-arm64\vc_redist.arm64.exe"
       - run: |
           $env:VERSION='${{ github.ref_name }}' -Replace "v(.*)", '$1'
           & .\scripts\build_windows.ps1 buildApp
@@ -254,16 +263,18 @@ jobs:
           echo "${{ vars.OLLAMA_CERT }}" >ollama_inc.crt
       - uses: actions/download-artifact@v4
         with:
-          name: build-windows-*
+          pattern: build-windows-*
           path: dist\
           merge-multiple: true
       - uses: actions/download-artifact@v4
         with:
-          name: depends-windows-amd64-*
+          pattern: depends-windows-amd64-*
           path: dist\windows-amd64\
           merge-multiple: true
       - run: |
           & .\scripts\build_windows.ps1 gatherDependencies sign buildInstaller distZip
+        env:
+          KEY_CONTAINER: ${{ vars.KEY_CONTAINER }}
       - uses: actions/upload-artifact@v4
         with:
           name: dist-windows
@@ -277,10 +288,13 @@ jobs:
         include:
           - os: linux
             arch: amd64
-            targets: 'archive rocm'
+            target: archive
+          - os: linux
+            arch: amd64
+            target: rocm
           - os: linux
             arch: arm64
-            targets: archive
+            target: archive
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     needs: setup-environment
@@ -289,38 +303,104 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.os }}/${{ matrix.arch }}
+          target: ${{ matrix.target }}
+          build-args: |
+            GOFLAGS=${{ env.GOFLAGS }}
+            CGO_CFLAGS=${{ env.CGO_CFLAGS }}
+            CGO_CXXFLAGS=${{ env.CGO_CXXFLAGS }}
+          outputs: type=local,dest=dist/${{ matrix.os }}-${{ matrix.arch }}
+          cache-from: type=registry,ref=ollama/ollama:latest
+          cache-to: type=inline
       - run: |
-          apt-get update && apt-get install pigz
-          for TARGET in ${{ matrix.targets }}; do docker buildx build --platform $PLATFORM --target $TARGET --build-arg GOFLAGS --output type=local,dest=dist/$PLATFORM .; done
-          tar c -C dist/$PLATFORM . | pigz -9cv >dist/ollama-${PLATFORM//\//-}.tgz
-        env:
-          PLATFORM: ${{ matrix.os }}/${{ matrix.arch }}
+          for COMPONENT in bin/* lib/ollama/*; do
+            case "$COMPONENT" in
+              bin/ollama)               echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/*.so)          echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/cuda_v11)      echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/cuda_v12)      echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/cuda_jetpack5) echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack5.tar.in ;;
+              lib/ollama/cuda_jetpack6) echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack6.tar.in ;;
+              lib/ollama/rocm)          echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
+            esac
+          done
+        working-directory: dist/${{ matrix.os }}-${{ matrix.arch }}
+      - run: |
+          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in; do tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE | pigz -9vc >$(basename ${ARCHIVE//.*/}.tgz); done
       - uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.os }}-${{ matrix.arch }}
+          name: dist-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.target }}
           path: |
-            dist/ollama-${{ matrix.os }}-${{ matrix.arch }}.tgz
+            *.tgz
 
-  docker-build:
+  # Build each Docker variant (OS, arch, and flavor) separately. Using QEMU is unreliable and slower.
+  docker-build-push:
     strategy:
       matrix:
         include:
-          - flavor: 'latest=false'
-            platforms: linux/amd64,linux/arm64
+          - os: linux
+            arch: arm64
             build-args: |
-              GOFLAGS=${{ needs.setup-environment.outputs.GOFLAGS }}
-          - flavor: 'latest=false,suffix=rocm'
-            platforms: linux/amd64
+              CGO_CFLAGS
+              CGO_CXXFLAGS
+              GOFLAGS
+          - os: linux
+            arch: amd64
             build-args: |
-              GOFLAGS=${{ needs.setup-environment.outputs.GOFLAGS }}
+              CGO_CFLAGS
+              CGO_CXXFLAGS
+              GOFLAGS
+          - os: linux
+            arch: amd64
+            suffix: '-rocm'
+            build-args: |
+              CGO_CFLAGS
+              CGO_CXXFLAGS
+              GOFLAGS
               FLAVOR=rocm
-    runs-on: linux
+    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     needs: setup-environment
+    env:
+      GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v2
-      - uses: docker/setup-buildx-action@v2
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
+      - id: build-push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.os }}/${{ matrix.arch }}
+          build-args: ${{ matrix.build-args }}
+          outputs: type=image,name=ollama/ollama,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=registry,ref=ollama/ollama:latest
+          cache-to: type=inline
+      - run: |
+          mkdir -p ${{ matrix.os }}-${{ matrix.arch }}
+          echo "${{ steps.build-push.outputs.digest }}" >${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}.txt
+        working-directory: ${{ runner.temp }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}
+          path: |
+            ${{ runner.temp }}/${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}.txt
+
+  # Merge Docker images for the same flavor into a single multi-arch manifest
+  docker-merge-push:
+    strategy:
+      matrix:
+        suffix: ['', '-rocm']
+    runs-on: linux
+    environment: release
+    needs: [docker-build-push]
+    steps:
       - uses: docker/login-action@v3
         with:
           username: ${{ vars.DOCKER_USER }}
@@ -328,22 +408,23 @@ jobs:
       - id: metadata
         uses: docker/metadata-action@v4
         with:
-          flavor: ${{ matrix.flavor }}
+          flavor: |
+            latest=false
+            suffix=${{ matrix.suffix }}
           images: |
             ollama/ollama
           tags: |
+            type=ref,enable=true,priority=600,prefix=pr-,event=pr
             type=semver,pattern={{version}}
-      - uses: docker/build-push-action@v6
+      - uses: actions/download-artifact@v4
         with:
-          context: .
-          push: true
-          platforms: ${{ matrix.platforms }}
-          build-args: ${{ matrix.build-args }}
-          tags: ${{ steps.metadata.outputs.tags }}
-          labels: ${{ steps.metadata.outputs.labels }}
-          cache-from: type=registry,ref=ollama/ollama:latest
-          cache-to: type=inline
-          provenance: false
+          pattern: digest-*
+          path: ${{ runner.temp }}
+          merge-multiple: true
+      - run: |
+          docker buildx imagetools create $(echo '${{ steps.metadata.outputs.json }}' | jq -cr '.tags | map("-t", .) | join(" ")') $(cat *-${{ matrix.suffix }}.txt | xargs printf 'ollama/ollama@%s ')
+          docker buildx imagetools inspect ollama/ollama:${{ steps.metadata.outputs.version }}
+        working-directory: ${{ runner.temp }}
 
   # Aggregate all the assets and ship a release
   release:
@@ -356,33 +437,24 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      - name: Set Version
-        shell: bash
-        run: |
       - uses: actions/download-artifact@v4
         with:
+          name: dist-darwin
           path: dist
-          pattern: dist-darwin
       - uses: actions/download-artifact@v4
         with:
+          name: dist-windows
           path: dist
-          pattern: dist-windows
       - uses: actions/download-artifact@v4
         with:
-          path: dist
           pattern: dist-linux-*
-      - uses: actions/download-artifact@v4
-        with:
           path: dist
-          pattern: dist-windows
-      - run: |
-          ls -lh dist/
-          (cd dist; find . -type f | xargs sha256sum > ../sha256sum.txt)
-          mv sha256sum.txt dist/
-          cat dist/sha256sum.txt
+          merge-multiple: true
+      - run: find . -type f -not -name 'sha256sum.txt' | xargs sha256sum | tee sha256sum.txt
+        working-directory: dist
       - name: Create or update Release
         run: |
-          RELEASE_VERSION=$(echo ${GITHUB_REF_NAME} | cut -f1 -d-)"
+          RELEASE_VERSION="$(echo ${GITHUB_REF_NAME} | cut -f1 -d-)"
 
           echo "Looking for existing release for ${RELEASE_VERSION}"
           OLD_TAG=$(gh release ls --json name,tagName | jq -r ".[] | select(.name == \"${RELEASE_VERSION}\") | .tagName")
