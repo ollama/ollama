@@ -372,11 +372,9 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 				timeoutAt := part.timeoutAt
 				part.timeoutAtMu.Unlock()
 
-				if time.Now().After(timeoutAt) {
+				if !timeoutAt.IsZero() && time.Now().After(timeoutAt) {
 					const msg = "%s part %d stalled; retrying. If this persists, press ctrl-c to exit, then 'ollama pull' to find a faster connection."
 					slog.Info(fmt.Sprintf(msg, b.Digest[7:19], part.N))
-					// reset last updated
-					part.lastUpdated = time.Time{}
 					return errPartStalled
 				}
 			case <-ctx.Done():
