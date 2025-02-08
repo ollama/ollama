@@ -1,5 +1,6 @@
 protect *.go
 protect *-embed.*
+protect ollama-debug.*
 include include/
 include src/
 include src/CMakeLists.txt

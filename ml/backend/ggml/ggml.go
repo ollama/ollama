@@ -99,15 +99,17 @@ func New(r *os.File) (ml.Backend, error) {
 				}),
 				backend: C.ggml_backend_dev_init(d.d, nil),
 			})
-		case C.GGML_BACKEND_DEVICE_TYPE_GPU:
-			slog.Info("gpu", "device", d)
-			gpus = append(gpus, Context{
-				ctx: C.ggml_init(C.struct_ggml_init_params{
-					mem_size: C.size_t(int(C.ggml_tensor_overhead()) * (len(meta.Tensors().Items()) + 1 + int(meta.KV().BlockCount())*2)),
-					no_alloc: true,
-				}),
-				backend: C.ggml_backend_dev_init(d.d, nil),
-			})
+
+			C.ggml_backend_cpu_set_n_threads(cpus[len(cpus)-1].backend, C.int(1))
+		// case C.GGML_BACKEND_DEVICE_TYPE_GPU:
+		// 	slog.Info("gpu", "device", d)
+		// 	gpus = append(gpus, Context{
+		// 		ctx: C.ggml_init(C.struct_ggml_init_params{
+		// 			mem_size: C.size_t(int(C.ggml_tensor_overhead()) * (len(meta.Tensors().Items()) + 1 + int(meta.KV().BlockCount())*2)),
+		// 			no_alloc: true,
+		// 		}),
+		// 		backend: C.ggml_backend_dev_init(d.d, nil),
+		// 	})
 		}
 	}
 
