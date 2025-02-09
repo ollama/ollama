@@ -4,6 +4,7 @@ import (
     "fmt"
     "testing"
     "github.com/ollama/ollama/api"
+    "context"
 )
 
 
@@ -27,3 +28,26 @@ func TestProgressFunction_Print(t *testing.T) {
         t.Fatalf("Expected no error, but got %v", err)
     }
 }
+
+// Test generated using Keploy
+func TestClientPull_ProgressFuncError(t *testing.T) {
+    mockClient := &MockClient{
+        PullFunc: func(ctx context.Context, req *api.PullRequest, progressFunc func(api.ProgressResponse) error) error {
+            return progressFunc(api.ProgressResponse{Status: "error"})
+        },
+    }
+
+    ctx := context.Background()
+    req := &api.PullRequest{
+        Model: "mistral",
+    }
+    progressFunc := func(resp api.ProgressResponse) error {
+        return fmt.Errorf("mock progress function error")
+    }
+
+    err := mockClient.Pull(ctx, req, progressFunc)
+    if err == nil || err.Error() != "mock progress function error" {
+        t.Fatalf("Expected 'mock progress function error', but got %v", err)
+    }
+}
+

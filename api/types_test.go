@@ -1,14 +1,17 @@
 package api
 
 import (
-	"encoding/json"
-	"errors"
-	"math"
-	"testing"
-	"time"
+    "encoding/json"
+    "errors"
+    "math"
+    "testing"
+    "time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+    "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/require"
+    "bytes"
+    "io"
+    "os"
 )
 
 func TestKeepAliveParsingFromJSON(t *testing.T) {
@@ -231,3 +234,147 @@ func TestMessage_UnmarshalJSON(t *testing.T) {
 		}
 	}
 }
+
+// Test generated using Keploy
+func TestStatusErrorFormatting(t *testing.T) {
+    tests := []struct {
+        name     string
+        input    StatusError
+        expected string
+    }{
+        {
+            name: "Both Status and ErrorMessage present",
+            input: StatusError{
+                Status:       "404 Not Found",
+                ErrorMessage: "Resource not found",
+            },
+            expected: "404 Not Found: Resource not found",
+        },
+        {
+            name: "Only Status present",
+            input: StatusError{
+                Status: "500 Internal Server Error",
+            },
+            expected: "500 Internal Server Error",
+        },
+        {
+            name: "Only ErrorMessage present",
+            input: StatusError{
+                ErrorMessage: "Unexpected error occurred",
+            },
+            expected: "Unexpected error occurred",
+        },
+        {
+            name: "Neither Status nor ErrorMessage present",
+            input: StatusError{},
+            expected: "something went wrong, please see the ollama server logs for details",
+        },
+    }
+
+    for _, test := range tests {
+        t.Run(test.name, func(t *testing.T) {
+            result := test.input.Error()
+            assert.Equal(t, test.expected, result)
+        })
+    }
+}
+
+
+// Test generated using Keploy
+func TestToolCallFunctionArgumentsString(t *testing.T) {
+    args := ToolCallFunctionArguments{
+        "key1": "value1",
+        "key2": 42,
+        "key3": true,
+    }
+
+    result := args.String()
+    expected := `{"key1":"value1","key2":42,"key3":true}`
+
+    assert.JSONEq(t, expected, result)
+}
+
+
+// Test generated using Keploy
+func TestMetricsSummary(t *testing.T) {
+    metrics := Metrics{
+        TotalDuration:      5 * time.Second,
+        LoadDuration:       2 * time.Second,
+        PromptEvalCount:    10,
+        PromptEvalDuration: 1 * time.Second,
+        EvalCount:          20,
+        EvalDuration:       3 * time.Second,
+    }
+
+    // Capture stderr output
+    oldStderr := os.Stderr
+    r, w, _ := os.Pipe()
+    os.Stderr = w
+
+    metrics.Summary()
+
+    w.Close()
+    os.Stderr = oldStderr
+
+    var buf bytes.Buffer
+    io.Copy(&buf, r)
+
+    output := buf.String()
+    assert.Contains(t, output, "total duration:       5s")
+    assert.Contains(t, output, "load duration:        2s")
+    assert.Contains(t, output, "prompt eval count:    10 token(s)")
+    assert.Contains(t, output, "prompt eval duration: 1s")
+    assert.Contains(t, output, "eval count:           20 token(s)")
+    assert.Contains(t, output, "eval duration:        3s")
+}
+
+
+// Test generated using Keploy
+func TestToolsString(t *testing.T) {
+    tools := Tools{
+        {Type: "tool1", Function: ToolFunction{Name: "func1"}},
+        {Type: "tool2", Function: ToolFunction{Name: "func2"}},
+    }
+
+    result := tools.String()
+    expected := `[{"type":"tool1","function":{"name":"func1","description":"","parameters":{"type":"","required":null,"properties":null}}},{"type":"tool2","function":{"name":"func2","description":"","parameters":{"type":"","required":null,"properties":null}}}]`
+
+    assert.JSONEq(t, expected, result)
+}
+
+
+// Test generated using Keploy
+func TestToolFunctionStringSerialization(t *testing.T) {
+    toolFunc := ToolFunction{
+        Name:        "exampleFunction",
+        Description: "This is an example function",
+        Parameters: struct {
+            Type       string   `json:"type"`
+            Required   []string `json:"required"`
+            Properties map[string]struct {
+                Type        string   `json:"type"`
+                Description string   `json:"description"`
+                Enum        []string `json:"enum,omitempty"`
+            } `json:"properties"`
+        }{
+            Type:     "object",
+            Required: []string{"param1"},
+            Properties: map[string]struct {
+                Type        string   `json:"type"`
+                Description string   `json:"description"`
+                Enum        []string `json:"enum,omitempty"`
+            }{
+                "param1": {
+                    Type:        "string",
+                    Description: "A required parameter",
+                },
+            },
+        },
+    }
+
+    result := toolFunc.String()
+    expected := `{"name":"exampleFunction","description":"This is an example function","parameters":{"type":"object","required":["param1"],"properties":{"param1":{"type":"string","description":"A required parameter"}}}}`
+
+    assert.JSONEq(t, expected, result)
+}
+

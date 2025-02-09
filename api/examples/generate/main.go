@@ -1,37 +1,45 @@
 package main
 
 import (
-	"context"
-	"fmt"
-	"log"
+    "context"
+    "fmt"
+    "log"
 
-	"github.com/ollama/ollama/api"
+    "github.com/ollama/ollama/api"
 )
 
+type GenerateClient interface {
+    Generate(ctx context.Context, req *api.GenerateRequest, respFunc func(api.GenerateResponse) error) error
+}
+
 func main() {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		log.Fatal(err)
-	}
+    client, err := api.ClientFromEnvironment()
+    if err != nil {
+        log.Fatal(err)
+    }
 
-	req := &api.GenerateRequest{
-		Model:  "gemma2",
-		Prompt: "how many planets are there?",
+    req := &api.GenerateRequest{
+        Model:  "gemma2",
+        Prompt: "how many planets are there?",
+        Stream: new(bool),
+    }
 
-		// set streaming to false
-		Stream: new(bool),
-	}
+    ctx := context.Background()
+    respFunc := func(resp api.GenerateResponse) error {
+        fmt.Println(resp.Response)
+        return nil
+    }
 
-	ctx := context.Background()
-	respFunc := func(resp api.GenerateResponse) error {
-		// Only print the response here; GenerateResponse has a number of other
-		// interesting fields you want to examine.
-		fmt.Println(resp.Response)
-		return nil
-	}
+    if err := client.Generate(ctx, req, respFunc); err != nil {
+        log.Fatal(err)
+    }
+}
 
-	err = client.Generate(ctx, req, respFunc)
-	if err != nil {
-		log.Fatal(err)
-	}
+// MockClient is a mock implementation of the GenerateClient interface for testing purposes.
+type MockClient struct {
+    GenerateFunc func(ctx context.Context, req *api.GenerateRequest, respFunc func(api.GenerateResponse) error) error
+}
+
+func (m *MockClient) Generate(ctx context.Context, req *api.GenerateRequest, respFunc func(api.GenerateResponse) error) error {
+    return m.GenerateFunc(ctx, req, respFunc)
 }

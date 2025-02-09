@@ -15,6 +15,8 @@ import (
     "github.com/spf13/cobra"
 
     "github.com/ollama/ollama/api"
+    "github.com/ollama/ollama/progress"
+    "path/filepath"
 )
 
 func TestShowInfo(t *testing.T) {
@@ -743,6 +745,97 @@ func TestRunHandler_GenerateAPIError(t *testing.T) {
     err := RunHandler(cmd, []string{"test-model", "Hello, world!"})
     if err == nil || !strings.Contains(err.Error(), "generate error") {
         t.Fatalf("expected generate error, got: %v", err)
+    }
+}
+
+
+// Test generated using Keploy
+func TestCreateBlob_NonExistentFile(t *testing.T) {
+    cmd := &cobra.Command{}
+    cmd.SetContext(context.TODO())
+
+    client := &api.Client{}
+    progress := progress.NewProgress(io.Discard)
+
+    _, err := createBlob(cmd, client, "nonexistentfile.txt", "dummyDigest", progress)
+    if err == nil || !os.IsNotExist(err) {
+        t.Fatalf("Expected file not found error, got: %v", err)
+    }
+}
+
+
+// Test generated using Keploy
+func TestInitializeKeypair_GenerateNewKeypair(t *testing.T) {
+    homeDir, err := os.UserHomeDir()
+    if err != nil {
+        t.Fatalf("Failed to get user home directory: %v", err)
+    }
+
+    keyDir := filepath.Join(homeDir, ".ollama")
+    privKeyPath := filepath.Join(keyDir, "id_ed25519")
+    pubKeyPath := filepath.Join(keyDir, "id_ed25519.pub")
+
+    os.Remove(privKeyPath)
+    os.Remove(pubKeyPath)
+
+    err = initializeKeypair()
+    if err != nil {
+        t.Fatalf("initializeKeypair failed: %v", err)
+    }
+
+    if _, err := os.Stat(privKeyPath); os.IsNotExist(err) {
+        t.Fatalf("Private key was not created")
+    }
+
+    if _, err := os.Stat(pubKeyPath); os.IsNotExist(err) {
+        t.Fatalf("Public key was not created")
+    }
+
+    os.Remove(privKeyPath)
+    os.Remove(pubKeyPath)
+}
+
+
+// Test generated using Keploy
+func TestPushHandler_NetworkFailure(t *testing.T) {
+    // Simulate a network failure by not starting the mock server
+    t.Setenv("OLLAMA_HOST", "http://invalid_host")
+
+    cmd := &cobra.Command{}
+    cmd.Flags().Bool("insecure", false, "")
+    cmd.SetContext(context.TODO())
+
+    err := PushHandler(cmd, []string{"test-model"})
+    if err == nil {
+        t.Fatalf("Expected error due to network failure, got nil")
+    }
+    if !strings.Contains(err.Error(), "dial") {
+        t.Errorf("Expected dial error, got: %v", err)
+    }
+}
+
+
+// Test generated using Keploy
+func TestDeleteHandler_NonExistentModel(t *testing.T) {
+    mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        if r.URL.Path == "/api/delete" && r.Method == http.MethodDelete {
+            w.WriteHeader(http.StatusNotFound)
+            json.NewEncoder(w).Encode(map[string]string{
+                "error": "model not found",
+            })
+            return
+        }
+    }))
+    defer mockServer.Close()
+
+    t.Setenv("OLLAMA_HOST", mockServer.URL)
+
+    cmd := &cobra.Command{}
+    cmd.SetContext(context.TODO())
+
+    err := DeleteHandler(cmd, []string{"nonexistent-model"})
+    if err == nil || !strings.Contains(err.Error(), "model not found") {
+        t.Fatalf("Expected model not found error, got: %v", err)
     }
 }
 

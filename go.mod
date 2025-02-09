@@ -9,7 +9,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/olekukonko/tablewriter v0.0.5
 	github.com/spf13/cobra v1.7.0
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.10.0
 	github.com/x448/float16 v0.8.4
 	golang.org/x/sync v0.10.0
 )
@@ -17,14 +17,12 @@ require (
 require (
 	github.com/agnivade/levenshtein v1.1.1
 	github.com/d4l3k/go-bfloat16 v0.0.0-20211005043715-690c3bdd05f1
-	github.com/dlclark/regexp2 v1.11.4
 	github.com/emirpasic/gods/v2 v2.0.0-alpha
 	github.com/google/go-cmp v0.6.0
 	github.com/mattn/go-runewidth v0.0.14
 	github.com/nlpodyssey/gopickle v0.3.0
 	github.com/pdevine/tensor v0.0.0-20240510204454-f88f4562727c
 	golang.org/x/image v0.22.0
-	gonum.org/v1/gonum v0.15.0
 )
 
 require (
@@ -44,6 +42,7 @@ require (
 	github.com/xtgo/set v1.0.0 // indirect
 	go4.org/unsafe/assume-no-moving-gc v0.0.0-20231121144256-b99613f794b6 // indirect
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
+	gonum.org/v1/gonum v0.15.0 // indirect
 	gorgonia.org/vecf32 v0.9.0 // indirect
 	gorgonia.org/vecf64 v0.9.0 // indirect
 )

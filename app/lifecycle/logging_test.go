@@ -1,13 +1,15 @@
 package lifecycle
 
 import (
-	"os"
-	"path/filepath"
-	"strconv"
-	"testing"
+    "os"
+    "path/filepath"
+    "strconv"
+    "testing"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+    "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/require"
+    "io"
+    "strings"
 )
 
 func TestRotateLogs(t *testing.T) {
@@ -42,3 +44,31 @@ func TestRotateLogs(t *testing.T) {
 		assert.NoFileExists(t, filepath.Join(logDir, "testlog-"+strconv.Itoa(i+1)+".log"))
 	}
 }
+
+// Test generated using Keploy
+func TestInitLogging_DebugMode(t *testing.T) {
+    // Mock envconfigDebug to return true
+    originalEnvconfigDebug := envconfigDebug
+    envconfigDebug = func() bool { return true }
+    defer func() { envconfigDebug = originalEnvconfigDebug }()
+
+    // Redirect os.Stderr to capture logs
+    originalStderr := os.Stderr
+    r, w, _ := os.Pipe()
+    os.Stderr = w
+
+    // Call InitLogging
+    InitLogging()
+
+    // Close and restore os.Stderr
+    w.Close()
+    os.Stderr = originalStderr
+
+    // Read captured logs
+    var buf strings.Builder
+    _, _ = io.Copy(&buf, r)
+
+    // Assert that the startup message is present
+    assert.Contains(t, buf.String(), "ollama app started")
+}
+

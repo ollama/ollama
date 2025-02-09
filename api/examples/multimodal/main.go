@@ -3,25 +3,33 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 
 	"github.com/ollama/ollama/api"
 )
 
-func main() {
-	if len(os.Args) <= 1 {
-		log.Fatal("usage: <image name>")
+var readFile = os.ReadFile
+var clientFromEnvironment = func() (APIClient, error) {
+	return api.ClientFromEnvironment()
+}
+
+type APIClient interface {
+	Generate(ctx context.Context, req *api.GenerateRequest, respFunc api.GenerateResponseFunc) error
+}
+
+func run(args []string) error {
+	if len(args) <= 1 {
+		return fmt.Errorf("usage: <image name>")
 	}
 
-	imgData, err := os.ReadFile(os.Args[1])
+	imgData, err := readFile(args[1])
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
-	client, err := api.ClientFromEnvironment()
+	client, err := clientFromEnvironment()
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	req := &api.GenerateRequest{
@@ -32,16 +40,21 @@ func main() {
 
 	ctx := context.Background()
 	respFunc := func(resp api.GenerateResponse) error {
-		// In streaming mode, responses are partial so we call fmt.Print (and not
-		// Println) in order to avoid spurious newlines being introduced. The
-		// model will insert its own newlines if it wants.
 		fmt.Print(resp.Response)
 		return nil
 	}
 
 	err = client.Generate(ctx, req, respFunc)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	fmt.Println()
+	return nil
+}
+
+func main() {
+	if err := run(os.Args); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }

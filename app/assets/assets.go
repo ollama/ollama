@@ -1,17 +1,19 @@
 package assets
 
 import (
-	"embed"
-	"io/fs"
+    "embed"
+    "io/fs"
 )
 
 //go:embed *.ico
-var icons embed.FS
+var embeddedIcons embed.FS
+
+var Icons fs.FS = embeddedIcons
 
 func ListIcons() ([]string, error) {
-	return fs.Glob(icons, "*")
+    return fs.Glob(Icons, "*")
 }
 
 func GetIcon(filename string) ([]byte, error) {
-	return icons.ReadFile(filename)
+    return fs.ReadFile(Icons, filename)
 }

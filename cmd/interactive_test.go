@@ -1,9 +1,10 @@
 package cmd
 
 import (
-	"testing"
+    "testing"
 
-	"github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/assert"
+    "os"
 )
 
 // Test generated using Keploy
@@ -77,3 +78,64 @@ d:\path with\spaces\seven.JPEG inbetween7 c:\users\jdoe\eight.png inbetween8
 	assert.Contains(t, res[9], "ten.PNG")
 	assert.Contains(t, res[9], "E:")
 }
+
+// Test generated using Keploy
+func TestGetImageData_ValidSmallPNG(t *testing.T) {
+    // Create a temporary PNG file for testing
+    tempFile, err := os.CreateTemp("", "test_image_*.png")
+    if err != nil {
+        t.Fatalf("Failed to create temporary file: %v", err)
+    }
+    defer os.Remove(tempFile.Name())
+
+    // Write a small valid PNG header to the file
+    pngHeader := []byte("\x89PNG\r\n\x1a\n")
+    _, err = tempFile.Write(pngHeader)
+    if err != nil {
+        t.Fatalf("Failed to write to temporary file: %v", err)
+    }
+
+    // Test the getImageData function
+    data, err := getImageData(tempFile.Name())
+    if err != nil {
+        t.Errorf("Expected no error, got: %v", err)
+    }
+    if len(data) == 0 {
+        t.Errorf("Expected non-empty data, got empty data")
+    }
+}
+
+
+// Test generated using Keploy
+func TestGetImageData_UnsupportedImageType(t *testing.T) {
+    // Create a temporary text file for testing
+    tempFile, err := os.CreateTemp("", "test_file_*.txt")
+    if err != nil {
+        t.Fatalf("Failed to create temporary file: %v", err)
+    }
+    defer os.Remove(tempFile.Name())
+
+    // Write some text data to the file
+    _, err = tempFile.WriteString("This is not an image file.")
+    if err != nil {
+        t.Fatalf("Failed to write to temporary file: %v", err)
+    }
+
+    // Test the getImageData function
+    _, err = getImageData(tempFile.Name())
+    if err == nil {
+        t.Errorf("Expected an error for unsupported image type, got nil")
+    }
+}
+
+
+// Test generated using Keploy
+func TestGetImageData_InvalidFilePath(t *testing.T) {
+    invalidFilePath := "/invalid/path/to/image.png"
+
+    _, err := getImageData(invalidFilePath)
+    if err == nil {
+        t.Errorf("Expected an error for invalid file path, got nil")
+    }
+}
+
