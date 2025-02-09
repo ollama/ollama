@@ -379,6 +379,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [MinimalNextOllamaChat](https://github.com/anilkay/MinimalNextOllamaChat) (Minimal Web UI for Chat and Model Control)
 - [Chipper](https://github.com/TilmanGriesel/chipper) AI interface for tinkerers (Ollama, Haystack RAG, Python)
 - [ChibiChat](https://github.com/CosmicEventHorizon/ChibiChat) (Kotlin-based Android app to chat with Ollama and Koboldcpp API endpoints)
+- [LocalLLM](https://github.com/qusaismael/localllm) (Minimal Web-App to run ollama models on it with a GUI)
 
 ### Cloud
 
@@ -492,6 +493,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama for Haskell](https://github.com/tusharad/ollama-haskell)
 - [multi-llm-ts](https://github.com/nbonamy/multi-llm-ts) (A Typescript/JavaScript library allowing access to different LLM in unified API)
 - [LlmTornado](https://github.com/lofcz/llmtornado) (C# library providing a unified interface for major FOSS & Commercial inference APIs)
+- [Ollama for Zig](https://github.com/dravenk/ollama-zig)
 
 ### Mobile
 
