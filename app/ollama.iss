@@ -98,15 +98,6 @@ Source: "..\dist\windows-arm64\ollama.exe"; DestDir: "{app}"; Check: IsArm64(); 
 Source: "..\dist\ollama_welcome.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: ".\assets\app.ico"; DestDir: "{app}"; Flags: ignoreversion
 
-
-#if FileExists("..\gui\ollama_chats.db")
-Source: "..\gui\ollama_chats.db"; DestDir: "{app}"; Flags: ignoreversion
-#endif
-
-#if FileExists("..\gui\DemoGUI.exe")
-Source: "..\gui\DemoGUI.exe"; DestDir: "{app}"; Flags: ignoreversion
-#endif
-
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app.ico"
 Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app.ico"
