@@ -275,6 +275,12 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	}
 	opts.Format = format
 
+	stream, err := cmd.Flags().GetBool("stream")
+	if err != nil {
+		return err
+	}
+	opts.Stream = stream
+
 	keepAlive, err := cmd.Flags().GetString("keepalive")
 	if err != nil {
 		return err
@@ -788,6 +794,7 @@ type runOptions struct {
 	Options     map[string]interface{}
 	MultiModal  bool
 	KeepAlive   *api.Duration
+	Stream      bool
 }
 
 type displayResponseState struct {
@@ -894,6 +901,7 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		Messages: opts.Messages,
 		Format:   json.RawMessage(opts.Format),
 		Options:  opts.Options,
+		Stream:   &opts.Stream,
 	}
 
 	if opts.KeepAlive != nil {
@@ -1201,6 +1209,7 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
+	runCmd.Flags().Bool("stream", true, "Stream response")
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",

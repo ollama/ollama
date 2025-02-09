@@ -61,6 +61,8 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /set noformat          Disable formatting")
 		fmt.Fprintln(os.Stderr, "  /set verbose           Show LLM stats")
 		fmt.Fprintln(os.Stderr, "  /set quiet             Disable LLM stats")
+		fmt.Fprintln(os.Stderr, "  /set stream			  Enable streaming")
+		fmt.Fprintln(os.Stderr, "  /set nostream		  Disable streaming")
 		fmt.Fprintln(os.Stderr, "")
 	}
 
@@ -245,6 +247,12 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				case "nowordwrap":
 					opts.WordWrap = false
 					fmt.Println("Set 'nowordwrap' mode.")
+				case "stream":
+					opts.Stream = true
+					fmt.Println("Set 'stream' mode.")
+				case "nostream":
+					opts.Stream = false
+					fmt.Println("Set 'nostream' mode.")
 				case "verbose":
 					if err := cmd.Flags().Set("verbose", "true"); err != nil {
 						return err
