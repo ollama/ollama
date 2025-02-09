@@ -1493,7 +1493,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			if r.Done {
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
-            	slog.Debug("chat response", "response", sb.String())
+				slog.Debug("chat response", "response", sb.String())
 				sb.Reset()
 			}
 
