@@ -328,6 +328,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					}
 					res.Context = tokens
 				}
+				slog.Debug("generate response", "response", sb.String())
 			}
 
 			ch <- res
@@ -1485,9 +1486,15 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				},
 			}
 
+			if _, err := sb.WriteString(r.Content); err != nil {
+				ch <- gin.H{"error": err.Error()}
+			}
+
 			if r.Done {
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+            	slog.Debug("chat response", "response", sb.String())
+				sb.Reset()
 			}
 
 			// TODO: tool call checking and filtering should be moved outside of this callback once streaming
