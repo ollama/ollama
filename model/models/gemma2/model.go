@@ -1,7 +1,6 @@
 package gemma2
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/ollama/ollama/kvcache"
@@ -20,7 +19,7 @@ type Options struct {
 
 type Model struct {
 	model.Base
-	model.BytePairEncoding
+	model.SentencePieceModel
 
 	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
 	Layers         []Layer       `gguf:"blk"`
@@ -32,10 +31,11 @@ type Model struct {
 
 func New(c ml.Config) (model.Model, error) {
 	m := Model{
-		BytePairEncoding: model.NewBytePairEncoding(
+		SentencePieceModel: model.NewSentencePieceModel(
 			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
+				Scores: c.Floats("tokenizer.ggml.scores"),
 				Types:  c.Uints("tokenizer.ggml.token_type"),
 				BOS:    int32(c.Uint("tokenizer.ggml.bos_token_id")),
 				EOS:    int32(c.Uint("tokenizer.ggml.eos_token_id")),
@@ -55,7 +55,7 @@ func New(c ml.Config) (model.Model, error) {
 	}
 
 	slidingWindowLen := int32(c.Uint("attention.sliding_window"))
-	m.Cache = kvcache.NewWrapperCache(kvcache.NewCausalCache(m.Shift), kvcache.NewSWACache(slidingWindowLen, m.Shift))
+	m.Cache = kvcache.NewWrapperCache(kvcache.NewSWACache(slidingWindowLen, m.Shift), kvcache.NewCausalCache(m.Shift))
 
 	return &m, nil
 }
@@ -76,7 +76,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 	q = q.RoPE(ctx, positionIDs, opts.RopeFactors, uint32(headDim), opts.ropeBase, opts.ropeScale)
 
 	// todo: this should be 1.0/math.Sqrt(float64(headDim)) for 27B models
-	q = q.Scale(ctx, 1.0/math.Sqrt(float64(opts.attnKeyLen)))
+	//q = q.Scale(ctx, 1.0/math.Sqrt(float64(opts.attnKeyLen)))
 
 	k := sa.Key.Forward(ctx, hiddenState)
 	k = k.Reshape(ctx, opts.attnKeyLen, opts.numKVHeads, batchSize)
@@ -140,8 +140,6 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cach
 }
 
 func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
-	fmt.Printf("HELLO THERE!!\n")
-
 	inputs, err := ctx.FromIntSlice(opts.Inputs, len(opts.Inputs))
 	if err != nil {
 		return nil, err

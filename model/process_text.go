@@ -2,6 +2,7 @@ package model
 
 import (
 	"cmp"
+	"fmt"
 	"iter"
 	"log/slog"
 	"strings"
@@ -18,6 +19,15 @@ const (
 	SpecialEOS
 )
 
+const (
+	TOKEN_TYPE_NORMAL = iota + 1
+	TOKEN_TYPE_UNKNOWN
+	TOKEN_TYPE_CONTROL
+	TOKEN_TYPE_USER_DEFINED
+	TOKEN_TYPE_UNUSED
+	TOKEN_TYPE_BYTE
+)
+
 type TextProcessor interface {
 	Encode(string) ([]int32, error)
 	Decode([]int32) (string, error)
@@ -27,7 +37,7 @@ type TextProcessor interface {
 type Vocabulary struct {
 	Values []string
 	Types  []uint32
-	Scores []uint32
+	Scores []float32
 	Merges []string
 
 	BOS, EOS int32
@@ -75,7 +85,7 @@ func (v *Vocabulary) Decode(id int32) string {
 func (v *Vocabulary) SpecialVocabulary() []string {
 	v.specialOnce.Do(func() {
 		for i := range v.Values {
-			if v.Types[i] == 3 {
+			if v.Types[i] == TOKEN_TYPE_CONTROL {
 				v.special = append(v.special, v.Values[i])
 			}
 		}
@@ -171,6 +181,7 @@ func (bpe BytePairEncoding) Encode(s string) ([]int32, error) {
 			fragments = append(fragments[:i], append(middle, fragments[i+1:]...)...)
 		}
 	}
+	fmt.Printf("frags = %#v\n", fragments)
 
 	var ids []int32
 	for _, frag := range fragments {

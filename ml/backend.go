@@ -17,6 +17,7 @@ type Config interface {
 
 	Strings(string, ...[]string) []string
 	Uints(string, ...[]uint32) []uint32
+	Floats(string, ...[]float32) []float32
 }
 
 type Backend interface {
