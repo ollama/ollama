@@ -546,6 +546,43 @@ func (llm GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partia
 	return
 }
 
+func (llm GGML) ProjectorGraphSize() (weights, graphSize uint64) {
+	switch arch := llm.KV().Architecture(); arch {
+	case "mllama":
+		for _, layer := range llm.Tensors().Layers()["v"] {
+			weights += layer.Size()
+		}
+
+		kv := func(n string) uint64 {
+			if v, ok := llm.KV()[arch+".vision."+n].(uint32); ok {
+				return uint64(v)
+			}
+
+			return 0
+		}
+
+		imageSize := kv("image_size")
+
+		maxNumTiles := kv("max_num_tiles")
+		embeddingLength := kv("embedding_length")
+		headCount := kv("attention.head_count")
+
+		numPatches := (imageSize / kv("patch_size")) * (imageSize / kv("patch_size"))
+		if _, ok := llm.Tensors().Layers()["v"]["class_embd"]; ok {
+			numPatches++
+		}
+
+		numPaddedPatches := numPatches + 8 - (numPatches%8)%8
+
+		graphSize = 4 * (8 +
+			imageSize*imageSize*kv("num_channels")*maxNumTiles +
+			embeddingLength*numPatches*maxNumTiles +
+			9*embeddingLength*numPaddedPatches*maxNumTiles +
+			numPaddedPatches*maxNumTiles*numPaddedPatches*maxNumTiles*headCount)
+	}
+	return weights, graphSize
+}
+
 // SupportsKVCacheType checks if the requested cache type is supported
 func (llm GGML) SupportsKVCacheType(cacheType string) bool {
 	return slices.Contains([]string{"f16", "q8_0", "q4_0"}, cacheType)

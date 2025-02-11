@@ -115,6 +115,9 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 		// multimodal models require at least 2048 context
 		opts.NumCtx = max(opts.NumCtx, 2048)
 	}
+	if projectorWeights == 0 && projectorGraph == 0 {
+		projectorWeights, projectorGraph = f.ProjectorGraphSize()
+	}
 
 	layers := f.Tensors().Layers()
 	// add one layer worth of memory as a buffer
