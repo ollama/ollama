@@ -494,6 +494,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [multi-llm-ts](https://github.com/nbonamy/multi-llm-ts) (A Typescript/JavaScript library allowing access to different LLM in unified API)
 - [LlmTornado](https://github.com/lofcz/llmtornado) (C# library providing a unified interface for major FOSS & Commercial inference APIs)
 - [Ollama for Zig](https://github.com/dravenk/ollama-zig)
+- [Abso](https://github.com/lunary-ai/abso/blob/main/README.md#ollama) (OpenAI-compatible TypeScript SDK for any LLM provider)
 
 ### Mobile
 
