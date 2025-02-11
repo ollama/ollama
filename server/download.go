@@ -46,9 +46,9 @@ type blobDownload struct {
 
 	context.CancelFunc
 
-	done       chan struct{}
-	err        error
-	references atomic.Int32
+	done                    chan struct{}
+	err                     error
+	references              atomic.Int32
 	checkBlobUpdateInterval time.Duration
 }
 
@@ -59,7 +59,7 @@ type blobDownloadPart struct {
 	Completed atomic.Int64
 
 	timeoutAtMu sync.Mutex
-	timeoutAt time.Time
+	timeoutAt   time.Time
 
 	*blobDownload `json:"-"`
 }
