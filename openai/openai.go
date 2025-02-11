@@ -610,14 +610,14 @@ type EmbedWriter struct {
 }
 
 func (w *BaseWriter) writeError(data []byte) (int, error) {
-	var serr api.StatusError
-	err := json.Unmarshal(data, &serr)
+	var er api.ErrorResponse // error response is used here to parse the error message
+	err := json.Unmarshal(data, &er)
 	if err != nil {
 		return 0, err
 	}
 
 	w.ResponseWriter.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w.ResponseWriter).Encode(NewError(http.StatusInternalServerError, serr.Error()))
+	err = json.NewEncoder(w.ResponseWriter).Encode(NewError(http.StatusInternalServerError, er.Err))
 	if err != nil {
 		return 0, err
 	}

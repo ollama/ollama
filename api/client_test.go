@@ -50,10 +50,10 @@ func TestClientFromEnvironment(t *testing.T) {
 	}
 }
 
-// testError represents an internal error type with status code and message
-// this is used since the error response from the server is not a standard error struct
+// testError represents an internal error type for testing different error formats
 type testError struct {
-	message    string
+	message    string         // basic error message
+	structured *ErrorResponse // structured error response, nil for basic format
 	statusCode int
 }
 
@@ -68,7 +68,7 @@ func TestClientStream(t *testing.T) {
 		wantErr   string
 	}{
 		{
-			name: "immediate error response",
+			name: "basic error format",
 			responses: []any{
 				testError{
 					message:    "test error message",
@@ -78,16 +78,46 @@ func TestClientStream(t *testing.T) {
 			wantErr: "test error message",
 		},
 		{
-			name: "error after successful chunks, ok response",
+			name: "structured error format",
 			responses: []any{
-				ChatResponse{Message: Message{Content: "partial response 1"}},
-				ChatResponse{Message: Message{Content: "partial response 2"}},
 				testError{
-					message:    "mid-stream error",
+					message: "test structured error",
+					structured: &ErrorResponse{
+						Err:  "test structured error",
+						Hint: "test hint",
+					},
+					statusCode: http.StatusBadRequest,
+				},
+			},
+			wantErr: "test structured error",
+		},
+		{
+			name: "error after chunks - basic format",
+			responses: []any{
+				ChatResponse{Message: Message{Content: "partial 1"}},
+				ChatResponse{Message: Message{Content: "partial 2"}},
+				testError{
+					message:    "mid-stream basic error",
 					statusCode: http.StatusOK,
 				},
 			},
-			wantErr: "mid-stream error",
+			wantErr: "mid-stream basic error",
+		},
+		{
+			name: "error after chunks - structured format",
+			responses: []any{
+				ChatResponse{Message: Message{Content: "partial 1"}},
+				ChatResponse{Message: Message{Content: "partial 2"}},
+				testError{
+					message: "mid-stream structured error",
+					structured: &ErrorResponse{
+						Err:  "mid-stream structured error",
+						Hint: "additional context",
+					},
+					statusCode: http.StatusOK,
+				},
+			},
+			wantErr: "mid-stream structured error",
 		},
 		{
 			name: "successful stream completion",
@@ -116,9 +146,14 @@ func TestClientStream(t *testing.T) {
 				for _, resp := range tc.responses {
 					if errResp, ok := resp.(testError); ok {
 						w.WriteHeader(errResp.statusCode)
-						err := json.NewEncoder(w).Encode(map[string]string{
-							"error": errResp.message,
-						})
+						var err error
+						if errResp.structured != nil {
+							err = json.NewEncoder(w).Encode(errResp.structured)
+						} else {
+							err = json.NewEncoder(w).Encode(map[string]string{
+								"error": errResp.message,
+							})
+						}
 						if err != nil {
 							t.Fatal("failed to encode error response:", err)
 						}
@@ -168,7 +203,7 @@ func TestClientDo(t *testing.T) {
 		wantErr  string
 	}{
 		{
-			name: "immediate error response",
+			name: "basic error format",
 			response: testError{
 				message:    "test error message",
 				statusCode: http.StatusBadRequest,
@@ -176,12 +211,36 @@ func TestClientDo(t *testing.T) {
 			wantErr: "test error message",
 		},
 		{
-			name: "server error response",
+			name: "structured error format",
+			response: testError{
+				message: "test structured error",
+				structured: &ErrorResponse{
+					Err:  "test structured error",
+					Hint: "test hint",
+				},
+				statusCode: http.StatusBadRequest,
+			},
+			wantErr: "test structured error",
+		},
+		{
+			name: "server error - basic format",
 			response: testError{
 				message:    "internal error",
 				statusCode: http.StatusInternalServerError,
 			},
 			wantErr: "internal error",
+		},
+		{
+			name: "server error - structured format",
+			response: testError{
+				message: "internal server error",
+				structured: &ErrorResponse{
+					Err:  "internal server error",
+					Hint: "please try again later",
+				},
+				statusCode: http.StatusInternalServerError,
+			},
+			wantErr: "internal server error",
 		},
 		{
 			name: "successful response",
@@ -200,9 +259,14 @@ func TestClientDo(t *testing.T) {
 			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if errResp, ok := tc.response.(testError); ok {
 					w.WriteHeader(errResp.statusCode)
-					err := json.NewEncoder(w).Encode(map[string]string{
-						"error": errResp.message,
-					})
+					var err error
+					if errResp.structured != nil {
+						err = json.NewEncoder(w).Encode(errResp.structured)
+					} else {
+						err = json.NewEncoder(w).Encode(map[string]string{
+							"error": errResp.message,
+						})
+					}
 					if err != nil {
 						t.Fatal("failed to encode error response:", err)
 					}

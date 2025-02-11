@@ -12,27 +12,6 @@ import (
 	"time"
 )
 
-// StatusError is an error with an HTTP status code and message.
-type StatusError struct {
-	StatusCode   int
-	Status       string
-	ErrorMessage string `json:"error"`
-}
-
-func (e StatusError) Error() string {
-	switch {
-	case e.Status != "" && e.ErrorMessage != "":
-		return fmt.Sprintf("%s: %s", e.Status, e.ErrorMessage)
-	case e.Status != "":
-		return e.Status
-	case e.ErrorMessage != "":
-		return e.ErrorMessage
-	default:
-		// this should not happen
-		return "something went wrong, please see the ollama server logs for details"
-	}
-}
-
 // ImageData represents the raw binary data of an image file.
 type ImageData []byte
 
@@ -659,6 +638,16 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 	}
 
 	return nil
+}
+
+// ErrorResponse implements a structured error interface that is returned from the Ollama server
+type ErrorResponse struct {
+	Err  string `json:"error,omitempty"` // The annotated error from the server, helps with debugging the code-path
+	Hint string `json:"hint,omitempty"`  // A user-friendly message about what went wrong, with suggested troubleshooting
+}
+
+func (e ErrorResponse) Error() string {
+	return e.Err
 }
 
 // FormatParams converts specified parameter options to their correct types

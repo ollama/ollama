@@ -591,7 +591,15 @@ func (s *Server) PullHandler(c *gin.Context) {
 		defer cancel()
 
 		if err := PullModel(ctx, name.DisplayShortest(), regOpts, fn); err != nil {
-			ch <- gin.H{"error": err.Error()}
+			var e ErrRemoteModelNotFound
+			if errors.As(err, &e) {
+				ch <- api.ErrorResponse{
+					Err:  err.Error(),
+					Hint: fmt.Sprintf("Model %q not found - please check the model name is correct and try again", name.DisplayShortest()),
+				}
+			} else {
+				ch <- gin.H{"error": err.Error()}
+			}
 		}
 	}()
 

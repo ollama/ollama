@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,6 +28,28 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/version"
 )
+
+// StatusError is an error with an HTTP status code and message,
+// it is parsed on the client-side and not returned from the API
+type StatusError struct {
+	StatusCode int    // e.g. 200
+	Status     string // e.g. "200 OK"
+	ErrorResponse
+}
+
+func (e StatusError) Error() string {
+	switch {
+	case e.Status != "" && e.Err != "":
+		return fmt.Sprintf("%s: %s", e.Status, e.Err)
+	case e.Status != "":
+		return e.Status
+	case e.Err != "":
+		return e.Err
+	default:
+		// this should not happen
+		return "something went wrong, please see the ollama server logs for details"
+	}
+}
 
 // Client encapsulates client state for interacting with the ollama
 // service. Use [ClientFromEnvironment] to create new Clients.
@@ -47,7 +68,7 @@ func checkError(resp *http.Response, body []byte) error {
 	err := json.Unmarshal(body, &apiError)
 	if err != nil {
 		// Use the full body as the message if we fail to decode a response.
-		apiError.ErrorMessage = string(body)
+		apiError.Err = string(body)
 	}
 
 	return apiError
@@ -163,24 +184,22 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 	scanBuf := make([]byte, 0, maxBufferSize)
 	scanner.Buffer(scanBuf, maxBufferSize)
 	for scanner.Scan() {
-		var errorResponse struct {
-			Error string `json:"error,omitempty"`
-		}
-
 		bts := scanner.Bytes()
+
+		var errorResponse ErrorResponse
 		if err := json.Unmarshal(bts, &errorResponse); err != nil {
 			return fmt.Errorf("unmarshal: %w", err)
 		}
 
-		if errorResponse.Error != "" {
-			return errors.New(errorResponse.Error)
+		if errorResponse.Err != "" {
+			return errorResponse
 		}
 
 		if response.StatusCode >= http.StatusBadRequest {
 			return StatusError{
-				StatusCode:   response.StatusCode,
-				Status:       response.Status,
-				ErrorMessage: errorResponse.Error,
+				StatusCode:    response.StatusCode,
+				Status:        response.Status,
+				ErrorResponse: errorResponse,
 			}
 		}
 
