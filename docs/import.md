@@ -20,25 +20,25 @@ Make sure that you use the same base model in the `FROM` command as you used to 
 
 Now run `ollama create` from the directory where the `Modelfile` was created:
 
-```bash
+```shell
 ollama create my-model
 ```
 
 Lastly, test the model:
 
-```bash
+```shell
 ollama run my-model
 ```
 
 Ollama supports importing adapters based on several different model architectures including:
 
-  * Llama (including Llama 2, Llama 3, and Llama 3.1);
+  * Llama (including Llama 2, Llama 3, Llama 3.1, and Llama 3.2);
   * Mistral (including Mistral 1, Mistral 2, and Mixtral); and
   * Gemma (including Gemma 1 and Gemma 2)
 
 You can create the adapter using a fine tuning framework or tool which can output adapters in the Safetensors format, such as:
 
-  * Hugging Face [fine tuning framework] (https://huggingface.co/docs/transformers/en/training)
+  * Hugging Face [fine tuning framework](https://huggingface.co/docs/transformers/en/training)
   * [Unsloth](https://github.com/unslothai/unsloth)
   * [MLX](https://github.com/ml-explore/mlx)
 
@@ -67,14 +67,12 @@ ollama run my-model
 
 Ollama supports importing models for several different architectures including:
 
-  * Llama (including Llama 2, Llama 3, and Llama 3.1);
+  * Llama (including Llama 2, Llama 3, Llama 3.1, and Llama 3.2);
   * Mistral (including Mistral 1, Mistral 2, and Mixtral);
   * Gemma (including Gemma 1 and Gemma 2); and
   * Phi3
 
-This includes importing foundation models as well as any fine tuned models which which have been _fused_ with a foundation model.
-
-
+This includes importing foundation models as well as any fine tuned models which have been _fused_ with a foundation model.
 ## Importing a GGUF based model or adapter
 
 If you have a GGUF based model or adapter it is possible to import it into Ollama. You can obtain a GGUF model or adapter by:
@@ -83,7 +81,7 @@ If you have a GGUF based model or adapter it is possible to import it into Ollam
   * converting a Safetensors adapter with the `convert_lora_to_gguf.py` from Llama.cpp; or
   * downloading a model or adapter from a place such as HuggingFace
 
-To import a GGUF model, create a `Modelfile` containg:
+To import a GGUF model, create a `Modelfile` containing:
 
 ```dockerfile
 FROM /path/to/file.gguf

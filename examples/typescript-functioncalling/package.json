@@ -1,9 +1,0 @@
-{
-  "dependencies": {
-    "ollama-node": "^0.1.27"
-  },
-  "devDependencies": {
-    "tsx": "^4.1.2",
-    "typescript": "^5.2.2"
-  }
-}

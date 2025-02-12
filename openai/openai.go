@@ -62,7 +62,12 @@ type Usage struct {
 }
 
 type ResponseFormat struct {
-	Type string `json:"type"`
+	Type       string      `json:"type"`
+	JsonSchema *JsonSchema `json:"json_schema,omitempty"`
+}
+
+type JsonSchema struct {
+	Schema json.RawMessage `json:"schema"`
 }
 
 type EmbedRequest struct {
@@ -70,10 +75,15 @@ type EmbedRequest struct {
 	Model string `json:"model"`
 }
 
+type StreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
+}
+
 type ChatCompletionRequest struct {
 	Model            string          `json:"model"`
 	Messages         []Message       `json:"messages"`
 	Stream           bool            `json:"stream"`
+	StreamOptions    *StreamOptions  `json:"stream_options"`
 	MaxTokens        *int            `json:"max_tokens"`
 	Seed             *int            `json:"seed"`
 	Stop             any             `json:"stop"`
@@ -102,21 +112,23 @@ type ChatCompletionChunk struct {
 	Model             string        `json:"model"`
 	SystemFingerprint string        `json:"system_fingerprint"`
 	Choices           []ChunkChoice `json:"choices"`
+	Usage             *Usage        `json:"usage,omitempty"`
 }
 
 // TODO (https://github.com/ollama/ollama/issues/5259): support []string, []int and [][]int
 type CompletionRequest struct {
-	Model            string   `json:"model"`
-	Prompt           string   `json:"prompt"`
-	FrequencyPenalty float32  `json:"frequency_penalty"`
-	MaxTokens        *int     `json:"max_tokens"`
-	PresencePenalty  float32  `json:"presence_penalty"`
-	Seed             *int     `json:"seed"`
-	Stop             any      `json:"stop"`
-	Stream           bool     `json:"stream"`
-	Temperature      *float32 `json:"temperature"`
-	TopP             float32  `json:"top_p"`
-	Suffix           string   `json:"suffix"`
+	Model            string         `json:"model"`
+	Prompt           string         `json:"prompt"`
+	FrequencyPenalty float32        `json:"frequency_penalty"`
+	MaxTokens        *int           `json:"max_tokens"`
+	PresencePenalty  float32        `json:"presence_penalty"`
+	Seed             *int           `json:"seed"`
+	Stop             any            `json:"stop"`
+	Stream           bool           `json:"stream"`
+	StreamOptions    *StreamOptions `json:"stream_options"`
+	Temperature      *float32       `json:"temperature"`
+	TopP             float32        `json:"top_p"`
+	Suffix           string         `json:"suffix"`
 }
 
 type Completion struct {
@@ -136,10 +148,12 @@ type CompletionChunk struct {
 	Choices           []CompleteChunkChoice `json:"choices"`
 	Model             string                `json:"model"`
 	SystemFingerprint string                `json:"system_fingerprint"`
+	Usage             *Usage                `json:"usage,omitempty"`
 }
 
 type ToolCall struct {
 	ID       string `json:"id"`
+	Index    int    `json:"index"`
 	Type     string `json:"type"`
 	Function struct {
 		Name      string `json:"name"`
@@ -191,6 +205,14 @@ func NewError(code int, message string) ErrorResponse {
 	return ErrorResponse{Error{Type: etype, Message: message}}
 }
 
+func toUsage(r api.ChatResponse) Usage {
+	return Usage{
+		PromptTokens:     r.PromptEvalCount,
+		CompletionTokens: r.EvalCount,
+		TotalTokens:      r.PromptEvalCount + r.EvalCount,
+	}
+}
+
 func toolCallId() string {
 	const letterBytes = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, 8)
@@ -200,12 +222,13 @@ func toolCallId() string {
 	return "call_" + strings.ToLower(string(b))
 }
 
-func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
-	toolCalls := make([]ToolCall, len(r.Message.ToolCalls))
-	for i, tc := range r.Message.ToolCalls {
+func toToolCalls(tc []api.ToolCall) []ToolCall {
+	toolCalls := make([]ToolCall, len(tc))
+	for i, tc := range tc {
 		toolCalls[i].ID = toolCallId()
 		toolCalls[i].Type = "function"
 		toolCalls[i].Function.Name = tc.Function.Name
+		toolCalls[i].Index = tc.Function.Index
 
 		args, err := json.Marshal(tc.Function.Arguments)
 		if err != nil {
@@ -215,7 +238,11 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 
 		toolCalls[i].Function.Arguments = string(args)
 	}
+	return toolCalls
+}
 
+func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
+	toolCalls := toToolCalls(r.Message.ToolCalls)
 	return ChatCompletion{
 		Id:                id,
 		Object:            "chat.completion",
@@ -235,15 +262,12 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 				return nil
 			}(r.DoneReason),
 		}},
-		Usage: Usage{
-			PromptTokens:     r.PromptEvalCount,
-			CompletionTokens: r.EvalCount,
-			TotalTokens:      r.PromptEvalCount + r.EvalCount,
-		},
+		Usage: toUsage(r),
 	}
 }
 
 func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
+	toolCalls := toToolCalls(r.Message.ToolCalls)
 	return ChatCompletionChunk{
 		Id:                id,
 		Object:            "chat.completion.chunk",
@@ -252,7 +276,7 @@ func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
 		SystemFingerprint: "fp_ollama",
 		Choices: []ChunkChoice{{
 			Index: 0,
-			Delta: Message{Role: "assistant", Content: r.Message.Content},
+			Delta: Message{Role: "assistant", Content: r.Message.Content, ToolCalls: toolCalls},
 			FinishReason: func(reason string) *string {
 				if len(reason) > 0 {
 					return &reason
@@ -260,6 +284,14 @@ func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
 				return nil
 			}(r.DoneReason),
 		}},
+	}
+}
+
+func toUsageGenerate(r api.GenerateResponse) Usage {
+	return Usage{
+		PromptTokens:     r.PromptEvalCount,
+		CompletionTokens: r.EvalCount,
+		TotalTokens:      r.PromptEvalCount + r.EvalCount,
 	}
 }
 
@@ -280,11 +312,7 @@ func toCompletion(id string, r api.GenerateResponse) Completion {
 				return nil
 			}(r.DoneReason),
 		}},
-		Usage: Usage{
-			PromptTokens:     r.PromptEvalCount,
-			CompletionTokens: r.EvalCount,
-			TotalTokens:      r.PromptEvalCount + r.EvalCount,
-		},
+		Usage: toUsageGenerate(r),
 	}
 }
 
@@ -452,7 +480,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	}
 
 	if r.Temperature != nil {
-		options["temperature"] = *r.Temperature * 2.0
+		options["temperature"] = *r.Temperature
 	} else {
 		options["temperature"] = 1.0
 	}
@@ -462,11 +490,11 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	}
 
 	if r.FrequencyPenalty != nil {
-		options["frequency_penalty"] = *r.FrequencyPenalty * 2.0
+		options["frequency_penalty"] = *r.FrequencyPenalty
 	}
 
 	if r.PresencePenalty != nil {
-		options["presence_penalty"] = *r.PresencePenalty * 2.0
+		options["presence_penalty"] = *r.PresencePenalty
 	}
 
 	if r.TopP != nil {
@@ -475,9 +503,17 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		options["top_p"] = 1.0
 	}
 
-	var format string
-	if r.ResponseFormat != nil && r.ResponseFormat.Type == "json_object" {
-		format = "json"
+	var format json.RawMessage
+	if r.ResponseFormat != nil {
+		switch strings.ToLower(strings.TrimSpace(r.ResponseFormat.Type)) {
+		// Support the old "json_object" type for OpenAI compatibility
+		case "json_object":
+			format = json.RawMessage(`"json"`)
+		case "json_schema":
+			if r.ResponseFormat.JsonSchema != nil {
+				format = r.ResponseFormat.JsonSchema.Schema
+			}
+		}
 	}
 
 	return &api.ChatRequest{
@@ -513,7 +549,7 @@ func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 	}
 
 	if r.Temperature != nil {
-		options["temperature"] = *r.Temperature * 2.0
+		options["temperature"] = *r.Temperature
 	} else {
 		options["temperature"] = 1.0
 	}
@@ -522,9 +558,9 @@ func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 		options["seed"] = *r.Seed
 	}
 
-	options["frequency_penalty"] = r.FrequencyPenalty * 2.0
+	options["frequency_penalty"] = r.FrequencyPenalty
 
-	options["presence_penalty"] = r.PresencePenalty * 2.0
+	options["presence_penalty"] = r.PresencePenalty
 
 	if r.TopP != 0.0 {
 		options["top_p"] = r.TopP
@@ -546,14 +582,16 @@ type BaseWriter struct {
 }
 
 type ChatWriter struct {
-	stream bool
-	id     string
+	stream        bool
+	streamOptions *StreamOptions
+	id            string
 	BaseWriter
 }
 
 type CompleteWriter struct {
-	stream bool
-	id     string
+	stream        bool
+	streamOptions *StreamOptions
+	id            string
 	BaseWriter
 }
 
@@ -571,7 +609,7 @@ type EmbedWriter struct {
 	model string
 }
 
-func (w *BaseWriter) writeError(code int, data []byte) (int, error) {
+func (w *BaseWriter) writeError(data []byte) (int, error) {
 	var serr api.StatusError
 	err := json.Unmarshal(data, &serr)
 	if err != nil {
@@ -596,7 +634,8 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 
 	// chat chunk
 	if w.stream {
-		d, err := json.Marshal(toChunk(w.id, chatResponse))
+		c := toChunk(w.id, chatResponse)
+		d, err := json.Marshal(c)
 		if err != nil {
 			return 0, err
 		}
@@ -608,6 +647,19 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 		}
 
 		if chatResponse.Done {
+			if w.streamOptions != nil && w.streamOptions.IncludeUsage {
+				u := toUsage(chatResponse)
+				c.Usage = &u
+				c.Choices = []ChunkChoice{}
+				d, err := json.Marshal(c)
+				if err != nil {
+					return 0, err
+				}
+				_, err = w.ResponseWriter.Write([]byte(fmt.Sprintf("data: %s\n\n", d)))
+				if err != nil {
+					return 0, err
+				}
+			}
 			_, err = w.ResponseWriter.Write([]byte("data: [DONE]\n\n"))
 			if err != nil {
 				return 0, err
@@ -630,7 +682,7 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 func (w *ChatWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
-		return w.writeError(code, data)
+		return w.writeError(data)
 	}
 
 	return w.writeResponse(data)
@@ -645,7 +697,11 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 
 	// completion chunk
 	if w.stream {
-		d, err := json.Marshal(toCompleteChunk(w.id, generateResponse))
+		c := toCompleteChunk(w.id, generateResponse)
+		if w.streamOptions != nil && w.streamOptions.IncludeUsage {
+			c.Usage = &Usage{}
+		}
+		d, err := json.Marshal(c)
 		if err != nil {
 			return 0, err
 		}
@@ -657,6 +713,19 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 		}
 
 		if generateResponse.Done {
+			if w.streamOptions != nil && w.streamOptions.IncludeUsage {
+				u := toUsageGenerate(generateResponse)
+				c.Usage = &u
+				c.Choices = []CompleteChunkChoice{}
+				d, err := json.Marshal(c)
+				if err != nil {
+					return 0, err
+				}
+				_, err = w.ResponseWriter.Write([]byte(fmt.Sprintf("data: %s\n\n", d)))
+				if err != nil {
+					return 0, err
+				}
+			}
 			_, err = w.ResponseWriter.Write([]byte("data: [DONE]\n\n"))
 			if err != nil {
 				return 0, err
@@ -679,7 +748,7 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 func (w *CompleteWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
-		return w.writeError(code, data)
+		return w.writeError(data)
 	}
 
 	return w.writeResponse(data)
@@ -704,7 +773,7 @@ func (w *ListWriter) writeResponse(data []byte) (int, error) {
 func (w *ListWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
-		return w.writeError(code, data)
+		return w.writeError(data)
 	}
 
 	return w.writeResponse(data)
@@ -730,7 +799,7 @@ func (w *RetrieveWriter) writeResponse(data []byte) (int, error) {
 func (w *RetrieveWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
-		return w.writeError(code, data)
+		return w.writeError(data)
 	}
 
 	return w.writeResponse(data)
@@ -755,7 +824,7 @@ func (w *EmbedWriter) writeResponse(data []byte) (int, error) {
 func (w *EmbedWriter) Write(data []byte) (int, error) {
 	code := w.ResponseWriter.Status()
 	if code != http.StatusOK {
-		return w.writeError(code, data)
+		return w.writeError(data)
 	}
 
 	return w.writeResponse(data)
@@ -819,9 +888,10 @@ func CompletionsMiddleware() gin.HandlerFunc {
 		c.Request.Body = io.NopCloser(&b)
 
 		w := &CompleteWriter{
-			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
-			stream:     req.Stream,
-			id:         fmt.Sprintf("cmpl-%d", rand.Intn(999)),
+			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
+			stream:        req.Stream,
+			id:            fmt.Sprintf("cmpl-%d", rand.Intn(999)),
+			streamOptions: req.StreamOptions,
 		}
 
 		c.Writer = w
@@ -901,9 +971,10 @@ func ChatMiddleware() gin.HandlerFunc {
 		c.Request.Body = io.NopCloser(&b)
 
 		w := &ChatWriter{
-			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
-			stream:     req.Stream,
-			id:         fmt.Sprintf("chatcmpl-%d", rand.Intn(999)),
+			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
+			stream:        req.Stream,
+			id:            fmt.Sprintf("chatcmpl-%d", rand.Intn(999)),
+			streamOptions: req.StreamOptions,
 		}
 
 		c.Writer = w

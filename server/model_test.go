@@ -2,10 +2,8 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,7 +11,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/template"
 )
 
@@ -39,6 +36,7 @@ func TestExecuteWithTools(t *testing.T) {
 		{"mistral", `[TOOL_CALLS]  [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]
 
 The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`, true},
+		{"mistral", `[TOOL_CALLS]  [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"To }]`, false},
 		{"mistral", `I'm not aware of that information. However, I can suggest searching for the weather using the "get_current_weather" function:
 
 		[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`, true},
@@ -69,6 +67,7 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
 {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}
 </tool_call>`, true},
 		{"xlam", `{"tool_calls": [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]}`, true},
+		{"nemotron", `<toolcall>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]} </toolcall>`, true},
 	}
 
 	var tools []api.Tool
@@ -137,83 +136,44 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
 	}
 }
 
-func TestParseFromFileFromLayer(t *testing.T) {
-	tempModels := t.TempDir()
-	t.Setenv("OLLAMA_MODELS", tempModels)
-
-	file, err := os.CreateTemp(tempModels, "")
-	if err != nil {
-		t.Fatalf("failed to open file: %v", err)
-	}
-	defer file.Close()
-	if err := llm.WriteGGUF(file, llm.KV{"general.architecture": "gemma"}, []llm.Tensor{}); err != nil {
-		t.Fatalf("failed to write gguf: %v", err)
-	}
-
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		t.Fatalf("failed to seek to start: %v", err)
-	}
-
-	layers, err := parseFromFile(context.Background(), "model", []*layerGGML{}, file, "", func(api.ProgressResponse) {})
-	if err != nil {
-		t.Fatalf("failed to parse from file: %v", err)
-	}
-
-	if len(layers) != 1 {
-		t.Fatalf("got %d != want 1", len(layers))
-	}
-
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		t.Fatalf("failed to seek to start: %v", err)
-	}
-
-	layers2, err := parseFromFile(context.Background(), "model", []*layerGGML{}, file, layers[0].Digest, func(api.ProgressResponse) {})
-	if err != nil {
-		t.Fatalf("failed to parse from file: %v", err)
-	}
-	if len(layers2) != 1 {
-		t.Fatalf("got %d != want 1", len(layers2))
+func TestParseObjects(t *testing.T) {
+	tests := []struct {
+		input string
+		want  []map[string]any
+	}{
+		{
+			input: `[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
+			want: []map[string]any{
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "fahrenheit", "location": "San Francisco, CA"}},
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "celsius", "location": "Toronto, Canada"}},
+			},
+		},
+		{
+			input: `<toolcall>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </toolcall>`,
+			want: []map[string]any{
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "fahrenheit", "location": "San Francisco, CA"}},
+			},
+		},
+		{
+			input: `<toolcall>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </toolcall> <toolcall>{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, ON"}} </toolcall>`,
+			want: []map[string]any{
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "fahrenheit", "location": "San Francisco, CA"}},
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "celsius", "location": "Toronto, ON"}},
+			},
+		},
+		{
+			input: `{"name": "get_current_weather", "arguments": `,
+			want:  nil,
+		},
 	}
 
-	if layers[0].Digest != layers2[0].Digest {
-		t.Fatalf("got %s != want %s", layers[0].Digest, layers2[0].Digest)
-	}
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			got := parseObjects(tc.input)
 
-	if layers[0].Size != layers2[0].Size {
-		t.Fatalf("got %d != want %d", layers[0].Size, layers2[0].Size)
-	}
-
-	if layers[0].MediaType != layers2[0].MediaType {
-		t.Fatalf("got %v != want %v", layers[0].MediaType, layers2[0].MediaType)
-	}
-}
-
-func TestParseLayerFromCopy(t *testing.T) {
-	tempModels := t.TempDir()
-	t.Setenv("OLLAMA_MODELS", tempModels)
-
-	file2, err := os.CreateTemp(tempModels, "")
-	if err != nil {
-		t.Fatalf("failed to open file: %v", err)
-	}
-	defer file2.Close()
-
-	for range 5 {
-		if err := llm.WriteGGUF(file2, llm.KV{"general.architecture": "gemma"}, []llm.Tensor{}); err != nil {
-			t.Fatalf("failed to write gguf: %v", err)
-		}
-	}
-
-	if _, err := file2.Seek(0, io.SeekStart); err != nil {
-		t.Fatalf("failed to seek to start: %v", err)
-	}
-
-	layers, err := parseFromFile(context.Background(), "model", []*layerGGML{}, file2, "", func(api.ProgressResponse) {})
-	if err != nil {
-		t.Fatalf("failed to parse from file: %v", err)
-	}
-
-	if len(layers) != 5 {
-		t.Fatalf("got %d != want 5", len(layers))
+			if diff := cmp.Diff(got, tc.want); diff != "" {
+				t.Errorf("mismatch (-got +want):\n%s", diff)
+			}
+		})
 	}
 }

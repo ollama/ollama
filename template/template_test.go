@@ -317,45 +317,6 @@ What is your name?<|im_end|>
 <|im_start|>assistant
 `,
 		},
-		{
-			"moondream",
-			[]template{
-				// this does not have a "no response" test because it's impossible to render the same output
-				{"response", `{{ if .Prompt }}Question: {{ .Prompt }}
-
-{{ end }}Answer: {{ .Response }}
-
-`},
-				{"messages", `
-{{- range .Messages }}
-{{- if eq .Role "user" }}Question: {{ .Content }}
-
-{{ else if eq .Role "assistant" }}Answer: {{ .Content }}
-
-{{ end }}
-{{- end }}Answer: `},
-			},
-			Values{
-				Messages: []api.Message{
-					{Role: "user", Content: "What's in this image?", Images: []api.ImageData{[]byte("")}},
-					{Role: "assistant", Content: "It's a hot dog."},
-					{Role: "user", Content: "What's in _this_ image?"},
-					{Role: "user", Images: []api.ImageData{[]byte("")}},
-					{Role: "user", Content: "Is it a hot dog?"},
-				},
-			},
-			`Question: [img-0] What's in this image?
-
-Answer: It's a hot dog.
-
-Question: What's in _this_ image?
-
-[img-1]
-
-Is it a hot dog?
-
-Answer: `,
-		},
 	}
 
 	for _, tt := range cases {

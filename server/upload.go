@@ -108,7 +108,9 @@ func (b *blobUpload) Prepare(ctx context.Context, requestURL *url.URL, opts *reg
 		offset += size
 	}
 
-	slog.Info(fmt.Sprintf("uploading %s in %d %s part(s)", b.Digest[7:19], len(b.Parts), format.HumanBytes(b.Parts[0].Size)))
+	if len(b.Parts) > 0 {
+		slog.Info(fmt.Sprintf("uploading %s in %d %s part(s)", b.Digest[7:19], len(b.Parts), format.HumanBytes(b.Parts[0].Size)))
+	}
 
 	requestURL, err = url.Parse(location)
 	if err != nil {

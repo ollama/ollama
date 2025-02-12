@@ -72,6 +72,7 @@ func Origins() (origins []string) {
 		"app://*",
 		"file://*",
 		"tauri://*",
+		"vscode-webview://*",
 	)
 
 	return origins
@@ -152,6 +153,8 @@ var (
 	Debug = Bool("OLLAMA_DEBUG")
 	// FlashAttention enables the experimental flash attention feature.
 	FlashAttention = Bool("OLLAMA_FLASH_ATTENTION")
+	// KvCacheType is the quantization type for the K/V cache.
+	KvCacheType = String("OLLAMA_KV_CACHE_TYPE")
 	// NoHistory disables readline history.
 	NoHistory = Bool("OLLAMA_NOHISTORY")
 	// NoPrune disables pruning of model blobs on startup.
@@ -160,6 +163,8 @@ var (
 	SchedSpread = Bool("OLLAMA_SCHED_SPREAD")
 	// IntelGPU enables experimental Intel GPU detection.
 	IntelGPU = Bool("OLLAMA_INTEL_GPU")
+	// MultiUserCache optimizes prompt caching for multi-user scenarios
+	MultiUserCache = Bool("OLLAMA_MULTIUSER_CACHE")
 )
 
 func String(s string) func() string {
@@ -170,7 +175,6 @@ func String(s string) func() string {
 
 var (
 	LLMLibrary = String("OLLAMA_LLM_LIBRARY")
-	TmpDir     = String("OLLAMA_TMPDIR")
 
 	CudaVisibleDevices    = String("CUDA_VISIBLE_DEVICES")
 	HipVisibleDevices     = String("HIP_VISIBLE_DEVICES")
@@ -178,53 +182,6 @@ var (
 	GpuDeviceOrdinal      = String("GPU_DEVICE_ORDINAL")
 	HsaOverrideGfxVersion = String("HSA_OVERRIDE_GFX_VERSION")
 )
-
-func RunnersDir() (p string) {
-	if p := Var("OLLAMA_RUNNERS_DIR"); p != "" {
-		return p
-	}
-
-	if runtime.GOOS != "windows" {
-		return
-	}
-
-	defer func() {
-		if p == "" {
-			slog.Error("unable to locate llm runner directory. Set OLLAMA_RUNNERS_DIR to the location of 'ollama/runners'")
-		}
-	}()
-
-	// On Windows we do not carry the payloads inside the main executable
-	exe, err := os.Executable()
-	if err != nil {
-		return
-	}
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		return
-	}
-
-	var paths []string
-	for _, root := range []string{filepath.Dir(exe), filepath.Join(filepath.Dir(exe), LibRelativeToExe()), cwd} {
-		paths = append(paths,
-			root,
-			filepath.Join(root, runtime.GOOS+"-"+runtime.GOARCH),
-			filepath.Join(root, "dist", runtime.GOOS+"-"+runtime.GOARCH),
-		)
-	}
-
-	// Try a few variations to improve developer experience when building from source in the local tree
-	for _, path := range paths {
-		candidate := filepath.Join(path, "lib", "ollama", "runners")
-		if _, err := os.Stat(candidate); err == nil {
-			p = candidate
-			break
-		}
-	}
-
-	return p
-}
 
 func Uint(key string, defaultValue uint) func() uint {
 	return func() uint {
@@ -278,6 +235,7 @@ func AsMap() map[string]EnvVar {
 	ret := map[string]EnvVar{
 		"OLLAMA_DEBUG":             {"OLLAMA_DEBUG", Debug(), "Show additional debug information (e.g. OLLAMA_DEBUG=1)"},
 		"OLLAMA_FLASH_ATTENTION":   {"OLLAMA_FLASH_ATTENTION", FlashAttention(), "Enabled flash attention"},
+		"OLLAMA_KV_CACHE_TYPE":     {"OLLAMA_KV_CACHE_TYPE", KvCacheType(), "Quantization type for the K/V cache (default: f16)"},
 		"OLLAMA_GPU_OVERHEAD":      {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
 		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
@@ -290,18 +248,31 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_NOPRUNE":           {"OLLAMA_NOPRUNE", NoPrune(), "Do not prune model blobs on startup"},
 		"OLLAMA_NUM_PARALLEL":      {"OLLAMA_NUM_PARALLEL", NumParallel(), "Maximum number of parallel requests"},
 		"OLLAMA_ORIGINS":           {"OLLAMA_ORIGINS", Origins(), "A comma separated list of allowed origins"},
-		"OLLAMA_RUNNERS_DIR":       {"OLLAMA_RUNNERS_DIR", RunnersDir(), "Location for runners"},
 		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
-		"OLLAMA_TMPDIR":            {"OLLAMA_TMPDIR", TmpDir(), "Location for temporary files"},
+		"OLLAMA_MULTIUSER_CACHE":   {"OLLAMA_MULTIUSER_CACHE", MultiUserCache(), "Optimize prompt caching for multi-user scenarios"},
+
+		// Informational
+		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},
+		"HTTPS_PROXY": {"HTTPS_PROXY", String("HTTPS_PROXY")(), "HTTPS proxy"},
+		"NO_PROXY":    {"NO_PROXY", String("NO_PROXY")(), "No proxy"},
 	}
+
+	if runtime.GOOS != "windows" {
+		// Windows environment variables are case-insensitive so there's no need to duplicate them
+		ret["http_proxy"] = EnvVar{"http_proxy", String("http_proxy")(), "HTTP proxy"}
+		ret["https_proxy"] = EnvVar{"https_proxy", String("https_proxy")(), "HTTPS proxy"}
+		ret["no_proxy"] = EnvVar{"no_proxy", String("no_proxy")(), "No proxy"}
+	}
+
 	if runtime.GOOS != "darwin" {
 		ret["CUDA_VISIBLE_DEVICES"] = EnvVar{"CUDA_VISIBLE_DEVICES", CudaVisibleDevices(), "Set which NVIDIA devices are visible"}
-		ret["HIP_VISIBLE_DEVICES"] = EnvVar{"HIP_VISIBLE_DEVICES", HipVisibleDevices(), "Set which AMD devices are visible"}
-		ret["ROCR_VISIBLE_DEVICES"] = EnvVar{"ROCR_VISIBLE_DEVICES", RocrVisibleDevices(), "Set which AMD devices are visible"}
-		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal(), "Set which AMD devices are visible"}
+		ret["HIP_VISIBLE_DEVICES"] = EnvVar{"HIP_VISIBLE_DEVICES", HipVisibleDevices(), "Set which AMD devices are visible by numeric ID"}
+		ret["ROCR_VISIBLE_DEVICES"] = EnvVar{"ROCR_VISIBLE_DEVICES", RocrVisibleDevices(), "Set which AMD devices are visible by UUID or numeric ID"}
+		ret["GPU_DEVICE_ORDINAL"] = EnvVar{"GPU_DEVICE_ORDINAL", GpuDeviceOrdinal(), "Set which AMD devices are visible by numeric ID"}
 		ret["HSA_OVERRIDE_GFX_VERSION"] = EnvVar{"HSA_OVERRIDE_GFX_VERSION", HsaOverrideGfxVersion(), "Override the gfx used for all detected AMD GPUs"}
 		ret["OLLAMA_INTEL_GPU"] = EnvVar{"OLLAMA_INTEL_GPU", IntelGPU(), "Enable experimental Intel GPU detection"}
 	}
+
 	return ret
 }
 
@@ -316,13 +287,4 @@ func Values() map[string]string {
 // Var returns an environment variable stripped of leading and trailing quotes or spaces
 func Var(key string) string {
 	return strings.Trim(strings.TrimSpace(os.Getenv(key)), "\"'")
-}
-
-// On windows, we keep the binary at the top directory, but
-// other platforms use a "bin" directory, so this returns ".."
-func LibRelativeToExe() string {
-	if runtime.GOOS == "windows" {
-		return "."
-	}
-	return ".."
 }

@@ -28,6 +28,7 @@ Check your compute compatibility to see if your card is supported:
 | 5.0                | GeForce GTX         | `GTX 750 Ti` `GTX 750` `NVS 810`                                                                            |
 |                    | Quadro              | `K2200` `K1200` `K620` `M1200` `M520` `M5000M` `M4000M` `M3000M` `M2000M` `M1000M` `K620M` `M600M` `M500M`  |
 
+For building locally to support older GPUs, see [developer.md](./development.md#linux-cuda-nvidia)
 
 ### GPU Selection
 
@@ -37,7 +38,7 @@ Numeric IDs may be used, however ordering may vary, so UUIDs are more reliable.
 You can discover the UUID of your GPUs by running `nvidia-smi -L` If you want to
 ignore the GPUs and force CPU usage, use an invalid GPU ID (e.g., "-1")
 
-### Laptop Suspend Resume
+### Linux Suspend Resume
 
 On linux, after a suspend/resume cycle, sometimes Ollama will fail to discover
 your NVIDIA GPU, and fallback to running on the CPU.  You can workaround this
@@ -74,6 +75,10 @@ would set `HSA_OVERRIDE_GFX_VERSION="10.3.0"` as an environment variable for the
 server.  If you have an unsupported AMD GPU you can experiment using the list of
 supported types below.
 
+If you have multiple GPUs with different GFX versions, append the numeric device
+number to the environment variable to set them individually.  For example,
+`HSA_OVERRIDE_GFX_VERSION_0=10.3.0` and  `HSA_OVERRIDE_GFX_VERSION_1=11.0.0`
+
 At this time, the known supported GPU types on linux are the following LLVM Targets.
 This table shows some example GPUs that map to these LLVM targets:
 | **LLVM Target** | **An Example GPU** |
@@ -99,9 +104,10 @@ Reach out on [Discord](https://discord.gg/ollama) or file an
 ### GPU Selection
 
 If you have multiple AMD GPUs in your system and want to limit Ollama to use a
-subset, you can set `HIP_VISIBLE_DEVICES` to a comma separated list of GPUs.
+subset, you can set `ROCR_VISIBLE_DEVICES` to a comma separated list of GPUs.
 You can see the list of devices with `rocminfo`.  If you want to ignore the GPUs
-and force CPU usage, use an invalid GPU ID (e.g., "-1")
+and force CPU usage, use an invalid GPU ID (e.g., "-1").  When available, use the
+`Uuid` to uniquely identify the device instead of numeric value.
 
 ### Container Permission
 

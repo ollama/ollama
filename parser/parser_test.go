@@ -2,17 +2,24 @@ package parser
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"unicode/utf16"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/unicode"
+
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/llm"
 )
 
 func TestParseFileFile(t *testing.T) {
@@ -180,8 +187,15 @@ func TestParseFileBadCommand(t *testing.T) {
 FROM foo
 BADCOMMAND param1 value1
 `
+	parserError := &ParserError{
+		LineNumber: 3,
+		Msg:        errInvalidCommand.Error(),
+	}
+
 	_, err := ParseFile(strings.NewReader(input))
-	require.ErrorIs(t, err, errInvalidCommand)
+	if !errors.As(err, &parserError) {
+		t.Errorf("unexpected error: expected: %s, actual: %s", parserError.Error(), err.Error())
+	}
 }
 
 func TestParseFileMessages(t *testing.T) {
@@ -245,7 +259,10 @@ FROM foo
 MESSAGE badguy I'm a bad guy!
 `,
 			nil,
-			errInvalidMessageRole,
+			&ParserError{
+				LineNumber: 3,
+				Msg:        errInvalidMessageRole.Error(),
+			},
 		},
 		{
 			`
@@ -264,13 +281,35 @@ MESSAGE system`,
 		},
 	}
 
-	for _, c := range cases {
+	for _, tt := range cases {
 		t.Run("", func(t *testing.T) {
-			modelfile, err := ParseFile(strings.NewReader(c.input))
-			require.ErrorIs(t, err, c.err)
+			modelfile, err := ParseFile(strings.NewReader(tt.input))
+
 			if modelfile != nil {
-				assert.Equal(t, c.expected, modelfile.Commands)
+				assert.Equal(t, tt.expected, modelfile.Commands)
 			}
+
+			if tt.err == nil {
+				if err != nil {
+					t.Fatalf("expected no error, but got %v", err)
+				}
+				return
+			}
+
+			switch tt.err.(type) {
+			case *ParserError:
+				var pErr *ParserError
+				if errors.As(err, &pErr) {
+					// got the correct type of error
+					return
+				}
+			}
+
+			if errors.Is(err, tt.err) {
+				return
+			}
+
+			t.Fatalf("unexpected error: expected: %v, actual: %v", tt.err, err)
 		})
 	}
 }
@@ -440,7 +479,6 @@ func TestParseFileParameters(t *testing.T) {
 		"num_gpu 1":                    {"num_gpu", "1"},
 		"main_gpu 1":                   {"main_gpu", "1"},
 		"low_vram true":                {"low_vram", "true"},
-		"f16_kv true":                  {"f16_kv", "true"},
 		"logits_all true":              {"logits_all", "true"},
 		"vocab_only true":              {"vocab_only", "true"},
 		"use_mmap true":                {"use_mmap", "true"},
@@ -452,7 +490,6 @@ func TestParseFileParameters(t *testing.T) {
 		"top_k 1":                      {"top_k", "1"},
 		"top_p 1.0":                    {"top_p", "1.0"},
 		"min_p 0.05":                   {"min_p", "0.05"},
-		"tfs_z 1.0":                    {"tfs_z", "1.0"},
 		"typical_p 1.0":                {"typical_p", "1.0"},
 		"repeat_last_n 1":              {"repeat_last_n", "1"},
 		"temperature 1.0":              {"temperature", "1.0"},
@@ -536,7 +573,7 @@ PARAMETER param1 value1
 PARAMETER param2 value2
 TEMPLATE template1
 MESSAGE system """
-You are a store greeter. Always responsed with "Hello!".
+You are a store greeter. Always respond with "Hello!".
 """
 MESSAGE user Hey there!
 MESSAGE assistant Hello, I want to parse all the things!
@@ -554,7 +591,7 @@ PARAMETER param1 value1
 PARAMETER param2 value2
 TEMPLATE template1
 MESSAGE system """
-You are a store greeter. Always responsed with "Hello!".
+You are a store greeter. Always respond with "Hello!".
 """
 MESSAGE user Hey there!
 MESSAGE assistant Hello, I want to parse all the things!
@@ -639,5 +676,157 @@ func TestParseMultiByte(t *testing.T) {
 
 			assert.Equal(t, expect, actual.Commands)
 		})
+	}
+}
+
+func TestCreateRequest(t *testing.T) {
+	cases := []struct {
+		input    string
+		expected *api.CreateRequest
+	}{
+		{
+			`FROM test`,
+			&api.CreateRequest{From: "test"},
+		},
+		{
+			`FROM test
+TEMPLATE some template
+`,
+			&api.CreateRequest{
+				From:     "test",
+				Template: "some template",
+			},
+		},
+		{
+			`FROM test
+LICENSE single license
+PARAMETER temperature 0.5
+MESSAGE user Hello
+`,
+			&api.CreateRequest{
+				From:       "test",
+				License:    []string{"single license"},
+				Parameters: map[string]any{"temperature": float32(0.5)},
+				Messages: []api.Message{
+					{Role: "user", Content: "Hello"},
+				},
+			},
+		},
+		{
+			`FROM test
+PARAMETER temperature 0.5
+PARAMETER top_k 1
+SYSTEM You are a bot.
+LICENSE license1
+LICENSE license2
+MESSAGE user Hello there!
+MESSAGE assistant Hi! How are you?
+`,
+			&api.CreateRequest{
+				From:       "test",
+				License:    []string{"license1", "license2"},
+				System:     "You are a bot.",
+				Parameters: map[string]any{"temperature": float32(0.5), "top_k": int64(1)},
+				Messages: []api.Message{
+					{Role: "user", Content: "Hello there!"},
+					{Role: "assistant", Content: "Hi! How are you?"},
+				},
+			},
+		},
+	}
+
+	for _, c := range cases {
+		s, err := unicode.UTF8.NewEncoder().String(c.input)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		p, err := ParseFile(strings.NewReader(s))
+		if err != nil {
+			t.Error(err)
+		}
+
+		actual, err := p.CreateRequest("")
+		if err != nil {
+			t.Error(err)
+		}
+
+		if diff := cmp.Diff(actual, c.expected); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	}
+}
+
+func getSHA256Digest(t *testing.T, r io.Reader) (string, int64) {
+	t.Helper()
+
+	h := sha256.New()
+	n, err := io.Copy(h, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return fmt.Sprintf("sha256:%x", h.Sum(nil)), n
+}
+
+func createBinFile(t *testing.T, kv map[string]any, ti []llm.Tensor) (string, string) {
+	t.Helper()
+
+	f, err := os.CreateTemp(t.TempDir(), "testbin.*.gguf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	if err := llm.WriteGGUF(f, kv, ti); err != nil {
+		t.Fatal(err)
+	}
+	// Calculate sha256 of file
+	if _, err := f.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	digest, _ := getSHA256Digest(t, f)
+
+	return f.Name(), digest
+}
+
+func TestCreateRequestFiles(t *testing.T) {
+	n1, d1 := createBinFile(t, nil, nil)
+	n2, d2 := createBinFile(t, map[string]any{"foo": "bar"}, nil)
+
+	cases := []struct {
+		input    string
+		expected *api.CreateRequest
+	}{
+		{
+			fmt.Sprintf("FROM %s", n1),
+			&api.CreateRequest{Files: map[string]string{n1: d1}},
+		},
+		{
+			fmt.Sprintf("FROM %s\nFROM %s", n1, n2),
+			&api.CreateRequest{Files: map[string]string{n1: d1, n2: d2}},
+		},
+	}
+
+	for _, c := range cases {
+		s, err := unicode.UTF8.NewEncoder().String(c.input)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		p, err := ParseFile(strings.NewReader(s))
+		if err != nil {
+			t.Error(err)
+		}
+
+		actual, err := p.CreateRequest("")
+		if err != nil {
+			t.Error(err)
+		}
+
+		if diff := cmp.Diff(actual, c.expected); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
 	}
 }
