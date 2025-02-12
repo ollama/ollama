@@ -16,6 +16,7 @@ import (
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
 
+	fs "github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	_ "github.com/ollama/ollama/ml/backend"
@@ -92,6 +93,36 @@ func New(s string) (Model, error) {
 	v := reflect.ValueOf(m)
 	v.Elem().Set(populateFields(base, v.Elem()))
 	return m, nil
+}
+
+func NewTextProcessor(s string) (TextProcessor, error) {
+	r, err := os.Open(s)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	meta, _, err := fs.Decode(r, -1)
+	if err != nil {
+		return nil, err
+	}
+	return getTextProcessor(meta.KV())
+}
+
+func getTextProcessor(kv fs.KV) (TextProcessor, error) {
+	arch := kv.Architecture()
+	f, ok := models[arch]
+	if !ok {
+		return nil, fmt.Errorf("unsupported model architecture %q", arch)
+	}
+	m, err := f(kv)
+	if err != nil {
+		return nil, err
+	}
+	tp, ok := m.(TextProcessor)
+	if !ok {
+		return nil, fmt.Errorf("%v is not a TextProcessor", m)
+	}
+	return tp, nil
 }
 
 func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {

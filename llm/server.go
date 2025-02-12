@@ -19,7 +19,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"golang.org/x/sync/semaphore"
@@ -30,6 +29,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llama"
+	"github.com/ollama/ollama/model"
 )
 
 type LlamaServer interface {
@@ -54,8 +54,10 @@ type llmServer struct {
 	options     api.Options
 	numParallel int
 	modelPath   string
-	modelLock   sync.Mutex   // Temporary until we switch fully to Go server
-	model       *llama.Model // If non-nil, the runner is a new Go server
+
+	// Only one flavor will be loaded depending on the runner type
+	llamaModel    *llama.Model
+	textProcessor model.TextProcessor
 
 	estimate    MemoryEstimate
 	totalLayers uint64
@@ -89,7 +91,7 @@ func LoadModel(model string, maxArraySize int) (*ggml.GGML, error) {
 
 // NewLlamaServer will run a server for the given GPUs
 // The gpu list must be a single family.
-func NewLlamaServer(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
+func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, adapters, projectors []string, opts api.Options, numParallel int) (LlamaServer, error) {
 	systemInfo := discover.GetSystemInfo()
 	systemTotalMemory := systemInfo.System.TotalMemory
 	systemFreeMemory := systemInfo.System.FreeMemory
@@ -130,7 +132,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapt
 	slog.Info("offload", "", estimate)
 
 	params := []string{
-		"--model", model,
+		"--model", modelPath,
 		"--ctx-size", strconv.Itoa(opts.NumCtx),
 		"--batch-size", strconv.Itoa(opts.NumBatch),
 	}
@@ -257,6 +259,29 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapt
 		}
 	}
 	slog.Debug("compatible gpu libraries", "compatible", compatible)
+	exe, err := os.Executable()
+	if err != nil {
+		return nil, fmt.Errorf("unable to lookup executable path: %w", err)
+	}
+
+	exe, err = filepath.EvalSymlinks(exe)
+	if err != nil {
+		return nil, fmt.Errorf("unable to evaluate symlinks for executable path: %w", err)
+	}
+
+	var llamaModel *llama.Model
+	var textProcessor model.TextProcessor
+	if envconfig.NewRunners() {
+		textProcessor, err = model.NewTextProcessor(modelPath)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		llamaModel, err = llama.LoadModelFromFile(modelPath, llama.ModelParams{VocabOnly: true})
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	// iterate through compatible GPU libraries such as 'cuda_v12', 'cuda_v11', 'rocm', etc.
 	// adding each library's respective path to the LD_LIBRARY_PATH, until finally running
@@ -315,29 +340,21 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapt
 		// finally, add the root library path
 		libraryPaths = append(libraryPaths, discover.LibOllamaPath)
 
-		exe, err := os.Executable()
-		if err != nil {
-			return nil, fmt.Errorf("unable to lookup executable path: %w", err)
-		}
-
-		exe, err = filepath.EvalSymlinks(exe)
-		if err != nil {
-			return nil, fmt.Errorf("unable to evaluate symlinks for executable path: %w", err)
-		}
-
 		// TODO - once fully switched to the Go runner, load the model here for tokenize/detokenize cgo access
 		s := &llmServer{
-			port:        port,
-			cmd:         exec.Command(exe, finalParams...),
-			status:      NewStatusWriter(os.Stderr),
-			options:     opts,
-			modelPath:   model,
-			estimate:    estimate,
-			numParallel: numParallel,
-			sem:         semaphore.NewWeighted(int64(numParallel)),
-			totalLayers: f.KV().BlockCount() + 1,
-			gpus:        gpus,
-			done:        make(chan error, 1),
+			port:          port,
+			cmd:           exec.Command(exe, finalParams...),
+			status:        NewStatusWriter(os.Stderr),
+			options:       opts,
+			modelPath:     modelPath,
+			llamaModel:    llamaModel,
+			textProcessor: textProcessor,
+			estimate:      estimate,
+			numParallel:   numParallel,
+			sem:           semaphore.NewWeighted(int64(numParallel)),
+			totalLayers:   f.KV().BlockCount() + 1,
+			gpus:          gpus,
+			done:          make(chan error, 1),
 		}
 
 		s.cmd.Env = os.Environ()
@@ -406,6 +423,9 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapt
 			}
 			err := fmt.Errorf("error starting runner: %v %s", err, msg)
 			if len(compatible) == 0 {
+				if llamaModel != nil {
+					llama.FreeModel(llamaModel)
+				}
 				return nil, err
 			}
 
@@ -702,24 +722,29 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	}
 
 	if len(req.Format) > 0 {
-		switch string(req.Format) {
-		case `null`, `""`:
-			// Field was set, but "missing" a value. We accept
-			// these as "not set".
-			break
-		case `"json"`:
-			request["grammar"] = grammarJSON
-		default:
-			if req.Format[0] != '{' {
-				return fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema object", req.Format)
-			}
+		strFormat := string(req.Format)
+		if strFormat != `null` && strFormat != `""` {
+			if s.textProcessor != nil {
+				// New engine handles this on the backend
+				request["format"] = req.Format
+			} else {
+				// old engine
+				switch strFormat {
+				case `"json"`:
+					request["grammar"] = grammarJSON
+				default:
+					if req.Format[0] != '{' {
+						return fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema object", req.Format)
+					}
 
-			// User provided a JSON schema
-			g := llama.SchemaToGrammar(req.Format)
-			if g == nil {
-				return fmt.Errorf("invalid JSON schema in format")
+					// User provided a JSON schema
+					g := llama.SchemaToGrammar(req.Format)
+					if g == nil {
+						return fmt.Errorf("invalid JSON schema in format")
+					}
+					request["grammar"] = string(g)
+				}
 			}
-			request["grammar"] = string(g)
 		}
 	}
 
@@ -934,64 +959,22 @@ type TokenizeResponse struct {
 }
 
 func (s *llmServer) Tokenize(ctx context.Context, content string) ([]int, error) {
-	s.modelLock.Lock()
-	defer s.modelLock.Unlock()
-	if s.model != nil {
-		return s.model.Tokenize(content, false, true)
+	if s.llamaModel != nil {
+		return s.llamaModel.Tokenize(content, false, true)
 	}
-
-	// Make sure the server is ready
-	status, err := s.getServerStatus(ctx)
-	if err != nil {
-		return nil, err
-	} else if status != ServerStatusReady && status != ServerStatusNoSlotsAvailable {
-		return nil, fmt.Errorf("unexpected server status: %s", status.ToString())
-	}
-
-	data, err := json.Marshal(TokenizeRequest{Content: content})
-	if err != nil {
-		return nil, fmt.Errorf("marshaling encode data: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/tokenize", s.port), bytes.NewBuffer(data))
-	if err != nil {
-		return nil, fmt.Errorf("encode request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("do encode request: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		if s.model == nil {
-			slog.Debug("new runner detected, loading model for cgo tokenization")
-			m, err := llama.LoadModelFromFile(s.modelPath, llama.ModelParams{VocabOnly: true})
-			if err != nil {
-				return nil, err
-			}
-			s.model = m
+	if s.textProcessor != nil {
+		tokens, err := s.textProcessor.Encode(content)
+		if err != nil {
+			return nil, err
 		}
-		return s.model.Tokenize(content, false, true)
+		toks := make([]int, len(tokens))
+		for i, t := range tokens {
+			toks[i] = int(t)
+		}
+		return toks, nil
 	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read encode request: %w", err)
-	}
-
-	if resp.StatusCode >= 400 {
-		log.Printf("llm encode error: %s", body)
-		return nil, fmt.Errorf("%s", body)
-	}
-
-	var encoded TokenizeResponse
-	if err := json.Unmarshal(body, &encoded); err != nil {
-		return nil, fmt.Errorf("unmarshal encode response: %w", err)
-	}
-
-	return encoded.Tokens, nil
+	// not reached
+	return nil, fmt.Errorf("no tokenizer configured")
 }
 
 type DetokenizeRequest struct {
@@ -1003,80 +986,33 @@ type DetokenizeResponse struct {
 }
 
 func (s *llmServer) Detokenize(ctx context.Context, tokens []int) (string, error) {
-	s.modelLock.Lock()
-	defer s.modelLock.Unlock()
-	if s.model != nil {
+	if s.llamaModel != nil {
 		var resp string
 		for _, token := range tokens {
-			resp += s.model.TokenToPiece(token)
+			resp += s.llamaModel.TokenToPiece(token)
 		}
 		return resp, nil
 	}
-	// Make sure the server is ready
-	status, err := s.getServerStatus(ctx)
-	if err != nil {
-		return "", err
-	} else if status != ServerStatusReady && status != ServerStatusNoSlotsAvailable {
-		return "", fmt.Errorf("unexpected server status: %s", status.ToString())
-	}
-
-	data, err := json.Marshal(DetokenizeRequest{Tokens: tokens})
-	if err != nil {
-		return "", fmt.Errorf("marshaling decode data: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/detokenize", s.port), bytes.NewBuffer(data))
-	if err != nil {
-		return "", fmt.Errorf("decode request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("do decode request: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		if s.model == nil {
-			slog.Debug("new runner detected, loading model for cgo tokenization")
-			m, err := llama.LoadModelFromFile(s.modelPath, llama.ModelParams{VocabOnly: true})
-			if err != nil {
-				return "", err
-			}
-			s.model = m
+	if s.textProcessor != nil {
+		toks := make([]int32, len(tokens))
+		for i, t := range tokens {
+			toks[i] = int32(t)
 		}
-		var resp string
-		for _, token := range tokens {
-			resp += s.model.TokenToPiece(token)
+		content, err := s.textProcessor.Decode(toks)
+		if err != nil {
+			return "", err
 		}
-		return resp, nil
+		return content, nil
 	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("read decode request: %w", err)
-	}
-
-	if resp.StatusCode >= 400 {
-		log.Printf("llm decode error: %s", body)
-		return "", fmt.Errorf("%s", body)
-	}
-
-	var decoded DetokenizeResponse
-	if err := json.Unmarshal(body, &decoded); err != nil {
-		return "", fmt.Errorf("unmarshal encode response: %w", err)
-	}
-
-	return decoded.Content, nil
+	// not reached
+	return "", fmt.Errorf("no tokenizer configured")
 }
 
 func (s *llmServer) Close() error {
-	s.modelLock.Lock()
-	if s.model != nil {
-		llama.FreeModel(s.model)
-		s.model = nil
+	if s.llamaModel != nil {
+		llama.FreeModel(s.llamaModel)
+		s.llamaModel = nil
 	}
-	s.modelLock.Unlock()
 
 	if s.cmd != nil {
 		slog.Debug("stopping llama server")
