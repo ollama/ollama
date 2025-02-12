@@ -596,9 +596,9 @@ func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 }
 
 const (
-	ropeTypeNorm C.int = 0
-	ropeTypeNeox C.int = 2
-	ropeTypeMrope C.int = 8
+	ropeTypeNorm   C.int = 0
+	ropeTypeNeox   C.int = 2
+	ropeTypeMrope  C.int = 8
 	ropeTypeVision C.int = 24
 )
 
@@ -617,7 +617,7 @@ func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDi
 			ctx.(*Context).ctx, dequant, positionIDs.(*Tensor).t, ropeFactors.(*Tensor).t,
 			C.int(ropeDim),
 			C.int(ropeType),
-			131072,       // YaRN n_ctx_train
+			131072, // YaRN n_ctx_train
 			C.float(ropeBase),
 			C.float(ropeScale),
 			0.,  // YaRN ext_factor
