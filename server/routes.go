@@ -1125,6 +1125,13 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 	}
 }
 
+func CacheControlMiddleware() gin.HandlerFunc {
+    return func(c *gin.Context) {
+        c.Header("Cache-Control", "max-age=0")
+        c.Next()
+    }
+}
+
 func (s *Server) GenerateRoutes() http.Handler {
 	config := cors.DefaultConfig()
 	config.AllowWildcard = true
@@ -1138,6 +1145,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 
 	r := gin.Default()
 	r.Use(
+		CacheControlMiddleware(),
 		cors.New(config),
 		allowedHostsMiddleware(s.addr),
 	)
