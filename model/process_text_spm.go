@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"iter"
+	"log/slog"
 	"strings"
 	//"unicode/utf8"
 
@@ -220,13 +221,13 @@ type candidate struct {
 func (spm SentencePieceModel) Decode(ids []int32) (string, error) {
 	var sb strings.Builder
 	for _, id := range ids {
-		for _, r := range spm.vocab.Decode(id) {
-			// todo - do we need to introspect the chars here?
-			if err := sb.WriteByte(byte(r)); err != nil {
-				return "", err
-			}
+		data := spm.vocab.Decode(id)
+		data = strings.ReplaceAll(data, spmWhitespaceSep, " ")
+		if _, err := sb.WriteString(data); err != nil {
+			return "", err
 		}
 	}
 
+	slog.Debug("decoded", "ids", ids, "text", sb.String())
 	return sb.String(), nil
 }
