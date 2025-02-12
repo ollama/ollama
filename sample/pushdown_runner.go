@@ -11,17 +11,17 @@ import (
 
 // TODO: safety in case of invalid json
 // TODO: interfaces to cleanup with return values
+// TODO this interface shouldn't be the sampler - should just use Sampler
+// TODO: add penalties for string \n stuff
 type PushdownSampler struct {
-	// stateful
-	curNode        *PDANode
-	proc           model.TextProcessor
-	stateToNodeMap map[JSONState]*PDANode
-	braceStack     []rune
-	stateCounter   uint32
+	PDAGraphBuilder
+	curNode      *PDA
+	braceStack   []rune
+	stateCounter uint32
 }
 
 // graph should be built once and reused per tokenizer
-func NewPushdownSampler(proc model.TextProcessor) *PushdownSampler {
+func NewPushdownSampler(proc model.TextProcessor) (*PushdownSampler, error) {
 	start := time.Now()
 
 	fmt.Println("--------------------------------")
@@ -32,27 +32,38 @@ func NewPushdownSampler(proc model.TextProcessor) *PushdownSampler {
 	before := m.Alloc
 	fmt.Printf("Alloc = %.2f MB\n", float64(before)/(1024*1024))
 
-	startNode, stateToNodeMap, err := BuildGraph(proc)
-	if err != nil {
-		panic(err)
+	vocab := proc.GetVocabulary()
+	decodedToks := make([]string, len(vocab.Values))
+	for i := range vocab.Values {
+		token, err := proc.Decode([]int32{int32(i)})
+		if err != nil {
+			return nil, err
+		}
+		decodedToks[i] = token
 	}
-	err = PreComputeValidStates(stateToNodeMap, proc)
-	if err != nil {
-		panic(err)
+
+	gb := &PDAGraphBuilder{
+		proc:        proc,
+		decodedToks: decodedToks,
 	}
+
+	if err := gb.BuildGraph(); err != nil {
+		return nil, err
+	}
+
 	runtime.ReadMemStats(&m)
 	after := m.Alloc
 	fmt.Printf("Alloc = %.2f MB\n", float64(after)/(1024*1024))
 	fmt.Printf("Graph memory usage = %.2f MB\n", float64(after-before)/(1024*1024))
 	fmt.Printf("Graph build time = %v\n", time.Since(start))
 
+	// TODO: this can be simplified
 	return &PushdownSampler{
-		curNode:        startNode,
-		proc:           proc,
-		stateToNodeMap: stateToNodeMap,
-		braceStack:     []rune{},
-		stateCounter:   0,
-	}
+		curNode:         gb.stateToNodeMap[StateStart],
+		PDAGraphBuilder: *gb,
+		braceStack:      []rune{},
+		stateCounter:    0,
+	}, nil
 }
 
 // TODO: need to add resampling logic if the first sample was not good
@@ -66,14 +77,7 @@ func (s *PushdownSampler) Apply(logits []float64) ([]float64, error) {
 		// force finish if no braces left
 		if len(s.braceStack) == 0 {
 			s.curNode = NewPDANode(StateTerminate)
-			for i := range logits {
-				if s.proc.Is(uint32(i), model.SpecialEOS) {
-					logits[i] = 1.0
-				} else {
-					logits[i] = math.Inf(-1)
-				}
-			}
-			return logits, nil
+			return forceFinish(s, logits)
 		}
 
 		logits, err := s.maskLogits(logits, s.curNode)
@@ -82,18 +86,14 @@ func (s *PushdownSampler) Apply(logits []float64) ([]float64, error) {
 		}
 		return logits, nil
 
+	case StateTerminate:
+		return forceFinish(s, logits)
+
 	case StateInObjectEnd:
 		// force finish if no braces left
 		if len(s.braceStack) == 0 {
 			s.curNode = NewPDANode(StateTerminate)
-			for i := range logits {
-				if s.proc.Is(uint32(i), model.SpecialEOS) {
-					logits[i] = 1.0
-				} else {
-					logits[i] = math.Inf(-1)
-				}
-			}
-			return logits, nil
+			return forceFinish(s, logits)
 		}
 
 		peek := s.braceStack[len(s.braceStack)-1]
@@ -112,19 +112,10 @@ func (s *PushdownSampler) Apply(logits []float64) ([]float64, error) {
 		if peek == rune('[') {
 			s.curNode = s.stateToNodeMap[StateInListComma]
 		}
+
 		logits, err := s.maskLogits(logits, s.curNode)
 		if err != nil {
 			return nil, err
-		}
-		return logits, nil
-
-	case StateTerminate:
-		for i := range logits {
-			if s.proc.Is(uint32(i), model.SpecialEOS) {
-				logits[i] = 1.0
-			} else {
-				logits[i] = math.Inf(-1)
-			}
 		}
 		return logits, nil
 
@@ -138,13 +129,24 @@ func (s *PushdownSampler) Apply(logits []float64) ([]float64, error) {
 	}
 }
 
+func forceFinish(s *PushdownSampler, logits []float64) ([]float64, error) {
+	for i := range logits {
+		if s.proc.Is(uint32(i), model.SpecialEOS) {
+			logits[i] = 1.0
+		} else {
+			logits[i] = math.Inf(-1)
+		}
+	}
+	return logits, nil
+}
+
 func (s *PushdownSampler) UpdateState(tokenSlice []int32) error {
 	fmt.Println("current state - updating", s.curNode.State)
 	mappedString, err := s.proc.Decode(tokenSlice)
 	if err != nil {
 		return err
 	}
-	fmt.Println(">>> mappedString", mappedString)
+	fmt.Printf(">>> mappedString: %q\n", mappedString)
 
 	// TODO: should force closing for all braces - not doing square yet
 	for _, r := range mappedString {
@@ -198,7 +200,8 @@ func (s *PushdownSampler) UpdateState(tokenSlice []int32) error {
 }
 
 // greedy sample + backtrack?
-func (s *PushdownSampler) maskLogits(logits []float64, node *PDANode) ([]float64, error) {
+func (s *PushdownSampler) maskLogits(logits []float64, node *PDA) ([]float64, error) {
+
 	// Create a new slice with same length as logits, initialized to -Inf
 	maskedLogits := make([]float64, len(logits))
 	for i := range maskedLogits {
@@ -215,4 +218,23 @@ func (s *PushdownSampler) maskLogits(logits []float64, node *PDANode) ([]float64
 	return maskedLogits, nil
 }
 
-// TODO: add penalties for string \n stuff
+func (s *PushdownSampler) fastMaskLogits(logits []float64, node *PDA) ([]float64, error) {
+	maxLogit := math.Inf(-1)
+	maxIndex := -1
+
+	// Find the maximum logit value among valid tokens
+	for tokenID := range node.MaskTokenIDToNode {
+		if int(tokenID) < len(logits) && logits[tokenID] > maxLogit {
+			maxLogit = logits[tokenID]
+			maxIndex = int(tokenID)
+		}
+	}
+
+	if maxIndex == -1 {
+		return nil, fmt.Errorf("no valid tokens found in mask")
+	}
+
+	logits[0] = float64(maxIndex)
+	return logits, nil
+	// return maxIndex, nil
+}

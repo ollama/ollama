@@ -1,0 +1,32 @@
+// Feedback from code review:
+
+// pushdown_automata.go:
+// 1. The BuildGraph function is quite long and could be split into smaller, more focused functions
+// 2. Consider using constants instead of magic runes like rune(-1) for sentinel values
+// 3. The state machine transitions could be defined more declaratively, perhaps in a config
+// 4. The stringInvalidRunes list needs to handle escape sequences properly
+// 5. The graph building could be optimized to avoid duplicate nodes/transitions
+// 6. Consider adding validation for max nesting depth of braces/brackets
+// 7. The CreateMask function is doing a lot - could be split into smaller pieces
+// 8. isRuneValid has a "garbage interface" per TODO - needs cleaner design
+
+// pushdown_runner.go:
+// 1. The Apply method has a lot of duplicated logic around EOS handling
+// 2. The UpdateState method could use more granular error messages
+// 3. The braceStack validation could be moved to a separate validator
+// 4. Consider adding max length limits for strings/numbers
+// 5. The stateCounter isn't being used effectively yet
+// 6. Need to add penalties for staying in same state too long
+// 7. The maskLogits function could be optimized to avoid allocations
+// 8. Missing proper cleanup/reset functionality
+// 9. Error handling could be more consistent throughout
+// 10. Consider adding debug logging levels instead of raw fmt.Println
+
+// General improvements needed:
+// - More comprehensive testing, especially edge cases
+// - Better documentation of state machine transitions
+// - Performance optimization for large inputs
+// - Memory usage optimization for the graph structure
+// - Cleaner interfaces between components
+// - More robust error handling and recovery
+

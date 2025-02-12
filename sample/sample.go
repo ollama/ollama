@@ -6,6 +6,8 @@ import (
 	"math"
 	"slices"
 
+	pq "github.com/emirpasic/gods/v2/queues/priorityqueue"
+	"golang.org/x/exp/rand"
 	"gonum.org/v1/gonum/floats"
 	"gonum.org/v1/gonum/stat/sampleuv"
 )
@@ -15,33 +17,34 @@ type Transform interface {
 }
 
 type Sampler interface {
-	Sample([]float64) (int, error)
+	Sample([]float32, ...Transform) (int, error)
 }
 
-type SamplerConfig struct {
-	transforms []Transform
-	sampler    Sampler
-}
-
-// NewSampler creates a sampler with the given transforms and sampling method
-func NewSampler(transforms []Transform, sampler Sampler) *SamplerConfig {
-	return &SamplerConfig{
-		transforms: transforms,
-		sampler:    sampler,
+// TODO(parthsareen): potentially cache softmax values
+func softmax(logits []float64) []float64 {
+	var sum float64
+	tt := make([]float64, len(logits))
+	for i, v := range logits {
+		tt[i] = math.Exp(v)
+		sum += tt[i]
 	}
+	floats.Scale(1/sum, tt)
+	return tt
 }
 
 type Temperature float64
 
 func (t Temperature) Apply(logits []float64) ([]float64, error) {
+	if t == 0 {
+		return nil, errors.New("use Greedy sampler instead of Temperature(0)")
+	}
 	if t < 0 || t > 2 {
 		return nil, errors.New("temperature must be between 0 and 2")
 	}
+	temp := math.Max(float64(t), 1e-7)
 
 	// subtracting max logit to avoid under/overflow
-	maxLogit := floats.Max(logits)
-
-	temp := math.Max(float64(t), 1e-7)
+	maxLogit := slices.Max(logits)
 	for i := range logits {
 		logits[i] = (logits[i] - maxLogit) / temp
 	}
@@ -49,52 +52,41 @@ func (t Temperature) Apply(logits []float64) ([]float64, error) {
 	return logits, nil
 }
 
-type softmax struct{}
-
-func Softmax() Transform {
-	return softmax{}
+type logitMap struct {
+	index int
+	logit float64
 }
 
-func (softmax) Apply(logits []float64) ([]float64, error) {
-	return computeSoftmax(logits), nil
-}
-
-// TODO: cache softmax values
-func computeSoftmax(logits []float64) []float64 {
-	copiedLogits := make([]float64, len(logits))
-	copy(copiedLogits, logits)
-	for i := range copiedLogits {
-		copiedLogits[i] = math.Exp(copiedLogits[i])
-	}
-
-	floatSum := floats.Sum(copiedLogits)
-	floats.Scale(1.0/floatSum, copiedLogits)
-
-	return copiedLogits
+func logitMapComparator(a, b logitMap) int {
+	return -cmp.Compare(a.logit, b.logit)
 }
 
 type TopK int
 
+// TODO(parthsareen): avoid having to check all logits after this transform
 func (k TopK) Apply(logits []float64) ([]float64, error) {
 	if k <= 0 {
-		return nil, errors.New("k must be positive")
+		return nil, errors.New("k must be greater than 0")
 	}
 	if int(k) >= len(logits) {
 		return logits, nil
 	}
 
-	indices := make([]int, len(logits))
-	for i := range indices {
-		indices[i] = i
+	q := pq.NewWith(logitMapComparator)
+	for i, logit := range logits {
+		q.Enqueue(logitMap{index: i, logit: logit})
 	}
 
-	// sort in descending order
-	slices.SortFunc(indices, func(i, j int) int {
-		return cmp.Compare(logits[j], logits[i])
-	})
+	validLogits := make(map[int]float64)
+	for range k {
+		logitMap, _ := q.Dequeue()
+		validLogits[logitMap.index] = logitMap.logit
+	}
 
-	for _, idx := range indices[k:] {
-		logits[idx] = math.Inf(-1)
+	for i := range logits {
+		if _, ok := validLogits[i]; !ok {
+			logits[i] = math.Inf(-1)
+		}
 	}
 
 	return logits, nil
@@ -107,8 +99,7 @@ func (p TopP) Apply(logits []float64) ([]float64, error) {
 		return nil, errors.New("p must be between 0 and 1")
 	}
 
-	probs := computeSoftmax(logits)
-
+	probs := softmax(logits)
 	indices := make([]int, len(probs))
 	for i := range indices {
 		indices[i] = i
@@ -139,17 +130,11 @@ func (p MinP) Apply(logits []float64) ([]float64, error) {
 		return nil, errors.New("p must be between 0 and 1")
 	}
 
-	probs := computeSoftmax(logits)
-	copiedProbs := make([]float64, len(probs))
-	copy(copiedProbs, probs)
+	probs := softmax(logits)
+	threshold := slices.Max(probs) * float64(p)
 
-	slices.Sort(copiedProbs)
-
-	maxProb := copiedProbs[len(copiedProbs)-1]
-	probThreshold := float64(p) * maxProb
-
-	for i := range probs {
-		if probs[i] < probThreshold {
+	for i, prob := range probs {
+		if prob < threshold {
 			logits[i] = math.Inf(-1)
 		}
 	}
@@ -157,18 +142,35 @@ func (p MinP) Apply(logits []float64) ([]float64, error) {
 	return logits, nil
 }
 
-type weighed struct{}
-
-func Weighed() Sampler {
-	return weighed{}
+type weighted struct {
+	src rand.Source
 }
 
-// should return single value
-func (s weighed) Sample(logits []float64) (int, error) {
+func Weighted(seed *int64) Sampler {
+	var src rand.Source
+	if seed != nil {
+		src = rand.NewSource(uint64(*seed))
+	}
+	return weighted{src: src}
+}
+
+func (s weighted) Sample(logits []float32, transforms ...Transform) (int, error) {
+	logits64 := make([]float64, len(logits))
+	for i, v := range logits {
+		logits64[i] = float64(v)
+	}
+
+	var err error
+	for _, t := range transforms {
+		logits64, err = t.Apply(logits64)
+		if err != nil {
+			return -1, err
+		}
+	}
+
 	logitsCopy := make([]float64, 0, len(logits))
 	indices := make([]int, 0, len(logits))
-	// the uv sampler does not support NaN values
-	for i, logit := range logits {
+	for i, logit := range logits64 {
 		if !math.IsInf(logit, -1) {
 			logitsCopy = append(logitsCopy, logit)
 			indices = append(indices, i)
@@ -176,38 +178,13 @@ func (s weighed) Sample(logits []float64) (int, error) {
 	}
 
 	if len(logitsCopy) == 0 {
-		return -1, errors.New("no valid tokens found")
+		return -1, errors.New("no valid logits found for weighed sampling")
 	}
 
-	softmax := computeSoftmax(logitsCopy)
-	w := sampleuv.NewWeighted(softmax, nil)
+	probs := softmax(logitsCopy)
+	w := sampleuv.NewWeighted(probs, s.src)
 	if idx, ok := w.Take(); ok {
-		// returns the token ID
 		return indices[idx], nil
 	}
-	return -1, errors.New("weighed sampler failed")
-}
-
-// Sample applies transforms and samples a token ID
-func (s *SamplerConfig) Sample(input []float32) (int, error) {
-	logits := make([]float64, len(input))
-	for i, v := range input {
-		logits[i] = float64(v)
-	}
-
-	var err error
-	for _, t := range s.transforms {
-		if t == Temperature(0) {
-			// early return with greedy if temperature is 0
-			s.sampler = Greedy()
-			break
-		}
-
-		logits, err = t.Apply(logits)
-		if err != nil {
-			return -1, err
-		}
-	}
-
-	return s.sampler.Sample(logits)
+	return -1, errors.New("weighed sampler failed, no valid token found")
 }

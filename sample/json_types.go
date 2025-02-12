@@ -23,7 +23,9 @@ const (
 	StateInColon
 	StateInComma
 	StateInTab
-	StateInSpace
+	StateInSpaceToValue
+	StateInSpaceEndValue
+	StateInNewlineEndValue
 	StateInObjSpace
 	StateInList
 	StateInListComma
@@ -57,7 +59,9 @@ var JSONStates = []JSONState{
 	StateInColon,
 	StateInComma,
 	StateInTab,
-	StateInSpace,
+	StateInSpaceToValue,
+	StateInSpaceEndValue,
+	StateInNewlineEndValue,
 	StateInObjSpace,
 	StateInList,
 	StateInListComma,
@@ -107,7 +111,7 @@ func (s JSONState) String() string {
 		return "StateInComma"
 	case StateInTab:
 		return "StateInTab"
-	case StateInSpace:
+	case StateInSpaceToValue:
 		return "StateInSpace"
 	case StateInObjSpace:
 		return "StateInObjSpace"
@@ -121,6 +125,8 @@ func (s JSONState) String() string {
 		return "StateInListEnd"
 	case StateInNewline:
 		return "StateInNewline"
+	case StateInNewlineEndValue:
+		return "StateInNewlineEndValue"
 	case StateInNumber:
 		return "StateInNumber"
 	case StateInNumberEnd:
@@ -129,6 +135,8 @@ func (s JSONState) String() string {
 		return "StateInStringEnd"
 	case StateInObjectKeyEnd:
 		return "StateInObjectKeyEnd"
+	case StateInSpaceEndValue:
+		return "StateInSpaceEndValue"
 	case StateTerminate:
 		return "StateTerminate"
 	case StateInObjectEnd:

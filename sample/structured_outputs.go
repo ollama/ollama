@@ -8,27 +8,45 @@ import (
 	"github.com/ollama/ollama/model"
 )
 
-type SOSampler struct {
+type JSONSampler struct {
 	schema        *Schema
 	propIdx       int
-	propToNodeMap map[string]*PDANode
+	propToNodeMap map[string]*PDA
 	pdaSampler    *PushdownSampler
 	decodedToks   []string
 }
 
-func NewSOSampler(schema *Schema, proc model.TextProcessor) (*SOSampler, error) {
-	pdaSampler := NewPushdownSampler(proc)
+func NewJSONSampler(proc model.TextProcessor, schema *Schema) (*JSONSampler, error) {
+	pdaSampler, err := NewPushdownSampler(proc)
+	if err != nil {
+		return nil, err
+	}
 
-	so := &SOSampler{
+	if schema == nil {
+		return &JSONSampler{
+			schema:        nil,
+			propIdx:       -1,
+			propToNodeMap: nil,
+			pdaSampler:    pdaSampler,
+		}, nil
+	}
+
+	fmt.Println("schema not nil")
+	so := &JSONSampler{
 		schema:        schema,
 		propIdx:       -1,
-		propToNodeMap: make(map[string]*PDANode),
+		propToNodeMap: make(map[string]*PDA),
 		pdaSampler:    pdaSampler,
 	}
 
 	so.schemaToGraph()
 
-	// This is prob slow
+	// Benchmark token decoding
+	start := time.Now()
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	before := m.Alloc
+
 	vocab := proc.GetVocabulary()
 	decodedToks := make([]string, len(vocab.Values))
 	for i := range vocab.Values {
@@ -40,14 +58,18 @@ func NewSOSampler(schema *Schema, proc model.TextProcessor) (*SOSampler, error) 
 	}
 	so.decodedToks = decodedToks
 
+	runtime.ReadMemStats(&m)
+	after := m.Alloc
+	fmt.Printf("Token decode memory usage = %.2f MB\n", float64(after-before)/(1024*1024))
+	fmt.Printf("Token decode time = %v\n", time.Since(start))
+
 	fmt.Println("--------------------------------")
 	fmt.Println("SOSampler")
 	fmt.Println("--------------------------------")
 	// Benchmark this section
-	start := time.Now()
-	var m runtime.MemStats
+	start = time.Now()
 	runtime.ReadMemStats(&m)
-	before := m.Alloc
+	before = m.Alloc
 
 	// TODO: still messed up
 	// TODO: recursion use case
@@ -57,12 +79,12 @@ func NewSOSampler(schema *Schema, proc model.TextProcessor) (*SOSampler, error) 
 		// propName -> node
 		curState := node.State
 		fromNode := node
-		CreateMask(fromNode, proc, decodedToks)
+		so.pdaSampler.CreateMask(fromNode)
 		for curState == StateInStructuredKey {
 			// there is only one edge
 			for r, toNode := range fromNode.TransitionEdges {
 				// fmt.Println("rune", r, "edge", toNode.State)
-				CreateMask(toNode, proc, decodedToks)
+				so.pdaSampler.CreateMask(toNode)
 				fmt.Printf("created mask for %c\n", r)
 				curState = toNode.State
 				fmt.Println("next state", curState)
@@ -73,7 +95,7 @@ func NewSOSampler(schema *Schema, proc model.TextProcessor) (*SOSampler, error) 
 	}
 
 	runtime.ReadMemStats(&m)
-	after := m.Alloc
+	after = m.Alloc
 	fmt.Printf("Mask creation memory usage = %.2f MB\n", float64(after-before)/(1024*1024))
 	fmt.Printf("Mask creation time = %v\n", time.Since(start))
 	fmt.Println("--------------------------------")
@@ -81,7 +103,7 @@ func NewSOSampler(schema *Schema, proc model.TextProcessor) (*SOSampler, error) 
 	return so, nil
 }
 
-func (s *SOSampler) schemaToGraph() {
+func (s *JSONSampler) schemaToGraph() {
 	schemaType := s.schema.EffectiveType()
 	switch schemaType {
 	case "object":
@@ -91,18 +113,18 @@ func (s *SOSampler) schemaToGraph() {
 		for _, prop := range s.schema.Properties {
 			// name of key
 			name := prop.Name
-			keyNode := &PDANode{
+			keyNode := &PDA{
 				State:             StateInStructuredKey, // this is unchanging, will impact sampling
-				TransitionEdges:   make(map[rune]*PDANode),
-				MaskTokenIDToNode: make(map[int32]*PDANode),
+				TransitionEdges:   make(map[rune]*PDA),
+				MaskTokenIDToNode: make(map[int32]*PDA),
 			}
 
 			prevNode := keyNode
 			for _, r := range name {
-				runeNode := &PDANode{
+				runeNode := &PDA{
 					State:             StateInStructuredKey, // this is unchanging, will impact sampling
-					TransitionEdges:   make(map[rune]*PDANode),
-					MaskTokenIDToNode: make(map[int32]*PDANode),
+					TransitionEdges:   make(map[rune]*PDA),
+					MaskTokenIDToNode: make(map[int32]*PDA),
 				}
 				fmt.Println("runeNode created", runeNode.State)
 				fmt.Printf("runeNode created %c\n", r)
@@ -117,9 +139,14 @@ func (s *SOSampler) schemaToGraph() {
 			fmt.Println("name", name, "keyNode", keyNode.State)
 		}
 	}
+	// TODO: do values + recursion
 }
 
-func (s *SOSampler) Apply(logits []float64) ([]float64, error) {
+func (s *JSONSampler) Apply(logits []float64) ([]float64, error) {
+	if s.schema == nil {
+		return s.pdaSampler.Apply(logits)
+	}
+
 	switch s.pdaSampler.curNode.State {
 	// doesnt account for multi rune case
 	case StateInObjectKey:
@@ -148,17 +175,18 @@ func (s *SOSampler) Apply(logits []float64) ([]float64, error) {
 			// todo: if i incremenet propidx then i know im in last value as well
 			switch s.pdaSampler.curNode.State {
 			case StateInObjectEnd:
-				fmt.Println("<<<<< in obj end- generating mask for", s.pdaSampler.curNode.State)
-				s.pdaSampler.curNode.TransitionEdges = make(map[rune]*PDANode)
+				fmt.Println("<<<<< in obj end - generating mask for", s.pdaSampler.curNode.State)
+				s.pdaSampler.curNode.TransitionEdges = make(map[rune]*PDA)
 				s.pdaSampler.curNode = NewPDANode(StateTerminate)
 				s.propIdx++
 
+			// TODO: this needs to be optimized in some way, computing mask on the fly is expensive
 			case StateInNumber, StateInString, StateInBool, StateInNull, StateInListEnd:
 				fmt.Println("<<<<< last prop - generating mask for", s.pdaSampler.curNode.State)
 				delete(s.pdaSampler.curNode.TransitionEdges, ',')
-				s.pdaSampler.curNode.MaskTokenIDToNode = make(map[int32]*PDANode)
+				s.pdaSampler.curNode.MaskTokenIDToNode = make(map[int32]*PDA)
 
-				CreateMask(s.pdaSampler.curNode, s.pdaSampler.proc, s.decodedToks)
+				s.pdaSampler.CreateMask(s.pdaSampler.curNode)
 				s.propIdx++
 			}
 		}
@@ -167,10 +195,15 @@ func (s *SOSampler) Apply(logits []float64) ([]float64, error) {
 
 }
 
-func (s *SOSampler) UpdateState(tokenSlice []int32) error {
+func (s *JSONSampler) UpdateState(tokenSlice []int32) error {
 	err := s.pdaSampler.UpdateState(tokenSlice)
 	if err != nil {
 		return err
+	}
+
+	if s.schema == nil {
+		// Don't need to update state for unconstrained JSON sampling
+		return nil
 	}
 
 	switch s.pdaSampler.curNode.State {
