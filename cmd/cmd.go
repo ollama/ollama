@@ -339,10 +339,14 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// TODO(jessegross): We should either find another way to know if this is
-	// a vision model or remove the logic. Also consider that other modalities will
-	// need different behavior anyways.
-	opts.MultiModal = len(info.ProjectorInfo) != 0 || envconfig.NewEngine()
+	opts.MultiModal = len(info.ProjectorInfo) != 0 || func(info map[string]any) bool {
+		for k := range info {
+			if strings.Contains(k, ".vision.") {
+				return true
+			}
+		}
+		return false
+	}(info.ModelInfo)
 	opts.ParentModel = info.Details.ParentModel
 
 	if interactive {
