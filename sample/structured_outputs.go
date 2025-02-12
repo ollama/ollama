@@ -17,9 +17,13 @@ type JSONSampler struct {
 }
 
 func NewJSONSampler(proc model.TextProcessor, schema *Schema) (*JSONSampler, error) {
+	if proc == nil {
+		return nil, fmt.Errorf("TextProcessor cannot be nil")
+	}
+
 	pdaSampler, err := NewPushdownSampler(proc)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create PushdownSampler: %w", err)
 	}
 
 	if schema == nil {
