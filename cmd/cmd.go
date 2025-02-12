@@ -1020,22 +1020,39 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 	return nil
 }
 
-func RunServer(_ *cobra.Command, _ []string) error {
-	if err := initializeKeypair(); err != nil {
-		return err
-	}
+func RunServer(cmd *cobra.Command, _ []string) error {
+    if err := initializeKeypair(); err != nil {
+        return err
+    }
 
-	ln, err := net.Listen("tcp", envconfig.Host().Host)
-	if err != nil {
-		return err
-	}
+    ln, err := net.Listen("tcp", envconfig.Host().Host)
+    if err != nil {
+        return err
+    }
 
-	err = server.Serve(ln)
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
-	}
+    // Start server in a goroutine
+    serverErr := make(chan error, 1)
+    go func() {
+        serverErr <- server.Serve(ln)
+    }()
 
-	return err
+    // Wait briefly for server to start
+    time.Sleep(1 * time.Second)
+
+    // Download default model if specified
+    ctx := context.Background()
+    if err := downloadDefaultModel(ctx); err != nil {
+        log.Printf("Warning: failed to download default model: %v", err)
+        // Continue server operation even if model download fails
+    }
+
+    // Wait for server to finish
+    err = <-serverErr
+    if errors.Is(err, http.ErrServerClosed) {
+        return nil
+    }
+
+    return err
 }
 
 func initializeKeypair() error {
@@ -1082,6 +1099,68 @@ func initializeKeypair() error {
 		fmt.Printf("Your new public key is: \n\n%s\n", publicKeyBytes)
 	}
 	return nil
+}
+
+func downloadDefaultModel(ctx context.Context) error {
+    defaultModel := os.Getenv("OLLAMA_LLM_DEFAULT")
+    if defaultModel == "" {
+        return nil // No default model specified, skip download
+    }
+
+    client, err := api.ClientFromEnvironment()
+    if err != nil {
+        return fmt.Errorf("failed to create client: %w", err)
+    }
+
+    // Check if model already exists
+    _, err = client.Show(ctx, &api.ShowRequest{Name: defaultModel})
+    if err == nil {
+        // Model already exists, no need to download
+        return nil
+    }
+
+    // Create progress tracking
+    p := progress.NewProgress(os.Stderr)
+    defer p.Stop()
+
+    bars := make(map[string]*progress.Bar)
+    var status string
+    var spinner *progress.Spinner
+
+    progressFn := func(resp api.ProgressResponse) error {
+        if resp.Digest != "" {
+            if spinner != nil {
+                spinner.Stop()
+            }
+
+            bar, ok := bars[resp.Digest]
+            if !ok {
+                bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
+                bars[resp.Digest] = bar
+                p.Add(resp.Digest, bar)
+            }
+
+            bar.Set(resp.Completed)
+        } else if status != resp.Status {
+            if spinner != nil {
+                spinner.Stop()
+            }
+
+            status = resp.Status
+            spinner = progress.NewSpinner(status)
+            p.Add(status, spinner)
+        }
+
+        return nil
+    }
+
+    // Download the model
+    request := api.PullRequest{Name: defaultModel}
+    if err := client.Pull(ctx, &request, progressFn); err != nil {
+        return fmt.Errorf("failed to download default model %s: %w", defaultModel, err)
+    }
+
+    return nil
 }
 
 func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
@@ -1320,6 +1399,7 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_LLM_LIBRARY"],
 				envVars["OLLAMA_GPU_OVERHEAD"],
 				envVars["OLLAMA_LOAD_TIMEOUT"],
+				envVars["OLLAMA_LLM_DEFAULT"],
 			})
 		default:
 			appendEnvDocs(cmd, envs)
