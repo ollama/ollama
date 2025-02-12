@@ -254,16 +254,16 @@ func TestDeleteHandler(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cmd.SetContext(context.TODO())
-	if err := DeleteHandler(cmd, []string{"test-model"}); err != nil {
-		t.Fatalf("DeleteHandler failed: %v", err)
+	if err := deleteHandler(cmd, []string{"test-model"}); err != nil {
+		t.Fatalf("deleteHandler failed: %v", err)
 	}
 	if !stopped {
 		t.Fatal("Model was not stopped before deletion")
 	}
 
-	err := DeleteHandler(cmd, []string{"test-model-not-found"})
+	err := deleteHandler(cmd, []string{"test-model-not-found"})
 	if err == nil || !strings.Contains(err.Error(), "unable to stop existing running model \"test-model-not-found\"") {
-		t.Fatalf("DeleteHandler failed: expected error about stopping non-existent model, got %v", err)
+		t.Fatalf("deleteHandler failed: expected error about stopping non-existent model, got %v", err)
 	}
 }
 
@@ -457,7 +457,7 @@ func TestPushHandler(t *testing.T) {
 			outR, outW, _ := os.Pipe()
 			os.Stdout = outW
 
-			err := PushHandler(cmd, []string{tt.modelName})
+			err := pushHandler(cmd, []string{tt.modelName})
 
 			// Restore stderr
 			w.Close()
@@ -587,7 +587,7 @@ func TestCreateHandler(t *testing.T) {
 			outR, outW, _ := os.Pipe()
 			os.Stdout = outW
 
-			err = CreateHandler(cmd, []string{tt.modelName})
+			err = createHandler(cmd, []string{tt.modelName})
 
 			// Restore stderr
 			w.Close()
