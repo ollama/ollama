@@ -54,7 +54,7 @@ func TestNamed(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				if tmpl.Tree.Root.String() == "" {
+				if tmpl.tree.Root.String() == "" {
 					t.Errorf("empty %s template", k)
 				}
 			})
@@ -153,7 +153,7 @@ func TestTemplate(t *testing.T) {
 	}
 }
 
-func TestParse(t *testing.T) {
+func TestParseVars(t *testing.T) {
 	cases := []struct {
 		template string
 		vars     []string
@@ -181,6 +181,9 @@ func TestParse(t *testing.T) {
 {{ end }}<|im_start|>assistant
 {{ .Response }}<|im_end|>
 {{- end -}}`, []string{"content", "messages", "prompt", "response", "role", "system"}},
+		{"{{ json .Messages }}", []string{"messages"}},
+		// undefined functions should not error
+		{"{{ undefined }}", []string{"response"}},
 	}
 
 	for _, tt := range cases {
@@ -195,6 +198,30 @@ func TestParse(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseExecute(t *testing.T) {
+	t.Run("undefined function", func(t *testing.T) {
+		tmpl, err := Parse(`{{- if .Suffix }}{{ .Prompt }} {{ .Suffix }}{{- else }}{{ undefined }}{{- end }}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var b bytes.Buffer
+		if err := tmpl.Execute(&b, Values{Prompt: "def add(", Suffix: "    return c"}); err != nil {
+			t.Fatal(err)
+		}
+
+		if diff := cmp.Diff(b.String(), "def add(     return c"); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+
+		if err := tmpl.Execute(io.Discard, Values{}); err == nil {
+			t.Fatal("expected error")
+		} else if !strings.Contains(err.Error(), "\"undefined\" is not a defined function") {
+			t.Fatal(err)
+		}
+	})
 }
 
 func TestExecuteWithMessages(t *testing.T) {
