@@ -113,6 +113,28 @@ func KeepAlive() (keepAlive time.Duration) {
 	return keepAlive
 }
 
+// MaxKeepAlive returns the maximum duration that models may stay loaded in memory.
+// MaxKeepAlive can be configured via the OLLAMA_MAX_KEEP_ALIVE environment variable.
+// Negative values are treated as infinite.
+// Default is infinite, or -1.
+func MaxKeepAlive() (maxKeepAlive time.Duration) {
+	maxKeepAlive = time.Duration(math.MaxInt64)
+	if s := Var("OLLAMA_MAX_KEEP_ALIVE"); s != "" {
+		if d, err := time.ParseDuration(s); err == nil {
+			maxKeepAlive = d
+		} else if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			maxKeepAlive = time.Duration(n) * time.Second
+		}
+	}
+
+	if maxKeepAlive < 0 {
+		return time.Duration(math.MaxInt64)
+	}
+
+	return maxKeepAlive
+}
+
+
 // LoadTimeout returns the duration for stall detection during model loads. LoadTimeout can be configured via the OLLAMA_LOAD_TIMEOUT environment variable.
 // Zero or Negative values are treated as infinite.
 // Default is 5 minutes.
@@ -239,6 +261,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_GPU_OVERHEAD":      {"OLLAMA_GPU_OVERHEAD", GpuOverhead(), "Reserve a portion of VRAM per GPU (bytes)"},
 		"OLLAMA_HOST":              {"OLLAMA_HOST", Host(), "IP Address for the ollama server (default 127.0.0.1:11434)"},
 		"OLLAMA_KEEP_ALIVE":        {"OLLAMA_KEEP_ALIVE", KeepAlive(), "The duration that models stay loaded in memory (default \"5m\")"},
+		"OLLAMA_MAX_KEEP_ALIVE":    {"OLLAMA_MAX_KEEP_ALIVE", MaxKeepAlive(), "The maximum duration that models stay loaded in memory, overriding OLLAMA_KEEP_ALIVE if it is larger. (default \"infinity\")"},
 		"OLLAMA_LLM_LIBRARY":       {"OLLAMA_LLM_LIBRARY", LLMLibrary(), "Set LLM library to bypass autodetection"},
 		"OLLAMA_LOAD_TIMEOUT":      {"OLLAMA_LOAD_TIMEOUT", LoadTimeout(), "How long to allow model loads to stall before giving up (default \"5m\")"},
 		"OLLAMA_MAX_LOADED_MODELS": {"OLLAMA_MAX_LOADED_MODELS", MaxRunners(), "Maximum number of loaded models per GPU"},
