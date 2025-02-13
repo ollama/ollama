@@ -50,7 +50,7 @@ import (
 	_ "github.com/ollama/ollama/llama/llama.cpp/common"
 	_ "github.com/ollama/ollama/llama/llama.cpp/examples/llava"
 	_ "github.com/ollama/ollama/llama/llama.cpp/src"
-	"github.com/ollama/ollama/ml/backend/ggml/ggml/src"
+	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 )
 
 func BackendInit() {
@@ -218,6 +218,31 @@ func (c *Context) GetEmbeddingsIth(i int) []float32 {
 	embeddings := make([]float32, c.Model().NEmbd())
 	_ = copy(embeddings, unsafe.Slice((*float32)(e), c.Model().NEmbd()))
 	return embeddings
+}
+
+// GetLogits returns the logits from the last decode operation.
+// The returned slice has length equal to the vocabulary size.
+func (c *Context) GetLogits() []float32 {
+	logits := unsafe.Pointer(C.llama_get_logits(c.c))
+	if logits == nil {
+		return nil
+	}
+
+	// Get the number of vocabulary tokens to determine array size
+	vocabSize := c.Model().NumVocab()
+	return unsafe.Slice((*float32)(logits), vocabSize)
+}
+
+func (m *Model) Detokenize(tokens []int) (string, error) {
+	var text string
+	for _, token := range tokens {
+		piece := m.TokenToPiece(token)
+		if piece == "" {
+			return "", fmt.Errorf("failed to convert token %d to piece", token)
+		}
+		text += piece
+	}
+	return text, nil
 }
 
 type ModelParams struct {
