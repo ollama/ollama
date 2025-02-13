@@ -116,7 +116,7 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 		opts.NumCtx = max(opts.NumCtx, 2048)
 	}
 
-	layers := f.Tensors().Layers()
+	layers := f.Tensors().GroupLayers()
 	// add one layer worth of memory as a buffer
 	if blk0, ok := layers["blk.0"]; ok {
 		layerSize = blk0.Size()
@@ -410,7 +410,7 @@ func projectorMemoryRequirements(filename string) (weights, graphSize uint64) {
 		return 0, 0
 	}
 
-	for _, layer := range ggml.Tensors().Layers() {
+	for _, layer := range ggml.Tensors().GroupLayers() {
 		weights += layer.Size()
 	}
 
@@ -431,7 +431,7 @@ func projectorMemoryRequirements(filename string) (weights, graphSize uint64) {
 		headCount := kv("attention.head_count")
 
 		numPatches := (imageSize / kv("patch_size")) * (imageSize / kv("patch_size"))
-		if _, ok := ggml.Tensors().Layers()["v"]["class_embd"]; ok {
+		if _, ok := ggml.Tensors().GroupLayers()["v"]["class_embd"]; ok {
 			numPatches++
 		}
 

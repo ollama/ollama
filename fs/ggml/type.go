@@ -32,9 +32,10 @@ const (
 	fileTypeIQ1_S
 	fileTypeIQ4_NL
 	fileTypeIQ3_S
+	fileTypeIQ3_M
 	fileTypeIQ2_S
-	fileTypeIQ4_XS
 	fileTypeIQ2_M
+	fileTypeIQ4_XS
 	fileTypeIQ1_M
 	fileTypeBF16
 
@@ -93,12 +94,14 @@ func ParseFileType(s string) (fileType, error) {
 		return fileTypeIQ4_NL, nil
 	case "IQ3_S":
 		return fileTypeIQ3_S, nil
+	case "IQ3_M":
+		return fileTypeIQ3_M, nil
 	case "IQ2_S":
 		return fileTypeIQ2_S, nil
-	case "IQ4_XS":
-		return fileTypeIQ4_XS, nil
 	case "IQ2_M":
 		return fileTypeIQ2_M, nil
+	case "IQ4_XS":
+		return fileTypeIQ4_XS, nil
 	case "IQ1_M":
 		return fileTypeIQ1_M, nil
 	case "BF16":
@@ -160,6 +163,8 @@ func (t fileType) String() string {
 		return "IQ4_NL"
 	case fileTypeIQ3_S:
 		return "IQ3_S"
+	case fileTypeIQ3_M:
+		return "IQ3_M"
 	case fileTypeIQ2_S:
 		return "IQ2_S"
 	case fileTypeIQ4_XS:

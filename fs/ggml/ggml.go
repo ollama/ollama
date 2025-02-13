@@ -153,7 +153,7 @@ func (s Tensors) Items(prefix ...string) []*Tensor {
 	return items
 }
 
-func (ts Tensors) Layers() map[string]Layer {
+func (ts Tensors) GroupLayers() map[string]Layer {
 	layers := make(map[string]Layer)
 	for _, t := range ts.items {
 		parts := strings.Split(t.Name, ".")
@@ -377,22 +377,22 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
 	}, offset, nil
 }
 
-func (llm GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialOffload, fullOffload uint64) {
-	embedding := llm.KV().EmbeddingLength()
-	heads := llm.KV().HeadCount()
-	headsKV := llm.KV().HeadCountKV()
-	vocab := uint64(llm.KV()["tokenizer.ggml.tokens"].(*array).size)
+func (f GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialOffload, fullOffload uint64) {
+	embedding := f.KV().EmbeddingLength()
+	heads := f.KV().HeadCount()
+	headsKV := f.KV().HeadCountKV()
+	vocab := uint64(f.KV()["tokenizer.ggml.tokens"].(*array).size)
 
-	embeddingHeads := llm.KV().EmbeddingHeadCount()
-	embeddingHeadsK := llm.KV().EmbeddingHeadCountK()
-	embeddingHeadsV := llm.KV().EmbeddingHeadCountV()
+	embeddingHeads := f.KV().EmbeddingHeadCount()
+	embeddingHeadsK := f.KV().EmbeddingHeadCountK()
+	embeddingHeadsV := f.KV().EmbeddingHeadCountV()
 
-	layers := llm.Tensors().Layers()
+	layers := f.Tensors().GroupLayers()
 
 	bytesPerElement := kvCacheBytesPerElement(kvCacheType)
-	kv = uint64(float64(context*llm.KV().BlockCount()*(embeddingHeadsK+embeddingHeadsV)*headsKV) * bytesPerElement)
+	kv = uint64(float64(context*f.KV().BlockCount()*(embeddingHeadsK+embeddingHeadsV)*headsKV) * bytesPerElement)
 
-	switch llm.KV().Architecture() {
+	switch f.KV().Architecture() {
 	case "llama":
 		fullOffload = max(
 			4*batch*(1+4*embedding+context*(1+heads)),
@@ -407,7 +407,7 @@ func (llm GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partia
 
 		if ffnGateExpsWeight, ok := layers["blk.0"]["ffn_gate_exps.weight"]; ok {
 			// mixtral 8x22b
-			ff := uint64(llm.KV()["llama.feed_forward_length"].(uint32))
+			ff := uint64(f.KV()["llama.feed_forward_length"].(uint32))
 			partialOffload = max(
 				3*ffnGateExpsWeight.Size()+4*batch*(2*ff+headsKV+embedding+context+embeddingHeads*headsKV),
 				4*(context*batch*heads+context*embeddingHeads*headsKV+batch*1024+embeddingHeads*headsKV*batch),
@@ -424,11 +424,11 @@ func (llm GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partia
 	case "mllama":
 		var visionTokens, tiles uint64 = 1601, 4
 
-		if crossAttentionLayers, ok := llm.KV()["mllama.attention.cross_attention_layers"].(*array); ok {
+		if crossAttentionLayers, ok := f.KV()["mllama.attention.cross_attention_layers"].(*array); ok {
 			kv = headsKV *
 				(embeddingHeadsK + embeddingHeadsV) * // one for K, one for V
 				(2* // sizeof(float16)
-					(llm.KV().BlockCount()-uint64(crossAttentionLayers.size))* // num non-cross attention layers
+					(f.KV().BlockCount()-uint64(crossAttentionLayers.size))* // num non-cross attention layers
 					context +
 					4* // sizeof(float32)
 						uint64(crossAttentionLayers.size)* // num cross attention layers
@@ -443,7 +443,7 @@ func (llm GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partia
 		)
 
 		var ropeFreqsCount uint64
-		if ropeFreqs, ok := llm.Tensors().Layers()["rope_freqs"]; ok {
+		if ropeFreqs, ok := f.Tensors().GroupLayers()["rope_freqs"]; ok {
 			if ropeFreqsWeights, ok := ropeFreqs["weights"]; ok {
 				ropeFreqsCount = ropeFreqsWeights.parameters()
 			}
@@ -547,20 +547,20 @@ func (llm GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partia
 }
 
 // SupportsKVCacheType checks if the requested cache type is supported
-func (llm GGML) SupportsKVCacheType(cacheType string) bool {
+func (f GGML) SupportsKVCacheType(cacheType string) bool {
 	return slices.Contains([]string{"f16", "q8_0", "q4_0"}, cacheType)
 }
 
 // SupportsFlashAttention checks if the model supports flash attention
-func (llm GGML) SupportsFlashAttention() bool {
-	_, isEmbedding := llm.KV()[fmt.Sprintf("%s.pooling_type", llm.KV().Architecture())]
+func (f GGML) SupportsFlashAttention() bool {
+	_, isEmbedding := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]
 	if isEmbedding {
 		return false
 	}
 
 	// Check head counts match and are non-zero
-	headCountK := llm.KV().EmbeddingHeadCountK()
-	headCountV := llm.KV().EmbeddingHeadCountV()
+	headCountK := f.KV().EmbeddingHeadCountK()
+	headCountV := f.KV().EmbeddingHeadCountV()
 	return headCountK != 0 && headCountV != 0 && headCountK == headCountV
 }
 
