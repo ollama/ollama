@@ -310,3 +310,93 @@ The currently available K/V cache quantization types are:
 How much the cache quantization impacts the model's response quality will depend on the model and the task.  Models that have a high GQA count (e.g. Qwen2) may see a larger impact on precision from quantization than models with a low GQA count.
 
 You may need to experiment with different quantization types to find the best balance between memory usage and quality.
+
+## How can I prevent OOMs?
+
+Memory calculations depend on the architecture of the model and sometimes it's not correct.  This can lead to the runner terminating from an OOM.  This may be mitigated by one or more of the following:
+
+1. Set [`OLLAMA_GPU_OVERHEAD`](https://github.com/ollama/ollama/blob/5f8051180e3b9aeafc153f6b5056e7358a939c88/envconfig/config.go#L237) to give llama.cpp a buffer to grow in to (eg, `OLLAMA_GPU_OVERHEAD=536870912` to reserve 512M).  The exact value depends on model/GPU.
+2. Enable flash attention by setting [`OLLAMA_FLASH_ATTENTION=1`](https://github.com/ollama/ollama/blob/5f8051180e3b9aeafc153f6b5056e7358a939c88/envconfig/config.go#L236) in the server environment.  Flash attention is a more efficient use of memory and may reduce memory pressure.  See above.
+3. Reduce the number layers that ollama thinks it can offload to the GPU, see [here](https://github.com/ollama/ollama/issues/6950#issuecomment-2373663650).
+4. In Linux, set `GGML_CUDA_ENABLE_UNIFIED_MEMORY=1`.  This will allow the GPU to offload to CPU memory if VRAM is exhausted.  This is only useful for small amounts of memory as there is a [performance penalty](https://github.com/ollama/ollama/issues/7584#issuecomment-2466715900).  However, in the case where the goal is to reduce OOMs, the amount offloaded will be small and the impact minimal. 
+5. Set [`OLLAMA_NUM_PARALLEL`](https://github.com/ollama/ollama/blob/a4f69a0191b304c204ef074ccd6523f121bfddfe/envconfig/config.go#L249) to 1.
+6. Using a smaller context buffer by reducing [`num_ctx`](https://github.com/ollama/ollama/blob/a4f69a0191b304c204ef074ccd6523f121bfddfe/docs/modelfile.md#valid-parameters-and-values:~:text=mirostat_tau%205.0-,num_ctx,-Sets%20the%20size).
+
+## How can I set the size of the context buffer?
+
+The size can be set in an API call (`"options":{"num_ctx":xxx}}`), in the ollama CLI (`/set parameter num_ctx xxx`), or configured in the model.  When using the OpenAI API compatability endpoint, setting the context size is not currently supported so it must be configured in the model.
+
+There are two ways to configure the context size in a model.  First, use the `/save` command in the ollama CLI:
+```console
+ollama run model-with-normal-context
+>>> /set parameter num_ctx 4096
+>>> /save model-with-4096-context
+>>> /bye
+```
+Second, create a new Modelfile:
+```console
+ollama show --modelfile model-with-normal-context > Modelfile
+echo PARAMETER num_ctx 4096 > Modelfile
+ollama create model-with-4096-context
+```
+After the model has been created, use it in the normal way:
+```console
+curl localhost:11434/api/generate -d "{\"model\":\"model-with-4096-context\",\"prompt\":\"why is the sky blue?\"}"
+```
+```console
+ollama run model-with-4096-context
+```
+If the model is large, the second approach above can cause a lot of disk activity as ollama loads the GGUF file.  This can be prevented by editing the Modelfile, uncommenting the first `FROM` statement and commenting the second `FROM` statement.
+
+## Why does the runner use 4 times the context buffer I configured?
+
+Ollama can do parallel completions, controlled by `OLLAMA_NUM_PARALLEL`.  If unset, the default is 4 (or 1 if your system has only a small amount of free RAM).  Each completion instance has its own context buffer, size given by `num_ctx`.  The value of `ctx-size` on the runner command line or the value `n_ctx` in the logs is the total context buffer that is allocated, `OLLAMA_NUM_PARALLEL` * `num_ctx`.
+
+## What is K-shift and why did it kill ollama?
+
+When the context buffer fills up during completion, the inference engine wants to shift the buffer to make room for new tokens.  Some model architectures, notably Deepseek, do not support this feature and the runner will exit with an error.  To prevent this, the context buffer (`num_ctx`) needs to be sized such that it can contain both input tokens and output tokens.  To prevent the completion from generating more output tokens than expected, `num_predict` should be set.  For example, if the model is expected to received up to 10,000 tokens and generate no more than 5,000 tokens in response, `num_ctx` is set to 15,000 and `num_predict` to 5,000.  These parameters can be set in the `options` field of an API call, or configured directly in the model.
+
+For example, to create a copy of deepseek-r1:7b that can accept 10,000 input tokens:
+```sh
+echo FROM deepseek-r1:7b > Modelfile
+echo PARAMETER num_ctx 15000 >> Modelfile
+echo PARAMETER num_predict 5000 >> Modelfile
+ollama create deepseek-r1:7b-10kcontext
+```
+
+## How can I force a model to load only in RAM?
+
+Set `num_gpu` to zero.  This can be done in the `options` field of an API call, in the ollama CLI (`/set parameter num_gpu xxx`), or configured directly in the model.
+```sh
+echo FROM deepseek-r1:7b > Modelfile
+echo PARAMETER num_gpu 0 >> Modelfile
+ollama create deepseek-r1:7b-cpu
+```
+
+## How can I force a model to load only in VRAM?
+
+ollama preferentially loads models in to VRAM, only loading part of a model in system RAM if it calculates the the whole model will not fit in VRAM.  This can be overriden by setting `num_gpu`.
+```sh
+echo FROM deepseek-r1:7b > Modelfile
+echo PARAMETER num_gpu 999 >> Modelfile
+ollama create deepseek-r1:7b-cpu
+```
+Warning: this can lead to runner crashes or performance penalties.
+
+## What's the impact of using shared memory?
+
+Nvidia GPUs have shared memory, or the ability of the GPU to access system RAM.  This makes it technically feasible for the GPU to do all inference processing even if part of the model is residing in system RAM.  However, there is a performance penalty.  If more than a few layers are loaded in system RAM and processed by the GPU, token generation rate can be affected.
+
+## Does using multuple GPUs increase token generation rate?
+
+A model is a collection of layers.  The layers are processed sequentially and processing in a layer must be compete before the output of the layer can be fed into the next layer.  Consequently, multiple GPUs do not increase the token generation rate for an individual completion.
+
+<!--
+## I'm unable to connect to the ollama server in Windows.
+
+## How can I make a model access the internet?
+
+## I'm having problems downloading a model.
+
+## Why is my GPU not being used?
+-->
