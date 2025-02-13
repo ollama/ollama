@@ -70,6 +70,8 @@ DisableReadyPage=yes
 DisableStartupPrompt=yes
 DisableWelcomePage=yes
 
+
+; Larger DialogFontSize will auto size the wizard window accordingly.
 WizardSizePercent=100
 
 #if GetEnv("KEY_CONTAINER")
@@ -82,11 +84,20 @@ SetupMutex=OllamaSetupMutex
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+; Larger DialogFontSize will auto size the wizard window accordingly.
+; [LangOptions]
+; DialogFontSize=12
+
 [Files]
 #if DirExists("..\dist\windows-amd64")
 Source: "..\dist\windows-amd64-app.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ;Check: not IsArm64();  Flags: ignoreversion 64bit
 Source: "..\dist\windows-amd64\ollama.exe"; DestDir: "{app}"; Check: not IsArm64(); Flags: ignoreversion 64bit
+; Does not seem to hold the required files gpus
 Source: "..\dist\windows-amd64\lib\ollama\*"; DestDir: "{app}\lib\ollama\"; Check: not IsArm64(); Flags: ignoreversion 64bit recursesubdirs
+#endif
+
+#if DirExists("..\build\lib\ollama")
+Source: "..\build\lib\ollama\*"; DestDir: "{app}\lib\ollama\"; Check: not IsArm64(); Flags: ignoreversion 64bit recursesubdirs
 #endif
 
 #if DirExists("..\dist\windows-arm64")
@@ -136,9 +147,9 @@ ReadyLabel1=%nLet's get you up and running with your own large language models.
 SetupAppRunningError=Another Ollama installer is running.%n%nPlease cancel or finish the other installer, then click OK to continue with this install, or Cancel to exit.
 
 
-;FinishedHeadingLabel=Run your first model
-;FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama3.2
-;ClickFinish=%n
+; FinishedHeadingLabel=Run your first model
+; FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama3.2
+; ClickFinish=%n
 
 [Registry]
 Root: HKCU; Subkey: "Environment"; \
