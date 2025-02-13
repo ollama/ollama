@@ -104,6 +104,10 @@ if(CMAKE_HIP_COMPILER)
     if(AMDGPU_TARGETS)
         add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-hip)
 
+        if (WIN32)
+            target_compile_definitions(ggml-hip PRIVATE GGML_CUDA_NO_PEER_COPY=1)
+        endif()
+
         set(OLLAMA_HIP_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/rocm)
         install(TARGETS ggml-hip
             RUNTIME_DEPENDENCIES
