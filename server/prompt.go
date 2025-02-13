@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/model/models/mllama"
 	"github.com/ollama/ollama/template"
@@ -93,7 +92,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 			var imgData llm.ImageData
 
 			if isMllama {
-				if envconfig.NewEngine() {
+				if len(m.ProjectorPaths) == 0 {
 					imgData = llm.ImageData{
 						ID:   len(images),
 						Data: i,

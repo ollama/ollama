@@ -339,14 +339,16 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	opts.MultiModal = len(info.ProjectorInfo) != 0 || func(info map[string]any) bool {
-		for k := range info {
-			if strings.Contains(k, ".vision.") {
-				return true
-			}
+	if len(info.ProjectorInfo) != 0 {
+		opts.MultiModal = true
+	}
+	for k := range info.ModelInfo {
+		if strings.Contains(k, ".vision.") {
+			opts.MultiModal = true
+			break
 		}
-		return false
-	}(info.ModelInfo)
+	}
+
 	opts.ParentModel = info.Details.ParentModel
 
 	if interactive {

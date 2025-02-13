@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/semaphore"
@@ -55,8 +56,13 @@ type llmServer struct {
 	numParallel int
 	modelPath   string
 
-	// Only one flavor will be loaded depending on the runner type
-	llamaModel    *llama.Model
+	// llamaModel is an instance of the cgo llama.cpp model definition
+	// nil if this server is running the new engine
+	llamaModel     *llama.Model
+	llamaModelLock sync.Mutex
+
+	// textProcessor handles text encoding/decoding for the model in the Ollama engine
+	// nil if this server is running the llama.cpp based engine
 	textProcessor model.TextProcessor
 
 	estimate    MemoryEstimate
@@ -153,11 +159,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		for _, adapter := range adapters {
 			params = append(params, "--lora", adapter)
 		}
-	}
-
-	if len(projectors) > 0 {
-		// TODO: applying multiple projectors is not supported by the llama.cpp server yet
-		params = append(params, "--mmproj", projectors[0])
 	}
 
 	defaultThreads := systemInfo.GetOptimalThreadCount()
@@ -273,13 +274,19 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 	if envconfig.NewEngine() {
 		textProcessor, err = model.NewTextProcessor(modelPath)
 		if err != nil {
-			return nil, err
+			// To prepare for opt-out mode, instead of treating this as an error, we fallback to the old runner
+			slog.Debug("model not yet supported by Ollama engine, switching to compatibility mode", "model", modelPath, "error", err)
 		}
-	} else {
+	}
+	if textProcessor == nil {
 		llamaModel, err = llama.LoadModelFromFile(modelPath, llama.ModelParams{VocabOnly: true})
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	if len(projectors) > 0 && llamaModel != nil {
+		params = append(params, "--mmproj", projectors[0])
 	}
 
 	// iterate through compatible GPU libraries such as 'cuda_v12', 'cuda_v11', 'rocm', etc.
@@ -299,7 +306,9 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			port = rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
 		}
 		finalParams := []string{"runner"}
-		if envconfig.NewEngine() {
+		if textProcessor != nil {
+			// New engine
+			// TODO - if we have failure to load scenarios, add logic to retry with the old runner
 			finalParams = append(finalParams, "--ollama-engine")
 		}
 		finalParams = append(finalParams, params...)
@@ -339,7 +348,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		// finally, add the root library path
 		libraryPaths = append(libraryPaths, discover.LibOllamaPath)
 
-		// TODO - once fully switched to the Go runner, load the model here for tokenize/detokenize cgo access
 		s := &llmServer{
 			port:          port,
 			cmd:           exec.Command(exe, finalParams...),
@@ -721,14 +729,14 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	}
 
 	if len(req.Format) > 0 {
-		strFormat := string(req.Format)
-		if strFormat != `null` && strFormat != `""` {
+		format := string(req.Format)
+		if format != `null` && format != `""` {
 			if s.textProcessor != nil {
 				// New engine handles this on the backend
 				request["format"] = req.Format
 			} else {
 				// old engine
-				switch strFormat {
+				switch format {
 				case `"json"`:
 					request["grammar"] = grammarJSON
 				default:
@@ -958,6 +966,9 @@ type TokenizeResponse struct {
 }
 
 func (s *llmServer) Tokenize(ctx context.Context, content string) ([]int, error) {
+	s.llamaModelLock.Lock()
+	defer s.llamaModelLock.Unlock()
+
 	if s.llamaModel != nil {
 		return s.llamaModel.Tokenize(content, false, true)
 	}
@@ -985,6 +996,9 @@ type DetokenizeResponse struct {
 }
 
 func (s *llmServer) Detokenize(ctx context.Context, tokens []int) (string, error) {
+	s.llamaModelLock.Lock()
+	defer s.llamaModelLock.Unlock()
+
 	if s.llamaModel != nil {
 		var resp string
 		for _, token := range tokens {
@@ -1008,10 +1022,12 @@ func (s *llmServer) Detokenize(ctx context.Context, tokens []int) (string, error
 }
 
 func (s *llmServer) Close() error {
+	s.llamaModelLock.Lock()
 	if s.llamaModel != nil {
 		llama.FreeModel(s.llamaModel)
 		s.llamaModel = nil
 	}
+	s.llamaModelLock.Unlock()
 
 	if s.cmd != nil {
 		slog.Debug("stopping llama server")

@@ -565,15 +565,15 @@ func (f GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialO
 	return
 }
 
-func (llm GGML) ProjectorGraphSize() (weights, graphSize uint64) {
-	switch arch := llm.KV().Architecture(); arch {
+func (llm GGML) VisionGraphSize() (weights, graphSize uint64) {
+	switch llm.KV().Architecture() {
 	case "mllama":
 		for _, layer := range llm.Tensors().GroupLayers()["v"] {
 			weights += layer.Size()
 		}
 
 		kv := func(n string) uint64 {
-			if v, ok := llm.KV()[arch+".vision."+n].(uint32); ok {
+			if v, ok := llm.KV()["mllama.vision."+n].(uint32); ok {
 				return uint64(v)
 			}
 

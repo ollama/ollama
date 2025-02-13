@@ -116,7 +116,7 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 		opts.NumCtx = max(opts.NumCtx, 2048)
 	}
 	if projectorWeights == 0 && projectorGraph == 0 {
-		projectorWeights, projectorGraph = f.ProjectorGraphSize()
+		projectorWeights, projectorGraph = f.VisionGraphSize()
 	}
 
 	layers := f.Tensors().GroupLayers()
