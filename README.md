@@ -380,6 +380,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Chipper](https://github.com/TilmanGriesel/chipper) AI interface for tinkerers (Ollama, Haystack RAG, Python)
 - [ChibiChat](https://github.com/CosmicEventHorizon/ChibiChat) (Kotlin-based Android app to chat with Ollama and Koboldcpp API endpoints)
 - [LocalLLM](https://github.com/qusaismael/localllm) (Minimal Web-App to run ollama models on it with a GUI)
+- [Ollamazing](https://github.com/buiducnhat/ollamazing) (Web extension to run Ollama models)
 
 ### Cloud
 
