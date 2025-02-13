@@ -1,7 +1,9 @@
 package llama
 
 import (
+	"fmt"
 	"math"
+	"strings"
 
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
@@ -29,6 +31,10 @@ type Model struct {
 }
 
 func New(c ml.Config) (model.Model, error) {
+	if !strings.EqualFold(c.String("tokenizer.ggml.model"), "gpt2") {
+		return nil, fmt.Errorf("tokenizer %s not yet supported", c.String("tokenizer.ggml.model"))
+	}
+
 	m := Model{
 		BytePairEncoding: model.NewBytePairEncoding(
 			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),

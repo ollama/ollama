@@ -155,11 +155,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		}
 	}
 
-	if len(projectors) > 0 {
-		// TODO: applying multiple projectors is not supported by the llama.cpp server yet
-		params = append(params, "--mmproj", projectors[0])
-	}
-
 	defaultThreads := systemInfo.GetOptimalThreadCount()
 	if opts.NumThread > 0 {
 		params = append(params, "--threads", strconv.Itoa(opts.NumThread))
@@ -274,13 +269,19 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 	if envconfig.NewRunners() {
 		textProcessor, err = model.NewTextProcessor(modelPath)
 		if err != nil {
-			return nil, err
+			// To prepare for opt-out mode, instead of treating this as an error, we fallback to the old runner
+			slog.Info("Unable to load new runner with requested model", "model", modelPath, "error", err)
 		}
-	} else {
+	}
+	if textProcessor == nil {
 		llamaModel, err = llama.LoadModelFromFile(modelPath, llama.ModelParams{VocabOnly: true})
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	if len(projectors) > 0 && llamaModel != nil {
+		params = append(params, "--mmproj", projectors[0])
 	}
 
 	// iterate through compatible GPU libraries such as 'cuda_v12', 'cuda_v11', 'rocm', etc.
@@ -300,7 +301,9 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			port = rand.Intn(65535-49152) + 49152 // get a random port in the ephemeral range
 		}
 		finalParams := []string{"runner"}
-		if envconfig.NewRunners() {
+		if textProcessor != nil {
+			// New runner
+			// TODO - if we have failure to load scenarios, add logic to retry with the old runner
 			finalParams = append(finalParams, "--ollama-runner")
 		}
 		finalParams = append(finalParams, params...)
