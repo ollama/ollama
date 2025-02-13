@@ -80,7 +80,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 	k = k.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 	v = v.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
 
-	kq := k.Mulmat(ctx, q)
+	kq := k.MulmatFullPrec(ctx, q)
 	kq = kq.Scale(ctx, 1.0/math.Sqrt(float64(headDim)))
 	kq = kq.Softmax(ctx)
 
