@@ -1165,7 +1165,7 @@ func NewCLI() *cobra.Command {
 
 	createCmd := &cobra.Command{
 		Use:     "create MODEL",
-		Short:   "Create a model from a Modelfile or the current directory (same as \"FROM .\")",
+		Short:   "Create a model from files",
 		Args:    cobra.ExactArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    CreateHandler,
