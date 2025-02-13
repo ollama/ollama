@@ -268,7 +268,7 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 	}
 }
 
-func toChunk(id string, r api.ChatResponse, toolCallsSent bool) ChatCompletionChunk {
+func toChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
 	toolCalls := toToolCalls(r.Message.ToolCalls)
 	return ChatCompletionChunk{
 		Id:                id,
@@ -281,7 +281,7 @@ func toChunk(id string, r api.ChatResponse, toolCallsSent bool) ChatCompletionCh
 			Delta: Message{Role: "assistant", Content: r.Message.Content, ToolCalls: toolCalls},
 			FinishReason: func(reason string) *string {
 				if len(reason) > 0 {
-					if toolCallsSent {
+					if toolCallSent {
 						return &finishReasonToolCalls
 					}
 					return &reason
