@@ -8,44 +8,74 @@ import (
 func TestTruncateStop(t *testing.T) {
 	tests := []struct {
 		name          string
-		pieces        []string
+		pieces        []CompletionResponse
 		stop          string
-		expected      []string
+		expected      []CompletionResponse
 		expectedTrunc bool
 	}{
 		{
-			name:          "Single word",
-			pieces:        []string{"hello", "world"},
-			stop:          "world",
-			expected:      []string{"hello"},
+			name: "Single word",
+			pieces: []CompletionResponse{
+				{Content: "hello"},
+				{Content: "world"},
+			},
+			stop: "world",
+			expected: []CompletionResponse{
+				{Content: "hello"},
+			},
 			expectedTrunc: false,
 		},
 		{
-			name:          "Partial",
-			pieces:        []string{"hello", "wor"},
-			stop:          "or",
-			expected:      []string{"hello", "w"},
+			name: "Partial",
+			pieces: []CompletionResponse{
+				{Content: "hello"},
+				{Content: "wor"},
+			},
+			stop: "or",
+			expected: []CompletionResponse{
+				{Content: "hello"},
+				{Content: "w"},
+			},
 			expectedTrunc: true,
 		},
 		{
-			name:          "Suffix",
-			pieces:        []string{"Hello", " there", "!"},
-			stop:          "!",
-			expected:      []string{"Hello", " there"},
+			name: "Suffix",
+			pieces: []CompletionResponse{
+				{Content: "Hello"},
+				{Content: " there"},
+				{Content: "!"},
+			},
+			stop: "!",
+			expected: []CompletionResponse{
+				{Content: "Hello"},
+				{Content: " there"},
+			},
 			expectedTrunc: false,
 		},
 		{
-			name:          "Suffix partial",
-			pieces:        []string{"Hello", " the", "re!"},
-			stop:          "there!",
-			expected:      []string{"Hello", " "},
+			name: "Suffix partial",
+			pieces: []CompletionResponse{
+				{Content: "Hello"},
+				{Content: " the"},
+				{Content: "re!"},
+			},
+			stop: "there!",
+			expected: []CompletionResponse{
+				{Content: "Hello"},
+				{Content: " "},
+			},
 			expectedTrunc: true,
 		},
 		{
-			name:          "Middle",
-			pieces:        []string{"hello", " wor"},
-			stop:          "llo w",
-			expected:      []string{"he"},
+			name: "Middle",
+			pieces: []CompletionResponse{
+				{Content: "hello"},
+				{Content: " wor"},
+			},
+			stop: "llo w",
+			expected: []CompletionResponse{
+				{Content: "he"},
+			},
 			expectedTrunc: true,
 		},
 	}

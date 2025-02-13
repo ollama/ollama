@@ -29,40 +29,43 @@ func containsStopSuffix(sequence string, stops []string) bool {
 // truncateStop removes the provided stop string from pieces,
 // returning the partial pieces with stop removed, including truncating
 // the last piece if required (and signalling if this was the case)
-func truncateStop(pieces []string, stop string) ([]string, bool) {
-	joined := strings.Join(pieces, "")
+func truncateStop(pieces []CompletionResponse, stop string) ([]CompletionResponse, bool) {
+	// Build complete string and find stop position
+	var completeStr string
+	for _, piece := range pieces {
+		completeStr += piece.Content
+	}
 
-	index := strings.Index(joined, stop)
-	if index == -1 {
+	stopStart := strings.Index(completeStr, stop)
+	if stopStart == -1 {
 		return pieces, false
 	}
 
-	joined = joined[:index]
+	// Build result up to stop position
+	result := make([]CompletionResponse, 0)
+	accumulated := 0
 
-	// Split truncated string back into pieces of original lengths
-	lengths := make([]int, len(pieces))
-	for i, piece := range pieces {
-		lengths[i] = len(piece)
-	}
-
-	var result []string
-	tokenTruncated := false
-	start := 0
-	for _, length := range lengths {
-		if start >= len(joined) {
-			break
+	truncated := false
+	for _, piece := range pieces {
+		if accumulated+len(piece.Content) <= stopStart {
+			result = append(result, piece)
+			accumulated += len(piece.Content)
+			continue
 		}
 
-		end := start + length
-		if end > len(joined) {
-			end = len(joined)
-			tokenTruncated = true
+		if accumulated < stopStart {
+			truncPiece := piece
+			truncPiece.Content = piece.Content[:stopStart-accumulated]
+			if len(truncPiece.Content) > 0 {
+				result = append(result, truncPiece)
+				truncated = true
+			}
 		}
-		result = append(result, joined[start:end])
-		start = end
+		break
 	}
 
-	return result, tokenTruncated
+	// Signal if we had to truncate the last piece
+	return result, truncated
 }
 
 func incompleteUnicode(token string) bool {
