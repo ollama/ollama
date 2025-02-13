@@ -66,6 +66,7 @@ type Tensor interface {
 	Add(ctx Context, t2 Tensor) Tensor
 	Mul(ctx Context, t2 Tensor) Tensor
 	Mulmat(ctx Context, t2 Tensor) Tensor
+	MulmatFullPrec(ctx Context, t2 Tensor) Tensor
 
 	Softmax(ctx Context) Tensor
 	LayerNorm(ctx Context, weight, bias Tensor, eps float32) Tensor
