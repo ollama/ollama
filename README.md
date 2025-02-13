@@ -437,9 +437,10 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 - [Pacman](https://archlinux.org/packages/extra/x86_64/ollama/)
 - [Gentoo](https://github.com/gentoo/guru/tree/master/app-misc/ollama)
+- [Homebrew](https://formulae.brew.sh/formula/ollama)
 - [Helm Chart](https://artifacthub.io/packages/helm/ollama-helm/ollama)
 - [Guix channel](https://codeberg.org/tusharhero/ollama-guix)
-- [Nix package](https://search.nixos.org/packages?channel=24.05&show=ollama&from=0&size=50&sort=relevance&type=packages&query=ollama)
+- [Nix package](https://search.nixos.org/packages?show=ollama&from=0&size=50&sort=relevance&type=packages&query=ollama)
 - [Flox](https://flox.dev/blog/ollama-part-one)
 
 ### Libraries
@@ -494,7 +495,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [multi-llm-ts](https://github.com/nbonamy/multi-llm-ts) (A Typescript/JavaScript library allowing access to different LLM in unified API)
 - [LlmTornado](https://github.com/lofcz/llmtornado) (C# library providing a unified interface for major FOSS & Commercial inference APIs)
 - [Ollama for Zig](https://github.com/dravenk/ollama-zig)
-- [Abso](https://github.com/lunary-ai/abso/blob/main/README.md#ollama) (OpenAI-compatible TypeScript SDK for any LLM provider)
+- [Abso](https://github.com/lunary-ai/abso) (OpenAI-compatible TypeScript SDK for any LLM provider)
 
 ### Mobile
 
