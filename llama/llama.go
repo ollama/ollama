@@ -233,18 +233,6 @@ func (c *Context) GetLogits() []float32 {
 	return unsafe.Slice((*float32)(logits), vocabSize)
 }
 
-func (m *Model) Detokenize(tokens []int) (string, error) {
-	var text string
-	for _, token := range tokens {
-		piece := m.TokenToPiece(token)
-		if piece == "" {
-			return "", fmt.Errorf("failed to convert token %d to piece", token)
-		}
-		text += piece
-	}
-	return text, nil
-}
-
 type ModelParams struct {
 	NumGpuLayers int
 	MainGpu      int

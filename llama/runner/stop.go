@@ -26,46 +26,15 @@ func containsStopSuffix(sequence string, stops []string) bool {
 	return false
 }
 
-// truncateStop removes the provided stop string from pieces,
-// returning the partial pieces with stop removed, including truncating
-// the last piece if required (and signalling if this was the case)
-func truncateStop(pieces []CompletionResponse, stop string) ([]CompletionResponse, bool) {
-	// Build complete string and find stop position
-	var completeStr string
-	for _, piece := range pieces {
-		completeStr += piece.Content
+// truncateStop removes the provided stop string from sequence,
+// returning both the truncated sequence and a bool indicating if truncation occurred
+func truncateStop(sequence string, stop string) (string, bool) {
+	index := strings.Index(sequence, stop)
+	if index == -1 {
+		return sequence, false
 	}
 
-	stopStart := strings.Index(completeStr, stop)
-	if stopStart == -1 {
-		return pieces, false
-	}
-
-	// Build result up to stop position
-	result := make([]CompletionResponse, 0)
-	accumulated := 0
-
-	truncated := false
-	for _, piece := range pieces {
-		if accumulated+len(piece.Content) <= stopStart {
-			result = append(result, piece)
-			accumulated += len(piece.Content)
-			continue
-		}
-
-		if accumulated < stopStart {
-			truncPiece := piece
-			truncPiece.Content = piece.Content[:stopStart-accumulated]
-			if len(truncPiece.Content) > 0 {
-				result = append(result, truncPiece)
-				truncated = true
-			}
-		}
-		break
-	}
-
-	// Signal if we had to truncate the last piece
-	return result, truncated
+	return sequence[:index], true
 }
 
 func incompleteUnicode(token string) bool {

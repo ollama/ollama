@@ -77,6 +77,8 @@ type GenerateRequest struct {
 	// request, for multimodal models.
 	Images []ImageData `json:"images,omitempty"`
 
+	LogProbs int `json:"logprobs,omitempty"`
+
 	// Options lists model-specific options. For example, temperature can be
 	// set through this field, if the model supports it.
 	Options map[string]interface{} `json:"options"`
@@ -102,6 +104,8 @@ type ChatRequest struct {
 
 	// Tools is an optional list of tools the model has access to.
 	Tools `json:"tools,omitempty"`
+
+	LogProbs int `json:"logprobs,omitempty"`
 
 	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
@@ -182,13 +186,20 @@ func (t *ToolFunction) String() string {
 	return string(bts)
 }
 
+type TokenProbs struct {
+	TokenID int     `json:"id"`
+	LogProb float32 `json:"logprob"`
+	Token   string  `json:"token"`
+}
+
 // ChatResponse is the response returned by [Client.Chat]. Its fields are
 // similar to [GenerateResponse].
 type ChatResponse struct {
-	Model      string    `json:"model"`
-	CreatedAt  time.Time `json:"created_at"`
-	Message    Message   `json:"message"`
-	DoneReason string    `json:"done_reason,omitempty"`
+	Model      string       `json:"model"`
+	CreatedAt  time.Time    `json:"created_at"`
+	Message    Message      `json:"message"`
+	DoneReason string       `json:"done_reason,omitempty"`
+	LogProbs   []TokenProbs `json:"logprobs,omitempty"`
 
 	Done bool `json:"done"`
 
@@ -451,6 +462,8 @@ type GenerateResponse struct {
 	// Context is an encoding of the conversation used in this response; this
 	// can be sent in the next request to keep a conversational memory.
 	Context []int `json:"context,omitempty"`
+
+	LogProbs []TokenProbs `json:"logprobs,omitempty"`
 
 	Metrics
 }

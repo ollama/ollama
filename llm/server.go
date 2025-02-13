@@ -644,12 +644,22 @@ type ImageData struct {
 	AspectRatioID int    `json:"aspect_ratio_id"`
 }
 
+// TokenProbs represents probability information for a token
+type TokenProbs struct {
+	TokenID int     `json:"id"`
+	Logit   float32 `json:"logit"`
+	Prob    float32 `json:"prob"`
+	LogProb float32 `json:"logprob"`
+	Token   string  `json:"token"`
+}
+
 type completion struct {
-	Content      string `json:"content"`
-	Model        string `json:"model"`
-	Prompt       string `json:"prompt"`
-	Stop         bool   `json:"stop"`
-	StoppedLimit bool   `json:"stopped_limit"`
+	Content      string       `json:"content"`
+	Model        string       `json:"model"`
+	Prompt       string       `json:"prompt"`
+	Stop         bool         `json:"stop"`
+	StoppedLimit bool         `json:"stopped_limit"`
+	LogProbs     []TokenProbs `json:"logprobs"`
 
 	Timings struct {
 		PredictedN  int     `json:"predicted_n"`
@@ -660,14 +670,16 @@ type completion struct {
 }
 
 type CompletionRequest struct {
-	Prompt  string
-	Format  json.RawMessage
-	Images  []ImageData
-	Options *api.Options
+	Prompt   string
+	Format   json.RawMessage
+	Images   []ImageData
+	LogProbs int
+	Options  *api.Options
 }
 
 type CompletionResponse struct {
 	Content            string
+	LogProbs           []TokenProbs
 	DoneReason         string
 	Done               bool
 	PromptEvalCount    int
@@ -698,8 +710,11 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		"seed":              req.Options.Seed,
 		"stop":              req.Options.Stop,
 		"image_data":        req.Images,
+		"logprobs":          req.LogProbs,
 		"cache_prompt":      true,
 	}
+
+	fmt.Println("completion request:", request)
 
 	if len(req.Format) > 0 {
 		switch string(req.Format) {
@@ -796,7 +811,6 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 				continue
 			}
 
-			// slog.Debug("got line", "line", string(line))
 			evt, ok := bytes.CutPrefix(line, []byte("data: "))
 			if !ok {
 				evt = line
@@ -822,7 +836,8 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 
 			if c.Content != "" {
 				fn(CompletionResponse{
-					Content: c.Content,
+					Content:  c.Content,
+					LogProbs: c.LogProbs,
 				})
 			}
 
@@ -839,6 +854,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 					PromptEvalDuration: parseDurationMs(c.Timings.PromptMS),
 					EvalCount:          c.Timings.PredictedN,
 					EvalDuration:       parseDurationMs(c.Timings.PredictedMS),
+					LogProbs:           c.LogProbs,
 				})
 				return nil
 			}

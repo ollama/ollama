@@ -1,90 +1,60 @@
 package runner
 
 import (
-	"reflect"
 	"testing"
 )
 
 func TestTruncateStop(t *testing.T) {
 	tests := []struct {
 		name          string
-		pieces        []CompletionResponse
+		sequence      string
 		stop          string
-		expected      []CompletionResponse
+		expected      string
 		expectedTrunc bool
 	}{
 		{
-			name: "Single word",
-			pieces: []CompletionResponse{
-				{Content: "hello"},
-				{Content: "world"},
-			},
-			stop: "world",
-			expected: []CompletionResponse{
-				{Content: "hello"},
-			},
+			name:          "Single word",
+			sequence:      "helloworld",
+			stop:          "world",
+			expected:      "hello",
+			expectedTrunc: true,
+		},
+		{
+			name:          "Partial",
+			sequence:      "hellowor",
+			stop:          "or",
+			expected:      "hellow",
+			expectedTrunc: true,
+		},
+		{
+			name:          "Suffix",
+			sequence:      "Hello there!",
+			stop:          "!",
+			expected:      "Hello there",
+			expectedTrunc: true,
+		},
+		{
+			name:          "Middle",
+			sequence:      "hello wor",
+			stop:          "llo w",
+			expected:      "he",
+			expectedTrunc: true,
+		},
+		{
+			name:          "No stop found",
+			sequence:      "hello world",
+			stop:          "xyz",
+			expected:      "hello world",
 			expectedTrunc: false,
-		},
-		{
-			name: "Partial",
-			pieces: []CompletionResponse{
-				{Content: "hello"},
-				{Content: "wor"},
-			},
-			stop: "or",
-			expected: []CompletionResponse{
-				{Content: "hello"},
-				{Content: "w"},
-			},
-			expectedTrunc: true,
-		},
-		{
-			name: "Suffix",
-			pieces: []CompletionResponse{
-				{Content: "Hello"},
-				{Content: " there"},
-				{Content: "!"},
-			},
-			stop: "!",
-			expected: []CompletionResponse{
-				{Content: "Hello"},
-				{Content: " there"},
-			},
-			expectedTrunc: false,
-		},
-		{
-			name: "Suffix partial",
-			pieces: []CompletionResponse{
-				{Content: "Hello"},
-				{Content: " the"},
-				{Content: "re!"},
-			},
-			stop: "there!",
-			expected: []CompletionResponse{
-				{Content: "Hello"},
-				{Content: " "},
-			},
-			expectedTrunc: true,
-		},
-		{
-			name: "Middle",
-			pieces: []CompletionResponse{
-				{Content: "hello"},
-				{Content: " wor"},
-			},
-			stop: "llo w",
-			expected: []CompletionResponse{
-				{Content: "he"},
-			},
-			expectedTrunc: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, resultTrunc := truncateStop(tt.pieces, tt.stop)
-			if !reflect.DeepEqual(result, tt.expected) || resultTrunc != tt.expectedTrunc {
-				t.Errorf("truncateStop(%v, %s): have %v (%v); want %v (%v)", tt.pieces, tt.stop, result, resultTrunc, tt.expected, tt.expectedTrunc)
+			result, truncated := truncateStop(tt.sequence, tt.stop)
+			if result != tt.expected || truncated != tt.expectedTrunc {
+				t.Errorf("truncateStop(%q, %q): have %q (%v); want %q (%v)",
+					tt.sequence, tt.stop, result, truncated, tt.expected, tt.expectedTrunc)
 			}
 		})
 	}

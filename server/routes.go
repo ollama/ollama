@@ -293,11 +293,13 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		var sb strings.Builder
 		defer close(ch)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:  prompt,
-			Images:  images,
-			Format:  req.Format,
-			Options: opts,
+			Prompt:   prompt,
+			Images:   images,
+			Format:   req.Format,
+			LogProbs: req.LogProbs,
+			Options:  opts,
 		}, func(cr llm.CompletionResponse) {
+			fmt.Printf("banana: %#v\n", cr)
 			res := api.GenerateResponse{
 				Model:      req.Model,
 				CreatedAt:  time.Now().UTC(),
@@ -310,6 +312,13 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					EvalCount:          cr.EvalCount,
 					EvalDuration:       cr.EvalDuration,
 				},
+			}
+			for _, p := range cr.LogProbs {
+				res.LogProbs = append(res.LogProbs, api.TokenProbs{
+					TokenID: p.TokenID,
+					LogProb: p.LogProb,
+					Token:   p.Token,
+				})
 			}
 
 			if _, err := sb.WriteString(cr.Content); err != nil {
@@ -1466,10 +1475,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		var sb strings.Builder
 		var toolCallIndex int = 0
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:  prompt,
-			Images:  images,
-			Format:  req.Format,
-			Options: opts,
+			Prompt:   prompt,
+			Images:   images,
+			Format:   req.Format,
+			LogProbs: req.LogProbs,
+			Options:  opts,
 		}, func(r llm.CompletionResponse) {
 			res := api.ChatResponse{
 				Model:      req.Model,
@@ -1483,6 +1493,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					EvalCount:          r.EvalCount,
 					EvalDuration:       r.EvalDuration,
 				},
+			}
+			for _, p := range r.LogProbs {
+				res.LogProbs = append(res.LogProbs, api.TokenProbs{
+					TokenID: p.TokenID,
+					LogProb: p.LogProb,
+					Token:   p.Token,
+				})
 			}
 
 			if r.Done {
