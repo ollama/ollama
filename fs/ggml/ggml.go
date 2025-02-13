@@ -157,15 +157,13 @@ func (ts Tensors) GroupLayers() map[string]Layer {
 	layers := make(map[string]Layer)
 	for _, t := range ts.items {
 		parts := strings.Split(t.Name, ".")
-		if i := slices.Index(parts, "blk"); i > 0 {
-			parts = append([]string{
-				strings.Join(parts[:i], "."),
-				strings.Join(parts[i:i+2], "."),
-			}, parts[i+2:]...)
-		} else if i == 0 {
-			parts = append([]string{
-				strings.Join(parts[i:i+2], "."),
-			}, parts[i+2:]...)
+		if index := slices.IndexFunc(parts, func(s string) bool { return s == "blk" || s == "mm" }); index != -1 {
+			if len(parts) > index+2 {
+				// blk and mm should have a number after them, join it
+				parts = append(
+					[]string{strings.Join(parts[:index+2], ".")},
+					parts[index+2:]...)
+			}
 		}
 
 		if _, ok := layers[parts[0]]; !ok {
