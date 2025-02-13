@@ -590,7 +590,7 @@ type ChatWriter struct {
 	stream        bool
 	streamOptions *StreamOptions
 	id            string
-	toolCallsSent bool
+	toolCallSent  bool
 	BaseWriter
 }
 
@@ -640,13 +640,13 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 
 	// chat chunk
 	if w.stream {
-		c := toChunk(w.id, chatResponse, w.toolCallsSent)
+		c := toChunk(w.id, chatResponse, w.toolCallSent)
 		d, err := json.Marshal(c)
 		if err != nil {
 			return 0, err
 		}
-		if !w.toolCallsSent && len(c.Choices) > 0 && len(c.Choices[0].Delta.ToolCalls) > 0 {
-			w.toolCallsSent = true
+		if !w.toolCallSent && len(c.Choices) > 0 && len(c.Choices[0].Delta.ToolCalls) > 0 {
+			w.toolCallSent = true
 		}
 
 		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
