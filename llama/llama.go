@@ -54,7 +54,8 @@ package llama
 #cgo linux,cann LDFLAGS: -lpthread -lrt -lresolv
 #cgo cann CFLAGS: -DGGML_USE_CANN -DGGML_BUILD=1
 #cgo cann CXXFLAGS: -DGGML_USE_CANN -DGGML_BUILD=1
-#cgo cann LDFLAGS: -L${SRCDIR}/build/linux-arm64/runners/cann -lggml_cann -lascendc_kernels
+#cgo arm64,cann LDFLAGS: -L${SRCDIR}/build/linux-arm64/runners/cann -lggml_cann -lascendc_kernels
+#cgo amd64,cann LDFLAGS: -L${SRCDIR}/build/linux-amd64/runners/cann -lggml_cann -lascendc_kernels
 #cgo windows CXXFLAGS: -D_WIN32_WINNT=0x602
 #cgo windows LDFLAGS: -lmsvcrt -static-libstdc++ -static-libgcc -static
 #cgo windows,amd64 LDFLAGS: -L${SRCDIR}/build/windows-amd64
