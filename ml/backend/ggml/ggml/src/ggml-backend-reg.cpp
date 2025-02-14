@@ -215,6 +215,11 @@ struct ggml_backend_registry {
         GGML_LOG_DEBUG("%s: registered device %s (%s)\n", __func__, ggml_backend_dev_name(device), ggml_backend_dev_description(device));
 #endif
         devices.push_back({device, score});
+        std::stable_sort(devices.begin(), devices.end(),
+            [](const auto & a, const auto & b) {
+                return a.second > b.second;
+            }
+        );
     }
 
     ggml_backend_reg_t load_backend(const std::wstring & path, bool silent) {
@@ -338,12 +343,7 @@ size_t ggml_backend_dev_count() {
 
 ggml_backend_dev_t ggml_backend_dev_get(size_t index) {
     GGML_ASSERT(index < ggml_backend_dev_count());
-    auto devices = get_reg().devices;
-    if (!std::is_heap(devices.begin(), devices.end())) {
-        std::make_heap(devices.begin(), devices.end(), [](const auto & a, const auto & b) { return a.second < b.second; });
-    }
-
-    return devices[index].first;
+    return get_reg().devices[index].first;
 }
 
 ggml_backend_dev_t ggml_backend_dev_by_name(const char * name) {
