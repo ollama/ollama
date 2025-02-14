@@ -40,7 +40,6 @@ import (
 	"github.com/ollama/ollama/runner"
 	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/model"
-	"github.com/ollama/ollama/version"
 )
 
 var errModelfileNotFound = errors.New("specified Modelfile wasn't found")
@@ -1103,26 +1102,6 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-func versionHandler(cmd *cobra.Command, _ []string) {
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return
-	}
-
-	serverVersion, err := client.Version(cmd.Context())
-	if err != nil {
-		fmt.Println("Warning: could not connect to a running Ollama instance")
-	}
-
-	if serverVersion != "" {
-		fmt.Printf("ollama version is %s\n", serverVersion)
-	}
-
-	if serverVersion != version.Version {
-		fmt.Printf("Warning: client version is %s\n", version.Version)
-	}
-}
-
 func appendEnvDocs(cmd *cobra.Command, envs []envconfig.EnvVar) {
 	if len(envs) == 0 {
 		return
@@ -1146,25 +1125,7 @@ func NewCLI() *cobra.Command {
 		console.ConsoleFromFile(os.Stdin) //nolint:errcheck
 	}
 
-	rootCmd := &cobra.Command{
-		Use:           "ollama",
-		Short:         "Large language model runner",
-		SilenceUsage:  true,
-		SilenceErrors: true,
-		CompletionOptions: cobra.CompletionOptions{
-			DisableDefaultCmd: true,
-		},
-		Run: func(cmd *cobra.Command, args []string) {
-			if version, _ := cmd.Flags().GetBool("version"); version {
-				versionHandler(cmd, args)
-				return
-			}
-
-			cmd.Print(cmd.UsageString())
-		},
-	}
-
-	rootCmd.Flags().BoolP("version", "v", false, "Show version information")
+	rootCmd := NewRootCmd()
 
 	createCmd := &cobra.Command{
 		Use:     "create MODEL",
