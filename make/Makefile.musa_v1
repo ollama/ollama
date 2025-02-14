@@ -1,0 +1,13 @@
+# Build rules for MUSA v1 runner
+
+include make/common-defs.make
+include make/musa-v1-defs.make
+
+GPU_RUNNER_VARIANT := _v1
+GPU_COMPILER=$(MUSA_1_COMPILER)
+MUSA_ARCHITECTURES?=21;22
+GPU_LIB_DIR = $(MUSA_1_LIB_DIR)
+CGO_EXTRA_LDFLAGS = $(MUSA_1_CGO_EXTRA_LDFLAGS)
+
+include make/musa.make
+include make/gpu.make
