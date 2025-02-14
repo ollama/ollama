@@ -21,6 +21,7 @@ import (
 	_ "github.com/ollama/ollama/ml/backend"
 )
 
+// Options contains the inputs for a model forward pass
 type Options struct {
 	Inputs    []int32
 	Positions []int32
@@ -34,11 +35,13 @@ type config struct {
 	Cache kvcache.Cache
 }
 
+// Base implements the common fields and methods for all models
 type Base struct {
 	b ml.Backend
 	config
 }
 
+// Backend returns the underlying backend that will run the model
 func (m *Base) Backend() ml.Backend {
 	return m.b
 }
@@ -47,6 +50,7 @@ func (m *Base) Config() config {
 	return m.config
 }
 
+// Model implements a specific model architecture, defining the forward pass and any model-specific configuration
 type Model interface {
 	Forward(ml.Context, Options) (ml.Tensor, error)
 
@@ -56,6 +60,7 @@ type Model interface {
 
 var models = make(map[string]func(ml.Config) (Model, error))
 
+// Register registers a model constructor for the given architecture
 func Register(name string, f func(ml.Config) (Model, error)) {
 	if _, ok := models[name]; ok {
 		panic("model: model already registered")
@@ -64,8 +69,9 @@ func Register(name string, f func(ml.Config) (Model, error)) {
 	models[name] = f
 }
 
-func New(s string) (Model, error) {
-	r, err := os.Open(s)
+// New initializes a new model instance with the provided configuration based on the metadata in the model file
+func New(modelPath string) (Model, error) {
+	r, err := os.Open(modelPath)
 	if err != nil {
 		return nil, err
 	}
