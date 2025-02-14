@@ -92,12 +92,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 #if DirExists("..\dist\windows-amd64")
 Source: "..\dist\windows-amd64-app.exe"; DestDir: "{app}"; DestName: "{#MyAppExeName}" ;Check: not IsArm64();  Flags: ignoreversion 64bit
 Source: "..\dist\windows-amd64\ollama.exe"; DestDir: "{app}"; Check: not IsArm64(); Flags: ignoreversion 64bit
-; Does not seem to hold the required gpu files
 Source: "..\dist\windows-amd64\lib\ollama\*"; DestDir: "{app}\lib\ollama\"; Check: not IsArm64(); Flags: ignoreversion 64bit recursesubdirs
-#endif
-
-#if DirExists("..\build\lib\ollama")
-Source: "..\build\lib\ollama\*"; DestDir: "{app}\lib\ollama\"; Check: not IsArm64(); Flags: ignoreversion 64bit recursesubdirs
 #endif
 
 #if DirExists("..\dist\windows-arm64")
