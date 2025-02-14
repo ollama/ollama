@@ -1,27 +1,40 @@
 #!/bin/sh
 
+# Exit immediately if a command exits with a non-zero status
 set -e
 
-status() { echo >&2 ">>> $@"; }
+# Function to print status messages
+status() {
+    echo >&2 ">>> $@"
+}
+
+# Function to print usage information
 usage() {
     echo "usage: $(basename $0) [build [sign]]"
     exit 1
 }
 
+# Retrieve the version from git tags or set as dirty if not found
 export VERSION=${VERSION:-$(git describe --tags --dirty)}
 export GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${VERSION#v}\" \"-X=github.com/ollama/ollama/server.mode=release\"'"
 export CGO_CPPFLAGS='-mmacosx-version-min=11.3'
 
+# Default architectures to build for
 ARCHS="arm64 amd64"
+
+# Parse command line options
 while getopts "a:h" OPTION; do
     case $OPTION in
         a) ARCHS=$OPTARG ;;
         h) usage ;;
+        *) usage ;;
     esac
 done
 
+# Shift away the parsed options
 shift $(( $OPTIND - 1 ))
 
+# Function to build for Darwin OS
 _build_darwin() {
     for ARCH in $ARCHS; do
         status "Building darwin $ARCH"
@@ -40,6 +53,7 @@ _build_darwin() {
     done
 }
 
+# Function to sign the Darwin binary
 _sign_darwin() {
     status "Creating universal binary..."
     mkdir -p dist/darwin
@@ -51,7 +65,7 @@ _sign_darwin() {
             codesign -f --timestamp -s "$APPLE_IDENTITY" --identifier ai.ollama.ollama --options=runtime $F
         done
 
-        # create a temporary zip for notarization
+        # Create a temporary zip for notarization
         TEMP=$(mktemp -u).zip
         ditto -c -k --keepParent dist/darwin/ollama "$TEMP"
         xcrun notarytool submit "$TEMP" --wait --timeout 10m --apple-id $APPLE_ID --password $APPLE_PASSWORD --team-id $APPLE_TEAM_ID
@@ -64,18 +78,18 @@ _sign_darwin() {
     gzip -9vc <dist/ollama-darwin.tar >dist/ollama-darwin.tgz
 }
 
+# Function to build and optionally sign the Mac app
 _build_macapp() {
-    # build and optionally sign the mac app
     npm install --prefix macapp
     if [ -n "$APPLE_IDENTITY" ]; then
         npm run --prefix macapp make:sign
     else
         npm run --prefix macapp make
     fi
-
     mv ./macapp/out/make/zip/darwin/universal/Ollama-darwin-universal-$VERSION.zip dist/Ollama-darwin.zip
 }
 
+# Main script logic
 if [ "$#" -eq 0 ]; then
     _build_darwin
     _sign_darwin
