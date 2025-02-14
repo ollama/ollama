@@ -47,6 +47,10 @@ var OnceLoad = sync.OnceFunc(func() {
 		exe = "."
 	}
 
+	if eval, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = eval
+	}
+
 	// PATH, LD_LIBRARY_PATH, and DYLD_LIBRARY_PATH are often
 	// set by the parent process, however, use a default value
 	// if the environment variable is not set.
