@@ -10,10 +10,10 @@ import (
 )
 
 type Options struct {
-	RopeFactors                      ml.Tensor `gguf:"rope_freqs.weight"`
-	hiddenSize, numHeads, numKVHeads int
-	eps, ropeBase, ropeScale         float32
-	ropeDim                          uint32
+	RopeFactors                              ml.Tensor `gguf:"rope_freqs.weight"`
+	ctxLen, hiddenSize, numHeads, numKVHeads int
+	eps, ropeBase, ropeScale                 float32
+	ropeDim                                  uint32
 }
 
 type Model struct {
@@ -46,6 +46,7 @@ func New(c ml.Config) (model.Model, error) {
 			numHeads:   int(c.Uint("attention.head_count")),
 			numKVHeads: int(c.Uint("attention.head_count_kv")),
 			eps:        c.Float("attention.layer_norm_rms_epsilon"),
+			ctxLen:     int(c.Uint("context_length")),
 			ropeBase:   c.Float("rope.freq_base"),
 			ropeScale:  c.Float("rope.freq_scale", 1),
 			ropeDim:    c.Uint("rope.dimension_count"),
@@ -67,14 +68,23 @@ type SelfAttention struct {
 func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
 	headDim := opts.hiddenSize / opts.numHeads
+	rc := ml.RopeConfig{
+		PositionIDs: positionIDs,
+		RopeFactors: opts.RopeFactors,
+		RopeDim:     opts.ropeDim,
+		RopeType:    ml.RopeTypeStandard,
+		OrigCtxLen:  opts.ctxLen,
+		RopeBase:    opts.ropeBase,
+		RopeScale:   opts.ropeScale,
+	}
 
 	q := sa.Query.Forward(ctx, hiddenState)
 	q = q.Reshape(ctx, headDim, opts.numHeads, batchSize)
-	q = q.RoPE(ctx, positionIDs, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
+	q = q.RoPE(ctx, rc)
 
 	k := sa.Key.Forward(ctx, hiddenState)
 	k = k.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-	k = k.RoPE(ctx, positionIDs, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
+	k = k.RoPE(ctx, rc)
 
 	v := sa.Value.Forward(ctx, hiddenState)
 	v = v.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
@@ -99,7 +109,18 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 }
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return key.RoPE(ctx, shift, m.Options.RopeFactors, m.Options.ropeDim, m.Options.ropeBase, m.Options.ropeScale), nil
+	return key.RoPE(
+		ctx,
+		ml.RopeConfig{
+			PositionIDs: shift,
+			RopeFactors: m.Options.RopeFactors,
+			RopeDim:     m.Options.ropeDim,
+			RopeType:    ml.RopeTypeStandard,
+			OrigCtxLen:  m.Options.ctxLen,
+			RopeBase:    m.Options.ropeBase,
+			RopeScale:   m.Options.ropeScale,
+		},
+	), nil
 }
 
 type MLP struct {

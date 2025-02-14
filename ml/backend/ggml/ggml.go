@@ -579,13 +579,9 @@ func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	}
 }
 
-const (
-	ropeTypeNorm C.int = iota
-)
-
-func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim uint32, ropeBase, ropeScale float32) ml.Tensor {
-	if ropeFactors == nil {
-		ropeFactors = &Tensor{}
+func (t *Tensor) RoPE(ctx ml.Context, rc ml.RopeConfig) ml.Tensor {
+	if rc.RopeFactors == nil {
+		rc.RopeFactors = &Tensor{}
 	}
 
 	dequant := t.t
@@ -595,12 +591,15 @@ func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDi
 
 	return &Tensor{
 		t: C.ggml_rope_ext(
-			ctx.(*Context).ctx, dequant, positionIDs.(*Tensor).t, ropeFactors.(*Tensor).t,
-			C.int(ropeDim),
-			131072,       // YaRN n_ctx_train
-			ropeTypeNorm, // ROPE_TYPE_NORM
-			C.float(ropeBase),
-			C.float(ropeScale),
+			ctx.(*Context).ctx,
+			dequant,
+			rc.PositionIDs.(*Tensor).t,
+			rc.RopeFactors.(*Tensor).t,
+			C.int(rc.RopeDim),
+			C.int(rc.RopeType),
+			C.int(rc.OrigCtxLen),
+			C.float(rc.RopeBase),
+			C.float(rc.RopeScale),
 			0.,  // YaRN ext_factor
 			1.,  // YaRN attn_factor
 			32., // YaRN beta_fast
