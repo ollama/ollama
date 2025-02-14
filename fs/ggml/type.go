@@ -1,4 +1,4 @@
-package llm
+package ggml
 
 import "fmt"
 
@@ -98,10 +98,10 @@ func ParseFileType(s string) (fileType, error) {
 		return fileTypeIQ3_M, nil
 	case "IQ2_S":
 		return fileTypeIQ2_S, nil
-	case "IQ4_XS":
-		return fileTypeIQ4_XS, nil
 	case "IQ2_M":
 		return fileTypeIQ2_M, nil
+	case "IQ4_XS":
+		return fileTypeIQ4_XS, nil
 	case "IQ1_M":
 		return fileTypeIQ1_M, nil
 	case "BF16":
