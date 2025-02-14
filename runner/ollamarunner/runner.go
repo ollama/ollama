@@ -813,6 +813,8 @@ func (s *Server) loadModel(
 		panic(err)
 	}
 
+	slog.Info("system", "info", s.model.Backend().SystemInfo() /* "threads", *threads */)
+
 	// TODO(jessegross): LoRA loading
 	if lpath.String() != "" {
 		panic("loras are not yet implemented")
@@ -881,7 +883,6 @@ func Execute(args []string) error {
 	})
 	slog.SetDefault(slog.New(handler))
 	slog.Info("starting ollama engine")
-	// TODO(jessegross): Some system info would be useful
 
 	server := &Server{
 		batchSize: *batchSize,

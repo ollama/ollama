@@ -1,11 +1,27 @@
 package ggml
 
-// #cgo CPPFLAGS: -I${SRCDIR}/ggml/include
-// #include <stdlib.h>
-// #include <stdint.h>
-// #include "ggml.h"
-// #include "ggml-cpu.h"
-// #include "ggml-backend.h"
+/*
+#cgo CPPFLAGS: -I${SRCDIR}/ggml/include
+#include <stdlib.h>
+#include <stdint.h>
+#include "ggml.h"
+#include "ggml-cpu.h"
+#include "ggml-backend.h"
+static struct ggml_backend_feature * getBackendFeatures(void *fp, ggml_backend_reg_t reg) {return ((ggml_backend_get_features_t)(fp))(reg);}
+static struct ggml_backend_feature * getNextBackendFeatures(struct ggml_backend_feature * feature) { return &feature[1];}
+
+typedef enum {COMP_UNKNOWN,COMP_GCC,COMP_CLANG} COMPILER;
+COMPILER inline get_compiler() {
+#if defined(__clang__)
+	return COMP_CLANG;
+#elif defined(__GNUC__)
+	return COMP_GCC;
+#else
+	return UNKNOWN_COMPILER;
+#endif
+}
+
+*/
 import "C"
 
 import (
@@ -625,4 +641,35 @@ func (t *Tensor) Conv2D(ctx ml.Context, t2 ml.Tensor, s0, s1, p0, p1, d0, d1 int
 	return &Tensor{
 		t: C.ggml_conv_2d(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.int(s0), C.int(s1), C.int(p0), C.int(p1), C.int(d0), C.int(d1)),
 	}
+}
+
+func (b *Backend) SystemInfo() string {
+	var compiler string
+	switch C.get_compiler() {
+	case C.COMP_UNKNOWN:
+		compiler = "cgo(unknown_compiler)"
+	case C.COMP_GCC:
+		compiler = "cgo(gcc)"
+	case C.COMP_CLANG:
+		compiler = "cgo(clang)"
+	}
+
+	var s string
+	for i := range C.ggml_backend_reg_count() {
+		reg := C.ggml_backend_reg_get(i)
+		fName := C.CString("ggml_backend_get_features")
+		defer C.free(unsafe.Pointer(fName))
+		get_features_fn := C.ggml_backend_reg_get_proc_address(reg, fName)
+		if get_features_fn != nil {
+			s += C.GoString(C.ggml_backend_reg_name(reg))
+			s += " : "
+			for features := C.getBackendFeatures(get_features_fn, reg); features.name != nil; features = C.getNextBackendFeatures(features) {
+				s += C.GoString(features.name)
+				s += " = "
+				s += C.GoString(features.value)
+				s += " | "
+			}
+		}
+	}
+	return s + compiler
 }
