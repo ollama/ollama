@@ -1107,6 +1107,11 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 
 		if addr, err := netip.ParseAddr(host); err == nil {
 			if addr.IsLoopback() || addr.IsPrivate() || addr.IsUnspecified() || isLocalIP(addr) {
+				if c.Request.Method == http.MethodOptions {
+					c.AbortWithStatus(http.StatusNoContent)
+					return
+				}
+
 				c.Next()
 				return
 			}
@@ -1138,6 +1143,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	config.AllowOrigins = envconfig.Origins()
 
 	r := gin.Default()
+	r.HandleMethodNotAllowed = true
 	r.Use(
 		cors.New(config),
 		allowedHostsMiddleware(s.addr),
