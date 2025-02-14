@@ -14,3 +14,5 @@ test_data
 __debug_bin*
 llama/build
 llama/vendor
+build/
+

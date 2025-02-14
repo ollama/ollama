@@ -54,6 +54,12 @@ type Causal struct {
 	backend      ml.Backend
 	cacheCtx     ml.Context
 	keys, values []ml.Tensor
+
+	// TODO - find a better way...
+	keysShape    []int
+	valuesShape  []int
+	keysStride   []int
+	valuesStride []int
 }
 
 type cacheCell struct {
@@ -178,13 +184,14 @@ func (c *Causal) buildMask(ctx ml.Context, positions []int32, seqs []int) (ml.Te
 }
 
 func moveCell(ctx ml.Context, objs []ml.Tensor, src, dst, len int) {
+	// TODO this wont work on MLX as is - needs to be adjusted for SliceUpdate
 	for _, obj := range objs {
 		if obj == nil {
 			continue
 		}
 
-		srcView := obj.View(ctx, obj.Stride(2)*src, obj.Dim(0)*obj.Dim(1)*len)
-		dstView := obj.View(ctx, obj.Stride(2)*dst, obj.Dim(0)*obj.Dim(1)*len)
+		srcView := obj.View(ctx, obj.Stride(0)*src, []int{obj.Dim(0) * obj.Dim(2) * len}, nil)
+		dstView := obj.View(ctx, obj.Stride(0)*dst, []int{obj.Dim(0) * obj.Dim(2) * len}, nil)
 
 		ctx.Forward(srcView.Copy(ctx, dstView))
 	}
@@ -305,33 +312,91 @@ func (c *Causal) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) {
 	key := c.keys[c.curLayer]
 	value := c.values[c.curLayer]
 
-	key = key.View(ctx, key.Stride(2)*c.curCellRange.min,
-		key.Dim(0), key.Stride(1),
-		key.Dim(1), key.Stride(2),
-		c.curMask.Dim(0),
-	)
+	// Temporary abstraction to work around differences in cache tensor handling.
+	if _, ok := ctx.(ml.SliceUpdate); ok {
+		kShape := append([]int{}, c.keysShape...)
+		kShape[0] = c.curMask.Dim(0)
+		vShape := append([]int{}, c.valuesShape...)
+		vShape[0] = c.curMask.Dim(0)
+		key = key.View(ctx, c.keysStride[0]*c.curCellRange.min, kShape, c.keysStride)
+		value = value.View(ctx, c.valuesStride[0]*c.curCellRange.min, vShape, c.valuesStride)
+	} else {
+		key = key.View(ctx, key.Stride(0)*c.curCellRange.min,
+			[]int{c.curMask.Dim(0), key.Dim(1), key.Dim(2)},
+			[]int{key.Stride(0), key.Stride(1)},
+		)
+		value = value.View(ctx, value.Stride(0)*c.curCellRange.min,
+			[]int{c.curMask.Dim(0), value.Dim(1), value.Dim(2)},
+			[]int{value.Stride(0), value.Stride(1)},
+		)
+	}
 
-	value = value.View(ctx, key.Stride(2)*c.curCellRange.min,
-		value.Dim(0), value.Stride(1),
-		value.Dim(1), value.Stride(2),
-		c.curMask.Dim(0),
-	)
-
+	// TODO The mask changes from X,X to 1,X, and with the Row-order change
+	// the 1 becomes trailing and messes up later operations
+	// This isn't the right solution, but works around it...
+	if c.curMask.Dim(1) == 1 {
+		return key, value, c.curMask.Permute(ctx, 1, 0, 2, 3)
+	}
 	return key, value, c.curMask
 }
 
 func (c *Causal) Put(ctx ml.Context, key, value ml.Tensor) {
-	if c.curBatchSize != key.Dim(2) {
-		panic(fmt.Errorf("inconsistent batch sizes (layer: %v, batch size: %v layer batch size: %v)", c.curLayer, c.curBatchSize, key.Dim(2)))
+	if c.curBatchSize != key.Dim(0) {
+		panic(fmt.Errorf("inconsistent batch sizes (layer: %v, batch size: %v layer batch size: %v)", c.curLayer, c.curBatchSize, key.Dim(0)))
 	}
 
 	if c.keys[c.curLayer] == nil || c.values[c.curLayer] == nil {
-		c.keys[c.curLayer] = c.cacheCtx.Zeros(c.DType, key.Dim(0), key.Dim(1), int(c.Capacity))
-		c.values[c.curLayer] = c.cacheCtx.Zeros(c.DType, value.Dim(0), value.Dim(1), int(c.Capacity))
+		// Record stride information on initial request with sequence > 1
+		nDims := len(key.Shape())
+		kStride := []int{}
+		vStride := []int{}
+		for d := range nDims - 1 {
+			kStride = append(kStride, key.Stride(d))
+			vStride = append(vStride, value.Stride(d))
+		}
+		c.keysStride = kStride
+		c.valuesStride = vStride
+
+		c.keysShape = key.Shape()
+		c.valuesShape = value.Shape()
+		c.keysShape[0] = -1
+		c.valuesShape[0] = -1
 	}
 
-	ctx.Forward(key.Copy(ctx, c.keys[c.curLayer].View(ctx, c.keys[c.curLayer].Stride(2)*c.curLoc, key.Dim(0)*key.Dim(1)*key.Dim(2))))
-	ctx.Forward(value.Copy(ctx, c.values[c.curLayer].View(ctx, c.values[c.curLayer].Stride(2)*c.curLoc, value.Dim(0)*value.Dim(1)*value.Dim(2))))
+	// Temporary abstraction to work around differences in cache tensor handling.
+	// With GGML, a view on a tensor is capable of copying to the underlying tensor
+	// MLX requires a slice_update call to the underlying tensor
+	if su, ok := ctx.(ml.SliceUpdate); ok {
+		kSize := key.Dim(1) * key.Dim(2)
+		vSize := value.Dim(1) * value.Dim(2)
+		seq := key.Dim(0)
+		key = key.Reshape(ctx, seq, -1).Contiguous(ctx)
+		value = value.Reshape(ctx, seq, -1).Contiguous(ctx)
+		if c.keys[c.curLayer] == nil || c.values[c.curLayer] == nil {
+			keysCacheShape := []int{int(c.Capacity), kSize}
+			valuesCacheShape := []int{int(c.Capacity), vSize}
+			c.keys[c.curLayer] = c.cacheCtx.Zeros(c.DType, keysCacheShape...)
+			c.values[c.curLayer] = c.cacheCtx.Zeros(c.DType, valuesCacheShape...)
+		}
+		start := []int{int(c.curLoc), 0}
+		kStop := []int{int(c.curLoc + key.Dim(0)), int(kSize)}
+		vStop := []int{int(c.curLoc + value.Dim(0)), int(vSize)}
+		strides := []int{1, 1}
+		su.SliceUpdate(c.keys[c.curLayer], key, start, kStop, strides)
+		su.SliceUpdate(c.values[c.curLayer], value, start, vStop, strides)
+		ctx.Forward(c.keys[c.curLayer])
+		ctx.Forward(c.values[c.curLayer])
+	} else {
+		// GGML pattern
+		if c.keys[c.curLayer] == nil || c.values[c.curLayer] == nil {
+			c.keys[c.curLayer] = c.cacheCtx.Zeros(c.DType, int(c.Capacity), key.Dim(1), key.Dim(2))
+			c.values[c.curLayer] = c.cacheCtx.Zeros(c.DType, int(c.Capacity), value.Dim(1), value.Dim(2))
+		}
+		// slog.Info("XXX Cache.Put", "key", key, "offset", c.keys[c.curLayer].Stride(0)*c.curLoc, "shape", []int{key.Dim(0) * key.Dim(1) * key.Dim(2)})
+
+		ctx.Forward(key.Copy(ctx, c.keys[c.curLayer].View(ctx, c.keys[c.curLayer].Stride(0)*c.curLoc, []int{key.Dim(0) * key.Dim(1) * key.Dim(2)}, nil)))
+		ctx.Forward(value.Copy(ctx, c.values[c.curLayer].View(ctx, c.values[c.curLayer].Stride(0)*c.curLoc, []int{value.Dim(0) * value.Dim(1) * value.Dim(2)}, nil)))
+	}
 }
 
 func (c *Causal) CopyPrefix(srcSeq, dstSeq int, len int32) {
@@ -387,10 +452,10 @@ func (c *Causal) shift(seq int, beginIndex, offset int32) error {
 			continue
 		}
 
-		key = key.View(ctx, key.Stride(2)*seqRange.min,
-			key.Dim(0), key.Stride(1),
-			key.Dim(1), key.Stride(2),
-			size,
+		// TODO - this also needs adjusting to support MLX with SliceUpdate
+		key = key.View(ctx, key.Stride(0)*seqRange.min,
+			[]int{size, key.Dim(0), key.Dim(2)},
+			[]int{key.Stride(0), key.Stride(1)},
 		)
 
 		roped, err := c.shiftFn(ctx, i, key, kShift)
