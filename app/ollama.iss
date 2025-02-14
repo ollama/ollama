@@ -126,9 +126,7 @@ Filename: "{cmd}"; Parameters: "/c timeout 5"; Flags: runhidden
 Type: filesandordirs; Name: "{%TEMP}\ollama*"
 Type: filesandordirs; Name: "{%LOCALAPPDATA}\Ollama"
 Type: filesandordirs; Name: "{%LOCALAPPDATA}\Programs\Ollama"
-Type: filesandordirs; Name: "{%USERPROFILE}\.ollama\models"
 Type: filesandordirs; Name: "{%USERPROFILE}\.ollama\history"
-; NOTE: if the user has a custom OLLAMA_MODELS it will be preserved
 
 [InstallDelete]
 Type: filesandordirs; Name: "{%TEMP}\ollama*"
@@ -201,4 +199,109 @@ begin
   end
   else
     Result := TRUE;
+end;
+
+
+var
+  DeleteModelsChecked: Boolean;
+ 
+procedure InitializeUninstallProgressForm();
+var
+  UninstallPage: TNewNotebookPage;
+  UninstallButton: TNewButton;
+  DeleteModelsCheckbox: TNewCheckBox;
+  OriginalPageNameLabel: string;
+  OriginalPageDescriptionLabel: string;
+  OriginalCancelButtonEnabled: Boolean;
+  OriginalCancelButtonModalResult: Integer;
+  ctrl: TWinControl;
+begin
+  if not UninstallSilent then
+  begin
+    ctrl := UninstallProgressForm.CancelButton;
+    UninstallButton := TNewButton.Create(UninstallProgressForm);
+    UninstallButton.Parent := UninstallProgressForm;
+    UninstallButton.Left := ctrl.Left - ctrl.Width - ScaleX(10);
+    UninstallButton.Top := ctrl.Top;
+    UninstallButton.Width := ctrl.Width;
+    UninstallButton.Height := ctrl.Height;
+    UninstallButton.TabOrder := ctrl.TabOrder;
+    UninstallButton.Caption := 'Uninstall';
+    UninstallButton.ModalResult := mrOK;    
+    UninstallProgressForm.CancelButton.TabOrder := UninstallButton.TabOrder + 1;
+    UninstallPage := TNewNotebookPage.Create(UninstallProgressForm);
+    UninstallPage.Notebook := UninstallProgressForm.InnerNotebook;
+    UninstallPage.Parent := UninstallProgressForm.InnerNotebook;
+    UninstallPage.Align := alClient;
+    UninstallProgressForm.InnerNotebook.ActivePage := UninstallPage;
+ 
+    ctrl := UninstallProgressForm.StatusLabel;
+    with TNewStaticText.Create(UninstallProgressForm) do
+    begin
+      Parent := UninstallPage;
+      Top := ctrl.Top;
+      Left := ctrl.Left;
+      Width := ctrl.Width;
+      Height := ctrl.Height;
+      AutoSize := False;
+      ShowAccelChar := False;
+      Caption := '';
+    end;
+ 
+    DeleteModelsCheckbox := TNewCheckBox.Create(UninstallProgressForm);
+    DeleteModelsCheckbox.Parent := UninstallPage;
+    DeleteModelsCheckbox.Top := ctrl.Top + ScaleY(30);
+    DeleteModelsCheckbox.Left := ctrl.Left;
+    DeleteModelsCheckbox.Width := ScaleX(300);
+    DeleteModelsCheckbox.Caption := 'Remove downloaded models';
+    DeleteModelsCheckbox.Checked := True;
+ 
+    OriginalPageNameLabel := UninstallProgressForm.PageNameLabel.Caption;
+    OriginalPageDescriptionLabel := UninstallProgressForm.PageDescriptionLabel.Caption;
+    OriginalCancelButtonEnabled := UninstallProgressForm.CancelButton.Enabled;
+    OriginalCancelButtonModalResult := UninstallProgressForm.CancelButton.ModalResult;
+ 
+    UninstallProgressForm.PageNameLabel.Caption := '';
+    UninstallProgressForm.PageDescriptionLabel.Caption := '';
+    UninstallProgressForm.CancelButton.Enabled := True;
+    UninstallProgressForm.CancelButton.ModalResult := mrCancel;
+ 
+    if UninstallProgressForm.ShowModal = mrCancel then Abort;
+ 
+    UninstallButton.Visible := False;   
+    UninstallProgressForm.PageNameLabel.Caption := OriginalPageNameLabel;
+    UninstallProgressForm.PageDescriptionLabel.Caption := OriginalPageDescriptionLabel;
+    UninstallProgressForm.CancelButton.Enabled := OriginalCancelButtonEnabled;
+    UninstallProgressForm.CancelButton.ModalResult := OriginalCancelButtonModalResult;
+ 
+    UninstallProgressForm.InnerNotebook.ActivePage := UninstallProgressForm.InstallingPage;
+ 
+    if DeleteModelsCheckbox.Checked then
+    begin
+      DeleteModelsChecked:=True;
+    end else
+    begin
+      DeleteModelsChecked:=False;
+    end;
+  end;
+end;
+ 
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  ErrorCode: Integer;
+begin
+  if CurUninstallStep = usDone then
+  begin
+    if DeleteModelsChecked then
+    begin
+      if (GetEnv('OLLAMA_MODELS') = '') then
+      begin
+        DelTree(GetEnv('USERPROFILE') + '\.ollama\models', True, True, True);
+      end else
+      begin
+        DelTree(GetEnv('OLLAMA_MODELS') + '\blobs', True, True, True);
+        DelTree(GetEnv('OLLAMA_MODELS') + '\manifests', True, True, True);
+      end;
+    end;
+  end;
 end;
