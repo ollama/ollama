@@ -16,6 +16,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
+	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
 )
 
@@ -45,8 +46,8 @@ func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error
 	return
 }
 
-func newMockServer(mock *mockRunner) func(discover.GpuInfoList, string, *llm.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
-	return func(gpus discover.GpuInfoList, model string, ggml *llm.GGML, projectors, system []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+func newMockServer(mock *mockRunner) func(discover.GpuInfoList, string, *ggml.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
+	return func(_ discover.GpuInfoList, _ string, _ *ggml.GGML, _, _ []string, _ api.Options, _ int) (llm.LlamaServer, error) {
 		return mock, nil
 	}
 }
@@ -76,7 +77,7 @@ func TestGenerateChat(t *testing.T) {
 			getGpuFn:      discover.GetGPUInfo,
 			getCpuFn:      discover.GetCPUInfo,
 			reschedDelay:  250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, ggml *llm.GGML, gpus discover.GpuInfoList, numParallel int) {
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ int) {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -88,7 +89,7 @@ func TestGenerateChat(t *testing.T) {
 
 	go s.sched.Run(context.TODO())
 
-	_, digest := createBinFile(t, llm.KV{
+	_, digest := createBinFile(t, ggml.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -98,7 +99,7 @@ func TestGenerateChat(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []llm.Tensor{
+	}, []ggml.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -154,10 +155,10 @@ func TestGenerateChat(t *testing.T) {
 	})
 
 	t.Run("missing capabilities chat", func(t *testing.T) {
-		_, digest := createBinFile(t, llm.KV{
+		_, digest := createBinFile(t, ggml.KV{
 			"general.architecture": "bert",
 			"bert.pooling_type":    uint32(0),
-		}, []llm.Tensor{})
+		}, []ggml.Tensor{})
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Model:  "bert",
 			Files:  map[string]string{"bert.gguf": digest},
@@ -612,7 +613,7 @@ func TestGenerate(t *testing.T) {
 			getGpuFn:      discover.GetGPUInfo,
 			getCpuFn:      discover.GetCPUInfo,
 			reschedDelay:  250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, ggml *llm.GGML, gpus discover.GpuInfoList, numParallel int) {
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ int) {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -624,7 +625,7 @@ func TestGenerate(t *testing.T) {
 
 	go s.sched.Run(context.TODO())
 
-	_, digest := createBinFile(t, llm.KV{
+	_, digest := createBinFile(t, ggml.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -634,7 +635,7 @@ func TestGenerate(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []llm.Tensor{
+	}, []ggml.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -686,10 +687,10 @@ func TestGenerate(t *testing.T) {
 	})
 
 	t.Run("missing capabilities generate", func(t *testing.T) {
-		_, digest := createBinFile(t, llm.KV{
+		_, digest := createBinFile(t, ggml.KV{
 			"general.architecture": "bert",
 			"bert.pooling_type":    uint32(0),
-		}, []llm.Tensor{})
+		}, []ggml.Tensor{})
 
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Model:  "bert",

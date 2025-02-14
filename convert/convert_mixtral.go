@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/fs/ggml"
 )
 
 type mixtralModel struct {
@@ -15,7 +15,7 @@ type mixtralModel struct {
 	NumExpertsPerToken uint32 `json:"num_experts_per_tok"`
 }
 
-func (p *mixtralModel) KV(t *Tokenizer) llm.KV {
+func (p *mixtralModel) KV(t *Tokenizer) ggml.KV {
 	kv := p.llamaModel.KV(t)
 
 	if p.NumLocalExperts > 0 {
@@ -29,7 +29,7 @@ func (p *mixtralModel) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *mixtralModel) Tensors(ts []Tensor) []llm.Tensor {
+func (p *mixtralModel) Tensors(ts []Tensor) []ggml.Tensor {
 	oldnew := []string{
 		"model.layers", "blk",
 		"w1", "ffn_gate_exps",
@@ -56,10 +56,10 @@ func (p *mixtralModel) Tensors(ts []Tensor) []llm.Tensor {
 		return true
 	})
 
-	var out []llm.Tensor
+	var out []ggml.Tensor
 	for n, e := range experts {
 		// TODO(mxyng): sanity check experts
-		out = append(out, llm.Tensor{
+		out = append(out, ggml.Tensor{
 			Name:     n,
 			Kind:     e[0].Kind(),
 			Shape:    append([]uint64{uint64(len(e))}, e[0].Shape()...),

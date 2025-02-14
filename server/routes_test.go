@@ -21,7 +21,7 @@ import (
 	"unicode"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -654,8 +654,8 @@ func TestShow(t *testing.T) {
 
 	var s Server
 
-	_, digest1 := createBinFile(t, llm.KV{"general.architecture": "test"}, nil)
-	_, digest2 := createBinFile(t, llm.KV{"general.type": "projector", "general.architecture": "clip"}, nil)
+	_, digest1 := createBinFile(t, ggml.KV{"general.architecture": "test"}, nil)
+	_, digest2 := createBinFile(t, ggml.KV{"general.type": "projector", "general.architecture": "clip"}, nil)
 
 	createRequest(t, s.CreateHandler, api.CreateRequest{
 		Name:  "show-model",
