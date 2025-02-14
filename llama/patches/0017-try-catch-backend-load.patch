@@ -8,7 +8,7 @@ Subject: [PATCH] try/catch backend load
  1 file changed, 23 insertions(+), 22 deletions(-)
 
 diff --git a/ggml/src/ggml-backend-reg.cpp b/ggml/src/ggml-backend-reg.cpp
-index ac5cda07..374c3b21 100644
+index 135f7df0..84b21dd8 100644
 --- a/ggml/src/ggml-backend-reg.cpp
 +++ b/ggml/src/ggml-backend-reg.cpp
 @@ -512,32 +512,33 @@ static ggml_backend_reg_t ggml_backend_load_best(const char * name, bool silent,
