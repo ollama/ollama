@@ -79,7 +79,7 @@ function checkEnv() {
 
 
 function buildOllama() {
-    if ($null -eq ${env:OLLAMA_SKIP_GENERATE}) {
+    if (($null -eq ${env:OLLAMA_SKIP_GENERATE}) -and ($script:ARCH -ne "arm64")) {
         Remove-Item -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}"
         New-Item "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\" -ItemType Directory -ea 0
 
