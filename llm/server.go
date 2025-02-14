@@ -320,6 +320,10 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, ggml *GGML, adapter
 			return nil, fmt.Errorf("unable to lookup executable path: %w", err)
 		}
 
+		if eval, err := filepath.EvalSymlinks(exe); err == nil {
+			exe = eval
+		}
+
 		// TODO - once fully switched to the Go runner, load the model here for tokenize/detokenize cgo access
 		s := &llmServer{
 			port:        port,
