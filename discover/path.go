@@ -19,11 +19,6 @@ var LibOllamaPath string = func() string {
 		return ""
 	}
 
-	exe, err = filepath.EvalSymlinks(exe)
-	if err != nil {
-		return ""
-	}
-
 	var libPath string
 	switch runtime.GOOS {
 	case "windows":
