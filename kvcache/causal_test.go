@@ -305,6 +305,10 @@ func (b *testBackend) NewContext() ml.Context {
 	return &testContext{}
 }
 
+func (b *testBackend) SystemInfo() string {
+	return "not implemented"
+}
+
 type testContext struct{}
 
 func (c *testContext) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
