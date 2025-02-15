@@ -111,6 +111,26 @@ type Tensor interface {
 	Copy(ctx Context, t2 Tensor) Tensor
 }
 
+// ScaledDotProductAttention implements a fused attention
+// operation equivalent to following code on a tensor named
+// query:
+//
+// kq := key.MulmatFullPrec(ctx, query)
+//
+// kq = kq.Scale(ctx, scale)
+//
+//	if mask != nil {
+//		kq = kq.Add(ctx, mask)
+//	}
+//
+// kq = kq.Softmax(ctx)
+//
+// kqv := value.Mulmat(ctx, kq)
+// return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+type ScaledDotProductAttention interface {
+	ScaledDotProductAttention(ctx Context, key, value, mask Tensor, scale float64) Tensor
+}
+
 type number interface {
 	~int | ~int8 | ~int16 | ~int32 | ~int64 |
 		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 |
