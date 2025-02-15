@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,6 +22,8 @@ import (
 )
 
 type MultilineState int
+
+var LoggingState bool = false
 
 const (
 	MultilineNone MultilineState = iota
@@ -61,6 +64,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /set noformat          Disable formatting")
 		fmt.Fprintln(os.Stderr, "  /set verbose           Show LLM stats")
 		fmt.Fprintln(os.Stderr, "  /set quiet             Disable LLM stats")
+		fmt.Fprintln(os.Stderr, "  /set logging           Enable logging")
 		fmt.Fprintln(os.Stderr, "")
 	}
 
@@ -146,6 +150,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		case err != nil:
 			return err
 		}
+		if LoggingState {
+			log.Println("User Input: " + line)
+		}
 
 		switch {
 		case multiline != MultilineNone:
@@ -162,6 +169,10 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				opts.System = sb.String()
 				opts.Messages = append(opts.Messages, api.Message{Role: "system", Content: opts.System})
 				fmt.Println("Set system message.")
+				if LoggingState {
+					log.Println("Set system message.")
+					log.Printf("System message content: %s", opts.System)
+				}
 				sb.Reset()
 			}
 
@@ -189,11 +200,17 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			args := strings.Fields(line)
 			if len(args) != 2 {
 				fmt.Println("Usage:\n  /load <modelname>")
+				if LoggingState {
+					log.Println("Invalid usage of /load command.")
+				}
 				continue
 			}
 			opts.Model = args[1]
 			opts.Messages = []api.Message{}
 			fmt.Printf("Loading model '%s'\n", opts.Model)
+			if LoggingState {
+				log.Printf("Loading model '%s'", opts.Model)
+			}
 			if err := loadOrUnloadModel(cmd, &opts); err != nil {
 				return err
 			}
@@ -202,12 +219,18 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			args := strings.Fields(line)
 			if len(args) != 2 {
 				fmt.Println("Usage:\n  /save <modelname>")
+				if LoggingState {
+					log.Println("Invalid usage of /save command.")
+				}
 				continue
 			}
 
 			client, err := api.ClientFromEnvironment()
 			if err != nil {
 				fmt.Println("error: couldn't connect to ollama server")
+				if LoggingState {
+					log.Println("Error: couldn't connect to ollama server")
+				}
 				return err
 			}
 
@@ -217,11 +240,17 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			if err != nil {
 				if strings.Contains(err.Error(), errtypes.InvalidModelNameErrMsg) {
 					fmt.Printf("error: The model name '%s' is invalid\n", args[1])
+					if LoggingState {
+						log.Printf("Error: The model name '%s' is invalid", args[1])
+					}
 					continue
 				}
 				return err
 			}
 			fmt.Printf("Created new model '%s'\n", args[1])
+			if LoggingState {
+				log.Printf("Created new model '%s'", args[1])
+			}
 			continue
 		case strings.HasPrefix(line, "/clear"):
 			opts.Messages = []api.Message{}
@@ -230,6 +259,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				opts.Messages = append(opts.Messages, newMessage)
 			}
 			fmt.Println("Cleared session context")
+			if LoggingState {
+				log.Println("Cleared session context")
+			}
 			continue
 		case strings.HasPrefix(line, "/set"):
 			args := strings.Fields(line)
@@ -242,29 +274,50 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				case "wordwrap":
 					opts.WordWrap = true
 					fmt.Println("Set 'wordwrap' mode.")
+					if LoggingState {
+						log.Println("Set 'wordwrap' mode.")
+					}
 				case "nowordwrap":
 					opts.WordWrap = false
 					fmt.Println("Set 'nowordwrap' mode.")
+					if LoggingState {
+						log.Println("Set 'nowordwrap' mode.")
+					}
 				case "verbose":
 					if err := cmd.Flags().Set("verbose", "true"); err != nil {
 						return err
 					}
 					fmt.Println("Set 'verbose' mode.")
+					if LoggingState {
+						log.Println("Set 'verbose' mode.")
+					}
 				case "quiet":
 					if err := cmd.Flags().Set("verbose", "false"); err != nil {
 						return err
 					}
 					fmt.Println("Set 'quiet' mode.")
+					if LoggingState {
+						log.Println("Set 'quiet' mode.")
+					}
 				case "format":
 					if len(args) < 3 || args[2] != "json" {
 						fmt.Println("Invalid or missing format. For 'json' mode use '/set format json'")
+						if LoggingState {
+							log.Println("Invalid or missing format. For 'json' mode use '/set format json'")
+						}
 					} else {
 						opts.Format = args[2]
 						fmt.Printf("Set format to '%s' mode.\n", args[2])
+						if LoggingState {
+							log.Printf("Set format to '%s' mode.", args[2])
+						}
 					}
 				case "noformat":
 					opts.Format = ""
 					fmt.Println("Disabled format.")
+					if LoggingState {
+						log.Println("Disabled format.")
+					}
 				case "parameter":
 					if len(args) < 4 {
 						usageParameters()
@@ -274,9 +327,15 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					fp, err := api.FormatParams(map[string][]string{args[2]: params})
 					if err != nil {
 						fmt.Printf("Couldn't set parameter: %q\n", err)
+						if LoggingState {
+							log.Printf("Couldn't set parameter: %q", err)
+						}
 						continue
 					}
 					fmt.Printf("Set parameter '%s' to '%s'\n", args[2], strings.Join(params, ", "))
+					if LoggingState {
+						log.Printf("Set parameter '%s' to '%s'", args[2], strings.Join(params, ", "))
+					}
 					opts.Options[args[2]] = fp[args[2]]
 				case "system":
 					if len(args) < 3 {
@@ -314,10 +373,28 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						opts.Messages = append(opts.Messages, newMessage)
 					}
 					fmt.Println("Set system message.")
+					if LoggingState {
+						log.Println("Set system message.")
+						log.Printf("System message content: %s", opts.System)
+					}
 					sb.Reset()
 					continue
+				case "logging":
+					LoggingState = true
+					file, err := os.OpenFile("app.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+					if err != nil {
+						log.Fatal("Failed to open log file:", err)
+					}
+					log.SetOutput(file)
+					fmt.Println("Set 'logging' mode.")
+					if LoggingState {
+						log.Println("Set 'logging' mode.")
+					}
 				default:
 					fmt.Printf("Unknown command '/set %s'. Type /? for help\n", args[1])
+					if LoggingState {
+						log.Printf("Unknown command '/set %s'. Type /? for help", args[1])
+					}
 				}
 			} else {
 				usageSet()
@@ -328,6 +405,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				client, err := api.ClientFromEnvironment()
 				if err != nil {
 					fmt.Println("error: couldn't connect to ollama server")
+					if LoggingState {
+						log.Println("Error: couldn't connect to ollama server")
+					}
 					return err
 				}
 				req := &api.ShowRequest{
@@ -338,23 +418,41 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				resp, err := client.Show(cmd.Context(), req)
 				if err != nil {
 					fmt.Println("error: couldn't get model")
+					if LoggingState {
+						log.Println("Error: couldn't get model")
+					}
 					return err
 				}
 
 				switch args[1] {
 				case "info":
 					_ = showInfo(resp, os.Stderr)
+					if LoggingState {
+						log.Println("Displayed model info.")
+					}
 				case "license":
 					if resp.License == "" {
 						fmt.Println("No license was specified for this model.")
+						if LoggingState {
+							log.Println("No license was specified for this model.")
+						}
 					} else {
 						fmt.Println(resp.License)
+						if LoggingState {
+							log.Println("Displayed model license.")
+						}
 					}
 				case "modelfile":
 					fmt.Println(resp.Modelfile)
+					if LoggingState {
+						log.Println("Displayed Modelfile.")
+					}
 				case "parameters":
 					if resp.Parameters == "" {
 						fmt.Println("No parameters were specified for this model.")
+						if LoggingState {
+							log.Println("No parameters were specified for this model.")
+						}
 					} else {
 						if len(opts.Options) > 0 {
 							fmt.Println("User defined parameters:")
@@ -365,24 +463,45 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						}
 						fmt.Println("Model defined parameters:")
 						fmt.Println(resp.Parameters)
+						if LoggingState {
+							log.Println("Displayed model parameters.")
+						}
 					}
 				case "system":
 					switch {
 					case opts.System != "":
 						fmt.Println(opts.System + "\n")
+						if LoggingState {
+							log.Printf("Displayed system message: %s", opts.System)
+						}
 					case resp.System != "":
 						fmt.Println(resp.System + "\n")
+						if LoggingState {
+							log.Printf("Displayed system message: %s", resp.System)
+						}
 					default:
 						fmt.Println("No system message was specified for this model.")
+						if LoggingState {
+							log.Println("No system message was specified for this model.")
+						}
 					}
 				case "template":
 					if resp.Template != "" {
 						fmt.Println(resp.Template)
+						if LoggingState {
+							log.Println("Displayed prompt template.")
+						}
 					} else {
 						fmt.Println("No prompt template was specified for this model.")
+						if LoggingState {
+							log.Println("No prompt template was specified for this model.")
+						}
 					}
 				default:
 					fmt.Printf("Unknown command '/show %s'. Type /? for help\n", args[1])
+					if LoggingState {
+						log.Printf("Unknown command '/show %s'. Type /? for help", args[1])
+					}
 				}
 			} else {
 				usageShow()
@@ -393,13 +512,25 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				switch args[1] {
 				case "set", "/set":
 					usageSet()
+					if LoggingState {
+						log.Println("Displayed '/set' usage.")
+					}
 				case "show", "/show":
 					usageShow()
+					if LoggingState {
+						log.Println("Displayed '/show' usage.")
+					}
 				case "shortcut", "shortcuts":
 					usageShortcuts()
+					if LoggingState {
+						log.Println("Displayed keyboard shortcuts.")
+					}
 				}
 			} else {
 				usage()
+				if LoggingState {
+					log.Println("Displayed general usage.")
+				}
 			}
 		case strings.HasPrefix(line, "/exit"), strings.HasPrefix(line, "/bye"):
 			return nil
@@ -418,6 +549,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 			if !isFile {
 				fmt.Printf("Unknown command '%s'. Type /? for help\n", args[0])
+				if LoggingState {
+					log.Printf("Unknown command '%s'. Type /? for help", args[0])
+				}
 				continue
 			}
 
@@ -447,6 +581,9 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			}
 			if assistant != nil {
 				opts.Messages = append(opts.Messages, *assistant)
+				if LoggingState {
+					log.Printf("Assistant Response: %s", assistant.Content)
+				}
 			}
 
 			sb.Reset()
