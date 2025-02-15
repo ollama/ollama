@@ -651,6 +651,21 @@ func (t *Tensor) Conv2D(ctx ml.Context, t2 ml.Tensor, s0, s1, p0, p1, d0, d1 int
 	}
 }
 
+func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask ml.Tensor, scale float64) ml.Tensor {
+	var kqMask *C.struct_ggml_tensor
+	if mask != nil {
+		kqMask = mask.(*Tensor).t
+	}
+
+	kq := key.MulmatFullPrec(ctx, t)
+	kq = &Tensor{
+		t: C.ggml_soft_max_ext(ctx.(*Context).ctx, kq.(*Tensor).t, kqMask, C.float(scale), 0),
+	}
+
+	kqv := value.Mulmat(ctx, kq)
+	return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+}
+
 func (b *Backend) SystemInfo() string {
 	var compiler string
 	switch C.get_compiler() {
