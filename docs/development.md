@@ -46,21 +46,20 @@ Install prerequisites:
 - (Optional) NVIDIA GPU support
     - [CUDA SDK](https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_network)
 
-> [!IMPORTANT]
-> Ensure prerequisites are in `PATH` before running CMake.
-
-> [!IMPORTANT]
-> ROCm is not compatible with Visual Studio CMake generators. Use `-GNinja` when configuring the project.
-
-> [!IMPORTANT]
-> CUDA is only compatible with Visual Studio CMake generators.
-
 Then, configure and build the project:
 
 ```shell
 cmake -B build
 cmake --build build --config Release
 ```
+
+> [!IMPORTANT]
+> Building for ROCm requires additional flags:
+> ```
+> cmake -B build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+> cmake --build build --config Release
+> ```
+
 
 Lastly, run Ollama:
 
