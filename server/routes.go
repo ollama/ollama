@@ -564,7 +564,8 @@ func (s *Server) PullHandler(c *gin.Context) {
 		return
 	}
 
-	name := model.ParseName(cmp.Or(req.Model, req.Name))
+	reqName := cmp.Or(req.Model, req.Name)
+	name := model.ParseName(reqName)
 	if !name.IsValid() {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errtypes.InvalidModelNameErrMsg})
 		return
@@ -593,9 +594,13 @@ func (s *Server) PullHandler(c *gin.Context) {
 		if err := PullModel(ctx, name.DisplayShortest(), regOpts, fn); err != nil {
 			var e ErrRemoteModelNotFound
 			if errors.As(err, &e) {
+				hint := fmt.Sprintf("Model %q not found - please check the model name is correct and try again", reqName)
+				if name.Host == DefaultRegistry {
+					hint = fmt.Sprintf("Model %q not found - search available models at https://ollama.com/search?q=%s", reqName, reqName)
+				}
 				ch <- api.ErrorResponse{
 					Err:  err.Error(),
-					Hint: fmt.Sprintf("Model %q not found - please check the model name is correct and try again", name.DisplayShortest()),
+					Hint: hint,
 				}
 			} else {
 				ch <- gin.H{"error": err.Error()}
