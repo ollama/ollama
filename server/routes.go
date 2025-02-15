@@ -1141,6 +1141,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.Use(
 		cors.New(config),
 		allowedHostsMiddleware(s.addr),
+		apiKeyAuthMiddleware(),
 	)
 
 	r.POST("/api/pull", s.PullHandler)
