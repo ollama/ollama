@@ -46,9 +46,10 @@ type blobDownload struct {
 
 	context.CancelFunc
 
-	done       chan struct{}
-	err        error
-	references atomic.Int32
+	done                    chan struct{}
+	err                     error
+	references              atomic.Int32
+	checkBlobUpdateInterval time.Duration
 }
 
 type blobDownloadPart struct {
@@ -57,8 +58,8 @@ type blobDownloadPart struct {
 	Size      int64
 	Completed atomic.Int64
 
-	lastUpdatedMu sync.Mutex
-	lastUpdated   time.Time
+	timeoutAtMu sync.Mutex
+	timeoutAt   time.Time
 
 	*blobDownload `json:"-"`
 }
@@ -116,9 +117,9 @@ func (p *blobDownloadPart) StopsAt() int64 {
 func (p *blobDownloadPart) Write(b []byte) (n int, err error) {
 	n = len(b)
 	p.blobDownload.Completed.Add(int64(n))
-	p.lastUpdatedMu.Lock()
-	p.lastUpdated = time.Now()
-	p.lastUpdatedMu.Unlock()
+	p.timeoutAtMu.Lock()
+	p.timeoutAt = time.Now().Add(p.checkBlobUpdateInterval)
+	p.timeoutAtMu.Unlock()
 	return n, nil
 }
 
@@ -357,6 +358,9 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 
 	g.Go(func() error {
 		ticker := time.NewTicker(time.Second)
+		part.timeoutAtMu.Lock()
+		part.timeoutAt = time.Now().Add(b.checkBlobUpdateInterval)
+		part.timeoutAtMu.Unlock()
 		for {
 			select {
 			case <-ticker.C:
@@ -364,17 +368,13 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 					return nil
 				}
 
-				part.lastUpdatedMu.Lock()
-				lastUpdated := part.lastUpdated
-				part.lastUpdatedMu.Unlock()
+				part.timeoutAtMu.Lock()
+				timeoutAt := part.timeoutAt
+				part.timeoutAtMu.Unlock()
 
-				if !lastUpdated.IsZero() && time.Since(lastUpdated) > 30*time.Second {
+				if !timeoutAt.IsZero() && time.Now().After(timeoutAt) {
 					const msg = "%s part %d stalled; retrying. If this persists, press ctrl-c to exit, then 'ollama pull' to find a faster connection."
 					slog.Info(fmt.Sprintf(msg, b.Digest[7:19], part.N))
-					// reset last updated
-					part.lastUpdatedMu.Lock()
-					part.lastUpdated = time.Time{}
-					part.lastUpdatedMu.Unlock()
 					return errPartStalled
 				}
 			case <-ctx.Done():
@@ -484,7 +484,7 @@ func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ erro
 		return true, nil
 	}
 
-	data, ok := blobDownloadManager.LoadOrStore(opts.digest, &blobDownload{Name: fp, Digest: opts.digest})
+	data, ok := blobDownloadManager.LoadOrStore(opts.digest, &blobDownload{Name: fp, Digest: opts.digest, checkBlobUpdateInterval: 30 * time.Second})
 	download := data.(*blobDownload)
 	if !ok {
 		requestURL := opts.mp.BaseURL()
