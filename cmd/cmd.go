@@ -35,9 +35,9 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/llama"
-	"github.com/ollama/ollama/llama/runner"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
+	"github.com/ollama/ollama/runner"
 	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -46,9 +46,8 @@ import (
 var errModelfileNotFound = errors.New("specified Modelfile wasn't found")
 
 func getModelfileName(cmd *cobra.Command) (string, error) {
-	fn, _ := cmd.Flags().GetString("file")
+	filename, _ := cmd.Flags().GetString("file")
 
-	filename := fn
 	if filename == "" {
 		filename = "Modelfile"
 	}
@@ -60,7 +59,7 @@ func getModelfileName(cmd *cobra.Command) (string, error) {
 
 	_, err = os.Stat(absName)
 	if err != nil {
-		return fn, err
+		return "", err
 	}
 
 	return absName, nil
@@ -100,7 +99,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
 
-	req, err := modelfile.CreateRequest()
+	req, err := modelfile.CreateRequest(filepath.Dir(filename))
 	if err != nil {
 		return err
 	}
@@ -339,7 +338,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	opts.MultiModal = len(info.ProjectorInfo) != 0
+	// TODO(jessegross): We should either find another way to know if this is
+	// a vision model or remove the logic. Also consider that other modalities will
+	// need different behavior anyways.
+	opts.MultiModal = len(info.ProjectorInfo) != 0 || envconfig.NewEngine()
 	opts.ParentModel = info.Details.ParentModel
 
 	if interactive {

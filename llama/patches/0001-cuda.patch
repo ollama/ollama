@@ -4,39 +4,44 @@ Date: Thu, 6 Jun 2024 23:55:47 -0700
 Subject: [PATCH] cuda
 
 ---
- ggml/src/ggml-backend.cpp       | 5 +++++
- ggml/src/ggml-cuda/ggml-cuda.cu | 4 ++++
- 2 files changed, 9 insertions(+)
+ ggml/src/ggml-backend.cpp        | 1 -
+ ggml/src/ggml-cuda/ggml-cuda.cu  | 1 +
+ ggml/src/ggml-metal/ggml-metal.m | 1 +
+ 3 files changed, 2 insertions(+), 1 deletion(-)
 
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index e2d6c405..1b62c056 100644
+index e2d6c405..a12172dc 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
-@@ -106,7 +106,12 @@ void ggml_backend_buffer_free(ggml_backend_buffer_t buffer) {
+@@ -106,7 +106,6 @@ void ggml_backend_buffer_free(ggml_backend_buffer_t buffer) {
      if (buffer->iface.free_buffer != NULL) {
          buffer->iface.free_buffer(buffer);
      }
-+
-+// TODO: this needs to be freed in cuda and hip backends because
-+// the cuda backend implementation compiled with msvc
-+#if !defined(GGML_USE_CUDA) && !defined(GGML_USE_HIP)
-     delete buffer;
-+#endif
+-    delete buffer;
  }
  
  size_t ggml_backend_buffer_get_size(ggml_backend_buffer_t buffer) {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 0b06be72..0a6ae325 100644
+index 0b06be72..be29e979 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -424,6 +424,10 @@ struct ggml_backend_cuda_buffer_context {
+@@ -424,6 +424,7 @@ struct ggml_backend_cuda_buffer_context {
  static void ggml_backend_cuda_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
      delete ctx;
-+
-+    // TODO: this needs to be freed in cuda and hipblas backends because
-+    // the cuda backend implementation compiled with msvc
-+    free(buffer);
++    delete buffer;
  }
  
  static bool ggml_backend_buffer_is_cuda(ggml_backend_buffer_t buffer) {
+diff --git a/ggml/src/ggml-metal/ggml-metal.m b/ggml/src/ggml-metal/ggml-metal.m
+index a85502ee..cd8ef741 100644
+--- a/ggml/src/ggml-metal/ggml-metal.m
++++ b/ggml/src/ggml-metal/ggml-metal.m
+@@ -4187,6 +4187,7 @@ static void ggml_backend_metal_buffer_free_buffer(ggml_backend_buffer_t buffer)
+     }
+ 
+     free(ctx);
++    free(buffer);
+ }
+ 
+ static void * ggml_backend_metal_buffer_get_base(ggml_backend_buffer_t buffer) {

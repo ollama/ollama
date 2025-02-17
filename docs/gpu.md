@@ -7,7 +7,7 @@ Check your compute compatibility to see if your card is supported:
 
 | Compute Capability | Family              | Cards                                                                                                       |
 | ------------------ | ------------------- | ----------------------------------------------------------------------------------------------------------- |
-| 9.0                | NVIDIA              | `H100`                                                                                                      |
+| 9.0                | NVIDIA              | `H200` `H100`                                                                                               |
 | 8.9                | GeForce RTX 40xx    | `RTX 4090` `RTX 4080 SUPER` `RTX 4080` `RTX 4070 Ti SUPER` `RTX 4070 Ti` `RTX 4070 SUPER` `RTX 4070` `RTX 4060 Ti` `RTX 4060`  |
 |                    | NVIDIA Professional | `L4` `L40` `RTX 6000`                                                                                       |
 | 8.6                | GeForce RTX 30xx    | `RTX 3090 Ti` `RTX 3090` `RTX 3080 Ti` `RTX 3080` `RTX 3070 Ti` `RTX 3070` `RTX 3060 Ti` `RTX 3060` `RTX 3050 Ti` `RTX 3050`   |
@@ -38,7 +38,7 @@ Numeric IDs may be used, however ordering may vary, so UUIDs are more reliable.
 You can discover the UUID of your GPUs by running `nvidia-smi -L` If you want to
 ignore the GPUs and force CPU usage, use an invalid GPU ID (e.g., "-1")
 
-### Laptop Suspend Resume
+### Linux Suspend Resume
 
 On linux, after a suspend/resume cycle, sometimes Ollama will fail to discover
 your NVIDIA GPU, and fallback to running on the CPU.  You can workaround this

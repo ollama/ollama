@@ -20,7 +20,7 @@ import (
 
 	"golang.org/x/exp/maps"
 
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/fs/ggml"
 )
 
 type tensorData struct {
@@ -29,7 +29,7 @@ type tensorData struct {
 	Shape   []int  `json:"shape"`
 }
 
-func convertFull(t *testing.T, fsys fs.FS) (*os.File, llm.KV, *llm.Tensors) {
+func convertFull(t *testing.T, fsys fs.FS) (*os.File, ggml.KV, ggml.Tensors) {
 	t.Helper()
 
 	f, err := os.CreateTemp(t.TempDir(), "f16")
@@ -48,7 +48,7 @@ func convertFull(t *testing.T, fsys fs.FS) (*os.File, llm.KV, *llm.Tensors) {
 	}
 	t.Cleanup(func() { r.Close() })
 
-	m, _, err := llm.DecodeGGML(r, math.MaxInt)
+	m, _, err := ggml.Decode(r, math.MaxInt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func convertFull(t *testing.T, fsys fs.FS) (*os.File, llm.KV, *llm.Tensors) {
 	return r, m.KV(), m.Tensors()
 }
 
-func generateResultsJSON(t *testing.T, f *os.File, kv llm.KV, tensors *llm.Tensors) map[string]string {
+func generateResultsJSON(t *testing.T, f *os.File, kv ggml.KV, tensors ggml.Tensors) map[string]string {
 	actual := make(map[string]string)
 	for k, v := range kv {
 		if s, ok := v.(json.Marshaler); !ok {
@@ -75,7 +75,7 @@ func generateResultsJSON(t *testing.T, f *os.File, kv llm.KV, tensors *llm.Tenso
 		}
 	}
 
-	for _, tensor := range tensors.Items {
+	for _, tensor := range tensors.Items() {
 		sha256sum := sha256.New()
 		sr := io.NewSectionReader(f, int64(tensors.Offset+tensor.Offset), int64(tensor.Size()))
 		if _, err := io.Copy(sha256sum, sr); err != nil {
@@ -108,6 +108,8 @@ func TestConvertModel(t *testing.T) {
 		"Phi-3-mini-128k-instruct",
 		"all-MiniLM-L6-v2",
 		"gemma-2-9b-it",
+		"Qwen2.5-0.5B-Instruct",
+		"c4ai-command-r-v01",
 	}
 
 	for i := range cases {
@@ -330,7 +332,7 @@ func TestConvertAdapter(t *testing.T) {
 			}
 			defer r.Close()
 
-			m, _, err := llm.DecodeGGML(r, math.MaxInt)
+			m, _, err := ggml.Decode(r, math.MaxInt)
 			if err != nil {
 				t.Fatal(err)
 			}
