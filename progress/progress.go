@@ -84,17 +84,16 @@ func (p *Progress) render() {
 	fmt.Fprint(p.w, "\033[?25l")
 	defer fmt.Fprint(p.w, "\033[?25h")
 
-	// clear already rendered progress lines
-	for i := range p.pos {
-		if i > 0 {
-			fmt.Fprint(p.w, "\033[A")
-		}
-		fmt.Fprint(p.w, "\033[2K\033[1G")
+	// move the cursor back to the beginning
+	for range p.pos - 1 {
+		fmt.Fprint(p.w, "\033[A")
 	}
+	fmt.Fprint(p.w, "\033[1G")
 
 	// render progress lines
 	for i, state := range p.states {
 		fmt.Fprint(p.w, state.String())
+		fmt.Fprintf(p.w, "\033[K")
 		if i < len(p.states)-1 {
 			fmt.Fprint(p.w, "\n")
 		}
