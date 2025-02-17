@@ -99,6 +99,12 @@ Lastly, run Ollama:
 go run . serve
 ```
 
+However, if you are running on LoongArch64, currently you need to run:
+
+```
+CGO_CFLAGS_ALLOW=-mlasx CGO_CPPFLAGS_ALLOW=-mlasx go run . serve
+```
+
 ## Docker
 
 ```shell
