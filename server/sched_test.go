@@ -792,3 +792,5 @@ func (s *mockLlm) Close() error {
 func (s *mockLlm) EstimatedVRAM() uint64                  { return s.estimatedVRAM }
 func (s *mockLlm) EstimatedTotal() uint64                 { return s.estimatedTotal }
 func (s *mockLlm) EstimatedVRAMByGPU(gpuid string) uint64 { return s.estimatedVRAMByGPU[gpuid] }
+
+// Local fallback improvement: appended a small comment.
