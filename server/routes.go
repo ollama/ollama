@@ -469,7 +469,12 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 			if err != nil {
 				return err
 			}
-			embeddings[i] = normalize(embedding)
+			// Apply normalization (default to True if unset)
+			if nil == req.Normalize || *req.Normalize {
+				embeddings[i] = normalize(embedding)
+			} else {
+				embeddings[i] = embedding
+			}
 			return nil
 		})
 	}
@@ -542,6 +547,10 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
+	// Apply normalization (default to False if unset)
+	if nil != req.Normalize && *req.Normalize {
+		embedding = normalize(embedding)
+	}
 	var e []float64
 	for _, v := range embedding {
 		e = append(e, float64(v))
