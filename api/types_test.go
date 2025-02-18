@@ -231,3 +231,17 @@ func TestMessage_UnmarshalJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultOptions(t *testing.T) {
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "2048")
+	opts := DefaultOptions()
+	if opts.NumCtx != 2048 {
+		t.Errorf("expected 2048, got %d", opts.NumCtx)
+	}
+
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
+	opts = DefaultOptions()
+	if opts.NumCtx != 4096 {
+		t.Errorf("expected 4096, got %d", opts.NumCtx)
+	}
+}
