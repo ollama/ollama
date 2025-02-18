@@ -83,10 +83,13 @@ func (p *Progress) render() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// buffer the terminal update to minimize cursor flickering
-	// https://gitlab.gnome.org/GNOME/vte/-/issues/2837#note_2269501
+	// buffer output to minimize flickering on all terminals
 	p.buf.Reset()
 	defer p.buf.WriteTo(p.w)
+
+	// eliminate flickering on terminals that support synchronized output
+	fmt.Fprint(&p.buf, "\033[?2026h")
+	defer fmt.Fprint(&p.buf, "\033[?2026l")
 
 	fmt.Fprint(&p.buf, "\033[?25l")
 	defer fmt.Fprint(&p.buf, "\033[?25h")
