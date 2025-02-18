@@ -168,7 +168,7 @@ var (
 	// Enable the new Ollama engine
 	NewEngine = Bool("OLLAMA_NEW_ENGINE")
 	// ContextLength sets the maximum context length
-	ContextLength = Uint("OLLAMA_CONTEXT_LENGTH", 2048)
+	ContextLength = func() uint { return CheckContextLength(Uint("OLLAMA_CONTEXT_LENGTH", 2048)()) }
 )
 
 func String(s string) func() string {
@@ -186,6 +186,14 @@ var (
 	GpuDeviceOrdinal      = String("GPU_DEVICE_ORDINAL")
 	HsaOverrideGfxVersion = String("HSA_OVERRIDE_GFX_VERSION")
 )
+
+func CheckContextLength(ctxLength uint) uint {
+	if ctxLength <= 0 {
+		slog.Warn("context length is less than 0, using default", "context_length", ctxLength, "default", 2048)
+		return 2048
+	}
+	return ctxLength
+}
 
 func Uint(key string, defaultValue uint) func() uint {
 	return func() uint {

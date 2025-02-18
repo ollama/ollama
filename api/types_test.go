@@ -233,15 +233,40 @@ func TestMessage_UnmarshalJSON(t *testing.T) {
 }
 
 func TestDefaultOptions(t *testing.T) {
-	t.Setenv("OLLAMA_CONTEXT_LENGTH", "2048")
-	opts := DefaultOptions()
-	if opts.NumCtx != 2048 {
-		t.Errorf("expected 2048, got %d", opts.NumCtx)
+	tests := []struct {
+		name           string
+		contextLength  string
+		expectedNumCtx uint
+	}{
+		{
+			name:           "default context length",
+			contextLength:  "2048",
+			expectedNumCtx: 2048,
+		},
+		{
+			name:           "custom context length",
+			contextLength:  "4096",
+			expectedNumCtx: 4096,
+		},
+		{
+			name:           "negative context length uses default",
+			contextLength:  "-1",
+			expectedNumCtx: 2048,
+		},
+		{
+			name:           "zero context length uses default",
+			contextLength:  "0",
+			expectedNumCtx: 2048,
+		},
 	}
 
-	t.Setenv("OLLAMA_CONTEXT_LENGTH", "4096")
-	opts = DefaultOptions()
-	if opts.NumCtx != 4096 {
-		t.Errorf("expected 4096, got %d", opts.NumCtx)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("OLLAMA_CONTEXT_LENGTH", tt.contextLength)
+			opts := DefaultOptions()
+			if opts.NumCtx != int(tt.expectedNumCtx) {
+				t.Errorf("expected %d, got %d", tt.expectedNumCtx, opts.NumCtx)
+			}
+		})
 	}
 }
