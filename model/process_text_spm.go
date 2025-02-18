@@ -26,7 +26,7 @@ func NewSentencePieceModel(pre string, vocab *Vocabulary) SentencePieceModel {
 
 	counter := map[int]int{}
 	var maxTokenLen int
-	for cnt, _ := range vocab.Types {
+	for cnt := range vocab.Types {
 		switch vocab.Types[cnt] {
 		case TOKEN_TYPE_NORMAL, TOKEN_TYPE_USER_DEFINED, TOKEN_TYPE_UNUSED:
 			maxTokenLen = max(maxTokenLen, len(vocab.Values[cnt]))
