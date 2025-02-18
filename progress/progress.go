@@ -49,29 +49,29 @@ func (p *Progress) stop() bool {
 func (p *Progress) Stop() bool {
 	stopped := p.stop()
 	if stopped {
-		fmt.Fprint(p.w, "\n")
-		p.w.Flush()
+		fmt.Fprintln(p.w)
 	}
+
+	// show cursor
+	fmt.Fprint(p.w, "\033[?25h")
+	p.w.Flush()
 	return stopped
 }
 
 func (p *Progress) StopAndClear() bool {
-	defer p.w.Flush()
-
-	fmt.Fprint(p.w, "\033[?25l")
-	defer fmt.Fprint(p.w, "\033[?25h")
-
 	stopped := p.stop()
 	if stopped {
 		// clear all progress lines
-		for i := range p.pos {
-			if i > 0 {
-				fmt.Fprint(p.w, "\033[A")
-			}
-			fmt.Fprint(p.w, "\033[2K\033[1G")
+		for range p.pos - 1 {
+			fmt.Fprint(p.w, "\033[A")
 		}
+
+		fmt.Fprint(p.w, "\033[2K", "\033[1G")
 	}
 
+	// show cursor
+	fmt.Fprint(p.w, "\033[?25h")
+	p.w.Flush()
 	return stopped
 }
 
@@ -86,19 +86,13 @@ func (p *Progress) render() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	defer p.w.Flush()
-
-	// eliminate flickering on terminals that support synchronized output
 	fmt.Fprint(p.w, "\033[?2026h")
 	defer fmt.Fprint(p.w, "\033[?2026l")
 
-	fmt.Fprint(p.w, "\033[?25l")
-	defer fmt.Fprint(p.w, "\033[?25h")
-
-	// move the cursor back to the beginning
 	for range p.pos - 1 {
 		fmt.Fprint(p.w, "\033[A")
 	}
+
 	fmt.Fprint(p.w, "\033[1G")
 
 	// render progress lines
@@ -110,10 +104,13 @@ func (p *Progress) render() {
 	}
 
 	p.pos = len(p.states)
+	p.w.Flush()
 }
 
 func (p *Progress) start() {
 	p.ticker = time.NewTicker(100 * time.Millisecond)
+	// hide cursor
+	fmt.Fprint(p.w, "\033[?25l")
 	for range p.ticker.C {
 		p.render()
 	}
