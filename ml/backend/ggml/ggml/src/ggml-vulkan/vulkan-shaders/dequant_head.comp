@@ -1,0 +1,13 @@
+#extension GL_EXT_control_flow_attributes : require
+#extension GL_EXT_shader_16bit_storage : require
+
+layout (push_constant) uniform parameter
+{
+    uint M;
+    uint K;
+    uint stride_a;
+    uint stride_b;
+    uint nel;
+} p;
+
+#include "types.comp"
