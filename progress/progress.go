@@ -1,7 +1,7 @@
 package progress
 
 import (
-	"bytes"
+	"bufio"
 	"fmt"
 	"io"
 	"sync"
@@ -13,9 +13,9 @@ type State interface {
 }
 
 type Progress struct {
-	mu  sync.Mutex
-	w   io.Writer
-	buf bytes.Buffer
+	mu sync.Mutex
+	// buffer output to minimize flickering on all terminals
+	w *bufio.Writer
 
 	pos int
 
@@ -24,7 +24,7 @@ type Progress struct {
 }
 
 func NewProgress(w io.Writer) *Progress {
-	p := &Progress{w: w}
+	p := &Progress{w: bufio.NewWriter(w)}
 	go p.start()
 	return p
 }
@@ -50,11 +50,14 @@ func (p *Progress) Stop() bool {
 	stopped := p.stop()
 	if stopped {
 		fmt.Fprint(p.w, "\n")
+		p.w.Flush()
 	}
 	return stopped
 }
 
 func (p *Progress) StopAndClear() bool {
+	defer p.w.Flush()
+
 	fmt.Fprint(p.w, "\033[?25l")
 	defer fmt.Fprint(p.w, "\033[?25h")
 
@@ -83,29 +86,26 @@ func (p *Progress) render() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// buffer output to minimize flickering on all terminals
-	p.buf.Reset()
-	defer p.buf.WriteTo(p.w)
+	defer p.w.Flush()
 
 	// eliminate flickering on terminals that support synchronized output
-	fmt.Fprint(&p.buf, "\033[?2026h")
-	defer fmt.Fprint(&p.buf, "\033[?2026l")
+	fmt.Fprint(p.w, "\033[?2026h")
+	defer fmt.Fprint(p.w, "\033[?2026l")
 
-	fmt.Fprint(&p.buf, "\033[?25l")
-	defer fmt.Fprint(&p.buf, "\033[?25h")
+	fmt.Fprint(p.w, "\033[?25l")
+	defer fmt.Fprint(p.w, "\033[?25h")
 
 	// move the cursor back to the beginning
 	for range p.pos - 1 {
-		fmt.Fprint(&p.buf, "\033[A")
+		fmt.Fprint(p.w, "\033[A")
 	}
-	fmt.Fprint(&p.buf, "\033[1G")
+	fmt.Fprint(p.w, "\033[1G")
 
 	// render progress lines
 	for i, state := range p.states {
-		fmt.Fprint(&p.buf, state.String())
-		fmt.Fprintf(&p.buf, "\033[K")
+		fmt.Fprint(p.w, state.String(), "\033[K")
 		if i < len(p.states)-1 {
-			fmt.Fprint(&p.buf, "\n")
+			fmt.Fprint(p.w, "\n")
 		}
 	}
 
