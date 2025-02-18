@@ -91,6 +91,9 @@ CLIP_API bool clip_model_quantize(const char * fname_inp, const char * fname_out
 CLIP_API int clip_is_minicpmv(const struct clip_ctx * ctx);
 CLIP_API bool clip_is_qwen2vl(const struct clip_ctx * ctx);
 
+CLIP_API size_t get_max_image_grid_pinpoints();
+CLIP_API int get_deepest_feature_layer(const struct clip_ctx * ctx);
+
 CLIP_API bool clip_encode_float_image (struct clip_ctx * ctx, int n_threads, float * img, int h, int w, float * vec);
 
 #ifdef __cplusplus
