@@ -329,7 +329,9 @@ jobs:
           done
         working-directory: dist/${{ matrix.os }}-${{ matrix.arch }}
       - run: |
-          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in; do tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE | pigz -9vc >$(basename ${ARCHIVE//.*/}.tgz); done
+          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in; do
+            tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | pigz -9vc >$(basename ${ARCHIVE//.*/}.tgz);
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.target }}
