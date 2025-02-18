@@ -550,7 +550,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	manifest, err = pullModelManifest(ctx, mp, regOpts)
 	if err != nil {
-		return fmt.Errorf("pull model manifest: %s", err)
+		return fmt.Errorf("pull model manifest: %w", err)
 	}
 
 	var layers []Layer
@@ -629,13 +629,22 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	return nil
 }
 
+type ErrRemoteModelNotFound struct{}
+
+func (ErrRemoteModelNotFound) Error() string {
+	return "model not found"
+}
+
 func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptions) (*Manifest, error) {
 	requestURL := mp.BaseURL().JoinPath("v2", mp.GetNamespaceRepository(), "manifests", mp.Tag)
 
 	headers := make(http.Header)
 	headers.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json")
 	resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, headers, nil, regOpts)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
+		// The model was not found on the remote registry
+		return nil, fmt.Errorf("%w: %s", ErrRemoteModelNotFound{}, err)
+	} else if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
