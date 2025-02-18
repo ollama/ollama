@@ -14,3 +14,6 @@ test_data
 __debug_bin*
 llama/build
 llama/vendor
+model/testdata/models/*
+!model/testdata/models/*.md
+!model/testdata/models/*.json

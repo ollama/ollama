@@ -1,0 +1,7 @@
+{
+  "prompt": "<|im_start|>system\nYou are Qwen, created by Alibaba Cloud. You are a helpful assistant.<|im_end|>\n<|im_start|>user\nhi<|im_end|>\n<|im_start|>assistant\n",
+  "output_contains_one": [
+    "Hello",
+    "Hi"
+  ]
+}
