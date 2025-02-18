@@ -1184,19 +1184,38 @@ func Serve(ln net.Listener) error {
 		level = slog.LevelDebug
 	}
 
-	slog.Info("server config", "env", envconfig.Values())
-	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level:     level,
-		AddSource: true,
-		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
-			if attr.Key == slog.SourceKey {
-				source := attr.Value.Any().(*slog.Source)
-				source.File = filepath.Base(source.File)
-			}
+	// Vérifier si le format JSON est activé via une variable d'environnement
+	jsonLogging := os.Getenv("OLLAMA_LOG_FORMAT_JSON") == "true"
 
-			return attr
-		},
-	})
+	var handler slog.Handler
+	if jsonLogging {
+		// Créer un handler JSON
+		handler = slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+			Level:     level,
+			AddSource: true,
+			ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
+				// Personnaliser la source du log pour n'avoir que le nom du fichier
+				if attr.Key == slog.SourceKey {
+					source := attr.Value.Any().(*slog.Source)
+					source.File = filepath.Base(source.File)
+				}
+				return attr
+			},
+		})
+	} else {
+		// Conserver le format texte existant
+		handler = slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			Level:     level,
+			AddSource: true,
+			ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
+				if attr.Key == slog.SourceKey {
+					source := attr.Value.Any().(*slog.Source)
+					source.File = filepath.Base(source.File)
+				}
+				return attr
+			},
+		})
+	}
 
 	slog.SetDefault(slog.New(handler))
 
