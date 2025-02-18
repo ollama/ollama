@@ -2,7 +2,6 @@ package model
 
 import (
 	"cmp"
-	"fmt"
 	"iter"
 	"log/slog"
 	"strings"
@@ -181,7 +180,6 @@ func (bpe BytePairEncoding) Encode(s string) ([]int32, error) {
 			fragments = append(fragments[:i], append(middle, fragments[i+1:]...)...)
 		}
 	}
-	fmt.Printf("frags = %#v\n", fragments)
 
 	var ids []int32
 	for _, frag := range fragments {
