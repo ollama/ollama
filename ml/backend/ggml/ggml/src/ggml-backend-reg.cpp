@@ -207,18 +207,27 @@ struct ggml_backend_registry {
         for (size_t i = 0; i < ggml_backend_reg_dev_count(reg); i++) {
             register_device(ggml_backend_reg_dev_get(reg, i), score);
         }
-    }
 
-    void register_device(ggml_backend_dev_t device, int score = -1) {
-#ifndef NDEBUG
-        GGML_LOG_DEBUG("%s: registered device %s (%s)\n", __func__, ggml_backend_dev_name(device), ggml_backend_dev_description(device));
-#endif
-        devices.push_back({device, score});
         std::stable_sort(devices.begin(), devices.end(),
             [](const auto & a, const auto & b) {
                 return a.second > b.second;
             }
         );
+    }
+
+    void register_device(ggml_backend_dev_t device, int score = -1) {
+        switch (ggml_backend_dev_type(device)) {
+        case GGML_BACKEND_DEVICE_TYPE_CPU:
+        case GGML_BACKEND_DEVICE_TYPE_GPU:
+            score += 1 << 16;
+        case GGML_BACKEND_DEVICE_TYPE_ACCEL:
+            score += 1 << 20;
+        }
+
+#ifndef NDEBUG
+        GGML_LOG_DEBUG("%s: registered device %s (%s)\n", __func__, ggml_backend_dev_name(device), ggml_backend_dev_description(device));
+#endif
+        devices.push_back({device, score});
     }
 
     ggml_backend_reg_t load_backend(const std::filesystem::path & path, bool silent) {
