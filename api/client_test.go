@@ -89,7 +89,7 @@ func TestClientStream(t *testing.T) {
 					statusCode: http.StatusBadRequest,
 				},
 			},
-			wantErr: "test structured error",
+			wantErr: "test structured error\ntest hint",
 		},
 		{
 			name: "error after chunks - basic format",
@@ -117,7 +117,7 @@ func TestClientStream(t *testing.T) {
 					statusCode: http.StatusOK,
 				},
 			},
-			wantErr: "mid-stream structured error",
+			wantErr: "mid-stream structured error\nadditional context",
 		},
 		{
 			name: "successful stream completion",
