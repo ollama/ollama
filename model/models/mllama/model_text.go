@@ -19,14 +19,23 @@ type TextSelfAttention struct {
 func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, positions, _ ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
 	headDim := opts.hiddenSize / opts.numHeads
+	rc := ml.RopeConfig{
+		PositionIDs: positions,
+		RopeFactors: opts.RopeFactors,
+		RopeDim:     opts.ropeDim,
+		RopeType:    ml.RopeTypeStandard,
+		OrigCtxLen:  opts.ctxLen,
+		RopeBase:    opts.ropeBase,
+		RopeScale:   opts.ropeScale,
+	}
 
 	query := sa.Query.Forward(ctx, hiddenState)
 	query = query.Reshape(ctx, headDim, opts.numHeads, batchSize)
-	query = query.RoPE(ctx, positions, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
+	query = query.RoPE(ctx, rc)
 
 	key := sa.Key.Forward(ctx, hiddenState)
 	key = key.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-	key = key.RoPE(ctx, positions, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
+	key = key.RoPE(ctx, rc)
 
 	value := sa.Value.Forward(ctx, hiddenState)
 	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
@@ -52,7 +61,18 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, positions, _ m
 
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
 	// This will only get called for layers in the cache, which are just the self attention layers
-	return key.RoPE(ctx, shift, m.RopeFactors, m.ropeDim, m.ropeBase, m.ropeScale), nil
+	return key.RoPE(
+		ctx,
+		ml.RopeConfig{
+			PositionIDs: shift,
+			RopeFactors: m.RopeFactors,
+			RopeDim:     m.ropeDim,
+			RopeType:    ml.RopeTypeStandard,
+			OrigCtxLen:  m.ctxLen,
+			RopeBase:    m.ropeBase,
+			RopeScale:   m.ropeScale,
+		},
+	), nil
 }
 
 type TextMLP struct {
@@ -189,9 +209,9 @@ func (d *TextDecoder) Forward(ctx ml.Context, hiddenState, positionIDs, mask, cr
 type TextModelOptions struct {
 	RopeFactors ml.Tensor `gguf:"rope_freqs.weight"`
 
-	hiddenSize, numHeads, numKVHeads int
-	eps, ropeBase, ropeScale         float32
-	ropeDim                          uint32
+	ctxLen, hiddenSize, numHeads, numKVHeads int
+	eps, ropeBase, ropeScale                 float32
+	ropeDim                                  uint32
 
 	crossAttentionLayers []uint32
 }
