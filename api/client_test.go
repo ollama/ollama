@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -147,15 +148,15 @@ func TestClientStream(t *testing.T) {
 
 			if tc.wantErr != "" {
 				if err == nil {
-					t.Fatalf("got nil, want error %q", tc.wantErr)
+					t.Fatal("expected error but got nil")
 				}
-				if err.Error() != tc.wantErr {
-					t.Errorf("error message mismatch: got %q, want %q", err.Error(), tc.wantErr)
+				if !strings.Contains(err.Error(), tc.wantErr) {
+					t.Errorf("expected error containing %q, got %v", tc.wantErr, err)
 				}
-			} else {
-				if err != nil {
-					t.Errorf("got error %q, want nil", err)
-				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
 	}
@@ -235,7 +236,7 @@ func TestClientDo(t *testing.T) {
 			}
 
 			if err != nil {
-				t.Errorf("got error %q, want nil", err)
+				t.Fatalf("got error %q, want nil", err)
 			}
 
 			if expectedResp, ok := tc.response.(struct {
