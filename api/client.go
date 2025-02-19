@@ -126,7 +126,8 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 			return err
 		}
 	}
-	return nil
+
+	return ctx.Err()
 }
 
 const maxBufferSize = 512 * format.KiloByte
@@ -189,7 +190,7 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 		}
 	}
 
-	return nil
+	return ctx.Err()
 }
 
 // GenerateResponseFunc is a function that [Client.Generate] invokes every time
