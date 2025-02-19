@@ -9,47 +9,47 @@ import (
 )
 
 func TestTemperature(t *testing.T) {
-	logits, err := Temperature(0.5).Apply([]float64{2, -1, 4, -3, 1, -2, 0})
+	got, err := Temperature(0.5).Apply([]float64{2, -1, 4, -3, 1, -2, 0})
 	if err != nil {
 		t.Error(err)
 		return
 	}
 	want := []float64{-4, -10, 0, -14, -6, -12, -8}
-	if diff := cmp.Diff(want, logits); diff != "" {
+	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("logits mismatch (-want +got):\n%s", diff)
 	}
 
-	logits, err = Temperature(-1).Apply([]float64{-3, -2, -1, 0, 1, 2, 4})
+	got, err = Temperature(-1).Apply([]float64{-3, -2, -1, 0, 1, 2, 4})
 	if err == nil {
-		t.Errorf("expected error for temperature=-1, got %v", logits)
+		t.Errorf("expected error for temperature=-1, got %v", got)
 	}
-	logits, err = Temperature(0).Apply([]float64{-3, -2, -1, 0, 1, 2, 4})
+	got, err = Temperature(0).Apply([]float64{-3, -2, -1, 0, 1, 2, 4})
 	if err == nil {
-		t.Errorf("expected error for temperature=0, got %v", logits)
+		t.Errorf("expected error for temperature=0, got %v", got)
 	}
-	logits, err = Temperature(2.1).Apply([]float64{-3, -2, -1, 0, 1, 2, 4})
+	got, err = Temperature(2.1).Apply([]float64{-3, -2, -1, 0, 1, 2, 4})
 	if err == nil {
-		t.Errorf("expected error for temperature=2.1, got %v", logits)
+		t.Errorf("expected error for temperature=2.1, got %v", got)
 	}
 }
 
 func TestSoftmax(t *testing.T) {
-	probs := softmax([]float64{-3, -2, -1, 0, 1, 2, 4})
+	got := softmax([]float64{-3, -2, -1, 0, 1, 2, 4})
 
-	expectedProbs := []float64{0.000751406628089903, 0.0020425349829204676, 0.005552185728064613, 0.015092405572827691, 0.04102541181635154, 0.11151863144543739, 0.8240174238263085}
-	if diff := cmp.Diff(expectedProbs, probs); diff != "" {
+	want := []float64{0.000751406628089903, 0.0020425349829204676, 0.005552185728064613, 0.015092405572827691, 0.04102541181635154, 0.11151863144543739, 0.8240174238263085}
+	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("probs mismatch (-want +got):\n%s", diff)
 	}
 }
 
 func TestTopK(t *testing.T) {
-	logits, err := TopK(3).Apply([]float64{-3, -2, -1, 0, 1, 2, 4})
+	got, err := TopK(3).Apply([]float64{-3, -2, -1, 0, 1, 2, 4})
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	expectedlogits := []float64{math.Inf(-1), math.Inf(-1), math.Inf(-1), math.Inf(-1), 1, 2, 4}
-	if diff := cmp.Diff(expectedlogits, logits); diff != "" {
+	want := []float64{math.Inf(-1), math.Inf(-1), math.Inf(-1), math.Inf(-1), 1, 2, 4}
+	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("logits mismatch (-want +got):\n%s", diff)
 	}
 
@@ -58,25 +58,25 @@ func TestTopK(t *testing.T) {
 		t.Errorf("expected error for k=0, got %v", err)
 	}
 
-	logits, err = TopK(10).Apply([]float64{-3, -2, -1, 0, 1, 2, 4})
+	got, err = TopK(10).Apply([]float64{-3, -2, -1, 0, 1, 2, 4})
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	expectedlogits = []float64{-3, -2, -1, 0, 1, 2, 4}
-	if diff := cmp.Diff(expectedlogits, logits); diff != "" {
+	want = []float64{-3, -2, -1, 0, 1, 2, 4}
+	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("logits mismatch (-want +got):\n%s", diff)
 	}
 }
 
 func TestTopP(t *testing.T) {
-	logits, err := TopP(0.9).Apply([]float64{-3, -2, -1, 0, 1, 2, 4})
+	got, err := TopP(0.9).Apply([]float64{-3, -2, -1, 0, 1, 2, 4})
 	if err != nil {
 		t.Error(err)
 		return
 	}
 	want := []float64{math.Inf(-1), math.Inf(-1), math.Inf(-1), math.Inf(-1), math.Inf(-1), 2, 4}
-	if diff := cmp.Diff(want, logits); diff != "" {
+	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("logits mismatch (-want +got):\n%s", diff)
 	}
 
@@ -91,13 +91,13 @@ func TestTopP(t *testing.T) {
 }
 
 func TestMinP(t *testing.T) {
-	logits, err := MinP(0.2).Apply([]float64{-3, -2, -1, 0, 1, 2, 4, 3})
+	got, err := MinP(0.2).Apply([]float64{-3, -2, -1, 0, 1, 2, 4, 3})
 	if err != nil {
 		t.Error(err)
 		return
 	}
 	want := []float64{math.Inf(-1), math.Inf(-1), math.Inf(-1), math.Inf(-1), math.Inf(-1), math.Inf(-1), 4, 3}
-	if diff := cmp.Diff(want, logits); diff != "" {
+	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("logits mismatch (-want +got):\n%s", diff)
 	}
 

@@ -10,30 +10,30 @@ import (
 )
 
 func TestWeighted(t *testing.T) {
-	idx, err := Weighted(nil).Sample([]float32{float32(math.Inf(-1)), 2, float32(math.Inf(-1)), float32(math.Inf(-1))})
+	got, err := Weighted(nil).Sample([]float32{float32(math.Inf(-1)), 2, float32(math.Inf(-1)), float32(math.Inf(-1))})
 	if err != nil {
 		t.Error(err)
 		return
 	}
 	want := int32(1)
-	if diff := cmp.Diff(want, idx); diff != "" {
+	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("index mismatch (-want +got):\n%s", diff)
 	}
 
-	idx, err = Weighted(nil).Sample([]float32{float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1))})
+	got, err = Weighted(nil).Sample([]float32{float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1))})
 	if err == nil {
-		t.Error("expected error for no valid tokens, got index", idx)
+		t.Error("expected error for no valid tokens, got index", got)
 	}
 
 	seed := int64(42)
-	idx, err = Weighted(&seed).Sample([]float32{1, 2, 3, 4})
+	got, err = Weighted(&seed).Sample([]float32{1, 2, 3, 4})
 	if err != nil {
 		t.Error(err)
 		return
 	}
 	// With seed 42, we expect a consistent sample
 	want = int32(3) // This will be deterministic due to the seed
-	if diff := cmp.Diff(want, idx); diff != "" {
+	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("seeded sample index mismatch (-want +got):\n%s", diff)
 	}
 }
