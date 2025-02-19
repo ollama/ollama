@@ -103,8 +103,16 @@ type ChatRequest struct {
 	// Tools is an optional list of tools the model has access to.
 	Tools `json:"tools,omitempty"`
 
+	Debug *Debug `json:"debug,omitempty"`
+
+	Dry bool `json:"dry,omitempty"`
+
 	// Options lists model-specific options.
 	Options map[string]interface{} `json:"options"`
+}
+
+type Debug struct {
+	Include []string `json:"include,omitempty"`
 }
 
 type Tools []Tool
@@ -189,6 +197,8 @@ type ChatResponse struct {
 	CreatedAt  time.Time `json:"created_at"`
 	Message    Message   `json:"message"`
 	DoneReason string    `json:"done_reason,omitempty"`
+
+	Debug map[string]any `json:"debug,omitempty"`
 
 	Done bool `json:"done"`
 
