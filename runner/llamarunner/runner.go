@@ -845,8 +845,6 @@ func (s *Server) loadModel(
 	threads int,
 	multiUserCache bool,
 ) {
-	llama.BackendInit()
-
 	var err error
 	s.model, err = llama.LoadModelFromFile(mpath, params)
 	if err != nil {
@@ -932,6 +930,8 @@ func Execute(args []string) error {
 	})
 	slog.SetDefault(slog.New(handler))
 	slog.Info("starting go runner")
+
+	llama.BackendInit()
 	slog.Info("system", "info", llama.PrintSystemInfo(), "threads", *threads)
 
 	server := &Server{

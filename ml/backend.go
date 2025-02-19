@@ -23,6 +23,7 @@ type Backend interface {
 	Config() Config
 	Get(name string) Tensor
 	NewContext() Context
+	SystemInfo() string
 }
 
 var backends = make(map[string]func(*os.File) (Backend, error))

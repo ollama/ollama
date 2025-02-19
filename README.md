@@ -381,6 +381,9 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [ChibiChat](https://github.com/CosmicEventHorizon/ChibiChat) (Kotlin-based Android app to chat with Ollama and Koboldcpp API endpoints)
 - [LocalLLM](https://github.com/qusaismael/localllm) (Minimal Web-App to run ollama models on it with a GUI)
 - [Ollamazing](https://github.com/buiducnhat/ollamazing) (Web extension to run Ollama models)
+- [OpenDeepResearcher-via-searxng](https://github.com/benhaotang/OpenDeepResearcher-via-searxng) (A Deep Research equivent endpoint with Ollama support for running locally)
+- [AntSK](https://github.com/AIDotNet/AntSK) (Out-of-the-box & Adaptable RAG Chatbot)
+- [MaxKB](https://github.com/1Panel-dev/MaxKB/) (Ready-to-use & flexible RAG Chatbot)
 
 ### Cloud
 
@@ -548,6 +551,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Alfred Ollama](https://github.com/zeitlings/alfred-ollama) (Alfred Workflow)
 - [TextLLaMA](https://github.com/adarshM84/TextLLaMA) A Chrome Extension that helps you write emails, correct grammar, and translate into any language
 - [Simple-Discord-AI](https://github.com/zyphixor/simple-discord-ai)
+- [LLM Telegram Bot](https://github.com/innightwolfsleep/llm_telegram_bot) (telegram bot, primary for RP. Oobabooga-like buttons, [A1111](https://github.com/AUTOMATIC1111/stable-diffusion-webui) API integration e.t.c)
 
 ### Supported backends
 
