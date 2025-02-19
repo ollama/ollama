@@ -647,7 +647,10 @@ type ErrorResponse struct {
 }
 
 func (e ErrorResponse) Error() string {
-	return e.Err
+	if e.Hint == "" {
+		return e.Err
+	}
+	return fmt.Sprintf("%s\n%s", e.Err, e.Hint)
 }
 
 // FormatParams converts specified parameter options to their correct types

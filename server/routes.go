@@ -596,7 +596,7 @@ func (s *Server) PullHandler(c *gin.Context) {
 			if errors.As(err, &e) {
 				hint := fmt.Sprintf("Model %q not found - please check the model name is correct and try again", reqName)
 				if name.Host == DefaultRegistry {
-					hint = fmt.Sprintf("Model %q not found - search available models at https://ollama.com/search?q=%s", reqName, reqName)
+					hint = fmt.Sprintf("Model %q not found - search available models at: https://ollama.com/search?q=%s", reqName, reqName)
 				}
 				ch <- api.ErrorResponse{
 					Err:  err.Error(),
