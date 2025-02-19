@@ -133,27 +133,6 @@ func Test_Routes(t *testing.T) {
 
 	testCases := []testCase{
 		{
-			Name:   "Version Handler",
-			Method: http.MethodGet,
-			Path:   "/api/version",
-			Setup: func(t *testing.T, req *http.Request) {
-			},
-			Expected: func(t *testing.T, resp *http.Response) {
-				contentType := resp.Header.Get("Content-Type")
-				if contentType != "application/json; charset=utf-8" {
-					t.Errorf("expected content type application/json; charset=utf-8, got %s", contentType)
-				}
-				body, err := io.ReadAll(resp.Body)
-				if err != nil {
-					t.Fatalf("failed to read response body: %v", err)
-				}
-				expectedBody := fmt.Sprintf(`{"version":"%s"}`, version.Version)
-				if string(body) != expectedBody {
-					t.Errorf("expected body %s, got %s", expectedBody, string(body))
-				}
-			},
-		},
-		{
 			Name:   "Tags Handler (no tags)",
 			Method: http.MethodGet,
 			Path:   "/api/tags",
@@ -716,5 +695,40 @@ func TestNormalize(t *testing.T) {
 				t.Errorf("Vector %v is not normalized", tc.input)
 			}
 		})
+	}
+}
+
+func TestVersionHandler(t *testing.T) {
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/version", nil)
+	s := &Server{}
+	s.versionHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected status code %d, but got %d", http.StatusOK, w.Code)
+	}
+
+	ct := w.Header().Get("Content-Type")
+	if ct != "application/json" {
+		t.Fatalf("Expected content type application/json, but got %s", ct)
+	}
+
+	var resp struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.Version != version.Version {
+		t.Fatalf("want version %s, got %s", version.Version, resp.Version)
+	}
+
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest(http.MethodPost, "/api/version", nil)
+	s.versionHandler(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("Expected status code %d, but got %d", http.StatusMethodNotAllowed, w.Code)
 	}
 }
