@@ -11,10 +11,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/auth"
 )
@@ -92,4 +94,37 @@ func getAuthorizationToken(ctx context.Context, challenge registryChallenge) (st
 	}
 
 	return token.Token, nil
+}
+
+func apiKeyAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		apiKey := os.Getenv("OLLAMA_API_KEY")
+		if apiKey == "" {
+			// No API key set, skip authentication
+			c.Next()
+			return
+		}
+
+		// Get the Authorization header
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing API key"})
+			return
+		}
+
+		// Check if it's a Bearer token
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid API key format"})
+			return
+		}
+
+		// Validate the API key
+		if parts[1] != apiKey {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid API key"})
+			return
+		}
+
+		c.Next()
+	}
 }
