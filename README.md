@@ -382,7 +382,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LocalLLM](https://github.com/qusaismael/localllm) (Minimal Web-App to run ollama models on it with a GUI)
 - [Ollamazing](https://github.com/buiducnhat/ollamazing) (Web extension to run Ollama models)
 - [OpenDeepResearcher-via-searxng](https://github.com/benhaotang/OpenDeepResearcher-via-searxng) (A Deep Research equivent endpoint with Ollama support for running locally)
-
+- [AntSK](https://github.com/AIDotNet/AntSK) (Out-of-the-box & Adaptable RAG Chatbot built with .NET 8, AntBlazor, SemanticKernel, and KernelMemory)
 ### Cloud
 
 - [Google Cloud](https://cloud.google.com/run/docs/tutorials/gpu-gemma2-with-ollama)
