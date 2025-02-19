@@ -195,7 +195,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	isMllama := checkMllamaModelFamily(model)
+	isMllama := slices.Contains(model.Config.ModelFamilies, "mllama")
 	if isMllama && len(req.Images) > 1 {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "this model only supports one image: more than one image sent"})
 		return
