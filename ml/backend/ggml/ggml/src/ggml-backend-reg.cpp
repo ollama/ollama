@@ -432,9 +432,8 @@ static std::filesystem::path get_executable_path() {
     }
 
     return std::filesystem::path(path.data()).parent_path();
-#else
-    return {};
 #endif
+    return {};
 }
 
 static std::string backend_filename_prefix() {
