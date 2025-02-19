@@ -1,4 +1,4 @@
-package llama
+package gemma2
 
 import (
 	"math"
@@ -10,49 +10,54 @@ import (
 )
 
 type Options struct {
-	RopeFactors                      ml.Tensor `gguf:"rope_freqs.weight"`
 	hiddenSize, numHeads, numKVHeads int
+	attnKeyLen, attnValLen           int
 	eps, ropeBase, ropeScale         float32
-	ropeDim                          uint32
+	attnLogitSoftcap                 float32
+	finalLogitSoftcap                float32
 }
 
 type Model struct {
 	model.Base
-	model.BytePairEncoding
+	model.SentencePieceModel
 
 	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
 	Layers         []Layer       `gguf:"blk"`
-	OutputNorm     *nn.RMSNorm   `gguf:"output_norm"`
-	Output         *nn.Linear    `gguf:"output,alt:token_embd"`
+	OutputNorm     *nn.RMSNorm   `gguf:"output_norm"`           // is this supposed to be root means square?
+	Output         *nn.Linear    `gguf:"output,alt:token_embd"` // just set to token_embd?
 
 	*Options
 }
 
 func New(c ml.Config) (model.Model, error) {
 	m := Model{
-		BytePairEncoding: model.NewBytePairEncoding(
+		SentencePieceModel: model.NewSentencePieceModel(
 			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
+				Scores: c.Floats("tokenizer.ggml.scores"),
 				Types:  c.Uints("tokenizer.ggml.token_type"),
-				Merges: c.Strings("tokenizer.ggml.merges"),
 				BOS:    int32(c.Uint("tokenizer.ggml.bos_token_id")),
 				EOS:    int32(c.Uint("tokenizer.ggml.eos_token_id")),
 			},
 		),
 		Layers: make([]Layer, c.Uint("block_count")),
 		Options: &Options{
-			hiddenSize: int(c.Uint("embedding_length")),
-			numHeads:   int(c.Uint("attention.head_count")),
-			numKVHeads: int(c.Uint("attention.head_count_kv")),
-			eps:        c.Float("attention.layer_norm_rms_epsilon"),
-			ropeBase:   c.Float("rope.freq_base"),
-			ropeScale:  c.Float("rope.freq_scale", 1),
-			ropeDim:    c.Uint("rope.dimension_count"),
+			hiddenSize:        int(c.Uint("embedding_length")),
+			numHeads:          int(c.Uint("attention.head_count")),
+			numKVHeads:        int(c.Uint("attention.head_count_kv")),
+			attnKeyLen:        int(c.Uint("attention.key_length")),
+			attnValLen:        int(c.Uint("attention.value_length")),
+			eps:               c.Float("attention.layer_norm_rms_epsilon"),
+			ropeBase:          c.Float("rope.freq_base", 10000.0),
+			ropeScale:         c.Float("rope.freq_scale", 1.0),
+			attnLogitSoftcap:  c.Float("attn_logit_softcapping"),
+			finalLogitSoftcap: c.Float("final_logit_softcapping"),
 		},
 	}
 
-	m.Cache = kvcache.NewCausalCache(m.Shift)
+	slidingWindowLen := int32(c.Uint("attention.sliding_window"))
+	m.Cache = kvcache.NewWrapperCache(kvcache.NewSWACache(slidingWindowLen, m.Shift), kvcache.NewCausalCache(m.Shift))
 
 	return &m, nil
 }
@@ -66,19 +71,21 @@ type SelfAttention struct {
 
 func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
-	headDim := opts.hiddenSize / opts.numHeads
-	ropeType := uint32(0)
+	ropeType := uint32(2)
 
 	q := sa.Query.Forward(ctx, hiddenState)
-	q = q.Reshape(ctx, headDim, opts.numHeads, batchSize)
-	q = q.RoPE(ctx, positionIDs, opts.RopeFactors, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
+	q = q.Reshape(ctx, opts.attnKeyLen, opts.numHeads, batchSize)
+	q = q.RoPE(ctx, positionIDs, nil, uint32(opts.attnKeyLen), ropeType, opts.ropeBase, opts.ropeScale)
+
+	// todo: this should be 1.0/math.Sqrt(float64(headDim)) for 27B models
+	q = q.Scale(ctx, 1.0/math.Sqrt(float64(opts.attnKeyLen)))
 
 	k := sa.Key.Forward(ctx, hiddenState)
-	k = k.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-	k = k.RoPE(ctx, positionIDs, opts.RopeFactors, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
+	k = k.Reshape(ctx, opts.attnKeyLen, opts.numKVHeads, batchSize)
+	k = k.RoPE(ctx, positionIDs, nil, uint32(opts.attnKeyLen), ropeType, opts.ropeBase, opts.ropeScale)
 
 	v := sa.Value.Forward(ctx, hiddenState)
-	v = v.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
+	v = v.Reshape(ctx, opts.attnValLen, opts.numKVHeads, batchSize)
 
 	cache.Put(ctx, k, v)
 	k, v, mask := cache.Get(ctx)
@@ -87,20 +94,25 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 	k = k.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 	v = v.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
 
-	kq := k.MulmatFullPrec(ctx, q)
-	kq = kq.Scale(ctx, 1.0/math.Sqrt(float64(headDim)))
+	kq := k.Mulmat(ctx, q)
+
+	// logit softcap
+	kq = kq.Scale(ctx, 1.0/float64(opts.attnLogitSoftcap))
+	kq = kq.Tanh(ctx)
+	kq = kq.Scale(ctx, float64(opts.attnLogitSoftcap))
+
 	kq = kq.Add(ctx, mask)
 	kq = kq.Softmax(ctx)
 
 	kqv := v.Mulmat(ctx, kq)
 	kqv = kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
-	kqv = kqv.Reshape(ctx, opts.hiddenSize, batchSize)
+	kqv = kqv.Reshape(ctx, opts.attnValLen*opts.numHeads, batchSize)
 
 	return sa.Output.Forward(ctx, kqv)
 }
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return key.RoPE(ctx, shift, m.Options.RopeFactors, m.Options.ropeDim, uint32(0), m.Options.ropeBase, m.Options.ropeScale), nil
+	return key.RoPE(ctx, shift, nil, uint32(m.Options.attnKeyLen), uint32(2), m.Options.ropeBase, m.Options.ropeScale), nil
 }
 
 type MLP struct {
@@ -110,15 +122,17 @@ type MLP struct {
 }
 
 func (mlp *MLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml.Tensor {
-	hiddenState = mlp.Gate.Forward(ctx, hiddenState).SILU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenState))
+	hiddenState = mlp.Gate.Forward(ctx, hiddenState).GELU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenState))
 	return mlp.Down.Forward(ctx, hiddenState)
 }
 
 type Layer struct {
-	AttentionNorm *nn.RMSNorm `gguf:"attn_norm"`
-	SelfAttention *SelfAttention
-	MLPNorm       *nn.RMSNorm `gguf:"ffn_norm"`
-	MLP           *MLP
+	AttentionNorm     *nn.RMSNorm `gguf:"attn_norm"`
+	SelfAttention     *SelfAttention
+	PostAttentionNorm *nn.RMSNorm `gguf:"post_attention_norm"`
+	MLPNorm           *nn.RMSNorm `gguf:"ffn_norm"`
+	MLP               *MLP
+	PostMLPNorm       *nn.RMSNorm `gguf:"post_ffw_norm"`
 }
 
 func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
@@ -126,11 +140,13 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cach
 
 	hiddenState = l.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
 	hiddenState = l.SelfAttention.Forward(ctx, hiddenState, positionIDs, cache, opts)
+	hiddenState = l.PostAttentionNorm.Forward(ctx, hiddenState, opts.eps)
 	hiddenState = hiddenState.Add(ctx, residual)
 	residual = hiddenState
 
 	hiddenState = l.MLPNorm.Forward(ctx, hiddenState, opts.eps)
 	hiddenState = l.MLP.Forward(ctx, hiddenState, opts)
+	hiddenState = l.PostMLPNorm.Forward(ctx, hiddenState, opts.eps)
 	return hiddenState.Add(ctx, residual)
 }
 
@@ -146,14 +162,23 @@ func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
 	}
 
 	hiddenState := m.TokenEmbedding.Forward(ctx, inputs)
+	hiddenState = hiddenState.Scale(ctx, math.Sqrt(float64(m.Options.hiddenSize)))
 
 	for i, layer := range m.Layers {
+		cacheType := i % 2
 		m.Cache.SetLayer(i)
+		wc := m.Cache.(*kvcache.WrapperCache)
+		wc.SetLayerType(cacheType)
 		hiddenState = layer.Forward(ctx, hiddenState, positions, m.Cache, m.Options)
 	}
 
 	hiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)
 	hiddenState = m.Output.Forward(ctx, hiddenState)
+
+	// final logit softcap
+	hiddenState = hiddenState.Scale(ctx, 1.0/float64(m.Options.finalLogitSoftcap))
+	hiddenState = hiddenState.Tanh(ctx)
+	hiddenState = hiddenState.Scale(ctx, float64(m.Options.finalLogitSoftcap))
 
 	outputs, err := ctx.FromIntSlice(opts.Outputs, len(opts.Outputs))
 	if err != nil {
@@ -164,5 +189,5 @@ func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
 }
 
 func init() {
-	model.Register("llama", New)
+	model.Register("gemma2", New)
 }
