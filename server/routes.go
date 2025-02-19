@@ -592,8 +592,7 @@ func (s *Server) PullHandler(c *gin.Context) {
 		defer cancel()
 
 		if err := PullModel(ctx, name.DisplayShortest(), regOpts, fn); err != nil {
-			var e ErrRemoteModelNotFound
-			if errors.As(err, &e) {
+			if errors.Is(err, ErrRemoteModelNotFound) {
 				hint := fmt.Sprintf("Model %q not found - please check the model name is correct and try again", reqName)
 				if name.Host == DefaultRegistry {
 					hint = fmt.Sprintf("Model %q not found - search available models at: https://ollama.com/search?q=%s", reqName, reqName)

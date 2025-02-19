@@ -629,11 +629,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	return nil
 }
 
-type ErrRemoteModelNotFound struct{}
-
-func (ErrRemoteModelNotFound) Error() string {
-	return "model not found"
-}
+var ErrRemoteModelNotFound = errors.New("model not found")
 
 func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptions) (*Manifest, error) {
 	requestURL := mp.BaseURL().JoinPath("v2", mp.GetNamespaceRepository(), "manifests", mp.Tag)
@@ -643,7 +639,7 @@ func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptio
 	resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, headers, nil, regOpts)
 	if errors.Is(err, os.ErrNotExist) {
 		// The model was not found on the remote registry
-		return nil, fmt.Errorf("%w: %s", ErrRemoteModelNotFound{}, err)
+		return nil, fmt.Errorf("%w: %s", ErrRemoteModelNotFound, err)
 	} else if err != nil {
 		return nil, err
 	}
