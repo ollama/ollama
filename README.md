@@ -383,6 +383,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollamazing](https://github.com/buiducnhat/ollamazing) (Web extension to run Ollama models)
 - [OpenDeepResearcher-via-searxng](https://github.com/benhaotang/OpenDeepResearcher-via-searxng) (A Deep Research equivent endpoint with Ollama support for running locally)
 - [AntSK](https://github.com/AIDotNet/AntSK) (Out-of-the-box & Adaptable RAG Chatbot built with .NET 8, AntBlazor, SemanticKernel, and KernelMemory)
+- [MaxKB](https://github.com/1Panel-dev/MaxKB/) (Ready-to-use & flexible RAG Chatbot)
+
 ### Cloud
 
 - [Google Cloud](https://cloud.google.com/run/docs/tutorials/gpu-gemma2-with-ollama)
