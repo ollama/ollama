@@ -96,6 +96,10 @@ type Tensor interface {
 	Copy(ctx Context, t2 Tensor) Tensor
 }
 
+type ScaledDotProductAttention interface {
+	ScaledDotProductAttention(ctx Context, key, value, mask Tensor, scale float64) Tensor
+}
+
 type number interface {
 	~int | ~int8 | ~int16 | ~int32 | ~int64 |
 		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 |
