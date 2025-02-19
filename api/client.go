@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -63,9 +64,23 @@ func checkError(resp *http.Response, body []byte) error {
 // If the variable is not specified, a default ollama host and port will be
 // used.
 func ClientFromEnvironment() (*Client, error) {
+	base := envconfig.Host()
+	httpClient := http.DefaultClient
+	if base.Scheme == "unix" {
+		socketAddress := base.Host
+		httpClient = &http.Client{
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+					return net.Dial("unix", socketAddress)
+				},
+			},
+		}
+		base.Scheme = "http"
+		base.Host = "localhost"
+	}
 	return &Client{
-		base: envconfig.Host(),
-		http: http.DefaultClient,
+		base: base,
+		http: httpClient,
 	}, nil
 }
 
