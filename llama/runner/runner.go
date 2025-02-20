@@ -378,13 +378,7 @@ type TokenProbs struct {
 }
 
 // probs returns sorted token probabilities for a specific token index
-func (s *Server) probs(seq *Sequence) []TokenProbs {
-	// Get logits for the specific token index
-	logits := s.lc.GetLogits()
-	seq.logits = make([]float32, len(logits))
-	copy(seq.logits, logits)
-
-	vocabSize := s.model.NumVocab()
+func probs(logits []float32, vocabSize int) []TokenProbs {
 	probs := make([]TokenProbs, vocabSize)
 
 	// Initialize token data with logits
@@ -418,6 +412,17 @@ func (s *Server) probs(seq *Sequence) []TokenProbs {
 	}
 
 	return probs
+}
+
+// probs returns sorted token probabilities for a specific token index
+func (s *Server) probs(seq *Sequence) []TokenProbs {
+	// Get logits for the specific token index
+	logits := s.lc.GetLogits()
+	seq.logits = make([]float32, len(logits))
+	copy(seq.logits, logits)
+
+	vocabSize := s.model.NumVocab()
+	return probs(logits, vocabSize)
 }
 
 // TODO (jmorganca): processBatch should be simplified, removing:
