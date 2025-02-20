@@ -158,7 +158,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapt
 		params = append(params, "--mmproj", projectors[0])
 	}
 
-	defaultThreads := systemInfo.GetOptimalThreadCount()
+	defaultThreads, _ := strconv.Atoi(os.Getenv("OMP_NUM_THREADS"))
 	if opts.NumThread > 0 {
 		params = append(params, "--threads", strconv.Itoa(opts.NumThread))
 	} else if defaultThreads > 0 {
