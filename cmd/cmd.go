@@ -1023,9 +1023,31 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 	return nil
 }
 
-func RunServer(_ *cobra.Command, _ []string) error {
+func RunServer(cmd *cobra.Command, _ []string) error {
 	if err := initializeKeypair(); err != nil {
 		return err
+	}
+
+	// Get flags
+	host, _ := cmd.Flags().GetString("host")
+	port, _ := cmd.Flags().GetString("port")
+	apiKey, _ := cmd.Flags().GetString("api-key")
+
+	// Set environment variables based on flags if provided
+	if host != "" || port != "" {
+		hostAddr := "127.0.0.1"
+		if host != "" {
+			hostAddr = host
+		}
+		portNum := "11434"
+		if port != "" {
+			portNum = port
+		}
+		os.Setenv("OLLAMA_HOST", fmt.Sprintf("%s:%s", hostAddr, portNum))
+	}
+
+	if apiKey != "" {
+		os.Setenv("OLLAMA_API_KEY", apiKey)
 	}
 
 	ln, err := net.Listen("tcp", envconfig.Host().Host)
@@ -1220,6 +1242,10 @@ func NewCLI() *cobra.Command {
 		Args:    cobra.ExactArgs(0),
 		RunE:    RunServer,
 	}
+
+	serveCmd.Flags().String("host", "", "Host to listen on (default: 127.0.0.1)")
+	serveCmd.Flags().String("port", "", "Port to listen on (default: 11434)")
+	serveCmd.Flags().String("api-key", "", "Optional API key to secure the server")
 
 	pullCmd := &cobra.Command{
 		Use:     "pull MODEL",
