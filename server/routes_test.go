@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"math"
 	"math/rand/v2"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -596,11 +595,6 @@ func TestManifestCaseSensitivity(t *testing.T) {
 	}
 
 	var s Server
-	testMakeRequestDialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
-		var d net.Dialer
-		return d.DialContext(ctx, "tcp", r.Listener.Addr().String())
-	}
-	t.Cleanup(func() { testMakeRequestDialContext = nil })
 
 	t.Logf("creating")
 	_, digest := createBinFile(t, nil, nil)

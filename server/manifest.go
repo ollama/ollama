@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -31,33 +30,6 @@ func (m *Manifest) Size() (size int64) {
 	}
 
 	return
-}
-
-func (m *Manifest) Remove() error {
-	if err := os.Remove(m.filepath); err != nil {
-		return err
-	}
-
-	manifests, err := GetManifestPath()
-	if err != nil {
-		return err
-	}
-
-	return PruneDirectory(manifests)
-}
-
-func (m *Manifest) RemoveLayers() error {
-	for _, layer := range append(m.Layers, m.Config) {
-		if layer.Digest != "" {
-			if err := layer.Remove(); errors.Is(err, os.ErrNotExist) {
-				slog.Debug("layer does not exist", "digest", layer.Digest)
-			} else if err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
 }
 
 func ParseNamedManifest(n model.Name) (*Manifest, error) {

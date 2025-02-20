@@ -697,38 +697,7 @@ func (s *Server) DeleteHandler(c *gin.Context) {
 		return
 	}
 
-	n := model.ParseName(cmp.Or(r.Model, r.Name))
-	if !n.IsValid() {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("name %q is invalid", cmp.Or(r.Model, r.Name))})
-		return
-	}
-
-	n, err := getExistingName(n)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", cmp.Or(r.Model, r.Name))})
-		return
-	}
-
-	m, err := ParseNamedManifest(n)
-	if err != nil {
-		switch {
-		case os.IsNotExist(err):
-			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", cmp.Or(r.Model, r.Name))})
-		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		}
-		return
-	}
-
-	if err := m.Remove(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	if err := m.RemoveLayers(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
+	panic("TODO")
 }
 
 func (s *Server) ShowHandler(c *gin.Context) {
@@ -1206,26 +1175,6 @@ func Serve(ln net.Listener) error {
 	}
 	if err := fixBlobs(blobsDir); err != nil {
 		return err
-	}
-
-	if !envconfig.NoPrune() {
-		if _, err := Manifests(false); err != nil {
-			slog.Warn("corrupt manifests detected, skipping prune operation.  Re-pull or delete to clear", "error", err)
-		} else {
-			// clean up unused layers and manifests
-			if err := PruneLayers(); err != nil {
-				return err
-			}
-
-			manifestsPath, err := GetManifestPath()
-			if err != nil {
-				return err
-			}
-
-			if err := PruneDirectory(manifestsPath); err != nil {
-				return err
-			}
-		}
 	}
 
 	ctx, done := context.WithCancel(context.Background())

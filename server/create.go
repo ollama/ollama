@@ -19,7 +19,6 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/convert"
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llama"
@@ -64,8 +63,6 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		fn := func(resp api.ProgressResponse) {
 			ch <- resp
 		}
-
-		oldManifest, _ := ParseNamedManifest(name)
 
 		var baseLayers []*layerGGML
 		if r.From != "" {
@@ -126,12 +123,6 @@ func (s *Server) CreateHandler(c *gin.Context) {
 			}
 			ch <- gin.H{"error": err.Error()}
 			return
-		}
-
-		if !envconfig.NoPrune() && oldManifest != nil {
-			if err := oldManifest.RemoveLayers(); err != nil {
-				ch <- gin.H{"error": err.Error()}
-			}
 		}
 
 		ch <- api.ProgressResponse{Status: "success"}
