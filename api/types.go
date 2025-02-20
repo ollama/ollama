@@ -643,7 +643,7 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 // ErrorResponse implements a structured error interface that is returned from the Ollama server
 type ErrorResponse struct {
 	// Err is the error from the server. It helps with debugging the code-path
-	Err  string `json:"error"`
+	Err string `json:"error"`
 
 	// Hint is a user-friendly message about what went wrong, with suggested troubleshooting
 	Hint string `json:"hint"`
