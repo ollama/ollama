@@ -120,6 +120,14 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	// add one layer worth of memory as a buffer
 	if blk0, ok := layers["blk.0"]; ok {
 		layerSize = blk0.Size()
+		//use layer with maximum size to avoid vram overflow
+		for i := 1; i < int(f.KV().BlockCount()); i++ {
+			if blkn, ok := layers[fmt.Sprintf("blk.%d", i)]; ok {
+				if blkn.Size() > layerSize {
+					layerSize = blkn.Size()
+				}
+			} 
+		}
 	} else {
 		slog.Warn("model missing blk.0 layer size")
 	}
@@ -210,7 +218,7 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	}
 
 	// For all the layers, find where they can fit on the GPU(s)
-	for i := range int(f.KV().BlockCount()) {
+	for i := int(f.KV().BlockCount()) - 1; i >= 0; i-- {
 		// Some models have inconsistent layer sizes
 		if blk, ok := layers[fmt.Sprintf("blk.%d", i)]; ok {
 			layerSize = blk.Size()
