@@ -57,7 +57,8 @@ func cudaVariant(gpuInfo CudaGPUInfo) string {
 		}
 	}
 
-	if gpuInfo.computeMajor < 6 || gpuInfo.DriverMajor < 12 || (gpuInfo.DriverMajor == 12 && gpuInfo.DriverMinor == 0) {
+	// driver 12.0 has problems with the cuda v12 library, so run v11 on those older drivers
+	if gpuInfo.DriverMajor < 12 || (gpuInfo.DriverMajor == 12 && gpuInfo.DriverMinor == 0) {
 		return "v11"
 	}
 	return "v12"
