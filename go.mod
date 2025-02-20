@@ -18,6 +18,7 @@ require (
 	github.com/agnivade/levenshtein v1.1.1
 	github.com/d4l3k/go-bfloat16 v0.0.0-20211005043715-690c3bdd05f1
 	github.com/dlclark/regexp2 v1.11.4
+	github.com/emirpasic/gods v1.18.1
 	github.com/emirpasic/gods/v2 v2.0.0-alpha
 	github.com/google/go-cmp v0.6.0
 	github.com/mattn/go-runewidth v0.0.14
