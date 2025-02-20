@@ -5,7 +5,6 @@ import (
 	"math"
 
 	"golang.org/x/exp/rand"
-	"gonum.org/v1/gonum/floats"
 	"gonum.org/v1/gonum/stat/sampleuv"
 )
 
@@ -18,10 +17,10 @@ type weighted struct {
 	transforms []Transform
 }
 
-func Weighted(seed *int64, transforms ...Transform) Sampler {
+func Weighted(seed *uint64, transforms ...Transform) Sampler {
 	var src rand.Source
 	if seed != nil {
-		src = rand.NewSource(uint64(*seed))
+		src = rand.NewSource(*seed)
 	}
 	return weighted{src: src, transforms: transforms}
 }
@@ -32,12 +31,8 @@ func (s weighted) Sample(logits []float32) (int32, error) {
 		logits64[i] = float64(v)
 	}
 
-	var err error
 	for _, t := range s.transforms {
-		logits64, err = t.Apply(logits64)
-		if err != nil {
-			return -1, err
-		}
+		logits64 = t.Apply(logits64)
 	}
 
 	logitsCopy := make([]float64, 0, len(logits))
@@ -75,13 +70,68 @@ func (s greedy) Sample(logits []float32) (int32, error) {
 		logits64[i] = float64(v)
 	}
 
-	var err error
 	for _, t := range s.transforms {
-		logits64, err = t.Apply(logits64)
-		if err != nil {
-			return -1, err
+		logits64 = t.Apply(logits64)
+	}
+
+	var maxIdx int
+	var maxLogit float64
+	for i, logit := range logits64 {
+		if logit > maxLogit {
+			maxLogit = logit
+			maxIdx = i
 		}
 	}
 
-	return int32(floats.MaxIdx(logits64)), nil
+	if maxLogit == math.Inf(-1) {
+		return -1, errors.New("no valid logits found for greedy sampling")
+	}
+
+	return int32(maxIdx), nil
+}
+
+func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int) (Sampler, error) {
+	transforms := []Transform{}
+	if temperature < 0 || temperature > 2 {
+		return nil, errors.New("temperature must be between 0 and 2")
+	}
+
+	if temperature != 0 {
+		transforms = append(transforms, Temperature(temperature))
+	}
+
+	if topK != 0 {
+		if topK <= 0 {
+			return nil, errors.New("topK must be greater than 0")
+		}
+		transforms = append(transforms, TopK(topK))
+	}
+
+	if topP != 0 {
+		if topP < 0 || topP >= 1 {
+			return nil, errors.New("topP must be between 0 and 1")
+		}
+		transforms = append(transforms, TopP(topP))
+	}
+
+	if minP != 0 {
+		if minP < 0 || minP >= 1 {
+			return nil, errors.New("minP must be between 0 and 1")
+		}
+		transforms = append(transforms, MinP(minP))
+	}
+
+	if len(transforms) == 0 {
+		return nil, errors.New("at least one transform is required")
+	}
+
+	if temperature == 0 {
+		return Greedy(transforms...), nil
+	}
+
+	if seed != 0 {
+		seed64 := uint64(seed)
+		return Weighted(&seed64, transforms...), nil
+	}
+	return Weighted(nil, transforms...), nil
 }

@@ -556,45 +556,6 @@ type CompletionResponse struct {
 	Timings Timings `json:"timings"`
 }
 
-func newSampler(req CompletionRequest) sample.Sampler {
-	transforms := []sample.Transform{}
-
-	if req.Temperature != 0 {
-		// Use greedy if temperature is 0
-		transforms = append(transforms, sample.Temperature(req.Temperature))
-	}
-	if req.TopK > 0 {
-		transforms = append(transforms, sample.TopK(req.TopK))
-	}
-	if req.TopP > 0 {
-		transforms = append(transforms, sample.TopP(req.TopP))
-	}
-	if req.MinP > 0 {
-		transforms = append(transforms, sample.MinP(req.MinP))
-	}
-
-	var sampler sample.Sampler
-	if req.Temperature != 0 {
-		sampler = sample.Greedy(transforms...)
-	} else {
-		sampler = sample.Weighted(nil, transforms...)
-	}
-
-	// TODO(parthsareen): Implement other sampling params
-	// samplingParams.TypicalP = req.TypicalP
-	// samplingParams.RepeatLastN = req.RepeatLastN
-	// samplingParams.PenaltyRepeat = req.RepeatPenalty
-	// samplingParams.PenaltyFreq = req.FrequencyPenalty
-	// samplingParams.PenaltyPresent = req.PresencePenalty
-	// samplingParams.Mirostat = req.Mirostat
-	// samplingParams.MirostatTau = req.MirostatTau
-	// samplingParams.MirostatEta = req.MirostatEta
-	// samplingParams.Seed = uint32(req.Seed)
-	// samplingParams.Grammar = req.Grammar
-
-	return sampler
-}
-
 func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	var req CompletionRequest
 	req.Options = Options(api.DefaultOptions())
@@ -613,11 +574,23 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sampler, err := sample.NewSampler(
+		req.Temperature,
+		req.TopK,
+		req.TopP,
+		req.MinP,
+		req.Seed,
+	)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to create sampler: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
 		numPredict: req.NumPredict,
 		stop:       req.Stop,
 		numKeep:    int32(req.NumKeep),
-		sampler:    newSampler(req),
+		sampler:    sampler,
 		embedding:  false,
 	})
 	if err != nil {
