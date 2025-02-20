@@ -26,9 +26,24 @@ type Backend interface {
 	SystemInfo() string
 }
 
-var backends = make(map[string]func(*os.File) (Backend, error))
+// BackendParams controls how the backend loads and executes models
+type BackendParams struct {
+	// NumThreads sets the number of threads to use if running on the CPU
+	NumThreads int
 
-func RegisterBackend(name string, f func(*os.File) (Backend, error)) {
+	// MainGPU is the index of the primary GPU to use
+	MainGPU int
+
+	// NumGPULayers is the number of layers to offload to GPUs
+	NumGPULayers int
+
+	// TensorSplit is the fraction of the model to offload to each GPU
+	TensorSplit []float32
+}
+
+var backends = make(map[string]func(*os.File, BackendParams) (Backend, error))
+
+func RegisterBackend(name string, f func(*os.File, BackendParams) (Backend, error)) {
 	if _, ok := backends[name]; ok {
 		panic("backend: backend already registered")
 	}
@@ -36,9 +51,9 @@ func RegisterBackend(name string, f func(*os.File) (Backend, error)) {
 	backends[name] = f
 }
 
-func NewBackend(f *os.File) (Backend, error) {
+func NewBackend(f *os.File, params BackendParams) (Backend, error) {
 	if backend, ok := backends["ggml"]; ok {
-		return backend(f)
+		return backend(f, params)
 	}
 
 	return nil, fmt.Errorf("unsupported backend")

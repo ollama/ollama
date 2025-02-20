@@ -25,6 +25,7 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/runner/common"
 	"github.com/ollama/ollama/sample"
@@ -801,6 +802,7 @@ func (m *multiLPath) String() string {
 
 func (s *Server) loadModel(
 	mpath string,
+	params ml.BackendParams,
 	lpath multiLPath,
 	parallel int,
 	kvCacheType string,
@@ -808,12 +810,12 @@ func (s *Server) loadModel(
 	multiUserCache bool,
 ) {
 	var err error
-	s.model, err = model.New(mpath)
+	s.model, err = model.New(mpath, params)
 	if err != nil {
 		panic(err)
 	}
 
-	slog.Info("system", "info", s.model.Backend().SystemInfo() /* "threads", *threads */)
+	slog.Info("system", "info", s.model.Backend().SystemInfo(), "threads", params.NumThreads)
 
 	// TODO(jessegross): LoRA loading
 	if lpath.String() != "" {
@@ -843,17 +845,17 @@ func Execute(args []string) error {
 	mpath := fs.String("model", "", "Path to model binary file")
 	parallel := fs.Int("parallel", 1, "Number of sequences to handle simultaneously")
 	batchSize := fs.Int("batch-size", 512, "Batch size")
-	_ = fs.Int("n-gpu-layers", 0, "Number of layers to offload to GPU")
-	_ = fs.Int("main-gpu", 0, "Main GPU")
+	numGPULayers := fs.Int("n-gpu-layers", 0, "Number of layers to offload to GPU")
+	mainGPU := fs.Int("main-gpu", 0, "Main GPU")
 	_ = fs.Bool("flash-attn", false, "Enable flash attention")
 	kvSize := fs.Int("ctx-size", 2048, "Context (or KV cache) size")
 	kvCacheType := fs.String("kv-cache-type", "", "quantization type for KV cache (default: f16)")
 	port := fs.Int("port", 8080, "Port to expose the server on")
-	_ = fs.Int("threads", runtime.NumCPU(), "Number of threads to use during generation")
+	threads := fs.Int("threads", runtime.NumCPU(), "Number of threads to use during generation")
 	verbose := fs.Bool("verbose", false, "verbose output (default: disabled)")
 	_ = fs.Bool("no-mmap", false, "do not memory-map model (slower load but may reduce pageouts if not using mlock)")
 	_ = fs.Bool("mlock", false, "force system to keep model in RAM rather than swapping or compressing")
-	_ = fs.String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
+	tensorSplit := fs.String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
 	multiUserCache := fs.Bool("multiuser-cache", false, "optimize input cache algorithm for multiple users")
 
 	var lpaths multiLPath
@@ -890,15 +892,11 @@ func Execute(args []string) error {
 	}
 
 	// TODO(jessegross): Parameters that need to be implemented:
-	//	n-gpu-layers
-	//	main-gpu
 	//	flash-attn
-	//	threads
 	//	no-mmap
 	//	mlock
-	//	tensor-split
 
-	/*var tensorSplitFloats []float32
+	var tensorSplitFloats []float32
 	if *tensorSplit != "" {
 		stringFloats := regexp.MustCompile(",").Split(*tensorSplit, -1)
 
@@ -907,10 +905,17 @@ func Execute(args []string) error {
 			f, _ := strconv.ParseFloat(s, 32)
 			tensorSplitFloats = append(tensorSplitFloats, float32(f))
 		}
-	}*/
+	}
+
+	params := ml.BackendParams{
+		NumThreads:   *threads,
+		NumGPULayers: *numGPULayers,
+		MainGPU:      *mainGPU,
+		TensorSplit:  tensorSplitFloats,
+	}
 
 	server.ready.Add(1)
-	go server.loadModel(*mpath, lpaths, *parallel, *kvCacheType, *kvSize, *multiUserCache)
+	go server.loadModel(*mpath, params, lpaths, *parallel, *kvCacheType, *kvSize, *multiUserCache)
 
 	server.cond = sync.NewCond(&server.mu)
 
