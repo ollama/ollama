@@ -2,6 +2,7 @@ package ml
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -37,7 +38,7 @@ func RegisterBackend(name string, f func(*os.File) (Backend, error)) {
 }
 
 func NewBackend(f *os.File) (Backend, error) {
-	if backend, ok := backends["ggml"]; ok {
+	if backend, ok := backends[cmp.Or(os.Getenv("OLLAMA_BACKEND"), "ggml")]; ok {
 		return backend(f)
 	}
 
@@ -53,6 +54,30 @@ type Context interface {
 	Compute(...Tensor)
 	MaxTensors() int
 	Close()
+
+	Timing() []OpTiming
+}
+
+// OpType is the type of operation performed during a forward pass.
+type OpType string
+
+const (
+	View       OpType = "View"
+	Copy       OpType = "Copy"
+	Reshape    OpType = "Reshape"
+	Permute    OpType = "Permute"
+	Contiguous OpType = "Contiguous"
+	Input      OpType = "Input"
+	ComputeOp  OpType = "Compute"
+	Transpose  OpType = "Transpose"
+)
+
+// OpTiming stores the timing information for a single operation.
+type OpTiming struct {
+	Type      OpType
+	Operation string
+	Duration  float64
+	Order     int
 }
 
 type Tensor interface {

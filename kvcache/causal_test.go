@@ -352,6 +352,10 @@ func (c *testContext) MaxTensors() int {
 	return 10
 }
 
+func (c *testContext) Timing() []ml.OpTiming {
+	return []ml.OpTiming{}
+}
+
 func (c *testContext) Close() {}
 
 type testTensor struct {

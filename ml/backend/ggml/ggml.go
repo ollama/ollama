@@ -4,6 +4,8 @@ package ggml
 #cgo CPPFLAGS: -I${SRCDIR}/ggml/include
 #include <stdlib.h>
 #include <stdint.h>
+#include <time.h>
+#include <string.h>
 #include "ggml.h"
 #include "ggml-cpu.h"
 #include "ggml-backend.h"
@@ -21,6 +23,54 @@ COMPILER inline get_compiler() {
 #endif
 }
 
+// Define a fixed-size struct to store timing data
+#define MAX_TENSOR_NAME 256
+#define MAX_TIMINGS 1000
+
+typedef struct {
+    char tensor_name[MAX_TENSOR_NAME];
+    double duration_ms;
+} timing_entry;
+
+typedef struct {
+    timing_entry entries[MAX_TIMINGS];
+    int count;
+} timing_data;
+
+// Global timing data structure
+timing_data g_timings = {0};
+
+double get_time_ms() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000.0 + ts.tv_nsec / 1000000.0;
+}
+
+bool debug_callback(struct ggml_tensor * t, bool ask, void * user_data) {
+    static double start_time;
+    static char current_tensor[MAX_TENSOR_NAME];
+
+    if (ask) {
+        start_time = get_time_ms();
+        strncpy(current_tensor, t->name, MAX_TENSOR_NAME - 1);
+        current_tensor[MAX_TENSOR_NAME - 1] = '\0';
+    } else {
+        double end_time = get_time_ms();
+        double duration = end_time - start_time;
+
+        if (g_timings.count < MAX_TIMINGS) {
+            strncpy(g_timings.entries[g_timings.count].tensor_name, current_tensor, MAX_TENSOR_NAME - 1);
+            g_timings.entries[g_timings.count].duration_ms = duration;
+            g_timings.count++;
+        }
+    }
+    return true;
+}
+
+void clear_timings() {
+    g_timings.count = 0;
+}
+
 */
 import "C"
 
@@ -29,9 +79,11 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"unsafe"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	fs "github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/ml"
@@ -256,7 +308,62 @@ func (c *Context) Forward(t ml.Tensor) {
 	C.ggml_build_forward_expand(c.graph, t.(*Tensor).t)
 }
 
+// Timing retrieves the collected timing data
+func (c *Context) Timing() []ml.OpTiming {
+	sequence := make([]ml.OpTiming, C.g_timings.count)
+
+	for i := range int(C.g_timings.count) {
+		entry := C.g_timings.entries[i]
+		tensorName := C.GoString(&entry.tensor_name[0])
+
+		// Determine operation type and description based on tensor name
+		var opType ml.OpType
+		var opDesc string
+
+		switch {
+		case strings.Contains(tensorName, "(view)"):
+			opType, opDesc = ml.View, "Memory view"
+		case strings.Contains(tensorName, "(copy)") || strings.Contains(tensorName, "(copy of"):
+			opType, opDesc = ml.Copy, "Memory copy"
+		case strings.Contains(tensorName, "(reshaped)"):
+			opType, opDesc = ml.Reshape, "Reshape"
+		case strings.Contains(tensorName, "(permuted)"):
+			opType, opDesc = ml.Permute, "Permute dimensions"
+		case strings.Contains(tensorName, "(cont)"):
+			opType, opDesc = ml.Contiguous, "Make contiguous"
+		case strings.Contains(tensorName, "(transposed)"):
+			opType, opDesc = ml.Transpose, "Transpose"
+		case strings.HasPrefix(tensorName, "leaf_"):
+			opType, opDesc = ml.Input, fmt.Sprintf("Input tensor %s", tensorName)
+		case strings.HasPrefix(tensorName, "node_"):
+			opType, opDesc = ml.ComputeOp, fmt.Sprintf("Computation %s", tensorName)
+		default:
+			opType, opDesc = "Unknown", tensorName
+		}
+
+		sequence[i] = ml.OpTiming{
+			Type:      opType,
+			Operation: opDesc,
+			Duration:  float64(entry.duration_ms),
+			Order:     i,
+		}
+	}
+
+	return sequence
+}
+
 func (c *Context) Compute(tensors ...ml.Tensor) {
+	if envconfig.Benchmark() {
+		// Clear previous timings before new computation
+		C.clear_timings()
+
+		C.ggml_backend_sched_set_eval_callback(
+			c.sched,
+			C.ggml_backend_eval_callback(C.debug_callback),
+			nil,
+		)
+	}
+
 	C.ggml_backend_sched_graph_compute_async(c.sched, c.graph)
 
 	needSync := true
