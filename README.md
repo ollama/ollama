@@ -382,6 +382,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LocalLLM](https://github.com/qusaismael/localllm) (Minimal Web-App to run ollama models on it with a GUI)
 - [Ollamazing](https://github.com/buiducnhat/ollamazing) (Web extension to run Ollama models)
 - [OpenDeepResearcher-via-searxng](https://github.com/benhaotang/OpenDeepResearcher-via-searxng) (A Deep Research equivent endpoint with Ollama support for running locally)
+- [yla](https://github.com/danielekp/yla) (Web interface to freely interact with your customized models)
 
 ### Cloud
 
