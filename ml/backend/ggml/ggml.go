@@ -84,7 +84,7 @@ type Backend struct {
 	tensors    map[string]*Context
 }
 
-func New(r *os.File) (ml.Backend, error) {
+func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 	meta, n, err := fs.Decode(r, -1)
 	if err != nil {
 		return nil, err

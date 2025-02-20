@@ -70,14 +70,14 @@ func Register(name string, f func(ml.Config) (Model, error)) {
 }
 
 // New initializes a new model instance with the provided configuration based on the metadata in the model file
-func New(modelPath string) (Model, error) {
+func New(modelPath string, params ml.BackendParams) (Model, error) {
 	r, err := os.Open(modelPath)
 	if err != nil {
 		return nil, err
 	}
 	defer r.Close()
 
-	b, err := ml.NewBackend(r)
+	b, err := ml.NewBackend(r, params)
 	if err != nil {
 		return nil, err
 	}
