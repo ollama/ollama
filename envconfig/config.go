@@ -148,6 +148,21 @@ func Bool(k string) func() bool {
 	}
 }
 
+func BoolWithDefault(k string, defaultValue bool) func() bool {
+	return func() bool {
+		if s := Var(k); s != "" {
+			b, err := strconv.ParseBool(s)
+			if err != nil {
+				return true
+			}
+
+			return b
+		}
+
+		return defaultValue
+	}
+}
+
 var (
 	// Debug enabled additional debug information.
 	Debug = Bool("OLLAMA_DEBUG")
@@ -166,7 +181,7 @@ var (
 	// MultiUserCache optimizes prompt caching for multi-user scenarios
 	MultiUserCache = Bool("OLLAMA_MULTIUSER_CACHE")
 	// Enable the new Ollama engine
-	NewEngine = Bool("OLLAMA_NEW_ENGINE")
+	NewEngine = BoolWithDefault("OLLAMA_NEW_ENGINE", false) // TODO switch to true when we're ready for opt-out
 )
 
 func String(s string) func() string {
