@@ -34,7 +34,7 @@ Lastly, run Ollama:
 go run . serve
 ```
 
-## Windows
+## Windows (x64)
 
 Install prerequisites:
 
@@ -70,7 +70,20 @@ go run . serve
 
 ## Windows (ARM)
 
-Windows ARM does not support additional acceleration libraries at this time.
+Follow the instructions at https://www.msys2.org/wiki/arm64/ to set up an arm64 msys2 environment.  One your msys environment is set up then you can run the following command to install the necessary tools:
+
+```
+pacman -S mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-gcc-compat
+```
+
+You will need to ensure your PATH includes go, gcc and clang to build ollama from source. (typically C:\msys64\clangarm64\bin\)
+
+Lastly, run Ollama:
+
+```powershell
+$env:CGO_ENABLED="1"
+go run . serve
+```
 
 ## Linux
 
