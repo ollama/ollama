@@ -379,7 +379,13 @@ func (f GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialO
 	embedding := f.KV().EmbeddingLength()
 	heads := f.KV().HeadCount()
 	headsKV := f.KV().HeadCountKV()
-	vocab := uint64(f.KV()["tokenizer.ggml.tokens"].(*array).size)
+	var vocab uint64
+	if tokensArray, ok := f.KV()["tokenizer.ggml.tokens"].(*array); ok && tokensArray != nil {
+		vocab = uint64(tokensArray.size)
+	} else {
+		vocab = 1 // ignore vocab size if not found
+		slog.Warn("tokenizer.ggml.tokens not found or nil, using 0 for vocab size in size calculation")
+	}
 
 	embeddingHeads := f.KV().EmbeddingHeadCount()
 	embeddingHeadsK := f.KV().EmbeddingHeadCountK()

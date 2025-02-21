@@ -9,6 +9,32 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
+type ggufModel struct {
+	kv      KV
+	tensors Tensors
+}
+
+func (m *ggufModel) KV() KV           { return m.kv }
+func (m *ggufModel) Tensors() Tensors { return m.tensors }
+
+func TestGraphNoVocab(t *testing.T) {
+	g := &GGML{
+		container: &containerGGUF{},
+		model: &ggufModel{
+			kv: KV{
+				"general.architecture": "llama",
+				"block_count":          uint32(1),
+			},
+			tensors: Tensors{
+				items: []*Tensor{},
+			},
+		},
+	}
+
+	// This should not panic
+	_, _, _ = g.GraphSize(1, 1, "f16")
+}
+
 func TestTensorLayers(t *testing.T) {
 	tensors := make(map[string]*Tensor)
 	for _, name := range []string{
