@@ -305,6 +305,14 @@ func signinURL() (string, error) {
 	return fmt.Sprintf(signinURLStr, url.PathEscape(h), encKey), nil
 }
 
+func loadMetrics(checkpointStart, checkpointLoaded time.Time) api.Metrics {
+	d := checkpointLoaded.Sub(checkpointStart)
+	return api.Metrics{
+		LoadDuration:  d,
+		TotalDuration: d,
+	}
+}
+
 func (s *Server) GenerateHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 	var req api.GenerateRequest
@@ -566,6 +574,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			CreatedAt:  time.Now().UTC(),
 			Done:       true,
 			DoneReason: "load",
+			Metrics:    loadMetrics(checkpointStart, checkpointLoaded),
 		})
 		return
 	}
@@ -3245,6 +3254,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			Message:    api.Message{Role: "assistant"},
 			Done:       true,
 			DoneReason: "load",
+			Metrics:    loadMetrics(checkpointStart, checkpointLoaded),
 		})
 		return
 	}
