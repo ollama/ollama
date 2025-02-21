@@ -2,7 +2,7 @@
 
 > **Note**: This guide and the Go inference engine are in early development and will be updated as implementation details evolve.
 
-This guide outlines the process of implementing a new model in Ollama's Go GGML inference engine. It covers everything from initial setup to deploying your model to ollama.com.
+This guide outlines the process of implementing a new model in Ollama's inference engine. It covers everything from initial setup to deploying your model to ollama.com.
 
 ## Architecture Overview
 
