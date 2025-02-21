@@ -65,7 +65,7 @@ type Context interface {
 	FromFloatSlice(s []float32, shape ...int) (Tensor, error)
 	FromIntSlice(s []int32, shape ...int) (Tensor, error)
 
-	Forward(Tensor)
+	Forward(...Tensor) Context
 	Compute(...Tensor)
 	MaxTensors() int
 	Close()
@@ -186,8 +186,7 @@ func Dump(ctx Context, t Tensor, opts ...DumpOptions) string {
 
 func dump[S ~[]E, E number](ctx Context, t Tensor, items int, fn func(E) string) string {
 	if t.Bytes() == nil {
-		ctx.Forward(t)
-		ctx.Compute(t)
+		ctx.Forward(t).Compute(t)
 	}
 
 	s := make(S, mul(t.Shape()...))
