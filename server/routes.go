@@ -1174,7 +1174,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
 	r.POST("/api/copy", s.CopyHandler)
 
-	// Model interaction endpoints
+	// Model inference endpoints
 	r.POST("/api/generate", s.GenerateHandler)
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)
