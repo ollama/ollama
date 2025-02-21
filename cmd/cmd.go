@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -1121,8 +1122,19 @@ func completionHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func autocompleteModelName(_ *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	log.Printf("autocomplete: %s", toComplete)
+func autocompleteOneModelName(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return autocompleteModelName(toComplete, args, 1)
+}
+
+func autocompleteInfiniteModelNames(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return autocompleteModelName(toComplete, args, math.MaxUint32)
+}
+
+func autocompleteModelName(toComplete string, args []string, targetCompletionsCount int) ([]string, cobra.ShellCompDirective) {
+	if len(args) >= targetCompletionsCount {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveError
@@ -1136,9 +1148,9 @@ func autocompleteModelName(_ *cobra.Command, _ []string, toComplete string) ([]s
 	var data []string
 
 	for _, m := range models.Models {
-		log.Printf("model: %s", m.Name)
-		if strings.HasPrefix(m.Name, toComplete) {
-			data = append(data, m.Name[:strings.IndexByte(m.Name, ':')])
+		completion := m.Name[:strings.IndexByte(m.Name, ':')]
+		if strings.HasPrefix(m.Name, toComplete) && !slices.Contains(args, completion) {
+			data = append(data, completion)
 		}
 	}
 
@@ -1230,7 +1242,7 @@ func NewCLI() *cobra.Command {
 		Args:              cobra.ExactArgs(1),
 		PreRunE:           checkServerHeartbeat,
 		RunE:              ShowHandler,
-		ValidArgsFunction: autocompleteModelName,
+		ValidArgsFunction: autocompleteOneModelName,
 	}
 
 	showCmd.Flags().Bool("license", false, "Show license of a model")
@@ -1245,7 +1257,7 @@ func NewCLI() *cobra.Command {
 		Args:              cobra.MinimumNArgs(1),
 		PreRunE:           checkServerHeartbeat,
 		RunE:              RunHandler,
-		ValidArgsFunction: autocompleteModelName,
+		ValidArgsFunction: autocompleteOneModelName,
 	}
 
 	runCmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
@@ -1288,7 +1300,7 @@ func NewCLI() *cobra.Command {
 		Args:              cobra.ExactArgs(1),
 		PreRunE:           checkServerHeartbeat,
 		RunE:              PushHandler,
-		ValidArgsFunction: autocompleteModelName,
+		ValidArgsFunction: autocompleteOneModelName,
 	}
 
 	pushCmd.Flags().Bool("insecure", false, "Use an insecure registry")
@@ -1315,7 +1327,7 @@ func NewCLI() *cobra.Command {
 		Args:              cobra.ExactArgs(2),
 		PreRunE:           checkServerHeartbeat,
 		RunE:              CopyHandler,
-		ValidArgsFunction: autocompleteModelName,
+		ValidArgsFunction: autocompleteOneModelName,
 	}
 
 	deleteCmd := &cobra.Command{
@@ -1324,7 +1336,7 @@ func NewCLI() *cobra.Command {
 		Args:              cobra.MinimumNArgs(1),
 		PreRunE:           checkServerHeartbeat,
 		RunE:              DeleteHandler,
-		ValidArgsFunction: autocompleteModelName,
+		ValidArgsFunction: autocompleteInfiniteModelNames,
 	}
 
 	completionCmd := &cobra.Command{
