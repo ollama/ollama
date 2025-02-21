@@ -31,7 +31,7 @@ The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `olla
 ### Autocompletion
 To enable autocompletion generate completion script for your shell (`bash`, `zsh`, `fish`):
 ```
-echo "source <(./ollama completion bash)" >> ~/.bashrc # Required bash-completion package installed
+echo "source <(ollama completion bash)" >> ~/.bashrc # Required bash-completion package installed
 ```
 ```
 echo '[[ $commands[ollama] ]] && source <(ollama completion zsh)' >> ~/.zshrc
