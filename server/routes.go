@@ -1127,37 +1127,60 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 }
 
 func (s *Server) GenerateRoutes() http.Handler {
-	config := cors.DefaultConfig()
-	config.AllowWildcard = true
-	config.AllowBrowserExtensions = true
-	config.AllowHeaders = []string{"Authorization", "Content-Type", "User-Agent", "Accept", "X-Requested-With"}
-	openAIProperties := []string{"lang", "package-version", "os", "arch", "retry-count", "runtime", "runtime-version", "async", "helper-method", "poll-helper", "custom-poll-interval", "timeout"}
-	for _, prop := range openAIProperties {
-		config.AllowHeaders = append(config.AllowHeaders, "x-stainless-"+prop)
+	corsConfig := cors.DefaultConfig()
+	corsConfig.AllowWildcard = true
+	corsConfig.AllowBrowserExtensions = true
+	corsConfig.AllowHeaders = []string{
+		"Authorization",
+		"Content-Type",
+		"User-Agent",
+		"Accept",
+		"X-Requested-With",
+
+		// OpenAI compatibility headers
+		"x-stainless-lang",
+		"x-stainless-package-version",
+		"x-stainless-os",
+		"x-stainless-arch",
+		"x-stainless-retry-count",
+		"x-stainless-runtime",
+		"x-stainless-runtime-version",
+		"x-stainless-async",
+		"x-stainless-helper-method",
+		"x-stainless-poll-helper",
+		"x-stainless-custom-poll-interval",
+		"x-stainless-timeout",
 	}
-	config.AllowOrigins = envconfig.Origins()
+	corsConfig.AllowOrigins = envconfig.AllowedOrigins()
 
 	r := gin.Default()
 	r.Use(
-		cors.New(config),
+		cors.New(corsConfig),
 		allowedHostsMiddleware(s.addr),
 	)
 
+	// Model cache management endpoints
 	r.POST("/api/pull", s.PullHandler)
+	r.POST("/api/push", s.PushHandler)
+	r.DELETE("/api/delete", s.DeleteHandler)
+
+	// Diagnostic endpoints
+	r.POST("/api/show", s.ShowHandler)
+	r.GET("/api/ps", s.PsHandler)
+
+	// Model creation endpoints
+	r.POST("/api/create", s.CreateHandler)
+	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
+	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
+	r.POST("/api/copy", s.CopyHandler)
+
+	// Model interaction endpoints
 	r.POST("/api/generate", s.GenerateHandler)
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
-	r.POST("/api/create", s.CreateHandler)
-	r.POST("/api/push", s.PushHandler)
-	r.POST("/api/copy", s.CopyHandler)
-	r.DELETE("/api/delete", s.DeleteHandler)
-	r.POST("/api/show", s.ShowHandler)
-	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
-	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
-	r.GET("/api/ps", s.PsHandler)
 
-	// Compatibility endpoints
+	// OpenAI compatibility endpoints
 	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)
 	r.POST("/v1/completions", openai.CompletionsMiddleware(), s.GenerateHandler)
 	r.POST("/v1/embeddings", openai.EmbeddingsMiddleware(), s.EmbedHandler)
