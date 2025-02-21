@@ -13,6 +13,7 @@
 - [Push a Model](#push-a-model)
 - [Generate Embeddings](#generate-embeddings)
 - [List Running Models](#list-running-models)
+- [Version](#version)
 
 ## Conventions
 
@@ -30,7 +31,7 @@ Certain endpoints stream responses as JSON objects. Streaming can be disabled by
 
 ## Generate a completion
 
-```shell
+```
 POST /api/generate
 ```
 
@@ -45,14 +46,18 @@ Generate a response for a given prompt with a provided model. This is a streamin
 
 Advanced parameters (optional):
 
-- `format`: the format to return a response in. Currently the only accepted value is `json`
+- `format`: the format to return a response in. Format can be `json` or a JSON schema
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `system`: system message to (overrides what is defined in the `Modelfile`)
 - `template`: the prompt template to use (overrides what is defined in the `Modelfile`)
-- `context`: the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `raw`: if `true` no formatting will be applied to the prompt. You may choose to use the `raw` parameter if you are specifying a full templated prompt in your request to the API
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
+- `context` (deprecated): the context parameter returned from a previous request to `/generate`, this can be used to keep a short conversational memory
+
+#### Structured outputs
+
+Structured outputs are supported by providing a JSON schema in the `format` parameter. The model will generate a response that matches the schema. See the [structured outputs](#request-structured-outputs) example below.
 
 #### JSON mode
 
@@ -185,6 +190,52 @@ curl http://localhost:11434/api/generate -d '{
 }
 ```
 
+#### Request (Structured outputs)
+
+##### Request
+
+```shell
+curl -X POST http://localhost:11434/api/generate -H "Content-Type: application/json" -d '{
+  "model": "llama3.1:8b",
+  "prompt": "Ollama is 22 years old and is busy saving the world. Respond using JSON",
+  "stream": false,
+  "format": {
+    "type": "object",
+    "properties": {
+      "age": {
+        "type": "integer"
+      },
+      "available": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "age",
+      "available"
+    ]
+  }
+}'
+```
+
+##### Response
+
+```json
+{
+  "model": "llama3.1:8b",
+  "created_at": "2024-12-06T00:48:09.983619Z",
+  "response": "{\n  \"age\": 22,\n  \"available\": true\n}",
+  "done": true,
+  "done_reason": "stop",
+  "context": [1, 2, 3],
+  "total_duration": 1075509083,
+  "load_duration": 567678166,
+  "prompt_eval_count": 28,
+  "prompt_eval_duration": 236000000,
+  "eval_count": 16,
+  "eval_duration": 269000000
+}
+```
+
 #### Request (JSON mode)
 
 > [!IMPORTANT]
@@ -255,7 +306,7 @@ curl http://localhost:11434/api/generate -d '{
 
 #### Response
 
-```
+```json
 {
   "model": "llava",
   "created_at": "2023-11-03T15:36:02.583064Z",
@@ -337,7 +388,6 @@ curl http://localhost:11434/api/generate -d '{
     "top_k": 20,
     "top_p": 0.9,
     "min_p": 0.0,
-    "tfs_z": 0.5,
     "typical_p": 0.7,
     "repeat_last_n": 33,
     "temperature": 0.8,
@@ -355,7 +405,6 @@ curl http://localhost:11434/api/generate -d '{
     "num_gpu": 1,
     "main_gpu": 0,
     "low_vram": false,
-    "f16_kv": true,
     "vocab_only": false,
     "use_mmap": true,
     "use_mlock": false,
@@ -436,7 +485,7 @@ A single JSON object is returned:
 
 ## Generate a chat completion
 
-```shell
+```
 POST /api/chat
 ```
 
@@ -446,21 +495,25 @@ Generate the next message in a chat with a provided model. This is a streaming e
 
 - `model`: (required) the [model name](#model-names)
 - `messages`: the messages of the chat, this can be used to keep a chat memory
-- `tools`: tools for the model to use if supported. Requires `stream` to be set to `false`
+- `tools`: list of tools in JSON for the model to use if supported
 
 The `message` object has the following fields:
 
 - `role`: the role of the message, either `system`, `user`, `assistant`, or `tool`
 - `content`: the content of the message
 - `images` (optional): a list of images to include in the message (for multimodal models such as `llava`)
-- `tool_calls` (optional): a list of tools the model wants to use
+- `tool_calls` (optional): a list of tools in JSON that the model wants to use
 
 Advanced parameters (optional):
 
-- `format`: the format to return a response in. Currently the only accepted value is `json`
+- `format`: the format to return a response in. Format can be `json` or a JSON schema. 
 - `options`: additional model parameters listed in the documentation for the [Modelfile](./modelfile.md#valid-parameters-and-values) such as `temperature`
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
+
+### Structured outputs
+
+Structured outputs are supported by providing a JSON schema in the `format` parameter. The model will generate a response that matches the schema. See the [Chat request (Structured outputs)](#chat-request-structured-outputs) example below.
 
 ### Examples
 
@@ -549,6 +602,54 @@ curl http://localhost:11434/api/chat -d '{
   "prompt_eval_duration": 383809000,
   "eval_count": 298,
   "eval_duration": 4799921000
+}
+```
+
+#### Chat request (Structured outputs)
+
+##### Request
+
+```shell
+curl -X POST http://localhost:11434/api/chat -H "Content-Type: application/json" -d '{
+  "model": "llama3.1",
+  "messages": [{"role": "user", "content": "Ollama is 22 years old and busy saving the world. Return a JSON object with the age and availability."}],
+  "stream": false,
+  "format": {
+    "type": "object",
+    "properties": {
+      "age": {
+        "type": "integer"
+      },
+      "available": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "age",
+      "available"
+    ]
+  },
+  "options": {
+    "temperature": 0
+  }
+}'
+```
+
+##### Response
+
+```json
+{
+  "model": "llama3.1",
+  "created_at": "2024-12-06T00:46:58.265747Z",
+  "message": { "role": "assistant", "content": "{\"age\": 22, \"available\": false}" },
+  "done_reason": "stop",
+  "done": true,
+  "total_duration": 2254970291,
+  "load_duration": 574751416,
+  "prompt_eval_count": 34,
+  "prompt_eval_duration": 1502000000,
+  "eval_count": 12,
+  "eval_duration": 175000000
 }
 ```
 
@@ -694,7 +795,7 @@ curl http://localhost:11434/api/chat -d '{
 
 ##### Request
 
-```
+```shell
 curl http://localhost:11434/api/chat -d '{
   "model": "llama3.2",
   "messages": [
@@ -769,7 +870,7 @@ If the messages array is empty, the model will be loaded into memory.
 
 ##### Request
 
-```
+```shell
 curl http://localhost:11434/api/chat -d '{
   "model": "llama3.2",
   "messages": []
@@ -777,6 +878,7 @@ curl http://localhost:11434/api/chat -d '{
 ```
 
 ##### Response
+
 ```json
 {
   "model": "llama3.2",
@@ -796,7 +898,7 @@ If the messages array is empty and the `keep_alive` parameter is set to `0`, a m
 
 ##### Request
 
-```
+```shell
 curl http://localhost:11434/api/chat -d '{
   "model": "llama3.2",
   "messages": [],
@@ -823,37 +925,69 @@ A single JSON object is returned:
 
 ## Create a Model
 
-```shell
+```
 POST /api/create
 ```
 
-Create a model from a [`Modelfile`](./modelfile.md). It is recommended to set `modelfile` to the content of the Modelfile rather than just set `path`. This is a requirement for remote create. Remote model creation must also create any file blobs, fields such as `FROM` and `ADAPTER`, explicitly with the server using [Create a Blob](#create-a-blob) and the value to the path indicated in the response.
+Create a model from:
+ * another model;
+ * a safetensors directory; or
+ * a GGUF file.
+
+If you are creating a model from a safetensors directory or from a GGUF file, you must [create a blob](#create-a-blob) for each of the files and then use the file name and SHA256 digest associated with each blob in the `files` field.
 
 ### Parameters
 
-- `name`: name of the model to create
-- `modelfile` (optional): contents of the Modelfile
+- `model`: name of the model to create
+- `from`: (optional) name of an existing model to create the new model from
+- `files`: (optional) a dictionary of file names to SHA256 digests of blobs to create the model from
+- `adapters`: (optional) a dictionary of file names to SHA256 digests of blobs for LORA adapters
+- `template`: (optional) the prompt template for the model
+- `license`: (optional) a string or list of strings containing the license or licenses for the model
+- `system`: (optional) a string containing the system prompt for the model
+- `parameters`: (optional) a dictionary of parameters for the model (see [Modelfile](./modelfile.md#valid-parameters-and-values) for a list of parameters)
+- `messages`: (optional) a list of message objects used to create a conversation
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
-- `path` (optional): path to the Modelfile
+- `quantize` (optional): quantize a non-quantized (e.g. float16) model
+
+#### Quantization types
+
+| Type | Recommended |
+| --- | :-: |
+| q2_K | |
+| q3_K_L | |
+| q3_K_M | |
+| q3_K_S | |
+| q4_0 | |
+| q4_1 | |
+| q4_K_M | * |
+| q4_K_S | |
+| q5_0 | |
+| q5_1 | |
+| q5_K_M | |
+| q5_K_S | |
+| q6_K | |
+| q8_0 | * |
 
 ### Examples
 
 #### Create a new model
 
-Create a new model from a `Modelfile`.
+Create a new model from an existing model.
 
 ##### Request
 
 ```shell
 curl http://localhost:11434/api/create -d '{
-  "name": "mario",
-  "modelfile": "FROM llama3\nSYSTEM You are mario from Super Mario Bros."
+  "model": "mario",
+  "from": "llama3.2",
+  "system": "You are Mario from Super Mario Bros."
 }'
 ```
 
 ##### Response
 
-A stream of JSON objects. Notice that the final JSON object shows a `"status": "success"`.
+A stream of JSON objects is returned:
 
 ```json
 {"status":"reading model metadata"}
@@ -869,57 +1003,147 @@ A stream of JSON objects. Notice that the final JSON object shows a `"status": "
 {"status":"success"}
 ```
 
-### Check if a Blob Exists
+#### Quantize a model
+
+Quantize a non-quantized model.
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/create -d '{
+  "model": "llama3.1:quantized",
+  "from": "llama3.1:8b-instruct-fp16",
+  "quantize": "q4_K_M"
+}'
+```
+
+##### Response
+
+A stream of JSON objects is returned:
+
+```json
+{"status":"quantizing F16 model to Q4_K_M"}
+{"status":"creating new layer sha256:667b0c1932bc6ffc593ed1d03f895bf2dc8dc6df21db3042284a6f4416b06a29"}
+{"status":"using existing layer sha256:11ce4ee3e170f6adebac9a991c22e22ab3f8530e154ee669954c4bc73061c258"}
+{"status":"using existing layer sha256:0ba8f0e314b4264dfd19df045cde9d4c394a52474bf92ed6a3de22a4ca31a177"}
+{"status":"using existing layer sha256:56bb8bd477a519ffa694fc449c2413c6f0e1d3b1c88fa7e3c9d88d3ae49d4dcb"}
+{"status":"creating new layer sha256:455f34728c9b5dd3376378bfb809ee166c145b0b4c1f1a6feca069055066ef9a"}
+{"status":"writing manifest"}
+{"status":"success"}
+```
+
+#### Create a model from GGUF
+
+Create a model from a GGUF file. The `files` parameter should be filled out with the file name and SHA256 digest of the GGUF file you wish to use. Use [/api/blobs/:digest](#push-a-blob) to push the GGUF file to the server before calling this API.
+
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/create -d '{
+  "model": "my-gguf-model",
+  "files": {
+    "test.gguf": "sha256:432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3"
+  }
+}'
+```
+
+##### Response
+
+A stream of JSON objects is returned:
+
+```json
+{"status":"parsing GGUF"}
+{"status":"using existing layer sha256:432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3"}
+{"status":"writing manifest"}
+{"status":"success"}
+```
+
+
+#### Create a model from a Safetensors directory
+
+The `files` parameter should include a dictionary of files for the safetensors model which includes the file names and SHA256 digest of each file. Use [/api/blobs/:digest](#push-a-blob) to first push each of the files to the server before calling this API. Files will remain in the cache until the Ollama server is restarted.
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/create -d '{
+  "model": "fred",
+  "files": {
+    "config.json": "sha256:dd3443e529fb2290423a0c65c2d633e67b419d273f170259e27297219828e389",
+    "generation_config.json": "sha256:88effbb63300dbbc7390143fbbdd9d9fa50587b37e8bfd16c8c90d4970a74a36",
+    "special_tokens_map.json": "sha256:b7455f0e8f00539108837bfa586c4fbf424e31f8717819a6798be74bef813d05",
+    "tokenizer.json": "sha256:bbc1904d35169c542dffbe1f7589a5994ec7426d9e5b609d07bab876f32e97ab",
+    "tokenizer_config.json": "sha256:24e8a6dc2547164b7002e3125f10b415105644fcf02bf9ad8b674c87b1eaaed6",
+    "model.safetensors": "sha256:1ff795ff6a07e6a68085d206fb84417da2f083f68391c2843cd2b8ac6df8538f"
+  }
+}'
+```
+
+##### Response
+
+A stream of JSON objects is returned:
+
+```shell
+{"status":"converting model"}
+{"status":"creating new layer sha256:05ca5b813af4a53d2c2922933936e398958855c44ee534858fcfd830940618b6"}
+{"status":"using autodetected template llama3-instruct"}
+{"status":"using existing layer sha256:56bb8bd477a519ffa694fc449c2413c6f0e1d3b1c88fa7e3c9d88d3ae49d4dcb"}
+{"status":"writing manifest"}
+{"status":"success"}
+```
+
+## Check if a Blob Exists
 
 ```shell
 HEAD /api/blobs/:digest
 ```
 
-Ensures that the file blob used for a FROM or ADAPTER field exists on the server. This is checking your Ollama server and not Ollama.ai.
+Ensures that the file blob (Binary Large Object) used with create a model exists on the server. This checks your Ollama server and not ollama.com.
 
-#### Query Parameters
+### Query Parameters
 
 - `digest`: the SHA256 digest of the blob
 
-#### Examples
+### Examples
 
-##### Request
+#### Request
 
 ```shell
 curl -I http://localhost:11434/api/blobs/sha256:29fdb92e57cf0827ded04ae6461b5931d01fa595843f55d36f5b275a52087dd2
 ```
 
-##### Response
+#### Response
 
 Return 200 OK if the blob exists, 404 Not Found if it does not.
 
-### Create a Blob
+## Push a Blob
 
-```shell
+```
 POST /api/blobs/:digest
 ```
 
-Create a blob from a file on the server. Returns the server file path.
+Push a file to the Ollama server to create a "blob" (Binary Large Object).
 
-#### Query Parameters
+### Query Parameters
 
 - `digest`: the expected SHA256 digest of the file
 
-#### Examples
+### Examples
 
-##### Request
+#### Request
 
 ```shell
-curl -T model.bin -X POST http://localhost:11434/api/blobs/sha256:29fdb92e57cf0827ded04ae6461b5931d01fa595843f55d36f5b275a52087dd2
+curl -T model.gguf -X POST http://localhost:11434/api/blobs/sha256:29fdb92e57cf0827ded04ae6461b5931d01fa595843f55d36f5b275a52087dd2
 ```
 
-##### Response
+#### Response
 
 Return 201 Created if the blob was successfully created, 400 Bad Request if the digest used is not expected.
 
 ## List Local Models
 
-```shell
+```
 GET /api/tags
 ```
 
@@ -972,7 +1196,7 @@ A single JSON object will be returned.
 
 ## Show Model Information
 
-```shell
+```
 POST /api/show
 ```
 
@@ -980,7 +1204,7 @@ Show information about a model including details, modelfile, template, parameter
 
 ### Parameters
 
-- `name`: name of the model to show
+- `model`: name of the model to show
 - `verbose`: (optional) if set to `true`, returns full data for verbose response fields
 
 ### Examples
@@ -989,7 +1213,7 @@ Show information about a model including details, modelfile, template, parameter
 
 ```shell
 curl http://localhost:11434/api/show -d '{
-  "name": "llama3.2"
+  "model": "llama3.2"
 }'
 ```
 
@@ -1038,7 +1262,7 @@ curl http://localhost:11434/api/show -d '{
 
 ## Copy a Model
 
-```shell
+```
 POST /api/copy
 ```
 
@@ -1061,7 +1285,7 @@ Returns a 200 OK if successful, or a 404 Not Found if the source model doesn't e
 
 ## Delete a Model
 
-```shell
+```
 DELETE /api/delete
 ```
 
@@ -1069,7 +1293,7 @@ Delete a model and its data.
 
 ### Parameters
 
-- `name`: model name to delete
+- `model`: model name to delete
 
 ### Examples
 
@@ -1077,7 +1301,7 @@ Delete a model and its data.
 
 ```shell
 curl -X DELETE http://localhost:11434/api/delete -d '{
-  "name": "llama3:13b"
+  "model": "llama3:13b"
 }'
 ```
 
@@ -1087,7 +1311,7 @@ Returns a 200 OK if successful, 404 Not Found if the model to be deleted doesn't
 
 ## Pull a Model
 
-```shell
+```
 POST /api/pull
 ```
 
@@ -1095,7 +1319,7 @@ Download a model from the ollama library. Cancelled pulls are resumed from where
 
 ### Parameters
 
-- `name`: name of the model to pull
+- `model`: name of the model to pull
 - `insecure`: (optional) allow insecure connections to the library. Only use this if you are pulling from your own library during development.
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 
@@ -1105,7 +1329,7 @@ Download a model from the ollama library. Cancelled pulls are resumed from where
 
 ```shell
 curl http://localhost:11434/api/pull -d '{
-  "name": "llama3.2"
+  "model": "llama3.2"
 }'
 ```
 
@@ -1159,7 +1383,7 @@ if `stream` is set to false, then the response is a single JSON object:
 
 ## Push a Model
 
-```shell
+```
 POST /api/push
 ```
 
@@ -1167,7 +1391,7 @@ Upload a model to a model library. Requires registering for ollama.ai and adding
 
 ### Parameters
 
-- `name`: name of the model to push in the form of `<namespace>/<model>:<tag>`
+- `model`: name of the model to push in the form of `<namespace>/<model>:<tag>`
 - `insecure`: (optional) allow insecure connections to the library. Only use this if you are pushing to your library during development.
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 
@@ -1177,7 +1401,7 @@ Upload a model to a model library. Requires registering for ollama.ai and adding
 
 ```shell
 curl http://localhost:11434/api/push -d '{
-  "name": "mattw/pygmalion:latest"
+  "model": "mattw/pygmalion:latest"
 }'
 ```
 
@@ -1224,7 +1448,7 @@ If `stream` is set to `false`, then the response is a single JSON object:
 
 ## Generate Embeddings
 
-```shell
+```
 POST /api/embed
 ```
 
@@ -1292,7 +1516,7 @@ curl http://localhost:11434/api/embed -d '{
 ```
 
 ## List Running Models
-```shell
+```
 GET /api/ps
 ```
 
@@ -1339,7 +1563,7 @@ A single JSON object will be returned.
 
 > Note: this endpoint has been superseded by `/api/embed`
 
-```shell
+```
 POST /api/embeddings
 ```
 
@@ -1376,3 +1600,29 @@ curl http://localhost:11434/api/embeddings -d '{
   ]
 }
 ```
+
+## Version
+
+```
+GET /api/version
+```
+
+Retrieve the Ollama version
+
+### Examples
+
+#### Request
+
+```shell
+curl http://localhost:11434/api/version
+```
+
+#### Response
+
+```json
+{
+  "version": "0.5.1"
+}
+```
+
+

@@ -1,13 +1,11 @@
 package cmd
 
 import (
-	"archive/zip"
 	"bufio"
-	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -19,9 +17,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -36,22 +32,83 @@ import (
 	"golang.org/x/term"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
+	"github.com/ollama/ollama/runner"
 	"github.com/ollama/ollama/server"
-	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
 
-func CreateHandler(cmd *cobra.Command, args []string) error {
+var errModelfileNotFound = errors.New("specified Modelfile wasn't found")
+
+func getModelfileName(cmd *cobra.Command) (string, error) {
 	filename, _ := cmd.Flags().GetString("file")
-	filename, err := filepath.Abs(filename)
+
+	if filename == "" {
+		filename = "Modelfile"
+	}
+
+	absName, err := filepath.Abs(filename)
+	if err != nil {
+		return "", err
+	}
+
+	_, err = os.Stat(absName)
+	if err != nil {
+		return "", err
+	}
+
+	return absName, nil
+}
+
+func CreateHandler(cmd *cobra.Command, args []string) error {
+	p := progress.NewProgress(os.Stderr)
+	defer p.Stop()
+
+	var reader io.Reader
+
+	filename, err := getModelfileName(cmd)
+	if os.IsNotExist(err) {
+		if filename == "" {
+			reader = strings.NewReader("FROM .\n")
+		} else {
+			return errModelfileNotFound
+		}
+	} else if err != nil {
+		return err
+	} else {
+		f, err := os.Open(filename)
+		if err != nil {
+			return err
+		}
+
+		reader = f
+		defer f.Close()
+	}
+
+	modelfile, err := parser.ParseFile(reader)
 	if err != nil {
 		return err
+	}
+
+	status := "gathering model components"
+	spinner := progress.NewSpinner(status)
+	p.Add(status, spinner)
+
+	req, err := modelfile.CreateRequest(filepath.Dir(filename))
+	if err != nil {
+		return err
+	}
+	spinner.Stop()
+
+	req.Name = args[0]
+	quantize, _ := cmd.Flags().GetString("quantize")
+	if quantize != "" {
+		req.Quantize = quantize
 	}
 
 	client, err := api.ClientFromEnvironment()
@@ -59,77 +116,31 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	p := progress.NewProgress(os.Stderr)
-	defer p.Stop()
-
-	f, err := os.Open(filename)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	modelfile, err := parser.ParseFile(f)
-	if err != nil {
-		return err
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
-	status := "transferring model data"
-	spinner := progress.NewSpinner(status)
-	p.Add(status, spinner)
-	defer p.Stop()
-
-	for i := range modelfile.Commands {
-		switch modelfile.Commands[i].Name {
-		case "model", "adapter":
-			path := modelfile.Commands[i].Args
-			if path == "~" {
-				path = home
-			} else if strings.HasPrefix(path, "~/") {
-				path = filepath.Join(home, path[2:])
-			}
-
-			if !filepath.IsAbs(path) {
-				path = filepath.Join(filepath.Dir(filename), path)
-			}
-
-			fi, err := os.Stat(path)
-			if errors.Is(err, os.ErrNotExist) && modelfile.Commands[i].Name == "model" {
-				continue
-			} else if err != nil {
+	if len(req.Files) > 0 {
+		fileMap := map[string]string{}
+		for f, digest := range req.Files {
+			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
 				return err
 			}
-
-			if fi.IsDir() {
-				// this is likely a safetensors or pytorch directory
-				// TODO make this work w/ adapters
-				tempfile, err := tempZipFiles(path)
-				if err != nil {
-					return err
-				}
-				defer os.RemoveAll(tempfile)
-
-				path = tempfile
-			}
-
-			digest, err := createBlob(cmd, client, path, spinner)
-			if err != nil {
-				return err
-			}
-
-			modelfile.Commands[i].Args = "@" + digest
+			fileMap[filepath.Base(f)] = digest
 		}
+		req.Files = fileMap
+	}
+
+	if len(req.Adapters) > 0 {
+		fileMap := map[string]string{}
+		for f, digest := range req.Adapters {
+			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
+				return err
+			}
+			fileMap[filepath.Base(f)] = digest
+		}
+		req.Adapters = fileMap
 	}
 
 	bars := make(map[string]*progress.Bar)
 	fn := func(resp api.ProgressResponse) error {
 		if resp.Digest != "" {
-			spinner.Stop()
-
 			bar, ok := bars[resp.Digest]
 			if !ok {
 				bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
@@ -149,145 +160,23 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	quantize, _ := cmd.Flags().GetString("quantize")
-
-	request := api.CreateRequest{Name: args[0], Modelfile: modelfile.String(), Quantize: quantize}
-	if err := client.Create(cmd.Context(), &request, fn); err != nil {
+	if err := client.Create(cmd.Context(), req, fn); err != nil {
+		if strings.Contains(err.Error(), "path or Modelfile are required") {
+			return fmt.Errorf("the ollama server must be updated to use `ollama create` with this client")
+		}
 		return err
 	}
 
 	return nil
 }
 
-func tempZipFiles(path string) (string, error) {
-	tempfile, err := os.CreateTemp("", "ollama-tf")
+func createBlob(cmd *cobra.Command, client *api.Client, path string, digest string, p *progress.Progress) (string, error) {
+	realPath, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return "", err
 	}
-	defer tempfile.Close()
 
-	detectContentType := func(path string) (string, error) {
-		f, err := os.Open(path)
-		if err != nil {
-			return "", err
-		}
-		defer f.Close()
-
-		var b bytes.Buffer
-		b.Grow(512)
-
-		if _, err := io.CopyN(&b, f, 512); err != nil && !errors.Is(err, io.EOF) {
-			return "", err
-		}
-
-		contentType, _, _ := strings.Cut(http.DetectContentType(b.Bytes()), ";")
-		return contentType, nil
-	}
-
-	glob := func(pattern, contentType string) ([]string, error) {
-		matches, err := filepath.Glob(pattern)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, safetensor := range matches {
-			if ct, err := detectContentType(safetensor); err != nil {
-				return nil, err
-			} else if ct != contentType {
-				return nil, fmt.Errorf("invalid content type: expected %s for %s", ct, safetensor)
-			}
-		}
-
-		return matches, nil
-	}
-
-	var files []string
-	if st, _ := glob(filepath.Join(path, "model*.safetensors"), "application/octet-stream"); len(st) > 0 {
-		// safetensors files might be unresolved git lfs references; skip if they are
-		// covers model-x-of-y.safetensors, model.fp32-x-of-y.safetensors, model.safetensors
-		files = append(files, st...)
-	} else if st, _ := glob(filepath.Join(path, "adapters.safetensors"), "application/octet-stream"); len(st) > 0 {
-		// covers adapters.safetensors
-		files = append(files, st...)
-	} else if st, _ := glob(filepath.Join(path, "adapter_model.safetensors"), "application/octet-stream"); len(st) > 0 {
-		// covers adapter_model.safetensors
-		files = append(files, st...)
-	} else if pt, _ := glob(filepath.Join(path, "pytorch_model*.bin"), "application/zip"); len(pt) > 0 {
-		// pytorch files might also be unresolved git lfs references; skip if they are
-		// covers pytorch_model-x-of-y.bin, pytorch_model.fp32-x-of-y.bin, pytorch_model.bin
-		files = append(files, pt...)
-	} else if pt, _ := glob(filepath.Join(path, "consolidated*.pth"), "application/zip"); len(pt) > 0 {
-		// pytorch files might also be unresolved git lfs references; skip if they are
-		// covers consolidated.x.pth, consolidated.pth
-		files = append(files, pt...)
-	} else {
-		return "", errors.New("no safetensors or torch files found")
-	}
-
-	// add configuration files, json files are detected as text/plain
-	js, err := glob(filepath.Join(path, "*.json"), "text/plain")
-	if err != nil {
-		return "", err
-	}
-	files = append(files, js...)
-
-	// bert models require a nested config.json
-	// TODO(mxyng): merge this with the glob above
-	js, err = glob(filepath.Join(path, "**/*.json"), "text/plain")
-	if err != nil {
-		return "", err
-	}
-	files = append(files, js...)
-
-	if tks, _ := glob(filepath.Join(path, "tokenizer.model"), "application/octet-stream"); len(tks) > 0 {
-		// add tokenizer.model if it exists, tokenizer.json is automatically picked up by the previous glob
-		// tokenizer.model might be a unresolved git lfs reference; error if it is
-		files = append(files, tks...)
-	} else if tks, _ := glob(filepath.Join(path, "**/tokenizer.model"), "text/plain"); len(tks) > 0 {
-		// some times tokenizer.model is in a subdirectory (e.g. meta-llama/Meta-Llama-3-8B)
-		files = append(files, tks...)
-	}
-
-	zipfile := zip.NewWriter(tempfile)
-	defer zipfile.Close()
-
-	for _, file := range files {
-		f, err := os.Open(file)
-		if err != nil {
-			return "", err
-		}
-		defer f.Close()
-
-		fi, err := f.Stat()
-		if err != nil {
-			return "", err
-		}
-
-		zfi, err := zip.FileInfoHeader(fi)
-		if err != nil {
-			return "", err
-		}
-
-		zfi.Name, err = filepath.Rel(path, file)
-		if err != nil {
-			return "", err
-		}
-
-		zf, err := zipfile.CreateHeader(zfi)
-		if err != nil {
-			return "", err
-		}
-
-		if _, err := io.Copy(zf, f); err != nil {
-			return "", err
-		}
-	}
-
-	return tempfile.Name(), nil
-}
-
-func createBlob(cmd *cobra.Command, client *api.Client, path string, spinner *progress.Spinner) (string, error) {
-	bin, err := os.Open(path)
+	bin, err := os.Open(realPath)
 	if err != nil {
 		return "", err
 	}
@@ -300,18 +189,11 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, spinner *pr
 	}
 	fileSize := fileInfo.Size()
 
-	hash := sha256.New()
-	if _, err := io.Copy(hash, bin); err != nil {
-		return "", err
-	}
-
-	if _, err := bin.Seek(0, io.SeekStart); err != nil {
-		return "", err
-	}
-
 	var pw progressWriter
-	status := "transferring model data 0%"
-	spinner.SetMessage(status)
+	status := fmt.Sprintf("copying file %s 0%%", digest)
+	spinner := progress.NewSpinner(status)
+	p.Add(status, spinner)
+	defer spinner.Stop()
 
 	done := make(chan struct{})
 	defer close(done)
@@ -322,15 +204,14 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, spinner *pr
 		for {
 			select {
 			case <-ticker.C:
-				spinner.SetMessage(fmt.Sprintf("transferring model data %d%%", int(100*pw.n.Load()/fileSize)))
+				spinner.SetMessage(fmt.Sprintf("copying file %s %d%%", digest, int(100*pw.n.Load()/fileSize)))
 			case <-done:
-				spinner.SetMessage("transferring model data 100%")
+				spinner.SetMessage(fmt.Sprintf("copying file %s 100%%", digest))
 				return
 			}
 		}
 	}()
 
-	digest := fmt.Sprintf("sha256:%x", hash.Sum(nil))
 	if err = client.CreateBlob(cmd.Context(), digest, io.TeeReader(bin, &pw)); err != nil {
 		return "", err
 	}
@@ -422,6 +303,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	if len(prompts) > 0 {
 		interactive = false
 	}
+	// Be quiet if we're redirecting to a pipe or file
+	if !term.IsTerminal(int(os.Stdout.Fd())) {
+		interactive = false
+	}
 
 	nowrap, err := cmd.Flags().GetBool("nowordwrap")
 	if err != nil {
@@ -453,7 +338,10 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	opts.MultiModal = slices.Contains(info.Details.Families, "clip")
+	// TODO(jessegross): We should either find another way to know if this is
+	// a vision model or remove the logic. Also consider that other modalities will
+	// need different behavior anyways.
+	opts.MultiModal = len(info.ProjectorInfo) != 0 || envconfig.NewEngine()
 	opts.ParentModel = info.Details.ParentModel
 
 	if interactive {
@@ -476,47 +364,6 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return generateInteractive(cmd, opts)
 	}
 	return generate(cmd, opts)
-}
-
-func errFromUnknownKey(unknownKeyErr error) error {
-	// find SSH public key in the error message
-	sshKeyPattern := `ssh-\w+ [^\s"]+`
-	re := regexp.MustCompile(sshKeyPattern)
-	matches := re.FindStringSubmatch(unknownKeyErr.Error())
-
-	if len(matches) > 0 {
-		serverPubKey := matches[0]
-
-		localPubKey, err := auth.GetPublicKey()
-		if err != nil {
-			return unknownKeyErr
-		}
-
-		if runtime.GOOS == "linux" && serverPubKey != localPubKey {
-			// try the ollama service public key
-			svcPubKey, err := os.ReadFile("/usr/share/ollama/.ollama/id_ed25519.pub")
-			if err != nil {
-				return unknownKeyErr
-			}
-			localPubKey = strings.TrimSpace(string(svcPubKey))
-		}
-
-		// check if the returned public key matches the local public key, this prevents adding a remote key to the user's account
-		if serverPubKey != localPubKey {
-			return unknownKeyErr
-		}
-
-		var msg strings.Builder
-		msg.WriteString(unknownKeyErr.Error())
-		msg.WriteString("\n\nYour ollama key is:\n")
-		msg.WriteString(localPubKey)
-		msg.WriteString("\nAdd your key at:\n")
-		msg.WriteString("https://ollama.com/settings/keys")
-
-		return errors.New(msg.String())
-	}
-
-	return unknownKeyErr
 }
 
 func PushHandler(cmd *cobra.Command, args []string) error {
@@ -565,6 +412,8 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	request := api.PushRequest{Name: args[0], Insecure: insecure}
+
+	n := model.ParseName(args[0])
 	if err := client.Push(cmd.Context(), &request, fn); err != nil {
 		if spinner != nil {
 			spinner.Stop()
@@ -572,18 +421,19 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		if strings.Contains(err.Error(), "access denied") {
 			return errors.New("you are not authorized to push to this namespace, create the model under a namespace you own")
 		}
-		host := model.ParseName(args[0]).Host
-		isOllamaHost := strings.HasSuffix(host, ".ollama.ai") || strings.HasSuffix(host, ".ollama.com")
-		if strings.Contains(err.Error(), errtypes.UnknownOllamaKeyErrMsg) && isOllamaHost {
-			// the user has not added their ollama key to ollama.com
-			// re-throw an error with a more user-friendly message
-			return errFromUnknownKey(err)
-		}
-
 		return err
 	}
 
+	p.Stop()
 	spinner.Stop()
+
+	destination := n.String()
+	if strings.HasSuffix(n.Host, ".ollama.ai") || strings.HasSuffix(n.Host, ".ollama.com") {
+		destination = "https://ollama.com/" + strings.TrimSuffix(n.DisplayShortest(), ":latest")
+	}
+	fmt.Printf("\nYou can find your model at:\n\n")
+	fmt.Printf("\t%s\n", destination)
+
 	return nil
 }
 
@@ -601,7 +451,7 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 	var data [][]string
 
 	for _, m := range models.Models {
-		if len(args) == 0 || strings.HasPrefix(m.Name, args[0]) {
+		if len(args) == 0 || strings.HasPrefix(strings.ToLower(m.Name), strings.ToLower(args[0])) {
 			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), format.HumanTime(m.ModifiedAt, "Never")})
 		}
 	}
@@ -766,9 +616,9 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		case "parameters":
 			fmt.Println(resp.Parameters)
 		case "system":
-			fmt.Println(resp.System)
+			fmt.Print(resp.System)
 		case "template":
-			fmt.Println(resp.Template)
+			fmt.Print(resp.Template)
 		}
 
 		return nil
@@ -1038,10 +888,14 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		return nil
 	}
 
+	if opts.Format == "json" {
+		opts.Format = `"` + opts.Format + `"`
+	}
+
 	req := &api.ChatRequest{
 		Model:    opts.Model,
 		Messages: opts.Messages,
-		Format:   opts.Format,
+		Format:   json.RawMessage(opts.Format),
 		Options:  opts.Options,
 	}
 
@@ -1123,12 +977,16 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		}
 	}
 
+	if opts.Format == "json" {
+		opts.Format = `"` + opts.Format + `"`
+	}
+
 	request := api.GenerateRequest{
 		Model:     opts.Model,
 		Prompt:    opts.Prompt,
 		Context:   generateContext,
 		Images:    opts.Images,
-		Format:    opts.Format,
+		Format:    json.RawMessage(opts.Format),
 		System:    opts.System,
 		Options:   opts.Options,
 		KeepAlive: opts.KeepAlive,
@@ -1330,7 +1188,7 @@ func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
 
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" && term.IsTerminal(int(os.Stdout.Fd())) {
 		console.ConsoleFromFile(os.Stdin) //nolint:errcheck
 	}
 
@@ -1363,7 +1221,7 @@ func NewCLI() *cobra.Command {
 		ValidArgsFunction: doNotAutocomplete,
 	}
 
-	createCmd.Flags().StringP("file", "f", "Modelfile", "Name of the Modelfile")
+	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\"")
 	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_0)")
 
 	showCmd := &cobra.Command{
@@ -1481,6 +1339,19 @@ func NewCLI() *cobra.Command {
 		},
 	}
 
+	runnerCmd := &cobra.Command{
+		Use:    "runner",
+		Short:  llama.PrintSystemInfo(),
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runner.Execute(os.Args[1:])
+		},
+		FParseErrWhitelist: cobra.FParseErrWhitelist{UnknownFlags: true},
+	}
+	runnerCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		_ = runner.Execute(args[1:])
+	})
+
 	envVars := envconfig.AsMap()
 
 	envs := []envconfig.EnvVar{envVars["OLLAMA_HOST"]}
@@ -1515,6 +1386,7 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_SCHED_SPREAD"],
 				envVars["OLLAMA_TMPDIR"],
 				envVars["OLLAMA_FLASH_ATTENTION"],
+				envVars["OLLAMA_KV_CACHE_TYPE"],
 				envVars["OLLAMA_LLM_LIBRARY"],
 				envVars["OLLAMA_GPU_OVERHEAD"],
 				envVars["OLLAMA_LOAD_TIMEOUT"],
@@ -1537,6 +1409,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		completionCmd,
+		runnerCmd,
 	)
 
 	return rootCmd

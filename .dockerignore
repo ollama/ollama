@@ -3,9 +3,9 @@ ollama
 app
 macapp
 dist
-llm/llama.cpp
+build
 .env
 .cache
 test_data
-llm/build
-llama/build
+.git
+

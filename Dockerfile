@@ -1,250 +1,128 @@
-ARG GOLANG_VERSION=1.22.5
-ARG CMAKE_VERSION=3.22.1
-ARG CUDA_VERSION_11=11.3.1
-ARG CUDA_V11_ARCHITECTURES="50;52;53;60;61;62;70;72;75;80;86"
-ARG CUDA_VERSION_12=12.4.0
-ARG CUDA_V12_ARCHITECTURES="60;61;62;70;72;75;80;86;87;89;90;90a"
-ARG ROCM_VERSION=6.1.2
+# vim: filetype=dockerfile
 
-# Copy the minimal context we need to run the generate scripts
-FROM scratch AS llm-code
-COPY .git .git
-COPY .gitmodules .gitmodules
-COPY llm llm
+ARG FLAVOR=${TARGETARCH}
 
-FROM --platform=linux/amd64 nvidia/cuda:$CUDA_VERSION_11-devel-centos7 AS cuda-11-build-amd64
-ARG CMAKE_VERSION
-COPY ./scripts/rh_linux_deps.sh /
-RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
-ENV PATH=/opt/rh/devtoolset-10/root/usr/bin:$PATH
-COPY --from=llm-code / /go/src/github.com/ollama/ollama/
-WORKDIR /go/src/github.com/ollama/ollama/llm/generate
-ARG CGO_CFLAGS
-ARG CUDA_V11_ARCHITECTURES
-ENV GOARCH=amd64
+ARG ROCMVERSION=6.1.2
+ARG JETPACK5VERSION=r35.4.1
+ARG JETPACK6VERSION=r36.2.0
+ARG CMAKEVERSION=3.31.2
+
+FROM --platform=linux/amd64 rocm/dev-centos-7:${ROCMVERSION}-complete AS base-amd64
+RUN sed -i -e 's/mirror.centos.org/vault.centos.org/g' -e 's/^#.*baseurl=http/baseurl=http/g' -e 's/^mirrorlist=http/#mirrorlist=http/g' /etc/yum.repos.d/*.repo \
+    && yum install -y yum-utils devtoolset-10-gcc devtoolset-10-gcc-c++ \
+    && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-rhel7.repo \
+    && curl -s -L https://github.com/ccache/ccache/releases/download/v4.10.2/ccache-4.10.2-linux-x86_64.tar.xz | tar -Jx -C /usr/local/bin --strip-components 1
+ENV PATH=/opt/rh/devtoolset-10/root/usr/bin:/opt/rh/devtoolset-11/root/usr/bin:$PATH
+
+FROM --platform=linux/arm64 rockylinux:8 AS base-arm64
+# install epel-release for ccache
+RUN yum install -y yum-utils epel-release \
+    && yum install -y clang ccache \
+    && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/sbsa/cuda-rhel8.repo
+ENV CC=clang CXX=clang++
+
+FROM base-${TARGETARCH} AS base
+ARG CMAKEVERSION
+RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
+COPY CMakeLists.txt CMakePresets.json .
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+ENV LDFLAGS=-s
+
+FROM base AS cpu
+# amd64 uses gcc which requires devtoolset-11 for AVX extensions while arm64 uses clang
+RUN if [ "$(uname -m)" = "x86_64" ]; then yum install -y devtoolset-11-gcc devtoolset-11-gcc-c++; fi
+ENV PATH=/opt/rh/devtoolset-11/root/usr/bin:$PATH
 RUN --mount=type=cache,target=/root/.ccache \
-    OLLAMA_SKIP_STATIC_GENERATE=1 \
-    OLLAMA_SKIP_CPU_GENERATE=1 \
-    CMAKE_CUDA_ARCHITECTURES="${CUDA_V11_ARCHITECTURES}" \
-    CUDA_VARIANT="_v11" \
-    bash gen_linux.sh
+    cmake --preset 'CPU' \
+        && cmake --build --parallel --preset 'CPU' \
+        && cmake --install build --component CPU --strip --parallel 8
 
-FROM --platform=linux/amd64 nvidia/cuda:$CUDA_VERSION_12-devel-centos7 AS cuda-12-build-amd64
-ARG CMAKE_VERSION
-COPY ./scripts/rh_linux_deps.sh /
-RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
-ENV PATH=/opt/rh/devtoolset-10/root/usr/bin:$PATH
-COPY --from=llm-code / /go/src/github.com/ollama/ollama/
-WORKDIR /go/src/github.com/ollama/ollama/llm/generate
-ARG CGO_CFLAGS
-ARG CUDA_V12_ARCHITECTURES
-ENV GOARCH=amd64
+FROM base AS cuda-11
+ARG CUDA11VERSION=11.3
+RUN yum install -y cuda-toolkit-${CUDA11VERSION//./-}
+ENV PATH=/usr/local/cuda-11/bin:$PATH
 RUN --mount=type=cache,target=/root/.ccache \
-    OLLAMA_SKIP_STATIC_GENERATE=1 \
-    OLLAMA_SKIP_CPU_GENERATE=1 \
-    CMAKE_CUDA_ARCHITECTURES="${CUDA_V12_ARCHITECTURES}" \
-    CUDA_VARIANT="_v12" \
-    OLLAMA_CUSTOM_CUDA_DEFS="-DGGML_CUDA_USE_GRAPHS=on" \
-    bash gen_linux.sh
+    cmake --preset 'CUDA 11' \
+        && cmake --build --parallel --preset 'CUDA 11' \
+        && cmake --install build --component CUDA --strip --parallel 8
 
-FROM --platform=linux/arm64 nvidia/cuda:$CUDA_VERSION_11-devel-rockylinux8 AS cuda-11-build-runner-arm64
-ARG CMAKE_VERSION
-COPY ./scripts/rh_linux_deps.sh /
-RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
-ENV PATH=/opt/rh/gcc-toolset-10/root/usr/bin:$PATH
-COPY --from=llm-code / /go/src/github.com/ollama/ollama/
-WORKDIR /go/src/github.com/ollama/ollama/llm/generate
-ARG CGO_CFLAGS
-ARG CUDA_V11_ARCHITECTURES
-ENV GOARCH=arm64
-RUN OLLAMA_SKIP_STATIC_GENERATE=1 \
-    OLLAMA_SKIP_CPU_GENERATE=1 \
-    CMAKE_CUDA_ARCHITECTURES="${CUDA_V11_ARCHITECTURES}" \
-    CUDA_VARIANT="_v11" \
-    bash gen_linux.sh
-
-FROM --platform=linux/arm64 nvidia/cuda:$CUDA_VERSION_12-devel-rockylinux8 AS cuda-12-build-runner-arm64
-ARG CMAKE_VERSION
-COPY ./scripts/rh_linux_deps.sh /
-RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
-ENV PATH=/opt/rh/gcc-toolset-10/root/usr/bin:$PATH
-COPY --from=llm-code / /go/src/github.com/ollama/ollama/
-WORKDIR /go/src/github.com/ollama/ollama/llm/generate
-ARG CGO_CFLAGS
-ARG CUDA_V12_ARCHITECTURES
-ENV GOARCH=arm64
+FROM base AS cuda-12
+ARG CUDA12VERSION=12.4
+RUN yum install -y cuda-toolkit-${CUDA12VERSION//./-}
+ENV PATH=/usr/local/cuda-12/bin:$PATH
 RUN --mount=type=cache,target=/root/.ccache \
-    OLLAMA_SKIP_STATIC_GENERATE=1 \
-    OLLAMA_SKIP_CPU_GENERATE=1 \
-    CMAKE_CUDA_ARCHITECTURES="${CUDA_V12_ARCHITECTURES}" \
-    CUDA_VARIANT="_v12" \
-    OLLAMA_CUSTOM_CUDA_DEFS="-DGGML_CUDA_USE_GRAPHS=on" \
-    bash gen_linux.sh
+    cmake --preset 'CUDA 12' \
+        && cmake --build --parallel --preset 'CUDA 12' \
+        && cmake --install build --component CUDA --strip --parallel 8
 
-
-FROM --platform=linux/amd64 rocm/dev-centos-7:${ROCM_VERSION}-complete AS rocm-build-amd64
-ARG CMAKE_VERSION
-COPY ./scripts/rh_linux_deps.sh /
-RUN CMAKE_VERSION=${CMAKE_VERSION} sh /rh_linux_deps.sh
-ENV PATH=/opt/rh/devtoolset-10/root/usr/bin:$PATH
-ENV LIBRARY_PATH=/opt/amdgpu/lib64
-COPY --from=llm-code / /go/src/github.com/ollama/ollama/
-WORKDIR /go/src/github.com/ollama/ollama/llm/generate
-ARG CGO_CFLAGS
-ARG AMDGPU_TARGETS
-ENV GOARCH=amd64
+FROM base AS rocm-6
 RUN --mount=type=cache,target=/root/.ccache \
-    OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_SKIP_CPU_GENERATE=1 bash gen_linux.sh
-RUN mkdir -p ../../dist/linux-amd64-rocm/lib/ollama && \
-    (cd /opt/rocm/lib && tar cf - rocblas/library) | (cd ../../dist/linux-amd64-rocm/lib/ollama && tar xf - )
+    cmake --preset 'ROCm 6' \
+        && cmake --build --parallel --preset 'ROCm 6' \
+        && cmake --install build --component HIP --strip --parallel 8
 
-FROM --platform=linux/amd64 centos:7 AS cpu-builder-amd64
-ARG CMAKE_VERSION
-ARG GOLANG_VERSION
-COPY ./scripts/rh_linux_deps.sh /
-RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
-ENV PATH=/opt/rh/devtoolset-10/root/usr/bin:$PATH
-COPY --from=llm-code / /go/src/github.com/ollama/ollama/
-ARG OLLAMA_CUSTOM_CPU_DEFS
-ARG CGO_CFLAGS
-ENV GOARCH=amd64
-WORKDIR /go/src/github.com/ollama/ollama/llm/generate
-
-FROM --platform=linux/amd64 cpu-builder-amd64 AS cpu-build-amd64
+FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK5VERSION} AS jetpack-5
+ARG CMAKEVERSION
+RUN apt-get update && apt-get install -y curl ccache \
+    && curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
+COPY CMakeLists.txt CMakePresets.json .
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 RUN --mount=type=cache,target=/root/.ccache \
-    OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu" bash gen_linux.sh
-FROM --platform=linux/amd64 cpu-builder-amd64 AS cpu_avx-build-amd64
+    cmake --preset 'JetPack 5' \
+        && cmake --build --parallel --preset 'JetPack 5' \
+        && cmake --install build --component CUDA --strip --parallel 8
+
+FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK6VERSION} AS jetpack-6
+ARG CMAKEVERSION
+RUN apt-get update && apt-get install -y curl ccache \
+    && curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
+COPY CMakeLists.txt CMakePresets.json .
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 RUN --mount=type=cache,target=/root/.ccache \
-    OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu_avx" bash gen_linux.sh
-FROM --platform=linux/amd64 cpu-builder-amd64 AS cpu_avx2-build-amd64
-RUN --mount=type=cache,target=/root/.ccache \
-    OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu_avx2" bash gen_linux.sh
+    cmake --preset 'JetPack 6' \
+        && cmake --build --parallel --preset 'JetPack 6' \
+        && cmake --install build --component CUDA --strip --parallel 8
 
-FROM --platform=linux/arm64 rockylinux:8 AS cpu-builder-arm64
-ARG CMAKE_VERSION
-ARG GOLANG_VERSION
-COPY ./scripts/rh_linux_deps.sh /
-RUN CMAKE_VERSION=${CMAKE_VERSION} GOLANG_VERSION=${GOLANG_VERSION} sh /rh_linux_deps.sh
-ENV PATH=/opt/rh/gcc-toolset-10/root/usr/bin:$PATH
-COPY --from=llm-code / /go/src/github.com/ollama/ollama/
-ARG OLLAMA_CUSTOM_CPU_DEFS
-ARG CGO_CFLAGS
-ENV GOARCH=arm64
-WORKDIR /go/src/github.com/ollama/ollama/llm/generate
-
-FROM --platform=linux/arm64 cpu-builder-arm64 AS cpu-build-arm64
-RUN --mount=type=cache,target=/root/.ccache \
-    OLLAMA_SKIP_STATIC_GENERATE=1 OLLAMA_CPU_TARGET="cpu" bash gen_linux.sh
-
-
-# Intermediate stages used for ./scripts/build_linux.sh
-FROM --platform=linux/amd64 cpu-build-amd64 AS build-amd64
+FROM base AS build
+ARG GOVERSION=1.23.4
+RUN curl -fsSL https://golang.org/dl/go${GOVERSION}.linux-$(case $(uname -m) in x86_64) echo amd64 ;; aarch64) echo arm64 ;; esac).tar.gz | tar xz -C /usr/local
+ENV PATH=/usr/local/go/bin:$PATH
+WORKDIR /go/src/github.com/ollama/ollama
+COPY . .
+ARG GOFLAGS="'-ldflags=-w -s'"
 ENV CGO_ENABLED=1
-WORKDIR /go/src/github.com/ollama/ollama
-COPY . .
-COPY --from=cpu_avx-build-amd64 /go/src/github.com/ollama/ollama/build/ build/
-COPY --from=cpu_avx2-build-amd64 /go/src/github.com/ollama/ollama/build/ build/
-COPY --from=cuda-11-build-amd64 /go/src/github.com/ollama/ollama/dist/ dist/
-COPY --from=cuda-11-build-amd64 /go/src/github.com/ollama/ollama/build/ build/
-COPY --from=cuda-12-build-amd64 /go/src/github.com/ollama/ollama/dist/ dist/
-COPY --from=cuda-12-build-amd64 /go/src/github.com/ollama/ollama/build/ build/
-COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/dist/ dist/
-COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/build/ build/
-ARG GOFLAGS
-ARG CGO_CFLAGS
-RUN --mount=type=cache,target=/root/.ccache \
-    go build -trimpath -o dist/linux-amd64/bin/ollama .
-RUN cd dist/linux-$GOARCH && \
-    tar --exclude runners -cf - . | pigz --best > ../ollama-linux-$GOARCH.tgz
-RUN cd dist/linux-$GOARCH-rocm && \
-    tar -cf - . | pigz --best > ../ollama-linux-$GOARCH-rocm.tgz
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    go build -trimpath -buildmode=pie -o /bin/ollama .
 
-FROM --platform=linux/arm64 cpu-build-arm64 AS build-arm64
-ENV CGO_ENABLED=1
-ARG GOLANG_VERSION
-WORKDIR /go/src/github.com/ollama/ollama
-COPY . .
-COPY --from=cuda-11-build-runner-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
-COPY --from=cuda-11-build-runner-arm64 /go/src/github.com/ollama/ollama/build/ build/
-COPY --from=cuda-12-build-runner-arm64 /go/src/github.com/ollama/ollama/dist/ dist/
-COPY --from=cuda-12-build-runner-arm64 /go/src/github.com/ollama/ollama/build/ build/
-ARG GOFLAGS
-ARG CGO_CFLAGS
-RUN --mount=type=cache,target=/root/.ccache \
-    go build -trimpath -o dist/linux-arm64/bin/ollama .
-RUN cd dist/linux-$GOARCH && \
-    tar --exclude runners -cf - . | pigz --best > ../ollama-linux-$GOARCH.tgz
+FROM --platform=linux/amd64 scratch AS amd64
+COPY --from=cuda-11 dist/lib/ollama/cuda_v11 /lib/ollama/cuda_v11
+COPY --from=cuda-12 dist/lib/ollama/cuda_v12 /lib/ollama/cuda_v12
 
-FROM --platform=linux/amd64 scratch AS dist-amd64
-COPY --from=build-amd64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
-FROM --platform=linux/arm64 scratch AS dist-arm64
-COPY --from=build-arm64 /go/src/github.com/ollama/ollama/dist/ollama-linux-*.tgz /
-FROM dist-$TARGETARCH as dist
+FROM --platform=linux/arm64 scratch AS arm64
+COPY --from=cuda-11 dist/lib/ollama/cuda_v11 /lib/ollama/cuda_v11
+COPY --from=cuda-12 dist/lib/ollama/cuda_v12 /lib/ollama/cuda_v12
+COPY --from=jetpack-5 dist/lib/ollama/cuda_v11 lib/ollama/cuda_jetpack5
+COPY --from=jetpack-6 dist/lib/ollama/cuda_v12 lib/ollama/cuda_jetpack6
 
+FROM --platform=linux/arm64 scratch AS rocm
+COPY --from=rocm-6 dist/lib/ollama/rocm /lib/ollama/rocm
 
-# Optimized container images do not cary nested payloads
-FROM --platform=linux/amd64 cpu-builder-amd64 AS container-build-amd64
-WORKDIR /go/src/github.com/ollama/ollama
-COPY . .
-ARG GOFLAGS
-ARG CGO_CFLAGS
-RUN --mount=type=cache,target=/root/.ccache \
-    go build -trimpath -o dist/linux-amd64/bin/ollama .
+FROM ${FLAVOR} AS archive
+COPY --from=cpu dist/lib/ollama /lib/ollama
+COPY --from=build /bin/ollama /bin/ollama
 
-FROM --platform=linux/arm64 cpu-builder-arm64 AS container-build-arm64
-WORKDIR /go/src/github.com/ollama/ollama
-COPY . .
-ARG GOFLAGS
-ARG CGO_CFLAGS
-RUN --mount=type=cache,target=/root/.ccache \
-    go build -trimpath -o dist/linux-arm64/bin/ollama .
-
-FROM --platform=linux/amd64 ubuntu:22.04 AS runtime-amd64
-RUN apt-get update && \
-    apt-get install -y ca-certificates && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-COPY --from=container-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/bin/ /bin/
-COPY --from=cpu-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
-COPY --from=cpu_avx-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
-COPY --from=cpu_avx2-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
-COPY --from=cuda-11-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
-COPY --from=cuda-12-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
-
-FROM --platform=linux/arm64 ubuntu:22.04 AS runtime-arm64
-RUN apt-get update && \
-    apt-get install -y ca-certificates && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-COPY --from=container-build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/bin/ /bin/
-COPY --from=cpu-build-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
-COPY --from=cuda-11-build-runner-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
-COPY --from=cuda-12-build-runner-arm64 /go/src/github.com/ollama/ollama/dist/linux-arm64/lib/ /lib/
-
-# ROCm libraries larger so we keep it distinct from the CPU/CUDA image
-FROM --platform=linux/amd64 ubuntu:22.04 AS runtime-rocm
-# Frontload the rocm libraries which are large, and rarely change to increase chance of a common layer
-# across releases
-COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64-rocm/lib/ /lib/
-RUN apt-get update && \
-    apt-get install -y ca-certificates && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-COPY --from=container-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/bin/ /bin/
-COPY --from=cpu-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
-COPY --from=cpu_avx-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
-COPY --from=cpu_avx2-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
-COPY --from=rocm-build-amd64 /go/src/github.com/ollama/ollama/dist/linux-amd64/lib/ /lib/
-EXPOSE 11434
-ENV OLLAMA_HOST=0.0.0.0
-
-ENTRYPOINT ["/bin/ollama"]
-CMD ["serve"]
-
-FROM runtime-$TARGETARCH
-EXPOSE 11434
-ENV OLLAMA_HOST=0.0.0.0
+FROM ubuntu:20.04
+RUN apt-get update \
+    && apt-get install -y ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=archive /bin /usr/bin
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+COPY --from=archive /lib/ollama /usr/lib/ollama
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
-
+ENV OLLAMA_HOST=0.0.0.0:11434
+EXPOSE 11434
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]

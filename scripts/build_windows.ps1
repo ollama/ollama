@@ -75,72 +75,66 @@ function checkEnv() {
     } else {
         write-host "Code signing disabled - please set KEY_CONTAINERS to sign and copy ollama_inc.crt to the top of the source tree"
     }
-
 }
 
 
 function buildOllama() {
     if ($null -eq ${env:OLLAMA_SKIP_GENERATE}) {
-        write-host "Building ollama runners"
         Remove-Item -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}"
-        if ($null -eq ${env:OLLAMA_NEW_RUNNERS}) {
-            # Start by skipping CUDA to build everything else
-            write-host "Building ollama runners"
-            powershell -Command { $env:OLLAMA_SKIP_CUDA_GENERATE="1"; & go generate ./... }
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}    
+        New-Item "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\" -ItemType Directory -ea 0
 
-            # Then skip everyhting else and build all the CUDA variants
-            foreach ($env:CUDA_LIB_DIR in $script:CUDA_DIRS) {
-                write-host "Building CUDA ${env:CUDA_LIB_DIR} runner"
 
-                if ($env:CUDA_LIB_DIR.Contains("v12")) {
-                    powershell -Command {
-                        $env:OLLAMA_SKIP_CUDA_GENERATE=""
-                        $env:OLLAMA_SKIP_STATIC_GENERATE="1"
-                        $env:OLLAMA_SKIP_CPU_GENERATE="1"
-                        $env:OLLAMA_SKIP_ONEAPI_GENERATE="1"
-                        $env:OLLAMA_SKIP_ROCM_GENERATE="1"
-                        $env:CMAKE_CUDA_ARCHITECTURES="60;61;62;70;72;75;80;86;87;89;90;90a"
-                        $env:OLLAMA_CUSTOM_CUDA_DEFS="-DGGML_CUDA_USE_GRAPHS=on"
-                        $env:CUDA_PATH=split-path -path $env:CUDA_LIB_DIR -parent
-                        $env:PATH="$envs:CUDA_LIB_DIR;$env:PATH"
-                        & go generate ./...
-                    }
-                } else {
-                    powershell -Command {
-                        $env:OLLAMA_SKIP_CUDA_GENERATE=""
-                        $env:OLLAMA_SKIP_STATIC_GENERATE="1"
-                        $env:OLLAMA_SKIP_CPU_GENERATE="1"
-                        $env:OLLAMA_SKIP_ONEAPI_GENERATE="1"
-                        $env:OLLAMA_SKIP_ROCM_GENERATE="1"
-                        $env:CMAKE_CUDA_ARCHITECTURES="50;52;53;60;61;62;70;72;75;80;86"
-                        $env:OLLAMA_CUSTOM_CUDA_DEFS=""
-                        $env:CUDA_PATH=split-path -path $env:CUDA_LIB_DIR -parent
-                        $env:PATH="$envs:CUDA_LIB_DIR;$env:PATH"
-                        & go generate ./...
-                    }
-                }
-                if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            }
-        } else {
-            & make -C llama -j 12
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        }
+        # Default first, then conditionall ROCm and cuda v11
+        write-host "Building Default native backend libraries"
+         $env:CMAKE_GENERATOR="ninja"
+        & cmake --preset Default
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        & cmake --build --preset Default -j 12
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        & cmake --install build -j 12
         
-        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}    
+        # TODO - add steps for v11 and ROCm
+        #
+        # if ("$script:CUDA_DIRS".Contains("v11") -and "$script:CUDA_DIRS".Contains("v12")) {
+        #     # We assume the default is v12, so override for v11
+        #     $origCUDA_PATH=$env:CUDA_PATH
+        #     $hashEnv = @{}
+        #     Get-ChildItem env: | foreach { $hashEnv[$_.Name] = $_.Value }
+        #     $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V11")) { $v11="$_" }}
+        #     write-host "$v11"
+        #     # $env:CUDA_PATH=$hashEnv[$v11]
+        #     # $env:CUDACXX=$hashEnv[$v11]+"\bin\nvcc.exe"
+        #     $env:CUDAToolkit_ROOT=$hashEnv[$v11]
+        #     # ls env:
+        #     write-host "Building CUDA v11 backend libraries"
+        #     & cmake --preset "CUDA 11"
+        #     $env:CUDA_PATH=$origCUDA_PATH
+        #     exit(1)
+        #     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        #     # & cmake --build --preset "CUDA 11" -j 12
+        #     # if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        # }
+
+        # if ($env:HIP_PATH) {
+        #     write-host "Building ROCm backend libraries"
+        #     $env:HIPCXX="${env:HIP_PATH}\bin\clang++.exe"
+        #     $env:HIP_PLATFORM="amd"
+        #     $env:CMAKE_PREFIX_PATH="${env:HIP_PATH}"
+        #     & cmake --preset "ROCm"
+        #     $env:HIPCXX=""
+        #     $env:HIP_PLATFORM=""
+        #     $env:CMAKE_PREFIX_PATH=""
+        #     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        #     & cmake --build --preset "ROCm" -j 12
+        #     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        # }
     } else {
         write-host "Skipping generate step with OLLAMA_SKIP_GENERATE set"
     }
     write-host "Building ollama CLI"
     & go build -trimpath -ldflags "-s -w -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    if ("${env:KEY_CONTAINER}") {
-        & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
-            /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} ollama.exe
-        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    }
-    New-Item -ItemType Directory -Path .\dist\windows-${script:TARGET_ARCH}\ -Force
-    cp .\ollama.exe .\dist\windows-${script:TARGET_ARCH}\
+    cp .\ollama.exe "${script:DIST_DIR}\"
 }
 
 function buildApp() {
@@ -149,11 +143,6 @@ function buildApp() {
     & windres -l 0 -o ollama.syso ollama.rc
     & go build -trimpath -ldflags "-s -w -H windowsgui -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" -o "${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}-app.exe" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    if ("${env:KEY_CONTAINER}") {
-        & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
-            /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} "${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}-app.exe"
-        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    }
 }
 
 function gatherDependencies() {
@@ -172,9 +161,12 @@ function gatherDependencies() {
     } else {
         $depArch=$script:TARGET_ARCH
     }
-    if ($depArch -eq "amd64") {
+    if ($depArch -eq "x64") {
+        write-host "cp ${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\msvcp140*.dll ${script:DIST_DIR}\lib\ollama\"
         cp "${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\msvcp140*.dll" "${script:DIST_DIR}\lib\ollama\"
+        write-host "cp ${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\vcruntime140.dll ${script:DIST_DIR}\lib\ollama\"
         cp "${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\vcruntime140.dll" "${script:DIST_DIR}\lib\ollama\"
+        write-host "cp ${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\vcruntime140_1.dll ${script:DIST_DIR}\lib\ollama\"
         cp "${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\vcruntime140_1.dll" "${script:DIST_DIR}\lib\ollama\"
         $llvmCrtDir="$env:VCToolsRedistDir\..\..\..\Tools\Llvm\${depArch}\bin"
         foreach ($part in $("runtime", "stdio", "filesystem", "math", "convert", "heap", "string", "time", "locale", "environment")) {
@@ -186,16 +178,19 @@ function gatherDependencies() {
         copy-item -path "${env:VCToolsRedistDir}\vc_redist.arm64.exe" -destination "${script:DIST_DIR}" -verbose
     }
 
-
     cp "${script:SRC_DIR}\app\ollama_welcome.ps1" "${script:SRC_DIR}\dist\"
+}
+
+function sign() {
     if ("${env:KEY_CONTAINER}") {
-        write-host "about to sign"
-        foreach ($file in (get-childitem "${script:DIST_DIR}\lib\ollama\cu*.dll") + @("${script:SRC_DIR}\dist\ollama_welcome.ps1")){
-            write-host "signing $file"
-            & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
-                /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} $file
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        }
+        write-host "Signing Ollama executables, scripts and libraries"
+        & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
+            /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} `
+            $(get-childitem -path "${script:SRC_DIR}\dist" -r -include @('ollama_welcome.ps1')) `
+            $(get-childitem -path "${script:SRC_DIR}\dist\windows-*" -r -include @('*.exe', '*.dll'))
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    } else {
+        write-host "Signing not enabled"
     }
 }
 
@@ -216,8 +211,15 @@ function buildInstaller() {
 }
 
 function distZip() {
-    write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-${script:TARGET_ARCH}.zip"
-    Compress-Archive -Path "${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-${script:TARGET_ARCH}.zip" -Force
+    if (Test-Path -Path "${script:SRC_DIR}\dist\windows-amd64") {
+        write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-amd64.zip"
+        Compress-Archive -Path "${script:SRC_DIR}\dist\windows-amd64\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-amd64.zip" -Force
+    }
+
+    if (Test-Path -Path "${script:SRC_DIR}\dist\windows-arm64") {
+        write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-arm64.zip"
+        Compress-Archive -Path "${script:SRC_DIR}\dist\windows-arm64\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-arm64.zip" -Force
+    }
 }
 
 checkEnv
@@ -226,6 +228,7 @@ try {
         buildOllama
         buildApp
         gatherDependencies
+        sign
         buildInstaller
         distZip
     } else {
