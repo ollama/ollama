@@ -1159,44 +1159,39 @@ func (s *Server) GenerateRoutes() http.Handler {
 		allowedHostsMiddleware(s.addr),
 	)
 
-	// Model cache management endpoints
+	// General
+	r.HEAD("/", func(c *gin.Context) { c.String(http.StatusOK, "Ollama is running") })
+	r.GET("/", func(c *gin.Context) { c.String(http.StatusOK, "Ollama is running") })
+	r.HEAD("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
+	r.GET("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
+
+	// Local model cache management
 	r.POST("/api/pull", s.PullHandler)
 	r.POST("/api/push", s.PushHandler)
 	r.DELETE("/api/delete", s.DeleteHandler)
-
-	// Diagnostic endpoints
+	r.HEAD("/api/tags", s.ListHandler)
+	r.GET("/api/tags", s.ListHandler)
 	r.POST("/api/show", s.ShowHandler)
-	r.GET("/api/ps", s.PsHandler)
 
-	// Model creation endpoints
+	// Create
 	r.POST("/api/create", s.CreateHandler)
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
 	r.POST("/api/copy", s.CopyHandler)
 
-	// Model inference endpoints
+	// Inference
+	r.GET("/api/ps", s.PsHandler)
 	r.POST("/api/generate", s.GenerateHandler)
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
 
-	// OpenAI compatibility endpoints
+	// Inference (OpenAI compatibility)
 	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)
 	r.POST("/v1/completions", openai.CompletionsMiddleware(), s.GenerateHandler)
 	r.POST("/v1/embeddings", openai.EmbeddingsMiddleware(), s.EmbedHandler)
 	r.GET("/v1/models", openai.ListMiddleware(), s.ListHandler)
 	r.GET("/v1/models/:model", openai.RetrieveMiddleware(), s.ShowHandler)
-
-	for _, method := range []string{http.MethodGet, http.MethodHead} {
-		r.Handle(method, "/", func(c *gin.Context) {
-			c.String(http.StatusOK, "Ollama is running")
-		})
-
-		r.Handle(method, "/api/tags", s.ListHandler)
-		r.Handle(method, "/api/version", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"version": version.Version})
-		})
-	}
 
 	return r
 }
