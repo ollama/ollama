@@ -535,6 +535,10 @@ func (c Context) newTensor(dtype ml.DType, shape []int) ml.Tensor {
 		cdtype = C.GGML_TYPE_F32
 	case ml.DTypeF16:
 		cdtype = C.GGML_TYPE_F16
+	case ml.DTypeQ80:
+		cdtype = C.GGML_TYPE_Q8_0
+	case ml.DTypeQ40:
+		cdtype = C.GGML_TYPE_Q4_0
 	case ml.DTypeI32:
 		cdtype = C.GGML_TYPE_I32
 	default:
@@ -680,6 +684,10 @@ func (t *Tensor) DType() ml.DType {
 		return ml.DTypeF32
 	case C.GGML_TYPE_F16:
 		return ml.DTypeF16
+	case C.GGML_TYPE_Q8_0:
+		return ml.DTypeQ80
+	case C.GGML_TYPE_Q4_0:
+		return ml.DTypeQ40
 	case C.GGML_TYPE_I32:
 		return ml.DTypeI32
 	default:
