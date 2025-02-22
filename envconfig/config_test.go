@@ -134,7 +134,7 @@ func TestOrigins(t *testing.T) {
 		t.Run(tt.value, func(t *testing.T) {
 			t.Setenv("OLLAMA_ORIGINS", tt.value)
 
-			if diff := cmp.Diff(Origins(), tt.expect); diff != "" {
+			if diff := cmp.Diff(AllowedOrigins(), tt.expect); diff != "" {
 				t.Errorf("%s: mismatch (-want +got):\n%s", tt.value, diff)
 			}
 		})
