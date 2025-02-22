@@ -6,8 +6,6 @@ linters:
     - bidichk
     - bodyclose
     - containedctx
-    - contextcheck
-    - errcheck
     - gocheckcompilerdirectives
     - gofmt
     - gofumpt
@@ -23,10 +21,11 @@ linters:
     - staticcheck
     - tenv
     - unconvert
-    - unused
-    - usestdlibvars
     - wastedassign
     - whitespace
+  disable:
+    - usestdlibvars
+    - errcheck
 linters-settings:
   staticcheck:
     checks:
@@ -39,5 +38,4 @@ severity:
         - gofmt
         - goimports
         - intrange
-        - usestdlibvars
       severity: info

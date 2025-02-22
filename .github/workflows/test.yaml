@@ -147,6 +147,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       CGO_ENABLED: '1'
+      GOEXPERIMENT: 'synctest'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
