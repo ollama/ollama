@@ -81,15 +81,8 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 	v := sa.Value.Forward(ctx, hiddenState)
 	v = v.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 
-	cache.Put(ctx, k, v)
-	k, v, mask := cache.Get(ctx)
-
-	q = q.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
-	k = k.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
-	v = v.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
-
 	scaleFactor := 1.0 / math.Sqrt(float64(headDim))
-	kqv := nn.Attention(ctx, q, k, v, mask, scaleFactor)
+	kqv := nn.Attention(ctx, q, k, v, scaleFactor, cache)
 	kqv = kqv.Reshape(ctx, opts.hiddenSize, batchSize)
 
 	return sa.Output.Forward(ctx, kqv)
