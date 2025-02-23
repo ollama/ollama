@@ -29,6 +29,17 @@ type Cache interface {
 	// cache implementation used.
 	Put(ctx ml.Context, key, value ml.Tensor)
 
+	// SetConfig controls optimizations (mostly backend-specific) that may transform
+	// the output of the cache to work better with specific kernels. If not called,
+	// the backend settings will be used. This works well when calling Attention.
+	//
+	// The config can be overridden by models, especially if they require vanilla
+	// output when implementing their own version of attention. To do this, pass
+	// an empty ml.CacheConfig.
+	//
+	// Most models will not need to use this.
+	SetConfig(ml.CacheConfig)
+
 	// ** cache management **
 
 	// Init sets up runtime parameters

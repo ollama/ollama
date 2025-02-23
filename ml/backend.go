@@ -27,6 +27,27 @@ type Backend interface {
 	SystemInfo() string
 }
 
+// BackendCacheConfig should be implemented by backends that need special output
+// from the cache to meet specific requirements. It is frequently implemented in
+// conjunction with ScaledDotProductAttention.
+type BackendCacheConfig interface {
+	CacheConfig() CacheConfig
+}
+
+// CacheConfig controls optimizations (mostly backend-specific) that may transform
+// the output the cache to work better with specific kernels.
+type CacheConfig struct {
+	// CachePadding specifies the multiple for the number of tokens of cache history
+	// that will be returned from cache Get for k, v and mask. The capacity of the
+	// cache itself will also be increased to a multiple of this size if needed.
+	CachePadding int
+
+	// PermutedV performs Permute(ctx, 1, 2, 0, 3) on v tensors stored via Put
+	// and return the permuted version via Get. This uses the cache copy operation
+	// to avoid a Contiguous call on the permuted tensor.
+	PermutedV bool
+}
+
 // BackendParams controls how the backend loads and executes models
 type BackendParams struct {
 	// NumThreads sets the number of threads to use if running on the CPU
@@ -115,6 +136,10 @@ type Tensor interface {
 // ScaledDotProductAttention implements a fused attention
 // operation equivalent to following code on a tensor named
 // query:
+//
+// query = query.Permute(ctx, 0, 2, 1, 3)
+// key = key.Permute(ctx, 0, 2, 1, 3)
+// value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
 //
 // kq := key.MulmatFullPrec(ctx, query)
 //

@@ -247,6 +247,10 @@ func (b *Backend) NewContext() ml.Context {
 	}
 }
 
+func (b *Backend) CacheConfig() ml.CacheConfig {
+	return ml.CacheConfig{CachePadding: 32, PermutedV: true}
+}
+
 type Context struct {
 	b       *Backend
 	ctx     *C.struct_ggml_context
@@ -661,7 +665,10 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask ml.T
 		kqMask = mask.(*Tensor).t
 	}
 
-	kq := key.MulmatFullPrec(ctx, t)
+	query := t.Permute(ctx, 0, 2, 1, 3)
+	key = key.Permute(ctx, 0, 2, 1, 3)
+
+	kq := key.MulmatFullPrec(ctx, query)
 	kq = &Tensor{
 		t: C.ggml_soft_max_ext(ctx.(*Context).ctx, kq.(*Tensor).t, kqMask, C.float(scale), 0),
 	}
