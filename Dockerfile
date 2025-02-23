@@ -4,20 +4,22 @@ ARG FLAVOR=${TARGETARCH}
 
 ARG ROCMVERSION=6.3.3
 ARG JETPACK5VERSION=r35.4.1
-ARG JETPACK6VERSION=r36.2.0
+ARG JETPACK6VERSION=r36.4.0
 ARG CMAKEVERSION=3.31.2
 
+# CUDA v11 requires gcc v10.  v10.3 has regressions, so the rockylinux 8.5 AppStream has the latest compatible version
 FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCMVERSION}-complete AS base-amd64
-RUN sed -i -e 's/mirror.centos.org/vault.centos.org/g' -e 's/^#.*baseurl=http/baseurl=http/g' -e 's/^mirrorlist=http/#mirrorlist=http/g' /etc/yum.repos.d/*.repo \
-    && yum install -y yum-utils gcc-toolset-11-gcc gcc-toolset-11-gcc-c++ \
-    && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo \
-    && curl -s -L https://github.com/ccache/ccache/releases/download/v4.10.2/ccache-4.10.2-linux-x86_64.tar.xz | tar -Jx -C /usr/local/bin --strip-components 1
-ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
+RUN yum install -y yum-utils \
+    && yum-config-manager --add-repo https://dl.rockylinux.org/vault/rocky/8.5/AppStream/\$basearch/os/ \
+    && rpm --import https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-8 \
+    && dnf install -y yum-utils ccache gcc-toolset-10-gcc-10.2.1-8.2.el8 gcc-toolset-10-gcc-c++-10.2.1-8.2.el8 \
+    && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
+ENV PATH=/opt/rh/gcc-toolset-10/root/usr/bin:$PATH
 
-FROM --platform=linux/arm64 rockylinux:8 AS base-arm64
+FROM --platform=linux/arm64 almalinux:8 AS base-arm64
 # install epel-release for ccache
 RUN yum install -y yum-utils epel-release \
-    && yum install -y clang ccache \
+    && dnf install -y clang ccache \
     && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/sbsa/cuda-rhel8.repo
 ENV CC=clang CXX=clang++
 
@@ -29,7 +31,8 @@ COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 ENV LDFLAGS=-s
 
 FROM base AS cpu
-# amd64 uses gcc which requires gcc-toolset-11 for AVX extensions while arm64 uses clang
+RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++
+ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'CPU' \
         && cmake --build --parallel --preset 'CPU' \
@@ -37,7 +40,7 @@ RUN --mount=type=cache,target=/root/.ccache \
 
 FROM base AS cuda-11
 ARG CUDA11VERSION=11.3
-RUN yum install -y cuda-toolkit-${CUDA11VERSION//./-}
+RUN dnf install -y cuda-toolkit-${CUDA11VERSION//./-}
 ENV PATH=/usr/local/cuda-11/bin:$PATH
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'CUDA 11' \
@@ -45,8 +48,8 @@ RUN --mount=type=cache,target=/root/.ccache \
         && cmake --install build --component CUDA --strip --parallel 8
 
 FROM base AS cuda-12
-ARG CUDA12VERSION=12.4
-RUN yum install -y cuda-toolkit-${CUDA12VERSION//./-}
+ARG CUDA12VERSION=12.8
+RUN dnf install -y cuda-toolkit-${CUDA12VERSION//./-}
 ENV PATH=/usr/local/cuda-12/bin:$PATH
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'CUDA 12' \
@@ -54,6 +57,7 @@ RUN --mount=type=cache,target=/root/.ccache \
         && cmake --install build --component CUDA --strip --parallel 8
 
 FROM base AS rocm-6
+ENV PATH=/opt/rocm/hcc/bin:/opt/rocm/hip/bin:/opt/rocm/bin:/opt/rocm/hcc/bin:$PATH
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'ROCm 6' \
         && cmake --build --parallel --preset 'ROCm 6' \
