@@ -73,6 +73,7 @@ func AllowedOrigins() (origins []string) {
 		"file://*",
 		"tauri://*",
 		"vscode-webview://*",
+		"vscode-file://*",
 	)
 
 	return origins

@@ -69,6 +69,7 @@ func TestOrigins(t *testing.T) {
 			"file://*",
 			"tauri://*",
 			"vscode-webview://*",
+			"vscode-file://*",
 		}},
 		{"http://10.0.0.1", []string{
 			"http://10.0.0.1",
@@ -88,6 +89,7 @@ func TestOrigins(t *testing.T) {
 			"file://*",
 			"tauri://*",
 			"vscode-webview://*",
+			"vscode-file://*",
 		}},
 		{"http://172.16.0.1,https://192.168.0.1", []string{
 			"http://172.16.0.1",
@@ -108,6 +110,7 @@ func TestOrigins(t *testing.T) {
 			"file://*",
 			"tauri://*",
 			"vscode-webview://*",
+			"vscode-file://*",
 		}},
 		{"http://totally.safe,http://definitely.legit", []string{
 			"http://totally.safe",
@@ -128,6 +131,7 @@ func TestOrigins(t *testing.T) {
 			"file://*",
 			"tauri://*",
 			"vscode-webview://*",
+			"vscode-file://*",
 		}},
 	}
 	for _, tt := range cases {
