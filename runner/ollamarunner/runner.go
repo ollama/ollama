@@ -51,13 +51,13 @@ type Sequence struct {
 	pendingInputs []input
 
 	// tokens that have been generated but not returned yet (e.g. for stop sequences)
-	pendingResponses []string
+	pendingResponses []common.CompletionResponse
 
 	// input cache being used by this sequence
 	cache *InputCacheSlot
 
 	// channel to send responses over
-	responses chan string
+	responses chan common.CompletionResponse
 
 	// channel to stop decoding (such as if the remote connection is closed)
 	quit chan bool
@@ -132,8 +132,8 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 		numPromptInputs:     len(inputs),
 		startProcessingTime: startTime,
 		numPredict:          params.numPredict,
-		pendingResponses:    make([]string, 0),
-		responses:           make(chan string, 100),
+		pendingResponses:    make([]common.CompletionResponse, 0),
+		responses:           make(chan common.CompletionResponse, 100),
 		quit:                make(chan bool, 1),
 		embedding:           make(chan []float32, 1),
 		samplers:            params.samplers,
@@ -250,29 +250,28 @@ func (s *Server) allNil() bool {
 }
 
 func flushPending(seq *Sequence) bool {
-	joined := strings.Join(seq.pendingResponses, "")
-	seq.pendingResponses = []string{}
+	pending := seq.pendingResponses
+	seq.pendingResponses = []common.CompletionResponse{}
 
-	// Check if there are any partial UTF-8 characters remaining.
-	// We already check and queue as we are generating but some may
-	// still make it here:
-	// - Sequence is ending, e.g. generation limit has been hit
-	// - Invalid characters in the middle of a string
-	// This is a stricter check to ensure we never output invalid Unicode.
-	for !utf8.ValidString(joined) {
-		joined = joined[:len(joined)-1]
-	}
+	for i, r := range pending {
+		if i == len(pending)-1 {
+			// Check and trim any trailing partial UTF-8 characters
+			content := r.Content
+			for !utf8.ValidString(content) {
+				content = content[:len(content)-1]
+			}
+			r.Content = content
+		}
 
-	if len(joined) == 0 {
-		return true
+		select {
+		case seq.responses <- r:
+			return true
+		case <-seq.quit:
+			return false
+		}
 	}
-
-	select {
-	case seq.responses <- joined:
-		return true
-	case <-seq.quit:
-		return false
-	}
+	// no pending responses to send
+	return true
 }
 
 func (s *Server) removeSequence(seqIndex int, reason string) {
@@ -459,8 +458,11 @@ func (s *Server) processBatch() error {
 
 		seq.inputs = []input{{token: token}}
 
-		seq.pendingResponses = append(seq.pendingResponses, piece)
-		sequence := strings.Join(seq.pendingResponses, "")
+		seq.pendingResponses = append(seq.pendingResponses, common.CompletionResponse{Content: piece})
+		sequence := ""
+		for _, r := range seq.pendingResponses {
+			sequence += r.Content
+		}
 
 		if ok, stop := common.FindStop(sequence, seq.stop); ok {
 			slog.Debug("hit stop token", "pending", seq.pendingResponses, "stop", stop)
@@ -541,28 +543,6 @@ type CompletionRequest struct {
 	CachePrompt bool        `json:"cache_prompt"`
 
 	Options
-}
-
-type Timings struct {
-	PredictedN  int     `json:"predicted_n"`
-	PredictedMS float64 `json:"predicted_ms"`
-	PromptN     int     `json:"prompt_n"`
-	PromptMS    float64 `json:"prompt_ms"`
-}
-
-type CompletionResponse struct {
-	Content string `json:"content"`
-	Stop    bool   `json:"stop"`
-
-	Model        string  `json:"model,omitempty"`
-	Prompt       string  `json:"prompt,omitempty"`
-	StoppedLimit bool    `json:"stopped_limit,omitempty"`
-	PredictedN   int     `json:"predicted_n,omitempty"`
-	PredictedMS  float64 `json:"predicted_ms,omitempty"`
-	PromptN      int     `json:"prompt_n,omitempty"`
-	PromptMS     float64 `json:"prompt_ms,omitempty"`
-
-	Timings Timings `json:"timings"`
 }
 
 func getSamplers(_ CompletionRequest) []sample.Sampler {
@@ -657,9 +637,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 			return
 		case content, ok := <-seq.responses:
 			if ok {
-				if err := json.NewEncoder(w).Encode(&CompletionResponse{
-					Content: content,
-				}); err != nil {
+				if err := json.NewEncoder(w).Encode(&content); err != nil {
 					http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 					close(seq.quit)
 					return
@@ -668,10 +646,10 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 				flusher.Flush()
 			} else {
 				// Send the final response
-				if err := json.NewEncoder(w).Encode(&CompletionResponse{
+				if err := json.NewEncoder(w).Encode(&common.CompletionResponse{
 					Stop:         true,
 					StoppedLimit: seq.doneReason == "limit",
-					Timings: Timings{
+					Timings: common.Timings{
 						PromptN:     seq.numPromptInputs,
 						PromptMS:    float64(seq.startGenerationTime.Sub(seq.startProcessingTime).Milliseconds()),
 						PredictedN:  seq.numPredicted,

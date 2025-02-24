@@ -1,6 +1,7 @@
 package common
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -8,44 +9,74 @@ import (
 func TestTruncateStop(t *testing.T) {
 	tests := []struct {
 		name          string
-		pieces        []string
+		pieces        []CompletionResponse
 		stop          string
-		expected      []string
+		expected      []CompletionResponse
 		expectedTrunc bool
 	}{
 		{
-			name:          "Single word",
-			pieces:        []string{"hello", "world"},
-			stop:          "world",
-			expected:      []string{"hello"},
+			name: "Single word",
+			pieces: []CompletionResponse{
+				{Content: "Hello"},
+				{Content: "world"},
+			},
+			stop: "world",
+			expected: []CompletionResponse{
+				{Content: "Hello"},
+			},
 			expectedTrunc: false,
 		},
 		{
-			name:          "Partial",
-			pieces:        []string{"hello", "wor"},
-			stop:          "or",
-			expected:      []string{"hello", "w"},
+			name: "Partial",
+			pieces: []CompletionResponse{
+				{Content: "Hello"},
+				{Content: " wor"},
+			},
+			stop: "or",
+			expected: []CompletionResponse{
+				{Content: "Hello"},
+				{Content: " w"},
+			},
 			expectedTrunc: true,
 		},
 		{
-			name:          "Suffix",
-			pieces:        []string{"Hello", " there", "!"},
-			stop:          "!",
-			expected:      []string{"Hello", " there"},
+			name: "Suffix",
+			pieces: []CompletionResponse{
+				{Content: "Hello"},
+				{Content: " there"},
+				{Content: "!"},
+			},
+			stop: "!",
+			expected: []CompletionResponse{
+				{Content: "Hello"},
+				{Content: " there"},
+			},
 			expectedTrunc: false,
 		},
 		{
-			name:          "Suffix partial",
-			pieces:        []string{"Hello", " the", "re!"},
-			stop:          "there!",
-			expected:      []string{"Hello", " "},
+			name: "Suffix partial",
+			pieces: []CompletionResponse{
+				{Content: "Hello"},
+				{Content: " the"},
+				{Content: "re!"},
+			},
+			stop: "there!",
+			expected: []CompletionResponse{
+				{Content: "Hello"},
+				{Content: " "},
+			},
 			expectedTrunc: true,
 		},
 		{
-			name:          "Middle",
-			pieces:        []string{"hello", " wor"},
-			stop:          "llo w",
-			expected:      []string{"he"},
+			name: "Middle",
+			pieces: []CompletionResponse{
+				{Content: "Hello"},
+				{Content: " wo"},
+			},
+			stop: "llo w",
+			expected: []CompletionResponse{
+				{Content: "He"},
+			},
 			expectedTrunc: true,
 		},
 	}
@@ -54,10 +85,25 @@ func TestTruncateStop(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result, resultTrunc := TruncateStop(tt.pieces, tt.stop)
 			if !reflect.DeepEqual(result, tt.expected) || resultTrunc != tt.expectedTrunc {
-				t.Errorf("truncateStop(%v, %s): have %v (%v); want %v (%v)", tt.pieces, tt.stop, result, resultTrunc, tt.expected, tt.expectedTrunc)
+				t.Errorf("truncateStop(%v, %v):\n%shave truncated %v\nwant truncated %v",
+					tt.pieces, tt.stop, formatContentDiff(result, tt.expected), resultTrunc, tt.expectedTrunc)
 			}
 		})
 	}
+}
+
+func formatContentDiff(result, expected []CompletionResponse) string {
+	var s string
+	for i := 0; i < len(result) || i < len(expected); i++ {
+		if i < len(result) && i < len(expected) && result[i].Content != expected[i].Content {
+			s += fmt.Sprintf("[%d] %q vs %q\n", i, result[i].Content, expected[i].Content)
+		} else if i < len(result) && i >= len(expected) {
+			s += fmt.Sprintf("[%d] extra %q\n", i, result[i].Content)
+		} else if i >= len(result) && i < len(expected) {
+			s += fmt.Sprintf("[%d] missing %q\n", i, expected[i].Content)
+		}
+	}
+	return s
 }
 
 func TestIncompleteUnicode(t *testing.T) {
