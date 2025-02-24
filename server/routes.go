@@ -1157,6 +1157,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.Use(
 		cors.New(corsConfig),
 		allowedHostsMiddleware(s.addr),
+		apiKeyAuthMiddleware(),
 	)
 
 	// General
