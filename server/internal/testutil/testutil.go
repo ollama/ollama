@@ -1,11 +1,39 @@
 package testutil
 
 import (
+	"bytes"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+// LogWriter returns an [io.Writer] that logs each Write using t.Log.
+func LogWriter(t *testing.T) io.Writer {
+	return testWriter{t}
+}
+
+type testWriter struct{ t *testing.T }
+
+func (w testWriter) Write(b []byte) (int, error) {
+	w.t.Logf("%s", b)
+	return len(b), nil
+}
+
+// Slogger returns a [*slog.Logger] that writes each message
+// using t.Log.
+func Slogger(t *testing.T) *slog.Logger {
+	return slog.New(slog.NewTextHandler(LogWriter(t), nil))
+}
+
+// SlogBuffer returns a [*slog.Logger] that writes each message to out.
+func SlogBuffer() (lg *slog.Logger, out *bytes.Buffer) {
+	var buf bytes.Buffer
+	lg = slog.New(slog.NewTextHandler(&buf, nil))
+	return lg, &buf
+}
 
 // Check calls t.Fatal(err) if err is not nil.
 func Check(t *testing.T, err error) {

@@ -23,6 +23,8 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/openai"
+	"github.com/ollama/ollama/server/internal/cache/blob"
+	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
@@ -91,7 +93,15 @@ func equalStringSlices(a, b []string) bool {
 	return true
 }
 
-func Test_Routes(t *testing.T) {
+type panicTransport struct{}
+
+func (t *panicTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	panic("unexpected RoundTrip call")
+}
+
+var panicOnRoundTrip = &http.Client{Transport: &panicTransport{}}
+
+func TestRoutes(t *testing.T) {
 	type testCase struct {
 		Name     string
 		Method   string
@@ -241,10 +251,10 @@ func Test_Routes(t *testing.T) {
 			Method: http.MethodDelete,
 			Path:   "/api/delete",
 			Setup: func(t *testing.T, req *http.Request) {
-				createTestModel(t, "model-to-delete")
+				createTestModel(t, "model_to_delete")
 
 				deleteReq := api.DeleteRequest{
-					Name: "model-to-delete",
+					Name: "model_to_delete",
 				}
 				jsonData, err := json.Marshal(deleteReq)
 				if err != nil {
@@ -271,7 +281,7 @@ func Test_Routes(t *testing.T) {
 			Path:   "/api/delete",
 			Setup: func(t *testing.T, req *http.Request) {
 				deleteReq := api.DeleteRequest{
-					Name: "non-existent-model",
+					Name: "non_existent_model",
 				}
 				jsonData, err := json.Marshal(deleteReq)
 				if err != nil {
@@ -477,10 +487,34 @@ func Test_Routes(t *testing.T) {
 		},
 	}
 
-	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	modelsDir := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", modelsDir)
+
+	c, err := blob.Open(modelsDir)
+	if err != nil {
+		t.Fatalf("failed to open models dir: %v", err)
+	}
+
+	rc := &ollama.Registry{
+		// This is a temporary measure to allow us to move forward,
+		// surfacing any code contacting ollama.com we do not intended
+		// to.
+		//
+		// Currently, this only handles DELETE /api/delete, which
+		// should not make any contact with the ollama.com registry, so
+		// be clear about that.
+		//
+		// Tests that do need to contact the registry here, will be
+		// consumed into our new server/api code packages and removed
+		// from here.
+		HTTPClient: panicOnRoundTrip,
+	}
 
 	s := &Server{}
-	router := s.GenerateRoutes()
+	router, err := s.GenerateRoutes(c, rc)
+	if err != nil {
+		t.Fatalf("failed to generate routes: %v", err)
+	}
 
 	httpSrv := httptest.NewServer(router)
 	t.Cleanup(httpSrv.Close)

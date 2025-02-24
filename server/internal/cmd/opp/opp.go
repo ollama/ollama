@@ -68,7 +68,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	rc, err := ollama.RegistryFromEnv()
+	rc, err := ollama.DefaultRegistry()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func cmdPush(ctx context.Context, rc *ollama.Registry, c *blob.DiskCache) error 
 	}
 
 	from := cmp.Or(*flagFrom, model)
-	m, err := ollama.ResolveLocal(c, from)
+	m, err := rc.ResolveLocal(c, from)
 	if err != nil {
 		return err
 	}
