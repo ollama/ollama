@@ -272,3 +272,19 @@ func TestVar(t *testing.T) {
 		})
 	}
 }
+
+func TestContextLength(t *testing.T) {
+	cases := map[string]uint{
+		"":     2048,
+		"4096": 4096,
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			t.Setenv("OLLAMA_CONTEXT_LENGTH", k)
+			if i := ContextLength(); i != v {
+				t.Errorf("%s: expected %d, got %d", k, v, i)
+			}
+		})
+	}
+}
