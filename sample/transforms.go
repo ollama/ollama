@@ -91,10 +91,10 @@ func (p TopP) Apply(logits []float64) []float64 {
 		return cmp.Compare(probs[j], probs[i])
 	})
 
-	var cumSum float64
+	var sum float64
 	for i, idx := range indices {
-		cumSum += probs[idx]
-		if cumSum > float64(p) {
+		sum += probs[idx]
+		if sum > float64(p) {
 			for _, idx := range indices[i+1:] {
 				logits[idx] = math.Inf(-1)
 			}
