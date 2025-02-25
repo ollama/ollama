@@ -17,6 +17,7 @@ type weighted struct {
 	transforms []Transform
 }
 
+// TODO(parthsareen): remove uv sample dependency https://github.com/ollama/ollama/issues/9279
 func Weighted(seed *uint64, transforms ...Transform) Sampler {
 	var src rand.Source
 	if seed != nil {
@@ -90,6 +91,7 @@ func (s greedy) Sample(logits []float32) (int32, error) {
 	return int32(maxIdx), nil
 }
 
+// TODO(parthsareen): update sampler interface to use json unmarshal https://github.com/ollama/ollama/issues/9278
 func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int) (Sampler, error) {
 	transforms := []Transform{}
 	if temperature < 0 || temperature > 2 {
