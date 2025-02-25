@@ -2,17 +2,17 @@
 
 ARG FLAVOR=${TARGETARCH}
 
-ARG ROCMVERSION=6.1.2
+ARG ROCMVERSION=6.3.3
 ARG JETPACK5VERSION=r35.4.1
 ARG JETPACK6VERSION=r36.2.0
 ARG CMAKEVERSION=3.31.2
 
-FROM --platform=linux/amd64 rocm/dev-centos-7:${ROCMVERSION}-complete AS base-amd64
+FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCMVERSION}-complete AS base-amd64
 RUN sed -i -e 's/mirror.centos.org/vault.centos.org/g' -e 's/^#.*baseurl=http/baseurl=http/g' -e 's/^mirrorlist=http/#mirrorlist=http/g' /etc/yum.repos.d/*.repo \
-    && yum install -y yum-utils devtoolset-10-gcc devtoolset-10-gcc-c++ \
-    && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-rhel7.repo \
+    && yum install -y yum-utils gcc-toolset-11-gcc gcc-toolset-11-gcc-c++ \
+    && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo \
     && curl -s -L https://github.com/ccache/ccache/releases/download/v4.10.2/ccache-4.10.2-linux-x86_64.tar.xz | tar -Jx -C /usr/local/bin --strip-components 1
-ENV PATH=/opt/rh/devtoolset-10/root/usr/bin:/opt/rh/devtoolset-11/root/usr/bin:$PATH
+ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
 
 FROM --platform=linux/arm64 rockylinux:8 AS base-arm64
 # install epel-release for ccache
@@ -29,9 +29,7 @@ COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 ENV LDFLAGS=-s
 
 FROM base AS cpu
-# amd64 uses gcc which requires devtoolset-11 for AVX extensions while arm64 uses clang
-RUN if [ "$(uname -m)" = "x86_64" ]; then yum install -y devtoolset-11-gcc devtoolset-11-gcc-c++; fi
-ENV PATH=/opt/rh/devtoolset-11/root/usr/bin:$PATH
+# amd64 uses gcc which requires gcc-toolset-11 for AVX extensions while arm64 uses clang
 RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'CPU' \
         && cmake --build --parallel --preset 'CPU' \
@@ -104,7 +102,7 @@ COPY --from=cuda-12 dist/lib/ollama/cuda_v12 /lib/ollama/cuda_v12
 COPY --from=jetpack-5 dist/lib/ollama/cuda_v11 lib/ollama/cuda_jetpack5
 COPY --from=jetpack-6 dist/lib/ollama/cuda_v12 lib/ollama/cuda_jetpack6
 
-FROM --platform=linux/arm64 scratch AS rocm
+FROM scratch AS rocm
 COPY --from=rocm-6 dist/lib/ollama/rocm /lib/ollama/rocm
 
 FROM ${FLAVOR} AS archive
