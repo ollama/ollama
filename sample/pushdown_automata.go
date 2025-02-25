@@ -37,8 +37,10 @@ Key JSON rules to consider:
 // TODO: / should be valid but an escape character
 var stringInvalidRunes = []rune{'\\', '\n', '\t', '{', '}', ':', ',', '/'}
 
-var intInvalidRunes = []rune{'e', 'E', ' ', '\n', '\t', '{', '}', ':', ',', '"'}
-var validIntRunes = []rune{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-'}
+var (
+	intInvalidRunes = []rune{'e', 'E', ' ', '\n', '\t', '{', '}', ':', ',', '"'}
+	validIntRunes   = []rune{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '-'}
+)
 
 var validNumberRunes = []rune{'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '-', '+', 'e', 'E'}
 
@@ -61,9 +63,10 @@ func NewPDANode(state JSONState) *PDA {
 }
 
 type PDAGraphBuilder struct {
-	proc           model.TextProcessor
-	decodedToks    []string
-	stateToNodeMap map[JSONState]*PDA
+	proc             model.TextProcessor
+	decodedToks      []string
+	stateToNodeMap   map[JSONState]*PDA
+	tokenToStatesMap map[int32][]JSONState
 }
 
 func (b *PDAGraphBuilder) BuildGraph() error {
@@ -73,20 +76,26 @@ func (b *PDAGraphBuilder) BuildGraph() error {
 	}
 
 	stateToNodeMap[StateStart].TransitionEdges['{'] = stateToNodeMap[StateInObject]
-	stateToNodeMap[StateStart].TransitionEdges['['] = stateToNodeMap[StateInList]
+	stateToNodeMap[StateStart].TransitionEdges['['] = stateToNodeMap[StateInListStartJSON]
+
+	// TODO: update naming here - and revisit values
+	stateToNodeMap[StateInListStartJSON].TransitionEdges['{'] = stateToNodeMap[StateInObject]
+	stateToNodeMap[StateInListStartJSON].TransitionEdges['['] = stateToNodeMap[StateInListStartJSON]
 
 	stateToNodeMap[StateInObject].TransitionEdges['"'] = stateToNodeMap[StateInObjectKey]
 	stateToNodeMap[StateInObject].TransitionEdges['\n'] = stateToNodeMap[StateInNewline]
 	stateToNodeMap[StateInObject].TransitionEdges[' '] = stateToNodeMap[StateInObjSpace]
+	stateToNodeMap[StateInObject].TransitionEdges['}'] = stateToNodeMap[StateInObjectEnd]
 
 	// new line
 	stateToNodeMap[StateInNewline].TransitionEdges['"'] = stateToNodeMap[StateInObjectKey]
 	stateToNodeMap[StateInNewline].TransitionEdges['\t'] = stateToNodeMap[StateInTab]
 	stateToNodeMap[StateInNewline].TransitionEdges['}'] = stateToNodeMap[StateInObjectEnd]
 	stateToNodeMap[StateInNewline].TransitionEdges[' '] = stateToNodeMap[StateInObjSpace]
+	// stateToNodeMap[StateInNewline].TransitionEdges['{'] = stateToNodeMap[StateInObject]
 
 	// new line end value
-	stateToNodeMap[StateInNewlineEndValue].TransitionEdges[' '] = stateToNodeMap[StateInSpaceEndValue]
+	// stateToNodeMap[StateInNewlineEndValue].TransitionEdges[' '] = stateToNodeMap[StateInSpaceEndValue]
 	stateToNodeMap[StateInNewlineEndValue].TransitionEdges['}'] = stateToNodeMap[StateInObjectEnd]
 	stateToNodeMap[StateInNewlineEndValue].TransitionEdges[']'] = stateToNodeMap[StateInListEnd]
 
@@ -108,6 +117,8 @@ func (b *PDAGraphBuilder) BuildGraph() error {
 	// where values should be
 	// this could be combined but the probl might change, we're alr doing a skip ahead
 	stateToNodeMap[StateInColon].TransitionEdges[' '] = stateToNodeMap[StateInSpaceToValue]
+	stateToNodeMap[StateInColon].TransitionEdges['\n'] = stateToNodeMap[StateInSpaceToValue]
+
 	stateToNodeMap[StateInColon].TransitionEdges['['] = stateToNodeMap[StateInList]
 	stateToNodeMap[StateInColon].TransitionEdges['{'] = stateToNodeMap[StateInObject]
 	addValueConnections(stateToNodeMap[StateInColon], stateToNodeMap)
@@ -117,6 +128,7 @@ func (b *PDAGraphBuilder) BuildGraph() error {
 	stateToNodeMap[StateInSpaceToValue].TransitionEdges['{'] = stateToNodeMap[StateInObject]
 	addValueConnections(stateToNodeMap[StateInSpaceToValue], stateToNodeMap)
 	stateToNodeMap[StateInSpaceToValue].TransitionEdges['}'] = stateToNodeMap[StateInObjectEnd]
+	stateToNodeMap[StateInSpaceToValue].TransitionEdges['\n'] = stateToNodeMap[StateInSpaceToValue]
 
 	// Values
 	// string node
@@ -125,7 +137,7 @@ func (b *PDAGraphBuilder) BuildGraph() error {
 
 	// String end node
 	addEnds(stateToNodeMap[StateInStringEnd], stateToNodeMap)
-	stateToNodeMap[StateInStringEnd].TransitionEdges[' '] = stateToNodeMap[StateInSpaceEndValue]
+	// stateToNodeMap[StateInStringEnd].TransitionEdges[' '] = stateToNodeMap[StateInSpaceEndValue]
 	stateToNodeMap[StateInStringEnd].TransitionEdges['\n'] = stateToNodeMap[StateInNewlineEndValue]
 
 	// TODO: add counters for allowable number of decimals, e, E, etc
@@ -134,7 +146,7 @@ func (b *PDAGraphBuilder) BuildGraph() error {
 		stateToNodeMap[StateInNumber].TransitionEdges[r] = stateToNodeMap[StateInNumber]
 	}
 	addEnds(stateToNodeMap[StateInNumber], stateToNodeMap)
-	stateToNodeMap[StateInNumber].TransitionEdges[' '] = stateToNodeMap[StateInSpaceEndValue]
+	// stateToNodeMap[StateInNumber].TransitionEdges[' '] = stateToNodeMap[StateInSpaceEndValue]
 	stateToNodeMap[StateInNumber].TransitionEdges['\n'] = stateToNodeMap[StateInNewlineEndValue]
 
 	// list node
@@ -142,10 +154,12 @@ func (b *PDAGraphBuilder) BuildGraph() error {
 	stateToNodeMap[StateInList].TransitionEdges['{'] = stateToNodeMap[StateInObject]
 	stateToNodeMap[StateInList].TransitionEdges[' '] = stateToNodeMap[StateInList]
 	stateToNodeMap[StateInList].TransitionEdges['\n'] = stateToNodeMap[StateInList]
+	// early end
+	stateToNodeMap[StateInList].TransitionEdges[']'] = stateToNodeMap[StateInListEnd]
 
 	// list end node
 	stateToNodeMap[StateInListEnd].TransitionEdges['}'] = stateToNodeMap[StateInObjectEnd]
-	stateToNodeMap[StateInListEnd].TransitionEdges[' '] = stateToNodeMap[StateInSpaceEndValue]
+	// stateToNodeMap[StateInListEnd].TransitionEdges[' '] = stateToNodeMap[StateInSpaceEndValue]
 	stateToNodeMap[StateInListEnd].TransitionEdges[','] = stateToNodeMap[StateInComma]
 	stateToNodeMap[StateInListEnd].TransitionEdges['\n'] = stateToNodeMap[StateInNewlineEndValue]
 
@@ -166,6 +180,9 @@ func (b *PDAGraphBuilder) BuildGraph() error {
 	stateToNodeMap[StateInListComma].TransitionEdges[' '] = stateToNodeMap[StateInListComma]
 	stateToNodeMap[StateInListComma].TransitionEdges['{'] = stateToNodeMap[StateInObject]
 	stateToNodeMap[StateInListComma].TransitionEdges['\n'] = stateToNodeMap[StateInList]
+	stateToNodeMap[StateInListComma].TransitionEdges[' '] = stateToNodeMap[StateInList]
+	stateToNodeMap[StateInListComma].TransitionEdges['\t'] = stateToNodeMap[StateInList]
+
 	addValueConnections(stateToNodeMap[StateInListComma], stateToNodeMap)
 
 	// list object end
@@ -180,7 +197,7 @@ func (b *PDAGraphBuilder) BuildGraph() error {
 	}
 	stateToNodeMap[StateInBool].TransitionEdges['\n'] = stateToNodeMap[StateInNewline]
 	addEnds(stateToNodeMap[StateInBool], stateToNodeMap)
-	stateToNodeMap[StateInBool].TransitionEdges[' '] = stateToNodeMap[StateInSpaceEndValue]
+	// stateToNodeMap[StateInBool].TransitionEdges[' '] = stateToNodeMap[StateInSpaceEndValue]
 	stateToNodeMap[StateInBool].TransitionEdges['\n'] = stateToNodeMap[StateInNewlineEndValue]
 
 	// comma node
@@ -188,9 +205,11 @@ func (b *PDAGraphBuilder) BuildGraph() error {
 	stateToNodeMap[StateInComma].TransitionEdges['\n'] = stateToNodeMap[StateInNewline]
 	stateToNodeMap[StateInComma].TransitionEdges['"'] = stateToNodeMap[StateInObjectKey]
 	stateToNodeMap[StateInComma].TransitionEdges[' '] = stateToNodeMap[StateInObjSpace]
+	// todo: review this space transition
+	// stateToNodeMap[StateInComma].TransitionEdges[' '] = stateToNodeMap[StateInSpaceToValue]
 
 	// space end value
-	stateToNodeMap[StateInSpaceEndValue].TransitionEdges[' '] = stateToNodeMap[StateInSpaceEndValue]
+	// stateToNodeMap[StateInSpaceEndValue].TransitionEdges[' '] = stateToNodeMap[StateInSpaceEndValue]
 	stateToNodeMap[StateInSpaceEndValue].TransitionEdges['}'] = stateToNodeMap[StateInObjectEnd]
 	stateToNodeMap[StateInSpaceEndValue].TransitionEdges[']'] = stateToNodeMap[StateInListEnd]
 	stateToNodeMap[StateInSpaceEndValue].TransitionEdges['\n'] = stateToNodeMap[StateInNewlineEndValue]
@@ -221,6 +240,12 @@ func addValueConnections(node *PDA, stateToNodeMap map[JSONState]*PDA) {
 
 func (b *PDAGraphBuilder) preComputeValidStates() error {
 	for _, node := range b.stateToNodeMap {
+		// if node.State == StateInObjectKey {
+		// 	if len(b.stateToNodeMap[StateInString].MaskTokenIDToNode) > 0 {
+		// 		b.stateToNodeMap[StateInObjectKey].MaskTokenIDToNode = b.stateToNodeMap[StateInString].MaskTokenIDToNode
+		// 		fmt.Println("copying string mask to object key mask")
+		// 	}
+		// }
 		if err := b.CreateMask(node); err != nil {
 			return err
 		}
@@ -228,6 +253,20 @@ func (b *PDAGraphBuilder) preComputeValidStates() error {
 	return nil
 }
 
+func (b *PDAGraphBuilder) preComputeTokenToStatesMap() error {
+	// TODO: make can be somewhere else too
+	b.tokenToStatesMap = make(map[int32][]JSONState)
+	for i, t := range b.decodedToks {
+		for _, r := range t {
+			if r == '"' {
+				b.tokenToStatesMap[int32(i)] = append(b.tokenToStatesMap[int32(i)], StateInString)
+			}
+		}
+	}
+	return nil
+}
+
+// TODO: the mask for obj key and string should be the same?
 func (b *PDAGraphBuilder) CreateMask(node *PDA) error {
 	if node == nil {
 		return fmt.Errorf("node cannot be nil")

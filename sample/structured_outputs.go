@@ -35,7 +35,7 @@ func NewJSONSampler(proc model.TextProcessor, schema *Schema) (*JSONSampler, err
 		}, nil
 	}
 
-	fmt.Println("schema not nil")
+	// fmt.Println("schema not nil")
 	so := &JSONSampler{
 		schema:        schema,
 		propIdx:       -1,
@@ -87,7 +87,7 @@ func NewJSONSampler(proc model.TextProcessor, schema *Schema) (*JSONSampler, err
 		for curState == StateInStructuredKey {
 			// there is only one edge
 			for r, toNode := range fromNode.TransitionEdges {
-				// fmt.Println("rune", r, "edge", toNode.State)
+				fmt.Println("rune", r, "edge", toNode.State)
 				so.pdaSampler.CreateMask(toNode)
 				fmt.Printf("created mask for %c\n", r)
 				curState = toNode.State
@@ -96,13 +96,27 @@ func NewJSONSampler(proc model.TextProcessor, schema *Schema) (*JSONSampler, err
 				fromNode = toNode
 			}
 		}
+
+		if curState != StateInColon {
+			return nil, fmt.Errorf("expected state to be StateInColon, got %v", curState)
+		}
+
+		// so.pdaSampler.CreateMask(fromNode)
+
+		fromNode = fromNode.TransitionEdges[' ']
+
+		so.pdaSampler.CreateMask(fromNode)
+		curState = fromNode.State
+		for _, toNode := range fromNode.TransitionEdges {
+			fmt.Println("toNode", toNode.State)
+		}
 	}
 
-	runtime.ReadMemStats(&m)
-	after = m.Alloc
-	fmt.Printf("Mask creation memory usage = %.2f MB\n", float64(after-before)/(1024*1024))
-	fmt.Printf("Mask creation time = %v\n", time.Since(start))
-	fmt.Println("--------------------------------")
+	// runtime.ReadMemStats(&m)
+	// after = m.Alloc
+	// fmt.Printf("Mask creation memory usage = %.2f MB\n", float64(after-before)/(1024*1024))
+	// fmt.Printf("Mask creation time = %v\n", time.Since(start))
+	// fmt.Println("--------------------------------")
 
 	return so, nil
 }
@@ -130,14 +144,66 @@ func (s *JSONSampler) schemaToGraph() {
 					TransitionEdges:   make(map[rune]*PDA),
 					MaskTokenIDToNode: make(map[int32]*PDA),
 				}
-				fmt.Println("runeNode created", runeNode.State)
-				fmt.Printf("runeNode created %c\n", r)
+				// fmt.Println("runeNode created", runeNode.State)
+				// fmt.Printf("runeNode created %c\n", r)
+
 				// since alloc on heap connections wil still map
 				prevNode.TransitionEdges[r] = runeNode
 				prevNode = runeNode
 			}
+
 			// point to end of object key node after all chars are done
-			prevNode.TransitionEdges['"'] = s.pdaSampler.stateToNodeMap[StateInObjectKeyEnd]
+			// prevNode.TransitionEdges['"'] = s.pdaSampler.stateToNodeMap[StateInObjectKeyEnd]
+
+			// link to value node
+			// Create a node for the end of the key (after the closing quote)
+			stringEndNode := &PDA{
+				State:             StateInStructuredKey,
+				TransitionEdges:   make(map[rune]*PDA),
+				MaskTokenIDToNode: make(map[int32]*PDA),
+			}
+			prevNode.TransitionEdges['"'] = stringEndNode
+			prevNode = stringEndNode
+
+			// Add transition for colon after key
+			colonNode := &PDA{
+				State:             StateInColon,
+				TransitionEdges:   make(map[rune]*PDA),
+				MaskTokenIDToNode: make(map[int32]*PDA),
+			}
+			prevNode.TransitionEdges[':'] = colonNode
+			prevNode = colonNode
+
+			// Add transition for space after colon
+			spaceNode := &PDA{
+				State:             StateInSpaceToValue,
+				TransitionEdges:   make(map[rune]*PDA),
+				MaskTokenIDToNode: make(map[int32]*PDA),
+			}
+			prevNode.TransitionEdges[' '] = spaceNode
+			prevNode = spaceNode
+
+			value := prop.Type
+			switch value {
+			case "object":
+				fmt.Println("object under key: ", name)
+			case "array":
+				fmt.Println("array under key: ", name)
+			case "string":
+				fmt.Println("string under key: ", name)
+				prevNode.TransitionEdges['"'] = s.pdaSampler.stateToNodeMap[StateInString]
+			case "number":
+				fmt.Println("number under key: ", name)
+				for _, r := range validNumberRunes {
+					prevNode.TransitionEdges[r] = s.pdaSampler.stateToNodeMap[StateInNumber]
+				}
+			case "boolean":
+				fmt.Println("boolean under key: ", name)
+				prevNode.TransitionEdges['t'] = s.pdaSampler.stateToNodeMap[StateInBool]
+				prevNode.TransitionEdges['f'] = s.pdaSampler.stateToNodeMap[StateInBool]
+				prevNode.TransitionEdges['n'] = s.pdaSampler.stateToNodeMap[StateInNull]
+			}
+
 			// points to start of the key
 			s.propToNodeMap[name] = keyNode
 			fmt.Println("name", name, "keyNode", keyNode.State)
@@ -152,7 +218,7 @@ func (s *JSONSampler) Apply(logits []float64) ([]float64, error) {
 	}
 
 	switch s.pdaSampler.curNode.State {
-	// doesnt account for multi rune case
+	// TODO: doesnt account for multi rune case
 	case StateInObjectKey:
 		if s.propIdx > len(s.schema.Properties)-1 {
 			return nil, fmt.Errorf("propIdx out of bounds")
@@ -196,18 +262,17 @@ func (s *JSONSampler) Apply(logits []float64) ([]float64, error) {
 		}
 		return s.pdaSampler.Apply(logits)
 	}
-
 }
 
-func (s *JSONSampler) UpdateState(tokenSlice []int32) error {
-	err := s.pdaSampler.UpdateState(tokenSlice)
+func (s *JSONSampler) UpdateState(tokenSlice []int32) ([]int32, error) {
+	tokenSlice, err := s.pdaSampler.UpdateState(tokenSlice)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if s.schema == nil {
 		// Don't need to update state for unconstrained JSON sampling
-		return nil
+		return tokenSlice, nil
 	}
 
 	switch s.pdaSampler.curNode.State {
@@ -217,14 +282,15 @@ func (s *JSONSampler) UpdateState(tokenSlice []int32) error {
 		prop := s.schema.Properties[s.propIdx]
 		fmt.Println("prop", prop.Name)
 		s.pdaSampler.curNode = s.propToNodeMap[prop.Name]
-		str, err := s.pdaSampler.proc.Decode(tokenSlice)
-		if err != nil {
-			return err
-		}
-		fmt.Println("str", str)
+		// TODO: this does not work - mike
+		// str, err := s.pdaSampler.proc.Decode(tokenSlice)
+		// if err != nil {
+		// 	return nil, err
+		// }
+		// fmt.Println("str", str)
 
-		return nil
+		return tokenSlice, nil
 	default:
-		return nil
+		return tokenSlice, nil
 	}
 }

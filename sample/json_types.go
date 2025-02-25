@@ -41,6 +41,7 @@ const (
 	StateTerminate
 	StateInObjectEnd
 	StateTransitioningToTerminate
+	StateInListStartJSON
 )
 
 var JSONStates = []JSONState{
@@ -48,6 +49,7 @@ var JSONStates = []JSONState{
 	StateInObject,
 	StateInObjectKey,
 	StateInStructuredKey,
+	StateInStructuredValue,
 	StateNewline,
 	StateTab,
 	StateSpace,
@@ -63,6 +65,7 @@ var JSONStates = []JSONState{
 	StateInSpaceEndValue,
 	StateInNewlineEndValue,
 	StateInObjSpace,
+	StateInListStartJSON,
 	StateInList,
 	StateInListComma,
 	StateInValue,
@@ -89,6 +92,8 @@ func (s JSONState) String() string {
 		return "StateInObjectKey"
 	case StateInStructuredKey:
 		return "StateInStructuredKey"
+	case StateInStructuredValue:
+		return "StateInStructuredValue"
 	case StateNewline:
 		return "StateNewline"
 	case StateTab:
@@ -112,21 +117,27 @@ func (s JSONState) String() string {
 	case StateInTab:
 		return "StateInTab"
 	case StateInSpaceToValue:
-		return "StateInSpace"
+		return "StateInSpaceToValue"
+	case StateInSpaceEndValue:
+		return "StateInSpaceEndValue"
+	case StateInNewlineEndValue:
+		return "StateInNewlineEndValue"
 	case StateInObjSpace:
 		return "StateInObjSpace"
 	case StateInList:
 		return "StateInList"
-	case StateInListObjectEnd:
-		return "StateInListObjectEnd"
 	case StateInListComma:
 		return "StateInListComma"
+	case StateInValue:
+		return "StateInValue"
+	case StateInValueEnd:
+		return "StateInValueEnd"
 	case StateInListEnd:
 		return "StateInListEnd"
+	case StateInListObjectEnd:
+		return "StateInListObjectEnd"
 	case StateInNewline:
 		return "StateInNewline"
-	case StateInNewlineEndValue:
-		return "StateInNewlineEndValue"
 	case StateInNumber:
 		return "StateInNumber"
 	case StateInNumberEnd:
@@ -135,12 +146,14 @@ func (s JSONState) String() string {
 		return "StateInStringEnd"
 	case StateInObjectKeyEnd:
 		return "StateInObjectKeyEnd"
-	case StateInSpaceEndValue:
-		return "StateInSpaceEndValue"
 	case StateTerminate:
 		return "StateTerminate"
 	case StateInObjectEnd:
 		return "StateInObjectEnd"
+	case StateTransitioningToTerminate:
+		return "StateTransitioningToTerminate"
+	case StateInListStartJSON:
+		return "StateInListStartJSON"
 	default:
 		return fmt.Sprintf("Unknown state: %d", s)
 	}

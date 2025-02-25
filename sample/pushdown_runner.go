@@ -10,9 +10,13 @@ import (
 )
 
 // TODO: safety in case of invalid json
+// TODO: partial JSON matching?
 // TODO: interfaces to cleanup with return values
 // TODO this interface shouldn't be the sampler - should just use Sampler
 // TODO: add penalties for string \n stuff
+// TODO: minimize number of fwd passes if there is only one match
+// TODO: greedy sample initially and then backtrack if no match
+
 type PushdownSampler struct {
 	PDAGraphBuilder
 	curNode      *PDA
@@ -140,16 +144,24 @@ func forceFinish(s *PushdownSampler, logits []float64) ([]float64, error) {
 	return logits, nil
 }
 
-func (s *PushdownSampler) UpdateState(tokenSlice []int32) error {
+func (s *PushdownSampler) UpdateState(tokenSlice []int32) ([]int32, error) {
 	fmt.Println("current state - updating", s.curNode.State)
 	mappedString, err := s.proc.Decode(tokenSlice)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	fmt.Printf(">>> mappedString: %q\n", mappedString)
 
-	// TODO: should force closing for all braces - not doing square yet
+	// flag := -1
+	// endBraceRunes := []rune{'}', ']'}
 	for _, r := range mappedString {
+		// TODO: if this is enabled again, make sure to appropriately handle the state transitions
+		// if slices.Contains(endBraceRunes, r) && len(s.braceStack) == 0 {
+		// 	fmt.Printf("stack is empty, extra closing brace %c\n", r)
+		// 	// flag = i
+		// 	break
+
+		// }
 		if r == rune('{') {
 			s.braceStack = append(s.braceStack, r)
 		}
@@ -158,32 +170,36 @@ func (s *PushdownSampler) UpdateState(tokenSlice []int32) error {
 		}
 		if r == rune('}') {
 			if len(s.braceStack) == 0 {
-				return fmt.Errorf("stack is empty, extra closing brace %c", r)
+				return nil, fmt.Errorf("stack is empty, extra closing brace %c", r)
 			}
 			top := s.braceStack[len(s.braceStack)-1]
 			if top != rune('{') {
-				return fmt.Errorf("unmatched closing brace, got%c, want%c", top, '{')
+				return nil, fmt.Errorf("unmatched closing brace, got%c, want%c", top, '{')
 			}
 			s.braceStack = s.braceStack[:len(s.braceStack)-1]
 		}
 
 		if r == rune(']') {
 			if len(s.braceStack) == 0 {
-				return fmt.Errorf("stack is empty, extra closing brace %c", r)
+				return nil, fmt.Errorf("stack is empty, extra closing brace %c", r)
 			}
 			top := s.braceStack[len(s.braceStack)-1]
 			if top != rune('[') {
-				return fmt.Errorf("unmatched closing brace, got%c, want%c", top, '[')
+				return nil, fmt.Errorf("unmatched closing brace, got%c, want%c", top, '[')
 			}
 			s.braceStack = s.braceStack[:len(s.braceStack)-1]
 		}
 	}
 
+	// if flag != -1 {
+	// 	tokenSlice = tokenSlice[:flag]
+	// }
+	// fmt.Println("flag!", flag)
 	for _, tokenID := range tokenSlice {
 		// transition to the next node
 		nextNode, ok := s.curNode.MaskTokenIDToNode[tokenID]
 		if !ok {
-			return fmt.Errorf("invalid token: %q", mappedString)
+			return nil, fmt.Errorf("invalid token: %q", mappedString)
 		}
 		fmt.Println("transitioning to", nextNode.State)
 
@@ -196,12 +212,11 @@ func (s *PushdownSampler) UpdateState(tokenSlice []int32) error {
 		s.curNode = nextNode
 		fmt.Println("updated curNode state", s.curNode.State)
 	}
-	return nil
+	return tokenSlice, nil
 }
 
 // greedy sample + backtrack?
 func (s *PushdownSampler) maskLogits(logits []float64, node *PDA) ([]float64, error) {
-
 	// Create a new slice with same length as logits, initialized to -Inf
 	maskedLogits := make([]float64, len(logits))
 	for i := range maskedLogits {

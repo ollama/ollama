@@ -443,6 +443,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		s.lc.Synchronize()
 	}
 
+	var totalSamplingTime time.Duration
 	for i, seq := range s.seqs {
 		if seq == nil {
 			continue
@@ -477,8 +478,12 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		}
 
 		// sample a token
+		samplingStart := time.Now()
 		token := seq.samplingCtx.Sample(s.lc, seq.iBatch)
 		seq.samplingCtx.Accept(token, true)
+		samplingTime := time.Since(samplingStart)
+		totalSamplingTime += samplingTime
+		slog.Info("sampling time", "time", samplingTime)
 		piece := s.model.TokenToPiece(token)
 
 		seq.numPredicted++
@@ -635,6 +640,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	samplingParams.Seed = uint32(req.Seed)
 	samplingParams.Grammar = req.Grammar
 
+	start := time.Now()
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
 		numPredict:     req.NumPredict,
 		stop:           req.Stop,
@@ -642,6 +648,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		samplingParams: &samplingParams,
 		embedding:      false,
 	})
+	slog.Info("new sequence created", "duration", time.Since(start))
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return

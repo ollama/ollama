@@ -28,7 +28,7 @@ var args struct {
 }
 
 func temp() error {
-	start := time.Now()
+	// start := time.Now()
 	flag.IntVar(&args.n, "n", 10, "number of samples")
 	flag.BoolVar(&args.debug, "debug", false, "enable debug logging")
 	flag.StringVar(&args.image, "image", "", "path to image file")
@@ -106,10 +106,12 @@ func temp() error {
 		}
 	}
 
-	// simple schema
-	// This schema maps to JSON like:
+	// Schema for a list of friends with their info
+	// Maps to JSON like:
 	// {
-	//   "name": "some string value"
+	// 	"name": "string",
+	// 	"age": integer,
+	// 	"is_available": boolean
 	// }
 	schema := &sample.Schema{
 		Name: "root",
@@ -117,20 +119,24 @@ func temp() error {
 		Properties: []*sample.Schema{
 			{Name: "name", Type: "string"},
 			{Name: "age", Type: "integer"},
-			{Name: "is_student", Type: "boolean"},
-			// {Name: "is_student", Type: "boolean"},
+			{Name: "is_available", Type: "boolean"},
 		},
 	}
 
-	// pushdownSampler := sample.NewPushdownSampler(m.(model.TextProcessor))
-	pushdownSampler, err := sample.NewSOSampler(schema, m.(model.TextProcessor))
+	// fmt.Println("schema", schema)
+	// schema = nil
+	jsonTransform, err := sample.NewJSONSampler(m.(model.TextProcessor), schema)
 	if err != nil {
 		return err
 	}
 
+	transforms := []sample.Transform{
+		jsonTransform,
+	}
+
 	var offset int
 	var stringBuffer string
-	var ttft time.Duration
+	// var ttft time.Duration
 	var totalSamplingTime time.Duration
 	count := 0
 	for range args.n {
@@ -139,24 +145,9 @@ func temp() error {
 			return err
 		}
 
-		// f64s := make([]float64, len(f32s))
-		// for i, f32 := range f32s {
-		// 	f64s[i] = float64(f32)
-		// }
-		// samplers := []sample.Transform{
-		// pushdownSampler,
-		// sample.Weighed(),
-		// sample.TopP(0.9),
-		// sample.Weighed(),
-		// sample.Greedy(),
-		// }
-		transforms := []sample.Transform{
-			pushdownSampler,
-		}
-
 		samplingStart := time.Now()
-		sampler := sample.NewSampler(transforms, sample.Greedy())
-		sampledIdx, err := sampler.Sample(logits.Floats())
+		sampler := sample.Greedy()
+		sampledIdx, err := sampler.Sample(logits.Floats(), transforms...)
 		if err != nil {
 			return err
 		}
@@ -164,7 +155,7 @@ func temp() error {
 		samplingTime := time.Since(samplingStart)
 		totalSamplingTime += samplingTime
 
-		fmt.Println("sampling time", samplingTime)
+		// fmt.Println("sampling time", samplingTime)
 		// fmt.Printf("Sample time: %vms\n", finishTime.Sub(sampleTime).Milliseconds())
 
 		var outputIDs []int32
@@ -184,10 +175,10 @@ func temp() error {
 			return err
 		}
 
-		if ttft == 0 {
-			ttft = time.Since(start)
-			fmt.Printf("Time to first token: %vms\n", ttft.Milliseconds())
-		}
+		// if ttft == 0 {
+		// 	ttft = time.Since(start)
+		// fmt.Printf("Time to first token: %vms\n", ttft.Milliseconds())
+		// }
 
 		// fmt.Printf("--- token: %q\n", s)
 		// fmt.Printf("--- outputIDs: %v\n", outputIDs)
@@ -195,7 +186,7 @@ func temp() error {
 		count++
 		fmt.Println("--- stringBuffer", stringBuffer)
 
-		err = pushdownSampler.UpdateState(outputIDs)
+		outputIDs, err = jsonTransform.UpdateState(outputIDs)
 		if err != nil {
 			return err
 		}
