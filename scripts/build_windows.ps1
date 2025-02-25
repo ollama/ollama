@@ -26,6 +26,9 @@ function checkEnv() {
         $MSVC_INSTALL=(Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation
         $env:VCToolsRedistDir=(get-item "${MSVC_INSTALL}\VC\Redist\MSVC\*")[0]
     }
+    if (-Not (get-command -ErrorAction silent ninja)) {
+        $script:NINJA_DIR=(gci -path (Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation -r -fi ninja.exe) | split-path -parent
+    }
     # Locate CUDA versions
     # Note: this assumes every version found will be built
     $cudaList=(get-item "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v*\bin\" -ea 'silentlycontinue')
@@ -75,6 +78,7 @@ function checkEnv() {
     } else {
         write-host "Code signing disabled - please set KEY_CONTAINERS to sign and copy ollama_inc.crt to the top of the source tree"
     }
+    $script:JOBS=((Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors)
 }
 
 
@@ -83,51 +87,57 @@ function buildOllama() {
         Remove-Item -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}"
         New-Item "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\" -ItemType Directory -ea 0
 
-
-        # Default first, then conditionall ROCm and cuda v11
-        write-host "Building Default native backend libraries"
-         $env:CMAKE_GENERATOR="ninja"
-        & cmake --preset Default
+        & cmake --fresh --preset CPU --install-prefix $script:DIST_DIR
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        & cmake --build --preset Default -j 12
+        & cmake --build --preset CPU --parallel $script:JOBS
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        & cmake --install build -j 12
-        
-        # TODO - add steps for v11 and ROCm
-        #
-        # if ("$script:CUDA_DIRS".Contains("v11") -and "$script:CUDA_DIRS".Contains("v12")) {
-        #     # We assume the default is v12, so override for v11
-        #     $origCUDA_PATH=$env:CUDA_PATH
-        #     $hashEnv = @{}
-        #     Get-ChildItem env: | foreach { $hashEnv[$_.Name] = $_.Value }
-        #     $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V11")) { $v11="$_" }}
-        #     write-host "$v11"
-        #     # $env:CUDA_PATH=$hashEnv[$v11]
-        #     # $env:CUDACXX=$hashEnv[$v11]+"\bin\nvcc.exe"
-        #     $env:CUDAToolkit_ROOT=$hashEnv[$v11]
-        #     # ls env:
-        #     write-host "Building CUDA v11 backend libraries"
-        #     & cmake --preset "CUDA 11"
-        #     $env:CUDA_PATH=$origCUDA_PATH
-        #     exit(1)
-        #     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        #     # & cmake --build --preset "CUDA 11" -j 12
-        #     # if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        # }
+        & cmake --install build --component CPU --strip
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 
-        # if ($env:HIP_PATH) {
-        #     write-host "Building ROCm backend libraries"
-        #     $env:HIPCXX="${env:HIP_PATH}\bin\clang++.exe"
-        #     $env:HIP_PLATFORM="amd"
-        #     $env:CMAKE_PREFIX_PATH="${env:HIP_PATH}"
-        #     & cmake --preset "ROCm"
-        #     $env:HIPCXX=""
-        #     $env:HIP_PLATFORM=""
-        #     $env:CMAKE_PREFIX_PATH=""
-        #     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        #     & cmake --build --preset "ROCm" -j 12
-        #     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        # }
+        $hashEnv = @{}
+        Get-ChildItem env: | foreach { $hashEnv[$_.Name] = $_.Value }
+        if ("$script:CUDA_DIRS".Contains("v11")) {
+            $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V11")) { $v11="$_" }}
+            $env:CUDAToolkit_ROOT=$hashEnv[$v11]
+            write-host "Building CUDA v11 backend libraries"
+            # Note: cuda v11 requires msvc 2019 so force the older generator
+            # to avoid 2022 (or newer) from being used as the default
+            & cmake --fresh --preset "CUDA 11" -G "Visual Studio 16 2019" --install-prefix $script:DIST_DIR
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --build --preset "CUDA 11" --parallel $script:JOBS
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --install build --component "CUDA" --strip
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        }
+        if ("$script:CUDA_DIRS".Contains("v12")) {
+            $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V12")) { $v12="$_" }}
+            $env:CUDAToolkit_ROOT=$hashEnv[$v12]
+            write-host "Building CUDA v12 backend libraries"
+            & cmake --fresh --preset "CUDA 12" --install-prefix $script:DIST_DIR
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --build --preset "CUDA 12" --parallel $script:JOBS
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --install build --component "CUDA" --strip
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        }
+        if ($env:HIP_PATH) {
+            write-host "Building ROCm backend libraries"
+            if ($null -ne $script:NINJA_DIR) {
+                $env:PATH="$script:NINJA_DIR;$env:PATH"
+            }
+            $env:HIPCXX="${env:HIP_PATH}\bin\clang++.exe"
+            $env:HIP_PLATFORM="amd"
+            $env:CMAKE_PREFIX_PATH="${env:HIP_PATH}"
+            & cmake --fresh --preset "ROCm 6" -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ --install-prefix $script:DIST_DIR
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            $env:HIPCXX=""
+            $env:HIP_PLATFORM=""
+            $env:CMAKE_PREFIX_PATH=""
+            & cmake --build --preset "ROCm" --parallel $script:JOBS
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --install build --component "HIP" --strip
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        }
     } else {
         write-host "Skipping generate step with OLLAMA_SKIP_GENERATE set"
     }

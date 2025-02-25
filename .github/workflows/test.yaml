@@ -81,7 +81,7 @@ jobs:
             install: https://developer.download.nvidia.com/compute/cuda/11.8.0/local_installers/cuda_11.8.0_522.06_windows.exe
             flags: '-DCMAKE_CUDA_ARCHITECTURES=87'
           - preset: ROCm
-            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q3-WinSvr2022-For-HIP.exe
+            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
             flags: '-DAMDGPU_TARGETS=gfx1010'
     runs-on: windows
     steps:
