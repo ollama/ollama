@@ -106,7 +106,7 @@ func (c *EncoderCache) Put(ctx ml.Context, key, value ml.Tensor) {
 	}
 
 	if _, ok := c.ctxs[c.curLayer]; !ok {
-		c.ctxs[c.curLayer] = c.backend.NewContext()
+		c.ctxs[c.curLayer] = c.backend.NewContextSize(2).Layer(c.curLayer)
 	}
 
 	if _, ok := c.keys[c.curLayer]; !ok {
