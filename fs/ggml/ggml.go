@@ -36,6 +36,10 @@ func (kv KV) ParameterCount() uint64 {
 	return keyValue[uint64](kv, "general.parameter_count")
 }
 
+func (kv KV) Alignment() int64 {
+	return int64(kv.Uint("general.alignment", 32))
+}
+
 func (kv KV) FileType() fileType {
 	if t := kv.Uint("general.file_type"); t > 0 {
 		return fileType(t)
@@ -386,10 +390,17 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
 	}
 
 	// final model type
-	return &GGML{
+	ggml := &GGML{
 		container: c,
 		model:     model,
-	}, offset, nil
+	}
+
+	alignment := ggml.KV().Alignment()
+	if offset, err = rs.Seek(offset+(alignment-(offset%alignment))%alignment, io.SeekStart); err != nil {
+		return nil, 0, err
+	}
+
+	return ggml, offset, nil
 }
 
 func (f GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialOffload, fullOffload uint64) {
