@@ -301,6 +301,10 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 		bufts = append(bufts, bt)
 
 		slog.Info("compute graph", "backend", C.GoString(C.ggml_backend_name(b)), "buffer_type", C.GoString(C.ggml_backend_buft_name(bt)))
+
+		if C.ggml_backend_is_cpu(b) {
+			C.ggml_backend_cpu_set_n_threads(b, C.int(params.NumThreads))
+		}
 	}
 
 	return &Backend{
