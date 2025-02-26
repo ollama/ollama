@@ -4,8 +4,6 @@ import (
 	"cmp"
 	"math"
 	"slices"
-
-	pq "github.com/emirpasic/gods/v2/queues/priorityqueue"
 )
 
 type Transform interface {
@@ -30,6 +28,10 @@ func softmax(logits []float64) []float64 {
 type Temperature float64
 
 func (t Temperature) Apply(ts tokenSliceInfo) tokenSliceInfo {
+	if t == 1 {
+		return ts
+	}
+
 	temp := math.Max(float64(t), 1e-7)
 
 	// subtracting max logit to avoid under/overflow
@@ -58,20 +60,68 @@ func (k TopK) Apply(ts tokenSliceInfo) tokenSliceInfo {
 	if int(k) >= len(ts.tokens) {
 		return ts
 	}
-	q := pq.NewWith(func(a, b tokenInfo) int {
-		return -cmp.Compare(a.logit, b.logit)
+
+	// tokens := make([]tokenInfo, len(ts.tokens))
+	// copy(tokens, ts.tokens)
+	tokens := ts.tokens
+
+	// Partial sort to get top-k tokens
+	partialSort(tokens, int(k), func(a, b tokenInfo) bool {
+		return a.logit > b.logit // Sort in descending order
 	})
 
-	validTokens := make([]tokenInfo, 0, int(k))
-	for _, token := range ts.tokens {
-		q.Enqueue(token)
+	return tokenSliceInfo{tokens: tokens[:int(k)], sorted: true}
+}
+
+// siftDown implements the sift-down operation for a heap
+func siftDown(tokens []tokenInfo, start, end int, less func(a, b tokenInfo) bool) {
+	current := start
+	for {
+		// Calculate child indices
+		child1 := 2*current + 1
+		child2 := 2*current + 2
+
+		// Find the largest/smallest child based on comparator
+		largest := current
+		if child1 < end && less(tokens[child1], tokens[largest]) {
+			largest = child1
+		}
+		if child2 < end && less(tokens[child2], tokens[largest]) {
+			largest = child2
+		}
+
+		// If current is already in the right position, we're done
+		if largest == current {
+			break
+		}
+
+		// Swap and continue sifting down
+		tokens[current], tokens[largest] = tokens[largest], tokens[current]
+		current = largest
 	}
-	for range k {
-		token, _ := q.Dequeue()
-		validTokens = append(validTokens, token)
+}
+
+// partialSort sorts the first k elements of the slice
+func partialSort(tokens []tokenInfo, k int, less func(a, b tokenInfo) bool) {
+	// Build heap with first k elements
+	for i := k/2 - 1; i >= 0; i-- {
+		siftDown(tokens, i, k, less)
 	}
 
-	return tokenSliceInfo{tokens: validTokens, sorted: true}
+	// For each remaining element, if it's "better" than the root,
+	// replace root and sift down to maintain heap property
+	for i := k; i < len(tokens); i++ {
+		if less(tokens[i], tokens[0]) {
+			tokens[0] = tokens[i]
+			siftDown(tokens, 0, k, less)
+		}
+	}
+
+	// Sort the heap (in-place)
+	for i := k - 1; i > 0; i-- {
+		tokens[0], tokens[i] = tokens[i], tokens[0]
+		siftDown(tokens, 0, i, less)
+	}
 }
 
 type TopP float64
