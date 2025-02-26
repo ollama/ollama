@@ -67,7 +67,7 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 		"num_key_values", len(meta.KV()),
 	)
 
-	type dbt struct {
+	type deviceBufferType struct {
 		d   *C.struct_ggml_backend_device
 		bts []*C.struct_ggml_backend_buffer_type
 	}
@@ -96,7 +96,7 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 	var sum uint64
 	var cumsum []uint64
 
-	var gpuBufferTypes []dbt
+	var gpuDeviceBufferTypes []deviceBufferType
 	for _, d := range gpus {
 		var free, total C.size_t
 		C.ggml_backend_dev_memory(d, &free, &total)
@@ -104,7 +104,7 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 		cumsum = append(cumsum, sum)
 
 		bt := C.ggml_backend_dev_buffer_type(d)
-		gpuBufferTypes = append(gpuBufferTypes, dbt{
+		gpuDeviceBufferTypes = append(gpuDeviceBufferTypes, deviceBufferType{
 			d:   d,
 			bts: append([]*C.struct_ggml_backend_buffer_type{bt}, cpuBufferTypes...),
 		})
@@ -115,7 +115,8 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 		splits[i] = float64(cumsum[i]) / float64(sum)
 	}
 
-	input := dbt{C.ggml_backend_dev_by_type(C.GGML_BACKEND_DEVICE_TYPE_CPU), cpuBufferTypes}
+	cpuDeviceBufferTypes := deviceBufferType{C.ggml_backend_dev_by_type(C.GGML_BACKEND_DEVICE_TYPE_CPU), cpuBufferTypes}
+	input := cpuDeviceBufferTypes
 
 	var blocks int
 	for key, value := range meta.KV() {
@@ -124,18 +125,22 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 		}
 	}
 
-	indexFunc := func(i int) func(float64) bool {
-		return func(f float64) bool {
-			return float64(i)/float64(blocks+1) < f
+	assignLayer := func(i int) (temp deviceBufferType) {
+		if i >= params.NumGPULayers {
+			return cpuDeviceBufferTypes
 		}
+
+		return gpuDeviceBufferTypes[slices.IndexFunc(splits, func(f float64) bool {
+			return float64(i)/float64(blocks+1) < f
+		})]
 	}
 
-	layers := make([]dbt, blocks)
+	layers := make([]deviceBufferType, blocks)
 	for i := range layers {
-		layers[i] = gpuBufferTypes[slices.IndexFunc(splits, indexFunc(i))]
+		layers[i] = assignLayer(i)
 	}
 
-	output := gpuBufferTypes[slices.IndexFunc(splits, indexFunc(blocks))]
+	output := assignLayer(blocks)
 
 	maxTensors := len(meta.Tensors().Items())
 	maxTensors += 1
