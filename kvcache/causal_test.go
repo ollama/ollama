@@ -342,7 +342,7 @@ func (c *testContext) FromIntSlice(s []int32, shape ...int) (ml.Tensor, error) {
 	return out, nil
 }
 
-func (c *testContext) Forward(ml.Tensor) {}
+func (c *testContext) Forward(...ml.Tensor) ml.Context { return c }
 
 func (c *testContext) Compute(...ml.Tensor) {}
 
