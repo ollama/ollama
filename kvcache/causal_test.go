@@ -303,6 +303,10 @@ func (b *testBackend) NewContext() ml.Context {
 	return &testContext{}
 }
 
+func (b *testBackend) NewContextSize(int) ml.Context {
+	return &testContext{}
+}
+
 func (b *testBackend) SystemInfo() string {
 	return "not implemented"
 }
@@ -346,11 +350,15 @@ func (c *testContext) FromIntSlice(s []int32, shape ...int) (ml.Tensor, error) {
 	return out, nil
 }
 
+func (c *testContext) Input() ml.Context    { return c }
+func (c *testContext) Output() ml.Context   { return c }
+func (c *testContext) Layer(int) ml.Context { return c }
+
 func (c *testContext) Forward(...ml.Tensor) ml.Context { return c }
 
 func (c *testContext) Compute(...ml.Tensor) {}
 
-func (c *testContext) MaxTensors() int {
+func (c *testContext) MaxGraphNodes() int {
 	return 10
 }
 
