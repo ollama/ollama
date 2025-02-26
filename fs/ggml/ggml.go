@@ -40,6 +40,13 @@ func (kv KV) Alignment() int64 {
 	return int64(kv.Uint("general.alignment", 32))
 }
 
+func (kv KV) Alignment() int64 {
+	if alignment := int64(kv.u64("general.alignment")); alignment != 0 {
+		return alignment
+	}
+	return 32
+}
+
 func (kv KV) FileType() fileType {
 	if t := kv.Uint("general.file_type"); t > 0 {
 		return fileType(t)
