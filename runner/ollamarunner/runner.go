@@ -818,7 +818,7 @@ func Execute(args []string) error {
 	batchSize := fs.Int("batch-size", 512, "Batch size")
 	numGPULayers := fs.Int("n-gpu-layers", 0, "Number of layers to offload to GPU")
 	mainGPU := fs.Int("main-gpu", 0, "Main GPU")
-	_ = fs.Bool("flash-attn", false, "Enable flash attention")
+	flashAttention := fs.Bool("flash-attn", false, "Enable flash attention")
 	kvSize := fs.Int("ctx-size", 2048, "Context (or KV cache) size")
 	kvCacheType := fs.String("kv-cache-type", "", "quantization type for KV cache (default: f16)")
 	port := fs.Int("port", 8080, "Port to expose the server on")
@@ -863,7 +863,6 @@ func Execute(args []string) error {
 	}
 
 	// TODO(jessegross): Parameters that need to be implemented:
-	//	flash-attn
 	//	no-mmap
 	//	mlock
 
@@ -878,10 +877,11 @@ func Execute(args []string) error {
 	}
 
 	params := ml.BackendParams{
-		NumThreads:   *threads,
-		NumGPULayers: *numGPULayers,
-		MainGPU:      *mainGPU,
-		TensorSplit:  tensorSplitFloats,
+		NumThreads:     *threads,
+		NumGPULayers:   *numGPULayers,
+		MainGPU:        *mainGPU,
+		TensorSplit:    tensorSplitFloats,
+		FlashAttention: *flashAttention,
 	}
 
 	server.ready.Add(1)
