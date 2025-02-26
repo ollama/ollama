@@ -8,7 +8,7 @@ Subject: [PATCH] use std::filesystem::path instead of wstring
  1 file changed, 58 insertions(+), 86 deletions(-)
 
 diff --git a/ggml/src/ggml-backend-reg.cpp b/ggml/src/ggml-backend-reg.cpp
-index 84b21dd8..e35a6936 100644
+index 1c19129a..c854e6bb 100644
 --- a/ggml/src/ggml-backend-reg.cpp
 +++ b/ggml/src/ggml-backend-reg.cpp
 @@ -66,26 +66,6 @@
