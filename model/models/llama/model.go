@@ -138,17 +138,17 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs, outputs ml.Ten
 }
 
 func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
-	inputs, err := ctx.FromIntSlice(opts.Inputs, len(opts.Inputs))
+	inputs, err := ctx.Input().FromIntSlice(opts.Inputs, len(opts.Inputs))
 	if err != nil {
 		return nil, err
 	}
 
-	positions, err := ctx.FromIntSlice(opts.Positions, len(opts.Positions))
+	positions, err := ctx.Input().FromIntSlice(opts.Positions, len(opts.Positions))
 	if err != nil {
 		return nil, err
 	}
 
-	outputs, err := ctx.FromIntSlice(opts.Outputs, len(opts.Outputs))
+	outputs, err := ctx.Output().FromIntSlice(opts.Outputs, len(opts.Outputs))
 	if err != nil {
 		return nil, err
 	}
