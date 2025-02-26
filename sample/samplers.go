@@ -57,9 +57,7 @@ func (s weighted) Sample(logits []float32) (int32, error) {
 	return -1, errors.New("weighed sampler failed, no valid token found")
 }
 
-type greedy struct {
-	transforms []Transform
-}
+type greedy struct{}
 
 func Greedy() Sampler {
 	return greedy{}
@@ -69,10 +67,6 @@ func (s greedy) Sample(logits []float32) (int32, error) {
 	logits64 := make([]float64, len(logits))
 	for i, v := range logits {
 		logits64[i] = float64(v)
-	}
-
-	for _, t := range s.transforms {
-		logits64 = t.Apply(logits64)
 	}
 
 	var maxIdx int
