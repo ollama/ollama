@@ -100,6 +100,10 @@ func (kv KV) Float(key string, defaultValue ...float32) float32 {
 	return keyValue(kv, key, append(defaultValue, 0)...)
 }
 
+func (kv KV) Bool(key string, defaultValue ...bool) bool {
+	return keyValue(kv, key, append(defaultValue, false)...)
+}
+
 func (kv KV) Strings(key string, defaultValue ...[]string) []string {
 	r := keyValue(kv, key, &array{})
 	s := make([]string, r.size)
@@ -120,7 +124,7 @@ func (kv KV) Uints(key string, defaultValue ...[]uint32) []uint32 {
 	return s
 }
 
-func keyValue[T string | uint32 | uint64 | float32 | *array](kv KV, key string, defaultValue ...T) T {
+func keyValue[T string | uint32 | uint64 | float32 | *array | bool](kv KV, key string, defaultValue ...T) T {
 	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") {
 		key = kv.Architecture() + "." + key
 	}
