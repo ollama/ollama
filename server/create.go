@@ -34,6 +34,7 @@ var (
 	errOnlyGGUFSupported       = errors.New("supplied file was not in GGUF format")
 	errUnknownType             = errors.New("unknown type")
 	errNeitherFromOrFiles      = errors.New("neither 'from' or 'files' was specified")
+	errFilePath                = errors.New("file path contains invalid characters")
 )
 
 func (s *Server) CreateHandler(c *gin.Context) {
@@ -86,7 +87,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		} else if r.Files != nil {
 			baseLayers, err = convertModelFromFiles(r.Files, baseLayers, false, fn)
 			if err != nil {
-				for _, badReq := range []error{errNoFilesProvided, errOnlyGGUFSupported, errUnknownType} {
+				for _, badReq := range []error{errNoFilesProvided, errOnlyGGUFSupported, errUnknownType, errFilePath} {
 					if errors.Is(err, badReq) {
 						ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
 						return
@@ -104,7 +105,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		if r.Adapters != nil {
 			adapterLayers, err = convertModelFromFiles(r.Adapters, baseLayers, true, fn)
 			if err != nil {
-				for _, badReq := range []error{errNoFilesProvided, errOnlyOneAdapterSupported, errOnlyGGUFSupported, errUnknownType} {
+				for _, badReq := range []error{errNoFilesProvided, errOnlyOneAdapterSupported, errOnlyGGUFSupported, errUnknownType, errFilePath} {
 					if errors.Is(err, badReq) {
 						ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
 						return
@@ -227,7 +228,7 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 		if err != nil {
 			return nil, err
 		}
-		if err := createLink(blobPath, filepath.Join(tmpDir, fp)); err != nil {
+		if err := createLink(blobPath, tmpDir, fp); err != nil {
 			return nil, err
 		}
 	}
@@ -660,15 +661,28 @@ func createConfigLayer(layers []Layer, config ConfigV2) (*Layer, error) {
 	return &layer, nil
 }
 
-func createLink(src, dst string) error {
-	// make any subdirs for dst
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+// createLink creates a symbolic link (or falls back to copy) from srcPath to dstPath,
+// where dstPath is constructed as dstDir/relPath.
+func createLink(srcPath, dstDir, relPath string) error {
+	dstPath := filepath.Join(dstDir, relPath)
+
+	// Validate the relative path is within the destination directory
+	rel, err := filepath.Rel(dstDir, filepath.Clean(dstPath))
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		return fmt.Errorf("%w: %s", errFilePath, relPath)
+	}
+
+	// Create any required subdirectories for the destination path
+	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
 		return err
 	}
 
-	_ = os.Remove(dst)
-	if err := os.Symlink(src, dst); err != nil {
-		if err := copyFile(src, dst); err != nil {
+	_ = os.Remove(dstPath)
+	if err := os.Symlink(srcPath, dstPath); err != nil {
+		if err := copyFile(srcPath, dstPath); err != nil {
 			return err
 		}
 	}

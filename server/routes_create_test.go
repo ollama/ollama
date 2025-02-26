@@ -49,7 +49,9 @@ func createBinFile(t *testing.T, kv map[string]any, ti []ggml.Tensor) (string, s
 		t.Fatal(err)
 	}
 
-	if err := createLink(f.Name(), filepath.Join(modelDir, "blobs", fmt.Sprintf("sha256-%s", strings.TrimPrefix(digest, "sha256:")))); err != nil {
+	dstDir := filepath.Join(modelDir, "blobs")
+	relPath := fmt.Sprintf("sha256-%s", strings.TrimPrefix(digest, "sha256:"))
+	if err := createLink(f.Name(), dstDir, relPath); err != nil {
 		t.Fatal(err)
 	}
 
