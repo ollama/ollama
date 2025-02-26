@@ -17,7 +17,6 @@ type tokenInfo struct {
 	prob  float64
 }
 
-// TODO: see if this is needed to check if things are sorted or not
 type tokenSliceInfo struct {
 	tokens []tokenInfo
 	sorted bool
@@ -54,31 +53,22 @@ func (s weighted) Sample(logits []float32) (int32, error) {
 		}
 	}
 
+	tokensInfo := tokenSliceInfo{tokens: tokens, sorted: false}
 	for _, t := range s.transforms {
-		tokens = t.Apply(tokens)
+		tokensInfo = t.Apply(tokensInfo)
 	}
 
-	// logitsCopy := make([]float64, 0, len(logits))
-	// indices := make([]int, 0, len(logits))
-	// for i, logit := range logits64 {
-	// 	if !math.IsInf(logit, -1) {
-	// 		logitsCopy = append(logitsCopy, logit)
-	// 		indices = append(indices, i)
-	// 	}
-	// }
-
-	if len(tokens) == 0 {
+	if len(tokensInfo.tokens) == 0 {
 		return -1, errors.New("no valid logits found for weighed sampling")
 	}
 
-	filteredProbs := make([]float64, len(tokens))
-	indices := make([]int, len(tokens))
-	for i, token := range tokens {
+	filteredProbs := make([]float64, len(tokensInfo.tokens))
+	indices := make([]int, len(tokensInfo.tokens))
+	for i, token := range tokensInfo.tokens {
 		filteredProbs[i] = token.prob
 		indices[i] = token.id
 	}
 
-	// probs := softmax(logitsCopy)
 	w := sampleuv.NewWeighted(filteredProbs, s.src)
 	if idx, ok := w.Take(); ok {
 		return int32(indices[idx]), nil
@@ -141,7 +131,15 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 		transforms = append(transforms, MinP(minP))
 	}
 
-	if seed >= 0 {
+	if len(transforms) == 0 {
+		return nil, errors.New("at least one transform is required")
+	}
+
+	if temperature == 0 {
+		return Greedy(), nil
+	}
+
+	if seed != 0 {
 		seed64 := uint64(seed)
 		return Weighted(&seed64, transforms...), nil
 	}

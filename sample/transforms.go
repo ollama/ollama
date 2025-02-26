@@ -3,15 +3,15 @@ package sample
 import (
 	"cmp"
 	"math"
+	"slices"
 
 	pq "github.com/emirpasic/gods/v2/queues/priorityqueue"
 )
 
 type Transform interface {
-	Apply([]tokenInfo) []tokenInfo
+	Apply(tokenSliceInfo) tokenSliceInfo
 }
 
-// TODO(parthsareen): potentially cache softmax values
 func softmax(logits []float64) []float64 {
 	var sum float64
 	probs := make([]float64, len(logits))
@@ -29,22 +29,22 @@ func softmax(logits []float64) []float64 {
 
 type Temperature float64
 
-func (t Temperature) Apply(tokens []tokenInfo) []tokenInfo {
+func (t Temperature) Apply(ts tokenSliceInfo) tokenSliceInfo {
 	temp := math.Max(float64(t), 1e-7)
 
 	// subtracting max logit to avoid under/overflow
 	maxLogit := math.Inf(-1)
-	for _, token := range tokens {
+	for _, token := range ts.tokens {
 		if token.logit > maxLogit {
 			maxLogit = token.logit
 		}
 	}
 
-	for i := range tokens {
-		tokens[i].logit = (tokens[i].logit - maxLogit) / temp
+	for i := range ts.tokens {
+		ts.tokens[i].logit = (ts.tokens[i].logit - maxLogit) / temp
 	}
 
-	return tokens
+	return ts
 }
 
 type logitMap struct {
@@ -54,17 +54,16 @@ type logitMap struct {
 
 type TopK int
 
-func (k TopK) Apply(tokens []tokenInfo) []tokenInfo {
-	if int(k) >= len(tokens) {
-		return tokens
+func (k TopK) Apply(ts tokenSliceInfo) tokenSliceInfo {
+	if int(k) >= len(ts.tokens) {
+		return ts
 	}
 	q := pq.NewWith(func(a, b tokenInfo) int {
 		return -cmp.Compare(a.logit, b.logit)
 	})
 
-	// TODO: can do a sort instead and make use of the sorted in other transforms
 	validTokens := make([]tokenInfo, 0, int(k))
-	for _, token := range tokens {
+	for _, token := range ts.tokens {
 		q.Enqueue(token)
 	}
 	for range k {
@@ -72,52 +71,45 @@ func (k TopK) Apply(tokens []tokenInfo) []tokenInfo {
 		validTokens = append(validTokens, token)
 	}
 
-	return validTokens
+	return tokenSliceInfo{tokens: validTokens, sorted: true}
 }
 
 type TopP float64
 
-func (p TopP) Apply(tokens []tokenInfo) []tokenInfo {
-	// probs := softmax(logits)
-	indices := make([]int, len(tokens))
+func (p TopP) Apply(ts tokenSliceInfo) tokenSliceInfo {
+	indices := make([]int, len(ts.tokens))
 	for i := range indices {
 		indices[i] = i
 	}
 
-	// sort in descending order
-	// todo: check and see if tokens are sorted
-	// slices.SortFunc(indices, func(i, j int) int {
-	// 	return -cmp.Compare(tokens[i].prob, tokens[j].prob)
-	// })
+	if !ts.sorted {
+		// sort in descending order
+		slices.SortFunc(indices, func(i, j int) int {
+			return cmp.Compare(ts.tokens[j].prob, ts.tokens[i].prob)
+		})
+	}
 
+	newTokens := make([]tokenInfo, 0, len(ts.tokens))
 	var sum float64
-	var cutoffIndex int
-	for i, idx := range indices {
-		sum += tokens[idx].prob
+	for _, idx := range indices {
+		sum += ts.tokens[idx].prob
+		newTokens = append(newTokens, ts.tokens[idx])
 		if sum > float64(p) {
-			cutoffIndex = i + 1
 			break
 		}
 	}
 
-	// If we didn't reach the threshold, keep all tokens
-	if cutoffIndex == 0 {
-		cutoffIndex = len(indices)
-	}
+	ts.tokens = newTokens
+	ts.sorted = true
 
-	// TODO: this only works if sorted
-	tokens = tokens[:cutoffIndex]
-
-	return tokens
+	return ts
 }
 
 type MinP float64
 
-// TODO: remove alloc in here
-func (p MinP) Apply(tokens []tokenInfo) []tokenInfo {
-	// probs := softmax(logits)
+func (p MinP) Apply(ts tokenSliceInfo) tokenSliceInfo {
 	maxProb := math.Inf(-1)
-	for _, token := range tokens {
+	for _, token := range ts.tokens {
 		if token.prob > maxProb {
 			maxProb = token.prob
 		}
@@ -125,12 +117,12 @@ func (p MinP) Apply(tokens []tokenInfo) []tokenInfo {
 
 	threshold := maxProb * float64(p)
 
-	newTokens := make([]tokenInfo, 0, len(tokens))
-	for i, token := range tokens {
+	newTokens := make([]tokenInfo, 0, len(ts.tokens))
+	for i, token := range ts.tokens {
 		if token.prob >= threshold {
-			newTokens = append(newTokens, tokens[i])
+			newTokens = append(newTokens, ts.tokens[i])
 		}
 	}
 
-	return newTokens
+	return tokenSliceInfo{tokens: newTokens, sorted: ts.sorted}
 }
