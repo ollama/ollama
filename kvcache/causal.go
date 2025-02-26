@@ -237,13 +237,13 @@ func (c *Causal) buildMask(ctx ml.Context, positions []int32, seqs []int) (ml.Te
 		mask[i] = float32(math.Inf(-1))
 	}
 
-	maskTensor, err := ctx.FromFloatSlice(mask, length, batchSize)
+	maskTensor, err := ctx.Input().FromFloatSlice(mask, length, batchSize)
 	if err != nil {
 		return nil, err
 	}
 
 	if c.config.MaskDType != ml.DTypeF32 {
-		out := ctx.Empty(c.config.MaskDType, maskTensor.Shape()...)
+		out := ctx.Input().Empty(c.config.MaskDType, maskTensor.Shape()...)
 		ctx.Forward(maskTensor.Copy(ctx, out))
 		maskTensor = out
 	}
@@ -440,7 +440,7 @@ func (c *Causal) Put(ctx ml.Context, key, value ml.Tensor) {
 	}
 
 	if _, ok := c.ctxs[c.curLayer]; !ok {
-		c.ctxs[c.curLayer] = c.backend.NewContext()
+		c.ctxs[c.curLayer] = c.backend.NewContextSize(2).Layer(c.curLayer)
 	}
 
 	if _, ok := c.keys[c.curLayer]; !ok {
