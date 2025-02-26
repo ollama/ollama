@@ -66,29 +66,12 @@ func TestSample(t *testing.T) {
 		callOrder: &callOrder,
 	}
 
-	got, err := Greedy(mock1, mock2, mock3).Sample(input)
+	_, err := Weighted(nil, mock1, mock2, mock3).Sample(input)
 	if err != nil {
 		t.Error(err)
 		return
-	}
-
-	want := int32(3) // Greedy sampler should pick highest logit
-	if want != got {
-		t.Errorf("index mismatch: want %d, got %d", want, got)
 	}
 	wantOrder := []int{1, 2, 3}
-	if diff := cmp.Diff(wantOrder, callOrder); diff != "" {
-		t.Errorf("call order mismatch (-want +got):\n%s", diff)
-	}
-
-	callOrder = nil
-
-	_, err = Weighted(nil, mock1, mock2, mock3).Sample(input)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	wantOrder = []int{1, 2, 3}
 	if diff := cmp.Diff(wantOrder, callOrder); diff != "" {
 		t.Errorf("call order mismatch (-want +got):\n%s", diff)
 	}
@@ -105,8 +88,9 @@ func TestNewSampler(t *testing.T) {
 		wantErr     bool
 	}{
 		{
-			name:    "no transforms",
-			wantErr: true,
+			name: "no transforms",
+			// temperature is 0, so greedy should be used
+			wantErr: false,
 		},
 		{
 			name:        "temperature",
@@ -124,49 +108,52 @@ func TestNewSampler(t *testing.T) {
 			wantErr:     true,
 		},
 		{
-			name:    "top k",
-			topK:    10,
-			wantErr: false,
+			name:        "top k",
+			topK:        10,
+			temperature: 0.8,
+			wantErr:     false,
 		},
 		{
-			name:    "invalid top k negative",
-			topK:    -1,
-			wantErr: true,
+			name:        "invalid top k negative",
+			topK:        -1,
+			temperature: 0.8,
+			wantErr:     true,
 		},
 		{
-			name:    "top p",
-			topP:    0.9,
-			wantErr: false,
+			name:        "top p",
+			topP:        0.9,
+			temperature: 0.8,
+			wantErr:     false,
 		},
 		{
-			name:    "invalid top p negative",
-			topP:    -0.1,
-			wantErr: true,
+			name:        "invalid top p negative",
+			topP:        -0.1,
+			temperature: 0.8,
+			wantErr:     true,
 		},
 		{
-			name:    "invalid top p one",
-			topP:    1.0,
-			wantErr: true,
+			name:        "invalid top p one",
+			topP:        1.0,
+			temperature: 0.8,
+			wantErr:     true,
 		},
 		{
-			name:    "min p",
-			minP:    0.2,
-			wantErr: false,
+			name:        "min p",
+			minP:        0.2,
+			temperature: 0.8,
+			wantErr:     false,
 		},
 		{
-			name:    "invalid min p negative",
-			minP:    -0.1,
-			wantErr: true,
+			name:        "invalid min p negative",
+			minP:        -0.1,
+			temperature: 0.8,
+			wantErr:     true,
 		},
 		{
-			name:    "invalid min p one",
-			minP:    1.0,
-			wantErr: true,
-		},
-		{
-			name:    "seed",
-			seed:    42,
-			wantErr: true, // seed alone is not valid without other transforms
+			name:        "invalid min p one",
+			minP:        1.0,
+			temperature: 0.8,
+			wantErr:     true,
 		},
 		{
 			name:        "default values",
@@ -184,7 +171,7 @@ func TestNewSampler(t *testing.T) {
 			topP:        0.0,
 			minP:        0.0,
 			seed:        0,
-			wantErr:     true, // all zeroes means no transforms
+			wantErr:     false, // all zeroes means no transforms
 		},
 		{
 			name:        "all transforms",
@@ -216,7 +203,7 @@ func BenchmarkSample(b *testing.B) {
 	}
 
 	samplers := map[string]Sampler{
-		"Greedy":   Greedy(transforms...),
+		"Greedy":   Greedy(),
 		"Weighted": Weighted(nil, transforms...),
 	}
 

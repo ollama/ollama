@@ -61,8 +61,8 @@ type greedy struct {
 	transforms []Transform
 }
 
-func Greedy(transforms ...Transform) Sampler {
-	return greedy{transforms: transforms}
+func Greedy() Sampler {
+	return greedy{}
 }
 
 func (s greedy) Sample(logits []float32) (int32, error) {
@@ -93,6 +93,10 @@ func (s greedy) Sample(logits []float32) (int32, error) {
 
 // TODO(parthsareen): update sampler interface to use json unmarshal https://github.com/ollama/ollama/issues/9278
 func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int) (Sampler, error) {
+	if temperature == 0 {
+		return Greedy(), nil
+	}
+
 	transforms := []Transform{}
 	if temperature < 0 || temperature > 2 {
 		return nil, errors.New("temperature must be between 0 and 2")
@@ -125,10 +129,6 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 
 	if len(transforms) == 0 {
 		return nil, errors.New("at least one transform is required")
-	}
-
-	if temperature == 0 {
-		return Greedy(transforms...), nil
 	}
 
 	if seed != 0 {
