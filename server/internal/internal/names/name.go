@@ -8,7 +8,7 @@ import (
 	"github.com/ollama/ollama/server/internal/internal/stringsx"
 )
 
-const MaxNameLength = 50 + 1 + 50 + 1 + 50 // <namespace>/<model>:<tag>
+const MaxNameLength = 350 + 1 + 80 + 1 + 80 + 1 + 80 // <host>/<namespace>/<model>:<tag>
 
 type Name struct {
 	// Make incomparable to enfoce use of Compare / Equal for
@@ -25,19 +25,12 @@ type Name struct {
 // format of a valid name string is:
 //
 //	  s:
-//		  { host } "/" { namespace } "/" { model } ":" { tag } "@" { digest }
 //		  { host } "/" { namespace } "/" { model } ":" { tag }
-//		  { host } "/" { namespace } "/" { model } "@" { digest }
 //		  { host } "/" { namespace } "/" { model }
-//		  { namespace } "/" { model } ":" { tag } "@" { digest }
 //		  { namespace } "/" { model } ":" { tag }
-//		  { namespace } "/" { model } "@" { digest }
 //		  { namespace } "/" { model }
-//		  { model } ":" { tag } "@" { digest }
 //		  { model } ":" { tag }
-//		  { model } "@" { digest }
 //		  { model }
-//		  "@" { digest }
 //	  host:
 //	      pattern: { alphanum | "_" } { alphanum | "_" | "-" | "." | ":" }*
 //	      length:  [1, 350]
@@ -49,9 +42,6 @@ type Name struct {
 //	      length:  [1, 80]
 //	  tag:
 //	      pattern: { alphanum | "_" } { alphanum | "-" | "_" | "." }*
-//	      length:  [1, 80]
-//	  digest:
-//	      pattern: { alphanum | "_" } { alphanum | "-" | ":" }*
 //	      length:  [1, 80]
 //
 // The name returned is not guaranteed to be valid. If it is not valid, the
@@ -82,23 +72,17 @@ func Parse(s string) Name {
 	}
 }
 
-// ParseExtended parses and returns any scheme, Name, and digest from from s in
-// the the form [scheme://][name][@digest]. All parts are optional.
-//
-// If the scheme is present, it must be followed by "://". The digest is
-// prefixed by "@" and comes after the name. The name is parsed using [Parse].
-//
-// The scheme and digest are stripped before the name is parsed by [Parse].
-//
-// For convience, the scheme is never empty. If the scheme is not present, the
-// returned scheme is "https".
+// Split splits an extended name string into its scheme, name, and digest
+// parts.
 //
 // Examples:
 //
 //	http://ollama.com/bmizerany/smol:latest@digest
 //	https://ollama.com/bmizerany/smol:latest
 //	ollama.com/bmizerany/smol:latest@digest // returns "https" scheme.
-func ParseExtended(s string) (scheme string, _ Name, digest string) {
+//	model@digest
+//	@digest
+func Split(s string) (scheme, name, digest string) {
 	i := strings.Index(s, "://")
 	if i >= 0 {
 		scheme = s[:i]
@@ -109,21 +93,7 @@ func ParseExtended(s string) (scheme string, _ Name, digest string) {
 		digest = s[i+1:]
 		s = s[:i]
 	}
-	return scheme, Parse(s), digest
-}
-
-func FormatExtended(scheme string, n Name, digest string) string {
-	var b strings.Builder
-	if scheme != "" {
-		b.WriteString(scheme)
-		b.WriteString("://")
-	}
-	b.WriteString(n.String())
-	if digest != "" {
-		b.WriteByte('@')
-		b.WriteString(digest)
-	}
-	return b.String()
+	return scheme, s, digest
 }
 
 // Merge merges two names into a single name. Non-empty host, namespace, and
@@ -141,39 +111,68 @@ func Merge(a, b Name) Name {
 
 // IsValid returns true if the name is valid.
 func (n Name) IsValid() bool {
-	if n.h != "" && !isValidHost(n.h) {
+	if n.h != "" && !isValidPart(partHost, n.h) {
 		return false
 	}
-	if n.n != "" && !isValidNamespace(n.n) {
+	if n.n != "" && !isValidPart(partNamespace, n.n) {
 		return false
 	}
-	if n.m != "" && !isValidModel(n.m) {
+	if n.t != "" && !isValidPart(partTag, n.t) {
 		return false
 	}
-	if n.t != "" && !isValidTag(n.t) {
-		return false
-	}
-	return true
+
+	// at bare minimum, model must be present and valid
+	return n.m != "" && isValidPart(partModel, n.m)
 }
 
 func (n Name) IsFullyQualified() bool {
 	return n.IsValid() && n.h != "" && n.n != "" && n.m != "" && n.t != ""
 }
 
-func isValidHost(_ string) bool {
-	return true // TODO: implement
+const (
+	partHost = iota
+	partNamespace
+	partModel
+	partTag
+)
+
+func isValidPart(kind int, s string) bool {
+	maxlen := 80
+	if kind == partHost {
+		maxlen = 350
+	}
+	if len(s) > maxlen {
+		return false
+	}
+
+	for i := range s {
+		if i == 0 {
+			if !isAlphanumericOrUnderscore(s[i]) {
+				return false
+			}
+			continue
+		}
+		switch s[i] {
+		case '_', '-':
+		case '.':
+			if kind == partNamespace {
+				return false
+			}
+		case ':':
+			if kind != partHost {
+				return false
+			}
+		default:
+			if !isAlphanumericOrUnderscore(s[i]) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
-func isValidNamespace(_ string) bool {
-	return true // TODO: implement
-}
-
-func isValidModel(_ string) bool {
-	return true // TODO: implement
-}
-
-func isValidTag(_ string) bool {
-	return true // TODO: implement
+func isAlphanumericOrUnderscore(c byte) bool {
+	return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_'
 }
 
 func (n Name) Host() string      { return n.h }

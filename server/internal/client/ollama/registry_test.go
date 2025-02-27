@@ -84,14 +84,14 @@ func newClient(t *testing.T, h http.HandlerFunc) (*Registry, *blob.DiskCache) {
 		}
 	}
 
-	rc := &Registry{
+	r := &Registry{
 		HTTPClient: &http.Client{
 			Transport: recordRoundTripper(h),
 		},
 	}
 
 	link := func(name string, manifest string) {
-		_, n, _, err := parseName(name, rc.NameMask)
+		_, n, _, err := parseName(name, r.Mask)
 		if err != nil {
 			panic(err)
 		}
@@ -122,7 +122,7 @@ func newClient(t *testing.T, h http.HandlerFunc) (*Registry, *blob.DiskCache) {
 	commit("sizemismatch", mklayer("exists"), &Layer{Digest: blob.DigestFromBytes("present"), Size: 499})
 	link("invalid", "!!!!!")
 
-	return rc, c
+	return r, c
 }
 
 func okHandler(w http.ResponseWriter, r *http.Request) {
@@ -143,29 +143,6 @@ func importBytes(t *testing.T, c *blob.DiskCache, data string) blob.Digest {
 		t.Fatal(err)
 	}
 	return d
-}
-
-func TestRegistryPushInvalidNames(t *testing.T) {
-	rc, c := newClient(t, nil)
-
-	cases := []struct {
-		name string
-		err  error
-	}{
-		{"", ErrNameInvalid},
-		{"@", ErrNameInvalid},
-		{"@x", blob.ErrInvalidDigest},
-	}
-
-	for _, tt := range cases {
-		t.Run(tt.name, func(t *testing.T) {
-			// Create a new registry and push a new image.
-			err := rc.Push(t.Context(), c, tt.name, nil)
-			if !errors.Is(err, tt.err) {
-				t.Errorf("err = %v; want %v", err, tt.err)
-			}
-		})
-	}
 }
 
 func withTraceUnexpected(ctx context.Context) (context.Context, *Trace) {
@@ -622,7 +599,7 @@ func TestInsecureSkipVerify(t *testing.T) {
 	}))
 	defer s.Close()
 
-	const name = "ollama.com/library/insecure"
+	const name = "library/insecure"
 
 	var rc Registry
 	url := fmt.Sprintf("https://%s/%s", s.Listener.Addr(), name)
@@ -722,5 +699,40 @@ func TestErrorUnmarshal(t *testing.T) {
 				t.Errorf("got = %v; want %v", got, *tt.want)
 			}
 		})
+	}
+}
+
+// TestParseNameErrors tests that parseName returns errors messages with enough
+// detail for users to debug naming issues they may encounter. Previous to this
+// test, the error messages were not very helpful and each problem was reported
+// as the same message.
+//
+// It is only for testing error messages, not that all invalids and valids are
+// covered. Those are in other tests for names.Name and blob.Digest.
+func TestParseNameErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"x", nil, ""},
+		{"x@", nil, ""},
+
+		{"", ErrNameInvalid, `invalid or missing name: ""`},
+		{"://", ErrNameInvalid, `invalid or missing name: "://"`},
+		{"x://", ErrNameInvalid, `unsupported scheme: "x": supported schemes are http, https, https+insecure`},
+
+		{"@sha123-1234", ErrNameInvalid, `invalid digest: "sha123-1234"`},
+		{"x@sha123-1234", ErrNameInvalid, `invalid digest: "sha123-1234"`},
+	}
+
+	for _, tt := range cases {
+		_, _, _, err := parseName(tt.name, DefaultMask)
+		if !errors.Is(err, tt.err) {
+			t.Errorf("[%s]: err = %v; want %v", tt.name, err, tt.err)
+		}
+		if err != nil && !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("[%s]: err =\n\t%v\nwant\n\t%v", tt.name, err, tt.want)
+		}
 	}
 }
