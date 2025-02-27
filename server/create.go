@@ -10,7 +10,6 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
-	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -49,7 +48,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		return
 	}
 
-	for f := range maps.Keys(r.Files) {
+	for f := range r.Files {
 		if filepath.Clean(f) != f {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errFilePath.Error()})
 			return
