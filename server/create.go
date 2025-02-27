@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -46,6 +47,13 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	} else if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	for f := range maps.Keys(r.Files) {
+		if filepath.Clean(f) != f {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errFilePath.Error()})
+			return
+		}
 	}
 
 	name := model.ParseName(cmp.Or(r.Model, r.Name))
@@ -228,27 +236,20 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 	if err != nil {
 		return nil, err
 	}
-	valid := func(path string) error {
-		if strings.Contains(path, "..") {
-			return fmt.Errorf("%w: %s", errFilePath, path)
-		}
-		_, err := root.Stat(path)
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			// Path is outside the expected directory
-			return fmt.Errorf("%w: %s", errFilePath, err)
-		}
-		return nil
-	}
+	defer root.Close()
 
 	for fp, digest := range files {
-		if err := valid(fp); err != nil {
-			return nil, err
+		dst := filepath.Join(tmpDir, filepath.Clean(fp))
+		// Confirm the path stays within the root, even if it doesn't exist yet
+		if _, err := root.Stat(dst); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			// Path is likely outside the root
+			return nil, fmt.Errorf("%w: %s", errFilePath, fp)
 		}
 		blobPath, err := GetBlobsPath(digest)
 		if err != nil {
 			return nil, err
 		}
-		if err := createLink(blobPath, filepath.Join(tmpDir, fp)); err != nil {
+		if err := createLink(blobPath, dst); err != nil {
 			return nil, err
 		}
 	}
