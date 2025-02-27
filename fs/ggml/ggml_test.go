@@ -3,6 +3,7 @@ package ggml
 import (
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -153,6 +154,58 @@ func TestTensorLayers(t *testing.T) {
 			got := Tensors{items: tt.items}.GroupLayers()
 			if diff := cmp.Diff(got, tt.want); diff != "" {
 				t.Errorf("unexpected layers (-got +want):\n%s", diff)
+			}
+		})
+	}
+}
+
+// ref: https://github.com/ggml-org/llama.cpp/blob/a82c9e7c23ef6db48cebfa194dc9cebbc4ac3552/ggml/src/ggml.c#L572
+func TestTensorTypes(t *testing.T) {
+	cases := []struct {
+		kind      uint32
+		blockSize uint64
+		typeSize  uint64
+	}{
+		{0, 1, 4},
+		{1, 1, 2},
+		{2, 32, 18},
+		{3, 32, 20},
+		{6, 32, 22},
+		{7, 32, 24},
+		{8, 32, 34},
+		{9, 32, 36},
+		{10, 256, 84},
+		{11, 256, 110},
+		{12, 256, 144},
+		{13, 256, 176},
+		{14, 256, 210},
+		{15, 256, 292},
+		{16, 256, 66},
+		{17, 256, 74},
+		{18, 256, 98},
+		{19, 256, 50},
+		{20, 32, 18},
+		{21, 256, 110},
+		{22, 256, 82},
+		{23, 256, 136},
+		{24, 1, 1},
+		{25, 1, 2},
+		{26, 1, 4},
+		{27, 1, 8},
+		{28, 1, 8},
+		{29, 256, 56},
+		{30, 1, 2},
+	}
+
+	for _, tt := range cases {
+		t.Run(strconv.Itoa(int(tt.kind)), func(t *testing.T) {
+			tensor := Tensor{Kind: tt.kind}
+			if tensor.blockSize() != tt.blockSize {
+				t.Errorf("unexpected block size: got=%d want=%d", tensor.blockSize(), tt.blockSize)
+			}
+
+			if tensor.typeSize() != tt.typeSize {
+				t.Errorf("unexpected type size: got=%d want=%d", tensor.typeSize(), tt.typeSize)
 			}
 		})
 	}

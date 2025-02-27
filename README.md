@@ -385,6 +385,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [AntSK](https://github.com/AIDotNet/AntSK) (Out-of-the-box & Adaptable RAG Chatbot)
 - [MaxKB](https://github.com/1Panel-dev/MaxKB/) (Ready-to-use & flexible RAG Chatbot)
 - [yla](https://github.com/danielekp/yla) (Web interface to freely interact with your customized models)
+- [LangBot](https://github.com/RockChinQ/LangBot) (LLM-based instant messaging bots platform, with Agents, RAG features, supports multiple platforms)
 
 ### Cloud
 
@@ -501,6 +502,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LlmTornado](https://github.com/lofcz/llmtornado) (C# library providing a unified interface for major FOSS & Commercial inference APIs)
 - [Ollama for Zig](https://github.com/dravenk/ollama-zig)
 - [Abso](https://github.com/lunary-ai/abso) (OpenAI-compatible TypeScript SDK for any LLM provider)
+- [Nichey](https://github.com/goodreasonai/nichey) is a Python package for generating custom wikis for your research topic
 
 ### Mobile
 
