@@ -112,7 +112,7 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 		transforms = append(transforms, MinP(minP))
 	}
 
-	if seed != 0 {
+	if seed >= 0 {
 		seed64 := uint64(seed)
 		return Weighted(&seed64, transforms...), nil
 	}
