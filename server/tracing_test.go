@@ -9,6 +9,9 @@ import (
         sdktrace "go.opentelemetry.io/otel/sdk/trace"
         "go.opentelemetry.io/otel/sdk/trace/tracetest"
         "go.opentelemetry.io/otel"
+
+	"github.com/ollama/ollama/server/internal/cache/blob"
+	"github.com/ollama/ollama/server/internal/client/ollama"
 )
 
 func Test_Tracing(t *testing.T) {
@@ -97,8 +100,24 @@ func Test_Tracing(t *testing.T) {
         tp := otel.GetTracerProvider()
         tp.(*sdktrace.TracerProvider).RegisterSpanProcessor(sr)
 
+	modelsDir := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", modelsDir)
+
+	c, err := blob.Open(modelsDir)
+	if err != nil {
+		t.Fatalf("failed to open models dir: %v", err)
+	}
+
+	rc := &ollama.Registry{
+		// Synced from routes_test.go. 
+		HTTPClient: panicOnRoundTrip,
+	}
+
         s := &Server{}
-        router := s.GenerateRoutes()
+        router, err := s.GenerateRoutes(c, rc)
+	if err != nil {
+		t.Fatalf("failed to generate routes: %v", err)
+	}
 
         httpSrv := httptest.NewServer(router)
         t.Cleanup(httpSrv.Close)
