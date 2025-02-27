@@ -190,27 +190,26 @@ jobs:
 
           go-version-file: go.mod
 
+      # It is tempting to run this in a platform independent way, but the past
+      # shows this codebase will see introductions of platform specific code
+      # generation, and so we need to check this per platform to ensure we
+      # don't abuse go generate on specific platforms.
+      - name: check that 'go generate' is clean
+        if: always()
+        run: |
+          go generate ./...
+          git diff --name-only --exit-code || (echo "Please run 'go generate ./...'." && exit 1)
+
+      - name: go test
+        if: always()
+        run: go test -count=1 -benchtime=1x ./...
+
       # TODO(bmizerany): replace this heavy tool with just the
       # tools/checks/binaries we want and then make them all run in parallel
       # across jobs, not on a single tiny vm on Github Actions.
       - uses: golangci/golangci-lint-action@v6
         with:
           args: --timeout 10m0s -v
-
-      - name: go test
-        # Do not skip tests in the face of linter errors, or 'go mod tidy'
-        # checks, which are secondary to the tests. Tests trump linters.
-        if: always()
-        run: go test -count=1 -benchtime=1x ./...
-
-      # It is tempting to run this in a platform independent way, but the past
-      # shows this codebase will see introductions of platform specific code
-      # generation, and so we need to check this per platform to ensure we
-      # don't abuse go generate on specific platforms.
-      - name: check that 'go generate' is clean
-        run: |
-          go generate ./...
-          git diff --name-only --exit-code || (echo "Please run 'go generate ./...'." && exit 1)
 
       - name: cache save
         # Always save the cache, even if the job fails. The artifacts produced
