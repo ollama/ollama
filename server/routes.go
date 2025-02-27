@@ -1157,6 +1157,7 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.Use(
 		cors.New(corsConfig),
 		allowedHostsMiddleware(s.addr),
+		TracingMiddleware(),
 	)
 
 	// General
@@ -1244,6 +1245,13 @@ func Serve(ln net.Listener) error {
 				return err
 			}
 		}
+	}
+
+	shutdownTracerProvider, err := initTracerProvider(context.Background())
+	if err != nil {
+		slog.Error("Failed to initialize opentelemetry trace provider", "error", err)
+	} else {
+		defer shutdownTracerProvider(context.Background())
 	}
 
 	ctx, done := context.WithCancel(context.Background())
