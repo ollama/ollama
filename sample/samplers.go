@@ -54,7 +54,7 @@ func (s weighted) Sample(logits []float32) (int32, error) {
 	if idx, ok := w.Take(); ok {
 		return int32(indices[idx]), nil
 	}
-	return -1, errors.New("weighed sampler failed, no valid token found")
+	return -1, errors.New("weighted sampler failed, no valid token found")
 }
 
 type greedy struct{}
@@ -63,23 +63,17 @@ func Greedy() Sampler {
 	return greedy{}
 }
 
+// Sample returns the index of the maximum value in logits.
 func (s greedy) Sample(logits []float32) (int32, error) {
-	logits64 := make([]float64, len(logits))
-	for i, v := range logits {
-		logits64[i] = float64(v)
+	if len(logits) == 0 {
+		return -1, errors.New("no logits provided for greedy sampling")
 	}
 
-	var maxIdx int
-	var maxLogit float64
-	for i, logit := range logits64 {
-		if logit > maxLogit {
-			maxLogit = logit
+	maxIdx := 0
+	for i := range logits {
+		if logits[i] > logits[maxIdx] {
 			maxIdx = i
 		}
-	}
-
-	if maxLogit == math.Inf(-1) {
-		return -1, errors.New("no valid logits found for greedy sampling")
 	}
 
 	return int32(maxIdx), nil
@@ -91,14 +85,11 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 		return Greedy(), nil
 	}
 
-	transforms := []Transform{}
 	if temperature < 0 || temperature > 2 {
 		return nil, errors.New("temperature must be between 0 and 2")
 	}
 
-	if temperature != 0 {
-		transforms = append(transforms, Temperature(temperature))
-	}
+	transforms := []Transform{Temperature(temperature)}
 
 	if topK != 0 {
 		if topK <= 0 {
@@ -119,10 +110,6 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 			return nil, errors.New("minP must be between 0 and 1")
 		}
 		transforms = append(transforms, MinP(minP))
-	}
-
-	if len(transforms) == 0 {
-		return nil, errors.New("at least one transform is required")
 	}
 
 	if seed != 0 {
