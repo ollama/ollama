@@ -249,7 +249,7 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 		if err != nil {
 			return nil, err
 		}
-		if err := createLink(blobPath, filepath.Join(tmpDir, filepath.Clean(fp))); err != nil {
+		if err := createLink(blobPath, filepath.Join(tmpDir, fp)); err != nil {
 			return nil, err
 		}
 	}
