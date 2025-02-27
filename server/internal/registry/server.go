@@ -72,6 +72,26 @@ func (r *statusCodeRecorder) WriteHeader(status int) {
 	r.ResponseWriter.WriteHeader(status)
 }
 
+var (
+	_ http.ResponseWriter = (*statusCodeRecorder)(nil)
+	_ http.CloseNotifier  = (*statusCodeRecorder)(nil)
+	_ http.Flusher        = (*statusCodeRecorder)(nil)
+)
+
+// CloseNotify implements the http.CloseNotifier interface, for Gin. Remove with Gin.
+//
+// It panics if the underlying ResponseWriter is not a CloseNotifier.
+func (r *statusCodeRecorder) CloseNotify() <-chan bool {
+	return r.ResponseWriter.(http.CloseNotifier).CloseNotify()
+}
+
+// Flush implements the http.Flusher interface, for Gin. Remove with Gin.
+//
+// It panics if the underlying ResponseWriter is not a Flusher.
+func (r *statusCodeRecorder) Flush() {
+	r.ResponseWriter.(http.Flusher).Flush()
+}
+
 func (r *statusCodeRecorder) status() int {
 	return cmp.Or(r._status, 200)
 }
