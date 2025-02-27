@@ -26,6 +26,7 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/sync/errgroup"
+	"go.opentelemetry.io/otel"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
@@ -111,6 +112,8 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []Capabil
 
 func (s *Server) GenerateHandler(c *gin.Context) {
 	checkpointStart := time.Now()
+	tracer := otel.Tracer("generate-handler")
+	_, loading_span := tracer.Start(c.Request.Context(), "model-loading")
 	var req api.GenerateRequest
 	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
@@ -182,7 +185,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	loading_span.End()
 	checkpointLoaded := time.Now()
+	_, eval_span := tracer.Start(c.Request.Context(), "model-eval")
+	defer eval_span.End()
 
 	// load the model
 	if req.Prompt == "" {
@@ -369,6 +375,8 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 func (s *Server) EmbedHandler(c *gin.Context) {
 	checkpointStart := time.Now()
+	tracer := otel.Tracer("embed-handler")
+	_, loading_span := tracer.Start(c.Request.Context(), "model-loading")
 	var req api.EmbedRequest
 	err := c.ShouldBindJSON(&req)
 	switch {
@@ -420,7 +428,10 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
+	loading_span.End()
 	checkpointLoaded := time.Now()
+	_, eval_span := tracer.Start(c.Request.Context(), "model-eval")
+	defer eval_span.End()
 
 	if len(input) == 0 {
 		c.JSON(http.StatusOK, api.EmbedResponse{Model: req.Model, Embeddings: [][]float32{}})
@@ -1399,6 +1410,8 @@ func (s *Server) PsHandler(c *gin.Context) {
 
 func (s *Server) ChatHandler(c *gin.Context) {
 	checkpointStart := time.Now()
+	tracer := otel.Tracer("chat-handler")
+	_, loading_span := tracer.Start(c.Request.Context(), "model-loading")
 
 	var req api.ChatRequest
 	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
@@ -1460,7 +1473,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
+	loading_span.End()
 	checkpointLoaded := time.Now()
+	_, eval_span := tracer.Start(c.Request.Context(), "model-eval")
+	defer eval_span.End()
 
 	if len(req.Messages) == 0 {
 		c.JSON(http.StatusOK, api.ChatResponse{

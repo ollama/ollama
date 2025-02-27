@@ -45,8 +45,42 @@ func Test_Tracing(t *testing.T) {
                                         t.Fatalf("Unexpected span name: %v", span.Name())
                                 }
 
-                                if span.ChildSpanCount() != 0 {
-                                        t.Fatalf("Expected 0 child spans, observed %d", span.ChildSpanCount())
+                                if span.ChildSpanCount() < 1 {
+                                        t.Fatalf("Expected 1+ child spans, observed %d", span.ChildSpanCount())
+                                }
+
+                        },
+                },
+		{
+                        Name:   "Chat Handler (400 response)",
+                        Method: http.MethodPost,
+                        Path:   "/api/chat",
+                        NumSpansExpected:       1,
+                        Expected: func(t *testing.T, sr *tracetest.SpanRecorder) {
+                                span := sr.Ended()[0]
+                                if span.Name() != "/api/chat" {
+                                        t.Fatalf("Unexpected span name: %v", span.Name())
+                                }
+
+                                if span.ChildSpanCount() < 1 {
+                                        t.Fatalf("Expected 1+ child spans, observed %d", span.ChildSpanCount())
+                                }
+
+                        },
+                }, 
+		{
+                        Name:   "Embed Handler (400 response)",
+                        Method: http.MethodPost,
+                        Path:   "/api/embed",
+                        NumSpansExpected:       1,
+                        Expected: func(t *testing.T, sr *tracetest.SpanRecorder) {
+                                span := sr.Ended()[0]
+                                if span.Name() != "/api/embed" {
+                                        t.Fatalf("Unexpected span name: %v", span.Name())
+                                }
+
+                                if span.ChildSpanCount() < 1 {
+                                        t.Fatalf("Expected 1+ child spans, observed %d", span.ChildSpanCount())
                                 }
 
                         },
