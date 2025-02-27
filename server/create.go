@@ -230,19 +230,19 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 	}
 	valid := func(path string) error {
 		if strings.Contains(path, "..") {
-			return errFilePath
+			return fmt.Errorf("%w: %s", errFilePath, path)
 		}
 		_, err := root.Stat(path)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			// Path is outside the expected directory
-			return err
+			return fmt.Errorf("%w: %s", errFilePath, err)
 		}
 		return nil
 	}
 
 	for fp, digest := range files {
 		if err := valid(fp); err != nil {
-			return nil, fmt.Errorf("%w: %s: %s", errFilePath, err, fp)
+			return nil, err
 		}
 		blobPath, err := GetBlobsPath(digest)
 		if err != nil {
