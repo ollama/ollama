@@ -687,8 +687,6 @@ func createLink(src, dst string) error {
 		return err
 	}
 
-	fmt.Println(dst)
-
 	_ = os.Remove(dst)
 	if err := os.Symlink(src, dst); err != nil {
 		if err := copyFile(src, dst); err != nil {
