@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -86,9 +87,23 @@ func DefaultCache() (*blob.DiskCache, error) {
 	return blob.Open(dir)
 }
 
-// Error is the standard error returned by Ollama APIs.
+// Error is the standard error returned by Ollama APIs. It can represent a
+// single or multiple error response.
+//
+// Single error responses have the following format:
+//
+//	{"code": "optional_code","error":"error message"}
+//
+// Multiple error responses have the following format:
+//
+//	{"errors": [{"code": "optional_code","message":"error message"}]}
+//
+// Note, that the error field is used in single error responses, while the
+// message field is used in multiple error responses.
+//
+// In both cases, the code field is optional and may be empty.
 type Error struct {
-	Status  int    `json:"-"`
+	Status  int    `json:"-"` // TODO(bmizerany): remove this
 	Code    string `json:"code"`
 	Message string `json:"message"`
 }
@@ -97,12 +112,33 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("registry responded with status %d: %s %s", e.Status, e.Code, e.Message)
 }
 
+func (e *Error) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.Int("status", e.Status),
+		slog.String("code", e.Code),
+		slog.String("message", e.Message),
+	)
+}
+
 // UnmarshalJSON implements json.Unmarshaler.
 func (e *Error) UnmarshalJSON(b []byte) error {
 	type E Error
-	var v struct{ Errors []E }
+	var v struct {
+		// Single error
+		Code  string
+		Error string
+
+		// Multiple errors
+		Errors []E
+	}
 	if err := json.Unmarshal(b, &v); err != nil {
 		return err
+	}
+	if v.Error != "" {
+		// Single error case
+		e.Code = v.Code
+		e.Message = v.Error
+		return nil
 	}
 	if len(v.Errors) == 0 {
 		return fmt.Errorf("no messages in error response: %s", string(b))
@@ -111,9 +147,8 @@ func (e *Error) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// TODO(bmizerany): make configurable on [Registry]
 var defaultName = func() names.Name {
-	n := names.Parse("ollama.com/library/_:latest")
+	n := names.Parse("registry.ollama.ai/library/_:latest")
 	if !n.IsFullyQualified() {
 		panic("default name is not fully qualified")
 	}
@@ -160,21 +195,26 @@ type Registry struct {
 	//
 	// It is only used when a layer is larger than [MaxChunkingThreshold].
 	MaxChunkSize int64
+
+	// NameMask, if set, is the name used to convert non-fully qualified
+	// names to fully qualified names. If empty, the default mask
+	// ("registry.ollama.ai/library/_:latest") is used.
+	NameMask string
 }
 
-// RegistryFromEnv returns a new Registry configured from the environment. The
+// DefaultRegistry returns a new Registry configured from the environment. The
 // key is read from $HOME/.ollama/id_ed25519, MaxStreams is set to the
 // value of OLLAMA_REGISTRY_MAXSTREAMS, and ChunkingDirectory is set to the
 // system's temporary directory.
 //
 // It returns an error if any configuration in the environment is invalid.
-func RegistryFromEnv() (*Registry, error) {
+func DefaultRegistry() (*Registry, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
 	}
 	keyPEM, err := os.ReadFile(filepath.Join(home, ".ollama/id_ed25519"))
-	if err != nil {
+	if err != nil && errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
 
@@ -208,9 +248,19 @@ type PushParams struct {
 // any, is invalid.
 //
 // The scheme is returned as provided by [names.ParseExtended].
-func parseName(s string) (scheme string, n names.Name, d blob.Digest, err error) {
+func parseName(s, mask string) (scheme string, n names.Name, d blob.Digest, err error) {
+	maskName := defaultName
+	if mask != "" {
+		maskName = names.Parse(mask)
+		if !maskName.IsFullyQualified() {
+			return "", names.Name{}, blob.Digest{}, fmt.Errorf("invalid name mask: %s", mask)
+		}
+	}
 	scheme, n, ds := names.ParseExtended(s)
-	n = names.Merge(n, defaultName)
+	if !n.IsValid() {
+		return "", names.Name{}, blob.Digest{}, fmt.Errorf("%w: %q", ErrNameInvalid, s)
+	}
+	n = names.Merge(n, maskName)
 	if ds != "" {
 		// Digest is present. Validate it.
 		d, err = blob.ParseDigest(ds)
@@ -223,7 +273,7 @@ func parseName(s string) (scheme string, n names.Name, d blob.Digest, err error)
 	// say that digests take precedence over names, and so should there
 	// errors when being parsed.
 	if !n.IsFullyQualified() {
-		return "", names.Name{}, blob.Digest{}, ErrNameInvalid
+		return "", names.Name{}, blob.Digest{}, fmt.Errorf("%w: %q", ErrNameInvalid, s)
 	}
 
 	scheme = cmp.Or(scheme, "https")
@@ -255,7 +305,7 @@ func (r *Registry) Push(ctx context.Context, c *blob.DiskCache, name string, p *
 		p = &PushParams{}
 	}
 
-	m, err := ResolveLocal(c, cmp.Or(p.From, name))
+	m, err := r.ResolveLocal(c, cmp.Or(p.From, name))
 	if err != nil {
 		return err
 	}
@@ -278,7 +328,7 @@ func (r *Registry) Push(ctx context.Context, c *blob.DiskCache, name string, p *
 
 	t := traceFromContext(ctx)
 
-	scheme, n, _, err := parseName(name)
+	scheme, n, _, err := parseName(name, r.NameMask)
 	if err != nil {
 		// This should never happen since ResolveLocal should have
 		// already validated the name.
@@ -372,7 +422,7 @@ func canRetry(err error) bool {
 // typically slower than splitting the model up across layers, and is mostly
 // utilized for layers of type equal to "application/vnd.ollama.image".
 func (r *Registry) Pull(ctx context.Context, c *blob.DiskCache, name string) error {
-	scheme, n, _, err := parseName(name)
+	scheme, n, _, err := parseName(name, r.NameMask)
 	if err != nil {
 		return err
 	}
@@ -520,6 +570,16 @@ func (r *Registry) Pull(ctx context.Context, c *blob.DiskCache, name string) err
 	return c.Link(m.Name, md)
 }
 
+// Unlink is like [blob.DiskCache.Unlink], but makes name fully qualified
+// before attempting to unlink the model.
+func (r *Registry) Unlink(c *blob.DiskCache, name string) (ok bool, _ error) {
+	_, n, _, err := parseName(name, r.NameMask)
+	if err != nil {
+		return false, err
+	}
+	return c.Unlink(n.String())
+}
+
 // Manifest represents a [ollama.com/manifest].
 type Manifest struct {
 	Name   string   `json:"-"` // the canonical name of the model
@@ -590,8 +650,8 @@ type Layer struct {
 
 // ResolveLocal resolves a name to a Manifest in the local cache. The name is
 // parsed using [names.ParseExtended] but the scheme is ignored.
-func ResolveLocal(c *blob.DiskCache, name string) (*Manifest, error) {
-	_, n, d, err := parseName(name)
+func (r *Registry) ResolveLocal(c *blob.DiskCache, name string) (*Manifest, error) {
+	_, n, d, err := parseName(name, r.NameMask)
 	if err != nil {
 		return nil, err
 	}
@@ -617,7 +677,7 @@ func ResolveLocal(c *blob.DiskCache, name string) (*Manifest, error) {
 
 // Resolve resolves a name to a Manifest in the remote registry.
 func (r *Registry) Resolve(ctx context.Context, name string) (*Manifest, error) {
-	scheme, n, d, err := parseName(name)
+	scheme, n, d, err := parseName(name, r.NameMask)
 	if err != nil {
 		return nil, err
 	}

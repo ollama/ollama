@@ -21,7 +21,7 @@ import (
 
 	"github.com/ollama/ollama/server/internal/cache/blob"
 	"github.com/ollama/ollama/server/internal/chunks"
-	"github.com/ollama/ollama/server/internal/internal/testutil"
+	"github.com/ollama/ollama/server/internal/testutil"
 )
 
 func TestManifestMarshalJSON(t *testing.T) {
@@ -34,20 +34,6 @@ func TestManifestMarshalJSON(t *testing.T) {
 	if !bytes.Contains(data, []byte(`"config":{"digest":"sha256:`)) {
 		t.Error("expected manifest to contain empty config")
 		t.Fatalf("got:\n%s", string(data))
-	}
-}
-
-func link(c *blob.DiskCache, name string, manifest string) {
-	_, n, _, err := parseName(name)
-	if err != nil {
-		panic(err)
-	}
-	d, err := c.Import(bytes.NewReader([]byte(manifest)), int64(len(manifest)))
-	if err != nil {
-		panic(err)
-	}
-	if err := c.Link(n.String(), d); err != nil {
-		panic(err)
 	}
 }
 
@@ -98,29 +84,44 @@ func newClient(t *testing.T, h http.HandlerFunc) (*Registry, *blob.DiskCache) {
 		}
 	}
 
+	rc := &Registry{
+		HTTPClient: &http.Client{
+			Transport: recordRoundTripper(h),
+		},
+	}
+
+	link := func(name string, manifest string) {
+		_, n, _, err := parseName(name, rc.NameMask)
+		if err != nil {
+			panic(err)
+		}
+		d, err := c.Import(bytes.NewReader([]byte(manifest)), int64(len(manifest)))
+		if err != nil {
+			panic(err)
+		}
+		if err := c.Link(n.String(), d); err != nil {
+			panic(err)
+		}
+	}
+
 	commit := func(name string, layers ...*Layer) {
 		t.Helper()
 		data, err := json.Marshal(&Manifest{Layers: layers})
 		if err != nil {
 			t.Fatal(err)
 		}
-		link(c, name, string(data))
+		link(name, string(data))
 	}
 
-	link(c, "empty", "")
+	link("empty", "")
 	commit("zero")
 	commit("single", mklayer("exists"))
 	commit("multiple", mklayer("exists"), mklayer("present"))
 	commit("notfound", &Layer{Digest: blob.DigestFromBytes("notfound"), Size: int64(len("notfound"))})
 	commit("null", nil)
 	commit("sizemismatch", mklayer("exists"), &Layer{Digest: blob.DigestFromBytes("present"), Size: 499})
-	link(c, "invalid", "!!!!!")
+	link("invalid", "!!!!!")
 
-	rc := &Registry{
-		HTTPClient: &http.Client{
-			Transport: recordRoundTripper(h),
-		},
-	}
 	return rc, c
 }
 
@@ -385,7 +386,7 @@ func TestRegistryPullNotCached(t *testing.T) {
 	})
 
 	// Confirm that the layer does not exist locally
-	_, err := ResolveLocal(c, "model")
+	_, err := rc.ResolveLocal(c, "model")
 	checkNotExist(t, err)
 
 	_, err = c.Get(d)
@@ -396,7 +397,7 @@ func TestRegistryPullNotCached(t *testing.T) {
 
 	mw, err := rc.Resolve(t.Context(), "model")
 	check(err)
-	mg, err := ResolveLocal(c, "model")
+	mg, err := rc.ResolveLocal(c, "model")
 	check(err)
 	if !reflect.DeepEqual(mw, mg) {
 		t.Errorf("mw = %v; mg = %v", mw, mg)
@@ -652,5 +653,74 @@ func TestCanRetry(t *testing.T) {
 		if got := canRetry(tt.err); got != tt.want {
 			t.Errorf("CanRetry(%v) = %v; want %v", tt.err, got, tt.want)
 		}
+	}
+}
+
+func TestErrorUnmarshal(t *testing.T) {
+	cases := []struct {
+		name    string
+		data    string
+		want    *Error
+		wantErr bool
+	}{
+		{
+			name:    "errors empty",
+			data:    `{"errors":[]}`,
+			wantErr: true,
+		},
+		{
+			name:    "errors empty",
+			data:    `{"errors":[]}`,
+			wantErr: true,
+		},
+		{
+			name: "errors single",
+			data: `{"errors":[{"code":"blob_unknown"}]}`,
+			want: &Error{Code: "blob_unknown", Message: ""},
+		},
+		{
+			name: "errors multiple",
+			data: `{"errors":[{"code":"blob_unknown"},{"code":"blob_error"}]}`,
+			want: &Error{Code: "blob_unknown", Message: ""},
+		},
+		{
+			name:    "error empty",
+			data:    `{"error":""}`,
+			wantErr: true,
+		},
+		{
+			name:    "error very empty",
+			data:    `{}`,
+			wantErr: true,
+		},
+		{
+			name: "error message",
+			data: `{"error":"message", "code":"code"}`,
+			want: &Error{Code: "code", Message: "message"},
+		},
+		{
+			name:    "invalid value",
+			data:    `{"error": 1}`,
+			wantErr: true,
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			var got Error
+			err := json.Unmarshal([]byte(tt.data), &got)
+			if err != nil {
+				if tt.wantErr {
+					return
+				}
+				t.Errorf("Unmarshal() error = %v", err)
+				// fallthrough and check got
+			}
+			if tt.want == nil {
+				tt.want = &Error{}
+			}
+			if !reflect.DeepEqual(got, *tt.want) {
+				t.Errorf("got = %v; want %v", got, *tt.want)
+			}
+		})
 	}
 }

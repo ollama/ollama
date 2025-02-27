@@ -86,7 +86,7 @@ func useCaseInsensitiveTempDir(t *testing.T) bool {
 		// link to docs on that topic.
 		lines := strings.Split(volumeHint, "\n")
 		for _, line := range lines {
-			t.Log(line)
+			t.Skip(line)
 		}
 	}
 	return false
