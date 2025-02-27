@@ -12,18 +12,17 @@
 
 #include <algorithm>
 #include <cassert>
+#include <codecvt>
 #include <cstddef>
 #include <cstdint>
+#include <locale>
 #include <map>
 #include <regex>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
-#include <locale>
-#include <codecvt>
 
 size_t unicode_len_utf8(char src) {
     const size_t lookup[] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 4 };
@@ -641,7 +640,14 @@ std::vector<uint32_t> unicode_cpts_from_utf8(const std::string & utf8) {
     result.reserve(utf8.size());
     size_t offset = 0;
     while (offset < utf8.size()) {
-        result.push_back(unicode_cpt_from_utf8(utf8, offset));
+        try {
+            result.push_back(unicode_cpt_from_utf8(utf8, offset));
+        }
+        catch (const std::invalid_argument & /*ex*/) {
+            // Silently ignore invalid UTF-8 input to avoid leaking the exception beyond llama_tokenize
+            ++offset;
+            result.emplace_back(0xFFFD); // replacement character
+        }
     }
     return result;
 }
@@ -724,7 +730,7 @@ std::vector<std::string> unicode_regex_split(const std::string & text, const std
     const auto cpts = unicode_cpts_from_utf8(text);
 
     // generate a "collapsed" representation of the text, where all codepoints are replaced by a single byte
-    // ref: https://github.com/ggerganov/llama.cpp/pull/6920#issuecomment-2081479935
+    // ref: https://github.com/ggml-org/llama.cpp/pull/6920#issuecomment-2081479935
     std::string text_collapsed;
     if (need_collapse) {
         // collapse all unicode categories

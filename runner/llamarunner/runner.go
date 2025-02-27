@@ -915,7 +915,6 @@ func Execute(args []string) error {
 	level := slog.LevelInfo
 	if *verbose {
 		level = slog.LevelDebug
-		llama.EnableDebug()
 	}
 	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level:     level,
@@ -944,12 +943,11 @@ func Execute(args []string) error {
 
 	var tensorSplitFloats []float32
 	if *tensorSplit != "" {
-		stringFloats := regexp.MustCompile(",").Split(*tensorSplit, -1)
-
-		tensorSplitFloats = make([]float32, 0, len(stringFloats))
-		for _, s := range stringFloats {
+		splits := strings.Split(*tensorSplit, ",")
+		tensorSplitFloats = make([]float32, len(splits))
+		for i, s := range splits {
 			f, _ := strconv.ParseFloat(s, 32)
-			tensorSplitFloats = append(tensorSplitFloats, float32(f))
+			tensorSplitFloats[i] = float32(f)
 		}
 	}
 
