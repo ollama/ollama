@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -34,6 +35,7 @@ var (
 	errOnlyGGUFSupported       = errors.New("supplied file was not in GGUF format")
 	errUnknownType             = errors.New("unknown type")
 	errNeitherFromOrFiles      = errors.New("neither 'from' or 'files' was specified")
+	errFilePath                = errors.New("file path contains invalid characters")
 )
 
 func (s *Server) CreateHandler(c *gin.Context) {
@@ -104,7 +106,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		if r.Adapters != nil {
 			adapterLayers, err = convertModelFromFiles(r.Adapters, baseLayers, true, fn)
 			if err != nil {
-				for _, badReq := range []error{errNoFilesProvided, errOnlyOneAdapterSupported, errOnlyGGUFSupported, errUnknownType} {
+				for _, badReq := range []error{errNoFilesProvided, errOnlyOneAdapterSupported, errOnlyGGUFSupported, errUnknownType, errFilePath} {
 					if errors.Is(err, badReq) {
 						ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
 						return
@@ -221,8 +223,27 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 		return nil, err
 	}
 	defer os.RemoveAll(tmpDir)
+	// Set up a root to validate paths
+	root, err := os.OpenRoot(tmpDir)
+	if err != nil {
+		return nil, err
+	}
+	valid := func(path string) error {
+		if strings.Contains(path, "..") {
+			return errFilePath
+		}
+		_, err := root.Stat(path)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			// Path is outside the expected directory
+			return err
+		}
+		return nil
+	}
 
 	for fp, digest := range files {
+		if err := valid(fp); err != nil {
+			return nil, fmt.Errorf("%w: %s: %s", errFilePath, err, fp)
+		}
 		blobPath, err := GetBlobsPath(digest)
 		if err != nil {
 			return nil, err
@@ -665,6 +686,8 @@ func createLink(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
+
+	fmt.Println(dst)
 
 	_ = os.Remove(dst)
 	if err := os.Symlink(src, dst); err != nil {
