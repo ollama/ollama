@@ -82,7 +82,11 @@ func Run() {
 		}
 	}
 
-	StartBackgroundUpdaterChecker(ctx, t.UpdateAvailable)
+	if os.Getenv("OLLAMA_NO_UPDATE_CHECKS") == "true" {
+		slog.Info("Skipping update checks")
+	} else {
+		StartBackgroundUpdaterChecker(ctx, t.UpdateAvailable)
+	}
 
 	t.Run()
 	cancel()

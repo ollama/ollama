@@ -152,6 +152,10 @@ Ollama binds 127.0.0.1 port 11434 by default. Change the bind address with the `
 
 Refer to the section [above](#how-do-i-configure-ollama-server) for how to set environment variables on your platform.
 
+## How can I disable the Update Checker on Ollama?
+
+Set the environment variable `OLLAMA_NO_UPDATE_CHECKS` to `true`.
+
 ## How can I use Ollama with a proxy server?
 
 Ollama runs an HTTP server and can be exposed using a proxy server such as Nginx. To do so, configure the proxy to forward requests and optionally set required headers (if not exposing Ollama on the network). For example, with Nginx:
