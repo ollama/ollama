@@ -36,22 +36,35 @@ COMPILER inline get_compiler() {
 import "C"
 
 import (
+	"context"
 	_ "embed"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"runtime"
 	"runtime/cgo"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"unsafe"
 
 	_ "github.com/ollama/ollama/llama/llama.cpp/common"
 	_ "github.com/ollama/ollama/llama/llama.cpp/examples/llava"
 	_ "github.com/ollama/ollama/llama/llama.cpp/src"
-	"github.com/ollama/ollama/ml/backend/ggml/ggml/src"
+	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 )
+
+func init() {
+	C.llama_log_set(C.ggml_log_callback(C.llamaLog), nil)
+}
+
+//export llamaLog
+func llamaLog(level C.int, text *C.char, _ unsafe.Pointer) {
+	// slog levels zeros INFO and are multiples of 4
+	if slog.Default().Enabled(context.TODO(), slog.Level(int(level-C.GGML_LOG_LEVEL_INFO)*4)) {
+		fmt.Fprint(os.Stderr, C.GoString(text))
+	}
+}
 
 func BackendInit() {
 	ggml.OnceLoad()
@@ -69,26 +82,6 @@ func PrintSystemInfo() string {
 		compiler = "cgo(clang)"
 	}
 	return C.GoString(C.llama_print_system_info()) + compiler
-}
-
-var logLevel atomic.Int32
-
-func init() {
-	logLevel.Store(int32(C.GGML_LOG_LEVEL_INFO))
-	C.llama_log_set((C.ggml_log_callback)(C.llamaLog), nil)
-}
-
-func EnableDebug() {
-	logLevel.Store(int32(C.GGML_LOG_LEVEL_DEBUG))
-}
-
-//export llamaLog
-func llamaLog(level int32, text *C.char, _ unsafe.Pointer) {
-	if level < logLevel.Load() {
-		return
-	}
-
-	fmt.Fprint(os.Stderr, C.GoString(text))
 }
 
 func GetModelArch(modelPath string) (string, error) {
