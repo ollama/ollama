@@ -292,6 +292,7 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 	if err != nil {
 		return nil, err
 	}
+	defer bin.Close()
 
 	f, _, err := ggml.Decode(bin, 0)
 	if err != nil {
