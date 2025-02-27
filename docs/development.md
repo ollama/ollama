@@ -69,7 +69,7 @@ go run . serve
 
 ## Windows (ARM)
 
-Windows ARM does not support additional acceleration libraries at this time.
+Windows ARM does not support additional acceleration libraries at this time.  Do not use cmake, simply `go run` or `go build`.
 
 ## Linux
 

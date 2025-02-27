@@ -26,9 +26,6 @@ function checkEnv() {
         $MSVC_INSTALL=(Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation
         $env:VCToolsRedistDir=(get-item "${MSVC_INSTALL}\VC\Redist\MSVC\*")[0]
     }
-    if (-Not (get-command -ErrorAction silent ninja)) {
-        $script:NINJA_DIR=(gci -path (Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation -r -fi ninja.exe) | split-path -parent
-    }
     # Locate CUDA versions
     # Note: this assumes every version found will be built
     $cudaList=(get-item "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v*\bin\" -ea 'silentlycontinue')
@@ -83,7 +80,7 @@ function checkEnv() {
 
 
 function buildOllama() {
-    if ($null -eq ${env:OLLAMA_SKIP_GENERATE}) {
+    if ($script:ARCH -ne "arm64") {
         Remove-Item -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}"
         New-Item "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\" -ItemType Directory -ea 0
 
@@ -122,8 +119,9 @@ function buildOllama() {
         }
         if ($env:HIP_PATH) {
             write-host "Building ROCm backend libraries"
-            if ($null -ne $script:NINJA_DIR) {
-                $env:PATH="$script:NINJA_DIR;$env:PATH"
+            if (-Not (get-command -ErrorAction silent ninja)) {
+                $NINJA_DIR=(gci -path (Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation -r -fi ninja.exe) | split-path -parent
+                $env:PATH="$NINJA_DIR;$env:PATH"
             }
             $env:HIPCXX="${env:HIP_PATH}\bin\clang++.exe"
             $env:HIP_PLATFORM="amd"
@@ -138,8 +136,6 @@ function buildOllama() {
             & cmake --install build --component "HIP" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
-    } else {
-        write-host "Skipping generate step with OLLAMA_SKIP_GENERATE set"
     }
     write-host "Building ollama CLI"
     & go build -trimpath -ldflags "-s -w -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" .
