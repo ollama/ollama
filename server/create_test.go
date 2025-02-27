@@ -119,5 +119,4 @@ func TestConvertFromSafetensorsPathValidation(t *testing.T) {
 			}
 		})
 	}
-
 }
