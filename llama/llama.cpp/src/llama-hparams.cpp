@@ -54,7 +54,7 @@ uint32_t llama_hparams::n_embd_v_gqa(uint32_t il) const {
 uint32_t llama_hparams::n_embd_k_s() const {
     if (wkv_head_size != 0) {
         // for RWKV models
-        return 2 * n_embd;
+        return token_shift_count * n_embd;
     }
 
     // TODO: maybe support other convolution strides than 1

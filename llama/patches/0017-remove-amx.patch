@@ -8,10 +8,10 @@ Subject: [PATCH] remove amx
  1 file changed, 4 deletions(-)
 
 diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
-index 72b488dd..50828717 100644
+index 0a8d1092..4564df91 100644
 --- a/ggml/src/CMakeLists.txt
 +++ b/ggml/src/CMakeLists.txt
-@@ -293,10 +293,6 @@ if (GGML_CPU_ALL_VARIANTS)
+@@ -312,10 +312,6 @@ if (GGML_CPU_ALL_VARIANTS)
      ggml_add_cpu_backend_variant(skylakex       AVX F16C AVX2 FMA AVX512)
      ggml_add_cpu_backend_variant(icelake        AVX F16C AVX2 FMA AVX512 AVX512_VBMI AVX512_VNNI)
      ggml_add_cpu_backend_variant(alderlake      AVX F16C AVX2 FMA AVX_VNNI)
@@ -19,6 +19,6 @@ index 72b488dd..50828717 100644
 -        # MSVC doesn't support AMX
 -        ggml_add_cpu_backend_variant(sapphirerapids AVX F16C AVX2 FMA AVX512 AVX512_VBMI AVX512_VNNI AVX512_BF16 AMX_TILE AMX_INT8)
 -    endif()
- else ()
+ elseif (GGML_CPU)
      ggml_add_cpu_backend_variant_impl("")
  endif()

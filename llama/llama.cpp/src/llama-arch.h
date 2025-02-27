@@ -32,6 +32,7 @@ enum llm_arch {
     LLM_ARCH_QWEN2VL,
     LLM_ARCH_PHI2,
     LLM_ARCH_PHI3,
+    LLM_ARCH_PHIMOE,
     LLM_ARCH_PLAMO,
     LLM_ARCH_CODESHELL,
     LLM_ARCH_ORION,
@@ -61,6 +62,7 @@ enum llm_arch {
     LLM_ARCH_NEMOTRON,
     LLM_ARCH_EXAONE,
     LLM_ARCH_RWKV6,
+    LLM_ARCH_RWKV6QWEN2,
     LLM_ARCH_GRANITE,
     LLM_ARCH_GRANITE_MOE,
     LLM_ARCH_CHAMELEON,
@@ -111,6 +113,7 @@ enum llm_kv {
     LLM_KV_TIME_DECAY_EXTRA_DIM,
     LLM_KV_RESIDUAL_SCALE,
     LLM_KV_EMBEDDING_SCALE,
+    LLM_KV_TOKEN_SHIFT_COUNT,
 
     LLM_KV_ATTENTION_HEAD_COUNT,
     LLM_KV_ATTENTION_HEAD_COUNT_KV,
@@ -177,6 +180,8 @@ enum llm_kv {
     LLM_KV_TOKENIZER_PRECOMPILED_CHARSMAP,
     LLM_KV_TOKENIZER_HF_JSON,
     LLM_KV_TOKENIZER_RWKV,
+    LLM_KV_TOKENIZER_CHAT_TEMPLATE,
+    LLM_KV_TOKENIZER_CHAT_TEMPLATE_N,
     LLM_KV_TOKENIZER_FIM_PRE_ID,
     LLM_KV_TOKENIZER_FIM_SUF_ID,
     LLM_KV_TOKENIZER_FIM_MID_ID,
@@ -256,6 +261,7 @@ enum llm_tensor {
     LLM_TENSOR_TIME_MIX_LERP_V,
     LLM_TENSOR_TIME_MIX_LERP_R,
     LLM_TENSOR_TIME_MIX_LERP_G,
+    LLM_TENSOR_TIME_MIX_LERP_FUSED,
     LLM_TENSOR_TIME_MIX_FIRST,
     LLM_TENSOR_TIME_MIX_DECAY,
     LLM_TENSOR_TIME_MIX_DECAY_W1,
@@ -343,9 +349,10 @@ enum llm_tensor_layer {
 };
 
 struct LLM_KV {
-    LLM_KV(llm_arch arch);
+    LLM_KV(llm_arch arch, const char * suffix = nullptr);
 
     llm_arch arch;
+    const char * suffix;
 
     std::string operator()(llm_kv kv) const;
 };

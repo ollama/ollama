@@ -1,5 +1,8 @@
 #include "llama-context.h"
 
+#include "llama-impl.h"
+#include "llama-mmap.h"
+
 #include <cassert>
 #include <cmath>
 #include <cstring>
@@ -513,7 +516,7 @@ size_t llama_output_reserve(struct llama_context & lctx, size_t n_outputs) {
 
         auto * buft = ggml_backend_cpu_buffer_type();
         // try to use the host buffer of the device where the output tensor is allocated for faster transfer to system memory
-        auto * output_dev = lctx.model.dev_output.dev;
+        auto * output_dev = lctx.model.dev_output();
         auto * output_dev_host_buft = output_dev ? ggml_backend_dev_host_buffer_type(output_dev) : nullptr;
         if (output_dev_host_buft) {
             buft = output_dev_host_buft;

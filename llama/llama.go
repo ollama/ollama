@@ -14,6 +14,7 @@ package llama
 #include "llama.h"
 #include "clip.h"
 #include "llava.h"
+#include "gguf.h"
 
 #include "mllama.h"
 #include "sampling_ext.h"
@@ -293,35 +294,39 @@ func NewContextWithModel(model *Model, params ContextParams) (*Context, error) {
 }
 
 func (m *Model) NumVocab() int {
-	return int(C.llama_n_vocab(m.c))
+	return int(C.llama_n_vocab(m.Vocab()))
 }
 
 func (m *Model) TokenIsEog(token int) bool {
-	return bool(C.llama_token_is_eog(m.c, C.llama_token(token)))
+	return bool(C.llama_token_is_eog(m.Vocab(), C.llama_token(token)))
 }
 
 func (m *Model) AddBOSToken() bool {
-	return bool(C.llama_add_bos_token(m.c))
+	return bool(C.llama_add_bos_token(m.Vocab()))
 }
 
 func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float32, threads int) error {
 	cLoraPath := C.CString(loraPath)
 	defer C.free(unsafe.Pointer(cLoraPath))
 
-	loraAdapter := C.llama_lora_adapter_init(m.c, cLoraPath)
+	loraAdapter := C.llama_adapter_lora_init(m.c, cLoraPath)
 	if loraAdapter == nil {
 		return errors.New("unable to load lora")
 	}
 
 	err := -1
 	if loraAdapter != nil {
-		err = int(C.llama_lora_adapter_set(context.c, loraAdapter, C.float(scale)))
+		err = int(C.llama_set_adapter_lora(context.c, loraAdapter, C.float(scale)))
 	}
 	if err != 0 {
 		return errors.New("error applying lora from file")
 	}
 
 	return nil
+}
+
+func (m *Model) Vocab() *C.struct_llama_vocab {
+	return C.llama_model_get_vocab(m.c)
 }
 
 type Batch struct {
@@ -414,7 +419,7 @@ func (m *Model) TokenToPiece(token int) string {
 	tokenLen := 12
 	buf := make([]byte, tokenLen)
 	tokenLen = int(C.llama_token_to_piece(
-		m.c,
+		m.Vocab(),
 		C.int32_t(token),
 		(*C.char)(unsafe.Pointer(&buf[0])),
 		C.int32_t(tokenLen),
@@ -426,7 +431,7 @@ func (m *Model) TokenToPiece(token int) string {
 
 		buf = make([]byte, tokenLen)
 		C.llama_token_to_piece(
-			m.c,
+			m.Vocab(),
 			C.int32_t(token),
 			(*C.char)(unsafe.Pointer(&buf[0])),
 			C.int32_t(tokenLen),
@@ -444,7 +449,7 @@ func (m *Model) Tokenize(text string, addSpecial bool, parseSpecial bool) ([]int
 	defer C.free(unsafe.Pointer(cText))
 
 	result := C.llama_tokenize(
-		m.c,
+		m.Vocab(),
 		cText,
 		C.int32_t(len(text)),
 		&cTokens[0],
@@ -458,7 +463,7 @@ func (m *Model) Tokenize(text string, addSpecial bool, parseSpecial bool) ([]int
 		maxTokens = int(-result)
 		cTokens = make([]C.llama_token, maxTokens)
 		result = C.llama_tokenize(
-			m.c,
+			m.Vocab(),
 			cText,
 			C.int32_t(len(text)),
 			&cTokens[0],
