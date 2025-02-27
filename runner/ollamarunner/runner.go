@@ -327,6 +327,10 @@ func (s *Server) processBatch() error {
 			s.removeSequence(seqIdx, "limit")
 			continue
 		}
+		if seq.numPredict == -2 && int32(len(seq.cache.Inputs)) >= s.cache.numCtx {
+			s.removeSequence(seqIdx, "limit")
+			continue
+		}
 
 		if !s.cache.enabled {
 			seq.inputs = append(seq.cache.Inputs, seq.inputs...)
