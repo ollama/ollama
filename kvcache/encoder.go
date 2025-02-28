@@ -80,8 +80,10 @@ func (c *EncoderCache) Put(ctx ml.Context, key, value ml.Tensor) {
 		c.values[c.curLayer] = c.cacheCtx.Zeros(value.DType(), value.Shape()...)
 	}
 
-	ctx.Forward(key.Copy(ctx, c.keys[c.curLayer]))
-	ctx.Forward(value.Copy(ctx, c.values[c.curLayer]))
+	ctx.Forward(
+		key.Copy(ctx, c.keys[c.curLayer]),
+		value.Copy(ctx, c.values[c.curLayer]),
+	)
 }
 
 func (c *EncoderCache) CopyPrefix(srcSeq, dstSeq int, len int32) {

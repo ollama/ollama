@@ -256,12 +256,16 @@ type Context struct {
 	nodes int
 }
 
-func (c *Context) Forward(t ml.Tensor) {
+func (c *Context) Forward(tensors ...ml.Tensor) ml.Context {
 	if c.graph == nil {
 		c.graph = C.ggml_new_graph_custom(c.ctx, C.size_t(c.nodes), false)
 	}
 
-	C.ggml_build_forward_expand(c.graph, t.(*Tensor).t)
+	for _, tensor := range tensors {
+		C.ggml_build_forward_expand(c.graph, tensor.(*Tensor).t)
+	}
+
+	return c
 }
 
 func (c *Context) Compute(tensors ...ml.Tensor) {

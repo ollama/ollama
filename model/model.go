@@ -248,8 +248,7 @@ func Forward(ctx ml.Context, m Model, opts Options) (ml.Tensor, error) {
 		return nil, err
 	}
 
-	ctx.Forward(t)
-	ctx.Compute(t)
+	ctx.Forward(t).Compute(t)
 
 	return t, nil
 }
