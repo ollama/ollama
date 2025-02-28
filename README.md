@@ -386,6 +386,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [MaxKB](https://github.com/1Panel-dev/MaxKB/) (Ready-to-use & flexible RAG Chatbot)
 - [yla](https://github.com/danielekp/yla) (Web interface to freely interact with your customized models)
 - [LangBot](https://github.com/RockChinQ/LangBot) (LLM-based instant messaging bots platform, with Agents, RAG features, supports multiple platforms)
+- [1Panel](https://github.com/1Panel-dev/1Panel/) (Web-based Linux Server Management Tool)
 
 ### Cloud
 
