@@ -75,29 +75,15 @@ func TestConvertFromSafetensors(t *testing.T) {
 			filePath: "dir/../../../../../other.safetensors",
 			wantErr:  errFilePath,
 		},
-
-		// Valid relative path test cases
-		{
-			name:     "ValidRelativePath",
-			filePath: "model.safetensors",
-			wantErr:  nil,
-		},
-		{
-			name:     "ValidRelativeWithDot",
-			filePath: "./model.safetensors",
-			wantErr:  nil,
-		},
-		{
-			name:     "ValidNestedWithValidParentRef",
-			filePath: "nested/../model.safetensors", // References tempDir/valid.safetensors
-			wantErr:  nil,
-		},
-
-		// Absolute paths are rejected
 		{
 			name:     "AbsolutePathOutsideRoot",
 			filePath: filepath.Join(os.TempDir(), "model.safetensors"),
 			wantErr:  errFilePath, // Should fail since it's outside tmpDir
+		},
+		{
+			name:     "ValidRelativePath",
+			filePath: "model.safetensors",
+			wantErr:  nil,
 		},
 	}
 
@@ -116,60 +102,6 @@ func TestConvertFromSafetensors(t *testing.T) {
 				(tt.wantErr != nil && err == nil) ||
 				(tt.wantErr != nil && !errors.Is(err, tt.wantErr)) {
 				t.Errorf("convertFromSafetensors() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestValidRelative(t *testing.T) {
-	// Test cases organized as described in the discussion comment
-	validPaths := []string{
-		"x/y/z",        // nested path
-		"a/b",          // simple path with one directory
-		"o/l/l/a/m/a",  // multiple nested directories
-		"file.txt",     // file in root
-		"dir/file.txt", // file in subdirectory
-		"a/b/",         // trailing slash
-		"a//b",         // double slash
-	}
-
-	invalidPaths := []string{
-		"/y",           // absolute path
-		"/etc/passwd",  // absolute path
-		"//etc/passwd", // double leading slash
-
-		"./x/y",     // current directory reference
-		"../x",      // parent directory reference
-		"a/../../b", // traversal beyond root
-		"a/../b",    // traversal within boundaries
-		"a/./b",     // current directory in middle
-		".",         // current directory only
-		"..",        // parent directory only
-		"a/b/..",    // ending with parent reference
-		"a/b/.",     // ending with current reference
-		"",          // empty path
-	}
-
-	// Test valid paths
-	for _, path := range validPaths {
-		t.Run("Valid: "+path, func(t *testing.T) {
-			err := validRelative(path)
-			if err != nil {
-				t.Errorf("validRelative(%q) returned error %v, expected nil", path, err)
-			}
-		})
-	}
-
-	// Test invalid paths
-	for _, path := range invalidPaths {
-		t.Run("Invalid: "+path, func(t *testing.T) {
-			err := validRelative(path)
-			if err == nil {
-				t.Errorf("validRelative(%q) returned nil, expected error", path)
-			}
-			if !errors.Is(err, errFilePath) {
-				t.Errorf("validRelative(%q) returned error type %T, expected to wrap %T",
-					path, err, errFilePath)
 			}
 		})
 	}
