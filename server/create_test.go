@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"cmp"
 	"encoding/binary"
 	"errors"
 	"os"
@@ -14,8 +13,7 @@ import (
 )
 
 func TestConvertFromSafetensors(t *testing.T) {
-	// Store test data in the temp directory
-	t.Setenv("OLLAMA_MODELS", cmp.Or(os.Getenv("OLLAMA_MODELS"), t.TempDir()))
+	t.Setenv("OLLAMA_MODELS", t.TempDir())
 
 	// Helper function to create a new layer and return its digest
 	makeTemp := func(content string) string {
