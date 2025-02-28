@@ -84,12 +84,12 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 		}
 	}
 
-	var cpuBufferTypes []*C.struct_ggml_backend_buffer_type
+	cpuDeviceBufferType := deviceBufferType{d: C.ggml_backend_dev_by_type(C.GGML_BACKEND_DEVICE_TYPE_CPU)}
 	for _, d := range append(accels, append(gpus, cpus...)...) {
 		switch C.ggml_backend_dev_type(d) {
 		case C.GGML_BACKEND_DEVICE_TYPE_CPU,
 			C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
-			cpuBufferTypes = append(cpuBufferTypes, C.ggml_backend_dev_buffer_type(d))
+			cpuDeviceBufferType.bts = append(cpuDeviceBufferType.bts, C.ggml_backend_dev_buffer_type(d))
 		}
 	}
 
@@ -98,7 +98,7 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 		bt := C.ggml_backend_dev_buffer_type(d)
 		gpuDeviceBufferTypes = append(gpuDeviceBufferTypes, deviceBufferType{
 			d:   d,
-			bts: append([]*C.struct_ggml_backend_buffer_type{bt}, cpuBufferTypes...),
+			bts: append([]*C.struct_ggml_backend_buffer_type{bt}, cpuDeviceBufferType.bts...),
 		})
 	}
 
@@ -131,18 +131,17 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 		splits[i] /= sum
 	}
 
-	cpuDeviceBufferTypes := deviceBufferType{C.ggml_backend_dev_by_type(C.GGML_BACKEND_DEVICE_TYPE_CPU), cpuBufferTypes}
-	input := cpuDeviceBufferTypes
+	input := cpuDeviceBufferType
 
 	blocks := int(meta.KV().BlockCount())
-	assignLayer := func(i int) (temp deviceBufferType) {
+	assignLayer := func(i int) deviceBufferType {
 		if i >= params.NumGPULayers {
-			return cpuDeviceBufferTypes
+			return cpuDeviceBufferType
 		}
 
 		index := slices.IndexFunc(splits, func(f float32) bool { return float32(i)/float32(blocks+1) < f })
 		if index < 0 || index >= len(gpuDeviceBufferTypes) {
-			return cpuDeviceBufferTypes
+			return cpuDeviceBufferType
 		}
 
 		return gpuDeviceBufferTypes[index]
