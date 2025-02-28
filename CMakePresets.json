@@ -28,7 +28,7 @@
       "name": "CUDA 12",
       "inherits": [ "CUDA" ],
       "cacheVariables": {
-        "CMAKE_CUDA_ARCHITECTURES": "50;60;61;70;75;80;86;87;89;90;90a;100"
+        "CMAKE_CUDA_ARCHITECTURES": "50;60;61;70;75;80;86;87;89;90;90a;120"
       }
     },
     {
