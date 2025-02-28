@@ -228,6 +228,10 @@ func cmdImport(ctx context.Context, c *blob.DiskCache) error {
 		flag.PrintDefaults()
 	}
 	flag.Parse(args)
+	if *flagAs == "" {
+		return fmt.Errorf("missing -as flag")
+	}
+	as := ollama.CompleteName(*flagAs)
 
 	dir := cmp.Or(flag.Arg(0), ".")
 	fmt.Fprintf(os.Stderr, "Reading %s\n", dir)
@@ -311,7 +315,7 @@ func cmdImport(ctx context.Context, c *blob.DiskCache) error {
 			if err != nil {
 				return err
 			}
-			return c.Link(*flagAs, d)
+			return c.Link(as, d)
 		}()
 	}()
 
@@ -340,6 +344,8 @@ func cmdImport(ctx context.Context, c *blob.DiskCache) error {
 			writeProgress()
 		case err := <-done:
 			writeProgress()
+			fmt.Println()
+			fmt.Println("Successfully imported", as)
 			return err
 		}
 	}
