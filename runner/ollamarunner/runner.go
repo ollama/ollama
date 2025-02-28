@@ -890,13 +890,14 @@ func Execute(args []string) error {
 	server.cond = sync.NewCond(&server.mu)
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	go server.run(ctx)
 
 	addr := "127.0.0.1:" + strconv.Itoa(*port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		fmt.Println("Listen error:", err)
-		cancel()
 		return err
 	}
 	defer listener.Close()
@@ -916,6 +917,5 @@ func Execute(args []string) error {
 		return err
 	}
 
-	cancel()
 	return nil
 }
