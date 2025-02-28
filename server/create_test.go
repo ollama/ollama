@@ -62,17 +62,17 @@ func TestConvertFromSafetensors(t *testing.T) {
 		// Invalid
 		{
 			name:     "InvalidRelativePathShallow",
-			filePath: "../file.safetensors",
+			filePath: filepath.Join("..", "file.safetensors"),
 			wantErr:  errFilePath,
 		},
 		{
 			name:     "InvalidRelativePathDeep",
-			filePath: "../../../../../../data/file.txt",
+			filePath: filepath.Join("..", "..", "..", "..", "..", "..", "data", "file.txt"),
 			wantErr:  errFilePath,
 		},
 		{
 			name:     "InvalidNestedPath",
-			filePath: "dir/../../../../../other.safetensors",
+			filePath: filepath.Join("dir", "..", "..", "..", "..", "..", "other.safetensors"),
 			wantErr:  errFilePath,
 		},
 		{
