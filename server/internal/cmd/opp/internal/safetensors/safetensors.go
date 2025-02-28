@@ -86,6 +86,8 @@ func (m *Model) readTensors(fname string) ([]*Tensor, error) {
 		return nil, err
 	}
 
+	endOfHeader := 8 + headerSize // 8 bytes for header size plus the header itself
+
 	// TODO(bmizerany): do something with metadata? This could be another
 	// header read if needed. We also need to figure out if the metadata is
 	// present in only one .safetensors file or if each file may have their
@@ -95,7 +97,8 @@ func (m *Model) readTensors(fname string) ([]*Tensor, error) {
 
 	tt := make([]*Tensor, 0, len(raws))
 	for name, raw := range raws {
-		if !strings.HasPrefix(name, "model.layer") {
+		if name == "__metadata__" {
+			// TODO(bmizerany): do something with metadata?
 			continue
 		}
 		var v struct {
@@ -112,7 +115,8 @@ func (m *Model) readTensors(fname string) ([]*Tensor, error) {
 
 		// TODO(bmizerany): after collecting, validate all offests make
 		// tensors contiguous?
-		begin, end := v.Offsets[0], v.Offsets[1]
+		begin := endOfHeader + v.Offsets[0]
+		end := endOfHeader + v.Offsets[1]
 		if err := checkBeginEnd(finfo.Size(), begin, end); err != nil {
 			return nil, err
 		}

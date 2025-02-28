@@ -147,13 +147,22 @@ func (e *Error) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-var defaultName = func() names.Name {
-	n := names.Parse("registry.ollama.ai/library/_:latest")
+const DefaultMask = "registry.ollama.ai/library/_:latest"
+
+var defaultMask = func() names.Name {
+	n := names.Parse(DefaultMask)
 	if !n.IsFullyQualified() {
-		panic("default name is not fully qualified")
+		panic("default mask is not fully qualified")
 	}
 	return n
 }()
+
+// CompleteName returns a fully qualified name by merging the given name with
+// the default mask. If the name is already fully qualified, it is returned
+// unchanged.
+func CompleteName(name string) string {
+	return names.Merge(names.Parse(name), defaultMask).String()
+}
 
 // Registry is a client for performing push and pull operations against an
 // Ollama registry.
@@ -249,7 +258,7 @@ type PushParams struct {
 //
 // The scheme is returned as provided by [names.ParseExtended].
 func parseName(s, mask string) (scheme string, n names.Name, d blob.Digest, err error) {
-	maskName := defaultName
+	maskName := defaultMask
 	if mask != "" {
 		maskName = names.Parse(mask)
 		if !maskName.IsFullyQualified() {
