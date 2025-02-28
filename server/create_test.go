@@ -13,7 +13,7 @@ import (
 	"github.com/ollama/ollama/api"
 )
 
-func TestConvertFromSafetensorsPathValidation(t *testing.T) {
+func TestConvertFromSafetensors(t *testing.T) {
 	// Store test data in the temp directory
 	t.Setenv("OLLAMA_MODELS", cmp.Or(os.Getenv("OLLAMA_MODELS"), t.TempDir()))
 
@@ -59,7 +59,7 @@ func TestConvertFromSafetensorsPathValidation(t *testing.T) {
 		filePath string
 		wantErr  error
 	}{
-		// Invalid test cases
+		// Invalid
 		{
 			name:     "InvalidRelativePathShallow",
 			filePath: "../file.safetensors",
@@ -116,6 +116,60 @@ func TestConvertFromSafetensorsPathValidation(t *testing.T) {
 				(tt.wantErr != nil && err == nil) ||
 				(tt.wantErr != nil && !errors.Is(err, tt.wantErr)) {
 				t.Errorf("convertFromSafetensors() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidRelative(t *testing.T) {
+	// Test cases organized as described in the discussion comment
+	validPaths := []string{
+		"x/y/z",        // nested path
+		"a/b",          // simple path with one directory
+		"o/l/l/a/m/a",  // multiple nested directories
+		"file.txt",     // file in root
+		"dir/file.txt", // file in subdirectory
+		"a/b/",         // trailing slash
+		"a//b",         // double slash
+	}
+
+	invalidPaths := []string{
+		"/y",           // absolute path
+		"/etc/passwd",  // absolute path
+		"//etc/passwd", // double leading slash
+
+		"./x/y",     // current directory reference
+		"../x",      // parent directory reference
+		"a/../../b", // traversal beyond root
+		"a/../b",    // traversal within boundaries
+		"a/./b",     // current directory in middle
+		".",         // current directory only
+		"..",        // parent directory only
+		"a/b/..",    // ending with parent reference
+		"a/b/.",     // ending with current reference
+		"",          // empty path
+	}
+
+	// Test valid paths
+	for _, path := range validPaths {
+		t.Run("Valid: "+path, func(t *testing.T) {
+			err := validRelative(path)
+			if err != nil {
+				t.Errorf("validRelative(%q) returned error %v, expected nil", path, err)
+			}
+		})
+	}
+
+	// Test invalid paths
+	for _, path := range invalidPaths {
+		t.Run("Invalid: "+path, func(t *testing.T) {
+			err := validRelative(path)
+			if err == nil {
+				t.Errorf("validRelative(%q) returned nil, expected error", path)
+			}
+			if !errors.Is(err, errFilePath) {
+				t.Errorf("validRelative(%q) returned error type %T, expected to wrap %T",
+					path, err, errFilePath)
 			}
 		})
 	}

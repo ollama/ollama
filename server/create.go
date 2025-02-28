@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -35,7 +34,7 @@ var (
 	errOnlyGGUFSupported       = errors.New("supplied file was not in GGUF format")
 	errUnknownType             = errors.New("unknown type")
 	errNeitherFromOrFiles      = errors.New("neither 'from' or 'files' was specified")
-	errFilePath                = errors.New("file path contains invalid characters")
+	errFilePath                = errors.New("file path must be relative")
 )
 
 func (s *Server) CreateHandler(c *gin.Context) {
@@ -48,12 +47,15 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		return
 	}
 
-	for f := range r.Files {
-		if filepath.Clean(f) != f {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errFilePath.Error()})
+	files := make(map[string]string, len(r.Files))
+	for k, v := range r.Files {
+		if err := validRelative(k); err != nil {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
+		files[filepath.Clean(k)] = v
 	}
+	r.Files = files
 
 	name := model.ParseName(cmp.Or(r.Model, r.Name))
 	if !name.IsValid() {
@@ -154,6 +156,37 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
+// validRelative ensures a path is a valid relative path without any
+// directory traversal components or absolute path indicators.
+func validRelative(path string) error {
+	if path == "" {
+		return fmt.Errorf("%w: empty path", errFilePath)
+	}
+
+	// Don't allow paths with absolute indicators
+	if strings.HasPrefix(path, "/") {
+		return fmt.Errorf("%w: path starts with '/'", errFilePath)
+	}
+
+	// Don't allow paths with explicit current directory or parent references
+	if strings.HasPrefix(path, "./") || strings.HasPrefix(path, "../") {
+		return fmt.Errorf("%w: path starts with './' or '../'", errFilePath)
+	}
+
+	// Don't allow paths that are just "." or ".."
+	if path == "." || path == ".." {
+		return fmt.Errorf("%w: path is '.' or '..'", errFilePath)
+	}
+
+	// Check for traversal sequences anywhere in the path
+	if strings.Contains(path, "/../") || strings.Contains(path, "/./") ||
+		strings.HasSuffix(path, "/..") || strings.HasSuffix(path, "/.") {
+		return fmt.Errorf("%w: path contains directory traversal sequences", errFilePath)
+	}
+
+	return nil
+}
+
 func convertModelFromFiles(files map[string]string, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
 	switch detectModelTypeFromFiles(files) {
 	case "safetensors":
@@ -239,11 +272,13 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 
 	for fp, digest := range files {
 		fp = filepath.Clean(fp)
-		// Confirm the path stays within the root, even if it doesn't exist yet
-		if _, err := root.Stat(fp); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			// Path is likely outside the root
-			return nil, fmt.Errorf("%w: %s: %s", errFilePath, err, fp)
+		// Try to open the file through the root first to validate containment
+		// Even for files that don't exist, this will validate the path is contained
+		f, err := root.OpenFile(fp, os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid path %s: %v", errFilePath, fp, err)
 		}
+		f.Close()
 
 		blobPath, err := GetBlobsPath(digest)
 		if err != nil {
