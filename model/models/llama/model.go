@@ -37,7 +37,9 @@ func New(c ml.Config) (model.Model, error) {
 				Types:  c.Uints("tokenizer.ggml.token_type"),
 				Merges: c.Strings("tokenizer.ggml.merges"),
 				BOS:    int32(c.Uint("tokenizer.ggml.bos_token_id")),
+				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
 				EOS:    int32(c.Uint("tokenizer.ggml.eos_token_id")),
+				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
 			},
 		),
 		Layers: make([]Layer, c.Uint("block_count")),
@@ -86,13 +88,8 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 	k = k.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 	v = v.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
 
-	kq := k.MulmatFullPrec(ctx, q)
-	kq = kq.Scale(ctx, 1.0/math.Sqrt(float64(headDim)))
-	kq = kq.Add(ctx, mask)
-	kq = kq.Softmax(ctx)
-
-	kqv := v.Mulmat(ctx, kq)
-	kqv = kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+	scaleFactor := 1.0 / math.Sqrt(float64(headDim))
+	kqv := nn.Attention(ctx, q, k, v, mask, scaleFactor)
 	kqv = kqv.Reshape(ctx, opts.hiddenSize, batchSize)
 
 	return sa.Output.Forward(ctx, kqv)
@@ -120,11 +117,19 @@ type Layer struct {
 	MLP           *MLP
 }
 
-func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
+func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs, outputs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
 	residual := hiddenState
 
 	hiddenState = l.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
 	hiddenState = l.SelfAttention.Forward(ctx, hiddenState, positionIDs, cache, opts)
+
+	// In the final layer (outputs != nil), optimize by pruning to just the token positions
+	// we need logits for.
+	if outputs != nil {
+		hiddenState = hiddenState.Rows(ctx, outputs)
+		residual = residual.Rows(ctx, outputs)
+	}
+
 	hiddenState = hiddenState.Add(ctx, residual)
 	residual = hiddenState
 
@@ -144,22 +149,26 @@ func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
 		return nil, err
 	}
 
-	hiddenState := m.TokenEmbedding.Forward(ctx, inputs)
-
-	for i, layer := range m.Layers {
-		m.Cache.SetLayer(i)
-		hiddenState = layer.Forward(ctx, hiddenState, positions, m.Cache, m.Options)
-	}
-
-	hiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)
-	hiddenState = m.Output.Forward(ctx, hiddenState)
-
 	outputs, err := ctx.FromIntSlice(opts.Outputs, len(opts.Outputs))
 	if err != nil {
 		return nil, err
 	}
 
-	return hiddenState.Rows(ctx, outputs), nil
+	hiddenState := m.TokenEmbedding.Forward(ctx, inputs)
+
+	for i, layer := range m.Layers {
+		m.Cache.SetLayer(i)
+
+		var lastLayerOutputs ml.Tensor
+		if i == len(m.Layers)-1 {
+			lastLayerOutputs = outputs
+		}
+
+		hiddenState = layer.Forward(ctx, hiddenState, positions, lastLayerOutputs, m.Cache, m.Options)
+	}
+
+	hiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)
+	return m.Output.Forward(ctx, hiddenState), nil
 }
 
 func init() {

@@ -25,6 +25,7 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/runner/common"
 	"github.com/ollama/ollama/sample"
@@ -64,8 +65,8 @@ type Sequence struct {
 	// number of tokens to predict
 	numPredict int
 
-	// set of samplers to run on generated logits
-	samplers []sample.Sampler
+	// sampler with transforms to run on generated logits
+	sampler sample.Sampler
 
 	// channel to send back the embedding if embedding only
 	embedding chan []float32
@@ -92,7 +93,7 @@ type NewSequenceParams struct {
 	numPredict int
 	stop       []string
 	numKeep    int32
-	samplers   []sample.Sampler
+	sampler    sample.Sampler
 	embedding  bool
 }
 
@@ -135,7 +136,7 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 		responses:           make(chan string, 100),
 		quit:                make(chan bool, 1),
 		embedding:           make(chan []float32, 1),
-		samplers:            params.samplers,
+		sampler:             params.sampler,
 		embeddingOnly:       params.embedding,
 		stop:                params.stop,
 		numKeep:             params.numKeep,
@@ -392,13 +393,7 @@ func (s *Server) processBatch() error {
 		return fmt.Errorf("failed to decode batch: %w", err)
 	}
 
-	f32s := modelOutput.Floats()
-
-	// TODO(jessegross): This will no longer be necessary once the sampling interface takes f32s
-	logits := make([]float64, len(f32s))
-	for i, f32 := range f32s {
-		logits[i] = float64(f32)
-	}
+	logits := modelOutput.Floats()
 
 	for i, seq := range s.seqs {
 		if seq == nil {
@@ -432,14 +427,12 @@ func (s *Server) processBatch() error {
 		}
 
 		// sample a token
-		vocabSize := len(f32s) / len(options.Outputs)
-		tokens, err := sample.Sample(logits[seq.iBatch*vocabSize:(seq.iBatch+1)*vocabSize], seq.samplers...)
-		if err != nil {
-			return err
-		}
+		vocabSize := len(logits) / len(options.Outputs)
 
-		// TODO(jessegross): Sampler will output a single int32 in the future
-		token := int32(tokens[0])
+		token, err := seq.sampler.Sample(logits[seq.iBatch*vocabSize : (seq.iBatch+1)*vocabSize])
+		if err != nil {
+			return fmt.Errorf("failed to sample token: %w", err)
+		}
 
 		// if it's an end of sequence token, break
 		if s.model.(model.TextProcessor).Is(token, model.SpecialEOS) {
@@ -564,27 +557,6 @@ type CompletionResponse struct {
 	Timings Timings `json:"timings"`
 }
 
-func getSamplers(_ CompletionRequest) []sample.Sampler {
-	// TODO(jessegross): Waiting for sampling code
-
-	/*samplingParams.TopK = req.TopK
-	samplingParams.TopP = req.TopP
-	samplingParams.MinP = req.MinP
-	samplingParams.TypicalP = req.TypicalP
-	samplingParams.Temp = req.Temperature
-	samplingParams.RepeatLastN = req.RepeatLastN
-	samplingParams.PenaltyRepeat = req.RepeatPenalty
-	samplingParams.PenaltyFreq = req.FrequencyPenalty
-	samplingParams.PenaltyPresent = req.PresencePenalty
-	samplingParams.Mirostat = req.Mirostat
-	samplingParams.MirostatTau = req.MirostatTau
-	samplingParams.MirostatEta = req.MirostatEta
-	samplingParams.Seed = uint32(req.Seed)
-	samplingParams.Grammar = req.Grammar*/
-
-	return []sample.Sampler{sample.Greedy()}
-}
-
 func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	var req CompletionRequest
 	req.Options = Options(api.DefaultOptions())
@@ -607,7 +579,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		numPredict: req.NumPredict,
 		stop:       req.Stop,
 		numKeep:    int32(req.NumKeep),
-		samplers:   getSamplers(req),
+		sampler:    sample.Greedy(), // TODO: add support for different samplers when performance is optimized
 		embedding:  false,
 	})
 	if err != nil {
@@ -801,6 +773,7 @@ func (m *multiLPath) String() string {
 
 func (s *Server) loadModel(
 	mpath string,
+	params ml.BackendParams,
 	lpath multiLPath,
 	parallel int,
 	kvCacheType string,
@@ -808,12 +781,12 @@ func (s *Server) loadModel(
 	multiUserCache bool,
 ) {
 	var err error
-	s.model, err = model.New(mpath)
+	s.model, err = model.New(mpath, params)
 	if err != nil {
 		panic(err)
 	}
 
-	slog.Info("system", "info", s.model.Backend().SystemInfo() /* "threads", *threads */)
+	slog.Info("system", "info", s.model.Backend().SystemInfo(), "threads", params.NumThreads)
 
 	// TODO(jessegross): LoRA loading
 	if lpath.String() != "" {
@@ -843,17 +816,17 @@ func Execute(args []string) error {
 	mpath := fs.String("model", "", "Path to model binary file")
 	parallel := fs.Int("parallel", 1, "Number of sequences to handle simultaneously")
 	batchSize := fs.Int("batch-size", 512, "Batch size")
-	_ = fs.Int("n-gpu-layers", 0, "Number of layers to offload to GPU")
-	_ = fs.Int("main-gpu", 0, "Main GPU")
+	numGPULayers := fs.Int("n-gpu-layers", 0, "Number of layers to offload to GPU")
+	mainGPU := fs.Int("main-gpu", 0, "Main GPU")
 	_ = fs.Bool("flash-attn", false, "Enable flash attention")
 	kvSize := fs.Int("ctx-size", 2048, "Context (or KV cache) size")
 	kvCacheType := fs.String("kv-cache-type", "", "quantization type for KV cache (default: f16)")
 	port := fs.Int("port", 8080, "Port to expose the server on")
-	_ = fs.Int("threads", runtime.NumCPU(), "Number of threads to use during generation")
+	threads := fs.Int("threads", runtime.NumCPU(), "Number of threads to use during generation")
 	verbose := fs.Bool("verbose", false, "verbose output (default: disabled)")
 	_ = fs.Bool("no-mmap", false, "do not memory-map model (slower load but may reduce pageouts if not using mlock)")
 	_ = fs.Bool("mlock", false, "force system to keep model in RAM rather than swapping or compressing")
-	_ = fs.String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
+	tensorSplit := fs.String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
 	multiUserCache := fs.Bool("multiuser-cache", false, "optimize input cache algorithm for multiple users")
 
 	var lpaths multiLPath
@@ -890,38 +863,41 @@ func Execute(args []string) error {
 	}
 
 	// TODO(jessegross): Parameters that need to be implemented:
-	//	n-gpu-layers
-	//	main-gpu
 	//	flash-attn
-	//	threads
 	//	no-mmap
 	//	mlock
-	//	tensor-split
 
-	/*var tensorSplitFloats []float32
+	var tensorSplitFloats []float32
 	if *tensorSplit != "" {
-		stringFloats := regexp.MustCompile(",").Split(*tensorSplit, -1)
-
-		tensorSplitFloats = make([]float32, 0, len(stringFloats))
-		for _, s := range stringFloats {
+		splits := strings.Split(*tensorSplit, ",")
+		tensorSplitFloats = make([]float32, len(splits))
+		for i, s := range splits {
 			f, _ := strconv.ParseFloat(s, 32)
-			tensorSplitFloats = append(tensorSplitFloats, float32(f))
+			tensorSplitFloats[i] = float32(f)
 		}
-	}*/
+	}
+
+	params := ml.BackendParams{
+		NumThreads:   *threads,
+		NumGPULayers: *numGPULayers,
+		MainGPU:      *mainGPU,
+		TensorSplit:  tensorSplitFloats,
+	}
 
 	server.ready.Add(1)
-	go server.loadModel(*mpath, lpaths, *parallel, *kvCacheType, *kvSize, *multiUserCache)
+	go server.loadModel(*mpath, params, lpaths, *parallel, *kvCacheType, *kvSize, *multiUserCache)
 
 	server.cond = sync.NewCond(&server.mu)
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	go server.run(ctx)
 
 	addr := "127.0.0.1:" + strconv.Itoa(*port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		fmt.Println("Listen error:", err)
-		cancel()
 		return err
 	}
 	defer listener.Close()
@@ -941,6 +917,5 @@ func Execute(args []string) error {
 		return err
 	}
 
-	cancel()
 	return nil
 }

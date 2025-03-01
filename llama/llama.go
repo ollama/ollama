@@ -14,6 +14,7 @@ package llama
 #include "llama.h"
 #include "clip.h"
 #include "llava.h"
+#include "gguf.h"
 
 #include "mllama.h"
 #include "sampling_ext.h"
@@ -36,22 +37,35 @@ COMPILER inline get_compiler() {
 import "C"
 
 import (
+	"context"
 	_ "embed"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"runtime"
 	"runtime/cgo"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"unsafe"
 
 	_ "github.com/ollama/ollama/llama/llama.cpp/common"
 	_ "github.com/ollama/ollama/llama/llama.cpp/examples/llava"
 	_ "github.com/ollama/ollama/llama/llama.cpp/src"
-	"github.com/ollama/ollama/ml/backend/ggml/ggml/src"
+	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 )
+
+func init() {
+	C.llama_log_set(C.ggml_log_callback(C.llamaLog), nil)
+}
+
+//export llamaLog
+func llamaLog(level C.int, text *C.char, _ unsafe.Pointer) {
+	// slog levels zeros INFO and are multiples of 4
+	if slog.Default().Enabled(context.TODO(), slog.Level(int(level-C.GGML_LOG_LEVEL_INFO)*4)) {
+		fmt.Fprint(os.Stderr, C.GoString(text))
+	}
+}
 
 func BackendInit() {
 	ggml.OnceLoad()
@@ -69,26 +83,6 @@ func PrintSystemInfo() string {
 		compiler = "cgo(clang)"
 	}
 	return C.GoString(C.llama_print_system_info()) + compiler
-}
-
-var logLevel atomic.Int32
-
-func init() {
-	logLevel.Store(int32(C.GGML_LOG_LEVEL_INFO))
-	C.llama_log_set((C.ggml_log_callback)(C.llamaLog), nil)
-}
-
-func EnableDebug() {
-	logLevel.Store(int32(C.GGML_LOG_LEVEL_DEBUG))
-}
-
-//export llamaLog
-func llamaLog(level int32, text *C.char, _ unsafe.Pointer) {
-	if level < logLevel.Load() {
-		return
-	}
-
-	fmt.Fprint(os.Stderr, C.GoString(text))
 }
 
 func GetModelArch(modelPath string) (string, error) {
@@ -268,7 +262,7 @@ func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
 		cparams.progress_callback_user_data = unsafe.Pointer(&handle)
 	}
 
-	m := Model{c: C.llama_load_model_from_file(C.CString(modelPath), cparams)}
+	m := Model{c: C.llama_model_load_from_file(C.CString(modelPath), cparams)}
 	if m.c == nil {
 		return nil, fmt.Errorf("unable to load model: %s", modelPath)
 	}
@@ -277,12 +271,12 @@ func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
 }
 
 func FreeModel(model *Model) {
-	C.llama_free_model(model.c)
+	C.llama_model_free(model.c)
 }
 
 func NewContextWithModel(model *Model, params ContextParams) (*Context, error) {
 	c := Context{
-		c:          C.llama_new_context_with_model(model.c, params.c),
+		c:          C.llama_init_from_model(model.c, params.c),
 		numThreads: int(params.c.n_threads),
 	}
 	if c.c == nil {
@@ -293,35 +287,39 @@ func NewContextWithModel(model *Model, params ContextParams) (*Context, error) {
 }
 
 func (m *Model) NumVocab() int {
-	return int(C.llama_n_vocab(m.c))
+	return int(C.llama_vocab_n_tokens(m.Vocab()))
 }
 
 func (m *Model) TokenIsEog(token int) bool {
-	return bool(C.llama_token_is_eog(m.c, C.llama_token(token)))
+	return bool(C.llama_vocab_is_eog(m.Vocab(), C.llama_token(token)))
 }
 
 func (m *Model) AddBOSToken() bool {
-	return bool(C.llama_add_bos_token(m.c))
+	return bool(C.llama_vocab_get_add_bos(m.Vocab()))
 }
 
 func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float32, threads int) error {
 	cLoraPath := C.CString(loraPath)
 	defer C.free(unsafe.Pointer(cLoraPath))
 
-	loraAdapter := C.llama_lora_adapter_init(m.c, cLoraPath)
+	loraAdapter := C.llama_adapter_lora_init(m.c, cLoraPath)
 	if loraAdapter == nil {
 		return errors.New("unable to load lora")
 	}
 
 	err := -1
 	if loraAdapter != nil {
-		err = int(C.llama_lora_adapter_set(context.c, loraAdapter, C.float(scale)))
+		err = int(C.llama_set_adapter_lora(context.c, loraAdapter, C.float(scale)))
 	}
 	if err != 0 {
 		return errors.New("error applying lora from file")
 	}
 
 	return nil
+}
+
+func (m *Model) Vocab() *C.struct_llama_vocab {
+	return C.llama_model_get_vocab(m.c)
 }
 
 type Batch struct {
@@ -414,7 +412,7 @@ func (m *Model) TokenToPiece(token int) string {
 	tokenLen := 12
 	buf := make([]byte, tokenLen)
 	tokenLen = int(C.llama_token_to_piece(
-		m.c,
+		m.Vocab(),
 		C.int32_t(token),
 		(*C.char)(unsafe.Pointer(&buf[0])),
 		C.int32_t(tokenLen),
@@ -426,7 +424,7 @@ func (m *Model) TokenToPiece(token int) string {
 
 		buf = make([]byte, tokenLen)
 		C.llama_token_to_piece(
-			m.c,
+			m.Vocab(),
 			C.int32_t(token),
 			(*C.char)(unsafe.Pointer(&buf[0])),
 			C.int32_t(tokenLen),
@@ -444,7 +442,7 @@ func (m *Model) Tokenize(text string, addSpecial bool, parseSpecial bool) ([]int
 	defer C.free(unsafe.Pointer(cText))
 
 	result := C.llama_tokenize(
-		m.c,
+		m.Vocab(),
 		cText,
 		C.int32_t(len(text)),
 		&cTokens[0],
@@ -458,7 +456,7 @@ func (m *Model) Tokenize(text string, addSpecial bool, parseSpecial bool) ([]int
 		maxTokens = int(-result)
 		cTokens = make([]C.llama_token, maxTokens)
 		result = C.llama_tokenize(
-			m.c,
+			m.Vocab(),
 			cText,
 			C.int32_t(len(text)),
 			&cTokens[0],
@@ -480,7 +478,7 @@ func (m *Model) Tokenize(text string, addSpecial bool, parseSpecial bool) ([]int
 }
 
 func (m *Model) NEmbd() int {
-	return int(C.llama_n_embd(m.c))
+	return int(C.llama_model_n_embd(m.c))
 }
 
 func Quantize(infile, outfile string, ftype uint32) error {

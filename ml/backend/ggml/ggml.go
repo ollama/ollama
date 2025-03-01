@@ -82,9 +82,11 @@ type Backend struct {
 	meta       *fs.GGML
 	cpus, gpus []Context
 	tensors    map[string]*Context
+
+	sched *C.struct_ggml_backend_sched
 }
 
-func New(r *os.File) (ml.Backend, error) {
+func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 	meta, n, err := fs.Decode(r, -1)
 	if err != nil {
 		return nil, err
@@ -182,10 +184,24 @@ func New(r *os.File) (ml.Backend, error) {
 		return nil, err
 	}
 
+	backends := make([]*C.struct_ggml_backend, len(gpus)+len(cpus))
+	bufts := make([]*C.struct_ggml_backend_buffer_type, len(gpus)+len(cpus))
+	for i, c := range append(gpus, cpus...) {
+		backends[i] = c.backend
+		bufts[i] = C.ggml_backend_get_default_buffer_type(c.backend)
+	}
+
 	return &Backend{
 		meta: meta,
 		cpus: cpus,
 		gpus: gpus,
+		sched: C.ggml_backend_sched_new(
+			(*C.ggml_backend_t)(unsafe.Pointer(&backends[0])),
+			(*C.ggml_backend_buffer_type_t)(unsafe.Pointer(&bufts[0])),
+			C.int(len(backends)),
+			C.size_t(max(8192, len(meta.Tensors().Items())*5)),
+			true,
+		),
 	}, nil
 }
 
@@ -219,50 +235,47 @@ func (b *Backend) NewContext() ml.Context {
 	})
 
 	backends := make([]*C.struct_ggml_backend, len(b.gpus)+len(b.cpus))
-	bufts := make([]*C.struct_ggml_backend_buffer_type, len(b.gpus)+len(b.cpus))
 	for i, c := range append(b.gpus, b.cpus...) {
 		backends[i] = c.backend
-		bufts[i] = C.ggml_backend_get_default_buffer_type(c.backend)
 	}
 
 	return &Context{
+		b:       b,
 		ctx:     c,
 		backend: backends[0],
 		nodes:   nodes,
-		sched: C.ggml_backend_sched_new(
-			(*C.ggml_backend_t)(unsafe.Pointer(&backends[0])),
-			(*C.ggml_backend_buffer_type_t)(unsafe.Pointer(&bufts[0])),
-			C.int(len(backends)),
-			C.size_t(nodes),
-			true,
-		),
 	}
 }
 
 type Context struct {
+	b       *Backend
 	ctx     *C.struct_ggml_context
 	backend *C.struct_ggml_backend
 
-	sched *C.struct_ggml_backend_sched
 	graph *C.struct_ggml_cgraph
 	nodes int
 }
 
-func (c *Context) Forward(t ml.Tensor) {
+func (c *Context) Forward(tensors ...ml.Tensor) ml.Context {
 	if c.graph == nil {
 		c.graph = C.ggml_new_graph_custom(c.ctx, C.size_t(c.nodes), false)
 	}
 
-	C.ggml_build_forward_expand(c.graph, t.(*Tensor).t)
+	for _, tensor := range tensors {
+		C.ggml_build_forward_expand(c.graph, tensor.(*Tensor).t)
+	}
+
+	return c
 }
 
 func (c *Context) Compute(tensors ...ml.Tensor) {
-	C.ggml_backend_sched_graph_compute_async(c.sched, c.graph)
+	C.ggml_backend_sched_graph_compute_async(c.b.sched, c.graph)
+	C.ggml_backend_sched_reset(c.b.sched)
 
 	needSync := true
 	sync := func() {
 		if needSync {
-			C.ggml_backend_sched_synchronize(c.sched)
+			C.ggml_backend_sched_synchronize(c.b.sched)
 			needSync = false
 		}
 	}
@@ -350,7 +363,6 @@ func (c Context) FromIntSlice(s []int32, shape ...int) (ml.Tensor, error) {
 
 func (c *Context) Close() {
 	if c != nil {
-		C.ggml_backend_sched_free(c.sched)
 		C.ggml_free(c.ctx)
 	}
 }
@@ -477,7 +489,7 @@ func (t *Tensor) LayerNorm(ctx ml.Context, w, b ml.Tensor, eps float32) ml.Tenso
 }
 
 func (t *Tensor) RMSNorm(ctx ml.Context, w ml.Tensor, eps float32) ml.Tensor {
-	return (&Tensor{t: C.ggml_norm(ctx.(*Context).ctx, t.t, C.float(eps))}).Mul(ctx, w)
+	return (&Tensor{t: C.ggml_rms_norm(ctx.(*Context).ctx, t.t, C.float(eps))}).Mul(ctx, w)
 }
 
 func (t *Tensor) Pad(ctx ml.Context, shape ...int) ml.Tensor {
@@ -641,6 +653,21 @@ func (t *Tensor) Conv2D(ctx ml.Context, t2 ml.Tensor, s0, s1, p0, p1, d0, d1 int
 	return &Tensor{
 		t: C.ggml_conv_2d(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.int(s0), C.int(s1), C.int(p0), C.int(p1), C.int(d0), C.int(d1)),
 	}
+}
+
+func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask ml.Tensor, scale float64) ml.Tensor {
+	var kqMask *C.struct_ggml_tensor
+	if mask != nil {
+		kqMask = mask.(*Tensor).t
+	}
+
+	kq := key.MulmatFullPrec(ctx, t)
+	kq = &Tensor{
+		t: C.ggml_soft_max_ext(ctx.(*Context).ctx, kq.(*Tensor).t, kqMask, C.float(scale), 0),
+	}
+
+	kqv := value.Mulmat(ctx, kq)
+	return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 }
 
 func (b *Backend) SystemInfo() string {

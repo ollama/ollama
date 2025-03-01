@@ -10,6 +10,8 @@ package ggml
 import "C"
 
 import (
+	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -22,21 +24,14 @@ import (
 )
 
 func init() {
-	C.ggml_log_set((C.ggml_log_callback)(C.sink), nil)
+	C.ggml_log_set(C.ggml_log_callback(C.sink), nil)
 }
 
 //export sink
 func sink(level C.int, text *C.char, _ unsafe.Pointer) {
-	msg := strings.TrimSpace(C.GoString(text))
-	switch level {
-	case C.GGML_LOG_LEVEL_DEBUG:
-		slog.Debug(msg)
-	case C.GGML_LOG_LEVEL_INFO:
-		slog.Info(msg)
-	case C.GGML_LOG_LEVEL_WARN:
-		slog.Warn(msg)
-	case C.GGML_LOG_LEVEL_ERROR:
-		slog.Error(msg)
+	// slog levels zeros INFO and are multiples of 4
+	if slog.Default().Enabled(context.TODO(), slog.Level(int(level-C.GGML_LOG_LEVEL_INFO)*4)) {
+		fmt.Fprint(os.Stderr, C.GoString(text))
 	}
 }
 

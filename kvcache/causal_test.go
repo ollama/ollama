@@ -280,9 +280,7 @@ func testCache(t *testing.T, backend ml.Backend, cache Cache, tests []testCase) 
 
 			out, _, mask := cache.Get(context)
 
-			context.Forward(out)
-			context.Forward(mask)
-			context.Compute(out, mask)
+			context.Forward(out, mask).Compute(out, mask)
 
 			if !slices.Equal(out.Floats(), test.expected) || !slices.Equal(out.Shape(), test.expectedShape) || !slices.Equal(mask.Floats(), test.expectedMask) {
 				t.Errorf("TestCache: have %v (shape %v); want %v (shape %v); mask: have %v (shape %v) want %v", out.Floats(), out.Shape(), test.expected, test.expectedShape, mask.Floats(), mask.Shape(), test.expectedMask)
@@ -344,7 +342,7 @@ func (c *testContext) FromIntSlice(s []int32, shape ...int) (ml.Tensor, error) {
 	return out, nil
 }
 
-func (c *testContext) Forward(ml.Tensor) {}
+func (c *testContext) Forward(...ml.Tensor) ml.Context { return c }
 
 func (c *testContext) Compute(...ml.Tensor) {}
 

@@ -9,10 +9,10 @@ Subject: [PATCH] embeddings
  2 files changed, 5 insertions(+), 3 deletions(-)
 
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index 38a55fb2..b9c4a5bf 100644
+index 671d2a81..47e79ed4 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
-@@ -475,7 +475,7 @@ size_t llama_output_reserve(struct llama_context & lctx, size_t n_outputs) {
+@@ -479,7 +479,7 @@ size_t llama_output_reserve(struct llama_context & lctx, size_t n_outputs) {
      const auto n_embd  = hparams.n_embd;
  
      // TODO: use a per-batch flag for logits presence instead
@@ -22,10 +22,10 @@ index 38a55fb2..b9c4a5bf 100644
  
      const size_t logits_size = has_logits ? n_vocab*n_outputs_max : 0;
 diff --git a/src/llama.cpp b/src/llama.cpp
-index ea78ea48..4eb3f6b9 100644
+index 607f2786..ac85bfed 100644
 --- a/src/llama.cpp
 +++ b/src/llama.cpp
-@@ -10876,7 +10876,6 @@ static int llama_decode_internal(
+@@ -8652,7 +8652,6 @@ static int llama_decode_impl(
              res  = nullptr;
              embd = nullptr;
          } else if (cparams.embeddings) {
@@ -33,7 +33,7 @@ index ea78ea48..4eb3f6b9 100644
              embd = nullptr;
              for (int i = ggml_graph_n_nodes(gf) - 1; i >= 0; --i) {
                  if (strcmp(ggml_graph_node(gf, i)->name, "result_embd_pooled") == 0) {
-@@ -10884,12 +10883,15 @@ static int llama_decode_internal(
+@@ -8660,12 +8659,15 @@ static int llama_decode_impl(
                      break;
                  }
              }

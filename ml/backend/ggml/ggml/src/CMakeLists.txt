@@ -93,12 +93,18 @@ endif()
 
 if (GGML_CCACHE)
     find_program(GGML_CCACHE_FOUND ccache)
+    find_program(GGML_SCCACHE_FOUND sccache)
 
-    if (GGML_CCACHE_FOUND)
+    if (GGML_CCACHE_FOUND OR GGML_SCCACHE_FOUND)
+        if(GGML_CCACHE_FOUND)
+            set(GGML_CCACHE_VARIANT ccache)
+        else()
+            set(GGML_CCACHE_VARIANT sccache)
+        endif()
         # TODO: should not be set globally
-        set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ccache)
+        set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${GGML_CCACHE_VARIANT}")
         set(ENV{CCACHE_SLOPPINESS} time_macros)
-        message(STATUS "ccache found, compilation results will be cached. Disable with GGML_CCACHE=OFF.")
+        message(STATUS "${GGML_CCACHE_VARIANT} found, compilation results will be cached. Disable with GGML_CCACHE=OFF.")
     else()
         message(STATUS "Warning: ccache not found - consider installing it for faster compilation or disable this warning with GGML_CCACHE=OFF")
     endif ()
@@ -208,6 +214,7 @@ add_library(ggml-base
             ../include/ggml-backend.h
             ../include/ggml-cpp.h
             ../include/ggml-opt.h
+            ../include/gguf.h
             ggml.c
             ggml-alloc.c
             ggml-backend.cpp
@@ -215,7 +222,8 @@ add_library(ggml-base
             ggml-threading.cpp
             ggml-threading.h
             ggml-quants.c
-            ggml-quants.h)
+            ggml-quants.h
+            gguf.cpp)
 
 target_include_directories(ggml-base PRIVATE .)
 
@@ -247,6 +255,17 @@ function(ggml_add_backend_library backend)
     if (${BUILD_SHARED_LIBS})
         target_compile_definitions(${backend} PRIVATE GGML_BACKEND_BUILD)
         target_compile_definitions(${backend} PUBLIC  GGML_BACKEND_SHARED)
+    endif()
+
+    if(NOT GGML_AVAILABLE_BACKENDS)
+        set(GGML_AVAILABLE_BACKENDS "${backend}"
+            CACHE INTERNAL "List of backends for cmake package")
+    else()
+        list(FIND GGML_AVAILABLE_BACKENDS "${backend}" has_backend)
+        if(has_backend EQUAL -1)
+            set(GGML_AVAILABLE_BACKENDS "${GGML_AVAILABLE_BACKENDS};${backend}"
+                CACHE INTERNAL "List of backends for cmake package")
+        endif()
     endif()
 endfunction()
 
@@ -293,7 +312,7 @@ if (GGML_CPU_ALL_VARIANTS)
     ggml_add_cpu_backend_variant(skylakex       AVX F16C AVX2 FMA AVX512)
     ggml_add_cpu_backend_variant(icelake        AVX F16C AVX2 FMA AVX512 AVX512_VBMI AVX512_VNNI)
     ggml_add_cpu_backend_variant(alderlake      AVX F16C AVX2 FMA AVX_VNNI)
-else ()
+elseif (GGML_CPU)
     ggml_add_cpu_backend_variant_impl("")
 endif()
 

@@ -38,13 +38,8 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, positions, _ m
 	key = key.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 	value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
 
-	scores := key.MulmatFullPrec(ctx, query)
-	scores = scores.Scale(ctx, 1.0/math.Sqrt(float64(headDim)))
-	scores = scores.Add(ctx, mask)
-	scores = scores.Softmax(ctx)
-
-	attention := value.Mulmat(ctx, scores)
-	attention = attention.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+	scaleFactor := 1.0 / math.Sqrt(float64(headDim))
+	attention := nn.Attention(ctx, query, key, value, mask, scaleFactor)
 	attention = attention.Reshape(ctx, opts.hiddenSize, batchSize)
 
 	return sa.Output.Forward(ctx, attention)
@@ -74,11 +69,19 @@ type TextSelfAttentionDecoderLayer struct {
 	MLP     *TextMLP
 }
 
-func (d *TextSelfAttentionDecoderLayer) Forward(ctx ml.Context, hiddenState, positions, mask, _, _ ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
+func (d *TextSelfAttentionDecoderLayer) Forward(ctx ml.Context, hiddenState, positions, outputs, mask, _, _ ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
 	residual := hiddenState
 
 	hiddenState = d.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
 	hiddenState = d.SelfAttention.Forward(ctx, hiddenState, positions, mask, cache, opts)
+
+	// In the final layer (outputs != nil), optimize by pruning to just the token positions
+	// we need logits for.
+	if outputs != nil {
+		hiddenState = hiddenState.Rows(ctx, outputs)
+		residual = residual.Rows(ctx, outputs)
+	}
+
 	hiddenState = hiddenState.Add(ctx, residual)
 	residual = hiddenState
 
@@ -104,7 +107,7 @@ func (ca *TextCrossAttention) Forward(ctx ml.Context, hiddenState, crossAttentio
 	query = query.Reshape(ctx, headDim, opts.numHeads, batchSize)
 	query = ca.QueryNorm.Forward(ctx, query, opts.eps)
 
-	var key, value ml.Tensor
+	var key, value, mask ml.Tensor
 	if crossAttentionStates != nil {
 		numVisionTokens, numTiles := crossAttentionStates.Dim(1), crossAttentionStates.Dim(2)
 
@@ -117,19 +120,15 @@ func (ca *TextCrossAttention) Forward(ctx ml.Context, hiddenState, crossAttentio
 
 		cache.Put(ctx, key, value)
 	} else {
-		key, value, _ = cache.Get(ctx)
+		key, value, mask = cache.Get(ctx)
 	}
 
 	query = query.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 	key = key.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 	value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
 
-	scores := key.Mulmat(ctx, query)
-	scores = scores.Scale(ctx, 1.0/math.Sqrt(float64(headDim)))
-	scores = scores.Softmax(ctx)
-
-	attention := value.Mulmat(ctx, scores)
-	attention = attention.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+	scaleFactor := 1.0 / math.Sqrt(float64(headDim))
+	attention := nn.Attention(ctx, query, key, value, mask, scaleFactor)
 	attention = attention.Reshape(ctx, opts.hiddenSize, batchSize)
 
 	return ca.Output.Forward(ctx, attention)
@@ -145,7 +144,7 @@ type TextCrossAttentionDecoderLayer struct {
 	MLPGate ml.Tensor `gguf:"cross_attn_mlp_gate"`
 }
 
-func (d *TextCrossAttentionDecoderLayer) Forward(ctx ml.Context, hiddenState, _, _, crossAttentionStates, crossAttentionMask ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
+func (d *TextCrossAttentionDecoderLayer) Forward(ctx ml.Context, hiddenState, _, _, _, crossAttentionStates, crossAttentionMask ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
 	residual := hiddenState
 
 	hiddenState = d.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
@@ -161,14 +160,14 @@ func (d *TextCrossAttentionDecoderLayer) Forward(ctx ml.Context, hiddenState, _,
 }
 
 type TextDecoderLayer interface {
-	Forward(ctx ml.Context, hiddenState, positionIDs, mask, crossAttentionStates, crossAttentionMask ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor
+	Forward(ctx ml.Context, hiddenState, positionIDs, outputs, mask, crossAttentionStates, crossAttentionMask ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor
 }
 
 type TextDecoder struct {
 	Layers []TextDecoderLayer
 }
 
-func (d *TextDecoder) Forward(ctx ml.Context, hiddenState, positionIDs, mask, crossAttentionStates, crossAttentionMask ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
+func (d *TextDecoder) Forward(ctx ml.Context, hiddenState, positionIDs, outputs, mask, crossAttentionStates, crossAttentionMask ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
 	for i, layer := range d.Layers {
 		layerType := selfAttentionLayer
 		if slices.Contains(opts.crossAttentionLayers, uint32(i)) {
@@ -179,7 +178,12 @@ func (d *TextDecoder) Forward(ctx ml.Context, hiddenState, positionIDs, mask, cr
 		cache.SetLayerType(layerType)
 
 		if layerType == selfAttentionLayer || crossAttentionStates != nil || cache.UnderlyingCache().(*kvcache.EncoderCache).EncoderCached() {
-			hiddenState = layer.Forward(ctx, hiddenState, positionIDs, mask, crossAttentionStates, crossAttentionMask, cache, opts)
+			var lastLayerOutputs ml.Tensor
+			if i == len(d.Layers)-1 {
+				lastLayerOutputs = outputs
+			}
+
+			hiddenState = layer.Forward(ctx, hiddenState, positionIDs, lastLayerOutputs, mask, crossAttentionStates, crossAttentionMask, cache, opts)
 		}
 	}
 
@@ -205,9 +209,9 @@ type TextModel struct {
 	*TextModelOptions
 }
 
-func (m *TextModel) Forward(ctx ml.Context, inputIDs, positionIDs, mask, crossAttentionStates, crossAttentionMask ml.Tensor, cache *kvcache.WrapperCache) ml.Tensor {
+func (m *TextModel) Forward(ctx ml.Context, inputIDs, positionIDs, outputs, mask, crossAttentionStates, crossAttentionMask ml.Tensor, cache *kvcache.WrapperCache) ml.Tensor {
 	hiddenState := m.TokenEmbedding.Forward(ctx, inputIDs)
-	hiddenState = m.Transformer.Forward(ctx, hiddenState, positionIDs, mask, crossAttentionStates, crossAttentionMask, cache, m.TextModelOptions)
+	hiddenState = m.Transformer.Forward(ctx, hiddenState, positionIDs, outputs, mask, crossAttentionStates, crossAttentionMask, cache, m.TextModelOptions)
 	hiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)
 	return m.Output.Forward(ctx, hiddenState)
 }

@@ -14,6 +14,7 @@ type Config interface {
 	String(string, ...string) string
 	Uint(string, ...uint32) uint32
 	Float(string, ...float32) float32
+	Bool(string, ...bool) bool
 
 	Strings(string, ...[]string) []string
 	Uints(string, ...[]uint32) []uint32
@@ -26,9 +27,24 @@ type Backend interface {
 	SystemInfo() string
 }
 
-var backends = make(map[string]func(*os.File) (Backend, error))
+// BackendParams controls how the backend loads and executes models
+type BackendParams struct {
+	// NumThreads sets the number of threads to use if running on the CPU
+	NumThreads int
 
-func RegisterBackend(name string, f func(*os.File) (Backend, error)) {
+	// MainGPU is the index of the primary GPU to use
+	MainGPU int
+
+	// NumGPULayers is the number of layers to offload to GPUs
+	NumGPULayers int
+
+	// TensorSplit is the fraction of the model to offload to each GPU
+	TensorSplit []float32
+}
+
+var backends = make(map[string]func(*os.File, BackendParams) (Backend, error))
+
+func RegisterBackend(name string, f func(*os.File, BackendParams) (Backend, error)) {
 	if _, ok := backends[name]; ok {
 		panic("backend: backend already registered")
 	}
@@ -36,9 +52,9 @@ func RegisterBackend(name string, f func(*os.File) (Backend, error)) {
 	backends[name] = f
 }
 
-func NewBackend(f *os.File) (Backend, error) {
+func NewBackend(f *os.File, params BackendParams) (Backend, error) {
 	if backend, ok := backends["ggml"]; ok {
-		return backend(f)
+		return backend(f, params)
 	}
 
 	return nil, fmt.Errorf("unsupported backend")
@@ -49,7 +65,7 @@ type Context interface {
 	FromFloatSlice(s []float32, shape ...int) (Tensor, error)
 	FromIntSlice(s []int32, shape ...int) (Tensor, error)
 
-	Forward(Tensor)
+	Forward(...Tensor) Context
 	Compute(...Tensor)
 	MaxTensors() int
 	Close()
@@ -94,6 +110,26 @@ type Tensor interface {
 	Concat(ctx Context, t2 Tensor, dim int) Tensor
 	Rows(ctx Context, t2 Tensor) Tensor
 	Copy(ctx Context, t2 Tensor) Tensor
+}
+
+// ScaledDotProductAttention implements a fused attention
+// operation equivalent to following code on a tensor named
+// query:
+//
+// kq := key.MulmatFullPrec(ctx, query)
+//
+// kq = kq.Scale(ctx, scale)
+//
+//	if mask != nil {
+//		kq = kq.Add(ctx, mask)
+//	}
+//
+// kq = kq.Softmax(ctx)
+//
+// kqv := value.Mulmat(ctx, kq)
+// return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+type ScaledDotProductAttention interface {
+	ScaledDotProductAttention(ctx Context, key, value, mask Tensor, scale float64) Tensor
 }
 
 type number interface {
@@ -150,8 +186,7 @@ func Dump(ctx Context, t Tensor, opts ...DumpOptions) string {
 
 func dump[S ~[]E, E number](ctx Context, t Tensor, items int, fn func(E) string) string {
 	if t.Bytes() == nil {
-		ctx.Forward(t)
-		ctx.Compute(t)
+		ctx.Forward(t).Compute(t)
 	}
 
 	s := make(S, mul(t.Shape()...))

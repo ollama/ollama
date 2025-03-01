@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -34,6 +35,7 @@ var (
 	errOnlyGGUFSupported       = errors.New("supplied file was not in GGUF format")
 	errUnknownType             = errors.New("unknown type")
 	errNeitherFromOrFiles      = errors.New("neither 'from' or 'files' was specified")
+	errFilePath                = errors.New("file path must be relative")
 )
 
 func (s *Server) CreateHandler(c *gin.Context) {
@@ -44,6 +46,13 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	} else if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	for v := range r.Files {
+		if !fs.ValidPath(v) {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errFilePath.Error()})
+			return
+		}
 	}
 
 	name := model.ParseName(cmp.Or(r.Model, r.Name))
@@ -104,7 +113,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		if r.Adapters != nil {
 			adapterLayers, err = convertModelFromFiles(r.Adapters, baseLayers, true, fn)
 			if err != nil {
-				for _, badReq := range []error{errNoFilesProvided, errOnlyOneAdapterSupported, errOnlyGGUFSupported, errUnknownType} {
+				for _, badReq := range []error{errNoFilesProvided, errOnlyOneAdapterSupported, errOnlyGGUFSupported, errUnknownType, errFilePath} {
 					if errors.Is(err, badReq) {
 						ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
 						return
@@ -221,8 +230,22 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 		return nil, err
 	}
 	defer os.RemoveAll(tmpDir)
+	// Set up a root to validate paths
+	root, err := os.OpenRoot(tmpDir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
 
 	for fp, digest := range files {
+		if !fs.ValidPath(fp) {
+			return nil, fmt.Errorf("%w: %s", errFilePath, fp)
+		}
+		if _, err := root.Stat(fp); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			// Path is likely outside the root
+			return nil, fmt.Errorf("%w: %s: %s", errFilePath, err, fp)
+		}
+
 		blobPath, err := GetBlobsPath(digest)
 		if err != nil {
 			return nil, err
@@ -270,6 +293,7 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 	if err != nil {
 		return nil, err
 	}
+	defer bin.Close()
 
 	f, _, err := ggml.Decode(bin, 0)
 	if err != nil {
