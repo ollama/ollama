@@ -118,19 +118,10 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 
 	layers := f.Tensors().GroupLayers()
 	// add one layer worth of memory as a buffer
-	if blk0, ok := layers["blk.0"]; ok {
-		layerSize = blk0.Size()
-		//use layer with maximum size to avoid vram overflow
-		for i := 1; i < int(f.KV().BlockCount()); i++ {
-			if blkn, ok := layers[fmt.Sprintf("blk.%d", i)]; ok {
-				if blkn.Size() > layerSize {
-					layerSize = blkn.Size()
-				}
-			} 
-		}
-	} else {
-		slog.Warn("model missing blk.0 layer size")
-	}
+	// use layer with maximum size to avoid vram overflow
+	layerSize = slices.MaxFunc(slices.Collect(maps.Values(layers)), func(a, b ggml.Layer) int {
+		return cmp.Compare(a.Size(), b.Size())
+	}).Size()
 
 	var kvct string
 	if envconfig.FlashAttention() &&
