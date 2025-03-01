@@ -105,8 +105,8 @@ func (c *EncoderCache) Put(ctx ml.Context, key, value ml.Tensor) {
 	}
 
 	if c.keys[c.curLayer] == nil || c.values[c.curLayer] == nil {
-		c.keys[c.curLayer] = c.cacheCtx.Zeros(key.DType(), key.Shape()...)
-		c.values[c.curLayer] = c.cacheCtx.Zeros(value.DType(), value.Shape()...)
+		c.keys[c.curLayer] = c.cacheCtx.Empty(key.DType(), key.Shape()...)
+		c.values[c.curLayer] = c.cacheCtx.Empty(value.DType(), value.Shape()...)
 	}
 
 	ctx.Forward(
