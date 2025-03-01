@@ -21,18 +21,6 @@ package llama
 
 extern bool llamaProgressCallback(float progress, void *user_data);
 extern void llamaLog(int level, char* text, void* user_data);
-
-typedef enum {COMP_UNKNOWN,COMP_GCC,COMP_CLANG} COMPILER;
-COMPILER inline get_compiler() {
-#if defined(__clang__)
-	return COMP_CLANG;
-#elif defined(__GNUC__)
-	return COMP_GCC;
-#else
-	return UNKNOWN_COMPILER;
-#endif
-}
-
 */
 import "C"
 
@@ -70,19 +58,6 @@ func llamaLog(level C.int, text *C.char, _ unsafe.Pointer) {
 func BackendInit() {
 	ggml.OnceLoad()
 	C.llama_backend_init()
-}
-
-func PrintSystemInfo() string {
-	var compiler string
-	switch C.get_compiler() {
-	case C.COMP_UNKNOWN:
-		compiler = "cgo(unknown_compiler)"
-	case C.COMP_GCC:
-		compiler = "cgo(gcc)"
-	case C.COMP_CLANG:
-		compiler = "cgo(clang)"
-	}
-	return C.GoString(C.llama_print_system_info()) + compiler
 }
 
 func GetModelArch(modelPath string) (string, error) {
