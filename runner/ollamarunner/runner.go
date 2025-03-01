@@ -786,8 +786,6 @@ func (s *Server) loadModel(
 		panic(err)
 	}
 
-	slog.Info("system", "info", s.model.Backend().SystemInfo(), "threads", params.NumThreads)
-
 	// TODO(jessegross): LoRA loading
 	if lpath.String() != "" {
 		panic("loras are not yet implemented")
