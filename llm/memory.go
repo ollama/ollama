@@ -5,7 +5,10 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
-	"strings"
+	"strings"	
+	"cmp"
+	"maps"
+	"slices"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
