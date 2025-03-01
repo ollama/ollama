@@ -102,23 +102,21 @@ jobs:
         os: [windows]
         arch: [amd64]
         preset: ['CPU']
+        runner: windows
         include:
-          - os: windows
-            arch: amd64
-            preset: 'CUDA 11'
+          - preset: 'CUDA 11'
             install: https://developer.download.nvidia.com/compute/cuda/11.3.1/local_installers/cuda_11.3.1_465.89_win10.exe
             cuda-version: '11.3'
-          - os: windows
-            arch: amd64
-            preset: 'CUDA 12'
+            runner: windows-cuda11
+          - preset: 'CUDA 12'
             install: https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_571.96_windows.exe
             cuda-version: '12.8'
-          - os: windows
-            arch: amd64
-            preset: 'ROCm 6'
+            runner: windows-cuda12
+          - preset: 'ROCm 6'
             install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
             rocm-version: '6.2'
-    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
+            runner: windows-rocm
+    runs-on: ${{ matrix.runner }}
     environment: release
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
