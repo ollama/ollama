@@ -109,7 +109,7 @@ if(CMAKE_HIP_COMPILER)
             target_compile_definitions(ggml-hip PRIVATE GGML_CUDA_NO_PEER_COPY)
         endif()
 
-        target_compile_definitions(ggml-hip PRIVATE GGML_CUDA_NO_VMM)
+        target_compile_definitions(ggml-hip PRIVATE GGML_HIP_NO_VMM)
 
         set(OLLAMA_HIP_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/rocm)
         install(TARGETS ggml-hip
