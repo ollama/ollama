@@ -43,7 +43,9 @@ func New(c ml.Config) (model.Model, error) {
 		TextModel:      newTextModel(c),
 	}
 
-	m.Cache = kvcache.NewWrapperCache(kvcache.NewEncoderCache(), kvcache.NewCausalCache(m.TextModel.Shift))
+	encoderCache := kvcache.NewEncoderCache()
+	encoderCache.SetConfig(ml.CacheConfig{})
+	m.Cache = kvcache.NewWrapperCache(encoderCache, kvcache.NewCausalCache(m.TextModel.Shift))
 
 	return &m, nil
 }

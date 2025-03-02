@@ -309,7 +309,7 @@ func (b *testBackend) SystemInfo() string {
 
 type testContext struct{}
 
-func (c *testContext) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
+func (c *testContext) Empty(dtype ml.DType, shape ...int) ml.Tensor {
 	total := 0
 
 	if len(shape) > 0 {
@@ -322,8 +322,12 @@ func (c *testContext) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
 	return &testTensor{dtype: dtype, elementSize: 4, data: make([]float32, total), shape: shape}
 }
 
+func (c *testContext) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
+	return c.Empty(dtype, shape...)
+}
+
 func (c *testContext) FromFloatSlice(s []float32, shape ...int) (ml.Tensor, error) {
-	t := c.Zeros(ml.DTypeF32, shape...).(*testTensor)
+	t := c.Empty(ml.DTypeF32, shape...).(*testTensor)
 
 	copy(t.data, s)
 
@@ -391,7 +395,7 @@ func (t *testTensor) Floats() []float32 {
 }
 
 func (t *testTensor) Add(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
-	out := ctx.Zeros(t.DType(), t.Shape()...).(*testTensor)
+	out := ctx.Empty(t.DType(), t.Shape()...).(*testTensor)
 
 	for i := range out.data {
 		out.data[i] = t.data[i] + t2.(*testTensor).data[i]
@@ -468,7 +472,7 @@ func (t *testTensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 
 	context := &testContext{}
 
-	view := context.Zeros(t.dtype, s...).(*testTensor)
+	view := context.Empty(t.dtype, s...).(*testTensor)
 	view.data = t.data[offset : offset+len(view.data)]
 
 	return view
