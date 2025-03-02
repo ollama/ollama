@@ -27,6 +27,35 @@ type Backend interface {
 	SystemInfo() string
 }
 
+// BackendCacheConfig should be implemented by backends that need special output
+// from the cache to meet specific requirements. It is frequently implemented in
+// conjunction with ScaledDotProductAttention.
+type BackendCacheConfig interface {
+	CacheConfig() CacheConfig
+}
+
+// CacheConfig controls optimizations (mostly backend-specific) that may transform
+// the output the cache to work better with specific kernels.
+type CacheConfig struct {
+	// CachePadding specifies the multiple for the number of tokens of cache history
+	// that will be returned from cache Get for k, v and mask. The capacity of the
+	// cache itself will also be increased to a multiple of this size if needed.
+	CachePadding int
+
+	// PermutedV performs Permute(ctx, 1, 2, 0, 3) on v tensors stored via Put
+	// and return the permuted version via Get. This uses the cache copy operation
+	// to avoid a Contiguous call on the permuted tensor.
+	PermutedV bool
+
+	// MaskDType specifies the data type for generating the mask. If unset it will
+	// default to DTypeF32.
+	MaskDType DType
+
+	// MaskBatchPadding specifies the multiple for the batch size dimension in the mask.
+	// Any position that does not correspond to an actual token will be filled with -Inf.
+	MaskBatchPadding int
+}
+
 // BackendParams controls how the backend loads and executes models
 type BackendParams struct {
 	// NumThreads sets the number of threads to use if running on the CPU
@@ -40,6 +69,9 @@ type BackendParams struct {
 
 	// TensorSplit is the fraction of the model to offload to each GPU
 	TensorSplit []float32
+
+	// FlashAttention indicates that we should use a fused flash attention kernel
+	FlashAttention bool
 }
 
 var backends = make(map[string]func(*os.File, BackendParams) (Backend, error))
@@ -61,6 +93,7 @@ func NewBackend(f *os.File, params BackendParams) (Backend, error) {
 }
 
 type Context interface {
+	Empty(dtype DType, shape ...int) Tensor
 	Zeros(dtype DType, shape ...int) Tensor
 	FromFloatSlice(s []float32, shape ...int) (Tensor, error)
 	FromIntSlice(s []int32, shape ...int) (Tensor, error)
@@ -116,6 +149,10 @@ type Tensor interface {
 // operation equivalent to following code on a tensor named
 // query:
 //
+// query = query.Permute(ctx, 0, 2, 1, 3)
+// key = key.Permute(ctx, 0, 2, 1, 3)
+// value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
+//
 // kq := key.MulmatFullPrec(ctx, query)
 //
 // kq = kq.Scale(ctx, scale)
@@ -170,7 +207,7 @@ func Dump(ctx Context, t Tensor, opts ...DumpOptions) string {
 			return strconv.FormatFloat(float64(f), 'f', opts[0].Precision, 32)
 		})
 	case DTypeF16:
-		f32 := ctx.Zeros(DTypeF32, t.Shape()...)
+		f32 := ctx.Empty(DTypeF32, t.Shape()...)
 		f32 = t.Copy(ctx, f32)
 		return dump[[]float32](ctx, f32, opts[0].Items, func(f float32) string {
 			return strconv.FormatFloat(float64(f), 'f', opts[0].Precision, 32)

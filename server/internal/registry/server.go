@@ -204,7 +204,7 @@ func (s *Local) handleDelete(_ http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if !ok {
-		return &serverError{404, "manifest_not_found", "manifest not found"}
+		return &serverError{404, "not_found", "model not found"}
 	}
 	return nil
 }

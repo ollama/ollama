@@ -28,6 +28,12 @@ func (c *WrapperCache) Init(backend ml.Backend, dtype ml.DType, capacity int32) 
 	}
 }
 
+func (c *WrapperCache) SetConfig(config ml.CacheConfig) {
+	for _, cache := range c.caches {
+		cache.SetConfig(config)
+	}
+}
+
 func (c *WrapperCache) Close() {
 	for _, cache := range c.caches {
 		cache.Close()
