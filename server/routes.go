@@ -34,7 +34,6 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/model/models/mllama"
 	"github.com/ollama/ollama/openai"
-	"github.com/ollama/ollama/server/internal/cache/blob"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/server/internal/registry"
 	"github.com/ollama/ollama/template"
@@ -1129,7 +1128,7 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 	}
 }
 
-func (s *Server) GenerateRoutes(c *blob.DiskCache, rc *ollama.Registry) (http.Handler, error) {
+func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	corsConfig := cors.DefaultConfig()
 	corsConfig.AllowWildcard = true
 	corsConfig.AllowBrowserExtensions = true
@@ -1197,7 +1196,6 @@ func (s *Server) GenerateRoutes(c *blob.DiskCache, rc *ollama.Registry) (http.Ha
 
 	// wrap old with new
 	rs := &registry.Local{
-		Cache:    c,
 		Client:   rc,
 		Logger:   slog.Default(), // TODO(bmizerany): Take a logger, do not use slog.Default()
 		Fallback: r,
@@ -1258,16 +1256,12 @@ func Serve(ln net.Listener) error {
 
 	s := &Server{addr: ln.Addr()}
 
-	c, err := ollama.DefaultCache()
-	if err != nil {
-		return err
-	}
 	rc, err := ollama.DefaultRegistry()
 	if err != nil {
 		return err
 	}
 
-	h, err := s.GenerateRoutes(c, rc)
+	h, err := s.GenerateRoutes(rc)
 	if err != nil {
 		return err
 	}

@@ -63,25 +63,28 @@ func main() {
 	}
 	flag.Parse()
 
-	c, err := ollama.DefaultCache()
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	rc, err := ollama.DefaultRegistry()
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	ctx := context.Background()
 
-	err = func() error {
+	err := func() error {
 		switch cmd := flag.Arg(0); cmd {
 		case "pull":
-			return cmdPull(ctx, rc, c)
+			rc, err := ollama.DefaultRegistry()
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			return cmdPull(ctx, rc)
 		case "push":
-			return cmdPush(ctx, rc, c)
+			rc, err := ollama.DefaultRegistry()
+			if err != nil {
+				log.Fatal(err)
+			}
+			return cmdPush(ctx, rc)
 		case "import":
+			c, err := ollama.DefaultCache()
+			if err != nil {
+				log.Fatal(err)
+			}
 			return cmdImport(ctx, c)
 		default:
 			if cmd == "" {
@@ -99,7 +102,7 @@ func main() {
 	}
 }
 
-func cmdPull(ctx context.Context, rc *ollama.Registry, c *blob.DiskCache) error {
+func cmdPull(ctx context.Context, rc *ollama.Registry) error {
 	model := flag.Arg(1)
 	if model == "" {
 		flag.Usage()
@@ -145,7 +148,7 @@ func cmdPull(ctx context.Context, rc *ollama.Registry, c *blob.DiskCache) error 
 
 	errc := make(chan error)
 	go func() {
-		errc <- rc.Pull(ctx, c, model)
+		errc <- rc.Pull(ctx, model)
 	}()
 
 	t := time.NewTicker(time.Second)
@@ -161,7 +164,7 @@ func cmdPull(ctx context.Context, rc *ollama.Registry, c *blob.DiskCache) error 
 	}
 }
 
-func cmdPush(ctx context.Context, rc *ollama.Registry, c *blob.DiskCache) error {
+func cmdPush(ctx context.Context, rc *ollama.Registry) error {
 	args := flag.Args()[1:]
 	flag := flag.NewFlagSet("push", flag.ExitOnError)
 	flagFrom := flag.String("from", "", "Use the manifest from a model by another name.")
@@ -177,7 +180,7 @@ func cmdPush(ctx context.Context, rc *ollama.Registry, c *blob.DiskCache) error 
 	}
 
 	from := cmp.Or(*flagFrom, model)
-	m, err := rc.ResolveLocal(c, from)
+	m, err := rc.ResolveLocal(from)
 	if err != nil {
 		return err
 	}
@@ -203,7 +206,7 @@ func cmdPush(ctx context.Context, rc *ollama.Registry, c *blob.DiskCache) error 
 		},
 	})
 
-	return rc.Push(ctx, c, model, &ollama.PushParams{
+	return rc.Push(ctx, model, &ollama.PushParams{
 		From: from,
 	})
 }

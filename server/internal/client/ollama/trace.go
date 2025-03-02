@@ -6,6 +6,9 @@ import (
 
 // Trace is a set of functions that are called to report progress during blob
 // downloads and uploads.
+//
+// Use [WithTrace] to attach a Trace to a context for use with [Registry.Push]
+// and [Registry.Pull].
 type Trace struct {
 	// Update is called during [Registry.Push] and [Registry.Pull] to
 	// report the progress of blob uploads and downloads.
