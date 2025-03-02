@@ -388,6 +388,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LangBot](https://github.com/RockChinQ/LangBot) (LLM-based instant messaging bots platform, with Agents, RAG features, supports multiple platforms)
 - [1Panel](https://github.com/1Panel-dev/1Panel/) (Web-based Linux Server Management Tool)
 - [AstrBot](https://github.com/Soulter/AstrBot/) (User-friendly LLM-based multi-platform chatbot with a WebUI, supporting RAG, LLM agents, and plugins integration)
+- [GPTLocalhost](https://youtu.be/kWOQDOO7eao)(using Ollama in Microsoft Word locally)
 
 ### Cloud
 
