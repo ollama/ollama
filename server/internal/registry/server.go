@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/ollama/ollama/server/internal/cache/blob"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 )
 
@@ -27,7 +26,6 @@ import (
 // directly to the blob disk cache.
 type Local struct {
 	Client *ollama.Registry // required
-	Cache  *blob.DiskCache  // required
 	Logger *slog.Logger     // required
 
 	// Fallback, if set, is used to handle requests that are not handled by
@@ -199,7 +197,7 @@ func (s *Local) handleDelete(_ http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	ok, err := s.Client.Unlink(s.Cache, p.model())
+	ok, err := s.Client.Unlink(p.model())
 	if err != nil {
 		return err
 	}

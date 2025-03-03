@@ -42,10 +42,10 @@ func newTestServer(t *testing.T) *Local {
 		t.Fatal(err)
 	}
 	rc := &ollama.Registry{
+		Cache:      c,
 		HTTPClient: panicOnRoundTrip,
 	}
 	l := &Local{
-		Cache:  c,
 		Client: rc,
 		Logger: testutil.Slogger(t),
 	}
@@ -87,7 +87,7 @@ func TestServerDelete(t *testing.T) {
 
 	s := newTestServer(t)
 
-	_, err := s.Client.ResolveLocal(s.Cache, "smol")
+	_, err := s.Client.ResolveLocal("smol")
 	check(err)
 
 	got := s.send(t, "DELETE", "/api/delete", `{"model": "smol"}`)
@@ -95,7 +95,7 @@ func TestServerDelete(t *testing.T) {
 		t.Fatalf("Code = %d; want 200", got.Code)
 	}
 
-	_, err = s.Client.ResolveLocal(s.Cache, "smol")
+	_, err = s.Client.ResolveLocal("smol")
 	if err == nil {
 		t.Fatal("expected smol to have been deleted")
 	}

@@ -73,6 +73,7 @@ func (rr recordRoundTripper) RoundTrip(req *http.Request) (*http.Response, error
 // To simulate a network error, pass a handler that returns a 499 status code.
 func newClient(t *testing.T, h http.HandlerFunc) (*Registry, *blob.DiskCache) {
 	t.Helper()
+
 	c, err := blob.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -86,6 +87,7 @@ func newClient(t *testing.T, h http.HandlerFunc) (*Registry, *blob.DiskCache) {
 	}
 
 	r := &Registry{
+		Cache: c,
 		HTTPClient: &http.Client{
 			Transport: recordRoundTripper(h),
 		},
@@ -152,55 +154,55 @@ func withTraceUnexpected(ctx context.Context) (context.Context, *Trace) {
 }
 
 func TestPushZero(t *testing.T) {
-	rc, c := newClient(t, okHandler)
-	err := rc.Push(t.Context(), c, "empty", nil)
+	rc, _ := newClient(t, okHandler)
+	err := rc.Push(t.Context(), "empty", nil)
 	if !errors.Is(err, ErrManifestInvalid) {
 		t.Errorf("err = %v; want %v", err, ErrManifestInvalid)
 	}
 }
 
 func TestPushSingle(t *testing.T) {
-	rc, c := newClient(t, okHandler)
-	err := rc.Push(t.Context(), c, "single", nil)
+	rc, _ := newClient(t, okHandler)
+	err := rc.Push(t.Context(), "single", nil)
 	testutil.Check(t, err)
 }
 
 func TestPushMultiple(t *testing.T) {
-	rc, c := newClient(t, okHandler)
-	err := rc.Push(t.Context(), c, "multiple", nil)
+	rc, _ := newClient(t, okHandler)
+	err := rc.Push(t.Context(), "multiple", nil)
 	testutil.Check(t, err)
 }
 
 func TestPushNotFound(t *testing.T) {
-	rc, c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+	rc, _ := newClient(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("unexpected request: %v", r)
 	})
-	err := rc.Push(t.Context(), c, "notfound", nil)
+	err := rc.Push(t.Context(), "notfound", nil)
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("err = %v; want %v", err, fs.ErrNotExist)
 	}
 }
 
 func TestPushNullLayer(t *testing.T) {
-	rc, c := newClient(t, nil)
-	err := rc.Push(t.Context(), c, "null", nil)
+	rc, _ := newClient(t, nil)
+	err := rc.Push(t.Context(), "null", nil)
 	if err == nil || !strings.Contains(err.Error(), "invalid manifest") {
 		t.Errorf("err = %v; want invalid manifest", err)
 	}
 }
 
 func TestPushSizeMismatch(t *testing.T) {
-	rc, c := newClient(t, nil)
+	rc, _ := newClient(t, nil)
 	ctx, _ := withTraceUnexpected(t.Context())
-	got := rc.Push(ctx, c, "sizemismatch", nil)
+	got := rc.Push(ctx, "sizemismatch", nil)
 	if got == nil || !strings.Contains(got.Error(), "size mismatch") {
 		t.Errorf("err = %v; want size mismatch", got)
 	}
 }
 
 func TestPushInvalid(t *testing.T) {
-	rc, c := newClient(t, nil)
-	err := rc.Push(t.Context(), c, "invalid", nil)
+	rc, _ := newClient(t, nil)
+	err := rc.Push(t.Context(), "invalid", nil)
 	if err == nil || !strings.Contains(err.Error(), "invalid manifest") {
 		t.Errorf("err = %v; want invalid manifest", err)
 	}
@@ -208,7 +210,7 @@ func TestPushInvalid(t *testing.T) {
 
 func TestPushExistsAtRemote(t *testing.T) {
 	var pushed bool
-	rc, c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+	rc, _ := newClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/uploads/") {
 			if !pushed {
 				// First push. Return an uploadURL.
@@ -236,35 +238,35 @@ func TestPushExistsAtRemote(t *testing.T) {
 
 	check := testutil.Checker(t)
 
-	err := rc.Push(ctx, c, "single", nil)
+	err := rc.Push(ctx, "single", nil)
 	check(err)
 
 	if !errors.Is(errors.Join(errs...), nil) {
 		t.Errorf("errs = %v; want %v", errs, []error{ErrCached})
 	}
 
-	err = rc.Push(ctx, c, "single", nil)
+	err = rc.Push(ctx, "single", nil)
 	check(err)
 }
 
 func TestPushRemoteError(t *testing.T) {
-	rc, c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+	rc, _ := newClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/blobs/") {
 			w.WriteHeader(500)
 			io.WriteString(w, `{"errors":[{"code":"blob_error"}]}`)
 			return
 		}
 	})
-	got := rc.Push(t.Context(), c, "single", nil)
+	got := rc.Push(t.Context(), "single", nil)
 	checkErrCode(t, got, 500, "blob_error")
 }
 
 func TestPushLocationError(t *testing.T) {
-	rc, c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+	rc, _ := newClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Location", ":///x")
 		w.WriteHeader(http.StatusAccepted)
 	})
-	got := rc.Push(t.Context(), c, "single", nil)
+	got := rc.Push(t.Context(), "single", nil)
 	wantContains := "invalid upload URL"
 	if got == nil || !strings.Contains(got.Error(), wantContains) {
 		t.Errorf("err = %v; want to contain %v", got, wantContains)
@@ -272,14 +274,14 @@ func TestPushLocationError(t *testing.T) {
 }
 
 func TestPushUploadRoundtripError(t *testing.T) {
-	rc, c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+	rc, _ := newClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.Host == "blob.store" {
 			w.WriteHeader(499) // force RoundTrip error on upload
 			return
 		}
 		w.Header().Set("Location", "http://blob.store/blobs/123")
 	})
-	got := rc.Push(t.Context(), c, "single", nil)
+	got := rc.Push(t.Context(), "single", nil)
 	if !errors.Is(got, errRoundTrip) {
 		t.Errorf("got = %v; want %v", got, errRoundTrip)
 	}
@@ -295,20 +297,20 @@ func TestPushUploadFileOpenError(t *testing.T) {
 			os.Remove(c.GetFile(l.Digest))
 		},
 	})
-	got := rc.Push(ctx, c, "single", nil)
+	got := rc.Push(ctx, "single", nil)
 	if !errors.Is(got, fs.ErrNotExist) {
 		t.Errorf("got = %v; want fs.ErrNotExist", got)
 	}
 }
 
 func TestPushCommitRoundtripError(t *testing.T) {
-	rc, c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+	rc, _ := newClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/blobs/") {
 			panic("unexpected")
 		}
 		w.WriteHeader(499) // force RoundTrip error
 	})
-	err := rc.Push(t.Context(), c, "zero", nil)
+	err := rc.Push(t.Context(), "zero", nil)
 	if !errors.Is(err, errRoundTrip) {
 		t.Errorf("err = %v; want %v", err, errRoundTrip)
 	}
@@ -322,8 +324,8 @@ func checkNotExist(t *testing.T, err error) {
 }
 
 func TestRegistryPullInvalidName(t *testing.T) {
-	rc, c := newClient(t, nil)
-	err := rc.Pull(t.Context(), c, "://")
+	rc, _ := newClient(t, nil)
+	err := rc.Pull(t.Context(), "://")
 	if !errors.Is(err, ErrNameInvalid) {
 		t.Errorf("err = %v; want %v", err, ErrNameInvalid)
 	}
@@ -338,10 +340,10 @@ func TestRegistryPullInvalidManifest(t *testing.T) {
 	}
 
 	for _, resp := range cases {
-		rc, c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+		rc, _ := newClient(t, func(w http.ResponseWriter, r *http.Request) {
 			io.WriteString(w, resp)
 		})
-		err := rc.Pull(t.Context(), c, "x")
+		err := rc.Pull(t.Context(), "x")
 		if !errors.Is(err, ErrManifestInvalid) {
 			t.Errorf("err = %v; want invalid manifest", err)
 		}
@@ -364,18 +366,18 @@ func TestRegistryPullNotCached(t *testing.T) {
 	})
 
 	// Confirm that the layer does not exist locally
-	_, err := rc.ResolveLocal(c, "model")
+	_, err := rc.ResolveLocal("model")
 	checkNotExist(t, err)
 
 	_, err = c.Get(d)
 	checkNotExist(t, err)
 
-	err = rc.Pull(t.Context(), c, "model")
+	err = rc.Pull(t.Context(), "model")
 	check(err)
 
 	mw, err := rc.Resolve(t.Context(), "model")
 	check(err)
-	mg, err := rc.ResolveLocal(c, "model")
+	mg, err := rc.ResolveLocal("model")
 	check(err)
 	if !reflect.DeepEqual(mw, mg) {
 		t.Errorf("mw = %v; mg = %v", mw, mg)
@@ -400,7 +402,7 @@ func TestRegistryPullNotCached(t *testing.T) {
 
 func TestRegistryPullCached(t *testing.T) {
 	cached := blob.DigestFromBytes("exists")
-	rc, c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+	rc, _ := newClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/blobs/") {
 			w.WriteHeader(499) // should not be called
 			return
@@ -423,7 +425,7 @@ func TestRegistryPullCached(t *testing.T) {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
-	err := rc.Pull(ctx, c, "single")
+	err := rc.Pull(ctx, "single")
 	testutil.Check(t, err)
 
 	want := []int64{6}
@@ -436,30 +438,30 @@ func TestRegistryPullCached(t *testing.T) {
 }
 
 func TestRegistryPullManifestNotFound(t *testing.T) {
-	rc, c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+	rc, _ := newClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
-	err := rc.Pull(t.Context(), c, "notfound")
+	err := rc.Pull(t.Context(), "notfound")
 	checkErrCode(t, err, 404, "")
 }
 
 func TestRegistryPullResolveRemoteError(t *testing.T) {
-	rc, c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+	rc, _ := newClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		io.WriteString(w, `{"errors":[{"code":"an_error"}]}`)
 	})
-	err := rc.Pull(t.Context(), c, "single")
+	err := rc.Pull(t.Context(), "single")
 	checkErrCode(t, err, 500, "an_error")
 }
 
 func TestRegistryPullResolveRoundtripError(t *testing.T) {
-	rc, c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+	rc, _ := newClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/manifests/") {
 			w.WriteHeader(499) // force RoundTrip error
 			return
 		}
 	})
-	err := rc.Pull(t.Context(), c, "single")
+	err := rc.Pull(t.Context(), "single")
 	if !errors.Is(err, errRoundTrip) {
 		t.Errorf("err = %v; want %v", err, errRoundTrip)
 	}
@@ -512,7 +514,7 @@ func TestRegistryPullMixedCachedNotCached(t *testing.T) {
 
 		// Check that we pull all layers that we can.
 
-		err := rc.Pull(ctx, c, "mixed")
+		err := rc.Pull(ctx, "mixed")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -530,7 +532,7 @@ func TestRegistryPullMixedCachedNotCached(t *testing.T) {
 }
 
 func TestRegistryPullChunking(t *testing.T) {
-	rc, c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
+	rc, _ := newClient(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Log("request:", r.URL.Host, r.Method, r.URL.Path, r.Header.Get("Range"))
 		if r.URL.Host != "blob.store" {
 			// The production registry redirects to the blob store.
@@ -568,7 +570,7 @@ func TestRegistryPullChunking(t *testing.T) {
 		},
 	})
 
-	err := rc.Pull(ctx, c, "remote")
+	err := rc.Pull(ctx, "remote")
 	testutil.Check(t, err)
 
 	want := []int64{0, 3, 6}
@@ -785,27 +787,27 @@ func TestParseNameExtended(t *testing.T) {
 
 func TestUnlink(t *testing.T) {
 	t.Run("found by name", func(t *testing.T) {
-		rc, c := newClient(t, nil)
+		rc, _ := newClient(t, nil)
 
 		// confirm linked
-		_, err := rc.ResolveLocal(c, "single")
+		_, err := rc.ResolveLocal("single")
 		if err != nil {
 			t.Errorf("unexpected error: %v", err)
 		}
 
 		// unlink
-		_, err = rc.Unlink(c, "single")
+		_, err = rc.Unlink("single")
 		testutil.Check(t, err)
 
 		// confirm unlinked
-		_, err = rc.ResolveLocal(c, "single")
+		_, err = rc.ResolveLocal("single")
 		if !errors.Is(err, fs.ErrNotExist) {
 			t.Errorf("err = %v; want fs.ErrNotExist", err)
 		}
 	})
 	t.Run("not found by name", func(t *testing.T) {
-		rc, c := newClient(t, nil)
-		ok, err := rc.Unlink(c, "manifestNotFound")
+		rc, _ := newClient(t, nil)
+		ok, err := rc.Unlink("manifestNotFound")
 		if err != nil {
 			t.Fatal(err)
 		}
