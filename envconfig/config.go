@@ -79,10 +79,23 @@ func AllowedOrigins() (origins []string) {
 	return origins
 }
 
-// Models returns the path to the models directory. Models directory can be configured via the OLLAMA_MODELS environment variable.
-// Default is $HOME/.ollama/models
+func dirExists(path string) bool {
+	probe, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if probe.IsDir() {
+		return true
+	}
+	return false
+}
+
+// Models returns the path to the models directory. It can be set via the OLLAMA_MODELS environment variable.
+// Default is $XDG_DATA_HOME/ollama/models. If it doesn't exist, $HOME/.ollama/models is tried for backward
+// compatibility.
 func Models() string {
 	if s := Var("OLLAMA_MODELS"); s != "" {
+		slog.Debug("model dir is from env", "Models", s)
 		return s
 	}
 
@@ -90,8 +103,25 @@ func Models() string {
 	if err != nil {
 		panic(err)
 	}
+	mhome := filepath.Join(home, ".ollama", "models")
 
-	return filepath.Join(home, ".ollama", "models")
+	data := os.Getenv("XDG_DATA_HOME")
+	if data == "" {
+		data = filepath.Join(home, ".local", "share")
+	}
+	dhome := filepath.Join(data, "ollama", "models")
+
+	if dirExists(dhome) {
+		slog.Debug("model dir is XDG_DATA_HOME", "Models", dhome)
+		return dhome
+	}
+
+	if dirExists(mhome) {
+		slog.Debug("model dir is from HOME", "Models", mhome)
+		return mhome
+	}
+
+	return dhome
 }
 
 // KeepAlive returns the duration that models stay loaded in memory. KeepAlive can be configured via the OLLAMA_KEEP_ALIVE environment variable.
