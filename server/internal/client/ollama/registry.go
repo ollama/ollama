@@ -212,12 +212,16 @@ type Registry struct {
 	Mask string
 }
 
-func (r *Registry) completeName(name string) names.Name {
+func (r *Registry) parseName(name string) (names.Name, error) {
 	mask := defaultMask
 	if r.Mask != "" {
 		mask = names.Parse(r.Mask)
 	}
-	return names.Merge(names.Parse(name), mask)
+	n := names.Merge(names.Parse(name), mask)
+	if !n.IsFullyQualified() {
+		return names.Name{}, fmt.Errorf("%w: %q", ErrNameInvalid, name)
+	}
+	return n, nil
 }
 
 // DefaultRegistry returns a new Registry configured from the environment. The
@@ -306,7 +310,7 @@ func (r *Registry) Push(ctx context.Context, c *blob.DiskCache, name string, p *
 
 	t := traceFromContext(ctx)
 
-	scheme, n, _, err := parseName(name, r.Mask)
+	scheme, n, _, err := r.parseNameExtended(name)
 	if err != nil {
 		// This should never happen since ResolveLocal should have
 		// already validated the name.
@@ -400,7 +404,7 @@ func canRetry(err error) bool {
 // typically slower than splitting the model up across layers, and is mostly
 // utilized for layers of type equal to "application/vnd.ollama.image".
 func (r *Registry) Pull(ctx context.Context, c *blob.DiskCache, name string) error {
-	scheme, n, _, err := parseName(name, r.Mask)
+	scheme, n, _, err := r.parseNameExtended(name)
 	if err != nil {
 		return err
 	}
@@ -551,9 +555,9 @@ func (r *Registry) Pull(ctx context.Context, c *blob.DiskCache, name string) err
 // Unlink is like [blob.DiskCache.Unlink], but makes name fully qualified
 // before attempting to unlink the model.
 func (r *Registry) Unlink(c *blob.DiskCache, name string) (ok bool, _ error) {
-	n := r.completeName(name)
-	if !n.IsFullyQualified() {
-		return false, fmt.Errorf("%w: %q", ErrNameInvalid, name)
+	n, err := r.parseName(name)
+	if err != nil {
+		return false, err
 	}
 	return c.Unlink(n.String())
 }
@@ -626,10 +630,9 @@ type Layer struct {
 	Size      int64       `json:"size"`
 }
 
-// ResolveLocal resolves a name to a Manifest in the local cache. The name is
-// parsed using [names.Split] but the scheme is ignored.
+// ResolveLocal resolves a name to a Manifest in the local cache.
 func (r *Registry) ResolveLocal(c *blob.DiskCache, name string) (*Manifest, error) {
-	_, n, d, err := parseName(name, r.Mask)
+	_, n, d, err := r.parseNameExtended(name)
 	if err != nil {
 		return nil, err
 	}
@@ -655,7 +658,7 @@ func (r *Registry) ResolveLocal(c *blob.DiskCache, name string) (*Manifest, erro
 
 // Resolve resolves a name to a Manifest in the remote registry.
 func (r *Registry) Resolve(ctx context.Context, name string) (*Manifest, error) {
-	scheme, n, d, err := parseName(name, r.Mask)
+	scheme, n, d, err := r.parseNameExtended(name)
 	if err != nil {
 		return nil, err
 	}
@@ -859,7 +862,7 @@ var supportedSchemes = []string{
 
 var supportedSchemesMessage = fmt.Sprintf("supported schemes are %v", strings.Join(supportedSchemes, ", "))
 
-// parseName parses and validates an extended name, returning the scheme, name,
+// parseNameExtended parses and validates an extended name, returning the scheme, name,
 // and digest.
 //
 // If the scheme is empty, scheme will be "https". If an unsupported scheme is
@@ -870,8 +873,8 @@ var supportedSchemesMessage = fmt.Sprintf("supported schemes are %v", strings.Jo
 //
 // If the name is not, once merged with the mask, fully qualified,
 // [ErrNameInvalid] wrapped with a display friendly message is returned.
-func parseName(s string, mask string) (scheme string, _ names.Name, _ blob.Digest, _ error) {
-	scheme, name, digest := names.Split(s)
+func (r *Registry) parseNameExtended(s string) (scheme string, _ names.Name, _ blob.Digest, _ error) {
+	scheme, name, digest := splitExtended(s)
 	scheme = cmp.Or(scheme, "https")
 	if !slices.Contains(supportedSchemes, scheme) {
 		err := withPublicMessagef(ErrNameInvalid, "unsupported scheme: %q: %s", scheme, supportedSchemesMessage)
@@ -894,13 +897,33 @@ func parseName(s string, mask string) (scheme string, _ names.Name, _ blob.Diges
 		}
 	}
 
-	maskName := defaultMask
-	if mask != "" {
-		maskName = names.Parse(mask)
-	}
-	n := names.Merge(names.Parse(name), maskName)
-	if !n.IsFullyQualified() {
-		return "", names.Name{}, blob.Digest{}, fmt.Errorf("%w: %q", ErrNameInvalid, s)
+	n, err := r.parseName(name)
+	if err != nil {
+		return "", names.Name{}, blob.Digest{}, err
 	}
 	return scheme, n, d, nil
+}
+
+// splitExtended splits an extended name string into its scheme, name, and digest
+// parts.
+//
+// Examples:
+//
+//	http://ollama.com/bmizerany/smol:latest@digest
+//	https://ollama.com/bmizerany/smol:latest
+//	ollama.com/bmizerany/smol:latest@digest // returns "https" scheme.
+//	model@digest
+//	@digest
+func splitExtended(s string) (scheme, name, digest string) {
+	i := strings.Index(s, "://")
+	if i >= 0 {
+		scheme = s[:i]
+		s = s[i+3:]
+	}
+	i = strings.LastIndex(s, "@")
+	if i >= 0 {
+		digest = s[i+1:]
+		s = s[:i]
+	}
+	return scheme, s, digest
 }
