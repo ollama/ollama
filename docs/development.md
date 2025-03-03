@@ -41,19 +41,10 @@ Install prerequisites:
 - [CMake](https://cmake.org/download/)
 - [Visual Studio 2022](https://visualstudio.microsoft.com/downloads/) including the Native Desktop Workload
 - (Optional) AMD GPU support
-    - [ROCm](https://rocm.github.io/install.html)
+    - [ROCm](https://rocm.docs.amd.com/en/latest/)
     - [Ninja](https://github.com/ninja-build/ninja/releases)
 - (Optional) NVIDIA GPU support
     - [CUDA SDK](https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_network)
-
-> [!IMPORTANT]
-> Ensure prerequisites are in `PATH` before running CMake.
-
-> [!IMPORTANT]
-> ROCm is not compatible with Visual Studio CMake generators. Use `-GNinja` when configuring the project.
-
-> [!IMPORTANT]
-> CUDA is only compatible with Visual Studio CMake generators.
 
 Then, configure and build the project:
 
@@ -61,6 +52,14 @@ Then, configure and build the project:
 cmake -B build
 cmake --build build --config Release
 ```
+
+> [!IMPORTANT]
+> Building for ROCm requires additional flags:
+> ```
+> cmake -B build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+> cmake --build build --config Release
+> ```
+
 
 Lastly, run Ollama:
 
@@ -70,7 +69,7 @@ go run . serve
 
 ## Windows (ARM)
 
-Windows ARM does not support additional acceleration libraries at this time.
+Windows ARM does not support additional acceleration libraries at this time.  Do not use cmake, simply `go run` or `go build`.
 
 ## Linux
 

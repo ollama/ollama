@@ -111,14 +111,15 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
                 function(check_arm_feature tag code)
                     set(CMAKE_REQUIRED_FLAGS_SAVE ${CMAKE_REQUIRED_FLAGS})
                     set(CMAKE_REQUIRED_FLAGS "${ARM_MCPU_FLAG}+${tag}")
-                    check_cxx_source_runs(
-                        "${code}"
-                        GGML_MACHINE_SUPPORTS_${tag}
-                    )
+                    check_cxx_source_runs("${code}" GGML_MACHINE_SUPPORTS_${tag})
                     if (GGML_MACHINE_SUPPORTS_${tag})
                         set(ARM_MCPU_FLAG_FIX "${ARM_MCPU_FLAG_FIX}+${tag}" PARENT_SCOPE)
                     else()
-                        set(ARM_MCPU_FLAG_FIX "${ARM_MCPU_FLAG_FIX}+no${tag}" PARENT_SCOPE)
+                        set(CMAKE_REQUIRED_FLAGS "${ARM_MCPU_FLAG}+no${tag}")
+                        check_cxx_source_compiles("int main() { return 0; }" GGML_MACHINE_SUPPORTS_no${tag})
+                        if (GGML_MACHINE_SUPPORTS_no${tag})
+                            set(ARM_MCPU_FLAG_FIX "${ARM_MCPU_FLAG_FIX}+no${tag}" PARENT_SCOPE)
+                        endif()
                     endif()
                     set(CMAKE_REQUIRED_FLAGS ${CMAKE_REQUIRED_FLAGS_SAVE})
                 endfunction()
@@ -126,6 +127,7 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
                 check_arm_feature(dotprod "#include <arm_neon.h>\nint main() { int8x16_t _a, _b; volatile int32x4_t _s = vdotq_s32(_s, _a, _b); return 0; }")
                 check_arm_feature(i8mm    "#include <arm_neon.h>\nint main() { int8x16_t _a, _b; volatile int32x4_t _s = vmmlaq_s32(_s, _a, _b); return 0; }")
                 check_arm_feature(sve     "#include <arm_sve.h>\nint main()  { svfloat32_t _a, _b; volatile svfloat32_t _c = svadd_f32_z(svptrue_b8(), _a, _b); return 0; }")
+                check_arm_feature(sme     "#include <arm_sme.h>\n__arm_locally_streaming int main() { __asm__ volatile(\"smstart; smstop;\"); return 0; }")
 
                 list(APPEND ARCH_FLAGS "${ARM_MCPU_FLAG}${ARM_MCPU_FLAG_FIX}")
             else()
@@ -150,7 +152,7 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
             if (ARM_FEATURE_RESULT)
                 message(WARNING "Failed to get ARM features")
             else()
-                foreach(feature DOTPROD SVE MATMUL_INT8 FMA FP16_VECTOR_ARITHMETIC)
+                foreach(feature DOTPROD SVE MATMUL_INT8 FMA FP16_VECTOR_ARITHMETIC SME)
                     string(FIND "${ARM_FEATURE}" "__ARM_FEATURE_${feature} 1" feature_pos)
                     if (NOT ${feature_pos} EQUAL -1)
                         message(STATUS "ARM feature ${feature} enabled")
@@ -308,12 +310,121 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
         if (GGML_RVV)
             list(APPEND ARCH_FLAGS -march=rv64gcv -mabi=lp64d)
         endif()
+    elseif (${CMAKE_SYSTEM_PROCESSOR} MATCHES "s390x")
+        message(STATUS "s390x detected")
+        file(READ "/proc/cpuinfo" CPUINFO_CONTENTS)
+        string(REGEX REPLACE "machine[ \t\r\n]*=[ \t\r\n]*([0-9]+)" "\\1" S390X_M ${CPUINFO_CONTENTS})
+
+        # TODO: Separation to determine activation of VX/VXE/VXE2
+        if (${S390X_M} MATCHES "8561|8562")
+            message(STATUS "z15 target")
+            list(APPEND ARCH_FLAGS -march=z15 -mtune=z15)
+        elseif (${S390X_M} MATCHES "3931")
+            message(STATUS "z16 target")
+            list(APPEND ARCH_FLAGS -march=z16 -mtune=z16)
+        else()
+            message(STATUS "Unknown target")
+            message(WARNING "Unknown target. If you are compiling for z14 and earlier, you might have to add -DGGML_VXE=OFF.")
+            list(APPEND ARCH_FLAGS -march=native -mtune=native)
+        endif()
+
+        if (GGML_VXE)
+            list(APPEND ARCH_FLAGS -mvx -mzvector)
+        endif()
     else()
         message(STATUS "Unknown architecture")
     endif()
 
     if (GGML_CPU_AARCH64)
         target_compile_definitions(${GGML_CPU_NAME} PRIVATE GGML_USE_CPU_AARCH64)
+    endif()
+
+    if (GGML_CPU_KLEIDIAI)
+        message(STATUS "Using KleidiAI optimized kernels if applicable")
+
+        # Disable the KleidiAI tests
+        set(KLEIDIAI_BUILD_TESTS  OFF)
+
+        # Fetch KleidiAI sources:
+        include(FetchContent)
+        set(KLEIDIAI_COMMIT_TAG "v1.3.0")
+        set(KLEIDIAI_DOWNLOAD_URL "https://github.com/ARM-software/kleidiai/archive/refs/tags/${KLEIDIAI_COMMIT_TAG}.tar.gz")
+        set(KLEIDIAI_ARCHIVE_MD5  "060bd2dc64642b091f461cc8dd7426d9")
+
+        if (POLICY CMP0135)
+            cmake_policy(SET CMP0135 NEW)
+        endif()
+
+        FetchContent_Declare(KleidiAI_Download
+            URL ${KLEIDIAI_DOWNLOAD_URL}
+            DOWNLOAD_EXTRACT_TIMESTAMP NEW
+            URL_HASH MD5=${KLEIDIAI_ARCHIVE_MD5})
+
+        FetchContent_MakeAvailable(KleidiAI_Download)
+        FetchContent_GetProperties(KleidiAI_Download
+            SOURCE_DIR  KLEIDIAI_SRC
+            POPULATED   KLEIDIAI_POPULATED)
+
+        if (NOT KLEIDIAI_POPULATED)
+            message(FATAL_ERROR "KleidiAI source downloaded failed.")
+        endif()
+
+        add_compile_definitions(GGML_USE_CPU_KLEIDIAI)
+
+        # Remove kleidiai target after fetching it
+        if (TARGET kleidiai)
+            set_target_properties(kleidiai PROPERTIES EXCLUDE_FROM_ALL TRUE)
+        endif()
+
+        list(APPEND GGML_CPU_SOURCES
+            ggml-cpu/kleidiai/kleidiai.cpp
+            ggml-cpu/kleidiai/kernels.cpp
+            ggml-cpu/kleidiai/kleidiai.h
+            ggml-cpu/kleidiai/kernels.h
+            )
+
+        # KleidiAI
+        include_directories(
+            ${KLEIDIAI_SRC}/
+            ${KLEIDIAI_SRC}/kai/
+            ${KLEIDIAI_SRC}/kai/ukernels/
+            ${KLEIDIAI_SRC}/kai/ukernels/matmul/
+            ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/
+            ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/)
+
+        set(ARCH_FLAGS_TEMP "${ARCH_FLAGS}")
+        if (NOT ARCH_FLAGS_TEMP)
+            string(REGEX MATCH "-march=[^ ]+" ARCH_FLAGS_TEMP "${CMAKE_C_FLAGS}")
+        endif()
+        string(FIND "${ARCH_FLAGS_TEMP}" "+dotprod" DOTPROD_ENABLED)
+        string(FIND "${ARCH_FLAGS_TEMP}" "+i8mm" I8MM_ENABLED)
+        string(FIND "${ARCH_FLAGS_TEMP}" "+sme" SME_ENABLED)
+
+        set(PRIVATE_ARCH_FLAGS ${ARCH_FLAGS})
+
+        list(APPEND GGML_KLEIDIAI_SOURCES ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_lhs_quant_pack_qsi8d32p_f32.c)
+        list(APPEND GGML_KLEIDIAI_SOURCES ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_rhs_pack_nxk_qsi4c32ps1s0scalef16_qsu4c32s16s0_neon.c)
+        list(APPEND GGML_KLEIDIAI_SOURCES ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_lhs_quant_pack_qsi8d32p_f32_neon.c)
+        list(APPEND GGML_KLEIDIAI_SOURCES ${KLEIDIAI_SRC}/kai/ukernels/matmul/pack/kai_rhs_pack_nxk_qsi4c32pscalef16_qsu4c32s16s0.c)
+
+        if (NOT DOTPROD_ENABLED MATCHES -1)
+            list(APPEND GGML_KLEIDIAI_SOURCES ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p1x8_qsi4c32p4x8_1x4x32_neon_dotprod.c)
+            list(APPEND GGML_KLEIDIAI_SOURCES ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p1x4_qsi4c32p4x4_1x4_neon_dotprod.c)
+            list(APPEND GGML_KLEIDIAI_SOURCES ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p4x4_qsi4c32p4x4_16x4_neon_dotprod.c)
+        endif()
+
+        if (NOT I8MM_ENABLED MATCHES -1)
+            list(APPEND GGML_KLEIDIAI_SOURCES ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p4x8_qsi4c32p4x8_16x4_neon_i8mm.c)
+        endif()
+
+        if (NOT SME_ENABLED MATCHES -1)
+            list(APPEND GGML_KLEIDIAI_SOURCES ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p1vlx4_qsi4c32p4vlx4_1vlx4vl_sme2_mopa.c)
+            list(APPEND GGML_KLEIDIAI_SOURCES ${KLEIDIAI_SRC}/kai/ukernels/matmul/matmul_clamp_f32_qsi8d32p_qsi4c32p/kai_matmul_clamp_f32_qsi8d32p1x4_qsi4c32p4vlx4_1x4vl_sme2_sdot.c)
+            set(PRIVATE_ARCH_FLAGS "${PRIVATE_ARCH_FLAGS}+sve+sve2")
+        endif()
+
+        set_source_files_properties(${GGML_KLEIDIAI_SOURCES} PROPERTIES COMPILE_OPTIONS "${PRIVATE_ARCH_FLAGS}")
+        list(APPEND GGML_CPU_SOURCES ${GGML_KLEIDIAI_SOURCES})
     endif()
 
     message(STATUS "Adding CPU backend variant ${GGML_CPU_NAME}: ${ARCH_FLAGS} ${ARCH_DEFINITIONS}")

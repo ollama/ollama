@@ -380,6 +380,14 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Chipper](https://github.com/TilmanGriesel/chipper) AI interface for tinkerers (Ollama, Haystack RAG, Python)
 - [ChibiChat](https://github.com/CosmicEventHorizon/ChibiChat) (Kotlin-based Android app to chat with Ollama and Koboldcpp API endpoints)
 - [LocalLLM](https://github.com/qusaismael/localllm) (Minimal Web-App to run ollama models on it with a GUI)
+- [Ollamazing](https://github.com/buiducnhat/ollamazing) (Web extension to run Ollama models)
+- [OpenDeepResearcher-via-searxng](https://github.com/benhaotang/OpenDeepResearcher-via-searxng) (A Deep Research equivent endpoint with Ollama support for running locally)
+- [AntSK](https://github.com/AIDotNet/AntSK) (Out-of-the-box & Adaptable RAG Chatbot)
+- [MaxKB](https://github.com/1Panel-dev/MaxKB/) (Ready-to-use & flexible RAG Chatbot)
+- [yla](https://github.com/danielekp/yla) (Web interface to freely interact with your customized models)
+- [LangBot](https://github.com/RockChinQ/LangBot) (LLM-based instant messaging bots platform, with Agents, RAG features, supports multiple platforms)
+- [1Panel](https://github.com/1Panel-dev/1Panel/) (Web-based Linux Server Management Tool)
+- [AstrBot](https://github.com/Soulter/AstrBot/) (User-friendly LLM-based multi-platform chatbot with a WebUI, supporting RAG, LLM agents, and plugins integration)
 
 ### Cloud
 
@@ -437,9 +445,10 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 - [Pacman](https://archlinux.org/packages/extra/x86_64/ollama/)
 - [Gentoo](https://github.com/gentoo/guru/tree/master/app-misc/ollama)
+- [Homebrew](https://formulae.brew.sh/formula/ollama)
 - [Helm Chart](https://artifacthub.io/packages/helm/ollama-helm/ollama)
 - [Guix channel](https://codeberg.org/tusharhero/ollama-guix)
-- [Nix package](https://search.nixos.org/packages?channel=24.05&show=ollama&from=0&size=50&sort=relevance&type=packages&query=ollama)
+- [Nix package](https://search.nixos.org/packages?show=ollama&from=0&size=50&sort=relevance&type=packages&query=ollama)
 - [Flox](https://flox.dev/blog/ollama-part-one)
 
 ### Libraries
@@ -494,7 +503,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [multi-llm-ts](https://github.com/nbonamy/multi-llm-ts) (A Typescript/JavaScript library allowing access to different LLM in unified API)
 - [LlmTornado](https://github.com/lofcz/llmtornado) (C# library providing a unified interface for major FOSS & Commercial inference APIs)
 - [Ollama for Zig](https://github.com/dravenk/ollama-zig)
-- [Abso](https://github.com/lunary-ai/abso/blob/main/README.md#ollama) (OpenAI-compatible TypeScript SDK for any LLM provider)
+- [Abso](https://github.com/lunary-ai/abso) (OpenAI-compatible TypeScript SDK for any LLM provider)
+- [Nichey](https://github.com/goodreasonai/nichey) is a Python package for generating custom wikis for your research topic
 
 ### Mobile
 
@@ -546,6 +556,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Alfred Ollama](https://github.com/zeitlings/alfred-ollama) (Alfred Workflow)
 - [TextLLaMA](https://github.com/adarshM84/TextLLaMA) A Chrome Extension that helps you write emails, correct grammar, and translate into any language
 - [Simple-Discord-AI](https://github.com/zyphixor/simple-discord-ai)
+- [LLM Telegram Bot](https://github.com/innightwolfsleep/llm_telegram_bot) (telegram bot, primary for RP. Oobabooga-like buttons, [A1111](https://github.com/AUTOMATIC1111/stable-diffusion-webui) API integration e.t.c)
 
 ### Supported backends
 

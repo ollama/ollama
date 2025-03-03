@@ -142,7 +142,7 @@ static void mul_mat_vec_q_cuda(
     int64_t nwarps = 1;
     int64_t rows_per_cuda_block = 1;
 
-    if (ggml_cuda_info().devices[id].cc < GGML_CUDA_CC_CDNA || ggml_cuda_info().devices[id].cc == GGML_CUDA_CC_RDNA1) { // NVIDIA and AMD older than RDNA2 but not CDNA
+    if (ggml_cuda_info().devices[id].cc < GGML_CUDA_CC_RDNA2) { // NVIDIA and AMD older than RDNA2
         switch(ncols_y) {
             case 1:
                 nwarps = 4;
@@ -166,6 +166,7 @@ static void mul_mat_vec_q_cuda(
                 break;
         }
     }
+
     const int64_t nblocks = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
     const dim3 block_nums(nblocks, 1, 1);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);

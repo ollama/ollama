@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
 // StatusError is an error with an HTTP status code and message.
@@ -609,7 +611,7 @@ func DefaultOptions() Options {
 
 		Runner: Runner{
 			// options set when the model is loaded
-			NumCtx:    2048,
+			NumCtx:    int(envconfig.ContextLength()),
 			NumBatch:  512,
 			NumGPU:    -1, // -1 here indicates that NumGPU should be set dynamically
 			NumThread: 0,  // let the runtime decide

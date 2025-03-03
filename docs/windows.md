@@ -55,7 +55,7 @@ Here's a quick example showing API access from `powershell`
 ## Troubleshooting
 
 Ollama on Windows stores files in a few different locations.  You can view them in
-the explorer window by hitting `<cmd>+R` and type in:
+the explorer window by hitting `<Ctrl>+R` and type in:
 - `explorer %LOCALAPPDATA%\Ollama` contains logs, and downloaded updates
     - *app.log* contains most resent logs from the GUI application
     - *server.log* contains the most recent server logs

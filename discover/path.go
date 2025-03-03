@@ -19,9 +19,8 @@ var LibOllamaPath string = func() string {
 		return ""
 	}
 
-	exe, err = filepath.EvalSymlinks(exe)
-	if err != nil {
-		return ""
+	if eval, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = eval
 	}
 
 	var libPath string
