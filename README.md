@@ -1,5 +1,5 @@
 <div align="center">
-  <a href="https://ollama.com">
+  <a href="https://ollama.com" />
     <img alt="ollama" height="200px" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
   </a>
 </div>
@@ -56,6 +56,7 @@ Here are some example models that can be downloaded:
 | ------------------ | ---------- | ----- | -------------------------------- |
 | DeepSeek-R1        | 7B         | 4.7GB | `ollama run deepseek-r1`         |
 | DeepSeek-R1        | 671B       | 404GB | `ollama run deepseek-r1:671b`    |
+| DeepSeek-V3        | 671B       | 404GB | `ollama run deepseek-v3`         |
 | Llama 3.3          | 70B        | 43GB  | `ollama run llama3.3`            |
 | Llama 3.2          | 3B         | 2.0GB | `ollama run llama3.2`            |
 | Llama 3.2          | 1B         | 1.3GB | `ollama run llama3.2:1b`         |
