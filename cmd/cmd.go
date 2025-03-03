@@ -256,6 +256,7 @@ func StopHandler(cmd *cobra.Command, args []string) error {
 		if strings.Contains(err.Error(), "not found") {
 			return fmt.Errorf("couldn't find model \"%s\" to stop", args[0])
 		}
+		return err
 	}
 	return nil
 }
