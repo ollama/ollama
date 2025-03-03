@@ -28,6 +28,18 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
 
+### Autocompletion
+To enable autocompletion generate completion script for your shell (`bash`, `zsh`, `fish`):
+```
+echo "source <(ollama completion bash)" >> ~/.bashrc # Required bash-completion package installed
+```
+```
+echo '[[ $commands[ollama] ]] && source <(ollama completion zsh)' >> ~/.zshrc
+```
+```
+ollama completion fish > ~/.config/fish/completions/ollama.fish
+```
+
 ### Libraries
 
 - [ollama-python](https://github.com/ollama/ollama-python)
