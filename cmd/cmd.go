@@ -269,6 +269,15 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		Options:  map[string]interface{}{},
 	}
 
+	threads, err := cmd.Flags().GetInt("threads")
+	if err != nil {
+		return err
+	}
+	// Only add threads to options if it's not 0
+	if threads > 0 {
+		opts.Options["num_thread"] = threads
+	}
+
 	format, err := cmd.Flags().GetString("format")
 	if err != nil {
 		return err
@@ -1204,6 +1213,7 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
+	runCmd.Flags().Int("threads", 0, "Number of threads to use (0 for default)")
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
