@@ -54,7 +54,18 @@ if [ "$(id -u)" -ne 0 ]; then
         error "This script requires superuser permissions. Please re-run as root."
     fi
 
-    SUDO="sudo"
+    # check if user has sudo rights
+    if groups | grep -E '(wheel|sudo)' ; then
+        SUDO='sudo'
+    # else, check if systemd has support for run0 (using polkit)
+    elif [[ $(systemctl --version | awk 'NR==1{print $2}') -ge 256 ]]; then
+        SUDO='run0'
+    # else, check if pkexec is available
+    elif command -v pkexec >/dev/null 2>&1 ;
+        SUDO='pkexec'
+    else
+        echo "No support for sudo, run0 or pkexec detected. Please run this script as root." >&2 ; exit 1;
+    fi
 fi
 
 NEEDS=$(require curl awk grep sed tee xargs)
@@ -64,6 +75,13 @@ if [ -n "$NEEDS" ]; then
         echo "  - $NEED"
     done
     exit 1
+fi
+
+# check if system is "immutable"
+if [ -w "/usr/share" ]; then
+  SHAREDIR="/usr/share"
+else
+  SHAREDIR="/usr/local/share"
 fi
 
 for BINDIR in /usr/local/bin /usr/bin /bin; do
@@ -115,7 +133,7 @@ trap install_success EXIT
 configure_systemd() {
     if ! id ollama >/dev/null 2>&1; then
         status "Creating ollama user..."
-        $SUDO useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama
+        $SUDO useradd -r -s /bin/false -U -m -d $SHAREDIR/ollama ollama
     fi
     if getent group render >/dev/null 2>&1; then
         status "Adding ollama user to render group..."
