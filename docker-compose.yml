@@ -1,0 +1,10 @@
+version: '3.4'
+
+services:
+  ollama:
+    image: ollama
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    ports:
+      - 8000:8000
