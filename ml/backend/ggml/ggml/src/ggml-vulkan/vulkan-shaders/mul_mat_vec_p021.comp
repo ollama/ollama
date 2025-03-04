@@ -1,0 +1,73 @@
+#version 450
+
+#extension GL_EXT_control_flow_attributes : enable
+#extension GL_EXT_shader_16bit_storage : require
+
+#define BLOCK_SIZE 32
+#define FLOAT_TYPE float
+
+layout(local_size_x = BLOCK_SIZE, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer A {A_TYPE data_a[];};
+layout (binding = 1) readonly buffer B {B_TYPE data_b[];};
+layout (binding = 2) writeonly buffer D {D_TYPE dst[];};
+
+layout (push_constant) uniform parameter
+{
+    uint ncols_x;
+    uint nrows_x;
+    uint nchannels_x;
+    uint nchannels_y;
+    uint b_offset;
+    uint d_offset;
+} p;
+
+shared FLOAT_TYPE tmp[BLOCK_SIZE];
+
+void main() {
+    const uint tid = gl_LocalInvocationID.x;
+    const uint row_x = gl_GlobalInvocationID.y;
+    const uint channel = gl_GlobalInvocationID.z;
+    const uint channel_x = channel / (p.nchannels_y / p.nchannels_x);
+
+    const uint nrows_y = p.ncols_x;
+    const uint nrows_dst = p.nrows_x;
+    const uint row_dst = row_x;
+
+    tmp[tid] = FLOAT_TYPE(0.0f);
+
+    for (uint col_x0 = 0; col_x0 < p.ncols_x; col_x0 += BLOCK_SIZE) {
+        const uint col_x = col_x0 + tid;
+
+        if (col_x >= p.ncols_x) {
+            break;
+        }
+
+        // x is transposed and permuted
+        const uint ix = row_x*p.nchannels_x*p.ncols_x + channel_x*p.ncols_x + col_x;
+        const FLOAT_TYPE xi = FLOAT_TYPE(data_a[ix]);
+
+        const uint row_y = col_x;
+
+        // y is not transposed but permuted
+        const uint iy = channel*nrows_y + row_y;
+
+        tmp[tid] = fma(xi, FLOAT_TYPE(data_b[iy]), tmp[tid]);
+    }
+
+    // dst is not transposed and not permuted
+    const uint idst = channel*nrows_dst + row_dst;
+
+    // sum up partial sums and write back result
+    barrier();
+    [[unroll]] for (int s = BLOCK_SIZE / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            tmp[tid] += tmp[tid + s];
+        }
+        barrier();
+    }
+
+    if (tid == 0) {
+        dst[idst] = tmp[0];
+    }
+}

@@ -1,0 +1,133 @@
+#version 450
+
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+
+#include "mul_mat_vec_base.comp"
+
+layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+
+void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
+    uint a_offset, b_offset, d_offset;
+    get_offsets(a_offset, b_offset, d_offset);
+
+    const uint num_blocks_per_row = p.ncols / QUANT_K;
+
+    // 16 threads are used to process each block
+    const uint it_size = gl_WorkGroupSize.x/16;
+    const uint tid = gl_LocalInvocationID.x;
+    const uint itid = tid%16;  // 0...16
+    const uint ix  = tid/16;
+
+    const uint step = 4;
+
+    const uint il = itid/step;                      // 0...3
+    const uint ir = itid - step*il;                 // 0...7 or 0...3
+    const uint n =  4;
+
+    const uint v_im = il / 2;  // 0 or 1. 0 computes 0,32 + 128,160, 1 computes 64,96 + 192,224
+    const uint v_in = il % 2;
+
+    const uint l0 = n * (2 * ir + v_in);            // 0...15
+    const uint q_offset = 32*v_im + l0;
+    const uint y_offset = 64*v_im + l0;
+
+    FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
+
+    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+        [[unroll]] for (uint i = 0; i < NUM_ROWS; ++i) {
+            temp[j][i] = FLOAT_TYPE(0);
+        }
+    }
+
+    [[unroll]] for (uint i = ix; i < num_blocks_per_row; i += it_size) {
+        const uint y1_idx = i * QUANT_K + y_offset;
+        const uint y2_idx = y1_idx + 128;
+
+        [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+            const uint ib0 = a_offset / QUANT_K + (first_row+n)*num_blocks_per_row;
+            f16vec2 d = data_a[ib0 + i].d;
+            const FLOAT_TYPE dall = FLOAT_TYPE(d.x);
+            const FLOAT_TYPE dmin = FLOAT_TYPE(d.y);
+
+            uint32_t scale0_u32 = data_a_packed16[ib0 + i].scales[v_im    ];
+            uint32_t scale4_u32 = data_a_packed16[ib0 + i].scales[v_im + 2];
+            uint32_t scale8_u32 = data_a_packed16[ib0 + i].scales[v_im + 4];
+            uvec4 scale0 = uvec4(unpack8(scale0_u32));
+            uvec4 scale4 = uvec4(unpack8(scale4_u32));
+            uvec4 scale8 = uvec4(unpack8(scale8_u32));
+
+            const uint32_t sc0 = (  scale0.x       & 0x3f);
+            const uint32_t sc1 = (  scale0.y       & 0x3f);
+            const uint32_t sc2 = (  scale4.x       & 0x3f);
+            const uint32_t sc3 = (  scale4.y       & 0x3f);
+            const uint32_t sc4 = (( scale8.x       & 0x0f) | ((scale0.x & 0xc0) >> 2));
+            const uint32_t sc5 = (( scale8.y       & 0x0f) | ((scale0.y & 0xc0) >> 2));
+            const uint32_t sc6 = (((scale8.x >> 4) & 0x0f) | ((scale4.x & 0xc0) >> 2));
+            const uint32_t sc7 = (((scale8.y >> 4) & 0x0f) | ((scale4.y & 0xc0) >> 2));
+
+            uint32_t qs0_u32 = data_a_packed32[ib0 + i].qs[q_offset / 4];
+            uint32_t qs64_u32 = data_a_packed32[ib0 + i].qs[q_offset / 4 + 16];
+
+            uint32_t qs0_u32_lo4 = qs0_u32 & 0x0F0F0F0F;
+            uint32_t qs0_u32_hi4 = (qs0_u32 >> 4) & 0x0F0F0F0F;
+            uint32_t qs64_u32_lo4 = qs64_u32 & 0x0F0F0F0F;
+            uint32_t qs64_u32_hi4 = (qs64_u32 >> 4) & 0x0F0F0F0F;
+
+            uvec4 qs0_lo4 = uvec4(unpack8(qs0_u32_lo4));
+            uvec4 qs64_lo4 = uvec4(unpack8(qs64_u32_lo4));
+            uvec4 qs0_hi4 = uvec4(unpack8(qs0_u32_hi4));
+            uvec4 qs64_hi4 = uvec4(unpack8(qs64_u32_hi4));
+
+            const uint32_t q4_0  = qs0_lo4.x;
+            const uint32_t q4_1  = qs0_lo4.y;
+            const uint32_t q4_2  = qs0_lo4.z;
+            const uint32_t q4_3  = qs0_lo4.w;
+            const uint32_t q4_4  = qs0_hi4.x;
+            const uint32_t q4_5  = qs0_hi4.y;
+            const uint32_t q4_6  = qs0_hi4.z;
+            const uint32_t q4_7  = qs0_hi4.w;
+            const uint32_t q4_8  = qs64_lo4.x;
+            const uint32_t q4_9  = qs64_lo4.y;
+            const uint32_t q4_10 = qs64_lo4.z;
+            const uint32_t q4_11 = qs64_lo4.w;
+            const uint32_t q4_12 = qs64_hi4.x;
+            const uint32_t q4_13 = qs64_hi4.y;
+            const uint32_t q4_14 = qs64_hi4.z;
+            const uint32_t q4_15 = qs64_hi4.w;
+
+            [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+                B_TYPE_VEC4 by10 =  data_b_v4[(j*p.batch_stride_b + b_offset + y1_idx) / 4];
+                B_TYPE_VEC4 by132 = data_b_v4[(j*p.batch_stride_b + b_offset + y1_idx) / 4 + 8];
+                B_TYPE_VEC4 by20 =  data_b_v4[(j*p.batch_stride_b + b_offset + y2_idx) / 4];
+                B_TYPE_VEC4 by232 = data_b_v4[(j*p.batch_stride_b + b_offset + y2_idx) / 4 + 8];
+
+                const FLOAT_TYPE sx = fma(FLOAT_TYPE(by10.x),      q4_0,  fma(FLOAT_TYPE(by10.y),  q4_1,  fma(FLOAT_TYPE(by10.z),  q4_2,  FLOAT_TYPE(by10.w) *  q4_3)));
+                const FLOAT_TYPE sy = fma(FLOAT_TYPE(by132.x),     q4_4,  fma(FLOAT_TYPE(by132.y), q4_5,  fma(FLOAT_TYPE(by132.z), q4_6,  FLOAT_TYPE(by132.w) * q4_7)));
+                const FLOAT_TYPE sz = fma(FLOAT_TYPE(by20.x),      q4_8,  fma(FLOAT_TYPE(by20.y),  q4_9,  fma(FLOAT_TYPE(by20.z),  q4_10, FLOAT_TYPE(by20.w) *  q4_11)));
+                const FLOAT_TYPE sw = fma(FLOAT_TYPE(by232.x),     q4_12, fma(FLOAT_TYPE(by232.y), q4_13, fma(FLOAT_TYPE(by232.z), q4_14, FLOAT_TYPE(by232.w) * q4_15)));
+                const FLOAT_TYPE smin =
+                    fma(FLOAT_TYPE(by10.x), sc2, fma(FLOAT_TYPE(by132.x), sc3, fma(FLOAT_TYPE(by20.x), sc6, fma(FLOAT_TYPE(by232.x), sc7,
+                    fma(FLOAT_TYPE(by10.y), sc2, fma(FLOAT_TYPE(by132.y), sc3, fma(FLOAT_TYPE(by20.y), sc6, fma(FLOAT_TYPE(by232.y), sc7,
+                    fma(FLOAT_TYPE(by10.z), sc2, fma(FLOAT_TYPE(by132.z), sc3, fma(FLOAT_TYPE(by20.z), sc6, fma(FLOAT_TYPE(by232.z), sc7,
+                    fma(FLOAT_TYPE(by10.w), sc2, fma(FLOAT_TYPE(by132.w), sc3, fma(FLOAT_TYPE(by20.w), sc6,     FLOAT_TYPE(by232.w) * sc7)))))))))))))));
+                temp[j][n] = fma(dall, fma(sx, sc0, fma(sy, sc1, fma(sz, sc4, sw * sc5))), fma(-dmin, smin, temp[j][n]));
+            }
+        }
+    }
+
+    reduce_result(temp, d_offset, first_row, num_rows, tid);
+}
+
+void main() {
+    const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
+
+    // do NUM_ROWS at a time, unless there aren't enough remaining rows
+    if (first_row + NUM_ROWS <= p.stride_d) {
+        compute_outputs(first_row, NUM_ROWS);
+    } else {
+        if (first_row >= p.stride_d) {
+            return;
+        }
+        compute_outputs(first_row, p.stride_d - first_row);
+    }
+}
