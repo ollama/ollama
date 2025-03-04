@@ -1,3 +1,5 @@
+//go:build goexperiment.synctest
+
 package syncs
 
 import (
