@@ -2,119 +2,152 @@ package sample
 
 import (
 	"cmp"
+	"container/heap"
 	"math"
 	"slices"
-
-	pq "github.com/emirpasic/gods/v2/queues/priorityqueue"
 )
 
 type Transform interface {
-	Apply([]float64) []float64
+	Apply(tokenSliceInfo) tokenSliceInfo
 }
 
-// TODO(parthsareen): potentially cache softmax values
-func softmax(logits []float64) []float64 {
-	var sum float64
-	probs := make([]float64, len(logits))
-	for i, v := range logits {
-		probs[i] = math.Exp(v)
-		sum += probs[i]
+type softmax struct{}
+
+func (s softmax) Apply(ts tokenSliceInfo) tokenSliceInfo {
+	var sum float32
+	for i, v := range ts.tokens {
+		ts.tokens[i].prob = float32(math.Exp(float64(v.logit)))
+		sum += ts.tokens[i].prob
 	}
 
-	for i := range probs {
-		probs[i] /= sum
+	for i := range ts.tokens {
+		ts.tokens[i].prob /= sum
 	}
 
-	return probs
+	return ts
 }
 
 type Temperature float64
 
-func (t Temperature) Apply(logits []float64) []float64 {
-	temp := math.Max(float64(t), 1e-7)
-
-	// subtracting max logit to avoid under/overflow
-	maxLogit := slices.Max(logits)
-	for i := range logits {
-		logits[i] = (logits[i] - maxLogit) / temp
+func (t Temperature) Apply(ts tokenSliceInfo) tokenSliceInfo {
+	if t == 1 {
+		return ts
 	}
 
-	return logits
+	temp := float32(math.Max(float64(t), 1e-7))
+	// if called after top-k, the tokens are already sorted
+	if !ts.sorted {
+		slices.SortFunc(ts.tokens, func(i, j tokenInfo) int {
+			return cmp.Compare(j.logit, i.logit) // Sort in descending order
+		})
+		ts.sorted = true
+	}
+
+	// subtracting max logit to avoid under/overflow
+	for i := range ts.tokens {
+		ts.tokens[i].logit = (ts.tokens[i].logit - ts.tokens[0].logit) / temp
+	}
+
+	return ts
 }
 
-type logitMap struct {
-	index int
-	logit float64
+// minHeap implements container/heap.Interface
+type minHeap []tokenInfo
+
+func (h minHeap) Len() int           { return len(h) }
+func (h minHeap) Less(i, j int) bool { return h[i].logit < h[j].logit }
+func (h minHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *minHeap) Push(x any)        { *h = append(*h, x.(tokenInfo)) }
+func (h *minHeap) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
 }
 
 type TopK int
 
-// TODO(parthsareen): avoid having to check all logits after this transform
-func (k TopK) Apply(logits []float64) []float64 {
-	if int(k) >= len(logits) {
-		return logits
-	}
-	q := pq.NewWith(func(a, b logitMap) int {
-		return -cmp.Compare(a.logit, b.logit)
-	})
-
-	for i, logit := range logits {
-		q.Enqueue(logitMap{index: i, logit: logit})
+func (k TopK) Apply(ts tokenSliceInfo) tokenSliceInfo {
+	kk := int(k)
+	if kk >= len(ts.tokens) {
+		return ts
 	}
 
-	validLogits := make(map[int]float64)
-	for range k {
-		logitMap, _ := q.Dequeue()
-		validLogits[logitMap.index] = logitMap.logit
-	}
+	// Create a min-heap with the first k elements
+	h := make(minHeap, kk)
+	copy(h, ts.tokens[:kk])
+	heap.Init(&h)
 
-	for i := range logits {
-		if _, ok := validLogits[i]; !ok {
-			logits[i] = math.Inf(-1)
+	// Process remaining elements
+	for i := kk; i < len(ts.tokens); i++ {
+		if ts.tokens[i].logit > h[0].logit {
+			h[0] = ts.tokens[i]
+			heap.Fix(&h, 0)
 		}
 	}
 
-	return logits
+	// Copy back k largest elements
+	copy(ts.tokens[:kk], h)
+
+	// Store in descending order
+	slices.Reverse(ts.tokens[:kk])
+
+	ts.tokens = ts.tokens[:kk]
+	ts.sorted = true
+	return ts
 }
 
 type TopP float64
 
-func (p TopP) Apply(logits []float64) []float64 {
-	probs := softmax(logits)
-	indices := make([]int, len(probs))
+func (p TopP) Apply(ts tokenSliceInfo) tokenSliceInfo {
+	indices := make([]int, len(ts.tokens))
 	for i := range indices {
 		indices[i] = i
 	}
 
-	// sort in descending order
-	slices.SortFunc(indices, func(i, j int) int {
-		return cmp.Compare(probs[j], probs[i])
-	})
+	if !ts.sorted {
+		// sort in descending order
+		slices.SortFunc(indices, func(i, j int) int {
+			return cmp.Compare(ts.tokens[j].prob, ts.tokens[i].prob)
+		})
+	}
 
-	var sum float64
-	for i, idx := range indices {
-		sum += probs[idx]
-		if sum > float64(p) {
-			for _, idx := range indices[i+1:] {
-				logits[idx] = math.Inf(-1)
-			}
+	newTokens := make([]tokenInfo, 0, len(ts.tokens))
+	var sum float32
+	for _, idx := range indices {
+		sum += ts.tokens[idx].prob
+		newTokens = append(newTokens, ts.tokens[idx])
+		if sum > float32(p) {
 			break
 		}
 	}
-	return logits
+
+	ts.tokens = newTokens
+	ts.sorted = true
+
+	return ts
 }
 
-type MinP float64
+type MinP float32
 
-func (p MinP) Apply(logits []float64) []float64 {
-	probs := softmax(logits)
-	threshold := slices.Max(probs) * float64(p)
-
-	for i, prob := range probs {
-		if prob < threshold {
-			logits[i] = math.Inf(-1)
+func (p MinP) Apply(ts tokenSliceInfo) tokenSliceInfo {
+	maxProb := float32(math.Inf(-1))
+	for _, token := range ts.tokens {
+		if token.prob > maxProb {
+			maxProb = token.prob
 		}
 	}
 
-	return logits
+	threshold := maxProb * float32(p)
+
+	// Filter tokens in-place
+	validTokens := ts.tokens[:0]
+	for i, token := range ts.tokens {
+		if token.prob >= threshold {
+			validTokens = append(validTokens, ts.tokens[i])
+		}
+	}
+
+	return tokenSliceInfo{tokens: validTokens, sorted: ts.sorted}
 }

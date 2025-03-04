@@ -2,59 +2,80 @@ package sample
 
 import (
 	"errors"
-	"math"
-
-	"golang.org/x/exp/rand"
-	"gonum.org/v1/gonum/stat/sampleuv"
+	"math/rand"
 )
 
+// Sampler is not thread-safe. Each goroutine should have its own instance.
 type Sampler interface {
 	Sample([]float32) (int32, error)
 }
 
+type tokenInfo struct {
+	id    int32
+	logit float32
+	prob  float32
+}
+
+type tokenSliceInfo struct {
+	tokens []tokenInfo
+	sorted bool
+}
+
 type weighted struct {
-	src        rand.Source
+	r          float32
 	transforms []Transform
 }
 
-// TODO(parthsareen): remove uv sample dependency https://github.com/ollama/ollama/issues/9279
-func Weighted(seed *uint64, transforms ...Transform) Sampler {
-	var src rand.Source
-	if seed != nil {
-		src = rand.NewSource(*seed)
+func Weighted(r float32, transforms ...Transform) Sampler {
+	return &weighted{
+		r:          r,
+		transforms: transforms,
 	}
-	return weighted{src: src, transforms: transforms}
 }
 
-func (s weighted) Sample(logits []float32) (int32, error) {
-	logits64 := make([]float64, len(logits))
+func (s *weighted) Sample(logits []float32) (int32, error) {
+	tokens := make([]tokenInfo, len(logits))
+	probs := make([]float32, len(logits))
+
 	for i, v := range logits {
-		logits64[i] = float64(v)
-	}
-
-	for _, t := range s.transforms {
-		logits64 = t.Apply(logits64)
-	}
-
-	logitsCopy := make([]float64, 0, len(logits))
-	indices := make([]int, 0, len(logits))
-	for i, logit := range logits64 {
-		if !math.IsInf(logit, -1) {
-			logitsCopy = append(logitsCopy, logit)
-			indices = append(indices, i)
+		tokens[i] = tokenInfo{
+			id:    int32(i),
+			logit: v,
+			prob:  probs[i],
 		}
 	}
 
-	if len(logitsCopy) == 0 {
-		return -1, errors.New("no valid logits found for weighed sampling")
+	tokensInfo := tokenSliceInfo{tokens: tokens, sorted: false}
+	for _, t := range s.transforms {
+		tokensInfo = t.Apply(tokensInfo)
 	}
 
-	probs := softmax(logitsCopy)
-	w := sampleuv.NewWeighted(probs, s.src)
-	if idx, ok := w.Take(); ok {
-		return int32(indices[idx]), nil
+	if len(tokensInfo.tokens) == 0 {
+		return -1, errors.New("no valid logits found for weighted sampling")
 	}
-	return -1, errors.New("weighted sampler failed, no valid token found")
+
+	// Cumulative distribution function based sampling
+	sumProbs := make([]float32, len(tokensInfo.tokens))
+	var sum float32
+	for i, token := range tokensInfo.tokens {
+		sum += token.prob
+		sumProbs[i] = sum
+	}
+
+	s.r *= sumProbs[len(tokensInfo.tokens)-1]
+
+	// Binary search for the selected index
+	left, right := 0, len(tokensInfo.tokens)-1
+	for left < right {
+		mid := (left + right) / 2
+		if sumProbs[mid] < s.r {
+			left = mid + 1
+		} else {
+			right = mid
+		}
+	}
+
+	return int32(tokensInfo.tokens[left].id), nil
 }
 
 type greedy struct{}
@@ -85,18 +106,20 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 		return Greedy(), nil
 	}
 
-	if temperature < 0 || temperature > 2 {
-		return nil, errors.New("temperature must be between 0 and 2")
-	}
-
-	transforms := []Transform{Temperature(temperature)}
-
+	transforms := []Transform{}
 	if topK != 0 {
 		if topK <= 0 {
 			return nil, errors.New("topK must be greater than 0")
 		}
+		// transforms = append(transforms, TopK(topK))
 		transforms = append(transforms, TopK(topK))
 	}
+
+	if temperature < 0 || temperature > 2 {
+		return nil, errors.New("temperature must be between 0 and 2")
+	}
+
+	transforms = append(transforms, Temperature(temperature), softmax{})
 
 	if topP != 0 {
 		if topP < 0 || topP >= 1 {
@@ -112,9 +135,23 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 		transforms = append(transforms, MinP(minP))
 	}
 
-	if seed >= 0 {
-		seed64 := uint64(seed)
-		return Weighted(&seed64, transforms...), nil
+	if len(transforms) == 0 {
+		return nil, errors.New("at least one transform is required")
 	}
-	return Weighted(nil, transforms...), nil
+
+	var seed64 *int64
+	if seed != 0 {
+		s := int64(seed)
+		seed64 = &s
+	}
+
+	var r float32
+	if seed64 == nil {
+		r = rand.Float32()
+	} else {
+		rng := rand.New(rand.NewSource(*seed64))
+		r = rng.Float32()
+	}
+
+	return Weighted(r, transforms...), nil
 }
