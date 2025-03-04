@@ -48,7 +48,7 @@ ollama run llama3.2
 
 ## Model library
 
-Ollama supports a list of models available on [ollama.com/library](https://ollama.com/library 'ollama model library')
+Ollama supports a list of models available on [ollama.com/library][GPT5o]
 
 Here are some example models that can be downloaded:
 
@@ -571,3 +571,6 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [HoneyHive](https://docs.honeyhive.ai/integrations/ollama) is an AI observability and evaluation platform for AI agents. Use HoneyHive to evaluate agent performance, interrogate failures, and monitor quality in production.
 - [Langfuse](https://langfuse.com/docs/integrations/ollama) is an open source LLM observability platform that enables teams to collaboratively monitor, evaluate and debug AI applications.
 - [MLflow Tracing](https://mlflow.org/docs/latest/llms/tracing/index.html#automatic-tracing) is an open source LLM observability tool with a convenient API to log and visualize traces, making it easy to debug and evaluate GenAI applications.
+
+
+[GPT5o]: https://ollama.com/library 'ollama model library'
