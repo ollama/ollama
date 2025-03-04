@@ -191,6 +191,10 @@ func (c *Context) KvCacheDefrag() {
 	C.llama_kv_cache_defrag(c.c)
 }
 
+func (c *Context) KvCacheCanShift() bool {
+	return bool(C.llama_kv_cache_can_shift(c.c))
+}
+
 // Get the embeddings for a sequence id
 func (c *Context) GetEmbeddingsSeq(seqId int) []float32 {
 	e := unsafe.Pointer(C.llama_get_embeddings_seq(c.c, C.int(seqId)))
