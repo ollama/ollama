@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -1120,4 +1121,39 @@ func parseDurationMs(ms float64) time.Duration {
 	}
 
 	return dur
+}
+
+func DynamicLibraries() []string {
+	var libExt string
+	if runtime.GOOS == "windows" {
+		libExt = "dll"
+	} else if runtime.GOOS == "darwin" {
+		libExt = "dylib"
+	} else {
+		libExt = "so"
+	}
+	libs := []string{}
+	re := regexp.MustCompile(`ggml-(.+)\.`)
+	// CPU and local build libraries
+	globs, _ := filepath.Glob(filepath.Join(discover.LibOllamaPath, "*ggml-*."+libExt))
+	for _, lib := range globs {
+		if strings.Contains(lib, "ggml-base") {
+			continue
+		}
+		matches := re.FindStringSubmatch(lib)
+		if len(matches) < 2 {
+			continue
+		}
+		libs = append(libs, matches[1])
+	}
+
+	if entries, err := os.ReadDir(discover.LibOllamaPath); err == nil {
+		for _, entry := range entries {
+			matches, _ := filepath.Glob(filepath.Join(discover.LibOllamaPath, entry.Name(), "*ggml-*."+libExt))
+			if len(matches) > 0 {
+				libs = append(libs, entry.Name())
+			}
+		}
+	}
+	return libs
 }
