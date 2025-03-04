@@ -448,10 +448,15 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 
 	t := traceFromContext(ctx)
 
-	var g errgroup.Group
+	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(r.maxStreams())
 
-	for _, l := range m.Layers {
+	layers := m.Layers
+	if m.Config != nil {
+		layers = append(layers, m.Config)
+	}
+
+	for _, l := range layers {
 		if exists(l) {
 			t.update(l, l.Size, ErrCached)
 			continue
@@ -501,12 +506,14 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 			res.Body.Close()
 			req = res.Request.WithContext(req.Context())
 
-			streamNo := 0
-			tws := make([]*bufio.Writer, r.maxStreams()-1)
+			wp := writerPool{size: r.maxChunkSize()}
+
 			for chunk := range chunks.Of(l.Size, r.maxChunkSize()) {
+				if ctx.Err() != nil {
+					break
+				}
+
 				ticket := q.Take()
-				bufIdx := streamNo % len(tws)
-				streamNo++
 				g.Go(func() (err error) {
 					defer func() {
 						if err != nil {
@@ -520,7 +527,6 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 						if err != nil {
 							return err
 						}
-
 						err := func() error {
 							req := req.Clone(req.Context())
 							req.Header.Set("Range", fmt.Sprintf("bytes=%s", chunk))
@@ -530,13 +536,9 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 							}
 							defer res.Body.Close()
 
-							tw := tws[bufIdx]
-							if tw == nil {
-								tw = bufio.NewWriterSize(nil, int(r.maxChunkSize()))
-								tws[bufIdx] = tw
-							}
+							tw := wp.get()
 							tw.Reset(ticket)
-							defer tw.Reset(nil) // release ticket
+							defer wp.put(tw)
 
 							_, err = io.CopyN(tw, res.Body, chunk.Size())
 							if err != nil {
@@ -595,6 +597,9 @@ type Manifest struct {
 	Name   string   `json:"-"` // the canonical name of the model
 	Data   []byte   `json:"-"` // the raw data of the manifest
 	Layers []*Layer `json:"layers"`
+
+	// For legacy reasons, we still have to download the config layer.
+	Config *Layer `json:"config"`
 }
 
 var emptyDigest, _ = blob.ParseDigest("sha256:0000000000000000000000000000000000000000000000000000000000000000")
@@ -959,4 +964,29 @@ func splitExtended(s string) (scheme, name, digest string) {
 		s = s[:i]
 	}
 	return scheme, s, digest
+}
+
+type writerPool struct {
+	size int64 // set by the caller
+
+	mu sync.Mutex
+	ws []*bufio.Writer
+}
+
+func (p *writerPool) get() *bufio.Writer {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.ws) == 0 {
+		return bufio.NewWriterSize(nil, int(p.size))
+	}
+	w := p.ws[len(p.ws)-1]
+	p.ws = p.ws[:len(p.ws)-1]
+	return w
+}
+
+func (p *writerPool) put(w *bufio.Writer) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	w.Reset(nil)
+	p.ws = append(p.ws, w)
 }

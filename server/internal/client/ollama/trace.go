@@ -13,9 +13,13 @@ type Trace struct {
 	// Update is called during [Registry.Push] and [Registry.Pull] to
 	// report the progress of blob uploads and downloads.
 	//
-	// It is called once at the beginning of the download with a zero n and
-	// then once per read operation with the number of bytes read so far,
-	// and an error if any.
+	// The n argument is the number of bytes transferred so far, and err is
+	// any error that has occurred. If n == 0, and err is nil, the download
+	// or upload has just started. If err is [ErrCached], the download or
+	// upload has been skipped because the blob is already present in the
+	// local cache or remote registry, respectively. Otherwise, if err is
+	// non-nil, the download or upload has failed. When l.Size == n, and
+	// err is nil, the download or upload has completed.
 	//
 	// A function assigned must be safe for concurrent use. The function is
 	// called synchronously and so should not block or take long to run.
