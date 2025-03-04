@@ -106,20 +106,20 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 		return Greedy(), nil
 	}
 
-	if temperature < 0 || temperature > 2 {
-		return nil, errors.New("temperature must be between 0 and 2")
-	}
-
-	transforms := []Transform{Temperature(temperature)}
-
+	transforms := []Transform{}
 	if topK != 0 {
 		if topK <= 0 {
 			return nil, errors.New("topK must be greater than 0")
 		}
+		// transforms = append(transforms, TopK(topK))
 		transforms = append(transforms, TopK(topK))
 	}
 
-	transforms = append(transforms, softmax{})
+	if temperature < 0 || temperature > 2 {
+		return nil, errors.New("temperature must be between 0 and 2")
+	}
+
+	transforms = append(transforms, Temperature(temperature), softmax{})
 
 	if topP != 0 {
 		if topP < 0 || topP >= 1 {
@@ -149,9 +149,7 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 	if seed64 == nil {
 		r = rand.Float32()
 	} else {
-		// Use the seed to initialize a random source
 		rng := rand.New(rand.NewSource(*seed64))
-		// Increment the seed for next call to ensure different results
 		r = rng.Float32()
 	}
 

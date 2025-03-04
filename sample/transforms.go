@@ -2,10 +2,9 @@ package sample
 
 import (
 	"cmp"
+	"container/heap"
 	"math"
 	"slices"
-
-	pq "github.com/emirpasic/gods/v2/queues/priorityqueue"
 )
 
 type Transform interface {
@@ -36,48 +35,67 @@ func (t Temperature) Apply(ts tokenSliceInfo) tokenSliceInfo {
 	}
 
 	temp := float32(math.Max(float64(t), 1e-7))
-
-	// subtracting max logit to avoid under/overflow
-	maxLogit := float32(math.Inf(-1))
-	for _, token := range ts.tokens {
-		if token.logit > maxLogit {
-			maxLogit = token.logit
-		}
+	// if called after top-k, the tokens are already sorted
+	if !ts.sorted {
+		slices.SortFunc(ts.tokens, func(i, j tokenInfo) int {
+			return cmp.Compare(j.logit, i.logit) // Sort in descending order
+		})
+		ts.sorted = true
 	}
 
+	// subtracting max logit to avoid under/overflow
 	for i := range ts.tokens {
-		ts.tokens[i].logit = (ts.tokens[i].logit - maxLogit) / temp
+		ts.tokens[i].logit = (ts.tokens[i].logit - ts.tokens[0].logit) / temp
 	}
 
 	return ts
 }
 
+// minHeap implements container/heap.Interface
+type minHeap []tokenInfo
+
+func (h minHeap) Len() int           { return len(h) }
+func (h minHeap) Less(i, j int) bool { return h[i].logit < h[j].logit }
+func (h minHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *minHeap) Push(x any)        { *h = append(*h, x.(tokenInfo)) }
+func (h *minHeap) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
+}
+
 type TopK int
 
 func (k TopK) Apply(ts tokenSliceInfo) tokenSliceInfo {
-	if int(k) >= len(ts.tokens) {
+	kk := int(k)
+	if kk >= len(ts.tokens) {
 		return ts
 	}
-	q := pq.NewWith(func(a, b tokenInfo) int {
-		return -cmp.Compare(a.logit, b.logit)
-	})
 
-	validTokens := make([]tokenInfo, 0, int(k))
-	for _, token := range ts.tokens {
-		if q.Size() < int(k) {
-			q.Enqueue(token)
-		} else if min, ok := q.Peek(); ok && token.logit > min.logit {
-			q.Dequeue()
-			q.Enqueue(token)
+	// Create a min-heap with the first k elements
+	h := make(minHeap, kk)
+	copy(h, ts.tokens[:kk])
+	heap.Init(&h)
+
+	// Process remaining elements
+	for i := kk; i < len(ts.tokens); i++ {
+		if ts.tokens[i].logit > h[0].logit {
+			h[0] = ts.tokens[i]
+			heap.Fix(&h, 0)
 		}
 	}
 
-	for !q.Empty() {
-		token, _ := q.Dequeue()
-		validTokens = append([]tokenInfo{token}, validTokens...)
-	}
+	// Copy back k largest elements
+	copy(ts.tokens[:kk], h)
 
-	return tokenSliceInfo{tokens: validTokens, sorted: true}
+	// Store in descending order
+	slices.Reverse(ts.tokens[:kk])
+
+	ts.tokens = ts.tokens[:kk]
+	ts.sorted = true
+	return ts
 }
 
 type TopP float64
