@@ -1,5 +1,5 @@
 <div align="center">
-  <a href="https://ollama.com" />
+  <a href="https://ollama.com">
     <img alt="ollama" height="200px" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
   </a>
 </div>
@@ -64,7 +64,7 @@ Here are some example models that can be downloaded:
 | Llama 3.1          | 8B         | 4.7GB | `ollama run llama3.1`            |
 | Llama 3.1          | 405B       | 231GB | `ollama run llama3.1:405b`       |
 | Phi 4              | 14B        | 9.1GB | `ollama run phi4`                |
-| Phi 3 Mini         | 3.8B       | 2.3GB | `ollama run phi3`                |
+| Phi 4 Mini         | 3.8B       | 2.5GB | `ollama run phi4-mini`           |
 | Gemma 2            | 2B         | 1.6GB | `ollama run gemma2:2b`           |
 | Gemma 2            | 9B         | 5.5GB | `ollama run gemma2`              |
 | Gemma 2            | 27B        | 16GB  | `ollama run gemma2:27b`          |
@@ -388,6 +388,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [LangBot](https://github.com/RockChinQ/LangBot) (LLM-based instant messaging bots platform, with Agents, RAG features, supports multiple platforms)
 - [1Panel](https://github.com/1Panel-dev/1Panel/) (Web-based Linux Server Management Tool)
 - [AstrBot](https://github.com/Soulter/AstrBot/) (User-friendly LLM-based multi-platform chatbot with a WebUI, supporting RAG, LLM agents, and plugins integration)
+- [Reins](https://github.com/ibrahimcetin/reins) (Easily tweak parameters, customize system prompts per chat, and enhance your AI experiments with reasoning model support.)
 
 ### Cloud
 
@@ -512,7 +513,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Maid](https://github.com/Mobile-Artificial-Intelligence/maid)
 - [Ollama App](https://github.com/JHubi1/ollama-app) (Modern and easy-to-use multi-platform client for Ollama)
 - [ConfiChat](https://github.com/1runeberg/confichat) (Lightweight, standalone, multi-platform, and privacy focused LLM chat interface with optional encryption)
-- [Ollama Server](https://github.com/sunshine0523/OllamaServer) (No need for Termux, start the Ollama service with one click on an Android device)
+- [Ollama Android Chat](https://github.com/sunshine0523/OllamaServer) (No need for Termux, start the Ollama service with one click on an Android device)
+- [Reins](https://github.com/ibrahimcetin/reins) (Easily tweak parameters, customize system prompts per chat, and enhance your AI experiments with reasoning model support.)
 
 ### Extensions & Plugins
 
