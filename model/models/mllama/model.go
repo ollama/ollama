@@ -64,7 +64,8 @@ func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
 			return nil, err
 		}
 
-		pixelValues, err := ctx.FromFloatSlice(f32s,
+		pixelValues, err := ctx.Input().FromFloatSlice(
+			f32s,
 			m.ImageProcessor.imageSize,
 			m.ImageProcessor.imageSize,
 			m.ImageProcessor.numChannels,
@@ -74,7 +75,7 @@ func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
 			return nil, err
 		}
 
-		aspectRatio, err := ctx.FromIntSlice([]int32{int32(aspectRatioID)}, 1)
+		aspectRatio, err := ctx.Input().FromIntSlice([]int32{int32(aspectRatioID)}, 1)
 		if err != nil {
 			return nil, err
 		}
@@ -84,7 +85,7 @@ func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
 			positions[i] = int32(i)
 		}
 
-		positionIDs, err := ctx.FromIntSlice(positions, len(positions))
+		positionIDs, err := ctx.Input().FromIntSlice(positions, len(positions))
 		if err != nil {
 			return nil, err
 		}
@@ -93,17 +94,17 @@ func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
 		crossAttentionStates = m.Projector.Forward(ctx, crossAttentionStates)
 	}
 
-	inputs, err := ctx.FromIntSlice(opts.Inputs, len(opts.Inputs))
+	inputs, err := ctx.Input().FromIntSlice(opts.Inputs, len(opts.Inputs))
 	if err != nil {
 		return nil, err
 	}
 
-	positions, err := ctx.FromIntSlice(opts.Positions, len(opts.Positions))
+	positions, err := ctx.Input().FromIntSlice(opts.Positions, len(opts.Positions))
 	if err != nil {
 		return nil, err
 	}
 
-	outputs, err := ctx.FromIntSlice(opts.Outputs, len(opts.Outputs))
+	outputs, err := ctx.Output().FromIntSlice(opts.Outputs, len(opts.Outputs))
 	if err != nil {
 		return nil, err
 	}
