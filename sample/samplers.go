@@ -2,19 +2,18 @@ package sample
 
 import (
 	"errors"
-
-	"golang.org/x/exp/rand"
-	"gonum.org/v1/gonum/stat/sampleuv"
+	"math/rand"
 )
 
+// Sampler is not thread-safe. Each goroutine should have its own instance.
 type Sampler interface {
 	Sample([]float32) (int32, error)
 }
 
 type tokenInfo struct {
-	id    int
-	logit float64
-	prob  float64
+	id    int32
+	logit float32
+	prob  float32
 }
 
 type tokenSliceInfo struct {
@@ -23,32 +22,25 @@ type tokenSliceInfo struct {
 }
 
 type weighted struct {
-	src        rand.Source
+	r          float32
 	transforms []Transform
 }
 
-// TODO(parthsareen): remove uv sample dependency https://github.com/ollama/ollama/issues/9279
-func Weighted(seed *uint64, transforms ...Transform) Sampler {
-	var src rand.Source
-	if seed != nil {
-		src = rand.NewSource(*seed)
+func Weighted(r float32, transforms ...Transform) Sampler {
+	return &weighted{
+		r:          r,
+		transforms: transforms,
 	}
-	return weighted{src: src, transforms: transforms}
 }
 
-func (s weighted) Sample(logits []float32) (int32, error) {
-	logits64 := make([]float64, len(logits))
-	for i, v := range logits {
-		logits64[i] = float64(v)
-	}
-
-	probs := softmax(logits64)
-
+func (s *weighted) Sample(logits []float32) (int32, error) {
 	tokens := make([]tokenInfo, len(logits))
+	probs := make([]float32, len(logits))
+
 	for i, v := range logits {
 		tokens[i] = tokenInfo{
-			id:    i,
-			logit: float64(v),
+			id:    int32(i),
+			logit: v,
 			prob:  probs[i],
 		}
 	}
@@ -59,21 +51,31 @@ func (s weighted) Sample(logits []float32) (int32, error) {
 	}
 
 	if len(tokensInfo.tokens) == 0 {
-		return -1, errors.New("no valid logits found for weighed sampling")
+		return -1, errors.New("no valid logits found for weighted sampling")
 	}
 
-	filteredProbs := make([]float64, len(tokensInfo.tokens))
-	indices := make([]int, len(tokensInfo.tokens))
+	// Cumulative distribution function based sampling
+	sumProbs := make([]float32, len(tokensInfo.tokens))
+	var sum float32
 	for i, token := range tokensInfo.tokens {
-		filteredProbs[i] = token.prob
-		indices[i] = token.id
+		sum += token.prob
+		sumProbs[i] = sum
 	}
 
-	w := sampleuv.NewWeighted(filteredProbs, s.src)
-	if idx, ok := w.Take(); ok {
-		return int32(indices[idx]), nil
+	s.r *= sumProbs[len(tokensInfo.tokens)-1]
+
+	// Binary search for the selected index
+	left, right := 0, len(tokensInfo.tokens)-1
+	for left < right {
+		mid := (left + right) / 2
+		if sumProbs[mid] < s.r {
+			left = mid + 1
+		} else {
+			right = mid
+		}
 	}
-	return -1, errors.New("weighted sampler failed, no valid token found")
+
+	return int32(tokensInfo.tokens[left].id), nil
 }
 
 type greedy struct{}
@@ -117,6 +119,8 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 		transforms = append(transforms, TopK(topK))
 	}
 
+	transforms = append(transforms, softmax{})
+
 	if topP != 0 {
 		if topP < 0 || topP >= 1 {
 			return nil, errors.New("topP must be between 0 and 1")
@@ -135,13 +139,21 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 		return nil, errors.New("at least one transform is required")
 	}
 
-	if temperature == 0 {
-		return Greedy(), nil
+	var seed64 *int64
+	if seed != 0 {
+		s := int64(seed)
+		seed64 = &s
 	}
 
-	if seed != 0 {
-		seed64 := uint64(seed)
-		return Weighted(&seed64, transforms...), nil
+	var r float32
+	if seed64 == nil {
+		r = rand.Float32()
+	} else {
+		// Use the seed to initialize a random source
+		rng := rand.New(rand.NewSource(*seed64))
+		// Increment the seed for next call to ensure different results
+		r = rng.Float32()
 	}
-	return Weighted(nil, transforms...), nil
+
+	return Weighted(r, transforms...), nil
 }

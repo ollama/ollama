@@ -12,19 +12,20 @@ type Transform interface {
 	Apply(tokenSliceInfo) tokenSliceInfo
 }
 
-func softmax(logits []float64) []float64 {
-	var sum float64
-	probs := make([]float64, len(logits))
-	for i, v := range logits {
-		probs[i] = math.Exp(v)
-		sum += probs[i]
+type softmax struct{}
+
+func (s softmax) Apply(ts tokenSliceInfo) tokenSliceInfo {
+	var sum float32
+	for i, v := range ts.tokens {
+		ts.tokens[i].prob = float32(math.Exp(float64(v.logit)))
+		sum += ts.tokens[i].prob
 	}
 
-	for i := range probs {
-		probs[i] /= sum
+	for i := range ts.tokens {
+		ts.tokens[i].prob /= sum
 	}
 
-	return probs
+	return ts
 }
 
 type Temperature float64
@@ -34,10 +35,10 @@ func (t Temperature) Apply(ts tokenSliceInfo) tokenSliceInfo {
 		return ts
 	}
 
-	temp := math.Max(float64(t), 1e-7)
+	temp := float32(math.Max(float64(t), 1e-7))
 
 	// subtracting max logit to avoid under/overflow
-	maxLogit := math.Inf(-1)
+	maxLogit := float32(math.Inf(-1))
 	for _, token := range ts.tokens {
 		if token.logit > maxLogit {
 			maxLogit = token.logit
@@ -49,11 +50,6 @@ func (t Temperature) Apply(ts tokenSliceInfo) tokenSliceInfo {
 	}
 
 	return ts
-}
-
-type logitMap struct {
-	index int
-	logit float64
 }
 
 type TopK int
@@ -100,11 +96,11 @@ func (p TopP) Apply(ts tokenSliceInfo) tokenSliceInfo {
 	}
 
 	newTokens := make([]tokenInfo, 0, len(ts.tokens))
-	var sum float64
+	var sum float32
 	for _, idx := range indices {
 		sum += ts.tokens[idx].prob
 		newTokens = append(newTokens, ts.tokens[idx])
-		if sum > float64(p) {
+		if sum > float32(p) {
 			break
 		}
 	}
@@ -115,24 +111,25 @@ func (p TopP) Apply(ts tokenSliceInfo) tokenSliceInfo {
 	return ts
 }
 
-type MinP float64
+type MinP float32
 
 func (p MinP) Apply(ts tokenSliceInfo) tokenSliceInfo {
-	maxProb := math.Inf(-1)
+	maxProb := float32(math.Inf(-1))
 	for _, token := range ts.tokens {
 		if token.prob > maxProb {
 			maxProb = token.prob
 		}
 	}
 
-	threshold := maxProb * float64(p)
+	threshold := maxProb * float32(p)
 
-	newTokens := make([]tokenInfo, 0, len(ts.tokens))
+	// Filter tokens in-place
+	validTokens := ts.tokens[:0]
 	for i, token := range ts.tokens {
 		if token.prob >= threshold {
-			newTokens = append(newTokens, ts.tokens[i])
+			validTokens = append(validTokens, ts.tokens[i])
 		}
 	}
 
-	return tokenSliceInfo{tokens: newTokens, sorted: ts.sorted}
+	return tokenSliceInfo{tokens: validTokens, sorted: ts.sorted}
 }
