@@ -378,6 +378,11 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	bandwidth, err := cmd.Flags().GetString("bandwidth")
+	if err != nil {
+		return err
+	}
+
 	insecure, err := cmd.Flags().GetBool("insecure")
 	if err != nil {
 		return err
@@ -417,8 +422,7 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	request := api.PushRequest{Name: args[0], Insecure: insecure}
-
+	request := api.PushRequest{Name: args[0], Insecure: insecure, Bandwidth: bandwidth}
 	n := model.ParseName(args[0])
 	if err := client.Push(cmd.Context(), &request, fn); err != nil {
 		if spinner != nil {
@@ -735,6 +739,11 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	bandwidth, err := cmd.Flags().GetString("bandwidth")
+	if err != nil {
+		return err
+	}
+
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
@@ -775,7 +784,7 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	request := api.PullRequest{Name: args[0], Insecure: insecure}
+	request := api.PullRequest{Name: args[0], Insecure: insecure, Bandwidth: bandwidth}
 	if err := client.Pull(cmd.Context(), &request, fn); err != nil {
 		return err
 	}
@@ -1208,6 +1217,7 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().String("keepalive", "", "Duration to keep a model loaded (e.g. 5m)")
 	runCmd.Flags().Bool("verbose", false, "Show timings for response")
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	runCmd.Flags().String("bandwidth", "0 KB", "Limit dialer bandwidth (1 MB, 200 KB)")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
 
@@ -1237,6 +1247,8 @@ func NewCLI() *cobra.Command {
 
 	pullCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 
+	pullCmd.Flags().String("bandwidth", "0 KB", "Limit dialer bandwidth (1 MB, 200 KB)")
+
 	pushCmd := &cobra.Command{
 		Use:     "push MODEL",
 		Short:   "Push a model to a registry",
@@ -1246,6 +1258,8 @@ func NewCLI() *cobra.Command {
 	}
 
 	pushCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+
+	pushCmd.Flags().String("bandwidth", "0 KB", "Limit dialer bandwidth (1 MB, 200 KB)")
 
 	listCmd := &cobra.Command{
 		Use:     "list",

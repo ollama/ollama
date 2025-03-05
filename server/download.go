@@ -181,6 +181,9 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *r
 
 func (b *blobDownload) Run(ctx context.Context, requestURL *url.URL, opts *registryOptions) {
 	defer close(b.done)
+	if opts.Bandwidth > 0 {
+		opts.Bandwidth = opts.Bandwidth / int64(len(b.Parts))
+	}
 	b.err = b.run(ctx, requestURL, opts)
 }
 
@@ -250,6 +253,10 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 				return http.ErrUseLastResponse
 			}
 
+			if newOpts.Bandwidth > 0 {
+				opts.Bandwidth = opts.Bandwidth / int64(len(b.Parts))
+			}
+			
 			resp, err := makeRequestWithRetry(ctx, http.MethodGet, requestURL, nil, nil, newOpts)
 			if err != nil {
 				slog.Warn("failed to get direct URL; backing off and retrying", "err", err)
@@ -268,7 +275,11 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 	if err != nil {
 		return err
 	}
-
+	if opts != nil {
+		if opts.Bandwidth > 0 {
+			opts.Bandwidth = opts.Bandwidth / int64(len(b.Parts))
+		}
+	}
 	g, inner := errgroup.WithContext(ctx)
 	g.SetLimit(numDownloadParts)
 	for i := range b.Parts {

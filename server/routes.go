@@ -3,11 +3,15 @@ package server
 import (
 	"bytes"
 	"cmp"
+	"codeberg.org/meta/bytesize"
 	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gin-contrib/cors"
+	"github.com/gin-gonic/gin"
+	"golang.org/x/sync/errgroup"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -22,10 +26,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-	"github.com/gin-contrib/cors"
-	"github.com/gin-gonic/gin"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
@@ -579,6 +579,12 @@ func (s *Server) PullHandler(c *gin.Context) {
 		return
 	}
 
+	bandwidth, err := bytesize.ParseBytes(req.Bandwidth)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
@@ -587,7 +593,8 @@ func (s *Server) PullHandler(c *gin.Context) {
 		}
 
 		regOpts := &registryOptions{
-			Insecure: req.Insecure,
+			Insecure:  req.Insecure,
+			Bandwidth: bandwidth,
 		}
 
 		ctx, cancel := context.WithCancel(c.Request.Context())
@@ -628,6 +635,12 @@ func (s *Server) PushHandler(c *gin.Context) {
 		return
 	}
 
+	bandwidth, err := bytesize.ParseBytes(req.Bandwidth)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
@@ -636,7 +649,8 @@ func (s *Server) PushHandler(c *gin.Context) {
 		}
 
 		regOpts := &registryOptions{
-			Insecure: req.Insecure,
+			Insecure:  req.Insecure,
+			Bandwidth: bandwidth,
 		}
 
 		ctx, cancel := context.WithCancel(c.Request.Context())

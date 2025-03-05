@@ -20,7 +20,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/conduitio/bwlimit"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/ggml"
@@ -46,10 +48,11 @@ const (
 )
 
 type registryOptions struct {
-	Insecure bool
-	Username string
-	Password string
-	Token    string
+	Insecure  bool
+	Username  string
+	Password  string
+	Token     string
+	Bandwidth int64
 
 	CheckRedirect func(req *http.Request, via []*http.Request) error
 }
@@ -726,7 +729,18 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 	if requestURL.Scheme != "http" && regOpts != nil && regOpts.Insecure {
 		requestURL.Scheme = "http"
 	}
+	if regOpts != nil {
+		if regOpts.Bandwidth > 0 {
+			bandwidth := bwlimit.Byte(regOpts.Bandwidth)
 
+			dialer := bwlimit.NewDialer(&net.Dialer{
+				Timeout:   30 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}, bandwidth, bandwidth)
+
+			http.DefaultTransport.(*http.Transport).DialContext = dialer.DialContext
+		}
+	}
 	req, err := http.NewRequestWithContext(ctx, method, requestURL.String(), body)
 	if err != nil {
 		return nil, err
