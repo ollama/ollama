@@ -138,7 +138,7 @@ func BenchmarkTransform(b *testing.B) {
 		b.Run(name, func(b *testing.B) {
 			ts := tokenSliceInfo{tokens: tokens}
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				tr.Apply(ts)
 			}
 		})

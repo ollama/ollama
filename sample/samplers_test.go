@@ -173,7 +173,7 @@ func BenchmarkSample(b *testing.B) {
 	for name, s := range samplers {
 		b.Run(name, func(b *testing.B) {
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				if _, err := s.Sample(logits); err != nil {
 					b.Error(err)
 				}
