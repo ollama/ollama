@@ -19,6 +19,7 @@ type tokenInfo struct {
 type tokenSliceInfo struct {
 	tokens []tokenInfo
 	sorted bool
+	sum    float32
 }
 
 type weighted struct {
@@ -35,14 +36,9 @@ func Weighted(r float32, transforms ...Transform) Sampler {
 
 func (s *weighted) Sample(logits []float32) (int32, error) {
 	tokens := make([]tokenInfo, len(logits))
-	probs := make([]float32, len(logits))
-
 	for i, v := range logits {
-		tokens[i] = tokenInfo{
-			id:    int32(i),
-			logit: v,
-			prob:  probs[i],
-		}
+		tokens[i].id = int32(i)
+		tokens[i].logit = v
 	}
 
 	tokensInfo := tokenSliceInfo{tokens: tokens, sorted: false}
@@ -54,21 +50,13 @@ func (s *weighted) Sample(logits []float32) (int32, error) {
 		return -1, errors.New("no valid logits found for weighted sampling")
 	}
 
-	// Cumulative distribution function based sampling
-	sumProbs := make([]float32, len(tokensInfo.tokens))
-	var sum float32
-	for i, token := range tokensInfo.tokens {
-		sum += token.prob
-		sumProbs[i] = sum
-	}
-
-	s.r *= sumProbs[len(tokensInfo.tokens)-1]
+	s.r *= tokensInfo.sum
 
 	// Binary search for the selected index
 	left, right := 0, len(tokensInfo.tokens)-1
 	for left < right {
 		mid := (left + right) / 2
-		if sumProbs[mid] < s.r {
+		if tokensInfo.tokens[mid].prob < s.r {
 			left = mid + 1
 		} else {
 			right = mid
@@ -91,8 +79,10 @@ func (s greedy) Sample(logits []float32) (int32, error) {
 	}
 
 	maxIdx := 0
-	for i := range logits {
-		if logits[i] > logits[maxIdx] {
+	maxVal := logits[0]
+	for i := 1; i < len(logits); i++ {
+		if logits[i] > maxVal {
+			maxVal = logits[i]
 			maxIdx = i
 		}
 	}
@@ -106,13 +96,11 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 		return Greedy(), nil
 	}
 
-	transforms := []Transform{}
-	if topK != 0 {
-		if topK <= 0 {
-			return nil, errors.New("topK must be greater than 0")
-		}
-		// transforms = append(transforms, TopK(topK))
+	transforms := make([]Transform, 0, 4)
+	if topK >= 0 {
 		transforms = append(transforms, TopK(topK))
+	} else {
+		transforms = append(transforms, sortTokens{})
 	}
 
 	if temperature < 0 || temperature > 2 {
