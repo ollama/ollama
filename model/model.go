@@ -3,7 +3,6 @@ package model
 import (
 	"errors"
 	"fmt"
-	"image"
 	_ "image/jpeg"
 	_ "image/png"
 	"log/slog"
@@ -22,14 +21,40 @@ import (
 	_ "github.com/ollama/ollama/ml/backend"
 )
 
+// Input represents one token in the input stream
+type Input struct {
+	// Token is a single element of text.
+	Token int32
+
+	// Multimodal is opaque data representing a non-text
+	// element such as an image (or part of one if the image
+	// can be processed in pieces). It may be either together
+	// with Token or on its own.
+	Multimodal any
+
+	// MultimodalHash is a unique representation of the data
+	// stored in Multimodal, used for caching and comparing
+	// equality.
+	MultimodalHash uint64
+}
+
+// MultimodalIndex is a multimodal element (such as an image)
+// together with an index into the slice of Inputs with the
+// corresponding token. Note that the index is not the same
+// as the position - to find that use the index with the
+// Positions slice.
+type MultimodalIndex struct {
+	Index      int
+	Multimodal any
+}
+
 // Options contains the inputs for a model forward pass
 type Options struct {
-	Inputs    []int32
-	Positions []int32
-	Sequences []int
-	Outputs   []int32
-
-	Images []image.Image
+	Inputs     []int32
+	Multimodal []MultimodalIndex
+	Positions  []int32
+	Sequences  []int
+	Outputs    []int32
 }
 
 type config struct {
@@ -57,6 +82,37 @@ type Model interface {
 
 	Backend() ml.Backend
 	Config() config
+}
+
+// MultimodalProcessor must be implemented by multimodal models.
+type MultimodalProcessor interface {
+	// EncodeMultimodal processes a single input (such as an image) and
+	// generates an output (typically an embedding) that can be used by the model.
+	//
+	// The return value is most typically an ml.Tensor, however, different
+	// type are possible, such as an object containing a tensor plus
+	// additional metadata, a slice of tensors or even just the original input.
+	//
+	// The result may be cached by the runner.
+	EncodeMultimodal(ml.Context, []byte) (any, error)
+
+	// PostTokenize is called after tokenization to allow the model to edit the
+	// input stream to correctly arrange multimodal elements.
+	//
+	// The input is a slice of tokens with the results of EncodeMultimodal interleaved
+	// in the order that the user provided them. Each element of the slice will be
+	// either a single token or single multimodal object.
+	//
+	// The model must ensure that inputs are stored according to how they will be
+	// processed and stored in the cache. For example, Llava-style models should insert
+	// placeholder tokens equal to the feature size of the corresponding image with
+	// the image itself attached to and split across these tokens. When Forward is called
+	// a partial subset of these tokens may be submitted according to the batch size.
+	//
+	// This function is also responsible for updating MultimodalHash for any Multimodal
+	// that is modified to ensure that there is a unique hash value that accurately
+	// represents the contents.
+	PostTokenize(ml.Context, []Input) ([]Input, error)
 }
 
 var models = make(map[string]func(ml.Config) (Model, error))
