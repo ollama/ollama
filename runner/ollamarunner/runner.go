@@ -161,7 +161,7 @@ func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 
 	for i, part := range parts {
 		// text - tokenize
-		tokens, err := s.model.(model.TextProcessor).Encode(part)
+		tokens, err := s.model.(model.TextProcessor).Encode(part, i == 0)
 		if err != nil {
 			return nil, err
 		}

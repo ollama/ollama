@@ -973,7 +973,7 @@ func (s *llmServer) Tokenize(ctx context.Context, content string) ([]int, error)
 		return s.llamaModel.Tokenize(content, false, true)
 	}
 	if s.textProcessor != nil {
-		tokens, err := s.textProcessor.Encode(content)
+		tokens, err := s.textProcessor.Encode(content, false)
 		if err != nil {
 			return nil, err
 		}
