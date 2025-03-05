@@ -24,7 +24,6 @@ type Backend interface {
 	Config() Config
 	Get(name string) Tensor
 	NewContext() Context
-	SystemInfo() string
 }
 
 // BackendCacheConfig should be implemented by backends that need special output

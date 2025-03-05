@@ -75,7 +75,7 @@ Here are some example models that can be downloaded:
 | Code Llama         | 7B         | 3.8GB | `ollama run codellama`           |
 | Llama 2 Uncensored | 7B         | 3.8GB | `ollama run llama2-uncensored`   |
 | LLaVA              | 7B         | 4.5GB | `ollama run llava`               |
-| Solar              | 10.7B      | 6.1GB | `ollama run solar`               |
+| Granite-3.2         | 8B         | 4.9GB | `ollama run granite3.2`          |
 
 > [!NOTE]
 > You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
@@ -513,6 +513,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Maid](https://github.com/Mobile-Artificial-Intelligence/maid)
 - [Ollama App](https://github.com/JHubi1/ollama-app) (Modern and easy-to-use multi-platform client for Ollama)
 - [ConfiChat](https://github.com/1runeberg/confichat) (Lightweight, standalone, multi-platform, and privacy focused LLM chat interface with optional encryption)
+- [Ollama Android Chat](https://github.com/sunshine0523/OllamaServer) (No need for Termux, start the Ollama service with one click on an Android device)
 - [Reins](https://github.com/ibrahimcetin/reins) (Easily tweak parameters, customize system prompts per chat, and enhance your AI experiments with reasoning model support.)
 
 ### Extensions & Plugins

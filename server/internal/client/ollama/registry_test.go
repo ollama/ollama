@@ -608,7 +608,7 @@ func TestInsecureSkipVerify(t *testing.T) {
 	url := fmt.Sprintf("https://%s/%s", s.Listener.Addr(), name)
 	_, err := rc.Resolve(t.Context(), url)
 	if err == nil || !strings.Contains(err.Error(), "failed to verify") {
-		t.Errorf("err = %v; want cert verifiction failure", err)
+		t.Errorf("err = %v; want cert verification failure", err)
 	}
 
 	url = fmt.Sprintf("https+insecure://%s/%s", s.Listener.Addr(), name)
