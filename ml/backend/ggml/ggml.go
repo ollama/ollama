@@ -44,13 +44,13 @@ type Backend struct {
 	tensors map[string]*C.struct_ggml_tensor
 
 	// input is the backend used for inputs
-	input *C.struct_ggml_backend
+	input *C.struct_ggml_backend_buffer_type
 
 	// output is the backend used for outputs
-	output *C.struct_ggml_backend
+	output *C.struct_ggml_backend_buffer_type
 
 	// layers is the backend used for repeating layers
-	layers map[int]*C.struct_ggml_backend
+	layers map[int]*C.struct_ggml_backend_buffer_type
 
 	flashAttention bool
 
@@ -83,7 +83,10 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 	for _, d := range devices() {
 		switch C.ggml_backend_dev_type(d) {
 		case C.GGML_BACKEND_DEVICE_TYPE_CPU:
-			cpus = append(cpus, d)
+			if len(cpus) == 0 {
+				// only the first cpu device should be used
+				cpus = append(cpus, d)
+			}
 		case C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
 			accels = append(accels, d)
 		case C.GGML_BACKEND_DEVICE_TYPE_GPU:
@@ -324,25 +327,25 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 		return nil, err
 	}
 
-	// map devices to backends so tensors created post initialization can be assigned to the correct device
-	deviceBackends := make(map[*C.struct_ggml_backend_device]*C.struct_ggml_backend)
+	// map devices to backend buffer types so new tensors can be assigned to the correct device
+	deviceBufferTypes := make(map[*C.struct_ggml_backend_device]*C.struct_ggml_backend_buffer_type)
 
 	// create backends and buffer types used for the compute graph scheduler
 	var schedBackends []*C.struct_ggml_backend
 	var schedBufts []*C.struct_ggml_backend_buffer_type
 	for _, d := range append(gpus, append(accels, cpus...)...) {
 		b := C.ggml_backend_dev_init(d, nil)
-		schedBackends = append(schedBackends, b)
-		deviceBackends[d] = b
-
 		bt := C.ggml_backend_get_default_buffer_type(b)
-		// use the first gpu host buffer type for gpu if possible
 		if d := C.ggml_backend_get_device(b); C.ggml_backend_dev_type(d) == C.GGML_BACKEND_DEVICE_TYPE_CPU && len(gpus) > 0 {
-			if hbt := C.ggml_backend_dev_host_buffer_type(d); hbt != nil {
+			// use the first gpu host buffer type for gpu if possible
+			if hbt := C.ggml_backend_dev_host_buffer_type(gpus[0]); hbt != nil {
 				bt = hbt
 			}
 		}
 
+		deviceBufferTypes[d] = bt
+
+		schedBackends = append(schedBackends, b)
 		schedBufts = append(schedBufts, bt)
 
 		slog.Info("compute graph", "backend", C.GoString(C.ggml_backend_name(b)), "buffer_type", C.GoString(C.ggml_backend_buft_name(bt)))
@@ -365,12 +368,12 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 			C.size_t(maxGraphNodes),
 			true,
 		),
-		input:  deviceBackends[input.d],
-		output: deviceBackends[output.d],
-		layers: func() map[int]*C.struct_ggml_backend {
-			m := make(map[int]*C.struct_ggml_backend)
+		input:  deviceBufferTypes[input.d],
+		output: deviceBufferTypes[output.d],
+		layers: func() map[int]*C.struct_ggml_backend_buffer_type {
+			m := make(map[int]*C.struct_ggml_backend_buffer_type)
 			for i, layer := range layers {
-				m[i] = deviceBackends[layer.d]
+				m[i] = deviceBufferTypes[layer.d]
 			}
 			return m
 		}(),
@@ -401,13 +404,12 @@ func (b *Backend) NewContext() ml.Context {
 func (b *Backend) NewContextSize(n int) ml.Context {
 	n = min(n, b.maxGraphNodes)
 	return &Context{
-		b: b,
+		b:             b,
+		maxGraphNodes: n,
 		ctx: C.ggml_init(C.struct_ggml_init_params{
 			mem_size: C.size_t(n)*C.ggml_tensor_overhead() + C.ggml_graph_overhead_custom(C.size_t(n), false),
 			no_alloc: true,
 		}),
-		backend:       C.ggml_backend_sched_get_backend(b.sched, 0),
-		maxGraphNodes: n,
 	}
 }
 
@@ -425,8 +427,8 @@ type Context struct {
 	ctx   *C.struct_ggml_context
 	graph *C.struct_ggml_cgraph
 
-	// backend is the backend used for new tensors
-	backend *C.struct_ggml_backend
+	// buft is the buffer type used for new tensors
+	buft *C.struct_ggml_backend_buffer_type
 
 	// maxGraphNodes is the maximum allowed number of graph nodes in this context
 	maxGraphNodes int
@@ -437,7 +439,7 @@ func (c Context) Input() ml.Context {
 		return &Context{
 			b:             c.b,
 			ctx:           c.ctx,
-			backend:       c.b.input,
+			buft:          c.b.input,
 			maxGraphNodes: c.maxGraphNodes,
 		}
 	}
@@ -450,7 +452,7 @@ func (c Context) Output() ml.Context {
 		return &Context{
 			b:             c.b,
 			ctx:           c.ctx,
-			backend:       c.b.output,
+			buft:          c.b.output,
 			maxGraphNodes: c.maxGraphNodes,
 		}
 	}
@@ -459,11 +461,11 @@ func (c Context) Output() ml.Context {
 }
 
 func (c Context) Layer(i int) ml.Context {
-	if backend, ok := c.b.layers[i]; ok {
+	if buft, ok := c.b.layers[i]; ok {
 		return &Context{
 			b:             c.b,
 			ctx:           c.ctx,
-			backend:       backend,
+			buft:          buft,
 			maxGraphNodes: c.maxGraphNodes,
 		}
 	}
@@ -516,6 +518,10 @@ func shapeToGGML(shape []int) *C.int64_t {
 }
 
 func (c Context) newTensor(dtype ml.DType, shape []int) ml.Tensor {
+	if c.buft == nil {
+		panic("set Input, Output, or Layer before creating tensors")
+	}
+
 	var cdtype uint32
 	switch dtype {
 	case ml.DTypeF32:
@@ -542,7 +548,7 @@ func (c Context) newTensor(dtype ml.DType, shape []int) ml.Tensor {
 	}
 
 	t := C.ggml_new_tensor(c.ctx, cdtype, C.int(len(shape)), shapeToGGML(shape))
-	b := C.ggml_backend_alloc_buffer(c.backend, C.ggml_nbytes(t))
+	b := C.ggml_backend_buft_alloc_buffer(c.buft, C.ggml_nbytes(t))
 	C.ggml_backend_tensor_alloc(b, t, C.ggml_backend_buffer_get_base(b))
 	return &Tensor{b: c.b, t: t}
 }
