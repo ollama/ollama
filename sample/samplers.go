@@ -2,7 +2,7 @@ package sample
 
 import (
 	"errors"
-	"math/rand"
+	"math/rand/v2"
 )
 
 // Sampler is not thread-safe. Each goroutine should have its own instance.
@@ -23,13 +23,13 @@ type tokenSliceInfo struct {
 }
 
 type weighted struct {
-	r          float32
-	transforms []Transform
+	rng        *rand.Rand
+	transforms []transform
 }
 
-func Weighted(r float32, transforms ...Transform) Sampler {
+func Weighted(rng *rand.Rand, transforms ...transform) Sampler {
 	return &weighted{
-		r:          r,
+		rng:        rng,
 		transforms: transforms,
 	}
 }
@@ -50,13 +50,19 @@ func (s *weighted) Sample(logits []float32) (int32, error) {
 		return -1, errors.New("no valid logits found for weighted sampling")
 	}
 
-	s.r *= tokensInfo.sum
+	var r float32
+	if s.rng != nil {
+		r = s.rng.Float32()
+	} else {
+		r = rand.Float32()
+	}
+	r *= tokensInfo.sum
 
 	// Binary search for the selected index
 	left, right := 0, len(tokensInfo.tokens)-1
 	for left < right {
 		mid := (left + right) / 2
-		if tokensInfo.tokens[mid].prob < s.r {
+		if tokensInfo.tokens[mid].prob < r {
 			left = mid + 1
 		} else {
 			right = mid
@@ -96,8 +102,8 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 		return Greedy(), nil
 	}
 
-	transforms := make([]Transform, 0, 4)
-	if topK >= 0 {
+	transforms := []transform{}
+	if topK > 0 {
 		transforms = append(transforms, TopK(topK))
 	} else {
 		transforms = append(transforms, sortTokens{})
@@ -107,6 +113,7 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 		return nil, errors.New("temperature must be between 0 and 2")
 	}
 
+	// tokens must be sorted by logits before next steps
 	transforms = append(transforms, Temperature(temperature), softmax{})
 
 	if topP != 0 {
@@ -123,23 +130,11 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 		transforms = append(transforms, MinP(minP))
 	}
 
-	if len(transforms) == 0 {
-		return nil, errors.New("at least one transform is required")
+	var rng *rand.Rand
+	if seed != -1 {
+		bits := uint64(float64(seed) * float64(1<<32))
+		rng = rand.New(rand.NewPCG(bits, bits))
 	}
 
-	var seed64 *int64
-	if seed != 0 {
-		s := int64(seed)
-		seed64 = &s
-	}
-
-	var r float32
-	if seed64 == nil {
-		r = rand.Float32()
-	} else {
-		rng := rand.New(rand.NewSource(*seed64))
-		r = rng.Float32()
-	}
-
-	return Weighted(r, transforms...), nil
+	return Weighted(rng, transforms...), nil
 }

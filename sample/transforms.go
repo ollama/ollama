@@ -5,7 +5,7 @@ import (
 	"slices"
 )
 
-type Transform interface {
+type transform interface {
 	Apply(tokenSliceInfo) tokenSliceInfo
 }
 

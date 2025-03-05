@@ -10,47 +10,47 @@ import (
 // with various input sizes and configurations
 func BenchmarkWeightedSampler(b *testing.B) {
 	// Different sizes of logits to test
-	// sizes := []int{10, 100, 1000, 10000}
+	sizes := []int{10, 100, 1000, 10000}
 
-	// // Different seed values to test
+	// Different seed values to test
 	seedValue := float32(42)
 
-	// for _, size := range sizes {
-	// 	b.Run(fmt.Sprintf("Size %d", size), func(b *testing.B) {
-	// 		// Create logits with random values
-	// 		logits := make([]float32, size)
-	// 		for i := range logits {
-	// 			logits[i] = float32(rand.Float64()*10 - 5) // values between -5 and 5
-	// 		}
+	for _, size := range sizes {
+		b.Run(fmt.Sprintf("Size %d", size), func(b *testing.B) {
+			// Create logits with random values
+			logits := make([]float32, size)
+			for i := range logits {
+				logits[i] = float32(rand.Float64()*10 - 5) // values between -5 and 5
+			}
 
-	// 		// Initialize sampler with seed
-	// 		sampler := Weighted(seedValue)
+			// Initialize sampler with seed
+			sampler := Weighted(seedValue)
 
-	// 		// Reset timer before the actual benchmark
-	// 		b.ResetTimer()
+			// Reset timer before the actual benchmark
+			b.ResetTimer()
 
-	// 		// Run the benchmark
-	// 		for i := 0; i < b.N; i++ {
-	// 			_, err := sampler.Sample(logits)
-	// 			if err != nil {
-	// 				b.Fatalf("Sampling failed: %v", err)
-	// 			}
-	// 		}
-	// 	})
-	// }
+			// Run the benchmark
+			for i := 0; i < b.N; i++ {
+				_, err := sampler.Sample(logits)
+				if err != nil {
+					b.Fatalf("Sampling failed: %v", err)
+				}
+			}
+		})
+	}
 
 	// Test with different transforms
 	transforms := []struct {
 		name      string
 		transform []Transform
 	}{
-		// {"NoTransform", []Transform{}},
-		// {"Temperature", []Transform{Temperature(0.8)}},
-		// {"Softmax2", []Transform{softmax{}}},
-		// {"TopK", []Transform{TopK(50)}},
-		// {"TopP", []Transform{TopP(0.9)}},
-		// {"MinP", []Transform{MinP(0.05)}},
-		{"Combined", []Transform{TopK(50), Temperature(0.8), softmax{}, TopP(0.9), MinP(0.05)}},
+		{"NoTransform", []Transform{}},
+		{"Temperature", []Transform{Temperature(0.8)}},
+		{"Softmax", []Transform{softmax{}}},
+		{"SortTokens", []Transform{sortTokens{}}},
+		{"TopK", []Transform{TopK(50)}},
+		{"TopP", []Transform{TopP(0.9)}},
+		{"MinP", []Transform{MinP(0.05)}},
 	}
 
 	// Fixed size for transform tests
@@ -74,6 +74,21 @@ func BenchmarkWeightedSampler(b *testing.B) {
 			}
 		})
 	}
+
+	// Test with combined transforms separately
+	b.Run("TransformCombined", func(b *testing.B) {
+		combinedTransforms := []Transform{TopK(50), Temperature(0.8), softmax{}, TopP(0.9), MinP(0.05)}
+		sampler := Weighted(seedValue, combinedTransforms...)
+
+		b.ResetTimer()
+
+		for i := 0; i < b.N; i++ {
+			_, err := sampler.Sample(logits)
+			if err != nil {
+				b.Fatalf("Sampling failed: %v", err)
+			}
+		}
+	})
 }
 
 // BenchmarkGreedySampler tests the performance of the greedy sampler
