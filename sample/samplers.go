@@ -69,7 +69,7 @@ func (s *weighted) Sample(logits []float32) (int32, error) {
 		}
 	}
 
-	return int32(tokensInfo.tokens[left].id), nil
+	return tokensInfo.tokens[left].id, nil
 }
 
 type greedy struct{}
