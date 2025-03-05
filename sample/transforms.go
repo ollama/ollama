@@ -143,13 +143,13 @@ func (p MinP) Apply(ts tokenSliceInfo) tokenSliceInfo {
 type sortTokens struct{}
 
 func (s sortTokens) Apply(ts tokenSliceInfo) tokenSliceInfo {
-	fastSort(ts.tokens)
+	countingSort(ts.tokens)
 	ts.sorted = true
 	return ts
 }
 
 // Counting sort
-func fastSort(tokens []tokenInfo) {
+func countingSort(tokens []tokenInfo) {
 	if len(tokens) <= 1 {
 		return
 	}
@@ -178,7 +178,8 @@ func fastSort(tokens []tokenInfo) {
 	for _, t := range tokens {
 		// Map to [0, maxInt] range
 		score := uint32((t.logit - minLogit) * float32(maxInt) / logitRange)
-		if score > maxInt { // Handle float precision edge cases
+		// Handle float precision edge cases
+		if score > maxInt {
 			score = maxInt
 		}
 		counts[score>>16]++

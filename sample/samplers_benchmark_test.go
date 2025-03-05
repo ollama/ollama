@@ -13,7 +13,6 @@ func BenchmarkWeightedSampler(b *testing.B) {
 	sizes := []int{10, 100, 1000, 10000}
 
 	// Different seed values to test
-	seedValue := float32(42)
 
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("Size %d", size), func(b *testing.B) {
@@ -24,7 +23,12 @@ func BenchmarkWeightedSampler(b *testing.B) {
 			}
 
 			// Initialize sampler with seed
-			sampler := Weighted(seedValue)
+			// sampler := Weighted(seedValue)
+			sampler, err := NewSampler(0.8, 0, 0, 0, 42)
+			if err != nil {
+				b.Error(err)
+				return
+			}
 
 			// Reset timer before the actual benchmark
 			b.ResetTimer()
@@ -39,30 +43,38 @@ func BenchmarkWeightedSampler(b *testing.B) {
 		})
 	}
 
-	// Test with different transforms
-	transforms := []struct {
-		name      string
-		transform []Transform
+	// Test with different sampling configurations
+	configs := []struct {
+		name        string
+		temperature float32
+		topK        int
+		topP        float32
+		minP        float32
+		seed        int
 	}{
-		{"NoTransform", []Transform{}},
-		{"Temperature", []Transform{Temperature(0.8)}},
-		{"Softmax", []Transform{softmax{}}},
-		{"SortTokens", []Transform{sortTokens{}}},
-		{"TopK", []Transform{TopK(50)}},
-		{"TopP", []Transform{TopP(0.9)}},
-		{"MinP", []Transform{MinP(0.05)}},
+		{"Greedy", 0, -1, 0, 0, -1},
+		{"Temperature", 0.8, -1, 0, 0, -1},
+		{"TopK", 0.8, 50, 0, 0, -1},
+		{"TopP", 0.8, -1, 0.9, 0, -1},
+		{"MinP", 0.8, -1, 0, 0.05, -1},
+		{"WithSeed", 0.8, 50, 0, 0, 42},
 	}
 
-	// Fixed size for transform tests
+	// Fixed size for configuration tests
 	size := 128000
 	logits := make([]float32, size)
 	for i := range logits {
 		logits[i] = float32(rand.Float64()*10 - 5)
 	}
 
-	for _, tc := range transforms {
-		b.Run("Transform"+tc.name, func(b *testing.B) {
-			sampler := Weighted(seedValue, tc.transform...)
+	for _, tc := range configs {
+		b.Run("Config"+tc.name, func(b *testing.B) {
+			sampler, err := NewSampler(tc.temperature, tc.topK, tc.topP, tc.minP, tc.seed)
+			if err != nil {
+				b.Error(err)
+				return
+			}
+			sampler.Sample(logits)
 
 			b.ResetTimer()
 
@@ -77,8 +89,11 @@ func BenchmarkWeightedSampler(b *testing.B) {
 
 	// Test with combined transforms separately
 	b.Run("TransformCombined", func(b *testing.B) {
-		combinedTransforms := []Transform{TopK(50), Temperature(0.8), softmax{}, TopP(0.9), MinP(0.05)}
-		sampler := Weighted(seedValue, combinedTransforms...)
+		sampler, err := NewSampler(0.8, 50, 0.9, 0.05, 42)
+		if err != nil {
+			b.Error(err)
+			return
+		}
 
 		b.ResetTimer()
 

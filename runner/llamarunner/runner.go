@@ -624,17 +624,17 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	samplingParams.TopK = req.TopK
 	samplingParams.TopP = req.TopP
 	samplingParams.MinP = req.MinP
-	samplingParams.TypicalP = req.TypicalP
+	// samplingParams.TypicalP = req.TypicalP
 	samplingParams.Temp = req.Temperature
-	samplingParams.RepeatLastN = req.RepeatLastN
-	samplingParams.PenaltyRepeat = req.RepeatPenalty
-	samplingParams.PenaltyFreq = req.FrequencyPenalty
-	samplingParams.PenaltyPresent = req.PresencePenalty
-	samplingParams.Mirostat = req.Mirostat
-	samplingParams.MirostatTau = req.MirostatTau
-	samplingParams.MirostatEta = req.MirostatEta
+	// samplingParams.RepeatLastN = req.RepeatLastN
+	// samplingParams.PenaltyRepeat = req.RepeatPenalty
+	// samplingParams.PenaltyFreq = req.FrequencyPenalty
+	// samplingParams.PenaltyPresent = req.PresencePenalty
+	// samplingParams.Mirostat = req.Mirostat
+	// samplingParams.MirostatTau = req.MirostatTau
+	// samplingParams.MirostatEta = req.MirostatEta
 	samplingParams.Seed = uint32(req.Seed)
-	samplingParams.Grammar = req.Grammar
+	// samplingParams.Grammar = req.Grammar
 
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
 		numPredict:     req.NumPredict,
