@@ -110,7 +110,6 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	status := "transferring model data"
 	spinner := progress.NewSpinner(status)
 	p.Add(status, spinner)
-	defer p.Stop()
 
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
