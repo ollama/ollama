@@ -78,7 +78,7 @@ Here are some example models that can be downloaded:
 | Granite-3.2         | 8B         | 4.9GB | `ollama run granite3.2`          |
 
 > [!NOTE]
-> You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
+> You should have at least 8 GB of RAM available to run the 9B models, 12 GB to run the 14B models, and 32 GB to run the 33B models.
 
 ## Customize a model
 
