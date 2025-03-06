@@ -81,9 +81,11 @@ help you keep up to date.
 
 If you'd like to install or integrate Ollama as a service, a standalone
 `ollama-windows-amd64.zip` zip file is available containing only the Ollama CLI
-and GPU library dependencies for Nvidia and AMD. This allows for embedding
-Ollama in existing applications, or running it as a system service via `ollama
-serve` with tools such as [NSSM](https://nssm.cc/).
+and GPU library dependencies for Nvidia.  If you have an AMD GPU, also download
+and extract the additional ROCm package `ollama-windows-amd64-rocm.zip` into the
+same directory.  This allows for embedding Ollama in existing applications, or
+running it as a system service via `ollama serve` with tools such as
+[NSSM](https://nssm.cc/). 
 
 > [!NOTE]  
 > If you are upgrading from a prior version, you should remove the old directories first.

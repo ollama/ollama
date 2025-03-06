@@ -45,9 +45,9 @@ import (
 
 // Errors
 var (
-	// ErrManifestNotFound is returned when a manifest is not found in the
+	// ErrModelNotFound is returned when a manifest is not found in the
 	// cache or registry.
-	ErrManifestNotFound = errors.New("manifest not found")
+	ErrModelNotFound = errors.New("model not found")
 
 	// ErrManifestInvalid is returned when a manifest found in a local or
 	// remote cache is invalid.
@@ -114,7 +114,18 @@ type Error struct {
 }
 
 func (e *Error) Error() string {
-	return fmt.Sprintf("registry responded with status %d: %s %s", e.Status, e.Code, e.Message)
+	var b strings.Builder
+	b.WriteString("registry responded with status ")
+	b.WriteString(strconv.Itoa(e.Status))
+	if e.Code != "" {
+		b.WriteString(": code ")
+		b.WriteString(e.Code)
+	}
+	if e.Message != "" {
+		b.WriteString(": ")
+		b.WriteString(e.Message)
+	}
+	return b.String()
 }
 
 func (e *Error) LogValue() slog.Value {
@@ -355,7 +366,7 @@ func (r *Registry) Push(ctx context.Context, name string, p *PushParams) error {
 				n.Model(),
 				l.Digest,
 			)
-			res, err := r.doOK(ctx, "POST", startURL, nil)
+			res, err := r.send(ctx, "POST", startURL, nil)
 			if err != nil {
 				return err
 			}
@@ -379,7 +390,7 @@ func (r *Registry) Push(ctx context.Context, name string, p *PushParams) error {
 			}
 			req.ContentLength = l.Size
 
-			res, err = doOK(r.client(), req)
+			res, err = sendRequest(r.client(), req)
 			if err == nil {
 				res.Body.Close()
 			}
@@ -399,7 +410,7 @@ func (r *Registry) Push(ctx context.Context, name string, p *PushParams) error {
 		n.Model(),
 		n.Tag(),
 	)
-	res, err := r.doOK(ctx, "PUT", path, bytes.NewReader(m.Data))
+	res, err := r.send(ctx, "PUT", path, bytes.NewReader(m.Data))
 	if err == nil {
 		res.Body.Close()
 	}
@@ -448,10 +459,15 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 
 	t := traceFromContext(ctx)
 
-	var g errgroup.Group
+	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(r.maxStreams())
 
-	for _, l := range m.Layers {
+	layers := m.Layers
+	if m.Config != nil && m.Config.Digest.IsValid() {
+		layers = append(layers, m.Config)
+	}
+
+	for _, l := range layers {
 		if exists(l) {
 			t.update(l, l.Size, ErrCached)
 			continue
@@ -468,7 +484,9 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 
 		if l.Size <= r.maxChunkingThreshold() {
 			g.Go(func() error {
-				res, err := doOK(r.client(), req)
+				// TODO(bmizerany): retry/backoff like below in
+				// the chunking case
+				res, err := sendRequest(r.client(), req)
 				if err != nil {
 					return err
 				}
@@ -494,19 +512,21 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 			// fire an initial request to get the final URL and
 			// then use that URL for the chunk requests.
 			req.Header.Set("Range", "bytes=0-0")
-			res, err := doOK(r.client(), req)
+			res, err := sendRequest(r.client(), req)
 			if err != nil {
 				return err
 			}
 			res.Body.Close()
 			req = res.Request.WithContext(req.Context())
 
-			streamNo := 0
-			tws := make([]*bufio.Writer, r.maxStreams()-1)
+			wp := writerPool{size: r.maxChunkSize()}
+
 			for chunk := range chunks.Of(l.Size, r.maxChunkSize()) {
+				if ctx.Err() != nil {
+					break
+				}
+
 				ticket := q.Take()
-				bufIdx := streamNo % len(tws)
-				streamNo++
 				g.Go(func() (err error) {
 					defer func() {
 						if err != nil {
@@ -520,23 +540,18 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 						if err != nil {
 							return err
 						}
-
 						err := func() error {
 							req := req.Clone(req.Context())
 							req.Header.Set("Range", fmt.Sprintf("bytes=%s", chunk))
-							res, err := doOK(r.client(), req)
+							res, err := sendRequest(r.client(), req)
 							if err != nil {
 								return err
 							}
 							defer res.Body.Close()
 
-							tw := tws[bufIdx]
-							if tw == nil {
-								tw = bufio.NewWriterSize(nil, int(r.maxChunkSize()))
-								tws[bufIdx] = tw
-							}
+							tw := wp.get()
 							tw.Reset(ticket)
-							defer tw.Reset(nil) // release ticket
+							defer wp.put(tw)
 
 							_, err = io.CopyN(tw, res.Body, chunk.Size())
 							if err != nil {
@@ -595,6 +610,9 @@ type Manifest struct {
 	Name   string   `json:"-"` // the canonical name of the model
 	Data   []byte   `json:"-"` // the raw data of the manifest
 	Layers []*Layer `json:"layers"`
+
+	// For legacy reasons, we still have to download the config layer.
+	Config *Layer `json:"config"`
 }
 
 var emptyDigest, _ = blob.ParseDigest("sha256:0000000000000000000000000000000000000000000000000000000000000000")
@@ -678,7 +696,7 @@ func (r *Registry) ResolveLocal(name string) (*Manifest, error) {
 	data, err := os.ReadFile(c.GetFile(d))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("%w: %s", ErrManifestNotFound, name)
+			return nil, fmt.Errorf("%w: %s", ErrModelNotFound, name)
 		}
 		return nil, err
 	}
@@ -701,7 +719,7 @@ func (r *Registry) Resolve(ctx context.Context, name string) (*Manifest, error) 
 		manifestURL = fmt.Sprintf("%s://%s/v2/%s/%s/blobs/%s", scheme, n.Host(), n.Namespace(), n.Model(), d)
 	}
 
-	res, err := r.doOK(ctx, "GET", manifestURL, nil)
+	res, err := r.send(ctx, "GET", manifestURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -726,7 +744,7 @@ func (r *Registry) client() *http.Client {
 }
 
 // newRequest constructs a new request, ready to use, with the given method,
-// url, and body, presigned with client Key and UserAgent.
+// url, and body, pre-signed with client [Key] and [UserAgent].
 func (r *Registry) newRequest(ctx context.Context, method, url string, body io.Reader) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
@@ -745,11 +763,17 @@ func (r *Registry) newRequest(ctx context.Context, method, url string, body io.R
 	return req, nil
 }
 
-// doOK makes a request with the given client and request, and returns the
+// sendRequest makes a request with the given client and request, and returns the
 // response if the status code is 200. If the status code is not 200, an Error
 // is parsed from the response body and returned. If any other error occurs, it
 // is returned.
-func doOK(c *http.Client, r *http.Request) (*http.Response, error) {
+func sendRequest(c *http.Client, r *http.Request) (_ *http.Response, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("request error %s: %w", r.URL, err)
+		}
+	}()
+
 	if r.URL.Scheme == "https+insecure" {
 		// TODO(bmizerany): clone client.Transport, set
 		// InsecureSkipVerify, etc.
@@ -792,20 +816,26 @@ func doOK(c *http.Client, r *http.Request) (*http.Response, error) {
 			// Use the raw body if we can't parse it as an error object.
 			re.Message = string(out)
 		}
+
+		// coerce MANIFEST_UNKNOWN to ErrManifestNotFound
+		if strings.EqualFold(re.Code, "MANIFEST_UNKNOWN") {
+			return nil, ErrModelNotFound
+		}
+
 		re.Status = res.StatusCode
 		return nil, &re
 	}
 	return res, nil
 }
 
-// doOK is a convenience method for making a request with newRequest and
-// passing it to doOK with r.client().
-func (r *Registry) doOK(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+// send is a convenience method for making a request with newRequest and
+// passing it to send with r.client().
+func (r *Registry) send(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
 	req, err := r.newRequest(ctx, method, path, body)
 	if err != nil {
 		return nil, err
 	}
-	return doOK(r.client(), req)
+	return sendRequest(r.client(), req)
 }
 
 // makeAuthToken creates an Ollama auth token for the given private key.
@@ -959,4 +989,29 @@ func splitExtended(s string) (scheme, name, digest string) {
 		s = s[:i]
 	}
 	return scheme, s, digest
+}
+
+type writerPool struct {
+	size int64 // set by the caller
+
+	mu sync.Mutex
+	ws []*bufio.Writer
+}
+
+func (p *writerPool) get() *bufio.Writer {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.ws) == 0 {
+		return bufio.NewWriterSize(nil, int(p.size))
+	}
+	w := p.ws[len(p.ws)-1]
+	p.ws = p.ws[:len(p.ws)-1]
+	return w
+}
+
+func (p *writerPool) put(w *bufio.Writer) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	w.Reset(nil)
+	p.ws = append(p.ws, w)
 }

@@ -42,6 +42,12 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
+func experimentEnabled(name string) bool {
+	return slices.Contains(strings.Split(os.Getenv("OLLAMA_EXPERIMENT"), ","), name)
+}
+
+var useClient2 = experimentEnabled("client2")
+
 var mode string = gin.DebugMode
 
 type Server struct {
@@ -1173,6 +1179,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.HEAD("/api/tags", s.ListHandler)
 	r.GET("/api/tags", s.ListHandler)
 	r.POST("/api/show", s.ShowHandler)
+	r.DELETE("/api/delete", s.DeleteHandler)
 
 	// Create
 	r.POST("/api/create", s.CreateHandler)
@@ -1194,16 +1201,19 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.GET("/v1/models", openai.ListMiddleware(), s.ListHandler)
 	r.GET("/v1/models/:model", openai.RetrieveMiddleware(), s.ShowHandler)
 
-	// wrap old with new
-	rs := &registry.Local{
-		Client:   rc,
-		Logger:   slog.Default(), // TODO(bmizerany): Take a logger, do not use slog.Default()
-		Fallback: r,
+	if rc != nil {
+		// wrap old with new
+		rs := &registry.Local{
+			Client:   rc,
+			Logger:   slog.Default(), // TODO(bmizerany): Take a logger, do not use slog.Default()
+			Fallback: r,
 
-		Prune: PruneLayers,
+			Prune: PruneLayers,
+		}
+		return rs, nil
 	}
 
-	return rs, nil
+	return r, nil
 }
 
 func Serve(ln net.Listener) error {
@@ -1258,15 +1268,20 @@ func Serve(ln net.Listener) error {
 
 	s := &Server{addr: ln.Addr()}
 
-	rc, err := ollama.DefaultRegistry()
-	if err != nil {
-		return err
+	var rc *ollama.Registry
+	if useClient2 {
+		var err error
+		rc, err = ollama.DefaultRegistry()
+		if err != nil {
+			return err
+		}
 	}
 
 	h, err := s.GenerateRoutes(rc)
 	if err != nil {
 		return err
 	}
+
 	http.Handle("/", h)
 
 	ctx, done := context.WithCancel(context.Background())
