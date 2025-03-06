@@ -12,7 +12,6 @@ func TestWeighted(t *testing.T) {
 		t.Error(err)
 		return
 	}
-	// sampler := Weighted(0, softmax{}, sortTokens{})
 	got, err := sampler.Sample(logits)
 	if err != nil {
 		t.Error(err)
@@ -23,8 +22,6 @@ func TestWeighted(t *testing.T) {
 		t.Errorf("index mismatch: want %d, got %d", want, got)
 	}
 
-	// Test with seed for deterministic sampling
-	// r := float32(0.5) // Use a fixed random value for deterministic sampling
 	logits = []float32{-100, -10, 0, 10}
 	sampler, err = NewSampler(0, 0, 0, 0, 0)
 	if err != nil {
@@ -173,11 +170,100 @@ func BenchmarkSample(b *testing.B) {
 	for name, s := range samplers {
 		b.Run(name, func(b *testing.B) {
 			b.ResetTimer()
-			for range b.N {
+			for b.Loop() {
 				if _, err := s.Sample(logits); err != nil {
 					b.Error(err)
 				}
 			}
 		})
+	}
+}
+
+func TestSeededSampling(t *testing.T) {
+	logits := []float32{-10, -5, 0, 5, 10}
+
+	// Create two samplers with the same seed
+	sampler1, err := NewSampler(0.8, 0, 0, 0, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sampler2, err := NewSampler(0.8, 0, 0, 0, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// They should produce the same sequence
+	for i := 0; i < 10; i++ {
+		got1, err := sampler1.Sample(logits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got2, err := sampler2.Sample(logits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got1 != got2 {
+			t.Errorf("iteration %d: samplers with same seed produced different results: %d != %d", i, got1, got2)
+		}
+	}
+
+	// Create two samplers with different seeds
+	sampler3, err := NewSampler(0.8, 0, 0, 0, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sampler4, err := NewSampler(0.8, 0, 0, 0, 43)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// They should produce different sequences
+	same := true
+	for i := 0; i < 10; i++ {
+		got3, err := sampler3.Sample(logits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got4, err := sampler4.Sample(logits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got3 != got4 {
+			same = false
+			break
+		}
+	}
+	if same {
+		t.Error("samplers with different seeds produced identical sequences")
+	}
+
+	// Create two samplers with seed -1 (non-deterministic)
+	sampler5, err := NewSampler(0.8, 0, 0, 0, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sampler6, err := NewSampler(0.8, 0, 0, 0, -1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// They should likely produce different sequences
+	same = true
+	for i := 0; i < 10; i++ {
+		got5, err := sampler5.Sample(logits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got6, err := sampler6.Sample(logits)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got5 != got6 {
+			same = false
+			break
+		}
+	}
+	if same {
+		t.Error("non-deterministic samplers produced identical sequences")
 	}
 }

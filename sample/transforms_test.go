@@ -45,7 +45,7 @@ func TestTemperature(t *testing.T) {
 func TestSoftmax(t *testing.T) {
 	input := []float64{-3, -2, -1, 0, 1, 2, 4}
 	ts := tokenSliceInfo{tokens: toTokenInfo(input)}
-	got := softmax{}.Apply(ts)
+	got := Softmax().Apply(ts)
 
 	// Check probabilities sum to 1
 	var sum float32
@@ -134,12 +134,12 @@ func BenchmarkTransform(b *testing.B) {
 		}
 	}
 
-	for name, tr := range transforms {
+	for name, t := range transforms {
 		b.Run(name, func(b *testing.B) {
 			ts := tokenSliceInfo{tokens: tokens}
 			b.ResetTimer()
-			for range b.N {
-				tr.Apply(ts)
+			for b.Loop() {
+				t.Apply(ts)
 			}
 		})
 	}

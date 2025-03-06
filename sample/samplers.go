@@ -58,7 +58,7 @@ func (s *weighted) Sample(logits []float32) (int32, error) {
 	}
 	r *= tokensInfo.sum
 
-	// Binary search for the selected index
+	// Binary search for the selected index as tokens are sorted by logits
 	left, right := 0, len(tokensInfo.tokens)-1
 	for left < right {
 		mid := (left + right) / 2
@@ -103,10 +103,11 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 	}
 
 	transforms := []transform{}
+	// Tokens are sorted by logits in TopK or SortTokens
 	if topK > 0 {
 		transforms = append(transforms, TopK(topK))
 	} else {
-		transforms = append(transforms, sortTokens{})
+		transforms = append(transforms, SortTokens())
 	}
 
 	if temperature < 0 || temperature > 2 {
@@ -114,7 +115,7 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 	}
 
 	// tokens must be sorted by logits before next steps
-	transforms = append(transforms, Temperature(temperature), softmax{})
+	transforms = append(transforms, Temperature(temperature), Softmax())
 
 	if topP != 0 {
 		if topP < 0 || topP >= 1 {
@@ -132,8 +133,9 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 
 	var rng *rand.Rand
 	if seed != -1 {
-		bits := uint64(float64(seed) * float64(1<<32))
-		rng = rand.New(rand.NewPCG(bits, bits))
+		seed1 := uint64(seed)
+		seed2 := uint64(seed) ^ 0x12345678 // XOR with a constant to get a different but deterministic value
+		rng = rand.New(rand.NewPCG(seed1, seed2))
 	}
 
 	return Weighted(rng, transforms...), nil

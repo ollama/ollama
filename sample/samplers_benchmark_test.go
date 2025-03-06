@@ -34,7 +34,7 @@ func BenchmarkWeightedSampler(b *testing.B) {
 			b.ResetTimer()
 
 			// Run the benchmark
-			for range b.N {
+			for b.Loop() {
 				_, err := sampler.Sample(logits)
 				if err != nil {
 					b.Fatalf("Sampling failed: %v", err)
@@ -78,7 +78,7 @@ func BenchmarkWeightedSampler(b *testing.B) {
 
 			b.ResetTimer()
 
-			for range b.N {
+			for b.Loop() {
 				_, err := sampler.Sample(logits)
 				if err != nil {
 					b.Fatalf("Sampling failed: %v", err)
@@ -97,7 +97,7 @@ func BenchmarkWeightedSampler(b *testing.B) {
 
 		b.ResetTimer()
 
-		for range b.N {
+		for b.Loop() {
 			_, err := sampler.Sample(logits)
 			if err != nil {
 				b.Fatalf("Sampling failed: %v", err)
@@ -127,7 +127,7 @@ func BenchmarkGreedySampler(b *testing.B) {
 			b.ResetTimer()
 
 			// Run the benchmark
-			for range b.N {
+			for b.Loop() {
 				_, err := sampler.Sample(logits)
 				if err != nil {
 					b.Fatalf("Sampling failed: %v", err)

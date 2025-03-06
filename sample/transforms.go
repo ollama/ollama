@@ -11,6 +11,10 @@ type transform interface {
 
 type softmax struct{}
 
+func Softmax() transform {
+	return softmax{}
+}
+
 func (s softmax) Apply(ts tokenSliceInfo) tokenSliceInfo {
 	var sum float32
 	for i, v := range ts.tokens {
@@ -64,11 +68,11 @@ func siftDown(data []tokenInfo, start, end int) {
 		if child+1 < end && data[child+1].logit < data[child].logit {
 			child++
 		}
-		// If root is already smaller than children, we're done
+		// Exit if root is already smaller than children
 		if data[root].logit <= data[child].logit {
 			break
 		}
-		// Otherwise swap with smaller child and continue
+		// Swap with smaller child and continue
 		data[root], data[child] = data[child], data[root]
 		root = child
 	}
@@ -80,6 +84,7 @@ func (k TopK) Apply(ts tokenSliceInfo) tokenSliceInfo {
 		return ts
 	}
 
+	// Heapify + siftDown - O(nlog(k))
 	// Build min-heap of first k elements
 	heap := ts.tokens[:kk]
 	for i := kk/2 - 1; i >= 0; i-- {
@@ -104,6 +109,7 @@ func (k TopK) Apply(ts tokenSliceInfo) tokenSliceInfo {
 type TopP float64
 
 func (p TopP) Apply(ts tokenSliceInfo) tokenSliceInfo {
+	// Sorting is required prior to applying this transform
 	// Find cutoff index where cumulative sum exceeds p
 	var sum float32
 	for i, t := range ts.tokens {
@@ -142,6 +148,10 @@ func (p MinP) Apply(ts tokenSliceInfo) tokenSliceInfo {
 
 type sortTokens struct{}
 
+func SortTokens() transform {
+	return sortTokens{}
+}
+
 func (s sortTokens) Apply(ts tokenSliceInfo) tokenSliceInfo {
 	countingSort(ts.tokens)
 	ts.sorted = true
@@ -177,11 +187,7 @@ func countingSort(tokens []tokenInfo) {
 	// First pass: count frequencies
 	for _, t := range tokens {
 		// Map to [0, maxInt] range
-		score := uint32((t.logit - minLogit) * float32(maxInt) / logitRange)
-		// Handle float precision edge cases
-		if score > maxInt {
-			score = maxInt
-		}
+		score := min(uint32((t.logit-minLogit)*float32(maxInt)/logitRange), maxInt)
 		counts[score>>16]++
 	}
 
@@ -199,10 +205,7 @@ func countingSort(tokens []tokenInfo) {
 	countsCopy := counts
 
 	for i, t := range tokens {
-		score := uint32((t.logit - minLogit) * float32(maxInt) / logitRange)
-		if score > maxInt {
-			score = maxInt
-		}
+		score := min(uint32((t.logit-minLogit)*float32(maxInt)/logitRange), maxInt)
 
 		pos := countsCopy[score>>16]
 		countsCopy[score>>16]++
