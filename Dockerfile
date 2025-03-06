@@ -6,6 +6,7 @@ ARG ROCMVERSION=6.3.3
 ARG JETPACK5VERSION=r35.4.1
 ARG JETPACK6VERSION=r36.4.0
 ARG CMAKEVERSION=3.31.2
+ARG MUSAVERSION=rc3.1.1
 
 # CUDA v11 requires gcc v10.  v10.3 has regressions, so the rockylinux 8.5 AppStream has the latest compatible version
 FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCMVERSION}-complete AS base-amd64
@@ -110,6 +111,25 @@ COPY --from=jetpack-6 dist/lib/ollama/cuda_v12 /lib/ollama/cuda_jetpack6
 FROM scratch AS rocm
 COPY --from=rocm-6 dist/lib/ollama/rocm /lib/ollama/rocm
 
+# Moore Threads (MUSA) build stages
+FROM --platform=linux/amd64 mthreads/musa:${MUSAVERSION}-devel-ubuntu22.04 AS musa-3
+RUN apt-get update \
+    && apt-get install -y curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+ARG CMAKEVERSION
+RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
+COPY CMakeLists.txt CMakePresets.json .
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+ENV LDFLAGS=-s
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'MUSA 3' \
+        && cmake --build --parallel --preset 'MUSA 3' \
+        && cmake --install build --component MUSA --strip --parallel 8
+
+FROM scratch AS musa
+COPY --from=musa-3 dist/lib/ollama/musa_v3 /lib/ollama/musa_v3
+
 FROM ${FLAVOR} AS archive
 COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
@@ -119,12 +139,21 @@ RUN apt-get update \
     && apt-get install -y ca-certificates \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+ARG FLAVOR
+RUN if [ "$FLAVOR" = "musa" ]; then \
+    apt-get update \
+    && apt-get install -y libelf1 libnuma1 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*; \
+fi
 COPY --from=archive /bin /usr/bin
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 COPY --from=archive /lib/ollama /usr/lib/ollama
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
+ENV MTHREADS_DRIVER_CAPABILITIES=compute,utility
+ENV MTHREADS_VISIBLE_DEVICES=all
 ENV OLLAMA_HOST=0.0.0.0:11434
 EXPOSE 11434
 ENTRYPOINT ["/bin/ollama"]
