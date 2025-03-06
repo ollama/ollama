@@ -52,6 +52,10 @@ jobs:
             container: rocm/dev-ubuntu-22.04:6.1.2
             extra-packages: rocm-libs
             flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
+          - preset: MUSA
+            container: mthreads/musa:rc3.1.1-devel-ubuntu22.04
+            extra-packages: curl git
+            flags: '-DCMAKE_MUSA_ARCHITECTURES=22'
     runs-on: linux
     container: ${{ matrix.container }}
     steps:
