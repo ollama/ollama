@@ -35,6 +35,7 @@ var (
 	errCapabilityCompletion = errors.New("completion")
 	errCapabilityTools      = errors.New("tools")
 	errCapabilityInsert     = errors.New("insert")
+	errInsecureProtocol     = errors.New("insecure protocol http")
 )
 
 type Capability string
@@ -479,7 +480,7 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	fn(api.ProgressResponse{Status: "retrieving manifest"})
 
 	if mp.ProtocolScheme == "http" && !regOpts.Insecure {
-		return errors.New("insecure protocol http")
+		return errInsecureProtocol
 	}
 
 	manifest, _, err := GetManifest(mp)
@@ -543,7 +544,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	}
 
 	if mp.ProtocolScheme == "http" && !regOpts.Insecure {
-		return errors.New("insecure protocol http")
+		return errInsecureProtocol
 	}
 
 	fn(api.ProgressResponse{Status: "pulling manifest"})
