@@ -915,7 +915,6 @@ func Execute(args []string) error {
 	level := slog.LevelInfo
 	if *verbose {
 		level = slog.LevelDebug
-		llama.EnableDebug()
 	}
 	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level:     level,
@@ -932,7 +931,6 @@ func Execute(args []string) error {
 	slog.Info("starting go runner")
 
 	llama.BackendInit()
-	slog.Info("system", "info", llama.PrintSystemInfo(), "threads", *threads)
 
 	server := &Server{
 		batchSize: *batchSize,
@@ -944,12 +942,11 @@ func Execute(args []string) error {
 
 	var tensorSplitFloats []float32
 	if *tensorSplit != "" {
-		stringFloats := regexp.MustCompile(",").Split(*tensorSplit, -1)
-
-		tensorSplitFloats = make([]float32, 0, len(stringFloats))
-		for _, s := range stringFloats {
+		splits := strings.Split(*tensorSplit, ",")
+		tensorSplitFloats = make([]float32, len(splits))
+		for i, s := range splits {
 			f, _ := strconv.ParseFloat(s, 32)
-			tensorSplitFloats = append(tensorSplitFloats, float32(f))
+			tensorSplitFloats[i] = float32(f)
 		}
 	}
 
@@ -970,13 +967,14 @@ func Execute(args []string) error {
 	server.cond = sync.NewCond(&server.mu)
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	go server.run(ctx)
 
 	addr := "127.0.0.1:" + strconv.Itoa(*port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		fmt.Println("Listen error:", err)
-		cancel()
 		return err
 	}
 	defer listener.Close()
@@ -996,6 +994,5 @@ func Execute(args []string) error {
 		return err
 	}
 
-	cancel()
 	return nil
 }

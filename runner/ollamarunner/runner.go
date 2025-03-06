@@ -575,23 +575,11 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sampler, err := sample.NewSampler(
-		req.Temperature,
-		req.TopK,
-		req.TopP,
-		req.MinP,
-		req.Seed,
-	)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create sampler: %v", err), http.StatusInternalServerError)
-		return
-	}
-
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
 		numPredict: req.NumPredict,
 		stop:       req.Stop,
 		numKeep:    int32(req.NumKeep),
-		sampler:    sampler,
+		sampler:    sample.Greedy(), // TODO: add support for different samplers when performance is optimized
 		embedding:  false,
 	})
 	if err != nil {
@@ -798,8 +786,6 @@ func (s *Server) loadModel(
 		panic(err)
 	}
 
-	slog.Info("system", "info", s.model.Backend().SystemInfo(), "threads", params.NumThreads)
-
 	// TODO(jessegross): LoRA loading
 	if lpath.String() != "" {
 		panic("loras are not yet implemented")
@@ -830,7 +816,7 @@ func Execute(args []string) error {
 	batchSize := fs.Int("batch-size", 512, "Batch size")
 	numGPULayers := fs.Int("n-gpu-layers", 0, "Number of layers to offload to GPU")
 	mainGPU := fs.Int("main-gpu", 0, "Main GPU")
-	_ = fs.Bool("flash-attn", false, "Enable flash attention")
+	flashAttention := fs.Bool("flash-attn", false, "Enable flash attention")
 	kvSize := fs.Int("ctx-size", 2048, "Context (or KV cache) size")
 	kvCacheType := fs.String("kv-cache-type", "", "quantization type for KV cache (default: f16)")
 	port := fs.Int("port", 8080, "Port to expose the server on")
@@ -875,26 +861,25 @@ func Execute(args []string) error {
 	}
 
 	// TODO(jessegross): Parameters that need to be implemented:
-	//	flash-attn
 	//	no-mmap
 	//	mlock
 
 	var tensorSplitFloats []float32
 	if *tensorSplit != "" {
-		stringFloats := regexp.MustCompile(",").Split(*tensorSplit, -1)
-
-		tensorSplitFloats = make([]float32, 0, len(stringFloats))
-		for _, s := range stringFloats {
+		splits := strings.Split(*tensorSplit, ",")
+		tensorSplitFloats = make([]float32, len(splits))
+		for i, s := range splits {
 			f, _ := strconv.ParseFloat(s, 32)
-			tensorSplitFloats = append(tensorSplitFloats, float32(f))
+			tensorSplitFloats[i] = float32(f)
 		}
 	}
 
 	params := ml.BackendParams{
-		NumThreads:   *threads,
-		NumGPULayers: *numGPULayers,
-		MainGPU:      *mainGPU,
-		TensorSplit:  tensorSplitFloats,
+		NumThreads:     *threads,
+		NumGPULayers:   *numGPULayers,
+		MainGPU:        *mainGPU,
+		TensorSplit:    tensorSplitFloats,
+		FlashAttention: *flashAttention,
 	}
 
 	server.ready.Add(1)
@@ -903,13 +888,14 @@ func Execute(args []string) error {
 	server.cond = sync.NewCond(&server.mu)
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	go server.run(ctx)
 
 	addr := "127.0.0.1:" + strconv.Itoa(*port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		fmt.Println("Listen error:", err)
-		cancel()
 		return err
 	}
 	defer listener.Close()
@@ -929,6 +915,5 @@ func Execute(args []string) error {
 		return err
 	}
 
-	cancel()
 	return nil
 }

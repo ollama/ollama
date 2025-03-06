@@ -1,6 +1,8 @@
 package kvcache
 
 import (
+	"fmt"
+
 	"github.com/ollama/ollama/ml"
 )
 
@@ -11,6 +13,9 @@ import (
 //
 // Not currently safe for multiple sequences
 type EncoderCache struct {
+	// config controls mostly backend-specific optimizations
+	config *ml.CacheConfig
+
 	// ** current forward pass **
 
 	// the active layer for Get and Put
@@ -40,7 +45,27 @@ func NewEncoderCache() *EncoderCache {
 }
 
 func (c *EncoderCache) Init(backend ml.Backend, dtype ml.DType, capacity int32) {
+	if c.config == nil {
+		var config ml.CacheConfig
+		if cc, ok := backend.(ml.BackendCacheConfig); ok {
+			config = cc.CacheConfig()
+		}
+		c.config = &config
+	}
+
+	if c.config.CachePadding != 0 && c.config.CachePadding != 1 {
+		panic(fmt.Errorf("encoder cache is unable to enforce requested CachePadding (%v)", c.config.CachePadding))
+	}
+
 	c.cacheCtx = backend.NewContext()
+}
+
+func (c *EncoderCache) SetConfig(config ml.CacheConfig) {
+	if c.config != nil {
+		panic("config cannot be changed after being previously set, either by the model or backend")
+	}
+
+	c.config = &config
 }
 
 func (c *EncoderCache) Close() {
@@ -75,13 +100,19 @@ func (c *EncoderCache) Put(ctx ml.Context, key, value ml.Tensor) {
 	c.encoderPos = c.curPos
 	c.encoderCached = true
 
-	if c.keys[c.curLayer] == nil || c.values[c.curLayer] == nil {
-		c.keys[c.curLayer] = c.cacheCtx.Zeros(key.DType(), key.Shape()...)
-		c.values[c.curLayer] = c.cacheCtx.Zeros(value.DType(), value.Shape()...)
+	if c.config.PermutedV {
+		value = value.Permute(ctx, 1, 2, 0, 3)
 	}
 
-	ctx.Forward(key.Copy(ctx, c.keys[c.curLayer]))
-	ctx.Forward(value.Copy(ctx, c.values[c.curLayer]))
+	if c.keys[c.curLayer] == nil || c.values[c.curLayer] == nil {
+		c.keys[c.curLayer] = c.cacheCtx.Empty(key.DType(), key.Shape()...)
+		c.values[c.curLayer] = c.cacheCtx.Empty(value.DType(), value.Shape()...)
+	}
+
+	ctx.Forward(
+		key.Copy(ctx, c.keys[c.curLayer]),
+		value.Copy(ctx, c.values[c.curLayer]),
+	)
 }
 
 func (c *EncoderCache) CopyPrefix(srcSeq, dstSeq int, len int32) {

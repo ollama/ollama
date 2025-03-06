@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ollama/ollama/server/internal/internal/testutil"
+	"github.com/ollama/ollama/server/internal/testutil"
 )
 
 func init() {
@@ -479,8 +479,11 @@ func testManifestNameReuse(t *testing.T) {
 	}
 
 	// relink with different case
-	err = c.Unlink("h/n/m:t")
+	unlinked, err := c.Unlink("h/n/m:t")
 	check(err)
+	if !unlinked {
+		t.Fatal("expected unlinked")
+	}
 	err = c.Link("h/n/m:T", d1)
 	check(err)
 

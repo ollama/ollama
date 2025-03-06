@@ -21,75 +21,43 @@ package llama
 
 extern bool llamaProgressCallback(float progress, void *user_data);
 extern void llamaLog(int level, char* text, void* user_data);
-
-typedef enum {COMP_UNKNOWN,COMP_GCC,COMP_CLANG} COMPILER;
-COMPILER inline get_compiler() {
-#if defined(__clang__)
-	return COMP_CLANG;
-#elif defined(__GNUC__)
-	return COMP_GCC;
-#else
-	return UNKNOWN_COMPILER;
-#endif
-}
-
 */
 import "C"
 
 import (
+	"context"
 	_ "embed"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"runtime"
 	"runtime/cgo"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"unsafe"
 
 	_ "github.com/ollama/ollama/llama/llama.cpp/common"
 	_ "github.com/ollama/ollama/llama/llama.cpp/examples/llava"
 	_ "github.com/ollama/ollama/llama/llama.cpp/src"
-	"github.com/ollama/ollama/ml/backend/ggml/ggml/src"
+	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 )
+
+func init() {
+	C.llama_log_set(C.ggml_log_callback(C.llamaLog), nil)
+}
+
+//export llamaLog
+func llamaLog(level C.int, text *C.char, _ unsafe.Pointer) {
+	// slog levels zeros INFO and are multiples of 4
+	if slog.Default().Enabled(context.TODO(), slog.Level(int(level-C.GGML_LOG_LEVEL_INFO)*4)) {
+		fmt.Fprint(os.Stderr, C.GoString(text))
+	}
+}
 
 func BackendInit() {
 	ggml.OnceLoad()
 	C.llama_backend_init()
-}
-
-func PrintSystemInfo() string {
-	var compiler string
-	switch C.get_compiler() {
-	case C.COMP_UNKNOWN:
-		compiler = "cgo(unknown_compiler)"
-	case C.COMP_GCC:
-		compiler = "cgo(gcc)"
-	case C.COMP_CLANG:
-		compiler = "cgo(clang)"
-	}
-	return C.GoString(C.llama_print_system_info()) + compiler
-}
-
-var logLevel atomic.Int32
-
-func init() {
-	logLevel.Store(int32(C.GGML_LOG_LEVEL_INFO))
-	C.llama_log_set((C.ggml_log_callback)(C.llamaLog), nil)
-}
-
-func EnableDebug() {
-	logLevel.Store(int32(C.GGML_LOG_LEVEL_DEBUG))
-}
-
-//export llamaLog
-func llamaLog(level int32, text *C.char, _ unsafe.Pointer) {
-	if level < logLevel.Load() {
-		return
-	}
-
-	fmt.Fprint(os.Stderr, C.GoString(text))
 }
 
 func GetModelArch(modelPath string) (string, error) {
@@ -269,7 +237,7 @@ func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
 		cparams.progress_callback_user_data = unsafe.Pointer(&handle)
 	}
 
-	m := Model{c: C.llama_load_model_from_file(C.CString(modelPath), cparams)}
+	m := Model{c: C.llama_model_load_from_file(C.CString(modelPath), cparams)}
 	if m.c == nil {
 		return nil, fmt.Errorf("unable to load model: %s", modelPath)
 	}
@@ -278,12 +246,12 @@ func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
 }
 
 func FreeModel(model *Model) {
-	C.llama_free_model(model.c)
+	C.llama_model_free(model.c)
 }
 
 func NewContextWithModel(model *Model, params ContextParams) (*Context, error) {
 	c := Context{
-		c:          C.llama_new_context_with_model(model.c, params.c),
+		c:          C.llama_init_from_model(model.c, params.c),
 		numThreads: int(params.c.n_threads),
 	}
 	if c.c == nil {
@@ -294,15 +262,15 @@ func NewContextWithModel(model *Model, params ContextParams) (*Context, error) {
 }
 
 func (m *Model) NumVocab() int {
-	return int(C.llama_n_vocab(m.Vocab()))
+	return int(C.llama_vocab_n_tokens(m.Vocab()))
 }
 
 func (m *Model) TokenIsEog(token int) bool {
-	return bool(C.llama_token_is_eog(m.Vocab(), C.llama_token(token)))
+	return bool(C.llama_vocab_is_eog(m.Vocab(), C.llama_token(token)))
 }
 
 func (m *Model) AddBOSToken() bool {
-	return bool(C.llama_add_bos_token(m.Vocab()))
+	return bool(C.llama_vocab_get_add_bos(m.Vocab()))
 }
 
 func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float32, threads int) error {
@@ -485,7 +453,7 @@ func (m *Model) Tokenize(text string, addSpecial bool, parseSpecial bool) ([]int
 }
 
 func (m *Model) NEmbd() int {
-	return int(C.llama_n_embd(m.c))
+	return int(C.llama_model_n_embd(m.c))
 }
 
 func Quantize(infile, outfile string, ftype uint32) error {

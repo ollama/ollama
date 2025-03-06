@@ -361,9 +361,9 @@ type CopyRequest struct {
 // PullRequest is the request passed to [Client.Pull].
 type PullRequest struct {
 	Model    string `json:"model"`
-	Insecure bool   `json:"insecure,omitempty"`
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Insecure bool   `json:"insecure,omitempty"` // Deprecated: ignored
+	Username string `json:"username"`           // Deprecated: ignored
+	Password string `json:"password"`           // Deprecated: ignored
 	Stream   *bool  `json:"stream,omitempty"`
 
 	// Deprecated: set the model name with Model instead

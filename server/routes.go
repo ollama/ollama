@@ -34,11 +34,19 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/model/models/mllama"
 	"github.com/ollama/ollama/openai"
+	"github.com/ollama/ollama/server/internal/client/ollama"
+	"github.com/ollama/ollama/server/internal/registry"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
+
+func experimentEnabled(name string) bool {
+	return slices.Contains(strings.Split(os.Getenv("OLLAMA_EXPERIMENT"), ","), name)
+}
+
+var useClient2 = experimentEnabled("client2")
 
 var mode string = gin.DebugMode
 
@@ -203,7 +211,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	images := make([]llm.ImageData, len(req.Images))
 	for i := range req.Images {
-		if isMllama && !envconfig.NewEngine() {
+		if isMllama && len(model.ProjectorPaths) > 0 {
 			data, opts, err := mllama.Preprocess(bytes.NewReader(req.Images[i]))
 			if err != nil {
 				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error processing image"})
@@ -1126,7 +1134,7 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 	}
 }
 
-func (s *Server) GenerateRoutes() http.Handler {
+func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	corsConfig := cors.DefaultConfig()
 	corsConfig.AllowWildcard = true
 	corsConfig.AllowBrowserExtensions = true
@@ -1165,13 +1173,13 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.HEAD("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
 	r.GET("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
 
-	// Local model cache management
+	// Local model cache management (new implementation is at end of function)
 	r.POST("/api/pull", s.PullHandler)
 	r.POST("/api/push", s.PushHandler)
-	r.DELETE("/api/delete", s.DeleteHandler)
 	r.HEAD("/api/tags", s.ListHandler)
 	r.GET("/api/tags", s.ListHandler)
 	r.POST("/api/show", s.ShowHandler)
+	r.DELETE("/api/delete", s.DeleteHandler)
 
 	// Create
 	r.POST("/api/create", s.CreateHandler)
@@ -1193,7 +1201,19 @@ func (s *Server) GenerateRoutes() http.Handler {
 	r.GET("/v1/models", openai.ListMiddleware(), s.ListHandler)
 	r.GET("/v1/models/:model", openai.RetrieveMiddleware(), s.ShowHandler)
 
-	return r
+	if rc != nil {
+		// wrap old with new
+		rs := &registry.Local{
+			Client:   rc,
+			Logger:   slog.Default(), // TODO(bmizerany): Take a logger, do not use slog.Default()
+			Fallback: r,
+
+			Prune: PruneLayers,
+		}
+		return rs, nil
+	}
+
+	return r, nil
 }
 
 func Serve(ln net.Listener) error {
@@ -1246,12 +1266,28 @@ func Serve(ln net.Listener) error {
 		}
 	}
 
+	s := &Server{addr: ln.Addr()}
+
+	var rc *ollama.Registry
+	if useClient2 {
+		var err error
+		rc, err = ollama.DefaultRegistry()
+		if err != nil {
+			return err
+		}
+	}
+
+	h, err := s.GenerateRoutes(rc)
+	if err != nil {
+		return err
+	}
+
+	http.Handle("/", h)
+
 	ctx, done := context.WithCancel(context.Background())
 	schedCtx, schedDone := context.WithCancel(ctx)
 	sched := InitScheduler(schedCtx)
-	s := &Server{addr: ln.Addr(), sched: sched}
-
-	http.Handle("/", s.GenerateRoutes())
+	s.sched = sched
 
 	slog.Info(fmt.Sprintf("Listening on %s (version %s)", ln.Addr(), version.Version))
 	srvr := &http.Server{

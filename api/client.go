@@ -10,7 +10,7 @@
 // repository].
 //
 // [the API documentation]: https://github.com/ollama/ollama/blob/main/docs/api.md
-// [in the GitHub repository]: https://github.com/ollama/ollama/tree/main/examples
+// [in the GitHub repository]: https://github.com/ollama/ollama/tree/main/api/examples
 package api
 
 import (

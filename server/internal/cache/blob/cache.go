@@ -279,6 +279,18 @@ func (c *DiskCache) Get(d Digest) (Entry, error) {
 // It returns an error if either the name or digest is invalid, or if link
 // creation encounters any issues.
 func (c *DiskCache) Link(name string, d Digest) error {
+	// TODO(bmizerany): Move link handling from cache to registry.
+	//
+	// We originally placed links in the cache due to its storage
+	// knowledge. However, the registry likely offers better context for
+	// naming concerns, and our API design shouldn't be tightly coupled to
+	// our on-disk format.
+	//
+	// Links work effectively when independent from physical location -
+	// they can reference content with matching SHA regardless of storage
+	// location. In an upcoming change, we plan to shift this
+	// responsibility to the registry where it better aligns with the
+	// system's conceptual model.
 	manifest, err := c.manifestPath(name)
 	if err != nil {
 		return err
@@ -304,21 +316,19 @@ func (c *DiskCache) Link(name string, d Digest) error {
 	return c.copyNamedFile(manifest, f, d, info.Size())
 }
 
-// Unlink removes the any link for name. If the link does not exist, nothing
-// happens, and no error is returned.
-//
-// It returns an error if the name is invalid or if the link removal encounters
-// any issues.
-func (c *DiskCache) Unlink(name string) error {
+// Unlink unlinks the manifest by name from the cache. If the name is not
+// found. If a manifest is removed ok will be true, otherwise false. If an
+// error occurs, it returns ok false, and the error.
+func (c *DiskCache) Unlink(name string) (ok bool, _ error) {
 	manifest, err := c.manifestPath(name)
 	if err != nil {
-		return err
+		return false, err
 	}
 	err = os.Remove(manifest)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil
+		return false, nil
 	}
-	return err
+	return true, err
 }
 
 // GetFile returns the absolute path to the file, in the cache, for the given

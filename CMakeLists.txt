@@ -23,6 +23,7 @@ set(GGML_SCHED_MAX_COPIES 4)
 set(GGML_LLAMAFILE ON)
 set(GGML_CUDA_PEER_MAX_BATCH_SIZE 128)
 set(GGML_CUDA_GRAPHS ON)
+set(GGML_CUDA_FA ON)
 
 if((CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
     OR (NOT CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "arm|aarch64|ARM64|ARMv[0-9]+"))
@@ -105,8 +106,10 @@ if(CMAKE_HIP_COMPILER)
         add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-hip)
 
         if (WIN32)
-            target_compile_definitions(ggml-hip PRIVATE GGML_CUDA_NO_PEER_COPY=1)
+            target_compile_definitions(ggml-hip PRIVATE GGML_CUDA_NO_PEER_COPY)
         endif()
+
+        target_compile_definitions(ggml-hip PRIVATE GGML_HIP_NO_VMM)
 
         set(OLLAMA_HIP_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/rocm)
         install(TARGETS ggml-hip
