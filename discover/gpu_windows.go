@@ -42,11 +42,22 @@ var OneapiGlobs = []string{
 	"c:\\Windows\\System32\\DriverStore\\FileRepository\\*\\ze_intel_gpu64.dll",
 }
 
+// MUSA: Not currently supported on Windows
+var MusartGlobs = []string{}
+
+var MtmlGlobs = []string{}
+
+var MtmusaGlobs = []string{}
+
 var (
 	CudartMgmtName = "cudart64_*.dll"
 	NvcudaMgmtName = "nvcuda.dll"
 	NvmlMgmtName   = "nvml.dll"
 	OneapiMgmtName = "ze_intel_gpu64.dll"
+	// MUSA: Not currently supported on Windows
+	MusartMgmtName = ""
+	MtmusaMgmtName = ""
+	MtmlMgmtName   = ""
 )
 
 func GetCPUMem() (memInfo, error) {
