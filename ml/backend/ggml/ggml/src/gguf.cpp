@@ -777,7 +777,6 @@ enum gguf_type gguf_get_arr_type(const struct gguf_context * ctx, int64_t key_id
 
 const void * gguf_get_arr_data(const struct gguf_context * ctx, int64_t key_id) {
     GGML_ASSERT(key_id >= 0 && key_id < gguf_get_n_kv(ctx));
-    GGML_ASSERT(ctx->kv[key_id].get_type() != GGUF_TYPE_STRING);
     return ctx->kv[key_id].data.data();
 }
 
