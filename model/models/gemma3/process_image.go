@@ -8,12 +8,13 @@ import (
 )
 
 type ImageProcessor struct {
-	imageSize, numChannels int
+	imageSize, patchSize, numChannels int
 }
 
 func newImageProcessor(c ml.Config) ImageProcessor {
 	return ImageProcessor{
 		imageSize:   int(c.Uint("vision.image_size")),
+		patchSize:   int(c.Uint("vision.patch_size")),
 		numChannels: int(c.Uint("vision.num_channels")),
 	}
 }

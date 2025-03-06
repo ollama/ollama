@@ -13,13 +13,13 @@ import (
 )
 
 type ModelParameters struct {
-	Architectures []string `json:"architectures"`
-	VocabSize     uint32   `json:"vocab_size"`
+	Architectures []string       `json:"architectures"`
+	VocabSize     uint32         `json:"vocab_size"`
 	TextModel     TextParameters `json:"text_config"`
 }
 
 type TextParameters struct {
-	VocabSize     uint32   `json:"vocab_size"`
+	VocabSize uint32 `json:"vocab_size"`
 }
 
 type AdapterParameters struct {

@@ -21,6 +21,8 @@ type SentencePieceModel struct {
 	vocab       *Vocabulary
 }
 
+var _ TextProcessor = (*SentencePieceModel)(nil)
+
 func NewSentencePieceModel(pre string, vocab *Vocabulary) SentencePieceModel {
 	slog.Debug("Tokens", "num tokens", len(vocab.Values), "vals", vocab.Values[:5], "scores", vocab.Scores[:5], "types", vocab.Types[:5])
 
@@ -61,7 +63,7 @@ func (spm *SentencePieceModel) split(s string) iter.Seq[string] {
 	}
 }
 
-func (spm SentencePieceModel) Encode(s string) ([]int32, error) {
+func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error) {
 	fragments := []fragment{{value: s}}
 	for _, special := range spm.vocab.SpecialVocabulary() {
 		// TODO: process special tokens concurrently
@@ -196,7 +198,26 @@ func (spm SentencePieceModel) Encode(s string) ([]int32, error) {
 			}
 		}
 	}
-	slog.Debug("encoded", "ids", ids)
+
+	if addSpecial && len(ids) > 0 {
+		if spm.vocab.AddBOS {
+			if ids[0] == spm.vocab.BOS {
+				slog.Warn("adding bos token to prompt which already has it", "id", spm.vocab.BOS)
+			}
+
+			slog.Debug("adding bos token to prompt", "id", spm.vocab.BOS)
+			ids = append([]int32{spm.vocab.BOS}, ids...)
+		}
+
+		if spm.vocab.AddEOS {
+			if ids[len(ids)-1] == spm.vocab.EOS {
+				slog.Warn("adding eos token to prompt which already has it", "id", spm.vocab.EOS)
+			}
+
+			slog.Debug("adding eos token to prompt", "id", spm.vocab.EOS)
+			ids = append(ids, spm.vocab.EOS)
+		}
+	}
 
 	return ids, nil
 }

@@ -4,8 +4,17 @@ import "github.com/ollama/ollama/fs/ggml"
 
 type gemma3Model struct {
 	gemmaModel
-	TextModel   gemma3TextModel   `json:"text_config"`
-	VisionModel gemma3VisionModel `json:"vision_config"`
+	TextModel   gemma3TextModel `json:"text_config"`
+	VisionModel struct {
+		NumAttentionHeads uint32  `json:"num_attention_heads"` // attention.head_count 16
+		LayerNormEpsilon  float32 `json:"layer_norm_eps"`      // attention.layer_norm_epsilon 1e-05
+		NumHiddenLayers   uint32  `json:"num_hidden_layers"`   // block_count 32
+		HiddenSize        uint32  `json:"hidden_size"`         // embedding_length 1280
+		IntermediateSize  uint32  `json:"intermediate_size"`   // feed_forward_length 5120
+		ImageSize         uint32  `json:"image_size"`          // image_size 560
+		NumChannels       uint32  `json:"num_channels"`        // num_channels 3
+		PatchSize         uint32  `json:"patch_size"`          // patch_size 14
+	} `json:"vision_config"`
 }
 
 type gemma3TextModel struct {
@@ -24,12 +33,6 @@ type gemma3TextModel struct {
 	RopeGlobalTheta       float32 `json:"rope_global_base_freq"`
 }
 
-type gemma3VisionModel struct {
-	ImageSize    uint32 `json:"image_size"`
-	NumChannels  uint32 `json:"num_channels"`
-	HiddenLayers uint32 `json:"num_hidden_layers"`
-}
-
 func (p *gemma3Model) KV(t *Tokenizer) ggml.KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "gemma3"
@@ -46,11 +49,18 @@ func (p *gemma3Model) KV(t *Tokenizer) ggml.KV {
 	kv["gemma3.text.final_logit_softcapping"] = p.TextModel.FinalLogitSoftcap
 	kv["gemma3.text.rope.local.freq_base"] = p.TextModel.RopeLocalTheta
 	kv["gemma3.text.rope.global.freq_base"] = p.TextModel.RopeGlobalTheta
+
+	kv["gemma3.vision.block_count"] = p.VisionModel.NumHiddenLayers
+	kv["gemma3.vision.embedding_length"] = p.VisionModel.HiddenSize
+	kv["gemma3.vision.feed_forward_length"] = p.VisionModel.IntermediateSize
+	kv["gemma3.vision.image_size"] = p.VisionModel.ImageSize
+	kv["gemma3.vision.patch_size"] = p.VisionModel.PatchSize
+	kv["gemma3.vision.num_channels"] = p.VisionModel.NumChannels
+	kv["gemma3.vision.attention.head_count"] = p.VisionModel.NumAttentionHeads
+	kv["gemma3.vision.attention.layer_norm_epsilon"] = p.VisionModel.LayerNormEpsilon
+
 	kv["tokenizer.ggml.bos_token_id"] = uint32(2)
 	kv["tokenizer.ggml.eot_token_id"] = uint32(1)
-	kv["gemma3.vision.image_size"] = p.VisionModel.ImageSize
-	kv["gemma3.vision.num_channels"] = p.VisionModel.NumChannels
-	kv["gemma3.vision.block_count"] = p.VisionModel.HiddenLayers
 	return kv
 }
 
@@ -59,11 +69,11 @@ func (p *gemma3Model) Replacements() []string {
 		"lm_head", "output",
 		"model.embed_tokens", "token_embd",
 		"model.norm", "output_norm",
-		"vision_model.vision_model", "v",
+		"vision_tower.vision_model.embeddings", "v",
+		"vision_tower.vision_model", "v",
 		"language_model.", "",
 		"model.layers", "blk",
 		"encoder.layers", "blk",
-		"vision_tower.vision_model.embeddings", "v",
 		"input_layernorm", "attn_norm",
 		"self_attn.q_proj", "attn_q",
 		"self_attn.q_norm", "attn_q_norm",
@@ -71,11 +81,14 @@ func (p *gemma3Model) Replacements() []string {
 		"self_attn.k_norm", "attn_k_norm",
 		"self_attn.v_proj", "attn_v",
 		"self_attn.o_proj", "attn_output",
+		"self_attn.out_proj", "attn_output",
 		"mlp.gate_proj", "ffn_gate",
 		"mlp.down_proj", "ffn_down",
 		"mlp.up_proj", "ffn_up",
 		"post_attention_layernorm", "post_attention_norm",
 		"pre_feedforward_layernorm", "ffn_norm",
 		"post_feedforward_layernorm", "post_ffw_norm",
+		"input_projection_weight", "input_projection.weight",
+		"multi_modal_projector", "mm",
 	}
 }
