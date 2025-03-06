@@ -256,11 +256,16 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 					}
 					fmt.Println("Set 'quiet' mode.")
 				case "format":
-					if len(args) < 3 || args[2] != "json" {
-						fmt.Println("Invalid or missing format. For 'json' mode use '/set format json'")
+					if len(args) < 3 {
+						fmt.Println("Invalid or missing format. For 'json' mode use '/set format json or provide a JSON schema'")
+					} else if len(args) == 3 && (args[2] == "json" || args[2] == `"json"`) {
+						opts.Format = `"json"`
+						fmt.Println("Set format to 'json' mode.")
+					} else if len(args) > 3 && strings.HasPrefix(args[2], "{") {
+						opts.Format = strings.Join(args[2:], " ")
+						fmt.Printf("Set format to schema: \n'%s'.\n", opts.Format)
 					} else {
-						opts.Format = args[2]
-						fmt.Printf("Set format to '%s' mode.\n", args[2])
+						fmt.Println("Invalid or missing format. For 'json' mode use '/set format json or provide a JSON schema'")
 					}
 				case "noformat":
 					opts.Format = ""
