@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"iter"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 
@@ -39,8 +40,8 @@ type Vocabulary struct {
 	Scores []float32
 	Merges []string
 
-	BOS, EOS       int32
-	AddBOS, AddEOS bool
+	BOS, EOS, EOT          int32
+	AddBOS, AddEOS, AddEOT bool
 
 	specialOnce sync.Once
 	special     []string
@@ -57,7 +58,7 @@ func (v *Vocabulary) Is(id int32, special Special) bool {
 	case SpecialBOS:
 		return id == v.BOS
 	case SpecialEOS:
-		return id == v.EOS
+		return id == v.EOS || id == v.EOT
 	default:
 		return false
 	}
@@ -85,7 +86,9 @@ func (v *Vocabulary) Decode(id int32) string {
 func (v *Vocabulary) SpecialVocabulary() []string {
 	v.specialOnce.Do(func() {
 		for i := range v.Values {
-			if v.Types[i] == TOKEN_TYPE_CONTROL {
+			if slices.Contains([]int{105, 106}, i) {
+				v.special = append(v.special, v.Values[i])
+			} else if v.Types[i] == TOKEN_TYPE_CONTROL {
 				v.special = append(v.special, v.Values[i])
 			}
 		}

@@ -58,9 +58,6 @@ func (p *gemma3Model) KV(t *Tokenizer) ggml.KV {
 	kv["gemma3.vision.num_channels"] = p.VisionModel.NumChannels
 	kv["gemma3.vision.attention.head_count"] = p.VisionModel.NumAttentionHeads
 	kv["gemma3.vision.attention.layer_norm_epsilon"] = p.VisionModel.LayerNormEpsilon
-
-	kv["tokenizer.ggml.bos_token_id"] = uint32(2)
-	kv["tokenizer.ggml.eot_token_id"] = uint32(1)
 	return kv
 }
 
