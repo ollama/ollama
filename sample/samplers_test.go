@@ -7,11 +7,7 @@ import (
 
 func TestWeighted(t *testing.T) {
 	logits := []float32{-10, 3, -10, -10}
-	sampler, err := NewSampler(0, 0, 0, 0, 0)
-	if err != nil {
-		t.Error(err)
-		return
-	}
+	sampler := NewSampler(0, 0, 0, 0, 0)
 	got, err := sampler.Sample(logits)
 	if err != nil {
 		t.Error(err)
@@ -23,11 +19,7 @@ func TestWeighted(t *testing.T) {
 	}
 
 	logits = []float32{-100, -10, 0, 10}
-	sampler, err = NewSampler(0, 0, 0, 0, 0)
-	if err != nil {
-		t.Error(err)
-		return
-	}
+	sampler = NewSampler(0, 0, 0, 0, 0)
 	got, err = sampler.Sample(logits)
 	if err != nil {
 		t.Error(err)
@@ -47,70 +39,41 @@ func TestNewSampler(t *testing.T) {
 		topP        float32
 		minP        float32
 		seed        int
-		wantErr     bool
+		wantGreedy  bool // Instead of wantErr, check if we get greedy sampler
 	}{
 		{
 			name:        "temperature",
 			temperature: 0.5,
-			wantErr:     false,
+			wantGreedy:  false,
 		},
 		{
-			name:        "invalid temperature negative",
-			temperature: -1,
-			wantErr:     true,
-		},
-		{
-			name:        "invalid temperature too high",
-			temperature: 2.1,
-			wantErr:     true,
+			name:        "zero temperature - greedy",
+			temperature: 0,
+			wantGreedy:  true,
 		},
 		{
 			name:        "top k",
 			temperature: 0.1,
 			topK:        10,
-			wantErr:     false,
+			wantGreedy:  false,
 		},
 		{
 			name:        "top p",
 			temperature: 0.1,
 			topP:        0.9,
-			wantErr:     false,
-		},
-		{
-			name:        "invalid top p negative",
-			temperature: 0.1,
-			topP:        -0.1,
-			wantErr:     true,
-		},
-		{
-			name:        "invalid top p one",
-			temperature: 0.1,
-			topP:        1.0,
-			wantErr:     true,
+			wantGreedy:  false,
 		},
 		{
 			name:        "min p",
 			temperature: 0.1,
 			minP:        0.2,
-			wantErr:     false,
+			wantGreedy:  false,
 		},
 		{
-			name:        "invalid min p negative",
-			temperature: 0.1,
-			minP:        -0.1,
-			wantErr:     true,
-		},
-		{
-			name:        "invalid min p one",
-			temperature: 0.1,
-			minP:        1.0,
-			wantErr:     true,
-		},
-		{
-			name:        "seed - greedy",
+			name:        "seed - weighted",
 			temperature: 0.1,
 			seed:        42,
-			wantErr:     false,
+			wantGreedy:  false,
 		},
 		{
 			name:        "default values",
@@ -119,7 +82,7 @@ func TestNewSampler(t *testing.T) {
 			topP:        0.9,
 			minP:        0.0,
 			seed:        0,
-			wantErr:     false,
+			wantGreedy:  false,
 		},
 		{
 			name:        "all zeroes - greedy",
@@ -128,7 +91,7 @@ func TestNewSampler(t *testing.T) {
 			topP:        0.0,
 			minP:        0.0,
 			seed:        0,
-			wantErr:     false,
+			wantGreedy:  true,
 		},
 		{
 			name:        "all transforms",
@@ -137,27 +100,24 @@ func TestNewSampler(t *testing.T) {
 			topP:        0.95,
 			minP:        0.1,
 			seed:        42,
-			wantErr:     false,
+			wantGreedy:  false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewSampler(tt.temperature, tt.topK, tt.topP, tt.minP, tt.seed)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("NewSampler() error = %v, wantErr %v", err, tt.wantErr)
+			sampler := NewSampler(tt.temperature, tt.topK, tt.topP, tt.minP, tt.seed)
+			_, isGreedy := sampler.(*greedy)
+			if isGreedy != tt.wantGreedy {
+				t.Errorf("NewSampler() got greedy = %v, want %v", isGreedy, tt.wantGreedy)
 			}
 		})
 	}
 }
 
 func BenchmarkSample(b *testing.B) {
-	weighted, err := NewSampler(0.5, 10, 0.9, 0.2, -1)
-	if err != nil {
-		b.Error(err)
-		return
-	}
+	weighted := NewSampler(0.5, 10, 0.9, 0.2, -1)
 	samplers := map[string]Sampler{
-		"Greedy":   Greedy(),
+		"Greedy":   NewSampler(0, 0, 0, 0, 0), // Use NewSampler with temp=0 for greedy
 		"Weighted": weighted,
 	}
 

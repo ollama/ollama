@@ -2,32 +2,32 @@ package sample
 
 import (
 	"math"
-	"math/rand"
+	"math/rand/v2"
 	"testing"
 )
 
-// Helper to convert float64 slice to tokenInfo slice
-func toTokenInfo(logits []float64) []tokenInfo {
-	tokens := make([]tokenInfo, len(logits))
-	for i, v := range logits {
-		tokens[i] = tokenInfo{
+// Helper to convert float64 slice to logit slice
+func toLogits(values []float64) []logit {
+	tokens := make([]logit, len(values))
+	for i, v := range values {
+		tokens[i] = logit{
 			id:    int32(i),
-			logit: float32(v),
+			value: float32(v),
 		}
 	}
 	return tokens
 }
 
-// Helper to compare tokenInfo slices
-func compareLogits(t *testing.T, name string, want []float64, got []tokenInfo) {
+// Helper to compare logit slices
+func compareLogits(t *testing.T, name string, want []float64, got []logit) {
 	t.Helper()
 	if len(want) != len(got) {
 		t.Errorf("%s: length mismatch: want %d, got %d", name, len(want), len(got))
 		return
 	}
 	for i := range want {
-		if math.Abs(float64(got[i].logit)-want[i]) > 1e-6 {
-			t.Errorf("%s: index %d: want %f, got %f", name, i, want[i], got[i].logit)
+		if math.Abs(float64(got[i].value)-want[i]) > 1e-6 {
+			t.Errorf("%s: index %d: want %f, got %f", name, i, want[i], got[i].value)
 		}
 	}
 }
@@ -36,29 +36,26 @@ func TestTemperature(t *testing.T) {
 	input := []float64{2, -1, 4, -3, 1, -2, 0}
 	want := []float64{-4, -10, 0, -14, -6, -12, -8} // (logit - max logit) / temp
 
-	ts := tokenSliceInfo{tokens: toTokenInfo(input)}
-	got := Temperature(0.5).Apply(ts)
-
-	compareLogits(t, "Temperature", want, got.tokens)
+	got := temperature(toLogits(input), 0.5)
+	compareLogits(t, "Temperature", want, got)
 }
 
 func TestSoftmax(t *testing.T) {
 	input := []float64{-3, -2, -1, 0, 1, 2, 4}
-	ts := tokenSliceInfo{tokens: toTokenInfo(input)}
-	got := Softmax().Apply(ts)
+	got := softmax(toLogits(input))
 
 	// Check probabilities sum to 1
 	var sum float32
-	for _, token := range got.tokens {
-		sum += token.prob
+	for _, token := range got {
+		sum += token.value
 	}
 	if math.Abs(float64(sum)-1.0) > 1e-6 {
 		t.Errorf("probabilities don't sum to 1: got %f", sum)
 	}
 
 	// Check relative ordering is preserved
-	for i := 1; i < len(got.tokens); i++ {
-		if got.tokens[i].prob < got.tokens[i-1].prob {
+	for i := 1; i < len(got); i++ {
+		if got[i].value < got[i-1].value {
 			t.Errorf("probability ordering not preserved at index %d", i)
 		}
 	}
@@ -68,79 +65,104 @@ func TestTopK(t *testing.T) {
 	input := []float64{-3, -2, -1, 0, 1, 2, 4}
 
 	// Test k=3
-	ts := tokenSliceInfo{tokens: toTokenInfo(input)}
-	got := TopK(3).Apply(ts)
-	if len(got.tokens) != 3 {
-		t.Errorf("TopK(3): wrong length: want 3, got %d", len(got.tokens))
+	got := topK(toLogits(input), 3)
+	if len(got) != 3 {
+		t.Errorf("topK(3): wrong length: want 3, got %d", len(got))
 	}
 	// Should keep highest 3 values: 4, 2, 1
 	want := []float64{4, 2, 1}
-	compareLogits(t, "TopK(3)", want, got.tokens)
+	compareLogits(t, "topK(3)", want, got)
 
 	// Test k > len
-	ts = tokenSliceInfo{tokens: toTokenInfo(input)}
-	got = TopK(10).Apply(ts)
-	compareLogits(t, "TopK(10)", input, got.tokens)
+	got = topK(toLogits(input), 10)
+	compareLogits(t, "topK(10)", input, got)
 }
 
 func TestTopP(t *testing.T) {
 	input := []float64{-3, -2, -1, 0, 1, 2, 4}
-	ts := tokenSliceInfo{tokens: toTokenInfo(input)}
+	tokens := toLogits(input)
 
-	ts = softmax{}.Apply(ts)
-	sortTokens{}.Apply(ts)
+	// First apply temperature and softmax to get probabilities
+	tokens = temperature(tokens, 1)
+	tokens = softmax(tokens)
+	sortTokens(tokens)
 
-	// Then apply TopP
-	got := TopP(0.95).Apply(ts)
+	// Then apply topP
+	got := topP(tokens, 0.95)
 
-	// Should keep tokens until cumsum > 0.9
-	if len(got.tokens) > 3 {
-		t.Errorf("TopP(0.9): kept too many tokens: got %d", len(got.tokens))
-		t.Logf("got: %v", got.tokens)
+	// Should keep tokens until cumsum > 0.95
+	if len(got) > 3 {
+		t.Errorf("topP(0.95): kept too many tokens: got %d", len(got))
+		t.Logf("got: %v", got)
 	}
 }
 
 func TestMinP(t *testing.T) {
 	input := []float64{-3, -2, -1, 0, 1, 2, 4, 3}
-	ts := tokenSliceInfo{tokens: toTokenInfo(input)}
+	tokens := toLogits(input)
 
 	// First apply temperature and softmax
-	ts = Temperature(1).Apply(ts)
-	ts = softmax{}.Apply(ts)
+	tokens = temperature(tokens, 1)
+	tokens = softmax(tokens)
 
-	// Then apply MinP
-	got := MinP(0.2).Apply(ts)
+	// Then apply minP
+	got := minP(tokens, 0.2)
 
 	// Should keep tokens with prob >= 0.2 * max_prob
-	if len(got.tokens) > 3 {
-		t.Errorf("MinP(0.2): kept too many tokens: got %d", len(got.tokens))
+	if len(got) > 3 {
+		t.Errorf("minP(0.2): kept too many tokens: got %d", len(got))
 	}
 }
 
-func BenchmarkTransform(b *testing.B) {
-	transforms := map[string]transform{
-		"Temperature": Temperature(0.5),
-		"TopK":        TopK(10),
-		"TopP":        TopP(0.9),
-		"MinP":        MinP(0.2),
-	}
-
+func BenchmarkTransforms(b *testing.B) {
 	// Generate random logits
-	tokens := make([]tokenInfo, 1<<16)
+	tokens := make([]logit, 1<<16)
 	for i := range tokens {
-		tokens[i] = tokenInfo{
+		tokens[i] = logit{
 			id:    int32(i),
-			logit: rand.Float32(),
+			value: rand.Float32(),
 		}
 	}
 
-	for name, t := range transforms {
-		b.Run(name, func(b *testing.B) {
-			ts := tokenSliceInfo{tokens: tokens}
-			b.ResetTimer()
-			for b.Loop() {
-				t.Apply(ts)
-			}
-		})
-	}
+	tokensCopy := make([]logit, len(tokens))
+
+	b.Run("Temperature", func(b *testing.B) {
+		b.ResetTimer()
+		for b.Loop() {
+			copy(tokensCopy, tokens)
+			temperature(tokensCopy, 0.5)
+		}
+	})
+
+	b.Run("TopK", func(b *testing.B) {
+		b.ResetTimer()
+		for b.Loop() {
+			copy(tokensCopy, tokens)
+			topK(tokensCopy, 10)
+		}
+	})
+
+	b.Run("TopP", func(b *testing.B) {
+		b.ResetTimer()
+		for b.Loop() {
+			copy(tokensCopy, tokens)
+			topP(tokensCopy, 0.9)
+		}
+	})
+
+	b.Run("MinP", func(b *testing.B) {
+		b.ResetTimer()
+		for b.Loop() {
+			copy(tokensCopy, tokens)
+			minP(tokensCopy, 0.2)
+		}
+	})
+
+	b.Run("SortTokens", func(b *testing.B) {
+		b.ResetTimer()
+		for b.Loop() {
+			copy(tokensCopy, tokens)
+			sortTokens(tokensCopy)
+		}
+	})
 }
