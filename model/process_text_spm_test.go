@@ -73,7 +73,7 @@ func TestSentencePieceEncode(t *testing.T) {
 		}
 
 		for _, want := range cases {
-			ids, err := tokenizer.Encode(want)
+			ids, err := tokenizer.Encode(want, true)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -98,7 +98,7 @@ func TestSentencePieceEncode(t *testing.T) {
 		}
 
 		for _, want := range cases {
-			ids, err := tokenizer.Encode(want.token)
+			ids, err := tokenizer.Encode(want.token, true)
 			if err != nil {
 				t.Fatal(err)
 			}

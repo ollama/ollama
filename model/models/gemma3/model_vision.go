@@ -53,7 +53,7 @@ func (mlp *VisionMLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Visio
 }
 
 type VisionEncoderLayer struct {
-	LayerNorm1    *nn.LayerNorm        `gguf:"layer_norm1"`
+	LayerNorm1    *nn.LayerNorm `gguf:"layer_norm1"`
 	SelfAttention *VisionSelfAttention
 
 	LayerNorm2 *nn.LayerNorm `gguf:"layer_norm2"`
