@@ -32,7 +32,8 @@ type TextModel struct {
 }
 
 const (
-	gemma27BLayerCount = 46
+	gemmaGlobalCacheCount = 6
+	gemma27BLayerCount    = 46
 )
 
 const (
@@ -55,15 +56,15 @@ func newTextModel(c ml.Config) *TextModel {
 		Layers: make([]TextLayer, c.Uint("block_count")),
 		TextOptions: &TextOptions{
 			hiddenSize:        int(c.Uint("embedding_length")),
-			numHeads:          int(c.Uint("attention.head_count")),
-			numKVHeads:        int(c.Uint("attention.head_count_kv")),
-			attnKeyLen:        int(c.Uint("attention.key_length")),
-			attnValLen:        int(c.Uint("attention.value_length")),
-			eps:               c.Float("text.attention.layer_norm_rms_epsilon"),
+			numHeads:          int(c.Uint("attention.head_count", 8)),
+			numKVHeads:        int(c.Uint("attention.head_count_kv", 4)),
+			attnKeyLen:        int(c.Uint("attention.key_length", 256)),
+			attnValLen:        int(c.Uint("attention.value_length", 256)),
+			eps:               c.Float("text.attention.layer_norm_rms_epsilon", 1e-06),
 			ropeLocalBase:     c.Float("text.rope.local.freq_base", 10000.0),
 			ropeGlobalBase:    c.Float("text.rope.global.freq_base", 1000000.0),
 			ropeScale:         c.Float("text.rope.freq_scale", 1.0),
-			finalLogitSoftcap: c.Float("text.final_logit_softcapping"),
+			finalLogitSoftcap: c.Float("text.final_logit_softcapping", 30.0),
 		},
 	}
 
@@ -84,7 +85,7 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, pos
 	ropeType := uint32(2)
 
 	ropeBase := opts.ropeLocalBase
-	if (layer+1)%6 == 0 {
+	if (layer+1)%gemmaGlobalCacheCount == 0 {
 		ropeBase = opts.ropeGlobalBase
 	}
 
@@ -116,7 +117,7 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, pos
 
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
 	ropeBase := m.TextOptions.ropeLocalBase
-	if (layer+1)%6 == 0 {
+	if (layer+1)%gemmaGlobalCacheCount == 0 {
 		ropeBase = m.TextOptions.ropeGlobalBase
 	}
 
@@ -184,7 +185,7 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 		// gemma alternates between the sliding window (local) and causal (global)
 		// kv cache every 6 layers
 		cacheType := cacheTypeSWA
-		if (i+1)%6 == 0 {
+		if (i+1)%gemmaGlobalCacheCount == 0 {
 			cacheType = cacheTypeCausal
 		}
 		cache.SetLayer(i)

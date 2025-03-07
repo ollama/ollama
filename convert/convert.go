@@ -190,8 +190,8 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 		conv = &gemmaModel{}
 	case "Gemma2ForCausalLM":
 		conv = &gemma2Model{}
-	case "Gemma3ForConditionalGeneration":
-		conv = &gemma3Model{}
+	case "Gemma3ForCausalLM", "Gemma3ForConditionalGeneration":
+		conv = &gemma3Model{Architecture: p.Architectures[0]}
 	case "Phi3ForCausalLM":
 		conv = &phi3Model{}
 	case "Qwen2ForCausalLM":
@@ -226,6 +226,9 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 	}
 
 	switch {
+	case vocabSize == 0:
+		slog.Warn("vocabulary size was not explicitly set by the model", "default size", len(t.Vocabulary.Tokens))
+		vocabSize = len(t.Vocabulary.Tokens)
 	case vocabSize > len(t.Vocabulary.Tokens):
 		slog.Warn("vocabulary is smaller than expected, padding with dummy tokens", "expect", vocabSize, "actual", len(t.Vocabulary.Tokens))
 		for i := range vocabSize - len(t.Vocabulary.Tokens) {
