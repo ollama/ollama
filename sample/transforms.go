@@ -74,22 +74,21 @@ func siftDown(data []logit, start, end int) {
 
 // topK limits the number of tokens considered to the k highest logits
 func topK(ts []logit, k int) []logit {
-	kk := int(k)
-	if kk >= len(ts) {
+	if k >= len(ts) {
 		return ts
 	}
 	// Heapify + siftDown - O(nlog(k))
 	// Build min-heap of first k elements
-	heap := ts[:kk]
-	for i := kk/2 - 1; i >= 0; i-- {
-		siftDown(heap, i, kk)
+	heap := ts[:k]
+	for i := k/2 - 1; i >= 0; i-- {
+		siftDown(heap, i, k)
 	}
 
 	// Process remaining elements - if larger than heap root, replace root
-	for i := kk; i < len(ts); i++ {
+	for i := k; i < len(ts); i++ {
 		if ts[i].value > heap[0].value {
 			heap[0] = ts[i]
-			siftDown(heap, 0, kk)
+			siftDown(heap, 0, k)
 		}
 	}
 
