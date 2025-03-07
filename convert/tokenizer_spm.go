@@ -47,6 +47,12 @@ func parseSentencePiece(fsys fs.FS) (*Vocabulary, error) {
 			v.Types = append(v.Types, int32(t))
 		default:
 			tt := int32(sentencepiece.ModelProto_SentencePiece_NORMAL)
+
+			// temporary fix to handle gemma3 broken configs
+			if slices.Contains([]string{"<end_of_turn>", "<start_of_turn>"}, piece.GetPiece()) {
+				tt = int32(sentencepiece.ModelProto_SentencePiece_CONTROL)
+			}
+
 			for _, t := range ast {
 				if t.Content == piece.GetPiece() {
 					tt = int32(sentencepiece.ModelProto_SentencePiece_CONTROL)
