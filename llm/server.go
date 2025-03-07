@@ -729,29 +729,24 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	}
 
 	if len(req.Format) > 0 {
-		format := string(req.Format)
-		if format != `null` && format != `""` {
-			if s.textProcessor != nil {
-				// New engine handles this on the backend
-				request["format"] = req.Format
-			} else {
-				// old engine
-				switch format {
-				case `"json"`:
-					request["grammar"] = grammarJSON
-				default:
-					if req.Format[0] != '{' {
-						return fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema object", req.Format)
-					}
-
-					// User provided a JSON schema
-					g := llama.SchemaToGrammar(req.Format)
-					if g == nil {
-						return fmt.Errorf("invalid JSON schema in format")
-					}
-					request["grammar"] = string(g)
-				}
+		switch string(req.Format) {
+		case `null`, `""`:
+			// Field was set, but "missing" a value. We accept
+			// these as "not set".
+			break
+		case `"json"`:
+			request["grammar"] = grammarJSON
+		default:
+			if req.Format[0] != '{' {
+				return fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema object", req.Format)
 			}
+
+			// User provided a JSON schema
+			g := llama.SchemaToGrammar(req.Format)
+			if g == nil {
+				return fmt.Errorf("invalid JSON schema in format")
+			}
+			request["grammar"] = string(g)
 		}
 	}
 

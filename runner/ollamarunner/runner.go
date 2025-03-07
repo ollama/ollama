@@ -24,6 +24,7 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/runner/common"
@@ -62,7 +63,7 @@ type Sequence struct {
 	numPredict int
 
 	// sampler with transforms to run on generated logits
-	sampler sample.Sampler
+	sampler *sample.Sampler
 
 	// channel to send back the embedding if embedding only
 	embedding chan []float32
@@ -89,7 +90,7 @@ type NewSequenceParams struct {
 	numPredict int
 	stop       []string
 	numKeep    int32
-	sampler    sample.Sampler
+	sampler    *sample.Sampler
 	embedding  bool
 }
 
@@ -256,6 +257,11 @@ type Server struct {
 	// multimodalHash generates hashes for comparing equality
 	// of non-text data
 	multimodalHash maphash.Hash
+
+	// vocab is the llama_vocab to be used for constrained
+	// decoding. TODO (jmorganca): remove this once we no longer
+	// rely on llama.cpp's grammar parsing
+	vocab *llama.Vocab
 }
 
 func (s *Server) allNil() bool {
@@ -591,12 +597,18 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var grammar *sample.Grammar
+	if req.Grammar != "" {
+		grammar = sample.NewGrammar(s.vocab, req.Grammar)
+	}
+
 	sampler := sample.NewSampler(
 		req.Temperature,
 		req.TopK,
 		req.TopP,
 		req.MinP,
 		req.Seed,
+		grammar,
 	)
 
 	if req.Grammar != "" {
@@ -813,6 +825,15 @@ func (s *Server) loadModel(
 	if err != nil {
 		panic(err)
 	}
+
+	// TODO(jmorganca): free this when no longer used
+	// TODO(jmorganca): remove this once llama.cpp's
+	// grammar parsing is removed
+	vocab, err := llama.LoadVocabFromFile(mpath)
+	if err != nil {
+		panic(err)
+	}
+	s.vocab = vocab
 
 	// TODO(jessegross): LoRA loading
 	if lpath.String() != "" {
