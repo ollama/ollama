@@ -436,8 +436,10 @@ func (s *Server) processBatch() error {
 		// if done processing the prompt, generate an embedding and return
 		if seq.embeddingOnly {
 			// TODO(jessegross): Embedding support
-			s.removeSequence(i, "")
-			continue
+			// s.removeSequence(i, "")
+			// continue
+
+			panic("generation of embedding outputs not yet supported")
 		}
 
 		// sample a token
@@ -596,6 +598,10 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		req.MinP,
 		req.Seed,
 	)
+
+	if req.Grammar != "" {
+		panic("grammars are not yet supported")
+	}
 
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
 		numPredict: req.NumPredict,
