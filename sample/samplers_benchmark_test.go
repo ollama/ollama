@@ -24,11 +24,7 @@ func BenchmarkWeightedSampler(b *testing.B) {
 
 			// Initialize sampler with seed
 			// sampler := Weighted(seedValue)
-			sampler, err := NewSampler(0.8, 0, 0, 0, 42)
-			if err != nil {
-				b.Error(err)
-				return
-			}
+			sampler := NewSampler(0.8, 0, 0, 0, 42)
 
 			// Reset timer before the actual benchmark
 			b.ResetTimer()
@@ -69,11 +65,7 @@ func BenchmarkWeightedSampler(b *testing.B) {
 
 	for _, tc := range configs {
 		b.Run("Config"+tc.name, func(b *testing.B) {
-			sampler, err := NewSampler(tc.temperature, tc.topK, tc.topP, tc.minP, tc.seed)
-			if err != nil {
-				b.Error(err)
-				return
-			}
+			sampler := NewSampler(tc.temperature, tc.topK, tc.topP, tc.minP, tc.seed)
 			sampler.Sample(logits)
 
 			b.ResetTimer()
@@ -89,12 +81,7 @@ func BenchmarkWeightedSampler(b *testing.B) {
 
 	// Test with combined transforms separately
 	b.Run("TransformCombined", func(b *testing.B) {
-		sampler, err := NewSampler(0.8, 50, 0.9, 0.05, 42)
-		if err != nil {
-			b.Error(err)
-			return
-		}
-
+		sampler := NewSampler(0.8, 50, 0.9, 0.05, 42)
 		b.ResetTimer()
 
 		for b.Loop() {
@@ -121,7 +108,7 @@ func BenchmarkGreedySampler(b *testing.B) {
 			}
 
 			// Initialize sampler
-			sampler := Greedy()
+			sampler := NewSampler(0, -1, 0, 0, -1)
 
 			// Reset timer before the actual benchmark
 			b.ResetTimer()

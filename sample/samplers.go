@@ -55,7 +55,6 @@ func (s *weighted) Sample(logits []float32) (int32, error) {
 		return -1, errors.New("no valid logits found for weighted sampling")
 	}
 
-	// TODO(parthsareen): fix seeded sampling https://github.com/ollama/ollama/issues/9554
 	var r float32
 	if s.rng != nil {
 		r = s.rng.Float32()
