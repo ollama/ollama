@@ -144,6 +144,7 @@ func minP(ts []logit, p float32) []logit {
 	return ts
 }
 
+// TODO(parthsareen): possibly replace with simpler implementation https://github.com/ollama/ollama/issues/9584
 // Conting sort implementation to sort tokens by logits
 func sortLogits(tokens []logit) {
 	if len(tokens) <= 1 {
