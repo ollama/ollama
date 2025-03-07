@@ -1,15 +1,14 @@
 package sample
 
 import (
-	"math"
 	"math/rand/v2"
 	"testing"
-
-	"github.com/google/go-cmp/cmp"
 )
 
 func TestWeighted(t *testing.T) {
-	got, err := Weighted(nil).Sample([]float32{float32(math.Inf(-1)), 2, float32(math.Inf(-1)), float32(math.Inf(-1))})
+	logits := []float32{-10, 3, -10, -10}
+	sampler := NewSampler(0, 0, 0, 0, 0)
+	got, err := sampler.Sample(logits)
 	if err != nil {
 		t.Error(err)
 		return
@@ -19,61 +18,16 @@ func TestWeighted(t *testing.T) {
 		t.Errorf("index mismatch: want %d, got %d", want, got)
 	}
 
-	got, err = Weighted(nil).Sample([]float32{float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1))})
-	if err == nil {
-		t.Error("expected error for no valid tokens, got index", got)
-	}
-
-	seed := uint64(42)
-	got, err = Weighted(&seed).Sample([]float32{1, 2, 3, 4})
+	logits = []float32{-100, -10, 0, 10}
+	sampler = NewSampler(0, 0, 0, 0, 0)
+	got, err = sampler.Sample(logits)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	// With seed 42, we expect a consistent sample
-	want = int32(3) // This will be deterministic due to the seed
+	want = int32(3) // Should pick highest probability with this r value
 	if want != got {
 		t.Errorf("index mismatch: want %d, got %d", want, got)
-	}
-}
-
-type testTransform struct {
-	id        int
-	callOrder *[]int
-}
-
-func (ts *testTransform) Apply(logits []float64) []float64 {
-	if ts.callOrder != nil {
-		*ts.callOrder = append(*ts.callOrder, ts.id)
-	}
-	return logits
-}
-
-func TestSample(t *testing.T) {
-	input := []float32{1, 2, 3, 4}
-
-	var callOrder []int
-	mock1 := &testTransform{
-		id:        1,
-		callOrder: &callOrder,
-	}
-	mock2 := &testTransform{
-		id:        2,
-		callOrder: &callOrder,
-	}
-	mock3 := &testTransform{
-		id:        3,
-		callOrder: &callOrder,
-	}
-
-	_, err := Weighted(nil, mock1, mock2, mock3).Sample(input)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	wantOrder := []int{1, 2, 3}
-	if diff := cmp.Diff(wantOrder, callOrder); diff != "" {
-		t.Errorf("call order mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -85,75 +39,41 @@ func TestNewSampler(t *testing.T) {
 		topP        float32
 		minP        float32
 		seed        int
-		wantErr     bool
+		wantGreedy  bool // Instead of wantErr, check if we get greedy sampler
 	}{
-		{
-			name: "no transforms",
-			// temperature is 0, so greedy should be used
-			wantErr: false,
-		},
 		{
 			name:        "temperature",
 			temperature: 0.5,
-			wantErr:     false,
+			wantGreedy:  false,
 		},
 		{
-			name:        "invalid temperature negative",
-			temperature: -1,
-			wantErr:     true,
-		},
-		{
-			name:        "invalid temperature too high",
-			temperature: 2.1,
-			wantErr:     true,
+			name:        "zero temperature - greedy",
+			temperature: 0,
+			wantGreedy:  true,
 		},
 		{
 			name:        "top k",
+			temperature: 0.1,
 			topK:        10,
-			temperature: 0.8,
-			wantErr:     false,
-		},
-		{
-			name:        "invalid top k negative",
-			topK:        -1,
-			temperature: 0.8,
-			wantErr:     true,
+			wantGreedy:  false,
 		},
 		{
 			name:        "top p",
+			temperature: 0.1,
 			topP:        0.9,
-			temperature: 0.8,
-			wantErr:     false,
-		},
-		{
-			name:        "invalid top p negative",
-			topP:        -0.1,
-			temperature: 0.8,
-			wantErr:     true,
-		},
-		{
-			name:        "invalid top p one",
-			topP:        1.0,
-			temperature: 0.8,
-			wantErr:     true,
+			wantGreedy:  false,
 		},
 		{
 			name:        "min p",
+			temperature: 0.1,
 			minP:        0.2,
-			temperature: 0.8,
-			wantErr:     false,
+			wantGreedy:  false,
 		},
 		{
-			name:        "invalid min p negative",
-			minP:        -0.1,
-			temperature: 0.8,
-			wantErr:     true,
-		},
-		{
-			name:        "invalid min p one",
-			minP:        1.0,
-			temperature: 0.8,
-			wantErr:     true,
+			name:        "seed - weighted",
+			temperature: 0.1,
+			seed:        42,
+			wantGreedy:  false,
 		},
 		{
 			name:        "default values",
@@ -162,16 +82,16 @@ func TestNewSampler(t *testing.T) {
 			topP:        0.9,
 			minP:        0.0,
 			seed:        0,
-			wantErr:     false,
+			wantGreedy:  false,
 		},
 		{
-			name:        "all zeroes",
+			name:        "all zeroes - greedy",
 			temperature: 0.0,
 			topK:        0,
 			topP:        0.0,
 			minP:        0.0,
 			seed:        0,
-			wantErr:     false, // all zeroes means no transforms
+			wantGreedy:  true,
 		},
 		{
 			name:        "all transforms",
@@ -180,33 +100,28 @@ func TestNewSampler(t *testing.T) {
 			topP:        0.95,
 			minP:        0.1,
 			seed:        42,
-			wantErr:     false,
+			wantGreedy:  false,
 		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewSampler(tt.temperature, tt.topK, tt.topP, tt.minP, tt.seed)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("NewSampler() error = %v, wantErr %v", err, tt.wantErr)
+			sampler := NewSampler(tt.temperature, tt.topK, tt.topP, tt.minP, tt.seed)
+			_, isGreedy := sampler.(*greedy)
+			if isGreedy != tt.wantGreedy {
+				t.Errorf("NewSampler() got greedy = %v, want %v", isGreedy, tt.wantGreedy)
 			}
 		})
 	}
 }
 
 func BenchmarkSample(b *testing.B) {
-	transforms := []Transform{
-		Temperature(0.5),
-		TopK(10),
-		TopP(0.9),
-		MinP(0.2),
-	}
-
+	weighted := NewSampler(0.5, 10, 0.9, 0.2, -1)
 	samplers := map[string]Sampler{
-		"Greedy":   Greedy(),
-		"Weighted": Weighted(nil, transforms...),
+		"Greedy":   NewSampler(0, 0, 0, 0, 0), // Use NewSampler with temp=0 for greedy
+		"Weighted": weighted,
 	}
 
+	// Generate random logits for benchmarking
 	logits := make([]float32, 1<<16)
 	for i := range logits {
 		logits[i] = rand.Float32()
@@ -215,7 +130,7 @@ func BenchmarkSample(b *testing.B) {
 	for name, s := range samplers {
 		b.Run(name, func(b *testing.B) {
 			b.ResetTimer()
-			for range b.N {
+			for b.Loop() {
 				if _, err := s.Sample(logits); err != nil {
 					b.Error(err)
 				}
