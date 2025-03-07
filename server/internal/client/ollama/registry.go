@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"iter"
 	"log/slog"
 	"net/http"
 	"os"
@@ -38,7 +39,6 @@ import (
 	"github.com/ollama/ollama/server/internal/chunks"
 	"github.com/ollama/ollama/server/internal/internal/backoff"
 	"github.com/ollama/ollama/server/internal/internal/names"
-	"github.com/ollama/ollama/server/internal/internal/syncs"
 
 	_ "embed"
 )
@@ -473,16 +473,15 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 			continue
 		}
 
-		blobURL := fmt.Sprintf("%s://%s/v2/%s/%s/blobs/%s", scheme, n.Host(), n.Namespace(), n.Model(), l.Digest)
-		req, err := r.newRequest(ctx, "GET", blobURL, nil)
-		if err != nil {
-			t.update(l, 0, err)
-			continue
-		}
-
 		t.update(l, 0, nil)
 
+		blobURL := fmt.Sprintf("%s://%s/v2/%s/%s/blobs/%s", scheme, n.Host(), n.Namespace(), n.Model(), l.Digest)
 		if l.Size <= r.maxChunkingThreshold() {
+			req, err := r.newRequest(ctx, "GET", blobURL, nil)
+			if err != nil {
+				t.update(l, 0, err)
+				continue
+			}
 			g.Go(func() error {
 				// TODO(bmizerany): retry/backoff like below in
 				// the chunking case
@@ -498,73 +497,103 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 				return err
 			})
 		} else {
-			q := syncs.NewRelayReader()
-
-			g.Go(func() (err error) {
-				defer func() { q.CloseWithError(err) }()
-				return c.Put(l.Digest, q, l.Size)
+			fetchTargetRequest := sync.OnceValues(func() (*http.Request, error) {
+				// Send a tracer request to find the target
+				// download URL.
+				//
+				// Without this, we'll end up with 2x the
+				// roundtrips because the registry will send us
+				// to the same place per chunk, so just take
+				// the first and use it for all chunks.
+				//
+				// TODO(bmizerany): retry with backoff
+				req, err := r.newRequest(ctx, "GET", blobURL, nil)
+				if err != nil {
+					return nil, err
+				}
+				req.Header.Set("Range", "bytes=0-0")
+				res, err := sendRequest(r.client(), req)
+				if err != nil {
+					return nil, err
+				}
+				res.Body.Close()
+				return res.Request.WithContext(req.Context()), nil
 			})
 
-			var progress atomic.Int64
+			// Prefetch the target request while we start looking
+			// for chunksums.
+			go fetchTargetRequest()
 
-			// We want to avoid extra round trips per chunk due to
-			// redirects from the registry to the blob store, so
-			// fire an initial request to get the final URL and
-			// then use that URL for the chunk requests.
-			req.Header.Set("Range", "bytes=0-0")
+			chunked, err := c.Chunked(l.Digest, l.Size)
+			if err != nil {
+				t.update(l, 0, err)
+				continue
+			}
+			defer chunked.Close()
+
+			chunksumsURL := fmt.Sprintf("%s://%s/v2/%s/%s/chunksums/%s", scheme, n.Host(), n.Namespace(), n.Model(), l.Digest)
+			req, err := r.newRequest(ctx, "GET", chunksumsURL, nil)
+			if err != nil {
+				t.update(l, 0, err)
+				continue
+			}
+
 			res, err := sendRequest(r.client(), req)
 			if err != nil {
-				return err
+				t.update(l, 0, err)
+				continue
 			}
-			res.Body.Close()
-			req = res.Request.WithContext(req.Context())
+			defer res.Body.Close()
 
-			wp := writerPool{size: r.maxChunkSize()}
+			if res.StatusCode != 200 {
+				t.update(l, 0, fmt.Errorf("chunksums: unexpected status code %d", res.StatusCode))
+				continue
+			}
 
-			for chunk := range chunks.Of(l.Size, r.maxChunkSize()) {
-				if ctx.Err() != nil {
+			var progress atomic.Int64
+			summer := sha256.New()
+			body := io.TeeReader(res.Body, summer)
+			for cs, err := range chunksums(body) {
+				if err != nil {
+					t.update(l, progress.Load(), err)
 					break
 				}
 
-				ticket := q.Take()
+				// Prevent wasted efforts and duplicated calls
+				// to t.update, if the targetURL could not be
+				// obtained, by calling fetchTargetRequest
+				// before starting goroutines.
+				targetReq, err := fetchTargetRequest()
+				if err != nil {
+					// The target request failed, so we
+					// can't proceed. Update any traces and
+					// return.
+					t.update(l, 0, err)
+					return err
+				}
+
 				g.Go(func() (err error) {
-					defer func() {
-						if err != nil {
-							q.CloseWithError(err)
-						}
-						ticket.Close()
-						t.update(l, progress.Load(), err)
-					}()
+					defer func() { t.update(l, progress.Load(), err) }()
 
 					for _, err := range backoff.Loop(ctx, 3*time.Second) {
 						if err != nil {
 							return err
 						}
 						err := func() error {
-							req := req.Clone(req.Context())
-							req.Header.Set("Range", fmt.Sprintf("bytes=%s", chunk))
+							req := targetReq.Clone(targetReq.Context())
+							req.Header.Set("Range", fmt.Sprintf("bytes=%s", cs.Chunk))
 							res, err := sendRequest(r.client(), req)
 							if err != nil {
 								return err
 							}
 							defer res.Body.Close()
 
-							tw := wp.get()
-							tw.Reset(ticket)
-							defer wp.put(tw)
-
-							_, err = io.CopyN(tw, res.Body, chunk.Size())
+							err = chunked.Put(cs.Chunk, cs.Digest, res.Body)
 							if err != nil {
-								return maybeUnexpectedEOF(err)
-							}
-							if err := tw.Flush(); err != nil {
 								return err
 							}
 
-							total := progress.Add(chunk.Size())
-							if total >= l.Size {
-								q.Close()
-							}
+							progress.Add(cs.Chunk.Size())
 							return nil
 						}()
 						if !canRetry(err) {
@@ -734,6 +763,43 @@ func (r *Registry) Resolve(ctx context.Context, name string) (*Manifest, error) 
 		return nil, fmt.Errorf("%s: %w", name, errors.Join(ErrManifestInvalid, err))
 	}
 	return m, nil
+}
+
+type chunksum struct {
+	Chunk  blob.Chunk
+	Digest blob.Digest
+}
+
+func chunksums(r io.Reader) iter.Seq2[chunksum, error] {
+	return func(yield func(chunksum, error) bool) {
+		s := bufio.NewScanner(r)
+		var lineno int
+		for s.Scan() {
+			lineno++
+			line := strings.TrimSpace(s.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			parts := strings.Fields(line)
+			if len(parts) != 2 {
+				yield(chunksum{}, fmt.Errorf("invalid chunksum line %d: %q", lineno, line))
+				return
+			}
+			d, err := blob.ParseDigest(parts[0])
+			if err != nil {
+				yield(chunksum{}, fmt.Errorf("invalid digest %d: %q", lineno, parts[0]))
+				return
+			}
+			chunk, err := chunks.Parse(parts[1])
+			if err != nil {
+				yield(chunksum{}, fmt.Errorf("invalid chunk range %d: %q", lineno, parts[1]))
+				return
+			}
+			if !yield(chunksum{Chunk: chunk, Digest: d}, nil) {
+				return
+			}
+		}
+	}
 }
 
 func (r *Registry) client() *http.Client {
