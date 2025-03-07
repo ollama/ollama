@@ -4,6 +4,7 @@ import (
 	"errors"
 	"math"
 
+	"github.com/ollama/ollama/llama"
 	"golang.org/x/exp/rand"
 	"gonum.org/v1/gonum/stat/sampleuv"
 )
@@ -57,10 +58,22 @@ func (s weighted) Sample(logits []float32) (int32, error) {
 	return -1, errors.New("weighted sampler failed, no valid token found")
 }
 
-type greedy struct{}
+type greedy struct {
+	grammar llama.Grammar
+}
 
 func Greedy() Sampler {
 	return greedy{}
+}
+
+func WithGrammar(s Sampler, grammar llama.Grammar) Sampler {
+	switch t := s.(type) {
+	case greedy:
+		t.grammar = grammar
+		return t
+	default:
+		return s
+	}
 }
 
 // Sample returns the index of the maximum value in logits.

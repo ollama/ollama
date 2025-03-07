@@ -1,0 +1,117 @@
+From 668a974433edccf2c5fcc2192c39aed601e575f2 Mon Sep 17 00:00:00 2001
+From: Bruce MacDonald <brucewmacdonald@gmail.com>
+Date: Thu, 6 Mar 2025 21:07:06 -0800
+Subject: [PATCH] expose llama_vocab from tokens
+
+---
+ llama/llama.cpp/src/llama-vocab.cpp | 73 +++++++++++++++++++++++++++++
+ llama/llama.cpp/src/llama-vocab.h   | 11 ++++-
+ 2 files changed, 83 insertions(+), 1 deletion(-)
+
+diff --git a/llama/llama.cpp/src/llama-vocab.cpp b/llama/llama.cpp/src/llama-vocab.cpp
+index c7ff28be..ad6e7ad8 100644
+--- a/llama/llama.cpp/src/llama-vocab.cpp
++++ b/llama/llama.cpp/src/llama-vocab.cpp
+@@ -3253,3 +3253,76 @@ int32_t llama_detokenize(
+     return vocab->detokenize(tokens, n_tokens, text, text_len_max, remove_special, unparse_special);
+ }
+ 
++struct llama_vocab *llama_vocab_from_tokens(const char **tokens, int n_tokens)
++{
++    if (!tokens || n_tokens <= 0)
++    {
++        return nullptr;
++    }
++
++    try
++    {
++        // Create a new vocabulary instance
++        llama_vocab *vocab = new llama_vocab();
++        vocab->pimpl = std::make_unique<llama_vocab::impl>(*vocab);
++
++        // Resize the token data vectors
++        vocab->pimpl->id_to_token.resize(n_tokens);
++
++        // Create mappings for all tokens
++        for (int i = 0; i < n_tokens; i++)
++        {
++            std::string word = tokens[i];
++            if (word.empty())
++            {
++                word = "[EMPTY_" + std::to_string(i) + "]";
++            }
++
++            // Add to token mappings
++            vocab->pimpl->token_to_id[word] = i;
++
++            // Set up token data
++            auto &token_data = vocab->pimpl->id_to_token[i];
++            token_data.text = std::move(word);
++            token_data.score = 0.0f; // Default score
++            token_data.attr = LLAMA_TOKEN_ATTR_NORMAL;
++
++            // Detect special tokens
++            if (word == "<s>" || word == "<bos>")
++            {
++                vocab->pimpl->special_bos_id = i;
++            }
++            else if (word == "</s>" || word == "<eos>" || word == "<|endoftext|>")
++            {
++                vocab->pimpl->special_eos_id = i;
++                vocab->pimpl->special_eog_ids.insert(i);
++            }
++            else if (word == "<unk>")
++            {
++                vocab->pimpl->special_unk_id = i;
++            }
++        }
++
++        // Initialize the token-to-piece cache
++        vocab->pimpl->cache_token_to_piece.resize(n_tokens);
++        for (int i = 0; i < n_tokens; i++)
++        {
++            vocab->pimpl->cache_token_to_piece[i] = vocab->pimpl->id_to_token[i].text;
++        }
++
++        return vocab;
++    }
++    catch (const std::exception &err)
++    {
++        return nullptr;
++    }
++}
++
++// Helper function to free the vocab
++void llama_vocab_free(struct llama_vocab *vocab)
++{
++    if (vocab)
++    {
++        delete vocab;
++    }
++}
+\ No newline at end of file
+diff --git a/llama/llama.cpp/src/llama-vocab.h b/llama/llama.cpp/src/llama-vocab.h
+index 5ce35521..eceb28f3 100644
+--- a/llama/llama.cpp/src/llama-vocab.h
++++ b/llama/llama.cpp/src/llama-vocab.h
+@@ -119,7 +119,16 @@ struct llama_vocab {
+ 
+     void print_info() const;
+ 
+-private:
+     struct impl;
+     std::unique_ptr<impl> pimpl;
+ };
++
++// Create a vocabulary from an array of token strings
++// tokens: Array of token strings
++// n_tokens: Number of tokens in the array
++// Returns: A new llama_vocab instance, or nullptr on failure
++// The caller is responsible for freeing the vocabulary using llama_vocab_free
++LLAMA_API struct llama_vocab * llama_vocab_from_tokens(const char ** tokens, int n_tokens);
++
++// Free a vocabulary created with llama_vocab_from_tokens
++LLAMA_API void llama_vocab_free(struct llama_vocab * vocab);
+-- 
+2.39.3 (Apple Git-145)
+

@@ -428,7 +428,8 @@ func (s *Server) processBatch() error {
 
 		// sample a token
 		vocabSize := len(logits) / len(options.Outputs)
-
+		// TODO: need access to vocab to apply grammar
+		// token = sampler.Grammar.Apply(logits)
 		token, err := seq.sampler.Sample(logits[seq.iBatch*vocabSize : (seq.iBatch+1)*vocabSize])
 		if err != nil {
 			return fmt.Errorf("failed to sample token: %w", err)
@@ -574,6 +575,13 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Streaming not supported", http.StatusInternalServerError)
 		return
 	}
+
+	// TODO: if grammar is provided, load it
+	// if req.Grammar != "" {
+	// 	grammar := llama.NewGrammarWithTokens(req.Grammar, "root", s.model.Vocabulary)
+	// }
+	// defer grammar.Close()
+	// sampler := sample.WithGrammar(sample.Greedy(), grammar)
 
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
 		numPredict: req.NumPredict,

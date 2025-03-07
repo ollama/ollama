@@ -18,6 +18,7 @@ package llama
 
 #include "mllama.h"
 #include "sampling_ext.h"
+#include "grammar_ext.h"
 
 extern bool llamaProgressCallback(float progress, void *user_data);
 extern void llamaLog(int level, char* text, void* user_data);
