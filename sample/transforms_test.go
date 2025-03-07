@@ -85,7 +85,7 @@ func TestTopP(t *testing.T) {
 	// First apply temperature and softmax to get probabilities
 	tokens = temperature(tokens, 1)
 	tokens = softmax(tokens)
-	sortTokens(tokens)
+	sortLogits(tokens)
 
 	// Then apply topP
 	got := topP(tokens, 0.95)
@@ -112,6 +112,23 @@ func TestMinP(t *testing.T) {
 	if len(got) > 3 {
 		t.Errorf("minP(0.2): kept too many tokens: got %d", len(got))
 	}
+}
+
+func TestSortLogits(t *testing.T) {
+	input := []float64{3, 1, 4, 2, -1, 0, -2}
+	tokens := toLogits(input)
+
+	sortLogits(tokens)
+
+	for i := 1; i < len(tokens); i++ {
+		if tokens[i].value > tokens[i-1].value {
+			t.Errorf("sortLogits: tokens not sorted in descending order at index %d: %f > %f",
+				i, tokens[i].value, tokens[i-1].value)
+		}
+	}
+
+	want := []float64{4, 3, 2, 1, 0, -1, -2}
+	compareLogits(t, "sortLogits", want, tokens)
 }
 
 func BenchmarkTransforms(b *testing.B) {
@@ -162,7 +179,7 @@ func BenchmarkTransforms(b *testing.B) {
 		b.ResetTimer()
 		for b.Loop() {
 			copy(tokensCopy, tokens)
-			sortTokens(tokensCopy)
+			sortLogits(tokensCopy)
 		}
 	})
 }

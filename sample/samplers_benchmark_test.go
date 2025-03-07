@@ -6,30 +6,18 @@ import (
 	"testing"
 )
 
-// BenchmarkWeightedSampler tests the performance of the weighted sampler
-// with various input sizes and configurations
 func BenchmarkWeightedSampler(b *testing.B) {
-	// Different sizes of logits to test
 	sizes := []int{10, 100, 1000, 10000}
-
-	// Different seed values to test
 
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("Size %d", size), func(b *testing.B) {
-			// Create logits with random values
 			logits := make([]float32, size)
 			for i := range logits {
-				logits[i] = float32(rand.Float64()*10 - 5) // values between -5 and 5
+				logits[i] = float32(rand.Float64()*10 - 5)
 			}
 
-			// Initialize sampler with seed
-			// sampler := Weighted(seedValue)
 			sampler := NewSampler(0.8, 0, 0, 0, 42)
-
-			// Reset timer before the actual benchmark
 			b.ResetTimer()
-
-			// Run the benchmark
 			for b.Loop() {
 				_, err := sampler.Sample(logits)
 				if err != nil {
@@ -39,7 +27,6 @@ func BenchmarkWeightedSampler(b *testing.B) {
 		})
 	}
 
-	// Test with different sampling configurations
 	configs := []struct {
 		name        string
 		temperature float32
@@ -56,7 +43,7 @@ func BenchmarkWeightedSampler(b *testing.B) {
 		{"WithSeed", 0.8, 50, 0, 0, 42},
 	}
 
-	// Fixed size for configuration tests
+	// Fixed size for common vocab size
 	size := 128000
 	logits := make([]float32, size)
 	for i := range logits {
@@ -79,7 +66,7 @@ func BenchmarkWeightedSampler(b *testing.B) {
 		})
 	}
 
-	// Test with combined transforms separately
+	// Test with combined transforms separately - topK influences performance greatly
 	b.Run("TransformCombined", func(b *testing.B) {
 		sampler := NewSampler(0.8, 50, 0.9, 0.05, 42)
 		b.ResetTimer()
@@ -93,27 +80,19 @@ func BenchmarkWeightedSampler(b *testing.B) {
 	})
 }
 
-// BenchmarkGreedySampler tests the performance of the greedy sampler
-// with various input sizes
 func BenchmarkGreedySampler(b *testing.B) {
-	// Different sizes of logits to test
 	sizes := []int{10, 100, 1000, 10000, 100000}
 
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("Size %d", size), func(b *testing.B) {
-			// Create logits with random values
 			logits := make([]float32, size)
 			for i := range logits {
-				logits[i] = float32(rand.Float64()*10 - 5) // values between -5 and 5
+				logits[i] = float32(rand.Float64()*10 - 5)
 			}
 
-			// Initialize sampler
 			sampler := NewSampler(0, -1, 0, 0, -1)
-
-			// Reset timer before the actual benchmark
 			b.ResetTimer()
 
-			// Run the benchmark
 			for b.Loop() {
 				_, err := sampler.Sample(logits)
 				if err != nil {

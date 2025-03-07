@@ -42,7 +42,7 @@ func (s *weighted) Sample(logits []float32) (int32, error) {
 	if s.topK > 0 {
 		tokens = topK(tokens, s.topK)
 	} else {
-		sortTokens(tokens)
+		sortLogits(tokens)
 	}
 
 	tokens = temperature(tokens, s.temperature)

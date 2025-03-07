@@ -144,8 +144,8 @@ func minP(ts []logit, p float32) []logit {
 	return ts
 }
 
-// Counting sort implementation to sort tokens by logits
-func sortTokens(tokens []logit) {
+// Conting sort implementation to sort tokens by logits
+func sortLogits(tokens []logit) {
 	if len(tokens) <= 1 {
 		return
 	}
