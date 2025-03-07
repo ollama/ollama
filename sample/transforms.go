@@ -5,59 +5,53 @@ import (
 	"slices"
 )
 
-type transform interface {
-	Apply(tokenSliceInfo) tokenSliceInfo
-}
-
-type softmax struct{}
-
-func Softmax() transform {
-	return softmax{}
-}
-
-func (s softmax) Apply(ts tokenSliceInfo) tokenSliceInfo {
+func softmax(ts []logit) []logit {
 	var sum float32
-	for i, v := range ts.tokens {
-		ts.tokens[i].prob = float32(math.Exp(float64(v.logit)))
-		sum += ts.tokens[i].prob
+	for i, v := range ts {
+		ts[i].value = float32(math.Exp(float64(v.value)))
+		sum += ts[i].value
 	}
 
-	for i := range ts.tokens {
-		ts.tokens[i].prob /= sum
+	for i := range ts {
+		ts[i].value /= sum
 	}
-
-	ts.sum = sum
 
 	return ts
 }
 
-type Temperature float64
-
-func (t Temperature) Apply(ts tokenSliceInfo) tokenSliceInfo {
+func temperature(ti []logit, t float32) []logit {
 	if t == 1 {
-		return ts
+		return ti
 	}
 
-	temp := float32(math.Max(float64(t), 1e-7))
+	temp := max(t, 1e-7)
 	maxLogit := float32(math.Inf(-1))
-	for _, token := range ts.tokens {
-		if token.logit > maxLogit {
-			maxLogit = token.logit
+	for _, token := range ti {
+		if token.value > maxLogit {
+			maxLogit = token.value
 		}
 	}
 
 	// subtracting max logit to avoid under/overflow
-	for i := range ts.tokens {
-		ts.tokens[i].logit = (ts.tokens[i].logit - maxLogit) / temp
+	for i := range ti {
+		ti[i].value = (ti[i].value - maxLogit) / temp
 	}
 
-	return ts
+	return ti
 }
 
-type TopK int
-
-// siftDown maintains min-heap property by pushing larger elements down
-func siftDown(data []tokenInfo, start, end int) {
+// siftDown maintains a min-heap property by recursively moving larger elements down the heap.
+//
+// The heap is represented as an array where for any node at index i:
+// - Left child is at index 2i + 1
+// - Right child is at index 2i + 2
+// - Parent is at index (i-1)/2
+//
+// The function compares a node with its children and:
+// 1. Finds the smallest value between the node and its children
+// 2. If the node is not the smallest, swaps it with its smallest child
+// 3. Continues this process down the affected path until the min-heap property is restored
+func siftDown(data []logit, start, end int) {
 	root := start
 	for {
 		child := 2*root + 1
@@ -65,11 +59,11 @@ func siftDown(data []tokenInfo, start, end int) {
 			break
 		}
 		// Find smaller child (we want min heap)
-		if child+1 < end && data[child+1].logit < data[child].logit {
+		if child+1 < end && data[child+1].value < data[child].value {
 			child++
 		}
 		// Exit if root is already smaller than children
-		if data[root].logit <= data[child].logit {
+		if data[root].value <= data[child].value {
 			break
 		}
 		// Swap with smaller child and continue
@@ -78,44 +72,45 @@ func siftDown(data []tokenInfo, start, end int) {
 	}
 }
 
-func (k TopK) Apply(ts tokenSliceInfo) tokenSliceInfo {
+// topK limits the number of tokens considered to the k highest logits
+func topK(ts []logit, k int) []logit {
 	kk := int(k)
-	if kk >= len(ts.tokens) {
+	if kk >= len(ts) {
 		return ts
 	}
-
 	// Heapify + siftDown - O(nlog(k))
 	// Build min-heap of first k elements
-	heap := ts.tokens[:kk]
+	heap := ts[:kk]
 	for i := kk/2 - 1; i >= 0; i-- {
 		siftDown(heap, i, kk)
 	}
 
 	// Process remaining elements - if larger than heap root, replace root
-	for i := kk; i < len(ts.tokens); i++ {
-		if ts.tokens[i].logit > heap[0].logit {
-			heap[0] = ts.tokens[i]
+	for i := kk; i < len(ts); i++ {
+		if ts[i].value > heap[0].value {
+			heap[0] = ts[i]
 			siftDown(heap, 0, kk)
 		}
 	}
 
 	slices.Reverse(heap)
 
-	ts.tokens = heap
-	ts.sorted = true
+	ts = heap
 	return ts
 }
 
-type TopP float64
+// topP limits tokens to those with cumulative probability p
+func topP(ts []logit, p float32) []logit {
+	if p == 1.0 {
+		return ts
+	}
 
-func (p TopP) Apply(ts tokenSliceInfo) tokenSliceInfo {
-	// Sorting is required prior to applying this transform
 	// Find cutoff index where cumulative sum exceeds p
 	var sum float32
-	for i, t := range ts.tokens {
-		sum += t.prob
+	for i, t := range ts {
+		sum += t.value
 		if sum > float32(p) {
-			ts.tokens = ts.tokens[:i+1]
+			ts = ts[:i+1]
 			return ts
 		}
 	}
@@ -123,54 +118,46 @@ func (p TopP) Apply(ts tokenSliceInfo) tokenSliceInfo {
 	return ts
 }
 
-type MinP float32
+// minP limits tokens to those with cumulative probability p
+func minP(ts []logit, p float32) []logit {
+	if p == 1.0 {
+		return ts
+	}
 
-func (p MinP) Apply(ts tokenSliceInfo) tokenSliceInfo {
 	maxProb := float32(math.Inf(-1))
-	for _, token := range ts.tokens {
-		if token.prob > maxProb {
-			maxProb = token.prob
+	for _, token := range ts {
+		if token.value > maxProb {
+			maxProb = token.value
 		}
 	}
 
 	threshold := maxProb * float32(p)
 
 	// Filter tokens in-place
-	validTokens := ts.tokens[:0]
-	for i, token := range ts.tokens {
-		if token.prob >= threshold {
-			validTokens = append(validTokens, ts.tokens[i])
+	validTokens := ts[:0]
+	for i, token := range ts {
+		if token.value >= threshold {
+			validTokens = append(validTokens, ts[i])
 		}
 	}
 
-	return tokenSliceInfo{tokens: validTokens, sorted: ts.sorted}
-}
-
-type sortTokens struct{}
-
-func SortTokens() transform {
-	return sortTokens{}
-}
-
-func (s sortTokens) Apply(ts tokenSliceInfo) tokenSliceInfo {
-	countingSort(ts.tokens)
-	ts.sorted = true
+	ts = validTokens
 	return ts
 }
 
-// Counting sort
-func countingSort(tokens []tokenInfo) {
+// Counting sort implementation to sort tokens by logits
+func sortTokens(tokens []logit) {
 	if len(tokens) <= 1 {
 		return
 	}
 
 	// Find max/min in a single pass
-	minLogit, maxLogit := tokens[0].logit, tokens[0].logit
+	minLogit, maxLogit := tokens[0].value, tokens[0].value
 	for _, t := range tokens[1:] {
-		if t.logit < minLogit {
-			minLogit = t.logit
-		} else if t.logit > maxLogit {
-			maxLogit = t.logit
+		if t.value < minLogit {
+			minLogit = t.value
+		} else if t.value > maxLogit {
+			maxLogit = t.value
 		}
 	}
 
@@ -187,7 +174,7 @@ func countingSort(tokens []tokenInfo) {
 	// First pass: count frequencies
 	for _, t := range tokens {
 		// Map to [0, maxInt] range
-		score := min(uint32((t.logit-minLogit)*float32(maxInt)/logitRange), maxInt)
+		score := min(uint32((t.value-minLogit)*float32(maxInt)/logitRange), maxInt)
 		counts[score>>16]++
 	}
 
@@ -200,12 +187,12 @@ func countingSort(tokens []tokenInfo) {
 	}
 
 	// Second pass: place elements in correct position
-	output := make([]tokenInfo, len(tokens))
+	output := make([]logit, len(tokens))
 	// Track current positions
 	countsCopy := counts
 
 	for i, t := range tokens {
-		score := min(uint32((t.logit-minLogit)*float32(maxInt)/logitRange), maxInt)
+		score := min(uint32((t.value-minLogit)*float32(maxInt)/logitRange), maxInt)
 
 		pos := countsCopy[score>>16]
 		countsCopy[score>>16]++

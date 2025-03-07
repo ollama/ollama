@@ -3,50 +3,55 @@ package sample
 import (
 	"errors"
 	"math/rand/v2"
+	"slices"
 )
 
-// Sampler is not thread-safe. Each goroutine should have its own instance.
+// Sampler is not thread-safe. Each goroutine should have its own instance
 type Sampler interface {
 	Sample([]float32) (int32, error)
 }
 
-type tokenInfo struct {
-	id    int32
-	logit float32
-	prob  float32
-}
-
-type tokenSliceInfo struct {
-	tokens []tokenInfo
-	sorted bool
-	sum    float32
+// logit represents information about a single token during sampling
+type logit struct {
+	id    int32   // The token's unique identifier
+	value float32 // The raw logit or probability from the model
 }
 
 type weighted struct {
-	rng        *rand.Rand
-	transforms []transform
-}
-
-func Weighted(rng *rand.Rand, transforms ...transform) Sampler {
-	return &weighted{
-		rng:        rng,
-		transforms: transforms,
-	}
+	rng         *rand.Rand
+	tokens      []logit
+	topK        int
+	topP        float32
+	minP        float32
+	temperature float32
 }
 
 func (s *weighted) Sample(logits []float32) (int32, error) {
-	tokens := make([]tokenInfo, len(logits))
+	if len(s.tokens) < len(logits) {
+		s.tokens = make([]logit, len(logits))
+	}
+
+	tokens := s.tokens[:len(logits)]
+
 	for i, v := range logits {
 		tokens[i].id = int32(i)
-		tokens[i].logit = v
+		tokens[i].value = v
 	}
 
-	tokensInfo := tokenSliceInfo{tokens: tokens, sorted: false}
-	for _, t := range s.transforms {
-		tokensInfo = t.Apply(tokensInfo)
+	// Tokens are sorted by logits in TopK or SortTokens
+	if s.topK > 0 {
+		tokens = topK(tokens, s.topK)
+	} else {
+		sortTokens(tokens)
 	}
 
-	if len(tokensInfo.tokens) == 0 {
+	tokens = temperature(tokens, s.temperature)
+	tokens = softmax(tokens)
+
+	tokens = topP(tokens, s.topP)
+	tokens = minP(tokens, s.minP)
+
+	if len(tokens) == 0 {
 		return -1, errors.New("no valid logits found for weighted sampling")
 	}
 
@@ -57,29 +62,34 @@ func (s *weighted) Sample(logits []float32) (int32, error) {
 	} else {
 		r = rand.Float32()
 	}
-	r *= tokensInfo.sum
 
-	// Binary search for the selected index as tokens are sorted by logits
-	left, right := 0, len(tokensInfo.tokens)-1
-	for left < right {
-		mid := (left + right) / 2
-		if tokensInfo.tokens[mid].prob < r {
-			left = mid + 1
-		} else {
-			right = mid
+	// Calculate cumulative sum of probabilities
+	var sum float32
+	for i := range tokens {
+		sum += tokens[i].value
+		tokens[i].value = sum
+	}
+	r *= tokens[len(tokens)-1].value
+
+	idx, _ := slices.BinarySearchFunc(tokens, r, func(token logit, target float32) int {
+		// Compare cumulative probabilities
+		if token.value < target {
+			return -1
 		}
+		// First token that exceeds target
+		return 1
+	})
+
+	if idx >= len(tokens) {
+		idx = len(tokens) - 1
 	}
 
-	return tokensInfo.tokens[left].id, nil
+	return tokens[idx].id, nil
 }
 
 type greedy struct{}
 
-func Greedy() Sampler {
-	return greedy{}
-}
-
-// Sample returns the index of the maximum value in logits.
+// Greedy sample returns the index of the maximum value in logits.
 func (s greedy) Sample(logits []float32) (int32, error) {
 	if len(logits) == 0 {
 		return -1, errors.New("no logits provided for greedy sampling")
@@ -98,46 +108,40 @@ func (s greedy) Sample(logits []float32) (int32, error) {
 }
 
 // TODO(parthsareen): update sampler interface to use json unmarshal https://github.com/ollama/ollama/issues/9278
-func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int) (Sampler, error) {
+func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int) Sampler {
 	if temperature == 0 {
-		return Greedy(), nil
-	}
-
-	transforms := []transform{}
-	// Tokens are sorted by logits in TopK or SortTokens
-	if topK > 0 {
-		transforms = append(transforms, TopK(topK))
-	} else {
-		transforms = append(transforms, SortTokens())
-	}
-
-	if temperature < 0 || temperature > 2 {
-		return nil, errors.New("temperature must be between 0 and 2")
-	}
-
-	// tokens must be sorted by logits before next steps
-	transforms = append(transforms, Temperature(temperature), Softmax())
-
-	if topP != 0 {
-		if topP < 0 || topP >= 1 {
-			return nil, errors.New("topP must be between 0 and 1")
-		}
-		transforms = append(transforms, TopP(topP))
-	}
-
-	if minP != 0 {
-		if minP < 0 || minP >= 1 {
-			return nil, errors.New("minP must be between 0 and 1")
-		}
-		transforms = append(transforms, MinP(minP))
+		return &greedy{}
 	}
 
 	var rng *rand.Rand
 	if seed != -1 {
-		seed1 := uint64(seed)
-		seed2 := uint64(seed) ^ 0x12345678 // XOR with a constant to get a different but deterministic value
-		rng = rand.New(rand.NewPCG(seed1, seed2))
+		// PCG requires two parameters: sequence and stream
+		// Use original seed for sequence
+		sequence := uint64(seed)
+		// Use golden ratio hash to generate statistically independent seeds
+		rng = rand.New(rand.NewPCG(sequence, sequence^0x9E3779B9))
+	}
+	temperature = max(temperature, 1)
+
+	if topP < 0.0 {
+		topP = 0.0
+	}
+	if topP >= 1.0 {
+		topP = 1.0
 	}
 
-	return Weighted(rng, transforms...), nil
+	if minP < 0.0 {
+		minP = 0.0
+	}
+	if minP >= 1.0 {
+		minP = 1.0
+	}
+
+	return &weighted{
+		rng:         rng,
+		topK:        topK,
+		topP:        topP,
+		minP:        minP,
+		temperature: temperature,
+	}
 }
