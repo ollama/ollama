@@ -26,6 +26,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model"
+	"github.com/ollama/ollama/model/input"
 	"github.com/ollama/ollama/runner/common"
 	"github.com/ollama/ollama/sample"
 
@@ -41,10 +42,10 @@ type Sequence struct {
 	iBatch int
 
 	// prompt inputs left to evaluate
-	inputs []model.Input
+	inputs []input.Input
 
 	// inputs that have been added to a batch but not yet submitted to Forward
-	pendingInputs []model.Input
+	pendingInputs []input.Input
 
 	// tokens that have been generated but not returned yet (e.g. for stop sequences)
 	pendingResponses []string
@@ -144,8 +145,8 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 // inputs processes the prompt and images into a list of inputs
 // by splitting the prompt on [img-<n>] tags, tokenizing text and
 // decoding images
-func (s *Server) inputs(ctx ml.Context, prompt string, images []ImageData) ([]model.Input, error) {
-	var inputs []model.Input
+func (s *Server) inputs(ctx ml.Context, prompt string, images []ImageData) ([]input.Input, error) {
+	var inputs []input.Input
 	var parts []string
 	var matches [][]string
 
@@ -168,7 +169,7 @@ func (s *Server) inputs(ctx ml.Context, prompt string, images []ImageData) ([]mo
 		}
 
 		for _, t := range tokens {
-			inputs = append(inputs, model.Input{Token: t})
+			inputs = append(inputs, input.Input{Token: t})
 		}
 
 		// image - decode and store
@@ -196,7 +197,7 @@ func (s *Server) inputs(ctx ml.Context, prompt string, images []ImageData) ([]mo
 			_, _ = s.multimodalHash.Write(images[imageIndex].Data)
 			imageHash := s.multimodalHash.Sum64()
 
-			inputs = append(inputs, model.Input{Multimodal: imageEmbeddings, MultimodalHash: imageHash})
+			inputs = append(inputs, input.Input{Multimodal: imageEmbeddings, MultimodalHash: imageHash})
 			postTokenize = true
 		}
 	}
@@ -249,9 +250,6 @@ type Server struct {
 
 	// KV cache
 	cache *InputCache
-
-	// next sequence for prompt processing to avoid starvation
-	nextSeq int
 
 	// multimodalHash generates hashes for comparing equality
 	// of non-text data
@@ -329,29 +327,25 @@ func (s *Server) processBatch() error {
 	}
 	defer s.mu.Unlock()
 
-	var options model.Options
+	var options input.Options
 
-	seqIdx := s.nextSeq - 1
-	for range s.seqs {
-		seqIdx = (seqIdx + 1) % len(s.seqs)
-		seq := s.seqs[seqIdx]
-
+	for i, seq := range s.seqs {
 		if seq == nil {
 			continue
 		}
 
 		// if past the num predict limit
 		if seq.numPredict > 0 && seq.numPredicted >= seq.numPredict {
-			s.removeSequence(seqIdx, "limit")
+			s.removeSequence(i, "limit")
 			continue
 		}
 
 		if !s.cache.enabled {
 			seq.inputs = append(seq.cache.Inputs, seq.inputs...)
-			seq.cache.Inputs = []model.Input{}
+			seq.cache.Inputs = []input.Input{}
 		}
 
-		for i, input := range seq.inputs {
+		for j, inp := range seq.inputs {
 			if int32(len(seq.cache.Inputs)+len(seq.pendingInputs)+1) > s.cache.numCtx {
 				if len(seq.pendingInputs) == 0 {
 					err := s.cache.ShiftCacheSlot(seq.cache, seq.numKeep)
@@ -363,33 +357,23 @@ func (s *Server) processBatch() error {
 				}
 			}
 
-			if i >= s.batchSize {
+			if j >= s.batchSize {
 				break
 			}
 
-			// TODO(jessegross): This is a workaround for generating an attention mask and also providing a hint
-			// to the encoder cache.
-			//
-			// Break the batch when switching from text to images so that images are always at the beginning.
-			if input.Multimodal != nil && !(len(seq.pendingInputs) == 0 ||
-				(len(options.Multimodal) > 0 && options.Multimodal[len(options.Multimodal)-1].Index == len(options.Inputs)-1)) {
-				s.nextSeq = seqIdx
-				break
-			}
-
-			options.Inputs = append(options.Inputs, input.Token)
-			if input.Multimodal != nil {
-				options.Multimodal = append(options.Multimodal, model.MultimodalIndex{Index: len(options.Inputs) - 1, Multimodal: input.Multimodal})
+			options.Inputs = append(options.Inputs, inp.Token)
+			if inp.Multimodal != nil {
+				options.Multimodal = append(options.Multimodal, input.MultimodalIndex{Index: len(options.Inputs) - 1, Multimodal: inp.Multimodal})
 			}
 
 			options.Positions = append(options.Positions, int32(len(seq.cache.Inputs)+len(seq.pendingInputs)))
 			options.Sequences = append(options.Sequences, seq.cache.Id)
 
 			seq.iBatch = len(options.Outputs)
-			if i+1 == len(seq.inputs) {
+			if j+1 == len(seq.inputs) {
 				options.Outputs = append(options.Outputs, int32(len(options.Inputs)-1))
 			}
-			seq.pendingInputs = append(seq.pendingInputs, input)
+			seq.pendingInputs = append(seq.pendingInputs, inp)
 		}
 
 		seq.inputs = seq.inputs[len(seq.pendingInputs):]
@@ -417,7 +401,7 @@ func (s *Server) processBatch() error {
 		// After calling Forward, pending inputs are now in the cache
 		if len(seq.pendingInputs) > 0 {
 			seq.cache.Inputs = append(seq.cache.Inputs, seq.pendingInputs...)
-			seq.pendingInputs = []model.Input{}
+			seq.pendingInputs = []input.Input{}
 		}
 
 		// don't sample prompt processing
@@ -465,7 +449,7 @@ func (s *Server) processBatch() error {
 			return err
 		}
 
-		seq.inputs = []model.Input{{Token: token}}
+		seq.inputs = []input.Input{{Token: token}}
 
 		seq.pendingResponses = append(seq.pendingResponses, piece)
 		sequence := strings.Join(seq.pendingResponses, "")

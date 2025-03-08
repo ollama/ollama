@@ -9,6 +9,7 @@ import (
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
 	"github.com/ollama/ollama/model"
+	"github.com/ollama/ollama/model/input"
 )
 
 type Options struct {
@@ -137,7 +138,7 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs, outputs ml.Ten
 	return hiddenState.Add(ctx, residual)
 }
 
-func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
+func (m *Model) Forward(ctx ml.Context, opts input.Options) (ml.Tensor, error) {
 	inputs, err := ctx.Input().FromIntSlice(opts.Inputs, len(opts.Inputs))
 	if err != nil {
 		return nil, err

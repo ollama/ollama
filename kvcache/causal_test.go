@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/model/input"
 )
 
 type testCase struct {
@@ -269,7 +270,7 @@ func testCache(t *testing.T, backend ml.Backend, cache Cache, tests []testCase) 
 			context := backend.NewContext()
 			defer context.Close()
 
-			err := cache.StartForward(context, test.pos, test.seqs)
+			err := cache.StartForward(context, input.Options{Positions: test.pos, Sequences: test.seqs})
 			if err != nil {
 				panic(err)
 			}

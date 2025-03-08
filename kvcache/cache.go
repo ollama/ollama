@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/model/input"
 )
 
 var (
@@ -51,7 +52,7 @@ type Cache interface {
 	// StartForward is called before the start of the model's forward pass.
 	// For each token in the coming batch, there must be a corresponding
 	// entry in positions and seqs.
-	StartForward(ctx ml.Context, positions []int32, seqs []int) error
+	StartForward(ctx ml.Context, opts input.Options) error
 
 	// CopyPrefix copies tokens in the range [0, len) from srcSeq to dstSeq
 	CopyPrefix(srcSeq, dstSeq int, len int32)

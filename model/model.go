@@ -19,66 +19,12 @@ import (
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	_ "github.com/ollama/ollama/ml/backend"
+	"github.com/ollama/ollama/model/input"
 )
-
-// Input represents one token in the input stream
-type Input struct {
-	// Token is a single element of text.
-	Token int32
-
-	// Multimodal is opaque data representing a non-text
-	// element such as an image (or part of one if the image
-	// can be processed in pieces). It may be either together
-	// with Token or on its own.
-	Multimodal any
-
-	// MultimodalHash is a unique representation of the data
-	// stored in Multimodal, used for caching and comparing
-	// equality.
-	MultimodalHash uint64
-}
-
-// MultimodalIndex is a multimodal element (such as an image)
-// together with an index into the slice of Inputs with the
-// corresponding token. Note that the index is not the same
-// as the position - to find that use the index with the
-// Positions slice.
-type MultimodalIndex struct {
-	Index      int
-	Multimodal any
-}
-
-// Options contains the inputs for a model forward pass
-type Options struct {
-	Inputs     []int32
-	Multimodal []MultimodalIndex
-	Positions  []int32
-	Sequences  []int
-	Outputs    []int32
-}
-
-type config struct {
-	Cache kvcache.Cache
-}
-
-// Base implements the common fields and methods for all models
-type Base struct {
-	b ml.Backend
-	config
-}
-
-// Backend returns the underlying backend that will run the model
-func (m *Base) Backend() ml.Backend {
-	return m.b
-}
-
-func (m *Base) Config() config {
-	return m.config
-}
 
 // Model implements a specific model architecture, defining the forward pass and any model-specific configuration
 type Model interface {
-	Forward(ml.Context, Options) (ml.Tensor, error)
+	Forward(ml.Context, input.Options) (ml.Tensor, error)
 
 	Backend() ml.Backend
 	Config() config
@@ -112,7 +58,26 @@ type MultimodalProcessor interface {
 	// This function is also responsible for updating MultimodalHash for any Multimodal
 	// that is modified to ensure that there is a unique hash value that accurately
 	// represents the contents.
-	PostTokenize(ml.Context, []Input) ([]Input, error)
+	PostTokenize(ml.Context, []input.Input) ([]input.Input, error)
+}
+
+// Base implements the common fields and methods for all models
+type Base struct {
+	b ml.Backend
+	config
+}
+
+type config struct {
+	Cache kvcache.Cache
+}
+
+// Backend returns the underlying backend that will run the model
+func (m *Base) Backend() ml.Backend {
+	return m.b
+}
+
+func (m *Base) Config() config {
+	return m.config
 }
 
 var models = make(map[string]func(ml.Config) (Model, error))
@@ -313,7 +278,7 @@ func canNil(t reflect.Type) bool {
 		t.Kind() == reflect.Slice
 }
 
-func Forward(ctx ml.Context, m Model, opts Options) (ml.Tensor, error) {
+func Forward(ctx ml.Context, m Model, opts input.Options) (ml.Tensor, error) {
 	if len(opts.Positions) != len(opts.Sequences) {
 		return nil, fmt.Errorf("length of positions (%v) must match length of seqs (%v)", len(opts.Positions), len(opts.Sequences))
 	}
@@ -324,7 +289,7 @@ func Forward(ctx ml.Context, m Model, opts Options) (ml.Tensor, error) {
 
 	cache := m.Config().Cache
 	if cache != nil {
-		err := cache.StartForward(ctx, opts.Positions, opts.Sequences)
+		err := cache.StartForward(ctx, opts)
 		if err != nil {
 			return nil, err
 		}
