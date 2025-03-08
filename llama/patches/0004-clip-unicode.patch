@@ -8,10 +8,10 @@ Subject: [PATCH] clip-unicode
  1 file changed, 39 insertions(+), 1 deletion(-)
 
 diff --git a/examples/llava/clip.cpp b/examples/llava/clip.cpp
-index 3cd0d2fa..b3c1829f 100644
+index 76d4a785..205af1eb 100644
 --- a/examples/llava/clip.cpp
 +++ b/examples/llava/clip.cpp
-@@ -56,6 +56,19 @@
+@@ -58,6 +58,19 @@
  #   define LOG_DBG(...) do { fprintf(stdout, __VA_ARGS__); } while (0)
  #endif // defined(LLAVA_LOG_OFF)
  
@@ -31,7 +31,7 @@ index 3cd0d2fa..b3c1829f 100644
  //#define CLIP_DEBUG_FUNCTIONS
  
  // RGB uint8 image
-@@ -1322,8 +1335,29 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
+@@ -1402,8 +1415,29 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
              gguf_free(ctx);
              return nullptr;
          }
@@ -62,7 +62,7 @@ index 3cd0d2fa..b3c1829f 100644
          if (!fin) {
              LOG_ERR("cannot open model file for loading tensors\n");
              clip_free(new_clip);
-@@ -1363,7 +1397,11 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
+@@ -1443,7 +1477,11 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
                  ggml_backend_tensor_set(cur, read_buf.data(), 0, num_bytes);
              }
          }

@@ -10,7 +10,7 @@
 // repository].
 //
 // [the API documentation]: https://github.com/ollama/ollama/blob/main/docs/api.md
-// [in the GitHub repository]: https://github.com/ollama/ollama/tree/main/examples
+// [in the GitHub repository]: https://github.com/ollama/ollama/tree/main/api/examples
 package api
 
 import (
@@ -132,7 +132,7 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 const maxBufferSize = 512 * format.KiloByte
 
 func (c *Client) stream(ctx context.Context, method, path string, data any, fn func([]byte) error) error {
-	var buf *bytes.Buffer
+	var buf io.Reader
 	if data != nil {
 		bts, err := json.Marshal(data)
 		if err != nil {

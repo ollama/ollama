@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Tue, 18 Feb 2025 14:47:21 -0800
+Subject: [PATCH] remove amx
+
+---
+ ggml/src/CMakeLists.txt | 4 ----
+ 1 file changed, 4 deletions(-)
+
+diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
+index 0a8d1092..4564df91 100644
+--- a/ggml/src/CMakeLists.txt
++++ b/ggml/src/CMakeLists.txt
+@@ -312,10 +312,6 @@ if (GGML_CPU_ALL_VARIANTS)
+     ggml_add_cpu_backend_variant(skylakex       AVX F16C AVX2 FMA AVX512)
+     ggml_add_cpu_backend_variant(icelake        AVX F16C AVX2 FMA AVX512 AVX512_VBMI AVX512_VNNI)
+     ggml_add_cpu_backend_variant(alderlake      AVX F16C AVX2 FMA AVX_VNNI)
+-    if (NOT MSVC)
+-        # MSVC doesn't support AMX
+-        ggml_add_cpu_backend_variant(sapphirerapids AVX F16C AVX2 FMA AVX512 AVX512_VBMI AVX512_VNNI AVX512_BF16 AMX_TILE AMX_INT8)
+-    endif()
+ elseif (GGML_CPU)
+     ggml_add_cpu_backend_variant_impl("")
+ endif()
