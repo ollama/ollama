@@ -499,6 +499,10 @@ func (t *testTensor) Contiguous(ctx ml.Context) ml.Tensor {
 	panic("not implemented")
 }
 
+func (t *testTensor) Set(ctx ml.Context, t2 ml.Tensor, offset int, strides ...int) ml.Tensor {
+	panic("not implemented")
+}
+
 func (t *testTensor) Pad(ctx ml.Context, shape ...int) ml.Tensor {
 	panic("not implemented")
 }
