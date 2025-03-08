@@ -276,6 +276,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ### Web & Desktop
 
 - [Open WebUI](https://github.com/open-webui/open-webui)
+- [SwiftChat (macOS with ReactNative)](https://github.com/aws-samples/swift-chat)
 - [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
 - [Hollama](https://github.com/fmaclen/hollama)
 - [Lollms-Webui](https://github.com/ParisNeo/lollms-webui)
@@ -433,6 +434,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Apple Vision Pro
 
+- [SwiftChat](https://github.com/aws-samples/swift-chat) (Cross-platform AI chat app supporting Apple Vision Pro via "Designed for iPad")
 - [Enchanted](https://github.com/AugustDev/enchanted)
 
 ### Database
@@ -510,6 +512,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Mobile
 
+- [SwiftChat](https://github.com/aws-samples/swift-chat) (Lightning-fast Cross-platform AI chat app with native UI for Android, iOS and iPad)
 - [Enchanted](https://github.com/AugustDev/enchanted)
 - [Maid](https://github.com/Mobile-Artificial-Intelligence/maid)
 - [Ollama App](https://github.com/JHubi1/ollama-app) (Modern and easy-to-use multi-platform client for Ollama)
