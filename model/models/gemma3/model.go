@@ -138,8 +138,8 @@ func (m *Model) PostTokenize(ctx ml.Context, inputs []input.Input) ([]input.Inpu
 				{Token: 255999}, // "<start_of_image>""
 			}
 
-			// <image_soft_token>
-			imageInputs = append(imageInputs, slices.Repeat([]input.Input{{Token: 262144}}, 256)...)
+			// pad inputs with placeholders for image embeddings
+			imageInputs = append(imageInputs, slices.Repeat([]input.Input{{Token: 0}}, 256)...)
 			// <end_of_image>
 			imageInputs = append(imageInputs, input.Input{Token: 256000})
 
