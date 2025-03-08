@@ -262,15 +262,15 @@ func NewContextWithModel(model *Model, params ContextParams) (*Context, error) {
 }
 
 func (m *Model) NumVocab() int {
-	return int(C.llama_vocab_n_tokens(m.Vocab()))
+	return int(C.llama_vocab_n_tokens(m.vocab()))
 }
 
 func (m *Model) TokenIsEog(token int) bool {
-	return bool(C.llama_vocab_is_eog(m.Vocab(), C.llama_token(token)))
+	return bool(C.llama_vocab_is_eog(m.vocab(), C.llama_token(token)))
 }
 
 func (m *Model) AddBOSToken() bool {
-	return bool(C.llama_vocab_get_add_bos(m.Vocab()))
+	return bool(C.llama_vocab_get_add_bos(m.vocab()))
 }
 
 func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float32, threads int) error {
@@ -293,8 +293,16 @@ func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float
 	return nil
 }
 
-func (m *Model) Vocab() *C.struct_llama_vocab {
+type Vocab struct {
+	c *C.struct_llama_vocab
+}
+
+func (m *Model) vocab() *C.struct_llama_vocab {
 	return C.llama_model_get_vocab(m.c)
+}
+
+func (m *Model) Vocab() *Vocab {
+	return &Vocab{c: C.llama_model_get_vocab(m.c)}
 }
 
 type Batch struct {
@@ -387,7 +395,7 @@ func (m *Model) TokenToPiece(token int) string {
 	tokenLen := 12
 	buf := make([]byte, tokenLen)
 	tokenLen = int(C.llama_token_to_piece(
-		m.Vocab(),
+		m.vocab(),
 		C.int32_t(token),
 		(*C.char)(unsafe.Pointer(&buf[0])),
 		C.int32_t(tokenLen),
@@ -399,7 +407,7 @@ func (m *Model) TokenToPiece(token int) string {
 
 		buf = make([]byte, tokenLen)
 		C.llama_token_to_piece(
-			m.Vocab(),
+			m.vocab(),
 			C.int32_t(token),
 			(*C.char)(unsafe.Pointer(&buf[0])),
 			C.int32_t(tokenLen),
@@ -417,7 +425,7 @@ func (m *Model) Tokenize(text string, addSpecial bool, parseSpecial bool) ([]int
 	defer C.free(unsafe.Pointer(cText))
 
 	result := C.llama_tokenize(
-		m.Vocab(),
+		m.vocab(),
 		cText,
 		C.int32_t(len(text)),
 		&cTokens[0],
@@ -431,7 +439,7 @@ func (m *Model) Tokenize(text string, addSpecial bool, parseSpecial bool) ([]int
 		maxTokens = int(-result)
 		cTokens = make([]C.llama_token, maxTokens)
 		result = C.llama_tokenize(
-			m.Vocab(),
+			m.vocab(),
 			cText,
 			C.int32_t(len(text)),
 			&cTokens[0],
@@ -668,4 +676,54 @@ func SchemaToGrammar(schema []byte) []byte {
 		return nil
 	}
 	return buf[:n]
+}
+
+type Sampler struct {
+	c *C.struct_llama_sampler
+}
+
+func NewGrammarSampler(vocab *Vocab, grammar string) *Sampler {
+	cGrammar := C.CString(grammar)
+	cRoot := C.CString("root")
+	defer C.free(unsafe.Pointer(cGrammar))
+	defer C.free(unsafe.Pointer(cRoot))
+
+	sampler := &Sampler{c: C.llama_sampler_init_grammar(vocab.c, cGrammar, cRoot)}
+
+	return sampler
+}
+
+func (s *Sampler) Accept(token int32) {
+	C.llama_sampler_accept(s.c, C.llama_token(token))
+}
+
+type TokenData struct {
+	Id    int32
+	Logit float32
+}
+
+func (s *Sampler) Apply(tokens []TokenData) {
+	tds := make([]C.struct_llama_token_data, len(tokens))
+	for i, token := range tokens {
+		tds[i] = C.struct_llama_token_data{
+			id:    C.int32_t(token.Id),
+			logit: C.float(token.Logit),
+			p:     C.float(0.0),
+		}
+	}
+	tda := &C.llama_token_data_array{
+		data:     (*C.struct_llama_token_data)(unsafe.Pointer(&tds[0])),
+		size:     C.size_t(len(tokens)),
+		selected: C.int64_t(-1),
+		sorted:   C.bool(false),
+	}
+
+	var pinner runtime.Pinner
+	pinner.Pin(&tds[0])
+	defer pinner.Unpin()
+
+	C.llama_sampler_apply(s.c, tda)
+	for i := range tokens {
+		tokens[i].Logit = float32(tds[i].logit)
+	}
 }
