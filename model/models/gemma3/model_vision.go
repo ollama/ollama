@@ -2,7 +2,6 @@ package gemma3
 
 import (
 	"math"
-	"slices"
 
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
@@ -69,52 +68,6 @@ func (e *VisionEncoderLayer) Forward(ctx ml.Context, hiddenState ml.Tensor, opts
 	return hiddenState.Add(ctx, residual)
 }
 
-type VisionEncoder struct {
-	Layers []VisionEncoderLayer
-}
-
-func (e *VisionEncoder) Forward(ctx ml.Context, hiddenState ml.Tensor, intermediateLayersIndices []uint32, opts *VisionModelOptions) (ml.Tensor, []ml.Tensor) {
-	var intermediateHiddenStates []ml.Tensor
-	for i, layer := range e.Layers {
-		if slices.Contains(intermediateLayersIndices, uint32(i)) {
-			intermediateHiddenStates = append(intermediateHiddenStates, hiddenState.Reshape(ctx, append([]int{1}, hiddenState.Shape()...)...))
-		}
-
-		hiddenState = layer.Forward(ctx, hiddenState, opts)
-	}
-
-	return hiddenState, intermediateHiddenStates
-}
-
-type PrecomputedAspectRatioEmbedding struct {
-	Embedding *nn.Embedding
-	Gate      ml.Tensor `gguf:"gate"`
-}
-
-func (e *PrecomputedAspectRatioEmbedding) Forward(ctx ml.Context, hiddenState ml.Tensor, aspectRatioIDs ml.Tensor, opts *VisionModelOptions) ml.Tensor {
-	embeddings := e.Embedding.Forward(ctx, aspectRatioIDs)
-	embeddings = embeddings.Reshape(ctx, opts.hiddenSize, 1, opts.numTiles)
-	if e.Gate != nil {
-		embeddings = embeddings.Mul(ctx, e.Gate)
-	}
-
-	return hiddenState.Add(ctx, embeddings)
-}
-
-type PrecomputedPositionEmbedding struct {
-	PositionEmbedding     *nn.Embedding `gguf:"position_embd"`
-	PositionEmbeddingGate ml.Tensor     `gguf:"position_embd.gate"`
-}
-
-func (e *PrecomputedPositionEmbedding) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, numPositions int, opts *VisionModelOptions) ml.Tensor {
-	positionEmbedding := e.PositionEmbedding.Forward(ctx, positionIDs)
-	if e.PositionEmbeddingGate != nil {
-		positionEmbedding = positionEmbedding.Mul(ctx, e.PositionEmbeddingGate)
-	}
-
-	return hiddenState.Add(ctx, positionEmbedding)
-}
-
 type VisionModelOptions struct {
 	hiddenSize, numHeads, numTiles int
 	imageSize, patchSize           int
@@ -126,22 +79,31 @@ type VisionModel struct {
 	PositionEmbedding *nn.Embedding `gguf:"position_embedding"`
 	PostLayerNorm     *nn.LayerNorm `gguf:"post_layernorm"`
 
-	Encoder *VisionEncoder `gguf:"blk"`
+	Layers []VisionEncoderLayer `gguf:"blk"`
 
 	*VisionModelOptions
 }
 
-func (m *VisionModel) Forward(ctx ml.Context, pixelValues, positionIDs ml.Tensor) ml.Tensor {
+func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor) ml.Tensor {
 	numPatches := (m.imageSize / m.patchSize) * (m.imageSize / m.patchSize)
 
 	hiddenState := m.PatchEmbedding.Forward(ctx, pixelValues, m.patchSize, m.patchSize, 0, 0, 1, 1)
 	hiddenState = hiddenState.Reshape(ctx, numPatches, m.hiddenSize)
 	hiddenState = hiddenState.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 
-	positions := m.PositionEmbedding.Forward(ctx, positionIDs)
-	hiddenState = hiddenState.Add(ctx, positions)
+	positions := make([]int32, numPatches)
+	for i := range positions {
+		positions[i] = int32(i)
+	}
 
-	for _, layer := range m.Encoder.Layers {
+	positionIDs, err := ctx.Input().FromIntSlice(positions, len(positions))
+	if err != nil {
+		panic(err)
+	}
+
+	hiddenState = hiddenState.Add(ctx, m.PositionEmbedding.Forward(ctx, positionIDs))
+
+	for _, layer := range m.Layers {
 		hiddenState = layer.Forward(ctx, hiddenState, m.VisionModelOptions)
 	}
 
@@ -151,7 +113,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues, positionIDs ml.Tensor
 
 func newVisionModel(c ml.Config) *VisionModel {
 	return &VisionModel{
-		Encoder: &VisionEncoder{Layers: make([]VisionEncoderLayer, c.Uint("vision.block_count"))},
+		Layers: make([]VisionEncoderLayer, c.Uint("vision.block_count")),
 		VisionModelOptions: &VisionModelOptions{
 			hiddenSize: int(c.Uint("vision.embedding_length")),
 			numHeads:   int(c.Uint("vision.attention.head_count")),

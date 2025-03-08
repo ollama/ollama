@@ -23,9 +23,8 @@ func (p *ImageProcessor) pack(img image.Image, mean, std [3]float32) []float32 {
 	var pixelVals []float32
 
 	bounds := img.Bounds()
-	var rVals, gVals, bVals []float32
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+	for x := bounds.Min.X; x < bounds.Max.X; x++ {
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 			c := img.At(x, y)
 			r, g, b, _ := c.RGBA()
 			rVal := float32(r>>8) / 255.0
@@ -36,14 +35,9 @@ func (p *ImageProcessor) pack(img image.Image, mean, std [3]float32) []float32 {
 			gVal = (gVal - mean[1]) / std[1]
 			bVal = (bVal - mean[2]) / std[2]
 
-			rVals = append(rVals, rVal)
-			gVals = append(gVals, gVal)
-			bVals = append(bVals, bVal)
+			pixelVals = append(pixelVals, rVal, gVal, bVal)
 		}
 	}
-	pixelVals = append(pixelVals, rVals...)
-	pixelVals = append(pixelVals, gVals...)
-	pixelVals = append(pixelVals, bVals...)
 
 	return pixelVals
 }

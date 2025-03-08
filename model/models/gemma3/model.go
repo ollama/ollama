@@ -88,13 +88,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 		return nil, err
 	}
 
-	positionIDs, err := ctx.FromIntSlice([]int32{0}, 1)
-	if err != nil {
-		return nil, err
-	}
-
-	visionOutputs := m.VisionModel.Forward(ctx, pixelValues, positionIDs)
-
+	visionOutputs := m.VisionModel.Forward(ctx, pixelValues)
 	visionOutputs = visionOutputs.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 	patchesPerImage := m.ImageProcessor.imageSize / m.ImageProcessor.patchSize
 	kernelSize := patchesPerImage * patchesPerImage / 256

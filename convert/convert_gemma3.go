@@ -1,6 +1,10 @@
 package convert
 
-import "github.com/ollama/ollama/fs/ggml"
+import (
+	"cmp"
+
+	"github.com/ollama/ollama/fs/ggml"
+)
 
 type gemma3Model struct {
 	gemmaModel
@@ -61,9 +65,9 @@ func (p *gemma3Model) KV(t *Tokenizer) ggml.KV {
 		kv["gemma3.vision.feed_forward_length"] = p.VisionModel.IntermediateSize
 		kv["gemma3.vision.image_size"] = p.VisionModel.ImageSize
 		kv["gemma3.vision.patch_size"] = p.VisionModel.PatchSize
-		kv["gemma3.vision.num_channels"] = p.VisionModel.NumChannels
+		kv["gemma3.vision.num_channels"] = cmp.Or(p.VisionModel.NumChannels, 3)
 		kv["gemma3.vision.attention.head_count"] = p.VisionModel.NumAttentionHeads
-		kv["gemma3.vision.attention.layer_norm_epsilon"] = p.VisionModel.LayerNormEpsilon
+		kv["gemma3.vision.attention.layer_norm_epsilon"] = cmp.Or(p.VisionModel.LayerNormEpsilon, 1e-6)
 	}
 
 	kv["tokenizer.ggml.bos_token_id"] = uint32(2)
