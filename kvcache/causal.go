@@ -545,7 +545,7 @@ func (c *Causal) shift(seq int, beginIndex, offset int32) error {
 		}
 	}
 
-	kShift, err := ctx.FromIntSlice(offsets, len(offsets))
+	kShift, err := ctx.Input().FromIntSlice(offsets, len(offsets))
 	if err != nil {
 		return err
 	}
