@@ -177,7 +177,6 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 	for _, frag := range fragments {
 		if len(frag.ids) > 0 {
 			ids = append(ids, frag.ids...)
-			slog.Debug("encoded", "text", frag.value, "ids", frag.ids, "special", true)
 			continue
 		}
 
@@ -201,7 +200,6 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 			// short circuit if the fragment is in the vocabulary
 			if id := bpe.vocab.Encode(sb.String()); id >= 0 {
 				ids = append(ids, id)
-				slog.Debug("encoded", "text", sb.String(), "ids", []int32{id})
 				continue
 			}
 
@@ -275,7 +273,6 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 					// TODO: handle the edge case where the rune isn't in the vocabulary
 					if id := bpe.vocab.Encode(string(merge.runes)); id >= 0 {
 						ids = append(ids, id)
-						slog.Debug("encoded", "text", string(merge.runes), "ids", []int32{id})
 					}
 				}
 			}
@@ -329,6 +326,5 @@ func (bpe BytePairEncoding) Decode(ids []int32) (string, error) {
 		}
 	}
 
-	slog.Debug("decoded", "ids", ids, "text", sb.String())
 	return sb.String(), nil
 }

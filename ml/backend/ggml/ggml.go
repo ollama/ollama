@@ -520,6 +520,10 @@ func shapeToGGML(shape []int) *C.int64_t {
 	return &sh[0]
 }
 
+func pad(length, pad C.size_t) C.size_t {
+	return ((length + pad - 1) / pad) * pad
+}
+
 func (c Context) newTensor(dtype ml.DType, shape []int) ml.Tensor {
 	if c.buft == nil {
 		panic("set Input, Output, or Layer before creating tensors")
@@ -531,6 +535,10 @@ func (c Context) newTensor(dtype ml.DType, shape []int) ml.Tensor {
 		cdtype = C.GGML_TYPE_F32
 	case ml.DTypeF16:
 		cdtype = C.GGML_TYPE_F16
+	case ml.DTypeQ80:
+		cdtype = C.GGML_TYPE_Q8_0
+	case ml.DTypeQ40:
+		cdtype = C.GGML_TYPE_Q4_0
 	case ml.DTypeI32:
 		cdtype = C.GGML_TYPE_I32
 	default:
@@ -551,7 +559,8 @@ func (c Context) newTensor(dtype ml.DType, shape []int) ml.Tensor {
 	}
 
 	t := C.ggml_new_tensor(c.ctx, cdtype, C.int(len(shape)), shapeToGGML(shape))
-	b := C.ggml_backend_buft_alloc_buffer(c.buft, C.ggml_nbytes(t))
+	size := pad(C.ggml_backend_buft_get_alloc_size(c.buft, t), C.ggml_backend_buft_get_alignment(c.buft))
+	b := C.ggml_backend_buft_alloc_buffer(c.buft, size)
 	C.ggml_backend_tensor_alloc(b, t, C.ggml_backend_buffer_get_base(b))
 	return &Tensor{b: c.b, t: t}
 }
@@ -675,6 +684,10 @@ func (t *Tensor) DType() ml.DType {
 		return ml.DTypeF32
 	case C.GGML_TYPE_F16:
 		return ml.DTypeF16
+	case C.GGML_TYPE_Q8_0:
+		return ml.DTypeQ80
+	case C.GGML_TYPE_Q4_0:
+		return ml.DTypeQ40
 	case C.GGML_TYPE_I32:
 		return ml.DTypeI32
 	default:

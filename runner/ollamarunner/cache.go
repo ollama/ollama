@@ -58,9 +58,9 @@ func NewInputCache(model model.Model, kvCacheType string, kvSize int32, numSlots
 func kvCacheTypeFromStr(s string) ml.DType {
 	switch s {
 	case "q8_0":
-		panic("kv cache quantization not yet implemented")
+		return ml.DTypeQ80
 	case "q4_0":
-		panic("kv cache quantization not yet implemented")
+		return ml.DTypeQ40
 	default:
 		return ml.DTypeF16
 	}
