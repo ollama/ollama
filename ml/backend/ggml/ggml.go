@@ -520,6 +520,10 @@ func shapeToGGML(shape []int) *C.int64_t {
 	return &sh[0]
 }
 
+func pad(length, pad C.size_t) C.size_t {
+	return ((length + pad - 1) / pad) * pad
+}
+
 func (c Context) newTensor(dtype ml.DType, shape []int) ml.Tensor {
 	if c.buft == nil {
 		panic("set Input, Output, or Layer before creating tensors")
@@ -551,7 +555,8 @@ func (c Context) newTensor(dtype ml.DType, shape []int) ml.Tensor {
 	}
 
 	t := C.ggml_new_tensor(c.ctx, cdtype, C.int(len(shape)), shapeToGGML(shape))
-	b := C.ggml_backend_buft_alloc_buffer(c.buft, C.ggml_nbytes(t))
+	size := pad(C.ggml_backend_buft_get_alloc_size(c.buft, t), C.ggml_backend_buft_get_alignment(c.buft))
+	b := C.ggml_backend_buft_alloc_buffer(c.buft, size)
 	C.ggml_backend_tensor_alloc(b, t, C.ggml_backend_buffer_get_base(b))
 	return &Tensor{b: c.b, t: t}
 }
