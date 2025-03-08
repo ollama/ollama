@@ -54,6 +54,7 @@ Here are some example models that can be downloaded:
 
 | Model              | Parameters | Size  | Download                         |
 | ------------------ | ---------- | ----- | -------------------------------- |
+| QwQ                | 32B        | 20GB  | `ollama run qwq`                 |
 | DeepSeek-R1        | 7B         | 4.7GB | `ollama run deepseek-r1`         |
 | DeepSeek-R1        | 671B       | 404GB | `ollama run deepseek-r1:671b`    |
 | Llama 3.3          | 70B        | 43GB  | `ollama run llama3.3`            |

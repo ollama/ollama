@@ -25,7 +25,6 @@ require (
 	github.com/pdevine/tensor v0.0.0-20240510204454-f88f4562727c
 	golang.org/x/image v0.22.0
 	golang.org/x/tools v0.30.0
-	gonum.org/v1/gonum v0.15.0
 )
 
 require (
@@ -45,6 +44,7 @@ require (
 	github.com/xtgo/set v1.0.0 // indirect
 	go4.org/unsafe/assume-no-moving-gc v0.0.0-20231121144256-b99613f794b6 // indirect
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
+	gonum.org/v1/gonum v0.15.0 // indirect
 	gorgonia.org/vecf32 v0.9.0 // indirect
 	gorgonia.org/vecf64 v0.9.0 // indirect
 )

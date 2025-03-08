@@ -24,6 +24,7 @@ type Backend interface {
 	Config() Config
 	Get(name string) Tensor
 	NewContext() Context
+	NewContextSize(size int) Context
 }
 
 // BackendCacheConfig should be implemented by backends that need special output
@@ -99,8 +100,17 @@ type Context interface {
 
 	Forward(...Tensor) Context
 	Compute(...Tensor)
-	MaxTensors() int
+	MaxGraphNodes() int
 	Close()
+
+	// Input returns a context appropriate for creating input tensors
+	Input() Context
+
+	// Output returns a context appropriate for creating output tensors
+	Output() Context
+
+	// Layer returns a context appropriate for creating intermediate tensors
+	Layer(int) Context
 }
 
 type Tensor interface {
