@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/model/input"
 )
 
 // Wrapper cache is a container for multiple types of caches,
@@ -40,14 +41,14 @@ func (c *WrapperCache) Close() {
 	}
 }
 
-func (c *WrapperCache) StartForward(ctx ml.Context, positions []int32, seqs []int) error {
+func (c *WrapperCache) StartForward(ctx ml.Context, opts input.Options) error {
 	for i, cache := range c.caches {
-		err := cache.StartForward(ctx, positions, seqs)
+		err := cache.StartForward(ctx, opts)
 		if err != nil {
 			// unwind on error - Remove with endIndex set to math.MaxInt32 does not fail
 			for j := i - 1; j >= 0; j-- {
-				for k := range positions {
-					_ = c.caches[j].Remove(seqs[k], positions[k], math.MaxInt32)
+				for k := range opts.Positions {
+					_ = c.caches[j].Remove(opts.Sequences[k], opts.Positions[k], math.MaxInt32)
 				}
 			}
 			return err
