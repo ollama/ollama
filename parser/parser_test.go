@@ -29,6 +29,7 @@ ADAPTER adapter1
 LICENSE MIT
 PARAMETER param1 value1
 PARAMETER param2 value2
+PREPEND "<think>"
 TEMPLATE """{{ if .System }}<|start_header_id|>system<|end_header_id|>
 
 {{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>
@@ -49,6 +50,7 @@ TEMPLATE """{{ if .System }}<|start_header_id|>system<|end_header_id|>
 		{Name: "license", Args: "MIT"},
 		{Name: "param1", Args: "value1"},
 		{Name: "param2", Args: "value2"},
+		{Name: "prepend", Args: "<think>"},
 		{Name: "template", Args: "{{ if .System }}<|start_header_id|>system<|end_header_id|>\n\n{{ .System }}<|eot_id|>{{ end }}{{ if .Prompt }}<|start_header_id|>user<|end_header_id|>\n\n{{ .Prompt }}<|eot_id|>{{ end }}<|start_header_id|>assistant<|end_header_id|>\n\n{{ .Response }}<|eot_id|>"},
 	}
 
@@ -691,10 +693,12 @@ func TestCreateRequest(t *testing.T) {
 		{
 			`FROM test
 TEMPLATE some template
+PREPEND "<think>"
 `,
 			&api.CreateRequest{
 				From:     "test",
 				Template: "some template",
+				Prepend:  "<think>",
 			},
 		},
 		{

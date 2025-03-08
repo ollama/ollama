@@ -368,6 +368,13 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 		}
 	}
 
+	if r.Prepend != "" {
+		layers, err = setPrepend(layers, r.Prepend)
+		if err != nil {
+			return err
+		}
+	}
+
 	if r.License != nil {
 		switch l := r.License.(type) {
 		case string:
@@ -576,6 +583,19 @@ func setSystem(layers []Layer, s string) ([]Layer, error) {
 	if s != "" {
 		blob := strings.NewReader(s)
 		layer, err := NewLayer(blob, "application/vnd.ollama.image.system")
+		if err != nil {
+			return nil, err
+		}
+		layers = append(layers, layer)
+	}
+	return layers, nil
+}
+
+func setPrepend(layers []Layer, p string) ([]Layer, error) {
+	layers = removeLayer(layers, "application/vnd.ollama.image.prepend")
+	if p != "" {
+		blob := strings.NewReader(p)
+		layer, err := NewLayer(blob, "application/vnd.ollama.image.prepend")
 		if err != nil {
 			return nil, err
 		}

@@ -63,6 +63,7 @@ type Model struct {
 	AdapterPaths   []string
 	ProjectorPaths []string
 	System         string
+	Prepend        string
 	License        []string
 	Digest         string
 	Options        map[string]interface{}
@@ -150,6 +151,13 @@ func (m *Model) String() string {
 		modelfile.Commands = append(modelfile.Commands, parser.Command{
 			Name: "system",
 			Args: m.System,
+		})
+	}
+
+	if m.Prepend != "" {
+		modelfile.Commands = append(modelfile.Commands, parser.Command{
+			Name: "prepend",
+			Args: m.Prepend,
 		})
 	}
 
@@ -294,6 +302,13 @@ func GetModel(name string) (*Model, error) {
 			}
 
 			model.System = string(bts)
+		case "application/vnd.ollama.image.prepend":
+			bts, err := os.ReadFile(filename)
+			if err != nil {
+				return nil, err
+			}
+
+			model.Prepend = string(bts)
 		case "application/vnd.ollama.image.params":
 			params, err := os.Open(filename)
 			if err != nil {
