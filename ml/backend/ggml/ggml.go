@@ -240,6 +240,9 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 		switch {
 		case contains(t.Name, "position_embd", "token_embd", "token_norm_embd", "token_types"):
 			createTensor(tensor{source: t}, input.bts)
+			if _, ok := meta.Tensors().GroupLayers()["output"]; !ok && t.Name == "token_embd.weight" {
+				createTensor(tensor{source: t, target: "output.weight"}, output.bts)
+			}
 		case contains(t.Name, "cls", "output", "output_norm"):
 			createTensor(tensor{source: t}, output.bts)
 		case strings.HasPrefix(t.Name, "v.") || strings.HasPrefix(t.Name, "mm."):
