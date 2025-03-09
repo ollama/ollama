@@ -265,7 +265,12 @@ func dump[S ~[]E, E number](ctx Context, t Tensor, items int, fn func(E) string)
 					fmt.Fprint(&sb, ",", strings.Repeat("\n", len(dims)-1), prefix)
 				}
 			} else {
-				fmt.Fprint(&sb, fn(s[stride+i]))
+				text := fn(s[stride+i])
+				if len(text) > 0 && text[0] != '-' {
+					fmt.Fprint(&sb, " ")
+				}
+
+				fmt.Fprint(&sb, text)
 				if i < dims[0]-1 {
 					fmt.Fprint(&sb, ", ")
 				}
