@@ -243,8 +243,7 @@ type Runner struct {
 	UseMMap   *bool `json:"use_mmap,omitempty"`
 	UseMLock  bool  `json:"use_mlock,omitempty"`
 	NumThread int   `json:"num_thread,omitempty"`
-	// RPCServers specifies a comma separated list of RPC servers to use for inference.
-	RPCServers string `json:"rpc_servers,omitempty"`
+	RPCServers string `json:"rpc_servers,omitempty"` // RPCServers specifies a comma-separated list of RPC servers to use for inference.
 }
 
 // EmbedRequest is the request passed to [Client.Embed].
