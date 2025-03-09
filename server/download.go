@@ -461,6 +461,14 @@ type downloadOpts struct {
 	fn      func(api.ProgressResponse)
 }
 
+func (o downloadOpts) shortDigest() string {
+	if strings.HasPrefix(o.digest, "sha256:") &&
+		len(o.digest) >= 19 {
+		return o.digest[7:19]
+	}
+	return ""
+}
+
 // downloadBlob downloads a blob from the registry and stores it in the blobs directory
 func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ error) {
 	fp, err := GetBlobsPath(opts.digest)
@@ -475,7 +483,7 @@ func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ erro
 		return false, err
 	default:
 		opts.fn(api.ProgressResponse{
-			Status:    fmt.Sprintf("pulling %s", opts.digest[7:19]),
+			Status:    fmt.Sprintf("pulling %s", opts.shortDigest()),
 			Digest:    opts.digest,
 			Total:     fi.Size(),
 			Completed: fi.Size(),
