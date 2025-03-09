@@ -31,9 +31,10 @@ const (
 
 var (
 	ErrInvalidImageFormat  = errors.New("invalid image format")
+	ErrInvalidDigestFormat = errors.New("invalid digest format")
 	ErrInvalidProtocol     = errors.New("invalid protocol scheme")
 	ErrInsecureProtocol    = errors.New("insecure protocol http")
-	ErrInvalidDigestFormat = errors.New("invalid digest format")
+	ErrModelPathInvalid    = errors.New("invalid model path")
 )
 
 func ParseModelPath(name string) ModelPath {
@@ -72,8 +73,6 @@ func ParseModelPath(name string) ModelPath {
 
 	return mp
 }
-
-var errModelPathInvalid = errors.New("invalid model path")
 
 func (mp ModelPath) GetNamespaceRepository() string {
 	return fmt.Sprintf("%s/%s", mp.Namespace, mp.Repository)
