@@ -355,7 +355,7 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 
 		if C.ggml_backend_is_cpu(b) {
 			// set number of threads for cpu backend
-			C.ggml_backend_cpu_set_n_threads(b, C.int(params.NumThreads))
+			C.ggml_backend_cpu_set_n_threads(b, C.int(Threads(params.NumThreads)))
 		}
 	}
 
