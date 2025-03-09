@@ -232,18 +232,18 @@ type Options struct {
 
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
-	NumCtx    int   `json:"num_ctx,omitempty"`
-	NumBatch  int   `json:"num_batch,omitempty"`
-	NumGPU    int   `json:"num_gpu,omitempty"`
-	MainGPU   int   `json:"main_gpu,omitempty"`
-	LowVRAM   bool  `json:"low_vram,omitempty"`
-	F16KV     bool  `json:"f16_kv,omitempty"` // Deprecated: This option is ignored
-	LogitsAll bool  `json:"logits_all,omitempty"`
-	VocabOnly bool  `json:"vocab_only,omitempty"`
-	UseMMap   *bool `json:"use_mmap,omitempty"`
-	UseMLock  bool  `json:"use_mlock,omitempty"`
-	NumThread int   `json:"num_thread,omitempty"`
-	RPCServers string `json:"rpc_servers,omitempty"` // RPCServers specifies a comma-separated list of RPC servers to use for inference.
+	NumCtx     int    `json:"num_ctx,omitempty"`
+	NumBatch   int    `json:"num_batch,omitempty"`
+	NumGPU     int    `json:"num_gpu,omitempty"`
+	MainGPU    int    `json:"main_gpu,omitempty"`
+	LowVRAM    bool   `json:"low_vram,omitempty"`
+	F16KV      bool   `json:"f16_kv,omitempty"` // Deprecated: This option is ignored
+	LogitsAll  bool   `json:"logits_all,omitempty"`
+	VocabOnly  bool   `json:"vocab_only,omitempty"`
+	UseMMap    *bool  `json:"use_mmap,omitempty"`
+	UseMLock   bool   `json:"use_mlock,omitempty"`
+	NumThread  int    `json:"num_thread,omitempty"`
+	RPCServers string `json:"rpc_servers,omitempty"`
 }
 
 // EmbedRequest is the request passed to [Client.Embed].
