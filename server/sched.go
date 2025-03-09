@@ -163,24 +163,25 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						gpus = s.getCpuFn()
 					} else {
 						gpus = s.getGpuFn()
-                        slog.Debug("RPC options", "options", pending.opts.RPCServers)
-                        // Removing Existing Servers
-                        if pending.opts.RPCServers != "" {
-                            slog.Debug("removing system RPC servers", "gpus", gpus)
-                            // Removing RPC Servers from system
-                            for _, rpcServer := range gpus {
-                                if rpcServer.Library == "rpc" {
-                                    gpus = gpus[1:]
-                                }
-                            }
-                            slog.Debug("adding request RPC servers", "gpus", gpus)
-                            // Adding RPC Servers from request
-                            newServers := gpu.CheckRPCServers(pending.opts.RPCServers)
-                            for _, rpcServer := range newServers {
-                                gpus = append(gpu.GpuInfoList{rpcServer.GpuInfo}, gpus...)
-                            }
-                            slog.Debug("new gpus", "gpus", gpus)
-                        }
+						slog.Debug("RPC options", "options", pending.opts.RPCServers)
+						// Removing Existing Servers
+						if pending.opts.RPCServers != "" {
+							slog.Debug("removing system RPC servers", "gpus", gpus)
+							// Removing RPC Servers from system
+							for _, rpcServer := range gpus {
+								if rpcServer.Library == "rpc" {
+									gpus = gpus[1:]
+								}
+							}
+							slog.Debug("adding request RPC servers", "gpus", gpus)
+							// Adding RPC Servers from request
+							// Create our RPC server list using discover package functionality
+							newServers := checkRPCServers(pending.opts.RPCServers)
+							for _, rpcServer := range newServers {
+								gpus = append(discover.GpuInfoList{rpcServer.GpuInfo}, gpus...)
+							}
+							slog.Debug("new gpus", "gpus", gpus)
+						}
 					}
 
 					if envconfig.MaxRunners() <= 0 {
@@ -849,6 +850,43 @@ func (s *Scheduler) expireRunner(model *Model) {
 		}
 		runner.refMu.Unlock()
 	}
+}
+
+// Simple wrapper for checkRPCServers to create server info objects compatible with discover.RPCServerInfoList
+type rpcServerInfo struct {
+	GpuInfo discover.GpuInfo
+}
+
+// checkRPCServers parses comma-separated list of RPC server endpoints and returns corresponding server info
+func checkRPCServers(endpoints string) []rpcServerInfo {
+	slog.Debug("processing RPC servers", "endpoints", endpoints)
+	var validServers []rpcServerInfo
+
+	if endpoints == "" {
+		return validServers
+	}
+
+	// Split the comma-separated list
+	serversList := strings.Split(endpoints, ",")
+	for _, server := range serversList {
+		// Skip empty entries
+		if server == "" {
+			continue
+		}
+
+		// Create server info with RPC GPU info
+		serverInfo := rpcServerInfo{
+			GpuInfo: discover.GpuInfo{
+				ID:      server,
+				Library: "rpc",
+			},
+		}
+
+		slog.Debug("added RPC server", "server", server)
+		validServers = append(validServers, serverInfo)
+	}
+
+	return validServers
 }
 
 // If other runners are loaded, make sure the pending request will fit in system memory
