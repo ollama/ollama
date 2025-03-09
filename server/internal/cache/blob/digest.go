@@ -5,17 +5,50 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"slices"
 	"strings"
 )
 
 var ErrInvalidDigest = errors.New("invalid digest")
 
+// RollingDigest is a rolling hash of a sequence of blobs. It tracks the last
+// digest that was appended to it for comparisons. See
+// [RollingDigest.CompareAndAppend].
+//
+// Its zero value is a valid RollingDigest that has not had any blobs appended
+// to it.
+type RollingDigest struct {
+	h hash.Hash
+}
+
+// Current reports if the given digest matches the current rolling sum.
+func (h *RollingDigest) Current() Digest {
+	if h.h == nil {
+		return Digest{}
+	}
+	var current [32]byte
+	h.h.Sum(current[:0])
+	return Digest{current}
+}
+
+// Append appends the given digest to the rolling sum in [Digest.String] form.
+func (h *RollingDigest) Append(o Digest) {
+	if h.h == nil {
+		h.h = sha256.New()
+	}
+	fmt.Fprintf(h.h, "sha256:%x", o.sum)
+}
+
 // Digest is a blob identifier that is the SHA-256 hash of a blob's content.
 //
 // It is comparable and can be used as a map key.
 type Digest struct {
 	sum [32]byte
+}
+
+func (d *Digest) Sum() [32]byte {
+	return d.sum
 }
 
 // ParseDigest parses a digest from a string. If the string is not a valid

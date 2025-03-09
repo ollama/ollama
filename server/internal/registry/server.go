@@ -237,14 +237,6 @@ func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	maybeFlush := func() {
-		fl, _ := w.(http.Flusher)
-		if fl != nil {
-			fl.Flush()
-		}
-	}
-	defer maybeFlush()
-
 	var mu sync.Mutex
 	enc := json.NewEncoder(w)
 	enc.Encode(progressUpdateJSON{Status: "pulling manifest"})
@@ -253,12 +245,23 @@ func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
 		Update: func(l *ollama.Layer, n int64, err error) {
 			mu.Lock()
 			defer mu.Unlock()
-
-			// TODO(bmizerany): coalesce these updates; writing per
-			// update is expensive
+			if err != nil {
+				if errors.Is(err, ollama.ErrCached) {
+					enc.Encode(progressUpdateJSON{
+						Digest:    l.Digest,
+						Status:    "(cached)",
+						Total:     l.Size,
+						Completed: n,
+					})
+				} else {
+					sum := l.Digest.Sum()
+					status := fmt.Sprintf("pulling %012x... ! error: %v", sum[:6], err)
+					enc.Encode(progressUpdateJSON{Status: status})
+				}
+				return
+			}
 			enc.Encode(progressUpdateJSON{
 				Digest:    l.Digest,
-				Status:    "pulling",
 				Total:     l.Size,
 				Completed: n,
 			})
@@ -271,44 +274,49 @@ func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
 		done <- s.Client.Pull(ctx, p.model())
 	}()
 
-	func() {
-		t := time.NewTicker(100 * time.Millisecond)
-		defer t.Stop()
-		for {
-			select {
-			case <-t.C:
-				mu.Lock()
-				maybeFlush()
-				mu.Unlock()
-			case err := <-done:
-				if err != nil {
-					var status string
-					if errors.Is(err, ollama.ErrModelNotFound) {
-						status = fmt.Sprintf("error: model %q not found", p.model())
-						enc.Encode(progressUpdateJSON{Status: status})
-					} else {
-						status = fmt.Sprintf("error: %v", err)
-						enc.Encode(progressUpdateJSON{Status: status})
-					}
-					return
-				}
-
-				// These final updates are not strictly necessary, because they have
-				// already happened at this point. Our pull handler code used to do
-				// these steps after, not during, the pull, and they were slow, so we
-				// wanted to provide feedback to users what was happening. For now, we
-				// keep them to not jar users who are used to seeing them. We can phase
-				// them out with a new and nicer UX later. One without progress bars
-				// and digests that no one cares about.
-				enc.Encode(progressUpdateJSON{Status: "verifying layers"})
-				enc.Encode(progressUpdateJSON{Status: "writing manifest"})
-				enc.Encode(progressUpdateJSON{Status: "success"})
-				return
-			}
+	maybeFlush := func() {
+		fl, _ := w.(http.Flusher)
+		if fl != nil {
+			fl.Flush()
 		}
-	}()
+	}
+	defer maybeFlush()
 
-	return nil
+	t := time.NewTicker(100 * time.Millisecond)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-t.C:
+			mu.Lock()
+			maybeFlush()
+			mu.Unlock()
+		case err := <-done:
+			if err != nil {
+				var status string
+				if errors.Is(err, ollama.ErrModelNotFound) {
+					status = fmt.Sprintf("error: model %q not found", p.model())
+					enc.Encode(progressUpdateJSON{Status: status})
+				} else {
+					status = fmt.Sprintf("error: %v", err)
+					enc.Encode(progressUpdateJSON{Status: status})
+				}
+				return err
+			}
+
+			// These final updates are not strictly necessary, because they have
+			// already happened at this point. Our pull handler code used to do
+			// these steps after, not during, the pull, and they were slow, so we
+			// wanted to provide feedback to users what was happening. For now, we
+			// keep them to not jar users who are used to seeing them. We can phase
+			// them out with a new and nicer UX later. One without progress bars
+			// and digests that no one cares about.
+			enc.Encode(progressUpdateJSON{Status: "verifying layers"})
+			enc.Encode(progressUpdateJSON{Status: "writing manifest"})
+			enc.Encode(progressUpdateJSON{Status: "success"})
+			return nil
+		}
+	}
 }
 
 func decodeUserJSON[T any](r io.Reader) (T, error) {

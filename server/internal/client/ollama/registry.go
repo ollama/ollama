@@ -36,7 +36,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/server/internal/cache/blob"
-	"github.com/ollama/ollama/server/internal/chunks"
 	"github.com/ollama/ollama/server/internal/internal/backoff"
 	"github.com/ollama/ollama/server/internal/internal/names"
 
@@ -766,36 +765,37 @@ func (r *Registry) Resolve(ctx context.Context, name string) (*Manifest, error) 
 }
 
 type chunksum struct {
-	Chunk  blob.Chunk
-	Digest blob.Digest
+	blob.Chunk
+	Digest     blob.Digest
+	Checkpoint blob.Digest
 }
+
+var errBrokenStream = errors.New("chunksums: final digest mismatch; possible broken stream")
 
 func chunksums(r io.Reader) iter.Seq2[chunksum, error] {
 	return func(yield func(chunksum, error) bool) {
-		s := bufio.NewScanner(r)
-		var lineno int
-		for s.Scan() {
-			lineno++
-			line := strings.TrimSpace(s.Text())
-			if line == "" || strings.HasPrefix(line, "#") {
-				continue
-			}
-			parts := strings.Fields(line)
-			if len(parts) != 2 {
-				yield(chunksum{}, fmt.Errorf("invalid chunksum line %d: %q", lineno, line))
+		var roll blob.RollingDigest
+		dec := json.NewDecoder(bufio.NewReader(r))
+		for {
+			var cs chunksum
+			if err := dec.Decode(&cs); err != nil {
+				if errors.Is(err, io.EOF) {
+					err = io.ErrUnexpectedEOF
+				}
+				yield(chunksum{}, err)
 				return
 			}
-			d, err := blob.ParseDigest(parts[0])
-			if err != nil {
-				yield(chunksum{}, fmt.Errorf("invalid digest %d: %q", lineno, parts[0]))
-				return
+			if cs.Digest.IsValid() {
+				roll.Append(cs.Digest)
 			}
-			chunk, err := chunks.Parse(parts[1])
-			if err != nil {
-				yield(chunksum{}, fmt.Errorf("invalid chunk range %d: %q", lineno, parts[1]))
-				return
+			if cs.Checkpoint.IsValid() {
+				if roll.Current() != cs.Checkpoint {
+					yield(chunksum{}, errBrokenStream)
+					return
+				}
 			}
-			if !yield(chunksum{Chunk: chunk, Digest: d}, nil) {
+			if !cs.Digest.IsValid() {
+				// success
 				return
 			}
 		}

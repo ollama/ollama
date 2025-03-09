@@ -35,14 +35,14 @@ func Parse(s string) (Chunk, error) {
 	startStr, endStr, _ := strings.Cut(s, "-")
 	start, err := strconv.ParseInt(startStr, 10, 64)
 	if err != nil {
-		return Chunk{}, fmt.Errorf("invalid start: %v", err)
+		return Chunk{}, fmt.Errorf("chunks: invalid start to %q: %v", s, err)
 	}
 	end, err := strconv.ParseInt(endStr, 10, 64)
 	if err != nil {
-		return Chunk{}, fmt.Errorf("invalid end: %v", err)
+		return Chunk{}, fmt.Errorf("chunks: invalid end to %q: %v", s, err)
 	}
 	if start > end {
-		return Chunk{}, fmt.Errorf("invalid range %d-%d: start > end", start, end)
+		return Chunk{}, fmt.Errorf("chunks: invalid range %q: start > end", s)
 	}
 	return Chunk{start, end}, nil
 }
