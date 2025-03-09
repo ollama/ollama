@@ -49,33 +49,33 @@ const (
 // RPCServerMemory checks and total and free memory in bytes of a given RPC
 // endpoint.
 //
-// If the RPC endpoint given is unavailble (unable to connect), the total and
+// If the RPC endpoint given is unavailable (unable to connect), the total and
 // free memory returned would be 0.
 func RPCServerMemory(endpoint string) RPCServerMemoryResult {
-    // Setting timeout to 5 seconds
-    var deadLine time.Time
-    timeout := time.Duration(5 * 1000 * 1000 * 1000)
+	// Setting timeout to 5 seconds
+	var deadLine time.Time
+	timeout := time.Duration(5 * 1000 * 1000 * 1000)
 
-    slog.Debug("getting memory for RPC server", "endpoint", endpoint)
+	slog.Debug("getting memory for RPC server", "endpoint", endpoint)
 	// Creating RPC client
 	client, err := net.DialTimeout("tcp", endpoint, timeout)
 	if err != nil {
 		return RPCServerMemoryResult{}
 	}
 	defer client.Close()
-    slog.Debug("connection established with server", "endpoint", endpoint)
+	slog.Debug("connection established with server", "endpoint", endpoint)
 
 	// Sending command to get memory
 	// RPC Command (1 byte)
-    deadLine = time.Now().Add(timeout)
-    client.SetDeadline(deadLine)
+	deadLine = time.Now().Add(timeout)
+	client.SetDeadline(deadLine)
 	_, err = client.Write([]byte{10})
 	if err != nil {
 		return RPCServerMemoryResult{}
 	}
 	// Input Size (8 bytes)
-    deadLine = time.Now().Add(timeout)
-    client.SetDeadline(deadLine)
+	deadLine = time.Now().Add(timeout)
+	client.SetDeadline(deadLine)
 	size := [8]byte{}
 	_, err = client.Write(size[:])
 	if err != nil {
@@ -84,8 +84,8 @@ func RPCServerMemory(endpoint string) RPCServerMemoryResult {
 
 	// Retrieving results
 	// Getting reply size (8 bytes)
-    deadLine = time.Now().Add(timeout)
-    client.SetDeadline(deadLine)
+	deadLine = time.Now().Add(timeout)
+	client.SetDeadline(deadLine)
 	reply := [8]byte{}
 	_, err = client.Read(reply[:])
 	if err != nil {
@@ -98,16 +98,16 @@ func RPCServerMemory(endpoint string) RPCServerMemoryResult {
 	}
 	// Getting main reply
 	// The free memory of the RPC server (8 bytes)
-    deadLine = time.Now().Add(timeout)
-    client.SetDeadline(deadLine)
+	deadLine = time.Now().Add(timeout)
+	client.SetDeadline(deadLine)
 	freeMem := [8]byte{}
 	_, err = client.Read(freeMem[:])
 	if err != nil {
 		return RPCServerMemoryResult{}
 	}
 	// The total memory of the RPC server (8 bytes)
-    deadLine = time.Now().Add(timeout)
-    client.SetDeadline(deadLine)
+	deadLine = time.Now().Add(timeout)
+	client.SetDeadline(deadLine)
 	totalMem := [8]byte{}
 	_, err = client.Read(totalMem[:])
 	if err != nil {
@@ -120,11 +120,11 @@ func RPCServerMemory(endpoint string) RPCServerMemoryResult {
 	}
 }
 
-// Find valid RPC servers from a comma seperated list of endpoints.
+// Find valid RPC servers from a comma separated list of endpoints.
 func CheckRPCServers(endpoints string) RPCServerInfoList {
-    slog.Debug("finding valid rpc servers", "endpoints", endpoints)
+	slog.Debug("finding valid rpc servers", "endpoints", endpoints)
 	rpcServersList := strings.Split(endpoints, ",")
-    var validServers RPCServerInfoList
+	var validServers RPCServerInfoList
 	for _, server := range rpcServersList {
 		// No servers given
 		if server == "" {
@@ -376,9 +376,9 @@ func GetGPUInfo() GpuInfoList {
 		// Load ALL libraries
 		cHandles = initCudaHandles()
 
-        // RPC Servers
-        rpcServersENV := envconfig.RPCServers()
-        rpcServers = CheckRPCServers(rpcServersENV)
+		// RPC Servers
+		rpcServersENV := envconfig.RPCServers()
+		rpcServers = CheckRPCServers(rpcServersENV)
 
 		// NVIDIA
 		for i := range cHandles.deviceCount {
@@ -536,11 +536,11 @@ func GetGPUInfo() GpuInfoList {
 			cpus[0].FreeSwap = mem.FreeSwap
 		}
 
-        // RPC Servers
-        rpcServersENV := envconfig.RPCServers()
-        rpcServers = CheckRPCServers(rpcServersENV)
+		// RPC Servers
+		rpcServersENV := envconfig.RPCServers()
+		rpcServers = CheckRPCServers(rpcServersENV)
 
-        // CUDA GPU
+		// CUDA GPU
 		var memInfo C.mem_info_t
 		if cHandles == nil && len(cudaGPUs) > 0 {
 			cHandles = initCudaHandles()
