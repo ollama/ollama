@@ -257,6 +257,10 @@ type Server struct {
 	// of non-text data
 	multimodalHash maphash.Hash
 
+	// vocab is a llama.cpp vocab required for gammar-based
+	// constrained generation (json mode, structured outputs)
+	// TODO: this is temporary until Ollama sampling supports
+	// constrained generation
 	vocab *sample.Vocab
 }
 
