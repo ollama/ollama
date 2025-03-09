@@ -1,0 +1,110 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "Default",
+      "binaryDir": "${sourceDir}/build",
+      "installDir": "${sourceDir}/dist",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "CPU",
+      "inherits": [ "Default" ]
+    },
+    {
+      "name": "CUDA",
+      "inherits": [ "Default" ]
+    },
+    {
+      "name": "CUDA 11",
+      "inherits": [ "CUDA" ],
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "50;52;53;60;61;70;75;80;86"
+      }
+    },
+    {
+      "name": "CUDA 12",
+      "inherits": [ "CUDA" ],
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "50;60;61;70;75;80;86;87;89;90;90a;120"
+      }
+    },
+    {
+      "name": "JetPack 5",
+      "inherits": [ "CUDA" ],
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "72;87"
+      }
+    },
+    {
+      "name": "JetPack 6",
+      "inherits": [ "CUDA" ],
+      "cacheVariables": {
+        "CMAKE_CUDA_ARCHITECTURES": "87"
+      }
+    },
+    {
+      "name": "ROCm",
+      "inherits": [ "Default" ],
+      "cacheVariables": {
+        "CMAKE_HIP_PLATFORM": "amd"
+      }
+    },
+    {
+      "name": "ROCm 6",
+      "inherits": [ "ROCm" ],
+      "cacheVariables": {
+        "AMDGPU_TARGETS": "gfx900;gfx940;gfx941;gfx942;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "Default",
+      "configurePreset": "Default",
+      "configuration": "Release"
+    },
+    {
+      "name": "CPU",
+      "configurePreset": "Default",
+      "targets": [ "ggml-cpu" ]
+    },
+    {
+      "name": "CUDA",
+      "configurePreset": "CUDA",
+      "targets": [ "ggml-cuda" ]
+    },
+    {
+      "name": "CUDA 11",
+      "inherits": [ "CUDA" ],
+      "configurePreset": "CUDA 11"
+    },
+    {
+      "name": "CUDA 12",
+      "inherits": [ "CUDA" ],
+      "configurePreset": "CUDA 12"
+    },
+    {
+      "name": "JetPack 5",
+      "inherits": [ "CUDA" ],
+      "configurePreset": "JetPack 5"
+    },
+    {
+      "name": "JetPack 6",
+      "inherits": [ "CUDA" ],
+      "configurePreset": "JetPack 6"
+    },
+    {
+      "name": "ROCm",
+      "configurePreset": "ROCm",
+      "targets": [ "ggml-hip" ]
+    },
+    {
+      "name": "ROCm 6",
+      "inherits": [ "ROCm" ],
+      "configurePreset": "ROCm 6"
+    }
+  ]
+}

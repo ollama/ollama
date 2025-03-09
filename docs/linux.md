@@ -10,6 +10,9 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 ## Manual install
 
+> [!NOTE]
+> If you are upgrading from a prior version, you should remove the old libraries with `sudo rm -rf /usr/lib/ollama` first.
+
 Download and extract the package:
 
 ```shell
@@ -112,6 +115,21 @@ sudo systemctl status ollama
 > https://www.amd.com/en/support/linux-drivers for best support of your Radeon
 > GPU.
 
+## Customizing
+
+To customize the installation of Ollama, you can edit the systemd service file or the environment variables by running:
+
+```shell
+sudo systemctl edit ollama
+```
+
+Alternatively, create an override file manually in `/etc/systemd/system/ollama.service.d/override.conf`:
+
+```ini
+[Service]
+Environment="OLLAMA_DEBUG=1"
+```
+
 ## Updating
 
 Update Ollama by running the install script again:
@@ -129,12 +147,12 @@ sudo tar -C /usr -xzf ollama-linux-amd64.tgz
 
 ## Installing specific versions
 
-Use `OLLAMA_VERSION` environment variable with the install script to install a specific version of Ollama, including pre-releases. You can find the version numbers in the [releases page](https://github.com/ollama/ollama/releases). 
+Use `OLLAMA_VERSION` environment variable with the install script to install a specific version of Ollama, including pre-releases. You can find the version numbers in the [releases page](https://github.com/ollama/ollama/releases).
 
 For example:
 
 ```shell
-curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=0.3.9 sh
+curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=0.5.7 sh
 ```
 
 ## Viewing logs
@@ -167,4 +185,10 @@ Remove the downloaded models and Ollama service user and group:
 sudo rm -r /usr/share/ollama
 sudo userdel ollama
 sudo groupdel ollama
+```
+
+Remove installed libraries:
+
+```shell
+sudo rm -rf /usr/local/lib/ollama
 ```
