@@ -180,7 +180,7 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 	if multimodal != nil {
 		visionOutputs := multimodal[0].Multimodal.(ml.Tensor)
 		offset := multimodal[0].Index - 1 - visionOutputs.Dim(1)
-		hiddenState = hiddenState.Set(ctx, visionOutputs, offset*hiddenState.Stride(0))
+		hiddenState = hiddenState.Set(ctx, visionOutputs, offset*hiddenState.Stride(1))
 	}
 
 	for i, layer := range m.Layers {
