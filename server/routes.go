@@ -306,6 +306,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			Images:  images,
 			Format:  req.Format,
 			Options: opts,
+			Prepend: m.Prepend,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
 				Model:      req.Model,
@@ -817,6 +818,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	resp := &api.ShowResponse{
 		License:    strings.Join(m.License, "\n"),
 		System:     m.System,
+		Prepend:    m.Prepend,
 		Template:   m.Template.String(),
 		Details:    modelDetails,
 		Messages:   msgs,
@@ -1525,6 +1527,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			Images:  images,
 			Format:  req.Format,
 			Options: opts,
+			Prepend: m.Prepend,
 		}, func(r llm.CompletionResponse) {
 			res := api.ChatResponse{
 				Model:      req.Model,
