@@ -33,7 +33,7 @@ type TextModel struct {
 
 const (
 	gemmaGlobalCacheCount = 6
-	gemma27BLayerCount    = 46
+	gemma27BLayerCount    = 62
 )
 
 const (
@@ -42,6 +42,8 @@ const (
 )
 
 func newTextModel(c ml.Config) *TextModel {
+	numBlocks := int(c.Uint("block_count"))
+
 	m := TextModel{
 		SentencePieceModel: model.NewSentencePieceModel(
 			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
@@ -53,11 +55,11 @@ func newTextModel(c ml.Config) *TextModel {
 				EOS:    int32(c.Uint("tokenizer.ggml.eos_token_id")),
 			},
 		),
-		Layers: make([]TextLayer, c.Uint("block_count")),
+		Layers: make([]TextLayer, numBlocks),
 		TextOptions: &TextOptions{
 			hiddenSize:        int(c.Uint("embedding_length")),
-			numHeads:          int(c.Uint("attention.head_count", 8)),
-			numKVHeads:        int(c.Uint("attention.head_count_kv", 4)),
+			numHeads:          int(c.Uint("attention.head_count")),
+			numKVHeads:        int(c.Uint("attention.head_count_kv")),
 			attnKeyLen:        int(c.Uint("attention.key_length", 256)),
 			attnValLen:        int(c.Uint("attention.value_length", 256)),
 			eps:               c.Float("text.attention.layer_norm_rms_epsilon", 1e-06),
@@ -66,6 +68,10 @@ func newTextModel(c ml.Config) *TextModel {
 			ropeScale:         c.Float("text.rope.freq_scale", 1.0),
 			finalLogitSoftcap: c.Float("text.final_logit_softcapping", 30.0),
 		},
+	}
+
+	if numBlocks == gemma27BLayerCount {
+		m.largeModelScaling = true
 	}
 
 	return &m
@@ -175,10 +181,6 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 		visionOutputs := multimodal[0].Multimodal.(ml.Tensor)
 		offset := multimodal[0].Index - 1 - visionOutputs.Dim(1)
 		hiddenState = hiddenState.Set(ctx, visionOutputs, offset*hiddenState.Stride(0))
-	}
-
-	if len(m.Layers) == gemma27BLayerCount {
-		m.TextOptions.largeModelScaling = true
 	}
 
 	for i, layer := range m.Layers {

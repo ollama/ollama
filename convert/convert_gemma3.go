@@ -10,6 +10,7 @@ type gemma3Model struct {
 	gemmaModel
 	Architecture string
 	TextModel    struct {
+		HeadDim          uint32 `json:"head_dim"`
 		HiddenSize       uint32 `json:"hidden_size"`
 		HiddenLayers     uint32 `json:"num_hidden_layers"`
 		IntermediateSize uint32 `json:"intermediate_size"`
@@ -36,15 +37,45 @@ type gemma3Model struct {
 	SlidingWindow         uint32  `json:"sliding_window"`
 }
 
+const (
+	gemma4BLayerCount  = 34
+	gemma12BLayerCount = 48
+	gemma27BLayerCount = 62
+)
+
 func (p *gemma3Model) KV(t *Tokenizer) ggml.KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "gemma3"
 
+	numBlocks := cmp.Or(p.HiddenLayers, p.TextModel.HiddenLayers)
+	kv["gemma3.block_count"] = numBlocks
+
+	var (
+		numHeads   uint32
+		numKVHeads uint32
+	)
+
+	switch numBlocks {
+	case gemma4BLayerCount:
+		numHeads = 8
+		numKVHeads = 4
+	case gemma12BLayerCount:
+		numHeads = 16
+		numKVHeads = 8
+	case gemma27BLayerCount:
+		numHeads = 32
+		numKVHeads = 16
+	default:
+		numHeads = p.NumAttentionHeads
+		numKVHeads = p.NumKeyValueHeads
+	}
+
+	kv["gemma3.attention.head_count"] = numHeads
+	kv["gemma3.attention.head_count_kv"] = numKVHeads
+
 	switch p.Architecture {
 	case "Gemma3ForCausalLM":
 		kv["gemma3.context_length"] = p.MaxPositionEmbeddings
-		kv["gemma3.attention.head_count"] = p.NumAttentionHeads
-		kv["gemma3.attention.head_count_kv"] = p.NumKeyValueHeads
 		kv["gemma3.text.attention.layer_norm_rms_epsilon"] = p.RMSNormEPS
 		kv["gemma3.attention.key_length"] = p.HeadDim
 		kv["gemma3.attention.value_length"] = p.HeadDim
@@ -53,11 +84,9 @@ func (p *gemma3Model) KV(t *Tokenizer) ggml.KV {
 		kv["gemma3.text.rope.local.freq_base"] = p.RopeLocalTheta
 		kv["gemma3.text.rope.global.freq_base"] = p.RopeGlobalTheta
 		kv["gemma3.embedding_length"] = p.HiddenSize
-		kv["gemma3.block_count"] = p.HiddenLayers
 		kv["gemma3.text.feed_forward_length"] = p.IntermediateSize
 	default:
 		kv["gemma3.embedding_length"] = p.TextModel.HiddenSize
-		kv["gemma3.block_count"] = p.TextModel.HiddenLayers
 		kv["gemma3.text.feed_forward_length"] = p.TextModel.IntermediateSize
 		kv["gemma3.text.attention.sliding_window"] = p.TextModel.SlidingWindow
 		kv["gemma3.vision.block_count"] = p.VisionModel.NumHiddenLayers
@@ -68,10 +97,9 @@ func (p *gemma3Model) KV(t *Tokenizer) ggml.KV {
 		kv["gemma3.vision.num_channels"] = cmp.Or(p.VisionModel.NumChannels, 3)
 		kv["gemma3.vision.attention.head_count"] = p.VisionModel.NumAttentionHeads
 		kv["gemma3.vision.attention.layer_norm_epsilon"] = cmp.Or(p.VisionModel.LayerNormEpsilon, 1e-6)
+		kv["gemma3.attention.key_length"] = cmp.Or(p.TextModel.HeadDim, 256)
+		kv["gemma3.attention.value_length"] = cmp.Or(p.TextModel.HeadDim, 256)
 	}
-
-	kv["tokenizer.ggml.bos_token_id"] = uint32(2)
-	kv["tokenizer.ggml.eot_token_id"] = uint32(1)
 
 	return kv
 }
