@@ -24,7 +24,6 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/runner/common"
@@ -258,10 +257,7 @@ type Server struct {
 	// of non-text data
 	multimodalHash maphash.Hash
 
-	// vocab is the llama_vocab to be used for constrained
-	// decoding. TODO (jmorganca): remove this once we no longer
-	// rely on llama.cpp's grammar parsing
-	vocab *llama.Vocab
+	vocab *sample.Vocab
 }
 
 func (s *Server) allNil() bool {
@@ -598,8 +594,12 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var grammar *sample.Grammar
+	var err error
 	if req.Grammar != "" {
-		grammar = sample.NewGrammar(s.vocab, req.Grammar)
+		grammar, err = sample.NewGrammar(s.vocab, req.Grammar)
+		if err != nil {
+			slog.Error("failed to load vocab for sampling", "error", err)
+		}
 	}
 
 	sampler := sample.NewSampler(
@@ -822,14 +822,7 @@ func (s *Server) loadModel(
 		panic(err)
 	}
 
-	// TODO(jmorganca): free this when no longer used
-	// TODO(jmorganca): remove this once llama.cpp's
-	// grammar parsing is removed
-	vocab, err := llama.LoadVocabFromFile(mpath)
-	if err != nil {
-		panic(err)
-	}
-	s.vocab = vocab
+	s.vocab = sample.NewVocab(mpath)
 
 	// TODO(jessegross): LoRA loading
 	if lpath.String() != "" {

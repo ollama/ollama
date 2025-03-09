@@ -5,6 +5,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"slices"
+	"sync"
 
 	"github.com/ollama/ollama/llama"
 )
@@ -165,17 +166,22 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 }
 
 type Grammar struct {
-	vocab   *llama.Vocab
+	vocab   *Vocab
 	grammar string
 	sampler *llama.Sampler
 }
 
-func NewGrammar(vocab *llama.Vocab, grammar string) *Grammar {
+func NewGrammar(vocab *Vocab, grammar string) (*Grammar, error) {
+	v, err := vocab.Load()
+	if err != nil {
+		return nil, err
+	}
+
 	return &Grammar{
 		vocab:   vocab,
 		grammar: grammar,
-		sampler: llama.NewGrammarSampler(vocab, grammar),
-	}
+		sampler: llama.NewGrammarSampler(v, grammar),
+	}, nil
 }
 
 func (g *Grammar) Apply(tokens []token) {
@@ -194,4 +200,28 @@ func (g *Grammar) Apply(tokens []token) {
 
 func (g *Grammar) Accept(token int32) {
 	g.sampler.Accept(token)
+}
+
+type Vocab struct {
+	once  sync.Once
+	vocab *llama.Vocab
+	err   error
+	path  string
+}
+
+func NewVocab(path string) *Vocab {
+	return &Vocab{path: path}
+}
+
+// Load returns the lazily-loaded vocabulary
+func (v *Vocab) Load() (*llama.Vocab, error) {
+	v.once.Do(func() {
+		vocab, err := llama.LoadVocabFromFile(v.path)
+		if err != nil {
+			v.err = err
+			return
+		}
+		v.vocab = vocab
+	})
+	return v.vocab, v.err
 }
