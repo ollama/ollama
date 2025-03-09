@@ -611,10 +611,6 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		grammar,
 	)
 
-	if req.Grammar != "" {
-		panic("grammars are not yet supported")
-	}
-
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
 		numPredict: req.NumPredict,
 		stop:       req.Stop,
