@@ -436,10 +436,9 @@ func (s *Server) processBatch() error {
 		// if done processing the prompt, generate an embedding and return
 		if seq.embeddingOnly {
 			// TODO(jessegross): Embedding support
-			// s.removeSequence(i, "")
-			// continue
-
-			panic("generation of embedding outputs not yet supported")
+			slog.Warn("generation of embedding outputs not yet supported")
+			s.removeSequence(i, "")
+			continue
 		}
 
 		// sample a token
