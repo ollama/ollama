@@ -598,7 +598,8 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	if req.Grammar != "" {
 		grammar, err = sample.NewGrammar(s.vocab, req.Grammar)
 		if err != nil {
-			slog.Error("failed to load vocab for sampling", "error", err)
+			http.Error(w, "failed to load model vocabulary required for format", http.StatusInternalServerError)
+			return
 		}
 	}
 
