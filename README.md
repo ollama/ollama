@@ -227,6 +227,10 @@ ollama stop llama3.2
 
 `ollama serve` is used when you want to start ollama without running the desktop application.
 
+### Shell Completion
+
+For instructions on configuring shell (bash) completions, see [docs/shell_completion.md](docs/shell_completion.md).
+
 ## Building
 
 See the [developer guide](https://github.com/ollama/ollama/blob/main/docs/development.md)
