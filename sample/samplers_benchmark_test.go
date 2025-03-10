@@ -16,13 +16,10 @@ func BenchmarkWeightedSampler(b *testing.B) {
 				logits[i] = float32(rand.Float64()*10 - 5)
 			}
 
-			sampler := NewSampler(0.8, 0, 0, 0, 42)
+			sampler := NewSampler(0.8, 0, 0, 0, 42, nil)
 			b.ResetTimer()
 			for b.Loop() {
-				_, err := sampler.Sample(logits)
-				if err != nil {
-					b.Fatalf("Sampling failed: %v", err)
-				}
+				sampler.Sample(logits)
 			}
 		})
 	}
@@ -52,30 +49,24 @@ func BenchmarkWeightedSampler(b *testing.B) {
 
 	for _, tc := range configs {
 		b.Run("Config"+tc.name, func(b *testing.B) {
-			sampler := NewSampler(tc.temperature, tc.topK, tc.topP, tc.minP, tc.seed)
+			sampler := NewSampler(tc.temperature, tc.topK, tc.topP, tc.minP, tc.seed, nil)
 			sampler.Sample(logits)
 
 			b.ResetTimer()
 
 			for b.Loop() {
-				_, err := sampler.Sample(logits)
-				if err != nil {
-					b.Fatalf("Sampling failed: %v", err)
-				}
+				sampler.Sample(logits)
 			}
 		})
 	}
 
 	// Test with combined transforms separately - topK influences performance greatly
 	b.Run("TransformCombined", func(b *testing.B) {
-		sampler := NewSampler(0.8, 50, 0.9, 0.05, 42)
+		sampler := NewSampler(0.8, 50, 0.9, 0.05, 42, nil)
 		b.ResetTimer()
 
 		for b.Loop() {
-			_, err := sampler.Sample(logits)
-			if err != nil {
-				b.Fatalf("Sampling failed: %v", err)
-			}
+			sampler.Sample(logits)
 		}
 	})
 }
@@ -90,14 +81,11 @@ func BenchmarkGreedySampler(b *testing.B) {
 				logits[i] = float32(rand.Float64()*10 - 5)
 			}
 
-			sampler := NewSampler(0, -1, 0, 0, -1)
+			sampler := NewSampler(0, -1, 0, 0, -1, nil)
 			b.ResetTimer()
 
 			for b.Loop() {
-				_, err := sampler.Sample(logits)
-				if err != nil {
-					b.Fatalf("Sampling failed: %v", err)
-				}
+				sampler.Sample(logits)
 			}
 		})
 	}
