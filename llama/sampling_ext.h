@@ -35,6 +35,9 @@ extern "C"
 
     int schema_to_grammar(const char *json_schema, char *grammar, size_t max_len);
 
+    struct llama_vocab * llama_load_vocab_from_file(const char * fname);
+    void llama_free_vocab(struct llama_vocab * vocab);
+
 #ifdef __cplusplus
 }
 #endif
