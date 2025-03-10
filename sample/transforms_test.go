@@ -34,7 +34,7 @@ func compareLogits(t *testing.T, name string, want []float64, got []token) {
 
 func TestTemperatureAndSoftmax(t *testing.T) {
 	input := []float64{1, 4, -2, 0}
-	got := temperatureAndSoftmax(toTokens(input), 0.5)
+	got := temperature(toTokens(input), 0.5)
 
 	// Check probabilities sum to 1
 	var sum float32
@@ -45,7 +45,7 @@ func TestTemperatureAndSoftmax(t *testing.T) {
 		t.Errorf("probabilities don't sum to 1: got %f", sum)
 	}
 
-	got = temperatureAndSoftmax(toTokens(input), 1)
+	got = temperature(toTokens(input), 1)
 	// Check probabilities sum to 1
 	sum = 0
 	for _, token := range got {
@@ -78,7 +78,7 @@ func TestTopP(t *testing.T) {
 	tokens := toTokens(input)
 
 	// First apply temperature and softmax to get probabilities
-	tokens = temperatureAndSoftmax(tokens, 1)
+	tokens = temperature(tokens, 1)
 	sortLogits(tokens)
 
 	// Then apply topP
@@ -96,7 +96,7 @@ func TestMinP(t *testing.T) {
 	tokens := toTokens(input)
 
 	// First apply temperature and softmax
-	tokens = temperatureAndSoftmax(tokens, 1)
+	tokens = temperature(tokens, 1)
 
 	// Then apply minP
 	got := minP(tokens, 0.2)
@@ -140,7 +140,7 @@ func BenchmarkTransforms(b *testing.B) {
 		b.ResetTimer()
 		for b.Loop() {
 			copy(tokensCopy, tokens)
-			temperatureAndSoftmax(tokensCopy, 0.5)
+			temperature(tokensCopy, 0.5)
 		}
 	})
 

@@ -5,7 +5,8 @@ import (
 	"slices"
 )
 
-func temperatureAndSoftmax(ts []token, temp float32) []token {
+// apply temperature scaling and softmax to the logits
+func temperature(ts []token, temp float32) []token {
 	// Find max logit for numerical stability
 	maxLogit := float32(math.Inf(-1))
 	for _, t := range ts {
@@ -135,7 +136,7 @@ func minP(ts []token, p float32) []token {
 }
 
 // TODO(parthsareen): possibly replace with simpler implementation https://github.com/ollama/ollama/issues/9584
-// Conting sort implementation to sort tokens by logits
+// counting sort implementation to sort tokens by logits
 func sortLogits(tokens []token) {
 	if len(tokens) <= 1 {
 		return
