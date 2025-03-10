@@ -65,23 +65,23 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 	return t.id, nil
 }
 
-func (s *Sampler) greedy(tokens []token) (t token) {
-	max := tokens[0].value
+// greedy returns the highest probability token from the tokens
+func greedy(tokens []token) token {
+	max := tokens[0]
 	for i := 1; i < len(tokens); i++ {
-		if tokens[i].value > max {
-			t = tokens[i]
-			max = t.value
+		if tokens[i].value > max.value {
+			max = tokens[i]
 		}
 	}
 
-	return t
+	return max
 }
 
 // sample returns the highest probability token from the tokens
 // given sampler parameters. It also has side effects of modifying the tokens
 func (s *Sampler) sample(tokens []token) (token, error) {
 	if s.temperature == 0 {
-		return s.greedy(tokens), nil
+		return greedy(tokens), nil
 	}
 
 	if s.topK > 0 {
@@ -128,7 +128,7 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 }
 
 // TODO(parthsareen): update sampler interface to use json unmarshal https://github.com/ollama/ollama/issues/9278
-func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int, grammar *Grammar) *Sampler {
+func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int, grammar *Grammar) Sampler {
 	var rng *rand.Rand
 	if seed != -1 {
 		// PCG requires two parameters: sequence and stream
@@ -155,7 +155,7 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 		minP = 1.0
 	}
 
-	return &Sampler{
+	return Sampler{
 		rng:         rng,
 		topK:        topK,
 		topP:        topP,

@@ -62,7 +62,7 @@ type Sequence struct {
 	numPredict int
 
 	// sampler with transforms to run on generated logits
-	sampler *sample.Sampler
+	sampler sample.Sampler
 
 	// channel to send back the embedding if embedding only
 	embedding chan []float32
@@ -89,7 +89,7 @@ type NewSequenceParams struct {
 	numPredict int
 	stop       []string
 	numKeep    int32
-	sampler    *sample.Sampler
+	sampler    sample.Sampler
 	embedding  bool
 }
 

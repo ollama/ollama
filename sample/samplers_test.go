@@ -32,7 +32,7 @@ func TestWeighted(t *testing.T) {
 }
 
 func BenchmarkSample(b *testing.B) {
-	samplers := map[string]*Sampler{
+	samplers := map[string]Sampler{
 		"Greedy":   NewSampler(0, 0, 0, 0, 0, nil), // Use NewSampler with temp=0 for greedy
 		"Weighted": NewSampler(0.5, 10, 0.9, 0.2, -1, nil),
 	}
