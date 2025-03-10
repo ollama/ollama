@@ -62,7 +62,7 @@ func New(c ml.Config) (model.Model, error) {
 		TextModel:      newTextModel(c),
 	}
 
-	slidingWindowLen := int32(c.Uint("text.attention.sliding_window"))
+	slidingWindowLen := int32(c.Uint("attention.sliding_window"))
 	m.Cache = kvcache.NewWrapperCache(kvcache.NewSWACache(slidingWindowLen, m.Shift), kvcache.NewCausalCache(m.Shift))
 
 	return &m, nil

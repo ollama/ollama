@@ -62,11 +62,11 @@ func newTextModel(c ml.Config) *TextModel {
 			numKVHeads:        int(c.Uint("attention.head_count_kv")),
 			attnKeyLen:        int(c.Uint("attention.key_length", 256)),
 			attnValLen:        int(c.Uint("attention.value_length", 256)),
-			eps:               c.Float("text.attention.layer_norm_rms_epsilon", 1e-06),
-			ropeLocalBase:     c.Float("text.rope.local.freq_base", 10000.0),
-			ropeGlobalBase:    c.Float("text.rope.global.freq_base", 1000000.0),
-			ropeScale:         c.Float("text.rope.freq_scale", 1.0),
-			finalLogitSoftcap: c.Float("text.final_logit_softcapping", 30.0),
+			eps:               c.Float("attention.layer_norm_rms_epsilon", 1e-06),
+			ropeLocalBase:     c.Float("rope.local.freq_base", 10000.0),
+			ropeGlobalBase:    c.Float("rope.global.freq_base", 1000000.0),
+			ropeScale:         c.Float("rope.freq_scale", 1.0),
+			finalLogitSoftcap: c.Float("final_logit_softcapping", 30.0),
 		},
 	}
 

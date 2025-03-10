@@ -76,19 +76,19 @@ func (p *gemma3Model) KV(t *Tokenizer) ggml.KV {
 	switch p.Architecture {
 	case "Gemma3ForCausalLM":
 		kv["gemma3.context_length"] = p.MaxPositionEmbeddings
-		kv["gemma3.text.attention.layer_norm_rms_epsilon"] = p.RMSNormEPS
+		kv["gemma3.attention.layer_norm_rms_epsilon"] = p.RMSNormEPS
 		kv["gemma3.attention.key_length"] = p.HeadDim
 		kv["gemma3.attention.value_length"] = p.HeadDim
-		kv["gemma3.text.attention.sliding_window"] = p.SlidingWindow
-		kv["gemma3.text.final_logit_softcapping"] = p.FinalLogitSoftcap
-		kv["gemma3.text.rope.local.freq_base"] = p.RopeLocalTheta
-		kv["gemma3.text.rope.global.freq_base"] = p.RopeGlobalTheta
+		kv["gemma3.attention.sliding_window"] = p.SlidingWindow
+		kv["gemma3.final_logit_softcapping"] = p.FinalLogitSoftcap
+		kv["gemma3.rope.local.freq_base"] = p.RopeLocalTheta
+		kv["gemma3.rope.global.freq_base"] = p.RopeGlobalTheta
 		kv["gemma3.embedding_length"] = p.HiddenSize
-		kv["gemma3.text.feed_forward_length"] = p.IntermediateSize
+		kv["gemma3.feed_forward_length"] = p.IntermediateSize
 	default:
 		kv["gemma3.embedding_length"] = p.TextModel.HiddenSize
-		kv["gemma3.text.feed_forward_length"] = p.TextModel.IntermediateSize
-		kv["gemma3.text.attention.sliding_window"] = p.TextModel.SlidingWindow
+		kv["gemma3.feed_forward_length"] = p.TextModel.IntermediateSize
+		kv["gemma3.attention.sliding_window"] = p.TextModel.SlidingWindow
 		kv["gemma3.vision.block_count"] = p.VisionModel.NumHiddenLayers
 		kv["gemma3.vision.embedding_length"] = p.VisionModel.HiddenSize
 		kv["gemma3.vision.feed_forward_length"] = p.VisionModel.IntermediateSize
