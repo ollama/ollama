@@ -524,6 +524,18 @@ func (c *ClipContext) NewEmbed(llamaContext *Context, data []byte) ([][]float32,
 	return embed, nil
 }
 
+func (c *ClipContext) ClipIsMinicpmv() int {
+	return int(C.clip_is_minicpmv(c.c))
+}
+
+func (c *ClipContext) ClipNPatches() int {
+	return int(C.clip_n_patches(c.c))
+}
+
+func (c *ClipContext) ClipUhdNumImageEmbedsCol() int {
+	return int(C.clip_uhd_num_image_embeds_col(c.c))
+}
+
 type MllamaContext struct {
 	c *C.struct_mllama_ctx
 }

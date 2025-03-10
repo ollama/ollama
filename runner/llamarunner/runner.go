@@ -208,8 +208,68 @@ func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 				return nil, err
 			}
 
-			for _, e := range embed {
-				inputs = append(inputs, input{embed: e})
+			minicpmv_version := s.image.clip.ClipIsMinicpmv()
+			if minicpmv_version > 0 {
+				idx := 0
+				patch_num := s.image.clip.ClipNPatches()
+				slice_num := len(embed) / patch_num
+
+				tokens1, err1 := s.lc.Model().Tokenize("<image>", true, true)
+				tokens2, err2 := s.lc.Model().Tokenize("</image>", true, true)
+				tokens3, err3 := s.lc.Model().Tokenize("<slice>", true, true)
+				tokens4, err4 := s.lc.Model().Tokenize("</slice>", true, true)
+				tokens5, err5 := s.lc.Model().Tokenize("\n", true, true)
+				if err1 != nil || err2 != nil || err3 != nil || err4 != nil || err5 != nil {
+					return nil, err
+				}
+
+				inputs = append(inputs, input{token: tokens1[0]})
+				for _, e := range embed[patch_num*idx : patch_num*(idx+1)] {
+					inputs = append(inputs, input{embed: e})
+				}
+				idx += 1
+				inputs = append(inputs, input{token: tokens2[0]})
+
+				if slice_num > 1 {
+					slice_col := s.image.clip.ClipUhdNumImageEmbedsCol()
+					slice_row := (slice_num - 1) / slice_col
+
+					if minicpmv_version == 2 {
+						inputs = append(inputs, input{token: tokens3[0]})
+						for i := 0; i < slice_row; i++ {
+							for j := 0; j < slice_col; j++ {
+								inputs = append(inputs, input{token: tokens1[0]})
+								for _, e := range embed[patch_num*idx : patch_num*(idx+1)] {
+									inputs = append(inputs, input{embed: e})
+								}
+								idx += 1
+								inputs = append(inputs, input{token: tokens2[0]})
+								if j == slice_col-1 {
+									inputs = append(inputs, input{token: tokens5[0]})
+								}
+							}
+						}
+						inputs = append(inputs, input{token: tokens4[0]})
+					} else if minicpmv_version == 3 {
+						for i := 0; i < slice_row; i++ {
+							for j := 0; j < slice_col; j++ {
+								inputs = append(inputs, input{token: tokens3[0]})
+								for _, e := range embed[patch_num*idx : patch_num*(idx+1)] {
+									inputs = append(inputs, input{embed: e})
+								}
+								idx += 1
+								inputs = append(inputs, input{token: tokens4[0]})
+								if j == slice_col-1 {
+									inputs = append(inputs, input{token: tokens5[0]})
+								}
+							}
+						}
+					}
+				}
+			} else {
+				for _, e := range embed {
+					inputs = append(inputs, input{embed: e})
+				}
 			}
 		}
 	}
