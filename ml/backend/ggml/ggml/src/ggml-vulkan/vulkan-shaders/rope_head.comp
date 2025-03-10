@@ -1,0 +1,49 @@
+#include "types.comp"
+
+#extension GL_EXT_shader_16bit_storage : require
+#extension GL_EXT_spirv_intrinsics: enable
+
+#if RTE16
+spirv_execution_mode(capabilities = [4467], 4462, 16); // RoundingModeRTE, 16 bits
+#endif
+
+layout(local_size_x = 1, local_size_y = 256, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer X {A_TYPE data_a[];};
+layout (binding = 1) readonly buffer Y {int data_pos[];};
+layout (binding = 2) readonly buffer Z {float data_ff[];};
+layout (binding = 3) writeonly buffer D {D_TYPE data_d[];};
+
+layout (push_constant) uniform parameter {
+    uint ncols;
+    uint n_dims;
+    float freq_scale;
+    uint p_delta_rows;
+    float freq_base;
+    float ext_factor;
+    float attn_factor;
+    float corr_dims[2];
+    float theta_scale;
+    uint has_ff;
+} p;
+
+float rope_yarn_ramp(const float low, const float high, const uint i0) {
+    const float y = (i0 / 2 - low) / max(0.001f, high - low);
+    return 1.0f - min(1.0f, max(0.0f, y));
+}
+
+void rope_yarn(const float theta_extrap, const uint i0, out float cos_theta, out float sin_theta) {
+    float mscale = p.attn_factor;
+    // Get n-d rotational scaling corrected for extrapolation
+    float theta_interp = p.freq_scale * theta_extrap;
+    float theta = theta_interp;
+    if (p.ext_factor != 0.0f) {
+        float ramp_mix = rope_yarn_ramp(p.corr_dims[0], p.corr_dims[1], i0) * p.ext_factor;
+        theta = theta_interp * (1 - ramp_mix) + theta_extrap * ramp_mix;
+
+        // Get n-d magnitude scaling corrected for interpolation
+        mscale *= 1.0f + 0.1f * log(1.0f / p.freq_scale);
+    }
+    cos_theta = cos(theta) * mscale;
+    sin_theta = sin(theta) * mscale;
+}

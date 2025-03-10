@@ -1,0 +1,36 @@
+#version 450
+
+layout (push_constant) uniform parameter
+{
+    uint ne; uint a_offset; uint d_offset;
+    uint nb00; uint nb01; uint nb02; uint nb03;
+    uint ne10; uint ne11; uint ne12; uint ne13;
+    float sf0; float sf1; float sf2; float sf3;
+} p;
+
+#include "types.comp"
+
+layout(local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer A {A_TYPE data_a[];};
+layout (binding = 1) writeonly buffer D {D_TYPE data_d[];};
+
+void main() {
+    const uint idx = gl_GlobalInvocationID.z * 262144 + gl_GlobalInvocationID.y * 512 + gl_GlobalInvocationID.x;
+
+    if (idx >= p.ne) {
+        return;
+    }
+
+    const uint i10 = idx % p.ne10;
+    const uint i11 = (idx / p.ne10) % p.ne11;
+    const uint i12 = (idx / (p.ne10 * p.ne11)) % p.ne12;
+    const uint i13 = (idx / (p.ne10 * p.ne11 * p.ne12)) % p.ne13;
+
+    const uint i00 = uint(i10 / p.sf0);
+    const uint i01 = uint(i11 / p.sf1);
+    const uint i02 = uint(i12 / p.sf2);
+    const uint i03 = uint(i13 / p.sf3);
+
+    data_d[p.d_offset + idx] = D_TYPE(data_a[p.a_offset + i03 * p.nb03 + i02 * p.nb02 + i01 * p.nb01 + i00 * p.nb00]);
+}
