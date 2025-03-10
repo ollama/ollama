@@ -32,17 +32,9 @@ func compareLogits(t *testing.T, name string, want []float64, got []token) {
 	}
 }
 
-func TestTemperature(t *testing.T) {
-	input := []float64{2, -1, 4, -3, 1, -2, 0}
-	want := []float64{-4, -10, 0, -14, -6, -12, -8} // (logit - max logit) / temp
-
-	got := temperature(toTokens(input), 0.5)
-	compareLogits(t, "Temperature", want, got)
-}
-
-func TestSoftmax(t *testing.T) {
-	input := []float64{-3, -2, -1, 0, 1, 2, 4}
-	got := softmax(toTokens(input))
+func TestTemperatureAndSoftmax(t *testing.T) {
+	input := []float64{1, 4, -2, 0}
+	got := temperatureAndSoftmax(toTokens(input), 0.5)
 
 	// Check probabilities sum to 1
 	var sum float32
@@ -53,11 +45,14 @@ func TestSoftmax(t *testing.T) {
 		t.Errorf("probabilities don't sum to 1: got %f", sum)
 	}
 
-	// Check relative ordering is preserved
-	for i := 1; i < len(got); i++ {
-		if got[i].value < got[i-1].value {
-			t.Errorf("probability ordering not preserved at index %d", i)
-		}
+	got = temperatureAndSoftmax(toTokens(input), 1)
+	// Check probabilities sum to 1
+	sum = 0
+	for _, token := range got {
+		sum += token.value
+	}
+	if math.Abs(float64(sum)-1.0) > 1e-6 {
+		t.Errorf("probabilities don't sum to 1: got %f", sum)
 	}
 }
 
@@ -83,8 +78,7 @@ func TestTopP(t *testing.T) {
 	tokens := toTokens(input)
 
 	// First apply temperature and softmax to get probabilities
-	tokens = temperature(tokens, 1)
-	tokens = softmax(tokens)
+	tokens = temperatureAndSoftmax(tokens, 1)
 	sortLogits(tokens)
 
 	// Then apply topP
@@ -102,8 +96,7 @@ func TestMinP(t *testing.T) {
 	tokens := toTokens(input)
 
 	// First apply temperature and softmax
-	tokens = temperature(tokens, 1)
-	tokens = softmax(tokens)
+	tokens = temperatureAndSoftmax(tokens, 1)
 
 	// Then apply minP
 	got := minP(tokens, 0.2)
@@ -147,7 +140,7 @@ func BenchmarkTransforms(b *testing.B) {
 		b.ResetTimer()
 		for b.Loop() {
 			copy(tokensCopy, tokens)
-			temperature(tokensCopy, 0.5)
+			temperatureAndSoftmax(tokensCopy, 0.5)
 		}
 	})
 

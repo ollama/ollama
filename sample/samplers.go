@@ -90,8 +90,7 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 		sortLogits(tokens)
 	}
 
-	tokens = temperature(tokens, s.temperature)
-	tokens = softmax(tokens)
+	tokens = temperatureAndSoftmax(tokens, s.temperature)
 	tokens = topP(tokens, s.topP)
 	tokens = minP(tokens, s.minP)
 
