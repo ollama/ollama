@@ -41,7 +41,7 @@ RUN \
     git config user.name "Builder" && git config user.email "builder@local" && \
     git remote add ollama_vanilla https://github.com/ollama/ollama.git && \
     git fetch ollama_vanilla --tags && git checkout v0.5.13 -b ollama_vanilla_stable && \
-    git checkout ollama_vulkan_stable && git merge ollama_vanilla_stable --allow-unrelated-histories --no-edit && \
+    git checkout ollama_vanilla_stable && git merge ollama_vulkan_stable --allow-unrelated-histories --no-edit && \
     for p in /tmp/patches/*.patch; do patch -p1 < $p; done
 RUN \
     cd "/tmp/ollama-vulkan-git" && \
