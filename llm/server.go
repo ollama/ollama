@@ -691,6 +691,7 @@ type CompletionRequest struct {
 	Format  json.RawMessage
 	Images  []ImageData
 	Options *api.Options
+	Prepend string
 }
 
 type CompletionResponse struct {
@@ -848,8 +849,12 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			}
 
 			if c.Content != "" {
+				content := c.Content
+				if req.Prepend != "" {
+					content = req.Prepend + content
+				}
 				fn(CompletionResponse{
-					Content: c.Content,
+					Content: content,
 				})
 			}
 
