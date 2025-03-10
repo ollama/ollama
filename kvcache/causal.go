@@ -8,6 +8,7 @@ import (
 	"slices"
 
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/model/input"
 )
 
 type shiftFn func(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error)
@@ -140,10 +141,10 @@ func (c *Causal) Close() {
 	}
 }
 
-func (c *Causal) StartForward(ctx ml.Context, positions []int32, seqs []int) error {
-	c.curBatchSize = len(positions)
-	c.curSequences = seqs
-	c.curPositions = positions
+func (c *Causal) StartForward(ctx ml.Context, opts input.Options) error {
+	c.curBatchSize = len(opts.Positions)
+	c.curSequences = opts.Sequences
+	c.curPositions = opts.Positions
 
 	var err error
 	c.curLoc, err = c.findStartLoc()
@@ -156,8 +157,8 @@ func (c *Causal) StartForward(ctx ml.Context, positions []int32, seqs []int) err
 	}
 
 	c.curCellRange = newRange()
-	for i, pos := range positions {
-		seq := seqs[i]
+	for i, pos := range opts.Positions {
+		seq := opts.Sequences[i]
 
 		c.cells[c.curLoc+i] = cacheCell{pos: pos, sequences: []int{seq}}
 

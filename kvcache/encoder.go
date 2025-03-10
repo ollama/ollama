@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/model/input"
 )
 
 // Encoder cache stores K and V tensors that are position independent
@@ -78,9 +79,11 @@ func (c *EncoderCache) Close() {
 	}
 }
 
-func (c *EncoderCache) StartForward(ctx ml.Context, positions []int32, seqs []int) error {
-	// The image is always in the first position
-	c.curPos = positions[0]
+func (c *EncoderCache) StartForward(ctx ml.Context, opts input.Options) error {
+	// We work with the most recent image
+	if len(opts.Multimodal) > 0 {
+		c.curPos = opts.Positions[opts.Multimodal[len(opts.Multimodal)-1].Index]
+	}
 
 	return nil
 }

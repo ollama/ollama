@@ -12,6 +12,7 @@ import (
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
 	"github.com/ollama/ollama/model"
+	"github.com/ollama/ollama/model/input"
 )
 
 type Model struct {
@@ -101,8 +102,8 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 	return m.Projector.Forward(ctx, crossAttentionStates), nil
 }
 
-func (m *Model) PostTokenize(ctx ml.Context, inputs []model.Input) ([]model.Input, error) {
-	var images []model.Input
+func (m *Model) PostTokenize(ctx ml.Context, inputs []input.Input) ([]input.Input, error) {
+	var images []input.Input
 	fnvHash := fnv.New64a()
 
 	for i := range inputs {
@@ -125,15 +126,15 @@ func (m *Model) PostTokenize(ctx ml.Context, inputs []model.Input) ([]model.Inpu
 		}
 	}
 
-	inputs = slices.DeleteFunc(inputs, func(input model.Input) bool { return input.Token == -1 })
+	inputs = slices.DeleteFunc(inputs, func(input input.Input) bool { return input.Token == -1 })
 
 	return inputs, nil
 }
 
-func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
+func (m *Model) Forward(ctx ml.Context, opts input.Options) (ml.Tensor, error) {
 	var crossAttentionStates ml.Tensor
-	if opts.Multimodal != nil {
-		crossAttentionStates = opts.Multimodal[0].Multimodal.(ml.Tensor)
+	if len(opts.Multimodal) > 0 {
+		crossAttentionStates = opts.Multimodal[len(opts.Multimodal)-1].Multimodal.(ml.Tensor)
 	}
 
 	inputs, err := ctx.Input().FromIntSlice(opts.Inputs, len(opts.Inputs))
