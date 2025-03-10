@@ -8,7 +8,7 @@ usage() {
     exit 1
 }
 
-export VERSION=${VERSION:-$(git describe --tags --dirty)}
+export VERSION=${VERSION:-$(git describe --tags --first-parent --abbrev=7 --long --dirty --always | sed -e "s/^v//g")}
 export GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${VERSION#v}\" \"-X=github.com/ollama/ollama/server.mode=release\"'"
 export CGO_CPPFLAGS='-mmacosx-version-min=11.3'
 
