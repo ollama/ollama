@@ -80,12 +80,13 @@ func (p *gemma3Model) KV(t *Tokenizer) ggml.KV {
 		kv["gemma3.attention.key_length"] = p.HeadDim
 		kv["gemma3.attention.value_length"] = p.HeadDim
 		kv["gemma3.attention.sliding_window"] = p.SlidingWindow
-		kv["gemma3.final_logit_softcapping"] = p.FinalLogitSoftcap
-		kv["gemma3.rope.local.freq_base"] = p.RopeLocalTheta
-		kv["gemma3.rope.global.freq_base"] = p.RopeGlobalTheta
+		kv["gemma3.final_logit_softcapping"] = cmp.Or(p.FinalLogitSoftcap, 30)
+		kv["gemma3.rope.local.freq_base"] = cmp.Or(p.RopeLocalTheta, 10000.0)
+		kv["gemma3.rope.global.freq_base"] = cmp.Or(p.RopeGlobalTheta, 1000000.0)
 		kv["gemma3.embedding_length"] = p.HiddenSize
 		kv["gemma3.feed_forward_length"] = p.IntermediateSize
 	default:
+		kv["gemma3.context_length"] = cmp.Or(p.MaxPositionEmbeddings, 8192)
 		kv["gemma3.embedding_length"] = p.TextModel.HiddenSize
 		kv["gemma3.feed_forward_length"] = p.TextModel.IntermediateSize
 		kv["gemma3.attention.sliding_window"] = p.TextModel.SlidingWindow
@@ -111,6 +112,8 @@ func (p *gemma3Model) Replacements() []string {
 		"model.norm", "output_norm",
 		"vision_tower.vision_model.embeddings", "v",
 		"vision_tower.vision_model", "v",
+		"vision_model.vision_model.embeddings", "v",
+		"vision_model.vision_model", "v",
 		"language_model.", "",
 		"model.layers", "blk",
 		"encoder.layers", "blk",
