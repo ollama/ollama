@@ -47,7 +47,7 @@ func TestTemperatureAndSoftmax(t *testing.T) {
 
 	got = temperature(toTokens(input), 1)
 	// Check probabilities sum to 1
-	sum = 0
+	sum = 0.0
 	for _, token := range got {
 		sum += token.value
 	}
