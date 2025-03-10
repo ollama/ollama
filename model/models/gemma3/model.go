@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"hash/fnv"
 	"image"
-	"slices"
 
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
@@ -99,49 +98,43 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 	return visionOutputs, nil
 }
 
+type imageToken struct {
+	embedding ml.Tensor
+	index     int
+}
+
 func (m *Model) PostTokenize(ctx ml.Context, inputs []input.Input) ([]input.Input, error) {
-	var images []input.Input
+	var result []input.Input
 	fnvHash := fnv.New64a()
 
-	for i := range inputs {
-		if inputs[i].Multimodal == nil {
-			for j := range images {
-				if j == 0 {
-					inputs[i].Multimodal = images[j].Multimodal
-					inputs[i].MultimodalHash = images[j].MultimodalHash
-				} else {
-					inputs[i].Multimodal = inputs[i].Multimodal.(ml.Tensor).Concat(ctx, images[j].Multimodal.(ml.Tensor), 3)
-					fnvHash.Reset()
-					binary.Write(fnvHash, binary.NativeEndian, inputs[i].MultimodalHash)
-					binary.Write(fnvHash, binary.NativeEndian, images[j].MultimodalHash)
-					inputs[i].MultimodalHash = fnvHash.Sum64()
-				}
-			}
-
-			images = nil
+	for _, inp := range inputs {
+		if inp.Multimodal == nil {
+			result = append(result, inp)
 		} else {
-			images = append(images, inputs[i])
-			inputs[i].Token = -1
-		}
-	}
-
-	for i := range inputs {
-		if inputs[i].Token == -1 {
 			imageInputs := []input.Input{
 				{Token: 108},    // "\n\n"
 				{Token: 255999}, // "<start_of_image>""
 			}
+			result = append(result, imageInputs...)
 
-			// pad inputs with placeholders for image embeddings
-			imageInputs = append(imageInputs, slices.Repeat([]input.Input{{Token: 0}}, 256)...)
+			// add image embeddings
+			inputMultimodal := inp.Multimodal.(ml.Tensor)
+
+			for i := range inputMultimodal.Dim(1) {
+				fnvHash.Reset()
+				binary.Write(fnvHash, binary.NativeEndian, inp.MultimodalHash)
+				fnvHash.Write([]byte{byte(i)})
+
+				imageToken := imageToken{embedding: inputMultimodal, index: i}
+				result = append(result, input.Input{Multimodal: imageToken, MultimodalHash: fnvHash.Sum64()})
+			}
+
 			// <end_of_image>
-			imageInputs = append(imageInputs, input.Input{Token: 256000})
-
-			inputs = append(inputs[:i], append(imageInputs, inputs[i+1:]...)...)
+			result = append(result, input.Input{Token: 256000})
 		}
 	}
 
-	return inputs, nil
+	return result, nil
 }
 
 func (m *Model) Forward(ctx ml.Context, opts input.Options) (ml.Tensor, error) {
@@ -160,7 +153,7 @@ func (m *Model) Forward(ctx ml.Context, opts input.Options) (ml.Tensor, error) {
 		return nil, err
 	}
 
-	return m.TextModel.Forward(ctx, inputs, positions, outputs, opts.Multimodal, m.Cache), nil
+	return m.TextModel.Forward(ctx, inputs, positions, outputs, opts, m.Cache), nil
 }
 
 func init() {
