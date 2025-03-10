@@ -37,13 +37,12 @@ COPY patches/ /tmp/patches/
 RUN \
     git clone https://github.com/pufferffish/ollama-vulkan.git "/tmp/ollama-vulkan-git" && \
     cd "/tmp/ollama-vulkan-git" && \
-    git checkout 2d443b3dd660a1fd2760d64538512df93648b4bb && git checkout -b ollama_vulkan_stable && \
+    git checkout 2d443b3dd660a1fd2760d64538512df93648b4bb -b ollama_vulkan_stable && \
     git config user.name "Builder" && git config user.email "builder@local" && \
     git remote add ollama_vanilla https://github.com/ollama/ollama.git && \
-    git fetch ollama_vanilla --tags && git checkout v0.5.14-rc0 && git checkout -b ollama_vanilla_stable && \
+    git fetch ollama_vanilla --tags && git checkout v0.5.13 -b ollama_vanilla_stable && \
     git checkout ollama_vulkan_stable && git merge ollama_vanilla_stable --allow-unrelated-histories --no-edit && \
-    for p in /tmp/patches/00-fix-vulkan-building.patch; do patch -p1 < $p; done
-
+    for p in /tmp/patches/*.patch; do patch -p1 < $p; done
 RUN \
     cd "/tmp/ollama-vulkan-git" && \
     make -f Makefile.sync clean sync
