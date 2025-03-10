@@ -5,6 +5,7 @@
 #include "ggml-backend.h"
 #include "ggml-cpu.h"
 #include "ggml.h"
+#include "gguf.h"
 
 #ifdef GGML_USE_CUDA
 #include "ggml-cuda.h"
@@ -558,30 +559,15 @@ struct mllama_ctx *mllama_model_load(const char *fname, const int verbosity = 1)
 
     mllama_ctx *new_mllama = new mllama_ctx{};
 
-#ifdef GGML_USE_CUDA
-    new_mllama->backend = ggml_backend_cuda_init(0);
-    LOG("vision using CUDA backend");
-#endif
-
-#ifdef GGML_USE_METAL
-    new_mllama->backend = ggml_backend_metal_init();
-    LOG("vision using Metal backend");
-#endif
-
-#ifdef GGML_USE_CANN
-    new_mllama->backend = ggml_backend_cann_init(0);
-    LOG("vision using CANN backend");
-#endif
-
-#ifdef GGML_USE_VULKAN
-    new_mllama->backend = ggml_backend_vk_init(0);
-    LOG("vision using Vulkan backend");
-#endif
-
-    if (!new_mllama->backend) {
-        new_mllama->backend = ggml_backend_cpu_init();
-        LOG("vision using CPU backend");
+    ggml_backend_t backend = ggml_backend_init_best();
+    if (backend == nullptr) {
+        LOG("%s: failed to initialize backend\n", __func__);
+        mllama_free(new_mllama);
+        gguf_free(ctx);
+        return nullptr;
     }
+    LOG("%s: using %s backend\n", __func__, ggml_backend_name(backend));
+    new_mllama->backend = backend;
 
     // load tensors
     {

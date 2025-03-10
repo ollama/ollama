@@ -9,6 +9,7 @@ include src/ggml-cpu/
 include src/ggml-cpu/amx/
 include src/ggml-cpu/llamafile/
 include src/ggml-cuda/
+include src/ggml-cuda/vendors/
 include src/ggml-cuda/template-instances/
 include src/ggml-hip/
 include src/ggml-metal/
