@@ -248,6 +248,14 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 		case strings.HasPrefix(t.Name, "v.") || strings.HasPrefix(t.Name, "mm."):
 			// TODO: assign vision tensors to the gpu if possible
 			createTensor(tensor{source: t}, input.bts)
+		case contains(t.Name, "rope_freqs", "rope_factors_long", "rope_factors_short"):
+			// these tensors should be repeated per layer
+			for i, layer := range layers {
+				createTensor(tensor{
+					source: t,
+					target: "blk." + strconv.Itoa(i) + "." + t.Name,
+				}, layer.bts)
+			}
 		default:
 			layerIndex := -1
 			if fields := strings.FieldsFunc(t.Name, func(r rune) bool { return !unicode.IsNumber(r) }); len(fields) > 0 {
@@ -259,14 +267,8 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 			if layerIndex >= 0 {
 				createTensor(tensor{source: t}, layers[layerIndex].bts)
 			} else {
-				// this is a repeating tensor that doesn't explicitly associated with a layer so
-				// duplicate it for each layer
-				for i, layer := range layers {
-					createTensor(tensor{
-						source: t,
-						target: "blk." + strconv.Itoa(i) + "." + t.Name,
-					}, layer.bts)
-				}
+				// load all other tensors on the cpu
+				createTensor(tensor{source: t}, input.bts)
 			}
 		}
 	}
