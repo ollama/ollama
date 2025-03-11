@@ -590,8 +590,17 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// temperature > 0 can tend to cause the model to
+	// hallucinate, so when images are provided, so
+	// we use a temperature of 0 for requests that
+	// include them
+	temperature := req.Temperature
+	if len(req.Images) > 0 {
+		temperature = 0
+	}
+
 	sampler := sample.NewSampler(
-		req.Temperature,
+		temperature,
 		req.TopK,
 		req.TopP,
 		req.MinP,
