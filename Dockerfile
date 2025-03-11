@@ -1,98 +1,151 @@
-FROM --platform=linux/amd64 library/ubuntu:noble as builder
+# vim: filetype=dockerfile
 
-ENV DEBIAN_FRONTEND="noninteractive"
+ARG FLAVOR=${TARGETARCH}
 
-ENV VULKAN_VER_BASE="1.3.296"
-ENV VULKAN_VER="${VULKAN_VER_BASE}.0"
-ENV UBUNTU_VERSION="noble"
+ARG ROCMVERSION=6.3.3
+ARG JETPACK5VERSION=r35.4.1
+ARG JETPACK6VERSION=r36.4.0
+ARG CMAKEVERSION=3.31.2
+ARG VULKANVERSION=1.4.304.1
 
-ENV GOLANG_VERSION="1.22.8"
-ENV GOARCH="amd64"
-ENV CGO_ENABLED=1
+# CUDA v11 requires gcc v10.  v10.3 has regressions, so the rockylinux 8.5 AppStream has the latest compatible version
+FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCMVERSION}-complete AS base-amd64
+RUN yum install -y yum-utils \
+    && yum-config-manager --add-repo https://dl.rockylinux.org/vault/rocky/8.5/AppStream/\$basearch/os/ \
+    && rpm --import https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-8 \
+    && dnf install -y yum-utils ccache gcc-toolset-10-gcc-10.2.1-8.2.el8 gcc-toolset-10-gcc-c++-10.2.1-8.2.el8 gcc-toolset-10-binutils-2.35-11.el8 \
+    && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo 
+ENV PATH=/opt/rh/gcc-toolset-10/root/usr/bin:$PATH
+ARG VULKANVERSION
+RUN wget https://sdk.lunarg.com/sdk/download/${VULKANVERSION}/linux/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz -O /tmp/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz \
+    && tar xvf /tmp/vulkansdk-linux-x86_64-${VULKANVERSION}.tar.xz \
+    && dnf -y install ninja-build libcap-devel \
+    && ln -s /usr/bin/python3 /usr/bin/python \  
+    && /${VULKANVERSION}/vulkansdk -j 8 vulkan-headers \
+    && /${VULKANVERSION}/vulkansdk -j 8 shaderc
+RUN cp -r /${VULKANVERSION}/x86_64/include/* /usr/local/include/ \
+    && cp -r /${VULKANVERSION}/x86_64/lib/* /usr/local/lib
+ENV PATH=/${VULKANVERSION}/x86_64/bin:$PATH
+
+FROM --platform=linux/arm64 almalinux:8 AS base-arm64
+# install epel-release for ccache
+RUN yum install -y yum-utils epel-release \
+    && dnf install -y clang ccache \
+    && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/sbsa/cuda-rhel8.repo
+ENV CC=clang CXX=clang++
+
+FROM base-${TARGETARCH} AS base
+ARG CMAKEVERSION
+RUN curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
+COPY CMakeLists.txt CMakePresets.json .
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
 ENV LDFLAGS=-s
 
-# Default mirror was very slow
-RUN \
-    sed -i 's/archive.ubuntu.com/gb.archive.ubuntu.com/g' /etc/apt/sources.list.d/ubuntu.sources
+FROM base AS cpu
+RUN dnf install -y gcc-toolset-11-gcc gcc-toolset-11-gcc-c++
+ENV PATH=/opt/rh/gcc-toolset-11/root/usr/bin:$PATH
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'CPU' \
+        && cmake --build --parallel --preset 'CPU' \
+        && cmake --install build --component CPU --strip --parallel 8
 
-RUN \
-    apt-get update && \
-    apt-get install -y ca-certificates build-essential ccache cmake wget git curl rsync xz-utils libcap-dev
+FROM base AS cuda-11
+ARG CUDA11VERSION=11.3
+RUN dnf install -y cuda-toolkit-${CUDA11VERSION//./-}
+ENV PATH=/usr/local/cuda-11/bin:$PATH
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'CUDA 11' \
+        && cmake --build --parallel --preset 'CUDA 11' \
+        && cmake --install build --component CUDA --strip --parallel 8
 
-RUN \
-    mkdir -p /usr/local 2>/dev/null || true && \
-    curl -s -L https://dl.google.com/go/go${GOLANG_VERSION}.linux-${GOARCH}.tar.gz | tar -xz -C /usr/local && \
-    ln -s /usr/local/go/bin/go /usr/local/bin/go && \
-    ln -s /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+FROM base AS cuda-12
+ARG CUDA12VERSION=12.8
+RUN dnf install -y cuda-toolkit-${CUDA12VERSION//./-}
+ENV PATH=/usr/local/cuda-12/bin:$PATH
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'CUDA 12' \
+        && cmake --build --parallel --preset 'CUDA 12' \
+        && cmake --install build --component CUDA --strip --parallel 8
 
+FROM base AS rocm-6
+ENV PATH=/opt/rocm/hcc/bin:/opt/rocm/hip/bin:/opt/rocm/bin:/opt/rocm/hcc/bin:$PATH
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'ROCm 6' \
+        && cmake --build --parallel --preset 'ROCm 6' \
+        && cmake --install build --component HIP --strip --parallel 8
 
-RUN \
-    wget -qO - https://packages.lunarg.com/lunarg-signing-key-pub.asc | gpg --dearmor -o /etc/apt/trusted.gpg.d/lunarg-signing-key-pub.gpg && \
-    wget -qO /etc/apt/sources.list.d/lunarg-vulkan-${UBUNTU_VERSION}.list https://packages.lunarg.com/vulkan/${VULKAN_VER_BASE}/lunarg-vulkan-${VULKAN_VER_BASE}-${UBUNTU_VERSION}.list && \
-    apt update && apt install -y vulkan-sdk
+FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK5VERSION} AS jetpack-5
+ARG CMAKEVERSION
+RUN apt-get update && apt-get install -y curl ccache \
+    && curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
+COPY CMakeLists.txt CMakePresets.json .
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'JetPack 5' \
+        && cmake --build --parallel --preset 'JetPack 5' \
+        && cmake --install build --component CUDA --strip --parallel 8
 
-# Last testet ollama-vulkan commit:
-# 2d443b3dd660a1fd2760d64538512df93648b4bb
-COPY patches/ /tmp/patches/
-RUN \
-    git clone https://github.com/pufferffish/ollama-vulkan.git "/tmp/ollama-vulkan-git" && \
-    cd "/tmp/ollama-vulkan-git" && \
-    git checkout 2d443b3dd660a1fd2760d64538512df93648b4bb -b ollama_vulkan_stable && \
-    git config user.name "Builder" && git config user.email "builder@local" && \
-    git remote add ollama_vanilla https://github.com/ollama/ollama.git && \
-    git fetch ollama_vanilla --tags && git checkout v0.5.13 -b ollama_vanilla_stable && \
-    git checkout ollama_vanilla_stable && git merge ollama_vulkan_stable --allow-unrelated-histories --no-edit && \
-    for p in /tmp/patches/*.patch; do patch -p1 < $p; done
-RUN \
-    cd "/tmp/ollama-vulkan-git" && \
-    make -f Makefile.sync clean sync
+FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK6VERSION} AS jetpack-6
+ARG CMAKEVERSION
+RUN apt-get update && apt-get install -y curl ccache \
+    && curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
+COPY CMakeLists.txt CMakePresets.json .
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'JetPack 6' \
+        && cmake --build --parallel --preset 'JetPack 6' \
+        && cmake --install build --component CUDA --strip --parallel 8
 
-
-FROM builder AS cpu-build
-RUN \
-    cd "/tmp/ollama-vulkan-git" && \
-    cmake --preset CPU && cmake --build --parallel --preset CPU && \
-    cmake --install build --component CPU --strip
-
-FROM builder AS vulkan-build
-RUN \
-    cd "/tmp/ollama-vulkan-git" && \
-    cmake --preset Vulkan && \
-    cmake --build --parallel --preset Vulkan && \
-    cmake --install build --component Vulkan --strip
-
-FROM builder AS binary-build
-RUN \
-    cd "/tmp/ollama-vulkan-git" && \
-    . scripts/env.sh && \
-    mkdir -p dist/bin && \
-    go build -trimpath -buildmode=pie -o dist/bin/ollama .
-
-
-FROM --platform=linux/amd64 library/ubuntu:noble
-RUN \
-    apt-get update && apt -y dist-upgrade && \
-    apt-get install -y ca-certificates libcap2 libvulkan1 && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Install ROCm
-RUN \
-    apt update && \
-    apt install -y wget python3-setuptools python3-wheel && \
-    wget https://repo.radeon.com/amdgpu-install/6.3.3/ubuntu/noble/amdgpu-install_6.3.60303-1_all.deb -O /tmp/amdgpu-install_6.3.60303-1_all.deb && \
-    apt install -y /tmp/amdgpu-install_6.3.60303-1_all.deb && \
-    apt update && apt install -y rocm && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+FROM base AS vulkan
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'Vulkan' \
+        && cmake --build --parallel --preset 'Vulkan' \
+        && cmake --install build --component Vulkan --strip --parallel 8 
 
 
-COPY --from=cpu-build /tmp/ollama-vulkan-git/dist/lib/ollama/ /lib/ollama/
-COPY --from=vulkan-build /tmp/ollama-vulkan-git/dist/lib/ollama/vulkan/ /lib/ollama/vulkan/
-COPY --from=binary-build /tmp/ollama-vulkan-git/dist/bin/ /bin/
+FROM base AS build
+WORKDIR /go/src/github.com/ollama/ollama
+COPY go.mod go.sum .
+RUN curl -fsSL https://golang.org/dl/go$(awk '/^go/ { print $2 }' go.mod).linux-$(case $(uname -m) in x86_64) echo amd64 ;; aarch64) echo arm64 ;; esac).tar.gz | tar xz -C /usr/local
+ENV PATH=/usr/local/go/bin:$PATH
+RUN go mod download
+COPY . .
+ARG GOFLAGS="'-ldflags=-w -s'"
+ENV CGO_ENABLED=1
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    go build -trimpath -buildmode=pie -o /bin/ollama .
 
-RUN find /lib/ollama && find /bin/ollama
+FROM --platform=linux/amd64 scratch AS amd64
+COPY --from=cuda-11 dist/lib/ollama/cuda_v11 /lib/ollama/cuda_v11
+COPY --from=cuda-12 dist/lib/ollama/cuda_v12 /lib/ollama/cuda_v12
+COPY --from=vulkan  dist/lib/ollama/vulkan  /lib/ollama/vulkan
 
+FROM --platform=linux/arm64 scratch AS arm64
+COPY --from=cuda-11 dist/lib/ollama/cuda_v11 /lib/ollama/cuda_v11
+COPY --from=cuda-12 dist/lib/ollama/cuda_v12 /lib/ollama/cuda_v12
+COPY --from=jetpack-5 dist/lib/ollama/cuda_v11 lib/ollama/cuda_jetpack5
+COPY --from=jetpack-6 dist/lib/ollama/cuda_v12 lib/ollama/cuda_jetpack6
+
+FROM scratch AS rocm
+COPY --from=rocm-6 dist/lib/ollama/rocm /lib/ollama/rocm
+
+FROM ${FLAVOR} AS archive
+ARG VULKANVERSION
+COPY --from=cpu dist/lib/ollama /lib/ollama
+COPY --from=build /bin/ollama /bin/ollama
+
+FROM ubuntu:24.04
+RUN apt-get update \
+    && apt-get install -y ca-certificates libcap2 libvulkan1 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=archive /bin /usr/bin
+COPY --from=archive /lib/ollama /usr/lib/ollama
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV OLLAMA_HOST=0.0.0.0:11434
 EXPOSE 11434
-ENV OLLAMA_HOST 0.0.0.0
-
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
