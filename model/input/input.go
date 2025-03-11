@@ -15,6 +15,12 @@ type Input struct {
 	// stored in Multimodal, used for caching and comparing
 	// equality.
 	MultimodalHash uint64
+
+	// BatchBreak forces a new batch to be started with this
+	// input. For example, this can be used to align images
+	// with batches. Note that batches may be divided in additional
+	// locations as well.
+	BatchBreak bool
 }
 
 // MultimodalIndex is a multimodal element (such as an image)
