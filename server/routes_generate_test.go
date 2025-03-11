@@ -372,24 +372,24 @@ func TestGenerateChat(t *testing.T) {
 						Type       string   `json:"type"`
 						Required   []string `json:"required"`
 						Properties map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Description string           `json:"description"`
+							Enum        []string         `json:"enum,omitempty"`
 						} `json:"properties"`
 					}{
 						Type:     "object",
 						Required: []string{"location"},
 						Properties: map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Description string           `json:"description"`
+							Enum        []string         `json:"enum,omitempty"`
 						}{
 							"location": {
-								Type:        "string",
+								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
 							},
 							"unit": {
-								Type: "string",
+								Type: api.PropertyType{"string"},
 								Enum: []string{"celsius", "fahrenheit"},
 							},
 						},
@@ -469,24 +469,24 @@ func TestGenerateChat(t *testing.T) {
 						Type       string   `json:"type"`
 						Required   []string `json:"required"`
 						Properties map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Description string           `json:"description"`
+							Enum        []string         `json:"enum,omitempty"`
 						} `json:"properties"`
 					}{
 						Type:     "object",
 						Required: []string{"location"},
 						Properties: map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Description string           `json:"description"`
+							Enum        []string         `json:"enum,omitempty"`
 						}{
 							"location": {
-								Type:        "string",
+								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
 							},
 							"unit": {
-								Type: "string",
+								Type: api.PropertyType{"string"},
 								Enum: []string{"celsius", "fahrenheit"},
 							},
 						},
