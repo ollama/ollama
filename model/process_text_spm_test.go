@@ -70,6 +70,14 @@ func TestSentencePieceEncode(t *testing.T) {
 			"请考试我的软件！12345",
 			"你好",
 			"Hello 你好 world!",
+			"Special characters: !@#$%^&*()_+-=[]{}|;':\",./<>?",
+			"Multilingual: 你好 こんにちは Привет Hola مرحبا",
+			"Numbers and symbols: 123456789 +- */",
+			"Special tokens: <bos> text <eos>",
+			"Code snippets: func main() { fmt.Println(\"Hello World\") }",
+			"Long text: " + "Lorem ipsum dolor sit amet, consectetur adipiscing elit. " +
+				"Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. " +
+				"Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris.",
 		}
 
 		for _, want := range cases {
