@@ -194,7 +194,10 @@ func TestManifestExistsWithoutBlob(t *testing.T) {
 	checkEntry := entryChecker(t, c)
 
 	man := must(c.manifestPath("h/n/m:t"))
-	os.MkdirAll(filepath.Dir(man), 0o777)
+	_, err = os.Stat(filepath.Dir(man))
+	if errors.Is(err, os.ErrNotExist) {
+		os.MkdirAll(filepath.Dir(man), 0o777)
+	}
 	testutil.WriteFile(t, man, "1")
 
 	got, err := c.Resolve("h/n/m:t")

@@ -44,10 +44,12 @@ func (h *History) Init() error {
 	}
 
 	path := filepath.Join(home, ".ollama", "history")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
+	_, err = os.Stat(filepath.Dir(path))
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
 	}
-
 	h.Filename = path
 
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY, 0o600)

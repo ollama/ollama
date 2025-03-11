@@ -103,8 +103,11 @@ func WriteManifest(name model.Name, config Layer, layers []Layer) error {
 	}
 
 	p := filepath.Join(manifests, name.Filepath())
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		return err
+	_, err = os.Stat(filepath.Dir(p))
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return err
+		}
 	}
 
 	f, err := os.Create(p)

@@ -93,8 +93,11 @@ func WriteFile[S []byte | string](t testing.TB, name string, data S) {
 	}
 	name = filepath.Clean(name)
 	dir := filepath.Dir(name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
+	_, err = os.Stat(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(name, []byte(data), 0o644); err != nil {
 		t.Fatal(err)

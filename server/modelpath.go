@@ -116,8 +116,11 @@ func (mp ModelPath) BaseURL() *url.URL {
 
 func GetManifestPath() (string, error) {
 	path := filepath.Join(envconfig.Models(), "manifests")
-	if err := os.MkdirAll(path, 0o755); err != nil {
-		return "", err
+	_, err = os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			return "", err
+		}
 	}
 
 	return path, nil
@@ -139,8 +142,11 @@ func GetBlobsPath(digest string) (string, error) {
 		dirPath = path
 	}
 
-	if err := os.MkdirAll(dirPath, 0o755); err != nil {
-		return "", err
+	_, err = os.Stat(dirPath)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(dirPath, 0o755); err != nil {
+			return "", err
+		}
 	}
 
 	return path, nil

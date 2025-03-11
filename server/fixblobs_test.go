@@ -39,8 +39,11 @@ func TestFixBlobs(t *testing.T) {
 				fullDir, _ := filepath.Split(fullPath)
 
 				t.Logf("creating dir %s", fullDir)
-				if err := os.MkdirAll(fullDir, 0o755); err != nil {
-					t.Fatal(err)
+				_, err = os.Stat(fullDir)
+				if errors.Is(err, os.ErrNotExist) {
+					if err := os.MkdirAll(fullDir, 0o755); err != nil {
+						t.Fatal(err)
+					}
 				}
 
 				t.Logf("writing file %s", fullPath)

@@ -754,8 +754,11 @@ func TestDetectModelTypeFromFiles(t *testing.T) {
 
 		data := []byte("12345678")
 		digest := fmt.Sprintf("sha256:%x", sha256.Sum256(data))
-		if err := os.MkdirAll(filepath.Join(p, "blobs"), 0o755); err != nil {
-			t.Fatal(err)
+		_, err = os.Stat(filepath.Join(p, "blobs"))
+		if errors.Is(err, os.ErrNotExist) {
+			if err := os.MkdirAll(filepath.Join(p, "blobs"), 0o755); err != nil {
+				t.Fatal(err)
+			}
 		}
 
 		f, err := os.Create(filepath.Join(p, "blobs", fmt.Sprintf("sha256-%s", strings.TrimPrefix(digest, "sha256:"))))
@@ -784,8 +787,11 @@ func TestDetectModelTypeFromFiles(t *testing.T) {
 
 		data := []byte("123")
 		digest := fmt.Sprintf("sha256:%x", sha256.Sum256(data))
-		if err := os.MkdirAll(filepath.Join(p, "blobs"), 0o755); err != nil {
-			t.Fatal(err)
+		_, err = os.Stat(filepath.Join(p, "blobs"))
+		if errors.Is(err, os.ErrNotExist) {
+			if err := os.MkdirAll(filepath.Join(p, "blobs"), 0o755); err != nil {
+				t.Fatal(err)
+			}
 		}
 
 		f, err := os.Create(filepath.Join(p, "blobs", fmt.Sprintf("sha256-%s", strings.TrimPrefix(digest, "sha256:"))))

@@ -1069,8 +1069,11 @@ func initializeKeypair() error {
 			return err
 		}
 
-		if err := os.MkdirAll(filepath.Dir(privKeyPath), 0o755); err != nil {
-			return fmt.Errorf("could not create directory %w", err)
+		_, err = os.Stat(filepath.Dir(privKeyPath))
+		if errors.Is(err, os.ErrNotExist) {
+			if err := os.MkdirAll(filepath.Dir(privKeyPath), 0o755); err != nil {
+				return fmt.Errorf("could not create directory %w", err)
+			}
 		}
 
 		if err := os.WriteFile(privKeyPath, pem.EncodeToMemory(privateKeyBytes), 0o600); err != nil {

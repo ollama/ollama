@@ -76,14 +76,20 @@ func Open(dir string) (*DiskCache, error) {
 	if err == nil && !info.IsDir() {
 		return nil, fmt.Errorf("%q is not a directory", dir)
 	}
-	if err := os.MkdirAll(dir, 0o777); err != nil {
-		return nil, err
+	_, err = os.Stat(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(dir, 0o777); err != nil {
+			return nil, err
+		}
 	}
 
 	subdirs := []string{"blobs", "manifests"}
 	for _, subdir := range subdirs {
-		if err := os.MkdirAll(filepath.Join(dir, subdir), 0o777); err != nil {
-			return nil, err
+		_, err = os.Stat(filepath.Join(dir, subdir))
+		if errors.Is(err, os.ErrNotExist) {
+			if err := os.MkdirAll(filepath.Join(dir, subdir), 0o777); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -303,8 +309,11 @@ func (c *DiskCache) Link(name string, d Digest) error {
 
 	// TODO(bmizerany): test this happens only if the blob was found to
 	// avoid leaving debris
-	if err := os.MkdirAll(filepath.Dir(manifest), 0o777); err != nil {
-		return err
+	_, err = os.Stat(filepath.Dir(manifest))
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(manifest), 0o777); err != nil {
+			return err
+		}
 	}
 
 	info, err := f.Stat()

@@ -14,8 +14,11 @@ func createManifest(t *testing.T, path, name string) {
 	t.Helper()
 
 	p := filepath.Join(path, "manifests", name)
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		t.Fatal(err)
+	_, err = os.Stat(filepath.Dir(p))
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	f, err := os.Create(p)

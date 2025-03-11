@@ -66,7 +66,10 @@ func useCaseInsensitiveTempDir(t *testing.T) bool {
 		_, err := os.Stat(volume)
 		if err == nil {
 			tmpdir := filepath.Join(volume, "tmp")
-			os.MkdirAll(tmpdir, 0o700)
+			_, err = os.Stat(tmpdir)
+			if errors.Is(err, os.ErrNotExist) {
+				os.MkdirAll(tmpdir, 0o700)
+			}
 			t.Setenv("TMPDIR", tmpdir)
 			return true
 		}

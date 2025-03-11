@@ -345,8 +345,11 @@ func CopyModel(src, dst model.Name) error {
 	}
 
 	dstpath := filepath.Join(manifests, dst.Filepath())
-	if err := os.MkdirAll(filepath.Dir(dstpath), 0o755); err != nil {
-		return err
+	_, err = os.Stat(filepath.Dir(dstpath))
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(dstpath), 0o755); err != nil {
+			return err
+		}
 	}
 
 	srcpath := filepath.Join(manifests, src.Filepath())
@@ -607,8 +610,11 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
-		return err
+	_, err = os.Stat(filepath.Dir(fp))
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
+			return err
+		}
 	}
 
 	err = os.WriteFile(fp, manifestJSON, 0o644)
