@@ -27,7 +27,7 @@ func TestShowInfo(t *testing.T) {
 				ParameterSize:     "7B",
 				QuantizationLevel: "FP16",
 			},
-		}, &b); err != nil {
+		}, false, &b); err != nil {
 			t.Fatal(err)
 		}
 
@@ -57,7 +57,7 @@ func TestShowInfo(t *testing.T) {
 				ParameterSize:     "7B",
 				QuantizationLevel: "FP16",
 			},
-		}, &b); err != nil {
+		}, false, &b); err != nil {
 			t.Fatal(err)
 		}
 
@@ -74,6 +74,57 @@ func TestShowInfo(t *testing.T) {
 		}
 	})
 
+	t.Run("verbose model", func(t *testing.T) {
+		var b bytes.Buffer
+		if err := showInfo(&api.ShowResponse{
+			Details: api.ModelDetails{
+				Family:            "test",
+				ParameterSize:     "8B",
+				QuantizationLevel: "FP16",
+			},
+			Parameters: `
+			stop up`,
+			ModelInfo: map[string]any{
+				"general.architecture":    "test",
+				"general.parameter_count": float64(8_000_000_000),
+				"test.context_length":     float64(1000),
+				"test.embedding_length":   float64(11434),
+			},
+			Tensors: []api.Tensor{
+				{ "blk.0.attn_k.weight", "BF16", []uint64{42, 3117} },
+				{ "blk.0.attn_q.weight", "FP16", []uint64{3117, 42} },
+			},
+		}, true, &b); err != nil {
+			t.Fatal(err)
+		}
+
+		expect := `  Model
+    architecture        test     
+    parameters          8B       
+    context length      1000     
+    embedding length    11434    
+    quantization        FP16     
+
+  Parameters
+    stop    up    
+
+  Metadata
+    general.architecture       test     
+    general.parameter_count    8e+09    
+    test.context_length        1000     
+    test.embedding_length      11434    
+
+  Tensors
+    blk.0.attn_k.weight    BF16    [42 3117]    
+    blk.0.attn_q.weight    FP16    [3117 42]    
+
+`
+		if diff := cmp.Diff(expect, b.String()); diff != "" {
+			t.Errorf("unexpected output (-want +got):\n%s", diff)
+		}
+	})
+
+
 	t.Run("parameters", func(t *testing.T) {
 		var b bytes.Buffer
 		if err := showInfo(&api.ShowResponse{
@@ -89,7 +140,7 @@ func TestShowInfo(t *testing.T) {
 			stop you
 			stop up
 			temperature 99`,
-		}, &b); err != nil {
+		}, false, &b); err != nil {
 			t.Fatal(err)
 		}
 
@@ -126,7 +177,7 @@ func TestShowInfo(t *testing.T) {
 				"clip.vision.embedding_length": float64(0),
 				"clip.vision.projection_dim":   float64(0),
 			},
-		}, &b); err != nil {
+		}, false, &b); err != nil {
 			t.Fatal(err)
 		}
 
@@ -159,7 +210,7 @@ func TestShowInfo(t *testing.T) {
 Ahoy, matey!
 Weigh anchor!
 			`,
-		}, &b); err != nil {
+		}, false, &b); err != nil {
 			t.Fatal(err)
 		}
 
@@ -188,7 +239,7 @@ Weigh anchor!
 				QuantizationLevel: "FP16",
 			},
 			License: license,
-		}, &b); err != nil {
+		}, false, &b); err != nil {
 			t.Fatal(err)
 		}
 
