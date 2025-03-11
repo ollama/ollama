@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -24,7 +25,36 @@ type Backend interface {
 	Config() Config
 	Get(name string) Tensor
 	NewContext() Context
-	SystemInfo() string
+	NewContextSize(size int) Context
+}
+
+// BackendCacheConfig should be implemented by backends that need special output
+// from the cache to meet specific requirements. It is frequently implemented in
+// conjunction with ScaledDotProductAttention.
+type BackendCacheConfig interface {
+	CacheConfig() CacheConfig
+}
+
+// CacheConfig controls optimizations (mostly backend-specific) that may transform
+// the output the cache to work better with specific kernels.
+type CacheConfig struct {
+	// CachePadding specifies the multiple for the number of tokens of cache history
+	// that will be returned from cache Get for k, v and mask. The capacity of the
+	// cache itself will also be increased to a multiple of this size if needed.
+	CachePadding int
+
+	// PermutedV performs Permute(ctx, 1, 2, 0, 3) on v tensors stored via Put
+	// and return the permuted version via Get. This uses the cache copy operation
+	// to avoid a Contiguous call on the permuted tensor.
+	PermutedV bool
+
+	// MaskDType specifies the data type for generating the mask. If unset it will
+	// default to DTypeF32.
+	MaskDType DType
+
+	// MaskBatchPadding specifies the multiple for the batch size dimension in the mask.
+	// Any position that does not correspond to an actual token will be filled with -Inf.
+	MaskBatchPadding int
 }
 
 // BackendParams controls how the backend loads and executes models
@@ -40,6 +70,9 @@ type BackendParams struct {
 
 	// TensorSplit is the fraction of the model to offload to each GPU
 	TensorSplit []float32
+
+	// FlashAttention indicates that we should use a fused flash attention kernel
+	FlashAttention bool
 }
 
 var backends = make(map[string]func(*os.File, BackendParams) (Backend, error))
@@ -61,14 +94,24 @@ func NewBackend(f *os.File, params BackendParams) (Backend, error) {
 }
 
 type Context interface {
+	Empty(dtype DType, shape ...int) Tensor
 	Zeros(dtype DType, shape ...int) Tensor
 	FromFloatSlice(s []float32, shape ...int) (Tensor, error)
 	FromIntSlice(s []int32, shape ...int) (Tensor, error)
 
 	Forward(...Tensor) Context
 	Compute(...Tensor)
-	MaxTensors() int
+	MaxGraphNodes() int
 	Close()
+
+	// Input returns a context appropriate for creating input tensors
+	Input() Context
+
+	// Output returns a context appropriate for creating output tensors
+	Output() Context
+
+	// Layer returns a context appropriate for creating intermediate tensors
+	Layer(int) Context
 }
 
 type Tensor interface {
@@ -115,6 +158,10 @@ type Tensor interface {
 // ScaledDotProductAttention implements a fused attention
 // operation equivalent to following code on a tensor named
 // query:
+//
+// query = query.Permute(ctx, 0, 2, 1, 3)
+// key = key.Permute(ctx, 0, 2, 1, 3)
+// value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
 //
 // kq := key.MulmatFullPrec(ctx, query)
 //
@@ -169,8 +216,8 @@ func Dump(ctx Context, t Tensor, opts ...DumpOptions) string {
 		return dump[[]float32](ctx, t, opts[0].Items, func(f float32) string {
 			return strconv.FormatFloat(float64(f), 'f', opts[0].Precision, 32)
 		})
-	case DTypeF16:
-		f32 := ctx.Zeros(DTypeF32, t.Shape()...)
+	case DTypeF16, DTypeQ80, DTypeQ40:
+		f32 := ctx.Empty(DTypeF32, t.Shape()...)
 		f32 = t.Copy(ctx, f32)
 		return dump[[]float32](ctx, f32, opts[0].Items, func(f float32) string {
 			return strconv.FormatFloat(float64(f), 'f', opts[0].Precision, 32)
@@ -195,16 +242,17 @@ func dump[S ~[]E, E number](ctx Context, t Tensor, items int, fn func(E) string)
 	}
 
 	shape := t.Shape()
+	slices.Reverse(shape)
 
 	var sb strings.Builder
 	var f func([]int, int)
 	f = func(dims []int, stride int) {
 		prefix := strings.Repeat(" ", len(shape)-len(dims)+1)
-		fmt.Fprint(&sb, "[")
-		defer func() { fmt.Fprint(&sb, "]") }()
+		sb.WriteString("[")
+		defer func() { sb.WriteString("]") }()
 		for i := 0; i < dims[0]; i++ {
 			if i >= items && i < dims[0]-items {
-				fmt.Fprint(&sb, "..., ")
+				sb.WriteString("..., ")
 				// skip to next printable element
 				skip := dims[0] - 2*items
 				if len(dims) > 1 {
@@ -219,9 +267,14 @@ func dump[S ~[]E, E number](ctx Context, t Tensor, items int, fn func(E) string)
 					fmt.Fprint(&sb, ",", strings.Repeat("\n", len(dims)-1), prefix)
 				}
 			} else {
-				fmt.Fprint(&sb, fn(s[stride+i]))
+				text := fn(s[stride+i])
+				if len(text) > 0 && text[0] != '-' {
+					sb.WriteString(" ")
+				}
+
+				sb.WriteString(text)
 				if i < dims[0]-1 {
-					fmt.Fprint(&sb, ", ")
+					sb.WriteString(", ")
 				}
 			}
 		}
@@ -237,5 +290,7 @@ const (
 	DTypeOther DType = iota
 	DTypeF32
 	DTypeF16
+	DTypeQ80
+	DTypeQ40
 	DTypeI32
 )

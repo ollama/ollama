@@ -1,13 +1,12 @@
 package ollamarunner
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"image"
+	"hash/maphash"
 	"log"
 	"log/slog"
 	"net"
@@ -27,28 +26,26 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model"
+	"github.com/ollama/ollama/model/input"
 	"github.com/ollama/ollama/runner/common"
 	"github.com/ollama/ollama/sample"
 
 	_ "github.com/ollama/ollama/model/models"
 )
 
-// input is an element of the prompt to process, either a token or an image
-type input struct {
-	token int32
-
-	image image.Image
-}
-
 type Sequence struct {
+	// ctx for allocating tensors that last the lifetime of the sequence, such as
+	// multimodal embeddings
+	ctx ml.Context
+
 	// batch index
 	iBatch int
 
 	// prompt inputs left to evaluate
-	inputs []input
+	inputs []input.Input
 
 	// inputs that have been added to a batch but not yet submitted to Forward
-	pendingInputs []input
+	pendingInputs []input.Input
 
 	// tokens that have been generated but not returned yet (e.g. for stop sequences)
 	pendingResponses []string
@@ -101,8 +98,9 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 	s.ready.Wait()
 
 	startTime := time.Now()
+	ctx := s.model.Backend().NewContext()
 
-	inputs, err := s.inputs(prompt, images)
+	inputs, err := s.inputs(ctx, prompt, images)
 	if err != nil {
 		return nil, fmt.Errorf("failed to process inputs: %w", err)
 	} else if len(inputs) == 0 {
@@ -128,6 +126,7 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 	// TODO(jessegross): Ingest cached history for grammar
 
 	return &Sequence{
+		ctx:                 ctx,
 		inputs:              inputs,
 		numPromptInputs:     len(inputs),
 		startProcessingTime: startTime,
@@ -146,28 +145,31 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 // inputs processes the prompt and images into a list of inputs
 // by splitting the prompt on [img-<n>] tags, tokenizing text and
 // decoding images
-func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
-	var inputs []input
+func (s *Server) inputs(ctx ml.Context, prompt string, images []ImageData) ([]input.Input, error) {
+	var inputs []input.Input
 	var parts []string
 	var matches [][]string
 
-	// TODO(jessegross): This can sometimes trigger for matching text in the
-	// user's prompt. We previously tried to avoid it by only looking for images
-	// on image models. We don't have a clear indication now but it would be better
-	// to properly escape it in any case.
-	re := regexp.MustCompile(`\[img-(\d+)\]`)
-	parts = re.Split(prompt, -1)
-	matches = re.FindAllStringSubmatch(prompt, -1)
+	multimodalProcessor, visionModel := s.model.(model.MultimodalProcessor)
 
+	if visionModel {
+		re := regexp.MustCompile(`\[img-(\d+)\]`)
+		parts = re.Split(prompt, -1)
+		matches = re.FindAllStringSubmatch(prompt, -1)
+	} else {
+		parts = []string{prompt}
+	}
+
+	postTokenize := false
 	for i, part := range parts {
 		// text - tokenize
-		tokens, err := s.model.(model.TextProcessor).Encode(part)
+		tokens, err := s.model.(model.TextProcessor).Encode(part, i == 0)
 		if err != nil {
 			return nil, err
 		}
 
 		for _, t := range tokens {
-			inputs = append(inputs, input{token: t})
+			inputs = append(inputs, input.Input{Token: t})
 		}
 
 		// image - decode and store
@@ -186,12 +188,25 @@ func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 				return nil, fmt.Errorf("invalid image index: %d", n)
 			}
 
-			image, _, err := image.Decode(bytes.NewReader(images[imageIndex].Data))
+			imageEmbeddings, err := multimodalProcessor.EncodeMultimodal(ctx, images[imageIndex].Data)
 			if err != nil {
 				return nil, err
 			}
 
-			inputs = append(inputs, input{image: image})
+			s.multimodalHash.Reset()
+			_, _ = s.multimodalHash.Write(images[imageIndex].Data)
+			imageHash := s.multimodalHash.Sum64()
+
+			inputs = append(inputs, input.Input{Multimodal: imageEmbeddings, MultimodalHash: imageHash})
+			postTokenize = true
+		}
+	}
+
+	if visionModel && postTokenize {
+		var err error
+		inputs, err = multimodalProcessor.PostTokenize(ctx, inputs)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -236,8 +251,15 @@ type Server struct {
 	// KV cache
 	cache *InputCache
 
-	// next sequence for prompt processing to avoid starvation
-	nextSeq int
+	// multimodalHash generates hashes for comparing equality
+	// of non-text data
+	multimodalHash maphash.Hash
+
+	// vocab is a llama.cpp vocab required for gammar-based
+	// constrained generation (json mode, structured outputs)
+	// TODO: this is temporary until Ollama sampling supports
+	// constrained generation
+	vocab *sample.Vocab
 }
 
 func (s *Server) allNil() bool {
@@ -283,6 +305,7 @@ func (s *Server) removeSequence(seqIndex int, reason string) {
 	close(seq.responses)
 	close(seq.embedding)
 	seq.cache.InUse = false
+	seq.ctx.Close()
 	s.seqs[seqIndex] = nil
 	s.seqsSem.Release(1)
 }
@@ -310,30 +333,25 @@ func (s *Server) processBatch() error {
 	}
 	defer s.mu.Unlock()
 
-	var options model.Options
-	imgSeq := -1
+	var options input.Options
 
-	seqIdx := s.nextSeq - 1
-	for range s.seqs {
-		seqIdx = (seqIdx + 1) % len(s.seqs)
-		seq := s.seqs[seqIdx]
-
+	for i, seq := range s.seqs {
 		if seq == nil {
 			continue
 		}
 
 		// if past the num predict limit
 		if seq.numPredict > 0 && seq.numPredicted >= seq.numPredict {
-			s.removeSequence(seqIdx, "limit")
+			s.removeSequence(i, "limit")
 			continue
 		}
 
 		if !s.cache.enabled {
 			seq.inputs = append(seq.cache.Inputs, seq.inputs...)
-			seq.cache.Inputs = []input{}
+			seq.cache.Inputs = []input.Input{}
 		}
 
-		for i, input := range seq.inputs {
+		for j, inp := range seq.inputs {
 			if int32(len(seq.cache.Inputs)+len(seq.pendingInputs)+1) > s.cache.numCtx {
 				if len(seq.pendingInputs) == 0 {
 					err := s.cache.ShiftCacheSlot(seq.cache, seq.numKeep)
@@ -345,37 +363,23 @@ func (s *Server) processBatch() error {
 				}
 			}
 
-			if i >= s.batchSize {
+			if j >= s.batchSize {
 				break
 			}
 
-			// TODO(jessegross): Image inputs need to be rethought - it's
-			// it doesn't work well for different types of models or multiple sequences
-			if input.image != nil {
-				if len(seq.pendingInputs) != len(options.Images) {
-					break
-				}
-
-				if imgSeq != seqIdx && imgSeq != -1 {
-					s.nextSeq = seqIdx
-					break
-				}
-
-				imgSeq = seqIdx
-				options.Images = append(options.Images, input.image)
-				seq.pendingInputs = append(seq.pendingInputs, input)
-				continue
+			options.Inputs = append(options.Inputs, inp.Token)
+			if inp.Multimodal != nil {
+				options.Multimodal = append(options.Multimodal, input.MultimodalIndex{Index: len(options.Inputs) - 1, Multimodal: inp.Multimodal})
 			}
 
-			options.Inputs = append(options.Inputs, input.token)
 			options.Positions = append(options.Positions, int32(len(seq.cache.Inputs)+len(seq.pendingInputs)))
 			options.Sequences = append(options.Sequences, seq.cache.Id)
 
 			seq.iBatch = len(options.Outputs)
-			if i+1 == len(seq.inputs) {
+			if j+1 == len(seq.inputs) {
 				options.Outputs = append(options.Outputs, int32(len(options.Inputs)-1))
 			}
-			seq.pendingInputs = append(seq.pendingInputs, input)
+			seq.pendingInputs = append(seq.pendingInputs, inp)
 		}
 
 		seq.inputs = seq.inputs[len(seq.pendingInputs):]
@@ -403,7 +407,7 @@ func (s *Server) processBatch() error {
 		// After calling Forward, pending inputs are now in the cache
 		if len(seq.pendingInputs) > 0 {
 			seq.cache.Inputs = append(seq.cache.Inputs, seq.pendingInputs...)
-			seq.pendingInputs = []input{}
+			seq.pendingInputs = []input.Input{}
 		}
 
 		// don't sample prompt processing
@@ -422,6 +426,7 @@ func (s *Server) processBatch() error {
 		// if done processing the prompt, generate an embedding and return
 		if seq.embeddingOnly {
 			// TODO(jessegross): Embedding support
+			slog.Warn("generation of embedding outputs not yet supported")
 			s.removeSequence(i, "")
 			continue
 		}
@@ -449,7 +454,7 @@ func (s *Server) processBatch() error {
 			return err
 		}
 
-		seq.inputs = []input{{token: token}}
+		seq.inputs = []input.Input{{Token: token}}
 
 		seq.pendingResponses = append(seq.pendingResponses, piece)
 		sequence := strings.Join(seq.pendingResponses, "")
@@ -575,11 +580,30 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var grammar *sample.Grammar
+	var err error
+	if req.Grammar != "" {
+		grammar, err = sample.NewGrammar(s.vocab, req.Grammar)
+		if err != nil {
+			http.Error(w, "failed to load model vocabulary required for format", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	sampler := sample.NewSampler(
+		req.Temperature,
+		req.TopK,
+		req.TopP,
+		req.MinP,
+		req.Seed,
+		grammar,
+	)
+
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
 		numPredict: req.NumPredict,
 		stop:       req.Stop,
 		numKeep:    int32(req.NumKeep),
-		sampler:    sample.Greedy(), // TODO: add support for different samplers when performance is optimized
+		sampler:    sampler,
 		embedding:  false,
 	})
 	if err != nil {
@@ -786,7 +810,7 @@ func (s *Server) loadModel(
 		panic(err)
 	}
 
-	slog.Info("system", "info", s.model.Backend().SystemInfo(), "threads", params.NumThreads)
+	s.vocab = sample.NewVocab(mpath)
 
 	// TODO(jessegross): LoRA loading
 	if lpath.String() != "" {
@@ -818,7 +842,7 @@ func Execute(args []string) error {
 	batchSize := fs.Int("batch-size", 512, "Batch size")
 	numGPULayers := fs.Int("n-gpu-layers", 0, "Number of layers to offload to GPU")
 	mainGPU := fs.Int("main-gpu", 0, "Main GPU")
-	_ = fs.Bool("flash-attn", false, "Enable flash attention")
+	flashAttention := fs.Bool("flash-attn", false, "Enable flash attention")
 	kvSize := fs.Int("ctx-size", 2048, "Context (or KV cache) size")
 	kvCacheType := fs.String("kv-cache-type", "", "quantization type for KV cache (default: f16)")
 	port := fs.Int("port", 8080, "Port to expose the server on")
@@ -863,7 +887,6 @@ func Execute(args []string) error {
 	}
 
 	// TODO(jessegross): Parameters that need to be implemented:
-	//	flash-attn
 	//	no-mmap
 	//	mlock
 
@@ -878,10 +901,11 @@ func Execute(args []string) error {
 	}
 
 	params := ml.BackendParams{
-		NumThreads:   *threads,
-		NumGPULayers: *numGPULayers,
-		MainGPU:      *mainGPU,
-		TensorSplit:  tensorSplitFloats,
+		NumThreads:     *threads,
+		NumGPULayers:   *numGPULayers,
+		MainGPU:        *mainGPU,
+		TensorSplit:    tensorSplitFloats,
+		FlashAttention: *flashAttention,
 	}
 
 	server.ready.Add(1)

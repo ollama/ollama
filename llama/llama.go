@@ -21,18 +21,6 @@ package llama
 
 extern bool llamaProgressCallback(float progress, void *user_data);
 extern void llamaLog(int level, char* text, void* user_data);
-
-typedef enum {COMP_UNKNOWN,COMP_GCC,COMP_CLANG} COMPILER;
-COMPILER inline get_compiler() {
-#if defined(__clang__)
-	return COMP_CLANG;
-#elif defined(__GNUC__)
-	return COMP_GCC;
-#else
-	return UNKNOWN_COMPILER;
-#endif
-}
-
 */
 import "C"
 
@@ -70,19 +58,6 @@ func llamaLog(level C.int, text *C.char, _ unsafe.Pointer) {
 func BackendInit() {
 	ggml.OnceLoad()
 	C.llama_backend_init()
-}
-
-func PrintSystemInfo() string {
-	var compiler string
-	switch C.get_compiler() {
-	case C.COMP_UNKNOWN:
-		compiler = "cgo(unknown_compiler)"
-	case C.COMP_GCC:
-		compiler = "cgo(gcc)"
-	case C.COMP_CLANG:
-		compiler = "cgo(clang)"
-	}
-	return C.GoString(C.llama_print_system_info()) + compiler
 }
 
 func GetModelArch(modelPath string) (string, error) {
@@ -270,6 +245,20 @@ func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
 	return &m, nil
 }
 
+func LoadVocabFromFile(path string) (*Vocab, error) {
+	mp := C.CString(path)
+	defer C.free(unsafe.Pointer(mp))
+	v := Vocab{c: C.llama_load_vocab_from_file(mp)}
+	if v.c == nil {
+		return nil, fmt.Errorf("unable to load vocab: %s", path)
+	}
+	return &v, nil
+}
+
+func FreeVocab(vocab *Vocab) {
+	C.llama_free_vocab(vocab.c)
+}
+
 func FreeModel(model *Model) {
 	C.llama_model_free(model.c)
 }
@@ -316,6 +305,10 @@ func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float
 	}
 
 	return nil
+}
+
+type Vocab struct {
+	c *C.struct_llama_vocab
 }
 
 func (m *Model) Vocab() *C.struct_llama_vocab {
@@ -693,4 +686,54 @@ func SchemaToGrammar(schema []byte) []byte {
 		return nil
 	}
 	return buf[:n]
+}
+
+type Sampler struct {
+	c *C.struct_llama_sampler
+}
+
+func NewGrammarSampler(vocab *Vocab, grammar string) *Sampler {
+	cGrammar := C.CString(grammar)
+	cRoot := C.CString("root")
+	defer C.free(unsafe.Pointer(cGrammar))
+	defer C.free(unsafe.Pointer(cRoot))
+
+	sampler := &Sampler{c: C.llama_sampler_init_grammar(vocab.c, cGrammar, cRoot)}
+
+	return sampler
+}
+
+func (s *Sampler) Accept(token int32) {
+	C.llama_sampler_accept(s.c, C.llama_token(token))
+}
+
+type TokenData struct {
+	Id    int32
+	Logit float32
+}
+
+func (s *Sampler) Apply(tokens []TokenData) {
+	tds := make([]C.struct_llama_token_data, len(tokens))
+	for i, token := range tokens {
+		tds[i] = C.struct_llama_token_data{
+			id:    C.int32_t(token.Id),
+			logit: C.float(token.Logit),
+			p:     C.float(0.0),
+		}
+	}
+	tda := &C.llama_token_data_array{
+		data:     (*C.struct_llama_token_data)(unsafe.Pointer(&tds[0])),
+		size:     C.size_t(len(tokens)),
+		selected: C.int64_t(-1),
+		sorted:   C.bool(false),
+	}
+
+	var pinner runtime.Pinner
+	pinner.Pin(&tds[0])
+	defer pinner.Unpin()
+
+	C.llama_sampler_apply(s.c, tda)
+	for i := range tokens {
+		tokens[i].Logit = float32(tds[i].logit)
+	}
 }

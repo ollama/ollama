@@ -1,7 +1,10 @@
 package kvcache
 
 import (
+	"fmt"
+
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/model/input"
 )
 
 // Encoder cache stores K and V tensors that are position independent
@@ -11,6 +14,9 @@ import (
 //
 // Not currently safe for multiple sequences
 type EncoderCache struct {
+	// config controls mostly backend-specific optimizations
+	config *ml.CacheConfig
+
 	// ** current forward pass **
 
 	// the active layer for Get and Put
@@ -30,36 +36,59 @@ type EncoderCache struct {
 	encoderPos int32
 
 	// ** cache data storage **
-
-	cacheCtx     ml.Context
-	keys, values []ml.Tensor
+	backend      ml.Backend
+	ctxs         map[int]ml.Context
+	keys, values map[int]ml.Tensor
 }
 
 func NewEncoderCache() *EncoderCache {
-	return &EncoderCache{}
+	return &EncoderCache{
+		ctxs:   make(map[int]ml.Context),
+		keys:   make(map[int]ml.Tensor),
+		values: make(map[int]ml.Tensor),
+	}
 }
 
 func (c *EncoderCache) Init(backend ml.Backend, dtype ml.DType, capacity int32) {
-	c.cacheCtx = backend.NewContext()
+	if c.config == nil {
+		var config ml.CacheConfig
+		if cc, ok := backend.(ml.BackendCacheConfig); ok {
+			config = cc.CacheConfig()
+		}
+		c.config = &config
+	}
+
+	if c.config.CachePadding != 0 && c.config.CachePadding != 1 {
+		panic(fmt.Errorf("encoder cache is unable to enforce requested CachePadding (%v)", c.config.CachePadding))
+	}
+
+	c.backend = backend
+}
+
+func (c *EncoderCache) SetConfig(config ml.CacheConfig) {
+	if c.config != nil {
+		panic("config cannot be changed after being previously set, either by the model or backend")
+	}
+
+	c.config = &config
 }
 
 func (c *EncoderCache) Close() {
-	c.cacheCtx.Close()
+	for _, ctx := range c.ctxs {
+		ctx.Close()
+	}
 }
 
-func (c *EncoderCache) StartForward(ctx ml.Context, positions []int32, seqs []int) error {
-	// The image is always in the first position
-	c.curPos = positions[0]
+func (c *EncoderCache) StartForward(ctx ml.Context, opts input.Options) error {
+	// We work with the most recent image
+	if len(opts.Multimodal) > 0 {
+		c.curPos = opts.Positions[opts.Multimodal[len(opts.Multimodal)-1].Index]
+	}
 
 	return nil
 }
 
 func (c *EncoderCache) SetLayer(layer int) {
-	if layer >= len(c.keys) {
-		c.keys = append(c.keys, make([]ml.Tensor, layer-len(c.keys)+1)...)
-		c.values = append(c.values, make([]ml.Tensor, layer-len(c.values)+1)...)
-	}
-
 	c.curLayer = layer
 }
 
@@ -75,9 +104,20 @@ func (c *EncoderCache) Put(ctx ml.Context, key, value ml.Tensor) {
 	c.encoderPos = c.curPos
 	c.encoderCached = true
 
-	if c.keys[c.curLayer] == nil || c.values[c.curLayer] == nil {
-		c.keys[c.curLayer] = c.cacheCtx.Zeros(key.DType(), key.Shape()...)
-		c.values[c.curLayer] = c.cacheCtx.Zeros(value.DType(), value.Shape()...)
+	if c.config.PermutedV {
+		value = value.Permute(ctx, 1, 2, 0, 3)
+	}
+
+	if _, ok := c.ctxs[c.curLayer]; !ok {
+		c.ctxs[c.curLayer] = c.backend.NewContextSize(2).Layer(c.curLayer)
+	}
+
+	if _, ok := c.keys[c.curLayer]; !ok {
+		c.keys[c.curLayer] = c.ctxs[c.curLayer].Empty(key.DType(), key.Shape()...)
+	}
+
+	if _, ok := c.values[c.curLayer]; !ok {
+		c.values[c.curLayer] = c.ctxs[c.curLayer].Empty(value.DType(), value.Shape()...)
 	}
 
 	ctx.Forward(

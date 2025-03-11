@@ -23,7 +23,6 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/openai"
-	"github.com/ollama/ollama/server/internal/cache/blob"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -490,11 +489,6 @@ func TestRoutes(t *testing.T) {
 	modelsDir := t.TempDir()
 	t.Setenv("OLLAMA_MODELS", modelsDir)
 
-	c, err := blob.Open(modelsDir)
-	if err != nil {
-		t.Fatalf("failed to open models dir: %v", err)
-	}
-
 	rc := &ollama.Registry{
 		// This is a temporary measure to allow us to move forward,
 		// surfacing any code contacting ollama.com we do not intended
@@ -511,7 +505,7 @@ func TestRoutes(t *testing.T) {
 	}
 
 	s := &Server{}
-	router, err := s.GenerateRoutes(c, rc)
+	router, err := s.GenerateRoutes(rc)
 	if err != nil {
 		t.Fatalf("failed to generate routes: %v", err)
 	}

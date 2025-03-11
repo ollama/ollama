@@ -75,7 +75,7 @@ RestartSec=3
 Environment="PATH=$PATH"
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
 ```
 
 Then start the service:

@@ -24,8 +24,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -43,9 +45,9 @@ import (
 
 // Errors
 var (
-	// ErrManifestNotFound is returned when a manifest is not found in the
+	// ErrModelNotFound is returned when a manifest is not found in the
 	// cache or registry.
-	ErrManifestNotFound = errors.New("manifest not found")
+	ErrModelNotFound = errors.New("model not found")
 
 	// ErrManifestInvalid is returned when a manifest found in a local or
 	// remote cache is invalid.
@@ -53,7 +55,7 @@ var (
 
 	// ErrMissingModel is returned when the model part of a name is missing
 	// or invalid.
-	ErrNameInvalid = errors.New("invalid name; must be in the form {scheme://}{host/}{namespace/}[model]{:tag}{@digest}")
+	ErrNameInvalid = errors.New("invalid or missing name")
 
 	// ErrCached is passed to [Trace.PushUpdate] when a layer already
 	// exists. It is a non-fatal error and is never returned by [Registry.Push].
@@ -72,19 +74,22 @@ const (
 	DefaultMaxChunkSize = 8 << 20
 )
 
-// DefaultCache returns a new disk cache for storing models. If the
-// OLLAMA_MODELS environment variable is set, it uses that directory;
-// otherwise, it uses $HOME/.ollama/models.
-func DefaultCache() (*blob.DiskCache, error) {
+var defaultCache = sync.OnceValues(func() (*blob.DiskCache, error) {
 	dir := os.Getenv("OLLAMA_MODELS")
 	if dir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
-		}
+		home, _ := os.UserHomeDir()
+		home = cmp.Or(home, ".")
 		dir = filepath.Join(home, ".ollama", "models")
 	}
 	return blob.Open(dir)
+})
+
+// DefaultCache returns the default cache used by the registry. It is
+// configured from the OLLAMA_MODELS environment variable, or defaults to
+// $HOME/.ollama/models, or, if an error occurs obtaining the home directory,
+// it uses the current working directory.
+func DefaultCache() (*blob.DiskCache, error) {
+	return defaultCache()
 }
 
 // Error is the standard error returned by Ollama APIs. It can represent a
@@ -109,7 +114,18 @@ type Error struct {
 }
 
 func (e *Error) Error() string {
-	return fmt.Sprintf("registry responded with status %d: %s %s", e.Status, e.Code, e.Message)
+	var b strings.Builder
+	b.WriteString("registry responded with status ")
+	b.WriteString(strconv.Itoa(e.Status))
+	if e.Code != "" {
+		b.WriteString(": code ")
+		b.WriteString(e.Code)
+	}
+	if e.Message != "" {
+		b.WriteString(": ")
+		b.WriteString(e.Message)
+	}
+	return b.String()
 }
 
 func (e *Error) LogValue() slog.Value {
@@ -167,6 +183,10 @@ func CompleteName(name string) string {
 // Registry is a client for performing push and pull operations against an
 // Ollama registry.
 type Registry struct {
+	// Cache is the cache used to store models. If nil, [DefaultCache] is
+	// used.
+	Cache *blob.DiskCache
+
 	// UserAgent is the User-Agent header to send with requests to the
 	// registry. If empty, the User-Agent is determined by HTTPClient.
 	UserAgent string
@@ -205,10 +225,28 @@ type Registry struct {
 	// It is only used when a layer is larger than [MaxChunkingThreshold].
 	MaxChunkSize int64
 
-	// NameMask, if set, is the name used to convert non-fully qualified
-	// names to fully qualified names. If empty, the default mask
-	// ("registry.ollama.ai/library/_:latest") is used.
-	NameMask string
+	// Mask, if set, is the name used to convert non-fully qualified names
+	// to fully qualified names. If empty, [DefaultMask] is used.
+	Mask string
+}
+
+func (r *Registry) cache() (*blob.DiskCache, error) {
+	if r.Cache != nil {
+		return r.Cache, nil
+	}
+	return defaultCache()
+}
+
+func (r *Registry) parseName(name string) (names.Name, error) {
+	mask := defaultMask
+	if r.Mask != "" {
+		mask = names.Parse(r.Mask)
+	}
+	n := names.Merge(names.Parse(name), mask)
+	if !n.IsFullyQualified() {
+		return names.Name{}, fmt.Errorf("%w: %q", ErrNameInvalid, name)
+	}
+	return n, nil
 }
 
 // DefaultRegistry returns a new Registry configured from the environment. The
@@ -243,52 +281,6 @@ func DefaultRegistry() (*Registry, error) {
 	return &rc, nil
 }
 
-type PushParams struct {
-	// From is an optional destination name for the model. If empty, the
-	// destination name is the same as the source name.
-	From string
-}
-
-// parseName parses name using [names.ParseExtended] and then merges the name with the
-// default name, and checks that the name is fully qualified. If a digest is
-// present, it parse and returns it with the other fields as their zero values.
-//
-// It returns an error if the name is not fully qualified, or if the digest, if
-// any, is invalid.
-//
-// The scheme is returned as provided by [names.ParseExtended].
-func parseName(s, mask string) (scheme string, n names.Name, d blob.Digest, err error) {
-	maskName := defaultMask
-	if mask != "" {
-		maskName = names.Parse(mask)
-		if !maskName.IsFullyQualified() {
-			return "", names.Name{}, blob.Digest{}, fmt.Errorf("invalid name mask: %s", mask)
-		}
-	}
-	scheme, n, ds := names.ParseExtended(s)
-	if !n.IsValid() {
-		return "", names.Name{}, blob.Digest{}, fmt.Errorf("%w: %q", ErrNameInvalid, s)
-	}
-	n = names.Merge(n, maskName)
-	if ds != "" {
-		// Digest is present. Validate it.
-		d, err = blob.ParseDigest(ds)
-		if err != nil {
-			return "", names.Name{}, blob.Digest{}, err
-		}
-	}
-
-	// The name check is deferred until after the digest check because we
-	// say that digests take precedence over names, and so should there
-	// errors when being parsed.
-	if !n.IsFullyQualified() {
-		return "", names.Name{}, blob.Digest{}, fmt.Errorf("%w: %q", ErrNameInvalid, s)
-	}
-
-	scheme = cmp.Or(scheme, "https")
-	return scheme, n, d, nil
-}
-
 func (r *Registry) maxStreams() int {
 	n := cmp.Or(r.MaxStreams, runtime.GOMAXPROCS(0))
 
@@ -308,13 +300,24 @@ func (r *Registry) maxChunkSize() int64 {
 	return cmp.Or(r.MaxChunkSize, DefaultMaxChunkSize)
 }
 
+type PushParams struct {
+	// From is an optional destination name for the model. If empty, the
+	// destination name is the same as the source name.
+	From string
+}
+
 // Push pushes the model with the name in the cache to the remote registry.
-func (r *Registry) Push(ctx context.Context, c *blob.DiskCache, name string, p *PushParams) error {
+func (r *Registry) Push(ctx context.Context, name string, p *PushParams) error {
 	if p == nil {
 		p = &PushParams{}
 	}
 
-	m, err := r.ResolveLocal(c, cmp.Or(p.From, name))
+	c, err := r.cache()
+	if err != nil {
+		return err
+	}
+
+	m, err := r.ResolveLocal(cmp.Or(p.From, name))
 	if err != nil {
 		return err
 	}
@@ -337,7 +340,7 @@ func (r *Registry) Push(ctx context.Context, c *blob.DiskCache, name string, p *
 
 	t := traceFromContext(ctx)
 
-	scheme, n, _, err := parseName(name, r.NameMask)
+	scheme, n, _, err := r.parseNameExtended(name)
 	if err != nil {
 		// This should never happen since ResolveLocal should have
 		// already validated the name.
@@ -363,7 +366,7 @@ func (r *Registry) Push(ctx context.Context, c *blob.DiskCache, name string, p *
 				n.Model(),
 				l.Digest,
 			)
-			res, err := r.doOK(ctx, "POST", startURL, nil)
+			res, err := r.send(ctx, "POST", startURL, nil)
 			if err != nil {
 				return err
 			}
@@ -387,7 +390,7 @@ func (r *Registry) Push(ctx context.Context, c *blob.DiskCache, name string, p *
 			}
 			req.ContentLength = l.Size
 
-			res, err = doOK(r.client(), req)
+			res, err = sendRequest(r.client(), req)
 			if err == nil {
 				res.Body.Close()
 			}
@@ -407,7 +410,7 @@ func (r *Registry) Push(ctx context.Context, c *blob.DiskCache, name string, p *
 		n.Model(),
 		n.Tag(),
 	)
-	res, err := r.doOK(ctx, "PUT", path, bytes.NewReader(m.Data))
+	res, err := r.send(ctx, "PUT", path, bytes.NewReader(m.Data))
 	if err == nil {
 		res.Body.Close()
 	}
@@ -430,8 +433,8 @@ func canRetry(err error) bool {
 // chunks of the specified size, and then reassembled and verified. This is
 // typically slower than splitting the model up across layers, and is mostly
 // utilized for layers of type equal to "application/vnd.ollama.image".
-func (r *Registry) Pull(ctx context.Context, c *blob.DiskCache, name string) error {
-	scheme, n, _, err := parseName(name, r.NameMask)
+func (r *Registry) Pull(ctx context.Context, name string) error {
+	scheme, n, _, err := r.parseNameExtended(name)
 	if err != nil {
 		return err
 	}
@@ -444,6 +447,11 @@ func (r *Registry) Pull(ctx context.Context, c *blob.DiskCache, name string) err
 		return fmt.Errorf("%w: no layers", ErrManifestInvalid)
 	}
 
+	c, err := r.cache()
+	if err != nil {
+		return err
+	}
+
 	exists := func(l *Layer) bool {
 		info, err := c.Get(l.Digest)
 		return err == nil && info.Size == l.Size
@@ -451,10 +459,15 @@ func (r *Registry) Pull(ctx context.Context, c *blob.DiskCache, name string) err
 
 	t := traceFromContext(ctx)
 
-	var g errgroup.Group
+	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(r.maxStreams())
 
-	for _, l := range m.Layers {
+	layers := m.Layers
+	if m.Config != nil && m.Config.Digest.IsValid() {
+		layers = append(layers, m.Config)
+	}
+
+	for _, l := range layers {
 		if exists(l) {
 			t.update(l, l.Size, ErrCached)
 			continue
@@ -471,7 +484,9 @@ func (r *Registry) Pull(ctx context.Context, c *blob.DiskCache, name string) err
 
 		if l.Size <= r.maxChunkingThreshold() {
 			g.Go(func() error {
-				res, err := doOK(r.client(), req)
+				// TODO(bmizerany): retry/backoff like below in
+				// the chunking case
+				res, err := sendRequest(r.client(), req)
 				if err != nil {
 					return err
 				}
@@ -497,19 +512,21 @@ func (r *Registry) Pull(ctx context.Context, c *blob.DiskCache, name string) err
 			// fire an initial request to get the final URL and
 			// then use that URL for the chunk requests.
 			req.Header.Set("Range", "bytes=0-0")
-			res, err := doOK(r.client(), req)
+			res, err := sendRequest(r.client(), req)
 			if err != nil {
 				return err
 			}
 			res.Body.Close()
 			req = res.Request.WithContext(req.Context())
 
-			streamNo := 0
-			tws := make([]*bufio.Writer, r.maxStreams()-1)
+			wp := writerPool{size: r.maxChunkSize()}
+
 			for chunk := range chunks.Of(l.Size, r.maxChunkSize()) {
+				if ctx.Err() != nil {
+					break
+				}
+
 				ticket := q.Take()
-				bufIdx := streamNo % len(tws)
-				streamNo++
 				g.Go(func() (err error) {
 					defer func() {
 						if err != nil {
@@ -523,23 +540,18 @@ func (r *Registry) Pull(ctx context.Context, c *blob.DiskCache, name string) err
 						if err != nil {
 							return err
 						}
-
 						err := func() error {
 							req := req.Clone(req.Context())
 							req.Header.Set("Range", fmt.Sprintf("bytes=%s", chunk))
-							res, err := doOK(r.client(), req)
+							res, err := sendRequest(r.client(), req)
 							if err != nil {
 								return err
 							}
 							defer res.Body.Close()
 
-							tw := tws[bufIdx]
-							if tw == nil {
-								tw = bufio.NewWriterSize(nil, int(r.maxChunkSize()))
-								tws[bufIdx] = tw
-							}
+							tw := wp.get()
 							tw.Reset(ticket)
-							defer tw.Reset(nil) // release ticket
+							defer wp.put(tw)
 
 							_, err = io.CopyN(tw, res.Body, chunk.Size())
 							if err != nil {
@@ -581,8 +593,12 @@ func (r *Registry) Pull(ctx context.Context, c *blob.DiskCache, name string) err
 
 // Unlink is like [blob.DiskCache.Unlink], but makes name fully qualified
 // before attempting to unlink the model.
-func (r *Registry) Unlink(c *blob.DiskCache, name string) (ok bool, _ error) {
-	_, n, _, err := parseName(name, r.NameMask)
+func (r *Registry) Unlink(name string) (ok bool, _ error) {
+	n, err := r.parseName(name)
+	if err != nil {
+		return false, err
+	}
+	c, err := r.cache()
 	if err != nil {
 		return false, err
 	}
@@ -594,6 +610,9 @@ type Manifest struct {
 	Name   string   `json:"-"` // the canonical name of the model
 	Data   []byte   `json:"-"` // the raw data of the manifest
 	Layers []*Layer `json:"layers"`
+
+	// For legacy reasons, we still have to download the config layer.
+	Config *Layer `json:"config"`
 }
 
 var emptyDigest, _ = blob.ParseDigest("sha256:0000000000000000000000000000000000000000000000000000000000000000")
@@ -657,14 +676,18 @@ type Layer struct {
 	Size      int64       `json:"size"`
 }
 
-// ResolveLocal resolves a name to a Manifest in the local cache. The name is
-// parsed using [names.ParseExtended] but the scheme is ignored.
-func (r *Registry) ResolveLocal(c *blob.DiskCache, name string) (*Manifest, error) {
-	_, n, d, err := parseName(name, r.NameMask)
+// ResolveLocal resolves a name to a Manifest in the local cache.
+func (r *Registry) ResolveLocal(name string) (*Manifest, error) {
+	_, n, d, err := r.parseNameExtended(name)
+	if err != nil {
+		return nil, err
+	}
+	c, err := r.cache()
 	if err != nil {
 		return nil, err
 	}
 	if !d.IsValid() {
+		// No digest, so resolve the manifest by name.
 		d, err = c.Resolve(n.String())
 		if err != nil {
 			return nil, err
@@ -673,7 +696,7 @@ func (r *Registry) ResolveLocal(c *blob.DiskCache, name string) (*Manifest, erro
 	data, err := os.ReadFile(c.GetFile(d))
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("%w: %s", ErrManifestNotFound, name)
+			return nil, fmt.Errorf("%w: %s", ErrModelNotFound, name)
 		}
 		return nil, err
 	}
@@ -686,7 +709,7 @@ func (r *Registry) ResolveLocal(c *blob.DiskCache, name string) (*Manifest, erro
 
 // Resolve resolves a name to a Manifest in the remote registry.
 func (r *Registry) Resolve(ctx context.Context, name string) (*Manifest, error) {
-	scheme, n, d, err := parseName(name, r.NameMask)
+	scheme, n, d, err := r.parseNameExtended(name)
 	if err != nil {
 		return nil, err
 	}
@@ -696,7 +719,7 @@ func (r *Registry) Resolve(ctx context.Context, name string) (*Manifest, error) 
 		manifestURL = fmt.Sprintf("%s://%s/v2/%s/%s/blobs/%s", scheme, n.Host(), n.Namespace(), n.Model(), d)
 	}
 
-	res, err := r.doOK(ctx, "GET", manifestURL, nil)
+	res, err := r.send(ctx, "GET", manifestURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -721,7 +744,7 @@ func (r *Registry) client() *http.Client {
 }
 
 // newRequest constructs a new request, ready to use, with the given method,
-// url, and body, presigned with client Key and UserAgent.
+// url, and body, pre-signed with client [Key] and [UserAgent].
 func (r *Registry) newRequest(ctx context.Context, method, url string, body io.Reader) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
@@ -740,11 +763,17 @@ func (r *Registry) newRequest(ctx context.Context, method, url string, body io.R
 	return req, nil
 }
 
-// doOK makes a request with the given client and request, and returns the
+// sendRequest makes a request with the given client and request, and returns the
 // response if the status code is 200. If the status code is not 200, an Error
 // is parsed from the response body and returned. If any other error occurs, it
 // is returned.
-func doOK(c *http.Client, r *http.Request) (*http.Response, error) {
+func sendRequest(c *http.Client, r *http.Request) (_ *http.Response, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("request error %s: %w", r.URL, err)
+		}
+	}()
+
 	if r.URL.Scheme == "https+insecure" {
 		// TODO(bmizerany): clone client.Transport, set
 		// InsecureSkipVerify, etc.
@@ -787,20 +816,26 @@ func doOK(c *http.Client, r *http.Request) (*http.Response, error) {
 			// Use the raw body if we can't parse it as an error object.
 			re.Message = string(out)
 		}
+
+		// coerce MANIFEST_UNKNOWN to ErrManifestNotFound
+		if strings.EqualFold(re.Code, "MANIFEST_UNKNOWN") {
+			return nil, ErrModelNotFound
+		}
+
 		re.Status = res.StatusCode
 		return nil, &re
 	}
 	return res, nil
 }
 
-// doOK is a convenience method for making a request with newRequest and
-// passing it to doOK with r.client().
-func (r *Registry) doOK(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+// send is a convenience method for making a request with newRequest and
+// passing it to send with r.client().
+func (r *Registry) send(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
 	req, err := r.newRequest(ctx, method, path, body)
 	if err != nil {
 		return nil, err
 	}
-	return doOK(r.client(), req)
+	return sendRequest(r.client(), req)
 }
 
 // makeAuthToken creates an Ollama auth token for the given private key.
@@ -868,4 +903,115 @@ func maybeUnexpectedEOF(err error) error {
 		return io.ErrUnexpectedEOF
 	}
 	return err
+}
+
+type publicError struct {
+	wrapped error
+	message string
+}
+
+func withPublicMessagef(err error, message string, args ...any) error {
+	return publicError{wrapped: err, message: fmt.Sprintf(message, args...)}
+}
+
+func (e publicError) Error() string { return e.message }
+func (e publicError) Unwrap() error { return e.wrapped }
+
+var supportedSchemes = []string{
+	"http",
+	"https",
+	"https+insecure",
+}
+
+var supportedSchemesMessage = fmt.Sprintf("supported schemes are %v", strings.Join(supportedSchemes, ", "))
+
+// parseNameExtended parses and validates an extended name, returning the scheme, name,
+// and digest.
+//
+// If the scheme is empty, scheme will be "https". If an unsupported scheme is
+// given, [ErrNameInvalid] wrapped with a display friendly message is returned.
+//
+// If the digest is invalid, [ErrNameInvalid] wrapped with a display friendly
+// message is returned.
+//
+// If the name is not, once merged with the mask, fully qualified,
+// [ErrNameInvalid] wrapped with a display friendly message is returned.
+func (r *Registry) parseNameExtended(s string) (scheme string, _ names.Name, _ blob.Digest, _ error) {
+	scheme, name, digest := splitExtended(s)
+	scheme = cmp.Or(scheme, "https")
+	if !slices.Contains(supportedSchemes, scheme) {
+		err := withPublicMessagef(ErrNameInvalid, "unsupported scheme: %q: %s", scheme, supportedSchemesMessage)
+		return "", names.Name{}, blob.Digest{}, err
+	}
+
+	var d blob.Digest
+	if digest != "" {
+		var err error
+		d, err = blob.ParseDigest(digest)
+		if err != nil {
+			err = withPublicMessagef(ErrNameInvalid, "invalid digest: %q", digest)
+			return "", names.Name{}, blob.Digest{}, err
+		}
+		if name == "" {
+			// We have can resolve a manifest from a digest only,
+			// so skip name validation and return the scheme and
+			// digest.
+			return scheme, names.Name{}, d, nil
+		}
+	}
+
+	n, err := r.parseName(name)
+	if err != nil {
+		return "", names.Name{}, blob.Digest{}, err
+	}
+	return scheme, n, d, nil
+}
+
+// splitExtended splits an extended name string into its scheme, name, and digest
+// parts.
+//
+// Examples:
+//
+//	http://ollama.com/bmizerany/smol:latest@digest
+//	https://ollama.com/bmizerany/smol:latest
+//	ollama.com/bmizerany/smol:latest@digest // returns "https" scheme.
+//	model@digest
+//	@digest
+func splitExtended(s string) (scheme, name, digest string) {
+	i := strings.Index(s, "://")
+	if i >= 0 {
+		scheme = s[:i]
+		s = s[i+3:]
+	}
+	i = strings.LastIndex(s, "@")
+	if i >= 0 {
+		digest = s[i+1:]
+		s = s[:i]
+	}
+	return scheme, s, digest
+}
+
+type writerPool struct {
+	size int64 // set by the caller
+
+	mu sync.Mutex
+	ws []*bufio.Writer
+}
+
+func (p *writerPool) get() *bufio.Writer {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.ws) == 0 {
+		return bufio.NewWriterSize(nil, int(p.size))
+	}
+	w := p.ws[len(p.ws)-1]
+	p.ws = p.ws[:len(p.ws)-1]
+	return w
+}
+
+func (p *writerPool) put(w *bufio.Writer) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	w.Reset(nil)
+	p.ws = append(p.ws, w)
 }

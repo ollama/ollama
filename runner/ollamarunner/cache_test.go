@@ -4,6 +4,8 @@ import (
 	"image"
 	"testing"
 	"time"
+
+	"github.com/ollama/ollama/model/input"
 )
 
 func TestCountCommon(t *testing.T) {
@@ -13,44 +15,50 @@ func TestCountCommon(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		t1       []input
-		t2       []input
+		t1       []input.Input
+		t2       []input.Input
 		expected int32
 	}{
 		{
 			name:     "Equal",
-			t1:       []input{{token: 1}, {token: 2}, {token: 3}},
-			t2:       []input{{token: 1}, {token: 2}, {token: 3}},
+			t1:       []input.Input{{Token: 1}, {Token: 2}, {Token: 3}},
+			t2:       []input.Input{{Token: 1}, {Token: 2}, {Token: 3}},
 			expected: 3,
 		},
 		{
 			name:     "Prefix",
-			t1:       []input{{token: 1}},
-			t2:       []input{{token: 1}, {token: 2}, {token: 3}},
+			t1:       []input.Input{{Token: 1}},
+			t2:       []input.Input{{Token: 1}, {Token: 2}, {Token: 3}},
 			expected: 1,
 		},
 		{
 			name:     "Image Prefix",
-			t1:       []input{{image: imgA}},
-			t2:       []input{{image: imgA}, {image: imgB}, {image: imgC}},
+			t1:       []input.Input{{Multimodal: imgA, MultimodalHash: 1}},
+			t2:       []input.Input{{Multimodal: imgA, MultimodalHash: 1}, {Multimodal: imgB, MultimodalHash: 2}, {Multimodal: imgC, MultimodalHash: 3}},
 			expected: 1,
 		},
 		{
 			name:     "Mixed",
-			t1:       []input{{token: 1}, {image: imgA}},
-			t2:       []input{{token: 1}, {image: imgA}, {token: 5}},
+			t1:       []input.Input{{Token: 1}, {Multimodal: imgA, MultimodalHash: 1}},
+			t2:       []input.Input{{Token: 1}, {Multimodal: imgA, MultimodalHash: 1}, {Token: 5}},
 			expected: 2,
 		},
 		{
+			name:     "Mixed, Same Length",
+			t1:       []input.Input{{Token: 1}, {Multimodal: imgA, MultimodalHash: 1}},
+			t2:       []input.Input{{Token: 1}, {Multimodal: imgB, MultimodalHash: 2}},
+			expected: 1,
+		},
+		{
 			name:     "Empty",
-			t1:       []input{},
-			t2:       []input{{token: 1}, {token: 2}, {token: 3}},
+			t1:       []input.Input{},
+			t2:       []input.Input{{Token: 1}, {Token: 2}, {Token: 3}},
 			expected: 0,
 		},
 		{
 			name:     "Both Empty",
-			t1:       []input{},
-			t2:       []input{},
+			t1:       []input.Input{},
+			t2:       []input.Input{},
 			expected: 0,
 		},
 	}
@@ -74,7 +82,7 @@ func TestFindCacheSlot(t *testing.T) {
 	tests := []struct {
 		name    string
 		cache   InputCache
-		prompt  []input
+		prompt  []input.Input
 		longest expected
 		best    expected
 	}{
@@ -83,18 +91,18 @@ func TestFindCacheSlot(t *testing.T) {
 			cache: InputCache{slots: []InputCacheSlot{
 				{
 					Id:       0,
-					Inputs:   []input{},
+					Inputs:   []input.Input{},
 					InUse:    false,
 					lastUsed: time.Time{},
 				},
 				{
 					Id:       1,
-					Inputs:   []input{},
+					Inputs:   []input.Input{},
 					InUse:    false,
 					lastUsed: time.Time{},
 				},
 			}},
-			prompt:  []input{{token: 1}},
+			prompt:  []input.Input{{Token: 1}},
 			longest: expected{result: 0, len: 0},
 			best:    expected{result: 0, len: 0},
 		},
@@ -103,18 +111,18 @@ func TestFindCacheSlot(t *testing.T) {
 			cache: InputCache{slots: []InputCacheSlot{
 				{
 					Id:       0,
-					Inputs:   []input{{token: 1}},
+					Inputs:   []input.Input{{Token: 1}},
 					InUse:    false,
 					lastUsed: time.Now().Add(-time.Second),
 				},
 				{
 					Id:       1,
-					Inputs:   []input{{token: 1}, {token: 2}},
+					Inputs:   []input.Input{{Token: 1}, {Token: 2}},
 					InUse:    false,
 					lastUsed: time.Now().Add(-2 * time.Second),
 				},
 			}},
-			prompt:  []input{{token: 1}, {token: 2}},
+			prompt:  []input.Input{{Token: 1}, {Token: 2}},
 			longest: expected{result: 1, len: 2},
 			best:    expected{result: 1, len: 2},
 		},
@@ -123,18 +131,18 @@ func TestFindCacheSlot(t *testing.T) {
 			cache: InputCache{slots: []InputCacheSlot{
 				{
 					Id:       0,
-					Inputs:   []input{{token: 1}, {token: 2}},
+					Inputs:   []input.Input{{Token: 1}, {Token: 2}},
 					InUse:    false,
 					lastUsed: time.Now().Add(-time.Second),
 				},
 				{
 					Id:       1,
-					Inputs:   []input{},
+					Inputs:   []input.Input{},
 					InUse:    false,
 					lastUsed: time.Time{},
 				},
 			}},
-			prompt:  []input{{token: 2}},
+			prompt:  []input.Input{{Token: 2}},
 			longest: expected{result: 0, len: 0},
 			best:    expected{result: 1, len: 0},
 		},
@@ -144,19 +152,19 @@ func TestFindCacheSlot(t *testing.T) {
 				slots: []InputCacheSlot{
 					{
 						Id:       0,
-						Inputs:   []input{{token: 1}, {token: 2}},
+						Inputs:   []input.Input{{Token: 1}, {Token: 2}},
 						InUse:    false,
 						lastUsed: time.Now().Add(-time.Second),
 					},
 					{
 						Id:       1,
-						Inputs:   []input{},
+						Inputs:   []input.Input{},
 						InUse:    false,
 						lastUsed: time.Time{},
 					},
 				},
 			},
-			prompt:  []input{{token: 1}},
+			prompt:  []input.Input{{Token: 1}},
 			longest: expected{result: 0, len: 1},
 			best:    expected{result: 1, len: 1},
 		},
@@ -165,18 +173,18 @@ func TestFindCacheSlot(t *testing.T) {
 			cache: InputCache{slots: []InputCacheSlot{
 				{
 					Id:       0,
-					Inputs:   []input{{token: 1}},
+					Inputs:   []input.Input{{Token: 1}},
 					InUse:    false,
 					lastUsed: time.Now().Add(-time.Second),
 				},
 				{
 					Id:       1,
-					Inputs:   []input{{token: 1}, {token: 2}},
+					Inputs:   []input.Input{{Token: 1}, {Token: 2}},
 					InUse:    false,
 					lastUsed: time.Now().Add(-2 * time.Second),
 				},
 			}},
-			prompt:  []input{{token: 2}, {token: 3}},
+			prompt:  []input.Input{{Token: 2}, {Token: 3}},
 			longest: expected{result: 0, len: 0},
 			best:    expected{result: 1, len: 0},
 		},
@@ -185,18 +193,18 @@ func TestFindCacheSlot(t *testing.T) {
 			cache: InputCache{slots: []InputCacheSlot{
 				{
 					Id:       0,
-					Inputs:   []input{{token: 1}, {token: 2}},
+					Inputs:   []input.Input{{Token: 1}, {Token: 2}},
 					InUse:    true,
 					lastUsed: time.Now().Add(-time.Second),
 				},
 				{
 					Id:       1,
-					Inputs:   []input{{token: 1}},
+					Inputs:   []input.Input{{Token: 1}},
 					InUse:    false,
 					lastUsed: time.Now().Add(-2 * time.Second),
 				},
 			}},
-			prompt:  []input{{token: 1}, {token: 2}},
+			prompt:  []input.Input{{Token: 1}, {Token: 2}},
 			longest: expected{result: 1, len: 1},
 			best:    expected{result: 1, len: 2},
 		},

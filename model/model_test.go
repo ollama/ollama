@@ -3,12 +3,15 @@ package model
 import (
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	fs "github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/backend/ggml"
 	"github.com/ollama/ollama/ml/nn"
+	"github.com/ollama/ollama/model/input"
 )
 
 func TestParseTags(t *testing.T) {
@@ -133,4 +136,41 @@ func TestPopulateFieldsAlternateName(t *testing.T) {
 	}, m); diff != "" {
 		t.Errorf("populateFields() set incorrect values (-want +got):\n%s", diff)
 	}
+}
+
+func TestGetTextProcessor(t *testing.T) {
+	tp, err := getTextProcessor(fs.KV{})
+	if err == nil {
+		t.Error("expected error")
+	} else if !strings.Contains(err.Error(), "unsupported model architecture") {
+		t.Errorf("unexpected error: %v", err)
+	} else if tp != nil {
+		t.Error("expected nil tp")
+	}
+
+	models["dummy"] = func(ml.Config) (Model, error) {
+		return notTextProcessorModel{}, nil
+	}
+	tp, err = getTextProcessor(fs.KV{"general.architecture": "dummy"})
+	if err == nil {
+		t.Error("expected error")
+	} else if !strings.Contains(err.Error(), "not a TextProcessor") {
+		t.Errorf("unexpected error: %v", err)
+	} else if tp != nil {
+		t.Error("expected nil tp")
+	}
+}
+
+type notTextProcessorModel struct{}
+
+func (notTextProcessorModel) Forward(ml.Context, input.Options) (ml.Tensor, error) {
+	panic("unimplemented")
+}
+
+func (notTextProcessorModel) Backend() ml.Backend {
+	panic("unimplemented")
+}
+
+func (notTextProcessorModel) Config() config {
+	panic("unimplemented")
 }

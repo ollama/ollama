@@ -1,89 +1,61 @@
 package ggml
 
-/*
-#cgo CPPFLAGS: -I${SRCDIR}/ggml/include
-#include <stdlib.h>
-#include <stdint.h>
-#include "ggml.h"
-#include "ggml-cpu.h"
-#include "ggml-backend.h"
-static struct ggml_backend_feature * getBackendFeatures(void *fp, ggml_backend_reg_t reg) {return ((ggml_backend_get_features_t)(fp))(reg);}
-static struct ggml_backend_feature * getNextBackendFeatures(struct ggml_backend_feature * feature) { return &feature[1];}
-
-typedef enum {COMP_UNKNOWN,COMP_GCC,COMP_CLANG} COMPILER;
-COMPILER inline get_compiler() {
-#if defined(__clang__)
-	return COMP_CLANG;
-#elif defined(__GNUC__)
-	return COMP_GCC;
-#else
-	return UNKNOWN_COMPILER;
-#endif
-}
-
-*/
+// #cgo CPPFLAGS: -I${SRCDIR}/ggml/include
+// #include <stdlib.h>
+// #include <stdint.h>
+// #include "ggml.h"
+// #include "ggml-cpu.h"
+// #include "ggml-backend.h"
 import "C"
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
-	"sync"
+	"slices"
+	"strconv"
+	"strings"
+	"unicode"
 	"unsafe"
 
 	"github.com/ollama/ollama/format"
 	fs "github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/ml"
-	"golang.org/x/sync/errgroup"
-
 	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
+	"golang.org/x/sync/errgroup"
 )
 
-type device struct {
-	d *C.struct_ggml_backend_device
-}
-
-func (d device) LogValue() slog.Value {
-	var free, total uint64
-	C.ggml_backend_dev_memory(d.d, (*C.size_t)(&free), (*C.size_t)(&total))
-
-	kind := "unknown"
-	switch C.ggml_backend_dev_type(d.d) {
-	case C.GGML_BACKEND_DEVICE_TYPE_CPU:
-		kind = "cpu"
-	case C.GGML_BACKEND_DEVICE_TYPE_GPU:
-		kind = "gpu"
-	case C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
-		kind = "accel"
-	}
-
-	return slog.GroupValue(
-		slog.String("name", C.GoString(C.ggml_backend_dev_name(d.d))),
-		slog.String("description", C.GoString(C.ggml_backend_dev_description(d.d))),
-		slog.String("kind", kind),
-		slog.String("free", format.HumanBytes2(free)),
-		slog.String("total", format.HumanBytes2(total)),
-	)
-}
-
-var devices = sync.OnceValue(func() []device {
+func devices() []*C.struct_ggml_backend_device {
 	ggml.OnceLoad()
-
-	s := make([]device, C.ggml_backend_dev_count())
-	for i := range s {
-		s[i] = device{C.ggml_backend_dev_get(C.size_t(i))}
+	ds := make([]*C.struct_ggml_backend_device, C.ggml_backend_dev_count())
+	for i := range ds {
+		ds[i] = C.ggml_backend_dev_get(C.size_t(i))
 	}
 
-	return s
-})
+	return ds
+}
 
 type Backend struct {
-	meta       *fs.GGML
-	cpus, gpus []Context
-	tensors    map[string]*Context
+	meta    *fs.GGML
+	sched   *C.struct_ggml_backend_sched
+	tensors map[string]*C.struct_ggml_tensor
 
-	sched *C.struct_ggml_backend_sched
+	// input is the backend used for inputs
+	input *C.struct_ggml_backend_buffer_type
+
+	// output is the backend used for outputs
+	output *C.struct_ggml_backend_buffer_type
+
+	// layers is the backend used for repeating layers
+	layers map[int]*C.struct_ggml_backend_buffer_type
+
+	flashAttention bool
+
+	// maxGraphNodes is the maximum allowed number of graph nodes in this scheduler
+	maxGraphNodes int
 }
 
 func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
@@ -102,106 +74,310 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 		"num_key_values", len(meta.KV()),
 	)
 
-	var cpus, gpus []Context
+	type deviceBufferType struct {
+		d   *C.struct_ggml_backend_device
+		bts []*C.struct_ggml_backend_buffer_type
+	}
+
+	var cpus, accels, gpus []*C.struct_ggml_backend_device
 	for _, d := range devices() {
-		switch C.ggml_backend_dev_type(d.d) {
+		switch C.ggml_backend_dev_type(d) {
+		case C.GGML_BACKEND_DEVICE_TYPE_CPU:
+			if len(cpus) == 0 {
+				// only the first cpu device should be used
+				cpus = append(cpus, d)
+			}
+		case C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
+			accels = append(accels, d)
+		case C.GGML_BACKEND_DEVICE_TYPE_GPU:
+			gpus = append(gpus, d)
+		}
+	}
+
+	// create list of buffer types for the cpu
+	cpuDeviceBufferType := deviceBufferType{d: C.ggml_backend_dev_by_type(C.GGML_BACKEND_DEVICE_TYPE_CPU)}
+	for _, d := range append(accels, append(gpus, cpus...)...) {
+		switch C.ggml_backend_dev_type(d) {
 		case C.GGML_BACKEND_DEVICE_TYPE_CPU,
 			C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
-			slog.Info("cpu", "device", d)
-			cpus = append(cpus, Context{
-				ctx: C.ggml_init(C.struct_ggml_init_params{
-					mem_size: C.size_t(int(C.ggml_tensor_overhead()) * (len(meta.Tensors().Items()) + 1 + int(meta.KV().BlockCount())*2)),
-					no_alloc: true,
-				}),
-				backend: C.ggml_backend_dev_init(d.d, nil),
-			})
-		case C.GGML_BACKEND_DEVICE_TYPE_GPU:
-			slog.Info("gpu", "device", d)
-			gpus = append(gpus, Context{
-				ctx: C.ggml_init(C.struct_ggml_init_params{
-					mem_size: C.size_t(int(C.ggml_tensor_overhead()) * (len(meta.Tensors().Items()) + 1 + int(meta.KV().BlockCount())*2)),
-					no_alloc: true,
-				}),
-				backend: C.ggml_backend_dev_init(d.d, nil),
-			})
+			cpuDeviceBufferType.bts = append(cpuDeviceBufferType.bts, C.ggml_backend_dev_buffer_type(d))
 		}
 	}
 
-	ctxFunc := func(s []Context) (*Context, error) {
-		for _, e := range s {
-			return &e, nil
-		}
-
-		return nil, fmt.Errorf("no devices available")
-	}
-
-	tensors := make(map[*fs.Tensor]*Context, len(meta.Tensors().Items()))
-	for _, t := range meta.Tensors().Items() {
-		c, err := ctxFunc(append(gpus, cpus...))
-		if err != nil {
-			return nil, err
-		}
-
-		func() {
-			tt := C.ggml_new_tensor(c.ctx, t.Kind, C.int(len(t.Shape)), (*C.int64_t)(unsafe.Pointer(&t.Shape[0])))
-
-			cname := C.CString(t.Name)
-			defer C.free(unsafe.Pointer(cname))
-			C.ggml_set_name(tt, cname)
-
-			tensors[t] = c
-		}()
-	}
-
-	for _, b := range append(gpus, cpus...) {
-		C.ggml_backend_alloc_ctx_tensors(b.ctx, b.backend)
-	}
-
-	sr := io.NewSectionReader(r, int64(meta.Tensors().Offset), n-int64(meta.Tensors().Offset))
-
-	var g errgroup.Group
-	for t, c := range tensors {
-		g.Go(func() error {
-			bts := make([]byte, t.Size())
-			n, err := io.ReadFull(io.NewSectionReader(sr, int64(t.Offset), int64(t.Size())), bts)
-			if err != nil {
-				return err
-			}
-
-			if n != int(t.Size()) {
-				return fmt.Errorf("expected %d bytes, got %d", t.Size(), n)
-			}
-
-			cname := C.CString(t.Name)
-			defer C.free(unsafe.Pointer(cname))
-
-			C.ggml_backend_tensor_set(C.ggml_get_tensor(c.ctx, cname), unsafe.Pointer(&bts[0]), 0, C.size_t(n))
-			return nil
+	// create list of buffer types for each gpu
+	var gpuDeviceBufferTypes []deviceBufferType
+	for _, d := range gpus {
+		bt := C.ggml_backend_dev_buffer_type(d)
+		gpuDeviceBufferTypes = append(gpuDeviceBufferTypes, deviceBufferType{
+			d:   d,
+			bts: append([]*C.struct_ggml_backend_buffer_type{bt}, cpuDeviceBufferType.bts...),
 		})
 	}
 
-	if err := g.Wait(); err != nil {
+	useDefaultSplit := true
+	for _, s := range params.TensorSplit {
+		if s != 0 {
+			useDefaultSplit = false
+			break
+		}
+	}
+
+	// calculate splits
+	splits := make([]float32, len(gpus))
+	if useDefaultSplit {
+		// default: split on free memory
+		for i := range splits {
+			var free, total C.size_t
+			C.ggml_backend_dev_memory(gpus[i], &free, &total)
+			splits[i] = float32(free)
+		}
+	} else {
+		splits = params.TensorSplit
+	}
+
+	var sum float32
+	// cumulative sum of all splits
+	for i := range splits {
+		sum += splits[i]
+		splits[i] = sum
+	}
+
+	// normalize splits
+	for i := range splits {
+		splits[i] /= sum
+	}
+
+	// inputs always use cpu
+	input := cpuDeviceBufferType
+
+	blocks := int(meta.KV().BlockCount())
+
+	// define a range of gpu layers. anything outside of this range is assigned to the cpu
+	gpuRangeStart := max(0, blocks-params.NumGPULayers)
+	gpuRangeStop := min(gpuRangeStart+params.NumGPULayers, blocks+1)
+	assignLayer := func(i int) deviceBufferType {
+		if i < gpuRangeStart || i >= gpuRangeStop {
+			return cpuDeviceBufferType
+		}
+
+		index := slices.IndexFunc(splits, func(f float32) bool { return float32(i-gpuRangeStart)/float32(gpuRangeStop-gpuRangeStart) < f })
+		if index < 0 || index >= len(gpuDeviceBufferTypes) {
+			return cpuDeviceBufferType
+		}
+
+		return gpuDeviceBufferTypes[index]
+	}
+
+	// repeating layers are assigned based on their index in reverse order, e.g. i / (block_count + 1)
+	layers := make([]deviceBufferType, blocks)
+	for i := range layers {
+		layers[i] = assignLayer(i)
+	}
+
+	// outputs are assigned iff allowed by splits and configured number of gpu layers
+	output := assignLayer(blocks)
+
+	maxTensors := len(meta.Tensors().Items())
+	maxTensors += 1
+	// each layer has at most 2 extra tensors for rope operations
+	maxTensors += blocks * 2
+
+	type tensor struct {
+		source *fs.Tensor
+		target string
+	}
+
+	// some tensors are mapped to different names so keep a list
+	targets := make(map[string][]string)
+
+	// contexts are shared by tensors of the same buffer type
+	ctxs := make(map[*C.struct_ggml_backend_buffer_type]*C.struct_ggml_context)
+	createTensor := func(t tensor, bts []*C.struct_ggml_backend_buffer_type) *C.struct_ggml_tensor {
+		for _, bt := range bts {
+			if _, ok := ctxs[bt]; !ok {
+				ctxs[bt] = C.ggml_init(C.struct_ggml_init_params{
+					mem_size: C.ggml_tensor_overhead() * C.size_t(maxTensors),
+					no_alloc: true,
+				})
+			}
+
+			targets[t.source.Name] = append(targets[t.source.Name], t.target)
+
+			name := t.source.Name
+			if t.target != "" {
+				name = t.target
+			}
+
+			cname := C.CString(name)
+			defer C.free(unsafe.Pointer(cname))
+			if tt := C.ggml_get_tensor(ctxs[bt], cname); tt != nil {
+				return tt
+			}
+
+			tt := C.ggml_new_tensor(ctxs[bt], t.source.Kind, C.int(len(t.source.Shape)), (*C.int64_t)(unsafe.Pointer(&t.source.Shape[0])))
+			C.ggml_set_name(tt, cname)
+
+			slog.Debug("created tensor", "name", name, "shape", t.source.Shape, "dtype", t.source.Kind, "buffer_type", C.GoString(C.ggml_backend_buft_name(bt)))
+			//nolint:staticcheck // TODO: check if buffer type supports this tensor
+			return tt
+		}
+
+		return nil
+	}
+
+	contains := func(s string, parts ...string) bool {
+		split := strings.Split(s, ".")
+		for _, part := range parts {
+			if slices.Contains(split, part) {
+				return true
+			}
+		}
+
+		return false
+	}
+
+	for _, t := range meta.Tensors().Items() {
+		switch {
+		case contains(t.Name, "position_embd", "token_embd", "token_norm_embd", "token_types"):
+			createTensor(tensor{source: t}, input.bts)
+		case contains(t.Name, "cls", "output", "output_norm"):
+			createTensor(tensor{source: t}, output.bts)
+		case strings.HasPrefix(t.Name, "v.") || strings.HasPrefix(t.Name, "mm."):
+			// TODO: assign vision tensors to the gpu if possible
+			createTensor(tensor{source: t}, input.bts)
+		default:
+			layerIndex := -1
+			if fields := strings.FieldsFunc(t.Name, func(r rune) bool { return !unicode.IsNumber(r) }); len(fields) > 0 {
+				if i, err := strconv.Atoi(fields[0]); err == nil {
+					layerIndex = i
+				}
+			}
+
+			if layerIndex >= 0 {
+				createTensor(tensor{source: t}, layers[layerIndex].bts)
+			} else {
+				// this is a repeating tensor that doesn't explicitly associated with a layer so
+				// duplicate it for each layer
+				for i, layer := range layers {
+					createTensor(tensor{
+						source: t,
+						target: "blk." + strconv.Itoa(i) + "." + t.Name,
+					}, layer.bts)
+				}
+			}
+		}
+	}
+
+	// allocate buffers for each context
+	bbs := make(map[*C.struct_ggml_context]*C.struct_ggml_backend_buffer, len(ctxs))
+	for bt, c := range ctxs {
+		if C.ggml_get_first_tensor(c) == nil {
+			continue
+		}
+
+		b := C.ggml_backend_alloc_ctx_tensors_from_buft(c, bt)
+		C.ggml_backend_buffer_set_usage(b, C.GGML_BACKEND_BUFFER_USAGE_WEIGHTS)
+		bbs[c] = b
+	}
+
+	for bs := range maps.Values(bbs) {
+		slog.Info("model weights", "buffer", C.GoString(C.ggml_backend_buffer_name(bs)), "size", format.HumanBytes2(uint64(C.ggml_backend_buffer_get_size(bs))))
+	}
+
+	// map tensor names to tensors for easy lookup later
+	tensors := make(map[string]*C.struct_ggml_tensor)
+	for _, c := range ctxs {
+		for t := C.ggml_get_first_tensor(c); t != nil; t = C.ggml_get_next_tensor(c, t) {
+			tensors[C.GoString(C.ggml_get_name(t))] = t
+		}
+	}
+
+	// concurrently read in tensor data. uses a section reader which is safe for concurrent reads
+	sr := io.NewSectionReader(r, int64(meta.Tensors().Offset), n-int64(meta.Tensors().Offset))
+	var g errgroup.Group
+	for _, t := range meta.Tensors().Items() {
+		for _, target := range targets[t.Name] {
+			g.Go(func() error {
+				if target == "" {
+					target = t.Name
+				}
+
+				tt, ok := tensors[target]
+				if !ok {
+					return fmt.Errorf("unassigned tensor: %s", t.Name)
+				}
+
+				bts := make([]byte, t.Size())
+				n, err := io.ReadFull(io.NewSectionReader(sr, int64(t.Offset), int64(t.Size())), bts)
+				if err != nil {
+					return err
+				}
+
+				if n != len(bts) {
+					return errors.New("short read")
+				}
+
+				C.ggml_backend_tensor_set(tt, unsafe.Pointer(&bts[0]), 0, C.size_t(t.Size()))
+				return nil
+			})
+		}
+	}
+
+	if g.Wait() != nil {
 		return nil, err
 	}
 
-	backends := make([]*C.struct_ggml_backend, len(gpus)+len(cpus))
-	bufts := make([]*C.struct_ggml_backend_buffer_type, len(gpus)+len(cpus))
-	for i, c := range append(gpus, cpus...) {
-		backends[i] = c.backend
-		bufts[i] = C.ggml_backend_get_default_buffer_type(c.backend)
+	// map devices to backend buffer types so new tensors can be assigned to the correct device
+	deviceBufferTypes := make(map[*C.struct_ggml_backend_device]*C.struct_ggml_backend_buffer_type)
+
+	// create backends and buffer types used for the compute graph scheduler
+	var schedBackends []*C.struct_ggml_backend
+	var schedBufts []*C.struct_ggml_backend_buffer_type
+	for _, d := range append(gpus, append(accels, cpus...)...) {
+		b := C.ggml_backend_dev_init(d, nil)
+		bt := C.ggml_backend_get_default_buffer_type(b)
+		if d := C.ggml_backend_get_device(b); C.ggml_backend_dev_type(d) == C.GGML_BACKEND_DEVICE_TYPE_CPU && len(gpus) > 0 {
+			// use the first gpu host buffer type for gpu if possible
+			if hbt := C.ggml_backend_dev_host_buffer_type(gpus[0]); hbt != nil {
+				bt = hbt
+			}
+		}
+
+		deviceBufferTypes[d] = bt
+
+		schedBackends = append(schedBackends, b)
+		schedBufts = append(schedBufts, bt)
+
+		slog.Info("compute graph", "backend", C.GoString(C.ggml_backend_name(b)), "buffer_type", C.GoString(C.ggml_backend_buft_name(bt)))
+
+		if C.ggml_backend_is_cpu(b) {
+			// set number of threads for cpu backend
+			C.ggml_backend_cpu_set_n_threads(b, C.int(params.NumThreads))
+		}
 	}
 
+	maxGraphNodes := max(8192, len(meta.Tensors().Items())*5)
 	return &Backend{
-		meta: meta,
-		cpus: cpus,
-		gpus: gpus,
+		flashAttention: params.FlashAttention,
+		meta:           meta,
+		tensors:        tensors,
 		sched: C.ggml_backend_sched_new(
-			(*C.ggml_backend_t)(unsafe.Pointer(&backends[0])),
-			(*C.ggml_backend_buffer_type_t)(unsafe.Pointer(&bufts[0])),
-			C.int(len(backends)),
-			C.size_t(max(8192, len(meta.Tensors().Items())*5)),
+			(*C.ggml_backend_t)(unsafe.Pointer(&schedBackends[0])),
+			(*C.ggml_backend_buffer_type_t)(unsafe.Pointer(&schedBufts[0])),
+			C.int(len(schedBackends)),
+			C.size_t(maxGraphNodes),
 			true,
 		),
+		input:  deviceBufferTypes[input.d],
+		output: deviceBufferTypes[output.d],
+		layers: func() map[int]*C.struct_ggml_backend_buffer_type {
+			m := make(map[int]*C.struct_ggml_backend_buffer_type)
+			for i, layer := range layers {
+				m[i] = deviceBufferTypes[layer.d]
+			}
+			return m
+		}(),
+		maxGraphNodes: maxGraphNodes,
 	}, nil
 }
 
@@ -214,51 +390,95 @@ func (b *Backend) Config() ml.Config {
 }
 
 func (b *Backend) Get(name string) ml.Tensor {
-	cname := C.CString(name)
-	defer C.free(unsafe.Pointer(cname))
-
-	for _, c := range append(b.gpus, b.cpus...) {
-		if t := C.ggml_get_tensor(c.ctx, cname); t != nil {
-			return &Tensor{t: t}
-		}
+	if t, ok := b.tensors[name]; ok {
+		return &Tensor{b: b, t: t}
 	}
 
 	return nil
 }
 
 func (b *Backend) NewContext() ml.Context {
-	nodes := max(8192, len(b.meta.Tensors().Items())*5)
-	c := C.ggml_init(C.struct_ggml_init_params{
-		mem_buffer: nil,
-		mem_size:   C.size_t(nodes)*C.ggml_tensor_overhead() + C.ggml_graph_overhead_custom(C.size_t(nodes), false),
-		no_alloc:   true,
-	})
+	return b.NewContextSize(b.maxGraphNodes)
+}
 
-	backends := make([]*C.struct_ggml_backend, len(b.gpus)+len(b.cpus))
-	for i, c := range append(b.gpus, b.cpus...) {
-		backends[i] = c.backend
+func (b *Backend) NewContextSize(n int) ml.Context {
+	if n > b.maxGraphNodes {
+		panic(fmt.Errorf("requested number of graph nodes (%v) for new context exceeds maximum (%v)", n, b.maxGraphNodes))
 	}
 
 	return &Context{
-		b:       b,
-		ctx:     c,
-		backend: backends[0],
-		nodes:   nodes,
+		b:             b,
+		maxGraphNodes: n,
+		ctx: C.ggml_init(C.struct_ggml_init_params{
+			mem_size: C.size_t(n)*C.ggml_tensor_overhead() + C.ggml_graph_overhead_custom(C.size_t(n), false),
+			no_alloc: true,
+		}),
+	}
+}
+
+func (b *Backend) CacheConfig() ml.CacheConfig {
+	if b.flashAttention {
+		return ml.CacheConfig{CachePadding: 256, MaskDType: ml.DTypeF16, MaskBatchPadding: C.GGML_KQ_MASK_PAD}
+	} else {
+		return ml.CacheConfig{CachePadding: 32, PermutedV: true}
 	}
 }
 
 type Context struct {
-	b       *Backend
-	ctx     *C.struct_ggml_context
-	backend *C.struct_ggml_backend
+	b *Backend
 
+	ctx   *C.struct_ggml_context
 	graph *C.struct_ggml_cgraph
-	nodes int
+
+	// buft is the buffer type used for new tensors
+	buft *C.struct_ggml_backend_buffer_type
+
+	// maxGraphNodes is the maximum allowed number of graph nodes in this context
+	maxGraphNodes int
+}
+
+func (c Context) Input() ml.Context {
+	if c.b.input != nil {
+		return &Context{
+			b:             c.b,
+			ctx:           c.ctx,
+			buft:          c.b.input,
+			maxGraphNodes: c.maxGraphNodes,
+		}
+	}
+
+	return &c
+}
+
+func (c Context) Output() ml.Context {
+	if c.b.output != nil {
+		return &Context{
+			b:             c.b,
+			ctx:           c.ctx,
+			buft:          c.b.output,
+			maxGraphNodes: c.maxGraphNodes,
+		}
+	}
+
+	return &c
+}
+
+func (c Context) Layer(i int) ml.Context {
+	if buft, ok := c.b.layers[i]; ok {
+		return &Context{
+			b:             c.b,
+			ctx:           c.ctx,
+			buft:          buft,
+			maxGraphNodes: c.maxGraphNodes,
+		}
+	}
+
+	return &c
 }
 
 func (c *Context) Forward(tensors ...ml.Tensor) ml.Context {
 	if c.graph == nil {
-		c.graph = C.ggml_new_graph_custom(c.ctx, C.size_t(c.nodes), false)
+		c.graph = C.ggml_new_graph_custom(c.ctx, C.size_t(c.maxGraphNodes), false)
 	}
 
 	for _, tensor := range tensors {
@@ -268,7 +488,7 @@ func (c *Context) Forward(tensors ...ml.Tensor) ml.Context {
 	return c
 }
 
-func (c *Context) Compute(tensors ...ml.Tensor) {
+func (c Context) Compute(tensors ...ml.Tensor) {
 	C.ggml_backend_sched_graph_compute_async(c.b.sched, c.graph)
 	C.ggml_backend_sched_reset(c.b.sched)
 
@@ -287,21 +507,48 @@ func (c *Context) Compute(tensors ...ml.Tensor) {
 	}
 }
 
-func (c *Context) MaxTensors() int {
-	return c.nodes
+func (c Context) MaxGraphNodes() int {
+	return c.maxGraphNodes
 }
 
 func shapeToGGML(shape []int) *C.int64_t {
 	sh := make([]C.int64_t, len(shape))
 	for i, s := range shape {
-		sh[i] = (C.int64_t)(s)
+		sh[i] = C.int64_t(s)
 	}
 
 	return &sh[0]
 }
 
-func (c Context) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
-	if len(shape) < 1 || len(shape) > 4 {
+func pad(length, pad C.size_t) C.size_t {
+	return ((length + pad - 1) / pad) * pad
+}
+
+func (c Context) newTensor(dtype ml.DType, shape []int) ml.Tensor {
+	if c.buft == nil {
+		panic("set Input, Output, or Layer before creating tensors")
+	}
+
+	var cdtype uint32
+	switch dtype {
+	case ml.DTypeF32:
+		cdtype = C.GGML_TYPE_F32
+	case ml.DTypeF16:
+		cdtype = C.GGML_TYPE_F16
+	case ml.DTypeQ80:
+		cdtype = C.GGML_TYPE_Q8_0
+	case ml.DTypeQ40:
+		cdtype = C.GGML_TYPE_Q4_0
+	case ml.DTypeI32:
+		cdtype = C.GGML_TYPE_I32
+	default:
+		panic("unsupported dtype")
+	}
+
+	if len(shape) < 1 || shape[0] == 0 {
+		var shape C.int64_t = 0
+		return &Tensor{b: c.b, t: C.ggml_new_tensor(c.ctx, cdtype, 1, &shape)}
+	} else if len(shape) > 4 {
 		panic("unsupported number of dimensions")
 	}
 
@@ -311,31 +558,28 @@ func (c Context) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
 		}
 	}
 
-	var t *C.struct_ggml_tensor
-	switch dtype {
-	case ml.DTypeF32:
-		t = C.ggml_new_tensor(c.ctx, C.GGML_TYPE_F32, C.int(len(shape)), shapeToGGML(shape))
-	case ml.DTypeF16:
-		t = C.ggml_new_tensor(c.ctx, C.GGML_TYPE_F16, C.int(len(shape)), shapeToGGML(shape))
-	case ml.DTypeI32:
-		t = C.ggml_new_tensor(c.ctx, C.GGML_TYPE_I32, C.int(len(shape)), shapeToGGML(shape))
-	default:
-		panic("unsupported dtype")
-	}
-
-	b := C.ggml_backend_alloc_buffer(c.backend, C.ggml_nbytes(t))
+	t := C.ggml_new_tensor(c.ctx, cdtype, C.int(len(shape)), shapeToGGML(shape))
+	size := pad(C.ggml_backend_buft_get_alloc_size(c.buft, t), C.ggml_backend_buft_get_alignment(c.buft))
+	b := C.ggml_backend_buft_alloc_buffer(c.buft, size)
 	C.ggml_backend_tensor_alloc(b, t, C.ggml_backend_buffer_get_base(b))
-	C.ggml_set_zero(t)
-	return &Tensor{t: t}
+	return &Tensor{b: c.b, t: t}
 }
 
-func fromSlice[S ~[]E, E float32 | int32](ctx Context, s S, shape []int, dtype uint32) (ml.Tensor, error) {
+func (c Context) Empty(dtype ml.DType, shape ...int) ml.Tensor {
+	return c.newTensor(dtype, shape)
+}
+
+func (c Context) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
+	t := c.newTensor(dtype, shape)
+	C.ggml_set_zero(t.(*Tensor).t)
+	return t
+}
+
+func checkShape[S ~[]E, E any](s S, shape ...int) error {
 	n := len(s)
 
 	if n == 0 {
-		var shape C.int64_t = 0
-		t := C.ggml_new_tensor(ctx.ctx, dtype, 1, &shape)
-		return &Tensor{t: t}, nil
+		return nil
 	}
 
 	for _, v := range shape {
@@ -343,22 +587,36 @@ func fromSlice[S ~[]E, E float32 | int32](ctx Context, s S, shape []int, dtype u
 	}
 
 	if n != 1 {
-		return nil, fmt.Errorf("invalid shape %v for %d elements", shape, len(s))
+		return fmt.Errorf("invalid shape: %v", shape)
 	}
 
-	t := C.ggml_new_tensor(ctx.ctx, dtype, C.int(len(shape)), shapeToGGML(shape))
-	b := C.ggml_backend_alloc_buffer(ctx.backend, C.ggml_nbytes(t))
-	C.ggml_backend_tensor_alloc(b, t, C.ggml_backend_buffer_get_base(b))
-	C.ggml_backend_tensor_set(t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t))
-	return &Tensor{t: t}, nil
+	return nil
 }
 
 func (c Context) FromFloatSlice(s []float32, shape ...int) (ml.Tensor, error) {
-	return fromSlice(c, s, shape, C.GGML_TYPE_F32)
+	if err := checkShape(s, shape...); err != nil {
+		return nil, err
+	}
+
+	t := c.newTensor(ml.DTypeF32, shape)
+	if len(s) > 0 {
+		C.ggml_backend_tensor_set(t.(*Tensor).t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
+	}
+
+	return t, nil
 }
 
 func (c Context) FromIntSlice(s []int32, shape ...int) (ml.Tensor, error) {
-	return fromSlice(c, s, shape, C.GGML_TYPE_I32)
+	if err := checkShape(s, shape...); err != nil {
+		return nil, err
+	}
+
+	t := c.newTensor(ml.DTypeI32, shape)
+	if len(s) > 0 {
+		C.ggml_backend_tensor_set(t.(*Tensor).t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
+	}
+
+	return t, nil
 }
 
 func (c *Context) Close() {
@@ -368,6 +626,7 @@ func (c *Context) Close() {
 }
 
 type Tensor struct {
+	b    *Backend
 	t    *C.struct_ggml_tensor
 	sync func()
 }
@@ -425,6 +684,10 @@ func (t *Tensor) DType() ml.DType {
 		return ml.DTypeF32
 	case C.GGML_TYPE_F16:
 		return ml.DTypeF16
+	case C.GGML_TYPE_Q8_0:
+		return ml.DTypeQ80
+	case C.GGML_TYPE_Q4_0:
+		return ml.DTypeQ40
 	case C.GGML_TYPE_I32:
 		return ml.DTypeI32
 	default:
@@ -434,6 +697,7 @@ func (t *Tensor) DType() ml.DType {
 
 func (t *Tensor) Add(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
+		b: t.b,
 		t: C.ggml_add(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
 	}
 }
@@ -448,24 +712,28 @@ func (t *Tensor) Stack(ctx ml.Context, dim int, s ...ml.Tensor) ml.Tensor {
 
 func (t *Tensor) Concat(ctx ml.Context, t2 ml.Tensor, dim int) ml.Tensor {
 	return &Tensor{
+		b: t.b,
 		t: C.ggml_concat(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.int(dim)),
 	}
 }
 
 func (t *Tensor) Contiguous(ctx ml.Context) ml.Tensor {
 	return &Tensor{
+		b: t.b,
 		t: C.ggml_cont(ctx.(*Context).ctx, t.t),
 	}
 }
 
 func (t *Tensor) Mul(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
+		b: t.b,
 		t: C.ggml_mul(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
 	}
 }
 
 func (t *Tensor) Mulmat(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
+		b: t.b,
 		t: C.ggml_mul_mat(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
 	}
 }
@@ -475,12 +743,13 @@ func (t *Tensor) MulmatFullPrec(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	C.ggml_mul_mat_set_prec(mul, C.GGML_PREC_F32)
 
 	return &Tensor{
+		b: t.b,
 		t: mul,
 	}
 }
 
 func (t *Tensor) LayerNorm(ctx ml.Context, w, b ml.Tensor, eps float32) ml.Tensor {
-	tt := (&Tensor{t: C.ggml_norm(ctx.(*Context).ctx, t.t, C.float(eps))}).Mul(ctx, w)
+	tt := (&Tensor{b: t.b, t: C.ggml_norm(ctx.(*Context).ctx, t.t, C.float(eps))}).Mul(ctx, w)
 	if b != nil {
 		tt = tt.Add(ctx, b)
 	}
@@ -489,7 +758,7 @@ func (t *Tensor) LayerNorm(ctx ml.Context, w, b ml.Tensor, eps float32) ml.Tenso
 }
 
 func (t *Tensor) RMSNorm(ctx ml.Context, w ml.Tensor, eps float32) ml.Tensor {
-	return (&Tensor{t: C.ggml_rms_norm(ctx.(*Context).ctx, t.t, C.float(eps))}).Mul(ctx, w)
+	return (&Tensor{b: t.b, t: C.ggml_rms_norm(ctx.(*Context).ctx, t.t, C.float(eps))}).Mul(ctx, w)
 }
 
 func (t *Tensor) Pad(ctx ml.Context, shape ...int) ml.Tensor {
@@ -498,6 +767,7 @@ func (t *Tensor) Pad(ctx ml.Context, shape ...int) ml.Tensor {
 	}
 
 	return &Tensor{
+		b: t.b,
 		t: C.ggml_pad(ctx.(*Context).ctx, t.t, C.int(shape[0]), C.int(shape[1]), C.int(shape[2]), C.int(shape[3])),
 	}
 }
@@ -508,18 +778,21 @@ func (t *Tensor) Permute(ctx ml.Context, shape ...int) ml.Tensor {
 	}
 
 	return &Tensor{
+		b: t.b,
 		t: C.ggml_permute(ctx.(*Context).ctx, t.t, C.int(shape[0]), C.int(shape[1]), C.int(shape[2]), C.int(shape[3])),
 	}
 }
 
 func (t *Tensor) Rows(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
+		b: t.b,
 		t: C.ggml_get_rows(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
 	}
 }
 
 func (t *Tensor) Copy(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
+		b: t.b,
 		t: C.ggml_cpy(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
 	}
 }
@@ -528,18 +801,22 @@ func (t *Tensor) Reshape(ctx ml.Context, shape ...int) ml.Tensor {
 	switch len(shape) {
 	case 1:
 		return &Tensor{
+			b: t.b,
 			t: C.ggml_reshape_1d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0])),
 		}
 	case 2:
 		return &Tensor{
+			b: t.b,
 			t: C.ggml_reshape_2d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0]), C.int64_t(shape[1])),
 		}
 	case 3:
 		return &Tensor{
+			b: t.b,
 			t: C.ggml_reshape_3d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0]), C.int64_t(shape[1]), C.int64_t(shape[2])),
 		}
 	case 4:
 		return &Tensor{
+			b: t.b,
 			t: C.ggml_reshape_4d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0]), C.int64_t(shape[1]), C.int64_t(shape[2]), C.int64_t(shape[3])),
 		}
 	default:
@@ -549,18 +826,21 @@ func (t *Tensor) Reshape(ctx ml.Context, shape ...int) ml.Tensor {
 
 func (t *Tensor) Scale(ctx ml.Context, s float64) ml.Tensor {
 	return &Tensor{
+		b: t.b,
 		t: C.ggml_scale(ctx.(*Context).ctx, t.t, (C.float)(s)),
 	}
 }
 
 func (t *Tensor) Softmax(ctx ml.Context) ml.Tensor {
 	return &Tensor{
+		b: t.b,
 		t: C.ggml_soft_max(ctx.(*Context).ctx, t.t),
 	}
 }
 
 func (t *Tensor) Tanh(ctx ml.Context) ml.Tensor {
 	return &Tensor{
+		b: t.b,
 		t: C.ggml_tanh_inplace(ctx.(*Context).ctx, t.t),
 	}
 }
@@ -571,6 +851,7 @@ func (t *Tensor) Unpad(ctx ml.Context, shape ...int) ml.Tensor {
 	}
 
 	return &Tensor{
+		b: t.b,
 		t: C.ggml_unpad(ctx.(*Context).ctx, t.t, C.int(shape[0]), C.int(shape[1]), C.int(shape[2]), C.int(shape[3])),
 	}
 }
@@ -579,10 +860,12 @@ func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	switch len(shape) {
 	case 1:
 		return &Tensor{
+			b: t.b,
 			t: C.ggml_view_1d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0]), C.size_t(offset)),
 		}
 	case 3:
 		return &Tensor{
+			b: t.b,
 			t: C.ggml_view_2d(ctx.(*Context).ctx, t.t,
 				C.int64_t(shape[0]), C.int64_t(shape[2]),
 				C.size_t(shape[1]),
@@ -590,6 +873,7 @@ func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 		}
 	case 5:
 		return &Tensor{
+			b: t.b,
 			t: C.ggml_view_3d(ctx.(*Context).ctx, t.t,
 				C.int64_t(shape[0]), C.int64_t(shape[2]), C.int64_t(shape[4]),
 				C.size_t(shape[1]), C.size_t(shape[3]),
@@ -597,6 +881,7 @@ func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 		}
 	case 7:
 		return &Tensor{
+			b: t.b,
 			t: C.ggml_view_4d(ctx.(*Context).ctx, t.t,
 				C.int64_t(shape[0]), C.int64_t(shape[2]), C.int64_t(shape[4]), C.int64_t(shape[6]),
 				C.size_t(shape[1]), C.size_t(shape[3]), C.size_t(shape[5]),
@@ -613,7 +898,7 @@ const (
 
 func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim uint32, ropeBase, ropeScale float32) ml.Tensor {
 	if ropeFactors == nil {
-		ropeFactors = &Tensor{}
+		ropeFactors = &Tensor{b: t.b}
 	}
 
 	dequant := t.t
@@ -622,6 +907,7 @@ func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDi
 	}
 
 	return &Tensor{
+		b: t.b,
 		t: C.ggml_rope_ext(
 			ctx.(*Context).ctx, dequant, positionIDs.(*Tensor).t, ropeFactors.(*Tensor).t,
 			C.int(ropeDim),
@@ -639,18 +925,21 @@ func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDi
 
 func (t *Tensor) GELU(ctx ml.Context) ml.Tensor {
 	return &Tensor{
+		b: t.b,
 		t: C.ggml_gelu_inplace(ctx.(*Context).ctx, t.t),
 	}
 }
 
 func (t *Tensor) SILU(ctx ml.Context) ml.Tensor {
 	return &Tensor{
+		b: t.b,
 		t: C.ggml_silu_inplace(ctx.(*Context).ctx, t.t),
 	}
 }
 
 func (t *Tensor) Conv2D(ctx ml.Context, t2 ml.Tensor, s0, s1, p0, p1, d0, d1 int) ml.Tensor {
 	return &Tensor{
+		b: t.b,
 		t: C.ggml_conv_2d(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.int(s0), C.int(s1), C.int(p0), C.int(p1), C.int(d0), C.int(d1)),
 	}
 }
@@ -661,42 +950,23 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask ml.T
 		kqMask = mask.(*Tensor).t
 	}
 
-	kq := key.MulmatFullPrec(ctx, t)
-	kq = &Tensor{
-		t: C.ggml_soft_max_ext(ctx.(*Context).ctx, kq.(*Tensor).t, kqMask, C.float(scale), 0),
-	}
+	query := t.Permute(ctx, 0, 2, 1, 3)
+	key = key.Permute(ctx, 0, 2, 1, 3)
 
-	kqv := value.Mulmat(ctx, kq)
-	return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
-}
+	if t.b.flashAttention {
+		value = value.Permute(ctx, 0, 2, 1, 3)
 
-func (b *Backend) SystemInfo() string {
-	var compiler string
-	switch C.get_compiler() {
-	case C.COMP_UNKNOWN:
-		compiler = "cgo(unknown_compiler)"
-	case C.COMP_GCC:
-		compiler = "cgo(gcc)"
-	case C.COMP_CLANG:
-		compiler = "cgo(clang)"
-	}
-
-	var s string
-	for i := range C.ggml_backend_reg_count() {
-		reg := C.ggml_backend_reg_get(i)
-		fName := C.CString("ggml_backend_get_features")
-		defer C.free(unsafe.Pointer(fName))
-		get_features_fn := C.ggml_backend_reg_get_proc_address(reg, fName)
-		if get_features_fn != nil {
-			s += C.GoString(C.ggml_backend_reg_name(reg))
-			s += " : "
-			for features := C.getBackendFeatures(get_features_fn, reg); features.name != nil; features = C.getNextBackendFeatures(features) {
-				s += C.GoString(features.name)
-				s += " = "
-				s += C.GoString(features.value)
-				s += " | "
-			}
+		kqv := C.ggml_flash_attn_ext(ctx.(*Context).ctx, query.(*Tensor).t, key.(*Tensor).t, value.(*Tensor).t, kqMask, C.float(scale), 0, 0)
+		C.ggml_flash_attn_ext_set_prec(kqv, C.GGML_PREC_F32)
+		return &Tensor{b: t.b, t: kqv}
+	} else {
+		kq := key.MulmatFullPrec(ctx, query)
+		kq = &Tensor{
+			b: t.b,
+			t: C.ggml_soft_max_ext(ctx.(*Context).ctx, kq.(*Tensor).t, kqMask, C.float(scale), 0),
 		}
+
+		kqv := value.Mulmat(ctx, kq)
+		return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 	}
-	return s + compiler
 }
