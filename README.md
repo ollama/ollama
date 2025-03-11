@@ -93,6 +93,8 @@ ollama pull llama3.2
 
 Create a `Modelfile`:
 
+File Format: Any simple text file format(.modelfile, .md, .txt, etc.)
+
 ```
 FROM llama3.2
 
