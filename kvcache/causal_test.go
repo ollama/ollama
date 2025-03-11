@@ -445,6 +445,10 @@ func (t *testTensor) AvgPool1D(ctx ml.Context, k, s, p int) ml.Tensor {
 	panic("not implemented")
 }
 
+func (t *testTensor) AvgPool2D(ctx ml.Context, k, s int, p float32) ml.Tensor {
+	panic("not implemented")
+}
+
 func (t *testTensor) Conv2D(ctx ml.Context, weight ml.Tensor, s0, s1, p0, p1, d0, d1 int) ml.Tensor {
 	panic("not implemented")
 }
