@@ -133,8 +133,10 @@ func (m *Model) PostTokenize(ctx ml.Context, inputs []input.Input) ([]input.Inpu
 				result = append(result, input.Input{Multimodal: imageToken, MultimodalHash: fnvHash.Sum64()})
 			}
 
-			// <end_of_image>
-			result = append(result, input.Input{Token: 256000})
+			result = append(result,
+				input.Input{Token: 256000}, // <end_of_image>
+				input.Input{Token: 108},    // "\n\n"
+			)
 		}
 	}
 
