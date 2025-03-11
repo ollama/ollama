@@ -2,9 +2,7 @@ package readline
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,113 +11,91 @@ import (
 )
 
 type History struct {
-	Buf      *arraylist.List[string]
-	Autosave bool
-	Pos      int
-	Limit    int
-	Filename string
-	Enabled  bool
+	Enabled bool
+
+	lines    *arraylist.List[string]
+	limit    int
+	pos      int
+	filename string
 }
 
 func NewHistory() (*History, error) {
 	h := &History{
-		Buf:      arraylist.New[string](),
-		Limit:    100, // resizeme
-		Autosave: true,
-		Enabled:  true,
+		Enabled: true,
+		lines:   arraylist.New[string](),
+		limit:   100, // resizeme
 	}
 
-	err := h.Init()
+	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
+	}
+
+	path := filepath.Join(home, ".ollama", "history")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+
+	h.filename = path
+
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		if line := strings.TrimSpace(scanner.Text()); len(line) > 0 {
+			h.Add(line)
+		}
 	}
 
 	return h, nil
 }
 
-func (h *History) Init() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
-	path := filepath.Join(home, ".ollama", "history")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-
-	h.Filename = path
-
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDONLY, 0o600)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	defer f.Close()
-
-	r := bufio.NewReader(f)
-	for {
-		line, err := r.ReadString('\n')
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return err
-		}
-
-		line = strings.TrimSpace(line)
-		if len(line) == 0 {
-			continue
-		}
-
-		h.Add(line)
-	}
-
-	return nil
-}
-
 func (h *History) Add(s string) {
-	h.Buf.Add(s)
-	h.Compact()
-	h.Pos = h.Size()
-	if h.Autosave {
+	if latest, _ := h.lines.Get(h.Size() - 1); latest != s {
+		h.lines.Add(s)
+		h.Compact()
 		_ = h.Save()
 	}
+	// always set position to the end
+	h.pos = h.Size()
 }
 
 func (h *History) Compact() {
-	s := h.Buf.Size()
-	if s > h.Limit {
-		for range s - h.Limit {
-			h.Buf.Remove(0)
+	if s := h.lines.Size(); s > h.limit {
+		for range s - h.limit {
+			h.lines.Remove(0)
 		}
 	}
 }
 
 func (h *History) Clear() {
-	h.Buf.Clear()
+	h.lines.Clear()
 }
 
 func (h *History) Prev() (line string) {
-	if h.Pos > 0 {
-		h.Pos -= 1
+	if h.pos > 0 {
+		h.pos -= 1
 	}
-	line, _ = h.Buf.Get(h.Pos)
+	// return first line if at the beginning
+	line, _ = h.lines.Get(h.pos)
 	return line
 }
 
 func (h *History) Next() (line string) {
-	if h.Pos < h.Buf.Size() {
-		h.Pos += 1
-		line, _ = h.Buf.Get(h.Pos)
+	if h.pos < h.lines.Size() {
+		h.pos += 1
+		line, _ = h.lines.Get(h.pos)
 	}
+	// return empty string if at the end
 	return line
 }
 
 func (h *History) Size() int {
-	return h.Buf.Size()
+	return h.lines.Size()
 }
 
 func (h *History) Save() error {
@@ -127,25 +103,21 @@ func (h *History) Save() error {
 		return nil
 	}
 
-	tmpFile := h.Filename + ".tmp"
-
-	f, err := os.OpenFile(tmpFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_APPEND, 0o600)
+	f, err := os.CreateTemp(filepath.Dir(h.filename), "")
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
-	buf := bufio.NewWriter(f)
-	for cnt := range h.Size() {
-		line, _ := h.Buf.Get(cnt)
-		fmt.Fprintln(buf, line)
-	}
-	buf.Flush()
-	f.Close()
+	func() {
+		defer f.Close()
 
-	if err = os.Rename(tmpFile, h.Filename); err != nil {
-		return err
-	}
+		w := bufio.NewWriter(f)
+		defer w.Flush()
 
-	return nil
+		h.lines.Each(func(i int, line string) {
+			fmt.Fprintln(w, line)
+		})
+	}()
+
+	return os.Rename(f.Name(), h.filename)
 }

@@ -91,8 +91,6 @@ func (i *Instance) Readline() (string, error) {
 	var escex bool
 	var metaDel bool
 
-	var currentLineBuf []rune
-
 	for {
 		// don't show placeholder when pasting unless we're in multiline mode
 		showPlaceholder := !i.Pasting || i.Prompt.UseAlt
@@ -116,19 +114,9 @@ func (i *Instance) Readline() (string, error) {
 
 			switch r {
 			case KeyUp:
-				if i.History.Pos > 0 {
-					if i.History.Pos == i.History.Size() {
-						currentLineBuf = []rune(buf.String())
-					}
-					buf.Replace([]rune(i.History.Prev()))
-				}
+				buf.Replace([]rune(i.History.Prev()))
 			case KeyDown:
-				if i.History.Pos < i.History.Size() {
-					buf.Replace([]rune(i.History.Next()))
-					if i.History.Pos == i.History.Size() {
-						buf.Replace(currentLineBuf)
-					}
-				}
+				buf.Replace([]rune(i.History.Next()))
 			case KeyLeft:
 				buf.MoveLeft()
 			case KeyRight:
