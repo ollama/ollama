@@ -146,8 +146,6 @@ func (p *ImageProcessor) splitToTiles(img image.Image, numTilesSize image.Point)
 
 // remove the "alpha" channel by drawing over a prefilled image
 //
-// remove the "alpha" channel by drawing over a prefilled image
-//
 //nolint:unused
 func (p *ImageProcessor) compositeImage(img image.Image) image.Image {
 	dst := image.NewRGBA(img.Bounds())
