@@ -133,6 +133,10 @@ func (kv KV) Floats(key string, defaultValue ...[]float32) []float32 {
 	return s
 }
 
+func (kv KV) OllamaEngineRequired() bool {
+	return kv.Architecture() == "gemma3"
+}
+
 func keyValue[T string | uint32 | uint64 | float32 | *array | bool](kv KV, key string, defaultValue ...T) T {
 	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") {
 		key = kv.Architecture() + "." + key
