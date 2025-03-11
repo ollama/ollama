@@ -845,6 +845,7 @@ func Execute(args []string) error {
 	flashAttention := fs.Bool("flash-attn", false, "Enable flash attention")
 	kvSize := fs.Int("ctx-size", 2048, "Context (or KV cache) size")
 	kvCacheType := fs.String("kv-cache-type", "", "quantization type for KV cache (default: f16)")
+	host := fs.String("host", "127.0.0.1", "Host to expose the server on")
 	port := fs.Int("port", 8080, "Port to expose the server on")
 	threads := fs.Int("threads", runtime.NumCPU(), "Number of threads to use during generation")
 	verbose := fs.Bool("verbose", false, "verbose output (default: disabled)")
@@ -918,7 +919,7 @@ func Execute(args []string) error {
 
 	go server.run(ctx)
 
-	addr := "127.0.0.1:" + strconv.Itoa(*port)
+	addr := *host + ":" + strconv.Itoa(*port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		fmt.Println("Listen error:", err)
