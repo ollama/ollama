@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"hash/fnv"
 	"image"
+	"math"
 
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
@@ -30,9 +31,21 @@ var _ model.MultimodalProcessor = (*Model)(nil)
 type MultiModalProjector struct {
 	SoftEmbNorm     *nn.RMSNorm `gguf:"mm_soft_emb_norm"`
 	InputProjection *nn.Linear  `gguf:"mm_input_projection"`
+
+	tokensPerImage int
 }
 
-func (p *MultiModalProjector) Forward(ctx ml.Context, visionOutputs ml.Tensor, eps float32) ml.Tensor {
+func (p *MultiModalProjector) Forward(ctx ml.Context, visionOutputs ml.Tensor, imageSize, patchSize int, eps float32) ml.Tensor {
+	l := visionOutputs.Dim(0)
+
+	visionOutputs = visionOutputs.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
+	patchesPerImage := imageSize / patchSize
+	visionOutputs = visionOutputs.Reshape(ctx, patchesPerImage, patchesPerImage, l)
+
+	kernelSize := patchesPerImage / int(math.Sqrt(float64(p.tokensPerImage)))
+	visionOutputs = visionOutputs.AvgPool2D(ctx, kernelSize, kernelSize, 0)
+	visionOutputs = visionOutputs.Reshape(ctx, visionOutputs.Dim(0)*visionOutputs.Dim(1), l)
+	visionOutputs = visionOutputs.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 	visionOutputs = p.SoftEmbNorm.Forward(ctx, visionOutputs, eps)
 
 	// TODO: inputProjection must be transposed since they're incompatible with visionOutputs
@@ -59,6 +72,9 @@ func New(c ml.Config) (model.Model, error) {
 		ImageProcessor: newImageProcessor(c),
 		VisionModel:    newVisionModel(c),
 		TextModel:      newTextModel(c),
+		MultiModalProjector: &MultiModalProjector{
+			tokensPerImage: int(c.Uint("mm_tokens_per_image", 256)),
+		},
 	}
 
 	slidingWindowLen := int32(c.Uint("attention.sliding_window"))
@@ -88,17 +104,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 	}
 
 	visionOutputs := m.VisionModel.Forward(ctx, pixelValues)
-	visionOutputs = visionOutputs.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
-	patchesPerImage := m.ImageProcessor.imageSize / m.ImageProcessor.patchSize
-
-	// TODO (jmorganca): read this from the model config
-	// it should instead be math.Sqrt(tokens per image)
-	tokensPerSide := 8
-	kernelSize := patchesPerImage / tokensPerSide
-	visionOutputs = visionOutputs.AvgPool1D(ctx, kernelSize, kernelSize, 0)
-
-	visionOutputs = visionOutputs.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
-	visionOutputs = m.MultiModalProjector.Forward(ctx, visionOutputs, m.VisionModel.eps)
+	visionOutputs = m.MultiModalProjector.Forward(ctx, visionOutputs, m.imageSize, m.patchSize, m.VisionModel.eps)
 	return visionOutputs, nil
 }
 

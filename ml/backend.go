@@ -135,7 +135,7 @@ type Tensor interface {
 	RMSNorm(ctx Context, weight Tensor, eps float32) Tensor
 	Scale(ctx Context, s float64) Tensor
 
-	AvgPool1D(ctx Context, k, s, p int) Tensor
+	AvgPool2D(ctx Context, k, s int, p float32) Tensor
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
 	RoPE(ctx Context, positionIDs, ropeFactors Tensor, dim, ropeType uint32, base, scale float32) Tensor

@@ -26,15 +26,16 @@ type gemma3Model struct {
 		NumChannels       uint32  `json:"num_channels"`        // num_channels 3
 		PatchSize         uint32  `json:"patch_size"`          // patch_size 14
 	} `json:"vision_config"`
-	MaxPositionEmbeddings uint32  `json:"max_position_embeddings"`
-	NumAttentionHeads     uint32  `json:"num_attention_heads"`
-	NumKeyValueHeads      uint32  `json:"num_key_value_heads"`
-	RMSNormEPS            float32 `json:"rms_norm_eps"`
-	HeadDim               uint32  `json:"head_dim"`
-	FinalLogitSoftcap     float32 `json:"final_logit_softcapping"`
-	RopeLocalTheta        float32 `json:"rope_local_base_freq"`
-	RopeGlobalTheta       float32 `json:"rope_global_base_freq"`
-	SlidingWindow         uint32  `json:"sliding_window"`
+	MaxPositionEmbeddings    uint32  `json:"max_position_embeddings"`
+	NumAttentionHeads        uint32  `json:"num_attention_heads"`
+	NumKeyValueHeads         uint32  `json:"num_key_value_heads"`
+	RMSNormEPS               float32 `json:"rms_norm_eps"`
+	HeadDim                  uint32  `json:"head_dim"`
+	FinalLogitSoftcap        float32 `json:"final_logit_softcapping"`
+	RopeLocalTheta           float32 `json:"rope_local_base_freq"`
+	RopeGlobalTheta          float32 `json:"rope_global_base_freq"`
+	SlidingWindow            uint32  `json:"sliding_window"`
+	MultiModalTokensPerImage uint32  `json:"mm_tokens_per_image"`
 }
 
 const (
@@ -100,6 +101,10 @@ func (p *gemma3Model) KV(t *Tokenizer) ggml.KV {
 		kv["gemma3.vision.attention.layer_norm_epsilon"] = cmp.Or(p.VisionModel.LayerNormEpsilon, 1e-6)
 		kv["gemma3.attention.key_length"] = cmp.Or(p.TextModel.HeadDim, 256)
 		kv["gemma3.attention.value_length"] = cmp.Or(p.TextModel.HeadDim, 256)
+	}
+
+	if p.MultiModalTokensPerImage > 0 {
+		kv["gemma3.mm.tokens_per_image"] = p.MultiModalTokensPerImage
 	}
 
 	return kv

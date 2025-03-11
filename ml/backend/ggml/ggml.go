@@ -247,7 +247,7 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 			createTensor(tensor{source: t}, output.bts)
 		case strings.HasPrefix(t.Name, "v.") || strings.HasPrefix(t.Name, "mm."):
 			// TODO: assign vision tensors to the gpu if possible
-			createTensor(tensor{source: t}, input.bts)
+			createTensor(tensor{source: t}, output.bts)
 		case contains(t.Name, "rope_freqs", "rope_factors_long", "rope_factors_short"):
 			// these tensors should be repeated per layer
 			for i, layer := range layers {
@@ -952,10 +952,10 @@ func (t *Tensor) Conv2D(ctx ml.Context, t2 ml.Tensor, s0, s1, p0, p1, d0, d1 int
 	}
 }
 
-func (t *Tensor) AvgPool1D(ctx ml.Context, k, s, p int) ml.Tensor {
+func (t *Tensor) AvgPool2D(ctx ml.Context, k, s int, p float32) ml.Tensor {
 	return &Tensor{
 		b: t.b,
-		t: C.ggml_pool_1d(ctx.(*Context).ctx, t.t, C.GGML_OP_POOL_AVG, C.int(k), C.int(s), C.int(p)),
+		t: C.ggml_pool_2d(ctx.(*Context).ctx, t.t, C.GGML_OP_POOL_AVG, C.int(k), C.int(k), C.int(s), C.int(s), C.float(p), C.float(p)),
 	}
 }
 
