@@ -482,7 +482,7 @@ type Context struct {
 	maxGraphNodes int
 }
 
-func (c Context) Input() ml.Context {
+func (c *Context) Input() ml.Context {
 	if c.b.input != nil {
 		return &Context{
 			b:             c.b,
@@ -492,10 +492,10 @@ func (c Context) Input() ml.Context {
 		}
 	}
 
-	return &c
+	return c
 }
 
-func (c Context) Layer(i int) ml.Context {
+func (c *Context) Layer(i int) ml.Context {
 	if buft, ok := c.b.layers[i]; ok {
 		return &Context{
 			b:             c.b,
@@ -505,7 +505,7 @@ func (c Context) Layer(i int) ml.Context {
 		}
 	}
 
-	return &c
+	return c
 }
 
 func (c *Context) Forward(tensors ...ml.Tensor) ml.Context {
@@ -520,7 +520,7 @@ func (c *Context) Forward(tensors ...ml.Tensor) ml.Context {
 	return c
 }
 
-func (c Context) Compute(tensors ...ml.Tensor) {
+func (c *Context) Compute(tensors ...ml.Tensor) {
 	C.ggml_backend_sched_graph_compute_async(c.b.sched, c.graph)
 	C.ggml_backend_sched_reset(c.b.sched)
 
@@ -539,7 +539,7 @@ func (c Context) Compute(tensors ...ml.Tensor) {
 	}
 }
 
-func (c Context) Reserve() error {
+func (c *Context) Reserve() error {
 	if !C.ggml_backend_sched_reserve(c.b.sched, c.graph) {
 		C.ggml_backend_sched_reset(c.b.sched)
 		return errors.New("failed to reserve graph")
@@ -557,7 +557,7 @@ func (c Context) Reserve() error {
 	return nil
 }
 
-func (c Context) MaxGraphNodes() int {
+func (c *Context) MaxGraphNodes() int {
 	return c.maxGraphNodes
 }
 
@@ -574,7 +574,7 @@ func pad(length, pad C.size_t) C.size_t {
 	return ((length + pad - 1) / pad) * pad
 }
 
-func (c Context) newTensor(dtype ml.DType, shape []int) (ml.Tensor, error) {
+func (c *Context) newTensor(dtype ml.DType, shape []int) (ml.Tensor, error) {
 	if c.buft == nil {
 		panic("set Input or Layer before creating tensors")
 	}
@@ -619,7 +619,7 @@ func (c Context) newTensor(dtype ml.DType, shape []int) (ml.Tensor, error) {
 	return &Tensor{b: c.b, t: t}, nil
 }
 
-func (c Context) Empty(dtype ml.DType, shape ...int) ml.Tensor {
+func (c *Context) Empty(dtype ml.DType, shape ...int) ml.Tensor {
 	t, err := c.newTensor(dtype, shape)
 	if err != nil {
 		panic(err)
@@ -628,7 +628,7 @@ func (c Context) Empty(dtype ml.DType, shape ...int) ml.Tensor {
 	return t
 }
 
-func (c Context) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
+func (c *Context) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
 	t, err := c.newTensor(dtype, shape)
 	if err != nil {
 		panic(err)
@@ -656,7 +656,7 @@ func checkShape[S ~[]E, E any](s S, shape ...int) error {
 	return nil
 }
 
-func (c Context) FromFloatSlice(s []float32, shape ...int) (ml.Tensor, error) {
+func (c *Context) FromFloatSlice(s []float32, shape ...int) (ml.Tensor, error) {
 	if err := checkShape(s, shape...); err != nil {
 		return nil, err
 	}
@@ -673,7 +673,7 @@ func (c Context) FromFloatSlice(s []float32, shape ...int) (ml.Tensor, error) {
 	return t, nil
 }
 
-func (c Context) FromIntSlice(s []int32, shape ...int) (ml.Tensor, error) {
+func (c *Context) FromIntSlice(s []int32, shape ...int) (ml.Tensor, error) {
 	if err := checkShape(s, shape...); err != nil {
 		return nil, err
 	}
