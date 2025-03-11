@@ -69,9 +69,9 @@ func (e *VisionEncoderLayer) Forward(ctx ml.Context, hiddenState ml.Tensor, opts
 }
 
 type VisionModelOptions struct {
-	hiddenSize, numHeads, numTiles int
-	imageSize, patchSize           int
-	eps                            float32
+	hiddenSize, numHeads int
+	imageSize, patchSize int
+	eps                  float32
 }
 
 type VisionModel struct {

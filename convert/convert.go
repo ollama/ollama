@@ -228,7 +228,6 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 	switch {
 	case vocabSize == 0:
 		slog.Warn("vocabulary size was not explicitly set by the model", "default size", len(t.Vocabulary.Tokens))
-		vocabSize = len(t.Vocabulary.Tokens)
 	case vocabSize > len(t.Vocabulary.Tokens):
 		slog.Warn("vocabulary is smaller than expected, padding with dummy tokens", "expect", vocabSize, "actual", len(t.Vocabulary.Tokens))
 		for i := range vocabSize - len(t.Vocabulary.Tokens) {
