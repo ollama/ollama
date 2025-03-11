@@ -169,6 +169,10 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 					continue
 				}
 
+				if id := spm.vocab.Encode(string(left.runes) + string(right.runes)); id < 0 {
+					continue
+				}
+
 				merges[pair.a].runes = append(left.runes, right.runes...)
 				merges[pair.b].runes = nil
 				merges[pair.a].n = right.n
