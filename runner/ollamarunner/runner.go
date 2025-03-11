@@ -363,7 +363,7 @@ func (s *Server) processBatch() error {
 				}
 			}
 
-			if j >= s.batchSize || (inp.BatchBreak && len(seq.pendingInputs) != 0) {
+			if j >= s.batchSize {
 				break
 			}
 

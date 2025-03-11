@@ -112,8 +112,8 @@ func (m *Model) PostTokenize(ctx ml.Context, inputs []input.Input) ([]input.Inpu
 			result = append(result, inp)
 		} else {
 			imageInputs := []input.Input{
-				{Token: 108},                      // "\n\n"
-				{Token: 255999, BatchBreak: true}, // "<start_of_image>""
+				{Token: 108},    // "\n\n"
+				{Token: 255999}, // "<start_of_image>""
 			}
 			result = append(result, imageInputs...)
 
