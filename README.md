@@ -83,32 +83,6 @@ Here are some example models that can be downloaded:
 
 ## Customize a model
 
-### Import from GGUF
-
-Ollama supports importing GGUF models in the Modelfile:
-
-1. Create a file named `Modelfile`, with a `FROM` instruction with the local filepath to the model you want to import.
-
-   ```
-   FROM ./vicuna-33b.Q4_0.gguf
-   ```
-
-2. Create the model in Ollama
-
-   ```shell
-   ollama create example -f Modelfile
-   ```
-
-3. Run the model
-
-   ```shell
-   ollama run example
-   ```
-
-### Import from Safetensors
-
-See the [guide](docs/import.md) on importing models for more information.
-
 ### Customize a prompt
 
 Models from the Ollama library can be customized with a prompt. For example, to customize the `llama3.2` model:
@@ -141,6 +115,32 @@ Hello! It's your friend Mario.
 ```
 
 For more information on working with a Modelfile, see the [Modelfile](docs/modelfile.md) documentation.
+
+### Import from GGUF
+
+Ollama supports importing GGUF models in the Modelfile:
+
+1. Create a file named `Modelfile`, with a `FROM` instruction with the local filepath to the model you want to import.
+
+   ```
+   FROM ./vicuna-33b.Q4_0.gguf
+   ```
+
+2. Create the model in Ollama
+
+   ```shell
+   ollama create example -f Modelfile
+   ```
+
+3. Run the model
+
+   ```shell
+   ollama run example
+   ```
+
+### Import from Safetensors
+
+See the [guide](docs/import.md) on importing models for more information.
 
 ## CLI Reference
 
