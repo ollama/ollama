@@ -91,8 +91,8 @@ func TestShowInfo(t *testing.T) {
 				"test.embedding_length":   float64(11434),
 			},
 			Tensors: []api.Tensor{
-				{ "blk.0.attn_k.weight", "BF16", []uint64{42, 3117} },
-				{ "blk.0.attn_q.weight", "FP16", []uint64{3117, 42} },
+				{Name: "blk.0.attn_k.weight", Type: "BF16", Shape: []uint64{42, 3117}},
+				{Name: "blk.0.attn_q.weight", Type: "FP16", Shape: []uint64{3117, 42}},
 			},
 		}, true, &b); err != nil {
 			t.Fatal(err)
@@ -123,7 +123,6 @@ func TestShowInfo(t *testing.T) {
 			t.Errorf("unexpected output (-want +got):\n%s", diff)
 		}
 	})
-
 
 	t.Run("parameters", func(t *testing.T) {
 		var b bytes.Buffer

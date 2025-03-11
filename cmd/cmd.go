@@ -701,7 +701,7 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 			sort.Strings(keys)
 
 			for _, k := range keys {
-				v := ""
+				var v string
 				switch vData := resp.ModelInfo[k].(type) {
 				case string:
 					v = vData

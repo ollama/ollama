@@ -861,7 +861,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 
 	tensorData := make([]api.Tensor, len(tensors.Items()))
 	for cnt, t := range tensors.Items() {
-		tensorData[cnt] = api.Tensor{t.Name, t.Type(), t.Shape}
+		tensorData[cnt] = api.Tensor{Name: t.Name, Type: t.Type(), Shape: t.Shape}
 	}
 	resp.Tensors = tensorData
 
