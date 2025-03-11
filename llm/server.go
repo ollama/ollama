@@ -189,6 +189,10 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		// Enable if the requested and kv cache type is supported by the model
 		if kvct != "" && f.SupportsKVCacheType(kvct) {
 			params = append(params, "--kv-cache-type", kvct)
+			if envconfig.NoKVOffload() {
+				slog.Info("Not offloading KV Cache to GPU")
+				params = append(params, "--no-kv-offload")
+			}
 		} else {
 			slog.Warn("kv cache type not supported by model", "type", kvct)
 		}

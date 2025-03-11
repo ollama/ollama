@@ -86,7 +86,7 @@ type ContextParams struct {
 	c C.struct_llama_context_params
 }
 
-func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, flashAttention bool, kvCacheType string) ContextParams {
+func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, flashAttention bool, noKVOffload bool, kvCacheType string) ContextParams {
 	params := C.llama_context_default_params()
 	params.n_ctx = C.uint(numCtx)
 	params.n_batch = C.uint(batchSize)
@@ -95,6 +95,7 @@ func NewContextParams(numCtx int, batchSize int, numSeqMax int, threads int, fla
 	params.n_threads_batch = params.n_threads
 	params.embeddings = C.bool(true)
 	params.flash_attn = C.bool(flashAttention)
+	params.offload_kqv = !C.bool(noKVOffload)
 	params.type_k = kvCacheTypeFromStr(strings.ToLower(kvCacheType))
 	params.type_v = kvCacheTypeFromStr(strings.ToLower(kvCacheType))
 
