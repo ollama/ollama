@@ -111,13 +111,13 @@ jobs:
           - os: windows
             arch: amd64
             preset: 'CUDA 12'
-            install: https://developer.download.nvidia.com/compute/cuda/12.4.0/local_installers/cuda_12.4.0_551.61_windows.exe
-            cuda-version: '12.4'
+            install: https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_571.96_windows.exe
+            cuda-version: '12.8'
           - os: windows
             arch: amd64
             preset: 'ROCm 6'
-            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q3-WinSvr2022-For-HIP.exe
-            rocm-version: '6.1'
+            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
+            rocm-version: '6.2'
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     env:
@@ -160,6 +160,10 @@ jobs:
           echo "$hipPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "CC=$hipPath\bin\clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "CXX=$hipPath\bin\clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - if: matrix.preset == 'CPU'
+        run: |
+          echo "CC=clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "CXX=clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
       - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
@@ -242,7 +246,7 @@ jobs:
             dist\${{ matrix.os }}-${{ matrix.arch }}-app.exe
 
   windows-sign:
-    runs-on: windows
+    runs-on: windows-2022
     environment: release
     needs: [windows-depends, windows-build]
     steps:
@@ -303,59 +307,106 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.os }}/${{ matrix.arch }}
+          target: ${{ matrix.target }}
+          build-args: |
+            GOFLAGS=${{ env.GOFLAGS }}
+            CGO_CFLAGS=${{ env.CGO_CFLAGS }}
+            CGO_CXXFLAGS=${{ env.CGO_CXXFLAGS }}
+          outputs: type=local,dest=dist/${{ matrix.os }}-${{ matrix.arch }}
+          cache-from: type=registry,ref=ollama/ollama:latest
+          cache-to: type=inline
       - run: |
-          sudo apt-get update && sudo apt-get install pigz
-          docker buildx build --platform $PLATFORM --target ${{ matrix.target }} --build-arg GOFLAGS --build-arg CGO_CFLAGS --build-arg CGO_CXXFLAGS --output type=local,dest=dist/$PLATFORM .
-
-          for COMPONENTS in dist/$PLATFORM/* dist/$PLATFORM/lib/ollama/*; do
-              if [ -d "$COMPONENTS" ]; then
-                  case "$COMPONENTS" in
-                      */bin) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}.tar.in ;;
-                      */lib/ollama) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}.tar.in;;
-                      */lib/ollama/cuda_v11) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}.tar.in;;
-                      */lib/ollama/cuda_v12) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}.tar.in;;
-                      */lib/ollama/cuda_jetpack5) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}-jetpack5.tar.in ;;
-                      */lib/ollama/cuda_jetpack6) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}-jetpack6.tar.in ;;
-                      */lib/ollama/rocm) echo $COMPONENTS >>dist/ollama-${PLATFORM//\//-}-rocm.tar.in ;;
-                  esac
-              fi
+          for COMPONENT in bin/* lib/ollama/*; do
+            case "$COMPONENT" in
+              bin/ollama)               echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/*.so)          echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/cuda_v11)      echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/cuda_v12)      echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
+              lib/ollama/cuda_jetpack5) echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack5.tar.in ;;
+              lib/ollama/cuda_jetpack6) echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack6.tar.in ;;
+              lib/ollama/rocm)          echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
+            esac
           done
-
-          for ARCHIVE in dist/*.tar.in; do tar c -T $ARCHIVE --strip-components 3 | pigz -9cv >${ARCHIVE//.*/}.tgz; done
-        env:
-          PLATFORM: ${{ matrix.os }}/${{ matrix.arch }}
+        working-directory: dist/${{ matrix.os }}-${{ matrix.arch }}
+      - run: |
+          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in; do
+            tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | pigz -9vc >$(basename ${ARCHIVE//.*/}.tgz);
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.target }}
           path: |
-            dist/*.tgz
+            *.tgz
 
-  docker-build:
+  # Build each Docker variant (OS, arch, and flavor) separately. Using QEMU is unreliable and slower.
+  docker-build-push:
     strategy:
       matrix:
         include:
-          - flavor: 'latest=false'
-            platforms: linux/amd64,linux/arm64
+          - os: linux
+            arch: arm64
             build-args: |
               CGO_CFLAGS
               CGO_CXXFLAGS
               GOFLAGS
-          - flavor: 'latest=false,suffix=-rocm'
-            platforms: linux/amd64
+          - os: linux
+            arch: amd64
+            build-args: |
+              CGO_CFLAGS
+              CGO_CXXFLAGS
+              GOFLAGS
+          - os: linux
+            arch: amd64
+            suffix: '-rocm'
             build-args: |
               CGO_CFLAGS
               CGO_CXXFLAGS
               GOFLAGS
               FLAVOR=rocm
-    env:
-      GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
-    runs-on: linux
+    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     needs: setup-environment
+    env:
+      GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v2
-      - uses: docker/setup-buildx-action@v2
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
+      - id: build-push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.os }}/${{ matrix.arch }}
+          build-args: ${{ matrix.build-args }}
+          outputs: type=image,name=ollama/ollama,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=registry,ref=ollama/ollama:latest
+          cache-to: type=inline
+      - run: |
+          mkdir -p ${{ matrix.os }}-${{ matrix.arch }}
+          echo "${{ steps.build-push.outputs.digest }}" >${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}.txt
+        working-directory: ${{ runner.temp }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}
+          path: |
+            ${{ runner.temp }}/${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}.txt
+
+  # Merge Docker images for the same flavor into a single multi-arch manifest
+  docker-merge-push:
+    strategy:
+      matrix:
+        suffix: ['', '-rocm']
+    runs-on: linux
+    environment: release
+    needs: [docker-build-push]
+    steps:
       - uses: docker/login-action@v3
         with:
           username: ${{ vars.DOCKER_USER }}
@@ -363,22 +414,23 @@ jobs:
       - id: metadata
         uses: docker/metadata-action@v4
         with:
-          flavor: ${{ matrix.flavor }}
+          flavor: |
+            latest=false
+            suffix=${{ matrix.suffix }}
           images: |
             ollama/ollama
           tags: |
+            type=ref,enable=true,priority=600,prefix=pr-,event=pr
             type=semver,pattern={{version}}
-      - uses: docker/build-push-action@v6
+      - uses: actions/download-artifact@v4
         with:
-          context: .
-          push: true
-          platforms: ${{ matrix.platforms }}
-          build-args: ${{ matrix.build-args }}
-          tags: ${{ steps.metadata.outputs.tags }}
-          labels: ${{ steps.metadata.outputs.labels }}
-          cache-from: type=registry,ref=ollama/ollama:latest
-          cache-to: type=inline
-          provenance: false
+          pattern: digest-*
+          path: ${{ runner.temp }}
+          merge-multiple: true
+      - run: |
+          docker buildx imagetools create $(echo '${{ steps.metadata.outputs.json }}' | jq -cr '.tags | map("-t", .) | join(" ")') $(cat *-${{ matrix.suffix }}.txt | xargs printf 'ollama/ollama@%s ')
+          docker buildx imagetools inspect ollama/ollama:${{ steps.metadata.outputs.version }}
+        working-directory: ${{ runner.temp }}
 
   # Aggregate all the assets and ship a release
   release:
@@ -408,7 +460,7 @@ jobs:
         working-directory: dist
       - name: Create or update Release
         run: |
-          RELEASE_VERSION=$(echo ${GITHUB_REF_NAME} | cut -f1 -d-)"
+          RELEASE_VERSION="$(echo ${GITHUB_REF_NAME} | cut -f1 -d-)"
 
           echo "Looking for existing release for ${RELEASE_VERSION}"
           OLD_TAG=$(gh release ls --json name,tagName | jq -r ".[] | select(.name == \"${RELEASE_VERSION}\") | .tagName")

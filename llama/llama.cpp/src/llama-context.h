@@ -22,12 +22,12 @@ struct llama_context {
 
     const struct llama_model & model;
 
-    struct llama_cparams        cparams;
-    struct llama_sbatch         sbatch;  // TODO: revisit if needed
-    struct llama_kv_cache       kv_self;
-    struct llama_control_vector cvec;
+    struct llama_cparams      cparams;
+    struct llama_sbatch       sbatch;  // TODO: revisit if needed
+    struct llama_kv_cache     kv_self;
+    struct llama_adapter_cvec cvec;
 
-    std::unordered_map<struct llama_lora_adapter *, float> lora_adapters;
+    std::unordered_map<struct llama_adapter_lora *, float> lora;
 
     std::vector<ggml_backend_ptr> backends;
     std::vector<std::pair<ggml_backend_t, ggml_backend_set_n_threads_t>> set_n_threads_fns;

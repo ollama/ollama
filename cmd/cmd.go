@@ -34,10 +34,9 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/llama"
-	"github.com/ollama/ollama/llama/runner"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
+	"github.com/ollama/ollama/runner"
 	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -256,6 +255,7 @@ func StopHandler(cmd *cobra.Command, args []string) error {
 		if strings.Contains(err.Error(), "not found") {
 			return fmt.Errorf("couldn't find model \"%s\" to stop", args[0])
 		}
+		return err
 	}
 	return nil
 }
@@ -338,7 +338,16 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	opts.MultiModal = len(info.ProjectorInfo) != 0
+	if len(info.ProjectorInfo) != 0 {
+		opts.MultiModal = true
+	}
+	for k := range info.ModelInfo {
+		if strings.Contains(k, ".vision.") {
+			opts.MultiModal = true
+			break
+		}
+	}
+
 	opts.ParentModel = info.Details.ParentModel
 
 	if interactive {
@@ -1271,7 +1280,6 @@ func NewCLI() *cobra.Command {
 
 	runnerCmd := &cobra.Command{
 		Use:    "runner",
-		Short:  llama.PrintSystemInfo(),
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runner.Execute(os.Args[1:])

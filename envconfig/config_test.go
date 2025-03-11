@@ -69,6 +69,7 @@ func TestOrigins(t *testing.T) {
 			"file://*",
 			"tauri://*",
 			"vscode-webview://*",
+			"vscode-file://*",
 		}},
 		{"http://10.0.0.1", []string{
 			"http://10.0.0.1",
@@ -88,6 +89,7 @@ func TestOrigins(t *testing.T) {
 			"file://*",
 			"tauri://*",
 			"vscode-webview://*",
+			"vscode-file://*",
 		}},
 		{"http://172.16.0.1,https://192.168.0.1", []string{
 			"http://172.16.0.1",
@@ -108,6 +110,7 @@ func TestOrigins(t *testing.T) {
 			"file://*",
 			"tauri://*",
 			"vscode-webview://*",
+			"vscode-file://*",
 		}},
 		{"http://totally.safe,http://definitely.legit", []string{
 			"http://totally.safe",
@@ -128,13 +131,14 @@ func TestOrigins(t *testing.T) {
 			"file://*",
 			"tauri://*",
 			"vscode-webview://*",
+			"vscode-file://*",
 		}},
 	}
 	for _, tt := range cases {
 		t.Run(tt.value, func(t *testing.T) {
 			t.Setenv("OLLAMA_ORIGINS", tt.value)
 
-			if diff := cmp.Diff(Origins(), tt.expect); diff != "" {
+			if diff := cmp.Diff(AllowedOrigins(), tt.expect); diff != "" {
 				t.Errorf("%s: mismatch (-want +got):\n%s", tt.value, diff)
 			}
 		})
@@ -268,6 +272,22 @@ func TestVar(t *testing.T) {
 			t.Setenv("OLLAMA_VAR", k)
 			if s := Var("OLLAMA_VAR"); s != v {
 				t.Errorf("%s: expected %q, got %q", k, v, s)
+			}
+		})
+	}
+}
+
+func TestContextLength(t *testing.T) {
+	cases := map[string]uint{
+		"":     2048,
+		"4096": 4096,
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			t.Setenv("OLLAMA_CONTEXT_LENGTH", k)
+			if i := ContextLength(); i != v {
+				t.Errorf("%s: expected %d, got %d", k, v, i)
 			}
 		})
 	}
