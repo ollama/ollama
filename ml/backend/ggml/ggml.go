@@ -240,11 +240,22 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 		switch {
 		case contains(t.Name, "position_embd", "token_embd", "token_norm_embd", "token_types"):
 			createTensor(tensor{source: t}, input.bts)
+			if _, ok := meta.Tensors().GroupLayers()["output"]; !ok && t.Name == "token_embd.weight" {
+				createTensor(tensor{source: t, target: "output.weight"}, output.bts)
+			}
 		case contains(t.Name, "cls", "output", "output_norm"):
 			createTensor(tensor{source: t}, output.bts)
 		case strings.HasPrefix(t.Name, "v.") || strings.HasPrefix(t.Name, "mm."):
 			// TODO: assign vision tensors to the gpu if possible
-			createTensor(tensor{source: t}, input.bts)
+			createTensor(tensor{source: t}, output.bts)
+		case contains(t.Name, "rope_freqs", "rope_factors_long", "rope_factors_short"):
+			// these tensors should be repeated per layer
+			for i, layer := range layers {
+				createTensor(tensor{
+					source: t,
+					target: "blk." + strconv.Itoa(i) + "." + t.Name,
+				}, layer.bts)
+			}
 		default:
 			layerIndex := -1
 			if fields := strings.FieldsFunc(t.Name, func(r rune) bool { return !unicode.IsNumber(r) }); len(fields) > 0 {
@@ -256,14 +267,8 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 			if layerIndex >= 0 {
 				createTensor(tensor{source: t}, layers[layerIndex].bts)
 			} else {
-				// this is a repeating tensor that doesn't explicitly associated with a layer so
-				// duplicate it for each layer
-				for i, layer := range layers {
-					createTensor(tensor{
-						source: t,
-						target: "blk." + strconv.Itoa(i) + "." + t.Name,
-					}, layer.bts)
-				}
+				// load all other tensors on the cpu
+				createTensor(tensor{source: t}, input.bts)
 			}
 		}
 	}
@@ -352,7 +357,7 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 
 		if C.ggml_backend_is_cpu(b) {
 			// set number of threads for cpu backend
-			C.ggml_backend_cpu_set_n_threads(b, C.int(params.NumThreads))
+			C.ggml_backend_cpu_set_n_threads(b, C.int(Threads(params.NumThreads)))
 		}
 	}
 
@@ -893,10 +898,13 @@ func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 }
 
 const (
-	ropeTypeNorm C.int = iota
+	ropeTypeNorm   C.int = 0
+	ropeTypeNeox   C.int = 2
+	ropeTypeMrope  C.int = 8
+	ropeTypeVision C.int = 24
 )
 
-func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim uint32, ropeBase, ropeScale float32) ml.Tensor {
+func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim, ropeType uint32, ropeBase, ropeScale float32) ml.Tensor {
 	if ropeFactors == nil {
 		ropeFactors = &Tensor{b: t.b}
 	}
@@ -911,8 +919,8 @@ func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDi
 		t: C.ggml_rope_ext(
 			ctx.(*Context).ctx, dequant, positionIDs.(*Tensor).t, ropeFactors.(*Tensor).t,
 			C.int(ropeDim),
-			131072,       // YaRN n_ctx_train
-			ropeTypeNorm, // ROPE_TYPE_NORM
+			C.int(ropeType),
+			131072, // YaRN n_ctx_train
 			C.float(ropeBase),
 			C.float(ropeScale),
 			0.,  // YaRN ext_factor
@@ -942,6 +950,27 @@ func (t *Tensor) Conv2D(ctx ml.Context, t2 ml.Tensor, s0, s1, p0, p1, d0, d1 int
 		b: t.b,
 		t: C.ggml_conv_2d(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.int(s0), C.int(s1), C.int(p0), C.int(p1), C.int(d0), C.int(d1)),
 	}
+}
+
+func (t *Tensor) AvgPool2D(ctx ml.Context, k, s int, p float32) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_pool_2d(ctx.(*Context).ctx, t.t, C.GGML_OP_POOL_AVG, C.int(k), C.int(k), C.int(s), C.int(s), C.float(p), C.float(p)),
+	}
+}
+
+func (t *Tensor) Set(ctx ml.Context, t2 ml.Tensor, offset int, strides ...int) ml.Tensor {
+	var tt *C.struct_ggml_tensor
+	switch len(strides) {
+	case 0:
+		tt = C.ggml_set_1d(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.size_t(offset))
+	case 1:
+		tt = C.ggml_set_2d(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.size_t(offset), C.size_t(strides[0]))
+	default:
+		panic("unsupported number of dimensions")
+	}
+
+	return &Tensor{b: t.b, t: tt}
 }
 
 func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask ml.Tensor, scale float64) ml.Tensor {

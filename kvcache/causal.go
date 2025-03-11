@@ -21,8 +21,9 @@ type shiftFn func(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, e
 type Causal struct {
 	DType      ml.DType
 	Capacity   int32
-	causal     bool
 	windowSize int32
+
+	opts CausalOptions
 
 	// config controls mostly backend-specific optimizations
 	config *ml.CacheConfig
@@ -79,7 +80,6 @@ type cellRange struct {
 
 func NewCausalCache(shift shiftFn) *Causal {
 	return &Causal{
-		causal:     true,
 		windowSize: math.MaxInt32,
 		shiftFn:    shift,
 		ctxs:       make(map[int]ml.Context),
@@ -90,7 +90,6 @@ func NewCausalCache(shift shiftFn) *Causal {
 
 func NewSWACache(windowSize int32, shift shiftFn) *Causal {
 	return &Causal{
-		causal:     true,
 		windowSize: windowSize,
 		shiftFn:    shift,
 		ctxs:       make(map[int]ml.Context),
@@ -145,6 +144,7 @@ func (c *Causal) StartForward(ctx ml.Context, opts input.Options) error {
 	c.curBatchSize = len(opts.Positions)
 	c.curSequences = opts.Sequences
 	c.curPositions = opts.Positions
+	c.opts.Except = nil
 
 	var err error
 	c.curLoc, err = c.findStartLoc()
@@ -235,9 +235,10 @@ func (c *Causal) buildMask(ctx ml.Context) (ml.Tensor, error) {
 	mask := make([]float32, batchSize*length)
 
 	for i := range c.curBatchSize {
+		enabled := !slices.Contains(c.opts.Except, i)
 		for j := c.curCellRange.min; j <= c.curCellRange.max; j++ {
 			if !slices.Contains(c.cells[j].sequences, c.curSequences[i]) ||
-				(c.causal && c.cells[j].pos > c.curPositions[i]) ||
+				(enabled && c.cells[j].pos > c.curPositions[i]) ||
 				c.cells[j].pos < c.curPositions[i]-c.windowSize {
 				mask[i*length+(j-c.curCellRange.min)] = float32(math.Inf(-1))
 			}
@@ -404,15 +405,16 @@ func (c *Causal) SetLayer(layer int) {
 	c.curLayer = layer
 }
 
-// SetCausal enables or disables causal mask generation for subsequent calls to Get.
-// This state carries over to future forward passes. The default value is true.
-//
-// ctx may be set to nil if this is called from outside of a forward pass, for
-// example, when initializing the cache.
-func (c *Causal) SetCausal(ctx ml.Context, causal bool) {
-	if c.causal != causal {
-		c.causal = causal
+type CausalOptions struct {
+	// Enabled controls whether the causal mask is generated for a particular index in a batch
+	Except []int
+}
 
+// SetCausal disables causal mask generation for a particular range of indicies in
+// the current batch for subsequent calls to Get. The state resets for the next forward pass.
+func (c *Causal) SetCausal(ctx ml.Context, opts CausalOptions) {
+	if !slices.Equal(c.opts.Except, opts.Except) {
+		c.opts = opts
 		if ctx != nil {
 			var err error
 			c.curMask, err = c.buildMask(ctx)
