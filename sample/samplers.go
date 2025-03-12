@@ -1,11 +1,10 @@
 package sample
 
 import (
-	"errors"
 	"math"
-	"math/rand/v2"
-	"slices"
+	"math/rand"
 	"sync"
+	"time"
 
 	"github.com/ollama/ollama/llama"
 )
@@ -87,53 +86,53 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 	// topK also sorts the tokens in descending order of logits
 	tokens = topK(tokens, s.topK)
 
-	// token logit values are updated to probabilities
-	tokens = temperature(tokens, s.temperature)
-
 	tokens = topP(tokens, s.topP)
 	tokens = minP(tokens, s.minP)
 
-	// TODO: this should fall back to greedy sampling
-	// or topP, topK values etc should be such that
-	// there are always tokens to sample from
-	if len(tokens) == 0 {
-		return token{}, errors.New("no tokens to sample from")
-	}
+	// token logit values are updated to probabilities
+	temperature(tokens, s.temperature)
+	softmax(tokens)
+	return tokens[dist(tokens, s.rng.Int63())], nil
 
-	var r float32
-	if s.rng != nil {
-		r = s.rng.Float32()
-	} else {
-		r = rand.Float32()
-	}
+	// // TODO: this should fall back to greedy sampling
+	// // or topP, topK values etc should be such that
+	// // there are always tokens to sample from
+	// if len(tokens) == 0 {
+	// 	return token{}, errors.New("no tokens to sample from")
+	// }
 
-	// Calculate cumulative sum of probabilities
-	var sum float32
-	for i := range tokens {
-		sum += tokens[i].value
-		tokens[i].value = sum
-	}
-	r *= tokens[len(tokens)-1].value
+	// var r float32
+	// if s.rng != nil {
+	// 	r = s.rng.Float32()
+	// } else {
+	// 	r = rand.Float32()
+	// }
 
-	idx, _ := slices.BinarySearchFunc(tokens, r, func(token token, target float32) int {
-		if token.value < target {
-			return -1
-		}
-		return 1
-	})
+	// // Calculate cumulative sum of probabilities
+	// var sum float32
+	// for i := range tokens {
+	// 	sum += tokens[i].value
+	// 	tokens[i].value = sum
+	// }
+	// r *= tokens[len(tokens)-1].value
 
-	return tokens[idx], nil
+	// idx, _ := slices.BinarySearchFunc(tokens, r, func(token token, target float32) int {
+	// 	if token.value < target {
+	// 		return -1
+	// 	}
+	// 	return 1
+	// })
+
+	// return tokens[idx], nil
 }
 
 // TODO(parthsareen): update sampler interface to use json unmarshal https://github.com/ollama/ollama/issues/9278
 func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int, grammar *Grammar) Sampler {
 	var rng *rand.Rand
 	if seed != -1 {
-		// PCG requires two parameters: sequence and stream
-		// Use original seed for sequence
-		sequence := uint64(seed)
-		// Use golden ratio hash to generate statistically independent seeds
-		rng = rand.New(rand.NewPCG(sequence, sequence^0x9E3779B9))
+		rng = rand.New(rand.NewSource(int64(seed)))
+	} else {
+		rng = rand.New(rand.NewSource(time.Now().UnixNano()))
 	}
 	if temperature < 0.0 {
 		temperature = 0.0
