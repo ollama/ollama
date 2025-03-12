@@ -15,6 +15,12 @@ type Input struct {
 	// stored in Multimodal, used for caching and comparing
 	// equality.
 	MultimodalHash uint64
+
+	// SameBatch forces the following number of tokens to be processed
+	// in a single batch, breaking and extending batches as needed.
+	// Useful for things like images that must be processed in one
+	// shot.
+	SameBatch int
 }
 
 // MultimodalIndex is a multimodal element (such as an image)
