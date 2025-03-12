@@ -151,8 +151,8 @@ func partialSortLogits(ts []token, n int) []token {
 			if ts[i].value >= pivotValue {
 				ts[storeIndex], ts[i] = ts[i], ts[storeIndex]
 				storeIndex++
+			}
 		}
-	}
 
 		// Move pivot to its final position
 		ts[right], ts[storeIndex] = ts[storeIndex], ts[right]
@@ -180,7 +180,7 @@ func partialSortLogits(ts []token, n int) []token {
 	})
 
 	return ts[:n]
-	}
+}
 
 // sortLogits uses partialSortLogits to efficiently sort tokens
 // It sorts approximately sqrt(len(tokens)) elements which balances
