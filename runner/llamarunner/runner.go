@@ -676,7 +676,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	minicpmv_version := s.image.clip.ClipIsMinicpmv()
 	if minicpmv_version > 0 {
 		if len(req.AudioUrls) > 0 || len(req.VideoUrls) > 0 {
-			content := Omni(req.Prompt, req.ImageUrls, req.AudioUrls, req.VideoUrls)
+			content := s.Omni(req.Prompt, req.ImageUrls, req.AudioUrls, req.VideoUrls)
 			if err := json.NewEncoder(w).Encode(&CompletionResponse{
 				Content: content,
 			}); err != nil {
@@ -712,7 +712,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	samplingParams.Seed = uint32(req.Seed)
 	samplingParams.Grammar = req.Grammar
 
-	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
+	seq, err := s.NewSequence(req.Prompt, req.Images, req.ImageUrls, req.AudioUrls, req.VideoUrls, NewSequenceParams{
 		numPredict:     req.NumPredict,
 		stop:           req.Stop,
 		numKeep:        req.NumKeep,
@@ -1073,7 +1073,7 @@ func Execute(args []string) error {
 	return nil
 }
 
-func Omni(input string, ImageUrls, audioUrls, videoUrls []string) string {
+func (s *Server) Omni(input string, ImageUrls, audioUrls, videoUrls []string) string {
 	if input == "" {
 		return "输入字符串不能为空"
 	}

@@ -29,7 +29,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	videoUrls = make([]string, 0)
 
 	isMllama := checkMllamaModelFamily(m)
-	isGemma3 := checkGemma3ModelFamily(m)
+	// isGemma3 := checkGemma3ModelFamily(m)
 
 	var imageNumTokens int
 	// TODO: Ideally we would compute this from the projector metadata but some pieces are implementation dependent
