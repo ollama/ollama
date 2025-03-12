@@ -611,6 +611,14 @@ func (llm GGML) VisionGraphSize() (weights, graphSize uint64) {
 			embeddingLength*numPatches*maxNumTiles +
 			9*embeddingLength*numPaddedPatches*maxNumTiles +
 			numPaddedPatches*maxNumTiles*numPaddedPatches*maxNumTiles*headCount)
+	case "gemma3":
+		for name, layer := range llm.Tensors().GroupLayers() {
+			if strings.HasPrefix(name, "v.") {
+				for _, tensor := range layer {
+					weights += tensor.Size()
+				}
+			}
+		}
 	}
 	return weights, graphSize
 }
