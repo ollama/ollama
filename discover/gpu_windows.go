@@ -42,12 +42,21 @@ var OneapiGlobs = []string{
 	"c:\\Windows\\System32\\DriverStore\\FileRepository\\*\\ze_intel_gpu64.dll",
 }
 
+var VulkanGlobs = []string{
+	"c:\\Windows\\System32\\vulkan-1.dll",
+}
+
 var (
 	CudartMgmtName = "cudart64_*.dll"
 	NvcudaMgmtName = "nvcuda.dll"
 	NvmlMgmtName   = "nvml.dll"
 	OneapiMgmtName = "ze_intel_gpu64.dll"
+	VulkanMgmtName = "vulkan-1.dll"
 )
+
+func FindLibCapLibs() []string {
+	return []string{"<unused>"}
+}
 
 func GetCPUMem() (memInfo, error) {
 	memStatus := MEMORYSTATUSEX{length: sizeofMemoryStatusEx}
