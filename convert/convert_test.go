@@ -307,6 +307,29 @@ func TestConvertAdapter(t *testing.T) {
 				"blk.31.attn_v.weight.lora_b":   "071dcafe89df065d6e1c935ecb8fdf6479b3c202eb912e7da938597673ff5857",
 			},
 		},
+		{
+			Name: "discoqwen2",
+			BaseKV: map[string]any{
+				"general.architecture":          "qwen2",
+				"qwen2.attention.head_count":    uint32(32),
+				"qwen2.attention.head_count_kv": uint32(8),
+			},
+			Expected: map[string]string{
+				"general.architecture":          "qwen2",
+				"general.file_type":             "1",
+				"general.parameter_count":       "106496",
+				"general.type":                  "adapter",
+				"general.version":               "v0.2",
+				"adapter.lora.alpha":            "16",
+				"adapter.type":                  "lora",
+				"qwen2.attention.head_count":    "32",
+				"qwen2.attention.head_count_kv": "8",
+				"blk.31.attn_q.weight.lora_a":   "0eb3318b02cd313429bcc7621b539fdbb10240fea190c56c9e5f93fcd37a4e50",
+				"blk.31.attn_q.weight.lora_b":   "0eb3318b02cd313429bcc7621b539fdbb10240fea190c56c9e5f93fcd37a4e50",
+				"blk.31.attn_v.weight.lora_a":   "0eb3318b02cd313429bcc7621b539fdbb10240fea190c56c9e5f93fcd37a4e50",
+				"blk.31.attn_v.weight.lora_b":   "071dcafe89df065d6e1c935ecb8fdf6479b3c202eb912e7da938597673ff5857",
+			},
+		},
 	}
 
 	for _, c := range cases {
