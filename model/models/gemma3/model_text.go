@@ -96,7 +96,7 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, pos
 	q := sa.Query.Forward(ctx, hiddenState)
 	q = q.Reshape(ctx, batchSize, opts.numHeads, opts.attnKeyLen)
 	q = sa.QueryNorm.Forward(ctx, q, opts.eps)
-	q = q.RoPE(ctx, positionIDs, nil, uint32(opts.attnKeyLen), ropeType, ropeBase, opts.ropeScale)
+	q = q.RoPE(ctx, positionIDs, nil, nil, uint32(opts.attnKeyLen), ropeType, ropeBase, opts.ropeScale)
 
 	if opts.largeModelScaling {
 		q = q.Scale(ctx, 1.0/math.Sqrt(float64(opts.hiddenSize/opts.numHeads)))
@@ -107,7 +107,7 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, pos
 	k := sa.Key.Forward(ctx, hiddenState)
 	k = k.Reshape(ctx, batchSize, opts.numKVHeads, opts.attnKeyLen)
 	k = sa.KeyNorm.Forward(ctx, k, opts.eps)
-	k = k.RoPE(ctx, positionIDs, nil, uint32(opts.attnKeyLen), ropeType, ropeBase, opts.ropeScale)
+	k = k.RoPE(ctx, positionIDs, nil, nil, uint32(opts.attnKeyLen), ropeType, ropeBase, opts.ropeScale)
 
 	v := sa.Value.Forward(ctx, hiddenState)
 	v = v.Reshape(ctx, batchSize, opts.numKVHeads, opts.attnValLen)
@@ -125,7 +125,7 @@ func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.T
 		ropeBase = m.TextOptions.ropeGlobalBase
 	}
 
-	return key.RoPE(ctx, shift, nil, uint32(m.TextOptions.attnKeyLen), uint32(2), ropeBase, m.TextOptions.ropeScale), nil
+	return key.RoPE(ctx, shift, nil, nil, uint32(m.TextOptions.attnKeyLen), uint32(2), ropeBase, m.TextOptions.ropeScale), nil
 }
 
 type TextMLP struct {

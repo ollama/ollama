@@ -1055,7 +1055,15 @@ const (
 	ropeTypeVision C.int = 24
 )
 
-func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim, ropeType uint32, ropeBase, ropeScale float32) ml.Tensor {
+func (t *Tensor) RoPE(
+	ctx ml.Context,
+	positionIDs ml.Tensor,
+	ropeFactors ml.Tensor,
+	freqs ml.Tensor, // Unused on GGML
+	ropeDim, ropeType uint32,
+	ropeBase,
+	ropeScale float32,
+) ml.Tensor {
 	if ropeFactors == nil {
 		ropeFactors = &Tensor{b: t.b, nDims: 0}
 	}

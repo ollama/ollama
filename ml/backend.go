@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log/slog"
 	"os"
 	"slices"
 	"strconv"
@@ -87,7 +88,13 @@ func RegisterBackend(name string, f func(*os.File, BackendParams) (Backend, erro
 }
 
 func NewBackend(f *os.File, params BackendParams) (Backend, error) {
-	if backend, ok := backends["ggml"]; ok {
+	be := os.Getenv("OLLAMA_BACKEND")
+	if be == "" {
+		be = "ggml"
+		slog.Info("Defaulting to " + be + ". Set OLLAMA_BACKEND to override")
+	}
+	slog.Info("Loading new engine", "backend", be)
+	if backend, ok := backends[be]; ok {
 		return backend(f, params)
 	}
 
@@ -122,6 +129,18 @@ type Context interface {
 	Abort(Tensor) // Evaluate the graph up to this point, retrieve the data from the tensor and dump it to a json file for comparison
 }
 
+// Usage:
+//
+//	if su, ok := ctx.(ml.SliceUpdate); ok {
+//	  su.SliceUpdate(...)
+//	} else {
+//	  // view + copy operations
+//	}
+type SliceUpdate interface {
+	SliceUpdate(target, source Tensor, start, stop, strides []int)
+	Slice(source Tensor, start, stop, strides []int) Tensor
+}
+
 type Tensor interface {
 	Dim(n int) int
 	Stride(n int) int
@@ -145,7 +164,7 @@ type Tensor interface {
 	AvgPool2D(ctx Context, k, s int, p float32) Tensor
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
-	RoPE(ctx Context, positionIDs, ropeFactors Tensor, dim, ropeType uint32, base, scale float32) Tensor
+	RoPE(ctx Context, positionIDs, ropeFactors, freqs Tensor, dim, ropeType uint32, base, scale float32) Tensor
 
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context) Tensor
@@ -316,5 +335,17 @@ func (dt DType) String() string {
 		return "int32"
 	default:
 		return "unknown"
+	}
+}
+
+func (dt DType) Sizeof() int64 {
+	// TODO call underlying API?
+	switch dt {
+	case DTypeF32:
+		return 4
+	case DTypeI32:
+		return 4
+	default:
+		panic("unrecognized type")
 	}
 }

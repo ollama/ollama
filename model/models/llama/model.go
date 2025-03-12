@@ -76,15 +76,14 @@ type SelfAttention struct {
 func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
 	batchSize := hiddenState.Dim(0) // TODO Consider renaming "L" as this is the sequence length, not batch size
 	headDim := opts.hiddenSize / opts.numHeads
-	ropeType := uint32(0)
 
 	q := sa.Query.Forward(ctx, hiddenState)
 	q = q.Reshape(ctx, batchSize, opts.numHeads, -1)
-	q = q.RoPE(ctx, positionIDs, sa.RopeFactors, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
+	q = LlamaRoPE(ctx, q, positionIDs, sa.RopeFactors, opts)
 
 	k := sa.Key.Forward(ctx, hiddenState)
 	k = k.Reshape(ctx, batchSize, opts.numKVHeads, -1)
-	k = k.RoPE(ctx, positionIDs, sa.RopeFactors, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
+	k = LlamaRoPE(ctx, k, positionIDs, sa.RopeFactors, opts)
 
 	v := sa.Value.Forward(ctx, hiddenState)
 	v = v.Reshape(ctx, batchSize, opts.numKVHeads, -1)
@@ -97,7 +96,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 }
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return key.RoPE(ctx, shift, m.Layers[layer].SelfAttention.RopeFactors, uint32(0), m.ropeDim, m.ropeBase, m.ropeScale), nil
+	return LlamaRoPE(ctx, key, shift, m.Layers[layer].SelfAttention.RopeFactors, m.Options), nil
 }
 
 type MLP struct {
