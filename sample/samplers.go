@@ -84,11 +84,8 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 		return greedy(tokens), nil
 	}
 
-	if s.topK > 0 {
-		tokens = topK(tokens, s.topK)
-	} else {
-		sortLogits(tokens)
-	}
+	// topK also sorts the tokens in descending order of logits
+	tokens = topK(tokens, s.topK)
 
 	// token logit values are updated to probabilities
 	tokens = temperature(tokens, s.temperature)
