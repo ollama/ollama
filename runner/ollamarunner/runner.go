@@ -352,6 +352,8 @@ func (s *Server) processBatch() error {
 			seq.cache.Inputs = []input.Input{}
 		}
 
+		batchSize := s.batchSize
+
 		for j, inp := range seq.inputs {
 			if int32(len(seq.cache.Inputs)+len(seq.pendingInputs)+1) > s.cache.numCtx {
 				if len(seq.pendingInputs) == 0 {
@@ -364,7 +366,15 @@ func (s *Server) processBatch() error {
 				}
 			}
 
-			if j >= s.batchSize {
+			// If we are required to put following inputs into a single batch then extend the
+			// batch size. Since we are only extending the size the minimum amount possible, this
+			// will cause a break if we have pending inputs.
+			minBatch := 1 + inp.SameBatch
+			if minBatch > batchSize {
+				batchSize = minBatch
+			}
+
+			if len(seq.pendingInputs)+minBatch > batchSize {
 				break
 			}
 
