@@ -24,7 +24,7 @@ static void print_tensor(const void *tensor, void (*cb)(const void *, int),
     fprintf(stderr, "[");
     for (int i = 0; i < dims[0]; i++) {
         if (i >= nitems && i < dims[0] - nitems) {
-            fprintf(stderr, "... (%lld more), ", dims[0] - 2 * nitems);
+            fprintf(stderr, "... (%ld more), ", dims[0] - 2 * nitems);
             int skip = dims[0] - 2 * nitems;
             if (ndims > 1) {
                 stride += mul(dims + 1, ndims - 1) * skip;
@@ -67,7 +67,7 @@ static void print_tensor_i32(const void *tensor, int i) {
 }
 
 static void ollama_debug_tensor(const struct ggml_tensor *tensor, bool verbose, const char *prefix, int indent) {
-    fprintf(stderr, "%s%s %s (%s): [%lld %lld %lld %lld]\n", prefix, tensor->name,
+    fprintf(stderr, "%s%s %s (%s): [%ld %ld %ld %ld]\n", prefix, tensor->name,
             ggml_op_name(tensor->op), ggml_type_name(tensor->type), tensor->ne[0],
             tensor->ne[1], tensor->ne[2], tensor->ne[3]);
 
