@@ -673,13 +673,16 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.AudioUrls) > 0 || len(req.VideoUrls) > 0 {
-		content := Omni(req.Prompt, req.ImageUrls, req.AudioUrls, req.VideoUrls)
-		if err := json.NewEncoder(w).Encode(&CompletionResponse{
-			Content: content,
-		}); err != nil {
-			http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
-			return
+	minicpmv_version := s.image.clip.ClipIsMinicpmv()
+	if minicpmv_version > 0 {
+		if len(req.AudioUrls) > 0 || len(req.VideoUrls) > 0 {
+			content := Omni(req.Prompt, req.ImageUrls, req.AudioUrls, req.VideoUrls)
+			if err := json.NewEncoder(w).Encode(&CompletionResponse{
+				Content: content,
+			}); err != nil {
+				http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+				return
+			}
 		}
 	}
 
