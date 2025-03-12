@@ -1,9 +1,29 @@
 package sample
 
 import (
+	"container/heap"
 	"math"
 	"slices"
 )
+
+// tokenHeap implements heap.Interface and holds tokens as a min-heap to track k largest elements
+type tokenHeap []token
+
+func (h tokenHeap) Len() int           { return len(h) }
+func (h tokenHeap) Less(i, j int) bool { return h[i].value < h[j].value } // Use < for min-heap to track largest elements
+func (h tokenHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+
+func (h *tokenHeap) Push(x any) {
+	*h = append(*h, x.(token))
+}
+
+func (h *tokenHeap) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
+}
 
 // temperature applies scaling and softmax to the logits
 func temperature(ts []token, temp float32) []token {
@@ -31,62 +51,33 @@ func temperature(ts []token, temp float32) []token {
 	return ts
 }
 
-// siftDown maintains a min-heap property by recursively moving larger elements down the heap.
-//
-// The heap is represented as an array where for any node at index i:
-// - Left child is at index 2i + 1
-// - Right child is at index 2i + 2
-// - Parent is at index (i-1)/2
-//
-// The function compares a node with its children and:
-// 1. Finds the smallest value between the node and its children
-// 2. If the node is not the smallest, swaps it with its smallest child
-// 3. Continues this process down the affected path until the min-heap property is restored
-func siftDown(data []token, start, end int) {
-	root := start
-	for {
-		child := 2*root + 1
-		if child >= end {
-			break
-		}
-		// Find smaller child (we want min heap)
-		if child+1 < end && data[child+1].value < data[child].value {
-			child++
-		}
-		// Exit if root is already smaller than children
-		if data[root].value <= data[child].value {
-			break
-		}
-		// Swap with smaller child and continue
-		data[root], data[child] = data[child], data[root]
-		root = child
-	}
-}
-
 // topK limits the number of tokens considered to the k highest logits
 func topK(ts []token, k int) []token {
 	if k >= len(ts) {
+		sortLogits(ts)
 		return ts
 	}
-	// Heapify + siftDown - O(nlog(k))
-	// Build min-heap of first k elements
-	heap := ts[:k]
-	for i := k/2 - 1; i >= 0; i-- {
-		siftDown(heap, i, k)
-	}
 
-	// Process remaining elements - if larger than heap root, replace root
+	// Initialize min-heap with first k elements
+	h := make(tokenHeap, k)
+	copy(h, ts[:k])
+	heap.Init(&h)
+
+	// Process remaining elements
 	for i := k; i < len(ts); i++ {
-		if ts[i].value > heap[0].value {
-			heap[0] = ts[i]
-			siftDown(heap, 0, k)
+		if ts[i].value > h[0].value {
+			heap.Pop(&h)
+			heap.Push(&h, ts[i])
 		}
 	}
 
-	slices.Reverse(heap)
+	// Convert heap to sorted slice in descending order
+	result := make([]token, k)
+	for i := k - 1; i >= 0; i-- {
+		result[i] = heap.Pop(&h).(token)
+	}
 
-	ts = heap
-	return ts
+	return result
 }
 
 // topP limits tokens to those with cumulative probability p
@@ -135,61 +126,77 @@ func minP(ts []token, p float32) []token {
 	return ts
 }
 
-// TODO(parthsareen): possibly replace with simpler implementation https://github.com/ollama/ollama/issues/9584
-// sortLogits sorts implementation to sort tokens by logits using counting sort
-// counting sort is faster than built-in sort for this use case
-func sortLogits(tokens []token) {
-	if len(tokens) <= 1 {
-		return
+// partialSortLogits uses quickselect to efficiently find and sort the top n tokens
+func partialSortLogits(ts []token, n int) []token {
+	if n >= len(ts) {
+		n = len(ts)
 	}
 
-	// Find max/min in a single pass
-	minLogit, maxLogit := tokens[0].value, tokens[0].value
-	for _, t := range tokens[1:] {
-		if t.value < minLogit {
-			minLogit = t.value
-		} else if t.value > maxLogit {
-			maxLogit = t.value
+	left, right := 0, len(ts)-1
+	target := n - 1
+
+	// Quickselect algorithm to partition array around pivot
+	for left < right {
+		// Choose middle element as pivot and move it to the end
+		pivot := left + (right-left)/2
+		ts[pivot], ts[right] = ts[right], ts[pivot]
+
+		// storeIndex tracks where to put next element greater than pivot
+		storeIndex := left
+		pivotValue := ts[right].value
+
+		// Partition array into elements >= pivot and < pivot
+		// Elements >= pivot go to the left side
+		for i := left; i < right; i++ {
+			if ts[i].value >= pivotValue {
+				ts[storeIndex], ts[i] = ts[i], ts[storeIndex]
+				storeIndex++
+			}
+		}
+
+		// Move pivot to its final position
+		ts[right], ts[storeIndex] = ts[storeIndex], ts[right]
+
+		// If pivot is at target position, we're done
+		// Otherwise recursively partition the half containing target
+		if storeIndex == target {
+			break
+		} else if storeIndex < target {
+			left = storeIndex + 1 // Target is in right half
+		} else {
+			right = storeIndex - 1 // Target is in left half
 		}
 	}
 
-	// Calculate scaling to map to uint32 range
-	logitRange := maxLogit - minLogit
-	if logitRange < 1e-6 {
-		return // All values effectively equal
+	// Sort just the top n elements in descending order
+	slices.SortFunc(ts[:n], func(a, b token) int {
+		if a.value > b.value {
+			return -1
+		}
+		if a.value < b.value {
+			return 1
+		}
+		return 0
+	})
+
+	return ts[:n]
+}
+
+// sortLogits uses partialSortLogits to efficiently sort tokens
+// It sorts approximately sqrt(len(tokens)) elements which balances
+// between having enough tokens for sampling while avoiding full sort
+func sortLogits(ts []token) {
+	// Use sqrt of token length as a heuristic for partial sort size
+	// This provides a good balance between performance and having enough tokens
+	n := int(math.Sqrt(float64(len(ts)))) + 1
+
+	// Ensure we have at least 100 tokens and at most 1000
+	switch {
+	case n < 100:
+		n = 100
+	case n > 1000:
+		n = 1000
 	}
 
-	// Count frequencies directly from tokens
-	const maxInt = (1 << 24) - 1 // Use 24 bits for good granularity
-	var counts [256]int          // For first byte
-
-	// First pass: count frequencies
-	for _, t := range tokens {
-		// Map to [0, maxInt] range
-		score := min(uint32((t.value-minLogit)*float32(maxInt)/logitRange), maxInt)
-		counts[score>>16]++
-	}
-
-	// Calculate offsets
-	var offset int
-	for i := range counts {
-		count := counts[i]
-		counts[i] = offset
-		offset += count
-	}
-
-	// Second pass: place elements in correct position
-	output := make([]token, len(tokens))
-	// Track current positions
-	countsCopy := counts
-
-	for i, t := range tokens {
-		score := min(uint32((t.value-minLogit)*float32(maxInt)/logitRange), maxInt)
-
-		pos := countsCopy[score>>16]
-		countsCopy[score>>16]++
-		output[len(tokens)-1-pos] = tokens[i]
-	}
-
-	copy(tokens, output)
+	partialSortLogits(ts, n)
 }
