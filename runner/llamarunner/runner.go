@@ -99,7 +99,7 @@ type NewSequenceParams struct {
 	embedding      bool
 }
 
-func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequenceParams) (*Sequence, error) {
+func (s *Server) NewSequence(prompt string, images []ImageData, imageUrls, audioUrls, videoUrls []string, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
 
 	startTime := time.Now()
@@ -636,6 +636,9 @@ type CompletionRequest struct {
 	Images      []ImageData `json:"image_data"`
 	Grammar     string      `json:"grammar"`
 	CachePrompt bool        `json:"cache_prompt"`
+	ImageUrls   []string    `json:"image_urls"`
+	AudioUrls   []string    `json:"audio_urls"`
+	VideoUrls   []string    `json:"video_urls"`
 
 	Options
 }
@@ -668,6 +671,16 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
+	}
+
+	if len(req.AudioUrls) > 0 || len(req.VideoUrls) > 0 {
+		content := Omni(req.Prompt, req.ImageUrls, req.AudioUrls, req.VideoUrls)
+		if err := json.NewEncoder(w).Encode(&CompletionResponse{
+			Content: content,
+		}); err != nil {
+			http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Set the headers to indicate streaming
@@ -801,7 +814,7 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 
 	slog.Debug("embedding request", "content", req.Content)
 
-	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{embedding: true})
+	seq, err := s.NewSequence(req.Content, nil, nil, nil, nil, NewSequenceParams{embedding: true})
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return
@@ -1055,4 +1068,12 @@ func Execute(args []string) error {
 	}
 
 	return nil
+}
+
+func Omni(input string, ImageUrls, audioUrls, videoUrls []string) string {
+	if input == "" {
+		return "输入字符串不能为空"
+	}
+	// TODO
+	return "你好，欢迎使用omni"
 }

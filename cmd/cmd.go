@@ -794,6 +794,9 @@ type runOptions struct {
 	Format      string
 	System      string
 	Images      []api.ImageData
+	ImageUrls   []string
+	AudioUrls   []string
+	VideoUrls   []string
 	Options     map[string]interface{}
 	MultiModal  bool
 	KeepAlive   *api.Duration
@@ -977,7 +980,7 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 	}
 
 	if opts.MultiModal {
-		opts.Prompt, opts.Images, err = extractFileData(opts.Prompt)
+		opts.Prompt, opts.Images, opts.ImageUrls, opts.AudioUrls, opts.VideoUrls, err = extractFileData(opts.Prompt)
 		if err != nil {
 			return err
 		}
@@ -992,6 +995,9 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		Prompt:    opts.Prompt,
 		Context:   generateContext,
 		Images:    opts.Images,
+		ImageUrls: opts.ImageUrls,
+		AudioUrls: opts.AudioUrls,
+		VideoUrls: opts.VideoUrls,
 		Format:    json.RawMessage(opts.Format),
 		System:    opts.System,
 		Options:   opts.Options,
