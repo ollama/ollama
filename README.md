@@ -54,6 +54,10 @@ Here are some example models that can be downloaded:
 
 | Model              | Parameters | Size  | Download                         |
 | ------------------ | ---------- | ----- | -------------------------------- |
+| Gemma 3            | 1B         | 815MB | `ollama run gemma3:1b`           |
+| Gemma 3            | 4B         | 3.3GB | `ollama run gemma3`              |
+| Gemma 3            | 12B        | 8.1GB | `ollama run gemma3:12b`          |
+| Gemma 3            | 27B        | 17GB  | `ollama run gemma3:27b`          |
 | QwQ                | 32B        | 20GB  | `ollama run qwq`                 |
 | DeepSeek-R1        | 7B         | 4.7GB | `ollama run deepseek-r1`         |
 | DeepSeek-R1        | 671B       | 404GB | `ollama run deepseek-r1:671b`    |
@@ -66,9 +70,6 @@ Here are some example models that can be downloaded:
 | Llama 3.1          | 405B       | 231GB | `ollama run llama3.1:405b`       |
 | Phi 4              | 14B        | 9.1GB | `ollama run phi4`                |
 | Phi 4 Mini         | 3.8B       | 2.5GB | `ollama run phi4-mini`           |
-| Gemma 2            | 2B         | 1.6GB | `ollama run gemma2:2b`           |
-| Gemma 2            | 9B         | 5.5GB | `ollama run gemma2`              |
-| Gemma 2            | 27B        | 16GB  | `ollama run gemma2:27b`          |
 | Mistral            | 7B         | 4.1GB | `ollama run mistral`             |
 | Moondream 2        | 1.4B       | 829MB | `ollama run moondream`           |
 | Neural Chat        | 7B         | 4.1GB | `ollama run neural-chat`         |
@@ -276,6 +277,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ### Web & Desktop
 
 - [Open WebUI](https://github.com/open-webui/open-webui)
+- [SwiftChat (macOS with ReactNative)](https://github.com/aws-samples/swift-chat)
 - [Enchanted (macOS native)](https://github.com/AugustDev/enchanted)
 - [Hollama](https://github.com/fmaclen/hollama)
 - [Lollms-Webui](https://github.com/ParisNeo/lollms-webui)
@@ -433,6 +435,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Apple Vision Pro
 
+- [SwiftChat](https://github.com/aws-samples/swift-chat) (Cross-platform AI chat app supporting Apple Vision Pro via "Designed for iPad")
 - [Enchanted](https://github.com/AugustDev/enchanted)
 
 ### Database
@@ -510,6 +513,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Mobile
 
+- [SwiftChat](https://github.com/aws-samples/swift-chat) (Lightning-fast Cross-platform AI chat app with native UI for Android, iOS and iPad)
 - [Enchanted](https://github.com/AugustDev/enchanted)
 - [Maid](https://github.com/Mobile-Artificial-Intelligence/maid)
 - [Ollama App](https://github.com/JHubi1/ollama-app) (Modern and easy-to-use multi-platform client for Ollama)
@@ -561,12 +565,14 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [TextLLaMA](https://github.com/adarshM84/TextLLaMA) A Chrome Extension that helps you write emails, correct grammar, and translate into any language
 - [Simple-Discord-AI](https://github.com/zyphixor/simple-discord-ai)
 - [LLM Telegram Bot](https://github.com/innightwolfsleep/llm_telegram_bot) (telegram bot, primary for RP. Oobabooga-like buttons, [A1111](https://github.com/AUTOMATIC1111/stable-diffusion-webui) API integration e.t.c)
+- [mcp-llm](https://github.com/sammcj/mcp-llm) (MCP Server to allow LLMs to call other LLMs)
 
 ### Supported backends
 
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov.
 
 ### Observability
+- [Opik](https://www.comet.com/docs/opik/cookbook/ollama) is an open-source platform to debug, evaluate, and monitor your LLM applications, RAG systems, and agentic workflows with comprehensive tracing, automated evaluations, and production-ready dashboards. Opik supports native intergration to Ollama.
 - [Lunary](https://lunary.ai/docs/integrations/ollama) is the leading open-source LLM observability platform. It provides a variety of enterprise-grade features such as real-time analytics, prompt templates management, PII masking, and comprehensive agent tracing.
 - [OpenLIT](https://github.com/openlit/openlit) is an OpenTelemetry-native tool for monitoring Ollama Applications & GPUs using traces and metrics.
 - [HoneyHive](https://docs.honeyhive.ai/integrations/ollama) is an AI observability and evaluation platform for AI agents. Use HoneyHive to evaluate agent performance, interrogate failures, and monitor quality in production.

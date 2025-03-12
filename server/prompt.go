@@ -29,6 +29,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	videoUrls = make([]string, 0)
 
 	isMllama := checkMllamaModelFamily(m)
+	isGemma3 := checkGemma3ModelFamily(m)
 
 	var imageNumTokens int
 	// TODO: Ideally we would compute this from the projector metadata but some pieces are implementation dependent
@@ -158,6 +159,15 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 func checkMllamaModelFamily(m *Model) bool {
 	for _, arch := range m.Config.ModelFamilies {
 		if arch == "mllama" {
+			return true
+		}
+	}
+	return false
+}
+
+func checkGemma3ModelFamily(m *Model) bool {
+	for _, arch := range m.Config.ModelFamilies {
+		if arch == "gemma3" {
 			return true
 		}
 	}
