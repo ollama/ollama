@@ -1,13 +1,8 @@
 package sample
 
 import (
-	"encoding/binary"
-	"errors"
 	"math"
 	"math/rand/v2"
-	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
 )
 
@@ -128,98 +123,6 @@ func TestSortLogits(t *testing.T) {
 
 	want := []float32{0.27755088, 0.20409796, 0.15720603, 0.08582123, 0.045046154, 0.043722924, 0.036774673, 0.026986899, 0.01681367, 0.0046718004, 0.00412893, 0.0030491839}
 	compareLogits(t, "sortLogits", want, tokens)
-}
-
-// TestSortLogitsWithRealData tests sorting behavior using real model logit distributions
-func TestSortLogitsWithRealData(t *testing.T) {
-	// This will be populated from testdata/logits.bin
-	// Format: 32-bit float array in binary format
-	logits, err := loadTestLogits(t)
-	if err != nil {
-		t.Skipf("Skipping real logit test: %v", err)
-		return
-	}
-
-	tokens := toTokens(logits)
-	sortLogits(tokens)
-
-	// Calculate n for verification
-	n := int(math.Sqrt(float64(len(tokens)))) + 1
-	if n > 1000 {
-		n = 1000
-	} else if n < 100 {
-		n = 100
-	}
-
-	t.Logf("Testing with %d tokens, partial sorting top %d", len(tokens), n)
-
-	// Only verify the top n elements are sorted (which is what we guarantee)
-	// This is much faster than checking the entire array
-	topN := tokens[:n]
-	for i := 1; i < len(topN); i++ {
-		if topN[i].value > topN[i-1].value {
-			t.Fatalf("top %d tokens not properly sorted at index %d: %.15f > %.15f",
-				n, i, topN[i].value, topN[i-1].value)
-		}
-	}
-
-	// Verify we didn't lose any high value tokens by checking that
-	// all tokens after position n are <= the nth token
-	// Do this in chunks to avoid timeouts on large arrays
-	nthValue := tokens[n-1].value
-	const chunkSize = 1000
-
-	for start := n; start < len(tokens); start += chunkSize {
-		end := min(start+chunkSize, len(tokens))
-		for i := start; i < end; i++ {
-			if tokens[i].value > nthValue {
-				t.Fatalf("found higher value token after position %d: tokens[%d].value = %.15f > %.15f",
-					n, i, tokens[i].value, nthValue)
-			}
-		}
-	}
-}
-
-// loadTestLogits loads logit test data from testdata/logits.bin
-func loadTestLogits(t *testing.T) ([]float32, error) {
-	t.Helper()
-
-	_, currFile, _, ok := runtime.Caller(0)
-	if !ok {
-		return nil, errors.New("could not determine test file path")
-	}
-	testDataPath := filepath.Join(filepath.Dir(currFile), "testdata", "logits.bin")
-
-	file, err := os.Open(testDataPath)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	stat, err := file.Stat()
-	if err != nil {
-		return nil, err
-	}
-
-	numFloats := stat.Size() / 4 // each float32 is 4 bytes
-	if numFloats*4 != stat.Size() {
-		return nil, errors.New("logits.bin has invalid size: not a multiple of 4 bytes")
-	}
-
-	logits := make([]float32, numFloats)
-	for i := range logits {
-		var val uint32
-		if err := binary.Read(file, binary.LittleEndian, &val); err != nil {
-			return nil, err
-		}
-		logits[i] = math.Float32frombits(val)
-	}
-
-	if len(logits) == 0 {
-		return nil, errors.New("logits.bin is empty")
-	}
-
-	return logits, nil
 }
 
 func BenchmarkTransforms(b *testing.B) {
