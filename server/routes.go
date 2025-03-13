@@ -435,7 +435,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	kvData, err := getKVData(m.ModelPath, false)
+	kvData, _, err := getModelData(m.ModelPath, false)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -866,7 +866,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	resp.Tensors = tensorData
 
 	if len(m.ProjectorPaths) > 0 {
-		projectorData, err := getKVData(m.ProjectorPaths[0], req.Verbose)
+		projectorData, _, err := getModelData(m.ProjectorPaths[0], req.Verbose)
 		if err != nil {
 			return nil, err
 		}
@@ -897,11 +897,6 @@ func getModelData(digest string, verbose bool) (ggml.KV, ggml.Tensors, error) {
 	}
 
 	return kv, data.Tensors(), nil
-}
-
-func getKVData(digest string, verbose bool) (ggml.KV, error) {
-	kv, _, err := getModelData(digest, verbose)
-	return kv, err
 }
 
 func (s *Server) ListHandler(c *gin.Context) {
