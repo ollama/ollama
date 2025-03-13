@@ -542,6 +542,30 @@ func (c *ClipContext) NewEmbed(llamaContext *Context, data []byte) ([][]float32,
 	return embed, nil
 }
 
+func (c *ClipContext) OmniNewEmbed(llamaContext *Context, imageUrls string) ([][]float32, error) {
+	l := C.llava_image_embed_make_with_filename(c.c, C.int(llamaContext.numThreads), (C.CString(imageUrls)))
+	if l == nil {
+		return nil, errors.New("unable to make llava embedding from image")
+	}
+
+	numTokens := int(l.n_image_pos)
+	numEmbed := llamaContext.Model().NEmbd()
+
+	s := unsafe.Slice((*float32)(l.embed), numEmbed*numTokens)
+
+	embed := make([][]float32, numTokens)
+	rows := make([]float32, len(s))
+	copy(rows, s)
+
+	for i := range embed {
+		embed[i] = rows[i*numEmbed : (i+1)*numEmbed]
+	}
+
+	C.llava_image_embed_free(l)
+
+	return embed, nil
+}
+
 func (c *ClipContext) ClipIsMinicpmv() int {
 	return int(C.clip_is_minicpmv(c.c))
 }
@@ -552,6 +576,11 @@ func (c *ClipContext) ClipNPatches() int {
 
 func (c *ClipContext) ClipUhdNumImageEmbedsCol() int {
 	return int(C.clip_uhd_num_image_embeds_col(c.c))
+}
+
+func (c *ClipContext) ClipUhdMaxSliceNums(max_slice_nums int) {
+	C.clip_uhd_max_slice_nums(c.c, C.int(max_slice_nums))
+	return
 }
 
 type MllamaContext struct {

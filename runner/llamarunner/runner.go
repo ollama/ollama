@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -99,12 +100,33 @@ type NewSequenceParams struct {
 	embedding      bool
 }
 
-func (s *Server) NewSequence(prompt string, images []ImageData, imageUrls, audioUrls, videoUrls []string, params NewSequenceParams) (*Sequence, error) {
+func ExtractFrames(videoPath string) ([]string, string, error) {
+	tempDir, err := os.MkdirTemp(filepath.Dir(videoPath), "video_frames_*")
+	if err != nil {
+		return nil, "", fmt.Errorf("创建临时目录失败: %v", err)
+	}
+
+	outputPattern := filepath.Join(tempDir, "frame_%04d.png") // 例如 frame_0001.png, frame_0002.png ...
+	cmd := exec.Command("ffmpeg", "-i", videoPath, "-vf", "fps=1", outputPattern)
+
+	if err := cmd.Run(); err != nil {
+		return nil, "", fmt.Errorf("ffmpeg 执行失败: %v", err)
+	}
+
+	imagePaths, err := filepath.Glob(filepath.Join(tempDir, "frame_*.png"))
+	if err != nil {
+		return nil, "", fmt.Errorf("遍历图片失败: %v", err)
+	}
+
+	return imagePaths, tempDir, nil
+}
+
+func (s *Server) NewSequence(prompt string, images []ImageData, audioUrls, videoUrls []string, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
 
 	startTime := time.Now()
 
-	inputs, err := s.inputs(prompt, images)
+	inputs, err := s.inputs(prompt, images, audioUrls, videoUrls)
 	if err != nil {
 		return nil, fmt.Errorf("failed to process inputs: %w", err)
 	} else if len(inputs) == 0 {
@@ -163,7 +185,7 @@ func (s *Server) NewSequence(prompt string, images []ImageData, imageUrls, audio
 // inputs processes the prompt and images into a list of inputs
 // by splitting the prompt on [img-<n>] tags, tokenizing text and
 // generating image embeddings for each image
-func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
+func (s *Server) inputs(prompt string, images []ImageData, audioUrls, videoUrls []string) ([]input, error) {
 	var inputs []input
 	var parts []string
 	var matches [][]string
@@ -186,8 +208,43 @@ func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 		for _, t := range tokens {
 			inputs = append(inputs, input{token: t})
 		}
-
 		// image - generate image embedding
+
+		print("===>>>:", len(audioUrls), " or", len(videoUrls), "\n")
+		if len(audioUrls) > 0 || len(videoUrls) > 0 {
+			minicpmv_version := s.image.clip.ClipIsMinicpmv()
+			print("===>>>:", minicpmv_version, "\n")
+			if minicpmv_version == 3 {
+				// tokens1, err1 := s.lc.Model().Tokenize("<unit>", true, true)
+				tokens2, err2 := s.lc.Model().Tokenize("<image>", true, true)
+				tokens3, err3 := s.lc.Model().Tokenize("</image>", true, true)
+				// tokens4, err4 := s.lc.Model().Tokenize("<|audio_start|>", true, true)
+				// tokens5, err5 := s.lc.Model().Tokenize("<|audio_end|>", true, true)
+				if err2 != nil || err3 != nil {
+					return nil, err
+				}
+				frames, tempDir, err := ExtractFrames(videoUrls[len(videoUrls)-1])
+				print("=== output path >>>:", tempDir, "\n")
+				if err != nil {
+					fmt.Println("视频抽帧失败:", err)
+					return nil, err
+				}
+				s.image.clip.ClipUhdMaxSliceNums(1)
+				for _, frame := range frames {
+					embed, err := s.image.OmniNewEmbed(s.lc, frame)
+					if err != nil {
+						return nil, err
+					}
+					inputs = append(inputs, input{token: tokens2[0]})
+					for _, e := range embed {
+						inputs = append(inputs, input{embed: e})
+					}
+					inputs = append(inputs, input{token: tokens3[0]})
+				}
+				s.image.clip.ClipUhdMaxSliceNums(9)
+			}
+		}
+
 		if i < len(matches) {
 			n, _ := strconv.Atoi(matches[i][1])
 
@@ -673,19 +730,6 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	minicpmv_version := s.image.clip.ClipIsMinicpmv()
-	if minicpmv_version > 0 {
-		if len(req.AudioUrls) > 0 || len(req.VideoUrls) > 0 {
-			content := s.Omni(req.Prompt, req.ImageUrls, req.AudioUrls, req.VideoUrls)
-			if err := json.NewEncoder(w).Encode(&CompletionResponse{
-				Content: content,
-			}); err != nil {
-				http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
-				return
-			}
-		}
-	}
-
 	// Set the headers to indicate streaming
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Transfer-Encoding", "chunked")
@@ -712,7 +756,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	samplingParams.Seed = uint32(req.Seed)
 	samplingParams.Grammar = req.Grammar
 
-	seq, err := s.NewSequence(req.Prompt, req.Images, req.ImageUrls, req.AudioUrls, req.VideoUrls, NewSequenceParams{
+	seq, err := s.NewSequence(req.Prompt, req.Images, req.AudioUrls, req.VideoUrls, NewSequenceParams{
 		numPredict:     req.NumPredict,
 		stop:           req.Stop,
 		numKeep:        req.NumKeep,
@@ -817,7 +861,7 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 
 	slog.Debug("embedding request", "content", req.Content)
 
-	seq, err := s.NewSequence(req.Content, nil, nil, nil, nil, NewSequenceParams{embedding: true})
+	seq, err := s.NewSequence(req.Content, nil, nil, nil, NewSequenceParams{embedding: true})
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return
