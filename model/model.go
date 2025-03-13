@@ -22,6 +22,8 @@ import (
 	"github.com/ollama/ollama/model/input"
 )
 
+var ErrNoVisionModel = errors.New("vision model not found")
+
 // Model implements a specific model architecture, defining the forward pass and any model-specific configuration
 type Model interface {
 	Forward(ml.Context, input.Options) (ml.Tensor, error)
