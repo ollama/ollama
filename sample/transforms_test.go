@@ -33,34 +33,82 @@ func compareLogits(t *testing.T, name string, want []float32, got []token) {
 }
 
 func TestTemperature(t *testing.T) {
-	input := []float32{1, 4, -2, 0}
+	input := []float32{1.0, 4.0, -2.0, 0.0}
 	got := temperature(toTokens(input), 0.5)
-	want := []float32{2, 8, -4, 0}
+	want := []float32{2.0, 8.0, -4.0, 0.0}
 	compareLogits(t, "temperature(0.5)", want, got)
 
-	got = temperature(toTokens(input), 1)
-	want = []float32{1, 4, -2, 0}
+	got = temperature(toTokens(input), 1.0)
+	want = []float32{1.0, 4.0, -2.0, 0.0}
 	compareLogits(t, "temperature(1)", want, got)
+
+	got = temperature(toTokens(input), 0.0)
+	want = []float32{1e7, 4e7, -2e7, 0.0}
+	compareLogits(t, "temperature(0)", want, got)
 }
 
 func TestSoftmax(t *testing.T) {
-	input := []float32{1, 4, -2, 0}
-	got := softmax(toTokens(input))
-
-	// Check probabilities sum to 1
-	var sum float32
-	for _, token := range got {
-		sum += token.value
+	tests := []struct {
+		name     string
+		input    []float32
+		expected []float32
+	}{
+		{
+			name:     "correctness softmax",
+			input:    []float32{1, -2, 3, 0},
+			expected: []float32{0.113550, 0.005653, 0.839024, 0.041773},
+		},
+		{
+			name:  "normal distribution",
+			input: []float32{0.026986899, 0.043722924, 0.036774673, 0.27755088, 0.0046718004, 0.08582123, 0.20409796, 0.00412893, 0.15720603, 0.045046154, 0.0030491839, 0.01681367},
+		},
+		{
+			name:  "single value",
+			input: []float32{1.0},
+		},
+		{
+			name:  "identical values",
+			input: []float32{0.9, 0.9, 0.9},
+		},
+		{
+			name:  "large values",
+			input: []float32{1000.0, 2000.0, 3000.0},
+		},
+		{
+			name:  "small values",
+			input: []float32{1e-6, 2e-6, 3e-6},
+		},
+		{
+			name:  "negative values",
+			input: []float32{-1.0, -2.0, -3.0},
+		},
+		{
+			name:  "mixed values",
+			input: []float32{-100.0, 0.0, 100.0},
+		},
 	}
-	if math.Abs(float64(sum-1.0)) > 1e-6 {
-		t.Errorf("probabilities don't sum to 1: got %f", sum)
-	}
 
-	// Check relative ordering is preserved
-	for i := 1; i < len(got); i++ {
-		if (input[i] > input[i-1]) != (got[i].value > got[i-1].value) {
-			t.Errorf("relative ordering not preserved at index %d", i)
-		}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := softmax(toTokens(tt.input))
+
+			if tt.expected != nil {
+				compareLogits(t, tt.name, tt.expected, got)
+				return
+			}
+
+			// Check probabilities sum to 1
+			var sum float32
+			for _, token := range got {
+				sum += token.value
+				if token.value < 0 || token.value > 1 {
+					t.Errorf("probability out of range [0,1]: got %f", token.value)
+				}
+			}
+			if math.Abs(float64(sum-1.0)) > 1e-6 {
+				t.Errorf("probabilities don't sum to 1: got %f", sum)
+			}
+		})
 	}
 }
 
