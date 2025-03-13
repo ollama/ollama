@@ -106,7 +106,7 @@ func ExtractFrames(videoPath string) ([]string, string, error) {
 		return nil, "", fmt.Errorf("创建临时目录失败: %v", err)
 	}
 
-	outputPattern := filepath.Join(tempDir, "frame_%04d.png") // 例如 frame_0001.png, frame_0002.png ...
+	outputPattern := filepath.Join(tempDir, "frame_%04d.png")
 	cmd := exec.Command("ffmpeg", "-i", videoPath, "-vf", "fps=1", outputPattern)
 
 	if err := cmd.Run(); err != nil {
@@ -119,6 +119,48 @@ func ExtractFrames(videoPath string) ([]string, string, error) {
 	}
 
 	return imagePaths, tempDir, nil
+}
+
+func ExtractFrames_audio(audiopath string) ([]string, error) {
+	tempDir, err := os.MkdirTemp(filepath.Dir(audiopath), "audio_frames_")
+	if err != nil {
+		return nil, fmt.Errorf("创建临时目录失败: %w", err)
+	}
+	fmt.Println("临时目录:", tempDir)
+	duration, err := getAudioDuration(audiopath)
+	if err != nil {
+		return nil, fmt.Errorf("获取音频时长失败: %w", err)
+	}
+
+	var framePaths []string
+	for i := 0; i < duration; i++ {
+		outputPath := filepath.Join(tempDir, fmt.Sprintf("frame_%03d.wav", i))
+		cmd := exec.Command("ffmpeg", "-y", "-i", audiopath, "-ss", fmt.Sprintf("%d", i), "-t", "1",
+			"-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", outputPath)
+		if err := cmd.Run(); err != nil {
+			return nil, fmt.Errorf("抽取第 %d 秒失败: %w", i, err)
+		}
+		fmt.Println("生成:", outputPath)
+		framePaths = append(framePaths, outputPath)
+	}
+
+	return framePaths, nil
+}
+
+func getAudioDuration(audiopath string) (int, error) {
+	cmd := exec.Command("ffprobe", "-i", audiopath, "-show_entries", "format=duration", "-v", "quiet", "-of", "csv=p=0")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, err
+	}
+
+	durationStr := strings.TrimSpace(string(output))
+	durationFloat, err := strconv.ParseFloat(durationStr, 64)
+	if err != nil {
+		return 0, err
+	}
+
+	return int(durationFloat), nil
 }
 
 func (s *Server) NewSequence(prompt string, images []ImageData, audioUrls, videoUrls []string, params NewSequenceParams) (*Sequence, error) {
@@ -242,6 +284,23 @@ func (s *Server) inputs(prompt string, images []ImageData, audioUrls, videoUrls 
 					inputs = append(inputs, input{token: tokens3[0]})
 				}
 				s.image.clip.ClipUhdMaxSliceNums(9)
+			} else if minicpmv_version == 4 {
+
+				frames, err := ExtractFrames_audio(audioUrls[len(videoUrls)-1])
+				if err != nil {
+					fmt.Println("错误:", err)
+					return nil, err
+				}
+
+				for _, frame := range frames {
+					embed, err := s.image.audioNewEmbed(s.lc, frame)
+					if err != nil {
+						return nil, err
+					}
+					for _, e := range embed {
+						inputs = append(inputs, input{embed: e})
+					}
+				}
 			}
 		}
 

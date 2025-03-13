@@ -99,6 +99,23 @@ func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte, aspect
 	return embed, nil
 }
 
+func (c *ImageContext) audioNewEmbed(llamaContext *llama.Context, imageUrls string) ([][]float32, error) {
+	if c == nil {
+		return nil, nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.clip != nil {
+		embed, err := c.clip.AudioNewEmbed(llamaContext, imageUrls)
+		if err != nil {
+			return nil, err
+		}
+		return embed, nil
+	} else {
+		return nil, errors.New("received image but vision model not loaded")
+	}
+}
+
 func (c *ImageContext) OmniNewEmbed(llamaContext *llama.Context, imageUrls string) ([][]float32, error) {
 	if c == nil {
 		return nil, nil
