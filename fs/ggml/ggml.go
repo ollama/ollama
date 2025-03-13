@@ -327,6 +327,10 @@ func (t Tensor) Size() uint64 {
 	return t.parameters() * t.typeSize() / t.blockSize()
 }
 
+func (t Tensor) Type() string {
+	return fileType(t.Kind).String()
+}
+
 type container interface {
 	Name() string
 	Decode(io.ReadSeeker) (model, error)
