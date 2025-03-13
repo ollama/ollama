@@ -63,6 +63,10 @@ func New(c ml.Config) (model.Model, error) {
 }
 
 func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, error) {
+	if len(m.VisionModel.Transformer.Layers) == 0 || len(m.GlobalTransformer.Layers) == 0 {
+		return nil, model.ErrNoVisionModel
+	}
+
 	image, _, err := image.Decode(bytes.NewReader(multimodalData))
 	if err != nil {
 		return nil, err
