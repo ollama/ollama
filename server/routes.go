@@ -435,7 +435,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	kvData, err := getKVData(m.ModelPath, false)
+	kvData, _, err := getModelData(m.ModelPath, false)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -848,16 +848,23 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	fmt.Fprint(&sb, m.String())
 	resp.Modelfile = sb.String()
 
-	kvData, err := getKVData(m.ModelPath, req.Verbose)
+	kvData, tensors, err := getModelData(m.ModelPath, req.Verbose)
 	if err != nil {
 		return nil, err
 	}
+
 	delete(kvData, "general.name")
 	delete(kvData, "tokenizer.chat_template")
 	resp.ModelInfo = kvData
 
+	tensorData := make([]api.Tensor, len(tensors.Items()))
+	for cnt, t := range tensors.Items() {
+		tensorData[cnt] = api.Tensor{Name: t.Name, Type: t.Type(), Shape: t.Shape}
+	}
+	resp.Tensors = tensorData
+
 	if len(m.ProjectorPaths) > 0 {
-		projectorData, err := getKVData(m.ProjectorPaths[0], req.Verbose)
+		projectorData, _, err := getModelData(m.ProjectorPaths[0], req.Verbose)
 		if err != nil {
 			return nil, err
 		}
@@ -867,17 +874,17 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	return resp, nil
 }
 
-func getKVData(digest string, verbose bool) (ggml.KV, error) {
+func getModelData(digest string, verbose bool) (ggml.KV, ggml.Tensors, error) {
 	maxArraySize := 0
 	if verbose {
 		maxArraySize = -1
 	}
-	kvData, err := llm.LoadModel(digest, maxArraySize)
+	data, err := llm.LoadModel(digest, maxArraySize)
 	if err != nil {
-		return nil, err
+		return nil, ggml.Tensors{}, err
 	}
 
-	kv := kvData.KV()
+	kv := data.KV()
 
 	if !verbose {
 		for k := range kv {
@@ -887,7 +894,7 @@ func getKVData(digest string, verbose bool) (ggml.KV, error) {
 		}
 	}
 
-	return kv, nil
+	return kv, data.Tensors(), nil
 }
 
 func (s *Server) ListHandler(c *gin.Context) {
