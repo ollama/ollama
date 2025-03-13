@@ -1144,6 +1144,59 @@ Environment Variables:
 	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
 }
 
+func BenchmarkHandler(cmd *cobra.Command, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("missing model name")
+	}
+	modelName := args[0]
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Benchmarking model: %s\n", modelName)
+
+	req := &api.GenerateRequest{
+		Model:  modelName,
+		Prompt: "Explain the theory of relativity in detail",
+		Options: map[string]interface{}{
+			"seed":        42,
+			"temperature": 0.7,
+			"num_predict": 500,
+		},
+	}
+
+	fmt.Printf("Measuring token generation and eval rate...\n")
+
+	var evalCount int
+	var evalDuration time.Duration
+
+	err = client.Generate(cmd.Context(), req, func(resp api.GenerateResponse) error {
+		if resp.Done {
+			evalCount = resp.EvalCount
+			evalDuration = resp.EvalDuration
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	evalRate := float64(0)
+	if evalDuration.Seconds() > 0 {
+		evalRate = float64(evalCount) / evalDuration.Seconds()
+	}
+
+	fmt.Println("\nBenchmark Results")
+	fmt.Println("================")
+	fmt.Printf("Model: %s\n", modelName)
+	fmt.Printf("eval count:           %d token(s)\n", evalCount)
+	fmt.Printf("eval duration:        %dms\n", evalDuration.Milliseconds())
+	fmt.Printf("eval rate:            %.2f tokens/s\n", evalRate)
+
+	return nil
+}
+
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
@@ -1334,6 +1387,14 @@ func NewCLI() *cobra.Command {
 		}
 	}
 
+
+	benchmarkCmd := &cobra.Command{
+		Use:   "benchmark [model_name]",
+		Short: "Benchmark a model",
+		Args:  cobra.MinimumNArgs(1),
+		RunE:  BenchmarkHandler,
+	}
+
 	rootCmd.AddCommand(
 		serveCmd,
 		createCmd,
@@ -1347,6 +1408,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		runnerCmd,
+		benchmarkCmd,
 	)
 
 	return rootCmd
