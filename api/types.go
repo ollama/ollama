@@ -306,6 +306,7 @@ type CreateRequest struct {
 	Template   string            `json:"template,omitempty"`
 	License    any               `json:"license,omitempty"`
 	System     string            `json:"system,omitempty"`
+	Prepend    string            `json:"prepend,omitempty"`
 	Parameters map[string]any    `json:"parameters,omitempty"`
 	Messages   []Message         `json:"messages,omitempty"`
 
@@ -345,6 +346,7 @@ type ShowResponse struct {
 	Parameters    string         `json:"parameters,omitempty"`
 	Template      string         `json:"template,omitempty"`
 	System        string         `json:"system,omitempty"`
+	Prepend       string         `json:"prepend,omitempty"`
 	Details       ModelDetails   `json:"details,omitempty"`
 	Messages      []Message      `json:"messages,omitempty"`
 	ModelInfo     map[string]any `json:"model_info,omitempty"`
