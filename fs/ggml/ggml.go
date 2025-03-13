@@ -579,6 +579,10 @@ func (f GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialO
 }
 
 func (llm GGML) VisionGraphSize() (weights, graphSize uint64) {
+	if llm.KV().Uint("vision.block_count") == 0 {
+		return
+	}
+
 	for name, layer := range llm.Tensors().GroupLayers() {
 		if strings.HasPrefix(name, "v.") {
 			for _, tensor := range layer {
@@ -589,6 +593,12 @@ func (llm GGML) VisionGraphSize() (weights, graphSize uint64) {
 
 	imageSize := uint64(llm.KV().Uint("vision.image_size"))
 	patchSize := uint64(llm.KV().Uint("vision.patch_size"))
+	if patchSize == 0 {
+		slog.Warn("unknown patch size for vision model")
+		return
+	}
+
+	numChannels := uint64(llm.KV().Uint("vision.num_channels"))
 
 	numPatches := (imageSize / patchSize) * (imageSize / patchSize)
 	if _, ok := llm.Tensors().GroupLayers()["v"]["class_embd"]; ok {
@@ -596,15 +606,13 @@ func (llm GGML) VisionGraphSize() (weights, graphSize uint64) {
 	}
 
 	headCount := uint64(llm.KV().Uint("vision.attention.head_count"))
+	embeddingLength := uint64(llm.KV().Uint("vision.embedding_length"))
 
 	switch llm.KV().Architecture() {
 	case "mllama":
-
 		numPaddedPatches := numPatches + 8 - (numPatches%8)%8
 
 		maxNumTiles := uint64(llm.KV().Uint("vision.max_num_tiles"))
-		numChannels := uint64(llm.KV().Uint("vision.num_channels"))
-		embeddingLength := uint64(llm.KV().Uint("vision.embedding_length"))
 
 		graphSize = 4 * (8 +
 			imageSize*imageSize*numChannels*maxNumTiles +
@@ -612,7 +620,9 @@ func (llm GGML) VisionGraphSize() (weights, graphSize uint64) {
 			9*embeddingLength*numPaddedPatches*maxNumTiles +
 			numPaddedPatches*maxNumTiles*numPaddedPatches*maxNumTiles*headCount)
 	case "gemma3":
-		graphSize = 4 * (numPatches * numPatches * headCount)
+		graphSize = 4 * (imageSize*imageSize*numChannels +
+			embeddingLength*patchSize +
+			numPatches*numPatches*headCount)
 	}
 
 	return weights, graphSize
