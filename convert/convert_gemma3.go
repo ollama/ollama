@@ -87,7 +87,7 @@ func (p *gemma3Model) KV(t *Tokenizer) ggml.KV {
 		kv["gemma3.embedding_length"] = p.HiddenSize
 		kv["gemma3.feed_forward_length"] = p.IntermediateSize
 	default:
-		kv["gemma3.context_length"] = cmp.Or(p.MaxPositionEmbeddings, 8192)
+		kv["gemma3.context_length"] = cmp.Or(p.MaxPositionEmbeddings, 131072)
 		kv["gemma3.embedding_length"] = p.TextModel.HiddenSize
 		kv["gemma3.feed_forward_length"] = p.TextModel.IntermediateSize
 		kv["gemma3.attention.sliding_window"] = p.TextModel.SlidingWindow
