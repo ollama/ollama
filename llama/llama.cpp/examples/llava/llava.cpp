@@ -1,4 +1,5 @@
 #include "clip.h"
+#include "audio.h"
 #include "llava.h"
 
 #include "llama.h"
@@ -566,6 +567,45 @@ struct llava_image_embed * llava_image_embed_make_with_filename(struct clip_ctx 
     llava_image_embed *embed = llava_image_embed_make_with_bytes(ctx_clip, n_threads, image_bytes, image_bytes_length);
     free(image_bytes);
 
+    return embed;
+}
+
+struct llava_image_embed * omni_audio_embed_make_with_bytes(audio_ctx * ctx_audio, int n_threads, audio_u8 * audio, int n_output) {
+    audio_f32 * res_auds = new audio_f32;
+    // printf("omni_audio_embed_make_with_bytes 1 :\n");
+    if (!audio_wav_preprocess(ctx_audio, audio, res_auds, n_output)) {
+        LOG_ERR("%s: failed to preprocess audio file\n", __func__);
+        return NULL;
+    }
+    // printf("omni_audio_embed_make_with_bytes 2 :\n");
+    audio_f32 ret;
+    if (!audio_encode(ctx_audio, n_threads, res_auds, ret)) {
+        LOG_ERR("%s: cannot encode audio, aborting\n", __func__);
+        return NULL;
+    }
+    // printf("omni_audio_embed_make_with_bytes 4 :\n");
+    auto result = (llava_image_embed*)malloc(sizeof(llava_image_embed));
+    result->embed = new float[ret.buf.size()];
+    memcpy(result->embed, ret.buf.data(), ret.buf.size() * sizeof(float));
+    result->n_image_pos = ret.n_len; 
+    // printf("===audio embed tokens: %d %d\n", result->n_pos, ret.buf.size() / ret.n_len);
+    return result;
+}
+
+struct llava_image_embed * omni_audio_embed_make_with_filename(struct audio_ctx * ctx_audio, int n_threads, std::string audio_path, int n_output) {
+    audio_u8 * audio = new audio_u8;
+    // printf("omni_audio_embed_make_with_filename 1 :%s\n", audio_path.c_str());
+    if (!read_binary_file(audio_path, &audio->buf)) {
+        LOG_ERR("%s: failed to read audio file %s\n", __func__,  audio_path.c_str());
+        return NULL;
+    }
+    // printf("omni_audio_embed_make_with_filename 2 :%s\n", audio_path.c_str());
+    llava_image_embed *embed = omni_audio_embed_make_with_bytes(ctx_audio, n_threads, audio, n_output);
+    if (embed == NULL) {
+        LOG_ERR("%s: failed to preprocess audio file, %s\n", __func__, audio_path.c_str());
+    }
+    free(audio);
+    // printf("omni_audio_embed_make_with_filename 3 :%s\n", audio_path.c_str());
     return embed;
 }
 
