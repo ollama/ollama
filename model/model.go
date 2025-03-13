@@ -22,7 +22,7 @@ import (
 	"github.com/ollama/ollama/model/input"
 )
 
-var ErrNoVisionModel = errors.New("vision model not found")
+var ErrNoVisionModel = errors.New("this model is missing data required for image input")
 
 // Model implements a specific model architecture, defining the forward pass and any model-specific configuration
 type Model interface {
