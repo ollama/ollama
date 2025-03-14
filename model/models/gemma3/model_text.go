@@ -11,7 +11,7 @@ import (
 	"github.com/ollama/ollama/model/input"
 )
 
-type TextOptions struct {
+type TextConfig struct {
 	hiddenSize, numHeads, numKVHeads int
 	attnKeyLen, attnValLen           int
 	eps, ropeScale                   float32
@@ -28,7 +28,7 @@ type TextModel struct {
 	OutputNorm     *nn.RMSNorm   `gguf:"output_norm"`
 	Output         *nn.Linear    `gguf:"output,alt:token_embd"`
 
-	*TextOptions
+	*TextConfig
 }
 
 const (
@@ -55,7 +55,7 @@ func newTextModel(c fs.Config) *TextModel {
 			},
 		),
 		Layers: make([]TextLayer, numBlocks),
-		TextOptions: &TextOptions{
+		TextConfig: &TextConfig{
 			hiddenSize:     int(c.Uint("embedding_length")),
 			numHeads:       int(c.Uint("attention.head_count")),
 			numKVHeads:     int(c.Uint("attention.head_count_kv")),
@@ -84,7 +84,7 @@ type TextSelfAttention struct {
 	Output    *nn.Linear  `gguf:"attn_output"`
 }
 
-func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *TextOptions) ml.Tensor {
+func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *TextConfig) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
 	ropeType := uint32(2)
 
@@ -120,12 +120,12 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, pos
 }
 
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	ropeBase := m.TextOptions.ropeLocalBase
+	ropeBase := m.TextConfig.ropeLocalBase
 	if (layer+1)%gemmaGlobalCacheCount == 0 {
-		ropeBase = m.TextOptions.ropeGlobalBase
+		ropeBase = m.TextConfig.ropeGlobalBase
 	}
 
-	return key.RoPE(ctx, shift, nil, uint32(m.TextOptions.attnKeyLen), uint32(2), ropeBase, m.TextOptions.ropeScale), nil
+	return key.RoPE(ctx, shift, nil, uint32(m.TextConfig.attnKeyLen), uint32(2), ropeBase, m.TextConfig.ropeScale), nil
 }
 
 type TextMLP struct {
@@ -134,7 +134,7 @@ type TextMLP struct {
 	Gate *nn.Linear `gguf:"ffn_gate"`
 }
 
-func (mlp *TextMLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *TextOptions) ml.Tensor {
+func (mlp *TextMLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *TextConfig) ml.Tensor {
 	hiddenState = mlp.Gate.Forward(ctx, hiddenState).GELU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenState))
 	return mlp.Down.Forward(ctx, hiddenState)
 }
@@ -148,7 +148,7 @@ type TextLayer struct {
 	PostMLPNorm       *nn.RMSNorm `gguf:"post_ffw_norm"`
 }
 
-func (l *TextLayer) Forward(ctx ml.Context, layer int, hiddenState, positionIDs, outputs ml.Tensor, cache kvcache.Cache, opts *TextOptions) ml.Tensor {
+func (l *TextLayer) Forward(ctx ml.Context, layer int, hiddenState, positionIDs, outputs ml.Tensor, cache kvcache.Cache, opts *TextConfig) ml.Tensor {
 	residual := hiddenState
 
 	hiddenState = l.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
@@ -173,7 +173,7 @@ func (l *TextLayer) Forward(ctx ml.Context, layer int, hiddenState, positionIDs,
 
 func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor, batch input.Batch, cache kvcache.Cache) ml.Tensor {
 	hiddenState := m.TokenEmbedding.Forward(ctx, inputs)
-	hiddenState = hiddenState.Scale(ctx, math.Sqrt(float64(m.TextOptions.hiddenSize)))
+	hiddenState = hiddenState.Scale(ctx, math.Sqrt(float64(m.TextConfig.hiddenSize)))
 
 	// set image embeddings
 	var except []int
@@ -206,7 +206,7 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 			lastLayerOutputs = outputs
 		}
 
-		hiddenState = layer.Forward(ctx, i, hiddenState, positions, lastLayerOutputs, cache, m.TextOptions)
+		hiddenState = layer.Forward(ctx, i, hiddenState, positions, lastLayerOutputs, cache, m.TextConfig)
 	}
 
 	hiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)
