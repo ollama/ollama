@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -260,6 +261,7 @@ func DefaultRegistry() (*Registry, error) {
 	}
 
 	var rc Registry
+	rc.UserAgent = UserAgent()
 	rc.Key, err = ssh.ParseRawPrivateKey(keyPEM)
 	if err != nil {
 		return nil, err
@@ -273,6 +275,16 @@ func DefaultRegistry() (*Registry, error) {
 		}
 	}
 	return &rc, nil
+}
+
+func UserAgent() string {
+	buildinfo, _ := debug.ReadBuildInfo()
+	return fmt.Sprintf("ollama/%s (%s %s) Go/%s",
+		buildinfo.Main.Version,
+		runtime.GOARCH,
+		runtime.GOOS,
+		runtime.Version(),
+	)
 }
 
 func (r *Registry) maxStreams() int {
