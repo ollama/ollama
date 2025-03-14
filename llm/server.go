@@ -402,7 +402,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			s.cmd.Env = append(s.cmd.Env, visibleDevicesEnv+"="+visibleDevicesEnvVal)
 		}
 
-		slog.Info("starting llama server", "cmd", s.cmd.String())
+		slog.Info("starting llama server", "cmd", s.cmd)
 		if envconfig.Debug() {
 			filteredEnv := []string{}
 			for _, ev := range s.cmd.Env {
@@ -499,7 +499,7 @@ func (s *llmServer) getServerStatus(ctx context.Context) (ServerStatus, error) {
 		}
 		if s.cmd.ProcessState.ExitCode() == -1 {
 			// Most likely a signal killed it, log some more details to try to help troubleshoot
-			slog.Warn("llama runner process no longer running", "sys", s.cmd.ProcessState.Sys(), "string", s.cmd.ProcessState.String())
+			slog.Warn("llama runner process no longer running", "sys", s.cmd.ProcessState.Sys(), "string", s.cmd.ProcessState)
 		}
 		return ServerStatusError, fmt.Errorf("llama runner process no longer running: %d %s", s.cmd.ProcessState.ExitCode(), msg)
 	}
@@ -611,7 +611,7 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 		status, _ := s.getServerStatus(ctx)
 		if lastStatus != status && status != ServerStatusReady {
 			// Only log on status changes
-			slog.Info("waiting for server to become available", "status", status.String())
+			slog.Info("waiting for server to become available", "status", status)
 		}
 		switch status {
 		case ServerStatusReady:
@@ -625,7 +625,7 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 				slog.Debug(fmt.Sprintf("model load progress %0.2f", s.loadProgress))
 				stallTimer = time.Now().Add(stallDuration)
 			} else if !fullyLoaded && int(s.loadProgress*100.0) >= 100 {
-				slog.Debug("model load completed, waiting for server to become available", "status", status.String())
+				slog.Debug("model load completed, waiting for server to become available", "status", status)
 				stallTimer = time.Now().Add(stallDuration)
 				fullyLoaded = true
 			}
@@ -733,7 +733,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	if err != nil {
 		return err
 	} else if status != ServerStatusReady {
-		return fmt.Errorf("unexpected server status: %s", status.String())
+		return fmt.Errorf("unexpected server status: %s", status)
 	}
 
 	// Handling JSON marshaling with special characters unescaped.
@@ -865,7 +865,7 @@ func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, err
 	if err != nil {
 		return nil, err
 	} else if status != ServerStatusReady {
-		return nil, fmt.Errorf("unexpected server status: %s", status.String())
+		return nil, fmt.Errorf("unexpected server status: %s", status)
 	}
 
 	data, err := json.Marshal(EmbeddingRequest{Content: input})

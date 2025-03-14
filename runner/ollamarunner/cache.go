@@ -107,6 +107,7 @@ func (c *InputCache) LoadCacheSlot(prompt []input.Input, cachePrompt bool) (*Inp
 		return nil, nil, err
 	}
 
+	// TODO (brucemacd): cachePrompt is always true for completion, but false for embedding, can this be improved?
 	if !cachePrompt {
 		numPast = 0
 	}
