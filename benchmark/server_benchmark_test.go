@@ -83,8 +83,7 @@ func BenchmarkColdStart(b *testing.B) {
 			// Set number of tokens as our throughput metric
 			b.SetBytes(int64(tt.maxTokens))
 
-			b.ResetTimer()
-			for range b.N {
+			for b.Loop() {
 				b.StopTimer()
 				// Ensure model is unloaded before each iteration
 				unload(client, m, b)
@@ -122,12 +121,11 @@ func BenchmarkWarmStart(b *testing.B) {
 			// Set number of tokens as our throughput metric
 			b.SetBytes(int64(tt.maxTokens))
 
-			b.ResetTimer()
-			for range b.N {
+			for b.Loop() {
 				req := &api.GenerateRequest{
 					Model:   m,
 					Prompt:  tt.prompt,
-					Options: map[string]interface{}{"num_predict": tt.maxTokens, "temperature": 0.1},
+					Options: map[string]any{"num_predict": tt.maxTokens, "temperature": 0.1},
 				}
 
 				runGenerateBenchmark(b, ctx, client, req)
