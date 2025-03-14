@@ -34,10 +34,14 @@ import (
 	_ "github.com/ollama/ollama/model/models"
 )
 
+type contextList struct {
+	list []ml.Context
+}
+
 type Sequence struct {
-	// ctx for allocating tensors that last the lifetime of the sequence, such as
+	// ctxs are used for allocating tensors that last the lifetime of the sequence, such as
 	// multimodal embeddings
-	ctx ml.Context
+	ctxs *contextList
 
 	// batch index
 	iBatch int
@@ -99,9 +103,8 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	s.ready.Wait()
 
 	startTime := time.Now()
-	ctx := s.model.Backend().NewContext()
 
-	inputs, err := s.inputs(ctx, prompt, images)
+	inputs, ctxs, err := s.inputs(prompt, images)
 	if err != nil {
 		return nil, fmt.Errorf("failed to process inputs: %w", err)
 	} else if len(inputs) == 0 {
@@ -127,7 +130,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	// TODO(jessegross): Ingest cached history for grammar
 
 	return &Sequence{
-		ctx:                 ctx,
+		ctxs:                ctxs,
 		inputs:              inputs,
 		numPromptInputs:     len(inputs),
 		startProcessingTime: startTime,
@@ -146,7 +149,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 // inputs processes the prompt and images into a list of inputs
 // by splitting the prompt on [img-<n>] tags, tokenizing text and
 // decoding images
-func (s *Server) inputs(ctx ml.Context, prompt string, images []llm.ImageData) ([]input.Input, error) {
+func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, *contextList, error) {
 	var inputs []input.Input
 	var parts []string
 	var matches [][]string
@@ -161,12 +164,19 @@ func (s *Server) inputs(ctx ml.Context, prompt string, images []llm.ImageData) (
 		parts = []string{prompt}
 	}
 
+	var contexts contextList
+	runtime.AddCleanup(&contexts, func(ctxs []ml.Context) {
+		for _, ctx := range ctxs {
+			ctx.Close()
+		}
+	}, contexts.list)
+
 	postTokenize := false
 	for i, part := range parts {
 		// text - tokenize
 		tokens, err := s.model.(model.TextProcessor).Encode(part, i == 0)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		for _, t := range tokens {
@@ -186,12 +196,14 @@ func (s *Server) inputs(ctx ml.Context, prompt string, images []llm.ImageData) (
 			}
 
 			if imageIndex < 0 {
-				return nil, fmt.Errorf("invalid image index: %d", n)
+				return nil, nil, fmt.Errorf("invalid image index: %d", n)
 			}
 
+			ctx := s.model.Backend().NewContext()
+			contexts.list = append(contexts.list, ctx)
 			imageEmbeddings, err := multimodalProcessor.EncodeMultimodal(ctx, images[imageIndex].Data)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 
 			s.multimodalHash.Reset()
@@ -205,13 +217,13 @@ func (s *Server) inputs(ctx ml.Context, prompt string, images []llm.ImageData) (
 
 	if visionModel && postTokenize {
 		var err error
-		inputs, err = multimodalProcessor.PostTokenize(ctx, inputs)
+		inputs, err = multimodalProcessor.PostTokenize(inputs)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
-	return inputs, nil
+	return inputs, &contexts, nil
 }
 
 type Server struct {
@@ -306,7 +318,6 @@ func (s *Server) removeSequence(seqIndex int, reason string) {
 	close(seq.responses)
 	close(seq.embedding)
 	seq.cache.InUse = false
-	seq.ctx.Close()
 	s.seqs[seqIndex] = nil
 	s.seqsSem.Release(1)
 }
