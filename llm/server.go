@@ -687,10 +687,13 @@ type completion struct {
 }
 
 type CompletionRequest struct {
-	Prompt  string
-	Format  json.RawMessage
-	Images  []ImageData
-	Options *api.Options
+	Prompt    string
+	Format    json.RawMessage
+	Images    []ImageData
+	ImageUrls []string
+	AudioUrls []string
+	VideoUrls []string
+	Options   *api.Options
 }
 
 type CompletionResponse struct {
@@ -725,6 +728,9 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		"seed":              req.Options.Seed,
 		"stop":              req.Options.Stop,
 		"image_data":        req.Images,
+		"image_urls":        req.ImageUrls,
+		"audio_urls":        req.AudioUrls,
+		"video_urls":        req.VideoUrls,
 		"cache_prompt":      true,
 	}
 

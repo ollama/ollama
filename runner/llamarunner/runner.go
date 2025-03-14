@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -99,12 +100,75 @@ type NewSequenceParams struct {
 	embedding      bool
 }
 
-func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequenceParams) (*Sequence, error) {
+func ExtractFrames(videoPath string) ([]string, string, error) {
+	tempDir, err := os.MkdirTemp(filepath.Dir(videoPath), "video_frames_*")
+	if err != nil {
+		return nil, "", fmt.Errorf("创建临时目录失败: %v", err)
+	}
+
+	outputPattern := filepath.Join(tempDir, "frame_%04d.png")
+	cmd := exec.Command("ffmpeg", "-i", videoPath, "-vf", "fps=1", outputPattern)
+
+	if err := cmd.Run(); err != nil {
+		return nil, "", fmt.Errorf("ffmpeg 执行失败: %v", err)
+	}
+
+	imagePaths, err := filepath.Glob(filepath.Join(tempDir, "frame_*.png"))
+	if err != nil {
+		return nil, "", fmt.Errorf("遍历图片失败: %v", err)
+	}
+
+	return imagePaths, tempDir, nil
+}
+
+func ExtractFrames_audio(audiopath string) ([]string, error) {
+	tempDir, err := os.MkdirTemp(filepath.Dir(audiopath), "audio_frames_")
+	if err != nil {
+		return nil, fmt.Errorf("创建临时目录失败: %w", err)
+	}
+	fmt.Println("临时目录:", tempDir)
+	duration, err := getAudioDuration(audiopath)
+	if err != nil {
+		return nil, fmt.Errorf("获取音频时长失败: %w", err)
+	}
+
+	var framePaths []string
+	for i := 0; i < duration; i++ {
+		outputPath := filepath.Join(tempDir, fmt.Sprintf("frame_%03d.wav", i))
+		cmd := exec.Command("ffmpeg", "-y", "-i", audiopath, "-ss", fmt.Sprintf("%d", i), "-t", "1",
+			"-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", outputPath)
+		if err := cmd.Run(); err != nil {
+			return nil, fmt.Errorf("抽取第 %d 秒失败: %w", i, err)
+		}
+		fmt.Println("生成:", outputPath)
+		framePaths = append(framePaths, outputPath)
+	}
+
+	return framePaths, nil
+}
+
+func getAudioDuration(audiopath string) (int, error) {
+	cmd := exec.Command("ffprobe", "-i", audiopath, "-show_entries", "format=duration", "-v", "quiet", "-of", "csv=p=0")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, err
+	}
+
+	durationStr := strings.TrimSpace(string(output))
+	durationFloat, err := strconv.ParseFloat(durationStr, 64)
+	if err != nil {
+		return 0, err
+	}
+
+	return int(durationFloat), nil
+}
+
+func (s *Server) NewSequence(prompt string, images []ImageData, audioUrls, videoUrls []string, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
 
 	startTime := time.Now()
 
-	inputs, err := s.inputs(prompt, images)
+	inputs, err := s.inputs(prompt, images, audioUrls, videoUrls)
 	if err != nil {
 		return nil, fmt.Errorf("failed to process inputs: %w", err)
 	} else if len(inputs) == 0 {
@@ -163,7 +227,7 @@ func (s *Server) NewSequence(prompt string, images []ImageData, params NewSequen
 // inputs processes the prompt and images into a list of inputs
 // by splitting the prompt on [img-<n>] tags, tokenizing text and
 // generating image embeddings for each image
-func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
+func (s *Server) inputs(prompt string, images []ImageData, audioUrls, videoUrls []string) ([]input, error) {
 	var inputs []input
 	var parts []string
 	var matches [][]string
@@ -186,8 +250,60 @@ func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 		for _, t := range tokens {
 			inputs = append(inputs, input{token: t})
 		}
-
 		// image - generate image embedding
+
+		print("===>>>:", len(audioUrls), " or", len(videoUrls), "\n")
+		if len(audioUrls) > 0 || len(videoUrls) > 0 {
+			minicpmv_version := s.image.clip.ClipIsMinicpmv()
+			print("===>>>:", minicpmv_version, "\n")
+			if minicpmv_version == 3 {
+				// tokens1, err1 := s.lc.Model().Tokenize("<unit>", true, true)
+				tokens2, err2 := s.lc.Model().Tokenize("<image>", true, true)
+				tokens3, err3 := s.lc.Model().Tokenize("</image>", true, true)
+				// tokens4, err4 := s.lc.Model().Tokenize("<|audio_start|>", true, true)
+				// tokens5, err5 := s.lc.Model().Tokenize("<|audio_end|>", true, true)
+				if err2 != nil || err3 != nil {
+					return nil, err
+				}
+				frames, tempDir, err := ExtractFrames(videoUrls[len(videoUrls)-1])
+				print("=== output path >>>:", tempDir, "\n")
+				if err != nil {
+					fmt.Println("视频抽帧失败:", err)
+					return nil, err
+				}
+				s.image.clip.ClipUhdMaxSliceNums(1)
+				for _, frame := range frames {
+					embed, err := s.image.OmniNewEmbed(s.lc, frame)
+					if err != nil {
+						return nil, err
+					}
+					inputs = append(inputs, input{token: tokens2[0]})
+					for _, e := range embed {
+						inputs = append(inputs, input{embed: e})
+					}
+					inputs = append(inputs, input{token: tokens3[0]})
+				}
+				s.image.clip.ClipUhdMaxSliceNums(9)
+			} else if minicpmv_version == 4 {
+
+				frames, err := ExtractFrames_audio(audioUrls[len(videoUrls)-1])
+				if err != nil {
+					fmt.Println("错误:", err)
+					return nil, err
+				}
+
+				for _, frame := range frames {
+					embed, err := s.image.audioNewEmbed(s.lc, frame)
+					if err != nil {
+						return nil, err
+					}
+					for _, e := range embed {
+						inputs = append(inputs, input{embed: e})
+					}
+				}
+			}
+		}
+
 		if i < len(matches) {
 			n, _ := strconv.Atoi(matches[i][1])
 
@@ -208,8 +324,68 @@ func (s *Server) inputs(prompt string, images []ImageData) ([]input, error) {
 				return nil, err
 			}
 
-			for _, e := range embed {
-				inputs = append(inputs, input{embed: e})
+			minicpmv_version := s.image.clip.ClipIsMinicpmv()
+			if minicpmv_version > 0 {
+				idx := 0
+				patch_num := s.image.clip.ClipNPatches()
+				slice_num := len(embed) / patch_num
+
+				tokens1, err1 := s.lc.Model().Tokenize("<image>", true, true)
+				tokens2, err2 := s.lc.Model().Tokenize("</image>", true, true)
+				tokens3, err3 := s.lc.Model().Tokenize("<slice>", true, true)
+				tokens4, err4 := s.lc.Model().Tokenize("</slice>", true, true)
+				tokens5, err5 := s.lc.Model().Tokenize("\n", true, true)
+				if err1 != nil || err2 != nil || err3 != nil || err4 != nil || err5 != nil {
+					return nil, err
+				}
+
+				inputs = append(inputs, input{token: tokens1[0]})
+				for _, e := range embed[patch_num*idx : patch_num*(idx+1)] {
+					inputs = append(inputs, input{embed: e})
+				}
+				idx += 1
+				inputs = append(inputs, input{token: tokens2[0]})
+
+				if slice_num > 1 {
+					slice_col := s.image.clip.ClipUhdNumImageEmbedsCol()
+					slice_row := (slice_num - 1) / slice_col
+
+					if minicpmv_version == 2 {
+						inputs = append(inputs, input{token: tokens3[0]})
+						for i := 0; i < slice_row; i++ {
+							for j := 0; j < slice_col; j++ {
+								inputs = append(inputs, input{token: tokens1[0]})
+								for _, e := range embed[patch_num*idx : patch_num*(idx+1)] {
+									inputs = append(inputs, input{embed: e})
+								}
+								idx += 1
+								inputs = append(inputs, input{token: tokens2[0]})
+								if j == slice_col-1 {
+									inputs = append(inputs, input{token: tokens5[0]})
+								}
+							}
+						}
+						inputs = append(inputs, input{token: tokens4[0]})
+					} else if minicpmv_version == 3 {
+						for i := 0; i < slice_row; i++ {
+							for j := 0; j < slice_col; j++ {
+								inputs = append(inputs, input{token: tokens3[0]})
+								for _, e := range embed[patch_num*idx : patch_num*(idx+1)] {
+									inputs = append(inputs, input{embed: e})
+								}
+								idx += 1
+								inputs = append(inputs, input{token: tokens4[0]})
+								if j == slice_col-1 {
+									inputs = append(inputs, input{token: tokens5[0]})
+								}
+							}
+						}
+					}
+				}
+			} else {
+				for _, e := range embed {
+					inputs = append(inputs, input{embed: e})
+				}
 			}
 		}
 	}
@@ -576,6 +752,9 @@ type CompletionRequest struct {
 	Images      []ImageData `json:"image_data"`
 	Grammar     string      `json:"grammar"`
 	CachePrompt bool        `json:"cache_prompt"`
+	ImageUrls   []string    `json:"image_urls"`
+	AudioUrls   []string    `json:"audio_urls"`
+	VideoUrls   []string    `json:"video_urls"`
 
 	Options
 }
@@ -636,7 +815,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	samplingParams.Seed = uint32(req.Seed)
 	samplingParams.Grammar = req.Grammar
 
-	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
+	seq, err := s.NewSequence(req.Prompt, req.Images, req.AudioUrls, req.VideoUrls, NewSequenceParams{
 		numPredict:     req.NumPredict,
 		stop:           req.Stop,
 		numKeep:        req.NumKeep,
@@ -741,7 +920,7 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 
 	slog.Debug("embedding request", "content", req.Content)
 
-	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{embedding: true})
+	seq, err := s.NewSequence(req.Content, nil, nil, nil, NewSequenceParams{embedding: true})
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return
@@ -995,4 +1174,12 @@ func Execute(args []string) error {
 	}
 
 	return nil
+}
+
+func (s *Server) Omni(input string, ImageUrls, audioUrls, videoUrls []string) string {
+	if input == "" {
+		return "输入字符串不能为空"
+	}
+	// TODO
+	return "你好，欢迎使用omni"
 }

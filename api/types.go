@@ -79,6 +79,10 @@ type GenerateRequest struct {
 	// request, for multimodal models.
 	Images []ImageData `json:"images,omitempty"`
 
+	ImageUrls []string `json:"image_urls,omitempty"`
+	AudioUrls []string `json:"audios,omitempty"`
+	VideoUrls []string `json:"videos,omitempty"`
+
 	// Options lists model-specific options. For example, temperature can be
 	// set through this field, if the model supports it.
 	Options map[string]interface{} `json:"options"`
@@ -128,6 +132,9 @@ type Message struct {
 	Role      string      `json:"role"`
 	Content   string      `json:"content"`
 	Images    []ImageData `json:"images,omitempty"`
+	ImageUrls []string    `json:"image_urls,omitempty"`
+	AudioUrls []string    `json:"audio_urls,omitempty"`
+	VideoUrls []string    `json:"video_urls,omitempty"`
 	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
 }
 
