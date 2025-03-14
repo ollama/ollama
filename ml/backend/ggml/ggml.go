@@ -371,7 +371,7 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 			(*C.ggml_backend_buffer_type_t)(unsafe.Pointer(&schedBufts[0])),
 			C.int(len(schedBackends)),
 			C.size_t(maxGraphNodes),
-			true,
+			C._Bool(len(gpus) > 1 && slices.Contains(gpus, output.d)),
 		),
 		input:  deviceBufferTypes[input.d],
 		output: deviceBufferTypes[output.d],
