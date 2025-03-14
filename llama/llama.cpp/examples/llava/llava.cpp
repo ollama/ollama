@@ -1,7 +1,6 @@
 #include "clip.h"
 #include "audio.h"
 #include "llava.h"
-
 #include "llama.h"
 
 #include <algorithm>
@@ -11,6 +10,8 @@
 #include <cstring>
 #include <limits>
 #include <vector>
+
+#include "utils/audio_common.h"
 
 #if defined(LLAVA_LOG_OFF)
 #   define LOG_INF(...)
@@ -44,6 +45,16 @@ struct clip_image_f32 {
 struct clip_image_grid_shape {
     int first;
     int second;
+};
+
+struct audio_u8 {
+    std::vector<uint8_t> buf;
+};
+
+struct audio_f32 {
+    int n_mel;
+    int n_len;
+    std::vector<float> buf;
 };
 
 /**
@@ -578,16 +589,16 @@ struct llava_image_embed * omni_audio_embed_make_with_bytes(audio_ctx * ctx_audi
         return NULL;
     }
     // printf("omni_audio_embed_make_with_bytes 2 :\n");
-    audio_f32 ret;
+    audio_f32 * ret;
     if (!audio_encode(ctx_audio, n_threads, res_auds, ret)) {
         LOG_ERR("%s: cannot encode audio, aborting\n", __func__);
         return NULL;
     }
     // printf("omni_audio_embed_make_with_bytes 4 :\n");
     auto result = (llava_image_embed*)malloc(sizeof(llava_image_embed));
-    result->embed = new float[ret.buf.size()];
-    memcpy(result->embed, ret.buf.data(), ret.buf.size() * sizeof(float));
-    result->n_image_pos = ret.n_len; 
+    result->embed = new float[ret->buf.size()];
+    memcpy(result->embed, ret->buf.data(), ret->buf.size() * sizeof(float));
+    result->n_image_pos = ret->n_len; 
     // printf("===audio embed tokens: %d %d\n", result->n_pos, ret.buf.size() / ret.n_len);
     return result;
 }
@@ -595,14 +606,15 @@ struct llava_image_embed * omni_audio_embed_make_with_bytes(audio_ctx * ctx_audi
 struct llava_image_embed * omni_audio_embed_make_with_filename(struct audio_ctx * ctx_audio, int n_threads, std::string audio_path, int n_output) {
     audio_u8 * audio = new audio_u8;
     // printf("omni_audio_embed_make_with_filename 1 :%s\n", audio_path.c_str());
-    if (!read_binary_file(audio_path, &audio->buf)) {
-        LOG_ERR("%s: failed to read audio file %s\n", __func__,  audio_path.c_str());
+    std::string audio_path_str = audio_path;
+    if (!read_binary_file(audio_path_str, &audio->buf)) {
+        LOG_ERR("%s: failed to read audio file %s\n", __func__,  audio_path_str.c_str());
         return NULL;
     }
     // printf("omni_audio_embed_make_with_filename 2 :%s\n", audio_path.c_str());
     llava_image_embed *embed = omni_audio_embed_make_with_bytes(ctx_audio, n_threads, audio, n_output);
     if (embed == NULL) {
-        LOG_ERR("%s: failed to preprocess audio file, %s\n", __func__, audio_path.c_str());
+        LOG_ERR("%s: failed to preprocess audio file, %s\n", __func__, audio_path_str.c_str());
     }
     free(audio);
     // printf("omni_audio_embed_make_with_filename 3 :%s\n", audio_path.c_str());

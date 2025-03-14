@@ -1,5 +1,6 @@
 #include "audio.h"
 #include "ggml.h"
+#include "ggml-cpu.h"
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
 
@@ -36,7 +37,7 @@
 #include <thread>
 
 #include <algorithm>
-
+#include "gguf.h"
 #include "utils/audio_common.h"
 #include <sys/stat.h>
 #include "json.hpp"
@@ -47,6 +48,65 @@
 #define LOG_ERR(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
 #define LOG_DBG(...) do { fprintf(stderr, __VA_ARGS__); } while (0)
 
+struct audio_u8 {
+    std::vector<uint8_t> buf;
+};
+
+struct audio_f32 {
+    int n_mel;
+    int n_len;
+    std::vector<float> buf;
+};
+
+struct audio_u8_batch {
+    struct audio_u8 * data;
+    size_t size;
+};
+
+struct audio_f32_batch {
+    struct audio_f32 * data;
+    size_t size;
+};
+
+struct whisper_filters {
+    int32_t n_mel;
+    int32_t n_fft = 400;
+    std::vector<float> data;
+};
+
+// samples_per_sec + N_FFT - HOP_LENGTH
+//static constexpr int FIXED_INPUT_SIZE = 16240;
+static constexpr int FIXED_INPUT_SIZE = 480000;
+//static constexpr int FIXED_SHAPE_SIZE = 80 * 102;
+static constexpr int FIXED_SHAPE_SIZE = 80 * 735;
+static constexpr int OTHER_FIXED_SHAPE_SIZE = 80 * 102;
+
+struct extractor_config {
+    int32_t feature_size = 80;
+    int32_t n_samples = 480000;
+    int32_t sampling_rate = 16000;
+    int32_t frame_size = 400;
+    int32_t hop_length = 160;
+    int32_t chunk_length = 30;
+    float padding_value = 0.0;
+    whisper_filters mel_filters;
+
+    extractor_config(){
+        init();
+    }
+    void init() {
+        int num_frequency_bins = frame_size / 2 + 1;
+        mel_filters.n_mel = feature_size;
+        mel_filters.n_fft = num_frequency_bins;
+        mel_filters.data.resize(num_frequency_bins * feature_size);
+        compute_mel_filter_bank(true);
+    }
+
+    // 从 JSON 配置文件中初始化配置
+    bool init_from_file(const std::string& file_path);
+
+    void compute_mel_filter_bank(bool norm_slaney);
+};
 struct audio_hparams {
     int32_t n_vocab       = 51864;
     int32_t n_audio_ctx   = 1500;
@@ -789,7 +849,7 @@ static int whisper_pcm_to_mel(extractor_config config, const float * samples,
     return 0;
 }
 
-bool feature_extract_v(extractor_config config,
+static bool feature_extract_v(extractor_config config,
                      const std::vector<float>& pcmf32,
                      audio_f32* features,
                      int n_output) {
@@ -860,8 +920,9 @@ bool feature_extract_f(extractor_config config,
                      int n_output) {
     std::vector<float> pcmf32;               // mono-channel F32 PCM
     std::vector<std::vector<float>> pcmf32s; // stereo-channel F32 PCM
-    if (!read_wav(fname, pcmf32, pcmf32s, false)) {
-        std::cerr << "failed to read wav from " << fname << std::endl;
+    std::string fname_str = fname;
+    if (!read_wav(fname_str, pcmf32, pcmf32s, false)) {
+        std::cerr << "failed to read wav from " << fname_str << std::endl;
         return false;
     }
     // printf("pcmf32: %d, pcmf32s: %d\n", pcmf32.size(), pcmf32s.size()); 
@@ -903,9 +964,9 @@ static struct ggml_tensor * get_tensor(struct ggml_context * ctx, const std::str
 
 
 // 加载 GGUF 模型的函数
-static bool load_gguf_model(const std::string &gguf_path, audio_ctx &ctx) {
+static bool load_gguf_model(const char * gguf_path, audio_ctx &ctx) {
     auto & config = ctx.encoder_config;
-    const char *fname = gguf_path.c_str();
+    const char *fname = gguf_path;
     struct ggml_context * meta = NULL;
 
     struct gguf_init_params params = {
@@ -915,7 +976,7 @@ static bool load_gguf_model(const std::string &gguf_path, audio_ctx &ctx) {
 
     struct gguf_context * gguf_ctx = gguf_init_from_file(fname, params);
     if (!gguf_ctx) {
-        throw std::runtime_error("Failed to load GGUF model from " + gguf_path);
+        throw std::runtime_error("Failed to load GGUF model");
     }
 
     const int n_tensors = gguf_get_n_tensors(gguf_ctx);
@@ -1061,7 +1122,7 @@ size_t audio_embd_nbytes() {
     return 25 * 2560 * sizeof(float);
 }
 
-struct audio_ctx* audio_ctx_init(const std::string& model_path) {
+struct audio_ctx* audio_ctx_init(const char * fname) {
     // std::cout << __func__ << model_path << std::endl;
     audio_ctx* ctx = new audio_ctx;
     // if (!ctx->config.init_from_file(model_path)) {
@@ -1074,9 +1135,7 @@ struct audio_ctx* audio_ctx_init(const std::string& model_path) {
     // }
 
     // std::string gguf_path = model_path + "/whisper.gguf";
-    //std::string gguf_path = "/Users/zkh/Downloads/whisper-new.gguf";
-    LOG_INF("Loading GGUF model from: %s\n", model_path.c_str());
-    if (!load_gguf_model(model_path, *ctx)) {
+    if (!load_gguf_model(fname, *ctx)) {
         std::cerr << __func__ << ": failed to load GGUF model." << std::endl;
         delete ctx;
         return nullptr;
@@ -1318,7 +1377,7 @@ static ggml_cgraph * whisper_build_graph(audio_ctx * ctx) {
     return gf;
 }
 
-static bool audio_batch_encode(struct audio_ctx * ctx, const int n_threads, audio_f32_batch * audio_batch, audio_f32& ret) {
+static bool audio_batch_encode(struct audio_ctx * ctx, const int n_threads, audio_f32_batch * audio_batch, audio_f32 * ret) {
     if (audio_batch->size != 1) {
         std::cerr << __func__ << ": only support batch size 1." << std::endl;
         return false;
@@ -1365,15 +1424,15 @@ static bool audio_batch_encode(struct audio_ctx * ctx, const int n_threads, audi
     // ggml_backend_tensor_get(hidden_states, vec, 0, ggml_nbytes(hidden_states));
 
     struct ggml_tensor * audio_embeds = ggml_graph_get_tensor(gf, "audio_embeds");
-    ret.n_len = audio_embeds->ne[1];
+    ret->n_len = audio_embeds->ne[1];
     // printf("audio_embeds:");
     // print_tensor(audio_embeds);
-    ret.buf.resize(ggml_nelements(audio_embeds));
-    ggml_backend_tensor_get(audio_embeds, ret.buf.data(), 0, ggml_nbytes(audio_embeds));
+    ret->buf.resize(ggml_nelements(audio_embeds));
+    ggml_backend_tensor_get(audio_embeds, ret->buf.data(), 0, ggml_nbytes(audio_embeds));
     return true;
 }
 
-bool audio_encode(struct audio_ctx * ctx, const int n_threads, audio_f32 * aud, audio_f32& ret) {
+bool audio_encode(struct audio_ctx * ctx, const int n_threads, audio_f32 * aud, audio_f32 * ret) {
     if (ctx->npu_use_ane) {
         float * aud_embedding1 = aud->buf.data();
         // audio_encode_ane(aud_embedding1, ret.buf.data());

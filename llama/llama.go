@@ -543,7 +543,7 @@ func (c *ClipContext) NewEmbed(llamaContext *Context, data []byte) ([][]float32,
 }
 
 func (c *ClipContext) AudioNewEmbed(llamaContext *Context, imageUrls string) ([][]float32, error) {
-	l := C.omni_audio_embed_make_with_filename(c.c, C.int(llamaContext.numThreads), (C.CString(imageUrls)))
+	l := C.omni_audio_embed_make_with_filename(c.c, C.int(llamaContext.numThreads), (C.CString(imageUrls)), 50)
 	if l == nil {
 		return nil, errors.New("unable to make llava embedding from image")
 	}
