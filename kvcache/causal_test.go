@@ -484,6 +484,14 @@ func (t *testTensor) Floats() []float32 {
 	return out
 }
 
+func (t *testTensor) Neg(ctx ml.Context) ml.Tensor {
+	out := ctx.Empty(t.DType(), t.Shape()...).(*testTensor)
+	for i := range out.data {
+		out.data[i] = -t.data[i]
+	}
+	return out
+}
+
 func (t *testTensor) Add(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	out := ctx.Empty(t.DType(), t.Shape()...).(*testTensor)
 
@@ -538,17 +546,15 @@ func (t *testTensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, di
 	panic("not implemented")
 }
 
-func (t *testTensor) Tanh(ctx ml.Context) ml.Tensor {
+func (t *testTensor) IM2Col(ctx ml.Context, weight ml.Tensor, s0, s1, p0, p1, d0, d1 int) ml.Tensor {
 	panic("not implemented")
 }
 
-func (t *testTensor) GELU(ctx ml.Context) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) SILU(ctx ml.Context) ml.Tensor {
-	panic("not implemented")
-}
+func (t *testTensor) Cos(ctx ml.Context) ml.Tensor  { panic("not implemented") }
+func (t *testTensor) Sin(ctx ml.Context) ml.Tensor  { panic("not implemented") }
+func (t *testTensor) Tanh(ctx ml.Context) ml.Tensor { panic("not implemented") }
+func (t *testTensor) GELU(ctx ml.Context) ml.Tensor { panic("not implemented") }
+func (t *testTensor) SILU(ctx ml.Context) ml.Tensor { panic("not implemented") }
 
 func (t *testTensor) Reshape(ctx ml.Context, shape ...int) ml.Tensor {
 	panic("not implemented")
@@ -600,6 +606,8 @@ func (t *testTensor) Stack(ctx ml.Context, dim int, s ...ml.Tensor) ml.Tensor {
 	panic("not implemented")
 }
 
+func (t *testTensor) Repeat(ctx ml.Context, dim, n int) ml.Tensor { panic("not implemented") }
+
 func (t *testTensor) Concat(ctx ml.Context, t2 ml.Tensor, dim int) ml.Tensor {
 	panic("not implemented")
 }
@@ -612,3 +620,5 @@ func (t *testTensor) Copy(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	copy(t2.(*testTensor).data, t.data)
 	return nil
 }
+
+func (t *testTensor) Duplicate(ctx ml.Context) ml.Tensor { panic("not implemented") }
