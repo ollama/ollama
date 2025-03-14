@@ -85,13 +85,14 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 	}
 
 	// topK also sorts the tokens in descending order of logits
-	topK(&tokens, s.topK)
+	tokens = topK(tokens, s.topK)
 
-	temperature(&tokens, s.temperature)
-	softmax(&tokens)
+	// scale and normalize the tokens in place
+	temperature(tokens, s.temperature)
+	softmax(tokens)
 
-	topP(&tokens, s.topP)
-	minP(&tokens, s.minP)
+	tokens = topP(tokens, s.topP)
+	tokens = minP(tokens, s.minP)
 
 	// TODO: this should fall back to greedy sampling
 	// or topP, topK values etc should be such that

@@ -35,19 +35,19 @@ func compareLogits(t *testing.T, name string, want []float32, got []token) {
 func TestTemperature(t *testing.T) {
 	input := []float32{1.0, 4.0, -2.0, 0.0}
 	tokens := toTokens(input)
-	temperature(&tokens, 0.5)
+	temperature(tokens, 0.5)
 	want := []float32{2.0, 8.0, -4.0, 0.0}
 	compareLogits(t, "temperature(0.5)", want, tokens)
 
 	input = []float32{1.0, 4.0, -2.0, 0.0}
 	tokens = toTokens(input)
-	temperature(&tokens, 1.0)
+	temperature(tokens, 1.0)
 	want = []float32{1.0, 4.0, -2.0, 0.0}
 	compareLogits(t, "temperature(1)", want, tokens)
 
 	input = []float32{1.0, 4.0, -2.0, 0.0}
 	tokens = toTokens(input)
-	temperature(&tokens, 0.0)
+	temperature(tokens, 0.0)
 	want = []float32{1e7, 4e7, -2e7, 0.0}
 	compareLogits(t, "temperature(0)", want, tokens)
 }
@@ -96,7 +96,7 @@ func TestSoftmax(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tokens := toTokens(tt.input)
-			softmax(&tokens)
+			softmax(tokens)
 
 			if tt.expected != nil {
 				compareLogits(t, tt.name, tt.expected, tokens)
@@ -121,7 +121,7 @@ func TestSoftmax(t *testing.T) {
 func TestTopK(t *testing.T) {
 	input := []float32{0.026986899, 0.043722924, 0.036774673, 0.27755088, 0.0046718004, 0.08582123, 0.20409796, 0.00412893, 0.15720603, 0.045046154, 0.0030491839, 0.01681367}
 	tokens := toTokens(input)
-	topK(&tokens, 5)
+	tokens = topK(tokens, 5)
 	if len(tokens) != 5 {
 		t.Errorf("topK(5): wrong length: want 5, got %d", len(tokens))
 	}
@@ -129,7 +129,7 @@ func TestTopK(t *testing.T) {
 	compareLogits(t, "topK(3)", want, tokens)
 
 	tokens = toTokens(input)
-	topK(&tokens, 20)
+	tokens = topK(tokens, 20)
 	if len(tokens) != len(input) {
 		t.Errorf("topK(20): wrong length: want %d, got %d", len(input), len(tokens))
 	}
@@ -137,7 +137,7 @@ func TestTopK(t *testing.T) {
 	input = []float32{0.026986899, 0.043722924, 0.036774673, 0.27755088, 0.0046718004, 0.08582123, 0.20409796, 0.00412893, 0.15720603, 0.045046154, 0.0030491839, 0.01681367}
 	want = []float32{0.27755088, 0.20409796, 0.15720603, 0.08582123, 0.045046154, 0.043722924, 0.036774673, 0.026986899, 0.01681367, 0.0046718004, 0.00412893, 0.0030491839}
 	tokens = toTokens(input)
-	topK(&tokens, -1)
+	tokens = topK(tokens, -1)
 	if len(tokens) != len(input) {
 		t.Errorf("topK(-1): wrong length: want %d, got %d", len(input), len(tokens))
 	}
@@ -146,7 +146,7 @@ func TestTopK(t *testing.T) {
 	input = []float32{0.026986899, 0.043722924, 0.036774673, 0.27755088, 0.0046718004, 0.08582123, 0.20409796, 0.00412893, 0.15720603, 0.045046154, 0.0030491839, 0.01681367}
 	want = []float32{0.27755088, 0.20409796, 0.15720603, 0.08582123, 0.045046154, 0.043722924, 0.036774673, 0.026986899, 0.01681367, 0.0046718004, 0.00412893, 0.0030491839}
 	tokens = toTokens(input)
-	topK(&tokens, 0)
+	tokens = topK(tokens, 0)
 	if len(tokens) != len(input) {
 		t.Errorf("topK(-1): wrong length: want %d, got %d", len(input), len(tokens))
 	}
@@ -154,7 +154,7 @@ func TestTopK(t *testing.T) {
 
 	input = []float32{-1e7, -2e7, -3e7, -4e7}
 	tokens = toTokens(input)
-	topK(&tokens, 1)
+	tokens = topK(tokens, 1)
 	if len(tokens) < 1 {
 		t.Error("topK should keep at least one token")
 	}
@@ -165,11 +165,11 @@ func TestTopP(t *testing.T) {
 	tokens := toTokens(input)
 
 	// First apply temperature and softmax to get probabilities
-	softmax(&tokens)
-	topK(&tokens, 20)
+	softmax(tokens)
+	tokens = topK(tokens, 20)
 
 	// Then apply topP
-	topP(&tokens, 0.95)
+	tokens = topP(tokens, 0.95)
 
 	// Should keep tokens until cumsum > 0.95
 	if len(tokens) > 3 {
@@ -180,8 +180,8 @@ func TestTopP(t *testing.T) {
 	// Test edge case - ensure at least one token remains
 	input = []float32{-1e6, -1e6, -1e6} // One dominant token
 	tokens = toTokens(input)
-	softmax(&tokens)
-	topP(&tokens, 0.0) // Very small p
+	softmax(tokens)
+	tokens = topP(tokens, 0.0) // Very small p
 	if len(tokens) < 1 {
 		t.Error("topP should keep at least one token")
 	}
@@ -192,10 +192,10 @@ func TestMinP(t *testing.T) {
 	tokens := toTokens(input)
 
 	// First apply temperature and softmax
-	topK(&tokens, 20)
-	softmax(&tokens)
+	tokens = topK(tokens, 20)
+	softmax(tokens)
 
-	minP(&tokens, 1.0)
+	tokens = minP(tokens, 1.0)
 
 	if len(tokens) != 1 {
 		t.Errorf("minP(1.0): should keep all tokens, got %d, want %d", len(tokens), len(tokens))
@@ -203,9 +203,9 @@ func TestMinP(t *testing.T) {
 
 	// Test with normal p value
 	tokens = toTokens(input) // Reset tokens
-	topK(&tokens, 20)
-	softmax(&tokens)
-	minP(&tokens, 0.2)
+	tokens = topK(tokens, 20)
+	softmax(tokens)
+	tokens = minP(tokens, 0.2)
 
 	// Should keep tokens with prob >= 0.2 * max_prob
 	if len(tokens) > 3 {
@@ -215,9 +215,9 @@ func TestMinP(t *testing.T) {
 
 	// Test with zero p value
 	tokens = toTokens(input) // Reset tokens
-	topK(&tokens, 20)
-	softmax(&tokens)
-	minP(&tokens, 0.0)
+	tokens = topK(tokens, 20)
+	softmax(tokens)
+	tokens = minP(tokens, 0.0)
 
 	// Should keep only the highest probability token
 	if len(tokens) != len(input) {
@@ -227,8 +227,8 @@ func TestMinP(t *testing.T) {
 
 	input = []float32{1e-10, 1e-10, 1e-10}
 	tokens = toTokens(input)
-	softmax(&tokens)
-	minP(&tokens, 1.0)
+	softmax(tokens)
+	tokens = minP(tokens, 1.0)
 	if len(tokens) < 1 {
 		t.Error("minP should keep at least one token even with extreme probabilities")
 	}
@@ -238,7 +238,7 @@ func TestSortLogits(t *testing.T) {
 	input := []float32{0.026986899, 0.043722924, 0.036774673, 0.27755088, 0.0046718004, 0.08582123, 0.20409796, 0.00412893, 0.15720603, 0.045046154, 0.0030491839, 0.01681367}
 	tokens := toTokens(input)
 
-	topK(&tokens, 20)
+	tokens = topK(tokens, 20)
 
 	for i := 1; i < len(tokens); i++ {
 		if tokens[i].value > tokens[i-1].value {
@@ -267,7 +267,7 @@ func BenchmarkTransforms(b *testing.B) {
 		b.ResetTimer()
 		for b.Loop() {
 			copy(tokensCopy, tokens)
-			temperature(&tokensCopy, 0.5)
+			temperature(tokensCopy, 0.5)
 		}
 	})
 
@@ -275,7 +275,7 @@ func BenchmarkTransforms(b *testing.B) {
 		b.ResetTimer()
 		for b.Loop() {
 			copy(tokensCopy, tokens)
-			softmax(&tokensCopy)
+			softmax(tokensCopy)
 		}
 	})
 
@@ -283,7 +283,7 @@ func BenchmarkTransforms(b *testing.B) {
 		b.ResetTimer()
 		for b.Loop() {
 			copy(tokensCopy, tokens)
-			topK(&tokensCopy, 10)
+			tokens = topK(tokensCopy, 10)
 		}
 	})
 
@@ -291,7 +291,7 @@ func BenchmarkTransforms(b *testing.B) {
 		b.ResetTimer()
 		for b.Loop() {
 			copy(tokensCopy, tokens)
-			topP(&tokensCopy, 0.9)
+			tokens = topP(tokensCopy, 0.9)
 		}
 	})
 
@@ -299,7 +299,7 @@ func BenchmarkTransforms(b *testing.B) {
 		b.ResetTimer()
 		for b.Loop() {
 			copy(tokensCopy, tokens)
-			minP(&tokensCopy, 0.2)
+			tokens = minP(tokensCopy, 0.2)
 		}
 	})
 
@@ -307,7 +307,7 @@ func BenchmarkTransforms(b *testing.B) {
 		b.ResetTimer()
 		for b.Loop() {
 			copy(tokensCopy, tokens)
-			topK(&tokensCopy, 200000)
+			tokens = topK(tokensCopy, 200000)
 		}
 	})
 }

@@ -26,27 +26,19 @@ func (h *tokenHeap) Pop() any {
 }
 
 // temperature applies scaling to the logits
-func temperature(ts *[]token, temp float32) {
-	if ts == nil {
-		return
-	}
-
+func temperature(ts []token, temp float32) {
 	// Ensure temperature clipping near 0 to avoid numerical instability
 	temp = max(temp, 1e-7)
-	for i := range *ts {
-		(*ts)[i].value = (*ts)[i].value / temp
+	for i := range ts {
+		ts[i].value = ts[i].value / temp
 	}
 }
 
 // softmax applies normalization to the logits
-func softmax(ts *[]token) {
-	if ts == nil {
-		return
-	}
-
+func softmax(ts []token) {
 	// Find max logit for numerical stability
 	maxLogit := float32(math.Inf(-1))
-	for _, t := range *ts {
+	for _, t := range ts {
 		if t.value > maxLogit {
 			maxLogit = t.value
 		}
@@ -54,25 +46,21 @@ func softmax(ts *[]token) {
 
 	// Compute exp(x - max)
 	var sum float32
-	for i, v := range *ts {
-		(*ts)[i].value = float32(math.Exp(float64(v.value - maxLogit)))
-		sum += (*ts)[i].value
+	for i, v := range ts {
+		ts[i].value = float32(math.Exp(float64(v.value - maxLogit)))
+		sum += ts[i].value
 	}
 
 	// exp(x - max) / sum(exp(x - max))
-	for i := range *ts {
-		(*ts)[i].value /= sum
+	for i := range ts {
+		ts[i].value /= sum
 	}
 }
 
 // topK limits the number of tokens considered to the k highest logits
-func topK(ts *[]token, k int) {
-	if ts == nil {
-		return
-	}
-
-	if k >= len(*ts) || k <= 0 {
-		slices.SortFunc(*ts, func(a, b token) int {
+func topK(ts []token, k int) []token {
+	if k >= len(ts) || k <= 0 {
+		slices.SortFunc(ts, func(a, b token) int {
 			switch {
 			case a.value < b.value:
 				return 1
@@ -82,19 +70,19 @@ func topK(ts *[]token, k int) {
 				return 0
 			}
 		})
-		return
+		return ts
 	}
 
 	// Initialize min-heap with first k elements
 	h := make(tokenHeap, k)
-	copy(h, (*ts)[:k])
+	copy(h, ts[:k])
 	heap.Init(&h)
 
 	// Process remaining elements
-	for i := k; i < len(*ts); i++ {
-		if (*ts)[i].value > h[0].value {
+	for i := k; i < len(ts); i++ {
+		if ts[i].value > h[0].value {
 			heap.Pop(&h)
-			heap.Push(&h, (*ts)[i])
+			heap.Push(&h, ts[i])
 		}
 	}
 
@@ -104,45 +92,39 @@ func topK(ts *[]token, k int) {
 		result[i] = heap.Pop(&h).(token)
 	}
 
-	*ts = result
+	return result
 }
 
 // topP limits tokens to those with cumulative probability p
-func topP(ts *[]token, p float32) {
-	if ts == nil {
-		return
-	}
-
+// requires ts to be sorted in descending order of probabilities
+func topP(ts []token, p float32) []token {
 	if p == 1.0 {
-		return
+		return ts
 	}
 
 	// Find cutoff index where cumulative sum exceeds p
 	var sum float32
-	for i, t := range *ts {
+	for i, t := range ts {
 		sum += t.value
 		if sum > float32(p) {
-			*ts = (*ts)[:i+1]
-			return
+			return ts[:i+1]
 		}
 	}
+
+	return ts
 }
 
 // minP filters tokens with probabilities >= p * max_prob
-func minP(ts *[]token, p float32) {
-	if ts == nil {
-		return
-	}
-
-	// tokens are sorted in descending order of probabilities
-	maxProb := (*ts)[0].value
+// requires ts to be sorted in descending order of probabilities
+func minP(ts []token, p float32) []token {
+	maxProb := ts[0].value
 
 	threshold := maxProb * p
 
-	for i, t := range *ts {
+	for i, t := range ts {
 		if t.value < threshold {
-			*ts = (*ts)[:i]
-			return
+			return ts[:i]
 		}
 	}
+	return ts
 }
