@@ -23,6 +23,7 @@ import (
 
 	"golang.org/x/sync/semaphore"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model"
@@ -509,8 +510,8 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Options == nil {
-		http.Error(w, "Options not provided", http.StatusBadRequest)
-		return
+		opts := api.DefaultOptions()
+		req.Options = &opts
 	}
 
 	// Set the headers to indicate streaming
@@ -630,7 +631,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(&llm.ServerStatusResponse{
-		Status:   s.status.String(),
+		Status:   s.status,
 		Progress: s.progress,
 	}); err != nil {
 		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
