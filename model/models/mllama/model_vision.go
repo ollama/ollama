@@ -23,25 +23,25 @@ func (sa *VisionSelfAttention) Forward(ctx ml.Context, hiddenState ml.Tensor, op
 	headDim := opts.hiddenSize / opts.numHeads
 
 	query := sa.Query.Forward(ctx, hiddenState)
-	query = query.Reshape(ctx, headDim, opts.numHeads, query.Dim(1), batchSize)
+	query = query.Reshape(ctx, batchSize, query.Dim(1), opts.numHeads, headDim)
 	query = query.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 
 	key := sa.Key.Forward(ctx, hiddenState)
-	key = key.Reshape(ctx, headDim, opts.numHeads, key.Dim(1), batchSize)
+	key = key.Reshape(ctx, batchSize, key.Dim(1), opts.numHeads, headDim)
 	key = key.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 
 	value := sa.Value.Forward(ctx, hiddenState)
-	value = value.Reshape(ctx, headDim, opts.numHeads, value.Dim(1), batchSize)
-	value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
+	value = value.Reshape(ctx, batchSize, value.Dim(1), opts.numHeads, headDim)
+	value = value.Permute(ctx, 0, 2, 3, 1).Contiguous(ctx)
 
 	scores := key.Mulmat(ctx, query)
 	scores = scores.Scale(ctx, 1.0/math.Sqrt(float64(headDim)))
 	scores = scores.Softmax(ctx)
 
 	attention := value.Mulmat(ctx, scores)
-	attention = attention.Reshape(ctx, headDim, attention.Dim(1), opts.numHeads, batchSize)
+	attention = attention.Reshape(ctx, batchSize, opts.numHeads, attention.Dim(2), headDim)
 	attention = attention.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
-	attention = attention.Reshape(ctx, opts.hiddenSize, attention.Dim(2), batchSize)
+	attention = attention.Reshape(ctx, batchSize, attention.Dim(1), opts.hiddenSize)
 
 	hiddenState = sa.Output.Forward(ctx, attention)
 	if sa.Gate != nil {
@@ -99,7 +99,7 @@ func (e *VisionEncoder) Forward(ctx ml.Context, hiddenState ml.Tensor, intermedi
 	var intermediateHiddenStates []ml.Tensor
 	for i, layer := range e.Layers {
 		if slices.Contains(intermediateLayersIndices, uint32(i)) {
-			intermediateHiddenStates = append(intermediateHiddenStates, hiddenState.Reshape(ctx, append([]int{1}, hiddenState.Shape()...)...))
+			intermediateHiddenStates = append(intermediateHiddenStates, hiddenState.Reshape(ctx, append(hiddenState.Shape(), 1)...))
 		}
 
 		hiddenState = layer.Forward(ctx, hiddenState, opts)
@@ -115,7 +115,7 @@ type PrecomputedAspectRatioEmbedding struct {
 
 func (e *PrecomputedAspectRatioEmbedding) Forward(ctx ml.Context, hiddenState ml.Tensor, aspectRatioIDs ml.Tensor, opts *VisionModelOptions) ml.Tensor {
 	embeddings := e.Embedding.Forward(ctx, aspectRatioIDs)
-	embeddings = embeddings.Reshape(ctx, opts.hiddenSize, 1, opts.numTiles)
+	embeddings = embeddings.Reshape(ctx, opts.numTiles, 1, opts.hiddenSize)
 	if e.Gate != nil {
 		embeddings = embeddings.Mul(ctx, e.Gate)
 	}
@@ -140,7 +140,7 @@ func (e *PrecomputedPositionEmbedding) Forward(ctx ml.Context, hiddenState, posi
 	hiddenState = hiddenState.Add(ctx, positionEmbedding)
 
 	tilePositionEmbedding := e.TilePositionEmbedding.Forward(ctx, aspectRatioIDs)
-	tilePositionEmbedding = tilePositionEmbedding.Reshape(ctx, opts.hiddenSize, numPositions, opts.numTiles)
+	tilePositionEmbedding = tilePositionEmbedding.Reshape(ctx, opts.numTiles, numPositions, opts.hiddenSize)
 	if e.TilePositionEmbeddingGate != nil {
 		tilePositionEmbedding = tilePositionEmbedding.Mul(ctx, e.TilePositionEmbeddingGate)
 	}
@@ -181,8 +181,8 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues, positionIDs, aspectRa
 	}
 
 	hiddenState := m.PatchEmbeddings.Forward(ctx, pixelValues, m.patchSize, m.patchSize, 0, 0, 1, 1)
-	hiddenState = hiddenState.Reshape(ctx, numPatches, m.hiddenSize, m.numTiles)
-	hiddenState = hiddenState.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
+	hiddenState = hiddenState.Reshape(ctx, m.numTiles, m.hiddenSize, numPatches)
+	hiddenState = hiddenState.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 
 	hiddenState = m.PreTilePositionEmbedding.Forward(ctx, hiddenState, aspectRatioIDs, m.VisionModelOptions)
 	hiddenState = m.ClassEmbedding.Stack(ctx, 2, slices.Repeat([]ml.Tensor{m.ClassEmbedding}, m.numTiles-1)...).Concat(ctx, hiddenState, 1)
@@ -193,23 +193,23 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues, positionIDs, aspectRa
 	numPaddingPatches := 8 - (hiddenState.Dim(1)%8)%8
 	hiddenState = hiddenState.Pad(ctx, 0, numPaddingPatches, 0, 0)
 
-	hiddenState = hiddenState.Reshape(ctx, hiddenState.Dim(0), hiddenState.Dim(1)*hiddenState.Dim(2), batchSize)
+	hiddenState = hiddenState.Reshape(ctx, batchSize, hiddenState.Dim(1)*hiddenState.Dim(0), hiddenState.Dim(2))
 	hiddenState, intermediateHiddenStates := m.Transformer.Forward(ctx, hiddenState, m.intermediateLayersIndices, m.VisionModelOptions)
 
 	hiddenState = m.PostLayerNorm.Forward(ctx, hiddenState, m.eps)
 
-	hiddenState = hiddenState.Reshape(ctx, m.hiddenSize, numPositions+numPaddingPatches, m.numTiles, batchSize)
+	hiddenState = hiddenState.Reshape(ctx, batchSize, m.numTiles, numPositions+numPaddingPatches, m.hiddenSize)
 	hiddenState = m.PostTilePositionEmbedding.Forward(ctx, hiddenState, aspectRatioIDs, m.VisionModelOptions)
 
-	hiddenState = hiddenState.Reshape(ctx, m.hiddenSize, m.numTiles*(numPositions+numPaddingPatches), batchSize)
+	hiddenState = hiddenState.Reshape(ctx, batchSize, m.numTiles*(numPositions+numPaddingPatches), m.hiddenSize)
 	hiddenState, _ = m.GlobalTransformer.Forward(ctx, hiddenState, nil, m.VisionModelOptions)
 
 	hiddenStates := intermediateHiddenStates[0].Stack(ctx, 0, intermediateHiddenStates[1:]...)
-	hiddenStates = hiddenStates.Reshape(ctx, len(intermediateHiddenStates)*m.hiddenSize, numPositions+numPaddingPatches, m.numTiles, batchSize)
-	hiddenStates = hiddenStates.Unpad(ctx, 0, numPaddingPatches, 0, 0)
+	hiddenStates = hiddenStates.Reshape(ctx, batchSize, m.numTiles, numPositions+numPaddingPatches, len(intermediateHiddenStates)*m.hiddenSize)
+	hiddenStates = hiddenStates.Unpad(ctx, 0, 0, numPaddingPatches, 0)
 
-	hiddenState = hiddenState.Reshape(ctx, m.hiddenSize, numPositions+numPaddingPatches, m.numTiles, batchSize)
-	hiddenState = hiddenState.Unpad(ctx, 0, numPaddingPatches, 0, 0)
+	hiddenState = hiddenState.Reshape(ctx, batchSize, m.numTiles, numPositions+numPaddingPatches, m.hiddenSize)
+	hiddenState = hiddenState.Unpad(ctx, 0, 0, numPaddingPatches, 0)
 	return hiddenState.Concat(ctx, hiddenStates, 0)
 }
 

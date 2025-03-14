@@ -36,15 +36,15 @@ type MultiModalProjector struct {
 }
 
 func (p *MultiModalProjector) Forward(ctx ml.Context, visionOutputs ml.Tensor, imageSize, patchSize int, eps float32) ml.Tensor {
-	l := visionOutputs.Dim(0)
+	l := visionOutputs.Dim(1)
 
 	visionOutputs = visionOutputs.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 	patchesPerImage := imageSize / patchSize
-	visionOutputs = visionOutputs.Reshape(ctx, patchesPerImage, patchesPerImage, l)
+	visionOutputs = visionOutputs.Reshape(ctx, l, patchesPerImage, patchesPerImage)
 
 	kernelSize := patchesPerImage / int(math.Sqrt(float64(p.tokensPerImage)))
 	visionOutputs = visionOutputs.AvgPool2D(ctx, kernelSize, kernelSize, 0)
-	visionOutputs = visionOutputs.Reshape(ctx, visionOutputs.Dim(0)*visionOutputs.Dim(1), l)
+	visionOutputs = visionOutputs.Reshape(ctx, l, visionOutputs.Dim(2)*visionOutputs.Dim(1))
 	visionOutputs = visionOutputs.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 	visionOutputs = p.SoftEmbNorm.Forward(ctx, visionOutputs, eps)
 
@@ -99,9 +99,9 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 	}
 
 	pixelValues, err := ctx.Input().FromFloatSlice(f32s,
-		m.ImageProcessor.imageSize,
-		m.ImageProcessor.imageSize,
 		m.ImageProcessor.numChannels,
+		m.ImageProcessor.imageSize,
+		m.ImageProcessor.imageSize,
 	)
 	if err != nil {
 		return nil, err
@@ -134,7 +134,7 @@ func (m *Model) PostTokenize(ctx ml.Context, inputs []input.Input) ([]input.Inpu
 			// add image embeddings
 			inputMultimodal := inp.Multimodal.(ml.Tensor)
 
-			for i := range inputMultimodal.Dim(1) {
+			for i := range inputMultimodal.Dim(0) {
 				fnvHash.Reset()
 				binary.Write(fnvHash, binary.NativeEndian, inp.MultimodalHash)
 				fnvHash.Write([]byte{byte(i)})

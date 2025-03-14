@@ -85,7 +85,7 @@ type TextSelfAttention struct {
 }
 
 func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *TextOptions) ml.Tensor {
-	batchSize := hiddenState.Dim(1)
+	batchSize := hiddenState.Dim(0)
 	ropeType := uint32(2)
 
 	ropeBase := opts.ropeLocalBase
@@ -94,7 +94,7 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, pos
 	}
 
 	q := sa.Query.Forward(ctx, hiddenState)
-	q = q.Reshape(ctx, opts.attnKeyLen, opts.numHeads, batchSize)
+	q = q.Reshape(ctx, batchSize, opts.numHeads, opts.attnKeyLen)
 	q = sa.QueryNorm.Forward(ctx, q, opts.eps)
 	q = q.RoPE(ctx, positionIDs, nil, uint32(opts.attnKeyLen), ropeType, ropeBase, opts.ropeScale)
 
@@ -105,16 +105,16 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, pos
 	}
 
 	k := sa.Key.Forward(ctx, hiddenState)
-	k = k.Reshape(ctx, opts.attnKeyLen, opts.numKVHeads, batchSize)
+	k = k.Reshape(ctx, batchSize, opts.numKVHeads, opts.attnKeyLen)
 	k = sa.KeyNorm.Forward(ctx, k, opts.eps)
 	k = k.RoPE(ctx, positionIDs, nil, uint32(opts.attnKeyLen), ropeType, ropeBase, opts.ropeScale)
 
 	v := sa.Value.Forward(ctx, hiddenState)
-	v = v.Reshape(ctx, opts.attnValLen, opts.numKVHeads, batchSize)
+	v = v.Reshape(ctx, batchSize, opts.numKVHeads, opts.attnValLen)
 
 	scaleFactor := 1.0
 	kqv := nn.Attention(ctx, q, k, v, scaleFactor, cache)
-	kqv = kqv.Reshape(ctx, opts.attnValLen*opts.numHeads, batchSize)
+	kqv = kqv.Reshape(ctx, batchSize, opts.attnValLen*opts.numHeads)
 
 	return sa.Output.Forward(ctx, kqv)
 }
@@ -193,8 +193,8 @@ func setImageEmbeddings(ctx ml.Context, hiddenState ml.Tensor, multimodal []inpu
 		} else if embedding == imageToken.embedding && src+length == imageSrc && dst+length == imageDst {
 			length++
 		} else {
-			visionOutputs := embedding.View(ctx, src*embedding.Stride(1), length*embedding.Dim(0))
-			ctx.Forward(visionOutputs.Copy(ctx, hiddenState.View(ctx, dst*hiddenState.Stride(1), length*hiddenState.Dim(0))))
+			visionOutputs := embedding.View(ctx, src*embedding.Stride(0), []int{length * embedding.Dim(1)}, nil)
+			ctx.Forward(visionOutputs.Copy(ctx, hiddenState.View(ctx, dst*hiddenState.Stride(0), []int{length * hiddenState.Dim(1)}, nil)))
 
 			embedding = imageToken.embedding
 			src = imageSrc
@@ -206,8 +206,8 @@ func setImageEmbeddings(ctx ml.Context, hiddenState ml.Tensor, multimodal []inpu
 	}
 
 	if embedding != nil {
-		visionOutputs := embedding.View(ctx, src*embedding.Stride(1), length*embedding.Dim(0))
-		ctx.Forward(visionOutputs.Copy(ctx, hiddenState.View(ctx, dst*hiddenState.Stride(1), length*hiddenState.Dim(0))))
+		visionOutputs := embedding.View(ctx, src*embedding.Stride(0), []int{length * embedding.Dim(1)}, nil)
+		ctx.Forward(visionOutputs.Copy(ctx, hiddenState.View(ctx, dst*hiddenState.Stride(0), []int{length * hiddenState.Dim(1)}, nil)))
 	}
 
 	return except
