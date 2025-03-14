@@ -12,7 +12,7 @@ Run these benchmarks when:
 - Testing performance across different hardware setups
 
 ## Prerequisites
-- Ollama server running locally (`127.0.0.1:11434`)
+- Ollama server running locally with `ollama serve` on `127.0.0.1:11434`
 ## Usage and Examples
 
 >[!NOTE]
