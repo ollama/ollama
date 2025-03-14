@@ -5,11 +5,18 @@ import (
 	"errors"
 	"io"
 	"os"
-
-	"github.com/ollama/ollama/server/internal/chunks"
 )
 
-type Chunk = chunks.Chunk // TODO: move chunks here?
+// Chunk represents a range of bytes in a blob.
+type Chunk struct {
+	Start int64
+	End   int64
+}
+
+// Size returns end minus start plus one.
+func (c Chunk) Size() int64 {
+	return c.End - c.Start + 1
+}
 
 // Chunker writes to a blob in chunks.
 // Its zero value is invalid. Use [DiskCache.Chunked] to create a new Chunker.
