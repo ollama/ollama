@@ -7,8 +7,6 @@ import (
 	"github.com/ollama/ollama/ml/nn"
 )
 
-var batchSize int = 1
-
 type VisionSelfAttention struct {
 	Query  *nn.Linear `gguf:"attn_q"`
 	Key    *nn.Linear `gguf:"attn_k"`
@@ -23,12 +21,12 @@ func (sa *VisionSelfAttention) Forward(ctx ml.Context, hiddenState ml.Tensor, op
 	key := sa.Key.Forward(ctx, hiddenState)
 	value := sa.Value.Forward(ctx, hiddenState)
 
-	query = query.Reshape(ctx, headDim, opts.numHeads, query.Dim(1), batchSize)
-	key = key.Reshape(ctx, headDim, opts.numHeads, key.Dim(1), batchSize)
-	value = value.Reshape(ctx, headDim, opts.numHeads, value.Dim(1), batchSize)
+	query = query.Reshape(ctx, query.Dim(0), opts.numHeads, headDim)
+	key = key.Reshape(ctx, key.Dim(0), opts.numHeads, headDim)
+	value = value.Reshape(ctx, value.Dim(0), opts.numHeads, headDim)
 
 	attention := nn.Attention(ctx, query, key, value, 1.0/math.Sqrt(float64(headDim)), nil)
-	attention = attention.Reshape(ctx, opts.hiddenSize, attention.Dim(2), batchSize)
+	attention = attention.Reshape(ctx, attention.Dim(0), opts.hiddenSize)
 
 	hiddenState = sa.Output.Forward(ctx, attention)
 	return hiddenState
@@ -88,7 +86,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor) ml.Tensor {
 	numPatches := (m.imageSize / m.patchSize) * (m.imageSize / m.patchSize)
 
 	hiddenState := m.PatchEmbedding.Forward(ctx, pixelValues, m.patchSize, m.patchSize, 0, 0, 1, 1)
-	hiddenState = hiddenState.Reshape(ctx, numPatches, m.hiddenSize)
+	hiddenState = hiddenState.Reshape(ctx, m.hiddenSize, numPatches)
 	hiddenState = hiddenState.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 
 	positions := make([]int32, numPatches)
