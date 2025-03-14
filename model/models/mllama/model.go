@@ -106,17 +106,17 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 	return m.Projector.Forward(ctx, crossAttentionStates), nil
 }
 
-func (m *Model) PostTokenize(ctx ml.Context, inputs []input.Input) ([]input.Input, error) {
+func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 	var images []input.Input
 	fnvHash := fnv.New64a()
 
 	for i := range inputs {
 		if inputs[i].Multimodal == nil {
 			if len(images) > 0 {
-				inputs[i].Multimodal = images[0].Multimodal
+				inputs[i].Multimodal = []ml.Tensor{images[0].Multimodal.(ml.Tensor)}
 				inputs[i].MultimodalHash = images[0].MultimodalHash
 				for j := 1; j < len(images); j++ {
-					inputs[i].Multimodal = inputs[i].Multimodal.(ml.Tensor).Concat(ctx, images[j].Multimodal.(ml.Tensor), 3)
+					inputs[i].Multimodal = append(inputs[i].Multimodal.([]ml.Tensor), images[0].Multimodal.(ml.Tensor))
 					fnvHash.Reset()
 					binary.Write(fnvHash, binary.NativeEndian, inputs[i].MultimodalHash)
 					binary.Write(fnvHash, binary.NativeEndian, inputs[j].MultimodalHash)
@@ -138,7 +138,10 @@ func (m *Model) PostTokenize(ctx ml.Context, inputs []input.Input) ([]input.Inpu
 func (m *Model) Forward(ctx ml.Context, opts input.Options) (ml.Tensor, error) {
 	var crossAttentionStates ml.Tensor
 	if len(opts.Multimodal) > 0 {
-		crossAttentionStates = opts.Multimodal[len(opts.Multimodal)-1].Multimodal.(ml.Tensor)
+		images := opts.Multimodal[len(opts.Multimodal)-1].Multimodal.([]ml.Tensor)
+		if len(images) > 0 {
+			crossAttentionStates = images[len(images)-1]
+		}
 	}
 
 	inputs, err := ctx.Input().FromIntSlice(opts.Inputs, len(opts.Inputs))
