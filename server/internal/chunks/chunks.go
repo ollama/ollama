@@ -31,18 +31,21 @@ func ParseRange(s string) (unit string, _ Chunk, _ error) {
 }
 
 // Parse parses a string in the form "start-end" and returns the Chunk.
-func Parse(s string) (Chunk, error) {
-	startStr, endStr, _ := strings.Cut(s, "-")
-	start, err := strconv.ParseInt(startStr, 10, 64)
-	if err != nil {
-		return Chunk{}, fmt.Errorf("invalid start: %v", err)
+func Parse[S ~string | ~[]byte](s S) (Chunk, error) {
+	startPart, endPart, found := strings.Cut(string(s), "-")
+	if !found {
+		return Chunk{}, fmt.Errorf("chunks: invalid range %q: missing '-'", s)
 	}
-	end, err := strconv.ParseInt(endStr, 10, 64)
+	start, err := strconv.ParseInt(startPart, 10, 64)
 	if err != nil {
-		return Chunk{}, fmt.Errorf("invalid end: %v", err)
+		return Chunk{}, fmt.Errorf("chunks: invalid start to %q: %v", s, err)
+	}
+	end, err := strconv.ParseInt(endPart, 10, 64)
+	if err != nil {
+		return Chunk{}, fmt.Errorf("chunks: invalid end to %q: %v", s, err)
 	}
 	if start > end {
-		return Chunk{}, fmt.Errorf("invalid range %d-%d: start > end", start, end)
+		return Chunk{}, fmt.Errorf("chunks: invalid range %q: start > end", s)
 	}
 	return Chunk{start, end}, nil
 }
