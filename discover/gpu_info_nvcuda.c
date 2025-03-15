@@ -17,7 +17,6 @@ void nvcuda_init(char *nvcuda_lib_path, nvcuda_init_resp_t *resp) {
     char *s;
     void **p;
   } l[] = {
-   
       {"cuInit", (void *)&resp->ch.cuInit},
       {"cuDriverGetVersion", (void *)&resp->ch.cuDriverGetVersion},
       {"cuDeviceGetCount", (void *)&resp->ch.cuDeviceGetCount},
@@ -103,13 +102,13 @@ void nvcuda_init(char *nvcuda_lib_path, nvcuda_init_resp_t *resp) {
   LOG(resp->ch.verbose, "device count %d\n", resp->num_devices);
 }
 
-const int buflen = 256;
 void nvcuda_bootstrap(nvcuda_handle_t h, int i, mem_info_t *resp) {
   resp->err = NULL;
   nvcudaMemory_t memInfo = {0,0};
   CUresult ret;
   CUdevice device = -1;
   CUcontext ctx = NULL;
+  const int buflen = 256;
   char buf[buflen + 1];
   CUuuid uuid = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
 
@@ -135,8 +134,8 @@ void nvcuda_bootstrap(nvcuda_handle_t h, int i, mem_info_t *resp) {
     if (ret != CUDA_SUCCESS) {
       LOG(h.verbose, "[%d] device minor lookup failure: %d\n", i, ret);
     } else {
-      resp->minor = minor;  
-      resp->major = major;  
+      resp->minor = minor;
+      resp->major = major;
     }
   }
 
@@ -197,7 +196,7 @@ void nvcuda_bootstrap(nvcuda_handle_t h, int i, mem_info_t *resp) {
   LOG(h.verbose, "[%s] CUDA freeMem %lu mb\n", resp->gpu_id, resp->free / 1024 / 1024);
   LOG(h.verbose, "[%s] Compute Capability %d.%d\n", resp->gpu_id, resp->major, resp->minor);
 
-  
+
 
   ret = (*h.cuCtxDestroy)(ctx);
   if (ret != CUDA_SUCCESS) {
