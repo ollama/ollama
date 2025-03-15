@@ -119,10 +119,6 @@ func topP(ts []token, p float32) []token {
 
 // minP limits tokens to those with cumulative probability p
 func minP(ts []token, p float32) []token {
-	if p == 1.0 {
-		return ts
-	}
-
 	maxProb := float32(math.Inf(-1))
 	for _, token := range ts {
 		if token.value > maxProb {

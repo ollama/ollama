@@ -1,7 +1,7 @@
 package sample
 
 import (
-	"errors"
+	"log/slog"
 	"math"
 	"math/rand/v2"
 	"slices"
@@ -93,11 +93,10 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 	tokens = topP(tokens, s.topP)
 	tokens = minP(tokens, s.minP)
 
-	// TODO: this should fall back to greedy sampling
-	// or topP, topK values etc should be such that
-	// there are always tokens to sample from
+	// fallback to greedy sampling if no tokens are left
 	if len(tokens) == 0 {
-		return token{}, errors.New("no tokens to sample from")
+		slog.Warn("sample: no tokens left after applying transforms, falling back to greedy sampling")
+		return greedy(tokens), nil
 	}
 
 	var r float32

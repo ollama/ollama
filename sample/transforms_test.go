@@ -156,12 +156,29 @@ func TestTopP(t *testing.T) {
 	tokens = softmax(tokens)
 	tokens = topK(tokens, 20)
 
-	// Then apply topP
-	got := topP(tokens, 0.95)
+	// Test with very high p value
+	got := topP(tokens, 1.0)
+
+	// Should keep almost all tokens since p is very high
+	if len(got) != len(tokens) {
+		t.Errorf("topP(1.0): should keep all tokens, got %d, want %d", len(got), len(tokens))
+	}
+
+	// Test with normal p value
+	got = topP(tokens, 0.95)
 
 	// Should keep tokens until cumsum > 0.95
 	if len(got) > 3 {
 		t.Errorf("topP(0.95): kept too many tokens: got %d", len(got))
+		t.Logf("got: %v", got)
+	}
+
+	// Test with zero p value
+	got = topP(tokens, 0.0)
+
+	// Should keep only the highest probability token
+	if len(got) != 1 {
+		t.Errorf("topP(0.0): should keep only one token, got %d", len(got))
 		t.Logf("got: %v", got)
 	}
 }
@@ -173,12 +190,28 @@ func TestMinP(t *testing.T) {
 	// First apply temperature and softmax
 	tokens = softmax(tokens)
 
-	// Then apply minP
-	got := minP(tokens, 0.2)
+	got := minP(tokens, 1.0)
+
+	if len(got) != 1 {
+		t.Errorf("minP(1.0): should keep all tokens, got %d, want %d", len(got), len(tokens))
+	}
+
+	// Test with normal p value
+	got = minP(tokens, 0.2)
 
 	// Should keep tokens with prob >= 0.2 * max_prob
 	if len(got) > 3 {
 		t.Errorf("minP(0.2): kept too many tokens: got %d", len(got))
+		t.Logf("got: %v", got)
+	}
+
+	// Test with zero p value
+	got = minP(tokens, 0.0)
+
+	// Should keep only the highest probability token
+	if len(got) != len(tokens) {
+		t.Errorf("minP(0.0): should keep only one token, got %d", len(got))
+		t.Logf("got: %v", got)
 	}
 }
 
