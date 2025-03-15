@@ -20,6 +20,7 @@ import (
 	"strings"
 	"unicode"
 	"unsafe"
+	"sync"
 
 	"github.com/ollama/ollama/format"
 	fs "github.com/ollama/ollama/fs/ggml"
@@ -299,6 +300,7 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 
 	// concurrently read in tensor data. uses a section reader which is safe for concurrent reads
 	sr := io.NewSectionReader(r, int64(meta.Tensors().Offset), n-int64(meta.Tensors().Offset))
+	var tensorSetMutex sync.Mutex
 	var g errgroup.Group
 	for _, t := range meta.Tensors().Items() {
 		for _, target := range targets[t.Name] {
@@ -322,7 +324,9 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 					return errors.New("short read")
 				}
 
+				tensorSetMutex.Lock()
 				C.ggml_backend_tensor_set(tt, unsafe.Pointer(&bts[0]), 0, C.size_t(t.Size()))
+				tensorSetMutex.Unlock()
 				return nil
 			})
 		}
