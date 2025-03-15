@@ -757,3 +757,132 @@ func TestCreateHandler(t *testing.T) {
 		})
 	}
 }
+
+func TestNewCreateRequest(t *testing.T) {
+	tests := []struct {
+		name     string
+		from     string
+		opts     runOptions
+		expected *api.CreateRequest
+	}{
+		{
+			"basic test",
+			"newmodel",
+			runOptions{
+				Model:       "mymodel",
+				ParentModel: "",
+				Prompt:      "You are a fun AI agent",
+				Messages:    []api.Message{},
+				WordWrap:    true,
+			},
+			&api.CreateRequest{
+				From:  "mymodel",
+				Model: "newmodel",
+			},
+		},
+		{
+			"parent model test",
+			"newmodel",
+			runOptions{
+				Model:       "mymodel",
+				ParentModel: "parentmodel",
+				Messages:    []api.Message{},
+				WordWrap:    true,
+			},
+			&api.CreateRequest{
+				From:  "parentmodel",
+				Model: "newmodel",
+			},
+		},
+		{
+			"parent model as filepath test",
+			"newmodel",
+			runOptions{
+				Model:       "mymodel",
+				ParentModel: "/some/file/like/etc/passwd",
+				Messages:    []api.Message{},
+				WordWrap:    true,
+			},
+			&api.CreateRequest{
+				From:  "mymodel",
+				Model: "newmodel",
+			},
+		},
+		{
+			"parent model as windows filepath test",
+			"newmodel",
+			runOptions{
+				Model:       "mymodel",
+				ParentModel: "D:\\some\\file\\like\\etc\\passwd",
+				Messages:    []api.Message{},
+				WordWrap:    true,
+			},
+			&api.CreateRequest{
+				From:  "mymodel",
+				Model: "newmodel",
+			},
+		},
+		{
+			"options test",
+			"newmodel",
+			runOptions{
+				Model:       "mymodel",
+				ParentModel: "parentmodel",
+				Options: map[string]any{
+					"temperature": 1.0,
+				},
+			},
+			&api.CreateRequest{
+				From:  "parentmodel",
+				Model: "newmodel",
+				Parameters: map[string]any{
+					"temperature": 1.0,
+				},
+			},
+		},
+		{
+			"messages test",
+			"newmodel",
+			runOptions{
+				Model:       "mymodel",
+				ParentModel: "parentmodel",
+				System:      "You are a fun AI agent",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "hello there!",
+					},
+					{
+						Role:    "assistant",
+						Content: "hello to you!",
+					},
+				},
+				WordWrap: true,
+			},
+			&api.CreateRequest{
+				From:   "parentmodel",
+				Model:  "newmodel",
+				System: "You are a fun AI agent",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "hello there!",
+					},
+					{
+						Role:    "assistant",
+						Content: "hello to you!",
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := NewCreateRequest(tt.from, tt.opts)
+			if !cmp.Equal(actual, tt.expected) {
+				t.Errorf("expected output %#v, got %#v", tt.expected, actual)
+			}
+		})
+	}
+}
