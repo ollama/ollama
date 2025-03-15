@@ -327,6 +327,10 @@ func (t Tensor) Size() uint64 {
 	return t.parameters() * t.typeSize() / t.blockSize()
 }
 
+func (t Tensor) Type() string {
+	return fileType(t.Kind).String()
+}
+
 type container interface {
 	Name() string
 	Decode(io.ReadSeeker) (model, error)
@@ -579,39 +583,52 @@ func (f GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialO
 }
 
 func (llm GGML) VisionGraphSize() (weights, graphSize uint64) {
+	if llm.KV().Uint("vision.block_count") == 0 {
+		return
+	}
+
+	for name, layer := range llm.Tensors().GroupLayers() {
+		if name == "v" || strings.HasPrefix(name, "v.") {
+			for _, tensor := range layer {
+				weights += tensor.Size()
+			}
+		}
+	}
+
+	imageSize := uint64(llm.KV().Uint("vision.image_size"))
+	patchSize := uint64(llm.KV().Uint("vision.patch_size"))
+	if patchSize == 0 {
+		slog.Warn("unknown patch size for vision model")
+		return
+	}
+
+	numChannels := uint64(llm.KV().Uint("vision.num_channels"))
+
+	numPatches := (imageSize / patchSize) * (imageSize / patchSize)
+	if _, ok := llm.Tensors().GroupLayers()["v"]["class_embd"]; ok {
+		numPatches++
+	}
+
+	headCount := uint64(llm.KV().Uint("vision.attention.head_count"))
+	embeddingLength := uint64(llm.KV().Uint("vision.embedding_length"))
+
 	switch llm.KV().Architecture() {
 	case "mllama":
-		for _, layer := range llm.Tensors().GroupLayers()["v"] {
-			weights += layer.Size()
-		}
-
-		kv := func(n string) uint64 {
-			if v, ok := llm.KV()["mllama.vision."+n].(uint32); ok {
-				return uint64(v)
-			}
-
-			return 0
-		}
-
-		imageSize := kv("image_size")
-
-		maxNumTiles := kv("max_num_tiles")
-		embeddingLength := kv("embedding_length")
-		headCount := kv("attention.head_count")
-
-		numPatches := (imageSize / kv("patch_size")) * (imageSize / kv("patch_size"))
-		if _, ok := llm.Tensors().GroupLayers()["v"]["class_embd"]; ok {
-			numPatches++
-		}
-
 		numPaddedPatches := numPatches + 8 - (numPatches%8)%8
 
+		maxNumTiles := uint64(llm.KV().Uint("vision.max_num_tiles"))
+
 		graphSize = 4 * (8 +
-			imageSize*imageSize*kv("num_channels")*maxNumTiles +
+			imageSize*imageSize*numChannels*maxNumTiles +
 			embeddingLength*numPatches*maxNumTiles +
 			9*embeddingLength*numPaddedPatches*maxNumTiles +
 			numPaddedPatches*maxNumTiles*numPaddedPatches*maxNumTiles*headCount)
+	case "gemma3":
+		graphSize = 4 * (imageSize*imageSize*numChannels +
+			embeddingLength*patchSize +
+			numPatches*numPatches*headCount)
 	}
+
 	return weights, graphSize
 }
 

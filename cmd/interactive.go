@@ -195,6 +195,10 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			opts.Messages = []api.Message{}
 			fmt.Printf("Loading model '%s'\n", opts.Model)
 			if err := loadOrUnloadModel(cmd, &opts); err != nil {
+				if strings.Contains(err.Error(), "not found") {
+					fmt.Printf("error: %v\n", err)
+					continue
+				}
 				return err
 			}
 			continue
@@ -343,7 +347,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 				switch args[1] {
 				case "info":
-					_ = showInfo(resp, os.Stderr)
+					_ = showInfo(resp, false, os.Stderr)
 				case "license":
 					if resp.License == "" {
 						fmt.Println("No license was specified for this model.")

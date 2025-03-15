@@ -349,6 +349,7 @@ type ShowResponse struct {
 	Messages      []Message      `json:"messages,omitempty"`
 	ModelInfo     map[string]any `json:"model_info,omitempty"`
 	ProjectorInfo map[string]any `json:"projector_info,omitempty"`
+	Tensors       []Tensor       `json:"tensors,omitempty"`
 	ModifiedAt    time.Time      `json:"modified_at,omitempty"`
 }
 
@@ -465,6 +466,13 @@ type ModelDetails struct {
 	Families          []string `json:"families"`
 	ParameterSize     string   `json:"parameter_size"`
 	QuantizationLevel string   `json:"quantization_level"`
+}
+
+// Tensor describes the metadata for a given tensor.
+type Tensor struct {
+	Name  string   `json:"name"`
+	Type  string   `json:"type"`
+	Shape []uint64 `json:"shape"`
 }
 
 func (m *Metrics) Summary() {

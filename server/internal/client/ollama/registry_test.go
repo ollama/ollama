@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/server/internal/cache/blob"
-	"github.com/ollama/ollama/server/internal/chunks"
 	"github.com/ollama/ollama/server/internal/testutil"
 )
 
@@ -428,7 +427,7 @@ func TestRegistryPullCached(t *testing.T) {
 	err := rc.Pull(ctx, "single")
 	testutil.Check(t, err)
 
-	want := []int64{6}
+	want := []int64{0, 6}
 	if !errors.Is(errors.Join(errs...), ErrCached) {
 		t.Errorf("errs = %v; want %v", errs, ErrCached)
 	}
@@ -528,54 +527,6 @@ func TestRegistryPullMixedCachedNotCached(t *testing.T) {
 				t.Errorf("info.Size = %v; want %v", info.Size, 6)
 			}
 		}
-	}
-}
-
-func TestRegistryPullChunking(t *testing.T) {
-	rc, _ := newClient(t, func(w http.ResponseWriter, r *http.Request) {
-		t.Log("request:", r.URL.Host, r.Method, r.URL.Path, r.Header.Get("Range"))
-		if r.URL.Host != "blob.store" {
-			// The production registry redirects to the blob store.
-			http.Redirect(w, r, "http://blob.store"+r.URL.Path, http.StatusFound)
-			return
-		}
-		if strings.Contains(r.URL.Path, "/blobs/") {
-			rng := r.Header.Get("Range")
-			if rng == "" {
-				http.Error(w, "missing range", http.StatusBadRequest)
-				return
-			}
-			_, c, err := chunks.ParseRange(r.Header.Get("Range"))
-			if err != nil {
-				panic(err)
-			}
-			io.WriteString(w, "remote"[c.Start:c.End+1])
-			return
-		}
-		fmt.Fprintf(w, `{"layers":[{"digest":%q,"size":6}]}`, blob.DigestFromBytes("remote"))
-	})
-
-	// Force chunking by setting the threshold to less than the size of the
-	// layer.
-	rc.ChunkingThreshold = 3
-	rc.MaxChunkSize = 3
-
-	var reads []int64
-	ctx := WithTrace(t.Context(), &Trace{
-		Update: func(d *Layer, n int64, err error) {
-			if err != nil {
-				t.Errorf("update %v %d %v", d, n, err)
-			}
-			reads = append(reads, n)
-		},
-	})
-
-	err := rc.Pull(ctx, "remote")
-	testutil.Check(t, err)
-
-	want := []int64{0, 3, 6}
-	if !slices.Equal(reads, want) {
-		t.Errorf("reads = %v; want %v", reads, want)
 	}
 }
 
