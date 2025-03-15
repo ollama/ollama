@@ -848,11 +848,11 @@ func TestNewCreateRequest(t *testing.T) {
 				ParentModel: "parentmodel",
 				System:      "You are a fun AI agent",
 				Messages: []api.Message{
-					api.Message{
+					{
 						Role:    "user",
 						Content: "hello there!",
 					},
-					api.Message{
+					{
 						Role:    "assistant",
 						Content: "hello to you!",
 					},
@@ -864,11 +864,11 @@ func TestNewCreateRequest(t *testing.T) {
 				Model:  "newmodel",
 				System: "You are a fun AI agent",
 				Messages: []api.Message{
-					api.Message{
+					{
 						Role:    "user",
 						Content: "hello there!",
 					},
-					api.Message{
+					{
 						Role:    "assistant",
 						Content: "hello to you!",
 					},
