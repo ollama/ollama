@@ -609,7 +609,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, context.Canceled) {
 			slog.Info("aborting completion request due to client closing the connection")
 		} else {
-			slog.Error("Failed to acquire semaphore", "error", err)
+			http.Error(w, fmt.Sprintf("Failed to acquire semaphore: %v", err), http.StatusInternalServerError)
 		}
 		return
 	}
@@ -621,6 +621,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 			seq.cache, seq.inputs, err = s.cache.LoadCacheSlot(seq.inputs)
 			if err != nil {
 				s.mu.Unlock()
+				s.seqsSem.Release(1)
 				http.Error(w, fmt.Sprintf("Failed to load cache: %v", err), http.StatusInternalServerError)
 				return
 			}
@@ -634,6 +635,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 
 	if !found {
+		s.seqsSem.Release(1)
 		http.Error(w, "could not find an available sequence", http.StatusInternalServerError)
 		return
 	}
