@@ -30,7 +30,7 @@ func TestMaxQueue(t *testing.T) {
 	t.Setenv("OLLAMA_MAX_QUEUE", strconv.Itoa(threadCount))
 
 	req := api.GenerateRequest{
-		Model:  "orca-mini",
+		Model:  smol,
 		Prompt: "write a long historical fiction story about christopher columbus.  use at least 10 facts from his actual journey",
 		Options: map[string]interface{}{
 			"seed":        42,
