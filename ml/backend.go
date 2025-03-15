@@ -74,6 +74,9 @@ type BackendParams struct {
 
 	// FlashAttention indicates that we should use a fused flash attention kernel
 	FlashAttention bool
+
+	// NoKVOffloads indicates that the KV Cache shouldn't be offloaded to GPUs.
+	NoKVOffload bool
 }
 
 var backends = make(map[string]func(*os.File, BackendParams) (Backend, error))
