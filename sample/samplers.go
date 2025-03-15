@@ -87,8 +87,9 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 	// topK also sorts the tokens in descending order of logits
 	tokens = topK(tokens, s.topK)
 
-	tokens = temperature(tokens, s.temperature)
-	tokens = softmax(tokens)
+	// scale and normalize the tokens in place
+	temperature(tokens, s.temperature)
+	softmax(tokens)
 
 	tokens = topP(tokens, s.topP)
 	tokens = minP(tokens, s.minP)
