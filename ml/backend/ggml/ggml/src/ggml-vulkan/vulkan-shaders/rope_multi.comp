@@ -6,6 +6,7 @@ void main() {
     const uint i0 = 2*gl_GlobalInvocationID.y;
     uint ne0 = p.ncols;
     uint ne1 = p.p_delta_rows;
+    uint ne2 = p.ne02;
 
     if (i0 >= ne0) {
         return;
@@ -28,7 +29,23 @@ void main() {
     const uint idst = row_dst*ne0 + i0/2;
     const uint ix   = channel_x*p.s2 + row_x*p.s1 + i0/2;
 
-    const float theta_base = data_pos[channel_x] * pow(p.theta_scale, i0/2.0f);
+    const int sect_dims = p.sections[0] + p.sections[1] + p.sections[2] + p.sections[3];
+    const int sec_w = p.sections[1] + p.sections[0];
+    const uint sector = (i0 / 2) % sect_dims;
+
+    float theta_base = 0.0;
+    if (sector < p.sections[0]) {
+        theta_base = data_pos[channel_x]*pow(p.theta_scale, i0/2.0f);
+    }
+    else if (sector >= p.sections[0] && sector < sec_w) {
+        theta_base = data_pos[channel_x + ne2 * 1]*pow(p.theta_scale, i0/2.0f);
+    }
+    else if (sector >= sec_w && sector < sec_w + p.sections[2]) {
+        theta_base = data_pos[channel_x + ne2 * 2]*pow(p.theta_scale, i0/2.0f);
+    }
+    else if (sector >= sec_w + p.sections[2]) {
+        theta_base = data_pos[channel_x + ne2 * 3]*pow(p.theta_scale, i0/2.0f);
+    }
 
     const float freq_factor = p.has_ff != 0 ? data_ff[i0/2] : 1.0f;
 

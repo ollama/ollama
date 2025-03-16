@@ -25,6 +25,11 @@ layout (push_constant) uniform parameter {
     float corr_dims[2];
     float theta_scale;
     uint has_ff;
+    uint ne02;
+    uint s1;
+    uint s2;
+    int sections[4];
+    uint is_back;
 } p;
 
 float rope_yarn_ramp(const float low, const float high, const uint i0) {
@@ -43,6 +48,10 @@ void rope_yarn(const float theta_extrap, const uint i0, out float cos_theta, out
 
         // Get n-d magnitude scaling corrected for interpolation
         mscale *= 1.0f + 0.1f * log(1.0f / p.freq_scale);
+    }
+    // Backprogagation uses inverted rotation
+    if (p.is_back != 0) {
+        theta = -theta;
     }
     cos_theta = cos(theta) * mscale;
     sin_theta = sin(theta) * mscale;

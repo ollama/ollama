@@ -57,16 +57,12 @@ layout (binding = 2) writeonly buffer D {D_TYPE data_d[];};
 
 #if QUANT_K > 1
 #define DECODEFUNCA , dequantFuncA
-#define MAT_A_TYPE float16_t
 
 #include "dequant_funcs_cm2.comp"
 
 #else
 #define DECODEFUNCA
-#define MAT_A_TYPE A_TYPE
 #endif
-
-#define MAT_B_TYPE B_TYPE
 
 #ifdef MUL_MAT_ID
 layout (binding = 3) readonly buffer IDS {int data_ids[];};
@@ -110,8 +106,8 @@ D_TYPE perElemOpD(const in uint32_t r, const in uint32_t c, const in D_TYPE elem
 #endif
 
 void main() {
-#if defined(DATA_A_IQ4_NL)
-    init_iq4nl_shmem();
+#ifdef NEEDS_INIT_IQ_SHMEM
+    init_iq_shmem(gl_WorkGroupSize);
 #endif
 
 #ifdef MUL_MAT_ID
@@ -236,16 +232,13 @@ void main() {
 
         for (uint block_k = start_k, i = 0; i < k_iters; block_k += BK, ++i) {
 
-            coopmat<MAT_A_TYPE, gl_ScopeWorkgroup, BM, BK, gl_MatrixUseA> mat_a;
-            coopmat<MAT_B_TYPE, gl_ScopeWorkgroup, BK, BN, gl_MatrixUseB> mat_b;
+            coopmat<FLOAT_TYPE, gl_ScopeWorkgroup, BM, BK, gl_MatrixUseA> mat_a;
+            coopmat<FLOAT_TYPE, gl_ScopeWorkgroup, BK, BN, gl_MatrixUseB> mat_b;
 
             coopMatLoadTensorNV(mat_a, data_a, pos_a, sliceTensorLayoutNV(tensorLayoutA, ir * BM, BM, block_k, BK) DECODEFUNCA);
-            coopmat<FLOAT_TYPE, gl_ScopeWorkgroup, BM, BK, gl_MatrixUseA> mat_a_ft = coopmat<FLOAT_TYPE, gl_ScopeWorkgroup, BM, BK, gl_MatrixUseA>(mat_a);
-
             coopMatLoadTensorNV(mat_b, data_b, pos_b, sliceTensorLayoutNV(tensorLayoutB, ic * BN, BN, block_k, BK), tensorViewTranspose);
-            coopmat<FLOAT_TYPE, gl_ScopeWorkgroup, BK, BN, gl_MatrixUseB> mat_b_ft = coopmat<FLOAT_TYPE, gl_ScopeWorkgroup, BK, BN, gl_MatrixUseB>(mat_b);
 
-            sum = coopMatMulAdd(mat_a_ft, mat_b_ft, sum);
+            sum = coopMatMulAdd(mat_a, mat_b, sum);
         }
     } else
 #endif // !defined(MUL_MAT_ID)
@@ -261,10 +254,8 @@ void main() {
         [[dont_unroll]]
         for (uint block_k = start_k; block_k < end_k; block_k += BK) {
 
-            coopmat<MAT_A_TYPE, gl_ScopeWorkgroup, BM, BK, gl_MatrixUseA> mat_a;
-            coopmat<MAT_B_TYPE, gl_ScopeWorkgroup, BK, BN, gl_MatrixUseB> mat_b;
-            coopmat<FLOAT_TYPE, gl_ScopeWorkgroup, BM, BK, gl_MatrixUseA> mat_a_ft;
-            coopmat<FLOAT_TYPE, gl_ScopeWorkgroup, BK, BN, gl_MatrixUseB> mat_b_ft;
+            coopmat<FLOAT_TYPE, gl_ScopeWorkgroup, BM, BK, gl_MatrixUseA> mat_a;
+            coopmat<FLOAT_TYPE, gl_ScopeWorkgroup, BK, BN, gl_MatrixUseB> mat_b;
 
             // Clamping is expensive, so detect different code paths for each combination
             // of A and B needing clamping.
@@ -281,16 +272,12 @@ void main() {
 #else
                 coopMatLoadTensorNV(mat_b, data_b, pos_b, sliceTensorLayoutNV(tensorLayoutB, ic * BN, BN, (block_k & ~7), BK), tensorViewTranspose);
 #endif
-                mat_a_ft = coopmat<FLOAT_TYPE, gl_ScopeWorkgroup, BM, BK, gl_MatrixUseA>(mat_a);
-                mat_b_ft = coopmat<FLOAT_TYPE, gl_ScopeWorkgroup, BK, BN, gl_MatrixUseB>(mat_b);
-                sum = coopMatMulAdd(mat_a_ft, mat_b_ft, sum);
+                sum = coopMatMulAdd(mat_a, mat_b, sum);
             } else if (unclampedA && !unclampedB) {
                 coopMatLoadTensorNV(mat_a, data_a, pos_a, sliceTensorLayoutNV(tensorLayoutA, ir * BM, BM, (block_k & ~7), BK) DECODEFUNCA);
                 coopMatLoadTensorNV(mat_b, data_b, pos_b, sliceTensorLayoutNV(tensorLayoutBClamp, ic * BN, BN, block_k, BK), tensorViewTranspose);
 
-                mat_a_ft = coopmat<FLOAT_TYPE, gl_ScopeWorkgroup, BM, BK, gl_MatrixUseA>(mat_a);
-                mat_b_ft = coopmat<FLOAT_TYPE, gl_ScopeWorkgroup, BK, BN, gl_MatrixUseB>(mat_b);
-                sum = coopMatMulAdd(mat_a_ft, mat_b_ft, sum);
+                sum = coopMatMulAdd(mat_a, mat_b, sum);
             } else if (!unclampedA && unclampedB) {
                 coopMatLoadTensorNV(mat_a, data_a, pos_a, sliceTensorLayoutNV(tensorLayoutAClamp, ir * BM, BM, block_k, BK) DECODEFUNCA);
 #ifdef MUL_MAT_ID
@@ -298,16 +285,12 @@ void main() {
 #else
                 coopMatLoadTensorNV(mat_b, data_b, pos_b, sliceTensorLayoutNV(tensorLayoutB, ic * BN, BN, (block_k & ~7), BK), tensorViewTranspose);
 #endif
-                mat_a_ft = coopmat<FLOAT_TYPE, gl_ScopeWorkgroup, BM, BK, gl_MatrixUseA>(mat_a);
-                mat_b_ft = coopmat<FLOAT_TYPE, gl_ScopeWorkgroup, BK, BN, gl_MatrixUseB>(mat_b);
-                sum = coopMatMulAdd(mat_a_ft, mat_b_ft, sum);
+                sum = coopMatMulAdd(mat_a, mat_b, sum);
             } else if (!unclampedA && !unclampedB) {
                 coopMatLoadTensorNV(mat_a, data_a, pos_a, sliceTensorLayoutNV(tensorLayoutAClamp, ir * BM, BM, block_k, BK) DECODEFUNCA);
                 coopMatLoadTensorNV(mat_b, data_b, pos_b, sliceTensorLayoutNV(tensorLayoutBClamp, ic * BN, BN, block_k, BK), tensorViewTranspose);
 
-                mat_a_ft = coopmat<FLOAT_TYPE, gl_ScopeWorkgroup, BM, BK, gl_MatrixUseA>(mat_a);
-                mat_b_ft = coopmat<FLOAT_TYPE, gl_ScopeWorkgroup, BK, BN, gl_MatrixUseB>(mat_b);
-                sum = coopMatMulAdd(mat_a_ft, mat_b_ft, sum);
+                sum = coopMatMulAdd(mat_a, mat_b, sum);
             }
         }
     }

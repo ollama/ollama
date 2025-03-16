@@ -1,9 +1,6 @@
 #version 450
 
-#ifdef FLOAT16
-#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
-#endif
-#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require
 
 #include "mul_mat_vec_base.comp"
 
@@ -27,8 +24,8 @@ void iter(inout FLOAT_TYPE temp[NUM_COLS][NUM_ROWS], const uint first_row, const
 
 #if K_PER_ITER == 8
 #if QUANT_R == 2
-        const B_TYPE_VEC4 bv02 = data_b_v4[(j*p.batch_stride_b + b_offset + iybs + iqs) / 4];
-        const B_TYPE_VEC4 bv13 = data_b_v4[(j*p.batch_stride_b + b_offset + iybs + iqs + y_offset) / 4];
+        const vec4 bv02 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + iybs + iqs) / 4]);
+        const vec4 bv13 = vec4(data_b_v4[(j*p.batch_stride_b + b_offset + iybs + iqs + y_offset) / 4]);
         const vec4 bv0 = vec4(bv02.x, bv13.x, bv02.y, bv13.y);
         const vec4 bv1 = vec4(bv02.z, bv13.z, bv02.w, bv13.w);
 #else
@@ -136,8 +133,8 @@ void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
 void main() {
     const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
 
-#if defined(DATA_A_IQ4_NL)
-    init_iq4nl_shmem();
+#ifdef NEEDS_INIT_IQ_SHMEM
+    init_iq_shmem(gl_WorkGroupSize);
 #endif
 
     // do NUM_ROWS at a time, unless there aren't enough remaining rows

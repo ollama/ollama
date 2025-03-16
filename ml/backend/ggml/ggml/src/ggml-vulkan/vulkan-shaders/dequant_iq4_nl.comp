@@ -10,7 +10,7 @@ layout (binding = 1) writeonly buffer D {D_TYPE data_b[];};
 void main() {
     const uint i = gl_WorkGroupID.x * 4 + gl_LocalInvocationID.x / 64;
 
-    init_iq4nl_shmem();
+    init_iq_shmem(gl_WorkGroupSize);
 
     const uint tid = gl_LocalInvocationID.x % 64;
     const uint il  = tid/32;

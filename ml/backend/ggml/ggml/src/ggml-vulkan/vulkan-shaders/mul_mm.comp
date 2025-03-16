@@ -6,6 +6,9 @@
 #ifdef FLOAT16
 #extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
 #endif
+#if defined(DATA_A_IQ1_M)
+#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
+#endif
 
 #ifdef COOPMAT
 #extension GL_KHR_cooperative_matrix : enable
@@ -95,8 +98,8 @@ shared ACC_TYPE coopmat_stage[TM * TN * NUM_WARPS];
 #endif
 
 void main() {
-#if defined(DATA_A_IQ4_NL)
-    init_iq4nl_shmem();
+#ifdef NEEDS_INIT_IQ_SHMEM
+    init_iq_shmem(gl_WorkGroupSize);
 #endif
 
 #ifdef MUL_MAT_ID
@@ -343,10 +346,8 @@ void main() {
             const uint qsshift = halfsplit * 2;          // 0,2,4,6
             const uint m = 1 << (4 * n + halfsplit);     // 1,2,4,8,16,32,64,128
 
-            const int8_t us = int8_t(is <  4 ? (data_a[ib].scales[is-0] & 0xF) | (((data_a[ib].scales[is+8] >> 0) & 3) << 4) :
-                                    is <  8 ? (data_a[ib].scales[is-0] & 0xF) | (((data_a[ib].scales[is+4] >> 2) & 3) << 4) :
-                                    is < 12 ? (data_a[ib].scales[is-8] >>  4) | (((data_a[ib].scales[is+0] >> 4) & 3) << 4) :
-                                            (data_a[ib].scales[is-8] >>  4) | (((data_a[ib].scales[is-4] >> 6) & 3) << 4));
+            const int8_t us = int8_t(((data_a[ib].scales[is % 8] >> (4 * int(is / 8))) & 0xF)
+                                  | (((data_a[ib].scales[8 + (is % 4)] >> (2 * int(is / 4))) & 3) << 4));
             const float dl = float(data_a[ib].d) * float(us - 32);
 
             buf_a[buf_idx    ] = FLOAT_TYPE(dl * float(int8_t((data_a[ib].qs[qsi    ] >> qsshift) & 3) - (((data_a[ib].hmask[hmi    ] & m) != 0) ? 0 : 4)));
@@ -439,6 +440,187 @@ void main() {
 
             buf_a[buf_idx    ] = FLOAT_TYPE(dscale * float(int8_t(((data_a[ib].ql[qsi    ] >> (b * 4)) & 0xF) | (((data_a[ib].qh[qhi    ] >> qhshift) & 3) << 4)) - 32));
             buf_a[buf_idx + 1] = FLOAT_TYPE(dscale * float(int8_t(((data_a[ib].ql[qsi + 1] >> (b * 4)) & 0xF) | (((data_a[ib].qh[qhi + 1] >> qhshift) & 3) << 4)) - 32));
+#elif defined(DATA_A_IQ1_S)
+            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
+            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
+
+            const uint ib = idx / 128;                  // 2 values per idx
+            const uint ib32 = (idx % 128) / 16;         // 0..7
+            const uint ib8 = (idx % 128) / 4;
+            const int i8 = 2 * int(idx % 4);
+
+            const float d = float(data_a[ib].d);
+            const uint qh = data_a[ib].qh[ib32];
+            const uint qs = data_a[ib].qs[ib8];
+            const float dl = d * (2 * bitfieldExtract(qh, 12, 3) + 1);
+            const float delta = ((qh & 0x8000) != 0) ? -IQ1S_DELTA : IQ1S_DELTA;
+            const int16_t grid = int16_t(iq1s_grid[qs | (bitfieldExtract(qh, 3 * int(ib8 & 3), 3) << 8)]);
+
+            const ivec2 gvec = ivec2(
+              bitfieldExtract(grid, 2 * (i8), 2),
+              bitfieldExtract(grid, 2 * (i8 + 1), 2)
+            );
+            const vec2 v = dl * (vec2(gvec) + delta);
+
+            buf_a[buf_idx    ] = FLOAT_TYPE(v.x);
+            buf_a[buf_idx + 1] = FLOAT_TYPE(v.y);
+#elif defined(DATA_A_IQ1_M)
+            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
+            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
+
+            const uint ib = idx / 128;                  // 2 values per idx
+            const uint ib8 = (idx % 128) / 4;
+            const uint ib16 = ib8 / 2;
+            const int i8 = 2 * int(idx % 4);
+
+            const uint16_t[4] scales = data_a[ib].scales;
+            const u16vec4 s = u16vec4(scales[0], scales[1], scales[2], scales[3]) >> 12;
+            const float d = float(unpackHalf2x16(s.x | (s.y << 4) | (s.z << 8) | (s.w << 12)).x);
+            const uint sc = scales[ib8 / 8];
+            const uint qs = data_a[ib].qs[ib8];
+            const uint qh = data_a[ib].qh[ib16] >> (4 * (ib8 & 1));
+            const float dl = d * (2 * bitfieldExtract(sc, 3 * int(ib16 & 3), 3) + 1);
+            const float delta = ((qh & 8) != 0) ? -IQ1M_DELTA : IQ1M_DELTA;
+            const int16_t grid = int16_t(iq1s_grid[qs | ((qh & 7) << 8)]);
+            const ivec2 gvec = ivec2(
+              bitfieldExtract(grid, 2 * (i8), 2),
+              bitfieldExtract(grid, 2 * (i8 + 1), 2)
+            );
+            const vec2 v = dl * (vec2(gvec) + delta);
+
+            buf_a[buf_idx    ] = FLOAT_TYPE(v.x);
+            buf_a[buf_idx + 1] = FLOAT_TYPE(v.y);
+#elif defined(DATA_A_IQ2_XXS)
+            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
+            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
+
+            const uint ib = idx / 128;                  // 2 values per idx
+            const uint ib32 = (idx % 128) / 16;         // 0..7
+            const uint ib8 = (idx / 4) % 4;
+
+            const float d = float(data_a[ib].d);
+            const uint qs = data_a[ib].qs[8 * ib32 + ib8];
+            const uint signs = pack32(u8vec4(
+                data_a[ib].qs[8*ib32 + 4],
+                data_a[ib].qs[8*ib32 + 5],
+                data_a[ib].qs[8*ib32 + 6],
+                data_a[ib].qs[8*ib32 + 7]
+            ));
+            const float db = d * 0.25 * (0.5 + (signs >> 28));
+            const uint32_t sign7 = bitfieldExtract(signs, 7 * int(ib8), 7);
+            const uint sign = (sign7 | (bitCount(sign7) << 7)) >> (2 * (idx % 4));
+            const i8vec2 sign01 = i8vec2(1 - (2 & i8vec2(int8_t(sign << 1), int8_t(sign))));
+            const uint grid = iq2xxs_grid[qs][(idx % 4) / 2] >> (16 * (idx & 1));
+            const vec2 v = db * vec2(sign01) * vec2(unpack8(grid).xy);
+
+            buf_a[buf_idx    ] = FLOAT_TYPE(v.x);
+            buf_a[buf_idx + 1] = FLOAT_TYPE(v.y);
+#elif defined(DATA_A_IQ2_XS)
+            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
+            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
+
+            const uint ib = idx / 128;                  // 2 values per idx
+            const uint ib32 = (idx % 128) / 16;         // 0..7
+            const uint ib8 = (idx / 4) % 4;             // 0..3
+
+            const float d = float(data_a[ib].d);
+            const uint scale = (data_a[ib].scales[ib32] >> (2 * (ib8 & 2))) & 0xf;
+            const float db = d * 0.25 * (0.5 + scale);
+            const uint qs = data_a[ib].qs[4 * ib32 + ib8];
+            const uint sign7 = qs >> 9;
+            const uint sign = (sign7 | (bitCount(sign7) << 7)) >> (2 * (idx % 4));
+            const i8vec2 sign01 = i8vec2(1 - (2 & i8vec2(int8_t(sign << 1), int8_t(sign))));
+            const uint grid = iq2xs_grid[qs & 511][(idx % 4) / 2] >> (16 * (idx & 1));
+            const vec2 v = db * vec2(sign01) * vec2(unpack8(grid).xy);
+
+            buf_a[buf_idx    ] = FLOAT_TYPE(v.x);
+            buf_a[buf_idx + 1] = FLOAT_TYPE(v.y);
+#elif defined(DATA_A_IQ2_S)
+            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
+            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
+
+            const uint ib = idx / 128;        // 2 values per idx
+            const uint ib8 = (idx % 128) / 4; // 0..31
+            const uint ib32 = ib8 / 4;        // 0..7
+
+            const uint scale = (data_a[ib].scales[ib32] >> (2 * (ib8 & 2))) & 0xf;
+            const uint qs = data_a[ib].qs[ib8];
+            const uint qh = data_a[ib].qh[ib32];
+            const uint qhshift = 2 * (ib8 % 4);
+            const uint sign = data_a[ib].qs[QUANT_K / 8 + ib8] >> (2 * (idx % 4));
+
+            const float d = float(data_a[ib].d);
+            const float db = d * 0.25 * (0.5 + scale);
+            const i8vec2 sign01 = i8vec2(1 - (2 & i8vec2(int8_t(sign << 1), int8_t(sign))));
+            const uint16_t grid = unpack16(iq2s_grid[qs | ((qh << (8 - qhshift)) & 0x300)][(idx & 2) >> 1])[idx & 1];
+            const vec2 v = db * vec2(sign01) * vec2(unpack8(grid));
+
+            buf_a[buf_idx    ] = FLOAT_TYPE(v.x);
+            buf_a[buf_idx + 1] = FLOAT_TYPE(v.y);
+#elif defined(DATA_A_IQ3_XXS)
+            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
+            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
+
+            const uint ib = idx / 128;                  // 2 values per idx
+            const uint iqs = (idx % 128) / 2;           // 0..63
+            const uint is = QUANT_K / 4 + 4 * (iqs / 8); // 8 values
+
+            const float d = float(data_a[ib].d);
+            const uint qs = data_a[ib].qs[iqs];
+            const uint signs = pack32(u8vec4(
+                data_a[ib].qs[is+0],
+                data_a[ib].qs[is+1],
+                data_a[ib].qs[is+2],
+                data_a[ib].qs[is+3]
+            ));
+            const float db = d * 0.5 * (0.5 + (signs >> 28));
+            const uint32_t sign7 = bitfieldExtract(signs, 7 * (int(iqs / 2) % 4), 7);
+            const uint sign = (sign7 | (bitCount(sign7) << 7)) >> (2 * (idx % 4));
+            const i8vec2 sign01 = i8vec2(1 - (2 & i8vec2(int8_t(sign << 1), int8_t(sign))));
+            const uint grid = iq3xxs_grid[qs] >> (16 * (idx & 1));
+            const vec2 v = db * vec2(sign01) * vec2(unpack8(grid).xy);
+
+            buf_a[buf_idx    ] = FLOAT_TYPE(v.x);
+            buf_a[buf_idx + 1] = FLOAT_TYPE(v.y);
+#elif defined(DATA_A_IQ3_S)
+            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
+            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
+
+            const uint ib = idx / 128;                  // 2 values per idx
+            const uint iqs = (idx % 128) / 2;           // 0..63
+            const uint iqh = iqs / 8;
+
+            const float d = float(data_a[ib].d);
+            const uint qs = data_a[ib].qs[iqs];
+            const uint qh = data_a[ib].qh[iqh];
+            const int8_t sign = int8_t(data_a[ib].signs[iqs / 2] >> (2 * (idx % 4)));
+            const uint scale = data_a[ib].scales[iqs / 16];
+            const i8vec2 sign01 = i8vec2(1 - (2 & i8vec2(sign << 1, sign)));
+            const float db = d * (1 + 2 * ((scale >> (4 * (iqh & 1))) & 0xf));
+            const uint32_t grid = iq3s_grid[qs | ((qh << (8 - (iqs % 8))) & 256)] >> (16 * (idx % 2));
+            const vec2 v = db * vec2(sign01) * vec2(unpack8(grid).xy);
+
+            buf_a[buf_idx    ] = FLOAT_TYPE(v.x);
+            buf_a[buf_idx + 1] = FLOAT_TYPE(v.y);
+#elif defined(DATA_A_IQ4_XS)
+            const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
+            const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a * LOAD_VEC_A;
+
+            const uint ib = idx / 128;                  // 2 values per idx
+            const uint ib32 = (idx % 128) / 16;         // 0..7
+            const uint iq = 16 * ib32 + 2 * (idx % 8);
+
+            const uint sl = (data_a[ib].scales_l[ib32/2] >> (4 * (ib32 & 1))) & 0xF;
+            const uint sh = ((data_a[ib].scales_h) >> (2 * ib32)) & 3;
+            const uint qshift = (idx & 8) >> 1;
+            u8vec2 qs = u8vec2(data_a[ib].qs[iq], data_a[ib].qs[iq + 1]);
+            qs = (qs >> qshift) & uint8_t(0xF);
+
+            const float d = float(data_a[ib].d);
+            const vec2 v = d * float(int(sl | (sh << 4)) - 32) * vec2(kvalues_iq4nl[qs.x], kvalues_iq4nl[qs.y]);
+
+            buf_a[buf_idx    ] = FLOAT_TYPE(v.x);
+            buf_a[buf_idx + 1] = FLOAT_TYPE(v.y);
 #elif defined(DATA_A_IQ4_NL)
             const uint idx = pos_a + (loadc_a + l) * p.stride_a / LOAD_VEC_A + loadr_a;
             const uint buf_idx = (loadc_a + l) * SHMEM_STRIDE + loadr_a;

@@ -12,8 +12,8 @@ void main() {
     const uint i11 = (gl_GlobalInvocationID.z)/p.ne12;
     const uint i12 = (gl_GlobalInvocationID.z)%p.ne12;
 
-#if defined(DATA_A_IQ4_NL)
-    init_iq4nl_shmem();
+#ifdef NEEDS_INIT_IQ_SHMEM
+    init_iq_shmem(gl_WorkGroupSize);
 #endif
 
     if (i00 >= p.ne00) {

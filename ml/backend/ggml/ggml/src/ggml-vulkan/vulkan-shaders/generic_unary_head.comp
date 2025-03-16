@@ -54,3 +54,23 @@ uint dst_idx(uint idx) {
     const uint i10 = idx - i13_offset - i12_offset - i11*p.ne10;
     return i13*p.nb13 + i12*p.nb12 + i11*p.nb11 + i10*p.nb10;
 }
+
+uint src0_idx_quant(uint idx, uint qk) {
+    const uint i03 = fastdiv(idx, p.ne0_012mp, p.ne0_012L);
+    const uint i03_offset = i03 * p.ne02*p.ne01*p.ne00;
+    const uint i02 = fastdiv(idx - i03_offset, p.ne0_01mp, p.ne0_01L);
+    const uint i02_offset = i02*p.ne01*p.ne00;
+    const uint i01 = fastdiv(idx - i03_offset - i02_offset, p.ne0_0mp, p.ne0_0L);
+    const uint i00 = idx - i03_offset - i02_offset - i01*p.ne00;
+    return i03*p.nb03 + i02*p.nb02 + i01*p.nb01 + (i00/qk)*p.nb00;
+}
+
+uint dst_idx_quant(uint idx, uint qk) {
+    const uint i13 = fastdiv(idx, p.ne1_012mp, p.ne1_012L);
+    const uint i13_offset = i13 * p.ne12*p.ne11*p.ne10;
+    const uint i12 = fastdiv(idx - i13_offset, p.ne1_01mp, p.ne1_01L);
+    const uint i12_offset = i12*p.ne11*p.ne10;
+    const uint i11 = fastdiv(idx - i13_offset - i12_offset, p.ne1_0mp, p.ne1_0L);
+    const uint i10 = idx - i13_offset - i12_offset - i11*p.ne10;
+    return i13*p.nb13 + i12*p.nb12 + i11*p.nb11 + (i10/qk)*p.nb10;
+}

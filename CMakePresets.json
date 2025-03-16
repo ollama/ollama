@@ -62,7 +62,7 @@
     {
       "name": "Vulkan",
       "inherits": [ "Default" ]
-     }
+    }
   ],
   "buildPresets": [
     {
@@ -114,6 +114,6 @@
       "name": "Vulkan",
       "targets": [ "ggml-vulkan" ],
       "configurePreset": "Vulkan"
-      }
+    }
   ]
 }

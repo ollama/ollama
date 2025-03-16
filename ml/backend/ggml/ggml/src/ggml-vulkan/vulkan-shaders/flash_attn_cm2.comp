@@ -42,10 +42,13 @@ layout (push_constant) uniform parameter {
     uint32_t nev3;
     uint32_t nem1;
 
+    uint32_t nb01;
     uint32_t nb02;
     uint32_t nb03;
+    uint32_t nb11;
     uint32_t nb12;
     uint32_t nb13;
+    uint32_t nb21;
     uint32_t nb22;
     uint32_t nb23;
     uint32_t nb31;
@@ -101,8 +104,8 @@ ACC_TYPE Max(const in uint32_t row, const in uint32_t col, const in ACC_TYPE ele
 #endif
 
 void main() {
-#if defined(DATA_A_IQ4_NL)
-    init_iq4nl_shmem();
+#ifdef NEEDS_INIT_IQ_SHMEM
+    init_iq_shmem(gl_WorkGroupSize);
 #endif
 
     const uint32_t N = p.N;
@@ -146,7 +149,24 @@ void main() {
     tensorLayoutK = setTensorLayoutDimensionNV(tensorLayoutK, KV, D);
     tensorLayoutV = setTensorLayoutDimensionNV(tensorLayoutV, KV, D);
 
-    coopmat<Q_TYPE, gl_ScopeWorkgroup, Br, D, gl_MatrixUseA> Q;
+    // nb?1 are already divided by the type size and are in units of elements
+    uint32_t q_stride = p.nb01;
+    uint32_t k_stride = p.nb11;
+    uint32_t v_stride = p.nb21;
+    // hint to the compiler that strides are aligned for the aligned variant of the shader
+    if (Clamp != gl_CooperativeMatrixClampModeConstantNV)
+    {
+        q_stride &= ~7;
+#if !defined(BLOCK_SIZE)
+        k_stride &= ~7;
+        v_stride &= ~7;
+#endif
+    }
+    tensorLayoutQ = setTensorLayoutStrideNV(tensorLayoutQ, q_stride, 1);
+    tensorLayoutK = setTensorLayoutStrideNV(tensorLayoutK, k_stride, 1);
+    tensorLayoutV = setTensorLayoutStrideNV(tensorLayoutV, v_stride, 1);
+
+    coopmat<Q_TYPE, gl_ScopeWorkgroup, Br, D, gl_MatrixUseAccumulator> Q;
     coopmat<float16_t, gl_ScopeWorkgroup, Br, D, gl_MatrixUseA> Qf16;
 
     uint32_t q_offset = iq2*p.nb02+iq3*p.nb03;
