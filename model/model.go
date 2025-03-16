@@ -60,7 +60,7 @@ type MultimodalProcessor interface {
 	// This function is also responsible for updating MultimodalHash for any Multimodal
 	// that is modified to ensure that there is a unique hash value that accurately
 	// represents the contents.
-	PostTokenize(ml.Context, []input.Input) ([]input.Input, error)
+	PostTokenize([]input.Input) ([]input.Input, error)
 }
 
 // Base implements the common fields and methods for all models

@@ -2,10 +2,9 @@ package gemma3
 
 import (
 	"bytes"
-	"encoding/binary"
-	"hash/fnv"
 	"image"
 	"math"
+	"slices"
 
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
@@ -112,36 +111,23 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 	return visionOutputs, nil
 }
 
-type imageToken struct {
-	embedding ml.Tensor
-	index     int
-}
-
-func (m *Model) PostTokenize(ctx ml.Context, inputs []input.Input) ([]input.Input, error) {
+func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 	var result []input.Input
-	fnvHash := fnv.New64a()
 
 	for _, inp := range inputs {
 		if inp.Multimodal == nil {
 			result = append(result, inp)
 		} else {
-			imageInputs := []input.Input{
-				{Token: 108},    // "\n\n"
-				{Token: 255999}, // "<start_of_image>""
-			}
-			result = append(result, imageInputs...)
-
-			// add image embeddings
 			inputMultimodal := inp.Multimodal.(ml.Tensor)
 
-			for i := range inputMultimodal.Dim(1) {
-				fnvHash.Reset()
-				binary.Write(fnvHash, binary.NativeEndian, inp.MultimodalHash)
-				fnvHash.Write([]byte{byte(i)})
+			result = append(result,
+				input.Input{Token: 108, SameBatch: inputMultimodal.Dim(1) + 3},               // "\n\n"
+				input.Input{Token: 255999},                                                   // "<start_of_image>""
+				input.Input{Multimodal: inputMultimodal, MultimodalHash: inp.MultimodalHash}, // image data is on the first placeholder
+			)
 
-				imageToken := imageToken{embedding: inputMultimodal, index: i}
-				result = append(result, input.Input{Multimodal: imageToken, MultimodalHash: fnvHash.Sum64()})
-			}
+			// add image token placeholders
+			result = append(result, slices.Repeat([]input.Input{{Token: 0}}, inputMultimodal.Dim(1)-1)...)
 
 			result = append(result,
 				input.Input{Token: 256000}, // <end_of_image>
