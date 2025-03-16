@@ -6,6 +6,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
@@ -448,4 +450,94 @@ func projectorMemoryRequirements(filename string) (weights, graphSize uint64) {
 	}
 
 	return weights, graphSize
+}
+
+// Task represents a unit of work to be executed.
+type Task struct {
+	ID      int
+	Payload interface{}
+}
+
+// TaskQueue represents a queue of tasks to be executed.
+type TaskQueue struct {
+	tasks chan Task
+	wg    sync.WaitGroup
+}
+
+// NewTaskQueue creates a new TaskQueue with the specified buffer size.
+func NewTaskQueue(bufferSize int) *TaskQueue {
+	return &TaskQueue{
+		tasks: make(chan Task, bufferSize),
+	}
+}
+
+// AddTask adds a task to the queue.
+func (q *TaskQueue) AddTask(task Task) {
+	q.wg.Add(1)
+	q.tasks <- task
+}
+
+// Run starts the task queue and processes tasks using the provided worker function.
+func (q *TaskQueue) Run(worker func(Task)) {
+	go func() {
+		for task := range q.tasks {
+			worker(task)
+			q.wg.Done()
+		}
+	}()
+}
+
+// Wait waits for all tasks in the queue to be processed.
+func (q *TaskQueue) Wait() {
+	q.wg.Wait()
+}
+
+// ConcurrencyControl represents a concurrency control mechanism.
+type ConcurrencyControl struct {
+	mu sync.Mutex
+}
+
+// NewConcurrencyControl creates a new ConcurrencyControl.
+func NewConcurrencyControl() *ConcurrencyControl {
+	return &ConcurrencyControl{}
+}
+
+// Lock acquires the lock.
+func (cc *ConcurrencyControl) Lock() {
+	cc.mu.Lock()
+}
+
+// Unlock releases the lock.
+func (cc *ConcurrencyControl) Unlock() {
+	cc.mu.Unlock()
+}
+
+// Example usage of the task queue and concurrency control.
+func main() {
+	// Create a task queue with a buffer size of 10.
+	taskQueue := NewTaskQueue(10)
+
+	// Create a concurrency control mechanism.
+	concurrencyControl := NewConcurrencyControl()
+
+	// Define a worker function to process tasks.
+	worker := func(task Task) {
+		concurrencyControl.Lock()
+		defer concurrencyControl.Unlock()
+
+		// Simulate task processing.
+		fmt.Printf("Processing task %d\n", task.ID)
+		time.Sleep(1 * time.Second)
+	}
+
+	// Start the task queue with the worker function.
+	taskQueue.Run(worker)
+
+	// Add tasks to the queue.
+	for i := 0; i < 20; i++ {
+		taskQueue.AddTask(Task{ID: i})
+	}
+
+	// Wait for all tasks to be processed.
+	taskQueue.Wait()
 }
