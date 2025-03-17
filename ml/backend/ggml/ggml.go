@@ -312,17 +312,19 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 					return fmt.Errorf("unassigned tensor: %s", t.Name)
 				}
 
-				bts := make([]byte, t.Size())
-				n, err := io.ReadFull(io.NewSectionReader(sr, int64(t.Offset), int64(t.Size())), bts)
-				if err != nil {
-					return err
+				bts := C.malloc(C.size_t(t.Size()))
+				if bts == nil {
+					return errors.New("failed to allocate tensor buffer")
+				}
+				defer C.free(bts)
+
+				buf := unsafe.Slice((*byte)(bts), t.Size())
+				n, err := io.ReadFull(io.NewSectionReader(sr, int64(t.Offset), int64(t.Size())), buf)
+				if err != nil || n != len(buf) {
+					return errors.New("read failed")
 				}
 
-				if n != len(bts) {
-					return errors.New("short read")
-				}
-
-				C.ggml_backend_tensor_set(tt, unsafe.Pointer(&bts[0]), 0, C.size_t(t.Size()))
+				C.ggml_backend_tensor_set(tt, bts, 0, C.size_t(t.Size()))
 				return nil
 			})
 		}
