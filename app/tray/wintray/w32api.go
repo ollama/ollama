@@ -67,6 +67,7 @@ const (
 	SW_HIDE             = 0
 	TPM_BOTTOMALIGN     = 0x0020
 	TPM_LEFTALIGN       = 0x0000
+	TPM_RIGHTBUTTON     = 0x0002
 	WM_CLOSE            = 0x0010
 	WM_USER             = 0x0400
 	WS_CAPTION          = 0x00C00000

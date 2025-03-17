@@ -4,7 +4,10 @@ import (
 	"syscall"
 )
 
-const CREATE_DEFAULT_ERROR_MODE = 0x04000000
+const (
+	CREATE_DEFAULT_ERROR_MODE   = 0x04000000
+	ABOVE_NORMAL_PRIORITY_CLASS = 0x00008000
+)
 
 var LlamaServerSysProcAttr = &syscall.SysProcAttr{
 	// Wire up the default error handling logic If for some reason a DLL is
@@ -12,5 +15,8 @@ var LlamaServerSysProcAttr = &syscall.SysProcAttr{
 	// the user can either fix their PATH, or report a bug. Without this
 	// setting, the process exits immediately with a generic exit status but no
 	// way to (easily) figure out what the actual missing DLL was.
-	CreationFlags: CREATE_DEFAULT_ERROR_MODE,
+	//
+	// Setting Above Normal priority class ensures when running as a "background service"
+	// with "programs" given best priority, we aren't starved of cpu cycles
+	CreationFlags: CREATE_DEFAULT_ERROR_MODE | ABOVE_NORMAL_PRIORITY_CLASS,
 }

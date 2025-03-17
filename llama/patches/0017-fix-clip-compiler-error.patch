@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: jmorganca <jmorganca@gmail.com>
+Date: Tue, 25 Feb 2025 19:14:51 -0800
+Subject: [PATCH] fix-clip-compiler-error
+
+---
+ examples/llava/clip.cpp | 2 +-
+ examples/llava/clip.h   | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/examples/llava/clip.cpp b/examples/llava/clip.cpp
+index 560021c7..54265beb 100644
+--- a/examples/llava/clip.cpp
++++ b/examples/llava/clip.cpp
+@@ -1788,7 +1788,7 @@ void clip_image_f32_batch_free(struct clip_image_f32_batch  * batch) {
+     }
+ }
+ 
+-void clip_build_img_from_pixels(const unsigned char * rgb_pixels, int nx, int ny, clip_image_u8 * img) {
++void clip_build_img_from_pixels(const unsigned char * rgb_pixels, int nx, int ny, struct clip_image_u8 * img) {
+     img->nx = nx;
+     img->ny = ny;
+     img->buf.resize(3 * nx * ny);
+diff --git a/examples/llava/clip.h b/examples/llava/clip.h
+index ce6f6194..f9f80d7d 100644
+--- a/examples/llava/clip.h
++++ b/examples/llava/clip.h
+@@ -75,7 +75,7 @@ CLIP_API void clip_image_u8_batch_free (struct clip_image_u8_batch  * batch);
+ CLIP_API void clip_image_f32_batch_free(struct clip_image_f32_batch * batch);
+ 
+ /** build image from pixels decoded by other libraries instead of stb_image.h for better performance. The memory layout is RGBRGBRGB..., input buffer length must be 3*nx*ny bytes */
+-CLIP_API void clip_build_img_from_pixels(const unsigned char * rgb_pixels, int nx, int ny, clip_image_u8 * img);
++CLIP_API void clip_build_img_from_pixels(const unsigned char * rgb_pixels, int nx, int ny, struct clip_image_u8 * img);
+ 
+ CLIP_API bool clip_image_load_from_file(const char * fname, struct clip_image_u8 * img);
+ 

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/ollama/ollama/api"
 )
@@ -107,7 +108,46 @@ func TestChatMiddleware(t *testing.T) {
 					"presence_penalty":  5.0,
 					"top_p":             6.0,
 				},
-				Format: "json",
+				Format: json.RawMessage(`"json"`),
+				Stream: &True,
+			},
+		},
+		{
+			name: "chat handler with streaming usage",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "Hello"}
+				],
+				"stream":            true,
+				"stream_options":    {"include_usage": true},
+				"max_tokens":        999,
+				"seed":              123,
+				"stop":              ["\n", "stop"],
+				"temperature":       3.0,
+				"frequency_penalty": 4.0,
+				"presence_penalty":  5.0,
+				"top_p":             6.0,
+				"response_format":   {"type": "json_object"}
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "Hello",
+					},
+				},
+				Options: map[string]any{
+					"num_predict":       999.0, // float because JSON doesn't distinguish between float and int
+					"seed":              123.0,
+					"stop":              []any{"\n", "stop"},
+					"temperature":       3.0,
+					"frequency_penalty": 4.0,
+					"presence_penalty":  5.0,
+					"top_p":             6.0,
+				},
+				Format: json.RawMessage(`"json"`),
 				Stream: &True,
 			},
 		},
@@ -195,7 +235,86 @@ func TestChatMiddleware(t *testing.T) {
 				Stream: &False,
 			},
 		},
-
+		{
+			name: "chat handler with streaming tools",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "What's the weather like in Paris?"}
+				],
+				"stream": true,
+				"tools": [{
+					"type": "function",
+					"function": {
+						"name": "get_weather",
+						"description": "Get the current weather",
+						"parameters": {
+							"type": "object",
+							"required": ["location"],
+							"properties": {
+								"location": {
+									"type": "string",
+									"description": "The city and state"
+								},
+								"unit": {
+									"type": "string",
+									"enum": ["celsius", "fahrenheit"]
+								}
+							}
+						}
+					}
+				}]
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "What's the weather like in Paris?",
+					},
+				},
+				Tools: []api.Tool{
+					{
+						Type: "function",
+						Function: api.ToolFunction{
+							Name:        "get_weather",
+							Description: "Get the current weather",
+							Parameters: struct {
+								Type       string   `json:"type"`
+								Required   []string `json:"required"`
+								Properties map[string]struct {
+									Type        string   `json:"type"`
+									Description string   `json:"description"`
+									Enum        []string `json:"enum,omitempty"`
+								} `json:"properties"`
+							}{
+								Type:     "object",
+								Required: []string{"location"},
+								Properties: map[string]struct {
+									Type        string   `json:"type"`
+									Description string   `json:"description"`
+									Enum        []string `json:"enum,omitempty"`
+								}{
+									"location": {
+										Type:        "string",
+										Description: "The city and state",
+									},
+									"unit": {
+										Type: "string",
+										Enum: []string{"celsius", "fahrenheit"},
+									},
+								},
+							},
+						},
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream: &True,
+			},
+		},
 		{
 			name: "chat handler error forwarding",
 			body: `{
@@ -237,13 +356,13 @@ func TestChatMiddleware(t *testing.T) {
 				if err := json.Unmarshal(resp.Body.Bytes(), &errResp); err != nil {
 					t.Fatal(err)
 				}
+				return
 			}
-			if capturedRequest != nil && !reflect.DeepEqual(tc.req, *capturedRequest) {
-				t.Fatal("requests did not match")
+			if diff := cmp.Diff(&tc.req, capturedRequest); diff != "" {
+				t.Fatalf("requests did not match: %+v", diff)
 			}
-
-			if !reflect.DeepEqual(tc.err, errResp) {
-				t.Fatal("errors did not match")
+			if diff := cmp.Diff(tc.err, errResp); diff != "" {
+				t.Fatalf("errors did not match for %s:\n%s", tc.name, diff)
 			}
 		})
 	}
@@ -281,6 +400,55 @@ func TestCompletionsMiddleware(t *testing.T) {
 				},
 				Suffix: "suffix",
 				Stream: &False,
+			},
+		},
+		{
+			name: "completions handler stream",
+			body: `{
+				"model": "test-model",
+				"prompt": "Hello",
+				"stream": true,
+				"temperature": 0.8,
+				"stop": ["\n", "stop"],
+				"suffix": "suffix"
+			}`,
+			req: api.GenerateRequest{
+				Model:  "test-model",
+				Prompt: "Hello",
+				Options: map[string]any{
+					"frequency_penalty": 0.0,
+					"presence_penalty":  0.0,
+					"temperature":       0.8,
+					"top_p":             1.0,
+					"stop":              []any{"\n", "stop"},
+				},
+				Suffix: "suffix",
+				Stream: &True,
+			},
+		},
+		{
+			name: "completions handler stream with usage",
+			body: `{
+				"model": "test-model",
+				"prompt": "Hello",
+				"stream": true,
+				"stream_options": {"include_usage": true},
+				"temperature": 0.8,
+				"stop": ["\n", "stop"],
+				"suffix": "suffix"
+			}`,
+			req: api.GenerateRequest{
+				Model:  "test-model",
+				Prompt: "Hello",
+				Options: map[string]any{
+					"frequency_penalty": 0.0,
+					"presence_penalty":  0.0,
+					"temperature":       0.8,
+					"top_p":             1.0,
+					"stop":              []any{"\n", "stop"},
+				},
+				Suffix: "suffix",
+				Stream: &True,
 			},
 		},
 		{

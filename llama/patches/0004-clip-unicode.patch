@@ -1,0 +1,76 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Mon, 16 Sep 2024 15:53:15 -0700
+Subject: [PATCH] clip-unicode
+
+---
+ examples/llava/clip.cpp | 40 +++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 39 insertions(+), 1 deletion(-)
+
+diff --git a/examples/llava/clip.cpp b/examples/llava/clip.cpp
+index 76d4a785..205af1eb 100644
+--- a/examples/llava/clip.cpp
++++ b/examples/llava/clip.cpp
+@@ -58,6 +58,19 @@
+ #   define LOG_DBG(...) do { fprintf(stdout, __VA_ARGS__); } while (0)
+ #endif // defined(LLAVA_LOG_OFF)
+ 
++#if defined(_WIN32)
++#define WIN32_LEAN_AND_MEAN
++#ifndef NOMINMAX
++    #define NOMINMAX
++#endif
++#include <windows.h>
++#if __GLIBCXX__
++#include <cstdio>
++#include <ext/stdio_filebuf.h>
++#include <fcntl.h>
++#endif
++#endif
++
+ //#define CLIP_DEBUG_FUNCTIONS
+ 
+ // RGB uint8 image
+@@ -1402,8 +1415,29 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
+             gguf_free(ctx);
+             return nullptr;
+         }
+-
++#ifdef _WIN32
++        int wlen = MultiByteToWideChar(CP_UTF8, 0, fname, -1, NULL, 0);
++        if (!wlen) {
++            return NULL;
++        }
++        wchar_t * wbuf = (wchar_t *) malloc(wlen * sizeof(wchar_t));
++        wlen = MultiByteToWideChar(CP_UTF8, 0, fname, -1, wbuf, wlen);
++        if (!wlen) {
++            free(wbuf);
++            return NULL;
++        }
++#if __GLIBCXX__
++        int fd = _wopen(wbuf, _O_RDONLY | _O_BINARY);
++        __gnu_cxx::stdio_filebuf<char> buffer(fd, std::ios_base::in);
++        std::istream fin(&buffer);
++#else // MSVC
++        // unused in our current build
++        auto fin = std::ifstream(wbuf, std::ios::binary);
++#endif
++        free(wbuf);
++#else
+         auto fin = std::ifstream(fname, std::ios::binary);
++#endif
+         if (!fin) {
+             LOG_ERR("cannot open model file for loading tensors\n");
+             clip_free(new_clip);
+@@ -1443,7 +1477,11 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
+                 ggml_backend_tensor_set(cur, read_buf.data(), 0, num_bytes);
+             }
+         }
++#if defined(_WIN32) && defined(__GLIBCXX__)
++        close(fd);
++#else
+         fin.close();
++#endif
+     }
+ 
+     // vision model
