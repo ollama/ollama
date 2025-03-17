@@ -83,7 +83,7 @@ type Sequence struct {
 	// true if an embedding are to be returned instead of text generation
 	embeddingOnly bool
 
-	doneReason string
+	doneReason llm.DoneReason
 
 	// Metrics
 	startProcessingTime time.Time
@@ -301,7 +301,7 @@ func flushPending(seq *Sequence) bool {
 	}
 }
 
-func (s *Server) removeSequence(seqIndex int, reason string) {
+func (s *Server) removeSequence(seqIndex int, reason llm.DoneReason) {
 	seq := s.seqs[seqIndex]
 
 	flushPending(seq)
@@ -380,7 +380,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 
 		// if past the num predict limit
 		if seq.numPredict > 0 && seq.numPredicted >= seq.numPredict {
-			s.removeSequence(seqIdx, "limit")
+			s.removeSequence(seqIdx, llm.DoneReasonLength)
 			continue
 		}
 
@@ -474,7 +474,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			}
 
 			seq.embedding <- embed
-			s.removeSequence(i, "")
+			s.removeSequence(i, llm.DoneReasonComplete)
 			continue
 		}
 
@@ -491,7 +491,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			// as it's important for the /api/generate context
 			// seq.responses <- piece
 
-			s.removeSequence(i, "stop")
+			s.removeSequence(i, llm.DoneReasonStop)
 			continue
 		}
 
@@ -522,7 +522,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			}
 			seq.cache.Inputs = seq.cache.Inputs[:tokenLen]
 
-			s.removeSequence(i, "stop")
+			s.removeSequence(i, llm.DoneReasonStop)
 			continue
 		}
 
@@ -535,7 +535,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 		}
 
 		if !flushPending(seq) {
-			s.removeSequence(i, "connection")
+			s.removeSequence(i, llm.DoneReasonConnectionClosed)
 		}
 	}
 
@@ -649,14 +649,9 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 
 				flusher.Flush()
 			} else {
-				// Send the final response
-				doneReason := "stop"
-				if seq.doneReason == "limit" {
-					doneReason = "length"
-				}
 				if err := json.NewEncoder(w).Encode(&llm.CompletionResponse{
 					Done:               true,
-					DoneReason:         doneReason,
+					DoneReason:         seq.doneReason,
 					PromptEvalCount:    seq.numPromptInputs,
 					PromptEvalDuration: seq.startGenerationTime.Sub(seq.startProcessingTime),
 					EvalCount:          seq.numDecoded,
