@@ -394,10 +394,31 @@ func toModel(r api.ShowResponse, m string) Model {
 
 func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	var messages []api.Message
+
 	for _, msg := range r.Messages {
 		switch content := msg.Content.(type) {
 		case string:
-			messages = append(messages, api.Message{Role: msg.Role, Content: content})
+			if len(msg.ToolCalls) > 0 {
+				toolCalls := make([]api.ToolCall, len(msg.ToolCalls))
+				for i, tc := range msg.ToolCalls {
+					toolCalls[i].Function.Name = tc.Function.Name
+					toolCalls[i].Function.Index = tc.Index
+					var args map[string]any
+					err := json.Unmarshal([]byte(tc.Function.Arguments), &args)
+					if err != nil {
+						slog.Error("Failed to parse tool call arguments", "error", err)
+						return nil, errors.New("invalid tool call arguments")
+					}
+					toolCalls[i].Function.Arguments = args
+				}
+				messages = append(messages, api.Message{
+					Role: msg.Role,
+					Content: content,
+					ToolCalls: toolCalls,
+				})
+			} else {
+				messages = append(messages, api.Message{Role: msg.Role, Content: content})
+			}
 		case []any:
 			for _, c := range content {
 				data, ok := c.(map[string]any)
