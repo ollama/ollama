@@ -92,6 +92,13 @@ type OneapiGPUInfo struct {
 }
 type OneapiGPUInfoList []OneapiGPUInfo
 
+type VulkanGPUInfo struct {
+	GpuInfo
+	index int
+}
+
+type VulkanGPUInfoList []VulkanGPUInfo
+
 type GpuInfoList []GpuInfo
 
 type UnsupportedGPUInfo struct {

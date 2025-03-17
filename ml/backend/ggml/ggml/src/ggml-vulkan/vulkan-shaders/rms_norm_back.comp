@@ -1,0 +1,55 @@
+#version 450
+
+#include "generic_head.comp"
+#include "types.comp"
+
+#extension GL_EXT_control_flow_attributes : enable
+#define BLOCK_SIZE 512
+
+layout(local_size_x = BLOCK_SIZE, local_size_y = 1, local_size_z = 1) in;
+
+layout (binding = 0) readonly buffer G {A_TYPE data_a[];};
+layout (binding = 1) readonly buffer X {B_TYPE data_b[];};
+layout (binding = 2) writeonly buffer D {D_TYPE data_d[];};
+
+shared FLOAT_TYPE sum_xx[BLOCK_SIZE];
+shared FLOAT_TYPE sum_xg[BLOCK_SIZE];
+
+void main() {
+    const uint row = gl_WorkGroupID.z * 262144 + gl_WorkGroupID.y * 512 + gl_WorkGroupID.x;
+    const uint tid = gl_LocalInvocationID.x;
+
+    // Compute derivative of x[i]/norm(x) = g[i]/norm(x) - x[i] dot(x,g)/KX / norm(x)^1.5
+
+    // partial sums for thread in warp
+    sum_xx[tid] = FLOAT_TYPE(0.0f);
+    sum_xg[tid] = FLOAT_TYPE(0.0f);
+
+    [[unroll]] for (uint col = tid; col < p.KX; col += BLOCK_SIZE) {
+        const FLOAT_TYPE gi = FLOAT_TYPE(data_a[row*p.KX + col]);
+        const FLOAT_TYPE xi = FLOAT_TYPE(data_b[row*p.KX + col]);
+        sum_xx[tid] += xi * xi;
+        sum_xg[tid] += xi * gi;
+    }
+
+    // sum up partial sums and write back result
+    barrier();
+    [[unroll]] for (int s = BLOCK_SIZE / 2; s > 0; s >>= 1) {
+        if (tid < s) {
+            sum_xx[tid] += sum_xx[tid + s];
+            sum_xg[tid] += sum_xg[tid + s];
+        }
+        barrier();
+    }
+
+    const FLOAT_TYPE eps = FLOAT_TYPE(p.param1);
+    const FLOAT_TYPE mean = sum_xx[0] / FLOAT_TYPE(p.KX);
+    const FLOAT_TYPE scale_g = inversesqrt(mean + eps);
+    const FLOAT_TYPE scale_x = -scale_g * sum_xg[0] / (sum_xx[0] + FLOAT_TYPE(p.KX) * eps);
+
+    [[unroll]] for (uint col = tid; col < p.KX; col += BLOCK_SIZE) {
+        data_d[row*p.KX + col] = D_TYPE(
+            scale_g * FLOAT_TYPE(data_a[row*p.KX + col]) +
+            scale_x * FLOAT_TYPE(data_b[row*p.KX + col]));
+    }
+}

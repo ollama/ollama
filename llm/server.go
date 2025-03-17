@@ -207,10 +207,12 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 	}
 
 	// Windows CUDA should not use mmap for best performance
+	// Vulkan should not use mmap because of double allocation (VRAM + RAM)
 	// Linux  with a model larger than free space, mmap leads to thrashing
 	// For CPU loads we want the memory to be allocated, not FS cache
 	if (runtime.GOOS == "windows" && gpus[0].Library == "cuda" && opts.UseMMap == nil) ||
 		(runtime.GOOS == "linux" && systemFreeMemory < estimate.TotalSize && opts.UseMMap == nil) ||
+		(gpus[0].Library == "vulkan" && opts.UseMMap == nil) ||
 		(gpus[0].Library == "cpu" && opts.UseMMap == nil) ||
 		(opts.UseMMap != nil && !*opts.UseMMap) {
 		params = append(params, "--no-mmap")
