@@ -1,4 +1,4 @@
-name: test
+sudo su && name: test
 
 concurrency:
   # For PRs, later CI runs preempt previous ones. e.g. a force push on a PR
