@@ -11,7 +11,7 @@
 #include <limits>
 #include <vector>
 
-#include "utils/audio_common.h"
+#include "audio_common.h"
 
 #if defined(LLAVA_LOG_OFF)
 #   define LOG_INF(...)
@@ -603,7 +603,7 @@ struct llava_image_embed * omni_audio_embed_make_with_bytes(audio_ctx * ctx_audi
     return result;
 }
 
-struct llava_image_embed * omni_audio_embed_make_with_filename(struct audio_ctx * ctx_audio, int n_threads, std::string audio_path, int n_output) {
+struct llava_image_embed * omni_audio_embed_make_with_filename(struct audio_ctx * ctx_audio, int n_threads, const char * audio_path, int n_output) {
     audio_u8 * audio = new audio_u8;
     // printf("omni_audio_embed_make_with_filename 1 :%s\n", audio_path.c_str());
     std::string audio_path_str = audio_path;

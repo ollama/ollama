@@ -542,30 +542,6 @@ func (c *ClipContext) NewEmbed(llamaContext *Context, data []byte) ([][]float32,
 	return embed, nil
 }
 
-func (c *ClipContext) AudioNewEmbed(llamaContext *Context, imageUrls string) ([][]float32, error) {
-	l := C.omni_audio_embed_make_with_filename(c.c, C.int(llamaContext.numThreads), (C.CString(imageUrls)), 50)
-	if l == nil {
-		return nil, errors.New("unable to make llava embedding from image")
-	}
-
-	numTokens := int(l.n_image_pos)
-	numEmbed := llamaContext.Model().NEmbd()
-
-	s := unsafe.Slice((*float32)(l.embed), numEmbed*numTokens)
-
-	embed := make([][]float32, numTokens)
-	rows := make([]float32, len(s))
-	copy(rows, s)
-
-	for i := range embed {
-		embed[i] = rows[i*numEmbed : (i+1)*numEmbed]
-	}
-
-	C.llava_image_embed_free(l)
-
-	return embed, nil
-}
-
 func (c *ClipContext) OmniNewEmbed(llamaContext *Context, imageUrls string) ([][]float32, error) {
 	l := C.llava_image_embed_make_with_filename(c.c, C.int(llamaContext.numThreads), (C.CString(imageUrls)))
 	if l == nil {
@@ -605,6 +581,49 @@ func (c *ClipContext) ClipUhdNumImageEmbedsCol() int {
 func (c *ClipContext) ClipUhdMaxSliceNums(max_slice_nums int) {
 	C.clip_uhd_max_slice_nums(c.c, C.int(max_slice_nums))
 	return
+}
+
+type AudioContext struct {
+	c *C.struct_audio_ctx
+}
+
+func NewAudioContext(llamaContext *Context, modelPath string) (*AudioContext, error) {
+	mp := C.CString(modelPath)
+	defer C.free(unsafe.Pointer(mp))
+	c := C.audio_ctx_init(mp)
+	if c == nil {
+		return nil, fmt.Errorf("unable to load audio model: %v", modelPath)
+	}
+
+	return &AudioContext{c: c}, nil
+}
+
+func (a *AudioContext) Free() {
+	C.audio_ctx_free(a.c)
+}
+
+func (a *AudioContext) AudioNewEmbed(llamaContext *Context, imageUrls string) ([][]float32, error) {
+	l := C.omni_audio_embed_make_with_filename(a.c, C.int(llamaContext.numThreads), (C.CString(imageUrls)), 50)
+	if l == nil {
+		return nil, errors.New("unable to make llava embedding from image")
+	}
+
+	numTokens := int(l.n_image_pos)
+	numEmbed := llamaContext.Model().NEmbd()
+
+	s := unsafe.Slice((*float32)(l.embed), numEmbed*numTokens)
+
+	embed := make([][]float32, numTokens)
+	rows := make([]float32, len(s))
+	copy(rows, s)
+
+	for i := range embed {
+		embed[i] = rows[i*numEmbed : (i+1)*numEmbed]
+	}
+
+	C.llava_image_embed_free(l)
+
+	return embed, nil
 }
 
 type MllamaContext struct {

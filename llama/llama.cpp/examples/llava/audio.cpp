@@ -38,7 +38,7 @@
 
 #include <algorithm>
 #include "gguf.h"
-#include "utils/audio_common.h"
+#include "audio_common.h"
 #include <sys/stat.h>
 #include "json.hpp"
 
