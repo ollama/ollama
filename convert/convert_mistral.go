@@ -63,10 +63,8 @@ func (p *mistralModel) KV(t *Tokenizer) ggml.KV {
 		kv["mistral.feed_forward_length"] = cmp.Or(p.IntermediateSize, p.NInner)
 	}
 
-	if headCount := cmp.Or(p.NumAttentionHeads, p.NHead); headCount > 0 {
-		kv["mistral.attention.head_count"] = cmp.Or(p.NumAttentionHeads, p.NHead)
-		kv["mistral.rope.dimension_count"] = p.HiddenSize / headCount
-	}
+	kv["mistral.attention.head_count"] = cmp.Or(p.NumAttentionHeads, p.NHead)
+	kv["mistral.rope.dimension_count"] = p.HiddenSize / cmp.Or(p.NLayers, p.NumHiddenLayers, p.NLayer)
 
 	if p.RopeTheta > 0 {
 		kv["mistral.rope.freq_base"] = p.RopeTheta
@@ -136,6 +134,13 @@ func (p *mistralModel) Tensors(ts []Tensor) []ggml.Tensor {
 			t.SetRepacker(p.repack)
 		}
 
+		if strings.HasPrefix(t.Name(), "patch_merger.") ||
+			strings.HasPrefix(t.Name(), "pre_mm_projector_output_norm.") ||
+			strings.HasPrefix(t.Name(), "vision_encoder.") ||
+			strings.HasPrefix(t.Name(), "vision_language_adapter.") {
+			continue
+		}
+
 		out = append(out, ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
@@ -149,7 +154,7 @@ func (p *mistralModel) Tensors(ts []Tensor) []ggml.Tensor {
 
 func (p *mistralModel) Replacements() []string {
 	return []string{
-		"tok_embeddings.weight", "token_embd",
+		"tok_embeddings", "token_embd",
 		"norm", "output_norm",
 		"layers", "blk",
 		"attention_norm", "attn_norm",
@@ -160,6 +165,8 @@ func (p *mistralModel) Replacements() []string {
 		"feed_forward.w1", "ffn_gate",
 		"feed_forward.w2", "ffn_down",
 		"feed_forward.w3", "ffn_up",
+		"ffn_norm", "ffn_norm",
+		"output", "output",
 	}
 }
 
