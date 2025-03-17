@@ -89,7 +89,7 @@ type InputCacheSlot struct {
 	lastUsed time.Time
 }
 
-func (c *InputCache) LoadCacheSlot(prompt []input.Input, cachePrompt bool) (*InputCacheSlot, []input.Input, error) {
+func (c *InputCache) LoadCacheSlot(prompt []input.Input) (*InputCacheSlot, []input.Input, error) {
 	var slot *InputCacheSlot
 	var numPast int32
 	var err error
@@ -105,11 +105,6 @@ func (c *InputCache) LoadCacheSlot(prompt []input.Input, cachePrompt bool) (*Inp
 	}
 	if err != nil {
 		return nil, nil, err
-	}
-
-	// TODO (brucemacd): cachePrompt is always true for completion, but false for embedding, can this be improved?
-	if !cachePrompt {
-		numPast = 0
 	}
 
 	slot.InUse = true
