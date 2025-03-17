@@ -180,6 +180,10 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, *
 		}
 
 		for _, t := range tokens {
+			decoded, _ := s.model.(model.TextProcessor).Decode([]int32{t})
+			fmt.Println("token", t, "decoded", decoded)
+		}
+		for _, t := range tokens {
 			inputs = append(inputs, input.Input{Token: t})
 		}
 
