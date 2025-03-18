@@ -699,7 +699,7 @@ func (s *Server) loadModel(
 		panic("loras are not yet implemented")
 	}
 
-	s.cache, err = NewInputCache(s.model, kvCacheType, int32(kvSize), parallel, multiUserCache)
+	s.cache, err = NewInputCache(s.model, kvCacheType, int32(kvSize), parallel, s.batchSize, multiUserCache)
 	if err != nil {
 		panic(err)
 	}
