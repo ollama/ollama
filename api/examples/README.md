@@ -13,6 +13,9 @@ go run example_name/main.go
 - [generate/main.go](generate/main.go)
 - [generate-streaming/main.go](generate-streaming/main.go)
 
+## Generate - Generate text from a multimodal
+- [multimodal/main.go](multimodal/main.go)
+
 ## Pull - Pull a model
 - [pull-progress/main.go](pull-progress/main.go)
 

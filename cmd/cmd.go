@@ -342,10 +342,12 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	if len(info.ProjectorInfo) != 0 {
 		opts.MultiModal = true
 	}
-	for k := range info.ModelInfo {
-		if strings.Contains(k, ".vision.") {
-			opts.MultiModal = true
-			break
+	if !opts.MultiModal {
+		for k := range info.ModelInfo {
+			if strings.Contains(k, ".vision.") {
+				opts.MultiModal = true
+				break
+			}
 		}
 	}
 
