@@ -330,7 +330,7 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 		}
 	}
 
-	if g.Wait() != nil {
+	if err := g.Wait(); err != nil {
 		return nil, err
 	}
 
