@@ -4,6 +4,7 @@ import (
 	"math"
 	"slices"
 
+	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
 )
@@ -213,7 +214,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues, positionIDs, aspectRa
 	return hiddenState.Concat(ctx, hiddenStates, 0)
 }
 
-func newVisionModel(c ml.Config) *VisionModel {
+func newVisionModel(c fs.Config) *VisionModel {
 	return &VisionModel{
 		Transformer:       &VisionEncoder{Layers: make([]VisionEncoderLayer, c.Uint("vision.block_count"))},
 		GlobalTransformer: &VisionEncoder{Layers: make([]VisionEncoderLayer, c.Uint("vision.global.block_count"))},

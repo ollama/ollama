@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model/input"
 )
@@ -373,7 +374,7 @@ func TestCanResume(t *testing.T) {
 
 type testBackend struct{}
 
-func (b *testBackend) Config() ml.Config {
+func (b *testBackend) Config() fs.Config {
 	panic("not implemented")
 }
 

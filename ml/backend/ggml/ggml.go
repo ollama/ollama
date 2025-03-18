@@ -24,7 +24,8 @@ import (
 	"unsafe"
 
 	"github.com/ollama/ollama/format"
-	fs "github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs"
+	fsggml "github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/ml"
 	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 	"golang.org/x/sync/errgroup"
@@ -41,7 +42,7 @@ func devices() []*C.struct_ggml_backend_device {
 }
 
 type Backend struct {
-	meta    *fs.GGML
+	meta    *fsggml.GGML
 	sched   *C.struct_ggml_backend_sched
 	tensors map[string]*C.struct_ggml_tensor
 
@@ -58,7 +59,7 @@ type Backend struct {
 }
 
 func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, error) {
-	meta, n, err := fs.Decode(r, -1)
+	meta, n, err := fsggml.Decode(r, -1)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +183,7 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 	maxTensors += blocks * 2
 
 	type tensor struct {
-		source *fs.Tensor
+		source *fsggml.Tensor
 		target string
 	}
 
@@ -413,7 +414,7 @@ func init() {
 	ml.RegisterBackend("ggml", New)
 }
 
-func (b *Backend) Config() ml.Config {
+func (b *Backend) Config() fs.Config {
 	return b.meta.KV()
 }
 
