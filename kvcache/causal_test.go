@@ -58,11 +58,11 @@ func TestSWA(t *testing.T) {
 	cache := NewSWACache(1, nil)
 	defer cache.Close()
 
-	cache.Init(backend, ml.DTypeF32, 1, 16, 16)
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
 
 	tests := []testCase{
 		{
-			name:          "SlidingWindow",
+			name:          "FirstBatch",
 			in:            []float32{1, 2, 3, 4},
 			inShape:       []int{1, 1, 4},
 			seqs:          []int{0, 0, 0, 0},
@@ -70,6 +70,16 @@ func TestSWA(t *testing.T) {
 			expected:      []float32{1, 2, 3, 4},
 			expectedShape: []int{1, 1, 4},
 			expectedMask:  []float32{0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0},
+		},
+		{
+			name:          "SecondBatch",
+			in:            []float32{5, 6},
+			inShape:       []int{1, 1, 2},
+			seqs:          []int{0, 0},
+			pos:           []int32{4, 5},
+			expected:      []float32{5, 6, 3, 4},
+			expectedShape: []int{1, 1, 4},
+			expectedMask:  []float32{0, float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1))},
 		},
 	}
 
