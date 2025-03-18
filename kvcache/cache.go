@@ -43,8 +43,13 @@ type Cache interface {
 
 	// ** cache management **
 
-	// Init sets up runtime parameters
-	Init(backend ml.Backend, dtype ml.DType, capacity int32)
+	// Init sets up runtime parameters.
+	// backend: Used to allocate cache data storage and execute management operations (such as defrag)
+	// dtype: The data type for storing cache entries
+	// maxSequences: The maximum number of sequences stored in the cache - across all batches
+	// capacity: The number of cache entries to store, per sequence
+	// maxBatch: The maximum number of tokens that can occur in a single batch
+	Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity, maxBatch int)
 
 	// Close closes the cache and frees resources associated with it
 	Close()

@@ -25,7 +25,7 @@ func TestStore(t *testing.T) {
 	cache := NewCausalCache(nil)
 	defer cache.Close()
 
-	cache.Init(backend, ml.DTypeF16, 16)
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
 
 	tests := []testCase{
 		{
@@ -58,7 +58,7 @@ func TestSWA(t *testing.T) {
 	cache := NewSWACache(1, nil)
 	defer cache.Close()
 
-	cache.Init(backend, ml.DTypeF32, 16)
+	cache.Init(backend, ml.DTypeF32, 1, 16, 16)
 
 	tests := []testCase{
 		{
@@ -81,7 +81,7 @@ func TestSequences(t *testing.T) {
 	cache := NewCausalCache(nil)
 	defer cache.Close()
 
-	cache.Init(backend, ml.DTypeF16, 16)
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
 
 	tests := []testCase{
 		{
@@ -116,7 +116,7 @@ func TestRemove(t *testing.T) {
 	})
 	defer cache.Close()
 
-	cache.Init(backend, ml.DTypeF16, 16)
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
 
 	tests := []testCase{
 		{
@@ -181,7 +181,7 @@ func TestDefrag(t *testing.T) {
 	})
 	defer cache.Close()
 
-	cache.Init(backend, ml.DTypeF16, 16)
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
 
 	tests := []testCase{
 		{
@@ -229,7 +229,7 @@ func TestCopy(t *testing.T) {
 	cache := NewCausalCache(func(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) { return key, nil })
 	defer cache.Close()
 
-	cache.Init(backend, ml.DTypeF16, 16)
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
 
 	tests := []testCase{
 		{
