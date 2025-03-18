@@ -29,6 +29,20 @@ func TestWeighted(t *testing.T) {
 	if want != got {
 		t.Errorf("index mismatch: want %d, got %d", want, got)
 	}
+
+	// Test greedy fallback when sample() returns error
+	logits = []float32{1.0, 0.999, 0.5, 0.1}
+	// Use extremely small topP to filter out all tokens, forcing error and greedy fallback
+	sampler = NewSampler(1.0, 0, 1e-10, 0, 0, nil)
+	got, err = sampler.Sample(logits)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	want = int32(0) // Should fall back to greedy and pick highest logit
+	if want != got {
+		t.Errorf("greedy fallback: want %d, got %d", want, got)
+	}
 }
 
 func BenchmarkSample(b *testing.B) {

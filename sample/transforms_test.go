@@ -171,7 +171,7 @@ func TestTopP(t *testing.T) {
 	// Test with very high p value
 	got := topP(tokens, 1.0)
 
-	// Should keep almost all tokens since p is very high
+	// Should keep all tokens since p is 1
 	if len(got) != len(input) {
 		t.Errorf("topP(1.0): should keep all tokens, got %d, want %d", len(got), len(input))
 	}
@@ -179,17 +179,17 @@ func TestTopP(t *testing.T) {
 	// Test with normal p value
 	got = topP(tokens, 0.95)
 
-	// Should keep tokens until cumulative probability > 0.95
 	if len(got) > 3 {
 		t.Errorf("topP(0.95): kept too many tokens: got %d", len(tokens))
 		t.Logf("got: %v", got)
 	}
 
 	// Test edge case - ensure at least one token remains
-	input = []float32{-1e6, -1e6, -1e6} // One dominant token
+	input = []float32{-1e6, -1e6, -1e7}
 	tokens = toTokens(input)
+	tokens = topK(tokens, 20)
 	softmax(tokens)
-	got = topP(tokens, 0.0) // Very small p
+	got = topP(tokens, 0.0)
 	if len(got) < 1 {
 		t.Error("topP should keep at least one token")
 	}
@@ -202,10 +202,19 @@ func TestTopP(t *testing.T) {
 		t.Errorf("topP(0.0): should keep only one token, got %d", len(got))
 		t.Logf("got: %v", got)
 	}
+
+	tokens = toTokens(input)
+	tokens = topK(tokens, 20)
+	softmax(tokens)
+	got = topP(tokens, 1e-10)
+	if len(got) == 0 {
+		t.Errorf("topP(1e-10): should keep at least one token, got %d", len(got))
+		t.Logf("got: %v", got)
+	}
 }
 
 func TestMinP(t *testing.T) {
-	input := []float32{-3, -2, -1, 0, 1, 2, 4, 3}
+	input := []float32{-2, 0, -1, -3, 2, 1, 4, 3}
 	tokens := toTokens(input)
 
 	// First apply temperature and softmax
@@ -239,6 +248,18 @@ func TestMinP(t *testing.T) {
 	// Should keep only the highest probability token
 	if len(tokens) != len(input) {
 		t.Errorf("minP(0.0): should keep only one token, got %d", len(tokens))
+		t.Logf("got: %v", tokens)
+	}
+
+	// Test with single token
+	tokens = toTokens(input[:1])
+	tokens = topK(tokens, 20)
+	softmax(tokens)
+	tokens = minP(tokens, 0.1)
+
+	// Should keep only the highest probability token
+	if len(tokens) != 1 {
+		t.Errorf("minP(0.1): should return single token, got %d", len(tokens))
 		t.Logf("got: %v", tokens)
 	}
 

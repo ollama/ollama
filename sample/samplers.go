@@ -2,7 +2,6 @@ package sample
 
 import (
 	"errors"
-	"log/slog"
 	"math"
 	"math/rand/v2"
 	"slices"
@@ -37,10 +36,7 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 		tokens[i].value = logits[i]
 	}
 
-	t, err := s.sample(tokens)
-	if err != nil {
-		return -1, err
-	}
+	t := s.sample(tokens)
 
 	if s.grammar != nil {
 		// optimization: first check if the max logit is accepted by the grammar
@@ -60,10 +56,7 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 			tokens[i].value = logits[i]
 		}
 		s.grammar.Apply(tokens)
-		t, err = s.sample(tokens)
-		if err != nil {
-			return -1, err
-		}
+		t = s.sample(tokens)
 		s.grammar.Accept(t.id)
 	}
 
@@ -84,9 +77,9 @@ func greedy(tokens []token) token {
 
 // sample returns the highest probability token from the tokens
 // given sampler parameters. It also has side effects of modifying the tokens
-func (s *Sampler) sample(tokens []token) (token, error) {
+func (s *Sampler) sample(tokens []token) token {
 	if s.temperature == 0 {
-		return greedy(tokens), nil
+		return greedy(tokens)
 	}
 
 	// topK also sorts the tokens in descending order of logits
@@ -98,12 +91,6 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 
 	tokens = topP(tokens, s.topP)
 	tokens = minP(tokens, s.minP)
-
-	// fallback to greedy sampling if no tokens are left
-	if len(tokens) == 0 {
-		slog.Warn("sample: no tokens left after applying transforms, falling back to greedy sampling")
-		return greedy(tokens), nil
-	}
 
 	var r float32
 	if s.rng != nil {
@@ -127,7 +114,7 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 		return 1
 	})
 
-	return tokens[idx], nil
+	return tokens[idx]
 }
 
 // TODO(parthsareen): update sampler interface to use json unmarshal https://github.com/ollama/ollama/issues/9278
