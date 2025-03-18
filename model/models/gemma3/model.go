@@ -6,6 +6,7 @@ import (
 	"math"
 	"slices"
 
+	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
@@ -52,7 +53,7 @@ func (p *MultiModalProjector) Forward(ctx ml.Context, visionOutputs ml.Tensor, i
 	return visionOutputs
 }
 
-func New(c ml.Config) (model.Model, error) {
+func New(c fs.Config) (model.Model, error) {
 	m := Model{
 		SentencePieceModel: model.NewSentencePieceModel(
 			&model.Vocabulary{
