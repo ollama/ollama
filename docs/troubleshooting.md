@@ -9,7 +9,7 @@ cat ~/.ollama/logs/server.log
 On **Linux** systems with systemd, the logs can be found with this command:
 
 ```shell
-journalctl -u ollama --no-pager
+journalctl -u ollama --no-pager --follow --pager-end 
 ```
 
 When you run Ollama in a **container**, the logs go to stdout/stderr in the container:
