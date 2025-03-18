@@ -379,14 +379,10 @@ func ParseFile(r io.Reader) (*Modelfile, error) {
 			case stateParameter:
 				cmd.Name = b.String()
 			case stateMessage:
-				if !isValidMessageRole(b.String()) {
-					return nil, &ParserError{
-						LineNumber: currLine,
-						Msg:        errInvalidMessageRole.Error(),
-					}
-				}
-
 				role = b.String()
+				if !isKnownMessageRole(b.String()) {
+					fmt.Printf("warning: received non-standard role %s. Continuing...\n", role)
+				}
 			case stateComment, stateNil:
 				// pass
 			case stateValue:
@@ -556,7 +552,7 @@ func isNewline(r rune) bool {
 	return r == '\r' || r == '\n'
 }
 
-func isValidMessageRole(role string) bool {
+func isKnownMessageRole(role string) bool {
 	return role == "system" || role == "user" || role == "assistant"
 }
 
