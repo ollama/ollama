@@ -9,7 +9,9 @@ package ggml
 import "C"
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -19,6 +21,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"unicode"
 	"unsafe"
@@ -299,6 +302,11 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 
 	var doneBytes atomic.Uint64
 	totalBytes := uint64(n) - meta.Tensors().Offset
+	pool := sync.Pool{
+		New: func() any {
+			return new(bytes.Buffer)
+		},
+	}
 
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(runtime.GOMAXPROCS(0))
@@ -320,18 +328,31 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 			}
 
 			sr := io.NewSectionReader(r, int64(meta.Tensors().Offset+t.Offset), int64(t.Size()))
-			bts := make([]byte, 128*format.KibiByte)
+			// bts := make([]byte, 128*format.KibiByte)
 
 			var s uint64
 			for s < t.Size() {
-				n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Size()-s))])
-				if err != nil {
+				b := pool.Get().(*bytes.Buffer)
+				b.Reset()
+
+				// n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Size()-s))])
+				// if err != nil {
+				// 	return err
+				// }
+				n, err := io.CopyN(b, sr, 256*format.KibiByte)
+				if n > 0 {
+				} else if errors.Is(err, io.EOF) {
+					break
+				} else if err != nil {
 					return err
 				}
 
+				bts := b.Bytes()
 				for _, tt := range tts {
 					C.ggml_backend_tensor_set(tt, unsafe.Pointer(&bts[0]), C.size_t(s), C.size_t(n))
 				}
+
+				pool.Put(b)
 
 				s += uint64(n)
 

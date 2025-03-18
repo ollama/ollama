@@ -256,16 +256,23 @@ func setPointer(base Base, v reflect.Value, tags []Tag) {
 type Tag struct {
 	Name      string
 	Alternate []string
+	Root      bool
+	Device    ml.Device
 }
 
 func ParseTags(s string) (tag Tag) {
 	parts := strings.Split(s, ",")
 	if len(parts) > 0 {
 		tag.Name = parts[0]
+		tag.Device = ml.GPU
 
 		for _, part := range parts[1:] {
 			if value, ok := strings.CutPrefix(part, "alt:"); ok {
 				tag.Alternate = append(tag.Alternate, value)
+			} else if value, ok := strings.CutPrefix(part, "root:"); ok {
+				tag.Root, _ = strconv.ParseBool(value)
+			} else if part == "cpu" {
+				tag.Device = ml.CPU
 			}
 		}
 	}

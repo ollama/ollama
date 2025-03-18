@@ -23,7 +23,7 @@ type Model struct {
 	model.Base
 	model.BytePairEncoding
 
-	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
+	TokenEmbedding *nn.Embedding `gguf:"token_embd,cpu"`
 	Layers         []Layer       `gguf:"blk"`
 	OutputNorm     *nn.RMSNorm   `gguf:"output_norm"`
 	Output         *nn.Linear    `gguf:"output,alt:token_embd"`
@@ -61,7 +61,7 @@ func New(c fs.Config) (model.Model, error) {
 		},
 	}
 
-	m.Cache = kvcache.NewCausalCache(m.Shift)
+	// m.Cache = kvcache.NewCausalCache(m.Shift)
 
 	return &m, nil
 }
@@ -71,7 +71,7 @@ type SelfAttention struct {
 	Key         *nn.Linear `gguf:"attn_k"`
 	Value       *nn.Linear `gguf:"attn_v"`
 	Output      *nn.Linear `gguf:"attn_output"`
-	RopeFactors ml.Tensor  `gguf:"rope_freqs.weight"`
+	RopeFactors ml.Tensor  `gguf:"rope_freqs.weight,root:true"`
 }
 
 func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
@@ -91,7 +91,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 	v = v.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 
 	scaleFactor := 1.0 / math.Sqrt(float64(headDim))
-	kqv := nn.Attention(ctx, q, k, v, scaleFactor, cache)
+	kqv := nn.Attention(ctx, q, k, v, scaleFactor, nil)
 	kqv = kqv.Reshape(ctx, opts.hiddenSize, batchSize)
 
 	return sa.Output.Forward(ctx, kqv)
@@ -154,7 +154,7 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	hiddenState := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 
 	for i, layer := range m.Layers {
-		m.Cache.SetLayer(i)
+		// m.Cache.SetLayer(i)
 
 		var lastLayerOutputs ml.Tensor
 		if i == len(m.Layers)-1 {
