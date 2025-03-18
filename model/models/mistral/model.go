@@ -37,10 +37,7 @@ func New(c ml.Config) (model.Model, error) {
 
 	m := Model{
 		BytePairEncoding: model.NewBytePairEncoding(
-			// TODO: need to set this in the conversion for mistral:
-			// tokenizer.ggml.pretokenizer = [^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+
-			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
-			// c.String("tokenizer.ggml.pretokenizer", `[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
+			c.String("tokenizer.ggml.pretokenizer", `[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Uints("tokenizer.ggml.token_type"),
@@ -64,16 +61,29 @@ func New(c ml.Config) (model.Model, error) {
 		},
 	}
 
+	fmt.Println("Model Parameters:")
+	fmt.Printf("  model_type: %q\n", "gpt2")
+	fmt.Printf("  vocab_size: %d\n", len(c.Strings("tokenizer.ggml.tokens")))
+	fmt.Printf("  hidden_size: %d\n", m.Options.hiddenSize)
+	fmt.Printf("  num_hidden_layers: %d\n", c.Uint("block_count"))
+	fmt.Printf("  num_attention_heads: %d\n", m.Options.numHeads)
+	fmt.Printf("  num_key_value_heads: %d\n", m.Options.numKVHeads)
+	fmt.Printf("  rms_norm_eps: %g\n", m.Options.eps)
+	fmt.Printf("  rope_theta: %g\n", m.Options.ropeBase)
+	fmt.Printf("  bos_token_id: %d\n", c.Uint("tokenizer.ggml.bos_token_id"))
+	fmt.Printf("  eos_token_id: %d\n", c.Uint("tokenizer.ggml.eos_token_id"))
+	fmt.Printf("  pad_token_id: %d\n", c.Uint("tokenizer.ggml.pad_token_id", 0))
+
 	m.Cache = kvcache.NewCausalCache(m.Shift)
 
 	return &m, nil
 }
 
 type SelfAttention struct {
-	Query       *nn.Linear `gguf:"attn_q"`
-	Key         *nn.Linear `gguf:"attn_k"`
-	Value       *nn.Linear `gguf:"attn_v"`
-	Output      *nn.Linear `gguf:"attn_output"`
+	Query       *nn.Linear `gguf:"self_attn.q_proj"`
+	Key         *nn.Linear `gguf:"self_attn.k_proj"`
+	Value       *nn.Linear `gguf:"self_attn.v_proj"`
+	Output      *nn.Linear `gguf:"self_attn.o_proj"`
 	RopeFactors ml.Tensor  `gguf:"rope_freqs.weight"`
 }
 
@@ -117,9 +127,9 @@ func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tenso
 }
 
 type MLP struct {
-	Up   *nn.Linear `gguf:"ffn_up"`
-	Down *nn.Linear `gguf:"ffn_down"`
-	Gate *nn.Linear `gguf:"ffn_gate"`
+	Up   *nn.Linear `gguf:"mlp.up_proj"`
+	Down *nn.Linear `gguf:"mlp.down_proj"`
+	Gate *nn.Linear `gguf:"mlp.gate_proj"`
 }
 
 func (mlp *MLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml.Tensor {
@@ -128,9 +138,9 @@ func (mlp *MLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml
 }
 
 type Layer struct {
-	AttentionNorm *nn.RMSNorm `gguf:"attn_norm"`
+	AttentionNorm *nn.RMSNorm `gguf:"input_layernorm"`
 	SelfAttention *SelfAttention
-	MLPNorm       *nn.RMSNorm `gguf:"ffn_norm"`
+	MLPNorm       *nn.RMSNorm `gguf:"post_attention_layernorm"`
 	MLP           *MLP
 }
 
@@ -171,6 +181,7 @@ func (m *Model) Forward(ctx ml.Context, opts input.Options) (ml.Tensor, error) {
 		return nil, err
 	}
 
+	// Get token embeddings
 	hiddenState := m.TokenEmbedding.Forward(ctx, inputs)
 
 	for i, layer := range m.Layers {
@@ -184,7 +195,10 @@ func (m *Model) Forward(ctx ml.Context, opts input.Options) (ml.Tensor, error) {
 		hiddenState = layer.Forward(ctx, hiddenState, positions, lastLayerOutputs, m.Cache, m.Options)
 	}
 
+	// Apply output normalization
 	hiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)
+
+	// Apply output projection
 	return m.Output.Forward(ctx, hiddenState), nil
 }
 

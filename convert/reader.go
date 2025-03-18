@@ -62,7 +62,10 @@ func parseTensors(fsys fs.FS, replacer *strings.Replacer) ([]Tensor, error) {
 		Pattern string
 		Func    func(fs.FS, *strings.Replacer, ...string) ([]Tensor, error)
 	}{
-		{"*.safetensors", parseSafetensors},
+		{"model-*-of-*.safetensors", parseSafetensors},
+		{"model.safetensors", parseSafetensors},
+		{"adapters.safetensors", parseSafetensors},
+		{"adapter_model.safetensors", parseSafetensors},
 		{"pytorch_model-*-of-*.bin", parseTorch},
 		{"pytorch_model.bin", parseTorch},
 		{"consolidated.*.pth", parseTorch},

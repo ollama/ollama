@@ -182,9 +182,9 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 
 	var conv ModelConverter
 	switch p.Architectures[0] {
-	case "LlamaForCausalLM":
+	case "LlamaForCausalLM", "MistralForCausalLM":
 		conv = &llamaModel{}
-	case "MistralForCausalLM":
+	case "Mistral3ForConditionalGeneration":
 		conv = &mistralModel{}
 	case "MixtralForCausalLM":
 		conv = &mixtralModel{}
