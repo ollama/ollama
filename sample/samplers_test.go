@@ -1,6 +1,7 @@
 package sample
 
 import (
+	"math"
 	"math/rand/v2"
 	"testing"
 )
@@ -30,18 +31,27 @@ func TestWeighted(t *testing.T) {
 		t.Errorf("index mismatch: want %d, got %d", want, got)
 	}
 
-	// Test greedy fallback when sample() returns error
-	logits = []float32{1.0, 0.999, 0.5, 0.1}
-	// Use extremely small topP to filter out all tokens, forcing error and greedy fallback
+	// Test very high p
+	logits = []float32{1.0, 0.9999999999999999, 0.5, 0.1}
+	// Use extremely small topP to filter out all tokens
 	sampler = NewSampler(1.0, 0, 1e-10, 0, 0, nil)
 	got, err = sampler.Sample(logits)
 	if err != nil {
 		t.Error(err)
 		return
 	}
-	want = int32(0) // Should fall back to greedy and pick highest logit
+	// Should get the token with the highest logit
+	want = int32(0)
 	if want != got {
-		t.Errorf("greedy fallback: want %d, got %d", want, got)
+		t.Errorf("index mismatch: want %d, got %d", want, got)
+	}
+
+	logits = []float32{float32(math.NaN()), float32(math.NaN()), float32(math.NaN())}
+	sampler = NewSampler(1, 0, 0.95, 0.05, 0, nil)
+	got, err = sampler.Sample(logits)
+	if err == nil {
+		t.Errorf("expected error, got %d", got)
+		return
 	}
 }
 

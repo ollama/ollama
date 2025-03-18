@@ -36,7 +36,10 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 		tokens[i].value = logits[i]
 	}
 
-	t := s.sample(tokens)
+	t, err := s.sample(tokens)
+	if err != nil {
+		return -1, err
+	}
 
 	if s.grammar != nil {
 		// optimization: first check if the max logit is accepted by the grammar
@@ -56,7 +59,10 @@ func (s *Sampler) Sample(logits []float32) (int32, error) {
 			tokens[i].value = logits[i]
 		}
 		s.grammar.Apply(tokens)
-		t = s.sample(tokens)
+		t, err = s.sample(tokens)
+		if err != nil {
+			return -1, err
+		}
 		s.grammar.Accept(t.id)
 	}
 
@@ -77,9 +83,9 @@ func greedy(tokens []token) token {
 
 // sample returns the highest probability token from the tokens
 // given sampler parameters. It also has side effects of modifying the tokens
-func (s *Sampler) sample(tokens []token) token {
+func (s *Sampler) sample(tokens []token) (token, error) {
 	if s.temperature == 0 {
-		return greedy(tokens)
+		return greedy(tokens), nil
 	}
 
 	// topK also sorts the tokens in descending order of logits
@@ -114,7 +120,10 @@ func (s *Sampler) sample(tokens []token) token {
 		return 1
 	})
 
-	return tokens[idx]
+	if math.IsNaN(float64(sum)) {
+		return token{}, errors.New("sample: logits sum to NaN, check model output")
+	}
+	return tokens[idx], nil
 }
 
 // TODO(parthsareen): update sampler interface to use json unmarshal https://github.com/ollama/ollama/issues/9278
