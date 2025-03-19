@@ -41,14 +41,14 @@ func (c *WrapperCache) Close() {
 	}
 }
 
-func (c *WrapperCache) StartForward(ctx ml.Context, opts input.Options) error {
+func (c *WrapperCache) StartForward(ctx ml.Context, batch input.Batch) error {
 	for i, cache := range c.caches {
-		err := cache.StartForward(ctx, opts)
+		err := cache.StartForward(ctx, batch)
 		if err != nil {
 			// unwind on error - Remove with endIndex set to math.MaxInt32 does not fail
 			for j := i - 1; j >= 0; j-- {
-				for k := range opts.Positions {
-					_ = c.caches[j].Remove(opts.Sequences[k], opts.Positions[k], math.MaxInt32)
+				for k := range batch.Positions {
+					_ = c.caches[j].Remove(batch.Sequences[k], batch.Positions[k], math.MaxInt32)
 				}
 			}
 			return err
