@@ -33,11 +33,24 @@ type MultimodalIndex struct {
 	Multimodal any
 }
 
-// Options contains the inputs for a model forward pass
-type Options struct {
-	Inputs     []int32
+// Batch contains the inputs for a model forward pass
+type Batch struct {
+	// Inputs is the input tokens, including placeholders for multimodal inputs.
+	Inputs []int32
+
+	// Multimodal is a set of multimodal embeddings previously created by
+	// EncodeMultimodal, along with an index into Inputs. Unused for text-only
+	// models or for batches without multimodal elements.
 	Multimodal []MultimodalIndex
-	Positions  []int32
-	Sequences  []int
-	Outputs    []int32
+
+	// Positions is the position for each Input, relative to its sequence. Equal
+	// in length to Inputs.
+	Positions []int32
+
+	// Sequences is the sequence for each Input. Equal in length to Inputs.
+	Sequences []int
+
+	// Outputs are the set of indicies into Inputs for which output data should
+	// be returned.
+	Outputs []int32
 }

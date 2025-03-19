@@ -140,10 +140,10 @@ func (c *Causal) Close() {
 	}
 }
 
-func (c *Causal) StartForward(ctx ml.Context, opts input.Options) error {
-	c.curBatchSize = len(opts.Positions)
-	c.curSequences = opts.Sequences
-	c.curPositions = opts.Positions
+func (c *Causal) StartForward(ctx ml.Context, batch input.Batch) error {
+	c.curBatchSize = len(batch.Positions)
+	c.curSequences = batch.Sequences
+	c.curPositions = batch.Positions
 	c.opts.Except = nil
 
 	var err error
@@ -157,8 +157,8 @@ func (c *Causal) StartForward(ctx ml.Context, opts input.Options) error {
 	}
 
 	c.curCellRange = newRange()
-	for i, pos := range opts.Positions {
-		seq := opts.Sequences[i]
+	for i, pos := range batch.Positions {
+		seq := batch.Sequences[i]
 
 		c.cells[c.curLoc+i] = cacheCell{pos: pos, sequences: []int{seq}}
 

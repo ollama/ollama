@@ -135,26 +135,26 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 	return inputs, nil
 }
 
-func (m *Model) Forward(ctx ml.Context, opts input.Options) (ml.Tensor, error) {
+func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	var crossAttentionStates ml.Tensor
-	if len(opts.Multimodal) > 0 {
-		images := opts.Multimodal[len(opts.Multimodal)-1].Multimodal.([]ml.Tensor)
+	if len(batch.Multimodal) > 0 {
+		images := batch.Multimodal[len(batch.Multimodal)-1].Multimodal.([]ml.Tensor)
 		if len(images) > 0 {
 			crossAttentionStates = images[len(images)-1]
 		}
 	}
 
-	inputs, err := ctx.Input().FromIntSlice(opts.Inputs, len(opts.Inputs))
+	inputs, err := ctx.Input().FromIntSlice(batch.Inputs, len(batch.Inputs))
 	if err != nil {
 		return nil, err
 	}
 
-	positions, err := ctx.Input().FromIntSlice(opts.Positions, len(opts.Positions))
+	positions, err := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
 	if err != nil {
 		return nil, err
 	}
 
-	outputs, err := ctx.Input().FromIntSlice(opts.Outputs, len(opts.Outputs))
+	outputs, err := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
 	if err != nil {
 		return nil, err
 	}
