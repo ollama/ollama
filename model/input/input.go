@@ -1,5 +1,7 @@
 package input
 
+import "github.com/ollama/ollama/ml"
+
 // Input represents one token in the input stream
 type Input struct {
 	// Token is a single element of text.
@@ -36,7 +38,7 @@ type MultimodalIndex struct {
 // Batch contains the inputs for a model forward pass
 type Batch struct {
 	// Inputs is the input tokens, including placeholders for multimodal inputs.
-	Inputs []int32
+	Inputs ml.Tensor
 
 	// Multimodal is a set of multimodal embeddings previously created by
 	// EncodeMultimodal, along with an index into Inputs. Unused for text-only
