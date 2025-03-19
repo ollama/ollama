@@ -37,7 +37,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/server/internal/cache/blob"
-	"github.com/ollama/ollama/server/internal/internal/backoff"
 	"github.com/ollama/ollama/server/internal/internal/names"
 
 	_ "embed"
@@ -212,12 +211,6 @@ type Registry struct {
 	// ChunkingThreshold is the maximum size of a layer to download in a single
 	// request. If zero, [DefaultChunkingThreshold] is used.
 	ChunkingThreshold int64
-
-	// MaxChunkSize is the maximum size of a chunk to download. If zero,
-	// the default is [DefaultMaxChunkSize].
-	//
-	// It is only used when a layer is larger than [MaxChunkingThreshold].
-	MaxChunkSize int64
 
 	// Mask, if set, is the name used to convert non-fully qualified names
 	// to fully qualified names. If empty, [DefaultMask] is used.
@@ -447,6 +440,11 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
+
+	// TODO(bmizerany): decide if this should be considered valid. Maybe
+	// server-side we special case '{}' to have some special meaning? Maybe
+	// "archiving" a tag (which is how we reason about it in the registry
+	// already, just with a different twist).
 	if len(m.Layers) == 0 {
 		return fmt.Errorf("%w: no layers", ErrManifestInvalid)
 	}
@@ -456,11 +454,7 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 		return err
 	}
 
-	exists := func(l *Layer) bool {
-		info, err := c.Get(l.Digest)
-		return err == nil && info.Size == l.Size
-	}
-
+	// TODO(bmizerany): work to remove the need to do this
 	layers := m.Layers
 	if m.Config != nil && m.Config.Digest.IsValid() {
 		layers = append(layers, m.Config)
@@ -469,19 +463,16 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 	// Send initial layer trace events to allow clients to have an
 	// understanding of work to be done before work starts.
 	t := traceFromContext(ctx)
-	skip := make([]bool, len(layers))
-	for i, l := range layers {
+	for _, l := range layers {
 		t.update(l, 0, nil)
-		if exists(l) {
-			skip[i] = true
-			t.update(l, l.Size, ErrCached)
-		}
 	}
 
-	g, ctx := errgroup.WithContext(ctx)
+	var g errgroup.Group
 	g.SetLimit(r.maxStreams())
-	for i, l := range layers {
-		if skip[i] {
+	for _, l := range layers {
+		info, err := c.Get(l.Digest)
+		if err == nil && info.Size == l.Size {
+			t.update(l, l.Size, ErrCached)
 			continue
 		}
 
@@ -490,63 +481,50 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 			t.update(l, 0, err)
 			continue
 		}
+		// TODO(bmizerany): fix this unbounded use of defer
 		defer chunked.Close()
 
 		var progress atomic.Int64
 		for cs, err := range r.chunksums(ctx, name, l) {
 			if err != nil {
+				// Bad chunksums response, update tracing
+				// clients and then bail.
 				t.update(l, progress.Load(), err)
-				break
+				return err
 			}
 
 			g.Go(func() (err error) {
-				defer func() { t.update(l, progress.Load(), err) }()
-
-				for _, err := range backoff.Loop(ctx, 3*time.Second) {
+				defer func() {
 					if err != nil {
-						return err
+						err = fmt.Errorf("error downloading %s: %w", cs.Digest.Short(), err)
 					}
-					err := func() error {
-						req, err := http.NewRequestWithContext(ctx, "GET", cs.URL, nil)
-						if err != nil {
-							return err
-						}
-						req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", cs.Chunk.Start, cs.Chunk.End))
-						res, err := sendRequest(r.client(), req)
-						if err != nil {
-							return err
-						}
-						defer res.Body.Close()
+					t.update(l, progress.Load(), err)
+				}()
 
-						// Count bytes towards
-						// progress, as they arrive, so
-						// that our bytes piggyback
-						// other chunk updates on
-						// completion.
-						//
-						// This tactic is enough to
-						// show "smooth" progress given
-						// the current CLI client. In
-						// the near future, the server
-						// should report download rate
-						// since it knows better than
-						// a client that is measuring
-						// rate based on wall-clock
-						// time-since-last-update.
-						body := &trackingReader{r: res.Body, n: &progress}
-
-						err = chunked.Put(cs.Chunk, cs.Digest, body)
-						if err != nil {
-							return err
-						}
-
-						return nil
-					}()
-					if !canRetry(err) {
-						return err
-					}
+				req, err := http.NewRequestWithContext(ctx, "GET", cs.URL, nil)
+				if err != nil {
+					return err
 				}
-				return nil
+				req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", cs.Chunk.Start, cs.Chunk.End))
+				res, err := sendRequest(r.client(), req)
+				if err != nil {
+					return err
+				}
+				defer res.Body.Close()
+
+				// Count bytes towards progress, as they
+				// arrive, so that our bytes piggyback other
+				// chunk updates on completion.
+				//
+				// This tactic is enough to show "smooth"
+				// progress given the current CLI client. In
+				// the near future, the server should report
+				// download rate since it knows better than a
+				// client that is measuring rate based on
+				// wall-clock time-since-last-update.
+				body := &trackingReader{r: res.Body, n: &progress}
+
+				return chunked.Put(cs.Chunk, cs.Digest, body)
 			})
 		}
 	}
@@ -554,13 +532,10 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 		return err
 	}
 
-	// store the manifest blob
 	md := blob.DigestFromBytes(m.Data)
 	if err := blob.PutBytes(c, md, m.Data); err != nil {
 		return err
 	}
-
-	// commit the manifest with a link
 	return c.Link(m.Name, md)
 }
 
@@ -782,12 +757,15 @@ func (r *Registry) chunksums(ctx context.Context, name string, l *Layer) iter.Se
 		}
 		blobURL := res.Header.Get("Content-Location")
 
+		var size int64
 		s := bufio.NewScanner(res.Body)
 		s.Split(bufio.ScanWords)
 		for {
 			if !s.Scan() {
 				if s.Err() != nil {
 					yield(chunksum{}, s.Err())
+				} else if size != l.Size {
+					yield(chunksum{}, fmt.Errorf("size mismatch: layer size %d != sum of chunks %d", size, l.Size))
 				}
 				return
 			}
@@ -808,6 +786,12 @@ func (r *Registry) chunksums(ctx context.Context, name string, l *Layer) iter.Se
 			chunk, err := parseChunk(s.Bytes())
 			if err != nil {
 				yield(chunksum{}, fmt.Errorf("invalid chunk range for digest %s: %q", d, s.Bytes()))
+				return
+			}
+
+			size += chunk.Size()
+			if size > l.Size {
+				yield(chunksum{}, fmt.Errorf("chunk size %d exceeds layer size %d", size, l.Size))
 				return
 			}
 
