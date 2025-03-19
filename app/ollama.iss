@@ -70,8 +70,9 @@ DisableReadyPage=yes
 DisableStartupPrompt=yes
 DisableWelcomePage=yes
 
-; TODO - percentage can't be set less than 100, so how to make it shorter?
-; WizardSizePercent=100,80
+
+; Larger DialogFontSize will auto size the wizard window accordingly.
+WizardSizePercent=100
 
 #if GetEnv("KEY_CONTAINER")
 SignTool=MySignTool
@@ -83,8 +84,9 @@ SetupMutex=OllamaSetupMutex
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
-[LangOptions]
-DialogFontSize=12
+; Larger DialogFontSize will auto size the wizard window accordingly. Default=8
+; [LangOptions]
+; DialogFontSize=12
 
 [Files]
 #if DirExists("..\dist\windows-amd64")
@@ -140,9 +142,9 @@ ReadyLabel1=%nLet's get you up and running with your own large language models.
 SetupAppRunningError=Another Ollama installer is running.%n%nPlease cancel or finish the other installer, then click OK to continue with this install, or Cancel to exit.
 
 
-;FinishedHeadingLabel=Run your first model
-;FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama3.2
-;ClickFinish=%n
+; FinishedHeadingLabel=Run your first model
+; FinishedLabel=%nRun this command in a PowerShell or cmd terminal.%n%n%n    ollama run llama3.2
+; ClickFinish=%n
 
 [Registry]
 Root: HKCU; Subkey: "Environment"; \
