@@ -381,7 +381,7 @@ func ParseFile(r io.Reader) (*Modelfile, error) {
 			case stateMessage:
 				role = b.String()
 				if !isKnownMessageRole(b.String()) {
-					fmt.Printf("warning: received non-standard role %s. Continuing...\n", role)
+					slog.Warn("received non-standard role", "role", role)
 				}
 			case stateComment, stateNil:
 				// pass
