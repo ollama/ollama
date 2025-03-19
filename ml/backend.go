@@ -2,6 +2,7 @@ package ml
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -80,9 +81,9 @@ type BackendParams struct {
 	FlashAttention bool
 }
 
-var backends = make(map[string]func(*os.File, BackendParams) (Backend, error))
+var backends = make(map[string]func(context.Context, *os.File, BackendParams) (Backend, error))
 
-func RegisterBackend(name string, f func(*os.File, BackendParams) (Backend, error)) {
+func RegisterBackend(name string, f func(context.Context, *os.File, BackendParams) (Backend, error)) {
 	if _, ok := backends[name]; ok {
 		panic("backend: backend already registered")
 	}
@@ -90,9 +91,9 @@ func RegisterBackend(name string, f func(*os.File, BackendParams) (Backend, erro
 	backends[name] = f
 }
 
-func NewBackend(f *os.File, params BackendParams) (Backend, error) {
+func NewBackend(ctx context.Context, f *os.File, params BackendParams) (Backend, error) {
 	if backend, ok := backends["ggml"]; ok {
-		return backend(f, params)
+		return backend(ctx, f, params)
 	}
 
 	return nil, fmt.Errorf("unsupported backend")
