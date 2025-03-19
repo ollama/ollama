@@ -1,0 +1,16 @@
+{{- $skipStartOfTurn := false }}
+{{- range $i, $_ := .Messages }}
+{{- $last := eq (len (slice $.Messages $i)) 1 }}
+{{- if and (eq .Role "system") (eq $i 0) }}<start_of_turn>user
+{{ .Content }}
+{{- $skipStartOfTurn = true }}
+{{- else if eq .Role "user" }}
+{{- if not $skipStartOfTurn }}<start_of_turn>user{{ end }}
+{{ .Content }}<end_of_turn>
+{{ $skipStartOfTurn = false }}
+{{- else if eq .Role "assistant" }}<start_of_turn>model
+{{ .Content }}<end_of_turn>
+{{ end }}
+{{- if $last }}<start_of_turn>model
+{{ end }}
+{{- end }}
