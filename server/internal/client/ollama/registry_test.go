@@ -25,6 +25,28 @@ import (
 	"github.com/ollama/ollama/server/internal/testutil"
 )
 
+func ExampleRegistry_cancelOnFirstError() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ctx = WithTrace(ctx, &Trace{
+		Update: func(l *Layer, n int64, err error) {
+			if err != nil {
+				// Discontinue pulling layers if there is an
+				// error instead of continuing to pull more
+				// data.
+				cancel()
+			}
+		},
+	})
+
+	var r Registry
+	if err := r.Pull(ctx, "model"); err != nil {
+		// panic for demo purposes
+		panic(err)
+	}
+}
+
 func TestManifestMarshalJSON(t *testing.T) {
 	// All manifests should contain an "empty" config object.
 	var m Manifest
@@ -813,8 +835,13 @@ func TestPullChunksums(t *testing.T) {
 	)
 	err := rc.Pull(ctx, "test")
 	check(err)
-	if !slices.Equal(reads, []int64{0, 3, 5}) {
-		t.Errorf("reads = %v; want %v", reads, []int64{0, 3, 5})
+	wantReads := []int64{
+		0, // initial signaling of layer pull starting
+		3, // first chunk read
+		2, // second chunk read
+	}
+	if !slices.Equal(reads, wantReads) {
+		t.Errorf("reads = %v; want %v", reads, wantReads)
 	}
 
 	mw, err := rc.Resolve(t.Context(), "test")

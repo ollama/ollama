@@ -200,7 +200,7 @@ type params struct {
 	//
 	// Unfortunately, this API was designed to be a bit awkward. Stream is
 	// defined to default to true if not present, so we need a way to check
-	// if the client decisively it to false. So, we use a pointer to a
+	// if the client decisively set it to false. So, we use a pointer to a
 	// bool. Gross.
 	//
 	// Use [stream()] to get the correct value for this field.
@@ -280,17 +280,17 @@ func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
 	progress := make(map[*ollama.Layer]int64)
 
 	progressCopy := make(map[*ollama.Layer]int64, len(progress))
-	pushUpdate := func() {
+	flushProgress := func() {
 		defer maybeFlush()
 
-		// TODO(bmizerany): This scales poorly with more layers due to
-		// needing to flush out them all in one big update. We _could_
-		// just flush on the changed ones, or just track the whole
-		// download. Needs more thought. This is fine for now.
+		// TODO(bmizerany): Flushing every layer in one update doesn't
+		// scale well. We could flush only the modified layers or track
+		// the full download. Needs further consideration, though it's
+		// fine for now.
 		mu.Lock()
 		maps.Copy(progressCopy, progress)
 		mu.Unlock()
-		for l, n := range progress {
+		for l, n := range progressCopy {
 			enc.Encode(progressUpdateJSON{
 				Digest:    l.Digest,
 				Total:     l.Size,
@@ -298,19 +298,26 @@ func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
 			})
 		}
 	}
+	defer flushProgress()
 
-	t := time.NewTicker(time.Hour) // "unstarted" timer
+	t := time.NewTicker(1000 * time.Hour) // "unstarted" timer
 	start := sync.OnceFunc(func() {
-		pushUpdate()
+		flushProgress() // flush initial state
 		t.Reset(100 * time.Millisecond)
 	})
 	ctx := ollama.WithTrace(r.Context(), &ollama.Trace{
 		Update: func(l *ollama.Layer, n int64, err error) {
 			if n > 0 {
-				start() // flush initial state
+				// Block flushing progress updates until every
+				// layer is accounted for. Clients depend on a
+				// complete model size to calculate progress
+				// correctly; if they use an incomplete total,
+				// progress indicators would erratically jump
+				// as new layers are registered.
+				start()
 			}
 			mu.Lock()
-			progress[l] = n
+			progress[l] += n
 			mu.Unlock()
 		},
 	})
@@ -323,9 +330,9 @@ func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
 	for {
 		select {
 		case <-t.C:
-			pushUpdate()
+			flushProgress()
 		case err := <-done:
-			pushUpdate()
+			flushProgress()
 			if err != nil {
 				var status string
 				if errors.Is(err, ollama.ErrModelNotFound) {
