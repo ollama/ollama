@@ -248,5 +248,10 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 		return err
 	}
 
+	// iterate through all ts and print the name
+	for _, t := range ts {
+		fmt.Print(t.Name(), "\n")
+	}
+
 	return conv.writeFile(ws, conv.KV(t), conv.Tensors(ts))
 }
