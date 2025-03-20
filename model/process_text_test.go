@@ -222,14 +222,10 @@ func tekken(t testing.TB) TextProcessor {
 	defer configFile.Close()
 
 	var config struct {
-		AddBosToken bool `json:"add_bos_token"`
-		AddEosToken bool `json:"add_eos_token"`
-		BosToken    struct {
-			Content string `json:"content"`
-		} `json:"bos_token"`
-		EosToken struct {
-			Content string `json:"content"`
-		} `json:"eos_token"`
+		AddBosToken bool   `json:"add_bos_token"`
+		AddEosToken bool   `json:"add_eos_token"`
+		BosToken    string `json:"bos_token"`
+		EosToken    string `json:"eos_token"`
 	}
 	if err := json.NewDecoder(configFile).Decode(&config); err != nil {
 		t.Fatal(err)
@@ -319,8 +315,8 @@ func tekken(t testing.TB) TextProcessor {
 		Types:  types,
 		Scores: scores,
 		Merges: merges,
-		BOS:    vocab[config.BosToken.Content],
-		EOS:    vocab[config.EosToken.Content],
+		BOS:    vocab[config.BosToken],
+		EOS:    vocab[config.EosToken],
 		AddBOS: config.AddBosToken,
 		AddEOS: config.AddEosToken,
 	}
