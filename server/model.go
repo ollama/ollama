@@ -82,7 +82,7 @@ func detectChatTemplate(layers []*layerGGML) ([]*layerGGML, error) {
 	for _, layer := range layers {
 		if s := layer.GGML.KV().ChatTemplate(); s != "" {
 			if t, err := template.Named(s); err != nil {
-				slog.Debug("template detection", "error", err)
+				slog.Debug("template detection", "error", err, "template", s)
 			} else {
 				layer, err := NewLayer(t.Reader(), "application/vnd.ollama.image.template")
 				if err != nil {
