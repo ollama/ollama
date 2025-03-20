@@ -783,6 +783,9 @@ func Execute(args []string) error {
 	}
 
 	params := ml.BackendParams{
+		Progress: func(progress float32) {
+			server.progress = progress
+		},
 		NumThreads:     *threads,
 		NumGPULayers:   *numGPULayers,
 		MainGPU:        *mainGPU,
