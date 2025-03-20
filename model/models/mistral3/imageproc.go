@@ -1,4 +1,4 @@
-package pixtral
+package mistral3
 
 import (
 	"fmt"
