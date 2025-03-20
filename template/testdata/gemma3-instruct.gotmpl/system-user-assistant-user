@@ -1,5 +1,6 @@
 <start_of_turn>user
 You are a helpful assistant.
+
 Hello, how are you?<end_of_turn>
 <start_of_turn>model
 I'm doing great. How can I help you today?<end_of_turn>
