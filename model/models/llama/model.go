@@ -74,24 +74,24 @@ type SelfAttention struct {
 }
 
 func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
-	batchSize := hiddenState.Dim(1)
+	batchSize := hiddenState.Dim(0) // TODO Consider renaming "L" as this is the sequence length, not batch size
 	headDim := opts.hiddenSize / opts.numHeads
 	ropeType := uint32(0)
 
 	q := sa.Query.Forward(ctx, hiddenState)
-	q = q.Reshape(ctx, headDim, opts.numHeads, batchSize)
+	q = q.Reshape(ctx, batchSize, opts.numHeads, -1)
 	q = q.RoPE(ctx, positionIDs, sa.RopeFactors, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
 
 	k := sa.Key.Forward(ctx, hiddenState)
-	k = k.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
+	k = k.Reshape(ctx, batchSize, opts.numKVHeads, -1)
 	k = k.RoPE(ctx, positionIDs, sa.RopeFactors, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
 
 	v := sa.Value.Forward(ctx, hiddenState)
-	v = v.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
+	v = v.Reshape(ctx, batchSize, opts.numKVHeads, -1)
 
 	scaleFactor := 1.0 / math.Sqrt(float64(headDim))
 	kqv := nn.Attention(ctx, q, k, v, scaleFactor, cache)
-	kqv = kqv.Reshape(ctx, opts.hiddenSize, batchSize)
+	kqv = kqv.Reshape(ctx, batchSize, -1)
 
 	return sa.Output.Forward(ctx, kqv)
 }

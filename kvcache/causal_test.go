@@ -31,21 +31,21 @@ func TestStore(t *testing.T) {
 		{
 			name:          "FirstBatch",
 			in:            []float32{111, 211, 121, 221, 131, 231, 112, 212, 122, 222, 132, 232, 113, 213, 123, 223, 133, 233, 114, 214, 124, 224, 134, 234},
-			inShape:       []int{2, 3, 4},
+			inShape:       []int{4, 3, 2},
 			seqs:          []int{0, 0, 0, 0},
 			pos:           []int32{0, 1, 2, 3},
 			expected:      []float32{111, 211, 121, 221, 131, 231, 112, 212, 122, 222, 132, 232, 113, 213, 123, 223, 133, 233, 114, 214, 124, 224, 134, 234},
-			expectedShape: []int{2, 3, 4},
+			expectedShape: []int{4, 3, 2},
 			expectedMask:  []float32{0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, float32(math.Inf(-1)), 0, 0, 0, 0},
 		},
 		{
 			name:          "SecondBatch",
 			in:            []float32{115, 215, 125, 225, 135, 235},
-			inShape:       []int{2, 3, 1},
+			inShape:       []int{1, 3, 2},
 			seqs:          []int{0},
 			pos:           []int32{4},
 			expected:      []float32{111, 211, 121, 221, 131, 231, 112, 212, 122, 222, 132, 232, 113, 213, 123, 223, 133, 233, 114, 214, 124, 224, 134, 234, 115, 215, 125, 225, 135, 235},
-			expectedShape: []int{2, 3, 5},
+			expectedShape: []int{5, 3, 2},
 			expectedMask:  []float32{0, 0, 0, 0, 0},
 		},
 	}
@@ -64,11 +64,11 @@ func TestSWA(t *testing.T) {
 		{
 			name:          "SlidingWindow",
 			in:            []float32{1, 2, 3, 4},
-			inShape:       []int{1, 1, 4},
+			inShape:       []int{4, 1, 1},
 			seqs:          []int{0, 0, 0, 0},
 			pos:           []int32{0, 1, 2, 3},
 			expected:      []float32{1, 2, 3, 4},
-			expectedShape: []int{1, 1, 4},
+			expectedShape: []int{4, 1, 1},
 			expectedMask:  []float32{0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0},
 		},
 	}
@@ -87,21 +87,21 @@ func TestSequences(t *testing.T) {
 		{
 			name:          "FirstBatch",
 			in:            []float32{1, 2, 3, 4},
-			inShape:       []int{1, 1, 4},
+			inShape:       []int{4, 1, 1},
 			seqs:          []int{0, 0, 1, 1},
 			pos:           []int32{0, 1, 0, 1},
 			expected:      []float32{1, 2, 3, 4},
-			expectedShape: []int{1, 1, 4},
+			expectedShape: []int{4, 1, 1},
 			expectedMask:  []float32{0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0},
 		},
 		{
 			name:          "SecondBatch",
 			in:            []float32{5, 6},
-			inShape:       []int{1, 1, 2},
+			inShape:       []int{2, 1, 1},
 			seqs:          []int{0, 1},
 			pos:           []int32{2, 2},
 			expected:      []float32{1, 2, 3, 4, 5, 6},
-			expectedShape: []int{1, 1, 6},
+			expectedShape: []int{6, 1, 1},
 			expectedMask:  []float32{0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), 0},
 		},
 	}
@@ -122,11 +122,11 @@ func TestRemove(t *testing.T) {
 		{
 			name:          "FirstBatch",
 			in:            []float32{1, 2, 3, 4},
-			inShape:       []int{1, 1, 4},
+			inShape:       []int{4, 1, 1},
 			seqs:          []int{0, 0, 1, 1},
 			pos:           []int32{0, 1, 0, 1},
 			expected:      []float32{1, 2, 3, 4},
-			expectedShape: []int{1, 1, 4},
+			expectedShape: []int{4, 1, 1},
 			expectedMask:  []float32{0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0},
 		},
 	}
@@ -142,11 +142,11 @@ func TestRemove(t *testing.T) {
 		{
 			name:          "RemoveEnd",
 			in:            []float32{5, 6},
-			inShape:       []int{1, 1, 2},
+			inShape:       []int{2, 1, 1},
 			seqs:          []int{0, 1},
 			pos:           []int32{1, 2},
 			expected:      []float32{1, 2, 3, 4, 5, 6},
-			expectedShape: []int{1, 1, 6},
+			expectedShape: []int{6, 1, 1},
 			expectedMask:  []float32{0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), 0},
 		},
 	}
@@ -162,11 +162,11 @@ func TestRemove(t *testing.T) {
 		{
 			name:          "RemoveMiddle",
 			in:            []float32{7, 8},
-			inShape:       []int{1, 1, 2},
+			inShape:       []int{2, 1, 1},
 			seqs:          []int{0, 0},
 			pos:           []int32{1, 2},
 			expected:      []float32{7, 8, 3, 4, 4},
-			expectedShape: []int{1, 1, 5},
+			expectedShape: []int{5, 1, 1},
 			expectedMask:  []float32{0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), 0},
 		},
 	}
@@ -187,11 +187,11 @@ func TestDefrag(t *testing.T) {
 		{
 			name:          "FirstBatch",
 			in:            []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
-			inShape:       []int{1, 1, 16},
+			inShape:       []int{16, 1, 1},
 			seqs:          []int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 			pos:           []int32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
 			expected:      []float32{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
-			expectedShape: []int{1, 1, 16},
+			expectedShape: []int{16, 1, 1},
 			expectedMask:  []float32{0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 		},
 	}
@@ -212,11 +212,11 @@ func TestDefrag(t *testing.T) {
 		{
 			name:          "Defrag",
 			in:            []float32{17, 18, 19},
-			inShape:       []int{1, 1, 3},
+			inShape:       []int{3, 1, 1},
 			seqs:          []int{0, 0, 0},
 			pos:           []int32{16, 17, 18},
 			expected:      []float32{1, 2, 12, 13, 3, 4, 5, 6, 7, 8, 9, 10, 11, 17, 18, 19},
-			expectedShape: []int{1, 1, 16},
+			expectedShape: []int{16, 1, 1},
 			expectedMask:  []float32{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, float32(math.Inf(-1)), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 		},
 	}
@@ -235,11 +235,11 @@ func TestCopy(t *testing.T) {
 		{
 			name:          "FirstBatch",
 			in:            []float32{1, 2, 3, 4},
-			inShape:       []int{1, 1, 4},
+			inShape:       []int{4, 1, 1},
 			seqs:          []int{0, 0, 0, 0},
 			pos:           []int32{0, 1, 2, 3},
 			expected:      []float32{1, 2, 3, 4},
-			expectedShape: []int{1, 1, 4},
+			expectedShape: []int{4, 1, 1},
 			expectedMask:  []float32{0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, float32(math.Inf(-1)), 0, 0, 0, 0},
 		},
 	}
@@ -252,11 +252,11 @@ func TestCopy(t *testing.T) {
 		{
 			name:          "Copy",
 			in:            []float32{5, 6},
-			inShape:       []int{1, 1, 2},
+			inShape:       []int{2, 1, 1},
 			seqs:          []int{1, 1},
 			pos:           []int32{3, 4},
 			expected:      []float32{1, 2, 3, 4, 5, 6},
-			expectedShape: []int{1, 1, 6},
+			expectedShape: []int{6, 1, 1},
 			expectedMask:  []float32{0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), 0, float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0},
 		},
 	}
@@ -365,6 +365,9 @@ func (c *testContext) MaxGraphNodes() int {
 
 func (c *testContext) Close() {}
 
+// TODO remove this before merging - temporary debugging aid
+func (c *testContext) Abort(t ml.Tensor) {}
+
 type testTensor struct {
 	dtype       ml.DType
 	elementSize int
@@ -378,7 +381,8 @@ func (t *testTensor) Dim(n int) int {
 
 func (t *testTensor) Stride(n int) int {
 	stride := t.elementSize
-	for i := range n {
+	// Reverse to mimic ggml's row order impl
+	for i := len(t.shape) - 1; i > n; i-- {
 		stride *= t.shape[i]
 	}
 
@@ -473,7 +477,7 @@ func (t *testTensor) Reshape(ctx ml.Context, shape ...int) ml.Tensor {
 	panic("not implemented")
 }
 
-func (t *testTensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
+func (t *testTensor) View(ctx ml.Context, offset int, shape []int, stride []int) ml.Tensor {
 	offset /= t.elementSize
 
 	var s []int
@@ -481,8 +485,8 @@ func (t *testTensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	switch len(shape) {
 	case 1:
 		s = []int{shape[0]}
-	case 5:
-		s = []int{shape[0], shape[2], shape[4]}
+	case 3:
+		s = []int{shape[0], shape[1], shape[2]}
 	default:
 		panic("unsupported number of dimensions")
 	}
@@ -496,7 +500,32 @@ func (t *testTensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 }
 
 func (t *testTensor) Permute(ctx ml.Context, shape ...int) ml.Tensor {
-	panic("not implemented")
+	switch len(t.shape) {
+	case 2:
+		sh := make([]int, len(t.shape))
+		size := 1
+		for i := range sh {
+			sh[i] = t.shape[shape[i]]
+			size *= sh[i]
+		}
+		data := make([]float32, size)
+		dn := 0
+		for j := range t.shape[1] {
+			for i := range t.shape[0] {
+				offset := i*t.shape[1] + j
+				data[dn] = t.data[offset]
+				dn++
+			}
+		}
+		return &testTensor{
+			dtype:       t.dtype,
+			elementSize: t.elementSize,
+			data:        data,
+			shape:       sh,
+		}
+	default:
+		panic("not implemented")
+	}
 }
 
 func (t *testTensor) Contiguous(ctx ml.Context) ml.Tensor {

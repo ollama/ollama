@@ -97,6 +97,10 @@ func NewBackend(f *os.File, params BackendParams) (Backend, error) {
 type Context interface {
 	Empty(dtype DType, shape ...int) Tensor
 	Zeros(dtype DType, shape ...int) Tensor
+
+	// TODO - the (Tensor, error) return pattern makes this impossible to
+	// one-line in cases where we need to pass a scalar into a function that
+	// requires a Tensor leading to overly verbose impls.  Consider a Must* API.
 	FromFloatSlice(s []float32, shape ...int) (Tensor, error)
 	FromIntSlice(s []int32, shape ...int) (Tensor, error)
 
@@ -113,6 +117,9 @@ type Context interface {
 
 	// Layer returns a context appropriate for creating intermediate tensors
 	Layer(int) Context
+
+	// TODO remove this before merging - temporary debugging aid
+	Abort(Tensor) // Evaluate the graph up to this point, retrieve the data from the tensor and dump it to a json file for comparison
 }
 
 type Tensor interface {
@@ -130,7 +137,7 @@ type Tensor interface {
 	Mulmat(ctx Context, t2 Tensor) Tensor
 	MulmatFullPrec(ctx Context, t2 Tensor) Tensor
 
-	Softmax(ctx Context) Tensor
+	Softmax(ctx Context) Tensor // TODO axis parameter?
 	LayerNorm(ctx Context, weight, bias Tensor, eps float32) Tensor
 	RMSNorm(ctx Context, weight Tensor, eps float32) Tensor
 	Scale(ctx Context, s float64) Tensor
@@ -145,7 +152,7 @@ type Tensor interface {
 	SILU(ctx Context) Tensor
 
 	Reshape(ctx Context, shape ...int) Tensor
-	View(ctx Context, offset int, shape ...int) Tensor
+	View(ctx Context, offset int, shape, stride []int) Tensor
 	Permute(ctx Context, shape ...int) Tensor
 	Contiguous(ctx Context) Tensor
 	Set(ctx Context, t2 Tensor, offset int, strides ...int) Tensor
@@ -298,3 +305,16 @@ const (
 	DTypeQ40
 	DTypeI32
 )
+
+func (dt DType) String() string {
+	switch dt {
+	case DTypeF32:
+		return "float32"
+	case DTypeF16:
+		return "float16"
+	case DTypeI32:
+		return "int32"
+	default:
+		return "unknown"
+	}
+}
