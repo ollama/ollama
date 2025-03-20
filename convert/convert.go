@@ -185,7 +185,7 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 	case "LlamaForCausalLM":
 		conv = &llamaModel{}
 	case "Mistral3ForConditionalGeneration":
-		conv = &mistralModel{}
+		conv = &mistral3Model{}
 	case "MixtralForCausalLM":
 		conv = &mixtralModel{}
 	case "GemmaForCausalLM":

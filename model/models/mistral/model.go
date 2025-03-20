@@ -1,4 +1,4 @@
-package llama
+package mistral3
 
 import (
 	"fmt"
@@ -12,7 +12,7 @@ import (
 	"github.com/ollama/ollama/model/input"
 )
 
-type Options struct {
+type TextOptions struct {
 	hiddenSize, numHeads, numKVHeads, headDim int
 	eps, ropeBase, ropeScale                  float32
 	ropeDim                                   uint32
@@ -27,7 +27,7 @@ type Model struct {
 	OutputNorm     *nn.RMSNorm   `gguf:"output_norm"`
 	Output         *nn.Linear    `gguf:"output,alt:token_embd"`
 
-	*Options
+	*TextOptions
 }
 
 func New(c ml.Config) (model.Model, error) {
@@ -49,7 +49,7 @@ func New(c ml.Config) (model.Model, error) {
 			},
 		),
 		Layers: make([]Layer, c.Uint("block_count")),
-		Options: &Options{
+		TextOptions: &TextOptions{
 			hiddenSize: int(c.Uint("embedding_length")),
 			numHeads:   int(c.Uint("attention.head_count")),
 			numKVHeads: int(c.Uint("attention.head_count_kv")),
@@ -74,7 +74,7 @@ type SelfAttention struct {
 	RopeFactors ml.Tensor  `gguf:"rope_freqs.weight"`
 }
 
-func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
+func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *TextOptions) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
 	ropeType := uint32(0)
 	// Get head dimension - use explicit value if available, otherwise calculate
@@ -119,7 +119,7 @@ type MLP struct {
 	Gate *nn.Linear `gguf:"ffn_gate"`
 }
 
-func (mlp *MLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml.Tensor {
+func (mlp *MLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *TextOptions) ml.Tensor {
 	hiddenState = mlp.Gate.Forward(ctx, hiddenState).SILU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenState))
 	return mlp.Down.Forward(ctx, hiddenState)
 }
@@ -131,7 +131,7 @@ type Layer struct {
 	MLP           *MLP
 }
 
-func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs, outputs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
+func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs, outputs ml.Tensor, cache kvcache.Cache, opts *TextOptions) ml.Tensor {
 	residual := hiddenState
 
 	hiddenState = l.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
@@ -168,8 +168,10 @@ func (m *Model) Forward(ctx ml.Context, opts input.Options) (ml.Tensor, error) {
 		return nil, err
 	}
 
+	// Process text inputs
 	hiddenState := m.TokenEmbedding.Forward(ctx, inputs)
 
+	// Process through text transformer layers
 	for i, layer := range m.Layers {
 		m.Cache.SetLayer(i)
 
@@ -178,7 +180,7 @@ func (m *Model) Forward(ctx ml.Context, opts input.Options) (ml.Tensor, error) {
 			lastLayerOutputs = outputs
 		}
 
-		hiddenState = layer.Forward(ctx, hiddenState, positions, lastLayerOutputs, m.Cache, m.Options)
+		hiddenState = layer.Forward(ctx, hiddenState, positions, lastLayerOutputs, m.Cache, m.TextOptions)
 	}
 
 	hiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)
@@ -186,5 +188,5 @@ func (m *Model) Forward(ctx ml.Context, opts input.Options) (ml.Tensor, error) {
 }
 
 func init() {
-	model.Register("mistral", New)
+	model.Register("mistral3", New)
 }

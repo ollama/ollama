@@ -11,8 +11,11 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 )
 
-type mistralModel struct {
+type mistral3Model struct {
 	ModelParameters
+	// ImageTokenIndex  uint32 `json:"image_token_index"`
+	// SpatialMergeSize uint32 `json:"spatial_merge_size"`
+	// VisionFeatureLayer int32  `json:"vision_feature_layer"`
 	TextModel struct {
 		NumHiddenLayers       uint32  `json:"num_hidden_layers"`
 		MaxPositionEmbeddings uint32  `json:"max_position_embeddings"`
@@ -23,30 +26,62 @@ type mistralModel struct {
 		RopeTheta             float32 `json:"rope_theta"`
 		RMSNormEPS            float32 `json:"rms_norm_eps"`
 		HeadDim               uint32  `json:"head_dim"`
+		SlidingWindow         *uint32 `json:"sliding_window"`
+		HiddenAct             string  `json:"hidden_act"`
+		VocabSize             uint32  `json:"vocab_size"`
 	} `json:"text_config"`
+	// VisionModel struct {
+	// 	NumAttentionHeads uint32  `json:"num_attention_heads"`
+	// 	NumHiddenLayers   uint32  `json:"num_hidden_layers"`
+	// 	HiddenSize        uint32  `json:"hidden_size"`
+	// 	IntermediateSize  uint32  `json:"intermediate_size"`
+	// 	ImageSize         uint32  `json:"image_size"`
+	// 	NumChannels       uint32  `json:"num_channels"`
+	// 	PatchSize         uint32  `json:"patch_size"`
+	// 	HeadDim           uint32  `json:"head_dim"`
+	// 	HiddenAct         string  `json:"hidden_act"`
+	// 	RopeTheta         float32 `json:"rope_theta"`
+	// } `json:"vision_config"`
+	// MultiModalProjectorBias bool   `json:"multimodal_projector_bias"`
+	// ProjectorHiddenAct      string `json:"projector_hidden_act"`
 }
 
-func (p *mistralModel) KV(t *Tokenizer) ggml.KV {
+func (p *mistral3Model) KV(t *Tokenizer) ggml.KV {
 	kv := p.ModelParameters.KV(t)
-	kv["general.architecture"] = "mistral"
-	kv["mistral.vocab_size"] = p.VocabSize
+	kv["general.architecture"] = "mistral3"
+	kv["mistral3.vocab_size"] = p.TextModel.VocabSize
 
-	kv["mistral.block_count"] = p.TextModel.NumHiddenLayers
-	kv["mistral.context_length"] = p.TextModel.MaxPositionEmbeddings
-	kv["mistral.embedding_length"] = p.TextModel.HiddenSize
-	kv["mistral.feed_forward_length"] = p.TextModel.IntermediateSize
-	kv["mistral.attention.head_count"] = p.TextModel.NumAttentionHeads
-	kv["mistral.rope.dimension_count"] = p.TextModel.HiddenSize / p.TextModel.NumHiddenLayers
-	kv["mistral.rope.freq_base"] = p.TextModel.RopeTheta
-	kv["mistral.attention.head_count_kv"] = p.TextModel.NumKeyValueHeads
-	kv["mistral.attention.layer_norm_rms_epsilon"] = p.TextModel.RMSNormEPS
-	kv["mistral.attention.key_length"] = p.TextModel.HeadDim
-	kv["mistral.attention.value_length"] = p.TextModel.HeadDim
+	// Text configuration
+	kv["mistral3.block_count"] = p.TextModel.NumHiddenLayers
+	kv["mistral3.context_length"] = p.TextModel.MaxPositionEmbeddings
+	kv["mistral3.embedding_length"] = p.TextModel.HiddenSize
+	kv["mistral3.feed_forward_length"] = p.TextModel.IntermediateSize
+	kv["mistral3.attention.head_count"] = p.TextModel.NumAttentionHeads
+	kv["mistral3.attention.head_count_kv"] = p.TextModel.NumKeyValueHeads
+	kv["mistral3.attention.layer_norm_rms_epsilon"] = p.TextModel.RMSNormEPS
+	kv["mistral3.attention.key_length"] = p.TextModel.HeadDim
+	kv["mistral3.attention.value_length"] = p.TextModel.HeadDim
+	kv["mistral3.rope.dimension_count"] = p.TextModel.HiddenSize / p.TextModel.NumHiddenLayers
+	kv["mistral3.rope.freq_base"] = p.TextModel.RopeTheta
+
+	// Multimodal configuration
+	// kv["mistral3.image_token_index"] = p.ImageTokenIndex
+	// kv["mistral3.spatial_merge_size"] = p.SpatialMergeSize
+
+	// if p.VisionFeatureLayer != 0 {
+	// 	kv["mistral3.vision_feature_layer"] = p.VisionFeatureLayer
+	// }
+
+	// kv["mistral3.mm.projector_bias"] = p.MultiModalProjectorBias
+
+	// if p.ProjectorHiddenAct != "" {
+	// 	kv["mistral3.mm.projector_hidden_act"] = p.ProjectorHiddenAct
+	// }
 
 	return kv
 }
 
-func (p *mistralModel) Tensors(ts []Tensor) []ggml.Tensor {
+func (p *mistral3Model) Tensors(ts []Tensor) []ggml.Tensor {
 	var out []ggml.Tensor
 
 	for _, t := range ts {
@@ -55,10 +90,8 @@ func (p *mistralModel) Tensors(ts []Tensor) []ggml.Tensor {
 			t.SetRepacker(p.repack)
 		}
 
-		if strings.HasPrefix(t.Name(), "patch_merger.") ||
-			strings.HasPrefix(t.Name(), "pre_mm_projector_output_norm.") ||
-			strings.HasPrefix(t.Name(), "vision_encoder.") ||
-			strings.HasPrefix(t.Name(), "vision_language_adapter.") {
+		// Skip certain vision model tensors that might need special handling
+		if strings.HasPrefix(t.Name(), "patch_merger.") || strings.HasPrefix(t.Name(), "pre_mm_projector_output_norm.") {
 			continue
 		}
 
@@ -73,8 +106,9 @@ func (p *mistralModel) Tensors(ts []Tensor) []ggml.Tensor {
 	return out
 }
 
-func (p *mistralModel) Replacements() []string {
+func (p *mistral3Model) Replacements() []string {
 	return []string{
+		// Text model replacements
 		"model.layers", "blk",
 		"input_layernorm", "attn_norm",
 		"post_attention_layernorm", "ffn_norm",
@@ -121,14 +155,21 @@ func (p *mistralModel) Replacements() []string {
 		"vision_tower.transformer.layers.*.ffn_norm", "v.ffn_norm",
 		"vision_tower.ln_pre", "v.encoder_norm",
 		"vision_tower.patch_conv", "v.patch_conv",
+		"vision_tower.embeddings", "v.embeddings",
+
+		// Alternative vision model paths
+		"vision_model.vision_model.embeddings", "v.embeddings",
+		"vision_model.vision_model", "v",
+		"vision_model.layers", "v.blk",
 
 		// Multimodal projector components
 		"multi_modal_projector.patch_merger", "mm.patch_merger",
 		"multi_modal_projector.norm", "mm.norm",
+		"multi_modal_projector.linear", "mm.projection",
 	}
 }
 
-func (p *mistralModel) repack(name string, data []float32, shape []uint64) ([]float32, error) {
+func (p *mistral3Model) repack(name string, data []float32, shape []uint64) ([]float32, error) {
 	var dims []int
 	for _, dim := range shape {
 		dims = append(dims, int(dim))
