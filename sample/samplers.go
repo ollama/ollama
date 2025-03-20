@@ -1,12 +1,14 @@
 package sample
 
 import (
+	"encoding/json"
 	"errors"
 	"math"
 	"math/rand/v2"
 	"slices"
 	"sync"
 
+	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/llama"
 )
 
@@ -126,40 +128,65 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 	return tokens[idx], nil
 }
 
-// TODO(parthsareen): update sampler interface to use json unmarshal https://github.com/ollama/ollama/issues/9278
-func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int, grammar *Grammar) Sampler {
+// SamplerParams contains the validated and normalized parameters for a sampler
+type SamplerParams struct {
+	Temperature float32 `json:"temperature"`
+	TopK        int     `json:"top_k"`
+	TopP        float32 `json:"top_p"`
+	MinP        float32 `json:"min_p"`
+	Seed        int     `json:"seed"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler to handle validation during JSON unmarshaling
+func (p *SamplerParams) UnmarshalJSON(data []byte) error {
+	type rawParams SamplerParams
+	if err := json.Unmarshal(data, (*rawParams)(p)); err != nil {
+		return err
+	}
+
+	// Validate and normalize after unmarshaling
+	if p.Temperature < 0.0 {
+		p.Temperature = 0.0
+	}
+
+	if p.TopP < 0.0 {
+		p.TopP = 0.0
+	}
+	if p.TopP >= 1.0 {
+		p.TopP = 1.0
+	}
+
+	if p.MinP < 0.0 {
+		p.MinP = 0.0
+	}
+	if p.MinP >= 1.0 {
+		p.MinP = 1.0
+	}
+
+	return nil
+}
+
+// NewSampler creates a new sampler with the given options
+func NewSampler(opts *api.Options, grammar *Grammar) Sampler {
+	var params SamplerParams
+	data, _ := json.Marshal(opts)
+	_ = json.Unmarshal(data, &params)
+
 	var rng *rand.Rand
-	if seed != -1 {
+	if params.Seed != -1 {
 		// PCG requires two parameters: sequence and stream
 		// Use original seed for sequence
-		sequence := uint64(seed)
+		sequence := uint64(params.Seed)
 		// Use golden ratio hash to generate statistically independent seeds
 		rng = rand.New(rand.NewPCG(sequence, sequence^0x9E3779B9))
-	}
-	if temperature < 0.0 {
-		temperature = 0.0
-	}
-
-	if topP < 0.0 {
-		topP = 0.0
-	}
-	if topP >= 1.0 {
-		topP = 1.0
-	}
-
-	if minP < 0.0 {
-		minP = 0.0
-	}
-	if minP >= 1.0 {
-		minP = 1.0
 	}
 
 	return Sampler{
 		rng:         rng,
-		topK:        topK,
-		topP:        topP,
-		minP:        minP,
-		temperature: temperature,
+		topK:        params.TopK,
+		topP:        params.TopP,
+		minP:        params.MinP,
+		temperature: params.Temperature,
 		grammar:     grammar,
 	}
 }

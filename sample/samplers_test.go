@@ -4,11 +4,23 @@ import (
 	"math"
 	"math/rand/v2"
 	"testing"
+
+	"github.com/ollama/ollama/api"
 )
+
+func createSamplerOptions(temperature float32, topK int, topP float32, minP float32, seed int) *api.Options {
+	return &api.Options{
+		Temperature: temperature,
+		TopK:        topK,
+		TopP:        topP,
+		MinP:        minP,
+		Seed:        seed,
+	}
+}
 
 func TestWeighted(t *testing.T) {
 	logits := []float32{-10, 3, -10, -10}
-	sampler := NewSampler(0, 0, 0, 0, 0, nil)
+	sampler := NewSampler(createSamplerOptions(0, 0, 0, 0, 0), nil)
 	got, err := sampler.Sample(logits)
 	if err != nil {
 		t.Error(err)
@@ -20,7 +32,7 @@ func TestWeighted(t *testing.T) {
 	}
 
 	logits = []float32{-100, -10, 0, 10}
-	sampler = NewSampler(0, 0, 0, 0, 0, nil)
+	sampler = NewSampler(createSamplerOptions(0, 0, 0, 0, 0), nil)
 	got, err = sampler.Sample(logits)
 	if err != nil {
 		t.Error(err)
@@ -34,7 +46,7 @@ func TestWeighted(t *testing.T) {
 	// Test very high p
 	logits = []float32{1.0, 0.9999999999999999, 0.5, 0.1}
 	// Use extremely small topP to filter out all tokens
-	sampler = NewSampler(1.0, 0, 1e-10, 0, 0, nil)
+	sampler = NewSampler(createSamplerOptions(1.0, 0, 1e-10, 0, 0), nil)
 	got, err = sampler.Sample(logits)
 	if err != nil {
 		t.Error(err)
@@ -47,7 +59,7 @@ func TestWeighted(t *testing.T) {
 	}
 
 	logits = []float32{float32(math.NaN()), float32(math.NaN()), float32(math.NaN())}
-	sampler = NewSampler(1, 0, 0.95, 0.05, 0, nil)
+	sampler = NewSampler(createSamplerOptions(1, 0, 0.95, 0.05, 0), nil)
 	got, err = sampler.Sample(logits)
 	if err == nil {
 		t.Errorf("expected error, got %d", got)
@@ -57,8 +69,8 @@ func TestWeighted(t *testing.T) {
 
 func BenchmarkSample(b *testing.B) {
 	samplers := map[string]Sampler{
-		"Greedy":   NewSampler(0, 0, 0, 0, 0, nil), // Use NewSampler with temp=0 for greedy
-		"Weighted": NewSampler(0.5, 10, 0.9, 0.2, -1, nil),
+		"Greedy":   NewSampler(createSamplerOptions(0, 0, 0, 0, 0), nil), // Use NewSampler with temp=0 for greedy
+		"Weighted": NewSampler(createSamplerOptions(0.5, 10, 0.9, 0.2, -1), nil),
 	}
 
 	// Generate random logits for benchmarking

@@ -561,14 +561,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sampler := sample.NewSampler(
-		req.Options.Temperature,
-		req.Options.TopK,
-		req.Options.TopP,
-		req.Options.MinP,
-		req.Options.Seed,
-		grammar,
-	)
+	sampler := sample.NewSampler(req.Options, grammar)
 
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
 		numPredict: req.Options.NumPredict,

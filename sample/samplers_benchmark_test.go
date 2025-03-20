@@ -16,7 +16,7 @@ func BenchmarkWeightedSampler(b *testing.B) {
 				logits[i] = float32(rand.Float64()*10 - 5)
 			}
 
-			sampler := NewSampler(0.8, 0, 0, 0, 42, nil)
+			sampler := NewSampler(createSamplerOptions(0.8, 0, 0, 0, 42), nil)
 			b.ResetTimer()
 			for b.Loop() {
 				sampler.Sample(logits)
@@ -49,7 +49,7 @@ func BenchmarkWeightedSampler(b *testing.B) {
 
 	for _, tc := range configs {
 		b.Run("Config"+tc.name, func(b *testing.B) {
-			sampler := NewSampler(tc.temperature, tc.topK, tc.topP, tc.minP, tc.seed, nil)
+			sampler := NewSampler(createSamplerOptions(tc.temperature, tc.topK, tc.topP, tc.minP, tc.seed), nil)
 			sampler.Sample(logits)
 
 			b.ResetTimer()
@@ -62,7 +62,7 @@ func BenchmarkWeightedSampler(b *testing.B) {
 
 	// Test with combined transforms separately - topK influences performance greatly
 	b.Run("TransformCombined", func(b *testing.B) {
-		sampler := NewSampler(0.8, 50, 0.9, 0.05, 42, nil)
+		sampler := NewSampler(createSamplerOptions(0.8, 50, 0.9, 0.05, 42), nil)
 		b.ResetTimer()
 
 		for b.Loop() {
@@ -81,7 +81,7 @@ func BenchmarkGreedySampler(b *testing.B) {
 				logits[i] = float32(rand.Float64()*10 - 5)
 			}
 
-			sampler := NewSampler(0, -1, 0, 0, -1, nil)
+			sampler := NewSampler(createSamplerOptions(0, -1, 0, 0, -1), nil)
 			b.ResetTimer()
 
 			for b.Loop() {
