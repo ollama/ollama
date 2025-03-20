@@ -301,9 +301,8 @@ const (
 )
 
 var (
-	errMissingFrom        = errors.New("no FROM line")
-	errInvalidMessageRole = errors.New("message role must be one of \"system\", \"user\", or \"assistant\"")
-	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"parameter\", or \"message\"")
+	errMissingFrom    = errors.New("no FROM line")
+	errInvalidCommand = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"parameter\", or \"message\"")
 )
 
 type ParserError struct {
