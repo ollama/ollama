@@ -512,6 +512,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama for Zig](https://github.com/dravenk/ollama-zig)
 - [Abso](https://github.com/lunary-ai/abso) (OpenAI-compatible TypeScript SDK for any LLM provider)
 - [Nichey](https://github.com/goodreasonai/nichey) is a Python package for generating custom wikis for your research topic
+- [Ollama for D](https://github.com/kassane/ollama-d)
 
 ### Mobile
 
