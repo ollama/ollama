@@ -60,6 +60,10 @@ type CacheConfig struct {
 
 // BackendParams controls how the backend loads and executes models
 type BackendParams struct {
+	// Progress is a callback function that allows reporting percentage completion
+	// of model loading
+	Progress func(float32)
+
 	// NumThreads sets the number of threads to use if running on the CPU
 	NumThreads int
 
