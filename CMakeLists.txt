@@ -130,3 +130,8 @@ if(CMAKE_HIP_COMPILER)
         endforeach()
     endif()
 endif()
+
+if(CMAKE_SYSTEM_NAME MATCHES "Darwin")
+    message(STATUS "Setting up MLX (this takes a while...)")
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/mlx)
+endif()
