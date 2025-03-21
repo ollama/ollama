@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -374,5 +375,71 @@ func TestExecuteWithSuffix(t *testing.T) {
 				t.Errorf("mismatch (-got +want):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestCollateKnownRoles(t *testing.T) {
+	tmpl, err := Parse(`
+{{ $controlCounter := 0 }}
+{{ $documentCounter := 0 }}
+{{ $userCounter := 0 }}
+{{- range .Messages }}
+    {{- if (eq .Role "control") }}
+        {{- $controlCounter = len (printf "a%*s" $controlCounter "")}}
+		{{- end}}
+    {{- if (eq .Role "document") }}
+        {{- $documentCounter = len (printf "a%*s" $documentCounter "")}}
+    {{- end}}
+    {{- if (eq .Role "user") }}
+        {{- $userCounter = len (printf "a%*s" $userCounter "")}}
+    {{- end}}
+{{- end -}}
+{
+    "controls": {{ $controlCounter }},
+    "documents": {{ $documentCounter }},
+    "users": {{ $userCounter }}
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	values := Values{
+		Messages: []api.Message{
+			{Role: "document"},
+			{Role: "document"},
+			{Role: "control"},
+			{Role: "control"},
+			{Role: "user"},
+			{Role: "user"},
+		},
+	}
+
+	expectedJson := `{
+    "controls": 2,
+    "documents": 2,
+    "users": 1
+}`
+
+	type Report struct {
+		Controls  int `json:"controls"`
+		Documents int `json:"documents"`
+		Users     int `json:"users"`
+	}
+	var expected Report
+	if err := json.Unmarshal([]byte(expectedJson), &expected); err != nil {
+		t.Fatal(err)
+	}
+
+	var b bytes.Buffer
+	if err := tmpl.Execute(&b, values); err != nil {
+		t.Fatal(err)
+	}
+	var parsed Report
+	if err := json.Unmarshal(b.Bytes(), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(expected, parsed) {
+		t.Fatalf("invalid output:\n%s", b.String())
 	}
 }
