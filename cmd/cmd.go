@@ -703,6 +703,8 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 			for _, k := range keys {
 				var v string
 				switch vData := resp.ModelInfo[k].(type) {
+				case bool:
+					v = fmt.Sprintf("%t", vData)
 				case string:
 					v = vData
 				case float64:
