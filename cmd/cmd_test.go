@@ -87,6 +87,8 @@ func TestShowInfo(t *testing.T) {
 			ModelInfo: map[string]any{
 				"general.architecture":    "test",
 				"general.parameter_count": float64(8_000_000_000),
+				"some.true_bool":          true,
+				"some.false_bool":         false,
 				"test.context_length":     float64(1000),
 				"test.embedding_length":   float64(11434),
 			},
@@ -111,6 +113,8 @@ func TestShowInfo(t *testing.T) {
   Metadata
     general.architecture       test     
     general.parameter_count    8e+09    
+    some.false_bool            false    
+    some.true_bool             true     
     test.context_length        1000     
     test.embedding_length      11434    
 
