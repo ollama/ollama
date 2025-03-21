@@ -3,10 +3,10 @@ site_description: 'Get up and running with Llama 3.3, DeepSeek-R1, Phi-4, Gemma 
 site_author: 'QubitPi (https://github.com/Qubitpi)'
 copyright: '<p>&copy <a href="https://github.com/ollama"><em>Ollama Organization</em></a><br/><span>This project is licensed under the MIT license.</span></p>'
 repo_name: 'ollama'
-repo_url: 'https://github.com/QubitPi/ollama'
+repo_url: 'https://github.com/ollama/ollama'
 edit_uri: 'edit/master/docs'
 docs_dir: 'docs'
-site_url: 'https://ollama.qubitpi.org'
+site_url: 'https://docs.ollama.com'
 
 theme:
   name: 'material'

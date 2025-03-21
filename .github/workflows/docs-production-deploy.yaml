@@ -5,11 +5,6 @@ on:
   push:
     branches:
       - master
-  pull_request:
-
-env:
-  GIT_USER: 'QubitPi'
-  GIT_EMAIL: 'jack20220723@gmail.com'
 
 jobs:
   deploy:
@@ -26,6 +21,6 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./site
-          user_name: ${{ env.GIT_USER }}
-          user_email: ${{ env.GIT_EMAIL }}
-          cname: ollama.qubitpi.org
+          user_name: QubitPi
+          user_email: jack20220723@gmail.com
+          cname: docs.ollama.com

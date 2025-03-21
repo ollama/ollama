@@ -2,7 +2,7 @@
 
 ### Getting Started
 
-* [Quickstart](https://github.com/QubitPi/ollama?tab=readme-ov-file#quickstart)
+* [Quickstart](https://github.com/ollama/ollama?tab=readme-ov-file#quickstart)
 * [Examples](./examples.md)
 * [Importing models](./import.md)
 * [Linux Documentation](./linux.md)
