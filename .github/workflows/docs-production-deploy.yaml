@@ -1,0 +1,26 @@
+# Copyright 2025 Jiaqi Liu. All rights reserved.
+name: 'Documentation'
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    permissions:
+      contents: write
+    name: Deploy Docs to GitHub Pages
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with mkdocs-material via Docker
+        run: '.github/workflows/scripts/docs/build-docs.sh'
+      - name: Deploy to Github Pages
+        uses: peaceiris/actions-gh-pages@v4.0.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site
+          user_name: QubitPi
+          user_email: jack20220723@gmail.com
+          cname: docs.ollama.com
