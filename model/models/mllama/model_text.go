@@ -4,6 +4,7 @@ import (
 	"math"
 	"slices"
 
+	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
@@ -220,7 +221,7 @@ func (m *TextModel) Forward(ctx ml.Context, inputIDs, positionIDs, outputs, mask
 	return m.Output.Forward(ctx, hiddenState)
 }
 
-func newTextModel(c ml.Config) *TextModel {
+func newTextModel(c fs.Config) *TextModel {
 	var decoderLayers []TextDecoderLayer
 	for i := range c.Uint("block_count") {
 		var textDecoderLayer TextDecoderLayer

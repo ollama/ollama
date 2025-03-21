@@ -3,7 +3,7 @@ package gemma3
 import (
 	"image"
 
-	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/model/imageproc"
 )
 
@@ -11,7 +11,7 @@ type ImageProcessor struct {
 	imageSize, patchSize, numChannels int
 }
 
-func newImageProcessor(c ml.Config) ImageProcessor {
+func newImageProcessor(c fs.Config) ImageProcessor {
 	return ImageProcessor{
 		imageSize:   int(c.Uint("vision.image_size")),
 		patchSize:   int(c.Uint("vision.patch_size")),

@@ -3,6 +3,7 @@ package gemma3
 import (
 	"math"
 
+	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
@@ -40,7 +41,7 @@ const (
 	cacheTypeCausal
 )
 
-func newTextModel(c ml.Config) *TextModel {
+func newTextModel(c fs.Config) *TextModel {
 	numBlocks := int(c.Uint("block_count"))
 
 	m := TextModel{
