@@ -1,65 +1,27 @@
 package mistral3
 
 import (
+	"bytes"
 	"image"
-	_ "image/jpeg"
-	_ "image/png"
+	"slices"
 
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model"
-	"github.com/ollama/ollama/model/imageproc"
 	"github.com/ollama/ollama/model/input"
 )
 
 type Model struct {
 	model.Base
 	*TextModel
+	*VisionModel         `gguf:"v,vision"`
+	*MultiModalProjector `gguf:"mm"`
 
 	ImageProcessor
-
-	// TODO: Add VisionModel field
-	// *VisionModel `gguf:"v,vision"`
-
-	// TODO: Add MultiModalProjector field for combining vision and text features
-	// *MultiModalProjector `gguf:"mm"`
 }
 
-// Adding ImageProcessor struct
-type ImageProcessor struct {
-	imageSize   int
-	patchSize   int
-	numChannels int
-	longestEdge int
-}
-
-// Function to create a new ImageProcessor
-func newImageProcessor(c ml.Config) ImageProcessor {
-	return ImageProcessor{
-		imageSize:   int(c.Uint("vision.image_size", 1024)),
-		patchSize:   int(c.Uint("vision.patch_size", 16)),
-		numChannels: int(c.Uint("vision.num_channels", 3)),
-		longestEdge: int(c.Uint("vision.longest_edge", 1024)),
-	}
-}
-
-// Method to process images for the model
-func (p *ImageProcessor) ProcessImage(img image.Image) ([]float32, error) {
-	// Get output size based on longest edge and patch size
-	outputSize := getResizeOutputImageSize(img, p.longestEdge, image.Point{p.patchSize, p.patchSize})
-
-	// Resize the image
-	newImage := imageproc.Composite(img)
-	newImage = imageproc.Resize(newImage, outputSize, imageproc.ResizeBilinear)
-
-	// Normalize image data
-	data := imageproc.Normalize(newImage, imageproc.ClipDefaultMean, imageproc.ClipDefaultSTD, true, true)
-
-	return data, nil
-}
-
-// TODO: Implement MultimodalProcessor interface
-// var _ model.MultimodalProcessor = (*Model)(nil)
+// Implement MultimodalProcessor interface
+var _ model.MultimodalProcessor = (*Model)(nil)
 
 func New(c ml.Config) (model.Model, error) {
 	textModel, err := NewTextModel(c)
@@ -68,15 +30,10 @@ func New(c ml.Config) (model.Model, error) {
 	}
 
 	m := &Model{
-		TextModel: textModel,
-		// Initialize the ImageProcessor
-		ImageProcessor: newImageProcessor(c),
-
-		// TODO: Initialize VisionModel if present
-		// VisionModel: newVisionModel(c),
-
-		// TODO: Initialize MultiModalProjector
-		// MultiModalProjector: &MultiModalProjector{...},
+		TextModel:           textModel,
+		VisionModel:         newVisionModel(c),
+		ImageProcessor:      newImageProcessor(c),
+		MultiModalProjector: newMultiModalProjector(c),
 	}
 
 	m.Cache = kvcache.NewCausalCache(m.TextModel.Shift)
@@ -84,37 +41,63 @@ func New(c ml.Config) (model.Model, error) {
 	return m, nil
 }
 
-// Implement EncodeMultimodal method for processing images
 func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, error) {
-	// Check if vision model exists - return error for now
-	return nil, model.ErrNoVisionModel
+	if len(m.VisionModel.Layers) == 0 {
+		return nil, model.ErrNoVisionModel
+	}
 
-	// This will be implemented when adding the vision model:
-	/*
-		image, _, err := image.Decode(bytes.NewReader(multimodalData))
-		if err != nil {
-			return nil, err
+	// Decode image
+	image, _, err := image.Decode(bytes.NewReader(multimodalData))
+	if err != nil {
+		return nil, err
+	}
+
+	// Process image
+	f32s, err := m.ImageProcessor.ProcessImage(image)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create tensor from image data
+	pixelValues, err := ctx.Input().FromFloatSlice(f32s,
+		m.ImageProcessor.imageSize,
+		m.ImageProcessor.imageSize,
+		m.ImageProcessor.numChannels,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Forward pass through vision model
+	visionOutputs := m.VisionModel.Forward(ctx, pixelValues)
+
+	// Project to text embedding space
+	visionOutputs = m.MultiModalProjector.Forward(ctx, visionOutputs, m.VisionModel.eps)
+
+	return visionOutputs, nil
+}
+
+func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
+	var result []input.Input
+
+	for _, inp := range inputs {
+		if inp.Multimodal == nil {
+			result = append(result, inp)
+		} else {
+			inputMultimodal := inp.Multimodal.(ml.Tensor)
+
+			// Add special image tokens - using the imageTokenIndex from config
+			result = append(result,
+				input.Input{Token: int32(m.MultiModalProjector.imageTokenIndex)},             // Image token
+				input.Input{Multimodal: inputMultimodal, MultimodalHash: inp.MultimodalHash}, // Image data
+			)
+
+			// Add image token placeholders
+			result = append(result, slices.Repeat([]input.Input{{Token: 0}}, inputMultimodal.Dim(1)-1)...)
 		}
+	}
 
-		f32s, err := m.ImageProcessor.ProcessImage(image)
-		if err != nil {
-			return nil, err
-		}
-
-		pixelValues, err := ctx.Input().FromFloatSlice(f32s,
-			m.ImageProcessor.imageSize,
-			m.ImageProcessor.imageSize,
-			m.ImageProcessor.numChannels,
-		)
-		if err != nil {
-			return nil, err
-		}
-
-		// Will need VisionModel to process this
-		// visionOutputs := m.VisionModel.Forward(ctx, pixelValues)
-		// visionOutputs = m.MultiModalProjector.Forward(ctx, visionOutputs)
-		// return visionOutputs, nil
-	*/
+	return result, nil
 }
 
 func (m *Model) Forward(ctx ml.Context, opts input.Options) (ml.Tensor, error) {
@@ -133,8 +116,20 @@ func (m *Model) Forward(ctx ml.Context, opts input.Options) (ml.Tensor, error) {
 		return nil, err
 	}
 
-	// TODO: Add handling of multimodal inputs when vision model is added
-	// Set image embeddings into hidden state if present in opts.Multimodal
+	// Handle multimodal inputs
+	// var except []int
+	// hiddenState := m.TextModel.TokenEmbedding.Forward(ctx, inputs)
+
+	// for _, image := range opts.Multimodal {
+	// 	visionOutputs := image.Multimodal.(ml.Tensor)
+
+	// 	// Copy vision outputs into the hidden state
+	// 	ctx.Forward(visionOutputs.Copy(ctx, hiddenState.View(ctx, image.Index*hiddenState.Stride(1), visionOutputs.Dim(0)*visionOutputs.Dim(1))))
+
+	// 	for i := range visionOutputs.Dim(1) {
+	// 		except = append(except, image.Index+i)
+	// 	}
+	// }
 
 	return m.TextModel.Forward(ctx, inputs, positions, outputs, opts, m.Cache), nil
 }

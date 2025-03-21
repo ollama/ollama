@@ -73,6 +73,7 @@ func (p *mistral3Model) KV(t *Tokenizer) ggml.KV {
 	kv["mistral3.vision.image_size"] = p.VisionModel.ImageSize
 	kv["mistral3.vision.patch_size"] = p.VisionModel.PatchSize
 	kv["mistral3.vision.num_channels"] = p.VisionModel.NumChannels
+	// kv["mistral3.vision.attention.layer_norm_epsilon"] = 1e-05 // Default value
 	kv["mistral3.vision.rope.freq_base"] = p.VisionModel.RopeTheta
 
 	// Multimodal configuration
