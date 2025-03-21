@@ -1,0 +1,132 @@
+site_name: 'Ollama Documentation'
+site_description: 'Get up and running with Llama 3.3, DeepSeek-R1, Phi-4, Gemma 3, and other large language models.'
+site_author: 'QubitPi (https://github.com/Qubitpi)'
+copyright: '<p>&copy <a href="https://github.com/ollama"><em>Ollama Organization</em></a><br/><span>This project is licensed under the MIT license.</span></p>'
+repo_name: 'ollama'
+repo_url: 'https://github.com/QubitPi/ollama'
+edit_uri: 'edit/master/docs'
+docs_dir: 'docs'
+site_url: 'https://ollama.qubitpi.org'
+
+theme:
+  name: 'material'
+  custom_dir: 'docs/overrides/'
+  favicon: assets/logo/favicon.ico
+  logo: assets/logo/ollama.png
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.tabs
+    - navigation.top
+    - navigation.expand
+    - navigation.instant
+    - content.action.edit
+    - content.action.view
+    - content.code.annotate
+  palette:
+    - media: '(prefers-color-scheme: light)'
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: '(prefers-color-scheme: dark)'
+      scheme: slate
+      primary: indigo
+      accent: blue
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+
+extra_css:
+  - assets/css/customizations.css
+
+# We do not use `mike`, but enabling this will enable the version selector UI.
+# It references `versions.json` on `gh-pages` branch,
+# however we have a basic setup that only matches `version` to a subdirectory.
+extra:
+  version:
+    provider: mike
+
+markdown_extensions:
+  - toc:
+      anchorlink: true
+  - abbr
+  - attr_list
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.magiclink
+  - pymdownx.inlinehilite
+  - pymdownx.tilde
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      extend_pygments_lang:
+        - name: yml
+          lang: yaml
+        - name: cf
+          lang: cfg
+        - name: conf
+          lang: cfg
+        - name: env
+          lang: properties
+        # We only show PHP snippets, requires config change to work:
+        # https://squidfunk.github.io/mkdocs-material/setup/extensions/python-markdown-extensions/#highlight
+        # https://facelessuser.github.io/pymdown-extensions/extensions/highlight/#extended-pygments-lexer-options
+        - name: php
+          lang: php
+          options:
+            startinline: true
+        # A variant that sometimes has nicer syntax highlighting:
+        - name: cf-extra
+          lang: linuxconfig
+        - name: cli-syntax
+          lang: linuxconfig
+        # These formats aren't supported by Python Pygments lexer,
+        # but we use them when the context is appropriate.
+        - name: log
+          lang: shell-session
+        - name: fetchmailrc
+          lang: txt
+        - name: getmailrc
+          lang: txt
+        - name: caddyfile
+          lang: txt
+
+# Hard-coded navigation list. Key(UI label): Value(relative filepath from `docs_dir`).
+# - If referencing a file more than once, the URLs will all point to the nav hierarchy of the last file reference entry. That usually breaks UX, try avoid it.
+# - The top-level elements are presented as tabs (due to `theme.features.navigation.tabs`).
+#   - Nested elements appear in the sidebar (left) of each tabs page.
+#   - 3rd level and beyond are automatically expanded in the sidebar instead of collapsed (due to `theme.features.navigation.expand`)
+nav:
+  - 'Home': README.md
+  - 'Getting Started':
+    - 'Examples': ./examples.md
+    - 'Importing Models': ./import.md
+    - 'Linux Documentation': ./linux.md
+    - 'Windows Documentation': ./windows.md
+    - 'Docker Documentation': ./docker.md
+  - 'Reference':
+    - 'API Reference': ./api.md
+    - 'Modelfile Reference': ./modelfile.md
+    - 'Template': ./template.md
+    - 'OpenAI Compatibility': ./openai.md
+    - 'GPU': ./gpu.md
+  - 'Resources':
+    - 'Troubleshooting Guide': ./troubleshooting.md
+    - 'FAQ': ./faq.md
+    - 'Development guide': ./development.md

@@ -1,0 +1,143 @@
+/*
+  This file adds our styling additions / fixes to maintain.
+  Some of which are overly specific and may break with future updates by upstream.
+*/
+
+/* ============================================================================================================= */
+
+/* External Link icon feature. Rejected from upstreaming to `mkdocs-material`.
+Alternative solution using SVG icon here (Broken on Chrome?): https://github.com/squidfunk/mkdocs-material/issues/2318#issuecomment-789461149
+Tab or Nav sidebar with non-relative links will prepend an icon (font glyph)
+If you want to append instead, switch `::before` to `::after`.
+*/
+/* reference the icon font to use */
+@font-face {
+  font-family: 'external-link';
+  src: url('../fonts/external-link.woff') format('woff');
+}
+
+/*
+  Since mkdocs-material 9.5.5 broke support in our docs from DMS v13.3.1, we now use our own class name,
+  which has been included for the two external nav links in mkdocs.yml via workaround (insert HTML).
+*/
+.icon-external-link::before {
+  display: inline-block; /* treat similar to text */
+  font-family: 'external-link';
+  content:'\0041'; /* represents "A" which our font renders as an icon instead of the "A" glyph */
+  font-size: 80%; /* icon is a little too big by default, scale it down */
+  margin-right: 4px;
+}
+
+/* ============================================================================================================= */
+
+/* UI Improvement: Header bar (top of page) adjustments - Increase scale of logo and adjust white-space */
+/* Make the logo larger without impacting other header components */
+.md-header__button.md-logo > img { transform: scale(180%); margin-left: 0.4rem; }
+/* Reduce the white-space between the Logo and Title components */
+.md-header__title { margin-left: 0.3rem; }
+
+/* ============================================================================================================= */
+
+/* UI Improvement: Add light colour bg for the version selector, with some rounded corners */
+.md-version__current {
+  background-color: rgb(255,255,255,0.18); /* white with 18% opacity */
+  padding: 5px;
+  border-radius: 3px;
+}
+
+/* ============================================================================================================= */
+
+/*
+  UX Bugfix for left navbar visibility on top-level (tabbed) pages with no nested sub-pages.
+  Upstream will not fix: https://github.com/squidfunk/mkdocs-material/issues/3109
+*/
+
+@media screen and (min-width: 76.25em) {
+  .md-nav--lifted>.md-nav__list>.md-nav__item--active>.md-nav__link {
+    display: none;
+  }
+}
+
+/* ============================================================================================================= */
+
+/*
+  UX Bugfix for permalink affecting typography in headings.
+  Upstream will not fix: https://github.com/squidfunk/mkdocs-material/issues/2369
+*/
+
+/* Headings are configured to be links (instead of only the permalink symbol), removes the link colour */
+div.md-content article.md-content__inner a.toclink {
+  color: currentColor;
+}
+
+/* Instead of a permalink symbol at the end of heading text, use a border line on the left spanning height of heading */
+/* Includes optional background fill with rounded right-side corners, and restores inline code style */
+/* NOTE: Headings with markdown links embedded disrupt the bg fill style, as they're not children of `a.toclink` element */
+div.md-content article.md-content__inner a.toclink {
+  display: inline-block; /* Enables multi-line support for both border and bg color */
+  border-left: .2rem solid transparent; /* transparent placeholder to avoid heading shift during reveal transition */
+  margin-left: -0.6rem; /* Offset heading to the left */
+  padding-left: 0.4rem; /* Push heading back to original position, margin-left - border-left widths */
+  transition: background-color 200ms,border-left 200ms;
+
+  /* Only relevant if using background highlight style */
+  border-radius: 0 0.25rem 0.25rem 0;
+  padding-right: 0.4rem;
+}
+
+div.md-content article.md-content__inner a.toclink:hover,
+div.md-content article.md-content__inner :target > a.toclink {
+  border-left: .2rem solid #448aff; /* highlight line on the left */
+  background-color: #b3dbff6e; /* background highlight fill */
+  transition: background-color 200ms,border-left 200ms;
+}
+
+/* Upstream overrides some of the `code` element styles for headings, restore them */
+div.md-content article.md-content__inner a.toclink code {
+  padding: 0 0.3em; /* padding to the left and right, not top and bottom */
+  border-radius: 0.2rem; /* 0.1rem of original style bit too small */
+  background-color: var(--md-code-bg-color);
+}
+
+.highlight.no-copy .md-clipboard { display: none; }
+
+/* ============================================================================================================= */
+
+/* Make the left-sidebar nav categories better distinguished from page links (bold text) */
+.md-nav__item--nested > .md-nav__link {
+  font-weight: 700;
+}
+
+/* ============================================================================================================= */
+
+/*
+  TaskList style for a pro/con list. Presently only used for this type of list in the kubernetes docs.
+  Uses a custom icon for the unchecked (con) state: :octicons-x-circle-fill-24:
+  https://github.com/squidfunk/mkdocs-material/discussions/6811#discussioncomment-8700795
+
+  TODO: Can better scope the style under a class name when migrating to block extension syntax:
+  https://github.com/facelessuser/pymdown-extensions/discussions/1973
+*/
+
+:root {
+  --md-tasklist-icon--failed: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M1 12C1 5.925 5.925 1 12 1s11 4.925 11 11-4.925 11-11 11S1 18.075 1 12Zm8.036-4.024a.751.751 0 0 0-1.042.018.751.751 0 0 0-.018 1.042L10.939 12l-2.963 2.963a.749.749 0 0 0 .326 1.275.749.749 0 0 0 .734-.215L12 13.06l2.963 2.964a.75.75 0 0 0 1.061-1.06L13.061 12l2.963-2.964a.749.749 0 0 0-.326-1.275.749.749 0 0 0-.734.215L12 10.939Z"/></svg>');
+}
+
+.md-typeset [type="checkbox"] + .task-list-indicator::before {
+  background-color: rgb(216, 87, 48);
+  -webkit-mask-image: var(--md-tasklist-icon--failed);
+  mask-image: var(--md-tasklist-icon--failed);
+}
+
+/* More suitable shade of green */
+.md-typeset [type=checkbox]:checked+.task-list-indicator:before {
+  background-color: rgb(97, 216, 42);
+}
+
+/* Tiny layout shift */
+[dir=ltr] .md-typeset .task-list-indicator:before {
+  left: -1.6em;
+  top: 1px;
+}
+
+/* ============================================================================================================= */
