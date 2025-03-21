@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	_ "image/jpeg"
@@ -94,14 +95,14 @@ func Register(name string, f func(ml.Config) (Model, error)) {
 }
 
 // New initializes a new model instance with the provided configuration based on the metadata in the model file
-func New(modelPath string, params ml.BackendParams) (Model, error) {
+func New(ctx context.Context, modelPath string, params ml.BackendParams) (Model, error) {
 	r, err := os.Open(modelPath)
 	if err != nil {
 		return nil, err
 	}
 	defer r.Close()
 
-	b, err := ml.NewBackend(r, params)
+	b, err := ml.NewBackend(ctx, r, params)
 	if err != nil {
 		return nil, err
 	}
