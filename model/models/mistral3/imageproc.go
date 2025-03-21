@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 
+	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model/imageproc"
 )
 
@@ -27,8 +28,8 @@ func getResizeOutputImageSize(img image.Image, longestEdge int, patchSize image.
 
 	if ratio > 1.0 {
 		newSize = image.Point{
-			int(math.Ceil(float64(b.Max.X) / ratio)),
-			int(math.Ceil(float64(b.Max.Y) / ratio)),
+			int(math.Floor(float64(b.Max.X) / ratio)),
+			int(math.Floor(float64(b.Max.Y) / ratio)),
 		}
 	}
 
@@ -65,4 +66,31 @@ func Preprocess(imageData io.Reader) ([]float32, map[string]any, error) {
 
 	opts := map[string]any{}
 	return data, opts, nil
+}
+
+type ImageProcessor struct {
+	imageSize   int
+	patchSize   int
+	numChannels int
+	longestEdge int
+}
+
+func newImageProcessor(c ml.Config) ImageProcessor {
+	return ImageProcessor{
+		imageSize:   int(c.Uint("vision.image_size", 1540)),
+		patchSize:   int(c.Uint("vision.patch_size", 14)),
+		numChannels: int(c.Uint("vision.num_channels", 3)),
+		longestEdge: int(c.Uint("vision.longest_edge", 1024)),
+	}
+}
+
+func (p *ImageProcessor) ProcessImage(img image.Image) ([]float32, error) {
+	outputSize := getResizeOutputImageSize(img, p.longestEdge, image.Point{p.patchSize, p.patchSize})
+
+	newImage := imageproc.Composite(img)
+	newImage = imageproc.Resize(newImage, outputSize, imageproc.ResizeBilinear)
+
+	data := imageproc.Normalize(newImage, imageproc.ClipDefaultMean, imageproc.ClipDefaultSTD, true, true)
+
+	return data, nil
 }
