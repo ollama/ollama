@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/user"
@@ -301,8 +300,9 @@ const (
 )
 
 var (
-	errMissingFrom    = errors.New("no FROM line")
-	errInvalidCommand = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"parameter\", or \"message\"")
+	errMissingFrom        = errors.New("no FROM line")
+	errInvalidMessageRole = errors.New("message role must be one of \"system\", \"user\", or \"assistant\"")
+	errInvalidCommand     = errors.New("command must be one of \"from\", \"license\", \"template\", \"system\", \"adapter\", \"parameter\", or \"message\"")
 )
 
 type ParserError struct {
@@ -379,10 +379,14 @@ func ParseFile(r io.Reader) (*Modelfile, error) {
 			case stateParameter:
 				cmd.Name = b.String()
 			case stateMessage:
-				role = b.String()
-				if !isKnownMessageRole(b.String()) {
-					slog.Warn("received non-standard role", "role", role)
+				if !isValidMessageRole(b.String()) {
+					return nil, &ParserError{
+						LineNumber: currLine,
+						Msg:        errInvalidMessageRole.Error(),
+					}
 				}
+
+				role = b.String()
 			case stateComment, stateNil:
 				// pass
 			case stateValue:
@@ -552,7 +556,7 @@ func isNewline(r rune) bool {
 	return r == '\r' || r == '\n'
 }
 
-func isKnownMessageRole(role string) bool {
+func isValidMessageRole(role string) bool {
 	return role == "system" || role == "user" || role == "assistant"
 }
 

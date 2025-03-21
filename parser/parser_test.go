@@ -256,13 +256,13 @@ You are a multiline file parser. Always parse things.
 		{
 			`
 FROM foo
-MESSAGE somerandomrole I'm ok with you adding any role message now!
+MESSAGE badguy I'm a bad guy!
 `,
-			[]Command{
-				{Name: "model", Args: "foo"},
-				{Name: "message", Args: "somerandomrole: I'm ok with you adding any role message now!"},
-			},
 			nil,
+			&ParserError{
+				LineNumber: 3,
+				Msg:        errInvalidMessageRole.Error(),
+			},
 		},
 		{
 			`
