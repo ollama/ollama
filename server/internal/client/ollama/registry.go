@@ -514,10 +514,41 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 				break
 			}
 
+			cacheKey := fmt.Sprintf(
+				"v1 pull chunksum %s %s %d-%d",
+				l.Digest,
+				cs.Digest,
+				cs.Chunk.Start,
+				cs.Chunk.End,
+			)
+			cacheKeyDigest := blob.DigestFromBytes(cacheKey)
+			_, err := c.Get(cacheKeyDigest)
+			if err == nil {
+				// Chunk already downloaded.
+				//
+				// NOTE: This is not the right situation for
+				// ErrCached. It should only look like a fast
+				// chunk download, so pass a nil error.
+				t.update(l, cs.Chunk.Size(), nil)
+				continue
+			}
+
 			wg.Add(1)
 			g.Go(func() (err error) {
 				defer func() {
 					if err == nil {
+						// Ignore cache key write errors for now. We've already
+						// reported to trace that the chunk is complete.
+						//
+						// Ideally, we should only report completion to trace
+						// after successful cache commit. This current approach
+						// works but could trigger unnecessary redownloads if
+						// the checkpoint key is missing on next pull.
+						//
+						// Not incorrect, just suboptimal - fix this in a
+						// future update.
+						_ = blob.PutBytes(c, cacheKeyDigest, cacheKey)
+
 						received.Add(cs.Chunk.Size())
 					} else {
 						err = fmt.Errorf("error downloading %s: %w", cs.Digest.Short(), err)
