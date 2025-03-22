@@ -28,8 +28,31 @@ func TestChatPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	
+	funcTmpl, err := template.Parse(`
+{{- $last := sum (len .Messages) -1 }}
+{{- range $i, $_ := .Messages }}
+{{- $content := .Content }}
+{{- if not (eq $i $last) }}
+{{- $split := split $content "</think>" }}
+{{- $content = index $split (sum (len $split) -1) }}
+{{- end }}{{ $content }} {{ end }}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	
+	toolTmpl, err := template.Parse(`
+{{- range .Messages }}	
+{{- if eq .Role "tool" }}
+<tool>{{ .Content }}</tool>{{ end }}{{ end }}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	visionModel := Model{Template: tmpl, ProjectorPaths: []string{"vision"}}
 	mllamaModel := Model{Template: tmpl, ProjectorPaths: []string{"vision"}, Config: ConfigV2{ModelFamilies: []string{"mllama"}}}
+	thinkingModel := Model{Template: funcTmpl}
+	toolModel := Model{Template: toolTmpl} 
 
 	createImg := func(width, height int) ([]byte, error) {
 		img := image.NewRGBA(image.Rect(0, 0, width, height))
@@ -310,6 +333,31 @@ func TestChatPrompt(t *testing.T) {
 			},
 			expect: expect{
 				error: errTooManyImages,
+			},
+		},
+		{
+			name: "thinking removal using functions",
+			model: thinkingModel,
+			limit: 2048,
+			msgs: []api.Message{
+				{Role: "assistant", Content: "<think>Hmm</think>Not thinking"},
+				{Role: "user", Content: "I am User" },
+				{Role: "assistant", Content: "<think>Hmm</think>Thinking"},
+			},
+			expect: expect{
+				prompt: "Not thinking I am User <think>Hmm</think>Thinking ",
+			},
+		},
+		{
+			name: "multi tool responses",
+			model: toolModel,
+			limit: 2048,
+			msgs: []api.Message{
+				{Role: "tool", Content: "1234"},
+				{Role: "tool", Content: "5678"},
+			},
+			expect: expect{
+				prompt: "\n<tool>1234</tool>\n<tool>5678</tool>",
 			},
 		},
 	}
