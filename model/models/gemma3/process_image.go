@@ -51,7 +51,7 @@ func (p *ImageProcessor) pack(img image.Image, mean, std [3]float32) []float32 {
 func (p ImageProcessor) ProcessImage(img image.Image) ([]float32, error) {
 	outputSize := image.Point{p.imageSize, p.imageSize}
 	newImage := imageproc.Composite(img)
-	newImage = imageproc.Resize(newImage, outputSize, imageproc.ResizeBicubic)
+	newImage = imageproc.Resize(newImage, outputSize, imageproc.ResizeBilinear)
 
 	data := p.pack(newImage, imageproc.ImageNetStandardMean, imageproc.ImageNetStandardSTD)
 	return data, nil
