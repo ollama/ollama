@@ -1568,19 +1568,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					toolCalls[i].Function.Index = toolCallIndex
 					toolCallIndex++
 				}
-				res.Message.Content = ""
 				sb.Reset()
-				ch <- res
-				return
 			}
-
-			if r.Done {
-				// Send any remaining content if no tool calls were detected
-				if toolCallIndex == 0 {
-					res.Message.Content = sb.String()
-				}
-				ch <- res
-			}
+			ch <- res
 		}); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
