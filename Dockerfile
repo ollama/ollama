@@ -4,7 +4,7 @@ ARG FLAVOR=${TARGETARCH}
 
 ARG ROCMVERSION=6.3.3
 ARG JETPACK5VERSION=r35.4.1
-ARG JETPACK6VERSION=r36.4.0
+ARG JETPACK6VERSION=r36.4.3
 ARG CMAKEVERSION=3.31.2
 
 # CUDA v11 requires gcc v10.  v10.3 has regressions, so the rockylinux 8.5 AppStream has the latest compatible version
