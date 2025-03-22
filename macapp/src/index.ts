@@ -6,7 +6,7 @@ import 'winston-daily-rotate-file'
 import * as path from 'path'
 
 import { v4 as uuidv4 } from 'uuid'
-import { installed } from './install'
+import { isInstalled } from './install'
 
 require('@electron/remote/main').initialize()
 
@@ -207,7 +207,7 @@ async function checkUpdate() {
   }
 }
 
-function init() {
+async function init() {
   if (app.isPackaged) {
     checkUpdate()
     setInterval(() => {
@@ -254,10 +254,30 @@ function init() {
 
   server()
 
-  if (store.get('first-time-run') && installed()) {
-    if (process.platform === 'darwin') {
-      app.dock.hide()
+  // Check if the user has opted for a custom path to install the CLI
+  const optedForCustomPath = store.get('custom-path')
+
+  const pathType = optedForCustomPath ? 'custom' : 'default'
+  const installed = await isInstalled(pathType)
+  
+  if (optedForCustomPath) {
+    if(!installed) {
+      // The user has opted for a custom path but the CLI is not installed
+      // This can happen if the user has uninstalled the CLI or the CLI is not installed at the custom path
+      store.set('custom-path', false)
+      app.setLoginItemSettings({ openAtLogin: true })
+      firstRunWindow()
+      return
+    } else {
+      app.setLoginItemSettings({ openAtLogin: app.getLoginItemSettings().openAtLogin })
+      return
     }
+  } 
+
+  if (store.get('first-time-run') && installed) {
+      if (process.platform === 'darwin') {
+        app.dock.hide()
+      }
 
     app.setLoginItemSettings({ openAtLogin: app.getLoginItemSettings().openAtLogin })
     return
