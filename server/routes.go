@@ -1402,6 +1402,11 @@ func (s *Server) PsHandler(c *gin.Context) {
 			QuantizationLevel: model.Config.FileType,
 		}
 
+		// Lock the reference mutex to safely check the reference count
+		v.refMu.Lock()
+		isActive := v.refCount > 0
+		v.refMu.Unlock()
+
 		mr := api.ProcessModelResponse{
 			Model:     model.ShortName,
 			Name:      model.ShortName,
@@ -1410,6 +1415,7 @@ func (s *Server) PsHandler(c *gin.Context) {
 			Digest:    model.Digest,
 			Details:   modelDetails,
 			ExpiresAt: v.expiresAt,
+			Active:    isActive,
 		}
 		// The scheduler waits to set expiresAt, so if a model is loading it's
 		// possible that it will be set to the unix epoch. For those cases, just
