@@ -2,6 +2,7 @@ package mistral3
 
 import (
 	"bytes"
+	"fmt"
 	"image"
 	"slices"
 
@@ -59,18 +60,27 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 	// Create tensor from image data
 	pixelValues, err := ctx.Input().FromFloatSlice(f32s,
 		m.ImageProcessor.imageSize,
-		m.ImageProcessor.imageSize,
+
+		// TODO (jmorganca): this should be returned from the
+		// image processor instead of hardcoded
+		1036,
 		m.ImageProcessor.numChannels,
 	)
 	if err != nil {
 		return nil, err
 	}
 
+	fmt.Println("pixelValues", "shape", pixelValues.Shape(), "data", ml.Dump(ctx, pixelValues))
+
 	// Forward pass through vision model
 	visionOutputs := m.VisionModel.Forward(ctx, pixelValues)
 
+	// fmt.Println("visionOutputs", "shape", visionOutputs.Shape(), "data", ml.Dump(ctx, visionOutputs))
+
 	// Project to text embedding space
 	visionOutputs = m.MultiModalProjector.Forward(ctx, visionOutputs, m.VisionModel.eps)
+
+	// fmt.Println("visionOutputs after projector", "shape", visionOutputs.Shape(), "data", ml.Dump(ctx, visionOutputs))
 
 	return visionOutputs, nil
 }
@@ -85,15 +95,14 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 			inputMultimodal := inp.Multimodal.(ml.Tensor)
 
 			// Add special image tokens - using the imageTokenIndex from config
-			result = append(result,
-				input.Input{Token: int32(m.MultiModalProjector.imageTokenIndex)},             // Image token
-				input.Input{Multimodal: inputMultimodal, MultimodalHash: inp.MultimodalHash}, // Image data
-			)
-
-			// Add image token placeholders
-			result = append(result, slices.Repeat([]input.Input{{Token: 0}}, inputMultimodal.Dim(1)-1)...)
+			result = append(result, input.Input{Token: 10})                                                       // [IMG]
+			result = append(result, input.Input{Multimodal: inputMultimodal, MultimodalHash: inp.MultimodalHash}) // image data
+			result = append(result, slices.Repeat([]input.Input{{Token: 10}}, inputMultimodal.Dim(1)-1)...)       // [IMG] placeholders
+			result = append(result, input.Input{Token: 13})                                                       // [IMG_END]
 		}
 	}
+
+	fmt.Println("post tokenize", "result", result)
 
 	return result, nil
 }

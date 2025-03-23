@@ -21,8 +21,7 @@ func getNumImageTokens(imageSize, patchSize image.Point) image.Point {
 
 func getResizeOutputImageSize(img image.Image, longestEdge int, patchSize image.Point) image.Point {
 	b := img.Bounds()
-	le := float64(longestEdge)
-	ratio := math.Max(float64(b.Max.Y)/le, float64(b.Max.X)/le)
+	ratio := math.Max(float64(b.Max.Y)/float64(longestEdge), float64(b.Max.X)/float64(longestEdge))
 
 	newSize := img.Bounds().Max
 
@@ -80,17 +79,14 @@ func newImageProcessor(c ml.Config) ImageProcessor {
 		imageSize:   int(c.Uint("vision.image_size", 1540)),
 		patchSize:   int(c.Uint("vision.patch_size", 14)),
 		numChannels: int(c.Uint("vision.num_channels", 3)),
-		longestEdge: int(c.Uint("vision.longest_edge", 1024)),
+		longestEdge: int(c.Uint("vision.longest_edge", 1540)),
 	}
 }
 
 func (p *ImageProcessor) ProcessImage(img image.Image) ([]float32, error) {
 	outputSize := getResizeOutputImageSize(img, p.longestEdge, image.Point{p.patchSize, p.patchSize})
-
 	newImage := imageproc.Composite(img)
 	newImage = imageproc.Resize(newImage, outputSize, imageproc.ResizeBilinear)
-
 	data := imageproc.Normalize(newImage, imageproc.ClipDefaultMean, imageproc.ClipDefaultSTD, true, true)
-
 	return data, nil
 }

@@ -116,13 +116,16 @@ func (p *mistral3Model) Tensors(ts []Tensor) []ggml.Tensor {
 
 func (p *mistral3Model) Replacements() []string {
 	return []string{
-		// Text model replacements
-		"model.layers", "blk",
+		"language_model.model.norm", "output_norm",
+		"language_model.model.", "",
+		"language_model.", "",
+		"layers", "blk",
+		"transformer.layers", "blk",
+		"vision_tower", "v",
+		"ln_pre", "encoder_norm",
 		"input_layernorm", "attn_norm",
 		"post_attention_layernorm", "ffn_norm",
-		"lm_head", "output",
-		"model.embed_tokens.weight", "token_embd.weight",
-		"model.norm.weight", "output_norm.weight",
+		"embed_tokens", "token_embd",
 		"self_attn.q_proj", "attn_q",
 		"self_attn.k_proj", "attn_k",
 		"self_attn.v_proj", "attn_v",
@@ -130,50 +133,18 @@ func (p *mistral3Model) Replacements() []string {
 		"mlp.down_proj", "ffn_down",
 		"mlp.gate_proj", "ffn_gate",
 		"mlp.up_proj", "ffn_up",
-
-		// Language model replacements
-		"language_model.model.embed_tokens", "token_embd",
-		"language_model.model.layers", "blk",
-		"language_model.model.layers.*.input_layernorm", "attn_norm",
-		"language_model.model.layers.*.self_attn.q_proj", "attn_q",
-		"language_model.model.layers.*.self_attn.k_proj", "attn_k",
-		"language_model.model.layers.*.self_attn.v_proj", "attn_v",
-		"language_model.model.layers.*.self_attn.o_proj", "attn_output",
-		"language_model.model.layers.*.mlp.gate_proj", "ffn_gate",
-		"language_model.model.layers.*.mlp.down_proj", "ffn_down",
-		"language_model.model.layers.*.mlp.up_proj", "ffn_up",
-		"language_model.model.layers.*.post_attention_layernorm", "ffn_norm",
-		"language_model.lm_head", "output",
-		"language_model.model.norm", "output_norm",
-
-		// Vision model replacements - map to shorter prefixes
-		"vision_tower", "v",
+		"attention.q_proj", "attn_q",
+		"attention.k_proj", "attn_k",
+		"attention.v_proj", "attn_v",
+		"attention.o_proj", "attn_output",
+		"attention_norm", "attn_norm",
+		"feed_forward", "mlp",
+		"feed_forward.gate_proj", "ffn_gate",
+		"feed_forward.down_proj", "ffn_down",
+		"feed_forward.up_proj", "ffn_up",
 		"multi_modal_projector", "mm",
-
-		// Vision transformer blocks - these should be updated accordingly
-		"vision_tower.transformer.layers", "v.blk",
-		"vision_tower.transformer.layers.*.attention_norm", "v.attn_norm",
-		"vision_tower.transformer.layers.*.attention.q_proj", "v.attn_q",
-		"vision_tower.transformer.layers.*.attention.k_proj", "v.attn_k",
-		"vision_tower.transformer.layers.*.attention.v_proj", "v.attn_v",
-		"vision_tower.transformer.layers.*.attention.o_proj", "v.attn_output",
-		"vision_tower.transformer.layers.*.feed_forward.gate_proj", "v.ffn_gate",
-		"vision_tower.transformer.layers.*.feed_forward.down_proj", "v.ffn_down",
-		"vision_tower.transformer.layers.*.feed_forward.up_proj", "v.ffn_up",
-		"vision_tower.transformer.layers.*.ffn_norm", "v.ffn_norm",
-		"vision_tower.ln_pre", "v.encoder_norm",
-		"vision_tower.patch_conv", "v.patch_conv",
-		"vision_tower.embeddings", "v.embeddings",
-
-		// Alternative vision model paths
-		"vision_model.vision_model.embeddings", "v.embeddings",
-		"vision_model.vision_model", "v",
-		"vision_model.layers", "v.blk",
-
-		// Multimodal projector components
-		"multi_modal_projector.patch_merger", "mm.patch_merger",
-		"multi_modal_projector.norm", "mm.norm",
-		"multi_modal_projector.linear", "mm.projection",
+		"ffn_norm", "ffn_norm",
+		"lm_head", "output",
 	}
 }
 

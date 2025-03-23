@@ -958,6 +958,41 @@ func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDi
 	}
 }
 
+func (t *Tensor) RoPEMulti(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim uint32, sections [4]int, ropeType uint32, ropeBase, ropeScale float32) ml.Tensor {
+	if ropeFactors == nil {
+		ropeFactors = &Tensor{b: t.b}
+	}
+
+	dequant := t.t
+	if C.ggml_is_quantized(t.t._type) {
+		dequant = C.ggml_cast(ctx.(*Context).ctx, t.t, C.GGML_TYPE_F32)
+	}
+
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_rope_multi(
+			ctx.(*Context).ctx, dequant, positionIDs.(*Tensor).t, ropeFactors.(*Tensor).t,
+			C.int(ropeDim),
+			(*C.int)(unsafe.Pointer(&sections[0])),
+			C.int(ropeType),
+			131072, // YaRN n_ctx_train
+			C.float(ropeBase),
+			C.float(ropeScale),
+			0.,  // YaRN ext_factor
+			1.,  // YaRN attn_factor
+			32., // YaRN beta_fast
+			1.,  // YaRN beta_slow
+		),
+	}
+}
+
+func (t *Tensor) IM2Col(ctx ml.Context, weight ml.Tensor, s0, s1, p0, p1, d0, d1 int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_im2col(ctx.(*Context).ctx, t.t, weight.(*Tensor).t, C.int(s0), C.int(s1), C.int(p0), C.int(p1), C.int(d0), C.int(d1), true, C.GGML_TYPE_F32),
+	}
+}
+
 func (t *Tensor) GELU(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
