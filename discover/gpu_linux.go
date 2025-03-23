@@ -111,6 +111,7 @@ func GetCPUDetails() ([]CPU, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer file.Close()
 	return linuxCPUDetails(file)
 }
 
@@ -168,13 +169,11 @@ func linuxCPUDetails(file io.Reader) ([]CPU, error) {
 	for id, s := range socketByID {
 		s.CoreCount = len(coreBySocket[id])
 		s.ThreadCount = 0
-		for _, tc := range threadsByCoreBySocket[id] {
-			s.ThreadCount += tc
-		}
 
 		// This only works if HT is enabled, consider a more reliable model, maybe cache size comparisons?
 		efficiencyCoreCount := 0
 		for _, threads := range threadsByCoreBySocket[id] {
+			s.ThreadCount += threads
 			if threads == 1 {
 				efficiencyCoreCount++
 			}
