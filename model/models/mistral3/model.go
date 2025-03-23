@@ -2,7 +2,6 @@ package mistral3
 
 import (
 	"bytes"
-	"fmt"
 	"image"
 	"slices"
 
@@ -70,7 +69,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 		return nil, err
 	}
 
-	fmt.Println("pixelValues", "shape", pixelValues.Shape(), "data", ml.Dump(ctx, pixelValues))
+	// fmt.Println("pixelValues", "shape", pixelValues.Shape(), "data", ml.Dump(ctx, pixelValues))
 
 	// Forward pass through vision model
 	visionOutputs := m.VisionModel.Forward(ctx, pixelValues)
@@ -101,8 +100,6 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 			result = append(result, input.Input{Token: 13})                                                       // [IMG_END]
 		}
 	}
-
-	fmt.Println("post tokenize", "result", result)
 
 	return result, nil
 }
