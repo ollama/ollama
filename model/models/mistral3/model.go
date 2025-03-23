@@ -59,10 +59,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 	// Create tensor from image data
 	pixelValues, err := ctx.Input().FromFloatSlice(f32s,
 		m.ImageProcessor.imageSize,
-
-		// TODO (jmorganca): this should be returned from the
-		// image processor instead of hardcoded
-		1036,
+		1036, // TODO (jmorganca): this should be returned from ProcessImage
 		m.ImageProcessor.numChannels,
 	)
 	if err != nil {
