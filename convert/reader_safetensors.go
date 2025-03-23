@@ -36,6 +36,11 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 			return nil, err
 		}
 
+		// Validate the value of n
+		if n <= 0 || n > 1<<30 { // Example: Limit n to 1GB for safety
+			return nil, fmt.Errorf("invalid or excessive size for safetensors file: %d", n)
+		}
+
 		b := bytes.NewBuffer(make([]byte, 0, n))
 		if _, err = io.CopyN(b, f, n); err != nil {
 			return nil, err
