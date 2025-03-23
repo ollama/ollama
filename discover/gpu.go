@@ -310,6 +310,7 @@ func GetGPUInfo() GpuInfoList {
 					C.free(unsafe.Pointer(memInfo.err))
 					continue
 				}
+				gpuInfo.FlashAttention = driverMajor >= 7
 				gpuInfo.TotalMemory = uint64(memInfo.total)
 				gpuInfo.FreeMemory = uint64(memInfo.free)
 				gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
@@ -394,6 +395,7 @@ func GetGPUInfo() GpuInfoList {
 						// TODO - convert this to MinimumMemory based on testing...
 						var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
 						memInfo.free = C.uint64_t(totalFreeMem)
+						gpuInfo.FlashAttention = false
 						gpuInfo.TotalMemory = uint64(memInfo.total)
 						gpuInfo.FreeMemory = uint64(memInfo.free)
 						gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
@@ -423,6 +425,7 @@ func GetGPUInfo() GpuInfoList {
 					continue
 				}
 
+				gpuInfo.FlashAttention = (C.vk_check_flash_attention(*vHandles.vulkan, C.int(i)) == 0) // 0 means supported
 				gpuInfo.TotalMemory = uint64(memInfo.total)
 				gpuInfo.FreeMemory = uint64(memInfo.free)
 				gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])

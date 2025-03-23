@@ -314,18 +314,20 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 					return fmt.Errorf("unassigned tensor: %s", t.Name)
 				}
 
-				bts := make([]byte, t.Size())
-				n, err := io.ReadFull(io.NewSectionReader(sr, int64(t.Offset), int64(t.Size())), bts)
-				if err != nil {
-					return err
+				bts := C.malloc(C.size_t(t.Size()))
+				if bts == nil {
+					return errors.New("failed to allocate tensor buffer")
 				}
+				defer C.free(bts)
 
-				if n != len(bts) {
-					return errors.New("short read")
+				buf := unsafe.Slice((*byte)(bts), t.Size())
+				n, err := io.ReadFull(io.NewSectionReader(sr, int64(t.Offset), int64(t.Size())), buf)
+				if err != nil || n != len(buf) {
+					return errors.New("read failed")
 				}
 
 				tensorSetMutex.Lock()
-				C.ggml_backend_tensor_set(tt, unsafe.Pointer(&bts[0]), 0, C.size_t(t.Size()))
+				C.ggml_backend_tensor_set(tt, bts, 0, C.size_t(t.Size()))
 				tensorSetMutex.Unlock()
 				return nil
 			})
@@ -375,7 +377,7 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 			(*C.ggml_backend_buffer_type_t)(unsafe.Pointer(&schedBufts[0])),
 			C.int(len(schedBackends)),
 			C.size_t(maxGraphNodes),
-			true,
+			C._Bool(len(gpus) > 1 && slices.Contains(gpus, output.d)),
 		),
 		input:  deviceBufferTypes[input.d],
 		output: deviceBufferTypes[output.d],

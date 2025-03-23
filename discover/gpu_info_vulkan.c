@@ -24,18 +24,32 @@ int check_perfmon(vk_handle_t* rh) {
   return 0;
 }
 
-int support_memory_budget(vk_handle_t* rh, VkPhysicalDevice device) {
+int is_extension_supported(vk_handle_t* rh, VkPhysicalDevice device, char* extension) {
   VkPhysicalDeviceProperties properties;
   (*rh->vkGetPhysicalDeviceProperties)(device, &properties);
+
   uint32_t extensionCount;
   (*rh->vkEnumerateDeviceExtensionProperties)(device, NULL, &extensionCount, NULL);
+
+  if (extensionCount == 0) {
+    return 0;
+  }
+
   VkExtensionProperties* extensions = malloc(extensionCount * sizeof(VkExtensionProperties));
+  if (extensions == NULL) {
+    return 0;
+  }
+
   (*rh->vkEnumerateDeviceExtensionProperties)(device, NULL, &extensionCount, extensions);
+
   for (int j = 0; j < extensionCount; j++) {
-    if (strcmp(extensions[j].extensionName, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME) == 0) {
+    if (strcmp(extensions[j].extensionName, extension) == 0) {
+      free(extensions);
       return 1;
     }
   }
+
+  free(extensions);
   return 0;
 }
 
@@ -125,6 +139,7 @@ void vk_init(char* vk_lib_path, char* cap_lib_path, vk_init_resp_t *resp) {
   }
 
   VkInstance instance;
+
   VkApplicationInfo appInfo = {};
   appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
   appInfo.pNext = NULL;
@@ -133,6 +148,7 @@ void vk_init(char* vk_lib_path, char* cap_lib_path, vk_init_resp_t *resp) {
   appInfo.pEngineName = "No Engine";
   appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
   appInfo.apiVersion = VK_API_VERSION_1_2;
+
   VkInstanceCreateInfo createInfo = {};
   createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
   createInfo.pNext = NULL;
@@ -141,6 +157,7 @@ void vk_init(char* vk_lib_path, char* cap_lib_path, vk_init_resp_t *resp) {
   const char* extensions[] = { VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME };
   createInfo.ppEnabledExtensionNames = extensions;
   createInfo.pApplicationInfo = &appInfo;
+
   VkResult result = (*resp->ch.vkCreateInstance)(&createInfo, NULL, &instance);
   if (result != VK_SUCCESS) {
     resp->err = strdup("failed to create instance");
@@ -160,25 +177,63 @@ void vk_init(char* vk_lib_path, char* cap_lib_path, vk_init_resp_t *resp) {
   resp->num_devices = deviceCount;
 }
 
+int vk_check_flash_attention(vk_handle_t rh, int i) {
+  VkInstance instance = rh.vk;
+  uint32_t deviceCount = rh.num_devices;
+
+  VkPhysicalDevice* devices = malloc(deviceCount * sizeof(VkPhysicalDevice));
+  if (devices == NULL) {
+    return 0;
+  }
+
+  VkResult result = (*rh.vkEnumeratePhysicalDevices)(instance, &deviceCount, devices);
+  if (result != VK_SUCCESS) {
+    free(devices);
+    return 0;
+  }
+
+  VkPhysicalDeviceProperties properties;
+  (*rh.vkGetPhysicalDeviceProperties)(devices[i], &properties);
+
+  int supports_nv_coopmat2 = is_extension_supported(&rh, devices[i], VK_NV_COOPERATIVE_MATRIX_2_EXTENSION_NAME);
+  if (!supports_nv_coopmat2) {
+    free(devices);
+    return 1;
+  }
+
+  free(devices);
+  return 0;
+}
+
 void vk_check_vram(vk_handle_t rh, int i, mem_info_t *resp) {
   VkInstance instance = rh.vk;
   uint32_t deviceCount = rh.num_devices;
 
   VkPhysicalDevice* devices = malloc(deviceCount * sizeof(VkPhysicalDevice));
+  if (devices == NULL) {
+    resp->err = strdup("memory allocation failed for devices array");
+    return;
+  }
+
   VkResult result = (*rh.vkEnumeratePhysicalDevices)(instance, &deviceCount, devices);
   if (result != VK_SUCCESS) {
+    free(devices);
     resp->err = strdup("failed to enumerate physical devices");
     return;
   }
 
   VkPhysicalDeviceProperties properties;
   (*rh.vkGetPhysicalDeviceProperties)(devices[i], &properties);
-  int supports_budget = support_memory_budget(&rh, devices[i]);
+
+  int supports_budget = is_extension_supported(&rh, devices[i], VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
   if (!supports_budget) {
+    free(devices);
     resp->err = strdup("device does not support memory budget");
     return;
   }
+
   if (properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU) {
+    free(devices);
     resp->err = strdup("device is a CPU");
     return;
   }
@@ -204,6 +259,8 @@ void vk_check_vram(vk_handle_t rh, int i, mem_info_t *resp) {
     }
   }
 
+  free(devices);
+
   resp->err = NULL;
   snprintf(&resp->gpu_id[0], GPU_ID_LEN, "%d", i);
   resp->gpu_name[GPU_NAME_LEN - 1] = '\0';
@@ -220,6 +277,7 @@ void vk_release(vk_handle_t rh) {
   (*rh.vkDestroyInstance)(rh.vk, NULL);
   UNLOAD_LIBRARY(rh.vk_handle);
   rh.vk_handle = NULL;
+
 #ifdef __linux__
   LOG(rh.verbose, "releasing libcap library\n");
   UNLOAD_LIBRARY(rh.cap_handle);
