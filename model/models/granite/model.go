@@ -169,8 +169,8 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 		return nil, err
 	}
 
-	hiddenState := m.TokenEmbedding.Forward(ctx, inputs)
-	hiddenState.Scale(ctx, m.Options.embeddingMultiplier)
+	hiddenState := m.TokenEmbedding.Forward(ctx, batch.Inputs)
+	hiddenState = hiddenState.Scale(ctx, m.Options.embeddingMultiplier)
 
 	for i, layer := range m.Layers {
 		m.Cache.SetLayer(i)
