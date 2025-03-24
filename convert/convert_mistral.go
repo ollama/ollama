@@ -93,7 +93,6 @@ func (p *mistral3Model) Tensors(ts []Tensor) []ggml.Tensor {
 	var out []ggml.Tensor
 
 	for _, t := range ts {
-		fmt.Println("tensor", t.Name(), "shape", t.Shape(), "kind", t.Kind())
 		if strings.HasSuffix(t.Name(), "attn_q.weight") ||
 			strings.HasSuffix(t.Name(), "attn_k.weight") {
 			t.SetRepacker(p.repack)
