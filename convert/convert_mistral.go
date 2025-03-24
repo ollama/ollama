@@ -93,6 +93,7 @@ func (p *mistral3Model) Tensors(ts []Tensor) []ggml.Tensor {
 	var out []ggml.Tensor
 
 	for _, t := range ts {
+		fmt.Println("tensor", t.Name(), "shape", t.Shape(), "kind", t.Kind())
 		if strings.HasSuffix(t.Name(), "attn_q.weight") ||
 			strings.HasSuffix(t.Name(), "attn_k.weight") {
 			t.SetRepacker(p.repack)
@@ -141,7 +142,6 @@ func (p *mistral3Model) Replacements() []string {
 		"feed_forward.gate_proj", "ffn_gate",
 		"feed_forward.down_proj", "ffn_down",
 		"feed_forward.up_proj", "ffn_up",
-		"patch_merger.merging_layer", "merger",
 		"multi_modal_projector", "mm",
 		"ffn_norm", "ffn_norm",
 		"lm_head", "output",
