@@ -65,10 +65,9 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 	features, size := m.MultiModalProjector.Forward(ctx, visionOutputs, size)
 
 	// split into patches to be sent to the text transformer
-	var rows []ml.Tensor
-	for i := 0; i < size.Y; i++ {
-		view := features.View(ctx, features.Dim(0)*i, features.Dim(0), features.Stride(1), size.X)
-		rows = append(rows, view)
+	rows := make([]ml.Tensor, size.Y)
+	for i := range rows {
+		rows[i] = features.View(ctx, features.Stride(1)*(i+size.X), features.Dim(0), features.Stride(1), size.X)
 	}
 
 	return rows, nil
@@ -88,8 +87,8 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 		} else {
 			inputMultimodal := inp.Multimodal.([]ml.Tensor)
 			for i, row := range inputMultimodal {
-				result = append(result, input.Input{Multimodal: row, MultimodalHash: inp.MultimodalHash, SameBatch: row.Dim(1)}) // Image data
-				result = append(result, slices.Repeat([]input.Input{{Token: 10}}, row.Dim(1))...)                                // [IMG]
+				result = append(result, input.Input{Token: 10, Multimodal: row, MultimodalHash: inp.MultimodalHash, SameBatch: row.Dim(1)}) // Image data
+				result = append(result, slices.Repeat([]input.Input{{Token: 10}}, row.Dim(1)-1)...)                                         // [IMG]
 				if i == len(inputMultimodal)-1 {
 					result = append(result, input.Input{Token: 13}) // [IMG_END]
 				} else {

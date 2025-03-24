@@ -106,14 +106,12 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs, outputs ml.Ten
 }
 
 func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor, batch input.Batch, cache kvcache.Cache) ml.Tensor {
-	hiddenState := m.TokenEmbedding.Forward(ctx, inputs)
+	hiddenState := m.TokenEmbedding.Forward(ctx, inputs).Duplicate(ctx)
 
 	// image embeddings
 	for _, image := range batch.Multimodal {
 		visionOutputs := image.Multimodal.(ml.Tensor)
 		// TODO (jmorganca): this fails on metal
-		// TODO (jmorganca): should this be image.Index*hiddenState.Dim(0)
-		// instead of image.Index*hiddenState.Stride(1)?
 		ctx.Forward(visionOutputs.Copy(ctx, hiddenState.View(ctx, image.Index*hiddenState.Stride(1), visionOutputs.Dim(0)*visionOutputs.Dim(1))))
 	}
 

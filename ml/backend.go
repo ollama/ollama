@@ -165,6 +165,7 @@ type Tensor interface {
 	Concat(ctx Context, t2 Tensor, dim int) Tensor
 	Rows(ctx Context, t2 Tensor) Tensor
 	Copy(ctx Context, t2 Tensor) Tensor
+	Duplicate(ctx Context) Tensor
 }
 
 // ScaledDotProductAttention implements a fused attention
