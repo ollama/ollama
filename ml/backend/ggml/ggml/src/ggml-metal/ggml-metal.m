@@ -2186,10 +2186,6 @@ static void ggml_metal_encode_node(
             } break;
         case GGML_OP_MUL_MAT:
             {
-                if (ne00 != ne10) {
-                    printf("mul_mat, ne00: %d, ne01: %d, ne02: %d, ne03: %d, ne10: %d, ne11: %d, ne12: %d, ne13: %d\n", ne00, ne01, ne02, ne03, ne10, ne11, ne12, ne13);
-                }
-
                 GGML_ASSERT(ne00 == ne10);
 
                 GGML_ASSERT(ne12 % ne02 == 0);

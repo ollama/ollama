@@ -1,7 +1,7 @@
 package mistral3
 
 import (
-	"fmt"
+	"image"
 	"math"
 
 	"github.com/ollama/ollama/ml"
@@ -14,32 +14,12 @@ type PatchMerger struct {
 	MergingLayer *nn.Linear `gguf:"merging_layer"`
 }
 
-func (pm *PatchMerger) Forward(ctx ml.Context, visionOutputs ml.Tensor) ml.Tensor {
-	// TODO: pass these in
-	w := 110
-	h := 74
-	// tokensPerImage := w * h
+func (pm *PatchMerger) Forward(ctx ml.Context, visionOutputs ml.Tensor, size image.Point, spatialMergeSize int) ml.Tensor {
 	d := visionOutputs.Dim(0)
-
-	// TODO: handle multiple images, this currently assumes one
-	// fmt.Println("patchmerger visionOutputs", "shape", visionOutputs.Shape(), "data", ml.Dump(ctx, visionOutputs))
-
-	// Reshape to [h, w, hidden_size]
-	imageGrid := visionOutputs.Reshape(ctx, h, w, d)
-	// fmt.Println("imageGrid", "shape", imageGrid.Shape(), "data", ml.Dump(ctx, imageGrid))
-
-	// TODO: load from config
-	spatialMergeSize := 2
+	imageGrid := visionOutputs.Reshape(ctx, size.Y, size.X, d)
 	kernel := ctx.Input().Empty(ml.DTypeF32, spatialMergeSize, spatialMergeSize, d, 1)
-	// fmt.Println("kernel", "shape", kernel.Shape(), "data", ml.Dump(ctx, kernel))
-
 	patches := kernel.IM2Col(ctx, imageGrid, spatialMergeSize, spatialMergeSize, 0, 0, 1, 1)
-	// fmt.Println("patches", "shape", patches.Shape(), "data", ml.Dump(ctx, patches))
-
-	// fmt.Println("creating reshaped", d*spatialMergeSize*spatialMergeSize, "x", patches.Dim(1)*patches.Dim(2))
 	reshaped := patches.Reshape(ctx, d*spatialMergeSize*spatialMergeSize, patches.Dim(1)*patches.Dim(2))
-	// fmt.Println("reshaped", "shape", reshaped.Shape(), "data", ml.Dump(ctx, reshaped))
-
 	return pm.MergingLayer.Forward(ctx, reshaped)
 }
 
@@ -50,23 +30,24 @@ type MultiModalProjector struct {
 	PatchMerger *PatchMerger `gguf:"patch_merger"`
 
 	spatialMergeSize int
-	imageTokenIndex  int
-	hasBias          bool
+	eps              float32
+	patchSize        int
 }
 
-func (p *MultiModalProjector) Forward(ctx ml.Context, visionOutputs ml.Tensor, eps float32) ml.Tensor {
-	visionOutputs = p.Norm.Forward(ctx, visionOutputs, eps)
-	visionOutputs = p.PatchMerger.Forward(ctx, visionOutputs)
+func (p *MultiModalProjector) Forward(ctx ml.Context, visionOutputs ml.Tensor, size image.Point) (ml.Tensor, image.Point) {
+	visionOutputs = p.Norm.Forward(ctx, visionOutputs, p.eps)
+	patchSizes := image.Point{size.X / p.patchSize, size.Y / p.patchSize}
+	visionOutputs = p.PatchMerger.Forward(ctx, visionOutputs, patchSizes, p.spatialMergeSize)
 	visionOutputs = p.Linear1.Forward(ctx, visionOutputs)
 	visionOutputs = visionOutputs.GELU(ctx)
-	return p.Linear2.Forward(ctx, visionOutputs)
+	return p.Linear2.Forward(ctx, visionOutputs), image.Point{patchSizes.X / p.spatialMergeSize, patchSizes.Y / p.spatialMergeSize}
 }
 
 func newMultiModalProjector(c ml.Config) *MultiModalProjector {
 	return &MultiModalProjector{
 		spatialMergeSize: int(c.Uint("spatial_merge_size", 2)),
-		imageTokenIndex:  int(c.Uint("image_token_index", 10)),
-		hasBias:          c.Bool("mm.projector_bias", false),
+		eps:              c.Float("text_config.rms_norm_eps", 1e-5),
+		patchSize:        int(c.Uint("vision.patch_size", 14)),
 	}
 }
 
@@ -115,9 +96,7 @@ type VisionEncoderLayer struct {
 
 func (e *VisionEncoderLayer) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, opts *VisionModelOptions) ml.Tensor {
 	residual := hiddenState
-
 	hiddenState = e.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
-	fmt.Println("after attention norm", "shape", hiddenState.Shape(), "data", ml.Dump(ctx, hiddenState, ml.DumpOptions{Items: 3, Precision: 6}))
 	hiddenState = e.SelfAttention.Forward(ctx, hiddenState, positionIDs, opts)
 	hiddenState = hiddenState.Add(ctx, residual)
 	residual = hiddenState
@@ -149,22 +128,23 @@ type VisionModel struct {
 }
 
 func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor) ml.Tensor {
-	numPatchesH := pixelValues.Dim(1) / m.patchSize
 	numPatchesW := pixelValues.Dim(0) / m.patchSize
-	numPatches := numPatchesH * numPatchesW
+	numPatchesH := pixelValues.Dim(1) / m.patchSize
+	numPatches := numPatchesW * numPatchesH
 	hiddenState := m.PatchEmbedding.Forward(ctx, pixelValues, m.patchSize, m.patchSize, 0, 0, 1, 1)
 	hiddenState = hiddenState.Reshape(ctx, numPatches, m.hiddenSize)
 	hiddenState = hiddenState.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 	hiddenState = m.EncoderNorm.Forward(ctx, hiddenState, m.VisionModelOptions.eps)
 
-	totalPositions := numPatchesH * numPatchesW
-	positions := make([]int32, totalPositions*4)
-
+	// Prepare position IDs for 2D rope
+	positions := make([]int32, numPatches*4)
 	for h := 0; h < numPatchesH; h++ {
 		for w := 0; w < numPatchesW; w++ {
-			index := h*numPatchesW + w
-			positions[totalPositions+index] = int32(h)
-			positions[totalPositions*2+index] = int32(w)
+			idx := h*numPatchesW + w
+			positions[idx] = 0                     // time (unused)
+			positions[numPatches+idx] = int32(h)   // height
+			positions[numPatches*2+idx] = int32(w) // width
+			positions[numPatches*3+idx] = 0        // extra (unused)
 		}
 	}
 
@@ -176,8 +156,6 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor) ml.Tensor {
 	for _, layer := range m.Layers {
 		hiddenState = layer.Forward(ctx, hiddenState, positionIDs, m.VisionModelOptions)
 	}
-
-	// fmt.Println("after layers", "shape", hiddenState.Shape(), "data", ml.Dump(ctx, hiddenState))
 
 	return hiddenState
 }

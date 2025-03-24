@@ -41,40 +41,29 @@ type SelfAttention struct {
 func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *TextOptions) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
 	ropeType := uint32(0)
-	// Get head dimension - use explicit value if available, otherwise calculate
 	headDim := opts.headDim
 	if headDim == 0 {
 		headDim = opts.hiddenSize / opts.numHeads
 	}
 
-	// Query projection and reshape
 	q := sa.Query.Forward(ctx, hiddenState)
 	q = q.Reshape(ctx, headDim, opts.numHeads, batchSize)
 	q = q.RoPE(ctx, positionIDs, sa.RopeFactors, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
 
-	// Key projection and reshape
 	k := sa.Key.Forward(ctx, hiddenState)
 	k = k.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 	k = k.RoPE(ctx, positionIDs, sa.RopeFactors, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
 
-	// Value projection and reshape
 	v := sa.Value.Forward(ctx, hiddenState)
 	v = v.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 
-	// Attention computation
-	scaleFactor := 1.0 / math.Sqrt(float64(headDim))
-	kqv := nn.Attention(ctx, q, k, v, scaleFactor, cache)
-
-	// Reshape attention output for final projection
-	outputDim := headDim * opts.numHeads
-	kqv = kqv.Reshape(ctx, outputDim, batchSize)
-
-	// Apply output projection
+	kqv := nn.Attention(ctx, q, k, v, 1.0/math.Sqrt(float64(headDim)), cache)
+	kqv = kqv.Reshape(ctx, headDim*opts.numHeads, batchSize)
 	return sa.Output.Forward(ctx, kqv)
 }
 
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return key.RoPE(ctx, shift, m.Layers[layer].SelfAttention.RopeFactors, uint32(0), m.ropeDim, m.ropeBase, m.ropeScale), nil
+	return key.RoPE(ctx, shift, nil, uint32(0), m.ropeDim, m.ropeBase, m.ropeScale), nil
 }
 
 type MLP struct {
@@ -117,10 +106,14 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs, outputs ml.Ten
 }
 
 func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor, batch input.Batch, cache kvcache.Cache) ml.Tensor {
-	// Process text inputs
 	hiddenState := m.TokenEmbedding.Forward(ctx, inputs)
 
-	// Process through text transformer layers
+	// image embeddings
+	for _, image := range batch.Multimodal {
+		visionOutputs := image.Multimodal.(ml.Tensor)
+		ctx.Forward(visionOutputs.Copy(ctx, hiddenState.View(ctx, image.Index*hiddenState.Dim(0), visionOutputs.Dim(0)*visionOutputs.Dim(1))))
+	}
+
 	for i, layer := range m.Layers {
 		cache.SetLayer(i)
 

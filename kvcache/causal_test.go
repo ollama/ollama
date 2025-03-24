@@ -467,6 +467,14 @@ func (t *testTensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, di
 	panic("not implemented")
 }
 
+func (t *testTensor) RoPEMulti(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim uint32, sections [4]int, ropeType uint32, base, scale float32) ml.Tensor {
+	panic("not implemented")
+}
+
+func (t *testTensor) IM2Col(ctx ml.Context, weight ml.Tensor, s0, s1, p0, p1, d0, d1 int) ml.Tensor {
+	panic("not implemented")
+}
+
 func (t *testTensor) Tanh(ctx ml.Context) ml.Tensor {
 	panic("not implemented")
 }

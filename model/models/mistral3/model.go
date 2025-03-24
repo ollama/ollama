@@ -51,36 +51,34 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 		return nil, err
 	}
 
-	f32s, err := m.ImageProcessor.ProcessImage(image)
+	f32s, size, err := m.ImageProcessor.ProcessImage(image)
 	if err != nil {
 		return nil, err
 	}
 
 	// Create tensor from image data
-	pixelValues, err := ctx.Input().FromFloatSlice(f32s,
-		m.ImageProcessor.imageSize,
-		1036, // TODO (jmorganca): this should be returned from ProcessImage
-		m.ImageProcessor.numChannels,
-	)
+	pixelValues, err := ctx.Input().FromFloatSlice(f32s, size.X, size.Y, m.ImageProcessor.numChannels)
 	if err != nil {
 		return nil, err
 	}
 
-	// fmt.Println("pixelValues", "shape", pixelValues.Shape(), "data", ml.Dump(ctx, pixelValues))
-
-	// Forward pass through vision model
 	visionOutputs := m.VisionModel.Forward(ctx, pixelValues)
+	features, size := m.MultiModalProjector.Forward(ctx, visionOutputs, size)
 
-	// fmt.Println("visionOutputs", "shape", visionOutputs.Shape(), "data", ml.Dump(ctx, visionOutputs))
+	// split into patches to be sent to the text transformer
+	var rows []ml.Tensor
+	for i := 0; i < size.Y; i++ {
+		view := features.View(ctx, features.Dim(0)*i, features.Dim(0), features.Dim(0)*4, size.X)
+		rows = append(rows, view)
+	}
 
-	// Project to text embedding space
-	visionOutputs = m.MultiModalProjector.Forward(ctx, visionOutputs, m.VisionModel.eps)
-
-	// fmt.Println("visionOutputs after projector", "shape", visionOutputs.Shape(), "data", ml.Dump(ctx, visionOutputs))
-
-	return visionOutputs, nil
+	return rows, nil
 }
 
+// PostTokenize arranges Mistral 3's inputs for the forward pass
+// In Mistral 3 and Pixtral, the input patches are arranged as follows:
+// [IMG]...[IMG][IMG_BREAK][IMG]...[IMG][IMG_BREAK][IMG]...[IMG][IMG_END]
+// Each sequence of [IMG]...[IMG] is a single patch or "row" of vision embeddings
 func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 	var result []input.Input
 
@@ -88,13 +86,16 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 		if inp.Multimodal == nil {
 			result = append(result, inp)
 		} else {
-			inputMultimodal := inp.Multimodal.(ml.Tensor)
-
-			// Add special image tokens - using the imageTokenIndex from config
-			result = append(result, input.Input{Token: 10})                                                       // [IMG]
-			result = append(result, input.Input{Multimodal: inputMultimodal, MultimodalHash: inp.MultimodalHash}) // image data
-			result = append(result, slices.Repeat([]input.Input{{Token: 10}}, inputMultimodal.Dim(1)-1)...)       // [IMG] placeholders
-			result = append(result, input.Input{Token: 13})                                                       // [IMG_END]
+			inputMultimodal := inp.Multimodal.([]ml.Tensor)
+			for i, row := range inputMultimodal {
+				result = append(result, input.Input{Multimodal: row, MultimodalHash: inp.MultimodalHash, SameBatch: row.Dim(1)}) // Image data
+				result = append(result, slices.Repeat([]input.Input{{Token: 10}}, row.Dim(1))...)                                // [IMG]
+				if i == len(inputMultimodal)-1 {
+					result = append(result, input.Input{Token: 13}) // [IMG_END]
+				} else {
+					result = append(result, input.Input{Token: 12}) // [IMG_BREAK]
+				}
+			}
 		}
 	}
 
