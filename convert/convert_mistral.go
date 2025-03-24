@@ -99,11 +99,6 @@ func (p *mistral3Model) Tensors(ts []Tensor) []ggml.Tensor {
 			t.SetRepacker(p.repack)
 		}
 
-		// Skip certain vision model tensors that might need special handling
-		if strings.HasPrefix(t.Name(), "patch_merger.") || strings.HasPrefix(t.Name(), "pre_mm_projector_output_norm.") {
-			continue
-		}
-
 		out = append(out, ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),

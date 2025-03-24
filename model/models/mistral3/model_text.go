@@ -111,7 +111,10 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 	// image embeddings
 	for _, image := range batch.Multimodal {
 		visionOutputs := image.Multimodal.(ml.Tensor)
-		ctx.Forward(visionOutputs.Copy(ctx, hiddenState.View(ctx, image.Index*hiddenState.Dim(0), visionOutputs.Dim(0)*visionOutputs.Dim(1))))
+		// TODO (jmorganca): this fails on metal
+		// TODO (jmorganca): should this be image.Index*hiddenState.Dim(0)
+		// instead of image.Index*hiddenState.Stride(1)?
+		ctx.Forward(visionOutputs.Copy(ctx, hiddenState.View(ctx, image.Index*hiddenState.Stride(1), visionOutputs.Dim(0)*visionOutputs.Dim(1))))
 	}
 
 	for i, layer := range m.Layers {

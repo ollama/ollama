@@ -56,7 +56,6 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 		return nil, err
 	}
 
-	// Create tensor from image data
 	pixelValues, err := ctx.Input().FromFloatSlice(f32s, size.X, size.Y, m.ImageProcessor.numChannels)
 	if err != nil {
 		return nil, err
@@ -68,7 +67,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 	// split into patches to be sent to the text transformer
 	var rows []ml.Tensor
 	for i := 0; i < size.Y; i++ {
-		view := features.View(ctx, features.Dim(0)*i, features.Dim(0), features.Dim(0)*4, size.X)
+		view := features.View(ctx, features.Dim(0)*i, features.Dim(0), features.Stride(1), size.X)
 		rows = append(rows, view)
 	}
 
