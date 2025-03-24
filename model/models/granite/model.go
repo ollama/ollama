@@ -158,18 +158,13 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs, outputs ml.Ten
 	return hiddenState.Add(ctx, residual)
 }
 
-func (m *Model) Forward(ctx ml.Context, opts input.Options) (ml.Tensor, error) {
-	inputs, err := ctx.Input().FromIntSlice(opts.Inputs, len(opts.Inputs))
+func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
+	positions, err := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
 	if err != nil {
 		return nil, err
 	}
 
-	positions, err := ctx.Input().FromIntSlice(opts.Positions, len(opts.Positions))
-	if err != nil {
-		return nil, err
-	}
-
-	outputs, err := ctx.Output().FromIntSlice(opts.Outputs, len(opts.Outputs))
+	outputs, err := ctx.Output().FromIntSlice(batch.Outputs, len(batch.Outputs))
 	if err != nil {
 		return nil, err
 	}
