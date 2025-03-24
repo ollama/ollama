@@ -77,7 +77,8 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 // PostTokenize arranges Mistral 3's inputs for the forward pass
 // In Mistral 3 and Pixtral, the input patches are arranged as follows:
 // [IMG]...[IMG][IMG_BREAK][IMG]...[IMG][IMG_BREAK][IMG]...[IMG][IMG_END]
-// Each sequence of [IMG]...[IMG] is a single patch or "row" of vision embeddings
+// Each sequence of [IMG]...[IMG] is a set of patches of vision embeddings
+// that can be processed together.
 func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 	var result []input.Input
 
