@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"text/template/parse"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
@@ -67,6 +68,7 @@ type Model struct {
 	Digest         string
 	Options        map[string]interface{}
 	Messages       []api.Message
+	ToolPrefix     string
 
 	Template *template.Template
 }
@@ -324,7 +326,31 @@ func GetModel(name string) (*Model, error) {
 		}
 	}
 
+	if model.Template != nil && model.CheckCapabilities(CapabilityTools) == nil {
+		model.InitToolPrefix()
+	}
+
 	return model, nil
+}
+
+// Figure out what's between the start of the tools block, and the json response, and use it as a marker.
+func (m *Model) InitToolPrefix() {
+	// create a subtree from the node that ranges over .ToolCalls
+	var prev parse.Node
+	tmpl := m.Template.Subtree(func(n parse.Node) bool {
+		if t, ok := n.(*parse.RangeNode); ok {
+			return slices.Contains(template.Identifiers(t.Pipe), "ToolCalls")
+		}
+		prev = n
+		return false
+	})
+	m.ToolPrefix = strings.TrimSpace(prev.String())
+	if len(m.ToolPrefix) == 0 && len(tmpl.Root.Nodes) > 0 {
+		ranger, ok := tmpl.Root.Nodes[0].(*parse.RangeNode)
+		if ok && len(ranger.List.Nodes) > 0 {
+			m.ToolPrefix = ranger.List.Nodes[0].String()
+		}
+	}
 }
 
 func CopyModel(src, dst model.Name) error {
