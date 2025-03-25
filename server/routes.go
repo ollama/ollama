@@ -1525,6 +1525,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		defer close(ch)
 		var sb strings.Builder
 		var toolCallIndex int = 0
+		var mightBeTools bool = true
+		var buf = make([]api.ChatResponse, 0)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
@@ -1550,18 +1552,29 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
 
-			// TODO: tool call checking and filtering should be moved outside of this callback once streaming
-			// however this was a simple change for now without reworking streaming logic of this (and other)
-			// handlers
-			if req.Stream != nil && !*req.Stream || len(req.Tools) == 0 {
+			// If we know we're not streaming
+			if req.Stream != nil && !*req.Stream || len(req.Tools) == 0 || !mightBeTools {
 				ch <- res
+				return
+			}
+
+			sb.WriteString(r.Content)
+
+			// Buffer up responses while we're unsure whether to stream.
+			buf = append(buf, res)
+
+			// Ah, we're not a tools response, continue streaming.
+			if !m.IsPotentialToolUse(sb) {
+				mightBeTools = false
+				for _, item := range buf {
+					ch <- item
+				}
 				return
 			}
 
 			// Streaming tool calls:
 			// If tools are recognized, use a flag to track the sending of a tool downstream
 			// This ensures that content is cleared from the message on the last chunk sent
-			sb.WriteString(r.Content)
 			if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
 				res.Message.ToolCalls = toolCalls
 				for i := range toolCalls {

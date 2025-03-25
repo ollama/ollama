@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -333,7 +334,29 @@ func GetModel(name string) (*Model, error) {
 	return model, nil
 }
 
-// Figure out what's between the start of the tools block, and the json response, and use it as a marker.
+func partialHasPrefix(haystack, needle string) bool {
+	if len(haystack) < len(needle) {
+		return haystack == needle[:len(haystack)]
+	}
+	return haystack[:len(needle)] == needle
+}
+
+// checks to see if the completion starts with the tool prefix, space-insensitive and also
+// aware of partial completions
+func (m *Model) IsPotentialToolUse(sb strings.Builder) bool {
+	white := regexp.MustCompile("\\s+")
+	text := white.ReplaceAllString(sb.String(), "")
+	needle := white.ReplaceAllString(m.ToolPrefix, "")
+
+	hasPrefix := partialHasPrefix(text, needle)
+	if !hasPrefix {
+		slog.Info(fmt.Sprintf("no prefix: %s, %s", needle, text))
+	}
+	return hasPrefix
+}
+
+// Figure out what's between the start of the tools block, and the json response, and use it as a marker.  Usually that's
+// {- if .ToolCalls}this text{ range .ToolCalls}or maybe this text{{.name}}
 func (m *Model) InitToolPrefix() {
 	// create a subtree from the node that ranges over .ToolCalls
 	var prev parse.Node
@@ -344,7 +367,9 @@ func (m *Model) InitToolPrefix() {
 		prev = n
 		return false
 	})
-	m.ToolPrefix = strings.TrimSpace(prev.String())
+	if prev, ok := prev.(*parse.TextNode); ok {
+		m.ToolPrefix = strings.TrimSpace(prev.String())
+	}
 	if len(m.ToolPrefix) == 0 && len(tmpl.Root.Nodes) > 0 {
 		ranger, ok := tmpl.Root.Nodes[0].(*parse.RangeNode)
 		if ok && len(ranger.List.Nodes) > 0 {
