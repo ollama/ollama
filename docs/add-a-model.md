@@ -32,10 +32,22 @@ graph TB
     subgraph Hardware["Backend Execution Layer"]
         direction TB
         backend_impl[" The backend package provides:<br>- Unified computation interface<br>- Automatic hardware selection<br>- Optimized kernels<br>- Efficient memory management "]
+        
+        subgraph Backends["Backend Implementations"]
+            direction LR
+            cpu["backend/cpu<br>- Pure Go implementation<br>- Fallback for all platforms"]
+            
+            metal["backend/metal<br>- Apple Silicon (M1/M2/M3)<br>- MLX integration<br>- Leverages Apple Neural Engine"]
+            
+            onnx["backend/onnx<br>- Cross-platform compatibility<br>- ONNX Runtime integration<br>- Pre-compiled graph execution"]
+            
+            ggml["backend/ggml<br>- CPU/GPU quantized compute<br>- Low-precision operations<br>- Memory-efficient inferencing"]
+        end
     end
 
     Models --> |" Makes high-level calls<br>(e.g., self-attention) "| ML_Ops
     ML_Ops --> |" Translates to tensor operations<br>(e.g., matmul, softmax) "| Hardware
+    backend_impl --> Backends
 ```
 
 When implementing a new model, you'll primarily work in the model layer, interfacing with the neural network operations layer.
