@@ -40,17 +40,26 @@ func New(c ml.Config) (model.Model, error) {
 	}
 
 	// TODO: Support a mapping of all possible tokenizer.ggml.pre values used by granite
-	tokenizerPre := c.String("tokenizer.ggml.pretokenizer", "")
-	if tokenizerPre == "" {
+	var tokenizerPreExprs []string
+	if tokenizerPre := c.String("tokenizer.ggml.pretokenizer", ""); tokenizerPre == "" {
 		if tokenizerPreName := c.String("tokenizer.ggml.pre", ""); tokenizerPreName == "refact" {
-			return nil, fmt.Errorf("TODO: Support multiple split expressions for pretokenizer %s", tokenizerPreName)
+			tokenizerPreExprs = []string{
+				`[^\p{N}]+|\p{N}`,
+				`'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)`,
+			}
 		} else if tokenizerPreName == "qwen2" {
-			tokenizerPre = `(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`
+			tokenizerPreExprs = []string{
+				`(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
+			}
+		} else {
+			return nil, fmt.Errorf("invalid tokenizer pre-tokenizer: %s", tokenizerPreName)
 		}
+	} else {
+		tokenizerPreExprs = []string{tokenizerPre}
 	}
 	m := Model{
-		BytePairEncoding: model.NewBytePairEncoding(
-			tokenizerPre,
+		BytePairEncoding: model.NewMultiRegexBytePairEncoding(
+			tokenizerPreExprs,
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Uints("tokenizer.ggml.token_type"),
