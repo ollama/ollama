@@ -582,16 +582,15 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	// 	return
 	// }
 	// jsonSampler = nil
-	// pythonSampler := sample.NewPythonSampler(s.model.(model.TextProcessor), nil)
-	// pythonSampler := &sample.PythonSampler{}
-	// functions := []sample.PythonFunction{
-	// 	{
-	// 		Name:  "add_two_strings",
-	// 		Args:  []string{"s1", "s2"},
-	// 		Types: []string{"string", "string"},
-	// 	},
-	// }
-	// pythonSampler.Init(functions, s.model.(model.TextProcessor))
+	pythonSampler := &sample.PythonSampler{}
+	functions := []sample.PythonFunction{
+		{
+			Name:  "add_two_strings",
+			Args:  []string{"s1", "s2"},
+			Types: []string{"string", "string"},
+		},
+	}
+	pythonSampler.Init(functions, s.model.(model.TextProcessor))
 	sampler := sample.NewSampler(
 		req.Options.Temperature,
 		req.Options.TopK,
@@ -600,7 +599,8 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		req.Options.Seed,
 		grammar,
 		nil,
-		nil,
+		pythonSampler,
+		// nil,
 	)
 
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
