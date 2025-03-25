@@ -40,6 +40,10 @@ curl http://localhost:11434/api/generate -d '{
 }'
 ```
 
+## How can I specify a fixed context window size?
+
+Ollama supports a fixed context window size by setting the `OLLAMA_FIXED_CTX_LENGTH` environment variable. For example, to set the context length to 8k, use: `OLLAMA_FIXED_CTX_LENGTH=8192 ollama serve`. This will override the context length obtained from the model or request settings.
+
 ## How can I tell if my model was loaded onto the GPU?
 
 Use the `ollama ps` command to see what models are currently loaded into memory.
