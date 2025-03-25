@@ -53,6 +53,10 @@ func (spm SentencePieceModel) Is(id int32, special Special) bool {
 	return spm.vocab.Is(id, special)
 }
 
+func (spm SentencePieceModel) Vocab() *Vocabulary {
+	return spm.vocab
+}
+
 func (spm *SentencePieceModel) split(s string) iter.Seq[string] {
 	return func(yield func(string) bool) {
 		for m, _ := spm.pre.FindStringMatch(s); m != nil; m, _ = spm.pre.FindNextMatch(m) {
