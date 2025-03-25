@@ -374,7 +374,7 @@ func (m MemoryEstimate) LogValue() slog.Value {
 			slog.Group(
 				"weights",
 				// memory of the weights
-				"total", format.HumanBytes2(m.memoryWeights),
+				"total", format.HumanBytes2(m.memoryWeights+m.memoryLayerOutput),
 				// memory of repeating layers
 				"repeating", format.HumanBytes2(m.memoryWeights),
 				// memory of non-repeating layers
