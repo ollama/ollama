@@ -42,17 +42,10 @@ func New(c ml.Config) (model.Model, error) {
 	// TODO: Support a mapping of all possible tokenizer.ggml.pre values used by granite
 	var tokenizerPreExprs []string
 	if tokenizerPre := c.String("tokenizer.ggml.pretokenizer", ""); tokenizerPre == "" {
-		if tokenizerPreName := c.String("tokenizer.ggml.pre", ""); tokenizerPreName == "refact" {
-			tokenizerPreExprs = []string{
-				`[^\p{N}]+|\p{N}`,
-				`'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)`,
-			}
-		} else if tokenizerPreName == "qwen2" {
-			tokenizerPreExprs = []string{
-				`(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
-			}
-		} else {
-			return nil, fmt.Errorf("invalid tokenizer pre-tokenizer: %s", tokenizerPreName)
+		tokenizerPreName := c.String("tokenizer.ggml.pre", "")
+		var tokenizerPreErr error
+		if tokenizerPreExprs, tokenizerPreErr = model.GetKnownPretokenizerExpressions(tokenizerPreName); tokenizerPreErr != nil {
+			return nil, tokenizerPreErr
 		}
 	} else {
 		tokenizerPreExprs = []string{tokenizerPre}

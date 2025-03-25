@@ -2,6 +2,7 @@ package model
 
 import (
 	"cmp"
+	"fmt"
 	"iter"
 	"log/slog"
 	"strings"
@@ -368,4 +369,20 @@ func (bpe BytePairEncoding) Decode(ids []int32) (string, error) {
 	}
 
 	return sb.String(), nil
+}
+
+func GetKnownPretokenizerExpressions(pretokName string) ([]string, error) {
+	switch pretokName {
+	case "refact":
+		return []string{
+			`[^\p{N}]+|\p{N}`,
+			`'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)`,
+		}, nil
+	case "qwen2":
+		return []string{
+			`(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
+		}, nil
+	default:
+		return nil, fmt.Errorf("invalid pretokenizer name: %s", pretokName)
+	}
 }
