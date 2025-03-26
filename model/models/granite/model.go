@@ -166,7 +166,7 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 		return nil, err
 	}
 
-	outputs, err := ctx.Output().FromIntSlice(batch.Outputs, len(batch.Outputs))
+	outputs, err := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
 	if err != nil {
 		return nil, err
 	}
