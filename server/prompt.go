@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -25,7 +26,7 @@ var errTooManyImages = errors.New("vision model only supports a single image per
 func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool) (prompt string, images []llm.ImageData, _ error) {
 	var system []api.Message
 
-	isMllama := checkMllamaModelFamily(m)
+	isMllama := slices.Contains(m.Config.ModelFamilies, "mllama")
 
 	var imageNumTokens int
 	// TODO: Ideally we would compute this from the projector metadata but some pieces are implementation dependent
@@ -147,13 +148,4 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	}
 
 	return b.String(), images, nil
-}
-
-func checkMllamaModelFamily(m *Model) bool {
-	for _, arch := range m.Config.ModelFamilies {
-		if arch == "mllama" {
-			return true
-		}
-	}
-	return false
 }
