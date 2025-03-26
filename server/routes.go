@@ -99,7 +99,7 @@ func (s *Server) modelOptions(model *Model, requestOpts map[string]interface{}) 
 	s.sched.loadedMu.Unlock()
 
 	// If the request sets any of the runner options, discard the runner options.  This
-	// prevents runner options from accumulating and potentialy creating a set of options
+	// prevents runner options from accumulating and potentially creating a set of options
 	// that are incompatible.
 	if commonKeys(runnerOpts, requestOpts) {
 		runnerOpts = map[string]any{}
