@@ -16,6 +16,10 @@ Get up and running with large language models.
 
 [Download](https://ollama.com/download/OllamaSetup.exe)
 
+```shell
+winget install Ollama.Ollama
+```
+
 ### Linux
 
 ```shell
