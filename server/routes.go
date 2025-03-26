@@ -72,9 +72,40 @@ var (
 	errBadTemplate = errors.New("template error")
 )
 
-func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options, error) {
+func commonKeys(m1, m2 map[string]any) bool {
+	for k := range m1 {
+		if _, exists := m2[k]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options, error) {
 	opts := api.DefaultOptions()
 	if err := opts.FromMap(model.Options); err != nil {
+		return api.Options{}, err
+	}
+
+	// Inherit runtime-specific options from the current runner if not explicitly requested.
+	// These options affect resource usage (memory, threads) but not model behavior.
+	// We want to preserve these settings to avoid unnecessary model reloads when
+	// only generation parameters have changed.
+	var runnerOpts map[string]any
+	s.sched.loadedMu.Lock()
+	if runner, ok := s.sched.loaded[model.ModelPath]; ok {
+		runnerOpts = runner.llama.RunnerOptions()
+	}
+	s.sched.loadedMu.Unlock()
+
+	// If the request sets any of the runner options, discard the runner options.  This
+	// prevents runner options from accumulating and potentialy creating a set of options
+	// that are incompatible.
+	if commonKeys(runnerOpts, requestOpts) {
+		runnerOpts = map[string]any{}
+	}
+
+	if err := opts.FromMap(runnerOpts); err != nil {
 		return api.Options{}, err
 	}
 
@@ -101,7 +132,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []Capabil
 		return nil, nil, nil, fmt.Errorf("%s %w", name, err)
 	}
 
-	opts, err := modelOptions(model, requestOpts)
+	opts, err := s.modelOptions(model, requestOpts)
 	if err != nil {
 		return nil, nil, nil, err
 	}
