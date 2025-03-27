@@ -6,23 +6,31 @@ linters:
     - bidichk
     - bodyclose
     - containedctx
-    - contextcheck
-    - exportloopref
     - gocheckcompilerdirectives
-    # conditionally enable this on linux/macos
-    # - gofmt
-    # - goimports
+    - gofmt
+    - gofumpt
+    - gosimple
+    - govet
+    - ineffassign
     - intrange
+    - makezero
     - misspell
     - nilerr
     - nolintlint
     - nosprintfhostport
-    - testifylint
+    - staticcheck
+    - tenv
     - unconvert
-    - unused
     - wastedassign
     - whitespace
+  disable:
     - usestdlibvars
+    - errcheck
+linters-settings:
+  staticcheck:
+    checks:
+      - all
+      - -SA1019 # omit Deprecated check
 severity:
   default-severity: error
   rules:
@@ -30,5 +38,4 @@ severity:
         - gofmt
         - goimports
         - intrange
-        - usestdlibvars
       severity: info

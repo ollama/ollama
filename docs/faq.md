@@ -22,9 +22,15 @@ Please refer to the [GPU docs](./gpu.md).
 
 By default, Ollama uses a context window size of 2048 tokens.
 
+This can be overridden with the `OLLAMA_CONTEXT_LENGTH` environment variable. For example, to set the default context window to 8K, use:
+
+```shell
+OLLAMA_CONTEXT_LENGTH=8192 ollama serve
+```
+
 To change this when using `ollama run`, use `/set parameter`:
 
-```
+```shell
 /set parameter num_ctx 4096
 ```
 
@@ -32,7 +38,7 @@ When using the API, specify the `num_ctx` parameter:
 
 ```shell
 curl http://localhost:11434/api/generate -d '{
-  "model": "llama3",
+  "model": "llama3.2",
   "prompt": "Why is the sky blue?",
   "options": {
     "num_ctx": 4096
@@ -46,9 +52,14 @@ Use the `ollama ps` command to see what models are currently loaded into memory.
 
 ```shell
 ollama ps
-NAME      	ID          	SIZE 	PROCESSOR	UNTIL
-llama3:70b	bcfb190ca3a7	42 GB	100% GPU 	4 minutes from now
 ```
+
+> **Output**:
+>
+> ```
+> NAME      	ID          	SIZE 	PROCESSOR	UNTIL
+> llama3:70b	bcfb190ca3a7	42 GB	100% GPU 	4 minutes from now
+> ```
 
 The `Processor` column will show which memory the model was loaded in to:
 * `100% GPU` means the model was loaded entirely into the GPU
@@ -66,7 +77,7 @@ If Ollama is run as a macOS application, environment variables should be set usi
 1. For each environment variable, call `launchctl setenv`.
 
     ```bash
-    launchctl setenv OLLAMA_HOST "0.0.0.0"
+    launchctl setenv OLLAMA_HOST "0.0.0.0:11434"
     ```
 
 2. Restart Ollama application.
@@ -83,7 +94,8 @@ If Ollama is run as a systemd service, environment variables should be set via t
 
 2. Restart Ollama:
 
-   ```bash
+   ```shell
+   systemctl daemon-reload
    systemctl restart ollama
    ```
 
@@ -105,7 +117,10 @@ On Windows, Ollama inherits your user and system environment variables.
 
 ## How do I use Ollama behind a proxy?
 
-Ollama is compatible with proxy servers if `HTTP_PROXY` or `HTTPS_PROXY` are configured. When using either variables, ensure it is set where `ollama serve` can access the values. When using `HTTPS_PROXY`, ensure the proxy certificate is installed as a system certificate. Refer to the section above for how to use environment variables on your platform.
+Ollama pulls models from the Internet and may require a proxy server to access the models. Use `HTTPS_PROXY` to redirect outbound requests through the proxy. Ensure the proxy certificate is installed as a system certificate. Refer to the section above for how to use environment variables on your platform.
+
+> [!NOTE]
+> Avoid setting `HTTP_PROXY`. Ollama does not use HTTP for model pulls, only HTTPS. Setting `HTTP_PROXY` may interrupt client connections to the server.
 
 ### How do I use Ollama behind a proxy in Docker?
 
@@ -142,7 +157,7 @@ Refer to the section [above](#how-do-i-configure-ollama-server) for how to set e
 
 Ollama runs an HTTP server and can be exposed using a proxy server such as Nginx. To do so, configure the proxy to forward requests and optionally set required headers (if not exposing Ollama on the network). For example, with Nginx:
 
-```
+```nginx
 server {
     listen 80;
     server_name example.com;  # Replace with your domain or IP
@@ -173,6 +188,13 @@ cloudflared tunnel --url http://localhost:11434 --http-host-header="localhost:11
 
 Ollama allows cross-origin requests from `127.0.0.1` and `0.0.0.0` by default. Additional origins can be configured with `OLLAMA_ORIGINS`.
 
+For browser extensions, you'll need to explicitly allow the extension's origin pattern. Set `OLLAMA_ORIGINS` to include `chrome-extension://*`, `moz-extension://*`, and `safari-web-extension://*` if you wish to allow all browser extensions access, or specific extensions as needed:
+
+```
+# Allow all Chrome, Firefox, and Safari extensions
+OLLAMA_ORIGINS=chrome-extension://*,moz-extension://*,safari-web-extension://* ollama serve
+```
+
 Refer to the section [above](#how-do-i-configure-ollama-server) for how to set environment variables on your platform.
 
 ## Where are models stored?
@@ -184,6 +206,8 @@ Refer to the section [above](#how-do-i-configure-ollama-server) for how to set e
 ### How do I set them to a different location?
 
 If a different directory needs to be used, set the environment variable `OLLAMA_MODELS` to the chosen directory.
+
+> Note: on Linux using the standard installer, the `ollama` user needs read and write access to the specified directory. To assign the directory to the `ollama` user run `sudo chown -R ollama:ollama <directory>`.
 
 Refer to the section [above](#how-do-i-configure-ollama-server) for how to set environment variables on your platform.
 
@@ -210,43 +234,52 @@ properties.
 If you are using the API you can preload a model by sending the Ollama server an empty request. This works with both the `/api/generate` and `/api/chat` API endpoints.
 
 To preload the mistral model using the generate endpoint, use:
+
 ```shell
 curl http://localhost:11434/api/generate -d '{"model": "mistral"}'
 ```
 
 To use the chat completions endpoint, use:
+
 ```shell
 curl http://localhost:11434/api/chat -d '{"model": "mistral"}'
 ```
 
 To preload a model using the CLI, use the command:
+
 ```shell
-ollama run llama3.1 ""
+ollama run llama3.2 ""
 ```
 
 ## How do I keep a model loaded in memory or make it unload immediately?
 
-By default models are kept in memory for 5 minutes before being unloaded. This allows for quicker response times if you are making numerous requests to the LLM. You may, however, want to free up the memory before the 5 minutes have elapsed or keep the model loaded indefinitely. Use the `keep_alive` parameter with either the `/api/generate` and `/api/chat` API endpoints to control how long the model is left in memory.
+By default models are kept in memory for 5 minutes before being unloaded. This allows for quicker response times if you're making numerous requests to the LLM. If you want to immediately unload a model from memory, use the `ollama stop` command:
 
-The `keep_alive` parameter can be set to:
+```shell
+ollama stop llama3.2
+```
+
+If you're using the API, use the `keep_alive` parameter with the `/api/generate` and `/api/chat` endpoints to set the amount of time that a model stays in memory. The `keep_alive` parameter can be set to:
 * a duration string (such as "10m" or "24h")
 * a number in seconds (such as 3600)
 * any negative number which will keep the model loaded in memory (e.g. -1 or "-1m")
 * '0' which will unload the model immediately after generating a response
 
 For example, to preload a model and leave it in memory use:
+
 ```shell
-curl http://localhost:11434/api/generate -d '{"model": "llama3", "keep_alive": -1}'
+curl http://localhost:11434/api/generate -d '{"model": "llama3.2", "keep_alive": -1}'
 ```
 
 To unload the model and free up memory use:
+
 ```shell
-curl http://localhost:11434/api/generate -d '{"model": "llama3", "keep_alive": 0}'
+curl http://localhost:11434/api/generate -d '{"model": "llama3.2", "keep_alive": 0}'
 ```
 
-Alternatively, you can change the amount of time all models are loaded into memory by setting the `OLLAMA_KEEP_ALIVE` environment variable when starting the Ollama server. The `OLLAMA_KEEP_ALIVE` variable uses the same parameter types as the `keep_alive` parameter types mentioned above. Refer to section explaining [how to configure the Ollama server](#how-do-i-configure-ollama-server) to correctly set the environment variable.
+Alternatively, you can change the amount of time all models are loaded into memory by setting the `OLLAMA_KEEP_ALIVE` environment variable when starting the Ollama server. The `OLLAMA_KEEP_ALIVE` variable uses the same parameter types as the `keep_alive` parameter types mentioned above. Refer to the section explaining [how to configure the Ollama server](#how-do-i-configure-ollama-server) to correctly set the environment variable.
 
-If you wish to override the `OLLAMA_KEEP_ALIVE` setting, use the `keep_alive` API parameter with the `/api/generate` or `/api/chat` API endpoints.
+The `keep_alive` API parameter with the `/api/generate` and `/api/chat` API endpoints will override the `OLLAMA_KEEP_ALIVE` setting.
 
 ## How do I manage the maximum number of requests the Ollama server can queue?
 

@@ -10,9 +10,11 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
-// StatusError is an error with and HTTP status code.
+// StatusError is an error with an HTTP status code and message.
 type StatusError struct {
 	StatusCode   int
 	Status       string
@@ -57,7 +59,7 @@ type GenerateRequest struct {
 	Template string `json:"template"`
 
 	// Context is the context parameter returned from a previous call to
-	// Generate call. It can be used to keep a short conversational memory.
+	// [Client.Generate]. It can be used to keep a short conversational memory.
 	Context []int `json:"context,omitempty"`
 
 	// Stream specifies whether the response is streaming; it is true by default.
@@ -67,7 +69,7 @@ type GenerateRequest struct {
 	Raw bool `json:"raw,omitempty"`
 
 	// Format specifies the format to return a response in.
-	Format string `json:"format"`
+	Format json.RawMessage `json:"format,omitempty"`
 
 	// KeepAlive controls how long the model will stay loaded in memory following
 	// this request.
@@ -90,14 +92,14 @@ type ChatRequest struct {
 	// Messages is the messages of the chat - can be used to keep a chat memory.
 	Messages []Message `json:"messages"`
 
-	// Stream enable streaming of returned response; true by default.
+	// Stream enables streaming of returned responses; true by default.
 	Stream *bool `json:"stream,omitempty"`
 
 	// Format is the format to return the response in (e.g. "json").
-	Format string `json:"format"`
+	Format json.RawMessage `json:"format,omitempty"`
 
 	// KeepAlive controls how long the model will stay loaded into memory
-	// followin the request.
+	// following the request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
 	// Tools is an optional list of tools the model has access to.
@@ -146,6 +148,7 @@ type ToolCall struct {
 }
 
 type ToolCallFunction struct {
+	Index     int                       `json:"index,omitempty"`
 	Name      string                    `json:"name"`
 	Arguments ToolCallFunctionArguments `json:"arguments"`
 }
@@ -203,8 +206,8 @@ type Metrics struct {
 	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
 }
 
-// Options specified in [GenerateRequest], if you add a new option here add it
-// to the API docs also.
+// Options specified in [GenerateRequest].  If you add a new option here, also
+// add it to the API docs.
 type Options struct {
 	Runner
 
@@ -215,7 +218,6 @@ type Options struct {
 	TopK             int      `json:"top_k,omitempty"`
 	TopP             float32  `json:"top_p,omitempty"`
 	MinP             float32  `json:"min_p,omitempty"`
-	TFSZ             float32  `json:"tfs_z,omitempty"`
 	TypicalP         float32  `json:"typical_p,omitempty"`
 	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
 	Temperature      float32  `json:"temperature,omitempty"`
@@ -225,19 +227,17 @@ type Options struct {
 	Mirostat         int      `json:"mirostat,omitempty"`
 	MirostatTau      float32  `json:"mirostat_tau,omitempty"`
 	MirostatEta      float32  `json:"mirostat_eta,omitempty"`
-	PenalizeNewline  bool     `json:"penalize_newline,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
 }
 
 // Runner options which must be set when the model is loaded into memory
 type Runner struct {
-	UseNUMA   bool  `json:"numa,omitempty"`
 	NumCtx    int   `json:"num_ctx,omitempty"`
 	NumBatch  int   `json:"num_batch,omitempty"`
 	NumGPU    int   `json:"num_gpu,omitempty"`
 	MainGPU   int   `json:"main_gpu,omitempty"`
 	LowVRAM   bool  `json:"low_vram,omitempty"`
-	F16KV     bool  `json:"f16_kv,omitempty"`
+	F16KV     bool  `json:"f16_kv,omitempty"` // Deprecated: This option is ignored
 	LogitsAll bool  `json:"logits_all,omitempty"`
 	VocabOnly bool  `json:"vocab_only,omitempty"`
 	UseMMap   *bool `json:"use_mmap,omitempty"`
@@ -296,16 +296,22 @@ type EmbeddingResponse struct {
 
 // CreateRequest is the request passed to [Client.Create].
 type CreateRequest struct {
-	Model     string `json:"model"`
-	Path      string `json:"path"`
-	Modelfile string `json:"modelfile"`
-	Stream    *bool  `json:"stream,omitempty"`
-	Quantize  string `json:"quantize,omitempty"`
+	Model    string `json:"model"`
+	Stream   *bool  `json:"stream,omitempty"`
+	Quantize string `json:"quantize,omitempty"`
 
-	// Name is deprecated, see Model
+	From       string            `json:"from,omitempty"`
+	Files      map[string]string `json:"files,omitempty"`
+	Adapters   map[string]string `json:"adapters,omitempty"`
+	Template   string            `json:"template,omitempty"`
+	License    any               `json:"license,omitempty"`
+	System     string            `json:"system,omitempty"`
+	Parameters map[string]any    `json:"parameters,omitempty"`
+	Messages   []Message         `json:"messages,omitempty"`
+
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
-
-	// Quantization is deprecated, see Quantize
+	// Deprecated: use Quantize instead
 	Quantization string `json:"quantization,omitempty"`
 }
 
@@ -313,7 +319,7 @@ type CreateRequest struct {
 type DeleteRequest struct {
 	Model string `json:"model"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
@@ -328,7 +334,7 @@ type ShowRequest struct {
 
 	Options map[string]interface{} `json:"options"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
@@ -343,6 +349,7 @@ type ShowResponse struct {
 	Messages      []Message      `json:"messages,omitempty"`
 	ModelInfo     map[string]any `json:"model_info,omitempty"`
 	ProjectorInfo map[string]any `json:"projector_info,omitempty"`
+	Tensors       []Tensor       `json:"tensors,omitempty"`
 	ModifiedAt    time.Time      `json:"modified_at,omitempty"`
 }
 
@@ -355,12 +362,12 @@ type CopyRequest struct {
 // PullRequest is the request passed to [Client.Pull].
 type PullRequest struct {
 	Model    string `json:"model"`
-	Insecure bool   `json:"insecure,omitempty"`
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Insecure bool   `json:"insecure,omitempty"` // Deprecated: ignored
+	Username string `json:"username"`           // Deprecated: ignored
+	Password string `json:"password"`           // Deprecated: ignored
 	Stream   *bool  `json:"stream,omitempty"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
@@ -381,7 +388,7 @@ type PushRequest struct {
 	Password string `json:"password"`
 	Stream   *bool  `json:"stream,omitempty"`
 
-	// Name is deprecated, see Model
+	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
@@ -461,6 +468,13 @@ type ModelDetails struct {
 	QuantizationLevel string   `json:"quantization_level"`
 }
 
+// Tensor describes the metadata for a given tensor.
+type Tensor struct {
+	Name  string   `json:"name"`
+	Type  string   `json:"type"`
+	Shape []uint64 `json:"shape"`
+}
+
 func (m *Metrics) Summary() {
 	if m.TotalDuration > 0 {
 		fmt.Fprintf(os.Stderr, "total duration:       %v\n", m.TotalDuration)
@@ -505,7 +519,7 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 	for key, val := range m {
 		opt, ok := jsonOpts[key]
 		if !ok {
-			slog.Warn("invalid option provided", "option", opt.Name)
+			slog.Warn("invalid option provided", "option", key)
 			continue
 		}
 
@@ -593,7 +607,6 @@ func DefaultOptions() Options {
 		Temperature:      0.8,
 		TopK:             40,
 		TopP:             0.9,
-		TFSZ:             1.0,
 		TypicalP:         1.0,
 		RepeatLastN:      64,
 		RepeatPenalty:    1.1,
@@ -602,20 +615,17 @@ func DefaultOptions() Options {
 		Mirostat:         0,
 		MirostatTau:      5.0,
 		MirostatEta:      0.1,
-		PenalizeNewline:  true,
 		Seed:             -1,
 
 		Runner: Runner{
 			// options set when the model is loaded
-			NumCtx:    2048,
+			NumCtx:    int(envconfig.ContextLength()),
 			NumBatch:  512,
 			NumGPU:    -1, // -1 here indicates that NumGPU should be set dynamically
 			NumThread: 0,  // let the runtime decide
 			LowVRAM:   false,
-			F16KV:     true,
 			UseMLock:  false,
 			UseMMap:   nil,
-			UseNUMA:   false,
 		},
 	}
 }

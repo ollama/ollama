@@ -2,28 +2,30 @@ package llm
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"os"
 	"testing"
 
-	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/gpu"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/discover"
+	"github.com/ollama/ollama/fs/ggml"
 )
 
 func TestEstimateGPULayers(t *testing.T) {
-	envconfig.Debug = true
+	t.Setenv("OLLAMA_DEBUG", "1")
+	t.Setenv("OLLAMA_KV_CACHE_TYPE", "") // Ensure default f16
+	t.Setenv("OLLAMA_CONTEXT_LENGTH", "2048")
+
 	modelName := "dummy"
 	f, err := os.CreateTemp(t.TempDir(), modelName)
 	require.NoError(t, err)
 	defer f.Close()
-	gguf := NewGGUFV3(binary.LittleEndian)
 	inputLayerCount := 5
 
-	tensors := []Tensor{
+	tensors := []ggml.Tensor{
 		{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
 		{Name: "blk.1.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
 		{Name: "blk.2.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
@@ -32,9 +34,8 @@ func TestEstimateGPULayers(t *testing.T) {
 		{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
 	}
 	assert.Len(t, tensors, inputLayerCount+1)
-	err = gguf.Encode(f, KV{
+	err = ggml.WriteGGUF(f, ggml.KV{
 		"general.architecture":          "llama",
-		"general.name":                  "name",
 		"llama.context_length":          uint32(32),
 		"llama.embedding_length":        uint32(4096),
 		"llama.block_count":             uint32(inputLayerCount),
@@ -52,7 +53,7 @@ func TestEstimateGPULayers(t *testing.T) {
 	}
 
 	// Simple CPU scenario
-	gpus := []gpu.GpuInfo{
+	gpus := []discover.GpuInfo{
 		{
 			Library: "cpu",
 		},
@@ -60,7 +61,7 @@ func TestEstimateGPULayers(t *testing.T) {
 	projectors := []string{}
 	opts := api.DefaultOptions()
 	t.Run("cpu", func(t *testing.T) {
-		estimate := EstimateGPULayers(gpus, ggml, projectors, opts)
+		estimate := EstimateGPULayers(gpus, ggml, projectors, opts, 1)
 		assert.Equal(t, 0, estimate.Layers)
 		assert.Equal(t, uint64(0), estimate.Graph)
 	})
@@ -72,9 +73,9 @@ func TestEstimateGPULayers(t *testing.T) {
 	projectorSize := uint64(0)
 	memoryLayerOutput := uint64(4)
 
-	// Dual CUDA scenario with assymetry
+	// Dual CUDA scenario with asymmetry
 	gpuMinimumMemory := uint64(2048)
-	gpus = []gpu.GpuInfo{
+	gpus = []discover.GpuInfo{
 		{
 			Library:       "cuda",
 			MinimumMemory: gpuMinimumMemory,
@@ -111,7 +112,7 @@ func TestEstimateGPULayers(t *testing.T) {
 			gpus[1].FreeMemory += gpuMinimumMemory + layerSize + s.layer1*layerSize + 1
 			gpus[0].FreeMemory += max(graphFullOffload, graphPartialOffload)
 			gpus[1].FreeMemory += max(graphFullOffload, graphPartialOffload)
-			estimate := EstimateGPULayers(gpus, ggml, projectors, opts)
+			estimate := EstimateGPULayers(gpus, ggml, projectors, opts, 1)
 			assert.Equal(t, int(s.expect0+s.expect1), estimate.Layers, "scenario %d: %v", i, s)
 			assert.Equal(t, fmt.Sprintf("%d,%d", s.expect0, s.expect1), estimate.TensorSplit, "scenario %d: %v", i, s)
 			var layerSums uint64

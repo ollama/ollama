@@ -1,0 +1,80 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: jmorganca <jmorganca@gmail.com>
+Date: Thu, 27 Feb 2025 15:12:26 -0800
+Subject: [PATCH] add phi4 support
+
+---
+ include/llama.h     |  1 +
+ src/llama-model.cpp | 10 +++++++---
+ src/llama-vocab.cpp | 11 +++++++++++
+ 3 files changed, 19 insertions(+), 3 deletions(-)
+
+diff --git a/include/llama.h b/include/llama.h
+index cc948005..16774711 100644
+--- a/include/llama.h
++++ b/include/llama.h
+@@ -105,6 +105,7 @@ extern "C" {
+         LLAMA_VOCAB_PRE_TYPE_CHAMELEON      = 26,
+         LLAMA_VOCAB_PRE_TYPE_MINERVA        = 27,
+         LLAMA_VOCAB_PRE_TYPE_DEEPSEEK3_LLM  = 28,
++        LLAMA_VOCAB_PRE_TYPE_GPT4O          = 29,
+     };
+ 
+     enum llama_rope_type {
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index 21819080..ab1a07d1 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -2283,7 +2283,11 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
+ 
+                     // output
+                     output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), { n_embd }, 0);
+-                    output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), { n_embd, n_vocab }, 0);
++                    output = create_tensor(tn(LLM_TENSOR_OUTPUT, "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
++                    // if output is NULL, init from the input tok embed
++                    if (output == NULL) {
++                        output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
++                    }
+ 
+                     for (int i = 0; i < n_layer; ++i) {
+                         auto & layer = layers[i];
+@@ -2298,8 +2302,8 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
+                         layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), { n_ff, n_embd }, 0);
+                         layer.ffn_up = create_tensor(tn(LLM_TENSOR_FFN_UP, "weight", i), { n_embd, 2 * n_ff }, 0);
+ 
+-                        layer.rope_long  = create_tensor(tn(LLM_TENSOR_ROPE_FACTORS_LONG,  "weight", i), { n_embd_head/2 }, TENSOR_NOT_REQUIRED | (i != 0 ? TENSOR_DUPLICATED : 0));
+-                        layer.rope_short = create_tensor(tn(LLM_TENSOR_ROPE_FACTORS_SHORT, "weight", i), { n_embd_head/2 }, TENSOR_NOT_REQUIRED | (i != 0 ? TENSOR_DUPLICATED : 0));
++                        layer.rope_long  = create_tensor(tn(LLM_TENSOR_ROPE_FACTORS_LONG,  "weight", i), { n_rot/2 }, TENSOR_NOT_REQUIRED | (i != 0 ? TENSOR_DUPLICATED : 0));
++                        layer.rope_short = create_tensor(tn(LLM_TENSOR_ROPE_FACTORS_SHORT, "weight", i), { n_rot/2 }, TENSOR_NOT_REQUIRED | (i != 0 ? TENSOR_DUPLICATED : 0));
+                     }
+                 } break;
+             case LLM_ARCH_PHIMOE:
+diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
+index 1ca827eb..c7ff28be 100644
+--- a/src/llama-vocab.cpp
++++ b/src/llama-vocab.cpp
+@@ -392,6 +392,13 @@ struct llm_tokenizer_bpe : llm_tokenizer {
+                     "'s|'t|'re|'ve|'m|'ll|'d| ?\\p{L}+| ?\\p{N}+| ?[^\\s\\p{L}\\p{N}]+|\\s+(?!\\S)",
+                 };
+                 break;
++            case LLAMA_VOCAB_PRE_TYPE_GPT4O:
++                // original regex from tokenizer.json
++                // [^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+
++                regex_exprs = {
++                    "[^\\r\\n\\p{L}\\p{N}]?((?=[\\p{L}])([^a-z]))*((?=[\\p{L}])([^A-Z]))+(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])?|[^\\r\\n\\p{L}\\p{N}]?((?=[\\p{L}])([^a-z]))+((?=[\\p{L}])([^A-Z]))*(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])?|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
++                };
++                break;
+             default:
+                 // default regex for BPE tokenization pre-processing
+                 regex_exprs = {
+@@ -1583,6 +1590,10 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+             } else if (
+                 tokenizer_pre == "megrez") {
+                 pre_type = LLAMA_VOCAB_PRE_TYPE_QWEN2;
++            } else if (
++                tokenizer_pre == "gpt-4o") {
++                pre_type = LLAMA_VOCAB_PRE_TYPE_GPT4O;
++                clean_spaces = false;
+             } else {
+                 LLAMA_LOG_WARN("%s: missing or unrecognized pre-tokenizer type, using: 'default'\n", __func__);
+                 pre_type = LLAMA_VOCAB_PRE_TYPE_DEFAULT;

@@ -15,6 +15,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,7 +47,7 @@ func IsNewReleaseAvailable(ctx context.Context) (bool, UpdateResponse) {
 	query.Add("os", runtime.GOOS)
 	query.Add("arch", runtime.GOARCH)
 	query.Add("version", version.Version)
-	query.Add("ts", fmt.Sprintf("%d", time.Now().Unix()))
+	query.Add("ts", strconv.FormatInt(time.Now().Unix(), 10))
 
 	nonce, err := auth.NewNonce(rand.Reader, 16)
 	if err != nil {

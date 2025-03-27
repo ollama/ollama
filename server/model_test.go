@@ -1,119 +1,18 @@
 package server
 
 import (
-	"archive/zip"
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"slices"
-	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/template"
 )
-
-func createZipFile(t *testing.T, name string) *os.File {
-	t.Helper()
-
-	f, err := os.CreateTemp(t.TempDir(), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	zf := zip.NewWriter(f)
-	defer zf.Close()
-
-	zh, err := zf.CreateHeader(&zip.FileHeader{Name: name})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := io.Copy(zh, bytes.NewReader([]byte(""))); err != nil {
-		t.Fatal(err)
-	}
-
-	return f
-}
-
-func TestExtractFromZipFile(t *testing.T) {
-	cases := []struct {
-		name   string
-		expect []string
-		err    error
-	}{
-		{
-			name:   "good",
-			expect: []string{"good"},
-		},
-		{
-			name:   strings.Join([]string{"path", "..", "to", "good"}, string(os.PathSeparator)),
-			expect: []string{filepath.Join("to", "good")},
-		},
-		{
-			name:   strings.Join([]string{"path", "..", "to", "..", "good"}, string(os.PathSeparator)),
-			expect: []string{"good"},
-		},
-		{
-			name:   strings.Join([]string{"path", "to", "..", "..", "good"}, string(os.PathSeparator)),
-			expect: []string{"good"},
-		},
-		{
-			name: strings.Join([]string{"..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "..", "bad"}, string(os.PathSeparator)),
-			err:  zip.ErrInsecurePath,
-		},
-		{
-			name: strings.Join([]string{"path", "..", "..", "to", "bad"}, string(os.PathSeparator)),
-			err:  zip.ErrInsecurePath,
-		},
-	}
-
-	for _, tt := range cases {
-		t.Run(tt.name, func(t *testing.T) {
-			f := createZipFile(t, tt.name)
-			defer f.Close()
-
-			tempDir := t.TempDir()
-			if err := extractFromZipFile(tempDir, f, func(api.ProgressResponse) {}); !errors.Is(err, tt.err) {
-				t.Fatal(err)
-			}
-
-			var matches []string
-			if err := filepath.Walk(tempDir, func(p string, fi os.FileInfo, err error) error {
-				if err != nil {
-					return err
-				}
-
-				if !fi.IsDir() {
-					matches = append(matches, p)
-				}
-
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
-
-			var actual []string
-			for _, match := range matches {
-				rel, err := filepath.Rel(tempDir, match)
-				if err != nil {
-					t.Error(err)
-				}
-
-				actual = append(actual, rel)
-			}
-
-			if !slices.Equal(actual, tt.expect) {
-				t.Fatalf("expected %d files, got %d", len(tt.expect), len(matches))
-			}
-		})
-	}
-}
 
 func readFile(t *testing.T, base, name string) *bytes.Buffer {
 	t.Helper()
@@ -137,6 +36,7 @@ func TestExecuteWithTools(t *testing.T) {
 		{"mistral", `[TOOL_CALLS]  [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]
 
 The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`, true},
+		{"mistral", `[TOOL_CALLS]  [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"To }]`, false},
 		{"mistral", `I'm not aware of that information. However, I can suggest searching for the weather using the "get_current_weather" function:
 
 		[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`, true},
@@ -167,6 +67,7 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
 {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}
 </tool_call>`, true},
 		{"xlam", `{"tool_calls": [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]}`, true},
+		{"nemotron", `<toolcall>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]} </toolcall>`, true},
 	}
 
 	var tools []api.Tool
@@ -231,6 +132,48 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
 					}
 				}
 			})
+		})
+	}
+}
+
+func TestParseObjects(t *testing.T) {
+	tests := []struct {
+		input string
+		want  []map[string]any
+	}{
+		{
+			input: `[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
+			want: []map[string]any{
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "fahrenheit", "location": "San Francisco, CA"}},
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "celsius", "location": "Toronto, Canada"}},
+			},
+		},
+		{
+			input: `<toolcall>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </toolcall>`,
+			want: []map[string]any{
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "fahrenheit", "location": "San Francisco, CA"}},
+			},
+		},
+		{
+			input: `<toolcall>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </toolcall> <toolcall>{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, ON"}} </toolcall>`,
+			want: []map[string]any{
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "fahrenheit", "location": "San Francisco, CA"}},
+				{"name": "get_current_weather", "arguments": map[string]any{"format": "celsius", "location": "Toronto, ON"}},
+			},
+		},
+		{
+			input: `{"name": "get_current_weather", "arguments": `,
+			want:  nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			got := parseObjects(tc.input)
+
+			if diff := cmp.Diff(got, tc.want); diff != "" {
+				t.Errorf("mismatch (-got +want):\n%s", diff)
+			}
 		})
 	}
 }

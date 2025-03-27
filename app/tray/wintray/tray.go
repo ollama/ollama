@@ -11,10 +11,12 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"syscall"
 	"unsafe"
 
-	"github.com/ollama/ollama/app/tray/commontray"
 	"golang.org/x/sys/windows"
+
+	"github.com/ollama/ollama/app/tray/commontray"
 )
 
 // Helpful sources: https://github.com/golang/exp/blob/master/shiny/driver/internal/win32
@@ -359,7 +361,7 @@ func (t *winTray) showMenu() error {
 
 	boolRet, _, err = pTrackPopupMenu.Call(
 		uintptr(t.menus[0]),
-		TPM_BOTTOMALIGN|TPM_LEFTALIGN,
+		TPM_BOTTOMALIGN|TPM_LEFTALIGN|TPM_RIGHTBUTTON,
 		uintptr(p.X),
 		uintptr(p.Y),
 		0,
@@ -414,7 +416,7 @@ func iconBytesToFilePath(iconBytes []byte) (string, error) {
 	iconFilePath := filepath.Join(os.TempDir(), "ollama_temp_icon_"+dataHash)
 
 	if _, err := os.Stat(iconFilePath); os.IsNotExist(err) {
-		if err := os.WriteFile(iconFilePath, iconBytes, 0644); err != nil {
+		if err := os.WriteFile(iconFilePath, iconBytes, 0o644); err != nil {
 			return "", err
 		}
 	}
@@ -432,7 +434,12 @@ func (t *winTray) setIcon(src string) error {
 	t.muNID.Lock()
 	defer t.muNID.Unlock()
 	t.nid.Icon = h
-	t.nid.Flags |= NIF_ICON
+	t.nid.Flags |= NIF_ICON | NIF_TIP
+	if toolTipUTF16, err := syscall.UTF16FromString(commontray.ToolTip); err == nil {
+		copy(t.nid.Tip[:], toolTipUTF16)
+	} else {
+		return err
+	}
 	t.nid.Size = uint32(unsafe.Sizeof(*t.nid))
 
 	return t.nid.modify()

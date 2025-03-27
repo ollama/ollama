@@ -4,12 +4,13 @@
 .venv
 .swp
 dist
-ollama
-ggml-metal.metal
+build
 .cache
 *.exe
 .idea
 test_data
 *.crt
-llm/build
 __debug_bin*
+llama/build
+llama/vendor
+/ollama
