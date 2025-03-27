@@ -45,7 +45,7 @@ func (p *gemmaModel) KV(t *Tokenizer) ggml.KV {
 func (p *gemmaModel) Tensors(ts []Tensor) []ggml.Tensor {
 	var out []ggml.Tensor
 	for _, t := range ts {
-		if strings.HasSuffix(t.Name(), "_norm.weight") {
+		if !strings.HasPrefix(t.Name(), "v.") && strings.HasSuffix(t.Name(), "_norm.weight") {
 			t.SetRepacker(p.addOne)
 		}
 

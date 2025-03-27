@@ -2,6 +2,7 @@ package ml
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -19,6 +20,7 @@ type Config interface {
 
 	Strings(string, ...[]string) []string
 	Uints(string, ...[]uint32) []uint32
+	Floats(string, ...[]float32) []float32
 }
 
 type Backend interface {
@@ -59,6 +61,10 @@ type CacheConfig struct {
 
 // BackendParams controls how the backend loads and executes models
 type BackendParams struct {
+	// Progress is a callback function that allows reporting percentage completion
+	// of model loading
+	Progress func(float32)
+
 	// NumThreads sets the number of threads to use if running on the CPU
 	NumThreads int
 
@@ -75,9 +81,9 @@ type BackendParams struct {
 	FlashAttention bool
 }
 
-var backends = make(map[string]func(*os.File, BackendParams) (Backend, error))
+var backends = make(map[string]func(context.Context, *os.File, BackendParams) (Backend, error))
 
-func RegisterBackend(name string, f func(*os.File, BackendParams) (Backend, error)) {
+func RegisterBackend(name string, f func(context.Context, *os.File, BackendParams) (Backend, error)) {
 	if _, ok := backends[name]; ok {
 		panic("backend: backend already registered")
 	}
@@ -85,9 +91,9 @@ func RegisterBackend(name string, f func(*os.File, BackendParams) (Backend, erro
 	backends[name] = f
 }
 
-func NewBackend(f *os.File, params BackendParams) (Backend, error) {
+func NewBackend(ctx context.Context, f *os.File, params BackendParams) (Backend, error) {
 	if backend, ok := backends["ggml"]; ok {
-		return backend(f, params)
+		return backend(ctx, f, params)
 	}
 
 	return nil, fmt.Errorf("unsupported backend")
@@ -104,11 +110,9 @@ type Context interface {
 	MaxGraphNodes() int
 	Close()
 
-	// Input returns a context appropriate for creating input tensors
+	// Input returns a context appropriate for creating tensors that are
+	// inputs to the model (which includes things like output locations)
 	Input() Context
-
-	// Output returns a context appropriate for creating output tensors
-	Output() Context
 
 	// Layer returns a context appropriate for creating intermediate tensors
 	Layer(int) Context
@@ -134,8 +138,10 @@ type Tensor interface {
 	RMSNorm(ctx Context, weight Tensor, eps float32) Tensor
 	Scale(ctx Context, s float64) Tensor
 
+	AvgPool2D(ctx Context, k, s int, p float32) Tensor
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
-	RoPE(ctx Context, positionIDs, ropeFactors Tensor, dim uint32, base, scale float32) Tensor
+
+	RoPE(ctx Context, positionIDs, ropeFactors Tensor, dim, ropeType uint32, base, scale float32) Tensor
 
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context) Tensor
@@ -145,6 +151,7 @@ type Tensor interface {
 	View(ctx Context, offset int, shape ...int) Tensor
 	Permute(ctx Context, shape ...int) Tensor
 	Contiguous(ctx Context) Tensor
+	Set(ctx Context, t2 Tensor, offset int, strides ...int) Tensor
 
 	Pad(ctx Context, shape ...int) Tensor
 	Unpad(ctx Context, shape ...int) Tensor

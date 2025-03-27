@@ -54,6 +54,10 @@ Here are some example models that can be downloaded:
 
 | Model              | Parameters | Size  | Download                         |
 | ------------------ | ---------- | ----- | -------------------------------- |
+| Gemma 3            | 1B         | 815MB | `ollama run gemma3:1b`           |
+| Gemma 3            | 4B         | 3.3GB | `ollama run gemma3`              |
+| Gemma 3            | 12B        | 8.1GB | `ollama run gemma3:12b`          |
+| Gemma 3            | 27B        | 17GB  | `ollama run gemma3:27b`          |
 | QwQ                | 32B        | 20GB  | `ollama run qwq`                 |
 | DeepSeek-R1        | 7B         | 4.7GB | `ollama run deepseek-r1`         |
 | DeepSeek-R1        | 671B       | 404GB | `ollama run deepseek-r1:671b`    |
@@ -66,9 +70,6 @@ Here are some example models that can be downloaded:
 | Llama 3.1          | 405B       | 231GB | `ollama run llama3.1:405b`       |
 | Phi 4              | 14B        | 9.1GB | `ollama run phi4`                |
 | Phi 4 Mini         | 3.8B       | 2.5GB | `ollama run phi4-mini`           |
-| Gemma 2            | 2B         | 1.6GB | `ollama run gemma2:2b`           |
-| Gemma 2            | 9B         | 5.5GB | `ollama run gemma2`              |
-| Gemma 2            | 27B        | 16GB  | `ollama run gemma2:27b`          |
 | Mistral            | 7B         | 4.1GB | `ollama run mistral`             |
 | Moondream 2        | 1.4B       | 829MB | `ollama run moondream`           |
 | Neural Chat        | 7B         | 4.1GB | `ollama run neural-chat`         |
@@ -391,6 +392,9 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [1Panel](https://github.com/1Panel-dev/1Panel/) (Web-based Linux Server Management Tool)
 - [AstrBot](https://github.com/Soulter/AstrBot/) (User-friendly LLM-based multi-platform chatbot with a WebUI, supporting RAG, LLM agents, and plugins integration)
 - [Reins](https://github.com/ibrahimcetin/reins) (Easily tweak parameters, customize system prompts per chat, and enhance your AI experiments with reasoning model support.)
+- [Ellama](https://github.com/zeozeozeo/ellama) (Friendly native app to chat with an Ollama instance)
+- [screenpipe](https://github.com/mediar-ai/screenpipe) Build agents powered by your screen history
+- [Ollamb](https://github.com/hengkysteen/ollamb) (Simple yet rich in features, cross-platform built with Flutter and designed for Ollama. Try the [web demo](https://hengkysteen.github.io/demo/ollamb/).)
 
 ### Cloud
 
@@ -431,6 +435,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [aichat](https://github.com/sigoden/aichat) All-in-one LLM CLI tool featuring Shell Assistant, Chat-REPL, RAG, AI tools & agents, with access to OpenAI, Claude, Gemini, Ollama, Groq, and more.
 - [PowershAI](https://github.com/rrg92/powershai) PowerShell module that brings AI to terminal on Windows, including support for Ollama
 - [orbiton](https://github.com/xyproto/orbiton) Configuration-free text editor and IDE with support for tab completion with Ollama.
+- [orca-cli](https://github.com/molbal/orca-cli) Ollama Registry CLI Application - Browse, pull and download models from Ollama Registry in your terminal.
 
 ### Apple Vision Pro
 
@@ -509,6 +514,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama for Zig](https://github.com/dravenk/ollama-zig)
 - [Abso](https://github.com/lunary-ai/abso) (OpenAI-compatible TypeScript SDK for any LLM provider)
 - [Nichey](https://github.com/goodreasonai/nichey) is a Python package for generating custom wikis for your research topic
+- [Ollama for D](https://github.com/kassane/ollama-d)
 
 ### Mobile
 
