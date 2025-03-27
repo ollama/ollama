@@ -1526,7 +1526,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		var sb strings.Builder
 		var toolCallIndex int = 0
 		var mightBeTools bool = true
-		var buf = make([]api.ChatResponse, 0)
+		buf := make([]api.ChatResponse, 0)
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,

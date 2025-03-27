@@ -344,7 +344,7 @@ func partialHasPrefix(haystack, needle string) bool {
 // checks to see if the completion starts with the tool prefix, space-insensitive and also
 // aware of partial completions
 func (m *Model) IsPotentialToolUse(sb strings.Builder) bool {
-	white := regexp.MustCompile("\\s+")
+	white := regexp.MustCompile(`\s+`)
 	text := white.ReplaceAllString(sb.String(), "")
 	needle := white.ReplaceAllString(m.ToolPrefix, "")
 
