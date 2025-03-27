@@ -48,9 +48,6 @@ type Backend struct {
 	// input is the backend used for inputs
 	input *C.struct_ggml_backend_buffer_type
 
-	// output is the backend used for outputs
-	output *C.struct_ggml_backend_buffer_type
-
 	// layers is the backend used for repeating layers
 	layers map[int]*C.struct_ggml_backend_buffer_type
 
@@ -400,8 +397,7 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 			C.size_t(maxGraphNodes),
 			C._Bool(len(gpus) > 1 && slices.Contains(gpus, output.d)),
 		),
-		input:  deviceBufferTypes[input.d],
-		output: deviceBufferTypes[output.d],
+		input: deviceBufferTypes[input.d],
 		layers: func() map[int]*C.struct_ggml_backend_buffer_type {
 			m := make(map[int]*C.struct_ggml_backend_buffer_type)
 			for i, layer := range layers {
@@ -475,19 +471,6 @@ func (c Context) Input() ml.Context {
 			b:             c.b,
 			ctx:           c.ctx,
 			buft:          c.b.input,
-			maxGraphNodes: c.maxGraphNodes,
-		}
-	}
-
-	return &c
-}
-
-func (c Context) Output() ml.Context {
-	if c.b.output != nil {
-		return &Context{
-			b:             c.b,
-			ctx:           c.ctx,
-			buft:          c.b.output,
 			maxGraphNodes: c.maxGraphNodes,
 		}
 	}

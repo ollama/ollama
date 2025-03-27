@@ -110,11 +110,9 @@ type Context interface {
 	MaxGraphNodes() int
 	Close()
 
-	// Input returns a context appropriate for creating input tensors
+	// Input returns a context appropriate for creating tensors that are
+	// inputs to the model (which includes things like output locations)
 	Input() Context
-
-	// Output returns a context appropriate for creating output tensors
-	Output() Context
 
 	// Layer returns a context appropriate for creating intermediate tensors
 	Layer(int) Context
