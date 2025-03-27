@@ -421,6 +421,7 @@ type ProcessModelResponse struct {
 	Details   ModelDetails `json:"details,omitempty"`
 	ExpiresAt time.Time    `json:"expires_at"`
 	SizeVRAM  int64        `json:"size_vram"`
+	Active    bool         `json:"active"`
 }
 
 type RetrieveModelResponse struct {
