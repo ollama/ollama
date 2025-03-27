@@ -16,10 +16,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"text/template/parse"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
@@ -62,6 +64,7 @@ type Model struct {
 	Digest         string
 	Options        map[string]any
 	Messages       []api.Message
+	ToolPrefix     string
 
 	Template *template.Template
 }
@@ -350,7 +353,45 @@ func GetModel(name string) (*Model, error) {
 		}
 	}
 
+	if model.Template != nil && model.CheckCapabilities(CapabilityTools) == nil {
+		model.addToolPrefix()
+	}
+
 	return model, nil
+}
+
+// HasToolPrefix checks if the completion starts with the tool prefix, ignoring whitespace
+func (m *Model) HasToolPrefix(sb strings.Builder) bool {
+	text := regexp.MustCompile(`\s+`).ReplaceAllString(sb.String(), "")
+	toolString := regexp.MustCompile(`\s+`).ReplaceAllString(m.ToolPrefix, "")
+
+	if len(text) < len(toolString) {
+		return text == toolString[:len(text)]
+	}
+	return text[:len(toolString)] == toolString
+}
+
+// Figure out what's between the start of the tools block, and the json response, and use it as a marker.  Usually that's
+// {- if .ToolCalls}this text{ range .ToolCalls}or maybe this text{{.name}}
+func (m *Model) addToolPrefix() {
+	// create a subtree from the node that ranges over .ToolCalls
+	var previousNode parse.Node
+	toolCallsTemplate := m.Template.Subtree(func(node parse.Node) bool {
+		if rangeNode, ok := node.(*parse.RangeNode); ok {
+			return slices.Contains(template.Identifiers(rangeNode.Pipe), "ToolCalls")
+		}
+		previousNode = node
+		return false
+	})
+	if textNode, ok := previousNode.(*parse.TextNode); ok {
+		m.ToolPrefix = strings.TrimSpace(textNode.String())
+	}
+	if len(m.ToolPrefix) == 0 && len(toolCallsTemplate.Root.Nodes) > 0 {
+		rangeNode, ok := toolCallsTemplate.Root.Nodes[0].(*parse.RangeNode)
+		if ok && len(rangeNode.List.Nodes) > 0 {
+			m.ToolPrefix = rangeNode.List.Nodes[0].String()
+		}
+	}
 }
 
 func CopyModel(src, dst model.Name) error {
