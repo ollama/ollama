@@ -1572,8 +1572,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				sb.Reset()
 				ch <- res
 				return
+			} else {
+				if !strings.HasPrefix(sb.String(), "{") {
+					ch <- res
+					return
+				}
 			}
-
 			if r.Done {
 				// Send any remaining content if no tool calls were detected
 				if toolCallIndex == 0 {
