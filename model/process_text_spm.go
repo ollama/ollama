@@ -49,6 +49,10 @@ func NewSentencePieceModel(pre string, vocab *Vocabulary) SentencePieceModel {
 	}
 }
 
+func (spm SentencePieceModel) Vocab() *Vocabulary {
+	return spm.vocab
+}
+
 func (spm SentencePieceModel) Is(id int32, special Special) bool {
 	return spm.vocab.Is(id, special)
 }
