@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/model/input"
 )
 
 // Encoder cache stores K and V tensors that are position independent
@@ -48,13 +49,17 @@ func NewEncoderCache() *EncoderCache {
 	}
 }
 
-func (c *EncoderCache) Init(backend ml.Backend, dtype ml.DType, capacity int32) {
+func (c *EncoderCache) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity, maxBatch int) {
 	if c.config == nil {
 		var config ml.CacheConfig
 		if cc, ok := backend.(ml.BackendCacheConfig); ok {
 			config = cc.CacheConfig()
 		}
 		c.config = &config
+	}
+
+	if maxSequences > 1 {
+		panic(fmt.Errorf("encoder cache does not support multiple sequences; requested: %v", maxSequences))
 	}
 
 	if c.config.CachePadding != 0 && c.config.CachePadding != 1 {
@@ -78,9 +83,11 @@ func (c *EncoderCache) Close() {
 	}
 }
 
-func (c *EncoderCache) StartForward(ctx ml.Context, positions []int32, seqs []int) error {
-	// The image is always in the first position
-	c.curPos = positions[0]
+func (c *EncoderCache) StartForward(ctx ml.Context, batch input.Batch) error {
+	// We work with the most recent image
+	if len(batch.Multimodal) > 0 {
+		c.curPos = batch.Positions[batch.Multimodal[len(batch.Multimodal)-1].Index]
+	}
 
 	return nil
 }

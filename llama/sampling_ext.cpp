@@ -2,6 +2,9 @@
 #include "sampling.h"
 #include "sampling_ext.h"
 #include "json-schema-to-grammar.h"
+#include "llama.h"
+#include "llama-model.h"
+#include "llama-model-loader.h"
 
 struct common_sampler *common_sampler_cinit(const struct llama_model *model, struct common_sampler_cparams *params) {
     try {
@@ -63,4 +66,23 @@ int schema_to_grammar(const char *json_schema, char *grammar, size_t max_len)
         strncpy(grammar, "", max_len - 1);
         return 0;
     }
+}
+
+struct llama_vocab * llama_load_vocab_from_file(const char * fname) {
+    llama_vocab * vocab = new llama_vocab();
+    try {
+        const auto kv = LLM_KV(LLM_ARCH_UNKNOWN);
+        std::vector<std::string> splits = {};
+        llama_model_loader ml(std::string(fname), splits, false, false, nullptr);
+        vocab->load(ml, kv);
+    } catch (const std::exception & err) {
+        LLAMA_LOG_ERROR("%s: error loading model: %s\n", __func__, err.what());
+        return nullptr;
+    }
+
+    return vocab;
+}
+
+void llama_free_vocab(struct llama_vocab * vocab) {
+    delete vocab;
 }

@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	_ "image/jpeg"
@@ -19,66 +20,14 @@ import (
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	_ "github.com/ollama/ollama/ml/backend"
+	"github.com/ollama/ollama/model/input"
 )
 
-// Input represents one token in the input stream
-type Input struct {
-	// Token is a single element of text.
-	Token int32
-
-	// Multimodal is opaque data representing a non-text
-	// element such as an image (or part of one if the image
-	// can be processed in pieces). It may be either together
-	// with Token or on its own.
-	Multimodal any
-
-	// MultimodalHash is a unique representation of the data
-	// stored in Multimodal, used for caching and comparing
-	// equality.
-	MultimodalHash uint64
-}
-
-// MultimodalIndex is a multimodal element (such as an image)
-// together with an index into the slice of Inputs with the
-// corresponding token. Note that the index is not the same
-// as the position - to find that use the index with the
-// Positions slice.
-type MultimodalIndex struct {
-	Index      int
-	Multimodal any
-}
-
-// Options contains the inputs for a model forward pass
-type Options struct {
-	Inputs     []int32
-	Multimodal []MultimodalIndex
-	Positions  []int32
-	Sequences  []int
-	Outputs    []int32
-}
-
-type config struct {
-	Cache kvcache.Cache
-}
-
-// Base implements the common fields and methods for all models
-type Base struct {
-	b ml.Backend
-	config
-}
-
-// Backend returns the underlying backend that will run the model
-func (m *Base) Backend() ml.Backend {
-	return m.b
-}
-
-func (m *Base) Config() config {
-	return m.config
-}
+var ErrNoVisionModel = errors.New("this model is missing data required for image input")
 
 // Model implements a specific model architecture, defining the forward pass and any model-specific configuration
 type Model interface {
-	Forward(ml.Context, Options) (ml.Tensor, error)
+	Forward(ml.Context, input.Batch) (ml.Tensor, error)
 
 	Backend() ml.Backend
 	Config() config
@@ -112,7 +61,26 @@ type MultimodalProcessor interface {
 	// This function is also responsible for updating MultimodalHash for any Multimodal
 	// that is modified to ensure that there is a unique hash value that accurately
 	// represents the contents.
-	PostTokenize(ml.Context, []Input) ([]Input, error)
+	PostTokenize([]input.Input) ([]input.Input, error)
+}
+
+// Base implements the common fields and methods for all models
+type Base struct {
+	b ml.Backend
+	config
+}
+
+type config struct {
+	Cache kvcache.Cache
+}
+
+// Backend returns the underlying backend that will run the model
+func (m *Base) Backend() ml.Backend {
+	return m.b
+}
+
+func (m *Base) Config() config {
+	return m.config
 }
 
 var models = make(map[string]func(ml.Config) (Model, error))
@@ -127,14 +95,14 @@ func Register(name string, f func(ml.Config) (Model, error)) {
 }
 
 // New initializes a new model instance with the provided configuration based on the metadata in the model file
-func New(modelPath string, params ml.BackendParams) (Model, error) {
+func New(ctx context.Context, modelPath string, params ml.BackendParams) (Model, error) {
 	r, err := os.Open(modelPath)
 	if err != nil {
 		return nil, err
 	}
 	defer r.Close()
 
-	b, err := ml.NewBackend(r, params)
+	b, err := ml.NewBackend(ctx, r, params)
 	if err != nil {
 		return nil, err
 	}
@@ -313,24 +281,30 @@ func canNil(t reflect.Type) bool {
 		t.Kind() == reflect.Slice
 }
 
-func Forward(ctx ml.Context, m Model, opts Options) (ml.Tensor, error) {
-	if len(opts.Positions) != len(opts.Sequences) {
-		return nil, fmt.Errorf("length of positions (%v) must match length of seqs (%v)", len(opts.Positions), len(opts.Sequences))
+func Forward(ctx ml.Context, m Model, inputs []int32, batch input.Batch) (ml.Tensor, error) {
+	if len(batch.Positions) != len(batch.Sequences) {
+		return nil, fmt.Errorf("length of positions (%v) must match length of seqs (%v)", len(batch.Positions), len(batch.Sequences))
 	}
 
-	if len(opts.Positions) < 1 {
+	if len(batch.Positions) < 1 {
 		return nil, errors.New("batch size cannot be less than 1")
+	}
+
+	var err error
+	batch.Inputs, err = ctx.Input().FromIntSlice(inputs, len(inputs))
+	if err != nil {
+		return nil, err
 	}
 
 	cache := m.Config().Cache
 	if cache != nil {
-		err := cache.StartForward(ctx, opts.Positions, opts.Sequences)
+		err := cache.StartForward(ctx, batch)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	t, err := m.Forward(ctx, opts)
+	t, err := m.Forward(ctx, batch)
 	if err != nil {
 		return nil, err
 	}

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ollama/ollama/model"
+	"github.com/ollama/ollama/model/input"
 )
 
 func TestCountCommon(t *testing.T) {
@@ -15,50 +15,50 @@ func TestCountCommon(t *testing.T) {
 
 	tests := []struct {
 		name     string
-		t1       []model.Input
-		t2       []model.Input
+		t1       []input.Input
+		t2       []input.Input
 		expected int32
 	}{
 		{
 			name:     "Equal",
-			t1:       []model.Input{{Token: 1}, {Token: 2}, {Token: 3}},
-			t2:       []model.Input{{Token: 1}, {Token: 2}, {Token: 3}},
+			t1:       []input.Input{{Token: 1}, {Token: 2}, {Token: 3}},
+			t2:       []input.Input{{Token: 1}, {Token: 2}, {Token: 3}},
 			expected: 3,
 		},
 		{
 			name:     "Prefix",
-			t1:       []model.Input{{Token: 1}},
-			t2:       []model.Input{{Token: 1}, {Token: 2}, {Token: 3}},
+			t1:       []input.Input{{Token: 1}},
+			t2:       []input.Input{{Token: 1}, {Token: 2}, {Token: 3}},
 			expected: 1,
 		},
 		{
 			name:     "Image Prefix",
-			t1:       []model.Input{{Multimodal: imgA, MultimodalHash: 1}},
-			t2:       []model.Input{{Multimodal: imgA, MultimodalHash: 1}, {Multimodal: imgB, MultimodalHash: 2}, {Multimodal: imgC, MultimodalHash: 3}},
+			t1:       []input.Input{{Multimodal: imgA, MultimodalHash: 1}},
+			t2:       []input.Input{{Multimodal: imgA, MultimodalHash: 1}, {Multimodal: imgB, MultimodalHash: 2}, {Multimodal: imgC, MultimodalHash: 3}},
 			expected: 1,
 		},
 		{
 			name:     "Mixed",
-			t1:       []model.Input{{Token: 1}, {Multimodal: imgA, MultimodalHash: 1}},
-			t2:       []model.Input{{Token: 1}, {Multimodal: imgA, MultimodalHash: 1}, {Token: 5}},
+			t1:       []input.Input{{Token: 1}, {Multimodal: imgA, MultimodalHash: 1}},
+			t2:       []input.Input{{Token: 1}, {Multimodal: imgA, MultimodalHash: 1}, {Token: 5}},
 			expected: 2,
 		},
 		{
 			name:     "Mixed, Same Length",
-			t1:       []model.Input{{Token: 1}, {Multimodal: imgA, MultimodalHash: 1}},
-			t2:       []model.Input{{Token: 1}, {Multimodal: imgB, MultimodalHash: 2}},
+			t1:       []input.Input{{Token: 1}, {Multimodal: imgA, MultimodalHash: 1}},
+			t2:       []input.Input{{Token: 1}, {Multimodal: imgB, MultimodalHash: 2}},
 			expected: 1,
 		},
 		{
 			name:     "Empty",
-			t1:       []model.Input{},
-			t2:       []model.Input{{Token: 1}, {Token: 2}, {Token: 3}},
+			t1:       []input.Input{},
+			t2:       []input.Input{{Token: 1}, {Token: 2}, {Token: 3}},
 			expected: 0,
 		},
 		{
 			name:     "Both Empty",
-			t1:       []model.Input{},
-			t2:       []model.Input{},
+			t1:       []input.Input{},
+			t2:       []input.Input{},
 			expected: 0,
 		},
 	}
@@ -82,7 +82,7 @@ func TestFindCacheSlot(t *testing.T) {
 	tests := []struct {
 		name    string
 		cache   InputCache
-		prompt  []model.Input
+		prompt  []input.Input
 		longest expected
 		best    expected
 	}{
@@ -91,18 +91,18 @@ func TestFindCacheSlot(t *testing.T) {
 			cache: InputCache{slots: []InputCacheSlot{
 				{
 					Id:       0,
-					Inputs:   []model.Input{},
+					Inputs:   []input.Input{},
 					InUse:    false,
 					lastUsed: time.Time{},
 				},
 				{
 					Id:       1,
-					Inputs:   []model.Input{},
+					Inputs:   []input.Input{},
 					InUse:    false,
 					lastUsed: time.Time{},
 				},
 			}},
-			prompt:  []model.Input{{Token: 1}},
+			prompt:  []input.Input{{Token: 1}},
 			longest: expected{result: 0, len: 0},
 			best:    expected{result: 0, len: 0},
 		},
@@ -111,18 +111,18 @@ func TestFindCacheSlot(t *testing.T) {
 			cache: InputCache{slots: []InputCacheSlot{
 				{
 					Id:       0,
-					Inputs:   []model.Input{{Token: 1}},
+					Inputs:   []input.Input{{Token: 1}},
 					InUse:    false,
 					lastUsed: time.Now().Add(-time.Second),
 				},
 				{
 					Id:       1,
-					Inputs:   []model.Input{{Token: 1}, {Token: 2}},
+					Inputs:   []input.Input{{Token: 1}, {Token: 2}},
 					InUse:    false,
 					lastUsed: time.Now().Add(-2 * time.Second),
 				},
 			}},
-			prompt:  []model.Input{{Token: 1}, {Token: 2}},
+			prompt:  []input.Input{{Token: 1}, {Token: 2}},
 			longest: expected{result: 1, len: 2},
 			best:    expected{result: 1, len: 2},
 		},
@@ -131,18 +131,18 @@ func TestFindCacheSlot(t *testing.T) {
 			cache: InputCache{slots: []InputCacheSlot{
 				{
 					Id:       0,
-					Inputs:   []model.Input{{Token: 1}, {Token: 2}},
+					Inputs:   []input.Input{{Token: 1}, {Token: 2}},
 					InUse:    false,
 					lastUsed: time.Now().Add(-time.Second),
 				},
 				{
 					Id:       1,
-					Inputs:   []model.Input{},
+					Inputs:   []input.Input{},
 					InUse:    false,
 					lastUsed: time.Time{},
 				},
 			}},
-			prompt:  []model.Input{{Token: 2}},
+			prompt:  []input.Input{{Token: 2}},
 			longest: expected{result: 0, len: 0},
 			best:    expected{result: 1, len: 0},
 		},
@@ -152,19 +152,19 @@ func TestFindCacheSlot(t *testing.T) {
 				slots: []InputCacheSlot{
 					{
 						Id:       0,
-						Inputs:   []model.Input{{Token: 1}, {Token: 2}},
+						Inputs:   []input.Input{{Token: 1}, {Token: 2}},
 						InUse:    false,
 						lastUsed: time.Now().Add(-time.Second),
 					},
 					{
 						Id:       1,
-						Inputs:   []model.Input{},
+						Inputs:   []input.Input{},
 						InUse:    false,
 						lastUsed: time.Time{},
 					},
 				},
 			},
-			prompt:  []model.Input{{Token: 1}},
+			prompt:  []input.Input{{Token: 1}},
 			longest: expected{result: 0, len: 1},
 			best:    expected{result: 1, len: 1},
 		},
@@ -173,18 +173,18 @@ func TestFindCacheSlot(t *testing.T) {
 			cache: InputCache{slots: []InputCacheSlot{
 				{
 					Id:       0,
-					Inputs:   []model.Input{{Token: 1}},
+					Inputs:   []input.Input{{Token: 1}},
 					InUse:    false,
 					lastUsed: time.Now().Add(-time.Second),
 				},
 				{
 					Id:       1,
-					Inputs:   []model.Input{{Token: 1}, {Token: 2}},
+					Inputs:   []input.Input{{Token: 1}, {Token: 2}},
 					InUse:    false,
 					lastUsed: time.Now().Add(-2 * time.Second),
 				},
 			}},
-			prompt:  []model.Input{{Token: 2}, {Token: 3}},
+			prompt:  []input.Input{{Token: 2}, {Token: 3}},
 			longest: expected{result: 0, len: 0},
 			best:    expected{result: 1, len: 0},
 		},
@@ -193,18 +193,18 @@ func TestFindCacheSlot(t *testing.T) {
 			cache: InputCache{slots: []InputCacheSlot{
 				{
 					Id:       0,
-					Inputs:   []model.Input{{Token: 1}, {Token: 2}},
+					Inputs:   []input.Input{{Token: 1}, {Token: 2}},
 					InUse:    true,
 					lastUsed: time.Now().Add(-time.Second),
 				},
 				{
 					Id:       1,
-					Inputs:   []model.Input{{Token: 1}},
+					Inputs:   []input.Input{{Token: 1}},
 					InUse:    false,
 					lastUsed: time.Now().Add(-2 * time.Second),
 				},
 			}},
-			prompt:  []model.Input{{Token: 1}, {Token: 2}},
+			prompt:  []input.Input{{Token: 1}, {Token: 2}},
 			longest: expected{result: 1, len: 1},
 			best:    expected{result: 1, len: 2},
 		},
@@ -293,6 +293,134 @@ func TestShiftDiscard(t *testing.T) {
 			result := c.ShiftDiscard(tt.inputLen, tt.numKeep)
 			if result != tt.expected {
 				t.Errorf("shiftDiscard(ctx: %v, keep: %v input: %v): have %v; want %v", tt.numCtx, tt.numKeep, tt.inputLen, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestLoadCacheSlot(t *testing.T) {
+	tests := []struct {
+		name           string
+		cache          InputCache
+		prompt         []input.Input
+		wantErr        bool
+		expectedSlotId int
+		expectedPrompt int // expected length of remaining prompt
+	}{
+		{
+			name: "Basic cache hit - single user",
+			cache: InputCache{
+				multiUserCache: false,
+				slots: []InputCacheSlot{
+					{
+						Id:       0,
+						Inputs:   []input.Input{{Token: 1}, {Token: 2}},
+						InUse:    false,
+						lastUsed: time.Now().Add(-time.Second),
+					},
+					{
+						Id:       1,
+						Inputs:   []input.Input{},
+						InUse:    false,
+						lastUsed: time.Now().Add(-2 * time.Second),
+					},
+				},
+			},
+			prompt:         []input.Input{{Token: 1}, {Token: 2}, {Token: 3}},
+			wantErr:        false,
+			expectedSlotId: 0,
+			expectedPrompt: 1, // Only token 3 remains
+		},
+		{
+			name: "Basic cache hit - multi user",
+			cache: InputCache{
+				multiUserCache: true,
+				slots: []InputCacheSlot{
+					{
+						Id:       0,
+						Inputs:   []input.Input{{Token: 1}, {Token: 2}},
+						InUse:    false,
+						lastUsed: time.Now().Add(-time.Second),
+					},
+					{
+						Id:       1,
+						Inputs:   []input.Input{},
+						InUse:    false,
+						lastUsed: time.Now().Add(-2 * time.Second),
+					},
+				},
+			},
+			prompt:         []input.Input{{Token: 1}, {Token: 2}, {Token: 3}},
+			wantErr:        false,
+			expectedSlotId: 0,
+			expectedPrompt: 1, // Only token 3 remains
+		},
+		{
+			name: "Exact match - leave one input",
+			cache: InputCache{
+				multiUserCache: false,
+				slots: []InputCacheSlot{
+					{
+						Id:       0,
+						Inputs:   []input.Input{{Token: 1}, {Token: 2}},
+						InUse:    false,
+						lastUsed: time.Now().Add(-time.Second),
+					},
+				},
+			},
+			prompt:         []input.Input{{Token: 1}, {Token: 2}},
+			wantErr:        false,
+			expectedSlotId: 0,
+			expectedPrompt: 1, // Should leave 1 token for sampling
+		},
+		{
+			name: "No available slots",
+			cache: InputCache{
+				multiUserCache: false,
+				slots: []InputCacheSlot{
+					{
+						Id:       0,
+						Inputs:   []input.Input{{Token: 1}, {Token: 2}},
+						InUse:    true,
+						lastUsed: time.Now().Add(-time.Second),
+					},
+				},
+			},
+			prompt:         []input.Input{{Token: 1}, {Token: 2}, {Token: 3}},
+			wantErr:        true,
+			expectedSlotId: -1,
+			expectedPrompt: -1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			slot, remainingPrompt, err := tt.cache.LoadCacheSlot(tt.prompt)
+
+			// Check error state
+			if (err != nil) != tt.wantErr {
+				t.Errorf("LoadCacheSlot() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr {
+				return // Skip further checks if we expected an error
+			}
+
+			// Verify slot ID
+			if slot.Id != tt.expectedSlotId {
+				t.Errorf("LoadCacheSlot() slot ID = %v, expected %v", slot.Id, tt.expectedSlotId)
+			}
+
+			// Verify slot is now marked in use
+			if !slot.InUse {
+				t.Errorf("LoadCacheSlot() slot not marked InUse")
+			}
+
+			// Verify remaining prompt length
+			if len(remainingPrompt) != tt.expectedPrompt {
+				t.Errorf("LoadCacheSlot() remaining prompt length = %v, expected %v",
+					len(remainingPrompt), tt.expectedPrompt)
 			}
 		})
 	}

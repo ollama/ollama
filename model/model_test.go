@@ -11,6 +11,7 @@ import (
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/backend/ggml"
 	"github.com/ollama/ollama/ml/nn"
+	"github.com/ollama/ollama/model/input"
 )
 
 func TestParseTags(t *testing.T) {
@@ -162,7 +163,7 @@ func TestGetTextProcessor(t *testing.T) {
 
 type notTextProcessorModel struct{}
 
-func (notTextProcessorModel) Forward(ml.Context, Options) (ml.Tensor, error) {
+func (notTextProcessorModel) Forward(ml.Context, input.Batch) (ml.Tensor, error) {
 	panic("unimplemented")
 }
 

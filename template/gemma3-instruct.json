@@ -1,0 +1,6 @@
+{
+  "stop": [
+    "<end_of_turn>"
+  ],
+  "temperature": 0.1
+}

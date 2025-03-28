@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -568,8 +569,9 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 	parameters, errParams := cmd.Flags().GetBool("parameters")
 	system, errSystem := cmd.Flags().GetBool("system")
 	template, errTemplate := cmd.Flags().GetBool("template")
+	verbose, errVerbose := cmd.Flags().GetBool("verbose")
 
-	for _, boolErr := range []error{errLicense, errModelfile, errParams, errSystem, errTemplate} {
+	for _, boolErr := range []error{errLicense, errModelfile, errParams, errSystem, errTemplate, errVerbose} {
 		if boolErr != nil {
 			return errors.New("error retrieving flags")
 		}
@@ -607,7 +609,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return errors.New("only one of '--license', '--modelfile', '--parameters', '--system', or '--template' can be specified")
 	}
 
-	req := api.ShowRequest{Name: args[0]}
+	req := api.ShowRequest{Name: args[0], Verbose: verbose}
 	resp, err := client.Show(cmd.Context(), &req)
 	if err != nil {
 		return err
@@ -630,10 +632,10 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	return showInfo(resp, os.Stdout)
+	return showInfo(resp, verbose, os.Stdout)
 }
 
-func showInfo(resp *api.ShowResponse, w io.Writer) error {
+func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 	tableRender := func(header string, rows func() [][]string) {
 		fmt.Fprintln(w, " ", header)
 		table := tablewriter.NewWriter(w)
@@ -685,6 +687,47 @@ func showInfo(resp *api.ShowResponse, w io.Writer) error {
 				if text := scanner.Text(); text != "" {
 					rows = append(rows, append([]string{""}, strings.Fields(text)...))
 				}
+			}
+			return
+		})
+	}
+
+	if resp.ModelInfo != nil && verbose {
+		tableRender("Metadata", func() (rows [][]string) {
+			keys := make([]string, 0, len(resp.ModelInfo))
+			for k := range resp.ModelInfo {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+
+			for _, k := range keys {
+				var v string
+				switch vData := resp.ModelInfo[k].(type) {
+				case bool:
+					v = fmt.Sprintf("%t", vData)
+				case string:
+					v = vData
+				case float64:
+					v = fmt.Sprintf("%g", vData)
+				case []any:
+					n := 3
+					if len(vData) < n {
+						n = len(vData)
+					}
+					v = fmt.Sprintf("%v", vData[:n])
+				default:
+					v = fmt.Sprintf("%T", vData)
+				}
+				rows = append(rows, []string{"", k, v})
+			}
+			return
+		})
+	}
+
+	if len(resp.Tensors) > 0 && verbose {
+		tableRender("Tensors", func() (rows [][]string) {
+			for _, t := range resp.Tensors {
+				rows = append(rows, []string{"", t.Name, t.Type, fmt.Sprint(t.Shape)})
 			}
 			return
 		})
@@ -1196,6 +1239,7 @@ func NewCLI() *cobra.Command {
 	showCmd.Flags().Bool("parameters", false, "Show parameters of a model")
 	showCmd.Flags().Bool("template", false, "Show template of a model")
 	showCmd.Flags().Bool("system", false, "Show system message of a model")
+	showCmd.Flags().BoolP("verbose", "v", false, "Show detailed model information")
 
 	runCmd := &cobra.Command{
 		Use:     "run MODEL [PROMPT]",

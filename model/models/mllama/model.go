@@ -12,6 +12,7 @@ import (
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
 	"github.com/ollama/ollama/model"
+	"github.com/ollama/ollama/model/input"
 )
 
 type Model struct {
@@ -62,6 +63,10 @@ func New(c ml.Config) (model.Model, error) {
 }
 
 func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, error) {
+	if len(m.VisionModel.Transformer.Layers) == 0 || len(m.GlobalTransformer.Layers) == 0 {
+		return nil, model.ErrNoVisionModel
+	}
+
 	image, _, err := image.Decode(bytes.NewReader(multimodalData))
 	if err != nil {
 		return nil, err
@@ -101,17 +106,17 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 	return m.Projector.Forward(ctx, crossAttentionStates), nil
 }
 
-func (m *Model) PostTokenize(ctx ml.Context, inputs []model.Input) ([]model.Input, error) {
-	var images []model.Input
+func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
+	var images []input.Input
 	fnvHash := fnv.New64a()
 
 	for i := range inputs {
 		if inputs[i].Multimodal == nil {
 			if len(images) > 0 {
-				inputs[i].Multimodal = images[0].Multimodal
+				inputs[i].Multimodal = []ml.Tensor{images[0].Multimodal.(ml.Tensor)}
 				inputs[i].MultimodalHash = images[0].MultimodalHash
 				for j := 1; j < len(images); j++ {
-					inputs[i].Multimodal = inputs[i].Multimodal.(ml.Tensor).Concat(ctx, images[j].Multimodal.(ml.Tensor), 3)
+					inputs[i].Multimodal = append(inputs[i].Multimodal.([]ml.Tensor), images[0].Multimodal.(ml.Tensor))
 					fnvHash.Reset()
 					binary.Write(fnvHash, binary.NativeEndian, inputs[i].MultimodalHash)
 					binary.Write(fnvHash, binary.NativeEndian, inputs[j].MultimodalHash)
@@ -125,34 +130,32 @@ func (m *Model) PostTokenize(ctx ml.Context, inputs []model.Input) ([]model.Inpu
 		}
 	}
 
-	inputs = slices.DeleteFunc(inputs, func(input model.Input) bool { return input.Token == -1 })
+	inputs = slices.DeleteFunc(inputs, func(input input.Input) bool { return input.Token == -1 })
 
 	return inputs, nil
 }
 
-func (m *Model) Forward(ctx ml.Context, opts model.Options) (ml.Tensor, error) {
+func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	var crossAttentionStates ml.Tensor
-	if opts.Multimodal != nil {
-		crossAttentionStates = opts.Multimodal[0].Multimodal.(ml.Tensor)
+	if len(batch.Multimodal) > 0 {
+		images := batch.Multimodal[len(batch.Multimodal)-1].Multimodal.([]ml.Tensor)
+		if len(images) > 0 {
+			crossAttentionStates = images[len(images)-1]
+		}
 	}
 
-	inputs, err := ctx.Input().FromIntSlice(opts.Inputs, len(opts.Inputs))
+	positions, err := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
 	if err != nil {
 		return nil, err
 	}
 
-	positions, err := ctx.Input().FromIntSlice(opts.Positions, len(opts.Positions))
-	if err != nil {
-		return nil, err
-	}
-
-	outputs, err := ctx.Output().FromIntSlice(opts.Outputs, len(opts.Outputs))
+	outputs, err := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
 	if err != nil {
 		return nil, err
 	}
 
 	// TODO: attention mask, cross attention mask
-	return m.TextModel.Forward(ctx, inputs, positions, outputs, nil, crossAttentionStates, nil, m.Cache.(*kvcache.WrapperCache)), nil
+	return m.TextModel.Forward(ctx, batch.Inputs, positions, outputs, nil, crossAttentionStates, nil, m.Cache.(*kvcache.WrapperCache)), nil
 }
 
 func init() {

@@ -9,15 +9,17 @@ package ggml
 import "C"
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
 	"maps"
 	"os"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"unicode"
 	"unsafe"
 
@@ -46,9 +48,6 @@ type Backend struct {
 	// input is the backend used for inputs
 	input *C.struct_ggml_backend_buffer_type
 
-	// output is the backend used for outputs
-	output *C.struct_ggml_backend_buffer_type
-
 	// layers is the backend used for repeating layers
 	layers map[int]*C.struct_ggml_backend_buffer_type
 
@@ -58,7 +57,7 @@ type Backend struct {
 	maxGraphNodes int
 }
 
-func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
+func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, error) {
 	meta, n, err := fs.Decode(r, -1)
 	if err != nil {
 		return nil, err
@@ -240,11 +239,22 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 		switch {
 		case contains(t.Name, "position_embd", "token_embd", "token_norm_embd", "token_types"):
 			createTensor(tensor{source: t}, input.bts)
+			if _, ok := meta.Tensors().GroupLayers()["output"]; !ok && t.Name == "token_embd.weight" {
+				createTensor(tensor{source: t, target: "output.weight"}, output.bts)
+			}
 		case contains(t.Name, "cls", "output", "output_norm"):
 			createTensor(tensor{source: t}, output.bts)
 		case strings.HasPrefix(t.Name, "v.") || strings.HasPrefix(t.Name, "mm."):
 			// TODO: assign vision tensors to the gpu if possible
-			createTensor(tensor{source: t}, input.bts)
+			createTensor(tensor{source: t}, output.bts)
+		case contains(t.Name, "rope_freqs", "rope_factors_long", "rope_factors_short"):
+			// these tensors should be repeated per layer
+			for i, layer := range layers {
+				createTensor(tensor{
+					source: t,
+					target: "blk." + strconv.Itoa(i) + "." + t.Name,
+				}, layer.bts)
+			}
 		default:
 			layerIndex := -1
 			if fields := strings.FieldsFunc(t.Name, func(r rune) bool { return !unicode.IsNumber(r) }); len(fields) > 0 {
@@ -256,14 +266,8 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 			if layerIndex >= 0 {
 				createTensor(tensor{source: t}, layers[layerIndex].bts)
 			} else {
-				// this is a repeating tensor that doesn't explicitly associated with a layer so
-				// duplicate it for each layer
-				for i, layer := range layers {
-					createTensor(tensor{
-						source: t,
-						target: "blk." + strconv.Itoa(i) + "." + t.Name,
-					}, layer.bts)
-				}
+				// load all other tensors on the cpu
+				createTensor(tensor{source: t}, input.bts)
 			}
 		}
 	}
@@ -292,12 +296,16 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 		}
 	}
 
-	// concurrently read in tensor data. uses a section reader which is safe for concurrent reads
-	sr := io.NewSectionReader(r, int64(meta.Tensors().Offset), n-int64(meta.Tensors().Offset))
-	var g errgroup.Group
+	var doneBytes atomic.Uint64
+	totalBytes := uint64(n) - meta.Tensors().Offset
+
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(runtime.GOMAXPROCS(0))
 	for _, t := range meta.Tensors().Items() {
-		for _, target := range targets[t.Name] {
-			g.Go(func() error {
+		g.Go(func() error {
+			tts := make([]*C.struct_ggml_tensor, max(1, len(targets[t.Name])))
+			for i := range tts {
+				target := targets[t.Name][i]
 				if target == "" {
 					target = t.Name
 				}
@@ -307,23 +315,44 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 					return fmt.Errorf("unassigned tensor: %s", t.Name)
 				}
 
-				bts := make([]byte, t.Size())
-				n, err := io.ReadFull(io.NewSectionReader(sr, int64(t.Offset), int64(t.Size())), bts)
+				tts[i] = tt
+			}
+
+			sr := io.NewSectionReader(r, int64(meta.Tensors().Offset+t.Offset), int64(t.Size()))
+			bts := make([]byte, 128*format.KibiByte)
+
+			var s uint64
+			for s < t.Size() {
+				n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Size()-s))])
 				if err != nil {
 					return err
 				}
 
-				if n != len(bts) {
-					return errors.New("short read")
+				for _, tt := range tts {
+					C.ggml_backend_tensor_set(tt, unsafe.Pointer(&bts[0]), C.size_t(s), C.size_t(n))
 				}
 
-				C.ggml_backend_tensor_set(tt, unsafe.Pointer(&bts[0]), 0, C.size_t(t.Size()))
-				return nil
-			})
-		}
+				s += uint64(n)
+
+				if params.Progress != nil {
+					done := doneBytes.Add(uint64(n))
+					params.Progress(float32(done) / float32(totalBytes))
+				}
+			}
+
+			return nil
+		})
 	}
 
-	if g.Wait() != nil {
+	// start a goroutine to cancel the errgroup if the parent context is done
+	go func() {
+		<-ctx.Done()
+		g.Go(func() error {
+			return ctx.Err()
+		})
+	}()
+
+	if err := g.Wait(); err != nil {
 		return nil, err
 	}
 
@@ -352,7 +381,7 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 
 		if C.ggml_backend_is_cpu(b) {
 			// set number of threads for cpu backend
-			C.ggml_backend_cpu_set_n_threads(b, C.int(params.NumThreads))
+			C.ggml_backend_cpu_set_n_threads(b, C.int(Threads(params.NumThreads)))
 		}
 	}
 
@@ -366,10 +395,9 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 			(*C.ggml_backend_buffer_type_t)(unsafe.Pointer(&schedBufts[0])),
 			C.int(len(schedBackends)),
 			C.size_t(maxGraphNodes),
-			true,
+			C._Bool(len(gpus) > 1 && slices.Contains(gpus, output.d)),
 		),
-		input:  deviceBufferTypes[input.d],
-		output: deviceBufferTypes[output.d],
+		input: deviceBufferTypes[input.d],
 		layers: func() map[int]*C.struct_ggml_backend_buffer_type {
 			m := make(map[int]*C.struct_ggml_backend_buffer_type)
 			for i, layer := range layers {
@@ -443,19 +471,6 @@ func (c Context) Input() ml.Context {
 			b:             c.b,
 			ctx:           c.ctx,
 			buft:          c.b.input,
-			maxGraphNodes: c.maxGraphNodes,
-		}
-	}
-
-	return &c
-}
-
-func (c Context) Output() ml.Context {
-	if c.b.output != nil {
-		return &Context{
-			b:             c.b,
-			ctx:           c.ctx,
-			buft:          c.b.output,
 			maxGraphNodes: c.maxGraphNodes,
 		}
 	}
@@ -893,10 +908,13 @@ func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 }
 
 const (
-	ropeTypeNorm C.int = iota
+	ropeTypeNorm   C.int = 0
+	ropeTypeNeox   C.int = 2
+	ropeTypeMrope  C.int = 8
+	ropeTypeVision C.int = 24
 )
 
-func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim uint32, ropeBase, ropeScale float32) ml.Tensor {
+func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim, ropeType uint32, ropeBase, ropeScale float32) ml.Tensor {
 	if ropeFactors == nil {
 		ropeFactors = &Tensor{b: t.b}
 	}
@@ -911,8 +929,8 @@ func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDi
 		t: C.ggml_rope_ext(
 			ctx.(*Context).ctx, dequant, positionIDs.(*Tensor).t, ropeFactors.(*Tensor).t,
 			C.int(ropeDim),
-			131072,       // YaRN n_ctx_train
-			ropeTypeNorm, // ROPE_TYPE_NORM
+			C.int(ropeType),
+			131072, // YaRN n_ctx_train
 			C.float(ropeBase),
 			C.float(ropeScale),
 			0.,  // YaRN ext_factor
@@ -942,6 +960,27 @@ func (t *Tensor) Conv2D(ctx ml.Context, t2 ml.Tensor, s0, s1, p0, p1, d0, d1 int
 		b: t.b,
 		t: C.ggml_conv_2d(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.int(s0), C.int(s1), C.int(p0), C.int(p1), C.int(d0), C.int(d1)),
 	}
+}
+
+func (t *Tensor) AvgPool2D(ctx ml.Context, k, s int, p float32) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_pool_2d(ctx.(*Context).ctx, t.t, C.GGML_OP_POOL_AVG, C.int(k), C.int(k), C.int(s), C.int(s), C.float(p), C.float(p)),
+	}
+}
+
+func (t *Tensor) Set(ctx ml.Context, t2 ml.Tensor, offset int, strides ...int) ml.Tensor {
+	var tt *C.struct_ggml_tensor
+	switch len(strides) {
+	case 0:
+		tt = C.ggml_set_1d(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.size_t(offset))
+	case 1:
+		tt = C.ggml_set_2d(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.size_t(offset), C.size_t(strides[0]))
+	default:
+		panic("unsupported number of dimensions")
+	}
+
+	return &Tensor{b: t.b, t: tt}
 }
 
 func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask ml.Tensor, scale float64) ml.Tensor {

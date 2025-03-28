@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/model/input"
 )
 
 type testCase struct {
@@ -24,7 +25,7 @@ func TestStore(t *testing.T) {
 	cache := NewCausalCache(nil)
 	defer cache.Close()
 
-	cache.Init(backend, ml.DTypeF16, 16)
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
 
 	tests := []testCase{
 		{
@@ -57,11 +58,11 @@ func TestSWA(t *testing.T) {
 	cache := NewSWACache(1, nil)
 	defer cache.Close()
 
-	cache.Init(backend, ml.DTypeF32, 16)
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
 
 	tests := []testCase{
 		{
-			name:          "SlidingWindow",
+			name:          "FirstBatch",
 			in:            []float32{1, 2, 3, 4},
 			inShape:       []int{1, 1, 4},
 			seqs:          []int{0, 0, 0, 0},
@@ -69,6 +70,16 @@ func TestSWA(t *testing.T) {
 			expected:      []float32{1, 2, 3, 4},
 			expectedShape: []int{1, 1, 4},
 			expectedMask:  []float32{0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0},
+		},
+		{
+			name:          "SecondBatch",
+			in:            []float32{5, 6},
+			inShape:       []int{1, 1, 2},
+			seqs:          []int{0, 0},
+			pos:           []int32{4, 5},
+			expected:      []float32{5, 6, 3, 4},
+			expectedShape: []int{1, 1, 4},
+			expectedMask:  []float32{0, float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1))},
 		},
 	}
 
@@ -80,7 +91,7 @@ func TestSequences(t *testing.T) {
 	cache := NewCausalCache(nil)
 	defer cache.Close()
 
-	cache.Init(backend, ml.DTypeF16, 16)
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
 
 	tests := []testCase{
 		{
@@ -115,7 +126,7 @@ func TestRemove(t *testing.T) {
 	})
 	defer cache.Close()
 
-	cache.Init(backend, ml.DTypeF16, 16)
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
 
 	tests := []testCase{
 		{
@@ -180,7 +191,7 @@ func TestDefrag(t *testing.T) {
 	})
 	defer cache.Close()
 
-	cache.Init(backend, ml.DTypeF16, 16)
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
 
 	tests := []testCase{
 		{
@@ -228,7 +239,7 @@ func TestCopy(t *testing.T) {
 	cache := NewCausalCache(func(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) { return key, nil })
 	defer cache.Close()
 
-	cache.Init(backend, ml.DTypeF16, 16)
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
 
 	tests := []testCase{
 		{
@@ -269,7 +280,7 @@ func testCache(t *testing.T, backend ml.Backend, cache Cache, tests []testCase) 
 			context := backend.NewContext()
 			defer context.Close()
 
-			err := cache.StartForward(context, test.pos, test.seqs)
+			err := cache.StartForward(context, input.Batch{Positions: test.pos, Sequences: test.seqs})
 			if err != nil {
 				panic(err)
 			}
@@ -351,7 +362,6 @@ func (c *testContext) FromIntSlice(s []int32, shape ...int) (ml.Tensor, error) {
 }
 
 func (c *testContext) Input() ml.Context    { return c }
-func (c *testContext) Output() ml.Context   { return c }
 func (c *testContext) Layer(int) ml.Context { return c }
 
 func (c *testContext) Forward(...ml.Tensor) ml.Context { return c }
@@ -440,11 +450,19 @@ func (t *testTensor) Scale(ctx ml.Context, s float64) ml.Tensor {
 	panic("not implemented")
 }
 
+func (t *testTensor) AvgPool1D(ctx ml.Context, k, s, p int) ml.Tensor {
+	panic("not implemented")
+}
+
+func (t *testTensor) AvgPool2D(ctx ml.Context, k, s int, p float32) ml.Tensor {
+	panic("not implemented")
+}
+
 func (t *testTensor) Conv2D(ctx ml.Context, weight ml.Tensor, s0, s1, p0, p1, d0, d1 int) ml.Tensor {
 	panic("not implemented")
 }
 
-func (t *testTensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, dim uint32, base, scale float32) ml.Tensor {
+func (t *testTensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, dim, ropeType uint32, base, scale float32) ml.Tensor {
 	panic("not implemented")
 }
 
@@ -491,6 +509,10 @@ func (t *testTensor) Permute(ctx ml.Context, shape ...int) ml.Tensor {
 }
 
 func (t *testTensor) Contiguous(ctx ml.Context) ml.Tensor {
+	panic("not implemented")
+}
+
+func (t *testTensor) Set(ctx ml.Context, t2 ml.Tensor, offset int, strides ...int) ml.Tensor {
 	panic("not implemented")
 }
 
