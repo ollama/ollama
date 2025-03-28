@@ -31,7 +31,7 @@ const maxRetries = 6
 var (
 	errMaxRetriesExceeded   = errors.New("max retries exceeded")
 	errPartStalled          = errors.New("part stalled")
-	errMaxRedirectsExceeded = errors.New("maximum redirects (10) exceeded for direct URL")
+	errMaxRedirectsExceeded = errors.New("maximum redirects exceeded (10) for directURL")
 )
 
 var blobDownloadManager sync.Map
