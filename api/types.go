@@ -503,6 +503,15 @@ func (m *Metrics) Summary() {
 	}
 }
 
+func (opts *Options) ApplyFixedContextLength() error {
+	if envconfig.FixedContextLength() > 0 {
+		opts.NumCtx = int(envconfig.FixedContextLength())
+		slog.Info("context length is set to fixed length", "opts.NumCtx", opts.NumCtx)
+	}
+
+	return nil
+}
+
 func (opts *Options) FromMap(m map[string]interface{}) error {
 	valueOpts := reflect.ValueOf(opts).Elem() // names of the fields in the options struct
 	typeOpts := reflect.TypeOf(opts).Elem()   // types of the fields in the options struct

@@ -292,3 +292,19 @@ func TestContextLength(t *testing.T) {
 		})
 	}
 }
+
+func TestFixedContextLength(t *testing.T) {
+	cases := map[string]uint{
+		"":     0,
+		"4096": 4096,
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			t.Setenv("OLLAMA_FIXED_CTX_LENGTH", k)
+			if i := FixedContextLength(); i != v {
+				t.Errorf("%s: expected %d, got %d", k, v, i)
+			}
+		})
+	}
+}

@@ -82,6 +82,10 @@ func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options
 		return api.Options{}, err
 	}
 
+	if err := opts.ApplyFixedContextLength(); err != nil {
+		return api.Options{}, err
+	}
+
 	return opts, nil
 }
 

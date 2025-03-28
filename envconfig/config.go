@@ -170,6 +170,8 @@ var (
 	NewEngine = Bool("OLLAMA_NEW_ENGINE")
 	// ContextLength sets the default context length
 	ContextLength = Uint("OLLAMA_CONTEXT_LENGTH", 2048)
+	// FixedContextLength eliminates the overhead of model reloading
+	FixedContextLength = Uint("OLLAMA_FIXED_CTX_LENGTH", 0)
 )
 
 func String(s string) func() string {
@@ -256,6 +258,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_SCHED_SPREAD":      {"OLLAMA_SCHED_SPREAD", SchedSpread(), "Always schedule model across all GPUs"},
 		"OLLAMA_MULTIUSER_CACHE":   {"OLLAMA_MULTIUSER_CACHE", MultiUserCache(), "Optimize prompt caching for multi-user scenarios"},
 		"OLLAMA_CONTEXT_LENGTH":    {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 2048)"},
+		"OLLAMA_FIXED_CTX_LENGTH":  {"OLLAMA_FIXED_CTX_LENGTH", FixedContextLength(), "Override context length obtained from model or request settings"},
 		"OLLAMA_NEW_ENGINE":        {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
 
 		// Informational
