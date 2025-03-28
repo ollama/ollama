@@ -246,7 +246,7 @@ func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int) error {
 		// For models that support shifting, attempt to shift the KV cache
 		if !c.lc.KvCacheSeqRm(slot.Id, numKeep, numKeep+discard) {
 			shiftFailed = true
-			slog.Debug("kv cache removal failed, clearing cache and returning inputs for reprocessing", "id", slot.Id)
+			slog.Debug("kv cache removal not supported, clearing cache and returning inputs for reprocessing", "id", slot.Id)
 		} else {
 			c.lc.KvCacheSeqAdd(slot.Id, numKeep+discard, inputLen, -discard)
 		}
@@ -257,14 +257,13 @@ func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int) error {
 	}
 
 	if shiftFailed {
-		// Clear the entire KV cache
-		_ = c.lc.KvCacheSeqRm(slot.Id, 0, -1)
-
 		// Create new input slice with preserved tokens (numKeep + remaining tokens after discard)
 		newInputs := make([]input, numKeep+inputLen-(numKeep+discard))
 		copy(newInputs[:numKeep], slot.Inputs[:numKeep])
 		copy(newInputs[numKeep:], slot.Inputs[numKeep+discard:])
 
+		// Clear the entire KV cache
+		_ = c.lc.KvCacheSeqRm(slot.Id, 0, -1)
 		// Reset the slot inputs since we've cleared the cache
 		slot.Inputs = []input{}
 

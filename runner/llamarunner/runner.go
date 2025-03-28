@@ -394,6 +394,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 							// Prepend these inputs to the sequence's inputs queue for reprocessing
 							seq.inputs = append(reprocess.Inputs, seq.inputs...)
 							// Continue processing as normal
+							continue
 						} else {
 							return err
 						}

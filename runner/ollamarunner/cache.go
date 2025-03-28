@@ -269,18 +269,16 @@ func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int32) error {
 	if c.cache != nil {
 		err := c.cache.Remove(slot.Id, numKeep, numKeep+discard)
 		if err != nil {
-			slog.Debug("kv cache removal failed, clearing cache and returning inputs for reprocessing",
+			slog.Debug("kv cache removal unsupported, clearing cache and returning inputs for reprocessing",
 				"id", slot.Id, "error", err)
-
-			// Clear the entire KV cache
-			_ = c.cache.Remove(slot.Id, 0, -1)
 
 			// Create new input slice with preserved tokens (numKeep + remaining tokens after discard)
 			newInputs := make([]input.Input, numKeep+inputLen-(numKeep+discard))
 			copy(newInputs[:numKeep], slot.Inputs[:numKeep])
 			copy(newInputs[numKeep:], slot.Inputs[numKeep+discard:])
 
-			// Reset the slot inputs since we've cleared the cache
+			// Reset the cache
+			_ = c.cache.Remove(slot.Id, 0, -1)
 			slot.Inputs = []input.Input{}
 
 			// Return error with inputs that need to be reprocessed
