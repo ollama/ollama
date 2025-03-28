@@ -727,6 +727,13 @@ func (t *Tensor) DType() ml.DType {
 	}
 }
 
+func (t *Tensor) Neg(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_neg(ctx.(*Context).ctx, t.t),
+	}
+}
+
 func (t *Tensor) Add(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -867,6 +874,20 @@ func (t *Tensor) Softmax(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_soft_max(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Sin(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_sin(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Cos(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_cos(ctx.(*Context).ctx, t.t),
 	}
 }
 
