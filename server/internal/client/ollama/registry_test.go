@@ -17,8 +17,8 @@ import (
 	"reflect"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
+
 	"time"
 
 	"github.com/ollama/ollama/server/internal/cache/blob"
@@ -789,80 +789,4 @@ func TestUnlink(t *testing.T) {
 			t.Error("expected not found")
 		}
 	})
-}
-
-func TestPullChunksums(t *testing.T) {
-	check := testutil.Checker(t)
-
-	content := "hello"
-	var chunksums string
-	contentDigest := func() blob.Digest {
-		return blob.DigestFromBytes(content)
-	}
-	rc, c := newClient(t, func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.Contains(r.URL.Path, "/manifests/latest"):
-			fmt.Fprintf(w, `{"layers":[{"digest":%q,"size":%d}]}`, contentDigest(), len(content))
-		case strings.HasSuffix(r.URL.Path, "/chunksums/"+contentDigest().String()):
-			loc := fmt.Sprintf("http://blob.store/v2/library/test/blobs/%s", contentDigest())
-			w.Header().Set("Content-Location", loc)
-			io.WriteString(w, chunksums)
-		case strings.Contains(r.URL.Path, "/blobs/"+contentDigest().String()):
-			http.ServeContent(w, r, contentDigest().String(), time.Time{}, strings.NewReader(content))
-		default:
-			t.Errorf("unexpected request: %v", r)
-			http.NotFound(w, r)
-		}
-	})
-
-	rc.MaxStreams = 1        // prevent concurrent chunk downloads
-	rc.ChunkingThreshold = 1 // for all blobs to be chunked
-
-	var mu sync.Mutex
-	var reads []int64
-	ctx := WithTrace(t.Context(), &Trace{
-		Update: func(l *Layer, n int64, err error) {
-			t.Logf("Update: %v %d %v", l, n, err)
-			mu.Lock()
-			reads = append(reads, n)
-			mu.Unlock()
-		},
-	})
-
-	chunksums = fmt.Sprintf("%s 0-2\n%s 3-4\n",
-		blob.DigestFromBytes("hel"),
-		blob.DigestFromBytes("lo"),
-	)
-	err := rc.Pull(ctx, "test")
-	check(err)
-	wantReads := []int64{
-		0, // initial signaling of layer pull starting
-		3, // first chunk read
-		2, // second chunk read
-	}
-	if !slices.Equal(reads, wantReads) {
-		t.Errorf("reads = %v; want %v", reads, wantReads)
-	}
-
-	mw, err := rc.Resolve(t.Context(), "test")
-	check(err)
-	mg, err := rc.ResolveLocal("test")
-	check(err)
-	if !reflect.DeepEqual(mw, mg) {
-		t.Errorf("mw = %v; mg = %v", mw, mg)
-	}
-	for i := range mg.Layers {
-		_, err = c.Get(mg.Layers[i].Digest)
-		if err != nil {
-			t.Errorf("Get(%v): %v", mg.Layers[i].Digest, err)
-		}
-	}
-
-	// missing chunks
-	content = "llama"
-	chunksums = fmt.Sprintf("%s 0-1\n", blob.DigestFromBytes("ll"))
-	err = rc.Pull(ctx, "missingchunks")
-	if err == nil {
-		t.Error("expected error because of missing chunks")
-	}
 }

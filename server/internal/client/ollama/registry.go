@@ -514,13 +514,40 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 				break
 			}
 
+			cacheKey := fmt.Sprintf(
+				"v1 pull chunksum %s %s %d-%d",
+				l.Digest,
+				cs.Digest,
+				cs.Chunk.Start,
+				cs.Chunk.End,
+			)
+			cacheKeyDigest := blob.DigestFromBytes(cacheKey)
+			_, err := c.Get(cacheKeyDigest)
+			if err == nil {
+				received.Add(cs.Chunk.Size())
+				t.update(l, cs.Chunk.Size(), ErrCached)
+				continue
+			}
+
 			wg.Add(1)
 			g.Go(func() (err error) {
 				defer func() {
 					if err == nil {
+						// Ignore cache key write errors for now. We've already
+						// reported to trace that the chunk is complete.
+						//
+						// Ideally, we should only report completion to trace
+						// after successful cache commit. This current approach
+						// works but could trigger unnecessary redownloads if
+						// the checkpoint key is missing on next pull.
+						//
+						// Not incorrect, just suboptimal - fix this in a
+						// future update.
+						_ = blob.PutBytes(c, cacheKeyDigest, cacheKey)
+
 						received.Add(cs.Chunk.Size())
 					} else {
-						err = fmt.Errorf("error downloading %s: %w", cs.Digest.Short(), err)
+						t.update(l, 0, err)
 					}
 					wg.Done()
 				}()
@@ -563,7 +590,7 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 		return err
 	}
 	if received.Load() != expected {
-		return fmt.Errorf("%w: received %d/%d", ErrIncomplete, received.Load(), expected)
+		return fmt.Errorf("%w: received %d/%d bytes", ErrIncomplete, received.Load(), expected)
 	}
 
 	md := blob.DigestFromBytes(m.Data)
@@ -606,6 +633,30 @@ func (m *Manifest) Layer(d blob.Digest) *Layer {
 		}
 	}
 	return nil
+}
+
+func (m *Manifest) All() iter.Seq[*Layer] {
+	return func(yield func(*Layer) bool) {
+		if !yield(m.Config) {
+			return
+		}
+		for _, l := range m.Layers {
+			if !yield(l) {
+				return
+			}
+		}
+	}
+}
+
+func (m *Manifest) Size() int64 {
+	var size int64
+	if m.Config != nil {
+		size += m.Config.Size
+	}
+	for _, l := range m.Layers {
+		size += l.Size
+	}
+	return size
 }
 
 // MarshalJSON implements json.Marshaler.
