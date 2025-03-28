@@ -1,0 +1,28 @@
+#version 450
+
+#include "types.comp"
+#include "generic_unary_head.comp"
+
+layout(local_size_x = 512, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    const uint idx = gl_GlobalInvocationID.z * 262144 + gl_GlobalInvocationID.y * 512 + gl_GlobalInvocationID.x;
+
+    if (idx >= p.ne) {
+        return;
+    }
+
+    const uint i3 = idx / (p.ne12*p.ne11*p.ne10);
+    const uint i3_offset = i3 * p.ne12*p.ne11*p.ne10;
+    const uint i2 = (idx - i3_offset) / (p.ne11*p.ne10);
+    const uint i2_offset = i2*p.ne11*p.ne10;
+    const uint i1 = (idx - i3_offset - i2_offset) / p.ne10;
+    const uint i0 = idx - i3_offset - i2_offset - i1*p.ne10;
+
+    const uint src0_idx = i3*p.nb03 + i2*p.nb02 + i1*p.nb01 + i0*p.nb00;
+    const uint dst_idx = i3*p.nb13 + i2*p.nb12 + i1*p.nb11 + i0*p.nb10;
+
+    const bool is_src0 = i0 < p.ne00 && i1 < p.ne01 && i2 < p.ne02 && i3 < p.ne03;
+
+    data_d[get_doffset() + dst_idx] = D_TYPE(is_src0 ? data_a[get_aoffset() + src0_idx] : 0.0f);
+}

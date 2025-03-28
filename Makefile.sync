@@ -36,7 +36,7 @@ PATCHES=$(wildcard llama/patches/*.patch)
 apply-patches: $(addsuffix ed, $(PATCHES))
 
 %.patched: %.patch
-	@if git -c user.name=nobody -c 'user.email=<>' -C $(WORKDIR) am -3 $(realpath $<); then touch $@; else git -C $(WORKDIR) am --abort; exit 1; fi
+	@if git -c commit.gpgSign=false -c user.name=nobody -c 'user.email=<>' -C $(WORKDIR) am -3 $(realpath $<); then touch $@; else git -C $(WORKDIR) am --abort; exit 1; fi
 
 .PHONY: checkout
 checkout: $(WORKDIR)
