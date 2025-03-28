@@ -130,6 +130,7 @@ type Tensor interface {
 	Bytes() []byte
 	Floats() []float32
 
+	Neg(ctx Context) Tensor
 	Add(ctx Context, t2 Tensor) Tensor
 	Mul(ctx Context, t2 Tensor) Tensor
 	Mulmat(ctx Context, t2 Tensor) Tensor
@@ -148,6 +149,8 @@ type Tensor interface {
 
 	IM2Col(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
+	Sin(ctx Context) Tensor
+	Cos(ctx Context) Tensor
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context) Tensor
 	SILU(ctx Context) Tensor
