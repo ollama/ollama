@@ -777,7 +777,7 @@ func (s *Server) ShowHandler(c *gin.Context) {
 func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	name := model.ParseName(req.Model)
 	if !name.IsValid() {
-		return nil, errModelPathInvalid
+		return nil, ErrModelPathInvalid
 	}
 	name, err := getExistingName(name)
 	if err != nil {
