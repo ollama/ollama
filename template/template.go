@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -120,6 +121,20 @@ var funcs = template.FuncMap{
 	"json": func(v any) string {
 		b, _ := json.Marshal(v)
 		return string(b)
+	},
+	"sum": func(args ...int) int {
+		var sum int
+		for _, v := range args {
+			sum += v
+		}
+		return sum
+	},
+	"split": func(input, pattern string) ([]string, error) {
+		if r, err := regexp.Compile(pattern); err != nil {
+			return nil, err
+		} else {
+			return r.Split(input, -1), nil
+		}
 	},
 }
 
@@ -309,7 +324,7 @@ func collate(msgs []api.Message) (string, []*api.Message) {
 			system = append(system, msg.Content)
 		}
 
-		if len(collated) > 0 && collated[len(collated)-1].Role == msg.Role {
+		if len(collated) > 0 && collated[len(collated)-1].Role == msg.Role && msg.Role != "tool" {
 			collated[len(collated)-1].Content += "\n\n" + msg.Content
 		} else {
 			collated = append(collated, &msg)
