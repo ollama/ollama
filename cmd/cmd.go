@@ -252,12 +252,36 @@ func StopHandler(cmd *cobra.Command, args []string) error {
 		Model:     args[0],
 		KeepAlive: &api.Duration{Duration: 0},
 	}
-	if err := loadOrUnloadModel(cmd, opts); err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			return fmt.Errorf("couldn't find model \"%s\" to stop", args[0])
+
+	if opts.Model == "all" {
+		client, err := api.ClientFromEnvironment()
+		if err != nil {
+			return err
 		}
-		return err
+
+		models, err := client.List(cmd.Context())
+		if err != nil {
+			return err
+		}
+
+		for _, model := range models.Models {
+			opts.Model = model.Name
+			if err := loadOrUnloadModel(cmd, opts); err != nil {
+				if strings.Contains(err.Error(), "not found") {
+					return fmt.Errorf("couldn't find model \"%s\" to stop", args[0])
+				}
+				return err
+			}
+		}
+	} else {
+		if err := loadOrUnloadModel(cmd, opts); err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				return fmt.Errorf("couldn't find model \"%s\" to stop", args[0])
+			}
+			return err
+		}
 	}
+
 	return nil
 }
 
