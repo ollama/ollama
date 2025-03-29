@@ -498,3 +498,11 @@ type AliasDeleteRequest struct {
 func (c *Client) DeleteAliasExperimental(ctx context.Context, req *AliasDeleteRequest) error {
 	return c.do(ctx, http.MethodDelete, "/api/experimental/aliases", req, nil)
 }
+
+func (c *Client) Search(ctx context.Context, req *SearchRequest) (*SearchResponse, error) {
+	var resp SearchResponse
+	if err := c.do(ctx, http.MethodPost, "/api/search", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
