@@ -392,6 +392,27 @@ type PushRequest struct {
 	Name string `json:"name"`
 }
 
+// SearchRequest is request passed to [Client.Search]
+type SearchRequest struct {
+	Query string `json:"query"`
+	Order string `json:"order"`
+	Category string `json:"category"`
+}
+
+// SearchResponse is response from [Client.Search]
+type SearchResponse struct {
+	Models []SearchModelResponse `json:"models"`
+}
+
+// SearchModelResponse is a single model description in [SearchResponse]
+type SearchModelResponse struct {
+	Name string `json:"name"`
+	Description string `json:"description"` 
+	Sizes string `json:"sizes"`
+	Pulls string `json:"pulls"`
+	Category string `json:"category"`
+}
+
 // ListResponse is the response from [Client.List].
 type ListResponse struct {
 	Models []ListModelResponse `json:"models"`
