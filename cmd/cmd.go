@@ -783,44 +783,53 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	p := progress.NewProgress(os.Stderr)
-	defer p.Stop()
-
-	bars := make(map[string]*progress.Bar)
-
-	var status string
-	var spinner *progress.Spinner
-
-	fn := func(resp api.ProgressResponse) error {
-		if resp.Digest != "" {
-			if spinner != nil {
-				spinner.Stop()
-			}
-
-			bar, ok := bars[resp.Digest]
-			if !ok {
-				bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
-				bars[resp.Digest] = bar
-				p.Add(resp.Digest, bar)
-			}
-
-			bar.Set(resp.Completed)
-		} else if status != resp.Status {
-			if spinner != nil {
-				spinner.Stop()
-			}
-
-			status = resp.Status
-			spinner = progress.NewSpinner(status)
-			p.Add(status, spinner)
-		}
-
-		return nil
+	if len(args) > 1 {
+		fmt.Printf("pulling %d models: %s\n", len(args), strings.Join(args, ", "))
 	}
 
-	request := api.PullRequest{Name: args[0], Insecure: insecure}
-	if err := client.Pull(cmd.Context(), &request, fn); err != nil {
-		return err
+	for i, name := range args {
+		p := progress.NewProgress(os.Stderr)
+		bars := make(map[string]*progress.Bar)
+
+		var status string
+		var spinner *progress.Spinner
+
+		fn := func(resp api.ProgressResponse) error {
+			if resp.Digest != "" {
+				if spinner != nil {
+					spinner.Stop()
+				}
+
+				bar, ok := bars[resp.Digest]
+				if !ok {
+					bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
+					bars[resp.Digest] = bar
+					p.Add(resp.Digest, bar)
+				}
+
+				bar.Set(resp.Completed)
+			} else if status != resp.Status {
+				if spinner != nil {
+					spinner.Stop()
+				}
+
+				status = resp.Status
+				spinner = progress.NewSpinner(status)
+				p.Add(status, spinner)
+			}
+
+			return nil
+		}
+
+		if len(args) > 1 {
+			fmt.Printf("pulling model %d: %s\n", i+1, name)
+		}
+		request := api.PullRequest{Name: name, Insecure: insecure}
+		if err := client.Pull(cmd.Context(), &request, fn); err != nil {
+			return err
+		}
+
+		p.Stop()
 	}
 
 	return nil
@@ -1272,9 +1281,9 @@ func NewCLI() *cobra.Command {
 	}
 
 	pullCmd := &cobra.Command{
-		Use:     "pull MODEL",
-		Short:   "Pull a model from a registry",
-		Args:    cobra.ExactArgs(1),
+		Use:     "pull MODEL [MODEL...]",
+		Short:   "Pull models from a registry",
+		Args:    cobra.MinimumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    PullHandler,
 	}
