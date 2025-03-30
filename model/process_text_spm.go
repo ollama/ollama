@@ -91,7 +91,6 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 			fragments = append(fragments[:i], append(middle, fragments[i+1:]...)...)
 		}
 	}
-	slog.Debug("fragments", "frags", fragments)
 
 	var ids []int32
 	for _, frag := range fragments {
@@ -129,8 +128,6 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 				}
 			}
 
-			slog.Debug("tokenizer", "merges", merges)
-
 			pairwise := func(a, b int) *candidate {
 				if a < 0 || b >= len(runes) {
 					return nil
@@ -153,18 +150,11 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 				}
 			}
 
-			pqv := pq.Values()
-			for _, v := range pqv {
-				e := v.(*candidate)
-				slog.Debug("candidate", "candidate", e)
-			}
-
 			for !pq.Empty() {
 				v, _ := pq.Dequeue()
 				pair := v.(*candidate)
 				left, right := merges[pair.a], merges[pair.b]
 
-				slog.Debug("pair", "left", left, "right", right)
 				if len(left.runes) == 0 || len(right.runes) == 0 {
 					continue
 				}
@@ -188,8 +178,6 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 					pq.Enqueue(pair)
 				}
 			}
-
-			slog.Debug("merges", "merges", merges)
 
 			for _, merge := range merges {
 				if len(merge.runes) > 0 {
@@ -241,6 +229,5 @@ func (spm SentencePieceModel) Decode(ids []int32) (string, error) {
 		}
 	}
 
-	slog.Debug("decoded", "ids", ids, "text", sb.String())
 	return sb.String(), nil
 }
