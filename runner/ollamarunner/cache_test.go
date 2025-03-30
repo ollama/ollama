@@ -451,6 +451,7 @@ func (m *mockCache) Close()                                                     
 func (m *mockCache) StartForward(ctx ml.Context, batch input.Batch) error                          { return nil }
 func (m *mockCache) CopyPrefix(srcSeq, dstSeq int, len int32)                                      {}
 func (m *mockCache) SetConfig(ml.CacheConfig)                                                      {}
+func (m *mockCache) CanResume(seq int, pos int32) bool                                             { return true }
 
 func TestShiftCacheSlot(t *testing.T) {
 	tests := []struct {
