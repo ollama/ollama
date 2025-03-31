@@ -2,6 +2,7 @@ package ml
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -60,6 +61,10 @@ type CacheConfig struct {
 
 // BackendParams controls how the backend loads and executes models
 type BackendParams struct {
+	// Progress is a callback function that allows reporting percentage completion
+	// of model loading
+	Progress func(float32)
+
 	// NumThreads sets the number of threads to use if running on the CPU
 	NumThreads int
 
@@ -76,9 +81,9 @@ type BackendParams struct {
 	FlashAttention bool
 }
 
-var backends = make(map[string]func(*os.File, BackendParams) (Backend, error))
+var backends = make(map[string]func(context.Context, *os.File, BackendParams) (Backend, error))
 
-func RegisterBackend(name string, f func(*os.File, BackendParams) (Backend, error)) {
+func RegisterBackend(name string, f func(context.Context, *os.File, BackendParams) (Backend, error)) {
 	if _, ok := backends[name]; ok {
 		panic("backend: backend already registered")
 	}
@@ -86,9 +91,9 @@ func RegisterBackend(name string, f func(*os.File, BackendParams) (Backend, erro
 	backends[name] = f
 }
 
-func NewBackend(f *os.File, params BackendParams) (Backend, error) {
+func NewBackend(ctx context.Context, f *os.File, params BackendParams) (Backend, error) {
 	if backend, ok := backends["ggml"]; ok {
-		return backend(f, params)
+		return backend(ctx, f, params)
 	}
 
 	return nil, fmt.Errorf("unsupported backend")
@@ -105,11 +110,9 @@ type Context interface {
 	MaxGraphNodes() int
 	Close()
 
-	// Input returns a context appropriate for creating input tensors
+	// Input returns a context appropriate for creating tensors that are
+	// inputs to the model (which includes things like output locations)
 	Input() Context
-
-	// Output returns a context appropriate for creating output tensors
-	Output() Context
 
 	// Layer returns a context appropriate for creating intermediate tensors
 	Layer(int) Context

@@ -19,11 +19,13 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"iter"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -35,10 +37,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/server/internal/cache/blob"
-	"github.com/ollama/ollama/server/internal/chunks"
-	"github.com/ollama/ollama/server/internal/internal/backoff"
 	"github.com/ollama/ollama/server/internal/internal/names"
-	"github.com/ollama/ollama/server/internal/internal/syncs"
 
 	_ "embed"
 )
@@ -60,18 +59,18 @@ var (
 	// ErrCached is passed to [Trace.PushUpdate] when a layer already
 	// exists. It is a non-fatal error and is never returned by [Registry.Push].
 	ErrCached = errors.New("cached")
+
+	// ErrIncomplete is returned by [Registry.Pull] when a model pull was
+	// incomplete due to one or more layer download failures. Users that
+	// want specific errors should use [WithTrace].
+	ErrIncomplete = errors.New("incomplete")
 )
 
 // Defaults
 const (
 	// DefaultChunkingThreshold is the threshold at which a layer should be
 	// split up into chunks when downloading.
-	DefaultChunkingThreshold = 128 << 20
-
-	// DefaultMaxChunkSize is the default maximum size of a chunk to
-	// download. It is configured based on benchmarks and aims to strike a
-	// balance between download speed and memory usage.
-	DefaultMaxChunkSize = 8 << 20
+	DefaultChunkingThreshold = 64 << 20
 )
 
 var defaultCache = sync.OnceValues(func() (*blob.DiskCache, error) {
@@ -211,19 +210,12 @@ type Registry struct {
 	// pushing or pulling models. If zero, the number of streams is
 	// determined by [runtime.GOMAXPROCS].
 	//
-	// Clients that want "unlimited" streams should set this to a large
-	// number.
+	// A negative value means no limit.
 	MaxStreams int
 
 	// ChunkingThreshold is the maximum size of a layer to download in a single
 	// request. If zero, [DefaultChunkingThreshold] is used.
 	ChunkingThreshold int64
-
-	// MaxChunkSize is the maximum size of a chunk to download. If zero,
-	// the default is [DefaultMaxChunkSize].
-	//
-	// It is only used when a layer is larger than [MaxChunkingThreshold].
-	MaxChunkSize int64
 
 	// Mask, if set, is the name used to convert non-fully qualified names
 	// to fully qualified names. If empty, [DefaultMask] is used.
@@ -266,6 +258,7 @@ func DefaultRegistry() (*Registry, error) {
 	}
 
 	var rc Registry
+	rc.UserAgent = UserAgent()
 	rc.Key, err = ssh.ParseRawPrivateKey(keyPEM)
 	if err != nil {
 		return nil, err
@@ -281,23 +274,33 @@ func DefaultRegistry() (*Registry, error) {
 	return &rc, nil
 }
 
-func (r *Registry) maxStreams() int {
-	n := cmp.Or(r.MaxStreams, runtime.GOMAXPROCS(0))
+func UserAgent() string {
+	buildinfo, _ := debug.ReadBuildInfo()
 
-	// Large downloads require a writter stream, so ensure we have at least
-	// two streams to avoid a deadlock.
-	return max(n, 2)
+	version := buildinfo.Main.Version
+	if version == "(devel)" {
+		// When using `go run .` the version is "(devel)". This is seen
+		// as an invalid version by ollama.com and so it defaults to
+		// "needs upgrade" for some requests, such as pulls. These
+		// checks can be skipped by using the special version "v0.0.0",
+		// so we set it to that here.
+		version = "v0.0.0"
+	}
+
+	return fmt.Sprintf("ollama/%s (%s %s) Go/%s",
+		version,
+		runtime.GOARCH,
+		runtime.GOOS,
+		runtime.Version(),
+	)
+}
+
+func (r *Registry) maxStreams() int {
+	return cmp.Or(r.MaxStreams, runtime.GOMAXPROCS(0))
 }
 
 func (r *Registry) maxChunkingThreshold() int64 {
 	return cmp.Or(r.ChunkingThreshold, DefaultChunkingThreshold)
-}
-
-// chunkSizeFor returns the chunk size for a layer of the given size. If the
-// size is less than or equal to the max chunking threshold, the size is
-// returned; otherwise, the max chunk size is returned.
-func (r *Registry) maxChunkSize() int64 {
-	return cmp.Or(r.MaxChunkSize, DefaultMaxChunkSize)
 }
 
 type PushParams struct {
@@ -418,12 +421,20 @@ func (r *Registry) Push(ctx context.Context, name string, p *PushParams) error {
 	return err
 }
 
-func canRetry(err error) bool {
-	var re *Error
-	if !errors.As(err, &re) {
-		return false
-	}
-	return re.Status >= 500
+// trackingReader is an io.Reader that tracks the number of bytes read and
+// calls the update function with the layer, the number of bytes read.
+//
+// It always calls update with a nil error.
+type trackingReader struct {
+	l      *Layer
+	r      io.Reader
+	update func(l *Layer, n int64, err error)
+}
+
+func (r *trackingReader) Read(p []byte) (n int, err error) {
+	n, err = r.r.Read(p)
+	r.update(r.l, int64(n), nil)
+	return
 }
 
 // Pull pulls the model with the given name from the remote registry into the
@@ -434,15 +445,15 @@ func canRetry(err error) bool {
 // typically slower than splitting the model up across layers, and is mostly
 // utilized for layers of type equal to "application/vnd.ollama.image".
 func (r *Registry) Pull(ctx context.Context, name string) error {
-	scheme, n, _, err := r.parseNameExtended(name)
-	if err != nil {
-		return err
-	}
-
 	m, err := r.Resolve(ctx, name)
 	if err != nil {
 		return err
 	}
+
+	// TODO(bmizerany): decide if this should be considered valid. Maybe
+	// server-side we special case '{}' to have some special meaning? Maybe
+	// "archiving" a tag (which is how we reason about it in the registry
+	// already, just with a different twist).
 	if len(m.Layers) == 0 {
 		return fmt.Errorf("%w: no layers", ErrManifestInvalid)
 	}
@@ -452,142 +463,132 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 		return err
 	}
 
-	exists := func(l *Layer) bool {
-		info, err := c.Get(l.Digest)
-		return err == nil && info.Size == l.Size
-	}
-
-	t := traceFromContext(ctx)
-
-	g, ctx := errgroup.WithContext(ctx)
-	g.SetLimit(r.maxStreams())
-
+	// TODO(bmizerany): work to remove the need to do this
 	layers := m.Layers
 	if m.Config != nil && m.Config.Digest.IsValid() {
 		layers = append(layers, m.Config)
 	}
 
+	// Send initial layer trace events to allow clients to have an
+	// understanding of work to be done before work starts.
+	var expected int64
+	t := traceFromContext(ctx)
 	for _, l := range layers {
-		if exists(l) {
+		t.update(l, 0, nil)
+		expected += l.Size
+	}
+
+	var received atomic.Int64
+	var g errgroup.Group
+	g.SetLimit(r.maxStreams())
+	for _, l := range layers {
+		info, err := c.Get(l.Digest)
+		if err == nil && info.Size == l.Size {
+			received.Add(l.Size)
 			t.update(l, l.Size, ErrCached)
 			continue
 		}
 
-		blobURL := fmt.Sprintf("%s://%s/v2/%s/%s/blobs/%s", scheme, n.Host(), n.Namespace(), n.Model(), l.Digest)
-		req, err := r.newRequest(ctx, "GET", blobURL, nil)
+		var wg sync.WaitGroup
+		chunked, err := c.Chunked(l.Digest, l.Size)
 		if err != nil {
 			t.update(l, 0, err)
 			continue
 		}
 
-		t.update(l, 0, nil)
+		for cs, err := range r.chunksums(ctx, name, l) {
+			if err != nil {
+				// Chunksum stream interrupted. Note in trace
+				// log and let in-flight downloads complete.
+				// This will naturally trigger ErrIncomplete
+				// since received < expected bytes.
+				t.update(l, 0, err)
+				break
+			}
 
-		if l.Size <= r.maxChunkingThreshold() {
-			g.Go(func() error {
-				// TODO(bmizerany): retry/backoff like below in
-				// the chunking case
+			cacheKey := fmt.Sprintf(
+				"v1 pull chunksum %s %s %d-%d",
+				l.Digest,
+				cs.Digest,
+				cs.Chunk.Start,
+				cs.Chunk.End,
+			)
+			cacheKeyDigest := blob.DigestFromBytes(cacheKey)
+			_, err := c.Get(cacheKeyDigest)
+			if err == nil {
+				received.Add(cs.Chunk.Size())
+				t.update(l, cs.Chunk.Size(), ErrCached)
+				continue
+			}
+
+			wg.Add(1)
+			g.Go(func() (err error) {
+				defer func() {
+					if err == nil {
+						// Ignore cache key write errors for now. We've already
+						// reported to trace that the chunk is complete.
+						//
+						// Ideally, we should only report completion to trace
+						// after successful cache commit. This current approach
+						// works but could trigger unnecessary redownloads if
+						// the checkpoint key is missing on next pull.
+						//
+						// Not incorrect, just suboptimal - fix this in a
+						// future update.
+						_ = blob.PutBytes(c, cacheKeyDigest, cacheKey)
+
+						received.Add(cs.Chunk.Size())
+					} else {
+						t.update(l, 0, err)
+					}
+					wg.Done()
+				}()
+
+				req, err := http.NewRequestWithContext(ctx, "GET", cs.URL, nil)
+				if err != nil {
+					return err
+				}
+				req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", cs.Chunk.Start, cs.Chunk.End))
 				res, err := sendRequest(r.client(), req)
 				if err != nil {
 					return err
 				}
 				defer res.Body.Close()
-				err = c.Put(l.Digest, res.Body, l.Size)
-				if err == nil {
-					t.update(l, l.Size, nil)
-				}
-				return err
+
+				body := &trackingReader{l: l, r: res.Body, update: t.update}
+				return chunked.Put(cs.Chunk, cs.Digest, body)
 			})
-		} else {
-			q := syncs.NewRelayReader()
-
-			g.Go(func() (err error) {
-				defer func() { q.CloseWithError(err) }()
-				return c.Put(l.Digest, q, l.Size)
-			})
-
-			var progress atomic.Int64
-
-			// We want to avoid extra round trips per chunk due to
-			// redirects from the registry to the blob store, so
-			// fire an initial request to get the final URL and
-			// then use that URL for the chunk requests.
-			req.Header.Set("Range", "bytes=0-0")
-			res, err := sendRequest(r.client(), req)
-			if err != nil {
-				return err
-			}
-			res.Body.Close()
-			req = res.Request.WithContext(req.Context())
-
-			wp := writerPool{size: r.maxChunkSize()}
-
-			for chunk := range chunks.Of(l.Size, r.maxChunkSize()) {
-				if ctx.Err() != nil {
-					break
-				}
-
-				ticket := q.Take()
-				g.Go(func() (err error) {
-					defer func() {
-						if err != nil {
-							q.CloseWithError(err)
-						}
-						ticket.Close()
-						t.update(l, progress.Load(), err)
-					}()
-
-					for _, err := range backoff.Loop(ctx, 3*time.Second) {
-						if err != nil {
-							return err
-						}
-						err := func() error {
-							req := req.Clone(req.Context())
-							req.Header.Set("Range", fmt.Sprintf("bytes=%s", chunk))
-							res, err := sendRequest(r.client(), req)
-							if err != nil {
-								return err
-							}
-							defer res.Body.Close()
-
-							tw := wp.get()
-							tw.Reset(ticket)
-							defer wp.put(tw)
-
-							_, err = io.CopyN(tw, res.Body, chunk.Size())
-							if err != nil {
-								return maybeUnexpectedEOF(err)
-							}
-							if err := tw.Flush(); err != nil {
-								return err
-							}
-
-							total := progress.Add(chunk.Size())
-							if total >= l.Size {
-								q.Close()
-							}
-							return nil
-						}()
-						if !canRetry(err) {
-							return err
-						}
-					}
-					return nil
-				})
-			}
 		}
-	}
 
+		// Close writer immediately after downloads finish, not at Pull
+		// exit. Using defer would keep file descriptors open until all
+		// layers complete, potentially exhausting system limits with
+		// many layers.
+		//
+		// The WaitGroup tracks when all chunks finish downloading,
+		// allowing precise writer closure in a background goroutine.
+		// Each layer briefly uses one extra goroutine while at most
+		// maxStreams()-1 chunks download in parallel.
+		//
+		// This caps file descriptors at maxStreams() instead of
+		// growing with layer count.
+		g.Go(func() error {
+			wg.Wait()
+			chunked.Close()
+			return nil
+		})
+	}
 	if err := g.Wait(); err != nil {
 		return err
 	}
+	if received.Load() != expected {
+		return fmt.Errorf("%w: received %d/%d bytes", ErrIncomplete, received.Load(), expected)
+	}
 
-	// store the manifest blob
 	md := blob.DigestFromBytes(m.Data)
 	if err := blob.PutBytes(c, md, m.Data); err != nil {
 		return err
 	}
-
-	// commit the manifest with a link
 	return c.Link(m.Name, md)
 }
 
@@ -615,8 +616,6 @@ type Manifest struct {
 	Config *Layer `json:"config"`
 }
 
-var emptyDigest, _ = blob.ParseDigest("sha256:0000000000000000000000000000000000000000000000000000000000000000")
-
 // Layer returns the layer with the given
 // digest, or nil if not found.
 func (m *Manifest) Layer(d blob.Digest) *Layer {
@@ -626,6 +625,30 @@ func (m *Manifest) Layer(d blob.Digest) *Layer {
 		}
 	}
 	return nil
+}
+
+func (m *Manifest) All() iter.Seq[*Layer] {
+	return func(yield func(*Layer) bool) {
+		if !yield(m.Config) {
+			return
+		}
+		for _, l := range m.Layers {
+			if !yield(l) {
+				return
+			}
+		}
+	}
+}
+
+func (m *Manifest) Size() int64 {
+	var size int64
+	if m.Config != nil {
+		size += m.Config.Size
+	}
+	for _, l := range m.Layers {
+		size += l.Size
+	}
+	return size
 }
 
 // MarshalJSON implements json.Marshaler.
@@ -643,10 +666,9 @@ func (m Manifest) MarshalJSON() ([]byte, error) {
 		// last phase of the commit which expects it, but does nothing
 		// with it. This will be fixed in a future release of
 		// ollama.com.
-		Config *Layer `json:"config"`
+		Config Layer `json:"config"`
 	}{
-		M:      M(m),
-		Config: &Layer{Digest: emptyDigest},
+		M: M(m),
 	}
 	return json.Marshal(v)
 }
@@ -734,6 +756,135 @@ func (r *Registry) Resolve(ctx context.Context, name string) (*Manifest, error) 
 		return nil, fmt.Errorf("%s: %w", name, errors.Join(ErrManifestInvalid, err))
 	}
 	return m, nil
+}
+
+type chunksum struct {
+	URL    string
+	Chunk  blob.Chunk
+	Digest blob.Digest
+}
+
+// chunksums returns a sequence of chunksums for the given layer. If the layer is under the
+// chunking threshold, a single chunksum is returned that covers the entire layer. If the layer
+// is over the chunking threshold, the chunksums are read from the chunksums endpoint.
+func (r *Registry) chunksums(ctx context.Context, name string, l *Layer) iter.Seq2[chunksum, error] {
+	return func(yield func(chunksum, error) bool) {
+		scheme, n, _, err := r.parseNameExtended(name)
+		if err != nil {
+			yield(chunksum{}, err)
+			return
+		}
+
+		if l.Size < r.maxChunkingThreshold() {
+			// any layer under the threshold should be downloaded
+			// in one go.
+			cs := chunksum{
+				URL: fmt.Sprintf("%s://%s/v2/%s/%s/blobs/%s",
+					scheme,
+					n.Host(),
+					n.Namespace(),
+					n.Model(),
+					l.Digest,
+				),
+				Chunk:  blob.Chunk{Start: 0, End: l.Size - 1},
+				Digest: l.Digest,
+			}
+			yield(cs, nil)
+			return
+		}
+
+		// The response is a sequence of chunksums.
+		//
+		// Chunksums are chunks of a larger blob that can be
+		// downloaded and verified independently.
+		//
+		// The chunksums endpoint is a GET request that returns a
+		// sequence of chunksums in the following format:
+		//
+		//     > GET /v2/<namespace>/<model>/chunksums/<digest>
+		//
+		//     < HTTP/1.1 200 OK
+		//     < Content-Location: <blobURL>
+		//     <
+		//     < <digest> <start>-<end>
+		//     < ...
+		//
+		// The <blobURL> is the URL to download the chunks from and
+		// each <digest> is the digest of the chunk, and <start>-<end>
+		// is the range the chunk in the blob.
+		//
+		// Ranges may be used directly in Range headers like
+		// "bytes=<start>-<end>".
+		//
+		// The chunksums returned are guaranteed to be contiguous and
+		// include all bytes of the layer. If the stream is cut short,
+		// clients should retry.
+
+		chunksumsURL := fmt.Sprintf("%s://%s/v2/%s/%s/chunksums/%s",
+			scheme,
+			n.Host(),
+			n.Namespace(),
+			n.Model(),
+			l.Digest,
+		)
+
+		req, err := r.newRequest(ctx, "GET", chunksumsURL, nil)
+		if err != nil {
+			yield(chunksum{}, err)
+			return
+		}
+		res, err := sendRequest(r.client(), req)
+		if err != nil {
+			yield(chunksum{}, err)
+			return
+		}
+		defer res.Body.Close()
+		if res.StatusCode != 200 {
+			err := fmt.Errorf("chunksums: unexpected status code %d", res.StatusCode)
+			yield(chunksum{}, err)
+			return
+		}
+		blobURL := res.Header.Get("Content-Location")
+
+		s := bufio.NewScanner(res.Body)
+		s.Split(bufio.ScanWords)
+		for {
+			if !s.Scan() {
+				if s.Err() != nil {
+					yield(chunksum{}, s.Err())
+				}
+				return
+			}
+			d, err := blob.ParseDigest(s.Bytes())
+			if err != nil {
+				yield(chunksum{}, fmt.Errorf("invalid digest: %q", s.Bytes()))
+				return
+			}
+
+			if !s.Scan() {
+				err := s.Err()
+				if err == nil {
+					err = fmt.Errorf("missing chunk range for digest %s", d)
+				}
+				yield(chunksum{}, err)
+				return
+			}
+			chunk, err := parseChunk(s.Bytes())
+			if err != nil {
+				yield(chunksum{}, fmt.Errorf("invalid chunk range for digest %s: %q", d, s.Bytes()))
+				return
+			}
+
+			cs := chunksum{
+				URL:    blobURL,
+				Chunk:  chunk,
+				Digest: d,
+			}
+			if !yield(cs, nil) {
+				return
+			}
+		}
+	}
 }
 
 func (r *Registry) client() *http.Client {
@@ -898,13 +1049,6 @@ func checkData(url string) string {
 	return fmt.Sprintf("GET,%s,%s", url, zeroSum)
 }
 
-func maybeUnexpectedEOF(err error) error {
-	if errors.Is(err, io.EOF) {
-		return io.ErrUnexpectedEOF
-	}
-	return err
-}
-
 type publicError struct {
 	wrapped error
 	message string
@@ -991,27 +1135,22 @@ func splitExtended(s string) (scheme, name, digest string) {
 	return scheme, s, digest
 }
 
-type writerPool struct {
-	size int64 // set by the caller
-
-	mu sync.Mutex
-	ws []*bufio.Writer
-}
-
-func (p *writerPool) get() *bufio.Writer {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.ws) == 0 {
-		return bufio.NewWriterSize(nil, int(p.size))
+// parseChunk parses a string in the form "start-end" and returns the Chunk.
+func parseChunk[S ~string | ~[]byte](s S) (blob.Chunk, error) {
+	startPart, endPart, found := strings.Cut(string(s), "-")
+	if !found {
+		return blob.Chunk{}, fmt.Errorf("chunks: invalid range %q: missing '-'", s)
 	}
-	w := p.ws[len(p.ws)-1]
-	p.ws = p.ws[:len(p.ws)-1]
-	return w
-}
-
-func (p *writerPool) put(w *bufio.Writer) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	w.Reset(nil)
-	p.ws = append(p.ws, w)
+	start, err := strconv.ParseInt(startPart, 10, 64)
+	if err != nil {
+		return blob.Chunk{}, fmt.Errorf("chunks: invalid start to %q: %v", s, err)
+	}
+	end, err := strconv.ParseInt(endPart, 10, 64)
+	if err != nil {
+		return blob.Chunk{}, fmt.Errorf("chunks: invalid end to %q: %v", s, err)
+	}
+	if start > end {
+		return blob.Chunk{}, fmt.Errorf("chunks: invalid range %q: start > end", s)
+	}
+	return blob.Chunk{Start: start, End: end}, nil
 }

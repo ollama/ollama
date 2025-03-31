@@ -26,6 +26,10 @@ type Sampler struct {
 }
 
 func (s *Sampler) Sample(logits []float32) (int32, error) {
+	if len(logits) == 0 {
+		return -1, errors.New("sample: no logits provided to sample")
+	}
+
 	tokens := make([]token, len(logits))
 	for i := range logits {
 		tokens[i].id = int32(i)
@@ -84,24 +88,15 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 		return greedy(tokens), nil
 	}
 
-	if s.topK > 0 {
-		tokens = topK(tokens, s.topK)
-	} else {
-		sortLogits(tokens)
-	}
+	// topK also sorts the tokens in descending order of logits
+	tokens = topK(tokens, s.topK)
 
-	// token logit values are updated to probabilities
-	tokens = temperature(tokens, s.temperature)
+	// scale and normalize the tokens in place
+	temperature(tokens, s.temperature)
+	softmax(tokens)
 
 	tokens = topP(tokens, s.topP)
 	tokens = minP(tokens, s.minP)
-
-	// TODO: this should fall back to greedy sampling
-	// or topP, topK values etc should be such that
-	// there are always tokens to sample from
-	if len(tokens) == 0 {
-		return token{}, errors.New("no tokens to sample from")
-	}
 
 	var r float32
 	if s.rng != nil {
@@ -125,6 +120,9 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 		return 1
 	})
 
+	if math.IsNaN(float64(sum)) {
+		return token{}, errors.New("sample: logits sum to NaN, check model output")
+	}
 	return tokens[idx], nil
 }
 

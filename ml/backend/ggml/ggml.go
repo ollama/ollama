@@ -9,15 +9,17 @@ package ggml
 import "C"
 
 import (
-	"errors"
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
 	"maps"
 	"os"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"unicode"
 	"unsafe"
 
@@ -46,9 +48,6 @@ type Backend struct {
 	// input is the backend used for inputs
 	input *C.struct_ggml_backend_buffer_type
 
-	// output is the backend used for outputs
-	output *C.struct_ggml_backend_buffer_type
-
 	// layers is the backend used for repeating layers
 	layers map[int]*C.struct_ggml_backend_buffer_type
 
@@ -58,7 +57,7 @@ type Backend struct {
 	maxGraphNodes int
 }
 
-func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
+func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, error) {
 	meta, n, err := fs.Decode(r, -1)
 	if err != nil {
 		return nil, err
@@ -297,12 +296,16 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 		}
 	}
 
-	// concurrently read in tensor data. uses a section reader which is safe for concurrent reads
-	sr := io.NewSectionReader(r, int64(meta.Tensors().Offset), n-int64(meta.Tensors().Offset))
-	var g errgroup.Group
+	var doneBytes atomic.Uint64
+	totalBytes := uint64(n) - meta.Tensors().Offset
+
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(runtime.GOMAXPROCS(0))
 	for _, t := range meta.Tensors().Items() {
-		for _, target := range targets[t.Name] {
-			g.Go(func() error {
+		g.Go(func() error {
+			tts := make([]*C.struct_ggml_tensor, max(1, len(targets[t.Name])))
+			for i := range tts {
+				target := targets[t.Name][i]
 				if target == "" {
 					target = t.Name
 				}
@@ -312,23 +315,44 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 					return fmt.Errorf("unassigned tensor: %s", t.Name)
 				}
 
-				bts := make([]byte, t.Size())
-				n, err := io.ReadFull(io.NewSectionReader(sr, int64(t.Offset), int64(t.Size())), bts)
+				tts[i] = tt
+			}
+
+			sr := io.NewSectionReader(r, int64(meta.Tensors().Offset+t.Offset), int64(t.Size()))
+			bts := make([]byte, 128*format.KibiByte)
+
+			var s uint64
+			for s < t.Size() {
+				n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Size()-s))])
 				if err != nil {
 					return err
 				}
 
-				if n != len(bts) {
-					return errors.New("short read")
+				for _, tt := range tts {
+					C.ggml_backend_tensor_set(tt, unsafe.Pointer(&bts[0]), C.size_t(s), C.size_t(n))
 				}
 
-				C.ggml_backend_tensor_set(tt, unsafe.Pointer(&bts[0]), 0, C.size_t(t.Size()))
-				return nil
-			})
-		}
+				s += uint64(n)
+
+				if params.Progress != nil {
+					done := doneBytes.Add(uint64(n))
+					params.Progress(float32(done) / float32(totalBytes))
+				}
+			}
+
+			return nil
+		})
 	}
 
-	if g.Wait() != nil {
+	// start a goroutine to cancel the errgroup if the parent context is done
+	go func() {
+		<-ctx.Done()
+		g.Go(func() error {
+			return ctx.Err()
+		})
+	}()
+
+	if err := g.Wait(); err != nil {
 		return nil, err
 	}
 
@@ -371,10 +395,9 @@ func New(r *os.File, params ml.BackendParams) (ml.Backend, error) {
 			(*C.ggml_backend_buffer_type_t)(unsafe.Pointer(&schedBufts[0])),
 			C.int(len(schedBackends)),
 			C.size_t(maxGraphNodes),
-			true,
+			C._Bool(len(gpus) > 1 && slices.Contains(gpus, output.d)),
 		),
-		input:  deviceBufferTypes[input.d],
-		output: deviceBufferTypes[output.d],
+		input: deviceBufferTypes[input.d],
 		layers: func() map[int]*C.struct_ggml_backend_buffer_type {
 			m := make(map[int]*C.struct_ggml_backend_buffer_type)
 			for i, layer := range layers {
@@ -448,19 +471,6 @@ func (c Context) Input() ml.Context {
 			b:             c.b,
 			ctx:           c.ctx,
 			buft:          c.b.input,
-			maxGraphNodes: c.maxGraphNodes,
-		}
-	}
-
-	return &c
-}
-
-func (c Context) Output() ml.Context {
-	if c.b.output != nil {
-		return &Context{
-			b:             c.b,
-			ctx:           c.ctx,
-			buft:          c.b.output,
 			maxGraphNodes: c.maxGraphNodes,
 		}
 	}

@@ -31,8 +31,10 @@ type InputCache struct {
 	cache kvcache.Cache
 }
 
-func NewInputCache(model model.Model, kvCacheType string, kvSize int32, numSlots int, multiUserCache bool) (*InputCache, error) {
-	if kvSize/int32(numSlots) < 1 {
+func NewInputCache(model model.Model, kvCacheType string, kvSize int32, numSlots int, batchSize int, multiUserCache bool) (*InputCache, error) {
+	numCtx := kvSize / int32(numSlots)
+
+	if numCtx < 1 {
 		return nil, fmt.Errorf("must have at least one kv cache entry per parallel sequence (kv: %v parallel: %v)", kvSize, numSlots)
 	}
 
@@ -44,11 +46,11 @@ func NewInputCache(model model.Model, kvCacheType string, kvSize int32, numSlots
 
 	cache := model.Config().Cache
 	if cache != nil {
-		cache.Init(model.Backend(), kvCacheTypeFromStr(kvCacheType), kvSize)
+		cache.Init(model.Backend(), kvCacheTypeFromStr(kvCacheType), numSlots, int(numCtx), batchSize)
 	}
 
 	return &InputCache{
-		numCtx:         kvSize / int32(numSlots),
+		numCtx:         numCtx,
 		enabled:        cache != nil,
 		slots:          slots,
 		multiUserCache: multiUserCache,
@@ -89,7 +91,7 @@ type InputCacheSlot struct {
 	lastUsed time.Time
 }
 
-func (c *InputCache) LoadCacheSlot(prompt []input.Input, cachePrompt bool) (*InputCacheSlot, []input.Input, error) {
+func (c *InputCache) LoadCacheSlot(prompt []input.Input) (*InputCacheSlot, []input.Input, error) {
 	var slot *InputCacheSlot
 	var numPast int32
 	var err error
@@ -105,10 +107,6 @@ func (c *InputCache) LoadCacheSlot(prompt []input.Input, cachePrompt bool) (*Inp
 	}
 	if err != nil {
 		return nil, nil, err
-	}
-
-	if !cachePrompt {
-		numPast = 0
 	}
 
 	slot.InUse = true

@@ -15,7 +15,6 @@ type TextOptions struct {
 	attnKeyLen, attnValLen           int
 	eps, ropeScale                   float32
 	ropeLocalBase, ropeGlobalBase    float32
-	finalLogitSoftcap                float32
 	largeModelScaling                bool
 }
 
@@ -57,16 +56,15 @@ func newTextModel(c ml.Config) *TextModel {
 		),
 		Layers: make([]TextLayer, numBlocks),
 		TextOptions: &TextOptions{
-			hiddenSize:        int(c.Uint("embedding_length")),
-			numHeads:          int(c.Uint("attention.head_count")),
-			numKVHeads:        int(c.Uint("attention.head_count_kv")),
-			attnKeyLen:        int(c.Uint("attention.key_length", 256)),
-			attnValLen:        int(c.Uint("attention.value_length", 256)),
-			eps:               c.Float("attention.layer_norm_rms_epsilon", 1e-06),
-			ropeLocalBase:     c.Float("rope.local.freq_base", 10000.0),
-			ropeGlobalBase:    c.Float("rope.global.freq_base", 1000000.0),
-			ropeScale:         c.Float("rope.freq_scale", 1.0),
-			finalLogitSoftcap: c.Float("final_logit_softcapping", 30.0),
+			hiddenSize:     int(c.Uint("embedding_length")),
+			numHeads:       int(c.Uint("attention.head_count")),
+			numKVHeads:     int(c.Uint("attention.head_count_kv")),
+			attnKeyLen:     int(c.Uint("attention.key_length", 256)),
+			attnValLen:     int(c.Uint("attention.value_length", 256)),
+			eps:            c.Float("attention.layer_norm_rms_epsilon", 1e-06),
+			ropeLocalBase:  c.Float("rope.local.freq_base", 10000.0),
+			ropeGlobalBase: c.Float("rope.global.freq_base", 1000000.0),
+			ropeScale:      c.Float("rope.freq_scale", 1.0),
 		},
 	}
 
@@ -173,53 +171,20 @@ func (l *TextLayer) Forward(ctx ml.Context, layer int, hiddenState, positionIDs,
 	return hiddenState.Add(ctx, residual)
 }
 
-func setImageEmbeddings(ctx ml.Context, hiddenState ml.Tensor, multimodal []input.MultimodalIndex) []int {
-	var embedding ml.Tensor
-	var src, dst, length int
-	var except []int
-
-	for _, image := range multimodal {
-		imageToken := image.Multimodal.(imageToken)
-		imageSrc := imageToken.index
-		imageDst := image.Index
-
-		if embedding == nil {
-			embedding = imageToken.embedding
-			src = imageSrc
-			dst = imageDst
-			length = 1
-		} else if embedding == imageToken.embedding && imageSrc+1 == src && imageDst+1 == dst {
-			src = imageSrc
-			dst = imageDst
-			length++
-		} else if embedding == imageToken.embedding && src+length == imageSrc && dst+length == imageDst {
-			length++
-		} else {
-			visionOutputs := embedding.View(ctx, src*embedding.Stride(1), length*embedding.Dim(0))
-			ctx.Forward(visionOutputs.Copy(ctx, hiddenState.View(ctx, dst*hiddenState.Stride(1), length*hiddenState.Dim(0))))
-
-			embedding = imageToken.embedding
-			src = imageSrc
-			dst = imageDst
-			length = 1
-		}
-
-		except = append(except, imageDst)
-	}
-
-	if embedding != nil {
-		visionOutputs := embedding.View(ctx, src*embedding.Stride(1), length*embedding.Dim(0))
-		ctx.Forward(visionOutputs.Copy(ctx, hiddenState.View(ctx, dst*hiddenState.Stride(1), length*hiddenState.Dim(0))))
-	}
-
-	return except
-}
-
-func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor, opts input.Options, cache kvcache.Cache) ml.Tensor {
+func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor, batch input.Batch, cache kvcache.Cache) ml.Tensor {
 	hiddenState := m.TokenEmbedding.Forward(ctx, inputs)
 	hiddenState = hiddenState.Scale(ctx, math.Sqrt(float64(m.TextOptions.hiddenSize)))
 
-	except := setImageEmbeddings(ctx, hiddenState, opts.Multimodal)
+	// set image embeddings
+	var except []int
+	for _, image := range batch.Multimodal {
+		visionOutputs := image.Multimodal.(ml.Tensor)
+		ctx.Forward(visionOutputs.Copy(ctx, hiddenState.View(ctx, image.Index*hiddenState.Stride(1), visionOutputs.Dim(0)*visionOutputs.Dim(1))))
+
+		for i := range visionOutputs.Dim(1) {
+			except = append(except, image.Index+i)
+		}
+	}
 
 	for i, layer := range m.Layers {
 		// gemma alternates between the sliding window (local) and causal (global)
@@ -245,10 +210,5 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 	}
 
 	hiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)
-	hiddenState = m.Output.Forward(ctx, hiddenState)
-
-	// final logit softcap
-	hiddenState = hiddenState.Scale(ctx, 1.0/float64(m.TextOptions.finalLogitSoftcap))
-	hiddenState = hiddenState.Tanh(ctx)
-	return hiddenState.Scale(ctx, float64(m.TextOptions.finalLogitSoftcap))
+	return m.Output.Forward(ctx, hiddenState)
 }

@@ -2,10 +2,9 @@ package gemma3
 
 import (
 	"bytes"
-	"encoding/binary"
-	"hash/fnv"
 	"image"
 	"math"
+	"slices"
 
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
@@ -84,6 +83,10 @@ func New(c ml.Config) (model.Model, error) {
 }
 
 func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, error) {
+	if len(m.VisionModel.Layers) == 0 {
+		return nil, model.ErrNoVisionModel
+	}
+
 	image, _, err := image.Decode(bytes.NewReader(multimodalData))
 	if err != nil {
 		return nil, err
@@ -108,36 +111,23 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 	return visionOutputs, nil
 }
 
-type imageToken struct {
-	embedding ml.Tensor
-	index     int
-}
-
-func (m *Model) PostTokenize(ctx ml.Context, inputs []input.Input) ([]input.Input, error) {
+func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 	var result []input.Input
-	fnvHash := fnv.New64a()
 
 	for _, inp := range inputs {
 		if inp.Multimodal == nil {
 			result = append(result, inp)
 		} else {
-			imageInputs := []input.Input{
-				{Token: 108},    // "\n\n"
-				{Token: 255999}, // "<start_of_image>""
-			}
-			result = append(result, imageInputs...)
-
-			// add image embeddings
 			inputMultimodal := inp.Multimodal.(ml.Tensor)
 
-			for i := range inputMultimodal.Dim(1) {
-				fnvHash.Reset()
-				binary.Write(fnvHash, binary.NativeEndian, inp.MultimodalHash)
-				fnvHash.Write([]byte{byte(i)})
+			result = append(result,
+				input.Input{Token: 108, SameBatch: inputMultimodal.Dim(1) + 3},               // "\n\n"
+				input.Input{Token: 255999},                                                   // "<start_of_image>""
+				input.Input{Multimodal: inputMultimodal, MultimodalHash: inp.MultimodalHash}, // image data is on the first placeholder
+			)
 
-				imageToken := imageToken{embedding: inputMultimodal, index: i}
-				result = append(result, input.Input{Multimodal: imageToken, MultimodalHash: fnvHash.Sum64()})
-			}
+			// add image token placeholders
+			result = append(result, slices.Repeat([]input.Input{{Token: 0}}, inputMultimodal.Dim(1)-1)...)
 
 			result = append(result,
 				input.Input{Token: 256000}, // <end_of_image>
@@ -149,23 +139,18 @@ func (m *Model) PostTokenize(ctx ml.Context, inputs []input.Input) ([]input.Inpu
 	return result, nil
 }
 
-func (m *Model) Forward(ctx ml.Context, opts input.Options) (ml.Tensor, error) {
-	inputs, err := ctx.Input().FromIntSlice(opts.Inputs, len(opts.Inputs))
+func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
+	positions, err := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
 	if err != nil {
 		return nil, err
 	}
 
-	positions, err := ctx.Input().FromIntSlice(opts.Positions, len(opts.Positions))
+	outputs, err := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
 	if err != nil {
 		return nil, err
 	}
 
-	outputs, err := ctx.Output().FromIntSlice(opts.Outputs, len(opts.Outputs))
-	if err != nil {
-		return nil, err
-	}
-
-	return m.TextModel.Forward(ctx, inputs, positions, outputs, opts, m.Cache), nil
+	return m.TextModel.Forward(ctx, batch.Inputs, positions, outputs, batch, m.Cache), nil
 }
 
 func init() {
