@@ -35,6 +35,7 @@ var (
 	errCapabilityCompletion = errors.New("completion")
 	errCapabilityTools      = errors.New("tools")
 	errCapabilityInsert     = errors.New("insert")
+	errCapabilityVision     = errors.New("vision")
 	errInsecureProtocol     = errors.New("insecure protocol http")
 )
 
@@ -73,11 +74,13 @@ func (m *Model) Capabilities() []model.Capability {
 	if err == nil {
 		defer r.Close()
 
-		// TODO(mxyng): decode the GGML into model to avoid doing this multiple times
 		f, _, err := ggml.Decode(r, 0)
 		if err == nil {
 			if _, ok := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]; !ok {
 				capabilities = append(capabilities, model.CapabilityCompletion)
+			}
+			if _, ok := f.KV()[fmt.Sprintf("%s.vision.block_count", f.KV().Architecture())]; ok {
+				capabilities = append(capabilities, model.CapabilityVision)
 			}
 		} else {
 			slog.Error("couldn't decode ggml", "error", err)
@@ -111,7 +114,7 @@ func (m *Model) CheckCapabilities(caps ...model.Capability) error {
 
 	for _, cap := range caps {
 		switch cap {
-		case model.CapabilityCompletion, model.CapabilityTools, model.CapabilityInsert:
+		case model.CapabilityCompletion, model.CapabilityTools, model.CapabilityInsert, model.CapabilityVision:
 			if !slices.Contains(modelCaps, cap) {
 				switch cap {
 				case model.CapabilityCompletion:
@@ -120,6 +123,8 @@ func (m *Model) CheckCapabilities(caps ...model.Capability) error {
 					errs = append(errs, errCapabilityTools)
 				case model.CapabilityInsert:
 					errs = append(errs, errCapabilityInsert)
+				case model.CapabilityVision:
+					errs = append(errs, errCapabilityVision)
 				}
 			}
 		default:

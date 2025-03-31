@@ -19,7 +19,7 @@ var (
 )
 
 // Helper function to create mock GGUF data
-func createMockGGUFData(architecture string, poolingType bool) []byte {
+func createMockGGUFData(architecture string, vision bool) []byte {
 	var buf bytes.Buffer
 
 	// Write GGUF header
@@ -32,7 +32,7 @@ func createMockGGUFData(architecture string, poolingType bool) []byte {
 
 	// Calculate number of metadata entries
 	numMetaEntries := uint64(1) // architecture entry
-	if poolingType {
+	if vision {
 		numMetaEntries++
 	}
 	binary.Write(&buf, binary.LittleEndian, numMetaEntries)
@@ -52,20 +52,19 @@ func createMockGGUFData(architecture string, poolingType bool) []byte {
 	binary.Write(&buf, binary.LittleEndian, strLen)
 	buf.WriteString(architecture)
 
-	// Add pooling_type entry if needed
-	if poolingType {
-		poolKey := architecture + ".pooling_type"
-		keyLen = uint64(len(poolKey))
+	if vision {
+		visionKey := architecture + ".vision.block_count"
+		keyLen = uint64(len(visionKey))
 		binary.Write(&buf, binary.LittleEndian, keyLen)
-		buf.WriteString(poolKey)
+		buf.WriteString(visionKey)
 
 		// uint32 type (4)
 		var uint32Type uint32 = 4
 		binary.Write(&buf, binary.LittleEndian, uint32Type)
 
 		// uint32 value (1)
-		var poolingVal uint32 = 1
-		binary.Write(&buf, binary.LittleEndian, poolingVal)
+		var countVal uint32 = 1
+		binary.Write(&buf, binary.LittleEndian, countVal)
 	}
 
 	return buf.Bytes()
@@ -81,20 +80,19 @@ func TestModelCapabilities(t *testing.T) {
 
 	// Create different types of mock model files
 	completionModelPath := filepath.Join(tempDir, "model.bin")
-
-	// Write GGUF data for completion model (no pooling_type)
-	err = os.WriteFile(completionModelPath, createMockGGUFData("llama", true), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create completion model file: %v", err)
-	}
-
+	visionModelPath := filepath.Join(tempDir, "vision_model.bin")
 	// Create a simple model file for tests that don't depend on GGUF content
 	simpleModelPath := filepath.Join(tempDir, "simple_model.bin")
-	err = os.WriteFile(simpleModelPath, []byte("dummy model data"), 0644)
+
+	err = os.WriteFile(simpleModelPath, []byte("dummy model data"), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create simple model file: %v", err)
 	}
-	err = os.WriteFile(completionModelPath, createMockGGUFData("llama", false), 0644)
+	err = os.WriteFile(completionModelPath, createMockGGUFData("llama", false), 0o644)
+	if err != nil {
+		t.Fatalf("Failed to create completion model file: %v", err)
+	}
+	err = os.WriteFile(visionModelPath, createMockGGUFData("llama", true), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create completion model file: %v", err)
 	}
@@ -150,6 +148,22 @@ func TestModelCapabilities(t *testing.T) {
 			},
 			expectedCaps: []model.Capability{model.CapabilityTools},
 		},
+		{
+			name: "model with vision capability",
+			model: Model{
+				ModelPath: visionModelPath,
+				Template:  chatTemplate,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision},
+		},
+		{
+			name: "model with vision, tools, and insert capability",
+			model: Model{
+				ModelPath: visionModelPath,
+				Template:  toolsInsertTemplate,
+			},
+			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityTools, model.CapabilityInsert},
+		},
 	}
 
 	// compare two slices of model.Capability regardless of order
@@ -196,11 +210,16 @@ func TestModelCheckCapabilities(t *testing.T) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	// Create a simple model file for tests
+	visionModelPath := filepath.Join(tempDir, "vision_model.bin")
 	simpleModelPath := filepath.Join(tempDir, "model.bin")
-	err = os.WriteFile(simpleModelPath, []byte("dummy model data"), 0644)
+
+	err = os.WriteFile(simpleModelPath, []byte("dummy model data"), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create simple model file: %v", err)
+	}
+	err = os.WriteFile(visionModelPath, createMockGGUFData("llama", true), 0o644)
+	if err != nil {
+		t.Fatalf("Failed to create completion model file: %v", err)
 	}
 
 	toolsInsertTemplate, err := template.Parse("{{ .prompt }}{{ if .tools }}{{ .tools }}{{ end }}{{ if .suffix }}{{ .suffix }}{{ end }}")
@@ -237,8 +256,7 @@ func TestModelCheckCapabilities(t *testing.T) {
 				ModelPath: simpleModelPath,
 				Template:  toolsInsertTemplate,
 			},
-			checkCaps:      []model.Capability{model.CapabilityTools, model.CapabilityInsert},
-			expectedErrMsg: "",
+			checkCaps: []model.Capability{model.CapabilityTools, model.CapabilityInsert},
 		},
 		{
 			name: "model missing insert capability",
@@ -248,6 +266,23 @@ func TestModelCheckCapabilities(t *testing.T) {
 			},
 			checkCaps:      []model.Capability{model.CapabilityInsert},
 			expectedErrMsg: "does not support insert",
+		},
+		{
+			name: "model missing vision capability",
+			model: Model{
+				ModelPath: simpleModelPath,
+				Template:  toolsTemplate,
+			},
+			checkCaps:      []model.Capability{model.CapabilityVision},
+			expectedErrMsg: "does not support vision",
+		},
+		{
+			name: "model with vision capability",
+			model: Model{
+				ModelPath: visionModelPath,
+				Template:  chatTemplate,
+			},
+			checkCaps: []model.Capability{model.CapabilityVision},
 		},
 		{
 			name: "unknown capability",
