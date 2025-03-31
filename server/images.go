@@ -38,14 +38,6 @@ var (
 	errInsecureProtocol     = errors.New("insecure protocol http")
 )
 
-type Capability string
-
-const (
-	CapabilityCompletion = Capability("completion")
-	CapabilityTools      = Capability("tools")
-	CapabilityInsert     = Capability("insert")
-)
-
 type registryOptions struct {
 	Insecure bool
 	Username string
@@ -72,38 +64,63 @@ type Model struct {
 	Template *template.Template
 }
 
+// Capabilities returns the capabilities that the model supports
+func (m *Model) Capabilities() []model.Capability {
+	capabilities := []model.Capability{}
+
+	// Check for completion capability
+	r, err := os.Open(m.ModelPath)
+	if err == nil {
+		defer r.Close()
+
+		// TODO(mxyng): decode the GGML into model to avoid doing this multiple times
+		f, _, err := ggml.Decode(r, 0)
+		if err == nil {
+			if _, ok := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]; !ok {
+				capabilities = append(capabilities, model.CapabilityCompletion)
+			}
+		} else {
+			slog.Error("couldn't decode ggml", "error", err)
+		}
+	} else {
+		slog.Error("couldn't open model file", "error", err)
+	}
+
+	if m.Template == nil {
+		return capabilities
+	}
+
+	// Check for tools capability
+	if slices.Contains(m.Template.Vars(), "tools") {
+		capabilities = append(capabilities, model.CapabilityTools)
+	}
+
+	// Check for insert capability
+	if slices.Contains(m.Template.Vars(), "suffix") {
+		capabilities = append(capabilities, model.CapabilityInsert)
+	}
+
+	return capabilities
+}
+
 // CheckCapabilities checks if the model has the specified capabilities returning an error describing
 // any missing or unknown capabilities
-func (m *Model) CheckCapabilities(caps ...Capability) error {
+func (m *Model) CheckCapabilities(caps ...model.Capability) error {
+	modelCaps := m.Capabilities()
 	var errs []error
+
 	for _, cap := range caps {
 		switch cap {
-		case CapabilityCompletion:
-			r, err := os.Open(m.ModelPath)
-			if err != nil {
-				slog.Error("couldn't open model file", "error", err)
-				continue
-			}
-			defer r.Close()
-
-			// TODO(mxyng): decode the GGML into model to avoid doing this multiple times
-			f, _, err := ggml.Decode(r, 0)
-			if err != nil {
-				slog.Error("couldn't decode ggml", "error", err)
-				continue
-			}
-
-			if _, ok := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]; ok {
-				errs = append(errs, errCapabilityCompletion)
-			}
-		case CapabilityTools:
-			if !slices.Contains(m.Template.Vars(), "tools") {
-				errs = append(errs, errCapabilityTools)
-			}
-		case CapabilityInsert:
-			vars := m.Template.Vars()
-			if !slices.Contains(vars, "suffix") {
-				errs = append(errs, errCapabilityInsert)
+		case model.CapabilityCompletion, model.CapabilityTools, model.CapabilityInsert:
+			if !slices.Contains(modelCaps, cap) {
+				switch cap {
+				case model.CapabilityCompletion:
+					errs = append(errs, errCapabilityCompletion)
+				case model.CapabilityTools:
+					errs = append(errs, errCapabilityTools)
+				case model.CapabilityInsert:
+					errs = append(errs, errCapabilityInsert)
+				}
 			}
 		default:
 			slog.Error("unknown capability", "capability", cap)
@@ -112,7 +129,7 @@ func (m *Model) CheckCapabilities(caps ...Capability) error {
 	}
 
 	if err := errors.Join(errs...); err != nil {
-		return fmt.Errorf("%w %w", errCapabilities, errors.Join(errs...))
+		return fmt.Errorf("%w %w", errCapabilities, err)
 	}
 
 	return nil
