@@ -264,6 +264,9 @@ type Server struct {
 
 	// next sequence for prompt processing to avoid starvation
 	nextSeq int
+
+	// kvCacheType is the type of KV cache to use
+	kvCacheType string
 }
 
 func (s *Server) allNil() bool {
@@ -608,7 +611,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	found := false
 	for i, sq := range s.seqs {
 		if sq == nil {
-			seq.cache, seq.inputs, err = s.cache.LoadCacheSlot(seq.inputs, true)
+			seq.cache, seq.inputs, err = s.cache.LoadCacheSlot(seq.inputs, s.kvCacheType != "nocache")
 			if err != nil {
 				s.mu.Unlock()
 				s.seqsSem.Release(1)
@@ -812,7 +815,7 @@ func Execute(args []string) error {
 	mainGpu := fs.Int("main-gpu", 0, "Main GPU")
 	flashAttention := fs.Bool("flash-attn", false, "Enable flash attention")
 	kvSize := fs.Int("ctx-size", 2048, "Context (or KV cache) size")
-	kvCacheType := fs.String("kv-cache-type", "", "quantization type for KV cache (default: f16)")
+	kvCacheType := fs.String("kv-cache-type", "f16", "quantization type for KV cache (default: f16)")
 	port := fs.Int("port", 8080, "Port to expose the server on")
 	threads := fs.Int("threads", runtime.NumCPU(), "Number of threads to use during generation")
 	verbose := fs.Bool("verbose", false, "verbose output (default: disabled)")
@@ -857,6 +860,7 @@ func Execute(args []string) error {
 		seqs:      make([]*Sequence, *parallel),
 		seqsSem:   semaphore.NewWeighted(int64(*parallel)),
 		status:    llm.ServerStatusLoadingModel,
+		kvCacheType: *kvCacheType,
 	}
 
 	var tensorSplitFloats []float32
