@@ -808,10 +808,7 @@ func execPullRequest(ctx context.Context, client *api.Client, req *api.PullReque
 		return nil
 	}
 
-	if err := client.Pull(ctx, req, fn); err != nil {
-		return err
-	}
-	return nil
+	return client.Pull(ctx, req, fn)
 }
 
 func PullHandler(cmd *cobra.Command, args []string) error {
