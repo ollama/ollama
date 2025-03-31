@@ -772,6 +772,48 @@ func CopyHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func execPullRequest(ctx context.Context, client *api.Client, req *api.PullRequest) error {
+	p := progress.NewProgress(os.Stderr)
+	defer p.Stop()
+
+	bars := make(map[string]*progress.Bar)
+
+	var status string
+	var spinner *progress.Spinner
+
+	fn := func(resp api.ProgressResponse) error {
+		if resp.Digest != "" {
+			if spinner != nil {
+				spinner.Stop()
+			}
+
+			bar, ok := bars[resp.Digest]
+			if !ok {
+				bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
+				bars[resp.Digest] = bar
+				p.Add(resp.Digest, bar)
+			}
+
+			bar.Set(resp.Completed)
+		} else if status != resp.Status {
+			if spinner != nil {
+				spinner.Stop()
+			}
+
+			status = resp.Status
+			spinner = progress.NewSpinner(status)
+			p.Add(status, spinner)
+		}
+
+		return nil
+	}
+
+	if err := client.Pull(ctx, req, fn); err != nil {
+		return err
+	}
+	return nil
+}
+
 func PullHandler(cmd *cobra.Command, args []string) error {
 	insecure, err := cmd.Flags().GetBool("insecure")
 	if err != nil {
@@ -788,48 +830,13 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	for i, name := range args {
-		p := progress.NewProgress(os.Stderr)
-		bars := make(map[string]*progress.Bar)
-
-		var status string
-		var spinner *progress.Spinner
-
-		fn := func(resp api.ProgressResponse) error {
-			if resp.Digest != "" {
-				if spinner != nil {
-					spinner.Stop()
-				}
-
-				bar, ok := bars[resp.Digest]
-				if !ok {
-					bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
-					bars[resp.Digest] = bar
-					p.Add(resp.Digest, bar)
-				}
-
-				bar.Set(resp.Completed)
-			} else if status != resp.Status {
-				if spinner != nil {
-					spinner.Stop()
-				}
-
-				status = resp.Status
-				spinner = progress.NewSpinner(status)
-				p.Add(status, spinner)
-			}
-
-			return nil
-		}
-
 		if len(args) > 1 {
 			fmt.Printf("pulling model %d: %s\n", i+1, name)
 		}
 		request := api.PullRequest{Name: name, Insecure: insecure}
-		if err := client.Pull(cmd.Context(), &request, fn); err != nil {
+		if err := execPullRequest(cmd.Context(), client, &request); err != nil {
 			return err
 		}
-
-		p.Stop()
 	}
 
 	return nil
