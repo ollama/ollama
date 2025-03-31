@@ -407,7 +407,15 @@ func (s *Server) processBatch() error {
 
 				err := s.cache.ShiftCacheSlot(seq.cache, seq.numKeep)
 				if err != nil {
-					return err
+					var reprocess *ErrReprocessInputs
+					if errors.As(err, &reprocess) {
+						// Prepend these inputs to the sequence's inputs queue for reprocessing
+						seq.inputs = append(reprocess.Inputs, seq.inputs...)
+						// Skip this sequence but continue processing the rest
+						continue
+					} else {
+						return err
+					}
 				}
 			}
 
