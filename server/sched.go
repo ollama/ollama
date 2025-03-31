@@ -37,7 +37,7 @@ type Scheduler struct {
 	pendingReqCh  chan *LlmRequest
 	finishedReqCh chan *LlmRequest
 	expiredCh     chan *runnerRef
-	unloadedCh    chan interface{}
+	unloadedCh    chan any
 
 	loaded   map[string]*runnerRef
 	loadedMu sync.Mutex
@@ -67,7 +67,7 @@ func InitScheduler(ctx context.Context) *Scheduler {
 		pendingReqCh:  make(chan *LlmRequest, maxQueue),
 		finishedReqCh: make(chan *LlmRequest, maxQueue),
 		expiredCh:     make(chan *runnerRef, maxQueue),
-		unloadedCh:    make(chan interface{}, maxQueue),
+		unloadedCh:    make(chan any, maxQueue),
 		loaded:        make(map[string]*runnerRef),
 		newServerFn:   llm.NewLlamaServer,
 		getGpuFn:      discover.GetGPUInfo,
@@ -617,8 +617,8 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 // a before and after GPU memory allocation.  The returned channel
 // will be notified when we're done waiting, or have timed out and should
 // proceed anyway
-func (runner *runnerRef) waitForVRAMRecovery() chan interface{} {
-	finished := make(chan interface{}, 1)
+func (runner *runnerRef) waitForVRAMRecovery() chan any {
+	finished := make(chan any, 1)
 
 	// CPU or Metal don't need checking, so no waiting required
 	// windows can page VRAM, only cuda currently can report accurate used vram usage

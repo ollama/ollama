@@ -267,7 +267,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	opts := runOptions{
 		Model:    args[0],
 		WordWrap: os.Getenv("TERM") == "xterm-256color",
-		Options:  map[string]interface{}{},
+		Options:  map[string]any{},
 	}
 
 	format, err := cmd.Flags().GetString("format")
@@ -837,7 +837,7 @@ type runOptions struct {
 	Format      string
 	System      string
 	Images      []api.ImageData
-	Options     map[string]interface{}
+	Options     map[string]any
 	MultiModal  bool
 	KeepAlive   *api.Duration
 }

@@ -22,7 +22,7 @@ func TestOrcaMiniBlueSky(t *testing.T) {
 		Model:  "orca-mini",
 		Prompt: "why is the sky blue?",
 		Stream: &stream,
-		Options: map[string]interface{}{
+		Options: map[string]any{
 			"temperature": 0,
 			"seed":        123,
 		},
@@ -39,7 +39,7 @@ func TestUnicode(t *testing.T) {
 		Model:  "deepseek-coder-v2:16b-lite-instruct-q2_K",
 		Prompt: "天空为什么是蓝色的?",
 		Stream: &stream,
-		Options: map[string]interface{}{
+		Options: map[string]any{
 			"temperature": 0,
 			"seed":        123,
 			// Workaround deepseek context shifting bug
@@ -61,7 +61,7 @@ func TestExtendedUnicodeOutput(t *testing.T) {
 		Model:  "gemma2:2b",
 		Prompt: "Output some smily face emoji",
 		Stream: &stream,
-		Options: map[string]interface{}{
+		Options: map[string]any{
 			"temperature": 0,
 			"seed":        123,
 		},
@@ -96,7 +96,7 @@ func TestUnicodeModelDir(t *testing.T) {
 		Model:  "orca-mini",
 		Prompt: "why is the sky blue?",
 		Stream: &stream,
-		Options: map[string]interface{}{
+		Options: map[string]any{
 			"temperature": 0,
 			"seed":        123,
 		},
