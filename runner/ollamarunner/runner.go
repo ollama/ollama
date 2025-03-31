@@ -224,7 +224,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, audioUrls, v
 // inputs processes the prompt and images into a list of inputs
 // by splitting the prompt on [img-<n>] tags, tokenizing text and
 // decoding images
-func (s *Server) inputs(prompt string, images []llm.ImageData, audioUrls, videoUrls []string) ([]input.Input, error) {
+func (s *Server) inputs(prompt string, images []llm.ImageData, audioUrls, videoUrls []string) ([]input.Input, *contextList, error) {
 	var inputs []input.Input
 	var parts []string
 	var matches [][]string
@@ -263,18 +263,19 @@ func (s *Server) inputs(prompt string, images []llm.ImageData, audioUrls, videoU
 			tokens2, err2 := s.model.(model.TextProcessor).Encode("<image>", i == 0)
 			tokens3, err3 := s.model.(model.TextProcessor).Encode("</image>", i == 0)
 			if err2 != nil || err3 != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			frames, tempDir, err := ExtractFrames(videoUrls[len(videoUrls)-1])
 			print("=== output path >>>:", tempDir, "\n")
 			if err != nil {
 				fmt.Println("视频抽帧失败:", err)
-				return nil, err
+				return nil, nil, err
 			}
+			ctx := s.model.Backend().NewContext()
 			for _, frame := range frames {
 				imageEmbeddings, err := multimodalProcessor.EncodeMultimodal(ctx, ReadImageToData(frame))
 				if err != nil {
-					return nil, err
+					return nil, nil, err
 				}
 				inputs = append(inputs, input.Input{Token: tokens2[0]})
 				inputs = append(inputs, input.Input{Multimodal: imageEmbeddings})

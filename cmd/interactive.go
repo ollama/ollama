@@ -451,14 +451,13 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			newMessage := api.Message{Role: "user", Content: sb.String()}
 
 			if opts.MultiModal {
-				msg, images, imageUrls, audioUrls, videoUrls, err := extractFileData(sb.String())
+				msg, images, audioUrls, videoUrls, err := extractFileData(sb.String())
 				if err != nil {
 					return err
 				}
 
 				newMessage.Content = msg
 				newMessage.Images = images
-				newMessage.ImageUrls = imageUrls
 				newMessage.AudioUrls = audioUrls
 				newMessage.VideoUrls = videoUrls
 			}
@@ -542,9 +541,8 @@ func extractFileNames(input string, mediaType MediaType) []string {
 	return matches
 }
 
-func extractFileData(input string) (string, []api.ImageData, []string, []string, []string, error) {
+func extractFileData(input string) (string, []api.ImageData, []string, []string, error) {
 	var images []api.ImageData
-	var imageUrls []string
 	var audioUrls []string
 	var videoUrls []string
 
@@ -564,7 +562,6 @@ func extractFileData(input string) (string, []api.ImageData, []string, []string,
 					fmt.Fprintf(os.Stderr, "Read image '%s' failed. Error is %s.\n", nfp, err.Error())
 				}
 				images = append(images, api.ImageData(data))
-				imageUrls = append(imageUrls, nfp)
 				fmt.Fprintf(os.Stderr, "Added image '%s'\n", nfp)
 			case MediaTypeAudio:
 				audioUrls = append(audioUrls, nfp)
@@ -578,7 +575,7 @@ func extractFileData(input string) (string, []api.ImageData, []string, []string,
 		}
 	}
 
-	return strings.TrimSpace(input), images, imageUrls, audioUrls, videoUrls, nil
+	return strings.TrimSpace(input), images, audioUrls, videoUrls, nil
 }
 
 // getMediaData reads and validates media files

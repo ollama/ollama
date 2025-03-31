@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -975,12 +974,4 @@ func Execute(args []string) error {
 	}
 
 	return nil
-}
-
-func (s *Server) Omni(input string, ImageUrls, audioUrls, videoUrls []string) string {
-	if input == "" {
-		return "输入字符串不能为空"
-	}
-	// TODO
-	return "你好，欢迎使用omni"
 }
