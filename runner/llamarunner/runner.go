@@ -252,58 +252,6 @@ func (s *Server) inputs(prompt string, images []ImageData, audioUrls, videoUrls 
 		}
 		// image - generate image embedding
 
-		print("===>>>:", len(audioUrls), " or", len(videoUrls), "\n")
-		if len(audioUrls) > 0 || len(videoUrls) > 0 {
-			minicpmv_version := s.image.clip.ClipIsMinicpmv()
-			print("===>>>:", minicpmv_version, "\n")
-			if minicpmv_version == 3 {
-				// tokens1, err1 := s.lc.Model().Tokenize("<unit>", true, true)
-				tokens2, err2 := s.lc.Model().Tokenize("<image>", true, true)
-				tokens3, err3 := s.lc.Model().Tokenize("</image>", true, true)
-				// tokens4, err4 := s.lc.Model().Tokenize("<|audio_start|>", true, true)
-				// tokens5, err5 := s.lc.Model().Tokenize("<|audio_end|>", true, true)
-				if err2 != nil || err3 != nil {
-					return nil, err
-				}
-				frames, tempDir, err := ExtractFrames(videoUrls[len(videoUrls)-1])
-				print("=== output path >>>:", tempDir, "\n")
-				if err != nil {
-					fmt.Println("视频抽帧失败:", err)
-					return nil, err
-				}
-				s.image.clip.ClipUhdMaxSliceNums(1)
-				for _, frame := range frames {
-					embed, err := s.image.OmniNewEmbed(s.lc, frame)
-					if err != nil {
-						return nil, err
-					}
-					inputs = append(inputs, input{token: tokens2[0]})
-					for _, e := range embed {
-						inputs = append(inputs, input{embed: e})
-					}
-					inputs = append(inputs, input{token: tokens3[0]})
-				}
-				s.image.clip.ClipUhdMaxSliceNums(9)
-			} else if minicpmv_version == 4 {
-
-				frames, err := ExtractFrames_audio(audioUrls[len(videoUrls)-1])
-				if err != nil {
-					fmt.Println("错误:", err)
-					return nil, err
-				}
-
-				for _, frame := range frames {
-					embed, err := s.image.audioNewEmbed(s.lc, frame)
-					if err != nil {
-						return nil, err
-					}
-					for _, e := range embed {
-						inputs = append(inputs, input{embed: e})
-					}
-				}
-			}
-		}
-
 		if i < len(matches) {
 			n, _ := strconv.Atoi(matches[i][1])
 
