@@ -93,9 +93,11 @@ func (p *mistral3Model) Tensors(ts []Tensor) []ggml.Tensor {
 	var out []ggml.Tensor
 
 	for _, t := range ts {
-		if strings.HasSuffix(t.Name(), "attn_q.weight") ||
-			strings.HasSuffix(t.Name(), "attn_k.weight") {
-			t.SetRepacker(p.repack)
+		if !strings.HasPrefix(t.Name(), "v.") {
+			if strings.HasSuffix(t.Name(), ".attn_q.weight") ||
+				strings.HasSuffix(t.Name(), ".attn_k.weight") {
+				t.SetRepacker(p.repack)
+			}
 		}
 
 		out = append(out, ggml.Tensor{
@@ -149,9 +151,9 @@ func (p *mistral3Model) repack(name string, data []float32, shape []uint64) ([]f
 	}
 
 	var heads uint32
-	if strings.HasSuffix(name, "attn_q.weight") {
+	if strings.HasSuffix(name, ".attn_q.weight") {
 		heads = p.TextModel.NumAttentionHeads
-	} else if strings.HasSuffix(name, "attn_k.weight") {
+	} else if strings.HasSuffix(name, ".attn_k.weight") {
 		heads = cmp.Or(p.TextModel.NumKeyValueHeads, p.TextModel.NumAttentionHeads)
 	} else {
 		return nil, fmt.Errorf("unknown tensor for repack: %s", name)

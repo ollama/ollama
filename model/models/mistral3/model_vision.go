@@ -21,10 +21,8 @@ func rotateHalf(ctx ml.Context, t ml.Tensor) ml.Tensor {
 	return x2.Neg(ctx).Concat(ctx, x1, 0)
 }
 
-func applyRotaryPositionalEmbedding(ctx ml.Context, query, key, cos, sin ml.Tensor) (ml.Tensor, ml.Tensor) {
-	query = query.Mul(ctx, cos).Add(ctx, rotateHalf(ctx, query).Mul(ctx, sin))
-	key = key.Mul(ctx, cos).Add(ctx, rotateHalf(ctx, key).Mul(ctx, sin))
-	return query, key
+func applyRotaryPositionalEmbedding(ctx ml.Context, t, cos, sin ml.Tensor) ml.Tensor {
+	return t.Mul(ctx, cos).Add(ctx, rotateHalf(ctx, t).Mul(ctx, sin))
 }
 
 func (pm *PatchMerger) Forward(ctx ml.Context, visionOutputs ml.Tensor, size image.Point, spatialMergeSize int) ml.Tensor {
@@ -84,7 +82,8 @@ func (sa *VisionSelfAttention) Forward(ctx ml.Context, hiddenStates, cos, sin ml
 	key = key.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 	value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
 
-	query, key = applyRotaryPositionalEmbedding(ctx, query, key, cos, sin)
+	query = applyRotaryPositionalEmbedding(ctx, query, cos, sin)
+	key = applyRotaryPositionalEmbedding(ctx, key, cos, sin)
 
 	scores := key.Mulmat(ctx, query)
 	scores = scores.Scale(ctx, 1.0/math.Sqrt(float64(opts.headDim)))

@@ -233,7 +233,7 @@ func Dump(ctx Context, t Tensor, opts ...DumpOptions) string {
 			return strconv.FormatFloat(float64(f), 'f', opts[0].Precision, 32)
 		})
 	case DTypeF16, DTypeQ80, DTypeQ40:
-		f32 := ctx.Empty(DTypeF32, t.Shape()...)
+		f32 := ctx.Input().Empty(DTypeF32, t.Shape()...)
 		f32 = t.Copy(ctx, f32)
 		return dump[[]float32](ctx, f32, opts[0].Items, func(f float32) string {
 			return strconv.FormatFloat(float64(f), 'f', opts[0].Precision, 32)
