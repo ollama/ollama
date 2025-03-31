@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -99,12 +100,83 @@ type NewSequenceParams struct {
 	embedding  bool
 }
 
-func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
+func ExtractFrames(videoPath string) ([]string, string, error) {
+	tempDir, err := os.MkdirTemp(filepath.Dir(videoPath), "video_frames_*")
+	if err != nil {
+		return nil, "", fmt.Errorf("创建临时目录失败: %v", err)
+	}
+
+	outputPattern := filepath.Join(tempDir, "frame_%04d.png")
+	cmd := exec.Command("ffmpeg", "-i", videoPath, "-vf", "fps=1", outputPattern)
+
+	if err := cmd.Run(); err != nil {
+		return nil, "", fmt.Errorf("ffmpeg 执行失败: %v", err)
+	}
+
+	imagePaths, err := filepath.Glob(filepath.Join(tempDir, "frame_*.png"))
+	if err != nil {
+		return nil, "", fmt.Errorf("遍历图片失败: %v", err)
+	}
+
+	return imagePaths, tempDir, nil
+}
+
+func ExtractFrames_audio(audiopath string) ([]string, error) {
+	tempDir, err := os.MkdirTemp(filepath.Dir(audiopath), "audio_frames_")
+	if err != nil {
+		return nil, fmt.Errorf("创建临时目录失败: %w", err)
+	}
+	fmt.Println("临时目录:", tempDir)
+	duration, err := getAudioDuration(audiopath)
+	if err != nil {
+		return nil, fmt.Errorf("获取音频时长失败: %w", err)
+	}
+
+	var framePaths []string
+	for i := 0; i < duration; i++ {
+		outputPath := filepath.Join(tempDir, fmt.Sprintf("frame_%03d.wav", i))
+		cmd := exec.Command("ffmpeg", "-y", "-i", audiopath, "-ss", fmt.Sprintf("%d", i), "-t", "1",
+			"-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", outputPath)
+		if err := cmd.Run(); err != nil {
+			return nil, fmt.Errorf("抽取第 %d 秒失败: %w", i, err)
+		}
+		fmt.Println("生成:", outputPath)
+		framePaths = append(framePaths, outputPath)
+	}
+
+	return framePaths, nil
+}
+
+func getAudioDuration(audiopath string) (int, error) {
+	cmd := exec.Command("ffprobe", "-i", audiopath, "-show_entries", "format=duration", "-v", "quiet", "-of", "csv=p=0")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, err
+	}
+
+	durationStr := strings.TrimSpace(string(output))
+	durationFloat, err := strconv.ParseFloat(durationStr, 64)
+	if err != nil {
+		return 0, err
+	}
+
+	return int(durationFloat), nil
+}
+
+func ReadImageToData(filename string) []byte {
+	imageBytes, err := os.ReadFile(filename)
+	if err != nil {
+		return nil
+	}
+	return imageBytes
+}
+
+func (s *Server) NewSequence(prompt string, images []llm.ImageData, audioUrls, videoUrls []string, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
 
 	startTime := time.Now()
 
-	inputs, ctxs, err := s.inputs(prompt, images)
+	inputs, ctxs, err := s.inputs(prompt, images, audioUrls, videoUrls)
 	if err != nil {
 		return nil, fmt.Errorf("failed to process inputs: %w", err)
 	} else if len(inputs) == 0 {
@@ -152,7 +224,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 // inputs processes the prompt and images into a list of inputs
 // by splitting the prompt on [img-<n>] tags, tokenizing text and
 // decoding images
-func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, *contextList, error) {
+func (s *Server) inputs(prompt string, images []llm.ImageData, audioUrls, videoUrls []string) ([]input.Input, error) {
 	var inputs []input.Input
 	var parts []string
 	var matches [][]string
@@ -184,6 +256,31 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, *
 
 		for _, t := range tokens {
 			inputs = append(inputs, input.Input{Token: t})
+		}
+
+		print("===>>>:", len(audioUrls), " or", len(videoUrls), "\n")
+		if len(audioUrls) > 0 || len(videoUrls) > 0 {
+			tokens2, err2 := s.model.(model.TextProcessor).Encode("<image>", i == 0)
+			tokens3, err3 := s.model.(model.TextProcessor).Encode("</image>", i == 0)
+			if err2 != nil || err3 != nil {
+				return nil, err
+			}
+			frames, tempDir, err := ExtractFrames(videoUrls[len(videoUrls)-1])
+			print("=== output path >>>:", tempDir, "\n")
+			if err != nil {
+				fmt.Println("视频抽帧失败:", err)
+				return nil, err
+			}
+			for _, frame := range frames {
+				imageEmbeddings, err := multimodalProcessor.EncodeMultimodal(ctx, ReadImageToData(frame))
+				if err != nil {
+					return nil, err
+				}
+				inputs = append(inputs, input.Input{Token: tokens2[0]})
+				inputs = append(inputs, input.Input{Multimodal: imageEmbeddings})
+				inputs = append(inputs, input.Input{Token: tokens3[0]})
+			}
+			postTokenize = true
 		}
 
 		// image - decode and store
@@ -592,7 +689,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		grammar,
 	)
 
-	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
+	seq, err := s.NewSequence(req.Prompt, req.Images, req.AudioUrls, req.VideoUrls, NewSequenceParams{
 		numPredict: req.Options.NumPredict,
 		stop:       req.Options.Stop,
 		numKeep:    int32(req.Options.NumKeep),

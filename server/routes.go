@@ -1511,7 +1511,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
 	}
 
-	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, req.Tools)
+	prompt, images, imageUrls, audioUrls, videoUrls, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, req.Tools)
 	if err != nil {
 		slog.Error("chat prompt error", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -1526,10 +1526,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		var sb strings.Builder
 		var toolCallIndex int = 0
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
-			Prompt:  prompt,
-			Images:  images,
-			Format:  req.Format,
-			Options: opts,
+			Prompt:    prompt,
+			Images:    images,
+			ImageUrls: imageUrls,
+			AudioUrls: audioUrls,
+			VideoUrls: videoUrls,
+			Format:    req.Format,
+			Options:   opts,
 		}, func(r llm.CompletionResponse) {
 			res := api.ChatResponse{
 				Model:      req.Model,

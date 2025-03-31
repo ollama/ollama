@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -28,6 +27,23 @@ const (
 	MultilinePrompt
 	MultilineSystem
 )
+
+// MediaType defines the type of media
+type MediaType int
+
+const (
+	MediaTypeImage MediaType = iota
+	MediaTypeAudio
+	MediaTypeVideo
+)
+
+// mediaConfig defines configuration for each media type
+type mediaConfig struct {
+	extensions  []string // Supported file extensions
+	mimeTypes   []string // Supported MIME types
+	maxSize     int64    // Maximum file size in bytes
+	description string   // Media type description
+}
 
 func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 	usage := func() {
@@ -413,7 +429,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			isFile := false
 
 			if opts.MultiModal {
-				for _, f := range extractFileNames(line) {
+				for _, f := range extractFileNames(line, MediaTypeImage) {
 					if strings.HasPrefix(f, args[0]) {
 						isFile = true
 						break
@@ -435,13 +451,16 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			newMessage := api.Message{Role: "user", Content: sb.String()}
 
 			if opts.MultiModal {
-				msg, images, err := extractFileData(sb.String())
+				msg, images, imageUrls, audioUrls, videoUrls, err := extractFileData(sb.String())
 				if err != nil {
 					return err
 				}
 
 				newMessage.Content = msg
 				newMessage.Images = images
+				newMessage.ImageUrls = imageUrls
+				newMessage.AudioUrls = audioUrls
+				newMessage.VideoUrls = videoUrls
 			}
 
 			opts.Messages = append(opts.Messages, newMessage)
@@ -506,76 +525,157 @@ func normalizeFilePath(fp string) string {
 	).Replace(fp)
 }
 
-func extractFileNames(input string) []string {
-	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
-	// and followed by more characters and a file extension
-	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png)\b`
+func extractFileNames(input string, mediaType MediaType) []string {
+	config := mediaConfigs[mediaType]
+	// Convert extension array to regex pattern
+	extensions := strings.Join(config.extensions, "|")
+	// Build regex pattern: match paths starting with optional drive letter,
+	// followed by / ./ \ or .\ and ending with specified extensions (case insensitive)
+	regexPattern := fmt.Sprintf(`(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:%s)\b`, extensions)
 	re := regexp.MustCompile(regexPattern)
 
-	return re.FindAllString(input, -1)
-}
-
-func extractFileData(input string) (string, []api.ImageData, error) {
-	filePaths := extractFileNames(input)
-	var imgs []api.ImageData
-
-	for _, fp := range filePaths {
-		nfp := normalizeFilePath(fp)
-		data, err := getImageData(nfp)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		} else if err != nil {
-			fmt.Fprintf(os.Stderr, "Couldn't process image: %q\n", err)
-			return "", imgs, err
-		}
-		fmt.Fprintf(os.Stderr, "Added image '%s'\n", nfp)
-		input = strings.ReplaceAll(input, fp, "")
-		imgs = append(imgs, data)
+	// Find all matching file paths
+	matches := re.FindAllString(input, -1)
+	if matches == nil {
+		return []string{}
 	}
-	return strings.TrimSpace(input), imgs, nil
+	return matches
 }
 
-func getImageData(filePath string) ([]byte, error) {
+func extractFileData(input string) (string, []api.ImageData, []string, []string, []string, error) {
+	var images []api.ImageData
+	var imageUrls []string
+	var audioUrls []string
+	var videoUrls []string
+
+	for mediaType := range mediaConfigs {
+		paths := extractFileNames(input, mediaType)
+		for _, fp := range paths {
+			nfp := normalizeFilePath(fp)
+			if _, err := os.Stat(nfp); errors.Is(err, os.ErrNotExist) {
+				fmt.Fprintf(os.Stderr, "File '%s' does not exist\n", nfp)
+				continue
+			}
+
+			switch mediaType {
+			case MediaTypeImage:
+				data, err := getMediaData(nfp, mediaType)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Read image '%s' failed. Error is %s.\n", nfp, err.Error())
+				}
+				images = append(images, api.ImageData(data))
+				imageUrls = append(imageUrls, nfp)
+				fmt.Fprintf(os.Stderr, "Added image '%s'\n", nfp)
+			case MediaTypeAudio:
+				audioUrls = append(audioUrls, nfp)
+				fmt.Fprintf(os.Stderr, "Added audio '%s'\n", nfp)
+			case MediaTypeVideo:
+				videoUrls = append(videoUrls, nfp)
+				fmt.Fprintf(os.Stderr, "Added video '%s'\n", nfp)
+			}
+
+			input = strings.ReplaceAll(input, fp, "")
+		}
+	}
+
+	return strings.TrimSpace(input), images, imageUrls, audioUrls, videoUrls, nil
+}
+
+// getMediaData reads and validates media files
+func getMediaData(filePath string, mediaType MediaType) ([]byte, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
 
-	buf := make([]byte, 512)
-	_, err = file.Read(buf)
-	if err != nil {
-		return nil, err
+	// Read file header to detect type
+	header := make([]byte, 512)
+	_, err = file.Read(header)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("failed to read file header: %w", err)
 	}
 
-	contentType := http.DetectContentType(buf)
-	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png"}
-	if !slices.Contains(allowedTypes, contentType) {
-		return nil, fmt.Errorf("invalid image type: %s", contentType)
-	}
-
+	// Get file info
 	info, err := file.Stat()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get file info: %w", err)
 	}
 
-	// Check if the file size exceeds 100MB
-	var maxSize int64 = 100 * 1024 * 1024 // 100MB in bytes
-	if info.Size() > maxSize {
-		return nil, errors.New("file size exceeds maximum limit (100MB)")
+	// Validate file type and size
+	contentType := http.DetectContentType(header)
+	config := mediaConfigs[mediaType]
+
+	// Validate file type
+	validType := false
+	for _, mimeType := range config.mimeTypes {
+		if strings.HasPrefix(contentType, mimeType) {
+			validType = true
+			break
+		}
+	}
+	if !validType {
+		return nil, fmt.Errorf("unsupported %s type: %s", config.description, contentType)
 	}
 
-	buf = make([]byte, info.Size())
+	// Validate file size
+	if info.Size() > config.maxSize {
+		return nil, fmt.Errorf("%s file size exceeds limit (max %dMB)",
+			config.description, config.maxSize/1024/1024)
+	}
+
+	// Read entire file content
+	buf := make([]byte, info.Size())
 	_, err = file.Seek(0, 0)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to reset file pointer: %w", err)
 	}
 
 	_, err = io.ReadFull(file, buf)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to read file content: %w", err)
 	}
 
 	return buf, nil
+}
+
+// mediaConfigs stores configurations for all media types
+var mediaConfigs = map[MediaType]mediaConfig{
+	MediaTypeImage: {
+		extensions:  []string{"jpg", "jpeg", "png"},
+		mimeTypes:   []string{"image/jpeg", "image/png"},
+		maxSize:     100 * 1024 * 1024, // 100MB
+		description: "image",
+	},
+	MediaTypeAudio: {
+		extensions: []string{"mp3"},
+		mimeTypes: []string{
+			"audio/mpeg",
+			"audio/wav",
+			"audio/ogg",
+			"audio/mp4",
+			"audio/x-m4a",
+			"audio/aac",
+			"audio/webm",
+			"application/ogg",
+		},
+		maxSize:     50 * 1024 * 1024, // 50MB
+		description: "audio",
+	},
+	MediaTypeVideo: {
+		extensions: []string{"mp4"},
+		mimeTypes: []string{
+			"video/mp4",
+			"video/x-msvideo",
+			"video/quicktime",
+			"video/x-matroska",
+			"video/webm",
+			"video/mpeg",
+			"video/ogg",
+			"application/x-mpegURL",
+			"video/MP2T",
+		},
+		maxSize:     200 * 1024 * 1024, // 200MB
+		description: "video",
+	},
 }

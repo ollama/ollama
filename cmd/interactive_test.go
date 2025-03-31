@@ -11,7 +11,7 @@ func TestExtractFilenames(t *testing.T) {
 	input := ` some preamble 
  ./relative\ path/one.png inbetween1 ./not a valid two.jpg inbetween2 ./1.svg
 /unescaped space /three.jpeg inbetween3 /valid\ path/dir/four.png "./quoted with spaces/five.JPG`
-	res := extractFileNames(input)
+	res := extractFileNames(input, MediaTypeImage)
 	assert.Len(t, res, 5)
 	assert.Contains(t, res[0], "one.png")
 	assert.Contains(t, res[1], "two.jpg")
@@ -30,7 +30,7 @@ func TestExtractFilenames(t *testing.T) {
 d:\path with\spaces\seven.JPEG inbetween7 c:\users\jdoe\eight.png inbetween8 
  d:\program files\someplace\nine.png inbetween9 "E:\program files\someplace\ten.PNG some ending
 `
-	res = extractFileNames(input)
+	res = extractFileNames(input, MediaTypeImage)
 	assert.Len(t, res, 10)
 	assert.NotContains(t, res, "inbetween2")
 	assert.Contains(t, res[0], "one.png")

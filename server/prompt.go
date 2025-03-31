@@ -22,8 +22,11 @@ var errTooManyImages = errors.New("vision model only supports a single image per
 // chatPrompt accepts a list of messages and returns the prompt and images that should be used for the next chat turn.
 // chatPrompt truncates any messages that exceed the context window of the model, making sure to always include 1) the
 // latest message and 2) system messages
-func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool) (prompt string, images []llm.ImageData, _ error) {
+func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool) (prompt string, images []llm.ImageData, imageUrls, audioUrls, videoUrls []string, _ error) {
 	var system []api.Message
+	imageUrls = make([]string, 0)
+	audioUrls = make([]string, 0)
+	videoUrls = make([]string, 0)
 
 	isMllama := checkMllamaModelFamily(m)
 
@@ -41,7 +44,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	// in reverse, find all messages that fit into context window
 	for i := n; i >= 0; i-- {
 		if isMllama && len(msgs[i].Images) > 1 {
-			return "", nil, errTooManyImages
+			return "", nil, nil, nil, nil, errTooManyImages
 		}
 
 		// always include the last message
@@ -58,12 +61,12 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 		var b bytes.Buffer
 		if err := m.Template.Execute(&b, template.Values{Messages: append(system, msgs[i:]...), Tools: tools}); err != nil {
-			return "", nil, err
+			return "", nil, nil, nil, nil, err
 		}
 
 		s, err := tokenize(ctx, b.String())
 		if err != nil {
-			return "", nil, err
+			return "", nil, nil, nil, nil, err
 		}
 
 		ctxLen := len(s)
@@ -100,18 +103,18 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 				} else {
 					data, opts, err := mllama.Preprocess(bytes.NewReader(i))
 					if err != nil {
-						return "", nil, err
+						return "", nil, nil, nil, nil, err
 					}
 
 					buf := new(bytes.Buffer)
 					err = binary.Write(buf, binary.LittleEndian, data)
 					if err != nil {
-						return "", nil, err
+						return "", nil, nil, nil, nil, err
 					}
 
 					ar, ok := opts["aspectRatioIndex"].(int)
 					if !ok {
-						return "", nil, fmt.Errorf("missing aspect ratio for image")
+						return "", nil, nil, nil, nil, fmt.Errorf("missing aspect ratio for image")
 					}
 
 					imgData = llm.ImageData{
@@ -138,15 +141,18 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 			images = append(images, imgData)
 		}
 		msgs[currMsgIdx+cnt].Content = prefix + imgPrompt + prompt
+		imageUrls = append(imageUrls, msg.ImageUrls...)
+		audioUrls = append(audioUrls, msg.AudioUrls...)
+		videoUrls = append(videoUrls, msg.VideoUrls...)
 	}
 
 	// truncate any messages that do not fit into the context window
 	var b bytes.Buffer
 	if err := m.Template.Execute(&b, template.Values{Messages: append(system, msgs[currMsgIdx:]...), Tools: tools}); err != nil {
-		return "", nil, err
+		return "", nil, nil, nil, nil, err
 	}
 
-	return b.String(), images, nil
+	return b.String(), images, imageUrls, audioUrls, videoUrls, nil
 }
 
 func checkMllamaModelFamily(m *Model) bool {

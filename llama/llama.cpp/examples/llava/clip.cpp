@@ -597,6 +597,7 @@ struct clip_ctx {
     bool has_glm_projector = false;
     bool has_qwen2vl_merger = false;
     int minicpmv_version = 2;
+    int max_slice_nums = 9;
 
     struct clip_vision_model vision_model;
     projector_type proj_type = PROJECTOR_TYPE_MLP;
@@ -2192,8 +2193,7 @@ int clip_uhd_num_image_embeds_col(struct clip_ctx * ctx_clip) {
 bool clip_image_preprocess(struct clip_ctx * ctx, const clip_image_u8 * img, clip_image_f32_batch * res_imgs) {
 
     if(clip_is_minicpmv(ctx)){
-        int max_slice_nums = 9;
-        std::vector<std::vector<clip_image_u8 *>> imgs = uhd_slice_image(img, max_slice_nums);
+        std::vector<std::vector<clip_image_u8 *>> imgs = uhd_slice_image(img, ctx->max_slice_nums);
         res_imgs->size = 0;
         for (size_t i = 0; i < imgs.size(); ++i){
             res_imgs->size += imgs[i].size();
@@ -2986,6 +2986,10 @@ int clip_is_minicpmv(const struct clip_ctx * ctx) {
         return ctx->minicpmv_version;
     }
     return 0;
+}
+
+void clip_uhd_max_slice_nums(struct clip_ctx * ctx, int max_slice_nums) {
+    ctx->max_slice_nums = max_slice_nums;
 }
 
 bool clip_is_glm(const struct clip_ctx * ctx) {

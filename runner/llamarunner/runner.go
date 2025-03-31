@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -100,12 +101,12 @@ type NewSequenceParams struct {
 	embedding      bool
 }
 
-func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
+func (s *Server) NewSequence(prompt string, images []llm.ImageData, audioUrls, videoUrls []string, params NewSequenceParams) (*Sequence, error) {
 	s.ready.Wait()
 
 	startTime := time.Now()
 
-	inputs, err := s.inputs(prompt, images)
+	inputs, err := s.inputs(prompt, images, audioUrls, videoUrls)
 	if err != nil {
 		return nil, fmt.Errorf("failed to process inputs: %w", err)
 	} else if len(inputs) == 0 {
@@ -164,7 +165,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 // inputs processes the prompt and images into a list of inputs
 // by splitting the prompt on [img-<n>] tags, tokenizing text and
 // generating image embeddings for each image
-func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input, error) {
+func (s *Server) inputs(prompt string, images []llm.ImageData, audioUrls, videoUrls []string) ([]input, error) {
 	var inputs []input
 	var parts []string
 	var matches [][]string
@@ -187,8 +188,8 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input, error) 
 		for _, t := range tokens {
 			inputs = append(inputs, input{token: t})
 		}
-
 		// image - generate image embedding
+
 		if i < len(matches) {
 			n, _ := strconv.Atoi(matches[i][1])
 
@@ -209,8 +210,68 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input, error) 
 				return nil, err
 			}
 
-			for _, e := range embed {
-				inputs = append(inputs, input{embed: e})
+			minicpmv_version := s.image.clip.ClipIsMinicpmv()
+			if minicpmv_version > 0 {
+				idx := 0
+				patch_num := s.image.clip.ClipNPatches()
+				slice_num := len(embed) / patch_num
+
+				tokens1, err1 := s.lc.Model().Tokenize("<image>", true, true)
+				tokens2, err2 := s.lc.Model().Tokenize("</image>", true, true)
+				tokens3, err3 := s.lc.Model().Tokenize("<slice>", true, true)
+				tokens4, err4 := s.lc.Model().Tokenize("</slice>", true, true)
+				tokens5, err5 := s.lc.Model().Tokenize("\n", true, true)
+				if err1 != nil || err2 != nil || err3 != nil || err4 != nil || err5 != nil {
+					return nil, err
+				}
+
+				inputs = append(inputs, input{token: tokens1[0]})
+				for _, e := range embed[patch_num*idx : patch_num*(idx+1)] {
+					inputs = append(inputs, input{embed: e})
+				}
+				idx += 1
+				inputs = append(inputs, input{token: tokens2[0]})
+
+				if slice_num > 1 {
+					slice_col := s.image.clip.ClipUhdNumImageEmbedsCol()
+					slice_row := (slice_num - 1) / slice_col
+
+					if minicpmv_version == 2 {
+						inputs = append(inputs, input{token: tokens3[0]})
+						for i := 0; i < slice_row; i++ {
+							for j := 0; j < slice_col; j++ {
+								inputs = append(inputs, input{token: tokens1[0]})
+								for _, e := range embed[patch_num*idx : patch_num*(idx+1)] {
+									inputs = append(inputs, input{embed: e})
+								}
+								idx += 1
+								inputs = append(inputs, input{token: tokens2[0]})
+								if j == slice_col-1 {
+									inputs = append(inputs, input{token: tokens5[0]})
+								}
+							}
+						}
+						inputs = append(inputs, input{token: tokens4[0]})
+					} else if minicpmv_version == 3 {
+						for i := 0; i < slice_row; i++ {
+							for j := 0; j < slice_col; j++ {
+								inputs = append(inputs, input{token: tokens3[0]})
+								for _, e := range embed[patch_num*idx : patch_num*(idx+1)] {
+									inputs = append(inputs, input{embed: e})
+								}
+								idx += 1
+								inputs = append(inputs, input{token: tokens4[0]})
+								if j == slice_col-1 {
+									inputs = append(inputs, input{token: tokens5[0]})
+								}
+							}
+						}
+					}
+				}
+			} else {
+				for _, e := range embed {
+					inputs = append(inputs, input{embed: e})
+				}
 			}
 		}
 	}
@@ -582,7 +643,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		Grammar:        req.Grammar,
 	}
 
-	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
+	seq, err := s.NewSequence(req.Prompt, req.Images, req.AudioUrls, req.VideoUrls, NewSequenceParams{
 		numPredict:     req.Options.NumPredict,
 		stop:           req.Options.Stop,
 		numKeep:        req.Options.NumKeep,
@@ -682,7 +743,7 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 
 	slog.Debug("embedding request", "content", req.Content)
 
-	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{embedding: true})
+	seq, err := s.NewSequence(req.Content, nil, nil, nil, NewSequenceParams{embedding: true})
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 		return
@@ -914,4 +975,12 @@ func Execute(args []string) error {
 	}
 
 	return nil
+}
+
+func (s *Server) Omni(input string, ImageUrls, audioUrls, videoUrls []string) string {
+	if input == "" {
+		return "输入字符串不能为空"
+	}
+	// TODO
+	return "你好，欢迎使用omni"
 }
