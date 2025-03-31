@@ -1,4 +1,4 @@
-package ggml
+	package ggml
 
 import (
 	"encoding/binary"
@@ -676,3 +676,112 @@ func kvCacheBytesPerElement(cacheType string) float64 {
 		return 2 // f16 (default)
 	}
 }
+package ggml
+
+import (
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"slices"
+	"strings"
+
+	"github.com/ollama/ollama/fs/util/bufioutil"
+)
+
+type GGML struct {
+	container
+	model
+}
+
+type model interface {
+	KV() KV
+	Tensors() Tensors
+}
+
+type KV map[string]any
+
+func (kv KV) Architecture() string {
+	return kv.String("general.architecture", "unknown")
+}
+
+func (kv KV) Kind() string {
+	return kv.String("general.type", "unknown")
+}
+
+// ... (Other KV methods)
+
+func keyValue[T string | uint32 | uint64 | float32 | *array | bool](kv KV, key string, defaultValue ...T) T {
+	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") {
+		key = kv.Architecture() + "." + key
+	}
+
+	if val, ok := kv[key]; ok {
+		return val.(T)
+	}
+
+	slog.Warn("key not found", "key", key, "default", defaultValue[0])
+	return defaultValue[0]
+}
+
+type Tensors struct {
+	items  []*Tensor
+	Offset uint64
+}
+
+// ... (Other Tensors methods)
+
+type Tensor struct {
+	Name   string `json:"name"`
+	Kind   uint32 `json:"kind"`
+	Offset uint64 `json:"-"`
+
+	// Shape is the number of elements in each dimension
+	Shape []uint64 `json:"shape"`
+
+	io.WriterTo `json:"-"`
+}
+
+// ... (Other Tensor methods)
+
+// Decode decodes a GGML model from the given reader.
+func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
+	if maxArraySize == 0 {
+		maxArraySize = 1024
+	}
+
+	rs = bufioutil.NewBufferedSeeker(rs, 32<<10)
+
+	var magic uint32
+	if err := binary.Read(rs, binary.LittleEndian, &magic); err != nil {
+		return nil, 0, fmt.Errorf("failed to read magic: %w", err)
+	}
+
+	var c container
+	switch magic {
+	case FILE_MAGIC_GGUF_LE:
+		c = &containerGGUF{ByteOrder: binary.LittleEndian, maxArraySize: maxArraySize}
+	case FILE_MAGIC_GGUF_BE:
+		c = &containerGGUF{ByteOrder: binary.BigEndian, maxArraySize: maxArraySize}
+	default:
+		return nil, 0, fmt.Errorf("invalid file magic: %x", magic)
+	}
+
+	model, err := c.Decode(rs)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to decode container: %w", err)
+	}
+
+	offset, err := rs.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to seek: %w", err)
+	}
+
+	return &GGML{
+		container: c,
+		model:     model,
+	}, offset, nil
+}
+
+// ... (Other functions)
