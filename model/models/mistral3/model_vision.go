@@ -1,7 +1,6 @@
 package mistral3
 
 import (
-	"image"
 	"math"
 	"slices"
 
@@ -11,10 +10,6 @@ import (
 
 var batchSize int = 1
 
-type PatchMerger struct {
-	MergingLayer *nn.Linear `gguf:"merging_layer"`
-}
-
 func rotateHalf(ctx ml.Context, t ml.Tensor) ml.Tensor {
 	x1 := t.View(ctx, 0, t.Dim(0)/2, t.Stride(1), t.Dim(1), t.Stride(2), t.Dim(2), t.Stride(3), t.Dim(3))
 	x2 := t.View(ctx, t.Stride(0)*t.Dim(0)/2, t.Dim(0)/2, t.Stride(1), t.Dim(1), t.Stride(2), t.Dim(2), t.Stride(3), t.Dim(3))
@@ -23,43 +18,6 @@ func rotateHalf(ctx ml.Context, t ml.Tensor) ml.Tensor {
 
 func applyRotaryPositionalEmbedding(ctx ml.Context, t, cos, sin ml.Tensor) ml.Tensor {
 	return t.Mul(ctx, cos).Add(ctx, rotateHalf(ctx, t).Mul(ctx, sin))
-}
-
-func (pm *PatchMerger) Forward(ctx ml.Context, visionOutputs ml.Tensor, size image.Point, spatialMergeSize int) ml.Tensor {
-	d := visionOutputs.Dim(0)
-	imageGrid := visionOutputs.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx).Reshape(ctx, size.X, size.Y, d)
-	kernel := ctx.Input().Empty(ml.DTypeF32, spatialMergeSize, spatialMergeSize, d)
-	patches := kernel.IM2Col(ctx, imageGrid, spatialMergeSize, spatialMergeSize, 0, 0, 1, 1)
-	reshaped := patches.Reshape(ctx, d*spatialMergeSize*spatialMergeSize, patches.Dim(1)*patches.Dim(2))
-	return pm.MergingLayer.Forward(ctx, reshaped)
-}
-
-type MultiModalProjector struct {
-	Norm        *nn.RMSNorm  `gguf:"norm"`
-	Linear1     *nn.Linear   `gguf:"linear_1"`
-	Linear2     *nn.Linear   `gguf:"linear_2"`
-	PatchMerger *PatchMerger `gguf:"patch_merger"`
-
-	spatialMergeSize int
-	eps              float32
-	patchSize        int
-}
-
-func (p *MultiModalProjector) Forward(ctx ml.Context, visionOutputs ml.Tensor, size image.Point) (ml.Tensor, image.Point) {
-	visionOutputs = p.Norm.Forward(ctx, visionOutputs, p.eps)
-	patchSizes := image.Point{size.X / p.patchSize, size.Y / p.patchSize}
-	visionOutputs = p.PatchMerger.Forward(ctx, visionOutputs, patchSizes, p.spatialMergeSize)
-	visionOutputs = p.Linear1.Forward(ctx, visionOutputs)
-	visionOutputs = visionOutputs.GELU(ctx)
-	return p.Linear2.Forward(ctx, visionOutputs), image.Point{patchSizes.X / p.spatialMergeSize, patchSizes.Y / p.spatialMergeSize}
-}
-
-func newMultiModalProjector(c ml.Config) *MultiModalProjector {
-	return &MultiModalProjector{
-		spatialMergeSize: int(c.Uint("spatial_merge_size", 2)),
-		eps:              c.Float("text_config.rms_norm_eps", 1e-5),
-		patchSize:        int(c.Uint("vision.patch_size", 14)),
-	}
 }
 
 type VisionSelfAttention struct {
