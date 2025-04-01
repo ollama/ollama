@@ -125,7 +125,7 @@ type RopeType int
 const (
 	RopeTypeNormal RopeType = iota // Standard RoPE implementation
 	RopeTypeNeox                   // NeoX-style RoPE implementation
-	RopeTypeMRoPE                  // Multi-scale RoPE implementation
+	RopeTypeMRoPE                  // Multimodal RoPE implementation
 	RopeTypeVision                 // Vision-specific RoPE implementation
 )
 
