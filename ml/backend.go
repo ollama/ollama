@@ -119,6 +119,53 @@ type Context interface {
 	Layer(int) Context
 }
 
+// RopeType represents different RoPE (Rotary Position Embedding) implementation types
+type RopeType int
+
+// Available RoPE implementation types
+const (
+	RopeTypeNormal RopeType = iota // Standard RoPE implementation
+	RopeTypeNeox                   // NeoX-style RoPE implementation
+	RopeTypeMRoPE                  // Multi-scale RoPE implementation
+	RopeTypeVision                 // Vision-specific RoPE implementation
+)
+
+type YarnConfig struct {
+	YarnCtxTrain   int     // Context size used during training (for YaRN scaling)
+	YarnExtFactor  float32 // Extension factor for YaRN
+	YarnAttnFactor float32 // Attention scaling factor for YaRN
+	YarnBetaFast   float32 // Fast decay parameter for YaRN
+	YarnBetaSlow   float32 // Slow decay parameter for YaRN
+}
+
+// DefaultYarnConfig returns a default configuration for YaRN (Yet Another Recurrent Network)
+func DefaultYarnConfig(nCtx int32) *YarnConfig {
+	return &YarnConfig{
+		YarnCtxTrain:   int(nCtx),
+		YarnExtFactor:  0.0,
+		YarnAttnFactor: 1.0,
+		YarnBetaFast:   32.0,
+		YarnBetaSlow:   1.0,
+	}
+}
+
+// RoPEConfig holds configuration for Rotary Position Embedding
+type RoPEConfig struct {
+	// Dim is the dimensionality for applying rotary embeddings
+	Dim uint32
+
+	// Type specifies the RoPE implementation variant
+	Type RopeType
+
+	// Base controls frequency decay for the embeddings
+	Base float32
+
+	// Scale allows scaling the effective context length
+	Scale float32
+
+	*YarnConfig
+}
+
 type Tensor interface {
 	Dim(n int) int
 	Stride(n int) int
@@ -144,8 +191,8 @@ type Tensor interface {
 	AvgPool2D(ctx Context, k, s int, p float32) Tensor
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
-	RoPE(ctx Context, positionIDs, ropeFactors Tensor, dim, ropeType uint32, base, scale float32) Tensor
 	IM2Col(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
+	RoPE(ctx Context, positionIDs, ropeFactors Tensor, config RoPEConfig) Tensor
 
 	Sin(ctx Context) Tensor
 	Cos(ctx Context) Tensor
