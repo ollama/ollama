@@ -20,15 +20,14 @@ type TextSelfAttention struct {
 func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, positions, _ ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
 	headDim := opts.hiddenSize / opts.numHeads
-	ropeType := uint32(0)
 
 	query := sa.Query.Forward(ctx, hiddenState)
 	query = query.Reshape(ctx, headDim, opts.numHeads, batchSize)
-	query = query.RoPE(ctx, positions, sa.RopeFactors, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
+	query = query.RoPE(ctx, positions, sa.RopeFactors, opts.ropeConfig)
 
 	key := sa.Key.Forward(ctx, hiddenState)
 	key = key.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-	key = key.RoPE(ctx, positions, sa.RopeFactors, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
+	key = key.RoPE(ctx, positions, sa.RopeFactors, opts.ropeConfig)
 
 	value := sa.Value.Forward(ctx, hiddenState)
 	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
@@ -43,7 +42,7 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, positions, _ m
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
 	// This will only get called for layers in the cache, which are just the self attention layers
 	if sa, ok := m.Transformer.Layers[layer].(*TextSelfAttentionDecoderLayer); ok {
-		return key.RoPE(ctx, shift, sa.SelfAttention.RopeFactors, m.ropeDim, uint32(0), m.ropeBase, m.ropeScale), nil
+		return key.RoPE(ctx, shift, sa.SelfAttention.RopeFactors, m.ropeConfig), nil
 	}
 
 	return key, nil
@@ -198,8 +197,8 @@ func (d *TextDecoder) Forward(ctx ml.Context, hiddenState, positionIDs, outputs,
 
 type TextModelOptions struct {
 	hiddenSize, numHeads, numKVHeads int
-	eps, ropeBase, ropeScale         float32
-	ropeDim                          uint32
+	eps                              float32
+	ropeConfig                       ml.RoPEConfig
 
 	crossAttentionLayers []uint32
 }
@@ -240,10 +239,14 @@ func newTextModel(c ml.Config) *TextModel {
 			numHeads:             int(c.Uint("attention.head_count")),
 			numKVHeads:           int(c.Uint("attention.head_count_kv")),
 			eps:                  c.Float("attention.layer_norm_rms_epsilon"),
-			ropeBase:             c.Float("rope.freq_base"),
-			ropeScale:            c.Float("rope.freq_scale", 1),
-			ropeDim:              c.Uint("rope.dimension_count"),
 			crossAttentionLayers: c.Uints("attention.cross_attention_layers"),
+			ropeConfig: ml.RoPEConfig{
+				Base:       c.Float("rope.freq_base"),
+				Scale:      c.Float("rope.freq_scale", 1),
+				Dim:        c.Uint("rope.dimension_count"),
+				Type:       ml.RopeTypeNormal,
+				YarnConfig: ml.DefaultYarnConfig(int32(c.Uint("context_length", 131072))),
+			},
 		},
 	}
 }
