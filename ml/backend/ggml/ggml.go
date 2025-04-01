@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"unicode"
 	"unsafe"
 
@@ -319,13 +318,11 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 				tts[i] = tt
 			}
 
-			fd := int(r.Fd())
-			newFd, err := syscall.Dup(fd)
+			newFile, err := os.Open(r.Name())
 			if err != nil {
-				fmt.Println("Error duplicating file descriptor:", err)
 				return err
 			}
-			newFile := os.NewFile(uintptr(newFd), r.Name())
+			defer newFile.Close()
 			sr := io.NewSectionReader(newFile, int64(meta.Tensors().Offset+t.Offset), int64(t.Size()))
 			bts := make([]byte, 128*format.KibiByte)
 
