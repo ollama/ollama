@@ -14,10 +14,11 @@ import (
 type Options struct {
 	hiddenSize, numHeads, numKVHeads int
 	attnKeyLen, attnValLen           int
-	eps, ropeBase, ropeScale         float32
+	eps                              float32
 	attnLogitSoftcap                 float32
 	finalLogitSoftcap                float32
 	largeModelScaling                bool
+	ropeConfig                       ml.RoPEConfig
 }
 
 type Model struct {
@@ -55,10 +56,15 @@ func New(c fs.Config) (model.Model, error) {
 			attnKeyLen:        int(c.Uint("attention.key_length")),
 			attnValLen:        int(c.Uint("attention.value_length")),
 			eps:               c.Float("attention.layer_norm_rms_epsilon"),
-			ropeBase:          c.Float("rope.freq_base", 10000.0),
-			ropeScale:         c.Float("rope.freq_scale", 1.0),
 			attnLogitSoftcap:  c.Float("attn_logit_softcapping"),
 			finalLogitSoftcap: c.Float("final_logit_softcapping"),
+			ropeConfig: ml.RoPEConfig{
+				Base:       c.Float("rope.freq_base", 10000.0),
+				Scale:      c.Float("rope.freq_scale", 1.0),
+				Dim:        c.Uint("attention.key_length"),
+				Type:       ml.RopeTypeNormal,
+				YarnConfig: ml.DefaultYarnConfig(int32(c.Uint("context_length", 131072))),
+			},
 		},
 	}
 
@@ -78,11 +84,10 @@ type SelfAttention struct {
 
 func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
-	ropeType := uint32(2)
 
 	q := sa.Query.Forward(ctx, hiddenState)
 	q = q.Reshape(ctx, opts.attnKeyLen, opts.numHeads, batchSize)
-	q = q.RoPE(ctx, positionIDs, nil, uint32(opts.attnKeyLen), ropeType, opts.ropeBase, opts.ropeScale)
+	q = q.RoPE(ctx, positionIDs, nil, opts.ropeConfig)
 
 	if opts.largeModelScaling {
 		q = q.Scale(ctx, 1.0/math.Sqrt(float64(opts.hiddenSize/opts.numHeads)))
@@ -92,7 +97,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 
 	k := sa.Key.Forward(ctx, hiddenState)
 	k = k.Reshape(ctx, opts.attnKeyLen, opts.numKVHeads, batchSize)
-	k = k.RoPE(ctx, positionIDs, nil, uint32(opts.attnKeyLen), ropeType, opts.ropeBase, opts.ropeScale)
+	k = k.RoPE(ctx, positionIDs, nil, opts.ropeConfig)
 
 	v := sa.Value.Forward(ctx, hiddenState)
 	v = v.Reshape(ctx, opts.attnValLen, opts.numKVHeads, batchSize)
@@ -122,7 +127,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 }
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return key.RoPE(ctx, shift, nil, uint32(m.Options.attnKeyLen), uint32(2), m.Options.ropeBase, m.Options.ropeScale), nil
+	return key.RoPE(ctx, shift, nil, m.ropeConfig), nil
 }
 
 type MLP struct {
