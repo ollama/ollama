@@ -75,6 +75,7 @@ func (m *Model) Capabilities() []model.Capability {
 	if err == nil {
 		defer r.Close()
 
+		// TODO(mxyng): decode the GGML into model to avoid doing this multiple times
 		f, _, err := ggml.Decode(r, 0)
 		if err == nil {
 			if _, ok := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]; ok {
