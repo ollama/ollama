@@ -110,8 +110,19 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 
 	// image embeddings
 	for _, image := range batch.Multimodal {
-		visionOutputs := image.Multimodal.(ml.Tensor)
-		ctx.Forward(visionOutputs.Copy(ctx, hiddenState.View(ctx, image.Index*hiddenState.Stride(1), visionOutputs.Dim(0)*visionOutputs.Dim(1))))
+		row := image.Multimodal.(*imageRow)
+		row.parent.dataOnce.Do(func() {
+			// use a new, throwaway context so the image tensor is not added to the graph
+			m.Backend().NewContext().Forward(row.parent.tensor).Compute(row.parent.tensor)
+			row.parent.data = row.parent.tensor.Floats()
+		})
+
+		imageFeature, err := ctx.Input().FromFloatSlice(row.data(), row.shape...)
+		if err != nil {
+			panic(err)
+		}
+
+		ctx.Forward(imageFeature.Copy(ctx, hiddenState.View(ctx, image.Index*hiddenState.Stride(1), imageFeature.Dim(0)*imageFeature.Dim(1))))
 	}
 
 	for i, layer := range m.Layers {
