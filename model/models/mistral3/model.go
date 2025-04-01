@@ -109,7 +109,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 	// split into patches to be sent to the text transformer
 	rows := make([]ml.Tensor, size.Y)
 	for i := range rows {
-		rows[i] = features.View(ctx, features.Stride(1)*(i+size.X), features.Dim(0), features.Stride(1), size.X)
+		rows[i] = features.View(ctx, features.Stride(1)*i*size.X, features.Dim(0), features.Stride(1), size.X)
 	}
 
 	return rows, nil
