@@ -741,6 +741,27 @@ func (t *Tensor) Add(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	}
 }
 
+func (t *Tensor) Repeat(ctx ml.Context, dim, n int) ml.Tensor {
+	if dim < 0 || dim >= C.GGML_MAX_DIMS {
+		panic("invalid dimension")
+	}
+
+	shape := make([]C.int64_t, C.GGML_MAX_DIMS)
+	for i := range C.GGML_MAX_DIMS {
+		if i == dim {
+			shape[i] = C.int64_t(t.Dim(i) * n)
+		} else {
+			shape[i] = C.int64_t(t.Dim(i))
+		}
+	}
+
+	tmpl := C.ggml_new_tensor(ctx.(*Context).ctx, t.t._type, C.int(len(shape)), unsafe.SliceData(shape))
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_repeat(ctx.(*Context).ctx, t.t, tmpl),
+	}
+}
+
 func (t *Tensor) Stack(ctx ml.Context, dim int, s ...ml.Tensor) ml.Tensor {
 	if len(s) > 0 {
 		return t.Concat(ctx, s[0].Stack(ctx, dim, s[1:]...), dim)

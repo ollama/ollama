@@ -2,7 +2,6 @@ package mistral3
 
 import (
 	"math"
-	"slices"
 
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
@@ -123,9 +122,9 @@ func (m *VisionModel) positionalEmbedding(ctx ml.Context, positionIDs ml.Tensor)
 	h = h.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 	w = w.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 
-	h = h.Stack(ctx, 1, slices.Repeat([]ml.Tensor{h}, maxPatchesPerSide-1)...)
+	h = h.Repeat(ctx, 1, maxPatchesPerSide)
 	h = h.Reshape(ctx, frequencies/2, maxPatchesPerSide, maxPatchesPerSide).Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
-	w = w.Stack(ctx, 2, slices.Repeat([]ml.Tensor{w}, maxPatchesPerSide-1)...)
+	w = w.Repeat(ctx, 2, maxPatchesPerSide)
 
 	inverseFrequencies := h.Concat(ctx, w, 0).Reshape(ctx, frequencies, maxPatchesPerSide*maxPatchesPerSide)
 	inverseFrequencies = inverseFrequencies.Concat(ctx, inverseFrequencies, 0)

@@ -165,6 +165,9 @@ type Tensor interface {
 	Unpad(ctx Context, shape ...int) Tensor
 
 	Stack(ctx Context, dim int, s ...Tensor) Tensor
+
+	// Repeat repeats the tensor n times along dimension dim
+	Repeat(ctx Context, dim, n int) Tensor
 	Concat(ctx Context, t2 Tensor, dim int) Tensor
 	Rows(ctx Context, t2 Tensor) Tensor
 	Copy(ctx Context, t2 Tensor) Tensor
