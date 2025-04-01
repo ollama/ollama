@@ -225,6 +225,8 @@ func countCommonPrefix(a []input.Input, b []input.Input) int32 {
 	return count
 }
 
+// TODO(jessegross): If we need to reprocess the inputs we should ensure that
+// we don't split up a SameBatch
 func (c *InputCache) ShiftDiscard(inputLen int32, numKeep int32) int32 {
 	targetFree := (c.numCtx - numKeep) / 2
 	targetFree = max(targetFree, 1)
