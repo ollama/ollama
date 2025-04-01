@@ -111,35 +111,33 @@ func (m *Model) Capabilities() []model.Capability {
 
 // CheckCapabilities checks if the model has the specified capabilities returning an error describing
 // any missing or unknown capabilities
-func (m *Model) CheckCapabilities(caps ...model.Capability) error {
-	modelCaps := m.Capabilities()
+func (m *Model) CheckCapabilities(want ...model.Capability) error {
+	available := m.Capabilities()
 	var errs []error
 
-	for _, cap := range caps {
-		switch cap {
-		case model.CapabilityCompletion, model.CapabilityTools, model.CapabilityInsert, model.CapabilityVision, model.CapabilityEmbedding:
-			if !slices.Contains(modelCaps, cap) {
-				switch cap {
-				case model.CapabilityCompletion:
-					errs = append(errs, errCapabilityCompletion)
-				case model.CapabilityTools:
-					errs = append(errs, errCapabilityTools)
-				case model.CapabilityInsert:
-					errs = append(errs, errCapabilityInsert)
-				case model.CapabilityVision:
-					errs = append(errs, errCapabilityVision)
-				case model.CapabilityEmbedding:
-					errs = append(errs, errCapabilityEmbedding)
-				}
-			}
-		default:
+	// Map capabilities to their corresponding error
+	capToErr := map[model.Capability]error{
+		model.CapabilityCompletion: errCapabilityCompletion,
+		model.CapabilityTools:      errCapabilityTools,
+		model.CapabilityInsert:     errCapabilityInsert,
+		model.CapabilityVision:     errCapabilityVision,
+		model.CapabilityEmbedding:  errCapabilityEmbedding,
+	}
+
+	for _, cap := range want {
+		err, ok := capToErr[cap]
+		if !ok {
 			slog.Error("unknown capability", "capability", cap)
 			return fmt.Errorf("unknown capability: %s", cap)
 		}
+
+		if !slices.Contains(available, cap) {
+			errs = append(errs, err)
+		}
 	}
 
-	if err := errors.Join(errs...); err != nil {
-		return fmt.Errorf("%w %w", errCapabilities, err)
+	if len(errs) > 0 {
+		return fmt.Errorf("%w %w", errCapabilities, errors.Join(errs...))
 	}
 
 	return nil
