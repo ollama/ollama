@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -339,6 +340,11 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision)
+
+	// TODO: remove the projector info and vision info checks below,
+	// these are left in for backwards compatibility with older servers
+	// that don't have the capabilities field in the model info
 	if len(info.ProjectorInfo) != 0 {
 		opts.MultiModal = true
 	}
@@ -668,6 +674,15 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 		rows = append(rows, []string{"", "quantization", resp.Details.QuantizationLevel})
 		return
 	})
+
+	if len(resp.Capabilities) > 0 {
+		tableRender("Capabilities", func() (rows [][]string) {
+			for _, capability := range resp.Capabilities {
+				rows = append(rows, []string{"", capability.String()})
+			}
+			return
+		})
+	}
 
 	if resp.ProjectorInfo != nil {
 		tableRender("Projector", func() (rows [][]string) {

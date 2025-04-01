@@ -20,6 +20,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/types/model"
 )
 
 type LlmRequest struct {
@@ -195,7 +196,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					}
 
 					// Embedding models should always be loaded with parallel=1
-					if pending.model.CheckCapabilities(CapabilityCompletion) != nil {
+					if pending.model.CheckCapabilities(model.CapabilityCompletion) != nil {
 						numParallel = 1
 					}
 
