@@ -7,6 +7,7 @@ const (
 	CapabilityTools      = Capability("tools")
 	CapabilityInsert     = Capability("insert")
 	CapabilityVision     = Capability("vision")
+	CapabilityEmbedding  = Capability("embedding")
 )
 
 func (c Capability) String() string {

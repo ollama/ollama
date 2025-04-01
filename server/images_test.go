@@ -35,6 +35,10 @@ func createMockGGUFData(architecture string, vision bool) []byte {
 	if vision {
 		numMetaEntries++
 	}
+	// Add embedding entry if architecture is "bert"
+	if architecture == "bert" {
+		numMetaEntries++
+	}
 	binary.Write(&buf, binary.LittleEndian, numMetaEntries)
 
 	// Write architecture metadata
@@ -66,6 +70,21 @@ func createMockGGUFData(architecture string, vision bool) []byte {
 		var countVal uint32 = 1
 		binary.Write(&buf, binary.LittleEndian, countVal)
 	}
+	// Write embedding metadata if architecture is "bert"
+	if architecture == "bert" {
+		poolKey := architecture + ".pooling_type"
+		keyLen = uint64(len(poolKey))
+		binary.Write(&buf, binary.LittleEndian, keyLen)
+		buf.WriteString(poolKey)
+
+		// uint32 type (4)
+		var uint32Type uint32 = 4
+		binary.Write(&buf, binary.LittleEndian, uint32Type)
+
+		// uint32 value (1)
+		var poolingVal uint32 = 1
+		binary.Write(&buf, binary.LittleEndian, poolingVal)
+	}
 
 	return buf.Bytes()
 }
@@ -81,13 +100,10 @@ func TestModelCapabilities(t *testing.T) {
 	// Create different types of mock model files
 	completionModelPath := filepath.Join(tempDir, "model.bin")
 	visionModelPath := filepath.Join(tempDir, "vision_model.bin")
+	embeddingModelPath := filepath.Join(tempDir, "embedding_model.bin")
 	// Create a simple model file for tests that don't depend on GGUF content
 	simpleModelPath := filepath.Join(tempDir, "simple_model.bin")
 
-	err = os.WriteFile(simpleModelPath, []byte("dummy model data"), 0o644)
-	if err != nil {
-		t.Fatalf("Failed to create simple model file: %v", err)
-	}
 	err = os.WriteFile(completionModelPath, createMockGGUFData("llama", false), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create completion model file: %v", err)
@@ -95,6 +111,14 @@ func TestModelCapabilities(t *testing.T) {
 	err = os.WriteFile(visionModelPath, createMockGGUFData("llama", true), 0o644)
 	if err != nil {
 		t.Fatalf("Failed to create completion model file: %v", err)
+	}
+	err = os.WriteFile(embeddingModelPath, createMockGGUFData("bert", false), 0o644)
+	if err != nil {
+		t.Fatalf("Failed to create embedding model file: %v", err)
+	}
+	err = os.WriteFile(simpleModelPath, []byte("dummy model data"), 0o644)
+	if err != nil {
+		t.Fatalf("Failed to create simple model file: %v", err)
 	}
 
 	toolsInsertTemplate, err := template.Parse("{{ .prompt }}{{ if .tools }}{{ .tools }}{{ end }}{{ if .suffix }}{{ .suffix }}{{ end }}")
@@ -164,6 +188,14 @@ func TestModelCapabilities(t *testing.T) {
 			},
 			expectedCaps: []model.Capability{model.CapabilityCompletion, model.CapabilityVision, model.CapabilityTools, model.CapabilityInsert},
 		},
+		{
+			name: "model with embedding capability",
+			model: Model{
+				ModelPath: embeddingModelPath,
+				Template:  chatTemplate,
+			},
+			expectedCaps: []model.Capability{model.CapabilityEmbedding},
+		},
 	}
 
 	// compare two slices of model.Capability regardless of order
@@ -212,6 +244,7 @@ func TestModelCheckCapabilities(t *testing.T) {
 
 	visionModelPath := filepath.Join(tempDir, "vision_model.bin")
 	simpleModelPath := filepath.Join(tempDir, "model.bin")
+	embeddingModelPath := filepath.Join(tempDir, "embedding_model.bin")
 
 	err = os.WriteFile(simpleModelPath, []byte("dummy model data"), 0o644)
 	if err != nil {
@@ -219,7 +252,11 @@ func TestModelCheckCapabilities(t *testing.T) {
 	}
 	err = os.WriteFile(visionModelPath, createMockGGUFData("llama", true), 0o644)
 	if err != nil {
-		t.Fatalf("Failed to create completion model file: %v", err)
+		t.Fatalf("Failed to create vision model file: %v", err)
+	}
+	err = os.WriteFile(embeddingModelPath, createMockGGUFData("bert", false), 0o644)
+	if err != nil {
+		t.Fatalf("Failed to create embedding model file: %v", err)
 	}
 
 	toolsInsertTemplate, err := template.Parse("{{ .prompt }}{{ if .tools }}{{ .tools }}{{ end }}{{ if .suffix }}{{ .suffix }}{{ end }}")
@@ -283,6 +320,14 @@ func TestModelCheckCapabilities(t *testing.T) {
 				Template:  chatTemplate,
 			},
 			checkCaps: []model.Capability{model.CapabilityVision},
+		},
+		{
+			name: "model with embedding capability",
+			model: Model{
+				ModelPath: embeddingModelPath,
+				Template:  chatTemplate,
+			},
+			checkCaps: []model.Capability{model.CapabilityEmbedding},
 		},
 		{
 			name: "unknown capability",
