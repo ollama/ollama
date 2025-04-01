@@ -193,6 +193,8 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 		conv = &bertModel{}
 	case "CohereForCausalLM":
 		conv = &commandrModel{}
+	case "GraniteForCausalLM":
+		conv = &graniteModel{}
 	default:
 		return fmt.Errorf("unsupported architecture %q", p.Architectures[0])
 	}
