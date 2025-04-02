@@ -626,7 +626,7 @@ func (llm GGML) VisionGraphSize() (weights, graphSize uint64) {
 			embeddingLength*numPatches*maxNumTiles +
 			9*embeddingLength*numPaddedPatches*maxNumTiles +
 			numPaddedPatches*maxNumTiles*numPaddedPatches*maxNumTiles*headCount)
-	case "gemma3":
+	case "gemma3", "mistral3":
 		graphSize = 4 * (imageSize*imageSize*numChannels +
 			embeddingLength*patchSize +
 			numPatches*numPatches*headCount)
