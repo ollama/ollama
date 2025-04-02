@@ -124,8 +124,6 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 			return nil
 		}
 
-		history := make(map[string][2]int)
-
 		for i := range len(runes) - 1 {
 			if pair := pairwise(i, i+1); pair != nil {
 				heap.Push(q, pair)
@@ -143,8 +141,6 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 			merges[pair.a].runes = append(left.runes, right.runes...)
 			merges[pair.b].runes = nil
 			merges[pair.a].n = right.n
-
-			left.n = right.n
 			if right.n != -1 {
 				merges[right.n].p = pair.a
 			}
@@ -158,41 +154,29 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 			}
 		}
 
-		// Helper function to recursively segment tokens
-		var resegment func(string, []merge) []int32
-		resegment = func(text string, merges []merge) []int32 {
-			id := spm.vocab.Encode(text)
-
-			if id >= 0 {
-				return []int32{id}
-			}
-
-			if pair, exists := history[text]; exists {
-				left := resegment(string(merges[pair[0]].runes), merges)
-				right := resegment(string(merges[pair[1]].runes), merges)
-				return append(left, right...)
-			}
-
-			// Fallback to byte tokenization
-			var result []int32
-			for _, b := range []byte(text) {
-				byteToken := fmt.Sprintf("<0x%02X>", b)
-				unknownID := spm.vocab.Encode(byteToken)
-				if unknownID >= 0 {
-					result = append(result, unknownID)
-				} else {
-					slog.Debug("unknown byte token", "byte", b, "token", byteToken)
-				}
-			}
-
-			return result
-		}
-
 		// Collect tokens from the merged symbols
 		for i := 0; i != -1; i = merges[i].n {
-			if string(merges[i].runes) != "" {
-				tokens := resegment(string(merges[i].runes), merges)
-				ids = append(ids, tokens...)
+			if token := string(merges[i].runes); token != "" {
+				id := spm.vocab.Encode(token)
+
+				if id >= 0 {
+					ids = append(ids, id)
+					continue
+				}
+
+				// Fallback to byte tokenization
+				var result []int32
+				for _, b := range []byte(token) {
+					byteToken := fmt.Sprintf("<0x%02X>", b)
+					unknownID := spm.vocab.Encode(byteToken)
+					if unknownID >= 0 {
+						result = append(result, unknownID)
+					} else {
+						slog.Debug("unknown byte token", "byte", b, "token", byteToken)
+					}
+				}
+
+				ids = append(ids, result...)
 			}
 		}
 	}
