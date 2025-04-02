@@ -44,6 +44,7 @@ type LlamaServer interface {
 	EstimatedVRAM() uint64 // Total VRAM across all GPUs
 	EstimatedTotal() uint64
 	EstimatedVRAMByGPU(gpuID string) uint64
+	RunnerOptions() map[string]any
 }
 
 // llmServer is an instance of the llama.cpp server
@@ -1009,4 +1010,16 @@ func (s *llmServer) EstimatedVRAMByGPU(gpuID string) uint64 {
 		}
 	}
 	return 0
+}
+
+func (s *llmServer) RunnerOptions() map[string]any {
+	options := map[string]any{
+		"num_ctx":    int64(s.options.NumCtx / s.numParallel),
+		"num_thread": int64(s.options.NumThread),
+		"use_mlock":  s.options.UseMLock,
+	}
+	if s.options.UseMMap != nil {
+		options["use_mmap"] = *s.options.UseMMap
+	}
+	return options
 }
