@@ -92,11 +92,11 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 
 		runes := []rune(text)
 		merges := make([]merge, len(runes))
-		for i, r := range runes {
-			merges[i] = merge{
-				p:     i - 1,
-				n:     i + 1,
-				runes: []rune{r},
+		for r := range runes {
+			merges[r] = merge{
+				p:     r - 1,
+				n:     r + 1,
+				runes: []rune{runes[r]},
 			}
 		}
 
