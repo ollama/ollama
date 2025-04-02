@@ -100,8 +100,6 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 			}
 		}
 
-		merges[len(merges)-1].n = -1
-
 		pairwise := func(a, b int) *candidate {
 			if a < 0 {
 				return nil
@@ -141,7 +139,7 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 			merges[pair.a].runes = append(left.runes, right.runes...)
 			merges[pair.b].runes = nil
 			merges[pair.a].n = right.n
-			if right.n != -1 {
+			if right.n < len(merges) {
 				merges[right.n].p = pair.a
 			}
 
@@ -155,8 +153,8 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 		}
 
 		// Collect tokens from the merged symbols
-		for i := 0; i != -1; i = merges[i].n {
-			if token := string(merges[i].runes); token != "" {
+		for _, merge := range merges {
+			if token := string(merge.runes); token != "" {
 				id := spm.vocab.Encode(token)
 
 				if id >= 0 {
