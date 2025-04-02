@@ -25,8 +25,6 @@ func loadSentencePieceVocab(t *testing.T) SentencePieceModel {
 		t.Fatal(err)
 	}
 
-	preTokenizer := `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`
-
 	var v Vocabulary
 
 	for _, piece := range spm.GetPieces() {
@@ -47,7 +45,7 @@ func loadSentencePieceVocab(t *testing.T) SentencePieceModel {
 		}
 	}
 
-	return NewSentencePieceModel(preTokenizer, &v)
+	return NewSentencePieceModel(&v)
 }
 
 func TestSentencePieceEncode(t *testing.T) {
@@ -115,4 +113,51 @@ func TestSentencePieceEncode(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestSentencePieceEncodeAndPrintTokens(t *testing.T) {
+	tokenizer := loadSentencePieceVocab(t)
+	tt := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{
+			name:  "basic",
+			input: `How are you doing? how's today's weather`,
+			want:  []string{"How", " are", " you", " doing", "?", " how", "'", "s", " today", "'", "s", " weather"},
+		},
+		{
+			name: "whitespace",
+			input: `Below is a list of items:
+    * **Item 1**
+    * **Item 2**
+    * **Item 3**`,
+			want: []string{"Below", " is", " a", " list", " of", " items", ":", "\n", "    ", "*", " **", "Item", " ", "1", "**", "\n", "    ", "*", " **", "Item", " ", "2", "**", "\n", "    ", "*", " **", "Item", " ", "3", "**"},
+		},
+		{
+			name:  "multilingual",
+			input: "'괭' 을 초성, 중성, 종성으로 나눠서 설명해줘. ",
+			want:  []string{"'", "괭", "'", " 을", " 초", "성", ",", " 중", "성", ",", " 종", "성", "으로", " 나", "눠", "서", " 설명", "해", "줘", ".", " "},
+		},
+	}
+
+	for _, tc := range tt {
+		t.Run(tc.name, func(t *testing.T) {
+			ids, err := tokenizer.Encode(tc.input, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for i, id := range ids {
+				token, err := tokenizer.Decode([]int32{id})
+				if err != nil {
+					t.Errorf("Failed to decode token ID %d: %v", id, err)
+				}
+				if token != tc.want[i] {
+					t.Errorf("got %q, want %q at position %d", token, tc.want[i], i)
+				}
+			}
+		})
+	}
 }

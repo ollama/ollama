@@ -1,29 +1,21 @@
 package model
 
 import (
-	"iter"
+	"container/heap"
 	"log/slog"
 	"strings"
-
-	"github.com/dlclark/regexp2"
-	queue "github.com/emirpasic/gods/v2/queues/priorityqueue"
 )
 
-const spmWhitespaceSep = "▁"
-
-func replaceWhitespaceBySeperator(s string) string {
-	return strings.ReplaceAll(s, " ", spmWhitespaceSep)
-}
+const WhitespaceSeparator = "▁"
 
 type SentencePieceModel struct {
 	maxTokenLen int
-	pre         *regexp2.Regexp
 	vocab       *Vocabulary
 }
 
 var _ TextProcessor = (*SentencePieceModel)(nil)
 
-func NewSentencePieceModel(pre string, vocab *Vocabulary) SentencePieceModel {
+func NewSentencePieceModel(vocab *Vocabulary) SentencePieceModel {
 	slog.Debug("Tokens", "num tokens", len(vocab.Values), "vals", vocab.Values[:5], "scores", vocab.Scores[:5], "types", vocab.Types[:5])
 
 	counter := map[int]int{}
@@ -44,7 +36,6 @@ func NewSentencePieceModel(pre string, vocab *Vocabulary) SentencePieceModel {
 
 	return SentencePieceModel{
 		maxTokenLen: maxTokenLen,
-		pre:         regexp2.MustCompile(pre, regexp2.Unicode|regexp2.RE2),
 		vocab:       vocab,
 	}
 }
@@ -53,20 +44,9 @@ func (spm SentencePieceModel) Is(id int32, special Special) bool {
 	return spm.vocab.Is(id, special)
 }
 
-func (spm *SentencePieceModel) split(s string) iter.Seq[string] {
-	return func(yield func(string) bool) {
-		for m, _ := spm.pre.FindStringMatch(s); m != nil; m, _ = spm.pre.FindNextMatch(m) {
-			if !yield(m.String()) {
-				break
-			}
-		}
-	}
-}
-
 func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error) {
 	fragments := []fragment{{value: s}}
 	for _, special := range spm.vocab.SpecialVocabulary() {
-		// TODO: process special tokens concurrently
 		id := spm.vocab.Encode(special)
 		for i := 0; i < len(fragments); i++ {
 			frag := fragments[i]
@@ -91,7 +71,6 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 			fragments = append(fragments[:i], append(middle, fragments[i+1:]...)...)
 		}
 	}
-	slog.Debug("fragments", "frags", fragments)
 
 	var ids []int32
 	for _, frag := range fragments {
@@ -100,107 +79,13 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 			continue
 		}
 
-		for split := range spm.split(frag.value) {
-			split = replaceWhitespaceBySeperator(split)
-
-			var sb strings.Builder
-			sb.Write([]byte(split))
-			if id := spm.vocab.Encode(sb.String()); id >= 0 {
-				ids = append(ids, id)
-				continue
-			}
-
-			runes := []rune(sb.String())
-			pq := queue.NewWith(func(a, b any) int {
-				priA := a.(*candidate)
-				priB := b.(*candidate)
-				if priA.score > priB.score || (priA.score == priB.score && priA.a < priB.a) {
-					return -1
-				}
-				return 1
-			})
-
-			merges := make([]merge, len(runes))
-			for r := range runes {
-				merges[r] = merge{
-					p:     r - 1,
-					n:     r + 1,
-					runes: []rune{runes[r]},
-				}
-			}
-
-			slog.Debug("tokenizer", "merges", merges)
-
-			pairwise := func(a, b int) *candidate {
-				if a < 0 || b >= len(runes) {
-					return nil
-				}
-
-				left, right := string(merges[a].runes), string(merges[b].runes)
-				if id := spm.vocab.Encode(left + right); id >= 0 {
-					return &candidate{
-						a:     a,
-						b:     b,
-						score: spm.vocab.Scores[id],
-					}
-				}
-				return nil
-			}
-
-			for i := range len(runes) - 1 {
-				if pair := pairwise(i, i+1); pair != nil {
-					pq.Enqueue(pair)
-				}
-			}
-
-			pqv := pq.Values()
-			for _, v := range pqv {
-				e := v.(*candidate)
-				slog.Debug("candidate", "candidate", e)
-			}
-
-			for !pq.Empty() {
-				v, _ := pq.Dequeue()
-				pair := v.(*candidate)
-				left, right := merges[pair.a], merges[pair.b]
-
-				slog.Debug("pair", "left", left, "right", right)
-				if len(left.runes) == 0 || len(right.runes) == 0 {
-					continue
-				}
-
-				if id := spm.vocab.Encode(string(left.runes) + string(right.runes)); id < 0 {
-					continue
-				}
-
-				merges[pair.a].runes = append(left.runes, right.runes...)
-				merges[pair.b].runes = nil
-				merges[pair.a].n = right.n
-				if right.n < len(merges) {
-					merges[right.n].p = pair.a
-				}
-
-				if pair := pairwise(merges[pair.a].p, pair.a); pair != nil {
-					pq.Enqueue(pair)
-				}
-
-				if pair := pairwise(pair.a, merges[pair.a].n); pair != nil {
-					pq.Enqueue(pair)
-				}
-			}
-
-			slog.Debug("merges", "merges", merges)
-
-			for _, merge := range merges {
-				if len(merge.runes) > 0 {
-					if id := spm.vocab.Encode(string(merge.runes)); id >= 0 {
-						ids = append(ids, id)
-					} else {
-						slog.Debug("missing token", "token", string(merge.runes))
-					}
-				}
-			}
+		if spm.vocab.Encode(frag.value) >= 0 {
+			ids = append(ids, spm.vocab.Encode(frag.value))
+			continue
 		}
+
+		s := newTokenizer(spm.vocab)
+		ids = append(ids, s.tokenize(strings.ReplaceAll(frag.value, " ", WhitespaceSeparator))...)
 	}
 
 	if addSpecial && len(ids) > 0 {
@@ -226,21 +111,184 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 	return ids, nil
 }
 
-type candidate struct {
-	a, b  int
-	score float32
-}
-
 func (spm SentencePieceModel) Decode(ids []int32) (string, error) {
 	var sb strings.Builder
 	for _, id := range ids {
 		data := spm.vocab.Decode(id)
-		data = strings.ReplaceAll(data, spmWhitespaceSep, " ")
+		data = strings.ReplaceAll(data, WhitespaceSeparator, " ")
 		if _, err := sb.WriteString(data); err != nil {
 			return "", err
 		}
 	}
 
-	slog.Debug("decoded", "ids", ids, "text", sb.String())
 	return sb.String(), nil
+}
+
+type symbol struct {
+	text string
+	prev int
+	next int
+}
+
+type tokenizer struct {
+	heap    *bigramHeap
+	history map[string][2]int
+	symbols []symbol
+	vocab   *Vocabulary
+}
+
+func newTokenizer(vocab *Vocabulary) *tokenizer {
+	h := &bigramHeap{}
+	heap.Init(h)
+
+	return &tokenizer{
+		heap:    h,
+		history: make(map[string][2]int),
+		symbols: []symbol{},
+		vocab:   vocab,
+	}
+}
+
+func (t *tokenizer) tokenize(text string) []int32 {
+	var symbols []symbol
+	for i, r := range []rune(text) {
+		sym := symbol{
+			text: string(r),
+			prev: i - 1,
+			next: i + 1,
+		}
+		symbols = append(symbols, sym)
+	}
+
+	if len(symbols) == 0 {
+		return []int32{}
+	}
+
+	symbols[len(symbols)-1].next = -1
+
+	// Add initial bigrams to the queue
+	for i := range len(symbols) - 1 {
+		t.add(i, i+1, symbols)
+	}
+
+	// Process bigrams in order of score
+	for t.heap.Len() > 0 {
+		bigram := heap.Pop(t.heap).(*bigram)
+		left := &symbols[bigram.left]
+		right := &symbols[bigram.right]
+
+		if left.text == "" || right.text == "" || len(left.text)+len(right.text) != bigram.size {
+			continue
+		}
+
+		left.text += right.text
+		right.text = ""
+
+		left.next = right.next
+		if right.next != -1 {
+			symbols[right.next].prev = bigram.left
+		}
+
+		t.add(left.prev, bigram.left, symbols)
+		t.add(bigram.left, left.next, symbols)
+	}
+
+	var output []int32
+	for i := 0; i != -1; i = symbols[i].next {
+		if symbols[i].text != "" {
+			tokens := t.resegment(symbols[i].text, symbols)
+			output = append(output, tokens...)
+		}
+	}
+
+	return output
+}
+
+// resegment recursively breaks down tokens that couldn't be encoded
+func (t *tokenizer) resegment(text string, symbols []symbol) []int32 {
+	id := t.vocab.Encode(text)
+
+	if id >= 0 {
+		return []int32{id}
+	}
+
+	if pair, exists := t.history[text]; exists {
+		left := t.resegment(symbols[pair[0]].text, symbols)
+		right := t.resegment(symbols[pair[1]].text, symbols)
+		return append(left, right...)
+	}
+
+	var result []int32
+	for _, b := range []byte(text) {
+		unknownID := t.vocab.Encode(string(b))
+		if unknownID >= 0 {
+			result = append(result, unknownID)
+		} else {
+			slog.Debug("unknown byte token", "byte", b)
+		}
+	}
+
+	return result
+}
+
+// add creates a new bigram and adds it to the heap
+func (t *tokenizer) add(left, right int, symbols []symbol) {
+	if left == -1 || right == -1 {
+		return
+	}
+
+	leftSym := &symbols[left]
+	rightSym := &symbols[right]
+
+	if leftSym.text == "" || rightSym.text == "" {
+		return
+	}
+
+	combined := leftSym.text + rightSym.text
+	id := t.vocab.Encode(combined)
+
+	if id < 0 || int(id) >= len(t.vocab.Scores) {
+		return
+	}
+
+	bigram := &bigram{
+		left:  left,
+		right: right,
+		score: t.vocab.Scores[id],
+		size:  len(combined),
+	}
+
+	heap.Push(t.heap, bigram)
+	t.history[combined] = [2]int{left, right}
+}
+
+// bigram represents a pair of adjacent symbols
+type bigram struct {
+	left  int
+	right int
+	score float32
+	size  int
+}
+
+type bigramHeap []*bigram
+
+func (bq bigramHeap) Len() int { return len(bq) }
+
+func (bq bigramHeap) Less(i, j int) bool {
+	return (bq[i].score > bq[j].score) || (bq[i].score == bq[j].score && bq[i].left < bq[j].left)
+}
+
+func (bq bigramHeap) Swap(i, j int) { bq[i], bq[j] = bq[j], bq[i] }
+
+func (bq *bigramHeap) Push(x interface{}) {
+	item := x.(*bigram)
+	*bq = append(*bq, item)
+}
+
+func (bq *bigramHeap) Pop() interface{} {
+	old := *bq
+	n := len(old)
+	item := old[n-1]
+	*bq = old[0 : n-1]
+	return item
 }
