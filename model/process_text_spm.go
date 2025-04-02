@@ -103,7 +103,11 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 		merges[len(merges)-1].n = -1
 
 		pairwise := func(a, b int) *candidate {
-			if a < 0 || b >= len(runes) {
+			if a < 0 {
+				return nil
+			}
+
+			if b < 0 || b >= len(runes) {
 				return nil
 			}
 
@@ -130,15 +134,17 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 
 		for q.Len() > 0 {
 			pair := heap.Pop(q).(*candidate)
-			left, right := merges[pair.a], merges[pair.b]
+			left, right := &merges[pair.a], &merges[pair.b]
 
-			if len(left.runes) == 0 || len(right.runes) == 0 {
+			if string(left.runes) == "" || string(right.runes) == "" || len(string(left.runes))+len(string(right.runes)) != pair.size {
 				continue
 			}
 
 			merges[pair.a].runes = append(left.runes, right.runes...)
 			merges[pair.b].runes = nil
 			merges[pair.a].n = right.n
+
+			left.n = right.n
 			if right.n != -1 {
 				merges[right.n].p = pair.a
 			}
@@ -147,10 +153,8 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 				heap.Push(q, pair)
 			}
 
-			if merges[pair.a].n != -1 {
-				if pair := pairwise(pair.a, merges[pair.a].n); pair != nil {
-					heap.Push(q, pair)
-				}
+			if pair := pairwise(pair.a, merges[pair.a].n); pair != nil {
+				heap.Push(q, pair)
 			}
 		}
 
