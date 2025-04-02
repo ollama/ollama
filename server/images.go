@@ -60,7 +60,7 @@ type Model struct {
 	System         string
 	License        []string
 	Digest         string
-	Options        map[string]interface{}
+	Options        map[string]any
 	Messages       []api.Message
 
 	Template *template.Template

@@ -82,7 +82,7 @@ type GenerateRequest struct {
 
 	// Options lists model-specific options. For example, temperature can be
 	// set through this field, if the model supports it.
-	Options map[string]interface{} `json:"options"`
+	Options map[string]any `json:"options"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
@@ -107,7 +107,7 @@ type ChatRequest struct {
 	Tools `json:"tools,omitempty"`
 
 	// Options lists model-specific options.
-	Options map[string]interface{} `json:"options"`
+	Options map[string]any `json:"options"`
 }
 
 type Tools []Tool
@@ -261,7 +261,7 @@ type EmbedRequest struct {
 	Truncate *bool `json:"truncate,omitempty"`
 
 	// Options lists model-specific options.
-	Options map[string]interface{} `json:"options"`
+	Options map[string]any `json:"options"`
 }
 
 // EmbedResponse is the response from [Client.Embed].
@@ -287,7 +287,7 @@ type EmbeddingRequest struct {
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
 	// Options lists model-specific options.
-	Options map[string]interface{} `json:"options"`
+	Options map[string]any `json:"options"`
 }
 
 // EmbeddingResponse is the response from [Client.Embeddings].
@@ -333,7 +333,7 @@ type ShowRequest struct {
 	Template string `json:"template"`
 	Verbose  bool   `json:"verbose"`
 
-	Options map[string]interface{} `json:"options"`
+	Options map[string]any `json:"options"`
 
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
@@ -505,7 +505,7 @@ func (m *Metrics) Summary() {
 	}
 }
 
-func (opts *Options) FromMap(m map[string]interface{}) error {
+func (opts *Options) FromMap(m map[string]any) error {
 	valueOpts := reflect.ValueOf(opts).Elem() // names of the fields in the options struct
 	typeOpts := reflect.TypeOf(opts).Elem()   // types of the fields in the options struct
 
@@ -562,12 +562,12 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 				}
 				field.SetString(val)
 			case reflect.Slice:
-				// JSON unmarshals to []interface{}, not []string
-				val, ok := val.([]interface{})
+				// JSON unmarshals to []any, not []string
+				val, ok := val.([]any)
 				if !ok {
 					return fmt.Errorf("option %q must be of type array", key)
 				}
-				// convert []interface{} to []string
+				// convert []any to []string
 				slice := make([]string, len(val))
 				for i, item := range val {
 					str, ok := item.(string)
@@ -674,7 +674,7 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 }
 
 // FormatParams converts specified parameter options to their correct types
-func FormatParams(params map[string][]string) (map[string]interface{}, error) {
+func FormatParams(params map[string][]string) (map[string]any, error) {
 	opts := Options{}
 	valueOpts := reflect.ValueOf(&opts).Elem() // names of the fields in the options struct
 	typeOpts := reflect.TypeOf(opts)           // types of the fields in the options struct
@@ -688,7 +688,7 @@ func FormatParams(params map[string][]string) (map[string]interface{}, error) {
 		}
 	}
 
-	out := make(map[string]interface{})
+	out := make(map[string]any)
 	// iterate params and set values based on json struct tags
 	for key, vals := range params {
 		if opt, ok := jsonOpts[key]; !ok {

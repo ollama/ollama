@@ -134,7 +134,7 @@ func TestUseMmapParsingFromJSON(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			var oMap map[string]interface{}
+			var oMap map[string]any
 			err := json.Unmarshal([]byte(test.req), &oMap)
 			require.NoError(t, err)
 			opts := DefaultOptions()

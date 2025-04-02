@@ -32,7 +32,7 @@ func TestMaxQueue(t *testing.T) {
 	req := api.GenerateRequest{
 		Model:  "orca-mini",
 		Prompt: "write a long historical fiction story about christopher columbus.  use at least 10 facts from his actual journey",
-		Options: map[string]interface{}{
+		Options: map[string]any{
 			"seed":        42,
 			"temperature": 0.0,
 		},
