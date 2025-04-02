@@ -126,7 +126,7 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 
 		for q.Len() > 0 {
 			pair := heap.Pop(q).(*candidate)
-			left, right := &merges[pair.a], &merges[pair.b]
+			left, right := merges[pair.a], merges[pair.b]
 
 			if string(left.runes) == "" || string(right.runes) == "" || len(string(left.runes))+len(string(right.runes)) != pair.size {
 				continue
@@ -148,7 +148,6 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 			}
 		}
 
-		// Collect tokens from the merged symbols
 		for _, merge := range merges {
 			if token := string(merge.runes); token != "" {
 				id := spm.vocab.Encode(token)
