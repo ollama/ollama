@@ -670,6 +670,8 @@ type CompletionRequest struct {
 	Prompt  string
 	Format  json.RawMessage
 	Images  []ImageData
+  AudioUrls []string
+	VideoUrls []string
 	Options *api.Options
 
 	Grammar string // set before sending the request to the subprocess

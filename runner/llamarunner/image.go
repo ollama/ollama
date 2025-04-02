@@ -19,6 +19,7 @@ type ImageContext struct {
 	mu sync.Mutex
 
 	clip   *llama.ClipContext
+	audio  *llama.AudioContext
 	mllama *llama.MllamaContext
 
 	// cache of images to embeddings
@@ -35,6 +36,8 @@ func NewImageContext(llamaContext *llama.Context, modelPath string) (*ImageConte
 	var c ImageContext
 	if arch == "clip" {
 		c.clip, err = llama.NewClipContext(llamaContext, modelPath)
+	} else if arch == "audio" {
+		c.audio, err = llama.NewAudioContext(llamaContext, modelPath)
 	} else if arch == "mllama" {
 		c.mllama, err = llama.NewMllamaContext(llamaContext, modelPath)
 	} else {
@@ -97,6 +100,40 @@ func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte, aspect
 	}
 
 	return embed, nil
+}
+
+func (c *ImageContext) audioNewEmbed(llamaContext *llama.Context, imageUrls string) ([][]float32, error) {
+	if c == nil {
+		return nil, nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.audio != nil {
+		embed, err := c.audio.AudioNewEmbed(llamaContext, imageUrls)
+		if err != nil {
+			return nil, err
+		}
+		return embed, nil
+	} else {
+		return nil, errors.New("received image but vision model not loaded")
+	}
+}
+
+func (c *ImageContext) OmniNewEmbed(llamaContext *llama.Context, imageUrls string) ([][]float32, error) {
+	if c == nil {
+		return nil, nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.clip != nil {
+		embed, err := c.clip.OmniNewEmbed(llamaContext, imageUrls)
+		if err != nil {
+			return nil, err
+		}
+		return embed, nil
+	} else {
+		return nil, errors.New("received image but vision model not loaded")
+	}
 }
 
 func (c *ImageContext) BatchSize(configuredBatchSize int) int {
