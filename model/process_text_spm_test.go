@@ -25,8 +25,6 @@ func loadSentencePieceVocab(t *testing.T) SentencePieceModel {
 		t.Fatal(err)
 	}
 
-	preTokenizer := `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`
-
 	var v Vocabulary
 
 	for _, piece := range spm.GetPieces() {
@@ -47,7 +45,7 @@ func loadSentencePieceVocab(t *testing.T) SentencePieceModel {
 		}
 	}
 
-	return NewSentencePieceModel(preTokenizer, &v)
+	return NewSentencePieceModel(&v)
 }
 
 func TestSentencePieceEncode(t *testing.T) {
@@ -115,4 +113,60 @@ func TestSentencePieceEncode(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestSentencePieceModelDecodeByteTokens(t *testing.T) {
+	vocab := &Vocabulary{
+		Values: []string{
+			"normal",
+			"<0xEA>",
+			"<0x41>",
+			"<0xC3>",
+			"<0xA3>",
+		},
+		Types: []uint32{
+			TOKEN_TYPE_NORMAL,
+			TOKEN_TYPE_BYTE,
+			TOKEN_TYPE_BYTE,
+			TOKEN_TYPE_BYTE,
+			TOKEN_TYPE_BYTE,
+		},
+		Scores: []float32{0, 0, 0, 0, 0},
+	}
+
+	spm := NewSentencePieceModel(vocab)
+
+	tests := []struct {
+		name     string
+		ids      []int32
+		expected string
+	}{
+		{
+			name:     "single byte token",
+			ids:      []int32{1},
+			expected: "\xea",
+		},
+		{
+			name:     "ASCII byte token",
+			ids:      []int32{2},
+			expected: "A",
+		},
+		{
+			name:     "multiple byte tokens forming UTF-8 character",
+			ids:      []int32{3, 4},
+			expected: "ã",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := spm.Decode(tt.ids)
+			if err != nil {
+				t.Errorf("failed to decode token IDs %v: %v", tt.ids, err)
+			}
+			if result != tt.expected {
+				t.Errorf("got %q, want %q", result, tt.expected)
+			}
+		})
+	}
 }
