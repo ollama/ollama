@@ -91,34 +91,30 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 		heap.Init(q)
 
 		runes := []rune(text)
-		symbols := make([]symbol, len(runes))
+		merges := make([]merge, len(runes))
 		for i, r := range runes {
-			symbols[i] = symbol{
-				text: string(r),
-				prev: i - 1,
-				next: i + 1,
+			merges[i] = merge{
+				p:     i - 1,
+				n:     i + 1,
+				runes: []rune{r},
 			}
 		}
 
-		if len(symbols) == 0 {
-			continue
-		}
-
-		symbols[len(symbols)-1].next = -1
+		merges[len(merges)-1].n = -1
 
 		history := make(map[string][2]int)
 
-		for i := 0; i < len(symbols)-1; i++ {
-			left := &symbols[i]
-			right := &symbols[i+1]
+		for i := 0; i < len(merges)-1; i++ {
+			left := &merges[i]
+			right := &merges[i+1]
 
-			combined := left.text + right.text
+			combined := string(left.runes) + string(right.runes)
 			id := spm.vocab.Encode(combined)
 
 			if id >= 0 && id < int32(len(spm.vocab.Scores)) {
 				heap.Push(q, &candidate{
-					left:  i,
-					right: i + 1,
+					a:     i,
+					b:     i + 1,
 					score: spm.vocab.Scores[id],
 					size:  len(combined),
 				})
@@ -129,62 +125,62 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 		// Process bigrams in order of score
 		for q.Len() > 0 {
 			bg := heap.Pop(q).(*candidate)
-			left := &symbols[bg.left]
-			right := &symbols[bg.right]
+			left := &merges[bg.a]
+			right := &merges[bg.b]
 
-			if left.text == "" || right.text == "" || len(left.text)+len(right.text) != bg.size {
+			if string(left.runes) == "" || string(right.runes) == "" || len(string(left.runes))+len(string(right.runes)) != bg.size {
 				continue
 			}
 
-			left.text += right.text
-			right.text = ""
+			left.runes = append(left.runes, right.runes...)
+			right.runes = nil
 
-			left.next = right.next
-			if right.next != -1 {
-				symbols[right.next].prev = bg.left
+			left.n = right.n
+			if right.n != -1 {
+				merges[right.n].p = bg.a
 			}
 
 			// Add new bigrams with updated left node
-			if left.prev != -1 {
-				prevSym := &symbols[left.prev]
-				if prevSym.text != "" {
-					combined := prevSym.text + left.text
+			if left.p != -1 {
+				prevSym := &merges[left.p]
+				if string(prevSym.runes) != "" {
+					combined := string(prevSym.runes) + string(left.runes)
 					id := spm.vocab.Encode(combined)
 
 					if id >= 0 && id < int32(len(spm.vocab.Scores)) {
 						heap.Push(q, &candidate{
-							left:  left.prev,
-							right: bg.left,
+							a:     left.p,
+							b:     bg.a,
 							score: spm.vocab.Scores[id],
 							size:  len(combined),
 						})
-						history[combined] = [2]int{left.prev, bg.left}
+						history[combined] = [2]int{left.p, bg.a}
 					}
 				}
 			}
 
-			if left.next != -1 {
-				nextSym := &symbols[left.next]
-				if nextSym.text != "" {
-					combined := left.text + nextSym.text
+			if left.n != -1 {
+				nextSym := &merges[left.n]
+				if string(nextSym.runes) != "" {
+					combined := string(left.runes) + string(nextSym.runes)
 					id := spm.vocab.Encode(combined)
 
 					if id >= 0 && id < int32(len(spm.vocab.Scores)) {
 						heap.Push(q, &candidate{
-							left:  bg.left,
-							right: left.next,
+							a:     bg.a,
+							b:     left.n,
 							score: spm.vocab.Scores[id],
 							size:  len(combined),
 						})
-						history[combined] = [2]int{bg.left, left.next}
+						history[combined] = [2]int{bg.a, left.n}
 					}
 				}
 			}
 		}
 
 		// Helper function to recursively segment tokens
-		var resegment func(string, []symbol) []int32
-		resegment = func(text string, symbols []symbol) []int32 {
+		var resegment func(string, []merge) []int32
+		resegment = func(text string, merges []merge) []int32 {
 			id := spm.vocab.Encode(text)
 
 			if id >= 0 {
@@ -192,8 +188,8 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 			}
 
 			if pair, exists := history[text]; exists {
-				left := resegment(symbols[pair[0]].text, symbols)
-				right := resegment(symbols[pair[1]].text, symbols)
+				left := resegment(string(merges[pair[0]].runes), merges)
+				right := resegment(string(merges[pair[1]].runes), merges)
 				return append(left, right...)
 			}
 
@@ -213,9 +209,9 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 		}
 
 		// Collect tokens from the merged symbols
-		for i := 0; i != -1; i = symbols[i].next {
-			if symbols[i].text != "" {
-				tokens := resegment(symbols[i].text, symbols)
+		for i := 0; i != -1; i = merges[i].n {
+			if string(merges[i].runes) != "" {
+				tokens := resegment(string(merges[i].runes), merges)
 				ids = append(ids, tokens...)
 			}
 		}
@@ -257,16 +253,10 @@ func (spm SentencePieceModel) Decode(ids []int32) (string, error) {
 	return sb.String(), nil
 }
 
-type symbol struct {
-	text string
-	prev int
-	next int
-}
-
 type candidate struct {
-	left, right int
-	score       float32
-	size        int
+	a, b  int
+	score float32
+	size  int
 }
 
 type queue []*candidate
@@ -274,7 +264,7 @@ type queue []*candidate
 func (q queue) Len() int { return len(q) }
 
 func (q queue) Less(i, j int) bool {
-	return (q[i].score > q[j].score) || (q[i].score == q[j].score && q[i].left < q[j].left)
+	return (q[i].score > q[j].score) || (q[i].score == q[j].score && q[i].a < q[j].a)
 }
 
 func (q queue) Swap(i, j int) { q[i], q[j] = q[j], q[i] }
