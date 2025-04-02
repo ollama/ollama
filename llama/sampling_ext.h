@@ -38,6 +38,15 @@ extern "C"
     struct llama_vocab * llama_load_vocab_from_file(const char * fname);
     void llama_free_vocab(struct llama_vocab * vocab);
 
+    struct ollama_vocab;
+    struct grammar *grammar_init(char* grammar);
+    void grammar_free(struct grammar *g);
+    void grammar_apply(struct grammar *g, struct llama_token_data_array *tokens);
+    void grammar_accept(struct grammar *g, llama_token id);
+    void grammar_add_symbol_id(struct grammar *g, const char *symbol, uint32_t id);
+    void grammar_add_token_piece(struct grammar *g, uint32_t token, const char *piece);
+    void grammar_set_eog_token(struct grammar *g, uint32_t token);
+
 #ifdef __cplusplus
 }
 #endif

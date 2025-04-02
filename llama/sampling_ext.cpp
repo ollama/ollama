@@ -2,6 +2,7 @@
 #include "sampling.h"
 #include "sampling_ext.h"
 #include "json-schema-to-grammar.h"
+#include "grammar.h"
 #include "llama.h"
 #include "llama-model.h"
 #include "llama-model-loader.h"
@@ -85,4 +86,66 @@ struct llama_vocab * llama_load_vocab_from_file(const char * fname) {
 
 void llama_free_vocab(struct llama_vocab * vocab) {
     delete vocab;
+}
+
+struct grammar *grammar_init(char* grammar) {
+    if (grammar == nullptr) {
+        LLAMA_LOG_ERROR("%s: null grammar input\n", __func__);
+        return nullptr;
+    }
+    
+    
+    // Create vocab object
+    ollama_vocab *vocab = nullptr;
+    try {
+        vocab = new ollama_vocab();
+        if (vocab == nullptr) {
+            LLAMA_LOG_ERROR("%s: failed to allocate vocab object\n", __func__);
+            return nullptr;
+        }
+        
+        
+        // Initialize grammar with the vocab
+        struct grammar *g = grammar_init_impl(vocab, grammar, "root", false, nullptr, 0, nullptr, 0);
+        if (g == nullptr) {
+            LLAMA_LOG_ERROR("%s: failed to initialize grammar\n", __func__);
+            delete vocab;
+            return nullptr;
+        }
+        
+        return g;
+    } catch (const std::exception& e) {
+        LLAMA_LOG_ERROR("%s: exception during initialization: %s\n", __func__, e.what());
+        delete vocab;
+        return nullptr;
+    }
+}
+
+void grammar_free(struct grammar *g) {
+    if (g != nullptr) {
+        if (g->vocab != nullptr) {
+            delete g->vocab;
+        }
+        grammar_free_impl(g);
+    }
+}
+
+void grammar_apply(struct grammar *g, struct llama_token_data_array *tokens) {
+    grammar_apply_impl(*g, tokens);
+}
+
+void grammar_accept(struct grammar *g, llama_token id) {
+    grammar_accept_impl(*g, id);
+}
+
+void grammar_add_symbol_id(struct grammar *g, const char *symbol, uint32_t id) {
+    g->vocab->add_symbol_id(symbol, id);
+}
+
+void grammar_add_token_piece(struct grammar *g, uint32_t token, const char *piece) {
+    g->vocab->add_token_piece(token, piece);
+}
+
+void grammar_set_eog_token(struct grammar *g, uint32_t token) {
+    g->vocab->set_eog_token(token);
 }

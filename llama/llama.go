@@ -8,6 +8,7 @@ package llama
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/examples/llava
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/src
 #cgo CPPFLAGS: -I${SRCDIR}/../ml/backend/ggml/ggml/include
+// #cgo CPPFLAGS: -I${SRCDIR}/grammar
 
 #include <stdlib.h>
 #include "ggml.h"
@@ -740,4 +741,69 @@ func (s *Sampler) Apply(tokens []TokenData) {
 	for i := range tokens {
 		tokens[i].Logit = float32(tds[i].logit)
 	}
+}
+
+type Grammar struct {
+	c *C.struct_grammar
+}
+
+func (g *Grammar) AddSymbol(symbol string, id uint32) {
+	cSymbol := C.CString(symbol)
+	defer C.free(unsafe.Pointer(cSymbol))
+	C.grammar_add_symbol_id(g.c, cSymbol, C.uint32_t(id))
+}
+
+func (g *Grammar) AddTokenPiece(token uint32, piece string) {
+	cPiece := C.CString(piece)
+	defer C.free(unsafe.Pointer(cPiece))
+	C.grammar_add_token_piece(g.c, C.uint32_t(token), cPiece)
+}
+
+func (g *Grammar) SetEOGToken(token uint32) {
+	C.grammar_set_eog_token(g.c, C.uint32_t(token))
+}
+
+func InitGrammarChain(grammar string) *Grammar {
+	cGrammar := C.CString(grammar)
+	defer C.free(unsafe.Pointer(cGrammar))
+
+	g := C.grammar_init(cGrammar)
+	if g == nil {
+		return nil
+	}
+
+	return &Grammar{c: g}
+}
+
+func (g *Grammar) Free() {
+	C.grammar_free(g.c)
+}
+
+func (g *Grammar) Apply(tokens []TokenData) {
+	tds := make([]C.struct_llama_token_data, len(tokens))
+	for i, token := range tokens {
+		tds[i] = C.struct_llama_token_data{
+			id:    C.int32_t(token.Id),
+			logit: C.float(token.Logit),
+			p:     C.float(0.0),
+		}
+	}
+	tda := &C.llama_token_data_array{
+		data:     (*C.struct_llama_token_data)(unsafe.Pointer(&tds[0])),
+		size:     C.size_t(len(tokens)),
+		selected: C.int64_t(-1),
+		sorted:   C.bool(false),
+	}
+	var pinner runtime.Pinner
+	pinner.Pin(&tds[0])
+	defer pinner.Unpin()
+
+	C.grammar_apply(g.c, tda)
+	for i := range tokens {
+		tokens[i].Logit = float32(tds[i].logit)
+	}
+}
+
+func (g *Grammar) Accept(token int32) {
+	C.grammar_accept(g.c, C.llama_token(token))
 }
