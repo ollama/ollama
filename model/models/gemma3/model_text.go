@@ -57,7 +57,7 @@ func newTextModel(c fs.Config) *TextModel {
 			},
 		),
 		Layers: make([]TextLayer, numBlocks),
-		TextOptions: &TextOptions{
+		TextConfig: &TextConfig{
 			hiddenSize: int(c.Uint("embedding_length")),
 			numHeads:   int(c.Uint("attention.head_count")),
 			numKVHeads: int(c.Uint("attention.head_count_kv")),

@@ -617,10 +617,16 @@ func (t *testTensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, co
 func (t *testTensor) IM2Col(ctx ml.Context, weight ml.Tensor, s0, s1, p0, p1, d0, d1 int) ml.Tensor {
 	panic("not implemented")
 }
+func (t *testTensor) RoPEMulti(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, sections [4]int, config ml.RoPEConfig) ml.Tensor {
+	panic("not implemented")
+}
+
+func (t *testTensor) Tanh(ctx ml.Context) ml.Tensor {
+	panic("not implemented")
+}
 
 func (t *testTensor) Cos(ctx ml.Context) ml.Tensor  { panic("not implemented") }
 func (t *testTensor) Sin(ctx ml.Context) ml.Tensor  { panic("not implemented") }
-func (t *testTensor) Tanh(ctx ml.Context) ml.Tensor { panic("not implemented") }
 func (t *testTensor) GELU(ctx ml.Context) ml.Tensor { panic("not implemented") }
 func (t *testTensor) SILU(ctx ml.Context) ml.Tensor { panic("not implemented") }
 

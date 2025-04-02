@@ -1,10 +1,11 @@
 package qwen25vl
 
 import (
+	"bytes"
 	"fmt"
-	"math"
-	"strings"
+	"image"
 
+	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
@@ -12,147 +13,151 @@ import (
 	"github.com/ollama/ollama/model/input"
 )
 
-type Options struct {
-	ctxLen, hiddenSize, numHeads, numKVHeads int
-	eps                                      float32
-	ropeConfig                               ml.RoPEConfig
-}
-
 type Model struct {
 	model.Base
-	model.BytePairEncoding
+	*TextModel
+	*VisionModel `gguf:"v,vision"`
+	*PatchMerger `gguf:"mm"`
 
-	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
-	Layers         []Layer       `gguf:"blk"`
-	OutputNorm     *nn.RMSNorm   `gguf:"output_norm"`
-	Output         *nn.Linear    `gguf:"output,alt:token_embd"`
-
-	*Options
+	ImageProcessor
 }
 
-func New(c ml.Config) (model.Model, error) {
-	if !strings.EqualFold(c.String("tokenizer.ggml.model"), "gpt2") {
-		return nil, fmt.Errorf("tokenizer %s not yet supported", c.String("tokenizer.ggml.model"))
+// Implement MultimodalProcessor interface
+var _ model.MultimodalProcessor = (*Model)(nil)
+
+type PatchMerger struct {
+	MLPLayer1 *nn.Linear `gguf:"0"`
+	MLPLayer2 *nn.Linear `gguf:"2"`
+}
+
+// Forward computes patch merging for the vision model
+func (pm *PatchMerger) Forward(ctx ml.Context, visionOutputs ml.Tensor, eps float32) ml.Tensor {
+	// Get dimensions
+	hiddenSize := visionOutputs.Dim(0)
+	numPositions := visionOutputs.Dim(1)
+	batchSize := visionOutputs.Dim(2)
+
+	reshaped := visionOutputs.Reshape(ctx, hiddenSize*4, numPositions/4, batchSize)
+
+	// Apply first linear layer (mm_0_w, mm_0_b)
+	hidden := pm.MLPLayer1.Forward(ctx, reshaped)
+
+	activated := hidden.GELU(ctx)
+
+	// Apply second linear layer (mm_1_w, mm_1_b)
+	output := pm.MLPLayer2.Forward(ctx, activated)
+
+	return output
+}
+
+func New(c fs.Config) (model.Model, error) {
+	m := &Model{
+		TextModel:      NewTextModel(c),
+		VisionModel:    newVisionModel(c),
+		ImageProcessor: newImageProcessor(c),
 	}
 
-	m := Model{
-		BytePairEncoding: model.NewBytePairEncoding(
-			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
-			&model.Vocabulary{
-				Values: c.Strings("tokenizer.ggml.tokens"),
-				Types:  c.Uints("tokenizer.ggml.token_type"),
-				Merges: c.Strings("tokenizer.ggml.merges"),
-				BOS:    int32(c.Uint("tokenizer.ggml.bos_token_id")),
-				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
-				EOS:    int32(c.Uint("tokenizer.ggml.eos_token_id")),
-				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
-			},
-		),
-		Layers: make([]Layer, c.Uint("block_count")),
-		Options: &Options{
-			ctxLen:     int(c.Uint("context_length")),
-			hiddenSize: int(c.Uint("embedding_length")),
-			numHeads:   int(c.Uint("attention.head_count")),
-			numKVHeads: int(c.Uint("attention.head_count_kv")),
-			eps:        c.Float("attention.layer_norm_rms_epsilon"),
-			ropeConfig: ml.RoPEConfig{
-				Base:       c.Float("rope.freq_base"),
-				Scale:      c.Float("rope.freq_scale", 1),
-				Dim:        c.Uint("rope.dimension_count", 128),
-				Type:       ml.RopeTypeNeox,
-				YarnConfig: ml.DefaultYarnConfig(int32(c.Uint("context_length", 32768))),
-			},
-		},
+	m.Cache = kvcache.NewCausalCache(m.TextModel.Shift)
+
+	return m, nil
+}
+
+type imageFeatures struct {
+	Tensor ml.Tensor
+	GridT  int
+	GridH  int
+	GridW  int
+}
+
+func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, error) {
+	if len(m.VisionModel.Layers) == 0 {
+		return nil, model.ErrNoVisionModel
 	}
 
-	m.Cache = kvcache.NewCausalCache(m.Shift)
-
-	return &m, nil
-}
-
-// SelfAttention implements the multi-head self-attention mechanism
-// with separate projections for query, key, value and output transformations
-type SelfAttention struct {
-	Query       *nn.Linear `gguf:"attn_q"`
-	Key         *nn.Linear `gguf:"attn_k"`
-	Value       *nn.Linear `gguf:"attn_v"`
-	Output      *nn.Linear `gguf:"attn_output"`
-	RopeFactors ml.Tensor  `gguf:"rope_freqs.weight"`
-}
-
-func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
-	batchSize := hiddenState.Dim(1)
-	headDim := opts.hiddenSize / opts.numHeads
-
-	q := sa.Query.Forward(ctx, hiddenState)
-	q = q.Reshape(ctx, headDim, opts.numHeads, batchSize)
-	q = q.RoPE(ctx, positionIDs, sa.RopeFactors, opts.ropeConfig)
-
-	k := sa.Key.Forward(ctx, hiddenState)
-	k = k.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-	k = k.RoPE(ctx, positionIDs, sa.RopeFactors, opts.ropeConfig)
-
-	v := sa.Value.Forward(ctx, hiddenState)
-	v = v.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-
-	scaleFactor := 1.0 / math.Sqrt(float64(headDim))
-	kqv := nn.Attention(ctx, q, k, v, scaleFactor, cache)
-	kqv = kqv.Reshape(ctx, opts.hiddenSize, batchSize)
-
-	return sa.Output.Forward(ctx, kqv)
-}
-
-// Shift applies rotary position embeddings to the key tensor for causal attention caching
-func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return key.RoPE(ctx, shift, m.Layers[layer].SelfAttention.RopeFactors, m.ropeConfig), nil
-}
-
-// MLP implements the feed-forward network component with SwiGLU activation
-type MLP struct {
-	Up   *nn.Linear `gguf:"ffn_up"`
-	Down *nn.Linear `gguf:"ffn_down"`
-	Gate *nn.Linear `gguf:"ffn_gate"`
-}
-
-func (mlp *MLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml.Tensor {
-	// Apply SwiGLU activation gating
-	hiddenState = mlp.Gate.Forward(ctx, hiddenState).SILU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenState))
-	// Project back to hidden dimension
-	return mlp.Down.Forward(ctx, hiddenState)
-}
-
-// Layer represents a single transformer layer combining self-attention and feed-forward components
-type Layer struct {
-	AttentionNorm *nn.RMSNorm `gguf:"attn_norm"`
-	SelfAttention *SelfAttention
-	MLPNorm       *nn.RMSNorm `gguf:"ffn_norm"`
-	MLP           *MLP
-}
-
-func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs, outputs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
-	// Self-attention branch with residual connection
-	residual := hiddenState
-
-	hiddenState = l.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
-	hiddenState = l.SelfAttention.Forward(ctx, hiddenState, positionIDs, cache, opts)
-
-	// In the final layer (outputs != nil), optimize by pruning to just the token positions
-	// we need logits for.
-	if outputs != nil {
-		hiddenState = hiddenState.Rows(ctx, outputs)
-		residual = residual.Rows(ctx, outputs)
+	image, _, err := image.Decode(bytes.NewReader(multimodalData))
+	if err != nil {
+		return nil, err
 	}
 
-	hiddenState = hiddenState.Add(ctx, residual)
-	// Feed-forward branch with residual connection
-	residual = hiddenState
-	hiddenState = l.MLPNorm.Forward(ctx, hiddenState, opts.eps)
-	hiddenState = l.MLP.Forward(ctx, hiddenState, opts)
-	return hiddenState.Add(ctx, residual)
+	f32s, gridT, gridH, gridW, err := m.ImageProcessor.ProcessImage(image)
+	if err != nil {
+		return nil, err
+	}
+
+	// Calculate tensor dimensions
+	patchDim := m.ImageProcessor.numChannels * m.ImageProcessor.temporalPatchSize *
+		m.ImageProcessor.patchSize * m.ImageProcessor.patchSize
+	numPatches := gridT * gridH * gridW
+
+	pixelValues, err := ctx.Input().FromFloatSlice(f32s, patchDim, numPatches)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create tensor from image: %w", err)
+	}
+
+	visionOutputs := m.VisionModel.Forward(ctx, pixelValues)
+	visionOutputs = m.PatchMerger.Forward(ctx, visionOutputs, m.VisionModel.eps)
+
+	return &imageFeatures{
+		Tensor: visionOutputs,
+		GridT:  gridT,
+		GridH:  gridH,
+		GridW:  gridW,
+	}, nil
+}
+
+// PostTokenize arranges Qwen-2.5-VL's inputs for the forward pass
+func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
+	var result []input.Input
+
+	// Get image token IDs from config
+	imageToken := 151655
+	visionStartToken := 151652
+	visionEndToken := 151653
+
+	// Get merge size from config
+	mergeSize := m.ImageProcessor.mergeSize
+
+	for _, inp := range inputs {
+		if inp.Multimodal == nil {
+			// If not a multimodal input, add it to the result unchanged
+			result = append(result, inp)
+		} else {
+			// This is an image token with multimodal data
+			features := inp.Multimodal.(*imageFeatures)
+
+			// Get grid dimensions from the features
+			gridT := features.GridT
+			gridH := features.GridH
+			gridW := features.GridW
+
+			// Calculate tokens per grid based on grid dimensions
+			mergeLength := mergeSize * mergeSize
+			gridProduct := gridT * gridH * gridW
+			tokensPerGrid := gridProduct / mergeLength
+
+			// First add the vision start token
+			result = append(result, input.Input{Token: int32(visionStartToken)})
+
+			// Add the image token with the multimodal tensor data at the first position
+			result = append(result, input.Input{
+				Token:          int32(imageToken),
+				Multimodal:     features.Tensor,
+				MultimodalHash: inp.MultimodalHash,
+			})
+
+			// Add the placeholder tokens for the remaining positions (tokensPerGrid-1)
+			for range tokensPerGrid - 1 {
+				result = append(result, input.Input{Token: int32(imageToken)})
+			}
+
+			result = append(result, input.Input{Token: int32(visionEndToken)})
+		}
+	}
+
+	return result, nil
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	// Convert input tokens and positions to tensors
 	positions, err := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
 	if err != nil {
 		return nil, err
@@ -163,25 +168,10 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 		return nil, err
 	}
 
-	// Initial token embedding
-	hiddenState := m.TokenEmbedding.Forward(ctx, batch.Inputs)
-
-	// Process through transformer layers
-	for i, layer := range m.Layers {
-		m.Cache.SetLayer(i)
-
-		var lastLayerOutputs ml.Tensor
-		if i == len(m.Layers)-1 {
-			lastLayerOutputs = outputs
-		}
-
-		hiddenState = layer.Forward(ctx, hiddenState, positions, lastLayerOutputs, m.Cache, m.Options)
-	}
-
-	hiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)
-	return m.Output.Forward(ctx, hiddenState), nil
+	return m.TextModel.Forward(ctx, batch.Inputs, positions, outputs, batch, m.Cache)
 }
 
 func init() {
+	model.Register("qwen25vl", New)
 	model.Register("qwen2vl", New)
 }

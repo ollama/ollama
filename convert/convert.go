@@ -189,6 +189,8 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 		conv = &phi3Model{}
 	case "Qwen2ForCausalLM":
 		conv = &qwen2Model{}
+	case "Qwen2_5_VLForConditionalGeneration":
+		conv = &qwen25vlModel{}
 	case "BertModel":
 		conv = &bertModel{}
 	case "CohereForCausalLM":

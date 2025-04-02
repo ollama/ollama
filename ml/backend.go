@@ -193,6 +193,7 @@ type Tensor interface {
 
 	IM2Col(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 	RoPE(ctx Context, positionIDs, ropeFactors Tensor, config RoPEConfig) Tensor
+	RoPEMulti(ctx Context, positionIDs, ropeFactors Tensor, sections [4]int, config RoPEConfig) Tensor
 
 	Sin(ctx Context) Tensor
 	Cos(ctx Context) Tensor
