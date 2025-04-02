@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 )
 
@@ -231,8 +232,25 @@ func (spm SentencePieceModel) Decode(ids []int32) (string, error) {
 	for _, id := range ids {
 		data := spm.vocab.Decode(id)
 		data = strings.ReplaceAll(data, spmWhitespaceSep, " ")
-		if _, err := sb.WriteString(data); err != nil {
-			return "", err
+
+		// For tokenizers that use byte tokens like "<0xEA>"
+		// convert them to the partial unicode character
+		// so they are buffered correctly by the runner instead
+		// of being sent back to the api as "<0xEA>"
+		if len(data) == 6 && strings.HasPrefix(data, "<0x") && strings.HasSuffix(data, ">") {
+			hexStr := data[3:5]
+			byteVal, err := strconv.ParseUint(hexStr, 16, 8)
+			if err != nil {
+				return "", fmt.Errorf("failed to parse hex byte: %v", err)
+			}
+
+			if err := sb.WriteByte(byte(byteVal)); err != nil {
+				return "", err
+			}
+		} else {
+			if _, err := sb.WriteString(data); err != nil {
+				return "", err
+			}
 		}
 	}
 

@@ -115,43 +115,57 @@ func TestSentencePieceEncode(t *testing.T) {
 	})
 }
 
-func TestSentencePieceEncodeAndPrintTokens(t *testing.T) {
-	tokenizer := loadSentencePieceVocab(t)
-	tt := []struct {
-		name  string
-		input string
-		want  []string
+func TestSentencePieceModelDecodeByteTokens(t *testing.T) {
+	vocab := &Vocabulary{
+		Values: []string{
+			"normal",
+			"<0xEA>",
+			"<0x41>",
+			"<0xC3>",
+			"<0xA3>",
+		},
+		Types: []uint32{
+			TOKEN_TYPE_NORMAL,
+			TOKEN_TYPE_BYTE,
+			TOKEN_TYPE_BYTE,
+			TOKEN_TYPE_BYTE,
+			TOKEN_TYPE_BYTE,
+		},
+		Scores: []float32{0, 0, 0, 0, 0},
+	}
+
+	spm := NewSentencePieceModel(vocab)
+
+	tests := []struct {
+		name     string
+		ids      []int32
+		expected string
 	}{
 		{
-			name:  "basic",
-			input: `How are you doing? how's today's weather`,
-			want:  []string{"How", " are", " you", " doing", "?", " how", "'", "s", " today", "'", "s", " weather"},
+			name:     "single byte token",
+			ids:      []int32{1},
+			expected: "\xea",
 		},
 		{
-			name: "whitespace",
-			input: `Below is a list of items:
-    * **Item 1**
-    * **Item 2**
-    * **Item 3**`,
-			want: []string{"Below", " is", " a", " list", " of", " items", ":", "\n", "    ", "*", " **", "Item", " ", "1", "**", "\n", "    ", "*", " **", "Item", " ", "2", "**", "\n", "    ", "*", " **", "Item", " ", "3", "**"},
+			name:     "ASCII byte token",
+			ids:      []int32{2},
+			expected: "A",
+		},
+		{
+			name:     "multiple byte tokens forming UTF-8 character",
+			ids:      []int32{3, 4},
+			expected: "ã",
 		},
 	}
 
-	for _, tc := range tt {
-		t.Run(tc.name, func(t *testing.T) {
-			ids, err := tokenizer.Encode(tc.input, true)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := spm.Decode(tt.ids)
 			if err != nil {
-				t.Fatal(err)
+				t.Errorf("failed to decode token IDs %v: %v", tt.ids, err)
 			}
-
-			for i, id := range ids {
-				token, err := tokenizer.Decode([]int32{id})
-				if err != nil {
-					t.Errorf("Failed to decode token ID %d: %v", id, err)
-				}
-				if token != tc.want[i] {
-					t.Errorf("got %q, want %q at position %d", token, tc.want[i], i)
-				}
+			if result != tt.expected {
+				t.Errorf("got %q, want %q", result, tt.expected)
 			}
 		})
 	}
