@@ -139,7 +139,7 @@ func (moe *MoE) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml
 	// softmax(logits) => "probs"
 	probs := logits.Softmax(ctx)
 	// topk(probs, n_expert_used) => "selected_experts"
-	selectedExperts := probs.TopK(ctx, int(opts.expertUsedCount))
+	selectedExperts := probs.TopK(ctx, opts.expertUsedCount)
 	// Rows (probs, selected_experts) => "weights"
 	weights := probs.Reshape(ctx, 1, opts.expertCount, nTokens).Rows(ctx, selectedExperts)
 	// norm weights (weights / sum weights)
@@ -165,7 +165,7 @@ func (moe *MoE) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml
 	expertStride2 := experts.Stride(2)
 	// sum experts
 	var moeOut ml.Tensor
-	for i := 0; i < opts.expertUsedCount; i++ {
+	for i := range opts.expertUsedCount {
 		curExpert := experts.View(ctx, i*expertStride1, nEmbed, expertStride2, nTokens)
 		if i == 0 {
 			moeOut = curExpert
