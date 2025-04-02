@@ -240,19 +240,6 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 	return ids, nil
 }
 
-func (spm SentencePieceModel) Decode(ids []int32) (string, error) {
-	var sb strings.Builder
-	for _, id := range ids {
-		data := spm.vocab.Decode(id)
-		data = strings.ReplaceAll(data, WhitespaceSeparator, " ")
-		if _, err := sb.WriteString(data); err != nil {
-			return "", err
-		}
-	}
-
-	return sb.String(), nil
-}
-
 type candidate struct {
 	a, b  int
 	score float32
@@ -280,4 +267,17 @@ func (q *queue) Pop() interface{} {
 	item := old[n-1]
 	*q = old[0 : n-1]
 	return item
+}
+
+func (spm SentencePieceModel) Decode(ids []int32) (string, error) {
+	var sb strings.Builder
+	for _, id := range ids {
+		data := spm.vocab.Decode(id)
+		data = strings.ReplaceAll(data, WhitespaceSeparator, " ")
+		if _, err := sb.WriteString(data); err != nil {
+			return "", err
+		}
+	}
+
+	return sb.String(), nil
 }
