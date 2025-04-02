@@ -137,7 +137,7 @@ type YarnConfig struct {
 	YarnBetaSlow   float32 // Slow decay parameter for YaRN
 }
 
-// DefaultYarnConfig returns a default configuration for YaRN (Yet Another Recurrent Network)
+// DefaultYarnConfig returns a default configuration for YaRN (Yet Another Rope Extension)
 func DefaultYarnConfig(nCtx int32) *YarnConfig {
 	return &YarnConfig{
 		YarnCtxTrain:   int(nCtx),
