@@ -135,40 +135,6 @@ func TestSentencePieceEncodeAndPrintTokens(t *testing.T) {
     * **Item 3**`,
 			want: []string{"Below", " is", " a", " list", " of", " items", ":", "\n", "    ", "*", " **", "Item", " ", "1", "**", "\n", "    ", "*", " **", "Item", " ", "2", "**", "\n", "    ", "*", " **", "Item", " ", "3", "**"},
 		},
-		// {
-		// 	name:  "multilingual",
-		// 	input: "'괭' 을 초성, 중성, 종성으로 나눠서 설명해줘. ",
-		// 	want:  []string{"'", "<0xEA>", "<0xB4>", "<0xAD>", "'", " 을", " 초", "성", ",", " 중", "성", ",", " 종", "성", "으로", " 나눠", "서", " 설명", "해", "줘", ".", " "},
-		// },
-		// {
-		// 	name: "long",
-		// 	input: `That’s absolutely correct! The answer is **D) All of the above**.
-
-		// Let’s break down why:
-
-		// *   **Higher Memory Requirements:** Larger models simply take up more space in memory.
-		// *   **Higher Inference Speed:** Processing a larger model is inherently slower.
-		// *   **Increased Accuracy (potentially):** While not guaranteed, larger models *can* capture more nuanced relationships and, therefore, potentially generate more accurate responses.
-
-		// **You’ve demonstrated a solid understanding of a fundamental concept!**
-
-		// Now, let’s build on this knowledge. We’ve talked about model size. What about **quantization**? Have you heard of it? It’s a technique that can significantly reduce the memory footprint of LLMs, making them runnable on less powerful
-		// hardware.
-
-		// Would you like me to:
-
-		// *   **Explain what quantization is in more detail?**
-		// *   **Discuss different quantization methods (e.g., 4-bit, 8-bit)?**
-		// *   **Explore how quantization impacts model quality?**
-
-		// >>> beautiful
-		// I’m absolutely thrilled to hear that! It’s incredibly rewarding to see you grasp these concepts.
-
-		// Let’s delve into quantization – it’s a game-changer for running LLMs efficiently.
-
-		// **Quantization, in its simplest form, is about reducing the precision of the numbers used to represent the model’s parameters.**`,
-		// 	want: []string{"That", "’", "s", " absolutely", " correct", "!", " The", " answer", " is", " **", "D", ")", " All", " of", " the", " above", "**.", "\n\n", "Let", "’", "s", " break", " down", " why", ":", "\n\n", "*", "   ", "**", "Higher", " Memory", " Requirements", ":**", " Larger", " models", " simply", " take", " up", " more", " space", " in", " memory", ".", "\n", "*", "   ", "**", "Higher", " Inference", " Speed", ":**", " Processing", " a", " larger", " model", " is", " inherently", " slower", ".", "\n", "*", "   ", "**", "Increased", " Accuracy", " (", "potentially", "):", "**", " While", " not", " guaranteed", ",", " larger", " models", " *", "can", "*", " capture", " more", " nuanced", " relationships", " and", ",", " therefore", ",", " potentially", " generate", " more", " accurate", " responses", ".", "\n\n", "**", "You", "’", "ve", " demonstrated", " a", " solid", " understanding", " of", " a", " fundamental", " concept", "!", "**", "\n\n", "Now", ",", " let", "’", "s", " build", " on", " this", " knowledge", ".", " We", "’", "ve", " talked", " about", " model", " size", ".", " What", " about", " **", "quanti", "zation", "**", "?", " Have", " you", " heard", " of", " it", "?", " It", "’", "s", " a", " technique", " that", " can", " significantly", " reduce", " the", " memory", " footprint", " of", " LL", "Ms", ",", " making", " them", " runnable", " on", " less", " powerful", " ", "\n", "hardware", ".", "\n\n", "Would", " you", " like", " me", " to", ":", "\n\n", "*", "   ", "**", "Explain", " what", " quantization", " is", " in", " more", " detail", "?", "**", "\n", "*", "   ", "**", "Discuss", " different", " quantization", " methods", " (", "e", ".", "g", ".,", " ", "4", "-", "bit", ",", " ", "8", "-", "bit", ")?", "**", "\n", "*", "   ", "**", "Explore", " how", " quantization", " impacts", " model", " quality", "?", "**", "\n\n", ">>>", " beautiful", "\n", "I", "’", "m", " absolutely", " thrilled", " to", " hear", " that", "!", " It", "’", "s", " incredibly", " rewarding", " to", " see", " you", " grasp", " these", " concepts", ".", "\n\n", "Let", "’", "s", " delve", " into", " quantization", " –", " it", "’", "s", " a", " game", "-", "changer", " for", " running", " LL", "Ms", " efficiently", ".", "\n\n", "**", "Quanti", "zation", ",", " in", " its", " simplest", " form", ",", " is", " about", " reducing", " the", " precision", " of", " the", " numbers", " used", " to", " represent", " the", " model", "’", "s", " parameters", ".**"},
-		// },
 	}
 
 	for _, tc := range tt {
