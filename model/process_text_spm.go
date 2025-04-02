@@ -129,55 +129,27 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 		}
 
 		for q.Len() > 0 {
-			c := heap.Pop(q).(*candidate)
-			left, right := &merges[c.a], &merges[c.b]
+			pair := heap.Pop(q).(*candidate)
+			left, right := merges[pair.a], merges[pair.b]
 
-			if string(left.runes) == "" || string(right.runes) == "" || len(string(left.runes))+len(string(right.runes)) != c.size {
+			if len(left.runes) == 0 || len(right.runes) == 0 {
 				continue
 			}
 
-			left.runes = append(left.runes, right.runes...)
-			right.runes = nil
-
-			left.n = right.n
+			merges[pair.a].runes = append(left.runes, right.runes...)
+			merges[pair.b].runes = nil
+			merges[pair.a].n = right.n
 			if right.n != -1 {
-				merges[right.n].p = c.a
+				merges[right.n].p = pair.a
 			}
 
-			// Add new bigrams with updated left node
-			if left.p != -1 {
-				prevSym := &merges[left.p]
-				if string(prevSym.runes) != "" {
-					combined := string(prevSym.runes) + string(left.runes)
-					id := spm.vocab.Encode(combined)
-
-					if id >= 0 && id < int32(len(spm.vocab.Scores)) {
-						heap.Push(q, &candidate{
-							a:     left.p,
-							b:     c.a,
-							score: spm.vocab.Scores[id],
-							size:  len(combined),
-						})
-						history[combined] = [2]int{left.p, c.a}
-					}
-				}
+			if pair := pairwise(merges[pair.a].p, pair.a); pair != nil {
+				heap.Push(q, pair)
 			}
 
-			if left.n != -1 {
-				nextSym := &merges[left.n]
-				if string(nextSym.runes) != "" {
-					combined := string(left.runes) + string(nextSym.runes)
-					id := spm.vocab.Encode(combined)
-
-					if id >= 0 && id < int32(len(spm.vocab.Scores)) {
-						heap.Push(q, &candidate{
-							a:     c.a,
-							b:     left.n,
-							score: spm.vocab.Scores[id],
-							size:  len(combined),
-						})
-						history[combined] = [2]int{c.a, left.n}
-					}
+			if merges[pair.a].n != -1 {
+				if pair := pairwise(pair.a, merges[pair.a].n); pair != nil {
+					heap.Push(q, pair)
 				}
 			}
 		}
