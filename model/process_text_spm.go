@@ -102,33 +102,37 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 
 		merges[len(merges)-1].n = -1
 
+		pairwise := func(a, b int) *candidate {
+			if a < 0 || b >= len(runes) {
+				return nil
+			}
+
+			left, right := string(merges[a].runes), string(merges[b].runes)
+			if id := spm.vocab.Encode(left + right); id >= 0 {
+				return &candidate{
+					a:     a,
+					b:     b,
+					score: spm.vocab.Scores[id],
+					size:  len(left) + len(right),
+				}
+			}
+
+			return nil
+		}
+
 		history := make(map[string][2]int)
 
-		for i := 0; i < len(merges)-1; i++ {
-			left := &merges[i]
-			right := &merges[i+1]
-
-			combined := string(left.runes) + string(right.runes)
-			id := spm.vocab.Encode(combined)
-
-			if id >= 0 && id < int32(len(spm.vocab.Scores)) {
-				heap.Push(q, &candidate{
-					a:     i,
-					b:     i + 1,
-					score: spm.vocab.Scores[id],
-					size:  len(combined),
-				})
-				history[combined] = [2]int{i, i + 1}
+		for i := range len(runes) - 1 {
+			if pair := pairwise(i, i+1); pair != nil {
+				heap.Push(q, pair)
 			}
 		}
 
-		// Process bigrams in order of score
 		for q.Len() > 0 {
-			bg := heap.Pop(q).(*candidate)
-			left := &merges[bg.a]
-			right := &merges[bg.b]
+			c := heap.Pop(q).(*candidate)
+			left, right := &merges[c.a], &merges[c.b]
 
-			if string(left.runes) == "" || string(right.runes) == "" || len(string(left.runes))+len(string(right.runes)) != bg.size {
+			if string(left.runes) == "" || string(right.runes) == "" || len(string(left.runes))+len(string(right.runes)) != c.size {
 				continue
 			}
 
@@ -137,7 +141,7 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 
 			left.n = right.n
 			if right.n != -1 {
-				merges[right.n].p = bg.a
+				merges[right.n].p = c.a
 			}
 
 			// Add new bigrams with updated left node
@@ -150,11 +154,11 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 					if id >= 0 && id < int32(len(spm.vocab.Scores)) {
 						heap.Push(q, &candidate{
 							a:     left.p,
-							b:     bg.a,
+							b:     c.a,
 							score: spm.vocab.Scores[id],
 							size:  len(combined),
 						})
-						history[combined] = [2]int{left.p, bg.a}
+						history[combined] = [2]int{left.p, c.a}
 					}
 				}
 			}
@@ -167,12 +171,12 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 
 					if id >= 0 && id < int32(len(spm.vocab.Scores)) {
 						heap.Push(q, &candidate{
-							a:     bg.a,
+							a:     c.a,
 							b:     left.n,
 							score: spm.vocab.Scores[id],
 							size:  len(combined),
 						})
-						history[combined] = [2]int{bg.a, left.n}
+						history[combined] = [2]int{c.a, left.n}
 					}
 				}
 			}
