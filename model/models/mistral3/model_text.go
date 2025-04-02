@@ -17,6 +17,7 @@ type TextOptions struct {
 	hiddenSize, numHeads, numKVHeads, headDim int
 	eps, ropeBase, ropeScale                  float32
 	ropeDim                                   uint32
+	ropeConfig                                ml.RoPEConfig
 }
 
 type TextModel struct {
@@ -40,7 +41,6 @@ type SelfAttention struct {
 
 func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *TextOptions) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
-	ropeType := uint32(0)
 	headDim := opts.headDim
 	if headDim == 0 {
 		headDim = opts.hiddenSize / opts.numHeads
@@ -48,11 +48,11 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 
 	q := sa.Query.Forward(ctx, hiddenState)
 	q = q.Reshape(ctx, headDim, opts.numHeads, batchSize)
-	q = q.RoPE(ctx, positionIDs, nil, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
+	q = q.RoPE(ctx, positionIDs, nil, opts.ropeConfig)
 
 	k := sa.Key.Forward(ctx, hiddenState)
 	k = k.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-	k = k.RoPE(ctx, positionIDs, nil, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
+	k = k.RoPE(ctx, positionIDs, nil, opts.ropeConfig)
 
 	v := sa.Value.Forward(ctx, hiddenState)
 	v = v.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
@@ -63,7 +63,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 }
 
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return key.RoPE(ctx, shift, nil, uint32(0), m.ropeDim, m.ropeBase, m.ropeScale), nil
+	return key.RoPE(ctx, shift, nil, m.TextOptions.ropeConfig), nil
 }
 
 type MLP struct {
@@ -167,9 +167,13 @@ func NewTextModel(c fs.Config) (*TextModel, error) {
 			numKVHeads: int(c.Uint("attention.head_count_kv")),
 			headDim:    int(c.Uint("attention.key_length")),
 			eps:        c.Float("attention.layer_norm_rms_epsilon"),
-			ropeBase:   c.Float("rope.freq_base"),
-			ropeScale:  c.Float("rope.freq_scale", 1),
-			ropeDim:    c.Uint("rope.dimension_count"),
+			ropeConfig: ml.RoPEConfig{
+				Base:       c.Float("rope.freq_base", 10000.0),
+				Scale:      c.Float("rope.freq_scale", 1.0),
+				Dim:        c.Uint("rope.dimension_count"),
+				Type:       ml.RopeTypeNormal,
+				YarnConfig: ml.DefaultYarnConfig(int32(c.Uint("context_length", 131072))),
+			},
 		},
 	}
 
