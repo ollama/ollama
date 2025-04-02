@@ -101,11 +101,7 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 		}
 
 		pairwise := func(a, b int) *candidate {
-			if a < 0 {
-				return nil
-			}
-
-			if b < 0 || b >= len(runes) {
+			if a < 0 || b >= len(runes) {
 				return nil
 			}
 
