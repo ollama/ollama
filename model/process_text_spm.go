@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const WhitespaceSeparator = "▁"
+const spmWhitespaceSep = "▁"
 
 type SentencePieceModel struct {
 	maxTokenLen int
@@ -80,7 +80,7 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 			continue
 		}
 
-		text := strings.ReplaceAll(frag.value, " ", WhitespaceSeparator)
+		text := strings.ReplaceAll(frag.value, " ", spmWhitespaceSep)
 
 		if id := spm.vocab.Encode(text); id >= 0 {
 			ids = append(ids, id)
@@ -230,7 +230,7 @@ func (spm SentencePieceModel) Decode(ids []int32) (string, error) {
 	var sb strings.Builder
 	for _, id := range ids {
 		data := spm.vocab.Decode(id)
-		data = strings.ReplaceAll(data, WhitespaceSeparator, " ")
+		data = strings.ReplaceAll(data, spmWhitespaceSep, " ")
 		if _, err := sb.WriteString(data); err != nil {
 			return "", err
 		}
