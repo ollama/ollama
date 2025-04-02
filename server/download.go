@@ -29,8 +29,9 @@ import (
 const maxRetries = 6
 
 var (
-	errMaxRetriesExceeded = errors.New("max retries exceeded")
-	errPartStalled        = errors.New("part stalled")
+	errMaxRetriesExceeded   = errors.New("max retries exceeded")
+	errPartStalled          = errors.New("part stalled")
+	errMaxRedirectsExceeded = errors.New("maximum redirects exceeded (10) for directURL")
 )
 
 var blobDownloadManager sync.Map
@@ -172,7 +173,10 @@ func (b *blobDownload) Prepare(ctx context.Context, requestURL *url.URL, opts *r
 		}
 	}
 
-	slog.Info(fmt.Sprintf("downloading %s in %d %s part(s)", b.Digest[7:19], len(b.Parts), format.HumanBytes(b.Parts[0].Size)))
+	if len(b.Parts) > 0 {
+		slog.Info(fmt.Sprintf("downloading %s in %d %s part(s)", b.Digest[7:19], len(b.Parts), format.HumanBytes(b.Parts[0].Size)))
+	}
+
 	return nil
 }
 
@@ -233,7 +237,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 
 			newOpts.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 				if len(via) > 10 {
-					return errors.New("maximum redirects exceeded (10) for directURL")
+					return errMaxRedirectsExceeded
 				}
 
 				// if the hostname is the same, allow the redirect
@@ -365,7 +369,7 @@ func (b *blobDownload) downloadChunk(ctx context.Context, requestURL *url.URL, w
 				lastUpdated := part.lastUpdated
 				part.lastUpdatedMu.Unlock()
 
-				if !lastUpdated.IsZero() && time.Since(lastUpdated) > 5*time.Second {
+				if !lastUpdated.IsZero() && time.Since(lastUpdated) > 30*time.Second {
 					const msg = "%s part %d stalled; retrying. If this persists, press ctrl-c to exit, then 'ollama pull' to find a faster connection."
 					slog.Info(fmt.Sprintf(msg, b.Digest[7:19], part.N))
 					// reset last updated
