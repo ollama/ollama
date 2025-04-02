@@ -997,7 +997,6 @@ struct grammar * grammar_init_impl(
                             size_t num_trigger_tokens) {
     grammar_parser parser;
 
-    LLAMA_LOG_INFO("initializing grammar with input: %s", grammar_str);
     // if there is a grammar, parse it
     if (!parser.parse(grammar_str)) {
         LLAMA_LOG_ERROR("failed to parse grammar");
@@ -1014,8 +1013,6 @@ struct grammar * grammar_init_impl(
     if (parser.symbol_ids.find("root") == parser.symbol_ids.end()) {
         fprintf(stderr, "%s: grammar does not contain a 'root' symbol\n", __func__);
         return nullptr;
-    } else {
-        LLAMA_LOG_INFO("grammar contains a 'root' symbol");
     }
 
     std::vector<const grammar_element *> grammar_rules_vec(parser.c_rules());
