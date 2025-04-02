@@ -2,6 +2,7 @@ package model
 
 import (
 	"container/heap"
+	"fmt"
 	"log/slog"
 	"strings"
 )
@@ -79,13 +80,145 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 			continue
 		}
 
-		if spm.vocab.Encode(frag.value) >= 0 {
-			ids = append(ids, spm.vocab.Encode(frag.value))
+		text := strings.ReplaceAll(frag.value, " ", WhitespaceSeparator)
+
+		if id := spm.vocab.Encode(text); id >= 0 {
+			ids = append(ids, id)
 			continue
 		}
 
-		s := newTokenizer(spm.vocab)
-		ids = append(ids, s.tokenize(strings.ReplaceAll(frag.value, " ", WhitespaceSeparator))...)
+		q := &queue{}
+		heap.Init(q)
+
+		runes := []rune(text)
+		symbols := make([]symbol, len(runes))
+		for i, r := range runes {
+			symbols[i] = symbol{
+				text: string(r),
+				prev: i - 1,
+				next: i + 1,
+			}
+		}
+
+		if len(symbols) == 0 {
+			continue
+		}
+
+		symbols[len(symbols)-1].next = -1
+
+		history := make(map[string][2]int)
+
+		for i := 0; i < len(symbols)-1; i++ {
+			left := &symbols[i]
+			right := &symbols[i+1]
+
+			combined := left.text + right.text
+			id := spm.vocab.Encode(combined)
+
+			if id >= 0 && id < int32(len(spm.vocab.Scores)) {
+				heap.Push(q, &candidate{
+					left:  i,
+					right: i + 1,
+					score: spm.vocab.Scores[id],
+					size:  len(combined),
+				})
+				history[combined] = [2]int{i, i + 1}
+			}
+		}
+
+		// Process bigrams in order of score
+		for q.Len() > 0 {
+			bg := heap.Pop(q).(*candidate)
+			left := &symbols[bg.left]
+			right := &symbols[bg.right]
+
+			if left.text == "" || right.text == "" || len(left.text)+len(right.text) != bg.size {
+				continue
+			}
+
+			left.text += right.text
+			right.text = ""
+
+			left.next = right.next
+			if right.next != -1 {
+				symbols[right.next].prev = bg.left
+			}
+
+			// Add new bigrams with updated left node
+			if left.prev != -1 {
+				prevSym := &symbols[left.prev]
+				if prevSym.text != "" {
+					combined := prevSym.text + left.text
+					id := spm.vocab.Encode(combined)
+
+					if id >= 0 && id < int32(len(spm.vocab.Scores)) {
+						heap.Push(q, &candidate{
+							left:  left.prev,
+							right: bg.left,
+							score: spm.vocab.Scores[id],
+							size:  len(combined),
+						})
+						history[combined] = [2]int{left.prev, bg.left}
+					}
+				}
+			}
+
+			if left.next != -1 {
+				nextSym := &symbols[left.next]
+				if nextSym.text != "" {
+					combined := left.text + nextSym.text
+					id := spm.vocab.Encode(combined)
+
+					if id >= 0 && id < int32(len(spm.vocab.Scores)) {
+						heap.Push(q, &candidate{
+							left:  bg.left,
+							right: left.next,
+							score: spm.vocab.Scores[id],
+							size:  len(combined),
+						})
+						history[combined] = [2]int{bg.left, left.next}
+					}
+				}
+			}
+		}
+
+		// Helper function to recursively segment tokens
+		var resegment func(string, []symbol) []int32
+		resegment = func(text string, symbols []symbol) []int32 {
+			id := spm.vocab.Encode(text)
+
+			if id >= 0 {
+				return []int32{id}
+			}
+
+			if pair, exists := history[text]; exists {
+				left := resegment(symbols[pair[0]].text, symbols)
+				right := resegment(symbols[pair[1]].text, symbols)
+				return append(left, right...)
+			}
+
+			// Fallback to byte tokenization
+			var result []int32
+			for _, b := range []byte(text) {
+				byteToken := fmt.Sprintf("<0x%02X>", b)
+				unknownID := spm.vocab.Encode(byteToken)
+				if unknownID >= 0 {
+					result = append(result, unknownID)
+				} else {
+					slog.Debug("unknown byte token", "byte", b, "token", byteToken)
+				}
+			}
+
+			return result
+		}
+
+		// Collect tokens from the merged symbols
+		for i := 0; i != -1; i = symbols[i].next {
+			if symbols[i].text != "" {
+				tokens := resegment(symbols[i].text, symbols)
+				ids = append(ids, tokens...)
+			}
+		}
 	}
 
 	if addSpecial && len(ids) > 0 {
@@ -130,165 +263,31 @@ type symbol struct {
 	next int
 }
 
-type tokenizer struct {
-	heap    *bigramHeap
-	history map[string][2]int
-	symbols []symbol
-	vocab   *Vocabulary
+type candidate struct {
+	left, right int
+	score       float32
+	size        int
 }
 
-func newTokenizer(vocab *Vocabulary) *tokenizer {
-	h := &bigramHeap{}
-	heap.Init(h)
+type queue []*candidate
 
-	return &tokenizer{
-		heap:    h,
-		history: make(map[string][2]int),
-		symbols: []symbol{},
-		vocab:   vocab,
-	}
+func (q queue) Len() int { return len(q) }
+
+func (q queue) Less(i, j int) bool {
+	return (q[i].score > q[j].score) || (q[i].score == q[j].score && q[i].left < q[j].left)
 }
 
-func (t *tokenizer) tokenize(text string) []int32 {
-	var symbols []symbol
-	for i, r := range []rune(text) {
-		sym := symbol{
-			text: string(r),
-			prev: i - 1,
-			next: i + 1,
-		}
-		symbols = append(symbols, sym)
-	}
+func (q queue) Swap(i, j int) { q[i], q[j] = q[j], q[i] }
 
-	if len(symbols) == 0 {
-		return []int32{}
-	}
-
-	symbols[len(symbols)-1].next = -1
-
-	// Add initial bigrams to the queue
-	for i := range len(symbols) - 1 {
-		t.add(i, i+1, symbols)
-	}
-
-	// Process bigrams in order of score
-	for t.heap.Len() > 0 {
-		bigram := heap.Pop(t.heap).(*bigram)
-		left := &symbols[bigram.left]
-		right := &symbols[bigram.right]
-
-		if left.text == "" || right.text == "" || len(left.text)+len(right.text) != bigram.size {
-			continue
-		}
-
-		left.text += right.text
-		right.text = ""
-
-		left.next = right.next
-		if right.next != -1 {
-			symbols[right.next].prev = bigram.left
-		}
-
-		t.add(left.prev, bigram.left, symbols)
-		t.add(bigram.left, left.next, symbols)
-	}
-
-	var output []int32
-	for i := 0; i != -1; i = symbols[i].next {
-		if symbols[i].text != "" {
-			tokens := t.resegment(symbols[i].text, symbols)
-			output = append(output, tokens...)
-		}
-	}
-
-	return output
+func (q *queue) Push(x interface{}) {
+	item := x.(*candidate)
+	*q = append(*q, item)
 }
 
-// resegment recursively breaks down tokens that couldn't be encoded
-func (t *tokenizer) resegment(text string, symbols []symbol) []int32 {
-	id := t.vocab.Encode(text)
-
-	if id >= 0 {
-		return []int32{id}
-	}
-
-	if pair, exists := t.history[text]; exists {
-		left := t.resegment(symbols[pair[0]].text, symbols)
-		right := t.resegment(symbols[pair[1]].text, symbols)
-		return append(left, right...)
-	}
-
-	var result []int32
-	for _, b := range []byte(text) {
-		unknownID := t.vocab.Encode(string(b))
-		if unknownID >= 0 {
-			result = append(result, unknownID)
-		} else {
-			slog.Debug("unknown byte token", "byte", b)
-		}
-	}
-
-	return result
-}
-
-// add creates a new bigram and adds it to the heap
-func (t *tokenizer) add(left, right int, symbols []symbol) {
-	if left == -1 || right == -1 {
-		return
-	}
-
-	leftSym := &symbols[left]
-	rightSym := &symbols[right]
-
-	if leftSym.text == "" || rightSym.text == "" {
-		return
-	}
-
-	combined := leftSym.text + rightSym.text
-	id := t.vocab.Encode(combined)
-
-	if id < 0 || int(id) >= len(t.vocab.Scores) {
-		return
-	}
-
-	bigram := &bigram{
-		left:  left,
-		right: right,
-		score: t.vocab.Scores[id],
-		size:  len(combined),
-	}
-
-	heap.Push(t.heap, bigram)
-	t.history[combined] = [2]int{left, right}
-}
-
-// bigram represents a pair of adjacent symbols
-type bigram struct {
-	left  int
-	right int
-	score float32
-	size  int
-}
-
-type bigramHeap []*bigram
-
-func (bq bigramHeap) Len() int { return len(bq) }
-
-func (bq bigramHeap) Less(i, j int) bool {
-	return (bq[i].score > bq[j].score) || (bq[i].score == bq[j].score && bq[i].left < bq[j].left)
-}
-
-func (bq bigramHeap) Swap(i, j int) { bq[i], bq[j] = bq[j], bq[i] }
-
-func (bq *bigramHeap) Push(x interface{}) {
-	item := x.(*bigram)
-	*bq = append(*bq, item)
-}
-
-func (bq *bigramHeap) Pop() interface{} {
-	old := *bq
+func (q *queue) Pop() interface{} {
+	old := *q
 	n := len(old)
 	item := old[n-1]
-	*bq = old[0 : n-1]
+	*q = old[0 : n-1]
 	return item
 }
