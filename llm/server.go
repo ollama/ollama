@@ -655,8 +655,7 @@ string ::=
   )* "\""
 number ::= "-"? ("0" | [1-9] [0-9]*) ("." [0-9]+)? ([eE] [-+]? [0-9]+)?
 ws     ::= [ \t \n \r]*
-s      ::= [ \n \t]
-t      ::= [ \t \r]*`
+s      ::= [ \n \t]`
 
 const maxBufferSize = 512 * format.KiloByte
 
@@ -717,8 +716,6 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			break
 		case `"json"`:
 			req.Grammar = grammarJSON
-			slog.Info("using JSON grammar")
-			slog.Info(req.Grammar)
 		default:
 			if req.Format[0] != '{' {
 				return fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema object", req.Format)

@@ -58,7 +58,7 @@ struct partial_utf8 {
 struct grammar_candidate {
     size_t           index;
     const uint32_t * code_points;
-    partial_utf8     partial_utf8;
+    partial_utf8     utf8_state;
 };
 
 using grammar_rule  = std::vector<      grammar_element>;
@@ -120,7 +120,7 @@ struct grammar {
           grammar_stacks stacks;
 
     // buffer for partially generated UTF-8 sequence from accepted tokens
-    partial_utf8 partial_utf8;
+    partial_utf8 utf8_state;
 
     // lazy grammars wait for trigger words or tokens before constraining the sampling.
     // we still have trigger_tokens for non-lazy grammars to force printing of special trigger tokens.
