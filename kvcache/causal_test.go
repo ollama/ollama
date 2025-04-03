@@ -281,7 +281,7 @@ func testCache(t *testing.T, backend ml.Backend, cache Cache, tests []testCase) 
 			context := backend.NewContext()
 			defer context.Close()
 
-			err := cache.StartForward(context, input.Batch{Positions: test.pos, Sequences: test.seqs})
+			err := cache.StartForward(context, input.Batch{Positions: test.pos, Sequences: test.seqs}, false)
 			if err != nil {
 				panic(err)
 			}
@@ -315,7 +315,7 @@ func TestCanResume(t *testing.T) {
 	err := cache.StartForward(context, input.Batch{
 		Positions: []int32{0, 1, 2, 3},
 		Sequences: []int{0, 0, 0, 0},
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("StartForward failed: %v", err)
 	}
@@ -342,7 +342,7 @@ func TestCanResume(t *testing.T) {
 	err = cache.StartForward(context, input.Batch{
 		Positions: []int32{4, 5},
 		Sequences: []int{0, 0},
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("StartForward failed: %v", err)
 	}
@@ -439,6 +439,8 @@ func (c *testContext) Layer(int) ml.Context { return c }
 func (c *testContext) Forward(...ml.Tensor) ml.Context { return c }
 
 func (c *testContext) Compute(...ml.Tensor) {}
+
+func (c *testContext) Reserve() error { return nil }
 
 func (c *testContext) MaxGraphNodes() int {
 	return 10

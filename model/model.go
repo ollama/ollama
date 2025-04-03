@@ -299,7 +299,7 @@ func Forward(ctx ml.Context, m Model, inputs []int32, batch input.Batch) (ml.Ten
 
 	cache := m.Config().Cache
 	if cache != nil {
-		err := cache.StartForward(ctx, batch)
+		err := cache.StartForward(ctx, batch, false)
 		if err != nil {
 			return nil, err
 		}

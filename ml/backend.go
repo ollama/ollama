@@ -97,6 +97,13 @@ type Context interface {
 
 	Forward(...Tensor) Context
 	Compute(...Tensor)
+
+	// Reserve is analogous to Compute but rather than executing a
+	// graph, simply preallocates memory. Typically called with a
+	// worst case graph to ensure all resources are available for
+	// for future inference.
+	Reserve() error
+
 	MaxGraphNodes() int
 	Close()
 
