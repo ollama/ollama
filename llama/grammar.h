@@ -157,7 +157,7 @@ void grammar_free_impl(struct grammar * grammar);
 
 struct grammar * grammar_clone_impl(const struct grammar & grammar);
 
-// TODO: move the API below as member functions of grammar
+// TODO(parthsareen): move the API below as member functions of grammar
 void grammar_apply_impl(
         const struct grammar & grammar,
             llama_token_data_array * cur_p);

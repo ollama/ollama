@@ -8,7 +8,6 @@ package llama
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/examples/llava
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/src
 #cgo CPPFLAGS: -I${SRCDIR}/../ml/backend/ggml/ggml/include
-// #cgo CPPFLAGS: -I${SRCDIR}/grammar
 
 #include <stdlib.h>
 #include "ggml.h"
