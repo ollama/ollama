@@ -196,6 +196,8 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 		conv = &phi3Model{}
 	case "Qwen2ForCausalLM":
 		conv = &qwen2Model{}
+	case "Qwen2_5_VLForConditionalGeneration":
+		conv = &qwen25VLModel{}
 	case "Qwen2_5OmniModel":
 		conv = &qwen25OmniModel{}
 	case "BertModel":
