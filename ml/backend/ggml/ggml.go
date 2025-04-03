@@ -907,6 +907,8 @@ func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	}
 }
 
+// GGML RoPE types
+// These are the types used in the C implementation of RoPE
 const (
 	ropeTypeNorm   C.int = 0
 	ropeTypeNeox   C.int = 2
@@ -914,7 +916,8 @@ const (
 	ropeTypeVision C.int = 24
 )
 
-func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim, ropeType uint32, ropeBase, ropeScale float32) ml.Tensor {
+// RoPE applies Rotary Position Embeddings to the tensor
+func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, config ml.RoPEConfig) ml.Tensor {
 	if ropeFactors == nil {
 		ropeFactors = &Tensor{b: t.b}
 	}
@@ -924,19 +927,41 @@ func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDi
 		dequant = C.ggml_cast(ctx.(*Context).ctx, t.t, C.GGML_TYPE_F32)
 	}
 
+	if config.YarnConfig == nil {
+		config.YarnConfig = ml.DefaultYarnConfig(131072) // 131072 is the default for LLaMA, so it is common at the time of writing
+	}
+
+	// Map Go RopeType to C implementation constants
+	var ropeTypeC C.int
+	switch config.Type {
+	case ml.RopeTypeNormal:
+		ropeTypeC = ropeTypeNorm
+	case ml.RopeTypeNeox:
+		ropeTypeC = ropeTypeNeox
+	case ml.RopeTypeMRoPE:
+		ropeTypeC = ropeTypeMrope
+	case ml.RopeTypeVision:
+		ropeTypeC = ropeTypeVision
+	default:
+		ropeTypeC = ropeTypeNorm
+	}
+
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_rope_ext(
-			ctx.(*Context).ctx, dequant, positionIDs.(*Tensor).t, ropeFactors.(*Tensor).t,
-			C.int(ropeDim),
-			C.int(ropeType),
-			131072, // YaRN n_ctx_train
-			C.float(ropeBase),
-			C.float(ropeScale),
-			0.,  // YaRN ext_factor
-			1.,  // YaRN attn_factor
-			32., // YaRN beta_fast
-			1.,  // YaRN beta_slow
+			ctx.(*Context).ctx,
+			dequant,
+			positionIDs.(*Tensor).t,
+			ropeFactors.(*Tensor).t,
+			C.int(config.Dim),
+			ropeTypeC,
+			C.int(config.YarnCtxTrain),
+			C.float(config.Base),
+			C.float(config.Scale),
+			C.float(config.YarnExtFactor),
+			C.float(config.YarnAttnFactor),
+			C.float(config.YarnBetaFast),
+			C.float(config.YarnBetaSlow),
 		),
 	}
 }
