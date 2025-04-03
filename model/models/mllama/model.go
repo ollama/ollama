@@ -92,16 +92,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 		return nil, err
 	}
 
-	positions := make([]int32, 1601)
-	for i := range positions {
-		positions[i] = int32(i)
-	}
-
-	positionIDs, err := ctx.Input().FromIntSlice(positions, len(positions))
-	if err != nil {
-		return nil, err
-	}
-
+	positionIDs := ctx.Arange(0, 1601, 1, ml.DTypeI32)
 	crossAttentionStates := m.VisionModel.Forward(ctx, pixelValues, positionIDs, aspectRatio)
 	return m.Projector.Forward(ctx, crossAttentionStates), nil
 }

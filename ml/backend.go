@@ -104,6 +104,7 @@ type Context interface {
 	Zeros(dtype DType, shape ...int) Tensor
 	FromFloatSlice(s []float32, shape ...int) (Tensor, error)
 	FromIntSlice(s []int32, shape ...int) (Tensor, error)
+	Arange(start, stop, step float32, dtype DType) Tensor
 
 	Forward(...Tensor) Context
 	Compute(...Tensor)

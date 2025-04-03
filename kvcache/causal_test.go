@@ -361,6 +361,17 @@ func (c *testContext) FromIntSlice(s []int32, shape ...int) (ml.Tensor, error) {
 	return out, nil
 }
 
+func (c *testContext) Arange(start, stop, step float32, dtype ml.DType) ml.Tensor {
+	s := make([]float32, int((stop-start)/step))
+	for i := range s {
+		s[i] = float32(start + float32(i)*step)
+	}
+
+	out, _ := c.FromFloatSlice(s, len(s))
+	out.(*testTensor).dtype = dtype
+	return out
+}
+
 func (c *testContext) Input() ml.Context    { return c }
 func (c *testContext) Output() ml.Context   { return c }
 func (c *testContext) Layer(int) ml.Context { return c }
