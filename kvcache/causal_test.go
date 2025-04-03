@@ -5,7 +5,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model/input"
 )
@@ -372,14 +371,8 @@ func TestCanResume(t *testing.T) {
 	}
 }
 
-type testBackend struct{}
-
-func (b *testBackend) Config() fs.Config {
-	panic("not implemented")
-}
-
-func (b *testBackend) Get(name string) ml.Tensor {
-	panic("not implemented")
+type testBackend struct {
+	ml.Backend
 }
 
 func (b *testBackend) NewContext() ml.Context {
@@ -390,11 +383,9 @@ func (b *testBackend) NewContextSize(int) ml.Context {
 	return &testContext{}
 }
 
-func (b *testBackend) SystemInfo() string {
-	return "not implemented"
+type testContext struct {
+	ml.Context
 }
-
-type testContext struct{}
 
 func (c *testContext) Empty(dtype ml.DType, shape ...int) ml.Tensor {
 	total := 0
@@ -449,6 +440,8 @@ func (c *testContext) MaxGraphNodes() int {
 func (c *testContext) Close() {}
 
 type testTensor struct {
+	ml.Tensor
+
 	dtype       ml.DType
 	elementSize int
 	data        []float32
@@ -476,10 +469,6 @@ func (t *testTensor) DType() ml.DType {
 	return t.dtype
 }
 
-func (t *testTensor) Bytes() []byte {
-	panic("not implemented")
-}
-
 func (t *testTensor) Floats() []float32 {
 	out := make([]float32, len(t.data))
 	copy(out, t.data)
@@ -504,64 +493,6 @@ func (t *testTensor) Add(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return out
 }
 
-func (t *testTensor) Mul(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Mulmat(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) MulmatFullPrec(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Softmax(ctx ml.Context) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) LayerNorm(ctx ml.Context, weight, bias ml.Tensor, eps float32) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) RMSNorm(ctx ml.Context, weight ml.Tensor, eps float32) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Scale(ctx ml.Context, s float64) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) AvgPool1D(ctx ml.Context, k, s, p int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) AvgPool2D(ctx ml.Context, k, s int, p float32) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Conv2D(ctx ml.Context, weight ml.Tensor, s0, s1, p0, p1, d0, d1 int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, dim, ropeType uint32, base, scale float32) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) IM2Col(ctx ml.Context, weight ml.Tensor, s0, s1, p0, p1, d0, d1 int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Cos(ctx ml.Context) ml.Tensor  { panic("not implemented") }
-func (t *testTensor) Sin(ctx ml.Context) ml.Tensor  { panic("not implemented") }
-func (t *testTensor) Tanh(ctx ml.Context) ml.Tensor { panic("not implemented") }
-func (t *testTensor) GELU(ctx ml.Context) ml.Tensor { panic("not implemented") }
-func (t *testTensor) SILU(ctx ml.Context) ml.Tensor { panic("not implemented") }
-
-func (t *testTensor) Reshape(ctx ml.Context, shape ...int) ml.Tensor {
-	panic("not implemented")
-}
-
 func (t *testTensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	offset /= t.elementSize
 
@@ -584,43 +515,7 @@ func (t *testTensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	return view
 }
 
-func (t *testTensor) Permute(ctx ml.Context, shape ...int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Contiguous(ctx ml.Context) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Set(ctx ml.Context, t2 ml.Tensor, offset int, strides ...int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Pad(ctx ml.Context, shape ...int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Unpad(ctx ml.Context, shape ...int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Stack(ctx ml.Context, dim int, s ...ml.Tensor) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Repeat(ctx ml.Context, dim, n int) ml.Tensor { panic("not implemented") }
-
-func (t *testTensor) Concat(ctx ml.Context, t2 ml.Tensor, dim int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Rows(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
-	panic("not implemented")
-}
-
 func (t *testTensor) Copy(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	copy(t2.(*testTensor).data, t.data)
 	return nil
 }
-
-func (t *testTensor) Duplicate(ctx ml.Context) ml.Tensor { panic("not implemented") }
