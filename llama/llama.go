@@ -680,26 +680,20 @@ type TokenData struct {
 }
 
 type Grammar struct {
-	c *C.struct_grammar
-}
-
-func (g *Grammar) AddSymbol(symbol string, id uint32) {
-	cSymbol := C.CString(symbol)
-	defer C.free(unsafe.Pointer(cSymbol))
-	C.grammar_add_symbol_id(g.c, cSymbol, C.uint32_t(id))
+	c *C.struct_llama_grammar
 }
 
 func (g *Grammar) AddTokenPiece(token uint32, piece string) {
 	cPiece := C.CString(piece)
 	defer C.free(unsafe.Pointer(cPiece))
-	C.grammar_add_token_piece(g.c, C.uint32_t(token), cPiece)
+	C.ollama_vocab_add_token_piece(g.c, C.uint32_t(token), cPiece)
 }
 
 func (g *Grammar) SetEOGToken(token uint32) {
-	C.grammar_set_eog_token(g.c, C.uint32_t(token))
+	C.ollama_vocab_set_eog_token(g.c, C.uint32_t(token))
 }
 
-func InitGrammarChain(grammar string) *Grammar {
+func LoadGrammar(grammar string) *Grammar {
 	cGrammar := C.CString(grammar)
 	defer C.free(unsafe.Pointer(cGrammar))
 

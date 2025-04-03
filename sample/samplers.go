@@ -170,13 +170,12 @@ type Grammar struct {
 }
 
 func NewGrammar(vocab *model.Vocabulary, grammarStr string) (*Grammar, error) {
-	grammar := llama.InitGrammarChain(grammarStr)
+	grammar := llama.LoadGrammar(grammarStr)
 	if grammar == nil {
 		return nil, errors.New("sample: failed to initialize grammar")
 	}
 	for _, s := range vocab.Values {
 		id := vocab.Encode(s)
-		grammar.AddSymbol(s, uint32(id))
 		grammar.AddTokenPiece(uint32(id), s)
 	}
 	grammar.SetEOGToken(uint32(vocab.EOS))

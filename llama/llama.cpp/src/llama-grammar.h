@@ -8,6 +8,17 @@
 #include <vector>
 
 struct llama_vocab;
+struct ollama_vocab {
+    std::map<uint32_t, std::string> token_to_piece_map;
+    uint32_t eog_token;
+
+    void add_token_piece(uint32_t token, const std::string & piece);
+    void set_eog_token(uint32_t token);
+
+    const std::string & token_to_piece(uint32_t token);
+    bool is_eog(uint32_t token);
+
+};
 
 // grammar element type
 enum llama_gretype {
@@ -114,6 +125,7 @@ struct llama_grammar_trigger_pattern {
 struct llama_grammar {
     // note: allow null vocab for testing (not great)
     const llama_vocab * vocab;
+    ollama_vocab * ollama_vocab;
 
     const llama_grammar_rules  rules;  // TODO: shared ptr
           llama_grammar_stacks stacks;
@@ -141,12 +153,14 @@ struct llama_grammar {
 // note: needed for tests (not great)
 struct llama_grammar * llama_grammar_init_impl(
         const struct llama_vocab * vocab,
+        struct ollama_vocab * ollama_vocab,
         const llama_grammar_element ** rules,
         size_t n_rules,
         size_t start_rule_index);
 
 struct llama_grammar * llama_grammar_init_impl(
         const struct llama_vocab * vocab,
+        struct ollama_vocab * ollama_vocab,
                       const char * grammar_str,
                       const char * grammar_root,
                               bool lazy,
