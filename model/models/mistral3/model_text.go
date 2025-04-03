@@ -112,8 +112,10 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 		row := image.Multimodal.(*imageRow)
 		row.parent.dataOnce.Do(func() {
 			// use a new, throwaway context so the image tensor is not added to the graph
-			m.Backend().NewContext().Forward(row.parent.tensor).Compute(row.parent.tensor)
+			temp := m.Backend().NewContext()
+			temp.Forward(row.parent.tensor).Compute(row.parent.tensor)
 			row.parent.data = row.parent.tensor.Floats()
+			temp.Close()
 		})
 
 		imageFeature, err := ctx.Input().FromFloatSlice(row.data(), row.shape...)
