@@ -694,7 +694,7 @@ func (d DoneReason) String() string {
 	case DoneReasonStop:
 		return "stop"
 	default:
-		return "" // closed or disconnected
+		return "" // closed
 	}
 }
 
