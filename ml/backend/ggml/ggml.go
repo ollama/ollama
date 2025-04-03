@@ -10,6 +10,7 @@ import "C"
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -42,8 +43,12 @@ func devices() []*C.struct_ggml_backend_device {
 }
 
 type Backend struct {
-	meta    *fsggml.GGML
-	sched   *C.struct_ggml_backend_sched
+	meta *fsggml.GGML
+
+	sched         *C.struct_ggml_backend_sched
+	schedBackends []*C.struct_ggml_backend
+	schedBufts    []*C.struct_ggml_backend_buffer_type
+
 	tensors map[string]*C.struct_ggml_tensor
 
 	// input is the backend used for inputs
@@ -389,8 +394,6 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 		schedBackends = append(schedBackends, b)
 		schedBufts = append(schedBufts, bt)
 
-		slog.Info("compute graph", "backend", C.GoString(C.ggml_backend_name(b)), "buffer_type", C.GoString(C.ggml_backend_buft_name(bt)))
-
 		if C.ggml_backend_is_cpu(b) {
 			// set number of threads for cpu backend
 			C.ggml_backend_cpu_set_n_threads(b, C.int(Threads(params.NumThreads)))
@@ -409,7 +412,9 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 			C.size_t(maxGraphNodes),
 			C._Bool(len(gpus) > 1 && slices.Contains(gpus, output.d)),
 		),
-		input: deviceBufferTypes[input.d],
+		schedBackends: schedBackends,
+		schedBufts:    schedBufts,
+		input:         deviceBufferTypes[input.d],
 		layers: func() map[int]*C.struct_ggml_backend_buffer_type {
 			m := make(map[int]*C.struct_ggml_backend_buffer_type)
 			for i, layer := range layers {
@@ -532,6 +537,24 @@ func (c Context) Compute(tensors ...ml.Tensor) {
 			t.(*Tensor).sync = sync
 		}
 	}
+}
+
+func (c Context) Reserve() error {
+	if !C.ggml_backend_sched_reserve(c.b.sched, c.graph) {
+		C.ggml_backend_sched_reset(c.b.sched)
+		return errors.New("failed to reserve graph")
+	}
+
+	slog.Debug("compute graph", "nodes", C.ggml_graph_n_nodes(c.graph), "splits", C.ggml_backend_sched_get_n_splits(c.b.sched))
+	for i := range c.b.schedBackends {
+		size := C.ggml_backend_sched_get_buffer_size(c.b.sched, c.b.schedBackends[i])
+		slog.Info("compute graph", "backend", C.GoString(C.ggml_backend_name(c.b.schedBackends[i])), "buffer_type", C.GoString(C.ggml_backend_buft_name(c.b.schedBufts[i])),
+			"size", format.HumanBytes2(uint64(size)))
+	}
+
+	C.ggml_backend_sched_reset(c.b.sched)
+
+	return nil
 }
 
 func (c Context) MaxGraphNodes() int {

@@ -146,51 +146,60 @@ func (c *Causal) Close() {
 	}
 }
 
-func (c *Causal) StartForward(ctx ml.Context, batch input.Batch) error {
+func (c *Causal) StartForward(ctx ml.Context, batch input.Batch, reserve bool) error {
 	c.curBatchSize = len(batch.Positions)
 	c.curSequences = batch.Sequences
 	c.curPositions = batch.Positions
 	c.opts.Except = nil
 
-	c.updateSlidingWindow()
+	if !reserve {
+		c.updateSlidingWindow()
+
+		var err error
+		c.curLoc, err = c.findStartLoc()
+		if errors.Is(err, ErrKvCacheFull) {
+			c.defrag()
+			c.curLoc, err = c.findStartLoc()
+		}
+		if err != nil {
+			return err
+		}
+
+		c.curCellRange = newRange()
+		for i, pos := range batch.Positions {
+			seq := batch.Sequences[i]
+
+			c.cells[c.curLoc+i] = cacheCell{pos: pos, sequences: []int{seq}}
+
+			seqRange, ok := c.cellRanges[seq]
+			if !ok {
+				seqRange = newRange()
+			}
+
+			if c.curLoc+i > seqRange.max {
+				seqRange.max = c.curLoc + i
+			}
+			if seqRange.max > c.curCellRange.max {
+				c.curCellRange.max = seqRange.max
+			}
+
+			if c.curLoc+i < seqRange.min {
+				seqRange.min = c.curLoc + i
+			}
+			if seqRange.min < c.curCellRange.min {
+				c.curCellRange.min = seqRange.min
+			}
+			c.cellRanges[seq] = seqRange
+		}
+	} else {
+		// If we are reserving memory, don't update any of the cache metadata but set the size
+		// to the worst case.
+		c.curLoc = 0
+		c.curCellRange.min = 0
+		c.curCellRange.max = len(c.cells) - 1
+	}
 
 	var err error
-	c.curLoc, err = c.findStartLoc()
-	if errors.Is(err, ErrKvCacheFull) {
-		c.defrag()
-		c.curLoc, err = c.findStartLoc()
-	}
-	if err != nil {
-		return err
-	}
-
-	c.curCellRange = newRange()
-	for i, pos := range batch.Positions {
-		seq := batch.Sequences[i]
-
-		c.cells[c.curLoc+i] = cacheCell{pos: pos, sequences: []int{seq}}
-
-		seqRange, ok := c.cellRanges[seq]
-		if !ok {
-			seqRange = newRange()
-		}
-
-		if c.curLoc+i > seqRange.max {
-			seqRange.max = c.curLoc + i
-		}
-		if seqRange.max > c.curCellRange.max {
-			c.curCellRange.max = seqRange.max
-		}
-
-		if c.curLoc+i < seqRange.min {
-			seqRange.min = c.curLoc + i
-		}
-		if seqRange.min < c.curCellRange.min {
-			c.curCellRange.min = seqRange.min
-		}
-		c.cellRanges[seq] = seqRange
-	}
-
 	c.curMask, err = c.buildMask(ctx)
 
 	return err
