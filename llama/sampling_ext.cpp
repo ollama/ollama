@@ -140,9 +140,9 @@ void grammar_accept(struct llama_grammar *g, llama_token id) {
 }
 
 void ollama_vocab_add_token_piece(struct llama_grammar *g, uint32_t token, const char *piece) {
-    g->ollama_vocab->add_token_piece(token, piece);
+    g->o_vocab->add_token_piece(token, piece);
 }
 
 void ollama_vocab_set_eog_token(struct llama_grammar *g, uint32_t token) {
-    g->ollama_vocab->set_eog_token(token);
+    g->o_vocab->set_eog_token(token);
 }

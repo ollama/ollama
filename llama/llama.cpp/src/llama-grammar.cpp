@@ -1093,7 +1093,7 @@ void llama_grammar_free_impl(struct llama_grammar * grammar) {
 struct llama_grammar * llama_grammar_clone_impl(const struct llama_grammar & grammar) {
     auto * result = new llama_grammar {
         grammar.vocab,
-        grammar.ollama_vocab,
+        grammar.o_vocab,
         grammar.rules,
         grammar.stacks,
         grammar.partial_utf8,
@@ -1121,7 +1121,7 @@ struct llama_grammar * llama_grammar_clone_impl(const struct llama_grammar & gra
 }
 
 void llama_grammar_apply_impl(const struct llama_grammar & grammar, llama_token_data_array * cur_p) {
-    GGML_ASSERT(!(grammar.vocab == nullptr && grammar.ollama_vocab == nullptr));
+    GGML_ASSERT(!(grammar.vocab == nullptr && grammar.o_vocab == nullptr));
 
     if (grammar.awaiting_trigger) {
         return;
@@ -1144,15 +1144,15 @@ void llama_grammar_apply_impl(const struct llama_grammar & grammar, llama_token_
     for (size_t i = 0; i < cur_p->size; ++i) {
         const llama_token id      = cur_p->data[i].id;
         std::string piece;
-        if (grammar.ollama_vocab) {
-            piece = grammar.ollama_vocab->token_to_piece(id);
+        if (grammar.o_vocab) {
+            piece = grammar.o_vocab->token_to_piece(id);
         } else {
             piece = grammar.vocab->token_to_piece(id);
         }
 
         bool is_eog = false;
-        if (grammar.ollama_vocab) {
-            is_eog = grammar.ollama_vocab->is_eog(id);
+        if (grammar.o_vocab) {
+            is_eog = grammar.o_vocab->is_eog(id);
         } else {
             is_eog = grammar.vocab->is_eog(id);
         }
@@ -1176,11 +1176,11 @@ void llama_grammar_apply_impl(const struct llama_grammar & grammar, llama_token_
 }
 
 void llama_grammar_accept_impl(struct llama_grammar & grammar, llama_token token) {
-    GGML_ASSERT(!(grammar.vocab == nullptr && grammar.ollama_vocab == nullptr));
+    GGML_ASSERT(!(grammar.vocab == nullptr && grammar.o_vocab == nullptr));
 
     std::string piece;
-    if (grammar.ollama_vocab) {
-        piece = grammar.ollama_vocab->token_to_piece(token);
+    if (grammar.o_vocab) {
+        piece = grammar.o_vocab->token_to_piece(token);
     } else {
         piece = grammar.vocab->token_to_piece(token);
     }
@@ -1213,8 +1213,8 @@ void llama_grammar_accept_impl(struct llama_grammar & grammar, llama_token token
         }
     }
 
-    if (grammar.ollama_vocab) {
-        if (grammar.ollama_vocab->is_eog(token)) {
+    if (grammar.o_vocab) {
+        if (grammar.o_vocab->is_eog(token)) {
             for (const auto & stack : grammar.stacks) {
                 if (stack.empty()) {
                     return;
