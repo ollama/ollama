@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -92,6 +91,10 @@ func NewBackend(ctx context.Context, f *os.File, params BackendParams) (Backend,
 type Context interface {
 	Empty(dtype DType, shape ...int) Tensor
 	Zeros(dtype DType, shape ...int) Tensor
+
+	// TODO - the (Tensor, error) return pattern makes this impossible to
+	// one-line in cases where we need to pass a scalar into a function that
+	// requires a Tensor leading to overly verbose impls.  Consider a Must* API.
 	FromFloatSlice(s []float32, shape ...int) (Tensor, error)
 	FromIntSlice(s []int32, shape ...int) (Tensor, error)
 
@@ -120,10 +123,10 @@ type Tensor interface {
 
 	Add(ctx Context, t2 Tensor) Tensor
 	Mul(ctx Context, t2 Tensor) Tensor
-	Mulmat(ctx Context, t2 Tensor) Tensor
-	MulmatFullPrec(ctx Context, t2 Tensor) Tensor
+	Matmul(ctx Context, t2 Tensor) Tensor
+	MatmulFullPrec(ctx Context, t2 Tensor) Tensor
 
-	Softmax(ctx Context) Tensor
+	Softmax(ctx Context) Tensor // TODO axis parameter?
 	LayerNorm(ctx Context, weight, bias Tensor, eps float32) Tensor
 	RMSNorm(ctx Context, weight Tensor, eps float32) Tensor
 	Scale(ctx Context, s float64) Tensor
@@ -138,10 +141,9 @@ type Tensor interface {
 	SILU(ctx Context) Tensor
 
 	Reshape(ctx Context, shape ...int) Tensor
-	View(ctx Context, offset int, shape ...int) Tensor
+	AsStrided(ctx Context, shape, stride []int, offset int) Tensor
 	Permute(ctx Context, shape ...int) Tensor
 	Contiguous(ctx Context) Tensor
-	Set(ctx Context, t2 Tensor, offset int, strides ...int) Tensor
 
 	Pad(ctx Context, shape ...int) Tensor
 	Unpad(ctx Context, shape ...int) Tensor
@@ -239,7 +241,6 @@ func dump[S ~[]E, E number](ctx Context, t Tensor, items int, fn func(E) string)
 	}
 
 	shape := t.Shape()
-	slices.Reverse(shape)
 
 	var sb strings.Builder
 	var f func([]int, int)
@@ -291,3 +292,20 @@ const (
 	DTypeQ40
 	DTypeI32
 )
+
+func (dt DType) String() string {
+	switch dt {
+	case DTypeF32:
+		return "float32"
+	case DTypeF16:
+		return "float16"
+	case DTypeI32:
+		return "int32"
+	case DTypeQ80:
+		return "q8_0"
+	case DTypeQ40:
+		return "q4_0"
+	default:
+		return "unknown"
+	}
+}

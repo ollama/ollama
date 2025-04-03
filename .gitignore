@@ -14,3 +14,5 @@ __debug_bin*
 llama/build
 llama/vendor
 /ollama
+build/
+

@@ -2972,17 +2972,19 @@ static void ggml_compute_forward_dup_same_cont(
     const int ith = params->ith; // thread index
     const int nth = params->nth; // number of threads
 
-    // parallelize by elements
+    // parallelize by blocks
     const int ne = ggml_nelements(dst);
-    const int dr = (ne + nth - 1) / nth;
-    const int ie0 = dr * ith;
-    const int ie1 = MIN(ie0 + dr, ne);
+    const size_t blck_size = ggml_blck_size(src0->type);
+    const int num_blcks = ne / blck_size;
+    const int dr = (num_blcks + nth - 1) / nth;
+    const int ib0 = dr * ith;
+    const int ib1 = MIN(ib0 + dr, num_blcks);
 
-    if (ie0 < ie1) {
+    if (ib0 < ib1) {
         memcpy(
-            ((char *)  dst->data + ie0*nb0),
-            ((char *) src0->data + ie0*nb0),
-            (ie1 - ie0) * nb0);
+            ((char *)  dst->data + ib0*nb0),
+            ((char *) src0->data + ib0*nb0),
+            (ib1 - ib0) * nb0);
     }
 }
 
