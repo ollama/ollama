@@ -683,8 +683,6 @@ const (
 	DoneReasonStop DoneReason = iota
 	// DoneReasonLength indicates the completion stopped due to length limits
 	DoneReasonLength
-	// DoneReasonComplete indicates the completion finished a single operation without requiring a specific reason
-	DoneReasonComplete
 	// DoneReasonConnectionClosed indicates the completion stopped due to the connection being closed
 	DoneReasonConnectionClosed
 )
@@ -696,7 +694,7 @@ func (d DoneReason) String() string {
 	case DoneReasonStop:
 		return "stop"
 	default:
-		return "" // complete, or disconnected
+		return "" // closed or disconnected
 	}
 }
 

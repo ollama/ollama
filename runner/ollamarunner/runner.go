@@ -477,7 +477,7 @@ func (s *Server) processBatch() error {
 		if seq.embeddingOnly {
 			// TODO(jessegross): Embedding support
 			slog.Warn("generation of embedding outputs not yet supported")
-			s.removeSequence(i, llm.DoneReasonComplete)
+			s.removeSequence(i, llm.DoneReasonStop)
 			continue
 		}
 

@@ -474,7 +474,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			}
 
 			seq.embedding <- embed
-			s.removeSequence(i, llm.DoneReasonComplete)
+			s.removeSequence(i, llm.DoneReasonStop)
 			continue
 		}
 
