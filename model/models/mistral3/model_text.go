@@ -31,10 +31,10 @@ type TextModel struct {
 }
 
 type SelfAttention struct {
-	Query       *nn.Linear `gguf:"attn_q"`
-	Key         *nn.Linear `gguf:"attn_k"`
-	Value       *nn.Linear `gguf:"attn_v"`
-	Output      *nn.Linear `gguf:"attn_output"`
+	Query  *nn.Linear `gguf:"attn_q"`
+	Key    *nn.Linear `gguf:"attn_k"`
+	Value  *nn.Linear `gguf:"attn_v"`
+	Output *nn.Linear `gguf:"attn_output"`
 }
 
 func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *TextOptions) ml.Tensor {
