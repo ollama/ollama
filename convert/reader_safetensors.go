@@ -94,6 +94,21 @@ type safetensor struct {
 	*tensorBase
 }
 
+func (st safetensor) Clone() Tensor {
+	return &safetensor{
+		fs:     st.fs,
+		path:   st.path,
+		dtype:  st.dtype,
+		offset: st.offset,
+		size:   st.size,
+		tensorBase: &tensorBase{
+			name:     st.name,
+			repacker: st.repacker,
+			shape:    slices.Clone(st.shape),
+		},
+	}
+}
+
 func (st safetensor) WriteTo(w io.Writer) (int64, error) {
 	f, err := st.fs.Open(st.path)
 	if err != nil {

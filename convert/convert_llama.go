@@ -42,6 +42,8 @@ type llamaModel struct {
 	LayerNormEpsilon float32 `json:"layer_norm_epsilon"`
 	NormEpsilon      float32 `json:"norm_epsilon"`
 	HeadDim          uint32  `json:"head_dim"`
+
+	skipRepack bool
 }
 
 var _ ModelConverter = (*llamaModel)(nil)
@@ -68,6 +70,10 @@ func (p *llamaModel) KV(t *Tokenizer) ggml.KV {
 	if headCount := cmp.Or(p.NumAttentionHeads, p.NHead); headCount > 0 {
 		kv["llama.attention.head_count"] = cmp.Or(p.NumAttentionHeads, p.NHead)
 		kv["llama.rope.dimension_count"] = p.HiddenSize / headCount
+	}
+
+	if p.HeadDim > 0 {
+		kv["llama.attention.head_dim"] = p.HeadDim
 	}
 
 	if p.RopeTheta > 0 {
@@ -133,9 +139,10 @@ func (p *llamaModel) Tensors(ts []Tensor) []ggml.Tensor {
 	}
 
 	for _, t := range ts {
-		if strings.HasSuffix(t.Name(), "attn_q.weight") ||
-			strings.HasSuffix(t.Name(), "attn_k.weight") {
-			t.SetRepacker(p.repack)
+		if strings.HasSuffix(t.Name(), "attn_q.weight") || strings.HasSuffix(t.Name(), "attn_k.weight") {
+			if !p.skipRepack {
+				t.SetRepacker(p.repack)
+			}
 		}
 
 		out = append(out, ggml.Tensor{
