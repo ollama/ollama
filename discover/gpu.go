@@ -368,7 +368,8 @@ func GetGPUInfo() GpuInfoList {
 			}
 		}
 
-		rocmGPUs, err = AMDGetGPUInfo()
+		rocmGPUs = AMDGetGPUInfo()
+		
 		if err != nil {
 			bootstrapErrors = append(bootstrapErrors, err)
 		}
