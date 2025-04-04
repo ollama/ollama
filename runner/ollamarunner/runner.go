@@ -779,6 +779,7 @@ func Execute(args []string) error {
 	flashAttention := fs.Bool("flash-attn", false, "Enable flash attention")
 	kvSize := fs.Int("ctx-size", 2048, "Context (or KV cache) size")
 	kvCacheType := fs.String("kv-cache-type", "", "quantization type for KV cache (default: f16)")
+	noKVOffload := fs.Bool("no-kv-offload", false, "don't offload the KV cache to GPU")
 	port := fs.Int("port", 8080, "Port to expose the server on")
 	threads := fs.Int("threads", runtime.NumCPU(), "Number of threads to use during generation")
 	verbose := fs.Bool("verbose", false, "verbose output (default: disabled)")
@@ -843,6 +844,7 @@ func Execute(args []string) error {
 		MainGPU:        *mainGPU,
 		TensorSplit:    tensorSplitFloats,
 		FlashAttention: *flashAttention,
+		NoKVOffload:    *noKVOffload,
 	}
 
 	server.ready.Add(1)
