@@ -5,6 +5,7 @@ Sometimes Ollama may not perform as expected. One of the best ways to figure out
 ```shell
 cat ~/.ollama/logs/server.log
 ```
+(The path is `$HOMEBREW_PREFIX/var/log/ollama.log` for Homebrew users)
 
 On **Linux** systems with systemd, the logs can be found with this command:
 
