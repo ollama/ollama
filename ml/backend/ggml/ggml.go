@@ -281,6 +281,10 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 		}
 
 		b := C.ggml_backend_alloc_ctx_tensors_from_buft(c, bt)
+		if b == nil {
+			return nil, fmt.Errorf("unable to allocate memory from device %v for model weights", C.GoString(C.ggml_backend_buft_name(bt)))
+		}
+
 		C.ggml_backend_buffer_set_usage(b, C.GGML_BACKEND_BUFFER_USAGE_WEIGHTS)
 		bbs[c] = b
 	}
@@ -547,9 +551,9 @@ func pad(length, pad C.size_t) C.size_t {
 	return ((length + pad - 1) / pad) * pad
 }
 
-func (c Context) newTensor(dtype ml.DType, shape []int) ml.Tensor {
+func (c Context) newTensor(dtype ml.DType, shape []int) (ml.Tensor, error) {
 	if c.buft == nil {
-		panic("set Input, Output, or Layer before creating tensors")
+		panic("set Input or Layer before creating tensors")
 	}
 
 	var cdtype uint32
@@ -570,7 +574,7 @@ func (c Context) newTensor(dtype ml.DType, shape []int) ml.Tensor {
 
 	if len(shape) < 1 || shape[0] == 0 {
 		var shape C.int64_t = 0
-		return &Tensor{b: c.b, t: C.ggml_new_tensor(c.ctx, cdtype, 1, &shape)}
+		return &Tensor{b: c.b, t: C.ggml_new_tensor(c.ctx, cdtype, 1, &shape)}, nil
 	} else if len(shape) > 4 {
 		panic("unsupported number of dimensions")
 	}
@@ -584,16 +588,29 @@ func (c Context) newTensor(dtype ml.DType, shape []int) ml.Tensor {
 	t := C.ggml_new_tensor(c.ctx, cdtype, C.int(len(shape)), shapeToGGML(shape))
 	size := pad(C.ggml_backend_buft_get_alloc_size(c.buft, t), C.ggml_backend_buft_get_alignment(c.buft))
 	b := C.ggml_backend_buft_alloc_buffer(c.buft, size)
+	if b == nil {
+		return nil, fmt.Errorf("unable to allocate %v from device %v for new tensor", format.HumanBytes2(uint64(size)), C.GoString(C.ggml_backend_buft_name(c.buft)))
+	}
+
 	C.ggml_backend_tensor_alloc(b, t, C.ggml_backend_buffer_get_base(b))
-	return &Tensor{b: c.b, t: t}
+	return &Tensor{b: c.b, t: t}, nil
 }
 
 func (c Context) Empty(dtype ml.DType, shape ...int) ml.Tensor {
-	return c.newTensor(dtype, shape)
+	t, err := c.newTensor(dtype, shape)
+	if err != nil {
+		panic(err)
+	}
+
+	return t
 }
 
 func (c Context) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
-	t := c.newTensor(dtype, shape)
+	t, err := c.newTensor(dtype, shape)
+	if err != nil {
+		panic(err)
+	}
+
 	C.ggml_set_zero(t.(*Tensor).t)
 	return t
 }
@@ -621,7 +638,11 @@ func (c Context) FromFloatSlice(s []float32, shape ...int) (ml.Tensor, error) {
 		return nil, err
 	}
 
-	t := c.newTensor(ml.DTypeF32, shape)
+	t, err := c.newTensor(ml.DTypeF32, shape)
+	if err != nil {
+		return nil, err
+	}
+
 	if len(s) > 0 {
 		C.ggml_backend_tensor_set(t.(*Tensor).t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
 	}
@@ -634,7 +655,11 @@ func (c Context) FromIntSlice(s []int32, shape ...int) (ml.Tensor, error) {
 		return nil, err
 	}
 
-	t := c.newTensor(ml.DTypeI32, shape)
+	t, err := c.newTensor(ml.DTypeI32, shape)
+	if err != nil {
+		return nil, err
+	}
+
 	if len(s) > 0 {
 		C.ggml_backend_tensor_set(t.(*Tensor).t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
 	}
