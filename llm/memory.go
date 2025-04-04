@@ -5,7 +5,10 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
-	"strings"
+	"strings"	
+	"cmp"
+	"maps"
+	"slices"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
@@ -121,11 +124,10 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 
 	layers := f.Tensors().GroupLayers()
 	// add one layer worth of memory as a buffer
-	if blk0, ok := layers["blk.0"]; ok {
-		layerSize = blk0.Size()
-	} else {
-		slog.Warn("model missing blk.0 layer size")
-	}
+	// use layer with maximum size to avoid vram overflow
+	layerSize = slices.MaxFunc(slices.Collect(maps.Values(layers)), func(a, b ggml.Layer) int {
+		return cmp.Compare(a.Size(), b.Size())
+	}).Size()
 
 	var kvct string
 	if envconfig.FlashAttention() &&
@@ -219,7 +221,7 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	}
 
 	// For all the layers, find where they can fit on the GPU(s)
-	for i := range int(f.KV().BlockCount()) {
+	for i := int(f.KV().BlockCount()) - 1; i >= 0; i-- {
 		// Some models have inconsistent layer sizes
 		if blk, ok := layers[fmt.Sprintf("blk.%d", i)]; ok {
 			layerSize = blk.Size()
