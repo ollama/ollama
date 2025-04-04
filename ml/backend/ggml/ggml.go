@@ -318,12 +318,14 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 				tts[i] = tt
 			}
 
-			newFile, err := os.Open(r.Name())
+			// Create a new FD for each goroutine so that each FD is read sequentially, rather than
+			// seeking around within an FD shared between all goroutines.
+			file, err := os.Open(r.Name())
 			if err != nil {
 				return err
 			}
-			defer newFile.Close()
-			sr := io.NewSectionReader(newFile, int64(meta.Tensors().Offset+t.Offset), int64(t.Size()))
+			defer file.Close()
+			sr := io.NewSectionReader(file, int64(meta.Tensors().Offset+t.Offset), int64(t.Size()))
 			bts := make([]byte, 128*format.KibiByte)
 
 			var s uint64
