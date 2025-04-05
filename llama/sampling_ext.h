@@ -37,13 +37,13 @@ extern "C"
 
 
     struct ollama_vocab;
-    struct llama_grammar *grammar_init(char* grammar);
+    struct ollama_vocab *ollama_vocab_init(char* grammar, uint32_t* tokens, size_t n_tokens, const char** pieces, uint32_t* eog_tokens, size_t n_eog_tokens);
+
+    struct llama_grammar *grammar_init(char* grammar, struct ollama_vocab *vocab);
     void grammar_free(struct llama_grammar *g);
     void grammar_apply(struct llama_grammar *g, struct llama_token_data_array *tokens);
     void grammar_accept(struct llama_grammar *g, llama_token id);
 
-    void ollama_vocab_add_token_piece(struct llama_grammar *g, uint32_t token, const char *piece);
-    void ollama_vocab_set_eog_token(struct llama_grammar *g, uint32_t token);
 
 #ifdef __cplusplus
 }

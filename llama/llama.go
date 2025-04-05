@@ -679,25 +679,42 @@ type TokenData struct {
 	Logit float32
 }
 
+type OllamaVocab struct {
+	c *C.struct_ollama_vocab
+}
+
+func NewOllamaVocab(grammar string, tokens []uint32, pieces []string, eogTokens []uint32) *OllamaVocab {
+	cGrammar := C.CString(grammar)
+	defer C.free(unsafe.Pointer(cGrammar))
+
+	cTokens := make([]C.uint32_t, len(tokens))
+	for i, token := range tokens {
+		cTokens[i] = C.uint32_t(token)
+	}
+
+	cPieces := make([]*C.char, len(pieces))
+	for i, piece := range pieces {
+		cPieces[i] = C.CString(piece)
+		defer C.free(unsafe.Pointer(cPieces[i]))
+	}
+
+	cEogTokens := make([]C.uint32_t, len(eogTokens))
+	for i, token := range eogTokens {
+		cEogTokens[i] = C.uint32_t(token)
+	}
+
+	return &OllamaVocab{c: C.ollama_vocab_init(cGrammar, (*C.uint32_t)(unsafe.Pointer(&cTokens[0])), C.size_t(len(tokens)), (**C.char)(unsafe.Pointer(&cPieces[0])), (*C.uint32_t)(unsafe.Pointer(&cEogTokens[0])), C.size_t(len(eogTokens)))}
+}
+
 type Grammar struct {
 	c *C.struct_llama_grammar
 }
 
-func (g *Grammar) AddTokenPiece(token uint32, piece string) {
-	cPiece := C.CString(piece)
-	defer C.free(unsafe.Pointer(cPiece))
-	C.ollama_vocab_add_token_piece(g.c, C.uint32_t(token), cPiece)
-}
-
-func (g *Grammar) SetEOGToken(token uint32) {
-	C.ollama_vocab_set_eog_token(g.c, C.uint32_t(token))
-}
-
-func LoadGrammar(grammar string) *Grammar {
+func LoadGrammar(grammar string, vocab *OllamaVocab) *Grammar {
 	cGrammar := C.CString(grammar)
 	defer C.free(unsafe.Pointer(cGrammar))
 
-	g := C.grammar_init(cGrammar)
+	g := C.grammar_init(cGrammar, vocab.c)
 	if g == nil {
 		return nil
 	}

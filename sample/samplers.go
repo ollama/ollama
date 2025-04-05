@@ -170,15 +170,19 @@ type Grammar struct {
 }
 
 func NewGrammar(vocab *model.Vocabulary, grammarStr string) (*Grammar, error) {
-	grammar := llama.LoadGrammar(grammarStr)
+	vocabIds := make([]uint32, len(vocab.Values))
+	for i, s := range vocab.Values {
+		vocabIds[i] = uint32(vocab.Encode(s))
+	}
+	ollamaVocab := llama.NewOllamaVocab(grammarStr, vocabIds, vocab.Values, []uint32{uint32(vocab.EOS), uint32(vocab.EOT)})
+	if ollamaVocab == nil {
+		return nil, errors.New("sample: failed to initialize ollama vocabulary")
+	}
+	grammar := llama.LoadGrammar(grammarStr, ollamaVocab)
 	if grammar == nil {
 		return nil, errors.New("sample: failed to initialize grammar")
 	}
-	for _, s := range vocab.Values {
-		id := vocab.Encode(s)
-		grammar.AddTokenPiece(uint32(id), s)
-	}
-	grammar.SetEOGToken(uint32(vocab.EOS))
+
 	return &Grammar{vocab: vocab, grammar: grammar}, nil
 }
 

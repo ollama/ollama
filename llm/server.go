@@ -636,13 +636,13 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 }
 
 var grammarJSON = `
-root   ::= s object
-value  ::= ws (object | array | string | number | ("true" | "false" | "null")) ws
+root   ::= object
+value  ::= object | array | string | number | ("true" | "false" | "null") ws
 object ::=
   "{" ws (
             string ":" ws value
     ("," ws string ":" ws value)*
-  )? "}" 
+  )? "}" ws
 array  ::=
   "[" ws (
             value
@@ -651,11 +651,12 @@ array  ::=
 string ::=
   "\"" (
     [^"\\\x7F\x00-\x1F] |
-    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F])
-  )* "\""
-number ::= "-"? ("0" | [1-9] [0-9]*) ("." [0-9]+)? ([eE] [-+]? [0-9]+)?
-ws     ::= [ \t \n \r]*
-s      ::= [ \n \t]`
+    "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) # escapes
+  )* "\"" ws
+number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)? ws
+# Optional space: by convention, applied in this grammar after literal chars when allowed
+ws ::= ([ \t\n] ws)?
+`
 
 const maxBufferSize = 512 * format.KiloByte
 

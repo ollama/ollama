@@ -907,7 +907,7 @@ llama_grammar_candidates llama_grammar_reject_candidates_for_stack(
 
 struct llama_grammar * llama_grammar_init_impl(
         const struct llama_vocab * vocab,
-        struct ollama_vocab * ollama_vocab,
+        const struct ollama_vocab * ollama_vocab,
         const llama_grammar_element ** rules,
         size_t n_rules,
         size_t start_rule_index) {
@@ -977,7 +977,7 @@ struct llama_grammar * llama_grammar_init_impl(
 
 struct llama_grammar * llama_grammar_init_impl(
         const struct llama_vocab * vocab,
-        struct ollama_vocab * ollama_vocab,
+        const struct ollama_vocab * ollama_vocab,
                       const char * grammar_str,
                       const char * grammar_root,
                               bool lazy,
@@ -1121,7 +1121,6 @@ struct llama_grammar * llama_grammar_clone_impl(const struct llama_grammar & gra
 }
 
 void llama_grammar_apply_impl(const struct llama_grammar & grammar, llama_token_data_array * cur_p) {
-    GGML_ASSERT(!(grammar.vocab == nullptr && grammar.o_vocab == nullptr));
 
     if (grammar.awaiting_trigger) {
         return;
@@ -1150,12 +1149,7 @@ void llama_grammar_apply_impl(const struct llama_grammar & grammar, llama_token_
             piece = grammar.vocab->token_to_piece(id);
         }
 
-        bool is_eog = false;
-        if (grammar.o_vocab) {
-            is_eog = grammar.o_vocab->is_eog(id);
-        } else {
-            is_eog = grammar.vocab->is_eog(id);
-        }
+        const bool is_eog = grammar.o_vocab ? grammar.o_vocab->is_eog(id) : grammar.vocab->is_eog(id);
 
         if (is_eog) {
             if (!allow_eog) {
@@ -1213,24 +1207,14 @@ void llama_grammar_accept_impl(struct llama_grammar & grammar, llama_token token
         }
     }
 
-    if (grammar.o_vocab) {
-        if (grammar.o_vocab->is_eog(token)) {
-            for (const auto & stack : grammar.stacks) {
-                if (stack.empty()) {
-                    return;
-                }
+    const bool is_eog = grammar.o_vocab ? grammar.o_vocab->is_eog(token) : grammar.vocab->is_eog(token);
+    if (is_eog) {
+        for (const auto & stack : grammar.stacks) {
+            if (stack.empty()) {
+                return;
             }
-            GGML_ABORT("grammar error: end of grammar token received but grammar stack is not empty");
         }
-    } else {
-        if (grammar.vocab->is_eog(token)) {
-            for (const auto & stack : grammar.stacks) {
-                if (stack.empty()) {
-                    return;
-                }
-            }
-            GGML_ABORT("grammar error: end of grammar token received but grammar stack is not empty");
-        }
+        GGML_ABORT("grammar error: end of grammar token received but grammar stack is not empty");
     }
 
     llama_grammar_accept_str(grammar, piece);
@@ -1252,18 +1236,26 @@ void llama_grammar_accept_str(struct llama_grammar & grammar, const std::string 
 }
 
 
-const std::string & ollama_vocab::token_to_piece(uint32_t token) {
-    return token_to_piece_map[token];
+const std::string & ollama_vocab::token_to_piece(uint32_t token) const {
+    try {
+        return token_to_piece_map.at(token);
+    } catch (const std::out_of_range&) {
+        throw std::runtime_error("Token not found in vocabulary: " + std::to_string(token));
+    }
 }
 
-bool ollama_vocab::is_eog(uint32_t token) {
-    return token == eog_token;
+void ollama_vocab::add_token_pieces(uint32_t *tokens, const char **pieces, size_t n_tokens) {
+    for (size_t i = 0; i < n_tokens; i++) {
+        token_to_piece_map[tokens[i]] = pieces[i];
+    }
 }
 
-void ollama_vocab::add_token_piece(uint32_t token, const std::string & piece) {
-    token_to_piece_map[token] = piece;
+bool ollama_vocab::is_eog(uint32_t token) const {
+    return special_eog_ids.count(token) > 0;
 }
 
-void ollama_vocab::set_eog_token(uint32_t token) {
-    eog_token = token;
+void ollama_vocab::set_eog_tokens(uint32_t *tokens, size_t n_tokens) {
+    for (size_t i = 0; i < n_tokens; i++) {
+        special_eog_ids.insert(tokens[i]);
+    }
 }

@@ -6,17 +6,17 @@
 #include <regex>
 #include <string>
 #include <vector>
+#include <set>
 
 struct llama_vocab;
 struct ollama_vocab {
     std::map<uint32_t, std::string> token_to_piece_map;
-    uint32_t eog_token;
+    std::set<uint32_t> special_eog_ids;
 
-    void add_token_piece(uint32_t token, const std::string & piece);
-    void set_eog_token(uint32_t token);
-
-    const std::string & token_to_piece(uint32_t token);
-    bool is_eog(uint32_t token);
+    const std::string & token_to_piece(uint32_t token) const;
+    void add_token_pieces(uint32_t *tokens, const char **pieces, size_t n_tokens);
+    void set_eog_tokens(uint32_t *tokens, size_t n_tokens);
+    bool is_eog(uint32_t token) const;
 
 };
 
@@ -125,7 +125,7 @@ struct llama_grammar_trigger_pattern {
 struct llama_grammar {
     // note: allow null vocab for testing (not great)
     const llama_vocab * vocab;
-    ollama_vocab * o_vocab;
+    const ollama_vocab * o_vocab;
 
     const llama_grammar_rules  rules;  // TODO: shared ptr
           llama_grammar_stacks stacks;
@@ -153,14 +153,14 @@ struct llama_grammar {
 // note: needed for tests (not great)
 struct llama_grammar * llama_grammar_init_impl(
         const struct llama_vocab * vocab,
-        struct ollama_vocab * ollama_vocab,
+        const struct ollama_vocab * ollama_vocab,
         const llama_grammar_element ** rules,
         size_t n_rules,
         size_t start_rule_index);
 
 struct llama_grammar * llama_grammar_init_impl(
         const struct llama_vocab * vocab,
-        struct ollama_vocab * ollama_vocab,
+        const struct ollama_vocab * ollama_vocab,
                       const char * grammar_str,
                       const char * grammar_root,
                               bool lazy,

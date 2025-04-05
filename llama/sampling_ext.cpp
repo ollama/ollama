@@ -87,33 +87,35 @@ struct llama_vocab * llama_load_vocab_from_file(const char * fname) {
 void llama_free_vocab(struct llama_vocab * vocab) {
     delete vocab;
 }
-
-struct llama_grammar *grammar_init(char* grammar) {
+struct ollama_vocab *ollama_vocab_init(char* grammar, uint32_t* tokens, size_t n_tokens, const char** pieces, uint32_t* eog_tokens, size_t n_eog_tokens) {
     if (grammar == nullptr) {
         LLAMA_LOG_ERROR("%s: null grammar input\n", __func__);
         return nullptr;
     }
-    
-    
-    // Create vocab object
-    ollama_vocab *vocab = nullptr;
+    ollama_vocab *vocab = new ollama_vocab();
+
+    vocab->set_eog_tokens(eog_tokens, n_eog_tokens);
+    vocab->add_token_pieces(tokens, pieces, n_tokens);
+
+    return vocab;
+}
+
+
+struct llama_grammar *grammar_init(char* grammar, ollama_vocab *vocab) {
     try {
-        vocab = new ollama_vocab();
         if (vocab == nullptr) {
             LLAMA_LOG_ERROR("%s: failed to allocate vocab object\n", __func__);
             return nullptr;
         }
         
-        
-        // Initialize grammar with the vocab
         struct llama_grammar *g = llama_grammar_init_impl(nullptr, vocab, grammar, "root", false, nullptr, 0, nullptr, 0);
         if (g == nullptr) {
             LLAMA_LOG_ERROR("%s: failed to initialize grammar\n", __func__);
             delete vocab;
             return nullptr;
         }
-        
         return g;
+
     } catch (const std::exception& e) {
         LLAMA_LOG_ERROR("%s: exception during initialization: %s\n", __func__, e.what());
         delete vocab;
@@ -137,12 +139,4 @@ void grammar_apply(struct llama_grammar *g, struct llama_token_data_array *token
 
 void grammar_accept(struct llama_grammar *g, llama_token id) {
     llama_grammar_accept_impl(*g, id);
-}
-
-void ollama_vocab_add_token_piece(struct llama_grammar *g, uint32_t token, const char *piece) {
-    g->o_vocab->add_token_piece(token, piece);
-}
-
-void ollama_vocab_set_eog_token(struct llama_grammar *g, uint32_t token) {
-    g->o_vocab->set_eog_token(token);
 }
