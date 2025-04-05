@@ -107,15 +107,19 @@ func DefaultCache() (*blob.DiskCache, error) {
 //
 // In both cases, the code field is optional and may be empty.
 type Error struct {
-	Status  int    `json:"-"` // TODO(bmizerany): remove this
+	status  int    `json:"-"` // TODO(bmizerany): remove this
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+func (e *Error) Temporary() bool {
+	return e.status > 500
 }
 
 func (e *Error) Error() string {
 	var b strings.Builder
 	b.WriteString("registry responded with status ")
-	b.WriteString(strconv.Itoa(e.Status))
+	b.WriteString(strconv.Itoa(e.status))
 	if e.Code != "" {
 		b.WriteString(": code ")
 		b.WriteString(e.Code)
@@ -129,7 +133,7 @@ func (e *Error) Error() string {
 
 func (e *Error) LogValue() slog.Value {
 	return slog.GroupValue(
-		slog.Int("status", e.Status),
+		slog.Int("status", e.status),
 		slog.String("code", e.Code),
 		slog.String("message", e.Message),
 	)
@@ -440,8 +444,8 @@ func (r *trackingReader) Read(p []byte) (n int, err error) {
 // Pull pulls the model with the given name from the remote registry into the
 // cache.
 //
-// For layers larger then [Registry.MaxChunkSize], the layer is downloaded in
-// chunks of the specified size, and then reassembled and verified. This is
+// For layers larger then [Registry.ChunkingThreshold], the layer is downloaded
+// in chunks of the specified size, and then reassembled and verified. This is
 // typically slower than splitting the model up across layers, and is mostly
 // utilized for layers of type equal to "application/vnd.ollama.image".
 func (r *Registry) Pull(ctx context.Context, name string) error {
@@ -489,94 +493,93 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 			continue
 		}
 
-		var wg sync.WaitGroup
-		chunked, err := c.Chunked(l.Digest, l.Size)
-		if err != nil {
-			t.update(l, 0, err)
-			continue
-		}
-
-		for cs, err := range r.chunksums(ctx, name, l) {
+		func() {
+			var wg sync.WaitGroup
+			chunked, err := c.Chunked(l.Digest, l.Size)
 			if err != nil {
-				// Chunksum stream interrupted. Note in trace
-				// log and let in-flight downloads complete.
-				// This will naturally trigger ErrIncomplete
-				// since received < expected bytes.
 				t.update(l, 0, err)
-				break
+				return
 			}
+			defer func() {
+				// Close the chunked writer when all chunks are
+				// downloaded.
+				//
+				// This is done as a background task in the
+				// group to allow the next layer to start while
+				// we wait for the final chunk in this layer to
+				// complete. It also ensures this is done
+				// before we exit Pull.
+				g.Go(func() error {
+					wg.Wait()
+					chunked.Close()
+					return nil
+				})
+			}()
 
-			cacheKey := fmt.Sprintf(
-				"v1 pull chunksum %s %s %d-%d",
-				l.Digest,
-				cs.Digest,
-				cs.Chunk.Start,
-				cs.Chunk.End,
-			)
-			cacheKeyDigest := blob.DigestFromBytes(cacheKey)
-			_, err := c.Get(cacheKeyDigest)
-			if err == nil {
-				received.Add(cs.Chunk.Size())
-				t.update(l, cs.Chunk.Size(), ErrCached)
-				continue
-			}
+			for cs, err := range r.chunksums(ctx, name, l) {
+				if err != nil {
+					// Chunksum stream interrupted. Note in trace
+					// log and let in-flight downloads complete.
+					// This will naturally trigger ErrIncomplete
+					// since received < expected bytes.
+					t.update(l, 0, err)
+					break
+				}
 
-			wg.Add(1)
-			g.Go(func() (err error) {
-				defer func() {
-					if err == nil {
-						// Ignore cache key write errors for now. We've already
-						// reported to trace that the chunk is complete.
-						//
-						// Ideally, we should only report completion to trace
-						// after successful cache commit. This current approach
-						// works but could trigger unnecessary redownloads if
-						// the checkpoint key is missing on next pull.
-						//
-						// Not incorrect, just suboptimal - fix this in a
-						// future update.
-						_ = blob.PutBytes(c, cacheKeyDigest, cacheKey)
+				cacheKey := fmt.Sprintf(
+					"v1 pull chunksum %s %s %d-%d",
+					l.Digest,
+					cs.Digest,
+					cs.Chunk.Start,
+					cs.Chunk.End,
+				)
+				cacheKeyDigest := blob.DigestFromBytes(cacheKey)
+				_, err := c.Get(cacheKeyDigest)
+				if err == nil {
+					received.Add(cs.Chunk.Size())
+					t.update(l, cs.Chunk.Size(), ErrCached)
+					continue
+				}
 
-						received.Add(cs.Chunk.Size())
-					} else {
-						t.update(l, 0, err)
+				wg.Add(1)
+				g.Go(func() (err error) {
+					defer func() {
+						if err == nil {
+							// Ignore cache key write errors for now. We've already
+							// reported to trace that the chunk is complete.
+							//
+							// Ideally, we should only report completion to trace
+							// after successful cache commit. This current approach
+							// works but could trigger unnecessary redownloads if
+							// the checkpoint key is missing on next pull.
+							//
+							// Not incorrect, just suboptimal - fix this in a
+							// future update.
+							_ = blob.PutBytes(c, cacheKeyDigest, cacheKey)
+
+							received.Add(cs.Chunk.Size())
+						} else {
+							t.update(l, 0, err)
+						}
+						wg.Done()
+					}()
+
+					req, err := http.NewRequestWithContext(ctx, "GET", cs.URL, nil)
+					if err != nil {
+						return err
 					}
-					wg.Done()
-				}()
+					req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", cs.Chunk.Start, cs.Chunk.End))
+					res, err := sendRequest(r.client(), req)
+					if err != nil {
+						return err
+					}
+					defer res.Body.Close()
 
-				req, err := http.NewRequestWithContext(ctx, "GET", cs.URL, nil)
-				if err != nil {
-					return err
-				}
-				req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", cs.Chunk.Start, cs.Chunk.End))
-				res, err := sendRequest(r.client(), req)
-				if err != nil {
-					return err
-				}
-				defer res.Body.Close()
-
-				body := &trackingReader{l: l, r: res.Body, update: t.update}
-				return chunked.Put(cs.Chunk, cs.Digest, body)
-			})
-		}
-
-		// Close writer immediately after downloads finish, not at Pull
-		// exit. Using defer would keep file descriptors open until all
-		// layers complete, potentially exhausting system limits with
-		// many layers.
-		//
-		// The WaitGroup tracks when all chunks finish downloading,
-		// allowing precise writer closure in a background goroutine.
-		// Each layer briefly uses one extra goroutine while at most
-		// maxStreams()-1 chunks download in parallel.
-		//
-		// This caps file descriptors at maxStreams() instead of
-		// growing with layer count.
-		g.Go(func() error {
-			wg.Wait()
-			chunked.Close()
-			return nil
-		})
+					body := &trackingReader{l: l, r: res.Body, update: t.update}
+					return chunked.Put(cs.Chunk, cs.Digest, body)
+				})
+			}
+		}()
 	}
 	if err := g.Wait(); err != nil {
 		return err
@@ -592,8 +595,7 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 	return c.Link(m.Name, md)
 }
 
-// Unlink is like [blob.DiskCache.Unlink], but makes name fully qualified
-// before attempting to unlink the model.
+// Unlink applies Mask to the name and passes it to the cache's Unlink method.
 func (r *Registry) Unlink(name string) (ok bool, _ error) {
 	n, err := r.parseName(name)
 	if err != nil {
@@ -973,7 +975,7 @@ func sendRequest(c *http.Client, r *http.Request) (_ *http.Response, err error) 
 			return nil, ErrModelNotFound
 		}
 
-		re.Status = res.StatusCode
+		re.status = res.StatusCode
 		return nil, &re
 	}
 	return res, nil

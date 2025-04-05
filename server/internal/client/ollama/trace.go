@@ -37,7 +37,25 @@ type traceKey struct{}
 // WithTrace returns a context derived from ctx that uses t to report trace
 // events.
 func WithTrace(ctx context.Context, t *Trace) context.Context {
-	return context.WithValue(ctx, traceKey{}, t)
+	old := traceFromContext(ctx)
+	if old == t {
+		// No change, return the original context. This also prevents
+		// infinite recursion below, if the caller passes the same
+		// Trace.
+		return ctx
+	}
+
+	// Create a new Trace that wraps the old one, if any. If we used the
+	// same pointer t, we end up with a recursive structure.
+	composed := &Trace{
+		Update: func(l *Layer, n int64, err error) {
+			if old != nil {
+				old.update(l, n, err)
+			}
+			t.update(l, n, err)
+		},
+	}
+	return context.WithValue(ctx, traceKey{}, composed)
 }
 
 var emptyTrace = &Trace{}

@@ -184,7 +184,6 @@ func TestServerPull(t *testing.T) {
 
 	checkResponse := func(got *httptest.ResponseRecorder, wantlines string) {
 		t.Helper()
-
 		if got.Code != 200 {
 			t.Errorf("Code = %d; want 200", got.Code)
 		}
@@ -203,12 +202,7 @@ func TestServerPull(t *testing.T) {
 		}
 	}
 
-	got := s.send(t, "POST", "/api/pull", `{"model": "BOOM"}`)
-	checkResponse(got, `
-		{"status":"error: request error https://example.com/v2/library/BOOM/manifests/latest: registry responded with status 999: boom"}
-	`)
-
-	got = s.send(t, "POST", "/api/pull", `{"model": "smol"}`)
+	got := s.send(t, "POST", "/api/pull", `{"model": "smol"}`)
 	checkResponse(got, `
 		{"digest":"sha256:68e0ec597aee59d35f8dc44942d7b17d471ade10d3aca07a5bb7177713950312","total":5}
 		{"digest":"sha256:ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356","total":3}

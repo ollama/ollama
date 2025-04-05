@@ -42,12 +42,6 @@ import (
 	"github.com/ollama/ollama/version"
 )
 
-func experimentEnabled(name string) bool {
-	return slices.Contains(strings.Split(os.Getenv("OLLAMA_EXPERIMENT"), ","), name)
-}
-
-var useClient2 = experimentEnabled("client2")
-
 var mode string = gin.DebugMode
 
 type Server struct {
@@ -1275,12 +1269,9 @@ func Serve(ln net.Listener) error {
 	s := &Server{addr: ln.Addr()}
 
 	var rc *ollama.Registry
-	if useClient2 {
-		var err error
-		rc, err = ollama.DefaultRegistry()
-		if err != nil {
-			return err
-		}
+	rc, err = ollama.DefaultRegistry()
+	if err != nil {
+		return err
 	}
 
 	h, err := s.GenerateRoutes(rc)

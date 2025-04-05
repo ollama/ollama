@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"math"
 	"net"
 	"net/http"
@@ -22,6 +23,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -788,57 +790,100 @@ func CopyHandler(cmd *cobra.Command, args []string) error {
 }
 
 func PullHandler(cmd *cobra.Command, args []string) error {
-	insecure, err := cmd.Flags().GetBool("insecure")
-	if err != nil {
-		return err
-	}
+	name := args[0] // cobra should be cofigured to always pass 1 arg
 
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	p := progress.NewProgress(os.Stderr)
-	defer p.Stop()
+	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt)
+	defer cancel()
 
-	bars := make(map[string]*progress.Bar)
-
-	var status string
-	var spinner *progress.Spinner
-
-	fn := func(resp api.ProgressResponse) error {
-		if resp.Digest != "" {
-			if spinner != nil {
-				spinner.Stop()
+	errc := make(chan error, 1)
+	var mu sync.Mutex
+	progressLocked := make(map[string][2]int64) // digest -> [completed, total]
+	go func() {
+		p := &api.PullRequest{Name: name}
+		errc <- client.Pull(ctx, p, func(up api.ProgressResponse) error {
+			if up.Digest == "" && up.Status != "" {
+				// A status with no digest is a terminal
+				// status. Give up and return an error.
+				//
+				// But first: Strip any "error: " prefix so it
+				// does not stutter with Cobra's "Error: "
+				// prefix.
+				//
+				// Our future client will handle the stream
+				// updates and errors properly. This works for
+				// now though.
+				status := strings.TrimPrefix(up.Status, "error: ")
+				return errors.New(status)
 			}
+			mu.Lock()
+			progressLocked[up.Digest] = [2]int64{up.Completed, up.Total}
+			mu.Unlock()
+			return nil
+		})
+	}()
 
-			bar, ok := bars[resp.Digest]
-			if !ok {
-				bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
-				bars[resp.Digest] = bar
-				p.Add(resp.Digest, bar)
-			}
+	t := time.NewTicker(100 * time.Millisecond)
+	defer t.Stop()
 
-			bar.Set(resp.Completed)
-		} else if status != resp.Status {
-			if spinner != nil {
-				spinner.Stop()
-			}
+	fmt.Fprint(os.Stderr, escHideCursor)
+	defer fmt.Fprint(os.Stderr, escShowCursor)
 
-			status = resp.Status
-			spinner = progress.NewSpinner(status)
-			p.Add(status, spinner)
+	progress := make(map[string][2]int64)
+	flushProgress := func() {
+		mu.Lock()
+		maps.Copy(progress, progressLocked)
+		mu.Unlock()
+		var completed, total int64
+		for _, v := range progress {
+			completed += v[0]
+			total += v[1]
 		}
-
-		return nil
+		if total > 0 {
+			fmt.Fprintf(os.Stderr, "\rDownloading %s %s/%s (%0.1f%%)%s",
+				name,
+				formatNatural(completed),
+				formatNatural(total),
+				100*float64(completed)/float64(total),
+				escClearToEOL,
+			)
+		}
 	}
-
-	request := api.PullRequest{Name: args[0], Insecure: insecure}
-	if err := client.Pull(cmd.Context(), &request, fn); err != nil {
-		return err
+	for {
+		select {
+		case <-t.C:
+			flushProgress()
+		case err := <-errc:
+			flushProgress()
+			fmt.Fprintln(os.Stderr)
+			return err
+		}
 	}
+}
 
-	return nil
+const (
+	escClearToEOL = "\x1b[K"
+	escHideCursor = "\x1b[?25l"
+	escShowCursor = "\x1b[?25h"
+)
+
+// formatNatural formats a number of bytes into SI units. This aligns with
+// other downloaders like cURL.
+func formatNatural(n int64) string {
+	switch {
+	case n < 1024:
+		return fmt.Sprintf("%d", n)
+	case n < 1024*1024:
+		return fmt.Sprintf("%.1fk", float64(n)/1024)
+	case n < 1024*1024*1024:
+		return fmt.Sprintf("%.1fM", float64(n)/(1024*1024))
+	default:
+		return fmt.Sprintf("%.1fG", float64(n)/(1024*1024*1024))
+	}
 }
 
 type generateContextKey string

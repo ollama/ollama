@@ -16,6 +16,7 @@ import (
 
 	"github.com/ollama/ollama/server/internal/cache/blob"
 	"github.com/ollama/ollama/server/internal/client/ollama"
+	"github.com/ollama/ollama/server/internal/internal/backoff"
 )
 
 // Local implements an http.Handler for handling local Ollama API model
@@ -323,8 +324,21 @@ func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
 	})
 
 	done := make(chan error, 1)
-	go func() {
-		done <- s.Client.Pull(ctx, p.model())
+	go func() (err error) {
+		defer func() { done <- err }()
+		for _, err := range backoff.Loop(ctx, 3*time.Second) {
+			if err != nil {
+				return err
+			}
+			err := s.Client.Pull(ctx, p.model())
+			var oe *ollama.Error
+			if errors.As(err, &oe) && oe.Temporary() {
+				s.Logger.Error("downloading", "model", p.model(), "error", err)
+				continue
+			}
+			return err
+		}
+		return nil
 	}()
 
 	for {
