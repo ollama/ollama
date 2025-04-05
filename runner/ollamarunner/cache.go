@@ -72,7 +72,9 @@ func kvCacheTypeFromStr(s string) ml.DType {
 }
 
 func (c *InputCache) Close() {
-	c.cache.Close()
+	if c.cache != nil {
+		c.cache.Close()
+	}
 }
 
 // Locking: Operations on InputCacheSlot (including finding one
