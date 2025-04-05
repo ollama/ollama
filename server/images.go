@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"text/template/parse"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
@@ -62,6 +63,7 @@ type Model struct {
 	Digest         string
 	Options        map[string]any
 	Messages       []api.Message
+	ToolPrefix     string
 
 	Template *template.Template
 }
@@ -260,7 +262,7 @@ func GetModel(name string) (*Model, error) {
 		return nil, err
 	}
 
-	model := &Model{
+	m := &Model{
 		Name:      mp.GetFullTagname(),
 		ShortName: mp.GetShortTagname(),
 		Digest:    digest,
@@ -279,7 +281,7 @@ func GetModel(name string) (*Model, error) {
 		}
 		defer configFile.Close()
 
-		if err := json.NewDecoder(configFile).Decode(&model.Config); err != nil {
+		if err := json.NewDecoder(configFile).Decode(&m.Config); err != nil {
 			return nil, err
 		}
 	}
@@ -292,16 +294,16 @@ func GetModel(name string) (*Model, error) {
 
 		switch layer.MediaType {
 		case "application/vnd.ollama.image.model":
-			model.ModelPath = filename
-			model.ParentModel = layer.From
+			m.ModelPath = filename
+			m.ParentModel = layer.From
 		case "application/vnd.ollama.image.embed":
 			// Deprecated in versions  > 0.1.2
 			// TODO: remove this warning in a future version
 			slog.Info("WARNING: model contains embeddings, but embeddings in modelfiles have been deprecated and will be ignored.")
 		case "application/vnd.ollama.image.adapter":
-			model.AdapterPaths = append(model.AdapterPaths, filename)
+			m.AdapterPaths = append(m.AdapterPaths, filename)
 		case "application/vnd.ollama.image.projector":
-			model.ProjectorPaths = append(model.ProjectorPaths, filename)
+			m.ProjectorPaths = append(m.ProjectorPaths, filename)
 		case "application/vnd.ollama.image.prompt",
 			"application/vnd.ollama.image.template":
 			bts, err := os.ReadFile(filename)
@@ -309,7 +311,7 @@ func GetModel(name string) (*Model, error) {
 				return nil, err
 			}
 
-			model.Template, err = template.Parse(string(bts))
+			m.Template, err = template.Parse(string(bts))
 			if err != nil {
 				return nil, err
 			}
@@ -319,7 +321,7 @@ func GetModel(name string) (*Model, error) {
 				return nil, err
 			}
 
-			model.System = string(bts)
+			m.System = string(bts)
 		case "application/vnd.ollama.image.params":
 			params, err := os.Open(filename)
 			if err != nil {
@@ -328,7 +330,7 @@ func GetModel(name string) (*Model, error) {
 			defer params.Close()
 
 			// parse model options parameters into a map so that we can see which fields have been specified explicitly
-			if err = json.NewDecoder(params).Decode(&model.Options); err != nil {
+			if err = json.NewDecoder(params).Decode(&m.Options); err != nil {
 				return nil, err
 			}
 		case "application/vnd.ollama.image.messages":
@@ -338,7 +340,7 @@ func GetModel(name string) (*Model, error) {
 			}
 			defer msgs.Close()
 
-			if err = json.NewDecoder(msgs).Decode(&model.Messages); err != nil {
+			if err = json.NewDecoder(msgs).Decode(&m.Messages); err != nil {
 				return nil, err
 			}
 		case "application/vnd.ollama.image.license":
@@ -346,11 +348,50 @@ func GetModel(name string) (*Model, error) {
 			if err != nil {
 				return nil, err
 			}
-			model.License = append(model.License, string(bts))
+			m.License = append(m.License, string(bts))
 		}
 	}
 
-	return model, nil
+	capabilities := m.Capabilities()
+	if slices.Contains(capabilities, model.CapabilityTools) {
+		m.addToolPrefix()
+	}
+
+	return m, nil
+}
+
+// HasToolPrefix checks if the completion starts with the tool prefix, ignoring whitespace
+func (m *Model) HasToolPrefix(sb strings.Builder) bool {
+	text := strings.ReplaceAll(strings.TrimSpace(sb.String()), " ", "")
+	toolString := strings.ReplaceAll(strings.TrimSpace(m.ToolPrefix), " ", "")
+
+	if len(text) < len(toolString) {
+		return text == toolString[:len(text)]
+	}
+	return text[:len(toolString)] == toolString
+}
+
+// Figure out what's between the start of the tools block, and the json response, and use it as a marker.  Usually that's
+// {- if .ToolCalls}this text{ range .ToolCalls}or maybe this text{{.name}}
+func (m *Model) addToolPrefix() {
+	// create a subtree from the node that ranges over .ToolCalls
+	var previousNode parse.Node
+	toolCallsTemplate := m.Template.Subtree(func(node parse.Node) bool {
+		if rangeNode, ok := node.(*parse.RangeNode); ok {
+			return slices.Contains(template.Identifiers(rangeNode.Pipe), "ToolCalls")
+		}
+		previousNode = node
+		return false
+	})
+	if textNode, ok := previousNode.(*parse.TextNode); ok {
+		m.ToolPrefix = strings.TrimSpace(textNode.String())
+	}
+	if len(m.ToolPrefix) == 0 && len(toolCallsTemplate.Root.Nodes) > 0 {
+		rangeNode, ok := toolCallsTemplate.Root.Nodes[0].(*parse.RangeNode)
+		if ok && len(rangeNode.List.Nodes) > 0 {
+			m.ToolPrefix = rangeNode.List.Nodes[0].String()
+		}
+	}
 }
 
 func CopyModel(src, dst model.Name) error {
