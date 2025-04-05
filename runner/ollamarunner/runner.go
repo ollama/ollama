@@ -600,7 +600,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var grammar *sample.Grammar
+	var grammar *sample.GrammarConstraint
 	var err error
 	if req.Grammar != "" {
 		var vocab *model.Vocabulary
@@ -609,7 +609,7 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if req.Grammar != "" && vocab != nil {
-			grammar, err = sample.NewGrammar(vocab, req.Grammar)
+			grammar, err = sample.NewGrammarConstraint(vocab, req.Grammar)
 			if err != nil {
 				http.Error(w, "failed to load model vocabulary required for format", http.StatusInternalServerError)
 				return

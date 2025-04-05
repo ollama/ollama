@@ -22,7 +22,7 @@ type Sampler struct {
 	topP        float32
 	minP        float32
 	temperature float32
-	grammar     *Grammar
+	grammar     *GrammarConstraint
 }
 
 func (s *Sampler) Sample(logits []float32) (int32, error) {
@@ -127,7 +127,7 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 }
 
 // TODO(parthsareen): update sampler interface to use json unmarshal https://github.com/ollama/ollama/issues/9278
-func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int, grammar *Grammar) Sampler {
+func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int, grammar *GrammarConstraint) Sampler {
 	var rng *rand.Rand
 	if seed != -1 {
 		// PCG requires two parameters: sequence and stream
@@ -164,12 +164,12 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 	}
 }
 
-type Grammar struct {
-	vocab   *model.Vocabulary
-	grammar *llama.Grammar
+type GrammarConstraint struct {
+	ollamaVocab *llama.OllamaVocab
+	grammar     *llama.GrammarSampling
 }
 
-func NewGrammar(vocab *model.Vocabulary, grammarStr string) (*Grammar, error) {
+func NewGrammarConstraint(vocab *model.Vocabulary, grammarStr string) (*GrammarConstraint, error) {
 	vocabIds := make([]uint32, len(vocab.Values))
 	for i, s := range vocab.Values {
 		vocabIds[i] = uint32(vocab.Encode(s))
@@ -178,15 +178,15 @@ func NewGrammar(vocab *model.Vocabulary, grammarStr string) (*Grammar, error) {
 	if ollamaVocab == nil {
 		return nil, errors.New("sample: failed to initialize ollama vocabulary")
 	}
-	grammar := llama.LoadGrammar(grammarStr, ollamaVocab)
+	grammar := llama.LoadGrammarSampling(grammarStr, ollamaVocab)
 	if grammar == nil {
 		return nil, errors.New("sample: failed to initialize grammar")
 	}
 
-	return &Grammar{vocab: vocab, grammar: grammar}, nil
+	return &GrammarConstraint{ollamaVocab: ollamaVocab, grammar: grammar}, nil
 }
 
-func (g *Grammar) Apply(tokens []token) {
+func (g *GrammarConstraint) Apply(tokens []token) {
 	tds := make([]llama.TokenData, len(tokens))
 	for i, token := range tokens {
 		tds[i].Id = token.id
@@ -199,6 +199,6 @@ func (g *Grammar) Apply(tokens []token) {
 	}
 }
 
-func (g *Grammar) Accept(token int32) {
+func (g *GrammarConstraint) Accept(token int32) {
 	g.grammar.Accept(token)
 }

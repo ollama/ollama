@@ -706,11 +706,11 @@ func NewOllamaVocab(grammar string, tokens []uint32, pieces []string, eogTokens 
 	return &OllamaVocab{c: C.ollama_vocab_init(cGrammar, (*C.uint32_t)(unsafe.Pointer(&cTokens[0])), C.size_t(len(tokens)), (**C.char)(unsafe.Pointer(&cPieces[0])), (*C.uint32_t)(unsafe.Pointer(&cEogTokens[0])), C.size_t(len(eogTokens)))}
 }
 
-type Grammar struct {
+type GrammarSampling struct {
 	c *C.struct_llama_grammar
 }
 
-func LoadGrammar(grammar string, vocab *OllamaVocab) *Grammar {
+func LoadGrammarSampling(grammar string, vocab *OllamaVocab) *GrammarSampling {
 	cGrammar := C.CString(grammar)
 	defer C.free(unsafe.Pointer(cGrammar))
 
@@ -719,14 +719,14 @@ func LoadGrammar(grammar string, vocab *OllamaVocab) *Grammar {
 		return nil
 	}
 
-	return &Grammar{c: g}
+	return &GrammarSampling{c: g}
 }
 
-func (g *Grammar) Free() {
+func (g *GrammarSampling) Free() {
 	C.grammar_free(g.c)
 }
 
-func (g *Grammar) Apply(tokens []TokenData) {
+func (g *GrammarSampling) Apply(tokens []TokenData) {
 	tds := make([]C.struct_llama_token_data, len(tokens))
 	for i, token := range tokens {
 		tds[i] = C.struct_llama_token_data{
@@ -751,6 +751,6 @@ func (g *Grammar) Apply(tokens []TokenData) {
 	}
 }
 
-func (g *Grammar) Accept(token int32) {
+func (g *GrammarSampling) Accept(token int32) {
 	C.grammar_accept(g.c, C.llama_token(token))
 }
