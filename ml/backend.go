@@ -140,6 +140,7 @@ type Tensor interface {
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context) Tensor
 	SILU(ctx Context) Tensor
+	Sigmoid(ctx Context) Tensor
 
 	Reshape(ctx Context, shape ...int) Tensor
 	View(ctx Context, offset int, shape ...int) Tensor
@@ -158,6 +159,8 @@ type Tensor interface {
 	Rows(ctx Context, t2 Tensor) Tensor
 	Copy(ctx Context, t2 Tensor) Tensor
 	Duplicate(ctx Context) Tensor
+
+	TopK(ctx Context, k int) Tensor
 }
 
 // ScaledDotProductAttention implements a fused attention

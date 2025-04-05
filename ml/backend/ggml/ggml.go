@@ -910,6 +910,13 @@ func (t *Tensor) Tanh(ctx ml.Context) ml.Tensor {
 	}
 }
 
+func (t *Tensor) Sigmoid(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_sigmoid_inplace(ctx.(*Context).ctx, t.t),
+	}
+}
+
 func (t *Tensor) Unpad(ctx ml.Context, shape ...int) ml.Tensor {
 	if len(shape) != 4 {
 		panic("expected 4 dimensions")
@@ -1071,5 +1078,12 @@ func (t *Tensor) Duplicate(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_dup(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) TopK(ctx ml.Context, k int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_top_k(ctx.(*Context).ctx, t.t, C.int(k)),
 	}
 }

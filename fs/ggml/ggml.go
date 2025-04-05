@@ -137,6 +137,7 @@ func (kv KV) OllamaEngineRequired() bool {
 	return slices.Contains([]string{
 		"gemma3",
 		"mistral3",
+		"llama4",
 	}, kv.Architecture())
 }
 
