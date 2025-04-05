@@ -5,9 +5,9 @@ import (
 	"math"
 	"math/rand/v2"
 	"slices"
-	"sync"
 
 	"github.com/ollama/ollama/llama"
+	"github.com/ollama/ollama/model"
 )
 
 // token represents information about a single token during sampling
@@ -22,7 +22,7 @@ type Sampler struct {
 	topP        float32
 	minP        float32
 	temperature float32
-	grammar     *Grammar
+	grammar     *GrammarConstraint
 }
 
 func (s *Sampler) Sample(logits []float32) (int32, error) {
@@ -127,7 +127,7 @@ func (s *Sampler) sample(tokens []token) (token, error) {
 }
 
 // TODO(parthsareen): update sampler interface to use json unmarshal https://github.com/ollama/ollama/issues/9278
-func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int, grammar *Grammar) Sampler {
+func NewSampler(temperature float32, topK int, topP float32, minP float32, seed int, grammar *GrammarConstraint) Sampler {
 	var rng *rand.Rand
 	if seed != -1 {
 		// PCG requires two parameters: sequence and stream
@@ -164,63 +164,41 @@ func NewSampler(temperature float32, topK int, topP float32, minP float32, seed 
 	}
 }
 
-type Grammar struct {
-	vocab   *Vocab
-	grammar string
-	sampler *llama.Sampler
+type GrammarConstraint struct {
+	ollamaVocab *llama.OllamaVocab
+	grammar     *llama.GrammarSampling
 }
 
-func NewGrammar(vocab *Vocab, grammar string) (*Grammar, error) {
-	v, err := vocab.Load()
-	if err != nil {
-		return nil, err
+func NewGrammarConstraint(vocab *model.Vocabulary, grammarStr string) (*GrammarConstraint, error) {
+	vocabIds := make([]uint32, len(vocab.Values))
+	for i, s := range vocab.Values {
+		vocabIds[i] = uint32(vocab.Encode(s))
+	}
+	ollamaVocab := llama.NewOllamaVocab(grammarStr, vocabIds, vocab.Values, []uint32{uint32(vocab.EOS), uint32(vocab.EOT)})
+	if ollamaVocab == nil {
+		return nil, errors.New("sample: failed to initialize ollama vocabulary")
+	}
+	grammar := llama.LoadGrammarSampling(grammarStr, ollamaVocab)
+	if grammar == nil {
+		return nil, errors.New("sample: failed to initialize grammar")
 	}
 
-	return &Grammar{
-		vocab:   vocab,
-		grammar: grammar,
-		sampler: llama.NewGrammarSampler(v, grammar),
-	}, nil
+	return &GrammarConstraint{ollamaVocab: ollamaVocab, grammar: grammar}, nil
 }
 
-func (g *Grammar) Apply(tokens []token) {
+func (g *GrammarConstraint) Apply(tokens []token) {
 	tds := make([]llama.TokenData, len(tokens))
 	for i, token := range tokens {
 		tds[i].Id = token.id
 		tds[i].Logit = token.value
 	}
-
-	g.sampler.Apply(tds)
+	g.grammar.Apply(tds)
 
 	for i := range tokens {
 		tokens[i].value = tds[i].Logit
 	}
 }
 
-func (g *Grammar) Accept(token int32) {
-	g.sampler.Accept(token)
-}
-
-type Vocab struct {
-	once  sync.Once
-	vocab *llama.Vocab
-	err   error
-	path  string
-}
-
-func NewVocab(path string) *Vocab {
-	return &Vocab{path: path}
-}
-
-// Load returns the lazily-loaded vocabulary
-func (v *Vocab) Load() (*llama.Vocab, error) {
-	v.once.Do(func() {
-		vocab, err := llama.LoadVocabFromFile(v.path)
-		if err != nil {
-			v.err = err
-			return
-		}
-		v.vocab = vocab
-	})
-	return v.vocab, v.err
+func (g *GrammarConstraint) Accept(token int32) {
+	g.grammar.Accept(token)
 }

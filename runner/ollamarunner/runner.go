@@ -298,12 +298,6 @@ type Server struct {
 	// multimodalHash generates hashes for comparing equality
 	// of non-text data
 	multimodalHash maphash.Hash
-
-	// vocab is a llama.cpp vocab required for gammar-based
-	// constrained generation (json mode, structured outputs)
-	// TODO: this is temporary until Ollama sampling supports
-	// constrained generation
-	vocab *sample.Vocab
 }
 
 func (s *Server) allNil() bool {
@@ -606,13 +600,20 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var grammar *sample.Grammar
+	var grammar *sample.GrammarConstraint
 	var err error
 	if req.Grammar != "" {
-		grammar, err = sample.NewGrammar(s.vocab, req.Grammar)
-		if err != nil {
-			http.Error(w, "failed to load model vocabulary required for format", http.StatusInternalServerError)
-			return
+		var vocab *model.Vocabulary
+		if tp, ok := s.model.(model.TextProcessor); ok {
+			vocab = tp.Vocabulary()
+		}
+
+		if req.Grammar != "" && vocab != nil {
+			grammar, err = sample.NewGrammarConstraint(vocab, req.Grammar)
+			if err != nil {
+				http.Error(w, "failed to load model vocabulary required for format", http.StatusInternalServerError)
+				return
+			}
 		}
 	}
 
@@ -743,8 +744,6 @@ func (s *Server) loadModel(
 	if err != nil {
 		panic(err)
 	}
-
-	s.vocab = sample.NewVocab(mpath)
 
 	// TODO(jessegross): LoRA loading
 	if lpath.String() != "" {
