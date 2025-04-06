@@ -649,7 +649,7 @@ func (llm GGML) VisionGraphSize() (weights, graphSize uint64) {
 
 // SupportsKVCacheType checks if the requested cache type is supported
 func (f GGML) SupportsKVCacheType(cacheType string) bool {
-	return slices.Contains([]string{"f16", "q8_0", "q4_0"}, cacheType)
+	return slices.Contains([]string{"f16", "q8_0", "q4_0", "nocache"}, cacheType)
 }
 
 // SupportsFlashAttention checks if the model supports flash attention
