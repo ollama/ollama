@@ -216,9 +216,15 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 				filename := filepath.Join(devDir, m.filename)
 				buf, err := os.ReadFile(filename)
 				if err != nil {
-					slog.Debug("failed to read sysfs node", "file", filename, "error", err)
-					matched = false
-					break
+					// Only treat it as a mismatch if the file is required
+					if m.filename == DRMUniqueIDFile {
+						slog.Debug("unique_id not found, skipping this check", "file", filename)
+						continue
+					} else {
+						slog.Debug("failed to read required sysfs node", "file", filename, "error", err)
+						matched = false
+						break
+					}
 				}
 				// values here are in hex, strip off the lead 0x and parse so we can compare the numeric (decimal) values in amdgpu
 				cmp, err := strconv.ParseUint(strings.TrimPrefix(strings.TrimSpace(string(buf)), "0x"), 16, 64)
