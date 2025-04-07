@@ -258,44 +258,6 @@ func TestToolFunction_UnmarshalJSON(t *testing.T) {
 			wantErr: "",
 		},
 		{
-			name: "duplicate enum values",
-			input: `{
-				"name": "test",
-				"description": "test function", 
-				"parameters": {
-					"type": "object",
-					"required": ["test"],
-					"properties": {
-						"test": {
-							"type": "string",
-							"description": "test prop",
-							"enum": ["a", "a", "b"]
-						}
-					}
-				}
-			}`,
-			wantErr: "enum values must be unique",
-		},
-		{
-			name: "mixed enum types",
-			input: `{
-				"name": "test",
-				"description": "test function",
-				"parameters": {
-					"type": "object", 
-					"required": ["test"],
-					"properties": {
-						"test": {
-							"type": "string",
-							"description": "test prop",
-							"enum": ["a", 1, "b"]
-						}
-					}
-				}
-			}`,
-			wantErr: "enum values must all have the same type",
-		},
-		{
 			name: "empty enum array",
 			input: `{
 				"name": "test",

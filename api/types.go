@@ -222,40 +222,6 @@ type ToolFunction struct {
 	} `json:"parameters"`
 }
 
-// https://json-schema.org/draft/2020-12/draft-bhutton-json-schema-validation-01#section-6.1.2
-func (t *ToolFunction) UnmarshalJSON(b []byte) error {
-	type Alias ToolFunction
-	var a Alias
-	if err := json.Unmarshal(b, &a); err != nil {
-		return err
-	}
-
-	// Validate enum arrays
-	for _, prop := range a.Parameters.Properties {
-		if len(prop.Enum) == 0 {
-			continue
-		}
-
-		// Check for uniqueness and consistent types
-		seen := make(map[any]bool)
-		enumType := reflect.TypeOf(prop.Enum[0])
-		for _, val := range prop.Enum {
-			if seen[val] {
-				return fmt.Errorf("enum values must be unique")
-			}
-			seen[val] = true
-
-			// Check that all enum values have the same type
-			if reflect.TypeOf(val) != enumType {
-				return fmt.Errorf("enum values must all have the same type")
-			}
-		}
-	}
-
-	*t = ToolFunction(a)
-	return nil
-}
-
 func (t *ToolFunction) String() string {
 	bts, _ := json.Marshal(t)
 	return string(bts)
