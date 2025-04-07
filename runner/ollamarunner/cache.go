@@ -118,6 +118,10 @@ func (c *InputCache) LoadCacheSlot(prompt []input.Input) (*InputCacheSlot, []inp
 	}
 
 	if c.cache != nil {
+		if numPast > 0 && !c.cache.CanResume(slot.Id, numPast) {
+			numPast = 0
+		}
+
 		err = c.cache.Remove(slot.Id, numPast, math.MaxInt32)
 		if err != nil {
 			// Some models don't support partial erasure
@@ -225,6 +229,8 @@ func countCommonPrefix(a []input.Input, b []input.Input) int32 {
 	return count
 }
 
+// TODO(jessegross): If we need to reprocess the inputs we should ensure that
+// we don't split up a SameBatch
 func (c *InputCache) ShiftDiscard(inputLen int32, numKeep int32) int32 {
 	targetFree := (c.numCtx - numKeep) / 2
 	targetFree = max(targetFree, 1)
@@ -237,6 +243,14 @@ func (c *InputCache) ShiftDiscard(inputLen int32, numKeep int32) int32 {
 	}
 
 	return discard
+}
+
+type ErrReprocessInputs struct {
+	Inputs []input.Input
+}
+
+func (e *ErrReprocessInputs) Error() string {
+	return fmt.Sprintf("kv cache shift not supported, inputs need reprocessing (input count: %v)", len(e.Inputs))
 }
 
 // Frees up space in the KV cache by deleting the oldest half of history and shifting
@@ -258,11 +272,23 @@ func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int32) error {
 	slog.Debug("context limit hit - shifting", "id", slot.Id, "limit", c.numCtx, "input", len(slot.Inputs),
 		"keep", numKeep, "discard", discard)
 
-	// TODO (jessegross): KV cache removal can fail for certain types of models
 	if c.cache != nil {
 		err := c.cache.Remove(slot.Id, numKeep, numKeep+discard)
 		if err != nil {
-			return fmt.Errorf("unable to remove old kv cache entries (id: %v, keep: %v discard: %v): %w", slot.Id, numKeep, discard, err)
+			slog.Debug("kv cache removal unsupported, clearing cache and returning inputs for reprocessing",
+				"id", slot.Id, "error", err)
+
+			// Create new input slice with preserved tokens (numKeep + remaining tokens after discard)
+			newInputs := make([]input.Input, numKeep+inputLen-(numKeep+discard))
+			copy(newInputs[:numKeep], slot.Inputs[:numKeep])
+			copy(newInputs[numKeep:], slot.Inputs[numKeep+discard:])
+
+			// Reset the cache
+			_ = c.cache.Remove(slot.Id, 0, -1)
+			slot.Inputs = []input.Input{}
+
+			// Return error with inputs that need to be reprocessed
+			return &ErrReprocessInputs{Inputs: newInputs}
 		}
 	}
 

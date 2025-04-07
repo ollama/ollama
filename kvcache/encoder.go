@@ -134,6 +134,10 @@ func (c *EncoderCache) CopyPrefix(srcSeq, dstSeq int, len int32) {
 	panic("encoder cache does not support multiple sequences")
 }
 
+func (c *EncoderCache) CanResume(seq int, pos int32) bool {
+	return true
+}
+
 func (c *EncoderCache) Remove(seq int, beginIndex, endIndex int32) error {
 	if c.encoderPos >= beginIndex && c.encoderPos < endIndex {
 		c.encoderCached = false

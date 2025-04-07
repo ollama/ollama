@@ -87,6 +87,16 @@ func (c *WrapperCache) CopyPrefix(srcSeq, dstSeq int, len int32) {
 	}
 }
 
+func (c *WrapperCache) CanResume(seq int, pos int32) bool {
+	for _, cache := range c.caches {
+		if !cache.CanResume(seq, pos) {
+			return false
+		}
+	}
+
+	return true
+}
+
 func (c *WrapperCache) Remove(seq int, beginIndex, endIndex int32) error {
 	// If the one of these fails, the caller is supposed to retry with endIndex set to math.MaxInt32, which should not fail
 	for _, cache := range c.caches {

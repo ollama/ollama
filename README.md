@@ -285,6 +285,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Bionic GPT](https://github.com/bionic-gpt/bionic-gpt)
 - [HTML UI](https://github.com/rtcfirefly/ollama-ui)
 - [Saddle](https://github.com/jikkuatwork/saddle)
+- [TagSpaces](https://www.tagspaces.org) (A platform for file based apps, [utilizing Ollama](https://docs.tagspaces.org/ai/) for the generation of tags and descriptions)
 - [Chatbot UI](https://github.com/ivanfioravanti/chatbot-ollama)
 - [Chatbot UI v2](https://github.com/mckaywrigley/chatbot-ui)
 - [Typescript UI](https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file)
@@ -324,6 +325,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [RWKV-Runner](https://github.com/josStorer/RWKV-Runner) (RWKV offline LLM deployment tool, also usable as a client for ChatGPT and Ollama)
 - [Ollama Grid Search](https://github.com/dezoito/ollama-grid-search) (app to evaluate and compare models)
 - [Olpaka](https://github.com/Otacon/olpaka) (User-friendly Flutter Web App for Ollama)
+- [Casibase](https://casibase.org) (An open source AI knowledge base and dialogue system combining the latest RAG, SSO, ollama support and multiple large language models.)
 - [OllamaSpring](https://github.com/CrazyNeil/OllamaSpring) (Ollama Client for macOS)
 - [LLocal.in](https://github.com/kartikm7/llocal) (Easy to use Electron Desktop Client for Ollama)
 - [Shinkai Desktop](https://github.com/dcSpark/shinkai-apps) (Two click install Local AI using Ollama + Files + RAG)
@@ -394,6 +396,8 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Reins](https://github.com/ibrahimcetin/reins) (Easily tweak parameters, customize system prompts per chat, and enhance your AI experiments with reasoning model support.)
 - [Ellama](https://github.com/zeozeozeo/ellama) (Friendly native app to chat with an Ollama instance)
 - [screenpipe](https://github.com/mediar-ai/screenpipe) Build agents powered by your screen history
+- [Ollamb](https://github.com/hengkysteen/ollamb) (Simple yet rich in features, cross-platform built with Flutter and designed for Ollama. Try the [web demo](https://hengkysteen.github.io/demo/ollamb/).)
+- [Writeopia](https://github.com/Writeopia/Writeopia) (Text editor with integration with Ollama)
 
 ### Cloud
 
@@ -433,7 +437,9 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [SwollamaCLI](https://github.com/marcusziade/Swollama) bundled with the Swollama Swift package. [Demo](https://github.com/marcusziade/Swollama?tab=readme-ov-file#cli-usage)
 - [aichat](https://github.com/sigoden/aichat) All-in-one LLM CLI tool featuring Shell Assistant, Chat-REPL, RAG, AI tools & agents, with access to OpenAI, Claude, Gemini, Ollama, Groq, and more.
 - [PowershAI](https://github.com/rrg92/powershai) PowerShell module that brings AI to terminal on Windows, including support for Ollama
+- [DeepShell](https://github.com/Abyss-c0re/deepshell) Your self-hosted AI assistant. Interactive Shell, Files and Folders analysis.
 - [orbiton](https://github.com/xyproto/orbiton) Configuration-free text editor and IDE with support for tab completion with Ollama.
+- [orca-cli](https://github.com/molbal/orca-cli) Ollama Registry CLI Application - Browse, pull and download models from Ollama Registry in your terminal.
 
 ### Apple Vision Pro
 

@@ -219,7 +219,7 @@ func TestChatMiddleware(t *testing.T) {
 							{
 								Function: api.ToolCallFunction{
 									Name: "get_current_weather",
-									Arguments: map[string]interface{}{
+									Arguments: map[string]any{
 										"location": "Paris, France",
 										"format":   "celsius",
 									},

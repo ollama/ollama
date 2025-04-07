@@ -24,7 +24,8 @@ import (
 	"unsafe"
 
 	"github.com/ollama/ollama/format"
-	fs "github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs"
+	fsggml "github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/ml"
 	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 	"golang.org/x/sync/errgroup"
@@ -41,15 +42,12 @@ func devices() []*C.struct_ggml_backend_device {
 }
 
 type Backend struct {
-	meta    *fs.GGML
+	meta    *fsggml.GGML
 	sched   *C.struct_ggml_backend_sched
 	tensors map[string]*C.struct_ggml_tensor
 
 	// input is the backend used for inputs
 	input *C.struct_ggml_backend_buffer_type
-
-	// output is the backend used for outputs
-	output *C.struct_ggml_backend_buffer_type
 
 	// layers is the backend used for repeating layers
 	layers map[int]*C.struct_ggml_backend_buffer_type
@@ -61,7 +59,7 @@ type Backend struct {
 }
 
 func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, error) {
-	meta, n, err := fs.Decode(r, -1)
+	meta, n, err := fsggml.Decode(r, -1)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +183,7 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 	maxTensors += blocks * 2
 
 	type tensor struct {
-		source *fs.Tensor
+		source *fsggml.Tensor
 		target string
 	}
 
@@ -321,7 +319,14 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 				tts[i] = tt
 			}
 
-			sr := io.NewSectionReader(r, int64(meta.Tensors().Offset+t.Offset), int64(t.Size()))
+			// Create a new FD for each goroutine so that each FD is read sequentially, rather than
+			// seeking around within an FD shared between all goroutines.
+			file, err := os.Open(r.Name())
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+			sr := io.NewSectionReader(file, int64(meta.Tensors().Offset+t.Offset), int64(t.Size()))
 			bts := make([]byte, 128*format.KibiByte)
 
 			var s uint64
@@ -400,8 +405,7 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 			C.size_t(maxGraphNodes),
 			C._Bool(len(gpus) > 1 && slices.Contains(gpus, output.d)),
 		),
-		input:  deviceBufferTypes[input.d],
-		output: deviceBufferTypes[output.d],
+		input: deviceBufferTypes[input.d],
 		layers: func() map[int]*C.struct_ggml_backend_buffer_type {
 			m := make(map[int]*C.struct_ggml_backend_buffer_type)
 			for i, layer := range layers {
@@ -417,7 +421,7 @@ func init() {
 	ml.RegisterBackend("ggml", New)
 }
 
-func (b *Backend) Config() ml.Config {
+func (b *Backend) Config() fs.Config {
 	return b.meta.KV()
 }
 
@@ -475,19 +479,6 @@ func (c Context) Input() ml.Context {
 			b:             c.b,
 			ctx:           c.ctx,
 			buft:          c.b.input,
-			maxGraphNodes: c.maxGraphNodes,
-		}
-	}
-
-	return &c
-}
-
-func (c Context) Output() ml.Context {
-	if c.b.output != nil {
-		return &Context{
-			b:             c.b,
-			ctx:           c.ctx,
-			buft:          c.b.output,
 			maxGraphNodes: c.maxGraphNodes,
 		}
 	}
@@ -727,10 +718,38 @@ func (t *Tensor) DType() ml.DType {
 	}
 }
 
+func (t *Tensor) Neg(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_neg(ctx.(*Context).ctx, t.t),
+	}
+}
+
 func (t *Tensor) Add(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_add(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
+	}
+}
+
+func (t *Tensor) Repeat(ctx ml.Context, dim, n int) ml.Tensor {
+	if dim < 0 || dim >= C.GGML_MAX_DIMS {
+		panic("invalid dimension")
+	}
+
+	shape := make([]C.int64_t, C.GGML_MAX_DIMS)
+	for i := range C.GGML_MAX_DIMS {
+		if i == dim {
+			shape[i] = C.int64_t(t.Dim(i) * n)
+		} else {
+			shape[i] = C.int64_t(t.Dim(i))
+		}
+	}
+
+	tmpl := C.ggml_new_tensor(ctx.(*Context).ctx, t.t._type, C.int(len(shape)), unsafe.SliceData(shape))
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_repeat(ctx.(*Context).ctx, t.t, tmpl),
 	}
 }
 
@@ -870,6 +889,20 @@ func (t *Tensor) Softmax(ctx ml.Context) ml.Tensor {
 	}
 }
 
+func (t *Tensor) Sin(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_sin(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Cos(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_cos(ctx.(*Context).ctx, t.t),
+	}
+}
+
 func (t *Tensor) Tanh(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -958,6 +991,13 @@ func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDi
 	}
 }
 
+func (t *Tensor) IM2Col(ctx ml.Context, t2 ml.Tensor, s0, s1, p0, p1, d0, d1 int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_im2col(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, C.int(s0), C.int(s1), C.int(p0), C.int(p1), C.int(d0), C.int(d1), true, C.GGML_TYPE_F32),
+	}
+}
+
 func (t *Tensor) GELU(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -1024,5 +1064,12 @@ func (t *Tensor) ScaledDotProductAttention(ctx ml.Context, key, value, mask ml.T
 
 		kqv := value.Mulmat(ctx, kq)
 		return kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+	}
+}
+
+func (t *Tensor) Duplicate(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_dup(ctx.(*Context).ctx, t.t),
 	}
 }

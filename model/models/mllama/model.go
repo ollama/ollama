@@ -8,6 +8,7 @@ import (
 	"image"
 	"slices"
 
+	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
@@ -32,7 +33,7 @@ const (
 	selfAttentionLayer
 )
 
-func New(c ml.Config) (model.Model, error) {
+func New(c fs.Config) (model.Model, error) {
 	// Verify unified config
 	if c.Uint("vision.block_count") == 0 {
 		return nil, fmt.Errorf("non-unified vision model not supported")

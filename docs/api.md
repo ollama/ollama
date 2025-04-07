@@ -1217,7 +1217,7 @@ Show information about a model including details, modelfile, template, parameter
 
 ```shell
 curl http://localhost:11434/api/show -d '{
-  "model": "llama3.2"
+  "model": "llava"
 }'
 ```
 
@@ -1260,7 +1260,11 @@ curl http://localhost:11434/api/show -d '{
     "tokenizer.ggml.pre": "llama-bpe",
     "tokenizer.ggml.token_type": [],        // populates if `verbose=true`
     "tokenizer.ggml.tokens": []             // populates if `verbose=true`
-  }
+  },
+  "capabilities": [
+    "completion",
+    "vision"
+  ],
 }
 ```
 

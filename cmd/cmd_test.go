@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 func TestShowInfo(t *testing.T) {
@@ -256,6 +257,34 @@ Weigh anchor!
     Copyright (c) Ollama    
 
 `
+		if diff := cmp.Diff(expect, b.String()); diff != "" {
+			t.Errorf("unexpected output (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("capabilities", func(t *testing.T) {
+		var b bytes.Buffer
+		if err := showInfo(&api.ShowResponse{
+			Details: api.ModelDetails{
+				Family:            "test",
+				ParameterSize:     "7B",
+				QuantizationLevel: "FP16",
+			},
+			Capabilities: []model.Capability{model.CapabilityVision, model.CapabilityTools},
+		}, false, &b); err != nil {
+			t.Fatal(err)
+		}
+
+		expect := "  Model\n" +
+			"    architecture    test    \n" +
+			"    parameters      7B      \n" +
+			"    quantization    FP16    \n" +
+			"\n" +
+			"  Capabilities\n" +
+			"    vision    \n" +
+			"    tools     \n" +
+			"\n"
+
 		if diff := cmp.Diff(expect, b.String()); diff != "" {
 			t.Errorf("unexpected output (-want +got):\n%s", diff)
 		}

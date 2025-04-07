@@ -12,7 +12,7 @@ func IsNUMA() bool {
 		// numa support in llama.cpp is linux only
 		return false
 	}
-	ids := map[string]interface{}{}
+	ids := map[string]any{}
 	packageIds, _ := filepath.Glob("/sys/devices/system/cpu/cpu*/topology/physical_package_id")
 	for _, packageId := range packageIds {
 		id, err := os.ReadFile(packageId)

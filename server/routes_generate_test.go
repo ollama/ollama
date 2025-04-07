@@ -58,7 +58,7 @@ func TestGenerateChat(t *testing.T) {
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
 			Done:               true,
-			DoneReason:         "stop",
+			DoneReason:         llm.DoneReasonStop,
 			PromptEvalCount:    1,
 			PromptEvalDuration: 1,
 			EvalCount:          1,
@@ -401,7 +401,7 @@ func TestGenerateChat(t *testing.T) {
 		mock.CompletionResponse = llm.CompletionResponse{
 			Content:            `{"name":"get_weather","arguments":{"location":"Seattle, WA","unit":"celsius"}}`,
 			Done:               true,
-			DoneReason:         "done",
+			DoneReason:         llm.DoneReasonStop,
 			PromptEvalCount:    1,
 			PromptEvalDuration: 1,
 			EvalCount:          1,
@@ -519,7 +519,7 @@ func TestGenerateChat(t *testing.T) {
 				{
 					Content:            `, WA","unit":"celsius"}}`,
 					Done:               true,
-					DoneReason:         "tool_call",
+					DoneReason:         llm.DoneReasonStop,
 					PromptEvalCount:    3,
 					PromptEvalDuration: 1,
 				},
@@ -594,7 +594,7 @@ func TestGenerate(t *testing.T) {
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
 			Done:               true,
-			DoneReason:         "stop",
+			DoneReason:         llm.DoneReasonStop,
 			PromptEvalCount:    1,
 			PromptEvalDuration: 1,
 			EvalCount:          1,

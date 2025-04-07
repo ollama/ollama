@@ -1,10 +1,13 @@
 package ollamarunner
 
 import (
+	"errors"
+	"fmt"
 	"image"
 	"testing"
 	"time"
 
+	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model/input"
 )
 
@@ -421,6 +424,95 @@ func TestLoadCacheSlot(t *testing.T) {
 			if len(remainingPrompt) != tt.expectedPrompt {
 				t.Errorf("LoadCacheSlot() remaining prompt length = %v, expected %v",
 					len(remainingPrompt), tt.expectedPrompt)
+			}
+		})
+	}
+}
+
+// Mock implementation of the Cache interface
+type mockCache struct {
+	shouldFail bool
+}
+
+// Implement only the methods needed for the test
+func (m *mockCache) Remove(seq int, beginIndex, endIndex int32) error {
+	if m.shouldFail {
+		return fmt.Errorf("mock cache removal error")
+	}
+	return nil
+}
+
+// Stub implementations for other interface methods
+func (m *mockCache) SetLayer(layer int)                                                            {}
+func (m *mockCache) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor)                          { return nil, nil, nil }
+func (m *mockCache) Put(ctx ml.Context, key, value ml.Tensor)                                      {}
+func (m *mockCache) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity, maxBatch int) {}
+func (m *mockCache) Close()                                                                        {}
+func (m *mockCache) StartForward(ctx ml.Context, batch input.Batch) error                          { return nil }
+func (m *mockCache) CopyPrefix(srcSeq, dstSeq int, len int32)                                      {}
+func (m *mockCache) SetConfig(ml.CacheConfig)                                                      {}
+func (m *mockCache) CanResume(seq int, pos int32) bool                                             { return true }
+
+func TestShiftCacheSlot(t *testing.T) {
+	tests := []struct {
+		name          string
+		numCtx        int32
+		inputs        []input.Input
+		numKeep       int32
+		cacheErr      bool
+		wantErr       any
+		wantInputsLen int
+	}{
+		{
+			name:          "Normal shift",
+			numCtx:        10,
+			inputs:        []input.Input{{Token: 1}, {Token: 2}, {Token: 3}, {Token: 4}, {Token: 5}, {Token: 6}, {Token: 7}, {Token: 8}, {Token: 9}, {Token: 10}},
+			numKeep:       2,
+			cacheErr:      false, // No error
+			wantErr:       nil,
+			wantInputsLen: 6, // After discarding 4 tokens
+		},
+		{
+			name:          "Cache removal fails",
+			numCtx:        10,
+			inputs:        []input.Input{{Token: 1}, {Token: 2}, {Token: 3}, {Token: 4}, {Token: 5}, {Token: 6}, {Token: 7}, {Token: 8}, {Token: 9}, {Token: 10}},
+			numKeep:       2,
+			cacheErr:      true,
+			wantErr:       &ErrReprocessInputs{},
+			wantInputsLen: 0, // Original inputs should be cleared
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockCache{shouldFail: tt.cacheErr}
+			c := InputCache{
+				numCtx: tt.numCtx,
+				cache:  mock,
+			}
+			slot := &InputCacheSlot{
+				Id:     123,
+				Inputs: make([]input.Input, len(tt.inputs)),
+			}
+			copy(slot.Inputs, tt.inputs)
+
+			err := c.ShiftCacheSlot(slot, tt.numKeep)
+
+			if tt.wantErr != nil {
+				if err == nil {
+					t.Errorf("Expected error but got nil")
+					return
+				}
+
+				if !errors.As(err, &tt.wantErr) {
+					t.Errorf("Expected error of type %T but got %T: %v", tt.wantErr, err, err)
+				}
+			} else if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+
+			if len(slot.Inputs) != tt.wantInputsLen {
+				t.Errorf("Slot inputs length after operation: got %v, want %v", len(slot.Inputs), tt.wantInputsLen)
 			}
 		})
 	}
