@@ -47,6 +47,7 @@ func TestChatMiddleware(t *testing.T) {
 		req  api.ChatRequest
 		err  ErrorResponse
 	}
+	var stringType = "string"
 
 	var capturedRequest *api.ChatRequest
 
@@ -283,24 +284,28 @@ func TestChatMiddleware(t *testing.T) {
 								Type       string   `json:"type"`
 								Required   []string `json:"required"`
 								Properties map[string]struct {
-									Type        string   `json:"type"`
-									Description string   `json:"description"`
-									Enum        []string `json:"enum,omitempty"`
+									Type        api.TypeField `json:"type"`
+									Description string        `json:"description"`
+									Enum        []string      `json:"enum,omitempty"`
 								} `json:"properties"`
 							}{
 								Type:     "object",
 								Required: []string{"location"},
 								Properties: map[string]struct {
-									Type        string   `json:"type"`
-									Description string   `json:"description"`
-									Enum        []string `json:"enum,omitempty"`
+									Type        api.TypeField `json:"type"`
+									Description string        `json:"description"`
+									Enum        []string      `json:"enum,omitempty"`
 								}{
 									"location": {
-										Type:        "string",
+										Type: api.TypeField{
+											Single: &stringType,
+										},
 										Description: "The city and state",
 									},
 									"unit": {
-										Type: "string",
+										Type: api.TypeField{
+											Single: &stringType,
+										},
 										Enum: []string{"celsius", "fahrenheit"},
 									},
 								},

@@ -166,6 +166,43 @@ type Tool struct {
 	Function ToolFunction `json:"function"`
 }
 
+// TypeField represents a flexible type field that can be a string, an array of strings, or an object
+type TypeField struct {
+	Single *string  `json:"-"`
+	Array  []string `json:"-"`
+}
+
+func (t TypeField) MarshalJSON() ([]byte, error) {
+	if t.Single != nil {
+		return json.Marshal(*t.Single)
+	}
+	return json.Marshal(t.Array)
+}
+
+// String returns the JSON representation of TypeField
+func (t TypeField) String() string {
+	bts, _ := json.Marshal(t)
+	return string(bts)
+}
+
+// UnmarshalJSON implements custom unmarshaling
+func (t *TypeField) UnmarshalJSON(data []byte) error {
+	// Try parsing as a single string
+	var single string
+	if err := json.Unmarshal(data, &single); err == nil {
+		t.Single = &single
+		return nil
+	}
+
+	// Try parsing as an array of strings
+	var array []string
+	if err := json.Unmarshal(data, &array); err == nil {
+		t.Array = array
+		return nil
+	}
+	return fmt.Errorf("invalid type field")
+}
+
 type ToolFunction struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -173,9 +210,9 @@ type ToolFunction struct {
 		Type       string   `json:"type"`
 		Required   []string `json:"required"`
 		Properties map[string]struct {
-			Type        string   `json:"type"`
-			Description string   `json:"description"`
-			Enum        []string `json:"enum,omitempty"`
+			Type        TypeField `json:"type"`
+			Description string    `json:"description"`
+			Enum        []string  `json:"enum,omitempty"`
 		} `json:"properties"`
 	} `json:"parameters"`
 }
