@@ -1142,12 +1142,9 @@ void llama_grammar_apply_impl(const struct llama_grammar & grammar, llama_token_
 
     for (size_t i = 0; i < cur_p->size; ++i) {
         const llama_token id      = cur_p->data[i].id;
-        std::string piece;
-        if (grammar.o_vocab) {
-            piece = grammar.o_vocab->token_to_piece(id);
-        } else {
-            piece = grammar.vocab->token_to_piece(id);
-        }
+        const std::string piece = grammar.o_vocab ?
+            grammar.o_vocab->token_to_piece(id) :
+            grammar.vocab->token_to_piece(id);
 
         const bool is_eog = grammar.o_vocab ? grammar.o_vocab->is_eog(id) : grammar.vocab->is_eog(id);
 
@@ -1170,14 +1167,10 @@ void llama_grammar_apply_impl(const struct llama_grammar & grammar, llama_token_
 }
 
 void llama_grammar_accept_impl(struct llama_grammar & grammar, llama_token token) {
-    GGML_ASSERT(!(grammar.vocab == nullptr && grammar.o_vocab == nullptr));
 
-    std::string piece;
-    if (grammar.o_vocab) {
-        piece = grammar.o_vocab->token_to_piece(token);
-    } else {
-        piece = grammar.vocab->token_to_piece(token);
-    }
+    const std::string piece = grammar.o_vocab ?
+        grammar.o_vocab->token_to_piece(token) :
+        grammar.vocab->token_to_piece(token);
 
     if (grammar.awaiting_trigger) {
         if (std::find(grammar.trigger_tokens.begin(), grammar.trigger_tokens.end(), token) != grammar.trigger_tokens.end()) {
@@ -1236,7 +1229,7 @@ void llama_grammar_accept_str(struct llama_grammar & grammar, const std::string 
 }
 
 
-const std::string & ollama_vocab::token_to_piece(uint32_t token) const {
+std::string ollama_vocab::token_to_piece(uint32_t token) const {
     try {
         return token_to_piece_map.at(token);
     } catch (const std::out_of_range&) {

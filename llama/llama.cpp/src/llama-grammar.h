@@ -13,7 +13,7 @@ struct ollama_vocab {
     std::map<uint32_t, std::string> token_to_piece_map;
     std::set<uint32_t> special_eog_ids;
 
-    const std::string & token_to_piece(uint32_t token) const;
+    std::string token_to_piece(uint32_t token) const;
     void add_token_pieces(uint32_t *tokens, const char **pieces, size_t n_tokens);
     void set_eog_tokens(uint32_t *tokens, size_t n_tokens);
     bool is_eog(uint32_t token) const;
