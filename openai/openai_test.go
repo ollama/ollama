@@ -285,7 +285,7 @@ func TestChatMiddleware(t *testing.T) {
 								Properties map[string]struct {
 									Type        api.PropertyType `json:"type"`
 									Description string           `json:"description"`
-									Enum        []string         `json:"enum,omitempty"`
+									Enum        []any            `json:"enum,omitempty"`
 								} `json:"properties"`
 							}{
 								Type:     "object",
@@ -293,7 +293,7 @@ func TestChatMiddleware(t *testing.T) {
 								Properties: map[string]struct {
 									Type        api.PropertyType `json:"type"`
 									Description string           `json:"description"`
-									Enum        []string         `json:"enum,omitempty"`
+									Enum        []any            `json:"enum,omitempty"`
 								}{
 									"location": {
 										Type:        api.PropertyType{"string"},
@@ -301,7 +301,7 @@ func TestChatMiddleware(t *testing.T) {
 									},
 									"unit": {
 										Type: api.PropertyType{"string"},
-										Enum: []string{"celsius", "fahrenheit"},
+										Enum: []any{"celsius", "fahrenheit"},
 									},
 								},
 							},

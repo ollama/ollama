@@ -232,6 +232,105 @@ func TestMessage_UnmarshalJSON(t *testing.T) {
 	}
 }
 
+func TestToolFunction_UnmarshalJSON(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr string
+	}{
+		{
+			name: "valid enum with same types",
+			input: `{
+				"name": "test",
+				"description": "test function",
+				"parameters": {
+					"type": "object",
+					"required": ["test"],
+					"properties": {
+						"test": {
+							"type": "string",
+							"description": "test prop",
+							"enum": ["a", "b", "c"]
+						}
+					}
+				}
+			}`,
+			wantErr: "",
+		},
+		{
+			name: "duplicate enum values",
+			input: `{
+				"name": "test",
+				"description": "test function", 
+				"parameters": {
+					"type": "object",
+					"required": ["test"],
+					"properties": {
+						"test": {
+							"type": "string",
+							"description": "test prop",
+							"enum": ["a", "a", "b"]
+						}
+					}
+				}
+			}`,
+			wantErr: "enum values must be unique",
+		},
+		{
+			name: "mixed enum types",
+			input: `{
+				"name": "test",
+				"description": "test function",
+				"parameters": {
+					"type": "object", 
+					"required": ["test"],
+					"properties": {
+						"test": {
+							"type": "string",
+							"description": "test prop",
+							"enum": ["a", 1, "b"]
+						}
+					}
+				}
+			}`,
+			wantErr: "enum values must all have the same type",
+		},
+		{
+			name: "empty enum array",
+			input: `{
+				"name": "test",
+				"description": "test function",
+				"parameters": {
+					"type": "object",
+					"required": ["test"],
+					"properties": {
+						"test": {
+							"type": "string",
+							"description": "test prop",
+							"enum": []
+						}
+					}
+				}
+			}`,
+			wantErr: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var tf ToolFunction
+			err := json.Unmarshal([]byte(tt.input), &tf)
+
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 func TestPropertyType_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
 		name     string
