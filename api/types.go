@@ -743,3 +743,13 @@ func FormatParams(params map[string][]string) (map[string]any, error) {
 
 	return out, nil
 }
+
+// NvidiaModel represents the Nvidia model details.
+type NvidiaModel struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Version     string `json:"version"`
+	URL         string `json:"url"`
+}
+
+const NvidiaModelURL = "https://huggingface.co/bartowski/Llama-3_1-Nemotron-51B-Instruct-GGUF"
