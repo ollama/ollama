@@ -764,6 +764,7 @@ func (s *Server) loadModel(
 	kvSize int,
 	kvCacheType string,
 	flashAttention bool,
+	noKVOffload bool,
 	threads int,
 	multiUserCache bool,
 ) {
@@ -773,7 +774,7 @@ func (s *Server) loadModel(
 		panic(err)
 	}
 
-	ctxParams := llama.NewContextParams(kvSize, s.batchSize*s.parallel, s.parallel, threads, flashAttention, kvCacheType)
+	ctxParams := llama.NewContextParams(kvSize, s.batchSize*s.parallel, s.parallel, threads, flashAttention, noKVOffload, kvCacheType)
 	s.lc, err = llama.NewContextWithModel(s.model, ctxParams)
 	if err != nil {
 		panic(err)
@@ -814,6 +815,7 @@ func Execute(args []string) error {
 	nGpuLayers := fs.Int("n-gpu-layers", 0, "Number of layers to offload to GPU")
 	mainGpu := fs.Int("main-gpu", 0, "Main GPU")
 	flashAttention := fs.Bool("flash-attn", false, "Enable flash attention")
+	noKVOffload := fs.Bool("no-kv-offload", false, "Prevent KV cache from being offloaded to GPU")
 	kvSize := fs.Int("ctx-size", 2048, "Context (or KV cache) size")
 	kvCacheType := fs.String("kv-cache-type", "", "quantization type for KV cache (default: f16)")
 	port := fs.Int("port", 8080, "Port to expose the server on")
@@ -884,7 +886,7 @@ func Execute(args []string) error {
 	}
 
 	server.ready.Add(1)
-	go server.loadModel(params, *mpath, lpaths, *ppath, *kvSize, *kvCacheType, *flashAttention, *threads, *multiUserCache)
+	go server.loadModel(params, *mpath, lpaths, *ppath, *kvSize, *kvCacheType, *flashAttention, *noKVOffload, *threads, *multiUserCache)
 
 	server.cond = sync.NewCond(&server.mu)
 
