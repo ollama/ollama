@@ -52,12 +52,12 @@ func (m *multimodalStore) addMultimodal(embedding []input.Multimodal) {
 // getMultimodal takes a source set of tensors (which may contain a whole or
 // parts of one or more images) and returns the equivalent that can be used in
 // the current context
-func (m *multimodalStore) getMultimodal(backend ml.Backend, ctx ml.Context, in []input.Multimodal) ([]input.Multimodal, error) {
+func (m *multimodalStore) getMultimodal(backend ml.Backend, ctx ml.Context, in []input.Multimodal, reserve bool) ([]input.Multimodal, error) {
 	out := make([]input.Multimodal, len(in))
 	for i := range out {
 		if in[i].Tensor != nil {
 			var err error
-			out[i].Tensor, err = m.getTensor(backend, ctx, in[i].Tensor)
+			out[i].Tensor, err = m.getTensor(backend, ctx, in[i].Tensor, reserve)
 			if err != nil {
 				return nil, err
 			}
@@ -69,7 +69,7 @@ func (m *multimodalStore) getMultimodal(backend ml.Backend, ctx ml.Context, in [
 	return out, nil
 }
 
-func (m *multimodalStore) getTensor(backend ml.Backend, ctx ml.Context, in ml.Tensor) (ml.Tensor, error) {
+func (m *multimodalStore) getTensor(backend ml.Backend, ctx ml.Context, in ml.Tensor, reserve bool) (ml.Tensor, error) {
 	entry := m.m[in]
 
 	if entry.data == nil {
@@ -87,19 +87,32 @@ func (m *multimodalStore) getTensor(backend ml.Backend, ctx ml.Context, in ml.Te
 			return nil, nil
 		}
 
-		computeCtx.Forward(tensors...).Compute(tensors...)
-
+		computeCtx.Forward(tensors...)
 		entry.data = make([][]float32, len(entry.mm))
-		for i, t := range entry.mm {
-			if t.Tensor != nil {
-				entry.data[i] = t.Tensor.Floats()
+
+		if !reserve {
+			computeCtx.Compute(tensors...)
+
+			for i, t := range entry.mm {
+				if t.Tensor != nil {
+					entry.data[i] = t.Tensor.Floats()
+				}
+			}
+		} else {
+			err := computeCtx.Reserve()
+			if err != nil {
+				return nil, err
 			}
 		}
 	}
 
 	for i, t := range entry.mm {
 		if in == t.Tensor {
-			return ctx.Input().FromFloatSlice(entry.data[i], t.Tensor.Shape()...)
+			if !reserve {
+				return ctx.Input().FromFloatSlice(entry.data[i], t.Tensor.Shape()...)
+			} else {
+				return ctx.Input().Empty(t.Tensor.DType(), t.Tensor.Shape()...), nil
+			}
 		}
 	}
 
