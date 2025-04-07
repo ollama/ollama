@@ -509,7 +509,7 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 		mediatype := "application/vnd.ollama.image.model"
 		if f.KV().Kind() == "adapter" {
 			mediatype = "application/vnd.ollama.image.adapter"
-		} else if _, ok := f.KV()[fmt.Sprintf("%s.vision.block_count", f.KV().Architecture())]; ok || f.KV().Kind() == "projector" {
+		} else if slices.Contains([]string{"clip", "mllama"}, f.KV().Architecture()) || f.KV().Kind() == "projector" {
 			mediatype = "application/vnd.ollama.image.projector"
 		}
 
