@@ -171,6 +171,7 @@ type ToolFunction struct {
 	Description string `json:"description"`
 	Parameters  struct {
 		Type       string   `json:"type"`
+		Defs       any      `json:"$defs,omitempty"`
 		Items      any      `json:"items,omitempty"`
 		Required   []string `json:"required"`
 		Properties map[string]struct {
