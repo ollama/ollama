@@ -62,7 +62,6 @@ the explorer window by hitting `<Ctrl>+R` and type in:
     - *upgrade.log* contains log output for upgrades
 - `explorer %LOCALAPPDATA%\Programs\Ollama` contains the binaries (The installer adds this to your user PATH)
 - `explorer %HOMEPATH%\.ollama` contains models and configuration
-- `explorer %TEMP%` contains temporary executable files in one or more `ollama*` directories
 
 ## Uninstall
 
