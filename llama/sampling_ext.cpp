@@ -122,6 +122,10 @@ void grammar_free(struct llama_grammar *g) {
 }
 
 void grammar_apply(struct llama_grammar *g, struct llama_token_data_array *tokens) {
+    if (g == nullptr || tokens == nullptr) {
+        LLAMA_LOG_ERROR("%s: null grammar or tokens input\n", __func__);
+        return;
+    }
     llama_grammar_apply_impl(*g, tokens);
 }
 

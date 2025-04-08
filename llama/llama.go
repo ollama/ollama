@@ -35,6 +35,7 @@ import (
 	"runtime/cgo"
 	"slices"
 	"strings"
+	"sync"
 	"unsafe"
 
 	_ "github.com/ollama/ollama/llama/llama.cpp/common"
@@ -680,7 +681,8 @@ type TokenData struct {
 }
 
 type Grammar struct {
-	c *C.struct_llama_grammar
+	c  *C.struct_llama_grammar
+	mu sync.Mutex
 }
 
 func NewGrammar(grammar string, vocabIds []uint32, vocabValues []string, eogTokens []uint32) *Grammar {
@@ -712,10 +714,22 @@ func NewGrammar(grammar string, vocabIds []uint32, vocabValues []string, eogToke
 }
 
 func (g *Grammar) Free() {
-	C.grammar_free(g.c)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.c != nil {
+		C.grammar_free(g.c)
+		g.c = nil
+	}
 }
 
 func (g *Grammar) Apply(tokens []TokenData) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.c == nil {
+		return
+	}
+
 	tds := make([]C.struct_llama_token_data, len(tokens))
 	for i, token := range tokens {
 		tds[i] = C.struct_llama_token_data{
@@ -741,5 +755,13 @@ func (g *Grammar) Apply(tokens []TokenData) {
 }
 
 func (g *Grammar) Accept(token int32) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	// Check if grammar was freed
+	if g.c == nil {
+		return
+	}
+
 	C.grammar_accept(g.c, C.llama_token(token))
 }
