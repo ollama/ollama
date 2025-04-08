@@ -922,14 +922,19 @@ func (s *Server) ListHandler(c *gin.Context) {
 				continue
 			}
 		}
-
+		cap, err := GetModel(n.String())
+		if err != nil {
+			slog.Warn("bad model datails", "name", n, "error", err)
+			continue
+		}
 		// tag should never be masked
 		models = append(models, api.ListModelResponse{
-			Model:      n.DisplayShortest(),
-			Name:       n.DisplayShortest(),
-			Size:       m.Size(),
-			Digest:     m.digest,
-			ModifiedAt: m.fi.ModTime(),
+			Model:        n.DisplayShortest(),
+			Name:         n.DisplayShortest(),
+			Size:         m.Size(),
+			Digest:       m.digest,
+			ModifiedAt:   m.fi.ModTime(),
+			Capabilities: cap.Capabilities(),
 			Details: api.ModelDetails{
 				Format:            cf.ModelFormat,
 				Family:            cf.ModelFamily,
