@@ -220,7 +220,6 @@ type ToolFunction struct {
 		Properties map[string]struct {
       Type        PropertyType `json:"type"`
 			Items       any      `json:"items,omitempty"`
-			Description string   `json:"description"`
 			Description string       `json:"description"`
 			Enum        []any        `json:"enum,omitempty"`
 		} `json:"properties"`
