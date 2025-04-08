@@ -675,25 +675,25 @@ func SchemaToGrammar(schema []byte) []byte {
 }
 
 type TokenData struct {
-	Id    int32
+	ID    int32
 	Logit float32
 }
 
-type OllamaVocab struct {
-	c *C.struct_ollama_vocab
+type Grammar struct {
+	c *C.struct_llama_grammar
 }
 
-func NewOllamaVocab(grammar string, tokens []uint32, pieces []string, eogTokens []uint32) *OllamaVocab {
+func NewGrammar(grammar string, vocabIds []uint32, vocabValues []string, eogTokens []uint32) *Grammar {
 	cGrammar := C.CString(grammar)
 	defer C.free(unsafe.Pointer(cGrammar))
 
-	cTokens := make([]C.uint32_t, len(tokens))
-	for i, token := range tokens {
+	cTokens := make([]C.uint32_t, len(vocabIds))
+	for i, token := range vocabIds {
 		cTokens[i] = C.uint32_t(token)
 	}
 
-	cPieces := make([]*C.char, len(pieces))
-	for i, piece := range pieces {
+	cPieces := make([]*C.char, len(vocabValues))
+	for i, piece := range vocabValues {
 		cPieces[i] = C.CString(piece)
 		defer C.free(unsafe.Pointer(cPieces[i]))
 	}
@@ -703,34 +703,23 @@ func NewOllamaVocab(grammar string, tokens []uint32, pieces []string, eogTokens 
 		cEogTokens[i] = C.uint32_t(token)
 	}
 
-	return &OllamaVocab{c: C.ollama_vocab_init(cGrammar, (*C.uint32_t)(unsafe.Pointer(&cTokens[0])), C.size_t(len(tokens)), (**C.char)(unsafe.Pointer(&cPieces[0])), (*C.uint32_t)(unsafe.Pointer(&cEogTokens[0])), C.size_t(len(eogTokens)))}
-}
-
-type GrammarSampling struct {
-	c *C.struct_llama_grammar
-}
-
-func LoadGrammarSampling(grammar string, vocab *OllamaVocab) *GrammarSampling {
-	cGrammar := C.CString(grammar)
-	defer C.free(unsafe.Pointer(cGrammar))
-
-	g := C.grammar_init(cGrammar, vocab.c)
+	g := C.grammar_init(cGrammar, (*C.uint32_t)(unsafe.Pointer(&cTokens[0])), C.size_t(len(cTokens)), (**C.char)(unsafe.Pointer(&cPieces[0])), (*C.uint32_t)(unsafe.Pointer(&cEogTokens[0])), C.size_t(len(cEogTokens)))
 	if g == nil {
 		return nil
 	}
 
-	return &GrammarSampling{c: g}
+	return &Grammar{c: g}
 }
 
-func (g *GrammarSampling) Free() {
+func (g *Grammar) Free() {
 	C.grammar_free(g.c)
 }
 
-func (g *GrammarSampling) Apply(tokens []TokenData) {
+func (g *Grammar) Apply(tokens []TokenData) {
 	tds := make([]C.struct_llama_token_data, len(tokens))
 	for i, token := range tokens {
 		tds[i] = C.struct_llama_token_data{
-			id:    C.int32_t(token.Id),
+			id:    C.int32_t(token.ID),
 			logit: C.float(token.Logit),
 			p:     C.float(0.0),
 		}
@@ -751,6 +740,6 @@ func (g *GrammarSampling) Apply(tokens []TokenData) {
 	}
 }
 
-func (g *GrammarSampling) Accept(token int32) {
+func (g *Grammar) Accept(token int32) {
 	C.grammar_accept(g.c, C.llama_token(token))
 }

@@ -87,26 +87,16 @@ struct llama_vocab * llama_load_vocab_from_file(const char * fname) {
 void llama_free_vocab(struct llama_vocab * vocab) {
     delete vocab;
 }
-struct ollama_vocab *ollama_vocab_init(char* grammar, uint32_t* tokens, size_t n_tokens, const char** pieces, uint32_t* eog_tokens, size_t n_eog_tokens) {
-    if (grammar == nullptr) {
-        LLAMA_LOG_ERROR("%s: null grammar input\n", __func__);
-        return nullptr;
-    }
-    ollama_vocab *vocab = new ollama_vocab();
-
-    vocab->set_eog_tokens(eog_tokens, n_eog_tokens);
-    vocab->add_token_pieces(tokens, pieces, n_tokens);
-
-    return vocab;
-}
-
-
-struct llama_grammar *grammar_init(char* grammar, ollama_vocab *vocab) {
+struct llama_grammar *grammar_init(char* grammar, uint32_t* tokens, size_t n_tokens, const char** pieces, uint32_t* eog_tokens, size_t n_eog_tokens) {
     try {
-        if (vocab == nullptr) {
-            LLAMA_LOG_ERROR("%s: failed to allocate vocab object\n", __func__);
+        if (grammar == nullptr) {
+            LLAMA_LOG_ERROR("%s: null grammar input\n", __func__);
             return nullptr;
         }
+
+        ollama_vocab *vocab = new ollama_vocab();
+        vocab->set_eog_tokens(eog_tokens, n_eog_tokens);
+        vocab->add_token_pieces(tokens, pieces, n_tokens);
         
         struct llama_grammar *g = llama_grammar_init_impl(nullptr, vocab, grammar, "root", false, nullptr, 0, nullptr, 0);
         if (g == nullptr) {

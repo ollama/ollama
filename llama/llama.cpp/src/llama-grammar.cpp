@@ -1229,7 +1229,7 @@ void llama_grammar_accept_str(struct llama_grammar & grammar, const std::string 
 }
 
 
-std::string ollama_vocab::token_to_piece(uint32_t token) const {
+std::string ollama_vocab::token_to_piece(const uint32_t token) const {
     try {
         return token_to_piece_map.at(token);
     } catch (const std::out_of_range&) {
@@ -1247,8 +1247,8 @@ bool ollama_vocab::is_eog(uint32_t token) const {
     return special_eog_ids.count(token) > 0;
 }
 
-void ollama_vocab::set_eog_tokens(uint32_t *tokens, size_t n_tokens) {
-    for (size_t i = 0; i < n_tokens; i++) {
+void ollama_vocab::set_eog_tokens(const std::vector<uint32_t> &tokens) {
+    for (size_t i = 0; i < tokens.size(); i++) {
         special_eog_ids.insert(tokens[i]);
     }
 }
