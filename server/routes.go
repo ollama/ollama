@@ -72,7 +72,7 @@ var (
 	errBadTemplate = errors.New("template error")
 )
 
-func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options, error) {
+func modelOptions(model *Model, requestOpts map[string]any) (api.Options, error) {
 	opts := api.DefaultOptions()
 	if err := opts.FromMap(model.Options); err != nil {
 		return api.Options{}, err
@@ -87,7 +87,7 @@ func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options
 
 // scheduleRunner schedules a runner after validating inputs such as capabilities and model options.
 // It returns the allocated runner, model instance, and consolidated options if successful and error otherwise.
-func (s *Server) scheduleRunner(ctx context.Context, name string, caps []Capability, requestOpts map[string]any, keepAlive *api.Duration) (llm.LlamaServer, *Model, *api.Options, error) {
+func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration) (llm.LlamaServer, *Model, *api.Options, error) {
 	if name == "" {
 		return nil, nil, nil, fmt.Errorf("model %w", errRequired)
 	}
@@ -144,7 +144,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	model, err := GetModel(name.String())
+	m, err := GetModel(name.String())
 	if err != nil {
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
@@ -159,7 +159,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	// expire the runner
 	if req.Prompt == "" && req.KeepAlive != nil && int(req.KeepAlive.Seconds()) == 0 {
-		s.sched.expireRunner(model)
+		s.sched.expireRunner(m)
 
 		c.JSON(http.StatusOK, api.GenerateResponse{
 			Model:      req.Model,
@@ -176,9 +176,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	caps := []Capability{CapabilityCompletion}
+	caps := []model.Capability{model.CapabilityCompletion}
 	if req.Suffix != "" {
-		caps = append(caps, CapabilityInsert)
+		caps = append(caps, model.CapabilityInsert)
 	}
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)
@@ -203,7 +203,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	isMllama := checkMllamaModelFamily(model)
+	isMllama := checkMllamaModelFamily(m)
 	if isMllama && len(req.Images) > 1 {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "this model only supports one image: more than one image sent"})
 		return
@@ -211,7 +211,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	images := make([]llm.ImageData, len(req.Images))
 	for i := range req.Images {
-		if isMllama && len(model.ProjectorPaths) > 0 {
+		if isMllama && len(m.ProjectorPaths) > 0 {
 			data, opts, err := mllama.Preprocess(bytes.NewReader(req.Images[i]))
 			if err != nil {
 				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error processing image"})
@@ -308,11 +308,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			Options: opts,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
-				Model:      req.Model,
-				CreatedAt:  time.Now().UTC(),
-				Response:   cr.Content,
-				Done:       cr.Done,
-				DoneReason: cr.DoneReason,
+				Model:     req.Model,
+				CreatedAt: time.Now().UTC(),
+				Response:  cr.Content,
+				Done:      cr.Done,
 				Metrics: api.Metrics{
 					PromptEvalCount:    cr.PromptEvalCount,
 					PromptEvalDuration: cr.PromptEvalDuration,
@@ -326,6 +325,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 
 			if cr.Done {
+				res.DoneReason = cr.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 
@@ -422,7 +422,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), []Capability{}, req.Options, req.KeepAlive)
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -530,7 +530,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []Capability{}, req.Options, req.KeepAlive)
+	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -813,19 +813,20 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	}
 
 	resp := &api.ShowResponse{
-		License:    strings.Join(m.License, "\n"),
-		System:     m.System,
-		Template:   m.Template.String(),
-		Details:    modelDetails,
-		Messages:   msgs,
-		ModifiedAt: manifest.fi.ModTime(),
+		License:      strings.Join(m.License, "\n"),
+		System:       m.System,
+		Template:     m.Template.String(),
+		Details:      modelDetails,
+		Messages:     msgs,
+		Capabilities: m.Capabilities(),
+		ModifiedAt:   manifest.fi.ModTime(),
 	}
 
 	var params []string
 	cs := 30
 	for k, v := range m.Options {
 		switch val := v.(type) {
-		case []interface{}:
+		case []any:
 			for _, nv := range val {
 				params = append(params, fmt.Sprintf("%-*s %#v", cs, k, nv))
 			}
@@ -1335,7 +1336,7 @@ func Serve(ln net.Listener) error {
 	return nil
 }
 
-func waitForStream(c *gin.Context, ch chan interface{}) {
+func waitForStream(c *gin.Context, ch chan any) {
 	c.Header("Content-Type", "application/json")
 	for resp := range ch {
 		switch r := resp.(type) {
@@ -1468,9 +1469,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	caps := []Capability{CapabilityCompletion}
+	caps := []model.Capability{model.CapabilityCompletion}
 	if len(req.Tools) > 0 {
-		caps = append(caps, CapabilityTools)
+		caps = append(caps, model.CapabilityTools)
 	}
 
 	name := model.ParseName(req.Model)
@@ -1532,11 +1533,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			Options: opts,
 		}, func(r llm.CompletionResponse) {
 			res := api.ChatResponse{
-				Model:      req.Model,
-				CreatedAt:  time.Now().UTC(),
-				Message:    api.Message{Role: "assistant", Content: r.Content},
-				Done:       r.Done,
-				DoneReason: r.DoneReason,
+				Model:     req.Model,
+				CreatedAt: time.Now().UTC(),
+				Message:   api.Message{Role: "assistant", Content: r.Content},
+				Done:      r.Done,
 				Metrics: api.Metrics{
 					PromptEvalCount:    r.PromptEvalCount,
 					PromptEvalDuration: r.PromptEvalDuration,
@@ -1546,6 +1546,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 
 			if r.Done {
+				res.DoneReason = r.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}

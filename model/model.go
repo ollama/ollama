@@ -16,7 +16,8 @@ import (
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
 
-	fs "github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs"
+	fsggml "github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	_ "github.com/ollama/ollama/ml/backend"
@@ -83,10 +84,10 @@ func (m *Base) Config() config {
 	return m.config
 }
 
-var models = make(map[string]func(ml.Config) (Model, error))
+var models = make(map[string]func(fs.Config) (Model, error))
 
 // Register registers a model constructor for the given architecture
-func Register(name string, f func(ml.Config) (Model, error)) {
+func Register(name string, f func(fs.Config) (Model, error)) {
 	if _, ok := models[name]; ok {
 		panic("model: model already registered")
 	}
@@ -131,14 +132,14 @@ func NewTextProcessor(s string) (TextProcessor, error) {
 		return nil, err
 	}
 	defer r.Close()
-	meta, _, err := fs.Decode(r, -1)
+	meta, _, err := fsggml.Decode(r, -1)
 	if err != nil {
 		return nil, err
 	}
 	return getTextProcessor(meta.KV())
 }
 
-func getTextProcessor(kv fs.KV) (TextProcessor, error) {
+func getTextProcessor(kv fsggml.KV) (TextProcessor, error) {
 	arch := kv.Architecture()
 	f, ok := models[arch]
 	if !ok {
@@ -298,7 +299,7 @@ func Forward(ctx ml.Context, m Model, inputs []int32, batch input.Batch) (ml.Ten
 
 	cache := m.Config().Cache
 	if cache != nil {
-		err := cache.StartForward(ctx, batch)
+		err := cache.StartForward(ctx, batch, false)
 		if err != nil {
 			return nil, err
 		}

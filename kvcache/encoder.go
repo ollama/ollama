@@ -27,6 +27,11 @@ type EncoderCache struct {
 	// anything will be stored)
 	curPos int32
 
+	// curReserve indicates that this forward pass is only for
+	// memory reservation and we should not update our metadata
+	// based on it.
+	curReserve bool
+
 	// ** cache metadata **
 
 	// was something stored in the cache?
@@ -83,11 +88,13 @@ func (c *EncoderCache) Close() {
 	}
 }
 
-func (c *EncoderCache) StartForward(ctx ml.Context, batch input.Batch) error {
+func (c *EncoderCache) StartForward(ctx ml.Context, batch input.Batch, reserve bool) error {
 	// We work with the most recent image
 	if len(batch.Multimodal) > 0 {
 		c.curPos = batch.Positions[batch.Multimodal[len(batch.Multimodal)-1].Index]
 	}
+
+	c.curReserve = reserve
 
 	return nil
 }
@@ -105,8 +112,10 @@ func (c *EncoderCache) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor) {
 }
 
 func (c *EncoderCache) Put(ctx ml.Context, key, value ml.Tensor) {
-	c.encoderPos = c.curPos
-	c.encoderCached = true
+	if !c.curReserve {
+		c.encoderPos = c.curPos
+		c.encoderCached = true
+	}
 
 	if c.config.PermutedV {
 		value = value.Permute(ctx, 1, 2, 0, 3)
@@ -132,6 +141,10 @@ func (c *EncoderCache) Put(ctx ml.Context, key, value ml.Tensor) {
 
 func (c *EncoderCache) CopyPrefix(srcSeq, dstSeq int, len int32) {
 	panic("encoder cache does not support multiple sequences")
+}
+
+func (c *EncoderCache) CanResume(seq int, pos int32) bool {
+	return true
 }
 
 func (c *EncoderCache) Remove(seq int, beginIndex, endIndex int32) error {

@@ -58,7 +58,7 @@ func TestGenerateChat(t *testing.T) {
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
 			Done:               true,
-			DoneReason:         "stop",
+			DoneReason:         llm.DoneReasonStop,
 			PromptEvalCount:    1,
 			PromptEvalDuration: 1,
 			EvalCount:          1,
@@ -372,25 +372,25 @@ func TestGenerateChat(t *testing.T) {
 						Type       string   `json:"type"`
 						Required   []string `json:"required"`
 						Properties map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Description string           `json:"description"`
+							Enum        []any            `json:"enum,omitempty"`
 						} `json:"properties"`
 					}{
 						Type:     "object",
 						Required: []string{"location"},
 						Properties: map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Description string           `json:"description"`
+							Enum        []any            `json:"enum,omitempty"`
 						}{
 							"location": {
-								Type:        "string",
+								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
 							},
 							"unit": {
-								Type: "string",
-								Enum: []string{"celsius", "fahrenheit"},
+								Type: api.PropertyType{"string"},
+								Enum: []any{"celsius", "fahrenheit"},
 							},
 						},
 					},
@@ -401,7 +401,7 @@ func TestGenerateChat(t *testing.T) {
 		mock.CompletionResponse = llm.CompletionResponse{
 			Content:            `{"name":"get_weather","arguments":{"location":"Seattle, WA","unit":"celsius"}}`,
 			Done:               true,
-			DoneReason:         "done",
+			DoneReason:         llm.DoneReasonStop,
 			PromptEvalCount:    1,
 			PromptEvalDuration: 1,
 			EvalCount:          1,
@@ -469,25 +469,25 @@ func TestGenerateChat(t *testing.T) {
 						Type       string   `json:"type"`
 						Required   []string `json:"required"`
 						Properties map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Description string           `json:"description"`
+							Enum        []any            `json:"enum,omitempty"`
 						} `json:"properties"`
 					}{
 						Type:     "object",
 						Required: []string{"location"},
 						Properties: map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Description string           `json:"description"`
+							Enum        []any            `json:"enum,omitempty"`
 						}{
 							"location": {
-								Type:        "string",
+								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
 							},
 							"unit": {
-								Type: "string",
-								Enum: []string{"celsius", "fahrenheit"},
+								Type: api.PropertyType{"string"},
+								Enum: []any{"celsius", "fahrenheit"},
 							},
 						},
 					},
@@ -519,7 +519,7 @@ func TestGenerateChat(t *testing.T) {
 				{
 					Content:            `, WA","unit":"celsius"}}`,
 					Done:               true,
-					DoneReason:         "tool_call",
+					DoneReason:         llm.DoneReasonStop,
 					PromptEvalCount:    3,
 					PromptEvalDuration: 1,
 				},
@@ -594,7 +594,7 @@ func TestGenerate(t *testing.T) {
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
 			Done:               true,
-			DoneReason:         "stop",
+			DoneReason:         llm.DoneReasonStop,
 			PromptEvalCount:    1,
 			PromptEvalDuration: 1,
 			EvalCount:          1,

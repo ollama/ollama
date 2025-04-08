@@ -92,7 +92,7 @@ func BenchmarkColdStart(b *testing.B) {
 				req := &api.GenerateRequest{
 					Model:   m,
 					Prompt:  tt.prompt,
-					Options: map[string]interface{}{"num_predict": tt.maxTokens, "temperature": 0.1},
+					Options: map[string]any{"num_predict": tt.maxTokens, "temperature": 0.1},
 				}
 
 				runGenerateBenchmark(b, ctx, client, req)
@@ -155,7 +155,7 @@ func warmup(client *api.Client, model string, prompt string, b *testing.B) {
 			&api.GenerateRequest{
 				Model:   model,
 				Prompt:  prompt,
-				Options: map[string]interface{}{"num_predict": 50, "temperature": 0.1},
+				Options: map[string]any{"num_predict": 50, "temperature": 0.1},
 			},
 			func(api.GenerateResponse) error { return nil },
 		)

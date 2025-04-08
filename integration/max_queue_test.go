@@ -32,7 +32,7 @@ func TestMaxQueue(t *testing.T) {
 	req := api.GenerateRequest{
 		Model:  "orca-mini",
 		Prompt: "write a long historical fiction story about christopher columbus.  use at least 10 facts from his actual journey",
-		Options: map[string]interface{}{
+		Options: map[string]any{
 			"seed":        42,
 			"temperature": 0.0,
 		},
@@ -52,8 +52,8 @@ func TestMaxQueue(t *testing.T) {
 	embedCtx := ctx
 
 	var genwg sync.WaitGroup
+	genwg.Add(1)
 	go func() {
-		genwg.Add(1)
 		defer genwg.Done()
 		slog.Info("Starting generate request")
 		DoGenerate(ctx, t, client, req, resp, 45*time.Second, 5*time.Second)
@@ -71,8 +71,8 @@ func TestMaxQueue(t *testing.T) {
 	counterMu := sync.Mutex{}
 	var embedwg sync.WaitGroup
 	for i := 0; i < threadCount; i++ {
+		embedwg.Add(1)
 		go func(i int) {
-			embedwg.Add(1)
 			defer embedwg.Done()
 			slog.Info("embed started", "id", i)
 			embedReq := api.EmbeddingRequest{

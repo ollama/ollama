@@ -25,7 +25,7 @@ func TestMultiModelConcurrency(t *testing.T) {
 				Prompt:    "why is the ocean blue?",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]interface{}{
+				Options: map[string]any{
 					"seed":        42,
 					"temperature": 0.0,
 				},
@@ -34,7 +34,7 @@ func TestMultiModelConcurrency(t *testing.T) {
 				Prompt:    "what is the origin of the us thanksgiving holiday?",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]interface{}{
+				Options: map[string]any{
 					"seed":        42,
 					"temperature": 0.0,
 				},

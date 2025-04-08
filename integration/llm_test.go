@@ -20,7 +20,7 @@ var (
 			Model:  "orca-mini",
 			Prompt: "why is the ocean blue?",
 			Stream: &stream,
-			Options: map[string]interface{}{
+			Options: map[string]any{
 				"seed":        42,
 				"temperature": 0.0,
 			},
@@ -28,7 +28,7 @@ var (
 			Model:  "orca-mini",
 			Prompt: "what is the origin of the us thanksgiving holiday?",
 			Stream: &stream,
-			Options: map[string]interface{}{
+			Options: map[string]any{
 				"seed":        42,
 				"temperature": 0.0,
 			},

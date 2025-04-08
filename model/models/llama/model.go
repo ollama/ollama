@@ -5,6 +5,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
@@ -30,7 +31,7 @@ type Model struct {
 	*Options
 }
 
-func New(c ml.Config) (model.Model, error) {
+func New(c fs.Config) (model.Model, error) {
 	if !strings.EqualFold(c.String("tokenizer.ggml.model"), "gpt2") {
 		return nil, fmt.Errorf("tokenizer %s not yet supported", c.String("tokenizer.ggml.model"))
 	}

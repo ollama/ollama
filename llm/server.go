@@ -675,9 +675,32 @@ type CompletionRequest struct {
 	Grammar string // set before sending the request to the subprocess
 }
 
+// DoneReason represents the reason why a completion response is done
+type DoneReason int
+
+const (
+	// DoneReasonStop indicates the completion stopped naturally
+	DoneReasonStop DoneReason = iota
+	// DoneReasonLength indicates the completion stopped due to length limits
+	DoneReasonLength
+	// DoneReasonConnectionClosed indicates the completion stopped due to the connection being closed
+	DoneReasonConnectionClosed
+)
+
+func (d DoneReason) String() string {
+	switch d {
+	case DoneReasonLength:
+		return "length"
+	case DoneReasonStop:
+		return "stop"
+	default:
+		return "" // closed
+	}
+}
+
 type CompletionResponse struct {
 	Content            string        `json:"content"`
-	DoneReason         string        `json:"done_reason"`
+	DoneReason         DoneReason    `json:"done_reason"`
 	Done               bool          `json:"done"`
 	PromptEvalCount    int           `json:"prompt_eval_count"`
 	PromptEvalDuration time.Duration `json:"prompt_eval_duration"`
@@ -786,7 +809,6 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 				continue
 			}
 
-			// slog.Debug("got line", "line", string(line))
 			evt, ok := bytes.CutPrefix(line, []byte("data: "))
 			if !ok {
 				evt = line

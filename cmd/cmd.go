@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -267,7 +268,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	opts := runOptions{
 		Model:    args[0],
 		WordWrap: os.Getenv("TERM") == "xterm-256color",
-		Options:  map[string]interface{}{},
+		Options:  map[string]any{},
 	}
 
 	format, err := cmd.Flags().GetString("format")
@@ -339,6 +340,11 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision)
+
+	// TODO: remove the projector info and vision info checks below,
+	// these are left in for backwards compatibility with older servers
+	// that don't have the capabilities field in the model info
 	if len(info.ProjectorInfo) != 0 {
 		opts.MultiModal = true
 	}
@@ -669,6 +675,15 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 		return
 	})
 
+	if len(resp.Capabilities) > 0 {
+		tableRender("Capabilities", func() (rows [][]string) {
+			for _, capability := range resp.Capabilities {
+				rows = append(rows, []string{"", capability.String()})
+			}
+			return
+		})
+	}
+
 	if resp.ProjectorInfo != nil {
 		tableRender("Projector", func() (rows [][]string) {
 			arch := resp.ProjectorInfo["general.architecture"].(string)
@@ -837,7 +852,7 @@ type runOptions struct {
 	Format      string
 	System      string
 	Images      []api.ImageData
-	Options     map[string]interface{}
+	Options     map[string]any
 	MultiModal  bool
 	KeepAlive   *api.Duration
 }
@@ -1366,7 +1381,6 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_NOPRUNE"],
 				envVars["OLLAMA_ORIGINS"],
 				envVars["OLLAMA_SCHED_SPREAD"],
-				envVars["OLLAMA_TMPDIR"],
 				envVars["OLLAMA_FLASH_ATTENTION"],
 				envVars["OLLAMA_KV_CACHE_TYPE"],
 				envVars["OLLAMA_LLM_LIBRARY"],
