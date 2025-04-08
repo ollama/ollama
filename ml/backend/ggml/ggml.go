@@ -447,6 +447,8 @@ func (b *Backend) NewContextSize(n int) ml.Context {
 		panic(fmt.Errorf("requested number of graph nodes (%v) for new context exceeds maximum (%v)", n, b.maxGraphNodes))
 	}
 
+	var allocatedBuffers []*C.struct_ggml_backend_buffer
+
 	return &Context{
 		b:             b,
 		maxGraphNodes: n,
@@ -454,6 +456,7 @@ func (b *Backend) NewContextSize(n int) ml.Context {
 			mem_size: C.size_t(n)*C.ggml_tensor_overhead() + C.ggml_graph_overhead_custom(C.size_t(n), false),
 			no_alloc: true,
 		}),
+		allocatedBuffers: &allocatedBuffers,
 	}
 }
 
@@ -474,6 +477,10 @@ type Context struct {
 	// buft is the buffer type used for new tensors
 	buft *C.struct_ggml_backend_buffer_type
 
+	// allocatedBuffers are buffers for tensors that we have allocated in this context
+	// so that we can free them when we close the context
+	allocatedBuffers *[]*C.struct_ggml_backend_buffer
+
 	// maxGraphNodes is the maximum allowed number of graph nodes in this context
 	maxGraphNodes int
 }
@@ -481,10 +488,11 @@ type Context struct {
 func (c *Context) Input() ml.Context {
 	if c.b.input != nil {
 		return &Context{
-			b:             c.b,
-			ctx:           c.ctx,
-			buft:          c.b.input,
-			maxGraphNodes: c.maxGraphNodes,
+			b:                c.b,
+			ctx:              c.ctx,
+			buft:             c.b.input,
+			allocatedBuffers: c.allocatedBuffers,
+			maxGraphNodes:    c.maxGraphNodes,
 		}
 	}
 
@@ -494,10 +502,11 @@ func (c *Context) Input() ml.Context {
 func (c *Context) Layer(i int) ml.Context {
 	if buft, ok := c.b.layers[i]; ok {
 		return &Context{
-			b:             c.b,
-			ctx:           c.ctx,
-			buft:          buft,
-			maxGraphNodes: c.maxGraphNodes,
+			b:                c.b,
+			ctx:              c.ctx,
+			buft:             buft,
+			allocatedBuffers: c.allocatedBuffers,
+			maxGraphNodes:    c.maxGraphNodes,
 		}
 	}
 
@@ -610,6 +619,7 @@ func (c *Context) newTensor(dtype ml.DType, shape []int) (ml.Tensor, error) {
 	if b == nil {
 		return nil, fmt.Errorf("unable to allocate %v from device %v for new tensor", format.HumanBytes2(uint64(size)), C.GoString(C.ggml_backend_buft_name(c.buft)))
 	}
+	*c.allocatedBuffers = append(*c.allocatedBuffers, b)
 
 	C.ggml_backend_tensor_alloc(b, t, C.ggml_backend_buffer_get_base(b))
 	return &Tensor{b: c.b, t: t}, nil
@@ -688,6 +698,11 @@ func (c *Context) FromIntSlice(s []int32, shape ...int) (ml.Tensor, error) {
 
 func (c *Context) Close() {
 	if c != nil {
+		for _, b := range *c.allocatedBuffers {
+			C.ggml_backend_buffer_free(b)
+		}
+		*c.allocatedBuffers = nil
+
 		C.ggml_free(c.ctx)
 	}
 }
