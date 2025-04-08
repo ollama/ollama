@@ -15,7 +15,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -23,7 +22,6 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/containerd/console"
@@ -332,6 +330,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 			if err := PullHandler(cmd, []string{name}); err != nil {
 				return nil, err
 			}
+
 			return client.Show(cmd.Context(), &api.ShowRequest{Name: name})
 		}
 		return info, err
@@ -922,17 +921,6 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 	spinner := progress.NewSpinner("")
 	p.Add("", spinner)
 
-	cancelCtx, cancel := context.WithCancel(cmd.Context())
-	defer cancel()
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT)
-
-	go func() {
-		<-sigChan
-		cancel()
-	}()
-
 	var state *displayResponseState = &displayResponseState{}
 	var latest api.ChatResponse
 	var fullResponse strings.Builder
@@ -967,10 +955,7 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		req.KeepAlive = opts.KeepAlive
 	}
 
-	if err := client.Chat(cancelCtx, req, fn); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return nil, nil
-		}
+	if err := client.Chat(cmd.Context(), req, fn); err != nil {
 		return nil, err
 	}
 
@@ -1010,17 +995,6 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		generateContext = []int{}
 	}
 
-	ctx, cancel := context.WithCancel(cmd.Context())
-	defer cancel()
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT)
-
-	go func() {
-		<-sigChan
-		cancel()
-	}()
-
 	var state *displayResponseState = &displayResponseState{}
 
 	fn := func(response api.GenerateResponse) error {
@@ -1056,10 +1030,7 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		KeepAlive: opts.KeepAlive,
 	}
 
-	if err := client.Generate(ctx, &request, fn); err != nil {
-		if errors.Is(err, context.Canceled) {
-			return nil
-		}
+	if err := client.Generate(cmd.Context(), &request, fn); err != nil {
 		return err
 	}
 
@@ -1081,8 +1052,7 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		latest.Summary()
 	}
 
-	ctx = context.WithValue(cmd.Context(), generateContextKey("context"), latest.Context)
-	cmd.SetContext(ctx)
+	cmd.SetContext(context.WithValue(cmd.Context(), generateContextKey("context"), latest.Context))
 
 	return nil
 }
