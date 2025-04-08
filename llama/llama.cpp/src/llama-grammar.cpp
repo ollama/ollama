@@ -1229,7 +1229,7 @@ void llama_grammar_accept_str(struct llama_grammar & grammar, const std::string 
 }
 
 
-std::string ollama_vocab::token_to_piece(const uint32_t token) const {
+const std::string & ollama_vocab::token_to_piece(const uint32_t token) const {
     try {
         return token_to_piece_map.at(token);
     } catch (const std::out_of_range&) {
@@ -1237,18 +1237,18 @@ std::string ollama_vocab::token_to_piece(const uint32_t token) const {
     }
 }
 
-void ollama_vocab::add_token_pieces(uint32_t *tokens, const char **pieces, size_t n_tokens) {
+void ollama_vocab::add_token_pieces(const uint32_t* tokens, size_t n_tokens, const char** pieces) {
     for (size_t i = 0; i < n_tokens; i++) {
         token_to_piece_map[tokens[i]] = pieces[i];
     }
 }
 
-bool ollama_vocab::is_eog(uint32_t token) const {
+bool ollama_vocab::is_eog(const uint32_t token) const {
     return special_eog_ids.count(token) > 0;
 }
 
-void ollama_vocab::set_eog_tokens(const std::vector<uint32_t> &tokens) {
-    for (size_t i = 0; i < tokens.size(); i++) {
+void ollama_vocab::set_eog_tokens(const uint32_t* tokens, size_t n_tokens) {
+    for (size_t i = 0; i < n_tokens; i++) {
         special_eog_ids.insert(tokens[i]);
     }
 }

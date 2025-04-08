@@ -96,7 +96,7 @@ struct llama_grammar *grammar_init(char* grammar, uint32_t* tokens, size_t n_tok
 
         ollama_vocab *vocab = new ollama_vocab();
         vocab->set_eog_tokens(eog_tokens, n_eog_tokens);
-        vocab->add_token_pieces(tokens, pieces, n_tokens);
+        vocab->add_token_pieces(tokens, n_tokens, pieces);
         
         struct llama_grammar *g = llama_grammar_init_impl(nullptr, vocab, grammar, "root", false, nullptr, 0, nullptr, 0);
         if (g == nullptr) {
@@ -108,7 +108,6 @@ struct llama_grammar *grammar_init(char* grammar, uint32_t* tokens, size_t n_tok
 
     } catch (const std::exception& e) {
         LLAMA_LOG_ERROR("%s: exception during initialization: %s\n", __func__, e.what());
-        delete vocab;
         return nullptr;
     }
 }
