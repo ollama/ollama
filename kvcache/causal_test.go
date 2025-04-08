@@ -508,11 +508,19 @@ func (t *testTensor) Mul(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	panic("not implemented")
 }
 
+func (t *testTensor) Div(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
+	panic("not implemented")
+}
+
 func (t *testTensor) Mulmat(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	panic("not implemented")
 }
 
 func (t *testTensor) MulmatFullPrec(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
+	panic("not implemented")
+}
+
+func (t *testTensor) MulmatId(ctx ml.Context, t2, ids ml.Tensor) ml.Tensor {
 	panic("not implemented")
 }
 
@@ -529,6 +537,14 @@ func (t *testTensor) RMSNorm(ctx ml.Context, weight ml.Tensor, eps float32) ml.T
 }
 
 func (t *testTensor) Scale(ctx ml.Context, s float64) ml.Tensor {
+	panic("not implemented")
+}
+
+func (t *testTensor) TopK(ctx ml.Context, k int) ml.Tensor {
+	panic("not implemented")
+}
+
+func (t *testTensor) SumRows(ctx ml.Context) ml.Tensor {
 	panic("not implemented")
 }
 

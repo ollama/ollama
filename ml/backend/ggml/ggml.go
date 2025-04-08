@@ -830,6 +830,13 @@ func (t *Tensor) Mul(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	}
 }
 
+func (t *Tensor) Div(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_div(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
+	}
+}
+
 func (t *Tensor) Mulmat(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -844,6 +851,13 @@ func (t *Tensor) MulmatFullPrec(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: mul,
+	}
+}
+
+func (t *Tensor) MulmatId(ctx ml.Context, t2, ids ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_mul_mat_id(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, ids.(*Tensor).t),
 	}
 }
 
@@ -927,6 +941,20 @@ func (t *Tensor) Scale(ctx ml.Context, s float64) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_scale(ctx.(*Context).ctx, t.t, (C.float)(s)),
+	}
+}
+
+func (t *Tensor) TopK(ctx ml.Context, k int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_top_k(ctx.(*Context).ctx, t.t, (C.int)(k)),
+	}
+}
+
+func (t *Tensor) SumRows(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_sum_rows(ctx.(*Context).ctx, t.t),
 	}
 }
 
