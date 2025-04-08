@@ -26,7 +26,6 @@ When you run Ollama on **Windows**, there are a few different locations. You can
 - `explorer %LOCALAPPDATA%\Ollama` to view logs.  The most recent server logs will be in `server.log` and older logs will be in `server-#.log` 
 - `explorer %LOCALAPPDATA%\Programs\Ollama` to browse the binaries (The installer adds this to your user PATH)
 - `explorer %HOMEPATH%\.ollama` to browse where models and configuration is stored
-- `explorer %TEMP%` where temporary executable files are stored in one or more `ollama*` directories
 
 To enable additional debug logging to help troubleshoot problems, first **Quit the running app from the tray menu** then in a powershell terminal
 
