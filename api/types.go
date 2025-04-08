@@ -406,12 +406,13 @@ type ProcessResponse struct {
 
 // ListModelResponse is a single model description in [ListResponse].
 type ListModelResponse struct {
-	Name       string       `json:"name"`
-	Model      string       `json:"model"`
-	ModifiedAt time.Time    `json:"modified_at"`
-	Size       int64        `json:"size"`
-	Digest     string       `json:"digest"`
-	Details    ModelDetails `json:"details,omitempty"`
+	Name         string             `json:"name"`
+	Model        string             `json:"model"`
+	ModifiedAt   time.Time          `json:"modified_at"`
+	Size         int64              `json:"size"`
+	Digest       string             `json:"digest"`
+	Capabilities []model.Capability `json:"capabilities,omitempty"`
+	Details      ModelDetails       `json:"details,omitempty"`
 }
 
 // ProcessModelResponse is a single model description in [ProcessResponse].
