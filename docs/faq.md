@@ -333,3 +333,25 @@ The currently available K/V cache quantization types are:
 How much the cache quantization impacts the model's response quality will depend on the model and the task.  Models that have a high GQA count (e.g. Qwen2) may see a larger impact on precision from quantization than models with a low GQA count.
 
 You may need to experiment with different quantization types to find the best balance between memory usage and quality.
+
+## Is there an official API for ollama.com/v2/?
+
+Not yet.
+
+We're prioritizing the core Ollama experience 
+over formalizing external integrations.
+
+Our small team needs flexibility 
+to iterate rapidly on fundamentals.
+
+Patches introducing new `/v2` API support 
+will be declined.
+
+We welcome genuine bug fixes, 
+but addressing "compatibility issues" with unofficial registries 
+is not fixing a bug.
+
+We intend to provide an official API eventually.
+Until then, 
+use of ollama with non-ollama endpoints 
+should be considered unstable.
