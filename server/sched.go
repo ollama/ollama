@@ -441,10 +441,9 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoLis
 		estimatedVRAM:   llama.EstimatedVRAM(),
 		estimatedTotal:  llama.EstimatedTotal(),
 		loading:         true,
-		refCount:        1,
 	}
 	runner.numParallel = numParallel
-	runner.refMu.Lock()
+	runner.refMu.Lock() // hold lock until running or aborted
 
 	s.loadedMu.Lock()
 	s.loaded[req.model.ModelPath] = runner
@@ -455,13 +454,13 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoLis
 		defer runner.refMu.Unlock()
 		if err = llama.WaitUntilRunning(req.ctx); err != nil {
 			slog.Error("error loading llama server", "error", err)
-			runner.refCount--
 			req.errCh <- err
 			slog.Debug("triggering expiration for failed load", "model", runner.modelPath)
 			s.expiredCh <- runner
 			return
 		}
 		slog.Debug("finished setting up runner", "model", req.model.ModelPath)
+		runner.refCount++
 		runner.loading = false
 		go func() {
 			<-req.ctx.Done()
@@ -537,10 +536,8 @@ func (s *Scheduler) filterGPUsWithoutLoadingModels(allGpus discover.GpuInfoList)
 
 // TODO consolidate sched_types.go
 type runnerRef struct {
-	refMu sync.Mutex
-	// refCond   sync.Cond // Signaled on transition from 1 -> 0 refCount
+	refMu    sync.Mutex
 	refCount uint // prevent unloading if > 0
-	// unloading bool      // set to true when we are trying to unload the runner
 
 	llama          llm.LlamaServer
 	loading        bool                 // True only during initial load, then false forever
