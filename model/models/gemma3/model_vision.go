@@ -3,6 +3,7 @@ package gemma3
 import (
 	"math"
 
+	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
 )
@@ -111,7 +112,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor) ml.Tensor {
 	return hiddenState
 }
 
-func newVisionModel(c ml.Config) *VisionModel {
+func newVisionModel(c fs.Config) *VisionModel {
 	return &VisionModel{
 		Layers: make([]VisionEncoderLayer, c.Uint("vision.block_count")),
 		VisionModelOptions: &VisionModelOptions{

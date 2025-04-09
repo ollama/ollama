@@ -9,22 +9,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/ollama/ollama/fs"
 )
 
-type Config interface {
-	Architecture() string
-	String(string, ...string) string
-	Uint(string, ...uint32) uint32
-	Float(string, ...float32) float32
-	Bool(string, ...bool) bool
-
-	Strings(string, ...[]string) []string
-	Uints(string, ...[]uint32) []uint32
-	Floats(string, ...[]float32) []float32
-}
-
 type Backend interface {
-	Config() Config
+	Config() fs.Config
 	Get(name string) Tensor
 	NewContext() Context
 	NewContextSize(size int) Context
@@ -107,6 +97,13 @@ type Context interface {
 
 	Forward(...Tensor) Context
 	Compute(...Tensor)
+
+	// Reserve is analogous to Compute but rather than executing a
+	// graph, simply preallocates memory. Typically called with a
+	// worst case graph to ensure all resources are available for
+	// for future inference.
+	Reserve() error
+
 	MaxGraphNodes() int
 	Close()
 
@@ -128,6 +125,7 @@ type Tensor interface {
 	Bytes() []byte
 	Floats() []float32
 
+	Neg(ctx Context) Tensor
 	Add(ctx Context, t2 Tensor) Tensor
 	Mul(ctx Context, t2 Tensor) Tensor
 	Mulmat(ctx Context, t2 Tensor) Tensor
@@ -142,7 +140,10 @@ type Tensor interface {
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
 	RoPE(ctx Context, positionIDs, ropeFactors Tensor, dim, ropeType uint32, base, scale float32) Tensor
+	IM2Col(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
+	Sin(ctx Context) Tensor
+	Cos(ctx Context) Tensor
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context) Tensor
 	SILU(ctx Context) Tensor
@@ -157,9 +158,13 @@ type Tensor interface {
 	Unpad(ctx Context, shape ...int) Tensor
 
 	Stack(ctx Context, dim int, s ...Tensor) Tensor
+
+	// Repeat repeats the tensor n times along dimension dim
+	Repeat(ctx Context, dim, n int) Tensor
 	Concat(ctx Context, t2 Tensor, dim int) Tensor
 	Rows(ctx Context, t2 Tensor) Tensor
 	Copy(ctx Context, t2 Tensor) Tensor
+	Duplicate(ctx Context) Tensor
 }
 
 // ScaledDotProductAttention implements a fused attention
@@ -224,7 +229,7 @@ func Dump(ctx Context, t Tensor, opts ...DumpOptions) string {
 			return strconv.FormatFloat(float64(f), 'f', opts[0].Precision, 32)
 		})
 	case DTypeF16, DTypeQ80, DTypeQ40:
-		f32 := ctx.Empty(DTypeF32, t.Shape()...)
+		f32 := ctx.Input().Empty(DTypeF32, t.Shape()...)
 		f32 = t.Copy(ctx, f32)
 		return dump[[]float32](ctx, f32, opts[0].Items, func(f float32) string {
 			return strconv.FormatFloat(float64(f), 'f', opts[0].Precision, 32)

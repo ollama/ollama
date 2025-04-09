@@ -738,13 +738,8 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         bool quantize = name.rfind("weight") == name.size() - 6; // ends with 'weight'?
 
         // don't quantize vision stuff
-        quantize &= name.find("v.blk.") == std::string::npos;
-
-        quantize &= name.find("mm.mm_input_projection.weight") == std::string::npos;
-        quantize &= name.find("mm.mm_soft_emb_norm.weight") == std::string::npos;
-        quantize &= name.find("v.patch_embedding.weight") == std::string::npos;
-        quantize &= name.find("v.position_embedding.weight") == std::string::npos;
-        quantize &= name.find("v.post_layernorm.weight") == std::string::npos;
+        quantize &= name.find("v.") == std::string::npos;
+        quantize &= name.find("mm.") == std::string::npos;
 
         // quantize only 2D and 3D tensors (experts)
         quantize &= (ggml_n_dims(tensor) >= 2);
