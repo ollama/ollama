@@ -339,6 +339,29 @@ type container interface {
 	Decode(io.ReadSeeker) (model, error)
 }
 
+type Endianness struct {
+	Host	binary.ByteOrder
+	Model binary.ByteOrder
+}
+
+func (e Endianness) ByteswapUint16(data uint16) uint16 {
+	byteswapped := make([]byte, 2)
+	e.Model.PutUint16(byteswapped, data)
+	return e.Host.Uint16(byteswapped)
+}
+
+func (e Endianness) ByteswapUint32(data uint32) uint32 {
+	byteswapped := make([]byte, 4)
+	e.Model.PutUint32(byteswapped, data)
+	return e.Host.Uint32(byteswapped)
+}
+
+func (e Endianness) ByteswapUint64(data uint64) uint64 {
+	byteswapped := make([]byte, 8)
+	e.Model.PutUint64(byteswapped, data)
+	return e.Host.Uint64(byteswapped)
+}
+
 const (
 	// Magic constant for `ggml` files (unversioned).
 	FILE_MAGIC_GGML = 0x67676d6c
@@ -356,7 +379,7 @@ const (
 var ErrUnsupportedFormat = errors.New("unsupported model format")
 
 func DetectContentType(b []byte) string {
-	switch binary.LittleEndian.Uint32(b[:4]) {
+	switch binary.NativeEndian.Uint32(b[:4]) {
 	case FILE_MAGIC_GGML:
 		return "ggml"
 	case FILE_MAGIC_GGMF:
@@ -383,20 +406,77 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
 	}
 
 	rs = bufioutil.NewBufferedSeeker(rs, 32<<10)
+	endianness := &Endianness{}
 
+	/*
+	 * We read in `binary.NativeEndian` to determine the endianness of the host
+	 * machine by comparing the current byte-order read against the known magic bytes.
+	 *
+	 * This eliminates the need to use unsafe pointers to do the same thing.
+	 * See: https://stackoverflow.com/a/51333745
+	 *
+	 * If `magic` is 0x46554747, the host machine is Little Endian.
+	 * If `magic` is 0x47475546, the host machine is Big Endian.
+	 */
 	var magic uint32
-	if err := binary.Read(rs, binary.LittleEndian, &magic); err != nil {
+	if err := binary.Read(rs, binary.NativeEndian, &magic); err != nil {
 		return nil, 0, err
 	}
 
-	var c container
+	var hostEndianness binary.ByteOrder
 	switch magic {
 	case FILE_MAGIC_GGUF_LE:
-		c = &containerGGUF{ByteOrder: binary.LittleEndian, maxArraySize: maxArraySize}
+		hostEndianness = binary.LittleEndian
+		endianness.Host = binary.LittleEndian
 	case FILE_MAGIC_GGUF_BE:
-		c = &containerGGUF{ByteOrder: binary.BigEndian, maxArraySize: maxArraySize}
+		hostEndianness = binary.BigEndian
+		endianness.Host = binary.BigEndian
 	default:
 		return nil, 0, errors.New("invalid file magic")
+	}
+
+	/*
+	 * We read in `binary.LittleEndian` to determine the endianness of the model
+	 * file as most architectures now use Little Endian byte-ordering.
+	 *
+	 * By comparing the last 4 hexadecimal digits of the version against 0x0000,
+	 * we can determine the endianness of the model file.
+	 *
+	 * If `version` is 0x00000003, the model file is Little Endian.
+	 * If `version` is 0x03000000, the model file is Big Endian.
+	 */
+	var version uint32
+	if err := binary.Read(rs, binary.LittleEndian, &version); err != nil {
+		return nil, 0, err
+	}
+
+	var modelEndianness binary.ByteOrder
+	if version & 0xFFFF != 0x0000 {
+		fmt.Println("Model detected as Little Endian")
+		modelEndianness = binary.LittleEndian
+		endianness.Model = binary.LittleEndian
+	} else {
+		fmt.Println("Model detected as Big Endian")
+		modelEndianness = binary.BigEndian
+		endianness.Model = binary.BigEndian
+	}
+	fmt.Printf("Version: %.8X\n", version)
+	fmt.Println("Host and Model Endianness match? ", hostEndianness == modelEndianness)
+	fmt.Println("Host and Model Endianness match? ", endianness.Host == endianness.Model)
+
+	fmt.Println("Version: ", version)
+	if modelEndianness != hostEndianness {
+		// tempVersion := make([]byte, 4)
+		// modelEndianness.PutUint32(tempVersion, version)
+		// version = hostEndianness.Uint32(tempVersion)
+		version = endianness.ByteswapUint32(version)
+	}
+	fmt.Println("Version: ", version)
+
+	c := &containerGGUF{
+		Version: version,
+		ByteOrder: endianness.Model,
+		maxArraySize: maxArraySize,
 	}
 
 	model, err := c.Decode(rs)

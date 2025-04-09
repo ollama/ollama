@@ -45,10 +45,6 @@ func (c *containerGGUF) Name() string {
 }
 
 func (c *containerGGUF) Decode(rs io.ReadSeeker) (model, error) {
-	if err := binary.Read(rs, c.ByteOrder, &c.Version); err != nil {
-		return nil, err
-	}
-
 	var err error
 	switch c.Version {
 	case 1:
