@@ -408,6 +408,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ### Terminal
 
 - [oterm](https://github.com/ggozad/oterm)
+- [Ollama Buddy Emacs client](https://github.com/captainflasmr/ollama-buddy)
 - [Ellama Emacs client](https://github.com/s-kostyaev/ellama)
 - [Emacs client](https://github.com/zweifisch/ollama)
 - [neollama](https://github.com/paradoxical-dev/neollama) UI client for interacting with models from within Neovim
