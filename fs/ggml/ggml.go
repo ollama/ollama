@@ -423,13 +423,10 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
 		return nil, 0, err
 	}
 
-	var hostEndianness binary.ByteOrder
 	switch magic {
 	case FILE_MAGIC_GGUF_LE:
-		hostEndianness = binary.LittleEndian
 		endianness.Host = binary.LittleEndian
 	case FILE_MAGIC_GGUF_BE:
-		hostEndianness = binary.BigEndian
 		endianness.Host = binary.BigEndian
 	default:
 		return nil, 0, errors.New("invalid file magic")
@@ -450,28 +447,16 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
 		return nil, 0, err
 	}
 
-	var modelEndianness binary.ByteOrder
 	if version & 0xFFFF != 0x0000 {
-		fmt.Println("Model detected as Little Endian")
-		modelEndianness = binary.LittleEndian
 		endianness.Model = binary.LittleEndian
 	} else {
-		fmt.Println("Model detected as Big Endian")
-		modelEndianness = binary.BigEndian
 		endianness.Model = binary.BigEndian
 	}
-	fmt.Printf("Version: %.8X\n", version)
-	fmt.Println("Host and Model Endianness match? ", hostEndianness == modelEndianness)
-	fmt.Println("Host and Model Endianness match? ", endianness.Host == endianness.Model)
 
 	fmt.Println("Version: ", version)
-	if modelEndianness != hostEndianness {
-		// tempVersion := make([]byte, 4)
-		// modelEndianness.PutUint32(tempVersion, version)
-		// version = hostEndianness.Uint32(tempVersion)
+	if endianness.Model != endianness.Host {
 		version = endianness.ByteswapUint32(version)
 	}
-	fmt.Println("Version: ", version)
 
 	c := &containerGGUF{
 		Version: version,
