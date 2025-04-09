@@ -1179,7 +1179,7 @@ func versionHandler(cmd *cobra.Command, _ []string) {
 	}
 
 	if serverVersion != "" {
-		fmt.Printf("ollama version is %s\n", serverVersion)
+		fmt.Printf("Ollama version is %s\n", serverVersion)
 	}
 
 	if serverVersion != version.Version {
@@ -1229,6 +1229,7 @@ func NewCLI() *cobra.Command {
 	}
 
 	rootCmd.Flags().BoolP("version", "v", false, "Show version information")
+	rootCmd.Flags().BoolP("help", "h", false, "help for Ollama")
 
 	createCmd := &cobra.Command{
 		Use:     "create MODEL",
@@ -1281,7 +1282,7 @@ func NewCLI() *cobra.Command {
 	serveCmd := &cobra.Command{
 		Use:     "serve",
 		Aliases: []string{"start"},
-		Short:   "Start ollama",
+		Short:   "Start Ollama",
 		Args:    cobra.ExactArgs(0),
 		RunE:    RunServer,
 	}
