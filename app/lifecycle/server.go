@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/ollama/ollama/api"
@@ -78,13 +79,26 @@ func start(ctx context.Context, command string) (*exec.Cmd, error) {
 		}
 	}
 
+	var wg sync.WaitGroup
+	wg.Add(2)
 	go func() {
-		defer logFile.Close()
-		io.Copy(logFile, stdout) //nolint:errcheck
+		defer wg.Done()
+		if _, err := io.Copy(logFile, stdout); err != nil {
+			slog.Warn("failed to copy stdout to log file", "err", err)
+		}
 	}()
+
 	go func() {
-		defer logFile.Close()
-		io.Copy(logFile, stderr) //nolint:errcheck
+		defer wg.Done()
+		if _, err := io.Copy(logFile, stderr); err != nil {
+			slog.Warn("failed to copy stderr to log file", "err", err)
+		}
+	}()
+
+	// Goroutine to wait for log copying to finish and close the log file.
+	go func() {
+		wg.Wait()
+		logFile.Close()
 	}()
 
 	// Re-wire context done behavior to attempt a graceful shutdown of the server
