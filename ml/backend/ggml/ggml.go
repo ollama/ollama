@@ -382,12 +382,6 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 	for _, d := range append(gpus, append(accels, cpus...)...) {
 		b := C.ggml_backend_dev_init(d, nil)
 		bt := C.ggml_backend_get_default_buffer_type(b)
-		if d := C.ggml_backend_get_device(b); C.ggml_backend_dev_type(d) == C.GGML_BACKEND_DEVICE_TYPE_CPU && len(gpus) > 0 {
-			// use the first gpu host buffer type for gpu if possible
-			if hbt := C.ggml_backend_dev_host_buffer_type(gpus[0]); hbt != nil {
-				bt = hbt
-			}
-		}
 
 		deviceBufferTypes[d] = bt
 
