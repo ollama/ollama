@@ -32,6 +32,7 @@ type TextProcessor interface {
 	Encode(s string, addSpecial bool) ([]int32, error)
 	Decode([]int32) (string, error)
 	Is(int32, Special) bool
+	Vocabulary() *Vocabulary
 }
 
 type Vocabulary struct {
