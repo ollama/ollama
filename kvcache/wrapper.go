@@ -41,9 +41,9 @@ func (c *WrapperCache) Close() {
 	}
 }
 
-func (c *WrapperCache) StartForward(ctx ml.Context, batch input.Batch) error {
+func (c *WrapperCache) StartForward(ctx ml.Context, batch input.Batch, reserve bool) error {
 	for i, cache := range c.caches {
-		err := cache.StartForward(ctx, batch)
+		err := cache.StartForward(ctx, batch, reserve)
 		if err != nil {
 			// unwind on error - Remove with endIndex set to math.MaxInt32 does not fail
 			for j := i - 1; j >= 0; j-- {

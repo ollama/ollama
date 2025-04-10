@@ -163,6 +163,7 @@ func (t *ToolCallFunctionArguments) String() string {
 
 type Tool struct {
 	Type     string       `json:"type"`
+	Items    any          `json:"items,omitempty"`
 	Function ToolFunction `json:"function"`
 }
 
@@ -213,11 +214,14 @@ type ToolFunction struct {
 	Description string `json:"description"`
 	Parameters  struct {
 		Type       string   `json:"type"`
+		Defs       any      `json:"$defs,omitempty"`
+		Items      any      `json:"items,omitempty"`
 		Required   []string `json:"required"`
 		Properties map[string]struct {
 			Type        PropertyType `json:"type"`
+			Items       any          `json:"items,omitempty"`
 			Description string       `json:"description"`
-			Enum        []string     `json:"enum,omitempty"`
+			Enum        []any        `json:"enum,omitempty"`
 		} `json:"properties"`
 	} `json:"parameters"`
 }
