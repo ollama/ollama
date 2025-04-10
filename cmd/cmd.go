@@ -1147,6 +1147,8 @@ func initializeKeypair() error {
 		}
 
 		fmt.Printf("Your new public key is: \n\n%s\n", publicKeyBytes)
+	} else if err != nil {
+		return err
 	}
 	return nil
 }
