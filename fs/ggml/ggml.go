@@ -453,7 +453,6 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
 		endianness.Model = binary.BigEndian
 	}
 
-	fmt.Println("Version: ", version)
 	if endianness.Model != endianness.Host {
 		version = endianness.ByteswapUint32(version)
 	}
