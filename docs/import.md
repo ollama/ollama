@@ -130,6 +130,8 @@ writing manifest
 success
 ```
 
+**Note:** When quantizing models, Ollama temporarily writes the model files to your system's temp directory, make sure your `TMP` envvar is set to a drive where you have sufficient space to avoid issues. 
+
 ### Supported Quantizations
 
 - `q4_0`
