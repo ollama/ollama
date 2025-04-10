@@ -168,12 +168,15 @@ type GrammarSampler struct {
 	grammar *llama.Grammar
 }
 
-func NewGrammarSampler(vocab *model.Vocabulary, grammarStr string) (*GrammarSampler, error) {
-	vocabIds := make([]uint32, len(vocab.Values))
-	for i, s := range vocab.Values {
-		vocabIds[i] = uint32(vocab.Encode(s))
+func NewGrammarSampler(model model.TextProcessor, grammarStr string) (*GrammarSampler, error) {
+	vocabIds := make([]uint32, len(model.Vocabulary().Values))
+	pieces := make([]string, len(model.Vocabulary().Values))
+	for i := range model.Vocabulary().Values {
+		pieces[i], _ = model.Decode([]int32{int32(i)})
+		vocabIds[i] = uint32(i)
 	}
-	grammar := llama.NewGrammar(grammarStr, vocabIds, vocab.Values, []uint32{uint32(vocab.EOS), uint32(vocab.EOT)})
+
+	grammar := llama.NewGrammar(grammarStr, vocabIds, pieces, []uint32{uint32(model.Vocabulary().EOS), uint32(model.Vocabulary().EOT)})
 	if grammar == nil {
 		return nil, errors.New("sample: failed to initialize grammar")
 	}

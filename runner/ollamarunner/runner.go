@@ -603,19 +603,12 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	var grammar *sample.GrammarSampler
 	var err error
 	if req.Grammar != "" {
-		var vocab *model.Vocabulary
-		if tp, ok := s.model.(model.TextProcessor); ok {
-			vocab = tp.Vocabulary()
+		grammar, err = sample.NewGrammarSampler(s.model.(model.TextProcessor), req.Grammar)
+		if err != nil {
+			http.Error(w, "failed to load model vocabulary required for format", http.StatusInternalServerError)
+			return
 		}
-
-		if req.Grammar != "" && vocab != nil {
-			grammar, err = sample.NewGrammarSampler(vocab, req.Grammar)
-			if err != nil {
-				http.Error(w, "failed to load model vocabulary required for format", http.StatusInternalServerError)
-				return
-			}
-			defer grammar.Free()
-		}
+		defer grammar.Free()
 	}
 
 	sampler := sample.NewSampler(
