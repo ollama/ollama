@@ -332,6 +332,7 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 			// seeking around within an FD shared between all goroutines.
 			file, err := os.Open(r.Name())
 			if err != nil {
+				slog.Warn("file open error", "file", r.Name(), "error", err)
 				return err
 			}
 			defer file.Close()
@@ -342,6 +343,7 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 			for s < t.Size() {
 				n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Size()-s))])
 				if err != nil {
+					slog.Warn("file read error", "file", r.Name(), "error", err)
 					return err
 				}
 
