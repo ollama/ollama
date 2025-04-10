@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -28,19 +29,20 @@ func readFile(t *testing.T, base, name string) *bytes.Buffer {
 func TestExecuteWithTools(t *testing.T) {
 	p := filepath.Join("testdata", "tools")
 	cases := []struct {
-		model  string
-		output string
-		ok     bool
+		model      string
+		output     string
+		ok         bool
+		wellFormed bool
 	}{
-		{"mistral", `[TOOL_CALLS]  [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`, true},
-		{"mistral", `[TOOL_CALLS]  [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]
+		{"mistral", `[TOOL_CALLS] [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`, true, true},
+		{"mistral", `[TOOL_CALLS] [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]
 
-The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`, true},
-		{"mistral", `[TOOL_CALLS]  [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"To }]`, false},
+The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`, true, false},
+		{"mistral", `[TOOL_CALLS] [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"To }]`, false, false},
 		{"mistral", `I'm not aware of that information. However, I can suggest searching for the weather using the "get_current_weather" function:
 
-		[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`, true},
-		{"mistral", " The weather in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.", false},
+		[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`, true, false},
+		{"mistral", " The weather in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.", false, false},
 		{"command-r-plus", "Action: ```json" + `
 [
     {
@@ -58,16 +60,17 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
         }
     }
 ]
-` + "```", true},
-		{"command-r-plus", " The weather in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.", false},
-		{"firefunction", ` functools[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`, true},
-		{"firefunction", " The weather in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.", false},
+` + "```", true, true},
+		{"command-r-plus", " The weather in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.", false, false},
+		{"firefunction", ` functools[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`, true, true},
+		{"firefunction", " The weather in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.", false, false},
 		{"llama3-groq-tool-use", `<tool_call>
 {"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}
 {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}
-</tool_call>`, true},
-		{"xlam", `{"tool_calls": [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]}`, true},
-		{"nemotron", `<toolcall>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]} </toolcall>`, true},
+</tool_call>`, true, true},
+		{"xlam", `### Response:
+{"tool_calls": [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]}`, true, true},
+		{"nemotron", `<toolcall> {"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]} </toolcall>`, true, true},
 	}
 
 	var tools []api.Tool
@@ -116,6 +119,21 @@ The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`,
 
 				if diff := cmp.Diff(actual.String(), readFile(t, p, fmt.Sprintf("%s.out", tt.model)).String()); diff != "" {
 					t.Errorf("mismatch (-got +want):\n%s", diff)
+				}
+			})
+
+			t.Run("prefix", func(t *testing.T) {
+				m := &Model{Template: tmpl}
+				m.addToolPrefix()
+
+				if tt.wellFormed {
+					if len(m.ToolPrefix) == 0 {
+						t.Fatalf("No tool prefix detected")
+					}
+
+					if !strings.HasPrefix(strings.TrimSpace(tt.output), m.ToolPrefix) {
+						t.Fatalf("incorrect tool prefix: \"%s\", \"%s\"", m.ToolPrefix, tt.output)
+					}
 				}
 			})
 
@@ -173,6 +191,67 @@ func TestParseObjects(t *testing.T) {
 
 			if diff := cmp.Diff(got, tc.want); diff != "" {
 				t.Errorf("mismatch (-got +want):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestAddToolPrefix(t *testing.T) {
+	tests := []struct {
+		name     string
+		template string
+		want     string
+	}{
+		{
+			name:     "prefix_from_previous_text_node",
+			template: `Previous text node{{- range .ToolCalls}}{{.name}}{{end}}`,
+			want:     "Previous text node",
+		},
+		{
+			name:     "prefix_from_range_node",
+			template: `{{- range .ToolCalls}}[TOOL_CALLS]{{.name}}{{end}}`,
+			want:     "[TOOL_CALLS]",
+		},
+		{
+			name:     "prefix_with_extra_whitespace",
+			template: `    Previous text with spaces    {{- range .ToolCalls}}{{.name}}{{end}}`,
+			want:     "Previous text with spaces",
+		},
+		{
+			name:     "prefix_with_newlines",
+			template: "First line\nSecond line\n{{- range .ToolCalls}}{{.name}}{{end}}",
+			want:     "First line\nSecond line",
+		},
+		{
+			name: "tool_calls_json_template",
+			template: `{{ if .Content }}{{ .Content }}{{- else if .ToolCalls }}<tool_call>
+{{ range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}{{ end }}</tool_call>
+{{ end }}`,
+			want: `<tool_call>`,
+		},
+		{
+			name: "mistral_tool_calls_template",
+			template: `{{- if .Content }} {{ .Content }}
+{{- else if .ToolCalls }}[TOOL_CALLS] [
+{{- range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
+{{- end }}]
+{{- end }}</s>`,
+			want: "[TOOL_CALLS] [",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpl, err := template.Parse(tt.template)
+			if err != nil {
+				t.Fatalf("failed to parse template: %v", err)
+			}
+
+			m := &Model{Template: tmpl}
+			m.addToolPrefix()
+
+			if m.ToolPrefix != tt.want {
+				t.Errorf("incorrect tool prefix:\ngot:  %q\nwant: %q", m.ToolPrefix, tt.want)
 			}
 		})
 	}
