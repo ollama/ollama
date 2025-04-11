@@ -235,10 +235,7 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 	// patch KV with parameter count
 	llm.kv["general.parameter_count"] = llm.parameters
 
-	alignment, ok := llm.kv["general.alignment"].(uint32)
-	if !ok {
-		alignment = 32
-	}
+	alignment := llm.kv.Uint("general.alignment", 32)
 
 	offset, err := rs.Seek(0, io.SeekCurrent)
 	if err != nil {
@@ -506,6 +503,8 @@ func writeGGUFArray[S ~[]E, E any](w io.Writer, t uint32, s S) error {
 }
 
 func WriteGGUF(ws io.WriteSeeker, kv KV, ts []Tensor) error {
+	alignment := kv.Uint("general.alignment", 32)
+
 	if err := binary.Write(ws, binary.LittleEndian, []byte("GGUF")); err != nil {
 		return err
 	}
@@ -543,16 +542,15 @@ func WriteGGUF(ws io.WriteSeeker, kv KV, ts []Tensor) error {
 
 	var s uint64
 	for _, t := range ts {
-		t.Offset = s
+		t.Offset = s + uint64(ggufPadding(int64(s), int64(alignment)))
 		if err := ggufWriteTensorInfo(ws, t); err != nil {
 			return err
 		}
 		s += t.Size()
 	}
 
-	var alignment int64 = 32
 	for _, t := range ts {
-		if err := ggufWriteTensor(ws, t, alignment); err != nil {
+		if err := ggufWriteTensor(ws, t, int64(alignment)); err != nil {
 			return err
 		}
 	}
