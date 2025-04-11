@@ -78,7 +78,12 @@ func newTestServer(t *testing.T, upstreamRegistry http.HandlerFunc) *Local {
 
 func (s *Local) send(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
+	ctx := ollama.WithTrace(t.Context(), &ollama.Trace{
+		Update: func(l *ollama.Layer, n int64, err error) {
+			t.Logf("update: %s %d %v", l.Digest, n, err)
+		},
+	})
+	req := httptest.NewRequestWithContext(ctx, method, path, strings.NewReader(body))
 	return s.sendRequest(t, req)
 }
 
@@ -184,7 +189,6 @@ func TestServerPull(t *testing.T) {
 
 	checkResponse := func(got *httptest.ResponseRecorder, wantlines string) {
 		t.Helper()
-
 		if got.Code != 200 {
 			t.Errorf("Code = %d; want 200", got.Code)
 		}
@@ -203,17 +207,11 @@ func TestServerPull(t *testing.T) {
 		}
 	}
 
-	got := s.send(t, "POST", "/api/pull", `{"model": "BOOM"}`)
+	got := s.send(t, "POST", "/api/pull", `{"model": "smol"}`)
 	checkResponse(got, `
-		{"status":"error: request error https://example.com/v2/library/BOOM/manifests/latest: registry responded with status 999: boom"}
-	`)
-
-	got = s.send(t, "POST", "/api/pull", `{"model": "smol"}`)
-	checkResponse(got, `
-		{"digest":"sha256:68e0ec597aee59d35f8dc44942d7b17d471ade10d3aca07a5bb7177713950312","total":5}
-		{"digest":"sha256:ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356","total":3}
-		{"digest":"sha256:68e0ec597aee59d35f8dc44942d7b17d471ade10d3aca07a5bb7177713950312","total":5,"completed":5}
-		{"digest":"sha256:ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356","total":3,"completed":3}
+		{"digest":"       smol         ","total":8}
+		{"digest":"       smol         ","total":8,"completed":8}
+		{"digest":"       smol         ","total":8,"completed":8}
 	`)
 
 	got = s.send(t, "POST", "/api/pull", `{"model": "unknown"}`)

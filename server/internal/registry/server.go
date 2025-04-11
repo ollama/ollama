@@ -9,13 +9,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/ollama/ollama/server/internal/cache/blob"
 	"github.com/ollama/ollama/server/internal/client/ollama"
+	"github.com/ollama/ollama/server/internal/internal/backoff"
 )
 
 // Local implements an http.Handler for handling local Ollama API model
@@ -241,10 +241,10 @@ func (s *Local) handleDelete(_ http.ResponseWriter, r *http.Request) error {
 }
 
 type progressUpdateJSON struct {
-	Status    string      `json:"status,omitempty,omitzero"`
-	Digest    blob.Digest `json:"digest,omitempty,omitzero"`
-	Total     int64       `json:"total,omitempty,omitzero"`
-	Completed int64       `json:"completed,omitempty,omitzero"`
+	Status    string `json:"status,omitempty,omitzero"`
+	Digest    string `json:"digest,omitempty,omitzero"`
+	Total     int64  `json:"total,omitempty,omitzero"`
+	Completed int64  `json:"completed,omitempty,omitzero"`
 }
 
 func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
@@ -265,37 +265,25 @@ func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
 			}
 			return err
 		}
-		return enc.Encode(progressUpdateJSON{Status: "success"})
+		enc.Encode(progressUpdateJSON{Status: "success"})
+		return nil
 	}
 
-	maybeFlush := func() {
+	var total, completed atomic.Int64
+	flushProgress := func() {
+		enc.Encode(progressUpdateJSON{
+			// This is a hack to maintain support for older clients
+			// as per the requirements given for the task of
+			// bringing in the our new client. In the future, once
+			// all clients are up-to-date, we can remove this
+			// change our API.
+			Digest:    fmt.Sprintf("%7s%-13s", "", p.model()),
+			Total:     total.Load(),
+			Completed: completed.Load(),
+		})
 		fl, _ := w.(http.Flusher)
 		if fl != nil {
 			fl.Flush()
-		}
-	}
-	defer maybeFlush()
-
-	var mu sync.Mutex
-	progress := make(map[*ollama.Layer]int64)
-
-	progressCopy := make(map[*ollama.Layer]int64, len(progress))
-	flushProgress := func() {
-		defer maybeFlush()
-
-		// TODO(bmizerany): Flushing every layer in one update doesn't
-		// scale well. We could flush only the modified layers or track
-		// the full download. Needs further consideration, though it's
-		// fine for now.
-		mu.Lock()
-		maps.Copy(progressCopy, progress)
-		mu.Unlock()
-		for l, n := range progressCopy {
-			enc.Encode(progressUpdateJSON{
-				Digest:    l.Digest,
-				Total:     l.Size,
-				Completed: n,
-			})
 		}
 	}
 	defer flushProgress()
@@ -307,7 +295,13 @@ func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
 	})
 	ctx := ollama.WithTrace(r.Context(), &ollama.Trace{
 		Update: func(l *ollama.Layer, n int64, err error) {
-			if n > 0 {
+			if err != nil && !errors.Is(err, ollama.ErrCached) {
+				s.Logger.Error("pulling", "model", p.model(), "error", err)
+				return
+			}
+			if n == 0 {
+				total.Add(l.Size)
+			} else {
 				// Block flushing progress updates until every
 				// layer is accounted for. Clients depend on a
 				// complete model size to calculate progress
@@ -315,16 +309,27 @@ func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
 				// progress indicators would erratically jump
 				// as new layers are registered.
 				start()
+				completed.Add(n)
 			}
-			mu.Lock()
-			progress[l] += n
-			mu.Unlock()
 		},
 	})
 
 	done := make(chan error, 1)
-	go func() {
-		done <- s.Client.Pull(ctx, p.model())
+	go func() (err error) {
+		defer func() { done <- err }()
+		for _, err := range backoff.Loop(ctx, 3*time.Second) {
+			if err != nil {
+				return err
+			}
+			err := s.Client.Pull(ctx, p.model())
+			var oe *ollama.Error
+			if errors.As(err, &oe) && oe.Temporary() {
+				// already logged in trace
+				continue
+			}
+			return err
+		}
+		return nil
 	}()
 
 	for {
@@ -341,6 +346,7 @@ func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
 					status = fmt.Sprintf("error: %v", err)
 				}
 				enc.Encode(progressUpdateJSON{Status: status})
+				return nil
 			}
 			return nil
 		}

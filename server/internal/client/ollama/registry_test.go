@@ -154,7 +154,7 @@ func okHandler(w http.ResponseWriter, r *http.Request) {
 func checkErrCode(t *testing.T, err error, status int, code string) {
 	t.Helper()
 	var e *Error
-	if !errors.As(err, &e) || e.Status != status || e.Code != code {
+	if !errors.As(err, &e) || e.status != status || e.Code != code {
 		t.Errorf("err = %v; want %v %v", err, status, code)
 	}
 }

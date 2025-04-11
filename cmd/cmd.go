@@ -814,7 +814,12 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 
 			bar, ok := bars[resp.Digest]
 			if !ok {
-				bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
+				name, isDigest := strings.CutPrefix(resp.Digest, "sha256:")
+				name = strings.TrimSpace(name)
+				if isDigest {
+					name = name[:min(12, len(name))]
+				}
+				bar = progress.NewBar(fmt.Sprintf("Downloading %s:", name), resp.Total, resp.Completed)
 				bars[resp.Digest] = bar
 				p.Add(resp.Digest, bar)
 			}

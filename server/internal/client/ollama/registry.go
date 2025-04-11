@@ -1,6 +1,5 @@
-// Package ollama provides a client for interacting with an Ollama registry
-// which pushes and pulls model manifests and layers as defined by the
-// [ollama.com/manifest].
+// Package ollama implements a client for the Ollama registry API.
+// It handles pushing and pulling model manifests and layers as per [ollama.com/manifest].
 package ollama
 
 import (
@@ -44,33 +43,28 @@ import (
 
 // Errors
 var (
-	// ErrModelNotFound is returned when a manifest is not found in the
-	// cache or registry.
+	// ErrModelNotFound indicates a manifest is missing from a cache or registry.
 	ErrModelNotFound = errors.New("model not found")
 
-	// ErrManifestInvalid is returned when a manifest found in a local or
-	// remote cache is invalid.
+	// ErrManifestInvalid indicates a manifest is structurally invalid.
 	ErrManifestInvalid = errors.New("invalid manifest")
 
-	// ErrMissingModel is returned when the model part of a name is missing
-	// or invalid.
+	// ErrNameInvalid indicates the model name is missing or invalid.
 	ErrNameInvalid = errors.New("invalid or missing name")
 
-	// ErrCached is passed to [Trace.PushUpdate] when a layer already
-	// exists. It is a non-fatal error and is never returned by [Registry.Push].
+	// ErrCached signals to [Trace.Update] that a layer exists and was skipped.
+	// Never returned by [Registry.Push].
 	ErrCached = errors.New("cached")
 
-	// ErrIncomplete is returned by [Registry.Pull] when a model pull was
-	// incomplete due to one or more layer download failures. Users that
-	// want specific errors should use [WithTrace].
+	// ErrIncomplete indicates [Registry.Pull] failed to download one or more layers.
+	// Use [WithTrace] for detailed error information.
 	ErrIncomplete = errors.New("incomplete")
 )
 
 // Defaults
 const (
-	// DefaultChunkingThreshold is the threshold at which a layer should be
-	// split up into chunks when downloading.
-	DefaultChunkingThreshold = 64 << 20
+	// DefaultChunkingThreshold defines when to download a layer in chunks.
+	DefaultChunkingThreshold = 64 << 20 // 64MB
 )
 
 var defaultCache = sync.OnceValues(func() (*blob.DiskCache, error) {
@@ -83,39 +77,34 @@ var defaultCache = sync.OnceValues(func() (*blob.DiskCache, error) {
 	return blob.Open(dir)
 })
 
-// DefaultCache returns the default cache used by the registry. It is
-// configured from the OLLAMA_MODELS environment variable, or defaults to
-// $HOME/.ollama/models, or, if an error occurs obtaining the home directory,
-// it uses the current working directory.
+// DefaultCache returns the default model cache.
+//
+// The cache directory is determined by the OLLAMA_MODELS environment variable,
+// if present; otherwise, it uses the $HOME/.ollama/models, or the current
+// working directory if $HOME cannot be determined.
 func DefaultCache() (*blob.DiskCache, error) {
 	return defaultCache()
 }
 
-// Error is the standard error returned by Ollama APIs. It can represent a
-// single or multiple error response.
-//
-// Single error responses have the following format:
-//
-//	{"code": "optional_code","error":"error message"}
-//
-// Multiple error responses have the following format:
-//
-//	{"errors": [{"code": "optional_code","message":"error message"}]}
-//
-// Note, that the error field is used in single error responses, while the
-// message field is used in multiple error responses.
-//
-// In both cases, the code field is optional and may be empty.
+// Error represents API error responses in two formats:
+// Single: {"code": "optional_code","error":"error message"}
+// Multiple: {"errors": [{"code": "optional_code","message":"error message"}]}
+// The code field is optional in both formats.
 type Error struct {
-	Status  int    `json:"-"` // TODO(bmizerany): remove this
+	status  int    `json:"-"` // TODO(bmizerany): remove this
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+// Temporary reports if the error is temporary (e.g. 5xx status code).
+func (e *Error) Temporary() bool {
+	return e.status > 500
 }
 
 func (e *Error) Error() string {
 	var b strings.Builder
 	b.WriteString("registry responded with status ")
-	b.WriteString(strconv.Itoa(e.Status))
+	b.WriteString(strconv.Itoa(e.status))
 	if e.Code != "" {
 		b.WriteString(": code ")
 		b.WriteString(e.Code)
@@ -129,7 +118,7 @@ func (e *Error) Error() string {
 
 func (e *Error) LogValue() slog.Value {
 	return slog.GroupValue(
-		slog.Int("status", e.Status),
+		slog.Int("status", e.status),
 		slog.String("code", e.Code),
 		slog.String("message", e.Message),
 	)
@@ -172,22 +161,19 @@ var defaultMask = func() names.Name {
 	return n
 }()
 
-// CompleteName returns a fully qualified name by merging the given name with
-// the default mask. If the name is already fully qualified, it is returned
-// unchanged.
+// CompleteName ensures a name is fully qualified by applying DefaultMask if needed.
 func CompleteName(name string) string {
 	return names.Merge(names.Parse(name), defaultMask).String()
 }
 
-// Registry is a client for performing push and pull operations against an
-// Ollama registry.
+// Registry handles Ollama registry operations.
 type Registry struct {
-	// Cache is the cache used to store models. If nil, [DefaultCache] is
-	// used.
+	// Cache is the cache for storing models and their blobs.
+	// If nil, [DefaultCache] is used.
 	Cache *blob.DiskCache
 
-	// UserAgent is the User-Agent header to send with requests to the
-	// registry. If empty, the User-Agent is determined by HTTPClient.
+	// UserAgent sent in HTTP requests.
+	// If empty, HTTPClient's User-Agent is used.
 	UserAgent string
 
 	// Key is the key used to authenticate with the registry.
@@ -195,30 +181,26 @@ type Registry struct {
 	// Currently, only Ed25519 keys are supported.
 	Key crypto.PrivateKey
 
-	// HTTPClient is the HTTP client used to make requests to the registry.
-	//
+	// HTTPClient specifies the [http.Client] for performing registry requests.
 	// If nil, [http.DefaultClient] is used.
 	//
-	// As a quick note: If a Registry function that makes a call to a URL
-	// with the "https+insecure" scheme, the client will be cloned and the
-	// transport will be set to skip TLS verification, unless the client's
-	// Transport done not have a Clone method with the same signature as
-	// [http.Transport.Clone], which case, the call will fail.
+	// If a user uses the "https+insecure" scheme in a URL, the client's
+	// Transport is cloned with InsecureSkipVerify set to true.
+	// If the Transport does not support cloning, the request will be
+	// passed, as-is, to HTTPClient.
 	HTTPClient *http.Client
 
-	// MaxStreams is the maximum number of concurrent streams to use when
-	// pushing or pulling models. If zero, the number of streams is
-	// determined by [runtime.GOMAXPROCS].
-	//
-	// A negative value means no limit.
+	// MaxStreams limits concurrent transfers.
+	// If zero, [runtime.GOMAXPROCS] is used.
+	// If negative, no limit is applied.
 	MaxStreams int
 
-	// ChunkingThreshold is the maximum size of a layer to download in a single
-	// request. If zero, [DefaultChunkingThreshold] is used.
+	// ChunkingThreshold defines max layer size for single download.
+	// If zero, [DefaultChunkingThreshold] is used.
 	ChunkingThreshold int64
 
-	// Mask, if set, is the name used to convert non-fully qualified names
-	// to fully qualified names. If empty, [DefaultMask] is used.
+	// Mask completes partial model names.
+	// If empty, [DefaultMask] is used.
 	Mask string
 }
 
@@ -304,12 +286,11 @@ func (r *Registry) maxChunkingThreshold() int64 {
 }
 
 type PushParams struct {
-	// From is an optional destination name for the model. If empty, the
-	// destination name is the same as the source name.
+	// From specifies an alternative source name. If empty, target name is used.
 	From string
 }
 
-// Push pushes the model with the name in the cache to the remote registry.
+// Push uploads a locally cached model to the remote registry.
 func (r *Registry) Push(ctx context.Context, name string, p *PushParams) error {
 	if p == nil {
 		p = &PushParams{}
@@ -437,13 +418,14 @@ func (r *trackingReader) Read(p []byte) (n int, err error) {
 	return
 }
 
-// Pull pulls the model with the given name from the remote registry into the
-// cache.
+// Pull copies the named model from the remote registry to the Cache.
+// Layers exceeding ChunkingThreshold in size are downloaded in chunks.
+// Each layer and chunk is downloaded in its own goroutine.
+// The maximum number of download goroutines is limited by MaxStreams.
+// If a layer or chunk is already in the Cache, it is skipped.
 //
-// For layers larger then [Registry.MaxChunkSize], the layer is downloaded in
-// chunks of the specified size, and then reassembled and verified. This is
-// typically slower than splitting the model up across layers, and is mostly
-// utilized for layers of type equal to "application/vnd.ollama.image".
+// Clients that need progress updates can use the [WithTrace] option to
+// register callbacks for updates.
 func (r *Registry) Pull(ctx context.Context, name string) error {
 	m, err := r.Resolve(ctx, name)
 	if err != nil {
@@ -489,94 +471,93 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 			continue
 		}
 
-		var wg sync.WaitGroup
-		chunked, err := c.Chunked(l.Digest, l.Size)
-		if err != nil {
-			t.update(l, 0, err)
-			continue
-		}
-
-		for cs, err := range r.chunksums(ctx, name, l) {
+		func() {
+			var wg sync.WaitGroup
+			chunked, err := c.Chunked(l.Digest, l.Size)
 			if err != nil {
-				// Chunksum stream interrupted. Note in trace
-				// log and let in-flight downloads complete.
-				// This will naturally trigger ErrIncomplete
-				// since received < expected bytes.
 				t.update(l, 0, err)
-				break
+				return
 			}
+			defer func() {
+				// Close the chunked writer when all chunks are
+				// downloaded.
+				//
+				// This is done as a background task in the
+				// group to allow the next layer to start while
+				// we wait for the final chunk in this layer to
+				// complete. It also ensures this is done
+				// before we exit Pull.
+				g.Go(func() error {
+					wg.Wait()
+					chunked.Close()
+					return nil
+				})
+			}()
 
-			cacheKey := fmt.Sprintf(
-				"v1 pull chunksum %s %s %d-%d",
-				l.Digest,
-				cs.Digest,
-				cs.Chunk.Start,
-				cs.Chunk.End,
-			)
-			cacheKeyDigest := blob.DigestFromBytes(cacheKey)
-			_, err := c.Get(cacheKeyDigest)
-			if err == nil {
-				received.Add(cs.Chunk.Size())
-				t.update(l, cs.Chunk.Size(), ErrCached)
-				continue
-			}
+			for cs, err := range r.chunksums(ctx, name, l) {
+				if err != nil {
+					// Chunksum stream interrupted. Note in trace
+					// log and let in-flight downloads complete.
+					// This will naturally trigger ErrIncomplete
+					// since received < expected bytes.
+					t.update(l, 0, err)
+					break
+				}
 
-			wg.Add(1)
-			g.Go(func() (err error) {
-				defer func() {
-					if err == nil {
-						// Ignore cache key write errors for now. We've already
-						// reported to trace that the chunk is complete.
-						//
-						// Ideally, we should only report completion to trace
-						// after successful cache commit. This current approach
-						// works but could trigger unnecessary redownloads if
-						// the checkpoint key is missing on next pull.
-						//
-						// Not incorrect, just suboptimal - fix this in a
-						// future update.
-						_ = blob.PutBytes(c, cacheKeyDigest, cacheKey)
+				cacheKey := fmt.Sprintf(
+					"v1 pull chunksum %s %s %d-%d",
+					l.Digest,
+					cs.Digest,
+					cs.Chunk.Start,
+					cs.Chunk.End,
+				)
+				cacheKeyDigest := blob.DigestFromBytes(cacheKey)
+				_, err := c.Get(cacheKeyDigest)
+				if err == nil {
+					received.Add(cs.Chunk.Size())
+					t.update(l, cs.Chunk.Size(), ErrCached)
+					continue
+				}
 
-						received.Add(cs.Chunk.Size())
-					} else {
-						t.update(l, 0, err)
+				wg.Add(1)
+				g.Go(func() (err error) {
+					defer func() {
+						if err == nil {
+							// Ignore cache key write errors for now. We've already
+							// reported to trace that the chunk is complete.
+							//
+							// Ideally, we should only report completion to trace
+							// after successful cache commit. This current approach
+							// works but could trigger unnecessary redownloads if
+							// the checkpoint key is missing on next pull.
+							//
+							// Not incorrect, just suboptimal - fix this in a
+							// future update.
+							_ = blob.PutBytes(c, cacheKeyDigest, cacheKey)
+
+							received.Add(cs.Chunk.Size())
+						} else {
+							t.update(l, 0, err)
+						}
+						wg.Done()
+					}()
+
+					req, err := http.NewRequestWithContext(ctx, "GET", cs.URL, nil)
+					if err != nil {
+						return err
 					}
-					wg.Done()
-				}()
+					req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", cs.Chunk.Start, cs.Chunk.End))
+					res, err := sendRequest(r.client(), req)
+					if err != nil {
+						return err
+					}
+					defer res.Body.Close()
 
-				req, err := http.NewRequestWithContext(ctx, "GET", cs.URL, nil)
-				if err != nil {
-					return err
-				}
-				req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", cs.Chunk.Start, cs.Chunk.End))
-				res, err := sendRequest(r.client(), req)
-				if err != nil {
-					return err
-				}
-				defer res.Body.Close()
-
-				body := &trackingReader{l: l, r: res.Body, update: t.update}
-				return chunked.Put(cs.Chunk, cs.Digest, body)
-			})
-		}
-
-		// Close writer immediately after downloads finish, not at Pull
-		// exit. Using defer would keep file descriptors open until all
-		// layers complete, potentially exhausting system limits with
-		// many layers.
-		//
-		// The WaitGroup tracks when all chunks finish downloading,
-		// allowing precise writer closure in a background goroutine.
-		// Each layer briefly uses one extra goroutine while at most
-		// maxStreams()-1 chunks download in parallel.
-		//
-		// This caps file descriptors at maxStreams() instead of
-		// growing with layer count.
-		g.Go(func() error {
-			wg.Wait()
-			chunked.Close()
-			return nil
-		})
+					body := &trackingReader{l: l, r: res.Body, update: t.update}
+					return chunked.Put(cs.Chunk, cs.Digest, body)
+				})
+			}
+		}()
 	}
 	if err := g.Wait(); err != nil {
 		return err
@@ -592,8 +573,7 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 	return c.Link(m.Name, md)
 }
 
-// Unlink is like [blob.DiskCache.Unlink], but makes name fully qualified
-// before attempting to unlink the model.
+// Unlink removes the named model from Cache.
 func (r *Registry) Unlink(name string) (ok bool, _ error) {
 	n, err := r.parseName(name)
 	if err != nil {
@@ -606,14 +586,12 @@ func (r *Registry) Unlink(name string) (ok bool, _ error) {
 	return c.Unlink(n.String())
 }
 
-// Manifest represents a [ollama.com/manifest].
+// Manifest represents a model manifest per [ollama.com/manifest].
 type Manifest struct {
-	Name   string   `json:"-"` // the canonical name of the model
-	Data   []byte   `json:"-"` // the raw data of the manifest
+	Name   string   `json:"-"` // Canonical model name
+	Data   []byte   `json:"-"` // Raw manifest data
 	Layers []*Layer `json:"layers"`
-
-	// For legacy reasons, we still have to download the config layer.
-	Config *Layer `json:"config"`
+	Config *Layer   `json:"config"` // Legacy requirement
 }
 
 // Layer returns the layer with the given
@@ -691,14 +669,14 @@ func unmarshalManifest(n names.Name, data []byte) (*Manifest, error) {
 	return &m, nil
 }
 
-// Layer is a layer in a model.
+// Layer represents a model component with its metadata.
 type Layer struct {
-	Digest    blob.Digest `json:"digest"`
-	MediaType string      `json:"mediaType"`
-	Size      int64       `json:"size"`
+	Digest    blob.Digest `json:"digest"`    // Content hash
+	MediaType string      `json:"mediaType"` // Content type
+	Size      int64       `json:"size"`      // Size in bytes
 }
 
-// ResolveLocal resolves a name to a Manifest in the local cache.
+// ResolveLocal resolves name to a Manifest in the Cache.
 func (r *Registry) ResolveLocal(name string) (*Manifest, error) {
 	_, n, d, err := r.parseNameExtended(name)
 	if err != nil {
@@ -973,7 +951,7 @@ func sendRequest(c *http.Client, r *http.Request) (_ *http.Response, err error) 
 			return nil, ErrModelNotFound
 		}
 
-		re.Status = res.StatusCode
+		re.status = res.StatusCode
 		return nil, &re
 	}
 	return res, nil
@@ -1069,17 +1047,18 @@ var supportedSchemes = []string{
 
 var supportedSchemesMessage = fmt.Sprintf("supported schemes are %v", strings.Join(supportedSchemes, ", "))
 
-// parseNameExtended parses and validates an extended name, returning the scheme, name,
-// and digest.
+// parseNameExtended parses and validates an extended name, returning the
+// scheme, name, and digest.
 //
-// If the scheme is empty, scheme will be "https". If an unsupported scheme is
-// given, [ErrNameInvalid] wrapped with a display friendly message is returned.
+// If the scheme is empty, the returned scheme will be "https".
+// If an unsupported scheme is given, [ErrNameInvalid] wrapped with a display
+// friendly message is returned.
 //
 // If the digest is invalid, [ErrNameInvalid] wrapped with a display friendly
 // message is returned.
 //
-// If the name is not, once merged with the mask, fully qualified,
-// [ErrNameInvalid] wrapped with a display friendly message is returned.
+// If the name after masking is not fully qualified, [ErrNameInvalid] wrapped
+// with a display friendly message is returned.
 func (r *Registry) parseNameExtended(s string) (scheme string, _ names.Name, _ blob.Digest, _ error) {
 	scheme, name, digest := splitExtended(s)
 	scheme = cmp.Or(scheme, "https")
