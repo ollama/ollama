@@ -1,0 +1,112 @@
+#version 450
+
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+
+#include "mul_mat_vec_base.comp"
+
+layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+
+void compute_outputs(const uint32_t first_row, const uint32_t num_rows) {
+    uint a_offset, b_offset, d_offset;
+    get_offsets(a_offset, b_offset, d_offset);
+
+    const uint num_blocks_per_row = p.ncols / QUANT_K;
+
+    // 16 threads are used to process each block
+    const uint it_size = gl_WorkGroupSize.x/16;
+    const uint tid = gl_LocalInvocationID.x;
+    const uint itid = tid%16;  // 0...16
+    const uint ix  = tid/16;
+
+    const uint step = 8;
+
+    const uint v_im = itid/step;                            // 0 or 1. 0 computes 0..., 1 computes 128...
+    const uint v_in = itid - step*v_im;                     // 0...15 or 0...7
+
+    const uint l0 = 4 * v_in;                               // 0, 4, 8, ..., 28
+    const uint is = v_in / 4;
+
+    const uint ql_offset = 64*v_im + l0;
+    const uint qh_offset = 32*v_im + l0;
+    const uint s_offset  =  8*v_im + is;
+    const uint y_offset = 128*v_im + l0;
+
+    FLOAT_TYPE temp[NUM_COLS][NUM_ROWS];
+
+    [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+        [[unroll]] for (uint i = 0; i < NUM_ROWS; ++i) {
+            temp[j][i] = FLOAT_TYPE(0);
+        }
+    }
+
+    [[unroll]] for (uint i = ix; i < num_blocks_per_row; i += it_size) {
+        const uint y_idx = i * QUANT_K + y_offset;
+
+        [[unroll]] for (uint n = 0; n < num_rows; ++n) {
+            const uint ib0 = a_offset / QUANT_K + (first_row+n)*num_blocks_per_row;
+            const FLOAT_TYPE d = FLOAT_TYPE(data_a[ib0 + i].d);
+
+            FLOAT_TYPE scales[4];
+            scales[0] = FLOAT_TYPE(data_a[ib0 + i].scales[s_offset + 0]);
+            scales[1] = FLOAT_TYPE(data_a[ib0 + i].scales[s_offset + 2]);
+            scales[2] = FLOAT_TYPE(data_a[ib0 + i].scales[s_offset + 4]);
+            scales[3] = FLOAT_TYPE(data_a[ib0 + i].scales[s_offset + 6]);
+
+            uint32_t ql0_u32 =  uint32_t(data_a_packed16[ib0 + i].ql[ql_offset / 2]) | (uint32_t(data_a_packed16[ib0 + i].ql[ql_offset / 2 + 1]) << 16);
+            uint32_t ql32_u32 = uint32_t(data_a_packed16[ib0 + i].ql[ql_offset / 2 + 16]) | (uint32_t(data_a_packed16[ib0 + i].ql[ql_offset / 2 + 17]) << 16);
+
+            uint32_t ql0_u32_lo4 = ql0_u32 & 0x0F0F0F0F;
+            uint32_t ql0_u32_hi4 = (ql0_u32 >> 4) & 0x0F0F0F0F;
+            uint32_t ql32_u32_lo4 = ql32_u32 & 0x0F0F0F0F;
+            uint32_t ql32_u32_hi4 = (ql32_u32 >> 4) & 0x0F0F0F0F;
+
+            uint32_t qh_u32 = uint32_t(data_a_packed16[ib0 + i].qh[qh_offset / 2]) | (uint32_t(data_a_packed16[ib0 + i].qh[qh_offset / 2 + 1]) << 16);
+            uint32_t qh0_u32 = (qh_u32 & 0x03030303) << 4;
+            uint32_t qh2_u32 = (qh_u32 & 0x0C0C0C0C) << 2;
+            uint32_t qh4_u32 = (qh_u32 & 0x30303030) << 0;
+            uint32_t qh6_u32 = (qh_u32 & 0xC0C0C0C0) >> 2;
+
+            uint32_t q0_u32 = ql0_u32_lo4  | qh0_u32;
+            uint32_t q1_u32 = ql32_u32_lo4 | qh2_u32;
+            uint32_t q2_u32 = ql0_u32_hi4  | qh4_u32;
+            uint32_t q3_u32 = ql32_u32_hi4 | qh6_u32;
+
+            uvec4 q0 = uvec4(unpack8(q0_u32));
+            uvec4 q1 = uvec4(unpack8(q1_u32));
+            uvec4 q2 = uvec4(unpack8(q2_u32));
+            uvec4 q3 = uvec4(unpack8(q3_u32));
+
+            [[unroll]] for (uint j = 0; j < NUM_COLS; ++j) {
+                B_TYPE_VEC4 by0  = data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4];
+                B_TYPE_VEC4 by32 = data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 8];
+                B_TYPE_VEC4 by64 = data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 16];
+                B_TYPE_VEC4 by96 = data_b_v4[(j*p.batch_stride_b + b_offset + y_idx) / 4 + 24];
+
+                FLOAT_TYPE sum = FLOAT_TYPE(0.0);
+                [[unroll]] for (int l = 0; l < 4; ++l) {
+                    sum = fma(FLOAT_TYPE(by0[l])  * scales[0], FLOAT_TYPE(int8_t(q0[l]) - 32),
+                          fma(FLOAT_TYPE(by32[l]) * scales[1], FLOAT_TYPE(int8_t(q1[l]) - 32),
+                          fma(FLOAT_TYPE(by64[l]) * scales[2], FLOAT_TYPE(int8_t(q2[l]) - 32),
+                          fma(FLOAT_TYPE(by96[l]) * scales[3], FLOAT_TYPE(int8_t(q3[l]) - 32), sum))));
+                }
+                temp[j][n] += sum * d;
+            }
+        }
+    }
+
+    reduce_result(temp, d_offset, first_row, num_rows, tid);
+}
+
+void main() {
+    const uint first_row = NUM_ROWS * (gl_WorkGroupID.x + gl_NumWorkGroups.x * gl_WorkGroupID.z);
+
+    // do NUM_ROWS at a time, unless there aren't enough remaining rows
+    if (first_row + NUM_ROWS <= p.stride_d) {
+        compute_outputs(first_row, NUM_ROWS);
+    } else {
+        if (first_row >= p.stride_d) {
+            return;
+        }
+        compute_outputs(first_row, p.stride_d - first_row);
+    }
+}
