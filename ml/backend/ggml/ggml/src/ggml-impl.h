@@ -16,14 +16,6 @@
 #include <arm_sve.h>
 #endif // __ARM_FEATURE_SVE
 
-#if defined(__ARM_NEON) && !defined(__CUDACC__) && !defined(__MUSACC__)
-// if YCM cannot find <arm_neon.h>, make a symbolic link to it, for example:
-//
-//   $ ln -sfn /Library/Developer/CommandLineTools/usr/lib/clang/13.1.6/include/arm_neon.h ./src/
-//
-#include <arm_neon.h>
-#endif
-
 #if defined(__F16C__)
 #include <immintrin.h>
 #endif
@@ -311,29 +303,35 @@ GGML_API void ggml_aligned_free(void * ptr, size_t size);
 
 // FP16 to FP32 conversion
 
-#if defined(__ARM_NEON)
-    #if defined(_MSC_VER) || (defined(__CUDACC__) && __CUDACC_VER_MAJOR__ <= 11)
-        typedef uint16_t ggml_fp16_internal_t;
-    #else
-        typedef __fp16 ggml_fp16_internal_t;
-    #endif
-#endif
+// 16-bit float
+// on Arm, we use __fp16
+// on x86, we use uint16_t
+//
+// for old CUDA compilers (<= 11), we use uint16_t: ref https://github.com/ggml-org/llama.cpp/pull/10616
+// for     MUSA compilers        , we use uint16_t: ref https://github.com/ggml-org/llama.cpp/pull/11843
+//
+#if defined(__ARM_NEON) && !(defined(__CUDACC__) && __CUDACC_VER_MAJOR__ <= 11) && !defined(__MUSACC__)
 
-#if defined(__ARM_NEON) && !defined(_MSC_VER) && !(defined(__CUDACC__) && __CUDACC_VER_MAJOR__ <= 11)
+    // if YCM cannot find <arm_neon.h>, make a symbolic link to it, for example:
+    //
+    //   $ ln -sfn /Library/Developer/CommandLineTools/usr/lib/clang/13.1.6/include/arm_neon.h ./src/
+    //
+    #include <arm_neon.h>
+
     #define GGML_COMPUTE_FP16_TO_FP32(x) ggml_compute_fp16_to_fp32(x)
     #define GGML_COMPUTE_FP32_TO_FP16(x) ggml_compute_fp32_to_fp16(x)
 
     #define GGML_FP16_TO_FP32(x) ggml_compute_fp16_to_fp32(x)
 
     static inline float ggml_compute_fp16_to_fp32(ggml_fp16_t h) {
-        ggml_fp16_internal_t tmp;
+        __fp16 tmp;
         memcpy(&tmp, &h, sizeof(ggml_fp16_t));
         return (float)tmp;
     }
 
     static inline ggml_fp16_t ggml_compute_fp32_to_fp16(float f) {
         ggml_fp16_t res;
-        ggml_fp16_internal_t tmp = f;
+        __fp16 tmp = f;
         memcpy(&res, &tmp, sizeof(ggml_fp16_t));
         return res;
     }
@@ -380,6 +378,35 @@ GGML_API void ggml_aligned_free(void * ptr, size_t size);
             /* in */   "f"(f));
         return r;
     }
+
+#elif defined(__riscv) && defined(GGML_RV_ZFH)
+
+    static inline float ggml_compute_fp16_to_fp32(ggml_fp16_t h) {
+        float f;
+        __asm__(
+            "fmv.h.x %[f], %[h]\n\t"
+            "fcvt.s.h %[f], %[f]"
+            : [f] "=&f" (f)
+            : [h] "r" (h)
+        );
+        return f;
+    }
+
+    static inline ggml_fp16_t ggml_compute_fp32_to_fp16(float f) {
+        ggml_fp16_t res;
+        __asm__(
+            "fcvt.h.s %[f], %[f]\n\t"
+            "fmv.x.h %[h], %[f]"
+            : [h] "=&r" (res)
+            : [f] "f" (f)
+        );
+        return res;
+    }
+
+    #define GGML_COMPUTE_FP16_TO_FP32(x) ggml_compute_fp16_to_fp32(x)
+    #define GGML_COMPUTE_FP32_TO_FP16(x) ggml_compute_fp32_to_fp16(x)
+    #define GGML_FP16_TO_FP32(x) GGML_COMPUTE_FP16_TO_FP32(x)
+    #define GGML_FP32_TO_FP16(x) GGML_COMPUTE_FP32_TO_FP16(x)
 
 #else
 
@@ -456,7 +483,7 @@ GGML_API void ggml_aligned_free(void * ptr, size_t size);
     #define GGML_COMPUTE_FP16_TO_FP32(x) ggml_compute_fp16_to_fp32(x)
     #define GGML_COMPUTE_FP32_TO_FP16(x) ggml_compute_fp32_to_fp16(x)
 
-#endif // defined(__ARM_NEON) && (!defined(__MSC_VER)
+#endif // defined(__ARM_NEON) && !(defined(__CUDACC__) && __CUDACC_VER_MAJOR__ <= 11) && !defined(__MUSACC__)
 
 // precomputed f32 table for f16 (256 KB)
 // defined in ggml.c, initialized in ggml_init()

@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: jmorganca <jmorganca@gmail.com>
-Date: Wed, 5 Mar 2025 17:41:07 -0800
+Date: Tue, 8 Apr 2025 20:35:53 -0700
 Subject: [PATCH] fix string arr kv loading
 
 ---
@@ -22,7 +22,7 @@ index 79ee2020..3efb22f0 100644
      // get ith C string from array with given key_id
      GGML_API const char * gguf_get_arr_str (const struct gguf_context * ctx, int64_t key_id, size_t i);
 diff --git a/ggml/src/gguf.cpp b/ggml/src/gguf.cpp
-index ab13669c..f75b923f 100644
+index 381a9c7d..e45b453d 100644
 --- a/ggml/src/gguf.cpp
 +++ b/ggml/src/gguf.cpp
 @@ -777,10 +777,14 @@ enum gguf_type gguf_get_arr_type(const struct gguf_context * ctx, int64_t key_id
@@ -50,10 +50,10 @@ index ab13669c..f75b923f 100644
  }
  
 diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
-index c7ff28be..7a185443 100644
+index 07da5fb6..b216e1c2 100644
 --- a/src/llama-vocab.cpp
 +++ b/src/llama-vocab.cpp
-@@ -1443,7 +1443,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+@@ -1459,7 +1459,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
  
              const int precompiled_charsmap_keyidx = gguf_find_key(ctx, kv(LLM_KV_TOKENIZER_PRECOMPILED_CHARSMAP).c_str());
              if (precompiled_charsmap_keyidx != -1) {

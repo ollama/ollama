@@ -1,47 +1,39 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Michael Yang <mxyng@pm.me>
-Date: Mon, 16 Sep 2024 15:53:16 -0700
+From: jmorganca <jmorganca@gmail.com>
+Date: Tue, 8 Apr 2025 16:03:51 -0700
 Subject: [PATCH] solar-pro
 
-solar-pro introduces block skip connections where blocks are connected
-to other, non-sequential blocks with a scale multiple
-
-this change adds 4 new keys to store the skip connections and one new
-tensor to store the scalar. the scalar is implemented a 1-dimensional
-tensor with 2 elements dervied from the model's bskcn_tv configuration.
-in general, the values are (bskcn_tv, 1 - bskcn_tv)
 ---
- src/llama-arch.cpp         |  21 +++++
+ src/llama-arch.cpp         |  21 ++++
  src/llama-arch.h           |   3 +
  src/llama-hparams.cpp      |   8 ++
- src/llama-hparams.h        |   5 ++
+ src/llama-hparams.h        |   5 +
  src/llama-model-loader.cpp |   1 +
- src/llama-model.cpp        |  44 +++++++++++
+ src/llama-model.cpp        | 207 +++++++++++++++++++++++++++++++++++++
  src/llama-model.h          |   3 +
- src/llama.cpp              | 152 ++++++++++++++++++++++++++++++++++++-
- 8 files changed, 236 insertions(+), 1 deletion(-)
+ 7 files changed, 248 insertions(+)
 
 diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
-index 97a1e7e5..a1e0ebcc 100644
+index ac997b96..b5c31d0c 100644
 --- a/src/llama-arch.cpp
 +++ b/src/llama-arch.cpp
-@@ -61,6 +61,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
+@@ -65,6 +65,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
      { LLM_ARCH_GRANITE,          "granite"          },
      { LLM_ARCH_GRANITE_MOE,      "granitemoe"       },
      { LLM_ARCH_CHAMELEON,        "chameleon"        },
 +    { LLM_ARCH_SOLAR,            "solar"            },
      { LLM_ARCH_WAVTOKENIZER_DEC, "wavtokenizer-dec" },
-     { LLM_ARCH_UNKNOWN,          "(unknown)"        },
- };
-@@ -125,6 +126,7 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
-     { LLM_KV_ATTENTION_RELATIVE_BUCKETS_COUNT, "%s.attention.relative_buckets_count" },
-     { LLM_KV_ATTENTION_SLIDING_WINDOW,         "%s.attention.sliding_window"         },
-     { LLM_KV_ATTENTION_SCALE,                  "%s.attention.scale"                  },
-+    { LLM_KV_ATTENTION_BLOCK_SKIP_CONNECTION,  "%s.attention.block_skip_connection"  },
+     { LLM_ARCH_PLM,              "plm"              },
+     { LLM_ARCH_BAILINGMOE,       "bailingmoe"       },
+@@ -137,6 +138,7 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
+     { LLM_KV_ATTENTION_RELATIVE_BUCKETS_COUNT,       "%s.attention.relative_buckets_count"       },
+     { LLM_KV_ATTENTION_SLIDING_WINDOW,               "%s.attention.sliding_window"               },
+     { LLM_KV_ATTENTION_SCALE,                        "%s.attention.scale"                        },
++    { LLM_KV_ATTENTION_BLOCK_SKIP_CONNECTION,        "%s.attention.block_skip_connection"        },
  
      { LLM_KV_ROPE_DIMENSION_COUNT,      "%s.rope.dimension_count"                 },
      { LLM_KV_ROPE_DIMENSION_SECTIONS,   "%s.rope.dimension_sections"              },
-@@ -1271,6 +1273,24 @@ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_N
+@@ -1417,6 +1419,24 @@ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_N
              { LLM_TENSOR_ATTN_K_NORM,     "blk.%d.attn_k_norm" },
          },
      },
@@ -66,7 +58,7 @@ index 97a1e7e5..a1e0ebcc 100644
      {
          LLM_ARCH_WAVTOKENIZER_DEC,
          {
-@@ -1429,6 +1449,7 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
+@@ -1610,6 +1630,7 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
      {LLM_TENSOR_FFN_EXP_PROBS_B,            {LLM_TENSOR_LAYER_REPEATING, GGML_OP_ADD}},
      // this tensor is loaded for T5, but never used
      {LLM_TENSOR_DEC_CROSS_ATTN_REL_B,       {LLM_TENSOR_LAYER_REPEATING, GGML_OP_NONE}},
@@ -75,18 +67,18 @@ index 97a1e7e5..a1e0ebcc 100644
      {LLM_TENSOR_POS_NET_NORM,               {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
      {LLM_TENSOR_POS_NET_NORM1,              {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
 diff --git a/src/llama-arch.h b/src/llama-arch.h
-index 122fdceb..77919578 100644
+index 42e4a3ef..96c4c995 100644
 --- a/src/llama-arch.h
 +++ b/src/llama-arch.h
-@@ -65,6 +65,7 @@ enum llm_arch {
+@@ -69,6 +69,7 @@ enum llm_arch {
      LLM_ARCH_GRANITE,
      LLM_ARCH_GRANITE_MOE,
      LLM_ARCH_CHAMELEON,
 +    LLM_ARCH_SOLAR,
      LLM_ARCH_WAVTOKENIZER_DEC,
-     LLM_ARCH_UNKNOWN,
- };
-@@ -129,6 +130,7 @@ enum llm_kv {
+     LLM_ARCH_PLM,
+     LLM_ARCH_BAILINGMOE,
+@@ -141,6 +142,7 @@ enum llm_kv {
      LLM_KV_ATTENTION_RELATIVE_BUCKETS_COUNT,
      LLM_KV_ATTENTION_SLIDING_WINDOW,
      LLM_KV_ATTENTION_SCALE,
@@ -94,7 +86,7 @@ index 122fdceb..77919578 100644
  
      LLM_KV_ROPE_DIMENSION_COUNT,
      LLM_KV_ROPE_DIMENSION_SECTIONS,
-@@ -311,6 +313,7 @@ enum llm_tensor {
+@@ -335,6 +337,7 @@ enum llm_tensor {
      LLM_TENSOR_ENC_OUTPUT_NORM,
      LLM_TENSOR_CLS,
      LLM_TENSOR_CLS_OUT,
@@ -103,14 +95,13 @@ index 122fdceb..77919578 100644
      LLM_TENSOR_CONVNEXT_DW,
      LLM_TENSOR_CONVNEXT_NORM,
 diff --git a/src/llama-hparams.cpp b/src/llama-hparams.cpp
-index ea87b295..f3955de9 100644
+index 90dfe7a7..8a667960 100644
 --- a/src/llama-hparams.cpp
 +++ b/src/llama-hparams.cpp
-@@ -69,3 +69,11 @@ uint32_t llama_hparams::n_embd_v_s() const {
-     // corresponds to Mamba's ssm_states size
+@@ -70,6 +70,14 @@ uint32_t llama_hparams::n_embd_v_s() const {
      return ssm_d_state * ssm_d_inner;
  }
-+
+ 
 +bool llama_hparams::n_bskcn(uint32_t n, uint32_t il) const {
 +    if (il < n_layer) {
 +        return n_bskcn_arr[n][il] > 0;
@@ -118,12 +109,15 @@ index ea87b295..f3955de9 100644
 +
 +    GGML_ABORT("fatal error");
 +}
-\ No newline at end of file
++
+ bool llama_hparams::is_swa(uint32_t il) const {
+     if (il < n_layer) {
+         return n_swa > 0 && n_swa_pattern > 0 && il % n_swa_pattern < (n_swa_pattern - 1);
 diff --git a/src/llama-hparams.h b/src/llama-hparams.h
-index 1fe45410..1bdcdfd5 100644
+index 4e0b5719..c3147cbc 100644
 --- a/src/llama-hparams.h
 +++ b/src/llama-hparams.h
-@@ -50,6 +50,8 @@ struct llama_hparams {
+@@ -51,6 +51,8 @@ struct llama_hparams {
      std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_kv_arr;
      std::array<uint32_t, LLAMA_MAX_LAYERS> n_ff_arr;
  
@@ -132,18 +126,18 @@ index 1fe45410..1bdcdfd5 100644
      uint32_t n_layer_dense_lead = 0;
      uint32_t n_lora_q           = 0;
      uint32_t n_lora_kv          = 0;
-@@ -133,6 +135,9 @@ struct llama_hparams {
- 
+@@ -149,6 +151,9 @@ struct llama_hparams {
      // dimension of the recurrent state embeddings
      uint32_t n_embd_v_s() const;
-+
+ 
 +    // Block skip connection
 +    bool n_bskcn(uint32_t n, uint32_t il) const;
++
+     bool is_swa(uint32_t il) const;
  };
  
- static_assert(std::is_trivially_copyable<llama_hparams>::value, "llama_hparams must be trivially copyable");
 diff --git a/src/llama-model-loader.cpp b/src/llama-model-loader.cpp
-index 05d58ad9..1252aca1 100644
+index ea73a8a7..a012aeae 100644
 --- a/src/llama-model-loader.cpp
 +++ b/src/llama-model-loader.cpp
 @@ -439,6 +439,7 @@ namespace GGUFMeta {
@@ -155,10 +149,10 @@ index 05d58ad9..1252aca1 100644
  llama_model_loader::llama_model_loader(
          const std::string & fname,
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 36a0a009..ad1315c6 100644
+index 4546e9cf..84969d2d 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -1238,6 +1238,21 @@ void llama_model::load_hparams(llama_model_loader & ml) {
+@@ -1347,6 +1347,21 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                      default: type = LLM_TYPE_UNKNOWN;
                 }
              } break;
@@ -180,7 +174,7 @@ index 36a0a009..ad1315c6 100644
          case LLM_ARCH_WAVTOKENIZER_DEC:
              {
                  ml.get_key(LLM_KV_ATTENTION_LAYERNORM_EPS,    hparams.f_norm_eps);
-@@ -3316,6 +3331,34 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
+@@ -3739,6 +3754,34 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
  
                          layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
  
@@ -215,54 +209,12 @@ index 36a0a009..ad1315c6 100644
                          layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
                          layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
                          layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
-@@ -3900,6 +3943,7 @@ enum llama_rope_type llama_model_rope_type(const struct llama_model * model) {
-         case LLM_ARCH_GRANITE:
-         case LLM_ARCH_GRANITE_MOE:
-         case LLM_ARCH_CHAMELEON:
-+        case LLM_ARCH_SOLAR:
-             return LLAMA_ROPE_TYPE_NORM;
+@@ -11705,6 +11748,165 @@ struct llm_build_chameleon : public llm_graph_context {
+     }
+ };
  
-         // the pairs of head values are offset by n_rot/2
-diff --git a/src/llama-model.h b/src/llama-model.h
-index a7c30444..1afb0024 100644
---- a/src/llama-model.h
-+++ b/src/llama-model.h
-@@ -55,6 +55,7 @@ enum llm_type {
-     LLM_TYPE_15B,
-     LLM_TYPE_16B,
-     LLM_TYPE_20B,
-+    LLM_TYPE_22B,
-     LLM_TYPE_30B,
-     LLM_TYPE_32B,
-     LLM_TYPE_34B,
-@@ -281,6 +282,8 @@ struct llama_layer {
-     struct ggml_tensor * ffn_up_scale   = nullptr;
-     struct ggml_tensor * ffn_down_scale = nullptr;
- 
-+    struct ggml_tensor * bskcn_tv = nullptr;
-+
-     struct llama_layer_posnet posnet;
- 
-     struct llama_layer_convnext convnext;
-diff --git a/src/llama.cpp b/src/llama.cpp
-index ac85bfed..6d320ea4 100644
---- a/src/llama.cpp
-+++ b/src/llama.cpp
-@@ -7953,9 +7953,155 @@ struct llm_build_context {
-         cb(img_logits, "img_logits", -1);
-         cur = ggml_set_1d(ctx0, cur, img_logits, ggml_element_size(cur) * img_token_start_idx);
-         cb(cur, "result_output", -1);
--
-         ggml_build_forward_expand(gf, cur);
-+        return gf;
-+   }
-+
-+   ggml_cgraph * build_solar() {
-+        struct ggml_cgraph * gf = ggml_new_graph_custom(ctx0, model.max_nodes(), false);
-+
-+        // mutable variable, needed during the last layer of the computation to skip unused tokens
-+        int32_t n_tokens = this->n_tokens;
-+
++struct llm_build_solar : public llm_graph_context {
++    llm_build_solar(const llama_model & model, const llm_graph_params & params, ggml_cgraph * gf) : llm_graph_context(params) {
 +        const int64_t n_embd_head = hparams.n_embd_head_v;
 +        GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
 +        GGML_ASSERT(n_embd_head == hparams.n_rot);
@@ -270,13 +222,15 @@ index ac85bfed..6d320ea4 100644
 +        struct ggml_tensor * cur;
 +        struct ggml_tensor * inpL;
 +
-+        inpL = llm_build_inp_embd(ctx0, lctx, hparams, ubatch, model.tok_embd, cb);
++        inpL = build_inp_embd(model.tok_embd);
 +
 +        // inp_pos - contains the positions
 +        struct ggml_tensor * inp_pos = build_inp_pos();
 +
 +        // KQ_mask (mask for 1 head, it will be broadcasted to all heads)
-+        struct ggml_tensor * KQ_mask = build_inp_KQ_mask();
++        auto * inp_attn = build_attn_inp_kv_unified();
++
++        const float kq_scale = hparams.f_attention_scale == 0.0f ? 1.0f/sqrtf(float(n_embd_head)) : hparams.f_attention_scale;
 +
 +        struct ggml_tensor * bskcn_1;
 +        struct ggml_tensor * bskcn_2;
@@ -305,88 +259,94 @@ index ac85bfed..6d320ea4 100644
 +                   ggml_mul(ctx0, bskcn_2, ggml_view_1d(ctx0, model.layers[il].bskcn_tv, 1, 0)),
 +                   ggml_mul(ctx0, inpSA, ggml_view_1d(ctx0, model.layers[il].bskcn_tv, 1, ggml_element_size(model.layers[il].bskcn_tv))));
 +            }
- 
++
 +            // norm
-+            cur = llm_build_norm(ctx0, inpL, hparams,
++            cur = build_norm(inpL,
 +                    model.layers[il].attn_norm, NULL,
-+                    LLM_NORM_RMS, cb, il);
++                    LLM_NORM_RMS, il);
 +            cb(cur, "attn_norm", il);
 +
 +            // self-attention
 +            {
 +                // rope freq factors for llama3; may return nullptr for llama2 and other models
-+                struct ggml_tensor * rope_factors = build_rope_factors(il);
++                ggml_tensor * rope_factors = static_cast<const llama_kv_cache_unified *>(memory)->cbs.get_rope_factors(n_ctx_per_seq, il);
 +
 +                // compute Q and K and RoPE them
-+                struct ggml_tensor * Qcur = llm_build_lora_mm(lctx, ctx0, model.layers[il].wq, cur);
++                ggml_tensor * Qcur = build_lora_mm(model.layers[il].wq, cur);
 +                cb(Qcur, "Qcur", il);
 +                if (model.layers[il].bq) {
 +                    Qcur = ggml_add(ctx0, Qcur, model.layers[il].bq);
 +                    cb(Qcur, "Qcur", il);
 +                }
 +
-+                struct ggml_tensor * Kcur = llm_build_lora_mm(lctx, ctx0, model.layers[il].wk, cur);
++                ggml_tensor * Kcur = build_lora_mm(model.layers[il].wk, cur);
 +                cb(Kcur, "Kcur", il);
 +                if (model.layers[il].bk) {
 +                    Kcur = ggml_add(ctx0, Kcur, model.layers[il].bk);
 +                    cb(Kcur, "Kcur", il);
 +                }
 +
-+                struct ggml_tensor * Vcur = llm_build_lora_mm(lctx, ctx0, model.layers[il].wv, cur);
++                ggml_tensor * Vcur = build_lora_mm(model.layers[il].wv, cur);
 +                cb(Vcur, "Vcur", il);
 +                if (model.layers[il].bv) {
 +                    Vcur = ggml_add(ctx0, Vcur, model.layers[il].bv);
 +                    cb(Vcur, "Vcur", il);
 +                }
 +
++                Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head,    n_tokens);
++                Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens);
++                Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
++
 +                Qcur = ggml_rope_ext(
-+                    ctx0, ggml_reshape_3d(ctx0, Qcur, n_embd_head, n_head, n_tokens), inp_pos, rope_factors,
-+                    n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
-+                    ext_factor, attn_factor, beta_fast, beta_slow
-+                );
-+                cb(Qcur, "Qcur", il);
++                        ctx0, Qcur, inp_pos, rope_factors,
++                        n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
++                        ext_factor, attn_factor, beta_fast, beta_slow
++                        );
 +
 +                Kcur = ggml_rope_ext(
-+                    ctx0, ggml_reshape_3d(ctx0, Kcur, n_embd_head, n_head_kv, n_tokens), inp_pos, rope_factors,
-+                    n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
-+                    ext_factor, attn_factor, beta_fast, beta_slow
-+                );
++                        ctx0, Kcur, inp_pos, rope_factors,
++                        n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
++                        ext_factor, attn_factor, beta_fast, beta_slow
++                        );
++                
++                cb(Qcur, "Qcur", il);
 +                cb(Kcur, "Kcur", il);
++                cb(Vcur, "Vcur", il);
 +
-+                cur = llm_build_kv(ctx0, lctx, kv_self, gf,
++                cur = build_attn(inp_attn, gf,
 +                        model.layers[il].wo, model.layers[il].bo,
-+                        Kcur, Vcur, Qcur, KQ_mask, n_tokens, kv_head, n_kv, 1.0f/sqrtf(float(n_embd_head)), cb, il);
++                        Qcur, Kcur, Vcur, nullptr, kq_scale, il);
++                cb(cur, "attn_out", il);
 +            }
 +
 +            if (il == n_layer - 1) {
 +                // skip computing output for unused tokens
-+                struct ggml_tensor * inp_out_ids = build_inp_out_ids();
-+                n_tokens = n_outputs;
++                ggml_tensor * inp_out_ids = build_inp_out_ids();
 +                cur   = ggml_get_rows(ctx0,   cur, inp_out_ids);
 +                inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
 +            }
 +
-+            struct ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpSA);
++            ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpSA);
 +            cb(ffn_inp, "ffn_inp", il);
 +
 +            // feed-forward network
-+            cur = llm_build_norm(ctx0, ffn_inp, hparams,
++            cur = build_norm(ffn_inp,
 +                    model.layers[il].ffn_norm, NULL,
-+                    LLM_NORM_RMS, cb, il);
++                    LLM_NORM_RMS, il);
 +            cb(cur, "ffn_norm", il);
 +
-+            cur = llm_build_ffn(ctx0, lctx, cur,
++            cur = build_ffn(cur,
 +                    model.layers[il].ffn_up,   model.layers[il].ffn_up_b,   NULL,
 +                    model.layers[il].ffn_gate, model.layers[il].ffn_gate_b, NULL,
 +                    model.layers[il].ffn_down, model.layers[il].ffn_down_b, NULL,
 +                    NULL,
-+                    LLM_FFN_SILU, LLM_FFN_PAR, cb, il);
++                    LLM_FFN_SILU, LLM_FFN_PAR, il);
 +            cb(cur, "ffn_out", il);
 +
 +            cur = ggml_add(ctx0, cur, ffn_inp);
 +            cb(cur, "ffn_out", il);
 +
-+            cur = lctx.cvec.apply_to(ctx0, cur, il);
++            cur = build_cvec(cur, il);
 +            cb(cur, "l_out", il);
 +
 +            // input for next layer
@@ -394,25 +354,64 @@ index ac85bfed..6d320ea4 100644
 +        }
 +
 +        cur = inpL;
-+        cur = llm_build_norm(ctx0, cur, hparams,
++
++        cur = build_norm(cur,
 +                model.output_norm, NULL,
-+                LLM_NORM_RMS, cb, -1);
++                LLM_NORM_RMS, -1);
++
 +        cb(cur, "result_norm", -1);
++        res->t_embd = cur;
++
 +        // lm_head
-+        cur = llm_build_lora_mm(lctx, ctx0, model.output, cur);
++        cur = build_lora_mm(model.output, cur);
++
 +        cb(cur, "result_output", -1);
++        res->t_logits = cur;
++
 +        ggml_build_forward_expand(gf, cur);
-         return gf;
-     }
- 
-@@ -8398,6 +8544,10 @@ static struct ggml_cgraph * llama_build_graph(
++    }
++};
++
+ struct llm_build_wavtokenizer_dec : public llm_graph_context {
+     llm_build_wavtokenizer_dec(const llama_model & model, const llm_graph_params & params, ggml_cgraph * gf) : llm_graph_context(params) {
+         ggml_tensor * cur;
+@@ -12442,6 +12644,10 @@ llm_graph_result_ptr llama_model::build_graph(
              {
-                 result = llm.build_chameleon();
+                 llm = std::make_unique<llm_build_chameleon>(*this, params, gf);
              } break;
 +        case LLM_ARCH_SOLAR:
 +            {
-+                result = llm.build_solar();
++                llm = std::make_unique<llm_build_solar>(*this, params, gf);
 +            } break;
          case LLM_ARCH_WAVTOKENIZER_DEC:
              {
-                 result = llm.build_wavtokenizer_dec();
+                 llm = std::make_unique<llm_build_wavtokenizer_dec>(*this, params, gf);
+@@ -12587,6 +12793,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
+         case LLM_ARCH_GRANITE:
+         case LLM_ARCH_GRANITE_MOE:
+         case LLM_ARCH_CHAMELEON:
++        case LLM_ARCH_SOLAR:
+         case LLM_ARCH_BAILINGMOE:
+             return LLAMA_ROPE_TYPE_NORM;
+ 
+diff --git a/src/llama-model.h b/src/llama-model.h
+index 0f18dac1..e08d4ae4 100644
+--- a/src/llama-model.h
++++ b/src/llama-model.h
+@@ -62,6 +62,7 @@ enum llm_type {
+     LLM_TYPE_15B,
+     LLM_TYPE_16B,
+     LLM_TYPE_20B,
++    LLM_TYPE_22B,
+     LLM_TYPE_30B,
+     LLM_TYPE_32B,
+     LLM_TYPE_34B,
+@@ -305,6 +306,8 @@ struct llama_layer {
+     struct ggml_tensor * ffn_up_scale   = nullptr;
+     struct ggml_tensor * ffn_down_scale = nullptr;
+ 
++    struct ggml_tensor * bskcn_tv = nullptr;
++
+     struct llama_layer_posnet posnet;
+ 
+     struct llama_layer_convnext convnext;

@@ -1,0 +1,22 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: jmorganca <jmorganca@gmail.com>
+Date: Tue, 8 Apr 2025 20:49:50 -0700
+Subject: [PATCH] fix compiler error in clip.h
+
+---
+ examples/llava/clip.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/examples/llava/clip.h b/examples/llava/clip.h
+index 87aa6157..0f7d24f8 100644
+--- a/examples/llava/clip.h
++++ b/examples/llava/clip.h
+@@ -42,7 +42,7 @@ struct clip_image_f32_batch {
+ 
+ struct clip_context_params {
+     bool use_gpu;
+-    ggml_log_level verbosity;
++    enum ggml_log_level verbosity;
+ };
+ 
+ // deprecated, use clip_init

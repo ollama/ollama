@@ -4,12 +4,12 @@
 
 #include "ggml.h"
 #include "ggml-impl.h"
+
 #include <stdlib.h> // load `stdlib.h` before other headers to work around MinGW bug: https://sourceforge.net/p/mingw-w64/bugs/192/
 //#include <stddef.h>
 #include <stdbool.h>
 #include <string.h> // memcpy
 #include <math.h>   // fabsf
-
 
 #ifdef __cplusplus
 extern "C" {
@@ -69,33 +69,16 @@ struct ggml_compute_params {
 #endif
 
 #if defined(__ARM_FEATURE_SVE)
-#include <arm_sve.h>
 #include <sys/prctl.h>
 #endif
 
-// 16-bit float
-// on Arm, we use __fp16
-// on x86, we use uint16_t
 #if defined(__ARM_NEON)
 
-// if YCM cannot find <arm_neon.h>, make a symbolic link to it, for example:
-//
-//   $ ln -sfn /Library/Developer/CommandLineTools/usr/lib/clang/13.1.6/include/arm_neon.h ./src/
-//
-#include <arm_neon.h>
-
+// ref: https://github.com/ggml-org/llama.cpp/pull/5404
 #ifdef _MSC_VER
-
-typedef uint16_t ggml_fp16_internal_t;
-
 #define ggml_vld1q_u32(w,x,y,z) { ((w) + ((uint64_t)(x) << 32)), ((y) + ((uint64_t)(z) << 32)) }
-
 #else
-
-typedef __fp16 ggml_fp16_internal_t;
-
 #define ggml_vld1q_u32(w,x,y,z) { (w), (x), (y), (z) }
-
 #endif // _MSC_VER
 
 #if !defined(__aarch64__)

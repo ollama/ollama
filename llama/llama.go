@@ -147,27 +147,27 @@ func (c *Context) Model() *Model {
 }
 
 func (c *Context) KvCacheSeqAdd(seqId int, p0 int, p1 int, delta int) {
-	C.llama_kv_cache_seq_add(c.c, C.int(seqId), C.int(p0), C.int(p1), C.int(delta))
+	C.llama_kv_self_seq_add(c.c, C.int(seqId), C.int(p0), C.int(p1), C.int(delta))
 }
 
 func (c *Context) KvCacheSeqRm(seqId int, p0 int, p1 int) bool {
-	return bool(C.llama_kv_cache_seq_rm(c.c, C.int(seqId), C.int(p0), C.int(p1)))
+	return bool(C.llama_kv_self_seq_rm(c.c, C.int(seqId), C.int(p0), C.int(p1)))
 }
 
 func (c *Context) KvCacheSeqCp(srcSeqId int, dstSeqId int, p0 int, p1 int) {
-	C.llama_kv_cache_seq_cp(c.c, C.int(srcSeqId), C.int(dstSeqId), C.int(p0), C.int(p1))
+	C.llama_kv_self_seq_cp(c.c, C.int(srcSeqId), C.int(dstSeqId), C.int(p0), C.int(p1))
 }
 
 func (c *Context) KvCacheClear() {
-	C.llama_kv_cache_clear(c.c)
+	C.llama_kv_self_clear(c.c)
 }
 
 func (c *Context) KvCacheDefrag() {
-	C.llama_kv_cache_defrag(c.c)
+	C.llama_kv_self_defrag(c.c)
 }
 
 func (c *Context) KvCacheCanShift() bool {
-	return bool(C.llama_kv_cache_can_shift(c.c))
+	return bool(C.llama_kv_self_can_shift(c.c))
 }
 
 // Get the embeddings for a sequence id

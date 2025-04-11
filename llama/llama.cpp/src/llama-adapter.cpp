@@ -4,14 +4,13 @@
 #include "llama-mmap.h"
 #include "llama-model.h"
 
-#include <algorithm>
 #include <map>
 #include <cassert>
 #include <stdexcept>
 
 // vec
 
-struct ggml_tensor * llama_adapter_cvec::tensor_for(int il) const {
+ggml_tensor * llama_adapter_cvec::tensor_for(int il) const {
     if (il < 0 || il < layer_start || il > layer_end || (size_t) il >= tensors.size()) {
         return nullptr;
     }
@@ -19,7 +18,7 @@ struct ggml_tensor * llama_adapter_cvec::tensor_for(int il) const {
     return tensors[il];
 }
 
-struct ggml_tensor * llama_adapter_cvec::apply_to(struct ggml_context * ctx, struct ggml_tensor * cur, int  il) const {
+ggml_tensor * llama_adapter_cvec::apply_to(ggml_context * ctx, ggml_tensor * cur, int  il) const {
     ggml_tensor * layer_dir = tensor_for(il);
     if (layer_dir != nullptr) {
         cur = ggml_add(ctx, cur, layer_dir);
@@ -40,7 +39,7 @@ bool llama_adapter_cvec::init(const llama_model & model) {
     auto ctx_for_buft = [&](ggml_backend_buffer_type_t buft) -> ggml_context * {
         auto it = ctx_map.find(buft);
         if (it == ctx_map.end()) {
-            struct ggml_init_params params = {
+            ggml_init_params params = {
                 /*.mem_size   =*/ hparams.n_layer*ggml_tensor_overhead(),
                 /*.mem_buffer =*/ NULL,
                 /*.no_alloc   =*/ true,
@@ -91,7 +90,7 @@ bool llama_adapter_cvec::init(const llama_model & model) {
     return true;
 }
 
-int32_t llama_adapter_cvec::apply(
+bool llama_adapter_cvec::apply(
         const llama_model & model,
         const float * data,
         size_t len,
@@ -104,17 +103,17 @@ int32_t llama_adapter_cvec::apply(
         // disable the current control vector (but leave allocated for later)
         layer_start = -1;
         layer_end   = -1;
-        return 0;
+        return true;
     }
 
     if (n_embd != (int) hparams.n_embd) {
         LLAMA_LOG_ERROR("%s: control vector n_embd does not match model\n", __func__);
-        return 1;
+        return false;
     }
 
     if (tensors.empty()) {
         if (!init(model)) {
-            return 1;
+            return false;
         }
     }
 
@@ -130,12 +129,12 @@ int32_t llama_adapter_cvec::apply(
         }
     }
 
-    return 0;
+    return true;
 }
 
 // lora
 
-llama_adapter_lora_weight * llama_adapter_lora::get_weight(struct ggml_tensor * w) {
+llama_adapter_lora_weight * llama_adapter_lora::get_weight(ggml_tensor * w) {
     const std::string name(w->name);
 
     const auto pos = ab_map.find(name);
@@ -146,11 +145,11 @@ llama_adapter_lora_weight * llama_adapter_lora::get_weight(struct ggml_tensor * 
     return nullptr;
 }
 
-static void llama_adapter_lora_init_impl(struct llama_model & model, const char * path_lora, struct llama_adapter_lora & adapter) {
+static void llama_adapter_lora_init_impl(llama_model & model, const char * path_lora, llama_adapter_lora & adapter) {
     LLAMA_LOG_INFO("%s: loading lora adapter from '%s' ...\n", __func__, path_lora);
 
     ggml_context * ctx_init;
-    struct gguf_init_params meta_gguf_params = {
+    gguf_init_params meta_gguf_params = {
         /* .no_alloc = */ true,
         /* .ctx      = */ &ctx_init,
     };
@@ -201,7 +200,7 @@ static void llama_adapter_lora_init_impl(struct llama_model & model, const char 
         auto it = ctx_map.find(buft);
         if (it == ctx_map.end()) {
             // add a new context
-            struct ggml_init_params params = {
+            ggml_init_params params = {
                 /*.mem_size   =*/ n_tensors*ggml_tensor_overhead(),
                 /*.mem_buffer =*/ NULL,
                 /*.no_alloc   =*/ true,
@@ -248,6 +247,26 @@ static void llama_adapter_lora_init_impl(struct llama_model & model, const char 
         }
     }
 
+    // get extra buffer types of the CPU
+    // TODO: a more general solution for non-CPU extra buft should be imlpemented in the future
+    //       ref: https://github.com/ggml-org/llama.cpp/pull/12593#pullrequestreview-2718659948
+    std::vector<ggml_backend_buffer_type_t> buft_extra;
+    {
+        auto * cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+        auto * cpu_reg = ggml_backend_dev_backend_reg(cpu_dev);
+
+        auto ggml_backend_dev_get_extra_bufts_fn = (ggml_backend_dev_get_extra_bufts_t)
+            ggml_backend_reg_get_proc_address(cpu_reg, "ggml_backend_dev_get_extra_bufts");
+
+        if (ggml_backend_dev_get_extra_bufts_fn) {
+            ggml_backend_buffer_type_t * extra_bufts = ggml_backend_dev_get_extra_bufts_fn(cpu_dev);
+            while (extra_bufts && *extra_bufts) {
+                buft_extra.emplace_back(*extra_bufts);
+                ++extra_bufts;
+            }
+        }
+    }
+
     // add tensors
     for (auto & it : ab_map) {
         const std::string & name = it.first;
@@ -264,7 +283,23 @@ static void llama_adapter_lora_init_impl(struct llama_model & model, const char 
             throw std::runtime_error("LoRA tensor '" + name + "' does not exist in base model (hint: maybe wrong base model?)");
         }
 
-        struct ggml_context * dev_ctx = ctx_for_buft(ggml_backend_buffer_get_type(model_tensor->buffer));
+        auto * buft = ggml_backend_buffer_get_type(model_tensor->buffer);
+
+        // do not load loras to extra buffer types (i.e. bufts for repacking) -> use the CPU in that case
+        for (auto & ex : buft_extra) {
+            if (ex == buft) {
+                LLAMA_LOG_WARN("%s: lora for '%s' cannot use buft '%s', fallback to CPU\n", __func__, model_tensor->name, ggml_backend_buft_name(buft));
+
+                auto * cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+                buft = ggml_backend_dev_buffer_type(cpu_dev);
+
+                break;
+            }
+        }
+
+        LLAMA_LOG_DEBUG("%s: lora for '%s' -> '%s'\n", __func__, model_tensor->name, ggml_backend_buft_name(buft));
+
+        ggml_context * dev_ctx = ctx_for_buft(buft);
         // validate tensor shape
         if (is_token_embd) {
             // expect B to be non-transposed, A and B are flipped; see llm_build_inp_embd()
@@ -281,8 +316,8 @@ static void llama_adapter_lora_init_impl(struct llama_model & model, const char 
         }
 
         // save tensor to adapter
-        struct ggml_tensor * tensor_a = ggml_dup_tensor(dev_ctx, w.a);
-        struct ggml_tensor * tensor_b = ggml_dup_tensor(dev_ctx, w.b);
+        ggml_tensor * tensor_a = ggml_dup_tensor(dev_ctx, w.a);
+        ggml_tensor * tensor_b = ggml_dup_tensor(dev_ctx, w.b);
         ggml_set_name(tensor_a, w.a->name);
         ggml_set_name(tensor_b, w.b->name);
         adapter.ab_map[name] = llama_adapter_lora_weight(tensor_a, tensor_b);
@@ -308,7 +343,7 @@ static void llama_adapter_lora_init_impl(struct llama_model & model, const char 
     {
         llama_file gguf_file(path_lora, "rb");
         std::vector<uint8_t> read_buf;
-        auto set_tensor = [&](struct ggml_tensor * orig, struct ggml_tensor * dev) {
+        auto set_tensor = [&](ggml_tensor * orig, ggml_tensor * dev) {
             size_t offs = gguf_get_data_offset(ctx_gguf.get()) + gguf_get_tensor_offset(ctx_gguf.get(), gguf_find_tensor(ctx_gguf.get(), orig->name));
             size_t size = ggml_nbytes(orig);
             read_buf.resize(size);
@@ -327,8 +362,8 @@ static void llama_adapter_lora_init_impl(struct llama_model & model, const char 
     LLAMA_LOG_INFO("%s: loaded %zu tensors from lora file\n", __func__, adapter.ab_map.size()*2);
 }
 
-struct llama_adapter_lora * llama_adapter_lora_init(struct llama_model * model, const char * path_lora) {
-    struct llama_adapter_lora * adapter = new llama_adapter_lora();
+llama_adapter_lora * llama_adapter_lora_init(llama_model * model, const char * path_lora) {
+    llama_adapter_lora * adapter = new llama_adapter_lora();
 
     try {
         llama_adapter_lora_init_impl(*model, path_lora, *adapter);
@@ -342,6 +377,6 @@ struct llama_adapter_lora * llama_adapter_lora_init(struct llama_model * model, 
     return nullptr;
 }
 
-void llama_adapter_lora_free(struct llama_adapter_lora * adapter) {
+void llama_adapter_lora_free(llama_adapter_lora * adapter) {
     delete adapter;
 }

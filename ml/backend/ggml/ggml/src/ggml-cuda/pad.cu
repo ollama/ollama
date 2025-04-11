@@ -14,7 +14,7 @@ static __global__ void pad_f32(const float * x, float * dst, const int ne0, cons
         nidx +
         blockIdx.y * ne0 +
         blockIdx.z * ne0 * gridDim.y;
-    if (nidx < ne00 && blockIdx.y < ne01 && blockIdx.z < ne02*ne03) {
+    if (nidx < ne00 && blockIdx.y < (unsigned)ne01 && blockIdx.z < (unsigned)(ne02*ne03)) {
         int offset_src =
             nidx +
             blockIdx.y * ne00 +

@@ -565,9 +565,9 @@ FILE * ggml_fopen(const char * fname, const char * mode) {
 #endif
 
 }
-static void ggml_vec_dot_f32(int n, float * restrict s, size_t bs, const float * restrict x, size_t bx, const float * restrict y, size_t by, int nrc);
-static void ggml_vec_dot_f16(int n, float * restrict s, size_t bs, ggml_fp16_t * restrict x, size_t bx, ggml_fp16_t * restrict y, size_t by, int nrc);
-static void ggml_vec_dot_bf16(int n, float * restrict s, size_t bs, ggml_bf16_t * restrict x, size_t bx, ggml_bf16_t * restrict y, size_t by, int nrc);
+static void ggml_vec_dot_f32(int n, float * GGML_RESTRICT s, size_t bs, const float * GGML_RESTRICT x, size_t bx, const float * GGML_RESTRICT y, size_t by, int nrc);
+static void ggml_vec_dot_f16(int n, float * GGML_RESTRICT s, size_t bs, ggml_fp16_t * GGML_RESTRICT x, size_t bx, ggml_fp16_t * GGML_RESTRICT y, size_t by, int nrc);
+static void ggml_vec_dot_bf16(int n, float * GGML_RESTRICT s, size_t bs, ggml_bf16_t * GGML_RESTRICT x, size_t bx, ggml_bf16_t * GGML_RESTRICT y, size_t by, int nrc);
 
 static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
     [GGML_TYPE_I8] = {
@@ -929,6 +929,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "RMS_NORM",
     "RMS_NORM_BACK",
     "GROUP_NORM",
+    "L2_NORM",
 
     "MUL_MAT",
     "MUL_MAT_ID",
@@ -978,6 +979,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "ADD_REL_POS",
     "RWKV_WKV6",
     "GATED_LINEAR_ATTN",
+    "RWKV_WKV7",
 
     "UNARY",
 
@@ -997,7 +999,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "OPT_STEP_ADAMW",
 };
 
-static_assert(GGML_OP_COUNT == 84, "GGML_OP_COUNT != 84");
+static_assert(GGML_OP_COUNT == 86, "GGML_OP_COUNT != 86");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1027,6 +1029,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "rms_norm(x)",
     "rms_norm_back(x)",
     "group_norm(x)",
+    "l2_norm(x)",
 
     "X*Y",
     "X[i]*Y",
@@ -1076,6 +1079,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "add_rel_pos(x)",
     "rwkv_wkv6(k, v, r, tf, td, s)",
     "gated_linear_attn(k, v, q, gate, s)",
+    "rwkv_wkv7(r, w, k, v, a, b, s)",
 
     "unary(x)",
 
@@ -1095,7 +1099,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "adamw(x)",
 };
 
-static_assert(GGML_OP_COUNT == 84, "GGML_OP_COUNT != 84");
+static_assert(GGML_OP_COUNT == 86, "GGML_OP_COUNT != 86");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -1157,6 +1161,12 @@ int64_t ggml_nrows(const struct ggml_tensor * tensor) {
 }
 
 size_t ggml_nbytes(const struct ggml_tensor * tensor) {
+    for (int i = 0; i < GGML_MAX_DIMS; ++i) {
+        if (tensor->ne[i] <= 0) {
+            return 0;
+        }
+    }
+
     size_t nbytes;
     const size_t blck_size = ggml_blck_size(tensor->type);
     if (blck_size == 1) {
@@ -2334,6 +2344,7 @@ struct ggml_tensor * ggml_concat(
     struct ggml_tensor  * b,
     int                   dim) {
     GGML_ASSERT(dim >= 0 && dim < GGML_MAX_DIMS);
+    GGML_ASSERT(a->type == b->type);
 
     int64_t ne[GGML_MAX_DIMS];
     for (int d = 0; d < GGML_MAX_DIMS; ++d) {
@@ -2685,6 +2696,37 @@ struct ggml_tensor * ggml_group_norm_inplace(
         int                   n_groups,
         float                 eps) {
     return ggml_group_norm_impl(ctx, a, n_groups, eps, true);
+}
+
+// ggml_l2_norm
+
+static struct ggml_tensor * ggml_l2_norm_impl(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        float                 eps,
+        bool                  inplace) {
+    struct ggml_tensor * result = inplace ? ggml_view_tensor(ctx, a) : ggml_dup_tensor(ctx, a);
+
+    ggml_set_op_params_f32(result, 0, eps);
+
+    result->op     = GGML_OP_L2_NORM;
+    result->src[0] = a;
+
+    return result;
+}
+
+struct ggml_tensor * ggml_l2_norm(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        float                 eps) {
+    return ggml_l2_norm_impl(ctx, a, eps, false);
+}
+
+struct ggml_tensor * ggml_l2_norm_inplace(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        float                 eps) {
+    return ggml_l2_norm_impl(ctx, a, eps, true);
 }
 
 // ggml_mul_mat
@@ -4354,7 +4396,7 @@ struct ggml_tensor * ggml_flash_attn_ext(
     }
 
     // permute(0, 2, 1, 3)
-    int64_t ne[4] = { q->ne[0], q->ne[2], q->ne[1], q->ne[3] };
+    int64_t ne[4] = { v->ne[0], q->ne[2], q->ne[1], q->ne[3] };
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
 
     float params[] = { scale, max_bias, logit_softcap };
@@ -4736,6 +4778,54 @@ struct ggml_tensor * ggml_gated_linear_attn(
     result->src[2] = q;
     result->src[3] = g;
     result->src[4] = state;
+
+    return result;
+}
+
+// ggml_rwkv_wkv7
+
+struct ggml_tensor * ggml_rwkv_wkv7(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * r,
+        struct ggml_tensor  * w,
+        struct ggml_tensor  * k,
+        struct ggml_tensor  * v,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b,
+        struct ggml_tensor  * state) {
+    GGML_ASSERT(ggml_is_contiguous(r));
+    GGML_ASSERT(ggml_is_contiguous(w));
+    GGML_ASSERT(ggml_is_contiguous(k));
+    GGML_ASSERT(ggml_is_contiguous(v));
+    GGML_ASSERT(ggml_is_contiguous(a));
+    GGML_ASSERT(ggml_is_contiguous(b));
+    GGML_ASSERT(ggml_is_contiguous(state));
+
+    const int64_t S = k->ne[0];
+    const int64_t H = k->ne[1];
+    const int64_t n_tokens = k->ne[2];
+    const int64_t n_seqs = state->ne[1];
+    {
+        GGML_ASSERT(w->ne[0] == S && w->ne[1] == H && w->ne[2] == n_tokens);
+        GGML_ASSERT(k->ne[0] == S && k->ne[1] == H && k->ne[2] == n_tokens);
+        GGML_ASSERT(v->ne[0] == S && v->ne[1] == H && v->ne[2] == n_tokens);
+        GGML_ASSERT(a->ne[0] == S && a->ne[1] == H && a->ne[2] == n_tokens);
+        GGML_ASSERT(b->ne[0] == S && b->ne[1] == H && b->ne[2] == n_tokens);
+        GGML_ASSERT(ggml_nelements(state) == S * S * H * n_seqs);
+    }
+
+    // concat output and new_state
+    const int64_t ne[4] = { S * H, n_tokens + S * n_seqs, 1, 1 };
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
+
+    result->op     = GGML_OP_RWKV_WKV7;
+    result->src[0] = r;
+    result->src[1] = w;
+    result->src[2] = k;
+    result->src[3] = v;
+    result->src[4] = a;
+    result->src[5] = b;
+    result->src[6] = state;
 
     return result;
 }

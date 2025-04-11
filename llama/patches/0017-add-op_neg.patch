@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Michael Yang <git@mxy.ng>
-Date: Wed, 2 Apr 2025 15:26:15 -0700
-Subject: [PATCH] metal: add op_neg
+From: jmorganca <jmorganca@gmail.com>
+Date: Tue, 8 Apr 2025 20:41:24 -0700
+Subject: [PATCH] add op_neg
 
 ---
  ggml/src/ggml-metal/ggml-metal.m     | 15 +++++++++++++++
@@ -9,10 +9,10 @@ Subject: [PATCH] metal: add op_neg
  2 files changed, 22 insertions(+)
 
 diff --git a/ggml/src/ggml-metal/ggml-metal.m b/ggml/src/ggml-metal/ggml-metal.m
-index e4c093f9..d8422f1b 100644
+index 7c7ca529..febece40 100644
 --- a/ggml/src/ggml-metal/ggml-metal.m
 +++ b/ggml/src/ggml-metal/ggml-metal.m
-@@ -423,6 +423,7 @@ enum ggml_metal_kernel_type {
+@@ -461,6 +461,7 @@ static void ggml_backend_metal_device_rel(struct ggml_backend_metal_device_conte
      GGML_METAL_KERNEL_TYPE_SQRT,
      GGML_METAL_KERNEL_TYPE_SIN,
      GGML_METAL_KERNEL_TYPE_COS,
@@ -20,23 +20,23 @@ index e4c093f9..d8422f1b 100644
      GGML_METAL_KERNEL_TYPE_SUM_ROWS,
      GGML_METAL_KERNEL_TYPE_POOL_2D_AVG_F32,
      GGML_METAL_KERNEL_TYPE_POOL_2D_MAX_F32,
-@@ -1039,6 +1040,7 @@ static struct ggml_backend_metal_context * ggml_metal_init(ggml_backend_dev_t de
-         GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_SQRT,                          sqrt,                           true);
-         GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_SIN,                           sin,                            true);
-         GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_COS,                           cos,                            true);
-+        GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_NEG,                           neg,                            true);
-         GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_SUM_ROWS,                      sum_rows,                       true);
-         GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_ARGMAX,                        argmax,                         true);
-         GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_POOL_2D_AVG_F32,               pool_2d_avg_f32,                true);
-@@ -1202,6 +1204,7 @@ static bool ggml_metal_supports_op(const struct ggml_backend_metal_device_contex
+@@ -1119,6 +1120,7 @@ @implementation GGMLMetalClass
+         GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_SQRT,                            sqrt,                            true);
+         GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_SIN,                             sin,                             true);
+         GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_COS,                             cos,                             true);
++        GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_NEG,                             neg,                             true);
+         GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_SUM_ROWS,                        sum_rows,                        true);
+         GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_ARGMAX,                          argmax,                          true);
+         GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_POOL_2D_AVG_F32,                 pool_2d_avg_f32,                 true);
+@@ -1280,6 +1282,7 @@ static bool ggml_metal_supports_op(const struct ggml_backend_metal_device_contex
                  case GGML_UNARY_OP_GELU_QUICK:
                  case GGML_UNARY_OP_SILU:
                  case GGML_UNARY_OP_ELU:
 +                case GGML_UNARY_OP_NEG:
-                     return ggml_is_contiguous(op->src[0]);
+                     return ggml_is_contiguous(op->src[0]) && op->src[0]->type == GGML_TYPE_F32;
                  default:
                      return false;
-@@ -1873,6 +1876,18 @@ static void ggml_metal_encode_node(
+@@ -1965,6 +1968,18 @@ static void ggml_metal_encode_node(
  
                      [encoder dispatchThreadgroups:MTLSizeMake(n, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
                  } break;
@@ -56,10 +56,10 @@ index e4c093f9..d8422f1b 100644
                  {
                      GGML_LOG_WARN("%s: node %3d, op = %8s not implemented\n", __func__, idx, ggml_op_name(dst->op));
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index f38909d0..bb0ff668 100644
+index e3185e5b..ede9d1e6 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -945,6 +945,13 @@ kernel void kernel_cos(
+@@ -949,6 +949,13 @@ kernel void kernel_cos(
      dst[tpig] = cos(src0[tpig]);
  }
  

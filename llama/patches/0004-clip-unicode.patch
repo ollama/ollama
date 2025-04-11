@@ -1,19 +1,19 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Michael Yang <mxyng@pm.me>
-Date: Mon, 16 Sep 2024 15:53:15 -0700
+From: jmorganca <jmorganca@gmail.com>
+Date: Tue, 8 Apr 2025 15:34:37 -0700
 Subject: [PATCH] clip-unicode
 
 ---
- examples/llava/clip.cpp | 40 +++++++++++++++++++++++++++++++++++++++-
- 1 file changed, 39 insertions(+), 1 deletion(-)
+ examples/llava/clip.cpp | 39 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 39 insertions(+)
 
 diff --git a/examples/llava/clip.cpp b/examples/llava/clip.cpp
-index 76d4a785..205af1eb 100644
+index 44428cc9..bbf4df5d 100644
 --- a/examples/llava/clip.cpp
 +++ b/examples/llava/clip.cpp
-@@ -58,6 +58,19 @@
- #   define LOG_DBG(...) do { fprintf(stdout, __VA_ARGS__); } while (0)
- #endif // defined(LLAVA_LOG_OFF)
+@@ -28,6 +28,19 @@
+ #include <cinttypes>
+ #include <limits>
  
 +#if defined(_WIN32)
 +#define WIN32_LEAN_AND_MEAN
@@ -28,49 +28,48 @@ index 76d4a785..205af1eb 100644
 +#endif
 +#endif
 +
+ struct clip_logger_state g_logger_state = {GGML_LOG_LEVEL_CONT, clip_log_callback_default, NULL};
+ 
  //#define CLIP_DEBUG_FUNCTIONS
+@@ -1458,7 +1471,29 @@ struct clip_model_loader {
+         {
+             std::vector<uint8_t> read_buf;
  
- // RGB uint8 image
-@@ -1402,8 +1415,29 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
-             gguf_free(ctx);
-             return nullptr;
-         }
--
 +#ifdef _WIN32
-+        int wlen = MultiByteToWideChar(CP_UTF8, 0, fname, -1, NULL, 0);
-+        if (!wlen) {
-+            return NULL;
-+        }
-+        wchar_t * wbuf = (wchar_t *) malloc(wlen * sizeof(wchar_t));
-+        wlen = MultiByteToWideChar(CP_UTF8, 0, fname, -1, wbuf, wlen);
-+        if (!wlen) {
-+            free(wbuf);
-+            return NULL;
-+        }
++            int wlen = MultiByteToWideChar(CP_UTF8, 0, fname, -1, NULL, 0);
++            if (!wlen) {
++                return NULL;
++            }
++            wchar_t * wbuf = (wchar_t *) malloc(wlen * sizeof(wchar_t));
++            wlen = MultiByteToWideChar(CP_UTF8, 0, fname, -1, wbuf, wlen);
++            if (!wlen) {
++                free(wbuf);
++                return NULL;
++            }
 +#if __GLIBCXX__
-+        int fd = _wopen(wbuf, _O_RDONLY | _O_BINARY);
-+        __gnu_cxx::stdio_filebuf<char> buffer(fd, std::ios_base::in);
-+        std::istream fin(&buffer);
++            int fd = _wopen(wbuf, _O_RDONLY | _O_BINARY);
++            __gnu_cxx::stdio_filebuf<char> buffer(fd, std::ios_base::in);
++            std::istream fin(&buffer);
 +#else // MSVC
-+        // unused in our current build
-+        auto fin = std::ifstream(wbuf, std::ios::binary);
++            // unused in our current build
++            auto fin = std::ifstream(wbuf, std::ios::binary);
 +#endif
-+        free(wbuf);
++            free(wbuf);
 +#else
-         auto fin = std::ifstream(fname, std::ios::binary);
+             auto fin = std::ifstream(fname, std::ios::binary);
 +#endif
-         if (!fin) {
-             LOG_ERR("cannot open model file for loading tensors\n");
-             clip_free(new_clip);
-@@ -1443,7 +1477,11 @@ struct clip_ctx * clip_model_load(const char * fname, const int verbosity = 1) {
-                 ggml_backend_tensor_set(cur, read_buf.data(), 0, num_bytes);
+             if (!fin) {
+                 throw std::runtime_error(string_format("%s: failed to open %s\n", __func__, fname.c_str()));
              }
-         }
+@@ -1485,7 +1520,11 @@ struct clip_model_loader {
+                     ggml_backend_tensor_set(cur, read_buf.data(), 0, num_bytes);
+                 }
+             }
 +#if defined(_WIN32) && defined(__GLIBCXX__)
-+        close(fd);
++            close(fd);
 +#else
-         fin.close();
+             fin.close();
 +#endif
-     }
  
-     // vision model
+             LOG_DBG("%s: loaded %zu tensors from %s\n", __func__, tensors_to_load.size(), fname.c_str());
+         }

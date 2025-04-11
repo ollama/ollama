@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Michael Yang <mxyng@pm.me>
-Date: Tue, 14 Jan 2025 12:01:24 -0800
+From: jmorganca <jmorganca@gmail.com>
+Date: Tue, 8 Apr 2025 20:31:38 -0700
 Subject: [PATCH] sort devices by score
 
 ---
@@ -8,10 +8,10 @@ Subject: [PATCH] sort devices by score
  1 file changed, 13 insertions(+), 8 deletions(-)
 
 diff --git a/ggml/src/ggml-backend-reg.cpp b/ggml/src/ggml-backend-reg.cpp
-index 95036ef8..98d5e14d 100644
+index 82ae1b5b..1487f322 100644
 --- a/ggml/src/ggml-backend-reg.cpp
 +++ b/ggml/src/ggml-backend-reg.cpp
-@@ -150,7 +150,7 @@ struct ggml_backend_reg_entry {
+@@ -157,7 +157,7 @@ struct ggml_backend_reg_entry {
  
  struct ggml_backend_registry {
      std::vector<ggml_backend_reg_entry> backends;
@@ -20,7 +20,7 @@ index 95036ef8..98d5e14d 100644
  
      ggml_backend_registry() {
  #ifdef GGML_USE_CUDA
-@@ -195,7 +195,7 @@ struct ggml_backend_registry {
+@@ -202,7 +202,7 @@ struct ggml_backend_registry {
          }
      }
  
@@ -29,7 +29,7 @@ index 95036ef8..98d5e14d 100644
          if (!reg) {
              return;
          }
-@@ -206,15 +206,20 @@ struct ggml_backend_registry {
+@@ -213,15 +213,20 @@ struct ggml_backend_registry {
  #endif
          backends.push_back({ reg, std::move(handle) });
          for (size_t i = 0; i < ggml_backend_reg_dev_count(reg); i++) {
@@ -52,17 +52,17 @@ index 95036ef8..98d5e14d 100644
 +        );
      }
  
-     ggml_backend_reg_t load_backend(const std::wstring & path, bool silent) {
-@@ -257,7 +262,7 @@ struct ggml_backend_registry {
+     ggml_backend_reg_t load_backend(const fs::path & path, bool silent) {
+@@ -265,7 +270,7 @@ struct ggml_backend_registry {
  
-         GGML_LOG_INFO("%s: loaded %s backend from %s\n", __func__, ggml_backend_reg_name(reg), utf16_to_utf8(path).c_str());
+         GGML_LOG_INFO("%s: loaded %s backend from %s\n", __func__, ggml_backend_reg_name(reg), path_str(path).c_str());
  
 -        register_backend(reg, std::move(handle));
 +        register_backend(reg, score_fn ? score_fn() : -1, std::move(handle));
  
          return reg;
      }
-@@ -280,7 +285,7 @@ struct ggml_backend_registry {
+@@ -288,7 +293,7 @@ struct ggml_backend_registry {
          // remove devices
          devices.erase(
              std::remove_if(devices.begin(), devices.end(),
@@ -71,7 +71,7 @@ index 95036ef8..98d5e14d 100644
              devices.end());
  
          // remove backend
-@@ -338,7 +343,7 @@ size_t ggml_backend_dev_count() {
+@@ -346,7 +351,7 @@ size_t ggml_backend_dev_count() {
  
  ggml_backend_dev_t ggml_backend_dev_get(size_t index) {
      GGML_ASSERT(index < ggml_backend_dev_count());

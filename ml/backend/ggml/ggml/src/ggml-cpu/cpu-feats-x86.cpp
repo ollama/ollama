@@ -278,6 +278,10 @@ static int ggml_backend_cpu_x86_score() {
     if (!is.SSE42()) { return 0; }
     score += 1<<2;
 #endif
+#ifdef GGML_BMI2
+    if (!is.BMI2()) { return 0; }
+    score += 1<<3;
+#endif
 #ifdef GGML_AVX
     if (!is.AVX()) { return 0; }
     score += 1<<4;

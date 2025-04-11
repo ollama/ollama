@@ -1,20 +1,18 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Daniel Hiltgen <daniel@ollama.com>
-Date: Fri, 25 Oct 2024 16:25:18 -0700
+From: jmorganca <jmorganca@gmail.com>
+Date: Tue, 8 Apr 2025 19:43:06 -0700
 Subject: [PATCH] fix deepseek deseret regex
 
-On windows compiled with gcc the c++ regex library failed to handle
-the characters
 ---
  src/llama-vocab.cpp |  2 +-
- src/unicode.cpp     | 22 ++++++++++++++++++++++
- 2 files changed, 23 insertions(+), 1 deletion(-)
+ src/unicode.cpp     | 21 +++++++++++++++++++++
+ 2 files changed, 22 insertions(+), 1 deletion(-)
 
 diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
-index a4eee9b8..1ca827eb 100644
+index f96550c8..07da5fb6 100644
 --- a/src/llama-vocab.cpp
 +++ b/src/llama-vocab.cpp
-@@ -295,7 +295,7 @@ struct llm_tokenizer_bpe : llm_tokenizer {
+@@ -296,7 +296,7 @@ struct llm_tokenizer_bpe : llm_tokenizer {
              case LLAMA_VOCAB_PRE_TYPE_DEEPSEEK_LLM:
                  regex_exprs = {
                      "[\r\n]",
@@ -24,7 +22,7 @@ index a4eee9b8..1ca827eb 100644
                      "\\s+$",
                      "[一-龥ࠀ-一가-퟿]+",
 diff --git a/src/unicode.cpp b/src/unicode.cpp
-index e63bb4ab..9dd53b9a 100644
+index e63bb4ab..73cb2b1a 100644
 --- a/src/unicode.cpp
 +++ b/src/unicode.cpp
 @@ -2,6 +2,11 @@
@@ -39,7 +37,7 @@ index e63bb4ab..9dd53b9a 100644
  #include "unicode.h"
  #include "unicode-data.h"
  
-@@ -200,6 +205,22 @@ static std::unordered_map<std::string, uint8_t> unicode_utf8_to_byte_map() {
+@@ -200,6 +205,21 @@ static std::unordered_map<std::string, uint8_t> unicode_utf8_to_byte_map() {
  }
  
  static inline std::wstring unicode_wstring_from_utf8(const std::string & s) {
@@ -58,11 +56,10 @@ index e63bb4ab..9dd53b9a 100644
 +    free(wbuf);
 +    return ret;
 +#else
-+
  #if defined(__clang__)
      // disable C++17 deprecation warning for std::codecvt_utf8
  #    pragma clang diagnostic push
-@@ -213,6 +234,7 @@ static inline std::wstring unicode_wstring_from_utf8(const std::string & s) {
+@@ -213,6 +233,7 @@ static inline std::wstring unicode_wstring_from_utf8(const std::string & s) {
  #endif
  
      return conv.from_bytes(s);

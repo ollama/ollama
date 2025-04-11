@@ -13,6 +13,7 @@ include include/llama-*.*
 include examples/
 include examples/llava/
 include examples/llava/clip.*
+include examples/llava/clip-impl.*
 include examples/llava/llava.*
 include src/
 include src/llama.*
