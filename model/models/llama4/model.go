@@ -52,8 +52,7 @@ func New(c fs.Config) (model.Model, error) {
 	}
 
 	m.Cache = kvcache.NewWrapperCache(
-		// TODO: pretend this is chunked attention for now
-		kvcache.NewSWACache(8192, m.Shift),
+		kvcache.NewChunkedAttentionCache(int32(c.Uint("attention.chunk_size")), m.Shift),
 		kvcache.NewCausalCache(m.Shift),
 	)
 
