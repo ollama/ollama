@@ -378,3 +378,12 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 
 	return version.Version, nil
 }
+
+
+func (c *Client) Search(ctx context.Context, req *SearchRequest) (*SearchResponse, error) {
+	var resp SearchResponse
+	if err := c.do(ctx, http.MethodPost, "/api/search", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
