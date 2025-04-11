@@ -21,6 +21,7 @@ type shiftFn func(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, e
 type Causal struct {
 	DType      ml.DType
 	windowSize int32
+	chunkSize  int32
 
 	opts CausalOptions
 
@@ -90,6 +91,17 @@ func NewCausalCache(shift shiftFn) *Causal {
 func NewSWACache(windowSize int32, shift shiftFn) *Causal {
 	return &Causal{
 		windowSize: windowSize,
+		shiftFn:    shift,
+		ctxs:       make(map[int]ml.Context),
+		keys:       make(map[int]ml.Tensor),
+		values:     make(map[int]ml.Tensor),
+	}
+}
+
+func NewChunkedAttentionCache(chunkSize int32, shift shiftFn) *Causal {
+	return &Causal{
+		windowSize: math.MaxInt32,
+		chunkSize:  chunkSize,
 		shiftFn:    shift,
 		ctxs:       make(map[int]ml.Context),
 		keys:       make(map[int]ml.Tensor),
@@ -300,6 +312,7 @@ func (c *Causal) buildMask(ctx ml.Context) (ml.Tensor, error) {
 		for j := c.curCellRange.min; j <= c.curCellRange.max; j++ {
 			if !slices.Contains(c.cells[j].sequences, c.curSequences[i]) ||
 				(enabled && c.cells[j].pos > c.curPositions[i]) ||
+				c.chunkSize > 0 && c.cells[j].pos < c.curPositions[i]-c.curPositions[i]%c.chunkSize ||
 				c.cells[j].pos < c.curPositions[i]-c.windowSize {
 				mask[i*length+(j-c.curCellRange.min)] = float32(math.Inf(-1))
 			}

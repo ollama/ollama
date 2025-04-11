@@ -19,6 +19,7 @@ type llama4Model struct {
 		InterleaveMOELayerStep uint32 `json:"interleave_moe_layer_step"`
 		UseQKNorm              bool   `json:"use_qk_norm"`
 		IntermediateSizeMLP    uint32 `json:"intermediate_size_mlp"`
+		AttentionChunkSize     uint32 `json:"attention_chunk_size"`
 	} `json:"text_config"`
 	VisionModel struct {
 		NumHiddenLayers   uint32  `json:"num_hidden_layers"`
@@ -51,6 +52,7 @@ func (p *llama4Model) KV(t *Tokenizer) ggml.KV {
 	kv["llama4.expert_used_count"] = p.TextModel.NumExpertsPerToken
 	kv["llama4.interleave_moe_layer_step"] = p.TextModel.InterleaveMOELayerStep
 	kv["llama4.use_qk_norm"] = p.TextModel.UseQKNorm
+	kv["llama4.attention.chunk_size"] = p.TextModel.AttentionChunkSize
 
 	kv["llama4.vision.block_count"] = p.VisionModel.NumHiddenLayers
 	kv["llama4.vision.embedding_length"] = p.VisionModel.HiddenSize
