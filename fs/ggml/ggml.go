@@ -53,11 +53,14 @@ func (kv KV) EmbeddingLength() uint64 {
 }
 
 func (kv KV) HeadCount() uint64 {
-	return uint64(kv.Uint("attention.head_count"))
+	// TODO(drifkin): using the max value can cause an overestimation. In the
+	// future if array values become more popular, we can adapt the more invasive
+	// <https://github.com/ollama/ollama/pull/10225>
+	return uint64(kv.UintOrMaxArrayValue("attention.head_count"))
 }
 
 func (kv KV) HeadCountKV() uint64 {
-	return uint64(kv.Uint("attention.head_count_kv", 1))
+	return uint64(kv.UintOrMaxArrayValue("attention.head_count_kv", 1))
 }
 
 func (kv KV) EmbeddingHeadCount() uint64 {
@@ -104,6 +107,28 @@ func (kv KV) Bool(key string, defaultValue ...bool) bool {
 	return keyValue(kv, key, append(defaultValue, false)...)
 }
 
+func (kv KV) UintOrMaxArrayValue(key string, defaultValue ...uint32) uint32 {
+	if v, ok := keyValueUntyped(kv, key); ok {
+		switch v := v.(type) {
+		case *array:
+			if v.size == 0 {
+				return defaultValue[0]
+			}
+			max := v.values[0].(int32)
+			for i := range v.values {
+				val := v.values[i].(int32)
+				if val > max {
+					max = val
+				}
+			}
+			return uint32(max)
+		default:
+			return v.(uint32)
+		}
+	}
+	return defaultValue[0]
+}
+
 func (kv KV) Strings(key string, defaultValue ...[]string) []string {
 	r := keyValue(kv, key, &array{})
 	s := make([]string, r.size)
@@ -141,16 +166,24 @@ func (kv KV) OllamaEngineRequired() bool {
 }
 
 func keyValue[T string | uint32 | uint64 | float32 | *array | bool](kv KV, key string, defaultValue ...T) T {
-	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") {
-		key = kv.Architecture() + "." + key
-	}
-
-	if val, ok := kv[key]; ok {
+	if val, ok := keyValueUntyped(kv, key); ok {
 		return val.(T)
 	}
 
 	slog.Warn("key not found", "key", key, "default", defaultValue[0])
 	return defaultValue[0]
+}
+
+func keyValueUntyped(kv KV, key string) (any, bool) {
+	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") {
+		key = kv.Architecture() + "." + key
+	}
+
+	if val, ok := kv[key]; ok {
+		return val, true
+	}
+
+	return nil, false
 }
 
 type Tensors struct {
