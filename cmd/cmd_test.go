@@ -689,7 +689,7 @@ func TestCreateHandler(t *testing.T) {
 						return
 					}
 
-					if req.Name != "test-model" {
+					if req.Model != "test-model" {
 						t.Errorf("expected model name 'test-model', got %s", req.Name)
 					}
 
