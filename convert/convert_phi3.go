@@ -118,6 +118,5 @@ func (p *phi3Model) Replacements() []string {
 type ropeFactor []float32
 
 func (r ropeFactor) WriteTo(w io.Writer) (int64, error) {
-	err := binary.Write(w, binary.LittleEndian, r)
-	return 0, err
+	return 0, binary.Write(w, binary.LittleEndian, r)
 }
