@@ -344,22 +344,10 @@ type Endianness struct {
 	Model binary.ByteOrder
 }
 
-func (e Endianness) ByteswapUint16(data uint16) uint16 {
-	byteswapped := make([]byte, 2)
-	e.Model.PutUint16(byteswapped, data)
-	return e.Host.Uint16(byteswapped)
-}
-
 func (e Endianness) ByteswapUint32(data uint32) uint32 {
 	byteswapped := make([]byte, 4)
 	e.Model.PutUint32(byteswapped, data)
 	return e.Host.Uint32(byteswapped)
-}
-
-func (e Endianness) ByteswapUint64(data uint64) uint64 {
-	byteswapped := make([]byte, 8)
-	e.Model.PutUint64(byteswapped, data)
-	return e.Host.Uint64(byteswapped)
 }
 
 const (
@@ -379,7 +367,7 @@ const (
 var ErrUnsupportedFormat = errors.New("unsupported model format")
 
 func DetectContentType(b []byte) string {
-	switch binary.NativeEndian.Uint32(b[:4]) {
+	switch binary.LittleEndian.Uint32(b[:4]) {
 	case FILE_MAGIC_GGML:
 		return "ggml"
 	case FILE_MAGIC_GGMF:
@@ -408,18 +396,8 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
 	rs = bufioutil.NewBufferedSeeker(rs, 32<<10)
 	endianness := &Endianness{}
 
-	/*
-	 * We read in `binary.NativeEndian` to determine the endianness of the host
-	 * machine by comparing the current byte-order read against the known magic bytes.
-	 *
-	 * This eliminates the need to use unsafe pointers to do the same thing.
-	 * See: https://stackoverflow.com/a/51333745
-	 *
-	 * If `magic` is 0x46554747, the host machine is Little Endian.
-	 * If `magic` is 0x47475546, the host machine is Big Endian.
-	 */
 	var magic uint32
-	if err := binary.Read(rs, binary.NativeEndian, &magic); err != nil {
+	if err := binary.Read(rs, binary.LittleEndian, &magic); err != nil {
 		return nil, 0, err
 	}
 
