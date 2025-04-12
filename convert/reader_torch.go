@@ -43,6 +43,17 @@ type torch struct {
 	*tensorBase
 }
 
+func (t torch) Clone() Tensor {
+	return torch{
+		storage: t.storage,
+		tensorBase: &tensorBase{
+			name:  t.name,
+			shape: t.shape,
+			repacker: t.repacker,
+		},
+	}
+}
+
 func (pt torch) WriteTo(w io.Writer) (int64, error) {
 	return 0, nil
 }
