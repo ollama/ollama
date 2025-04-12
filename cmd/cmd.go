@@ -787,17 +787,7 @@ func CopyHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func PullHandler(cmd *cobra.Command, args []string) error {
-	insecure, err := cmd.Flags().GetBool("insecure")
-	if err != nil {
-		return err
-	}
-
-	client, err := api.ClientFromEnvironment()
-	if err != nil {
-		return err
-	}
-
+func execPullRequest(ctx context.Context, client *api.Client, req *api.PullRequest) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
@@ -833,9 +823,32 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	request := api.PullRequest{Name: args[0], Insecure: insecure}
-	if err := client.Pull(cmd.Context(), &request, fn); err != nil {
+	return client.Pull(ctx, req, fn)
+}
+
+func PullHandler(cmd *cobra.Command, args []string) error {
+	insecure, err := cmd.Flags().GetBool("insecure")
+	if err != nil {
 		return err
+	}
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	if len(args) > 1 {
+		fmt.Printf("pulling %d models: %s\n", len(args), strings.Join(args, ", "))
+	}
+
+	for i, name := range args {
+		if len(args) > 1 {
+			fmt.Printf("pulling model %d: %s\n", i+1, name)
+		}
+		request := api.PullRequest{Name: name, Insecure: insecure}
+		if err := execPullRequest(cmd.Context(), client, &request); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -1287,9 +1300,9 @@ func NewCLI() *cobra.Command {
 	}
 
 	pullCmd := &cobra.Command{
-		Use:     "pull MODEL",
-		Short:   "Pull a model from a registry",
-		Args:    cobra.ExactArgs(1),
+		Use:     "pull MODEL [MODEL...]",
+		Short:   "Pull models from a registry",
+		Args:    cobra.MinimumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    PullHandler,
 	}
