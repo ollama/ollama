@@ -784,6 +784,7 @@ struct ggml_backend_cuda_split_buffer_context {
 static void ggml_backend_cuda_split_buffer_free_buffer(ggml_backend_buffer_t buffer) {
     ggml_backend_cuda_split_buffer_context * ctx = (ggml_backend_cuda_split_buffer_context *)buffer->context;
     delete ctx;
+    delete buffer;
 }
 
 static void * ggml_backend_cuda_split_buffer_get_base(ggml_backend_buffer_t buffer) {
@@ -1056,6 +1057,7 @@ static const char * ggml_backend_cuda_host_buffer_type_name(ggml_backend_buffer_
 
 static void ggml_backend_cuda_host_buffer_free_buffer(ggml_backend_buffer_t buffer) {
     CUDA_CHECK(cudaFreeHost(buffer->context));
+    delete buffer;
 }
 
 static void * ggml_cuda_host_malloc(size_t size) {
