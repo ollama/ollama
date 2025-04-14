@@ -415,6 +415,7 @@ func TestGetModelfileName(t *testing.T) {
 				if err != nil {
 					t.Fatalf("temp modelfile creation failed: %v", err)
 				}
+				defer tempFile.Close()
 
 				expectedFilename = tempFile.Name()
 				err = cmd.Flags().Set("file", expectedFilename)
