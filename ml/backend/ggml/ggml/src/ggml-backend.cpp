@@ -541,6 +541,7 @@ static void ggml_backend_multi_buffer_free_buffer(ggml_backend_buffer_t buffer) 
 
     free(ctx->buffers);
     free(ctx);
+    delete buffer;
 }
 
 static void ggml_backend_multi_buffer_clear(ggml_backend_buffer_t buffer, uint8_t value) {
@@ -1864,6 +1865,11 @@ static void * ggml_backend_cpu_buffer_get_base(ggml_backend_buffer_t buffer) {
 
 static void ggml_backend_cpu_buffer_free_buffer(ggml_backend_buffer_t buffer) {
     ggml_aligned_free(buffer->context, buffer->size);
+    delete buffer;
+}
+
+static void ggml_backend_cpu_ptr_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+    delete buffer;
 }
 
 static void ggml_backend_cpu_buffer_memset_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, uint8_t value, size_t offset, size_t size) {
@@ -1911,7 +1917,7 @@ static const struct ggml_backend_buffer_i ggml_backend_cpu_buffer_i = {
 };
 
 static const struct ggml_backend_buffer_i ggml_backend_cpu_buffer_from_ptr_i = {
-    /* .free_buffer     = */ NULL, // ptr is not owned by the buffer, so it does not need to be freed
+    /* .free_buffer     = */ ggml_backend_cpu_ptr_buffer_free_buffer, // ptr is not owned by the buffer but need to free the buffer itself
     /* .get_base        = */ ggml_backend_cpu_buffer_get_base,
     /* .init_tensor     = */ NULL, // no initialization required
     /* .memset_tensor   = */ ggml_backend_cpu_buffer_memset_tensor,
