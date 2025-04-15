@@ -12,12 +12,12 @@ var server *zeroconf.Server
 func RegisterService() {
 	var err error
 	server, err = zeroconf.Register(
-		"OllamaInstance", // Service Name
-		"_ollama._tcp",   // Service Type
-		"local.",         // Domain
-		11434,            // Port
+		"OllamaInstance",    // Service Name
+		"_ollama._tcp",      // Service Type
+		"local.",            // Domain
+		11434,               // Port
 		[]string{"path=./"}, // TXT Records
-		nil, // Host
+		nil,                 // Host
 	)
 	if err != nil {
 		log.Fatalf("Failed to register service: %s", err)
