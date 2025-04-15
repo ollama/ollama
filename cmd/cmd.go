@@ -1092,6 +1092,11 @@ func RunServer(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
+	if os.Getenv("OLLAMA_ZEROCONF") == "1" {
+		go server.RegisterService()
+		defer server.UnregisterService()
+	}
+
 	ln, err := net.Listen("tcp", envconfig.Host().Host)
 	if err != nil {
 		return err
@@ -1101,7 +1106,6 @@ func RunServer(_ *cobra.Command, _ []string) error {
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
-
 	return err
 }
 
