@@ -4,6 +4,10 @@ This document recode process of merge ggml-sycl from [llama.cpp](https://github.
 
 Only tested in windows and intel integrated Graphics Card.
 
+A portable package in https://github.com/chnxq/ollama/releases/tag/chnxq%2Fv0.0.1a 
+
+# `develope config`
+
 ## Pre-request
 Install Intel-OneApi: from [OneApiBaseToolkit](https://www.intel.com/content/www/us/en/developer/articles/system-requirements/oneapi-base-toolkit/2025.html#inpage-nav-1-1)
 
@@ -54,6 +58,9 @@ set PATH=%PATH%;%ONEAPI_ROOT%\2025.1\bin
 
 .\ollama.exe serve
 ```
+note:
+  set OLLAMA_NUM_GPU=xxx
+  xxx: It needs to be manually set. According to the number of model layers that the video memory can load.for example my T140 has 16G shared video memory,i set it to 64.
 
 ```shell
 # run ollama test client
