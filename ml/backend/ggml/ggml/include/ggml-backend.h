@@ -203,6 +203,8 @@ extern "C" {
     // Backend registry
     //
 
+    GGML_API void ggml_backend_device_register(ggml_backend_dev_t device);
+
     // Backend (reg) enumeration
     GGML_API size_t             ggml_backend_reg_count(void);
     GGML_API ggml_backend_reg_t ggml_backend_reg_get(size_t index);

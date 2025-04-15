@@ -10,7 +10,7 @@ Subject: [PATCH] cuda
  3 files changed, 2 insertions(+), 1 deletion(-)
 
 diff --git a/ggml/src/ggml-backend.cpp b/ggml/src/ggml-backend.cpp
-index e2d6c405..a12172dc 100644
+index dba7be33..1ca40b2c 100644
 --- a/ggml/src/ggml-backend.cpp
 +++ b/ggml/src/ggml-backend.cpp
 @@ -106,7 +106,6 @@ void ggml_backend_buffer_free(ggml_backend_buffer_t buffer) {
@@ -22,10 +22,10 @@ index e2d6c405..a12172dc 100644
  
  size_t ggml_backend_buffer_get_size(ggml_backend_buffer_t buffer) {
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 0b06be72..be29e979 100644
+index ebb2ccae..b094929b 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -424,6 +424,7 @@ struct ggml_backend_cuda_buffer_context {
+@@ -529,6 +529,7 @@ struct ggml_backend_cuda_buffer_context {
  static void ggml_backend_cuda_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_backend_cuda_buffer_context * ctx = (ggml_backend_cuda_buffer_context *)buffer->context;
      delete ctx;
@@ -34,10 +34,10 @@ index 0b06be72..be29e979 100644
  
  static bool ggml_backend_buffer_is_cuda(ggml_backend_buffer_t buffer) {
 diff --git a/ggml/src/ggml-metal/ggml-metal.m b/ggml/src/ggml-metal/ggml-metal.m
-index a85502ee..cd8ef741 100644
+index c550142a..fd9a4e77 100644
 --- a/ggml/src/ggml-metal/ggml-metal.m
 +++ b/ggml/src/ggml-metal/ggml-metal.m
-@@ -4187,6 +4187,7 @@ static void ggml_backend_metal_buffer_free_buffer(ggml_backend_buffer_t buffer)
+@@ -4350,6 +4350,7 @@ static void ggml_backend_metal_buffer_free_buffer(ggml_backend_buffer_t buffer)
      }
  
      free(ctx);

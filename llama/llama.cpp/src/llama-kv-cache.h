@@ -37,7 +37,7 @@ struct llama_kv_cache {
     bool can_shift = false;
 
     // Note: The value of head isn't only used to optimize searching
-    // for a free KV slot. llama_decode_internal also uses it, so it
+    // for a free KV slot. llama_decode_impl also uses it, so it
     // cannot be freely changed after a slot has been allocated.
     uint32_t head = 0;
     uint32_t size = 0;

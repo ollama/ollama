@@ -6,8 +6,6 @@ Thank you for your interest in contributing to Ollama! Here are a few guidelines
 
 See the [development documentation](./docs/development.md) for instructions on how to build and run Ollama locally.
 
-## Pull requests
-
 ### Ideal issues
 
 * [Bugs](https://github.com/ollama/ollama/issues?q=is%3Aissue+is%3Aopen+label%3Abug): issues where Ollama stops working or where it results in an unexpected error.
@@ -26,11 +24,64 @@ See the [development documentation](./docs/development.md) for instructions on h
 * Changes that add significant friction to the user experience
 * Changes that create a large future maintenance burden for maintainers and contributors
 
-### Best practices
+## Proposing a (non-trivial) change
 
-* Commit messages: please leave both a title and a description in your commit messages. The title should be a short summary of the changes, with a leading word that explains the section of the code being changed (e.g. `api: fix parsing of prompt field`) . In the description, leave a short 2-3 sentences that explain more about the change and its impact.
-* Tests: please add test coverage to changes where possible.
-* Minimize dependencies: avoid adding new dependencies unless absolutely necessary.
+> By "non-trivial", we mean a change that is not a bug fix or small
+> documentation update. If you are unsure, please ask us on our [Discord
+> server](https://discord.gg/ollama).
+
+Before opening a non-trivial Pull Request, please open an issue to discuss the change and
+get feedback from the maintainers. This helps us understand the context of the
+change and how it fits into Ollama's roadmap and prevents us from duplicating
+work or you from spending time on a change that we may not be able to accept.
+
+Tips for proposals:
+
+* Explain the problem you are trying to solve, not what you are trying to do.
+* Explain why the change is important.
+* Explain how the change will be used.
+* Explain how the change will be tested.
+
+Additionally, for bonus points: Provide draft documentation you would expect to
+see if the change were accepted.
+
+## Pull requests
+
+**Commit messages**
+
+The title should look like:
+
+    <package>: <short description>
+
+The package is the most affected Go package. If the change does not affect Go
+code, then use the directory name instead. Changes to a single well-known
+file in the root directory may use the file name.
+
+The short description should start with a lowercase letter and be a
+continuation of the sentence:
+
+      "This changes Ollama to..."
+
+Examples:
+
+      llm/backend/mlx: support the llama architecture
+      CONTRIBUTING: provide clairity on good commit messages, and bad
+
+Bad Examples:
+
+      feat: add more emoji
+      fix: was not using famous web framework
+      chore: generify code
+
+**Tests**
+
+Please include tests. Strive to test behavior, not implementation.
+
+**New dependencies**
+
+Dependencies should be added sparingly. If you are adding a new dependency,
+please explain why it is necessary and what other ways you attempted that
+did not work without it.
 
 ## Need help?
 

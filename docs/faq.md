@@ -20,11 +20,17 @@ Please refer to the [GPU docs](./gpu.md).
 
 ## How can I specify the context window size?
 
-By default, Ollama uses a context window size of 2048 tokens.
+By default, Ollama uses a context window size of 2048 tokens. 
+
+This can be overridden with the `OLLAMA_CONTEXT_LENGTH` environment variable. For example, to set the default context window to 8K, use: 
+
+```shell
+OLLAMA_CONTEXT_LENGTH=8192 ollama serve
+```
 
 To change this when using `ollama run`, use `/set parameter`:
 
-```
+```shell
 /set parameter num_ctx 4096
 ```
 
@@ -46,9 +52,14 @@ Use the `ollama ps` command to see what models are currently loaded into memory.
 
 ```shell
 ollama ps
-NAME      	ID          	SIZE 	PROCESSOR	UNTIL
-llama3:70b	bcfb190ca3a7	42 GB	100% GPU 	4 minutes from now
 ```
+
+> **Output**:
+>
+> ```
+> NAME      	ID          	SIZE 	PROCESSOR	UNTIL
+> llama3:70b	bcfb190ca3a7	42 GB	100% GPU 	4 minutes from now
+> ```
 
 The `Processor` column will show which memory the model was loaded in to:
 * `100% GPU` means the model was loaded entirely into the GPU
@@ -66,7 +77,7 @@ If Ollama is run as a macOS application, environment variables should be set usi
 1. For each environment variable, call `launchctl setenv`.
 
     ```bash
-    launchctl setenv OLLAMA_HOST "0.0.0.0"
+    launchctl setenv OLLAMA_HOST "0.0.0.0:11434"
     ```
 
 2. Restart Ollama application.
@@ -81,14 +92,14 @@ If Ollama is run as a systemd service, environment variables should be set using
 
     ```ini
     [Service]
-    Environment="OLLAMA_HOST=0.0.0.0"
+    Environment="OLLAMA_HOST=0.0.0.0:11434"
     ```
 
 3. Save and exit.
 
 4. Reload `systemd` and restart Ollama:
 
-   ```bash
+   ```shell
    systemctl daemon-reload
    systemctl restart ollama
    ```
@@ -182,6 +193,13 @@ cloudflared tunnel --url http://localhost:11434 --http-host-header="localhost:11
 
 Ollama allows cross-origin requests from `127.0.0.1` and `0.0.0.0` by default. Additional origins can be configured with `OLLAMA_ORIGINS`.
 
+For browser extensions, you'll need to explicitly allow the extension's origin pattern. Set `OLLAMA_ORIGINS` to include `chrome-extension://*`, `moz-extension://*`, and `safari-web-extension://*` if you wish to allow all browser extensions access, or specific extensions as needed:
+
+```
+# Allow all Chrome, Firefox, and Safari extensions
+OLLAMA_ORIGINS=chrome-extension://*,moz-extension://*,safari-web-extension://* ollama serve
+```
+
 Refer to the section [above](#how-do-i-configure-ollama-server) for how to set environment variables on your platform.
 
 ## Where are models stored?
@@ -221,16 +239,19 @@ properties.
 If you are using the API you can preload a model by sending the Ollama server an empty request. This works with both the `/api/generate` and `/api/chat` API endpoints.
 
 To preload the mistral model using the generate endpoint, use:
+
 ```shell
 curl http://localhost:11434/api/generate -d '{"model": "mistral"}'
 ```
 
 To use the chat completions endpoint, use:
+
 ```shell
 curl http://localhost:11434/api/chat -d '{"model": "mistral"}'
 ```
 
 To preload a model using the CLI, use the command:
+
 ```shell
 ollama run llama3.2 ""
 ```
@@ -250,11 +271,13 @@ If you're using the API, use the `keep_alive` parameter with the `/api/generate`
 * '0' which will unload the model immediately after generating a response
 
 For example, to preload a model and leave it in memory use:
+
 ```shell
 curl http://localhost:11434/api/generate -d '{"model": "llama3.2", "keep_alive": -1}'
 ```
 
 To unload the model and free up memory use:
+
 ```shell
 curl http://localhost:11434/api/generate -d '{"model": "llama3.2", "keep_alive": 0}'
 ```

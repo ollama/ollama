@@ -62,13 +62,13 @@ static __global__ void mul_mat_vec_q(
 
     constexpr vec_dot_q_cuda_t vec_dot_q_cuda = get_vec_dot_q_cuda(type);
 
-#if defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__) && (defined(RDNA2) || defined(RDNA3))
+#if defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__) && (defined(RDNA2) || defined(RDNA3) || defined(RDNA4))
     constexpr int nwarps              = 1;
     constexpr int rows_per_cuda_block = 1;
 #else
     constexpr int nwarps              = ncols_y <= 4 ? 4 : 2;
     constexpr int rows_per_cuda_block = ncols_y == 1 ? 1 : 2;
-#endif // defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__) && !defined(RDNA2) && !defined(RDNA3)
+#endif // defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__) && !defined(RDNA2) && !defined(RDNA3) && !defined(RDNA4)
 
     const     int tid = WARP_SIZE*threadIdx.y + threadIdx.x;
     const     int row0 = rows_per_cuda_block*blockIdx.x;
@@ -142,7 +142,7 @@ static void mul_mat_vec_q_cuda(
     int64_t nwarps = 1;
     int64_t rows_per_cuda_block = 1;
 
-    if (ggml_cuda_info().devices[id].cc < GGML_CUDA_CC_CDNA || ggml_cuda_info().devices[id].cc == GGML_CUDA_CC_RDNA1) { // NVIDIA and AMD older than RDNA2 but not CDNA
+    if (ggml_cuda_info().devices[id].cc < GGML_CUDA_CC_RDNA2) { // NVIDIA and AMD older than RDNA2
         switch(ncols_y) {
             case 1:
                 nwarps = 4;
@@ -166,6 +166,7 @@ static void mul_mat_vec_q_cuda(
                 break;
         }
     }
+
     const int64_t nblocks = (nrows_x + rows_per_cuda_block - 1) / rows_per_cuda_block;
     const dim3 block_nums(nblocks, 1, 1);
     const dim3 block_dims(WARP_SIZE, nwarps, 1);

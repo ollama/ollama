@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Michael Yang <mxyng@pm.me>
+Date: Tue, 14 Jan 2025 15:59:04 -0800
+Subject: [PATCH] add phony target ggml-cpu for all cpu variants
+
+---
+ ggml/src/CMakeLists.txt | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
+index 0002ac18..0a8d1092 100644
+--- a/ggml/src/CMakeLists.txt
++++ b/ggml/src/CMakeLists.txt
+@@ -297,6 +297,7 @@ function(ggml_add_cpu_backend_variant tag_name)
+     endforeach()
+ 
+     ggml_add_cpu_backend_variant_impl(${tag_name})
++    add_dependencies(ggml-cpu ggml-cpu-${tag_name})
+ endfunction()
+ 
+ ggml_add_backend(CPU)
+@@ -305,6 +306,7 @@ if (GGML_CPU_ALL_VARIANTS)
+     if (NOT GGML_BACKEND_DL)
+         message(FATAL_ERROR "GGML_CPU_ALL_VARIANTS requires GGML_BACKEND_DL")
+     endif()
++    add_custom_target(ggml-cpu)
+     ggml_add_cpu_backend_variant(sandybridge    AVX)
+     ggml_add_cpu_backend_variant(haswell        AVX F16C AVX2 FMA)
+     ggml_add_cpu_backend_variant(skylakex       AVX F16C AVX2 FMA AVX512)

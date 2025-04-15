@@ -75,7 +75,7 @@ RestartSec=3
 Environment="PATH=$PATH"
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
 ```
 
 Then start the service:
@@ -119,7 +119,7 @@ sudo systemctl status ollama
 
 To customize the installation of Ollama, you can edit the systemd service file or the environment variables by running:
 
-```
+```shell
 sudo systemctl edit ollama
 ```
 
@@ -152,7 +152,7 @@ Use `OLLAMA_VERSION` environment variable with the install script to install a s
 For example:
 
 ```shell
-curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=0.3.9 sh
+curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=0.5.7 sh
 ```
 
 ## Viewing logs
@@ -185,4 +185,10 @@ Remove the downloaded models and Ollama service user and group:
 sudo rm -r /usr/share/ollama
 sudo userdel ollama
 sudo groupdel ollama
+```
+
+Remove installed libraries:
+
+```shell
+sudo rm -rf /usr/local/lib/ollama
 ```

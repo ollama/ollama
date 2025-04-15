@@ -18,7 +18,9 @@ import (
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/types/model"
 )
 
 type LlmRequest struct {
@@ -36,13 +38,13 @@ type Scheduler struct {
 	pendingReqCh  chan *LlmRequest
 	finishedReqCh chan *LlmRequest
 	expiredCh     chan *runnerRef
-	unloadedCh    chan interface{}
+	unloadedCh    chan any
 
 	loaded   map[string]*runnerRef
 	loadedMu sync.Mutex
 
-	loadFn       func(req *LlmRequest, ggml *llm.GGML, gpus discover.GpuInfoList, numParallel int)
-	newServerFn  func(gpus discover.GpuInfoList, model string, ggml *llm.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error)
+	loadFn       func(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoList, numParallel int)
+	newServerFn  func(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error)
 	getGpuFn     func() discover.GpuInfoList
 	getCpuFn     func() discover.GpuInfoList
 	reschedDelay time.Duration
@@ -66,7 +68,7 @@ func InitScheduler(ctx context.Context) *Scheduler {
 		pendingReqCh:  make(chan *LlmRequest, maxQueue),
 		finishedReqCh: make(chan *LlmRequest, maxQueue),
 		expiredCh:     make(chan *runnerRef, maxQueue),
-		unloadedCh:    make(chan interface{}, maxQueue),
+		unloadedCh:    make(chan any, maxQueue),
 		loaded:        make(map[string]*runnerRef),
 		newServerFn:   llm.NewLlamaServer,
 		getGpuFn:      discover.GetGPUInfo,
@@ -178,7 +180,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						if allReliable {
 							// HACK
 							os.Setenv("OLLAMA_MAX_LOADED_MODELS", strconv.Itoa(defaultModelsPerGPU*len(gpus)))
-							slog.Debug("updating default concurrency", "OLLAMA_MAX_LOADED_MODELS", envconfig.MaxRunners, "gpu_count", len(gpus))
+							slog.Debug("updating default concurrency", "OLLAMA_MAX_LOADED_MODELS", envconfig.MaxRunners(), "gpu_count", len(gpus))
 						} else {
 							// HACK
 							os.Setenv("OLLAMA_MAX_LOADED_MODELS", strconv.Itoa(len(gpus)))
@@ -194,7 +196,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					}
 
 					// Embedding models should always be loaded with parallel=1
-					if pending.model.CheckCapabilities(CapabilityCompletion) != nil {
+					if pending.model.CheckCapabilities(model.CapabilityCompletion) != nil {
 						numParallel = 1
 					}
 
@@ -409,7 +411,7 @@ func (pending *LlmRequest) useLoadedRunner(runner *runnerRef, finished chan *Llm
 	}()
 }
 
-func (s *Scheduler) load(req *LlmRequest, ggml *llm.GGML, gpus discover.GpuInfoList, numParallel int) {
+func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoList, numParallel int) {
 	if numParallel < 1 {
 		numParallel = 1
 	}
@@ -417,12 +419,12 @@ func (s *Scheduler) load(req *LlmRequest, ggml *llm.GGML, gpus discover.GpuInfoL
 	if req.sessionDuration != nil {
 		sessionDuration = req.sessionDuration.Duration
 	}
-	llama, err := s.newServerFn(gpus, req.model.ModelPath, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, numParallel)
+	llama, err := s.newServerFn(gpus, req.model.ModelPath, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, numParallel)
 	if err != nil {
 		// some older models are not compatible with newer versions of llama.cpp
 		// show a generalized compatibility error until there is a better way to
 		// check for model compatibility
-		if errors.Is(err, llm.ErrUnsupportedFormat) || strings.Contains(err.Error(), "failed to load model") {
+		if errors.Is(err, ggml.ErrUnsupportedFormat) || strings.Contains(err.Error(), "failed to load model") {
 			err = fmt.Errorf("%v: this model may be incompatible with your version of Ollama. If you previously pulled this model, try updating it by running `ollama pull %s`", err, req.model.ShortName)
 		}
 		slog.Info("NewLlamaServer failed", "model", req.model.ModelPath, "error", err)
@@ -616,8 +618,8 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 // a before and after GPU memory allocation.  The returned channel
 // will be notified when we're done waiting, or have timed out and should
 // proceed anyway
-func (runner *runnerRef) waitForVRAMRecovery() chan interface{} {
-	finished := make(chan interface{}, 1)
+func (runner *runnerRef) waitForVRAMRecovery() chan any {
+	finished := make(chan any, 1)
 
 	// CPU or Metal don't need checking, so no waiting required
 	// windows can page VRAM, only cuda currently can report accurate used vram usage
@@ -665,13 +667,19 @@ func (runner *runnerRef) waitForVRAMRecovery() chan interface{} {
 	return finished
 }
 
-type ByDuration []*runnerRef
+type ByDurationAndName []*runnerRef
 
-func (a ByDuration) Len() int      { return len(a) }
-func (a ByDuration) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
-func (a ByDuration) Less(i, j int) bool {
-	// uint64 to turn negative time (never unload) to largest
-	return uint64(a[i].sessionDuration) < uint64(a[j].sessionDuration)
+func (a ByDurationAndName) Len() int      { return len(a) }
+func (a ByDurationAndName) Swap(i, j int) { a[i], a[j] = a[j], a[i] }
+func (a ByDurationAndName) Less(i, j int) bool {
+	// Primary sort by session duration (uint64 to handle negatives)
+	d1 := uint64(a[i].sessionDuration)
+	d2 := uint64(a[j].sessionDuration)
+	if d1 != d2 {
+		return d1 < d2
+	}
+	// Secondary sort by model path lex order
+	return a[i].modelPath < a[j].modelPath
 }
 
 // TODO - future consideration to pick runners based on size
@@ -685,7 +693,7 @@ func (a ByDuration) Less(i, j int) bool {
 // If the model can not be fit fully within the available GPU(s) nil is returned
 // If numParallel is <= 0, this will attempt try to optimize parallelism based on available VRAM, and adjust
 // opts.NumCtx accordingly
-func pickBestFullFitByLibrary(req *LlmRequest, ggml *llm.GGML, gpus discover.GpuInfoList, numParallel *int) discover.GpuInfoList {
+func pickBestFullFitByLibrary(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoList, numParallel *int) discover.GpuInfoList {
 	var estimatedVRAM uint64
 
 	var numParallelToTry []int
@@ -710,7 +718,7 @@ func pickBestFullFitByLibrary(req *LlmRequest, ggml *llm.GGML, gpus discover.Gpu
 			req.opts.NumCtx = req.origNumCtx * p
 			if !envconfig.SchedSpread() {
 				for _, g := range sgl {
-					if ok, estimatedVRAM = llm.PredictServerFit([]discover.GpuInfo{g}, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts); ok {
+					if ok, estimatedVRAM = llm.PredictServerFit([]discover.GpuInfo{g}, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, p); ok {
 						slog.Info("new model will fit in available VRAM in single GPU, loading", "model", req.model.ModelPath, "gpu", g.ID, "parallel", p, "available", g.FreeMemory, "required", format.HumanBytes2(estimatedVRAM))
 						*numParallel = p
 						return []discover.GpuInfo{g}
@@ -726,7 +734,7 @@ func pickBestFullFitByLibrary(req *LlmRequest, ggml *llm.GGML, gpus discover.Gpu
 		// Now try all the GPUs
 		for _, p := range numParallelToTry {
 			req.opts.NumCtx = req.origNumCtx * p
-			if ok, estimatedVRAM = llm.PredictServerFit(sgl, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts); ok {
+			if ok, estimatedVRAM = llm.PredictServerFit(sgl, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, p); ok {
 				slog.Info("new model will fit in available VRAM, loading", "model", req.model.ModelPath, "library", sgl[0].Library, "parallel", p, "required", format.HumanBytes2(estimatedVRAM))
 				*numParallel = p
 				return sgl
@@ -737,7 +745,7 @@ func pickBestFullFitByLibrary(req *LlmRequest, ggml *llm.GGML, gpus discover.Gpu
 }
 
 // If multiple Libraries are detected, pick the Library which loads the most layers for the model
-func pickBestPartialFitByLibrary(req *LlmRequest, ggml *llm.GGML, gpus discover.GpuInfoList, numParallel *int) discover.GpuInfoList {
+func pickBestPartialFitByLibrary(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoList, numParallel *int) discover.GpuInfoList {
 	if *numParallel <= 0 {
 		*numParallel = 1
 		req.opts.NumCtx = req.origNumCtx
@@ -749,7 +757,7 @@ func pickBestPartialFitByLibrary(req *LlmRequest, ggml *llm.GGML, gpus discover.
 	var bestEstimate uint64
 	var bestFit int
 	for i, gl := range byLibrary {
-		_, estimatedVRAM := llm.PredictServerFit(gl, ggml, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts)
+		_, estimatedVRAM := llm.PredictServerFit(gl, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, *numParallel)
 		if estimatedVRAM > bestEstimate {
 			bestEstimate = estimatedVRAM
 			bestFit = i
@@ -773,7 +781,7 @@ func (s *Scheduler) findRunnerToUnload() *runnerRef {
 
 	// In the future we can enhance the algorithm to be smarter about picking the optimal runner to unload
 	// e.g., if we have multiple options, will one make room for the request?
-	sort.Sort(ByDuration(runnerList))
+	sort.Sort(ByDurationAndName(runnerList))
 
 	// First try to find a runner that's already idle
 	for _, runner := range runnerList {
@@ -822,9 +830,9 @@ func (s *Scheduler) expireRunner(model *Model) {
 
 // If other runners are loaded, make sure the pending request will fit in system memory
 // If not, pick a runner to unload, else return nil and the request can be loaded
-func (s *Scheduler) maybeFindCPURunnerToUnload(req *LlmRequest, ggml *llm.GGML, gpus discover.GpuInfoList) *runnerRef {
+func (s *Scheduler) maybeFindCPURunnerToUnload(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoList) *runnerRef {
 	slog.Debug("evaluating if CPU model load will fit in available system memory")
-	estimate := llm.EstimateGPULayers(gpus, ggml, req.model.ProjectorPaths, req.opts)
+	estimate := llm.EstimateGPULayers(gpus, f, req.model.ProjectorPaths, req.opts, req.opts.NumCtx/req.origNumCtx)
 	if estimate.TotalSize <= gpus[0].FreeMemory {
 		slog.Debug("cpu inference mode, model fits in available system memory", "model", format.HumanBytes2(estimate.TotalSize), "available", format.HumanBytes2(gpus[0].FreeMemory))
 		return nil

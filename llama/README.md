@@ -8,7 +8,7 @@ Ollama vendors [llama.cpp](https://github.com/ggerganov/llama.cpp/) and [ggml](h
 
 If you update the vendoring code, start by running the following command to establish the tracking llama.cpp repo in the `./vendor/` directory.
 
-```
+```shell
 make -f Makefile.sync apply-patches
 ```
 
@@ -22,7 +22,7 @@ When updating to a newer base commit, the existing patches may not apply cleanly
 
 Start by applying the patches. If any of the patches have conflicts, the `git am` will stop at the first failure.
 
-```
+```shell
 make -f Makefile.sync apply-patches
 ```
 
@@ -30,7 +30,7 @@ If there are conflicts, you will see an error message. Resolve the conflicts in 
 
 Once all patches are applied, commit the changes to the tracking repository.
 
-```
+```shell
 make -f Makefile.sync format-patches sync
 ```
 
@@ -38,13 +38,13 @@ make -f Makefile.sync format-patches sync
 
 When working on new fixes or features that impact vendored code, use the following model. First get a clean tracking repo with all current patches applied:
 
-```
+```shell
 make -f Makefile.sync clean apply-patches
 ```
 
 Iterate until you're ready to submit PRs. Once your code is ready, commit a change in the `./vendor/` directory, then generate the patches for ollama with
 
-```
+```shell
 make -f Makefile.sync format-patches
 ```
 

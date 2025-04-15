@@ -20,13 +20,13 @@ Make sure that you use the same base model in the `FROM` command as you used to 
 
 Now run `ollama create` from the directory where the `Modelfile` was created:
 
-```bash
+```shell
 ollama create my-model
 ```
 
 Lastly, test the model:
 
-```bash
+```shell
 ollama run my-model
 ```
 
