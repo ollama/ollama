@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"text/template/parse"
@@ -166,8 +167,11 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 	})
 
 	if tmpl == nil {
+		slog.Debug("parseToolCalls: no ToolCalls template found")
 		return nil, false
 	}
+
+	slog.Debug("parseToolCalls: executing template with test data", "input", s)
 
 	var b bytes.Buffer
 	if err := tmpl.Execute(&b, map[string][]api.ToolCall{
@@ -182,8 +186,11 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 			},
 		},
 	}); err != nil {
+		slog.Debug("parseToolCalls: template execution failed", "error", err)
 		return nil, false
 	}
+
+	slog.Debug("parseToolCalls: template executed successfully", "output", b.String())
 
 	templateObjects := parseObjects(b.String())
 	if len(templateObjects) == 0 {
@@ -248,4 +255,115 @@ func (m *Model) parseToolCalls(s string) ([]api.ToolCall, bool) {
 	}
 
 	return toolCalls, len(toolCalls) > 0
+}
+
+func (m *Model) ParseToolCallsNew(s string) ([]api.ToolCall, bool) {
+	// Parse both Python function calls and JSON function calls into ToolCall structs
+	// Example inputs:
+	// Python: func(a=2, b=2)
+	// JSON: {"function": {"name": "func", "arguments": {"a": 2, "b": 2}}}
+	// JSON array: [{"name": "func", "arguments": {"a": 2}}]
+
+	slog.Debug("parsing function calls", "input", s)
+
+	// Try JSON parsing first
+	if strings.HasPrefix(strings.TrimSpace(s), "[") {
+		// Try parsing as JSON array
+		var jsonArray []map[string]any
+		if err := json.Unmarshal([]byte(s), &jsonArray); err == nil {
+			var toolCalls []api.ToolCall
+			for _, obj := range jsonArray {
+				if calls, ok := parseJSONToolCalls(obj); ok {
+					toolCalls = append(toolCalls, calls...)
+				}
+			}
+			if len(toolCalls) > 0 {
+				return toolCalls, true
+			}
+		}
+	} else {
+		// Try parsing as single JSON object
+		var jsonObj map[string]any
+		if err := json.Unmarshal([]byte(s), &jsonObj); err == nil {
+			if toolCalls, ok := parseJSONToolCalls(jsonObj); ok {
+				return toolCalls, true
+			}
+		}
+	}
+
+	// Fall back to Python-style parsing
+	re := regexp.MustCompile(`(\w+)\((.*?)\)`)
+	matches := re.FindAllStringSubmatch(s, -1)
+
+	if len(matches) == 0 {
+		slog.Debug("no function calls found")
+		return nil, false
+	}
+
+	slog.Debug("found function calls", "matches", len(matches))
+
+	var toolCalls []api.ToolCall
+	for i, match := range matches {
+		name := match[1]
+		args := match[2]
+
+		slog.Debug("parsing function call", "index", i, "name", name, "args", args)
+
+		arguments := make(api.ToolCallFunctionArguments)
+
+		if strings.Contains(args, "=") { // Keyword args
+			pairs := strings.Split(args, ",")
+			for _, pair := range pairs {
+				pair = strings.TrimSpace(pair)
+				kv := strings.Split(pair, "=")
+				if len(kv) == 2 {
+					key := strings.TrimSpace(kv[0])
+					value := strings.TrimSpace(kv[1])
+					arguments[key] = value
+				}
+			}
+		} else { // Positional args
+			arguments["args"] = args
+		}
+
+		toolCalls = append(toolCalls, api.ToolCall{
+			Function: api.ToolCallFunction{
+				Name:      name,
+				Arguments: arguments,
+			},
+		})
+	}
+
+	slog.Debug("finished parsing", "tool_calls", len(toolCalls))
+	return toolCalls, len(toolCalls) > 0
+}
+
+func parseJSONToolCalls(obj map[string]any) ([]api.ToolCall, bool) {
+	// Check for function-style format first
+	if function, ok := obj["function"].(map[string]any); ok {
+		name, _ := function["name"].(string)
+		args, _ := function["arguments"].(map[string]any)
+		if name != "" && args != nil {
+			return []api.ToolCall{{
+				Function: api.ToolCallFunction{
+					Name:      name,
+					Arguments: args,
+				},
+			}}, true
+		}
+	}
+
+	// Check for direct name/parameters format
+	if name, ok := obj["name"].(string); ok {
+		if params, ok := obj["parameters"].(map[string]any); ok {
+			return []api.ToolCall{{
+				Function: api.ToolCallFunction{
+					Name:      name,
+					Arguments: params,
+				},
+			}}, true
+		}
+	}
+
+	return nil, false
 }
