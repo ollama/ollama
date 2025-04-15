@@ -1106,6 +1106,7 @@ func RunServer(_ *cobra.Command, _ []string) error {
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
+	
 	return err
 }
 
