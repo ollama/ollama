@@ -924,7 +924,7 @@ func (s *Server) ListHandler(c *gin.Context) {
 		}
 		cap, err := GetModel(n.String())
 		if err != nil {
-			slog.Warn("bad model datails", "name", n, "error", err)
+			slog.Warn("bad model details", "name", n, "error", err)
 			continue
 		}
 		// tag should never be masked
