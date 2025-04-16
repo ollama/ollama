@@ -86,6 +86,18 @@ func TestChatPrompt(t *testing.T) {
 			},
 		},
 		{
+			name:  "truncate messages, keep system",
+			model: visionModel,
+			limit: 1,
+			msgs: []api.Message{
+				{Role: "system", Content: "You are the Test Who Lived."},
+				{Role: "user", Content: "A test. And a thumping good one at that, I'd wager."},
+			},
+			expect: expect{
+				prompt: "You are the Test Who Lived. A test. And a thumping good one at that, I'd wager. ",
+			},
+		},
+		{
 			name:  "truncate messages with image",
 			model: visionModel,
 			limit: 64,
