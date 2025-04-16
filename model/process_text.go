@@ -118,11 +118,17 @@ type BytePairEncoding struct {
 	vocab *Vocabulary
 }
 
+var _ TextProcessor = (*BytePairEncoding)(nil)
+
 func NewBytePairEncoding(pre string, vocab *Vocabulary) BytePairEncoding {
 	return BytePairEncoding{
 		pre:   regexp2.MustCompile(pre, regexp2.Unicode|regexp2.RE2),
 		vocab: vocab,
 	}
+}
+
+func (bpe BytePairEncoding) Vocabulary() *Vocabulary {
+	return bpe.vocab
 }
 
 func (bpe BytePairEncoding) Is(id int32, special Special) bool {
