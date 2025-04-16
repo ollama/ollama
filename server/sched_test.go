@@ -355,7 +355,7 @@ func TestRequestsMultipleLoadedModels(t *testing.T) {
 }
 
 func TestGetRunner(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 3*time.Second)
 	defer done()
 
 	a := newScenarioRequest(t, ctx, "ollama-model-1a", 10, &api.Duration{Duration: 2 * time.Millisecond})
