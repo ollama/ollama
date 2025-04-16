@@ -19,7 +19,7 @@ static __global__ void upscale_f32(const float * x, float * dst,
     int i02 = i12 / sf2;
     int i03 = i13 / sf3;
 
-    dst[index] = *(float *)((char *)x + i03 * nb03 + i02 * nb02 + i01 * nb01 + i00 * nb00);
+    dst[index] = *( (const float *)((const char *)x + i03 * nb03 + i02 * nb02 + i01 * nb01 + i00 * nb00) );
 }
 
 static void upscale_f32_cuda(const float * x, float * dst,

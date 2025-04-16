@@ -1,0 +1,361 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: jmorganca <jmorganca@gmail.com>
+Date: Tue, 15 Apr 2025 14:27:40 -0400
+Subject: [PATCH] ensure KV cache is fully defragmented
+
+Sometimes the KV cache requires defragmentation even without
+triggering the threshold heuristic. In this case, decoding
+will not being able to find a KV cache slot. This is particularly
+difficult for the caller to handle if it happens in between
+ubatches. To avoid this, we should immediately trigger a defrag.
+
+In addition, a heavily fragmented cache can require more than
+max_moves to defragment. Currently, we stop when we hit the limit
+but this can leave a cache that still does not have adequate space
+even after defragmentation is triggered. Instead, we should do
+multiple batches of processing until everything is complete.
+---
+ src/llama-context.cpp  | 105 +++++++++++++----------------------------
+ src/llama-context.h    |   4 +-
+ src/llama-kv-cache.cpp |  39 +++------------
+ src/llama-kv-cache.h   |   9 +++-
+ 4 files changed, 51 insertions(+), 106 deletions(-)
+
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index afe6f552..d6e7b3af 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -590,13 +590,12 @@ llm_graph_result_ptr llama_context::build_kv_self_shift(
+ 
+ llm_graph_result_ptr llama_context::build_kv_self_defrag(
+         ggml_context * ctx0,
+-        ggml_cgraph * gf) const {
++        ggml_cgraph * gf,
++        const std::vector<struct llama_kv_defrag_move> & moves) const {
+     auto res = std::make_unique<llm_graph_result>();
+ 
+     const auto & hparams = model.hparams;
+ 
+-    const auto & ids = kv_self->defrag_info.ids;
+-
+ #if 0
+     // CPU defrag
+     //
+@@ -668,32 +667,20 @@ llm_graph_result_ptr llama_context::build_kv_self_defrag(
+         ggml_backend_tensor_set(v_l[il], buf_v.data(), 0, buf_v.size());
+     }
+ #else
+-    for (uint32_t i = 0; i < ids.size(); ++i) {
+-        const uint32_t id = ids[i];
+-
+-        if (i == id || id == ids.size()) {
+-            continue;
+-        }
+-
+-        uint32_t nm = 1;
+-
+-        while (i + nm < ids.size() && ids[i + nm] == id + nm) {
+-            nm++;
+-        }
+-
++    for (const auto & move : moves) {
+         for (uint32_t il = 0; il < hparams.n_layer; ++il) { // NOLINT
+             const int64_t n_embd_k_gqa = hparams.n_embd_k_gqa(il);
+             const int64_t n_embd_v_gqa = hparams.n_embd_v_gqa(il);
+ 
+             ggml_tensor * view_k_src = ggml_view_2d(ctx0, kv_self->k_l[il],
+-                    n_embd_k_gqa, nm,
++                    n_embd_k_gqa, move.len,
+                     ggml_row_size(kv_self->k_l[il]->type, n_embd_k_gqa),
+-                    ggml_row_size(kv_self->k_l[il]->type, n_embd_k_gqa*i));
++                    ggml_row_size(kv_self->k_l[il]->type, n_embd_k_gqa*move.src));
+ 
+             ggml_tensor * view_k_dst = ggml_view_2d(ctx0, kv_self->k_l[il],
+-                    n_embd_k_gqa, nm,
++                    n_embd_k_gqa, move.len,
+                     ggml_row_size(kv_self->k_l[il]->type, n_embd_k_gqa),
+-                    ggml_row_size(kv_self->k_l[il]->type, n_embd_k_gqa*id));
++                    ggml_row_size(kv_self->k_l[il]->type, n_embd_k_gqa*move.dst));
+ 
+             ggml_tensor * view_v_src;
+             ggml_tensor * view_v_dst;
+@@ -701,34 +688,30 @@ llm_graph_result_ptr llama_context::build_kv_self_defrag(
+             if (cparams.flash_attn) {
+                 // NOTE: the V cache is not transposed when using flash attention
+                 view_v_src = ggml_view_2d(ctx0, kv_self->v_l[il],
+-                        n_embd_v_gqa, nm,
++                        n_embd_v_gqa, move.len,
+                         ggml_row_size(kv_self->v_l[il]->type, n_embd_v_gqa),
+-                        ggml_row_size(kv_self->v_l[il]->type, n_embd_v_gqa*i));
++                        ggml_row_size(kv_self->v_l[il]->type, n_embd_v_gqa*move.src));
+ 
+                 view_v_dst = ggml_view_2d(ctx0, kv_self->v_l[il],
+-                        n_embd_v_gqa, nm,
++                        n_embd_v_gqa, move.len,
+                         ggml_row_size(kv_self->v_l[il]->type, n_embd_v_gqa),
+-                        ggml_row_size(kv_self->v_l[il]->type, n_embd_v_gqa*id));
++                        ggml_row_size(kv_self->v_l[il]->type, n_embd_v_gqa*move.dst));
+             } else {
+                 view_v_src = ggml_view_2d(ctx0, kv_self->v_l[il],
+-                        nm, n_embd_v_gqa,
++                        move.len, n_embd_v_gqa,
+                         ggml_row_size(kv_self->v_l[il]->type, kv_self->size),
+-                        ggml_row_size(kv_self->v_l[il]->type, i));
++                        ggml_row_size(kv_self->v_l[il]->type, move.src));
+ 
+                 view_v_dst = ggml_view_2d(ctx0, kv_self->v_l[il],
+-                        nm, n_embd_v_gqa,
++                        move.len, n_embd_v_gqa,
+                         ggml_row_size(kv_self->v_l[il]->type, kv_self->size),
+-                        ggml_row_size(kv_self->v_l[il]->type, id));
++                        ggml_row_size(kv_self->v_l[il]->type, move.dst));
+             }
+ 
+             ggml_build_forward_expand(gf, ggml_cpy(ctx0, view_k_src, view_k_dst));
+             ggml_build_forward_expand(gf, ggml_cpy(ctx0, view_v_src, view_v_dst));
+         }
+-
+-        i += nm - 1;
+     }
+-
+-    //LLAMA_LOG_INFO("gf->n_nodes = %d\n", gf->n_nodes);
+ #endif
+ 
+     return res;
+@@ -737,8 +720,6 @@ llm_graph_result_ptr llama_context::build_kv_self_defrag(
+ void llama_context::kv_self_update() {
+     auto & kv = kv_self;
+ 
+-    bool need_reserve = false;
+-
+     if (kv->has_shift) {
+         if (!kv->get_can_shift()) {
+             GGML_ABORT("The current context does not support K-shift");
+@@ -759,8 +740,6 @@ void llama_context::kv_self_update() {
+             res->set_inputs(nullptr);
+ 
+             graph_compute(gf, false);
+-
+-            need_reserve = true;
+         }
+ 
+         {
+@@ -775,49 +754,28 @@ void llama_context::kv_self_update() {
+     // defragment the KV cache if needed
+     if (kv->do_defrag) {
+         LLAMA_LOG_DEBUG("%s: defragmenting KV cache\n", __func__);
++        const uint32_t n_max_nodes = graph_max_nodes();
++        const uint32_t max_moves = (n_max_nodes - 2*model.hparams.n_layer)/(6*model.hparams.n_layer);
++        if (!kv->defrag_prepare(n_max_nodes)) {
++            LLAMA_LOG_ERROR("%s: failed to prepare defragmentation\n", __func__);
++            return;
++        }
+ 
+-        if (kv->defrag_prepare(graph_max_nodes())) {
+-            ggml_backend_sched_reset(sched.get());
++        for (std::size_t i = 0; i < kv_self->defrag_info.moves.size(); i += max_moves) {
++            std::vector<struct llama_kv_defrag_move> chunk;
++            auto end = std::min(i + max_moves, kv_self->defrag_info.moves.size());
++            chunk.assign(kv_self->defrag_info.moves.begin() + i, kv_self->defrag_info.moves.begin() + end);
+ 
++            ggml_backend_sched_reset(sched.get());
+             auto * gf = graph_init();
+-
+-            auto res = build_kv_self_defrag(ctx_compute.get(), gf);
+-
++            auto res = build_kv_self_defrag(ctx_compute.get(), gf, chunk);
+             ggml_backend_sched_alloc_graph(sched.get(), gf);
+-
+             res->set_inputs(nullptr);
+-
+             graph_compute(gf, false);
+-
+-            need_reserve = true;
+         }
+ 
+         kv->do_defrag = false;
+     }
+-
+-    // reserve a worst case graph if needed
+-    if (need_reserve) {
+-        LLAMA_LOG_DEBUG("%s: reserving a worst case graph\n", __func__);
+-
+-        // build worst-case graph
+-        uint32_t n_seqs = 1; // TODO: worst-case number of sequences
+-        uint32_t n_tokens = std::min(cparams.n_ctx, cparams.n_ubatch);
+-
+-        // simulate full KV cache
+-        kv_self->n = kv_self->size;
+-
+-        llama_token token = model.vocab.token_bos(); // not actually used by llama_build_graph, but required to choose between token and embedding inputs graph
+-        llama_ubatch ubatch = { true, n_tokens, n_tokens / n_seqs, n_seqs, &token, nullptr, nullptr, nullptr, nullptr, nullptr};
+-
+-        auto * gf = graph_init();
+-        graph_build(ctx_compute.get(), gf, ubatch, LLM_GRAPH_TYPE_DEFAULT);
+-
+-        // initialize scheduler with the worst-case graph
+-        ggml_backend_sched_reset(sched.get());
+-        if (!ggml_backend_sched_reserve(sched.get(), gf)) {
+-            LLAMA_LOG_ERROR("%s: failed to allocate compute buffers\n", __func__);
+-        }
+-    }
+ }
+ 
+ enum llama_pooling_type llama_context::pooling_type() const {
+@@ -1301,9 +1259,12 @@ int llama_context::decode(llama_batch & inp_batch) {
+         // find KV slot
+         {
+             if (!kv_self->find_slot(ubatch)) {
+-                LLAMA_LOG_WARN("%s: failed to find KV cache slot for ubatch of size %d\n", __func__, ubatch.n_tokens);
+-
+-                return 1;
++                kv_self->defrag();
++                kv_self_update();
++                if (!kv_self->find_slot(ubatch)) {
++                    LLAMA_LOG_WARN("%s: failed to find KV cache slot for ubatch of size %d\n", __func__, ubatch.n_tokens);
++                    return 1;
++                }
+             }
+ 
+             if (!kv_self->recurrent) {
+diff --git a/src/llama-context.h b/src/llama-context.h
+index baa03276..a59ff8fd 100644
+--- a/src/llama-context.h
++++ b/src/llama-context.h
+@@ -5,6 +5,7 @@
+ #include "llama-cparams.h"
+ #include "llama-graph.h"
+ #include "llama-adapter.h"
++#include "llama-kv-cache.h"
+ 
+ #include "ggml-cpp.h"
+ 
+@@ -180,7 +181,8 @@ private:
+ 
+     llm_graph_result_ptr build_kv_self_defrag(
+             ggml_context * ctx0,
+-            ggml_cgraph * gf) const;
++            ggml_cgraph * gf,
++            const std::vector<struct llama_kv_defrag_move> & moves) const;
+ 
+     // TODO: read/write lora adapters and cvec
+     size_t state_write_data(llama_io_write_i & io);
+diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
+index 9310f262..5c941e7c 100644
+--- a/src/llama-kv-cache.cpp
++++ b/src/llama-kv-cache.cpp
+@@ -781,17 +781,7 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
+ 
+     assert(n_used <= n_kv);
+ 
+-    //const int64_t t_start = ggml_time_us();
+-
+-    // number of cells moved
+-    uint32_t n_moves = 0;
+-
+-    // each move requires 6*n_layer tensors (see graph_build_kv_self_defrag)
+-    //   - source view, destination view, copy operation
+-    //   - x2 for keys and values
+-    //const uint32_t max_moves = max_nodes()/(6*n_layer);
+-    // TODO: tmp fix https://github.com/ggerganov/llama.cpp/issues/6685#issuecomment-2057579516
+-    const uint32_t max_moves = (n_max_nodes - 2*n_layer)/(6*n_layer);
++    defrag_info.moves.clear();
+ 
+     // determine which KV cells to move where
+     //
+@@ -799,10 +789,7 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
+     //
+     //  if ids[i] == i || ids[i] == n_kv, then cell i is not moved
+     //
+-    auto & ids = defrag_info.ids;
+-
+-    ids.clear();
+-    ids.resize(n_kv, n_kv);
++    std::vector<uint32_t> ids(n_kv, n_kv);
+ 
+     for (uint32_t i0 = 0; i0 < n_used; ++i0) {
+         const auto & cell0 = cells[i0];
+@@ -851,19 +838,11 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
+         // are we moving a continuous block of memory?
+         bool cont = false;
+ 
+-        // should we stop searching for the next move?
+-        bool stop = false;
+-
+         // go back and move the nf cells to the hole
+         for (; i1 < n_kv; ++i1) {
+             auto & cell1 = cells[i1];
+ 
+             if (cell1.is_empty() || ids[i1] != n_kv) {
+-                if (n_moves == max_moves) {
+-                    stop = true;
+-                    break;
+-                }
+-
+                 cont = false;
+                 continue;
+             }
+@@ -879,8 +858,10 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
+             head = n_used;
+ 
+             if (!cont) {
+-                n_moves++;
++                defrag_info.moves.push_back({i1, i0 + nf, 1});
+                 cont = true;
++            } else {
++                defrag_info.moves.back().len++;
+             }
+ 
+             nf++;
+@@ -890,22 +871,16 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
+             }
+         }
+ 
+-        if (stop || n_moves == max_moves) {
+-            break;
+-        }
+-
+         //LLAMA_LOG_INFO("(tmp log) KV defrag: move [%u, %u) to [%u, %u)\n", is, i1 + 1, i0, i0 + nh);
+ 
+         i0 += nh - 1;
+     }
+ 
+-    if (n_moves == 0) {
++    if (defrag_info.moves.size() == 0) {
+         return false;
+     }
+ 
+-    LLAMA_LOG_DEBUG("(tmp log) KV defrag cell moves: %u\n", n_moves);
+-
+-    LLAMA_LOG_DEBUG("expected gf nodes: %u\n", 6*n_moves*n_layer);
++    // LLAMA_LOG_DEBUG("(tmp log) KV defrag cell moves: %u\n", n_moves);
+ 
+     return true;
+ }
+diff --git a/src/llama-kv-cache.h b/src/llama-kv-cache.h
+index 56c74035..25cbcb56 100644
+--- a/src/llama-kv-cache.h
++++ b/src/llama-kv-cache.h
+@@ -43,6 +43,13 @@ private:
+     llama_kv_cache * kv;
+ };
+ 
++// block of KV slots to move when defragging
++struct llama_kv_defrag_move {
++    uint32_t src;
++    uint32_t dst;
++    uint32_t len;
++};
++
+ struct llama_kv_cell {
+     llama_pos pos   = -1;
+     llama_pos delta =  0;
+@@ -131,7 +138,7 @@ public:
+     // defrag
+ 
+     struct {
+-        std::vector<uint32_t> ids;
++        std::vector<llama_kv_defrag_move> moves;
+     } defrag_info;
+ 
+     // return true if cells have been moved

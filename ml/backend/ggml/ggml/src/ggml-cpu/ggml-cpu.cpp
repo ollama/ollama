@@ -511,6 +511,9 @@ static ggml_backend_feature * ggml_backend_cpu_get_features(ggml_backend_reg_t r
         if (ggml_cpu_has_fma()) {
             features.push_back({ "FMA", "1" });
         }
+        if (ggml_cpu_has_bmi2()) {
+            features.push_back({ "BMI2", "1" });
+        }
         if (ggml_cpu_has_avx512()) {
             features.push_back({ "AVX512", "1" });
         }

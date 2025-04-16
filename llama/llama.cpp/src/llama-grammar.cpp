@@ -969,7 +969,7 @@ struct llama_grammar * llama_grammar_init_impl(
         /* .awaiting_trigger = */ false,
         /* .trigger_buffer = */   "",
         /* .trigger_tokens   = */ {},
-        /* .trigger_words    = */ {},
+        /* .trigger_patterns    = */ {},
     };
 }
 
@@ -978,19 +978,15 @@ struct llama_grammar * llama_grammar_init_impl(
                       const char * grammar_str,
                       const char * grammar_root,
                               bool lazy,
-                     const char ** trigger_words,
-                            size_t num_trigger_words,
+                     const char ** trigger_patterns,
+                            size_t num_trigger_patterns,
                const llama_token * trigger_tokens,
                             size_t num_trigger_tokens) {
     llama_grammar_parser parser;
 
     // if there is a grammar, parse it
-    if (!parser.parse(grammar_str)) {
-        return nullptr;
-    }
-
-    // will be empty (default) if there are parse errors
-    if (parser.rules.empty()) {
+    // rules will be empty (default) if there are parse errors
+    if (!parser.parse(grammar_str) || parser.rules.empty()) {
         fprintf(stderr, "%s: failed to parse grammar\n", __func__);
         return nullptr;
     }
@@ -1054,14 +1050,16 @@ struct llama_grammar * llama_grammar_init_impl(
     } while (true);
 
     std::vector<llama_token>    vec_trigger_tokens;
-    std::vector<std::string> vec_trigger_words;
+    std::vector<llama_grammar_trigger_pattern> vec_trigger_patterns;
     for (size_t i = 0; i < num_trigger_tokens; i++) {
         GGML_ASSERT(trigger_tokens != nullptr);
         vec_trigger_tokens.push_back(trigger_tokens[i]);
     }
-    for (size_t i = 0; i < num_trigger_words; i++) {
-        GGML_ASSERT(trigger_words != nullptr);
-        vec_trigger_words.push_back(trigger_words[i]);
+    for (size_t i = 0; i < num_trigger_patterns; i++) {
+        GGML_ASSERT(trigger_patterns != nullptr);
+        auto & trigger = vec_trigger_patterns.emplace_back();
+        trigger.pattern = trigger_patterns[i];
+        trigger.regex = std::regex(trigger.pattern);
     }
 
     // Important: vec_rules has to be moved here, not copied, because stacks contains
@@ -1076,7 +1074,7 @@ struct llama_grammar * llama_grammar_init_impl(
         /* .awaiting_trigger = */ lazy,
         /* .trigger_buffer = */   "",
         std::move(vec_trigger_tokens),
-        std::move(vec_trigger_words),
+        std::move(vec_trigger_patterns),
     };
 }
 
@@ -1089,7 +1087,7 @@ void llama_grammar_free_impl(struct llama_grammar * grammar) {
 }
 
 struct llama_grammar * llama_grammar_clone_impl(const struct llama_grammar & grammar) {
-    llama_grammar * result = new llama_grammar {
+    auto * result = new llama_grammar {
         grammar.vocab,
         grammar.rules,
         grammar.stacks,
@@ -1098,7 +1096,7 @@ struct llama_grammar * llama_grammar_clone_impl(const struct llama_grammar & gra
         grammar.awaiting_trigger,
         grammar.trigger_buffer,
         grammar.trigger_tokens,
-        grammar.trigger_words,
+        grammar.trigger_patterns,
     };
 
     // redirect elements in stacks to point to new rules
@@ -1173,16 +1171,18 @@ void llama_grammar_accept_impl(struct llama_grammar & grammar, llama_token token
             LLAMA_LOG_DEBUG("Grammar triggered on token %u (`%s`)", token, piece.c_str());
             return;
         } else {
-            // TODO: consider a smarter incremental substring search algorithm (store last position to search from).
             grammar.trigger_buffer += piece;
-            for (const auto & word : grammar.trigger_words) {
-                auto pos = grammar.trigger_buffer.find(word);
-                if (pos != std::string::npos) {
+
+            std::smatch match;
+            for (const auto & trigger_pattern : grammar.trigger_patterns) {
+                if (std::regex_match(grammar.trigger_buffer, match, trigger_pattern.regex)) {
                     grammar.awaiting_trigger = false;
-                    auto constrained_str = grammar.trigger_buffer.substr(pos);
+                    // get from the first match to the end of the string
+                    auto constrained_str = grammar.trigger_buffer.substr(match.position(1));
+                    // std::string constrained_str(match[1].first, grammar.trigger_buffer.end());
                     grammar.trigger_buffer.clear();
                     llama_grammar_accept_str(grammar, constrained_str);
-                    LLAMA_LOG_DEBUG("Grammar triggered on word `%s`", word.c_str());
+                    LLAMA_LOG_DEBUG("Grammar triggered on regex: '%s'\n", constrained_str.c_str());
                     return;
                 }
             }

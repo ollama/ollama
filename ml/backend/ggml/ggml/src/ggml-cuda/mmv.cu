@@ -29,7 +29,7 @@ static __global__ void mul_mat_vec(
         __syncthreads();
     }
 
-    float sumf;
+    float sumf = 0.0f;
 
     if constexpr (std::is_same<T, half>::value) {
         const half2 * x2 = (const half2 *) x;

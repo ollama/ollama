@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: jmorganca <jmorganca@gmail.com>
+Date: Tue, 8 Apr 2025 20:33:01 -0700
+Subject: [PATCH] remove amx
+
+disable amx as it reduces performance on some systems
+---
+ ggml/src/CMakeLists.txt | 4 ----
+ 1 file changed, 4 deletions(-)
+
+diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
+index 91d6a7d5..d6b393a2 100644
+--- a/ggml/src/CMakeLists.txt
++++ b/ggml/src/CMakeLists.txt
+@@ -293,10 +293,6 @@ if (GGML_CPU_ALL_VARIANTS)
+     ggml_add_cpu_backend_variant(skylakex       AVX F16C AVX2 BMI2 FMA AVX512)
+     ggml_add_cpu_backend_variant(icelake        AVX F16C AVX2 BMI2 FMA AVX512 AVX512_VBMI AVX512_VNNI)
+     ggml_add_cpu_backend_variant(alderlake      AVX F16C AVX2 BMI2 FMA AVX_VNNI)
+-    if (NOT MSVC)
+-        # MSVC doesn't support AMX
+-        ggml_add_cpu_backend_variant(sapphirerapids AVX F16C AVX2 BMI2 FMA AVX512 AVX512_VBMI AVX512_VNNI AVX512_BF16 AMX_TILE AMX_INT8)
+-    endif()
+ elseif (GGML_CPU)
+     ggml_add_cpu_backend_variant_impl("")
+ endif()

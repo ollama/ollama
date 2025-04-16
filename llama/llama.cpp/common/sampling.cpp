@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <unordered_map>
+#include <algorithm>
 
 // the ring buffer works similarly to std::deque, but with a fixed capacity
 // TODO: deduplicate with llama-impl.h
@@ -159,17 +160,57 @@ struct common_sampler * common_sampler_init(const struct llama_model * model, co
         GGML_ABORT("llguidance (cmake -DLLAMA_LLGUIDANCE=ON) is not enabled");
 #endif // LLAMA_USE_LLGUIDANCE
     } else {
-        std::vector<const char *> trigger_words;
-        trigger_words.reserve(params.grammar_trigger_words.size());
-        for (const auto & str : params.grammar_trigger_words) {
-            trigger_words.push_back(str.word.c_str());
+        std::vector<std::string> patterns_at_start;
+        std::vector<std::string> patterns_anywhere;
+        std::vector<llama_token> trigger_tokens;
+        for (const auto & trigger : params.grammar_triggers) {
+            switch (trigger.type) {
+                case COMMON_GRAMMAR_TRIGGER_TYPE_WORD:
+                {
+                    const auto & word = trigger.value;
+                    patterns_anywhere.push_back(regex_escape(word));
+                    break;
+                }
+                case COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN:
+                case COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN_START:
+                {
+                    const auto & pattern = trigger.value;
+                    (trigger.type == COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN_START ? patterns_at_start : patterns_anywhere).push_back(pattern);
+                    break;
+                }
+                case COMMON_GRAMMAR_TRIGGER_TYPE_TOKEN:
+                {
+                    const auto token = trigger.token;
+                    trigger_tokens.push_back(token);
+                    break;
+                }
+                default:
+                    GGML_ASSERT(false && "unknown trigger type");
+            }
+        }
+
+        std::vector<std::string> trigger_patterns;
+        if (!patterns_at_start.empty()) {
+            trigger_patterns.push_back("^(" + string_join(patterns_at_start, "|") + ")[\\s\\S]*");
+        }
+        if (!patterns_anywhere.empty()) {
+            trigger_patterns.push_back("^[\\s\\S]*?(" + string_join(patterns_anywhere, "|") + ")[\\s\\S]*");
+        }
+
+        std::vector<const char *> trigger_patterns_c;
+        trigger_patterns_c.reserve(trigger_patterns.size());
+        for (const auto & regex : trigger_patterns) {
+            trigger_patterns_c.push_back(regex.c_str());
         }
 
         grmr = params.grammar_lazy
-             ? llama_sampler_init_grammar_lazy(vocab, params.grammar.c_str(), "root",
-                                               trigger_words.data(), trigger_words.size(),
-                                               params.grammar_trigger_tokens.data(), params.grammar_trigger_tokens.size())
+             ? llama_sampler_init_grammar_lazy_patterns(vocab, params.grammar.c_str(), "root",
+                                                        trigger_patterns_c.data(), trigger_patterns_c.size(),
+                                                        trigger_tokens.data(), trigger_tokens.size())
              :      llama_sampler_init_grammar(vocab, params.grammar.c_str(), "root");
+        if (!grmr) {
+            return nullptr;
+        }
     }
 
     auto * result = new common_sampler {

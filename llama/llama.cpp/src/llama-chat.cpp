@@ -4,6 +4,7 @@
 
 #include <map>
 #include <sstream>
+#include <algorithm>
 
 #if __cplusplus >= 202000L
     #define LU8(x) (const char*)(u8##x)
@@ -58,6 +59,9 @@ static const std::map<std::string, llm_chat_template> LLM_CHAT_TEMPLATES = {
     { "granite",           LLM_CHAT_TEMPLATE_GRANITE           },
     { "gigachat",          LLM_CHAT_TEMPLATE_GIGACHAT          },
     { "megrez",            LLM_CHAT_TEMPLATE_MEGREZ            },
+    { "yandex",            LLM_CHAT_TEMPLATE_YANDEX            },
+    { "bailing",           LLM_CHAT_TEMPLATE_BAILING           },
+    { "llama4",            LLM_CHAT_TEMPLATE_LLAMA4            },
 };
 
 llm_chat_template llm_chat_template_from_str(const std::string & name) {
@@ -167,6 +171,12 @@ llm_chat_template llm_chat_detect_template(const std::string & tmpl) {
         return LLM_CHAT_TEMPLATE_GIGACHAT;
     } else if (tmpl_contains("<|role_start|>")) {
         return LLM_CHAT_TEMPLATE_MEGREZ;
+    } else if (tmpl_contains(" Ассистент:")) {
+        return LLM_CHAT_TEMPLATE_YANDEX;
+    } else if (tmpl_contains("<role>ASSISTANT</role>") && tmpl_contains("'HUMAN'")) {
+        return LLM_CHAT_TEMPLATE_BAILING;
+    } else if (tmpl_contains("<|header_start|>") && tmpl_contains("<|header_end|>")) {
+        return LLM_CHAT_TEMPLATE_LLAMA4;
     }
     return LLM_CHAT_TEMPLATE_UNKNOWN;
 }
@@ -566,7 +576,51 @@ int32_t llm_chat_apply_template(
         if (add_ass) {
             ss << "<|role_start|>assistant<|role_end|>";
         }
-    } else {
+    } else if (tmpl == LLM_CHAT_TEMPLATE_YANDEX) {
+        // Yandex template ("\n\n" is defined as EOT token)
+
+        ss << "<s>";
+
+        for (size_t i = 0; i < chat.size(); i++) {
+            std::string role(chat[i]->role);
+            if (role == "user") {
+                ss << " Пользователь: " << chat[i]->content << "\n\n";
+            } else if (role == "assistant") {
+                ss << " Ассистент: " << chat[i]->content << "\n\n";
+            }
+        }
+
+        // Add generation prompt if needed
+        if (add_ass) {
+            ss << " Ассистент:[SEP]";
+        }
+    }  else if (tmpl == LLM_CHAT_TEMPLATE_BAILING) {
+        // Bailing (Ling) template
+        for (auto message : chat) {
+            std::string role(message->role);
+
+            if (role == "user") {
+                role = "HUMAN";
+            } else {
+                std::transform(role.begin(), role.end(), role.begin(), ::toupper);
+            }
+
+            ss << "<role>" << role << "</role>" << message->content;
+        }
+
+        if (add_ass) {
+            ss << "<role>ASSISTANT</role>";
+        }
+    } else if (tmpl == LLM_CHAT_TEMPLATE_LLAMA4) {
+        // Llama 4
+        for (auto message : chat) {
+            std::string role(message->role);
+            ss << "<|header_start|>" << role << "<|header_end|>\n\n" << trim(message->content) << "<|eot|>";
+        }
+        if (add_ass) {
+            ss << "<|header_start|>assistant<|header_end|>\n\n";
+        }
+    }  else {
         // template not supported
         return -1;
     }
@@ -584,4 +638,3 @@ int32_t llama_chat_builtin_templates(const char ** output, size_t len) {
     }
     return (int32_t) LLM_CHAT_TEMPLATES.size();
 }
-
