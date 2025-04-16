@@ -12,58 +12,51 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIntegrationLlava(t *testing.T) {
-	image, err := base64.StdEncoding.DecodeString(imageEncoding)
-	require.NoError(t, err)
-	req := api.GenerateRequest{
-		Model:  "llava:7b",
-		Prompt: "what does the text in this image say?",
-		Stream: &stream,
-		Options: map[string]any{
-			"seed":        42,
-			"temperature": 0.0,
+func TestVisionModels(t *testing.T) {
+	skipUnderMinVRAM(t, 6)
+	type testCase struct {
+		model string
+	}
+	testCases := []testCase{
+		{
+			model: "llava:7b",
 		},
-		Images: []api.ImageData{
-			image,
+		{
+			model: "llama3.2-vision",
+		},
+		{
+			model: "gemma3",
 		},
 	}
 
-	// Note: sometimes it returns "the ollamas" sometimes "the ollams"
-	resp := "the ollam"
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-	client, _, cleanup := InitServerConnection(ctx, t)
-	defer cleanup()
-	require.NoError(t, PullIfMissing(ctx, client, req.Model))
-	// llava models on CPU can be quite slow to start,
-	DoGenerate(ctx, t, client, req, []string{resp}, 120*time.Second, 30*time.Second)
-}
+	for _, v := range testCases {
+		t.Run(v.model, func(t *testing.T) {
+			image, err := base64.StdEncoding.DecodeString(imageEncoding)
+			require.NoError(t, err)
+			req := api.GenerateRequest{
+				Model:  v.model,
+				Prompt: "what does the text in this image say?",
+				Stream: &stream,
+				Options: map[string]any{
+					"seed":        42,
+					"temperature": 0.0,
+				},
+				Images: []api.ImageData{
+					image,
+				},
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			client, _, cleanup := InitServerConnection(ctx, t)
 
-func TestIntegrationMllama(t *testing.T) {
-	image, err := base64.StdEncoding.DecodeString(imageEncoding)
-	require.NoError(t, err)
-	req := api.GenerateRequest{
-		// TODO fix up once we publish the final image
-		Model:  "x/llama3.2-vision",
-		Prompt: "what does the text in this image say?",
-		Stream: &stream,
-		Options: map[string]any{
-			"seed":        42,
-			"temperature": 0.0,
-		},
-		Images: []api.ImageData{
-			image,
-		},
+			// Note: sometimes it returns "the ollamas" sometimes "the ollams"
+			resp := "the ollam"
+			defer cleanup()
+			require.NoError(t, PullIfMissing(ctx, client, req.Model))
+			// llava models on CPU can be quite slow to start
+			DoGenerate(ctx, t, client, req, []string{resp}, 240*time.Second, 30*time.Second)
+		})
 	}
-
-	resp := "the ollamas"
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	client, _, cleanup := InitServerConnection(ctx, t)
-	defer cleanup()
-	require.NoError(t, PullIfMissing(ctx, client, req.Model))
-	// mllama models on CPU can be quite slow to start,
-	DoGenerate(ctx, t, client, req, []string{resp}, 240*time.Second, 30*time.Second)
 }
 
 func TestIntegrationSplitBatch(t *testing.T) {

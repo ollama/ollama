@@ -14,12 +14,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestOrcaMiniBlueSky(t *testing.T) {
+func TestBlueSky(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	// Set up the test data
 	req := api.GenerateRequest{
-		Model:  "orca-mini",
+		Model:  smol,
 		Prompt: "why is the sky blue?",
 		Stream: &stream,
 		Options: map[string]any{
@@ -31,6 +31,7 @@ func TestOrcaMiniBlueSky(t *testing.T) {
 }
 
 func TestUnicode(t *testing.T) {
+	skipUnderMinVRAM(t, 6)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	// Set up the test data
@@ -93,7 +94,7 @@ func TestUnicodeModelDir(t *testing.T) {
 	defer cancel()
 
 	req := api.GenerateRequest{
-		Model:  "orca-mini",
+		Model:  smol,
 		Prompt: "why is the sky blue?",
 		Stream: &stream,
 		Options: map[string]any{

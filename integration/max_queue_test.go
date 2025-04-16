@@ -30,7 +30,7 @@ func TestMaxQueue(t *testing.T) {
 	t.Setenv("OLLAMA_MAX_QUEUE", strconv.Itoa(threadCount))
 
 	req := api.GenerateRequest{
-		Model:  "orca-mini",
+		Model:  smol,
 		Prompt: "write a long historical fiction story about christopher columbus.  use at least 10 facts from his actual journey",
 		Options: map[string]any{
 			"seed":        42,
@@ -61,7 +61,7 @@ func TestMaxQueue(t *testing.T) {
 	}()
 
 	// Give the generate a chance to get started before we start hammering on embed requests
-	time.Sleep(5 * time.Millisecond)
+	time.Sleep(10 * time.Millisecond)
 
 	threadCount += 10 // Add a few extra to ensure we push the queue past its limit
 	busyCount := 0
