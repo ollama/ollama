@@ -1,0 +1,96 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: jmorganca <jmorganca@gmail.com>
+Date: Tue, 8 Apr 2025 20:39:32 -0700
+Subject: [PATCH] add model quantizations
+
+a temporary patch to add model quantization for
+models not supported in llama.cpp
+---
+ src/llama-arch.cpp  | 17 +++++++++++++++++
+ src/llama-arch.h    |  1 +
+ src/llama-model.cpp |  2 ++
+ src/llama-quant.cpp |  4 ++++
+ 4 files changed, 24 insertions(+)
+
+diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
+index c1f78618..bdf3d898 100644
+--- a/src/llama-arch.cpp
++++ b/src/llama-arch.cpp
+@@ -73,6 +73,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
+     { LLM_ARCH_WAVTOKENIZER_DEC, "wavtokenizer-dec" },
+     { LLM_ARCH_PLM,              "plm"              },
+     { LLM_ARCH_BAILINGMOE,       "bailingmoe"       },
++    { LLM_ARCH_MISTRAL3,         "mistral3"         },
+     { LLM_ARCH_UNKNOWN,          "(unknown)"        },
+ };
+ 
+@@ -1582,6 +1583,22 @@ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_N
+             { LLM_TENSOR_FFN_UP_SHEXP,       "blk.%d.ffn_up_shexp" },
+         },
+     },
++    {
++        LLM_ARCH_MISTRAL3,
++        {
++            { LLM_TENSOR_TOKEN_EMBD,  "token_embd" },
++            { LLM_TENSOR_OUTPUT_NORM, "output_norm" },
++            { LLM_TENSOR_ATTN_NORM,   "blk.%d.attn_norm" },
++            { LLM_TENSOR_ATTN_Q,      "blk.%d.attn_q" },
++            { LLM_TENSOR_ATTN_K,      "blk.%d.attn_k" },
++            { LLM_TENSOR_ATTN_V,      "blk.%d.attn_v" },
++            { LLM_TENSOR_ATTN_OUT,    "blk.%d.attn_output" },
++            { LLM_TENSOR_FFN_NORM,    "blk.%d.ffn_norm" },
++            { LLM_TENSOR_FFN_GATE,    "blk.%d.ffn_gate" },
++            { LLM_TENSOR_FFN_UP,      "blk.%d.ffn_up" },
++            { LLM_TENSOR_FFN_DOWN,    "blk.%d.ffn_down" },
++        }
++    },
+     {
+         LLM_ARCH_UNKNOWN,
+         {
+diff --git a/src/llama-arch.h b/src/llama-arch.h
+index f987844d..ee081fbf 100644
+--- a/src/llama-arch.h
++++ b/src/llama-arch.h
+@@ -75,6 +75,7 @@ enum llm_arch {
+     LLM_ARCH_CHAMELEON,
+     LLM_ARCH_SOLAR,
+     LLM_ARCH_WAVTOKENIZER_DEC,
++    LLM_ARCH_MISTRAL3,
+     LLM_ARCH_PLM,
+     LLM_ARCH_BAILINGMOE,
+     LLM_ARCH_UNKNOWN,
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index d5ad466e..cd1d239c 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -1423,6 +1423,7 @@ void llama_model::load_hparams(llama_model_loader & ml) {
+                     default: type = LLM_TYPE_UNKNOWN;
+                 }
+             } break;
++        case LLM_ARCH_MISTRAL3: break;
+         default: throw std::runtime_error("unsupported model architecture");
+     }
+ 
+@@ -13652,6 +13653,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
+         case LLM_ARCH_CHAMELEON:
+         case LLM_ARCH_SOLAR:
+         case LLM_ARCH_BAILINGMOE:
++        case LLM_ARCH_MISTRAL3:
+             return LLAMA_ROPE_TYPE_NORM;
+ 
+         // the pairs of head values are offset by n_rot/2
+diff --git a/src/llama-quant.cpp b/src/llama-quant.cpp
+index 223e1f3f..8ae6dde8 100644
+--- a/src/llama-quant.cpp
++++ b/src/llama-quant.cpp
+@@ -744,6 +744,10 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
+         // This used to be a regex, but <regex> has an extreme cost to compile times.
+         bool quantize = name.rfind("weight") == name.size() - 6; // ends with 'weight'?
+ 
++        // don't quantize vision stuff
++        quantize &= name.find("v.") == std::string::npos;
++        quantize &= name.find("mm.") == std::string::npos;
++
+         // quantize only 2D and 3D tensors (experts)
+         quantize &= (ggml_n_dims(tensor) >= 2);
+ 
