@@ -131,7 +131,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				slog.Debug("pending request cancelled or timed out, skipping scheduling")
 				continue
 			}
-			numParallel := int(envconfig.NumParallel())
+			numParallel := pending.opts.NumParallel
 			// TODO (jmorganca): mllama doesn't support parallel yet
 			// see https://github.com/ollama/ollama/issues/4165
 			if checkMllamaModelFamily(pending.model) && numParallel != 1 {
