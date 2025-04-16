@@ -284,7 +284,6 @@ func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
 			fl.Flush()
 		}
 	}
-	defer flushProgress()
 
 	t := time.NewTicker(1<<63 - 1) // "unstarted" timer
 	start := sync.OnceFunc(func() {
