@@ -44,7 +44,14 @@ func devices() []*C.struct_ggml_backend_device {
 }
 
 type Backend struct {
+	// modelPath is the location of the model data
+	modelPath string
+
 	meta *fsggml.GGML
+
+	// tensorLoadTargets maps from the name of the tensor in the file
+	// to the name that is used by the model definition
+	tensorLoadTargets map[string][]string
 
 	sched         *C.struct_ggml_backend_sched
 	schedBackends []*C.struct_ggml_backend
@@ -64,8 +71,14 @@ type Backend struct {
 	maxGraphNodes int
 }
 
-func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, error) {
-	meta, n, err := fsggml.Decode(r, -1)
+func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
+	r, err := os.Open(modelPath)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+
+	meta, err := fsggml.Decode(r, -1)
 	if err != nil {
 		return nil, err
 	}
@@ -307,73 +320,6 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 		}
 	}
 
-	var doneBytes atomic.Uint64
-	totalBytes := uint64(n) - meta.Tensors().Offset
-
-	g, ctx := errgroup.WithContext(ctx)
-	g.SetLimit(runtime.GOMAXPROCS(0))
-	for _, t := range meta.Tensors().Items() {
-		t := t
-		g.Go(func() error {
-			tts := make([]*C.struct_ggml_tensor, max(1, len(targets[t.Name])))
-			for i := range tts {
-				target := targets[t.Name][i]
-				if target == "" {
-					target = t.Name
-				}
-
-				tt, ok := tensors[target]
-				if !ok {
-					return fmt.Errorf("unassigned tensor: %s", t.Name)
-				}
-
-				tts[i] = tt
-			}
-
-			// Create a new FD for each goroutine so that each FD is read sequentially, rather than
-			// seeking around within an FD shared between all goroutines.
-			file, err := os.Open(r.Name())
-			if err != nil {
-				slog.Warn("file open error", "file", r.Name(), "error", err)
-				return err
-			}
-			defer file.Close()
-			sr := io.NewSectionReader(file, int64(meta.Tensors().Offset+t.Offset), int64(t.Size()))
-			bts := make([]byte, 128*format.KibiByte)
-
-			var s uint64
-			for s < t.Size() {
-				// Stop if either the parent context has been canceled or if any of the other tensors returned an error
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-
-				n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Size()-s))])
-				if err != nil {
-					slog.Warn("file read error", "file", r.Name(), "error", err)
-					return err
-				}
-
-				for _, tt := range tts {
-					C.ggml_backend_tensor_set(tt, unsafe.Pointer(&bts[0]), C.size_t(s), C.size_t(n))
-				}
-
-				s += uint64(n)
-
-				if params.Progress != nil {
-					done := doneBytes.Add(uint64(n))
-					params.Progress(float32(done) / float32(totalBytes))
-				}
-			}
-
-			return nil
-		})
-	}
-
-	if err := g.Wait(); err != nil {
-		return nil, err
-	}
-
 	// map devices to backend buffer types so new tensors can be assigned to the correct device
 	deviceBufferTypes := make(map[*C.struct_ggml_backend_device]*C.struct_ggml_backend_buffer_type)
 
@@ -397,9 +343,11 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 
 	maxGraphNodes := max(8192, len(meta.Tensors().Items())*5)
 	return &Backend{
-		flashAttention: params.FlashAttention,
-		meta:           meta,
-		tensors:        tensors,
+		modelPath:         modelPath,
+		flashAttention:    params.FlashAttention,
+		meta:              meta,
+		tensorLoadTargets: targets,
+		tensors:           tensors,
 		sched: C.ggml_backend_sched_new(
 			(*C.ggml_backend_t)(unsafe.Pointer(&schedBackends[0])),
 			(*C.ggml_backend_buffer_type_t)(unsafe.Pointer(&schedBufts[0])),
@@ -424,6 +372,77 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 
 func init() {
 	ml.RegisterBackend("ggml", New)
+}
+
+func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
+	var doneBytes atomic.Uint64
+	totalBytes := uint64(b.meta.Length) - b.meta.Tensors().Offset
+
+	g, ctx := errgroup.WithContext(ctx)
+	g.SetLimit(runtime.GOMAXPROCS(0))
+	for _, t := range b.meta.Tensors().Items() {
+		t := t
+		g.Go(func() error {
+			tts := make([]*C.struct_ggml_tensor, max(1, len(b.tensorLoadTargets[t.Name])))
+			for i := range tts {
+				target := b.tensorLoadTargets[t.Name][i]
+				if target == "" {
+					target = t.Name
+				}
+
+				tt, ok := b.tensors[target]
+				if !ok {
+					return fmt.Errorf("unassigned tensor: %s", t.Name)
+				}
+
+				tts[i] = tt
+			}
+
+			// Create a new FD for each goroutine so that each FD is read sequentially, rather than
+			// seeking around within an FD shared between all goroutines.
+			file, err := os.Open(b.modelPath)
+			if err != nil {
+				slog.Warn("file open error", "file", b.modelPath, "error", err)
+				return err
+			}
+			defer file.Close()
+			sr := io.NewSectionReader(file, int64(b.meta.Tensors().Offset+t.Offset), int64(t.Size()))
+			bts := make([]byte, 128*format.KibiByte)
+
+			var s uint64
+			for s < t.Size() {
+				// Stop if either the parent context has been canceled or if any of the other tensors returned an error
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+
+				n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Size()-s))])
+				if err != nil {
+					slog.Warn("file read error", "file", b.modelPath, "error", err)
+					return err
+				}
+
+				for _, tt := range tts {
+					C.ggml_backend_tensor_set(tt, unsafe.Pointer(&bts[0]), C.size_t(s), C.size_t(n))
+				}
+
+				s += uint64(n)
+
+				if progress != nil {
+					done := doneBytes.Add(uint64(n))
+					progress(float32(done) / float32(totalBytes))
+				}
+			}
+
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (b *Backend) Config() fs.Config {
