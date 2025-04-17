@@ -107,15 +107,20 @@ func DefaultCache() (*blob.DiskCache, error) {
 //
 // In both cases, the code field is optional and may be empty.
 type Error struct {
-	Status  int    `json:"-"` // TODO(bmizerany): remove this
+	status  int    `json:"-"` // TODO(bmizerany): remove this
 	Code    string `json:"code"`
 	Message string `json:"message"`
+}
+
+// Temporary reports if the error is temporary (e.g. 5xx status code).
+func (e *Error) Temporary() bool {
+	return e.status >= 500
 }
 
 func (e *Error) Error() string {
 	var b strings.Builder
 	b.WriteString("registry responded with status ")
-	b.WriteString(strconv.Itoa(e.Status))
+	b.WriteString(strconv.Itoa(e.status))
 	if e.Code != "" {
 		b.WriteString(": code ")
 		b.WriteString(e.Code)
@@ -129,7 +134,7 @@ func (e *Error) Error() string {
 
 func (e *Error) LogValue() slog.Value {
 	return slog.GroupValue(
-		slog.Int("status", e.Status),
+		slog.Int("status", e.status),
 		slog.String("code", e.Code),
 		slog.String("message", e.Message),
 	)
@@ -426,14 +431,13 @@ func (r *Registry) Push(ctx context.Context, name string, p *PushParams) error {
 //
 // It always calls update with a nil error.
 type trackingReader struct {
-	l      *Layer
 	r      io.Reader
-	update func(l *Layer, n int64, err error)
+	update func(n int64, err error) // err is always nil
 }
 
 func (r *trackingReader) Read(p []byte) (n int, err error) {
 	n, err = r.r.Read(p)
-	r.update(r.l, int64(n), nil)
+	r.update(int64(n), nil)
 	return
 }
 
@@ -478,111 +482,118 @@ func (r *Registry) Pull(ctx context.Context, name string) error {
 		expected += l.Size
 	}
 
-	var received atomic.Int64
 	var g errgroup.Group
 	g.SetLimit(r.maxStreams())
+
+	var completed atomic.Int64
 	for _, l := range layers {
+		var received atomic.Int64
+		update := func(n int64, err error) {
+			completed.Add(n)
+			t.update(l, received.Add(n), err)
+		}
+
 		info, err := c.Get(l.Digest)
 		if err == nil && info.Size == l.Size {
-			received.Add(l.Size)
-			t.update(l, l.Size, ErrCached)
+			update(l.Size, ErrCached)
 			continue
 		}
 
-		var wg sync.WaitGroup
-		chunked, err := c.Chunked(l.Digest, l.Size)
-		if err != nil {
-			t.update(l, 0, err)
-			continue
-		}
+		func() (err error) {
+			defer func() {
+				if err != nil {
+					update(0, err)
+				}
+			}()
 
-		for cs, err := range r.chunksums(ctx, name, l) {
+			var wg sync.WaitGroup
+			chunked, err := c.Chunked(l.Digest, l.Size)
 			if err != nil {
-				// Chunksum stream interrupted. Note in trace
-				// log and let in-flight downloads complete.
-				// This will naturally trigger ErrIncomplete
-				// since received < expected bytes.
-				t.update(l, 0, err)
-				break
+				return err
 			}
+			defer func() {
+				// Close the chunked writer when all chunks are
+				// downloaded.
+				//
+				// This is done as a background task in the
+				// group to allow the next layer to start while
+				// we wait for the final chunk in this layer to
+				// complete. It also ensures this is done
+				// before we exit Pull.
+				g.Go(func() error {
+					wg.Wait()
+					chunked.Close()
+					return nil
+				})
+			}()
 
-			cacheKey := fmt.Sprintf(
-				"v1 pull chunksum %s %s %d-%d",
-				l.Digest,
-				cs.Digest,
-				cs.Chunk.Start,
-				cs.Chunk.End,
-			)
-			cacheKeyDigest := blob.DigestFromBytes(cacheKey)
-			_, err := c.Get(cacheKeyDigest)
-			if err == nil {
-				received.Add(cs.Chunk.Size())
-				t.update(l, cs.Chunk.Size(), ErrCached)
-				continue
-			}
+			for cs, err := range r.chunksums(ctx, name, l) {
+				if err != nil {
+					// Note the chunksum stream
+					// interuption, but do not cancel
+					// in-flight downloads. We can still
+					// make progress on them. Once they are
+					// done, ErrIncomplete will be returned
+					// below.
+					update(0, err)
+					break
+				}
 
-			wg.Add(1)
-			g.Go(func() (err error) {
-				defer func() {
-					if err == nil {
-						// Ignore cache key write errors for now. We've already
-						// reported to trace that the chunk is complete.
-						//
-						// Ideally, we should only report completion to trace
-						// after successful cache commit. This current approach
-						// works but could trigger unnecessary redownloads if
-						// the checkpoint key is missing on next pull.
-						//
-						// Not incorrect, just suboptimal - fix this in a
-						// future update.
-						_ = blob.PutBytes(c, cacheKeyDigest, cacheKey)
+				cacheKey := fmt.Sprintf(
+					"v1 pull chunksum %s %s %d-%d",
+					l.Digest,
+					cs.Digest,
+					cs.Chunk.Start,
+					cs.Chunk.End,
+				)
+				cacheKeyDigest := blob.DigestFromBytes(cacheKey)
+				_, err := c.Get(cacheKeyDigest)
+				if err == nil {
+					update(cs.Chunk.Size(), ErrCached)
+					continue
+				}
 
-						received.Add(cs.Chunk.Size())
-					} else {
-						t.update(l, 0, err)
+				wg.Add(1)
+				g.Go(func() (err error) {
+					defer func() {
+						defer wg.Done()
+						if err != nil {
+							update(0, err)
+						}
+					}()
+
+					req, err := http.NewRequestWithContext(ctx, "GET", cs.URL, nil)
+					if err != nil {
+						return err
 					}
-					wg.Done()
-				}()
+					req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", cs.Chunk.Start, cs.Chunk.End))
+					res, err := sendRequest(r.client(), req)
+					if err != nil {
+						return err
+					}
+					defer res.Body.Close()
 
-				req, err := http.NewRequestWithContext(ctx, "GET", cs.URL, nil)
-				if err != nil {
-					return err
-				}
-				req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", cs.Chunk.Start, cs.Chunk.End))
-				res, err := sendRequest(r.client(), req)
-				if err != nil {
-					return err
-				}
-				defer res.Body.Close()
+					tr := &trackingReader{
+						r:      res.Body,
+						update: update,
+					}
+					if err := chunked.Put(cs.Chunk, cs.Digest, tr); err != nil {
+						return err
+					}
 
-				body := &trackingReader{l: l, r: res.Body, update: t.update}
-				return chunked.Put(cs.Chunk, cs.Digest, body)
-			})
-		}
+					// Record the downloading of this chunk.
+					return blob.PutBytes(c, cacheKeyDigest, cacheKey)
+				})
+			}
 
-		// Close writer immediately after downloads finish, not at Pull
-		// exit. Using defer would keep file descriptors open until all
-		// layers complete, potentially exhausting system limits with
-		// many layers.
-		//
-		// The WaitGroup tracks when all chunks finish downloading,
-		// allowing precise writer closure in a background goroutine.
-		// Each layer briefly uses one extra goroutine while at most
-		// maxStreams()-1 chunks download in parallel.
-		//
-		// This caps file descriptors at maxStreams() instead of
-		// growing with layer count.
-		g.Go(func() error {
-			wg.Wait()
-			chunked.Close()
 			return nil
-		})
+		}()
 	}
 	if err := g.Wait(); err != nil {
 		return err
 	}
-	if received.Load() != expected {
-		return fmt.Errorf("%w: received %d/%d bytes", ErrIncomplete, received.Load(), expected)
+	if recv := completed.Load(); recv != expected {
+		return fmt.Errorf("%w: received %d/%d bytes", ErrIncomplete, recv, expected)
 	}
 
 	md := blob.DigestFromBytes(m.Data)
@@ -973,7 +984,7 @@ func sendRequest(c *http.Client, r *http.Request) (_ *http.Response, err error) 
 			return nil, ErrModelNotFound
 		}
 
-		re.Status = res.StatusCode
+		re.status = res.StatusCode
 		return nil, &re
 	}
 	return res, nil

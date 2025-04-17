@@ -1,6 +1,6 @@
 UPSTREAM=https://github.com/ggerganov/llama.cpp.git
 WORKDIR=llama/vendor
-FETCH_HEAD=d7cfe1ffe0f435d0048a6058d529daf76e072d9c
+FETCH_HEAD=71e90e8813f90097701e62f7fce137d96ddf41e2
 
 .PHONY: help
 help:
@@ -15,18 +15,18 @@ help:
 	@echo "    make -f $(lastword $(MAKEFILE_LIST)) clean sync"
 
 .PHONY: sync
-sync: llama/build-info.cpp llama/llama.cpp ml/backend/ggml/ggml apply-patches
+sync: llama/build-info.cpp llama/llama.cpp ml/backend/ggml/ggml
 
 .PHONY: llama/build-info.cpp
 llama/build-info.cpp: llama/build-info.cpp.in
 	sed -e 's|@FETCH_HEAD@|$(FETCH_HEAD)|' $< > $@
 
 .PHONY: llama/llama.cpp
-llama/llama.cpp: llama/vendor/ apply-patches
+llama/llama.cpp: llama/vendor/
 	rsync -arvzc -f "merge $@/.rsync-filter" $< $@
 
-.PHONY: ml/backend/ggml/ggml apply-patches
-ml/backend/ggml/ggml: llama/vendor/ggml/ apply-patches
+.PHONY: ml/backend/ggml/ggml
+ml/backend/ggml/ggml: llama/vendor/ggml/
 	rsync -arvzc -f "merge $@/.rsync-filter" $< $@
 
 PATCHES=$(wildcard llama/patches/*.patch)

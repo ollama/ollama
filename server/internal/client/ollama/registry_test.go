@@ -154,7 +154,7 @@ func okHandler(w http.ResponseWriter, r *http.Request) {
 func checkErrCode(t *testing.T, err error, status int, code string) {
 	t.Helper()
 	var e *Error
-	if !errors.As(err, &e) || e.Status != status || e.Code != code {
+	if !errors.As(err, &e) || e.status != status || e.Code != code {
 		t.Errorf("err = %v; want %v %v", err, status, code)
 	}
 }
@@ -860,8 +860,8 @@ func TestPullChunksumStreaming(t *testing.T) {
 
 	// now send the second chunksum and ensure it kicks off work immediately
 	fmt.Fprintf(csw, "%s 2-2\n", blob.DigestFromBytes("c"))
-	if g := <-update; g != 1 {
-		t.Fatalf("got %d, want 1", g)
+	if g := <-update; g != 3 {
+		t.Fatalf("got %d, want 3", g)
 	}
 	csw.Close()
 	testutil.Check(t, <-errc)
@@ -944,10 +944,10 @@ func TestPullChunksumsCached(t *testing.T) {
 	_, err = c.Cache.Resolve("o.com/library/abc:latest")
 	check(err)
 
-	if g := written.Load(); g != 3 {
+	if g := written.Load(); g != 5 {
 		t.Fatalf("wrote %d bytes, want 3", g)
 	}
 	if g := cached.Load(); g != 2 { // "ab" should have been cached
-		t.Fatalf("cached %d bytes, want 3", g)
+		t.Fatalf("cached %d bytes, want 5", g)
 	}
 }

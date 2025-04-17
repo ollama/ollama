@@ -2,6 +2,8 @@
 
 #include "llama.h"
 
+#include <algorithm>
+
 #include <array>
 
 // bump if necessary
@@ -36,6 +38,7 @@ struct llama_hparams {
     uint32_t n_layer;
     uint32_t n_rot;
     uint32_t n_swa = 0; // sliding window attention (SWA)
+    uint32_t n_swa_pattern = 1; // by default, all layers use non-sliding-window attention
     uint32_t n_embd_head_k; // dimension of keys (d_k). d_q is assumed to be the same, but there are n_head q heads, and only n_head_kv k-v heads
     uint32_t n_embd_head_v; // dimension of values (d_v) aka n_embd_head
     uint32_t n_expert = 0;
@@ -79,10 +82,16 @@ struct llama_hparams {
     uint32_t time_decay_extra_dim   = 0;
     uint32_t wkv_head_size          = 0;
     uint32_t token_shift_count      = 2;
+    uint32_t n_lora_decay           = 0;
+    uint32_t n_lora_iclr            = 0;
+    uint32_t n_lora_value_res_mix   = 0;
+    uint32_t n_lora_gate            = 0;
 
     float    rope_attn_factor = 1.0f;
     float    rope_freq_base_train;
+    float    rope_freq_base_train_swa;
     float    rope_freq_scale_train;
+    float    rope_freq_scale_train_swa;
     uint32_t n_ctx_orig_yarn;
     float    rope_yarn_log_mul;
 
@@ -108,6 +117,14 @@ struct llama_hparams {
     bool causal_attn   = true;
     bool use_alibi     = false;
     bool attn_soft_cap = false;
+
+    uint32_t n_moe_layer_step        = 0;
+    bool     use_kq_norm             = true;
+    uint32_t n_attn_chunk            = 0;
+    // values below seems to be fixed on llama4
+    uint32_t n_no_rope_layer_step    = 4;
+    uint32_t n_attn_temp_floor_scale = 8192;
+    float    f_attn_temp_scale       = 0.1;
 
     // needed by encoder-decoder models (e.g. T5, FLAN-T5)
     // ref: https://github.com/ggerganov/llama.cpp/pull/8141
@@ -143,6 +160,8 @@ struct llama_hparams {
 
     // cross attention layers
     bool cross_attention_layers(uint32_t il) const;
+
+    bool is_swa(uint32_t il) const;
 };
 
 static_assert(std::is_trivially_copyable<llama_hparams>::value, "llama_hparams must be trivially copyable");
