@@ -224,6 +224,20 @@ ollama ps
 ollama stop llama3.2
 ```
 
+### How to Increase the context window size
+
+This will allow you to increase the context window size temporarily.
+
+```shell
+ollama run llama3.2 set parameter num_ctx 4096
+```
+
+You could use an environmental variable to make the context window size permanent.
+
+```shell
+OLLAMA_CONTEXT_LENGTH=8192 ollama serve
+```
+
 ### Start Ollama
 
 `ollama serve` is used when you want to start ollama without running the desktop application.
