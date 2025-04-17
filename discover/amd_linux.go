@@ -2,6 +2,7 @@ package discover
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -46,12 +47,21 @@ var (
 	RocmStandardLocations = []string{"/opt/rocm/lib", "/usr/lib64"}
 )
 
+
+func AMDGetGPUInfo() []RocmGPUInfo {
+	resp := AMDGetGPUInfoFromDriver()
+	if len(resp) != 0 {
+		return resp
+	}
+
+	return AMDGetGPUInfoFromRuntime()
+}
+
 // Gather GPU information from the amdgpu driver if any supported GPUs are detected
-// Only called once during bootstrap
-func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
+func AMDGetGPUInfoFromDriver() []RocmGPUInfo {
 	resp := []RocmGPUInfo{}
 	if !AMDDetected() {
-		return resp, fmt.Errorf("AMD GPUs not detected")
+		return resp
 	}
 
 	// Opportunistic logging of driver version to aid in troubleshooting
@@ -64,20 +74,23 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 	// Determine if the user has already pre-selected which GPUs to look at, then ignore the others
 	var visibleDevices []string
 	hipVD := envconfig.HipVisibleDevices()   // zero based index only
-	rocrVD := envconfig.RocrVisibleDevices() // zero based index or UUID
+	rocrVD := envconfig.RocrVisibleDevices() // zero based index or UUID, but consumer cards seem to not support UUID
 	gpuDO := envconfig.GpuDeviceOrdinal()    // zero based index
 	switch {
-	case rocrVD != "":
-		visibleDevices = strings.Split(rocrVD, ",")
+	// TODO is this priorty order right?
 	case hipVD != "":
 		visibleDevices = strings.Split(hipVD, ",")
+	case rocrVD != "":
+		visibleDevices = strings.Split(rocrVD, ",")
+		// TODO - since we don't yet support UUIDs, consider detecting and reporting here
+		// all our test systems show GPU-XX indicating UUID is not supported
 	case gpuDO != "":
 		visibleDevices = strings.Split(gpuDO, ",")
 	}
 
 	gfxOverride := envconfig.HsaOverrideGfxVersion()
 	var supported []string
-	var libDir string
+	libDir := ""
 
 	// The amdgpu driver always exposes the host CPU(s) first, but we have to skip them and subtract
 	// from the other IDs to get alignment with the HIP libraries expectations (zero is the first GPU, not the CPU)
@@ -96,7 +109,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 		}
 		return a < b
 	})
-	gpuCount := 0
+	cpuCount := 0
 	for _, match := range matches {
 		slog.Debug("evaluating amdgpu node " + match)
 		fp, err := os.Open(match)
@@ -105,6 +118,11 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 			continue
 		}
 		defer fp.Close()
+		nodeID, err := strconv.Atoi(filepath.Base(filepath.Dir(match)))
+		if err != nil {
+			slog.Debug("failed to parse node ID", "error", err)
+			continue
+		}
 
 		scanner := bufio.NewScanner(fp)
 		isCPU := false
@@ -178,18 +196,23 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 		// do reliably report VRAM usage.
 
 		if isCPU {
+			cpuCount++
 			continue
 		}
 
-		// Skip over any GPUs that are masked
-		if major == 0 && minor == 0 && patch == 0 {
-			slog.Debug("skipping gpu with gfx000")
-			continue
+		// CPUs are always first in the list
+		gpuID := nodeID - cpuCount
+
+		// Shouldn't happen, but just in case...
+		if gpuID < 0 {
+			slog.Error("unexpected amdgpu sysfs data resulted in negative GPU ID, please set OLLAMA_DEBUG=1 and report an issue")
+			return nil
 		}
 
-		// Keep track of numeric IDs based on valid GPUs
-		gpuID := gpuCount
-		gpuCount += 1
+		//if int(major) < RocmComputeMin {
+		//	slog.Warn(fmt.Sprintf("amdgpu too old gfx%d%x%x", major, minor, patch), "gpu", gpuID)
+		//	continue
+		//}
 
 		// Look up the memory for the current node
 		totalMemory := uint64(0)
@@ -258,20 +281,19 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 			break
 		}
 
+		// iGPU detection, remove this check once we can support an iGPU variant of the rocm library
+		if totalMemory < IGPUMemLimit {
+			slog.Info("unsupported Radeon iGPU detected skipping", "id", gpuID, "total", format.HumanBytes2(totalMemory))
+			continue
+		}
 		var name string
 		// TODO - PCI ID lookup
 		if vendor > 0 && device > 0 {
 			name = fmt.Sprintf("%04x:%04x", vendor, device)
 		}
 
-		// Favor UUIDs if available to reduce possibility of getting the numeric IDs wrong
-		var ID string
-		if uniqueID != 0 {
-			ID = fmt.Sprintf("GPU-%016x", uniqueID)
-		} else {
-			ID = strconv.Itoa(gpuID)
-		}
-
+		slog.Debug("amdgpu memory", "gpu", gpuID, "total", format.HumanBytes2(totalMemory))
+		slog.Debug("amdgpu memory", "gpu", gpuID, "available", format.HumanBytes2(totalMemory-usedMemory))
 		gpuInfo := RocmGPUInfo{
 			GpuInfo: GpuInfo{
 				Library: "rocm",
@@ -279,7 +301,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 					TotalMemory: totalMemory,
 					FreeMemory:  (totalMemory - usedMemory),
 				},
-				ID:            ID,
+				ID:            strconv.Itoa(gpuID),
 				Name:          name,
 				Compute:       fmt.Sprintf("gfx%d%x%x", major, minor, patch),
 				MinimumMemory: rocmMinimumMemory,
@@ -287,54 +309,19 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 				DriverMinor:   driverMinor,
 			},
 			usedFilepath: usedFile,
-			index:        gpuID,
 		}
-
-		// iGPU detection, remove this check once we can support an iGPU variant of the rocm library
-		if totalMemory < IGPUMemLimit {
-			reason := "unsupported Radeon iGPU detected skipping"
-			slog.Info(reason, "id", gpuID, "total", format.HumanBytes2(totalMemory))
-			unsupportedGPUs = append(unsupportedGPUs, UnsupportedGPUInfo{
-				GpuInfo: gpuInfo.GpuInfo,
-				Reason:  reason,
-			})
-			continue
-		}
-		minVer, err := strconv.Atoi(RocmComputeMajorMin)
-		if err != nil {
-			slog.Error("invalid RocmComputeMajorMin setting", "value", RocmComputeMajorMin, "error", err)
-		}
-		if int(major) < minVer {
-			reason := fmt.Sprintf("amdgpu too old gfx%d%x%x", major, minor, patch)
-			slog.Warn(reason, "gpu", gpuID)
-			unsupportedGPUs = append(unsupportedGPUs, UnsupportedGPUInfo{
-				GpuInfo: gpuInfo.GpuInfo,
-				Reason:  reason,
-			})
-
-			continue
-		}
-
-		slog.Debug("amdgpu memory", "gpu", gpuID, "total", format.HumanBytes2(totalMemory))
-		slog.Debug("amdgpu memory", "gpu", gpuID, "available", format.HumanBytes2(totalMemory-usedMemory))
 
 		// If the user wants to filter to a subset of devices, filter out if we aren't a match
 		if len(visibleDevices) > 0 {
 			include := false
 			for _, visible := range visibleDevices {
-				if visible == gpuInfo.ID || visible == strconv.Itoa(gpuInfo.index) {
+				if visible == gpuInfo.ID {
 					include = true
 					break
 				}
 			}
 			if !include {
-				reason := "filtering out device per user request"
-				slog.Info(reason, "id", gpuInfo.ID, "visible_devices", visibleDevices)
-				unsupportedGPUs = append(unsupportedGPUs, UnsupportedGPUInfo{
-					GpuInfo: gpuInfo.GpuInfo,
-					Reason:  reason,
-				})
-
+				slog.Info("filtering out device per user request", "id", gpuInfo.ID, "visible_devices", visibleDevices)
 				continue
 			}
 		}
@@ -344,41 +331,25 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 		if libDir == "" {
 			libDir, err = AMDValidateLibDir()
 			if err != nil {
-				err = fmt.Errorf("unable to verify rocm library: %w", err)
-				slog.Warn(err.Error())
-				unsupportedGPUs = append(unsupportedGPUs, UnsupportedGPUInfo{
-					GpuInfo: gpuInfo.GpuInfo,
-					Reason:  err.Error(),
-				})
-				return nil, err
+				slog.Warn("unable to verify rocm library, will use cpu", "error", err)
+				return nil
 			}
 		}
-		gpuInfo.DependencyPath = []string{libDir}
+		gpuInfo.DependencyPath = strings.Split(libDir, "")
 
 		if gfxOverride == "" {
 			// Only load supported list once
 			if len(supported) == 0 {
 				supported, err = GetSupportedGFX(libDir)
 				if err != nil {
-					err = fmt.Errorf("failed to lookup supported GFX types: %w", err)
-					slog.Warn(err.Error())
-					unsupportedGPUs = append(unsupportedGPUs, UnsupportedGPUInfo{
-						GpuInfo: gpuInfo.GpuInfo,
-						Reason:  err.Error(),
-					})
-					return nil, err
+					slog.Warn("failed to lookup supported GFX types, falling back to CPU mode", "error", err)
+					return nil
 				}
 				slog.Debug("rocm supported GPUs", "types", supported)
 			}
 			gfx := gpuInfo.Compute
 			if !slices.Contains[[]string, string](supported, gfx) {
-				reason := fmt.Sprintf("amdgpu is not supported (supported types:%s)", supported)
-				slog.Warn(reason, "gpu_type", gfx, "gpu", gpuInfo.ID, "library", libDir)
-				unsupportedGPUs = append(unsupportedGPUs, UnsupportedGPUInfo{
-					GpuInfo: gpuInfo.GpuInfo,
-					Reason:  reason,
-				})
-
+				slog.Warn("amdgpu is not supported", "gpu", gpuInfo.ID, "gpu_type", gfx, "library", libDir, "supported_types", supported)
 				// TODO - consider discrete markdown just for ROCM troubleshooting?
 				slog.Warn("See https://github.com/ollama/ollama/blob/main/docs/gpu.md#overrides for HSA_OVERRIDE_GFX_VERSION usage")
 				continue
@@ -398,18 +369,14 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 		resp = append(resp, gpuInfo)
 	}
 	if len(resp) == 0 {
-		err := fmt.Errorf("no compatible amdgpu devices detected")
-		slog.Info(err.Error())
-		return nil, err
+		slog.Info("no compatible amdgpu devices detected")
 	}
 	if err := verifyKFDDriverAccess(); err != nil {
-		err = fmt.Errorf("amdgpu devices detected but permission problems block access: %w", err)
-		slog.Error(err.Error())
-		return nil, err
+		slog.Error("amdgpu devices detected but permission problems block access", "error", err)
+		return nil
 	}
-	return resp, nil
+	return resp
 }
-
 // Quick check for AMD driver so we can skip amdgpu discovery if not present
 func AMDDetected() bool {
 	// Some driver versions (older?) don't have a version file, so just lookup the parent dir
@@ -502,6 +469,124 @@ func getFreeMemory(usedFile string) (uint64, error) {
 		return 0, fmt.Errorf("failed to parse sysfs node %s %w", usedFile, err)
 	}
 	return usedMemory, nil
+}
+
+func AMDGetGPUInfoFromRuntime() []RocmGPUInfo {
+	resp := []RocmGPUInfo{}
+	hl, err := NewHipLib()
+	if err != nil {
+		slog.Debug(err.Error())
+		return nil
+	}
+	defer hl.Release()
+
+	driverMajor, driverMinor, err := hl.AMDDriverVersion()
+	if err != nil {
+		// For now this is benign, but we may eventually need to fail compatibility checks
+		slog.Debug("error looking up amd driver version", "error", err)
+	}
+
+	// Note: the HIP library automatically handles subsetting to any HIP_VISIBLE_DEVICES the user specified
+	count := hl.HipGetDeviceCount()
+	if count == 0 {
+		return nil
+	}
+	libDir, err := AMDValidateLibDir()
+	if err != nil {
+		slog.Warn("unable to verify rocm library, will use cpu", "error", err)
+		return nil
+	}
+
+	var supported []string
+	gfxOverride := envconfig.HsaOverrideGfxVersion()
+	if gfxOverride == "" {
+		supported, err = GetSupportedGFX(libDir)
+		if err != nil {
+			slog.Warn("failed to lookup supported GFX types, falling back to CPU mode", "error", err)
+			return nil
+		}
+	} else {
+		slog.Info("skipping rocm gfx compatibility check", "HSA_OVERRIDE_GFX_VERSION", gfxOverride)
+	}
+
+	slog.Debug("detected hip devices", "count", count)
+	// TODO how to determine the underlying device ID when visible devices is causing this to subset?
+	for i := range count {
+		err = hl.HipSetDevice(i)
+		if err != nil {
+			slog.Warn("set device", "id", i, "error", err)
+			continue
+		}
+
+		props, err := hl.HipGetDeviceProperties(i)
+		if err != nil {
+			slog.Warn("get properties", "id", i, "error", err)
+			continue
+		}
+		n := bytes.IndexByte(props.Name[:], 0)
+		name := string(props.Name[:n])
+		// TODO is UUID actually populated on windows?
+		// Can luid be used on windows for setting visible devices (and is it actually set?)
+		n = bytes.IndexByte(props.GcnArchName[:], 0)
+		gfx := string(props.GcnArchName[:n])
+		slog.Debug("hip device", "id", i, "name", name, "gfx", gfx)
+		// slog.Info(fmt.Sprintf("[%d] Integrated: %d", i, props.iGPU)) // DOESN'T REPORT CORRECTLY!  Always 0
+		// ROCm in WSL does not support iGPU at the moment
+		// if strings.EqualFold(name, iGPUName) {
+		// 	slog.Info("unsupported Radeon iGPU detected skipping", "id", i, "name", name, "gfx", gfx)
+		// 	continue
+		// }
+		if gfxOverride == "" {
+			// Strip off Target Features when comparing
+			if !slices.Contains[[]string, string](supported, strings.Split(gfx, ":")[0]) {
+				slog.Warn("amdgpu is not supported", "gpu", i, "gpu_type", gfx, "library", libDir, "supported_types", supported)
+				// TODO - consider discrete markdown just for ROCM troubleshooting?
+				slog.Warn("See https://github.com/ollama/ollama/blob/main/docs/troubleshooting.md for HSA_OVERRIDE_GFX_VERSION usage")
+				continue
+			} else {
+				slog.Debug("amdgpu is supported", "gpu", i, "gpu_type", gfx)
+			}
+		}
+
+		freeMemory, totalMemory, err := hl.HipMemGetInfo()
+		if err != nil {
+			slog.Warn("get mem info", "id", i, "error", err)
+			continue
+		}
+
+		// iGPU detection, remove this check once we can support an iGPU variant of the rocm library
+		if totalMemory < IGPUMemLimit {
+			slog.Info("amdgpu appears to be an iGPU, skipping", "gpu", i, "total", format.HumanBytes2(totalMemory))
+			continue
+		}
+
+		slog.Debug("amdgpu memory", "gpu", i, "total", format.HumanBytes2(totalMemory))
+		slog.Debug("amdgpu memory", "gpu", i, "available", format.HumanBytes2(freeMemory))
+		gpuInfo := RocmGPUInfo{
+			GpuInfo: GpuInfo{
+				Library: "rocm",
+				memInfo: memInfo{
+					TotalMemory: totalMemory,
+					FreeMemory:  freeMemory,
+				},
+				// Free memory reporting on Windows is not reliable until we bump to ROCm v6.2
+				UnreliableFreeMemory: true,
+
+				ID:             strconv.Itoa(i), // TODO this is probably wrong if we specify visible devices
+				DependencyPath: strings.Split(libDir, ""),
+				MinimumMemory:  rocmMinimumMemory,
+				Name:           name,
+				Compute:        gfx,
+				DriverMajor:    driverMajor,
+				DriverMinor:    driverMinor,
+			},
+			index: i,
+		}
+
+		resp = append(resp, gpuInfo)
+	}
+
+	return resp
 }
 
 func verifyKFDDriverAccess() error {
