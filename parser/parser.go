@@ -129,6 +129,10 @@ func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error)
 	return req, nil
 }
 
+func IsKnownMessageRole(role string) bool {
+	return role == "system" || role == "user" || role == "assistant"
+}
+
 func fileDigestMap(path string) (map[string]string, error) {
 	fl := make(map[string]string)
 
@@ -567,7 +571,7 @@ func isNewline(r rune) bool {
 }
 
 func isValidMessageRole(role string) bool {
-	return role == "system" || role == "user" || role == "assistant"
+	return IsKnownMessageRole(role)
 }
 
 func isValidCommand(cmd string) bool {
