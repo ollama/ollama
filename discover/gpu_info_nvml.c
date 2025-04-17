@@ -36,7 +36,7 @@ void nvml_init(char *nvml_lib_path, nvml_init_resp_t *resp) {
 
   // TODO once we've squashed the remaining corner cases remove this log
   // LOG(resp->ch.verbose, "wiring nvidia management library functions in %s\n", nvml_lib_path);
-  
+
   for (i = 0; l[i].s != NULL; i++) {
     // TODO once we've squashed the remaining corner cases remove this log
     // LOG(resp->ch.verbose, "dlsym: %s\n", l[i].s);
