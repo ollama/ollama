@@ -605,8 +605,8 @@ func checkRequest(t *testing.T, req *http.Request, method, path string) {
 	}
 }
 
-func newRegistryClient(t *testing.T, h http.HandlerFunc) (*Registry, context.Context) {
-	s := httptest.NewServer(h)
+func newRegistryClient(t *testing.T, upstream http.HandlerFunc) (*Registry, context.Context) {
+	s := httptest.NewServer(upstream)
 	t.Cleanup(s.Close)
 	cache, err := blob.Open(t.TempDir())
 	if err != nil {
