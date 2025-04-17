@@ -271,7 +271,7 @@ func TestQuantizeModel(t *testing.T) {
 				t.Fatal(err.Error())
 			}
 			defer fp.Close()
-			meta, _, err := fsggml.Decode(fp, -1)
+			meta, err := fsggml.Decode(fp, -1)
 			if err != nil {
 				t.Fatal(err.Error())
 			}
@@ -303,7 +303,7 @@ func TestQuantizeModel(t *testing.T) {
 				t.Fatalf("failed to load the quantized model %s: %s", tmp.Name(), err)
 			}
 			defer fpNew.Close()
-			newMeta, _, err := fsggml.Decode(fpNew, -1)
+			newMeta, err := fsggml.Decode(fpNew, -1)
 			if err != nil {
 				t.Fatalf("failed to load the quantized model %s: %s", tmp.Name(), err)
 			}

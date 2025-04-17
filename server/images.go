@@ -75,7 +75,7 @@ func (m *Model) Capabilities() []model.Capability {
 	if err == nil {
 		defer r.Close()
 
-		f, _, err := ggml.Decode(r, 1024)
+		f, err := ggml.Decode(r, 1024)
 		if err == nil {
 			if _, ok := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]; ok {
 				capabilities = append(capabilities, model.CapabilityEmbedding)
