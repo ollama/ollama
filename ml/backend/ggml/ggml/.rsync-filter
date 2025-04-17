@@ -1,6 +1,5 @@
 protect *.go
 protect *-embed.*
-include cmake/
 include include/
 include src/
 include src/CMakeLists.txt
@@ -14,7 +13,6 @@ include src/ggml-cuda/vendors/
 include src/ggml-cuda/template-instances/
 include src/ggml-hip/
 include src/ggml-metal/
-include CMakeLists.txt
 include *.c
 include *.h
 include *.cpp
@@ -22,6 +20,4 @@ include *.cu
 include *.cuh
 include *.m
 include *.metal
-include common.cmake
-include ggml-config.cmake.in
 exclude *
