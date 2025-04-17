@@ -328,14 +328,13 @@ static void * ggml_backend_sycl_buffer_get_base(ggml_backend_buffer_t buffer) {
     return ctx->dev_ptr;
 }
 
-//static enum ggml_status
-static void ggml_backend_sycl_buffer_init_tensor(ggml_backend_buffer_t buffer,
+static enum ggml_status ggml_backend_sycl_buffer_init_tensor(ggml_backend_buffer_t buffer,
                                      ggml_tensor *tensor) try {
     ggml_backend_sycl_buffer_context * ctx = (ggml_backend_sycl_buffer_context *)buffer->context;
 
     if (tensor->view_src != NULL) {
         assert(tensor->view_src->buffer->buft == buffer->buft);
-        //return GGML_STATUS_SUCCESS;
+        return GGML_STATUS_SUCCESS;
     }
     if (tensor->type == GGML_TYPE_Q4_0) {
         ggml_tensor_extra_gpu * extra = new ggml_tensor_extra_gpu{};
@@ -354,7 +353,7 @@ static void ggml_backend_sycl_buffer_init_tensor(ggml_backend_buffer_t buffer,
                 padded_size - original_size).wait()));
         }
     }
-    //return GGML_STATUS_SUCCESS;
+    return GGML_STATUS_SUCCESS;
 }
 catch (sycl::exception const &exc) {
   std::cerr << exc.what() << "Exception caught at file:" << __FILE__
@@ -770,8 +769,7 @@ static void * ggml_backend_sycl_split_buffer_get_base(ggml_backend_buffer_t buff
     GGML_UNUSED(buffer);
 }
 
-//static enum ggml_status
-static void ggml_backend_sycl_split_buffer_init_tensor(ggml_backend_buffer_t buffer,
+static enum ggml_status ggml_backend_sycl_split_buffer_init_tensor(ggml_backend_buffer_t buffer,
                                            ggml_tensor *tensor) try {
     GGML_ASSERT(tensor->view_src == nullptr); // views of split tensors are not supported
 
@@ -845,7 +843,7 @@ static void ggml_backend_sycl_split_buffer_init_tensor(ggml_backend_buffer_t buf
         }
     }
     tensor->extra = extra;
-    //return GGML_STATUS_SUCCESS;
+    return GGML_STATUS_SUCCESS;
 }
 catch (sycl::exception const &exc) {
   std::cerr << exc.what() << "Exception caught at file:" << __FILE__
