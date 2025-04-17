@@ -221,7 +221,7 @@ func TestServerPull(t *testing.T) {
 
 	got = s.send(t, "POST", "/api/pull", `{"model": "unknown"}`)
 	checkResponse(got, `
-		{"status":"error: model \"unknown\" not found"}
+		{"code":"not_found","error":"model \"unknown\" not found"}
 	`)
 
 	got = s.send(t, "DELETE", "/api/pull", `{"model": "smol"}`)
@@ -235,7 +235,7 @@ func TestServerPull(t *testing.T) {
 
 	got = s.send(t, "POST", "/api/pull", `{"model": "://"}`)
 	checkResponse(got, `
-		{"status":"error: invalid or missing name: \"\""}
+		{"code":"bad_request","error":"invalid or missing name: \"\""}
 	`)
 
 	// Non-streaming pulls
