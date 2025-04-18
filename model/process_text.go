@@ -2,9 +2,9 @@ package model
 
 import (
 	"cmp"
+	"fmt"
 	"iter"
 	"log/slog"
-	"slices"
 	"strings"
 	"sync"
 
@@ -86,9 +86,7 @@ func (v *Vocabulary) Decode(id int32) string {
 func (v *Vocabulary) SpecialVocabulary() []string {
 	v.specialOnce.Do(func() {
 		for i := range v.Values {
-			if slices.Contains([]int{105, 106}, i) {
-				v.special = append(v.special, v.Values[i])
-			} else if v.Types[i] == TOKEN_TYPE_CONTROL {
+			if v.Types[i] == TOKEN_TYPE_CONTROL {
 				v.special = append(v.special, v.Values[i])
 			}
 		}
@@ -113,13 +111,24 @@ func (v *Vocabulary) Merge(left, right string) int {
 }
 
 type BytePairEncoding struct {
-	pre   *regexp2.Regexp
+	pre   []*regexp2.Regexp
 	vocab *Vocabulary
 }
 
 func NewBytePairEncoding(pre string, vocab *Vocabulary) BytePairEncoding {
 	return BytePairEncoding{
-		pre:   regexp2.MustCompile(pre, regexp2.Unicode|regexp2.RE2),
+		pre:   []*regexp2.Regexp{regexp2.MustCompile(pre, regexp2.Unicode|regexp2.RE2)},
+		vocab: vocab,
+	}
+}
+
+func NewMultiRegexBytePairEncoding(pres []string, vocab *Vocabulary) BytePairEncoding {
+	preExprs := []*regexp2.Regexp{}
+	for _, pre := range pres {
+		preExprs = append(preExprs, regexp2.MustCompile(pre, regexp2.Unicode|regexp2.RE2))
+	}
+	return BytePairEncoding{
+		pre:   preExprs,
 		vocab: vocab,
 	}
 }
@@ -130,8 +139,18 @@ func (bpe BytePairEncoding) Is(id int32, special Special) bool {
 
 func (bpe *BytePairEncoding) split(s string) iter.Seq[string] {
 	return func(yield func(string) bool) {
-		for m, _ := bpe.pre.FindStringMatch(s); m != nil; m, _ = bpe.pre.FindNextMatch(m) {
-			if !yield(m.String()) {
+		chunks := []string{s}
+		for _, pre := range bpe.pre {
+			prevChunks := chunks
+			chunks = []string{}
+			for _, chunk := range prevChunks {
+				for m, _ := pre.FindStringMatch(chunk); m != nil; m, _ = pre.FindNextMatch(m) {
+					chunks = append(chunks, m.String())
+				}
+			}
+		}
+		for _, chunk := range chunks {
+			if !yield(chunk) {
 				break
 			}
 		}
@@ -343,4 +362,20 @@ func (bpe BytePairEncoding) Decode(ids []int32) (string, error) {
 	}
 
 	return sb.String(), nil
+}
+
+func GetKnownPretokenizerExpressions(pretokName string) ([]string, error) {
+	switch pretokName {
+	case "refact":
+		return []string{
+			`[^\p{N}]+|\p{N}`,
+			`'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)`,
+		}, nil
+	case "qwen2":
+		return []string{
+			`(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
+		}, nil
+	default:
+		return nil, fmt.Errorf("invalid pretokenizer name: %s", pretokName)
+	}
 }
