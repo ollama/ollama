@@ -15,6 +15,9 @@ import (
 )
 
 type Backend interface {
+	// Close frees all memory associated with this backend
+	Close()
+
 	Load(ctx context.Context, progress func(float32)) error
 
 	// BackendMemory returns the memory allocations that were made for this model
