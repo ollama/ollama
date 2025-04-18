@@ -75,6 +75,10 @@ type Backend struct {
 
 	// maxGraphNodes is the maximum allowed number of graph nodes in this scheduler
 	maxGraphNodes int
+
+	weightBuffers map[*C.struct_ggml_context]*C.struct_ggml_backend_buffer
+
+	ctxs map[*C.struct_ggml_backend_buffer_type]*C.struct_ggml_context
 }
 
 func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
@@ -346,6 +350,14 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		}
 
 		if b == nil {
+			for _, b := range bbs {
+				C.ggml_backend_buffer_free(b)
+			}
+
+			for _, ctx := range ctxs {
+				C.ggml_free(ctx)
+			}
+
 			panic(ml.ErrNoMem{BackendMemory: requiredMemory})
 		}
 
@@ -414,11 +426,28 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		requiredMemory: &requiredMemory,
 		btDeviceMemory: btDeviceMemory,
 		maxGraphNodes:  maxGraphNodes,
+		weightBuffers:  bbs,
+		ctxs:           ctxs,
 	}, nil
 }
 
 func init() {
 	ml.RegisterBackend("ggml", New)
+}
+
+func (b *Backend) Close() {
+	if b == nil {
+		return
+	}
+
+	// There is probably a small VRAM leak here
+	for _, b := range b.weightBuffers {
+		C.ggml_backend_buffer_free(b)
+	}
+	for _, ctx := range b.ctxs {
+		C.ggml_free(ctx)
+	}
+	C.ggml_backend_sched_free(b.sched)
 }
 
 func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
