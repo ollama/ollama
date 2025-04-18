@@ -88,13 +88,13 @@ func (p *llama4Model) Replacements() []string {
 }
 
 // Tensors implements ModelConverter.
-func (p *llama4Model) Tensors(ts []Tensor) []ggml.Tensor {
-	var out []ggml.Tensor
+func (p *llama4Model) Tensors(ts []Tensor) []*ggml.Tensor {
+	var out []*ggml.Tensor
 
 	var textTensors []Tensor
 	for _, t := range ts {
 		if strings.HasPrefix(t.Name(), "v.") || strings.HasPrefix(t.Name(), "mm.") {
-			out = append(out, ggml.Tensor{
+			out = append(out, &ggml.Tensor{
 				Name:     t.Name(),
 				Kind:     t.Kind(),
 				Shape:    t.Shape(),
@@ -112,7 +112,7 @@ func (p *llama4Model) Tensors(ts []Tensor) []ggml.Tensor {
 				// clone tensor since we need separate repackers
 				tt := t.Clone()
 				tt.SetRepacker(p.repack(nil, nil, tensor.S(i*halfDim, (i+1)*halfDim)))
-				out = append(out, ggml.Tensor{
+				out = append(out, &ggml.Tensor{
 					Name:     strings.ReplaceAll(tt.Name(), "ffn_gate_up_exps", name),
 					Kind:     tt.Kind(),
 					Shape:    newShape,
@@ -125,7 +125,7 @@ func (p *llama4Model) Tensors(ts []Tensor) []ggml.Tensor {
 			t.SetRepacker(p.repack())
 			newShape := slices.Clone(t.Shape())
 			newShape[1], newShape[2] = newShape[2], newShape[1]
-			out = append(out, ggml.Tensor{
+			out = append(out, &ggml.Tensor{
 				Name:     t.Name(),
 				Kind:     t.Kind(),
 				Shape:    newShape,

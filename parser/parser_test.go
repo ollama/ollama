@@ -765,7 +765,7 @@ func getSHA256Digest(t *testing.T, r io.Reader) (string, int64) {
 	return fmt.Sprintf("sha256:%x", h.Sum(nil)), n
 }
 
-func createBinFile(t *testing.T, kv map[string]any, ti []ggml.Tensor) (string, string) {
+func createBinFile(t *testing.T, kv map[string]any, ti []*ggml.Tensor) (string, string) {
 	t.Helper()
 
 	f, err := os.CreateTemp(t.TempDir(), "testbin.*.gguf")
