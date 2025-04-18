@@ -4,6 +4,7 @@ package registry
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -330,9 +332,8 @@ func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
 				return err
 			}
 			err := s.Client.Pull(ctx, p.model())
-			var oe *ollama.Error
-			if errors.As(err, &oe) && oe.Temporary() {
-				continue // retry
+			if canRetry(err) {
+				continue
 			}
 			return err
 		}
@@ -389,4 +390,21 @@ func decodeUserJSON[T any](r io.Reader) (T, error) {
 		err = &serverError{Status: 400, Message: "empty request body", Code: "bad_request"}
 	}
 	return zero, err
+}
+
+func canRetry(err error) bool {
+	if err == nil {
+		return false
+	}
+	var oe *ollama.Error
+	if errors.As(err, &oe) {
+		return oe.Temporary()
+	}
+	s := err.Error()
+	return cmp.Or(
+		errors.Is(err, context.DeadlineExceeded),
+		strings.Contains(s, "unreachable"),
+		strings.Contains(s, "no route to host"),
+		strings.Contains(s, "connection reset by peer"),
+	)
 }
