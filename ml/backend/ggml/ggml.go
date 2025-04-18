@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"unicode"
 	"unsafe"
@@ -33,15 +34,33 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func devices() []C.ggml_backend_dev_t {
-	ggml.OnceLoad()
-	ds := make([]C.ggml_backend_dev_t, C.ggml_backend_dev_count())
-	for i := range ds {
-		ds[i] = C.ggml_backend_dev_get(C.size_t(i))
-	}
+var (
+	cpus, accels, gpus []C.ggml_backend_dev_t
+	backends           map[C.ggml_backend_dev_t]C.ggml_backend_t
+)
 
-	return ds
-}
+var initDevices = sync.OnceFunc(func() {
+	ggml.OnceLoad()
+
+	backends = make(map[C.ggml_backend_dev_t]C.ggml_backend_t)
+	for i := range C.ggml_backend_dev_count() {
+		d := C.ggml_backend_dev_get(i)
+
+		switch C.ggml_backend_dev_type(d) {
+		case C.GGML_BACKEND_DEVICE_TYPE_CPU:
+			if len(cpus) == 0 {
+				// only the first cpu device should be used
+				cpus = append(cpus, d)
+			}
+		case C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
+			accels = append(accels, d)
+		case C.GGML_BACKEND_DEVICE_TYPE_GPU:
+			gpus = append(gpus, d)
+		}
+
+		backends[d] = C.ggml_backend_dev_init(d, nil)
+	}
+})
 
 type Backend struct {
 	// modelPath is the location of the model data
@@ -75,6 +94,9 @@ type Backend struct {
 
 	// maxGraphNodes is the maximum allowed number of graph nodes in this scheduler
 	maxGraphNodes int
+
+	// weightBuffers are the GGML contexts and buffers for allocating weights
+	weightBuffers map[*C.struct_ggml_context]C.ggml_backend_buffer_t
 }
 
 func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
@@ -99,27 +121,14 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		"num_key_values", len(meta.KV()),
 	)
 
+	initDevices()
+
 	var requiredMemory ml.BackendMemory
 	btDeviceMemory := make(map[C.ggml_backend_buffer_type_t]*ml.DeviceMemory)
 
 	type deviceBufferType struct {
 		d   C.ggml_backend_dev_t
 		bts []C.ggml_backend_buffer_type_t
-	}
-
-	var cpus, accels, gpus []C.ggml_backend_dev_t
-	for _, d := range devices() {
-		switch C.ggml_backend_dev_type(d) {
-		case C.GGML_BACKEND_DEVICE_TYPE_CPU:
-			if len(cpus) == 0 {
-				// only the first cpu device should be used
-				cpus = append(cpus, d)
-			}
-		case C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
-			accels = append(accels, d)
-		case C.GGML_BACKEND_DEVICE_TYPE_GPU:
-			gpus = append(gpus, d)
-		}
 	}
 
 	blocks := int(meta.KV().BlockCount())
@@ -348,6 +357,14 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		}
 
 		if b == nil {
+			for _, b := range bbs {
+				C.ggml_backend_buffer_free(b)
+			}
+
+			for _, ctx := range ctxs {
+				C.ggml_free(ctx)
+			}
+
 			panic(ml.ErrNoMem{BackendMemory: requiredMemory})
 		}
 
@@ -394,7 +411,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	var schedBackends []C.ggml_backend_t
 	var schedBufts []C.ggml_backend_buffer_type_t
 	for _, d := range append(gpus, append(accels, cpus...)...) {
-		b := C.ggml_backend_dev_init(d, nil)
+		b := backends[d]
 		bt := C.ggml_backend_get_default_buffer_type(b)
 
 		deviceBufferTypes[d] = bt
@@ -436,11 +453,25 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		requiredMemory: &requiredMemory,
 		btDeviceMemory: btDeviceMemory,
 		maxGraphNodes:  maxGraphNodes,
+		weightBuffers:  bbs,
 	}, nil
 }
 
 func init() {
 	ml.RegisterBackend("ggml", New)
+}
+
+func (b *Backend) Close() {
+	if b == nil {
+		return
+	}
+
+	for ctx, b := range b.weightBuffers {
+		C.ggml_backend_buffer_free(b)
+		C.ggml_free(ctx)
+	}
+
+	C.ggml_backend_sched_free(b.sched)
 }
 
 func (b *Backend) Load(ctx context.Context, progress func(float32)) error {

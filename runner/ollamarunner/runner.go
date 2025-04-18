@@ -877,6 +877,15 @@ func (s *Server) load(
 ) {
 	err := s.initModel(mpath, params, lpath, parallel, kvCacheType, kvSize, multiUserCache)
 	if err != nil {
+		var noMem ml.ErrNoMem
+		if errors.As(err, &noMem) {
+			// We can't yet handle this but in the future we will
+			s.cache.Close()
+			if s.model != nil {
+				s.model.Backend().Close()
+			}
+		}
+
 		panic(err)
 	}
 

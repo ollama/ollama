@@ -70,6 +70,10 @@ func kvCacheTypeFromStr(s string) ml.DType {
 }
 
 func (c *InputCache) Close() {
+	if c == nil {
+		return
+	}
+
 	c.cache.Close()
 }
 
