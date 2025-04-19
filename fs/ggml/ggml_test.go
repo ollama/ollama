@@ -210,3 +210,33 @@ func TestTensorTypes(t *testing.T) {
 		})
 	}
 }
+
+func TestHeadCount(t *testing.T) {
+	valuesArray := []any{int32(1), int32(5), int32(3), int32(4)}
+	cases := []struct {
+		kv   KV
+		want uint64
+	}{
+		{
+			kv: KV{
+				"general.architecture":     "abc",
+				"abc.attention.head_count": &array{values: valuesArray, size: len(valuesArray)},
+			},
+			want: uint64(5),
+		},
+		{
+			kv: KV{
+				"general.architecture":     "abc",
+				"abc.attention.head_count": uint32(3),
+			},
+			want: uint64(3),
+		},
+	}
+
+	for _, tt := range cases {
+		got := tt.kv.HeadCountMax()
+		if got != tt.want {
+			t.Errorf("unexpected max value: got=%d want=%d", got, tt.want)
+		}
+	}
+}

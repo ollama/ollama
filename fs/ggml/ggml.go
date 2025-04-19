@@ -52,16 +52,27 @@ func (kv KV) EmbeddingLength() uint64 {
 	return uint64(kv.Uint("embedding_length"))
 }
 
-func (kv KV) HeadCount() uint64 {
-	return uint64(kv.Uint("attention.head_count"))
+func (kv KV) HeadCountMax() uint64 {
+	// TODO(drifkin): using the max value can cause an overestimation. In the
+	// future if array values become more popular, we can adapt the more invasive
+	// <https://github.com/ollama/ollama/pull/10225>
+	return uint64(kv.UintOrMaxArrayValue("attention.head_count", 1))
 }
 
-func (kv KV) HeadCountKV() uint64 {
-	return uint64(kv.Uint("attention.head_count_kv", 1))
+func (kv KV) HeadCountMin() uint64 {
+	return uint64(kv.UintOrMinArrayValue("attention.head_count", 1))
 }
 
-func (kv KV) EmbeddingHeadCount() uint64 {
-	if heads := kv.HeadCount(); heads > 0 {
+func (kv KV) HeadCountKVMax() uint64 {
+	return uint64(kv.UintOrMaxArrayValue("attention.head_count_kv", 1))
+}
+
+func (kv KV) HeadCountKVMin() uint64 {
+	return uint64(kv.UintOrMinArrayValue("attention.head_count_kv", 1))
+}
+
+func (kv KV) EmbeddingHeadCountMax() uint64 {
+	if heads := kv.HeadCountMin(); heads > 0 {
 		return kv.EmbeddingLength() / heads
 	}
 
@@ -69,15 +80,11 @@ func (kv KV) EmbeddingHeadCount() uint64 {
 }
 
 func (kv KV) EmbeddingHeadCountK() uint64 {
-	return uint64(kv.Uint("attention.key_length", uint32(kv.EmbeddingHeadCount())))
+	return uint64(kv.Uint("attention.key_length", uint32(kv.EmbeddingHeadCountMax())))
 }
 
 func (kv KV) EmbeddingHeadCountV() uint64 {
-	return uint64(kv.Uint("attention.value_length", uint32(kv.EmbeddingHeadCount())))
-}
-
-func (kv KV) GQA() uint64 {
-	return kv.HeadCount() / kv.HeadCountKV()
+	return uint64(kv.Uint("attention.value_length", uint32(kv.EmbeddingHeadCountMax())))
 }
 
 func (kv KV) ContextLength() uint64 {
@@ -102,6 +109,48 @@ func (kv KV) Float(key string, defaultValue ...float32) float32 {
 
 func (kv KV) Bool(key string, defaultValue ...bool) bool {
 	return keyValue(kv, key, append(defaultValue, false)...)
+}
+
+func (kv KV) UintOrMaxArrayValue(key string, defaultValue uint32) uint32 {
+	_, max := kv.UintOrArrayValue(key, defaultValue)
+	return max
+}
+
+func (kv KV) UintOrMinArrayValue(key string, defaultValue uint32) uint32 {
+	min, _ := kv.UintOrArrayValue(key, defaultValue)
+	return min
+}
+
+func (kv KV) UintOrArrayValue(key string, defaultValue uint32) (uint32, uint32) {
+	if v, ok := keyValueUntyped(kv, key); ok {
+		switch v := v.(type) {
+		case *array:
+			length := len(v.values)
+			if length < v.size {
+				slog.Warn("trying to access a partially collected array. You probably want the whole array to be collected.", "key", key, "size", v.size, "len(values)", length)
+			}
+
+			if length == 0 {
+				return defaultValue, defaultValue
+			}
+			max := v.values[0].(int32)
+			min := v.values[0].(int32)
+			for i := range v.values {
+				val := v.values[i].(int32)
+				if val > max {
+					max = val
+				}
+				if val < min {
+					min = val
+				}
+			}
+			return uint32(min), uint32(max)
+		default:
+			val := v.(uint32)
+			return val, val
+		}
+	}
+	return defaultValue, defaultValue
 }
 
 func (kv KV) Strings(key string, defaultValue ...[]string) []string {
@@ -141,16 +190,24 @@ func (kv KV) OllamaEngineRequired() bool {
 }
 
 func keyValue[T string | uint32 | uint64 | float32 | *array | bool](kv KV, key string, defaultValue ...T) T {
-	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") {
-		key = kv.Architecture() + "." + key
-	}
-
-	if val, ok := kv[key]; ok {
+	if val, ok := keyValueUntyped(kv, key); ok {
 		return val.(T)
 	}
 
 	slog.Warn("key not found", "key", key, "default", defaultValue[0])
 	return defaultValue[0]
+}
+
+func keyValueUntyped(kv KV, key string) (any, bool) {
+	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") {
+		key = kv.Architecture() + "." + key
+	}
+
+	if val, ok := kv[key]; ok {
+		return val, true
+	}
+
+	return nil, false
 }
 
 type Tensors struct {
@@ -418,11 +475,11 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
 
 func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType string) (kv []uint64, partialOffload, fullOffload uint64) {
 	embedding := f.KV().EmbeddingLength()
-	heads := f.KV().HeadCount()
-	headsKV := f.KV().HeadCountKV()
+	heads := f.KV().HeadCountMax()
+	headsKV := f.KV().HeadCountKVMax()
 	vocab := uint64(f.KV()["tokenizer.ggml.tokens"].(*array).size)
 
-	embeddingHeads := f.KV().EmbeddingHeadCount()
+	embeddingHeads := f.KV().EmbeddingHeadCountMax()
 	embeddingHeadsK := f.KV().EmbeddingHeadCountK()
 	embeddingHeadsV := f.KV().EmbeddingHeadCountV()
 
