@@ -665,6 +665,24 @@ func (s *Server) PushHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
+func (s *Server) SearchHandler(c *gin.Context) {
+	var req api.SearchRequest
+	if err := c.ShouldBindJSON(&req) ; errors.Is(err, io.EOF) {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	} else if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	} 
+
+	resp, err := SearchRegistry(c.Request.Context(), &req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
+		return 
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
 // getExistingName searches the models directory for the longest prefix match of
 // the input name and returns the input name with all existing parts replaced
 // with each part found. If no parts are found, the input name is returned as
@@ -1187,6 +1205,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.GET("/api/tags", s.ListHandler)
 	r.POST("/api/show", s.ShowHandler)
 	r.DELETE("/api/delete", s.DeleteHandler)
+	r.POST("/api/search", s.SearchHandler)
 
 	// Create
 	r.POST("/api/create", s.CreateHandler)

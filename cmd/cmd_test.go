@@ -920,3 +920,107 @@ func TestNewCreateRequest(t *testing.T) {
 		})
 	}
 }
+
+func TestSearchRequest(t *testing.T) {		
+	testcases := []struct {
+		testName string
+		query []string
+		flags map[string]any
+		models []api.SearchModelResponse
+		expectedOutput string
+	}{
+		{
+			testName: "basic test - no flags",
+			models: []api.SearchModelResponse{
+				{
+					Name: "model0",
+					Description: "This is the first mock model",
+					Pulls: "10M",
+					Sizes: "1b,7b,70b",
+					Category: "",
+				},
+				{
+					Name: "model1",
+					Description: "This is the second mock model. This model has vision capability",
+					Pulls: "12M",
+					Sizes: "7b,70b",
+					Category: "vision",
+				},
+				{
+					Name: "model2",
+					Description: "This is the third mock model. This model has embedding capability",
+					Pulls: "10M",
+					Sizes: "1b,7b,70b",
+					Category: "embedding",
+				},
+				{
+					Name: "model3",
+					Description: "This is the fourth mock model. This model has tools capability",
+					Pulls: "100M",
+					Sizes: "8b,32b",
+					Category: "tools",
+				},
+				{
+					Name: "model4",
+					Description: "This is the fifth mock model. This model has a very long description, that should be truncated to prevent the text from overflowing on a small terminal window. If you are reading this then there is a bug in the truncation (shameful)",
+					Pulls: "10M",
+					Sizes: "1b,7b,70b",
+					Category: "",
+				},
+			},
+			expectedOutput: "NAME      DESCRIPTION                                                                            SIZES        PULL COUNT    CATEGORY  \n" + 
+			"model0    This is the first mock model                                                           1b,7b,70b    10M                        \n" + 
+			"model1    This is the second mock model. This model has vision capability                        7b,70b       12M           vision       \n" + 
+			"model2    This is the third mock model. This model has embedding capability                      1b,7b,70b    10M           embedding    \n" + 
+			"model3    This is the fourth mock model. This model has tools capability                         8b,32b       100M          tools        \n" + 
+			"model4    This is the fifth mock model. This model has a very long description, that shoul...    1b,7b,70b    10M                        \n" +
+			"",
+		},
+	}
+
+	for _, testcase := range testcases {
+		t.Run(testcase.testName, func(t *testing.T) {
+			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// ensures that our Handler only calls the correct service endpoints
+				if r.URL.Path != "/api/search" || r.Method != http.MethodPost {
+					t.Errorf("unexpected api call to %s using method %s", r.URL.Path, r.Method)
+					http.Error(w, "unknonw path", http.StatusNotFound)
+					return
+				}
+
+				response := api.SearchResponse{Models: testcase.models}
+				if err := json.NewEncoder(w).Encode(response); err != nil {
+					t.Fatal(err)
+				}
+			}))
+			defer mockServer.Close()
+
+			t.Setenv("OLLAMA_HOST", mockServer.URL)
+
+			// create a cobra command, run the handler, and match the output
+			cmd := &cobra.Command{}
+			cmd.Flags().Bool("newest", false, "")
+			cmd.Flags().String("category", "", "")
+			cmd.SetContext(context.TODO())
+
+			// this captures stdout
+			oldStdout := os.Stdout
+			r, w, _ := os.Pipe()
+			os.Stdout = w
+
+			err := SearchHandler(cmd, testcase.query)
+
+			// Restore stdout and get output
+			w.Close()
+			os.Stdout = oldStdout
+			output, _ := io.ReadAll(r)
+			if got := string(output); got != testcase.expectedOutput {
+				t.Errorf("expected output:\n%s\ngot:\n%s", testcase.expectedOutput, got)
+			} else if err != nil {
+				t.Errorf("expected no error, got %v", err)
+			}
+		})
+	}
+
+}
+
