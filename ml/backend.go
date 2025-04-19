@@ -95,6 +95,9 @@ type Context interface {
 	FromFloatSlice(s []float32, shape ...int) (Tensor, error)
 	FromIntSlice(s []int32, shape ...int) (Tensor, error)
 
+	// Arange creates a 1D tensor with values within an interval (start, stop] increased by step.
+	Arange(start, stop, step float32, dtype DType) Tensor
+
 	Forward(...Tensor) Context
 	Compute(...Tensor)
 

@@ -225,7 +225,7 @@ func detectModelTypeFromFiles(files map[string]string) string {
 }
 
 func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
-	tmpDir, err := os.MkdirTemp("", "ollama-safetensors")
+	tmpDir, err := os.MkdirTemp(envconfig.Models(), "ollama-safetensors")
 	if err != nil {
 		return nil, err
 	}
