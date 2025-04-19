@@ -116,6 +116,20 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			// disable partial offloading when model is greater than total system memory as this
 			// can lead to locking up the system
 			opts.NumGPU = 0
+		case runtime.GOOS == "windows" && gpus[0].Library == "oneapi" && estimate.Layers == 0:
+			//delete "runtime.GOOS == "windows" && " when test for linux
+			if s := envconfig.Var("OLLAMA_NUM_GPU"); s != "" {
+				if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+					opts.NumGPU = int(n)
+				}
+			}
+			if opts.NumGPU <= 0 {
+				if s := envconfig.Var("OLLAMA_INTEL_GPU"); s != "" {
+					if b, err := strconv.ParseBool(s); err == nil && b == true {
+						opts.NumGPU = 999
+					}
+				}
+			}
 		case gpus[0].Library != "metal" && estimate.Layers == 0:
 			// Don't bother loading into the GPU if no layers can fit
 			gpus = discover.GetCPUInfo()
