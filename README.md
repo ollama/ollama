@@ -291,7 +291,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Typescript UI](https://github.com/ollama-interface/Ollama-Gui?tab=readme-ov-file)
 - [Minimalistic React UI for Ollama Models](https://github.com/richawo/minimal-llm-ui)
 - [Ollamac](https://github.com/kevinhermawan/Ollamac)
-- [big-AGI](https://github.com/enricoros/big-AGI) 
+- [big-AGI](https://github.com/enricoros/big-AGI)
 - [Cheshire Cat assistant framework](https://github.com/cheshire-cat-ai/core)
 - [Amica](https://github.com/semperai/amica)
 - [chatd](https://github.com/BruceMacD/chatd)
@@ -398,6 +398,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [screenpipe](https://github.com/mediar-ai/screenpipe) Build agents powered by your screen history
 - [Ollamb](https://github.com/hengkysteen/ollamb) (Simple yet rich in features, cross-platform built with Flutter and designed for Ollama. Try the [web demo](https://hengkysteen.github.io/demo/ollamb/).)
 - [Writeopia](https://github.com/Writeopia/Writeopia) (Text editor with integration with Ollama)
+- [AppFlowy](https://github.com/AppFlowy-IO/AppFlowy) (AI collaborative workspace with Ollama, cross-platform and self-hostable)
 
 ### Cloud
 
