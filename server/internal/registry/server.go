@@ -244,6 +244,7 @@ func (s *Local) handleDelete(_ http.ResponseWriter, r *http.Request) error {
 }
 
 type progressUpdateJSON struct {
+	Error     string      `json:"error,omitempty,omitzero"`
 	Status    string      `json:"status,omitempty,omitzero"`
 	Digest    blob.Digest `json:"digest,omitempty,omitzero"`
 	Total     int64       `json:"total,omitempty,omitzero"`
@@ -348,14 +349,15 @@ func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
 		case err := <-done:
 			flushProgress()
 			if err != nil {
-				var status string
 				if errors.Is(err, ollama.ErrModelNotFound) {
-					status = fmt.Sprintf("error: model %q not found", p.model())
+					return &serverError{
+						Status:  404,
+						Code:    "not_found",
+						Message: fmt.Sprintf("model %q not found", p.model()),
+					}
 				} else {
-					status = fmt.Sprintf("error: %v", err)
+					return err
 				}
-				enc.Encode(progressUpdateJSON{Status: status})
-				return nil
 			}
 
 			// Emulate old client pull progress (for now):
