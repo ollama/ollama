@@ -1327,6 +1327,8 @@ func Serve(ln net.Listener) error {
 	gpus := discover.GetGPUInfo()
 	gpus.LogDetails()
 
+	discover.LogSystemInfo()
+
 	err = srvr.Serve(ln)
 	// If server is closed from the signal handler, wait for the ctx to be done
 	// otherwise error out quickly
