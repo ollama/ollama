@@ -1113,6 +1113,9 @@ func RunServer(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
+	go server.RegisterService()
+	defer server.UnregisterService()
+
 	ln, err := net.Listen("tcp", envconfig.Host().Host)
 	if err != nil {
 		return err
