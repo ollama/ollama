@@ -50,7 +50,6 @@
 // tensor name constants
 //
 
-#define TN_TOKEN_EMBD      "%s.token_embd.weight"
 #define TN_POS_EMBD        "%s.position_embd.weight"
 #define TN_CLASS_EMBD      "v.class_embd"
 #define TN_PATCH_EMBD      "v.patch_embd.weight"  // not rename tensor with ".0" postfix for backwrad compat
@@ -66,8 +65,6 @@
 #define TN_LN_2            "%s.blk.%d.ln2.%s"
 #define TN_LN_PRE          "%s.pre_ln.%s"
 #define TN_LN_POST         "%s.post_ln.%s"
-#define TN_TEXT_PROJ       "text_projection.weight"
-#define TN_VIS_PROJ        "visual_projection.weight"
 #define TN_LLAVA_PROJ      "mm.%d.%s"
 #define TN_MVLM_PROJ_MLP   "mm.model.mlp.%d.%s"
 #define TN_MVLM_PROJ_BLOCK "mm.model.mb_block.%d.block.%d.%s"

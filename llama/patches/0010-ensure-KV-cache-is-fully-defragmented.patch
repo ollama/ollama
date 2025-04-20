@@ -22,10 +22,10 @@ multiple batches of processing until everything is complete.
  4 files changed, 51 insertions(+), 106 deletions(-)
 
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index afe6f552..d6e7b3af 100644
+index 0343ba8a..4b3e6a83 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
-@@ -590,13 +590,12 @@ llm_graph_result_ptr llama_context::build_kv_self_shift(
+@@ -594,13 +594,12 @@ llm_graph_result_ptr llama_context::build_kv_self_shift(
  
  llm_graph_result_ptr llama_context::build_kv_self_defrag(
          ggml_context * ctx0,
@@ -41,7 +41,7 @@ index afe6f552..d6e7b3af 100644
  #if 0
      // CPU defrag
      //
-@@ -668,32 +667,20 @@ llm_graph_result_ptr llama_context::build_kv_self_defrag(
+@@ -672,32 +671,20 @@ llm_graph_result_ptr llama_context::build_kv_self_defrag(
          ggml_backend_tensor_set(v_l[il], buf_v.data(), 0, buf_v.size());
      }
  #else
@@ -79,7 +79,7 @@ index afe6f552..d6e7b3af 100644
  
              ggml_tensor * view_v_src;
              ggml_tensor * view_v_dst;
-@@ -701,34 +688,30 @@ llm_graph_result_ptr llama_context::build_kv_self_defrag(
+@@ -705,34 +692,30 @@ llm_graph_result_ptr llama_context::build_kv_self_defrag(
              if (cparams.flash_attn) {
                  // NOTE: the V cache is not transposed when using flash attention
                  view_v_src = ggml_view_2d(ctx0, kv_self->v_l[il],
@@ -122,7 +122,7 @@ index afe6f552..d6e7b3af 100644
  #endif
  
      return res;
-@@ -737,8 +720,6 @@ llm_graph_result_ptr llama_context::build_kv_self_defrag(
+@@ -741,8 +724,6 @@ llm_graph_result_ptr llama_context::build_kv_self_defrag(
  void llama_context::kv_self_update() {
      auto & kv = kv_self;
  
@@ -131,7 +131,7 @@ index afe6f552..d6e7b3af 100644
      if (kv->has_shift) {
          if (!kv->get_can_shift()) {
              GGML_ABORT("The current context does not support K-shift");
-@@ -759,8 +740,6 @@ void llama_context::kv_self_update() {
+@@ -763,8 +744,6 @@ void llama_context::kv_self_update() {
              res->set_inputs(nullptr);
  
              graph_compute(gf, false);
@@ -140,7 +140,7 @@ index afe6f552..d6e7b3af 100644
          }
  
          {
-@@ -775,49 +754,28 @@ void llama_context::kv_self_update() {
+@@ -779,49 +758,28 @@ void llama_context::kv_self_update() {
      // defragment the KV cache if needed
      if (kv->do_defrag) {
          LLAMA_LOG_DEBUG("%s: defragmenting KV cache\n", __func__);
@@ -202,7 +202,7 @@ index afe6f552..d6e7b3af 100644
  }
  
  enum llama_pooling_type llama_context::pooling_type() const {
-@@ -1301,9 +1259,12 @@ int llama_context::decode(llama_batch & inp_batch) {
+@@ -1305,9 +1263,12 @@ int llama_context::decode(llama_batch & inp_batch) {
          // find KV slot
          {
              if (!kv_self->find_slot(ubatch)) {
@@ -241,7 +241,7 @@ index baa03276..a59ff8fd 100644
      // TODO: read/write lora adapters and cvec
      size_t state_write_data(llama_io_write_i & io);
 diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
-index 9310f262..5c941e7c 100644
+index 69f8d35a..35a750d3 100644
 --- a/src/llama-kv-cache.cpp
 +++ b/src/llama-kv-cache.cpp
 @@ -781,17 +781,7 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {

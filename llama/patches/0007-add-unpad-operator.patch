@@ -147,10 +147,10 @@ index 410a3720..3eca1cf8 100644
  void ggml_compute_forward_timestep_embedding(const struct ggml_compute_params * params, struct ggml_tensor * dst);
  void ggml_compute_forward_argsort(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index b70c6a32..67208cba 100644
+index 31750b6f..0fef9522 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -2245,6 +2245,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
+@@ -2246,6 +2246,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
          case GGML_OP_PAD:
              ggml_cuda_op_pad(ctx, dst);
              break;
@@ -160,7 +160,7 @@ index b70c6a32..67208cba 100644
          case GGML_OP_ARANGE:
              ggml_cuda_op_arange(ctx, dst);
              break;
-@@ -3223,6 +3226,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
+@@ -3222,6 +3225,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
          case GGML_OP_UPSCALE:
              return op->src[0]->type == GGML_TYPE_F32 && op->op_params[0] == GGML_SCALE_MODE_NEAREST;
          case GGML_OP_PAD:
@@ -233,7 +233,7 @@ index 8fd386b0..e2ededc3 100644
  void ggml_cuda_op_pad(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 +void ggml_cuda_op_unpad(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 diff --git a/ggml/src/ggml-metal/ggml-metal.m b/ggml/src/ggml-metal/ggml-metal.m
-index 310afe8a..b121ab9e 100644
+index 12886cd3..b2e95a66 100644
 --- a/ggml/src/ggml-metal/ggml-metal.m
 +++ b/ggml/src/ggml-metal/ggml-metal.m
 @@ -341,6 +341,7 @@ static void ggml_backend_metal_device_rel(struct ggml_backend_metal_device_conte
@@ -244,7 +244,7 @@ index 310afe8a..b121ab9e 100644
      GGML_METAL_KERNEL_TYPE_ARANGE_F32,
      GGML_METAL_KERNEL_TYPE_TIMESTEP_EMBEDDING_F32,
      GGML_METAL_KERNEL_TYPE_ARGSORT_F32_I32_ASC,
-@@ -998,6 +999,7 @@ @implementation GGMLMetalClass
+@@ -1020,6 +1021,7 @@ @implementation GGMLMetalClass
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_UPSCALE_F32,                     upscale_f32,                     true);
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_PAD_F32,                         pad_f32,                         true);
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_PAD_REFLECT_1D_F32,              pad_reflect_1d_f32,              true);
@@ -252,7 +252,7 @@ index 310afe8a..b121ab9e 100644
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_TIMESTEP_EMBEDDING_F32,          timestep_embedding_f32,          true);
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_ARANGE_F32,                      arange_f32,                      true);
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_ARGSORT_F32_I32_ASC,             argsort_f32_i32_asc,             true);
-@@ -1339,6 +1341,7 @@ static bool ggml_metal_supports_op(const struct ggml_backend_metal_device_contex
+@@ -1384,6 +1386,7 @@ static bool ggml_metal_supports_op(const struct ggml_backend_metal_device_contex
          case GGML_OP_POOL_2D:
          case GGML_OP_PAD:
          case GGML_OP_PAD_REFLECT_1D:
@@ -260,7 +260,7 @@ index 310afe8a..b121ab9e 100644
          case GGML_OP_TIMESTEP_EMBEDDING:
          case GGML_OP_ARGSORT:
          case GGML_OP_LEAKY_RELU:
-@@ -3669,6 +3672,36 @@ static void ggml_metal_encode_node(
+@@ -3731,6 +3734,36 @@ static void ggml_metal_encode_node(
  
                  const int nth = MIN(1024, ne0);
  
@@ -298,10 +298,10 @@ index 310afe8a..b121ab9e 100644
              } break;
          case GGML_OP_ARANGE:
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index b08666e2..e3185e5b 100644
+index 8d6e99e6..71f0f97f 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -2968,6 +2968,51 @@ kernel void kernel_pad_reflect_1d_f32(
+@@ -2975,6 +2975,51 @@ kernel void kernel_pad_reflect_1d_f32(
      }
  }
  
