@@ -75,7 +75,9 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 		visibleDevices = strings.Split(gpuDO, ",")
 	}
 
-	gfxOverride := envconfig.HsaOverrideGfxVersion()
+	gfxOverrideDefault := envconfig.HsaOverrideGfxVersion()
+	gfxOverrideNameDefault := "HSA_OVERRIDE_GFX_VERSION"
+
 	var supported []string
 	var libDir string
 
@@ -355,7 +357,18 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 		}
 		gpuInfo.DependencyPath = []string{libDir}
 
-		if gfxOverride == "" {
+		// try to use default global gfxOverride for this GPU
+		gfxOverrideGpuID := gfxOverrideDefault
+		gfxOverrideName := gfxOverrideNameDefault
+
+		// but use the more specific override by specific gpuID if appropriate env variable has been set
+		gfxOverrideNameGpuID := fmt.Sprintf("HSA_OVERRIDE_GFX_VERSION_%d", gpuID)
+		if os.Getenv(gfxOverrideNameGpuID) != "" {
+			gfxOverrideName = gfxOverrideNameGpuID
+			gfxOverrideGpuID = os.Getenv(gfxOverrideNameGpuID)
+		}
+
+		if gfxOverrideGpuID == "" {
 			// Only load supported list once
 			if len(supported) == 0 {
 				supported, err = GetSupportedGFX(libDir)
@@ -386,7 +399,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 				slog.Info("amdgpu is supported", "gpu", gpuInfo.ID, "gpu_type", gfx)
 			}
 		} else {
-			slog.Info("skipping rocm gfx compatibility check", "HSA_OVERRIDE_GFX_VERSION", gfxOverride)
+			slog.Info("skipping rocm gfx compatibility check", gfxOverrideName, gfxOverrideGpuID)
 		}
 
 		// Check for env var workarounds
