@@ -19,7 +19,7 @@ type TextAttention struct {
 	RopeFactors ml.Tensor  `gguf:"rope_factors"`
 }
 
-func (sa *TextAttention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache kvcache.Cache, useRope bool, opts *TextOptions) ml.Tensor {
+func (sa *TextAttention) Forward(ctx ml.Context, hiddenStates, positions, attentionScales ml.Tensor, cache kvcache.Cache, useRope bool, opts *TextOptions) ml.Tensor {
 	batchSize, headDim := hiddenStates.Dim(1), cmp.Or(opts.headDim, opts.hiddenSize/opts.numHeads)
 
 	query := sa.Query.Forward(ctx, hiddenStates)
@@ -33,11 +33,15 @@ func (sa *TextAttention) Forward(ctx ml.Context, hiddenStates, positions ml.Tens
 	if useRope {
 		query = query.RoPE(ctx, positions, sa.RopeFactors, uint32(opts.ropeDim), uint32(0), opts.ropeBase, opts.ropeScale)
 		key = key.RoPE(ctx, positions, sa.RopeFactors, uint32(opts.ropeDim), uint32(0), opts.ropeBase, opts.ropeScale)
+	}
 
-		if opts.useQKNorm {
-			query = query.RMSNorm(ctx, nil, opts.eps)
-			key = key.RMSNorm(ctx, nil, opts.eps)
-		}
+	if opts.useQKNorm {
+		query = query.RMSNorm(ctx, nil, opts.eps)
+		key = key.RMSNorm(ctx, nil, opts.eps)
+	}
+
+	if attentionScales != nil && !useRope {
+		query = query.Mul(ctx, attentionScales)
 	}
 
 	attention := nn.Attention(ctx, query, key, value, 1./math.Sqrt(float64(headDim)), cache)
@@ -82,7 +86,7 @@ func (e *TextExperts) Forward(ctx ml.Context, hiddenStates, routerLogits ml.Tens
 	return nextStates
 }
 
-// TextSharedExpert is TextMLP with different names
+// TextSharedExpert is TextMLP with different tensor names
 type TextSharedExpert struct {
 	Gate *nn.Linear `gguf:"ffn_gate_shexp"`
 	Up   *nn.Linear `gguf:"ffn_up_shexp"`
@@ -122,12 +126,12 @@ type TextLayer struct {
 	FeedForward TextFeedForward
 }
 
-func (d *TextLayer) Forward(ctx ml.Context, hiddenStates, positions, outputs ml.Tensor, cache kvcache.Cache, useRope bool, opts *TextOptions) ml.Tensor {
+func (d *TextLayer) Forward(ctx ml.Context, hiddenStates, positions, attentionScales, outputs ml.Tensor, cache kvcache.Cache, useRope bool, opts *TextOptions) ml.Tensor {
 	residual := hiddenStates
 
 	// self attention
 	hiddenStates = d.AttentionNorm.Forward(ctx, hiddenStates, opts.eps)
-	hiddenStates = d.Attention.Forward(ctx, hiddenStates, positions, cache, useRope, opts)
+	hiddenStates = d.Attention.Forward(ctx, hiddenStates, positions, attentionScales, cache, useRope, opts)
 
 	if outputs != nil {
 		hiddenStates = hiddenStates.Rows(ctx, outputs)
@@ -151,7 +155,11 @@ type TextOptions struct {
 	ropeBase, ropeScale           float32
 	eps                           float32
 	interleaveLayerStep           int
+	noRopeInterval                int
 	useQKNorm                     bool
+	attentionTemperatureTuning    bool
+	attentionScale                float64
+	attentionFloorScale           float64
 }
 
 type TextModel struct {
@@ -178,18 +186,22 @@ func newTextModel(c fs.Config) *TextModel {
 	return &TextModel{
 		Layers: layers,
 		TextOptions: &TextOptions{
-			hiddenSize:          int(c.Uint("embedding_length")),
-			numHeads:            int(c.Uint("attention.head_count")),
-			numKVHeads:          int(c.Uint("attention.head_count_kv")),
-			headDim:             int(c.Uint("attention.head_dim", 128)),
-			numExperts:          int(c.Uint("expert_count")),
-			numExpertsUsed:      int(c.Uint("expert_used_count")),
-			ropeDim:             int(c.Uint("rope.dimension_count")),
-			ropeBase:            c.Float("rope.freq_base"),
-			ropeScale:           c.Float("rope.freq_scale", 1),
-			eps:                 c.Float("attention.layer_norm_rms_epsilon"),
-			interleaveLayerStep: int(c.Uint("interleave_moe_layer_step", 1)),
-			useQKNorm:           c.Bool("use_qk_norm", true),
+			hiddenSize:                 int(c.Uint("embedding_length")),
+			numHeads:                   int(c.Uint("attention.head_count")),
+			numKVHeads:                 int(c.Uint("attention.head_count_kv")),
+			headDim:                    int(c.Uint("attention.head_dim", 128)),
+			numExperts:                 int(c.Uint("expert_count")),
+			numExpertsUsed:             int(c.Uint("expert_used_count")),
+			ropeDim:                    int(c.Uint("rope.dimension_count")),
+			ropeBase:                   c.Float("rope.freq_base"),
+			ropeScale:                  c.Float("rope.freq_scale", 1),
+			eps:                        c.Float("attention.layer_norm_rms_epsilon"),
+			interleaveLayerStep:        int(c.Uint("interleave_moe_layer_step", 1)),
+			noRopeInterval:             int(c.Uint("no_rope_interval", 4)),
+			useQKNorm:                  c.Bool("use_qk_norm", true),
+			attentionTemperatureTuning: c.Bool("attention.temperature_tuning", true),
+			attentionScale:             float64(c.Float("attention.scale", 0.1)),
+			attentionFloorScale:        float64(c.Float("attention.floor_scale", 8192)),
 		},
 	}
 }
@@ -207,11 +219,25 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 		ctx.Forward(img.Copy(ctx, hiddenStates.View(ctx, mi.Index*hiddenStates.Stride(1), img.Dim(0)*img.Dim(1))))
 	}
 
+	var attentionScales ml.Tensor
+	if m.attentionTemperatureTuning {
+		scales := make([]float32, len(batch.Positions))
+		for i, p := range batch.Positions {
+			scales[i] = float32(math.Log(math.Floor(((float64(p)+1.0)/float64(m.attentionFloorScale))+1.0))*m.attentionScale + 1.0)
+		}
+
+		var err error
+		attentionScales, err = ctx.Input().FromFloatSlice(scales, 1, 1, len(scales))
+		if err != nil {
+			panic(err)
+		}
+	}
+
 	for i, layer := range m.Layers {
 		cache.SetLayer(i)
 		wc := cache.(*kvcache.WrapperCache)
 		wc.SetLayerType(1)
-		useChunkedAttention := (i+1)%4 != 0
+		useChunkedAttention := (i+1)%m.noRopeInterval != 0
 		if useChunkedAttention {
 			wc.SetLayerType(0)
 		}
@@ -221,7 +247,7 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 			lastLayerOutputs = outputs
 		}
 
-		hiddenStates = layer.Forward(ctx, hiddenStates, positions, lastLayerOutputs, cache, useChunkedAttention, m.TextOptions)
+		hiddenStates = layer.Forward(ctx, hiddenStates, positions, attentionScales, lastLayerOutputs, cache, useChunkedAttention, m.TextOptions)
 	}
 
 	hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)

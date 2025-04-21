@@ -45,8 +45,8 @@ func (p *llama4Model) KV(t *Tokenizer) ggml.KV {
 		}
 	}
 
-	kv["llama4.intermediate_size"] = p.TextModel.IntermediateSizeMLP
-	kv["llama4.intermediate_size_moe"] = p.TextModel.IntermediateSize
+	kv["llama4.feed_forward_length"] = p.TextModel.IntermediateSizeMLP
+	kv["llama4.expert_feed_forward_length"] = p.TextModel.IntermediateSize
 
 	kv["llama4.expert_count"] = p.TextModel.NumLocalExperts
 	kv["llama4.expert_used_count"] = p.TextModel.NumExpertsPerToken
