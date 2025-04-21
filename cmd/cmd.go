@@ -18,6 +18,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -34,7 +36,6 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/runner"
@@ -256,6 +257,7 @@ func StopHandler(cmd *cobra.Command, args []string) error {
 		if strings.Contains(err.Error(), "not found") {
 			return fmt.Errorf("couldn't find model \"%s\" to stop", args[0])
 		}
+		return err
 	}
 	return nil
 }
@@ -266,7 +268,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	opts := runOptions{
 		Model:    args[0],
 		WordWrap: os.Getenv("TERM") == "xterm-256color",
-		Options:  map[string]interface{}{},
+		Options:  map[string]any{},
 	}
 
 	format, err := cmd.Flags().GetString("format")
@@ -338,10 +340,21 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// TODO(jessegross): We should either find another way to know if this is
-	// a vision model or remove the logic. Also consider that other modalities will
-	// need different behavior anyways.
-	opts.MultiModal = len(info.ProjectorInfo) != 0 || envconfig.NewEngine()
+	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision)
+
+	// TODO: remove the projector info and vision info checks below,
+	// these are left in for backwards compatibility with older servers
+	// that don't have the capabilities field in the model info
+	if len(info.ProjectorInfo) != 0 {
+		opts.MultiModal = true
+	}
+	for k := range info.ModelInfo {
+		if strings.Contains(k, ".vision.") {
+			opts.MultiModal = true
+			break
+		}
+	}
+
 	opts.ParentModel = info.Details.ParentModel
 
 	if interactive {
@@ -562,8 +575,9 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 	parameters, errParams := cmd.Flags().GetBool("parameters")
 	system, errSystem := cmd.Flags().GetBool("system")
 	template, errTemplate := cmd.Flags().GetBool("template")
+	verbose, errVerbose := cmd.Flags().GetBool("verbose")
 
-	for _, boolErr := range []error{errLicense, errModelfile, errParams, errSystem, errTemplate} {
+	for _, boolErr := range []error{errLicense, errModelfile, errParams, errSystem, errTemplate, errVerbose} {
 		if boolErr != nil {
 			return errors.New("error retrieving flags")
 		}
@@ -601,7 +615,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return errors.New("only one of '--license', '--modelfile', '--parameters', '--system', or '--template' can be specified")
 	}
 
-	req := api.ShowRequest{Name: args[0]}
+	req := api.ShowRequest{Name: args[0], Verbose: verbose}
 	resp, err := client.Show(cmd.Context(), &req)
 	if err != nil {
 		return err
@@ -624,10 +638,10 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	return showInfo(resp, os.Stdout)
+	return showInfo(resp, verbose, os.Stdout)
 }
 
-func showInfo(resp *api.ShowResponse, w io.Writer) error {
+func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 	tableRender := func(header string, rows func() [][]string) {
 		fmt.Fprintln(w, " ", header)
 		table := tablewriter.NewWriter(w)
@@ -661,6 +675,15 @@ func showInfo(resp *api.ShowResponse, w io.Writer) error {
 		return
 	})
 
+	if len(resp.Capabilities) > 0 {
+		tableRender("Capabilities", func() (rows [][]string) {
+			for _, capability := range resp.Capabilities {
+				rows = append(rows, []string{"", capability.String()})
+			}
+			return
+		})
+	}
+
 	if resp.ProjectorInfo != nil {
 		tableRender("Projector", func() (rows [][]string) {
 			arch := resp.ProjectorInfo["general.architecture"].(string)
@@ -679,6 +702,47 @@ func showInfo(resp *api.ShowResponse, w io.Writer) error {
 				if text := scanner.Text(); text != "" {
 					rows = append(rows, append([]string{""}, strings.Fields(text)...))
 				}
+			}
+			return
+		})
+	}
+
+	if resp.ModelInfo != nil && verbose {
+		tableRender("Metadata", func() (rows [][]string) {
+			keys := make([]string, 0, len(resp.ModelInfo))
+			for k := range resp.ModelInfo {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+
+			for _, k := range keys {
+				var v string
+				switch vData := resp.ModelInfo[k].(type) {
+				case bool:
+					v = fmt.Sprintf("%t", vData)
+				case string:
+					v = vData
+				case float64:
+					v = fmt.Sprintf("%g", vData)
+				case []any:
+					n := 3
+					if len(vData) < n {
+						n = len(vData)
+					}
+					v = fmt.Sprintf("%v", vData[:n])
+				default:
+					v = fmt.Sprintf("%T", vData)
+				}
+				rows = append(rows, []string{"", k, v})
+			}
+			return
+		})
+	}
+
+	if len(resp.Tensors) > 0 && verbose {
+		tableRender("Tensors", func() (rows [][]string) {
+			for _, t := range resp.Tensors {
+				rows = append(rows, []string{"", t.Name, t.Type, fmt.Sprint(t.Shape)})
 			}
 			return
 		})
@@ -744,13 +808,38 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 
 	fn := func(resp api.ProgressResponse) error {
 		if resp.Digest != "" {
+			if resp.Completed == 0 {
+				// This is the initial status update for the
+				// layer, which the server sends before
+				// beginning the download, for clients to
+				// compute total size and prepare for
+				// downloads, if needed.
+				//
+				// Skipping this here to avoid showing a 0%
+				// progress bar, which *should* clue the user
+				// into the fact that many things are being
+				// downloaded and that the current active
+				// download is not that last. However, in rare
+				// cases it seems to be triggering to some, and
+				// it isn't worth explaining, so just ignore
+				// and regress to the old UI that keeps giving
+				// you the "But wait, there is more!" after
+				// each "100% done" bar, which is "better."
+				return nil
+			}
+
 			if spinner != nil {
 				spinner.Stop()
 			}
 
 			bar, ok := bars[resp.Digest]
 			if !ok {
-				bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
+				name, isDigest := strings.CutPrefix(resp.Digest, "sha256:")
+				name = strings.TrimSpace(name)
+				if isDigest {
+					name = name[:min(12, len(name))]
+				}
+				bar = progress.NewBar(fmt.Sprintf("pulling %s:", name), resp.Total, resp.Completed)
 				bars[resp.Digest] = bar
 				p.Add(resp.Digest, bar)
 			}
@@ -770,11 +859,7 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	request := api.PullRequest{Name: args[0], Insecure: insecure}
-	if err := client.Pull(cmd.Context(), &request, fn); err != nil {
-		return err
-	}
-
-	return nil
+	return client.Pull(cmd.Context(), &request, fn)
 }
 
 type generateContextKey string
@@ -788,7 +873,7 @@ type runOptions struct {
 	Format      string
 	System      string
 	Images      []api.ImageData
-	Options     map[string]interface{}
+	Options     map[string]any
 	MultiModal  bool
 	KeepAlive   *api.Duration
 }
@@ -1190,6 +1275,7 @@ func NewCLI() *cobra.Command {
 	showCmd.Flags().Bool("parameters", false, "Show parameters of a model")
 	showCmd.Flags().Bool("template", false, "Show template of a model")
 	showCmd.Flags().Bool("system", false, "Show system message of a model")
+	showCmd.Flags().BoolP("verbose", "v", false, "Show detailed model information")
 
 	runCmd := &cobra.Command{
 		Use:     "run MODEL [PROMPT]",
@@ -1274,7 +1360,6 @@ func NewCLI() *cobra.Command {
 
 	runnerCmd := &cobra.Command{
 		Use:    "runner",
-		Short:  llama.PrintSystemInfo(),
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runner.Execute(os.Args[1:])
@@ -1317,7 +1402,6 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_NOPRUNE"],
 				envVars["OLLAMA_ORIGINS"],
 				envVars["OLLAMA_SCHED_SPREAD"],
-				envVars["OLLAMA_TMPDIR"],
 				envVars["OLLAMA_FLASH_ATTENTION"],
 				envVars["OLLAMA_KV_CACHE_TYPE"],
 				envVars["OLLAMA_LLM_LIBRARY"],

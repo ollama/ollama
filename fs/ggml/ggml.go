@@ -124,6 +124,22 @@ func (kv KV) Uints(key string, defaultValue ...[]uint32) []uint32 {
 	return s
 }
 
+func (kv KV) Floats(key string, defaultValue ...[]float32) []float32 {
+	r := keyValue(kv, key, &array{})
+	s := make([]float32, r.size)
+	for i := range r.size {
+		s[i] = float32(r.values[i].(float32))
+	}
+	return s
+}
+
+func (kv KV) OllamaEngineRequired() bool {
+	return slices.Contains([]string{
+		"gemma3",
+		"mistral3",
+	}, kv.Architecture())
+}
+
 func keyValue[T string | uint32 | uint64 | float32 | *array | bool](kv KV, key string, defaultValue ...T) T {
 	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") {
 		key = kv.Architecture() + "." + key
@@ -314,6 +330,10 @@ func (t Tensor) Size() uint64 {
 	return t.parameters() * t.typeSize() / t.blockSize()
 }
 
+func (t Tensor) Type() string {
+	return fileType(t.Kind).String()
+}
+
 type container interface {
 	Name() string
 	Decode(io.ReadSeeker) (model, error)
@@ -396,7 +416,7 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
 	}, offset, nil
 }
 
-func (f GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialOffload, fullOffload uint64) {
+func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType string) (kv []uint64, partialOffload, fullOffload uint64) {
 	embedding := f.KV().EmbeddingLength()
 	heads := f.KV().HeadCount()
 	headsKV := f.KV().HeadCountKV()
@@ -409,7 +429,10 @@ func (f GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialO
 	layers := f.Tensors().GroupLayers()
 
 	bytesPerElement := kvCacheBytesPerElement(kvCacheType)
-	kv = uint64(float64(context*f.KV().BlockCount()*(embeddingHeadsK+embeddingHeadsV)*headsKV) * bytesPerElement)
+	kv = make([]uint64, f.KV().BlockCount())
+	for i := range kv {
+		kv[i] = uint64(float64(context*(embeddingHeadsK+embeddingHeadsV)*headsKV) * bytesPerElement)
+	}
 
 	switch f.KV().Architecture() {
 	case "llama":
@@ -443,16 +466,14 @@ func (f GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialO
 	case "mllama":
 		var visionTokens, tiles uint64 = 1601, 4
 
-		if crossAttentionLayers, ok := f.KV()["mllama.attention.cross_attention_layers"].(*array); ok {
-			kv = headsKV *
-				(embeddingHeadsK + embeddingHeadsV) * // one for K, one for V
-				(2* // sizeof(float16)
-					(f.KV().BlockCount()-uint64(crossAttentionLayers.size))* // num non-cross attention layers
-					context +
-					4* // sizeof(float32)
-						uint64(crossAttentionLayers.size)* // num cross attention layers
-						visionTokens*
-						tiles)
+		crossAttentionLayers := f.KV().Uints("attention.cross_attention_layers")
+		for i := range kv {
+			if slices.Contains(crossAttentionLayers, uint32(i)) {
+				kv[i] = headsKV * (embeddingHeadsK + embeddingHeadsV) *
+					4 * // sizeof(float32)
+					visionTokens *
+					tiles
+			}
 		}
 
 		fullOffload = max(
@@ -476,7 +497,7 @@ func (f GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialO
 			// vocab graph
 			4*batch*(embedding+vocab)+embedding*vocab*105/128,
 		)
-	case "gemma", "gemma2":
+	case "gemma", "gemma2", "gemma3":
 		fullOffload = max(
 			4*batch*(embedding+vocab),
 			4*batch*(2+context+context*heads+2*embedding+2*embeddingHeadsK*heads),
@@ -488,6 +509,20 @@ func (f GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialO
 				4*embeddingHeadsK*context*8+
 				embedding*embeddingHeadsK*heads*9/16,
 		)
+
+		// Gemma2 also has sliding window attention but we only have an optimized implementation in the Ollama
+		// engine. Gemma3 always uses the Ollama engine.
+		if f.KV().Architecture() == "gemma3" {
+			const gemma3GlobalCacheCount = 6
+			slidingWindow := (uint64(numParallel) * uint64(f.KV().Uint("attention.sliding_window"))) + batch
+			for i := range kv {
+				// Every 6th layer is a global layer, which is the full context size that has already been set. The other
+				// layers are the smaller local (sliding) layers.
+				if (i+1)%gemma3GlobalCacheCount != 0 {
+					kv[i] = uint64(float64(slidingWindow*(embeddingHeadsK+embeddingHeadsV)*headsKV) * bytesPerElement)
+				}
+			}
+		}
 	case "command-r":
 		fullOffload = max(
 			4*batch*(embedding+vocab),
@@ -563,6 +598,56 @@ func (f GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialO
 	}
 
 	return
+}
+
+func (llm GGML) VisionGraphSize() (weights, graphSize uint64) {
+	if llm.KV().Uint("vision.block_count") == 0 {
+		return
+	}
+
+	for name, layer := range llm.Tensors().GroupLayers() {
+		if name == "v" || strings.HasPrefix(name, "v.") {
+			for _, tensor := range layer {
+				weights += tensor.Size()
+			}
+		}
+	}
+
+	imageSize := uint64(llm.KV().Uint("vision.image_size"))
+	patchSize := uint64(llm.KV().Uint("vision.patch_size"))
+	if patchSize == 0 {
+		slog.Warn("unknown patch size for vision model")
+		return
+	}
+
+	numChannels := uint64(llm.KV().Uint("vision.num_channels"))
+
+	numPatches := (imageSize / patchSize) * (imageSize / patchSize)
+	if _, ok := llm.Tensors().GroupLayers()["v"]["class_embd"]; ok {
+		numPatches++
+	}
+
+	headCount := uint64(llm.KV().Uint("vision.attention.head_count"))
+	embeddingLength := uint64(llm.KV().Uint("vision.embedding_length"))
+
+	switch llm.KV().Architecture() {
+	case "mllama":
+		numPaddedPatches := numPatches + 8 - (numPatches%8)%8
+
+		maxNumTiles := uint64(llm.KV().Uint("vision.max_num_tiles"))
+
+		graphSize = 4 * (8 +
+			imageSize*imageSize*numChannels*maxNumTiles +
+			embeddingLength*numPatches*maxNumTiles +
+			9*embeddingLength*numPaddedPatches*maxNumTiles +
+			numPaddedPatches*maxNumTiles*numPaddedPatches*maxNumTiles*headCount)
+	case "gemma3", "mistral3":
+		graphSize = 4 * (imageSize*imageSize*numChannels +
+			embeddingLength*patchSize +
+			numPatches*numPatches*headCount)
+	}
+
+	return weights, graphSize
 }
 
 // SupportsKVCacheType checks if the requested cache type is supported

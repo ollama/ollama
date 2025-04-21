@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/model/input"
 )
 
 type testCase struct {
@@ -24,7 +25,7 @@ func TestStore(t *testing.T) {
 	cache := NewCausalCache(nil)
 	defer cache.Close()
 
-	cache.Init(backend, ml.DTypeF16, 16)
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
 
 	tests := []testCase{
 		{
@@ -57,11 +58,11 @@ func TestSWA(t *testing.T) {
 	cache := NewSWACache(1, nil)
 	defer cache.Close()
 
-	cache.Init(backend, ml.DTypeF32, 16)
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
 
 	tests := []testCase{
 		{
-			name:          "SlidingWindow",
+			name:          "FirstBatch",
 			in:            []float32{1, 2, 3, 4},
 			inShape:       []int{1, 1, 4},
 			seqs:          []int{0, 0, 0, 0},
@@ -69,6 +70,16 @@ func TestSWA(t *testing.T) {
 			expected:      []float32{1, 2, 3, 4},
 			expectedShape: []int{1, 1, 4},
 			expectedMask:  []float32{0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0},
+		},
+		{
+			name:          "SecondBatch",
+			in:            []float32{5, 6},
+			inShape:       []int{1, 1, 2},
+			seqs:          []int{0, 0},
+			pos:           []int32{4, 5},
+			expected:      []float32{5, 6, 3, 4},
+			expectedShape: []int{1, 1, 4},
+			expectedMask:  []float32{0, float32(math.Inf(-1)), float32(math.Inf(-1)), 0, 0, 0, float32(math.Inf(-1)), float32(math.Inf(-1))},
 		},
 	}
 
@@ -80,7 +91,7 @@ func TestSequences(t *testing.T) {
 	cache := NewCausalCache(nil)
 	defer cache.Close()
 
-	cache.Init(backend, ml.DTypeF16, 16)
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
 
 	tests := []testCase{
 		{
@@ -115,7 +126,7 @@ func TestRemove(t *testing.T) {
 	})
 	defer cache.Close()
 
-	cache.Init(backend, ml.DTypeF16, 16)
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
 
 	tests := []testCase{
 		{
@@ -180,7 +191,7 @@ func TestDefrag(t *testing.T) {
 	})
 	defer cache.Close()
 
-	cache.Init(backend, ml.DTypeF16, 16)
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
 
 	tests := []testCase{
 		{
@@ -228,7 +239,7 @@ func TestCopy(t *testing.T) {
 	cache := NewCausalCache(func(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) { return key, nil })
 	defer cache.Close()
 
-	cache.Init(backend, ml.DTypeF16, 16)
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
 
 	tests := []testCase{
 		{
@@ -269,7 +280,7 @@ func testCache(t *testing.T, backend ml.Backend, cache Cache, tests []testCase) 
 			context := backend.NewContext()
 			defer context.Close()
 
-			err := cache.StartForward(context, test.pos, test.seqs)
+			err := cache.StartForward(context, input.Batch{Positions: test.pos, Sequences: test.seqs}, false)
 			if err != nil {
 				panic(err)
 			}
@@ -289,27 +300,94 @@ func testCache(t *testing.T, backend ml.Backend, cache Cache, tests []testCase) 
 	}
 }
 
-type testBackend struct{}
+func TestCanResume(t *testing.T) {
+	backend := &testBackend{}
+	windowSize := int32(4)
+	cache := NewSWACache(windowSize, nil)
+	defer cache.Close()
 
-func (b *testBackend) Config() ml.Config {
-	panic("not implemented")
+	cache.Init(backend, ml.DTypeF16, 1, 16, 16)
+
+	context := backend.NewContext()
+	defer context.Close()
+
+	err := cache.StartForward(context, input.Batch{
+		Positions: []int32{0, 1, 2, 3},
+		Sequences: []int{0, 0, 0, 0},
+	}, false)
+	if err != nil {
+		t.Fatalf("StartForward failed: %v", err)
+	}
+
+	cache.SetLayer(0)
+	tensor, _ := context.FromFloatSlice([]float32{1, 2, 3, 4}, 1, 1, 4)
+	cache.Put(context, tensor, tensor)
+
+	// with window size 4, nothing has slid out of the window yet
+	if !cache.CanResume(0, 0) {
+		t.Errorf("CanResume(0, 0) = false, want true (within window)")
+	}
+	if !cache.CanResume(0, 1) {
+		t.Errorf("CanResume(0, 1) = false, want true (within window)")
+	}
+	if !cache.CanResume(0, 2) {
+		t.Errorf("CanResume(0, 2) = false, want true (within window)")
+	}
+	if !cache.CanResume(0, 3) {
+		t.Errorf("CanResume(0, 3) = false, want true (latest position)")
+	}
+
+	// shift window by adding position 4
+	err = cache.StartForward(context, input.Batch{
+		Positions: []int32{4, 5},
+		Sequences: []int{0, 0},
+	}, false)
+	if err != nil {
+		t.Fatalf("StartForward failed: %v", err)
+	}
+
+	cache.SetLayer(0)
+	tensor, _ = context.FromFloatSlice([]float32{5, 6}, 1, 1, 2)
+	cache.Put(context, tensor, tensor)
+
+	// only the latest position has overlapping windows
+	if cache.CanResume(0, 0) {
+		t.Errorf("after shift: CanResume(0, 0) = true, want false (outside window)")
+	}
+	if cache.CanResume(0, 1) {
+		t.Errorf("after shift: CanResume(0, 1) = true, want false (outside window)")
+	}
+	if cache.CanResume(0, 2) {
+		t.Errorf("after shift: CanResume(0, 2) = true, want false (outside window)")
+	}
+	if cache.CanResume(0, 3) {
+		t.Errorf("after shift: CanResume(0, 3) = true, want false (outside window)")
+	}
+	if cache.CanResume(0, 4) {
+		t.Errorf("after shift: CanResume(0, 4) = true, want false (outside window)")
+	}
+	if !cache.CanResume(0, 5) {
+		t.Errorf("after shift: CanResume(0, 5) = false, want true (latest position)")
+	}
 }
 
-func (b *testBackend) Get(name string) ml.Tensor {
-	panic("not implemented")
+type testBackend struct {
+	ml.Backend
 }
 
 func (b *testBackend) NewContext() ml.Context {
 	return &testContext{}
 }
 
-func (b *testBackend) SystemInfo() string {
-	return "not implemented"
+func (b *testBackend) NewContextSize(int) ml.Context {
+	return &testContext{}
 }
 
-type testContext struct{}
+type testContext struct {
+	ml.Context
+}
 
-func (c *testContext) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
+func (c *testContext) Empty(dtype ml.DType, shape ...int) ml.Tensor {
 	total := 0
 
 	if len(shape) > 0 {
@@ -322,8 +400,12 @@ func (c *testContext) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
 	return &testTensor{dtype: dtype, elementSize: 4, data: make([]float32, total), shape: shape}
 }
 
+func (c *testContext) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
+	return c.Empty(dtype, shape...)
+}
+
 func (c *testContext) FromFloatSlice(s []float32, shape ...int) (ml.Tensor, error) {
-	t := c.Zeros(ml.DTypeF32, shape...).(*testTensor)
+	t := c.Empty(ml.DTypeF32, shape...).(*testTensor)
 
 	copy(t.data, s)
 
@@ -342,17 +424,35 @@ func (c *testContext) FromIntSlice(s []int32, shape ...int) (ml.Tensor, error) {
 	return out, nil
 }
 
+func (c *testContext) Arange(start, stop, step float32, dtype ml.DType) ml.Tensor {
+	s := make([]float32, 0, int((stop-start)/step))
+	for i := start; i < stop; i += step {
+		s = append(s, i)
+	}
+
+	out, _ := c.FromFloatSlice(s, len(s))
+	out.(*testTensor).dtype = dtype
+	return out
+}
+
+func (c *testContext) Input() ml.Context    { return c }
+func (c *testContext) Layer(int) ml.Context { return c }
+
 func (c *testContext) Forward(...ml.Tensor) ml.Context { return c }
 
 func (c *testContext) Compute(...ml.Tensor) {}
 
-func (c *testContext) MaxTensors() int {
+func (c *testContext) Reserve() error { return nil }
+
+func (c *testContext) MaxGraphNodes() int {
 	return 10
 }
 
 func (c *testContext) Close() {}
 
 type testTensor struct {
+	ml.Tensor
+
 	dtype       ml.DType
 	elementSize int
 	data        []float32
@@ -380,76 +480,28 @@ func (t *testTensor) DType() ml.DType {
 	return t.dtype
 }
 
-func (t *testTensor) Bytes() []byte {
-	panic("not implemented")
-}
-
 func (t *testTensor) Floats() []float32 {
 	out := make([]float32, len(t.data))
 	copy(out, t.data)
 	return out
 }
 
+func (t *testTensor) Neg(ctx ml.Context) ml.Tensor {
+	out := ctx.Empty(t.DType(), t.Shape()...).(*testTensor)
+	for i := range out.data {
+		out.data[i] = -t.data[i]
+	}
+	return out
+}
+
 func (t *testTensor) Add(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
-	out := ctx.Zeros(t.DType(), t.Shape()...).(*testTensor)
+	out := ctx.Empty(t.DType(), t.Shape()...).(*testTensor)
 
 	for i := range out.data {
 		out.data[i] = t.data[i] + t2.(*testTensor).data[i]
 	}
 
 	return out
-}
-
-func (t *testTensor) Mul(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Mulmat(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) MulmatFullPrec(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Softmax(ctx ml.Context) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) LayerNorm(ctx ml.Context, weight, bias ml.Tensor, eps float32) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) RMSNorm(ctx ml.Context, weight ml.Tensor, eps float32) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Scale(ctx ml.Context, s float64) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Conv2D(ctx ml.Context, weight ml.Tensor, s0, s1, p0, p1, d0, d1 int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, dim uint32, base, scale float32) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Tanh(ctx ml.Context) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) GELU(ctx ml.Context) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) SILU(ctx ml.Context) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Reshape(ctx ml.Context, shape ...int) ml.Tensor {
-	panic("not implemented")
 }
 
 func (t *testTensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
@@ -468,38 +520,10 @@ func (t *testTensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 
 	context := &testContext{}
 
-	view := context.Zeros(t.dtype, s...).(*testTensor)
+	view := context.Empty(t.dtype, s...).(*testTensor)
 	view.data = t.data[offset : offset+len(view.data)]
 
 	return view
-}
-
-func (t *testTensor) Permute(ctx ml.Context, shape ...int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Contiguous(ctx ml.Context) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Pad(ctx ml.Context, shape ...int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Unpad(ctx ml.Context, shape ...int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Stack(ctx ml.Context, dim int, s ...ml.Tensor) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Concat(ctx ml.Context, t2 ml.Tensor, dim int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Rows(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
-	panic("not implemented")
 }
 
 func (t *testTensor) Copy(ctx ml.Context, t2 ml.Tensor) ml.Tensor {

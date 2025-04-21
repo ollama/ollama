@@ -4,6 +4,7 @@ import (
 	"math"
 
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/model/input"
 )
 
 // Wrapper cache is a container for multiple types of caches,
@@ -22,9 +23,15 @@ func NewWrapperCache(caches ...Cache) *WrapperCache {
 	}
 }
 
-func (c *WrapperCache) Init(backend ml.Backend, dtype ml.DType, capacity int32) {
+func (c *WrapperCache) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity, maxBatch int) {
 	for _, cache := range c.caches {
-		cache.Init(backend, dtype, capacity)
+		cache.Init(backend, dtype, maxSequences, capacity, maxBatch)
+	}
+}
+
+func (c *WrapperCache) SetConfig(config ml.CacheConfig) {
+	for _, cache := range c.caches {
+		cache.SetConfig(config)
 	}
 }
 
@@ -34,14 +41,14 @@ func (c *WrapperCache) Close() {
 	}
 }
 
-func (c *WrapperCache) StartForward(ctx ml.Context, positions []int32, seqs []int) error {
+func (c *WrapperCache) StartForward(ctx ml.Context, batch input.Batch, reserve bool) error {
 	for i, cache := range c.caches {
-		err := cache.StartForward(ctx, positions, seqs)
+		err := cache.StartForward(ctx, batch, reserve)
 		if err != nil {
 			// unwind on error - Remove with endIndex set to math.MaxInt32 does not fail
 			for j := i - 1; j >= 0; j-- {
-				for k := range positions {
-					_ = c.caches[j].Remove(seqs[k], positions[k], math.MaxInt32)
+				for k := range batch.Positions {
+					_ = c.caches[j].Remove(batch.Sequences[k], batch.Positions[k], math.MaxInt32)
 				}
 			}
 			return err
@@ -78,6 +85,16 @@ func (c *WrapperCache) CopyPrefix(srcSeq, dstSeq int, len int32) {
 	for _, cache := range c.caches {
 		cache.CopyPrefix(srcSeq, dstSeq, len)
 	}
+}
+
+func (c *WrapperCache) CanResume(seq int, pos int32) bool {
+	for _, cache := range c.caches {
+		if !cache.CanResume(seq, pos) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (c *WrapperCache) Remove(seq int, beginIndex, endIndex int32) error {

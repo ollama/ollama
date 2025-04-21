@@ -1,120 +1,130 @@
 package sample
 
 import (
-	"cmp"
+	"container/heap"
 	"math"
 	"slices"
-
-	pq "github.com/emirpasic/gods/v2/queues/priorityqueue"
 )
 
-type Transform interface {
-	Apply([]float64) []float64
+// tokenHeap implements heap.Interface and holds tokens as a min-heap to track k largest elements
+type tokenHeap []token
+
+func (h tokenHeap) Len() int           { return len(h) }
+func (h tokenHeap) Less(i, j int) bool { return h[i].value < h[j].value }
+func (h tokenHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+
+func (h *tokenHeap) Push(x any) {
+	*h = append(*h, x.(token))
 }
 
-// TODO(parthsareen): potentially cache softmax values
-func softmax(logits []float64) []float64 {
-	var sum float64
-	probs := make([]float64, len(logits))
-	for i, v := range logits {
-		probs[i] = math.Exp(v)
-		sum += probs[i]
-	}
-
-	for i := range probs {
-		probs[i] /= sum
-	}
-
-	return probs
+func (h *tokenHeap) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
 }
 
-type Temperature float64
-
-func (t Temperature) Apply(logits []float64) []float64 {
-	temp := math.Max(float64(t), 1e-7)
-
-	// subtracting max logit to avoid under/overflow
-	maxLogit := slices.Max(logits)
-	for i := range logits {
-		logits[i] = (logits[i] - maxLogit) / temp
+// temperature applies scaling to the logits
+func temperature(ts []token, temp float32) {
+	// Ensure temperature clipping near 0 to avoid numerical instability
+	temp = max(temp, 1e-7)
+	for i := range ts {
+		ts[i].value = ts[i].value / temp
 	}
-
-	return logits
 }
 
-type logitMap struct {
-	index int
-	logit float64
-}
-
-type TopK int
-
-// TODO(parthsareen): avoid having to check all logits after this transform
-func (k TopK) Apply(logits []float64) []float64 {
-	if int(k) >= len(logits) {
-		return logits
-	}
-	q := pq.NewWith(func(a, b logitMap) int {
-		return -cmp.Compare(a.logit, b.logit)
-	})
-
-	for i, logit := range logits {
-		q.Enqueue(logitMap{index: i, logit: logit})
-	}
-
-	validLogits := make(map[int]float64)
-	for range k {
-		logitMap, _ := q.Dequeue()
-		validLogits[logitMap.index] = logitMap.logit
-	}
-
-	for i := range logits {
-		if _, ok := validLogits[i]; !ok {
-			logits[i] = math.Inf(-1)
+// softmax applies normalization to the logits
+func softmax(ts []token) {
+	// Find max logit for numerical stability
+	maxLogit := float32(math.Inf(-1))
+	for _, t := range ts {
+		if t.value > maxLogit {
+			maxLogit = t.value
 		}
 	}
 
-	return logits
-}
-
-type TopP float64
-
-func (p TopP) Apply(logits []float64) []float64 {
-	probs := softmax(logits)
-	indices := make([]int, len(probs))
-	for i := range indices {
-		indices[i] = i
+	// Compute exp(x - max)
+	var sum float32
+	for i, v := range ts {
+		ts[i].value = float32(math.Exp(float64(v.value - maxLogit)))
+		sum += ts[i].value
 	}
 
-	// sort in descending order
-	slices.SortFunc(indices, func(i, j int) int {
-		return cmp.Compare(probs[j], probs[i])
-	})
+	// exp(x - max) / sum(exp(x - max))
+	for i := range ts {
+		ts[i].value /= sum
+	}
+}
 
-	var sum float64
-	for i, idx := range indices {
-		sum += probs[idx]
-		if sum > float64(p) {
-			for _, idx := range indices[i+1:] {
-				logits[idx] = math.Inf(-1)
+// topK limits the number of tokens considered to the k highest logits
+func topK(ts []token, k int) []token {
+	if k >= len(ts) || k <= 0 {
+		slices.SortFunc(ts, func(a, b token) int {
+			switch {
+			case a.value < b.value:
+				return 1
+			case a.value > b.value:
+				return -1
+			default:
+				return 0
 			}
-			break
+		})
+		return ts
+	}
+
+	// Initialize min-heap with first k elements
+	h := make(tokenHeap, k)
+	copy(h, ts[:k])
+	heap.Init(&h)
+
+	// Process remaining elements
+	for i := k; i < len(ts); i++ {
+		if ts[i].value > h[0].value {
+			heap.Pop(&h)
+			heap.Push(&h, ts[i])
 		}
 	}
-	return logits
+
+	// Convert heap to sorted slice in descending order
+	result := make([]token, len(h))
+	for i := k - 1; i >= 0; i-- {
+		result[i] = heap.Pop(&h).(token)
+	}
+
+	return result
 }
 
-type MinP float64
+// topP limits tokens to those with cumulative probability p
+// requires ts to be sorted in descending order of probabilities
+func topP(ts []token, p float32) []token {
+	if p == 1.0 {
+		return ts
+	}
 
-func (p MinP) Apply(logits []float64) []float64 {
-	probs := softmax(logits)
-	threshold := slices.Max(probs) * float64(p)
-
-	for i, prob := range probs {
-		if prob < threshold {
-			logits[i] = math.Inf(-1)
+	// Find cutoff index where cumulative sum exceeds p
+	var sum float32
+	for i, t := range ts {
+		sum += t.value
+		if sum > float32(p) {
+			return ts[:i+1]
 		}
 	}
 
-	return logits
+	return ts
+}
+
+// minP filters tokens with probabilities >= p * max_prob
+// requires ts to be sorted in descending order of probabilities
+func minP(ts []token, p float32) []token {
+	maxProb := ts[0].value
+
+	threshold := maxProb * p
+
+	for i, t := range ts {
+		if t.value < threshold {
+			return ts[:i]
+		}
+	}
+	return ts
 }

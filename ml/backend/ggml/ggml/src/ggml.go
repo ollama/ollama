@@ -7,6 +7,20 @@ package ggml
 // #include <stdlib.h>
 // #include "ggml-backend.h"
 // extern void sink(int level, char *text, void *user_data);
+// static struct ggml_backend_feature * first_feature(ggml_backend_get_features_t fp, ggml_backend_reg_t reg) { return fp(reg); }
+// static struct ggml_backend_feature * next_feature(struct ggml_backend_feature * feature) { return &feature[1]; }
+/*
+typedef enum { COMPILER_CLANG, COMPILER_GNUC, COMPILER_UNKNOWN } COMPILER;
+static COMPILER compiler_name(void) {
+#if defined(__clang__)
+	return COMPILER_CLANG;
+#elif defined(__GNUC__)
+	return COMPILER_GNUC;
+#else
+	return COMPILER_UNKNOWN;
+#endif
+}
+*/
 import "C"
 
 import (
@@ -16,6 +30,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"unsafe"
@@ -90,4 +105,43 @@ var OnceLoad = sync.OnceFunc(func() {
 			visited[abspath] = struct{}{}
 		}
 	}
+
+	slog.Info("system", "", system{})
 })
+
+type system struct{}
+
+func (system) LogValue() slog.Value {
+	var attrs []slog.Attr
+	names := make(map[string]int)
+	for i := range C.ggml_backend_dev_count() {
+		r := C.ggml_backend_dev_backend_reg(C.ggml_backend_dev_get(i))
+
+		func() {
+			fName := C.CString("ggml_backend_get_features")
+			defer C.free(unsafe.Pointer(fName))
+
+			if fn := C.ggml_backend_reg_get_proc_address(r, fName); fn != nil {
+				var features []any
+				for f := C.first_feature(C.ggml_backend_get_features_t(fn), r); f.name != nil; f = C.next_feature(f) {
+					features = append(features, C.GoString(f.name), C.GoString(f.value))
+				}
+
+				name := C.GoString(C.ggml_backend_reg_name(r))
+				attrs = append(attrs, slog.Group(name+"."+strconv.Itoa(names[name]), features...))
+				names[name] += 1
+			}
+		}()
+	}
+
+	switch C.compiler_name() {
+	case C.COMPILER_CLANG:
+		attrs = append(attrs, slog.String("compiler", "cgo(clang)"))
+	case C.COMPILER_GNUC:
+		attrs = append(attrs, slog.String("compiler", "cgo(gcc)"))
+	default:
+		attrs = append(attrs, slog.String("compiler", "cgo(unknown)"))
+	}
+
+	return slog.GroupValue(attrs...)
+}

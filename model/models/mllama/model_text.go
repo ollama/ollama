@@ -4,42 +4,38 @@ import (
 	"math"
 	"slices"
 
+	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
 )
 
 type TextSelfAttention struct {
-	Query  *nn.Linear `gguf:"attn_q"`
-	Key    *nn.Linear `gguf:"attn_k"`
-	Value  *nn.Linear `gguf:"attn_v"`
-	Output *nn.Linear `gguf:"attn_output"`
+	Query       *nn.Linear `gguf:"attn_q"`
+	Key         *nn.Linear `gguf:"attn_k"`
+	Value       *nn.Linear `gguf:"attn_v"`
+	Output      *nn.Linear `gguf:"attn_output"`
+	RopeFactors ml.Tensor  `gguf:"rope_freqs.weight"`
 }
 
 func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, positions, _ ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
 	headDim := opts.hiddenSize / opts.numHeads
+	ropeType := uint32(0)
 
 	query := sa.Query.Forward(ctx, hiddenState)
 	query = query.Reshape(ctx, headDim, opts.numHeads, batchSize)
-	query = query.RoPE(ctx, positions, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
+	query = query.RoPE(ctx, positions, sa.RopeFactors, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
 
 	key := sa.Key.Forward(ctx, hiddenState)
 	key = key.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-	key = key.RoPE(ctx, positions, opts.RopeFactors, opts.ropeDim, opts.ropeBase, opts.ropeScale)
+	key = key.RoPE(ctx, positions, sa.RopeFactors, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
 
 	value := sa.Value.Forward(ctx, hiddenState)
 	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 
-	cache.Put(ctx, key, value)
-	key, value, mask := cache.Get(ctx)
-
-	query = query.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
-	key = key.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
-	value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
-
 	scaleFactor := 1.0 / math.Sqrt(float64(headDim))
-	attention := nn.Attention(ctx, query, key, value, mask, scaleFactor)
+	attention := nn.Attention(ctx, query, key, value, scaleFactor, cache)
 	attention = attention.Reshape(ctx, opts.hiddenSize, batchSize)
 
 	return sa.Output.Forward(ctx, attention)
@@ -47,7 +43,11 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, positions, _ m
 
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
 	// This will only get called for layers in the cache, which are just the self attention layers
-	return key.RoPE(ctx, shift, m.RopeFactors, m.ropeDim, m.ropeBase, m.ropeScale), nil
+	if sa, ok := m.Transformer.Layers[layer].(*TextSelfAttentionDecoderLayer); ok {
+		return key.RoPE(ctx, shift, sa.SelfAttention.RopeFactors, m.ropeDim, uint32(0), m.ropeBase, m.ropeScale), nil
+	}
+
+	return key, nil
 }
 
 type TextMLP struct {
@@ -107,7 +107,7 @@ func (ca *TextCrossAttention) Forward(ctx ml.Context, hiddenState, crossAttentio
 	query = query.Reshape(ctx, headDim, opts.numHeads, batchSize)
 	query = ca.QueryNorm.Forward(ctx, query, opts.eps)
 
-	var key, value, mask ml.Tensor
+	var key, value ml.Tensor
 	if crossAttentionStates != nil {
 		numVisionTokens, numTiles := crossAttentionStates.Dim(1), crossAttentionStates.Dim(2)
 
@@ -119,16 +119,23 @@ func (ca *TextCrossAttention) Forward(ctx ml.Context, hiddenState, crossAttentio
 		value = value.Reshape(ctx, headDim, opts.numKVHeads, numVisionTokens*numTiles)
 
 		cache.Put(ctx, key, value)
-	} else {
-		key, value, mask = cache.Get(ctx)
 	}
 
-	query = query.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
-	key = key.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
-	value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
+	key, value, _ = cache.Get(ctx)
 
 	scaleFactor := 1.0 / math.Sqrt(float64(headDim))
-	attention := nn.Attention(ctx, query, key, value, mask, scaleFactor)
+
+	query = query.Permute(ctx, 0, 2, 1, 3)
+	key = key.Permute(ctx, 0, 2, 1, 3)
+	value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
+
+	kq := key.MulmatFullPrec(ctx, query)
+
+	kq = kq.Scale(ctx, scaleFactor)
+	kq = kq.Softmax(ctx)
+
+	kqv := value.Mulmat(ctx, kq)
+	attention := kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 	attention = attention.Reshape(ctx, opts.hiddenSize, batchSize)
 
 	return ca.Output.Forward(ctx, attention)
@@ -191,8 +198,6 @@ func (d *TextDecoder) Forward(ctx ml.Context, hiddenState, positionIDs, outputs,
 }
 
 type TextModelOptions struct {
-	RopeFactors ml.Tensor `gguf:"rope_freqs.weight"`
-
 	hiddenSize, numHeads, numKVHeads int
 	eps, ropeBase, ropeScale         float32
 	ropeDim                          uint32
@@ -216,7 +221,7 @@ func (m *TextModel) Forward(ctx ml.Context, inputIDs, positionIDs, outputs, mask
 	return m.Output.Forward(ctx, hiddenState)
 }
 
-func newTextModel(c ml.Config) *TextModel {
+func newTextModel(c fs.Config) *TextModel {
 	var decoderLayers []TextDecoderLayer
 	for i := range c.Uint("block_count") {
 		var textDecoderLayer TextDecoderLayer

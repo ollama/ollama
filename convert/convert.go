@@ -13,8 +13,13 @@ import (
 )
 
 type ModelParameters struct {
-	Architectures []string `json:"architectures"`
-	VocabSize     uint32   `json:"vocab_size"`
+	Architectures []string       `json:"architectures"`
+	VocabSize     uint32         `json:"vocab_size"`
+	TextModel     TextParameters `json:"text_config"`
+}
+
+type TextParameters struct {
+	VocabSize uint32 `json:"vocab_size"`
 }
 
 type AdapterParameters struct {
@@ -177,14 +182,18 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 
 	var conv ModelConverter
 	switch p.Architectures[0] {
-	case "LlamaForCausalLM", "MistralForCausalLM":
+	case "LlamaForCausalLM":
 		conv = &llamaModel{}
+	case "Mistral3ForConditionalGeneration":
+		conv = &mistral3Model{}
 	case "MixtralForCausalLM":
 		conv = &mixtralModel{}
 	case "GemmaForCausalLM":
 		conv = &gemmaModel{}
 	case "Gemma2ForCausalLM":
 		conv = &gemma2Model{}
+	case "Gemma3ForCausalLM", "Gemma3ForConditionalGeneration":
+		conv = &gemma3Model{Architecture: p.Architectures[0]}
 	case "Phi3ForCausalLM":
 		conv = &phi3Model{}
 	case "Qwen2ForCausalLM":
@@ -194,7 +203,7 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 	case "CohereForCausalLM":
 		conv = &commandrModel{}
 	default:
-		return errors.New("unsupported architecture")
+		return fmt.Errorf("unsupported architecture %q", p.Architectures[0])
 	}
 
 	if err := json.Unmarshal(bts, conv); err != nil {
@@ -213,7 +222,14 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 	}
 
 	vocabSize := int(p.VocabSize)
+	if vocabSize == 0 {
+		tVocabSize := int(p.TextModel.VocabSize)
+		vocabSize = tVocabSize
+	}
+
 	switch {
+	case vocabSize == 0:
+		slog.Warn("vocabulary size was not explicitly set by the model", "default size", len(t.Vocabulary.Tokens))
 	case vocabSize > len(t.Vocabulary.Tokens):
 		slog.Warn("vocabulary is smaller than expected, padding with dummy tokens", "expect", vocabSize, "actual", len(t.Vocabulary.Tokens))
 		for i := range vocabSize - len(t.Vocabulary.Tokens) {

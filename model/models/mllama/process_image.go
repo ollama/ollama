@@ -8,14 +8,14 @@ import (
 
 	"golang.org/x/image/draw"
 
-	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/fs"
 )
 
 type ImageProcessor struct {
 	imageSize, numChannels, maxNumTiles int
 }
 
-func newImageProcessor(c ml.Config) ImageProcessor {
+func newImageProcessor(c fs.Config) ImageProcessor {
 	return ImageProcessor{
 		imageSize:   int(c.Uint("vision.image_size")),
 		numChannels: int(c.Uint("vision.num_channels")),
@@ -144,8 +144,6 @@ func (p *ImageProcessor) splitToTiles(img image.Image, numTilesSize image.Point)
 	return images
 }
 
-// remove the "alpha" channel by drawing over a prefilled image
-//
 // remove the "alpha" channel by drawing over a prefilled image
 //
 //nolint:unused

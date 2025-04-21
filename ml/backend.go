@@ -2,33 +2,59 @@ package ml
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/ollama/ollama/fs"
 )
 
-type Config interface {
-	Architecture() string
-	String(string, ...string) string
-	Uint(string, ...uint32) uint32
-	Float(string, ...float32) float32
-	Bool(string, ...bool) bool
-
-	Strings(string, ...[]string) []string
-	Uints(string, ...[]uint32) []uint32
-}
-
 type Backend interface {
-	Config() Config
+	Config() fs.Config
 	Get(name string) Tensor
 	NewContext() Context
-	SystemInfo() string
+	NewContextSize(size int) Context
+}
+
+// BackendCacheConfig should be implemented by backends that need special output
+// from the cache to meet specific requirements. It is frequently implemented in
+// conjunction with ScaledDotProductAttention.
+type BackendCacheConfig interface {
+	CacheConfig() CacheConfig
+}
+
+// CacheConfig controls optimizations (mostly backend-specific) that may transform
+// the output the cache to work better with specific kernels.
+type CacheConfig struct {
+	// CachePadding specifies the multiple for the number of tokens of cache history
+	// that will be returned from cache Get for k, v and mask. The capacity of the
+	// cache itself will also be increased to a multiple of this size if needed.
+	CachePadding int
+
+	// PermutedV performs Permute(ctx, 1, 2, 0, 3) on v tensors stored via Put
+	// and return the permuted version via Get. This uses the cache copy operation
+	// to avoid a Contiguous call on the permuted tensor.
+	PermutedV bool
+
+	// MaskDType specifies the data type for generating the mask. If unset it will
+	// default to DTypeF32.
+	MaskDType DType
+
+	// MaskBatchPadding specifies the multiple for the batch size dimension in the mask.
+	// Any position that does not correspond to an actual token will be filled with -Inf.
+	MaskBatchPadding int
 }
 
 // BackendParams controls how the backend loads and executes models
 type BackendParams struct {
+	// Progress is a callback function that allows reporting percentage completion
+	// of model loading
+	Progress func(float32)
+
 	// NumThreads sets the number of threads to use if running on the CPU
 	NumThreads int
 
@@ -40,11 +66,14 @@ type BackendParams struct {
 
 	// TensorSplit is the fraction of the model to offload to each GPU
 	TensorSplit []float32
+
+	// FlashAttention indicates that we should use a fused flash attention kernel
+	FlashAttention bool
 }
 
-var backends = make(map[string]func(*os.File, BackendParams) (Backend, error))
+var backends = make(map[string]func(context.Context, *os.File, BackendParams) (Backend, error))
 
-func RegisterBackend(name string, f func(*os.File, BackendParams) (Backend, error)) {
+func RegisterBackend(name string, f func(context.Context, *os.File, BackendParams) (Backend, error)) {
 	if _, ok := backends[name]; ok {
 		panic("backend: backend already registered")
 	}
@@ -52,23 +81,41 @@ func RegisterBackend(name string, f func(*os.File, BackendParams) (Backend, erro
 	backends[name] = f
 }
 
-func NewBackend(f *os.File, params BackendParams) (Backend, error) {
+func NewBackend(ctx context.Context, f *os.File, params BackendParams) (Backend, error) {
 	if backend, ok := backends["ggml"]; ok {
-		return backend(f, params)
+		return backend(ctx, f, params)
 	}
 
 	return nil, fmt.Errorf("unsupported backend")
 }
 
 type Context interface {
+	Empty(dtype DType, shape ...int) Tensor
 	Zeros(dtype DType, shape ...int) Tensor
 	FromFloatSlice(s []float32, shape ...int) (Tensor, error)
 	FromIntSlice(s []int32, shape ...int) (Tensor, error)
 
+	// Arange creates a 1D tensor with values within an interval (start, stop] increased by step.
+	Arange(start, stop, step float32, dtype DType) Tensor
+
 	Forward(...Tensor) Context
 	Compute(...Tensor)
-	MaxTensors() int
+
+	// Reserve is analogous to Compute but rather than executing a
+	// graph, simply preallocates memory. Typically called with a
+	// worst case graph to ensure all resources are available for
+	// for future inference.
+	Reserve() error
+
+	MaxGraphNodes() int
 	Close()
+
+	// Input returns a context appropriate for creating tensors that are
+	// inputs to the model (which includes things like output locations)
+	Input() Context
+
+	// Layer returns a context appropriate for creating intermediate tensors
+	Layer(int) Context
 }
 
 type Tensor interface {
@@ -81,6 +128,7 @@ type Tensor interface {
 	Bytes() []byte
 	Floats() []float32
 
+	Neg(ctx Context) Tensor
 	Add(ctx Context, t2 Tensor) Tensor
 	Mul(ctx Context, t2 Tensor) Tensor
 	Mulmat(ctx Context, t2 Tensor) Tensor
@@ -91,9 +139,14 @@ type Tensor interface {
 	RMSNorm(ctx Context, weight Tensor, eps float32) Tensor
 	Scale(ctx Context, s float64) Tensor
 
+	AvgPool2D(ctx Context, k, s int, p float32) Tensor
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
-	RoPE(ctx Context, positionIDs, ropeFactors Tensor, dim uint32, base, scale float32) Tensor
 
+	RoPE(ctx Context, positionIDs, ropeFactors Tensor, dim, ropeType uint32, base, scale float32) Tensor
+	IM2Col(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
+
+	Sin(ctx Context) Tensor
+	Cos(ctx Context) Tensor
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context) Tensor
 	SILU(ctx Context) Tensor
@@ -102,19 +155,28 @@ type Tensor interface {
 	View(ctx Context, offset int, shape ...int) Tensor
 	Permute(ctx Context, shape ...int) Tensor
 	Contiguous(ctx Context) Tensor
+	Set(ctx Context, t2 Tensor, offset int, strides ...int) Tensor
 
 	Pad(ctx Context, shape ...int) Tensor
 	Unpad(ctx Context, shape ...int) Tensor
 
 	Stack(ctx Context, dim int, s ...Tensor) Tensor
+
+	// Repeat repeats the tensor n times along dimension dim
+	Repeat(ctx Context, dim, n int) Tensor
 	Concat(ctx Context, t2 Tensor, dim int) Tensor
 	Rows(ctx Context, t2 Tensor) Tensor
 	Copy(ctx Context, t2 Tensor) Tensor
+	Duplicate(ctx Context) Tensor
 }
 
 // ScaledDotProductAttention implements a fused attention
 // operation equivalent to following code on a tensor named
 // query:
+//
+// query = query.Permute(ctx, 0, 2, 1, 3)
+// key = key.Permute(ctx, 0, 2, 1, 3)
+// value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
 //
 // kq := key.MulmatFullPrec(ctx, query)
 //
@@ -169,8 +231,8 @@ func Dump(ctx Context, t Tensor, opts ...DumpOptions) string {
 		return dump[[]float32](ctx, t, opts[0].Items, func(f float32) string {
 			return strconv.FormatFloat(float64(f), 'f', opts[0].Precision, 32)
 		})
-	case DTypeF16:
-		f32 := ctx.Zeros(DTypeF32, t.Shape()...)
+	case DTypeF16, DTypeQ80, DTypeQ40:
+		f32 := ctx.Input().Empty(DTypeF32, t.Shape()...)
 		f32 = t.Copy(ctx, f32)
 		return dump[[]float32](ctx, f32, opts[0].Items, func(f float32) string {
 			return strconv.FormatFloat(float64(f), 'f', opts[0].Precision, 32)
@@ -195,16 +257,17 @@ func dump[S ~[]E, E number](ctx Context, t Tensor, items int, fn func(E) string)
 	}
 
 	shape := t.Shape()
+	slices.Reverse(shape)
 
 	var sb strings.Builder
 	var f func([]int, int)
 	f = func(dims []int, stride int) {
 		prefix := strings.Repeat(" ", len(shape)-len(dims)+1)
-		fmt.Fprint(&sb, "[")
-		defer func() { fmt.Fprint(&sb, "]") }()
+		sb.WriteString("[")
+		defer func() { sb.WriteString("]") }()
 		for i := 0; i < dims[0]; i++ {
 			if i >= items && i < dims[0]-items {
-				fmt.Fprint(&sb, "..., ")
+				sb.WriteString("..., ")
 				// skip to next printable element
 				skip := dims[0] - 2*items
 				if len(dims) > 1 {
@@ -219,9 +282,14 @@ func dump[S ~[]E, E number](ctx Context, t Tensor, items int, fn func(E) string)
 					fmt.Fprint(&sb, ",", strings.Repeat("\n", len(dims)-1), prefix)
 				}
 			} else {
-				fmt.Fprint(&sb, fn(s[stride+i]))
+				text := fn(s[stride+i])
+				if len(text) > 0 && text[0] != '-' {
+					sb.WriteString(" ")
+				}
+
+				sb.WriteString(text)
 				if i < dims[0]-1 {
-					fmt.Fprint(&sb, ", ")
+					sb.WriteString(", ")
 				}
 			}
 		}
@@ -237,5 +305,7 @@ const (
 	DTypeOther DType = iota
 	DTypeF32
 	DTypeF16
+	DTypeQ80
+	DTypeQ40
 	DTypeI32
 )

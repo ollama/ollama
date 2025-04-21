@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/ollama/ollama/ml"
+	"github.com/ollama/ollama/model/input"
 )
 
 var (
@@ -29,21 +30,43 @@ type Cache interface {
 	// cache implementation used.
 	Put(ctx ml.Context, key, value ml.Tensor)
 
+	// SetConfig controls optimizations (mostly backend-specific) that may transform
+	// the output of the cache to work better with specific kernels. If not called,
+	// the backend settings will be used. This works well when calling Attention.
+	//
+	// The config can be overridden by models, especially if they require vanilla
+	// output when implementing their own version of attention. To do this, pass
+	// an empty ml.CacheConfig.
+	//
+	// Most models will not need to use this.
+	SetConfig(ml.CacheConfig)
+
 	// ** cache management **
 
-	// Init sets up runtime parameters
-	Init(backend ml.Backend, dtype ml.DType, capacity int32)
+	// Init sets up runtime parameters.
+	// backend: Used to allocate cache data storage and execute management operations (such as defrag)
+	// dtype: The data type for storing cache entries
+	// maxSequences: The maximum number of sequences stored in the cache - across all batches
+	// capacity: The number of cache entries to store, per sequence
+	// maxBatch: The maximum number of tokens that can occur in a single batch
+	Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity, maxBatch int)
 
 	// Close closes the cache and frees resources associated with it
 	Close()
 
 	// StartForward is called before the start of the model's forward pass.
 	// For each token in the coming batch, there must be a corresponding
-	// entry in positions and seqs.
-	StartForward(ctx ml.Context, positions []int32, seqs []int) error
+	// entry in positions and seqs. reserve is to preallocate memory
+	// without actually storing data in the cache.
+	StartForward(ctx ml.Context, batch input.Batch, reserve bool) error
 
 	// CopyPrefix copies tokens in the range [0, len) from srcSeq to dstSeq
 	CopyPrefix(srcSeq, dstSeq int, len int32)
+
+	// CanResume returns true if the cache can continue with the next token at
+	// the given position and sequence. Assumes that the caller has already
+	// verified the contents of the cache.
+	CanResume(seq int, pos int32) bool
 
 	// Remove deletes tokens in the range [beginIndex, endIndex) from seq. Set
 	// endIndex to math.MaxInt32 to remove everything starting at beginIndex.
