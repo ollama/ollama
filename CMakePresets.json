@@ -69,7 +69,7 @@
       "name": "MUSA 3",
       "inherits": [ "MUSA" ],
       "cacheVariables": {
-        "MUSA_ARCHITECTURES": "21;22"
+        "MUSA_ARCHITECTURES": "21;22;31"
       }
     }
   ],

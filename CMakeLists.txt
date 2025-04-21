@@ -147,7 +147,7 @@ list(APPEND CMAKE_MODULE_PATH "${MUSA_PATH}/cmake")
 find_package(MUSAToolkit)
 if(MUSAToolkit_FOUND)
     if(NOT MUSA_ARCHITECTURES)
-        set(MUSA_ARCHITECTURES "21;22")
+        set(MUSA_ARCHITECTURES "21;22;31")
     endif()
 
     if(MUSA_ARCHITECTURES)
