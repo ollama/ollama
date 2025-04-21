@@ -190,7 +190,7 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 	case "Qwen2ForCausalLM":
 		conv = &qwen2Model{}
 	case "Qwen2_5_VLForConditionalGeneration":
-		conv = &qwen25vlModel{}
+		conv = &qwen25VLModel{}
 	case "BertModel":
 		conv = &bertModel{}
 	case "CohereForCausalLM":
