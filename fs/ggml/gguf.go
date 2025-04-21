@@ -9,8 +9,12 @@ import (
 	"io"
 	"log/slog"
 	"maps"
+	"os"
+	"runtime"
 	"slices"
 	"strings"
+
+	"golang.org/x/sync/errgroup"
 )
 
 type containerGGUF struct {
@@ -502,22 +506,22 @@ func writeGGUFArray[S ~[]E, E any](w io.Writer, t uint32, s S) error {
 	return binary.Write(w, binary.LittleEndian, s)
 }
 
-func WriteGGUF(ws io.WriteSeeker, kv KV, ts []Tensor) error {
+func WriteGGUF(f *os.File, kv KV, ts []Tensor) error {
 	alignment := kv.Uint("general.alignment", 32)
 
-	if err := binary.Write(ws, binary.LittleEndian, []byte("GGUF")); err != nil {
+	if err := binary.Write(f, binary.LittleEndian, []byte("GGUF")); err != nil {
 		return err
 	}
 
-	if err := binary.Write(ws, binary.LittleEndian, uint32(3)); err != nil {
+	if err := binary.Write(f, binary.LittleEndian, uint32(3)); err != nil {
 		return err
 	}
 
-	if err := binary.Write(ws, binary.LittleEndian, uint64(len(ts))); err != nil {
+	if err := binary.Write(f, binary.LittleEndian, uint64(len(ts))); err != nil {
 		return err
 	}
 
-	if err := binary.Write(ws, binary.LittleEndian, uint64(len(kv))); err != nil {
+	if err := binary.Write(f, binary.LittleEndian, uint64(len(kv))); err != nil {
 		return err
 	}
 
@@ -525,7 +529,7 @@ func WriteGGUF(ws io.WriteSeeker, kv KV, ts []Tensor) error {
 	slices.Sort(keys)
 
 	for _, key := range keys {
-		if err := ggufWriteKV(ws, key, kv[key]); err != nil {
+		if err := ggufWriteKV(f, key, kv[key]); err != nil {
 			return err
 		}
 	}
@@ -541,21 +545,34 @@ func WriteGGUF(ws io.WriteSeeker, kv KV, ts []Tensor) error {
 	})
 
 	var s uint64
-	for _, t := range ts {
-		t.Offset = s + uint64(ggufPadding(int64(s), int64(alignment)))
-		if err := ggufWriteTensorInfo(ws, t); err != nil {
+	for i := range ts {
+		ts[i].Offset = s + uint64(ggufPadding(int64(s), int64(alignment)))
+		if err := ggufWriteTensorInfo(f, ts[i]); err != nil {
 			return err
 		}
-		s += t.Size()
+		s += ts[i].Size()
 	}
 
+	offset, err := f.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return err
+	}
+
+	offset += ggufPadding(offset, int64(alignment))
+	slog.Debug("gguf", "offset", offset, "size", s, "alignment", alignment)
+
+	var g errgroup.Group
+	g.SetLimit(runtime.GOMAXPROCS(0))
 	for _, t := range ts {
-		if err := ggufWriteTensor(ws, t, int64(alignment)); err != nil {
+		t := t
+		w := io.NewOffsetWriter(f, offset+int64(t.Offset))
+		g.Go(func() error {
+			_, err := t.WriteTo(w)
 			return err
-		}
+		})
 	}
 
-	return nil
+	return g.Wait()
 }
 
 func ggufWriteKV(ws io.WriteSeeker, k string, v any) error {
@@ -638,20 +655,6 @@ func ggufWriteTensorInfo(ws io.WriteSeeker, t Tensor) error {
 	}
 
 	return binary.Write(ws, binary.LittleEndian, t.Offset)
-}
-
-func ggufWriteTensor(ws io.WriteSeeker, t Tensor, alignment int64) error {
-	offset, err := ws.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return err
-	}
-
-	if err := binary.Write(ws, binary.LittleEndian, bytes.Repeat([]byte{0}, int(ggufPadding(offset, alignment)))); err != nil {
-		return err
-	}
-
-	_, err = t.WriteTo(ws)
-	return err
 }
 
 func ggufPadding(offset, align int64) int64 {
