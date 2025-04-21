@@ -77,7 +77,13 @@ func (p *ImageProcessor) SmartResize(height, width int) (int, int) {
 	return hBar, wBar
 }
 
-func (p *ImageProcessor) ProcessImage(img image.Image) ([]float32, int, int, int, error) {
+type Grid struct {
+	Height   int
+	Width    int
+	Temporal int
+}
+
+func (p *ImageProcessor) ProcessImage(img image.Image) ([]float32, *Grid, error) {
 	origWidth := img.Bounds().Dx()
 	origHeight := img.Bounds().Dy()
 
@@ -96,27 +102,29 @@ func (p *ImageProcessor) ProcessImage(img image.Image) ([]float32, int, int, int
 	)
 
 	// Calculate grid dimensions
-	gridH := resizedHeight / p.patchSize
-	gridW := resizedWidth / p.patchSize
-	gridT := 1 // For single images, temporal dimension is 1
+	grid := &Grid{
+		Height:   resizedHeight / p.patchSize,
+		Width:    resizedWidth / p.patchSize,
+		Temporal: 1, // For single images, temporal dimension is 1
+	}
 
-	patches, err := p.createPatches(normalizedPixels, resizedHeight, resizedWidth, gridH, gridW, gridT)
+	patches, err := p.createPatches(normalizedPixels, resizedHeight, resizedWidth, grid)
 	if err != nil {
-		return nil, 0, 0, 0, fmt.Errorf("failed to create patches: %v", err)
+		return nil, nil, fmt.Errorf("failed to create patches: %v", err)
 	}
 
 	// Return patches and grid dimensions
-	return patches, gridT, gridH, gridW, nil
+	return patches, grid, nil
 }
 
-func (p *ImageProcessor) createPatches(pixels []float32, height, width, gridH, gridW, gridT int) ([]float32, error) {
+func (p *ImageProcessor) createPatches(pixels []float32, height, width int, grid *Grid) ([]float32, error) {
 	channels := p.numChannels
 	patchSize := p.patchSize
 	mergeSize := p.mergeSize
 	temporalPatchSize := p.temporalPatchSize
 
 	// Calculate output dimensions
-	numPatches := gridT * gridH * gridW
+	numPatches := grid.Temporal * grid.Height * grid.Width
 	patchDim := channels * temporalPatchSize * patchSize * patchSize
 
 	// Create output tensor
@@ -126,10 +134,10 @@ func (p *ImageProcessor) createPatches(pixels []float32, height, width, gridH, g
 	// in the format expected by the forward pass
 	patchIndex := 0
 
-	for t := 0; t < gridT; t++ {
+	for t := 0; t < grid.Temporal; t++ {
 		// For each patch in the grid
-		for h := 0; h < gridH; h += mergeSize {
-			for w := 0; w < gridW; w += mergeSize {
+		for h := 0; h < grid.Height; h += mergeSize {
+			for w := 0; w < grid.Width; w += mergeSize {
 				// Handle the 2x2 merged patches
 				for mh := 0; mh < mergeSize; mh++ {
 					for mw := 0; mw < mergeSize; mw++ {

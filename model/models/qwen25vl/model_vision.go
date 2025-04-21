@@ -177,7 +177,7 @@ type VisionModel struct {
 }
 
 // Forward computes the vision model for an input tensor
-func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor) ml.Tensor {
+func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid) ml.Tensor {
 	// Calculate position IDs for 2D RoPE
 	numPatchesH := pixelValues.Dim(0) / m.patchSize
 	numPatchesW := pixelValues.Dim(1) / m.patchSize
@@ -193,14 +193,12 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor) ml.Tensor {
 	)
 
 	// Create position IDs - for Qwen2VL mRoPE we need 4 values per position
-	// The format needed is specified in the C++ code as "mrope expecting 4 position ids per token"
 	positions := make([]int32, numPatches*4)
 
 	for h := 0; h < numPatchesH; h++ {
 		for w := 0; w < numPatchesW; w++ {
 			idx := h*numPatchesW + w
 			// For each position, store both h and w coordinates twice
-			// This matches the pattern seen in the C++ implementation
 			positions[idx*4] = int32(h)   // y coordinate
 			positions[idx*4+1] = int32(w) // x coordinate
 			positions[idx*4+2] = int32(h) // y coordinate (repeated)
