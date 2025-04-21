@@ -58,7 +58,7 @@ var defaultModelsPerGPU = 3
 // Default automatic value for parallel setting
 // Model will still need to fit in VRAM.  If this setting won't fit
 // we'll back off down to 1 to try to get it to fit
-var defaultParallel = 4
+var defaultParallel = 2
 
 var ErrMaxQueue = errors.New("server busy, please try again.  maximum pending requests exceeded")
 
@@ -81,10 +81,6 @@ func InitScheduler(ctx context.Context) *Scheduler {
 
 // context must be canceled to decrement ref count and release the runner
 func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options, sessionDuration *api.Duration) (chan *runnerRef, chan error) {
-	if opts.NumCtx < 4 {
-		opts.NumCtx = 4
-	}
-
 	req := &LlmRequest{
 		ctx:             c,
 		model:           model,
@@ -113,6 +109,11 @@ func (s *Scheduler) Run(ctx context.Context) {
 		s.processCompleted(ctx)
 	}()
 }
+
+const (
+	defaultContextLength  = 4096
+	smallGpuContextLength = 2048
+)
 
 func (s *Scheduler) processPending(ctx context.Context) {
 	for {
@@ -164,6 +165,17 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						gpus = s.getCpuFn()
 					} else {
 						gpus = s.getGpuFn()
+					}
+
+					if pending.origNumCtx == -1 {
+						if len(gpus) == 1 && gpus[0].Library != "cpu" && gpus[0].TotalMemory <= 4096*1024*1024 {
+							slog.Info("GPU is small, limiting context window", "num_ctx", smallGpuContextLength)
+							pending.opts.NumCtx = smallGpuContextLength
+							pending.origNumCtx = smallGpuContextLength
+						} else {
+							pending.opts.NumCtx = defaultContextLength
+							pending.origNumCtx = defaultContextLength
+						}
 					}
 
 					if envconfig.MaxRunners() <= 0 {
