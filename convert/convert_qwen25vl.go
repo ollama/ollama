@@ -13,7 +13,7 @@ import (
 	"github.com/x448/float16"
 )
 
-type qwen25vlModel struct {
+type qwen25VLModel struct {
 	ModelParameters
 	HiddenSize            uint32  `json:"hidden_size"`
 	IntermediateSize      uint32  `json:"intermediate_size"`
@@ -25,18 +25,12 @@ type qwen25vlModel struct {
 	RMSNormEPS            float32 `json:"rms_norm_eps"`
 
 	VisionModel struct {
-		PatchSize uint32 `json:"patch_size"`
-		//HeadDim uint32 `json:"num_heads"`
-		//RopeTheta float32 `json:"rope_theta"`
-		HiddenSize       uint32 `json:"hidden_size"`
-		IntermediateSize uint32 `json:"intermediate_size"`
-		WindowSize       uint32 `json:"window_size"`
 	} `json:"vision_config"`
 }
 
-var _ ModelConverter = (*qwen25vlModel)(nil)
+var _ ModelConverter = (*qwen25VLModel)(nil)
 
-func (q *qwen25vlModel) KV(t *Tokenizer) ggml.KV {
+func (q *qwen25VLModel) KV(t *Tokenizer) ggml.KV {
 	kv := q.ModelParameters.KV(t)
 	kv["general.architecture"] = "qwen25vl"
 	kv["qwen25vl.block_count"] = q.HiddenLayers
@@ -48,24 +42,18 @@ func (q *qwen25vlModel) KV(t *Tokenizer) ggml.KV {
 	kv["qwen25vl.rope.freq_base"] = q.RopeTheta
 	kv["qwen25vl.attention.layer_norm_rms_epsilon"] = q.RMSNormEPS
 
-	kv["qwen25vl.vision.embedding_length"] = q.VisionModel.HiddenSize
-
 	return kv
 }
 
-func (q *qwen25vlModel) Tensors(ts []Tensor) []ggml.Tensor {
+func (q *qwen25VLModel) Tensors(ts []Tensor) []ggml.Tensor {
 	var out []ggml.Tensor
 
 	for _, t := range ts {
 		if strings.HasSuffix(t.Name(), "patch_embed.proj.weight") {
-			// var buf bytes.Buffer
-			// if _, err := t.WriteTo(&buf); err != nil {
-			// 	panic(err)
-			// }
-			// newTensors := splitPatchEmbed(buf, t.Kind(), t.Shape())
-			// out = append(out, newTensors...)
-			// } else if strings.HasPrefix(t.Name(), "v.blk.") {
-			// skip
+			var buf bytes.Buffer
+			t.WriteTo(&buf)
+			newTensors := splitPatchEmbed(buf, t.Kind(), t.Shape())
+			out = append(out, newTensors...)
 		} else {
 			out = append(out, ggml.Tensor{
 				Name:     t.Name(),
@@ -79,7 +67,7 @@ func (q *qwen25vlModel) Tensors(ts []Tensor) []ggml.Tensor {
 	return out
 }
 
-func (p *qwen25vlModel) Replacements() []string {
+func (p *qwen25VLModel) Replacements() []string {
 	return []string{
 		"lm_head", "output",
 		"model.embed_tokens", "token_embd",
@@ -151,10 +139,10 @@ func splitPatchEmbed(buf bytes.Buffer, kind uint32, shape []uint64) []ggml.Tenso
 
 		slog.Debug("first vals", "val 1", ts[0][0], "val 2", ts[0][1], "val 3", ts[0][2])
 
-		var f16s patchEmbed
-		for _, row := range ts {
-			for _, col := range row {
-				f16s = append(f16s, float16.Fromfloat32(col).Bits())
+		f16s := make(patchEmbed, shapeToSize(shape))
+		for r, row := range ts {
+			for c, col := range row {
+				f16s[r+c] = float16.Fromfloat32(col).Bits()
 			}
 		}
 
@@ -163,7 +151,7 @@ func splitPatchEmbed(buf bytes.Buffer, kind uint32, shape []uint64) []ggml.Tenso
 
 	p := getDataFromSlice(f32s, intShape, []tensor.Slice{nil, nil, tensor.S(0, 1, 1), nil, nil})
 	newTensors = append(newTensors, ggml.Tensor{
-		Name:     "v.patch_embed.0.weight",
+		Name:     "v.patch_embed_0.weight",
 		Kind:     kind,
 		Shape:    append(shape[:2], shape[3:]...),
 		WriterTo: p,
@@ -171,7 +159,7 @@ func splitPatchEmbed(buf bytes.Buffer, kind uint32, shape []uint64) []ggml.Tenso
 
 	p = getDataFromSlice(f32s, intShape, []tensor.Slice{nil, nil, tensor.S(1, 2, 1), nil, nil})
 	newTensors = append(newTensors, ggml.Tensor{
-		Name:     "v.patch_embed.1.weight",
+		Name:     "v.patch_embed_1.weight",
 		Kind:     kind,
 		Shape:    append(shape[:2], shape[3:]...),
 		WriterTo: p,
