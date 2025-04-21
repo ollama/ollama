@@ -636,11 +636,11 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 }
 
 var grammarJSON = `
-root   ::= ws object
+root   ::= object
 value  ::= object | array | string | number | ("true" | "false" | "null") ws
 object ::=
   "{" ws (
-            ws string ":" ws value
+         string ":" ws value
     ("," ws string ":" ws value)*
   )? ws "}" 
 array  ::=
