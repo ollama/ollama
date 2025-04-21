@@ -103,8 +103,8 @@ func (st safetensor) Clone() Tensor {
 		size:   st.size,
 		tensorBase: &tensorBase{
 			name:     st.name,
+			shape:    st.shape,
 			repacker: st.repacker,
-			shape:    slices.Clone(st.shape),
 		},
 	}
 }
@@ -117,6 +117,8 @@ func (st safetensor) WriteTo(w io.Writer) (int64, error) {
 	defer f.Close()
 
 	if seeker, ok := f.(io.Seeker); ok {
+		msg := fmt.Sprintf("Seeking Safetensor: %s,shape: %v, offset: %v\n", st.Name(), st.Shape(), st.offset)
+		fmt.Printf(msg)
 		if _, err := seeker.Seek(st.offset, io.SeekStart); err != nil {
 			return 0, err
 		}
@@ -170,6 +172,9 @@ func (st safetensor) WriteTo(w io.Writer) (int64, error) {
 		for i := range f32s {
 			f16s[i] = float16.Fromfloat32(f32s[i]).Bits()
 		}
+
+		msg := fmt.Sprintf(">>> Writing Safetensor: %s, len(f16s): %v\n", st.Name(), len(f16s))
+		fmt.Printf(msg)
 
 		return 0, binary.Write(w, binary.LittleEndian, f16s)
 	default:
