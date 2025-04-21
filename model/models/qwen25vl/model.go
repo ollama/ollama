@@ -64,9 +64,7 @@ func New(c fs.Config) (model.Model, error) {
 
 type imageFeatures struct {
 	Tensor ml.Tensor
-	GridT  int
-	GridH  int
-	GridW  int
+	Grid   *Grid
 }
 
 func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, error) {
@@ -79,7 +77,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 		return nil, err
 	}
 
-	f32s, gridT, gridH, gridW, err := m.ImageProcessor.ProcessImage(image)
+	f32s, grid, err := m.ImageProcessor.ProcessImage(image)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +85,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 	// Calculate tensor dimensions
 	patchDim := m.ImageProcessor.numChannels * m.ImageProcessor.temporalPatchSize *
 		m.ImageProcessor.patchSize * m.ImageProcessor.patchSize
-	numPatches := gridT * gridH * gridW
+	numPatches := grid.Temporal * grid.Height * grid.Width
 
 	pixelValues, err := ctx.Input().FromFloatSlice(f32s, patchDim, numPatches)
 	if err != nil {
@@ -99,9 +97,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 
 	return &imageFeatures{
 		Tensor: visionOutputs,
-		GridT:  gridT,
-		GridH:  gridH,
-		GridW:  gridW,
+		Grid:   grid,
 	}, nil
 }
 
@@ -125,14 +121,9 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 			// This is an image token with multimodal data
 			features := inp.Multimodal.(*imageFeatures)
 
-			// Get grid dimensions from the features
-			gridT := features.GridT
-			gridH := features.GridH
-			gridW := features.GridW
-
 			// Calculate tokens per grid based on grid dimensions
 			mergeLength := mergeSize * mergeSize
-			gridProduct := gridT * gridH * gridW
+			gridProduct := features.Grid.Temporal * features.Grid.Height * features.Grid.Width
 			tokensPerGrid := gridProduct / mergeLength
 
 			// First add the vision start token
