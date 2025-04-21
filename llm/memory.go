@@ -125,9 +125,8 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	layers := f.Tensors().GroupLayers()
 	// add one layer worth of memory as a buffer
 	// use layer with maximum size to avoid vram overflow
-	layerSize = slices.MaxFunc(slices.Collect(maps.Values(layers)), func(a, b ggml.Layer) int {
-		return cmp.Compare(a.Size(), b.Size())
-	}).Size()
+	maxBlockKey, maxLayer := maps.MaxFunc(layers, func(a, b Layer) int { return cmp.Compare(a.Size(), b.Size()) }); 
+	layerSize = maxLayer.Size()
 
 	var kvct string
 	if envconfig.FlashAttention() &&
@@ -142,7 +141,8 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	kv, graphPartialOffload, graphFullOffload := f.GraphSize(uint64(opts.NumCtx), uint64(min(opts.NumCtx, opts.NumBatch)), numParallel, kvct)
 
 	if len(kv) > 0 {
-		layerSize += kv[0]
+		maxKVIdx, _ := strconv.Atoi(regexp.MustCompile(`blk\.(\d+)`).FindStringSubmatch(maxBlockKey)[1]); 
+		layerSize += kv[maxKVIdx]
 	}
 
 	var kvTotal uint64
@@ -251,7 +251,12 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	if layerCount >= int(f.KV().BlockCount()) {
 		fullyLoaded = true
 	} else {
-		for i := layerCount; i < int(f.KV().BlockCount()); i++ {
+		// Calculate overflow for the layers that doesn't fit on the GPUs
+		for i := int(f.KV().BlockCount()) - (layercount - 1) - 1; i >= 0; i-- {
+			if blk, ok := layers[fmt.Sprintf("blk.%d", i)]; ok {
+				layerSize = blk.Size()
+				layerSize += kv[i]
+			}
 			overflow += layerSize
 		}
 	}
