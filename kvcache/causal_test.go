@@ -570,6 +570,10 @@ func (t *testTensor) Add(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return out
 }
 
+func (t *testTensor) Div(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
+	panic("not implemented")
+}
+
 func (t *testTensor) Mul(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	panic("not implemented")
 }
@@ -622,6 +626,10 @@ func (t *testTensor) RoPEMulti(ctx ml.Context, positionIDs, ropeFactors ml.Tenso
 }
 
 func (t *testTensor) Tanh(ctx ml.Context) ml.Tensor {
+	panic("not implemented")
+}
+
+func (t *testTensor) Exp(ctx ml.Context) ml.Tensor {
 	panic("not implemented")
 }
 

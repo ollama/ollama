@@ -25,6 +25,7 @@ type qwen25VLModel struct {
 	RMSNormEPS            float32 `json:"rms_norm_eps"`
 
 	VisionModel struct {
+		SpatialMergeSize uint32 `json:"spatial_merge_size"` // TODO: is this set?
 	} `json:"vision_config"`
 }
 

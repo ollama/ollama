@@ -858,6 +858,13 @@ func (t *Tensor) Contiguous(ctx ml.Context) ml.Tensor {
 	}
 }
 
+func (t *Tensor) Div(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_div(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
+	}
+}
+
 func (t *Tensor) Mul(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -1012,6 +1019,13 @@ func (t *Tensor) Sigmoid(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_sigmoid_inplace(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Exp(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_exp_inplace(ctx.(*Context).ctx, t.t),
 	}
 }
 
