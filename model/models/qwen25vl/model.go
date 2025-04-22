@@ -92,7 +92,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 		return nil, fmt.Errorf("failed to create tensor from image: %w", err)
 	}
 
-	visionOutputs := m.VisionModel.Forward(ctx, pixelValues)
+	visionOutputs := m.VisionModel.Forward(ctx, pixelValues, grid)
 	visionOutputs = m.PatchMerger.Forward(ctx, visionOutputs, m.VisionModel.eps)
 
 	return &imageFeatures{

@@ -178,6 +178,8 @@ type Tensor interface {
 
 	Neg(ctx Context) Tensor
 	Add(ctx Context, t2 Tensor) Tensor
+	// Div computes the element-wise division (t1 / t2) for all values in the tensor
+	Div(ctx Context, t2 Tensor) Tensor
 	Mul(ctx Context, t2 Tensor) Tensor
 	Mulmat(ctx Context, t2 Tensor) Tensor
 	MulmatFullPrec(ctx Context, t2 Tensor) Tensor
@@ -198,6 +200,8 @@ type Tensor interface {
 	Sin(ctx Context) Tensor
 	Cos(ctx Context) Tensor
 	Tanh(ctx Context) Tensor
+	// Exp computes the element-wise exponential (e^t) for all values in the tensor
+	Exp(ctx Context) Tensor
 	GELU(ctx Context) Tensor
 	SILU(ctx Context) Tensor
 	Sigmoid(ctx Context) Tensor
