@@ -148,6 +148,7 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 		successCh:       make(chan *runnerRef, 1),
 		errCh:           make(chan error, 1),
 	}
+	b.req.opts.NumCtx = 4096
 	b.srv = &mockLlm{estimatedVRAM: estimatedVRAM, estimatedVRAMByGPU: map[string]uint64{"": estimatedVRAM}}
 	return b
 }
