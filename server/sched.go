@@ -169,7 +169,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 
 					if pending.origNumCtx == -1 {
 						if len(gpus) == 1 && gpus[0].Library != "cpu" && gpus[0].TotalMemory <= 4096*1024*1024 {
-							slog.Info("GPU is small, limiting context window", "num_ctx", smallGpuContextLength)
+							slog.Info("GPU is small, limiting default context window", "num_ctx", smallGpuContextLength)
 							pending.opts.NumCtx = smallGpuContextLength
 							pending.origNumCtx = smallGpuContextLength
 						} else {
