@@ -33,7 +33,7 @@ func (kv KV) Kind() string {
 }
 
 func (kv KV) ParameterCount() uint64 {
-	return keyValue[uint64](kv, "general.parameter_count")
+	return keyValue(kv, "general.parameter_count", uint64(0))
 }
 
 func (kv KV) FileType() fileType {
