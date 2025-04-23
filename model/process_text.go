@@ -37,7 +37,7 @@ type TextProcessor interface {
 
 type Vocabulary struct {
 	Values []string
-	Types  []uint32
+	Types  []int32
 	Scores []float32
 	Merges []string
 
