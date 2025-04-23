@@ -303,7 +303,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid)
 		m.patchSize,   // patch size, e.g., 14
 	)
 
-	rope := rope(ctx, grid)
+	rope(ctx, grid)
 
 	// spatialMergeSize := 2 // TODO: get this from config
 	// // Create the position IDs tensor with correct dimensions
