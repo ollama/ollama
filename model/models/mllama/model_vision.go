@@ -96,10 +96,10 @@ type VisionEncoder struct {
 	Layers []VisionEncoderLayer
 }
 
-func (e *VisionEncoder) Forward(ctx ml.Context, hiddenState ml.Tensor, intermediateLayersIndices []uint32, opts *VisionModelOptions) (ml.Tensor, []ml.Tensor) {
+func (e *VisionEncoder) Forward(ctx ml.Context, hiddenState ml.Tensor, intermediateLayersIndices []int32, opts *VisionModelOptions) (ml.Tensor, []ml.Tensor) {
 	var intermediateHiddenStates []ml.Tensor
 	for i, layer := range e.Layers {
-		if slices.Contains(intermediateLayersIndices, uint32(i)) {
+		if slices.Contains(intermediateLayersIndices, int32(i)) {
 			intermediateHiddenStates = append(intermediateHiddenStates, hiddenState.Reshape(ctx, append([]int{1}, hiddenState.Shape()...)...))
 		}
 
@@ -154,7 +154,7 @@ type VisionModelOptions struct {
 	imageSize, patchSize           int
 	eps                            float32
 
-	intermediateLayersIndices []uint32
+	intermediateLayersIndices []int32
 }
 
 type VisionModel struct {
@@ -229,7 +229,7 @@ func newVisionModel(c fs.Config) *VisionModel {
 
 			eps: c.Float("vision.attention.layer_norm_epsilon"),
 
-			intermediateLayersIndices: c.Uints("vision.intermediate_layers_indices"),
+			intermediateLayersIndices: c.Ints("vision.intermediate_layers_indices"),
 		},
 	}
 }

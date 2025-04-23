@@ -108,6 +108,10 @@ func (kv KV) Strings(key string, defaultValue ...[]string) []string {
 	return keyValue(kv, key, &array[string]{}).values
 }
 
+func (kv KV) Ints(key string, defaultValue ...[]int32) []int32 {
+	return keyValue(kv, key, &array[int32]{}).values
+}
+
 func (kv KV) Uints(key string, defaultValue ...[]uint32) []uint32 {
 	return keyValue(kv, key, &array[uint32]{}).values
 }
@@ -124,11 +128,18 @@ func (kv KV) OllamaEngineRequired() bool {
 }
 
 type valueTypes interface {
-	string | uint32 | uint64 | float32 | bool |
-		*array[string] | *array[uint32] | *array[uint64] | *array[float32] | *array[bool]
+	uint8 | int8 | uint16 | int16 |
+		uint32 | int32 | uint64 | int64 |
+		string | float32 | float64 | bool
 }
 
-func keyValue[T valueTypes](kv KV, key string, defaultValue ...T) T {
+type arrayValueTypes interface {
+	*array[uint8] | *array[int8] | *array[uint16] | *array[int16] |
+		*array[uint32] | *array[int32] | *array[uint64] | *array[int64] |
+		*array[string] | *array[float32] | *array[float64] | *array[bool]
+}
+
+func keyValue[T valueTypes | arrayValueTypes](kv KV, key string, defaultValue ...T) T {
 	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") {
 		key = kv.Architecture() + "." + key
 	}
@@ -450,9 +461,9 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 	case "mllama":
 		var visionTokens, tiles uint64 = 1601, 4
 
-		crossAttentionLayers := f.KV().Uints("attention.cross_attention_layers")
+		crossAttentionLayers := f.KV().Ints("attention.cross_attention_layers")
 		for i := range kv {
-			if slices.Contains(crossAttentionLayers, uint32(i)) {
+			if slices.Contains(crossAttentionLayers, int32(i)) {
 				kv[i] = headsKV * (embeddingHeadsK + embeddingHeadsV) *
 					4 * // sizeof(float32)
 					visionTokens *
