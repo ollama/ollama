@@ -2,6 +2,7 @@ package ggml
 
 import (
 	"maps"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -208,5 +209,63 @@ func TestTensorTypes(t *testing.T) {
 				t.Errorf("unexpected type size: got=%d want=%d", tensor.typeSize(), tt.typeSize)
 			}
 		})
+	}
+}
+
+func TestKeyValue(t *testing.T) {
+	kv := KV{
+		"general.architecture": "test",
+		"test.strings":         &array[string]{size: 3, values: []string{"a", "b", "c"}},
+		"test.float32s":        &array[float32]{size: 3, values: []float32{1.0, 2.0, 3.0}},
+		"test.int32s":          &array[int32]{size: 3, values: []int32{1, 2, 3}},
+		"test.uint32s":         &array[uint32]{size: 3, values: []uint32{1, 2, 3}},
+	}
+
+	if diff := cmp.Diff(kv.Strings("strings"), []string{"a", "b", "c"}); diff != "" {
+		t.Errorf("unexpected strings (-got +want):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(kv.Strings("nonexistent.strings"), []string(nil)); diff != "" {
+		t.Errorf("unexpected strings (-got +want):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(kv.Strings("default.strings", []string{"ollama"}), []string{"ollama"}); diff != "" {
+		t.Errorf("unexpected strings (-got +want):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(kv.Floats("float32s"), []float32{1.0, 2.0, 3.0}); diff != "" {
+		t.Errorf("unexpected float32s (-got +want):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(kv.Floats("nonexistent.float32s"), []float32(nil)); diff != "" {
+		t.Errorf("unexpected float32s (-got +want):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(kv.Floats("default.float32s", []float32{math.MaxFloat32}), []float32{math.MaxFloat32}); diff != "" {
+		t.Errorf("unexpected float32s (-got +want):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(kv.Ints("int32s"), []int32{1, 2, 3}); diff != "" {
+		t.Errorf("unexpected int8s (-got +want):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(kv.Ints("nonexistent.int32s"), []int32(nil)); diff != "" {
+		t.Errorf("unexpected int8s (-got +want):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(kv.Ints("default.int32s", []int32{math.MaxInt32}), []int32{math.MaxInt32}); diff != "" {
+		t.Errorf("unexpected int8s (-got +want):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(kv.Uints("uint32s"), []uint32{1, 2, 3}); diff != "" {
+		t.Errorf("unexpected uint8s (-got +want):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(kv.Uints("nonexistent.uint32s"), []uint32(nil)); diff != "" {
+		t.Errorf("unexpected uint8s (-got +want):\n%s", diff)
+	}
+
+	if diff := cmp.Diff(kv.Uints("default.uint32s", []uint32{math.MaxUint32}), []uint32{math.MaxUint32}); diff != "" {
+		t.Errorf("unexpected uint8s (-got +want):\n%s", diff)
 	}
 }

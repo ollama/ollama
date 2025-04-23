@@ -105,19 +105,19 @@ func (kv KV) Bool(key string, defaultValue ...bool) bool {
 }
 
 func (kv KV) Strings(key string, defaultValue ...[]string) []string {
-	return keyValue(kv, key, &array[string]{}).values
+	return keyValue(kv, key, &array[string]{values: append(defaultValue, []string(nil))[0]}).values
 }
 
 func (kv KV) Ints(key string, defaultValue ...[]int32) []int32 {
-	return keyValue(kv, key, &array[int32]{}).values
+	return keyValue(kv, key, &array[int32]{values: append(defaultValue, []int32(nil))[0]}).values
 }
 
 func (kv KV) Uints(key string, defaultValue ...[]uint32) []uint32 {
-	return keyValue(kv, key, &array[uint32]{}).values
+	return keyValue(kv, key, &array[uint32]{values: append(defaultValue, []uint32(nil))[0]}).values
 }
 
 func (kv KV) Floats(key string, defaultValue ...[]float32) []float32 {
-	return keyValue(kv, key, &array[float32]{}).values
+	return keyValue(kv, key, &array[float32]{values: append(defaultValue, []float32(nil))[0]}).values
 }
 
 func (kv KV) OllamaEngineRequired() bool {
