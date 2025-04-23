@@ -105,32 +105,15 @@ func (kv KV) Bool(key string, defaultValue ...bool) bool {
 }
 
 func (kv KV) Strings(key string, defaultValue ...[]string) []string {
-	r := keyValue(kv, key, &array{})
-	s := make([]string, r.size)
-	for i := range r.size {
-		s[i] = r.values[i].(string)
-	}
-
-	return s
+	return keyValue(kv, key, &array[string]{}).values
 }
 
 func (kv KV) Uints(key string, defaultValue ...[]uint32) []uint32 {
-	r := keyValue(kv, key, &array{})
-	s := make([]uint32, r.size)
-	for i := range r.size {
-		s[i] = uint32(r.values[i].(int32))
-	}
-
-	return s
+	return keyValue(kv, key, &array[uint32]{}).values
 }
 
 func (kv KV) Floats(key string, defaultValue ...[]float32) []float32 {
-	r := keyValue(kv, key, &array{})
-	s := make([]float32, r.size)
-	for i := range r.size {
-		s[i] = float32(r.values[i].(float32))
-	}
-	return s
+	return keyValue(kv, key, &array[float32]{}).values
 }
 
 func (kv KV) OllamaEngineRequired() bool {
@@ -140,7 +123,12 @@ func (kv KV) OllamaEngineRequired() bool {
 	}, kv.Architecture())
 }
 
-func keyValue[T string | uint32 | uint64 | float32 | *array | bool](kv KV, key string, defaultValue ...T) T {
+type valueTypes interface {
+	string | uint32 | uint64 | float32 | bool |
+		*array[string] | *array[uint32] | *array[uint64] | *array[float32] | *array[bool]
+}
+
+func keyValue[T valueTypes](kv KV, key string, defaultValue ...T) T {
 	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") {
 		key = kv.Architecture() + "." + key
 	}
@@ -420,7 +408,7 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 	embedding := f.KV().EmbeddingLength()
 	heads := f.KV().HeadCount()
 	headsKV := f.KV().HeadCountKV()
-	vocab := uint64(f.KV()["tokenizer.ggml.tokens"].(*array).size)
+	vocab := uint64(f.KV()["tokenizer.ggml.tokens"].(*array[string]).size)
 
 	embeddingHeads := f.KV().EmbeddingHeadCount()
 	embeddingHeadsK := f.KV().EmbeddingHeadCountK()
