@@ -136,6 +136,9 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	}
 
 	requiredMemory.CPU.Name = C.GoString(C.ggml_backend_dev_name(cpuDeviceBufferType.d))
+	var props C.struct_ggml_backend_dev_props
+	C.ggml_backend_dev_get_props(cpuDeviceBufferType.d, &props)
+	requiredMemory.CPU.UUID = C.GoString(props.uuid)
 	requiredMemory.CPU.Weights = make([]ml.Memory, blocks+1)
 	requiredMemory.CPU.Cache = make([]ml.Memory, blocks+1)
 
@@ -150,6 +153,9 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		})
 		btDeviceMemory[bt] = &requiredMemory.GPUs[i]
 		requiredMemory.GPUs[i].Name = C.GoString(C.ggml_backend_dev_name(d))
+		var props C.struct_ggml_backend_dev_props
+		C.ggml_backend_dev_get_props(d, &props)
+		requiredMemory.GPUs[i].UUID = C.GoString(props.uuid)
 		requiredMemory.GPUs[i].Weights = make([]ml.Memory, blocks+1)
 		requiredMemory.GPUs[i].Cache = make([]ml.Memory, blocks+1)
 	}
