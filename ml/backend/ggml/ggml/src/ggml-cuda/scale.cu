@@ -29,5 +29,31 @@ void ggml_cuda_op_scale(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     memcpy(&scale, (float *) dst->op_params + 0, sizeof(float));
     memcpy(&bias,  (float *) dst->op_params + 1, sizeof(float));
 
-    scale_f32_cuda(src0_d, dst_d, scale, bias, ggml_nelements(src0), stream);
+
+    const int64_t total = ggml_nelements(src0);
+
+    // query the device’s max 1D grid size:
+    cudaDeviceProp prop;
+    int dev = -1;
+    cudaGetDevice(&dev);
+    cudaGetDeviceProperties(&prop, dev);
+
+    // maximum elements per launch = maxGridSize[0] * blockDim.x,
+    // still also clamp to INT_MAX for the kernel’s 32-bit k parameter:
+    const int64_t max_by_grid = int64_t(prop.maxGridSize[0]) * CUDA_SCALE_BLOCK_SIZE;
+    const int64_t max_chunk = std::min<int64_t>(
+        max_by_grid,
+        std::numeric_limits<int>::max() - CUDA_SCALE_BLOCK_SIZE);
+
+    // launch in chunks of at most INT_MAX elements to stay within grid size
+    int64_t offset = 0;
+    while (offset < total) {
+        int chunk = static_cast<int>(std::min(max_chunk, total - offset));
+        scale_f32_cuda(src0_d + offset, dst_d + offset, scale, bias, chunk, stream);
+        offset += chunk;
+    }
+
+    // check for any launch errors
+    CUDA_CHECK(cudaGetLastError());
 }
+
