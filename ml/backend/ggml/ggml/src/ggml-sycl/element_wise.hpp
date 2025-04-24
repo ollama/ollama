@@ -10,27 +10,6 @@ T neg_infinity() {
     return -std::numeric_limits<T>::infinity();
 }
 
-static __dpct_inline__ float op_repeat(const float a, const float b) {
-    return b;
-    GGML_UNUSED(a);
-}
-
-static __dpct_inline__ float op_add(const float a, const float b) {
-    return a + b;
-}
-
-static __dpct_inline__ float op_sub(const float a, const float b) {
-    return a - b;
-}
-
-static __dpct_inline__ float op_mul(const float a, const float b) {
-    return a * b;
-}
-
-static __dpct_inline__ float op_div(const float a, const float b) {
-    return a / b;
-}
-
 template<typename T>
 struct typed_data {
     const T * src;
@@ -87,14 +66,5 @@ void ggml_sycl_pad(ggml_backend_sycl_context & ctx, ggml_tensor * dst);
 
 void ggml_sycl_clamp(ggml_backend_sycl_context & ctx, ggml_tensor * dst);
 
-// ---------
-
-void ggml_sycl_add(ggml_backend_sycl_context & ctx, ggml_tensor * dst);
-
-void ggml_sycl_sub(ggml_backend_sycl_context & ctx, ggml_tensor * dst);
-
-void ggml_sycl_mul(ggml_backend_sycl_context & ctx, ggml_tensor * dst);
-
-void ggml_sycl_div(ggml_backend_sycl_context & ctx, ggml_tensor * dst);
-
 #endif // GGML_SYCL_ELEMENTWISE_HPP
+

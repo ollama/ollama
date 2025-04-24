@@ -13,6 +13,7 @@
 #ifndef GGML_SYCL_BACKEND_HPP
 #define GGML_SYCL_BACKEND_HPP
 
+#include "binbcast.hpp"
 #include "concat.hpp"
 #include "common.hpp"
 #include "conv.hpp"
