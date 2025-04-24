@@ -4,18 +4,21 @@ package registry
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"maps"
 	"net/http"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/ollama/ollama/server/internal/cache/blob"
 	"github.com/ollama/ollama/server/internal/client/ollama"
+	"github.com/ollama/ollama/server/internal/internal/backoff"
 )
 
 // Local implements an http.Handler for handling local Ollama API model
@@ -241,6 +244,7 @@ func (s *Local) handleDelete(_ http.ResponseWriter, r *http.Request) error {
 }
 
 type progressUpdateJSON struct {
+	Error     string      `json:"error,omitempty,omitzero"`
 	Status    string      `json:"status,omitempty,omitzero"`
 	Digest    blob.Digest `json:"digest,omitempty,omitzero"`
 	Total     int64       `json:"total,omitempty,omitzero"`
@@ -265,68 +269,79 @@ func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
 			}
 			return err
 		}
-		return enc.Encode(progressUpdateJSON{Status: "success"})
+		enc.Encode(progressUpdateJSON{Status: "success"})
+		return nil
 	}
 
-	maybeFlush := func() {
+	var mu sync.Mutex
+	var progress []progressUpdateJSON
+	flushProgress := func() {
+		mu.Lock()
+		progress := slices.Clone(progress) // make a copy and release lock before encoding to the wire
+		mu.Unlock()
+		for _, p := range progress {
+			enc.Encode(p)
+		}
 		fl, _ := w.(http.Flusher)
 		if fl != nil {
 			fl.Flush()
 		}
 	}
-	defer maybeFlush()
 
-	var mu sync.Mutex
-	progress := make(map[*ollama.Layer]int64)
-
-	progressCopy := make(map[*ollama.Layer]int64, len(progress))
-	flushProgress := func() {
-		defer maybeFlush()
-
-		// TODO(bmizerany): Flushing every layer in one update doesn't
-		// scale well. We could flush only the modified layers or track
-		// the full download. Needs further consideration, though it's
-		// fine for now.
-		mu.Lock()
-		maps.Copy(progressCopy, progress)
-		mu.Unlock()
-		for l, n := range progressCopy {
-			enc.Encode(progressUpdateJSON{
-				Digest:    l.Digest,
-				Total:     l.Size,
-				Completed: n,
-			})
-		}
-	}
-	defer flushProgress()
-
-	t := time.NewTicker(1000 * time.Hour) // "unstarted" timer
+	t := time.NewTicker(1<<63 - 1) // "unstarted" timer
 	start := sync.OnceFunc(func() {
 		flushProgress() // flush initial state
 		t.Reset(100 * time.Millisecond)
 	})
 	ctx := ollama.WithTrace(r.Context(), &ollama.Trace{
 		Update: func(l *ollama.Layer, n int64, err error) {
-			if n > 0 {
-				// Block flushing progress updates until every
-				// layer is accounted for. Clients depend on a
-				// complete model size to calculate progress
-				// correctly; if they use an incomplete total,
-				// progress indicators would erratically jump
-				// as new layers are registered.
-				start()
+			if err != nil && !errors.Is(err, ollama.ErrCached) {
+				s.Logger.Error("pulling", "model", p.model(), "error", err)
+				return
 			}
-			mu.Lock()
-			progress[l] += n
-			mu.Unlock()
+
+			func() {
+				mu.Lock()
+				defer mu.Unlock()
+				for i, p := range progress {
+					if p.Digest == l.Digest {
+						progress[i].Completed = n
+						return
+					}
+				}
+				progress = append(progress, progressUpdateJSON{
+					Digest: l.Digest,
+					Total:  l.Size,
+				})
+			}()
+
+			// Block flushing progress updates until every
+			// layer is accounted for. Clients depend on a
+			// complete model size to calculate progress
+			// correctly; if they use an incomplete total,
+			// progress indicators would erratically jump
+			// as new layers are registered.
+			start()
 		},
 	})
 
 	done := make(chan error, 1)
-	go func() {
-		done <- s.Client.Pull(ctx, p.model())
+	go func() (err error) {
+		defer func() { done <- err }()
+		for _, err := range backoff.Loop(ctx, 3*time.Second) {
+			if err != nil {
+				return err
+			}
+			err := s.Client.Pull(ctx, p.model())
+			if canRetry(err) {
+				continue
+			}
+			return err
+		}
+		return nil
 	}()
 
+	enc.Encode(progressUpdateJSON{Status: "pulling manifest"})
 	for {
 		select {
 		case <-t.C:
@@ -334,14 +349,21 @@ func (s *Local) handlePull(w http.ResponseWriter, r *http.Request) error {
 		case err := <-done:
 			flushProgress()
 			if err != nil {
-				var status string
 				if errors.Is(err, ollama.ErrModelNotFound) {
-					status = fmt.Sprintf("error: model %q not found", p.model())
+					return &serverError{
+						Status:  404,
+						Code:    "not_found",
+						Message: fmt.Sprintf("model %q not found", p.model()),
+					}
 				} else {
-					status = fmt.Sprintf("error: %v", err)
+					return err
 				}
-				enc.Encode(progressUpdateJSON{Status: status})
 			}
+
+			// Emulate old client pull progress (for now):
+			enc.Encode(progressUpdateJSON{Status: "verifying sha256 digest"})
+			enc.Encode(progressUpdateJSON{Status: "writing manifest"})
+			enc.Encode(progressUpdateJSON{Status: "success"})
 			return nil
 		}
 	}
@@ -370,4 +392,21 @@ func decodeUserJSON[T any](r io.Reader) (T, error) {
 		err = &serverError{Status: 400, Message: "empty request body", Code: "bad_request"}
 	}
 	return zero, err
+}
+
+func canRetry(err error) bool {
+	if err == nil {
+		return false
+	}
+	var oe *ollama.Error
+	if errors.As(err, &oe) {
+		return oe.Temporary()
+	}
+	s := err.Error()
+	return cmp.Or(
+		errors.Is(err, context.DeadlineExceeded),
+		strings.Contains(s, "unreachable"),
+		strings.Contains(s, "no route to host"),
+		strings.Contains(s, "connection reset by peer"),
+	)
 }
