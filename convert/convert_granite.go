@@ -14,26 +14,7 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 )
 
-type HFBaseModelEntry struct {
-	ModelBaseEntryName         string // general.base_model.0.name str         = Granite 3.1 3b A800M Base
-	ModelBaseEntryOrganization string // general.base_model.0.organization str = Ibm Granite
-	ModelBaseEntryRepoUrl      string // general.base_model.0.repo_url str     = https://huggingface.co/ibm-granite/gr...
-}
-
-type HFGeneralModelMetadata struct {
-	ModelType        string
-	ModelName        string
-	ModelLicense     string
-	ModelFineTune    string
-	ModelBaseCount   uint32 // general.base_model.count u32                    = 1
-	ModelBaseName    string // general.basename str                            = granite-3.1
-	ModelBaseEntries []HFBaseModelEntry
-	ModelTags        []string
-	// TBD: general.file_type 	MOSTLY_F16
-}
-
 type graniteModel struct {
-	HFGeneralModelMetadata
 	GraniteMoEParameters
 	ModelParameters
 	ModelType             string  `json:"model_type"` // TBD: Why is this not in ModelParameters?
@@ -103,19 +84,10 @@ func (p *graniteModel) KV(t *Tokenizer) ggml.KV {
 	kv := p.ModelParameters.KV(t)
 
 	// General metadata
-	// TBD from reading the HF "model card" (i.e., README.md) YAML metadata
 	kv["general.type"] = "model"
-	kv["general.name"] = "Granite 3.1 3b A800M Instruct"
-	kv["general.finetune"] = "instruct"
-	kv["general.license"] = "apache-2.0"
-	kv["general.base_model.count"] = uint32(1)
-	kv["general.basename"] = "granite-3.1"
-	kv["general.base_model.0.name"] = "Granite 3.1 3b A800M Base"
-	kv["general.base_model.0.organization"] = "Ibm Granite"
-	kv["general.base_model.0.repo_url"] = "https://huggingface.co/ibm-granite/granite-3.1-3b-a800m-base"
-	kv["general.size_label"] = "3B-a800M"
-	kv["general.tags"] = "[language, granite-3.1, text-generation]"
-	kv["general.file_type"] = uint32(1) // config.json, "torch_dtype": "bfloat16", ???
+
+	// SHOULD be set from config.json, "torch_dtype", but "finetunes" can alter; often overridden looking at first_tensor.dtype
+	kv["general.file_type"] = uint32(1) // GGUF constant (LlamaFileType(IntEnum)), MOSTLY_F16 = 1
 
 	// architecture-specific values (i.e. from HF config.json, tokenizer.json, etc.)
 	modelType := p.ModelType
@@ -213,16 +185,11 @@ func (p *graniteModel) KV(t *Tokenizer) ggml.KV {
 // - i.e. (batch size, sequence length, embedding dimension)
 // as represented in the model's config.json:
 //   - "num_local_experts": 40, "intermediate_size": 512, "hidden_size": 1536,
-//
-// However, for GraniteMoe models in the HF safetensor format, the "gate" and "up" tensors
-// are merged in a single tensor (and need to be "sliced" in half from 1024->512):
-// - "model.layers.1.block_sparse_moe.input_linear.weight":"shape":[40,1024,1536], ...
 func (p *graniteModel) getFeedForwardLengthFromFFNShape(ffnTensor []uint64) (uint64, error) {
 	if len(ffnTensor) != 3 {
 		err := fmt.Errorf("FFN Tensor must be size 3, actual: %v", len(ffnTensor))
 		return 0, err
 	}
-	// fmt.Printf("ffnTensor: %v\n", ffnTensor)
 	return ffnTensor[1], nil
 }
 
@@ -246,9 +213,8 @@ func (p *graniteModel) Tensors(ts []Tensor) []ggml.Tensor {
 			t.SetRepacker(p.repack)
 		} else if index := strings.Index(t.Name(), "ffn_gate_exps.weight"); index > -1 {
 			// In modeling_granitemoe, the JetMoe implementation of parallel experts
-			// is used. This essentially merges w1 and w3 into a single tensor with 2x
-			// the hidden size that is then split during forward. To keep compatibility
-			// with existing mixtral support, we pull them apart here.
+			// is used. This essentially merges w1 (i.e., "ffn_gate_exp") and w3 (i.e., "ffn_gate_up")
+			// into a single tensor with 2x the hidden size that is then split during forward.
 			merged_ffn_length, err := p.getFeedForwardLengthFromFFNShape(t.Shape())
 			if err != nil {
 				slog.Error(err.Error())
@@ -277,14 +243,6 @@ func (p *graniteModel) Tensors(ts []Tensor) []ggml.Tensor {
 
 			up := t.Clone()
 			up.SetRepacker(p.getMoESparseInputRepacker(nil, tensor.S(int_merged_ffn_length/2, int_merged_ffn_length), nil))
-
-			msg1 := fmt.Sprintf("Slicing Tensor: `%s` (safetensor), Shape(): %v into:\n", t.Name(), t.Shape())
-			msg2 := fmt.Sprintf(">>(GGML) Tensor: Name: `%s`, Shape(): %v, using tensor.Slice(start,end,step): %v\n", t.Name(), newFfnShape, tensor.S(0, int_merged_ffn_length/2))
-			msg3 := fmt.Sprintf(">>(GGML) Tensor: Name:`%s`, Shape(): %v, using tensor.Slice(start,end,step): %v\n", ffn_gate_up_exp_name, newFfnShape, tensor.S(int_merged_ffn_length/2, int_merged_ffn_length))
-			slog.Info("=============================================")
-			slog.Info(msg1)
-			slog.Info(msg2)
-			slog.Info(msg3)
 
 			gtGate := &ggml.Tensor{
 				Name:     t.Name(),
@@ -332,16 +290,10 @@ func (p *graniteModel) repack(name string, data []float32, shape []uint64) ([]fl
 		return nil, fmt.Errorf("unknown tensor for repack: %s", name)
 	}
 
-	msg := fmt.Sprintf("repack(): name: %s, shape: %v, dims: %v, length: %v\n", name, shape, dims, len(data))
-	fmt.Printf(msg)
-
 	n := tensor.New(tensor.WithShape(dims...), tensor.WithBacking(data))
 	if err := n.Reshape(append([]int{int(heads), 2, dims[0] / int(heads) / 2}, dims[1:]...)...); err != nil {
 		return nil, err
 	}
-
-	msg = fmt.Sprintf("repack(): [BEFORE T()] tensor.New: Shape(): %v, Dims(): %v, DataSize: %v\n", n.Shape(), n.Dims(), n.DataSize())
-	fmt.Printf(msg)
 
 	if err := n.T(0, 2, 1, 3); err != nil {
 		return nil, err
@@ -354,9 +306,6 @@ func (p *graniteModel) repack(name string, data []float32, shape []uint64) ([]fl
 	if err := n.Transpose(); err != nil {
 		return nil, err
 	}
-
-	msg = fmt.Sprintf("repack(): [After Transpose()] tensor.New: Shape(): %v, Dims(): %v, DataSize: %v\n", n.Shape(), n.Dims(), n.DataSize())
-	fmt.Printf(msg)
 
 	ts, err := native.SelectF32(n, 1)
 	if err != nil {
@@ -371,54 +320,40 @@ func (p *graniteModel) repack(name string, data []float32, shape []uint64) ([]fl
 	return f32s, nil
 }
 
+// GraniteMoe models, in the HF safetensor format, are encoded such that the
+// "ffn_gate_exps" and "ffn_gate_up" tensors are merged into the "ffn_gate_exps" tensor
+// and need to be "sliced" in half from 1024->512 in this "repack" function.
 func (p *graniteModel) getMoESparseInputRepacker(tSlice ...tensor.Slice) Repacker {
 	return func(name string, data []float32, shape []uint64) (f32s []float32, err error) {
 		dims := make([]int, len(shape))
 		for i, dim := range shape {
 			dims[i] = int(dim)
 		}
-		msg := fmt.Sprintf("Repacker(): name: %s, shape: %v, dims: %v, length: %v\n", name, shape, dims, len(data))
-		fmt.Printf(msg)
 
 		var t tensor.Tensor = tensor.New(tensor.WithShape(dims...), tensor.WithBacking(data))
 
-		msg = fmt.Sprintf("Repacker(): [BEFORE Slice()] tensor.New: Shape(): %v, Dims(): %v, DataSize: %v\n", t.Shape(), t.Dims(), t.DataSize())
-		fmt.Printf(msg)
-
+		// Note: we should only be slicing the dim[1] value
 		if tSlice != nil {
-			for idx, s := range tSlice {
-				if s != nil {
-					msg = fmt.Sprintf("Repacker(): tSlice[%v]: start: %v, end: %v, step: %v\n", idx, s.Start(), s.End(), s.Step())
-					fmt.Printf(msg)
-				}
-			}
+			slog.Debug(fmt.Sprintf("slicing: tensor: %s using tSlice[1]: start: %v, end: %v, step: %v\n", name, tSlice[1].Start(), tSlice[1].End(), tSlice[1].Step()))
 			t, err = t.Slice(tSlice...)
 			if err != nil {
 				return nil, err
 			}
+		} else {
+			slog.Error(fmt.Sprintf("Cannot repack tensor %s. Slice is nil", name))
+			os.Exit(1)
 		}
-		msg = fmt.Sprintf("Repacker(): [AFTER Slice()] tensor.New: Shape(): %v, Dims(): %v, DataSize: %v\n", t.Shape(), t.Dims(), t.DataSize())
-		fmt.Printf(msg)
 
 		// "realize" the data for the "Slice" (which only creates a view)
 		t = tensor.Materialize(t)
-
-		msg = fmt.Sprintf("REPACK: tSlice [Materialize]: Dims(): %v, Dtype(): %v, DataSize(): %v\n", t.Dims(), t.Dtype(), t.DataSize())
-		fmt.Printf(msg)
 
 		// flatten tensor so it can be return as a vector
 		if err := t.Reshape(t.Shape().TotalSize()); err != nil {
 			return nil, err
 		}
 
-		msg = fmt.Sprintf("Repacker(): [AFTER Reshape()] tensor.New: Shape(): %v, Dims(): %v, DataSize: %v\n", t.Shape(), t.Dims(), t.DataSize())
-		fmt.Printf(msg)
-
+		// convert tensor to float32 slice
 		f32s, err = native.VectorF32(t.(*tensor.Dense))
-
-		msg = fmt.Sprintf("Repacker(): VectorF32(): len(f32s): %v,\n", len(f32s))
-		fmt.Printf(msg)
-
 		return f32s, err
 	}
 }
