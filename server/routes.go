@@ -1527,15 +1527,16 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		var sb strings.Builder
 		var toolCallIndex int = 0
 		var sentWithTools int = 0
-		var prefix string
-		// var specialToken string
-		_, specialToken, _ := m.GetToolCallFormat(sb.String())
+		// var prefix string
+		// var templateToolToken string
+		_, templateToolToken, _ := m.GetToolCallFormat()
+		fmt.Println("special token", templateToolToken)
 
 		var minDuration time.Duration = math.MaxInt64
 		var maxDuration time.Duration
 		var totalDuration time.Duration
 		var checkCount int
-		const MAX_TOOL_TOKENS = 6
+		const maxToolTokens = 1
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
@@ -1561,9 +1562,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				slog.Debug("total duration", "duration", totalDuration)
 				slog.Debug("check count", "count", checkCount)
 				// slog.Debug("average duration", "duration", totalDuration/time.Duration(checkCount))
-				// if sb.Len() > 0 {
-				// 	res.Message.Content = sb.String()
-				// }
+				if sb.Len() > 0 {
+					res.Message.Content = sb.String()
+				}
 				res.DoneReason = r.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
@@ -1585,8 +1586,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			// TODO: if we are deriving the tool token, then a heuristic must be applied to stream eventually
 			// TODO: if the prefix check fails, send the content downstream and reset the builder
 			startTime := time.Now()
-			if len(req.Tools) > 0 && sentWithTools < MAX_TOOL_TOKENS {
-				toolCalls, partial, ok := m.ParseToolCallsStream(sb.String(), &prefix, &specialToken)
+			if len(req.Tools) > 0 && sentWithTools < maxToolTokens {
+				toolCalls, partial, ok := m.ParseToolCallsNew(sb.String(), &templateToolToken)
 				duration := time.Since(startTime)
 				checkCount++
 				minDuration = min(minDuration, duration)
@@ -1605,8 +1606,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						toolCallIndex++
 					}
 					sentWithTools = 0
-					prefix = ""
-					specialToken = ""
+					// prefix = ""
+					templateToolToken = ""
 					res.Message.Content = ""
 					sb.Reset()
 					ch <- res
@@ -1630,11 +1631,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		var resp api.ChatResponse
 		var sb strings.Builder
 		var toolCalls []api.ToolCall
-		var prefix string
-		var specialToken string
-		const MAX_TOOL_TOKENS = 6
+		const MAX_TOOL_TOKENS = 1
 		sentWithTools := 0
 		var tb strings.Builder
+		_, templateToolToken, _ := m.GetToolCallFormat()
 		for rr := range ch {
 			switch t := rr.(type) {
 			case api.ChatResponse:
@@ -1642,14 +1642,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				resp = t
 				if len(req.Tools) > 0 && sentWithTools < MAX_TOOL_TOKENS {
 					tb.WriteString(t.Message.Content)
-					if tcs, partial, ok := m.ParseToolCallsStream(tb.String(), &prefix, &specialToken); ok {
+					if tcs, partial, ok := m.ParseToolCallsNew(tb.String(), &templateToolToken); ok {
 						if !partial {
 							// resp.Message.ToolCalls = toolCalls
 							toolCalls = append(toolCalls, tcs...)
 							resp.Message.Content = ""
 							tb.Reset()
-							prefix = ""
-							specialToken = ""
 						}
 					} else {
 						// equivalent to no partial - send the content downstream
