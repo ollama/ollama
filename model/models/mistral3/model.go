@@ -26,6 +26,9 @@ type Model struct {
 // Implement MultimodalProcessor interface
 var _ model.MultimodalProcessor = (*Model)(nil)
 
+// Implement TextProcessor interface
+var _ model.TextProcessor = (*Model)(nil)
+
 func New(c fs.Config) (model.Model, error) {
 	textModel, err := NewTextModel(c)
 	if err != nil {

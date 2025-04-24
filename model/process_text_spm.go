@@ -17,6 +17,10 @@ type SentencePieceModel struct {
 
 var _ TextProcessor = (*SentencePieceModel)(nil)
 
+func (spm SentencePieceModel) Vocabulary() *Vocabulary {
+	return spm.vocab
+}
+
 func NewSentencePieceModel(vocab *Vocabulary) SentencePieceModel {
 	slog.Debug("Tokens", "num tokens", len(vocab.Values), "vals", vocab.Values[:5], "scores", vocab.Scores[:5], "types", vocab.Types[:5])
 
