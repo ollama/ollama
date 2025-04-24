@@ -47,6 +47,7 @@ If Ollama is already running, Quit the tray application and relaunch it from the
 ## API Access
 
 Here's a quick example showing API access from `powershell`
+
 ```powershell
 (Invoke-WebRequest -method POST -Body '{"model":"llama3.2", "prompt":"Why is the sky blue?", "stream": false}' -uri http://localhost:11434/api/generate ).Content | ConvertFrom-json
 ```
@@ -54,14 +55,13 @@ Here's a quick example showing API access from `powershell`
 ## Troubleshooting
 
 Ollama on Windows stores files in a few different locations.  You can view them in
-the explorer window by hitting `<cmd>+R` and type in:
+the explorer window by hitting `<Ctrl>+R` and type in:
 - `explorer %LOCALAPPDATA%\Ollama` contains logs, and downloaded updates
     - *app.log* contains most resent logs from the GUI application
     - *server.log* contains the most recent server logs
     - *upgrade.log* contains log output for upgrades
 - `explorer %LOCALAPPDATA%\Programs\Ollama` contains the binaries (The installer adds this to your user PATH)
 - `explorer %HOMEPATH%\.ollama` contains models and configuration
-- `explorer %TEMP%` contains temporary executable files in one or more `ollama*` directories
 
 ## Uninstall
 
@@ -80,9 +80,11 @@ help you keep up to date.
 
 If you'd like to install or integrate Ollama as a service, a standalone
 `ollama-windows-amd64.zip` zip file is available containing only the Ollama CLI
-and GPU library dependencies for Nvidia and AMD. This allows for embedding
-Ollama in existing applications, or running it as a system service via `ollama
-serve` with tools such as [NSSM](https://nssm.cc/).
+and GPU library dependencies for Nvidia.  If you have an AMD GPU, also download
+and extract the additional ROCm package `ollama-windows-amd64-rocm.zip` into the
+same directory.  This allows for embedding Ollama in existing applications, or
+running it as a system service via `ollama serve` with tools such as
+[NSSM](https://nssm.cc/). 
 
 > [!NOTE]  
 > If you are upgrading from a prior version, you should remove the old directories first.

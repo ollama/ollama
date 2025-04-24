@@ -10,11 +10,13 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/spf13/cobra"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 func TestShowInfo(t *testing.T) {
@@ -26,7 +28,7 @@ func TestShowInfo(t *testing.T) {
 				ParameterSize:     "7B",
 				QuantizationLevel: "FP16",
 			},
-		}, &b); err != nil {
+		}, false, &b); err != nil {
 			t.Fatal(err)
 		}
 
@@ -56,7 +58,7 @@ func TestShowInfo(t *testing.T) {
 				ParameterSize:     "7B",
 				QuantizationLevel: "FP16",
 			},
-		}, &b); err != nil {
+		}, false, &b); err != nil {
 			t.Fatal(err)
 		}
 
@@ -66,6 +68,60 @@ func TestShowInfo(t *testing.T) {
     context length      0       
     embedding length    0       
     quantization        FP16    
+
+`
+		if diff := cmp.Diff(expect, b.String()); diff != "" {
+			t.Errorf("unexpected output (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("verbose model", func(t *testing.T) {
+		var b bytes.Buffer
+		if err := showInfo(&api.ShowResponse{
+			Details: api.ModelDetails{
+				Family:            "test",
+				ParameterSize:     "8B",
+				QuantizationLevel: "FP16",
+			},
+			Parameters: `
+			stop up`,
+			ModelInfo: map[string]any{
+				"general.architecture":    "test",
+				"general.parameter_count": float64(8_000_000_000),
+				"some.true_bool":          true,
+				"some.false_bool":         false,
+				"test.context_length":     float64(1000),
+				"test.embedding_length":   float64(11434),
+			},
+			Tensors: []api.Tensor{
+				{Name: "blk.0.attn_k.weight", Type: "BF16", Shape: []uint64{42, 3117}},
+				{Name: "blk.0.attn_q.weight", Type: "FP16", Shape: []uint64{3117, 42}},
+			},
+		}, true, &b); err != nil {
+			t.Fatal(err)
+		}
+
+		expect := `  Model
+    architecture        test     
+    parameters          8B       
+    context length      1000     
+    embedding length    11434    
+    quantization        FP16     
+
+  Parameters
+    stop    up    
+
+  Metadata
+    general.architecture       test     
+    general.parameter_count    8e+09    
+    some.false_bool            false    
+    some.true_bool             true     
+    test.context_length        1000     
+    test.embedding_length      11434    
+
+  Tensors
+    blk.0.attn_k.weight    BF16    [42 3117]    
+    blk.0.attn_q.weight    FP16    [3117 42]    
 
 `
 		if diff := cmp.Diff(expect, b.String()); diff != "" {
@@ -88,7 +144,7 @@ func TestShowInfo(t *testing.T) {
 			stop you
 			stop up
 			temperature 99`,
-		}, &b); err != nil {
+		}, false, &b); err != nil {
 			t.Fatal(err)
 		}
 
@@ -125,7 +181,7 @@ func TestShowInfo(t *testing.T) {
 				"clip.vision.embedding_length": float64(0),
 				"clip.vision.projection_dim":   float64(0),
 			},
-		}, &b); err != nil {
+		}, false, &b); err != nil {
 			t.Fatal(err)
 		}
 
@@ -158,7 +214,7 @@ func TestShowInfo(t *testing.T) {
 Ahoy, matey!
 Weigh anchor!
 			`,
-		}, &b); err != nil {
+		}, false, &b); err != nil {
 			t.Fatal(err)
 		}
 
@@ -187,7 +243,7 @@ Weigh anchor!
 				QuantizationLevel: "FP16",
 			},
 			License: license,
-		}, &b); err != nil {
+		}, false, &b); err != nil {
 			t.Fatal(err)
 		}
 
@@ -201,6 +257,34 @@ Weigh anchor!
     Copyright (c) Ollama    
 
 `
+		if diff := cmp.Diff(expect, b.String()); diff != "" {
+			t.Errorf("unexpected output (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("capabilities", func(t *testing.T) {
+		var b bytes.Buffer
+		if err := showInfo(&api.ShowResponse{
+			Details: api.ModelDetails{
+				Family:            "test",
+				ParameterSize:     "7B",
+				QuantizationLevel: "FP16",
+			},
+			Capabilities: []model.Capability{model.CapabilityVision, model.CapabilityTools},
+		}, false, &b); err != nil {
+			t.Fatal(err)
+		}
+
+		expect := "  Model\n" +
+			"    architecture    test    \n" +
+			"    parameters      7B      \n" +
+			"    quantization    FP16    \n" +
+			"\n" +
+			"  Capabilities\n" +
+			"    vision    \n" +
+			"    tools     \n" +
+			"\n"
+
 		if diff := cmp.Diff(expect, b.String()); diff != "" {
 			t.Errorf("unexpected output (-want +got):\n%s", diff)
 		}
@@ -279,7 +363,7 @@ func TestGetModelfileName(t *testing.T) {
 			name:          "no modelfile specified, no modelfile exists",
 			modelfileName: "",
 			fileExists:    false,
-			expectedName:  "Modelfile",
+			expectedName:  "",
 			expectedErr:   os.ErrNotExist,
 		},
 		{
@@ -293,7 +377,7 @@ func TestGetModelfileName(t *testing.T) {
 			name:          "modelfile specified, no modelfile exists",
 			modelfileName: "crazyfile",
 			fileExists:    false,
-			expectedName:  "crazyfile",
+			expectedName:  "",
 			expectedErr:   os.ErrNotExist,
 		},
 		{
@@ -331,6 +415,7 @@ func TestGetModelfileName(t *testing.T) {
 				if err != nil {
 					t.Fatalf("temp modelfile creation failed: %v", err)
 				}
+				defer tempFile.Close()
 
 				expectedFilename = tempFile.Name()
 				err = cmd.Flags().Set("file", expectedFilename)
@@ -490,6 +575,96 @@ func TestPushHandler(t *testing.T) {
 	}
 }
 
+func TestListHandler(t *testing.T) {
+	tests := []struct {
+		name           string
+		args           []string
+		serverResponse []api.ListModelResponse
+		expectedError  string
+		expectedOutput string
+	}{
+		{
+			name: "list all models",
+			args: []string{},
+			serverResponse: []api.ListModelResponse{
+				{Name: "model1", Digest: "sha256:abc123", Size: 1024, ModifiedAt: time.Now().Add(-24 * time.Hour)},
+				{Name: "model2", Digest: "sha256:def456", Size: 2048, ModifiedAt: time.Now().Add(-48 * time.Hour)},
+			},
+			expectedOutput: "NAME      ID              SIZE      MODIFIED     \n" +
+				"model1    sha256:abc12    1.0 KB    24 hours ago    \n" +
+				"model2    sha256:def45    2.0 KB    2 days ago      \n",
+		},
+		{
+			name: "filter models by prefix",
+			args: []string{"model1"},
+			serverResponse: []api.ListModelResponse{
+				{Name: "model1", Digest: "sha256:abc123", Size: 1024, ModifiedAt: time.Now().Add(-24 * time.Hour)},
+				{Name: "model2", Digest: "sha256:def456", Size: 2048, ModifiedAt: time.Now().Add(-24 * time.Hour)},
+			},
+			expectedOutput: "NAME      ID              SIZE      MODIFIED     \n" +
+				"model1    sha256:abc12    1.0 KB    24 hours ago    \n",
+		},
+		{
+			name:          "server error",
+			args:          []string{},
+			expectedError: "server error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/tags" || r.Method != http.MethodGet {
+					t.Errorf("unexpected request to %s %s", r.Method, r.URL.Path)
+					http.Error(w, "not found", http.StatusNotFound)
+					return
+				}
+
+				if tt.expectedError != "" {
+					http.Error(w, tt.expectedError, http.StatusInternalServerError)
+					return
+				}
+
+				response := api.ListResponse{Models: tt.serverResponse}
+				if err := json.NewEncoder(w).Encode(response); err != nil {
+					t.Fatal(err)
+				}
+			}))
+			defer mockServer.Close()
+
+			t.Setenv("OLLAMA_HOST", mockServer.URL)
+
+			cmd := &cobra.Command{}
+			cmd.SetContext(context.TODO())
+
+			// Capture stdout
+			oldStdout := os.Stdout
+			r, w, _ := os.Pipe()
+			os.Stdout = w
+
+			err := ListHandler(cmd, tt.args)
+
+			// Restore stdout and get output
+			w.Close()
+			os.Stdout = oldStdout
+			output, _ := io.ReadAll(r)
+
+			if tt.expectedError == "" {
+				if err != nil {
+					t.Errorf("expected no error, got %v", err)
+				}
+				if got := string(output); got != tt.expectedOutput {
+					t.Errorf("expected output:\n%s\ngot:\n%s", tt.expectedOutput, got)
+				}
+			} else {
+				if err == nil || !strings.Contains(err.Error(), tt.expectedError) {
+					t.Errorf("expected error containing %q, got %v", tt.expectedError, err)
+				}
+			}
+		})
+	}
+}
+
 func TestCreateHandler(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -612,6 +787,135 @@ func TestCreateHandler(t *testing.T) {
 						t.Errorf("expected output %q, got %q", tt.expectedOutput, got)
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestNewCreateRequest(t *testing.T) {
+	tests := []struct {
+		name     string
+		from     string
+		opts     runOptions
+		expected *api.CreateRequest
+	}{
+		{
+			"basic test",
+			"newmodel",
+			runOptions{
+				Model:       "mymodel",
+				ParentModel: "",
+				Prompt:      "You are a fun AI agent",
+				Messages:    []api.Message{},
+				WordWrap:    true,
+			},
+			&api.CreateRequest{
+				From:  "mymodel",
+				Model: "newmodel",
+			},
+		},
+		{
+			"parent model test",
+			"newmodel",
+			runOptions{
+				Model:       "mymodel",
+				ParentModel: "parentmodel",
+				Messages:    []api.Message{},
+				WordWrap:    true,
+			},
+			&api.CreateRequest{
+				From:  "parentmodel",
+				Model: "newmodel",
+			},
+		},
+		{
+			"parent model as filepath test",
+			"newmodel",
+			runOptions{
+				Model:       "mymodel",
+				ParentModel: "/some/file/like/etc/passwd",
+				Messages:    []api.Message{},
+				WordWrap:    true,
+			},
+			&api.CreateRequest{
+				From:  "mymodel",
+				Model: "newmodel",
+			},
+		},
+		{
+			"parent model as windows filepath test",
+			"newmodel",
+			runOptions{
+				Model:       "mymodel",
+				ParentModel: "D:\\some\\file\\like\\etc\\passwd",
+				Messages:    []api.Message{},
+				WordWrap:    true,
+			},
+			&api.CreateRequest{
+				From:  "mymodel",
+				Model: "newmodel",
+			},
+		},
+		{
+			"options test",
+			"newmodel",
+			runOptions{
+				Model:       "mymodel",
+				ParentModel: "parentmodel",
+				Options: map[string]any{
+					"temperature": 1.0,
+				},
+			},
+			&api.CreateRequest{
+				From:  "parentmodel",
+				Model: "newmodel",
+				Parameters: map[string]any{
+					"temperature": 1.0,
+				},
+			},
+		},
+		{
+			"messages test",
+			"newmodel",
+			runOptions{
+				Model:       "mymodel",
+				ParentModel: "parentmodel",
+				System:      "You are a fun AI agent",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "hello there!",
+					},
+					{
+						Role:    "assistant",
+						Content: "hello to you!",
+					},
+				},
+				WordWrap: true,
+			},
+			&api.CreateRequest{
+				From:   "parentmodel",
+				Model:  "newmodel",
+				System: "You are a fun AI agent",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "hello there!",
+					},
+					{
+						Role:    "assistant",
+						Content: "hello to you!",
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			actual := NewCreateRequest(tt.from, tt.opts)
+			if !cmp.Equal(actual, tt.expected) {
+				t.Errorf("expected output %#v, got %#v", tt.expected, actual)
 			}
 		})
 	}

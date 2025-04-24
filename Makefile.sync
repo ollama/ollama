@@ -1,0 +1,60 @@
+UPSTREAM=https://github.com/ggerganov/llama.cpp.git
+WORKDIR=llama/vendor
+FETCH_HEAD=71e90e8813f90097701e62f7fce137d96ddf41e2
+
+.PHONY: help
+help:
+	@echo "Available targets:"
+	@echo "    sync                 Sync with upstream repositories"
+	@echo "    checkout             Checkout upstream repository"
+	@echo "    apply-patches        Apply patches to local repository"
+	@echo "    format-patches       Format patches from local repository"
+	@echo "    clean                Clean local repository"
+	@echo
+	@echo "Example:"
+	@echo "    make -f $(lastword $(MAKEFILE_LIST)) clean sync"
+
+.PHONY: sync
+sync: llama/build-info.cpp llama/llama.cpp ml/backend/ggml/ggml
+
+.PHONY: llama/build-info.cpp
+llama/build-info.cpp: llama/build-info.cpp.in
+	sed -e 's|@FETCH_HEAD@|$(FETCH_HEAD)|' $< > $@
+
+.PHONY: llama/llama.cpp
+llama/llama.cpp: llama/vendor/
+	rsync -arvzc -f "merge $@/.rsync-filter" $< $@
+
+.PHONY: ml/backend/ggml/ggml
+ml/backend/ggml/ggml: llama/vendor/ggml/
+	rsync -arvzc -f "merge $@/.rsync-filter" $< $@
+
+PATCHES=$(wildcard llama/patches/*.patch)
+
+.PHONY: apply-patches
+.NOTPARALLEL:
+apply-patches: $(addsuffix ed, $(PATCHES))
+
+%.patched: %.patch
+	@if git -c user.name=nobody -c 'user.email=<>' -C $(WORKDIR) am -3 $(realpath $<); then touch $@; else git -C $(WORKDIR) am --abort; exit 1; fi
+
+.PHONY: checkout
+checkout: $(WORKDIR)
+	git -C $(WORKDIR) fetch
+	git -C $(WORKDIR) checkout -f $(FETCH_HEAD)
+
+$(WORKDIR):
+	git clone $(UPSTREAM) $(WORKDIR)
+
+.PHONE: format-patches
+format-patches: llama/patches
+	git -C $(WORKDIR) format-patch \
+		--no-signature \
+		--no-numbered \
+		--zero-commit \
+		-o $(realpath $<) \
+		$(FETCH_HEAD)
+
+.PHONE: clean
+clean: checkout
+	$(RM) $(addsuffix ed, $(PATCHES))

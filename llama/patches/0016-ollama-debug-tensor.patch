@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: jmorganca <jmorganca@gmail.com>
+Date: Tue, 8 Apr 2025 20:36:41 -0700
+Subject: [PATCH] ollama debug tensor
+
+---
+ ggml/src/ggml-cpu/ggml-cpu.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
+index 432942bf..6d4abe4c 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -15,6 +15,8 @@
+ #include "ops.h"
+ #include "ggml.h"
+ 
++#include "ollama-debug.h"
++
+ #if defined(_MSC_VER) || defined(__MINGW32__)
+ #include <malloc.h> // using malloc.h with MSC/MINGW
+ #elif !defined(__FreeBSD__) && !defined(__NetBSD__) && !defined(__OpenBSD__)
+@@ -2854,6 +2856,10 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
+ 
+         ggml_compute_forward(&params, node);
+ 
++#ifdef OLLAMA_DEBUG
++        ollama_debug(node, true);
++#endif
++
+         if (state->ith == 0 && cplan->abort_callback &&
+                 cplan->abort_callback(cplan->abort_callback_data)) {
+             atomic_store_explicit(&tp->abort, node_n + 1, memory_order_relaxed);

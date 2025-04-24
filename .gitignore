@@ -4,12 +4,13 @@
 .venv
 .swp
 dist
-ollama
+build
 .cache
 *.exe
 .idea
 test_data
 *.crt
-llama/build
 __debug_bin*
+llama/build
 llama/vendor
+/ollama

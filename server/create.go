@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -21,8 +22,8 @@ import (
 	"github.com/ollama/ollama/convert"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llama"
-	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -34,6 +35,7 @@ var (
 	errOnlyGGUFSupported       = errors.New("supplied file was not in GGUF format")
 	errUnknownType             = errors.New("unknown type")
 	errNeitherFromOrFiles      = errors.New("neither 'from' or 'files' was specified")
+	errFilePath                = errors.New("file path must be relative")
 )
 
 func (s *Server) CreateHandler(c *gin.Context) {
@@ -44,6 +46,13 @@ func (s *Server) CreateHandler(c *gin.Context) {
 	} else if err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	for v := range r.Files {
+		if !fs.ValidPath(v) {
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": errFilePath.Error()})
+			return
+		}
 	}
 
 	name := model.ParseName(cmp.Or(r.Model, r.Name))
@@ -104,7 +113,7 @@ func (s *Server) CreateHandler(c *gin.Context) {
 		if r.Adapters != nil {
 			adapterLayers, err = convertModelFromFiles(r.Adapters, baseLayers, true, fn)
 			if err != nil {
-				for _, badReq := range []error{errNoFilesProvided, errOnlyOneAdapterSupported, errOnlyGGUFSupported, errUnknownType} {
+				for _, badReq := range []error{errNoFilesProvided, errOnlyOneAdapterSupported, errOnlyGGUFSupported, errUnknownType, errFilePath} {
 					if errors.Is(err, badReq) {
 						ch <- gin.H{"error": err.Error(), "status": http.StatusBadRequest}
 						return
@@ -178,12 +187,37 @@ func convertModelFromFiles(files map[string]string, baseLayers []*layerGGML, isA
 }
 
 func detectModelTypeFromFiles(files map[string]string) string {
-	// todo make this more robust by actually introspecting the files
 	for fn := range files {
 		if strings.HasSuffix(fn, ".safetensors") {
 			return "safetensors"
-		} else if strings.HasSuffix(fn, ".bin") || strings.HasSuffix(fn, ".gguf") {
+		} else if strings.HasSuffix(fn, ".gguf") {
 			return "gguf"
+		} else {
+			// try to see if we can find a gguf file even without the file extension
+			blobPath, err := GetBlobsPath(files[fn])
+			if err != nil {
+				slog.Error("error getting blobs path", "file", fn)
+				return ""
+			}
+
+			f, err := os.Open(blobPath)
+			if err != nil {
+				slog.Error("error reading file", "error", err)
+				return ""
+			}
+			defer f.Close()
+
+			buf := make([]byte, 4)
+			_, err = f.Read(buf)
+			if err != nil {
+				slog.Error("error reading file", "error", err)
+				return ""
+			}
+
+			ct := ggml.DetectContentType(buf)
+			if ct == "gguf" {
+				return "gguf"
+			}
 		}
 	}
 
@@ -191,13 +225,27 @@ func detectModelTypeFromFiles(files map[string]string) string {
 }
 
 func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, isAdapter bool, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
-	tmpDir, err := os.MkdirTemp("", "ollama-safetensors")
+	tmpDir, err := os.MkdirTemp(envconfig.Models(), "ollama-safetensors")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(tmpDir)
+	// Set up a root to validate paths
+	root, err := os.OpenRoot(tmpDir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
 
 	for fp, digest := range files {
+		if !fs.ValidPath(fp) {
+			return nil, fmt.Errorf("%w: %s", errFilePath, fp)
+		}
+		if _, err := root.Stat(fp); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			// Path is likely outside the root
+			return nil, fmt.Errorf("%w: %s: %s", errFilePath, err, fp)
+		}
+
 		blobPath, err := GetBlobsPath(digest)
 		if err != nil {
 			return nil, err
@@ -245,12 +293,13 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 	if err != nil {
 		return nil, err
 	}
+	defer bin.Close()
 
-	ggml, _, err := llm.DecodeGGML(bin, 0)
+	f, _, err := ggml.Decode(bin, 0)
 	if err != nil {
 		return nil, err
 	}
-	layers := []*layerGGML{{layer, ggml}}
+	layers := []*layerGGML{{layer, f}}
 
 	if !isAdapter {
 		return detectChatTemplate(layers)
@@ -258,13 +307,13 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 	return layers, nil
 }
 
-func kvFromLayers(baseLayers []*layerGGML) (llm.KV, error) {
+func kvFromLayers(baseLayers []*layerGGML) (ggml.KV, error) {
 	for _, l := range baseLayers {
 		if l.GGML != nil {
 			return l.KV(), nil
 		}
 	}
-	return llm.KV{}, fmt.Errorf("no base model was found")
+	return ggml.KV{}, fmt.Errorf("no base model was found")
 }
 
 func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, fn func(resp api.ProgressResponse)) (err error) {
@@ -281,7 +330,7 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 		if layer.GGML != nil {
 			quantType := strings.ToUpper(cmp.Or(r.Quantize, r.Quantization))
 			if quantType != "" && layer.GGML.Name() == "gguf" && layer.MediaType == "application/vnd.ollama.image.model" {
-				want, err := llm.ParseFileType(quantType)
+				want, err := ggml.ParseFileType(quantType)
 				if err != nil {
 					return err
 				}
@@ -378,7 +427,7 @@ func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.Progr
 	ft := layer.GGML.KV().FileType()
 	fn(api.ProgressResponse{Status: fmt.Sprintf("quantizing %s model to %s", ft, quantizeType)})
 
-	want, err := llm.ParseFileType(quantizeType)
+	want, err := ggml.ParseFileType(quantizeType)
 	if err != nil {
 		return nil, err
 	}
@@ -408,13 +457,13 @@ func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.Progr
 		return nil, err
 	}
 
-	ggml, _, err := llm.DecodeGGML(temp, 0)
+	f, _, err := ggml.Decode(temp, 0)
 	if err != nil {
 		slog.Error(fmt.Sprintf("error decoding ggml: %s\n", err))
 		return nil, err
 	}
 
-	return &layerGGML{newLayer, ggml}, nil
+	return &layerGGML{newLayer, f}, nil
 }
 
 func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML, error) {
@@ -450,7 +499,7 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 
 	var offset int64
 	for offset < stat.Size() {
-		ggml, n, err := llm.DecodeGGML(blob, 0)
+		f, n, err := ggml.Decode(blob, 0)
 		if errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
@@ -458,9 +507,9 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 		}
 
 		mediatype := "application/vnd.ollama.image.model"
-		if ggml.KV().Kind() == "adapter" {
+		if f.KV().Kind() == "adapter" {
 			mediatype = "application/vnd.ollama.image.adapter"
-		} else if _, ok := ggml.KV()[fmt.Sprintf("%s.vision.block_count", ggml.KV().Architecture())]; ok || ggml.KV().Kind() == "projector" {
+		} else if _, ok := f.KV()[fmt.Sprintf("%s.vision.block_count", f.KV().Architecture())]; ok || f.KV().Kind() == "projector" {
 			mediatype = "application/vnd.ollama.image.projector"
 		}
 
@@ -481,7 +530,7 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 			}
 		}
 
-		layers = append(layers, &layerGGML{layer, ggml})
+		layers = append(layers, &layerGGML{layer, f})
 		offset = n
 	}
 

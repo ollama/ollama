@@ -1,6 +1,7 @@
 # OpenAI compatibility
 
-> **Note:** OpenAI compatibility is experimental and is subject to major adjustments including breaking changes. For fully-featured access to the Ollama API, see the Ollama [Python library](https://github.com/ollama/ollama-python), [JavaScript library](https://github.com/ollama/ollama-js) and [REST API](https://github.com/ollama/ollama/blob/main/docs/api.md).
+> [!NOTE]
+> OpenAI compatibility is experimental and is subject to major adjustments including breaking changes. For fully-featured access to the Ollama API, see the Ollama [Python library](https://github.com/ollama/ollama-python), [JavaScript library](https://github.com/ollama/ollama-js) and [REST API](https://github.com/ollama/ollama/blob/main/docs/api.md).
 
 Ollama provides experimental compatibility with parts of the [OpenAI API](https://platform.openai.com/docs/api-reference) to help connect existing applications to Ollama.
 
@@ -59,8 +60,10 @@ embeddings = client.embeddings.create(
     input=["why is the sky blue?", "why is the grass green?"],
 )
 ```
+
 #### Structured outputs
-```py
+
+```python
 from pydantic import BaseModel
 from openai import OpenAI
 
@@ -144,7 +147,7 @@ const embedding = await openai.embeddings.create({
 
 ### `curl`
 
-``` shell
+```shell
 curl http://localhost:11434/v1/chat/completions \
     -H "Content-Type: application/json" \
     -d '{
@@ -319,7 +322,7 @@ ollama pull llama3.2
 
 For tooling that relies on default OpenAI model names such as `gpt-3.5-turbo`, use `ollama cp` to copy an existing model name to a temporary name:
 
-```
+```shell
 ollama cp llama3.2 gpt-3.5-turbo
 ```
 
@@ -343,7 +346,7 @@ curl http://localhost:11434/v1/chat/completions \
 
 The OpenAI API does not have a way of setting the context size for a model. If you need to change the context size, create a `Modelfile` which looks like:
 
-```modelfile
+```
 FROM <some model>
 PARAMETER num_ctx <context size>
 ```

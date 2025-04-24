@@ -9,7 +9,7 @@ import (
 	"github.com/pdevine/tensor"
 	"github.com/pdevine/tensor/native"
 
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/fs/ggml"
 )
 
 type llamaModel struct {
@@ -28,12 +28,12 @@ type llamaModel struct {
 	NumKeyValueHeads      uint32  `json:"num_key_value_heads"`
 	RopeTheta             float32 `json:"rope_theta"`
 	RopeScaling           struct {
-		Type                            string  `json:"type"`
-		RopeType                        string  `json:"rope_type"`
-		Factor                          float32 `json:"factor"`
-		LowFrequencyFactor              float32 `json:"low_freq_factor"`
-		HighFrequencyFactor             float32 `json:"high_freq_factor"`
-		OriginalMaxPositionalEmbeddings uint32  `json:"original_max_positional_embeddings"`
+		Type                          string  `json:"type"`
+		RopeType                      string  `json:"rope_type"`
+		Factor                        float32 `json:"factor"`
+		LowFrequencyFactor            float32 `json:"low_freq_factor"`
+		HighFrequencyFactor           float32 `json:"high_freq_factor"`
+		OriginalMaxPositionEmbeddings uint32  `json:"original_max_position_embeddings"`
 
 		factors ropeFactor
 	} `json:"rope_scaling"`
@@ -46,7 +46,7 @@ type llamaModel struct {
 
 var _ ModelConverter = (*llamaModel)(nil)
 
-func (p *llamaModel) KV(t *Tokenizer) llm.KV {
+func (p *llamaModel) KV(t *Tokenizer) ggml.KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "llama"
 	kv["llama.vocab_size"] = p.VocabSize
@@ -84,7 +84,7 @@ func (p *llamaModel) KV(t *Tokenizer) llm.KV {
 			factorLow := cmp.Or(p.RopeScaling.LowFrequencyFactor, 1.0)
 			factorHigh := cmp.Or(p.RopeScaling.HighFrequencyFactor, 4.0)
 
-			original := cmp.Or(p.RopeScaling.OriginalMaxPositionalEmbeddings, 8192)
+			original := cmp.Or(p.RopeScaling.OriginalMaxPositionEmbeddings, 8192)
 			lambdaLow := float32(original) / factorLow
 			lambdaHigh := float32(original) / factorHigh
 
@@ -120,11 +120,11 @@ func (p *llamaModel) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *llamaModel) Tensors(ts []Tensor) []llm.Tensor {
-	var out []llm.Tensor
+func (p *llamaModel) Tensors(ts []Tensor) []ggml.Tensor {
+	var out []ggml.Tensor
 
 	if p.RopeScaling.factors != nil {
-		out = append(out, llm.Tensor{
+		out = append(out, ggml.Tensor{
 			Name:     "rope_freqs.weight",
 			Kind:     0,
 			Shape:    []uint64{uint64(len(p.RopeScaling.factors))},
@@ -138,7 +138,7 @@ func (p *llamaModel) Tensors(ts []Tensor) []llm.Tensor {
 			t.SetRepacker(p.repack)
 		}
 
-		out = append(out, llm.Tensor{
+		out = append(out, ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),
