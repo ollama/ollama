@@ -76,7 +76,7 @@ type GenerateRequest struct {
 	// this request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
-	// Images is an optional list of base64-encoded images accompanying this
+	// Images is an optional list of raw image bytes accompanying this
 	// request, for multimodal models.
 	Images []ImageData `json:"images,omitempty"`
 
