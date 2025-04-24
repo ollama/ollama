@@ -321,7 +321,9 @@ static void ggml_cpy_i32_i32_cuda(
 
 void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, ggml_tensor * src1, bool disable_indirection_for_this_node) {
     const int64_t ne = ggml_nelements(src0);
-    GGML_ASSERT(ne == ggml_nelements(src1));
+    const int64_t ne1 = ggml_nelements(src1);
+
+    GGML_ASSERT((ne == ne1) || (src1->view_src && (ne == ggml_nelements(src1->view_src))));
 
     GGML_ASSERT(ggml_nbytes(src0) <= INT_MAX);
     GGML_ASSERT(ggml_nbytes(src1) <= INT_MAX);
