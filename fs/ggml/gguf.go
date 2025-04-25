@@ -627,8 +627,8 @@ func ggufWriteTensorInfo(ws io.WriteSeeker, t Tensor) error {
 		return err
 	}
 
-	for i := range len(t.Shape) {
-		if err := binary.Write(ws, binary.LittleEndian, t.Shape[len(t.Shape)-i-1]); err != nil {
+	for _, n := range t.Shape {
+		if err := binary.Write(ws, binary.LittleEndian, n); err != nil {
 			return err
 		}
 	}
