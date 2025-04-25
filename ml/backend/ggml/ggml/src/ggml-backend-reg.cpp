@@ -178,9 +178,9 @@ struct ggml_backend_registry {
 #ifdef GGML_USE_CANN
         register_backend(ggml_backend_cann_reg());
 #endif
-// #ifdef GGML_USE_BLAS
-//         register_backend(ggml_backend_blas_reg());
-// #endif
+#ifdef GGML_USE_BLAS
+        register_backend(ggml_backend_blas_reg());
+#endif
 #ifdef GGML_USE_RPC
         register_backend(ggml_backend_rpc_reg());
 #endif
