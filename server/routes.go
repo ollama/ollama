@@ -1529,8 +1529,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		var sentWithTools int = 0
 		// var prefix string
 		// var templateToolToken string
-		_, templateToolToken, _ := m.GetToolCallFormat()
-		fmt.Println("special token", templateToolToken)
+		_, templateToolToken, _ := m.TemplateToolToken()
+		// fmt.Println("special token", templateToolToken)
 
 		var minDuration time.Duration = math.MaxInt64
 		var maxDuration time.Duration
@@ -1562,9 +1562,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				slog.Debug("total duration", "duration", totalDuration)
 				slog.Debug("check count", "count", checkCount)
 				// slog.Debug("average duration", "duration", totalDuration/time.Duration(checkCount))
-				if sb.Len() > 0 {
-					res.Message.Content = sb.String()
-				}
+				// if sb.Len() > 0 {
+				// 	res.Message.Content = sb.String()
+				// }
 				res.DoneReason = r.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
@@ -1582,12 +1582,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			// If tools are recognized, use a flag to track the sending of a tool downstream
 			// This ensures that content is cleared from the message on the last chunk sent
 			sb.WriteString(r.Content)
-			// TODO: here we want to prefix check the tool ideally or derive the tool token from the model
-			// TODO: if we are deriving the tool token, then a heuristic must be applied to stream eventually
-			// TODO: if the prefix check fails, send the content downstream and reset the builder
 			startTime := time.Now()
+			// TODO: work max tool tok logic
 			if len(req.Tools) > 0 && sentWithTools < maxToolTokens {
-				toolCalls, partial, ok := m.ParseToolCallsNew(sb.String(), &templateToolToken)
+				toolCalls, partial, ok := m.ParseToolCalls(sb.String(), &templateToolToken)
 				duration := time.Since(startTime)
 				checkCount++
 				minDuration = min(minDuration, duration)
@@ -1600,6 +1598,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						// If the tool call is partial, we need to wait for the next chunk
 						return
 					}
+					slog.Debug("toolCalls", "toolCalls", toolCalls, "partial", partial, "ok", ok)
 					res.Message.ToolCalls = toolCalls
 					for i := range toolCalls {
 						toolCalls[i].Function.Index = toolCallIndex
@@ -1611,6 +1610,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					res.Message.Content = ""
 					sb.Reset()
 					ch <- res
+					// TODO: revisit this
+					sentWithTools++
+					slog.Debug("fired on tool call", "toolCalls", toolCalls, "toolCallIndex", toolCallIndex)
 					return
 				}
 			}
@@ -1634,15 +1636,16 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		const MAX_TOOL_TOKENS = 1
 		sentWithTools := 0
 		var tb strings.Builder
-		_, templateToolToken, _ := m.GetToolCallFormat()
+		_, templateToolToken, _ := m.TemplateToolToken()
 		for rr := range ch {
 			switch t := rr.(type) {
 			case api.ChatResponse:
 				sb.WriteString(t.Message.Content)
 				resp = t
+				// TODO: work max tool tok logic
 				if len(req.Tools) > 0 && sentWithTools < MAX_TOOL_TOKENS {
 					tb.WriteString(t.Message.Content)
-					if tcs, partial, ok := m.ParseToolCallsNew(tb.String(), &templateToolToken); ok {
+					if tcs, partial, ok := m.ParseToolCalls(tb.String(), &templateToolToken); ok {
 						if !partial {
 							// resp.Message.ToolCalls = toolCalls
 							toolCalls = append(toolCalls, tcs...)
