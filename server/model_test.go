@@ -1,178 +1,184 @@
 package server
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
 	"testing"
-
-	"github.com/google/go-cmp/cmp"
-
-	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/template"
+	gotmpl "text/template"
 )
 
-func readFile(t *testing.T, base, name string) *bytes.Buffer {
-	t.Helper()
-
-	bts, err := os.ReadFile(filepath.Join(base, name))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	return bytes.NewBuffer(bts)
-}
-
-func TestExecuteWithTools(t *testing.T) {
-	p := filepath.Join("testdata", "tools")
+func TestToolToken(t *testing.T) {
 	cases := []struct {
-		model  string
-		output string
-		ok     bool
+		name     string
+		template string
+		want     string
+		ok       bool
 	}{
-		{"mistral", `[TOOL_CALLS]  [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`, true},
-		{"mistral", `[TOOL_CALLS]  [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]
-
-The temperature in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.`, true},
-		{"mistral", `[TOOL_CALLS]  [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"To }]`, false},
-		{"mistral", `I'm not aware of that information. However, I can suggest searching for the weather using the "get_current_weather" function:
-
-		[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`, true},
-		{"mistral", " The weather in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.", false},
-		{"command-r-plus", "Action: ```json" + `
-[
-    {
-        "tool_name": "get_current_weather",
-        "parameters": {
-            "format": "fahrenheit",
-            "location": "San Francisco, CA"
-        }
-    },
-    {
-        "tool_name": "get_current_weather",
-        "parameters": {
-            "format": "celsius",
-            "location": "Toronto, Canada"
-        }
-    }
-]
-` + "```", true},
-		{"command-r-plus", " The weather in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.", false},
-		{"firefunction", ` functools[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`, true},
-		{"firefunction", " The weather in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.", false},
-		{"llama3-groq-tool-use", `<tool_call>
-{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}
-{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}
-</tool_call>`, true},
-		{"xlam", `{"tool_calls": [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]}`, true},
-		{"nemotron", `<toolcall>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]} </toolcall>`, true},
-	}
-
-	var tools []api.Tool
-	if err := json.Unmarshal(readFile(t, p, "tools.json").Bytes(), &tools); err != nil {
-		t.Fatal(err)
-	}
-
-	var messages []api.Message
-	if err := json.Unmarshal(readFile(t, p, "messages.json").Bytes(), &messages); err != nil {
-		t.Fatal(err)
-	}
-
-	calls := []api.ToolCall{
 		{
-			Function: api.ToolCallFunction{
-				Name: "get_current_weather",
-				Arguments: api.ToolCallFunctionArguments{
-					"format":   "fahrenheit",
-					"location": "San Francisco, CA",
-				},
-			},
+			name:     "basic tool call with action prefix",
+			template: "{{if .ToolCalls}}Action: ```json{{end}}",
+			want:     "Action:",
+			ok:       true,
 		},
 		{
-			Function: api.ToolCallFunction{
-				Name: "get_current_weather",
-				Arguments: api.ToolCallFunctionArguments{
-					"format":   "celsius",
-					"location": "Toronto, Canada",
-				},
-			},
+			name:     "incomplete functools bracket",
+			template: "{{if .ToolCalls}}functools[{{end}}",
+			want:     "functools",
+			ok:       true,
+		},
+		{
+			name:     "tool call with angle brackets",
+			template: "{{if .ToolCalls}}Hello, world! <tool_call>{{end}}",
+			want:     "<tool_call>",
+			ok:       true,
+		},
+		{
+			name:     "multiple tool call formats",
+			template: "{{if .ToolCalls}}[tool_call] <tool_call>{{end}}",
+			want:     "[tool_call]",
+			ok:       true,
+		},
+		{
+			name:     "single angle bracket tool call",
+			template: "{{if .ToolCalls}}<tool_call>{{end}}",
+			want:     "<tool_call>",
+			ok:       true,
+		},
+		{
+			name:     "incomplete angle bracket after tool call",
+			template: "{{if .ToolCalls}}[tool_call] <{{end}}",
+			want:     "[tool_call]",
+			ok:       true,
+		},
+		{
+			name:     "angle bracket prefix with tool call",
+			template: "{{if .ToolCalls}}> <tool_call>{{end}}",
+			want:     "<tool_call>",
+			ok:       true,
+		},
+		{
+			name:     "uppercase tool call with incomplete bracket",
+			template: "{{if .ToolCalls}}[TOOL_CALL] [{{end}}",
+			want:     "[TOOL_CALL]",
+			ok:       true,
+		},
+		{
+			name:     "uppercase tool call with adjacent bracket",
+			template: "{{if .ToolCalls}}[TOOL_CALL][{{end}}",
+			want:     "[TOOL_CALL]",
+			ok:       true,
+		},
+		{
+			name:     "tool call with pipe delimiters",
+			template: "{{if .ToolCalls}}<|tool_call|>{{end}}",
+			want:     "<|tool_call|>",
+			ok:       true,
 		},
 	}
 
 	for _, tt := range cases {
-		t.Run(tt.model, func(t *testing.T) {
-			tmpl, err := template.Parse(readFile(t, p, fmt.Sprintf("%s.gotmpl", tt.model)).String())
+		t.Run(tt.name, func(t *testing.T) {
+			tmpl, err := gotmpl.New("test").Parse(tt.template)
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("failed to parse template: %v", err)
 			}
-
-			t.Run("template", func(t *testing.T) {
-				var actual bytes.Buffer
-				if err := tmpl.Execute(&actual, template.Values{Tools: tools, Messages: messages}); err != nil {
-					t.Fatal(err)
-				}
-
-				if diff := cmp.Diff(actual.String(), readFile(t, p, fmt.Sprintf("%s.out", tt.model)).String()); diff != "" {
-					t.Errorf("mismatch (-got +want):\n%s", diff)
-				}
-			})
-
-			t.Run("parse", func(t *testing.T) {
-				m := &Model{Template: tmpl}
-				actual, ok := m.parseToolCalls(tt.output)
-				if ok != tt.ok {
-					t.Fatalf("expected %t, got %t", tt.ok, ok)
-				}
-
-				if tt.ok {
-					if diff := cmp.Diff(actual, calls); diff != "" {
-						t.Errorf("mismatch (-got +want):\n%s", diff)
-					}
-				}
-			})
+			got, ok := ToolToken(tmpl)
+			if got != tt.want {
+				t.Errorf("ToolToken(%q) = %q; want %q", tt.template, got, tt.want)
+			}
+			if ok != tt.ok {
+				t.Errorf("ToolToken(%q) = %v; want %v", tt.template, ok, tt.ok)
+			}
 		})
 	}
 }
 
-func TestParseObjects(t *testing.T) {
-	tests := []struct {
-		input string
-		want  []map[string]any
+func TestTextAfterToolCalls(t *testing.T) {
+	cases := []struct {
+		name     string
+		template string
+		want     string
+		ok       bool
 	}{
 		{
-			input: `[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
-			want: []map[string]any{
-				{"name": "get_current_weather", "arguments": map[string]any{"format": "fahrenheit", "location": "San Francisco, CA"}},
-				{"name": "get_current_weather", "arguments": map[string]any{"format": "celsius", "location": "Toronto, Canada"}},
-			},
+			name:     "basic tool call with text after",
+			template: `{{if .ToolCalls}}tool response{{end}}`,
+			want:     "tool response",
+			ok:       true,
 		},
 		{
-			input: `<toolcall>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </toolcall>`,
-			want: []map[string]any{
-				{"name": "get_current_weather", "arguments": map[string]any{"format": "fahrenheit", "location": "San Francisco, CA"}},
-			},
+			name:     "tool call with mixed content after",
+			template: `{{if .ToolCalls}}<tool_call>{{.Something}}{{end}}`,
+			want:     "<tool_call>",
+			ok:       true,
 		},
 		{
-			input: `<toolcall>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </toolcall> <toolcall>{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, ON"}} </toolcall>`,
-			want: []map[string]any{
-				{"name": "get_current_weather", "arguments": map[string]any{"format": "fahrenheit", "location": "San Francisco, CA"}},
-				{"name": "get_current_weather", "arguments": map[string]any{"format": "celsius", "location": "Toronto, ON"}},
-			},
+			name:     "tool call with no text after",
+			template: `{{if .ToolCalls}}{{.Something}}{{end}}`,
+			want:     "",
+			ok:       true,
 		},
 		{
-			input: `{"name": "get_current_weather", "arguments": `,
-			want:  nil,
+			name:     "nested tool call",
+			template: `{{if .Something}}{{if .ToolCalls}}[TOOL_CALL]{{end}}{{end}}`,
+			want:     "[TOOL_CALL]",
+			ok:       true,
+		},
+		{
+			name:     "no tool calls",
+			template: `{{if .Something}}no tools here{{end}}`,
+			want:     "",
+			ok:       false,
+		},
+		{
+			name:     "empty template",
+			template: ``,
+			want:     "",
+			ok:       false,
+		},
+		{
+			name:     "multiple tool calls sections",
+			template: `{{if .ToolCalls}}first{{end}}{{if .ToolCalls}}second{{end}}`,
+			want:     "first",
+			ok:       true,
+		},
+		{
+			name:     "range over tool calls",
+			template: `{{if .ToolCalls}}{{range .ToolCalls}}tool{{end}}{{end}}`,
+			want:     "",
+			ok:       true,
+		},
+		{
+			name:     "tool calls with pipe delimiters",
+			template: `{{if .ToolCalls}}<|tool|>{{end}}`,
+			want:     "<|tool|>",
+			ok:       true,
+		},
+		{
+			name:     "tool calls with nested template",
+			template: `{{if .ToolCalls}}{{template "tool" .}}{{end}}`,
+			want:     "",
+			ok:       true,
+		},
+		{
+			name:     "tool calls with whitespace variations",
+			template: `{{if .ToolCalls}}  tool  {{end}}`,
+			want:     "  tool  ",
+			ok:       true,
 		},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.input, func(t *testing.T) {
-			got := parseObjects(tc.input)
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpl, err := gotmpl.New("test").Parse(tt.template)
+			if err != nil {
+				t.Fatalf("failed to parse template: %v", err)
+			}
 
-			if diff := cmp.Diff(got, tc.want); diff != "" {
-				t.Errorf("mismatch (-got +want):\n%s", diff)
+			got, ok := extractToolCallsTemplate(tmpl)
+			if got != tt.want {
+				t.Errorf("TextAfterToolCalls() got = %q, want %q", got, tt.want)
+			}
+			if ok != tt.ok {
+				t.Errorf("TextAfterToolCalls() ok = %v, want %v", ok, tt.ok)
 			}
 		})
 	}
