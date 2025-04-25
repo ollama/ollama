@@ -89,10 +89,6 @@ endif()
 
 add_compile_definitions(GGML_USE_HIP)
 
-if (GGML_HIP_UMA)
-    add_compile_definitions(GGML_HIP_UMA)
-endif()
-
 if (GGML_CUDA_FORCE_MMQ)
     add_compile_definitions(GGML_CUDA_FORCE_MMQ)
 endif()

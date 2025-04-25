@@ -46,6 +46,10 @@ struct llama_hparams {
     uint32_t n_rel_attn_bkts = 0;
     uint32_t n_vocab = 0;
 
+    // note: deepseek2 using MLA converts into MQA with larger heads, then decompresses to MHA
+    uint32_t n_embd_head_k_mla = 0;
+    uint32_t n_embd_head_v_mla = 0;
+
     // for WavTokenizer
     struct llama_hparams_posnet   posnet;
     struct llama_hparams_convnext convnext;

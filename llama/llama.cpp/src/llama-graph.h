@@ -517,11 +517,12 @@ struct llm_graph_context {
 
     ggml_tensor * build_attn_mha(
              ggml_cgraph * gf,
-             ggml_tensor * q, // [n_embd_head_q, n_tokens, n_head_q]
-             ggml_tensor * k, // [n_embd_head_k, n_tokens, n_head_k]
-             ggml_tensor * v, // [n_embd_head_v, n_tokens, n_head_v] (v_trans == false)
+             ggml_tensor * q,     // [n_embd_head_q, n_tokens, n_head_q]
+             ggml_tensor * k,     // [n_embd_head_k, n_tokens, n_head_k]
+             ggml_tensor * v,     // [n_embd_head_v, n_tokens, n_head_v] (v_trans == false)
              ggml_tensor * kq_b,
              ggml_tensor * kq_mask,
+             ggml_tensor * v_mla, // [n_embd_head_v_mla, n_embd_head_v, n_head_v]
                     bool   v_trans,
                    float   kq_scale) const;
 
@@ -536,6 +537,7 @@ struct llm_graph_context {
             ggml_tensor * k_cur, // [n_embd_head_k, n_head_k, n_tokens]
             ggml_tensor * v_cur, // [n_embd_head_v, n_head_v, n_tokens]
             ggml_tensor * kq_b,
+            ggml_tensor * v_mla, // [n_embd_head_v_mla, n_embd_head_v, n_head_v]
                   float   kq_scale,
                     int   il) const;
 
@@ -550,6 +552,7 @@ struct llm_graph_context {
             ggml_tensor * k_cur, // [n_embd_head_k, n_head_k, n_tokens]
             ggml_tensor * v_cur, // [n_embd_head_v, n_head_v, n_tokens]
             ggml_tensor * kq_b,
+            ggml_tensor * v_mla, // [n_embd_head_v_mla, n_embd_head_v, n_head_v]
                   float   kq_scale,
                     int   il) const;
 
@@ -564,6 +567,7 @@ struct llm_graph_context {
             ggml_tensor * k_cur, // [n_embd_head_k, n_head_k, n_tokens]
             ggml_tensor * v_cur, // [n_embd_head_v, n_head_v, n_tokens]
             ggml_tensor * kq_b,
+            ggml_tensor * v_mla, // [n_embd_head_v_mla, n_embd_head_v, n_head_v]
                   float   kq_scale,
                     int   il) const;
 

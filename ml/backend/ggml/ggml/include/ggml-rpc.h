@@ -7,6 +7,9 @@
 extern "C" {
 #endif
 
+#define RPC_PROTO_MAJOR_VERSION    1
+#define RPC_PROTO_MINOR_VERSION    0
+#define RPC_PROTO_PATCH_VERSION    0
 #define GGML_RPC_MAX_SERVERS       16
 
 // backend API

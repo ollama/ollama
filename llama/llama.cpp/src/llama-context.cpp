@@ -10,6 +10,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <cinttypes>
+#include <cmath>
 
 //
 // llama_context
@@ -473,7 +474,6 @@ ggml_tensor * llama_context::build_rope_shift(
     const auto & n_ctx_orig = cparams.n_ctx_orig_yarn;
 
     const auto & yarn_ext_factor  = cparams.yarn_ext_factor;
-    const auto & yarn_attn_factor = cparams.yarn_attn_factor;
     const auto & yarn_beta_fast   = cparams.yarn_beta_fast;
     const auto & yarn_beta_slow   = cparams.yarn_beta_slow;
 
@@ -481,6 +481,10 @@ ggml_tensor * llama_context::build_rope_shift(
 
     const auto & n_rot     = hparams.n_rot;
     const auto & rope_type = hparams.rope_type;
+
+    // See llm_build_deepseek2() for why attn_factor has to be scaled for YaRN RoPE to work correctly.
+    // See https://github.com/ggerganov/llama.cpp/discussions/7416 for detailed explanation.
+    const float yarn_attn_factor = model.arch == LLM_ARCH_DEEPSEEK2 ? 1.0f / (1.0f + 0.1f * logf(1.0f / freq_scale)) : cparams.yarn_attn_factor;
 
     ggml_tensor * tmp;
 
