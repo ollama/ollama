@@ -295,7 +295,7 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 	}
 	defer bin.Close()
 
-	f, _, err := ggml.Decode(bin, 0)
+	f, _, err := ggml.Decode(bin, 1024)
 	if err != nil {
 		return nil, err
 	}
@@ -457,7 +457,7 @@ func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.Progr
 		return nil, err
 	}
 
-	f, _, err := ggml.Decode(temp, 0)
+	f, _, err := ggml.Decode(temp, 1024)
 	if err != nil {
 		slog.Error(fmt.Sprintf("error decoding ggml: %s\n", err))
 		return nil, err
@@ -499,7 +499,7 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 
 	var offset int64
 	for offset < stat.Size() {
-		f, n, err := ggml.Decode(blob, 0)
+		f, n, err := ggml.Decode(blob, 1024)
 		if errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
