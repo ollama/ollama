@@ -149,7 +149,12 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	}
 
 	if graphPartialOffload == 0 {
-		graphPartialOffload = f.KV().GQA() * kvTotal / 6
+		headsKV := f.KV().HeadCountKVMin()
+		if headsKV == 0 {
+			headsKV = 1
+		}
+		gqa := f.KV().HeadCountMax() / headsKV
+		graphPartialOffload = gqa * kvTotal / 6
 	}
 	if graphFullOffload == 0 {
 		graphFullOffload = graphPartialOffload
