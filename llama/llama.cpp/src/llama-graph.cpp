@@ -1194,6 +1194,7 @@ ggml_tensor * llm_graph_context::build_attn_mha(
          ggml_tensor * v,
          ggml_tensor * kq_b,
          ggml_tensor * kq_mask,
+         ggml_tensor * v_mla,
              bool      v_trans,
              float     kq_scale) const {
   //const int64_t n_embd_k_gqa = hparams.n_embd_k_gqa(il);
@@ -1204,8 +1205,6 @@ ggml_tensor * llm_graph_context::build_attn_mha(
 
   //const auto & n_embd_head_k = hparams.n_embd_head_k;
   //const auto & n_embd_head_v = hparams.n_embd_head_v;
-
-    const auto n_embd_head_v = v_trans ? v->ne[1] : v->ne[0];
 
     const auto n_tokens = q->ne[1];
     const auto n_head   = q->ne[2];
@@ -1235,7 +1234,12 @@ ggml_tensor * llm_graph_context::build_attn_mha(
 
         ggml_flash_attn_ext_set_prec(cur, GGML_PREC_F32);
 
-        cur = ggml_reshape_2d(ctx0, cur, n_embd_head_v*n_head, n_tokens);
+        if (v_mla) {
+            cur = ggml_reshape_4d(ctx0, cur, v_mla->ne[0], 1, n_head, n_tokens);
+            cur = ggml_mul_mat(ctx0, v_mla, cur);
+        }
+
+        cur = ggml_reshape_2d(ctx0, cur, cur->ne[0]*n_head, n_tokens);
     } else {
         ggml_tensor * kq = ggml_mul_mat(ctx0, k, q);
 
@@ -1273,9 +1277,14 @@ ggml_tensor * llm_graph_context::build_attn_mha(
 
         ggml_tensor * kqv = ggml_mul_mat(ctx0, v, kq);
 
-        ggml_tensor * kqv_merged = ggml_permute(ctx0, kqv, 0, 2, 1, 3);
+        // for MLA with the absorption optimization, we need to "decompress" from MQA back to MHA
+        if (v_mla) {
+            kqv = ggml_mul_mat(ctx0, v_mla, kqv);
+        }
 
-        cur = ggml_cont_2d(ctx0, kqv_merged, n_embd_head_v*n_head, n_tokens);
+        cur = ggml_permute(ctx0, kqv, 0, 2, 1, 3);
+
+        cur = ggml_cont_2d(ctx0, cur, cur->ne[0]*n_head, n_tokens);
 
         if (!cparams.offload_kqv) {
             // all nodes between the KV store and the attention output are run on the CPU
@@ -1310,6 +1319,7 @@ ggml_tensor * llm_graph_context::build_attn(
         ggml_tensor * k_cur,
         ggml_tensor * v_cur,
         ggml_tensor * kq_b,
+        ggml_tensor * v_mla,
             float     kq_scale,
             int       il) const {
     GGML_UNUSED(n_tokens);
@@ -1331,7 +1341,7 @@ ggml_tensor * llm_graph_context::build_attn(
     ggml_tensor * v = ggml_permute(ctx0, v_cur, 0, 2, 1, 3);
     //cb(k, "v", il);
 
-    ggml_tensor * cur = build_attn_mha(gf, q, k, v, kq_b, kq_mask, false, kq_scale);
+    ggml_tensor * cur = build_attn_mha(gf, q, k, v, kq_b, kq_mask, v_mla, false, kq_scale);
 
     cb(cur, "kqv_out", il);
 
@@ -1385,6 +1395,7 @@ ggml_tensor * llm_graph_context::build_attn(
         ggml_tensor * k_cur,
         ggml_tensor * v_cur,
         ggml_tensor * kq_b,
+        ggml_tensor * v_mla,
             float     kq_scale,
             int       il) const {
     // these nodes are added to the graph together so that they are not reordered
@@ -1470,7 +1481,7 @@ ggml_tensor * llm_graph_context::build_attn(
                 ggml_element_size(kv_self->v_l[il])*n_ctx*n_embd_head_v,
                 0);
 
-    ggml_tensor * cur = build_attn_mha(gf, q, k, v, kq_b, kq_mask, v_trans, kq_scale);
+    ggml_tensor * cur = build_attn_mha(gf, q, k, v, kq_b, kq_mask, v_mla, v_trans, kq_scale);
     cb(cur, "kqv_out", il);
 
     if (wo) {
@@ -1529,6 +1540,7 @@ ggml_tensor * llm_graph_context::build_attn(
         ggml_tensor * k_cur,
         ggml_tensor * v_cur,
         ggml_tensor * kq_b,
+        ggml_tensor * v_mla,
             float     kq_scale,
             int       il) const {
     // these nodes are added to the graph together so that they are not reordered
@@ -1548,7 +1560,7 @@ ggml_tensor * llm_graph_context::build_attn(
     ggml_tensor * v = ggml_permute(ctx0, v_cur, 0, 2, 1, 3);
     //cb(k, "v", il);
 
-    ggml_tensor * cur = build_attn_mha(gf, q, k, v, kq_b, kq_mask, false, kq_scale);
+    ggml_tensor * cur = build_attn_mha(gf, q, k, v, kq_b, kq_mask, v_mla, false, kq_scale);
 
     cb(cur, "kqv_out", il);
 
@@ -1717,4 +1729,3 @@ void llm_graph_context::build_pooling(
 
     ggml_build_forward_expand(gf, cur);
 }
-
