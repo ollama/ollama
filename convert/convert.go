@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/fs/ggml"
@@ -84,14 +85,6 @@ func (ModelParameters) specialTokenTypes() []string {
 	}
 }
 
-func (ModelParameters) writeFile(ws io.WriteSeeker, kv ggml.KV, ts []ggml.Tensor) error {
-	return ggml.WriteGGUF(ws, kv, ts)
-}
-
-func (AdapterParameters) writeFile(ws io.WriteSeeker, kv ggml.KV, ts []ggml.Tensor) error {
-	return ggml.WriteGGUF(ws, kv, ts)
-}
-
 type ModelConverter interface {
 	// KV maps parameters to LLM key-values
 	KV(*Tokenizer) ggml.KV
@@ -103,8 +96,6 @@ type ModelConverter interface {
 
 	// specialTokenTypes returns any special token types the model uses
 	specialTokenTypes() []string
-	// writeFile writes the model to the provided io.WriteSeeker
-	writeFile(io.WriteSeeker, ggml.KV, []ggml.Tensor) error
 }
 
 type moreParser interface {
@@ -119,8 +110,6 @@ type AdapterConverter interface {
 	// Replacements returns a list of string pairs to replace in tensor names.
 	// See [strings.Replacer](https://pkg.go.dev/strings#Replacer) for details
 	Replacements() []string
-
-	writeFile(io.WriteSeeker, ggml.KV, []ggml.Tensor) error
 }
 
 func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseKV ggml.KV) error {
@@ -158,7 +147,7 @@ func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseKV ggml.KV) error {
 		return err
 	}
 
-	return conv.writeFile(ws, conv.KV(baseKV), conv.Tensors(ts))
+	return writeFile(ws, conv.KV(baseKV), conv.Tensors(ts))
 }
 
 // Convert writes an Ollama compatible model to the provided io.WriteSeeker based on configurations
@@ -248,5 +237,13 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 		return err
 	}
 
-	return conv.writeFile(ws, conv.KV(t), conv.Tensors(ts))
+	return writeFile(ws, conv.KV(t), conv.Tensors(ts))
+}
+
+func writeFile(ws io.WriteSeeker, kv ggml.KV, ts []ggml.Tensor) error {
+	for i := range ts {
+		ts[i].Shape = slices.Clone(ts[i].Shape)
+		slices.Reverse(ts[i].Shape)
+	}
+	return ggml.WriteGGUF(ws, kv, ts)
 }
