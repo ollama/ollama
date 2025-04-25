@@ -13,7 +13,7 @@ models not supported in llama.cpp
  4 files changed, 24 insertions(+)
 
 diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
-index c1f78618..bdf3d898 100644
+index 0568565f..dd01df60 100644
 --- a/src/llama-arch.cpp
 +++ b/src/llama-arch.cpp
 @@ -73,6 +73,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
@@ -24,7 +24,7 @@ index c1f78618..bdf3d898 100644
      { LLM_ARCH_UNKNOWN,          "(unknown)"        },
  };
  
-@@ -1582,6 +1583,22 @@ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_N
+@@ -1586,6 +1587,22 @@ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_N
              { LLM_TENSOR_FFN_UP_SHEXP,       "blk.%d.ffn_up_shexp" },
          },
      },
@@ -48,7 +48,7 @@ index c1f78618..bdf3d898 100644
          LLM_ARCH_UNKNOWN,
          {
 diff --git a/src/llama-arch.h b/src/llama-arch.h
-index f987844d..ee081fbf 100644
+index 6a989034..b6227eeb 100644
 --- a/src/llama-arch.h
 +++ b/src/llama-arch.h
 @@ -75,6 +75,7 @@ enum llm_arch {
@@ -60,10 +60,10 @@ index f987844d..ee081fbf 100644
      LLM_ARCH_BAILINGMOE,
      LLM_ARCH_UNKNOWN,
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index d5ad466e..cd1d239c 100644
+index d051696c..c8374159 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -1423,6 +1423,7 @@ void llama_model::load_hparams(llama_model_loader & ml) {
+@@ -1425,6 +1425,7 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                      default: type = LLM_TYPE_UNKNOWN;
                  }
              } break;
@@ -71,7 +71,7 @@ index d5ad466e..cd1d239c 100644
          default: throw std::runtime_error("unsupported model architecture");
      }
  
-@@ -13652,6 +13653,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
+@@ -13704,6 +13705,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
          case LLM_ARCH_CHAMELEON:
          case LLM_ARCH_SOLAR:
          case LLM_ARCH_BAILINGMOE:
