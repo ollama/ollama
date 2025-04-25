@@ -17,7 +17,6 @@ package llama
 #include "llava.h"
 #include "gguf.h"
 
-#include "mllama.h"
 #include "sampling_ext.h"
 
 extern bool llamaProgressCallback(float progress, void *user_data);
