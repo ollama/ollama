@@ -3,7 +3,6 @@ package mllama
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"hash/fnv"
 	"image"
 	"slices"
@@ -34,10 +33,6 @@ const (
 )
 
 func New(c fs.Config) (model.Model, error) {
-	// Verify unified config
-	if c.Uint("vision.block_count") == 0 {
-		return nil, fmt.Errorf("non-unified vision model not supported")
-	}
 	m := Model{
 		BytePairEncoding: model.NewBytePairEncoding(
 			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
