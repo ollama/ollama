@@ -413,9 +413,6 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			if batch == nil {
 				if !embedding {
 					batch = tokenBatch
-				} else {
-					batch = embedBatch
-					seq.crossAttention = s.image.NeedCrossAttention(input)
 				}
 			} else if embedding != batch.IsEmbedding() || crossAttention != seq.crossAttention {
 				s.nextSeq = seqIdx
@@ -438,8 +435,6 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 	if batch == nil || batch.NumTokens() == 0 {
 		return nil
 	}
-
-	s.lc.SetCrossAttention(crossAttention)
 
 	err := s.lc.Decode(batch)
 	if err != nil {
@@ -620,8 +615,6 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, fmt.Sprintf("Failed to load cache: %v", err), http.StatusInternalServerError)
 				return
 			}
-
-			seq.crossAttention = s.image.NeedCrossAttention(seq.cache.Inputs...)
 
 			s.seqs[i] = seq
 			s.cond.Signal()
