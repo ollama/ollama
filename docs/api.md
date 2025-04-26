@@ -1190,7 +1190,8 @@ A single JSON object will be returned.
       "size": 3825819519,
       "digest": "fe938a131f40e6f6d40083c9f0f430a515233eb2edaa6d72eb85c50d64f2300e",
       "capabilities": [
-        "completion"
+        "completion",
+        "vision"
       ],
       "details": {
         "format": "gguf",
