@@ -42,7 +42,7 @@ func New(c fs.Config) (model.Model, error) {
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Scores: c.Floats("tokenizer.ggml.scores"),
-				Types:  c.Uints("tokenizer.ggml.token_type"),
+				Types:  c.Ints("tokenizer.ggml.token_type"),
 				BOS:    int32(c.Uint("tokenizer.ggml.bos_token_id")),
 				EOS:    int32(c.Uint("tokenizer.ggml.eos_token_id")),
 			},

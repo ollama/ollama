@@ -42,9 +42,9 @@ struct llama_sbatch {
     bool logits_all; // TODO: remove once lctx.logits_all is removed too
 
     // sorted indices into the batch
-    std::vector<size_t> ids;
+    std::vector<int64_t> ids;
     // batch indices of the output
-    std::vector<size_t> out_ids;
+    std::vector<int64_t> out_ids;
     std::vector<llama_sbatch_seq> seq;
 
     const llama_batch * batch = nullptr;

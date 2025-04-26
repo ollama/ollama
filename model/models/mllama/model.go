@@ -43,7 +43,7 @@ func New(c fs.Config) (model.Model, error) {
 			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
-				Types:  c.Uints("tokenizer.ggml.token_type"),
+				Types:  c.Ints("tokenizer.ggml.token_type"),
 				Merges: c.Strings("tokenizer.ggml.merges"),
 				BOS:    int32(c.Uint("tokenizer.ggml.bos_token_id")),
 				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
@@ -93,16 +93,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 		return nil, err
 	}
 
-	positions := make([]int32, 1601)
-	for i := range positions {
-		positions[i] = int32(i)
-	}
-
-	positionIDs, err := ctx.Input().FromIntSlice(positions, len(positions))
-	if err != nil {
-		return nil, err
-	}
-
+	positionIDs := ctx.Arange(0, 1601, 1, ml.DTypeI32)
 	crossAttentionStates := m.VisionModel.Forward(ctx, pixelValues, positionIDs, aspectRatio)
 	return m.Projector.Forward(ctx, crossAttentionStates), nil
 }

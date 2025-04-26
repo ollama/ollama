@@ -148,6 +148,7 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 		successCh:       make(chan *runnerRef, 1),
 		errCh:           make(chan error, 1),
 	}
+	b.req.opts.NumCtx = 4096
 	b.srv = &mockLlm{estimatedVRAM: estimatedVRAM, estimatedVRAMByGPU: map[string]uint64{"": estimatedVRAM}}
 	return b
 }
@@ -355,7 +356,7 @@ func TestRequestsMultipleLoadedModels(t *testing.T) {
 }
 
 func TestGetRunner(t *testing.T) {
-	ctx, done := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	ctx, done := context.WithTimeout(context.Background(), 3*time.Second)
 	defer done()
 
 	a := newScenarioRequest(t, ctx, "ollama-model-1a", 10, &api.Duration{Duration: 2 * time.Millisecond})

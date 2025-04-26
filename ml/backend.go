@@ -95,6 +95,9 @@ type Context interface {
 	FromFloatSlice(s []float32, shape ...int) (Tensor, error)
 	FromIntSlice(s []int32, shape ...int) (Tensor, error)
 
+	// Arange creates a 1D tensor with values within an interval (start, stop] increased by step.
+	Arange(start, stop, step float32, dtype DType) Tensor
+
 	Forward(...Tensor) Context
 	Compute(...Tensor)
 
@@ -130,6 +133,7 @@ type Tensor interface {
 	Mul(ctx Context, t2 Tensor) Tensor
 	Mulmat(ctx Context, t2 Tensor) Tensor
 	MulmatFullPrec(ctx Context, t2 Tensor) Tensor
+	MulmatID(ctx Context, t2, ids Tensor) Tensor
 
 	Softmax(ctx Context) Tensor
 	LayerNorm(ctx Context, weight, bias Tensor, eps float32) Tensor
@@ -147,6 +151,7 @@ type Tensor interface {
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context) Tensor
 	SILU(ctx Context) Tensor
+	Sigmoid(ctx Context) Tensor
 
 	Reshape(ctx Context, shape ...int) Tensor
 	View(ctx Context, offset int, shape ...int) Tensor
@@ -165,6 +170,8 @@ type Tensor interface {
 	Rows(ctx Context, t2 Tensor) Tensor
 	Copy(ctx Context, t2 Tensor) Tensor
 	Duplicate(ctx Context) Tensor
+
+	TopK(ctx Context, k int) Tensor
 }
 
 // ScaledDotProductAttention implements a fused attention
