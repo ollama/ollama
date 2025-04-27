@@ -11,7 +11,6 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
-	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -48,7 +47,7 @@ func convertFull(t *testing.T, fsys fs.FS) (*os.File, ggml.KV, ggml.Tensors) {
 	}
 	t.Cleanup(func() { r.Close() })
 
-	m, _, err := ggml.Decode(r, math.MaxInt)
+	m, _, err := ggml.Decode(r, -1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +331,7 @@ func TestConvertAdapter(t *testing.T) {
 			}
 			defer r.Close()
 
-			m, _, err := ggml.Decode(r, math.MaxInt)
+			m, _, err := ggml.Decode(r, -1)
 			if err != nil {
 				t.Fatal(err)
 			}

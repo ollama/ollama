@@ -28,7 +28,7 @@ func llama(t testing.TB) BytePairEncoding {
 		t.Fatal(err)
 	}
 
-	types := make([]uint32, len(vocab))
+	types := make([]int32, len(vocab))
 	tokens := make([]string, len(vocab))
 	for token, id := range vocab {
 		tokens[id] = token
