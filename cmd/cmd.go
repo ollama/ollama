@@ -564,6 +564,83 @@ func DeleteHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func SearchHandler(cmd *cobra.Command, args []string) error {
+	// by default an empty query lists all models
+	query := ""
+	if len(args) != 0 {
+		query = args[0]
+	}
+
+	category, err := cmd.Flags().GetString("category")
+	if err != nil {
+		return err
+	}
+
+	// this ensures a well-formed query downstream
+	// i.e [server.SearchRegistry] gets a well formed request
+	switch category {
+	case "":
+		// no-op
+	case "e":
+		category = "embedding"
+	case "v":
+		category = "vision"
+	case "t":
+		category = "tools"
+	default:
+		return errors.New("invalid category to search, valid options: e for embedding, v for vision, t for tools, omit flag for no filters")
+	}
+
+	// this ensures a well-formed query downstream
+	// i.e [server.SearchRegistry] gets a well formed request
+	newest, err := cmd.Flags().GetBool("newest")
+	if err != nil {
+		return err
+	}
+	order := "popularity"
+	if newest {
+		order = "newest"
+	}
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	request := api.SearchRequest{Query: query, Category: category, Order: order}
+	response, err := client.Search(cmd.Context(), &request)
+	if err != nil {
+		return err
+	}
+
+	var data [][]string
+
+	var _trim = func (s string) string {
+		if len(s) > 80 {
+			return s[:80] + "..."
+		}
+		return s
+	}
+
+	for _, model := range response.Models {
+		data = append(data, []string{model.Name, _trim(model.Description), model.Sizes, model.Pulls, model.Category})
+	}
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"NAME", "DESCRIPTION", "SIZES", "PULL COUNT", "CATEGORY"})
+	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	table.SetAutoWrapText(false)
+	table.SetHeaderLine(false)
+	table.SetBorder(false)
+	table.SetNoWhiteSpace(true)
+	table.SetTablePadding("    ")
+	table.AppendBulk(data)
+	table.Render()
+
+	return nil
+}
+
 func ShowHandler(cmd *cobra.Command, args []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -1358,6 +1435,16 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	searchCmd := &cobra.Command{
+		Use:     "search [MODEL]",
+		Short:   "Search for a model",
+		Args:    cobra.MaximumNArgs(1),
+		PreRunE: checkServerHeartbeat,
+		RunE:    SearchHandler,
+	}
+	searchCmd.Flags().String("category", "", "Filter on category: [A]ll/[e]mbedding/[v]ision/[t]ools")
+	searchCmd.Flags().Bool("newest", false, "Order by date instead of popularity")
+
 	runnerCmd := &cobra.Command{
 		Use:    "runner",
 		Hidden: true,
@@ -1386,6 +1473,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		serveCmd,
+		searchCmd,
 	} {
 		switch cmd {
 		case runCmd:
@@ -1427,6 +1515,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		runnerCmd,
+		searchCmd,
 	)
 
 	return rootCmd
