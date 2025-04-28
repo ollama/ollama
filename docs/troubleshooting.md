@@ -126,4 +126,4 @@ To resolve this issue, set the `TLS_DISABLE=FALSE` environment variable before s
 
 ```bash
 export TLS_DISABLE=FALSE
-ollama serve
+```
