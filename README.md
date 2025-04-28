@@ -347,6 +347,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Go-CREW](https://www.jonathanhecl.com/go-crew/) (Powerful Offline RAG in Golang)
 - [PartCAD](https://github.com/openvmp/partcad/) (CAD model generation with OpenSCAD and CadQuery)
 - [Ollama4j Web UI](https://github.com/ollama4j/ollama4j-web-ui) - Java-based Web UI for Ollama built with Vaadin, Spring Boot and Ollama4j
+- [Ollama4j UI](https://github.com/ollama4j/ollama4j-ui) - Simple UI for Ollama built in Java with Swing and Ollama4j
 - [PyOllaMx](https://github.com/kspviswa/pyOllaMx) - macOS application capable of chatting with both Ollama and Apple MLX models.
 - [Cline](https://github.com/cline/cline) - Formerly known as Claude Dev is a VSCode extension for multi-file/whole-repo coding
 - [Cherry Studio](https://github.com/kangfenmao/cherry-studio) (Desktop client with Ollama support)
