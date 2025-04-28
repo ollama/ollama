@@ -253,7 +253,7 @@ func newVisionModel(c fs.Config) *VisionModel {
 	numHeads := int(c.Uint("vision.attention.head_count", 16))
 
 	return &VisionModel{
-		Layers: make([]VisionEncoderLayer, c.Uint("vision.block_count", 24)),
+		Layers: make([]VisionEncoderLayer, c.Uint("vision.block_count", 32)),
 		VisionModelOptions: &VisionModelOptions{
 			hiddenSize:       hiddenSize,
 			numHeads:         numHeads,
