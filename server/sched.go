@@ -81,6 +81,9 @@ func InitScheduler(ctx context.Context) *Scheduler {
 
 // context must be canceled to decrement ref count and release the runner
 func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options, sessionDuration *api.Duration) (chan *runnerRef, chan error) {
+	if opts.NumCtx != -1 && opts.NumCtx < 4 {
+		opts.NumCtx = 4
+	}
 	req := &LlmRequest{
 		ctx:             c,
 		model:           model,
@@ -585,6 +588,16 @@ func (runner *runnerRef) unload() {
 	runner.gpus = nil
 }
 
+func runnerOptionsEqual(a, b api.Runner) bool {
+	// if one of the options is -1, then it means it needs to be dynamically calculated
+	if a.NumCtx == -1 {
+		a.NumCtx = b.NumCtx
+	} else if b.NumCtx == -1 {
+		b.NumCtx = a.NumCtx
+	}
+	return reflect.DeepEqual(a, b)
+}
+
 func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool {
 	slog.Debug("evaluating already loaded", "model", req.model.ModelPath)
 	runner.refMu.Lock()
@@ -614,7 +627,7 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 	defer cancel()
 	if !reflect.DeepEqual(runner.model.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
 		!reflect.DeepEqual(runner.model.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
-		!reflect.DeepEqual(optsExisting, optsNew) || // have the runner options changed?
+		!runnerOptionsEqual(optsExisting, optsNew) ||
 		runner.llama.Ping(ctx) != nil {
 		return true
 	}

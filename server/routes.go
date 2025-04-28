@@ -114,6 +114,16 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, err
 	}
 
+	// TODO(drifkin): `GetRunner` above changes opts, but we currently pass it by
+	// value.  The following line is a hack to fix this for the now dynaically
+	// calculated NumCtx, but we should fix this properly (which could have other
+	// side effects, since perhaps we were relying on the values not being stomped
+	// on, particularly when NumCtx sometimes represents a numParallel-adjusted
+	// number and sometimes not)
+	if opts.NumCtx == -1 {
+		opts.NumCtx = runner.Options.NumCtx / runner.numParallel
+	}
+
 	return runner.llama, model, &opts, nil
 }
 

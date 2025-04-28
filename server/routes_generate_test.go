@@ -80,8 +80,12 @@ func TestGenerateChat(t *testing.T) {
 			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ int) {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
+				opts := api.DefaultOptions()
+				opts.NumCtx = 4096
 				req.successCh <- &runnerRef{
-					llama: &mock,
+					llama:       &mock,
+					numParallel: 1,
+					Options:     &opts,
 				}
 			},
 		},
@@ -184,7 +188,8 @@ func TestGenerateChat(t *testing.T) {
 
 	t.Run("load model", func(t *testing.T) {
 		w := createRequest(t, s.ChatHandler, api.ChatRequest{
-			Model: "test",
+			Model:   "test",
+			Options: map[string]any{"num_ctx": 2048},
 		})
 
 		if w.Code != http.StatusOK {
@@ -634,7 +639,9 @@ func TestGenerate(t *testing.T) {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
-					llama: &mock,
+					llama:       &mock,
+					Options:     &api.Options{},
+					numParallel: 1,
 				}
 			},
 		},
@@ -750,7 +757,8 @@ func TestGenerate(t *testing.T) {
 
 	t.Run("load model", func(t *testing.T) {
 		w := createRequest(t, s.GenerateHandler, api.GenerateRequest{
-			Model: "test",
+			Model:   "test",
+			Options: map[string]any{"num_ctx": 2048},
 		})
 
 		if w.Code != http.StatusOK {
