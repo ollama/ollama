@@ -179,6 +179,8 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid)
 
 	positionEmbedding := m.positionalEmbedding(ctx, grid)
 	cos, sin := positionEmbedding.Cos(ctx), positionEmbedding.Sin(ctx)
+	cos = cos.Reshape(ctx, cos.Dim(0), 1, cos.Dim(1))
+	sin = sin.Reshape(ctx, sin.Dim(0), 1, sin.Dim(1))
 
 	// Apply encoder layers
 	for _, layer := range m.Layers {
