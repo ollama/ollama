@@ -54,7 +54,7 @@ func New(c fs.Config) (model.Model, error) {
 			tokenizerPreExprs,
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
-				Types:  c.Uints("tokenizer.ggml.token_type"),
+				Types:  c.Ints("tokenizer.ggml.token_type"),
 				Merges: c.Strings("tokenizer.ggml.merges"),
 				BOS:    int32(c.Uint("tokenizer.ggml.bos_token_id")),
 				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", false),
@@ -151,15 +151,15 @@ func (moe *MoE) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *Options) ml
 	// (?) reshape hiddenState => hiddenState
 	hiddenState = hiddenState.Reshape(ctx, nEmbed, 1, nTokens)
 	// UpExps * hiddenState (ids = selected_experts) => "up"
-	up := moe.UpExps.Weight.MulmatId(ctx, hiddenState, selectedExperts)
+	up := moe.UpExps.Weight.MulmatID(ctx, hiddenState, selectedExperts)
 	// GateExps * hiddenState (ids = selected_experts) => "gate"
-	gate := moe.GateExps.Weight.MulmatId(ctx, hiddenState, selectedExperts)
+	gate := moe.GateExps.Weight.MulmatID(ctx, hiddenState, selectedExperts)
 	// SILU (gate) => "gate"
 	gate = gate.SILU(ctx)
 	// up * gate => "par"
 	par := up.Mul(ctx, gate)
 	// DownExps * par (ids = selected_experts) => "experts"
-	experts := moe.DownExps.Weight.MulmatId(ctx, par, selectedExperts)
+	experts := moe.DownExps.Weight.MulmatID(ctx, par, selectedExperts)
 	// experts * weights => experts
 	experts = experts.Mul(ctx, weights)
 	expertStride1 := experts.Stride(1)
