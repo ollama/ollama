@@ -278,8 +278,8 @@ func TestVar(t *testing.T) {
 }
 
 func TestContextLength(t *testing.T) {
-	cases := map[string]int64{
-		"":     -1,
+	cases := map[string]uint{
+		"":     2048,
 		"4096": 4096,
 	}
 
