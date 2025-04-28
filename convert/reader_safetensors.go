@@ -170,6 +170,7 @@ func (st safetensor) WriteTo(w io.Writer) (int64, error) {
 		for i := range f32s {
 			f16s[i] = float16.Fromfloat32(f32s[i]).Bits()
 		}
+
 		return 0, binary.Write(w, binary.LittleEndian, f16s)
 	default:
 		return 0, fmt.Errorf("unknown storage type: %d", st.Kind())
