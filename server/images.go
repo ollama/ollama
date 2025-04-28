@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -781,9 +782,15 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 		req.ContentLength = contentLength
 	}
 
+	transport := &http.Transport{}
+	if os.Getenv("TLS_DISABLE") == "FALSE" {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
 	c := &http.Client{
 		CheckRedirect: regOpts.CheckRedirect,
+		Transport:     transport,
 	}
+
 	if testMakeRequestDialContext != nil {
 		tr := http.DefaultTransport.(*http.Transport).Clone()
 		tr.DialContext = testMakeRequestDialContext

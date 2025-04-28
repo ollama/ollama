@@ -113,3 +113,17 @@ If you experience gibberish responses when models load across multiple AMD GPUs 
 ## Windows Terminal Errors
 
 Older versions of Windows 10 (e.g., 21H1) are known to have a bug where the standard terminal program does not display control characters correctly.  This can result in a long string of strings like `←[?25h←[?25l` being displayed, sometimes erroring with `The parameter is incorrect`  To resolve this problem, please update to Win 10 22H1 or newer.
+
+### TLS: failed to verify certificate: x509
+```
+pulling manifest
+Error: pull model manifest: Get "https://registry.ollama.ai/v2/library/llama3.2/manifests/latest": tls: failed to verify certificate: x509: certificate signed by unknown authority
+```
+
+This typically occurs in corporate environments that intercept HTTPS traffic, decrypt it for inspection, and then re-encrypt it with a corporate certificate authority (CA).
+
+To resolve this issue, set the `TLS_DISABLE=FALSE` environment variable before starting Ollama, which will disable certificate verification:
+
+```bash
+export TLS_DISABLE=FALSE
+ollama serve
