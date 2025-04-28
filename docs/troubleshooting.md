@@ -125,5 +125,5 @@ This typically occurs in corporate environments that intercept HTTPS traffic, de
 To resolve this issue, set the `TLS_DISABLE=FALSE` environment variable before starting Ollama, which will disable certificate verification:
 
 ```bash
-export TLS_DISABLE=FALSE
+export TLS_DISABLE=TRUE
 ```

@@ -783,7 +783,7 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 	}
 
 	transport := &http.Transport{}
-	if os.Getenv("TLS_DISABLE") == "FALSE" {
+	if os.Getenv("TLS_DISABLE") == "TRUE" {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 	c := &http.Client{
