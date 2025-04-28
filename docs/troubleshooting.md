@@ -122,7 +122,7 @@ Error: pull model manifest: Get "https://registry.ollama.ai/v2/library/llama3.2/
 
 This typically occurs in corporate environments that intercept HTTPS traffic, decrypt it for inspection, and then re-encrypt it with a corporate certificate authority (CA).
 
-To resolve this issue, set the `TLS_DISABLE=FALSE` environment variable before starting Ollama, which will disable certificate verification:
+To resolve this issue, set the `TLS_DISABLE=TRUE` environment variable before starting Ollama, which will disable certificate verification:
 
 ```bash
 export TLS_DISABLE=TRUE
