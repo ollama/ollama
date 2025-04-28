@@ -140,7 +140,6 @@ type Tensor interface {
 	LayerNorm(ctx Context, weight, bias Tensor, eps float32) Tensor
 	RMSNorm(ctx Context, weight Tensor, eps float32) Tensor
 	Scale(ctx Context, s float64) Tensor
-	TopK(ctx Context, k int) Tensor
 	SumRows(ctx Context) Tensor
 
 	AvgPool2D(ctx Context, k, s int, p float32) Tensor
