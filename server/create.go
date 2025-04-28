@@ -514,17 +514,34 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 		} else if err != nil {
 			return nil, err
 		}
-	}
 
-	// Fallback to creating layer from file copy (either NewLayerFromLayer failed, or digest empty/n != stat.Size())
-	if layer.Digest == "" {
-		layer, err = NewLayer(io.NewSectionReader(blob, 0, n), mediatype)
-		if err != nil {
-			return nil, err
+		mediatype := "application/vnd.ollama.image.model"
+		if f.KV().Kind() == "adapter" {
+			mediatype = "application/vnd.ollama.image.adapter"
+		} else if _, ok := f.KV()[fmt.Sprintf("%s.vision.block_count", f.KV().Architecture())]; ok || f.KV().Kind() == "projector" {
+			mediatype = "application/vnd.ollama.image.projector"
 		}
-	}
 
-	layers = append(layers, &layerGGML{layer, f})
+		var layer Layer
+		if digest != "" && n == stat.Size() && offset == 0 {
+			layer, err = NewLayerFromLayer(digest, mediatype, blob.Name())
+			if err != nil {
+				slog.Debug("could not create new layer from layer", "error", err)
+				return nil, err
+			}
+		}
+
+		// Fallback to creating layer from file copy (either NewLayerFromLayer failed, or digest empty/n != stat.Size())
+		if layer.Digest == "" {
+			layer, err = NewLayer(io.NewSectionReader(blob, offset, n), mediatype)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		layers = append(layers, &layerGGML{layer, f})
+		offset = n
+	}
 
 	return detectChatTemplate(layers)
 }

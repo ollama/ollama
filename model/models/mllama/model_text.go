@@ -240,7 +240,7 @@ func newTextModel(c fs.Config) *TextModel {
 			numHeads:             int(c.Uint("attention.head_count")),
 			numKVHeads:           int(c.Uint("attention.head_count_kv")),
 			eps:                  c.Float("attention.layer_norm_rms_epsilon"),
-			crossAttentionLayers: c.Uints("attention.cross_attention_layers"),
+			crossAttentionLayers: c.Ints("attention.cross_attention_layers"),
 			ropeConfig: ml.RoPEConfig{
 				Base:       c.Float("rope.freq_base"),
 				Scale:      c.Float("rope.freq_scale", 1),
