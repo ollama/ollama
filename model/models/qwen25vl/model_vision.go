@@ -70,8 +70,8 @@ func (mlp *VisionMLP) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Visi
 // VisionEncoderLayer implements an encoder layer for the Qwen vision model
 type VisionEncoderLayer struct {
 	Norm1         *nn.RMSNorm `gguf:"ln1"`
-	Norm2         *nn.RMSNorm `gguf:"ln2"`
 	SelfAttention *VisionSelfAttention
+	Norm2         *nn.RMSNorm `gguf:"ln2"`
 	MLP           *VisionMLP
 }
 
@@ -138,30 +138,36 @@ func (pe *PatchEmbedding) Forward(ctx ml.Context, pixelValues ml.Tensor, numChan
 
 // VisionPatchMerger implements patch merging for the Qwen vision model
 type VisionPatchMerger struct {
-	LNQ *nn.RMSNorm `gguf:"ln_q"`
-	MLP *nn.Linear  `gguf:"mlp"`
+	LNQ  *nn.RMSNorm `gguf:"ln_q"`
+	MLP0 *nn.Linear  `gguf:"mlp.0"`
+	MLP2 *nn.Linear  `gguf:"mlp.2"`
 }
 
 // Forward computes patch merging for the vision model
-func (pm *VisionPatchMerger) Forward(ctx ml.Context, x ml.Tensor, outDim, contextDim, spatialMergeSize int) ml.Tensor {
-	hiddenSize := contextDim * (spatialMergeSize * spatialMergeSize)
+func (pm *VisionPatchMerger) Forward(ctx ml.Context, visionOutputs ml.Tensor, eps float32) ml.Tensor {
+	// Get dimensions
+	hiddenSize := visionOutputs.Dim(0)
+	numPositions := visionOutputs.Dim(1)
+	batchSize := visionOutputs.Dim(2)
 
-	// Normalize and reshape
-	x = pm.LNQ.Forward(ctx, x, 1e-6)
-	x = x.Reshape(ctx, -1, hiddenSize)
+	reshaped := pm.LNQ.Forward(ctx, visionOutputs, 1e6).Reshape(ctx, hiddenSize*4, numPositions/4, batchSize)
 
-	// Apply MLP for merging
-	x = pm.MLP.Forward(ctx, x)
+	// Apply first linear layer (mm_0_w, mm_0_b)
+	hidden := pm.MLP0.Forward(ctx, reshaped)
 
-	return x
+	activated := hidden.GELU(ctx)
+
+	// Apply second linear layer (mm_1_w, mm_1_b)
+	output := pm.MLP2.Forward(ctx, activated)
+
+	return output
 }
 
 // VisionModel implements the Qwen vision model
 type VisionModel struct {
 	PatchEmbedding *PatchEmbedding
 	Layers         []VisionEncoderLayer `gguf:"blk"`
-	PostLayerNorm  *nn.LayerNorm        `gguf:"post_ln"`
-	PatchMerger    *VisionPatchMerger   `gguf:"patch_merger"`
+	PatchMerger    *VisionPatchMerger   `gguf:"merger"`
 
 	*VisionModelOptions
 }
@@ -187,8 +193,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid)
 		hiddenStates = layer.Forward(ctx, hiddenStates, cos, sin, m.VisionModelOptions)
 	}
 
-	// hiddenStates = m.PostLayerNorm.Forward(ctx, hiddenStates, m.eps)
-	return hiddenStates
+	return m.PatchMerger.Forward(ctx, hiddenStates, m.eps)
 }
 
 // positionalEmbedding generates rotary position embeddings for attention mechanisms
@@ -248,7 +253,7 @@ func (m *VisionModel) positionalEmbedding(ctx ml.Context, grid *Grid) ml.Tensor 
 func newVisionModel(c fs.Config) *VisionModel {
 	patchSize := int(c.Uint("vision.patch_size", 14))
 	hiddenSize := int(c.Uint("vision.embedding_length", 1280))
-	ropeTheta := c.Float("vision.rope_theta", 10000.0)             // not set
+	ropeTheta := c.Float("vision.rope.freq_base", 10000.0)         // not set
 	outHiddenSize := int(c.Uint("vision.out_embedding_length", 0)) // not set
 	numHeads := int(c.Uint("vision.attention.head_count", 16))
 

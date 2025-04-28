@@ -26,13 +26,12 @@ type ImageProcessor struct {
 
 // newImageProcessor creates a new image processor with default values
 func newImageProcessor(c fs.Config) ImageProcessor {
-
 	patchSize := int(c.Uint("vision.patch_size", 14))
 	mergeSize := int(c.Uint("vision.spatial_merge_size", 2))
 
 	return ImageProcessor{
 		imageSize:         int(c.Uint("vision.image_size", 560)),
-		numChannels:       3,
+		numChannels:       int(c.Uint("vision.num_channels", 3)), // not set
 		patchSize:         patchSize,
 		temporalPatchSize: 2,
 		mergeSize:         mergeSize,

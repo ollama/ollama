@@ -148,6 +148,11 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 	// Initial token embedding
 	hiddenState := m.TokenEmbedding.Forward(ctx, inputs)
 
+	for _, image := range batch.Multimodal {
+		visionOutputs := image.Multimodal.(ml.Tensor)
+		ctx.Forward(visionOutputs.Copy(ctx, hiddenState.View(ctx, image.Index*hiddenState.Stride(1), visionOutputs.Dim(0)*visionOutputs.Dim(1))))
+	}
+
 	// Process through transformer layers
 	for i, layer := range m.Layers {
 		cache.SetLayer(i)
