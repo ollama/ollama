@@ -56,7 +56,7 @@ func New(c fs.Config) (model.Model, error) {
 			tokenizerPreExprs,
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
-				Types:  c.Uints("tokenizer.ggml.token_type"),
+				Types:  c.Ints("tokenizer.ggml.token_type"),
 				Merges: c.Strings("tokenizer.ggml.merges"),
 				BOS:    int32(c.Uint("tokenizer.ggml.bos_token_id")),
 				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", false),
