@@ -1,6 +1,7 @@
 package qwen25vl
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/ollama/ollama/fs"
@@ -251,7 +252,7 @@ func (m *VisionModel) positionalEmbedding(ctx ml.Context, grid *Grid) ml.Tensor 
 	}
 	freqs, err := ctx.Input().FromFloatSlice(freqVals, freq, maxGridSize)
 	if err != nil {
-		panic(err) // TODO: handle error
+		panic(fmt.Errorf("failed to create tensor from frequencies: %w", err))
 	}
 
 	// Create position coordinates (y,x pairs) for the grid
@@ -264,7 +265,7 @@ func (m *VisionModel) positionalEmbedding(ctx ml.Context, grid *Grid) ml.Tensor 
 	}
 	pos, err := ctx.Input().FromIntSlice(coords, 2, grid.Width, grid.Height)
 	if err != nil {
-		panic(err) // TODO: handle error
+		panic(fmt.Errorf("failed to create tensor from positions: %w", err))
 	}
 
 	// Reshape and permute positions to match spatial merging pattern
