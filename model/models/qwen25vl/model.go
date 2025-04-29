@@ -118,6 +118,4 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 
 func init() {
 	model.Register("qwen25vl", New)
-	model.Register("qwen2", New)
-	model.Register("qwen2vl", New)
 }
