@@ -20,7 +20,7 @@ Please refer to the [GPU docs](./gpu.md).
 
 ## How can I specify the context window size?
 
-By default, Ollama uses a context window size of 2048 tokens. 
+By default, Ollama uses a context window size of 4096 tokens. 
 
 This can be overridden with the `OLLAMA_CONTEXT_LENGTH` environment variable. For example, to set the default context window to 8K, use: 
 
