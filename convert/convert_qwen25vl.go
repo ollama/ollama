@@ -12,16 +12,17 @@ type qwen25VLModel struct {
 	qwen2Model
 
 	VisionModel struct {
-		Depth            uint32  `json:"depth"`
-		HiddenSize       uint32  `json:"hidden_size"`
-		IntermediateSize uint32  `json:"intermediate_size"`
-		InChannels       uint32  `json:"in_chans"`
-		NumHeads         uint32  `json:"num_heads"`
-		PatchSize        uint32  `json:"patch_size"`
-		SpatialMergeSize uint32  `json:"spatial_merge_size"`
-		SpatialPatchSize uint32  `json:"spatial_patch_size"`
-		WindowSize       uint32  `json:"window_size"`
-		RopeTheta        float32 `json:"rope_theta"`
+		Depth             uint32  `json:"depth"`
+		HiddenSize        uint32  `json:"hidden_size"`
+		NumHeads          uint32  `json:"num_heads"`
+		InChannels        uint32  `json:"in_chans"`
+		PatchSize         uint32  `json:"patch_size"`
+		SpatialMergeSize  uint32  `json:"spatial_merge_size"`
+		SpatialPatchSize  uint32  `json:"spatial_patch_size"`
+		WindowSize        uint32  `json:"window_size"`
+		RMSNormEps        float32 `json:"layer_norm_epsilon"`
+		RopeTheta         float32 `json:"rope_theta"`
+		TemporalPatchSize uint32  `json:"temporal_patch_size"`
 	} `json:"vision_config"`
 }
 
@@ -39,13 +40,15 @@ func (q *qwen25VLModel) KV(t *Tokenizer) ggml.KV {
 
 	kv["qwen25vl.vision.block_count"] = q.VisionModel.Depth
 	kv["qwen25vl.vision.embedding_length"] = q.VisionModel.HiddenSize
-	kv["qwen25vl.vision.feed_forward_length"] = q.VisionModel.IntermediateSize
 	kv["qwen25vl.vision.attention.head_count"] = q.VisionModel.NumHeads
 	kv["qwen25vl.vision.num_channels"] = q.VisionModel.InChannels
 	kv["qwen25vl.vision.patch_size"] = q.VisionModel.PatchSize
 	kv["qwen25vl.vision.spatial_merge_size"] = q.VisionModel.SpatialMergeSize
 	kv["qwen25vl.vision.spatial_patch_size"] = q.VisionModel.SpatialPatchSize
+	kv["qwen25vl.vision.window_size"] = q.VisionModel.WindowSize
+	kv["qwen25vl.vision.attention.layer_norm_epsilon"] = cmp.Or(q.VisionModel.RMSNormEps, 1e-6)
 	kv["qwen25vl.vision.rope.freq_base"] = cmp.Or(q.VisionModel.RopeTheta, 1e5)
+	kv["qwen25vl.vision.temporal_patch_size"] = q.VisionModel.TemporalPatchSize
 
 	return kv
 }
