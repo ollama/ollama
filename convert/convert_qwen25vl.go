@@ -18,8 +18,9 @@ type qwen25VLModel struct {
 		InChannels       uint32  `json:"in_chans"`
 		NumHeads         uint32  `json:"num_heads"`
 		PatchSize        uint32  `json:"patch_size"`
-		SpatialMergeSize uint32  `json:"spatial_merge_size"` // TODO: is this set?
+		SpatialMergeSize uint32  `json:"spatial_merge_size"`
 		SpatialPatchSize uint32  `json:"spatial_patch_size"`
+		WindowSize       uint32  `json:"window_size"`
 		RopeTheta        float32 `json:"rope_theta"`
 	} `json:"vision_config"`
 }
