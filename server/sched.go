@@ -478,7 +478,12 @@ func (s *Scheduler) updateFreeSpace(allGpus discover.GpuInfoList) {
 	}
 	predMap := map[predKey]uint64{} // Sum up the total predicted usage per GPU for all runners
 	s.loadedMu.Lock()
+	runners := make([]*runnerRef, 0, len(s.loaded))
 	for _, r := range s.loaded {
+		runners = append(runners, r)
+	}
+	s.loadedMu.Unlock()
+	for _, r := range runners {
 		r.refMu.Lock()
 		if r.llama != nil {
 			for _, gpu := range allGpus {
@@ -489,7 +494,6 @@ func (s *Scheduler) updateFreeSpace(allGpus discover.GpuInfoList) {
 		}
 		r.refMu.Unlock()
 	}
-	s.loadedMu.Unlock()
 
 	// Now that we've summed up all the GPU usage predictions across all the loaded runners, update the gpu list
 	for i := range allGpus {
@@ -808,8 +812,8 @@ func (s *Scheduler) unloadAllRunners() {
 
 func (s *Scheduler) expireRunner(model *Model) {
 	s.loadedMu.Lock()
-	defer s.loadedMu.Unlock()
 	runner, ok := s.loaded[model.ModelPath]
+	s.loadedMu.Unlock()
 	if ok {
 		runner.refMu.Lock()
 		runner.expiresAt = time.Now()
