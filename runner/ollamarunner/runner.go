@@ -723,7 +723,9 @@ func (m *multiLPath) String() string {
 	return strings.Join(*m, ", ")
 }
 
-func (s *Server) reserveWorstCaseGraph() error {
+// TODO(jessegross): This is causing tensor allocation failures with large batches when not offloaded
+// to the GPU
+/*func (s *Server) reserveWorstCaseGraph() error {
 	ctx := s.model.Backend().NewContext()
 	defer ctx.Close()
 
@@ -766,7 +768,7 @@ func (s *Server) reserveWorstCaseGraph() error {
 	}
 
 	return nil
-}
+}*/
 
 func (s *Server) loadModel(
 	ctx context.Context,
@@ -803,10 +805,10 @@ func (s *Server) loadModel(
 	s.seqs = make([]*Sequence, s.parallel)
 	s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
 
-	err = s.reserveWorstCaseGraph()
+	/*err = s.reserveWorstCaseGraph()
 	if err != nil {
 		panic(err)
-	}
+	}*/
 
 	s.status = llm.ServerStatusReady
 	s.ready.Done()
