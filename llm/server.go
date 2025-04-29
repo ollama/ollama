@@ -798,6 +798,12 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	var lastToken string
 	var tokenRepeat int
 	var inDisabledTagBlock bool // Track if currently inside the disabled tag
+	var ticker *time.Ticker
+	defer func() {
+		if ticker != nil {
+			ticker.Stop()
+		}
+	}()
 
 	disabledTag := envconfig.DisableTokenTag()
 	startTag := "<" + disabledTag + ">"
@@ -808,6 +814,15 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		case <-ctx.Done():
 			// This handles the request cancellation
 			return ctx.Err()
+		case <-func() <-chan time.Time {
+			if ticker == nil {
+				// Return a nil channel if ticker is not active to block this case
+				return nil
+			}
+			return ticker.C
+		}():
+			// Send a zero-width space periodically while in the disabled tag block as a keep-alive
+			fn(CompletionResponse{Content: "\u200B"})
 		default:
 			line := scanner.Bytes()
 			if len(line) == 0 {
@@ -839,6 +854,10 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 
 			// Check for the end tag first to ensure it's not sent
 			if disabledTag != "" && strings.Contains(c.Content, endTag) {
+				if ticker != nil {
+					ticker.Stop()
+					ticker = nil
+				}
 				inDisabledTagBlock = false
 			}
 
@@ -853,6 +872,10 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 
 			// Check for the start tag last to start blocking subsequent tokens
 			if disabledTag != "" && strings.Contains(c.Content, startTag) {
+				if ticker == nil {
+					// Start the ticker when entering the disabled block
+					ticker = time.NewTicker(3 * time.Second)
+				}
 				inDisabledTagBlock = true
 			}
 
