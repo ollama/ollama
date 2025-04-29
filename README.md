@@ -468,7 +468,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Libraries
 
-- [LangChain](https://python.langchain.com/docs/integrations/llms/ollama) and [LangChain.js](https://js.langchain.com/docs/integrations/chat/ollama/) with [example](https://js.langchain.com/docs/tutorials/local_rag/)
+- [LangChain](https://python.langchain.com/docs/integrations/chat/ollama/) and [LangChain.js](https://js.langchain.com/docs/integrations/chat/ollama/) with [example](https://js.langchain.com/docs/tutorials/local_rag/)
 - [Firebase Genkit](https://firebase.google.com/docs/genkit/plugins/ollama)
 - [crewAI](https://github.com/crewAIInc/crewAI)
 - [Yacana](https://remembersoftwares.github.io/yacana/) (User-friendly multi-agent framework for brainstorming and executing predetermined flows with built-in tool integration)
