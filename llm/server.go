@@ -797,6 +797,11 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	// keep track of the last token generated, this is used to abort if the model starts looping
 	var lastToken string
 	var tokenRepeat int
+	var inDisabledTagBlock bool // Track if currently inside the disabled tag
+
+	disabledTag := envconfig.DisableTokenTag()
+	startTag := "<" + disabledTag + ">"
+	endTag := "</" + disabledTag + ">"
 
 	for scanner.Scan() {
 		select {
@@ -832,10 +837,23 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 				return ctx.Err()
 			}
 
-			if c.Content != "" {
-				fn(CompletionResponse{
-					Content: c.Content,
-				})
+			// Check for the end tag first to ensure it's not sent
+			if disabledTag != "" && strings.Contains(c.Content, endTag) {
+				inDisabledTagBlock = false
+			}
+
+			// Only send the chunk if no disabled tag is specified or not inside the disabled tag block
+			if disabledTag == "" || !inDisabledTagBlock {
+				if c.Content != "" {
+					fn(CompletionResponse{
+						Content: c.Content,
+					})
+				}
+			}
+
+			// Check for the start tag last to start blocking subsequent tokens
+			if disabledTag != "" && strings.Contains(c.Content, startTag) {
+				inDisabledTagBlock = true
 			}
 
 			if c.Done {
