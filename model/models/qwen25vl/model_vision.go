@@ -209,13 +209,14 @@ func (m *VisionModel) positionalEmbedding(ctx ml.Context, grid *Grid) ml.Tensor 
 	// Create frequency patterns for position encoding
 	// These are scaled position values based on frequency
 	// In PyTorch: Similar to inv_freq = 1.0 / (theta ** (torch.arange(0, dim, 2) / dim))
-	freqVals := make([]float32, freq*grid.Width)
-	for i := range grid.Width {
+	maxGridSize := max(grid.Height, grid.Width)
+	freqVals := make([]float32, freq*maxGridSize)
+	for i := range maxGridSize {
 		for j := range freq {
 			freqVals[i*freq+j] = float32(i) / float32(math.Pow(theta, float64(j*2)/float64(dim)))
 		}
 	}
-	freqs, err := ctx.Input().FromFloatSlice(freqVals, freq, grid.Width)
+	freqs, err := ctx.Input().FromFloatSlice(freqVals, freq, maxGridSize)
 	if err != nil {
 		panic(err) // TODO: handle error
 	}
