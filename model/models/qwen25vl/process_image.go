@@ -50,14 +50,12 @@ func (p *ImageProcessor) SmartResize(height, width int) (int, int) {
 
 	if height < factor || width < factor {
 		panic(fmt.Sprintf("height:%d or width:%d must be larger than factor:%d", height, width, factor))
-	} else if float64(max(height, width))/float64(min(height, width)) > 200 {
-		aspectRatio := float64(max(height, width)) / float64(min(height, width))
-		panic(fmt.Sprintf("absolute aspect ratio must be smaller than 200, got %f", aspectRatio))
+	} else if aspectRatio := max(height, width) / min(height, width); aspectRatio > 200 {
+		panic(fmt.Sprintf("absolute aspect ratio must be smaller than 200, got %v", aspectRatio))
 	}
 
-	round := func(x float64) int {
-		return int(math.Round(x))
-	}
+	round := func(x float64) int { return int(math.RoundToEven(x)) }
+
 	hBar := round(float64(height)/float64(factor)) * factor
 	wBar := round(float64(width)/float64(factor)) * factor
 
