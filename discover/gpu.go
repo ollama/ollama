@@ -5,6 +5,7 @@ package discover
 /*
 #cgo linux LDFLAGS: -lrt -lpthread -ldl -lstdc++ -lm
 #cgo windows LDFLAGS: -lpthread
+#cgo CPPFLAGS: -I${SRCDIR}/../ml/backend/ggml/ggml/include
 
 #include "gpu_info.h"
 */
@@ -34,6 +35,7 @@ type cudaHandles struct {
 
 type oneapiHandles struct {
 	oneapi      *C.oneapi_handle_t
+	sycl        *C.sycl_handle_t
 	deviceCount int
 }
 
@@ -51,6 +53,7 @@ var (
 	nvcudaLibPath string
 	cudartLibPath string
 	oneapiLibPath string
+	syclLibPath   string
 	nvmlLibPath   string
 	rocmGPUs      []RocmGPUInfo
 	oneapiGPUs    []OneapiGPUInfo
@@ -166,6 +169,28 @@ func initOneAPIHandles() *oneapiHandles {
 	if len(oneapiLibPaths) > 0 {
 		var err error
 		oHandles.deviceCount, oHandles.oneapi, oneapiLibPath, err = loadOneapiMgmt(oneapiLibPaths)
+		if err != nil {
+			bootstrapErrors = append(bootstrapErrors, err)
+		}
+	}
+
+	return oHandles
+}
+
+// Note: gpuMutex must already be held
+func initSyclHandles(oHandles *oneapiHandles) *oneapiHandles {
+
+	// Short Circuit if we already know which library to use
+	// ignore bootstrap errors in this case since we already recorded them
+	if syclLibPath != "" {
+		oHandles.deviceCount, oHandles.sycl, _, _ = loadSyclMgmt([]string{syclLibPath})
+		return oHandles
+	}
+
+	syclLibPaths := FindGPULibs(SyclMgmtName, SyclGlobs)
+	if len(syclLibPaths) > 0 {
+		var err error
+		oHandles.deviceCount, oHandles.sycl, syclLibPath, err = loadSyclMgmt(syclLibPaths)
 		if err != nil {
 			bootstrapErrors = append(bootstrapErrors, err)
 		}
@@ -365,6 +390,34 @@ func GetGPUInfo() GpuInfoList {
 						oneapiGPUs = append(oneapiGPUs, gpuInfo)
 					}
 				}
+			}
+
+			oHandles = initSyclHandles(oHandles)
+			if oHandles != nil && oHandles.sycl != nil {
+				//for d := range oHandles.sycl.num_drivers {
+				devCount := C.sycl_get_device_count(oHandles.sycl)
+				for i := range devCount { //for i := range oHandles.deviceCount {
+					gpuInfo := OneapiGPUInfo{
+						GpuInfo: GpuInfo{
+							Library: "oneapi",
+						},
+						driverIndex: int(0),
+						gpuIndex:    int(i),
+					}
+					var free, total C.uint64_t
+					C.sycl_get_device_memory(oHandles.sycl, i, &free, &total)
+					// TODO - convert this to MinimumMemory based on testing...
+					var totalFreeMem float64 = float64(free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
+					free = C.uint64_t(totalFreeMem)
+					gpuInfo.TotalMemory = uint64(total)
+					gpuInfo.FreeMemory = uint64(free)
+					//gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
+					//gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
+					//gpuInfo.DependencyPath = []string{LibOllamaPath}
+					oneapiGPUs = append(oneapiGPUs, gpuInfo)
+					slog.Info("GPU Info ", "=", gpuInfo)
+				}
+				//}
 			}
 		}
 
@@ -663,6 +716,29 @@ func loadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string, e
 			for i := range resp.oh.num_drivers {
 				num_devices += int(C.oneapi_get_device_count(resp.oh, C.int(i)))
 			}
+			return num_devices, &resp.oh, libPath, err
+		}
+	}
+	return 0, nil, "", err
+}
+
+func loadSyclMgmt(oneapiLibPaths []string) (int, *C.sycl_handle_t, string, error) {
+	var resp C.sycl_init_resp_t
+	num_devices := 0
+	resp.oh.verbose = getVerboseState()
+	var err error
+	for _, libPath := range oneapiLibPaths {
+		lib := C.CString(libPath)
+		defer C.free(unsafe.Pointer(lib))
+		C.sycl_init(lib, &resp)
+		if resp.err != nil {
+			err = fmt.Errorf("Unable to load Sycl management library %s: %s", libPath, C.GoString(resp.err))
+			slog.Error(err.Error())
+			C.free(unsafe.Pointer(resp.err))
+		} else {
+			num_devices = int(C.sycl_get_device_count(&resp.oh))
+			err = nil
+			C.sycl_print_sycl_devices(&resp.oh)
 			return num_devices, &resp.oh, libPath, err
 		}
 	}
