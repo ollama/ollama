@@ -843,6 +843,7 @@ func TestFilterThinkTags(t *testing.T) {
 				{Role: "user", Content: "What is the answer?"},
 			},
 			model: &Model{
+				Name:      "registry.ollama.ai/library/deepseek-r1:latest",
 				ShortName: "deepseek-r1:7b",
 				Config:    ConfigV2{},
 			},

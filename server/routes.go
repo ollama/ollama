@@ -1645,8 +1645,8 @@ func handleScheduleError(c *gin.Context, name string, err error) {
 
 var thinkTagRegexp = regexp.MustCompile(`<think>(?s).*?</think>(\n)*`)
 
-func filterThinkTags(msgs []api.Message, model *Model) []api.Message {
-	if model.Config.ModelFamily == "qwen3" || strings.HasPrefix(model.ShortName, "deepseek-r1:") {
+func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
+	if m.Config.ModelFamily == "qwen3" || model.ParseName(m.Name).Model == "deepseek-r1" {
 		finalUserIndex := -1
 		for i, msg := range msgs {
 			if msg.Role == "user" {
