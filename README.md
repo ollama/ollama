@@ -54,6 +54,12 @@ Here are some example models that can be downloaded:
 
 | Model              | Parameters | Size  | Download                         |
 | ------------------ | ---------- | ----- | -------------------------------- |
+| Qwen 3             | 235b       | 142GB | `ollama run qwen3:235b`          |
+| Qwen 3             | 8b         | 5.2GB | `ollama run qwen3`               |
+| Qwen 3             | 14b        | 9.3GB | `ollama run qwen3:14b`           |
+| Qwen 3             | 30b        | 19GB  | `ollama run qwen3:30b`           |
+| Qwen 3             | 32b        | 20GB  | `ollama run qwen3:32b`           |
+| Qwen 3             | 0.6b       | 523MB | `ollama run qwen3:235b`          |
 | Gemma 3            | 1B         | 815MB | `ollama run gemma3:1b`           |
 | Gemma 3            | 4B         | 3.3GB | `ollama run gemma3`              |
 | Gemma 3            | 12B        | 8.1GB | `ollama run gemma3:12b`          |
@@ -77,7 +83,7 @@ Here are some example models that can be downloaded:
 | Code Llama         | 7B         | 3.8GB | `ollama run codellama`           |
 | Llama 2 Uncensored | 7B         | 3.8GB | `ollama run llama2-uncensored`   |
 | LLaVA              | 7B         | 4.5GB | `ollama run llava`               |
-| Granite-3.2         | 8B         | 4.9GB | `ollama run granite3.2`          |
+| Granite-3.2        | 8B         | 4.9GB | `ollama run granite3.2`          |
 
 > [!NOTE]
 > You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
