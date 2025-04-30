@@ -178,7 +178,8 @@ func initOneAPIHandles() *oneapiHandles {
 }
 
 // Note: gpuMutex must already be held
-func initSyclHandles(oHandles *oneapiHandles) *oneapiHandles {
+func initSyclHandles() *oneapiHandles {
+	oHandles := &oneapiHandles{}
 
 	// Short Circuit if we already know which library to use
 	// ignore bootstrap errors in this case since we already recorded them
@@ -195,7 +196,6 @@ func initSyclHandles(oHandles *oneapiHandles) *oneapiHandles {
 			bootstrapErrors = append(bootstrapErrors, err)
 		}
 	}
-
 	return oHandles
 }
 
@@ -234,6 +234,9 @@ func GetGPUInfo() GpuInfoList {
 			if oHandles.oneapi != nil {
 				// TODO - is this needed?
 				C.oneapi_release(*oHandles.oneapi)
+			}
+			if oHandles.sycl != nil {
+				C.sycl_release(*oHandles.sycl)
 			}
 		}
 	}()
@@ -359,7 +362,44 @@ func GetGPUInfo() GpuInfoList {
 		}
 
 		// Intel
-		if envconfig.IntelGPU() {
+		var useSycl bool = false
+		if s := envconfig.Var("OLLAMA_NUM_GPU"); s != "" {
+			if _, err := strconv.ParseInt(s, 10, 64); err == nil {
+				useSycl = true
+			}
+		}
+		if envconfig.IntelGPU() && useSycl {
+			oHandles = initSyclHandles()
+			if oHandles != nil && oHandles.sycl != nil {
+				devCount := C.sycl_get_device_count(oHandles.sycl)
+				for i := range devCount { //for i := range oHandles.deviceCount {
+					gpuInfo := OneapiGPUInfo{
+						GpuInfo: GpuInfo{
+							Library: "oneapi",
+						},
+						driverIndex: int(999),
+						gpuIndex:    int(i),
+					}
+					var free, total C.uint64_t
+					var descBuffer [64]byte
+					desc := (*C.char)(unsafe.Pointer(&descBuffer[0]))
+
+					C.sycl_get_device_memory(oHandles.sycl, i, &free, &total)
+					C.sycl_get_device_description(oHandles.sycl, i, desc, C.uint64_t(64))
+
+					var totalFreeMem float64 = float64(free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
+					free = C.uint64_t(totalFreeMem)
+					gpuInfo.TotalMemory = uint64(total)
+					gpuInfo.FreeMemory = uint64(free)
+					gpuInfo.ID = strconv.Itoa(int(i))
+					gpuInfo.Name = C.GoString(desc)
+					//gpuInfo.DependencyPath = []string{LibOllamaPath}
+					//gpuInfo.Variant = "SYCL"
+					oneapiGPUs = append(oneapiGPUs, gpuInfo)
+					slog.Info("SYCL GPU Info ", "=", gpuInfo)
+				}
+			}
+		} else if envconfig.IntelGPU() {
 			oHandles = initOneAPIHandles()
 			if oHandles != nil && oHandles.oneapi != nil {
 				for d := range oHandles.oneapi.num_drivers {
@@ -390,34 +430,6 @@ func GetGPUInfo() GpuInfoList {
 						oneapiGPUs = append(oneapiGPUs, gpuInfo)
 					}
 				}
-			}
-
-			oHandles = initSyclHandles(oHandles)
-			if oHandles != nil && oHandles.sycl != nil {
-				//for d := range oHandles.sycl.num_drivers {
-				devCount := C.sycl_get_device_count(oHandles.sycl)
-				for i := range devCount { //for i := range oHandles.deviceCount {
-					gpuInfo := OneapiGPUInfo{
-						GpuInfo: GpuInfo{
-							Library: "oneapi",
-						},
-						driverIndex: int(0),
-						gpuIndex:    int(i),
-					}
-					var free, total C.uint64_t
-					C.sycl_get_device_memory(oHandles.sycl, i, &free, &total)
-					// TODO - convert this to MinimumMemory based on testing...
-					var totalFreeMem float64 = float64(free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
-					free = C.uint64_t(totalFreeMem)
-					gpuInfo.TotalMemory = uint64(total)
-					gpuInfo.FreeMemory = uint64(free)
-					//gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
-					//gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
-					//gpuInfo.DependencyPath = []string{LibOllamaPath}
-					oneapiGPUs = append(oneapiGPUs, gpuInfo)
-					slog.Info("GPU Info ", "=", gpuInfo)
-				}
-				//}
 			}
 		}
 
@@ -511,7 +523,11 @@ func GetGPUInfo() GpuInfoList {
 		}
 
 		if oHandles == nil && len(oneapiGPUs) > 0 {
-			oHandles = initOneAPIHandles()
+			if oneapiGPUs[0].driverIndex == 999 {
+				oHandles = initSyclHandles()
+			} else {
+				oHandles = initOneAPIHandles()
+			}
 		}
 		for i, gpu := range oneapiGPUs {
 			if oHandles.oneapi == nil {

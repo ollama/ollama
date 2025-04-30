@@ -13,6 +13,7 @@ typedef struct sycl_handle {
   void (*ggml_backend_sycl_print_sycl_devices)(void);
   int  (*ggml_backend_sycl_get_device_count)();
   void (*ggml_backend_sycl_get_device_memory)(uint32_t device, size_t *free, size_t *total);
+  void (*ggml_backend_sycl_get_device_description)(uint32_t device, char *description, size_t description_size);
 } sycl_handle_t;
 
 typedef struct sycl_init_resp {
@@ -21,11 +22,11 @@ typedef struct sycl_init_resp {
 } sycl_init_resp_t;
 
 void sycl_init(char *oneapi_lib_path, sycl_init_resp_t *resp);
+void sycl_release(sycl_handle_t h);
 void sycl_get_gpu_list(sycl_handle_t *oh, int *id_list, int max_len);
 void sycl_print_sycl_devices(sycl_handle_t *oh);
-//void oneapi_release(oneapi_handle_t h);
 int sycl_get_device_count(sycl_handle_t *oh);
 void sycl_get_device_memory(sycl_handle_t *oh, int device, size_t *free, size_t *total);
-
+void sycl_get_device_description(sycl_handle_t *oh, int device, char *description, size_t description_size);
 #endif // __GPU_INFO_INTEL_H__
 #endif // __APPLE__

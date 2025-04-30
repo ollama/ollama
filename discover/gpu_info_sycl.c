@@ -9,10 +9,6 @@ typedef int (*GetDeviceCount)();
 
 void sycl_init(char *lib_path, sycl_init_resp_t *resp) {
   resp->err = NULL;
-//  resp->oh.devices = NULL;
-//  resp->oh.num_devices = NULL;
-//  resp->oh.drivers = NULL;
-//  resp->oh.num_drivers = 0;
   const int buflen = 256;
   char buf[buflen + 1];
   int i, d;
@@ -24,6 +20,7 @@ void sycl_init(char *lib_path, sycl_init_resp_t *resp) {
       {"ggml_backend_sycl_print_sycl_devices", (void *)&resp->oh.ggml_backend_sycl_print_sycl_devices},
       {"ggml_backend_sycl_get_device_count", (void *)&resp->oh.ggml_backend_sycl_get_device_count},
       {"ggml_backend_sycl_get_device_memory", (void *)&resp->oh.ggml_backend_sycl_get_device_memory},
+      {"ggml_backend_sycl_get_device_description", (void *)&resp->oh.ggml_backend_sycl_get_device_description},
       {NULL, NULL},
   };
 
@@ -58,6 +55,11 @@ void sycl_init(char *lib_path, sycl_init_resp_t *resp) {
   return;
 }
 
+void sycl_release(sycl_handle_t h) {
+  UNLOAD_LIBRARY(h.handle);
+  h.handle = NULL;
+}
+
 void sycl_get_gpu_list(sycl_handle_t *oh, int *id_list, int max_len) {
     (oh->ggml_backend_sycl_get_gpu_list)(id_list, max_len);
 }
@@ -72,7 +74,15 @@ int sycl_get_device_count(sycl_handle_t *oh) {
 }
 
 void sycl_get_device_memory(sycl_handle_t *oh, int device, size_t *free, size_t *total) {
+  if (!free || !total)
+    return;
   (oh->ggml_backend_sycl_get_device_memory)(device, free, total);
+}
+
+void sycl_get_device_description(sycl_handle_t *oh, int device, char *description, size_t description_size) {
+  if (!description || description_size < 1)
+    return;
+  (oh->ggml_backend_sycl_get_device_description)(device, description, description_size);
 }
 
 #endif // __APPLE__
