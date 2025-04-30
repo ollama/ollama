@@ -86,6 +86,64 @@ func TestSWA(t *testing.T) {
 	testCache(t, backend, cache, tests)
 }
 
+func TestChunkedAttention(t *testing.T) {
+	cache := NewChunkedAttentionCache(2, nil)
+	defer cache.Close()
+
+	var b testBackend
+	cache.Init(&b, ml.DTypeF16, 1, 16, 16)
+
+	x := float32(math.Inf(-1))
+
+	testCache(
+		t, &b, cache,
+		[]testCase{
+			{
+				name:          "FirstBatch",
+				in:            []float32{1, 2, 3, 4},
+				inShape:       []int{1, 1, 4},
+				seqs:          []int{0, 0, 0, 0},
+				pos:           []int32{0, 1, 2, 3},
+				expected:      []float32{1, 2, 3, 4},
+				expectedShape: []int{1, 1, 4},
+				expectedMask: []float32{
+					0, x, x, x,
+					0, 0, x, x,
+					x, x, 0, x,
+					x, x, 0, 0,
+				},
+			},
+			{
+				name:          "SecondBatch",
+				in:            []float32{5, 6, 7},
+				inShape:       []int{1, 1, 3},
+				seqs:          []int{0, 0, 0},
+				pos:           []int32{4, 5, 6},
+				expected:      []float32{1, 2, 3, 4, 5, 6, 7},
+				expectedShape: []int{1, 1, 7},
+				expectedMask: []float32{
+					x, x, x, x, 0, x, x,
+					x, x, x, x, 0, 0, x,
+					x, x, x, x, x, x, 0,
+				},
+			},
+			{
+				name:          "ThirdBatch",
+				in:            []float32{8, 9},
+				inShape:       []int{1, 1, 2},
+				seqs:          []int{0, 0},
+				pos:           []int32{7, 8},
+				expected:      []float32{1, 2, 3, 4, 5, 6, 7, 8, 9},
+				expectedShape: []int{1, 1, 9},
+				expectedMask: []float32{
+					x, x, x, x, x, x, 0, 0, x,
+					x, x, x, x, x, x, x, x, 0,
+				},
+			},
+		},
+	)
+}
+
 func TestSequences(t *testing.T) {
 	backend := &testBackend{}
 	cache := NewCausalCache(nil)
@@ -293,8 +351,16 @@ func testCache(t *testing.T, backend ml.Backend, cache Cache, tests []testCase) 
 
 			context.Forward(out, mask).Compute(out, mask)
 
-			if !slices.Equal(out.Floats(), test.expected) || !slices.Equal(out.Shape(), test.expectedShape) || !slices.Equal(mask.Floats(), test.expectedMask) {
-				t.Errorf("TestCache: have %v (shape %v); want %v (shape %v); mask: have %v (shape %v) want %v", out.Floats(), out.Shape(), test.expected, test.expectedShape, mask.Floats(), mask.Shape(), test.expectedMask)
+			if !slices.Equal(out.Floats(), test.expected) {
+				t.Errorf("TestCache: have %v; want %v", out.Floats(), test.expected)
+			}
+
+			if !slices.Equal(out.Shape(), test.expectedShape) {
+				t.Errorf("TestCache: has shape %v; want %v", out.Shape(), test.expectedShape)
+			}
+
+			if !slices.Equal(mask.Floats(), test.expectedMask) {
+				t.Errorf("TestCache: have mask: have %v want %v", mask.Floats(), test.expectedMask)
 			}
 		})
 	}

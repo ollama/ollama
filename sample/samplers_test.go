@@ -74,7 +74,6 @@ func modelHelper(t testing.TB) model.BytePairEncoding {
 		t.Fatal(err)
 	}
 
-	types := make([]uint32, len(vocab))
 	tokens := make([]string, len(vocab))
 	for token, id := range vocab {
 		tokens[id] = token
@@ -86,7 +85,7 @@ func modelHelper(t testing.TB) model.BytePairEncoding {
 		``,
 		&model.Vocabulary{
 			Values: tokens,
-			Types:  types,
+			Types:  make([]int32, len(vocab)),
 			Merges: merges,
 		},
 	)

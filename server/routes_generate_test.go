@@ -299,9 +299,6 @@ func TestGenerateChat(t *testing.T) {
 				{Role: "user", Content: "Hello!"},
 			},
 			Stream: &stream,
-			Options: map[string]any{
-				"num_ctx": 1024,
-			},
 		})
 
 		if w.Code != http.StatusOK {
@@ -324,9 +321,6 @@ func TestGenerateChat(t *testing.T) {
 				{Role: "user", Content: "Hello!"},
 			},
 			Stream: &stream,
-			Options: map[string]any{
-				"num_ctx": 1024,
-			},
 		})
 
 		if w.Code != http.StatusOK {
@@ -350,9 +344,6 @@ func TestGenerateChat(t *testing.T) {
 				{Role: "user", Content: "Help me write tests."},
 			},
 			Stream: &stream,
-			Options: map[string]any{
-				"num_ctx": 1024,
-			},
 		})
 
 		if w.Code != http.StatusOK {

@@ -81,6 +81,10 @@ func InitScheduler(ctx context.Context) *Scheduler {
 
 // context must be canceled to decrement ref count and release the runner
 func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options, sessionDuration *api.Duration) (chan *runnerRef, chan error) {
+	if opts.NumCtx < 4 {
+		opts.NumCtx = 4
+	}
+
 	req := &LlmRequest{
 		ctx:             c,
 		model:           model,
@@ -109,11 +113,6 @@ func (s *Scheduler) Run(ctx context.Context) {
 		s.processCompleted(ctx)
 	}()
 }
-
-const (
-	defaultContextLength  = 4096
-	smallGpuContextLength = 2048
-)
 
 func (s *Scheduler) processPending(ctx context.Context) {
 	for {
@@ -165,17 +164,6 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						gpus = s.getCpuFn()
 					} else {
 						gpus = s.getGpuFn()
-					}
-
-					if pending.origNumCtx == -1 {
-						if len(gpus) == 1 && gpus[0].Library != "cpu" && gpus[0].TotalMemory <= 4096*1024*1024 {
-							slog.Info("GPU is small, limiting default context window", "num_ctx", smallGpuContextLength)
-							pending.opts.NumCtx = smallGpuContextLength
-							pending.origNumCtx = smallGpuContextLength
-						} else {
-							pending.opts.NumCtx = defaultContextLength
-							pending.origNumCtx = defaultContextLength
-						}
 					}
 
 					if envconfig.MaxRunners() <= 0 {
