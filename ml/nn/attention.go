@@ -7,6 +7,18 @@ import (
 	"github.com/ollama/ollama/ml"
 )
 
+type AttentionOption func(*attentionOptions)
+
+type attentionOptions struct {
+	mask ml.Tensor
+}
+
+func WithMask(mask ml.Tensor) AttentionOption {
+	return func(opts *attentionOptions) {
+		opts.mask = mask
+	}
+}
+
 // Attention implements scaled dot-product attention for transformer models:
 // Attention(Q, K, V) = softmax(QK^T/√d_k)V
 //
@@ -21,7 +33,12 @@ import (
 // Returns:
 //
 //	Attention output with shape [d_v, heads, seq_len_q]
-func Attention(ctx ml.Context, query, key, value ml.Tensor, scale float64, cache kvcache.Cache) ml.Tensor {
+func Attention(ctx ml.Context, query, key, value ml.Tensor, scale float64, cache kvcache.Cache, opts ...AttentionOption) ml.Tensor {
+	options := &attentionOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+
 	if key != nil && value != nil {
 		if query.Dim(0) != key.Dim(0) {
 			panic(fmt.Errorf("d_k in attention operation does not match between query(%v) and key(%v)", query.Dim(0), key.Dim(0)))
@@ -45,6 +62,9 @@ func Attention(ctx ml.Context, query, key, value ml.Tensor, scale float64, cache
 	var mask ml.Tensor
 	if cache != nil {
 		key, value, mask = cache.Get(ctx)
+	}
+	if options.mask != nil {
+		mask = options.mask
 	}
 
 	// Only use the fast SDPA implementation if we have a cache, since that's what
