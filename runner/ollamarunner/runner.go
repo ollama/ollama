@@ -34,14 +34,10 @@ import (
 	_ "github.com/ollama/ollama/model/models"
 )
 
-type contextList struct {
-	list []ml.Context
-}
-
 type Sequence struct {
 	// ctxs are used for allocating tensors that last the lifetime of the sequence, such as
 	// multimodal embeddings
-	ctxs *contextList
+	ctxs []ml.Context
 
 	// batch index
 	iBatch int
@@ -177,8 +173,10 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 // inputs processes the prompt and images into a list of inputs
 // by splitting the prompt on [img-<n>] tags, tokenizing text and
 // decoding images
-func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, *contextList, error) {
+func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, []ml.Context, error) {
 	var inputs []input.Input
+	var ctxs []ml.Context
+
 	var parts []string
 	var matches [][]string
 
@@ -191,13 +189,6 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, *
 	} else {
 		parts = []string{prompt}
 	}
-
-	var contexts contextList
-	runtime.AddCleanup(&contexts, func(ctxs []ml.Context) {
-		for _, ctx := range ctxs {
-			ctx.Close()
-		}
-	}, contexts.list)
 
 	postTokenize := false
 	for i, part := range parts {
@@ -228,7 +219,8 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, *
 			}
 
 			ctx := s.model.Backend().NewContext()
-			contexts.list = append(contexts.list, ctx)
+			runtime.SetFinalizer(ctx, func(c ml.Context) { c.Close() })
+			ctxs = append(ctxs, ctx)
 			imageEmbeddings, err := multimodalProcessor.EncodeMultimodal(ctx, images[imageIndex].Data)
 			if err != nil {
 				return nil, nil, err
@@ -251,7 +243,7 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, *
 		}
 	}
 
-	return inputs, &contexts, nil
+	return inputs, ctxs, nil
 }
 
 type Server struct {
