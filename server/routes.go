@@ -850,20 +850,29 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	fmt.Fprint(&sb, m.String())
 	resp.Modelfile = sb.String()
 
-	kvData, tensors, err := getModelData(m.ModelPath, req.Verbose)
-	if err != nil {
-		return nil, err
+	// Conditionally retrieve tensor data
+	var kvData map[string]any
+	var tensors *model.Tensors
+	if req.Verbose {
+		kvData, tensors, err = getModelData(m.ModelPath, true)
+		if err != nil {
+			return nil, err
+		}
+		tensorData := make([]api.Tensor, len(tensors.Items()))
+		for cnt, t := range tensors.Items() {
+			tensorData[cnt] = api.Tensor{Name: t.Name, Type: t.Type(), Shape: t.Shape}
+		}
+		resp.Tensors = tensorData
+	} else {
+		kvData, _, err = getModelData(m.ModelPath, false)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	delete(kvData, "general.name")
 	delete(kvData, "tokenizer.chat_template")
 	resp.ModelInfo = kvData
-
-	tensorData := make([]api.Tensor, len(tensors.Items()))
-	for cnt, t := range tensors.Items() {
-		tensorData[cnt] = api.Tensor{Name: t.Name, Type: t.Type(), Shape: t.Shape}
-	}
-	resp.Tensors = tensorData
 
 	if len(m.ProjectorPaths) > 0 {
 		projectorData, _, err := getModelData(m.ProjectorPaths[0], req.Verbose)
