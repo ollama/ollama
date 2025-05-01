@@ -281,7 +281,6 @@ func (m *VisionModel) windowIndex(ctx ml.Context, grid *Grid) (ml.Tensor, []int)
 				}
 			}
 
-			// Update total sequence length and append to cuWindowSeqlens
 			totalSeqLen += seqLen
 			bounds = append(bounds, totalSeqLen*(m.spatialMergeSize*m.spatialMergeSize)+bounds[0])
 		}
