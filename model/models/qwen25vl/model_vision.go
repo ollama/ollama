@@ -3,6 +3,7 @@ package qwen25vl
 import (
 	"fmt"
 	"math"
+	"slices"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/ml"
@@ -74,7 +75,10 @@ func (sa *VisionSelfAttention) Forward(ctx ml.Context, hiddenStates, cos, sin ml
 
 	// Scale factor for scaled dot-product attention
 	scale := 1.0 / math.Sqrt(float64(opts.headDim))
-	mask := blockDiagonalMask(ctx, query.Dim(2), bounds, opts.numHeads)
+	var mask ml.Tensor
+	if bounds != nil {
+		mask = blockDiagonalMask(ctx, query.Dim(2), bounds, opts.numHeads)
+	}
 
 	attention := nn.Attention(ctx, query, key, value, scale, nil, nn.WithMask(mask))
 	attention = attention.Reshape(ctx, opts.hiddenSize, attention.Dim(2), batchSize)
@@ -128,6 +132,7 @@ type VisionModelOptions struct {
 	ropeTheta         float32
 	spatialMergeSize  int
 	windowSize        int
+	fullAttnBlocks    []int
 	temporalPatchSize int
 }
 
@@ -221,8 +226,12 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid)
 	sin = sin.Reshape(ctx, sin.Dim(0), 1, sin.Dim(1))
 
 	// Apply encoder layers
-	for _, layer := range m.Layers {
-		hiddenStates = layer.Forward(ctx, hiddenStates, cos, sin, bounds, m.VisionModelOptions)
+	for i, layer := range m.Layers {
+		if slices.Contains(m.fullAttnBlocks, i) {
+			hiddenStates = layer.Forward(ctx, hiddenStates, cos, sin, nil, m.VisionModelOptions)
+		} else {
+			hiddenStates = layer.Forward(ctx, hiddenStates, cos, sin, bounds, m.VisionModelOptions)
+		}
 	}
 
 	return m.PatchMerger.Forward(ctx, hiddenStates, m.VisionModelOptions)
@@ -342,9 +351,10 @@ func newVisionModel(c fs.Config) *VisionModel {
 	ropeTheta := c.Float("vision.rope.freq_base", 10000.0)
 	spatialMergeSize := int(c.Uint("vision.spatial_merge_size", 2))
 	windowSize := int(c.Uint("vision.window_size", 112))
+	fullAttnBlocks := c.Ints("qwen25vl.vision.fullatt_block_indexes", []int32{7, 15, 23, 31})
 	temporalPatchSize := int(c.Uint("vision.temporal_patch_size", 2))
 
-	return &VisionModel{
+	model := &VisionModel{
 		Layers: make([]VisionEncoderLayer, c.Uint("vision.block_count", 32)),
 		VisionModelOptions: &VisionModelOptions{
 			hiddenSize:        hiddenSize,
@@ -359,4 +369,11 @@ func newVisionModel(c fs.Config) *VisionModel {
 			temporalPatchSize: temporalPatchSize,
 		},
 	}
+
+	for i := range fullAttnBlocks {
+		// full attention block indexes have to be converted to int for use with the slices package
+		model.fullAttnBlocks = append(model.fullAttnBlocks, int(fullAttnBlocks[i]))
+	}
+
+	return model
 }
