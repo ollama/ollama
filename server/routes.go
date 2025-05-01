@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -30,14 +31,23 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/model/mllama"
+	"github.com/ollama/ollama/model/models/mllama"
 	"github.com/ollama/ollama/openai"
+	"github.com/ollama/ollama/server/internal/client/ollama"
+	"github.com/ollama/ollama/server/internal/registry"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
+
+func experimentEnabled(name string) bool {
+	return slices.Contains(strings.Split(os.Getenv("OLLAMA_EXPERIMENT"), ","), name)
+}
+
+var useClient2 = experimentEnabled("client2")
 
 var mode string = gin.DebugMode
 
@@ -63,7 +73,7 @@ var (
 	errBadTemplate = errors.New("template error")
 )
 
-func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options, error) {
+func modelOptions(model *Model, requestOpts map[string]any) (api.Options, error) {
 	opts := api.DefaultOptions()
 	if err := opts.FromMap(model.Options); err != nil {
 		return api.Options{}, err
@@ -78,7 +88,7 @@ func modelOptions(model *Model, requestOpts map[string]interface{}) (api.Options
 
 // scheduleRunner schedules a runner after validating inputs such as capabilities and model options.
 // It returns the allocated runner, model instance, and consolidated options if successful and error otherwise.
-func (s *Server) scheduleRunner(ctx context.Context, name string, caps []Capability, requestOpts map[string]any, keepAlive *api.Duration) (llm.LlamaServer, *Model, *api.Options, error) {
+func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration) (llm.LlamaServer, *Model, *api.Options, error) {
 	if name == "" {
 		return nil, nil, nil, fmt.Errorf("model %w", errRequired)
 	}
@@ -135,7 +145,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	model, err := GetModel(name.String())
+	m, err := GetModel(name.String())
 	if err != nil {
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
@@ -150,7 +160,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	// expire the runner
 	if req.Prompt == "" && req.KeepAlive != nil && int(req.KeepAlive.Seconds()) == 0 {
-		s.sched.expireRunner(model)
+		s.sched.expireRunner(m)
 
 		c.JSON(http.StatusOK, api.GenerateResponse{
 			Model:      req.Model,
@@ -167,9 +177,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	caps := []Capability{CapabilityCompletion}
+	caps := []model.Capability{model.CapabilityCompletion}
 	if req.Suffix != "" {
-		caps = append(caps, CapabilityInsert)
+		caps = append(caps, model.CapabilityInsert)
 	}
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)
@@ -194,7 +204,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	isMllama := checkMllamaModelFamily(model)
+	isMllama := checkMllamaModelFamily(m)
 	if isMllama && len(req.Images) > 1 {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "this model only supports one image: more than one image sent"})
 		return
@@ -202,7 +212,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	images := make([]llm.ImageData, len(req.Images))
 	for i := range req.Images {
-		if isMllama {
+		if isMllama && len(m.ProjectorPaths) > 0 {
 			data, opts, err := mllama.Preprocess(bytes.NewReader(req.Images[i]))
 			if err != nil {
 				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error processing image"})
@@ -299,11 +309,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			Options: opts,
 		}, func(cr llm.CompletionResponse) {
 			res := api.GenerateResponse{
-				Model:      req.Model,
-				CreatedAt:  time.Now().UTC(),
-				Response:   cr.Content,
-				Done:       cr.Done,
-				DoneReason: cr.DoneReason,
+				Model:     req.Model,
+				CreatedAt: time.Now().UTC(),
+				Response:  cr.Content,
+				Done:      cr.Done,
 				Metrics: api.Metrics{
 					PromptEvalCount:    cr.PromptEvalCount,
 					PromptEvalDuration: cr.PromptEvalDuration,
@@ -317,6 +326,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 
 			if cr.Done {
+				res.DoneReason = cr.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 
@@ -413,7 +423,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), []Capability{}, req.Options, req.KeepAlive)
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -426,7 +436,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	kvData, err := getKVData(m.ModelPath, false)
+	kvData, _, err := getModelData(m.ModelPath, false)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -474,8 +484,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 	}
 
 	if err := g.Wait(); err != nil {
-		slog.Error("embedding generation failed", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Errorf("failed to generate embeddings: %v", err)})
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
 		return
 	}
 
@@ -522,7 +531,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []Capability{}, req.Options, req.KeepAlive)
+	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -536,8 +545,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 
 	embedding, err := r.Embedding(c.Request.Context(), req.Prompt)
 	if err != nil {
-		slog.Info(fmt.Sprintf("embedding generation failed: %v", err))
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Errorf("failed to generate embedding: %v", err)})
+		c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": strings.TrimSpace(err.Error())})
 		return
 	}
 
@@ -770,7 +778,7 @@ func (s *Server) ShowHandler(c *gin.Context) {
 func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	name := model.ParseName(req.Model)
 	if !name.IsValid() {
-		return nil, errModelPathInvalid
+		return nil, ErrModelPathInvalid
 	}
 	name, err := getExistingName(name)
 	if err != nil {
@@ -806,19 +814,20 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	}
 
 	resp := &api.ShowResponse{
-		License:    strings.Join(m.License, "\n"),
-		System:     m.System,
-		Template:   m.Template.String(),
-		Details:    modelDetails,
-		Messages:   msgs,
-		ModifiedAt: manifest.fi.ModTime(),
+		License:      strings.Join(m.License, "\n"),
+		System:       m.System,
+		Template:     m.Template.String(),
+		Details:      modelDetails,
+		Messages:     msgs,
+		Capabilities: m.Capabilities(),
+		ModifiedAt:   manifest.fi.ModTime(),
 	}
 
 	var params []string
 	cs := 30
 	for k, v := range m.Options {
 		switch val := v.(type) {
-		case []interface{}:
+		case []any:
 			for _, nv := range val {
 				params = append(params, fmt.Sprintf("%-*s %#v", cs, k, nv))
 			}
@@ -841,16 +850,23 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	fmt.Fprint(&sb, m.String())
 	resp.Modelfile = sb.String()
 
-	kvData, err := getKVData(m.ModelPath, req.Verbose)
+	kvData, tensors, err := getModelData(m.ModelPath, req.Verbose)
 	if err != nil {
 		return nil, err
 	}
+
 	delete(kvData, "general.name")
 	delete(kvData, "tokenizer.chat_template")
 	resp.ModelInfo = kvData
 
+	tensorData := make([]api.Tensor, len(tensors.Items()))
+	for cnt, t := range tensors.Items() {
+		tensorData[cnt] = api.Tensor{Name: t.Name, Type: t.Type(), Shape: t.Shape}
+	}
+	resp.Tensors = tensorData
+
 	if len(m.ProjectorPaths) > 0 {
-		projectorData, err := getKVData(m.ProjectorPaths[0], req.Verbose)
+		projectorData, _, err := getModelData(m.ProjectorPaths[0], req.Verbose)
 		if err != nil {
 			return nil, err
 		}
@@ -860,17 +876,17 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	return resp, nil
 }
 
-func getKVData(digest string, verbose bool) (llm.KV, error) {
+func getModelData(digest string, verbose bool) (ggml.KV, ggml.Tensors, error) {
 	maxArraySize := 0
 	if verbose {
 		maxArraySize = -1
 	}
-	kvData, err := llm.LoadModel(digest, maxArraySize)
+	data, err := llm.LoadModel(digest, maxArraySize)
 	if err != nil {
-		return nil, err
+		return nil, ggml.Tensors{}, err
 	}
 
-	kv := kvData.KV()
+	kv := data.KV()
 
 	if !verbose {
 		for k := range kv {
@@ -880,7 +896,7 @@ func getKVData(digest string, verbose bool) (llm.KV, error) {
 		}
 	}
 
-	return kv, nil
+	return kv, data.Tensors(), nil
 }
 
 func (s *Server) ListHandler(c *gin.Context) {
@@ -1125,56 +1141,87 @@ func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 	}
 }
 
-func (s *Server) GenerateRoutes() http.Handler {
-	config := cors.DefaultConfig()
-	config.AllowWildcard = true
-	config.AllowBrowserExtensions = true
-	config.AllowHeaders = []string{"Authorization", "Content-Type", "User-Agent", "Accept", "X-Requested-With"}
-	openAIProperties := []string{"lang", "package-version", "os", "arch", "retry-count", "runtime", "runtime-version", "async", "helper-method", "poll-helper", "custom-poll-interval"}
-	for _, prop := range openAIProperties {
-		config.AllowHeaders = append(config.AllowHeaders, "x-stainless-"+prop)
+func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
+	corsConfig := cors.DefaultConfig()
+	corsConfig.AllowWildcard = true
+	corsConfig.AllowBrowserExtensions = true
+	corsConfig.AllowHeaders = []string{
+		"Authorization",
+		"Content-Type",
+		"User-Agent",
+		"Accept",
+		"X-Requested-With",
+
+		// OpenAI compatibility headers
+		"OpenAI-Beta",
+		"x-stainless-arch",
+		"x-stainless-async",
+		"x-stainless-custom-poll-interval",
+		"x-stainless-helper-method",
+		"x-stainless-lang",
+		"x-stainless-os",
+		"x-stainless-package-version",
+		"x-stainless-poll-helper",
+		"x-stainless-retry-count",
+		"x-stainless-runtime",
+		"x-stainless-runtime-version",
+		"x-stainless-timeout",
 	}
-	config.AllowOrigins = envconfig.Origins()
+	corsConfig.AllowOrigins = envconfig.AllowedOrigins()
 
 	r := gin.Default()
 	r.Use(
-		cors.New(config),
+		cors.New(corsConfig),
 		allowedHostsMiddleware(s.addr),
 	)
 
+	// General
+	r.HEAD("/", func(c *gin.Context) { c.String(http.StatusOK, "Ollama is running") })
+	r.GET("/", func(c *gin.Context) { c.String(http.StatusOK, "Ollama is running") })
+	r.HEAD("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
+	r.GET("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
+
+	// Local model cache management (new implementation is at end of function)
 	r.POST("/api/pull", s.PullHandler)
+	r.POST("/api/push", s.PushHandler)
+	r.HEAD("/api/tags", s.ListHandler)
+	r.GET("/api/tags", s.ListHandler)
+	r.POST("/api/show", s.ShowHandler)
+	r.DELETE("/api/delete", s.DeleteHandler)
+
+	// Create
+	r.POST("/api/create", s.CreateHandler)
+	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
+	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
+	r.POST("/api/copy", s.CopyHandler)
+
+	// Inference
+	r.GET("/api/ps", s.PsHandler)
 	r.POST("/api/generate", s.GenerateHandler)
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
-	r.POST("/api/create", s.CreateHandler)
-	r.POST("/api/push", s.PushHandler)
-	r.POST("/api/copy", s.CopyHandler)
-	r.DELETE("/api/delete", s.DeleteHandler)
-	r.POST("/api/show", s.ShowHandler)
-	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
-	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
-	r.GET("/api/ps", s.PsHandler)
 
-	// Compatibility endpoints
+	// Inference (OpenAI compatibility)
 	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)
 	r.POST("/v1/completions", openai.CompletionsMiddleware(), s.GenerateHandler)
 	r.POST("/v1/embeddings", openai.EmbeddingsMiddleware(), s.EmbedHandler)
 	r.GET("/v1/models", openai.ListMiddleware(), s.ListHandler)
 	r.GET("/v1/models/:model", openai.RetrieveMiddleware(), s.ShowHandler)
 
-	for _, method := range []string{http.MethodGet, http.MethodHead} {
-		r.Handle(method, "/", func(c *gin.Context) {
-			c.String(http.StatusOK, "Ollama is running")
-		})
+	if rc != nil {
+		// wrap old with new
+		rs := &registry.Local{
+			Client:   rc,
+			Logger:   slog.Default(), // TODO(bmizerany): Take a logger, do not use slog.Default()
+			Fallback: r,
 
-		r.Handle(method, "/api/tags", s.ListHandler)
-		r.Handle(method, "/api/version", func(c *gin.Context) {
-			c.JSON(http.StatusOK, gin.H{"version": version.Version})
-		})
+			Prune: PruneLayers,
+		}
+		return rs, nil
 	}
 
-	return r
+	return r, nil
 }
 
 func Serve(ln net.Listener) error {
@@ -1227,12 +1274,28 @@ func Serve(ln net.Listener) error {
 		}
 	}
 
+	s := &Server{addr: ln.Addr()}
+
+	var rc *ollama.Registry
+	if useClient2 {
+		var err error
+		rc, err = ollama.DefaultRegistry()
+		if err != nil {
+			return err
+		}
+	}
+
+	h, err := s.GenerateRoutes(rc)
+	if err != nil {
+		return err
+	}
+
+	http.Handle("/", h)
+
 	ctx, done := context.WithCancel(context.Background())
 	schedCtx, schedDone := context.WithCancel(ctx)
 	sched := InitScheduler(schedCtx)
-	s := &Server{addr: ln.Addr(), sched: sched}
-
-	http.Handle("/", s.GenerateRoutes())
+	s.sched = sched
 
 	slog.Info(fmt.Sprintf("Listening on %s (version %s)", ln.Addr(), version.Version))
 	srvr := &http.Server{
@@ -1275,7 +1338,7 @@ func Serve(ln net.Listener) error {
 	return nil
 }
 
-func waitForStream(c *gin.Context, ch chan interface{}) {
+func waitForStream(c *gin.Context, ch chan any) {
 	c.Header("Content-Type", "application/json")
 	for resp := range ch {
 		switch r := resp.(type) {
@@ -1408,9 +1471,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	caps := []Capability{CapabilityCompletion}
+	caps := []model.Capability{model.CapabilityCompletion}
 	if len(req.Tools) > 0 {
-		caps = append(caps, CapabilityTools)
+		caps = append(caps, model.CapabilityTools)
 	}
 
 	name := model.ParseName(req.Model)
@@ -1450,6 +1513,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if req.Messages[0].Role != "system" && m.System != "" {
 		msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
 	}
+	msgs = filterThinkTags(msgs, m)
 
 	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, req.Tools)
 	if err != nil {
@@ -1472,11 +1536,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			Options: opts,
 		}, func(r llm.CompletionResponse) {
 			res := api.ChatResponse{
-				Model:      req.Model,
-				CreatedAt:  time.Now().UTC(),
-				Message:    api.Message{Role: "assistant", Content: r.Content},
-				Done:       r.Done,
-				DoneReason: r.DoneReason,
+				Model:     req.Model,
+				CreatedAt: time.Now().UTC(),
+				Message:   api.Message{Role: "assistant", Content: r.Content},
+				Done:      r.Done,
 				Metrics: api.Metrics{
 					PromptEvalCount:    r.PromptEvalCount,
 					PromptEvalDuration: r.PromptEvalDuration,
@@ -1486,6 +1549,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 
 			if r.Done {
+				res.DoneReason = r.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
@@ -1577,4 +1641,24 @@ func handleScheduleError(c *gin.Context, name string, err error) {
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 	}
+}
+
+var thinkTagRegexp = regexp.MustCompile(`<think>(?s).*?</think>(\n)*`)
+
+func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
+	if m.Config.ModelFamily == "qwen3" || model.ParseName(m.Name).Model == "deepseek-r1" {
+		finalUserIndex := -1
+		for i, msg := range msgs {
+			if msg.Role == "user" {
+				finalUserIndex = i
+			}
+		}
+
+		for i, msg := range msgs {
+			if msg.Role == "assistant" && i < finalUserIndex {
+				msgs[i].Content = thinkTagRegexp.ReplaceAllString(msg.Content, "")
+			}
+		}
+	}
+	return msgs
 }

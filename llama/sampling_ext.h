@@ -35,6 +35,13 @@ extern "C"
 
     int schema_to_grammar(const char *json_schema, char *grammar, size_t max_len);
 
+
+    struct llama_grammar *grammar_init(char* grammar, uint32_t* tokens, size_t n_tokens, const char** pieces, uint32_t* eog_tokens, size_t n_eog_tokens);
+    void grammar_free(struct llama_grammar *g);
+    void grammar_apply(struct llama_grammar *g, struct llama_token_data_array *tokens);
+    void grammar_accept(struct llama_grammar *g, llama_token id);
+
+
 #ifdef __cplusplus
 }
 #endif

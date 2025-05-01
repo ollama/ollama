@@ -577,15 +577,26 @@ static __global__ void convert_unary(const void * __restrict__ vx, dst_t * __res
         return;
     }
 
-    const src_t * x = (src_t *) vx;
+    const src_t * x = (const src_t *) vx;
 
-    y[i] = x[i];
+    y[i] = float(x[i]);
 }
 
 template <typename src_t, typename dst_t>
 static void convert_unary_cuda(const void * __restrict__ vx, dst_t * __restrict__ y, const int64_t k, cudaStream_t stream) {
     const int num_blocks = (k + CUDA_DEQUANTIZE_BLOCK_SIZE - 1) / CUDA_DEQUANTIZE_BLOCK_SIZE;
     convert_unary<src_t><<<num_blocks, CUDA_DEQUANTIZE_BLOCK_SIZE, 0, stream>>>(vx, y, k);
+}
+
+to_bf16_cuda_t ggml_get_to_bf16_cuda(ggml_type type) {
+    switch (type) {
+        case GGML_TYPE_F32:
+            return convert_unary_cuda<float>;
+        case GGML_TYPE_F16:
+            return convert_unary_cuda<half>;
+        default:
+            return nullptr;
+    }
 }
 
 to_fp16_cuda_t ggml_get_to_fp16_cuda(ggml_type type) {
@@ -599,7 +610,7 @@ to_fp16_cuda_t ggml_get_to_fp16_cuda(ggml_type type) {
         case GGML_TYPE_Q5_1:
             return dequantize_block_cuda<QK5_1, QR5_1, dequantize_q5_1>;
         case GGML_TYPE_Q8_0:
-            if (ggml_cuda_info().devices[ggml_cuda_get_device()].cc >= GGML_CUDA_CC_PASCAL) {
+            if (fp16_available(ggml_cuda_info().devices[ggml_cuda_get_device()].cc)) {
                 return dequantize_block_q8_0_f16_cuda;
             }
             return dequantize_block_cuda<QK8_0, QR8_0, dequantize_q8_0>;
@@ -633,6 +644,8 @@ to_fp16_cuda_t ggml_get_to_fp16_cuda(ggml_type type) {
             return dequantize_row_iq3_s_cuda;
         case GGML_TYPE_F32:
             return convert_unary_cuda<float>;
+        case GGML_TYPE_BF16:
+            return convert_unary_cuda<nv_bfloat16>;
         default:
             return nullptr;
     }

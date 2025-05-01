@@ -7,6 +7,8 @@
 #include <cstring>
 #include <climits>
 #include <stdexcept>
+#include <cerrno>
+#include <algorithm>
 
 #ifdef __has_include
     #if __has_include(<unistd.h>)
@@ -33,9 +35,13 @@
     #include <io.h>
 #endif
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
 // TODO: consider moving to llama-impl.h if needed in more places
 #if defined(_WIN32)
-std::string llama_format_win_err(DWORD err) {
+static std::string llama_format_win_err(DWORD err) {
     LPSTR buf;
     size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
                                  NULL, err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&buf, 0, NULL);
@@ -241,11 +247,15 @@ llama_file::~llama_file() = default;
 size_t llama_file::tell() const { return pimpl->tell(); }
 size_t llama_file::size() const { return pimpl->size; }
 
-int llama_file::fileno() const {
+int llama_file::file_id() const {
 #ifdef _WIN32
     return _fileno(pimpl->fp);
 #else
+#if defined(fileno)
+    return fileno(pimpl->fp);
+#else
     return ::fileno(pimpl->fp);
+#endif
 #endif
 }
 
@@ -265,7 +275,7 @@ struct llama_mmap::impl {
 
     impl(struct llama_file * file, size_t prefetch, bool numa) {
         size = file->size();
-        int fd = file->fileno();
+        int fd = file->file_id();
         int flags = MAP_SHARED;
         if (numa) { prefetch = 0; }
 #ifdef __linux__
@@ -357,7 +367,7 @@ struct llama_mmap::impl {
 
         size = file->size();
 
-        HANDLE hFile = (HANDLE) _get_osfhandle(file->fileno());
+        HANDLE hFile = (HANDLE) _get_osfhandle(file->file_id());
 
         HANDLE hMapping = CreateFileMappingA(hFile, NULL, PAGE_READONLY, 0, 0, NULL);
 
@@ -466,7 +476,11 @@ struct llama_mlock::impl {
 
         char* errmsg = std::strerror(errno);
         bool suggest = (errno == ENOMEM);
-
+#if defined(TARGET_OS_VISION) || defined(TARGET_OS_TV) || defined(_AIX)
+        // visionOS/tvOS dont't support RLIMIT_MEMLOCK
+        // Skip resource limit checks on visionOS/tvOS
+        suggest = false;
+#else
         struct rlimit lock_limit;
         if (suggest && getrlimit(RLIMIT_MEMLOCK, &lock_limit)) {
             suggest = false;
@@ -474,6 +488,7 @@ struct llama_mlock::impl {
         if (suggest && (lock_limit.rlim_max > lock_limit.rlim_cur + size)) {
             suggest = false;
         }
+#endif
 
         LLAMA_LOG_WARN("warning: failed to mlock %zu-byte buffer (after previously locking %zu bytes): %s\n%s",
                 size, this->size, errmsg, suggest ? MLOCK_SUGGESTION : "");

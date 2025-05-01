@@ -45,7 +45,7 @@ GGML_BACKEND_API bool ggml_backend_is_metal(ggml_backend_t backend);
 
 GGML_DEPRECATED(
         GGML_BACKEND_API ggml_backend_buffer_t ggml_backend_metal_buffer_from_ptr(void * data, size_t size, size_t max_size),
-        "obsoleted by the new device interface - https://github.com/ggerganov/llama.cpp/pull/9713");
+        "obsoleted by the new device interface - https://github.com/ggml-org/llama.cpp/pull/9713");
 
 GGML_BACKEND_API void ggml_backend_metal_set_abort_callback(ggml_backend_t backend, ggml_abort_callback abort_callback, void * user_data);
 

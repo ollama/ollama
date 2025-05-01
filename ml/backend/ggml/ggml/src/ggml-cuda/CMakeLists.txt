@@ -7,7 +7,7 @@ if (CUDAToolkit_FOUND)
 
     if (NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
         # native == GPUs available at build time
-        # 52     == Maxwell, lowest CUDA 12 standard
+        # 50     == Maxwell, lowest CUDA 12 standard
         # 60     == P100, FP16 CUDA intrinsics
         # 61     == Pascal, __dp4a instruction (per-byte integer dot product)
         # 70     == V100, FP16 tensor cores
@@ -15,9 +15,9 @@ if (CUDAToolkit_FOUND)
         if (GGML_NATIVE AND CUDAToolkit_VERSION VERSION_GREATER_EQUAL "11.6" AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.24")
             set(CMAKE_CUDA_ARCHITECTURES "native")
         elseif(GGML_CUDA_F16 OR GGML_CUDA_DMMV_F16)
-            set(CMAKE_CUDA_ARCHITECTURES "60;61;70;75")
+            set(CMAKE_CUDA_ARCHITECTURES "60;61;70;75;80")
         else()
-            set(CMAKE_CUDA_ARCHITECTURES "52;61;70;75")
+            set(CMAKE_CUDA_ARCHITECTURES "50;61;70;75;80")
         endif()
     endif()
     message(STATUS "Using CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
@@ -28,7 +28,7 @@ if (CUDAToolkit_FOUND)
     list(APPEND GGML_HEADERS_CUDA "../../include/ggml-cuda.h")
 
     file(GLOB   GGML_SOURCES_CUDA "*.cu")
-    file(GLOB   SRCS "template-instances/fattn-wmma*.cu")
+    file(GLOB   SRCS "template-instances/fattn-mma*.cu")
     list(APPEND GGML_SOURCES_CUDA ${SRCS})
     file(GLOB   SRCS "template-instances/mmq*.cu")
     list(APPEND GGML_SOURCES_CUDA ${SRCS})
@@ -69,6 +69,10 @@ if (CUDAToolkit_FOUND)
         add_compile_definitions(GGML_CUDA_NO_VMM)
     endif()
 
+    if (NOT GGML_CUDA_FA)
+        add_compile_definitions(GGML_CUDA_NO_FA)
+    endif()
+
     if (GGML_CUDA_F16 OR GGML_CUDA_DMMV_F16)
         add_compile_definitions(GGML_CUDA_F16)
     endif()
@@ -97,6 +101,15 @@ if (CUDAToolkit_FOUND)
     set(CUDA_CXX_FLAGS "")
 
     set(CUDA_FLAGS -use_fast_math)
+
+    if (CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12.8")
+        # Options are:
+        # - none (not recommended)
+        # - speed (nvcc's default)
+        # - balance
+        # - size
+        list(APPEND CUDA_FLAGS -compress-mode=${GGML_CUDA_COMPRESSION_MODE})
+    endif()
 
     if (GGML_FATAL_WARNINGS)
         list(APPEND CUDA_FLAGS -Werror all-warnings)

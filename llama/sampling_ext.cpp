@@ -2,6 +2,10 @@
 #include "sampling.h"
 #include "sampling_ext.h"
 #include "json-schema-to-grammar.h"
+#include "llama.h"
+#include "llama-model.h"
+#include "llama-model-loader.h"
+#include "llama-grammar.h"
 
 struct common_sampler *common_sampler_cinit(const struct llama_model *model, struct common_sampler_cparams *params) {
     try {
@@ -63,4 +67,69 @@ int schema_to_grammar(const char *json_schema, char *grammar, size_t max_len)
         strncpy(grammar, "", max_len - 1);
         return 0;
     }
+}
+
+struct llama_vocab * llama_load_vocab_from_file(const char * fname) {
+    llama_vocab * vocab = new llama_vocab();
+    try {
+        const auto kv = LLM_KV(LLM_ARCH_UNKNOWN);
+        std::vector<std::string> splits = {};
+        llama_model_loader ml(std::string(fname), splits, false, false, nullptr, nullptr);
+        vocab->load(ml, kv);
+    } catch (const std::exception & err) {
+        LLAMA_LOG_ERROR("%s: error loading model: %s\n", __func__, err.what());
+        return nullptr;
+    }
+
+    return vocab;
+}
+
+void llama_free_vocab(struct llama_vocab * vocab) {
+    delete vocab;
+}
+struct llama_grammar *grammar_init(char* grammar, uint32_t* tokens, size_t n_tokens, const char** pieces, uint32_t* eog_tokens, size_t n_eog_tokens) {
+    try {
+        if (grammar == nullptr) {
+            LLAMA_LOG_ERROR("%s: null grammar input\n", __func__);
+            return nullptr;
+        }
+
+        ollama_vocab *vocab = new ollama_vocab();
+        vocab->set_eog_tokens(eog_tokens, n_eog_tokens);
+        vocab->add_token_pieces(tokens, n_tokens, pieces);
+        
+        struct llama_grammar *g = llama_grammar_init_impl(nullptr, vocab, grammar, "root", false, nullptr, 0, nullptr, 0);
+        if (g == nullptr) {
+            LLAMA_LOG_ERROR("%s: failed to initialize grammar\n", __func__);
+            delete vocab;
+            return nullptr;
+        }
+        return g;
+
+    } catch (const std::exception& e) {
+        LLAMA_LOG_ERROR("%s: exception during initialization: %s\n", __func__, e.what());
+        return nullptr;
+    }
+}
+
+void grammar_free(struct llama_grammar *g) {
+    if (g != nullptr) {
+        if (g->vocab != nullptr) {
+            delete g->vocab;
+        }
+        llama_grammar_free_impl(g);
+    }
+}
+
+void grammar_apply(struct llama_grammar *g, struct llama_token_data_array *tokens) {
+    if (g == nullptr || tokens == nullptr) {
+        LLAMA_LOG_ERROR("%s: null grammar or tokens input\n", __func__);
+        return;
+    }
+    llama_grammar_apply_impl(*g, tokens);
+}
+
+
+void grammar_accept(struct llama_grammar *g, llama_token id) {
+    llama_grammar_accept_impl(*g, id);
 }

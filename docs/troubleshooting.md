@@ -9,7 +9,7 @@ cat ~/.ollama/logs/server.log
 On **Linux** systems with systemd, the logs can be found with this command:
 
 ```shell
-journalctl -u ollama --no-pager
+journalctl -u ollama --no-pager --follow --pager-end 
 ```
 
 When you run Ollama in a **container**, the logs go to stdout/stderr in the container:
@@ -17,6 +17,7 @@ When you run Ollama in a **container**, the logs go to stdout/stderr in the cont
 ```shell
 docker logs <container-name>
 ```
+
 (Use `docker ps` to find the container name)
 
 If manually running `ollama serve` in a terminal, the logs will be on that terminal.
@@ -25,9 +26,9 @@ When you run Ollama on **Windows**, there are a few different locations. You can
 - `explorer %LOCALAPPDATA%\Ollama` to view logs.  The most recent server logs will be in `server.log` and older logs will be in `server-#.log` 
 - `explorer %LOCALAPPDATA%\Programs\Ollama` to browse the binaries (The installer adds this to your user PATH)
 - `explorer %HOMEPATH%\.ollama` to browse where models and configuration is stored
-- `explorer %TEMP%` where temporary executable files are stored in one or more `ollama*` directories
 
 To enable additional debug logging to help troubleshoot problems, first **Quit the running app from the tray menu** then in a powershell terminal
+
 ```powershell
 $env:OLLAMA_DEBUG="1"
 & "ollama app.exe"
@@ -49,12 +50,13 @@ Dynamic LLM libraries [rocm_v6 cpu cpu_avx cpu_avx2 cuda_v11 rocm_v5]
 
 You can set OLLAMA_LLM_LIBRARY to any of the available LLM libraries to bypass autodetection, so for example, if you have a CUDA card, but want to force the CPU LLM library with AVX2 vector support, use:
 
-```
+```shell
 OLLAMA_LLM_LIBRARY="cpu_avx2" ollama serve
 ```
 
 You can see what features your CPU has with the following.
-```
+
+```shell
 cat /proc/cpuinfo| grep flags | head -1
 ```
 
@@ -62,13 +64,13 @@ cat /proc/cpuinfo| grep flags | head -1
 
 If you run into problems on Linux and want to install an older version, or you'd like to try out a pre-release before it's officially released, you can tell the install script which version to install.
 
-```sh
-curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION="0.1.29" sh
+```shell
+curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=0.5.7 sh
 ```
 
-## Linux tmp noexec 
+## Linux docker
 
-If your system is configured with the "noexec" flag where Ollama stores its temporary executable files, you can specify an alternate location by setting OLLAMA_TMPDIR to a location writable by the user ollama runs as. For example OLLAMA_TMPDIR=/usr/share/ollama/
+If Ollama initially works on the GPU in a docker container, but then switches to running on CPU after some period of time with errors in the server log reporting GPU discovery failures, this can be resolved by disabling systemd cgroup management in Docker.  Edit `/etc/docker/daemon.json` on the host and add `"exec-opts": ["native.cgroupdriver=cgroupfs"]` to the docker configuration.
 
 ## NVIDIA GPU Discovery
 
@@ -96,8 +98,6 @@ If none of those resolve the problem, gather additional information and file an 
 On linux, AMD GPU access typically requires `video` and/or `render` group membership to access the `/dev/kfd` device.  If permissions are not set up correctly, Ollama will detect this and report an error in the server log.
 
 When running in a container, in some Linux distributions and container runtimes, the ollama process may be unable to access the GPU.  Use `ls -lnd /dev/kfd /dev/dri /dev/dri/*` on the host system to determine the **numeric** group IDs on your system, and pass additional `--group-add ...` arguments to the container so it can access the required devices.   For example, in the following output `crw-rw---- 1 0  44 226,   0 Sep 16 16:55 /dev/dri/card0` the group ID column is `44` 
-
-If Ollama initially works on the GPU in a docker container, but then switches to running on CPU after some period of time with errors in the server log reporting GPU discovery failures, this can be resolved by disabling systemd cgroup management in Docker.  Edit `/etc/docker/daemon.json` on the host and add `"exec-opts": ["native.cgroupdriver=cgroupfs"]` to the docker configuration.
 
 If you are experiencing problems getting Ollama to correctly discover or use your GPU for inference, the following may help isolate the failure.
 - `AMD_LOG_LEVEL=3` Enable info log levels in the AMD HIP/ROCm libraries.  This can help show more detailed error codes that can help troubleshoot problems

@@ -2,14 +2,13 @@
 #include "ggml-backend.h"
 #include "ggml-impl.h"
 #include <algorithm>
-#include <codecvt>
 #include <cstring>
 #include <filesystem>
-#include <locale>
 #include <memory>
 #include <string>
 #include <type_traits>
 #include <vector>
+#include <cctype>
 
 #ifdef _WIN32
 #    define WIN32_LEAN_AND_MEAN
@@ -72,14 +71,22 @@
 #    pragma clang diagnostic ignored "-Wdeprecated-declarations"
 #endif
 
-static std::wstring utf8_to_utf16(const std::string & str) {
-    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
-    return converter.from_bytes(str);
-}
+namespace fs = std::filesystem;
 
-static std::string utf16_to_utf8(const std::wstring & str) {
-    std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
-    return converter.to_bytes(str);
+static std::string path_str(const fs::path & path) {
+    std::string u8path;
+    try {
+#if defined(__cpp_lib_char8_t)
+        // C++20 and later: u8string() returns std::u8string
+        std::u8string u8str = path.u8string();
+        u8path = std::string(reinterpret_cast<const char*>(u8str.c_str()));
+#else
+        // C++17: u8string() returns std::string
+        u8path = path.u8string();
+#endif
+    } catch (...) {
+    }
+    return u8path;
 }
 
 #if defined(__clang__)
@@ -96,12 +103,12 @@ struct dl_handle_deleter {
     }
 };
 
-static dl_handle * dl_load_library(const std::wstring & path) {
+static dl_handle * dl_load_library(const fs::path & path) {
     // suppress error dialogs for missing DLLs
     DWORD old_mode = SetErrorMode(SEM_FAILCRITICALERRORS);
     SetErrorMode(old_mode | SEM_FAILCRITICALERRORS);
 
-    HMODULE handle = LoadLibraryW(path.c_str());
+    HMODULE handle = LoadLibraryW(path.wstring().c_str());
 
     SetErrorMode(old_mode);
 
@@ -129,8 +136,8 @@ struct dl_handle_deleter {
     }
 };
 
-static void * dl_load_library(const std::wstring & path) {
-    dl_handle * handle = dlopen(utf16_to_utf8(path).c_str(), RTLD_NOW | RTLD_LOCAL);
+static void * dl_load_library(const fs::path & path) {
+    dl_handle * handle = dlopen(path.string().c_str(), RTLD_NOW | RTLD_LOCAL);
 
     return handle;
 }
@@ -215,13 +222,18 @@ struct ggml_backend_registry {
         GGML_LOG_DEBUG("%s: registered device %s (%s)\n", __func__, ggml_backend_dev_name(device), ggml_backend_dev_description(device));
 #endif
         devices.push_back({device, score});
+        std::stable_sort(devices.begin(), devices.end(),
+            [](const auto & a, const auto & b) {
+                return a.second > b.second;
+            }
+        );
     }
 
-    ggml_backend_reg_t load_backend(const std::wstring & path, bool silent) {
+    ggml_backend_reg_t load_backend(const fs::path & path, bool silent) {
         dl_handle_ptr handle { dl_load_library(path) };
         if (!handle) {
             if (!silent) {
-                GGML_LOG_ERROR("%s: failed to load %s\n", __func__, utf16_to_utf8(path).c_str());
+                GGML_LOG_ERROR("%s: failed to load %s\n", __func__, path_str(path).c_str());
             }
             return nullptr;
         }
@@ -229,7 +241,7 @@ struct ggml_backend_registry {
         auto score_fn = (ggml_backend_score_t) dl_get_sym(handle.get(), "ggml_backend_score");
         if (score_fn && score_fn() == 0) {
             if (!silent) {
-                GGML_LOG_INFO("%s: backend %s is not supported on this system\n", __func__, utf16_to_utf8(path).c_str());
+                GGML_LOG_INFO("%s: backend %s is not supported on this system\n", __func__, path_str(path).c_str());
             }
             return nullptr;
         }
@@ -237,7 +249,7 @@ struct ggml_backend_registry {
         auto backend_init_fn = (ggml_backend_init_t) dl_get_sym(handle.get(), "ggml_backend_init");
         if (!backend_init_fn) {
             if (!silent) {
-                GGML_LOG_ERROR("%s: failed to find ggml_backend_init in %s\n", __func__, utf16_to_utf8(path).c_str());
+                GGML_LOG_ERROR("%s: failed to find ggml_backend_init in %s\n", __func__, path_str(path).c_str());
             }
             return nullptr;
         }
@@ -246,16 +258,17 @@ struct ggml_backend_registry {
         if (!reg || reg->api_version != GGML_BACKEND_API_VERSION) {
             if (!silent) {
                 if (!reg) {
-                    GGML_LOG_ERROR("%s: failed to initialize backend from %s: ggml_backend_init returned NULL\n", __func__, utf16_to_utf8(path).c_str());
+                    GGML_LOG_ERROR("%s: failed to initialize backend from %s: ggml_backend_init returned NULL\n",
+                        __func__, path_str(path).c_str());
                 } else {
                     GGML_LOG_ERROR("%s: failed to initialize backend from %s: incompatible API version (backend: %d, current: %d)\n",
-                        __func__, utf16_to_utf8(path).c_str(), reg->api_version, GGML_BACKEND_API_VERSION);
+                        __func__, path_str(path).c_str(), reg->api_version, GGML_BACKEND_API_VERSION);
                 }
             }
             return nullptr;
         }
 
-        GGML_LOG_INFO("%s: loaded %s backend from %s\n", __func__, ggml_backend_reg_name(reg), utf16_to_utf8(path).c_str());
+        GGML_LOG_INFO("%s: loaded %s backend from %s\n", __func__, ggml_backend_reg_name(reg), path_str(path).c_str());
 
         register_backend(reg, score_fn ? score_fn() : -1, std::move(handle));
 
@@ -338,12 +351,7 @@ size_t ggml_backend_dev_count() {
 
 ggml_backend_dev_t ggml_backend_dev_get(size_t index) {
     GGML_ASSERT(index < ggml_backend_dev_count());
-    auto devices = get_reg().devices;
-    if (!std::is_heap(devices.begin(), devices.end())) {
-        std::make_heap(devices.begin(), devices.end(), [](const auto & a, const auto & b) { return a.second < b.second; });
-    }
-
-    return devices[index].first;
+    return get_reg().devices[index].first;
 }
 
 ggml_backend_dev_t ggml_backend_dev_by_name(const char * name) {
@@ -396,14 +404,14 @@ ggml_backend_t ggml_backend_init_best(void) {
 
 // Dynamic loading
 ggml_backend_reg_t ggml_backend_load(const char * path) {
-    return get_reg().load_backend(utf8_to_utf16(path), false);
+    return get_reg().load_backend(path, false);
 }
 
 void ggml_backend_unload(ggml_backend_reg_t reg) {
     get_reg().unload_backend(reg, true);
 }
 
-static std::wstring get_executable_path() {
+static fs::path get_executable_path() {
 #if defined(__APPLE__)
     // get executable path
     std::vector<char> path;
@@ -421,7 +429,7 @@ static std::wstring get_executable_path() {
     if (last_slash != std::string::npos) {
         base_path = base_path.substr(0, last_slash);
     }
-    return utf8_to_utf16(base_path + "/");
+    return base_path + "/";
 #elif defined(__linux__) || defined(__FreeBSD__)
     std::string base_path = ".";
     std::vector<char> path(1024);
@@ -447,7 +455,7 @@ static std::wstring get_executable_path() {
         path.resize(path.size() * 2);
     }
 
-    return utf8_to_utf16(base_path + "/");
+    return base_path + "/";
 #elif defined(_WIN32)
     std::vector<wchar_t> path(MAX_PATH);
     DWORD len = GetModuleFileNameW(NULL, path.data(), path.size());
@@ -466,74 +474,69 @@ static std::wstring get_executable_path() {
 #endif
 }
 
-static std::wstring backend_filename_prefix() {
+static fs::path backend_filename_prefix() {
 #ifdef _WIN32
-    return L"ggml-";
+    return fs::u8path("ggml-");
 #else
-    return L"libggml-";
+    return fs::u8path("libggml-");
 #endif
 }
 
-static std::wstring backend_filename_suffix() {
+static fs::path backend_filename_extension() {
 #ifdef _WIN32
-    return L".dll";
+    return fs::u8path(".dll");
 #else
-    return L".so";
-#endif
-}
-
-static std::wstring path_separator() {
-#ifdef _WIN32
-    return L"\\";
-#else
-    return L"/";
+    return fs::u8path(".so");
 #endif
 }
 
 static ggml_backend_reg_t ggml_backend_load_best(const char * name, bool silent, const char * user_search_path) {
     // enumerate all the files that match [lib]ggml-name-*.[so|dll] in the search paths
-     // TODO: search system paths
-    std::wstring file_prefix = backend_filename_prefix() + utf8_to_utf16(name) + L"-";
-    std::vector<std::wstring> search_paths;
+    const fs::path name_path = fs::u8path(name);
+    const fs::path file_prefix = backend_filename_prefix().native() + name_path.native() + fs::u8path("-").native();
+    const fs::path file_extension = backend_filename_extension();
+
+    std::vector<fs::path> search_paths;
     if (user_search_path == nullptr) {
-        search_paths.push_back(L"." + path_separator());
+        // default search paths: executable directory, current directory
         search_paths.push_back(get_executable_path());
+        search_paths.push_back(fs::current_path());
     } else {
-        search_paths.push_back(utf8_to_utf16(user_search_path) + path_separator());
+        search_paths.push_back(fs::u8path(user_search_path));
     }
 
     int best_score = 0;
-    std::wstring best_path;
+    fs::path best_path;
 
-    namespace fs = std::filesystem;
     for (const auto & search_path : search_paths) {
         if (!fs::exists(search_path)) {
+            GGML_LOG_DEBUG("%s: search path %s does not exist\n", __func__, path_str(search_path).c_str());
             continue;
         }
         fs::directory_iterator dir_it(search_path, fs::directory_options::skip_permission_denied);
         for (const auto & entry : dir_it) {
             if (entry.is_regular_file()) {
-                std::wstring filename = entry.path().filename().wstring();
-                std::wstring ext = entry.path().extension().wstring();
-                if (filename.find(file_prefix) == 0 && ext == backend_filename_suffix()) {
-                    dl_handle_ptr handle { dl_load_library(entry.path().wstring()) };
+                auto filename = entry.path().filename();
+                auto ext = entry.path().extension();
+                if (filename.native().find(file_prefix) == 0 && ext == file_extension) {
+                    dl_handle_ptr handle { dl_load_library(entry) };
                     if (!handle && !silent) {
-                        GGML_LOG_ERROR("%s: failed to load %s\n", __func__, utf16_to_utf8(entry.path().wstring()).c_str());
+                        GGML_LOG_ERROR("%s: failed to load %s\n", __func__, path_str(entry.path()).c_str());
                     }
                     if (handle) {
                         auto score_fn = (ggml_backend_score_t) dl_get_sym(handle.get(), "ggml_backend_score");
                         if (score_fn) {
                             int s = score_fn();
 #ifndef NDEBUG
-                            GGML_LOG_DEBUG("%s: %s score: %d\n", __func__, utf16_to_utf8(entry.path().wstring()).c_str(), s);
+                            GGML_LOG_DEBUG("%s: %s score: %d\n", __func__, path_str(entry.path()).c_str(), s);
 #endif
                             if (s > best_score) {
                                 best_score = s;
-                                best_path = entry.path().wstring();
+                                best_path = entry.path();
                             }
                         } else {
                             if (!silent) {
-                                GGML_LOG_INFO("%s: failed to find ggml_backend_score in %s\n", __func__, utf16_to_utf8(entry.path().wstring()).c_str());
+                                GGML_LOG_INFO("%s: failed to find ggml_backend_score in %s\n", __func__, path_str(entry.path()).c_str());
                             }
                         }
                     }
@@ -545,7 +548,8 @@ static ggml_backend_reg_t ggml_backend_load_best(const char * name, bool silent,
     if (best_score == 0) {
         // try to load the base backend
         for (const auto & search_path : search_paths) {
-            std::wstring path = search_path + backend_filename_prefix() + utf8_to_utf16(name) + backend_filename_suffix();
+            fs::path filename = backend_filename_prefix().native() + name_path.native() + backend_filename_extension().native();
+            fs::path path = search_path / filename;
             if (fs::exists(path)) {
                 return get_reg().load_backend(path, silent);
             }
@@ -579,4 +583,9 @@ void ggml_backend_load_all_from_path(const char * dir_path) {
     ggml_backend_load_best("opencl", silent, dir_path);
     ggml_backend_load_best("musa", silent, dir_path);
     ggml_backend_load_best("cpu", silent, dir_path);
+    // check the environment variable GGML_BACKEND_PATH to load an out-of-tree backend
+    const char * backend_path = std::getenv("GGML_BACKEND_PATH");
+    if (backend_path) {
+        ggml_backend_load(backend_path);
+    }
 }
