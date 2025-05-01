@@ -1256,3 +1256,10 @@ func (t *Tensor) TopK(ctx ml.Context, k int) ml.Tensor {
 		t: C.ggml_top_k(ctx.(*Context).ctx, t.t, C.int(k)),
 	}
 }
+
+func (t *Tensor) Argsort(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_argsort(ctx.(*Context).ctx, t.t, C.GGML_SORT_ORDER_ASC),
+	}
+}

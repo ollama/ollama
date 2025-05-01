@@ -245,7 +245,9 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid)
 		}
 	}
 
-	return m.PatchMerger.Forward(ctx, hiddenStates, m.VisionModelOptions)
+	hiddenStates =  m.PatchMerger.Forward(ctx, hiddenStates, m.VisionModelOptions)
+	reverseWindowIndex := windowIndex.Argsort(ctx)
+	return hiddenStates.Rows(ctx, reverseWindowIndex)
 }
 
 // windowIndex divides the grid into windows and returns:

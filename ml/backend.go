@@ -225,6 +225,7 @@ type Tensor interface {
 	Duplicate(ctx Context) Tensor
 
 	TopK(ctx Context, k int) Tensor
+	Argsort(ctx Context) Tensor
 }
 
 // ScaledDotProductAttention implements a fused attention
