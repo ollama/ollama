@@ -245,7 +245,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid)
 		}
 	}
 
-	hiddenStates =  m.PatchMerger.Forward(ctx, hiddenStates, m.VisionModelOptions)
+	hiddenStates = m.PatchMerger.Forward(ctx, hiddenStates, m.VisionModelOptions)
 	reverseWindowIndex := windowIndex.Argsort(ctx)
 	return hiddenStates.Rows(ctx, reverseWindowIndex)
 }

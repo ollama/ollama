@@ -14,7 +14,7 @@ import (
 const (
 	DefaultFactor    = 28
 	DefaultMinPixels = 56 * 56
-	DefaultMaxPixels = 14 * 14 * 4 * 1280 // TODO: might need to change
+	DefaultMaxPixels = 14 * 14 * 4 * 1280
 )
 
 // smartResize calculates the size of the image to resize to based on the

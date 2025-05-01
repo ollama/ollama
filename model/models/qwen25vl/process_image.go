@@ -131,22 +131,22 @@ func (p *ImageProcessor) createPatches(pixels []float32, height, width int, grid
 	// in the format expected by the forward pass
 	patchIndex := 0
 
-	for t := 0; t < grid.Temporal; t++ {
+	for range grid.Temporal {
 		// For each patch in the grid
 		for h := 0; h < grid.Height; h += mergeSize {
 			for w := 0; w < grid.Width; w += mergeSize {
 				// Handle the 2x2 merged patches
-				for mh := 0; mh < mergeSize; mh++ {
-					for mw := 0; mw < mergeSize; mw++ {
+				for mh := range mergeSize {
+					for mw := range mergeSize {
 						// For each pixel in the patch
-						for py := 0; py < patchSize; py++ {
-							for px := 0; px < patchSize; px++ {
+						for py := range patchSize {
+							for px := range patchSize {
 								// Calculate source coordinates
 								y := (h+mh)*patchSize + py
 								x := (w+mw)*patchSize + px
 
 								// For each channel
-								for c := 0; c < channels; c++ {
+								for c := range channels {
 									// Channel-first format (CHW)
 									srcIdx := c*height*width + y*width + x
 
@@ -167,9 +167,9 @@ func (p *ImageProcessor) createPatches(pixels []float32, height, width int, grid
 
 						// Handle temporal dimension padding (if needed)
 						for tp := 1; tp < temporalPatchSize; tp++ {
-							for py := 0; py < patchSize; py++ {
-								for px := 0; px < patchSize; px++ {
-									for c := 0; c < channels; c++ {
+							for py := range patchSize {
+								for px := range patchSize {
+									for c := range channels {
 										srcIdx := patchIndex*patchDim +
 											(c * temporalPatchSize * patchSize * patchSize) +
 											(0 * patchSize * patchSize) + // first temporal frame
