@@ -13,8 +13,8 @@ import (
 
 type TextOptions struct {
 	ctxLen, hiddenSize, numHeads, numKVHeads int
-	eps                                      float32
-	ropeConfig                               ml.RoPEConfig
+	eps, ropeBase, ropeScale                 float32
+	ropeDim, defaultContextLen               uint32
 }
 
 type TextModel struct {
@@ -45,18 +45,15 @@ func NewTextModel(c fs.Config) *TextModel {
 		),
 		Layers: make([]Layer, c.Uint("block_count")),
 		TextOptions: &TextOptions{
-			ctxLen:     int(c.Uint("context_length")),
-			hiddenSize: int(c.Uint("embedding_length")),
-			numHeads:   int(c.Uint("attention.head_count")),
-			numKVHeads: int(c.Uint("attention.head_count_kv")),
-			eps:        c.Float("attention.layer_norm_rms_epsilon"),
-			ropeConfig: ml.RoPEConfig{
-				Base:       c.Float("rope.freq_base"),
-				Scale:      c.Float("rope.freq_scale", 1),
-				Dim:        c.Uint("rope.dimension_count", 128),
-				Type:       ml.RopeTypeNeox,
-				YarnConfig: ml.DefaultYarnConfig(int32(c.Uint("context_length", 128000))),
-			},
+			ctxLen:            int(c.Uint("context_length")),
+			hiddenSize:        int(c.Uint("embedding_length")),
+			numHeads:          int(c.Uint("attention.head_count")),
+			numKVHeads:        int(c.Uint("attention.head_count_kv")),
+			eps:               c.Float("attention.layer_norm_rms_epsilon"),
+			ropeBase:          c.Float("rope.freq_base"),
+			ropeScale:         c.Float("rope.freq_scale", 1),
+			ropeDim:           c.Uint("rope.dimension_count", 128),
+			defaultContextLen: c.Uint("context_length", 128000),
 		},
 	}
 
@@ -79,11 +76,11 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 
 	q := sa.Query.Forward(ctx, hiddenState)
 	q = q.Reshape(ctx, headDim, opts.numHeads, batchSize)
-	q = q.RoPE(ctx, positionIDs, sa.RopeFactors, opts.ropeConfig)
+	q = q.RoPEWithLen(ctx, positionIDs, sa.RopeFactors, opts.ropeDim, 2, opts.defaultContextLen, opts.ropeBase, opts.ropeScale)
 
 	k := sa.Key.Forward(ctx, hiddenState)
 	k = k.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-	k = k.RoPE(ctx, positionIDs, sa.RopeFactors, opts.ropeConfig)
+	k = k.RoPEWithLen(ctx, positionIDs, sa.RopeFactors, opts.ropeDim, 2, opts.defaultContextLen, opts.ropeBase, opts.ropeScale)
 
 	v := sa.Value.Forward(ctx, hiddenState)
 	v = v.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
@@ -97,7 +94,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 
 // Shift applies rotary position embeddings to the key tensor for causal attention caching
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return key.RoPE(ctx, shift, m.Layers[layer].SelfAttention.RopeFactors, m.ropeConfig), nil
+	return key.RoPEWithLen(ctx, shift, nil, m.ropeDim, 2, m.TextOptions.defaultContextLen, m.ropeBase, m.ropeScale), nil
 }
 
 // MLP implements the feed-forward network component with SwiGLU activation

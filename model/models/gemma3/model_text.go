@@ -14,11 +14,9 @@ import (
 type TextConfig struct {
 	hiddenSize, numHeads, numKVHeads int
 	attnKeyLen, attnValLen           int
-	eps                              float32
+	eps, ropeScale                   float32
+	ropeLocalBase, ropeGlobalBase    float32
 	largeModelScaling                bool
-
-	ropeLocalConfig  ml.RoPEConfig
-	ropeGlobalConfig ml.RoPEConfig
 }
 
 type TextModel struct {
@@ -58,27 +56,15 @@ func newTextModel(c fs.Config) *TextModel {
 		),
 		Layers: make([]TextLayer, numBlocks),
 		TextConfig: &TextConfig{
-			hiddenSize: int(c.Uint("embedding_length")),
-			numHeads:   int(c.Uint("attention.head_count")),
-			numKVHeads: int(c.Uint("attention.head_count_kv")),
-			attnKeyLen: int(c.Uint("attention.key_length", 256)),
-			attnValLen: int(c.Uint("attention.value_length", 256)),
-			eps:        c.Float("attention.layer_norm_rms_epsilon", 1e-06),
-
-			ropeLocalConfig: ml.RoPEConfig{
-				Base:       c.Float("rope.local.freq_base", 10000.0),
-				Scale:      c.Float("rope.freq_scale", 1.0),
-				Dim:        c.Uint("attention.key_length", 256),
-				Type:       ml.RopeTypeNeox,
-				YarnConfig: ml.DefaultYarnConfig(int32(c.Uint("context_length", 131072))),
-			},
-			ropeGlobalConfig: ml.RoPEConfig{
-				Base:       c.Float("rope.global.freq_base", 1000000.0),
-				Scale:      c.Float("rope.freq_scale", 1.0),
-				Dim:        c.Uint("attention.key_length", 256),
-				Type:       ml.RopeTypeNeox,
-				YarnConfig: ml.DefaultYarnConfig(int32(c.Uint("context_length", 131072))),
-			},
+			hiddenSize:     int(c.Uint("embedding_length")),
+			numHeads:       int(c.Uint("attention.head_count")),
+			numKVHeads:     int(c.Uint("attention.head_count_kv")),
+			attnKeyLen:     int(c.Uint("attention.key_length", 256)),
+			attnValLen:     int(c.Uint("attention.value_length", 256)),
+			eps:            c.Float("attention.layer_norm_rms_epsilon", 1e-06),
+			ropeLocalBase:  c.Float("rope.local.freq_base", 10000.0),
+			ropeGlobalBase: c.Float("rope.global.freq_base", 1000000.0),
+			ropeScale:      c.Float("rope.freq_scale", 1.0),
 		},
 	}
 
@@ -100,16 +86,17 @@ type TextSelfAttention struct {
 
 func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *TextConfig) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
+	ropeType := uint32(2)
 
-	ropeConfig := opts.ropeLocalConfig
+	ropeBase := opts.ropeLocalBase
 	if (layer+1)%gemmaGlobalCacheCount == 0 {
-		ropeConfig = opts.ropeGlobalConfig
+		ropeBase = opts.ropeGlobalBase
 	}
 
 	q := sa.Query.Forward(ctx, hiddenState)
 	q = q.Reshape(ctx, opts.attnKeyLen, opts.numHeads, batchSize)
 	q = sa.QueryNorm.Forward(ctx, q, opts.eps)
-	q = q.RoPE(ctx, positionIDs, nil, ropeConfig)
+	q = q.RoPE(ctx, positionIDs, nil, uint32(opts.attnKeyLen), ropeType, ropeBase, opts.ropeScale)
 
 	if opts.largeModelScaling {
 		q = q.Scale(ctx, 1.0/math.Sqrt(float64(opts.hiddenSize/opts.numHeads)))
@@ -120,7 +107,7 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, pos
 	k := sa.Key.Forward(ctx, hiddenState)
 	k = k.Reshape(ctx, opts.attnKeyLen, opts.numKVHeads, batchSize)
 	k = sa.KeyNorm.Forward(ctx, k, opts.eps)
-	k = k.RoPE(ctx, positionIDs, nil, ropeConfig)
+	k = k.RoPE(ctx, positionIDs, nil, uint32(opts.attnKeyLen), ropeType, ropeBase, opts.ropeScale)
 
 	v := sa.Value.Forward(ctx, hiddenState)
 	v = v.Reshape(ctx, opts.attnValLen, opts.numKVHeads, batchSize)
@@ -133,12 +120,12 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, layer int, hiddenState, pos
 }
 
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	ropeConfig := m.ropeLocalConfig
+	ropeBase := m.TextConfig.ropeLocalBase
 	if (layer+1)%gemmaGlobalCacheCount == 0 {
-		ropeConfig = m.ropeGlobalConfig
+		ropeBase = m.TextConfig.ropeGlobalBase
 	}
 
-	return key.RoPE(ctx, shift, nil, ropeConfig), nil
+	return key.RoPE(ctx, shift, nil, uint32(m.TextConfig.attnKeyLen), uint32(2), ropeBase, m.TextConfig.ropeScale), nil
 }
 
 type TextMLP struct {
