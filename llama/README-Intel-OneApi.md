@@ -42,6 +42,7 @@ on ollama root directory
 cmd.exe "/K" '"C:\Program Files (x86)\Intel\oneAPI\setvars.bat" && powershell'
 
 set OLLAMA_INTEL_GPU=true
+set OLLAMA_INTEL_GPU_SYCL=true
 set OLLAMA_NUM_GPU=999
 set SYCL_CACHE_PERSISTENT=1
 
@@ -51,7 +52,8 @@ set SYCL_CACHE_PERSISTENT=1
 or use shell ollama-intel-gpu.bat:
 ```shell
 set OLLAMA_INTEL_GPU=true
-set OLLAMA_NUM_GPU=999
+set OLLAMA_INTEL_GPU_SYCL=true
+set OLLAMA_NUM_GPU=64
 set SYCL_CACHE_PERSISTENT=1
 set ONEAPI_ROOT=C:\Program Files (x86)\Intel\oneAPI
 set PATH=%PATH%;%ONEAPI_ROOT%\2025.1\bin

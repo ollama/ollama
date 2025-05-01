@@ -362,13 +362,8 @@ func GetGPUInfo() GpuInfoList {
 		}
 
 		// Intel
-		var useSycl bool = false
-		if s := envconfig.Var("OLLAMA_NUM_GPU"); s != "" {
-			if _, err := strconv.ParseInt(s, 10, 64); err == nil {
-				useSycl = true
-			}
-		}
-		if envconfig.IntelGPU() && useSycl {
+		var useSyclDiscover bool = envconfig.Bool("OLLAMA_INTEL_GPU_SYCL")()
+		if envconfig.IntelGPU() && useSyclDiscover {
 			oHandles = initSyclHandles()
 			if oHandles != nil && oHandles.sycl != nil {
 				devCount := C.sycl_get_device_count(oHandles.sycl)

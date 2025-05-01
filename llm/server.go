@@ -116,18 +116,33 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			// disable partial offloading when model is greater than total system memory as this
 			// can lead to locking up the system
 			opts.NumGPU = 0
-		case runtime.GOOS == "windows" && gpus[0].Library == "oneapi" && estimate.Layers == 0:
+		case runtime.GOOS == "windows" && gpus[0].Library == "oneapi":
 			//delete "runtime.GOOS == "windows" && " when test for linux
 			if s := envconfig.Var("OLLAMA_NUM_GPU"); s != "" {
+				// use env OLLAMA_NUM_GPU to contral GPU offloaded layers number
 				if n, err := strconv.ParseInt(s, 10, 64); err == nil {
-					opts.NumGPU = int(n)
-				}
-			}
-			if opts.NumGPU <= 0 {
-				if s := envconfig.Var("OLLAMA_INTEL_GPU"); s != "" {
-					if b, err := strconv.ParseBool(s); err == nil && b == true {
-						opts.NumGPU = 999
+					if estimate.Layers == 0 {
+						opts.NumGPU = int(n)
+					} else {
+						//has estimate.Layers value;
+						if n >= 0 && int64(estimate.Layers) > n {
+							//has OLLAMA_NUM_GPU value n; 1.max offload to gpu layers is limit by n. 2. if don't gpu offload, set OLLAMA_NUM_GPU=0
+							opts.NumGPU = int(n)
+						} else {
+							opts.NumGPU = estimate.Layers
+						}
 					}
+				}
+			} else {
+				if estimate.Layers == 0 {
+					//no estimate.Layers value;
+					if opts.NumGPU <= 0 {
+						if envconfig.Bool("OLLAMA_INTEL_GPU")() {
+							opts.NumGPU = 999
+						}
+					}
+				} else {
+					opts.NumGPU = estimate.Layers
 				}
 			}
 		case gpus[0].Library != "metal" && estimate.Layers == 0:

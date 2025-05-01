@@ -51,11 +51,15 @@ void sycl_init(char *lib_path, sycl_init_resp_t *resp) {
       return;
     }
   }
-  LOG(resp->oh.verbose, "Sycl lib Init OK\n");
   return;
 }
 
 void sycl_release(sycl_handle_t h) {
+  LOG(h.verbose, "releasing sycl library\n");
+  if (h.num_devices != NULL) {
+    free(h.num_devices);
+    h.num_devices = NULL;
+  }
   UNLOAD_LIBRARY(h.handle);
   h.handle = NULL;
 }

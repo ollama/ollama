@@ -6,7 +6,6 @@
 typedef struct sycl_handle {
   void *handle;
   uint16_t verbose;
-  uint32_t num_drivers;
   uint32_t *num_devices;
 
   void (*ggml_backend_sycl_get_gpu_list)(int *id_list, int max_len);
