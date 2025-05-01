@@ -108,7 +108,7 @@ func (mlp *VisionMLP) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Visi
 	// Using activation as specified in config (likely GELU or SiLU/Swish)
 	gateOutput := mlp.Gate.Forward(ctx, hiddenStates)
 	upOutput := mlp.Up.Forward(ctx, hiddenStates)
-	hiddenStates = gateOutput.GELU(ctx).Mul(ctx, upOutput)
+	hiddenStates = gateOutput.SILU(ctx).Mul(ctx, upOutput)
 
 	return mlp.Down.Forward(ctx, hiddenStates)
 }
