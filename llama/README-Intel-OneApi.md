@@ -45,7 +45,7 @@ set OLLAMA_INTEL_GPU=true
 set OLLAMA_INTEL_GPU_SYCL=true
 set OLLAMA_NUM_GPU=999
 set SYCL_CACHE_PERSISTENT=1
-
+set OLLAMA_LIBRARY_PATH=./build/lib/ollama
 # run ollama server
 .\ollama.exe serve
 ```
@@ -55,14 +55,19 @@ set OLLAMA_INTEL_GPU=true
 set OLLAMA_INTEL_GPU_SYCL=true
 set OLLAMA_NUM_GPU=64
 set SYCL_CACHE_PERSISTENT=1
+set OLLAMA_LIBRARY_PATH=./build/lib/ollama
 set ONEAPI_ROOT=C:\Program Files (x86)\Intel\oneAPI
-set PATH=%PATH%;%ONEAPI_ROOT%\2025.1\bin
+set PATH=%PATH%;%ONEAPI_ROOT%\2025.1\bin;./build/lib/ollama;
 
 .\ollama.exe serve
 ```
 note:
-  set OLLAMA_NUM_GPU=xxx
-  xxx: It needs to be manually set. According to the number of model layers that the video memory can load.for example my T140 has 16G shared video memory,i set it to 64.
+  1. set OLLAMA_NUM_GPU=xxx
+     xxx: It needs to be manually set. According to the number of model layers that the video memory can load.for example my T140 has 16G shared video memory,i set it to 64.
+  2. Next 2 env is necessary if use sycl for discover intel gpu:
+     set OLLAMA_INTEL_GPU=true
+     set OLLAMA_INTEL_GPU_SYCL=true
+  3. When use pure CPU inference,a known bug need to delete ggml_sycl library temporay.
 
 ```shell
 # run ollama test client

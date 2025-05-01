@@ -12,5 +12,6 @@ set OLLAMA_KEEP_ALIVE=10m
 set NO_PROXY=localhost,127.0.0.1
 set OLLAMA_GPU_OVERHEAD=0
 set OLLAMA_FLASH_ATTENTION=false
+set OLLAMA_LIBRARY_PATH=./build/lib/ollama
 
 .\ollama.exe serve
