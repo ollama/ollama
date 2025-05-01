@@ -106,6 +106,11 @@ func (m *Model) Capabilities() []model.Capability {
 		capabilities = append(capabilities, model.CapabilityInsert)
 	}
 
+	// Check for vision capability in projector-based models
+	if len(m.ProjectorPaths) > 0 {
+		capabilities = append(capabilities, model.CapabilityVision)
+	}
+
 	return capabilities
 }
 
