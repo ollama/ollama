@@ -531,11 +531,12 @@ func WriteGGUF(ws io.WriteSeeker, kv KV, ts []Tensor) error {
 
 	var s uint64
 	for _, t := range ts {
-		t.Offset = s + uint64(ggufPadding(int64(s), int64(alignment)))
+		t.Offset = s
 		if err := ggufWriteTensorInfo(ws, t); err != nil {
 			return err
 		}
 		s += t.Size()
+		s += uint64(ggufPadding(int64(s), int64(alignment)))
 	}
 
 	for _, t := range ts {
