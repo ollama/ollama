@@ -375,23 +375,18 @@ func GetGPUInfo() GpuInfoList {
 						driverIndex: int(999),
 						gpuIndex:    int(i),
 					}
-					var free, total C.uint64_t
-					var descBuffer [64]byte
-					desc := (*C.char)(unsafe.Pointer(&descBuffer[0]))
 
-					C.sycl_get_device_memory(oHandles.sycl, i, &free, &total)
-					C.sycl_get_device_description(oHandles.sycl, i, desc, C.uint64_t(64))
+					C.sycl_check_vram(*oHandles.sycl, i, &memInfo)
 
-					var totalFreeMem float64 = float64(free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
-					free = C.uint64_t(totalFreeMem)
-					gpuInfo.TotalMemory = uint64(total)
-					gpuInfo.FreeMemory = uint64(free)
+					var totalFreeMem float64 = float64(memInfo.free) * 0.90 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
+					memInfo.free = C.uint64_t(totalFreeMem)
+					gpuInfo.TotalMemory = uint64(memInfo.total)
+					gpuInfo.FreeMemory = uint64(memInfo.free)
 					gpuInfo.ID = strconv.Itoa(int(i))
-					gpuInfo.Name = C.GoString(desc)
-					//gpuInfo.DependencyPath = []string{LibOllamaPath}
-					//gpuInfo.Variant = "SYCL"
+					gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
+					gpuInfo.DependencyPath = []string{LibOllamaPath}
 					oneapiGPUs = append(oneapiGPUs, gpuInfo)
-					slog.Info("SYCL GPU Info ", "=", gpuInfo)
+					slog.Info("SYCL GPU", "GPU Info", gpuInfo)
 				}
 			}
 		} else if envconfig.IntelGPU() {
@@ -525,16 +520,22 @@ func GetGPUInfo() GpuInfoList {
 			}
 		}
 		for i, gpu := range oneapiGPUs {
-			if oHandles.oneapi == nil {
+			if oHandles.oneapi != nil {
+				C.oneapi_check_vram(*oHandles.oneapi, C.int(gpu.driverIndex), C.int(gpu.gpuIndex), &memInfo)
+				// TODO - convert this to MinimumMemory based on testing...
+				var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
+				memInfo.free = C.uint64_t(totalFreeMem)
+				oneapiGPUs[i].FreeMemory = uint64(memInfo.free)
+			} else if oHandles.sycl != nil {
+				C.sycl_check_vram(*oHandles.sycl, C.int(gpu.gpuIndex), &memInfo)
+				// TODO - convert this to MinimumMemory based on testing...
+				var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
+				memInfo.free = C.uint64_t(totalFreeMem)
+				oneapiGPUs[i].FreeMemory = uint64(memInfo.free)
+			} else {
 				// shouldn't happen
 				slog.Warn("nil oneapi handle with device count", "count", oHandles.deviceCount)
-				continue
 			}
-			C.oneapi_check_vram(*oHandles.oneapi, C.int(gpu.driverIndex), C.int(gpu.gpuIndex), &memInfo)
-			// TODO - convert this to MinimumMemory based on testing...
-			var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
-			memInfo.free = C.uint64_t(totalFreeMem)
-			oneapiGPUs[i].FreeMemory = uint64(memInfo.free)
 		}
 
 		err = RocmGPUInfoList(rocmGPUs).RefreshFreeMemory()

@@ -25,7 +25,6 @@ void sycl_release(sycl_handle_t h);
 void sycl_get_gpu_list(sycl_handle_t *oh, int *id_list, int max_len);
 void sycl_print_sycl_devices(sycl_handle_t *oh);
 int sycl_get_device_count(sycl_handle_t *oh);
-void sycl_get_device_memory(sycl_handle_t *oh, int device, size_t *free, size_t *total);
-void sycl_get_device_description(sycl_handle_t *oh, int device, char *description, size_t description_size);
+void sycl_check_vram(sycl_handle_t h, int device, mem_info_t *resp);
 #endif // __GPU_INFO_INTEL_H__
 #endif // __APPLE__

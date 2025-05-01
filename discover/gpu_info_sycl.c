@@ -77,16 +77,25 @@ int sycl_get_device_count(sycl_handle_t *oh) {
   return ret;
 }
 
-void sycl_get_device_memory(sycl_handle_t *oh, int device, size_t *free, size_t *total) {
-  if (!free || !total)
-    return;
-  (oh->ggml_backend_sycl_get_device_memory)(device, free, total);
-}
+void sycl_check_vram(sycl_handle_t h, int device, mem_info_t *resp) {
+  resp->err = NULL;
+  uint64_t totalMem = 0;
+  uint64_t usedMem = 0;
+  const int buflen = 256;
+  char buf[buflen + 1];
+  int i, d, m;
 
-void sycl_get_device_description(sycl_handle_t *oh, int device, char *description, size_t description_size) {
-  if (!description || description_size < 1)
+  if (h.handle == NULL) {
+    resp->err = strdup("Level-Zero handle not initialized");
     return;
-  (oh->ggml_backend_sycl_get_device_description)(device, description, description_size);
+  }
+  resp->total = 0;
+  resp->free = 0;
+
+  (h.ggml_backend_sycl_get_device_memory)(device, &resp->free, &resp->total);
+  (h.ggml_backend_sycl_get_device_description)(device, buf, buflen);
+
+  snprintf(&resp->gpu_name[0], GPU_NAME_LEN, "%s", buf);
 }
 
 #endif // __APPLE__
