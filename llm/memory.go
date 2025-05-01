@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"strings"	
 	"cmp"
-	"maps"
-	"slices"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
@@ -72,6 +70,20 @@ type MemoryEstimate struct {
 	projectorWeights, projectorGraph uint64
 }
 
+func MapMaxFunc[K comparable, V any](m map[K]V, cmp func(a, b V) int) (K, V) {
+	var maxKey K
+	var maxVal V
+	first := true
+	for k, v := range m {
+		if first || cmp(maxVal, v) < 0 {
+			maxKey = k
+			maxVal = v
+			first = false
+		}
+	}
+	return maxKey, maxVal
+}
+
 // Given a model and one or more GPU targets, predict how many layers and bytes we can load, and the total size
 // The GPUs provided must all be the same Library
 func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []string, opts api.Options, numParallel int) MemoryEstimate {
@@ -125,7 +137,9 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	layers := f.Tensors().GroupLayers()
 	// add one layer worth of memory as a buffer
 	// use layer with maximum size to avoid vram overflow
-	maxBlockKey, maxLayer := maps.MaxFunc(layers, func(a, b Layer) int { return cmp.Compare(a.Size(), b.Size()) }); 
+	maxKey, maxLayer := MapMaxFunc(layers, func(a, b ggml.Layer) int {
+		return cmp.Compare(a.Size(), b.Size())
+	})
 	layerSize = maxLayer.Size()
 
 	var kvct string
@@ -141,8 +155,11 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	kv, graphPartialOffload, graphFullOffload := f.GraphSize(uint64(opts.NumCtx), uint64(min(opts.NumCtx, opts.NumBatch)), numParallel, kvct)
 
 	if len(kv) > 0 {
-		maxKVIdx, _ := strconv.Atoi(regexp.MustCompile(`blk\.(\d+)`).FindStringSubmatch(maxBlockKey)[1]); 
-		layerSize += kv[maxKVIdx]
+		i, err := strconv.Atoi(strings.TrimPrefix(maxKey, "blk."))
+		if err != nil {
+			slog.Error(fmt.Sprintf("Invalid block key: %v", err))
+		}
+		layerSize += kv[i]
 	}
 
 	var kvTotal uint64
@@ -252,7 +269,7 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 		fullyLoaded = true
 	} else {
 		// Calculate overflow for the layers that doesn't fit on the GPUs
-		for i := int(f.KV().BlockCount()) - (layercount - 1) - 1; i >= 0; i-- {
+		for i := int(f.KV().BlockCount()) - (layerCount - 1) - 1; i >= 0; i-- {
 			if blk, ok := layers[fmt.Sprintf("blk.%d", i)]; ok {
 				layerSize = blk.Size()
 				layerSize += kv[i]
