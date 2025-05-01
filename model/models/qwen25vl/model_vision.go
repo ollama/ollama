@@ -80,7 +80,18 @@ func (sa *VisionSelfAttention) Forward(ctx ml.Context, hiddenStates, cos, sin ml
 		mask = blockDiagonalMask(ctx, query.Dim(2), bounds, opts.numHeads)
 	}
 
-	attention := nn.Attention(ctx, query, key, value, scale, nil, nn.WithMask(mask))
+	// Scaled dot-product attention
+	query = query.Permute(ctx, 0, 2, 1, 3)
+	key = key.Permute(ctx, 0, 2, 1, 3)
+	value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
+	kq := key.MulmatFullPrec(ctx, query)
+	kq = kq.Scale(ctx, scale)
+	if mask != nil {
+		kq = kq.Add(ctx, mask)
+	}
+	kq = kq.Softmax(ctx)
+	kqv := value.Mulmat(ctx, kq)
+	attention := kqv.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 	attention = attention.Reshape(ctx, opts.hiddenSize, attention.Dim(2), batchSize)
 
 	return sa.Output.Forward(ctx, attention)
