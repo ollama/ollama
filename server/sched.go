@@ -81,6 +81,10 @@ func InitScheduler(ctx context.Context) *Scheduler {
 
 // context must be canceled to decrement ref count and release the runner
 func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options, sessionDuration *api.Duration) (chan *runnerRef, chan error) {
+	if opts.NumCtx < 4 {
+		opts.NumCtx = 4
+	}
+
 	req := &LlmRequest{
 		ctx:             c,
 		model:           model,
@@ -109,11 +113,6 @@ func (s *Scheduler) Run(ctx context.Context) {
 		s.processCompleted(ctx)
 	}()
 }
-
-const (
-	defaultContextLength  = 4096
-	smallGpuContextLength = 2048
-)
 
 func (s *Scheduler) processPending(ctx context.Context) {
 	for {
@@ -165,17 +164,6 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						gpus = s.getCpuFn()
 					} else {
 						gpus = s.getGpuFn()
-					}
-
-					if pending.origNumCtx == -1 {
-						if len(gpus) == 1 && gpus[0].Library != "cpu" && gpus[0].TotalMemory <= 4096*1024*1024 {
-							slog.Info("GPU is small, limiting default context window", "num_ctx", smallGpuContextLength)
-							pending.opts.NumCtx = smallGpuContextLength
-							pending.origNumCtx = smallGpuContextLength
-						} else {
-							pending.opts.NumCtx = defaultContextLength
-							pending.origNumCtx = defaultContextLength
-						}
 					}
 
 					if envconfig.MaxRunners() <= 0 {
@@ -453,10 +441,9 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoLis
 		estimatedVRAM:   llama.EstimatedVRAM(),
 		estimatedTotal:  llama.EstimatedTotal(),
 		loading:         true,
-		refCount:        1,
 	}
 	runner.numParallel = numParallel
-	runner.refMu.Lock()
+	runner.refMu.Lock() // hold lock until running or aborted
 
 	s.loadedMu.Lock()
 	s.loaded[req.model.ModelPath] = runner
@@ -467,13 +454,13 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoLis
 		defer runner.refMu.Unlock()
 		if err = llama.WaitUntilRunning(req.ctx); err != nil {
 			slog.Error("error loading llama server", "error", err)
-			runner.refCount--
 			req.errCh <- err
 			slog.Debug("triggering expiration for failed load", "model", runner.modelPath)
 			s.expiredCh <- runner
 			return
 		}
 		slog.Debug("finished setting up runner", "model", req.model.ModelPath)
+		runner.refCount++
 		runner.loading = false
 		go func() {
 			<-req.ctx.Done()
@@ -491,7 +478,12 @@ func (s *Scheduler) updateFreeSpace(allGpus discover.GpuInfoList) {
 	}
 	predMap := map[predKey]uint64{} // Sum up the total predicted usage per GPU for all runners
 	s.loadedMu.Lock()
+	runners := make([]*runnerRef, 0, len(s.loaded))
 	for _, r := range s.loaded {
+		runners = append(runners, r)
+	}
+	s.loadedMu.Unlock()
+	for _, r := range runners {
 		r.refMu.Lock()
 		if r.llama != nil {
 			for _, gpu := range allGpus {
@@ -502,7 +494,6 @@ func (s *Scheduler) updateFreeSpace(allGpus discover.GpuInfoList) {
 		}
 		r.refMu.Unlock()
 	}
-	s.loadedMu.Unlock()
 
 	// Now that we've summed up all the GPU usage predictions across all the loaded runners, update the gpu list
 	for i := range allGpus {
@@ -549,10 +540,8 @@ func (s *Scheduler) filterGPUsWithoutLoadingModels(allGpus discover.GpuInfoList)
 
 // TODO consolidate sched_types.go
 type runnerRef struct {
-	refMu sync.Mutex
-	// refCond   sync.Cond // Signaled on transition from 1 -> 0 refCount
+	refMu    sync.Mutex
 	refCount uint // prevent unloading if > 0
-	// unloading bool      // set to true when we are trying to unload the runner
 
 	llama          llm.LlamaServer
 	loading        bool                 // True only during initial load, then false forever
@@ -823,8 +812,8 @@ func (s *Scheduler) unloadAllRunners() {
 
 func (s *Scheduler) expireRunner(model *Model) {
 	s.loadedMu.Lock()
-	defer s.loadedMu.Unlock()
 	runner, ok := s.loaded[model.ModelPath]
+	s.loadedMu.Unlock()
 	if ok {
 		runner.refMu.Lock()
 		runner.expiresAt = time.Now()
