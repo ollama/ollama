@@ -12,18 +12,18 @@ type qwen25VLModel struct {
 	qwen2Model
 
 	VisionModel struct {
-		Depth               uint32   `json:"depth"`
-		HiddenSize          uint32   `json:"hidden_size"`
-		NumHeads            uint32   `json:"num_heads"`
-		InChannels          uint32   `json:"in_chans"`
-		PatchSize           uint32   `json:"patch_size"`
-		SpatialMergeSize    uint32   `json:"spatial_merge_size"`
-		SpatialPatchSize    uint32   `json:"spatial_patch_size"`
-		WindowSize          uint32   `json:"window_size"`
-		RMSNormEps          float32  `json:"layer_norm_epsilon"`
-		RopeTheta           float32  `json:"rope_theta"`
-		FullAttentionBlocks []uint32 `json:"fullatt_block_indexes"`
-		TemporalPatchSize   uint32   `json:"temporal_patch_size"`
+		Depth               uint32  `json:"depth"`
+		HiddenSize          uint32  `json:"hidden_size"`
+		NumHeads            uint32  `json:"num_heads"`
+		InChannels          uint32  `json:"in_chans"`
+		PatchSize           uint32  `json:"patch_size"`
+		SpatialMergeSize    uint32  `json:"spatial_merge_size"`
+		SpatialPatchSize    uint32  `json:"spatial_patch_size"`
+		WindowSize          uint32  `json:"window_size"`
+		RMSNormEps          float32 `json:"layer_norm_epsilon"`
+		RopeTheta           float32 `json:"rope_theta"`
+		FullAttentionBlocks []int32 `json:"fullatt_block_indexes"`
+		TemporalPatchSize   uint32  `json:"temporal_patch_size"`
 	} `json:"vision_config"`
 }
 

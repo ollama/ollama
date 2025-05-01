@@ -69,7 +69,6 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 	var result []input.Input
 
-	// Get image token IDs from config
 	var (
 		imageToken       int32 = 151655
 		visionStartToken int32 = 151652
