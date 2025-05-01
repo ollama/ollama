@@ -239,7 +239,7 @@ func (c *Causal) findStartLoc() (int, error) {
 		}
 	}
 
-	return 0, fmt.Errorf("%w (length: %v)", ErrKvCacheFull, len(c.cells))
+	return 0, fmt.Errorf("%w (cache: %v batch: %v)", ErrKvCacheFull, len(c.cells), c.curBatchSize)
 }
 
 func (c *Causal) updateSlidingWindow() {
