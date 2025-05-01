@@ -124,39 +124,33 @@ func (p *ImageProcessor) createPatches(pixels []float32, height, width int, grid
 	numPatches := grid.Temporal * grid.Height * grid.Width
 	patchDim := channels * temporalPatchSize * patchSize * patchSize
 
-	// Create output tensor
 	result := make([]float32, numPatches*patchDim)
-
-	// Instead of the complex 9D reshape+transpose, directly extract patches
-	// in the format expected by the forward pass
 	patchIndex := 0
 
+	// Single temporal frame handling (copies to all frames)
 	for range grid.Temporal {
-		// For each patch in the grid
 		for h := 0; h < grid.Height; h += mergeSize {
 			for w := 0; w < grid.Width; w += mergeSize {
 				// Handle the 2x2 merged patches
 				for mh := range mergeSize {
 					for mw := range mergeSize {
-						// For each pixel in the patch
-						for py := range patchSize {
-							for px := range patchSize {
-								// Calculate source coordinates
-								y := (h+mh)*patchSize + py
-								x := (w+mw)*patchSize + px
+						baseOffset := patchIndex * patchDim
 
-								// For each channel
-								for c := range channels {
-									// Channel-first format (CHW)
+						// Extract patch data for first temporal frame
+						for c := range channels {
+							channelOffset := baseOffset + (c * temporalPatchSize * patchSize * patchSize)
+
+							for py := range patchSize {
+								for px := range patchSize {
+									// Calculate source pixel coordinates
+									y := (h+mh)*patchSize + py
+									x := (w+mw)*patchSize + px
+
+									// Source index in input tensor (CHW format)
 									srcIdx := c*height*width + y*width + x
 
-									// Calculate destination index based on the expected layout
-									// This is the key part that matches what the model expects
-									dstIdx := patchIndex*patchDim +
-										(c * temporalPatchSize * patchSize * patchSize) +
-										(0 * patchSize * patchSize) + // temporal dim
-										(py * patchSize) +
-										px
+									// Destination index in first temporal frame
+									dstIdx := channelOffset + (py * patchSize) + px
 
 									if srcIdx < len(pixels) && dstIdx < len(result) {
 										result[dstIdx] = pixels[srcIdx]
@@ -165,27 +159,18 @@ func (p *ImageProcessor) createPatches(pixels []float32, height, width int, grid
 							}
 						}
 
-						// Handle temporal dimension padding (if needed)
-						for tp := 1; tp < temporalPatchSize; tp++ {
-							for py := range patchSize {
-								for px := range patchSize {
-									for c := range channels {
-										srcIdx := patchIndex*patchDim +
-											(c * temporalPatchSize * patchSize * patchSize) +
-											(0 * patchSize * patchSize) + // first temporal frame
-											(py * patchSize) +
-											px
+						// Copy first temporal frame to all other frames
+						if temporalPatchSize > 1 {
+							for c := range channels {
+								channelOffset := baseOffset + (c * temporalPatchSize * patchSize * patchSize)
+								firstFrameOffset := channelOffset
+								frameSize := patchSize * patchSize
 
-										dstIdx := patchIndex*patchDim +
-											(c * temporalPatchSize * patchSize * patchSize) +
-											(tp * patchSize * patchSize) + // current temporal frame
-											(py * patchSize) +
-											px
-
-										if srcIdx < len(result) && dstIdx < len(result) {
-											result[dstIdx] = result[srcIdx] // Copy from first frame
-										}
-									}
+								// Copy first frame to all other frames
+								for tp := 1; tp < temporalPatchSize; tp++ {
+									currentFrameOffset := channelOffset + (tp * frameSize)
+									copy(result[currentFrameOffset:currentFrameOffset+frameSize],
+										result[firstFrameOffset:firstFrameOffset+frameSize])
 								}
 							}
 						}
