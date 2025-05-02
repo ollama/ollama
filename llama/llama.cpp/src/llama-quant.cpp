@@ -744,10 +744,6 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         // This used to be a regex, but <regex> has an extreme cost to compile times.
         bool quantize = name.rfind("weight") == name.size() - 6; // ends with 'weight'?
 
-        // don't quantize vision stuff
-        quantize &= name.find("v.") == std::string::npos;
-        quantize &= name.find("mm.") == std::string::npos;
-
         // quantize only 2D and 3D tensors (experts)
         quantize &= (ggml_n_dims(tensor) >= 2);
 
