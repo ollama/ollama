@@ -586,6 +586,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Observability
 - [Opik](https://www.comet.com/docs/opik/cookbook/ollama) is an open-source platform to debug, evaluate, and monitor your LLM applications, RAG systems, and agentic workflows with comprehensive tracing, automated evaluations, and production-ready dashboards. Opik supports native intergration to Ollama.
+- [OpenLLMetry](https://www.traceloop.com/openllmetry/provider/ollama) is an open-source, OpenTelemetry-based SDK for tracing and monitoring calls to Ollama in [24+ platforms](https://www.traceloop.com/docs/openllmetry/integrations/introduction).
 - [Lunary](https://lunary.ai/docs/integrations/ollama) is the leading open-source LLM observability platform. It provides a variety of enterprise-grade features such as real-time analytics, prompt templates management, PII masking, and comprehensive agent tracing.
 - [OpenLIT](https://github.com/openlit/openlit) is an OpenTelemetry-native tool for monitoring Ollama Applications & GPUs using traces and metrics.
 - [HoneyHive](https://docs.honeyhive.ai/integrations/ollama) is an AI observability and evaluation platform for AI agents. Use HoneyHive to evaluate agent performance, interrogate failures, and monitor quality in production.
