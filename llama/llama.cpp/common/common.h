@@ -342,6 +342,8 @@ struct common_params {
 
     // multimodal models (see examples/llava)
     struct common_params_model mmproj;
+    bool mmproj_use_gpu = true;     // use GPU for multimodal model
+    bool no_mmproj = false;         // explicitly disable multimodal model
     std::vector<std::string> image; // path to image file(s)
 
     // embedding

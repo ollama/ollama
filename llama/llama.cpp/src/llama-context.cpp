@@ -114,7 +114,7 @@ llama_context::llama_context(
     }
 
     if (n_ctx_per_seq > hparams.n_ctx_train) {
-        LLAMA_LOG_WARN("%s: n_ctx_pre_seq (%u) > n_ctx_train (%u) -- possible training context overflow\n",
+        LLAMA_LOG_WARN("%s: n_ctx_per_seq (%u) > n_ctx_train (%u) -- possible training context overflow\n",
                 __func__, n_ctx_per_seq, hparams.n_ctx_train);
     }
 
@@ -469,8 +469,7 @@ ggml_tensor * llama_context::build_rope_shift(
         ggml_tensor * shift,
         ggml_tensor * factors,
               float   freq_base,
-              float   freq_scale,
-        ggml_backend_buffer * bbuf) const {
+              float   freq_scale) const {
     const auto & n_ctx_orig = cparams.n_ctx_orig_yarn;
 
     const auto & yarn_ext_factor  = cparams.yarn_ext_factor;
@@ -492,17 +491,7 @@ ggml_tensor * llama_context::build_rope_shift(
         // dequantize to f32 -> RoPE -> quantize back
         tmp = ggml_cast(ctx0, cur, GGML_TYPE_F32);
 
-        if (bbuf) {
-            for (const auto & backend : backends) {
-                // Figure out which backend KV cache belongs to
-                if (ggml_backend_supports_buft(backend.get(), ggml_backend_buffer_get_type(bbuf))) {
-                    ggml_backend_sched_set_tensor_backend(sched.get(), tmp, backend.get());
-                    break;
-                }
-            }
-        }
-
-        tmp = ggml_rope_ext_inplace(ctx0, tmp,
+        tmp = ggml_rope_ext(ctx0, tmp,
                 shift, factors, n_rot, rope_type, n_ctx_orig, freq_base, freq_scale,
                 yarn_ext_factor, yarn_attn_factor, yarn_beta_fast, yarn_beta_slow);
 
@@ -582,7 +571,7 @@ llm_graph_result_ptr llama_context::build_kv_self_shift(
                 ggml_row_size(kv_self->k_l[il]->type, n_embd_k_gqa),
                 0);
 
-        ggml_tensor * cur = build_rope_shift(ctx0, k, inp->k_shift, rope_factors, freq_base_l, freq_scale_l, kv_self->k_l[il]->buffer);
+        ggml_tensor * cur = build_rope_shift(ctx0, k, inp->k_shift, rope_factors, freq_base_l, freq_scale_l);
 
         ggml_build_forward_expand(gf, cur);
     }
@@ -1509,8 +1498,6 @@ int32_t llama_context::output_reserve(int32_t n_outputs) {
 
     // set all ids as invalid (negative)
     std::fill(output_ids.begin(), output_ids.end(), -1);
-
-    ggml_backend_buffer_clear(buf_output.get(), 0);
 
     this->n_outputs     = 0;
     this->n_outputs_max = n_outputs_max;

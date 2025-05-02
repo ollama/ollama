@@ -47,7 +47,7 @@ CLIP_API struct clip_ctx * clip_init(const char * fname, struct clip_context_par
 CLIP_API void clip_free(struct clip_ctx * ctx);
 
 CLIP_API size_t clip_embd_nbytes(const struct clip_ctx * ctx);
-CLIP_API size_t clip_embd_nbytes_by_img(const struct clip_ctx * ctx, int img_h, int img_w);
+CLIP_API size_t clip_embd_nbytes_by_img(const struct clip_ctx * ctx, int img_w, int img_h);
 
 CLIP_API int32_t clip_get_image_size (const struct clip_ctx * ctx);
 CLIP_API int32_t clip_get_patch_size (const struct clip_ctx * ctx);
@@ -59,9 +59,20 @@ CLIP_API const char * clip_patch_merge_type(const struct clip_ctx * ctx);
 CLIP_API const int32_t * clip_image_grid(const struct clip_ctx * ctx);
 CLIP_API size_t get_clip_image_grid_size(const struct clip_ctx * ctx);
 
-CLIP_API int clip_n_patches        (const struct clip_ctx * ctx);
-CLIP_API int clip_n_patches_by_img (const struct clip_ctx * ctx, struct clip_image_f32 * img);
-CLIP_API int clip_n_mmproj_embd    (const struct clip_ctx * ctx);
+GGML_DEPRECATED(CLIP_API int clip_n_patches(const struct clip_ctx * ctx),
+    "use clip_n_output_tokens instead");
+GGML_DEPRECATED(CLIP_API int clip_n_patches_by_img(const struct clip_ctx * ctx, struct clip_image_f32 * img),
+    "use clip_n_output_tokens instead");
+
+CLIP_API int clip_n_output_tokens(const struct clip_ctx * ctx, struct clip_image_f32 * img);
+
+// for M-RoPE, this will be the number of token positions in X and Y directions
+// for other models, X will be the total number of tokens and Y will be 1
+CLIP_API int clip_n_output_tokens_x(const struct clip_ctx * ctx, struct clip_image_f32 * img);
+CLIP_API int clip_n_output_tokens_y(const struct clip_ctx * ctx, struct clip_image_f32 * img);
+
+// this should be equal to the embedding dimension of the text model
+CLIP_API int clip_n_mmproj_embd(const struct clip_ctx * ctx);
 
 CLIP_API int clip_uhd_num_image_embeds_col(struct clip_ctx * ctx_clip);
 CLIP_API void clip_add_load_image_size(struct clip_ctx * ctx_clip, struct clip_image_size * load_image_size);
@@ -113,8 +124,6 @@ CLIP_API bool clip_is_glm(const struct clip_ctx * ctx);
 CLIP_API bool clip_is_qwen2vl(const struct clip_ctx * ctx);
 CLIP_API bool clip_is_llava(const struct clip_ctx * ctx);
 CLIP_API bool clip_is_gemma3(const struct clip_ctx * ctx);
-
-CLIP_API int get_deepest_feature_layer(const struct clip_ctx * ctx);
 
 CLIP_API bool clip_encode_float_image (struct clip_ctx * ctx, int n_threads, float * img, int h, int w, float * vec);
 

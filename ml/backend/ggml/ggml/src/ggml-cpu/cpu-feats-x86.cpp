@@ -263,7 +263,7 @@ void test_x86_is() {
 static int ggml_backend_cpu_x86_score() {
     // FIXME: this does not check for OS support
 
-    int score = 0;
+    int score = 1;
     cpuid_x86 is;
 
 #ifdef GGML_FMA

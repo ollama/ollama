@@ -172,8 +172,7 @@ private:
         ggml_tensor * shift,
         ggml_tensor * factors,
               float   freq_base,
-              float   freq_scale,
-        ggml_backend_buffer * bbuf) const;
+              float   freq_scale) const;
 
     llm_graph_result_ptr build_kv_self_shift(
             ggml_context * ctx0,

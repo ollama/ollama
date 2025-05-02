@@ -16,6 +16,9 @@ using json = nlohmann::ordered_json;
 static std::string build_repetition(const std::string & item_rule, int min_items, int max_items, const std::string & separator_rule = "") {
     auto has_max = max_items != std::numeric_limits<int>::max();
 
+    if (max_items == 0) {
+        return "";
+    }
     if (min_items == 0 && max_items == 1) {
         return item_rule + "?";
     }

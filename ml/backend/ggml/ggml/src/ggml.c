@@ -4,6 +4,7 @@
 #include "ggml-backend.h"
 #include "ggml-impl.h"
 #include "ggml-threading.h"
+#include "ggml-cpu.h"
 #include "ggml.h"
 
 // FIXME: required here for quantization functions
@@ -382,58 +383,16 @@ void ggml_fp16_to_fp32_row(const ggml_fp16_t * x, float * y, int64_t n) {
     }
 }
 
-// FIXME: these functions must detect the instruction set at runtime, since they are part of the core ggml library
-//        currently, the ggml_cpu_has_* functions are entirely compile-time
 void ggml_fp32_to_fp16_row(const float * x, ggml_fp16_t * y, int64_t n) {
-    int64_t i = 0;
-#if defined(__F16C__)
-    //if (ggml_cpu_has_f16c()) {
-        for (; i + 7 < n; i += 8) {
-            __m256 x_vec = _mm256_loadu_ps(x + i);
-            __m128i y_vec = _mm256_cvtps_ph(x_vec, _MM_FROUND_TO_NEAREST_INT);
-            _mm_storeu_si128((__m128i *)(y + i), y_vec);
-        }
-        for(; i + 3 < n; i += 4) {
-            __m128 x_vec = _mm_loadu_ps(x + i);
-            __m128i y_vec = _mm_cvtps_ph(x_vec, _MM_FROUND_TO_NEAREST_INT);
-            _mm_storel_epi64((__m128i *)(y + i), y_vec);
-        }
-    //}
-#endif
-    for (; i < n; i++) {
+    int i = 0;
+    for (; i < n; ++i) {
         y[i] = GGML_FP32_TO_FP16(x[i]);
     }
 }
 
 void ggml_bf16_to_fp32_row(const ggml_bf16_t * x, float * y, int64_t n) {
-    int64_t i = 0;
-#if defined(__AVX512F__)
-    //if (ggml_cpu_has_avx512()) {
-        for (; i + 16 <= n; i += 16) {
-            _mm512_storeu_ps(y + i,
-                            _mm512_castsi512_ps(
-                                _mm512_slli_epi32(
-                                    _mm512_cvtepu16_epi32(
-                                        _mm256_loadu_si256(
-                                            (const __m256i *)(x + i))),
-                                    16)));
-        }
-    //}
-#endif
-#if defined(__AVX2__)
-    //if (ggml_cpu_has_avx2()) {
-        for (; i + 8 <= n; i += 8) {
-            _mm256_storeu_ps(y + i,
-                            _mm256_castsi256_ps(
-                                _mm256_slli_epi32(
-                                    _mm256_cvtepu16_epi32(
-                                        _mm_loadu_si128(
-                                            (const __m128i *)(x + i))),
-                                    16)));
-        }
-    //}
-#endif
-    for (; i < n; i++) {
+    int i = 0;
+    for (; i < n; ++i) {
         y[i] = GGML_BF16_TO_FP32(x[i]);
     }
 }
@@ -956,6 +915,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "CONV_TRANSPOSE_1D",
     "IM2COL",
     "IM2COL_BACK",
+    "CONV_2D_DW",
     "CONV_TRANSPOSE_2D",
     "POOL_1D",
     "POOL_2D",
@@ -994,7 +954,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "OPT_STEP_ADAMW",
 };
 
-static_assert(GGML_OP_COUNT == 82, "GGML_OP_COUNT != 82");
+static_assert(GGML_OP_COUNT == 83, "GGML_OP_COUNT != 83");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1051,6 +1011,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "conv_transpose_1d(x)",
     "im2col(x)",
     "im2col_back(x)",
+    "conv_2d_dw(x)",
     "conv_transpose_2d(x)",
     "pool_1d(x)",
     "pool_2d(x)",
@@ -1089,7 +1050,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "adamw(x)",
 };
 
-static_assert(GGML_OP_COUNT == 82, "GGML_OP_COUNT != 82");
+static_assert(GGML_OP_COUNT == 83, "GGML_OP_COUNT != 83");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -1344,6 +1305,13 @@ bool ggml_is_permuted(const struct ggml_tensor * tensor) {
     static_assert(GGML_MAX_DIMS == 4, "GGML_MAX_DIMS is not 4 - update this function");
 
     return tensor->nb[0] > tensor->nb[1] || tensor->nb[1] > tensor->nb[2] || tensor->nb[2] > tensor->nb[3];
+}
+
+bool ggml_is_contiguous_channels(const struct ggml_tensor * tensor) {
+    return
+        tensor->nb[0] > tensor->nb[2] &&
+        tensor->nb[1] > tensor->nb[0] &&
+        tensor->nb[2] == ggml_type_size(tensor->type);
 }
 
 static inline bool ggml_is_padded_1d(const struct ggml_tensor * tensor) {
@@ -4049,6 +4017,46 @@ struct ggml_tensor * ggml_conv_2d_dw(
     struct ggml_tensor * result = ggml_mul_mat(ctx, new_a, new_b);
     result = ggml_reshape_4d(ctx, result, im2col->ne[1], im2col->ne[2], b->ne[2], b->ne[3]); // [N, OC, OH, OW]
 
+    return result;
+}
+
+// ggml_conv_2d_dw_direct
+
+struct ggml_tensor * ggml_conv_2d_dw_direct(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b,
+        int                   stride0,
+        int                   stride1,
+        int                   pad0,
+        int                   pad1,
+        int                   dilation0,
+        int                   dilation1) {
+    GGML_ASSERT(a->ne[2] == 1);
+    GGML_ASSERT(a->ne[3] == b->ne[2]);
+    int64_t ne[4];
+    ne[0] = ggml_calc_conv_output_size(b->ne[0], a->ne[0], stride0, pad0, dilation0);
+    ne[1] = ggml_calc_conv_output_size(b->ne[1], a->ne[1], stride1, pad1, dilation1);
+    ne[2] = b->ne[2];
+    ne[3] = b->ne[3];
+
+    struct ggml_tensor * result = ggml_new_tensor(ctx, b->type, 4, ne);
+
+    if (ggml_is_contiguous_channels(b)) {
+        // Result will be permuted the same way as input (CWHN order)
+        const int64_t type_size = ggml_type_size(result->type);
+        GGML_ASSERT(ggml_blck_size(result->type) == 1);
+        result->nb[0] = result->ne[2] * type_size;
+        result->nb[1] = result->ne[0] * result->nb[0];
+        result->nb[2] = type_size;
+    }
+
+    int32_t params[] = { stride0, stride1, pad0, pad1, dilation0, dilation1 };
+    ggml_set_op_params(result, params, sizeof(params));
+
+    result->op     = GGML_OP_CONV_2D_DW;
+    result->src[0] = a;
+    result->src[1] = b;
     return result;
 }
 

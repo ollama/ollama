@@ -133,6 +133,11 @@ extern "C" {
 
     GGML_BACKEND_API ggml_backend_reg_t ggml_backend_cpu_reg(void);
 
+    GGML_BACKEND_API void ggml_cpu_fp32_to_fp16(const float *, ggml_fp16_t *, int64_t);
+    GGML_BACKEND_API void ggml_cpu_fp16_to_fp32(const ggml_fp16_t *, float *, int64_t);
+    GGML_BACKEND_API void ggml_cpu_fp32_to_bf16(const float *, ggml_bf16_t *, int64_t);
+    GGML_BACKEND_API void ggml_cpu_bf16_to_fp32(const ggml_bf16_t *, float *, int64_t);
+
 #ifdef __cplusplus
 }
 #endif

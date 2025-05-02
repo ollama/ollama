@@ -8,10 +8,10 @@ Subject: [PATCH] maintain ordering for rules for grammar
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/common/json-schema-to-grammar.cpp b/common/json-schema-to-grammar.cpp
-index 90679822..56043678 100644
+index 5b3059c2..656b3eca 100644
 --- a/common/json-schema-to-grammar.cpp
 +++ b/common/json-schema-to-grammar.cpp
-@@ -346,7 +346,7 @@ private:
+@@ -349,7 +349,7 @@ private:
      friend std::string build_grammar(const std::function<void(const common_grammar_builder &)> & cb, const common_grammar_options & options);
      std::function<json(const std::string &)> _fetch_json;
      bool _dotall;

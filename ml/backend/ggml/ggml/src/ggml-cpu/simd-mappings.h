@@ -341,7 +341,7 @@ static inline void __avx_f32cx8_store(ggml_fp16_t *x, __m256 y) {
 #define GGML_F32_EPR  4
 
 #define GGML_F32x4              vector float
-#define GGML_F32x4_ZERO         0.0f
+#define GGML_F32x4_ZERO         {0.0f}
 #define GGML_F32x4_SET1         vec_splats
 #define GGML_F32x4_LOAD(p)      vec_xl(0, p)
 #define GGML_F32x4_STORE(p, r)  vec_xst(r, 0, p)

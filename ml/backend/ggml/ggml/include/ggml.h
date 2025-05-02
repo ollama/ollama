@@ -393,8 +393,8 @@ extern "C" {
 
     // precision
     enum ggml_prec {
-        GGML_PREC_DEFAULT,
-        GGML_PREC_F32,
+        GGML_PREC_DEFAULT =  0, // stored as ggml_tensor.op_params, 0 by default
+        GGML_PREC_F32     = 10,
     };
 
     // model file types
@@ -481,6 +481,7 @@ extern "C" {
         GGML_OP_CONV_TRANSPOSE_1D,
         GGML_OP_IM2COL,
         GGML_OP_IM2COL_BACK,
+        GGML_OP_CONV_2D_DW,
         GGML_OP_CONV_TRANSPOSE_2D,
         GGML_OP_POOL_1D,
         GGML_OP_POOL_2D,
@@ -677,6 +678,9 @@ extern "C" {
     GGML_API bool ggml_is_contiguous_0(const struct ggml_tensor * tensor); // same as ggml_is_contiguous()
     GGML_API bool ggml_is_contiguous_1(const struct ggml_tensor * tensor); // contiguous for dims >= 1
     GGML_API bool ggml_is_contiguous_2(const struct ggml_tensor * tensor); // contiguous for dims >= 2
+
+    // true for tensor that is stored in memory as CxWxHxN and has been permuted to WxHxCxN
+    GGML_API bool ggml_is_contiguous_channels(const struct ggml_tensor * tensor);
 
     GGML_API bool ggml_are_same_shape (const struct ggml_tensor * t0, const struct ggml_tensor * t1);
     GGML_API bool ggml_are_same_stride(const struct ggml_tensor * t0, const struct ggml_tensor * t1);
@@ -1661,7 +1665,7 @@ extern "C" {
             struct ggml_tensor  * a,
             struct ggml_tensor  * b);
 
-    // depthwise
+    // depthwise (via im2col and mul_mat)
     GGML_API struct ggml_tensor * ggml_conv_2d_dw(
             struct ggml_context * ctx,
             struct ggml_tensor  * a,  // convolution kernel
@@ -1672,6 +1676,22 @@ extern "C" {
             int                  p1,  // padding dimension 1
             int                  d0,  // dilation dimension 0
             int                  d1); // dilation dimension 1
+
+    // Depthwise 2D convolution
+    // may be faster than ggml_conv_2d_dw, but not available in all backends
+    // a:   KW    KH    1    C    convolution kernel
+    // b:   W     H     C    N    input data
+    // res: W_out H_out C    N
+    GGML_API struct ggml_tensor * ggml_conv_2d_dw_direct(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+            struct ggml_tensor  * b,
+            int                   stride0,
+            int                   stride1,
+            int                   pad0,
+            int                   pad1,
+            int                   dilation0,
+            int                   dilation1);
 
     GGML_API struct ggml_tensor * ggml_conv_transpose_2d_p0(
             struct ggml_context * ctx,
