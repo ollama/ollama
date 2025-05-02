@@ -360,7 +360,7 @@ func newVisionModel(c fs.Config) *VisionModel {
 	numHeads := int(c.Uint("vision.attention.head_count", 16))
 	numChannels := int(c.Uint("vision.num_channels", 3))
 	eps := c.Float("vision.attention.layer_norm_epsilon", 1e-6)
-	ropeTheta := c.Float("vision.rope.freq_base", 100000.0)
+	ropeTheta := c.Float("vision.rope.freq_base", 10000.0)
 	spatialMergeSize := int(c.Uint("vision.spatial_merge_size", 2))
 	windowSize := int(c.Uint("vision.window_size", 112))
 	fullAttnBlocks := c.Ints("qwen25vl.vision.fullatt_block_indexes", []int32{7, 15, 23, 31})
@@ -383,7 +383,7 @@ func newVisionModel(c fs.Config) *VisionModel {
 	}
 
 	for i := range fullAttnBlocks {
-		// full attention block indexes have to be converted to  int for use with the slices package
+		// full attention block indexes have to be converted to int for use with the slices package
 		model.fullAttnBlocks = append(model.fullAttnBlocks, int(fullAttnBlocks[i]))
 	}
 
