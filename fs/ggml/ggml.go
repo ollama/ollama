@@ -125,6 +125,7 @@ func (kv KV) OllamaEngineRequired() bool {
 		"gemma3",
 		"mistral3",
 		"llama4",
+		"qwen25vl",
 	}, kv.Architecture())
 }
 
