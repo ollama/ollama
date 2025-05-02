@@ -1553,12 +1553,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 						toolCallIndex++
 					}
 					res.Message.Content = ""
-					sb.Reset()
 					ch <- res
 					// Only way to have multiple calls is to have [] which is derived or provided
-					if templateToolToken == "" {
+					// This case occurs when the tool call is a json block - do not allow tool calls again
+					if templateToolToken == "" || (templateToolToken != "" && !strings.HasPrefix(sb.String(), templateToolToken)) {
 						checkToolCall = false
 					}
+					sb.Reset()
 					return
 				}
 			}
