@@ -34,14 +34,10 @@ import (
 	_ "github.com/ollama/ollama/model/models"
 )
 
-type contextList struct {
-	list []ml.Context
-}
-
 type Sequence struct {
 	// ctxs are used for allocating tensors that last the lifetime of the sequence, such as
 	// multimodal embeddings
-	ctxs *contextList
+	ctxs []ml.Context
 
 	// batch index
 	iBatch int
@@ -177,8 +173,10 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 // inputs processes the prompt and images into a list of inputs
 // by splitting the prompt on [img-<n>] tags, tokenizing text and
 // decoding images
-func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, *contextList, error) {
+func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, []ml.Context, error) {
 	var inputs []input.Input
+	var ctxs []ml.Context
+
 	var parts []string
 	var matches [][]string
 
@@ -191,13 +189,6 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, *
 	} else {
 		parts = []string{prompt}
 	}
-
-	var contexts contextList
-	runtime.AddCleanup(&contexts, func(ctxs []ml.Context) {
-		for _, ctx := range ctxs {
-			ctx.Close()
-		}
-	}, contexts.list)
 
 	postTokenize := false
 	for i, part := range parts {
@@ -228,7 +219,8 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, *
 			}
 
 			ctx := s.model.Backend().NewContext()
-			contexts.list = append(contexts.list, ctx)
+			runtime.SetFinalizer(ctx, func(c ml.Context) { c.Close() })
+			ctxs = append(ctxs, ctx)
 			imageEmbeddings, err := multimodalProcessor.EncodeMultimodal(ctx, images[imageIndex].Data)
 			if err != nil {
 				return nil, nil, err
@@ -251,7 +243,7 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, *
 		}
 	}
 
-	return inputs, &contexts, nil
+	return inputs, ctxs, nil
 }
 
 type Server struct {
@@ -298,12 +290,6 @@ type Server struct {
 	// multimodalHash generates hashes for comparing equality
 	// of non-text data
 	multimodalHash maphash.Hash
-
-	// vocab is a llama.cpp vocab required for gammar-based
-	// constrained generation (json mode, structured outputs)
-	// TODO: this is temporary until Ollama sampling supports
-	// constrained generation
-	vocab *sample.Vocab
 }
 
 func (s *Server) allNil() bool {
@@ -606,14 +592,15 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var grammar *sample.Grammar
+	var grammar *sample.GrammarSampler
 	var err error
 	if req.Grammar != "" {
-		grammar, err = sample.NewGrammar(s.vocab, req.Grammar)
+		grammar, err = sample.NewGrammarSampler(s.model.(model.TextProcessor), req.Grammar)
 		if err != nil {
 			http.Error(w, "failed to load model vocabulary required for format", http.StatusInternalServerError)
 			return
 		}
+		defer grammar.Free()
 	}
 
 	sampler := sample.NewSampler(
@@ -728,7 +715,9 @@ func (m *multiLPath) String() string {
 	return strings.Join(*m, ", ")
 }
 
-func (s *Server) reserveWorstCaseGraph() error {
+// TODO(jessegross): This is causing tensor allocation failures with large batches when not offloaded
+// to the GPU
+/*func (s *Server) reserveWorstCaseGraph() error {
 	ctx := s.model.Backend().NewContext()
 	defer ctx.Close()
 
@@ -771,7 +760,7 @@ func (s *Server) reserveWorstCaseGraph() error {
 	}
 
 	return nil
-}
+}*/
 
 func (s *Server) loadModel(
 	ctx context.Context,
@@ -788,8 +777,6 @@ func (s *Server) loadModel(
 	if err != nil {
 		panic(err)
 	}
-
-	s.vocab = sample.NewVocab(mpath)
 
 	// TODO(jessegross): LoRA loading
 	if lpath.String() != "" {
@@ -810,10 +797,10 @@ func (s *Server) loadModel(
 	s.seqs = make([]*Sequence, s.parallel)
 	s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
 
-	err = s.reserveWorstCaseGraph()
+	/*err = s.reserveWorstCaseGraph()
 	if err != nil {
 		panic(err)
-	}
+	}*/
 
 	s.status = llm.ServerStatusReady
 	s.ready.Done()

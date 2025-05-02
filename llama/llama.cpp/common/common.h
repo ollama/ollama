@@ -110,9 +110,17 @@ enum common_conversation_mode {
     COMMON_CONVERSATION_MODE_AUTO     = 2,
 };
 
+enum common_grammar_trigger_type {
+    COMMON_GRAMMAR_TRIGGER_TYPE_TOKEN,
+    COMMON_GRAMMAR_TRIGGER_TYPE_WORD,
+    COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN,
+    COMMON_GRAMMAR_TRIGGER_TYPE_PATTERN_START,
+};
+
 struct common_grammar_trigger {
-    std::string word;
-    bool at_start;
+    common_grammar_trigger_type type;
+    std::string value;
+    llama_token token = LLAMA_TOKEN_NULL;
 };
 
 // sampling parameters
@@ -163,14 +171,20 @@ struct common_params_sampling {
 
     std::string                         grammar; // optional BNF-like grammar to constrain sampling
     bool                                grammar_lazy = false;
-    std::vector<common_grammar_trigger> grammar_trigger_words;  // optional trigger words to trigger lazy grammar
-    std::vector<llama_token>            grammar_trigger_tokens; // optional trigger tokens to trigger lazy grammar and print trigger special tokens.
+    std::vector<common_grammar_trigger> grammar_triggers; // optional triggers (for lazy grammars)
     std::set<llama_token>               preserved_tokens;
 
     std::vector<llama_logit_bias> logit_bias; // logit biases to apply
 
     // print the parameters into a string
     std::string print() const;
+};
+
+struct common_params_model {
+    std::string path    = ""; // model local path                                           // NOLINT
+    std::string url     = ""; // model url to download                                      // NOLINT
+    std::string hf_repo = ""; // HF repo                                                    // NOLINT
+    std::string hf_file = ""; // HF file                                                    // NOLINT
 };
 
 struct common_params_speculative {
@@ -186,19 +200,13 @@ struct common_params_speculative {
     struct cpu_params cpuparams;
     struct cpu_params cpuparams_batch;
 
-    std::string hf_repo = ""; // HF repo                                                     // NOLINT
-    std::string hf_file = ""; // HF file                                                     // NOLINT
-
-    std::string model = "";     // draft model for speculative decoding                      // NOLINT
-    std::string model_url = ""; // model url to download                                     // NOLINT
+    struct common_params_model model;
 };
 
 struct common_params_vocoder {
-    std::string hf_repo = ""; // HF repo                                                     // NOLINT
-    std::string hf_file = ""; // HF file                                                     // NOLINT
+    struct common_params_model model;
 
-    std::string model     = ""; // model path                                                // NOLINT
-    std::string model_url = ""; // model url to download                                     // NOLINT
+    std::string speaker_file = ""; // speaker file path                                      // NOLINT
 
     bool use_guide_tokens = false; // enable guide tokens to improve TTS accuracy            // NOLINT
 };
@@ -254,13 +262,12 @@ struct common_params {
     struct common_params_speculative speculative;
     struct common_params_vocoder     vocoder;
 
-    std::string model                = ""; // model path                                                    // NOLINT
+    struct common_params_model model;
+
     std::string model_alias          = ""; // model alias                                                   // NOLINT
-    std::string model_url            = ""; // model url to download                                         // NOLINT
     std::string hf_token             = ""; // HF token                                                      // NOLINT
-    std::string hf_repo              = ""; // HF repo                                                       // NOLINT
-    std::string hf_file              = ""; // HF file                                                       // NOLINT
     std::string prompt               = "";                                                                  // NOLINT
+    std::string system_prompt        = "";                                                                  // NOLINT
     std::string prompt_file          = ""; // store the external prompt file name                           // NOLINT
     std::string path_prompt_cache    = ""; // path to file for saving/loading prompt eval state             // NOLINT
     std::string input_prefix         = ""; // string to prefix user inputs with                             // NOLINT
@@ -272,6 +279,7 @@ struct common_params {
     std::vector<std::string> in_files;   // all input files
     std::vector<std::string> antiprompt; // strings upon which more user input is prompted (a.k.a. reverse prompts)
     std::vector<llama_model_kv_override> kv_overrides;
+    std::vector<llama_model_tensor_buft_override> tensor_buft_overrides;
 
     bool lora_init_without_apply = false; // only load lora to memory, but do not apply it to ctx (user can manually apply lora later using llama_adapter_lora_apply)
     std::vector<common_adapter_lora_info> lora_adapters; // lora adapter path with user defined scale
@@ -325,13 +333,17 @@ struct common_params {
     bool warmup            = true;  // warmup run
     bool check_tensors     = false; // validate tensor data
 
+    bool single_turn       = false; // single turn chat conversation
+
     ggml_type cache_type_k = GGML_TYPE_F16; // KV cache data type for the K
     ggml_type cache_type_v = GGML_TYPE_F16; // KV cache data type for the V
 
     common_conversation_mode conversation_mode = COMMON_CONVERSATION_MODE_AUTO;
 
     // multimodal models (see examples/llava)
-    std::string mmproj = "";        // path to multimodal projector                                         // NOLINT
+    struct common_params_model mmproj;
+    bool mmproj_use_gpu = true;     // use GPU for multimodal model
+    bool no_mmproj = false;         // explicitly disable multimodal model
     std::vector<std::string> image; // path to image file(s)
 
     // embedding
@@ -391,8 +403,6 @@ struct common_params {
     int32_t i_pos  = -1;  // position of the passkey in the junk text
 
     // imatrix params
-    std::string out_file = "imatrix.dat"; // save the resulting imatrix to this file
-
     int32_t n_out_freq  = 10; // output the imatrix every n_out_freq iterations
     int32_t n_save_freq =  0; // save the imatrix every n_save_freq iterations
     int32_t i_chunk     =  0; // start processing from this chunk
@@ -404,16 +414,16 @@ struct common_params {
     int n_pca_batch = 100;
     int n_pca_iterations = 1000;
     dimre_method cvector_dimre_method = DIMRE_METHOD_PCA;
-    std::string cvector_outfile       = "control_vector.gguf";
     std::string cvector_positive_file = "examples/cvector-generator/positive.txt";
     std::string cvector_negative_file = "examples/cvector-generator/negative.txt";
 
     bool spm_infill = false; // suffix/prefix/middle pattern for infill
 
-    std::string lora_outfile = "ggml-lora-merged-f16.gguf";
-
     // batched-bench params
     bool batched_bench_output_jsonl = false;
+
+    // common params
+    std::string out_file; // output filename for all example programs
 };
 
 // call once at the start of a program if it uses libcommon
@@ -452,6 +462,8 @@ std::vector<std::string> string_split(const std::string & str, const std::string
 std::string string_repeat(const std::string & str, size_t n);
 
 void string_replace_all(std::string & s, const std::string & search, const std::string & replace);
+
+std::string regex_escape(const std::string & s);
 
 template<class T>
 static std::vector<T> string_split(const std::string & str, char delim) {
@@ -530,25 +542,10 @@ struct llama_model_params     common_model_params_to_llama  (      common_params
 struct llama_context_params   common_context_params_to_llama(const common_params & params);
 struct ggml_threadpool_params ggml_threadpool_params_from_cpu_params(const cpu_params & params);
 
-struct llama_model * common_load_model_from_url(
-    const std::string & model_url,
-    const std::string & local_path,
-    const std::string & hf_token,
-    const struct llama_model_params & params);
-
-struct llama_model * common_load_model_from_hf(
-    const std::string & repo,
-    const std::string & remote_path,
-    const std::string & local_path,
-    const std::string & hf_token,
-    const struct llama_model_params & params);
-
-std::pair<std::string, std::string> common_get_hf_file(
-    const std::string & hf_repo_with_tag,
-    const std::string & hf_token);
-
 // clear LoRA adapters from context, then apply new list of adapters
 void common_set_adapter_lora(struct llama_context * ctx, std::vector<common_adapter_lora_info> & lora);
+
+std::string                   get_model_endpoint();
 
 //
 // Batch utils

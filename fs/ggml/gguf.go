@@ -36,10 +36,6 @@ type containerGGUF struct {
 	maxArraySize int
 }
 
-func (c *containerGGUF) canCollectArray(size int) bool {
-	return c.maxArraySize < 0 || size <= c.maxArraySize
-}
-
 func (c *containerGGUF) Name() string {
 	return "gguf"
 }
@@ -235,10 +231,7 @@ func (llm *gguf) Decode(rs io.ReadSeeker) error {
 	// patch KV with parameter count
 	llm.kv["general.parameter_count"] = llm.parameters
 
-	alignment, ok := llm.kv["general.alignment"].(uint32)
-	if !ok {
-		alignment = 32
-	}
+	alignment := llm.kv.Uint("general.alignment", 32)
 
 	offset, err := rs.Seek(0, io.SeekCurrent)
 	if err != nil {
@@ -298,6 +291,23 @@ func readGGUFV1String(llm *gguf, r io.Reader) (string, error) {
 	return b.String(), nil
 }
 
+func readGGUFV1StringsData(llm *gguf, r io.Reader, a *array[string]) (any, error) {
+	for i := range a.size {
+		if a.values != nil {
+			e, err := readGGUFV1String(llm, r)
+			if err != nil {
+				return nil, err
+			}
+
+			a.values[i] = e
+		} else {
+			discardGGUFString(llm, r)
+		}
+	}
+
+	return a, nil
+}
+
 func discardGGUFString(llm *gguf, r io.Reader) error {
 	buf := llm.scratch[:8]
 	_, err := io.ReadFull(r, buf)
@@ -355,78 +365,44 @@ func writeGGUFString(w io.Writer, s string) error {
 	return err
 }
 
-type array struct {
-	size   int
-	values []any
-}
-
-func (a *array) MarshalJSON() ([]byte, error) {
-	return json.Marshal(a.values)
-}
-
-func readGGUFV1Array(llm *gguf, r io.Reader) (*array, error) {
-	t, err := readGGUF[uint32](llm, r)
-	if err != nil {
-		return nil, err
-	}
-
-	n, err := readGGUF[uint32](llm, r)
-	if err != nil {
-		return nil, err
-	}
-
-	a := &array{size: int(n)}
-	if llm.canCollectArray(int(n)) {
-		a.values = make([]any, 0, int(n))
-	}
-
-	for i := range n {
-		var e any
-		switch t {
-		case ggufTypeUint8:
-			e, err = readGGUF[uint8](llm, r)
-		case ggufTypeInt8:
-			e, err = readGGUF[int8](llm, r)
-		case ggufTypeUint16:
-			e, err = readGGUF[uint16](llm, r)
-		case ggufTypeInt16:
-			e, err = readGGUF[int16](llm, r)
-		case ggufTypeUint32:
-			e, err = readGGUF[uint32](llm, r)
-		case ggufTypeInt32:
-			e, err = readGGUF[int32](llm, r)
-		case ggufTypeUint64:
-			e, err = readGGUF[uint64](llm, r)
-		case ggufTypeInt64:
-			e, err = readGGUF[int64](llm, r)
-		case ggufTypeFloat32:
-			e, err = readGGUF[float32](llm, r)
-		case ggufTypeFloat64:
-			e, err = readGGUF[float64](llm, r)
-		case ggufTypeBool:
-			e, err = readGGUF[bool](llm, r)
-		case ggufTypeString:
-			e, err = readGGUFV1String(llm, r)
-		default:
-			return nil, fmt.Errorf("invalid array type: %d", t)
-		}
-		if err != nil {
-			return nil, err
-		}
-
+func readGGUFStringsData(llm *gguf, r io.Reader, a *array[string]) (any, error) {
+	for i := range a.size {
 		if a.values != nil {
+			e, err := readGGUFString(llm, r)
+			if err != nil {
+				return nil, err
+			}
+
 			a.values[i] = e
+		} else {
+			discardGGUFString(llm, r)
 		}
 	}
 
 	return a, nil
 }
 
-func readGGUFArray(llm *gguf, r io.Reader) (*array, error) {
-	if llm.Version == 1 {
-		return readGGUFV1Array(llm, r)
-	}
+type array[T any] struct {
+	// size is the actual size of the array
+	size int
 
+	// values is the array of values. this is nil if the array is larger than configured maxSize
+	values []T
+}
+
+func (a *array[T]) MarshalJSON() ([]byte, error) {
+	return json.Marshal(a.values)
+}
+
+func newArray[T any](size, maxSize int) *array[T] {
+	a := array[T]{size: size}
+	if maxSize < 0 || size <= maxSize {
+		a.values = make([]T, size)
+	}
+	return &a
+}
+
+func readGGUFArray(llm *gguf, r io.Reader) (any, error) {
 	t, err := readGGUF[uint32](llm, r)
 	if err != nil {
 		return nil, err
@@ -437,45 +413,55 @@ func readGGUFArray(llm *gguf, r io.Reader) (*array, error) {
 		return nil, err
 	}
 
-	a := &array{size: int(n)}
-	if llm.canCollectArray(int(n)) {
-		a.values = make([]any, int(n))
-	}
-
-	for i := range n {
-		var e any
-		switch t {
-		case ggufTypeUint8:
-			e, err = readGGUF[uint8](llm, r)
-		case ggufTypeInt8:
-			e, err = readGGUF[int8](llm, r)
-		case ggufTypeUint16:
-			e, err = readGGUF[uint16](llm, r)
-		case ggufTypeInt16:
-			e, err = readGGUF[int16](llm, r)
-		case ggufTypeUint32:
-			e, err = readGGUF[uint32](llm, r)
-		case ggufTypeInt32:
-			e, err = readGGUF[int32](llm, r)
-		case ggufTypeUint64:
-			e, err = readGGUF[uint64](llm, r)
-		case ggufTypeInt64:
-			e, err = readGGUF[int64](llm, r)
-		case ggufTypeFloat32:
-			e, err = readGGUF[float32](llm, r)
-		case ggufTypeFloat64:
-			e, err = readGGUF[float64](llm, r)
-		case ggufTypeBool:
-			e, err = readGGUF[bool](llm, r)
-		case ggufTypeString:
-			if a.values != nil {
-				e, err = readGGUFString(llm, r)
-			} else {
-				err = discardGGUFString(llm, r)
-			}
-		default:
-			return nil, fmt.Errorf("invalid array type: %d", t)
+	switch t {
+	case ggufTypeUint8:
+		a := newArray[uint8](int(n), llm.maxArraySize)
+		return readGGUFArrayData(llm, r, a)
+	case ggufTypeInt8:
+		a := newArray[int8](int(n), llm.maxArraySize)
+		return readGGUFArrayData(llm, r, a)
+	case ggufTypeUint16:
+		a := newArray[uint16](int(n), llm.maxArraySize)
+		return readGGUFArrayData(llm, r, a)
+	case ggufTypeInt16:
+		a := newArray[int16](int(n), llm.maxArraySize)
+		return readGGUFArrayData(llm, r, a)
+	case ggufTypeUint32:
+		a := newArray[uint32](int(n), llm.maxArraySize)
+		return readGGUFArrayData(llm, r, a)
+	case ggufTypeInt32:
+		a := newArray[int32](int(n), llm.maxArraySize)
+		return readGGUFArrayData(llm, r, a)
+	case ggufTypeUint64:
+		a := newArray[uint64](int(n), llm.maxArraySize)
+		return readGGUFArrayData(llm, r, a)
+	case ggufTypeInt64:
+		a := newArray[int64](int(n), llm.maxArraySize)
+		return readGGUFArrayData(llm, r, a)
+	case ggufTypeFloat32:
+		a := newArray[float32](int(n), llm.maxArraySize)
+		return readGGUFArrayData(llm, r, a)
+	case ggufTypeFloat64:
+		a := newArray[float64](int(n), llm.maxArraySize)
+		return readGGUFArrayData(llm, r, a)
+	case ggufTypeBool:
+		a := newArray[bool](int(n), llm.maxArraySize)
+		return readGGUFArrayData(llm, r, a)
+	case ggufTypeString:
+		a := newArray[string](int(n), llm.maxArraySize)
+		if llm.Version == 1 {
+			return readGGUFV1StringsData(llm, r, a)
 		}
+
+		return readGGUFStringsData(llm, r, a)
+	default:
+		return nil, fmt.Errorf("invalid array type: %d", t)
+	}
+}
+
+func readGGUFArrayData[T any](llm *gguf, r io.Reader, a *array[T]) (any, error) {
+	for i := range a.size {
+		e, err := readGGUF[T](llm, r)
 		if err != nil {
 			return nil, err
 		}
@@ -506,6 +492,8 @@ func writeGGUFArray[S ~[]E, E any](w io.Writer, t uint32, s S) error {
 }
 
 func WriteGGUF(ws io.WriteSeeker, kv KV, ts []Tensor) error {
+	alignment := kv.Uint("general.alignment", 32)
+
 	if err := binary.Write(ws, binary.LittleEndian, []byte("GGUF")); err != nil {
 		return err
 	}
@@ -548,11 +536,11 @@ func WriteGGUF(ws io.WriteSeeker, kv KV, ts []Tensor) error {
 			return err
 		}
 		s += t.Size()
+		s += uint64(ggufPadding(int64(s), int64(alignment)))
 	}
 
-	var alignment int64 = 32
 	for _, t := range ts {
-		if err := ggufWriteTensor(ws, t, alignment); err != nil {
+		if err := ggufWriteTensor(ws, t, int64(alignment)); err != nil {
 			return err
 		}
 	}
@@ -629,8 +617,8 @@ func ggufWriteTensorInfo(ws io.WriteSeeker, t Tensor) error {
 		return err
 	}
 
-	for i := range len(t.Shape) {
-		if err := binary.Write(ws, binary.LittleEndian, t.Shape[len(t.Shape)-i-1]); err != nil {
+	for _, n := range t.Shape {
+		if err := binary.Write(ws, binary.LittleEndian, n); err != nil {
 			return err
 		}
 	}

@@ -35,9 +35,9 @@ func loadSentencePieceVocab(t *testing.T) SentencePieceModel {
 			sentencepiece.ModelProto_SentencePiece_CONTROL,
 			sentencepiece.ModelProto_SentencePiece_UNUSED,
 			sentencepiece.ModelProto_SentencePiece_BYTE:
-			v.Types = append(v.Types, uint32(t))
+			v.Types = append(v.Types, int32(t))
 		default:
-			tt := uint32(sentencepiece.ModelProto_SentencePiece_NORMAL)
+			tt := int32(sentencepiece.ModelProto_SentencePiece_NORMAL)
 			// todo parse the special tokens file
 			//   - this will roundtrip correctly but the <start_of_turn> and
 			//     <end_of_turn> tokens aren't processed
@@ -124,7 +124,7 @@ func TestSentencePieceModelDecodeByteTokens(t *testing.T) {
 			"<0xC3>",
 			"<0xA3>",
 		},
-		Types: []uint32{
+		Types: []int32{
 			TOKEN_TYPE_NORMAL,
 			TOKEN_TYPE_BYTE,
 			TOKEN_TYPE_BYTE,

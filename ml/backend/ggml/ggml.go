@@ -696,6 +696,32 @@ func (c *Context) FromIntSlice(s []int32, shape ...int) (ml.Tensor, error) {
 	return t, nil
 }
 
+func (c Context) Arange(start, stop, step float32, dtype ml.DType) ml.Tensor {
+	switch dtype {
+	case ml.DTypeF32:
+		// ggml_arange creates a float32 tensor
+		return &Tensor{
+			b: c.b,
+			t: C.ggml_arange(c.ctx, C.float(start), C.float(stop), C.float(step)),
+		}
+	case ml.DTypeI32:
+		// ggml_cast does not support float32 to int32 conversion
+		arange := make([]int32, 0, int((stop-start)/step))
+		for i := start; i < stop; i += step {
+			arange = append(arange, int32(i))
+		}
+
+		t, err := c.Input().FromIntSlice(arange, len(arange))
+		if err != nil {
+			panic(err)
+		}
+
+		return t
+	default:
+		panic("unsupported dtype for arange")
+	}
+}
+
 func (c *Context) Close() {
 	if c != nil {
 		for _, b := range *c.allocatedBuffers {
@@ -858,17 +884,32 @@ func (t *Tensor) MulmatFullPrec(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	}
 }
 
+func (t *Tensor) MulmatID(ctx ml.Context, t2, ids ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_mul_mat_id(ctx.(*Context).ctx, t.t, t2.(*Tensor).t, ids.(*Tensor).t),
+	}
+}
+
 func (t *Tensor) LayerNorm(ctx ml.Context, w, b ml.Tensor, eps float32) ml.Tensor {
-	tt := (&Tensor{b: t.b, t: C.ggml_norm(ctx.(*Context).ctx, t.t, C.float(eps))}).Mul(ctx, w)
-	if b != nil {
-		tt = tt.Add(ctx, b)
+	tt := C.ggml_norm(ctx.(*Context).ctx, t.t, C.float(eps))
+	if w != nil {
+		tt = C.ggml_mul(ctx.(*Context).ctx, tt, w.(*Tensor).t)
+		if b != nil {
+			tt = C.ggml_add(ctx.(*Context).ctx, tt, b.(*Tensor).t)
+		}
 	}
 
-	return tt
+	return &Tensor{b: t.b, t: tt}
 }
 
 func (t *Tensor) RMSNorm(ctx ml.Context, w ml.Tensor, eps float32) ml.Tensor {
-	return (&Tensor{b: t.b, t: C.ggml_rms_norm(ctx.(*Context).ctx, t.t, C.float(eps))}).Mul(ctx, w)
+	tt := C.ggml_rms_norm(ctx.(*Context).ctx, t.t, C.float(eps))
+	if w != nil {
+		tt = C.ggml_mul(ctx.(*Context).ctx, tt, w.(*Tensor).t)
+	}
+
+	return &Tensor{b: t.b, t: tt}
 }
 
 func (t *Tensor) Pad(ctx ml.Context, shape ...int) ml.Tensor {
@@ -966,6 +1007,13 @@ func (t *Tensor) Tanh(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_tanh_inplace(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Sigmoid(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_sigmoid_inplace(ctx.(*Context).ctx, t.t),
 	}
 }
 
@@ -1130,5 +1178,12 @@ func (t *Tensor) Duplicate(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_dup(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) TopK(ctx ml.Context, k int) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_top_k(ctx.(*Context).ctx, t.t, C.int(k)),
 	}
 }

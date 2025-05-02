@@ -329,11 +329,13 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
 		}
 
+		ggmlPaths := []string{discover.LibOllamaPath}
 		if len(compatible) > 0 {
 			c := compatible[0]
 			if libpath, ok := libs[c]; ok {
 				slog.Debug("adding gpu library", "path", libpath)
 				libraryPaths = append(libraryPaths, libpath)
+				ggmlPaths = append(ggmlPaths, libpath)
 			}
 		}
 
@@ -368,6 +370,8 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		s.cmd.Stdout = os.Stdout
 		s.cmd.Stderr = s.status
 		s.cmd.SysProcAttr = LlamaServerSysProcAttr
+
+		s.cmd.Env = append(s.cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(ggmlPaths, string(filepath.ListSeparator)))
 
 		envWorkarounds := [][2]string{}
 		for _, gpu := range gpus {
@@ -406,7 +410,8 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		if envconfig.Debug() {
 			filteredEnv := []string{}
 			for _, ev := range s.cmd.Env {
-				if strings.HasPrefix(ev, "CUDA_") ||
+				if strings.HasPrefix(ev, "OLLAMA_") ||
+					strings.HasPrefix(ev, "CUDA_") ||
 					strings.HasPrefix(ev, "ROCR_") ||
 					strings.HasPrefix(ev, "ROCM_") ||
 					strings.HasPrefix(ev, "HIP_") ||
@@ -640,20 +645,20 @@ root   ::= object
 value  ::= object | array | string | number | ("true" | "false" | "null") ws
 object ::=
   "{" ws (
-            string ":" ws value
+         string ":" ws value
     ("," ws string ":" ws value)*
-  )? "}" ws
+  )? ws "}" 
 array  ::=
   "[" ws (
             value
     ("," ws value)*
-  )? "]" ws
+  )? ws "]" 
 string ::=
   "\"" (
     [^"\\\x7F\x00-\x1F] |
     "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) # escapes
-  )* "\"" ws
-number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)? ws
+  )* "\"" 
+number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)? 
 # Optional space: by convention, applied in this grammar after literal chars when allowed
 ws ::= ([ \t\n] ws)?
 `

@@ -1,3 +1,5 @@
+#pragma once
+
 #include "common.cuh"
 #include <cstdint>
 
