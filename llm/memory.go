@@ -1,12 +1,12 @@
 package llm
 
 import (
+	"cmp"
 	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
-	"strings"	
-	"cmp"
+	"strings"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
