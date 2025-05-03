@@ -324,7 +324,9 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			pathEnv = "LD_LIBRARY_PATH"
 		}
 
-		var libraryPaths []string
+		// Note: we always put our dependency paths first
+		// since these are the exact version we compiled/linked against
+		libraryPaths := []string{discover.LibOllamaPath}
 		if libraryPath, ok := os.LookupEnv(pathEnv); ok {
 			libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
 		}
@@ -334,13 +336,11 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			c := compatible[0]
 			if libpath, ok := libs[c]; ok {
 				slog.Debug("adding gpu library", "path", libpath)
-				libraryPaths = append(libraryPaths, libpath)
+				libraryPaths = append([]string{libpath}, libraryPaths...)
 				ggmlPaths = append(ggmlPaths, libpath)
 			}
 		}
 
-		// Note: we always put the dependency path first
-		// since this was the exact version we compiled/linked against
 		if gpus[0].DependencyPath != nil {
 			slog.Debug("adding gpu dependency paths", "paths", gpus[0].DependencyPath)
 			// assume gpus from the same library have the same dependency path
