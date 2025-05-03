@@ -55,6 +55,10 @@ set(GGML_CPU ON)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src)
 set_property(TARGET ggml PROPERTY EXCLUDE_FROM_ALL TRUE)
 
+set(GGML_RPC ON)
+# Not sure if this is needed as it still works without it
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-rpc)
+
 get_target_property(CPU_VARIANTS ggml-cpu MANUALLY_ADDED_DEPENDENCIES)
 if(NOT CPU_VARIANTS)
     set(CPU_VARIANTS "ggml-cpu")
