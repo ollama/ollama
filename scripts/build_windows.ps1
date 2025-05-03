@@ -121,7 +121,7 @@ function buildOllama() {
         if ($env:HIP_PATH) {
             write-host "Building ROCm backend libraries"
             if (-Not (get-command -ErrorAction silent ninja)) {
-                $NINJA_DIR=(gci -path (Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation -r -fi ninja.exe) | split-path -parent
+                $NINJA_DIR=(gci -path (Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation -r -fi ninja.exe).Directory.FullName
                 $env:PATH="$NINJA_DIR;$env:PATH"
             }
             $env:HIPCXX="${env:HIP_PATH}\bin\clang++.exe"
