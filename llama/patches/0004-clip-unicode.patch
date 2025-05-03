@@ -10,12 +10,12 @@ filesystems for paths that include wide characters
  1 file changed, 39 insertions(+)
 
 diff --git a/examples/llava/clip.cpp b/examples/llava/clip.cpp
-index 75970615..d57b4bd6 100644
+index ad3e7df1..b3218c78 100644
 --- a/examples/llava/clip.cpp
 +++ b/examples/llava/clip.cpp
-@@ -29,6 +29,19 @@
- #include <limits>
+@@ -30,6 +30,19 @@
  #include <array>
+ #include <numeric>
  
 +#if defined(_WIN32)
 +#define WIN32_LEAN_AND_MEAN
@@ -33,7 +33,7 @@ index 75970615..d57b4bd6 100644
  struct clip_logger_state g_logger_state = {GGML_LOG_LEVEL_CONT, clip_log_callback_default, NULL};
  
  //#define CLIP_DEBUG_FUNCTIONS
-@@ -1430,7 +1443,29 @@ struct clip_model_loader {
+@@ -1971,7 +1984,29 @@ struct clip_model_loader {
          {
              std::vector<uint8_t> read_buf;
  
@@ -63,7 +63,7 @@ index 75970615..d57b4bd6 100644
              if (!fin) {
                  throw std::runtime_error(string_format("%s: failed to open %s\n", __func__, fname.c_str()));
              }
-@@ -1457,7 +1492,11 @@ struct clip_model_loader {
+@@ -1998,7 +2033,11 @@ struct clip_model_loader {
                      ggml_backend_tensor_set(cur, read_buf.data(), 0, num_bytes);
                  }
              }

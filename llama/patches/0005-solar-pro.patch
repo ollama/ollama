@@ -15,10 +15,10 @@ adds support for the Solar Pro architecture
  7 files changed, 248 insertions(+)
 
 diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
-index 62e1480b..f754bc8f 100644
+index f2bc8ca7..5ab3f572 100644
 --- a/src/llama-arch.cpp
 +++ b/src/llama-arch.cpp
-@@ -68,6 +68,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
+@@ -69,6 +69,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
      { LLM_ARCH_GRANITE,          "granite"          },
      { LLM_ARCH_GRANITE_MOE,      "granitemoe"       },
      { LLM_ARCH_CHAMELEON,        "chameleon"        },
@@ -26,7 +26,7 @@ index 62e1480b..f754bc8f 100644
      { LLM_ARCH_WAVTOKENIZER_DEC, "wavtokenizer-dec" },
      { LLM_ARCH_PLM,              "plm"              },
      { LLM_ARCH_BAILINGMOE,       "bailingmoe"       },
-@@ -140,6 +141,7 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
+@@ -142,6 +143,7 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
      { LLM_KV_ATTENTION_RELATIVE_BUCKETS_COUNT,       "%s.attention.relative_buckets_count"       },
      { LLM_KV_ATTENTION_SLIDING_WINDOW,               "%s.attention.sliding_window"               },
      { LLM_KV_ATTENTION_SCALE,                        "%s.attention.scale"                        },
@@ -34,7 +34,7 @@ index 62e1480b..f754bc8f 100644
      { LLM_KV_ATTENTION_KEY_LENGTH_MLA,               "%s.attention.key_length_mla"               },
      { LLM_KV_ATTENTION_VALUE_LENGTH_MLA,             "%s.attention.value_length_mla"             },
  
-@@ -1482,6 +1484,24 @@ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_N
+@@ -1502,6 +1504,24 @@ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_N
              { LLM_TENSOR_ATTN_K_NORM,     "blk.%d.attn_k_norm" },
          },
      },
@@ -59,7 +59,7 @@ index 62e1480b..f754bc8f 100644
      {
          LLM_ARCH_WAVTOKENIZER_DEC,
          {
-@@ -1660,6 +1680,7 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
+@@ -1680,6 +1700,7 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
      {LLM_TENSOR_FFN_EXP_PROBS_B,            {LLM_TENSOR_LAYER_REPEATING, GGML_OP_ADD}},
      // this tensor is loaded for T5, but never used
      {LLM_TENSOR_DEC_CROSS_ATTN_REL_B,       {LLM_TENSOR_LAYER_REPEATING, GGML_OP_NONE}},
@@ -68,10 +68,10 @@ index 62e1480b..f754bc8f 100644
      {LLM_TENSOR_POS_NET_NORM,               {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
      {LLM_TENSOR_POS_NET_NORM1,              {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
 diff --git a/src/llama-arch.h b/src/llama-arch.h
-index 98ca00a1..439aaeab 100644
+index 41a023da..525c1b7d 100644
 --- a/src/llama-arch.h
 +++ b/src/llama-arch.h
-@@ -72,6 +72,7 @@ enum llm_arch {
+@@ -73,6 +73,7 @@ enum llm_arch {
      LLM_ARCH_GRANITE,
      LLM_ARCH_GRANITE_MOE,
      LLM_ARCH_CHAMELEON,
@@ -79,7 +79,7 @@ index 98ca00a1..439aaeab 100644
      LLM_ARCH_WAVTOKENIZER_DEC,
      LLM_ARCH_PLM,
      LLM_ARCH_BAILINGMOE,
-@@ -144,6 +145,7 @@ enum llm_kv {
+@@ -146,6 +147,7 @@ enum llm_kv {
      LLM_KV_ATTENTION_RELATIVE_BUCKETS_COUNT,
      LLM_KV_ATTENTION_SLIDING_WINDOW,
      LLM_KV_ATTENTION_SCALE,
@@ -87,7 +87,7 @@ index 98ca00a1..439aaeab 100644
      LLM_KV_ATTENTION_KEY_LENGTH_MLA,
      LLM_KV_ATTENTION_VALUE_LENGTH_MLA,
  
-@@ -344,6 +346,7 @@ enum llm_tensor {
+@@ -346,6 +348,7 @@ enum llm_tensor {
      LLM_TENSOR_ENC_OUTPUT_NORM,
      LLM_TENSOR_CLS,
      LLM_TENSOR_CLS_OUT,
@@ -115,7 +115,7 @@ index 90dfe7a7..8a667960 100644
      if (il < n_layer) {
          return n_swa > 0 && n_swa_pattern > 0 && il % n_swa_pattern < (n_swa_pattern - 1);
 diff --git a/src/llama-hparams.h b/src/llama-hparams.h
-index 80fcd65d..6e278945 100644
+index 7ee6a5b7..48dce407 100644
 --- a/src/llama-hparams.h
 +++ b/src/llama-hparams.h
 @@ -55,6 +55,8 @@ struct llama_hparams {
@@ -127,7 +127,7 @@ index 80fcd65d..6e278945 100644
      uint32_t n_layer_dense_lead = 0;
      uint32_t n_lora_q           = 0;
      uint32_t n_lora_kv          = 0;
-@@ -153,6 +155,9 @@ struct llama_hparams {
+@@ -154,6 +156,9 @@ struct llama_hparams {
      // dimension of the recurrent state embeddings
      uint32_t n_embd_v_s() const;
  
@@ -150,10 +150,10 @@ index ea73a8a7..a012aeae 100644
  llama_model_loader::llama_model_loader(
          const std::string & fname,
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 6b7bfecf..aba42819 100644
+index 822e2bb2..572378c9 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -1374,6 +1374,21 @@ void llama_model::load_hparams(llama_model_loader & ml) {
+@@ -1386,6 +1386,21 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                      default: type = LLM_TYPE_UNKNOWN;
                 }
              } break;
@@ -175,7 +175,7 @@ index 6b7bfecf..aba42819 100644
          case LLM_ARCH_WAVTOKENIZER_DEC:
              {
                  ml.get_key(LLM_KV_ATTENTION_LAYERNORM_EPS,    hparams.f_norm_eps);
-@@ -3717,6 +3732,34 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
+@@ -3741,6 +3756,34 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
  
                          layer.ffn_norm = create_tensor(tn(LLM_TENSOR_FFN_NORM, "weight", i), {n_embd}, 0);
  
@@ -210,7 +210,7 @@ index 6b7bfecf..aba42819 100644
                          layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
                          layer.ffn_down = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "weight", i), {  n_ff, n_embd}, 0);
                          layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
-@@ -12296,6 +12339,165 @@ struct llm_build_chameleon : public llm_graph_context {
+@@ -12342,6 +12385,165 @@ struct llm_build_chameleon : public llm_graph_context {
      }
  };
  
@@ -376,7 +376,7 @@ index 6b7bfecf..aba42819 100644
  struct llm_build_wavtokenizer_dec : public llm_graph_context {
      llm_build_wavtokenizer_dec(const llama_model & model, const llm_graph_params & params, ggml_cgraph * gf) : llm_graph_context(params) {
          ggml_tensor * cur;
-@@ -13045,6 +13247,10 @@ llm_graph_result_ptr llama_model::build_graph(
+@@ -13092,6 +13294,10 @@ llm_graph_result_ptr llama_model::build_graph(
              {
                  llm = std::make_unique<llm_build_chameleon>(*this, params, gf);
              } break;
@@ -387,7 +387,7 @@ index 6b7bfecf..aba42819 100644
          case LLM_ARCH_WAVTOKENIZER_DEC:
              {
                  llm = std::make_unique<llm_build_wavtokenizer_dec>(*this, params, gf);
-@@ -13191,6 +13397,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
+@@ -13238,6 +13444,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
          case LLM_ARCH_GRANITE:
          case LLM_ARCH_GRANITE_MOE:
          case LLM_ARCH_CHAMELEON:
@@ -396,18 +396,18 @@ index 6b7bfecf..aba42819 100644
              return LLAMA_ROPE_TYPE_NORM;
  
 diff --git a/src/llama-model.h b/src/llama-model.h
-index fd82d106..5865d5e9 100644
+index 95eca002..856e6042 100644
 --- a/src/llama-model.h
 +++ b/src/llama-model.h
-@@ -62,6 +62,7 @@ enum llm_type {
+@@ -64,6 +64,7 @@ enum llm_type {
      LLM_TYPE_15B,
      LLM_TYPE_16B,
      LLM_TYPE_20B,
 +    LLM_TYPE_22B,
+     LLM_TYPE_27B,
      LLM_TYPE_30B,
      LLM_TYPE_32B,
-     LLM_TYPE_34B,
-@@ -307,6 +308,8 @@ struct llama_layer {
+@@ -311,6 +312,8 @@ struct llama_layer {
      struct ggml_tensor * ffn_up_scale   = nullptr;
      struct ggml_tensor * ffn_down_scale = nullptr;
  

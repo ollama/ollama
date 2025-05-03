@@ -72,6 +72,7 @@ struct llama_hparams {
     float    expert_weights_scale = 0.0;
     bool     expert_weights_norm  = false;
     uint32_t expert_gating_func   = LLAMA_EXPERT_GATING_FUNC_TYPE_NONE;
+    uint32_t moe_every_n_layers   = 0;
 
     float f_norm_eps;
     float f_norm_rms_eps;
