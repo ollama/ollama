@@ -106,6 +106,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 
 	// If the user wants zero GPU layers, reset the gpu list to be CPU/system ram info
 	if opts.NumGPU == 0 {
+		slog.Debug("Reset GetCPUInfo...zero GPU layers")
 		gpus = discover.GetCPUInfo()
 	}
 
@@ -132,6 +133,8 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 							opts.NumGPU = estimate.Layers
 						}
 					}
+				} else {
+					opts.NumGPU = estimate.Layers
 				}
 			} else {
 				if estimate.Layers == 0 {

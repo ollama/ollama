@@ -362,62 +362,73 @@ func GetGPUInfo() GpuInfoList {
 		}
 
 		// Intel
-		var useSyclDiscover bool = envconfig.Bool("OLLAMA_INTEL_GPU_SYCL")()
-		if envconfig.IntelGPU() && useSyclDiscover {
-			oHandles = initSyclHandles()
-			if oHandles != nil && oHandles.sycl != nil {
-				devCount := C.sycl_get_device_count(oHandles.sycl)
-				for i := range devCount { //for i := range oHandles.deviceCount {
-					gpuInfo := OneapiGPUInfo{
-						GpuInfo: GpuInfo{
-							Library: "oneapi",
-						},
-						driverIndex: int(999),
-						gpuIndex:    int(i),
-					}
-
-					C.sycl_check_vram(*oHandles.sycl, i, &memInfo)
-
-					var totalFreeMem float64 = float64(memInfo.free) * 0.90 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
-					memInfo.free = C.uint64_t(totalFreeMem)
-					gpuInfo.TotalMemory = uint64(memInfo.total)
-					gpuInfo.FreeMemory = uint64(memInfo.free)
-					gpuInfo.ID = strconv.Itoa(int(i))
-					gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
-					gpuInfo.DependencyPath = []string{LibOllamaPath}
-					oneapiGPUs = append(oneapiGPUs, gpuInfo)
-					slog.Info("SYCL GPU", "GPU Info", gpuInfo)
+		if envconfig.IntelGPU() {
+			var discoverInterface string = envconfig.String("OLLAMA_INTEL_IF_TYPE")()
+			var numLayerstoGpu int = 999
+			if s := envconfig.Var("OLLAMA_NUM_GPU"); s != "" {
+				// use env OLLAMA_NUM_GPU to contral GPU offloaded layers number
+				if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+					numLayerstoGpu = int(n)
 				}
 			}
-		} else if envconfig.IntelGPU() {
-			oHandles = initOneAPIHandles()
-			if oHandles != nil && oHandles.oneapi != nil {
-				for d := range oHandles.oneapi.num_drivers {
-					if oHandles.oneapi == nil {
-						// shouldn't happen
-						slog.Warn("nil oneapi handle with driver count", "count", int(oHandles.oneapi.num_drivers))
-						continue
-					}
-					devCount := C.oneapi_get_device_count(*oHandles.oneapi, C.int(d))
-					for i := range devCount {
+			if discoverInterface == "SYCL" && numLayerstoGpu != 0 {
+				//if discover with SYCL
+				oHandles = initSyclHandles()
+				if oHandles != nil && oHandles.sycl != nil {
+					devCount := C.sycl_get_device_count(*oHandles.sycl)
+					for i := range devCount { //for i := range oHandles.deviceCount {
 						gpuInfo := OneapiGPUInfo{
 							GpuInfo: GpuInfo{
 								Library: "oneapi",
 							},
-							driverIndex: int(d),
+							driverIndex: int(999), //tag for sycl
 							gpuIndex:    int(i),
 						}
-						// TODO - split bootstrapping from updating free memory
-						C.oneapi_check_vram(*oHandles.oneapi, C.int(d), i, &memInfo)
-						// TODO - convert this to MinimumMemory based on testing...
-						var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
+
+						C.sycl_check_vram(*oHandles.sycl, i, &memInfo)
+
+						var totalFreeMem float64 = float64(memInfo.free) * 0.90 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
 						memInfo.free = C.uint64_t(totalFreeMem)
 						gpuInfo.TotalMemory = uint64(memInfo.total)
 						gpuInfo.FreeMemory = uint64(memInfo.free)
-						gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
+						gpuInfo.ID = strconv.Itoa(int(i))
 						gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
 						gpuInfo.DependencyPath = []string{LibOllamaPath}
 						oneapiGPUs = append(oneapiGPUs, gpuInfo)
+						slog.Info("SYCL GPU", "GPU Info", gpuInfo)
+					}
+				}
+			} else if discoverInterface == "ONEAPI" && numLayerstoGpu != 0 {
+				//otherwise discover with OneApi ze_intel_gpu64
+				oHandles = initOneAPIHandles()
+				if oHandles != nil && oHandles.oneapi != nil {
+					for d := range oHandles.oneapi.num_drivers {
+						if oHandles.oneapi == nil {
+							// shouldn't happen
+							slog.Warn("nil oneapi handle with driver count", "count", int(oHandles.oneapi.num_drivers))
+							continue
+						}
+						devCount := C.oneapi_get_device_count(*oHandles.oneapi, C.int(d))
+						for i := range devCount {
+							gpuInfo := OneapiGPUInfo{
+								GpuInfo: GpuInfo{
+									Library: "oneapi",
+								},
+								driverIndex: int(d),
+								gpuIndex:    int(i),
+							}
+							// TODO - split bootstrapping from updating free memory
+							C.oneapi_check_vram(*oHandles.oneapi, C.int(d), i, &memInfo)
+							// TODO - convert this to MinimumMemory based on testing...
+							var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
+							memInfo.free = C.uint64_t(totalFreeMem)
+							gpuInfo.TotalMemory = uint64(memInfo.total)
+							gpuInfo.FreeMemory = uint64(memInfo.free)
+							gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
+							gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
+							gpuInfo.DependencyPath = []string{LibOllamaPath}
+							oneapiGPUs = append(oneapiGPUs, gpuInfo)
+						}
 					}
 				}
 			}
@@ -748,9 +759,9 @@ func loadSyclMgmt(oneapiLibPaths []string) (int, *C.sycl_handle_t, string, error
 			slog.Error(err.Error())
 			C.free(unsafe.Pointer(resp.err))
 		} else {
-			num_devices = int(C.sycl_get_device_count(&resp.oh))
+			num_devices = int(C.sycl_get_device_count(resp.oh))
 			err = nil
-			C.sycl_print_sycl_devices(&resp.oh)
+			C.sycl_print_sycl_devices(resp.oh)
 			return num_devices, &resp.oh, libPath, err
 		}
 	}

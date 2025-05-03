@@ -56,24 +56,20 @@ void sycl_init(char *lib_path, sycl_init_resp_t *resp) {
 
 void sycl_release(sycl_handle_t h) {
   LOG(h.verbose, "releasing sycl library\n");
-  if (h.num_devices != NULL) {
-    free(h.num_devices);
-    h.num_devices = NULL;
-  }
   UNLOAD_LIBRARY(h.handle);
   h.handle = NULL;
 }
 
-void sycl_get_gpu_list(sycl_handle_t *oh, int *id_list, int max_len) {
-    (oh->ggml_backend_sycl_get_gpu_list)(id_list, max_len);
+void sycl_get_gpu_list(sycl_handle_t h, int *id_list, int max_len) {
+    (h.ggml_backend_sycl_get_gpu_list)(id_list, max_len);
 }
 
-void sycl_print_sycl_devices(sycl_handle_t *oh) {
-    (oh->ggml_backend_sycl_print_sycl_devices)();
+void sycl_print_sycl_devices(sycl_handle_t h) {
+    (h.ggml_backend_sycl_print_sycl_devices)();
 }
 
-int sycl_get_device_count(sycl_handle_t *oh) {
-  int ret = (oh->ggml_backend_sycl_get_device_count)();
+int sycl_get_device_count(sycl_handle_t h) {
+  int ret = (h.ggml_backend_sycl_get_device_count)();
   return ret;
 }
 

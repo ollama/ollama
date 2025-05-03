@@ -42,7 +42,7 @@ on ollama root directory
 cmd.exe "/K" '"C:\Program Files (x86)\Intel\oneAPI\setvars.bat" && powershell'
 
 set OLLAMA_INTEL_GPU=true
-set OLLAMA_INTEL_GPU_SYCL=true
+set OLLAMA_INTEL_IF_TYPE=SYCL
 set OLLAMA_NUM_GPU=999
 set SYCL_CACHE_PERSISTENT=1
 set OLLAMA_LIBRARY_PATH=./build/lib/ollama
@@ -52,7 +52,7 @@ set OLLAMA_LIBRARY_PATH=./build/lib/ollama
 or use shell ollama-intel-gpu.bat:
 ```shell
 set OLLAMA_INTEL_GPU=true
-set OLLAMA_INTEL_GPU_SYCL=true
+set OLLAMA_INTEL_IF_TYPE=SYCL
 set OLLAMA_NUM_GPU=64
 set SYCL_CACHE_PERSISTENT=1
 set OLLAMA_LIBRARY_PATH=./build/lib/ollama
@@ -66,7 +66,7 @@ note:
      xxx: It needs to be manually set. According to the number of model layers that the video memory can load.for example my T140 has 16G shared video memory,i set it to 64.
   2. Next 2 env is necessary if use sycl for discover intel gpu:
      set OLLAMA_INTEL_GPU=true
-     set OLLAMA_INTEL_GPU_SYCL=true
+     set OLLAMA_INTEL_IF_TYPE=SYCL (env OLLAMA_INTEL_IF_TYPE is used in go and c code of ollama and llama.cpp,same name as build param)
   3. When use pure CPU inference,a known bug need to delete ggml_sycl library temporay.
 
 ```shell
