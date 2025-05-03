@@ -176,9 +176,9 @@ func (s *Scheduler) processPending(ctx context.Context) {
                             }
                             slog.Debug("adding request RPC servers", "gpus", gpus)
                             // Adding RPC Servers from request
-                            newServers := gpu.CheckRPCServers(pending.opts.RPCServers)
+                            newServers := discover.CheckRPCServers(pending.opts.RPCServers)
                             for _, rpcServer := range newServers {
-                                gpus = append(gpu.GpuInfoList{rpcServer.GpuInfo}, gpus...)
+                                gpus = append(discover.GpuInfoList{rpcServer.GpuInfo}, gpus...)
                             }
                             slog.Debug("new gpus", "gpus", gpus)
                         }
