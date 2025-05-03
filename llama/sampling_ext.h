@@ -1,20 +1,19 @@
 // TODO: this is a temporary wrapper to allow calling C++ code from CGo
-#ifndef LLAMA_SAMPLING_EXT_H
-#define LLAMA_SAMPLING_EXT_H
-
-#include "llama.h"
+#ifndef SAMPLING_EXT_H
+#define SAMPLING_EXT_H
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 
-    struct llama_sampling_cparams
-    {
+    // Forward declaration to avoid include of "sampling.h" which has c++
+    // includes
+    struct common_sampler;
+    struct common_sampler_cparams {
         int32_t top_k;
         float top_p;
         float min_p;
-        float tfs_z;
         float typical_p;
         float temp;
         int32_t penalty_last_n;
@@ -24,29 +23,27 @@ extern "C"
         int32_t mirostat;
         float mirostat_tau;
         float mirostat_eta;
-        bool penalize_nl;
         uint32_t seed;
         char *grammar;
     };
 
-    struct llama_sampling_context *llama_sampling_cinit(struct llama_sampling_cparams *params);
-    void llama_sampling_cfree(struct llama_sampling_context *ctx);
-    void llama_sampling_creset(struct llama_sampling_context *ctx);
+    struct common_sampler *common_sampler_cinit(const struct llama_model *model, struct common_sampler_cparams *params);
+    void common_sampler_cfree(struct common_sampler *sampler);
+    void common_sampler_creset(struct common_sampler *sampler);
+    void common_sampler_caccept(struct common_sampler *sampler, llama_token id, bool apply_grammar);
+    llama_token common_sampler_csample(struct common_sampler *sampler, struct llama_context *ctx, int idx);
 
-    llama_token llama_sampling_csample(
-        struct llama_sampling_context *ctx_sampling,
-        struct llama_context *ctx_main,
-        struct llama_context *ctx_cfg,
-        int idx);
+    int schema_to_grammar(const char *json_schema, char *grammar, size_t max_len);
 
-    void llama_sampling_caccept(
-        struct llama_sampling_context *ctx_sampling,
-        struct llama_context *ctx_main,
-        llama_token id,
-        bool apply_grammar);
+
+    struct llama_grammar *grammar_init(char* grammar, uint32_t* tokens, size_t n_tokens, const char** pieces, uint32_t* eog_tokens, size_t n_eog_tokens);
+    void grammar_free(struct llama_grammar *g);
+    void grammar_apply(struct llama_grammar *g, struct llama_token_data_array *tokens);
+    void grammar_accept(struct llama_grammar *g, llama_token id);
+
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif // LLAMA_SAMPLING_EXT_H
+#endif // SAMPLING_EXT_H

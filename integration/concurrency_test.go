@@ -21,11 +21,11 @@ func TestMultiModelConcurrency(t *testing.T) {
 	var (
 		req = [2]api.GenerateRequest{
 			{
-				Model:     "orca-mini",
+				Model:     "llama3.2:1b",
 				Prompt:    "why is the ocean blue?",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]interface{}{
+				Options: map[string]any{
 					"seed":        42,
 					"temperature": 0.0,
 				},
@@ -34,7 +34,7 @@ func TestMultiModelConcurrency(t *testing.T) {
 				Prompt:    "what is the origin of the us thanksgiving holiday?",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]interface{}{
+				Options: map[string]any{
 					"seed":        42,
 					"temperature": 0.0,
 				},
@@ -60,13 +60,14 @@ func TestMultiModelConcurrency(t *testing.T) {
 	for i := 0; i < len(req); i++ {
 		go func(i int) {
 			defer wg.Done()
-			DoGenerate(ctx, t, client, req[i], resp[i], 60*time.Second, 10*time.Second)
+			// Note: CPU based inference can crawl so don't give up too quickly
+			DoGenerate(ctx, t, client, req[i], resp[i], 90*time.Second, 30*time.Second)
 		}(i)
 	}
 	wg.Wait()
 }
 
-func TestIntegrationConcurrentPredictOrcaMini(t *testing.T) {
+func TestIntegrationConcurrentPredict(t *testing.T) {
 	req, resp := GenerateRequests()
 	reqLimit := len(req)
 	iterLimit := 5
@@ -116,6 +117,9 @@ func TestMultiModelStress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if maxVram < 2*format.GibiByte {
+		t.Skip("VRAM less than 2G, skipping model stress tests")
+	}
 
 	type model struct {
 		name string
@@ -124,8 +128,8 @@ func TestMultiModelStress(t *testing.T) {
 
 	smallModels := []model{
 		{
-			name: "orca-mini",
-			size: 2992 * format.MebiByte,
+			name: "llama3.2:1b",
+			size: 2876 * format.MebiByte,
 		},
 		{
 			name: "phi",
@@ -206,7 +210,7 @@ func TestMultiModelStress(t *testing.T) {
 		chosenModels = mediumModels
 		// default:
 		// 	slog.Info("selecting large models")
-		// 	chosenModels = largModels
+		// 	chosenModels = largeModels
 	}
 
 	req, resp := GenerateRequests()
@@ -231,7 +235,7 @@ func TestMultiModelStress(t *testing.T) {
 	var wg sync.WaitGroup
 	consumed := uint64(256 * format.MebiByte) // Assume some baseline usage
 	for i := 0; i < len(req); i++ {
-		// Always get at least 2 models, but dont' overshoot VRAM too much or we'll take too long
+		// Always get at least 2 models, but don't overshoot VRAM too much or we'll take too long
 		if i > 1 && consumed > maxVram {
 			slog.Info("achieved target vram exhaustion", "count", i, "vram", format.HumanBytes2(maxVram), "models", format.HumanBytes2(consumed))
 			break

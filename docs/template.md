@@ -12,7 +12,7 @@ A basic Go template consists of three main parts:
 
 Here's an example of a simple chat template:
 
-```gotmpl
+```go
 {{- range .Messages }}
 {{ .Role }}: {{ .Content }}
 {{- end }}
@@ -111,7 +111,7 @@ Keep the following tips and best practices in mind when working with Go template
 
 ChatML is a popular template format. It can be used for models such as Databrick's DBRX, Intel's Neural Chat, and Microsoft's Orca 2.
 
-```gotmpl
+```go
 {{- range .Messages }}<|im_start|>{{ .Role }}
 {{ .Content }}<|im_end|>
 {{ end }}<|im_start|>assistant
@@ -125,7 +125,7 @@ Tools support can be added to a model by adding a `{{ .Tools }}` node to the tem
 
 Mistral v0.3 and Mixtral 8x22B supports tool calling.
 
-```gotmpl
+```go
 {{- range $index, $_ := .Messages }}
 {{- if eq .Role "user" }}
 {{- if and (le (len (slice $.Messages $index)) 2) $.Tools }}[AVAILABLE_TOOLS] {{ json $.Tools }}[/AVAILABLE_TOOLS]
@@ -151,7 +151,7 @@ Fill-in-middle support can be added to a model by adding a `{{ .Suffix }}` node 
 
 CodeLlama [7B](https://ollama.com/library/codellama:7b-code) and [13B](https://ollama.com/library/codellama:13b-code) code completion models support fill-in-middle.
 
-```gotmpl
+```go
 <PRE> {{ .Prompt }} <SUF>{{ .Suffix }} <MID>
 ```
 
@@ -162,6 +162,6 @@ CodeLlama [7B](https://ollama.com/library/codellama:7b-code) and [13B](https://o
 
 Codestral [22B](https://ollama.com/library/codestral:22b) supports fill-in-middle.
 
-```gotmpl
+```go
 [SUFFIX]{{ .Suffix }}[PREFIX] {{ .Prompt }}
 ```

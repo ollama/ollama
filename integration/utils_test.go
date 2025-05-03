@@ -24,7 +24,12 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/app/lifecycle"
+	"github.com/ollama/ollama/format"
 	"github.com/stretchr/testify/require"
+)
+
+const (
+	smol = "llama3.2:1b"
 )
 
 func Init() {
@@ -140,7 +145,7 @@ func PullIfMissing(ctx context.Context, client *api.Client, modelName string) er
 
 	showCtx, cancel := context.WithDeadlineCause(
 		ctx,
-		time.Now().Add(10*time.Second),
+		time.Now().Add(20*time.Second),
 		fmt.Errorf("show for existing model %s took too long", modelName),
 	)
 	defer cancel()
@@ -157,7 +162,7 @@ func PullIfMissing(ctx context.Context, client *api.Client, modelName string) er
 	}
 	slog.Info("model missing", "model", modelName)
 
-	stallDuration := 30 * time.Second // This includes checksum verification, which can take a while on larger models
+	stallDuration := 60 * time.Second // This includes checksum verification, which can take a while on larger models, and slower systems
 	stallTimer := time.NewTimer(stallDuration)
 	fn := func(resp api.ProgressResponse) error {
 		// fmt.Print(".")
@@ -283,51 +288,51 @@ func DoGenerate(ctx context.Context, t *testing.T, client *api.Client, genReq ap
 }
 
 // Generate a set of requests
-// By default each request uses orca-mini as the model
+// By default each request uses llama3.2 as the model
 func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 	return []api.GenerateRequest{
 			{
-				Model:     "orca-mini",
+				Model:     smol,
 				Prompt:    "why is the ocean blue?",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]interface{}{
+				Options: map[string]any{
 					"seed":        42,
 					"temperature": 0.0,
 				},
 			}, {
-				Model:     "orca-mini",
+				Model:     smol,
 				Prompt:    "why is the color of dirt brown?",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]interface{}{
+				Options: map[string]any{
 					"seed":        42,
 					"temperature": 0.0,
 				},
 			}, {
-				Model:     "orca-mini",
+				Model:     smol,
 				Prompt:    "what is the origin of the us thanksgiving holiday?",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]interface{}{
+				Options: map[string]any{
 					"seed":        42,
 					"temperature": 0.0,
 				},
 			}, {
-				Model:     "orca-mini",
+				Model:     smol,
 				Prompt:    "what is the origin of independence day?",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]interface{}{
+				Options: map[string]any{
 					"seed":        42,
 					"temperature": 0.0,
 				},
 			}, {
-				Model:     "orca-mini",
+				Model:     smol,
 				Prompt:    "what is the composition of air?",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]interface{}{
+				Options: map[string]any{
 					"seed":        42,
 					"temperature": 0.0,
 				},
@@ -340,4 +345,16 @@ func GenerateRequests() ([]api.GenerateRequest, [][]string) {
 			{"fourth", "july", "declaration", "independence"},
 			{"nitrogen", "oxygen", "carbon", "dioxide"},
 		}
+}
+
+func skipUnderMinVRAM(t *testing.T, gb uint64) {
+	// TODO use info API in the future
+	if s := os.Getenv("OLLAMA_MAX_VRAM"); s != "" {
+		maxVram, err := strconv.ParseUint(s, 10, 64)
+		require.NoError(t, err)
+		// Don't hammer on small VRAM cards...
+		if maxVram < gb*format.GibiByte {
+			t.Skip("skipping with small VRAM to avoid timeouts")
+		}
+	}
 }

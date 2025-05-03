@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/fs/ggml"
 )
 
 type phi3Model struct {
@@ -37,7 +37,7 @@ type phi3Model struct {
 
 var _ ModelConverter = (*phi3Model)(nil)
 
-func (p *phi3Model) KV(t *Tokenizer) llm.KV {
+func (p *phi3Model) KV(t *Tokenizer) ggml.KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "phi3"
 	kv["phi3.context_length"] = p.MaxPositionEmbeddings
@@ -68,19 +68,19 @@ func (p *phi3Model) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *phi3Model) Tensors(ts []Tensor) []llm.Tensor {
+func (p *phi3Model) Tensors(ts []Tensor) []ggml.Tensor {
 	var addRopeFactors sync.Once
 
-	out := make([]llm.Tensor, 0, len(ts)+2)
+	out := make([]ggml.Tensor, 0, len(ts)+2)
 	for _, t := range ts {
 		if strings.HasPrefix(t.Name(), "blk.0.") {
 			addRopeFactors.Do(func() {
-				out = append(out, llm.Tensor{
+				out = append(out, ggml.Tensor{
 					Name:     "rope_factors_long.weight",
 					Kind:     0,
 					Shape:    []uint64{uint64(len(p.RopeScaling.LongFactor))},
 					WriterTo: p.RopeScaling.LongFactor,
-				}, llm.Tensor{
+				}, ggml.Tensor{
 					Name:     "rope_factors_short.weight",
 					Kind:     0,
 					Shape:    []uint64{uint64(len(p.RopeScaling.ShortFactor))},
@@ -89,7 +89,7 @@ func (p *phi3Model) Tensors(ts []Tensor) []llm.Tensor {
 			})
 		}
 
-		out = append(out, llm.Tensor{
+		out = append(out, ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),
@@ -118,6 +118,5 @@ func (p *phi3Model) Replacements() []string {
 type ropeFactor []float32
 
 func (r ropeFactor) WriteTo(w io.Writer) (int64, error) {
-	err := binary.Write(w, binary.LittleEndian, r)
-	return 0, err
+	return 0, binary.Write(w, binary.LittleEndian, r)
 }
