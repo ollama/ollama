@@ -1,7 +1,7 @@
 package ggml
 
 // #cgo CXXFLAGS: -std=c++17
-// #cgo CPPFLAGS: -DNDEBUG -DGGML_USE_CPU
+// #cgo CPPFLAGS: -DNDEBUG -DGGML_USE_CPU -DGGML_USE_RPC
 // #cgo CPPFLAGS: -I${SRCDIR}/../include -I${SRCDIR}/ggml-cpu
 // #cgo windows LDFLAGS: -lmsvcrt -static -static-libgcc -static-libstdc++
 // #include <stdlib.h>
@@ -36,6 +36,7 @@ import (
 	"unsafe"
 
 	_ "github.com/ollama/ollama/ml/backend/ggml/ggml/src/ggml-cpu"
+	_ "github.com/ollama/ollama/ml/backend/ggml/ggml/src/ggml-rpc"
 )
 
 func init() {

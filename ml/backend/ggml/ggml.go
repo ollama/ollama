@@ -6,6 +6,7 @@ package ggml
 // #include "ggml.h"
 // #include "ggml-cpu.h"
 // #include "ggml-backend.h"
+// #include "utils.h"
 import "C"
 
 import (
@@ -64,13 +65,18 @@ type Backend struct {
 }
 
 func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, error) {
+	// Adding RPC servers to devices
+ 	rpcServers := C.CString(params.RPCServers)
+ 	C.add_rpc_devices(rpcServers)
+ 	C.free(unsafe.Pointer(rpcServers))
+
 	meta, n, err := fsggml.Decode(r, -1)
 	if err != nil {
 		return nil, err
 	}
 
 	slog.Info(
-		"",
+	 	"",
 		"architecture", meta.KV().Architecture(),
 		"file_type", meta.KV().FileType(),
 		"name", meta.KV().String("general.name"),

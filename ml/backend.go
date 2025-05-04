@@ -69,6 +69,9 @@ type BackendParams struct {
 
 	// FlashAttention indicates that we should use a fused flash attention kernel
 	FlashAttention bool
+
+	// RPCServers is the RPC server made available
+	RPCServers string
 }
 
 var backends = make(map[string]func(context.Context, *os.File, BackendParams) (Backend, error))
