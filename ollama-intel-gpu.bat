@@ -1,0 +1,17 @@
+set OLLAMA_INTEL_GPU=true
+set OLLAMA_INTEL_IF_TYPE=SYCL
+set OLLAMA_NUM_GPU=64
+set SYCL_CACHE_PERSISTENT=1
+set OLLAMA_CONTEXT_LENGTH=4096
+@REM set ONEAPI_ROOT=C:\Program Files (x86)\Intel\oneAPI
+@REM set PATH=%PATH%;%ONEAPI_ROOT%\2025.1\bin
+set PATH=%PATH%;D:\GoProjects\ollama\build\lib\ollama;
+set OLLAMA_KEEP_ALIVE=10m
+@REM set OLLAMA_DEBUG=true
+@REM set GGML_SYCL_DEBUG=1
+set NO_PROXY=localhost,127.0.0.1
+set OLLAMA_GPU_OVERHEAD=0
+set OLLAMA_FLASH_ATTENTION=false
+set OLLAMA_LIBRARY_PATH=./build/lib/ollama
+set ZES_ENABLE_SYSMAN=1
+.\ollama.exe serve
