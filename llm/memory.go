@@ -234,7 +234,7 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 		}
 
 		// distribute the layers across the GPU(s) that have space
-		for j := (len(gpusWithSpace)); j > 0; j-- {
+		for j := len(gpusWithSpace); j > 0; j-- {
 			g := gpusWithSpace[i%j]
 			used := gpuAllocations[g.i] + max(graphPartialOffload, graphFullOffload)
 			if g.g.FreeMemory > overhead+used+layerSize {
