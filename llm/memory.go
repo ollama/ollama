@@ -1,9 +1,12 @@
 package llm
 
 import (
+	"cmp"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -120,12 +123,10 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	}
 
 	layers := f.Tensors().GroupLayers()
-	// add one layer worth of memory as a buffer
-	if blk0, ok := layers["blk.0"]; ok {
-		layerSize = blk0.Size()
-	} else {
-		slog.Warn("model missing blk.0 layer size")
-	}
+	// add one layer (chosing the max layer) worth of memory as a buffer
+	layerSize = slices.MaxFunc(slices.Collect(maps.Values(layers)), func(a, b ggml.Layer) int {
+		return cmp.Compare(a.Size(), b.Size())
+	}).Size()
 
 	var kvct string
 	if envconfig.FlashAttention() &&
