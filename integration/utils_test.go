@@ -217,6 +217,7 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 					slog.Error("failed to open server log", "logfile", lifecycle.ServerLogFile, "error", err)
 					return
 				}
+				defer fp.Close()
 				data, err := io.ReadAll(fp)
 				if err != nil {
 					slog.Error("failed to read server log", "logfile", lifecycle.ServerLogFile, "error", err)
