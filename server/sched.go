@@ -691,11 +691,13 @@ func (runner *runnerRef) LogValue() slog.Value {
 	attrs = append(attrs,
 		slog.String("size", format.HumanBytes2(runner.estimatedTotal)),
 		slog.String("vram", format.HumanBytes2(runner.estimatedVRAM)),
-		slog.Int("num_ctx", runner.NumCtx),
 		slog.Int("parallel", runner.numParallel),
 		slog.Int("pid", runner.pid),
 		slog.String("model", runner.modelPath),
 	)
+	if runner.Options != nil {
+		attrs = append(attrs, slog.Int("num_ctx", runner.Options.NumCtx))
+	}
 	return slog.GroupValue(attrs...)
 }
 
