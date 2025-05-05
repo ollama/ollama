@@ -43,8 +43,8 @@ type Vocabulary struct {
 	Scores []float32
 	Merges []string
 
-	BOS, EOS, EOT          int32
-	AddBOS, AddEOS, AddEOT bool
+	BOS, EOS       []int32
+	AddBOS, AddEOS bool
 
 	specialOnce sync.Once
 	special     []string
@@ -59,12 +59,34 @@ type Vocabulary struct {
 func (v *Vocabulary) Is(id int32, special Special) bool {
 	switch special {
 	case SpecialBOS:
-		return id == v.BOS
+		return slices.Contains(v.BOS, id)
 	case SpecialEOS:
-		return id == v.EOS || id == v.EOT
+		return slices.Contains(v.EOS, id)
 	default:
 		return false
 	}
+}
+
+func (v *Vocabulary) addSpecials(ids []int32) []int32 {
+	if v.AddBOS && len(v.BOS) > 0 {
+		if slices.Contains(v.BOS, ids[0]) {
+			slog.Warn("adding bos token to prompt which already has it", "id", v.BOS)
+		}
+
+		slog.Debug("adding bos token to prompt", "id", v.BOS)
+		ids = append([]int32{v.BOS[0]}, ids...)
+	}
+
+	if v.AddEOS && len(v.EOS) > 0 {
+		if slices.Contains(v.BOS, ids[len(ids)-1]) {
+			slog.Warn("adding eos token to prompt which already has it", "id", v.EOS)
+		}
+
+		slog.Debug("adding eos token to prompt", "id", v.EOS)
+		ids = append(ids, v.EOS[0])
+	}
+
+	return ids
 }
 
 func (v *Vocabulary) Encode(s string) int32 {
@@ -305,23 +327,7 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 	}
 
 	if addSpecial && len(ids) > 0 {
-		if bpe.vocab.AddBOS {
-			if ids[0] == bpe.vocab.BOS {
-				slog.Warn("adding bos token to prompt which already has it", "id", bpe.vocab.BOS)
-			}
-
-			slog.Debug("adding bos token to prompt", "id", bpe.vocab.BOS)
-			ids = append([]int32{bpe.vocab.BOS}, ids...)
-		}
-
-		if bpe.vocab.AddEOS {
-			if ids[len(ids)-1] == bpe.vocab.EOS {
-				slog.Warn("adding eos token to prompt which already has it", "id", bpe.vocab.EOS)
-			}
-
-			slog.Debug("adding eos token to prompt", "id", bpe.vocab.EOS)
-			ids = append(ids, bpe.vocab.EOS)
-		}
+		ids = bpe.vocab.addSpecials(ids)
 	}
 
 	slog.Log(context.TODO(), logutil.LevelTrace, "encoded", "ids", ids)

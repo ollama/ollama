@@ -110,6 +110,7 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 	}
 
 	if f, err := fsys.Open("tokenizer_config.json"); errors.Is(err, os.ErrNotExist) {
+		// noop
 	} else if err != nil {
 		return nil, err
 	} else {
@@ -167,6 +168,34 @@ func parseTokenizer(fsys fs.FS, specialTokenTypes []string) (*Tokenizer, error) 
 			if id, ok := addedTokens[sv.Content]; ok {
 				sv.ID = id.ID
 				t.SpecialVocabulary = append(t.SpecialVocabulary, &sv)
+			}
+		}
+	}
+
+	if f, err := fsys.Open("generation_config.json"); errors.Is(err, os.ErrNotExist) {
+	} else if err != nil {
+		return nil, err
+	} else {
+		defer f.Close()
+
+		var p map[string]json.RawMessage
+		if err := json.NewDecoder(f).Decode(&p); err != nil {
+			return nil, err
+		}
+
+		for _, st := range specialTokenTypes {
+			if bts, ok := p[fmt.Sprintf("%s_token_id", st)]; ok {
+				var ids []int32
+				if err := json.Unmarshal(bts, &ids); err != nil {
+					// value is not a list so the existing ID is used
+					continue
+				}
+
+				if i := slices.IndexFunc(t.SpecialVocabulary, func(sv *SpecialVocabulary) bool {
+					return sv.Type == st
+				}); i >= 0 {
+					t.SpecialVocabulary[i].IDs = ids
+				}
 			}
 		}
 	}
@@ -278,6 +307,7 @@ func parseVocabulary(fsys fs.FS) (*Vocabulary, error) {
 type SpecialVocabulary struct {
 	Type     string
 	ID       int
+	IDs      []int32
 	Content  string
 	AddToken bool
 }
