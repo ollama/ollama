@@ -1,4 +1,5 @@
 #include "scale.cuh"
+#include "device.cuh"
 
 static __global__ void scale_f32(const float * x, float * dst, const float scale, const float bias, const int k) {
     const int i = blockDim.x*blockIdx.x + threadIdx.x;
@@ -33,10 +34,7 @@ void ggml_cuda_op_scale(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const int64_t total = ggml_nelements(src0);
 
     // query the device’s max 1D grid size:
-    cudaDeviceProp prop;
-    int dev = -1;
-    cudaGetDevice(&dev);
-    cudaGetDeviceProperties(&prop, dev);
+    const cudaDeviceProp prop = getCachedDeviceProperties();
 
     // maximum elements per launch = maxGridSize[0] * blockDim.x,
     // still also clamp to INT_MAX for the kernel’s 32-bit k parameter:
