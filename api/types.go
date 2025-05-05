@@ -283,12 +283,7 @@ type Runner struct {
 	NumBatch  int   `json:"num_batch,omitempty"`
 	NumGPU    int   `json:"num_gpu,omitempty"`
 	MainGPU   int   `json:"main_gpu,omitempty"`
-	LowVRAM   bool  `json:"low_vram,omitempty"`
-	F16KV     bool  `json:"f16_kv,omitempty"` // Deprecated: This option is ignored
-	LogitsAll bool  `json:"logits_all,omitempty"`
-	VocabOnly bool  `json:"vocab_only,omitempty"`
 	UseMMap   *bool `json:"use_mmap,omitempty"`
-	UseMLock  bool  `json:"use_mlock,omitempty"`
 	NumThread int   `json:"num_thread,omitempty"`
 }
 
@@ -671,8 +666,6 @@ func DefaultOptions() Options {
 			NumBatch:  512,
 			NumGPU:    -1, // -1 here indicates that NumGPU should be set dynamically
 			NumThread: 0,  // let the runtime decide
-			LowVRAM:   false,
-			UseMLock:  false,
 			UseMMap:   nil,
 		},
 	}

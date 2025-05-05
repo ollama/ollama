@@ -199,7 +199,6 @@ type ModelParams struct {
 	NumGpuLayers int
 	MainGpu      int
 	UseMmap      bool
-	UseMlock     bool
 	TensorSplit  []float32
 	Progress     func(float32)
 	VocabOnly    bool
@@ -218,7 +217,6 @@ func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
 	cparams.n_gpu_layers = C.int(params.NumGpuLayers)
 	cparams.main_gpu = C.int32_t(params.MainGpu)
 	cparams.use_mmap = C.bool(params.UseMmap)
-	cparams.use_mlock = C.bool(params.UseMlock)
 	cparams.vocab_only = C.bool(params.VocabOnly)
 
 	if len(params.TensorSplit) > 0 {

@@ -217,10 +217,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		params = append(params, "--no-mmap")
 	}
 
-	if opts.UseMLock {
-		params = append(params, "--mlock")
-	}
-
 	// TODO - NUMA support currently doesn't work properly
 
 	params = append(params, "--parallel", strconv.Itoa(numParallel))
