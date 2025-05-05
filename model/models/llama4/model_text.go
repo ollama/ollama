@@ -210,12 +210,7 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 	hiddenStates := m.TokenEmbedding.Forward(ctx, inputs).Duplicate(ctx)
 
 	for _, mi := range batch.Multimodal {
-		f32s := mi.Multimodal.(*chunk).floats()
-		img, err := ctx.Input().FromFloatSlice(f32s, len(f32s)/m.hiddenSize, m.hiddenSize)
-		if err != nil {
-			panic(err)
-		}
-
+		img := mi.Multimodal[0].Tensor
 		ctx.Forward(img.Copy(ctx, hiddenStates.View(ctx, mi.Index*hiddenStates.Stride(1), img.Dim(0)*img.Dim(1))))
 	}
 

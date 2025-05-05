@@ -40,12 +40,13 @@ type MultimodalProcessor interface {
 	// EncodeMultimodal processes a single input (such as an image) and
 	// generates an output (typically an embedding) that can be used by the model.
 	//
-	// The return value is most typically an ml.Tensor, however, different
-	// type are possible, such as an object containing a tensor plus
-	// additional metadata, a slice of tensors or even just the original input.
+	// The return value is one or more tensors, each with optional model-specific
+	// opaque metadata. Typically, the tensors might be views into an embedding
+	// with each view representing a chunk of data that can be processed independently
+	// in different batches.
 	//
 	// The result may be cached by the runner.
-	EncodeMultimodal(ml.Context, []byte) (any, error)
+	EncodeMultimodal(ml.Context, []byte) ([]input.Multimodal, error)
 
 	// PostTokenize is called after tokenization to allow the model to edit the
 	// input stream to correctly arrange multimodal elements.

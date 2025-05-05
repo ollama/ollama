@@ -165,7 +165,7 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 	// set image embeddings
 	var except []int
 	for _, image := range batch.Multimodal {
-		visionOutputs := image.Multimodal.(ml.Tensor)
+		visionOutputs := image.Multimodal[0].Tensor
 		ctx.Forward(visionOutputs.Copy(ctx, hiddenState.View(ctx, image.Index*hiddenState.Stride(1), visionOutputs.Dim(0)*visionOutputs.Dim(1))))
 
 		for i := range visionOutputs.Dim(1) {

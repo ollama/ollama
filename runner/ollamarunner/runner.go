@@ -40,6 +40,9 @@ type Sequence struct {
 	// multimodal embeddings
 	ctxs []ml.Context
 
+	// mmStore holds multimodal embeddings to mange memory and enable splitting across batches
+	mmStore multimodalStore
+
 	// batch index
 	iBatch int
 
@@ -101,7 +104,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 
 	startTime := time.Now()
 
-	inputs, ctxs, err := s.inputs(prompt, images)
+	inputs, ctxs, mmStore, err := s.inputs(prompt, images)
 	if err != nil {
 		return nil, fmt.Errorf("failed to process inputs: %w", err)
 	} else if len(inputs) == 0 {
@@ -156,6 +159,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 
 	return &Sequence{
 		ctxs:                ctxs,
+		mmStore:             mmStore,
 		inputs:              inputs,
 		numPromptInputs:     len(inputs),
 		startProcessingTime: startTime,
@@ -174,9 +178,10 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 // inputs processes the prompt and images into a list of inputs
 // by splitting the prompt on [img-<n>] tags, tokenizing text and
 // decoding images
-func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, []ml.Context, error) {
+func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, []ml.Context, multimodalStore, error) {
 	var inputs []input.Input
 	var ctxs []ml.Context
+	var mmStore multimodalStore
 
 	var parts []string
 	var matches [][]string
@@ -187,6 +192,7 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, [
 		re := regexp.MustCompile(`\[img-(\d+)\]`)
 		parts = re.Split(prompt, -1)
 		matches = re.FindAllStringSubmatch(prompt, -1)
+		mmStore = newMultimodalStore()
 	} else {
 		parts = []string{prompt}
 	}
@@ -196,7 +202,7 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, [
 		// text - tokenize
 		tokens, err := s.model.(model.TextProcessor).Encode(part, i == 0)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 
 		for _, t := range tokens {
@@ -216,7 +222,7 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, [
 			}
 
 			if imageIndex < 0 {
-				return nil, nil, fmt.Errorf("invalid image index: %d", n)
+				return nil, nil, nil, fmt.Errorf("invalid image index: %d", n)
 			}
 
 			ctx := s.model.Backend().NewContext()
@@ -224,12 +230,14 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, [
 			ctxs = append(ctxs, ctx)
 			imageEmbeddings, err := multimodalProcessor.EncodeMultimodal(ctx, images[imageIndex].Data)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 
 			s.multimodalHash.Reset()
 			_, _ = s.multimodalHash.Write(images[imageIndex].Data)
 			imageHash := s.multimodalHash.Sum64()
+
+			mmStore.addMultimodal(imageEmbeddings)
 
 			inputs = append(inputs, input.Input{Multimodal: imageEmbeddings, MultimodalHash: imageHash})
 			postTokenize = true
@@ -240,11 +248,11 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, [
 		var err error
 		inputs, err = multimodalProcessor.PostTokenize(inputs)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
 
-	return inputs, ctxs, nil
+	return inputs, ctxs, mmStore, nil
 }
 
 type Server struct {
@@ -363,6 +371,9 @@ func (s *Server) processBatch() error {
 	}
 	defer s.mu.Unlock()
 
+	ctx := s.model.Backend().NewContext()
+	defer ctx.Close()
+
 	var batchInputs []int32
 	var batch input.Batch
 
@@ -433,7 +444,11 @@ func (s *Server) processBatch() error {
 
 			batchInputs = append(batchInputs, inp.Token)
 			if inp.Multimodal != nil {
-				batch.Multimodal = append(batch.Multimodal, input.MultimodalIndex{Index: len(batchInputs) - 1, Multimodal: inp.Multimodal})
+				mm, err := seq.mmStore.getMultimodal(s.model.Backend(), ctx, inp.Multimodal)
+				if err != nil {
+					return err
+				}
+				batch.Multimodal = append(batch.Multimodal, input.MultimodalIndex{Index: len(batchInputs) - 1, Multimodal: mm})
 			}
 
 			batch.Positions = append(batch.Positions, int32(len(seq.cache.Inputs)+len(seq.pendingInputs)))
@@ -458,9 +473,6 @@ func (s *Server) processBatch() error {
 	if len(batchInputs) == 0 {
 		return nil
 	}
-
-	ctx := s.model.Backend().NewContext()
-	defer ctx.Close()
 
 	modelOutput, err := model.Forward(ctx, s.model, batchInputs, batch)
 	if err != nil {
