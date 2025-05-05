@@ -31,6 +31,7 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 
 	"github.com/ollama/ollama/api"
@@ -41,6 +42,7 @@ import (
 	"github.com/ollama/ollama/runner"
 	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
 )
 
@@ -106,7 +108,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 	spinner.Stop()
 
-	req.Name = args[0]
+	req.Model = args[0]
 	quantize, _ := cmd.Flags().GetString("quantize")
 	if quantize != "" {
 		req.Quantize = quantize
@@ -117,27 +119,43 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if len(req.Files) > 0 {
-		fileMap := map[string]string{}
-		for f, digest := range req.Files {
+	var g errgroup.Group
+	g.SetLimit(max(runtime.GOMAXPROCS(0)-1, 1))
+
+	files := syncmap.NewSyncMap[string, string]()
+	for f, digest := range req.Files {
+		g.Go(func() error {
 			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
 				return err
 			}
-			fileMap[filepath.Base(f)] = digest
-		}
-		req.Files = fileMap
+
+			// TODO: this is incorrect since the file might be in a subdirectory
+			//       instead this should take the path relative to the model directory
+			//       but the current implementation does not allow this
+			files.Store(filepath.Base(f), digest)
+			return nil
+		})
 	}
 
-	if len(req.Adapters) > 0 {
-		fileMap := map[string]string{}
-		for f, digest := range req.Adapters {
+	adapters := syncmap.NewSyncMap[string, string]()
+	for f, digest := range req.Adapters {
+		g.Go(func() error {
 			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
 				return err
 			}
-			fileMap[filepath.Base(f)] = digest
-		}
-		req.Adapters = fileMap
+
+			// TODO: same here
+			adapters.Store(filepath.Base(f), digest)
+			return nil
+		})
 	}
+
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	req.Files = files.Items()
+	req.Adapters = adapters.Items()
 
 	bars := make(map[string]*progress.Bar)
 	fn := func(resp api.ProgressResponse) error {
@@ -213,7 +231,7 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, digest stri
 		}
 	}()
 
-	if err = client.CreateBlob(cmd.Context(), digest, io.TeeReader(bin, &pw)); err != nil {
+	if err := client.CreateBlob(cmd.Context(), digest, io.TeeReader(bin, &pw)); err != nil {
 		return "", err
 	}
 	return digest, nil
