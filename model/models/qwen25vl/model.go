@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"image"
 	"slices"
-	"sync"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -77,7 +76,7 @@ func (m *Model) PixelValues(ctx ml.Context, multimodalData []byte) (ml.Tensor, *
 	return pixelValues, grid, nil
 }
 
-func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, error) {
+func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input.Multimodal, error) {
 	if len(m.VisionModel.Layers) == 0 {
 		return nil, model.ErrNoVisionModel
 	}
@@ -88,31 +87,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 	}
 
 	visionOutputs := m.VisionModel.Forward(ctx, pixels, grid)
-	return &chunks{Model: m, Tensor: visionOutputs}, nil
-}
-
-type chunks struct {
-	*Model
-	ml.Tensor
-
-	dataOnce sync.Once
-	data     []float32
-}
-
-type chunk struct {
-	*chunks
-	s, n int
-}
-
-func (r *chunk) floats() []float32 {
-	r.dataOnce.Do(func() {
-		temp := r.Backend().NewContext()
-		defer temp.Close()
-		temp.Forward(r.Tensor).Compute(r.Tensor)
-		r.data = r.Floats()
-	})
-
-	return r.data[r.s*r.Dim(0) : (r.s+r.n)*r.Dim(0)]
+	return []input.Multimodal{{Tensor: visionOutputs}}, nil
 }
 
 // PostTokenize arranges Qwen-2.5-VL's inputs for the forward pass
@@ -142,20 +117,16 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 				result = append(result, input.Input{Token: pre[i]})
 			}
 
-			// This is an image token with multimodal data
-			chunksData := inp.Multimodal.(*chunks)
-			patchesPerChunk := chunksData.Dim(1)
+			patchesPerChunk := inp.Multimodal[0].Tensor.Dim(1)
 
 			// First add the vision start token
-			result = append(result, input.Input{Token: visionStartToken, SameBatch: patchesPerChunk + 2})
+			result = append(result, input.Input{Token: visionStartToken, SameBatch: patchesPerChunk + 1})
 
 			// Add the image token with the multimodal tensor data at the first position
-			// Create a chunk with proper s and n values
 			result = append(result, input.Input{
 				Token:          imageToken,
-				Multimodal:     &chunk{chunks: chunksData, s: 0, n: patchesPerChunk},
+				Multimodal:     inp.Multimodal,
 				MultimodalHash: inp.MultimodalHash,
-				SameBatch:      patchesPerChunk,
 			})
 
 			// Add the placeholder tokens for the remaining positions (tokensPerGrid-1)
