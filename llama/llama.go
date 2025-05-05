@@ -2,6 +2,7 @@ package llama
 
 /*
 #cgo CFLAGS: -std=c11
+#cgo windows CFLAGS: -Wno-dll-attribute-on-redeclaration
 #cgo CXXFLAGS: -std=c++17
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/include
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/common
