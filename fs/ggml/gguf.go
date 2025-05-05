@@ -635,7 +635,7 @@ func ggufWriteTensor(ws io.WriteSeeker, t Tensor, alignment int64) error {
 	if err != nil {
 		return err
 	}
-
+	slog.Debug(t.Name, "kind", t.Kind, "shape", t.Shape, "offset", t.Offset)
 	if err := binary.Write(ws, binary.LittleEndian, bytes.Repeat([]byte{0}, int(ggufPadding(offset, alignment)))); err != nil {
 		return err
 	}
