@@ -110,20 +110,7 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 
 	// image embeddings
 	for _, image := range batch.Multimodal {
-		row := image.Multimodal.(*imageRow)
-		row.parent.dataOnce.Do(func() {
-			// use a new, throwaway context so the image tensor is not added to the graph
-			temp := m.Backend().NewContext()
-			temp.Forward(row.parent.tensor).Compute(row.parent.tensor)
-			row.parent.data = row.parent.tensor.Floats()
-			temp.Close()
-		})
-
-		imageFeature, err := ctx.Input().FromFloatSlice(row.data(), row.shape...)
-		if err != nil {
-			panic(err)
-		}
-
+		imageFeature := image.Multimodal[0].Tensor
 		ctx.Forward(imageFeature.Copy(ctx, hiddenState.View(ctx, image.Index*hiddenState.Stride(1), imageFeature.Dim(0)*imageFeature.Dim(1))))
 	}
 

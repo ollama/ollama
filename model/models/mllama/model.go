@@ -63,7 +63,7 @@ func New(c fs.Config) (model.Model, error) {
 	return &m, nil
 }
 
-func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, error) {
+func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input.Multimodal, error) {
 	if len(m.VisionModel.Transformer.Layers) == 0 || len(m.GlobalTransformer.Layers) == 0 {
 		return nil, model.ErrNoVisionModel
 	}
@@ -95,7 +95,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 
 	positionIDs := ctx.Arange(0, 1601, 1, ml.DTypeI32)
 	crossAttentionStates := m.VisionModel.Forward(ctx, pixelValues, positionIDs, aspectRatio)
-	return m.Projector.Forward(ctx, crossAttentionStates), nil
+	return []input.Multimodal{{Tensor: m.Projector.Forward(ctx, crossAttentionStates)}}, nil
 }
 
 func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
@@ -103,12 +103,12 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 	fnvHash := fnv.New64a()
 
 	for i := range inputs {
-		if inputs[i].Multimodal == nil {
+		if len(inputs[i].Multimodal) == 0 {
 			if len(images) > 0 {
-				inputs[i].Multimodal = []ml.Tensor{images[0].Multimodal.(ml.Tensor)}
+				inputs[i].Multimodal = images[0].Multimodal
 				inputs[i].MultimodalHash = images[0].MultimodalHash
 				for j := 1; j < len(images); j++ {
-					inputs[i].Multimodal = append(inputs[i].Multimodal.([]ml.Tensor), images[0].Multimodal.(ml.Tensor))
+					inputs[i].Multimodal = append(inputs[i].Multimodal, images[j].Multimodal...)
 					fnvHash.Reset()
 					binary.Write(fnvHash, binary.NativeEndian, inputs[i].MultimodalHash)
 					binary.Write(fnvHash, binary.NativeEndian, inputs[j].MultimodalHash)
@@ -130,9 +130,9 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	var crossAttentionStates ml.Tensor
 	if len(batch.Multimodal) > 0 {
-		images := batch.Multimodal[len(batch.Multimodal)-1].Multimodal.([]ml.Tensor)
+		images := batch.Multimodal[len(batch.Multimodal)-1].Multimodal
 		if len(images) > 0 {
-			crossAttentionStates = images[len(images)-1]
+			crossAttentionStates = images[len(images)-1].Tensor
 		}
 	}
 
