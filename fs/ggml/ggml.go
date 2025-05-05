@@ -149,7 +149,7 @@ func keyValue[T valueTypes | arrayValueTypes](kv KV, key string, defaultValue ..
 		return val.(T)
 	}
 
-	slog.Warn("key not found", "key", key, "default", defaultValue[0])
+	slog.Debug("key not found", "key", key, "default", defaultValue[0])
 	return defaultValue[0]
 }
 
