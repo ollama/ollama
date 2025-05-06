@@ -21,6 +21,8 @@ import (
 	"testing"
 	"unicode"
 
+	"github.com/gin-gonic/gin"
+	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/openai"
@@ -870,5 +872,89 @@ func TestFilterThinkTags(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestWaitForStream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cases := []struct {
+		name       string
+		messages   []any
+		expectCode int
+		expectBody string
+	}{
+		{
+			name: "error",
+			messages: []any{
+				gin.H{"error": "internal server error"},
+			},
+			expectCode: http.StatusInternalServerError,
+			expectBody: `{"error":"internal server error"}`,
+		},
+		{
+			name: "error status",
+			messages: []any{
+				gin.H{"status": http.StatusNotFound, "error": "not found"},
+			},
+			expectCode: http.StatusNotFound,
+			expectBody: `{"error":"not found"}`,
+		},
+		{
+			name: "unknown error",
+			messages: []any{
+				gin.H{"msg": "something else"},
+			},
+			expectCode: http.StatusInternalServerError,
+			expectBody: `{"error":"unknown error"}`,
+		},
+		{
+			name: "unknown type",
+			messages: []any{
+				struct{}{},
+			},
+			expectCode: http.StatusInternalServerError,
+			expectBody: `{"error":"unknown message type"}`,
+		},
+		{
+			name: "progress success",
+			messages: []any{
+				api.ProgressResponse{Status: "success"},
+			},
+			expectCode: http.StatusOK,
+			expectBody: `{"status":"success"}`,
+		},
+		{
+			name: "progress more than success",
+			messages: []any{
+				api.ProgressResponse{Status: "success"},
+				api.ProgressResponse{Status: "one more thing"},
+			},
+			expectCode: http.StatusOK,
+			expectBody: `{"status":"one more thing"}`,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+
+			ch := make(chan any, len(tt.messages))
+			for _, msg := range tt.messages {
+				ch <- msg
+			}
+			close(ch)
+
+			waitForStream(c, ch)
+
+			if w.Code != tt.expectCode {
+				t.Errorf("expected status %d, got %d", tt.expectCode, w.Code)
+			}
+
+			if diff := cmp.Diff(w.Body.String(), tt.expectBody); diff != "" {
+				t.Errorf("body mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
