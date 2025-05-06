@@ -605,9 +605,6 @@ type SamplingParams struct {
 	PenaltyRepeat  float32
 	PenaltyFreq    float32
 	PenaltyPresent float32
-	Mirostat       int
-	MirostatTau    float32
-	MirostatEta    float32
 	PenalizeNl     bool
 	Seed           uint32
 	Grammar        string
@@ -624,9 +621,6 @@ func NewSamplingContext(model *Model, params SamplingParams) (*SamplingContext, 
 	cparams.penalty_repeat = C.float(params.PenaltyRepeat)
 	cparams.penalty_freq = C.float(params.PenaltyFreq)
 	cparams.penalty_present = C.float(params.PenaltyFreq)
-	cparams.mirostat = C.int32_t(params.Mirostat)
-	cparams.mirostat_tau = C.float(params.MirostatTau)
-	cparams.mirostat_eta = C.float(params.MirostatEta)
 	cparams.seed = C.uint32_t(params.Seed)
 
 	grammar := C.CString(params.Grammar)
