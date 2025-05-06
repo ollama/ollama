@@ -485,6 +485,16 @@ func TestRoutes(t *testing.T) {
 				}
 			},
 		},
+		{
+			Name:   "Method Not Allowed",
+			Method: http.MethodGet,
+			Path:   "/api/show",
+			Expected: func(t *testing.T, resp *http.Response) {
+				if resp.StatusCode != 405 {
+					t.Errorf("expected status code 405, got %d", resp.StatusCode)
+				}
+			},
+		},
 	}
 
 	modelsDir := t.TempDir()
