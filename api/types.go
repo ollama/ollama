@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/types/model"
 )
 
 // StatusError is an error with an HTTP status code and message.
@@ -75,13 +76,13 @@ type GenerateRequest struct {
 	// this request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
-	// Images is an optional list of base64-encoded images accompanying this
+	// Images is an optional list of raw image bytes accompanying this
 	// request, for multimodal models.
 	Images []ImageData `json:"images,omitempty"`
 
 	// Options lists model-specific options. For example, temperature can be
 	// set through this field, if the model supports it.
-	Options map[string]interface{} `json:"options"`
+	Options map[string]any `json:"options"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
@@ -106,7 +107,7 @@ type ChatRequest struct {
 	Tools `json:"tools,omitempty"`
 
 	// Options lists model-specific options.
-	Options map[string]interface{} `json:"options"`
+	Options map[string]any `json:"options"`
 }
 
 type Tools []Tool
@@ -162,7 +163,50 @@ func (t *ToolCallFunctionArguments) String() string {
 
 type Tool struct {
 	Type     string       `json:"type"`
+	Items    any          `json:"items,omitempty"`
 	Function ToolFunction `json:"function"`
+}
+
+// PropertyType can be either a string or an array of strings
+type PropertyType []string
+
+// UnmarshalJSON implements the json.Unmarshaler interface
+func (pt *PropertyType) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as a string first
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*pt = []string{s}
+		return nil
+	}
+
+	// If that fails, try to unmarshal as an array of strings
+	var a []string
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*pt = a
+	return nil
+}
+
+// MarshalJSON implements the json.Marshaler interface
+func (pt PropertyType) MarshalJSON() ([]byte, error) {
+	if len(pt) == 1 {
+		// If there's only one type, marshal as a string
+		return json.Marshal(pt[0])
+	}
+	// Otherwise marshal as an array
+	return json.Marshal([]string(pt))
+}
+
+// String returns a string representation of the PropertyType
+func (pt PropertyType) String() string {
+	if len(pt) == 0 {
+		return ""
+	}
+	if len(pt) == 1 {
+		return pt[0]
+	}
+	return fmt.Sprintf("%v", []string(pt))
 }
 
 type ToolFunction struct {
@@ -170,11 +214,14 @@ type ToolFunction struct {
 	Description string `json:"description"`
 	Parameters  struct {
 		Type       string   `json:"type"`
+		Defs       any      `json:"$defs,omitempty"`
+		Items      any      `json:"items,omitempty"`
 		Required   []string `json:"required"`
 		Properties map[string]struct {
-			Type        string   `json:"type"`
-			Description string   `json:"description"`
-			Enum        []string `json:"enum,omitempty"`
+			Type        PropertyType `json:"type"`
+			Items       any          `json:"items,omitempty"`
+			Description string       `json:"description"`
+			Enum        []any        `json:"enum,omitempty"`
 		} `json:"properties"`
 	} `json:"parameters"`
 }
@@ -236,12 +283,7 @@ type Runner struct {
 	NumBatch  int   `json:"num_batch,omitempty"`
 	NumGPU    int   `json:"num_gpu,omitempty"`
 	MainGPU   int   `json:"main_gpu,omitempty"`
-	LowVRAM   bool  `json:"low_vram,omitempty"`
-	F16KV     bool  `json:"f16_kv,omitempty"` // Deprecated: This option is ignored
-	LogitsAll bool  `json:"logits_all,omitempty"`
-	VocabOnly bool  `json:"vocab_only,omitempty"`
 	UseMMap   *bool `json:"use_mmap,omitempty"`
-	UseMLock  bool  `json:"use_mlock,omitempty"`
 	NumThread int   `json:"num_thread,omitempty"`
 }
 
@@ -260,7 +302,7 @@ type EmbedRequest struct {
 	Truncate *bool `json:"truncate,omitempty"`
 
 	// Options lists model-specific options.
-	Options map[string]interface{} `json:"options"`
+	Options map[string]any `json:"options"`
 }
 
 // EmbedResponse is the response from [Client.Embed].
@@ -286,7 +328,7 @@ type EmbeddingRequest struct {
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
 	// Options lists model-specific options.
-	Options map[string]interface{} `json:"options"`
+	Options map[string]any `json:"options"`
 }
 
 // EmbeddingResponse is the response from [Client.Embeddings].
@@ -332,7 +374,7 @@ type ShowRequest struct {
 	Template string `json:"template"`
 	Verbose  bool   `json:"verbose"`
 
-	Options map[string]interface{} `json:"options"`
+	Options map[string]any `json:"options"`
 
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
@@ -340,16 +382,18 @@ type ShowRequest struct {
 
 // ShowResponse is the response returned from [Client.Show].
 type ShowResponse struct {
-	License       string         `json:"license,omitempty"`
-	Modelfile     string         `json:"modelfile,omitempty"`
-	Parameters    string         `json:"parameters,omitempty"`
-	Template      string         `json:"template,omitempty"`
-	System        string         `json:"system,omitempty"`
-	Details       ModelDetails   `json:"details,omitempty"`
-	Messages      []Message      `json:"messages,omitempty"`
-	ModelInfo     map[string]any `json:"model_info,omitempty"`
-	ProjectorInfo map[string]any `json:"projector_info,omitempty"`
-	ModifiedAt    time.Time      `json:"modified_at,omitempty"`
+	License       string             `json:"license,omitempty"`
+	Modelfile     string             `json:"modelfile,omitempty"`
+	Parameters    string             `json:"parameters,omitempty"`
+	Template      string             `json:"template,omitempty"`
+	System        string             `json:"system,omitempty"`
+	Details       ModelDetails       `json:"details,omitempty"`
+	Messages      []Message          `json:"messages,omitempty"`
+	ModelInfo     map[string]any     `json:"model_info,omitempty"`
+	ProjectorInfo map[string]any     `json:"projector_info,omitempty"`
+	Tensors       []Tensor           `json:"tensors,omitempty"`
+	Capabilities  []model.Capability `json:"capabilities,omitempty"`
+	ModifiedAt    time.Time          `json:"modified_at,omitempty"`
 }
 
 // CopyRequest is the request passed to [Client.Copy].
@@ -467,6 +511,13 @@ type ModelDetails struct {
 	QuantizationLevel string   `json:"quantization_level"`
 }
 
+// Tensor describes the metadata for a given tensor.
+type Tensor struct {
+	Name  string   `json:"name"`
+	Type  string   `json:"type"`
+	Shape []uint64 `json:"shape"`
+}
+
 func (m *Metrics) Summary() {
 	if m.TotalDuration > 0 {
 		fmt.Fprintf(os.Stderr, "total duration:       %v\n", m.TotalDuration)
@@ -495,7 +546,7 @@ func (m *Metrics) Summary() {
 	}
 }
 
-func (opts *Options) FromMap(m map[string]interface{}) error {
+func (opts *Options) FromMap(m map[string]any) error {
 	valueOpts := reflect.ValueOf(opts).Elem() // names of the fields in the options struct
 	typeOpts := reflect.TypeOf(opts).Elem()   // types of the fields in the options struct
 
@@ -552,12 +603,12 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 				}
 				field.SetString(val)
 			case reflect.Slice:
-				// JSON unmarshals to []interface{}, not []string
-				val, ok := val.([]interface{})
+				// JSON unmarshals to []any, not []string
+				val, ok := val.([]any)
 				if !ok {
 					return fmt.Errorf("option %q must be of type array", key)
 				}
-				// convert []interface{} to []string
+				// convert []any to []string
 				slice := make([]string, len(val))
 				for i, item := range val {
 					str, ok := item.(string)
@@ -615,8 +666,6 @@ func DefaultOptions() Options {
 			NumBatch:  512,
 			NumGPU:    -1, // -1 here indicates that NumGPU should be set dynamically
 			NumThread: 0,  // let the runtime decide
-			LowVRAM:   false,
-			UseMLock:  false,
 			UseMMap:   nil,
 		},
 	}
@@ -664,7 +713,7 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 }
 
 // FormatParams converts specified parameter options to their correct types
-func FormatParams(params map[string][]string) (map[string]interface{}, error) {
+func FormatParams(params map[string][]string) (map[string]any, error) {
 	opts := Options{}
 	valueOpts := reflect.ValueOf(&opts).Elem() // names of the fields in the options struct
 	typeOpts := reflect.TypeOf(opts)           // types of the fields in the options struct
@@ -678,7 +727,7 @@ func FormatParams(params map[string][]string) (map[string]interface{}, error) {
 		}
 	}
 
-	out := make(map[string]interface{})
+	out := make(map[string]any)
 	// iterate params and set values based on json struct tags
 	for key, vals := range params {
 		if opt, ok := jsonOpts[key]; !ok {

@@ -11,10 +11,13 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
 
@@ -36,7 +39,14 @@ func (f Modelfile) String() string {
 	return sb.String()
 }
 
-var deprecatedParameters = []string{"penalize_newline"}
+var deprecatedParameters = []string{
+	"penalize_newline",
+	"low_vram",
+	"f16_kv",
+	"logits_all",
+	"vocab_only",
+	"use_mlock",
+}
 
 // CreateRequest creates a new *api.CreateRequest from an existing Modelfile
 func (f Modelfile) CreateRequest(relativeDir string) (*api.CreateRequest, error) {
@@ -136,20 +146,51 @@ func fileDigestMap(path string) (map[string]string, error) {
 
 	var files []string
 	if fi.IsDir() {
-		files, err = filesForModel(path)
+		fs, err := filesForModel(path)
 		if err != nil {
 			return nil, err
+		}
+
+		for _, f := range fs {
+			f, err := filepath.EvalSymlinks(f)
+			if err != nil {
+				return nil, err
+			}
+
+			rel, err := filepath.Rel(path, f)
+			if err != nil {
+				return nil, err
+			}
+
+			if !filepath.IsLocal(rel) {
+				return nil, fmt.Errorf("insecure path: %s", rel)
+			}
+
+			files = append(files, f)
 		}
 	} else {
 		files = []string{path}
 	}
 
+	var mu sync.Mutex
+	var g errgroup.Group
+	g.SetLimit(max(runtime.GOMAXPROCS(0)-1, 1))
 	for _, f := range files {
-		digest, err := digestForFile(f)
-		if err != nil {
-			return nil, err
-		}
-		fl[f] = digest
+		g.Go(func() error {
+			digest, err := digestForFile(f)
+			if err != nil {
+				return err
+			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			fl[f] = digest
+			return nil
+		})
+	}
+
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	return fl, nil
@@ -199,11 +240,11 @@ func filesForModel(path string) ([]string, error) {
 			return nil, err
 		}
 
-		for _, safetensor := range matches {
-			if ct, err := detectContentType(safetensor); err != nil {
+		for _, match := range matches {
+			if ct, err := detectContentType(match); err != nil {
 				return nil, err
 			} else if ct != contentType {
-				return nil, fmt.Errorf("invalid content type: expected %s for %s", ct, safetensor)
+				return nil, fmt.Errorf("invalid content type: expected %s for %s", ct, match)
 			}
 		}
 
@@ -211,15 +252,9 @@ func filesForModel(path string) ([]string, error) {
 	}
 
 	var files []string
-	if st, _ := glob(filepath.Join(path, "model*.safetensors"), "application/octet-stream"); len(st) > 0 {
+	if st, _ := glob(filepath.Join(path, "*.safetensors"), "application/octet-stream"); len(st) > 0 {
 		// safetensors files might be unresolved git lfs references; skip if they are
 		// covers model-x-of-y.safetensors, model.fp32-x-of-y.safetensors, model.safetensors
-		files = append(files, st...)
-	} else if st, _ := glob(filepath.Join(path, "adapters.safetensors"), "application/octet-stream"); len(st) > 0 {
-		// covers adapters.safetensors
-		files = append(files, st...)
-	} else if st, _ := glob(filepath.Join(path, "adapter_model.safetensors"), "application/octet-stream"); len(st) > 0 {
-		// covers adapter_model.safetensors
 		files = append(files, st...)
 	} else if pt, _ := glob(filepath.Join(path, "pytorch_model*.bin"), "application/zip"); len(pt) > 0 {
 		// pytorch files might also be unresolved git lfs references; skip if they are

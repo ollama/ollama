@@ -10,6 +10,7 @@
 #include <cstring>
 #include <limits>
 #include <vector>
+#include <memory>
 
 #if defined(LLAVA_LOG_OFF)
 #   define LOG_INF(...)
@@ -44,6 +45,17 @@ struct clip_image_grid_shape {
     int first;
     int second;
 };
+
+// convenience cpp wrapper
+struct clip_image_f32_batch_deleter {
+    void operator()(clip_image_f32_batch * val) { clip_image_f32_batch_free(val); }
+};
+typedef std::unique_ptr<clip_image_f32_batch, clip_image_f32_batch_deleter> clip_image_f32_batch_ptr;
+
+struct clip_image_size_deleter {
+    void operator()(clip_image_f32_batch * val) { clip_image_f32_batch_free(val); }
+};
+typedef std::unique_ptr<clip_image_size, clip_image_size_deleter> clip_image_size_ptr;
 
 /**
  * Selects the best resolution from a list of possible resolutions based on the original size.
@@ -100,13 +112,13 @@ static struct clip_image_grid_shape get_anyres_image_grid_shape(const std::pair<
 }
 
 // Take the image segments in a grid configuration and return the embeddings and the number of embeddings into preallocated memory (image_embd_out)
-static bool clip_llava_handle_patches(clip_ctx * ctx_clip, std::vector<float *> & image_embd_v, struct clip_image_grid_shape grid_shape, float * image_embd_out, int * n_img_pos_out) {
+static bool clip_llava_handle_patches(clip_ctx * ctx_clip, std::vector<float *> & image_embd_v, struct clip_image_grid_shape grid_shape, float * image_embd_out, int * n_img_pos_out, clip_image_f32 * img_input) {
     struct {
         struct ggml_context * ctx;
     } model;
 
-    const int32_t image_size = clip_image_size(ctx_clip);
-    const int32_t patch_size = clip_patch_size(ctx_clip);
+    const int32_t image_size = clip_get_image_size(ctx_clip);
+    const int32_t patch_size = clip_get_patch_size(ctx_clip);
 
     int32_t num_patches_per_side = image_size / patch_size; // 336 / 14 = 24 - used for embedding-patching boxes (24*24 = 576 patches)
 
@@ -163,7 +175,7 @@ static bool clip_llava_handle_patches(clip_ctx * ctx_clip, std::vector<float *> 
 
     model.ctx = ggml_init(params);
 
-    struct ggml_tensor * image_features = ggml_new_tensor_3d(model.ctx, GGML_TYPE_F32, clip_n_mmproj_embd(ctx_clip), clip_n_patches(ctx_clip), num_images - 1); // example: 4096 x 576 x 4
+    struct ggml_tensor * image_features = ggml_new_tensor_3d(model.ctx, GGML_TYPE_F32, clip_n_mmproj_embd(ctx_clip), clip_n_output_tokens(ctx_clip, img_input), num_images - 1); // example: 4096 x 576 x 4
     // ggml_tensor_printf(image_features,"image_features",__LINE__,false,false);
     // fill it with the image embeddings, ignoring the base
     for (size_t i = 1; i < num_images; i++) {
@@ -202,8 +214,8 @@ static bool clip_llava_handle_patches(clip_ctx * ctx_clip, std::vector<float *> 
 
     memcpy(image_embd_out, image_embd_v[0], clip_embd_nbytes(ctx_clip)); // main image as global context
     // append without newline tokens (default behavior in llava_arch when not using unpad ):
-    memcpy(image_embd_out + clip_n_patches(ctx_clip) * clip_n_mmproj_embd(ctx_clip), (float*)result->data, clip_embd_nbytes(ctx_clip) * (num_images-1)); // grid patches
-    *n_img_pos_out = static_cast<int>(result->ne[1]+clip_n_patches(ctx_clip));
+    memcpy(image_embd_out + clip_n_output_tokens(ctx_clip, img_input) * clip_n_mmproj_embd(ctx_clip), (float*)result->data, clip_embd_nbytes(ctx_clip) * (num_images-1)); // grid patches
+    *n_img_pos_out = static_cast<int>(result->ne[1]+clip_n_output_tokens(ctx_clip, img_input));
 
     // Debug: Test single segments
     // Current findings: sending base image, sending a segment embedding all works similar to python
@@ -246,12 +258,9 @@ static clip_image_f32 * reshape_by_patch(clip_image_f32 * image, int patch_size)
 
 static bool encode_image_with_clip(clip_ctx * ctx_clip, int n_threads, const clip_image_u8 * img, float * image_embd, int * n_img_pos) {
     // std::vector<clip_image_f32*> img_res_v; // format VectN x H x W x RGB (N x 336 x 336 x 3), so interleaved RGB - different to the python implementation which is N x 3 x 336 x 336
-    clip_image_f32_batch img_res_v;
-    img_res_v.size = 0;
-    img_res_v.data = nullptr;
-    if (!clip_image_preprocess(ctx_clip, img, &img_res_v)) {
+    clip_image_f32_batch_ptr img_res_v(clip_image_f32_batch_init());
+    if (!clip_image_preprocess(ctx_clip, img, img_res_v.get())) {
         LOG_ERR("%s: unable to preprocess image\n", __func__);
-        delete[] img_res_v.data;
         return false;
     }
 
@@ -259,66 +268,72 @@ static bool encode_image_with_clip(clip_ctx * ctx_clip, int n_threads, const cli
 
     const char * mm_patch_merge_type = clip_patch_merge_type(ctx_clip);
 
+    const size_t n_imgs = clip_image_f32_batch_n_images(img_res_v.get());
+
     if (clip_is_minicpmv(ctx_clip) || clip_is_qwen2vl(ctx_clip)) {
         std::vector<float *> image_embd_v;
-        image_embd_v.resize(img_res_v.size);
-        struct clip_image_size * load_image_size = clip_image_size_init();
+        image_embd_v.resize(n_imgs);
+        clip_image_size load_image_size;
 
-        for (size_t i = 0; i < img_res_v.size; i++) {
+        for (size_t i = 0; i < n_imgs; i++) {
             const int64_t t_img_enc_step_start_us = ggml_time_us();
-            image_embd_v[i] = (float *)malloc(clip_embd_nbytes_by_img(ctx_clip, img_res_v.data[i].nx, img_res_v.data[i].ny));
-            int patch_size=14;
-            load_image_size->width = img_res_v.data[i].nx;
-            load_image_size->height = img_res_v.data[i].ny;
-            clip_add_load_image_size(ctx_clip, load_image_size);
+            int nx = clip_image_f32_batch_nx(img_res_v.get(), i);
+            int ny = clip_image_f32_batch_ny(img_res_v.get(), i);
+            image_embd_v[i] = (float *)malloc(clip_embd_nbytes_by_img(ctx_clip, nx, ny));
+            int patch_size = 14;
+            load_image_size.width = nx;
+            load_image_size.height = ny;
+            clip_add_load_image_size(ctx_clip, &load_image_size);
 
             bool encoded = false;
+            clip_image_f32 * img_res = clip_image_f32_get_img(img_res_v.get(), i);
             if (clip_is_qwen2vl(ctx_clip)) {
-                encoded = clip_image_encode(ctx_clip, n_threads, &img_res_v.data[i], image_embd_v[i]);
+                encoded = clip_image_encode(ctx_clip, n_threads, img_res, image_embd_v[i]);
             }
             else {
-                encoded = clip_image_encode(ctx_clip, n_threads, reshape_by_patch(&img_res_v.data[i], patch_size), image_embd_v[i]);
+                encoded = clip_image_encode(ctx_clip, n_threads, reshape_by_patch(img_res, patch_size), image_embd_v[i]);
             }
 
             if (!encoded) {
-                LOG_ERR("Unable to encode image - spatial_unpad - subimage %d of %d\n", (int) i+1, (int) img_res_v.size);
+                LOG_ERR("Unable to encode image - spatial_unpad - subimage %d of %d\n", (int) i+1, (int) n_imgs);
                 return false;
             }
             const int64_t t_img_enc_steop_batch_us = ggml_time_us();
-            LOG_INF("%s: step %d of %d encoded in %8.2f ms\n", __func__, (int)i+1, (int)img_res_v.size, (t_img_enc_steop_batch_us - t_img_enc_step_start_us) / 1000.0);
+            LOG_INF("%s: step %d of %d encoded in %8.2f ms\n", __func__, (int)i+1, (int)n_imgs, (t_img_enc_steop_batch_us - t_img_enc_step_start_us) / 1000.0);
         }
         const int64_t t_img_enc_batch_us = ggml_time_us();
-        LOG_INF("%s: all %d segments encoded in %8.2f ms\n", __func__, (int)img_res_v.size, (t_img_enc_batch_us - t_img_enc_start_us) / 1000.0);
+        LOG_INF("%s: all %d segments encoded in %8.2f ms\n", __func__, (int)n_imgs, (t_img_enc_batch_us - t_img_enc_start_us) / 1000.0);
 
         int n_img_pos_out = 0;
         for (size_t i = 0; i < image_embd_v.size(); i++) {
+            int nx = clip_image_f32_batch_nx(img_res_v.get(), i);
+            int ny = clip_image_f32_batch_ny(img_res_v.get(), i);
+            clip_image_f32 * img_res = clip_image_f32_get_img(img_res_v.get(), i);
             std::memcpy(
                 image_embd + n_img_pos_out * clip_n_mmproj_embd(ctx_clip),
                 image_embd_v[i],
-                clip_embd_nbytes_by_img(ctx_clip, img_res_v.data[i].nx, img_res_v.data[i].ny));
-            n_img_pos_out += clip_n_patches_by_img(ctx_clip, &img_res_v.data[i]);
+                clip_embd_nbytes_by_img(ctx_clip, nx, ny));
+            n_img_pos_out += clip_n_output_tokens(ctx_clip, img_res);
         }
         *n_img_pos = n_img_pos_out;
         for (size_t i = 0; i < image_embd_v.size(); i++) {
             free(image_embd_v[i]);
         }
         image_embd_v.clear();
-        load_image_size->width = img->nx;
-        load_image_size->height = img->ny;
-        clip_add_load_image_size(ctx_clip, load_image_size);
-        LOG_INF("%s: load_image_size %d %d\n", __func__, load_image_size->width, load_image_size->height);
-        delete[] img_res_v.data;
-        img_res_v.size = 0;
-        img_res_v.data = nullptr;
+        load_image_size.width = img->nx;
+        load_image_size.height = img->ny;
+        clip_add_load_image_size(ctx_clip, &load_image_size);
+        LOG_INF("%s: load_image_size %d %d\n", __func__, load_image_size.width, load_image_size.height);
     }
     else if (clip_is_glm(ctx_clip)){
         struct clip_image_size * load_image_size = clip_image_size_init();
-        load_image_size->width = img_res_v.data[0].nx;
-        load_image_size->height = img_res_v.data[0].ny;
+        load_image_size->width  = clip_image_f32_batch_nx(img_res_v.get(), 0);
+        load_image_size->height = clip_image_f32_batch_ny(img_res_v.get(), 0);
         clip_add_load_image_size(ctx_clip, load_image_size);
 
-        bool encoded = clip_image_encode(ctx_clip, n_threads, &img_res_v.data[0], image_embd);
-        int pos = int(load_image_size->width/clip_patch_size(ctx_clip)/2);
+        clip_image_f32 * img_res = clip_image_f32_get_img(img_res_v.get(), 0);
+        bool encoded = clip_image_encode(ctx_clip, n_threads, img_res, image_embd);
+        int pos = int(load_image_size->width/clip_get_patch_size(ctx_clip)/2);
         *n_img_pos = (pos * pos + 2);
         if (!encoded){
             LOG_ERR("Unable to encode image \n");
@@ -327,9 +342,9 @@ static bool encode_image_with_clip(clip_ctx * ctx_clip, int n_threads, const cli
     }
     else if (strcmp(mm_patch_merge_type, "spatial_unpad") != 0) {
         // flat / default llava-1.5 type embedding
-        *n_img_pos = clip_n_patches(ctx_clip);
-        bool encoded = clip_image_encode(ctx_clip, n_threads, &img_res_v.data[0], image_embd); // image_embd shape is 576 x 4096
-        delete[] img_res_v.data;
+        clip_image_f32 * img_res = clip_image_f32_get_img(img_res_v.get(), 0);
+        *n_img_pos = clip_n_output_tokens(ctx_clip, img_res);
+        bool encoded = clip_image_encode(ctx_clip, n_threads, img_res, image_embd); // image_embd shape is 576 x 4096
         if (!encoded) {
             LOG_ERR("Unable to encode image\n");
 
@@ -340,17 +355,18 @@ static bool encode_image_with_clip(clip_ctx * ctx_clip, int n_threads, const cli
         // spatial_unpad llava-1.6 type embedding
         // TODO: CLIP needs batching support - in HF the llm projection is separate after encoding, which might be a solution to quickly get batching working
         std::vector<float *> image_embd_v;
-        image_embd_v.resize(img_res_v.size);
-        for (size_t i = 0; i < img_res_v.size; i++) {
+        image_embd_v.resize(n_imgs);
+        for (size_t i = 0; i < n_imgs; i++) {
+            clip_image_f32 * img_res = clip_image_f32_get_img(img_res_v.get(), i);
             image_embd_v[i] = (float *)malloc(clip_embd_nbytes(ctx_clip)); // 576 patches * 4096 embeddings * 4 bytes = 9437184
-            const bool encoded = clip_image_encode(ctx_clip, n_threads, &img_res_v.data[i], image_embd_v[i]); // image data is in 3x336x336 format and will be converted to 336x336x3 inside
+            const bool encoded = clip_image_encode(ctx_clip, n_threads, img_res, image_embd_v[i]); // image data is in 3x336x336 format and will be converted to 336x336x3 inside
             if (!encoded) {
-                LOG_ERR("Unable to encode image - spatial_unpad - subimage %d of %d\n", (int) i+1, (int) img_res_v.size);
+                LOG_ERR("Unable to encode image - spatial_unpad - subimage %d of %d\n", (int) i+1, (int) n_imgs);
                 return false;
             }
         }
         const int64_t t_img_enc_batch_us = ggml_time_us();
-        LOG_INF("%s: %d segments encoded in %8.2f ms\n", __func__, (int)img_res_v.size, (t_img_enc_batch_us - t_img_enc_start_us) / 1000.0);
+        LOG_INF("%s: %d segments encoded in %8.2f ms\n", __func__, (int)n_imgs, (t_img_enc_batch_us - t_img_enc_start_us) / 1000.0);
 
         const int32_t * image_grid = clip_image_grid(ctx_clip);
         const size_t num_gridpoints = get_clip_image_grid_size(ctx_clip);
@@ -360,17 +376,13 @@ static bool encode_image_with_clip(clip_ctx * ctx_clip, int n_threads, const cli
             grid_pinpoints.push_back({image_grid[i], image_grid[i+1]});
         }
 
-        // free all img_res_v - not needed anymore
-        delete[] img_res_v.data;
-        img_res_v.size = 0;
-        img_res_v.data = nullptr;
-
-        const int32_t image_size = clip_image_size(ctx_clip);
+        const int32_t image_size = clip_get_image_size(ctx_clip);
 
         struct clip_image_grid_shape grid_shape = get_anyres_image_grid_shape({img->nx,img->ny}, grid_pinpoints, image_size);
 
         int n_img_pos_out;
-        clip_llava_handle_patches(ctx_clip, image_embd_v, grid_shape, image_embd, &n_img_pos_out);
+        clip_image_f32 * img_input = clip_image_f32_get_img(img_res_v.get(), 0);
+        clip_llava_handle_patches(ctx_clip, image_embd_v, grid_shape, image_embd, &n_img_pos_out, img_input);
         *n_img_pos = n_img_pos_out;
 
         for (size_t i = 0; i < image_embd_v.size(); i++) {

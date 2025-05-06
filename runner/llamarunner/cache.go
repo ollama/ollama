@@ -213,8 +213,16 @@ func (c *InputCache) ShiftDiscard(inputLen int, numKeep int) int {
 	return discard
 }
 
-// Frees up space in the KV cache by deleting the oldest half of history and shifting
-// the newest half into that space (saving numKeep inputs at the beginning).
+type ErrReprocessInputs struct {
+	Inputs []input
+}
+
+func (e *ErrReprocessInputs) Error() string {
+	return fmt.Sprintf("kv cache shift not supported, inputs need reprocessing (input count: %v)", len(e.Inputs))
+}
+
+// ShiftCacheSlot frees up space in the KV cache by deleting the oldest half of history
+// and shifting the newest half into that space (saving numKeep inputs at the beginning).
 //
 // Assumes that at least 1 entry can be freed up by shifting (i.e. numKeep < numCtx)
 func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int) error {
@@ -222,7 +230,8 @@ func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int) error {
 		return fmt.Errorf("unable to shift context - keep exceeds context (keep: %v context: %v)", numKeep, c.numCtx)
 	}
 
-	discard := c.ShiftDiscard(len(slot.Inputs), numKeep)
+	inputLen := len(slot.Inputs)
+	discard := c.ShiftDiscard(inputLen, numKeep)
 
 	if discard <= 0 {
 		return nil
@@ -231,16 +240,42 @@ func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int) error {
 	slog.Debug("context limit hit - shifting", "id", slot.Id, "limit", c.numCtx, "input", len(slot.Inputs),
 		"keep", numKeep, "discard", discard)
 
-	// TODO (jessegross): KV cache removal can fail for certain types of models
-	if !c.lc.KvCacheSeqRm(slot.Id, numKeep, numKeep+discard) {
-		return fmt.Errorf("unable to remove old kv cache entries (id: %v, keep: %v discard: %v)", slot.Id, numKeep, discard)
-	}
-	c.lc.KvCacheSeqAdd(slot.Id, numKeep+discard, len(slot.Inputs), -discard)
+	var shiftFailed bool
 
-	for i := numKeep + discard; i < len(slot.Inputs); i++ {
+	if c.lc.KvCacheCanShift() {
+		// For models that support shifting, attempt to shift the KV cache
+		if !c.lc.KvCacheSeqRm(slot.Id, numKeep, numKeep+discard) {
+			shiftFailed = true
+			slog.Debug("kv cache removal not supported, clearing cache and returning inputs for reprocessing", "id", slot.Id)
+		} else {
+			c.lc.KvCacheSeqAdd(slot.Id, numKeep+discard, inputLen, -discard)
+		}
+	} else {
+		// For models that don't support shifting
+		shiftFailed = true
+		slog.Debug("kv cache cannot shift, clearing cache and returning inputs for reprocessing", "id", slot.Id)
+	}
+
+	if shiftFailed {
+		// Create new input slice with preserved tokens (numKeep + remaining tokens after discard)
+		newInputs := make([]input, numKeep+inputLen-(numKeep+discard))
+		copy(newInputs[:numKeep], slot.Inputs[:numKeep])
+		copy(newInputs[numKeep:], slot.Inputs[numKeep+discard:])
+
+		// Clear the entire KV cache
+		_ = c.lc.KvCacheSeqRm(slot.Id, 0, -1)
+		// Reset the slot inputs since we've cleared the cache
+		slot.Inputs = []input{}
+
+		// Return error with inputs that need to be reprocessed
+		return &ErrReprocessInputs{Inputs: newInputs}
+	}
+
+	// Standard shift succeeded - update input array
+	for i := numKeep + discard; i < inputLen; i++ {
 		slot.Inputs[i-discard] = slot.Inputs[i]
 	}
-	slot.Inputs = slot.Inputs[:len(slot.Inputs)-discard]
+	slot.Inputs = slot.Inputs[:inputLen-discard]
 
 	return nil
 }

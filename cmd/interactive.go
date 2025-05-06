@@ -18,6 +18,7 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/readline"
 	"github.com/ollama/ollama/types/errtypes"
+	"github.com/ollama/ollama/types/model"
 )
 
 type MultilineState int
@@ -347,7 +348,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 				switch args[1] {
 				case "info":
-					_ = showInfo(resp, os.Stderr)
+					_ = showInfo(resp, false, os.Stderr)
 				case "license":
 					if resp.License == "" {
 						fmt.Println("No license was specified for this model.")
@@ -459,9 +460,16 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 }
 
 func NewCreateRequest(name string, opts runOptions) *api.CreateRequest {
+	parentModel := opts.ParentModel
+
+	modelName := model.ParseName(parentModel)
+	if !modelName.IsValid() {
+		parentModel = ""
+	}
+
 	req := &api.CreateRequest{
-		Name: name,
-		From: cmp.Or(opts.ParentModel, opts.Model),
+		Model: name,
+		From:  cmp.Or(parentModel, opts.Model),
 	}
 
 	if opts.System != "" {
@@ -495,6 +503,7 @@ func normalizeFilePath(fp string) string {
 		"\\\\", "\\", // Escaped backslash
 		"\\*", "*", // Escaped asterisk
 		"\\?", "?", // Escaped question mark
+		"\\~", "~", // Escaped tilde
 	).Replace(fp)
 }
 

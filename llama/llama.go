@@ -2,6 +2,7 @@ package llama
 
 /*
 #cgo CFLAGS: -std=c11
+#cgo windows CFLAGS: -Wno-dll-attribute-on-redeclaration
 #cgo CXXFLAGS: -std=c++17
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/include
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/common
@@ -35,6 +36,7 @@ import (
 	"runtime/cgo"
 	"slices"
 	"strings"
+	"sync"
 	"unsafe"
 
 	_ "github.com/ollama/ollama/llama/llama.cpp/common"
@@ -147,23 +149,27 @@ func (c *Context) Model() *Model {
 }
 
 func (c *Context) KvCacheSeqAdd(seqId int, p0 int, p1 int, delta int) {
-	C.llama_kv_cache_seq_add(c.c, C.int(seqId), C.int(p0), C.int(p1), C.int(delta))
+	C.llama_kv_self_seq_add(c.c, C.int(seqId), C.int(p0), C.int(p1), C.int(delta))
 }
 
 func (c *Context) KvCacheSeqRm(seqId int, p0 int, p1 int) bool {
-	return bool(C.llama_kv_cache_seq_rm(c.c, C.int(seqId), C.int(p0), C.int(p1)))
+	return bool(C.llama_kv_self_seq_rm(c.c, C.int(seqId), C.int(p0), C.int(p1)))
 }
 
 func (c *Context) KvCacheSeqCp(srcSeqId int, dstSeqId int, p0 int, p1 int) {
-	C.llama_kv_cache_seq_cp(c.c, C.int(srcSeqId), C.int(dstSeqId), C.int(p0), C.int(p1))
+	C.llama_kv_self_seq_cp(c.c, C.int(srcSeqId), C.int(dstSeqId), C.int(p0), C.int(p1))
 }
 
 func (c *Context) KvCacheClear() {
-	C.llama_kv_cache_clear(c.c)
+	C.llama_kv_self_clear(c.c)
 }
 
 func (c *Context) KvCacheDefrag() {
-	C.llama_kv_cache_defrag(c.c)
+	C.llama_kv_self_defrag(c.c)
+}
+
+func (c *Context) KvCacheCanShift() bool {
+	return bool(C.llama_kv_self_can_shift(c.c))
 }
 
 // Get the embeddings for a sequence id
@@ -193,7 +199,6 @@ type ModelParams struct {
 	NumGpuLayers int
 	MainGpu      int
 	UseMmap      bool
-	UseMlock     bool
 	TensorSplit  []float32
 	Progress     func(float32)
 	VocabOnly    bool
@@ -212,7 +217,6 @@ func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
 	cparams.n_gpu_layers = C.int(params.NumGpuLayers)
 	cparams.main_gpu = C.int32_t(params.MainGpu)
 	cparams.use_mmap = C.bool(params.UseMmap)
-	cparams.use_mlock = C.bool(params.UseMlock)
 	cparams.vocab_only = C.bool(params.VocabOnly)
 
 	if len(params.TensorSplit) > 0 {
@@ -243,20 +247,6 @@ func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
 	}
 
 	return &m, nil
-}
-
-func LoadVocabFromFile(path string) (*Vocab, error) {
-	mp := C.CString(path)
-	defer C.free(unsafe.Pointer(mp))
-	v := Vocab{c: C.llama_load_vocab_from_file(mp)}
-	if v.c == nil {
-		return nil, fmt.Errorf("unable to load vocab: %s", path)
-	}
-	return &v, nil
-}
-
-func FreeVocab(vocab *Vocab) {
-	C.llama_free_vocab(vocab.c)
 }
 
 func FreeModel(model *Model) {
@@ -305,10 +295,6 @@ func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float
 	}
 
 	return nil
-}
-
-type Vocab struct {
-	c *C.struct_llama_vocab
 }
 
 func (m *Model) Vocab() *C.struct_llama_vocab {
@@ -472,24 +458,6 @@ func (m *Model) Tokenize(text string, addSpecial bool, parseSpecial bool) ([]int
 
 func (m *Model) NEmbd() int {
 	return int(C.llama_model_n_embd(m.c))
-}
-
-func Quantize(infile, outfile string, ftype uint32) error {
-	cinfile := C.CString(infile)
-	defer C.free(unsafe.Pointer(cinfile))
-
-	coutfile := C.CString(outfile)
-	defer C.free(unsafe.Pointer(coutfile))
-
-	params := C.llama_model_quantize_default_params()
-	params.nthread = -1
-	params.ftype = ftype
-
-	if rc := C.llama_model_quantize(cinfile, coutfile, &params); rc != 0 {
-		return fmt.Errorf("llama_model_quantize: %d", rc)
-	}
-
-	return nil
 }
 
 // vision processing
@@ -688,35 +656,65 @@ func SchemaToGrammar(schema []byte) []byte {
 	return buf[:n]
 }
 
-type Sampler struct {
-	c *C.struct_llama_sampler
-}
-
-func NewGrammarSampler(vocab *Vocab, grammar string) *Sampler {
-	cGrammar := C.CString(grammar)
-	cRoot := C.CString("root")
-	defer C.free(unsafe.Pointer(cGrammar))
-	defer C.free(unsafe.Pointer(cRoot))
-
-	sampler := &Sampler{c: C.llama_sampler_init_grammar(vocab.c, cGrammar, cRoot)}
-
-	return sampler
-}
-
-func (s *Sampler) Accept(token int32) {
-	C.llama_sampler_accept(s.c, C.llama_token(token))
-}
-
 type TokenData struct {
-	Id    int32
+	ID    int32
 	Logit float32
 }
 
-func (s *Sampler) Apply(tokens []TokenData) {
+type Grammar struct {
+	c  *C.struct_llama_grammar
+	mu sync.Mutex
+}
+
+func NewGrammar(grammar string, vocabIds []uint32, vocabValues []string, eogTokens []uint32) *Grammar {
+	cGrammar := C.CString(grammar)
+	defer C.free(unsafe.Pointer(cGrammar))
+
+	cTokens := make([]C.uint32_t, len(vocabIds))
+	for i, token := range vocabIds {
+		cTokens[i] = C.uint32_t(token)
+	}
+
+	cPieces := make([]*C.char, len(vocabValues))
+	for i, piece := range vocabValues {
+		cPieces[i] = C.CString(piece)
+		defer C.free(unsafe.Pointer(cPieces[i]))
+	}
+
+	cEogTokens := make([]C.uint32_t, len(eogTokens))
+	for i, token := range eogTokens {
+		cEogTokens[i] = C.uint32_t(token)
+	}
+
+	g := C.grammar_init(cGrammar, (*C.uint32_t)(unsafe.Pointer(&cTokens[0])), C.size_t(len(cTokens)), (**C.char)(unsafe.Pointer(&cPieces[0])), (*C.uint32_t)(unsafe.Pointer(&cEogTokens[0])), C.size_t(len(cEogTokens)))
+	if g == nil {
+		return nil
+	}
+
+	return &Grammar{c: g}
+}
+
+func (g *Grammar) Free() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.c != nil {
+		C.grammar_free(g.c)
+		g.c = nil
+	}
+}
+
+func (g *Grammar) Apply(tokens []TokenData) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.c == nil {
+		return
+	}
+
 	tds := make([]C.struct_llama_token_data, len(tokens))
 	for i, token := range tokens {
 		tds[i] = C.struct_llama_token_data{
-			id:    C.int32_t(token.Id),
+			id:    C.int32_t(token.ID),
 			logit: C.float(token.Logit),
 			p:     C.float(0.0),
 		}
@@ -727,13 +725,24 @@ func (s *Sampler) Apply(tokens []TokenData) {
 		selected: C.int64_t(-1),
 		sorted:   C.bool(false),
 	}
-
 	var pinner runtime.Pinner
 	pinner.Pin(&tds[0])
 	defer pinner.Unpin()
 
-	C.llama_sampler_apply(s.c, tda)
+	C.grammar_apply(g.c, tda)
 	for i := range tokens {
 		tokens[i].Logit = float32(tds[i].logit)
 	}
+}
+
+func (g *Grammar) Accept(token int32) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	// Check if grammar was freed
+	if g.c == nil {
+		return
+	}
+
+	C.grammar_accept(g.c, C.llama_token(token))
 }

@@ -2,28 +2,19 @@ package ml
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"os"
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/ollama/ollama/fs"
 )
 
-type Config interface {
-	Architecture() string
-	String(string, ...string) string
-	Uint(string, ...uint32) uint32
-	Float(string, ...float32) float32
-	Bool(string, ...bool) bool
-
-	Strings(string, ...[]string) []string
-	Uints(string, ...[]uint32) []uint32
-	Floats(string, ...[]float32) []float32
-}
-
 type Backend interface {
-	Config() Config
+	Config() fs.Config
 	Get(name string) Tensor
 	NewContext() Context
 	NewContextSize(size int) Context
@@ -60,6 +51,10 @@ type CacheConfig struct {
 
 // BackendParams controls how the backend loads and executes models
 type BackendParams struct {
+	// Progress is a callback function that allows reporting percentage completion
+	// of model loading
+	Progress func(float32)
+
 	// NumThreads sets the number of threads to use if running on the CPU
 	NumThreads int
 
@@ -76,9 +71,9 @@ type BackendParams struct {
 	FlashAttention bool
 }
 
-var backends = make(map[string]func(*os.File, BackendParams) (Backend, error))
+var backends = make(map[string]func(context.Context, *os.File, BackendParams) (Backend, error))
 
-func RegisterBackend(name string, f func(*os.File, BackendParams) (Backend, error)) {
+func RegisterBackend(name string, f func(context.Context, *os.File, BackendParams) (Backend, error)) {
 	if _, ok := backends[name]; ok {
 		panic("backend: backend already registered")
 	}
@@ -86,9 +81,9 @@ func RegisterBackend(name string, f func(*os.File, BackendParams) (Backend, erro
 	backends[name] = f
 }
 
-func NewBackend(f *os.File, params BackendParams) (Backend, error) {
+func NewBackend(ctx context.Context, f *os.File, params BackendParams) (Backend, error) {
 	if backend, ok := backends["ggml"]; ok {
-		return backend(f, params)
+		return backend(ctx, f, params)
 	}
 
 	return nil, fmt.Errorf("unsupported backend")
@@ -100,16 +95,24 @@ type Context interface {
 	FromFloatSlice(s []float32, shape ...int) (Tensor, error)
 	FromIntSlice(s []int32, shape ...int) (Tensor, error)
 
+	// Arange creates a 1D tensor with values within an interval (start, stop] increased by step.
+	Arange(start, stop, step float32, dtype DType) Tensor
+
 	Forward(...Tensor) Context
 	Compute(...Tensor)
+
+	// Reserve is analogous to Compute but rather than executing a
+	// graph, simply preallocates memory. Typically called with a
+	// worst case graph to ensure all resources are available for
+	// for future inference.
+	Reserve() error
+
 	MaxGraphNodes() int
 	Close()
 
-	// Input returns a context appropriate for creating input tensors
+	// Input returns a context appropriate for creating tensors that are
+	// inputs to the model (which includes things like output locations)
 	Input() Context
-
-	// Output returns a context appropriate for creating output tensors
-	Output() Context
 
 	// Layer returns a context appropriate for creating intermediate tensors
 	Layer(int) Context
@@ -125,10 +128,12 @@ type Tensor interface {
 	Bytes() []byte
 	Floats() []float32
 
+	Neg(ctx Context) Tensor
 	Add(ctx Context, t2 Tensor) Tensor
 	Mul(ctx Context, t2 Tensor) Tensor
 	Mulmat(ctx Context, t2 Tensor) Tensor
 	MulmatFullPrec(ctx Context, t2 Tensor) Tensor
+	MulmatID(ctx Context, t2, ids Tensor) Tensor
 
 	Softmax(ctx Context) Tensor
 	LayerNorm(ctx Context, weight, bias Tensor, eps float32) Tensor
@@ -139,10 +144,14 @@ type Tensor interface {
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
 	RoPE(ctx Context, positionIDs, ropeFactors Tensor, dim, ropeType uint32, base, scale float32) Tensor
+	IM2Col(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
+	Sin(ctx Context) Tensor
+	Cos(ctx Context) Tensor
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context) Tensor
 	SILU(ctx Context) Tensor
+	Sigmoid(ctx Context) Tensor
 
 	Reshape(ctx Context, shape ...int) Tensor
 	View(ctx Context, offset int, shape ...int) Tensor
@@ -154,9 +163,15 @@ type Tensor interface {
 	Unpad(ctx Context, shape ...int) Tensor
 
 	Stack(ctx Context, dim int, s ...Tensor) Tensor
+
+	// Repeat repeats the tensor n times along dimension dim
+	Repeat(ctx Context, dim, n int) Tensor
 	Concat(ctx Context, t2 Tensor, dim int) Tensor
 	Rows(ctx Context, t2 Tensor) Tensor
 	Copy(ctx Context, t2 Tensor) Tensor
+	Duplicate(ctx Context) Tensor
+
+	TopK(ctx Context, k int) Tensor
 }
 
 // ScaledDotProductAttention implements a fused attention
@@ -221,7 +236,7 @@ func Dump(ctx Context, t Tensor, opts ...DumpOptions) string {
 			return strconv.FormatFloat(float64(f), 'f', opts[0].Precision, 32)
 		})
 	case DTypeF16, DTypeQ80, DTypeQ40:
-		f32 := ctx.Empty(DTypeF32, t.Shape()...)
+		f32 := ctx.Input().Empty(DTypeF32, t.Shape()...)
 		f32 = t.Copy(ctx, f32)
 		return dump[[]float32](ctx, f32, opts[0].Items, func(f float32) string {
 			return strconv.FormatFloat(float64(f), 'f', opts[0].Precision, 32)

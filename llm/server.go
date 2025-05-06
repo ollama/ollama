@@ -44,6 +44,7 @@ type LlamaServer interface {
 	EstimatedVRAM() uint64 // Total VRAM across all GPUs
 	EstimatedTotal() uint64
 	EstimatedVRAMByGPU(gpuID string) uint64
+	Pid() int
 }
 
 // llmServer is an instance of the llama.cpp server
@@ -109,7 +110,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		gpus = discover.GetCPUInfo()
 	}
 
-	estimate := EstimateGPULayers(gpus, f, projectors, opts)
+	estimate := EstimateGPULayers(gpus, f, projectors, opts, numParallel)
 	if len(gpus) > 1 || gpus[0].Library != "cpu" {
 		switch {
 		case gpus[0].Library == "metal" && estimate.VRAMSize > systemTotalMemory:
@@ -216,10 +217,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		params = append(params, "--no-mmap")
 	}
 
-	if opts.UseMLock {
-		params = append(params, "--mlock")
-	}
-
 	// TODO - NUMA support currently doesn't work properly
 
 	params = append(params, "--parallel", strconv.Itoa(numParallel))
@@ -324,21 +321,23 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			pathEnv = "LD_LIBRARY_PATH"
 		}
 
-		var libraryPaths []string
+		// Note: we always put our dependency paths first
+		// since these are the exact version we compiled/linked against
+		libraryPaths := []string{discover.LibOllamaPath}
 		if libraryPath, ok := os.LookupEnv(pathEnv); ok {
 			libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
 		}
 
+		ggmlPaths := []string{discover.LibOllamaPath}
 		if len(compatible) > 0 {
 			c := compatible[0]
 			if libpath, ok := libs[c]; ok {
 				slog.Debug("adding gpu library", "path", libpath)
-				libraryPaths = append(libraryPaths, libpath)
+				libraryPaths = append([]string{libpath}, libraryPaths...)
+				ggmlPaths = append(ggmlPaths, libpath)
 			}
 		}
 
-		// Note: we always put the dependency path first
-		// since this was the exact version we compiled/linked against
 		if gpus[0].DependencyPath != nil {
 			slog.Debug("adding gpu dependency paths", "paths", gpus[0].DependencyPath)
 			// assume gpus from the same library have the same dependency path
@@ -368,6 +367,8 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		s.cmd.Stdout = os.Stdout
 		s.cmd.Stderr = s.status
 		s.cmd.SysProcAttr = LlamaServerSysProcAttr
+
+		s.cmd.Env = append(s.cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(ggmlPaths, string(filepath.ListSeparator)))
 
 		envWorkarounds := [][2]string{}
 		for _, gpu := range gpus {
@@ -402,11 +403,12 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			s.cmd.Env = append(s.cmd.Env, visibleDevicesEnv+"="+visibleDevicesEnvVal)
 		}
 
-		slog.Info("starting llama server", "cmd", s.cmd.String())
+		slog.Info("starting llama server", "cmd", s.cmd)
 		if envconfig.Debug() {
 			filteredEnv := []string{}
 			for _, ev := range s.cmd.Env {
-				if strings.HasPrefix(ev, "CUDA_") ||
+				if strings.HasPrefix(ev, "OLLAMA_") ||
+					strings.HasPrefix(ev, "CUDA_") ||
 					strings.HasPrefix(ev, "ROCR_") ||
 					strings.HasPrefix(ev, "ROCM_") ||
 					strings.HasPrefix(ev, "HIP_") ||
@@ -470,7 +472,7 @@ const ( // iota is reset to 0
 	ServerStatusError
 )
 
-func (s ServerStatus) ToString() string {
+func (s ServerStatus) String() string {
 	switch s {
 	case ServerStatusReady:
 		return "llm server ready"
@@ -485,12 +487,9 @@ func (s ServerStatus) ToString() string {
 	}
 }
 
-type ServerStatusResp struct {
-	Status          string  `json:"status"`
-	SlotsIdle       int     `json:"slots_idle"`
-	SlotsProcessing int     `json:"slots_processing"`
-	Error           string  `json:"error"`
-	Progress        float32 `json:"progress"`
+type ServerStatusResponse struct {
+	Status   ServerStatus `json:"status"`
+	Progress float32      `json:"progress"`
 }
 
 func (s *llmServer) getServerStatus(ctx context.Context) (ServerStatus, error) {
@@ -502,7 +501,7 @@ func (s *llmServer) getServerStatus(ctx context.Context) (ServerStatus, error) {
 		}
 		if s.cmd.ProcessState.ExitCode() == -1 {
 			// Most likely a signal killed it, log some more details to try to help troubleshoot
-			slog.Warn("llama runner process no longer running", "sys", s.cmd.ProcessState.Sys(), "string", s.cmd.ProcessState.String())
+			slog.Warn("llama runner process no longer running", "sys", s.cmd.ProcessState.Sys(), "string", s.cmd.ProcessState)
 		}
 		return ServerStatusError, fmt.Errorf("llama runner process no longer running: %d %s", s.cmd.ProcessState.ExitCode(), msg)
 	}
@@ -518,6 +517,9 @@ func (s *llmServer) getServerStatus(ctx context.Context) (ServerStatus, error) {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return ServerStatusNotResponding, errors.New("server not responding")
 		}
+		if strings.Contains(err.Error(), "connection refused") {
+			return ServerStatusNotResponding, errors.New("connection refused")
+		}
 		return ServerStatusError, fmt.Errorf("health resp: %w", err)
 	}
 	defer resp.Body.Close()
@@ -527,21 +529,19 @@ func (s *llmServer) getServerStatus(ctx context.Context) (ServerStatus, error) {
 		return ServerStatusError, fmt.Errorf("read health request: %w", err)
 	}
 
-	var status ServerStatusResp
-	if err := json.Unmarshal(body, &status); err != nil {
+	var ssr ServerStatusResponse
+	if err := json.Unmarshal(body, &ssr); err != nil {
 		return ServerStatusError, fmt.Errorf("health unmarshal encode response: %w", err)
 	}
 
-	switch status.Status {
-	case "ok":
-		return ServerStatusReady, nil
-	case "no slot available":
-		return ServerStatusNoSlotsAvailable, nil
-	case "loading model":
-		s.loadProgress = status.Progress
-		return ServerStatusLoadingModel, nil
+	switch ssr.Status {
+	case ServerStatusLoadingModel:
+		s.loadProgress = ssr.Progress
+		return ssr.Status, nil
+	case ServerStatusReady, ServerStatusNoSlotsAvailable:
+		return ssr.Status, nil
 	default:
-		return ServerStatusError, fmt.Errorf("server error: %+v", status)
+		return ssr.Status, fmt.Errorf("server error: %+v", ssr)
 	}
 }
 
@@ -616,7 +616,7 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 		status, _ := s.getServerStatus(ctx)
 		if lastStatus != status && status != ServerStatusReady {
 			// Only log on status changes
-			slog.Info("waiting for server to become available", "status", status.ToString())
+			slog.Info("waiting for server to become available", "status", status)
 		}
 		switch status {
 		case ServerStatusReady:
@@ -630,7 +630,7 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 				slog.Debug(fmt.Sprintf("model load progress %0.2f", s.loadProgress))
 				stallTimer = time.Now().Add(stallDuration)
 			} else if !fullyLoaded && int(s.loadProgress*100.0) >= 100 {
-				slog.Debug("model load completed, waiting for server to become available", "status", status.ToString())
+				slog.Debug("model load completed, waiting for server to become available", "status", status)
 				stallTimer = time.Now().Add(stallDuration)
 				fullyLoaded = true
 			}
@@ -640,25 +640,32 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 	}
 }
 
+func (s *llmServer) Pid() int {
+	if s.cmd != nil && s.cmd.Process != nil {
+		return s.cmd.Process.Pid
+	}
+	return -1
+}
+
 var grammarJSON = `
 root   ::= object
 value  ::= object | array | string | number | ("true" | "false" | "null") ws
 object ::=
   "{" ws (
-            string ":" ws value
+         string ":" ws value
     ("," ws string ":" ws value)*
-  )? "}" ws
+  )? ws "}" 
 array  ::=
   "[" ws (
             value
     ("," ws value)*
-  )? "]" ws
+  )? ws "]" 
 string ::=
   "\"" (
     [^"\\\x7F\x00-\x1F] |
     "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) # escapes
-  )* "\"" ws
-number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)? ws
+  )* "\"" 
+number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)? 
 # Optional space: by convention, applied in this grammar after literal chars when allowed
 ws ::= ([ \t\n] ws)?
 `
@@ -671,63 +678,49 @@ type ImageData struct {
 	AspectRatioID int    `json:"aspect_ratio_id"`
 }
 
-type completion struct {
-	Content      string `json:"content"`
-	Model        string `json:"model"`
-	Prompt       string `json:"prompt"`
-	Stop         bool   `json:"stop"`
-	StoppedLimit bool   `json:"stopped_limit"`
-
-	Timings struct {
-		PredictedN  int     `json:"predicted_n"`
-		PredictedMS float64 `json:"predicted_ms"`
-		PromptN     int     `json:"prompt_n"`
-		PromptMS    float64 `json:"prompt_ms"`
-	}
-}
-
 type CompletionRequest struct {
 	Prompt  string
 	Format  json.RawMessage
 	Images  []ImageData
 	Options *api.Options
+
+	Grammar string // set before sending the request to the subprocess
+}
+
+// DoneReason represents the reason why a completion response is done
+type DoneReason int
+
+const (
+	// DoneReasonStop indicates the completion stopped naturally
+	DoneReasonStop DoneReason = iota
+	// DoneReasonLength indicates the completion stopped due to length limits
+	DoneReasonLength
+	// DoneReasonConnectionClosed indicates the completion stopped due to the connection being closed
+	DoneReasonConnectionClosed
+)
+
+func (d DoneReason) String() string {
+	switch d {
+	case DoneReasonLength:
+		return "length"
+	case DoneReasonStop:
+		return "stop"
+	default:
+		return "" // closed
+	}
 }
 
 type CompletionResponse struct {
-	Content            string
-	DoneReason         string
-	Done               bool
-	PromptEvalCount    int
-	PromptEvalDuration time.Duration
-	EvalCount          int
-	EvalDuration       time.Duration
+	Content            string        `json:"content"`
+	DoneReason         DoneReason    `json:"done_reason"`
+	Done               bool          `json:"done"`
+	PromptEvalCount    int           `json:"prompt_eval_count"`
+	PromptEvalDuration time.Duration `json:"prompt_eval_duration"`
+	EvalCount          int           `json:"eval_count"`
+	EvalDuration       time.Duration `json:"eval_duration"`
 }
 
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
-	request := map[string]any{
-		"prompt":            req.Prompt,
-		"stream":            true,
-		"n_predict":         req.Options.NumPredict,
-		"n_keep":            req.Options.NumKeep,
-		"main_gpu":          req.Options.MainGPU,
-		"temperature":       req.Options.Temperature,
-		"top_k":             req.Options.TopK,
-		"top_p":             req.Options.TopP,
-		"min_p":             req.Options.MinP,
-		"typical_p":         req.Options.TypicalP,
-		"repeat_last_n":     req.Options.RepeatLastN,
-		"repeat_penalty":    req.Options.RepeatPenalty,
-		"presence_penalty":  req.Options.PresencePenalty,
-		"frequency_penalty": req.Options.FrequencyPenalty,
-		"mirostat":          req.Options.Mirostat,
-		"mirostat_tau":      req.Options.MirostatTau,
-		"mirostat_eta":      req.Options.MirostatEta,
-		"seed":              req.Options.Seed,
-		"stop":              req.Options.Stop,
-		"image_data":        req.Images,
-		"cache_prompt":      true,
-	}
-
 	if len(req.Format) > 0 {
 		switch string(req.Format) {
 		case `null`, `""`:
@@ -735,7 +728,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			// these as "not set".
 			break
 		case `"json"`:
-			request["grammar"] = grammarJSON
+			req.Grammar = grammarJSON
 		default:
 			if req.Format[0] != '{' {
 				return fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema object", req.Format)
@@ -746,8 +739,13 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 			if g == nil {
 				return fmt.Errorf("invalid JSON schema in format")
 			}
-			request["grammar"] = string(g)
+			req.Grammar = string(g)
 		}
+	}
+
+	if req.Options == nil {
+		opts := api.DefaultOptions()
+		req.Options = &opts
 	}
 
 	if err := s.sem.Acquire(ctx, 1); err != nil {
@@ -770,7 +768,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	if err != nil {
 		return err
 	} else if status != ServerStatusReady {
-		return fmt.Errorf("unexpected server status: %s", status.ToString())
+		return fmt.Errorf("unexpected server status: %s", status)
 	}
 
 	// Handling JSON marshaling with special characters unescaped.
@@ -778,7 +776,7 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	enc := json.NewEncoder(buffer)
 	enc.SetEscapeHTML(false)
 
-	if err := enc.Encode(request); err != nil {
+	if err := enc.Encode(req); err != nil {
 		return fmt.Errorf("failed to marshal data: %v", err)
 	}
 
@@ -823,13 +821,12 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 				continue
 			}
 
-			// slog.Debug("got line", "line", string(line))
 			evt, ok := bytes.CutPrefix(line, []byte("data: "))
 			if !ok {
 				evt = line
 			}
 
-			var c completion
+			var c CompletionResponse
 			if err := json.Unmarshal(evt, &c); err != nil {
 				return fmt.Errorf("error unmarshalling llm prediction response: %v", err)
 			}
@@ -853,20 +850,8 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 				})
 			}
 
-			if c.Stop {
-				doneReason := "stop"
-				if c.StoppedLimit {
-					doneReason = "length"
-				}
-
-				fn(CompletionResponse{
-					Done:               true,
-					DoneReason:         doneReason,
-					PromptEvalCount:    c.Timings.PromptN,
-					PromptEvalDuration: parseDurationMs(c.Timings.PromptMS),
-					EvalCount:          c.Timings.PredictedN,
-					EvalDuration:       parseDurationMs(c.Timings.PredictedMS),
-				})
+			if c.Done {
+				fn(c)
 				return nil
 			}
 		}
@@ -914,7 +899,7 @@ func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, err
 	if err != nil {
 		return nil, err
 	} else if status != ServerStatusReady {
-		return nil, fmt.Errorf("unexpected server status: %s", status.ToString())
+		return nil, fmt.Errorf("unexpected server status: %s", status)
 	}
 
 	data, err := json.Marshal(EmbeddingRequest{Content: input})
@@ -1058,13 +1043,4 @@ func (s *llmServer) EstimatedVRAMByGPU(gpuID string) uint64 {
 		}
 	}
 	return 0
-}
-
-func parseDurationMs(ms float64) time.Duration {
-	dur, err := time.ParseDuration(fmt.Sprintf("%fms", ms))
-	if err != nil {
-		panic(err)
-	}
-
-	return dur
 }

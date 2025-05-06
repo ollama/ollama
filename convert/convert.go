@@ -4,9 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
+	"os"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/fs/ggml"
@@ -84,27 +85,17 @@ func (ModelParameters) specialTokenTypes() []string {
 	}
 }
 
-func (ModelParameters) writeFile(ws io.WriteSeeker, kv ggml.KV, ts []ggml.Tensor) error {
-	return ggml.WriteGGUF(ws, kv, ts)
-}
-
-func (AdapterParameters) writeFile(ws io.WriteSeeker, kv ggml.KV, ts []ggml.Tensor) error {
-	return ggml.WriteGGUF(ws, kv, ts)
-}
-
 type ModelConverter interface {
 	// KV maps parameters to LLM key-values
 	KV(*Tokenizer) ggml.KV
 	// Tensors maps input tensors to LLM tensors. Model specific modifications can be done here.
-	Tensors([]Tensor) []ggml.Tensor
+	Tensors([]Tensor) []*ggml.Tensor
 	// Replacements returns a list of string pairs to replace in tensor names.
 	// See [strings.Replacer](https://pkg.go.dev/strings#Replacer) for details
 	Replacements() []string
 
 	// specialTokenTypes returns any special token types the model uses
 	specialTokenTypes() []string
-	// writeFile writes the model to the provided io.WriteSeeker
-	writeFile(io.WriteSeeker, ggml.KV, []ggml.Tensor) error
 }
 
 type moreParser interface {
@@ -115,15 +106,13 @@ type AdapterConverter interface {
 	// KV maps parameters to LLM key-values
 	KV(ggml.KV) ggml.KV
 	// Tensors maps input tensors to LLM tensors. Adapter specific modifications can be done here.
-	Tensors([]Tensor) []ggml.Tensor
+	Tensors([]Tensor) []*ggml.Tensor
 	// Replacements returns a list of string pairs to replace in tensor names.
 	// See [strings.Replacer](https://pkg.go.dev/strings#Replacer) for details
 	Replacements() []string
-
-	writeFile(io.WriteSeeker, ggml.KV, []ggml.Tensor) error
 }
 
-func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseKV ggml.KV) error {
+func ConvertAdapter(fsys fs.FS, f *os.File, baseKV ggml.KV) error {
 	bts, err := fs.ReadFile(fsys, "adapter_config.json")
 	if err != nil {
 		return err
@@ -158,14 +147,14 @@ func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseKV ggml.KV) error {
 		return err
 	}
 
-	return conv.writeFile(ws, conv.KV(baseKV), conv.Tensors(ts))
+	return writeFile(f, conv.KV(baseKV), conv.Tensors(ts))
 }
 
 // Convert writes an Ollama compatible model to the provided io.WriteSeeker based on configurations
 // and files it finds in the input path.
 // Supported input model formats include safetensors.
 // Supported input tokenizers files include tokenizer.json (preferred) and tokenizer.model.
-func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
+func ConvertModel(fsys fs.FS, f *os.File) error {
 	bts, err := fs.ReadFile(fsys, "config.json")
 	if err != nil {
 		return err
@@ -182,8 +171,12 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 
 	var conv ModelConverter
 	switch p.Architectures[0] {
-	case "LlamaForCausalLM", "MistralForCausalLM":
+	case "LlamaForCausalLM":
 		conv = &llamaModel{}
+	case "Llama4ForConditionalGeneration":
+		conv = &llama4Model{}
+	case "Mistral3ForConditionalGeneration":
+		conv = &mistral3Model{}
 	case "MixtralForCausalLM":
 		conv = &mixtralModel{}
 	case "GemmaForCausalLM":
@@ -201,7 +194,7 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 	case "CohereForCausalLM":
 		conv = &commandrModel{}
 	default:
-		return errors.New("unsupported architecture")
+		return fmt.Errorf("unsupported architecture %q", p.Architectures[0])
 	}
 
 	if err := json.Unmarshal(bts, conv); err != nil {
@@ -246,5 +239,13 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 		return err
 	}
 
-	return conv.writeFile(ws, conv.KV(t), conv.Tensors(ts))
+	return writeFile(f, conv.KV(t), conv.Tensors(ts))
+}
+
+func writeFile(f *os.File, kv ggml.KV, ts []*ggml.Tensor) error {
+	for i := range ts {
+		ts[i].Shape = slices.Clone(ts[i].Shape)
+		slices.Reverse(ts[i].Shape)
+	}
+	return ggml.WriteGGUF(f, kv, ts)
 }

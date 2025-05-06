@@ -4,6 +4,7 @@ import (
 	"math"
 	"slices"
 
+	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
 )
@@ -95,10 +96,10 @@ type VisionEncoder struct {
 	Layers []VisionEncoderLayer
 }
 
-func (e *VisionEncoder) Forward(ctx ml.Context, hiddenState ml.Tensor, intermediateLayersIndices []uint32, opts *VisionModelOptions) (ml.Tensor, []ml.Tensor) {
+func (e *VisionEncoder) Forward(ctx ml.Context, hiddenState ml.Tensor, intermediateLayersIndices []int32, opts *VisionModelOptions) (ml.Tensor, []ml.Tensor) {
 	var intermediateHiddenStates []ml.Tensor
 	for i, layer := range e.Layers {
-		if slices.Contains(intermediateLayersIndices, uint32(i)) {
+		if slices.Contains(intermediateLayersIndices, int32(i)) {
 			intermediateHiddenStates = append(intermediateHiddenStates, hiddenState.Reshape(ctx, append([]int{1}, hiddenState.Shape()...)...))
 		}
 
@@ -153,7 +154,7 @@ type VisionModelOptions struct {
 	imageSize, patchSize           int
 	eps                            float32
 
-	intermediateLayersIndices []uint32
+	intermediateLayersIndices []int32
 }
 
 type VisionModel struct {
@@ -185,7 +186,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues, positionIDs, aspectRa
 	hiddenState = hiddenState.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 
 	hiddenState = m.PreTilePositionEmbedding.Forward(ctx, hiddenState, aspectRatioIDs, m.VisionModelOptions)
-	hiddenState = m.ClassEmbedding.Stack(ctx, 2, slices.Repeat([]ml.Tensor{m.ClassEmbedding}, m.numTiles-1)...).Concat(ctx, hiddenState, 1)
+	hiddenState = m.ClassEmbedding.Repeat(ctx, 2, m.numTiles).Concat(ctx, hiddenState, 1)
 
 	hiddenState = m.PositionEmbedding.Forward(ctx, hiddenState, positionIDs, aspectRatioIDs, numPositions, m.VisionModelOptions)
 	hiddenState = m.PreLayerNorm.Forward(ctx, hiddenState, m.eps)
@@ -213,7 +214,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues, positionIDs, aspectRa
 	return hiddenState.Concat(ctx, hiddenStates, 0)
 }
 
-func newVisionModel(c ml.Config) *VisionModel {
+func newVisionModel(c fs.Config) *VisionModel {
 	return &VisionModel{
 		Transformer:       &VisionEncoder{Layers: make([]VisionEncoderLayer, c.Uint("vision.block_count"))},
 		GlobalTransformer: &VisionEncoder{Layers: make([]VisionEncoderLayer, c.Uint("vision.global.block_count"))},
@@ -228,7 +229,7 @@ func newVisionModel(c ml.Config) *VisionModel {
 
 			eps: c.Float("vision.attention.layer_norm_epsilon"),
 
-			intermediateLayersIndices: c.Uints("vision.intermediate_layers_indices"),
+			intermediateLayersIndices: c.Ints("vision.intermediate_layers_indices"),
 		},
 	}
 }

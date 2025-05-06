@@ -58,7 +58,7 @@ func TestGenerateChat(t *testing.T) {
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
 			Done:               true,
-			DoneReason:         "stop",
+			DoneReason:         llm.DoneReasonStop,
 			PromptEvalCount:    1,
 			PromptEvalDuration: 1,
 			EvalCount:          1,
@@ -99,7 +99,7 @@ func TestGenerateChat(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []ggml.Tensor{
+	}, []*ggml.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -158,7 +158,7 @@ func TestGenerateChat(t *testing.T) {
 		_, digest := createBinFile(t, ggml.KV{
 			"general.architecture": "bert",
 			"bert.pooling_type":    uint32(0),
-		}, []ggml.Tensor{})
+		}, []*ggml.Tensor{})
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Model:  "bert",
 			Files:  map[string]string{"bert.gguf": digest},
@@ -370,27 +370,31 @@ func TestGenerateChat(t *testing.T) {
 					Description: "Get the current weather",
 					Parameters: struct {
 						Type       string   `json:"type"`
+						Defs       any      `json:"$defs,omitempty"`
+						Items      any      `json:"items,omitempty"`
 						Required   []string `json:"required"`
 						Properties map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Items       any              `json:"items,omitempty"`
+							Description string           `json:"description"`
+							Enum        []any            `json:"enum,omitempty"`
 						} `json:"properties"`
 					}{
 						Type:     "object",
 						Required: []string{"location"},
 						Properties: map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Items       any              `json:"items,omitempty"`
+							Description string           `json:"description"`
+							Enum        []any            `json:"enum,omitempty"`
 						}{
 							"location": {
-								Type:        "string",
+								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
 							},
 							"unit": {
-								Type: "string",
-								Enum: []string{"celsius", "fahrenheit"},
+								Type: api.PropertyType{"string"},
+								Enum: []any{"celsius", "fahrenheit"},
 							},
 						},
 					},
@@ -401,7 +405,7 @@ func TestGenerateChat(t *testing.T) {
 		mock.CompletionResponse = llm.CompletionResponse{
 			Content:            `{"name":"get_weather","arguments":{"location":"Seattle, WA","unit":"celsius"}}`,
 			Done:               true,
-			DoneReason:         "done",
+			DoneReason:         llm.DoneReasonStop,
 			PromptEvalCount:    1,
 			PromptEvalDuration: 1,
 			EvalCount:          1,
@@ -467,27 +471,31 @@ func TestGenerateChat(t *testing.T) {
 					Description: "Get the current weather",
 					Parameters: struct {
 						Type       string   `json:"type"`
+						Defs       any      `json:"$defs,omitempty"`
+						Items      any      `json:"items,omitempty"`
 						Required   []string `json:"required"`
 						Properties map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Items       any              `json:"items,omitempty"`
+							Description string           `json:"description"`
+							Enum        []any            `json:"enum,omitempty"`
 						} `json:"properties"`
 					}{
 						Type:     "object",
 						Required: []string{"location"},
 						Properties: map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Items       any              `json:"items,omitempty"`
+							Description string           `json:"description"`
+							Enum        []any            `json:"enum,omitempty"`
 						}{
 							"location": {
-								Type:        "string",
+								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
 							},
 							"unit": {
-								Type: "string",
-								Enum: []string{"celsius", "fahrenheit"},
+								Type: api.PropertyType{"string"},
+								Enum: []any{"celsius", "fahrenheit"},
 							},
 						},
 					},
@@ -519,7 +527,7 @@ func TestGenerateChat(t *testing.T) {
 				{
 					Content:            `, WA","unit":"celsius"}}`,
 					Done:               true,
-					DoneReason:         "tool_call",
+					DoneReason:         llm.DoneReasonStop,
 					PromptEvalCount:    3,
 					PromptEvalDuration: 1,
 				},
@@ -594,7 +602,7 @@ func TestGenerate(t *testing.T) {
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
 			Done:               true,
-			DoneReason:         "stop",
+			DoneReason:         llm.DoneReasonStop,
 			PromptEvalCount:    1,
 			PromptEvalDuration: 1,
 			EvalCount:          1,
@@ -635,7 +643,7 @@ func TestGenerate(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []ggml.Tensor{
+	}, []*ggml.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -690,7 +698,7 @@ func TestGenerate(t *testing.T) {
 		_, digest := createBinFile(t, ggml.KV{
 			"general.architecture": "bert",
 			"bert.pooling_type":    uint32(0),
-		}, []ggml.Tensor{})
+		}, []*ggml.Tensor{})
 
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Model:  "bert",

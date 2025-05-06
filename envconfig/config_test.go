@@ -279,8 +279,8 @@ func TestVar(t *testing.T) {
 
 func TestContextLength(t *testing.T) {
 	cases := map[string]uint{
-		"":     2048,
-		"4096": 4096,
+		"":     4096,
+		"2048": 2048,
 	}
 
 	for k, v := range cases {

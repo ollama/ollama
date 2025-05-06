@@ -1,5 +1,7 @@
 package input
 
+import "github.com/ollama/ollama/ml"
+
 // Input represents one token in the input stream
 type Input struct {
 	// Token is a single element of text.
@@ -15,6 +17,12 @@ type Input struct {
 	// stored in Multimodal, used for caching and comparing
 	// equality.
 	MultimodalHash uint64
+
+	// SameBatch forces the following number of tokens to be processed
+	// in a single batch, breaking and extending batches as needed.
+	// Useful for things like images that must be processed in one
+	// shot.
+	SameBatch int
 }
 
 // MultimodalIndex is a multimodal element (such as an image)
@@ -27,11 +35,24 @@ type MultimodalIndex struct {
 	Multimodal any
 }
 
-// Options contains the inputs for a model forward pass
-type Options struct {
-	Inputs     []int32
+// Batch contains the inputs for a model forward pass
+type Batch struct {
+	// Inputs is the input tokens, including placeholders for multimodal inputs.
+	Inputs ml.Tensor
+
+	// Multimodal is a set of multimodal embeddings previously created by
+	// EncodeMultimodal, along with an index into Inputs. Unused for text-only
+	// models or for batches without multimodal elements.
 	Multimodal []MultimodalIndex
-	Positions  []int32
-	Sequences  []int
-	Outputs    []int32
+
+	// Positions is the position for each Input, relative to its sequence. Equal
+	// in length to Inputs.
+	Positions []int32
+
+	// Sequences is the sequence for each Input. Equal in length to Inputs.
+	Sequences []int
+
+	// Outputs are the set of indicies into Inputs for which output data should
+	// be returned.
+	Outputs []int32
 }

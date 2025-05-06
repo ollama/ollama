@@ -32,11 +32,12 @@ type TextProcessor interface {
 	Encode(s string, addSpecial bool) ([]int32, error)
 	Decode([]int32) (string, error)
 	Is(int32, Special) bool
+	Vocabulary() *Vocabulary
 }
 
 type Vocabulary struct {
 	Values []string
-	Types  []uint32
+	Types  []int32
 	Scores []float32
 	Merges []string
 
@@ -117,11 +118,17 @@ type BytePairEncoding struct {
 	vocab *Vocabulary
 }
 
+var _ TextProcessor = (*BytePairEncoding)(nil)
+
 func NewBytePairEncoding(pre string, vocab *Vocabulary) BytePairEncoding {
 	return BytePairEncoding{
 		pre:   regexp2.MustCompile(pre, regexp2.Unicode|regexp2.RE2),
 		vocab: vocab,
 	}
+}
+
+func (bpe BytePairEncoding) Vocabulary() *Vocabulary {
+	return bpe.vocab
 }
 
 func (bpe BytePairEncoding) Is(id int32, special Special) bool {
@@ -260,6 +267,10 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 				left, right := merges[pair.a], merges[pair.b]
 				if len(left.runes) == 0 || len(right.runes) == 0 ||
 					string(left.runes)+string(right.runes) != pair.value {
+					continue
+				}
+
+				if id := bpe.vocab.Encode(pair.value); id < 0 {
 					continue
 				}
 
