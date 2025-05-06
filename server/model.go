@@ -210,7 +210,16 @@ func nodeContainsToolCalls(n *parse.IfNode) bool {
 	return false
 }
 
-func ToolToken(tmpl *gotmpl.Template) (string, bool) {
+func ToolPrefix2(tmpl *gotmpl.Template) (string, bool) {
+	tokenText, ok := extractToolCallsTemplate(tmpl)
+	if !ok {
+		return "", false
+	}
+	tokenText = strings.TrimSpace(tokenText)
+	return tokenText, true
+}
+
+func ToolPrefix(tmpl *gotmpl.Template) (string, bool) {
 	tokenText, ok := extractToolCallsTemplate(tmpl)
 	if !ok {
 		return "", false
