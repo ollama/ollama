@@ -193,8 +193,8 @@ void nvcuda_bootstrap(nvcuda_handle_t h, int i, mem_info_t *resp) {
   resp->total = memInfo.total;
   resp->free = memInfo.free;
 
-  LOG(h.verbose, "[%s] CUDA totalMem %lu mb\n", resp->gpu_id, resp->total / 1024 / 1024);
-  LOG(h.verbose, "[%s] CUDA freeMem %lu mb\n", resp->gpu_id, resp->free / 1024 / 1024);
+  LOG(h.verbose, "[%s] CUDA totalMem %llu mb\n", resp->gpu_id, resp->total / 1024 / 1024);
+  LOG(h.verbose, "[%s] CUDA freeMem %llu mb\n", resp->gpu_id, resp->free / 1024 / 1024);
   LOG(h.verbose, "[%s] Compute Capability %d.%d\n", resp->gpu_id, resp->major, resp->minor);
 
   

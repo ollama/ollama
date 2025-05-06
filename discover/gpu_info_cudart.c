@@ -58,7 +58,7 @@ void cudart_init(char *cudart_lib_path, cudart_init_resp_t *resp) {
     LOG(resp->ch.verbose, "cudaSetDevice err: %d\n", ret);
     UNLOAD_LIBRARY(resp->ch.handle);
     resp->ch.handle = NULL;
-    if (ret == CUDA_ERROR_INSUFFICIENT_DRIVER) {
+    if (ret == CUDART_ERROR_INSUFFICIENT_DRIVER) {
       resp->err = strdup("your nvidia driver is too old or missing.  If you have a CUDA GPU please upgrade to run ollama");
       return;
     }
@@ -168,9 +168,9 @@ void cudart_bootstrap(cudart_handle_t h, int i, mem_info_t *resp) {
   resp->free = memInfo.free;
   resp->used = memInfo.used;
 
-  LOG(h.verbose, "[%s] CUDA totalMem %lu\n", resp->gpu_id, resp->total);
-  LOG(h.verbose, "[%s] CUDA freeMem %lu\n", resp->gpu_id, resp->free);
-  LOG(h.verbose, "[%s] CUDA usedMem %lu\n", resp->gpu_id, resp->used);
+  LOG(h.verbose, "[%s] CUDA totalMem %llu\n", resp->gpu_id, resp->total);
+  LOG(h.verbose, "[%s] CUDA freeMem %llu\n", resp->gpu_id, resp->free);
+  LOG(h.verbose, "[%s] CUDA usedMem %llu\n", resp->gpu_id, resp->used);
   LOG(h.verbose, "[%s] Compute Capability %d.%d\n", resp->gpu_id, resp->major, resp->minor);
 }
 

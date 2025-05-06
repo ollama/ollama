@@ -44,6 +44,7 @@ type LlamaServer interface {
 	EstimatedVRAM() uint64 // Total VRAM across all GPUs
 	EstimatedTotal() uint64
 	EstimatedVRAMByGPU(gpuID string) uint64
+	Pid() int
 }
 
 // llmServer is an instance of the llama.cpp server
@@ -231,10 +232,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		params = append(params, "--no-mmap")
 	}
 
-	if opts.UseMLock {
-		params = append(params, "--mlock")
-	}
-
 	// TODO - NUMA support currently doesn't work properly
 
 	params = append(params, "--parallel", strconv.Itoa(numParallel))
@@ -339,7 +336,9 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			pathEnv = "LD_LIBRARY_PATH"
 		}
 
-		var libraryPaths []string
+		// Note: we always put our dependency paths first
+		// since these are the exact version we compiled/linked against
+		libraryPaths := []string{discover.LibOllamaPath}
 		if libraryPath, ok := os.LookupEnv(pathEnv); ok {
 			libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
 		}
@@ -349,13 +348,11 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			c := compatible[0]
 			if libpath, ok := libs[c]; ok {
 				slog.Debug("adding gpu library", "path", libpath)
-				libraryPaths = append(libraryPaths, libpath)
+				libraryPaths = append([]string{libpath}, libraryPaths...)
 				ggmlPaths = append(ggmlPaths, libpath)
 			}
 		}
 
-		// Note: we always put the dependency path first
-		// since this was the exact version we compiled/linked against
 		if gpus[0].DependencyPath != nil {
 			slog.Debug("adding gpu dependency paths", "paths", gpus[0].DependencyPath)
 			// assume gpus from the same library have the same dependency path
@@ -535,6 +532,9 @@ func (s *llmServer) getServerStatus(ctx context.Context) (ServerStatus, error) {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return ServerStatusNotResponding, errors.New("server not responding")
 		}
+		if strings.Contains(err.Error(), "connection refused") {
+			return ServerStatusNotResponding, errors.New("connection refused")
+		}
 		return ServerStatusError, fmt.Errorf("health resp: %w", err)
 	}
 	defer resp.Body.Close()
@@ -653,6 +653,13 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 			continue
 		}
 	}
+}
+
+func (s *llmServer) Pid() int {
+	if s.cmd != nil && s.cmd.Process != nil {
+		return s.cmd.Process.Pid
+	}
+	return -1
 }
 
 var grammarJSON = `
