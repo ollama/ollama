@@ -99,7 +99,7 @@ func TestGenerateChat(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []ggml.Tensor{
+	}, []*ggml.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -158,7 +158,7 @@ func TestGenerateChat(t *testing.T) {
 		_, digest := createBinFile(t, ggml.KV{
 			"general.architecture": "bert",
 			"bert.pooling_type":    uint32(0),
-		}, []ggml.Tensor{})
+		}, []*ggml.Tensor{})
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Model:  "bert",
 			Files:  map[string]string{"bert.gguf": digest},
@@ -643,7 +643,7 @@ func TestGenerate(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []ggml.Tensor{
+	}, []*ggml.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -698,7 +698,7 @@ func TestGenerate(t *testing.T) {
 		_, digest := createBinFile(t, ggml.KV{
 			"general.architecture": "bert",
 			"bert.pooling_type":    uint32(0),
-		}, []ggml.Tensor{})
+		}, []*ggml.Tensor{})
 
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Model:  "bert",

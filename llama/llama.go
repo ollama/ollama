@@ -460,24 +460,6 @@ func (m *Model) NEmbd() int {
 	return int(C.llama_model_n_embd(m.c))
 }
 
-func Quantize(infile, outfile string, ftype uint32) error {
-	cinfile := C.CString(infile)
-	defer C.free(unsafe.Pointer(cinfile))
-
-	coutfile := C.CString(outfile)
-	defer C.free(unsafe.Pointer(coutfile))
-
-	params := C.llama_model_quantize_default_params()
-	params.nthread = -1
-	params.ftype = ftype
-
-	if rc := C.llama_model_quantize(cinfile, coutfile, &params); rc != 0 {
-		return fmt.Errorf("llama_model_quantize: %d", rc)
-	}
-
-	return nil
-}
-
 // vision processing
 type ClipContext struct {
 	c *C.struct_clip_ctx

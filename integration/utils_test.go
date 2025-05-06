@@ -359,3 +359,14 @@ func skipUnderMinVRAM(t *testing.T, gb uint64) {
 		}
 	}
 }
+
+func getTimeouts(t *testing.T) (soft time.Duration, hard time.Duration) {
+	deadline, hasDeadline := t.Deadline()
+	if !hasDeadline {
+		return 8 * time.Minute, 10 * time.Minute
+	} else if deadline.Compare(time.Now().Add(2*time.Minute)) <= 0 {
+		t.Skip("too little time")
+		return time.Duration(0), time.Duration(0)
+	}
+	return -time.Since(deadline.Add(-2 * time.Minute)), -time.Since(deadline.Add(-20 * time.Second))
+}
