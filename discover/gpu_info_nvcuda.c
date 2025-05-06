@@ -1,6 +1,7 @@
 #ifndef __APPLE__  // TODO - maybe consider nvidia support on intel macs?
 
 #include <string.h>
+#include <inttypes.h>
 #include "gpu_info_nvcuda.h"
 
 void nvcuda_init(char *nvcuda_lib_path, nvcuda_init_resp_t *resp) {
@@ -193,8 +194,8 @@ void nvcuda_bootstrap(nvcuda_handle_t h, int i, mem_info_t *resp) {
   resp->total = memInfo.total;
   resp->free = memInfo.free;
 
-  LOG(h.verbose, "[%s] CUDA totalMem %llu mb\n", resp->gpu_id, resp->total / 1024 / 1024);
-  LOG(h.verbose, "[%s] CUDA freeMem %llu mb\n", resp->gpu_id, resp->free / 1024 / 1024);
+  LOG(h.verbose, "[%s] CUDA totalMem %" PRId64 "mb\n", resp->gpu_id, resp->total / 1024 / 1024);
+  LOG(h.verbose, "[%s] CUDA freeMem %" PRId64 "mb\n", resp->gpu_id, resp->free / 1024 / 1024);
   LOG(h.verbose, "[%s] Compute Capability %d.%d\n", resp->gpu_id, resp->major, resp->minor);
 
   
