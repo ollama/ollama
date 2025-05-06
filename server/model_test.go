@@ -80,7 +80,7 @@ func TestToolToken(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to parse template: %v", err)
 			}
-			got, ok := ToolToken(tmpl)
+			got, ok := ToolPrefix(tmpl)
 			if got != tt.want {
 				t.Errorf("ToolToken(%q) = %q; want %q", tt.template, got, tt.want)
 			}

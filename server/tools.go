@@ -2,50 +2,39 @@ package server
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	gotmpl "text/template"
+
+	jsonv2 "github.com/go-json-experiment/json"
 
 	"github.com/ollama/ollama/api"
 )
 
-func parseObjects(s string) []map[string]any {
-	var objs []map[string]any
-	for offset := 0; offset < len(s); {
-		var obj map[string]any
-		decoder := json.NewDecoder(strings.NewReader(s[offset:]))
-		err := decoder.Decode(&obj)
-		switch {
-		case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
-			return objs
-		case err != nil:
-			var syntax *json.SyntaxError
-			var unmarshalType *json.UnmarshalTypeError
-			switch {
-			case errors.As(err, &syntax):
-				offset += int(syntax.Offset)
-				continue
-			case errors.As(err, &unmarshalType):
-				offset += int(unmarshalType.Offset)
-				continue
-			default:
-				return nil
-			}
-		}
-		offset += int(decoder.InputOffset())
-		objs = append(objs, obj)
-	}
-	return objs
+type State int
+
+const (
+	NoTool State = iota
+	PartialTool
+	ToolCall
+)
+
+type ToolParser struct {
+	tmpl       *gotmpl.Template
+	state      State
+	sb         *strings.Builder
+	toolPrefix string
+	done       bool
 }
 
 // parseJSONToolCalls attempts to parse a JSON string into a slice of ToolCalls.
 // Returns parsed tool calls and a boolean indicating if the JSON is incomplete
-func parseJSONToolCalls(tmpl *gotmpl.Template, s string) ([]api.ToolCall, bool) {
+func (p *ToolParser) parseJSONToolCalls(s string) ([]api.ToolCall, bool, bool) {
 	var b bytes.Buffer
-	if err := tmpl.Execute(&b, map[string][]api.ToolCall{
+	if err := p.tmpl.Execute(&b, map[string][]api.ToolCall{
 		"ToolCalls": {
 			{
 				Function: api.ToolCallFunction{
@@ -57,35 +46,18 @@ func parseJSONToolCalls(tmpl *gotmpl.Template, s string) ([]api.ToolCall, bool) 
 			},
 		},
 	}); err != nil {
-		return nil, false
+		return nil, false, false
 	}
 
-	templateObjects := parseObjects(b.String())
-	if len(templateObjects) == 0 {
-		return nil, false
+	// slog.Debug("template", "template", b.String())
+
+	// ! this can be either a map or an array
+	var temp any
+	err := jsonv2.Unmarshal(b.Bytes(), &temp)
+	if err != nil {
+		return nil, false, false
 	}
 
-	// find the keys that correspond to the name and arguments fields
-	var name, arguments string
-	for k, v := range templateObjects[0] {
-		switch v.(type) {
-		case string:
-			name = k
-		case map[string]any:
-			arguments = k
-		}
-	}
-
-	if name == "" || arguments == "" {
-		return nil, false
-	}
-
-	responseObjects := parseObjects(s)
-	if len(responseObjects) == 0 {
-		return nil, false
-	}
-
-	// collect all nested objects
 	var collect func(any) []map[string]any
 	collect = func(obj any) (all []map[string]any) {
 		switch o := obj.(type) {
@@ -103,16 +75,63 @@ func parseJSONToolCalls(tmpl *gotmpl.Template, s string) ([]api.ToolCall, bool) 
 		return all
 	}
 
-	var objs []map[string]any
-	for _, p := range responseObjects {
-		objs = append(objs, collect(p)...)
+	var templateObjects []map[string]any
+	switch t := temp.(type) {
+	case map[string]any:
+		templateObjects = []map[string]any{t}
+	case []map[string]any:
+		templateObjects = t
+	// ! fallback?
+	case []any:
+		templateObjects = collect(t)
 	}
+	if len(templateObjects) == 0 {
+		return nil, false, false
+	}
+	// fmt.Println("template objects", templateObjects)
+
+	// find the keys that correspond to the name and arguments fields
+	var name, arguments string
+	for k, v := range templateObjects[0] {
+		switch v.(type) {
+		case string:
+			name = k
+		case map[string]any:
+			arguments = k
+		}
+	}
+
+	if name == "" || arguments == "" {
+		return nil, false, false
+	}
+	var responseObjects any
+	err = jsonv2.Unmarshal([]byte(s), &responseObjects)
+	if err != nil {
+		if errors.Is(err, io.ErrUnexpectedEOF) || err.Error() == "unexpected end of JSON input" {
+			fmt.Println("Detected partial or incomplete JSON.")
+			fmt.Println("state", p.state)
+			return nil, true, false
+		} else {
+			fmt.Printf("Other error: %v\n", err)
+			fmt.Println("exiting", p.state)
+			return nil, false, false
+		}
+	}
+
+	var objs []map[string]any
+	objs = append(objs, collect(responseObjects)...)
+	if len(objs) == 0 {
+		return nil, false, false
+	}
+
+	slog.Debug("collected objects", "count", len(objs))
 
 	var toolCalls []api.ToolCall
 	for _, kv := range objs {
 		n, nok := kv[name].(string)
 		a, aok := kv[arguments].(map[string]any)
 		if nok && aok {
+			slog.Debug("found valid tool call", "name", n)
 			toolCalls = append(toolCalls, api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name:      n,
@@ -122,54 +141,82 @@ func parseJSONToolCalls(tmpl *gotmpl.Template, s string) ([]api.ToolCall, bool) 
 		}
 	}
 
-	return toolCalls, len(toolCalls) > 0
-}
-
-// routeToolParsing is a helper function that routes what kind of tool parsing to use
-func routeToolParsing(s string, tmpl *gotmpl.Template) ([]api.ToolCall, bool, bool) {
-	if strings.HasPrefix(s, "[{") || strings.HasPrefix(s, "```") || strings.HasPrefix(s, "{") {
-		if toolCalls, ok := parseJSONToolCalls(tmpl, s); ok {
-			return toolCalls, false, true
-		}
-		// in the case the JSON never finishes, the acuumulated content should be sent downstream
-		return nil, true, true
-	}
-	// TODO(parthsareen): add python tool call support
-	return nil, false, false
+	slog.Debug("parsed tool calls", "count", len(toolCalls))
+	return toolCalls, len(toolCalls) > 0, true
 }
 
 // ParseToolCalls extracts tool calls from a string using a tool token prefix or direct JSON parsing.
 // Returns tool calls, whether parsing is incomplete, and any errors.
-func ParseToolCalls(s string, toolToken string, tmpl *gotmpl.Template) ([]api.ToolCall, bool, error) {
-	if tmpl == nil {
-		return nil, false, fmt.Errorf("no template provided")
-	}
+func (p *ToolParser) ParseToolCalls(s string) ([]api.ToolCall, bool) {
+	p.sb.WriteString(s)
+	s = p.sb.String()
 	s = strings.TrimSpace(s)
+	slog.Debug("parse tool calls", "content", s)
+
 	if len(s) == 0 {
-		return nil, false, fmt.Errorf("empty input string")
+		return nil, false
 	}
-	if toolToken != "" {
-		if strings.HasPrefix(s, toolToken) {
-			s = strings.TrimSpace(s[len(toolToken):])
-			tc, _, ok := routeToolParsing(s, tmpl)
-			if len(tc) == 0 || !ok {
-				return nil, true, nil
-			}
-			return tc, false, nil
+	hasPrefix := false
+	if p.toolPrefix != "" {
+		if strings.HasPrefix(s, p.toolPrefix) {
+			s = strings.TrimSpace(s[len(p.toolPrefix):])
+			slog.Debug("tool prefix", "prefix", p.toolPrefix, "content", s)
+			p.state = PartialTool
+			hasPrefix = true
 			// Special token end case
-		} else if strings.HasSuffix(s, toolToken[2:]) {
-			tc := api.ToolCall{
-				Function: api.ToolCallFunction{
-					Name: toolToken,
-				},
-			}
-			return []api.ToolCall{tc}, true, nil
+		} else if strings.HasSuffix(s, p.toolPrefix[2:]) {
+			p.state = PartialTool
+			p.sb.Reset()
+			slog.Debug("setting to no tool", "content", s)
+			return nil, false
 		}
 	}
+	tcs, partial, ok := p.parseJSONToolCalls(s)
 
-	tc, partial, ok := routeToolParsing(s, tmpl)
-	if !ok {
-		return nil, false, fmt.Errorf("failed to parse tool calls for input: %q", s)
+	//  TODO: figure out how to return the remaining string if not partial anymore
+	// update state
+	switch {
+	case !ok && !partial && hasPrefix:
+		p.state = PartialTool
+	case !ok && !partial:
+		p.state = NoTool
+	case !ok && partial:
+		p.state = PartialTool
+	case len(tcs) > 0:
+		p.state = ToolCall
 	}
-	return tc, partial, nil
+
+	if p.state == NoTool || p.state == ToolCall {
+		slog.Debug("resetting string builder", "state", p.state)
+		p.sb.Reset()
+	}
+
+	if !ok {
+		return nil, false
+	}
+
+	slog.Debug("returning tool calls", "tool calls", tcs)
+	fmt.Println("end state", p.state)
+	if p.toolPrefix == "" {
+		p.done = true
+	}
+
+	fmt.Println("len tcs", len(tcs))
+	return tcs, true
+}
+
+func NewToolParser(model *Model) *ToolParser {
+	templateToolPrefix, _ := ToolPrefix(model.Template.Template)
+	slog.Debug("tool prefix", "prefix", templateToolPrefix)
+	tmpl, ok := ToolTemplate(model)
+	if !ok {
+		return nil
+	}
+
+	return &ToolParser{
+		tmpl:       tmpl,
+		sb:         &strings.Builder{},
+		toolPrefix: templateToolPrefix,
+		done:       false,
+	}
 }

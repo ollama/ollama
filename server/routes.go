@@ -21,7 +21,6 @@ import (
 	"slices"
 	"strings"
 	"syscall"
-	gotmpl "text/template"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -1486,26 +1485,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
-		var sb strings.Builder
+		// var sb strings.Builder
 		var toolCallIndex int = 0
-		var templateToolToken string
-		var tmpl *gotmpl.Template
+		var tp *ToolParser
 		if len(req.Tools) > 0 {
-			var ok bool
-			templateToolToken, ok = ToolToken(m.Template.Template)
-			if !ok {
-				slog.Debug("no tool token found")
-			}
-			tmpl, ok = ToolTemplate(m)
-			if !ok {
-				slog.Debug("no tool template found")
-			}
+			tp = NewToolParser(m)
 		}
 
-		checkToolCall := false
-		if len(req.Tools) > 0 {
-			checkToolCall = true
-		}
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
@@ -1526,50 +1512,29 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 
 			if r.Done {
-				if sb.Len() > 0 {
-					res.Message.Content = sb.String()
-				}
 				res.DoneReason = r.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
 
-			sb.WriteString(r.Content)
-			if len(req.Tools) > 0 && checkToolCall {
-				slog.Debug("parse tool calls", "content", sb.String(), "templateToolToken", templateToolToken)
-				toolCalls, partial, err := ParseToolCalls(sb.String(), templateToolToken, tmpl)
-				if err == nil {
-					if partial {
-						// circuit break to remove tool end token
-						if len(toolCalls) > 0 {
-							sb.Reset()
-						}
-						// If the tool call is partial, we need to wait for the next chunk
-						return
-					}
+			if len(req.Tools) > 0 && !tp.done {
+				fmt.Println("checking tool calls")
+				toolCalls, ok := tp.ParseToolCalls(r.Content)
+				if tp.state == PartialTool {
+					fmt.Println("partial tool, returning")
+					return
+				}
+				if ok && len(toolCalls) > 0 {
 					res.Message.ToolCalls = toolCalls
 					for i := range toolCalls {
 						toolCalls[i].Function.Index = toolCallIndex
 						toolCallIndex++
 					}
+					// Remove content when tool call is present
 					res.Message.Content = ""
-					ch <- res
-					// Only way to have multiple calls is to have [] which is derived or provided
-					// This case occurs when the tool call is a json block - do not allow tool calls again
-					if templateToolToken == "" || (templateToolToken != "" && !strings.HasPrefix(sb.String(), templateToolToken)) {
-						checkToolCall = false
-					}
-					sb.Reset()
-					return
 				}
 			}
 
-			// If there is no template tool token, we don't need to check for tool calls after the first chunk
-			if templateToolToken == "" {
-				checkToolCall = false
-			}
-			res.Message.Content = sb.String()
-			sb.Reset()
 			ch <- res
 		}); err != nil {
 			ch <- gin.H{"error": err.Error()}
