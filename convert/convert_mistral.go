@@ -89,8 +89,8 @@ func (p *mistral3Model) KV(t *Tokenizer) ggml.KV {
 	return kv
 }
 
-func (p *mistral3Model) Tensors(ts []Tensor) []ggml.Tensor {
-	var out []ggml.Tensor
+func (p *mistral3Model) Tensors(ts []Tensor) []*ggml.Tensor {
+	var out []*ggml.Tensor
 
 	for _, t := range ts {
 		if !strings.HasPrefix(t.Name(), "v.") {
@@ -100,7 +100,7 @@ func (p *mistral3Model) Tensors(ts []Tensor) []ggml.Tensor {
 			}
 		}
 
-		out = append(out, ggml.Tensor{
+		out = append(out, &ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),

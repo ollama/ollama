@@ -312,6 +312,7 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(runtime.GOMAXPROCS(0))
 	for _, t := range meta.Tensors().Items() {
+		t := t
 		g.Go(func() error {
 			tts := make([]*C.struct_ggml_tensor, max(1, len(targets[t.Name])))
 			for i := range tts {

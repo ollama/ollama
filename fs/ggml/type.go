@@ -1,185 +1,341 @@
 package ggml
 
-import "fmt"
-
-type fileType uint32
-
-const (
-	fileTypeF32 fileType = iota
-	fileTypeF16
-	fileTypeQ4_0
-	fileTypeQ4_1
-	fileTypeQ4_1_F16
-	fileTypeQ4_2 // unused
-	fileTypeQ4_3 // unused
-	fileTypeQ8_0
-	fileTypeQ5_0
-	fileTypeQ5_1
-	fileTypeQ2_K
-	fileTypeQ3_K_S
-	fileTypeQ3_K_M
-	fileTypeQ3_K_L
-	fileTypeQ4_K_S
-	fileTypeQ4_K_M
-	fileTypeQ5_K_S
-	fileTypeQ5_K_M
-	fileTypeQ6_K
-	fileTypeIQ2_XXS
-	fileTypeIQ2_XS
-	fileTypeQ2_K_S
-	fileTypeIQ3_XS
-	fileTypeIQ3_XXS
-	fileTypeIQ1_S
-	fileTypeIQ4_NL
-	fileTypeIQ3_S
-	fileTypeIQ3_M
-	fileTypeIQ2_S
-	fileTypeIQ2_M
-	fileTypeIQ4_XS
-	fileTypeIQ1_M
-	fileTypeBF16
-
-	fileTypeUnknown
+import (
+	"fmt"
+	"log/slog"
+	"strings"
 )
 
-func ParseFileType(s string) (fileType, error) {
+// FileType is the Go equivalent to llama_ftype used for gguf file typing
+type FileType uint32
+
+const (
+	FileTypeF32 FileType = iota
+	FileTypeF16
+	FileTypeQ4_0
+	FileTypeQ4_1
+	fileTypeQ4_1_F16 // unused by GGML
+	fileTypeQ4_2     // unused by GGML
+	fileTypeQ4_3     // unused by GGML
+	FileTypeQ8_0
+	FileTypeQ5_0
+	FileTypeQ5_1
+	FileTypeQ2_K
+	FileTypeQ3_K_S
+	FileTypeQ3_K_M
+	FileTypeQ3_K_L
+	FileTypeQ4_K_S
+	FileTypeQ4_K_M
+	FileTypeQ5_K_S
+	FileTypeQ5_K_M
+	FileTypeQ6_K
+	fileTypeIQ2_XXS // not supported by ollama
+	fileTypeIQ2_XS  // not supported by ollama
+	FileTypeQ2_K_S
+	fileTypeIQ3_XS  // not supported by ollama
+	fileTypeIQ3_XXS // not supported by ollama
+	fileTypeIQ1_S   // not supported by ollama
+	fileTypeIQ4_NL  // not supported by ollama
+	fileTypeIQ3_S   // not supported by ollama
+	fileTypeIQ3_M   // not supported by ollama
+	fileTypeIQ2_S   // not supported by ollama
+	fileTypeIQ2_M   // not supported by ollama
+	fileTypeIQ4_XS  // not supported by ollama
+	fileTypeIQ1_M   // not supported by ollama
+	FileTypeBF16
+	fileTypeQ4_0_4_4 // unused by GGML
+	fileTypeQ4_0_4_8 // unused by GGML
+	fileTypeQ4_0_8_8 // unused by GGML
+	fileTypeTQ1_0    // not supported by ollama
+	fileTypeTQ2_0    // not supported by ollama
+
+	FileTypeUnknown = 1024
+)
+
+// ParseFileType parses the provided GGUF file type
+// Only Ollama supported types are considered valid
+func ParseFileType(s string) (FileType, error) {
 	switch s {
 	case "F32":
-		return fileTypeF32, nil
+		return FileTypeF32, nil
 	case "F16":
-		return fileTypeF16, nil
+		return FileTypeF16, nil
 	case "Q4_0":
-		return fileTypeQ4_0, nil
+		return FileTypeQ4_0, nil
 	case "Q4_1":
-		return fileTypeQ4_1, nil
-	case "Q4_1_F16":
-		return fileTypeQ4_1_F16, nil
+		return FileTypeQ4_1, nil
 	case "Q8_0":
-		return fileTypeQ8_0, nil
+		return FileTypeQ8_0, nil
 	case "Q5_0":
-		return fileTypeQ5_0, nil
+		return FileTypeQ5_0, nil
 	case "Q5_1":
-		return fileTypeQ5_1, nil
+		return FileTypeQ5_1, nil
 	case "Q2_K":
-		return fileTypeQ2_K, nil
+		return FileTypeQ2_K, nil
 	case "Q3_K_S":
-		return fileTypeQ3_K_S, nil
+		return FileTypeQ3_K_S, nil
 	case "Q3_K_M":
-		return fileTypeQ3_K_M, nil
+		return FileTypeQ3_K_M, nil
 	case "Q3_K_L":
-		return fileTypeQ3_K_L, nil
+		return FileTypeQ3_K_L, nil
 	case "Q4_K_S":
-		return fileTypeQ4_K_S, nil
-	case "Q4_K_M":
-		return fileTypeQ4_K_M, nil
+		return FileTypeQ4_K_S, nil
+	case "Q4_K_M", "Q4_K":
+		return FileTypeQ4_K_M, nil
 	case "Q5_K_S":
-		return fileTypeQ5_K_S, nil
-	case "Q5_K_M":
-		return fileTypeQ5_K_M, nil
+		return FileTypeQ5_K_S, nil
+	case "Q5_K_M", "Q5_K":
+		return FileTypeQ5_K_M, nil
 	case "Q6_K":
-		return fileTypeQ6_K, nil
-	case "IQ2_XXS":
-		return fileTypeIQ2_XXS, nil
-	case "IQ2_XS":
-		return fileTypeIQ2_XS, nil
+		return FileTypeQ6_K, nil
 	case "Q2_K_S":
-		return fileTypeQ2_K_S, nil
-	case "IQ3_XS":
-		return fileTypeIQ3_XS, nil
-	case "IQ3_XXS":
-		return fileTypeIQ3_XXS, nil
-	case "IQ1_S":
-		return fileTypeIQ1_S, nil
-	case "IQ4_NL":
-		return fileTypeIQ4_NL, nil
-	case "IQ3_S":
-		return fileTypeIQ3_S, nil
-	case "IQ3_M":
-		return fileTypeIQ3_M, nil
-	case "IQ2_S":
-		return fileTypeIQ2_S, nil
-	case "IQ2_M":
-		return fileTypeIQ2_M, nil
-	case "IQ4_XS":
-		return fileTypeIQ4_XS, nil
-	case "IQ1_M":
-		return fileTypeIQ1_M, nil
+		return FileTypeQ2_K_S, nil
 	case "BF16":
-		return fileTypeBF16, nil
+		return FileTypeBF16, nil
 	default:
-		return fileTypeUnknown, fmt.Errorf("unknown fileType: %s", s)
+		supportedFileTypes := []FileType{
+			FileTypeF32,
+			FileTypeF16,
+			FileTypeQ4_K_S,
+			FileTypeQ4_K_M,
+			FileTypeQ8_0,
+			// fsggml.FileTypeBF16, // TODO
+		}
+		strs := make([]string, len(supportedFileTypes))
+		for i := range supportedFileTypes {
+			strs[i] = supportedFileTypes[i].String()
+		}
+
+		return FileTypeUnknown, fmt.Errorf("unsupported quantization type %s - supported types are %s", s, strings.Join(strs, ", "))
 	}
 }
 
-func (t fileType) String() string {
+func (t FileType) String() string {
 	switch t {
-	case fileTypeF32:
+	case FileTypeF32:
 		return "F32"
-	case fileTypeF16:
+	case FileTypeF16:
 		return "F16"
-	case fileTypeQ4_0:
+	case FileTypeQ4_0:
 		return "Q4_0"
-	case fileTypeQ4_1:
+	case FileTypeQ4_1:
 		return "Q4_1"
-	case fileTypeQ4_1_F16:
-		return "Q4_1_F16"
-	case fileTypeQ8_0:
+	case FileTypeQ8_0:
 		return "Q8_0"
-	case fileTypeQ5_0:
+	case FileTypeQ5_0:
 		return "Q5_0"
-	case fileTypeQ5_1:
+	case FileTypeQ5_1:
 		return "Q5_1"
-	case fileTypeQ2_K:
+	case FileTypeQ2_K:
 		return "Q2_K"
-	case fileTypeQ3_K_S:
+	case FileTypeQ3_K_S:
 		return "Q3_K_S"
-	case fileTypeQ3_K_M:
+	case FileTypeQ3_K_M:
 		return "Q3_K_M"
-	case fileTypeQ3_K_L:
+	case FileTypeQ3_K_L:
 		return "Q3_K_L"
-	case fileTypeQ4_K_S:
+	case FileTypeQ4_K_S:
 		return "Q4_K_S"
-	case fileTypeQ4_K_M:
+	case FileTypeQ4_K_M:
 		return "Q4_K_M"
-	case fileTypeQ5_K_S:
+	case FileTypeQ5_K_S:
 		return "Q5_K_S"
-	case fileTypeQ5_K_M:
+	case FileTypeQ5_K_M:
 		return "Q5_K_M"
-	case fileTypeQ6_K:
+	case FileTypeQ6_K:
 		return "Q6_K"
-	case fileTypeIQ2_XXS:
-		return "IQ2_XXS"
-	case fileTypeIQ2_XS:
-		return "IQ2_XS"
-	case fileTypeQ2_K_S:
+	case FileTypeQ2_K_S:
 		return "Q2_K_S"
-	case fileTypeIQ3_XS:
-		return "IQ3_XS"
-	case fileTypeIQ3_XXS:
-		return "IQ3_XXS"
-	case fileTypeIQ1_S:
-		return "IQ1_S"
-	case fileTypeIQ4_NL:
-		return "IQ4_NL"
-	case fileTypeIQ3_S:
-		return "IQ3_S"
-	case fileTypeIQ3_M:
-		return "IQ3_M"
-	case fileTypeIQ2_S:
-		return "IQ2_S"
-	case fileTypeIQ4_XS:
-		return "IQ4_XS"
-	case fileTypeIQ2_M:
-		return "IQ2_M"
-	case fileTypeIQ1_M:
-		return "IQ1_M"
-	case fileTypeBF16:
+	case FileTypeBF16:
 		return "BF16"
 	default:
 		return "unknown"
 	}
 }
 
-func (t fileType) Value() uint32 {
+func (t FileType) Value() uint32 {
 	return uint32(t)
+}
+
+func (ftype FileType) ToTensorType() TensorType {
+	switch ftype {
+	case FileTypeF32:
+		return TensorTypeF32
+	case FileTypeF16:
+		return TensorTypeF16
+	case FileTypeQ4_0:
+		return TensorTypeQ4_0
+	case FileTypeQ4_1:
+		return TensorTypeQ4_1
+	case FileTypeQ8_0:
+		return TensorTypeQ8_0
+	case FileTypeQ5_0:
+		return TensorTypeQ5_0
+	case FileTypeQ5_1:
+		return TensorTypeQ5_1
+	case FileTypeQ2_K:
+		return TensorTypeQ2_K
+	case FileTypeQ3_K_S:
+		return TensorTypeQ3_K
+	case FileTypeQ3_K_M:
+		return TensorTypeQ3_K
+	case FileTypeQ3_K_L:
+		return TensorTypeQ3_K
+	case FileTypeQ4_K_S:
+		return TensorTypeQ4_K
+	case FileTypeQ4_K_M:
+		return TensorTypeQ4_K
+	case FileTypeQ5_K_S:
+		return TensorTypeQ5_K
+	case FileTypeQ5_K_M:
+		return TensorTypeQ5_K
+	case FileTypeQ6_K:
+		return TensorTypeQ6_K
+	case FileTypeQ2_K_S:
+		return TensorTypeQ2_K
+	case FileTypeBF16:
+		return TensorTypeBF16
+	default:
+		slog.Warn("unsupported file type", "type", ftype)
+		return 0 // F32
+	}
+}
+
+// TensorType is equivalent to ggml_type for individual tensor types
+// Note: these are not the same as FileType
+type TensorType uint32
+
+const (
+	TensorTypeF32 TensorType = iota
+	TensorTypeF16
+	TensorTypeQ4_0
+	TensorTypeQ4_1
+	tensorTypeQ4_2 // unused by GGML
+	tensorTypeQ4_3 // unused by GGML
+	TensorTypeQ5_0
+	TensorTypeQ5_1
+	TensorTypeQ8_0
+	TensorTypeQ8_1
+	TensorTypeQ2_K
+	TensorTypeQ3_K
+	TensorTypeQ4_K
+	TensorTypeQ5_K
+	TensorTypeQ6_K
+	TensorTypeQ8_K
+	tensorTypeIQ2_XXS // not supported by ollama
+	tensorTypeIQ2_XS  // not supported by ollama
+	tensorTypeIQ3_XXS // not supported by ollama
+	tensorTypeIQ1_S   // not supported by ollama
+	tensorTypeIQ4_NL  // not supported by ollama
+	tensorTypeIQ3_S   // not supported by ollama
+	tensorTypeIQ2_S   // not supported by ollama
+	tensorTypeIQ4_XS  // not supported by ollama
+	TensorTypeI8
+	TensorTypeI16
+	TensorTypeI32
+	TensorTypeI64
+	TensorTypeF64
+	tensorTypeIQ1_M // not supported by ollama
+	TensorTypeBF16
+	tensorTypeQ4_0_4_4   // unused by GGML
+	tensorTypeQ4_0_4_8   // unused by GGML
+	tensorTypeQ4_0_8_8   // unused by GGML
+	tensorTypeTQ1_0      // not supported by ollama
+	tensorTypeTQ2_0      // not supported by ollama
+	tensorTypeIQ4_NL_4_4 // unused by GGML
+	tensorTypeIQ4_NL_4_8 // unused by GGML
+	tensorTypeIQ4_NL_8_8 // unused by GGML
+)
+
+// ParseFileType parses the provided GGUF file type
+// Only Ollama supported types are considered valid
+func ParseTensorType(s string) (TensorType, error) {
+	switch s {
+	case "F32":
+		return TensorTypeF32, nil
+	case "F16":
+		return TensorTypeF16, nil
+	case "Q4_0":
+		return TensorTypeQ4_0, nil
+	case "Q4_1":
+		return TensorTypeQ4_1, nil
+	case "Q5_0":
+		return TensorTypeQ5_0, nil
+	case "Q5_1":
+		return TensorTypeQ5_1, nil
+	case "Q8_0":
+		return TensorTypeQ8_0, nil
+	case "Q8_1":
+		return TensorTypeQ8_1, nil
+	case "Q2_K":
+		return TensorTypeQ2_K, nil
+	case "Q3_K":
+		return TensorTypeQ3_K, nil
+	case "Q4_K":
+		return TensorTypeQ4_K, nil
+	case "Q5_K":
+		return TensorTypeQ5_K, nil
+	case "Q6_K":
+		return TensorTypeQ6_K, nil
+	case "Q8_K":
+		return TensorTypeQ8_K, nil
+	case "F64":
+		return TensorTypeF64, nil
+	case "BF16":
+		return TensorTypeBF16, nil
+	default:
+		return 0, fmt.Errorf("unsupported quantization type %s", s)
+	}
+}
+
+func (t TensorType) IsQuantized() bool {
+	switch t {
+	case TensorTypeF32, TensorTypeF16, TensorTypeBF16:
+		return false
+	default:
+		return true
+	}
+}
+
+func (t TensorType) RowSize(ne uint64) uint64 {
+	return t.TypeSize() * ne / t.BlockSize()
+}
+
+func (t TensorType) String() string {
+	switch t {
+	case TensorTypeF32:
+		return "F32"
+	case TensorTypeF16:
+		return "F16"
+	case TensorTypeQ4_0:
+		return "Q4_0"
+	case TensorTypeQ4_1:
+		return "Q4_1"
+	case TensorTypeQ5_0:
+		return "Q5_0"
+	case TensorTypeQ5_1:
+		return "Q5_1"
+	case TensorTypeQ8_0:
+		return "Q8_0"
+	case TensorTypeQ8_1:
+		return "Q8_1"
+	case TensorTypeQ2_K:
+		return "Q2_K"
+	case TensorTypeQ3_K:
+		return "Q3_K"
+	case TensorTypeQ4_K:
+		return "Q4_K"
+	case TensorTypeQ5_K:
+		return "Q5_K"
+	case TensorTypeQ6_K:
+		return "Q6_K"
+	case TensorTypeQ8_K:
+		return "Q8_K"
+	case TensorTypeF64:
+		return "F64"
+	case TensorTypeBF16:
+		return "BF16"
+	default:
+		return "unknown"
+	}
 }

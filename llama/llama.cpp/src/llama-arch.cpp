@@ -74,7 +74,6 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
     { LLM_ARCH_WAVTOKENIZER_DEC, "wavtokenizer-dec" },
     { LLM_ARCH_PLM,              "plm"              },
     { LLM_ARCH_BAILINGMOE,       "bailingmoe"       },
-    { LLM_ARCH_MISTRAL3,         "mistral3"         },
     { LLM_ARCH_UNKNOWN,          "(unknown)"        },
 };
 
@@ -1606,22 +1605,6 @@ static const std::map<llm_arch, std::map<llm_tensor, const char *>> LLM_TENSOR_N
             { LLM_TENSOR_FFN_DOWN_SHEXP,     "blk.%d.ffn_down_shexp" },
             { LLM_TENSOR_FFN_UP_SHEXP,       "blk.%d.ffn_up_shexp" },
         },
-    },
-    {
-        LLM_ARCH_MISTRAL3,
-        {
-            { LLM_TENSOR_TOKEN_EMBD,  "token_embd" },
-            { LLM_TENSOR_OUTPUT_NORM, "output_norm" },
-            { LLM_TENSOR_ATTN_NORM,   "blk.%d.attn_norm" },
-            { LLM_TENSOR_ATTN_Q,      "blk.%d.attn_q" },
-            { LLM_TENSOR_ATTN_K,      "blk.%d.attn_k" },
-            { LLM_TENSOR_ATTN_V,      "blk.%d.attn_v" },
-            { LLM_TENSOR_ATTN_OUT,    "blk.%d.attn_output" },
-            { LLM_TENSOR_FFN_NORM,    "blk.%d.ffn_norm" },
-            { LLM_TENSOR_FFN_GATE,    "blk.%d.ffn_gate" },
-            { LLM_TENSOR_FFN_UP,      "blk.%d.ffn_up" },
-            { LLM_TENSOR_FFN_DOWN,    "blk.%d.ffn_down" },
-        }
     },
     {
         LLM_ARCH_UNKNOWN,

@@ -29,7 +29,7 @@ func (p *mixtralModel) KV(t *Tokenizer) ggml.KV {
 	return kv
 }
 
-func (p *mixtralModel) Tensors(ts []Tensor) []ggml.Tensor {
+func (p *mixtralModel) Tensors(ts []Tensor) []*ggml.Tensor {
 	oldnew := []string{
 		"model.layers", "blk",
 		"w1", "ffn_gate_exps",
@@ -56,10 +56,10 @@ func (p *mixtralModel) Tensors(ts []Tensor) []ggml.Tensor {
 		return true
 	})
 
-	var out []ggml.Tensor
+	var out []*ggml.Tensor
 	for n, e := range experts {
 		// TODO(mxyng): sanity check experts
-		out = append(out, ggml.Tensor{
+		out = append(out, &ggml.Tensor{
 			Name:     n,
 			Kind:     e[0].Kind(),
 			Shape:    append([]uint64{uint64(len(e))}, e[0].Shape()...),
