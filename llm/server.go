@@ -373,10 +373,12 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		isCPUMode:     cpuMode,
 	}
 	
-	// Initialize model preloader for CPU mode to reduce first token latency
-	if cpuMode {
+	// Initialize model preloader for CPU mode if enabled
+	if cpuMode && envconfig.PreloadCPUModel() {
 		s.modelPreloader = NewModelPreloader(modelPath, estimate.TotalSize)
-		slog.Info("CPU mode detected - will preload model to improve first token latency")
+		slog.Info("CPU model preloading enabled - will preload model to improve first token latency")
+	} else if cpuMode {
+		slog.Debug("CPU model preloading disabled - set OLLAMA_PRELOAD_CPU_MODEL=1 to enable")
 	}
 
 		s.cmd.Env = os.Environ()
