@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 )
 
@@ -99,7 +100,8 @@ func (p *ModelPreloader) preloadRoutine() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	inactivityTimeout := 5 * time.Minute
+	// Use the system-wide keep alive timeout setting
+	inactivityTimeout := envconfig.KeepAlive()
 	
 	for {
 		select {
