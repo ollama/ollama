@@ -6,12 +6,42 @@ import (
 	"log/slog"
 	"math"
 	"slices"
+	"syscall"
+	"unsafe"
 
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model/input"
 )
 
 type shiftFn func(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error)
+
+// lockMemory locks a memory region in RAM using madvise system call
+// This prevents the OS from swapping these pages to disk
+func lockMemory(addr uintptr, length uintptr) error {
+	// MADV_WILLNEED: Indicates that the application will need these pages
+	// MADV_LOCK: Prevent these pages from being swapped out (requires CAP_SYS_ADMIN or similar privileges)
+	err := syscall.Madvise(unsafe.Slice((*byte)(unsafe.Pointer(addr)), int(length)), syscall.MADV_WILLNEED)
+	if err != nil {
+		return err
+	}
+	
+	// Try to lock the memory - this may fail if the process doesn't have the necessary privileges
+	err = syscall.Madvise(unsafe.Slice((*byte)(unsafe.Pointer(addr)), int(length)), syscall.MADV_DONTFORK)
+	if err != nil {
+		// Log but continue - MADV_DONTFORK may not be critical
+		slog.Debug("could not set MADV_DONTFORK for KV cache, continuing anyway", "error", err)
+	}
+	
+	// Try to lock the memory - this requires privileges but provides the strongest guarantee
+	err = syscall.Madvise(unsafe.Slice((*byte)(unsafe.Pointer(addr)), int(length)), syscall.MADV_LOCK)
+	if err != nil {
+		// Log but continue - this is expected to fail without elevated privileges
+		slog.Debug("could not lock KV cache memory with MADV_LOCK (requires elevated privileges)", "error", err)
+		return nil
+	}
+	
+	return nil
+}
 
 // Causal cache stores K and V tensors according to their position in the
 // sequence. Returns the history and a mask for attending to past tokens
@@ -66,6 +96,9 @@ type Causal struct {
 	backend      ml.Backend
 	ctxs         map[int]ml.Context
 	keys, values map[int]ml.Tensor
+	
+	// memory locking flags
+	memoryLocked bool
 }
 
 type cacheCell struct {
@@ -555,6 +588,23 @@ func (c *Causal) Put(ctx ml.Context, key, value ml.Tensor) {
 
 	if _, ok := c.keys[c.curLayer]; !ok {
 		c.keys[c.curLayer] = c.ctxs[c.curLayer].Zeros(c.DType, kHeadDim, numKVHeads, len(c.cells))
+		
+		// Attempt to lock memory for KV cache - keys
+		if !c.memoryLocked {
+			data := c.keys[c.curLayer].Data()
+			if data != nil {
+				addr := uintptr(unsafe.Pointer(data))
+				length := uintptr(c.keys[c.curLayer].Size())
+				
+				if err := lockMemory(addr, length); err != nil {
+					slog.Warn("failed to lock KV cache key memory, pages may be swapped", "error", err)
+				} else {
+					slog.Info("successfully locked KV cache key memory", 
+						"layer", c.curLayer, 
+						"size", fmt.Sprintf("%.2f MB", float64(length)/(1024*1024)))
+				}
+			}
+		}
 	}
 
 	if _, ok := c.values[c.curLayer]; !ok {
@@ -562,6 +612,24 @@ func (c *Causal) Put(ctx ml.Context, key, value ml.Tensor) {
 			c.values[c.curLayer] = c.ctxs[c.curLayer].Zeros(c.DType, len(c.cells), vHeadDim, numKVHeads)
 		} else {
 			c.values[c.curLayer] = c.ctxs[c.curLayer].Zeros(c.DType, vHeadDim, numKVHeads, len(c.cells))
+		}
+		
+		// Attempt to lock memory for KV cache - values
+		if !c.memoryLocked {
+			data := c.values[c.curLayer].Data()
+			if data != nil {
+				addr := uintptr(unsafe.Pointer(data))
+				length := uintptr(c.values[c.curLayer].Size())
+				
+				if err := lockMemory(addr, length); err != nil {
+					slog.Warn("failed to lock KV cache value memory, pages may be swapped", "error", err)
+				} else {
+					slog.Info("successfully locked KV cache value memory", 
+						"layer", c.curLayer, 
+						"size", fmt.Sprintf("%.2f MB", float64(length)/(1024*1024)))
+					c.memoryLocked = true
+				}
+			}
 		}
 	}
 

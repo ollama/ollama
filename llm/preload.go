@@ -4,14 +4,16 @@ import (
 	"log/slog"
 	"runtime"
 	"sync"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 )
 
 // ModelPreloader provides functionality to preload model memory pages
-// and keep them warm to prevent page faults during inference
+// and lock them in RAM to prevent page faults during inference
 type ModelPreloader struct {
 	// Protects access to the preload state
 	mu sync.Mutex
@@ -45,8 +47,37 @@ func NewModelPreloader(modelPath string, modelSize uint64) *ModelPreloader {
 	}
 }
 
+// LockMemory locks a memory region in RAM using madvise system call
+// This prevents the OS from swapping these pages to disk
+func LockMemory(addr uintptr, length uintptr) error {
+	// MADV_WILLNEED: Indicates that the application will need these pages
+	// MADV_LOCK: Prevent these pages from being swapped out (requires CAP_SYS_ADMIN or similar privileges)
+	err := syscall.Madvise(unsafe.Slice((*byte)(unsafe.Pointer(addr)), int(length)), syscall.MADV_WILLNEED)
+	if err != nil {
+		return err
+	}
+	
+	// Try to lock the memory - this may fail if the process doesn't have the necessary privileges
+	err = syscall.Madvise(unsafe.Slice((*byte)(unsafe.Pointer(addr)), int(length)), syscall.MADV_DONTFORK)
+	if err != nil {
+		// Log but continue - MADV_DONTFORK may not be critical
+		slog.Debug("could not set MADV_DONTFORK, continuing anyway", "error", err)
+	}
+	
+	// Try to lock the memory - this requires privileges but provides the strongest guarantee
+	err = syscall.Madvise(unsafe.Slice((*byte)(unsafe.Pointer(addr)), int(length)), syscall.MADV_LOCK)
+	if err != nil {
+		// Log but continue - this is expected to fail without elevated privileges
+		slog.Debug("could not lock memory with MADV_LOCK (requires elevated privileges), falling back to manual preloading", "error", err)
+		return nil
+	}
+	
+	return nil
+}
+
 // StartPreloading begins the memory preloading process
-// It reads through the model memory to ensure pages are in RAM
+// It tries to lock the model memory in RAM, and if that's not possible,
+// falls back to periodic touches to keep pages in memory
 func (p *ModelPreloader) StartPreloading(buffer []byte) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -64,7 +95,23 @@ func (p *ModelPreloader) StartPreloading(buffer []byte) {
 		"model", p.modelName,
 		"size", format.HumanBytes2(p.modelSize))
 
+	// Try to lock the memory in RAM first
+	addr := uintptr(unsafe.Pointer(&buffer[0]))
+	length := uintptr(len(buffer))
+	
+	err := LockMemory(addr, length)
+	if err == nil {
+		slog.Info("successfully locked model memory in RAM", 
+			"model", p.modelName, 
+			"size", format.HumanBytes2(p.modelSize))
+	} else {
+		slog.Warn("failed to lock model memory, falling back to periodic access", 
+			"model", p.modelName, 
+			"error", err)
+	}
+
 	// Start background goroutine to maintain model in memory
+	// This is needed even with memory locking as a fallback and to handle timeout
 	go p.preloadRoutine()
 }
 
@@ -137,6 +184,21 @@ func (p *ModelPreloader) touchAllPages() {
 	buffer := p.modelBuffer
 	p.mu.Unlock()
 
+	// Try to lock the memory first (in case it wasn't locked in StartPreloading)
+	addr := uintptr(unsafe.Pointer(&buffer[0]))
+	length := uintptr(len(buffer))
+	
+	if err := LockMemory(addr, length); err != nil {
+		// If locking fails, fall back to manual touching
+		manuallyTouchPages(buffer, p.modelName)
+	} else {
+		slog.Info("memory locked successfully", "model", p.modelName)
+	}
+}
+
+// manuallyTouchPages manually touches all pages to bring them into RAM
+// This is used as a fallback when memory locking is not available
+func manuallyTouchPages(buffer []byte, modelName string) {
 	// System page size, typically 4KB
 	pageSize := 4096
 	sum := byte(0)
@@ -145,8 +207,8 @@ func (p *ModelPreloader) touchAllPages() {
 	chunkSize := 64 * 1024 * 1024 // 64MB chunks
 	numChunks := (len(buffer) + chunkSize - 1) / chunkSize
 	
-	slog.Debug("touching all model memory pages", 
-		"model", p.modelName,
+	slog.Debug("manually touching all model memory pages", 
+		"model", modelName,
 		"chunks", numChunks, 
 		"total_size", format.HumanBytes2(uint64(len(buffer))))
 
@@ -173,8 +235,8 @@ func (p *ModelPreloader) touchAllPages() {
 		_ = sum
 	}
 	
-	slog.Info("completed initial model memory preloading", 
-		"model", p.modelName,
+	slog.Info("completed model memory preloading via manual touching", 
+		"model", modelName,
 		"duration", time.Since(start), 
 		"size", format.HumanBytes2(uint64(len(buffer))))
 }
