@@ -217,9 +217,9 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid)
 	// Extract patch embeddings
 	hiddenStates := m.PatchEmbedding.Forward(ctx, pixelValues, m.VisionModelOptions)
 
-	positionEmbedding := m.positionalEmbedding(ctx, grid)
+	positionEmbedding := m.PositionalEmbedding(ctx, grid)
 
-	windowIndex, bounds := m.windowIndex(ctx, grid)
+	windowIndex, bounds := m.WindowIndex(ctx, grid)
 
 	spatialMergeUnit := m.spatialMergeSize * m.spatialMergeSize
 
@@ -250,7 +250,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid)
 	return hiddenStates.Rows(ctx, reverseWindowIndex)
 }
 
-// windowIndex divides the grid into windows and returns:
+// WindowIndex divides the grid into windows and returns:
 //  1. A tensor containing flattened indices of all grid points organized by windows
 //  2. A slice of boundaries that mark where each window's data begins and ends
 //     in the flattened representation, scaled by spatialMergeSize squared
@@ -258,7 +258,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor, grid *Grid)
 // The boundaries slice always starts with 0 and contains cumulative ending
 // positions for each window, allowing downstream processing to identify
 // window boundaries in the tensor data.
-func (m *VisionModel) windowIndex(ctx ml.Context, grid *Grid) (ml.Tensor, []int) {
+func (m *VisionModel) WindowIndex(ctx ml.Context, grid *Grid) (ml.Tensor, []int) {
 	vitMergerWindowSize := m.windowSize / m.spatialMergeSize / m.patchSize
 
 	llmGridH := grid.Height / m.spatialMergeSize
@@ -307,8 +307,8 @@ func (m *VisionModel) windowIndex(ctx ml.Context, grid *Grid) (ml.Tensor, []int)
 	return t, bounds
 }
 
-// positionalEmbedding generates rotary position embeddings for attention mechanisms
-func (m *VisionModel) positionalEmbedding(ctx ml.Context, grid *Grid) ml.Tensor {
+// PositionalEmbedding generates rotary position embeddings for attention mechanisms
+func (m *VisionModel) PositionalEmbedding(ctx ml.Context, grid *Grid) ml.Tensor {
 	dim := m.headDim / 2
 	freq := dim / 2
 	theta := float64(m.ropeTheta)
