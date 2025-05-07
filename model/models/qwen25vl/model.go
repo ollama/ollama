@@ -36,19 +36,15 @@ func New(c fs.Config) (model.Model, error) {
 	return m, nil
 }
 
-func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, error) {
-	if len(m.VisionModel.Layers) == 0 {
-		return nil, model.ErrNoVisionModel
-	}
-
+func (m *Model) PixelValues(ctx ml.Context, multimodalData []byte) (ml.Tensor, *Grid, error) {
 	image, _, err := image.Decode(bytes.NewReader(multimodalData))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	f32s, grid, err := m.ImageProcessor.ProcessImage(image)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Calculate tensor dimensions
@@ -58,10 +54,23 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 
 	pixelValues, err := ctx.Input().FromFloatSlice(f32s, patchDim, numPatches)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create tensor from image: %w", err)
+		return nil, nil, fmt.Errorf("failed to create tensor from image: %w", err)
 	}
 
-	visionOutputs := m.VisionModel.Forward(ctx, pixelValues, grid)
+	return pixelValues, grid, nil
+}
+
+func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, error) {
+	if len(m.VisionModel.Layers) == 0 {
+		return nil, model.ErrNoVisionModel
+	}
+
+	pixels, grid, err := m.PixelValues(ctx, multimodalData)
+	if err != nil {
+		return nil, err
+	}
+
+	visionOutputs := m.VisionModel.Forward(ctx, pixels, grid)
 	return visionOutputs, nil
 }
 
