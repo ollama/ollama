@@ -17,17 +17,42 @@ import (
 type State int
 
 const (
-	NoTool State = iota
-	PartialTool
-	ToolCall
+	SendTokens State = iota
+	GreedyToolWithPrefix
+	GreedyToolNoPrefix
+	// ToolCall
+	ForceTools
+	ToolSuffix
+	ContainsPartialPrefix
+	Done
 )
+
+func (s State) String() string {
+	switch s {
+	case SendTokens:
+		return "SendTokens"
+	case GreedyToolWithPrefix:
+		return "GreedyToolWithPrefix"
+	case GreedyToolNoPrefix:
+		return "GreedyToolNoPrefix"
+	case ForceTools:
+		return "ForceTools"
+	case ToolSuffix:
+		return "ToolSuffix"
+	case Done:
+		return "Done"
+	case ContainsPartialPrefix:
+		return "PartialPrefix"
+	default:
+		return fmt.Sprintf("Unknown State (%d)", s)
+	}
+}
 
 type ToolParser struct {
 	tmpl       *gotmpl.Template
 	state      State
 	sb         *strings.Builder
 	toolPrefix string
-	done       bool
 }
 
 // parseJSONToolCalls attempts to parse a JSON string into a slice of ToolCalls.
@@ -48,8 +73,6 @@ func (p *ToolParser) parseJSONToolCalls(s string) ([]api.ToolCall, bool, bool) {
 	}); err != nil {
 		return nil, false, false
 	}
-
-	// slog.Debug("template", "template", b.String())
 
 	// ! this can be either a map or an array
 	var temp any
@@ -88,7 +111,6 @@ func (p *ToolParser) parseJSONToolCalls(s string) ([]api.ToolCall, bool, bool) {
 	if len(templateObjects) == 0 {
 		return nil, false, false
 	}
-	// fmt.Println("template objects", templateObjects)
 
 	// find the keys that correspond to the name and arguments fields
 	var name, arguments string
@@ -142,81 +164,134 @@ func (p *ToolParser) parseJSONToolCalls(s string) ([]api.ToolCall, bool, bool) {
 	}
 
 	slog.Debug("parsed tool calls", "count", len(toolCalls))
-	return toolCalls, len(toolCalls) > 0, true
+	return toolCalls, false, true
+}
+
+func (p *ToolParser) updateState(ok bool, partial bool, tcs []api.ToolCall) {
+	switch {
+	case !ok && !partial && p.state == ForceTools:
+		fmt.Println("Case: !ok && !partial && ForceTools - staying in force tools, resetting buffer")
+		// force partial tool if we have a prefix
+		// no op and stay in force tools
+		p.sb.Reset()
+	case !ok && !partial:
+		fmt.Println("Case: !ok && !partial")
+		fmt.Println("state", p.state)
+		if p.state == GreedyToolNoPrefix {
+			fmt.Println("  Subcase: GreedyToolNoPrefix - marking as done")
+			p.state = Done
+		}
+		if p.state == GreedyToolWithPrefix {
+			fmt.Println("  Subcase: GreedyToolWithPrefix - switching to SendTokens")
+			p.state = SendTokens
+		}
+		p.sb.Reset()
+	case !ok && partial:
+		fmt.Println("Case: !ok && partial - accumulating partial content")
+
+		// ! acucumulate
+
+	case len(tcs) > 0:
+		fmt.Println("Case: tool calls found")
+		// do not parse again in the greedy JSON case as soon as we have a tool call
+		if p.state == GreedyToolWithPrefix {
+			p.state = SendTokens
+		} else if p.state == GreedyToolNoPrefix {
+			fmt.Println("  Subcase: Greedy modes - marking done and switching to SendTokens")
+			p.state = Done
+		}
+		p.sb.Reset()
+	}
 }
 
 // ParseToolCalls extracts tool calls from a string using a tool token prefix or direct JSON parsing.
 // Returns tool calls, whether parsing is incomplete, and any errors.
-func (p *ToolParser) ParseToolCalls(s string) ([]api.ToolCall, bool) {
+func (p *ToolParser) ParseToolCalls(s string) ([]api.ToolCall, string, bool) {
 	p.sb.WriteString(s)
 	s = p.sb.String()
 	s = strings.TrimSpace(s)
 	slog.Debug("parse tool calls", "content", s)
 
 	if len(s) == 0 {
-		return nil, false
+		return nil, "", false
 	}
-	hasPrefix := false
+	s, hasPrefix := strings.CutPrefix(s, p.toolPrefix)
+	fmt.Println("hasPrefix", hasPrefix)
+	var tcs []api.ToolCall
+	var partial bool
+	var ok bool
+
 	if p.toolPrefix != "" {
-		if strings.HasPrefix(s, p.toolPrefix) {
-			s = strings.TrimSpace(s[len(p.toolPrefix):])
-			slog.Debug("tool prefix", "prefix", p.toolPrefix, "content", s)
-			p.state = PartialTool
-			hasPrefix = true
-			// Special token end case
-		} else if strings.HasSuffix(s, p.toolPrefix[2:]) {
-			p.state = PartialTool
-			p.sb.Reset()
+		if hasPrefix {
+			p.state = ForceTools
+			slog.Debug("tool prefix in prefix", "prefix", p.toolPrefix, "content", s)
+			// partial tool possibly
+		} else if strings.HasPrefix(p.toolPrefix, s) {
+			slog.Debug("tool prefix partially", "prefix", p.toolPrefix, "content", s)
+			// TODO: could possibly err maybe this should be greedy instead?
+			p.state = ForceTools
+			return nil, "", false
+		} else if strings.Contains(s, p.toolPrefix) {
+			idx := strings.Index(s, p.toolPrefix)
+			if idx != -1 {
+				// still keeps the prefix
+				p.state = ContainsPartialPrefix
+				p.sb.Reset()
+				p.sb.WriteString(s[idx:])
+				return nil, s[:idx], false
+			}
+		}
+		// Special token end case
+		// if s, ok := strings.CutSuffix(s, p.toolPrefix[2:]); ok {
+		if strings.HasSuffix(s, p.toolPrefix[2:]) {
+			// can be with string or just the token
+			if hasPrefix {
+				s = strings.TrimSpace(s[:len(s)-(len(p.toolPrefix)+1)])
+			} else {
+				p.state = ToolSuffix
+				p.sb.Reset()
+				return nil, "", false
+			}
 			slog.Debug("setting to no tool", "content", s)
-			return nil, false
 		}
 	}
-	tcs, partial, ok := p.parseJSONToolCalls(s)
-
-	//  TODO: figure out how to return the remaining string if not partial anymore
-	// update state
-	switch {
-	case !ok && !partial && hasPrefix:
-		p.state = PartialTool
-	case !ok && !partial:
-		p.state = NoTool
-	case !ok && partial:
-		p.state = PartialTool
-	case len(tcs) > 0:
-		p.state = ToolCall
+	fmt.Println("s before parsing", s)
+	if p.state == SendTokens {
+		fmt.Println("returning nil cause of send tokens")
+		return nil, "", false
 	}
-
-	if p.state == NoTool || p.state == ToolCall {
-		slog.Debug("resetting string builder", "state", p.state)
-		p.sb.Reset()
-	}
-
-	if !ok {
-		return nil, false
-	}
-
+	tcs, partial, ok = p.parseJSONToolCalls(s)
 	slog.Debug("returning tool calls", "tool calls", tcs)
 	fmt.Println("end state", p.state)
-	if p.toolPrefix == "" {
-		p.done = true
-	}
 
 	fmt.Println("len tcs", len(tcs))
-	return tcs, true
+	p.updateState(ok, partial, tcs)
+	if !ok {
+		return nil, "", false
+	}
+
+	return tcs, "", true
 }
 
 func NewToolParser(model *Model) *ToolParser {
 	templateToolPrefix, _ := ToolPrefix(model.Template.Template)
+	templateToolPrefix = strings.TrimSpace(templateToolPrefix)
 	slog.Debug("tool prefix", "prefix", templateToolPrefix)
 	tmpl, ok := ToolTemplate(model)
 	if !ok {
 		return nil
 	}
 
+	var state State
+	if templateToolPrefix == "" {
+		state = GreedyToolNoPrefix
+	} else {
+		state = GreedyToolWithPrefix
+	}
 	return &ToolParser{
 		tmpl:       tmpl,
 		sb:         &strings.Builder{},
 		toolPrefix: templateToolPrefix,
-		done:       false,
+		state:      state,
 	}
 }

@@ -1517,12 +1517,15 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
 
-			if len(req.Tools) > 0 && !tp.done {
+			if len(req.Tools) > 0 && tp.state != Done {
 				fmt.Println("checking tool calls")
-				toolCalls, ok := tp.ParseToolCalls(r.Content)
-				if tp.state == PartialTool {
-					fmt.Println("partial tool, returning")
+				toolCalls, leftover, ok := tp.ParseToolCalls(r.Content)
+				if (tp.state == GreedyToolWithPrefix || tp.state == GreedyToolNoPrefix || tp.state == ToolSuffix) || (tp.state == ForceTools && len(toolCalls) == 0) {
 					return
+				}
+				if tp.state == ContainsPartialPrefix {
+					fmt.Println("sending tokens", leftover)
+					res.Message.Content = leftover
 				}
 				if ok && len(toolCalls) > 0 {
 					res.Message.ToolCalls = toolCalls
@@ -1535,6 +1538,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				}
 			}
 
+			fmt.Println("sending response", res.Message.Content)
 			ch <- res
 		}); err != nil {
 			ch <- gin.H{"error": err.Error()}
