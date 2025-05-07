@@ -49,7 +49,7 @@ const (
 // RPCServerMemory checks and total and free memory in bytes of a given RPC
 // endpoint.
 //
-// If the RPC endpoint given is unavailble (unable to connect), the total and
+// If the RPC endpoint given is unavailable (unable to connect), the total and
 // free memory returned would be 0.
 func RPCServerMemory(endpoint string) RPCServerMemoryResult {
 	// Setting timeout to 5 seconds

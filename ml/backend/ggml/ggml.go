@@ -65,7 +65,7 @@ type Backend struct {
 }
 
 func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, error) {
-	// Adding RPC servers to devices
+	// Add RPC servers to devices
  	rpcServers := C.CString(params.RPCServers)
  	C.add_rpc_devices(rpcServers)
  	C.free(unsafe.Pointer(rpcServers))

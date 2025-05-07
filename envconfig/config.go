@@ -166,7 +166,7 @@ var (
 	IntelGPU = Bool("OLLAMA_INTEL_GPU")
 	// MultiUserCache optimizes prompt caching for multi-user scenarios
 	MultiUserCache = Bool("OLLAMA_MULTIUSER_CACHE")
-	// RPCServers sepecifies a comma seperated list of RPC servers to use for inteference.
+	// RPCServers specifies a comma separated list of RPC servers to use for inference.
 	RPCServers = String("OLLAMA_RPC_SERVERS")
 	// Enable the new Ollama engine
 	NewEngine = Bool("OLLAMA_NEW_ENGINE")
