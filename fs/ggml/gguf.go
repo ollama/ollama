@@ -569,7 +569,7 @@ func WriteGGUF(f *os.File, kv KV, ts []*Tensor) error {
 		t := t
 		w := io.NewOffsetWriter(f, offset+int64(t.Offset))
 		g.Go(func() error {
-			_, err = t.WriteTo(w)
+			_, err := t.WriteTo(w)
 			return err
 		})
 	}
