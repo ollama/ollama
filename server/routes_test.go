@@ -474,14 +474,14 @@ func TestRoutes(t *testing.T) {
 					t.Fatalf("failed to read response body: %v", err)
 				}
 
-				var retrieveResp api.RetrieveModelResponse
-				err = json.Unmarshal(body, &retrieveResp)
+				var m openai.Model
+				err = json.Unmarshal(body, &m)
 				if err != nil {
 					t.Fatalf("failed to unmarshal response body: %v", err)
 				}
 
-				if retrieveResp.Id != "show-model" || retrieveResp.OwnedBy != "library" {
-					t.Errorf("expected model 'show-model' owned by 'library', got %v", retrieveResp)
+				if m.Id != "show-model" || m.OwnedBy != "library" {
+					t.Errorf("expected model 'show-model' owned by 'library', got %v", m)
 				}
 			},
 		},
