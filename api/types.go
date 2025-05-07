@@ -83,6 +83,10 @@ type GenerateRequest struct {
 	// Options lists model-specific options. For example, temperature can be
 	// set through this field, if the model supports it.
 	Options map[string]any `json:"options"`
+
+	// Thinking controls whether thinking/reasoning models will think before
+	// responding
+	Thinking bool `json:"thinking,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
@@ -108,6 +112,10 @@ type ChatRequest struct {
 
 	// Options lists model-specific options.
 	Options map[string]any `json:"options"`
+
+	// Thinking controls whether thinking/reasoning models will think before
+	// responding
+	Thinking bool `json:"thinking,omitempty"`
 }
 
 type Tools []Tool
@@ -130,6 +138,10 @@ type Message struct {
 	Content   string      `json:"content"`
 	Images    []ImageData `json:"images,omitempty"`
 	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
+
+	// ThinkingBlock contains the text that was inside <think> tags in the
+	// original model output when ChatRequest.Thinking was enabled.
+	ThinkingBlock string `json:"thinkingBlock,omitempty"`
 }
 
 func (m *Message) UnmarshalJSON(b []byte) error {
@@ -275,6 +287,8 @@ type Options struct {
 	MirostatTau      float32  `json:"mirostat_tau,omitempty"`
 	MirostatEta      float32  `json:"mirostat_eta,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
+
+	Thinking bool `json:"thinking,omitempty"`
 }
 
 // Runner options which must be set when the model is loaded into memory

@@ -318,7 +318,7 @@ func TestChatPrompt(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			model := tt.model
 			opts := api.Options{Runner: api.Runner{NumCtx: tt.limit}}
-			prompt, images, err := chatPrompt(context.TODO(), &model, mockRunner{}.Tokenize, &opts, tt.msgs, nil)
+			prompt, images, err := chatPrompt(context.TODO(), &model, mockRunner{}.Tokenize, &opts, tt.msgs, nil, false)
 			if tt.error == nil && err != nil {
 				t.Fatal(err)
 			} else if tt.error != nil && err != tt.error {

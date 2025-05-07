@@ -165,8 +165,9 @@ func (t *Template) Vars() []string {
 type Values struct {
 	Messages []api.Message
 	api.Tools
-	Prompt string
-	Suffix string
+	Prompt   string
+	Suffix   string
+	Thinking bool
 
 	// forceLegacy is a flag used to test compatibility with legacy templates
 	forceLegacy bool
@@ -225,6 +226,7 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 			"Prompt":   v.Prompt,
 			"Suffix":   v.Suffix,
 			"Response": "",
+			"Thinking": v.Thinking,
 		})
 	} else if !v.forceLegacy && slices.Contains(t.Vars(), "messages") {
 		return t.Template.Execute(w, map[string]any{
@@ -232,6 +234,7 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 			"Messages": messages,
 			"Tools":    v.Tools,
 			"Response": "",
+			"Thinking": v.Thinking,
 		})
 	}
 
@@ -244,6 +247,7 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 				"System":   system,
 				"Prompt":   prompt,
 				"Response": response,
+				"Thinking": v.Thinking,
 			}); err != nil {
 				return err
 			}
@@ -289,6 +293,7 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 		"System":   system,
 		"Prompt":   prompt,
 		"Response": response,
+		"Thinking": v.Thinking,
 	}); err != nil {
 		return err
 	}

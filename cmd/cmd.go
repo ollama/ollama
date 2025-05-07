@@ -38,11 +38,32 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
+	"github.com/ollama/ollama/readline"
 	"github.com/ollama/ollama/runner"
 	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
+
+// warnMissingThinking emits a warning if the model does not advertise thinking
+// support and opts.Thinking is set. Failures to query the capability are
+// ignored so this does not impact regular usage.
+func warnMissingThinking(ctx context.Context, client *api.Client, name string) {
+	fmt.Printf("$$$$$ warnMissingThinking %q\n", name)
+	if name == "" {
+		return
+	}
+	resp, err := client.Show(ctx, &api.ShowRequest{Model: name})
+	if err != nil {
+		return
+	}
+	for _, cap := range resp.Capabilities {
+		if cap == model.CapabilityThinking {
+			return
+		}
+	}
+	fmt.Fprintf(os.Stderr, "warning: model %q does not support thinking output\n", name)
+}
 
 var errModelfileNotFound = errors.New("specified Modelfile wasn't found")
 
@@ -243,6 +264,9 @@ func loadOrUnloadModel(cmd *cobra.Command, opts *runOptions) error {
 	req := &api.GenerateRequest{
 		Model:     opts.Model,
 		KeepAlive: opts.KeepAlive,
+
+		// pass Thinking here so we fail before getting to the chat prompt if the model doesn't support it
+		Thinking: opts.Thinking,
 	}
 
 	return client.Generate(cmd.Context(), req, func(api.GenerateResponse) error { return nil })
@@ -276,6 +300,12 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	opts.Format = format
+
+	thinkingFlag, err := cmd.Flags().GetBool("thinking")
+	if err != nil {
+		return err
+	}
+	opts.Thinking = thinkingFlag
 
 	keepAlive, err := cmd.Flags().GetString("keepalive")
 	if err != nil {
@@ -361,6 +391,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		if err := loadOrUnloadModel(cmd, &opts); err != nil {
 			return err
 		}
+		warnMissingThinking(cmd.Context(), client, opts.Model)
 
 		for _, msg := range info.Messages {
 			switch msg.Role {
@@ -876,6 +907,7 @@ type runOptions struct {
 	Options     map[string]any
 	MultiModal  bool
 	KeepAlive   *api.Duration
+	Thinking    bool
 }
 
 type displayResponseState struct {
@@ -958,6 +990,8 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 	var latest api.ChatResponse
 	var fullResponse strings.Builder
 	var role string
+	var thinkTagOpened bool = false
+	var thinkTagClosed bool = false
 
 	fn := func(response api.ChatResponse) error {
 		p.StopAndClear()
@@ -965,7 +999,23 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		latest = response
 
 		role = response.Message.Role
+		if response.Message.ThinkingBlock != "" {
+			if !thinkTagOpened {
+				fmt.Print(readline.ColorGrey + readline.ColorBold + "<think>" + readline.ColorDefault + readline.ColorGrey)
+				thinkTagOpened = true
+			}
+			displayResponse(response.Message.ThinkingBlock, opts.WordWrap, state)
+		}
+
 		content := response.Message.Content
+		if !thinkTagClosed && thinkTagOpened && content != "" {
+			fmt.Print(readline.ColorGrey + readline.ColorBold + "</think>" + readline.ColorDefault)
+			thinkTagClosed = true
+		}
+		// purposefully not putting thinking blocks in the response, which would
+		// only be needed if we later added tool calling to the cli (they get
+		// filtered out anyway since current models don't expect them unless you're
+		// about to finish some tool calls)
 		fullResponse.WriteString(content)
 
 		displayResponse(content, opts.WordWrap, state)
@@ -982,6 +1032,11 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		Messages: opts.Messages,
 		Format:   json.RawMessage(opts.Format),
 		Options:  opts.Options,
+		Thinking: opts.Thinking,
+	}
+
+	if opts.Thinking {
+		warnMissingThinking(cmd.Context(), client, opts.Model)
 	}
 
 	if opts.KeepAlive != nil {
@@ -1075,6 +1130,7 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 		System:    opts.System,
 		Options:   opts.Options,
 		KeepAlive: opts.KeepAlive,
+		Thinking:  opts.Thinking,
 	}
 
 	if err := client.Generate(ctx, &request, fn); err != nil {
@@ -1290,6 +1346,8 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().Bool("insecure", false, "Use an insecure registry")
 	runCmd.Flags().Bool("nowordwrap", false, "Don't wrap words to the next line automatically")
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
+	// TODO(drifkin): what should happen for an unsupported model? Warning? Fail hard?
+	runCmd.Flags().Bool("thinking", false, "Turn on thinking mode for supported models")
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
