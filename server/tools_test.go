@@ -51,7 +51,7 @@ func TestParseToolCalls(t *testing.T) {
 		name     string
 		model    string
 		output   string
-		token    string
+		prefix   string
 		expected []api.ToolCall
 		wantErr  bool
 	}{
@@ -59,23 +59,50 @@ func TestParseToolCalls(t *testing.T) {
 			name:     "mistral invalid json",
 			model:    "mistral",
 			output:   `[TOOL_CALLS]  [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_curren}]`,
-			token:    "[TOOL_CALLS]",
+			prefix:   "[TOOL_CALLS]",
 			expected: []api.ToolCall{},
 			wantErr:  true,
 		},
 		{
-			name:     "mistral valid json",
+			name:     "mistral multiple tool calls - no prefix",
+			model:    "mistral",
+			output:   `[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
+			prefix:   "[TOOL_CALLS]",
+			expected: []api.ToolCall{t1, t2},
+			wantErr:  false,
+		},
+		{
+			name:  "mistral tool calls with text in between - no prefix",
+			model: "mistral",
+			output: `[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}] 
+			model outputs more tokens here and then [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
+			prefix:   "[TOOL_CALLS]",
+			expected: []api.ToolCall{t1, t2},
+			wantErr:  false,
+		},
+		{
+			name:     "mistral valid json - with prefix",
 			model:    "mistral",
 			output:   `[TOOL_CALLS]  [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
-			token:    "[TOOL_CALLS]",
+			prefix:   "[TOOL_CALLS]",
 			expected: []api.ToolCall{t1, t2},
+			wantErr:  false,
+		},
+		{
+			// In this case we'd be ignoring the text in between and just returning the tool calls
+			name:  "mistral valid json with text in between - with prefix",
+			model: "mistral",
+			output: `[TOOL_CALLS]  [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]
+			model outputs more tokens here and then [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
+			prefix:   "[TOOL_CALLS]",
+			expected: []api.ToolCall{t1, t2, t1, t2},
 			wantErr:  false,
 		},
 		{
 			name:     "mistral incomplete json",
 			model:    "mistral",
 			output:   `[TOOL_CALLS]  [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, `,
-			token:    "[TOOL_CALLS]",
+			prefix:   "[TOOL_CALLS]",
 			expected: []api.ToolCall{},
 			wantErr:  true,
 		},
@@ -85,7 +112,7 @@ func TestParseToolCalls(t *testing.T) {
 			output: `I'm not aware of that information. However, I can suggest searching for the weather using the "get_current_weather" function:
 
 		[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
-			token:    "[TOOL_CALLS]",
+			prefix:   "[TOOL_CALLS]",
 			expected: []api.ToolCall{},
 			wantErr:  true,
 		},
@@ -93,7 +120,7 @@ func TestParseToolCalls(t *testing.T) {
 			name:     "mistral without tool token - tool first",
 			model:    "mistral",
 			output:   `[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
-			token:    "[TOOL_CALLS]",
+			prefix:   "[TOOL_CALLS]",
 			expected: []api.ToolCall{t1, t2},
 			wantErr:  false,
 		},
@@ -118,7 +145,7 @@ func TestParseToolCalls(t *testing.T) {
 		    }
 		]
 		` + "```",
-			token:    "Action:",
+			prefix:   "Action: ```json",
 			expected: []api.ToolCall{t1, t2},
 			wantErr:  false,
 		},
@@ -126,7 +153,7 @@ func TestParseToolCalls(t *testing.T) {
 			name:     "firefunction with functools",
 			model:    "firefunction",
 			output:   ` functools[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
-			token:    "functools",
+			prefix:   "functools",
 			expected: []api.ToolCall{t1, t2},
 			wantErr:  false,
 		},
@@ -136,7 +163,7 @@ func TestParseToolCalls(t *testing.T) {
 			output: `<tool_call>
 		{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}
 		</tool_call>`,
-			token:    "<tool_call>",
+			prefix:   "<tool_call>",
 			expected: []api.ToolCall{t1},
 			wantErr:  false,
 		},
@@ -144,16 +171,15 @@ func TestParseToolCalls(t *testing.T) {
 			name:     "xlam with tool_calls wrapper",
 			model:    "xlam",
 			output:   `{"tool_calls": [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]}`,
-			token:    "",
+			prefix:   "",
 			expected: []api.ToolCall{t1, t2},
 			wantErr:  false,
 		},
 		{
-			// TODO: fix the spacing issue
 			name:     "qwen with single tool call",
 			model:    "qwen2.5-coder",
-			output:   `<tool_call>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
-			token:    "<tool_call>",
+			output:   `<tool_call>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}</tool_call>`,
+			prefix:   "<tool_call>",
 			expected: []api.ToolCall{t1},
 			wantErr:  false,
 		},
@@ -161,15 +187,31 @@ func TestParseToolCalls(t *testing.T) {
 			name:     "qwen with invalid tool token",
 			model:    "qwen2.5-coder",
 			output:   `[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}, {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
-			token:    "[TOOL_CALLS]",
+			prefix:   "[TOOL_CALLS]",
 			expected: []api.ToolCall{t1, t2},
+			wantErr:  false,
+		},
+		{
+			name:     "qwen3 with single tool call and thinking",
+			model:    "qwen3",
+			output:   `<think>Okay, let me think what tool we should use...</think><tool_call>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}</tool_call>`,
+			prefix:   "<tool_call>",
+			expected: []api.ToolCall{t1},
+			wantErr:  false,
+		},
+		{
+			name:     "qwen3 with single tool call and thinking spaces",
+			model:    "qwen3",
+			output:   `<think>Okay, let me think what tool we should use...</think> <tool_call> {"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
+			prefix:   "<tool_call>",
+			expected: []api.ToolCall{t1},
 			wantErr:  false,
 		},
 		{
 			name:     "qwen with no tool calls",
 			model:    "qwen2.5-coder",
 			output:   " The weather in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.",
-			token:    "",
+			prefix:   "",
 			expected: []api.ToolCall{},
 			wantErr:  true,
 		},
@@ -211,11 +253,15 @@ func TestParseToolCalls(t *testing.T) {
 				tokens := strings.Fields(tt.output)
 				for _, tok := range tokens {
 					s := " " + tok
-					toolCalls, ok := tp.ParseToolCalls(s)
-					if ok {
-						success = true
+					var toolCalls []api.ToolCall
+					var ok bool
+					if tp.state != Done {
+						toolCalls, _, ok = tp.ParseToolCalls(s)
+						if ok {
+							success = true
+						}
+						got = append(got, toolCalls...)
 					}
-					got = append(got, toolCalls...)
 				}
 
 				if !tt.wantErr {
@@ -230,3 +276,5 @@ func TestParseToolCalls(t *testing.T) {
 		})
 	}
 }
+
+// TODO: add tests to check string sent not just tool
