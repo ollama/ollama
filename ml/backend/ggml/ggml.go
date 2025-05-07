@@ -867,6 +867,13 @@ func (t *Tensor) Mul(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	}
 }
 
+func (t *Tensor) Div(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_div(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
+	}
+}
+
 func (t *Tensor) Mulmat(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -981,6 +988,13 @@ func (t *Tensor) Scale(ctx ml.Context, s float64) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_scale(ctx.(*Context).ctx, t.t, (C.float)(s)),
+	}
+}
+
+func (t *Tensor) SumRows(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_sum_rows(ctx.(*Context).ctx, t.t),
 	}
 }
 
