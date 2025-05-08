@@ -172,7 +172,7 @@ func TestRoutes(t *testing.T) {
 			Expected: func(t *testing.T, resp *http.Response) {
 				contentType := resp.Header.Get("Content-Type")
 				if contentType != "text/plain; charset=utf-8" {
-					t.Errorf("expected content type application/json; charset=utf-8, got %s", contentType)
+					t.Errorf("expected content type text/plain; charset=utf-8, got %s", contentType)
 				}
 				body, err := io.ReadAll(resp.Body)
 				if err != nil {
