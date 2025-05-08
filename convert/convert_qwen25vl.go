@@ -49,7 +49,7 @@ func (q *qwen25VLModel) KV(t *Tokenizer) ggml.KV {
 	kv["qwen25vl.vision.window_size"] = q.VisionModel.WindowSize
 	kv["qwen25vl.vision.attention.layer_norm_epsilon"] = cmp.Or(q.VisionModel.RMSNormEps, 1e-6)
 	// RoPE theta increased from 1e4 to 1e5 to compensate for numerical differences between tensor operations; empirically produces better results.
-	kv["qwen25vl.vision.rope.freq_base"] = cmp.Or(q.VisionModel.RopeTheta, 1e5)
+	kv["qwen25vl.vision.rope.freq_base"] = cmp.Or(q.VisionModel.RopeTheta, 1e4)
 	kv["qwen25vl.vision.fullatt_block_indexes"] = q.VisionModel.FullAttentionBlocks
 	kv["qwen25vl.vision.temporal_patch_size"] = q.VisionModel.TemporalPatchSize
 
