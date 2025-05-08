@@ -230,34 +230,9 @@ func Dump(ctx Context, t Tensor, opts ...DumpOptions) string {
 		})
 	}
 
-	switch t.DType() {
-	case DTypeF32:
-		return dump[[]float32](ctx, t, opts[0].Items, func(f float32) string {
-			return strconv.FormatFloat(float64(f), 'f', opts[0].Precision, 32)
-		})
-	case DTypeF16, DTypeQ80, DTypeQ40:
-		f32 := ctx.Input().Empty(DTypeF32, t.Shape()...)
-		f32 = t.Copy(ctx, f32)
-		return dump[[]float32](ctx, f32, opts[0].Items, func(f float32) string {
-			return strconv.FormatFloat(float64(f), 'f', opts[0].Precision, 32)
-		})
-	case DTypeI32:
-		return dump[[]int32](ctx, t, opts[0].Items, func(i int32) string {
-			return strconv.FormatInt(int64(i), 10)
-		})
-	default:
-		return "<unsupported>"
-	}
-}
-
-func dump[S ~[]E, E number](ctx Context, t Tensor, items int, fn func(E) string) string {
-	if t.Bytes() == nil {
-		ctx.Forward(t).Compute(t)
-	}
-
-	s := make(S, mul(t.Shape()...))
-	if err := binary.Read(bytes.NewBuffer(t.Bytes()), binary.LittleEndian, &s); err != nil {
-		panic(err)
+	data, err := ExtractTensorData(ctx, t)
+	if err != nil {
+		return fmt.Sprintf("<error extracting data: %v>", err)
 	}
 
 	shape := t.Shape()
@@ -270,10 +245,10 @@ func dump[S ~[]E, E number](ctx Context, t Tensor, items int, fn func(E) string)
 		sb.WriteString("[")
 		defer func() { sb.WriteString("]") }()
 		for i := 0; i < dims[0]; i++ {
-			if i >= items && i < dims[0]-items {
+			if i >= opts[0].Items && i < dims[0]-opts[0].Items {
 				sb.WriteString("..., ")
 				// skip to next printable element
-				skip := dims[0] - 2*items
+				skip := dims[0] - 2*opts[0].Items
 				if len(dims) > 1 {
 					stride += mul(append(dims[1:], skip)...)
 					fmt.Fprint(&sb, strings.Repeat("\n", len(dims)-1), prefix)
@@ -286,7 +261,8 @@ func dump[S ~[]E, E number](ctx Context, t Tensor, items int, fn func(E) string)
 					fmt.Fprint(&sb, ",", strings.Repeat("\n", len(dims)-1), prefix)
 				}
 			} else {
-				text := fn(s[stride+i])
+				// Format the value based on precision
+				text := strconv.FormatFloat(float64(data[stride+i]), 'f', opts[0].Precision, 32)
 				if len(text) > 0 && text[0] != '-' {
 					sb.WriteString(" ")
 				}
@@ -301,6 +277,49 @@ func dump[S ~[]E, E number](ctx Context, t Tensor, items int, fn func(E) string)
 	f(shape, 0)
 
 	return sb.String()
+}
+
+// ExtractTensorData extracts the tensor data as a float32 slice
+func ExtractTensorData(ctx Context, t Tensor) ([]float32, error) {
+	// Make sure tensor data is computed
+	if t.Bytes() == nil {
+		ctx.Forward(t).Compute(t)
+	}
+
+	var result []float32
+
+	switch t.DType() {
+	case DTypeF32:
+		// For float32, we can read directly
+		result = make([]float32, mul(t.Shape()...))
+		if err := binary.Read(bytes.NewBuffer(t.Bytes()), binary.LittleEndian, &result); err != nil {
+			return nil, fmt.Errorf("failed to read float32 tensor data: %w", err)
+		}
+
+	case DTypeF16, DTypeQ80, DTypeQ40:
+		// For other floating point types, convert to float32 first
+		f32 := ctx.Input().Empty(DTypeF32, t.Shape()...)
+		f32 = t.Copy(ctx, f32)
+		return ExtractTensorData(ctx, f32)
+
+	case DTypeI32:
+		// For int32, read then convert to float32
+		i32Data := make([]int32, mul(t.Shape()...))
+		if err := binary.Read(bytes.NewBuffer(t.Bytes()), binary.LittleEndian, &i32Data); err != nil {
+			return nil, fmt.Errorf("failed to read int32 tensor data: %w", err)
+		}
+
+		// Convert int32 to float32
+		result = make([]float32, len(i32Data))
+		for i, v := range i32Data {
+			result[i] = float32(v)
+		}
+
+	default:
+		return nil, fmt.Errorf("unsupported tensor data type: %v", t.DType())
+	}
+
+	return result, nil
 }
 
 type DType int
