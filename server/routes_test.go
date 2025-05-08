@@ -164,6 +164,27 @@ func TestRoutes(t *testing.T) {
 			},
 		},
 		{
+			Name:   "Health Handler",
+			Method: http.MethodGet,
+			Path:   "/health",
+			Setup: func(t *testing.T, req *http.Request) {
+			},
+			Expected: func(t *testing.T, resp *http.Response) {
+				contentType := resp.Header.Get("Content-Type")
+				if contentType != "text/plain; charset=utf-8" {
+					t.Errorf("expected content type application/json; charset=utf-8, got %s", contentType)
+				}
+				body, err := io.ReadAll(resp.Body)
+				if err != nil {
+					t.Fatalf("failed to read response body: %v", err)
+				}
+				expectedBody := http.StatusText(http.StatusOK)
+				if string(body) != expectedBody {
+					t.Errorf("expected body %s, got %s", expectedBody, string(body))
+				}
+			},
+		},
+		{
 			Name:   "Tags Handler (no tags)",
 			Method: http.MethodGet,
 			Path:   "/api/tags",
