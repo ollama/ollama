@@ -1181,6 +1181,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.GET("/", func(c *gin.Context) { c.String(http.StatusOK, "Ollama is running") })
 	r.HEAD("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
 	r.GET("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
+	r.HEAD("/health", func(c *gin.Context) { c.String(http.StatusOK, http.StatusText(http.StatusOK)) })
 	r.GET("/health", func(c *gin.Context) { c.String(http.StatusOK, http.StatusText(http.StatusOK)) })
 
 	// Local model cache management (new implementation is at end of function)
