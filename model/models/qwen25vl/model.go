@@ -84,11 +84,23 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 		visionEndToken   int32 = 151653
 	)
 
+	nImg := 0
 	for _, inp := range inputs {
 		if inp.Multimodal == nil {
 			// If not a multimodal input, add it to the result unchanged
 			result = append(result, inp)
 		} else {
+			// Adding the 'Picture' prefix is a hack, at the time of writing there is no way to prefix
+			// the image tokens with a prompt, so we add a prefix here
+			nImg++
+			pre, err := m.TextModel.Encode(fmt.Sprintf(" Picture %d: ", nImg), true)
+			if err != nil {
+				return nil, fmt.Errorf("failed to encode image prompt: %w", err)
+			}
+			for i := range pre {
+				result = append(result, input.Input{Token: pre[i]})
+			}
+
 			// This is an image token with multimodal data
 			visionOutputs := inp.Multimodal.(ml.Tensor)
 
