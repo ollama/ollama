@@ -583,9 +583,6 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		PenaltyRepeat:  req.Options.RepeatPenalty,
 		PenaltyFreq:    req.Options.FrequencyPenalty,
 		PenaltyPresent: req.Options.PresencePenalty,
-		Mirostat:       req.Options.Mirostat,
-		MirostatTau:    req.Options.MirostatTau,
-		MirostatEta:    req.Options.MirostatEta,
 		Seed:           uint32(req.Options.Seed),
 		Grammar:        req.Grammar,
 	}

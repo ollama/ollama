@@ -46,6 +46,9 @@ var deprecatedParameters = []string{
 	"logits_all",
 	"vocab_only",
 	"use_mlock",
+	"mirostat",
+	"mirostat_tau",
+	"mirostat_eta",
 }
 
 // CreateRequest creates a new *api.CreateRequest from an existing Modelfile
