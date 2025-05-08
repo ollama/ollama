@@ -143,11 +143,16 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs, outputs ml.Ten
 
 func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor, batch input.Batch, cache kvcache.Cache) (ml.Tensor, error) {
 	// Initial token embedding
-	hiddenState := m.TokenEmbedding.Forward(ctx, inputs).Duplicate(ctx)
+	hiddenStates := m.TokenEmbedding.Forward(ctx, inputs).Duplicate(ctx)
 
-	for _, image := range batch.Multimodal {
-		visionOutputs := image.Multimodal.(ml.Tensor)
-		ctx.Forward(visionOutputs.Copy(ctx, hiddenState.View(ctx, image.Index*hiddenState.Stride(1), visionOutputs.Dim(0)*visionOutputs.Dim(1))))
+	for _, mi := range batch.Multimodal {
+		f32s := mi.Multimodal.(*chunk).floats()
+		img, err := ctx.Input().FromFloatSlice(f32s, len(f32s)/m.hiddenSize, m.hiddenSize)
+		if err != nil {
+			panic(err)
+		}
+
+		ctx.Forward(img.Copy(ctx, hiddenStates.View(ctx, mi.Index*hiddenStates.Stride(1), img.Dim(0)*img.Dim(1))))
 	}
 
 	// Process through transformer layers
@@ -159,9 +164,9 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 			lastLayerOutputs = outputs
 		}
 
-		hiddenState = layer.Forward(ctx, hiddenState, positions, lastLayerOutputs, cache, m.TextOptions)
+		hiddenStates = layer.Forward(ctx, hiddenStates, positions, lastLayerOutputs, cache, m.TextOptions)
 	}
 
-	hiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)
-	return m.Output.Forward(ctx, hiddenState), nil
+	hiddenStates = m.OutputNorm.Forward(ctx, hiddenStates, m.eps)
+	return m.Output.Forward(ctx, hiddenStates), nil
 }

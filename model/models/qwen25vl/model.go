@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image"
 	"slices"
+	"sync"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -71,7 +72,31 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 	}
 
 	visionOutputs := m.VisionModel.Forward(ctx, pixels, grid)
-	return visionOutputs, nil
+	return &chunks{Model: m, Tensor: visionOutputs}, nil
+}
+
+type chunks struct {
+	*Model
+	ml.Tensor
+
+	dataOnce sync.Once
+	data     []float32
+}
+
+type chunk struct {
+	*chunks
+	s, n int
+}
+
+func (r *chunk) floats() []float32 {
+	r.dataOnce.Do(func() {
+		temp := r.Backend().NewContext()
+		defer temp.Close()
+		temp.Forward(r.Tensor).Compute(r.Tensor)
+		r.data = r.Floats()
+	})
+
+	return r.data[r.s*r.Dim(0) : (r.s+r.n)*r.Dim(0)]
 }
 
 // PostTokenize arranges Qwen-2.5-VL's inputs for the forward pass
@@ -102,18 +127,23 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 			}
 
 			// This is an image token with multimodal data
-			visionOutputs := inp.Multimodal.(ml.Tensor)
-
-			// Calculate tokens per grid based on grid dimensions
+			chunksData := inp.Multimodal.(*chunks)
+			patchesPerChunk := chunksData.Dim(1)
 
 			// First add the vision start token
-			result = append(result, input.Input{Token: visionStartToken, SameBatch: visionOutputs.Dim(1) + 2})
+			result = append(result, input.Input{Token: visionStartToken, SameBatch: patchesPerChunk + 2})
 
 			// Add the image token with the multimodal tensor data at the first position
-			result = append(result, input.Input{Token: imageToken, Multimodal: visionOutputs, MultimodalHash: inp.MultimodalHash})
+			// Create a chunk with proper s and n values
+			result = append(result, input.Input{
+				Token:          imageToken,
+				Multimodal:     &chunk{chunks: chunksData, s: 0, n: patchesPerChunk},
+				MultimodalHash: inp.MultimodalHash,
+				SameBatch:      patchesPerChunk,
+			})
 
 			// Add the placeholder tokens for the remaining positions (tokensPerGrid-1)
-			result = append(result, slices.Repeat([]input.Input{{Token: imageToken}}, visionOutputs.Dim(1)-1)...)
+			result = append(result, slices.Repeat([]input.Input{{Token: imageToken}}, patchesPerChunk-1)...)
 
 			result = append(result, input.Input{Token: visionEndToken})
 		}
