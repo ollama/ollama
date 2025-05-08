@@ -20,7 +20,6 @@ const (
 	SendTokens State = iota
 	GreedyToolWithPrefix
 	GreedyToolNoPrefix
-	// ToolCall
 	ForceTools
 	ToolSuffix
 	ContainsPartialPrefix
@@ -56,7 +55,7 @@ type ToolParser struct {
 }
 
 // parseJSONToolCalls attempts to parse a JSON string into a slice of ToolCalls.
-// Returns parsed tool calls and a boolean indicating if the JSON is incomplete
+// Returns parsed tool calls, a boolean indicating if the JSON is incomplete, and a boolean indicating if the tool calls were found
 func (p *ToolParser) parseJSONToolCalls(s string) ([]api.ToolCall, bool, bool) {
 	var b bytes.Buffer
 	if err := p.tmpl.Execute(&b, map[string][]api.ToolCall{
@@ -93,6 +92,9 @@ func (p *ToolParser) parseJSONToolCalls(s string) ([]api.ToolCall, bool, bool) {
 			for _, v := range o {
 				all = append(all, collect(v)...)
 			}
+		default:
+			// TODO: err or fallback
+			return nil
 		}
 
 		return all
@@ -241,9 +243,37 @@ func (p *ToolParser) updateInputState(s string, hasPrefix bool) (string, bool) {
 	return s, true
 }
 
+func (p *ToolParser) sendTokens(original string, hasPrefix bool) (string, bool) {
+	if p.state == SendTokens {
+		return "", false
+	}
+	if p.state == ContainsPartialPrefix {
+		idx := strings.Index(original, p.toolPrefix)
+		if idx != -1 {
+			// still keeps the prefix
+			p.state = ContainsPartialPrefix
+			return original[:idx], false
+		} else {
+			fmt.Println("some weird state")
+		}
+	} else if strings.HasSuffix(original, p.toolPrefix[2:]) {
+		// can be with string or just the token
+		if hasPrefix {
+			original = strings.TrimSpace(original[:len(original)-(len(p.toolPrefix)+1)])
+			return original, false
+		} else {
+			p.state = ToolSuffix
+			p.sb.Reset()
+		}
+	}
+
+	return "", true
+}
+
 // ParseToolCalls extracts tool calls from a string using a tool token prefix or direct JSON parsing.
 // Returns tool calls, whether parsing is incomplete, and any errors.
 func (p *ToolParser) ParseToolCalls(s string) ([]api.ToolCall, string, bool) {
+	original := s
 	// append input
 	p.sb.WriteString(s)
 	s = p.sb.String()
@@ -258,7 +288,20 @@ func (p *ToolParser) ParseToolCalls(s string) ([]api.ToolCall, string, bool) {
 	s, ok := p.updateInputState(s, hasPrefix)
 	if !ok {
 		if p.state == ContainsPartialPrefix {
-			return nil, s, false
+			idx := strings.Index(original, p.toolPrefix)
+			if idx != -1 {
+				// still keeps the prefix
+				p.state = ContainsPartialPrefix
+				// p.sb.Reset()
+				// p.sb.WriteString(original[idx:])
+				return nil, original[:idx], false
+			} else {
+				fmt.Println("some weird state")
+			}
+			// }
+			// s, ok = p.sendTokens(original, hasPrefix)
+			// if ok {
+			// 	return nil, s, true
 		}
 		return nil, "", false
 	}
@@ -292,7 +335,7 @@ func NewToolParser(model *Model) *ToolParser {
 	} else {
 		state = GreedyToolWithPrefix
 	}
-	fmt.Println("state", state)
+	fmt.Println("setup state", state)
 	return &ToolParser{
 		tmpl:       tmpl,
 		sb:         &strings.Builder{},
