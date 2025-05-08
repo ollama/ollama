@@ -395,9 +395,26 @@ func toModel(r api.ShowResponse, m string) Model {
 func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	var messages []api.Message
 	for _, msg := range r.Messages {
+		var message api.Message
+		message.Role = msg.Role
+		
+		// Process ToolCalls if present, regardless of content type
+		if len(msg.ToolCalls) > 0 {
+			toolCalls := make([]api.ToolCall, len(msg.ToolCalls))
+			for i, tc := range msg.ToolCalls {
+				toolCalls[i].Function.Name = tc.Function.Name
+				err := json.Unmarshal([]byte(tc.Function.Arguments), &toolCalls[i].Function.Arguments)
+				if err != nil {
+					return nil, errors.New("invalid tool call arguments")
+				}
+			}
+			message.ToolCalls = toolCalls
+		}
+		
+		// Process content based on type
 		switch content := msg.Content.(type) {
 		case string:
-			messages = append(messages, api.Message{Role: msg.Role, Content: content})
+			message.Content = content
 		case []any:
 			for _, c := range content {
 				data, ok := c.(map[string]any)
@@ -410,7 +427,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 					if !ok {
 						return nil, errors.New("invalid message format")
 					}
-					messages = append(messages, api.Message{Role: msg.Role, Content: text})
+					message.Content = text
 				case "image_url":
 					var url string
 					if urlMap, ok := data["image_url"].(map[string]any); ok {
@@ -443,26 +460,21 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 						return nil, errors.New("invalid message format")
 					}
 
-					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{img}})
+					message.Images = append(message.Images, img)
 				default:
 					return nil, errors.New("invalid message format")
 				}
 			}
+		case nil:
+			// Content is nil, which is fine if there are tool calls
+			if len(msg.ToolCalls) == 0 {
+				return nil, errors.New("message must have either content or tool calls")
+			}
 		default:
-			if msg.ToolCalls == nil {
-				return nil, fmt.Errorf("invalid message content type: %T", content)
-			}
-
-			toolCalls := make([]api.ToolCall, len(msg.ToolCalls))
-			for i, tc := range msg.ToolCalls {
-				toolCalls[i].Function.Name = tc.Function.Name
-				err := json.Unmarshal([]byte(tc.Function.Arguments), &toolCalls[i].Function.Arguments)
-				if err != nil {
-					return nil, errors.New("invalid tool call arguments")
-				}
-			}
-			messages = append(messages, api.Message{Role: msg.Role, ToolCalls: toolCalls})
+			return nil, fmt.Errorf("invalid message content type: %T", content)
 		}
+		
+		messages = append(messages, message)
 	}
 
 	options := make(map[string]any)
