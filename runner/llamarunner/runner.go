@@ -2,6 +2,8 @@ package llamarunner
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -23,6 +25,7 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/runner/common"
@@ -680,7 +683,13 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	slog.Debug("embedding request", "content", req.Content)
+	content := req.Content
+	if envconfig.Debug() == 2 {
+		sha256sum := sha256.New()
+		sha256sum.Write([]byte(content))
+		content = hex.EncodeToString(sha256sum.Sum(nil))
+	}
+	slog.Debug("embedding request", "content", content)
 
 	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{embedding: true})
 	if err != nil {

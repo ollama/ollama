@@ -148,7 +148,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		params = append(params, "--n-gpu-layers", strconv.Itoa(opts.NumGPU))
 	}
 
-	if envconfig.Debug() {
+	if envconfig.Debug() > 0 {
 		params = append(params, "--verbose")
 	}
 
@@ -404,7 +404,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		}
 
 		slog.Info("starting llama server", "cmd", s.cmd)
-		if envconfig.Debug() {
+		if envconfig.Debug() > 0 {
 			filteredEnv := []string{}
 			for _, ev := range s.cmd.Env {
 				if strings.HasPrefix(ev, "OLLAMA_") ||

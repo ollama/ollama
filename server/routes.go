@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -295,7 +297,13 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		prompt = b.String()
 	}
 
-	slog.Debug("generate request", "images", len(images), "prompt", prompt)
+	p := prompt
+	if envconfig.Debug() == 2 {
+		sha256sum := sha256.New()
+		sha256sum.Write([]byte(p))
+		p = hex.EncodeToString(sha256sum.Sum(nil))
+	}
+	slog.Debug("generate request", "images", len(images), "prompt", p)
 
 	ch := make(chan any)
 	go func() {
@@ -1227,7 +1235,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 
 func Serve(ln net.Listener) error {
 	level := slog.LevelInfo
-	if envconfig.Debug() {
+	if envconfig.Debug() > 0 {
 		level = slog.LevelDebug
 	}
 
@@ -1523,7 +1531,13 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	slog.Debug("chat request", "images", len(images), "prompt", prompt)
+	p := prompt
+	if envconfig.Debug() == 2 {
+		sha256sum := sha256.New()
+		sha256sum.Write([]byte(p))
+		p = hex.EncodeToString(sha256sum.Sum(nil))
+	}
+	slog.Debug("chat request", "images", len(images), "prompt", p)
 
 	ch := make(chan any)
 	go func() {

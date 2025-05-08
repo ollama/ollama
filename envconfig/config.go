@@ -151,7 +151,7 @@ func Bool(k string) func() bool {
 
 var (
 	// Debug enabled additional debug information.
-	Debug = Bool("OLLAMA_DEBUG")
+	Debug = Uint("OLLAMA_DEBUG", 0)
 	// FlashAttention enables the experimental flash attention feature.
 	FlashAttention = Bool("OLLAMA_FLASH_ATTENTION")
 	// KvCacheType is the quantization type for the K/V cache.
