@@ -87,7 +87,7 @@ func TestGenerateChat(t *testing.T) {
 		},
 	}
 
-	go s.sched.Run(context.TODO())
+	go s.sched.Run(t.Context())
 
 	_, digest := createBinFile(t, ggml.KV{
 		"general.architecture":          "llama",
@@ -631,7 +631,7 @@ func TestGenerate(t *testing.T) {
 		},
 	}
 
-	go s.sched.Run(context.TODO())
+	go s.sched.Run(t.Context())
 
 	_, digest := createBinFile(t, ggml.KV{
 		"general.architecture":          "llama",

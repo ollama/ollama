@@ -527,7 +527,7 @@ func TestRoutes(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
 			u := httpSrv.URL + tc.Path
-			req, err := http.NewRequestWithContext(context.TODO(), tc.Method, u, nil)
+			req, err := http.NewRequestWithContext(t.Context(), tc.Method, u, nil)
 			if err != nil {
 				t.Fatalf("failed to create request: %v", err)
 			}

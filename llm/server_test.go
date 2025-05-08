@@ -16,7 +16,7 @@ func TestLLMServerCompletionFormat(t *testing.T) {
 	// of a mess, and but it's good enough, until we can refactoring the
 	// Completion method to be more testable.
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	s := &llmServer{
 		sem: semaphore.NewWeighted(1), // required to prevent nil panic
 	}
