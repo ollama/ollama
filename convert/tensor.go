@@ -12,8 +12,8 @@ import (
 
 // splitDim splits a tensor along a specified dimension into multiple tensors. The dimension
 // is split evenly based on the number of replacers provided.
-func splitDim(t Tensor, dim int, replacers ...*strings.Replacer) iter.Seq[ggml.Tensor] {
-	return func(yield func(ggml.Tensor) bool) {
+func splitDim(t Tensor, dim int, replacers ...*strings.Replacer) iter.Seq[*ggml.Tensor] {
+	return func(yield func(*ggml.Tensor) bool) {
 		for i, replacer := range replacers {
 			shape := slices.Clone(t.Shape())
 			shape[dim] = shape[dim] / uint64(len(replacers))
@@ -43,7 +43,7 @@ func splitDim(t Tensor, dim int, replacers ...*strings.Replacer) iter.Seq[ggml.T
 				return native.VectorF32(t.(*tensor.Dense))
 			})
 
-			if !yield(ggml.Tensor{
+			if !yield(&ggml.Tensor{
 				Name:     replacer.Replace(t.Name()),
 				Kind:     t.Kind(),
 				Shape:    shape,

@@ -56,8 +56,8 @@ func (q *qwen25VLModel) KV(t *Tokenizer) ggml.KV {
 	return kv
 }
 
-func (q *qwen25VLModel) Tensors(ts []Tensor) []ggml.Tensor {
-	var out []ggml.Tensor
+func (q *qwen25VLModel) Tensors(ts []Tensor) []*ggml.Tensor {
+	var out []*ggml.Tensor
 
 	for _, t := range ts {
 		if strings.Contains(t.Name(), "patch_embed.proj") {
@@ -75,7 +75,7 @@ func (q *qwen25VLModel) Tensors(ts []Tensor) []ggml.Tensor {
 				strings.NewReplacer("attn.qkv", "attn_v"),
 			))...)
 		} else {
-			out = append(out, ggml.Tensor{
+			out = append(out, &ggml.Tensor{
 				Name:     t.Name(),
 				Kind:     t.Kind(),
 				Shape:    t.Shape(),
