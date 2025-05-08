@@ -71,22 +71,19 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 		return nil, err
 	}
 
-	f32s, aspectRatioID, err := m.ImageProcessor.ProcessImage(image)
+	f32s, ratio, err := m.ImageProcessor.ProcessImage(image)
 	if err != nil {
 		return nil, err
 	}
 
-	pixelValues, err := ctx.Input().FromFloatSlice(f32s,
-		m.ImageProcessor.imageSize,
-		m.ImageProcessor.imageSize,
-		m.ImageProcessor.numChannels,
-		m.ImageProcessor.maxNumTiles,
-	)
+	pixelValues, err := ctx.Input().FromFloatSlice(f32s, m.imageSize, m.imageSize, m.numChannels, ratio.numTiles())
 	if err != nil {
 		return nil, err
 	}
 
-	aspectRatio, err := ctx.Input().FromIntSlice([]int32{int32(aspectRatioID)}, 1)
+	pixelValues = pixelValues.Pad(ctx, 0, 0, 0, m.ImageProcessor.maxNumTiles-ratio.numTiles())
+
+	aspectRatio, err := ctx.Input().FromIntSlice([]int32{int32(ratio.rank)}, 1)
 	if err != nil {
 		return nil, err
 	}

@@ -114,9 +114,9 @@ type PrecomputedAspectRatioEmbedding struct {
 	Gate      ml.Tensor `gguf:"gate"`
 }
 
-func (e *PrecomputedAspectRatioEmbedding) Forward(ctx ml.Context, hiddenState ml.Tensor, aspectRatioIDs ml.Tensor, opts *VisionModelOptions) ml.Tensor {
+func (e *PrecomputedAspectRatioEmbedding) Forward(ctx ml.Context, hiddenState ml.Tensor, aspectRatioIDs ml.Tensor, numTiles int, opts *VisionModelOptions) ml.Tensor {
 	embeddings := e.Embedding.Forward(ctx, aspectRatioIDs)
-	embeddings = embeddings.Reshape(ctx, opts.hiddenSize, 1, opts.numTiles)
+	embeddings = embeddings.Reshape(ctx, opts.hiddenSize, 1, numTiles)
 	if e.Gate != nil {
 		embeddings = embeddings.Mul(ctx, e.Gate)
 	}
@@ -132,7 +132,7 @@ type PrecomputedPositionEmbedding struct {
 	TilePositionEmbeddingGate ml.Tensor     `gguf:"tile_position_embd.gate"`
 }
 
-func (e *PrecomputedPositionEmbedding) Forward(ctx ml.Context, hiddenState, positionIDs, aspectRatioIDs ml.Tensor, numPositions int, opts *VisionModelOptions) ml.Tensor {
+func (e *PrecomputedPositionEmbedding) Forward(ctx ml.Context, hiddenState, positionIDs, aspectRatioIDs ml.Tensor, numPositions, numTiles int, opts *VisionModelOptions) ml.Tensor {
 	positionEmbedding := e.PositionEmbedding.Forward(ctx, positionIDs)
 	if e.PositionEmbeddingGate != nil {
 		positionEmbedding = positionEmbedding.Mul(ctx, e.PositionEmbeddingGate)
@@ -141,7 +141,7 @@ func (e *PrecomputedPositionEmbedding) Forward(ctx ml.Context, hiddenState, posi
 	hiddenState = hiddenState.Add(ctx, positionEmbedding)
 
 	tilePositionEmbedding := e.TilePositionEmbedding.Forward(ctx, aspectRatioIDs)
-	tilePositionEmbedding = tilePositionEmbedding.Reshape(ctx, opts.hiddenSize, numPositions, opts.numTiles)
+	tilePositionEmbedding = tilePositionEmbedding.Reshape(ctx, opts.hiddenSize, numPositions, numTiles)
 	if e.TilePositionEmbeddingGate != nil {
 		tilePositionEmbedding = tilePositionEmbedding.Mul(ctx, e.TilePositionEmbeddingGate)
 	}
@@ -150,9 +150,9 @@ func (e *PrecomputedPositionEmbedding) Forward(ctx ml.Context, hiddenState, posi
 }
 
 type VisionModelOptions struct {
-	hiddenSize, numHeads, numTiles int
-	imageSize, patchSize           int
-	eps                            float32
+	hiddenSize, numHeads int
+	imageSize, patchSize int
+	eps                  float32
 
 	intermediateLayersIndices []int32
 }
@@ -181,14 +181,16 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues, positionIDs, aspectRa
 		numPositions++
 	}
 
+	numTiles := pixelValues.Dim(3)
+
 	hiddenState := m.PatchEmbeddings.Forward(ctx, pixelValues, m.patchSize, m.patchSize, 0, 0, 1, 1)
-	hiddenState = hiddenState.Reshape(ctx, numPatches, m.hiddenSize, m.numTiles)
+	hiddenState = hiddenState.Reshape(ctx, numPatches, m.hiddenSize, numTiles)
 	hiddenState = hiddenState.Permute(ctx, 1, 0, 2, 3).Contiguous(ctx)
 
-	hiddenState = m.PreTilePositionEmbedding.Forward(ctx, hiddenState, aspectRatioIDs, m.VisionModelOptions)
-	hiddenState = m.ClassEmbedding.Repeat(ctx, 2, m.numTiles).Concat(ctx, hiddenState, 1)
+	hiddenState = m.PreTilePositionEmbedding.Forward(ctx, hiddenState, aspectRatioIDs, numTiles, m.VisionModelOptions)
+	hiddenState = m.ClassEmbedding.Repeat(ctx, 2, numTiles).Concat(ctx, hiddenState, 1)
 
-	hiddenState = m.PositionEmbedding.Forward(ctx, hiddenState, positionIDs, aspectRatioIDs, numPositions, m.VisionModelOptions)
+	hiddenState = m.PositionEmbedding.Forward(ctx, hiddenState, positionIDs, aspectRatioIDs, numPositions, numTiles, m.VisionModelOptions)
 	hiddenState = m.PreLayerNorm.Forward(ctx, hiddenState, m.eps)
 
 	numPaddingPatches := 8 - (hiddenState.Dim(1)%8)%8
@@ -199,17 +201,17 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues, positionIDs, aspectRa
 
 	hiddenState = m.PostLayerNorm.Forward(ctx, hiddenState, m.eps)
 
-	hiddenState = hiddenState.Reshape(ctx, m.hiddenSize, numPositions+numPaddingPatches, m.numTiles, batchSize)
-	hiddenState = m.PostTilePositionEmbedding.Forward(ctx, hiddenState, aspectRatioIDs, m.VisionModelOptions)
+	hiddenState = hiddenState.Reshape(ctx, m.hiddenSize, numPositions+numPaddingPatches, numTiles, batchSize)
+	hiddenState = m.PostTilePositionEmbedding.Forward(ctx, hiddenState, aspectRatioIDs, numTiles, m.VisionModelOptions)
 
-	hiddenState = hiddenState.Reshape(ctx, m.hiddenSize, m.numTiles*(numPositions+numPaddingPatches), batchSize)
+	hiddenState = hiddenState.Reshape(ctx, m.hiddenSize, numTiles*(numPositions+numPaddingPatches), batchSize)
 	hiddenState, _ = m.GlobalTransformer.Forward(ctx, hiddenState, nil, m.VisionModelOptions)
 
 	hiddenStates := intermediateHiddenStates[0].Stack(ctx, 0, intermediateHiddenStates[1:]...)
-	hiddenStates = hiddenStates.Reshape(ctx, len(intermediateHiddenStates)*m.hiddenSize, numPositions+numPaddingPatches, m.numTiles, batchSize)
+	hiddenStates = hiddenStates.Reshape(ctx, len(intermediateHiddenStates)*m.hiddenSize, numPositions+numPaddingPatches, numTiles, batchSize)
 	hiddenStates = hiddenStates.Pad(ctx, 0, -numPaddingPatches, 0, 0)
 
-	hiddenState = hiddenState.Reshape(ctx, m.hiddenSize, numPositions+numPaddingPatches, m.numTiles, batchSize)
+	hiddenState = hiddenState.Reshape(ctx, m.hiddenSize, numPositions+numPaddingPatches, numTiles, batchSize)
 	hiddenState = hiddenState.Pad(ctx, 0, -numPaddingPatches, 0, 0)
 	return hiddenState.Concat(ctx, hiddenStates, 0)
 }
@@ -222,7 +224,6 @@ func newVisionModel(c fs.Config) *VisionModel {
 		VisionModelOptions: &VisionModelOptions{
 			hiddenSize: int(c.Uint("vision.embedding_length")),
 			numHeads:   int(c.Uint("vision.attention.head_count")),
-			numTiles:   int(c.Uint("vision.max_num_tiles")),
 
 			imageSize: int(c.Uint("vision.image_size")),
 			patchSize: int(c.Uint("vision.patch_size")),
