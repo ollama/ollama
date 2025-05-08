@@ -1519,14 +1519,28 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 			if len(req.Tools) > 0 && tp.state != Done {
 				fmt.Println("checking tool calls")
+				/*
+					This should give us a few return things we shouldnt have to build things up.
+					1. tool calls if any
+					2. leftover tokens if any - this happens in the partial case where we have a prefix inside a string
+					3. if we need to skip this loop and not send anything back
+
+
+					between these three things, we should just be switching on either the state or something to capture this
+					potentially consider a difference between internal and external state
+				*/
 				toolCalls, leftover, ok := tp.ParseToolCalls(r.Content)
+
+				// todo: this should just be one check/state coming back from the parse tool calls
 				if (tp.state == GreedyToolWithPrefix || tp.state == GreedyToolNoPrefix || tp.state == ToolSuffix) || (tp.state == ForceTools && len(toolCalls) == 0) {
 					return
 				}
+				// todo: our second state also should just be a var
 				if tp.state == ContainsPartialPrefix {
 					fmt.Println("sending tokens", leftover)
 					res.Message.Content = leftover
 				}
+				// TODO: this can be done inside the parse tool calls
 				if ok && len(toolCalls) > 0 {
 					res.Message.ToolCalls = toolCalls
 					for i := range toolCalls {
