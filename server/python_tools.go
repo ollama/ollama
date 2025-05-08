@@ -155,9 +155,9 @@ func parsePythonValue(value string) (any, error) {
 	return nil, fmt.Errorf("invalid Python value: %s", value)
 }
 
-// parsePythonFunctionCall parses Python function calls from a string
+// parsePythonToolCall parses Python function calls from a string
 // it supports keyword arguments, as well as multiple functions in a single string
-func parsePythonFunctionCall(s string) ([]api.ToolCall, error) {
+func parsePythonToolCall(s string) ([]api.ToolCall, error) {
 	matches := pythonFuncRegex.FindAllStringSubmatchIndex(s, -1)
 	if len(matches) == 0 {
 		return nil, fmt.Errorf("no Python function calls found")
@@ -167,7 +167,7 @@ func parsePythonFunctionCall(s string) ([]api.ToolCall, error) {
 	for _, match := range matches {
 		name := s[match[2]:match[3]]
 		args := s[match[4]:match[5]]
-		arguments := make(api.ToolCallFunctionArguments)
+		var arguments api.ToolCallFunctionArguments
 		if len(args) == 0 {
 			toolCalls = append(toolCalls, api.ToolCall{
 				Function: api.ToolCallFunction{

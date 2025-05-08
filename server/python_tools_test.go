@@ -143,7 +143,7 @@ func TestParsePythonFunctionCall(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parsePythonFunctionCall(tt.input)
+			got, err := parsePythonToolCall(tt.input)
 			if (err != nil) != tt.err {
 				t.Fatalf("expected error: %v, got error: %v", tt.err, err)
 			}
