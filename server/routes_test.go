@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -473,14 +474,24 @@ func TestRoutes(t *testing.T) {
 					t.Fatalf("failed to read response body: %v", err)
 				}
 
-				var retrieveResp api.RetrieveModelResponse
-				err = json.Unmarshal(body, &retrieveResp)
+				var m openai.Model
+				err = json.Unmarshal(body, &m)
 				if err != nil {
 					t.Fatalf("failed to unmarshal response body: %v", err)
 				}
 
-				if retrieveResp.Id != "show-model" || retrieveResp.OwnedBy != "library" {
-					t.Errorf("expected model 'show-model' owned by 'library', got %v", retrieveResp)
+				if m.Id != "show-model" || m.OwnedBy != "library" {
+					t.Errorf("expected model 'show-model' owned by 'library', got %v", m)
+				}
+			},
+		},
+		{
+			Name:   "Method Not Allowed",
+			Method: http.MethodGet,
+			Path:   "/api/show",
+			Expected: func(t *testing.T, resp *http.Response) {
+				if resp.StatusCode != 405 {
+					t.Errorf("expected status code 405, got %d", resp.StatusCode)
 				}
 			},
 		},
@@ -516,7 +527,7 @@ func TestRoutes(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
 			u := httpSrv.URL + tc.Path
-			req, err := http.NewRequestWithContext(context.TODO(), tc.Method, u, nil)
+			req, err := http.NewRequestWithContext(t.Context(), tc.Method, u, nil)
 			if err != nil {
 				t.Fatalf("failed to create request: %v", err)
 			}
@@ -744,5 +755,130 @@ func TestNormalize(t *testing.T) {
 				t.Errorf("Vector %v is not normalized", tc.input)
 			}
 		})
+	}
+}
+
+func TestFilterThinkTags(t *testing.T) {
+	type testCase struct {
+		msgs  []api.Message
+		want  []api.Message
+		model *Model
+	}
+	testCases := []testCase{
+		{
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "<think>Thinking... about the answer</think>abc"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			want: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "abc"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			model: &Model{
+				Config: ConfigV2{
+					ModelFamily: "qwen3",
+				},
+			},
+		},
+		// with newlines inside the think tag aned newlines after
+		{
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "<think>Thinking... \n\nabout \nthe answer</think>\n\nabc\ndef"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			want: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "abc\ndef"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			model: &Model{
+				Config: ConfigV2{
+					ModelFamily: "qwen3",
+				},
+			},
+		},
+		// should leave thinking tags if it's after the last user message
+		{
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "<think>Thinking...</think>after"},
+				{Role: "user", Content: "What is the answer?"},
+				{Role: "assistant", Content: "<think>thinking again</think>hjk"},
+				{Role: "assistant", Content: "<think>thinking yet again</think>hjk"},
+			},
+			want: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "after"},
+				{Role: "user", Content: "What is the answer?"},
+				{Role: "assistant", Content: "<think>thinking again</think>hjk"},
+				{Role: "assistant", Content: "<think>thinking yet again</think>hjk"},
+			},
+			model: &Model{
+				Config: ConfigV2{
+					ModelFamily: "qwen3",
+				},
+			},
+		},
+		{
+			// shouldn't strip anything because the model family isn't one of the hardcoded ones
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "<think>Thinking... about the answer</think>abc"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			want: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "<think>Thinking... about the answer</think>abc"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			model: &Model{
+				Config: ConfigV2{
+					ModelFamily: "llama3",
+				},
+			},
+		},
+		{
+			// deepseek-r1:-prefixed model
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "<think>Thinking... about the answer</think>abc"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			want: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "abc"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			model: &Model{
+				Name:      "registry.ollama.ai/library/deepseek-r1:latest",
+				ShortName: "deepseek-r1:7b",
+				Config:    ConfigV2{},
+			},
+		},
+	}
+
+	for i, tc := range testCases {
+		filtered := filterThinkTags(tc.msgs, tc.model)
+
+		if !reflect.DeepEqual(filtered, tc.want) {
+			t.Errorf("messages differ for case %d:", i)
+			for i := range tc.want {
+				if i >= len(filtered) {
+					t.Errorf("  missing message %d: %+v", i, tc.want[i])
+					continue
+				}
+				if !reflect.DeepEqual(filtered[i], tc.want[i]) {
+					t.Errorf("  message %d:\n    want: %+v\n    got:  %+v", i, tc.want[i], filtered[i])
+				}
+			}
+			if len(filtered) > len(tc.want) {
+				for i := len(tc.want); i < len(filtered); i++ {
+					t.Errorf("  extra message %d: %+v", i, filtered[i])
+				}
+			}
+		}
 	}
 }

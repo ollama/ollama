@@ -312,6 +312,7 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(runtime.GOMAXPROCS(0))
 	for _, t := range meta.Tensors().Items() {
+		t := t
 		g.Go(func() error {
 			tts := make([]*C.struct_ggml_tensor, max(1, len(targets[t.Name])))
 			for i := range tts {
@@ -341,6 +342,11 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 
 			var s uint64
 			for s < t.Size() {
+				// Stop if either the parent context has been canceled or if any of the other tensors returned an error
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+
 				n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Size()-s))])
 				if err != nil {
 					slog.Warn("file read error", "file", r.Name(), "error", err)
@@ -362,14 +368,6 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 			return nil
 		})
 	}
-
-	// start a goroutine to cancel the errgroup if the parent context is done
-	go func() {
-		<-ctx.Done()
-		g.Go(func() error {
-			return ctx.Err()
-		})
-	}()
 
 	if err := g.Wait(); err != nil {
 		return nil, err

@@ -44,6 +44,7 @@ type LlamaServer interface {
 	EstimatedVRAM() uint64 // Total VRAM across all GPUs
 	EstimatedTotal() uint64
 	EstimatedVRAMByGPU(gpuID string) uint64
+	Pid() int
 }
 
 // llmServer is an instance of the llama.cpp server
@@ -216,10 +217,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		params = append(params, "--no-mmap")
 	}
 
-	if opts.UseMLock {
-		params = append(params, "--mlock")
-	}
-
 	// TODO - NUMA support currently doesn't work properly
 
 	params = append(params, "--parallel", strconv.Itoa(numParallel))
@@ -289,7 +286,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		params = append(params, "--mmproj", projectors[0])
 	}
 
-	// iterate through compatible GPU libraries such as 'cuda_v12', 'cuda_v11', 'rocm', etc.
+	// iterate through compatible GPU libraries such as 'cuda_v12', 'rocm', etc.
 	// adding each library's respective path to the LD_LIBRARY_PATH, until finally running
 	// without any LD_LIBRARY_PATH flags
 	for {
@@ -324,21 +321,23 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			pathEnv = "LD_LIBRARY_PATH"
 		}
 
-		var libraryPaths []string
+		// Note: we always put our dependency paths first
+		// since these are the exact version we compiled/linked against
+		libraryPaths := []string{discover.LibOllamaPath}
 		if libraryPath, ok := os.LookupEnv(pathEnv); ok {
 			libraryPaths = append(libraryPaths, filepath.SplitList(libraryPath)...)
 		}
 
+		ggmlPaths := []string{discover.LibOllamaPath}
 		if len(compatible) > 0 {
 			c := compatible[0]
 			if libpath, ok := libs[c]; ok {
 				slog.Debug("adding gpu library", "path", libpath)
-				libraryPaths = append(libraryPaths, libpath)
+				libraryPaths = append([]string{libpath}, libraryPaths...)
+				ggmlPaths = append(ggmlPaths, libpath)
 			}
 		}
 
-		// Note: we always put the dependency path first
-		// since this was the exact version we compiled/linked against
 		if gpus[0].DependencyPath != nil {
 			slog.Debug("adding gpu dependency paths", "paths", gpus[0].DependencyPath)
 			// assume gpus from the same library have the same dependency path
@@ -368,6 +367,8 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		s.cmd.Stdout = os.Stdout
 		s.cmd.Stderr = s.status
 		s.cmd.SysProcAttr = LlamaServerSysProcAttr
+
+		s.cmd.Env = append(s.cmd.Env, "OLLAMA_LIBRARY_PATH="+strings.Join(ggmlPaths, string(filepath.ListSeparator)))
 
 		envWorkarounds := [][2]string{}
 		for _, gpu := range gpus {
@@ -406,7 +407,8 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		if envconfig.Debug() {
 			filteredEnv := []string{}
 			for _, ev := range s.cmd.Env {
-				if strings.HasPrefix(ev, "CUDA_") ||
+				if strings.HasPrefix(ev, "OLLAMA_") ||
+					strings.HasPrefix(ev, "CUDA_") ||
 					strings.HasPrefix(ev, "ROCR_") ||
 					strings.HasPrefix(ev, "ROCM_") ||
 					strings.HasPrefix(ev, "HIP_") ||
@@ -514,6 +516,9 @@ func (s *llmServer) getServerStatus(ctx context.Context) (ServerStatus, error) {
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return ServerStatusNotResponding, errors.New("server not responding")
+		}
+		if strings.Contains(err.Error(), "connection refused") {
+			return ServerStatusNotResponding, errors.New("connection refused")
 		}
 		return ServerStatusError, fmt.Errorf("health resp: %w", err)
 	}
@@ -633,6 +638,13 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 			continue
 		}
 	}
+}
+
+func (s *llmServer) Pid() int {
+	if s.cmd != nil && s.cmd.Process != nil {
+		return s.cmd.Process.Pid
+	}
+	return -1
 }
 
 var grammarJSON = `
@@ -998,17 +1010,17 @@ func (s *llmServer) Close() error {
 	s.llamaModelLock.Unlock()
 
 	if s.cmd != nil {
-		slog.Debug("stopping llama server")
+		slog.Debug("stopping llama server", "pid", s.Pid())
 		if err := s.cmd.Process.Kill(); err != nil {
 			return err
 		}
 		// if ProcessState is already populated, Wait already completed, no need to wait again
 		if s.cmd.ProcessState == nil {
-			slog.Debug("waiting for llama server to exit")
+			slog.Debug("waiting for llama server to exit", "pid", s.Pid())
 			<-s.done
 		}
 
-		slog.Debug("llama server stopped")
+		slog.Debug("llama server stopped", "pid", s.Pid())
 	}
 
 	return nil
