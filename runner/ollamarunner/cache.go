@@ -284,7 +284,7 @@ func (c *InputCache) ShiftCacheSlot(slot *InputCacheSlot, numKeep int32) error {
 			copy(newInputs[numKeep:], slot.Inputs[numKeep+discard:])
 
 			// Reset the cache
-			_ = c.cache.Remove(slot.Id, 0, -1)
+			_ = c.cache.Remove(slot.Id, 0, math.MaxInt32)
 			slot.Inputs = []input.Input{}
 
 			// Return error with inputs that need to be reprocessed
