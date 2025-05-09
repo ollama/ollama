@@ -404,6 +404,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Writeopia](https://github.com/Writeopia/Writeopia) (Text editor with integration with Ollama)
 - [AppFlowy](https://github.com/AppFlowy-IO/AppFlowy) (AI collaborative workspace with Ollama, cross-platform and self-hostable)
 - [Lumina](https://github.com/cushydigit/lumina.git) (A lightweight, minimal React.js frontend for interacting with Ollama servers)
+- [GPTLocalhost](https://gptlocalhost.com/demo/#ollama) (using Ollama in Microsoft Word locally)
 
 ### Cloud
 
