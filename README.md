@@ -526,6 +526,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Abso](https://github.com/lunary-ai/abso) (OpenAI-compatible TypeScript SDK for any LLM provider)
 - [Nichey](https://github.com/goodreasonai/nichey) is a Python package for generating custom wikis for your research topic
 - [Ollama for D](https://github.com/kassane/ollama-d)
+- [TensorZero](https://www.tensorzero.com/docs/gateway/guides/providers/openai-compatible/)
 
 ### Mobile
 
