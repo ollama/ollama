@@ -1,0 +1,5 @@
+---
+
+# Tiny LlamaForCausalLM
+
+This is a minimal model built for unit tests in the [TRL](https://github.com/huggingface/trl) library.

@@ -292,6 +292,13 @@ func filesForModel(path string) ([]string, error) {
 	}
 	files = append(files, js...)
 
+	// Add (optional) README.md which contains HF model card with potential YAML metadata at the top
+	// most of which can be parsed and stored in GGUF general KVs according to HF schema:
+	// See: https://huggingface.co/docs/hub/en/model-cards#using-the-metadata-ui
+	if readme, _ := glob(filepath.Join(path, "README.md"), "text/plain"); len(readme) > 0 {
+		files = append(files, readme...)
+	}
+
 	if tks, _ := glob(filepath.Join(path, "tokenizer.model"), "application/octet-stream"); len(tks) > 0 {
 		// add tokenizer.model if it exists, tokenizer.json is automatically picked up by the previous glob
 		// tokenizer.model might be a unresolved git lfs reference; error if it is
