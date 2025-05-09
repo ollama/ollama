@@ -16,77 +16,73 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-const defaultPrivateKey = "id_ed25519"
+const (
+	defaultPrivateKey = "id_ed25519"
+	keyDir            = ".ollama"
+)
 
 func keyPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+	return filepath.Join(home, keyDir, defaultPrivateKey), nil
+}
+
+func loadPrivateKey() (ssh.Signer, error) {
+	path, err := keyPath()
+	if err != nil {
+		return nil, err
 	}
 
-	return filepath.Join(home, ".ollama", defaultPrivateKey), nil
+	data, err := os.ReadFile(path)
+	if err != nil {
+		slog.Info("Failed to read private key", "error", err, "path", path)
+		return nil, fmt.Errorf("failed to read private key: %w", err)
+	}
+
+	signer, err := ssh.ParsePrivateKey(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse private key: %w", err)
+	}
+
+	return signer, nil
 }
 
 func GetPublicKey() (string, error) {
-	keyPath, err := keyPath()
+	signer, err := loadPrivateKey()
 	if err != nil {
 		return "", err
 	}
 
-	privateKeyFile, err := os.ReadFile(keyPath)
-	if err != nil {
-		slog.Info(fmt.Sprintf("Failed to load private key: %v", err))
-		return "", err
-	}
-
-	privateKey, err := ssh.ParsePrivateKey(privateKeyFile)
-	if err != nil {
-		return "", err
-	}
-
-	publicKey := ssh.MarshalAuthorizedKey(privateKey.PublicKey())
-
-	return strings.TrimSpace(string(publicKey)), nil
+	pubKey := ssh.MarshalAuthorizedKey(signer.PublicKey())
+	return strings.TrimSpace(string(pubKey)), nil
 }
 
 func NewNonce(r io.Reader, length int) (string, error) {
 	nonce := make([]byte, length)
 	if _, err := io.ReadFull(r, nonce); err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to generate nonce: %w", err)
 	}
-
 	return base64.RawURLEncoding.EncodeToString(nonce), nil
 }
 
-func Sign(ctx context.Context, bts []byte) (string, error) {
-	keyPath, err := keyPath()
+func Sign(ctx context.Context, data []byte) (string, error) {
+	signer, err := loadPrivateKey()
 	if err != nil {
 		return "", err
 	}
 
-	privateKeyFile, err := os.ReadFile(keyPath)
-	if err != nil {
-		slog.Info(fmt.Sprintf("Failed to load private key: %v", err))
-		return "", err
-	}
-
-	privateKey, err := ssh.ParsePrivateKey(privateKeyFile)
-	if err != nil {
-		return "", err
-	}
-
-	// get the pubkey, but remove the type
-	publicKey := ssh.MarshalAuthorizedKey(privateKey.PublicKey())
-	parts := bytes.Split(publicKey, []byte(" "))
+	pubKey := ssh.MarshalAuthorizedKey(signer.PublicKey())
+	parts := bytes.Split(pubKey, []byte(" "))
 	if len(parts) < 2 {
 		return "", errors.New("malformed public key")
 	}
 
-	signedData, err := privateKey.Sign(rand.Reader, bts)
+	signature, err := signer.Sign(rand.Reader, data)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to sign data: %w", err)
 	}
 
-	// signature is <pubkey>:<signature>
-	return fmt.Sprintf("%s:%s", bytes.TrimSpace(parts[1]), base64.StdEncoding.EncodeToString(signedData.Blob)), nil
+	return fmt.Sprintf("%s:%s", bytes.TrimSpace(parts[1]), base64.StdEncoding.EncodeToString(signature.Blob)), nil
 }
