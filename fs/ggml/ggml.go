@@ -347,6 +347,17 @@ type container interface {
 	Decode(io.ReadSeeker) (model, error)
 }
 
+type Endianness struct {
+	Host	binary.ByteOrder
+	Model binary.ByteOrder
+}
+
+func (e Endianness) ByteswapUint32(data uint32) uint32 {
+	byteswapped := make([]byte, 4)
+	e.Model.PutUint32(byteswapped, data)
+	return e.Host.Uint32(byteswapped)
+}
+
 const (
 	// Magic constant for `ggml` files (unversioned).
 	FILE_MAGIC_GGML = 0x67676d6c
@@ -386,20 +397,51 @@ func DetectContentType(b []byte) string {
 // maxArraySize. If the maxArraySize is negative, all arrays are collected.
 func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
 	rs = bufioutil.NewBufferedSeeker(rs, 32<<10)
+	endianness := &Endianness{}
 
 	var magic uint32
 	if err := binary.Read(rs, binary.LittleEndian, &magic); err != nil {
 		return nil, 0, err
 	}
 
-	var c container
 	switch magic {
 	case FILE_MAGIC_GGUF_LE:
-		c = &containerGGUF{ByteOrder: binary.LittleEndian, maxArraySize: maxArraySize}
+		endianness.Host = binary.LittleEndian
 	case FILE_MAGIC_GGUF_BE:
-		c = &containerGGUF{ByteOrder: binary.BigEndian, maxArraySize: maxArraySize}
+		endianness.Host = binary.BigEndian
 	default:
 		return nil, 0, errors.New("invalid file magic")
+	}
+
+	/*
+	 * We read in `binary.LittleEndian` to determine the endianness of the model
+	 * file as most architectures now use Little Endian byte-ordering.
+	 *
+	 * By comparing the last 4 hexadecimal digits of the version against 0x0000,
+	 * we can determine the endianness of the model file.
+	 *
+	 * If `version` is 0x00000003, the model file is Little Endian.
+	 * If `version` is 0x03000000, the model file is Big Endian.
+	 */
+	var version uint32
+	if err := binary.Read(rs, binary.LittleEndian, &version); err != nil {
+		return nil, 0, err
+	}
+
+	if version & 0xFFFF != 0x0000 {
+		endianness.Model = binary.LittleEndian
+	} else {
+		endianness.Model = binary.BigEndian
+	}
+
+	if endianness.Model != endianness.Host {
+		version = endianness.ByteswapUint32(version)
+	}
+
+	c := &containerGGUF{
+		Version: version,
+		ByteOrder: endianness.Model,
+		maxArraySize: maxArraySize,
 	}
 
 	model, err := c.Decode(rs)
