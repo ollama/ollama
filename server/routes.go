@@ -1486,10 +1486,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	go func() {
 		defer close(ch)
 		// var sb strings.Builder
-		var toolCallIndex int = 0
-		var tp *ToolParser
+		var toolParser *ToolParser
 		if len(req.Tools) > 0 {
-			tp = NewToolParser(m)
+			toolParser = NewToolParser(m)
 		}
 
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
@@ -1517,37 +1516,19 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
 
-			if len(req.Tools) > 0 && tp.state != Done {
-				fmt.Println("checking tool calls")
-				/*
-					This should give us a few return things we shouldnt have to build things up.
-					1. tool calls if any
-					2. leftover tokens if any - this happens in the partial case where we have a prefix inside a string
-					3. if we need to skip this loop and not send anything back
-
-
-					between these three things, we should just be switching on either the state or something to capture this
-					potentially consider a difference between internal and external state
-				*/
-				toolCalls, leftover, ok := tp.ParseToolCalls(r.Content)
-
-				// todo: this should just be one check/state coming back from the parse tool calls
-				if (tp.state == GreedyToolWithPrefix || tp.state == GreedyToolNoPrefix || tp.state == ToolSuffix) || (tp.state == ForceTools && len(toolCalls) == 0) {
+			if len(req.Tools) > 0 && !toolParser.Done {
+				toolCalls, leftover := toolParser.ParseToolCalls(r.Content)
+				switch toolParser.ParserState {
+				case ToolCallAccumulate:
+					// tokens are accumulated in the tool parser
 					return
-				}
-				// todo: our second state also should just be a var
-				if tp.state == ContainsPartialPrefix {
-					fmt.Println("sending tokens", leftover)
+				case ToolCallSendTokens:
+					// tokens are sent back in the response
+				case ToolCallSendPartial:
+					// tokens not needed for parsing are sent back in the response
 					res.Message.Content = leftover
-				}
-				// TODO: this can be done inside the parse tool calls
-				if ok && len(toolCalls) > 0 {
+				case ToolCallFound:
 					res.Message.ToolCalls = toolCalls
-					for i := range toolCalls {
-						toolCalls[i].Function.Index = toolCallIndex
-						toolCallIndex++
-					}
-					// Remove content when tool call is present
 					res.Message.Content = ""
 				}
 			}
