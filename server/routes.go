@@ -1485,7 +1485,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
-		// var sb strings.Builder
 		var toolParser *ToolParser
 		if len(req.Tools) > 0 {
 			toolParser = NewToolParser(m)
@@ -1518,6 +1517,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 			if len(req.Tools) > 0 && !toolParser.Done {
 				toolCalls, leftover := toolParser.ParseToolCalls(r.Content)
+				// * This can be abstracted again to a .handleState(tp.state)
+				// * However, we'd need a flag to indicate whether to send the response or not
+				// * happy to take whatever is more idiomatic
 				switch toolParser.ParserState {
 				case ToolCallAccumulate:
 					// tokens are accumulated in the tool parser
@@ -1526,7 +1528,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					// tokens are sent back in the response
 				case ToolCallSendPartial:
 					// tokens not needed for parsing are sent back in the response
-					res.Message.Content = leftover
+					if len(leftover) > 0 {
+						res.Message.Content = leftover
+					}
+					// ! state is needed as we need to not match on the other states
 				case ToolCallFound:
 					res.Message.ToolCalls = toolCalls
 					res.Message.Content = ""
@@ -1534,6 +1539,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 
 			fmt.Println("sending response", res.Message.Content)
+			// * this is where we'd need the flag if we have a .handleState(tp.state)
 			ch <- res
 		}); err != nil {
 			ch <- gin.H{"error": err.Error()}
