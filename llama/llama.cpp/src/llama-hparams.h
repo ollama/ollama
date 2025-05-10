@@ -2,8 +2,6 @@
 
 #include "llama.h"
 
-#include <algorithm>
-
 #include <array>
 
 // bump if necessary
@@ -44,7 +42,6 @@ struct llama_hparams {
     uint32_t n_expert = 0;
     uint32_t n_expert_used = 0;
     uint32_t n_rel_attn_bkts = 0;
-    uint32_t n_vocab = 0;
 
     // note: deepseek2 using MLA converts into MQA with larger heads, then decompresses to MHA
     uint32_t n_embd_head_k_mla = 0;
@@ -59,7 +56,6 @@ struct llama_hparams {
     std::array<uint32_t, LLAMA_MAX_LAYERS> n_ff_arr;
 
     std::array<std::array<uint32_t, LLAMA_MAX_LAYERS>, 4> n_bskcn_arr = {};
-    std::array<uint32_t, LLAMA_MAX_LAYERS> cross_attn_layers;
 
     uint32_t n_layer_dense_lead = 0;
     uint32_t n_lora_q           = 0;
@@ -162,9 +158,6 @@ struct llama_hparams {
 
     // Block skip connection
     bool n_bskcn(uint32_t n, uint32_t il) const;
-
-    // cross attention layers
-    bool cross_attention_layers(uint32_t il) const;
 
     bool is_swa(uint32_t il) const;
 };

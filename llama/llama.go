@@ -17,7 +17,6 @@ package llama
 #include "llava.h"
 #include "gguf.h"
 
-#include "mllama.h"
 #include "sampling_ext.h"
 
 extern bool llamaProgressCallback(float progress, void *user_data);
@@ -508,63 +507,6 @@ func (c *ClipContext) NewEmbed(llamaContext *Context, data []byte) ([][]float32,
 	C.llava_image_embed_free(l)
 
 	return embed, nil
-}
-
-type MllamaContext struct {
-	c *C.struct_mllama_ctx
-}
-
-func NewMllamaContext(llamaContext *Context, modelPath string) (*MllamaContext, error) {
-	mp := C.CString(modelPath)
-	defer C.free(unsafe.Pointer(mp))
-	c := C.mllama_model_load(mp, 1)
-	if c == nil {
-		return nil, fmt.Errorf("unable to load mllama model: %v", modelPath)
-	}
-
-	projEmbedSize := int(C.mllama_n_embd(c))
-	modelEmbedSize := llamaContext.Model().NEmbd()
-	if projEmbedSize != modelEmbedSize {
-		return nil, fmt.Errorf("projector embedding size (%d) does not match model (%d)", projEmbedSize, modelEmbedSize)
-	}
-
-	return &MllamaContext{c: c}, nil
-}
-
-func (m *MllamaContext) Free() {
-	C.mllama_free(m.c)
-}
-
-func (m *MllamaContext) NewEmbed(llamaContext *Context, data []byte, aspectRatioId int) ([][]float32, error) {
-	img := C.mllama_image_init()
-	defer C.mllama_image_free(img)
-
-	ok := bool(C.mllama_image_load_from_data(unsafe.Pointer(&data[0]), C.int(len(data)), 560, 560, 3, 4, C.int(aspectRatioId), img))
-	if !ok {
-		return nil, errors.New("unable to load mllama image data")
-	}
-
-	rows := make([]float32, m.EmbedSize(llamaContext))
-	ok = bool(C.mllama_image_encode(m.c, C.int(llamaContext.numThreads), img, (*C.float)(unsafe.Pointer(&rows[0]))))
-	if !ok {
-		return nil, errors.New("unable to make mllama embedding from image")
-	}
-
-	embed := make([][]float32, 1)
-	embed[0] = rows
-
-	return embed, nil
-}
-
-func (m *MllamaContext) EmbedSize(llamaContext *Context) int {
-	numTokens := int(C.mllama_n_positions(m.c) * C.mllama_n_tiles(m.c))
-	numEmbed := llamaContext.Model().NEmbd()
-
-	return numTokens * numEmbed
-}
-
-func (c *Context) SetCrossAttention(state bool) {
-	C.llama_set_cross_attention(c.c, C.bool(state))
 }
 
 func (c *Context) Synchronize() {

@@ -208,7 +208,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor) ml.Tensor {
 	}
 
 	hiddenStates = m.LayerNormPost.Forward(ctx, hiddenStates, m.eps)
-	hiddenStates = hiddenStates.Unpad(ctx, 0, 1, 0, 0)
+	hiddenStates = hiddenStates.Pad(ctx, 0, -1, 0, 0)
 	hiddenStates = m.VisionAdapter.Forward(ctx, hiddenStates, m.VisionOptions)
 	return hiddenStates
 }

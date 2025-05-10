@@ -256,7 +256,6 @@ extern "C" {
 
         llama_token  *  token;
         float        *  embd;
-        int32_t         n_embd;
         llama_pos    *  pos;
         int32_t      *  n_seq_id;
         llama_seq_id ** seq_id;
@@ -359,7 +358,6 @@ extern "C" {
         bool offload_kqv; // whether to offload the KQV ops (including the KV cache) to GPU
         bool flash_attn;  // whether to use flash attention [EXPERIMENTAL]
         bool no_perf;     // whether to measure performance timings
-        bool cross_attn;  // whether to use cross attention
 
         // Abort callback
         // if it returns true, execution of llama_decode() will be aborted
@@ -460,10 +458,6 @@ extern "C" {
                      struct llama_model * model,
             struct llama_context_params   params),
             "use llama_init_from_model instead");
-
-    // TODO (jmorganca): this should most likely be passed in as part of a batch
-    // and not set on the context for all batches.
-    LLAMA_API void llama_set_cross_attention(struct llama_context * ctx, bool cross_attn_state);
 
     // Frees all allocated memory
     LLAMA_API void llama_free(struct llama_context * ctx);

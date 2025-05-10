@@ -315,8 +315,6 @@ namespace GGUFMeta {
         return true;
     }
 
-    template bool llama_model_loader::get_arr<std::array<unsigned int, 512>>(enum llm_kv kid, std::array<unsigned int, 512>& result, bool required);
-
     template<typename T, size_t N_MAX>
     bool llama_model_loader::get_arr(const std::string & key, std::array<T, N_MAX> & result, bool required) {
         const int kid = gguf_find_key(meta.get(), key.c_str());

@@ -809,7 +809,7 @@ float * llama_context::get_logits_ith(int32_t i) {
             throw std::runtime_error(format("corrupt output buffer (j=%d, n_outputs=%d)", j, n_outputs));
         }
 
-        return logits + j*model.hparams.n_vocab;
+        return logits + j*model.vocab.n_tokens();
     } catch (const std::exception & err) {
         LLAMA_LOG_ERROR("%s: invalid logits id %d, reason: %s\n", __func__, i, err.what());
 #ifndef NDEBUG
@@ -930,10 +930,6 @@ void llama_context::set_warmup(bool value) {
     cparams.warmup = value;
 }
 
-void llama_context::set_cross_attn(bool value) {
-    cparams.cross_attn = value;
-}
-
 void llama_context::set_adapter_lora(
             llama_adapter_lora * adapter,
             float scale) {
@@ -1009,7 +1005,7 @@ int llama_context::encode(llama_batch & inp_batch) {
 
     const int64_t n_embd = hparams.n_embd;
 
-    sbatch.from_batch(batch, batch.n_embd, /* simple_split */ true, /* logits_all */ true);
+    sbatch.from_batch(batch, n_embd, /* simple_split */ true, /* logits_all */ true);
 
     const llama_ubatch ubatch = sbatch.split_simple(n_tokens);
 
@@ -1149,9 +1145,10 @@ int llama_context::decode(llama_batch & inp_batch) {
 
     const llama_batch & batch = batch_allocr.batch;
 
+    const auto & vocab   = model.vocab;
     const auto & hparams = model.hparams;
 
-    const int32_t n_vocab = hparams.n_vocab;
+    const int32_t n_vocab = vocab.n_tokens();
 
     const int64_t n_tokens_all = batch.n_tokens;
     const int64_t n_embd       = hparams.n_embd;
@@ -1199,7 +1196,7 @@ int llama_context::decode(llama_batch & inp_batch) {
 
     const bool logits_all = n_outputs_all == n_tokens_all;
 
-    sbatch.from_batch(batch, batch.n_embd,
+    sbatch.from_batch(batch, n_embd,
             /* simple_split */ !kv_self->recurrent,
             /* logits_all   */ logits_all);
 
@@ -1436,11 +1433,12 @@ int llama_context::decode(llama_batch & inp_batch) {
 
 int32_t llama_context::output_reserve(int32_t n_outputs) {
     const auto & hparams = model.hparams;
+    const auto & vocab   = model.vocab;
 
     const int64_t n_outputs_max = std::max<int64_t>(n_outputs, n_seq_max());
 
     const auto n_batch = cparams.n_batch;
-    const auto n_vocab = hparams.n_vocab;
+    const auto n_vocab = vocab.n_tokens();
     const auto n_embd  = hparams.n_embd;
 
     // TODO: use a per-batch flag for logits presence instead
@@ -1508,7 +1506,7 @@ int32_t llama_context::output_reserve(int32_t n_outputs) {
 void llama_context::output_reorder() {
     auto & out_ids = sbatch.out_ids;
     if (!out_ids.empty()) {
-        const uint32_t n_vocab = model.hparams.n_vocab;
+        const uint32_t n_vocab = model.vocab.n_tokens();
         const uint32_t n_embd  = model.hparams.n_embd;
 
         GGML_ASSERT((size_t) n_outputs == out_ids.size());
@@ -2015,7 +2013,7 @@ size_t llama_context::state_write_data(llama_io_write_i & io) {
     {
         LLAMA_LOG_DEBUG("%s: - writing logits\n", __func__);
 
-        const uint64_t logits_size = std::min((uint64_t) this->logits_size, (uint64_t) n_outputs * model.hparams.n_vocab);
+        const uint64_t logits_size = std::min((uint64_t) this->logits_size, (uint64_t) n_outputs * model.vocab.n_tokens());
 
         io.write(&logits_size, sizeof(logits_size));
 
@@ -2198,7 +2196,6 @@ llama_context_params llama_context_default_params() {
         /*.offload_kqv                 =*/ true,
         /*.flash_attn                  =*/ false,
         /*.no_perf                     =*/ true,
-        /*.cross_attn                  =*/ false,
         /*.abort_callback              =*/ nullptr,
         /*.abort_callback_data         =*/ nullptr,
     };
@@ -2324,10 +2321,6 @@ void llama_set_causal_attn(llama_context * ctx, bool causal_attn) {
 
 void llama_set_warmup(llama_context * ctx, bool warmup) {
     ctx->set_warmup(warmup);
-}
-
-void llama_set_cross_attention(struct llama_context * ctx, bool cross_attention) {
-    ctx->set_cross_attn(cross_attention);
 }
 
 void llama_synchronize(llama_context * ctx) {

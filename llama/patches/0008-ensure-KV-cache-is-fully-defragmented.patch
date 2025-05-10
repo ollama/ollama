@@ -22,7 +22,7 @@ multiple batches of processing until everything is complete.
  4 files changed, 51 insertions(+), 106 deletions(-)
 
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index cd06ad91..77177c5e 100644
+index 9c1fe93f..773c63fe 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
 @@ -583,13 +583,12 @@ llm_graph_result_ptr llama_context::build_kv_self_shift(
@@ -202,7 +202,7 @@ index cd06ad91..77177c5e 100644
  }
  
  enum llama_pooling_type llama_context::pooling_type() const {
-@@ -1294,9 +1252,12 @@ int llama_context::decode(llama_batch & inp_batch) {
+@@ -1291,9 +1249,12 @@ int llama_context::decode(llama_batch & inp_batch) {
          // find KV slot
          {
              if (!kv_self->find_slot(ubatch)) {
@@ -219,7 +219,7 @@ index cd06ad91..77177c5e 100644
  
              if (!kv_self->recurrent) {
 diff --git a/src/llama-context.h b/src/llama-context.h
-index a50c4afa..30f84bfd 100644
+index 5457f077..299fbd52 100644
 --- a/src/llama-context.h
 +++ b/src/llama-context.h
 @@ -5,6 +5,7 @@
@@ -230,7 +230,7 @@ index a50c4afa..30f84bfd 100644
  
  #include "ggml-cpp.h"
  
-@@ -179,7 +180,8 @@ private:
+@@ -178,7 +179,8 @@ private:
  
      llm_graph_result_ptr build_kv_self_defrag(
              ggml_context * ctx0,
@@ -241,10 +241,10 @@ index a50c4afa..30f84bfd 100644
      // TODO: read/write lora adapters and cvec
      size_t state_write_data(llama_io_write_i & io);
 diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
-index 69f8d35a..35a750d3 100644
+index 7c9d46d8..a38416d8 100644
 --- a/src/llama-kv-cache.cpp
 +++ b/src/llama-kv-cache.cpp
-@@ -781,17 +781,7 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
+@@ -773,17 +773,7 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
  
      assert(n_used <= n_kv);
  
@@ -263,7 +263,7 @@ index 69f8d35a..35a750d3 100644
  
      // determine which KV cells to move where
      //
-@@ -799,10 +789,7 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
+@@ -791,10 +781,7 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
      //
      //  if ids[i] == i || ids[i] == n_kv, then cell i is not moved
      //
@@ -275,7 +275,7 @@ index 69f8d35a..35a750d3 100644
  
      for (uint32_t i0 = 0; i0 < n_used; ++i0) {
          const auto & cell0 = cells[i0];
-@@ -851,19 +838,11 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
+@@ -843,19 +830,11 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
          // are we moving a continuous block of memory?
          bool cont = false;
  
@@ -295,7 +295,7 @@ index 69f8d35a..35a750d3 100644
                  cont = false;
                  continue;
              }
-@@ -879,8 +858,10 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
+@@ -871,8 +850,10 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
              head = n_used;
  
              if (!cont) {
@@ -307,7 +307,7 @@ index 69f8d35a..35a750d3 100644
              }
  
              nf++;
-@@ -890,22 +871,16 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
+@@ -882,22 +863,16 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
              }
          }
  
