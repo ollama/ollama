@@ -152,6 +152,21 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		params = append(params, "--verbose")
 	}
 
+	rpcServers := ""
+	for _, gpu := range gpus {
+		if gpu.Library != "rpc" {
+			continue
+		}
+
+		if rpcServers != "" {
+			rpcServers += ","
+		}
+		rpcServers += gpu.ID
+	}
+	if rpcServers != "" {
+		params = append(params, "--rpc", rpcServers)
+	}
+
 	if opts.MainGPU > 0 {
 		params = append(params, "--main-gpu", strconv.Itoa(opts.MainGPU))
 	}
