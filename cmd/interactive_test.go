@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -49,4 +51,25 @@ d:\path with\spaces\seven.JPEG inbetween7 c:\users\jdoe\eight.png inbetween8
 	assert.Contains(t, res[8], "d:")
 	assert.Contains(t, res[9], "ten.PNG")
 	assert.Contains(t, res[9], "E:")
+}
+
+// Ensure that file paths wrapped in single quotes are removed with the quotes.
+func TestExtractFileDataRemovesQuotedFilepath(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "img.jpg")
+	data := make([]byte, 600)
+	copy(data, []byte{
+		0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 'J', 'F', 'I', 'F',
+		0x00, 0x01, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0xff, 0xd9,
+	})
+	if err := os.WriteFile(fp, data, 0o600); err != nil {
+		t.Fatalf("failed to write test image: %v", err)
+	}
+
+	input := "before '" + fp + "' after"
+	cleaned, imgs, err := extractFileData(input)
+	assert.NoError(t, err)
+	assert.Len(t, imgs, 1)
+	assert.Equal(t, cleaned, "before  after")
 }
