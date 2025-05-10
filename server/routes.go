@@ -1526,8 +1526,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
-		var sb strings.Builder
-		var toolCallIndex int = 0
+		var toolParser *ToolParser
+		if len(req.Tools) > 0 {
+			toolParser = NewToolParser(m)
+		}
+
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
@@ -1553,37 +1556,32 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
 
-			// TODO: tool call checking and filtering should be moved outside of this callback once streaming
-			// however this was a simple change for now without reworking streaming logic of this (and other)
-			// handlers
-			if req.Stream != nil && !*req.Stream || len(req.Tools) == 0 {
-				ch <- res
-				return
+			if len(req.Tools) > 0 && !toolParser.Done {
+				toolCalls, leftover := toolParser.ParseToolCalls(r.Content)
+				// * This can be abstracted again to a .handleState(tp.state)
+				// * However, we'd need a flag to indicate whether to send the response or not
+				// * happy to take whatever is more idiomatic
+				switch toolParser.ParserState {
+				case ToolCallAccumulate:
+					// tokens are accumulated in the tool parser
+					return
+				case ToolCallSendTokens:
+					// tokens are sent back in the response
+				case ToolCallSendPartial:
+					// tokens not needed for parsing are sent back in the response
+					if len(leftover) > 0 {
+						res.Message.Content = leftover
+					}
+					// ! state is needed as we need to not match on the other states
+				case ToolCallFound:
+					res.Message.ToolCalls = toolCalls
+					res.Message.Content = ""
+				}
 			}
 
-			// Streaming tool calls:
-			// If tools are recognized, use a flag to track the sending of a tool downstream
-			// This ensures that content is cleared from the message on the last chunk sent
-			sb.WriteString(r.Content)
-			if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
-				res.Message.ToolCalls = toolCalls
-				for i := range toolCalls {
-					toolCalls[i].Function.Index = toolCallIndex
-					toolCallIndex++
-				}
-				res.Message.Content = ""
-				sb.Reset()
-				ch <- res
-				return
-			}
-
-			if r.Done {
-				// Send any remaining content if no tool calls were detected
-				if toolCallIndex == 0 {
-					res.Message.Content = sb.String()
-				}
-				ch <- res
-			}
+			fmt.Println("sending response", res.Message.Content)
+			// * this is where we'd need the flag if we have a .handleState(tp.state)
+			ch <- res
 		}); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
@@ -1592,11 +1590,15 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if req.Stream != nil && !*req.Stream {
 		var resp api.ChatResponse
 		var sb strings.Builder
+		var toolCalls []api.ToolCall
 		for rr := range ch {
 			switch t := rr.(type) {
 			case api.ChatResponse:
 				sb.WriteString(t.Message.Content)
 				resp = t
+				if len(req.Tools) > 0 {
+					toolCalls = append(toolCalls, t.Message.ToolCalls...)
+				}
 			case gin.H:
 				msg, ok := t["error"].(string)
 				if !ok {
@@ -1612,12 +1614,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 
 		resp.Message.Content = sb.String()
-
-		if len(req.Tools) > 0 {
-			if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
-				resp.Message.ToolCalls = toolCalls
-				resp.Message.Content = ""
-			}
+		if len(toolCalls) > 0 {
+			resp.Message.ToolCalls = toolCalls
 		}
 
 		c.JSON(http.StatusOK, resp)
