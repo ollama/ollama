@@ -637,8 +637,8 @@ func SchemaToGrammar(schema []byte) []byte {
 	cStr := C.CString(string(schema))
 	defer C.free(unsafe.Pointer(cStr))
 
-	// Allocate buffer for grammar output with reasonable size
-	const maxLen = 32768 // 32KB
+	// Allocate buffer for grammar based on schema length but with upper bound
+	maxLen := min(1024*1024*1024, len(schema)*4)
 	buf := make([]byte, maxLen)
 
 	// Call C function to convert schema to grammar
