@@ -176,7 +176,7 @@ func NewGrammarSampler(model model.TextProcessor, grammarStr string) (*GrammarSa
 		vocabIds[i] = uint32(i)
 	}
 
-	grammar := llama.NewGrammar(grammarStr, vocabIds, pieces, []uint32{uint32(model.Vocabulary().EOS), uint32(model.Vocabulary().EOT)})
+	grammar := llama.NewGrammar(grammarStr, vocabIds, pieces, model.Vocabulary().EOS)
 	if grammar == nil {
 		return nil, errors.New("sample: failed to initialize grammar")
 	}

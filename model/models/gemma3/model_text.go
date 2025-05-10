@@ -21,7 +21,6 @@ type TextConfig struct {
 
 type TextModel struct {
 	model.Base
-	model.SentencePieceModel
 
 	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
 	Layers         []TextLayer   `gguf:"blk"`
@@ -45,15 +44,6 @@ func newTextModel(c fs.Config) *TextModel {
 	numBlocks := int(c.Uint("block_count"))
 
 	m := TextModel{
-		SentencePieceModel: model.NewSentencePieceModel(
-			&model.Vocabulary{
-				Values: c.Strings("tokenizer.ggml.tokens"),
-				Scores: c.Floats("tokenizer.ggml.scores"),
-				Types:  c.Ints("tokenizer.ggml.token_type"),
-				BOS:    int32(c.Uint("tokenizer.ggml.bos_token_id")),
-				EOS:    int32(c.Uint("tokenizer.ggml.eos_token_id")),
-			},
-		),
 		Layers: make([]TextLayer, numBlocks),
 		TextConfig: &TextConfig{
 			hiddenSize:     int(c.Uint("embedding_length")),
