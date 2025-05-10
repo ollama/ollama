@@ -24,12 +24,14 @@ docker buildx build \
     .
 
 if echo $PLATFORM | grep "amd64" > /dev/null; then
-    docker buildx build \
-        ${LOAD_OR_PUSH} \
-        --platform=linux/amd64 \
-        ${OLLAMA_COMMON_BUILD_ARGS} \
-        --build-arg FLAVOR=rocm \
-        -f Dockerfile \
-        -t ${FINAL_IMAGE_REPO}:$VERSION-rocm \
-        .
+    for FLAVOR in "rocm" "musa"; do
+        docker buildx build \
+            ${LOAD_OR_PUSH} \
+            --platform=linux/amd64 \
+            ${OLLAMA_COMMON_BUILD_ARGS} \
+            --build-arg FLAVOR=${FLAVOR} \
+            -f Dockerfile \
+            -t ${FINAL_IMAGE_REPO}:$VERSION-${FLAVOR} \
+            .
+    done
 fi
