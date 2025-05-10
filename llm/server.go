@@ -107,6 +107,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 
 	// If the user wants zero GPU layers, reset the gpu list to be CPU/system ram info
 	if opts.NumGPU == 0 {
+		slog.Debug("Reset GetCPUInfo...zero GPU layers")
 		gpus = discover.GetCPUInfo()
 	}
 
@@ -117,6 +118,37 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			// disable partial offloading when model is greater than total system memory as this
 			// can lead to locking up the system
 			opts.NumGPU = 0
+		case runtime.GOOS == "windows" && gpus[0].Library == "oneapi":
+			//delete "runtime.GOOS == "windows" && " when test for linux
+			if s := envconfig.Var("OLLAMA_NUM_GPU"); s != "" {
+				// use env OLLAMA_NUM_GPU to contral GPU offloaded layers number
+				if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+					if estimate.Layers == 0 {
+						opts.NumGPU = int(n)
+					} else {
+						//has estimate.Layers value;
+						if n >= 0 && int64(estimate.Layers) > n {
+							//has OLLAMA_NUM_GPU value n; 1.max offload to gpu layers is limit by n. 2. if don't gpu offload, set OLLAMA_NUM_GPU=0
+							opts.NumGPU = int(n)
+						} else {
+							opts.NumGPU = estimate.Layers
+						}
+					}
+				} else {
+					opts.NumGPU = estimate.Layers
+				}
+			} else {
+				if estimate.Layers == 0 {
+					//no estimate.Layers value;
+					if opts.NumGPU <= 0 {
+						if envconfig.Bool("OLLAMA_INTEL_GPU")() {
+							opts.NumGPU = 999
+						}
+					}
+				} else {
+					opts.NumGPU = estimate.Layers
+				}
+			}
 		case gpus[0].Library != "metal" && estimate.Layers == 0:
 			// Don't bother loading into the GPU if no layers can fit
 			gpus = discover.GetCPUInfo()
