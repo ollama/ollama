@@ -1508,7 +1508,20 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
+	// Merge consecutive user messages (instruction + file content) if present
 	msgs := append(m.Messages, req.Messages...)
+	if len(req.Messages) >= 2 &&
+		req.Messages[0].Role == "user" && req.Messages[1].Role == "user" &&
+		len(strings.TrimSpace(req.Messages[0].Content)) > 0 && len(strings.TrimSpace(req.Messages[1].Content)) > 0 {
+		// Merge the first two user messages into one message, preserving order
+		mergedContent := req.Messages[0].Content + "\n\n" + req.Messages[1].Content
+		mergedMsg := api.Message{
+			Role:    "user",
+			Content: mergedContent,
+		}
+		msgs = append(m.Messages, append([]api.Message{mergedMsg}, req.Messages[2:]...)...)
+	}
+
 	if req.Messages[0].Role != "system" && m.System != "" {
 		msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
 	}
