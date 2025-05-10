@@ -1503,7 +1503,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	slog.Debug("chat request", "images", len(images), "prompt", prompt)
+	slog.Log(context.TODO(), logutil.LevelTrace, "chat request", "images", len(images), "prompt", prompt)
 
 	ch := make(chan any)
 	go func() {
