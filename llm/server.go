@@ -31,6 +31,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llama"
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/model"
 )
 
@@ -726,6 +727,9 @@ type CompletionResponse struct {
 }
 
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
+	slog.Debug("completion request", "images", len(req.Images), "prompt", len(req.Prompt), "format", string(req.Format))
+	slog.Log(ctx, logutil.LevelTrace, "completion request", "prompt", req.Prompt)
+
 	if len(req.Format) > 0 {
 		switch string(req.Format) {
 		case `null`, `""`:
@@ -889,6 +893,8 @@ type EmbeddingResponse struct {
 }
 
 func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, error) {
+	slog.Log(ctx, logutil.LevelTrace, "embedding request", "input", input)
+
 	if err := s.sem.Acquire(ctx, 1); err != nil {
 		if errors.Is(err, context.Canceled) {
 			slog.Info("aborting embedding request due to client closing the connection")

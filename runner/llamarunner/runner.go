@@ -681,8 +681,6 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	slog.Debug("embedding request", "content", req.Content)
-
 	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{embedding: true})
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)

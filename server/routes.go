@@ -295,8 +295,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		prompt = b.String()
 	}
 
-	slog.Debug("generate request", "images", len(images), "prompt", prompt)
-
 	ch := make(chan any)
 	go func() {
 		// TODO (jmorganca): avoid building the response twice both here and below
@@ -1502,8 +1500,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	slog.Log(context.TODO(), logutil.LevelTrace, "chat request", "images", len(images), "prompt", prompt)
 
 	ch := make(chan any)
 	go func() {
