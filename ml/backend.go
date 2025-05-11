@@ -145,6 +145,8 @@ type Tensor interface {
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
 	RoPE(ctx Context, positionIDs, ropeFactors Tensor, dim, ropeType uint32, base, scale float32) Tensor
+	// RoPEWithLen allows the caller to specify the rope default context length
+	RoPEWithLen(ctx Context, positionIDs, ropeFactors Tensor, ropeDim, ropeType, defaultContextLen uint32, ropeBase, ropeScale float32) Tensor
 	IM2Col(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
 	Sin(ctx Context) Tensor
@@ -173,6 +175,7 @@ type Tensor interface {
 	Duplicate(ctx Context) Tensor
 
 	TopK(ctx Context, k int) Tensor
+	Argsort(ctx Context) Tensor
 }
 
 // ScaledDotProductAttention implements a fused attention
