@@ -1170,6 +1170,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	corsConfig.AllowOrigins = envconfig.AllowedOrigins()
 
 	r := gin.Default()
+	r.HandleMethodNotAllowed = true
 	r.Use(
 		cors.New(corsConfig),
 		allowedHostsMiddleware(s.addr),
@@ -1340,31 +1341,29 @@ func Serve(ln net.Listener) error {
 
 func waitForStream(c *gin.Context, ch chan any) {
 	c.Header("Content-Type", "application/json")
+	var latest api.ProgressResponse
 	for resp := range ch {
 		switch r := resp.(type) {
 		case api.ProgressResponse:
-			if r.Status == "success" {
-				c.JSON(http.StatusOK, r)
-				return
-			}
+			latest = r
 		case gin.H:
 			status, ok := r["status"].(int)
 			if !ok {
 				status = http.StatusInternalServerError
 			}
-			if errorMsg, ok := r["error"].(string); ok {
-				c.JSON(status, gin.H{"error": errorMsg})
-				return
-			} else {
-				c.JSON(status, gin.H{"error": "unexpected error format in progress response"})
-				return
+			errorMsg, ok := r["error"].(string)
+			if !ok {
+				errorMsg = "unknown error"
 			}
+			c.JSON(status, gin.H{"error": errorMsg})
+			return
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected progress response"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "unknown message type"})
 			return
 		}
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected end of progress response"})
+
+	c.JSON(http.StatusOK, latest)
 }
 
 func streamResponse(c *gin.Context, ch chan any) {

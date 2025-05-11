@@ -249,10 +249,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		params = append(params, "--no-mmap")
 	}
 
-	if opts.UseMLock {
-		params = append(params, "--mlock")
-	}
-
 	// TODO - NUMA support currently doesn't work properly
 
 	params = append(params, "--parallel", strconv.Itoa(numParallel))
@@ -322,7 +318,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		params = append(params, "--mmproj", projectors[0])
 	}
 
-	// iterate through compatible GPU libraries such as 'cuda_v12', 'cuda_v11', 'rocm', etc.
+	// iterate through compatible GPU libraries such as 'cuda_v12', 'rocm', etc.
 	// adding each library's respective path to the LD_LIBRARY_PATH, until finally running
 	// without any LD_LIBRARY_PATH flags
 	for {
@@ -1046,17 +1042,17 @@ func (s *llmServer) Close() error {
 	s.llamaModelLock.Unlock()
 
 	if s.cmd != nil {
-		slog.Debug("stopping llama server")
+		slog.Debug("stopping llama server", "pid", s.Pid())
 		if err := s.cmd.Process.Kill(); err != nil {
 			return err
 		}
 		// if ProcessState is already populated, Wait already completed, no need to wait again
 		if s.cmd.ProcessState == nil {
-			slog.Debug("waiting for llama server to exit")
+			slog.Debug("waiting for llama server to exit", "pid", s.Pid())
 			<-s.done
 		}
 
-		slog.Debug("llama server stopped")
+		slog.Debug("llama server stopped", "pid", s.Pid())
 	}
 
 	return nil

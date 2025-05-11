@@ -315,6 +315,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama-chats RPG](https://github.com/drazdra/ollama-chats)
 - [IntelliBar](https://intellibar.app/) (AI-powered assistant for macOS)
 - [Jirapt](https://github.com/AliAhmedNada/jirapt) (Jira Integration to generate issues, tasks, epics)
+- [ojira](https://github.com/AliAhmedNada/ojira) (Jira chrome plugin to easily generate descriptions for tasks)
 - [QA-Pilot](https://github.com/reid41/QA-Pilot) (Interactive chat tool that can leverage Ollama models for rapid understanding and navigation of GitHub code repositories)
 - [ChatOllama](https://github.com/sugarforever/chat-ollama) (Open Source Chatbot based on Ollama with Knowledge Bases)
 - [CRAG Ollama Chat](https://github.com/Nagi-ovo/CRAG-Ollama-Chat) (Simple Web Search with Corrective RAG)
@@ -397,6 +398,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [1Panel](https://github.com/1Panel-dev/1Panel/) (Web-based Linux Server Management Tool)
 - [AstrBot](https://github.com/Soulter/AstrBot/) (User-friendly LLM-based multi-platform chatbot with a WebUI, supporting RAG, LLM agents, and plugins integration)
 - [Reins](https://github.com/ibrahimcetin/reins) (Easily tweak parameters, customize system prompts per chat, and enhance your AI experiments with reasoning model support.)
+- [Flufy](https://github.com/Aharon-Bensadoun/Flufy) (A beautiful chat interface for interacting with Ollama's API. Built with React, TypeScript, and Material-UI.)
 - [Ellama](https://github.com/zeozeozeo/ellama) (Friendly native app to chat with an Ollama instance)
 - [screenpipe](https://github.com/mediar-ai/screenpipe) Build agents powered by your screen history
 - [Ollamb](https://github.com/hengkysteen/ollamb) (Simple yet rich in features, cross-platform built with Flutter and designed for Ollama. Try the [web demo](https://hengkysteen.github.io/demo/ollamb/).)

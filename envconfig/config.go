@@ -209,8 +209,6 @@ var (
 	MaxRunners = Uint("OLLAMA_MAX_LOADED_MODELS", 0)
 	// MaxQueue sets the maximum number of queued requests. MaxQueue can be configured via the OLLAMA_MAX_QUEUE environment variable.
 	MaxQueue = Uint("OLLAMA_MAX_QUEUE", 512)
-	// MaxVRAM sets a maximum VRAM override in bytes. MaxVRAM can be configured via the OLLAMA_MAX_VRAM environment variable.
-	MaxVRAM = Uint("OLLAMA_MAX_VRAM", 0)
 )
 
 func Uint64(key string, defaultValue uint64) func() uint64 {

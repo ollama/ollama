@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
 
@@ -23,7 +24,6 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
-	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -425,9 +425,14 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 
 func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.ProgressResponse)) (*layerGGML, error) {
 	ft := layer.GGML.KV().FileType()
-	fn(api.ProgressResponse{Status: fmt.Sprintf("quantizing %s model to %s", ft, quantizeType)})
-
-	want, err := ggml.ParseFileType(quantizeType)
+	var doneBytes atomic.Uint64
+	totalBytes := uint64(layer.Size) - layer.GGML.Tensors().Offset
+	fnWrap := func(n uint64) {
+		done := doneBytes.Add(n)
+		progress := float32(done) / float32(totalBytes)
+		fn(api.ProgressResponse{Status: fmt.Sprintf("quantizing %s model to %s", ft, quantizeType), Digest: "0", Total: layer.Size, Completed: int64(progress * float32(layer.Size))})
+	}
+	ftype, err := ggml.ParseFileType(quantizeType)
 	if err != nil {
 		return nil, err
 	}
@@ -436,6 +441,11 @@ func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.Progr
 	if err != nil {
 		return nil, err
 	}
+	fp, err := os.Open(blob)
+	if err != nil {
+		return nil, err
+	}
+	defer fp.Close()
 
 	temp, err := os.CreateTemp(filepath.Dir(blob), quantizeType)
 	if err != nil {
@@ -444,15 +454,15 @@ func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.Progr
 	defer temp.Close()
 	defer os.Remove(temp.Name())
 
-	if err := llama.Quantize(blob, temp.Name(), uint32(want)); err != nil {
+	if err := quantize(fp, temp, layer.GGML, ftype, fnWrap); err != nil {
 		return nil, err
 	}
-
+	temp.Seek(0, io.SeekStart)
+	fn(api.ProgressResponse{Status: "verifying conversion"})
 	newLayer, err := NewLayer(temp, layer.MediaType)
 	if err != nil {
 		return nil, err
 	}
-
 	if _, err := temp.Seek(0, io.SeekStart); err != nil {
 		return nil, err
 	}
@@ -462,7 +472,6 @@ func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.Progr
 		slog.Error(fmt.Sprintf("error decoding ggml: %s\n", err))
 		return nil, err
 	}
-
 	return &layerGGML{newLayer, f}, nil
 }
 

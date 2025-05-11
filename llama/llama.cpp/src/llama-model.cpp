@@ -1437,7 +1437,6 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                     default: type = LLM_TYPE_UNKNOWN;
                 }
             } break;
-        case LLM_ARCH_MISTRAL3: break;
         default: throw std::runtime_error("unsupported model architecture");
     }
 
@@ -13752,7 +13751,6 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_CHAMELEON:
         case LLM_ARCH_SOLAR:
         case LLM_ARCH_BAILINGMOE:
-        case LLM_ARCH_MISTRAL3:
             return LLAMA_ROPE_TYPE_NORM;
 
         // the pairs of head values are offset by n_rot/2

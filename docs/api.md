@@ -394,9 +394,6 @@ curl http://localhost:11434/api/generate -d '{
     "repeat_penalty": 1.2,
     "presence_penalty": 1.5,
     "frequency_penalty": 1.0,
-    "mirostat": 1,
-    "mirostat_tau": 0.8,
-    "mirostat_eta": 0.6,
     "penalize_newline": true,
     "stop": ["\n", "user:"],
     "numa": false,
@@ -404,10 +401,7 @@ curl http://localhost:11434/api/generate -d '{
     "num_batch": 2,
     "num_gpu": 1,
     "main_gpu": 0,
-    "low_vram": false,
-    "vocab_only": false,
     "use_mmap": true,
-    "use_mlock": false,
     "num_thread": 8
   }
 }'

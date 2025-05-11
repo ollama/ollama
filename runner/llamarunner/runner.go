@@ -583,9 +583,6 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		PenaltyRepeat:  req.Options.RepeatPenalty,
 		PenaltyFreq:    req.Options.FrequencyPenalty,
 		PenaltyPresent: req.Options.PresencePenalty,
-		Mirostat:       req.Options.Mirostat,
-		MirostatTau:    req.Options.MirostatTau,
-		MirostatEta:    req.Options.MirostatEta,
 		Seed:           uint32(req.Options.Seed),
 		Grammar:        req.Grammar,
 	}
@@ -820,7 +817,6 @@ func Execute(args []string) error {
 	threads := fs.Int("threads", runtime.NumCPU(), "Number of threads to use during generation")
 	verbose := fs.Bool("verbose", false, "verbose output (default: disabled)")
 	noMmap := fs.Bool("no-mmap", false, "do not memory-map model (slower load but may reduce pageouts if not using mlock)")
-	mlock := fs.Bool("mlock", false, "force system to keep model in RAM rather than swapping or compressing")
 	tensorSplit := fs.String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
 	multiUserCache := fs.Bool("multiuser-cache", false, "optimize input cache algorithm for multiple users")
 
@@ -876,7 +872,6 @@ func Execute(args []string) error {
 		NumGpuLayers: *nGpuLayers,
 		MainGpu:      *mainGpu,
 		UseMmap:      !*noMmap && lpaths.String() == "",
-		UseMlock:     *mlock,
 		TensorSplit:  tensorSplitFloats,
 		Progress: func(progress float32) {
 			server.progress = progress

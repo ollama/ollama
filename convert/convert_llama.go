@@ -126,11 +126,11 @@ func (p *llamaModel) KV(t *Tokenizer) ggml.KV {
 	return kv
 }
 
-func (p *llamaModel) Tensors(ts []Tensor) []ggml.Tensor {
-	var out []ggml.Tensor
+func (p *llamaModel) Tensors(ts []Tensor) []*ggml.Tensor {
+	var out []*ggml.Tensor
 
 	if p.RopeScaling.factors != nil {
-		out = append(out, ggml.Tensor{
+		out = append(out, &ggml.Tensor{
 			Name:     "rope_freqs.weight",
 			Kind:     0,
 			Shape:    []uint64{uint64(len(p.RopeScaling.factors))},
@@ -145,7 +145,7 @@ func (p *llamaModel) Tensors(ts []Tensor) []ggml.Tensor {
 			}
 		}
 
-		out = append(out, ggml.Tensor{
+		out = append(out, &ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),
