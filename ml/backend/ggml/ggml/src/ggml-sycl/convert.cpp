@@ -437,41 +437,52 @@ static void dequantize_row_iq4_nl_sycl(const void *vx, dst_t *y, const int64_t k
 }
 
 template <typename src_t, typename dst_t>
-static void convert_unary(const void * __restrict__ vx, dst_t * __restrict__ y, const int64_t k,
-                          const sycl::nd_item<3> &item_ct1) {
+static void convert_unary_nc(const void * __restrict__ vx, dst_t * __restrict__ y, const int64_t ne00, const int64_t ne01,
+                          const int64_t ne02, const int64_t s01, const int64_t s02, const int64_t s03,
+                          const sycl::nd_item<3> & item_ct1) {
+
     const int64_t work_group_size = item_ct1.get_local_range(2);
-    const int64_t global_id = item_ct1.get_local_id(2) + work_group_size * item_ct1.get_group(2);
+    const int64_t global_id       = item_ct1.get_local_id(2) + work_group_size * item_ct1.get_group(2);
+
+    const int64_t i01 = item_ct1.get_group(1);
+    const int64_t i02 = item_ct1.get_group(0) % ne02;
+    const int64_t i03 = item_ct1.get_group(0) / ne02;
 
     // make each work-item deal with more elements since sycl global range can not exceed max int
-    const src_t * x = (const src_t *) vx;
-    for (int64_t i = global_id; i < k; i += work_group_size * item_ct1.get_group_range(2)) {
-        y[i] = x[i];
+    const src_t * x = static_cast<const src_t *>(vx);
+    const int64_t ix = i03 * s03 + i02 * s02 + i01 * s01;
+    const int64_t iy = ((i03 * ne02 + i02) * ne01 + i01) * ne00;
+
+#pragma unroll
+    for (int64_t i00 = global_id; i00 < ne00; i00 += work_group_size * item_ct1.get_group_range(2)) {
+        y[iy + i00] = static_cast<dst_t>(x[ix + i00]);
     }
 }
 
 template <typename src_t, typename dst_t>
-static void convert_unary_sycl(const void *__restrict__ vx,
-                               dst_t *__restrict__ y, const int64_t k,
-                               dpct::queue_ptr stream) {
-    const int64_t num_blocks = (k + SYCL_DEQUANTIZE_BLOCK_SIZE - 1) / SYCL_DEQUANTIZE_BLOCK_SIZE;
+static void convert_unary_nc_sycl(const void * __restrict__ vx, dst_t * __restrict__ y,
+                                  const int64_t ne00, const int64_t ne01, const int64_t ne02, const int64_t ne03,
+                                  const int64_t s01, const int64_t s02, const int64_t s03, dpct::queue_ptr queue) {
+    dpct::has_capability_or_fail(queue->get_device(), { sycl::aspect::fp16 });
+
+    sycl::range<3> global_size(ne02 * ne03, ne01, ceil_div(ne00, SYCL_DEQUANTIZE_BLOCK_SIZE));
 
     // decrease global range when it exceeds the max int
-    int64_t local_size = downsample_sycl_global_range(num_blocks, SYCL_DEQUANTIZE_BLOCK_SIZE);
-    sycl::range<3> block_nums(1, 1, num_blocks);
-    sycl::range<3> local_range(1, 1, local_size);
-    {
-        dpct::has_capability_or_fail(stream->get_device(),
-                                     {sycl::aspect::fp16});
+    // TODO: Downsample logic is separated from the kernel, a rewrite is desirable
+    int64_t        downsized_workgroup = downsample_sycl_global_range(global_size[0], SYCL_DEQUANTIZE_BLOCK_SIZE);
+    sycl::range<3> workgroup_size(1, 1, downsized_workgroup);
 
-        stream->parallel_for(
-            sycl::nd_range<3>(block_nums * local_range, local_range),
-            [=](sycl::nd_item<3> item_ct1) {
-                convert_unary<src_t>(vx, y, k, item_ct1);
-            });
-    }
+    queue->parallel_for(sycl::nd_range<3>(global_size * workgroup_size, workgroup_size), [=](sycl::nd_item<3> item_ct1) {
+        convert_unary_nc<src_t>(vx, y, ne00, ne01, ne02, s01, s02, s03, item_ct1);
+    });
 }
 
-to_fp16_sycl_t ggml_get_to_fp16_sycl(ggml_type type, ggml_tensor *dst) {
+template <typename src_t, typename dst_t>
+static void convert_unary_sycl(const void * vx, dst_t * y, const int64_t k, dpct::queue_ptr queue) {
+    convert_unary_nc_sycl<src_t>(vx, y, k, 1, 1, 1, k, k, k, queue);
+}
+
+to_fp16_sycl_t ggml_get_to_fp16_sycl(ggml_type type, ggml_tensor * dst) {
     switch (type) {
         case GGML_TYPE_Q4_0:
             if (dst->src[0]->extra &&
@@ -570,6 +581,15 @@ to_fp32_sycl_t ggml_get_to_fp32_sycl(ggml_type type, ggml_tensor *dst) {
             return dequantize_row_iq4_nl_sycl;
         case GGML_TYPE_F16:
             return convert_unary_sycl<sycl::half>;
+        default:
+            return nullptr;
+    }
+}
+
+to_fp16_nc_sycl_t get_to_fp16_nc_sycl(ggml_type type) {
+    switch (type) {
+        case GGML_TYPE_F32:
+            return convert_unary_nc_sycl<float>;
         default:
             return nullptr;
     }
