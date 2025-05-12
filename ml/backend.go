@@ -119,6 +119,25 @@ type Context interface {
 	Layer(int) Context
 }
 
+// RopeOpts contains optional parameters for RoPE function
+type RopeOpts struct {
+	DefaultContextLen uint32
+	YarnExtFactor     float32
+	YarnAttnFactor    float32
+	YarnBetaFast      float32
+	YarnBetaSlow      float32
+}
+
+// RopeOption defines a function that modifies RopeOpts
+type RopeOption func(*RopeOpts)
+
+// WithContextLen sets a custom context length
+func WithContextLen(len uint32) RopeOption {
+	return func(opts *RopeOpts) {
+		opts.DefaultContextLen = len
+	}
+}
+
 type Tensor interface {
 	Dim(n int) int
 	Stride(n int) int
@@ -144,9 +163,7 @@ type Tensor interface {
 	AvgPool2D(ctx Context, k, s int, p float32) Tensor
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
-	RoPE(ctx Context, positionIDs, ropeFactors Tensor, dim, ropeType uint32, base, scale float32) Tensor
-	// RoPEWithLen allows the caller to specify the rope default context length
-	RoPEWithLen(ctx Context, positionIDs, ropeFactors Tensor, ropeDim, ropeType, defaultContextLen uint32, ropeBase, ropeScale float32) Tensor
+	RoPE(ctx Context, positionIDs, ropeFactors Tensor, dim, ropeType uint32, base, scale float32, options ...RopeOption) Tensor
 	IM2Col(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
 	Sin(ctx Context) Tensor

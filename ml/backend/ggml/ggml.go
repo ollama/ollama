@@ -1071,12 +1071,21 @@ const (
 	ropeTypeVision C.int = 24
 )
 
-func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim, ropeType uint32, ropeBase, ropeScale float32) ml.Tensor {
-	defaultContextLen := uint32(131072)
-	return t.RoPEWithLen(ctx, positionIDs, ropeFactors, ropeDim, ropeType, defaultContextLen, ropeBase, ropeScale)
-}
+func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim, ropeType uint32, ropeBase, ropeScale float32, options ...ml.RopeOption) ml.Tensor {
+	// Default options
+	opts := &ml.RopeOpts{
+		DefaultContextLen: 131072,
+		YarnExtFactor:     0.0,
+		YarnAttnFactor:    1.0,
+		YarnBetaFast:      32.0,
+		YarnBetaSlow:      1.0,
+	}
 
-func (t *Tensor) RoPEWithLen(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim, ropeType, defaultContextLen uint32, ropeBase, ropeScale float32) ml.Tensor {
+	// Apply any provided options
+	for _, option := range options {
+		option(opts)
+	}
+
 	if ropeFactors == nil {
 		ropeFactors = &Tensor{b: t.b}
 	}
@@ -1095,13 +1104,13 @@ func (t *Tensor) RoPEWithLen(ctx ml.Context, positionIDs, ropeFactors ml.Tensor,
 			ropeFactors.(*Tensor).t,
 			C.int(ropeDim),
 			C.int(ropeType),
-			C.int(defaultContextLen), // YaRN n_ctx_train
+			C.int(opts.DefaultContextLen),
 			C.float(ropeBase),
 			C.float(ropeScale),
-			0.,  // YaRN ext_factor
-			1.,  // YaRN attn_factor
-			32., // YaRN beta_fast
-			1.,  // YaRN beta_slow
+			C.float(opts.YarnExtFactor),
+			C.float(opts.YarnAttnFactor),
+			C.float(opts.YarnBetaFast),
+			C.float(opts.YarnBetaSlow),
 		),
 	}
 }
