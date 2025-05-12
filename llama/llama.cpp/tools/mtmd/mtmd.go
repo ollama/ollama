@@ -1,4 +1,4 @@
-package llava
+package mtmd
 
 // #cgo CXXFLAGS: -std=c++11
 // #cgo CPPFLAGS: -I${SRCDIR}/../../include -I${SRCDIR}/../../common

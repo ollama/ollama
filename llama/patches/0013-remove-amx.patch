@@ -9,7 +9,7 @@ disable amx as it reduces performance on some systems
  1 file changed, 4 deletions(-)
 
 diff --git a/ggml/src/CMakeLists.txt b/ggml/src/CMakeLists.txt
-index 4c0d3824..79c26312 100644
+index 45918bf6..0beaed86 100644
 --- a/ggml/src/CMakeLists.txt
 +++ b/ggml/src/CMakeLists.txt
 @@ -296,10 +296,6 @@ if (GGML_CPU_ALL_VARIANTS)

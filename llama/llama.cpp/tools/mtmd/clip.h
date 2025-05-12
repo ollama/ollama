@@ -78,10 +78,10 @@ CLIP_API int clip_uhd_num_image_embeds_col(struct clip_ctx * ctx_clip);
 CLIP_API void clip_add_load_image_size(struct clip_ctx * ctx_clip, struct clip_image_size * load_image_size);
 CLIP_API struct clip_image_size * clip_get_load_image_size(struct clip_ctx * ctx_clip);
 
-CLIP_API struct clip_image_size      * clip_image_size_init();
-CLIP_API struct clip_image_u8        * clip_image_u8_init ();
-CLIP_API struct clip_image_f32       * clip_image_f32_init();
-CLIP_API struct clip_image_f32_batch * clip_image_f32_batch_init(); // only used by libllava
+CLIP_API struct clip_image_size      * clip_image_size_init(void);
+CLIP_API struct clip_image_u8        * clip_image_u8_init (void);
+CLIP_API struct clip_image_f32       * clip_image_f32_init(void);
+CLIP_API struct clip_image_f32_batch * clip_image_f32_batch_init(void); // only used by libllava
 
 // nx, ny are the output image dimensions
 CLIP_API unsigned char * clip_image_u8_get_data(struct clip_image_u8 * img, uint32_t * nx, uint32_t * ny);

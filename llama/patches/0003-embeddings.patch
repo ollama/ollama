@@ -11,10 +11,10 @@ instead of forcing one or the error
  1 file changed, 3 insertions(+), 3 deletions(-)
 
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index 5a2eef9b..9c1fe93f 100644
+index 62246c10..dca22d8b 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
-@@ -1225,7 +1225,7 @@ int llama_context::decode(llama_batch & inp_batch) {
+@@ -901,7 +901,7 @@ int llama_context::decode(llama_batch & inp_batch) {
      int64_t n_outputs_all = 0;
  
      // count outputs
@@ -23,7 +23,7 @@ index 5a2eef9b..9c1fe93f 100644
          for (uint32_t i = 0; i < n_tokens_all; ++i) {
              n_outputs_all += batch.logits[i] != 0;
          }
-@@ -1337,7 +1337,7 @@ int llama_context::decode(llama_batch & inp_batch) {
+@@ -982,7 +982,7 @@ int llama_context::decode(llama_batch & inp_batch) {
          //    ggml_graph_dump_dot(gf, NULL, "llama.dot");
          //}
  
@@ -32,7 +32,7 @@ index 5a2eef9b..9c1fe93f 100644
          auto * t_embd   = cparams.embeddings ? res->get_embd() : nullptr;
  
          if (t_embd && res->get_embd_pooled()) {
-@@ -1481,7 +1481,7 @@ int32_t llama_context::output_reserve(int32_t n_outputs) {
+@@ -1151,7 +1151,7 @@ int32_t llama_context::output_reserve(int32_t n_outputs) {
      const auto n_embd  = hparams.n_embd;
  
      // TODO: use a per-batch flag for logits presence instead

@@ -72,8 +72,6 @@ static_assert(sizeof(block_iq4_nlx4) == 4 * sizeof(ggml_half) + QK4_NL * 2, "wro
 
 #if defined(__GNUC__)
 #pragma GCC diagnostic ignored "-Woverlength-strings"
-#elif defined(_MSC_VER)
-#pragma warning(disable: 4244 4267) // possible loss of data
 #endif
 
 #define UNUSED GGML_UNUSED

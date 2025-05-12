@@ -10,11 +10,11 @@ include common/stb_image.*
 include include/
 include include/llama.*
 include include/llama-*.*
-include examples/
-include examples/llava/
-include examples/llava/clip.*
-include examples/llava/clip-impl.*
-include examples/llava/llava.*
+include tools/
+include tools/mtmd/
+include tools/mtmd/clip.*
+include tools/mtmd/clip-impl.*
+include tools/mtmd/llava.*
 include src/
 include src/llama.*
 include src/llama-*.*

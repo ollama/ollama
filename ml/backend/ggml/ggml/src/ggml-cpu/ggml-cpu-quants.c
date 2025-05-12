@@ -20,12 +20,6 @@
 #define GROUP_MAX_EPS_IQ1_M 1e-7f
 #define GROUP_MAX_EPS_IQ1_S 1e-12f
 
-#if defined(_MSC_VER)
-// disable "possible loss of data" to avoid warnings for hundreds of casts
-// we should just be careful :)
-#pragma warning(disable: 4244 4267)
-#endif
-
 #define UNUSED GGML_UNUSED
 
 // some compilers don't provide _mm256_set_m128i, e.g. gcc 7
@@ -6596,7 +6590,118 @@ void ggml_vec_dot_q3_K_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const voi
     }
 
     *s = hsum_float_8(acc);
+#elif defined(__VXE__) || defined(__VXE2__)
+    uint32_t aux[3];
+    uint32_t utmp[4];
 
+    const int32x4_t v_z = vec_splat_s32(0);
+    const uint8x16_t v_3m = vec_splat_u8(0x03);
+
+    const uint8x16_t v_0c = vec_splat_u8(1);
+    const uint8x16_t v_1c = vec_sl(v_0c, 1);
+    const uint8x16_t v_2c = vec_sl(v_0c, 2);
+    const uint8x16_t v_3c = vec_sl(v_0c, 3);
+
+    uint8x16_t q3h[4];
+    uint8x16_t q3b[2];
+    int8x16_t q3bytes[4];
+    int8x16_t q8bytes[4];
+    uint8x16_t qhbits[2];
+
+    float sum = 0;
+
+    for (int i = 0; i < nb; ++i) {
+        const float d = y[i].d * GGML_FP16_TO_FP32(x[i].d);
+
+        const uint8_t * restrict x0l = x[i].qs;
+        const uint8_t * restrict x0h = x[i].hmask;
+        const int8_t  * restrict y0  = y[i].qs;
+
+        qhbits[0] = vec_xl(0 , x0h);
+        qhbits[1] = vec_xl(16, x0h);
+
+        int32_t isum = 0;
+
+        memcpy(aux, x[i].scales, 12);
+        utmp[3] = ((aux[1] >> 4) & kmask2) | (((aux[2] >> 6) & kmask1) << 4);
+        utmp[2] = ((aux[0] >> 4) & kmask2) | (((aux[2] >> 4) & kmask1) << 4);
+        utmp[1] = (aux[1] & kmask2) | (((aux[2] >> 2) & kmask1) << 4);
+        utmp[0] = (aux[0] & kmask2) | (((aux[2] >> 0) & kmask1) << 4);
+
+        int8_t * scale = (int8_t *)utmp;
+        for (int j = 0; j < 16; ++j) scale[j] -= 32;
+
+        for (int j = 0; j < QK_K/128; ++j) {
+            int32x4_t isum0, isum1, isum2, isum3;
+
+            q3b[0] = vec_xl(0 , x0l);
+            q3b[1] = vec_xl(16, x0l);
+            x0l += 32;
+
+            q8bytes[0] = vec_xl(0  , y0);
+            q8bytes[1] = vec_xl(16 , y0);
+            q8bytes[2] = vec_xl(32 , y0);
+            q8bytes[3] = vec_xl(48 , y0);
+            q8bytes[4] = vec_xl(64 , y0);
+            q8bytes[5] = vec_xl(80 , y0);
+            q8bytes[6] = vec_xl(96 , y0);
+            q8bytes[7] = vec_xl(112, y0);
+            y0 += 128;
+
+            q3h[0] = vec_sl(vec_andc(v_0c, qhbits[0]), 2);
+            q3h[1] = vec_sl(vec_andc(v_0c, qhbits[1]), 2);
+            q3h[2] = vec_sl(vec_andc(v_1c, qhbits[0]), 1);
+            q3h[3] = vec_sl(vec_andc(v_1c, qhbits[1]), 1);
+
+            q3bytes[0] = vec_sub((int8x16_t)vec_and(q3b[0], v_3m), (int8x16_t)q3h[0]);
+            q3bytes[1] = vec_sub((int8x16_t)vec_and(q3b[1], v_3m), (int8x16_t)q3h[1]);
+            q3bytes[2] = vec_sub((int8x16_t)vec_and(vec_sr(q3b[0], 2), v_3m), (int8x16_t)q3h[2]);
+            q3bytes[3] = vec_sub((int8x16_t)vec_and(vec_sr(q3b[1], 2), v_3m), (int8x16_t)q3h[3]);
+
+            isum0 = ggml_vec_dot(v_z, q3bytes[0], q8bytes[0]);
+            isum1 = ggml_vec_dot(v_z, q3bytes[1], q8bytes[1]);
+            isum2 = ggml_vec_dot(v_z, q3bytes[2], q8bytes[2]);
+            isum3 = ggml_vec_dot(v_z, q3bytes[3], q8bytes[3]);
+
+            isum += (isum0[0] + isum0[1] + isum0[2] + isum0[3]) * scale[0];
+            isum += (isum1[0] + isum1[1] + isum1[2] + isum1[3]) * scale[1];
+            isum += (isum2[0] + isum2[1] + isum2[2] + isum2[3]) * scale[2];
+            isum += (isum3[0] + isum3[1] + isum3[2] + isum3[3]) * scale[3];
+
+            scale += 4;
+
+            q3h[0] = vec_andc(v_2c, qhbits[0]);
+            q3h[1] = vec_andc(v_2c, qhbits[1]);
+            q3h[2] = vec_sr(vec_andc(v_3c, qhbits[0]), 1);
+            q3h[3] = vec_sr(vec_andc(v_3c, qhbits[1]), 1);
+
+            q3bytes[0] = vec_sub((int8x16_t)vec_and(vec_sr(q3b[0], 4), v_3m), (int8x16_t)q3h[0]);
+            q3bytes[1] = vec_sub((int8x16_t)vec_and(vec_sr(q3b[1], 4), v_3m), (int8x16_t)q3h[1]);
+            q3bytes[2] = vec_sub((int8x16_t)vec_and(vec_sr(q3b[0], 6), v_3m), (int8x16_t)q3h[2]);
+            q3bytes[3] = vec_sub((int8x16_t)vec_and(vec_sr(q3b[1], 6), v_3m), (int8x16_t)q3h[3]);
+
+            isum0 = ggml_vec_dot(v_z, q3bytes[0], q8bytes[4]);
+            isum1 = ggml_vec_dot(v_z, q3bytes[1], q8bytes[5]);
+            isum2 = ggml_vec_dot(v_z, q3bytes[2], q8bytes[6]);
+            isum3 = ggml_vec_dot(v_z, q3bytes[3], q8bytes[7]);
+
+            isum += (isum0[0] + isum0[1] + isum0[2] + isum0[3]) * scale[0];
+            isum += (isum1[0] + isum1[1] + isum1[2] + isum1[3]) * scale[1];
+            isum += (isum2[0] + isum2[1] + isum2[2] + isum2[3]) * scale[2];
+            isum += (isum3[0] + isum3[1] + isum3[2] + isum3[3]) * scale[3];
+
+            scale += 4;
+
+            if (j == 0) {
+                qhbits[0] = vec_sr(qhbits[0], 4);
+                qhbits[1] = vec_sr(qhbits[1], 4);
+            }
+        }
+
+        sum += d * isum;
+    }
+
+    *s = sum;
 #else
     // scalar version
     // This function is written like this so the compiler can manage to vectorize most of it
