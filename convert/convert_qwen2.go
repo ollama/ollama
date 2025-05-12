@@ -40,7 +40,7 @@ func (q *qwen2Model) KV(t *Tokenizer) ggml.KV {
 	case "yarn":
 		kv["qwen2.rope.scaling.type"] = q.RopeScaling.Type
 		kv["qwen2.rope.scaling.factor"] = q.RopeScaling.Factor
-	case "mrope":
+	case "mrope", "default":
 		kv["qwen2.rope.mrope_section"] = q.RopeScaling.MropeSection
 	default:
 		panic("unknown rope scaling type")
