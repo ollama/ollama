@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,8 +31,36 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llama"
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/model"
 )
+
+type filteredEnv []string
+
+func (e filteredEnv) LogValue() slog.Value {
+	var attrs []slog.Attr
+	for _, env := range e {
+		if key, value, ok := strings.Cut(env, "="); ok {
+			switch {
+			case strings.HasPrefix(key, "OLLAMA_"),
+				strings.HasPrefix(key, "CUDA_"),
+				strings.HasPrefix(key, "ROCR_"),
+				strings.HasPrefix(key, "ROCM_"),
+				strings.HasPrefix(key, "HIP_"),
+				strings.HasPrefix(key, "GPU_"),
+				strings.HasPrefix(key, "HSA_"),
+				strings.HasPrefix(key, "GGML_"),
+				slices.Contains([]string{
+					"PATH",
+					"LD_LIBRARY_PATH",
+					"DYLD_LIBRARY_PATH",
+				}, key):
+				attrs = append(attrs, slog.String(key, value))
+			}
+		}
+	}
+	return slog.GroupValue(attrs...)
+}
 
 type LlamaServer interface {
 	Ping(ctx context.Context) error
@@ -150,10 +179,6 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 
 	if opts.NumGPU >= 0 {
 		params = append(params, "--n-gpu-layers", strconv.Itoa(opts.NumGPU))
-	}
-
-	if envconfig.Debug() {
-		params = append(params, "--verbose")
 	}
 
 	if opts.MainGPU > 0 {
@@ -294,7 +319,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		params = append(params, "--mmproj", projectors[0])
 	}
 
-	// iterate through compatible GPU libraries such as 'cuda_v12', 'cuda_v11', 'rocm', etc.
+	// iterate through compatible GPU libraries such as 'cuda_v12', 'rocm', etc.
 	// adding each library's respective path to the LD_LIBRARY_PATH, until finally running
 	// without any LD_LIBRARY_PATH flags
 	for {
@@ -422,26 +447,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		}
 
 		slog.Info("starting llama server", "cmd", s.cmd)
-		if envconfig.Debug() {
-			filteredEnv := []string{}
-			for _, ev := range s.cmd.Env {
-				if strings.HasPrefix(ev, "OLLAMA_") ||
-					strings.HasPrefix(ev, "CUDA_") ||
-					strings.HasPrefix(ev, "ROCR_") ||
-					strings.HasPrefix(ev, "ROCM_") ||
-					strings.HasPrefix(ev, "HIP_") ||
-					strings.HasPrefix(ev, "GPU_") ||
-					strings.HasPrefix(ev, "HSA_") ||
-					strings.HasPrefix(ev, "GGML_") ||
-					strings.HasPrefix(ev, "PATH=") ||
-					strings.HasPrefix(ev, "LD_LIBRARY_PATH=") ||
-					strings.HasPrefix(ev, "DYLD_LIBRARY_PATH=") {
-					filteredEnv = append(filteredEnv, ev)
-				}
-			}
-			// Log at debug as the environment is inherited and might contain sensitive information
-			slog.Debug("subprocess", "environment", filteredEnv)
-		}
+		slog.Debug("subprocess", "", filteredEnv(s.cmd.Env))
 
 		if err = s.cmd.Start(); err != nil {
 			var msg string
@@ -820,6 +826,9 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 		s.modelPreloader.UpdateLastAccess()
 	}
 	
+	slog.Debug("completion request", "images", len(req.Images), "prompt", len(req.Prompt), "format", string(req.Format))
+	slog.Log(ctx, logutil.LevelTrace, "completion request", "prompt", req.Prompt)
+
 	if len(req.Format) > 0 {
 		switch string(req.Format) {
 		case `null`, `""`:
@@ -983,6 +992,8 @@ type EmbeddingResponse struct {
 }
 
 func (s *llmServer) Embedding(ctx context.Context, input string) ([]float32, error) {
+	slog.Log(ctx, logutil.LevelTrace, "embedding request", "input", input)
+
 	if err := s.sem.Acquire(ctx, 1); err != nil {
 		if errors.Is(err, context.Canceled) {
 			slog.Info("aborting embedding request due to client closing the connection")
@@ -1116,17 +1127,17 @@ func (s *llmServer) Close() error {
 	s.llamaModelLock.Unlock()
 
 	if s.cmd != nil {
-		slog.Debug("stopping llama server")
+		slog.Debug("stopping llama server", "pid", s.Pid())
 		if err := s.cmd.Process.Kill(); err != nil {
 			return err
 		}
 		// if ProcessState is already populated, Wait already completed, no need to wait again
 		if s.cmd.ProcessState == nil {
-			slog.Debug("waiting for llama server to exit")
+			slog.Debug("waiting for llama server to exit", "pid", s.Pid())
 			<-s.done
 		}
 
-		slog.Debug("llama server stopped")
+		slog.Debug("llama server stopped", "pid", s.Pid())
 	}
 
 	return nil

@@ -271,9 +271,6 @@ type Options struct {
 	RepeatPenalty    float32  `json:"repeat_penalty,omitempty"`
 	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
 	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
-	Mirostat         int      `json:"mirostat,omitempty"`
-	MirostatTau      float32  `json:"mirostat_tau,omitempty"`
-	MirostatEta      float32  `json:"mirostat_eta,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
 }
 
@@ -466,13 +463,6 @@ type ProcessModelResponse struct {
 	SizeVRAM  int64        `json:"size_vram"`
 }
 
-type RetrieveModelResponse struct {
-	Id      string `json:"id"`
-	Object  string `json:"object"`
-	Created int64  `json:"created"`
-	OwnedBy string `json:"owned_by"`
-}
-
 type TokenResponse struct {
 	Token string `json:"token"`
 }
@@ -655,9 +645,6 @@ func DefaultOptions() Options {
 		RepeatPenalty:    1.1,
 		PresencePenalty:  0.0,
 		FrequencyPenalty: 0.0,
-		Mirostat:         0,
-		MirostatTau:      5.0,
-		MirostatEta:      0.1,
 		Seed:             -1,
 
 		Runner: Runner{

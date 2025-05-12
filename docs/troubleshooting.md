@@ -43,7 +43,7 @@ Ollama includes multiple LLM libraries compiled for different GPUs and CPU vecto
 In the server log, you will see a message that looks something like this (varies from release to release):
 
 ```
-Dynamic LLM libraries [rocm_v6 cpu cpu_avx cpu_avx2 cuda_v11 rocm_v5]
+Dynamic LLM libraries [rocm_v6 cpu cpu_avx cpu_avx2 cuda_v12 rocm_v5]
 ```
 
 **Experimental LLM Library Override**
