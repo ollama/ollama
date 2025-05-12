@@ -41,6 +41,8 @@ func NewTextModel(c fs.Config) *TextModel {
 				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", false),
 				EOS:    int32(c.Uint("tokenizer.ggml.eos_token_id")),
 				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
+				EOT:    int32(c.Uint("tokenizer.ggml.eos_token_id")),
+				AddEOT: c.Bool("tokenizer.ggml.add_eos_token", false),
 			},
 		),
 		Layers: make([]Layer, c.Uint("block_count")),
