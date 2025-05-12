@@ -43,7 +43,6 @@ func (q *qwen25VLModel) KV(t *Tokenizer) ggml.KV {
 		kv["qwen25vl.vision.fullatt_block_indexes"] = []int32{7, 15, 23, 31}
 	}
 
-	// Use cmp.Or directly in the KV assignments to provide defaults for missing values
 	kv["qwen25vl.vision.block_count"] = cmp.Or(q.VisionModel.Depth, 32)
 	kv["qwen25vl.vision.embedding_length"] = q.VisionModel.HiddenSize
 	kv["qwen25vl.vision.attention.head_count"] = cmp.Or(q.VisionModel.NumHeads, 16)
@@ -53,7 +52,6 @@ func (q *qwen25VLModel) KV(t *Tokenizer) ggml.KV {
 	kv["qwen25vl.vision.spatial_patch_size"] = q.VisionModel.SpatialPatchSize
 	kv["qwen25vl.vision.window_size"] = cmp.Or(q.VisionModel.WindowSize, 112)
 	kv["qwen25vl.vision.attention.layer_norm_epsilon"] = cmp.Or(q.VisionModel.RMSNormEps, 1e-6)
-	// RoPE theta increased from 1e4 to 1e5 to compensate for numerical differences between tensor operations; empirically produces better results.
 	kv["qwen25vl.vision.rope.freq_base"] = cmp.Or(q.VisionModel.RopeTheta, 1e4)
 	kv["qwen25vl.vision.fullatt_block_indexes"] = q.VisionModel.FullAttentionBlocks
 	kv["qwen25vl.vision.temporal_patch_size"] = cmp.Or(q.VisionModel.TemporalPatchSize, 2)
