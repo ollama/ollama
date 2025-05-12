@@ -6,7 +6,7 @@ package llama
 #cgo CXXFLAGS: -std=c++17
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/include
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/common
-#cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/examples/llava
+#cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/tools/mtmd
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/src
 #cgo CPPFLAGS: -I${SRCDIR}/../ml/backend/ggml/ggml/include
 
@@ -40,8 +40,8 @@ import (
 	"unsafe"
 
 	_ "github.com/ollama/ollama/llama/llama.cpp/common"
-	_ "github.com/ollama/ollama/llama/llama.cpp/examples/llava"
 	_ "github.com/ollama/ollama/llama/llama.cpp/src"
+	_ "github.com/ollama/ollama/llama/llama.cpp/tools/mtmd"
 	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 )
 
