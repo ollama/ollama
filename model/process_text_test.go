@@ -15,6 +15,10 @@ import (
 )
 
 func llama(t testing.TB) BytePairEncoding {
+	return llamaExprs(t, nil)
+}
+
+func llamaExprs(t testing.TB, exprs *[]string) BytePairEncoding {
 	t.Helper()
 
 	f, err := os.Open(filepath.Join("testdata", "llama3.2", "encoder.json"))
@@ -58,8 +62,14 @@ func llama(t testing.TB) BytePairEncoding {
 		}
 	}
 
-	return NewBytePairEncoding(
-		`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
+	if exprs == nil {
+		exprs = &[]string{
+			`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
+		}
+	}
+
+	return NewMultiRegexBytePairEncoding(
+		*exprs,
 		&Vocabulary{
 			Values: tokens,
 			Types:  types,
@@ -250,5 +260,13 @@ func BenchmarkBytePairEncoding(b *testing.B) {
 				slices.Collect(tokenizer.split(string(bts)))
 			}
 		})
+	}
+}
+
+func TestMultiRegex(t *testing.T) {
+	tokenizer := llamaExprs(t, &[]string{`([^ ]+)`, `([^ \t]+)`})
+	splits := slices.Collect(tokenizer.split("This is\ta test"))
+	if len(splits) != 4 {
+		t.Fatalf("expected 4 splits, got %d\n", len(splits))
 	}
 }
