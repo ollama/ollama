@@ -38,6 +38,7 @@ import (
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/server/internal/registry"
 	"github.com/ollama/ollama/template"
+	"github.com/ollama/ollama/tools"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -1485,9 +1486,15 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
-		var toolParser *ToolParser
+		// ! personally not a fan of this pattern
+		toolTemplate, ok := ToolTemplate(m)
+		if !ok {
+			slog.Error("tool template not found", "model", m.Name)
+			return
+		}
+		var toolParser *tools.Parser
 		if len(req.Tools) > 0 {
-			toolParser = NewToolParser(m)
+			toolParser = tools.NewParser(m.Template.Template, toolTemplate)
 		}
 
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
@@ -1521,18 +1528,18 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				// * However, we'd need a flag to indicate whether to send the response or not
 				// * happy to take whatever is more idiomatic
 				switch toolParser.ParserState {
-				case ToolCallAccumulate:
+				case tools.ToolCallAccumulate:
 					// tokens are accumulated in the tool parser
 					return
-				case ToolCallSendTokens:
+				case tools.ToolCallSendTokens:
 					// tokens are sent back in the response
-				case ToolCallSendPartial:
+				case tools.ToolCallSendPartial:
 					// tokens not needed for parsing are sent back in the response
 					if len(leftover) > 0 {
 						res.Message.Content = leftover
 					}
 					// ! state is needed as we need to not match on the other states
-				case ToolCallFound:
+				case tools.ToolCallFound:
 					res.Message.ToolCalls = toolCalls
 					res.Message.Content = ""
 				}

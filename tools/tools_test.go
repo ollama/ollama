@@ -1,4 +1,4 @@
-package server
+package tools
 
 import (
 	"bytes"
@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	gotmpl "text/template"
+	"text/template/parse"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -27,7 +30,7 @@ func readFile(t *testing.T, base, name string) *bytes.Buffer {
 }
 
 func TestParseToolCalls(t *testing.T) {
-	p := filepath.Join("testdata", "tools")
+	p := filepath.Join("testdata")
 	t1 := api.ToolCall{
 		Function: api.ToolCallFunction{
 			Name: "get_current_weather",
@@ -311,8 +314,12 @@ func TestParseToolCalls(t *testing.T) {
 			})
 
 			t.Run("parse", func(t *testing.T) {
-				m := &Model{Template: tmpl}
-				tp := NewToolParser(m)
+				// fmt.Printf("tmpl: %s\n", tmpl.Root.String())
+				toolTemplate, ok := toolTemplateHelper(t, tmpl)
+				if !ok {
+					t.Fatalf("tool template not found for model %s", tt.model)
+				}
+				tp := NewParser(tmpl.Template, toolTemplate)
 				got := []api.ToolCall{}
 				var gotTokens strings.Builder
 
@@ -357,4 +364,26 @@ func TestParseToolCalls(t *testing.T) {
 			})
 		})
 	}
+}
+
+func toolTemplateHelper(t *testing.T, tmpl *template.Template) (*gotmpl.Template, bool) {
+	// create a subtree from the node that ranges over .ToolCalls
+
+	tmpl2 := tmpl.Subtree(func(n parse.Node) bool {
+		if t, ok := n.(*parse.RangeNode); ok {
+			return slices.Contains(template.Identifiers(t.Pipe), "ToolCalls")
+		}
+
+		return false
+	})
+
+	if tmpl2.Root != nil {
+		t.Log("tmpl2", tmpl2.Root.String())
+	}
+
+	if tmpl2 == nil {
+		return nil, false
+	}
+
+	return tmpl2, true
 }
