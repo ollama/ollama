@@ -9,30 +9,51 @@ import (
 
 func TestSupportedAspectRatios(t *testing.T) {
 	cases := []struct {
-		p      ImageProcessor
-		expect []image.Point
+		p    ImageProcessor
+		want []supportedAspectRatio
 	}{
 		{
-			p:      ImageProcessor{maxNumTiles: 1},
-			expect: []image.Point{{1, 1}},
+			p: ImageProcessor{maxNumTiles: 1},
+			want: []supportedAspectRatio{
+				{1, 1, 1},
+			},
 		},
 		{
-			p:      ImageProcessor{maxNumTiles: 2},
-			expect: []image.Point{{1, 1}, {1, 2}, {2, 1}},
+			p: ImageProcessor{maxNumTiles: 2},
+			want: []supportedAspectRatio{
+				{1, 1, 1},
+				{2, 1, 2},
+				{3, 2, 1},
+			},
 		},
 		{
-			p:      ImageProcessor{maxNumTiles: 3},
-			expect: []image.Point{{1, 1}, {1, 2}, {1, 3}, {2, 1}, {3, 1}},
+			p: ImageProcessor{maxNumTiles: 3},
+			want: []supportedAspectRatio{
+				{1, 1, 1},
+				{2, 1, 2},
+				{3, 1, 3},
+				{4, 2, 1},
+				{5, 3, 1},
+			},
 		},
 		{
-			p:      ImageProcessor{maxNumTiles: 4},
-			expect: []image.Point{{1, 1}, {1, 2}, {1, 3}, {1, 4}, {2, 1}, {2, 2}, {3, 1}, {4, 1}},
+			p: ImageProcessor{maxNumTiles: 4},
+			want: []supportedAspectRatio{
+				{1, 1, 1},
+				{2, 1, 2},
+				{3, 1, 3},
+				{4, 1, 4},
+				{5, 2, 1},
+				{6, 2, 2},
+				{7, 3, 1},
+				{8, 4, 1},
+			},
 		},
 	}
 
 	for _, tt := range cases {
 		actual := tt.p.supportedAspectRatios()
-		if diff := cmp.Diff(actual, tt.expect); diff != "" {
+		if diff := cmp.Diff(actual, tt.want, cmp.AllowUnexported(supportedAspectRatio{})); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	}
@@ -350,7 +371,7 @@ func TestPreprocess(t *testing.T) {
 
 	p := ImageProcessor{imageSize: 560, maxNumTiles: 4}
 	for _, tt := range cases {
-		img, aspectRatioID, err := p.ProcessImage(image.NewRGBA(image.Rectangle{Max: tt.imageMax}))
+		img, aspectRatio, err := p.ProcessImage(image.NewRGBA(image.Rectangle{Max: tt.imageMax}))
 		if err != nil {
 			t.Fatalf("error processing: %q", err)
 		}
@@ -359,8 +380,8 @@ func TestPreprocess(t *testing.T) {
 			t.Errorf("no image data returned")
 		}
 
-		if aspectRatioID != tt.expectAspectRatioID {
-			t.Errorf("aspect ratio incorrect: '%d': expect: '%d'", aspectRatioID, tt.expectAspectRatioID)
+		if aspectRatio.rank != tt.expectAspectRatioID {
+			t.Errorf("aspect ratio incorrect: '%d': expect: '%d'", aspectRatio, tt.expectAspectRatioID)
 		}
 	}
 }

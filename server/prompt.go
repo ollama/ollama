@@ -3,7 +3,6 @@ package server
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -15,18 +14,15 @@ import (
 
 type tokenizeFunc func(context.Context, string) ([]int, error)
 
-var errTooManyImages = errors.New("vision model only supports a single image per message")
-
 // chatPrompt accepts a list of messages and returns the prompt and images that should be used for the next chat turn.
 // chatPrompt truncates any messages that exceed the context window of the model, making sure to always include 1) the
 // latest message and 2) system messages
 func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.Options, msgs []api.Message, tools []api.Tool) (prompt string, images []llm.ImageData, _ error) {
 	var system []api.Message
 
-	var imageNumTokens int
 	// TODO: Ideally we would compute this from the projector metadata but some pieces are implementation dependent
 	// Clip images are represented as 768 tokens, each an embedding
-	imageNumTokens = 768
+	imageNumTokens := 768
 
 	n := len(msgs) - 1
 	// in reverse, find all messages that fit into context window
@@ -76,9 +72,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 		prompt := msg.Content
 
 		for _, i := range msg.Images {
-			var imgData llm.ImageData
-
-			imgData = llm.ImageData{
+			imgData := llm.ImageData{
 				ID:   len(images),
 				Data: i,
 			}
