@@ -56,7 +56,7 @@ func (c *ImageContext) Free(modelPath string) {
 	}
 }
 
-func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte, aspectRatioId int) ([][]float32, error) {
+func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte) ([][]float32, error) {
 	if c == nil {
 		return nil, nil
 	}
@@ -93,10 +93,6 @@ func (c *ImageContext) BatchSize(configuredBatchSize int) int {
 		return 0
 	}
 
-	// Mllama maps an image to 1 embedding token (llava creates many tokens)
-	// and doesn't support more than a single image per request.
-	// The embeddings are large (100 MB), so allocating a big batch can fail
-	// on some systems
 	return configuredBatchSize
 }
 

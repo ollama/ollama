@@ -3,8 +3,10 @@ package server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/ollama/ollama/api"
@@ -67,8 +69,11 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 	currMsgIdx := n
 
 	for cnt, msg := range msgs[currMsgIdx:] {
-		prefix := ""
-		imgPrompt := ""
+		if slices.Contains(m.Config.ModelFamilies, "mllama") && len(msg.Images) > 1 {
+			return "", nil, errors.New("this model only supports one image while more than one image requested")
+		}
+
+		var prefix string
 		prompt := msg.Content
 
 		for _, i := range msg.Images {
@@ -86,7 +91,7 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 
 			images = append(images, imgData)
 		}
-		msgs[currMsgIdx+cnt].Content = prefix + imgPrompt + prompt
+		msgs[currMsgIdx+cnt].Content = prefix + prompt
 	}
 
 	// truncate any messages that do not fit into the context window

@@ -12,10 +12,9 @@ import (
 
 func TestChatPrompt(t *testing.T) {
 	type expect struct {
-		prompt        string
-		images        [][]byte
-		aspectRatioID int
-		error         error
+		prompt string
+		images [][]byte
+		error  error
 	}
 
 	tmpl, err := template.Parse(`
@@ -232,10 +231,6 @@ func TestChatPrompt(t *testing.T) {
 				if len(model.Config.ModelFamilies) == 0 {
 					if !bytes.Equal(images[i].Data, tt.images[i]) {
 						t.Errorf("expected %q, got %q", tt.images[i], images[i].Data)
-					}
-				} else {
-					if images[i].AspectRatioID != tt.aspectRatioID {
-						t.Errorf("expected aspect ratio %d, got %d", tt.aspectRatioID, images[i].AspectRatioID)
 					}
 				}
 			}

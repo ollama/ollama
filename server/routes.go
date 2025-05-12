@@ -208,6 +208,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
+	if slices.Contains(m.Config.ModelFamilies, "mllama") && len(req.Images) > 1 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "this model only supports one image while more than one image requested"})
+		return
+	}
+
 	images := make([]llm.ImageData, len(req.Images))
 	for i := range req.Images {
 		images[i] = llm.ImageData{ID: i, Data: req.Images[i]}
