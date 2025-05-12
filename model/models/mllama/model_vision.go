@@ -207,10 +207,10 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues, positionIDs, aspectRa
 
 	hiddenStates := intermediateHiddenStates[0].Stack(ctx, 0, intermediateHiddenStates[1:]...)
 	hiddenStates = hiddenStates.Reshape(ctx, len(intermediateHiddenStates)*m.hiddenSize, numPositions+numPaddingPatches, m.numTiles, batchSize)
-	hiddenStates = hiddenStates.Unpad(ctx, 0, numPaddingPatches, 0, 0)
+	hiddenStates = hiddenStates.Pad(ctx, 0, -numPaddingPatches, 0, 0)
 
 	hiddenState = hiddenState.Reshape(ctx, m.hiddenSize, numPositions+numPaddingPatches, m.numTiles, batchSize)
-	hiddenState = hiddenState.Unpad(ctx, 0, numPaddingPatches, 0, 0)
+	hiddenState = hiddenState.Pad(ctx, 0, -numPaddingPatches, 0, 0)
 	return hiddenState.Concat(ctx, hiddenStates, 0)
 }
 
