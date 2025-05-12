@@ -53,17 +53,17 @@ Ollama supports the following AMD GPUs:
 ### Linux Support
 | Family         | Cards and accelerators                                                                                                               |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| AMD Radeon RX  | `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600` `6950 XT` `6900 XTX` `6900XT` `6800 XT` `6800` `Vega 64` `Vega 56`    |
-| AMD Radeon PRO | `W7900` `W7800` `W7700` `W7600` `W7500` `W6900X` `W6800X Duo` `W6800X` `W6800` `V620` `V420` `V340` `V320` `Vega II Duo` `Vega II` `VII` `SSG` |
-| AMD Instinct   | `MI300X` `MI300A` `MI300` `MI250X` `MI250` `MI210` `MI200` `MI100` `MI60` `MI50`                                                               |
+| AMD Radeon RX  | `RX 9060` `RX 9070` `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600` `6950 XT` `6900 XTX` `6900XT` `6800 XT` `6800`    |
+| AMD Radeon PRO | `R9700` `V710` `W7900` `W7800` `W7700` `W7600` `W7500` `W6900X` `W6800X Duo` `W6800X` `W6800` `V620`  |
+| AMD Instinct   | `MI325X` `MI300X` `MI300A` `MI300` `MI250X` `MI250` `MI210` `MI200` `MI100`                                                      |
 
 ### Windows Support
 With ROCm v6.1, the following GPUs are supported on Windows.
 
 | Family         | Cards and accelerators                                                                                                               |
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| AMD Radeon RX  | `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600` `6950 XT` `6900 XTX` `6900XT` `6800 XT` `6800`    |
-| AMD Radeon PRO | `W7900` `W7800` `W7700` `W7600` `W7500` `W6900X` `W6800X Duo` `W6800X` `W6800` `V620` |
+| AMD Radeon RX  | `RX 9060` `RX 9070` `7900 XTX` `7900 XT` `7900 GRE` `7800 XT` `7700 XT` `7600 XT` `7600` `6950 XT` `6900 XTX` `6900XT` `6800 XT` `6800`    |
+| AMD Radeon PRO | `R9700` `V710` `W7900` `W7800` `W7700` `W7600` `W7500` `W6900X` `W6800X Duo` `W6800X` `W6800` `V620` |
 
 
 ### Overrides on Linux
@@ -85,8 +85,6 @@ At this time, the known supported GPU types on linux are the following LLVM Targ
 This table shows some example GPUs that map to these LLVM targets:
 | **LLVM Target** | **An Example GPU** |
 |-----------------|---------------------|
-| gfx900 | Radeon RX Vega 56 |
-| gfx906 | Radeon Instinct MI50 |
 | gfx908 | Radeon Instinct MI100 |
 | gfx90a | Radeon Instinct MI210 |
 | gfx940 | Radeon Instinct MI300 |
@@ -96,9 +94,6 @@ This table shows some example GPUs that map to these LLVM targets:
 | gfx1100 | Radeon PRO W7900 |
 | gfx1101 | Radeon PRO W7700 |
 | gfx1102 | Radeon RX 7600 |
-
-AMD is working on enhancing ROCm v6 to broaden support for families of GPUs in a
-future release which should increase support for more GPUs.
 
 Reach out on [Discord](https://discord.gg/ollama) or file an
 [issue](https://github.com/ollama/ollama/issues) for additional help.
