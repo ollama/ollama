@@ -767,10 +767,11 @@ func pickBestFullFitByLibrary(req *LlmRequest, f *ggml.GGML, gpus discover.GpuIn
 		// Note: at present, this will favor more VRAM over faster GPU speed in mixed setups
 		sort.Sort(sort.Reverse(discover.ByFreeMemory(sgl)))
 
+		// Use only one GPU (OLLAMA_SCHED_SPREAD is not set or set to 0)
 		// First attempt to fit the model into a single GPU
 		for _, p := range numParallelToTry {
 			req.opts.NumCtx = req.origNumCtx * p
-			if !envconfig.SchedSpread() {
+			if envconfig.SchedSpread() == 0 {
 				for _, g := range sgl {
 					if ok, estimatedVRAM = llm.PredictServerFit([]discover.GpuInfo{g}, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, p); ok {
 						slog.Info("new model will fit in available VRAM in single GPU, loading", "model", req.model.ModelPath, "gpu", g.ID, "parallel", p, "available", g.FreeMemory, "required", format.HumanBytes2(estimatedVRAM))
@@ -780,18 +781,52 @@ func pickBestFullFitByLibrary(req *LlmRequest, f *ggml.GGML, gpus discover.GpuIn
 				}
 			}
 		}
+		// Keep the amount of GPUs to a minimum (OLLAMA_SCHED_SPREAD is set to 2)
+		for _, p := range numParallelToTry {
+			req.opts.NumCtx = req.origNumCtx * p
+			// First get the estimated VRAM needed
+			_, estimatedVRAM = llm.PredictServerFit(sgl, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, p)
+
+			// Calculate how many GPUs we need based on available memory
+			var totalFreeMemory uint64
+			var neededGPUs int
+			for i, g := range sgl {
+				totalFreeMemory += g.FreeMemory
+				if totalFreeMemory >= estimatedVRAM {
+					neededGPUs = i + 1
+					break
+				}
+			}
+
+			// If we found enough GPUs, try to fit the model
+			if neededGPUs > 0 && envconfig.SchedSpread() == 2 {
+				selectedGPUs := sgl[:neededGPUs]
+				if ok, _ := llm.PredictServerFit(selectedGPUs, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, p); ok {
+					slog.Info("new model will fit in available VRAM across minimum required GPUs",
+						"model", req.model.ModelPath,
+						"library", selectedGPUs[0].Library,
+						"parallel", p,
+						"required", format.HumanBytes2(estimatedVRAM),
+						"gpus", neededGPUs)
+					*numParallel = p
+					return selectedGPUs
+				}
+			}
+		}
 
 		// TODO future refinements
 		// - if multiple Libraries, see if any single GPU in any Library will fit
 		// - try subsets of GPUs instead of just falling back to 1 or all in a family
 
-		// Now try all the GPUs
+		// Now try all the GPUS evenly (OLLAMA_SCHED_SPREAD is set and does have any kind of value)
 		for _, p := range numParallelToTry {
 			req.opts.NumCtx = req.origNumCtx * p
-			if ok, estimatedVRAM = llm.PredictServerFit(sgl, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, p); ok {
-				slog.Info("new model will fit in available VRAM, loading", "model", req.model.ModelPath, "library", sgl[0].Library, "parallel", p, "required", format.HumanBytes2(estimatedVRAM))
-				*numParallel = p
-				return sgl
+			if envconfig.SchedSpread() != 0 && envconfig.SchedSpread() != 2 {
+				if ok, estimatedVRAM = llm.PredictServerFit(sgl, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, p); ok {
+					slog.Info("new model will fit in available VRAM, loading", "model", req.model.ModelPath, "library", sgl[0].Library, "parallel", p, "required", format.HumanBytes2(estimatedVRAM))
+					*numParallel = p
+					return sgl
+				}
 			}
 		}
 	}
