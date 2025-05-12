@@ -144,7 +144,7 @@ type VisionModelOptions struct {
 }
 
 type PatchEmbedding struct {
-	PatchConv0 *nn.Conv2D `gguf:"patch_embd_0"` // TODO: `gguf:"patch_embed_0"`
+	PatchConv0 *nn.Conv2D `gguf:"patch_embd_0"`
 	PatchConv1 *nn.Conv2D `gguf:"patch_embd_1"`
 }
 
