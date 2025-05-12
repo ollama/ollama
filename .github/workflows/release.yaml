@@ -111,6 +111,7 @@ jobs:
           - os: windows
             arch: amd64
             preset: 'ROCm 6'
+            # TODO - update with new URL once 6.4 GA's
             install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
             rocm-version: '6.2'
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
