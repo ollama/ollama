@@ -19,6 +19,7 @@ import (
 	"github.com/ollama/ollama/fs"
 	fsggml "github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/kvcache"
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	_ "github.com/ollama/ollama/ml/backend"
 	"github.com/ollama/ollama/model/input"
@@ -202,7 +203,7 @@ func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 				names := fn(tagsCopy)
 				for _, name := range names {
 					if tensor := base.Backend().Get(strings.Join(name, ".")); tensor != nil {
-						slog.Debug("found tensor", "", tensor)
+						slog.Log(context.TODO(), logutil.LevelTrace, "found tensor", "", tensor)
 						vv.Set(reflect.ValueOf(tensor))
 						break
 					}

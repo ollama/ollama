@@ -2,10 +2,13 @@ package model
 
 import (
 	"container/heap"
+	"context"
 	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
+
+	"github.com/ollama/ollama/logutil"
 )
 
 const spmWhitespaceSep = "▁"
@@ -22,7 +25,7 @@ func (spm SentencePieceModel) Vocabulary() *Vocabulary {
 }
 
 func NewSentencePieceModel(vocab *Vocabulary) SentencePieceModel {
-	slog.Debug("Tokens", "num tokens", len(vocab.Values), "vals", vocab.Values[:5], "scores", vocab.Scores[:5], "types", vocab.Types[:5])
+	slog.Log(context.TODO(), logutil.LevelTrace, "Tokens", "num tokens", len(vocab.Values), "vals", vocab.Values[:5], "scores", vocab.Scores[:5], "types", vocab.Types[:5])
 
 	counter := map[int]int{}
 	var maxTokenLen int
@@ -36,7 +39,7 @@ func NewSentencePieceModel(vocab *Vocabulary) SentencePieceModel {
 		}
 	}
 
-	slog.Debug("Token counts", "normal", counter[TOKEN_TYPE_NORMAL], "unknown", counter[TOKEN_TYPE_UNKNOWN], "control", counter[TOKEN_TYPE_CONTROL],
+	slog.Log(context.TODO(), logutil.LevelTrace, "Token counts", "normal", counter[TOKEN_TYPE_NORMAL], "unknown", counter[TOKEN_TYPE_UNKNOWN], "control", counter[TOKEN_TYPE_CONTROL],
 		"user defined", counter[TOKEN_TYPE_USER_DEFINED], "unused", counter[TOKEN_TYPE_UNUSED], "byte", counter[TOKEN_TYPE_BYTE],
 		"max token len", maxTokenLen)
 
@@ -199,6 +202,7 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 		}
 	}
 
+	slog.Log(context.TODO(), logutil.LevelTrace, "encoded", "ids", ids)
 	return ids, nil
 }
 
@@ -257,5 +261,6 @@ func (spm SentencePieceModel) Decode(ids []int32) (string, error) {
 		}
 	}
 
+	slog.Log(context.TODO(), logutil.LevelTrace, "decoded", "string", sb.String())
 	return sb.String(), nil
 }

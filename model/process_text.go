@@ -2,6 +2,7 @@ package model
 
 import (
 	"cmp"
+	"context"
 	"iter"
 	"log/slog"
 	"slices"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/dlclark/regexp2"
 	heap "github.com/emirpasic/gods/v2/trees/binaryheap"
+	"github.com/ollama/ollama/logutil"
 )
 
 type Special int32
@@ -322,6 +324,7 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 		}
 	}
 
+	slog.Log(context.TODO(), logutil.LevelTrace, "encoded", "ids", ids)
 	return ids, nil
 }
 
@@ -349,5 +352,6 @@ func (bpe BytePairEncoding) Decode(ids []int32) (string, error) {
 		}
 	}
 
+	slog.Log(context.TODO(), logutil.LevelTrace, "decoded", "string", sb.String())
 	return sb.String(), nil
 }
