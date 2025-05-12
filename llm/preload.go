@@ -65,7 +65,10 @@ func LockMemory(addr uintptr, length uintptr) error {
 	}
 	
 	// Try to lock the memory - this requires privileges but provides the strongest guarantee
-	err = syscall.Madvise(unsafe.Slice((*byte)(unsafe.Pointer(addr)), int(length)), syscall.MADV_LOCK)
+	// Note: MADV_LOCK is not defined in Go's syscall package, so we'll use a constant value
+	// Linux MADV_LOCK is typically defined as 14
+	const MADV_LOCK = 14
+	err = syscall.Madvise(unsafe.Slice((*byte)(unsafe.Pointer(addr)), int(length)), MADV_LOCK)
 	if err != nil {
 		// Log but continue - this is expected to fail without elevated privileges
 		slog.Debug("could not lock memory with MADV_LOCK (requires elevated privileges), falling back to manual preloading", "error", err)

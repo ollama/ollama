@@ -33,7 +33,10 @@ func lockMemory(addr uintptr, length uintptr) error {
 	}
 	
 	// Try to lock the memory - this requires privileges but provides the strongest guarantee
-	err = syscall.Madvise(unsafe.Slice((*byte)(unsafe.Pointer(addr)), int(length)), syscall.MADV_LOCK)
+	// Note: MADV_LOCK is not defined in Go's syscall package, so we'll use a constant value
+	// Linux MADV_LOCK is typically defined as 14
+	const MADV_LOCK = 14
+	err = syscall.Madvise(unsafe.Slice((*byte)(unsafe.Pointer(addr)), int(length)), MADV_LOCK)
 	if err != nil {
 		// Log but continue - this is expected to fail without elevated privileges
 		slog.Debug("could not lock KV cache memory with MADV_LOCK (requires elevated privileges)", "error", err)
@@ -591,10 +594,11 @@ func (c *Causal) Put(ctx ml.Context, key, value ml.Tensor) {
 		
 		// Attempt to lock memory for KV cache - keys
 		if !c.memoryLocked {
-			data := c.keys[c.curLayer].Data()
-			if data != nil {
-				addr := uintptr(unsafe.Pointer(data))
-				length := uintptr(c.keys[c.curLayer].Size())
+			// Get the byte data from the tensor
+			data := c.keys[c.curLayer].Bytes()
+			if len(data) > 0 {
+				addr := uintptr(unsafe.Pointer(&data[0]))
+				length := uintptr(len(data))
 				
 				if err := lockMemory(addr, length); err != nil {
 					slog.Warn("failed to lock KV cache key memory, pages may be swapped", "error", err)
@@ -616,10 +620,11 @@ func (c *Causal) Put(ctx ml.Context, key, value ml.Tensor) {
 		
 		// Attempt to lock memory for KV cache - values
 		if !c.memoryLocked {
-			data := c.values[c.curLayer].Data()
-			if data != nil {
-				addr := uintptr(unsafe.Pointer(data))
-				length := uintptr(c.values[c.curLayer].Size())
+			// Get the byte data from the tensor
+			data := c.values[c.curLayer].Bytes()
+			if len(data) > 0 {
+				addr := uintptr(unsafe.Pointer(&data[0]))
+				length := uintptr(len(data))
 				
 				if err := lockMemory(addr, length); err != nil {
 					slog.Warn("failed to lock KV cache value memory, pages may be swapped", "error", err)
