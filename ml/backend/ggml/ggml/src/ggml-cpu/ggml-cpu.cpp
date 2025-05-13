@@ -498,7 +498,7 @@ static ggml_backend_dev_t ggml_backend_cpu_reg_get_device(ggml_backend_reg_t reg
     return &ggml_backend_cpu_device;
 }
 
-// This is intended to replace the ggml_cpu_has_* functions when loading the CPU backend dynamically,
+// This is intended to replace the the ggml_cpu_has_* functions when loading the CPU backend dynamically,
 // and additionally to allow other backends to expose their own list of features that applications can query using the same API
 static ggml_backend_feature * ggml_backend_cpu_get_features(ggml_backend_reg_t reg) {
     static std::vector<ggml_backend_feature> features = []() {
