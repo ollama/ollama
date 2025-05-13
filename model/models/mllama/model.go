@@ -2,10 +2,7 @@ package mllama
 
 import (
 	"bytes"
-	"encoding/binary"
-	"hash/fnv"
 	"image"
-	"slices"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -94,30 +91,11 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 }
 
 func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
-	var images []input.Input
-	fnvHash := fnv.New64a()
-
 	for i := range inputs {
-		if inputs[i].Multimodal == nil {
-			if len(images) > 0 {
-				inputs[i].Multimodal = []ml.Tensor{images[0].Multimodal.(ml.Tensor)}
-				inputs[i].MultimodalHash = images[0].MultimodalHash
-				for j := 1; j < len(images); j++ {
-					inputs[i].Multimodal = append(inputs[i].Multimodal.([]ml.Tensor), images[0].Multimodal.(ml.Tensor))
-					fnvHash.Reset()
-					binary.Write(fnvHash, binary.NativeEndian, inputs[i].MultimodalHash)
-					binary.Write(fnvHash, binary.NativeEndian, inputs[j].MultimodalHash)
-					inputs[i].MultimodalHash = fnvHash.Sum64()
-				}
-				images = nil
-			}
-		} else {
-			images = append(images, inputs[i])
-			inputs[i].Token = -1
+		if inputs[i].Multimodal != nil {
+			inputs[i].Token = 128256 // <|image|>
 		}
 	}
-
-	inputs = slices.DeleteFunc(inputs, func(input input.Input) bool { return input.Token == -1 })
 
 	return inputs, nil
 }
@@ -125,10 +103,7 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	var crossAttentionStates ml.Tensor
 	if len(batch.Multimodal) > 0 {
-		images := batch.Multimodal[len(batch.Multimodal)-1].Multimodal.([]ml.Tensor)
-		if len(images) > 0 {
-			crossAttentionStates = images[len(images)-1]
-		}
+		crossAttentionStates = batch.Multimodal[len(batch.Multimodal)-1].Multimodal.(ml.Tensor)
 	}
 
 	positions, err := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
