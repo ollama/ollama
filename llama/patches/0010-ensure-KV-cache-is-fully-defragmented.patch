@@ -15,11 +15,48 @@ but this can leave a cache that still does not have adequate space
 even after defragmentation is triggered. Instead, we should do
 multiple batches of processing until everything is complete.
 ---
+ src/llama-context.cpp  |  18 ++++---
  src/llama-context.h    |   1 +
  src/llama-kv-cache.cpp | 107 ++++++++++++++---------------------------
  src/llama-kv-cache.h   |  12 ++++-
- 3 files changed, 47 insertions(+), 73 deletions(-)
+ 4 files changed, 59 insertions(+), 79 deletions(-)
 
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index c22687e4..c5948e8f 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -950,9 +950,12 @@ int llama_context::decode(llama_batch & inp_batch) {
+ 
+         // find KV slot
+         if (!kv_self->find_slot(ubatch)) {
+-            LLAMA_LOG_WARN("%s: failed to find KV cache slot for ubatch of size %d\n", __func__, ubatch.n_tokens);
+-
+-            return 1;
++            kv_self->defrag_sched(-1.0f);
++            kv_self->update(*this);
++            if (!kv_self->find_slot(ubatch)) {
++                LLAMA_LOG_WARN("%s: failed to find KV cache slot for ubatch of size %d\n", __func__, ubatch.n_tokens);
++                return 1;
++            }
+         }
+ 
+         ggml_backend_sched_reset(sched.get());
+@@ -1967,9 +1970,12 @@ void llama_context::opt_epoch_iter(
+ 
+             // TODO: not sure if this is needed
+             if (!kv_self->find_slot(ubatch)) {
+-                LLAMA_LOG_WARN("%s: failed to find KV cache slot for ubatch of size %d\n", __func__, ubatch.n_tokens);
+-
+-                GGML_ABORT("TODO: handle this error");
++                kv_self->defrag_sched(-1.0f);
++                kv_self->update(*this);
++                if (!kv_self->find_slot(ubatch)) {
++                    LLAMA_LOG_WARN("%s: failed to find KV cache slot for ubatch of size %d\n", __func__, ubatch.n_tokens);
++                    GGML_ABORT("TODO: handle this error");
++                }
+             }
+ 
+             auto * gf = graph_init();
 diff --git a/src/llama-context.h b/src/llama-context.h
 index c4ab242a..9970dfc6 100644
 --- a/src/llama-context.h

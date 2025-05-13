@@ -950,9 +950,12 @@ int llama_context::decode(llama_batch & inp_batch) {
 
         // find KV slot
         if (!kv_self->find_slot(ubatch)) {
-            LLAMA_LOG_WARN("%s: failed to find KV cache slot for ubatch of size %d\n", __func__, ubatch.n_tokens);
-
-            return 1;
+            kv_self->defrag_sched(-1.0f);
+            kv_self->update(*this);
+            if (!kv_self->find_slot(ubatch)) {
+                LLAMA_LOG_WARN("%s: failed to find KV cache slot for ubatch of size %d\n", __func__, ubatch.n_tokens);
+                return 1;
+            }
         }
 
         ggml_backend_sched_reset(sched.get());
@@ -1967,9 +1970,12 @@ void llama_context::opt_epoch_iter(
 
             // TODO: not sure if this is needed
             if (!kv_self->find_slot(ubatch)) {
-                LLAMA_LOG_WARN("%s: failed to find KV cache slot for ubatch of size %d\n", __func__, ubatch.n_tokens);
-
-                GGML_ABORT("TODO: handle this error");
+                kv_self->defrag_sched(-1.0f);
+                kv_self->update(*this);
+                if (!kv_self->find_slot(ubatch)) {
+                    LLAMA_LOG_WARN("%s: failed to find KV cache slot for ubatch of size %d\n", __func__, ubatch.n_tokens);
+                    GGML_ABORT("TODO: handle this error");
+                }
             }
 
             auto * gf = graph_init();
