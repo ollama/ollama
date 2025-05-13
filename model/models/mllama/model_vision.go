@@ -15,7 +15,7 @@ type VisionSelfAttention struct {
 	Query  *nn.Linear `gguf:"attn_q"`
 	Key    *nn.Linear `gguf:"attn_k"`
 	Value  *nn.Linear `gguf:"attn_v"`
-	Output *nn.Linear `gguf:"attn_out"`
+	Output *nn.Linear `gguf:"attn_output"`
 
 	Gate ml.Tensor `gguf:"attn_gate"`
 }
@@ -45,36 +45,29 @@ func (sa *VisionSelfAttention) Forward(ctx ml.Context, hiddenState ml.Tensor, op
 	attention = attention.Reshape(ctx, opts.hiddenSize, attention.Dim(2), batchSize)
 
 	hiddenState = sa.Output.Forward(ctx, attention)
-	if sa.Gate != nil {
-		hiddenState = hiddenState.Mul(ctx, sa.Gate)
-	}
-
 	return hiddenState
 }
 
 type VisionMLP struct {
-	Down *nn.Linear `gguf:"ffn_down"`
 	Up   *nn.Linear `gguf:"ffn_up"`
-
-	Gate ml.Tensor `gguf:"ffn_gate"`
+	Down *nn.Linear `gguf:"ffn_down"`
 }
 
 func (mlp *VisionMLP) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *VisionModelOptions) ml.Tensor {
-	hiddenState = mlp.Down.Forward(ctx, hiddenState).GELU(ctx)
-	hiddenState = mlp.Up.Forward(ctx, hiddenState)
-	if mlp.Gate != nil {
-		hiddenState = hiddenState.Mul(ctx, mlp.Gate)
-	}
+	hiddenState = mlp.Up.Forward(ctx, hiddenState).GELU(ctx)
+	hiddenState = mlp.Down.Forward(ctx, hiddenState)
 
 	return hiddenState
 }
 
 type VisionEncoderLayer struct {
-	AttentionNorm *nn.LayerNorm `gguf:"ln1"`
+	AttentionNorm *nn.LayerNorm `gguf:"attn_norm"`
 	SelfAttention *VisionSelfAttention
+	AttentionGate ml.Tensor `gguf:"attn_gate"`
 
-	MLPNorm *nn.LayerNorm `gguf:"ln2"`
+	MLPNorm *nn.LayerNorm `gguf:"ffn_norm"`
 	MLP     *VisionMLP
+	MLPGate ml.Tensor `gguf:"ffn_gate"`
 }
 
 func (e *VisionEncoderLayer) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *VisionModelOptions) ml.Tensor {
@@ -83,13 +76,22 @@ func (e *VisionEncoderLayer) Forward(ctx ml.Context, hiddenState ml.Tensor, opts
 	// self attention
 	hiddenState = e.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
 	hiddenState = e.SelfAttention.Forward(ctx, hiddenState, opts)
+
+	if e.AttentionGate != nil {
+		hiddenState = hiddenState.Mul(ctx, e.AttentionGate)
+	}
 	hiddenState = hiddenState.Add(ctx, residual)
 	residual = hiddenState
 
 	// feed forward
 	hiddenState = e.MLPNorm.Forward(ctx, hiddenState, opts.eps)
 	hiddenState = e.MLP.Forward(ctx, hiddenState, opts)
-	return hiddenState.Add(ctx, residual)
+	hiddenState = hiddenState.Add(ctx, residual)
+	if e.MLPGate != nil {
+		hiddenState = hiddenState.Mul(ctx, e.MLPGate)
+	}
+
+	return hiddenState
 }
 
 type VisionEncoder struct {
