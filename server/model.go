@@ -10,9 +10,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"slices"
-	gotmpl "text/template"
-	"text/template/parse"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
@@ -129,19 +126,19 @@ func detectContentType(r io.Reader) (string, error) {
 	return "unknown", nil
 }
 
-func ToolTemplate(m *Model) (*gotmpl.Template, bool) {
-	// create a subtree from the node that ranges over .ToolCalls
-	tmpl := m.Template.Subtree(func(n parse.Node) bool {
-		if t, ok := n.(*parse.RangeNode); ok {
-			return slices.Contains(template.Identifiers(t.Pipe), "ToolCalls")
-		}
+// func ToolTemplate(m *Model) (*gotmpl.Template, bool) {
+// 	// create a subtree from the node that ranges over .ToolCalls
+// 	tmpl := m.Template.Subtree(func(n parse.Node) bool {
+// 		if t, ok := n.(*parse.RangeNode); ok {
+// 			return slices.Contains(template.Identifiers(t.Pipe), "ToolCalls")
+// 		}
 
-		return false
-	})
+// 		return false
+// 	})
 
-	if tmpl == nil {
-		return nil, false
-	}
+// 	if tmpl == nil {
+// 		return nil, false
+// 	}
 
-	return tmpl, true
-}
+// 	return tmpl, true
+// }

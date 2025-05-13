@@ -239,14 +239,14 @@ func TestParseToolCalls(t *testing.T) {
 			model:            "qwen3",
 			output:           `<think></think>< fakeout{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
 			expectedToolCall: []api.ToolCall{},
-			expectedTokens:   `<think></think>< fakeout{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
+			expectedTokens:   `<think></think> fakeout{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
 		},
 		{
 			name:             "qwen3 invalid tool call with partial tool prefix (multiple rune suffix match)",
 			model:            "qwen3",
 			output:           `<think></think><tool_c fakeout{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
 			expectedToolCall: []api.ToolCall{},
-			expectedTokens:   `<think></think><tool_c fakeout{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
+			expectedTokens:   `<think></think> fakeout{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
 		},
 		{
 			name:             "qwen3 invalid tool call with malformed tool prefix",
@@ -315,34 +315,31 @@ func TestParseToolCalls(t *testing.T) {
 
 			t.Run("parse", func(t *testing.T) {
 				// fmt.Printf("tmpl: %s\n", tmpl.Root.String())
-				toolTemplate, ok := toolTemplateHelper(t, tmpl)
-				if !ok {
-					t.Fatalf("tool template not found for model %s", tt.model)
+				tp, err := NewParser(tmpl.Template)
+				if err != nil {
+					t.Fatal(err)
 				}
-				tp := NewParser(tmpl.Template, toolTemplate)
 				got := []api.ToolCall{}
 				var gotTokens strings.Builder
 
+				var add bool
 				tokens := strings.Fields(tt.output)
 				for _, tok := range tokens {
-					add := true
 					s := " " + tok
 
+					add = true
 					if !tp.Done {
-						toolCalls, leftover := tp.ParseToolCalls(s)
-						switch tp.ParserState {
-						case ToolCallFound:
-							got = append(got, toolCalls...)
-							add = false
-						case ToolCallSendTokens:
-							gotTokens.WriteString(s)
-							add = false
-						case ToolCallAccumulate:
-							add = false
-						case ToolCallSendPartial:
-							t.Log("send partial", "leftover", leftover)
-							gotTokens.WriteString(" " + leftover)
-							add = false
+						toolCalls, content, err := tp.Add(s)
+						if err == nil {
+							if content != "" {
+								gotTokens.WriteString(content)
+								add = false
+							} else if len(toolCalls) > 0 {
+								got = append(got, toolCalls...)
+								add = false
+							} else {
+								add = false
+							}
 						}
 					}
 					if add {
