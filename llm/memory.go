@@ -108,9 +108,8 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	slog.Debug("evaluating", "library", gpus[0].Library, "gpu_count", len(gpus), "available", availableList)
 
 	for _, projector := range projectors {
-		weight, graph := projectorMemoryRequirements(projector)
+		weight := projectorMemoryRequirements(projector)
 		projectorWeights += weight
-		projectorGraph += graph
 
 		// multimodal models require at least 2048 context
 		opts.NumCtx = max(opts.NumCtx, 2048)
@@ -407,51 +406,21 @@ func (m MemoryEstimate) LogValue() slog.Value {
 	return slog.GroupValue(attrs...)
 }
 
-func projectorMemoryRequirements(filename string) (weights, graphSize uint64) {
+func projectorMemoryRequirements(filename string) (weights uint64) {
 	file, err := os.Open(filename)
 	if err != nil {
-		return 0, 0
+		return 0
 	}
 	defer file.Close()
 
 	ggml, _, err := ggml.Decode(file, 1024)
 	if err != nil {
-		return 0, 0
+		return 0
 	}
 
 	for _, layer := range ggml.Tensors().GroupLayers() {
 		weights += layer.Size()
 	}
 
-	switch arch := ggml.KV().Architecture(); arch {
-	case "mllama":
-		kv := func(n string) uint64 {
-			if v, ok := ggml.KV()[arch+".vision."+n].(uint32); ok {
-				return uint64(v)
-			}
-
-			return 0
-		}
-
-		imageSize := kv("image_size")
-
-		maxNumTiles := kv("max_num_tiles")
-		embeddingLength := kv("embedding_length")
-		headCount := kv("attention.head_count")
-
-		numPatches := (imageSize / kv("patch_size")) * (imageSize / kv("patch_size"))
-		if _, ok := ggml.Tensors().GroupLayers()["v"]["class_embd"]; ok {
-			numPatches++
-		}
-
-		numPaddedPatches := numPatches + 8 - (numPatches%8)%8
-
-		graphSize = 4 * (8 +
-			imageSize*imageSize*kv("num_channels")*maxNumTiles +
-			embeddingLength*numPatches*maxNumTiles +
-			9*embeddingLength*numPaddedPatches*maxNumTiles +
-			numPaddedPatches*maxNumTiles*numPaddedPatches*maxNumTiles*headCount)
-	}
-
-	return weights, graphSize
+	return weights
 }
