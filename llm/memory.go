@@ -216,6 +216,8 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	if len(gpusWithSpace) > 0 {
 		gpuZeroID = gpusWithSpace[0].i
 		gpuAllocations[gpuZeroID] += gpuZeroOverhead
+	} else {
+		overflow += gpuZeroOverhead
 	}
 
 	// For all the layers, find where they can fit on the GPU(s)
@@ -256,15 +258,17 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	}
 
 	// Determine if we need to consider output then find where it fits
-	if memoryLayerOutput > 0 && (opts.NumGPU < 0 || layerCount < opts.NumGPU) {
-		for j := len(gpusWithSpace); j > 0; j-- {
-			g := gpusWithSpace[layerCount%j]
-			used := gpuAllocations[g.i] + max(graphPartialOffload, graphFullOffload)
-			if g.g.FreeMemory > overhead+used+memoryLayerOutput {
-				gpuAllocations[g.i] += memoryLayerOutput
-				layerCounts[g.i]++
-				layerCount++
-				break
+	if memoryLayerOutput > 0 {
+		if opts.NumGPU < 0 || layerCount < opts.NumGPU {
+			for j := len(gpusWithSpace); j > 0; j-- {
+				g := gpusWithSpace[layerCount%j]
+				used := gpuAllocations[g.i] + max(graphPartialOffload, graphFullOffload)
+				if g.g.FreeMemory > overhead+used+memoryLayerOutput {
+					gpuAllocations[g.i] += memoryLayerOutput
+					layerCounts[g.i]++
+					layerCount++
+					break
+				}
 			}
 		}
 
