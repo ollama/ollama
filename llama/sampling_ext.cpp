@@ -114,6 +114,9 @@ void grammar_free(struct llama_grammar *g) {
         if (g->vocab != nullptr) {
             delete g->vocab;
         }
+        if (g->o_vocab != nullptr) {
+                delete g->o_vocab;
+        }
         llama_grammar_free_impl(g);
     }
 }
