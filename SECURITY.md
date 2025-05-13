@@ -14,7 +14,7 @@ Please include the following details in your report:
 
 ## Security best practices
 
-While the maintainer team does their best to secure Ollama, users are encouraged to implement their own security best practices, such as:
+While the maintainer team does its best to secure Ollama, users are encouraged to implement their own security best practices, such as:
 
 - Regularly updating to the latest version of Ollama
 - Securing access to hosted instances of Ollama
