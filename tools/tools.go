@@ -1,9 +1,7 @@
 package tools
 
 import (
-	"bytes"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -16,136 +14,56 @@ import (
 	"github.com/ollama/ollama/template"
 )
 
-// TODO: simplify if possible
 type Parser struct {
-	greedy        bool
+	greedyParse   bool
 	prefixFound   bool
-	partialPrefix bool
+	prefixPartial bool
 	tmpl          *gotmpl.Template
 	sb            *strings.Builder
 	prefix        string
 	index         int
+	name          string
+	arguments     string
 	Done          bool
 }
 
 // parseJSONToolCalls attempts to parse a JSON string into a slice of ToolCalls.
-// Returns parsed tool calls, a boolean indicating if the JSON is incomplete, and a boolean indicating if the tool calls were found
-func (p *Parser) parseJSONToolCalls(s string) ([]api.ToolCall, bool, bool) {
-	fmt.Printf("attempting to parse JSON tool calls: input=%s\n", s)
-
-	var b bytes.Buffer
-	if err := p.tmpl.Execute(&b, map[string][]api.ToolCall{
-		"ToolCalls": {
-			{
-				Function: api.ToolCallFunction{
-					Name: "@@name@@",
-					Arguments: api.ToolCallFunctionArguments{
-						"@@argument@@": 1,
-					},
-				},
-			},
-		},
-	}); err != nil {
-		fmt.Printf("failed to execute template: error=%v\n", err)
-		return nil, false, false
-	}
-
-	// this can be either a map or an array
-	var temp any
-	err := jsonv2.Unmarshal(b.Bytes(), &temp)
-	if err != nil {
-		fmt.Printf("failed to unmarshal template: error=%v\n", err)
-		return nil, false, false
-	}
-
-	var collect func(any) []map[string]any
-	collect = func(obj any) (all []map[string]any) {
-		switch o := obj.(type) {
-		case map[string]any:
-			all = append(all, o)
-			for _, v := range o {
-				all = append(all, collect(v)...)
-			}
-		case []any:
-			for _, v := range o {
-				all = append(all, collect(v)...)
-			}
-		default:
-			// TODO: err or fallback
-			fmt.Printf("collect encountered unknown type: type=%T\n", obj)
-			return nil
-		}
-
-		return all
-	}
-
-	var templateObjects []map[string]any
-	switch t := temp.(type) {
-	case map[string]any:
-		templateObjects = []map[string]any{t}
-	case []map[string]any:
-		templateObjects = t
-	// ! fallback?
-	case []any:
-		templateObjects = collect(t)
-	}
-	if len(templateObjects) == 0 {
-		fmt.Println("no template objects found")
-		return nil, false, false
-	}
-
-	// find the keys that correspond to the name and arguments fields
-	var name, arguments string
-	for k, v := range templateObjects[0] {
-		switch v.(type) {
-		case string:
-			name = k
-			fmt.Printf("found name field: key=%s\n", k)
-		case map[string]any:
-			arguments = k
-			fmt.Printf("found arguments field: key=%s\n", k)
-		}
-	}
-
-	if name == "" || arguments == "" {
-		fmt.Printf("missing required fields: name_found=%v arguments_found=%v\n", name != "", arguments != "")
-		return nil, false, false
-	}
-
-	// TODO: there is probably some underlying repeat work here to avoid
-	// This incrementally decodes the JSON string and returns the first parsedobject
+// It first tries to incrementally decode the JSON to handle partial inputs.
+// Returns:
+//   - []api.ToolCall: The parsed tool calls if successful
+//   - bool: True if JSON is incomplete and needs more input
+func (p *Parser) parseJSONToolCalls(s string) ([]api.ToolCall, bool) {
+	// First try incremental decoding to handle partial JSON
 	dec := jsontext.NewDecoder(strings.NewReader(s))
 	if got, err := dec.ReadValue(); err == nil {
 		s = got.String()
-		fmt.Printf("decoded JSON value: value=%s\n", s)
 	}
 
-	var responseObjects any
-	err = jsonv2.Unmarshal([]byte(s), &responseObjects)
+	// Attempt full unmarshal of the JSON
+	var resp any
+	err := jsonv2.Unmarshal([]byte(s), &resp)
 	if err != nil {
+		// Handle incomplete JSON cases
 		if errors.Is(err, io.ErrUnexpectedEOF) || err.Error() == "unexpected end of JSON input" {
-			fmt.Println("incomplete JSON detected")
-			return nil, true, false
-		} else {
-			fmt.Printf("failed to unmarshal response: error=%v\n", err)
-			return nil, false, false
+			slog.Debug("incomplete JSON detected", "input", s)
+			return nil, true
 		}
+		slog.Debug("failed to unmarshal response", "error", err)
+		return nil, false
 	}
 
+	// Collect all nested objects that could contain tool calls
 	var objs []map[string]any
-	objs = append(objs, collect(responseObjects)...)
+	objs = append(objs, collect(resp)...)
 	if len(objs) == 0 {
-		return nil, false, false
+		return nil, false
 	}
-
-	fmt.Printf("collected objects: count=%d\n", len(objs))
 
 	var toolCalls []api.ToolCall
 	for _, kv := range objs {
-		n, nok := kv[name].(string)
-		a, aok := kv[arguments].(map[string]any)
+		n, nok := kv[p.name].(string)
+		a, aok := kv[p.arguments].(map[string]any)
 		if nok && aok {
-			fmt.Printf("found valid tool call: name=%s\n", n)
 			toolCalls = append(toolCalls, api.ToolCall{
 				Function: api.ToolCallFunction{
 					Name:      n,
@@ -155,130 +73,171 @@ func (p *Parser) parseJSONToolCalls(s string) ([]api.ToolCall, bool, bool) {
 		}
 	}
 
-	fmt.Printf("parsed tool calls: count=%d\n", len(toolCalls))
-	return toolCalls, false, true
+	// Valid JSON, no tool calls found
+	if len(toolCalls) == 0 {
+		return nil, false
+	}
+
+	return toolCalls, false
 }
 
-// prefix stripped string if any, prefix found, and if we should accumulate
+// checkPrefix processes a string to find and handle a prefix pattern.
+//
+// Returns:
+//   - The processed string with prefix removed if found
+//   - Whether the prefix was found at the start of the string
+//   - Whether to continue parsing
 func (p *Parser) checkPrefix(s string) (string, bool, bool) {
+	// Keep original for overlap checks
+	original := s
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", false, true
+	}
 
+	// If no prefix defined, just return trimmed string
 	if p.prefix == "" {
 		return s, false, true
 	}
-	original := s
-	s = strings.TrimSpace(s)
-	s, hasPrefix := strings.CutPrefix(s, p.prefix)
-	if hasPrefix {
-		// partial tool possibly - accumulate
-		return s, true, true
-	} else if overlap := suffixOverlap(original, p.prefix); overlap > 0 {
-		// p.state = PartialPrefix
-		p.partialPrefix = true
-		return original[0 : len(original)-overlap], false, false
-	} else if idx := strings.Index(original, p.prefix); idx != -1 {
-		// Found prefix in middle of string, keep only content before prefix
-		// accounts for spaces in prefix or suffix to avoid breaking cache
-		p.partialPrefix = true
-		p.sb.Reset()
 
+	// Check for prefix at start of string
+	if processedStr, hasPrefix := strings.CutPrefix(s, p.prefix); hasPrefix {
+		// Found prefix at start - accumulate for potential tool
+		return processedStr, true, true
+	}
+
+	// Check if prefix overlaps end of string
+	if overlap := suffixOverlap(original, p.prefix); overlap > 0 {
+		p.prefixPartial = true
+		// Return everything except overlapping portion
+		p.sb.Reset()
+		p.sb.WriteString(original[len(original)-overlap:])
+		return original[0 : len(original)-overlap], false, false
+	}
+
+	// Check if prefix appears in middle of string
+	if idx := strings.Index(original, p.prefix); idx != -1 {
+		p.prefixPartial = true
+		// Save remainder starting at prefix for next pass
+		p.sb.Reset()
 		p.sb.WriteString(strings.TrimSpace(original[idx:]))
+		// Return everything before prefix
 		return original[:idx], false, false
 	}
 
-	p.partialPrefix = false
+	// No prefix found
+	p.prefixPartial = false
 	return s, false, true
 }
 
+// Add processes a string input to parse tool calls and content.
+// It handles prefix detection and JSON parsing to extract tool calls.
+//
+// Returns:
+//   - tools: Any parsed tool calls
+//   - content: Non-tool call content
+//   - err: Error if parsing failed
 func (p *Parser) Add(s string) (tools []api.ToolCall, content string, err error) {
-	slog.Debug("adding tool calls", "input", s)
-
-	p.sb.WriteString(s)
-	s = p.sb.String()
-
 	if len(s) == 0 {
 		return nil, "", nil
 	}
 
-	s, prefixFound, cont := p.checkPrefix(s)
+	p.sb.WriteString(s)
+	s = p.sb.String()
 
-	if !cont {
+	// Check for prefix pattern in input
+	s, prefixFound, shouldContinue := p.checkPrefix(s)
+	if !shouldContinue {
 		if s != "" {
-			// send only the content back, prefix exists
+			// Return content before prefix
 			return nil, s, nil
 		}
-		// accumulate case
+		// Need more input to complete prefix
 		return nil, "", nil
 	}
 
-	// circuit breaker
+	// Update prefix found state
 	if prefixFound {
 		p.prefixFound = true
 	}
 
-	// for cases with a prefix in template
-	if p.prefix != "" && !p.greedy && !p.prefixFound {
-		// send tokens down
+	// Exit if prefix exists in template, greedy parsing is off, and prefix not found
+	if !p.greedyParse && !p.prefixFound {
 		p.sb.Reset()
 		return nil, "", errors.New("prefix not found")
 	}
-	// we have a prefix or are in json mode
-	tcs, partial, ok := p.parseJSONToolCalls(s)
-	if partial {
-		// accumulate case
+
+	toolCalls, isPartial := p.parseJSONToolCalls(s)
+	if isPartial {
+		// Need more input to complete JSON
 		return nil, "", nil
 	}
 
-	p.greedy = false
-	if !ok {
-		// will not be a partial at this point
+	// Do not try greedy parsing if partial JSON not found
+	p.greedyParse = false
+
+	// Handle invalid tool call format
+	if len(toolCalls) == 0 {
 		p.sb.Reset()
-		// send tokens
 		if p.prefix == "" {
 			p.Done = true
 		}
 		if p.prefixFound {
-			// drop tokens instead - sb is reset, no tokens sent to user
+			// Drop tokens since prefix was found
 			return nil, "", nil
 		}
-		return nil, "", errors.New("failed to parse tool calls")
+		return nil, s, nil
 	}
 
-	for _, tc := range tcs {
+	for _, tc := range toolCalls {
 		tc.Function.Index = p.index
 		p.index++
 	}
+
+	// Mark as done if no prefix needed
 	if p.prefix == "" {
 		p.Done = true
 	}
+
 	p.sb.Reset()
-	return tcs, "", nil
+	return toolCalls, "", nil
 }
 
+// NewParser creates a new tool call parser from a template. It extracts the tool call format,
+// prefix, and field names from the template to use for parsing tool calls from model output.
+//
+// Returns an error if the template does not contain valid tool call formatting.
 func NewParser(templateToProcess *gotmpl.Template) (*Parser, error) {
-	parsedTemplate, err := template.Parse(templateToProcess.Root.String())
+	parsed, err := template.Parse(templateToProcess.Root.String())
 	if err != nil {
 		return nil, err
 	}
-	if parsedTemplate == nil {
+	if parsed == nil {
 		return nil, errors.New("failed to parse template")
 	}
 
-	toolCallTemplate, hasToolCalls := toolTemplate(parsedTemplate)
-	if !hasToolCalls {
-		return nil, errors.New("failed to find tool template")
+	tt, tc := toolTemplate(parsed)
+	if !tc {
+		return nil, errors.New("failed to find tool calls in template")
 	}
-	if toolCallTemplate == nil {
+	if tt == nil {
 		return nil, errors.New("failed to find tool template")
 	}
 
-	toolPrefix, _ := ToolPrefix(templateToProcess)
-	toolPrefix = strings.TrimSpace(toolPrefix)
+	tp := toolPrefix(templateToProcess)
+	tp = strings.TrimSpace(tp)
 
-	fmt.Printf("creating new tool parser: prefix=%s\n", toolPrefix)
+	name, arguments, err := extractToolArgs(tt)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Parser{
-		tmpl:   toolCallTemplate,
-		sb:     &strings.Builder{},
-		prefix: toolPrefix,
-		greedy: true,
+		tmpl:        tt,
+		sb:          &strings.Builder{},
+		prefix:      tp,
+		greedyParse: true,
+		name:        name,
+		arguments:   arguments,
 	}, nil
 }
