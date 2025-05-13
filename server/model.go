@@ -125,20 +125,3 @@ func detectContentType(r io.Reader) (string, error) {
 
 	return "unknown", nil
 }
-
-// func ToolTemplate(m *Model) (*gotmpl.Template, bool) {
-// 	// create a subtree from the node that ranges over .ToolCalls
-// 	tmpl := m.Template.Subtree(func(n parse.Node) bool {
-// 		if t, ok := n.(*parse.RangeNode); ok {
-// 			return slices.Contains(template.Identifiers(t.Pipe), "ToolCalls")
-// 		}
-
-// 		return false
-// 	})
-
-// 	if tmpl == nil {
-// 		return nil, false
-// 	}
-
-// 	return tmpl, true
-// }

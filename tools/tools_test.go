@@ -6,11 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
-	gotmpl "text/template"
-	"text/template/parse"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -207,6 +204,27 @@ func TestParseToolCalls(t *testing.T) {
 			expectedTokens:   "",
 		},
 		{
+			name:             "qwen2.5 tool calls without prefix and valid tool call",
+			model:            "qwen2.5-coder",
+			output:           `[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}, {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
+			expectedToolCall: []api.ToolCall{t1, t2},
+			expectedTokens:   "",
+		},
+		{
+			name:             "qwen2.5 tool calls without prefix and invalid tool call",
+			model:            "qwen2.5-coder",
+			output:           `[{"options": "foo"}]`,
+			expectedToolCall: []api.ToolCall{},
+			expectedTokens:   `[{"options": "foo"}]`,
+		},
+		{
+			name:             "qwen2.5 tool calls with prefix and invalid tool call",
+			model:            "qwen2.5-coder",
+			output:           `<tool_call> [{"options": "foo"}] </tool_call> `,
+			expectedToolCall: []api.ToolCall{},
+			expectedTokens:   ``,
+		},
+		{
 			name:             "qwen3 tool call with think prefix and tool prefix (sent as a single token)",
 			model:            "qwen3",
 			output:           `<think>Okay, let me think what tool we should use...</think><tool_call>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}</tool_call>`,
@@ -239,14 +257,14 @@ func TestParseToolCalls(t *testing.T) {
 			model:            "qwen3",
 			output:           `<think></think>< fakeout{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
 			expectedToolCall: []api.ToolCall{},
-			expectedTokens:   `<think></think> fakeout{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
+			expectedTokens:   `<think></think>< fakeout{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
 		},
 		{
 			name:             "qwen3 invalid tool call with partial tool prefix (multiple rune suffix match)",
 			model:            "qwen3",
 			output:           `<think></think><tool_c fakeout{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
 			expectedToolCall: []api.ToolCall{},
-			expectedTokens:   `<think></think> fakeout{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
+			expectedTokens:   `<think></think><tool_c fakeout{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
 		},
 		{
 			name:             "qwen3 invalid tool call with malformed tool prefix",
@@ -332,6 +350,7 @@ func TestParseToolCalls(t *testing.T) {
 						toolCalls, content, err := tp.Add(s)
 						if err == nil {
 							if content != "" {
+								fmt.Printf("content: %q\n", content)
 								gotTokens.WriteString(content)
 								add = false
 							} else if len(toolCalls) > 0 {
@@ -363,24 +382,101 @@ func TestParseToolCalls(t *testing.T) {
 	}
 }
 
-func toolTemplateHelper(t *testing.T, tmpl *template.Template) (*gotmpl.Template, bool) {
-	// create a subtree from the node that ranges over .ToolCalls
-
-	tmpl2 := tmpl.Subtree(func(n parse.Node) bool {
-		if t, ok := n.(*parse.RangeNode); ok {
-			return slices.Contains(template.Identifiers(t.Pipe), "ToolCalls")
-		}
-
-		return false
-	})
-
-	if tmpl2.Root != nil {
-		t.Log("tmpl2", tmpl2.Root.String())
+func TestParseJSONToolCalls(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         string
+		parser        *Parser
+		wantToolCalls []api.ToolCall
+		wantPartial   bool
+		wantValid     bool
+	}{
+		{
+			name:   "valid single tool call",
+			input:  `{"name": "test_tool", "arguments": {"arg1": "value1"}}`,
+			parser: &Parser{name: "name", arguments: "arguments"},
+			wantToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "test_tool",
+						Arguments: map[string]any{
+							"arg1": "value1",
+						},
+					},
+				},
+			},
+			wantPartial: false,
+			wantValid:   true,
+		},
+		{
+			name:          "incomplete JSON",
+			input:         `{"name": "test_tool", "arguments": {"arg1": `,
+			parser:        &Parser{name: "name", arguments: "arguments"},
+			wantToolCalls: nil,
+			wantPartial:   true,
+			wantValid:     false,
+		},
+		{
+			name:          "invalid JSON",
+			input:         `not json at all`,
+			parser:        &Parser{name: "name", arguments: "arguments"},
+			wantToolCalls: nil,
+			wantPartial:   false,
+			wantValid:     false,
+		},
+		{
+			name:          "missing required fields",
+			input:         `{"other": "field"}`,
+			parser:        &Parser{name: "name", arguments: "arguments"},
+			wantToolCalls: nil,
+			wantPartial:   false,
+			wantValid:     false,
+		},
+		{
+			name: "multiple tool calls in array",
+			input: `[
+				{"name": "tool1", "arguments": {"arg1": 1}},
+				{"name": "tool2", "arguments": {"arg2": "value"}}
+			]`,
+			parser: &Parser{name: "name", arguments: "arguments"},
+			wantToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "tool1",
+						Arguments: map[string]any{
+							"arg1": float64(1),
+						},
+					},
+				},
+				{
+					Function: api.ToolCallFunction{
+						Name: "tool2",
+						Arguments: map[string]any{
+							"arg2": "value",
+						},
+					},
+				},
+			},
+			wantPartial: false,
+			wantValid:   true,
+		},
 	}
 
-	if tmpl2 == nil {
-		return nil, false
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotCalls, gotPartial := tt.parser.parseJSONToolCalls(tt.input)
 
-	return tmpl2, true
+			if gotPartial != tt.wantPartial {
+				t.Errorf("parseJSONToolCalls() partial = %v, want %v", gotPartial, tt.wantPartial)
+			}
+
+			if len(gotCalls) != 0 != tt.wantValid {
+				t.Errorf("parseJSONToolCalls() valid = %v, want %v", len(gotCalls) == 0, tt.wantValid)
+			}
+
+			if diff := cmp.Diff(gotCalls, tt.wantToolCalls); diff != "" {
+				t.Errorf("parseJSONToolCalls() tool calls mismatch (-got +want):\n%s", diff)
+			}
+		})
+	}
 }
