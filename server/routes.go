@@ -1483,19 +1483,21 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
+	slog.Debug("chat request", "images", len(images), "prompt", prompt)
+
+	var toolParser *tools.Parser
+	if len(req.Tools) > 0 {
+		toolParser, err = tools.NewParser(m.Template.Template)
+		if err != nil {
+			slog.Error("failed to create tool parser", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
-		// ! personally not a fan of this pattern
-		toolTemplate, ok := ToolTemplate(m)
-		if !ok {
-			slog.Error("tool template not found", "model", m.Name)
-			return
-		}
-		var toolParser *tools.Parser
-		if len(req.Tools) > 0 {
-			toolParser = tools.NewParser(m.Template.Template, toolTemplate)
-		}
 
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
@@ -1523,30 +1525,20 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 
 			if len(req.Tools) > 0 && !toolParser.Done {
-				toolCalls, leftover := toolParser.ParseToolCalls(r.Content)
-				// * This can be abstracted again to a .handleState(tp.state)
-				// * However, we'd need a flag to indicate whether to send the response or not
-				// * happy to take whatever is more idiomatic
-				switch toolParser.ParserState {
-				case tools.ToolCallAccumulate:
-					// tokens are accumulated in the tool parser
-					return
-				case tools.ToolCallSendTokens:
-					// tokens are sent back in the response
-				case tools.ToolCallSendPartial:
-					// tokens not needed for parsing are sent back in the response
-					if len(leftover) > 0 {
-						res.Message.Content = leftover
+				toolCalls, content, err := toolParser.Add(r.Content)
+				if err == nil {
+					if len(content) > 0 {
+						res.Message.Content = content
+						fmt.Println("sending content in response", content)
+					} else if len(toolCalls) > 0 {
+						fmt.Println("sending tool calls in response", toolCalls)
+						res.Message.ToolCalls = toolCalls
+						res.Message.Content = ""
+					} else {
+						return
 					}
-					// ! state is needed as we need to not match on the other states
-				case tools.ToolCallFound:
-					res.Message.ToolCalls = toolCalls
-					res.Message.Content = ""
 				}
 			}
-
-			fmt.Println("sending response", res.Message.Content)
-			// * this is where we'd need the flag if we have a .handleState(tp.state)
 			ch <- res
 		}); err != nil {
 			ch <- gin.H{"error": err.Error()}

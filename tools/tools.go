@@ -6,91 +6,28 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"slices"
 	"strings"
 	gotmpl "text/template"
-	"text/template/parse"
 
 	jsonv2 "github.com/go-json-experiment/json"
 	jsontext "github.com/go-json-experiment/json/jsontext"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/template"
 )
-
-type State int
-
-// TODO: potentially coalesce states
-const (
-	SendTokens State = iota
-	GreedyToolWithPrefix
-	GreedyToolNoPrefix
-	ForceTools
-	ToolSuffix
-	ContainsPrefix
-	PartialPrefix
-	NotPartialPrefix
-	Done
-)
-
-type ExternalState int
-
-const (
-	ToolCallFound ExternalState = iota
-	ToolCallSendPartial
-	ToolCallAccumulate
-	ToolCallSendTokens
-)
-
-func (s ExternalState) String() string {
-	switch s {
-	case ToolCallFound:
-		return "ToolCallFound"
-	case ToolCallSendPartial:
-		return "ToolCallSendPartial"
-	case ToolCallAccumulate:
-		return "ToolCallAccumulate"
-	case ToolCallSendTokens:
-		return "ToolCallSendTokens"
-	default:
-		return fmt.Sprintf("Unknown ExternalState (%d)", s)
-	}
-}
-
-func (s State) String() string {
-	switch s {
-	case SendTokens:
-		return "SendTokens"
-	case GreedyToolWithPrefix:
-		return "GreedyToolWithPrefix"
-	case GreedyToolNoPrefix:
-		return "GreedyToolNoPrefix"
-	case ForceTools:
-		return "ForceTools"
-	case ToolSuffix:
-		return "ToolSuffix"
-	case PartialPrefix:
-		return "PossiblePrefix"
-	case Done:
-		return "Done"
-	case ContainsPrefix:
-		return "PartialPrefix"
-	default:
-		return fmt.Sprintf("Unknown State (%d)", s)
-	}
-}
 
 // TODO: simplify if possible
 type Parser struct {
-	tmpl        *gotmpl.Template
-	state       State
-	sb          *strings.Builder
-	toolPrefix  string
-	toolIndex   int
-	ParserState ExternalState
-	Done        bool
+	greedy        bool
+	prefixFound   bool
+	partialPrefix bool
+	tmpl          *gotmpl.Template
+	sb            *strings.Builder
+	prefix        string
+	index         int
+	Done          bool
 }
 
-// ? move to a separate file
 // parseJSONToolCalls attempts to parse a JSON string into a slice of ToolCalls.
 // Returns parsed tool calls, a boolean indicating if the JSON is incomplete, and a boolean indicating if the tool calls were found
 func (p *Parser) parseJSONToolCalls(s string) ([]api.ToolCall, bool, bool) {
@@ -222,314 +159,126 @@ func (p *Parser) parseJSONToolCalls(s string) ([]api.ToolCall, bool, bool) {
 	return toolCalls, false, true
 }
 
-// TODO: clean up the boundary of internal and external state transitions
-func (p *Parser) updateStateAfterJSONParse(ok bool, partial bool, tcs []api.ToolCall) {
-	fmt.Printf("updating output state: ok=%v partial=%v tool_calls=%d current_state=%s\n", ok, partial, len(tcs), p.state)
+// prefix stripped string if any, prefix found, and if we should accumulate
+func (p *Parser) checkPrefix(s string) (string, bool, bool) {
 
-	// state transition logic
-	switch {
-	case !ok && !partial && p.state == ForceTools:
-		// force partial tool if we have a prefix
-		// no op and stay in force tools
-		p.sb.Reset()
-	case !ok && !partial:
-		if p.state == GreedyToolNoPrefix {
-			p.state = Done
-			// ? the output parser state is the same even though internal can we not leak the external state?
-			p.Done = true
-		}
-		if p.state == GreedyToolWithPrefix {
-			p.state = SendTokens
-		}
-		if p.state == PartialPrefix {
-			p.state = NotPartialPrefix
-		}
-	case !ok && partial:
-		// acucumulate
-
-	case len(tcs) > 0:
-		// do not parse again in the greedy JSON case as soon as we have a tool call
-		p.sb.Reset()
-	}
-	p.updateExternalState(tcs)
-	fmt.Printf("state updated: new_state=%s parser_state=%s\n", p.state, p.ParserState)
-}
-
-func (p *Parser) updateExternalState(tcs []api.ToolCall) {
-	fmt.Printf("updating external state: current_state=%s tool_calls=%d\n", p.state, len(tcs))
-
-	switch {
-	case len(tcs) > 0:
-		// do not parse again in the greedy JSON case as soon as we have a tool call
-		if p.state == GreedyToolWithPrefix {
-			p.state = SendTokens
-		} else if p.state == GreedyToolNoPrefix {
-			p.state = Done
-			p.Done = true
-		}
-		p.ParserState = ToolCallFound
-	case p.state == GreedyToolWithPrefix || p.state == GreedyToolNoPrefix ||
-		p.state == ToolSuffix || p.state == PartialPrefix ||
-		(p.state == ForceTools && len(tcs) == 0):
-		p.ParserState = ToolCallAccumulate
-	case p.state == ContainsPrefix:
-		p.ParserState = ToolCallSendPartial
-	case p.state == SendTokens || p.state == Done:
-		p.ParserState = ToolCallSendTokens
-	case p.state == NotPartialPrefix:
-		p.ParserState = ToolCallSendPartial
-	default:
-		p.ParserState = ToolCallSendTokens
-		p.sb.Reset()
-		p.state = SendTokens
-	}
-}
-
-// string, and if it has a prefix
-func (p *Parser) checkPrefix(s string) (string, bool) {
-	fmt.Printf("checking prefix: input=%s prefix=%s\n", s, p.toolPrefix)
-
-	if p.toolPrefix == "" {
-		return s, true
+	if p.prefix == "" {
+		return s, false, true
 	}
 	original := s
-	s, hasPrefix := strings.CutPrefix(s, p.toolPrefix)
+	s = strings.TrimSpace(s)
+	s, hasPrefix := strings.CutPrefix(s, p.prefix)
 	if hasPrefix {
-		p.state = ForceTools
-		fmt.Printf("found exact prefix match: remaining=%s\n", s)
 		// partial tool possibly - accumulate
-	} else if suffixOverlap(s, p.toolPrefix) > 0 {
-		p.state = PartialPrefix
-		fmt.Printf("found partial prefix: remaining=%s\n", s)
-		return "", false
-		// the case where "token<tool_call>" - send "token" back
+		return s, true, true
+	} else if overlap := suffixOverlap(original, p.prefix); overlap > 0 {
+		// p.state = PartialPrefix
+		p.partialPrefix = true
+		return original[0 : len(original)-overlap], false, false
+	} else if idx := strings.Index(original, p.prefix); idx != -1 {
+		// Found prefix in middle of string, keep only content before prefix
 		// accounts for spaces in prefix or suffix to avoid breaking cache
-	} else if strings.Contains(original, p.toolPrefix) {
-		idx := strings.Index(original, p.toolPrefix)
-		if idx != -1 {
-			// still keeps the prefix
-			p.state = ContainsPrefix
-			p.sb.Reset()
-			// todo: see if there is a simpler way for this
-			idx2 := strings.Index(s, p.toolPrefix)
-			// buffer now only has the prefix
-			p.sb.WriteString(s[idx2:])
-			fmt.Printf("found prefix in middle: prefix_start=%d content_before=%s\n", idx, original[:idx])
-			return original[:idx], false
-		}
+		p.partialPrefix = true
+		p.sb.Reset()
+
+		p.sb.WriteString(strings.TrimSpace(original[idx:]))
+		return original[:idx], false, false
 	}
 
-	return s, true
+	p.partialPrefix = false
+	return s, false, true
 }
 
-// TODO: simplify the flow of this function
-// ParseToolCalls extracts tool calls from a string using a tool token prefix or direct JSON parsing.
-// Returns tool calls, whether parsing is incomplete, and any errors.
-func (p *Parser) ParseToolCalls(s string) ([]api.ToolCall, string) {
-	fmt.Printf("parsing tool calls: input=%s current_state=%s\n", s, p.state)
+func (p *Parser) Add(s string) (tools []api.ToolCall, content string, err error) {
+	slog.Debug("adding tool calls", "input", s)
 
 	p.sb.WriteString(s)
 	s = p.sb.String()
 
-	s = strings.TrimSpace(s)
-
 	if len(s) == 0 {
-		p.updateExternalState(nil)
-		return nil, ""
+		return nil, "", nil
 	}
 
-	s, cont := p.checkPrefix(s)
+	s, prefixFound, cont := p.checkPrefix(s)
+
 	if !cont {
-		p.updateExternalState(nil)
-		if p.state == ContainsPrefix {
-			fmt.Printf("returning partial prefix: remaining=%s\n", s)
-			return nil, s
+		if s != "" {
+			// send only the content back, prefix exists
+			return nil, s, nil
 		}
-		// * we'd be returning here for just accumulating with possible prefix
-		// * ext state is accumulation
-		return nil, ""
+		// accumulate case
+		return nil, "", nil
 	}
-	// * lets say the check fails here and now we're still in external state accumulation here
 
-	// stay in SendTokens unless we have a prefix
-	if p.state == SendTokens {
-		p.updateExternalState(nil)
+	// circuit breaker
+	if prefixFound {
+		p.prefixFound = true
+	}
+
+	// for cases with a prefix in template
+	if p.prefix != "" && !p.greedy && !p.prefixFound {
+		// send tokens down
 		p.sb.Reset()
-		fmt.Printf("returning send tokens: remaining=%s\n", s)
-		return nil, s
+		return nil, "", errors.New("prefix not found")
 	}
-
-	// * we'd parse here as json to see if it's a tool call
+	// we have a prefix or are in json mode
 	tcs, partial, ok := p.parseJSONToolCalls(s)
-	// * it would not be a tool call here
-	p.updateStateAfterJSONParse(ok, partial, tcs)
-	if !ok {
-		// * and so we should send the data here
-		// * we also need to move out of that internal state after sending the tokens
-		if p.state == NotPartialPrefix {
-			p.state = SendTokens
-			// the string would have acc until here
-			return nil, p.sb.String()
-		}
-		return nil, ""
+	if partial {
+		// accumulate case
+		return nil, "", nil
 	}
+
+	p.greedy = false
+	if !ok {
+		// will not be a partial at this point
+		p.sb.Reset()
+		// send tokens
+		if p.prefix == "" {
+			p.Done = true
+		}
+		if p.prefixFound {
+			// drop tokens instead - sb is reset, no tokens sent to user
+			return nil, "", nil
+		}
+		return nil, "", errors.New("failed to parse tool calls")
+	}
+
 	for _, tc := range tcs {
-		tc.Function.Index = p.toolIndex
-		p.toolIndex++
+		tc.Function.Index = p.index
+		p.index++
 	}
-	fmt.Printf("finished parsing tool calls: tool_calls_found=%d\n", len(tcs))
-	return tcs, ""
+	if p.prefix == "" {
+		p.Done = true
+	}
+	p.sb.Reset()
+	return tcs, "", nil
 }
 
-func suffixOverlap(s, delim string) int {
-	max := min(len(delim), len(s))
-	for i := max; i > 0; i-- {
-		if strings.HasSuffix(s, delim[:i]) {
-			return i
-		}
+func NewParser(templateToProcess *gotmpl.Template) (*Parser, error) {
+	parsedTemplate, err := template.Parse(templateToProcess.Root.String())
+	if err != nil {
+		return nil, err
 	}
-	return 0
-}
-
-// extractToolCallsTemplate finds the immediate following text after any IfNode containing ".ToolCalls"
-func extractToolCallsTemplate(tmpl *gotmpl.Template) (string, bool) {
-	if tmpl == nil || tmpl.Tree == nil {
-		slog.Debug("TextAfterToolCalls: template or tree is nil")
-		return "", false
+	if parsedTemplate == nil {
+		return nil, errors.New("failed to parse template")
 	}
 
-	var result string
-	var found bool
-
-	var walk func(nodes []parse.Node)
-	walk = func(nodes []parse.Node) {
-		for _, node := range nodes {
-			if found {
-				return
-			}
-
-			switch n := node.(type) {
-			case *parse.IfNode:
-				if nodeContainsToolCalls(n) {
-					// Collect immediate TextNode(s) at start of IfNode's list
-					var sb strings.Builder
-					for _, innerNode := range n.List.Nodes {
-						if tn, ok := innerNode.(*parse.TextNode); ok {
-							sb.Write(tn.Text)
-						} else {
-							// Stop at first non-text node
-							break
-						}
-					}
-					result = sb.String()
-					found = true
-					return
-				}
-				// Recurse into child nodes
-				walk(n.List.Nodes)
-				if n.ElseList != nil {
-					walk(n.ElseList.Nodes)
-				}
-			case *parse.ListNode:
-				walk(n.Nodes)
-			case *parse.RangeNode:
-				walk(n.List.Nodes)
-				if n.ElseList != nil {
-					walk(n.ElseList.Nodes)
-				}
-			case *parse.WithNode:
-				walk(n.List.Nodes)
-				if n.ElseList != nil {
-					walk(n.ElseList.Nodes)
-				}
-			default:
-				// Continue to next node
-				continue
-			}
-
-			if found {
-				return
-			}
-		}
+	toolCallTemplate, hasToolCalls := toolTemplate(parsedTemplate)
+	if !hasToolCalls {
+		return nil, errors.New("failed to find tool template")
+	}
+	if toolCallTemplate == nil {
+		return nil, errors.New("failed to find tool template")
 	}
 
-	walk(tmpl.Tree.Root.Nodes)
-	return result, found
-}
+	toolPrefix, _ := ToolPrefix(templateToProcess)
+	toolPrefix = strings.TrimSpace(toolPrefix)
 
-// Helper to detect if a node's condition includes ".ToolCalls"
-func nodeContainsToolCalls(n *parse.IfNode) bool {
-	for _, cmd := range n.Pipe.Cmds {
-		for _, arg := range cmd.Args {
-			if field, ok := arg.(*parse.FieldNode); ok {
-				if slices.Contains(field.Ident, "ToolCalls") {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-func ToolPrefix(tmpl *gotmpl.Template) (string, bool) {
-	tokenText, ok := extractToolCallsTemplate(tmpl)
-	if !ok {
-		return "", false
-	}
-	tokenText = strings.TrimSpace(tokenText)
-	if tokenText == "" {
-		return "", false
-	}
-	first := strings.Fields(tokenText)[0]
-
-	start := -1
-	end := -1
-	for i, r := range tokenText {
-		if r == '<' || r == '[' {
-			start = i
-		}
-		if (r == '>' || r == ']') && start != -1 {
-			end = i
-			break
-		}
-	}
-	if start != -1 && end != -1 {
-		// return the token including the [ or < and the ] or >
-		return tokenText[start : end+1], true
-	} else if start != -1 {
-		// get until the [ or < - in the case tag was not closed
-		return tokenText[:start], true
-	} else if end != -1 {
-		// get after the ] or > - in the case tag was not opened
-		return tokenText[end+1:], true
-	}
-	return first, true
-}
-
-func NewParser(tmpl *gotmpl.Template, toolTemplate *gotmpl.Template) *Parser {
-	// TODO: use new template parsing to get all tokens for the prefix
-	if tmpl == nil {
-		return nil
-	}
-	if toolTemplate == nil {
-		return nil
-	}
-
-	prefix, _ := ToolPrefix(tmpl)
-	prefix = strings.TrimSpace(prefix)
-
-	var state State
-	if prefix == "" {
-		state = GreedyToolNoPrefix
-	} else {
-		state = GreedyToolWithPrefix
-	}
-	fmt.Printf("creating new tool parser: prefix=%s initial_state=%s\n", prefix, state)
+	fmt.Printf("creating new tool parser: prefix=%s\n", toolPrefix)
 	return &Parser{
-		tmpl:        toolTemplate,
-		sb:          &strings.Builder{},
-		toolPrefix:  prefix,
-		state:       state,
-		ParserState: ToolCallAccumulate,
-	}
+		tmpl:   toolCallTemplate,
+		sb:     &strings.Builder{},
+		prefix: toolPrefix,
+		greedy: true,
+	}, nil
 }
