@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -23,8 +22,10 @@ import (
 	"golang.org/x/sync/semaphore"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/runner/common"
 )
 
@@ -583,9 +584,6 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 		PenaltyRepeat:  req.Options.RepeatPenalty,
 		PenaltyFreq:    req.Options.FrequencyPenalty,
 		PenaltyPresent: req.Options.PresencePenalty,
-		Mirostat:       req.Options.Mirostat,
-		MirostatTau:    req.Options.MirostatTau,
-		MirostatEta:    req.Options.MirostatEta,
 		Seed:           uint32(req.Options.Seed),
 		Grammar:        req.Grammar,
 	}
@@ -682,8 +680,6 @@ func (s *Server) embeddings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-
-	slog.Debug("embedding request", "content", req.Content)
 
 	seq, err := s.NewSequence(req.Content, nil, NewSequenceParams{embedding: true})
 	if err != nil {
@@ -818,9 +814,8 @@ func Execute(args []string) error {
 	kvCacheType := fs.String("kv-cache-type", "", "quantization type for KV cache (default: f16)")
 	port := fs.Int("port", 8080, "Port to expose the server on")
 	threads := fs.Int("threads", runtime.NumCPU(), "Number of threads to use during generation")
-	verbose := fs.Bool("verbose", false, "verbose output (default: disabled)")
+	_ = fs.Bool("verbose", false, "verbose output (default: disabled)")
 	noMmap := fs.Bool("no-mmap", false, "do not memory-map model (slower load but may reduce pageouts if not using mlock)")
-	mlock := fs.Bool("mlock", false, "force system to keep model in RAM rather than swapping or compressing")
 	tensorSplit := fs.String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
 	multiUserCache := fs.Bool("multiuser-cache", false, "optimize input cache algorithm for multiple users")
 
@@ -834,22 +829,7 @@ func Execute(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	level := slog.LevelInfo
-	if *verbose {
-		level = slog.LevelDebug
-	}
-	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level:     level,
-		AddSource: true,
-		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
-			if attr.Key == slog.SourceKey {
-				source := attr.Value.Any().(*slog.Source)
-				source.File = filepath.Base(source.File)
-			}
-			return attr
-		},
-	})
-	slog.SetDefault(slog.New(handler))
+	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
 	slog.Info("starting go runner")
 
 	llama.BackendInit()
@@ -876,7 +856,6 @@ func Execute(args []string) error {
 		NumGpuLayers: *nGpuLayers,
 		MainGpu:      *mainGpu,
 		UseMmap:      !*noMmap && lpaths.String() == "",
-		UseMlock:     *mlock,
 		TensorSplit:  tensorSplitFloats,
 		Progress: func(progress float32) {
 			server.progress = progress

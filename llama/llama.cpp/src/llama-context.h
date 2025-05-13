@@ -8,6 +8,7 @@
 #include "llama-kv-cache.h"
 
 #include "ggml-cpp.h"
+#include "ggml-opt.h"
 
 #include <map>
 #include <vector>
@@ -28,7 +29,12 @@ struct llama_context {
 
     void synchronize();
 
-    const llama_model & get_model() const;
+    const llama_model   & get_model()   const;
+    const llama_cparams & get_cparams() const;
+
+    ggml_backend_sched_t get_sched() const;
+
+    ggml_context * get_ctx_compute() const;
 
     uint32_t n_ctx()         const;
     uint32_t n_ctx_per_seq() const;
@@ -130,6 +136,32 @@ struct llama_context {
     llama_perf_context_data perf_get_data() const;
     void perf_reset();
 
+    //
+    // training
+    //
+
+    void opt_init(struct llama_model * model, struct llama_opt_params lopt_params);
+
+    void opt_epoch(
+            ggml_opt_dataset_t      dataset,
+            ggml_opt_result_t       result_train,
+            ggml_opt_result_t       result_eval,
+            int64_t                 idata_split,
+            ggml_opt_epoch_callback callback_train,
+            ggml_opt_epoch_callback callback_eval);
+
+    void opt_epoch_iter(
+            ggml_opt_dataset_t               dataset,
+            ggml_opt_result_t                result,
+            const std::vector<llama_token> & tokens,
+            const std::vector<llama_token> & labels_sparse,
+            llama_batch                    & batch,
+            ggml_opt_epoch_callback          callback,
+            bool                             train,
+            int64_t                          idata_in_loop,
+            int64_t                          ndata_in_loop,
+            int64_t                          t_loop_start);
+
 private:
     //
     // output
@@ -139,50 +171,29 @@ private:
     // Returns max number of outputs for which space was reserved.
     int32_t output_reserve(int32_t n_outputs);
 
-    // make the outputs have the same order they had in the user-provided batch
-    // TODO: maybe remove this
-    void output_reorder();
-
     //
     // graph
     //
 
+public:
     int32_t graph_max_nodes() const;
 
     // zero-out inputs and create the ctx_compute for the compute graph
     ggml_cgraph * graph_init();
-
-    llm_graph_result_ptr graph_build(
-            ggml_context * ctx,
-             ggml_cgraph * gf,
-      const llama_ubatch & ubatch,
-          llm_graph_type   gtype);
 
     // returns the result of ggml_backend_sched_graph_compute_async execution
     ggml_status graph_compute(
             ggml_cgraph * gf,
                    bool   batched);
 
+private:
+    llm_graph_result_ptr graph_build(
+            ggml_context * ctx,
+             ggml_cgraph * gf,
+      const llama_ubatch & ubatch,
+          llm_graph_type   gtype);
+
     llm_graph_cb graph_get_cb() const;
-
-    // used by kv_self_update()
-    ggml_tensor * build_rope_shift(
-        ggml_context * ctx0,
-        ggml_tensor * cur,
-        ggml_tensor * shift,
-        ggml_tensor * factors,
-              float   freq_base,
-              float   freq_scale,
-        ggml_backend_buffer * bbuf) const;
-
-    llm_graph_result_ptr build_kv_self_shift(
-            ggml_context * ctx0,
-            ggml_cgraph * gf) const;
-
-    llm_graph_result_ptr build_kv_self_defrag(
-            ggml_context * ctx0,
-            ggml_cgraph * gf,
-            const std::vector<struct llama_kv_defrag_move> & moves) const;
 
     // TODO: read/write lora adapters and cvec
     size_t state_write_data(llama_io_write_i & io);
@@ -200,14 +211,10 @@ private:
     llama_cparams       cparams;
     llama_adapter_cvec  cvec;
     llama_adapter_loras loras;
-    llama_sbatch        sbatch;
 
     llama_cross cross; // TODO: tmp for handling cross-attention - need something better probably
 
-    std::unique_ptr<llama_kv_cache_unified> kv_self;
-
-    // TODO: remove
-    bool logits_all = false;
+    std::unique_ptr<llama_memory_i> memory;
 
     // decode output (2-dimensional array: [n_outputs][n_vocab])
     size_t  logits_size = 0; // capacity (of floats) for logits
@@ -233,6 +240,9 @@ private:
     std::vector<ggml_backend_ptr> backends;
 
     ggml_context_ptr ctx_compute;
+
+    // training
+    ggml_opt_context_t opt_ctx = nullptr;
 
     ggml_threadpool_t threadpool       = nullptr;
     ggml_threadpool_t threadpool_batch = nullptr;

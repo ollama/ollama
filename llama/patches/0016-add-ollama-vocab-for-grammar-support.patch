@@ -184,10 +184,10 @@ index f8c291de..2a3a62db 100644
                        const char * grammar_root,
                                bool lazy,
 diff --git a/src/llama-sampling.cpp b/src/llama-sampling.cpp
-index d1497985..b1a9dca3 100644
+index 804b11e0..15a10ca8 100644
 --- a/src/llama-sampling.cpp
 +++ b/src/llama-sampling.cpp
-@@ -1465,7 +1465,7 @@ static void llama_sampler_grammar_reset(struct llama_sampler * smpl) {
+@@ -1466,7 +1466,7 @@ static void llama_sampler_grammar_reset(struct llama_sampler * smpl) {
          trigger_patterns_c.push_back(trigger_pattern.pattern.c_str());
      }
  
@@ -196,7 +196,7 @@ index d1497985..b1a9dca3 100644
                                                   ctx->grammar->lazy, trigger_patterns_c.data(), trigger_patterns_c.size(),
                                                   ctx->grammar->trigger_tokens.data(), ctx->grammar->trigger_tokens.size());
  
-@@ -1547,7 +1547,7 @@ static struct llama_sampler * llama_sampler_init_grammar_impl(
+@@ -1548,7 +1548,7 @@ static struct llama_sampler * llama_sampler_init_grammar_impl(
              /* .vocab        = */ vocab,
              /* .grammar_str  = */ grammar_str,
              /* .grammar_root = */ grammar_root,

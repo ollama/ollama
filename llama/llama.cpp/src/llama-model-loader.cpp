@@ -301,12 +301,12 @@ namespace GGUFMeta {
             GGUFMeta::GKV<GGUFMeta::ArrayInfo>::get_kv(meta.get(), kid);
 
         switch (arr_info.gt) {
-            case GGUF_TYPE_FLOAT32: GGML_ASSERT((std::is_same<T, float>::value)); break;
-            case GGUF_TYPE_INT32:   GGML_ASSERT(
-                                            (std::is_same<T,  int32_t>::value) ||
-                                            (std::is_same<T, uint32_t>::value));  break;
+            case GGUF_TYPE_UINT32:
+            case GGUF_TYPE_INT32:   GGML_ASSERT((std::is_same<T,  int32_t>::value) ||
+                                                (std::is_same<T, uint32_t>::value)); break;
+            case GGUF_TYPE_FLOAT32: GGML_ASSERT((std::is_same<T,    float>::value)); break;
             default:
-                throw std::runtime_error(format("%s is not a float32, int32 array", key.c_str()));
+                throw std::runtime_error(format("%s is not a float32/uint32/int32 array", key.c_str()));
         }
 
         result.resize(arr_info.length);
@@ -332,12 +332,12 @@ namespace GGUFMeta {
             GGUFMeta::GKV<GGUFMeta::ArrayInfo>::get_kv(meta.get(), kid);
 
         switch (arr_info.gt) {
-            case GGUF_TYPE_FLOAT32: GGML_ASSERT((std::is_same<T, float>::value)); break;
-            case GGUF_TYPE_INT32:   GGML_ASSERT(
-                                            (std::is_same<T,  int32_t>::value) ||
-                                            (std::is_same<T, uint32_t>::value));  break;
+            case GGUF_TYPE_UINT32:
+            case GGUF_TYPE_INT32:   GGML_ASSERT((std::is_same<T,  int32_t>::value) ||
+                                                (std::is_same<T, uint32_t>::value)); break;
+            case GGUF_TYPE_FLOAT32: GGML_ASSERT((std::is_same<T,    float>::value)); break;
             default:
-                throw std::runtime_error(format("%s is not a float32, int32 array", key.c_str()));
+                throw std::runtime_error(format("%s is not a float32/uint32/int32 array", key.c_str()));
         }
 
         if (arr_info.length > N_MAX) {
@@ -826,6 +826,10 @@ void llama_model_loader::init_mappings(bool prefetch, llama_mlocks * mlock_mmaps
         mmaps_used.reserve(files.size());
         for (const auto & file : files) {
             auto * reg = ggml_backend_dev_backend_reg(ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU));
+            if (!reg) {
+                throw std::runtime_error(format("%s: no CPU backend found", __func__));
+            }
+
             auto * is_numa_fn = (decltype(ggml_is_numa) *) ggml_backend_reg_get_proc_address(reg, "ggml_backend_cpu_is_numa");
             std::unique_ptr<llama_mmap> mapping = std::make_unique<llama_mmap>(file.get(), prefetch ? -1 : 0, is_numa_fn());
             mmaps_used.emplace_back(mapping->size(), 0);

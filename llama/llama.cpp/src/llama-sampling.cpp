@@ -232,7 +232,7 @@ static void llama_sampler_top_k_impl(llama_token_data_array * cur_p, int32_t k) 
     // }
 
     if (k <= 0) {
-        k = cur_p->size;
+        return;
     }
 
     k = std::min(k, (int) cur_p->size);
@@ -298,6 +298,7 @@ static void llama_sampler_top_k_impl(llama_token_data_array * cur_p, int32_t k) 
         }
         cur_p->sorted = true;
     }
+
     cur_p->size = k;
 }
 
@@ -1749,23 +1750,35 @@ static const char * llama_sampler_top_n_sigma_name(const struct llama_sampler * 
 static void llama_sampler_top_n_sigma_apply(struct llama_sampler * smpl, llama_token_data_array * cur_p) {
     const auto * ctx = (llama_sampler_top_n_sigma *) smpl->ctx;
 
+    if (ctx->n <= 0.0f || cur_p->size <= 1) {
+        return;
+    }
+
     // find max logit and calculate mean
     float max = cur_p->data[0].logit;
     float logits_sum = 0;
+    size_t valid_count = 0;
     for (size_t i = 0; i < cur_p->size; ++i) {
-        if (cur_p->data[i].logit > max) {
-            max = cur_p->data[i].logit;
+        // Only count non-negative infinity values
+        if (cur_p->data[i].logit != -INFINITY) {
+            if (cur_p->data[i].logit > max) {
+                max = cur_p->data[i].logit;
+            }
+            logits_sum += cur_p->data[i].logit;
+            valid_count++;
         }
-        logits_sum += cur_p->data[i].logit;
     }
-    float mean = logits_sum/cur_p->size;
+    float mean = valid_count > 0 ? logits_sum/valid_count : 0;
 
     // calculate standard deviation
     float acc = 0;
     for (size_t i = 0; i < cur_p->size; ++i) {
-        acc += pow(cur_p->data[i].logit - mean, 2);
+        // Skip -infinity in std calculation
+        if (cur_p->data[i].logit != -INFINITY) {
+            acc += pow(cur_p->data[i].logit - mean, 2);
+        }
     }
-    float std = sqrt(acc/cur_p->size);
+    float std = valid_count > 0 ? sqrt(acc/valid_count) : 0;
 
     //apply mask
     for (size_t i = 0; i < cur_p->size; ++i) {

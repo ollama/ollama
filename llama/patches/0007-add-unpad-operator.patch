@@ -18,10 +18,10 @@ adds the unpad operator to GGML
  10 files changed, 223 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/include/ggml.h b/ggml/include/ggml.h
-index 8fcc16df..d19fc167 100644
+index e91dedf1..8dc107ba 100644
 --- a/ggml/include/ggml.h
 +++ b/ggml/include/ggml.h
-@@ -488,6 +488,7 @@ extern "C" {
+@@ -489,6 +489,7 @@ extern "C" {
          GGML_OP_UPSCALE, // nearest interpolate
          GGML_OP_PAD,
          GGML_OP_PAD_REFLECT_1D,
@@ -29,7 +29,7 @@ index 8fcc16df..d19fc167 100644
          GGML_OP_ARANGE,
          GGML_OP_TIMESTEP_EMBEDDING,
          GGML_OP_ARGSORT,
-@@ -1757,6 +1758,15 @@ extern "C" {
+@@ -1781,6 +1782,15 @@ extern "C" {
              int                   p0,
              int                   p1);
  
@@ -46,10 +46,10 @@ index 8fcc16df..d19fc167 100644
      // timesteps: [N,]
      // return: [N, dim]
 diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
-index 50400328..432942bf 100644
+index a30e67f2..835e6495 100644
 --- a/ggml/src/ggml-cpu/ggml-cpu.c
 +++ b/ggml/src/ggml-cpu/ggml-cpu.c
-@@ -1960,6 +1960,10 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
+@@ -1951,6 +1951,10 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
              {
                  ggml_compute_forward_pad_reflect_1d(params, tensor);
              } break;
@@ -60,7 +60,7 @@ index 50400328..432942bf 100644
          case GGML_OP_ARANGE:
              {
                  ggml_compute_forward_arange(params, tensor);
-@@ -2282,6 +2286,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
+@@ -2274,6 +2278,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
          case GGML_OP_UPSCALE:
          case GGML_OP_PAD:
          case GGML_OP_PAD_REFLECT_1D:
@@ -69,10 +69,10 @@ index 50400328..432942bf 100644
          case GGML_OP_TIMESTEP_EMBEDDING:
          case GGML_OP_ARGSORT:
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index 6050147b..66b8da68 100644
+index 955fec59..1868a10c 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
-@@ -6531,6 +6531,61 @@ void ggml_compute_forward_pad_reflect_1d(
+@@ -6690,6 +6690,61 @@ void ggml_compute_forward_pad_reflect_1d(
      }
  }
  
@@ -135,10 +135,10 @@ index 6050147b..66b8da68 100644
  
  static void ggml_compute_forward_arange_f32(
 diff --git a/ggml/src/ggml-cpu/ops.h b/ggml/src/ggml-cpu/ops.h
-index 410a3720..3eca1cf8 100644
+index dc081b9e..a7125555 100644
 --- a/ggml/src/ggml-cpu/ops.h
 +++ b/ggml/src/ggml-cpu/ops.h
-@@ -71,6 +71,7 @@ void ggml_compute_forward_pool_2d_back(const struct ggml_compute_params * params
+@@ -72,6 +72,7 @@ void ggml_compute_forward_pool_2d_back(const struct ggml_compute_params * params
  void ggml_compute_forward_upscale(const struct ggml_compute_params * params, struct ggml_tensor * dst);
  void ggml_compute_forward_pad(const struct ggml_compute_params * params, struct ggml_tensor * dst);
  void ggml_compute_forward_pad_reflect_1d(const struct ggml_compute_params * params, struct ggml_tensor * dst);
@@ -147,10 +147,10 @@ index 410a3720..3eca1cf8 100644
  void ggml_compute_forward_timestep_embedding(const struct ggml_compute_params * params, struct ggml_tensor * dst);
  void ggml_compute_forward_argsort(const struct ggml_compute_params * params, struct ggml_tensor * dst);
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 31750b6f..0fef9522 100644
+index cb0d8528..6fe86674 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -2246,6 +2246,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
+@@ -2238,6 +2238,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
          case GGML_OP_PAD:
              ggml_cuda_op_pad(ctx, dst);
              break;
@@ -160,7 +160,7 @@ index 31750b6f..0fef9522 100644
          case GGML_OP_ARANGE:
              ggml_cuda_op_arange(ctx, dst);
              break;
-@@ -3222,6 +3225,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
+@@ -3212,6 +3215,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
          case GGML_OP_UPSCALE:
              return op->src[0]->type == GGML_TYPE_F32 && op->op_params[0] == GGML_SCALE_MODE_NEAREST;
          case GGML_OP_PAD:
@@ -233,10 +233,10 @@ index 8fd386b0..e2ededc3 100644
  void ggml_cuda_op_pad(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 +void ggml_cuda_op_unpad(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 diff --git a/ggml/src/ggml-metal/ggml-metal.m b/ggml/src/ggml-metal/ggml-metal.m
-index 12886cd3..b2e95a66 100644
+index 1b56f858..7641247e 100644
 --- a/ggml/src/ggml-metal/ggml-metal.m
 +++ b/ggml/src/ggml-metal/ggml-metal.m
-@@ -341,6 +341,7 @@ static void ggml_backend_metal_device_rel(struct ggml_backend_metal_device_conte
+@@ -347,6 +347,7 @@ static void ggml_backend_metal_device_rel(struct ggml_backend_metal_device_conte
      GGML_METAL_KERNEL_TYPE_UPSCALE_F32,
      GGML_METAL_KERNEL_TYPE_PAD_F32,
      GGML_METAL_KERNEL_TYPE_PAD_REFLECT_1D_F32,
@@ -244,7 +244,7 @@ index 12886cd3..b2e95a66 100644
      GGML_METAL_KERNEL_TYPE_ARANGE_F32,
      GGML_METAL_KERNEL_TYPE_TIMESTEP_EMBEDDING_F32,
      GGML_METAL_KERNEL_TYPE_ARGSORT_F32_I32_ASC,
-@@ -1020,6 +1021,7 @@ @implementation GGMLMetalClass
+@@ -1294,6 +1295,7 @@ @implementation GGMLMetalClass
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_UPSCALE_F32,                     upscale_f32,                     true);
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_PAD_F32,                         pad_f32,                         true);
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_PAD_REFLECT_1D_F32,              pad_reflect_1d_f32,              true);
@@ -252,7 +252,7 @@ index 12886cd3..b2e95a66 100644
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_TIMESTEP_EMBEDDING_F32,          timestep_embedding_f32,          true);
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_ARANGE_F32,                      arange_f32,                      true);
          GGML_METAL_ADD_KERNEL(GGML_METAL_KERNEL_TYPE_ARGSORT_F32_I32_ASC,             argsort_f32_i32_asc,             true);
-@@ -1384,6 +1386,7 @@ static bool ggml_metal_supports_op(const struct ggml_backend_metal_device_contex
+@@ -1655,6 +1657,7 @@ static bool ggml_metal_supports_op(const struct ggml_backend_metal_device_contex
          case GGML_OP_POOL_2D:
          case GGML_OP_PAD:
          case GGML_OP_PAD_REFLECT_1D:
@@ -260,7 +260,7 @@ index 12886cd3..b2e95a66 100644
          case GGML_OP_TIMESTEP_EMBEDDING:
          case GGML_OP_ARGSORT:
          case GGML_OP_LEAKY_RELU:
-@@ -3731,6 +3734,36 @@ static void ggml_metal_encode_node(
+@@ -4184,6 +4187,36 @@ static bool ggml_metal_encode_node(
  
                  const int nth = MIN(1024, ne0);
  
@@ -298,10 +298,10 @@ index 12886cd3..b2e95a66 100644
              } break;
          case GGML_OP_ARANGE:
 diff --git a/ggml/src/ggml-metal/ggml-metal.metal b/ggml/src/ggml-metal/ggml-metal.metal
-index 8d6e99e6..71f0f97f 100644
+index 9cfddf45..080a943b 100644
 --- a/ggml/src/ggml-metal/ggml-metal.metal
 +++ b/ggml/src/ggml-metal/ggml-metal.metal
-@@ -2975,6 +2975,51 @@ kernel void kernel_pad_reflect_1d_f32(
+@@ -3121,6 +3121,51 @@ kernel void kernel_pad_reflect_1d_f32(
      }
  }
  
@@ -354,10 +354,10 @@ index 8d6e99e6..71f0f97f 100644
      device        char * dst,
      constant   ggml_metal_kargs_arange & args,
 diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
-index 950772c7..2276b631 100644
+index 8a654624..6b034d35 100644
 --- a/ggml/src/ggml.c
 +++ b/ggml/src/ggml.c
-@@ -963,6 +963,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
+@@ -923,6 +923,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
      "UPSCALE",
      "PAD",
      "PAD_REFLECT_1D",
@@ -365,16 +365,16 @@ index 950772c7..2276b631 100644
      "ARANGE",
      "TIMESTEP_EMBEDDING",
      "ARGSORT",
-@@ -993,7 +994,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
+@@ -953,7 +954,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
      "OPT_STEP_ADAMW",
  };
  
--static_assert(GGML_OP_COUNT == 81, "GGML_OP_COUNT != 81");
-+static_assert(GGML_OP_COUNT == 82, "GGML_OP_COUNT != 82");
+-static_assert(GGML_OP_COUNT == 82, "GGML_OP_COUNT != 82");
++static_assert(GGML_OP_COUNT == 83, "GGML_OP_COUNT != 83");
  
  static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
      "none",
-@@ -1057,6 +1058,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
+@@ -1018,6 +1019,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
      "upscale(x)",
      "pad(x)",
      "pad_reflect_1d(x)",
@@ -382,16 +382,16 @@ index 950772c7..2276b631 100644
      "arange(start, stop, step)",
      "timestep_embedding(timesteps, dim, max_period)",
      "argsort(x)",
-@@ -1087,7 +1089,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
+@@ -1048,7 +1050,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
      "adamw(x)",
  };
  
--static_assert(GGML_OP_COUNT == 81, "GGML_OP_COUNT != 81");
-+static_assert(GGML_OP_COUNT == 82, "GGML_OP_COUNT != 82");
+-static_assert(GGML_OP_COUNT == 82, "GGML_OP_COUNT != 82");
++static_assert(GGML_OP_COUNT == 83, "GGML_OP_COUNT != 83");
  
  static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
  
-@@ -4262,6 +4264,25 @@ struct ggml_tensor * ggml_pad_reflect_1d(
+@@ -4274,6 +4276,25 @@ struct ggml_tensor * ggml_pad_reflect_1d(
      return result;
  }
  

@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
+	"os"
 	"slices"
 	"strings"
 
@@ -89,7 +89,7 @@ type ModelConverter interface {
 	// KV maps parameters to LLM key-values
 	KV(*Tokenizer) ggml.KV
 	// Tensors maps input tensors to LLM tensors. Model specific modifications can be done here.
-	Tensors([]Tensor) []ggml.Tensor
+	Tensors([]Tensor) []*ggml.Tensor
 	// Replacements returns a list of string pairs to replace in tensor names.
 	// See [strings.Replacer](https://pkg.go.dev/strings#Replacer) for details
 	Replacements() []string
@@ -106,13 +106,13 @@ type AdapterConverter interface {
 	// KV maps parameters to LLM key-values
 	KV(ggml.KV) ggml.KV
 	// Tensors maps input tensors to LLM tensors. Adapter specific modifications can be done here.
-	Tensors([]Tensor) []ggml.Tensor
+	Tensors([]Tensor) []*ggml.Tensor
 	// Replacements returns a list of string pairs to replace in tensor names.
 	// See [strings.Replacer](https://pkg.go.dev/strings#Replacer) for details
 	Replacements() []string
 }
 
-func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseKV ggml.KV) error {
+func ConvertAdapter(fsys fs.FS, f *os.File, baseKV ggml.KV) error {
 	bts, err := fs.ReadFile(fsys, "adapter_config.json")
 	if err != nil {
 		return err
@@ -147,14 +147,14 @@ func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseKV ggml.KV) error {
 		return err
 	}
 
-	return writeFile(ws, conv.KV(baseKV), conv.Tensors(ts))
+	return writeFile(f, conv.KV(baseKV), conv.Tensors(ts))
 }
 
 // Convert writes an Ollama compatible model to the provided io.WriteSeeker based on configurations
 // and files it finds in the input path.
 // Supported input model formats include safetensors.
 // Supported input tokenizers files include tokenizer.json (preferred) and tokenizer.model.
-func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
+func ConvertModel(fsys fs.FS, f *os.File) error {
 	bts, err := fs.ReadFile(fsys, "config.json")
 	if err != nil {
 		return err
@@ -239,13 +239,13 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 		return err
 	}
 
-	return writeFile(ws, conv.KV(t), conv.Tensors(ts))
+	return writeFile(f, conv.KV(t), conv.Tensors(ts))
 }
 
-func writeFile(ws io.WriteSeeker, kv ggml.KV, ts []ggml.Tensor) error {
+func writeFile(f *os.File, kv ggml.KV, ts []*ggml.Tensor) error {
 	for i := range ts {
 		ts[i].Shape = slices.Clone(ts[i].Shape)
 		slices.Reverse(ts[i].Shape)
 	}
-	return ggml.WriteGGUF(ws, kv, ts)
+	return ggml.WriteGGUF(f, kv, ts)
 }

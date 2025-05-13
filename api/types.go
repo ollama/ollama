@@ -271,9 +271,6 @@ type Options struct {
 	RepeatPenalty    float32  `json:"repeat_penalty,omitempty"`
 	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
 	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
-	Mirostat         int      `json:"mirostat,omitempty"`
-	MirostatTau      float32  `json:"mirostat_tau,omitempty"`
-	MirostatEta      float32  `json:"mirostat_eta,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
 }
 
@@ -283,12 +280,7 @@ type Runner struct {
 	NumBatch  int   `json:"num_batch,omitempty"`
 	NumGPU    int   `json:"num_gpu,omitempty"`
 	MainGPU   int   `json:"main_gpu,omitempty"`
-	LowVRAM   bool  `json:"low_vram,omitempty"`
-	F16KV     bool  `json:"f16_kv,omitempty"` // Deprecated: This option is ignored
-	LogitsAll bool  `json:"logits_all,omitempty"`
-	VocabOnly bool  `json:"vocab_only,omitempty"`
 	UseMMap   *bool `json:"use_mmap,omitempty"`
-	UseMLock  bool  `json:"use_mlock,omitempty"`
 	NumThread int   `json:"num_thread,omitempty"`
 }
 
@@ -470,13 +462,6 @@ type ProcessModelResponse struct {
 	Details   ModelDetails `json:"details,omitempty"`
 	ExpiresAt time.Time    `json:"expires_at"`
 	SizeVRAM  int64        `json:"size_vram"`
-}
-
-type RetrieveModelResponse struct {
-	Id      string `json:"id"`
-	Object  string `json:"object"`
-	Created int64  `json:"created"`
-	OwnedBy string `json:"owned_by"`
 }
 
 type TokenResponse struct {
@@ -661,9 +646,6 @@ func DefaultOptions() Options {
 		RepeatPenalty:    1.1,
 		PresencePenalty:  0.0,
 		FrequencyPenalty: 0.0,
-		Mirostat:         0,
-		MirostatTau:      5.0,
-		MirostatEta:      0.1,
 		Seed:             -1,
 
 		Runner: Runner{
@@ -672,8 +654,6 @@ func DefaultOptions() Options {
 			NumBatch:  512,
 			NumGPU:    -1, // -1 here indicates that NumGPU should be set dynamically
 			NumThread: 0,  // let the runtime decide
-			LowVRAM:   false,
-			UseMLock:  false,
 			UseMMap:   nil,
 		},
 	}

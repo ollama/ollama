@@ -2,8 +2,6 @@
 #include "gguf.h"
 #include "clip.h"
 
-#include "clip.h"
-
 #include <climits>
 #include <cstdarg>
 #include <string>
@@ -17,33 +15,29 @@
 #define KEY_FTYPE               "general.file_type"
 #define KEY_NAME                "general.name"
 #define KEY_DESCRIPTION         "general.description"
-#define KEY_HAS_TEXT_ENC        "clip.has_text_encoder"
-#define KEY_HAS_VIS_ENC         "clip.has_vision_encoder"
-#define KEY_HAS_LLAVA_PROJ      "clip.has_llava_projector"
-#define KEY_HAS_MINICPMV_PROJ   "clip.has_minicpmv_projector"
-#define KEY_HAS_GLM_PROJ        "clip.has_glm_projector"
 #define KEY_MINICPMV_VERSION    "clip.minicpmv_version"
-#define KEY_HAS_QWEN2VL_MERGER  "clip.has_qwen2vl_merger"
 #define KEY_USE_GELU            "clip.use_gelu"
 #define KEY_USE_SILU            "clip.use_silu"
-#define KEY_N_EMBD              "clip.%s.embedding_length"
-#define KEY_N_FF                "clip.%s.feed_forward_length"
-#define KEY_N_BLOCK             "clip.%s.block_count"
-#define KEY_N_HEAD              "clip.%s.attention.head_count"
-#define KEY_LAYER_NORM_EPS      "clip.%s.attention.layer_norm_epsilon"
-#define KEY_PROJ_DIM            "clip.%s.projection_dim"
-#define KEY_TOKENS              "tokenizer.ggml.tokens"
-#define KEY_N_POSITIONS         "clip.text.context_length"
+#define KEY_N_EMBD              "clip.vision.embedding_length"
+#define KEY_N_FF                "clip.vision.feed_forward_length"
+#define KEY_N_BLOCK             "clip.vision.block_count"
+#define KEY_N_HEAD              "clip.vision.attention.head_count"
+#define KEY_LAYER_NORM_EPS      "clip.vision.attention.layer_norm_epsilon"
+#define KEY_PROJ_DIM            "clip.vision.projection_dim"
 #define KEY_IMAGE_SIZE          "clip.vision.image_size"
 #define KEY_PATCH_SIZE          "clip.vision.patch_size"
 #define KEY_IMAGE_MEAN          "clip.vision.image_mean"
 #define KEY_IMAGE_STD           "clip.vision.image_std"
-#define KEY_PROJ_TYPE           "clip.projector_type"
 #define KEY_FEATURE_LAYER       "clip.vision.feature_layer"
+#define KEY_PROJ_SCALE_FACTOR   "clip.vision.projector.scale_factor"
+#define KEY_PROJ_TYPE           "clip.projector_type"
+#define KEY_SPATIAL_MERGE_SIZE  "clip.vision.spatial_merge_size"
 
 #define KEY_MM_PATCH_MERGE_TYPE   "clip.vision.mm_patch_merge_type"
 #define KEY_IMAGE_GRID_PINPOINTS  "clip.vision.image_grid_pinpoints"
 #define KEY_IMAGE_CROP_RESOLUTION "clip.vision.image_crop_resolution"
+#define KEY_WIN_ATTN_PATTERN      "clip.vision.n_wa_pattern"
+#define KEY_ATTN_WINDOW_SIZE      "clip.vision.window_size"
 
 
 //
@@ -59,10 +53,16 @@
 #define TN_ATTN_Q          "%s.blk.%d.attn_q.%s"
 #define TN_ATTN_V          "%s.blk.%d.attn_v.%s"
 #define TN_ATTN_OUTPUT     "%s.blk.%d.attn_out.%s"
+#define TN_ATTN_K_NORM     "%s.blk.%d.attn_k_norm.%s"
+#define TN_ATTN_Q_NORM     "%s.blk.%d.attn_q_norm.%s"
 #define TN_FFN_DOWN        "%s.blk.%d.ffn_down.%s"
+#define TN_FFN_GATE        "%s.blk.%d.ffn_gate.%s"
 #define TN_FFN_UP          "%s.blk.%d.ffn_up.%s"
-#define TN_LN_1            "%s.blk.%d.ln1.%s"
-#define TN_LN_2            "%s.blk.%d.ln2.%s"
+#define TN_FFN_GATE        "%s.blk.%d.ffn_gate.%s"
+#define TN_LN_1            "%s.blk.%d.ln1.%s" // layer norm
+#define TN_LN_2            "%s.blk.%d.ln2.%s" // layer norm
+#define TN_LS_1            "%s.blk.%d.ls1.%s" // layer scale
+#define TN_LS_2            "%s.blk.%d.ls2.%s" // layer scale
 #define TN_LN_PRE          "%s.pre_ln.%s"
 #define TN_LN_POST         "%s.post_ln.%s"
 #define TN_LLAVA_PROJ      "mm.%d.%s"
@@ -70,8 +70,14 @@
 #define TN_MVLM_PROJ_BLOCK "mm.model.mb_block.%d.block.%d.%s"
 #define TN_MVLM_PROJ_PEG   "mm.model.peg.%d.%s"
 #define TN_IMAGE_NEWLINE   "model.image_newline"
+#define TN_MM_INP_NORM     "mm.input_norm.weight"
 #define TN_MM_INP_PROJ     "mm.input_projection.weight" // gemma3
 #define TN_MM_SOFT_EMB_N   "mm.soft_emb_norm.weight"    // gemma3
+#define TN_MM_PROJECTOR    "mm.model.fc.weight"         // idefics3
+#define TN_MM_PATCH_MERGER "mm.patch_merger.weight"     // mistral small 3.1
+#define TN_TOK_IMG_BREAK   "v.token_embd.img_break"     // pixtral
+#define TN_TOK_GLM_BOI     "adapter.boi"                // glm-edge (these embeddings are not in text model)
+#define TN_TOK_GLM_EOI     "adapter.eoi"                // glm-edge (these embeddings are not in text model)
 
 // mimicpmv
 #define TN_MINICPMV_POS_EMBD_K "resampler.pos_embed_k"
@@ -87,18 +93,23 @@
 #define TN_GLM_ADAPTER_D_H_2_4H "adapter.linear.dense_h_to_4h.%s"
 #define TN_GLM_ADAPTER_GATE     "adapter.linear.gate.%s"
 #define TN_GLM_ADAPTER_D_4H_2_H "adapter.linear.dense_4h_to_h.%s"
-#define TN_GLM_BOI_W            "adapter.boi"
-#define TN_GLM_EOI_W            "adapter.eoi"
+
+// align x to upper multiple of n
+#define CLIP_ALIGN(x, n) ((((x) + (n) - 1) / (n)) * (n))
 
 enum projector_type {
     PROJECTOR_TYPE_MLP,
     PROJECTOR_TYPE_MLP_NORM,
     PROJECTOR_TYPE_LDP,
     PROJECTOR_TYPE_LDPV2,
-    PROJECTOR_TYPE_RESAMPLER,
+    PROJECTOR_TYPE_MINICPMV,
     PROJECTOR_TYPE_GLM_EDGE,
-    PROJECTOR_TYPE_MERGER,
+    PROJECTOR_TYPE_QWEN2VL,
     PROJECTOR_TYPE_GEMMA3,
+    PROJECTOR_TYPE_IDEFICS3,
+    PROJECTOR_TYPE_PIXTRAL,
+    PROJECTOR_TYPE_QWEN25VL,
+    PROJECTOR_TYPE_INTERNVL,
     PROJECTOR_TYPE_UNKNOWN,
 };
 
@@ -106,10 +117,14 @@ static std::map<projector_type, std::string> PROJECTOR_TYPE_NAMES = {
     { PROJECTOR_TYPE_MLP,       "mlp" },
     { PROJECTOR_TYPE_LDP,       "ldp" },
     { PROJECTOR_TYPE_LDPV2,     "ldpv2"},
-    { PROJECTOR_TYPE_RESAMPLER, "resampler"},
+    { PROJECTOR_TYPE_MINICPMV,  "resampler"},
     { PROJECTOR_TYPE_GLM_EDGE,  "adapter"},
-    { PROJECTOR_TYPE_MERGER,    "qwen2vl_merger"},
+    { PROJECTOR_TYPE_QWEN2VL,   "qwen2vl_merger"},
+    { PROJECTOR_TYPE_QWEN25VL,  "qwen2.5vl_merger"},
     { PROJECTOR_TYPE_GEMMA3,    "gemma3"},
+    { PROJECTOR_TYPE_IDEFICS3,  "idefics3"},
+    { PROJECTOR_TYPE_PIXTRAL,   "pixtral"},
+    { PROJECTOR_TYPE_INTERNVL,  "internvl"},
 };
 
 static projector_type clip_projector_type_from_string(const std::string & str) {
@@ -224,6 +239,15 @@ struct clip_image_u8_batch {
 
 struct clip_image_f32_batch {
     std::vector<clip_image_f32_ptr> entries;
+
+    clip_image_f32_batch clone() const {
+        clip_image_f32_batch new_batch;
+        new_batch.entries.reserve(entries.size());
+        for (const auto & entry : entries) {
+            new_batch.entries.emplace_back(new clip_image_f32(*entry));
+        }
+        return new_batch;
+    }
 };
 
 //

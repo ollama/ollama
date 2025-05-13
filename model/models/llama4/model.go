@@ -45,6 +45,9 @@ func New(c fs.Config) (model.Model, error) {
 				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
 				EOS:    int32(c.Uint("tokenizer.ggml.eos_token_id")),
 				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
+				// TODO: set EOT to EOS otherwise 0 will stop generation
+				EOT:    int32(c.Uint("tokenizer.ggml.eos_token_id")),
+				AddEOT: c.Bool("tokenizer.ggml.add_eos_token", false),
 			},
 		),
 		ImageProcessor: newImageProcessor(c),

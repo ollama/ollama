@@ -2,10 +2,11 @@ package llama
 
 /*
 #cgo CFLAGS: -std=c11
+#cgo windows CFLAGS: -Wno-dll-attribute-on-redeclaration
 #cgo CXXFLAGS: -std=c++17
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/include
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/common
-#cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/examples/llava
+#cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/tools/mtmd
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/src
 #cgo CPPFLAGS: -I${SRCDIR}/../ml/backend/ggml/ggml/include
 
@@ -39,8 +40,8 @@ import (
 	"unsafe"
 
 	_ "github.com/ollama/ollama/llama/llama.cpp/common"
-	_ "github.com/ollama/ollama/llama/llama.cpp/examples/llava"
 	_ "github.com/ollama/ollama/llama/llama.cpp/src"
+	_ "github.com/ollama/ollama/llama/llama.cpp/tools/mtmd"
 	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 )
 
@@ -198,7 +199,6 @@ type ModelParams struct {
 	NumGpuLayers int
 	MainGpu      int
 	UseMmap      bool
-	UseMlock     bool
 	TensorSplit  []float32
 	Progress     func(float32)
 	VocabOnly    bool
@@ -217,7 +217,6 @@ func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
 	cparams.n_gpu_layers = C.int(params.NumGpuLayers)
 	cparams.main_gpu = C.int32_t(params.MainGpu)
 	cparams.use_mmap = C.bool(params.UseMmap)
-	cparams.use_mlock = C.bool(params.UseMlock)
 	cparams.vocab_only = C.bool(params.VocabOnly)
 
 	if len(params.TensorSplit) > 0 {
@@ -461,24 +460,6 @@ func (m *Model) NEmbd() int {
 	return int(C.llama_model_n_embd(m.c))
 }
 
-func Quantize(infile, outfile string, ftype uint32) error {
-	cinfile := C.CString(infile)
-	defer C.free(unsafe.Pointer(cinfile))
-
-	coutfile := C.CString(outfile)
-	defer C.free(unsafe.Pointer(coutfile))
-
-	params := C.llama_model_quantize_default_params()
-	params.nthread = -1
-	params.ftype = ftype
-
-	if rc := C.llama_model_quantize(cinfile, coutfile, &params); rc != 0 {
-		return fmt.Errorf("llama_model_quantize: %d", rc)
-	}
-
-	return nil
-}
-
 // vision processing
 type ClipContext struct {
 	c *C.struct_clip_ctx
@@ -606,9 +587,6 @@ type SamplingParams struct {
 	PenaltyRepeat  float32
 	PenaltyFreq    float32
 	PenaltyPresent float32
-	Mirostat       int
-	MirostatTau    float32
-	MirostatEta    float32
 	PenalizeNl     bool
 	Seed           uint32
 	Grammar        string
@@ -625,9 +603,6 @@ func NewSamplingContext(model *Model, params SamplingParams) (*SamplingContext, 
 	cparams.penalty_repeat = C.float(params.PenaltyRepeat)
 	cparams.penalty_freq = C.float(params.PenaltyFreq)
 	cparams.penalty_present = C.float(params.PenaltyFreq)
-	cparams.mirostat = C.int32_t(params.Mirostat)
-	cparams.mirostat_tau = C.float(params.MirostatTau)
-	cparams.mirostat_eta = C.float(params.MirostatEta)
 	cparams.seed = C.uint32_t(params.Seed)
 
 	grammar := C.CString(params.Grammar)
@@ -662,8 +637,8 @@ func SchemaToGrammar(schema []byte) []byte {
 	cStr := C.CString(string(schema))
 	defer C.free(unsafe.Pointer(cStr))
 
-	// Allocate buffer for grammar output with reasonable size
-	const maxLen = 32768 // 32KB
+	// Allocate buffer for grammar based on schema length but with upper bound
+	maxLen := min(1024*1024, len(schema)*4)
 	buf := make([]byte, maxLen)
 
 	// Call C function to convert schema to grammar

@@ -37,14 +37,17 @@ enum llm_type {
     LLM_TYPE_335M,
     LLM_TYPE_410M,
     LLM_TYPE_450M,
+    LLM_TYPE_475M,
     LLM_TYPE_770M,
     LLM_TYPE_780M,
     LLM_TYPE_0_5B,
+    LLM_TYPE_0_6B,
     LLM_TYPE_1B,
     LLM_TYPE_1_3B,
     LLM_TYPE_1_4B,
     LLM_TYPE_1_5B,
     LLM_TYPE_1_6B,
+    LLM_TYPE_1_7B,
     LLM_TYPE_1_8B,
     LLM_TYPE_2B,
     LLM_TYPE_2_8B,
@@ -64,6 +67,7 @@ enum llm_type {
     LLM_TYPE_16B,
     LLM_TYPE_20B,
     LLM_TYPE_22B,
+    LLM_TYPE_27B,
     LLM_TYPE_30B,
     LLM_TYPE_32B,
     LLM_TYPE_34B,
@@ -73,7 +77,9 @@ enum llm_type {
     LLM_TYPE_70B,
     LLM_TYPE_90B,
     LLM_TYPE_236B,
+    LLM_TYPE_290B,
     LLM_TYPE_314B,
+    LLM_TYPE_405B,
     LLM_TYPE_671B,
     LLM_TYPE_SMALL,
     LLM_TYPE_MEDIUM,
@@ -87,11 +93,13 @@ enum llm_type {
     LLM_TYPE_16x3_8B,
     LLM_TYPE_10B_128x3_66B,
     LLM_TYPE_57B_A14B,
-    LLM_TYPE_27B,
-    LLM_TYPE_290B,
     LLM_TYPE_17B_16E, // llama4 Scout
     LLM_TYPE_17B_128E, // llama4 Maverick
+    LLM_TYPE_30B_A3B,
+    LLM_TYPE_235B_A22B,
 };
+
+std::string llama_rope_scaling_type_name(llama_rope_scaling_type rope_scaling_type);
 
 struct llama_layer_posnet {
     // resnet
@@ -405,8 +413,11 @@ struct llama_model {
 
     const struct ggml_tensor * get_tensor(const char * name) const;
 
+    ggml_tensor * get_rope_factors(uint32_t n_ctx_per_seq, int il) const;
+
+    // note: can mutate `cparams`
     // TODO: move this to new llm_arch_model_i interface
-    llama_memory_i * create_memory() const; // TODO: params
+    llama_memory_i * create_memory(const llama_memory_params & params, llama_cparams & cparams) const;
 
     // TODO: move this to new llm_arch_model_i interface
     llm_graph_result_ptr build_graph(
