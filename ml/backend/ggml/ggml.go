@@ -27,6 +27,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs"
 	fsggml "github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 	"golang.org/x/sync/errgroup"
@@ -222,7 +223,7 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 			tt := C.ggml_new_tensor(ctxs[bt], t.source.Kind, C.int(len(t.source.Shape)), (*C.int64_t)(unsafe.Pointer(&t.source.Shape[0])))
 			C.ggml_set_name(tt, cname)
 
-			slog.Debug("created tensor", "name", name, "shape", t.source.Shape, "dtype", t.source.Kind, "buffer_type", C.GoString(C.ggml_backend_buft_name(bt)))
+			slog.Log(context.TODO(), logutil.LevelTrace, "created tensor", "name", name, "shape", t.source.Shape, "dtype", t.source.Kind, "buffer_type", C.GoString(C.ggml_backend_buft_name(bt)))
 			//nolint:staticcheck // TODO: check if buffer type supports this tensor
 			return tt
 		}
@@ -405,6 +406,7 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 			C.int(len(schedBackends)),
 			C.size_t(maxGraphNodes),
 			C._Bool(len(gpus) > 1 && slices.Contains(gpus, output.d)),
+			C._Bool(false),
 		),
 		schedBackends: schedBackends,
 		schedBufts:    schedBufts,

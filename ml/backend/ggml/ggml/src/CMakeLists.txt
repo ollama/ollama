@@ -214,7 +214,7 @@ add_library(ggml
 target_link_libraries(ggml PUBLIC ggml-base)
 
 if (CMAKE_SYSTEM_NAME MATCHES "Linux")
-    target_link_libraries(ggml PRIVATE dl stdc++fs)
+    target_link_libraries(ggml PRIVATE dl)
 endif()
 
 function(ggml_add_backend_library backend)
