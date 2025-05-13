@@ -9,8 +9,8 @@ such as vocab fields
 ---
  ggml/include/gguf.h | 1 +
  ggml/src/gguf.cpp   | 7 +++++--
- src/llama-vocab.cpp | 2 +-
- 3 files changed, 7 insertions(+), 3 deletions(-)
+ src/llama-vocab.cpp | 4 +---
+ 3 files changed, 7 insertions(+), 5 deletions(-)
 
 diff --git a/ggml/include/gguf.h b/ggml/include/gguf.h
 index 79ee2020..3efb22f0 100644
@@ -53,13 +53,15 @@ index 381a9c7d..e45b453d 100644
  }
  
 diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
-index 10f34d33..b098bb25 100644
+index 10f34d33..9f5fd57b 100644
 --- a/src/llama-vocab.cpp
 +++ b/src/llama-vocab.cpp
-@@ -1471,7 +1471,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+@@ -1469,9 +1469,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+             const int precompiled_charsmap_keyidx = gguf_find_key(ctx, kv(LLM_KV_TOKENIZER_PRECOMPILED_CHARSMAP).c_str());
+             if (precompiled_charsmap_keyidx != -1) {
                  const gguf_type pc_type = gguf_get_arr_type(ctx, precompiled_charsmap_keyidx);
-                 GGML_ASSERT(pc_type == GGUF_TYPE_INT8 || pc_type == GGUF_TYPE_UINT8);
- 
+-                GGML_ASSERT(pc_type == GGUF_TYPE_INT8 || pc_type == GGUF_TYPE_UINT8);
+-
 -                const size_t n_precompiled_charsmap = gguf_get_arr_n(ctx, precompiled_charsmap_keyidx);
 +                const size_t n_precompiled_charsmap = gguf_get_arr_data_n(ctx, precompiled_charsmap_keyidx);
                  const char * pc = (const char *) gguf_get_arr_data(ctx, precompiled_charsmap_keyidx);
