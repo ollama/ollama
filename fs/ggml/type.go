@@ -12,42 +12,42 @@ type FileType uint32
 const (
 	FileTypeF32 FileType = iota
 	FileTypeF16
-	FileTypeQ4_0
-	FileTypeQ4_1
+	fileTypeQ4_0
+	fileTypeQ4_1
 	fileTypeQ4_1_F16 // unused by GGML
 	fileTypeQ4_2     // unused by GGML
 	fileTypeQ4_3     // unused by GGML
 	FileTypeQ8_0
-	FileTypeQ5_0
-	FileTypeQ5_1
-	FileTypeQ2_K
-	FileTypeQ3_K_S
-	FileTypeQ3_K_M
-	FileTypeQ3_K_L
+	fileTypeQ5_0
+	fileTypeQ5_1
+	fileTypeQ2_K
+	fileTypeQ3_K_S
+	fileTypeQ3_K_M
+	fileTypeQ3_K_L
 	FileTypeQ4_K_S
 	FileTypeQ4_K_M
-	FileTypeQ5_K_S
-	FileTypeQ5_K_M
-	FileTypeQ6_K
-	fileTypeIQ2_XXS // not supported by ollama
-	fileTypeIQ2_XS  // not supported by ollama
-	FileTypeQ2_K_S
-	fileTypeIQ3_XS  // not supported by ollama
-	fileTypeIQ3_XXS // not supported by ollama
-	fileTypeIQ1_S   // not supported by ollama
-	fileTypeIQ4_NL  // not supported by ollama
-	fileTypeIQ3_S   // not supported by ollama
-	fileTypeIQ3_M   // not supported by ollama
-	fileTypeIQ2_S   // not supported by ollama
-	fileTypeIQ2_M   // not supported by ollama
-	fileTypeIQ4_XS  // not supported by ollama
-	fileTypeIQ1_M   // not supported by ollama
+	fileTypeQ5_K_S
+	fileTypeQ5_K_M
+	fileTypeQ6_K
+	fileTypeIQ2_XXS
+	fileTypeIQ2_XS
+	fileTypeQ2_K_S
+	fileTypeIQ3_XS
+	fileTypeIQ3_XXS
+	fileTypeIQ1_S
+	fileTypeIQ4_NL
+	fileTypeIQ3_S
+	fileTypeIQ3_M
+	fileTypeIQ2_S
+	fileTypeIQ2_M
+	fileTypeIQ4_XS
+	fileTypeIQ1_M
 	FileTypeBF16
 	fileTypeQ4_0_4_4 // unused by GGML
 	fileTypeQ4_0_4_8 // unused by GGML
 	fileTypeQ4_0_8_8 // unused by GGML
-	fileTypeTQ1_0    // not supported by ollama
-	fileTypeTQ2_0    // not supported by ollama
+	fileTypeTQ1_0
+	fileTypeTQ2_0
 
 	FileTypeUnknown = 1024
 )
@@ -60,36 +60,12 @@ func ParseFileType(s string) (FileType, error) {
 		return FileTypeF32, nil
 	case "F16":
 		return FileTypeF16, nil
-	case "Q4_0":
-		return FileTypeQ4_0, nil
-	case "Q4_1":
-		return FileTypeQ4_1, nil
 	case "Q8_0":
 		return FileTypeQ8_0, nil
-	case "Q5_0":
-		return FileTypeQ5_0, nil
-	case "Q5_1":
-		return FileTypeQ5_1, nil
-	case "Q2_K":
-		return FileTypeQ2_K, nil
-	case "Q3_K_S":
-		return FileTypeQ3_K_S, nil
-	case "Q3_K_M":
-		return FileTypeQ3_K_M, nil
-	case "Q3_K_L":
-		return FileTypeQ3_K_L, nil
 	case "Q4_K_S":
 		return FileTypeQ4_K_S, nil
 	case "Q4_K_M", "Q4_K":
 		return FileTypeQ4_K_M, nil
-	case "Q5_K_S":
-		return FileTypeQ5_K_S, nil
-	case "Q5_K_M", "Q5_K":
-		return FileTypeQ5_K_M, nil
-	case "Q6_K":
-		return FileTypeQ6_K, nil
-	case "Q2_K_S":
-		return FileTypeQ2_K_S, nil
 	case "BF16":
 		return FileTypeBF16, nil
 	default:
@@ -111,40 +87,41 @@ func ParseFileType(s string) (FileType, error) {
 }
 
 func (t FileType) String() string {
+	// Note: this routine will return a broader set of file types for existing models
 	switch t {
 	case FileTypeF32:
 		return "F32"
 	case FileTypeF16:
 		return "F16"
-	case FileTypeQ4_0:
+	case fileTypeQ4_0:
 		return "Q4_0"
-	case FileTypeQ4_1:
+	case fileTypeQ4_1:
 		return "Q4_1"
 	case FileTypeQ8_0:
 		return "Q8_0"
-	case FileTypeQ5_0:
+	case fileTypeQ5_0:
 		return "Q5_0"
-	case FileTypeQ5_1:
+	case fileTypeQ5_1:
 		return "Q5_1"
-	case FileTypeQ2_K:
+	case fileTypeQ2_K:
 		return "Q2_K"
-	case FileTypeQ3_K_S:
+	case fileTypeQ3_K_S:
 		return "Q3_K_S"
-	case FileTypeQ3_K_M:
+	case fileTypeQ3_K_M:
 		return "Q3_K_M"
-	case FileTypeQ3_K_L:
+	case fileTypeQ3_K_L:
 		return "Q3_K_L"
 	case FileTypeQ4_K_S:
 		return "Q4_K_S"
 	case FileTypeQ4_K_M:
 		return "Q4_K_M"
-	case FileTypeQ5_K_S:
+	case fileTypeQ5_K_S:
 		return "Q5_K_S"
-	case FileTypeQ5_K_M:
+	case fileTypeQ5_K_M:
 		return "Q5_K_M"
-	case FileTypeQ6_K:
+	case fileTypeQ6_K:
 		return "Q6_K"
-	case FileTypeQ2_K_S:
+	case fileTypeQ2_K_S:
 		return "Q2_K_S"
 	case FileTypeBF16:
 		return "BF16"
@@ -163,35 +140,35 @@ func (ftype FileType) ToTensorType() TensorType {
 		return TensorTypeF32
 	case FileTypeF16:
 		return TensorTypeF16
-	case FileTypeQ4_0:
+	case fileTypeQ4_0:
 		return TensorTypeQ4_0
-	case FileTypeQ4_1:
+	case fileTypeQ4_1:
 		return TensorTypeQ4_1
 	case FileTypeQ8_0:
 		return TensorTypeQ8_0
-	case FileTypeQ5_0:
+	case fileTypeQ5_0:
 		return TensorTypeQ5_0
-	case FileTypeQ5_1:
+	case fileTypeQ5_1:
 		return TensorTypeQ5_1
-	case FileTypeQ2_K:
+	case fileTypeQ2_K:
 		return TensorTypeQ2_K
-	case FileTypeQ3_K_S:
+	case fileTypeQ3_K_S:
 		return TensorTypeQ3_K
-	case FileTypeQ3_K_M:
+	case fileTypeQ3_K_M:
 		return TensorTypeQ3_K
-	case FileTypeQ3_K_L:
+	case fileTypeQ3_K_L:
 		return TensorTypeQ3_K
 	case FileTypeQ4_K_S:
 		return TensorTypeQ4_K
 	case FileTypeQ4_K_M:
 		return TensorTypeQ4_K
-	case FileTypeQ5_K_S:
+	case fileTypeQ5_K_S:
 		return TensorTypeQ5_K
-	case FileTypeQ5_K_M:
+	case fileTypeQ5_K_M:
 		return TensorTypeQ5_K
-	case FileTypeQ6_K:
+	case fileTypeQ6_K:
 		return TensorTypeQ6_K
-	case FileTypeQ2_K_S:
+	case fileTypeQ2_K_S:
 		return TensorTypeQ2_K
 	case FileTypeBF16:
 		return TensorTypeBF16

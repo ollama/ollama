@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -25,6 +26,7 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/image/webp"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
@@ -1303,6 +1305,10 @@ func Serve(ln net.Listener) error {
 	}()
 
 	s.sched.Run(schedCtx)
+
+	// register the experimental webp decoder
+	// so webp images can be used in multimodal inputs
+	image.RegisterFormat("webp", "RIFF????WEBP", webp.Decode, webp.DecodeConfig)
 
 	// At startup we retrieve GPU information so we can get log messages before loading a model
 	// This will log warnings to the log in case we have problems with detected GPUs
