@@ -72,13 +72,13 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 	}
 
 	visionOutputs := m.VisionModel.Forward(ctx, pixels, grid)
-	return &chunks{Model: m, Tensor: visionOutputs}, nil
+	return &chunks{Model: m, Tensor: visionOutputs, grid: grid}, nil
 }
 
 type chunks struct {
 	*Model
 	ml.Tensor
-
+	grid     *Grid
 	dataOnce sync.Once
 	data     []float32
 }
@@ -153,7 +153,28 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	positions, err := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
+	fmt.Println("Forward")
+	pos := make([]int32, len(batch.Positions)*4)
+	var grid = &Grid{}
+	if len(batch.Multimodal) > 0 {
+		image := batch.Multimodal[0].Multimodal
+		grid = image.(*chunk).chunks.grid
+		for y := 0; y < grid.Height/2; y++ {
+			for x := 0; x < grid.Width/2; x++ {
+				i := y*grid.Width/2 + x
+				pos[i] = batch.Positions[i]
+				pos[i+len(batch.Positions)] = batch.Positions[i] + int32(y)
+				pos[i+len(batch.Positions)*2] = batch.Positions[i] + int32(x)
+				pos[i+len(batch.Positions)*3] = 0
+			}
+		}
+	} else {
+		copy(pos[:len(batch.Positions)], batch.Positions)
+		copy(pos[len(batch.Positions):len(batch.Positions)*2], batch.Positions)
+		copy(pos[len(batch.Positions)*2:len(batch.Positions)*3], batch.Positions)
+	}
+
+	positions, err := ctx.Input().FromIntSlice(pos, len(pos))
 	if err != nil {
 		return nil, err
 	}

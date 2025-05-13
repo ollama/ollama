@@ -164,6 +164,7 @@ type Tensor interface {
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
 	RoPE(ctx Context, positionIDs, ropeFactors Tensor, dim, ropeType uint32, base, scale float32, options ...RopeOption) Tensor
+	RoPEMulti(ctx Context, positionIDs, ropeFactors Tensor, dim uint32, sections [4]int32, ropeType uint32, base, scale float32) Tensor
 	IM2Col(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
 	Sin(ctx Context) Tensor

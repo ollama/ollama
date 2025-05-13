@@ -1104,13 +1104,44 @@ func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDi
 			ropeFactors.(*Tensor).t,
 			C.int(ropeDim),
 			C.int(ropeType),
-			C.int(opts.DefaultContextLen),
+			C.int(128000),
 			C.float(ropeBase),
 			C.float(ropeScale),
 			C.float(opts.YarnExtFactor),
 			C.float(opts.YarnAttnFactor),
 			C.float(opts.YarnBetaFast),
 			C.float(opts.YarnBetaSlow),
+		),
+	}
+}
+
+func (t *Tensor) RoPEMulti(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim uint32, sections [4]int32, ropeType uint32, ropeBase, ropeScale float32) ml.Tensor {
+	if ropeFactors == nil {
+		ropeFactors = &Tensor{b: t.b}
+	}
+
+	dequant := t.t
+	if C.ggml_is_quantized(t.t._type) {
+		dequant = C.ggml_cast(ctx.(*Context).ctx, t.t, C.GGML_TYPE_F32)
+	}
+
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_rope_multi(
+			ctx.(*Context).ctx,
+			dequant,
+			positionIDs.(*Tensor).t,
+			ropeFactors.(*Tensor).t,
+			C.int(ropeDim),
+			(*C.int)(&sections[0]),
+			C.int(ropeType),
+			C.int(128000), // Default context length
+			C.float(ropeBase),
+			C.float(ropeScale),
+			C.float(0.0),  // ext_factor
+			C.float(1.0),  // attn_factor
+			C.float(32.0), // beta_fast
+			C.float(1.0),  // beta_slow
 		),
 	}
 }
