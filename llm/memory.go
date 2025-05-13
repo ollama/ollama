@@ -85,8 +85,11 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	var graphOffload uint64
 
 	// Projectors loaded into GPU0 only
-	var projectorWeights uint64
-	var projectorGraph uint64
+	var llamaEngineProjectorWeights uint64
+
+	// Projectors loaded with output layer
+	var ollamaEngineProjectorWeights uint64
+	var ollamaEngineProjectorGraph uint64
 
 	// Conditional output size on GPU 0
 	var memoryLayerOutput uint64
@@ -111,14 +114,14 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	slog.Debug("evaluating", "library", gpus[0].Library, "gpu_count", len(gpus), "available", availableList)
 
 	for _, projector := range projectors {
-		weight := projectorMemoryRequirements(projector)
-		projectorWeights += weight
+		llamaEngineProjectorWeights += projectorMemoryRequirements(projector)
 
 		// multimodal models require at least 2048 context
 		opts.NumCtx = max(opts.NumCtx, 2048)
 	}
-	if projectorWeights == 0 && projectorGraph == 0 {
-		projectorWeights, projectorGraph = f.VisionGraphSize()
+	if llamaEngineProjectorWeights == 0 {
+		ollamaEngineProjectorWeights, ollamaEngineProjectorGraph = f.VisionGraphSize()
+		opts.NumCtx = max(opts.NumCtx, 2048)
 	}
 
 	layers := f.Tensors().GroupLayers()
@@ -163,6 +166,7 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 		graphFullOffload = graphPartialOffload
 	}
 
+	// Output layer handled at the end if we have space
 	if layer, ok := layers["output_norm"]; ok {
 		memoryLayerOutput += layer.Size()
 	}
@@ -172,8 +176,7 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 		memoryLayerOutput += layer.Size()
 	}
 
-	// Output layer handled at the end if we have space
-	gpuZeroOverhead := projectorWeights + projectorGraph
+	gpuZeroOverhead := llamaEngineProjectorWeights
 
 	// Reduce set of GPUs to only those that have sufficient space to fit overhead and at least one layer
 	var layerCount int
@@ -258,13 +261,14 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	}
 
 	// Determine if we need to consider output then find where it fits
-	if memoryLayerOutput > 0 {
+	memoryLastLayer := memoryLayerOutput + ollamaEngineProjectorWeights + ollamaEngineProjectorGraph
+	if memoryLastLayer > 0 {
 		if opts.NumGPU < 0 || layerCount < opts.NumGPU {
 			for j := len(gpusWithSpace); j > 0; j-- {
 				g := gpusWithSpace[layerCount%j]
 				used := gpuAllocations[g.i] + max(graphPartialOffload, graphFullOffload)
-				if g.g.FreeMemory > overhead+used+memoryLayerOutput {
-					gpuAllocations[g.i] += memoryLayerOutput
+				if g.g.FreeMemory > overhead+used+memoryLastLayer {
+					gpuAllocations[g.i] += memoryLastLayer
 					layerCounts[g.i]++
 					layerCount++
 					break
@@ -274,7 +278,7 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 
 		if layerCount < int(f.KV().BlockCount())+1 {
 			fullyLoaded = false
-			overflow += memoryLayerOutput
+			overflow += memoryLastLayer
 		}
 	}
 
@@ -332,8 +336,8 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 		memoryLayerOutput:   memoryLayerOutput,
 		graphFullOffload:    graphFullOffload,
 		graphPartialOffload: graphPartialOffload,
-		projectorWeights:    projectorWeights,
-		projectorGraph:      projectorGraph,
+		projectorWeights:    llamaEngineProjectorWeights + ollamaEngineProjectorWeights,
+		projectorGraph:      ollamaEngineProjectorGraph,
 	}
 
 	if gpus[0].Library == "cpu" {
