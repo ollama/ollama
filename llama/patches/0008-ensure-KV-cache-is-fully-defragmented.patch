@@ -15,13 +15,50 @@ but this can leave a cache that still does not have adequate space
 even after defragmentation is triggered. Instead, we should do
 multiple batches of processing until everything is complete.
 ---
+ src/llama-context.cpp  |  18 ++++---
  src/llama-context.h    |   1 +
  src/llama-kv-cache.cpp | 107 ++++++++++++++---------------------------
  src/llama-kv-cache.h   |  12 ++++-
- 3 files changed, 47 insertions(+), 73 deletions(-)
+ 4 files changed, 59 insertions(+), 79 deletions(-)
 
+diff --git a/src/llama-context.cpp b/src/llama-context.cpp
+index c22687e4..c5948e8f 100644
+--- a/src/llama-context.cpp
++++ b/src/llama-context.cpp
+@@ -950,9 +950,12 @@ int llama_context::decode(llama_batch & inp_batch) {
+ 
+         // find KV slot
+         if (!kv_self->find_slot(ubatch)) {
+-            LLAMA_LOG_WARN("%s: failed to find KV cache slot for ubatch of size %d\n", __func__, ubatch.n_tokens);
+-
+-            return 1;
++            kv_self->defrag_sched(-1.0f);
++            kv_self->update(*this);
++            if (!kv_self->find_slot(ubatch)) {
++                LLAMA_LOG_WARN("%s: failed to find KV cache slot for ubatch of size %d\n", __func__, ubatch.n_tokens);
++                return 1;
++            }
+         }
+ 
+         ggml_backend_sched_reset(sched.get());
+@@ -1967,9 +1970,12 @@ void llama_context::opt_epoch_iter(
+ 
+             // TODO: not sure if this is needed
+             if (!kv_self->find_slot(ubatch)) {
+-                LLAMA_LOG_WARN("%s: failed to find KV cache slot for ubatch of size %d\n", __func__, ubatch.n_tokens);
+-
+-                GGML_ABORT("TODO: handle this error");
++                kv_self->defrag_sched(-1.0f);
++                kv_self->update(*this);
++                if (!kv_self->find_slot(ubatch)) {
++                    LLAMA_LOG_WARN("%s: failed to find KV cache slot for ubatch of size %d\n", __func__, ubatch.n_tokens);
++                    GGML_ABORT("TODO: handle this error");
++                }
+             }
+ 
+             auto * gf = graph_init();
 diff --git a/src/llama-context.h b/src/llama-context.h
-index c4ab242a..9970dfc6 100644
+index c0ceacb1..0264e937 100644
 --- a/src/llama-context.h
 +++ b/src/llama-context.h
 @@ -5,6 +5,7 @@
@@ -33,10 +70,10 @@ index c4ab242a..9970dfc6 100644
  #include "ggml-cpp.h"
  #include "ggml-opt.h"
 diff --git a/src/llama-kv-cache.cpp b/src/llama-kv-cache.cpp
-index a7b0a7eb..1a50c034 100644
+index 3dcad65b..60e67b03 100644
 --- a/src/llama-kv-cache.cpp
 +++ b/src/llama-kv-cache.cpp
-@@ -372,8 +372,6 @@ void llama_kv_cache_unified::commit() {
+@@ -364,8 +364,6 @@ void llama_kv_cache_unified::commit() {
  }
  
  bool llama_kv_cache_unified::update(llama_context & lctx) {
@@ -45,7 +82,7 @@ index a7b0a7eb..1a50c034 100644
      auto * sched = lctx.get_sched();
  
      if (has_shift) {
-@@ -396,8 +394,6 @@ bool llama_kv_cache_unified::update(llama_context & lctx) {
+@@ -388,8 +386,6 @@ bool llama_kv_cache_unified::update(llama_context & lctx) {
              res->set_inputs(nullptr);
  
              lctx.graph_compute(gf, false);
@@ -54,7 +91,7 @@ index a7b0a7eb..1a50c034 100644
          }
  
          {
-@@ -411,27 +407,36 @@ bool llama_kv_cache_unified::update(llama_context & lctx) {
+@@ -403,27 +399,36 @@ bool llama_kv_cache_unified::update(llama_context & lctx) {
  
      if (do_defrag) {
          LLAMA_LOG_DEBUG("%s: defragmenting KV cache\n", __func__);
@@ -96,7 +133,7 @@ index a7b0a7eb..1a50c034 100644
  }
  
  void llama_kv_cache_unified::defrag_sched(float thold) {
-@@ -715,11 +720,10 @@ llm_graph_result_ptr llama_kv_cache_unified::build_graph_shift(
+@@ -707,11 +712,10 @@ llm_graph_result_ptr llama_kv_cache_unified::build_graph_shift(
  llm_graph_result_ptr llama_kv_cache_unified::build_graph_defrag(
          const llama_cparams & cparams,
                 ggml_context * ctx,
@@ -110,7 +147,7 @@ index a7b0a7eb..1a50c034 100644
  #if 0
      // CPU defrag
      //
-@@ -791,32 +795,20 @@ llm_graph_result_ptr llama_kv_cache_unified::build_graph_defrag(
+@@ -783,32 +787,20 @@ llm_graph_result_ptr llama_kv_cache_unified::build_graph_defrag(
          ggml_backend_tensor_set(v_l[il], buf_v.data(), 0, buf_v.size());
      }
  #else
@@ -148,7 +185,7 @@ index a7b0a7eb..1a50c034 100644
  
              ggml_tensor * view_v_src;
              ggml_tensor * view_v_dst;
-@@ -824,31 +816,29 @@ llm_graph_result_ptr llama_kv_cache_unified::build_graph_defrag(
+@@ -816,31 +808,29 @@ llm_graph_result_ptr llama_kv_cache_unified::build_graph_defrag(
              if (cparams.flash_attn) {
                  // NOTE: the V cache is not transposed when using flash attention
                  view_v_src = ggml_view_2d(ctx, v_l[il],
@@ -188,7 +225,7 @@ index a7b0a7eb..1a50c034 100644
      }
  
      //LLAMA_LOG_INFO("gf->n_nodes = %d\n", gf->n_nodes);
-@@ -865,17 +855,7 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
+@@ -857,17 +847,7 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
  
      assert(n_used <= n_kv);
  
@@ -207,7 +244,7 @@ index a7b0a7eb..1a50c034 100644
  
      // determine which KV cells to move where
      //
-@@ -883,10 +863,7 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
+@@ -875,10 +855,7 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
      //
      //  if ids[i] == i || ids[i] == n_kv, then cell i is not moved
      //
@@ -219,7 +256,7 @@ index a7b0a7eb..1a50c034 100644
  
      for (uint32_t i0 = 0; i0 < n_used; ++i0) {
          const auto & cell0 = cells[i0];
-@@ -935,19 +912,11 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
+@@ -927,19 +904,11 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
          // are we moving a continuous block of memory?
          bool cont = false;
  
@@ -239,7 +276,7 @@ index a7b0a7eb..1a50c034 100644
                  cont = false;
                  continue;
              }
-@@ -963,8 +932,10 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
+@@ -955,8 +924,10 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
              head = n_used;
  
              if (!cont) {
@@ -251,7 +288,7 @@ index a7b0a7eb..1a50c034 100644
              }
  
              nf++;
-@@ -974,22 +945,16 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
+@@ -966,22 +937,16 @@ bool llama_kv_cache_unified::defrag_prepare(int32_t n_max_nodes) {
              }
          }
  

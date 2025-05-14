@@ -38,7 +38,10 @@ const (
 func (t tensorBase) Kind() uint32 {
 	if strings.HasSuffix(t.name, ".ffn_gate_inp.weight") ||
 		t.name == "token_types.weight" ||
-		t.name == "v.positional_embedding_vlm" {
+		t.name == "v.positional_embedding_vlm" ||
+		t.name == "v.tile_position_embd.weight" ||
+		t.name == "v.pre_tile_position_embd.weight" ||
+		t.name == "v.post_tile_position_embd.weight" {
 		// these tensors are always F32
 		return 0
 	}

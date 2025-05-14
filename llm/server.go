@@ -343,7 +343,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		params = append(params, "--mmproj", projectors[0])
 	}
 
-	// iterate through compatible GPU libraries such as 'cuda_v12', 'rocm', etc.
+	// iterate through compatible GPU libraries such as 'cuda_v12', 'cuda_v11', 'rocm', etc.
 	// adding each library's respective path to the LD_LIBRARY_PATH, until finally running
 	// without any LD_LIBRARY_PATH flags
 	for {
@@ -711,9 +711,8 @@ ws ::= ([ \t\n] ws)?
 const maxBufferSize = 512 * format.KiloByte
 
 type ImageData struct {
-	Data          []byte `json:"data"`
-	ID            int    `json:"id"`
-	AspectRatioID int    `json:"aspect_ratio_id"`
+	Data []byte `json:"data"`
+	ID   int    `json:"id"`
 }
 
 type CompletionRequest struct {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"slices"
 	"strings"
 
@@ -125,6 +126,8 @@ func (kv KV) OllamaEngineRequired() bool {
 		"gemma3",
 		"mistral3",
 		"llama4",
+		"mllama",
+		"qwen25vl",
 	}, kv.Architecture())
 }
 
@@ -648,6 +651,29 @@ func (llm GGML) VisionGraphSize() (weights, graphSize uint64) {
 		graphSize = 4 * (imageSize*imageSize*numChannels +
 			embeddingLength*patchSize +
 			numPatches*numPatches*headCount)
+	case "qwen25vl":
+		maxPixels := uint64(llm.KV().Uint("vision.max_pixels", 28*28*1280))
+		mergeSize := uint64(llm.KV().Uint("vision.spatial_merge_size", 2))
+		temporalPatchSize := uint64(2)
+
+		// Calculate max possible patches based on max_pixels
+		maxHeight := uint64(math.Sqrt(float64(maxPixels)))
+		maxWidth := maxPixels / maxHeight
+		maxGridHeight := maxHeight / patchSize
+		maxGridWidth := maxWidth / patchSize
+		// Account for merged patches (2x2 grid)
+		numPatches := (maxGridHeight * maxGridWidth) / (mergeSize * mergeSize)
+
+		// Calculate graph size based on typical operations in ProcessImage and createPatches
+		graphSize = 4 * (maxPixels*numChannels + // Original image storage
+			// Normalized pixels
+			maxPixels*numChannels +
+			// Patches storage (numPatches * channels * temporalPatchSize * patchSize^2)
+			numPatches*numChannels*temporalPatchSize*patchSize*patchSize +
+			// Self-attention calculations (similar to other architectures)
+			numPatches*numPatches*headCount +
+			// Additional buffer for processing
+			embeddingLength*numPatches)
 	case "llama4":
 		// vision graph is computed independently in the same schedule
 		// and is negligible compared to the worst case text graph

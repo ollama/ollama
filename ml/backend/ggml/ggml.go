@@ -1017,17 +1017,6 @@ func (t *Tensor) Sigmoid(ctx ml.Context) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Unpad(ctx ml.Context, shape ...int) ml.Tensor {
-	if len(shape) != 4 {
-		panic("expected 4 dimensions")
-	}
-
-	return &Tensor{
-		b: t.b,
-		t: C.ggml_unpad(ctx.(*Context).ctx, t.t, C.int(shape[0]), C.int(shape[1]), C.int(shape[2]), C.int(shape[3])),
-	}
-}
-
 func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	switch len(shape) {
 	case 1:
@@ -1071,7 +1060,17 @@ const (
 	ropeTypeVision C.int = 24
 )
 
-func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim, ropeType uint32, ropeBase, ropeScale float32) ml.Tensor {
+func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim, ropeType uint32, ropeBase, ropeScale float32, options ...ml.RopeOption) ml.Tensor {
+	// Default options
+	opts := &ml.RopeOptions{
+		OriginalContextLen: 131072,
+	}
+
+	// Apply any provided options
+	for _, option := range options {
+		option(opts)
+	}
+
 	if ropeFactors == nil {
 		ropeFactors = &Tensor{b: t.b}
 	}
@@ -1084,16 +1083,19 @@ func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDi
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_rope_ext(
-			ctx.(*Context).ctx, dequant, positionIDs.(*Tensor).t, ropeFactors.(*Tensor).t,
+			ctx.(*Context).ctx,
+			dequant,
+			positionIDs.(*Tensor).t,
+			ropeFactors.(*Tensor).t,
 			C.int(ropeDim),
 			C.int(ropeType),
-			131072, // YaRN n_ctx_train
+			C.int(opts.OriginalContextLen),
 			C.float(ropeBase),
 			C.float(ropeScale),
-			0.,  // YaRN ext_factor
-			1.,  // YaRN attn_factor
-			32., // YaRN beta_fast
-			1.,  // YaRN beta_slow
+			C.float(0.0),
+			C.float(1.0),
+			C.float(32.0),
+			C.float(1.0),
 		),
 	}
 }
@@ -1185,5 +1187,12 @@ func (t *Tensor) TopK(ctx ml.Context, k int) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_top_k(ctx.(*Context).ctx, t.t, C.int(k)),
+	}
+}
+
+func (t *Tensor) Argsort(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_argsort(ctx.(*Context).ctx, t.t, C.GGML_SORT_ORDER_ASC),
 	}
 }

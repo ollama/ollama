@@ -270,7 +270,7 @@ index 3a4e72a3..831b68c0 100644
 +            // self-attention
 +            {
 +                // rope freq factors for llama3; may return nullptr for llama2 and other models
-+                ggml_tensor * rope_factors = static_cast<const llama_kv_cache_unified *>(memory)->cbs.get_rope_factors(n_ctx_per_seq, il);
++                ggml_tensor * rope_factors = model.get_rope_factors(n_ctx_per_seq, il);
 +
 +                // compute Q and K and RoPE them
 +                ggml_tensor * Qcur = build_lora_mm(model.layers[il].wq, cur);
