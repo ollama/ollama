@@ -430,7 +430,7 @@ func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.Progr
 	fnWrap := func(n uint64) {
 		done := doneBytes.Add(n)
 		progress := float32(done) / float32(totalBytes)
-		fn(api.ProgressResponse{Status: fmt.Sprintf("quantizing %s model to %s", ft, quantizeType), Digest: "0", Total: layer.Size, Completed: int64(progress * float32(layer.Size))})
+		fn(api.ProgressResponse{Status: fmt.Sprintf("quantizing %s model to %s", ft, quantizeType), Digest: "0000000000000000000", Total: layer.Size, Completed: int64(progress * float32(layer.Size))})
 	}
 	ftype, err := ggml.ParseFileType(quantizeType)
 	if err != nil {
