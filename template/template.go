@@ -17,6 +17,7 @@ import (
 	"golang.org/x/exp/maps"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/parser"
 )
 
 //go:embed index.json
@@ -309,7 +310,7 @@ func collate(msgs []api.Message) (string, []*api.Message) {
 			system = append(system, msg.Content)
 		}
 
-		if len(collated) > 0 && collated[len(collated)-1].Role == msg.Role {
+		if len(collated) > 0 && parser.IsKnownMessageRole(msg.Role) && collated[len(collated)-1].Role == msg.Role {
 			collated[len(collated)-1].Content += "\n\n" + msg.Content
 		} else {
 			collated = append(collated, &msg)
