@@ -532,12 +532,6 @@ void llm_graph_input_attn_cross::set_input(const llama_ubatch * ubatch) {
     }
 }
 
-void llm_graph_input_cross_attn_state::set_input(const llama_ubatch * ubatch) {
-    if (ubatch->embd) {
-        ggml_backend_tensor_set(cross_attn_state, ubatch->embd, 0, ggml_nbytes(cross_attn_state));
-    }
-}
-
 //
 // llm_graph_context
 //
@@ -1518,25 +1512,6 @@ llm_graph_input_attn_cross * llm_graph_context::build_attn_inp_cross() const {
     inp->cross_kq_mask_cnv = cparams.flash_attn ? ggml_cast(ctx0, inp->cross_kq_mask, GGML_TYPE_F16) : inp->cross_kq_mask;
 
     return (llm_graph_input_attn_cross *) res->add_input(std::move(inp));
-}
-
-ggml_tensor * llm_graph_context::build_inp_cross_attn_state() const {
-    const int64_t n_embd = hparams.n_embd;
-
-    auto inp = std::make_unique<llm_graph_input_cross_attn_state>();
-
-    ggml_tensor * cur = nullptr;
-
-    inp->cross_attn_state = ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, n_embd, 1601, 4);
-    ggml_set_input(inp->cross_attn_state);
-
-    cur = inp->cross_attn_state;
-
-    cb(cur, "inp_cross_attn_state", -1);
-
-    res->add_input(std::move(inp));
-
-    return cur;
 }
 
 ggml_tensor * llm_graph_context::build_attn(

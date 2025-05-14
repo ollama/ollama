@@ -85,7 +85,3 @@ bool llama_hparams::is_swa(uint32_t il) const {
 
     GGML_ABORT("fatal error");
 }
-
-bool llama_hparams::cross_attention_layers(uint32_t il) const {
-    return std::find(cross_attn_layers.begin(), cross_attn_layers.end(), il) != cross_attn_layers.end();
-}

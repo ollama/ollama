@@ -462,7 +462,7 @@ struct llava_embd_batch {
     std::vector<llama_seq_id *> seq_ids;
     std::vector<int8_t>         logits;
     llama_batch batch;
-    llava_embd_batch(float * embd, int32_t n_embd, int32_t n_tokens, llama_pos pos_0, llama_seq_id seq_id) {
+    llava_embd_batch(float * embd, int32_t n_tokens, llama_pos pos_0, llama_seq_id seq_id) {
         pos     .resize(n_tokens);
         n_seq_id.resize(n_tokens);
         seq_ids .resize(n_tokens + 1);
@@ -474,7 +474,6 @@ struct llava_embd_batch {
             /*n_tokens       =*/ n_tokens,
             /*tokens         =*/ nullptr,
             /*embd           =*/ embd,
-            /*n_embd         =*/ n_embd,
             /*pos            =*/ pos.data(),
             /*n_seq_id       =*/ n_seq_id.data(),
             /*seq_id         =*/ seq_ids.data(),
@@ -498,7 +497,7 @@ bool llava_eval_image_embed(llama_context * ctx_llama, const struct llava_image_
             n_eval = n_batch;
         }
         float * embd = image_embed->embed+i*n_embd;
-        llava_embd_batch llava_batch = llava_embd_batch(embd, n_embd, n_eval, *n_past, 0);
+        llava_embd_batch llava_batch = llava_embd_batch(embd, n_eval, *n_past, 0);
         if (llama_decode(ctx_llama, llava_batch.batch)) {
             LOG_ERR("%s : failed to eval\n", __func__);
             return false;

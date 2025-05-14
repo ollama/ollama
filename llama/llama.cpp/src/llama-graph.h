@@ -87,7 +87,6 @@ public:
 
     ggml_tensor * tokens = nullptr; // I32 [n_batch]
     ggml_tensor * embd   = nullptr; // F32 [n_embd, n_batch]
-    ggml_tensor * cross_attn_state; // F32 [4, n_embd, 1061]
 };
 
 class llm_graph_input_pos : public llm_graph_input_i {
@@ -283,16 +282,6 @@ public:
     ggml_tensor * cross_kq_mask_cnv = nullptr; // F32 [n_outputs_enc, n_batch]
 
     const llama_cross * cross = nullptr;
-};
-
-class llm_graph_input_cross_attn_state : public llm_graph_input_i {
-public:
-    llm_graph_input_cross_attn_state()          = default;
-    virtual ~llm_graph_input_cross_attn_state() = default;
-
-    void set_input(const llama_ubatch * ubatch) override;
-
-    ggml_tensor * cross_attn_state; // F32 [4, n_embd, 1061]
 };
 
 //
@@ -506,7 +495,6 @@ struct llm_graph_context {
     ggml_tensor * build_inp_cls() const;
     ggml_tensor * build_inp_s_copy() const;
     ggml_tensor * build_inp_s_mask() const;
-    ggml_tensor * build_inp_cross_attn_state() const;
 
     ggml_tensor * build_inp_cross_embd() const;
     ggml_tensor * build_inp_pos_bucket_enc() const;

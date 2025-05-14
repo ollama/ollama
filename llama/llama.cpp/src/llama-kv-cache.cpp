@@ -100,16 +100,8 @@ llama_kv_cache_unified::llama_kv_cache_unified(
             throw std::runtime_error("failed to create ggml context for kv cache");
         }
 
-        ggml_tensor * k, *v;
-
-        // for cross attention layers
-        if (model.arch == LLM_ARCH_MLLAMA && hparams.cross_attention_layers(i)) {
-            k = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, hparams.n_embd_head_k, 6404, hparams.n_head_kv(i));
-            v = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, hparams.n_embd_head_v, 6404, hparams.n_head_kv(i));
-        } else {
-            k = ggml_new_tensor_1d(ctx, type_k, n_embd_k_gqa*kv_size);
-            v = ggml_new_tensor_1d(ctx, type_v, n_embd_v_gqa*kv_size);
-        }
+        ggml_tensor * k = ggml_new_tensor_1d(ctx, type_k, n_embd_k_gqa*kv_size);
+        ggml_tensor * v = ggml_new_tensor_1d(ctx, type_v, n_embd_v_gqa*kv_size);
         ggml_format_name(k, "cache_k_l%d", i);
         ggml_format_name(v, "cache_v_l%d", i);
         k_l.push_back(k);
@@ -459,7 +451,7 @@ void llama_kv_cache_unified::set_full() {
 llama_sbatch llama_kv_cache_unified::sbatch_init(
         const llama_batch & batch,
         bool logits_all) {
-    return llama_sbatch(batch, batch.n_embd, true, logits_all);
+    return llama_sbatch(batch, hparams.n_embd, true, logits_all);
 }
 
 llama_ubatch llama_kv_cache_unified::ubatch_next(

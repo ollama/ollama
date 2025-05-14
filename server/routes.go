@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,7 +34,6 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
-	"github.com/ollama/ollama/model/models/mllama"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/server/internal/registry"
@@ -98,6 +96,10 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	model, err := GetModel(name)
 	if err != nil {
 		return nil, nil, nil, err
+	}
+
+	if slices.Contains(model.Config.ModelFamilies, "mllama") && len(model.ProjectorPaths) > 0 {
+		return nil, nil, nil, fmt.Errorf("'llama3.2-vision' is no longer compatible with your version of Ollama and has been replaced by a newer version. To re-download, run 'ollama pull llama3.2-vision'")
 	}
 
 	if err := model.CheckCapabilities(caps...); err != nil {
@@ -206,38 +208,14 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	isMllama := checkMllamaModelFamily(m)
-	if isMllama && len(req.Images) > 1 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "this model only supports one image: more than one image sent"})
+	if slices.Contains(m.Config.ModelFamilies, "mllama") && len(req.Images) > 1 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "this model only supports one image while more than one image requested"})
 		return
 	}
 
 	images := make([]llm.ImageData, len(req.Images))
 	for i := range req.Images {
-		if isMllama && len(m.ProjectorPaths) > 0 {
-			data, opts, err := mllama.Preprocess(bytes.NewReader(req.Images[i]))
-			if err != nil {
-				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error processing image"})
-				return
-			}
-
-			ar, ok := opts["aspectRatioIndex"].(int)
-			if !ok {
-				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error processing image"})
-				return
-			}
-
-			buf := new(bytes.Buffer)
-			err = binary.Write(buf, binary.LittleEndian, data)
-			if err != nil {
-				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error processing image"})
-				return
-			}
-
-			images[i] = llm.ImageData{ID: i, Data: buf.Bytes(), AspectRatioID: ar}
-		} else {
-			images[i] = llm.ImageData{ID: i, Data: req.Images[i]}
-		}
+		images[i] = llm.ImageData{ID: i, Data: req.Images[i]}
 	}
 
 	prompt := req.Prompt
@@ -269,9 +247,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 			for _, i := range images {
 				imgPrompt := ""
-				if isMllama {
-					imgPrompt = "<|image|>"
-				}
 				msgs = append(msgs, api.Message{Role: "user", Content: fmt.Sprintf("[img-%d]"+imgPrompt, i.ID)})
 			}
 
