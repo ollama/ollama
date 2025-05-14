@@ -16,6 +16,8 @@ import (
 
 type Model struct {
 	model.Base
+	model.BytePairEncoding
+
 	*TextModel
 	*VisionModel         `gguf:"v,vision"`
 	*MultiModalProjector `gguf:"mm"`
@@ -25,6 +27,9 @@ type Model struct {
 
 // Implement MultimodalProcessor interface
 var _ model.MultimodalProcessor = (*Model)(nil)
+
+// Implement TextProcessor interface
+var _ model.TextProcessor = (*Model)(nil)
 
 func New(c fs.Config) (model.Model, error) {
 	textModel, err := NewTextModel(c)
@@ -37,6 +42,21 @@ func New(c fs.Config) (model.Model, error) {
 		VisionModel:         newVisionModel(c),
 		ImageProcessor:      newImageProcessor(c),
 		MultiModalProjector: newMultiModalProjector(c),
+		BytePairEncoding: model.NewBytePairEncoding(
+			c.String("tokenizer.ggml.pretokenizer", `[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
+			&model.Vocabulary{
+				Values: c.Strings("tokenizer.ggml.tokens"),
+				Types:  c.Ints("tokenizer.ggml.token_type"),
+				Merges: c.Strings("tokenizer.ggml.merges"),
+				BOS:    int32(c.Uint("tokenizer.ggml.bos_token_id", 1)),
+				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
+				EOS:    int32(c.Uint("tokenizer.ggml.eos_token_id", 2)),
+				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
+				// TODO: set EOT to EOS otherwise 0 will stop generation
+				EOT:    int32(c.Uint("tokenizer.ggml.eos_token_id")),
+				AddEOT: c.Bool("tokenizer.ggml.add_eos_token", false),
+			},
+		),
 	}
 
 	m.Cache = kvcache.NewCausalCache(m.TextModel.Shift)

@@ -907,6 +907,7 @@ llama_grammar_candidates llama_grammar_reject_candidates_for_stack(
 
 struct llama_grammar * llama_grammar_init_impl(
         const struct llama_vocab * vocab,
+        const struct ollama_vocab * ollama_vocab,
         const llama_grammar_element ** rules,
         size_t n_rules,
         size_t start_rule_index) {
@@ -962,6 +963,7 @@ struct llama_grammar * llama_grammar_init_impl(
     // then the pointers would be invalidated when the local vec_rules goes out of scope.
     return new llama_grammar {
         vocab,
+        ollama_vocab,
         std::move(vec_rules),
         std::move(stacks),
         /* .partial_utf8 = */     {},
@@ -975,6 +977,7 @@ struct llama_grammar * llama_grammar_init_impl(
 
 struct llama_grammar * llama_grammar_init_impl(
         const struct llama_vocab * vocab,
+        const struct ollama_vocab * ollama_vocab,
                       const char * grammar_str,
                       const char * grammar_root,
                               bool lazy,
@@ -1067,6 +1070,7 @@ struct llama_grammar * llama_grammar_init_impl(
     // then the pointers would be invalidated when the local vec_rules goes out of scope.
     return new llama_grammar {
         vocab,
+        ollama_vocab,
         std::move(vec_rules),
         std::move(stacks),
         /* .partial_utf8 = */     {},
@@ -1089,6 +1093,7 @@ void llama_grammar_free_impl(struct llama_grammar * grammar) {
 struct llama_grammar * llama_grammar_clone_impl(const struct llama_grammar & grammar) {
     auto * result = new llama_grammar {
         grammar.vocab,
+        grammar.o_vocab,
         grammar.rules,
         grammar.stacks,
         grammar.partial_utf8,
@@ -1116,7 +1121,6 @@ struct llama_grammar * llama_grammar_clone_impl(const struct llama_grammar & gra
 }
 
 void llama_grammar_apply_impl(const struct llama_grammar & grammar, llama_token_data_array * cur_p) {
-    GGML_ASSERT(grammar.vocab != nullptr);
 
     if (grammar.awaiting_trigger) {
         return;
@@ -1138,9 +1142,13 @@ void llama_grammar_apply_impl(const struct llama_grammar & grammar, llama_token_
 
     for (size_t i = 0; i < cur_p->size; ++i) {
         const llama_token id      = cur_p->data[i].id;
-        const std::string & piece = grammar.vocab->token_to_piece(id);
+        const std::string piece = grammar.o_vocab ?
+            grammar.o_vocab->token_to_piece(id) :
+            grammar.vocab->token_to_piece(id);
 
-        if (grammar.vocab->is_eog(id)) {
+        const bool is_eog = grammar.o_vocab ? grammar.o_vocab->is_eog(id) : grammar.vocab->is_eog(id);
+
+        if (is_eog) {
             if (!allow_eog) {
                 cur_p->data[i].logit = -INFINITY;
             }
@@ -1159,9 +1167,10 @@ void llama_grammar_apply_impl(const struct llama_grammar & grammar, llama_token_
 }
 
 void llama_grammar_accept_impl(struct llama_grammar & grammar, llama_token token) {
-    GGML_ASSERT(grammar.vocab != nullptr);
 
-    const auto & piece = grammar.vocab->token_to_piece(token);
+    const std::string piece = grammar.o_vocab ?
+        grammar.o_vocab->token_to_piece(token) :
+        grammar.vocab->token_to_piece(token);
 
     if (grammar.awaiting_trigger) {
         if (std::find(grammar.trigger_tokens.begin(), grammar.trigger_tokens.end(), token) != grammar.trigger_tokens.end()) {
@@ -1191,13 +1200,14 @@ void llama_grammar_accept_impl(struct llama_grammar & grammar, llama_token token
         }
     }
 
-    if (grammar.vocab->is_eog(token)) {
+    const bool is_eog = grammar.o_vocab ? grammar.o_vocab->is_eog(token) : grammar.vocab->is_eog(token);
+    if (is_eog) {
         for (const auto & stack : grammar.stacks) {
             if (stack.empty()) {
                 return;
             }
         }
-        GGML_ABORT("fatal error");
+        GGML_ABORT("grammar error: end of grammar token received but grammar stack is not empty");
     }
 
     llama_grammar_accept_str(grammar, piece);
@@ -1215,5 +1225,30 @@ void llama_grammar_accept_str(struct llama_grammar & grammar, const std::string 
     grammar.partial_utf8 = decoded.second;
     if (grammar.stacks.empty()) {
         throw std::runtime_error("Unexpected empty grammar stack after accepting piece: " + piece);
+    }
+}
+
+
+const std::string & ollama_vocab::token_to_piece(const uint32_t token) const {
+    try {
+        return token_to_piece_map.at(token);
+    } catch (const std::out_of_range&) {
+        throw std::runtime_error("Token not found in vocabulary: " + std::to_string(token));
+    }
+}
+
+void ollama_vocab::add_token_pieces(const uint32_t* tokens, size_t n_tokens, const char** pieces) {
+    for (size_t i = 0; i < n_tokens; i++) {
+        token_to_piece_map[tokens[i]] = pieces[i];
+    }
+}
+
+bool ollama_vocab::is_eog(const uint32_t token) const {
+    return special_eog_ids.count(token) > 0;
+}
+
+void ollama_vocab::set_eog_tokens(const uint32_t* tokens, size_t n_tokens) {
+    for (size_t i = 0; i < n_tokens; i++) {
+        special_eog_ids.insert(tokens[i]);
     }
 }

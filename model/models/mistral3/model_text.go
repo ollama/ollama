@@ -21,7 +21,6 @@ type TextOptions struct {
 
 type TextModel struct {
 	model.Base
-	model.BytePairEncoding
 
 	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
 	Layers         []Layer       `gguf:"blk"`
@@ -148,18 +147,6 @@ func NewTextModel(c fs.Config) (*TextModel, error) {
 	}
 
 	textModel := &TextModel{
-		BytePairEncoding: model.NewBytePairEncoding(
-			c.String("tokenizer.ggml.pretokenizer", `[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
-			&model.Vocabulary{
-				Values: c.Strings("tokenizer.ggml.tokens"),
-				Types:  c.Uints("tokenizer.ggml.token_type"),
-				Merges: c.Strings("tokenizer.ggml.merges"),
-				BOS:    int32(c.Uint("tokenizer.ggml.bos_token_id", 1)),
-				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
-				EOS:    int32(c.Uint("tokenizer.ggml.eos_token_id", 2)),
-				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
-			},
-		),
 		Layers: make([]Layer, c.Uint("block_count")),
 		TextOptions: &TextOptions{
 			hiddenSize: int(c.Uint("embedding_length")),

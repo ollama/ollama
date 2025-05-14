@@ -1,9 +1,12 @@
 package llm
 
 import (
+	"cmp"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -108,9 +111,8 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	slog.Debug("evaluating", "library", gpus[0].Library, "gpu_count", len(gpus), "available", availableList)
 
 	for _, projector := range projectors {
-		weight, graph := projectorMemoryRequirements(projector)
+		weight := projectorMemoryRequirements(projector)
 		projectorWeights += weight
-		projectorGraph += graph
 
 		// multimodal models require at least 2048 context
 		opts.NumCtx = max(opts.NumCtx, 2048)
@@ -120,12 +122,10 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	}
 
 	layers := f.Tensors().GroupLayers()
-	// add one layer worth of memory as a buffer
-	if blk0, ok := layers["blk.0"]; ok {
-		layerSize = blk0.Size()
-	} else {
-		slog.Warn("model missing blk.0 layer size")
-	}
+	// add one layer (chosing the max layer) worth of memory as a buffer
+	layerSize = slices.MaxFunc(slices.Collect(maps.Values(layers)), func(a, b ggml.Layer) int {
+		return cmp.Compare(a.Size(), b.Size())
+	}).Size()
 
 	var kvct string
 	if envconfig.FlashAttention() &&
@@ -219,7 +219,7 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	}
 
 	// For all the layers, find where they can fit on the GPU(s)
-	for i := range int(f.KV().BlockCount()) {
+	for i := int(f.KV().BlockCount()) - 1; i >= 0; i-- {
 		// Some models have inconsistent layer sizes
 		if blk, ok := layers[fmt.Sprintf("blk.%d", i)]; ok {
 			layerSize = blk.Size()
@@ -229,6 +229,7 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 
 		if opts.NumGPU >= 0 && layerCount >= opts.NumGPU {
 			// Stop allocating on GPU(s) once we hit the users target NumGPU
+			overflow += layerSize
 			continue
 		}
 
@@ -245,13 +246,13 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 				gpusWithSpace = append(gpusWithSpace[:i%j], gpusWithSpace[i%j+1:]...)
 			}
 		}
+
+		if len(gpusWithSpace) == 0 {
+			overflow += layerSize
+		}
 	}
 	if layerCount >= int(f.KV().BlockCount()) {
 		fullyLoaded = true
-	} else {
-		for i := layerCount; i < int(f.KV().BlockCount()); i++ {
-			overflow += layerSize
-		}
 	}
 
 	// Determine if we need to consider output then find where it fits
@@ -407,51 +408,21 @@ func (m MemoryEstimate) LogValue() slog.Value {
 	return slog.GroupValue(attrs...)
 }
 
-func projectorMemoryRequirements(filename string) (weights, graphSize uint64) {
+func projectorMemoryRequirements(filename string) (weights uint64) {
 	file, err := os.Open(filename)
 	if err != nil {
-		return 0, 0
+		return 0
 	}
 	defer file.Close()
 
-	ggml, _, err := ggml.Decode(file, 0)
+	ggml, _, err := ggml.Decode(file, 1024)
 	if err != nil {
-		return 0, 0
+		return 0
 	}
 
 	for _, layer := range ggml.Tensors().GroupLayers() {
 		weights += layer.Size()
 	}
 
-	switch arch := ggml.KV().Architecture(); arch {
-	case "mllama":
-		kv := func(n string) uint64 {
-			if v, ok := ggml.KV()[arch+".vision."+n].(uint32); ok {
-				return uint64(v)
-			}
-
-			return 0
-		}
-
-		imageSize := kv("image_size")
-
-		maxNumTiles := kv("max_num_tiles")
-		embeddingLength := kv("embedding_length")
-		headCount := kv("attention.head_count")
-
-		numPatches := (imageSize / kv("patch_size")) * (imageSize / kv("patch_size"))
-		if _, ok := ggml.Tensors().GroupLayers()["v"]["class_embd"]; ok {
-			numPatches++
-		}
-
-		numPaddedPatches := numPatches + 8 - (numPatches%8)%8
-
-		graphSize = 4 * (8 +
-			imageSize*imageSize*kv("num_channels")*maxNumTiles +
-			embeddingLength*numPatches*maxNumTiles +
-			9*embeddingLength*numPaddedPatches*maxNumTiles +
-			numPaddedPatches*maxNumTiles*numPaddedPatches*maxNumTiles*headCount)
-	}
-
-	return weights, graphSize
+	return weights
 }

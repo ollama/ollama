@@ -2,10 +2,11 @@ package llama
 
 /*
 #cgo CFLAGS: -std=c11
+#cgo windows CFLAGS: -Wno-dll-attribute-on-redeclaration
 #cgo CXXFLAGS: -std=c++17
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/include
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/common
-#cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/examples/llava
+#cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/tools/mtmd
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/src
 #cgo CPPFLAGS: -I${SRCDIR}/../ml/backend/ggml/ggml/include
 
@@ -16,7 +17,6 @@ package llama
 #include "llava.h"
 #include "gguf.h"
 
-#include "mllama.h"
 #include "sampling_ext.h"
 
 extern bool llamaProgressCallback(float progress, void *user_data);
@@ -35,11 +35,12 @@ import (
 	"runtime/cgo"
 	"slices"
 	"strings"
+	"sync"
 	"unsafe"
 
 	_ "github.com/ollama/ollama/llama/llama.cpp/common"
-	_ "github.com/ollama/ollama/llama/llama.cpp/examples/llava"
 	_ "github.com/ollama/ollama/llama/llama.cpp/src"
+	_ "github.com/ollama/ollama/llama/llama.cpp/tools/mtmd"
 	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 )
 
@@ -197,7 +198,6 @@ type ModelParams struct {
 	NumGpuLayers int
 	MainGpu      int
 	UseMmap      bool
-	UseMlock     bool
 	TensorSplit  []float32
 	Progress     func(float32)
 	VocabOnly    bool
@@ -216,7 +216,6 @@ func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
 	cparams.n_gpu_layers = C.int(params.NumGpuLayers)
 	cparams.main_gpu = C.int32_t(params.MainGpu)
 	cparams.use_mmap = C.bool(params.UseMmap)
-	cparams.use_mlock = C.bool(params.UseMlock)
 	cparams.vocab_only = C.bool(params.VocabOnly)
 
 	if len(params.TensorSplit) > 0 {
@@ -247,20 +246,6 @@ func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
 	}
 
 	return &m, nil
-}
-
-func LoadVocabFromFile(path string) (*Vocab, error) {
-	mp := C.CString(path)
-	defer C.free(unsafe.Pointer(mp))
-	v := Vocab{c: C.llama_load_vocab_from_file(mp)}
-	if v.c == nil {
-		return nil, fmt.Errorf("unable to load vocab: %s", path)
-	}
-	return &v, nil
-}
-
-func FreeVocab(vocab *Vocab) {
-	C.llama_free_vocab(vocab.c)
 }
 
 func FreeModel(model *Model) {
@@ -309,10 +294,6 @@ func (m *Model) ApplyLoraFromFile(context *Context, loraPath string, scale float
 	}
 
 	return nil
-}
-
-type Vocab struct {
-	c *C.struct_llama_vocab
 }
 
 func (m *Model) Vocab() *C.struct_llama_vocab {
@@ -478,24 +459,6 @@ func (m *Model) NEmbd() int {
 	return int(C.llama_model_n_embd(m.c))
 }
 
-func Quantize(infile, outfile string, ftype uint32) error {
-	cinfile := C.CString(infile)
-	defer C.free(unsafe.Pointer(cinfile))
-
-	coutfile := C.CString(outfile)
-	defer C.free(unsafe.Pointer(coutfile))
-
-	params := C.llama_model_quantize_default_params()
-	params.nthread = -1
-	params.ftype = ftype
-
-	if rc := C.llama_model_quantize(cinfile, coutfile, &params); rc != 0 {
-		return fmt.Errorf("llama_model_quantize: %d", rc)
-	}
-
-	return nil
-}
-
 // vision processing
 type ClipContext struct {
 	c *C.struct_clip_ctx
@@ -546,63 +509,6 @@ func (c *ClipContext) NewEmbed(llamaContext *Context, data []byte) ([][]float32,
 	return embed, nil
 }
 
-type MllamaContext struct {
-	c *C.struct_mllama_ctx
-}
-
-func NewMllamaContext(llamaContext *Context, modelPath string) (*MllamaContext, error) {
-	mp := C.CString(modelPath)
-	defer C.free(unsafe.Pointer(mp))
-	c := C.mllama_model_load(mp, 1)
-	if c == nil {
-		return nil, fmt.Errorf("unable to load mllama model: %v", modelPath)
-	}
-
-	projEmbedSize := int(C.mllama_n_embd(c))
-	modelEmbedSize := llamaContext.Model().NEmbd()
-	if projEmbedSize != modelEmbedSize {
-		return nil, fmt.Errorf("projector embedding size (%d) does not match model (%d)", projEmbedSize, modelEmbedSize)
-	}
-
-	return &MllamaContext{c: c}, nil
-}
-
-func (m *MllamaContext) Free() {
-	C.mllama_free(m.c)
-}
-
-func (m *MllamaContext) NewEmbed(llamaContext *Context, data []byte, aspectRatioId int) ([][]float32, error) {
-	img := C.mllama_image_init()
-	defer C.mllama_image_free(img)
-
-	ok := bool(C.mllama_image_load_from_data(unsafe.Pointer(&data[0]), C.int(len(data)), 560, 560, 3, 4, C.int(aspectRatioId), img))
-	if !ok {
-		return nil, errors.New("unable to load mllama image data")
-	}
-
-	rows := make([]float32, m.EmbedSize(llamaContext))
-	ok = bool(C.mllama_image_encode(m.c, C.int(llamaContext.numThreads), img, (*C.float)(unsafe.Pointer(&rows[0]))))
-	if !ok {
-		return nil, errors.New("unable to make mllama embedding from image")
-	}
-
-	embed := make([][]float32, 1)
-	embed[0] = rows
-
-	return embed, nil
-}
-
-func (m *MllamaContext) EmbedSize(llamaContext *Context) int {
-	numTokens := int(C.mllama_n_positions(m.c) * C.mllama_n_tiles(m.c))
-	numEmbed := llamaContext.Model().NEmbd()
-
-	return numTokens * numEmbed
-}
-
-func (c *Context) SetCrossAttention(state bool) {
-	C.llama_set_cross_attention(c.c, C.bool(state))
-}
-
 func (c *Context) Synchronize() {
 	C.llama_synchronize(c.c)
 }
@@ -623,9 +529,6 @@ type SamplingParams struct {
 	PenaltyRepeat  float32
 	PenaltyFreq    float32
 	PenaltyPresent float32
-	Mirostat       int
-	MirostatTau    float32
-	MirostatEta    float32
 	PenalizeNl     bool
 	Seed           uint32
 	Grammar        string
@@ -642,9 +545,6 @@ func NewSamplingContext(model *Model, params SamplingParams) (*SamplingContext, 
 	cparams.penalty_repeat = C.float(params.PenaltyRepeat)
 	cparams.penalty_freq = C.float(params.PenaltyFreq)
 	cparams.penalty_present = C.float(params.PenaltyFreq)
-	cparams.mirostat = C.int32_t(params.Mirostat)
-	cparams.mirostat_tau = C.float(params.MirostatTau)
-	cparams.mirostat_eta = C.float(params.MirostatEta)
 	cparams.seed = C.uint32_t(params.Seed)
 
 	grammar := C.CString(params.Grammar)
@@ -679,8 +579,8 @@ func SchemaToGrammar(schema []byte) []byte {
 	cStr := C.CString(string(schema))
 	defer C.free(unsafe.Pointer(cStr))
 
-	// Allocate buffer for grammar output with reasonable size
-	const maxLen = 32768 // 32KB
+	// Allocate buffer for grammar based on schema length but with upper bound
+	maxLen := min(1024*1024, len(schema)*4)
 	buf := make([]byte, maxLen)
 
 	// Call C function to convert schema to grammar
@@ -692,35 +592,65 @@ func SchemaToGrammar(schema []byte) []byte {
 	return buf[:n]
 }
 
-type Sampler struct {
-	c *C.struct_llama_sampler
-}
-
-func NewGrammarSampler(vocab *Vocab, grammar string) *Sampler {
-	cGrammar := C.CString(grammar)
-	cRoot := C.CString("root")
-	defer C.free(unsafe.Pointer(cGrammar))
-	defer C.free(unsafe.Pointer(cRoot))
-
-	sampler := &Sampler{c: C.llama_sampler_init_grammar(vocab.c, cGrammar, cRoot)}
-
-	return sampler
-}
-
-func (s *Sampler) Accept(token int32) {
-	C.llama_sampler_accept(s.c, C.llama_token(token))
-}
-
 type TokenData struct {
-	Id    int32
+	ID    int32
 	Logit float32
 }
 
-func (s *Sampler) Apply(tokens []TokenData) {
+type Grammar struct {
+	c  *C.struct_llama_grammar
+	mu sync.Mutex
+}
+
+func NewGrammar(grammar string, vocabIds []uint32, vocabValues []string, eogTokens []uint32) *Grammar {
+	cGrammar := C.CString(grammar)
+	defer C.free(unsafe.Pointer(cGrammar))
+
+	cTokens := make([]C.uint32_t, len(vocabIds))
+	for i, token := range vocabIds {
+		cTokens[i] = C.uint32_t(token)
+	}
+
+	cPieces := make([]*C.char, len(vocabValues))
+	for i, piece := range vocabValues {
+		cPieces[i] = C.CString(piece)
+		defer C.free(unsafe.Pointer(cPieces[i]))
+	}
+
+	cEogTokens := make([]C.uint32_t, len(eogTokens))
+	for i, token := range eogTokens {
+		cEogTokens[i] = C.uint32_t(token)
+	}
+
+	g := C.grammar_init(cGrammar, (*C.uint32_t)(unsafe.Pointer(&cTokens[0])), C.size_t(len(cTokens)), (**C.char)(unsafe.Pointer(&cPieces[0])), (*C.uint32_t)(unsafe.Pointer(&cEogTokens[0])), C.size_t(len(cEogTokens)))
+	if g == nil {
+		return nil
+	}
+
+	return &Grammar{c: g}
+}
+
+func (g *Grammar) Free() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.c != nil {
+		C.grammar_free(g.c)
+		g.c = nil
+	}
+}
+
+func (g *Grammar) Apply(tokens []TokenData) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	if g.c == nil {
+		return
+	}
+
 	tds := make([]C.struct_llama_token_data, len(tokens))
 	for i, token := range tokens {
 		tds[i] = C.struct_llama_token_data{
-			id:    C.int32_t(token.Id),
+			id:    C.int32_t(token.ID),
 			logit: C.float(token.Logit),
 			p:     C.float(0.0),
 		}
@@ -731,13 +661,24 @@ func (s *Sampler) Apply(tokens []TokenData) {
 		selected: C.int64_t(-1),
 		sorted:   C.bool(false),
 	}
-
 	var pinner runtime.Pinner
 	pinner.Pin(&tds[0])
 	defer pinner.Unpin()
 
-	C.llama_sampler_apply(s.c, tda)
+	C.grammar_apply(g.c, tda)
 	for i := range tokens {
 		tokens[i].Logit = float32(tds[i].logit)
 	}
+}
+
+func (g *Grammar) Accept(token int32) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	// Check if grammar was freed
+	if g.c == nil {
+		return
+	}
+
+	C.grammar_accept(g.c, C.llama_token(token))
 }

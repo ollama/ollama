@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -17,7 +17,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
-	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -25,6 +25,7 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/image/webp"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
@@ -32,7 +33,7 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/model/models/mllama"
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/server/internal/registry"
@@ -95,6 +96,10 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	model, err := GetModel(name)
 	if err != nil {
 		return nil, nil, nil, err
+	}
+
+	if slices.Contains(model.Config.ModelFamilies, "mllama") && len(model.ProjectorPaths) > 0 {
+		return nil, nil, nil, fmt.Errorf("'llama3.2-vision' is no longer compatible with your version of Ollama and has been replaced by a newer version. To re-download, run 'ollama pull llama3.2-vision'")
 	}
 
 	if err := model.CheckCapabilities(caps...); err != nil {
@@ -203,38 +208,14 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	isMllama := checkMllamaModelFamily(m)
-	if isMllama && len(req.Images) > 1 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "this model only supports one image: more than one image sent"})
+	if slices.Contains(m.Config.ModelFamilies, "mllama") && len(req.Images) > 1 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "this model only supports one image while more than one image requested"})
 		return
 	}
 
 	images := make([]llm.ImageData, len(req.Images))
 	for i := range req.Images {
-		if isMllama && len(m.ProjectorPaths) > 0 {
-			data, opts, err := mllama.Preprocess(bytes.NewReader(req.Images[i]))
-			if err != nil {
-				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error processing image"})
-				return
-			}
-
-			ar, ok := opts["aspectRatioIndex"].(int)
-			if !ok {
-				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error processing image"})
-				return
-			}
-
-			buf := new(bytes.Buffer)
-			err = binary.Write(buf, binary.LittleEndian, data)
-			if err != nil {
-				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error processing image"})
-				return
-			}
-
-			images[i] = llm.ImageData{ID: i, Data: buf.Bytes(), AspectRatioID: ar}
-		} else {
-			images[i] = llm.ImageData{ID: i, Data: req.Images[i]}
-		}
+		images[i] = llm.ImageData{ID: i, Data: req.Images[i]}
 	}
 
 	prompt := req.Prompt
@@ -266,9 +247,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 			for _, i := range images {
 				imgPrompt := ""
-				if isMllama {
-					imgPrompt = "<|image|>"
-				}
 				msgs = append(msgs, api.Message{Role: "user", Content: fmt.Sprintf("[img-%d]"+imgPrompt, i.ID)})
 			}
 
@@ -293,8 +271,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 		prompt = b.String()
 	}
-
-	slog.Debug("generate request", "images", len(images), "prompt", prompt)
 
 	ch := make(chan any)
 	go func() {
@@ -1169,6 +1145,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	corsConfig.AllowOrigins = envconfig.AllowedOrigins()
 
 	r := gin.Default()
+	r.HandleMethodNotAllowed = true
 	r.Use(
 		cors.New(corsConfig),
 		allowedHostsMiddleware(s.addr),
@@ -1224,26 +1201,8 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 }
 
 func Serve(ln net.Listener) error {
-	level := slog.LevelInfo
-	if envconfig.Debug() {
-		level = slog.LevelDebug
-	}
-
+	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
 	slog.Info("server config", "env", envconfig.Values())
-	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level:     level,
-		AddSource: true,
-		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
-			if attr.Key == slog.SourceKey {
-				source := attr.Value.Any().(*slog.Source)
-				source.File = filepath.Base(source.File)
-			}
-
-			return attr
-		},
-	})
-
-	slog.SetDefault(slog.New(handler))
 
 	blobsDir, err := GetBlobsPath("")
 	if err != nil {
@@ -1322,6 +1281,10 @@ func Serve(ln net.Listener) error {
 
 	s.sched.Run(schedCtx)
 
+	// register the experimental webp decoder
+	// so webp images can be used in multimodal inputs
+	image.RegisterFormat("webp", "RIFF????WEBP", webp.Decode, webp.DecodeConfig)
+
 	// At startup we retrieve GPU information so we can get log messages before loading a model
 	// This will log warnings to the log in case we have problems with detected GPUs
 	gpus := discover.GetGPUInfo()
@@ -1339,31 +1302,29 @@ func Serve(ln net.Listener) error {
 
 func waitForStream(c *gin.Context, ch chan any) {
 	c.Header("Content-Type", "application/json")
+	var latest api.ProgressResponse
 	for resp := range ch {
 		switch r := resp.(type) {
 		case api.ProgressResponse:
-			if r.Status == "success" {
-				c.JSON(http.StatusOK, r)
-				return
-			}
+			latest = r
 		case gin.H:
 			status, ok := r["status"].(int)
 			if !ok {
 				status = http.StatusInternalServerError
 			}
-			if errorMsg, ok := r["error"].(string); ok {
-				c.JSON(status, gin.H{"error": errorMsg})
-				return
-			} else {
-				c.JSON(status, gin.H{"error": "unexpected error format in progress response"})
-				return
+			errorMsg, ok := r["error"].(string)
+			if !ok {
+				errorMsg = "unknown error"
 			}
+			c.JSON(status, gin.H{"error": errorMsg})
+			return
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected progress response"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "unknown message type"})
 			return
 		}
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected end of progress response"})
+
+	c.JSON(http.StatusOK, latest)
 }
 
 func streamResponse(c *gin.Context, ch chan any) {
@@ -1512,6 +1473,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if req.Messages[0].Role != "system" && m.System != "" {
 		msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
 	}
+	msgs = filterThinkTags(msgs, m)
 
 	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, req.Tools)
 	if err != nil {
@@ -1519,8 +1481,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
-	slog.Debug("chat request", "images", len(images), "prompt", prompt)
 
 	ch := make(chan any)
 	go func() {
@@ -1639,4 +1599,24 @@ func handleScheduleError(c *gin.Context, name string, err error) {
 	default:
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 	}
+}
+
+var thinkTagRegexp = regexp.MustCompile(`<think>(?s).*?</think>(\n)*`)
+
+func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
+	if m.Config.ModelFamily == "qwen3" || model.ParseName(m.Name).Model == "deepseek-r1" {
+		finalUserIndex := -1
+		for i, msg := range msgs {
+			if msg.Role == "user" {
+				finalUserIndex = i
+			}
+		}
+
+		for i, msg := range msgs {
+			if msg.Role == "assistant" && i < finalUserIndex {
+				msgs[i].Content = thinkTagRegexp.ReplaceAllString(msg.Content, "")
+			}
+		}
+	}
+	return msgs
 }
