@@ -1017,17 +1017,6 @@ func (t *Tensor) Sigmoid(ctx ml.Context) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Unpad(ctx ml.Context, shape ...int) ml.Tensor {
-	if len(shape) != 4 {
-		panic("expected 4 dimensions")
-	}
-
-	return &Tensor{
-		b: t.b,
-		t: C.ggml_unpad(ctx.(*Context).ctx, t.t, C.int(shape[0]), C.int(shape[1]), C.int(shape[2]), C.int(shape[3])),
-	}
-}
-
 func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	switch len(shape) {
 	case 1:
