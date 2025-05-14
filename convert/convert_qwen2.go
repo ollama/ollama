@@ -12,9 +12,9 @@ type qwen2Model struct {
 	NumKeyValueHeads      uint32  `json:"num_key_value_heads"`
 	RopeTheta             float32 `json:"rope_theta"`
 	RopeScaling           struct {
-		Type                          string     `json:"type"`
-		Factor                        ropeFactor `json:"factor"`
-		OriginalMaxPositionEmbeddings uint32     `json:"original_max_position_embeddings"`
+		Type                          string  `json:"type"`
+		Factor                        float32 `json:"factor"`
+		OriginalMaxPositionEmbeddings uint32  `json:"original_max_position_embeddings"`
 	} `json:"rope_scaling"`
 	RMSNormEPS float32 `json:"rms_norm_eps"`
 }
