@@ -19,7 +19,7 @@ func TestVisionModels(t *testing.T) {
 	}
 	testCases := []testCase{
 		{
-			model: "llava:7b",
+			model: "qwen2.5vl",
 		},
 		{
 			model: "llama3.2-vision",
@@ -60,6 +60,7 @@ func TestVisionModels(t *testing.T) {
 }
 
 func TestIntegrationSplitBatch(t *testing.T) {
+	skipUnderMinVRAM(t, 6)
 	image, err := base64.StdEncoding.DecodeString(imageEncoding)
 	require.NoError(t, err)
 	req := api.GenerateRequest{
