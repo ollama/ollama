@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
 	"slices"
 	"strings"
 
@@ -653,24 +652,15 @@ func (llm GGML) VisionGraphSize() (weights, graphSize uint64) {
 			numPatches*numPatches*headCount)
 	case "qwen25vl":
 		maxPixels := uint64(llm.KV().Uint("vision.max_pixels", 28*28*1280))
-		mergeSize := uint64(llm.KV().Uint("vision.spatial_merge_size", 2))
-		temporalPatchSize := uint64(2)
 
-		// Calculate max possible patches based on max_pixels
-		maxHeight := uint64(math.Sqrt(float64(maxPixels)))
-		maxWidth := maxPixels / maxHeight
-		maxGridHeight := maxHeight / patchSize
-		maxGridWidth := maxWidth / patchSize
-		// Account for merged patches (2x2 grid)
-		numPatches := (maxGridHeight * maxGridWidth) / (mergeSize * mergeSize)
+		numPatches := maxPixels / (patchSize * patchSize)
 
-		// Calculate graph size based on typical operations in ProcessImage and createPatches
 		graphSize = 4 * (maxPixels*numChannels + // Original image storage
 			// Normalized pixels
 			maxPixels*numChannels +
-			// Patches storage (numPatches * channels * temporalPatchSize * patchSize^2)
-			numPatches*numChannels*temporalPatchSize*patchSize*patchSize +
-			// Self-attention calculations (similar to other architectures)
+			// Patches storage (numPatches * channels * patchSize^2)
+			numPatches*numChannels*patchSize*patchSize +
+			// Self-attention calculations
 			numPatches*numPatches*headCount +
 			// Additional buffer for processing
 			embeddingLength*numPatches)
