@@ -197,6 +197,8 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 		conv = &bertModel{}
 	case "CohereForCausalLM":
 		conv = &commandrModel{}
+	case "MiniCPM_o_2_6ForCausalLM":
+		conv = &minicpm_o_2_6Model{}
 	default:
 		return fmt.Errorf("unsupported architecture %q", p.Architectures[0])
 	}
