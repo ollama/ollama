@@ -747,10 +747,37 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 				case float64:
 					v = fmt.Sprintf("%g", vData)
 				case []any:
-					n := min(len(vData), 3)
-					v = fmt.Sprintf("%v", vData[:n])
-					if len(vData) > n {
-						v = strings.TrimSuffix(v, "]") + " ...]"
+					targetWidth := 10 // Small width where we are displaying the data in a column
+
+					var itemsToShow int
+					totalWidth := 1 // Start with 1 for opening bracket
+
+					// Find how many we can fit
+					for i := range vData {
+						itemStr := fmt.Sprintf("%v", vData[i])
+						width := runewidth.StringWidth(itemStr)
+
+						// Add separator width (", ") for all items except the first
+						if i > 0 {
+							width += 2
+						}
+
+						// Check if adding this item would exceed our width limit
+						if totalWidth+width > targetWidth && i > 0 {
+							break
+						}
+
+						totalWidth += width
+						itemsToShow++
+					}
+
+					// Format the output
+					if itemsToShow < len(vData) {
+						v = fmt.Sprintf("%v", vData[:itemsToShow])
+						v = strings.TrimSuffix(v, "]")
+						v += fmt.Sprintf(" ...+%d more]", len(vData)-itemsToShow)
+					} else {
+						v = fmt.Sprintf("%v", vData)
 					}
 				default:
 					v = fmt.Sprintf("%T", vData)
