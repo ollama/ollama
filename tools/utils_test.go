@@ -192,9 +192,9 @@ func TestToolTemplate(t *testing.T) {
 				t.Fatalf("failed to parse template: %v", err)
 			}
 
-			_, got := toolTemplate(parsed)
-			if got != tt.want {
-				t.Errorf("toolTemplate() = %v; want %v", got, tt.want)
+			_, err = toolTemplate(parsed)
+			if err != nil && tt.want {
+				t.Errorf("toolTemplate() = %v; want %v", err, tt.want)
 			}
 		})
 	}

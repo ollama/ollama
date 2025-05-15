@@ -3,6 +3,7 @@ package tools
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -197,11 +198,25 @@ func TestParseToolCalls(t *testing.T) {
 			expectedTokens:   "some tokens after call",
 		},
 		{
+			name:             "qwen2.5-coder tool calls with initial text",
+			model:            "qwen2.5-coder",
+			output:           `some tokens before call [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}, {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
+			expectedToolCall: []api.ToolCall{},
+			expectedTokens:   `some tokens before call [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}, {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
+		},
+		{
 			name:             "qwen2.5 tool calls with prefix and trailing text",
 			model:            "qwen2.5-coder",
 			output:           `<tool_call> [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}, {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}] </tool_call> some tokens after call`,
 			expectedToolCall: []api.ToolCall{t1, t2},
 			expectedTokens:   "",
+		},
+		{
+			name:             "qwen2.5 tool calls with prefix and initial text",
+			model:            "qwen2.5-coder",
+			output:           `some tokens before call <tool_call> [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}, {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}] </tool_call>`,
+			expectedToolCall: []api.ToolCall{t1, t2},
+			expectedTokens:   "some tokens before call",
 		},
 		{
 			name:             "qwen2.5 tool calls without prefix and valid tool call",
@@ -356,9 +371,9 @@ func TestParseToolCalls(t *testing.T) {
 							} else if len(toolCalls) > 0 {
 								got = append(got, toolCalls...)
 								add = false
-							} else {
-								add = false
 							}
+						} else if errors.Is(err, ErrAccumulateMore) {
+							add = false
 						}
 					}
 					if add {
@@ -388,8 +403,7 @@ func TestParseJSONToolCalls(t *testing.T) {
 		input         string
 		parser        *Parser
 		wantToolCalls []api.ToolCall
-		wantPartial   bool
-		wantValid     bool
+		wantErr       error
 	}{
 		{
 			name:   "valid single tool call",
@@ -405,32 +419,28 @@ func TestParseJSONToolCalls(t *testing.T) {
 					},
 				},
 			},
-			wantPartial: false,
-			wantValid:   true,
+			wantErr: nil,
 		},
 		{
 			name:          "incomplete JSON",
 			input:         `{"name": "test_tool", "arguments": {"arg1": `,
 			parser:        &Parser{name: "name", arguments: "arguments"},
 			wantToolCalls: nil,
-			wantPartial:   true,
-			wantValid:     false,
+			wantErr:       ErrAccumulateMore,
 		},
 		{
 			name:          "invalid JSON",
 			input:         `not json at all`,
 			parser:        &Parser{name: "name", arguments: "arguments"},
 			wantToolCalls: nil,
-			wantPartial:   false,
-			wantValid:     false,
+			wantErr:       ErrInvalidToolCall,
 		},
 		{
 			name:          "missing required fields",
 			input:         `{"other": "field"}`,
 			parser:        &Parser{name: "name", arguments: "arguments"},
 			wantToolCalls: nil,
-			wantPartial:   false,
-			wantValid:     false,
+			wantErr:       ErrInvalidToolCall,
 		},
 		{
 			name: "multiple tool calls in array",
@@ -457,21 +467,20 @@ func TestParseJSONToolCalls(t *testing.T) {
 					},
 				},
 			},
-			wantPartial: false,
-			wantValid:   true,
+			wantErr: nil,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotCalls, gotPartial := tt.parser.parseJSONToolCalls(tt.input)
+			gotCalls, err := tt.parser.parseJSONToolCalls(tt.input)
 
-			if gotPartial != tt.wantPartial {
-				t.Errorf("parseJSONToolCalls() partial = %v, want %v", gotPartial, tt.wantPartial)
+			if err != tt.wantErr {
+				t.Errorf("parseJSONToolCalls() error = %v, want %v", err, tt.wantErr)
 			}
 
-			if len(gotCalls) != 0 != tt.wantValid {
-				t.Errorf("parseJSONToolCalls() valid = %v, want %v", len(gotCalls) == 0, tt.wantValid)
+			if len(gotCalls) != 0 && tt.wantErr != nil {
+				t.Errorf("parseJSONToolCalls() valid = %v, want %v", len(gotCalls) == 0, tt.wantErr == nil)
 			}
 
 			if diff := cmp.Diff(gotCalls, tt.wantToolCalls); diff != "" {

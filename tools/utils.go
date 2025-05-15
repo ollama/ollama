@@ -142,8 +142,8 @@ func toolPrefix(tmpl *gotmpl.Template) string {
 //
 // Returns:
 //   - *gotmpl.Template: The subtree containing the .ToolCalls range
-//   - bool: Whether a .ToolCalls range was found in the template
-func toolTemplate(t *template.Template) (*gotmpl.Template, bool) {
+//   - error: Error if parsing failed
+func toolTemplate(t *template.Template) (*gotmpl.Template, error) {
 	tmpl := t.Subtree(func(n parse.Node) bool {
 		if t, ok := n.(*parse.RangeNode); ok {
 			return slices.Contains(template.Identifiers(t.Pipe), "ToolCalls")
@@ -153,20 +153,20 @@ func toolTemplate(t *template.Template) (*gotmpl.Template, bool) {
 	})
 
 	if tmpl == nil {
-		return nil, false
+		return nil, errors.New("failed to find tool template")
 	}
 
-	return tmpl, true
+	return tmpl, nil
 }
 
 // suffixOverlap returns the length of the longest suffix overlap between two strings
 //
 // Returns:
 //   - int: The length of the longest suffix overlap
-func suffixOverlap(s, delim string) int {
-	max := min(len(delim), len(s))
+func suffixOverlap(s, prefix string) int {
+	max := min(len(prefix), len(s))
 	for i := max; i > 0; i-- {
-		if strings.HasSuffix(s, delim[:i]) {
+		if strings.HasSuffix(s, prefix[:i]) {
 			return i
 		}
 	}
