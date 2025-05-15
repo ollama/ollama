@@ -1483,8 +1483,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	slog.Debug("chat request", "images", len(images), "prompt", prompt)
-
 	var toolParser tools.Parser
 	if len(req.Tools) > 0 {
 		toolParser, err = tools.NewParser(m.Template.Template)
@@ -1539,6 +1537,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					}
 				} else if errors.Is(err, tools.ErrAccumulateMore) {
 					return
+				} else {
+					slog.Debug("tools: error", "error", err)
 				}
 			}
 			ch <- res
