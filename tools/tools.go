@@ -14,25 +14,35 @@ import (
 	"github.com/ollama/ollama/template"
 )
 
+// Sentinel errors for parsing states
+var (
+	ErrPartialPrefix = errors.New("partial prefix detected")
+
+	ErrPrefixNotFound = errors.New("prefix not found")
+
+	ErrInvalidToolCall = errors.New("invalid tool call format")
+
+	ErrAccumulateMore = errors.New("need to accumulate more content")
+)
+
 type Parser struct {
-	greedyParse   bool
-	prefixFound   bool
-	prefixPartial bool
-	tmpl          *gotmpl.Template
-	sb            *strings.Builder
-	prefix        string
-	index         int
-	name          string
-	arguments     string
-	Done          bool
+	greedyParse bool
+	prefixFound bool
+	tmpl        gotmpl.Template
+	sb          strings.Builder
+	prefix      string
+	index       int
+	name        string
+	arguments   string
+	Done        bool
 }
 
-// parseJSONToolCalls attempts to parse a JSON string into a slice of ToolCalls.
+// parseJSONToolCalls attempts to parse a JSON string into a slice ToolCalls.
 // It first tries to incrementally decode the JSON to handle partial inputs.
 // Returns:
 //   - []api.ToolCall: The parsed tool calls if successful
-//   - bool: True if JSON is incomplete and needs more input
-func (p *Parser) parseJSONToolCalls(s string) ([]api.ToolCall, bool) {
+//   - error: ErrPartialJSON if JSON is incomplete, ErrInvalidToolCall if invalid, or nil if successful
+func (p *Parser) parseJSONToolCalls(s string) ([]api.ToolCall, error) {
 	// First try incremental decoding to handle partial JSON
 	dec := jsontext.NewDecoder(strings.NewReader(s))
 	if got, err := dec.ReadValue(); err == nil {
@@ -41,22 +51,18 @@ func (p *Parser) parseJSONToolCalls(s string) ([]api.ToolCall, bool) {
 
 	// Attempt full unmarshal of the JSON
 	var resp any
-	err := jsonv2.Unmarshal([]byte(s), &resp)
-	if err != nil {
-		// Handle incomplete JSON cases
-		if errors.Is(err, io.ErrUnexpectedEOF) || err.Error() == "unexpected end of JSON input" {
-			slog.Debug("incomplete JSON detected", "input", s)
-			return nil, true
-		}
+	if err := jsonv2.Unmarshal([]byte(s), &resp); errors.Is(err, io.ErrUnexpectedEOF) {
+		slog.Debug("incomplete JSON detected", "input", s)
+		return nil, ErrAccumulateMore
+	} else if err != nil {
 		slog.Debug("failed to unmarshal response", "error", err)
-		return nil, false
+		return nil, ErrInvalidToolCall
 	}
 
 	// Collect all nested objects that could contain tool calls
-	var objs []map[string]any
-	objs = append(objs, collect(resp)...)
+	objs := collect(resp)
 	if len(objs) == 0 {
-		return nil, false
+		return nil, ErrInvalidToolCall
 	}
 
 	var toolCalls []api.ToolCall
@@ -75,59 +81,56 @@ func (p *Parser) parseJSONToolCalls(s string) ([]api.ToolCall, bool) {
 
 	// Valid JSON, no tool calls found
 	if len(toolCalls) == 0 {
-		return nil, false
+		return nil, ErrInvalidToolCall
 	}
 
-	return toolCalls, false
+	return toolCalls, nil
 }
 
 // checkPrefix processes a string to find and handle a prefix pattern.
 //
 // Returns:
 //   - The processed string with prefix removed if found
-//   - Whether the prefix was found at the start of the string
-//   - Whether to continue parsing
-func (p *Parser) checkPrefix(s string) (string, bool, bool) {
+//   - error: ErrPartialPrefix if prefix is incomplete, ErrPrefixNotFound if not found, or nil if successful
+func (p *Parser) checkPrefix(s string) (string, error) {
 	// Keep original for overlap checks
 	original := s
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return "", false, true
+		return "", nil
 	}
 
 	// If no prefix defined, just return trimmed string
 	if p.prefix == "" {
-		return s, false, true
+		return s, nil
 	}
 
 	// Check for prefix at start of string
 	if processedStr, hasPrefix := strings.CutPrefix(s, p.prefix); hasPrefix {
 		// Found prefix at start - accumulate for potential tool
-		return processedStr, true, true
+		p.prefixFound = true
+		return processedStr, nil
 	}
 
 	// Check if prefix overlaps end of string
 	if overlap := suffixOverlap(original, p.prefix); overlap > 0 {
-		p.prefixPartial = true
 		// Return everything except overlapping portion
 		p.sb.Reset()
 		p.sb.WriteString(original[len(original)-overlap:])
-		return original[0 : len(original)-overlap], false, false
+		return original[0 : len(original)-overlap], ErrAccumulateMore
 	}
 
 	// Check if prefix appears in middle of string
 	if idx := strings.Index(original, p.prefix); idx != -1 {
-		p.prefixPartial = true
 		// Save remainder starting at prefix for next pass
 		p.sb.Reset()
 		p.sb.WriteString(strings.TrimSpace(original[idx:]))
 		// Return everything before prefix
-		return original[:idx], false, false
+		return original[:idx], ErrAccumulateMore
 	}
 
-	// No prefix found
-	p.prefixPartial = false
-	return s, false, true
+	// No partial prefix found
+	return s, nil
 }
 
 // Add processes a string input to parse tool calls and content.
@@ -136,57 +139,45 @@ func (p *Parser) checkPrefix(s string) (string, bool, bool) {
 // Returns:
 //   - tools: Any parsed tool calls
 //   - content: Non-tool call content
-//   - err: Error if parsing failed
+//   - error: One of the sentinel errors or nil if successful
 func (p *Parser) Add(s string) (tools []api.ToolCall, content string, err error) {
-	if len(s) == 0 {
-		return nil, "", nil
-	}
-
 	p.sb.WriteString(s)
 	s = p.sb.String()
 
 	// Check for prefix pattern in input
-	s, prefixFound, shouldContinue := p.checkPrefix(s)
-	if !shouldContinue {
+	s, err = p.checkPrefix(s)
+	if err != nil {
 		if s != "" {
 			// Return content before prefix
 			return nil, s, nil
 		}
 		// Need more input to complete prefix
-		return nil, "", nil
-	}
-
-	// Update prefix found state
-	if prefixFound {
-		p.prefixFound = true
+		return nil, "", ErrAccumulateMore
 	}
 
 	// Exit if prefix exists in template, greedy parsing is off, and prefix not found
 	if !p.greedyParse && !p.prefixFound {
 		p.sb.Reset()
-		return nil, "", errors.New("prefix not found")
+		return nil, "", ErrPrefixNotFound
 	}
 
-	toolCalls, isPartial := p.parseJSONToolCalls(s)
-	if isPartial {
-		// Need more input to complete JSON
-		return nil, "", nil
-	}
-
-	// Do not try greedy parsing if partial JSON not found
-	p.greedyParse = false
-
-	// Handle invalid tool call format
-	if len(toolCalls) == 0 {
-		p.sb.Reset()
-		if p.prefix == "" {
-			p.Done = true
+	toolCalls, err := p.parseJSONToolCalls(s)
+	if err != nil {
+		if errors.Is(err, ErrAccumulateMore) {
+			return nil, "", err
+		} else {
+			p.sb.Reset()
+			// Do not try greedy parsing if JSON not found
+			p.greedyParse = false
+			if p.prefix == "" {
+				p.Done = true
+			}
+			if p.prefixFound {
+				// Drop tokens since prefix was found
+				return nil, "", ErrAccumulateMore
+			}
+			return nil, s, nil
 		}
-		if p.prefixFound {
-			// Drop tokens since prefix was found
-			return nil, "", nil
-		}
-		return nil, s, nil
 	}
 
 	for _, tc := range toolCalls {
@@ -207,21 +198,15 @@ func (p *Parser) Add(s string) (tools []api.ToolCall, content string, err error)
 // prefix, and field names from the template to use for parsing tool calls from model output.
 //
 // Returns an error if the template does not contain valid tool call formatting.
-func NewParser(templateToProcess *gotmpl.Template) (*Parser, error) {
+func NewParser(templateToProcess *gotmpl.Template) (Parser, error) {
 	parsed, err := template.Parse(templateToProcess.Root.String())
 	if err != nil {
-		return nil, err
-	}
-	if parsed == nil {
-		return nil, errors.New("failed to parse template")
+		return Parser{}, err
 	}
 
-	tt, tc := toolTemplate(parsed)
-	if !tc {
-		return nil, errors.New("failed to find tool calls in template")
-	}
-	if tt == nil {
-		return nil, errors.New("failed to find tool template")
+	tt, err := toolTemplate(parsed)
+	if err != nil {
+		return Parser{}, err
 	}
 
 	tp := toolPrefix(templateToProcess)
@@ -229,12 +214,12 @@ func NewParser(templateToProcess *gotmpl.Template) (*Parser, error) {
 
 	name, arguments, err := extractToolArgs(tt)
 	if err != nil {
-		return nil, err
+		return Parser{}, err
 	}
 
-	return &Parser{
-		tmpl:        tt,
-		sb:          &strings.Builder{},
+	return Parser{
+		tmpl:        *tt,
+		sb:          strings.Builder{},
 		prefix:      tp,
 		greedyParse: true,
 		name:        name,
