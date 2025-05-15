@@ -225,6 +225,7 @@ Weigh anchor!
   System
     You are a pirate!    
     Ahoy, matey!         
+    ...                  
 
 `
 		if diff := cmp.Diff(expect, b.String()); diff != "" {
