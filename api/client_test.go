@@ -166,6 +166,7 @@ func TestClientDo(t *testing.T) {
 		name     string
 		response any
 		wantErr  string
+		hook     RequestHookFunc
 	}{
 		{
 			name: "immediate error response",
@@ -193,6 +194,19 @@ func TestClientDo(t *testing.T) {
 				Success: true,
 			},
 		},
+		{
+			name: "successful response with hook",
+			response: struct {
+				ID      string `json:"id"`
+				Success bool   `json:"success"`
+			}{
+				ID:      "msg_123",
+				Success: true,
+			},
+			hook: func(r *http.Request) {
+				r.Header.Set("Authorization", "Bearer X")
+			},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -209,6 +223,18 @@ func TestClientDo(t *testing.T) {
 					return
 				}
 
+				authHeader := r.Header.Get("Authorization")
+				if (tc.hook == nil && authHeader != "") || (tc.hook != nil && authHeader != "Bearer X") {
+					w.WriteHeader(http.StatusInternalServerError)
+					err := json.NewEncoder(w).Encode(map[string]string{
+						"error": fmt.Sprintf("got Authorization header %q", authHeader),
+					})
+					if err != nil {
+						t.Fatal("failed to encode error response:", err)
+					}
+					return
+				}
+
 				w.Header().Set("Content-Type", "application/json")
 				if err := json.NewEncoder(w).Encode(tc.response); err != nil {
 					t.Fatalf("failed to encode response: %v", err)
@@ -217,6 +243,7 @@ func TestClientDo(t *testing.T) {
 			defer ts.Close()
 
 			client := NewClient(&url.URL{Scheme: "http", Host: ts.Listener.Addr().String()}, http.DefaultClient)
+			client.Hook = tc.hook
 
 			var resp struct {
 				ID      string `json:"id"`
