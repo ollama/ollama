@@ -747,11 +747,11 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 				case float64:
 					v = fmt.Sprintf("%g", vData)
 				case []any:
-					n := 3
-					if len(vData) < n {
-						n = len(vData)
-					}
+					n := min(len(vData), 3)
 					v = fmt.Sprintf("%v", vData[:n])
+					if len(vData) > n {
+						v = strings.TrimSuffix(v, "]") + " ...]"
+					}
 				default:
 					v = fmt.Sprintf("%T", vData)
 				}
@@ -772,10 +772,19 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 
 	head := func(s string, n int) (rows [][]string) {
 		scanner := bufio.NewScanner(strings.NewReader(s))
-		for scanner.Scan() && (len(rows) < n || n < 0) {
-			if text := scanner.Text(); text != "" {
-				rows = append(rows, []string{"", strings.TrimSpace(text)})
+		count := 0
+		for scanner.Scan() {
+			text := strings.TrimSpace(scanner.Text())
+			if text == "" {
+				continue
 			}
+			count++
+			if n < 0 || count <= n {
+				rows = append(rows, []string{"", text})
+			}
+		}
+		if n >= 0 && count > n {
+			rows = append(rows, []string{"", "..."})
 		}
 		return
 	}
