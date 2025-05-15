@@ -182,11 +182,12 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 		}
 	}
 
+	slog.Log(context.TODO(), logutil.LevelTrace, "encoded", "string", s, "ids", ids)
+
 	if addSpecial && len(ids) > 0 {
 		ids = spm.vocab.addSpecials(ids)
 	}
 
-	slog.Log(context.TODO(), logutil.LevelTrace, "encoded", "ids", ids)
 	return ids, nil
 }
 
@@ -245,6 +246,6 @@ func (spm SentencePieceModel) Decode(ids []int32) (string, error) {
 		}
 	}
 
-	slog.Log(context.TODO(), logutil.LevelTrace, "decoded", "string", sb.String())
+	slog.Log(context.TODO(), logutil.LevelTrace, "decoded", "ids", ids, "string", sb.String())
 	return sb.String(), nil
 }
