@@ -1282,7 +1282,7 @@ func NewCLI() *cobra.Command {
 	}
 
 	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\"")
-	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_0)")
+	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_K_M)")
 
 	showCmd := &cobra.Command{
 		Use:     "show MODEL",
