@@ -915,6 +915,8 @@ func (t *Tensor) RMSNorm(ctx ml.Context, w ml.Tensor, eps float32) ml.Tensor {
 func (t *Tensor) Pad(ctx ml.Context, shape ...int) ml.Tensor {
 	if len(shape) != 4 {
 		panic("expected 4 dimensions")
+	} else if shape[3] != 0 {
+		panic("cuda does not support 4d tensors")
 	}
 
 	return &Tensor{

@@ -3,6 +3,7 @@ package mllama
 import (
 	"bytes"
 	"image"
+	"slices"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -73,12 +74,16 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 		return nil, err
 	}
 
-	pixelValues, err := ctx.Input().FromFloatSlice(f32s, m.imageSize, m.imageSize, m.numChannels, ratio.numTiles())
+	if ratio.numTiles() < m.maxNumTiles {
+		// Pad tiles to maxNumTiles
+		f32s = slices.Grow(f32s, m.imageSize*m.imageSize*m.numChannels*m.maxNumTiles)
+		f32s = f32s[:m.imageSize*m.imageSize*m.numChannels*m.maxNumTiles]
+	}
+
+	pixelValues, err := ctx.Input().FromFloatSlice(f32s, m.imageSize, m.imageSize, m.numChannels, m.maxNumTiles)
 	if err != nil {
 		return nil, err
 	}
-
-	pixelValues = pixelValues.Pad(ctx, 0, 0, 0, m.ImageProcessor.maxNumTiles-ratio.numTiles())
 
 	aspectRatio, err := ctx.Input().FromIntSlice([]int32{int32(ratio.rank)}, 1)
 	if err != nil {
