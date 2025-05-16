@@ -51,6 +51,7 @@ Here are some example models that can be downloaded:
 ### Windows
 
 [Download](https://ollama.com/download/OllamaSetup.exe)
+[Windows installation guide](../installation/windows.md)
 
 ### Linux
 
@@ -58,11 +59,13 @@ Here are some example models that can be downloaded:
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-[Manual install instructions](./linux.md)
+[Manual install instructions](../installation/linux.md)
 
 ### Docker
 
 The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
+[Docker installation guide](../installation/docker.md).
+
 
 ### Libraries
 

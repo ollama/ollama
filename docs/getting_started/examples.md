@@ -18,7 +18,7 @@ These examples demonstrate how to use the Ollama JavaScript library to interact 
 
 Ollama provides OpenAI compatibility, allowing you to use Ollama with libraries and tools designed for OpenAI's API.
 
-For more information, see the [OpenAI Compatibility](../reference/openai.md) documentation.
+For more information, see the [OpenAI Compatibility](../devs/openai.md) documentation.
 
 ## Community examples
 

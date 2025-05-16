@@ -84,7 +84,7 @@ When Ollama starts up, it takes inventory of the GPUs present in the system to d
 
 #### Linux NVIDIA Troubleshooting
 
-If you are using a container to run Ollama, make sure you've set up the container runtime first as described in the [Docker documentation](../getting_started/docker.md).
+If you are using a container to run Ollama, make sure you've set up the container runtime first as described in the [Docker documentation](../installation/docker.md).
 
 Sometimes Ollama can have difficulties initializing the GPU. When you check the server logs, this can show up as various error codes, such as "3" (not initialized), "46" (device unavailable), "100" (no device), "999" (unknown), or others. The following troubleshooting techniques may help resolve the problem:
 

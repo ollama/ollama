@@ -5,11 +5,12 @@ Ollama is available for Linux, macOS, and Windows. Choose your platform below to
 ## Platform-specific Installation Guides
 
 ```{toctree}
-:maxdepth: 1
+:maxdepth: 3
 
 linux
 windows
 docker
+gpu
 ```
 
 ## Quick Links

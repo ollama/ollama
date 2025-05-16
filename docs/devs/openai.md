@@ -106,39 +106,39 @@ except Exception as e:
 ### OpenAI JavaScript Library
 
 ```javascript
-import OpenAI from 'openai'
+import OpenAI from 'docs/devs/openai'
 
 const openai = new OpenAI({
-  baseURL: 'http://localhost:11434/v1/',
+    baseURL: 'http://localhost:11434/v1/',
 
-  // required but ignored
-  apiKey: 'ollama',
+    // required but ignored
+    apiKey: 'ollama',
 })
 
 async function main() {
-  const chatCompletion = await openai.chat.completions.create({
-    messages: [
-      {
-        role: 'user',
-        content: 'Say this is a test',
-      },
-    ],
-    model: 'llama3.2',
-  })
+    const chatCompletion = await openai.chat.completions.create({
+        messages: [
+            {
+                role: 'user',
+                content: 'Say this is a test',
+            },
+        ],
+        model: 'llama3.2',
+    })
 
-  const completion = await openai.completions.create({
-    model: 'llama3.2',
-    prompt: 'Say this is a test',
-  })
+    const completion = await openai.completions.create({
+        model: 'llama3.2',
+        prompt: 'Say this is a test',
+    })
 
-  const models = await openai.models.list()
+    const models = await openai.models.list()
 
-  const model = await openai.models.retrieve('llama3.2')
+    const model = await openai.models.retrieve('llama3.2')
 
-  const embeddings = await openai.embeddings.create({
-    model: 'all-minilm',
-    input: ['why is the sky blue?', 'why is the grass green?'],
-  })
+    const embeddings = await openai.embeddings.create({
+        model: 'all-minilm',
+        input: ['why is the sky blue?', 'why is the grass green?'],
+    })
 }
 
 main()

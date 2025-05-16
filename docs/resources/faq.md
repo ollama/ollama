@@ -94,7 +94,7 @@ If a different directory needs to be used, set the environment variable `OLLAMA_
 
 ### Is my GPU compatible with Ollama?
 
-Please refer to the [GPU documentation](gpu.md) for detailed information about GPU compatibility.
+Please refer to the [GPU documentation](../installation/gpu.md) for detailed information about GPU compatibility.
 
 ### How can I tell if my model was loaded onto the GPU?
 
