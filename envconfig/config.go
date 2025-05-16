@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"bufio"
+	"sync"
 )
 
 // Host returns the scheme and host. Host can be configured via the OLLAMA_HOST environment variable.
@@ -302,7 +304,70 @@ func Values() map[string]string {
 	return vals
 }
 
+var (
+	fileVars map[string]string
+	fileErr error
+	fileOnce sync.Once
+)
+
+func parseEnvLine(raw string) (key, val string, ok bool) {
+	line := strings.TrimSpace(raw)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return "", "", false
+	}
+	if i := strings.Index(line, "#"); i != -1 {
+		line = line[:i]
+	}
+	parts := strings.SplitN(line, "=", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	key = strings.TrimSpace(parts[0])
+	val = strings.Trim(parts[1], `"' `)
+	return key, val, key != ""
+}
+
+func loadEnvFile() {
+	fileVars = make(map[string]string)
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fileErr = err
+		return
+	}
+	path := filepath.Join(home, ".ollama", "config.env")
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		fileErr = err
+		return
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		if k, v, ok := parseEnvLine(scanner.Text()); ok {
+			fileVars[k] = v
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		fileErr = err
+	}
+}
+
 // Var returns an environment variable stripped of leading and trailing quotes or spaces
+// If the environment variable is not set, will return from the config file
 func Var(key string) string {
-	return strings.Trim(strings.TrimSpace(os.Getenv(key)), "\"'")
+	fileOnce.Do(func() {
+		loadEnvFile()
+		if fileErr != nil {
+			slog.Info("failed to load ~/.ollama/config.env", "err", fileErr)
+		}
+	})
+	value := strings.Trim(strings.TrimSpace(os.Getenv(key)), "\"'")
+	if val, ok := fileVars[key]; ok && value == "" {
+		value = strings.Trim(strings.TrimSpace(val), "\"'")
+	}
+	return value
 }
