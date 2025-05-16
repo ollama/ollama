@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"math"
 	"os"
 	"slices"
 	"strconv"
@@ -95,8 +96,18 @@ type Context interface {
 	FromFloatSlice(s []float32, shape ...int) (Tensor, error)
 	FromIntSlice(s []int32, shape ...int) (Tensor, error)
 
+	// Arange creates a 1D tensor with values within an interval (start, stop] increased by step.
+	Arange(start, stop, step float32, dtype DType) Tensor
+
 	Forward(...Tensor) Context
 	Compute(...Tensor)
+
+	// Reserve is analogous to Compute but rather than executing a
+	// graph, simply preallocates memory. Typically called with a
+	// worst case graph to ensure all resources are available for
+	// for future inference.
+	Reserve() error
+
 	MaxGraphNodes() int
 	Close()
 
@@ -106,6 +117,21 @@ type Context interface {
 
 	// Layer returns a context appropriate for creating intermediate tensors
 	Layer(int) Context
+}
+
+// RopeOptions contains optional parameters for RoPE function
+type RopeOptions struct {
+	OriginalContextLen uint32
+}
+
+// RopeOption defines a function that modifies RopeOpts
+type RopeOption func(*RopeOptions)
+
+// WithContextLen sets a custom context length
+func WithContextLen(len uint32) RopeOption {
+	return func(opts *RopeOptions) {
+		opts.OriginalContextLen = len
+	}
 }
 
 type Tensor interface {
@@ -123,6 +149,7 @@ type Tensor interface {
 	Mul(ctx Context, t2 Tensor) Tensor
 	Mulmat(ctx Context, t2 Tensor) Tensor
 	MulmatFullPrec(ctx Context, t2 Tensor) Tensor
+	MulmatID(ctx Context, t2, ids Tensor) Tensor
 
 	Softmax(ctx Context) Tensor
 	LayerNorm(ctx Context, weight, bias Tensor, eps float32) Tensor
@@ -132,7 +159,7 @@ type Tensor interface {
 	AvgPool2D(ctx Context, k, s int, p float32) Tensor
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
-	RoPE(ctx Context, positionIDs, ropeFactors Tensor, dim, ropeType uint32, base, scale float32) Tensor
+	RoPE(ctx Context, positionIDs, ropeFactors Tensor, dim, ropeType uint32, base, scale float32, options ...RopeOption) Tensor
 	IM2Col(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
 	Sin(ctx Context) Tensor
@@ -140,6 +167,7 @@ type Tensor interface {
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context) Tensor
 	SILU(ctx Context) Tensor
+	Sigmoid(ctx Context) Tensor
 
 	Reshape(ctx Context, shape ...int) Tensor
 	View(ctx Context, offset int, shape ...int) Tensor
@@ -148,7 +176,6 @@ type Tensor interface {
 	Set(ctx Context, t2 Tensor, offset int, strides ...int) Tensor
 
 	Pad(ctx Context, shape ...int) Tensor
-	Unpad(ctx Context, shape ...int) Tensor
 
 	Stack(ctx Context, dim int, s ...Tensor) Tensor
 
@@ -158,6 +185,9 @@ type Tensor interface {
 	Rows(ctx Context, t2 Tensor) Tensor
 	Copy(ctx Context, t2 Tensor) Tensor
 	Duplicate(ctx Context) Tensor
+
+	TopK(ctx Context, k int) Tensor
+	Argsort(ctx Context) Tensor
 }
 
 // ScaledDotProductAttention implements a fused attention
@@ -200,35 +230,58 @@ func mul[T number](s ...T) T {
 	return p
 }
 
-type DumpOptions struct {
-	// Items is the number of elements to print at the beginning and end of each dimension.
-	Items int
+type DumpOptions func(*dumpOptions)
 
-	// Precision is the number of decimal places to print. Applies to float32 and float64.
-	Precision int
+// DumpWithPrecision sets the number of decimal places to print. Applies to float32 and float64.
+func DumpWithPrecision(n int) DumpOptions {
+	return func(opts *dumpOptions) {
+		opts.Precision = n
+	}
 }
 
-func Dump(ctx Context, t Tensor, opts ...DumpOptions) string {
-	if len(opts) < 1 {
-		opts = append(opts, DumpOptions{
-			Items:     3,
-			Precision: 4,
-		})
+// DumpWithThreshold sets the threshold for printing the entire tensor. If the number of elements
+// is less than or equal to this value, the entire tensor will be printed. Otherwise, only the
+// beginning and end of each dimension will be printed.
+func DumpWithThreshold(n int) DumpOptions {
+	return func(opts *dumpOptions) {
+		opts.Threshold = n
+	}
+}
+
+// DumpWithEdgeItems sets the number of elements to print at the beginning and end of each dimension.
+func DumpWithEdgeItems(n int) DumpOptions {
+	return func(opts *dumpOptions) {
+		opts.EdgeItems = n
+	}
+}
+
+type dumpOptions struct {
+	Precision, Threshold, EdgeItems int
+}
+
+func Dump(ctx Context, t Tensor, optsFuncs ...DumpOptions) string {
+	opts := dumpOptions{Precision: 4, Threshold: 1000, EdgeItems: 3}
+	for _, optsFunc := range optsFuncs {
+		optsFunc(&opts)
+	}
+
+	if mul(t.Shape()...) <= opts.Threshold {
+		opts.EdgeItems = math.MaxInt
 	}
 
 	switch t.DType() {
 	case DTypeF32:
-		return dump[[]float32](ctx, t, opts[0].Items, func(f float32) string {
-			return strconv.FormatFloat(float64(f), 'f', opts[0].Precision, 32)
+		return dump[[]float32](ctx, t, opts.EdgeItems, func(f float32) string {
+			return strconv.FormatFloat(float64(f), 'f', opts.Precision, 32)
 		})
 	case DTypeF16, DTypeQ80, DTypeQ40:
 		f32 := ctx.Input().Empty(DTypeF32, t.Shape()...)
 		f32 = t.Copy(ctx, f32)
-		return dump[[]float32](ctx, f32, opts[0].Items, func(f float32) string {
-			return strconv.FormatFloat(float64(f), 'f', opts[0].Precision, 32)
+		return dump[[]float32](ctx, f32, opts.EdgeItems, func(f float32) string {
+			return strconv.FormatFloat(float64(f), 'f', opts.Precision, 32)
 		})
 	case DTypeI32:
-		return dump[[]int32](ctx, t, opts[0].Items, func(i int32) string {
+		return dump[[]int32](ctx, t, opts.EdgeItems, func(i int32) string {
 			return strconv.FormatInt(int64(i), 10)
 		})
 	default:

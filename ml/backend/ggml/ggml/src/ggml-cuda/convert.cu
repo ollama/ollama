@@ -1,6 +1,8 @@
 #include "convert.cuh"
 #include "dequantize.cuh"
 
+#include <cstdint>
+
 #define CUDA_Q8_0_NE_ALIGN 2048
 
 template <int qk, int qr, dequantize_kernel_t dequantize_kernel, typename dst_t>
@@ -570,22 +572,49 @@ static void dequantize_row_iq4_xs_cuda(const void * vx, dst_t * y, const int64_t
 }
 
 template <typename src_t, typename dst_t>
-static __global__ void convert_unary(const void * __restrict__ vx, dst_t * __restrict__ y, const int64_t k) {
-    const int64_t i = (int64_t)blockDim.x*blockIdx.x + threadIdx.x;
+static __global__ void convert_unary(
+        const void * __restrict__ vx, dst_t * __restrict__ y, const int64_t ne00, const int64_t ne01, const int64_t ne02,
+        const int64_t s01, const int64_t s02, const int64_t s03) {
+    const int64_t i00 = (int64_t)blockDim.x*blockIdx.x + threadIdx.x;
 
-    if (i >= k) {
+    if (i00 >= ne00) {
         return;
     }
 
-    const src_t * x = (src_t *) vx;
+    const int64_t i01 = blockIdx.y;
+    const int64_t i02 = blockIdx.z % ne02;
+    const int64_t i03 = blockIdx.z / ne02;
 
-    y[i] = x[i];
+    const src_t * x = (const src_t *) vx;
+
+    const int64_t ix = i03*s03 + i02*s02 + i01*s01 + i00;
+    const int64_t iy = ((i03*ne02 + i02)*ne01 + i01)*ne00 + i00;
+    y[iy] = float(x[ix]);
 }
 
 template <typename src_t, typename dst_t>
-static void convert_unary_cuda(const void * __restrict__ vx, dst_t * __restrict__ y, const int64_t k, cudaStream_t stream) {
-    const int num_blocks = (k + CUDA_DEQUANTIZE_BLOCK_SIZE - 1) / CUDA_DEQUANTIZE_BLOCK_SIZE;
-    convert_unary<src_t><<<num_blocks, CUDA_DEQUANTIZE_BLOCK_SIZE, 0, stream>>>(vx, y, k);
+static void convert_unary_cuda(const void * vx, dst_t * y,
+        const int64_t ne00, const int64_t ne01, const int64_t ne02, const int64_t ne03,
+        const int64_t s01, const int64_t s02, const int64_t s03, cudaStream_t stream) {
+    const dim3 num_blocks((ne00 + CUDA_DEQUANTIZE_BLOCK_SIZE - 1) / CUDA_DEQUANTIZE_BLOCK_SIZE, ne01, ne02*ne03);
+    convert_unary<src_t><<<num_blocks, CUDA_DEQUANTIZE_BLOCK_SIZE, 0, stream>>>
+        (vx, y, ne00, ne01, ne02, s01, s02, s03);
+}
+
+template <typename src_t, typename dst_t>
+static void convert_unary_cont_cuda(const void * vx, dst_t * y, const int64_t k, cudaStream_t stream) {
+    convert_unary_cuda<src_t>(vx, y, k, 1, 1, 1, k, k, k, stream);
+}
+
+to_bf16_cuda_t ggml_get_to_bf16_cuda(ggml_type type) {
+    switch (type) {
+        case GGML_TYPE_F32:
+            return convert_unary_cont_cuda<float>;
+        case GGML_TYPE_F16:
+            return convert_unary_cont_cuda<half>;
+        default:
+            return nullptr;
+    }
 }
 
 to_fp16_cuda_t ggml_get_to_fp16_cuda(ggml_type type) {
@@ -632,7 +661,9 @@ to_fp16_cuda_t ggml_get_to_fp16_cuda(ggml_type type) {
         case GGML_TYPE_IQ3_S:
             return dequantize_row_iq3_s_cuda;
         case GGML_TYPE_F32:
-            return convert_unary_cuda<float>;
+            return convert_unary_cont_cuda<float>;
+        case GGML_TYPE_BF16:
+            return convert_unary_cont_cuda<nv_bfloat16>;
         default:
             return nullptr;
     }
@@ -679,7 +710,18 @@ to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type) {
         case GGML_TYPE_IQ3_S:
             return dequantize_row_iq3_s_cuda;
         case GGML_TYPE_F16:
-            return convert_unary_cuda<half>;
+            return convert_unary_cont_cuda<half>;
+        case GGML_TYPE_BF16:
+            return convert_unary_cont_cuda<nv_bfloat16>;
+        default:
+            return nullptr;
+    }
+}
+
+to_fp16_nc_cuda_t ggml_get_to_fp16_nc_cuda(ggml_type type) {
+    switch (type) {
+        case GGML_TYPE_F32:
+            return convert_unary_cuda<float>;
         case GGML_TYPE_BF16:
             return convert_unary_cuda<nv_bfloat16>;
         default:

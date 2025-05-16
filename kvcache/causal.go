@@ -21,6 +21,7 @@ type shiftFn func(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, e
 type Causal struct {
 	DType      ml.DType
 	windowSize int32
+	chunkSize  int32
 
 	opts CausalOptions
 
@@ -97,6 +98,17 @@ func NewSWACache(windowSize int32, shift shiftFn) *Causal {
 	}
 }
 
+func NewChunkedAttentionCache(chunkSize int32, shift shiftFn) *Causal {
+	return &Causal{
+		windowSize: math.MaxInt32,
+		chunkSize:  chunkSize,
+		shiftFn:    shift,
+		ctxs:       make(map[int]ml.Context),
+		keys:       make(map[int]ml.Tensor),
+		values:     make(map[int]ml.Tensor),
+	}
+}
+
 func (c *Causal) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity, maxBatch int) {
 	if c.config == nil {
 		var config ml.CacheConfig
@@ -146,51 +158,60 @@ func (c *Causal) Close() {
 	}
 }
 
-func (c *Causal) StartForward(ctx ml.Context, batch input.Batch) error {
+func (c *Causal) StartForward(ctx ml.Context, batch input.Batch, reserve bool) error {
 	c.curBatchSize = len(batch.Positions)
 	c.curSequences = batch.Sequences
 	c.curPositions = batch.Positions
 	c.opts.Except = nil
 
-	c.updateSlidingWindow()
+	if !reserve {
+		c.updateSlidingWindow()
+
+		var err error
+		c.curLoc, err = c.findStartLoc()
+		if errors.Is(err, ErrKvCacheFull) {
+			c.defrag()
+			c.curLoc, err = c.findStartLoc()
+		}
+		if err != nil {
+			return err
+		}
+
+		c.curCellRange = newRange()
+		for i, pos := range batch.Positions {
+			seq := batch.Sequences[i]
+
+			c.cells[c.curLoc+i] = cacheCell{pos: pos, sequences: []int{seq}}
+
+			seqRange, ok := c.cellRanges[seq]
+			if !ok {
+				seqRange = newRange()
+			}
+
+			if c.curLoc+i > seqRange.max {
+				seqRange.max = c.curLoc + i
+			}
+			if seqRange.max > c.curCellRange.max {
+				c.curCellRange.max = seqRange.max
+			}
+
+			if c.curLoc+i < seqRange.min {
+				seqRange.min = c.curLoc + i
+			}
+			if seqRange.min < c.curCellRange.min {
+				c.curCellRange.min = seqRange.min
+			}
+			c.cellRanges[seq] = seqRange
+		}
+	} else {
+		// If we are reserving memory, don't update any of the cache metadata but set the size
+		// to the worst case.
+		c.curLoc = 0
+		c.curCellRange.min = 0
+		c.curCellRange.max = len(c.cells) - 1
+	}
 
 	var err error
-	c.curLoc, err = c.findStartLoc()
-	if errors.Is(err, ErrKvCacheFull) {
-		c.defrag()
-		c.curLoc, err = c.findStartLoc()
-	}
-	if err != nil {
-		return err
-	}
-
-	c.curCellRange = newRange()
-	for i, pos := range batch.Positions {
-		seq := batch.Sequences[i]
-
-		c.cells[c.curLoc+i] = cacheCell{pos: pos, sequences: []int{seq}}
-
-		seqRange, ok := c.cellRanges[seq]
-		if !ok {
-			seqRange = newRange()
-		}
-
-		if c.curLoc+i > seqRange.max {
-			seqRange.max = c.curLoc + i
-		}
-		if seqRange.max > c.curCellRange.max {
-			c.curCellRange.max = seqRange.max
-		}
-
-		if c.curLoc+i < seqRange.min {
-			seqRange.min = c.curLoc + i
-		}
-		if seqRange.min < c.curCellRange.min {
-			c.curCellRange.min = seqRange.min
-		}
-		c.cellRanges[seq] = seqRange
-	}
-
 	c.curMask, err = c.buildMask(ctx)
 
 	return err
@@ -218,7 +239,7 @@ func (c *Causal) findStartLoc() (int, error) {
 		}
 	}
 
-	return 0, fmt.Errorf("%w (length: %v)", ErrKvCacheFull, len(c.cells))
+	return 0, fmt.Errorf("%w (cache: %v batch: %v)", ErrKvCacheFull, len(c.cells), c.curBatchSize)
 }
 
 func (c *Causal) updateSlidingWindow() {
@@ -291,6 +312,7 @@ func (c *Causal) buildMask(ctx ml.Context) (ml.Tensor, error) {
 		for j := c.curCellRange.min; j <= c.curCellRange.max; j++ {
 			if !slices.Contains(c.cells[j].sequences, c.curSequences[i]) ||
 				(enabled && c.cells[j].pos > c.curPositions[i]) ||
+				c.chunkSize > 0 && c.cells[j].pos < c.curPositions[i]-c.curPositions[i]%c.chunkSize ||
 				c.cells[j].pos < c.curPositions[i]-c.windowSize {
 				mask[i*length+(j-c.curCellRange.min)] = float32(math.Inf(-1))
 			}

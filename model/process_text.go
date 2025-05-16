@@ -2,6 +2,7 @@ package model
 
 import (
 	"cmp"
+	"context"
 	"iter"
 	"log/slog"
 	"slices"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/dlclark/regexp2"
 	heap "github.com/emirpasic/gods/v2/trees/binaryheap"
+	"github.com/ollama/ollama/logutil"
 )
 
 type Special int32
@@ -32,11 +34,12 @@ type TextProcessor interface {
 	Encode(s string, addSpecial bool) ([]int32, error)
 	Decode([]int32) (string, error)
 	Is(int32, Special) bool
+	Vocabulary() *Vocabulary
 }
 
 type Vocabulary struct {
 	Values []string
-	Types  []uint32
+	Types  []int32
 	Scores []float32
 	Merges []string
 
@@ -117,11 +120,17 @@ type BytePairEncoding struct {
 	vocab *Vocabulary
 }
 
+var _ TextProcessor = (*BytePairEncoding)(nil)
+
 func NewBytePairEncoding(pre string, vocab *Vocabulary) BytePairEncoding {
 	return BytePairEncoding{
 		pre:   regexp2.MustCompile(pre, regexp2.Unicode|regexp2.RE2),
 		vocab: vocab,
 	}
+}
+
+func (bpe BytePairEncoding) Vocabulary() *Vocabulary {
+	return bpe.vocab
 }
 
 func (bpe BytePairEncoding) Is(id int32, special Special) bool {
@@ -315,6 +324,7 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 		}
 	}
 
+	slog.Log(context.TODO(), logutil.LevelTrace, "encoded", "ids", ids)
 	return ids, nil
 }
 
@@ -342,5 +352,6 @@ func (bpe BytePairEncoding) Decode(ids []int32) (string, error) {
 		}
 	}
 
+	slog.Log(context.TODO(), logutil.LevelTrace, "decoded", "string", sb.String())
 	return sb.String(), nil
 }
