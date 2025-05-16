@@ -1,4 +1,4 @@
-# Installation
+# Install
 
 Ollama is available for Linux, macOS, and Windows. Choose your platform below to get started.
 

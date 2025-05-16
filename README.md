@@ -272,7 +272,7 @@ curl http://localhost:11434/api/chat -d '{
 }'
 ```
 
-See the [API documentation](docs/devs/api.md) for all endpoints.
+See the [API documentation](docs/api.md) for all endpoints.
 
 ## Community Integrations
 

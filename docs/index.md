@@ -10,7 +10,7 @@ Ollama lets you run powerful large language models (LLMs) on your own hardware. 
 - **No cloud required** - your data stays on your device
 - **Easy to use** - [simple commands](./getting_started/quickstart.md) to download and run models
 - **Customizable** - [create](./getting_started/modelfile.md) and [modify](./getting_started/examples.md) your own models
-- **API access** - [integrate](./devs/api.md) with your applications
+- **API access** - [integrate](api.md) with your applications
 
 ## Quick Start
 
@@ -33,16 +33,7 @@ ollama run llama3.2
 
 That's it! You're now chatting with a powerful LLM running on your own hardware.
 
-For more detailed instructions, follow the following guides:
-
-```{toctree}
-:maxdepth: 3
-
-getting_started/quickstart
-getting_started/examples
-getting_started/import
-getting_started/modelfile
-```
+Or see the [quick start guide](./getting_started/quickstart.md) for more details.
 
 ## Documentation
 
@@ -51,9 +42,11 @@ The Ollama documentation provides comprehensive guides and references
 ```{toctree}
 :maxdepth: 3
 
+getting_started/quickstart
+getting_started/index
 installation/index.md
+api
 devs/index.md
 resources/index.md
-
 ```
 

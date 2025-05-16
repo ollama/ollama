@@ -42,7 +42,7 @@ myst_enable_extensions = [
 
 ]
 
-myst_heading_anchors = 5
+myst_heading_anchors = 7
 
 
 # -- Options for HTML output -------------------------------------------------
@@ -55,39 +55,47 @@ html_static_path = ['_static']
 html_logo = "_static/logo/llama.png"
 html_theme_options = {
 
-    "use_edit_page_button": False,
+    "use_edit_page_button": True,
     "github_url": "https://github.com/ollama/ollama",
-    "twitter_url": "https://twitter.com/ollamaAI",
-    "show_toc_level": 2,
+    "show_toc_level": 5,
 
     # Add navigation bar at the top
     "navbar_start": ["navbar-logo"],
     "navbar_center": ["navbar-nav"],
-    "navbar_end": ["navbar-icon-links"],
+    # "navbar_end": ["navbar-icon-links"],
 
     # Configure the top navigation bar
     "navbar_persistent": ["search-button"],
 
     # Define the top-level navigation items
-    "header_links_before_dropdown": 4,
+    "header_links_before_dropdown": 7,
     "icon_links_label": "Quick Links",
 
     # Define the navigation structure
-    "navigation_depth": 3,
-    "collapse_navigation": False,
-    "show_nav_level": 2,
+    "navigation_depth": 7,
+    "collapse_navigation": True,
+    "show_nav_level": 7,
+
+
 
     # Add primary sidebar navigation
     "primary_sidebar_end": ["sidebar-ethical-ads"],
 
     # Configure the top navigation bar with important sections
-    "external_links": [
-        {"name": "Home", "url": "index.html"},
-        {"name": "Install", "url": "installation/index.html"},
-        {"name": "Getting Started", "url": "getting_started/quickstart.html"},
-        {"name": "API Reference", "url": "devs/api.html"},
-        {"name": "Resources", "url": "resources/faq.html"},
-    ],
+    # "external_links": [
+    #     {"name": "Home", "url": "index.html"},
+    #     {"name": "Install", "url": "installation/index.html"},
+    #     {"name": "Getting Started", "url": "getting_started/quickstart.html"},
+    #     {"name": "API Reference", "url": "devs/api.html"},
+    #     {"name": "Resources", "url": "resources/faq.html"},
+    # ],
+
+}
+html_context = {
+    "github_user": "ollama",
+    "github_repo": "ollama",
+    "github_version": "main",
+    "doc_path": "docs",
 }
 
 # -- Options for intersphinx extension ---------------------------------------
