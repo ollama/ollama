@@ -1,9 +1,8 @@
-# For developers
+# Development
 
 Welcome to the Ollama Developer Guide! This section is your starting point for understanding how to build, modify, and contribute to the Ollama project. Whether you're looking to set up a local development environment, understand the build process, or contribute new features, you'll find the necessary information here.
 
 ```{toctree}
-api
 development
 benchmark
 template

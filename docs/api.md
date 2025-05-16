@@ -49,7 +49,7 @@ statistics and additional data from the request.
 Advanced parameters (optional):
 
 - `format`: the format to return a response in. Format can be `json` or a JSON schema
-- `options`: additional model parameters listed in the documentation for the [Modelfile](../getting_started/modelfile.md#valid-parameters-and-values) such as `temperature`
+- `options`: additional model parameters listed in the documentation for the [Modelfile](getting_started/modelfile.md#valid-parameters-and-values) such as `temperature`
 - `system`: system message to (overrides what is defined in the `Modelfile`)
 - `template`: the prompt template to use (overrides what is defined in the `Modelfile`)
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
@@ -533,7 +533,7 @@ The `message` object has the following fields:
 Advanced parameters (optional):
 
 - `format`: the format to return a response in. Format can be `json` or a JSON schema.
-- `options`: additional model parameters listed in the documentation for the [Modelfile](../getting_started/modelfile.md#valid-parameters-and-values) such as `temperature`
+- `options`: additional model parameters listed in the documentation for the [Modelfile](getting_started/modelfile.md#valid-parameters-and-values) such as `temperature`
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 
@@ -981,7 +981,7 @@ and SHA256 digest associated with each blob in the `files` field.
 - `template`: (optional) the prompt template for the model
 - `license`: (optional) a string or list of strings containing the license or licenses for the model
 - `system`: (optional) a string containing the system prompt for the model
-- `parameters`: (optional) a dictionary of parameters for the model (see [Modelfile](../getting_started/modelfile.md#valid-parameters-and-values) for a list of parameters)
+- `parameters`: (optional) a dictionary of parameters for the model (see [Modelfile](getting_started/modelfile.md#valid-parameters-and-values) for a list of parameters)
 - `messages`: (optional) a list of message objects used to create a conversation
 - `stream`: (optional) if `false` the response will be returned as a single response object, rather than a stream of objects
 - `quantize` (optional): quantize a non-quantized (e.g. float16) model
@@ -1567,7 +1567,7 @@ Generate embeddings from a model
 Advanced parameters:
 
 - `truncate`: truncates the end of each input to fit within context length. Returns error if `false` and context length is exceeded. Defaults to `true`
-- `options`: additional model parameters listed in the documentation for the [Modelfile](../getting_started/modelfile.md#valid-parameters-and-values) such as `temperature`
+- `options`: additional model parameters listed in the documentation for the [Modelfile](getting_started/modelfile.md#valid-parameters-and-values) such as `temperature`
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 
 ### Examples
@@ -1711,7 +1711,7 @@ Generate embeddings from a model
 
 Advanced parameters:
 
-- `options`: additional model parameters listed in the documentation for the [Modelfile](../getting_started/modelfile.md#valid-parameters-and-values) such as `temperature`
+- `options`: additional model parameters listed in the documentation for the [Modelfile](getting_started/modelfile.md#valid-parameters-and-values) such as `temperature`
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 
 ### Examples
