@@ -82,7 +82,7 @@ func New(c fs.Config) (model.Model, error) {
 	return &m, nil
 }
 
-func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, error) {
+func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input.Multimodal, error) {
 	if len(m.VisionModel.Layers) == 0 {
 		return nil, model.ErrNoVisionModel
 	}
@@ -108,22 +108,22 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 
 	visionOutputs := m.VisionModel.Forward(ctx, pixelValues)
 	visionOutputs = m.MultiModalProjector.Forward(ctx, visionOutputs, m.imageSize, m.patchSize, m.VisionModel.eps)
-	return visionOutputs, nil
+	return []input.Multimodal{{Tensor: visionOutputs}}, nil
 }
 
 func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 	var result []input.Input
 
 	for _, inp := range inputs {
-		if inp.Multimodal == nil {
+		if len(inp.Multimodal) == 0 {
 			result = append(result, inp)
 		} else {
-			inputMultimodal := inp.Multimodal.(ml.Tensor)
+			inputMultimodal := inp.Multimodal[0].Tensor
 
 			result = append(result,
-				input.Input{Token: 108, SameBatch: inputMultimodal.Dim(1) + 3},               // "\n\n"
-				input.Input{Token: 255999},                                                   // "<start_of_image>""
-				input.Input{Multimodal: inputMultimodal, MultimodalHash: inp.MultimodalHash}, // image data is on the first placeholder
+				input.Input{Token: 108, SameBatch: inputMultimodal.Dim(1) + 3}, // "\n\n"
+				input.Input{Token: 255999},                                     // "<start_of_image>""
+				input.Input{Multimodal: []input.Multimodal{{Tensor: inputMultimodal}}, MultimodalHash: inp.MultimodalHash}, // image data is on the first placeholder
 			)
 
 			// add image token placeholders

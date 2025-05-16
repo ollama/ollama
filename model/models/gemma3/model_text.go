@@ -7,7 +7,6 @@ import (
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
-	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
 )
 
@@ -20,9 +19,6 @@ type TextConfig struct {
 }
 
 type TextModel struct {
-	model.Base
-	model.SentencePieceModel
-
 	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
 	Layers         []TextLayer   `gguf:"blk"`
 	OutputNorm     *nn.RMSNorm   `gguf:"output_norm"`
@@ -45,15 +41,6 @@ func newTextModel(c fs.Config) *TextModel {
 	numBlocks := int(c.Uint("block_count"))
 
 	m := TextModel{
-		SentencePieceModel: model.NewSentencePieceModel(
-			&model.Vocabulary{
-				Values: c.Strings("tokenizer.ggml.tokens"),
-				Scores: c.Floats("tokenizer.ggml.scores"),
-				Types:  c.Ints("tokenizer.ggml.token_type"),
-				BOS:    int32(c.Uint("tokenizer.ggml.bos_token_id")),
-				EOS:    int32(c.Uint("tokenizer.ggml.eos_token_id")),
-			},
-		),
 		Layers: make([]TextLayer, numBlocks),
 		TextConfig: &TextConfig{
 			hiddenSize:     int(c.Uint("embedding_length")),
@@ -178,7 +165,7 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 	// set image embeddings
 	var except []int
 	for _, image := range batch.Multimodal {
-		visionOutputs := image.Multimodal.(ml.Tensor)
+		visionOutputs := image.Multimodal[0].Tensor
 		ctx.Forward(visionOutputs.Copy(ctx, hiddenState.View(ctx, image.Index*hiddenState.Stride(1), visionOutputs.Dim(0)*visionOutputs.Dim(1))))
 
 		for i := range visionOutputs.Dim(1) {
