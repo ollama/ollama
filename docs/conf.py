@@ -42,7 +42,7 @@ myst_enable_extensions = [
 
 ]
 
-myst_heading_anchors = 3
+myst_heading_anchors = 5
 
 
 # -- Options for HTML output -------------------------------------------------
@@ -96,3 +96,7 @@ html_theme_options = {
 intersphinx_mapping = {
     'python': ('https://docs.python.org/3', None),
 }
+
+# -- Warning options ---------------------------------------------------
+suppress_warnings = ['misc.highlighting_failure']  # some highlighting fails (dockerfile, a shell command)
+warning_is_error = True
