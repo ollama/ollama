@@ -103,3 +103,50 @@ func TestSchemaToGrammer(t *testing.T) {
 		})
 	}
 }
+
+
+const growingJSONSchema = `{
+    "type": "object",
+    "properties": {
+        "execSchema": { "type": "object", "additionalProperties": true },
+        "execInstructions": { "type": "string" },
+        "combineSchema": { "type": "object", "additionalProperties": true },
+        "combineInstructions": { "type": "string" },
+        "question": { "type": "string" }
+    }
+}`
+const growingJSONSchemaGrammar = `root ::= "{" space  (execSchema-kv execSchema-rest | execInstructions-kv execInstructions-rest | combineSchema-kv combineSchema-rest | combineInstructions-kv combineInstructions-rest | question-kv )? "}" space
+execSchema-rest ::= ( "," space execInstructions-kv )? execInstructions-rest
+execInstructions-rest ::= ( "," space combineSchema-kv )? combineSchema-rest
+combineInstructions-rest ::= ( "," space question-kv )?
+question-kv ::= "\"question\"" space ":" space string
+combineInstructions-kv ::= "\"combineInstructions\"" space ":" space string
+combineSchema-kv ::= "\"combineSchema\"" space ":" space combineSchema
+execInstructions-kv ::= "\"execInstructions\"" space ":" space string
+combineSchema-rest ::= ( "," space combineInstructions-kv )? combineInstructions-rest
+space ::= | " " | "\n"{1,2} [ \t]{0,20}
+number ::= ("-"? integral-part) ("." decimal-part)? ([eE] [-+]? integral-part)? space
+object ::= "{" space ( string ":" space value ("," space string ":" space value)* )? "}" space
+boolean ::= ("true" | "false") space
+combineSchema ::= object
+string ::= "\"" char* "\"" space
+value ::= object | array | string | number | boolean | null
+integral-part ::= [0] | [1-9] [0-9]{0,15}
+null ::= "null" space
+execSchema-kv ::= "\"execSchema\"" space ":" space execSchema
+array ::= "[" space ( value ("," space value)* )? "]" space
+char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
+decimal-part ::= [0-9]{1,16}
+execSchema ::= object
+`
+
+func TestGrowingSchema(t *testing.T) {
+	g := SchemaToGrammar([]byte(growingJSONSchema))
+	if g == nil {
+		t.Fatal("failed to convert JSON schema to grammar")
+	}
+
+	if string(g) != growingJSONSchemaGrammar {
+		t.Errorf("Mismatch!\ngot =\n%q\nwant:\n%q", g, growingJSONSchemaGrammar)
+	}
+}
