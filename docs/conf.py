@@ -41,6 +41,8 @@ myst_enable_extensions = [
     'tasklist',
 
 ]
+# Note that the new syntax allowed in github markdown denoting [!NOTE] or [!WARNING] is not yet supported
+# by myst-parser. See https://github.com/executablebooks/MyST-Parser/issues/845
 
 myst_heading_anchors = 7
 
