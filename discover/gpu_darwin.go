@@ -19,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 )
 
@@ -224,15 +225,15 @@ func GetGPUInfo() GpuInfoList {
 	info.FreeMemory = info.TotalMemory
 
 	info.MinimumMemory = metalMinimumMemory
-	resp := []GpuInfo{info}
+	resp := []GpuInfo{}
 
-	// // RPC Servers
-	// rpcServersENV := envconfig.RPCServers()
-	// rpcServers := CheckRPCServers(rpcServersENV)
+	// RPC Servers
+	rpcServersENV := envconfig.RPCServers()
+	rpcServers := CheckRPCServers(rpcServersENV)
 
-	// // for _, gpu := range rpcServers {
-	// // 	resp = append(resp, gpu.GpuInfo)
-	// // }
+	for _, gpu := range rpcServers {
+		resp = append(resp, gpu.GpuInfo)
+	}
 
 	return resp
 }

@@ -215,10 +215,12 @@ func llamaProgressCallback(progress C.float, userData unsafe.Pointer) C.bool {
 }
 
 func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
-	// Adding RPC servers to devices
-	rpcServers := C.CString(params.RPCServers)
-	C.add_rpc_devices(rpcServers)
-	C.free(unsafe.Pointer(rpcServers))
+	if params.RPCServers != "" {
+		// Adding RPC servers to devices
+		rpcServers := C.CString(params.RPCServers)
+		C.add_rpc_devices(rpcServers)
+		C.free(unsafe.Pointer(rpcServers))
+	}
 
 	// Setting model parameters
 	cparams := C.llama_model_default_params()

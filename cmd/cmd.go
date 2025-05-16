@@ -1428,6 +1428,16 @@ func NewCLI() *cobra.Command {
 		_ = runner.Execute(args[1:])
 	})
 
+	rpcCmd := &cobra.Command{
+		Use:   "rpc",
+		Short: "Start an RPC server for distributed inference",
+		RunE:  rpcServerRun,
+		// PersistentPreRunE from rootCmd will apply
+	}
+
+	rpcCmd.Flags().StringVar(&rpcHost, "host", "0.0.0.0", "Host address for the RPC server")
+	rpcCmd.Flags().IntVar(&rpcPort, "port", 50051, "Port for the RPC server")
+
 	envVars := envconfig.AsMap()
 
 	envs := []envconfig.EnvVar{envVars["OLLAMA_HOST"]}
@@ -1444,6 +1454,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		serveCmd,
+		rpcCmd,
 	} {
 		switch cmd {
 		case runCmd:
@@ -1484,6 +1495,7 @@ func NewCLI() *cobra.Command {
 		copyCmd,
 		deleteCmd,
 		runnerCmd,
+		rpcCmd,
 	)
 
 	return rootCmd
