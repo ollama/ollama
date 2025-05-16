@@ -7,6 +7,7 @@
 #include "llama-model-loader.h"
 #include "llama-grammar.h"
 
+
 struct common_sampler *common_sampler_cinit(const struct llama_model *model, struct common_sampler_cparams *params) {
     try {
         common_params_sampling sparams;
@@ -45,25 +46,22 @@ llama_token common_sampler_csample(struct common_sampler *sampler, struct llama_
     return common_sampler_sample(sampler, ctx, idx);
 }
 
-int schema_to_grammar(const char *json_schema, char *grammar, size_t max_len)
+struct parsed_grammar * schema_to_grammar(const char *json_schema)
 {
+    struct parsed_grammar *result = new parsed_grammar();
     try
     {
         nlohmann::ordered_json schema = nlohmann::ordered_json::parse(json_schema);
         std::string grammar_str = json_schema_to_grammar(schema);
-        size_t len = grammar_str.length();
-        if (len >= max_len)
-        {
-            len = max_len - 1;
-        }
-        strncpy(grammar, grammar_str.c_str(), len);
-        return len;
+        result->length = grammar_str.length();
+        result->grammar = new char[result->length];
+        std::strcpy(result->grammar, grammar_str.c_str());
     }
     catch (const std::exception &e)
     {
-        strncpy(grammar, "", max_len - 1);
-        return 0;
+        result->length = 0;
     }
+    return result;
 }
 
 struct llama_vocab * llama_load_vocab_from_file(const char * fname) {
