@@ -19,7 +19,8 @@
 
 ### Model names
 
-Model names follow a `model:tag` format, where `model` can have an optional namespace such as `example/model`. Some examples are `orca-mini:3b-q8_0` and `llama3:70b`. The tag is optional and, if not provided, will default to `latest`. The tag is used to identify a specific version.
+Model names follow a `model:tag` format, where `model` can have an optional namespace such as `example/model`. Some examples are `orca-mini:3b-q8_0` and `llama3:70b`. The tag is
+optional and, if not provided, will default to `latest`. The tag is used to identify a specific version.
 
 ### Durations
 
@@ -35,7 +36,8 @@ Certain endpoints stream responses as JSON objects. Streaming can be disabled by
 POST /api/generate
 ```
 
-Generate a response for a given prompt with a provided model. This is a streaming endpoint, so there will be a series of responses. The final response object will include statistics and additional data from the request.
+Generate a response for a given prompt with a provided model. This is a streaming endpoint, so there will be a series of responses. The final response object will include
+statistics and additional data from the request.
 
 ### Parameters
 
@@ -57,7 +59,8 @@ Advanced parameters (optional):
 
 #### Structured outputs
 
-Structured outputs are supported by providing a JSON schema in the `format` parameter. The model will generate a response that matches the schema. See the [structured outputs](#request-structured-outputs) example below.
+Structured outputs are supported by providing a JSON schema in the `format` parameter. The model will generate a response that matches the schema. See
+the [structured outputs](#request-structured-outputs) example below.
 
 #### JSON mode
 
@@ -111,7 +114,11 @@ To calculate how fast the response is generated in tokens per second (token/s), 
   "created_at": "2023-08-04T19:22:45.499127Z",
   "response": "",
   "done": true,
-  "context": [1, 2, 3],
+  "context": [
+    1,
+    2,
+    3
+  ],
   "total_duration": 10706818083,
   "load_duration": 6338219291,
   "prompt_eval_count": 26,
@@ -145,7 +152,11 @@ If `stream` is set to `false`, the response will be a single JSON object:
   "created_at": "2023-08-04T19:22:45.499127Z",
   "response": "The sky is blue because it is the color of the sky.",
   "done": true,
-  "context": [1, 2, 3],
+  "context": [
+    1,
+    2,
+    3
+  ],
   "total_duration": 5043500667,
   "load_duration": 5025959,
   "prompt_eval_count": 26,
@@ -159,7 +170,7 @@ If `stream` is set to `false`, the response will be a single JSON object:
 
 ##### Request
 
-```shell
+```bash
 curl http://localhost:11434/api/generate -d '{
   "model": "codellama:code",
   "prompt": "def compute_gcd(a, b):",
@@ -180,7 +191,9 @@ curl http://localhost:11434/api/generate -d '{
   "response": "\n  if a == 0:\n    return b\n  else:\n    return compute_gcd(b % a, a)\n\ndef compute_lcm(a, b):\n  result = (a * b) / compute_gcd(a, b)\n",
   "done": true,
   "done_reason": "stop",
-  "context": [...],
+  "context": [
+    ...
+  ],
   "total_duration": 1162761250,
   "load_duration": 6683708,
   "prompt_eval_count": 17,
@@ -226,7 +239,11 @@ curl -X POST http://localhost:11434/api/generate -H "Content-Type: application/j
   "response": "{\n  \"age\": 22,\n  \"available\": true\n}",
   "done": true,
   "done_reason": "stop",
-  "context": [1, 2, 3],
+  "context": [
+    1,
+    2,
+    3
+  ],
   "total_duration": 1075509083,
   "load_duration": 567678166,
   "prompt_eval_count": 28,
@@ -260,7 +277,11 @@ curl http://localhost:11434/api/generate -d '{
   "created_at": "2023-11-09T21:07:55.186497Z",
   "response": "{\n\"morning\": {\n\"color\": \"blue\"\n},\n\"noon\": {\n\"color\": \"blue-gray\"\n},\n\"afternoon\": {\n\"color\": \"warm gray\"\n},\n\"evening\": {\n\"color\": \"orange\"\n}\n}\n",
   "done": true,
-  "context": [1, 2, 3],
+  "context": [
+    1,
+    2,
+    3
+  ],
   "total_duration": 4648158584,
   "load_duration": 4071084,
   "prompt_eval_count": 36,
@@ -312,7 +333,11 @@ curl http://localhost:11434/api/generate -d '{
   "created_at": "2023-11-03T15:36:02.583064Z",
   "response": "A happy cartoon character, which is cute and cheerful.",
   "done": true,
-  "context": [1, 2, 3],
+  "context": [
+    1,
+    2,
+    3
+  ],
   "total_duration": 2938432250,
   "load_duration": 2559292,
   "prompt_eval_count": 1,
@@ -324,7 +349,8 @@ curl http://localhost:11434/api/generate -d '{
 
 #### Request (Raw Mode)
 
-In some cases, you may wish to bypass the templating system and provide a full prompt. In this case, you can use the `raw` parameter to disable templating. Also note that raw mode will not return a context.
+In some cases, you may wish to bypass the templating system and provide a full prompt. In this case, you can use the `raw` parameter to disable templating. Also note that raw mode
+will not return a context.
 
 ##### Request
 
@@ -372,7 +398,8 @@ curl http://localhost:11434/api/generate -d '{
 
 #### Generate request (With options)
 
-If you want to set custom options for the model at runtime rather than in the Modelfile, you can do so with the `options` parameter. This example sets every available option, but you can set any of them individually and omit the ones you do not want to override.
+If you want to set custom options for the model at runtime rather than in the Modelfile, you can do so with the `options` parameter. This example sets every available option, but
+you can set any of them individually and omit the ones you do not want to override.
 
 ##### Request
 
@@ -415,7 +442,11 @@ curl http://localhost:11434/api/generate -d '{
   "created_at": "2023-08-04T19:22:45.499127Z",
   "response": "The sky is blue because it is the color of the sky.",
   "done": true,
-  "context": [1, 2, 3],
+  "context": [
+    1,
+    2,
+    3
+  ],
   "total_duration": 4935886791,
   "load_duration": 534986708,
   "prompt_eval_count": 26,
@@ -483,7 +514,8 @@ A single JSON object is returned:
 POST /api/chat
 ```
 
-Generate the next message in a chat with a provided model. This is a streaming endpoint, so there will be a series of responses. Streaming can be disabled using `"stream": false`. The final response object will include statistics and additional data from the request.
+Generate the next message in a chat with a provided model. This is a streaming endpoint, so there will be a series of responses. Streaming can be disabled using `"stream": false`.
+The final response object will include statistics and additional data from the request.
 
 ### Parameters
 
@@ -500,14 +532,15 @@ The `message` object has the following fields:
 
 Advanced parameters (optional):
 
-- `format`: the format to return a response in. Format can be `json` or a JSON schema. 
+- `format`: the format to return a response in. Format can be `json` or a JSON schema.
 - `options`: additional model parameters listed in the documentation for the [Modelfile](../getting_started/modelfile.md#valid-parameters-and-values) such as `temperature`
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 
 ### Structured outputs
 
-Structured outputs are supported by providing a JSON schema in the `format` parameter. The model will generate a response that matches the schema. See the [Chat request (Structured outputs)](#chat-request-structured-outputs) example below.
+Structured outputs are supported by providing a JSON schema in the `format` parameter. The model will generate a response that matches the schema. See
+the [Chat request (Structured outputs)](#chat-request-structured-outputs) example below.
 
 ### Examples
 
@@ -639,7 +672,10 @@ curl -X POST http://localhost:11434/api/chat -H "Content-Type: application/json"
 {
   "model": "llama3.1",
   "created_at": "2024-12-06T00:46:58.265747Z",
-  "message": { "role": "assistant", "content": "{\"age\": 22, \"available\": false}" },
+  "message": {
+    "role": "assistant",
+    "content": "{\"age\": 22, \"available\": false}"
+  },
   "done_reason": "stop",
   "done": true,
   "total_duration": 2254970291,
@@ -880,7 +916,7 @@ curl http://localhost:11434/api/chat -d '{
 ```json
 {
   "model": "llama3.2",
-  "created_at":"2024-09-12T21:17:29.110811Z",
+  "created_at": "2024-09-12T21:17:29.110811Z",
   "message": {
     "role": "assistant",
     "content": ""
@@ -911,7 +947,7 @@ A single JSON object is returned:
 ```json
 {
   "model": "llama3.2",
-  "created_at":"2024-09-12T21:33:17.547535Z",
+  "created_at": "2024-09-12T21:33:17.547535Z",
   "message": {
     "role": "assistant",
     "content": ""
@@ -928,11 +964,13 @@ POST /api/create
 ```
 
 Create a model from:
- * another model;
- * a safetensors directory; or
- * a GGUF file.
 
-If you are creating a model from a safetensors directory or from a GGUF file, you must [create a blob](#create-a-blob) for each of the files and then use the file name and SHA256 digest associated with each blob in the `files` field.
+* another model;
+* a safetensors directory; or
+* a GGUF file.
+
+If you are creating a model from a safetensors directory or from a GGUF file, you must [create a blob](#create-a-model-from-gguf) for each of the files and then use the file name
+and SHA256 digest associated with each blob in the `files` field.
 
 ### Parameters
 
@@ -950,11 +988,11 @@ If you are creating a model from a safetensors directory or from a GGUF file, yo
 
 #### Quantization types
 
-| Type | Recommended |
-| --- | :-: |
-| q4_K_M | * |
-| q4_K_S | |
-| q8_0 | * |
+| Type   | Recommended |
+|--------|:-----------:|
+| q4_K_M |      *      |
+| q4_K_S |             |
+| q8_0   |      *      |
 
 ### Examples
 
@@ -977,17 +1015,39 @@ curl http://localhost:11434/api/create -d '{
 A stream of JSON objects is returned:
 
 ```json
-{"status":"reading model metadata"}
-{"status":"creating system layer"}
-{"status":"using already created layer sha256:22f7f8ef5f4c791c1b03d7eb414399294764d7cc82c7e94aa81a1feb80a983a2"}
-{"status":"using already created layer sha256:8c17c2ebb0ea011be9981cc3922db8ca8fa61e828c5d3f44cb6ae342bf80460b"}
-{"status":"using already created layer sha256:7c23fb36d80141c4ab8cdbb61ee4790102ebd2bf7aeff414453177d4f2110e5d"}
-{"status":"using already created layer sha256:2e0493f67d0c8c9c68a8aeacdf6a38a2151cb3c4c1d42accf296e19810527988"}
-{"status":"using already created layer sha256:2759286baa875dc22de5394b4a925701b1896a7e3f8e53275c36f75a877a82c9"}
-{"status":"writing layer sha256:df30045fe90f0d750db82a058109cecd6d4de9c90a3d75b19c09e5f64580bb42"}
-{"status":"writing layer sha256:f18a68eb09bf925bb1b669490407c1b1251c5db98dc4d3d81f3088498ea55690"}
-{"status":"writing manifest"}
-{"status":"success"}
+{
+  "status": "reading model metadata"
+}
+{
+  "status": "creating system layer"
+}
+{
+  "status": "using already created layer sha256:22f7f8ef5f4c791c1b03d7eb414399294764d7cc82c7e94aa81a1feb80a983a2"
+}
+{
+  "status": "using already created layer sha256:8c17c2ebb0ea011be9981cc3922db8ca8fa61e828c5d3f44cb6ae342bf80460b"
+}
+{
+  "status": "using already created layer sha256:7c23fb36d80141c4ab8cdbb61ee4790102ebd2bf7aeff414453177d4f2110e5d"
+}
+{
+  "status": "using already created layer sha256:2e0493f67d0c8c9c68a8aeacdf6a38a2151cb3c4c1d42accf296e19810527988"
+}
+{
+  "status": "using already created layer sha256:2759286baa875dc22de5394b4a925701b1896a7e3f8e53275c36f75a877a82c9"
+}
+{
+  "status": "writing layer sha256:df30045fe90f0d750db82a058109cecd6d4de9c90a3d75b19c09e5f64580bb42"
+}
+{
+  "status": "writing layer sha256:f18a68eb09bf925bb1b669490407c1b1251c5db98dc4d3d81f3088498ea55690"
+}
+{
+  "status": "writing manifest"
+}
+{
+  "status": "success"
+}
 ```
 
 #### Quantize a model
@@ -1009,22 +1069,48 @@ curl http://localhost:11434/api/create -d '{
 A stream of JSON objects is returned:
 
 ```json
-{"status":"quantizing F16 model to Q4_K_M","digest":"0","total":6433687776,"completed":12302}
-{"status":"quantizing F16 model to Q4_K_M","digest":"0","total":6433687776,"completed":6433687552}
-{"status":"verifying conversion"}
-{"status":"creating new layer sha256:fb7f4f211b89c6c4928ff4ddb73db9f9c0cfca3e000c3e40d6cf27ddc6ca72eb"}
-{"status":"using existing layer sha256:966de95ca8a62200913e3f8bfbf84c8494536f1b94b49166851e76644e966396"}
-{"status":"using existing layer sha256:fcc5a6bec9daf9b561a68827b67ab6088e1dba9d1fa2a50d7bbcc8384e0a265d"}
-{"status":"using existing layer sha256:a70ff7e570d97baaf4e62ac6e6ad9975e04caa6d900d3742d37698494479e0cd"}
-{"status":"using existing layer sha256:56bb8bd477a519ffa694fc449c2413c6f0e1d3b1c88fa7e3c9d88d3ae49d4dcb"}
-{"status":"writing manifest"}
-{"status":"success"}
+{
+  "status": "quantizing F16 model to Q4_K_M",
+  "digest": "0",
+  "total": 6433687776,
+  "completed": 12302
+}
+{
+  "status": "quantizing F16 model to Q4_K_M",
+  "digest": "0",
+  "total": 6433687776,
+  "completed": 6433687552
+}
+{
+  "status": "verifying conversion"
+}
+{
+  "status": "creating new layer sha256:fb7f4f211b89c6c4928ff4ddb73db9f9c0cfca3e000c3e40d6cf27ddc6ca72eb"
+}
+{
+  "status": "using existing layer sha256:966de95ca8a62200913e3f8bfbf84c8494536f1b94b49166851e76644e966396"
+}
+{
+  "status": "using existing layer sha256:fcc5a6bec9daf9b561a68827b67ab6088e1dba9d1fa2a50d7bbcc8384e0a265d"
+}
+{
+  "status": "using existing layer sha256:a70ff7e570d97baaf4e62ac6e6ad9975e04caa6d900d3742d37698494479e0cd"
+}
+{
+  "status": "using existing layer sha256:56bb8bd477a519ffa694fc449c2413c6f0e1d3b1c88fa7e3c9d88d3ae49d4dcb"
+}
+{
+  "status": "writing manifest"
+}
+{
+  "status": "success"
+}
 ```
 
 #### Create a model from GGUF
 
-Create a model from a GGUF file. The `files` parameter should be filled out with the file name and SHA256 digest of the GGUF file you wish to use. Use [/api/blobs/:digest](#push-a-blob) to push the GGUF file to the server before calling this API.
-
+Create a model from a GGUF file. The `files` parameter should be filled out with the file name and SHA256 digest of the GGUF file you wish to use.
+Use [/api/blobs/:digest](#push-a-blob) to push the GGUF file to the server before calling this API.
 
 ##### Request
 
@@ -1042,16 +1128,24 @@ curl http://localhost:11434/api/create -d '{
 A stream of JSON objects is returned:
 
 ```json
-{"status":"parsing GGUF"}
-{"status":"using existing layer sha256:432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3"}
-{"status":"writing manifest"}
-{"status":"success"}
+{
+  "status": "parsing GGUF"
+}
+{
+  "status": "using existing layer sha256:432f310a77f4650a88d0fd59ecdd7cebed8d684bafea53cbff0473542964f0c3"
+}
+{
+  "status": "writing manifest"
+}
+{
+  "status": "success"
+}
 ```
-
 
 #### Create a model from a Safetensors directory
 
-The `files` parameter should include a dictionary of files for the safetensors model which includes the file names and SHA256 digest of each file. Use [/api/blobs/:digest](#push-a-blob) to first push each of the files to the server before calling this API. Files will remain in the cache until the Ollama server is restarted.
+The `files` parameter should include a dictionary of files for the safetensors model which includes the file names and SHA256 digest of each file.
+Use [/api/blobs/:digest](#push-a-blob) to first push each of the files to the server before calling this API. Files will remain in the cache until the Ollama server is restarted.
 
 ##### Request
 
@@ -1248,11 +1342,14 @@ curl http://localhost:11434/api/show -d '{
     "llama.vocab_size": 128256,
     "tokenizer.ggml.bos_token_id": 128000,
     "tokenizer.ggml.eos_token_id": 128009,
-    "tokenizer.ggml.merges": [],            // populates if `verbose=true`
+    "tokenizer.ggml.merges": [],
+    // populates if `verbose=true`
     "tokenizer.ggml.model": "gpt2",
     "tokenizer.ggml.pre": "llama-bpe",
-    "tokenizer.ggml.token_type": [],        // populates if `verbose=true`
-    "tokenizer.ggml.tokens": []             // populates if `verbose=true`
+    "tokenizer.ggml.token_type": [],
+    // populates if `verbose=true`
+    "tokenizer.ggml.tokens": []
+    // populates if `verbose=true`
   },
   "capabilities": [
     "completion",
@@ -1346,7 +1443,8 @@ The first object is the manifest:
 }
 ```
 
-Then there is a series of downloading responses. Until any of the download is completed, the `completed` key may not be included. The number of files to be downloaded depends on the number of layers specified in the manifest.
+Then there is a series of downloading responses. Until any of the download is completed, the `completed` key may not be included. The number of files to be downloaded depends on
+the number of layers specified in the manifest.
 
 ```json
 {
@@ -1437,14 +1535,20 @@ Then there is a series of uploading responses:
 Finally, when the upload is complete:
 
 ```json
-{"status":"pushing manifest"}
-{"status":"success"}
+{
+  "status": "pushing manifest"
+}
+{
+  "status": "success"
+}
 ```
 
 If `stream` is set to `false`, then the response is a single JSON object:
 
 ```json
-{ "status": "success" }
+{
+  "status": "success"
+}
 ```
 
 ## Generate Embeddings
@@ -1482,10 +1586,20 @@ curl http://localhost:11434/api/embed -d '{
 ```json
 {
   "model": "all-minilm",
-  "embeddings": [[
-    0.010071029, -0.0017594862, 0.05007221, 0.04692972, 0.054916814,
-    0.008599704, 0.105441414, -0.025878139, 0.12958129, 0.031952348
-  ]],
+  "embeddings": [
+    [
+      0.010071029,
+      -0.0017594862,
+      0.05007221,
+      0.04692972,
+      0.054916814,
+      0.008599704,
+      0.105441414,
+      -0.025878139,
+      0.12958129,
+      0.031952348
+    ]
+  ],
   "total_duration": 14143917,
   "load_duration": 1019500,
   "prompt_eval_count": 8
@@ -1506,26 +1620,46 @@ curl http://localhost:11434/api/embed -d '{
 ```json
 {
   "model": "all-minilm",
-  "embeddings": [[
-    0.010071029, -0.0017594862, 0.05007221, 0.04692972, 0.054916814,
-    0.008599704, 0.105441414, -0.025878139, 0.12958129, 0.031952348
-  ],[
-    -0.0098027075, 0.06042469, 0.025257962, -0.006364387, 0.07272725,
-    0.017194884, 0.09032035, -0.051705178, 0.09951512, 0.09072481
-  ]]
+  "embeddings": [
+    [
+      0.010071029,
+      -0.0017594862,
+      0.05007221,
+      0.04692972,
+      0.054916814,
+      0.008599704,
+      0.105441414,
+      -0.025878139,
+      0.12958129,
+      0.031952348
+    ],
+    [
+      -0.0098027075,
+      0.06042469,
+      0.025257962,
+      -0.006364387,
+      0.07272725,
+      0.017194884,
+      0.09032035,
+      -0.051705178,
+      0.09951512,
+      0.09072481
+    ]
+  ]
 }
 ```
 
 ## List Running Models
+
 ```
 GET /api/ps
 ```
 
 List models that are currently loaded into memory.
 
-#### Examples
+### Examples
 
-### Request
+#### Request
 
 ```shell
 curl http://localhost:11434/api/ps
