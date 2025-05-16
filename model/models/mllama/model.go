@@ -3,6 +3,7 @@ package mllama
 import (
 	"bytes"
 	"image"
+	"slices"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -58,7 +59,7 @@ func New(c fs.Config) (model.Model, error) {
 	return &m, nil
 }
 
-func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, error) {
+func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input.Multimodal, error) {
 	if len(m.VisionModel.Transformer.Layers) == 0 || len(m.GlobalTransformer.Layers) == 0 {
 		return nil, model.ErrNoVisionModel
 	}
@@ -73,12 +74,16 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 		return nil, err
 	}
 
-	pixelValues, err := ctx.Input().FromFloatSlice(f32s, m.imageSize, m.imageSize, m.numChannels, ratio.numTiles())
+	if ratio.numTiles() < m.maxNumTiles {
+		// Pad tiles to maxNumTiles
+		f32s = slices.Grow(f32s, m.imageSize*m.imageSize*m.numChannels*m.maxNumTiles)
+		f32s = f32s[:m.imageSize*m.imageSize*m.numChannels*m.maxNumTiles]
+	}
+
+	pixelValues, err := ctx.Input().FromFloatSlice(f32s, m.imageSize, m.imageSize, m.numChannels, m.maxNumTiles)
 	if err != nil {
 		return nil, err
 	}
-
-	pixelValues = pixelValues.Pad(ctx, 0, 0, 0, m.ImageProcessor.maxNumTiles-ratio.numTiles())
 
 	aspectRatio, err := ctx.Input().FromIntSlice([]int32{int32(ratio.rank)}, 1)
 	if err != nil {
@@ -87,7 +92,9 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 
 	positionIDs := ctx.Arange(0, 1601, 1, ml.DTypeI32)
 	crossAttentionStates := m.VisionModel.Forward(ctx, pixelValues, positionIDs, aspectRatio)
-	return m.Projector.Forward(ctx, crossAttentionStates), nil
+	projectedOutputs := m.Projector.Forward(ctx, crossAttentionStates)
+
+	return []input.Multimodal{{Tensor: projectedOutputs}}, nil
 }
 
 func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
@@ -103,7 +110,7 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	var crossAttentionStates ml.Tensor
 	if len(batch.Multimodal) > 0 {
-		crossAttentionStates = batch.Multimodal[len(batch.Multimodal)-1].Multimodal.(ml.Tensor)
+		crossAttentionStates = batch.Multimodal[len(batch.Multimodal)-1].Multimodal[0].Tensor
 	}
 
 	positions, err := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
