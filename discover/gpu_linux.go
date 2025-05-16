@@ -2,12 +2,14 @@ package discover
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/ollama/ollama/format"
@@ -55,6 +57,14 @@ var (
 )
 
 func GetCPUMem() (memInfo, error) {
+	mem, err := getCPUMem()
+	if err != nil {
+		return memInfo{}, err
+	}
+	return getCPUMemByCgroups(mem), nil
+}
+
+func getCPUMem() (memInfo, error) {
 	var mem memInfo
 	var total, available, free, buffers, cached, freeSwap uint64
 	f, err := os.Open("/proc/meminfo")
@@ -95,6 +105,32 @@ func GetCPUMem() (memInfo, error) {
 	return mem, nil
 }
 
+func getCPUMemByCgroups(mem memInfo) memInfo {
+	total, err := getUint64ValueFromFile("/sys/fs/cgroup/memory.max")
+	if err == nil {
+		mem.TotalMemory = total
+	}
+	used, err := getUint64ValueFromFile("/sys/fs/cgroup/memory.current")
+	if err == nil {
+		mem.FreeMemory = mem.TotalMemory - used
+	}
+	return mem
+}
+
+func getUint64ValueFromFile(path string) (uint64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	s := bufio.NewScanner(f)
+	for s.Scan() {
+		line := s.Text()
+		return strconv.ParseUint(line, 10, 64)
+	}
+	return 0, errors.New("empty file content")
+}
+
 const CpuInfoFilename = "/proc/cpuinfo"
 
 type linuxCpuInfo struct {
@@ -112,7 +148,42 @@ func GetCPUDetails() ([]CPU, error) {
 		return nil, err
 	}
 	defer file.Close()
-	return linuxCPUDetails(file)
+	cpus, err := linuxCPUDetails(file)
+	if err != nil {
+		return nil, err
+	}
+	return overwriteThreadCountByLinuxCgroups(cpus)
+}
+
+func overwriteThreadCountByLinuxCgroups(cpus []CPU) ([]CPU, error) {
+	file, err := os.Open("/sys/fs/cgroup/cpu.max")
+	if err != nil {
+		return cpus, nil
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if sl := strings.Split(line, " "); len(sl) == 2 {
+			allowdUs, err := strconv.ParseInt(sl[0], 10, 64)
+			if err != nil {
+				return cpus, nil
+			}
+			unitUs, err := strconv.ParseInt(sl[1], 10, 64)
+			if err != nil {
+				return nil, err
+			}
+
+			threads := int(max(allowdUs/unitUs, 1))
+
+			cpu := cpus[0]
+			cpu.CoreCount = threads
+			cpu.ThreadCount = threads
+			return []CPU{cpu}, nil
+		}
+	}
+	return cpus, nil
 }
 
 func linuxCPUDetails(file io.Reader) ([]CPU, error) {
