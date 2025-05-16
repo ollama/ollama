@@ -1,21 +1,27 @@
-# Development
+# Development Guide
 
-Install prerequisites:
+This guide provides instructions for setting up a development environment for Ollama on different platforms.
+
+## Prerequisites
 
 - [Go](https://go.dev/doc/install)
 - C/C++ Compiler e.g. Clang on macOS, [TDM-GCC](https://github.com/jmeubank/tdm-gcc/releases/latest) (Windows amd64) or [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (Windows arm64), GCC/Clang on Linux.
 
-Then build and run Ollama from the root directory of the repository:
+## Building and Running
+
+To build and run Ollama from the root directory of the repository:
 
 ```shell
 go run . serve
 ```
 
-## macOS (Apple Silicon)
+## Platform-Specific Instructions
+
+### macOS (Apple Silicon)
 
 macOS Apple Silicon supports Metal which is built-in to the Ollama binary. No additional steps are required.
 
-## macOS (Intel)
+### macOS (Intel)
 
 Install prerequisites:
 
@@ -34,7 +40,7 @@ Lastly, run Ollama:
 go run . serve
 ```
 
-## Windows
+### Windows
 
 Install prerequisites:
 
@@ -60,18 +66,17 @@ cmake --build build --config Release
 > cmake --build build --config Release
 > ```
 
-
 Lastly, run Ollama:
 
 ```shell
 go run . serve
 ```
 
-## Windows (ARM)
+### Windows (ARM)
 
-Windows ARM does not support additional acceleration libraries at this time.  Do not use cmake, simply `go run` or `go build`.
+Windows ARM does not support additional acceleration libraries at this time. Do not use cmake, simply `go run` or `go build`.
 
-## Linux
+### Linux
 
 Install prerequisites:
 
@@ -83,7 +88,6 @@ Install prerequisites:
 
 > [!IMPORTANT]
 > Ensure prerequisites are in `PATH` before running CMake.
-
 
 Then, configure and build the project:
 
@@ -100,17 +104,19 @@ go run . serve
 
 ## Docker
 
+To build Ollama using Docker:
+
 ```shell
 docker build .
 ```
 
-### ROCm
+### ROCm Support in Docker
 
 ```shell
 docker build --build-arg FLAVOR=rocm .
 ```
 
-## Running tests
+## Running Tests
 
 To run tests, use `go test`:
 
@@ -118,7 +124,7 @@ To run tests, use `go test`:
 go test ./...
 ```
 
-> NOTE: In rare cirumstances, you may nedd to change a package using the new
+> NOTE: In rare circumstances, you may need to change a package using the new
 > "synctest" package in go1.24.
 >
 > If you do not have the "synctest" package enabled, you will not see build or
@@ -147,7 +153,7 @@ go test ./...
 >
 > The synctest package is not required for production builds.
 
-## Library detection
+## Library Detection
 
 Ollama looks for acceleration libraries in the following paths relative to the `ollama` executable:
 
@@ -157,3 +163,7 @@ Ollama looks for acceleration libraries in the following paths relative to the `
 * `build/lib/ollama` (for development)
 
 If the libraries are not found, Ollama will not run with any acceleration libraries.
+
+## Contributing
+
+For more information on contributing to Ollama, please see the [CONTRIBUTING.md](https://github.com/ollama/ollama/blob/main/CONTRIBUTING.md) file in the repository.
