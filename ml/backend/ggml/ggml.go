@@ -67,9 +67,11 @@ type Backend struct {
 
 func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, error) {
 	// Add RPC servers to devices
- 	rpcServers := C.CString(params.RPCServers)
- 	C.add_rpc_devices(rpcServers)
- 	C.free(unsafe.Pointer(rpcServers))
+	if params.RPCServers != "" {
+		rpcServers := C.CString(params.RPCServers)
+		C.add_rpc_devices(rpcServers)
+		C.free(unsafe.Pointer(rpcServers))
+	}
 
 	meta, n, err := fsggml.Decode(r, -1)
 	if err != nil {
@@ -77,7 +79,7 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 	}
 
 	slog.Info(
-	 	"",
+		"",
 		"architecture", meta.KV().Architecture(),
 		"file_type", meta.KV().FileType(),
 		"name", meta.KV().String("general.name"),

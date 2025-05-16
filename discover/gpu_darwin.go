@@ -42,7 +42,7 @@ func GetGPUInfo() GpuInfoList {
 	info.FreeMemory = info.TotalMemory
 
 	info.MinimumMemory = metalMinimumMemory
-	resp := []GpuInfo{}
+	resp := []GpuInfo{info}
 
 	// RPC Servers
 	rpcServersENV := envconfig.RPCServers()
