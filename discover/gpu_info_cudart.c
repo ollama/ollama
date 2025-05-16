@@ -1,6 +1,7 @@
 #ifndef __APPLE__  // TODO - maybe consider nvidia support on intel macs?
 
 #include <string.h>
+#include <inttypes.h>
 #include "gpu_info_cudart.h"
 
 void cudart_init(char *cudart_lib_path, cudart_init_resp_t *resp) {
@@ -168,9 +169,9 @@ void cudart_bootstrap(cudart_handle_t h, int i, mem_info_t *resp) {
   resp->free = memInfo.free;
   resp->used = memInfo.used;
 
-  LOG(h.verbose, "[%s] CUDA totalMem %llu\n", resp->gpu_id, resp->total);
-  LOG(h.verbose, "[%s] CUDA freeMem %llu\n", resp->gpu_id, resp->free);
-  LOG(h.verbose, "[%s] CUDA usedMem %llu\n", resp->gpu_id, resp->used);
+  LOG(h.verbose, "[%s] CUDA totalMem %" PRId64 "\n", resp->gpu_id, resp->total);
+  LOG(h.verbose, "[%s] CUDA freeMem %" PRId64 "\n", resp->gpu_id, resp->free);
+  LOG(h.verbose, "[%s] CUDA usedMem %" PRId64 "\n", resp->gpu_id, resp->used);
   LOG(h.verbose, "[%s] Compute Capability %d.%d\n", resp->gpu_id, resp->major, resp->minor);
 }
 

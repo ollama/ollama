@@ -20,9 +20,6 @@ extern "C"
         float penalty_repeat;
         float penalty_freq;
         float penalty_present;
-        int32_t mirostat;
-        float mirostat_tau;
-        float mirostat_eta;
         uint32_t seed;
         char *grammar;
     };

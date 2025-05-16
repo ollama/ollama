@@ -1,12 +1,13 @@
 package convert
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"log/slog"
+	"os"
 	"slices"
 	"strings"
 
@@ -14,13 +15,12 @@ import (
 )
 
 type ModelParameters struct {
-	Architectures []string       `json:"architectures"`
-	VocabSize     uint32         `json:"vocab_size"`
-	TextModel     TextParameters `json:"text_config"`
-}
+	Architectures []string `json:"architectures"`
+	VocabSize     uint32   `json:"vocab_size"`
 
-type TextParameters struct {
-	VocabSize uint32 `json:"vocab_size"`
+	TextModel struct {
+		VocabSize uint32 `json:"vocab_size"`
+	} `json:"text_config"`
 }
 
 type AdapterParameters struct {
@@ -89,7 +89,7 @@ type ModelConverter interface {
 	// KV maps parameters to LLM key-values
 	KV(*Tokenizer) ggml.KV
 	// Tensors maps input tensors to LLM tensors. Model specific modifications can be done here.
-	Tensors([]Tensor) []ggml.Tensor
+	Tensors([]Tensor) []*ggml.Tensor
 	// Replacements returns a list of string pairs to replace in tensor names.
 	// See [strings.Replacer](https://pkg.go.dev/strings#Replacer) for details
 	Replacements() []string
@@ -106,13 +106,13 @@ type AdapterConverter interface {
 	// KV maps parameters to LLM key-values
 	KV(ggml.KV) ggml.KV
 	// Tensors maps input tensors to LLM tensors. Adapter specific modifications can be done here.
-	Tensors([]Tensor) []ggml.Tensor
+	Tensors([]Tensor) []*ggml.Tensor
 	// Replacements returns a list of string pairs to replace in tensor names.
 	// See [strings.Replacer](https://pkg.go.dev/strings#Replacer) for details
 	Replacements() []string
 }
 
-func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseKV ggml.KV) error {
+func ConvertAdapter(fsys fs.FS, f *os.File, baseKV ggml.KV) error {
 	bts, err := fs.ReadFile(fsys, "adapter_config.json")
 	if err != nil {
 		return err
@@ -147,14 +147,14 @@ func ConvertAdapter(fsys fs.FS, ws io.WriteSeeker, baseKV ggml.KV) error {
 		return err
 	}
 
-	return writeFile(ws, conv.KV(baseKV), conv.Tensors(ts))
+	return writeFile(f, conv.KV(baseKV), conv.Tensors(ts))
 }
 
 // Convert writes an Ollama compatible model to the provided io.WriteSeeker based on configurations
 // and files it finds in the input path.
 // Supported input model formats include safetensors.
 // Supported input tokenizers files include tokenizer.json (preferred) and tokenizer.model.
-func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
+func ConvertModel(fsys fs.FS, f *os.File) error {
 	bts, err := fs.ReadFile(fsys, "config.json")
 	if err != nil {
 		return err
@@ -173,6 +173,8 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 	switch p.Architectures[0] {
 	case "LlamaForCausalLM":
 		conv = &llamaModel{}
+	case "MllamaForConditionalGeneration":
+		conv = &mllamaModel{}
 	case "Llama4ForConditionalGeneration":
 		conv = &llama4Model{}
 	case "Mistral3ForConditionalGeneration":
@@ -189,6 +191,8 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 		conv = &phi3Model{}
 	case "Qwen2ForCausalLM":
 		conv = &qwen2Model{}
+	case "Qwen2_5_VLForConditionalGeneration":
+		conv = &qwen25VLModel{}
 	case "BertModel":
 		conv = &bertModel{}
 	case "CohereForCausalLM":
@@ -212,24 +216,22 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 		return err
 	}
 
-	vocabSize := int(p.VocabSize)
-	if vocabSize == 0 {
-		tVocabSize := int(p.TextModel.VocabSize)
-		vocabSize = tVocabSize
-	}
+	vocabSize := int(cmp.Or(p.VocabSize, p.TextModel.VocabSize))
 
 	switch {
 	case vocabSize == 0:
-		slog.Warn("vocabulary size was not explicitly set by the model", "default size", len(t.Vocabulary.Tokens))
+		slog.Debug("vocabulary size was not explicitly set by the model", "default size", len(t.Vocabulary.Tokens))
 	case vocabSize > len(t.Vocabulary.Tokens):
-		slog.Warn("vocabulary is smaller than expected, padding with dummy tokens", "expect", vocabSize, "actual", len(t.Vocabulary.Tokens))
+		slog.Debug("vocabulary is smaller than expected, padding with dummy tokens", "expect", vocabSize, "actual", len(t.Vocabulary.Tokens))
 		for i := range vocabSize - len(t.Vocabulary.Tokens) {
 			t.Vocabulary.Tokens = append(t.Vocabulary.Tokens, fmt.Sprintf("[PAD%d]", i))
 			t.Vocabulary.Scores = append(t.Vocabulary.Scores, -1)
 			t.Vocabulary.Types = append(t.Vocabulary.Types, tokenTypeUserDefined)
 		}
 	case vocabSize < len(t.Vocabulary.Tokens):
-		return fmt.Errorf("vocabulary is larger than expected '%d' instead of '%d'", len(t.Vocabulary.Tokens), vocabSize)
+		slog.Debug("vocabulary is larger than expected", "want", vocabSize, "got", len(t.Vocabulary.Tokens))
+		p.VocabSize = uint32(len(t.Vocabulary.Tokens))
+		p.TextModel.VocabSize = uint32(len(t.Vocabulary.Tokens))
 	default:
 		slog.Debug("vocabulary", "size", len(t.Vocabulary.Tokens))
 	}
@@ -239,13 +241,13 @@ func ConvertModel(fsys fs.FS, ws io.WriteSeeker) error {
 		return err
 	}
 
-	return writeFile(ws, conv.KV(t), conv.Tensors(ts))
+	return writeFile(f, conv.KV(t), conv.Tensors(ts))
 }
 
-func writeFile(ws io.WriteSeeker, kv ggml.KV, ts []ggml.Tensor) error {
+func writeFile(f *os.File, kv ggml.KV, ts []*ggml.Tensor) error {
 	for i := range ts {
 		ts[i].Shape = slices.Clone(ts[i].Shape)
 		slices.Reverse(ts[i].Shape)
 	}
-	return ggml.WriteGGUF(ws, kv, ts)
+	return ggml.WriteGGUF(f, kv, ts)
 }

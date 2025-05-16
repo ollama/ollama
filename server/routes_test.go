@@ -21,6 +21,8 @@ import (
 	"testing"
 	"unicode"
 
+	"github.com/gin-gonic/gin"
+	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/openai"
@@ -474,14 +476,24 @@ func TestRoutes(t *testing.T) {
 					t.Fatalf("failed to read response body: %v", err)
 				}
 
-				var retrieveResp api.RetrieveModelResponse
-				err = json.Unmarshal(body, &retrieveResp)
+				var m openai.Model
+				err = json.Unmarshal(body, &m)
 				if err != nil {
 					t.Fatalf("failed to unmarshal response body: %v", err)
 				}
 
-				if retrieveResp.Id != "show-model" || retrieveResp.OwnedBy != "library" {
-					t.Errorf("expected model 'show-model' owned by 'library', got %v", retrieveResp)
+				if m.Id != "show-model" || m.OwnedBy != "library" {
+					t.Errorf("expected model 'show-model' owned by 'library', got %v", m)
+				}
+			},
+		},
+		{
+			Name:   "Method Not Allowed",
+			Method: http.MethodGet,
+			Path:   "/api/show",
+			Expected: func(t *testing.T, resp *http.Response) {
+				if resp.StatusCode != 405 {
+					t.Errorf("expected status code 405, got %d", resp.StatusCode)
 				}
 			},
 		},
@@ -517,7 +529,7 @@ func TestRoutes(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
 			u := httpSrv.URL + tc.Path
-			req, err := http.NewRequestWithContext(context.TODO(), tc.Method, u, nil)
+			req, err := http.NewRequestWithContext(t.Context(), tc.Method, u, nil)
 			if err != nil {
 				t.Fatalf("failed to create request: %v", err)
 			}
@@ -870,5 +882,89 @@ func TestFilterThinkTags(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestWaitForStream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cases := []struct {
+		name       string
+		messages   []any
+		expectCode int
+		expectBody string
+	}{
+		{
+			name: "error",
+			messages: []any{
+				gin.H{"error": "internal server error"},
+			},
+			expectCode: http.StatusInternalServerError,
+			expectBody: `{"error":"internal server error"}`,
+		},
+		{
+			name: "error status",
+			messages: []any{
+				gin.H{"status": http.StatusNotFound, "error": "not found"},
+			},
+			expectCode: http.StatusNotFound,
+			expectBody: `{"error":"not found"}`,
+		},
+		{
+			name: "unknown error",
+			messages: []any{
+				gin.H{"msg": "something else"},
+			},
+			expectCode: http.StatusInternalServerError,
+			expectBody: `{"error":"unknown error"}`,
+		},
+		{
+			name: "unknown type",
+			messages: []any{
+				struct{}{},
+			},
+			expectCode: http.StatusInternalServerError,
+			expectBody: `{"error":"unknown message type"}`,
+		},
+		{
+			name: "progress success",
+			messages: []any{
+				api.ProgressResponse{Status: "success"},
+			},
+			expectCode: http.StatusOK,
+			expectBody: `{"status":"success"}`,
+		},
+		{
+			name: "progress more than success",
+			messages: []any{
+				api.ProgressResponse{Status: "success"},
+				api.ProgressResponse{Status: "one more thing"},
+			},
+			expectCode: http.StatusOK,
+			expectBody: `{"status":"one more thing"}`,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+
+			ch := make(chan any, len(tt.messages))
+			for _, msg := range tt.messages {
+				ch <- msg
+			}
+			close(ch)
+
+			waitForStream(c, ch)
+
+			if w.Code != tt.expectCode {
+				t.Errorf("expected status %d, got %d", tt.expectCode, w.Code)
+			}
+
+			if diff := cmp.Diff(w.Body.String(), tt.expectBody); diff != "" {
+				t.Errorf("body mismatch (-want +got):\n%s", diff)
+			}
+		})
 	}
 }
