@@ -574,6 +574,7 @@ func TestListHandler(t *testing.T) {
 	tests := []struct {
 		name           string
 		args           []string
+		flags          map[string]string
 		serverResponse []api.ListModelResponse
 		expectedError  string
 		expectedOutput string
@@ -588,6 +589,17 @@ func TestListHandler(t *testing.T) {
 			expectedOutput: "NAME      ID              SIZE      MODIFIED     \n" +
 				"model1    sha256:abc12    1.0 KB    24 hours ago    \n" +
 				"model2    sha256:def45    2.0 KB    2 days ago      \n",
+		},
+		{
+			name:  "list all models in json format",
+			args:  []string{},
+			flags: map[string]string{"json": "true"},
+			serverResponse: []api.ListModelResponse{
+				{Name: "model1", Digest: "sha256:abc123", Size: 1024, ModifiedAt: time.Unix(1745695919, 0)},
+				{Name: "model2", Digest: "sha256:def456", Size: 2048, ModifiedAt: time.Unix(1745696000, 0)},
+			},
+			expectedOutput: "[{\"name\":\"model1\",\"id\":\"sha256:abc12\",\"size\":1024,\"modified\":1745695919}," +
+				"{\"name\":\"model2\",\"id\":\"sha256:def45\",\"size\":2048,\"modified\":1745696000}]\n",
 		},
 		{
 			name: "filter models by prefix",
@@ -630,7 +642,14 @@ func TestListHandler(t *testing.T) {
 			t.Setenv("OLLAMA_HOST", mockServer.URL)
 
 			cmd := &cobra.Command{}
-			cmd.SetContext(t.Context())
+      cmd.SetContext(t.Context())
+      
+			cmd.Flags().Bool("json", false, "Output non human-readable JSON")
+			cmd.Flags().String("sortby", "name", "Value to sort by (name, size, time)")
+
+			for k, v := range tt.flags {
+				cmd.Flags().Set(k, v)
+			}
 
 			// Capture stdout
 			oldStdout := os.Stdout
