@@ -217,6 +217,7 @@ func InitServerConnection(ctx context.Context, t *testing.T) (*api.Client, strin
 					slog.Error("failed to open server log", "logfile", lifecycle.ServerLogFile, "error", err)
 					return
 				}
+				defer fp.Close()
 				data, err := io.ReadAll(fp)
 				if err != nil {
 					slog.Error("failed to read server log", "logfile", lifecycle.ServerLogFile, "error", err)
@@ -357,4 +358,15 @@ func skipUnderMinVRAM(t *testing.T, gb uint64) {
 			t.Skip("skipping with small VRAM to avoid timeouts")
 		}
 	}
+}
+
+func getTimeouts(t *testing.T) (soft time.Duration, hard time.Duration) {
+	deadline, hasDeadline := t.Deadline()
+	if !hasDeadline {
+		return 8 * time.Minute, 10 * time.Minute
+	} else if deadline.Compare(time.Now().Add(2*time.Minute)) <= 0 {
+		t.Skip("too little time")
+		return time.Duration(0), time.Duration(0)
+	}
+	return -time.Since(deadline.Add(-2 * time.Minute)), -time.Since(deadline.Add(-20 * time.Second))
 }

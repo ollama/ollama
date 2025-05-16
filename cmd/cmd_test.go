@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -226,6 +225,7 @@ Weigh anchor!
   System
     You are a pirate!    
     Ahoy, matey!         
+    ...                  
 
 `
 		if diff := cmp.Diff(expect, b.String()); diff != "" {
@@ -337,7 +337,7 @@ func TestDeleteHandler(t *testing.T) {
 	t.Cleanup(mockServer.Close)
 
 	cmd := &cobra.Command{}
-	cmd.SetContext(context.TODO())
+	cmd.SetContext(t.Context())
 	if err := DeleteHandler(cmd, []string{"test-model"}); err != nil {
 		t.Fatalf("DeleteHandler failed: %v", err)
 	}
@@ -399,11 +399,6 @@ func TestGetModelfileName(t *testing.T) {
 			var expectedFilename string
 
 			if tt.fileExists {
-				tempDir, err := os.MkdirTemp("", "modelfiledir")
-				defer os.RemoveAll(tempDir)
-				if err != nil {
-					t.Fatalf("temp modelfile dir creation failed: %v", err)
-				}
 				var fn string
 				if tt.modelfileName != "" {
 					fn = tt.modelfileName
@@ -411,7 +406,7 @@ func TestGetModelfileName(t *testing.T) {
 					fn = "Modelfile"
 				}
 
-				tempFile, err := os.CreateTemp(tempDir, fn)
+				tempFile, err := os.CreateTemp(t.TempDir(), fn)
 				if err != nil {
 					t.Fatalf("temp modelfile creation failed: %v", err)
 				}
@@ -530,7 +525,7 @@ func TestPushHandler(t *testing.T) {
 
 			cmd := &cobra.Command{}
 			cmd.Flags().Bool("insecure", false, "")
-			cmd.SetContext(context.TODO())
+			cmd.SetContext(t.Context())
 
 			// Redirect stderr to capture progress output
 			oldStderr := os.Stderr
@@ -647,7 +642,8 @@ func TestListHandler(t *testing.T) {
 			t.Setenv("OLLAMA_HOST", mockServer.URL)
 
 			cmd := &cobra.Command{}
-			cmd.SetContext(context.TODO())
+      cmd.SetContext(t.Context())
+      
 			cmd.Flags().Bool("json", false, "Output non human-readable JSON")
 			cmd.Flags().String("sortby", "name", "Value to sort by (name, size, time)")
 
@@ -708,7 +704,7 @@ func TestCreateHandler(t *testing.T) {
 						return
 					}
 
-					if req.Name != "test-model" {
+					if req.Model != "test-model" {
 						t.Errorf("expected model name 'test-model', got %s", req.Name)
 					}
 
@@ -748,7 +744,7 @@ func TestCreateHandler(t *testing.T) {
 			}))
 			t.Setenv("OLLAMA_HOST", mockServer.URL)
 			t.Cleanup(mockServer.Close)
-			tempFile, err := os.CreateTemp("", "modelfile")
+			tempFile, err := os.CreateTemp(t.TempDir(), "modelfile")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -768,7 +764,7 @@ func TestCreateHandler(t *testing.T) {
 			}
 
 			cmd.Flags().Bool("insecure", false, "")
-			cmd.SetContext(context.TODO())
+			cmd.SetContext(t.Context())
 
 			// Redirect stderr to capture progress output
 			oldStderr := os.Stderr

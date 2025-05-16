@@ -35,6 +35,7 @@ static const std::map<std::string, llm_chat_template> LLM_CHAT_TEMPLATES = {
     { "mistral-v3",        LLM_CHAT_TEMPLATE_MISTRAL_V3        },
     { "mistral-v3-tekken", LLM_CHAT_TEMPLATE_MISTRAL_V3_TEKKEN },
     { "mistral-v7",        LLM_CHAT_TEMPLATE_MISTRAL_V7        },
+    { "mistral-v7-tekken", LLM_CHAT_TEMPLATE_MISTRAL_V7_TEKKEN },
     { "phi3",              LLM_CHAT_TEMPLATE_PHI_3             },
     { "phi4",              LLM_CHAT_TEMPLATE_PHI_4             },
     { "falcon3",           LLM_CHAT_TEMPLATE_FALCON_3          },
@@ -50,8 +51,8 @@ static const std::map<std::string, llm_chat_template> LLM_CHAT_TEMPLATES = {
     { "deepseek3",         LLM_CHAT_TEMPLATE_DEEPSEEK_3        },
     { "command-r",         LLM_CHAT_TEMPLATE_COMMAND_R         },
     { "llama3",            LLM_CHAT_TEMPLATE_LLAMA_3           },
-    { "chatglm3",          LLM_CHAT_TEMPLATE_CHATGML_3         },
-    { "chatglm4",          LLM_CHAT_TEMPLATE_CHATGML_4         },
+    { "chatglm3",          LLM_CHAT_TEMPLATE_CHATGLM_3         },
+    { "chatglm4",          LLM_CHAT_TEMPLATE_CHATGLM_4         },
     { "glmedge",           LLM_CHAT_TEMPLATE_GLMEDGE           },
     { "minicpm",           LLM_CHAT_TEMPLATE_MINICPM           },
     { "exaone3",           LLM_CHAT_TEMPLATE_EXAONE_3          },
@@ -62,6 +63,7 @@ static const std::map<std::string, llm_chat_template> LLM_CHAT_TEMPLATES = {
     { "yandex",            LLM_CHAT_TEMPLATE_YANDEX            },
     { "bailing",           LLM_CHAT_TEMPLATE_BAILING           },
     { "llama4",            LLM_CHAT_TEMPLATE_LLAMA4            },
+    { "smolvlm",           LLM_CHAT_TEMPLATE_SMOLVLM           },
 };
 
 llm_chat_template llm_chat_template_from_str(const std::string & name) {
@@ -81,7 +83,9 @@ llm_chat_template llm_chat_detect_template(const std::string & tmpl) {
     if (tmpl_contains("<|im_start|>")) {
         return tmpl_contains("<|im_sep|>")
             ? LLM_CHAT_TEMPLATE_PHI_4
-            : LLM_CHAT_TEMPLATE_CHATML;
+            : tmpl_contains("<end_of_utterance>")
+                ? LLM_CHAT_TEMPLATE_SMOLVLM // SmolVLM uses <|im_start|> as BOS, but it is NOT chatml
+                : LLM_CHAT_TEMPLATE_CHATML;
     } else if (tmpl.find("mistral") == 0 || tmpl_contains("[INST]")) {
         if (tmpl_contains("[SYSTEM_PROMPT]")) {
             return LLM_CHAT_TEMPLATE_MISTRAL_V7;
@@ -119,8 +123,12 @@ llm_chat_template llm_chat_detect_template(const std::string & tmpl) {
         }
     } else if (tmpl_contains("<|assistant|>") && tmpl_contains("<|end|>")) {
         return LLM_CHAT_TEMPLATE_PHI_3;
+    } else if (tmpl_contains("[gMASK]<sop>")) {
+        return LLM_CHAT_TEMPLATE_CHATGLM_4;
     } else if (tmpl_contains("<|assistant|>") && tmpl_contains("<|user|>")) {
         return tmpl_contains("</s>") ? LLM_CHAT_TEMPLATE_FALCON_3 : LLM_CHAT_TEMPLATE_GLMEDGE;
+    } else if (tmpl_contains("<|{{ item['role'] }}|>") && tmpl_contains("<|begin_of_image|>")) {
+        return LLM_CHAT_TEMPLATE_GLMEDGE;
     } else if (tmpl_contains("<|user|>") && tmpl_contains("<|endoftext|>")) {
         return LLM_CHAT_TEMPLATE_ZEPHYR;
     } else if (tmpl_contains("bos_token + message['role']")) {
@@ -149,9 +157,7 @@ llm_chat_template llm_chat_detect_template(const std::string & tmpl) {
         return LLM_CHAT_TEMPLATE_LLAMA_3;
     } else if (tmpl_contains("[gMASK]sop")) {
         // chatglm3-6b
-        return LLM_CHAT_TEMPLATE_CHATGML_3;
-    } else if (tmpl_contains("[gMASK]<sop>")) {
-        return LLM_CHAT_TEMPLATE_CHATGML_4;
+        return LLM_CHAT_TEMPLATE_CHATGLM_3;
     } else if (tmpl_contains(LU8("<用户>"))) {
         // MiniCPM-3B-OpenHermes-2.5-v2-GGUF
         return LLM_CHAT_TEMPLATE_MINICPM;
@@ -197,19 +203,20 @@ int32_t llm_chat_apply_template(
         if (add_ass) {
             ss << "<|im_start|>assistant\n";
         }
-    } else if (tmpl == LLM_CHAT_TEMPLATE_MISTRAL_V7) {
+    } else if (tmpl == LLM_CHAT_TEMPLATE_MISTRAL_V7 || tmpl == LLM_CHAT_TEMPLATE_MISTRAL_V7_TEKKEN) {
         // Official mistral 'v7' template
         // See: https://huggingface.co/mistralai/Mistral-Large-Instruct-2411#basic-instruct-template-v7
+        //      https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503#basic-instruct-template-v7-tekken
+        const char * trailing_space = tmpl == LLM_CHAT_TEMPLATE_MISTRAL_V7 ? " " : "";
         for (auto message : chat) {
             std::string role(message->role);
             std::string content(message->content);
             if (role == "system") {
-                ss << "[SYSTEM_PROMPT] " << content << "[/SYSTEM_PROMPT]";
+                ss << "[SYSTEM_PROMPT]" << trailing_space << content << "[/SYSTEM_PROMPT]";
             } else if (role == "user") {
-                ss << "[INST] " << content << "[/INST]";
-            }
-            else {
-                ss << " " << content << "</s>";
+                ss << "[INST]" << trailing_space << content << "[/INST]";
+            } else {
+                ss << trailing_space << content << "</s>";
             }
         }
     } else if (tmpl == LLM_CHAT_TEMPLATE_MISTRAL_V1
@@ -432,7 +439,7 @@ int32_t llm_chat_apply_template(
         if (add_ass) {
             ss << "<|start_header_id|>assistant<|end_header_id|>\n\n";
         }
-    } else if (tmpl == LLM_CHAT_TEMPLATE_CHATGML_3) {
+    } else if (tmpl == LLM_CHAT_TEMPLATE_CHATGLM_3) {
         // chatglm3-6b
         ss << "[gMASK]" << "sop";
         for (auto message : chat) {
@@ -442,14 +449,14 @@ int32_t llm_chat_apply_template(
         if (add_ass) {
             ss << "<|assistant|>";
         }
-    } else if (tmpl == LLM_CHAT_TEMPLATE_CHATGML_4) {
+    } else if (tmpl == LLM_CHAT_TEMPLATE_CHATGLM_4) {
         ss << "[gMASK]" << "<sop>";
         for (auto message : chat) {
             std::string role(message->role);
             ss << "<|" << role << "|>" << "\n" << message->content;
         }
         if (add_ass) {
-            ss << "<|assistant|>";
+            ss << "<|assistant|>\n";
         }
     } else if (tmpl == LLM_CHAT_TEMPLATE_GLMEDGE) {
         for (auto message : chat) {
@@ -620,7 +627,23 @@ int32_t llm_chat_apply_template(
         if (add_ass) {
             ss << "<|header_start|>assistant<|header_end|>\n\n";
         }
-    }  else {
+    } else if (tmpl == LLM_CHAT_TEMPLATE_SMOLVLM) {
+        // SmolVLM
+        ss << "<|im_start|>"; // uses <|im_start|> as BOS, but the actual content is NOT chatml
+        for (auto message : chat) {
+            std::string role(message->role);
+            if (role == "system") {
+                ss << message->content << "\n\n";
+            } else if (role == "user") {
+                ss << "User: " << message->content << "<end_of_utterance>\n";
+            } else {
+                ss << "Assistant: " << message->content << "<end_of_utterance>\n";
+            }
+        }
+        if (add_ass) {
+            ss << "Assistant:";
+        }
+    } else {
         // template not supported
         return -1;
     }

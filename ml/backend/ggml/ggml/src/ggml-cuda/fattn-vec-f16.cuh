@@ -168,6 +168,7 @@ static __global__ void flash_attn_vec_ext_f16(
     for (int j = 0; j < ncols; ++j) {
         KQ[j*D + tid] = -HALF_MAX_HALF;
     }
+    __syncthreads();
 
     half2 VKQ[ncols] = {{0.0f, 0.0f}};
 
@@ -315,7 +316,7 @@ void ggml_cuda_flash_attn_ext_vec_f16_case_impl(ggml_backend_cuda_context & ctx,
     constexpr bool need_f16_K = D != 128;
     constexpr bool need_f16_V = D != 128 && D != 64;
     constexpr size_t nbytes_shared = 0;
-    launch_fattn<D, cols_per_block, 1, -1>(ctx, dst, fattn_kernel, nwarps, nbytes_shared, D, need_f16_K, need_f16_V, false);
+    launch_fattn<D, cols_per_block, 1>(ctx, dst, fattn_kernel, nwarps, nbytes_shared, D, need_f16_K, need_f16_V, false);
 }
 
 template <int D, ggml_type type_K, ggml_type type_V>
