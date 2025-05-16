@@ -30,7 +30,7 @@ struct rpc_server_params {
     std::string host        = "127.0.0.1";
     int         port        = 50052;
     size_t      backend_mem = 0;
-    bool        use_cache   = false;
+    bool        use_cache   = true;
     int         n_threads   = std::max(1U, std::thread::hardware_concurrency()/2);
     std::string device;
 };

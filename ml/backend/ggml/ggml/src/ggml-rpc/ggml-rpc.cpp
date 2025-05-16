@@ -4,6 +4,7 @@
 #include "ggml-cpp.h"
 
 #include <cinttypes>
+#include <cstdio>
 #include <string>
 #include <vector>
 #include <memory>
@@ -29,6 +30,7 @@
 #include <cstring>
 #include <fstream>
 #include <filesystem>
+#include <pthread.h>
 
 namespace fs = std::filesystem;
 
@@ -94,6 +96,24 @@ enum rpc_cmd {
     RPC_CMD_GET_ALLOC_SIZE,
     RPC_CMD_HELLO,
     RPC_CMD_COUNT,
+};
+
+const char* rpc_cmd_names[] = {
+    "RPC_CMD_ALLOC_BUFFER",
+    "RPC_CMD_GET_ALIGNMENT",
+    "RPC_CMD_GET_MAX_SIZE",
+    "RPC_CMD_BUFFER_GET_BASE",
+    "RPC_CMD_FREE_BUFFER",
+    "RPC_CMD_BUFFER_CLEAR",
+    "RPC_CMD_SET_TENSOR",
+    "RPC_CMD_SET_TENSOR_HASH",
+    "RPC_CMD_GET_TENSOR",
+    "RPC_CMD_COPY_TENSOR",
+    "RPC_CMD_GRAPH_COMPUTE",
+    "RPC_CMD_GET_DEVICE_MEMORY",
+    "RPC_CMD_INIT_TENSOR",
+    "RPC_CMD_GET_ALLOC_SIZE",
+    "RPC_CMD_HELLO"
 };
 
 // Try RPC_CMD_SET_TENSOR_HASH first when data size is larger than this threshold
@@ -326,7 +346,7 @@ static bool send_data(sockfd_t sockfd, const void * data, size_t size) {
 static bool recv_data(sockfd_t sockfd, void * data, size_t size) {
     size_t bytes_recv = 0;
     while (bytes_recv < size) {
-        ssize_t n = recv(sockfd, (char *)data + bytes_recv, size - bytes_recv, 0);
+        ssize_t n = recv(sockfd, (char *)data + bytes_recv, size - bytes_recv, MSG_WAITALL);
         if (n <= 0) {
             return false;
         }
@@ -380,6 +400,8 @@ static bool parse_endpoint(const std::string & endpoint, std::string & host, int
 // RPC request : | rpc_cmd (1 byte) | request_size (8 bytes) | request_data (request_size bytes) |
 // No response
 static bool send_rpc_cmd(const std::shared_ptr<socket_t> & sock, enum rpc_cmd cmd, const void * input, size_t input_size) {
+    static std::mutex send_rpc_cmd_mutex;
+    std::lock_guard<std::mutex> lock(send_rpc_cmd_mutex);
     uint8_t cmd_byte = cmd;
     if (!send_data(sock->fd, &cmd_byte, sizeof(cmd_byte))) {
         return false;
@@ -526,9 +548,6 @@ static rpc_tensor serialize_tensor(const ggml_tensor * tensor) {
 static enum ggml_status ggml_backend_rpc_buffer_init_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor) {
     ggml_backend_rpc_buffer_context * ctx = (ggml_backend_rpc_buffer_context *)buffer->context;
 
-    // CUDA backend on the server pads everything to 512 due to CUDA limitations.
-    // Due to bandwidth constraints, we only call the server init tensor functions if necessary.
-    // In particular, only quantized tensors need padding
     if (ggml_is_quantized(tensor->type) && (tensor->ne[0] % 512 != 0) && (tensor->view_src == nullptr)) {
         rpc_msg_init_tensor_req request;
 
@@ -567,6 +586,12 @@ static void ggml_backend_rpc_buffer_set_tensor(ggml_backend_buffer_t buffer, ggm
     memcpy(input.data() + sizeof(rpc_tensor) + sizeof(offset), data, size);
     bool status = send_rpc_cmd(ctx->sock, RPC_CMD_SET_TENSOR, input.data(), input.size());
     GGML_ASSERT(status);
+}
+
+static void ggml_backend_rpc_buffer_memset_tensor(ggml_backend_buffer_t buffer, ggml_tensor * tensor, uint8_t value, size_t offset, size_t size) {
+    ggml_backend_rpc_buffer_context * ctx = (ggml_backend_rpc_buffer_context *)buffer->context;
+    std::vector<uint8_t> data(size, value);
+    ggml_backend_rpc_buffer_set_tensor(buffer, tensor, data.data(), offset, size);
 }
 
 static void ggml_backend_rpc_buffer_get_tensor(ggml_backend_buffer_t buffer, const ggml_tensor * tensor, void * data, size_t offset, size_t size) {
@@ -609,7 +634,7 @@ static ggml_backend_buffer_i ggml_backend_rpc_buffer_interface = {
     /* .free_buffer     = */ ggml_backend_rpc_buffer_free_buffer,
     /* .get_base        = */ ggml_backend_rpc_buffer_get_base,
     /* .init_tensor     = */ ggml_backend_rpc_buffer_init_tensor,
-    /* .memset_tensor   = */ NULL,
+    /* .memset_tensor   = */ ggml_backend_rpc_buffer_memset_tensor,
     /* .set_tensor      = */ ggml_backend_rpc_buffer_set_tensor,
     /* .get_tensor      = */ ggml_backend_rpc_buffer_get_tensor,
     /* .cpy_tensor      = */ ggml_backend_rpc_buffer_cpy_tensor,
@@ -926,7 +951,6 @@ void rpc_server::alloc_buffer(const rpc_msg_alloc_buffer_req & request, rpc_msg_
     if (buffer != nullptr) {
         response.remote_ptr = reinterpret_cast<uint64_t>(buffer);
         response.remote_size = buffer->size;
-        GGML_PRINT_DEBUG("[%s] size: %" PRIu64 " -> remote_ptr: %" PRIx64 ", remote_size: %" PRIu64 "\n", __func__, request.size, response.remote_ptr, response.remote_size);
         buffers.insert(buffer);
     } else {
         GGML_LOG_ERROR("[%s] size: %" PRIu64 " -> failed\n", __func__, request.size);
