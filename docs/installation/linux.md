@@ -1,14 +1,16 @@
-# Linux
+# Linux Installation Guide
 
-## Install
+This guide provides instructions for installing, configuring, and running Ollama on Linux systems.
 
-To install Ollama, run the following command:
+## Quick Install
+
+To install Ollama with a single command, run:
 
 ```shell
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-## Manual install
+## Manual Installation
 
 > [!NOTE]
 > If you are upgrading from a prior version, you should remove the old libraries with `sudo rm -rf /usr/lib/ollama` first.
@@ -32,7 +34,7 @@ In another terminal, verify that Ollama is running:
 ollama -v
 ```
 
-### AMD GPU install
+### AMD GPU Installation
 
 If you have an AMD GPU, also download and extract the additional ROCm package:
 
@@ -41,7 +43,7 @@ curl -L https://ollama.com/download/ollama-linux-amd64-rocm.tgz -o ollama-linux-
 sudo tar -C /usr -xzf ollama-linux-amd64-rocm.tgz
 ```
 
-### ARM64 install
+### ARM64 Installation
 
 Download and extract the ARM64-specific package:
 
@@ -50,7 +52,7 @@ curl -L https://ollama.com/download/ollama-linux-arm64.tgz -o ollama-linux-arm64
 sudo tar -C /usr -xzf ollama-linux-arm64.tgz
 ```
 
-### Adding Ollama as a startup service (recommended)
+## Setting Up Ollama as a Startup Service (Recommended)
 
 Create a user and group for Ollama:
 
@@ -85,7 +87,9 @@ sudo systemctl daemon-reload
 sudo systemctl enable ollama
 ```
 
-### Install CUDA drivers (optional)
+## Installing GPU Drivers
+
+### NVIDIA CUDA Drivers (Optional)
 
 [Download and install](https://developer.nvidia.com/cuda-downloads) CUDA.
 
@@ -95,18 +99,9 @@ Verify that the drivers are installed by running the following command, which sh
 nvidia-smi
 ```
 
-### Install AMD ROCm drivers (optional)
+### AMD ROCm Drivers (Optional)
 
 [Download and Install](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/tutorial/quick-start.html) ROCm v6.
-
-### Start Ollama
-
-Start Ollama and verify it is running:
-
-```shell
-sudo systemctl start ollama
-sudo systemctl status ollama
-```
 
 > [!NOTE]
 > While AMD has contributed the `amdgpu` driver upstream to the official linux
@@ -115,7 +110,16 @@ sudo systemctl status ollama
 > https://www.amd.com/en/support/linux-drivers for best support of your Radeon
 > GPU.
 
-## Customizing
+## Starting Ollama
+
+Start Ollama and verify it is running:
+
+```shell
+sudo systemctl start ollama
+sudo systemctl status ollama
+```
+
+## Customizing the Installation
 
 To customize the installation of Ollama, you can edit the systemd service file or the environment variables by running:
 
@@ -130,7 +134,7 @@ Alternatively, create an override file manually in `/etc/systemd/system/ollama.s
 Environment="OLLAMA_DEBUG=1"
 ```
 
-## Updating
+## Updating Ollama
 
 Update Ollama by running the install script again:
 
@@ -145,7 +149,7 @@ curl -L https://ollama.com/download/ollama-linux-amd64.tgz -o ollama-linux-amd64
 sudo tar -C /usr -xzf ollama-linux-amd64.tgz
 ```
 
-## Installing specific versions
+## Installing Specific Versions
 
 Use `OLLAMA_VERSION` environment variable with the install script to install a specific version of Ollama, including pre-releases. You can find the version numbers in the [releases page](https://github.com/ollama/ollama/releases).
 
@@ -155,7 +159,7 @@ For example:
 curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=0.5.7 sh
 ```
 
-## Viewing logs
+## Viewing Logs
 
 To view logs of Ollama running as a startup service, run:
 
@@ -163,7 +167,7 @@ To view logs of Ollama running as a startup service, run:
 journalctl -e -u ollama
 ```
 
-## Uninstall
+## Uninstalling Ollama
 
 Remove the ollama service:
 
