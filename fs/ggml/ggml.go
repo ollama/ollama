@@ -125,6 +125,8 @@ func (kv KV) OllamaEngineRequired() bool {
 		"gemma3",
 		"mistral3",
 		"llama4",
+		"mllama",
+		"qwen25vl",
 	}, kv.Architecture())
 }
 
@@ -648,6 +650,20 @@ func (llm GGML) VisionGraphSize() (weights, graphSize uint64) {
 		graphSize = 4 * (imageSize*imageSize*numChannels +
 			embeddingLength*patchSize +
 			numPatches*numPatches*headCount)
+	case "qwen25vl":
+		maxPixels := uint64(llm.KV().Uint("vision.max_pixels", 28*28*1280))
+
+		numPatches := maxPixels / (patchSize * patchSize)
+
+		graphSize = 4 * (maxPixels*numChannels + // Original image storage
+			// Normalized pixels
+			maxPixels*numChannels +
+			// Patches storage (numPatches * channels * patchSize^2)
+			numPatches*numChannels*patchSize*patchSize +
+			// Self-attention calculations
+			numPatches*numPatches*headCount +
+			// Additional buffer for processing
+			embeddingLength*numPatches)
 	case "llama4":
 		// vision graph is computed independently in the same schedule
 		// and is negligible compared to the worst case text graph

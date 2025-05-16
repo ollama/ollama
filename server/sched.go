@@ -8,6 +8,7 @@ import (
 	"os"
 	"reflect"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -132,11 +133,11 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				continue
 			}
 			numParallel := int(envconfig.NumParallel())
-			// TODO (jmorganca): mllama doesn't support parallel yet
-			// see https://github.com/ollama/ollama/issues/4165
-			if checkMllamaModelFamily(pending.model) && numParallel != 1 {
+			// `mllama` is a snowflake and uses an encoder cache which cannot be used with num_parallel > 1
+			// ref: https://github.com/ollama/ollama/issues/4165
+			if slices.Contains(pending.model.Config.ModelFamilies, "mllama") && numParallel != 1 {
 				numParallel = 1
-				slog.Warn("mllama doesn't support parallel requests yet")
+				slog.Warn("mllama does not currently support parallel requests")
 			}
 
 			for {
