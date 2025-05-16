@@ -62,6 +62,8 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /set noformat          Disable formatting")
 		fmt.Fprintln(os.Stderr, "  /set verbose           Show LLM stats")
 		fmt.Fprintln(os.Stderr, "  /set quiet             Disable LLM stats")
+		fmt.Fprintln(os.Stderr, "  /set think             Enable thinking")
+		fmt.Fprintln(os.Stderr, "  /set nothink           Disable thinking")
 		fmt.Fprintln(os.Stderr, "")
 	}
 
@@ -260,6 +262,17 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						return err
 					}
 					fmt.Println("Set 'quiet' mode.")
+				case "think":
+					think := true
+					opts.Think = &think
+					if client, err := api.ClientFromEnvironment(); err == nil {
+						warnMissingThinking(cmd.Context(), client, opts.Model)
+					}
+					fmt.Println("Set 'think' mode.")
+				case "nothink":
+					think := false
+					opts.Think = &think
+					fmt.Println("Set 'nothink' mode.")
 				case "format":
 					if len(args) < 3 || args[2] != "json" {
 						fmt.Println("Invalid or missing format. For 'json' mode use '/set format json'")
