@@ -53,8 +53,11 @@ func (ModelParameters) KV(t *Tokenizer) ggml.KV {
 	}
 
 	for _, sv := range t.SpecialVocabulary {
-		kv[fmt.Sprintf("tokenizer.ggml.%s_token_id", sv.Key())] = uint32(sv.ID)
 		kv[fmt.Sprintf("tokenizer.ggml.add_%s_token", sv.Key())] = sv.AddToken
+		kv[fmt.Sprintf("tokenizer.ggml.%s_token_id", sv.Key())] = uint32(sv.ID)
+		if len(sv.IDs) > 0 {
+			kv[fmt.Sprintf("tokenizer.ggml.%s_token_ids", sv.Key())] = sv.IDs
+		}
 	}
 
 	return kv

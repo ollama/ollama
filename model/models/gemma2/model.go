@@ -43,10 +43,13 @@ func New(c fs.Config) (model.Model, error) {
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Scores: c.Floats("tokenizer.ggml.scores"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
-				BOS:    int32(c.Uint("tokenizer.ggml.bos_token_id")),
-				EOS:    int32(c.Uint("tokenizer.ggml.eos_token_id")),
-				// TODO: set EOT to EOS otherwise 0 will stop generation
-				EOT: int32(c.Uint("tokenizer.ggml.eos_token_id")),
+				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
+				BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
+				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
+				EOS: append(
+					[]int32{int32(c.Uint("tokenizer.ggml.eos_token_id"))},
+					c.Ints("tokenizer.ggml.eos_token_ids")...,
+				),
 			},
 		),
 		Layers: make([]Layer, c.Uint("block_count")),
