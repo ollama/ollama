@@ -307,9 +307,11 @@ func parseVocabulary(fsys fs.FS) (*Vocabulary, error) {
 type SpecialVocabulary struct {
 	Type     string
 	ID       int
-	IDs      []int32
 	Content  string
 	AddToken bool
+
+	// IDs is populated by generation_config.json
+	IDs []int32
 }
 
 func (sv SpecialVocabulary) Key() string {
