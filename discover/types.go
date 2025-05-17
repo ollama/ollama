@@ -78,18 +78,6 @@ type RPCServerMemoryResult struct {
 	TotalMem uint64
 }
 
-// An info about an RPC server/endpoint.
-type RPCServerInfo struct {
-	GpuInfo
-	// The host/ip address of the endpoint.
-	host string //nolint:unused,nolintlint
-	// The port number of the endpoint.
-	port uint16 //nolint:unused,nolintlint
-}
-
-// A list of RPC server/endpoint info.
-type RPCServerInfoList []RPCServerInfo
-
 type CudaGPUInfo struct {
 	GpuInfo
 	OSOverhead   uint64 // Memory overhead between the driver library and management library

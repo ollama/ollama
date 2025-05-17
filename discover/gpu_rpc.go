@@ -14,7 +14,7 @@ import (
 //
 // If the RPC endpoint given is unavailable (unable to connect), the total and
 // free memory returned would be 0.
-func RPCServerMemory(endpoint string) RPCServerMemoryResult {
+func getRPCServerMemory(endpoint string) RPCServerMemoryResult {
 	// Setting timeout to 5 seconds
 	var deadLine time.Time
 	timeout := time.Duration(5 * 1000 * 1000 * 1000)
@@ -140,10 +140,10 @@ func RPCServerMemory(endpoint string) RPCServerMemoryResult {
 }
 
 // Find valid RPC servers from a comma seperated list of endpoints.
-func CheckRPCServers(endpoints string) RPCServerInfoList {
+func GetRPCServers(endpoints string) GpuInfoList {
 	slog.Debug("finding valid rpc servers", "endpoints", endpoints)
 	rpcServersList := strings.Split(endpoints, ",")
-	var validServers RPCServerInfoList
+	var validServers GpuInfoList
 	for _, server := range rpcServersList {
 		// No servers given
 		if server == "" {
@@ -151,7 +151,7 @@ func CheckRPCServers(endpoints string) RPCServerInfoList {
 		}
 
 		// Getting information
-		info := RPCServerMemory(server)
+		info := getRPCServerMemory(server)
 		serverAddress := strings.Split(server, ":")
 		// We got an invalid server address
 		if len(serverAddress) != 2 {
@@ -159,20 +159,17 @@ func CheckRPCServers(endpoints string) RPCServerInfoList {
 			continue
 		}
 		// Invalid port number
-		port, err := strconv.ParseUint(serverAddress[1], 10, 16)
+		_, err := strconv.ParseUint(serverAddress[len(serverAddress)-1], 10, 16)
 		if err != nil {
 			slog.Warn("invalid RPC endpoint port number", "endpoint", server)
 			continue
 		}
 
-		serverInfo := RPCServerInfo{
-			GpuInfo: GpuInfo{
-				ID:      server,
-				Library: "rpc",
-			},
-			host: serverAddress[0],
-			port: uint16(port),
+		serverInfo := GpuInfo{
+			ID:      server,
+			Library: "rpc",
 		}
+
 		serverInfo.TotalMemory = info.TotalMem
 		serverInfo.FreeMemory = info.FreeMem
 

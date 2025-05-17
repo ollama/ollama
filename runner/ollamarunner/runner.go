@@ -937,7 +937,7 @@ func Execute(args []string) error {
 		MainGPU:        *mainGPU,
 		TensorSplit:    tensorSplitFloats,
 		FlashAttention: *flashAttention,
-		RPCServers:   *rpcServers,
+		RPCServers:     *rpcServers,
 	}
 
 	server.ready.Add(1)

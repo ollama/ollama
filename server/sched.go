@@ -166,24 +166,9 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						gpus = s.getCpuFn()
 					} else {
 						gpus = s.getGpuFn()
-                        slog.Debug("RPC options", "options", pending.opts.RPCServers)
-                        // Removing Existing Servers
-                        if pending.opts.RPCServers != "" {
-                            slog.Debug("removing system RPC servers", "gpus", gpus)
-                            // Removing RPC Servers from system
-                            for _, rpcServer := range gpus {
-                                if rpcServer.Library == "rpc" {
-                                    gpus = gpus[1:]
-                                }
-                            }
-                            slog.Debug("adding request RPC servers", "gpus", gpus)
-                            // Adding RPC Servers from request
-                            newServers := discover.CheckRPCServers(pending.opts.RPCServers)
-                            for _, rpcServer := range newServers {
-                                gpus = append(discover.GpuInfoList{rpcServer.GpuInfo}, gpus...)
-                            }
-                            slog.Debug("new gpus", "gpus", gpus)
-                        }
+						if rpcServers := envconfig.RPCServers(); rpcServers != "" {
+							gpus = append(gpus, discover.GetRPCServers(rpcServers)...)
+						}
 					}
 
 					if envconfig.MaxRunners() <= 0 {
@@ -247,9 +232,6 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						g := pickBestFullFitByLibrary(pending, ggml, gpus, &numParallel)
 						if g != nil {
 							gpus = g
-						} else {
-							// Only allow partial loads when this is the first model
-							gpus = pickBestPartialFitByLibrary(pending, ggml, gpus, &numParallel)
 						}
 						s.loadFn(pending, ggml, gpus, numParallel)
 						break

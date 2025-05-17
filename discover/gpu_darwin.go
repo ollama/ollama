@@ -14,7 +14,6 @@ import (
 	"runtime"
 	"syscall"
 
-	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 )
 
@@ -40,19 +39,9 @@ func GetGPUInfo() GpuInfoList {
 
 	// TODO is there a way to gather actual allocated video memory? (currentAllocatedSize doesn't work)
 	info.FreeMemory = info.TotalMemory
-
 	info.MinimumMemory = metalMinimumMemory
-	resp := []GpuInfo{info}
 
-	// RPC Servers
-	rpcServersENV := envconfig.RPCServers()
-	rpcServers := CheckRPCServers(rpcServersENV)
-
-	for _, gpu := range rpcServers {
-		resp = append(resp, gpu.GpuInfo)
-	}
-
-	return resp
+	return []GpuInfo{info}
 }
 
 func GetCPUInfo() GpuInfoList {
