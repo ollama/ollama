@@ -1,6 +1,8 @@
 # Distributed Inferencing
 
-Ollama supports distributed inferencing using llama.cpp RPC servers.
+Ollama supports distributed inference via llama.cpp RPC servers, enabling larger models to run across multiple machines within the same network.
+
+Note: Model loading can be very slow over a slow network.
 
 # Getting Started
 
