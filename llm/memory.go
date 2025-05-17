@@ -415,7 +415,7 @@ func projectorMemoryRequirements(filename string) (weights uint64) {
 	}
 	defer file.Close()
 
-	ggml, _, err := ggml.Decode(file, 1024)
+	ggml, err := ggml.Decode(file, 1024)
 	if err != nil {
 		return 0
 	}

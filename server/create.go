@@ -295,7 +295,7 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 	}
 	defer bin.Close()
 
-	f, _, err := ggml.Decode(bin, -1)
+	f, err := ggml.Decode(bin, -1)
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +467,7 @@ func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.Progr
 		return nil, err
 	}
 
-	f, _, err := ggml.Decode(temp, 1024)
+	f, err := ggml.Decode(temp, 1024)
 	if err != nil {
 		slog.Error(fmt.Sprintf("error decoding ggml: %s\n", err))
 		return nil, err
@@ -508,7 +508,7 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 
 	var offset int64
 	for offset < stat.Size() {
-		f, n, err := ggml.Decode(blob, 1024)
+		f, err := ggml.Decode(blob, 1024)
 		if errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
@@ -523,7 +523,7 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 		}
 
 		var layer Layer
-		if digest != "" && n == stat.Size() && offset == 0 {
+		if digest != "" && f.Length == stat.Size() && offset == 0 {
 			layer, err = NewLayerFromLayer(digest, mediatype, blob.Name())
 			if err != nil {
 				slog.Debug("could not create new layer from layer", "error", err)
@@ -533,14 +533,14 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 
 		// Fallback to creating layer from file copy (either NewLayerFromLayer failed, or digest empty/n != stat.Size())
 		if layer.Digest == "" {
-			layer, err = NewLayer(io.NewSectionReader(blob, offset, n), mediatype)
+			layer, err = NewLayer(io.NewSectionReader(blob, offset, f.Length), mediatype)
 			if err != nil {
 				return nil, err
 			}
 		}
 
 		layers = append(layers, &layerGGML{layer, f})
-		offset = n
+		offset = f.Length
 	}
 
 	return detectChatTemplate(layers)

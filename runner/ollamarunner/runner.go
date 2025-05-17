@@ -845,7 +845,7 @@ func (s *Server) loadModel(
 	multiUserCache bool,
 ) {
 	var err error
-	s.model, err = model.New(ctx, mpath, params)
+	s.model, err = model.New(mpath, params)
 	if err != nil {
 		panic(err)
 	}
@@ -870,6 +870,14 @@ func (s *Server) loadModel(
 	s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
 
 	err = s.reserveWorstCaseGraph()
+	if err != nil {
+		panic(err)
+	}
+
+	err = s.model.Backend().Load(ctx,
+		func(progress float32) {
+			s.progress = progress
+		})
 	if err != nil {
 		panic(err)
 	}
@@ -928,9 +936,6 @@ func Execute(args []string) error {
 	}
 
 	params := ml.BackendParams{
-		Progress: func(progress float32) {
-			server.progress = progress
-		},
 		NumThreads:     *threads,
 		NumGPULayers:   *numGPULayers,
 		MainGPU:        *mainGPU,
