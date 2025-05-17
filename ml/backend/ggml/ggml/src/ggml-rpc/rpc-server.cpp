@@ -261,8 +261,11 @@ static void get_backend_memory(ggml_backend_t backend, size_t * free_mem, size_t
     ggml_backend_dev_memory(dev, free_mem, total_mem);
 }
 
-int run_rpc_server() {
+int run_rpc_server(const char *host, int port, const char *device) {
     rpc_server_params params;
+    params.host = host;
+    params.port = port;
+    params.device = device;
 
     ggml_backend_load_all();
 
@@ -274,6 +277,22 @@ int run_rpc_server() {
         fprintf(stderr, "         This is an experimental feature and is not secure!\n");
         fprintf(stderr, "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n");
         fprintf(stderr, "\n");
+    }
+
+     if (!params.device.empty()) {
+        if (ggml_backend_dev_by_name(params.device.c_str()) == nullptr) {
+            fprintf(stderr, "error: unknown device: %s\n", params.device.c_str());
+            fprintf(stderr, "available devices:\n");
+            for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+                auto *dev = ggml_backend_dev_get(i);
+                size_t free, total;
+                ggml_backend_dev_memory(dev, &free, &total);
+                printf("  %s: %s (%zu MiB, %zu MiB free)\n", ggml_backend_dev_name(dev),
+                ggml_backend_dev_description(dev), total / 1024 / 1024,
+                free / 1024 / 1024);
+            }
+            return false;
+        }
     }
 
     ggml_backend_t backend = create_backend(params);

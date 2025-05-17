@@ -16,12 +16,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	rpcHost string
-	rpcPort int
-)
-
 func rpcServerRun(cmd *cobra.Command, args []string) error {
+	rpcHost, _ := cmd.Flags().GetString("host")
+	rpcPort, _ := cmd.Flags().GetInt("port")
+	device, _ := cmd.Flags().GetString("device")
+
 	endpoint := fmt.Sprintf("%s:%d", rpcHost, rpcPort)
 	log.Printf("Starting RPC server on %s", endpoint)
 
@@ -29,7 +28,7 @@ func rpcServerRun(cmd *cobra.Command, args []string) error {
 	// so we can handle signals and potentially stop it later if needed.
 	// Note: ggml_backend_rpc_start_server is likely a blocking call.
 	go func() {
-		C.run_rpc_server()
+		C.run_rpc_server(C.CString(rpcHost), C.int(rpcPort), C.CString(device))
 	}()
 
 	log.Printf("RPC server started with Metal backend on %s. Press Ctrl+C to exit.", endpoint)

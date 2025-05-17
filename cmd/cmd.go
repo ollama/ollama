@@ -1435,8 +1435,9 @@ func NewCLI() *cobra.Command {
 		// PersistentPreRunE from rootCmd will apply
 	}
 
-	rpcCmd.Flags().StringVar(&rpcHost, "host", "0.0.0.0", "Host address for the RPC server")
-	rpcCmd.Flags().IntVar(&rpcPort, "port", 50051, "Port for the RPC server")
+	rpcCmd.Flags().String("host", "0.0.0.0", "Host address for the RPC server")
+	rpcCmd.Flags().Int("port", 50052, "Port for the RPC server")
+	rpcCmd.Flags().String("device", "", "Device to use (use --device list to see all)")
 
 	envVars := envconfig.AsMap()
 
