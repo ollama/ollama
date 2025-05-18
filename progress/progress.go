@@ -4,8 +4,16 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
+
+	"golang.org/x/term"
+)
+
+const (
+	defaultTermWidth  = 80
+	defaultTermHeight = 24
 )
 
 type State interface {
@@ -83,6 +91,11 @@ func (p *Progress) Add(key string, state State) {
 }
 
 func (p *Progress) render() {
+	_, termHeight, err := term.GetSize(int(os.Stderr.Fd()))
+	if err != nil {
+		termHeight = defaultTermHeight
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -102,8 +115,9 @@ func (p *Progress) render() {
 	fmt.Fprint(p.w, "\033[1G")
 
 	// render progress lines
-	for i, state := range p.states {
-		fmt.Fprint(p.w, state.String(), "\033[K")
+	maxHeight := min(len(p.states), termHeight)
+	for i := len(p.states) - maxHeight; i < len(p.states); i++ {
+		fmt.Fprint(p.w, p.states[i].String(), "\033[K")
 		if i < len(p.states)-1 {
 			fmt.Fprint(p.w, "\n")
 		}

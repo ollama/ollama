@@ -9,7 +9,6 @@ import (
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
-	"github.com/ollama/ollama/model"
 	"github.com/ollama/ollama/model/input"
 )
 
@@ -20,9 +19,6 @@ type TextOptions struct {
 }
 
 type TextModel struct {
-	model.Base
-	model.BytePairEncoding
-
 	TokenEmbedding *nn.Embedding `gguf:"token_embd"`
 	Layers         []Layer       `gguf:"blk"`
 	OutputNorm     *nn.RMSNorm   `gguf:"output_norm"`
@@ -110,20 +106,7 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 
 	// image embeddings
 	for _, image := range batch.Multimodal {
-		row := image.Multimodal.(*imageRow)
-		row.parent.dataOnce.Do(func() {
-			// use a new, throwaway context so the image tensor is not added to the graph
-			temp := m.Backend().NewContext()
-			temp.Forward(row.parent.tensor).Compute(row.parent.tensor)
-			row.parent.data = row.parent.tensor.Floats()
-			temp.Close()
-		})
-
-		imageFeature, err := ctx.Input().FromFloatSlice(row.data(), row.shape...)
-		if err != nil {
-			panic(err)
-		}
-
+		imageFeature := image.Multimodal[0].Tensor
 		ctx.Forward(imageFeature.Copy(ctx, hiddenState.View(ctx, image.Index*hiddenState.Stride(1), imageFeature.Dim(0)*imageFeature.Dim(1))))
 	}
 
@@ -148,18 +131,6 @@ func NewTextModel(c fs.Config) (*TextModel, error) {
 	}
 
 	textModel := &TextModel{
-		BytePairEncoding: model.NewBytePairEncoding(
-			c.String("tokenizer.ggml.pretokenizer", `[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
-			&model.Vocabulary{
-				Values: c.Strings("tokenizer.ggml.tokens"),
-				Types:  c.Ints("tokenizer.ggml.token_type"),
-				Merges: c.Strings("tokenizer.ggml.merges"),
-				BOS:    int32(c.Uint("tokenizer.ggml.bos_token_id", 1)),
-				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
-				EOS:    int32(c.Uint("tokenizer.ggml.eos_token_id", 2)),
-				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
-			},
-		),
 		Layers: make([]Layer, c.Uint("block_count")),
 		TextOptions: &TextOptions{
 			hiddenSize: int(c.Uint("embedding_length")),

@@ -27,6 +27,7 @@ import (
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs"
 	fsggml "github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 	"golang.org/x/sync/errgroup"
@@ -222,7 +223,7 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 			tt := C.ggml_new_tensor(ctxs[bt], t.source.Kind, C.int(len(t.source.Shape)), (*C.int64_t)(unsafe.Pointer(&t.source.Shape[0])))
 			C.ggml_set_name(tt, cname)
 
-			slog.Debug("created tensor", "name", name, "shape", t.source.Shape, "dtype", t.source.Kind, "buffer_type", C.GoString(C.ggml_backend_buft_name(bt)))
+			slog.Log(context.TODO(), logutil.LevelTrace, "created tensor", "name", name, "shape", t.source.Shape, "dtype", t.source.Kind, "buffer_type", C.GoString(C.ggml_backend_buft_name(bt)))
 			//nolint:staticcheck // TODO: check if buffer type supports this tensor
 			return tt
 		}
@@ -312,6 +313,7 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 	g, ctx := errgroup.WithContext(ctx)
 	g.SetLimit(runtime.GOMAXPROCS(0))
 	for _, t := range meta.Tensors().Items() {
+		t := t
 		g.Go(func() error {
 			tts := make([]*C.struct_ggml_tensor, max(1, len(targets[t.Name])))
 			for i := range tts {
@@ -341,6 +343,11 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 
 			var s uint64
 			for s < t.Size() {
+				// Stop if either the parent context has been canceled or if any of the other tensors returned an error
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+
 				n, err := io.ReadFull(sr, bts[:min(len(bts), int(t.Size()-s))])
 				if err != nil {
 					slog.Warn("file read error", "file", r.Name(), "error", err)
@@ -362,14 +369,6 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 			return nil
 		})
 	}
-
-	// start a goroutine to cancel the errgroup if the parent context is done
-	go func() {
-		<-ctx.Done()
-		g.Go(func() error {
-			return ctx.Err()
-		})
-	}()
 
 	if err := g.Wait(); err != nil {
 		return nil, err
@@ -407,6 +406,7 @@ func New(ctx context.Context, r *os.File, params ml.BackendParams) (ml.Backend, 
 			C.int(len(schedBackends)),
 			C.size_t(maxGraphNodes),
 			C._Bool(len(gpus) > 1 && slices.Contains(gpus, output.d)),
+			C._Bool(false),
 		),
 		schedBackends: schedBackends,
 		schedBufts:    schedBufts,
@@ -915,6 +915,8 @@ func (t *Tensor) RMSNorm(ctx ml.Context, w ml.Tensor, eps float32) ml.Tensor {
 func (t *Tensor) Pad(ctx ml.Context, shape ...int) ml.Tensor {
 	if len(shape) != 4 {
 		panic("expected 4 dimensions")
+	} else if shape[3] != 0 {
+		panic("cuda does not support 4d tensors")
 	}
 
 	return &Tensor{
@@ -1017,17 +1019,6 @@ func (t *Tensor) Sigmoid(ctx ml.Context) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Unpad(ctx ml.Context, shape ...int) ml.Tensor {
-	if len(shape) != 4 {
-		panic("expected 4 dimensions")
-	}
-
-	return &Tensor{
-		b: t.b,
-		t: C.ggml_unpad(ctx.(*Context).ctx, t.t, C.int(shape[0]), C.int(shape[1]), C.int(shape[2]), C.int(shape[3])),
-	}
-}
-
 func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	switch len(shape) {
 	case 1:
@@ -1071,7 +1062,17 @@ const (
 	ropeTypeVision C.int = 24
 )
 
-func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim, ropeType uint32, ropeBase, ropeScale float32) ml.Tensor {
+func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim, ropeType uint32, ropeBase, ropeScale float32, options ...ml.RopeOption) ml.Tensor {
+	// Default options
+	opts := &ml.RopeOptions{
+		OriginalContextLen: 131072,
+	}
+
+	// Apply any provided options
+	for _, option := range options {
+		option(opts)
+	}
+
 	if ropeFactors == nil {
 		ropeFactors = &Tensor{b: t.b}
 	}
@@ -1084,16 +1085,19 @@ func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDi
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_rope_ext(
-			ctx.(*Context).ctx, dequant, positionIDs.(*Tensor).t, ropeFactors.(*Tensor).t,
+			ctx.(*Context).ctx,
+			dequant,
+			positionIDs.(*Tensor).t,
+			ropeFactors.(*Tensor).t,
 			C.int(ropeDim),
 			C.int(ropeType),
-			131072, // YaRN n_ctx_train
+			C.int(opts.OriginalContextLen),
 			C.float(ropeBase),
 			C.float(ropeScale),
-			0.,  // YaRN ext_factor
-			1.,  // YaRN attn_factor
-			32., // YaRN beta_fast
-			1.,  // YaRN beta_slow
+			C.float(0.0),
+			C.float(1.0),
+			C.float(32.0),
+			C.float(1.0),
 		),
 	}
 }
@@ -1185,5 +1189,12 @@ func (t *Tensor) TopK(ctx ml.Context, k int) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_top_k(ctx.(*Context).ctx, t.t, C.int(k)),
+	}
+}
+
+func (t *Tensor) Argsort(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_argsort(ctx.(*Context).ctx, t.t, C.GGML_SORT_ORDER_ASC),
 	}
 }
