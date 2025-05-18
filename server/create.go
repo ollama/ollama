@@ -508,7 +508,7 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 
 	var offset int64
 	for offset < stat.Size() {
-		f, err := ggml.Decode(blob, 1024)
+		f, err := ggml.Decode(blob, -1)
 		if errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
