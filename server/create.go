@@ -467,7 +467,7 @@ func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.Progr
 		return nil, err
 	}
 
-	f, _, err := ggml.Decode(temp, 1024)
+	f, _, err := ggml.Decode(temp, -1)
 	if err != nil {
 		slog.Error(fmt.Sprintf("error decoding ggml: %s\n", err))
 		return nil, err
@@ -508,7 +508,7 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 
 	var offset int64
 	for offset < stat.Size() {
-		f, n, err := ggml.Decode(blob, 1024)
+		f, n, err := ggml.Decode(blob, -1)
 		if errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
