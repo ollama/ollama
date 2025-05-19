@@ -31,11 +31,6 @@ var _ model.MultimodalProcessor = (*Model)(nil)
 var _ model.TextProcessor = (*Model)(nil)
 
 func New(c fs.Config) (model.Model, error) {
-	textModel, err := NewTextModel(c)
-	if err != nil {
-		return nil, err
-	}
-
 	m := &Model{
 		BytePairEncoding: model.NewBytePairEncoding(
 			c.String("tokenizer.ggml.pretokenizer", `[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
@@ -52,7 +47,7 @@ func New(c fs.Config) (model.Model, error) {
 				),
 			},
 		),
-		TextModel:           textModel,
+		TextModel:           newTextModel(c),
 		VisionModel:         newVisionModel(c),
 		ImageProcessor:      newImageProcessor(c),
 		MultiModalProjector: newMultiModalProjector(c),
