@@ -729,11 +729,11 @@ func (c *Context) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
 	return t
 }
 
-func checkShape[S ~[]E, E any](s S, shape ...int) error {
+func checkShape[S ~[]E, E any](s S, shape ...int) {
 	n := len(s)
 
 	if n == 0 {
-		return nil
+		return
 	}
 
 	for _, v := range shape {
@@ -741,16 +741,12 @@ func checkShape[S ~[]E, E any](s S, shape ...int) error {
 	}
 
 	if n != 1 {
-		return fmt.Errorf("invalid shape: %v", shape)
+		panic(fmt.Errorf("invalid shape: %v", shape))
 	}
-
-	return nil
 }
 
-func (c *Context) FromFloatSlice(s []float32, shape ...int) (ml.Tensor, error) {
-	if err := checkShape(s, shape...); err != nil {
-		return nil, err
-	}
+func (c *Context) FromFloatSlice(s []float32, shape ...int) ml.Tensor {
+	checkShape(s, shape...)
 
 	t := c.newTensor(ml.DTypeF32, shape)
 
@@ -758,13 +754,11 @@ func (c *Context) FromFloatSlice(s []float32, shape ...int) (ml.Tensor, error) {
 		C.ggml_backend_tensor_set(t.(*Tensor).t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
 	}
 
-	return t, nil
+	return t
 }
 
-func (c *Context) FromIntSlice(s []int32, shape ...int) (ml.Tensor, error) {
-	if err := checkShape(s, shape...); err != nil {
-		return nil, err
-	}
+func (c *Context) FromIntSlice(s []int32, shape ...int) ml.Tensor {
+	checkShape(s, shape...)
 
 	t := c.newTensor(ml.DTypeI32, shape)
 
@@ -772,7 +766,7 @@ func (c *Context) FromIntSlice(s []int32, shape ...int) (ml.Tensor, error) {
 		C.ggml_backend_tensor_set(t.(*Tensor).t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
 	}
 
-	return t, nil
+	return t
 }
 
 func (c Context) Arange(start, stop, step float32, dtype ml.DType) ml.Tensor {
@@ -790,12 +784,7 @@ func (c Context) Arange(start, stop, step float32, dtype ml.DType) ml.Tensor {
 			arange = append(arange, int32(i))
 		}
 
-		t, err := c.Input().FromIntSlice(arange, len(arange))
-		if err != nil {
-			panic(err)
-		}
-
-		return t
+		return c.Input().FromIntSlice(arange, len(arange))
 	default:
 		panic("unsupported dtype for arange")
 	}
