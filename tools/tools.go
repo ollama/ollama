@@ -2,13 +2,8 @@ package tools
 
 import (
 	"errors"
-	"io"
-	"log/slog"
 	"strings"
 	gotmpl "text/template"
-
-	jsonv2 "github.com/go-json-experiment/json"
-	jsontext "github.com/go-json-experiment/json/jsontext"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/template"
@@ -37,56 +32,6 @@ type Parser struct {
 	Done        bool
 }
 
-// parseJSONToolCalls attempts to parse a JSON string into a slice ToolCalls.
-// It first tries to incrementally decode the JSON to handle partial inputs.
-// Returns:
-//   - []api.ToolCall: The parsed tool calls if successful
-//   - error: ErrPartialJSON if JSON is incomplete, ErrInvalidToolCall if invalid, or nil if successful
-func (p *Parser) parseJSONToolCalls(s string) ([]api.ToolCall, error) {
-	// First try incremental decoding to handle partial JSON
-	dec := jsontext.NewDecoder(strings.NewReader(s))
-	if got, err := dec.ReadValue(); err == nil {
-		s = got.String()
-	}
-
-	// Attempt full unmarshal of the JSON
-	var resp any
-	if err := jsonv2.Unmarshal([]byte(s), &resp); errors.Is(err, io.ErrUnexpectedEOF) {
-		slog.Debug("incomplete JSON detected", "input", s)
-		return nil, ErrAccumulateMore
-	} else if err != nil {
-		slog.Debug("failed to unmarshal response", "error", err)
-		return nil, ErrInvalidToolCall
-	}
-
-	// Collect all nested objects that could contain tool calls
-	objs := collect(resp)
-	if len(objs) == 0 {
-		return nil, ErrInvalidToolCall
-	}
-
-	var toolCalls []api.ToolCall
-	for _, kv := range objs {
-		n, nok := kv[p.name].(string)
-		a, aok := kv[p.arguments].(map[string]any)
-		if nok && aok {
-			toolCalls = append(toolCalls, api.ToolCall{
-				Function: api.ToolCallFunction{
-					Name:      n,
-					Arguments: a,
-				},
-			})
-		}
-	}
-
-	// Valid JSON, no tool calls found
-	if len(toolCalls) == 0 {
-		return nil, ErrInvalidToolCall
-	}
-
-	return toolCalls, nil
-}
-
 // checkPrefix processes a string to find and handle a prefix pattern.
 //
 // Returns:
@@ -95,7 +40,7 @@ func (p *Parser) parseJSONToolCalls(s string) ([]api.ToolCall, error) {
 func (p *Parser) checkPrefix(s string) (string, error) {
 	// Keep original for overlap checks
 	original := s
-	s = strings.TrimSpace(s)
+
 	if s == "" {
 		return "", nil
 	}
@@ -141,6 +86,9 @@ func (p *Parser) checkPrefix(s string) (string, error) {
 //   - content: Non-tool call content
 //   - error: One of the sentinel errors or nil if successful
 func (p *Parser) Add(s string) (tools []api.ToolCall, content string, err error) {
+	if s == "" {
+		return nil, "", ErrAccumulateMore
+	}
 	p.sb.WriteString(s)
 	s = p.sb.String()
 
@@ -161,7 +109,7 @@ func (p *Parser) Add(s string) (tools []api.ToolCall, content string, err error)
 		return nil, "", ErrPrefixNotFound
 	}
 
-	toolCalls, err := p.parseJSONToolCalls(s)
+	toolCalls, err := parseJSONToolCalls(s, p.name, p.arguments)
 	if err != nil {
 		if errors.Is(err, ErrAccumulateMore) {
 			return nil, "", err

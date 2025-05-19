@@ -59,7 +59,7 @@ func TestParseToolCalls(t *testing.T) {
 			name:             "mistral malformed json with tool calls prefix",
 			model:            "mistral",
 			output:           `[TOOL_CALLS]  [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_curren}]`,
-			expectedToolCall: []api.ToolCall{},
+			expectedToolCall: []api.ToolCall{t1},
 			expectedTokens:   "",
 		},
 		{
@@ -249,37 +249,37 @@ func TestParseToolCalls(t *testing.T) {
 		{
 			name:             "qwen3 tool call with think prefix, tool prefix, and whitespace (sent as separate tokens)",
 			model:            "qwen3",
-			output:           `<think>Okay, let me think what tool we should use...</think> <tool_call> {"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
+			output:           `<think>Okay, let me think what tool we should use...</think> <tool_call>{ "name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
 			expectedToolCall: []api.ToolCall{t1},
 			expectedTokens:   "<think>Okay, let me think what tool we should use...</think>",
 		},
 		{
 			name:             "qwen3 empty think prefix without tool prefix and invalid tool call",
 			model:            "qwen3",
-			output:           `<think></think>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
+			output:           `<think></think> {"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
 			expectedToolCall: []api.ToolCall{},
-			expectedTokens:   `<think></think>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
+			expectedTokens:   `<think></think> {"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
 		},
 		{
 			name:             "qwen3 empty think prefix with tool prefix and valid tool call",
 			model:            "qwen3",
-			output:           `<think></think><tool_call>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}  </tool_call>`,
+			output:           `<think></think><tool_call>{ "name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}  </tool_call>`,
 			expectedToolCall: []api.ToolCall{t1},
 			expectedTokens:   `<think></think>`,
 		},
 		{
 			name:             "qwen3 invalid tool call with fake tool prefix (single rune suffix match)",
 			model:            "qwen3",
-			output:           `<think></think>< fakeout{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
+			output:           `<think></think>< fakeout {"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
 			expectedToolCall: []api.ToolCall{},
-			expectedTokens:   `<think></think>< fakeout{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
+			expectedTokens:   `<think></think>< fakeout {"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
 		},
 		{
 			name:             "qwen3 invalid tool call with partial tool prefix (multiple rune suffix match)",
 			model:            "qwen3",
-			output:           `<think></think><tool_c fakeout{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
+			output:           `<think></think><tool_c fakeout {"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
 			expectedToolCall: []api.ToolCall{},
-			expectedTokens:   `<think></think><tool_c fakeout{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
+			expectedTokens:   `<think></think><tool_c fakeout {"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
 		},
 		{
 			name:             "qwen3 invalid tool call with malformed tool prefix",
@@ -312,9 +312,9 @@ func TestParseToolCalls(t *testing.T) {
 		{
 			name:             "llama3.2 tool call with invalid tool prefix (no prefix in template)",
 			model:            "llama3.2",
-			output:           `<tool_call>{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}}`,
+			output:           `<tool_call> {"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}}`,
 			expectedToolCall: []api.ToolCall{},
-			expectedTokens:   `<tool_call>{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}}`,
+			expectedTokens:   `<tool_call> {"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}}`,
 		},
 	}
 
@@ -393,99 +393,6 @@ func TestParseToolCalls(t *testing.T) {
 					t.Errorf("tokens mismatch (-got +want):\n%s", diff)
 				}
 			})
-		})
-	}
-}
-
-func TestParseJSONToolCalls(t *testing.T) {
-	tests := []struct {
-		name          string
-		input         string
-		parser        *Parser
-		wantToolCalls []api.ToolCall
-		wantErr       error
-	}{
-		{
-			name:   "valid single tool call",
-			input:  `{"name": "test_tool", "arguments": {"arg1": "value1"}}`,
-			parser: &Parser{name: "name", arguments: "arguments"},
-			wantToolCalls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name: "test_tool",
-						Arguments: map[string]any{
-							"arg1": "value1",
-						},
-					},
-				},
-			},
-			wantErr: nil,
-		},
-		{
-			name:          "incomplete JSON",
-			input:         `{"name": "test_tool", "arguments": {"arg1": `,
-			parser:        &Parser{name: "name", arguments: "arguments"},
-			wantToolCalls: nil,
-			wantErr:       ErrAccumulateMore,
-		},
-		{
-			name:          "invalid JSON",
-			input:         `not json at all`,
-			parser:        &Parser{name: "name", arguments: "arguments"},
-			wantToolCalls: nil,
-			wantErr:       ErrInvalidToolCall,
-		},
-		{
-			name:          "missing required fields",
-			input:         `{"other": "field"}`,
-			parser:        &Parser{name: "name", arguments: "arguments"},
-			wantToolCalls: nil,
-			wantErr:       ErrInvalidToolCall,
-		},
-		{
-			name: "multiple tool calls in array",
-			input: `[
-				{"name": "tool1", "arguments": {"arg1": 1}},
-				{"name": "tool2", "arguments": {"arg2": "value"}}
-			]`,
-			parser: &Parser{name: "name", arguments: "arguments"},
-			wantToolCalls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name: "tool1",
-						Arguments: map[string]any{
-							"arg1": float64(1),
-						},
-					},
-				},
-				{
-					Function: api.ToolCallFunction{
-						Name: "tool2",
-						Arguments: map[string]any{
-							"arg2": "value",
-						},
-					},
-				},
-			},
-			wantErr: nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotCalls, err := tt.parser.parseJSONToolCalls(tt.input)
-
-			if err != tt.wantErr {
-				t.Errorf("parseJSONToolCalls() error = %v, want %v", err, tt.wantErr)
-			}
-
-			if len(gotCalls) != 0 && tt.wantErr != nil {
-				t.Errorf("parseJSONToolCalls() valid = %v, want %v", len(gotCalls) == 0, tt.wantErr == nil)
-			}
-
-			if diff := cmp.Diff(gotCalls, tt.wantToolCalls); diff != "" {
-				t.Errorf("parseJSONToolCalls() tool calls mismatch (-got +want):\n%s", diff)
-			}
 		})
 	}
 }

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"slices"
@@ -9,7 +10,6 @@ import (
 	gotmpl "text/template"
 	"text/template/parse"
 
-	jsonv2 "github.com/go-json-experiment/json"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/template"
 )
@@ -197,7 +197,7 @@ func extractToolArgs(tmpl *gotmpl.Template) (name, arguments string, err error) 
 	}
 
 	var obj any
-	err = jsonv2.Unmarshal(b.Bytes(), &obj)
+	err = json.Unmarshal(b.Bytes(), &obj)
 	if err != nil {
 		return "", "", err
 	}
@@ -254,4 +254,76 @@ func collect(obj any) []map[string]any {
 	}
 
 	return all
+}
+
+// parseJSONToolCalls attempts to parse a JSON string into a slice ToolCalls.
+// It first checks for balanced braces before attempting to parse.
+// Returns:
+//   - []api.ToolCall: The parsed tool calls if successful
+//   - error: ErrAccumulateMore if braces unbalanced, ErrInvalidToolCall if invalid, or nil if successful
+func parseJSONToolCalls(s string, name, arguments string) ([]api.ToolCall, error) {
+	// Check for balanced braces before attempting to parse
+	braceCount := 0
+	startIndex := -1
+	rawToolCalls := []string{}
+	for i, c := range s {
+		if c == '{' {
+			braceCount++
+			if startIndex == -1 {
+				startIndex = i
+			}
+		} else if c == '}' {
+			braceCount--
+			if braceCount == 0 {
+				rawToolCalls = append(rawToolCalls, s[startIndex:i+1])
+				startIndex = -1
+			}
+		}
+		// Negative means we have an extra closing brace
+		if braceCount < 0 {
+			return nil, ErrInvalidToolCall
+		}
+	}
+
+	// If braces aren't balanced, need more input
+	if braceCount > 0 {
+		slog.Debug("unbalanced braces detected", "input", s)
+		return nil, ErrAccumulateMore
+	}
+
+	// Attempt full unmarshal of the JSON
+	var toolCalls []api.ToolCall
+	for _, rawToolCall := range rawToolCalls {
+		var resp any
+		if err := json.Unmarshal([]byte(rawToolCall), &resp); err != nil {
+			continue
+		}
+
+		// Collect nested objects that could contain tool calls
+		objs := collect(resp)
+		if len(objs) == 0 {
+			continue
+		}
+
+		// Extract tool calls from objects
+		for _, kv := range objs {
+			n, nok := kv[name].(string)
+			a, aok := kv[arguments].(map[string]any)
+			if nok && aok {
+				toolCalls = append(toolCalls, api.ToolCall{
+					Function: api.ToolCallFunction{
+						Name:      n,
+						Arguments: a,
+					},
+				})
+			}
+		}
+	}
+
+	// Valid JSON, no tool calls found
+	if len(toolCalls) == 0 {
+		return nil, ErrInvalidToolCall
+	}
+
+	return toolCalls, nil
 }
