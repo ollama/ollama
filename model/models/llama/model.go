@@ -142,10 +142,7 @@ func (l *Layer) Forward(ctx ml.Context, hiddenState, positions, outputs ml.Tenso
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	positions, err := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
-	if err != nil {
-		return nil, err
-	}
+	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
 
 	hiddenState := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 
@@ -154,10 +151,7 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 
 		var outputs ml.Tensor
 		if i == len(m.Layers)-1 {
-			outputs, err = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
-			if err != nil {
-				return nil, err
-			}
+			outputs = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
 		}
 
 		hiddenState = layer.Forward(ctx, hiddenState, positions, outputs, m.Cache, m.Options)

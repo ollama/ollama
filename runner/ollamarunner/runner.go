@@ -808,10 +808,7 @@ func (s *Server) reserveWorstCaseGraph() error {
 		batch.Outputs[i] = int32(i)
 	}
 
-	batch.Inputs, err = ctx.Input().FromIntSlice(batchInputs, len(batchInputs))
-	if err != nil {
-		return err
-	}
+	batch.Inputs = ctx.Input().FromIntSlice(batchInputs, len(batchInputs))
 
 	cache := s.model.Config().Cache
 	if cache != nil {
@@ -876,7 +873,8 @@ func (s *Server) load(
 	parallel int,
 	kvCacheType string,
 	kvSize int,
-	multiUserCache bool) {
+	multiUserCache bool,
+) {
 	err := s.initModel(mpath, params, lpath, parallel, kvCacheType, kvSize, multiUserCache)
 	if err != nil {
 		panic(err)

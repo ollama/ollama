@@ -1,7 +1,6 @@
 package qwen25vl
 
 import (
-	"fmt"
 	"math"
 	"slices"
 
@@ -44,10 +43,8 @@ func blockDiagonalMask(ctx ml.Context, seqLength int, bounds []int, numHeads int
 		}
 	}
 
-	mask, err := ctx.Input().FromFloatSlice(flat, seqLength, seqLength)
-	if err != nil {
-		panic(err)
-	}
+	mask := ctx.Input().FromFloatSlice(flat, seqLength, seqLength)
+
 	// Reshape to match [seqLength, seqLength, 1] for broadcasting
 	mask = mask.Reshape(ctx, seqLength, seqLength, 1)
 
@@ -303,10 +300,7 @@ func (m *VisionModel) WindowIndex(ctx ml.Context, grid *Grid) (ml.Tensor, []int)
 		}
 	}
 
-	t, err := ctx.Input().FromIntSlice(index, len(index))
-	if err != nil {
-		panic(err)
-	}
+	t := ctx.Input().FromIntSlice(index, len(index))
 
 	return t, bounds
 }
@@ -326,10 +320,7 @@ func (m *VisionModel) PositionalEmbedding(ctx ml.Context, grid *Grid) ml.Tensor 
 			freqVals[i*freq+j] = float32(i) / float32(math.Pow(theta, float64(j*2)/float64(dim)))
 		}
 	}
-	freqs, err := ctx.Input().FromFloatSlice(freqVals, freq, maxGridSize)
-	if err != nil {
-		panic(fmt.Errorf("failed to create tensor from frequencies: %w", err))
-	}
+	freqs := ctx.Input().FromFloatSlice(freqVals, freq, maxGridSize)
 
 	// Create position coordinates (y,x pairs) for the grid
 	// In PyTorch: Equivalent to generating position ids with torch.arange()
@@ -339,10 +330,7 @@ func (m *VisionModel) PositionalEmbedding(ctx ml.Context, grid *Grid) ml.Tensor 
 			coords = append(coords, int32(y), int32(x))
 		}
 	}
-	pos, err := ctx.Input().FromIntSlice(coords, 2, grid.Width, grid.Height)
-	if err != nil {
-		panic(fmt.Errorf("failed to create tensor from positions: %w", err))
-	}
+	pos := ctx.Input().FromIntSlice(coords, 2, grid.Width, grid.Height)
 
 	// Reshape and permute positions to match spatial merging pattern
 	pos = pos.Reshape(ctx, 2, grid.Width, merge, grid.Height/merge)

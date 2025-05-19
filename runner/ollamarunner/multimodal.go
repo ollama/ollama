@@ -102,7 +102,7 @@ func (m multimodalStore) getTensor(backend ml.Backend, ctx ml.Context, in ml.Ten
 	for i, t := range entry.mm {
 		if in == t.Tensor {
 			if !reserve {
-				return ctx.Input().FromFloatSlice(entry.data[i], t.Tensor.Shape()...)
+				return ctx.Input().FromFloatSlice(entry.data[i], t.Tensor.Shape()...), nil
 			} else {
 				return ctx.Input().Empty(t.Tensor.DType(), t.Tensor.Shape()...), nil
 			}
