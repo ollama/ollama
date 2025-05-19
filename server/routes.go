@@ -1522,23 +1522,16 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
 
-			if len(req.Tools) > 0 && !toolParser.Done {
-				if r.Content == "" {
-					return
-				}
-				toolCalls, content, err := toolParser.Add(r.Content)
-				if err == nil {
-					if len(content) > 0 {
-						res.Message.Content = content
-						slog.Debug("tools: setting content to", "content", content)
-					} else if len(toolCalls) > 0 {
-						res.Message.ToolCalls = toolCalls
-						res.Message.Content = ""
-					}
-				} else if errors.Is(err, tools.ErrAccumulateMore) {
-					return
+			if len(req.Tools) > 0 {
+				toolCalls, content := toolParser.Add(r.Content)
+				if len(content) > 0 {
+					res.Message.Content = content
+					slog.Debug("tools: setting content to", "content", content)
+				} else if len(toolCalls) > 0 {
+					res.Message.ToolCalls = toolCalls
+					res.Message.Content = ""
 				} else {
-					slog.Debug("tools: error", "error", err)
+					return
 				}
 			}
 			ch <- res

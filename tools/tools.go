@@ -29,7 +29,7 @@ type Parser struct {
 	index       int
 	name        string
 	arguments   string
-	Done        bool
+	done        bool
 }
 
 // checkPrefix processes a string to find and handle a prefix pattern.
@@ -84,47 +84,49 @@ func (p *Parser) checkPrefix(s string) (string, error) {
 // Returns:
 //   - tools: Any parsed tool calls
 //   - content: Non-tool call content
-//   - error: One of the sentinel errors or nil if successful
-func (p *Parser) Add(s string) (tools []api.ToolCall, content string, err error) {
+func (p *Parser) Add(s string) (tools []api.ToolCall, content string) {
 	if s == "" {
-		return nil, "", ErrAccumulateMore
+		return nil, ""
+	}
+	if p.done {
+		return nil, s
 	}
 	p.sb.WriteString(s)
 	s = p.sb.String()
 
 	// Check for prefix pattern in input
-	s, err = p.checkPrefix(s)
-	if err != nil {
+	s, prefixErr := p.checkPrefix(s)
+	if prefixErr != nil {
 		if s != "" {
 			// Return content before prefix
-			return nil, s, nil
+			return nil, s
 		}
 		// Need more input to complete prefix
-		return nil, "", ErrAccumulateMore
+		return nil, ""
 	}
 
 	// Exit if prefix exists in template, greedy parsing is off, and prefix not found
 	if !p.greedyParse && !p.prefixFound {
 		p.sb.Reset()
-		return nil, "", ErrPrefixNotFound
+		return nil, s
 	}
 
-	toolCalls, err := parseJSONToolCalls(s, p.name, p.arguments)
-	if err != nil {
-		if errors.Is(err, ErrAccumulateMore) {
-			return nil, "", err
+	toolCalls, parseErr := parseJSONToolCalls(s, p.name, p.arguments)
+	if parseErr != nil {
+		if errors.Is(parseErr, ErrAccumulateMore) {
+			return nil, ""
 		} else {
 			p.sb.Reset()
 			// Do not try greedy parsing if JSON not found
 			p.greedyParse = false
 			if p.prefix == "" {
-				p.Done = true
+				p.done = true
 			}
 			if p.prefixFound {
 				// Drop tokens since prefix was found
-				return nil, "", ErrAccumulateMore
+				return nil, ""
 			}
-			return nil, s, nil
+			return nil, s
 		}
 	}
 
@@ -135,11 +137,11 @@ func (p *Parser) Add(s string) (tools []api.ToolCall, content string, err error)
 
 	// Mark as done if no prefix needed
 	if p.prefix == "" {
-		p.Done = true
+		p.done = true
 	}
 
 	p.sb.Reset()
-	return toolCalls, "", nil
+	return toolCalls, ""
 }
 
 // NewParser creates a new tool call parser from a template. It extracts the tool call format,

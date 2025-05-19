@@ -3,7 +3,6 @@ package tools
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -355,29 +354,16 @@ func TestParseToolCalls(t *testing.T) {
 				got := []api.ToolCall{}
 				var gotTokens strings.Builder
 
-				var add bool
 				tokens := strings.Fields(tt.output)
 				for _, tok := range tokens {
 					s := " " + tok
 
-					add = true
-					if !tp.Done {
-						toolCalls, content, err := tp.Add(s)
-						if err == nil {
-							if content != "" {
-								fmt.Printf("content: %q\n", content)
-								gotTokens.WriteString(content)
-								add = false
-							} else if len(toolCalls) > 0 {
-								got = append(got, toolCalls...)
-								add = false
-							}
-						} else if errors.Is(err, ErrAccumulateMore) {
-							add = false
-						}
-					}
-					if add {
-						gotTokens.WriteString(s)
+					toolCalls, content := tp.Add(s)
+					if content != "" {
+						t.Logf("content: %q\n", content)
+						gotTokens.WriteString(content)
+					} else if len(toolCalls) > 0 {
+						got = append(got, toolCalls...)
 					}
 				}
 
