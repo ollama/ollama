@@ -9,38 +9,29 @@ import (
 	"github.com/ollama/ollama/template"
 )
 
-// Sentinel errors for parsing states
 var (
-	ErrPartialPrefix = errors.New("partial prefix detected")
-
-	ErrPrefixNotFound = errors.New("prefix not found")
-
-	ErrInvalidToolCall = errors.New("invalid tool call format")
-
-	ErrAccumulateMore = errors.New("need to accumulate more content")
+	errInvalidToolCall = errors.New("invalid tool call format")
+	errAccumulateMore  = errors.New("need to accumulate more content")
 )
 
 type Parser struct {
-	greedyParse bool
-	prefixFound bool
-	tmpl        gotmpl.Template
-	sb          strings.Builder
-	prefix      string
-	index       int
-	name        string
-	arguments   string
-	done        bool
+	parseLeadingJSON bool
+	prefixFound      bool
+	tmpl             gotmpl.Template
+	sb               strings.Builder
+	prefix           string
+	index            int
+	name             string
+	arguments        string
+	done             bool
 }
 
 // checkPrefix processes a string to find and handle a prefix pattern.
 //
 // Returns:
 //   - The processed string with prefix removed if found
-//   - error: ErrPartialPrefix if prefix is incomplete, ErrPrefixNotFound if not found, or nil if successful
+//   - error: ErrAccumulateMore if prefix is incomplete, or nil if successful
 func (p *Parser) checkPrefix(s string) (string, error) {
-	// Keep original for overlap checks
-	original := s
-
 	if s == "" {
 		return "", nil
 	}
@@ -51,27 +42,27 @@ func (p *Parser) checkPrefix(s string) (string, error) {
 	}
 
 	// Check for prefix at start of string
-	if processedStr, hasPrefix := strings.CutPrefix(s, p.prefix); hasPrefix {
+	if cut, hasPrefix := strings.CutPrefix(s, p.prefix); hasPrefix {
 		// Found prefix at start - accumulate for potential tool
 		p.prefixFound = true
-		return processedStr, nil
+		return cut, nil
 	}
 
 	// Check if prefix overlaps end of string
-	if overlap := suffixOverlap(original, p.prefix); overlap > 0 {
+	if idx := suffixOverlap(s, p.prefix); idx != -1 {
 		// Return everything except overlapping portion
 		p.sb.Reset()
-		p.sb.WriteString(original[len(original)-overlap:])
-		return original[0 : len(original)-overlap], ErrAccumulateMore
+		p.sb.WriteString(s[idx:])
+		return s[:idx], errAccumulateMore
 	}
 
 	// Check if prefix appears in middle of string
-	if idx := strings.Index(original, p.prefix); idx != -1 {
+	if idx := strings.Index(s, p.prefix); idx != -1 {
 		// Save remainder starting at prefix for next pass
 		p.sb.Reset()
-		p.sb.WriteString(strings.TrimSpace(original[idx:]))
+		p.sb.WriteString(strings.TrimSpace(s[idx:]))
 		// Return everything before prefix
-		return original[:idx], ErrAccumulateMore
+		return s[:idx], errAccumulateMore
 	}
 
 	// No partial prefix found
@@ -95,30 +86,26 @@ func (p *Parser) Add(s string) (tools []api.ToolCall, content string) {
 	s = p.sb.String()
 
 	// Check for prefix pattern in input
-	s, prefixErr := p.checkPrefix(s)
-	if prefixErr != nil {
-		if s != "" {
-			// Return content before prefix
-			return nil, s
-		}
+	s, err := p.checkPrefix(s)
+	if err != nil {
 		// Need more input to complete prefix
-		return nil, ""
+		return nil, s
 	}
 
 	// Exit if prefix exists in template, greedy parsing is off, and prefix not found
-	if !p.greedyParse && !p.prefixFound {
+	if !p.parseLeadingJSON && !p.prefixFound {
 		p.sb.Reset()
 		return nil, s
 	}
 
-	toolCalls, parseErr := parseJSONToolCalls(s, p.name, p.arguments)
-	if parseErr != nil {
-		if errors.Is(parseErr, ErrAccumulateMore) {
+	toolCalls, err := parseJSONToolCalls(s, p.name, p.arguments)
+	if err != nil {
+		if errors.Is(err, errAccumulateMore) {
 			return nil, ""
 		} else {
 			p.sb.Reset()
-			// Do not try greedy parsing if JSON not found
-			p.greedyParse = false
+			// Do not try parsing leading JSON if JSON not found
+			p.parseLeadingJSON = false
 			if p.prefix == "" {
 				p.done = true
 			}
@@ -135,7 +122,7 @@ func (p *Parser) Add(s string) (tools []api.ToolCall, content string) {
 		p.index++
 	}
 
-	// Mark as done if no prefix needed
+	// Mark as done if no prefix in template
 	if p.prefix == "" {
 		p.done = true
 	}
@@ -148,15 +135,15 @@ func (p *Parser) Add(s string) (tools []api.ToolCall, content string) {
 // prefix, and field names from the template to use for parsing tool calls from model output.
 //
 // Returns an error if the template does not contain valid tool call formatting.
-func NewParser(templateToProcess *gotmpl.Template) (Parser, error) {
+func NewParser(templateToProcess *gotmpl.Template) (*Parser, error) {
 	parsed, err := template.Parse(templateToProcess.Root.String())
 	if err != nil {
-		return Parser{}, err
+		return nil, err
 	}
 
 	tt, err := toolTemplate(parsed)
 	if err != nil {
-		return Parser{}, err
+		return nil, err
 	}
 
 	tp := toolPrefix(templateToProcess)
@@ -164,15 +151,15 @@ func NewParser(templateToProcess *gotmpl.Template) (Parser, error) {
 
 	name, arguments, err := extractToolArgs(tt)
 	if err != nil {
-		return Parser{}, err
+		return nil, err
 	}
 
-	return Parser{
-		tmpl:        *tt,
-		sb:          strings.Builder{},
-		prefix:      tp,
-		greedyParse: true,
-		name:        name,
-		arguments:   arguments,
+	return &Parser{
+		tmpl:             *tt,
+		sb:               strings.Builder{},
+		prefix:           tp,
+		parseLeadingJSON: true,
+		name:             name,
+		arguments:        arguments,
 	}, nil
 }

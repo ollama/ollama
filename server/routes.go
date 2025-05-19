@@ -1483,7 +1483,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	var toolParser tools.Parser
+	var toolParser *tools.Parser
 	if len(req.Tools) > 0 {
 		toolParser, err = tools.NewParser(m.Template.Template)
 		if err != nil {

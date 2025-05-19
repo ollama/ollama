@@ -346,7 +346,6 @@ func TestParseToolCalls(t *testing.T) {
 			})
 
 			t.Run("parse", func(t *testing.T) {
-				// fmt.Printf("tmpl: %s\n", tmpl.Root.String())
 				tp, err := NewParser(tmpl.Template)
 				if err != nil {
 					t.Fatal(err)
@@ -359,8 +358,7 @@ func TestParseToolCalls(t *testing.T) {
 					s := " " + tok
 
 					toolCalls, content := tp.Add(s)
-					if content != "" {
-						t.Logf("content: %q\n", content)
+					if len(content) > 0 {
 						gotTokens.WriteString(content)
 					} else if len(toolCalls) > 0 {
 						got = append(got, toolCalls...)

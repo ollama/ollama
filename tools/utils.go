@@ -159,18 +159,18 @@ func toolTemplate(t *template.Template) (*gotmpl.Template, error) {
 	return tmpl, nil
 }
 
-// suffixOverlap returns the length of the longest suffix overlap between two strings
+// suffixOverlap returns the index in s where the longest suffix overlap with prefix begins
 //
 // Returns:
-//   - int: The length of the longest suffix overlap
+//   - int: The starting index in s where the suffix overlap begins
 func suffixOverlap(s, prefix string) int {
 	max := min(len(prefix), len(s))
 	for i := max; i > 0; i-- {
 		if strings.HasSuffix(s, prefix[:i]) {
-			return i
+			return len(s) - i
 		}
 	}
-	return 0
+	return -1
 }
 
 // extractToolArgs executes a template with a known tool call format to extract the name and arguments
@@ -256,8 +256,13 @@ func collect(obj any) []map[string]any {
 	return all
 }
 
-// parseJSONToolCalls attempts to parse a JSON string into a slice ToolCalls.
-// It first checks for balanced braces before attempting to parse.
+// parseJSONToolCalls attempts to parse a JSON string into a slice of ToolCalls.
+//
+// Parameters:
+//   - s: The string to parse
+//   - name: The field name from template that identifies the tool call name
+//   - arguments: The field name from template that identifies the tool call arguments
+//
 // Returns:
 //   - []api.ToolCall: The parsed tool calls if successful
 //   - error: ErrAccumulateMore if braces unbalanced, ErrInvalidToolCall if invalid, or nil if successful
@@ -265,7 +270,8 @@ func parseJSONToolCalls(s string, name, arguments string) ([]api.ToolCall, error
 	// Check for balanced braces before attempting to parse
 	braceCount := 0
 	startIndex := -1
-	rawToolCalls := []string{}
+	var rawToolCalls []string
+
 	for i, c := range s {
 		if c == '{' {
 			braceCount++
@@ -281,14 +287,14 @@ func parseJSONToolCalls(s string, name, arguments string) ([]api.ToolCall, error
 		}
 		// Negative means we have an extra closing brace
 		if braceCount < 0 {
-			return nil, ErrInvalidToolCall
+			return nil, errInvalidToolCall
 		}
 	}
 
 	// If braces aren't balanced, need more input
 	if braceCount > 0 {
 		slog.Debug("unbalanced braces detected", "input", s)
-		return nil, ErrAccumulateMore
+		return nil, errAccumulateMore
 	}
 
 	// Attempt full unmarshal of the JSON
@@ -322,7 +328,7 @@ func parseJSONToolCalls(s string, name, arguments string) ([]api.ToolCall, error
 
 	// Valid JSON, no tool calls found
 	if len(toolCalls) == 0 {
-		return nil, ErrInvalidToolCall
+		return nil, errInvalidToolCall
 	}
 
 	return toolCalls, nil

@@ -212,44 +212,44 @@ func TestSuffixOverlap(t *testing.T) {
 		{
 			name: "no overlap",
 			s:    "hello world",
-			d:    "",
-			want: 0,
+			d:    "<tool_call>",
+			want: -1,
 		},
 		{
 			name: "full overlap",
 			s:    "<tool_call>",
 			d:    "<tool_call>",
-			want: 11,
+			want: 0,
 		},
 		{
 			name: "partial overlap",
 			s:    "text <tool_call>",
 			d:    "<tool_call>",
-			want: 11,
+			want: 5,
 		},
 		{
 			name: "delimiter longer than string",
 			s:    "<tool>",
 			d:    "<tool_call>",
-			want: 0,
+			want: -1,
 		},
 		{
 			name: "empty string",
 			s:    "",
 			d:    "<tool_call>",
-			want: 0,
+			want: -1,
 		},
 		{
 			name: "empty delimiter",
 			s:    "<tool_call>",
 			d:    "",
-			want: 0,
+			want: -1,
 		},
 		{
 			name: "single char overlap",
 			s:    "test<",
 			d:    "<tool_call>",
-			want: 1,
+			want: 4,
 		},
 		{
 			name: "partial tool call",
@@ -497,7 +497,7 @@ func TestParseJSONToolCalls(t *testing.T) {
 			nameField:     "name",
 			argsField:     "arguments",
 			wantToolCalls: nil,
-			wantErr:       ErrAccumulateMore,
+			wantErr:       errAccumulateMore,
 		},
 		{
 			name:          "invalid JSON",
@@ -505,7 +505,7 @@ func TestParseJSONToolCalls(t *testing.T) {
 			nameField:     "name",
 			argsField:     "arguments",
 			wantToolCalls: nil,
-			wantErr:       ErrInvalidToolCall,
+			wantErr:       errInvalidToolCall,
 		},
 		{
 			name:          "missing required fields",
@@ -513,7 +513,7 @@ func TestParseJSONToolCalls(t *testing.T) {
 			nameField:     "name",
 			argsField:     "arguments",
 			wantToolCalls: nil,
-			wantErr:       ErrInvalidToolCall,
+			wantErr:       errInvalidToolCall,
 		},
 		// Unlikely to hit this case as the parse would have already parsed the first JSON
 		{
