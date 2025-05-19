@@ -184,6 +184,24 @@ static void dequantize_row_q4_K_sycl(const void *vx, dst_t *y, const int64_t k,
 }
 
 template <typename dst_t>
+static void dequantize_row_q4_K_sycl_reorder(const void * vx, dst_t * y, const int64_t k, dpct::queue_ptr stream) {
+    const int64_t nb = k / QK_K;
+    const size_t  local_size  = 32;
+    const size_t  global_size = nb * local_size;
+
+    dpct::has_capability_or_fail(stream->get_device(), { sycl::aspect::fp16 });
+
+    stream->submit([&](sycl::handler & cgh) {
+        sycl::local_accessor<uint8_t, 1> scale_local_acc(sycl::range<1>(12), cgh);
+
+        cgh.parallel_for(sycl::nd_range<1>(sycl::range<1>(global_size), sycl::range<1>(local_size)),
+                         [=](sycl::nd_item<1> item_ct1) {
+                             dequantize_block_q4_K_reorder(vx, y, get_pointer(scale_local_acc), item_ct1, nb);
+                         });
+    });
+}
+
+template <typename dst_t>
 static void dequantize_row_q5_K_sycl(const void *vx, dst_t *y, const int64_t k,
                                      dpct::queue_ptr stream) {
     const int64_t nb = k / QK_K;
@@ -504,7 +522,11 @@ to_fp16_sycl_t ggml_get_to_fp16_sycl(ggml_type type, ggml_tensor * dst) {
         case GGML_TYPE_Q3_K:
             return dequantize_row_q3_K_sycl;
         case GGML_TYPE_Q4_K:
-            return dequantize_row_q4_K_sycl;
+            if (dst->src[0]->extra && ((ggml_tensor_extra_gpu *) dst->src[0]->extra)->optimized_feature.reorder) {
+                return dequantize_row_q4_K_sycl_reorder;
+            } else {
+                return dequantize_row_q4_K_sycl;
+            }
         case GGML_TYPE_Q5_K:
             return dequantize_row_q5_K_sycl;
         case GGML_TYPE_Q6_K:
@@ -556,7 +578,12 @@ to_fp32_sycl_t ggml_get_to_fp32_sycl(ggml_type type, ggml_tensor *dst) {
         case GGML_TYPE_Q3_K:
             return dequantize_row_q3_K_sycl;
         case GGML_TYPE_Q4_K:
-            return dequantize_row_q4_K_sycl;
+            if (dst->src[0]->extra &&
+                ((ggml_tensor_extra_gpu*)dst->src[0]->extra)->optimized_feature.reorder) {
+                return dequantize_row_q4_K_sycl_reorder;
+            } else {
+                return dequantize_row_q4_K_sycl;
+            }
         case GGML_TYPE_Q5_K:
             return dequantize_row_q5_K_sycl;
         case GGML_TYPE_Q6_K:

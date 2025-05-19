@@ -1129,7 +1129,13 @@ void ggml_sycl_op_dequantize_mul_mat_vec(
             dequantize_mul_mat_vec_q3_K_sycl(src0_dd_i, src1_ddf_i, dst_dd_i, ne00, row_diff, stream);
             break;
         case GGML_TYPE_Q4_K:
-            dequantize_mul_mat_vec_q4_K_sycl(src0_dd_i, src1_ddf_i, dst_dd_i, ne00, row_diff, stream);
+            if ((ggml_tensor_extra_gpu *) dst->src[0]->extra &&
+                ((ggml_tensor_extra_gpu *) dst->src[0]->extra)->optimized_feature.reorder) {
+                // reorder is currently not supported for dmmv
+                GGML_ABORT("Unimplemented dequantize case case for q4_k reorder");
+            } else {
+                dequantize_mul_mat_vec_q4_K_sycl(src0_dd_i, src1_ddf_i, dst_dd_i, ne00, row_diff, stream);
+            }
             break;
         case GGML_TYPE_Q5_K:
             dequantize_mul_mat_vec_q5_K_sycl(src0_dd_i, src1_ddf_i, dst_dd_i, ne00, row_diff, stream);
