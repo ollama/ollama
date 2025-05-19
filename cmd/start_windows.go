@@ -14,6 +14,8 @@ import (
 )
 
 func startApp(ctx context.Context, client *api.Client) error {
+	// No need to create cluster.json file - we use in-memory defaults now
+	
 	// log.Printf("XXX Attempting to find and start ollama app")
 	AppName := "ollama app.exe"
 	exe, err := os.Executable()

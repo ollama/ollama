@@ -1430,7 +1430,12 @@ func NewCLI() *cobra.Command {
 
 	envVars := envconfig.AsMap()
 
-	envs := []envconfig.EnvVar{envVars["OLLAMA_HOST"]}
+	envs := []envconfig.EnvVar{
+		envVars["OLLAMA_HOST"],
+		envVars["OLLAMA_CLUSTER_ENABLED"],
+		envVars["OLLAMA_CLUSTER_NODE_NAME"],
+		envVars["OLLAMA_CLUSTER_NODE_ROLE"],
+	}
 
 	for _, cmd := range []*cobra.Command{
 		createCmd,
@@ -1485,6 +1490,9 @@ func NewCLI() *cobra.Command {
 		deleteCmd,
 		runnerCmd,
 	)
+	
+	// Register cluster commands
+	RegisterClusterCommands(rootCmd)
 
 	return rootCmd
 }

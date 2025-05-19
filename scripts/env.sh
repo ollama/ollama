@@ -18,7 +18,8 @@ OLLAMA_COMMON_BUILD_ARGS="--build-arg=VERSION \
     --build-arg=OLLAMA_FAST_BUILD \
     --build-arg=CUSTOM_CPU_FLAGS \
     --build-arg=GPU_RUNNER_CPU_FLAGS \
-    --build-arg=AMDGPU_TARGETS"
+    --build-arg=AMDGPU_TARGETS \
+    --build-arg=OLLAMA_ENABLE_MDNS=true"
 
 echo "Building Ollama"
 echo "VERSION=$VERSION"

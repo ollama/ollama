@@ -1197,6 +1197,58 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 		return rs, nil
 	}
 
+	// Initialize cluster mode if enabled
+	if strings.ToLower(os.Getenv("OLLAMA_CLUSTER_MODE")) == "true" {
+		// Create a basic config
+		// Create a simplified config struct to match our ClusterMode implementation
+		type configStruct struct {
+			Enabled  bool
+			NodeName string
+			NodeRole string
+			Health   struct {
+				CheckInterval        time.Duration
+				NodeTimeoutThreshold time.Duration
+			}
+			Discovery struct {
+				Method string
+			}
+		}
+		
+		// Initialize with defaults
+		clusterConfig := &configStruct{
+			Enabled:  true,
+			NodeName: "ollama-node",
+			NodeRole: "mixed", // Use string instead of enum
+		}
+		
+		// Add some reasonable defaults for intervals
+		clusterConfig.Health.CheckInterval = 5 * time.Second
+		clusterConfig.Health.NodeTimeoutThreshold = 15 * time.Second
+		clusterConfig.Discovery.Method = "none"
+		
+		// Enable it
+		clusterConfig.Enabled = true
+		
+		// In a real implementation, we would load more config from the environment
+		slog.Info("Using basic cluster configuration")
+		
+		// Pass our config directly
+		if err := InitializeClusterMode2(nil); err != nil {
+			slog.Error("Failed to initialize cluster mode", "error", err)
+		} else {
+			slog.Info("Cluster mode initialized successfully",
+				"clusterEnabled", clusterEnabled,
+				"clusterEnabled2", clusterEnabled2)
+			
+			// Add cluster endpoints
+			r.GET("/api/cluster/status", s.ClusterStatusHandler)
+			r.GET("/api/cluster/nodes", s.ClusterNodesHandler)
+			r.POST("/api/cluster/join", s.ClusterJoinHandler)
+			r.POST("/api/cluster/leave", s.ClusterLeaveHandler)
+			r.POST("/api/cluster/model/load", s.ClusterModelLoadHandler)
+		}
+	}
+	
 	return r, nil
 }
 

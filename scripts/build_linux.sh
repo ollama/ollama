@@ -12,6 +12,27 @@ set -eu
 
 . $(dirname $0)/env.sh
 
+# Enable mDNS support for zero-configuration cluster mode
+export OLLAMA_ENABLE_MDNS=${OLLAMA_ENABLE_MDNS:-true}
+
+# Ensure mDNS development libraries are installed
+if [ "$OLLAMA_ENABLE_MDNS" = "true" ]; then
+    # Check if libavahi-compat-libdns_sd-dev is installed
+    if [ -f /etc/debian_version ]; then
+        # Debian/Ubuntu
+        if ! dpkg -l libavahi-compat-libdnssd-dev > /dev/null 2>&1; then
+            echo "Warning: libavahi-compat-libdnssd-dev not found. Zero-configuration cluster mode requires this package."
+            echo "Install with: sudo apt-get install libavahi-compat-libdnssd-dev"
+        fi
+    elif [ -f /etc/redhat-release ]; then
+        # RHEL/CentOS/Fedora
+        if ! rpm -q avahi-compat-libdns_sd-devel > /dev/null 2>&1; then
+            echo "Warning: avahi-compat-libdns_sd-devel not found. Zero-configuration cluster mode requires this package."
+            echo "Install with: sudo dnf install avahi-compat-libdns_sd-devel"
+        fi
+    fi
+fi
+
 mkdir -p dist
 
 docker buildx build \
