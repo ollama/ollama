@@ -474,6 +474,9 @@ func downloadBlob(ctx context.Context, opts downloadOpts) (cacheHit bool, _ erro
 	case errors.Is(err, os.ErrNotExist):
 	case err != nil:
 		return false, err
+	case len(opts.digest) <= 0:
+		err := fmt.Errorf("digest is empty")
+		return false, err
 	default:
 		opts.fn(api.ProgressResponse{
 			Status:    fmt.Sprintf("pulling %s", opts.digest[7:19]),
