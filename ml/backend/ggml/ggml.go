@@ -30,6 +30,7 @@ import (
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
+	"github.com/ollama/ollama/ml/nn/rope"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -1074,26 +1075,13 @@ func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	}
 }
 
-const (
-	ropeTypeNorm   C.int = 0
-	ropeTypeNeox   C.int = 2
-	ropeTypeMrope  C.int = 8
-	ropeTypeVision C.int = 24
-)
-
-func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDim, ropeType uint32, ropeBase, ropeScale float32, options ...ml.RopeOption) ml.Tensor {
+func (t *Tensor) RoPE(ctx ml.Context, positions ml.Tensor, ropeDim int, ropeBase, ropeScale float32, options ...func(*rope.Options)) ml.Tensor {
 	// Default options
-	opts := &ml.RopeOptions{
-		OriginalContextLen: 131072,
-	}
+	opts := &rope.Options{OriginalContextLength: 131072, Factors: &Tensor{}}
 
 	// Apply any provided options
 	for _, option := range options {
 		option(opts)
-	}
-
-	if ropeFactors == nil {
-		ropeFactors = &Tensor{b: t.b}
 	}
 
 	dequant := t.t
@@ -1106,11 +1094,11 @@ func (t *Tensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, ropeDi
 		t: C.ggml_rope_ext(
 			ctx.(*Context).ctx,
 			dequant,
-			positionIDs.(*Tensor).t,
-			ropeFactors.(*Tensor).t,
+			positions.(*Tensor).t,
+			opts.Factors.(*Tensor).t,
 			C.int(ropeDim),
-			C.int(ropeType),
-			C.int(opts.OriginalContextLen),
+			C.int(opts.Type),
+			C.int(opts.OriginalContextLength),
 			C.float(ropeBase),
 			C.float(ropeScale),
 			C.float(0.0),
