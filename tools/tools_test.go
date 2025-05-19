@@ -225,6 +225,20 @@ func TestParseToolCalls(t *testing.T) {
 			expectedTokens:   "",
 		},
 		{
+			name:             "qwen2.5 tool calls without and with prefix",
+			model:            "qwen2.5-coder",
+			output:           `{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} <tool_call>{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}</tool_call>`,
+			expectedToolCall: []api.ToolCall{t1, t2},
+			expectedTokens:   "",
+		},
+		{
+			name:             "qwen2.5 tool calls without and with prefix and text between",
+			model:            "qwen2.5-coder",
+			output:           `{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} some tokens between <tool_call>{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}</tool_call> some tokens after call`,
+			expectedToolCall: []api.ToolCall{t1, t2},
+			expectedTokens:   "some tokens between",
+		},
+		{
 			name:             "qwen2.5 tool calls without prefix and invalid tool call",
 			model:            "qwen2.5-coder",
 			output:           `[{"options": "foo"}]`,
@@ -314,6 +328,21 @@ func TestParseToolCalls(t *testing.T) {
 			output:           `<tool_call> {"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}}`,
 			expectedToolCall: []api.ToolCall{},
 			expectedTokens:   `<tool_call> {"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}}`,
+		},
+		{
+			name:             "llama3.2 tool call with tokens after tool call",
+			model:            "llama3.2",
+			output:           `{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} some tokens after tool call`,
+			expectedToolCall: []api.ToolCall{t1},
+			expectedTokens:   "some tokens after tool call",
+		},
+		// Only the first tool call is returned
+		{
+			name:             "llama3.2 tool call with multiple tool calls",
+			model:            "llama3.2",
+			output:           `{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}`,
+			expectedToolCall: []api.ToolCall{t1},
+			expectedTokens:   `{"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}`,
 		},
 	}
 
