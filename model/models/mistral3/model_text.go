@@ -1,9 +1,8 @@
 package mistral3
 
 import (
-	"fmt"
+	"cmp"
 	"math"
-	"strings"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -37,10 +36,7 @@ type SelfAttention struct {
 func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *TextOptions) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
 	ropeType := uint32(0)
-	headDim := opts.headDim
-	if headDim == 0 {
-		headDim = opts.hiddenSize / opts.numHeads
-	}
+	headDim := cmp.Or(opts.headDim, opts.hiddenSize/opts.numHeads)
 
 	q := sa.Query.Forward(ctx, hiddenState)
 	q = q.Reshape(ctx, headDim, opts.numHeads, batchSize)
@@ -125,12 +121,8 @@ func (m *TextModel) Forward(ctx ml.Context, inputs, positions, outputs ml.Tensor
 	return m.Output.Forward(ctx, hiddenState)
 }
 
-func NewTextModel(c fs.Config) (*TextModel, error) {
-	if !strings.EqualFold(c.String("tokenizer.ggml.model"), "gpt2") {
-		return nil, fmt.Errorf("tokenizer %s not yet supported", c.String("tokenizer.ggml.model"))
-	}
-
-	textModel := &TextModel{
+func newTextModel(c fs.Config) *TextModel {
+	return &TextModel{
 		Layers: make([]Layer, c.Uint("block_count")),
 		TextOptions: &TextOptions{
 			hiddenSize: int(c.Uint("embedding_length")),
@@ -143,6 +135,4 @@ func NewTextModel(c fs.Config) (*TextModel, error) {
 			ropeDim:    c.Uint("rope.dimension_count"),
 		},
 	}
-
-	return textModel, nil
 }
