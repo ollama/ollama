@@ -1,9 +1,8 @@
 package llama
 
 import (
-	"fmt"
+	"cmp"
 	"math"
-	"strings"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -14,9 +13,9 @@ import (
 )
 
 type Options struct {
-	hiddenSize, numHeads, numKVHeads int
-	eps, ropeBase, ropeScale         float32
-	ropeDim                          uint32
+	hiddenSize, numHeads, numKVHeads, headDim int
+	eps, ropeBase, ropeScale                  float32
+	ropeDim                                   uint32
 }
 
 type Model struct {
@@ -32,10 +31,6 @@ type Model struct {
 }
 
 func New(c fs.Config) (model.Model, error) {
-	if !strings.EqualFold(c.String("tokenizer.ggml.model"), "gpt2") {
-		return nil, fmt.Errorf("tokenizer %s not yet supported", c.String("tokenizer.ggml.model"))
-	}
-
 	m := Model{
 		BytePairEncoding: model.NewBytePairEncoding(
 			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
@@ -57,6 +52,7 @@ func New(c fs.Config) (model.Model, error) {
 			hiddenSize: int(c.Uint("embedding_length")),
 			numHeads:   int(c.Uint("attention.head_count")),
 			numKVHeads: int(c.Uint("attention.head_count_kv")),
+			headDim:    int(c.Uint("attention.key_length")),
 			eps:        c.Float("attention.layer_norm_rms_epsilon"),
 			ropeBase:   c.Float("rope.freq_base"),
 			ropeScale:  c.Float("rope.freq_scale", 1),
@@ -79,7 +75,7 @@ type SelfAttention struct {
 
 func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
-	headDim := opts.hiddenSize / opts.numHeads
+	headDim := cmp.Or(opts.headDim, opts.hiddenSize/opts.numHeads)
 	ropeType := uint32(0)
 
 	q := sa.Query.Forward(ctx, hiddenState)
@@ -95,7 +91,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 
 	scaleFactor := 1.0 / math.Sqrt(float64(headDim))
 	kqv := nn.Attention(ctx, q, k, v, scaleFactor, cache)
-	kqv = kqv.Reshape(ctx, opts.hiddenSize, batchSize)
+	kqv = kqv.Reshape(ctx, headDim*opts.numHeads, batchSize)
 
 	return sa.Output.Forward(ctx, kqv)
 }

@@ -170,7 +170,7 @@ func (m *VisionModel) Forward(ctx ml.Context, pixelValues ml.Tensor) ml.Tensor {
 
 func newVisionModel(c fs.Config) *VisionModel {
 	return &VisionModel{
-		Layers: make([]VisionEncoderLayer, c.Uint("vision.block_count", 24)),
+		Layers: make([]VisionEncoderLayer, c.Uint("vision.block_count")),
 		VisionModelOptions: &VisionModelOptions{
 			hiddenSize:       int(c.Uint("vision.embedding_length", 1024)),
 			numHeads:         int(c.Uint("vision.attention.head_count", 16)),
