@@ -54,6 +54,10 @@ Here are some example models that can be downloaded:
 
 | Model              | Parameters | Size  | Download                         |
 | ------------------ | ---------- | ----- | -------------------------------- |
+| Qwen2.5vl          | 3B         | 3.2GB | `ollama run qwen2.5vl:3b`        |
+| Qwen2.5vl          | 7B         | 6.0GB | `ollama run qwen2.5vl`           |
+| Qwen2.5vl          | 32B        | 21GB  | `ollama run qwen2.5vl:32b`       |
+| Qwen2.5vl          | 72B        | 71GB  | `ollama run qwen2.5vl:72b`       |
 | Gemma 3            | 1B         | 815MB | `ollama run gemma3:1b`           |
 | Gemma 3            | 4B         | 3.3GB | `ollama run gemma3`              |
 | Gemma 3            | 12B        | 8.1GB | `ollama run gemma3:12b`          |
