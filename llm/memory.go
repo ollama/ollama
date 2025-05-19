@@ -122,8 +122,20 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	}
 
 	layers := f.Tensors().GroupLayers()
+
+	excludeLayers := make(map[string]struct{})
+	for _, key := range []string{"position_embd", "token_embd", "token_norm_embd", "token_types"} {
+		excludeLayers[key] = struct{}{}
+	}
+	filteredLayers := make(map[string]ggml.Layer)
+	for key, layer := range layers {
+		if _, excluded := excludeLayers[key]; !excluded {
+			filteredLayers[key] = layer
+		}
+	}
+
 	// add one layer (chosing the max layer) worth of memory as a buffer
-	layerSize = slices.MaxFunc(slices.Collect(maps.Values(layers)), func(a, b ggml.Layer) int {
+	layerSize = slices.MaxFunc(slices.Collect(maps.Values(filteredLayers)), func(a, b ggml.Layer) int {
 		return cmp.Compare(a.Size(), b.Size())
 	}).Size()
 
