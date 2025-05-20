@@ -633,7 +633,9 @@ func ClusterRunHandler(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to encode request: %w", err)
 	}
 	
+	// Debug: Print the request body
 	fmt.Printf("Running model '%s' in cluster mode...\n", model)
+	fmt.Printf("Request body: %s\n", string(jsonData))
 	
 	// Make API call to run the model
 	client := NewClient()

@@ -227,25 +227,36 @@ func (d *DiscoveryService) startMDNSDiscovery() error {
 	d.registry.RegisterNode(d.localNode)
 	
 	// Create mDNS service registration with extended information
-	host, _ := os.Hostname()
-	info := []string{
-		fmt.Sprintf("id=%s", d.localNode.ID),
-		fmt.Sprintf("name=%s", d.localNode.Name),
-		fmt.Sprintf("role=%s", d.localNode.Role),
-		fmt.Sprintf("api_port=%d", d.localNode.ApiPort),
-		fmt.Sprintf("cluster_port=%d", d.localNode.ClusterPort),
-		fmt.Sprintf("version=%s", "v0.2.0"),
-		fmt.Sprintf("auto_discovery=true"),
-	}
+		host, _ := os.Hostname()
+		
+		// Debug hostname and node ID
+		fmt.Printf("DEBUG: Starting mDNS with hostname=%s, node_id=%s\n", host, d.localNode.ID)
+		
+		info := []string{
+			fmt.Sprintf("id=%s", d.localNode.ID),
+			fmt.Sprintf("name=%s", d.localNode.Name),
+			fmt.Sprintf("role=%s", d.localNode.Role),
+			fmt.Sprintf("api_port=%d", d.localNode.ApiPort),
+			fmt.Sprintf("cluster_port=%d", d.localNode.ClusterPort),
+			fmt.Sprintf("version=%s", "v0.2.0"),
+			fmt.Sprintf("auto_discovery=true"),
+			fmt.Sprintf("hostname=%s", host), // Add explicit hostname
+		}
+		
+		fmt.Printf("DEBUG: mDNS TXT records: %v\n", info)
 	
 	// Add resource information if available
 	if d.localNode.Resources.CPUCores > 0 {
 		info = append(info, fmt.Sprintf("cpu_cores=%d", d.localNode.Resources.CPUCores))
 		info = append(info, fmt.Sprintf("memory_mb=%d", d.localNode.Resources.MemoryMB))
+		fmt.Printf("DEBUG: Adding resource info to mDNS advertisement: CPU=%d cores, Memory=%d MB\n",
+			d.localNode.Resources.CPUCores, d.localNode.Resources.MemoryMB)
 	}
 	
 	if d.localNode.Resources.GPUCount > 0 {
 		info = append(info, fmt.Sprintf("gpu_count=%d", d.localNode.Resources.GPUCount))
+		fmt.Printf("DEBUG: Adding GPU info to mDNS advertisement: GPUs=%d\n",
+			d.localNode.Resources.GPUCount)
 	}
 	
 	// Create service
@@ -900,6 +911,11 @@ func (d *DiscoveryService) discoverMDNSNodes() {
 	params.Timeout = time.Second * 2 // Longer timeout for better discovery
 	params.Entries = make(chan *mdns.ServiceEntry, 20) // Larger buffer
 	
+	// Explicitly ensure we're only searching for Ollama services
+	params.Service = OllamaServiceName // "_ollama._tcp"
+	
+	fmt.Printf("DEBUG: Initializing mDNS discovery for service: %s\n", params.Service)
+	
 	// Use shorter interval for faster discovery in the beginning
 	initialDiscoveryTicker := time.NewTicker(time.Second * 2)
 	defer initialDiscoveryTicker.Stop()
@@ -942,6 +958,12 @@ func (d *DiscoveryService) performMDNSDiscovery(params *mdns.QueryParam) {
 	// Set up params to use our channel for results
 	params.Entries = entryChan
 	
+	// Ensure we're only looking for Ollama services
+	// We explicitly set the service parameter to ensure we only discover Ollama services
+	params.Service = OllamaServiceName // "_ollama._tcp"
+	
+	fmt.Printf("DEBUG: Performing mDNS discovery for service: %s\n", params.Service)
+	
 	// Execute the query
 	if err := mdns.Query(params); err != nil {
 		fmt.Printf("mDNS lookup error: %v\n", err)
@@ -956,16 +978,25 @@ func (d *DiscoveryService) performMDNSDiscovery(params *mdns.QueryParam) {
 	
 	// Track discovered nodes in this operation
 	discoveredNodes := 0
+	discoveredOllamaNodes := 0
 	
 	// Process discovered entries from our channel
 	for entry := range entryChan {
-		d.processMDNSEntry(entry)
 		discoveredNodes++
+		
+		// Only process if it's an Ollama service
+		if strings.Contains(entry.Name, OllamaServiceName) {
+			d.processMDNSEntry(entry)
+			discoveredOllamaNodes++
+		} else {
+			fmt.Printf("DEBUG: Skipping non-Ollama service in discovery: %s\n", entry.Name)
+		}
 	}
 	
-	// Log discovery results if any nodes found
+	// Log discovery results with more details
 	if discoveredNodes > 0 {
-		fmt.Printf("Zero-config discovery found %d Ollama node(s)\n", discoveredNodes)
+		fmt.Printf("Zero-config discovery found %d service(s), %d Ollama node(s)\n",
+			discoveredNodes, discoveredOllamaNodes)
 	}
 }
 
@@ -974,19 +1005,54 @@ func (d *DiscoveryService) processMDNSEntry(entry *mdns.ServiceEntry) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	
-	// Store entry for future reference
+	// Enhanced logging for debugging
+	fmt.Printf("DEBUG: Processing mDNS entry: Name=%s\n", entry.Name)
+	fmt.Printf("DEBUG: mDNS entry IP: AddrV4=%v, AddrV6=%v, Port=%d\n",
+		entry.AddrV4, entry.AddrV6, entry.Port)
+	fmt.Printf("DEBUG: mDNS TXT records: %v\n", entry.InfoFields)
+	
+	// Check if this is an Ollama service (service type should be _ollama._tcp)
+	// Parse the entry name to extract service type
+	nameParts := strings.Split(entry.Name, ".")
+	isOllamaService := false
+	
+	// Look for _ollama._tcp in the service name parts
+	for i := 0; i < len(nameParts)-1; i++ {
+		if nameParts[i] == "_ollama" && i+1 < len(nameParts) && nameParts[i+1] == "_tcp" {
+			isOllamaService = true
+			break
+		}
+	}
+	
+	if !isOllamaService {
+		fmt.Printf("DEBUG: Skipping non-Ollama service: %s\n", entry.Name)
+		return
+	}
+	
+	// Store entry for future reference (only for Ollama services)
 	d.mdnsEntries[entry.Name] = entry
 	
 	// Extract node information from TXT records
 	nodeInfo := extractNodeInfoFromMDNS(entry)
 	
+	// Enhanced debug logging for extracted node info
+	fmt.Printf("DEBUG: Extracted NodeInfo: ID=%s, Name=%s, Addr=%s, Role=%s\n",
+		nodeInfo.ID, nodeInfo.Name, nodeInfo.Addr, nodeInfo.Role)
+	
 	// Skip our own node
 	if nodeInfo.ID == d.localNode.ID {
+		fmt.Printf("DEBUG: Skipping our own node: %s\n", nodeInfo.ID)
 		return
 	}
 	
 	// Update last heartbeat time
 	nodeInfo.LastHeartbeat = time.Now()
+	
+	// Check if node with this ID already exists
+	if existingNode, exists := d.registry.GetNode(nodeInfo.ID); exists {
+		fmt.Printf("DEBUG: Node with ID %s already exists in registry: Name=%s, Addr=%s\n",
+			existingNode.ID, existingNode.Name, existingNode.Addr)
+	}
 	
 	// Register or update the node in registry
 	d.registry.RegisterNode(nodeInfo)
@@ -1001,27 +1067,45 @@ func extractNodeInfoFromMDNS(entry *mdns.ServiceEntry) NodeInfo {
 		Status: NodeStatusOnline,
 	}
 	
+	fmt.Printf("DEBUG: Extracting NodeInfo from mDNS entry: %s\n", entry.Name)
+	
 	// Set IP address
 	if len(entry.AddrV4) > 0 {
 		nodeInfo.Addr = entry.AddrV4
+		fmt.Printf("DEBUG: Using IPv4: %v\n", entry.AddrV4)
 	} else if len(entry.AddrV6) > 0 {
 		nodeInfo.Addr = entry.AddrV6
+		fmt.Printf("DEBUG: Using IPv6: %v\n", entry.AddrV6)
+	} else {
+		fmt.Printf("DEBUG: No IP address found in mDNS entry\n")
 	}
 	
 	// Parse TXT records
+	foundID := false
+	foundName := false
+	
+	// Track if we see resource information in TXT records
+	seenCPUCores := false
+	seenMemoryMB := false
+	seenGPUCount := false
+	
 	for _, txt := range entry.InfoFields {
 		parts := strings.SplitN(txt, "=", 2)
 		if len(parts) != 2 {
+			fmt.Printf("DEBUG: Skipping invalid TXT record: %s\n", txt)
 			continue
 		}
 		
 		key, value := parts[0], parts[1]
+		fmt.Printf("DEBUG: Processing TXT record: %s=%s\n", key, value)
 		
 		switch key {
 		case "id":
 			nodeInfo.ID = value
+			foundID = true
 		case "name":
 			nodeInfo.Name = value
+			foundName = true
 		case "role":
 			nodeInfo.Role = NodeRole(value)
 		case "api_port":
@@ -1030,19 +1114,56 @@ func extractNodeInfoFromMDNS(entry *mdns.ServiceEntry) NodeInfo {
 		case "cluster_port":
 			port, _ := strconv.Atoi(value)
 			nodeInfo.ClusterPort = port
+		case "cpu_cores":
+			seenCPUCores = true
+			cores, err := strconv.Atoi(value)
+			if err == nil {
+				nodeInfo.Resources.CPUCores = cores
+				fmt.Printf("DEBUG: Processed cpu_cores=%d\n", cores)
+			}
+		case "memory_mb":
+			seenMemoryMB = true
+			memory, err := strconv.ParseUint(value, 10, 64)
+			if err == nil {
+				nodeInfo.Resources.MemoryMB = memory
+				fmt.Printf("DEBUG: Processed memory_mb=%d\n", memory)
+			}
+		case "gpu_count":
+			seenGPUCount = true
+			gpus, err := strconv.Atoi(value)
+			if err == nil {
+				nodeInfo.Resources.GPUCount = gpus
+				fmt.Printf("DEBUG: Processed gpu_count=%d\n", gpus)
+			}
+		default:
+			fmt.Printf("DEBUG: Ignoring unknown TXT record: %s=%s\n", key, value)
 		}
 	}
 	
-	// If no ID was found, create one from the mDNS name
-	if nodeInfo.ID == "" {
-		nodeInfo.ID = "mdns-" + entry.Name
+	// Log summary of resource info processed
+	if seenCPUCores || seenMemoryMB || seenGPUCount {
+		fmt.Printf("DEBUG: Resource information processed from mDNS TXT records:\n")
+		fmt.Printf("DEBUG:   CPU cores: %d\n", nodeInfo.Resources.CPUCores)
+		fmt.Printf("DEBUG:   Memory MB: %d\n", nodeInfo.Resources.MemoryMB)
+		fmt.Printf("DEBUG:   GPU count: %d\n", nodeInfo.Resources.GPUCount)
+	}
+	
+	// If no ID was found, create one from the mDNS name but ensure it's for Ollama services only
+	if !foundID {
+		// Extract hostname part from the entry name (first part before any dots)
+		hostnameParts := strings.Split(entry.Name, ".")
+		hostname := hostnameParts[0]
+		
+		nodeInfo.ID = "ollama-" + hostname
+		fmt.Printf("DEBUG: No ID found in TXT records, generated: %s\n", nodeInfo.ID)
 	}
 	
 	// If no name was found, use the hostname part
-	if nodeInfo.Name == "" {
+	if !foundName {
 		parts := strings.Split(entry.Name, ".")
 		if len(parts) > 0 {
 			nodeInfo.Name = parts[0]
+			fmt.Printf("DEBUG: No name found in TXT records, using: %s\n", nodeInfo.Name)
 		}
 	}
 	

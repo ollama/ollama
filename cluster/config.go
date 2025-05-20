@@ -290,15 +290,31 @@ func (c *ClusterConfig) GetNodeID() string {
 	// Start with hostname
 	hostname, err := os.Hostname()
 	if err != nil {
+		fmt.Printf("DEBUG: Error getting hostname: %v\n", err)
 		hostname = "unknown-host"
+	} else {
+		fmt.Printf("DEBUG: Got hostname: %s\n", hostname)
 	}
 	
 	// Try to get MAC address of primary interface
 	interfaces, err := net.Interfaces()
-	if err == nil {
-		for _, iface := range interfaces {
+	if err != nil {
+		fmt.Printf("DEBUG: Error getting network interfaces: %v\n", err)
+	} else {
+		fmt.Printf("DEBUG: Found %d network interfaces\n", len(interfaces))
+		
+		for i, iface := range interfaces {
+			fmt.Printf("DEBUG: Checking interface[%d]: %s, Flags: %v, MAC: %s\n",
+				i, iface.Name, iface.Flags, iface.HardwareAddr)
+			
 			// Skip loopback and interfaces without MAC
-			if iface.Flags&net.FlagLoopback != 0 || len(iface.HardwareAddr) == 0 {
+			if iface.Flags&net.FlagLoopback != 0 {
+				fmt.Printf("DEBUG: Skipping loopback interface: %s\n", iface.Name)
+				continue
+			}
+			
+			if len(iface.HardwareAddr) == 0 {
+				fmt.Printf("DEBUG: Skipping interface without MAC: %s\n", iface.Name)
 				continue
 			}
 			
@@ -306,10 +322,16 @@ func (c *ClusterConfig) GetNodeID() string {
 			mac := iface.HardwareAddr.String()
 			// Remove colons for a cleaner ID
 			mac = strings.ReplaceAll(mac, ":", "")
-			return fmt.Sprintf("%s-%s", hostname, mac)
+			nodeID := fmt.Sprintf("%s-%s", hostname, mac)
+			fmt.Printf("DEBUG: Generated node ID from hostname+MAC: %s\n", nodeID)
+			return nodeID
 		}
+		
+		fmt.Printf("DEBUG: No suitable network interface found with MAC address\n")
 	}
 	
 	// Fallback if no suitable interface found
-	return fmt.Sprintf("%s-%d", hostname, time.Now().UnixNano())
+	nodeID := fmt.Sprintf("%s-%d", hostname, time.Now().UnixNano())
+	fmt.Printf("DEBUG: Generated fallback node ID: %s\n", nodeID)
+	return nodeID
 }

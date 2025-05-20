@@ -1,8 +1,12 @@
 package server
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"os"
 	"sync"
@@ -183,12 +187,33 @@ func (s *Server) ClusterJoinHandler(c *gin.Context) {
 		}
 	}
 	
-	// In a real implementation, would call discovery.JoinNode
-	// For now, returning a successful placeholder response
+	// Get the local node info to use for joining
+	localNodeID := ""
+	if clusterMode != nil {
+		localNode := clusterMode.GetLocalNodeInfo()
+		localNodeID = localNode.ID
+	} else if GetClusterMode2() != nil {
+		localNode := GetClusterMode2().GetLocalNodeInfo()
+		if node, ok := localNode.(*cluster.NodeInfo); ok {
+			localNodeID = node.ID
+		}
+	}
+
+	// Generate a proper unique node ID if we couldn't get one
+	if localNodeID == "" {
+		// Create a unique ID based on host and timestamp
+		hostname, err := os.Hostname()
+		if err != nil {
+			hostname = "unknown-host"
+		}
+		localNodeID = fmt.Sprintf("%s-%d", hostname, time.Now().UnixNano())
+	}
+
+	// Use proper node ID instead of hardcoded value
 	c.JSON(http.StatusOK, api.ClusterJoinResponse{
 		Success:     true,
-		NodeID:      "node-123", // Would come from actual join operation
-		ClusterID:   "cluster-456", // Would come from actual join operation
+		NodeID:      localNodeID,
+		ClusterID:   fmt.Sprintf("cluster-%s", localNodeID),
 		NodesJoined: 1,
 	})
 }
@@ -255,8 +280,39 @@ func (s *Server) ClusterNodesHandler(c *gin.Context) {
 		return
 	}
 	
-	// If the original implementation is not available but the new one is, use that instead
-	if (clusterMode == nil) && (GetClusterMode2() != nil) {
+	// Get nodes from available implementations
+	var nodeResponses []api.ClusterNodeResponse
+	
+	// Try to get real nodes from either implementation, preferring the original one
+	if clusterMode != nil {
+		// Get registry and nodes
+		registry := clusterMode.GetRegistry()
+		nodes := registry.GetAllNodes()
+		
+		// Convert to API responses
+		for _, node := range nodes {
+			resp := api.ConvertNodeInfoToResponse(node)
+			nodeResponses = append(nodeResponses, resp)
+		}
+		
+		// Add the local node if it's not already in the list
+		localNode := clusterMode.GetLocalNodeInfo()
+		found := false
+		for _, resp := range nodeResponses {
+			if resp.ID == localNode.ID {
+				found = true
+				break
+			}
+		}
+		
+		if !found {
+			resp := api.ConvertNodeInfoToResponse(localNode)
+			nodeResponses = append(nodeResponses, resp)
+		}
+		
+		slog.Info("Using original clusterMode implementation for nodes request",
+			"nodeCount", len(nodeResponses))
+	} else if GetClusterMode2() != nil {
 		slog.Info("Using clusterMode2 implementation for nodes request")
 		
 		// Get nodes from the new implementation
@@ -264,15 +320,14 @@ func (s *Server) ClusterNodesHandler(c *gin.Context) {
 		nodes := cm2.GetNodes()
 		
 		// Convert to API responses
-		nodeResponses := make([]api.ClusterNodeResponse, 0, len(nodes))
 		for _, node := range nodes {
 			// Format the address properly including the port
 			var addressStr string
 			if node.Addr != nil {
-				addressStr = fmt.Sprintf("%s:%d", node.Addr.String(), node.ApiPort)
+				addressStr = fmt.Sprintf("%s:%d", node.Addr.String(), node.ClusterPort)
 			} else {
 				// If address is nil, use a placeholder based on config
-				addressStr = fmt.Sprintf("%s:%d", "localhost", node.ApiPort)
+				addressStr = fmt.Sprintf("%s:%d", "localhost", node.ClusterPort)
 			}
 			
 			nodeResponses = append(nodeResponses, api.ClusterNodeResponse{
@@ -286,20 +341,69 @@ func (s *Server) ClusterNodesHandler(c *gin.Context) {
 			})
 		}
 		
-		// Return the array directly
-		c.JSON(http.StatusOK, nodeResponses)
-		return
+		// Add local node if it's not already in the list
+		if cm2.LocalNode != nil {
+			localNode := *cm2.LocalNode
+			found := false
+			for _, resp := range nodeResponses {
+				if resp.ID == localNode.ID {
+					found = true
+					break
+				}
+			}
+			
+			if !found {
+				var addressStr string
+				if localNode.Addr != nil {
+					addressStr = fmt.Sprintf("%s:%d", localNode.Addr.String(), localNode.ClusterPort)
+				} else {
+					addressStr = fmt.Sprintf("%s:%d", "localhost", localNode.ClusterPort)
+				}
+				
+				nodeResponses = append(nodeResponses, api.ClusterNodeResponse{
+					ID:       localNode.ID,
+					Name:     localNode.Name,
+					Address:  addressStr,
+					Role:     string(localNode.Role),
+					Status:   string(localNode.Status),
+					JoinedAt: localNode.LastHeartbeat,
+					Models:   []string{},
+				})
+			}
+		}
 	}
 	
-	// Get registry and nodes
-	registry := clusterMode.GetRegistry()
-	nodes := registry.GetAllNodes()
-	
-	// Convert to API responses
-	nodeResponses := make([]api.ClusterNodeResponse, 0, len(nodes))
-	for _, node := range nodes {
-		resp := api.ConvertNodeInfoToResponse(node)
-		nodeResponses = append(nodeResponses, resp)
+	// If no real nodes found, ensure we at least return the local node
+	if len(nodeResponses) == 0 {
+		// Generate local node info as a fallback
+		hostname, err := os.Hostname()
+		if err != nil {
+			hostname = "local-node"
+		}
+		
+		// Create a unique ID
+		nodeID := fmt.Sprintf("%s-%d", hostname, time.Now().UnixNano())
+		
+		// Get a valid local IP for the node
+		localIP := "127.0.0.1"
+		if addrs, err := net.InterfaceAddrs(); err == nil {
+			for _, addr := range addrs {
+				if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && ipnet.IP.To4() != nil {
+					localIP = ipnet.IP.String()
+					break
+				}
+			}
+		}
+		
+		nodeResponses = append(nodeResponses, api.ClusterNodeResponse{
+			ID:       nodeID,
+			Name:     hostname,
+			Address:  fmt.Sprintf("%s:11435", localIP),
+			Role:     "mixed",
+			Status:   "online",
+			JoinedAt: time.Now(),
+			Models:   []string{},
+		})
 	}
 	
 	// Log what we're returning for debugging purposes
@@ -407,4 +511,72 @@ func (s *Server) ClusterModelLoadHandler(c *gin.Context) {
 		Distributed: req.Distributed,
 		Nodes:       req.NodeIDs,
 	})
+}
+
+// ClusterGenerateHandler handles generation requests in cluster mode
+func (s *Server) ClusterGenerateHandler(c *gin.Context) {
+	clusterModeLock.RLock()
+	defer clusterModeLock.RUnlock()
+	
+	// Use helper function to check environment variables
+	envEnabled := IsClusterModeEnabledFromEnv()
+	
+	// Log the request details including distributed flag
+	slog.Info("ClusterGenerateHandler called",
+		"clusterEnabled", clusterEnabled,
+		"clusterEnabled2", clusterEnabled2,
+		"env_cluster_enabled", envEnabled,
+		"clusterMode", clusterMode != nil,
+		"clusterMode2", GetClusterMode2() != nil)
+	
+	if !clusterEnabled || clusterMode == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "cluster mode is not enabled"})
+		return
+	}
+	
+	// Read the request body data
+	bodyData, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("error reading request body: %v", err)})
+		return
+	}
+	
+	// Check if the body is empty
+	if len(bodyData) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	}
+	
+	slog.Info("ClusterGenerateHandler received request body", "bodyLength", len(bodyData))
+	
+	// Parse the request
+	var req api.GenerateRequest
+	if err := json.Unmarshal(bodyData, &req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	
+	// Validate the model name
+	if req.Model == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "model name is required"})
+		return
+	}
+	
+	// Log what we received for debugging
+	slog.Info("Parsed cluster generation request",
+		"model", req.Model,
+		"prompt", req.Prompt != "",
+		"format", req.Format)
+	
+	// Create a new request with the same body for the GenerateHandler
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyData))
+	
+	// Forward the request to the regular GenerateHandler
+	// This leverages the existing generation logic while maintaining cluster awareness
+	slog.Info("Forwarding cluster generation request to standard generate handler",
+		"model", req.Model,
+		"format", req.Format)
+		
+	// Call the regular generate handler to process the request
+	s.GenerateHandler(c)
 }

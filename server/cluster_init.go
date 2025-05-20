@@ -269,9 +269,24 @@ func (cm *ClusterMode) ClusterLoadModel(modelName string, distributed bool, shar
 		// Use specified nodes
 		nodesToUse = specificNodeIDs
 	} else {
-		// In a simulated implementation, just use a stub node
-		nodesToUse = []string{"node-123"}
-		slog.Info("Would discover nodes in a real implementation")
+		// Get real nodes from the registry
+		nodes := cm.Registry.GetAllNodes()
+		slog.Info("Finding available worker nodes for model loading", "nodeCount", len(nodes))
+		
+		for _, node := range nodes {
+			// Only use worker or mixed nodes that are online
+			if (node.Role == cluster.NodeRoleWorker || node.Role == cluster.NodeRoleMixed) &&
+			   node.Status == cluster.NodeStatusOnline {
+				slog.Info("Found available worker node", "nodeID", node.ID, "nodeName", node.Name)
+				nodesToUse = append(nodesToUse, node.ID)
+			}
+		}
+		
+		// If no worker nodes found, use the local node
+		if len(nodesToUse) == 0 && cm.LocalNode != nil {
+			slog.Info("No worker nodes found, using local node", "nodeID", cm.LocalNode.ID)
+			nodesToUse = append(nodesToUse, cm.LocalNode.ID)
+		}
 	}
 
 	if len(nodesToUse) == 0 {

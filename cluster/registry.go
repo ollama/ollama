@@ -54,7 +54,27 @@ func (r *NodeRegistry) RegisterNode(node NodeInfo) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	
+	// Debug logging for node registration
+	fmt.Printf("DEBUG: RegisterNode called for node: ID=%s, Name=%s, Addr=%s\n",
+		node.ID, node.Name, node.Addr)
+	
 	existing, exists := r.nodes[node.ID]
+	
+	// Enhanced logging if node already exists
+	if exists {
+		fmt.Printf("DEBUG: Existing node found with ID=%s:\n", node.ID)
+		fmt.Printf("DEBUG:   Existing: Name=%s, Addr=%s, Status=%s\n",
+			existing.Name, existing.Addr, existing.Status)
+		fmt.Printf("DEBUG:   New: Name=%s, Addr=%s, Status=%s\n",
+			node.Name, node.Addr, node.Status)
+		
+		// Check if this is possibly a duplicate node with same ID but different address
+		if existing.Addr.String() != node.Addr.String() {
+			fmt.Printf("DEBUG: WARNING! Node ID collision detected: same ID=%s but different addresses: %s vs %s\n",
+				node.ID, existing.Addr, node.Addr)
+		}
+	}
+	
 	r.nodes[node.ID] = node
 	
 	if !exists {

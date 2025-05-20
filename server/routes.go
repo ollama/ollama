@@ -1301,6 +1301,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 				clusterGroup.POST("/join", s.ClusterJoinHandler)
 				clusterGroup.POST("/leave", s.ClusterLeaveHandler)
 				clusterGroup.POST("/model/load", s.ClusterModelLoadHandler)
+				clusterGroup.POST("/generate", s.ClusterGenerateHandler)
 			}
 		}
 	}
