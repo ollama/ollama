@@ -8,6 +8,8 @@ import (
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
+	"github.com/ollama/ollama/ml/nn/fast"
+	"github.com/ollama/ollama/ml/nn/rope"
 )
 
 type TextSelfAttention struct {
@@ -21,15 +23,14 @@ type TextSelfAttention struct {
 func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.Tensor, cache *kvcache.WrapperCache, opts *TextModelOptions) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
 	headDim := opts.hiddenSize / opts.numHeads
-	ropeType := uint32(0)
 
 	query := sa.Query.Forward(ctx, hiddenState)
 	query = query.Reshape(ctx, headDim, opts.numHeads, batchSize)
-	query = query.RoPE(ctx, positions, sa.RopeFactors, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
+	query = fast.RoPE(ctx, query, positions, opts.ropeDim, opts.ropeBase, opts.ropeScale, rope.WithFactors(sa.RopeFactors))
 
 	key := sa.Key.Forward(ctx, hiddenState)
 	key = key.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-	key = key.RoPE(ctx, positions, sa.RopeFactors, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
+	key = fast.RoPE(ctx, key, positions, opts.ropeDim, opts.ropeBase, opts.ropeScale, rope.WithFactors(sa.RopeFactors))
 
 	value := sa.Value.Forward(ctx, hiddenState)
 	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
@@ -44,7 +45,7 @@ func (sa *TextSelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.T
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
 	// This will only get called for layers in the cache, which are just the self attention layers
 	if sa, ok := m.Transformer.Layers[layer].(*TextSelfAttentionDecoderLayer); ok {
-		return key.RoPE(ctx, shift, sa.SelfAttention.RopeFactors, m.ropeDim, uint32(0), m.ropeBase, m.ropeScale), nil
+		return fast.RoPE(ctx, key, shift, m.ropeDim, m.ropeBase, m.ropeScale, rope.WithFactors(sa.SelfAttention.RopeFactors)), nil
 	}
 
 	return key, nil
@@ -199,8 +200,8 @@ func (d *TextDecoder) Forward(ctx ml.Context, hiddenState, positionIDs, outputs,
 
 type TextModelOptions struct {
 	hiddenSize, numHeads, numKVHeads int
+	ropeDim                          int
 	eps, ropeBase, ropeScale         float32
-	ropeDim                          uint32
 
 	crossAttentionLayers []int32
 }
@@ -240,10 +241,10 @@ func newTextModel(c fs.Config) *TextModel {
 			hiddenSize:           int(c.Uint("embedding_length")),
 			numHeads:             int(c.Uint("attention.head_count")),
 			numKVHeads:           int(c.Uint("attention.head_count_kv")),
+			ropeDim:              int(c.Uint("rope.dimension_count")),
 			eps:                  c.Float("attention.layer_norm_rms_epsilon"),
 			ropeBase:             c.Float("rope.freq_base"),
 			ropeScale:            c.Float("rope.freq_scale", 1),
-			ropeDim:              c.Uint("rope.dimension_count"),
 			crossAttentionLayers: c.Ints("attention.cross_attention_layers"),
 		},
 	}

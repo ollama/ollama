@@ -8,13 +8,14 @@ import (
 	"github.com/ollama/ollama/kvcache"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/nn"
+	"github.com/ollama/ollama/ml/nn/fast"
 	"github.com/ollama/ollama/model/input"
 )
 
 type TextOptions struct {
-	hiddenSize, numHeads, numKVHeads, headDim int
-	eps, ropeBase, ropeScale                  float32
-	ropeDim                                   uint32
+	hiddenSize, numHeads, numKVHeads int
+	headDim, ropeDim                 int
+	eps, ropeBase, ropeScale         float32
 }
 
 type TextModel struct {
@@ -35,16 +36,15 @@ type SelfAttention struct {
 
 func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *TextOptions) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
-	ropeType := uint32(0)
 	headDim := cmp.Or(opts.headDim, opts.hiddenSize/opts.numHeads)
 
 	q := sa.Query.Forward(ctx, hiddenState)
 	q = q.Reshape(ctx, headDim, opts.numHeads, batchSize)
-	q = q.RoPE(ctx, positionIDs, nil, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
+	q = fast.RoPE(ctx, q, positionIDs, opts.ropeDim, opts.ropeBase, opts.ropeScale)
 
 	k := sa.Key.Forward(ctx, hiddenState)
 	k = k.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-	k = k.RoPE(ctx, positionIDs, nil, opts.ropeDim, ropeType, opts.ropeBase, opts.ropeScale)
+	k = fast.RoPE(ctx, k, positionIDs, opts.ropeDim, opts.ropeBase, opts.ropeScale)
 
 	v := sa.Value.Forward(ctx, hiddenState)
 	v = v.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
@@ -55,7 +55,7 @@ func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Ten
 }
 
 func (m *TextModel) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return key.RoPE(ctx, shift, nil, uint32(0), m.ropeDim, m.ropeBase, m.ropeScale), nil
+	return fast.RoPE(ctx, key, shift, m.ropeDim, m.ropeBase, m.ropeScale), nil
 }
 
 type MLP struct {
@@ -129,10 +129,10 @@ func newTextModel(c fs.Config) *TextModel {
 			numHeads:   int(c.Uint("attention.head_count")),
 			numKVHeads: int(c.Uint("attention.head_count_kv")),
 			headDim:    int(c.Uint("attention.key_length")),
+			ropeDim:    int(c.Uint("rope.dimension_count")),
 			eps:        c.Float("attention.layer_norm_rms_epsilon"),
 			ropeBase:   c.Float("rope.freq_base"),
 			ropeScale:  c.Float("rope.freq_scale", 1),
-			ropeDim:    c.Uint("rope.dimension_count"),
 		},
 	}
 }
