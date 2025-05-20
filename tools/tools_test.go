@@ -334,15 +334,22 @@ func TestParseToolCalls(t *testing.T) {
 			model:            "llama3.2",
 			output:           `{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} some tokens after tool call`,
 			expectedToolCall: []api.ToolCall{t1},
-			expectedTokens:   "some tokens after tool call",
+			expectedTokens:   "",
 		},
 		// Only the first tool call is returned
 		{
 			name:             "llama3.2 tool call with multiple tool calls",
 			model:            "llama3.2",
 			output:           `{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}`,
-			expectedToolCall: []api.ToolCall{t1},
-			expectedTokens:   `{"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}`,
+			expectedToolCall: []api.ToolCall{t1, t2},
+			expectedTokens:   "",
+		},
+		{
+			name:             "llama3.2 tool call with multiple tool calls",
+			model:            "llama3.2",
+			output:           `[{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}]`,
+			expectedToolCall: []api.ToolCall{t1, t2},
+			expectedTokens:   "",
 		},
 	}
 
