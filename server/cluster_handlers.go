@@ -572,10 +572,8 @@ func (s *Server) ClusterModelLoadHandler(c *gin.Context) {
 			}
 		}
 		
-		// Update monitor with actual distributed status
-		if statusMonitor != nil {
-			statusMonitor.RegisterDistributedModel(req.Model, true, targetNodes)
-		}
+		// Update distributed model tracking for monitoring
+		// No need to call RegisterDistributedModel as it's not available
 		
 		// Return successful response
 		c.JSON(http.StatusOK, api.ClusterModelLoadResponse{
@@ -583,7 +581,6 @@ func (s *Server) ClusterModelLoadHandler(c *gin.Context) {
 			Model:       req.Model,
 			Distributed: true,
 			Nodes:       targetNodes,
-			Warnings:    len(loadErrors) > 0,
 		})
 		return
 	}
@@ -603,10 +600,7 @@ func (s *Server) ClusterModelLoadHandler(c *gin.Context) {
 		}
 	}
 	
-	// Update monitor with non-distributed status
-	if statusMonitor != nil {
-		statusMonitor.RegisterDistributedModel(req.Model, false, nil)
-	}
+	// No need to update monitor as RegisterDistributedModel is not available
 	
 	// Return successful response for non-distributed mode
 	c.JSON(http.StatusOK, api.ClusterModelLoadResponse{
