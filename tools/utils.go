@@ -100,42 +100,13 @@ func isToolCallsNode(n *parse.IfNode) bool {
 	return false
 }
 
-// TODO(parthsareen): get full prefix from the template instead of just the first token
-
-// toolPrefix returns the prefix for the tool call if it exists from a template
 func toolPrefix(tmpl *gotmpl.Template) string {
 	tokenText, ok := extractToolCallsFormat(tmpl)
 	if !ok {
 		return ""
 	}
 	tokenText = strings.TrimSpace(tokenText)
-	if tokenText == "" {
-		return ""
-	}
-	first := strings.Fields(tokenText)[0]
-
-	start := -1
-	end := -1
-	for i, r := range tokenText {
-		if r == '<' || r == '[' {
-			start = i
-		}
-		if (r == '>' || r == ']') && start != -1 {
-			end = i
-			break
-		}
-	}
-	if start != -1 && end != -1 {
-		// return the token including the [ or < and the ] or >
-		return tokenText[start : end+1]
-	} else if start != -1 {
-		// get until the [ or < - in the case tag was not closed
-		return tokenText[:start]
-	} else if end != -1 {
-		// get after the ] or > - in the case tag was not opened
-		return tokenText[end+1:]
-	}
-	return first
+	return tokenText
 }
 
 // toolTemplate creates a subtree from the node that ranges over .ToolCalls

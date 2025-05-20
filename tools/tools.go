@@ -32,6 +32,9 @@ type Parser struct {
 //   - The processed string with prefix removed if found
 //   - error: ErrAccumulateMore if prefix is incomplete, or nil if successful
 func (p *Parser) checkPrefix(s string) (string, error) {
+	original := s
+	s = strings.ReplaceAll(s, "\n", " ")
+
 	if s == "" {
 		return "", nil
 	}
@@ -53,7 +56,7 @@ func (p *Parser) checkPrefix(s string) (string, error) {
 		// Return everything except overlapping portion
 		p.sb.Reset()
 		p.sb.WriteString(s[idx:])
-		return s[:idx], errAccumulateMore
+		return original[:idx], errAccumulateMore
 	}
 
 	// Check if prefix appears in middle of string
@@ -62,7 +65,7 @@ func (p *Parser) checkPrefix(s string) (string, error) {
 		p.sb.Reset()
 		p.sb.WriteString(strings.TrimSpace(s[idx:]))
 		// Return everything before prefix
-		return s[:idx], errAccumulateMore
+		return original[:idx], errAccumulateMore
 	}
 
 	// No partial prefix found
@@ -80,7 +83,12 @@ func (p *Parser) Add(s string) (tools []api.ToolCall, content string) {
 		return nil, ""
 	}
 	if p.done {
-		return nil, s
+		if p.index == 0 {
+			// Return original string if no tool calls found at start
+			return nil, s
+		}
+		// Return empty if no tool calls found after start
+		return nil, ""
 	}
 	p.sb.WriteString(s)
 	s = p.sb.String()
@@ -102,29 +110,26 @@ func (p *Parser) Add(s string) (tools []api.ToolCall, content string) {
 	if err != nil {
 		if errors.Is(err, errAccumulateMore) {
 			return nil, ""
-		} else {
-			p.sb.Reset()
-			// Do not try parsing leading JSON if JSON not found
-			p.parseLeadingJSON = false
-			if p.prefix == "" {
-				p.done = true
-			}
-			if p.prefixFound {
-				// Drop tokens since prefix was found
-				return nil, ""
-			}
-			return nil, s
 		}
+		p.sb.Reset()
+		// Do not try parsing leading JSON if JSON not found
+		p.parseLeadingJSON = false
+		if p.prefix == "" {
+			p.done = true
+		}
+		if p.index != 0 && p.prefix == "" {
+			return nil, ""
+		}
+		if p.prefixFound {
+			// Drop tokens since prefix was found
+			return nil, ""
+		}
+		return nil, s
 	}
 
 	for _, tc := range toolCalls {
 		tc.Function.Index = p.index
 		p.index++
-	}
-
-	// Mark as done if no prefix in template
-	if p.prefix == "" {
-		p.done = true
 	}
 
 	p.sb.Reset()
@@ -147,7 +152,7 @@ func NewParser(templateToProcess *gotmpl.Template) (*Parser, error) {
 	}
 
 	tp := toolPrefix(templateToProcess)
-	tp = strings.TrimSpace(tp)
+	tp = strings.ReplaceAll(tp, "\n", " ")
 
 	name, arguments, err := extractToolArgs(tt)
 	if err != nil {
