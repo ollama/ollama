@@ -12,7 +12,17 @@ import (
 	"time"
 
 	"github.com/hashicorp/mdns"
+	
+	cerrors "github.com/ollama/ollama/cluster/errors"
 )
+
+// min returns the smaller of x or y
+func min(x, y int) int {
+	if x < y {
+		return x
+	}
+	return y
+}
 
 // DiscoveryMethod defines the method used for node discovery
 type DiscoveryMethod string
@@ -92,6 +102,30 @@ type DiscoveryService struct {
 	
 	// isRunning indicates if the discovery service is active
 	isRunning bool
+	
+	// retryPolicy defines how to handle retries for temporary failures
+	retryPolicy cerrors.RetryPolicy
+	
+	// nodeRetries tracks retry attempts per node
+	nodeRetries map[string]int
+	
+	// communicationMetrics tracks communication success/failure stats
+	communicationMetrics struct {
+		successCount   int
+		failureCount   int
+		lastFailure    time.Time
+		avgLatency     time.Duration
+		minLatency     time.Duration
+		maxLatency     time.Duration
+		latencySamples int
+		errorRates     map[cerrors.ErrorCategory]int
+	}
+	
+	// nodeFailureTracker tracks failure history for each node
+	nodeFailureTracker map[string]*cerrors.NodeFailureInfo
+	
+	// statusController is a reference to the node status controller
+	statusController *NodeStatusController
 }
 
 // NewDiscoveryService creates a new discovery service
@@ -99,12 +133,29 @@ func NewDiscoveryService(config DiscoveryConfig, registry *NodeRegistry, localNo
 	ctx, cancel := context.WithCancel(context.Background())
 	
 	return &DiscoveryService{
-		config:    config,
-		registry:  registry,
-		localNode: localNode,
-		ctx:       ctx,
-		cancel:    cancel,
-		isRunning: false,
+		config:      config,
+		registry:    registry,
+		localNode:   localNode,
+		ctx:         ctx,
+		cancel:      cancel,
+		isRunning:   false,
+		retryPolicy: cerrors.NewDefaultRetryPolicy(),
+		nodeRetries: make(map[string]int),
+		mdnsEntries: make(map[string]*mdns.ServiceEntry),
+		nodeFailureTracker: make(map[string]*cerrors.NodeFailureInfo),
+		statusController:   nil, // Will be set after ClusterMode is initialized
+		communicationMetrics: struct {
+			successCount   int
+			failureCount   int
+			lastFailure    time.Time
+			avgLatency     time.Duration
+			minLatency     time.Duration
+			maxLatency     time.Duration
+			latencySamples int
+			errorRates     map[cerrors.ErrorCategory]int
+		}{
+			errorRates: make(map[cerrors.ErrorCategory]int),
+		},
 	}
 }
 
@@ -209,13 +260,27 @@ func (d *DiscoveryService) startMDNSDiscovery() error {
 	)
 	
 	if err != nil {
-		return fmt.Errorf("failed to create mDNS service: %w", err)
+		clusterErr := cerrors.NewDiscoveryError4(
+			d.localNode.ID,
+			"Failed to create mDNS service",
+			cerrors.PersistentError,
+			err,
+		)
+		cerrors.LogError(clusterErr)
+		return clusterErr
 	}
 	
 	// Create server
 	server, err := mdns.NewServer(&mdns.Config{Zone: service})
 	if err != nil {
-		return fmt.Errorf("failed to create mDNS server: %w", err)
+		clusterErr := cerrors.NewDiscoveryError4(
+			d.localNode.ID,
+			"Failed to create mDNS server",
+			cerrors.PersistentError,
+			err,
+		)
+		cerrors.LogError(clusterErr)
+		return clusterErr
 	}
 	
 	d.mdnsServer = server
@@ -233,13 +298,27 @@ func (d *DiscoveryService) startMulticastDiscovery() error {
 	// Parse the multicast address
 	addr, err := net.ResolveUDPAddr("udp", d.config.MulticastAddress)
 	if err != nil {
-		return fmt.Errorf("invalid multicast address: %w", err)
+		clusterErr := cerrors.NewConfigurationError4(
+			d.localNode.ID,
+			"Invalid multicast address configuration",
+			cerrors.PersistentError,
+			err,
+		)
+		cerrors.LogError(clusterErr)
+		return clusterErr
 	}
 	
 	// Create UDP connection for sending
 	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
 	if err != nil {
-		return fmt.Errorf("failed to create UDP connection: %w", err)
+		clusterErr := cerrors.NewCommunicationError(
+			d.localNode.ID,
+			"Failed to create UDP connection for multicast discovery",
+			cerrors.TemporaryError,
+			err,
+		)
+		cerrors.LogError(clusterErr)
+		return clusterErr
 	}
 	d.multicastConn = conn
 	
@@ -262,7 +341,7 @@ func (d *DiscoveryService) startManualDiscovery() error {
 	
 	// For each node in the manual node list, attempt to connect and register
 	for _, nodeAddr := range d.config.NodeList {
-		go d.connectToNode(nodeAddr)
+		go d.ConnectToNodeWithRetry(nodeAddr)
 	}
 	
 	// Start a goroutine to periodically refresh connections to manual nodes
@@ -282,22 +361,355 @@ func (d *DiscoveryService) refreshManualConnections() {
 			return
 		case <-ticker.C:
 			for _, nodeAddr := range d.config.NodeList {
-				go d.connectToNode(nodeAddr)
+				go d.ConnectToNodeWithRetry(nodeAddr)
 			}
 		}
 	}
 }
 
-// connectToNode attempts to connect to a node at the given address and register it
-func (d *DiscoveryService) connectToNode(nodeAddr string) {
-	// In a real implementation, this would make an API call to the node
-	// to retrieve its information and register it with the registry.
-	// For now, just log the attempt.
-	fmt.Printf("Attempting to connect to node at %s\n", nodeAddr)
+// ConnectToNodeWithRetry attempts to connect to a node with built-in retry and error tracking
+func (d *DiscoveryService) ConnectToNodeWithRetry(nodeAddr string) {
+	// Extract node ID from address (temporary ID until we get real one)
+	tempNodeID := "node-" + nodeAddr
 	
-	// TODO: Implement actual node connection and registration
-	// This would involve making an HTTP request to the node's API
-	// to get its details and then registering it with the registry.
+	// Get existing node failure info or create one if it doesn't exist
+	var nodeFailure *cerrors.NodeFailureInfo
+	d.mu.Lock()
+	existing, exists := d.nodeFailureTracker[tempNodeID]
+	if !exists {
+		nodeFailure = cerrors.NewNodeFailureInfo(tempNodeID)
+		d.nodeFailureTracker[tempNodeID] = nodeFailure
+	} else {
+		nodeFailure = existing
+	}
+	d.mu.Unlock()
+	
+	// Create a metrics tracker for this connection
+	metrics := cerrors.NewMetricsTracker()
+	
+	// Create retry config with exponential backoff
+	retryConfig := cerrors.NewDefaultRetryConfig().
+		WithMaxRetries(5).
+		WithBaseDelay(200 * time.Millisecond).
+		WithMaxDelay(8 * time.Second)
+	
+	// Get the current retry count
+	retryCount := d.nodeRetries[tempNodeID]
+	timeout := time.Duration(min(30, 10+retryCount)) * time.Second
+	
+	// Create timeout context
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	
+	fmt.Printf("Attempting to connect to node at %s (timeout: %v, retry attempt: %d)\n",
+		nodeAddr, timeout, retryCount)
+	
+	// Define connection function with proper error handling
+	connectFunc := func(attemptCtx context.Context) (NodeInfo, error) {
+		startTime := time.Now()
+		
+		// Check for context cancellation
+		if attemptCtx.Err() != nil {
+			return NodeInfo{}, cerrors.NewTimeoutError(
+				tempNodeID,
+				"node-connection",
+				timeout,
+				attemptCtx.Err(),
+			)
+		}
+		
+		// In a real implementation, make an HTTP request here
+		// For demonstration, we'll create a simulated connection attempt
+		
+		// ---- Begin connection simulation code (replace with actual connection) ----
+		// This would make an HTTP request to the node endpoint to get node information
+		// e.g., client.Get(fmt.Sprintf("http://%s/api/node_info", nodeAddr))
+		
+		// Simulated delay for connection attempt (remove in real code)
+		time.Sleep(100 * time.Millisecond)
+		
+		// For debugging/testing, randomly return error cases
+		errorSim := false // Set to true to simulate errors
+		if errorSim && (retryCount % 3 == 0) {
+			// Simulate various error types
+			var err error
+			switch retryCount % 4 {
+			case 0:
+				// Timeout error
+				err = context.DeadlineExceeded
+			case 1:
+				// Connection refused
+				err = &net.OpError{
+					Op:  "dial",
+					Err: fmt.Errorf("connection refused"),
+				}
+			case 2:
+				// Name resolution error
+				err = &net.DNSError{
+					Err:       "no such host",
+					Name:      nodeAddr,
+					IsTimeout: false,
+				}
+			case 3:
+				// Network error
+				err = fmt.Errorf("network is unreachable")
+			}
+			
+			// Create proper error category and return
+			errorCategory := cerrors.ErrorCategoryFromError(err)
+			errorSeverity := cerrors.ErrorSeverityFromError(err)
+			
+			return NodeInfo{}, cerrors.NewDetailedCommunicationError6(
+				tempNodeID,
+				fmt.Sprintf("Connection to %s failed", nodeAddr),
+				errorSeverity,
+				errorCategory,
+				err,
+				map[string]string{
+					"node_addr": nodeAddr,
+					"attempt":   fmt.Sprintf("%d", retryCount),
+				},
+			)
+		}
+		
+		// No error - create simulated node info
+		// In a real implementation, this would parse the HTTP response data
+		nodeInfo := NodeInfo{
+			ID:            tempNodeID,
+			Name:          "node-" + nodeAddr,
+			Addr:          net.ParseIP(strings.Split(nodeAddr, ":")[0]),
+			ClusterPort:   12095,
+			ApiPort:       11434,
+			Role:          NodeRoleWorker,
+			Status:        NodeStatusOnline,
+			LastHeartbeat: time.Now(),
+		}
+		// ---- End simulation code ----
+		
+		// Track latency for this attempt
+		latency := time.Since(startTime)
+		metrics.RecordLatency(latency)
+		
+		return nodeInfo, nil
+	}
+	
+	// Execute the function with retry logic
+	startTime := time.Now()
+	nodeInfo, err := d.executeWithRetryAndMetrics(ctx, connectFunc, retryConfig, metrics)
+	connectionDuration := time.Since(startTime)
+	
+	// Handle result based on success or failure
+	if err != nil {
+		// Create appropriate error with detailed category and context
+		errorCategory := cerrors.ErrorCategoryFromError(err)
+		errorSeverity := cerrors.ErrorSeverityFromError(err)
+		
+		// Construct a detailed error message with context
+		var errorMessage string
+		var recoverySuggestion string
+		
+		switch errorCategory {
+		case cerrors.ConnectionRefused:
+			errorMessage = fmt.Sprintf("Connection refused by node at %s", nodeAddr)
+			recoverySuggestion = "Check if the Ollama service is running on the target node"
+		case cerrors.TimeoutError:
+			errorMessage = fmt.Sprintf("Connection timed out to node at %s after %v", nodeAddr, timeout)
+			recoverySuggestion = "Check network latency or increase connection timeout"
+		case cerrors.NameResolution:
+			errorMessage = fmt.Sprintf("Failed to resolve hostname for node at %s", nodeAddr)
+			recoverySuggestion = "Verify DNS configuration and node hostname"
+		case cerrors.NetworkTemporary:
+			errorMessage = fmt.Sprintf("Temporary network error connecting to %s", nodeAddr)
+			recoverySuggestion = "Retry after checking network connectivity"
+		default:
+			errorMessage = fmt.Sprintf("Failed to connect to node at %s", nodeAddr)
+			recoverySuggestion = "Check node logs for more details"
+		}
+		
+		// Create enhanced error with detailed metadata
+		clusterErr := cerrors.NewNodeCommunicationError(
+			tempNodeID,
+			nodeAddr,
+			"node-discovery",
+			errorMessage,
+			errorSeverity,
+			errorCategory,
+			err,
+		).WithMetadata(map[string]string{
+			"recovery_strategy": recoverySuggestion,
+			"attempts":          fmt.Sprintf("%d", retryCount+1),
+			"duration_ms":       fmt.Sprintf("%d", connectionDuration.Milliseconds()),
+		})
+		
+		// Log the error with context
+		cerrors.LogErrorf(clusterErr,
+			"Connection failed to %s after %d %s: %v (recovery: %s)",
+			nodeAddr,
+			retryCount+1,
+			pluralize("attempt", retryCount+1),
+			err,
+			recoverySuggestion,
+		)
+		
+		// Update node status in registry if it exists
+		if node, exists := d.registry.GetNode(tempNodeID); exists {
+			if d.statusController != nil {
+				// Use state machine for proper transition
+				newStatus, err := d.statusController.TransitionStatus(node.Status, NodeStatusOffline)
+				if err == nil {
+					node.Status = newStatus
+					d.registry.RegisterNode(node)
+				}
+			} else {
+				node.Status = NodeStatusOffline
+				d.registry.RegisterNode(node)
+			}
+		}
+		
+		// Record the failure in node failure info
+		nodeFailure.RecordFailure(clusterErr)
+		
+		// Update connection metrics
+		d.mu.Lock()
+		d.communicationMetrics.failureCount++
+		d.communicationMetrics.lastFailure = time.Now()
+		d.communicationMetrics.errorRates[errorCategory]++
+		
+		// Increment retry counter for next attempt
+		d.nodeRetries[tempNodeID] = retryCount + 1
+		d.mu.Unlock()
+		
+		return
+	}
+	
+	// Connection was successful
+	nodeFailure.RecordSuccess()
+	
+	// Log success with metrics
+	fmt.Printf("Successfully connected to node %s at %s (duration: %v, attempts: %d)\n",
+		nodeInfo.Name, nodeAddr, connectionDuration, retryCount+1)
+	
+	// Update connection metrics
+	d.mu.Lock()
+	delete(d.nodeRetries, tempNodeID) // Reset retry counter on success
+	d.communicationMetrics.successCount++
+	
+	// Update latency metrics with exponential moving average
+	alpha := 0.2 // Weight for new samples
+	if d.communicationMetrics.latencySamples == 0 {
+		d.communicationMetrics.avgLatency = connectionDuration
+		d.communicationMetrics.minLatency = connectionDuration
+		d.communicationMetrics.maxLatency = connectionDuration
+	} else {
+		// Update average with weighted average
+		d.communicationMetrics.avgLatency = time.Duration(
+			float64(d.communicationMetrics.avgLatency)*(1-alpha) +
+			float64(connectionDuration)*alpha)
+		
+		// Update min/max tracking
+		if connectionDuration < d.communicationMetrics.minLatency {
+			d.communicationMetrics.minLatency = connectionDuration
+		}
+		if connectionDuration > d.communicationMetrics.maxLatency {
+			d.communicationMetrics.maxLatency = connectionDuration
+		}
+	}
+	d.communicationMetrics.latencySamples++
+	d.mu.Unlock()
+	
+	// Register the node with proper status
+	status := NodeStatusOnline
+	if d.statusController != nil {
+		// Use state machine for proper transition
+		if oldNode, exists := d.registry.GetNode(tempNodeID); exists {
+			newStatus, err := d.statusController.TransitionStatus(oldNode.Status, NodeStatusOnline)
+			if err == nil {
+				status = newStatus
+			}
+		}
+	}
+	
+	nodeInfo.Status = status
+	d.registry.RegisterNode(nodeInfo)
+}
+
+// executeWithRetryAndMetrics executes a function with retry logic and tracks metrics
+func (d *DiscoveryService) executeWithRetryAndMetrics(
+	ctx context.Context,
+	fn func(context.Context) (NodeInfo, error),
+	config *cerrors.RetryConfig,
+	metrics *cerrors.MetricsTracker,
+) (NodeInfo, error) {
+	var result NodeInfo
+	var lastErr error
+	
+	for attempt := 0; attempt <= config.MaxRetries; attempt++ {
+		// For retries (not first attempt), calculate and apply backoff
+		if attempt > 0 {
+			backoff := config.CalculateBackoff(attempt - 1)
+			
+			// Log retry information
+			fmt.Printf("Retrying connection (attempt %d/%d) after %v\n",
+				attempt+1, config.MaxRetries, backoff.Round(time.Millisecond))
+			
+			// Sleep for backoff duration, but respect context cancellation
+			select {
+			case <-ctx.Done():
+				// Context was cancelled during backoff
+				return result, fmt.Errorf("connection cancelled during backoff: %w", ctx.Err())
+			case <-time.After(backoff):
+				// Backoff completed, proceed with retry
+			}
+		}
+		
+		// Check if context is already cancelled before attempting
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		
+		// Create sub-context for this attempt
+		attemptCtx := ctx
+		
+		// Execute the function
+		startTime := time.Now()
+		nodeInfo, err := fn(attemptCtx)
+		attemptDuration := time.Since(startTime)
+		
+		if err == nil {
+			// Success!
+			metrics.RecordSuccess(attemptDuration, attempt+1)
+			return nodeInfo, nil
+		}
+		
+		// Record the failure with metrics
+		metrics.RecordFailure(err, attempt+1)
+		lastErr = err
+		
+		// Check if this is a permanent error
+		severity := cerrors.ErrorSeverityFromError(err)
+		if severity == cerrors.PersistentError {
+			return result, fmt.Errorf("permanent error, halting retries: %w", err)
+		}
+		
+		// Check for context cancellation
+		if ctx.Err() != nil {
+			return result, fmt.Errorf("operation cancelled: %w", ctx.Err())
+		}
+		
+		// Log the error and continue retrying
+		fmt.Printf("Connection attempt %d failed: %v\n", attempt+1, err)
+	}
+	
+	// All retries failed
+	return result, fmt.Errorf("all %d retry attempts failed: %w", config.MaxRetries, lastErr)
+}
+
+// pluralize returns the singular or plural form of a word based on count
+func pluralize(word string, count int) string {
+	if count == 1 {
+		return word
+	}
+	return word + "s"
 }
 
 // sendHeartbeats periodically sends multicast heartbeat messages
@@ -332,15 +744,61 @@ func (d *DiscoveryService) sendHeartbeat(addr *net.UDPAddr) {
 	// Marshal to JSON
 	data, err := json.Marshal(heartbeat)
 	if err != nil {
-		fmt.Printf("Error marshalling heartbeat: %v\n", err)
+		clusterErr := cerrors.NewSerializationError4(
+			d.localNode.ID,
+			"Failed to marshal heartbeat message",
+			cerrors.TemporaryError,
+			err,
+		)
+		cerrors.LogError(clusterErr)
 		return
 	}
 	
 	// Send the message
 	if d.multicastConn != nil {
+		startTime := time.Now()
 		_, err = d.multicastConn.WriteToUDP(data, addr)
+		latency := time.Since(startTime)
+		
 		if err != nil {
-			fmt.Printf("Error sending heartbeat: %v\n", err)
+			// Create appropriate error based on type
+			var clusterErr cerrors.ClusterError
+			
+			if cerrors.IsNetworkUnreachable(err) {
+				clusterErr = cerrors.NewCommunicationError(
+					d.localNode.ID,
+					"Network unreachable when sending heartbeat",
+					cerrors.TemporaryError,
+					err,
+				)
+			} else if cerrors.IsPermissionError(err) {
+				clusterErr = cerrors.NewCommunicationError(
+					d.localNode.ID,
+					"Permission denied when sending heartbeat",
+					cerrors.PersistentError,
+					err,
+				)
+			} else {
+				clusterErr = cerrors.NewCommunicationError(
+					d.localNode.ID,
+					"Error sending heartbeat",
+					cerrors.TemporaryError,
+					err,
+				)
+			}
+			
+			cerrors.LogError(clusterErr)
+		} else {
+			// Record successful communication for metrics
+			d.mu.Lock()
+			d.communicationMetrics.successCount++
+			
+			// Update average latency
+			totalLatency := d.communicationMetrics.avgLatency * time.Duration(d.communicationMetrics.latencySamples)
+			newLatency := totalLatency + latency
+			d.communicationMetrics.latencySamples++
+			d.communicationMetrics.avgLatency = newLatency / time.Duration(d.communicationMetrics.latencySamples)
+			d.mu.Unlock()
 		}
 	}
 }
@@ -378,16 +836,53 @@ func (d *DiscoveryService) receiveMulticastMessages(addr *net.UDPAddr) {
 			conn.SetReadDeadline(time.Now().Add(1 * time.Second))
 			
 			// Read from the connection
-			n, _, err := conn.ReadFromUDP(buffer)
+			n, src, err := conn.ReadFromUDP(buffer)
 			if err != nil {
-				// Check if it's a timeout
+				// Check if it's a timeout - not a real error
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					// Just a timeout, continue the loop
 					continue
 				}
 				
-				// Error reading from UDP
-				fmt.Printf("Error reading multicast message: %v\n", err)
+				// Categorize the error properly
+				var clusterErr cerrors.ClusterError
+				
+				if cerrors.IsIOError(err) {
+					clusterErr = cerrors.NewCommunicationError(
+						d.localNode.ID,
+						"I/O error reading from multicast",
+						cerrors.TemporaryError,
+						err,
+					)
+				} else if cerrors.IsBufferError(err) {
+					clusterErr = cerrors.NewCommunicationError(
+						d.localNode.ID,
+						"Buffer overflow when reading from multicast",
+						cerrors.TemporaryError,
+						err,
+					)
+				} else if cerrors.IsConnectionResetError(err) {
+					clusterErr = cerrors.NewCommunicationError(
+						d.localNode.ID,
+						"Connection reset while reading from multicast",
+						cerrors.TemporaryError,
+						err,
+					)
+				} else {
+					clusterErr = cerrors.NewCommunicationError(
+						d.localNode.ID,
+						"Error reading from multicast",
+						cerrors.TemporaryError,
+						err,
+					)
+				}
+				
+				// Log the error with source address if available
+				if src != nil {
+					cerrors.LogErrorf(clusterErr, "Error reading from %s: %v", src.String(), err)
+				} else {
+					cerrors.LogError(clusterErr)
+				}
 				continue
 			}
 			
@@ -556,18 +1051,41 @@ func extractNodeInfoFromMDNS(entry *mdns.ServiceEntry) NodeInfo {
 
 // processDiscoveryMessage handles an incoming discovery message
 func (d *DiscoveryService) processDiscoveryMessage(data []byte) {
+	startTime := time.Now() // Track processing time for metrics
 	var message HeartbeatMessage
 	
 	// Unmarshal the message
 	err := json.Unmarshal(data, &message)
 	if err != nil {
-		fmt.Printf("Error parsing discovery message: %v\n", err)
+		// Create serialization error
+		clusterErr := cerrors.NewSerializationError4(
+			d.localNode.ID,
+			"Failed to parse discovery message",
+			cerrors.TemporaryError,
+			err,
+		)
+		
+		// Add metadata about the message
+		clusterErr = clusterErr.WithMetadata(map[string]string{
+			"data_size_bytes": fmt.Sprintf("%d", len(data)),
+			"first_bytes": fmt.Sprintf("%x", data[:min(10, len(data))]),
+			"time_utc": time.Now().UTC().Format(time.RFC3339),
+		})
+		
+		// Log with detailed context
+		cerrors.LogErrorf(clusterErr, "Malformed message received (likely from another service): %v", err)
 		return
 	}
 	
 	// Validate the message
 	if message.MessageType != "heartbeat" {
-		fmt.Printf("Received unknown message type: %s\n", message.MessageType)
+		clusterErr := cerrors.NewProtocolError4(
+			d.localNode.ID,
+			fmt.Sprintf("Unexpected message type: %s", message.MessageType),
+			cerrors.TemporaryError,
+			nil,
+		)
+		cerrors.LogError(clusterErr)
 		return
 	}
 	
@@ -576,8 +1094,26 @@ func (d *DiscoveryService) processDiscoveryMessage(data []byte) {
 		return
 	}
 	
+	// Ensure node ID is valid
+	if message.NodeInfo.ID == "" {
+		clusterErr := cerrors.NewValidationError4(
+			d.localNode.ID,
+			"Received heartbeat with empty node ID",
+			cerrors.TemporaryError,
+			nil,
+		)
+		cerrors.LogError(clusterErr)
+		return
+	}
+	
 	// Update the last heartbeat time
 	message.NodeInfo.LastHeartbeat = time.Now()
+	
+	// Update metrics
+	d.mu.Lock()
+	processingTime := time.Since(startTime)
+	d.communicationMetrics.avgLatency = (d.communicationMetrics.avgLatency + processingTime) / 2
+	d.mu.Unlock()
 	
 	// Register or update the node
 	d.registry.RegisterNode(message.NodeInfo)
@@ -585,22 +1121,80 @@ func (d *DiscoveryService) processDiscoveryMessage(data []byte) {
 
 // SendNodeListRequest sends a request for the complete node list to a specific node
 func (d *DiscoveryService) SendNodeListRequest(targetAddr *net.UDPAddr) error {
+	startTime := time.Now()
 	request := map[string]string{
 		"message_type": "node_list_request",
 		"source_node":  d.localNode.ID,
+		"timestamp":    time.Now().UTC().Format(time.RFC3339),
+		"request_id":   fmt.Sprintf("%s-%d", d.localNode.ID, time.Now().UnixNano()),
 	}
 	
+	// Marshal the request to JSON
 	data, err := json.Marshal(request)
 	if err != nil {
-		return fmt.Errorf("error marshalling node list request: %w", err)
+		clusterErr := cerrors.NewSerializationError4(
+			d.localNode.ID,
+			"Failed to marshal node list request",
+			cerrors.TemporaryError,
+			err,
+		)
+		cerrors.LogError(clusterErr)
+		return clusterErr
 	}
 	
-	if d.multicastConn != nil {
-		_, err = d.multicastConn.WriteToUDP(data, targetAddr)
-		if err != nil {
-			return fmt.Errorf("error sending node list request: %w", err)
-		}
+	// Check for valid connection
+	if d.multicastConn == nil {
+		clusterErr := cerrors.NewCommunicationError(
+			d.localNode.ID,
+			"No active multicast connection for sending node list request",
+			cerrors.PersistentError,
+			nil,
+		)
+		cerrors.LogError(clusterErr)
+		return clusterErr
 	}
+	
+	// Send the request
+	_, err = d.multicastConn.WriteToUDP(data, targetAddr)
+	if err != nil {
+		var severity cerrors.ErrorSeverity
+		var msg string
+		
+		if cerrors.IsNetworkUnreachable(err) {
+			severity = cerrors.TemporaryError
+			msg = "Network unreachable when sending node list request"
+		} else if cerrors.IsConnectionRefusedError(err) {
+			severity = cerrors.TemporaryError
+			msg = "Connection refused when sending node list request"
+		} else {
+			severity = cerrors.TemporaryError
+			msg = "Failed to send node list request"
+		}
+		
+		clusterErr := cerrors.NewDetailedCommunicationError6(
+			d.localNode.ID,
+			msg,
+			severity,
+			cerrors.NetworkSendError,
+			err,
+			map[string]string{
+				"target_addr": targetAddr.String(),
+				"request_id":  request["request_id"],
+			},
+		)
+		
+		cerrors.LogError(clusterErr)
+		return clusterErr
+	}
+	
+	// Record metrics for successful send
+	latency := time.Since(startTime)
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.communicationMetrics.successCount++
+	totalLatency := d.communicationMetrics.avgLatency * time.Duration(d.communicationMetrics.latencySamples)
+	d.communicationMetrics.latencySamples++
+	d.communicationMetrics.avgLatency = (totalLatency + latency) / time.Duration(d.communicationMetrics.latencySamples)
 	
 	return nil
 }

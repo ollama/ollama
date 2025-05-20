@@ -51,6 +51,10 @@ const (
 	// NodeStatusFailed indicates the node has encountered a critical error
 	// Valid transitions: from any state
 	NodeStatusFailed NodeStatus = "failed"
+	
+	// NodeStatusDegraded indicates the node is operational but experiencing issues
+	// Valid transitions: from Online, Busy
+	NodeStatusDegraded NodeStatus = "degraded"
 )
 
 // NodeStatusTransition represents a valid transition between node statuses
@@ -80,14 +84,21 @@ func NewNodeStatusController() *NodeStatusController {
 			
 			{From: NodeStatusBusy, To: NodeStatusOnline},
 			{From: NodeStatusBusy, To: NodeStatusFailed},
+			{From: NodeStatusBusy, To: NodeStatusDegraded},
 			
 			{From: NodeStatusMaintenance, To: NodeStatusOnline},
 			{From: NodeStatusMaintenance, To: NodeStatusFailed},
 			
 			{From: NodeStatusOffline, To: NodeStatusOnline},
 			{From: NodeStatusOffline, To: NodeStatusFailed},
+			{From: NodeStatusOffline, To: NodeStatusDegraded},
 			
 			{From: NodeStatusStopping, To: NodeStatusFailed},
+			
+			{From: NodeStatusOnline, To: NodeStatusDegraded},
+			{From: NodeStatusDegraded, To: NodeStatusOnline},
+			{From: NodeStatusDegraded, To: NodeStatusOffline},
+			{From: NodeStatusDegraded, To: NodeStatusFailed},
 		},
 	}
 }
@@ -268,14 +279,20 @@ func NewClusterMode(config *ClusterConfig) (*ClusterMode, error) {
 	// Create status controller
 	statusController := NewNodeStatusController()
 	
-	return &ClusterMode{
+	// Create the cluster mode instance
+	cm := &ClusterMode{
 		Config:          config,
 		Registry:        registry,
 		Discovery:       discovery,
 		Health:          health,
 		StatusController: statusController,
 		localNodeInfo:   localNodeInfo,
-	}, nil
+	}
+	
+	// Set up the circular reference from health monitor back to cluster mode
+	health.SetClusterMode(cm)
+	
+	return cm, nil
 }
 
 // Start initializes and begins the cluster mode components
@@ -405,6 +422,20 @@ func (c *ClusterMode) SetNodeToFailed(reason string) error {
 	
 	// Log the failure reason
 	fmt.Printf("Node marked as failed: %s\n", reason)
+	
+	return nil
+}
+
+// SetNodeToDegraded transitions the node to Degraded state
+// This indicates the node is operational but experiencing issues
+func (c *ClusterMode) SetNodeToDegraded(reason string) error {
+	err := c.UpdateNodeStatus(NodeStatusDegraded)
+	if err != nil {
+		return err
+	}
+	
+	// Log the degradation reason
+	fmt.Printf("Node marked as degraded: %s\n", reason)
 	
 	return nil
 }
