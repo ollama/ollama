@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -87,12 +88,18 @@ func (s *Server) ClusterStatusHandler(c *gin.Context) {
 	clusterModeLock.RLock()
 	defer clusterModeLock.RUnlock()
 	
-	// Log the state of both implementations
+	// Use helper function to check environment variables
+	envEnabled := IsClusterModeEnabledFromEnv()
+	
+	// Log the state of both implementations with more environment details
 	slog.Info("ClusterStatusHandler check",
 		"clusterEnabled", clusterEnabled,
 		"clusterEnabled2", clusterEnabled2,
 		"clusterMode", clusterMode != nil,
-		"clusterMode2", GetClusterMode2() != nil)
+		"clusterMode2", GetClusterMode2() != nil,
+		"env_cluster_enabled", envEnabled,
+		"OLLAMA_CLUSTER_MODE", os.Getenv("OLLAMA_CLUSTER_MODE"),
+		"OLLAMA_CLUSTER_ENABLED", os.Getenv("OLLAMA_CLUSTER_ENABLED"))
 	
 	if !clusterEnabled || clusterMode == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "cluster mode is not enabled"})
@@ -226,15 +233,61 @@ func (s *Server) ClusterNodesHandler(c *gin.Context) {
 	clusterModeLock.RLock()
 	defer clusterModeLock.RUnlock()
 	
-	// Log the state of both implementations
+	// Use helper function to check environment variables
+	envEnabled := IsClusterModeEnabledFromEnv()
+	
+	// Log the state of both implementations and request details with environment variables
 	slog.Info("ClusterNodesHandler check",
 		"clusterEnabled", clusterEnabled,
 		"clusterEnabled2", clusterEnabled2,
 		"clusterMode", clusterMode != nil,
-		"clusterMode2", GetClusterMode2() != nil)
+		"clusterMode2", GetClusterMode2() != nil,
+		"env_cluster_enabled", envEnabled,
+		"request", c.Request.URL.String(),
+		"method", c.Request.Method,
+		"client", c.ClientIP(),
+		"OLLAMA_CLUSTER_MODE", os.Getenv("OLLAMA_CLUSTER_MODE"),
+		"OLLAMA_CLUSTER_ENABLED", os.Getenv("OLLAMA_CLUSTER_ENABLED"))
 	
-	if !clusterEnabled || clusterMode == nil {
+	// Check if at least one of the implementations is enabled
+	if ((!clusterEnabled || clusterMode == nil) && (!clusterEnabled2 || GetClusterMode2() == nil)) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "cluster mode is not enabled"})
+		return
+	}
+	
+	// If the original implementation is not available but the new one is, use that instead
+	if (clusterMode == nil) && (GetClusterMode2() != nil) {
+		slog.Info("Using clusterMode2 implementation for nodes request")
+		
+		// Get nodes from the new implementation
+		cm2 := GetClusterMode2()
+		nodes := cm2.GetNodes()
+		
+		// Convert to API responses
+		nodeResponses := make([]api.ClusterNodeResponse, 0, len(nodes))
+		for _, node := range nodes {
+			// Format the address properly including the port
+			var addressStr string
+			if node.Addr != nil {
+				addressStr = fmt.Sprintf("%s:%d", node.Addr.String(), node.ApiPort)
+			} else {
+				// If address is nil, use a placeholder based on config
+				addressStr = fmt.Sprintf("%s:%d", "localhost", node.ApiPort)
+			}
+			
+			nodeResponses = append(nodeResponses, api.ClusterNodeResponse{
+				ID:       node.ID,
+				Name:     node.Name,
+				Address:  addressStr,
+				Role:     string(node.Role),
+				Status:   string(node.Status),
+				JoinedAt: node.LastHeartbeat, // Using LastHeartbeat as a substitute for JoinedAt
+				Models:   []string{}, // Would need to populate from model tracker
+			})
+		}
+		
+		// Return the array directly
+		c.JSON(http.StatusOK, nodeResponses)
 		return
 	}
 	
@@ -249,7 +302,14 @@ func (s *Server) ClusterNodesHandler(c *gin.Context) {
 		nodeResponses = append(nodeResponses, resp)
 	}
 	
-	c.JSON(http.StatusOK, gin.H{"nodes": nodeResponses})
+	// Log what we're returning for debugging purposes
+	slog.Info("ClusterNodesHandler returning nodes",
+		"nodeCount", len(nodeResponses),
+		"format", "direct array")
+	
+	// Return the array directly, not wrapped in a "nodes" object
+	// This matches what the client expects
+	c.JSON(http.StatusOK, nodeResponses)
 }
 
 // ClusterModelLoadHandler handles loading a model in cluster mode
@@ -257,10 +317,14 @@ func (s *Server) ClusterModelLoadHandler(c *gin.Context) {
 	clusterModeLock.RLock()
 	defer clusterModeLock.RUnlock()
 	
+	// Use helper function to check environment variables
+	envEnabled := IsClusterModeEnabledFromEnv()
+	
 	// Log the request details including the distributed flag
 	slog.Info("ClusterModelLoadHandler called",
 		"clusterEnabled", clusterEnabled,
 		"clusterEnabled2", clusterEnabled2,
+		"env_cluster_enabled", envEnabled,
 		"clusterMode", clusterMode != nil,
 		"clusterMode2", GetClusterMode2() != nil)
 	

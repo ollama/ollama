@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"fmt"
 	"net"
 	"time"
 )
@@ -24,23 +25,98 @@ type NodeStatus string
 
 const (
 	// NodeStatusOnline indicates the node is operational
+	// Valid transitions: from Starting, Busy, Maintenance, Offline
 	NodeStatusOnline NodeStatus = "online"
 	
 	// NodeStatusOffline indicates the node is unreachable
+	// Valid transitions: from Online
 	NodeStatusOffline NodeStatus = "offline"
 	
 	// NodeStatusBusy indicates the node is operational but fully loaded
+	// Valid transitions: from Online
 	NodeStatusBusy NodeStatus = "busy"
 	
 	// NodeStatusStarting indicates the node is starting up
+	// Valid transitions: initial state
 	NodeStatusStarting NodeStatus = "starting"
 	
 	// NodeStatusStopping indicates the node is shutting down
+	// Valid transitions: from Online
 	NodeStatusStopping NodeStatus = "stopping"
 	
 	// NodeStatusMaintenance indicates the node is in maintenance mode
+	// Valid transitions: from Online
 	NodeStatusMaintenance NodeStatus = "maintenance"
+	
+	// NodeStatusFailed indicates the node has encountered a critical error
+	// Valid transitions: from any state
+	NodeStatusFailed NodeStatus = "failed"
 )
+
+// NodeStatusTransition represents a valid transition between node statuses
+type NodeStatusTransition struct {
+	From NodeStatus
+	To   NodeStatus
+}
+
+// NodeStatusController manages and validates node status transitions
+type NodeStatusController struct {
+	// validTransitions contains all allowed state transitions
+	validTransitions []NodeStatusTransition
+}
+
+// NewNodeStatusController creates a new controller with predefined valid transitions
+func NewNodeStatusController() *NodeStatusController {
+	return &NodeStatusController{
+		validTransitions: []NodeStatusTransition{
+			{From: NodeStatusStarting, To: NodeStatusOnline},
+			{From: NodeStatusStarting, To: NodeStatusFailed},
+			
+			{From: NodeStatusOnline, To: NodeStatusBusy},
+			{From: NodeStatusOnline, To: NodeStatusMaintenance},
+			{From: NodeStatusOnline, To: NodeStatusOffline},
+			{From: NodeStatusOnline, To: NodeStatusStopping},
+			{From: NodeStatusOnline, To: NodeStatusFailed},
+			
+			{From: NodeStatusBusy, To: NodeStatusOnline},
+			{From: NodeStatusBusy, To: NodeStatusFailed},
+			
+			{From: NodeStatusMaintenance, To: NodeStatusOnline},
+			{From: NodeStatusMaintenance, To: NodeStatusFailed},
+			
+			{From: NodeStatusOffline, To: NodeStatusOnline},
+			{From: NodeStatusOffline, To: NodeStatusFailed},
+			
+			{From: NodeStatusStopping, To: NodeStatusFailed},
+		},
+	}
+}
+
+// IsValidTransition checks if a status transition is valid
+func (c *NodeStatusController) IsValidTransition(from, to NodeStatus) bool {
+	// Failed state can be reached from any state
+	if to == NodeStatusFailed {
+		return true
+	}
+	
+	// Check if the transition exists in the valid transitions list
+	for _, transition := range c.validTransitions {
+		if transition.From == from && transition.To == to {
+			return true
+		}
+	}
+	
+	return false
+}
+
+// TransitionStatus attempts to transition the status and returns error if invalid
+func (c *NodeStatusController) TransitionStatus(from, to NodeStatus) (NodeStatus, error) {
+	if !c.IsValidTransition(from, to) {
+		return from, fmt.Errorf("invalid status transition from '%s' to '%s'", from, to)
+	}
+	
+	return to, nil
+}
 
 // NodeInfo contains information about a node in the cluster
 type NodeInfo struct {
@@ -134,6 +210,9 @@ type ClusterMode struct {
 	// Health is the health monitor
 	Health *HealthMonitor
 	
+	// StatusController manages node status transitions
+	StatusController *NodeStatusController
+	
 	// localNodeInfo contains information about this node
 	localNodeInfo NodeInfo
 }
@@ -186,12 +265,16 @@ func NewClusterMode(config *ClusterConfig) (*ClusterMode, error) {
 		config.Health.NodeTimeoutThreshold,
 	)
 	
+	// Create status controller
+	statusController := NewNodeStatusController()
+	
 	return &ClusterMode{
-		Config:       config,
-		Registry:     registry,
-		Discovery:    discovery,
-		Health:       health,
-		localNodeInfo: localNodeInfo,
+		Config:          config,
+		Registry:        registry,
+		Discovery:       discovery,
+		Health:          health,
+		StatusController: statusController,
+		localNodeInfo:   localNodeInfo,
 	}, nil
 }
 
@@ -209,18 +292,25 @@ func (c *ClusterMode) Start() error {
 		return err
 	}
 	
-	// Update node status to online
-	c.localNodeInfo.Status = NodeStatusOnline
-	c.Discovery.UpdateLocalNodeInfo(c.localNodeInfo)
+	// Update node status to online using the status controller
+	if err := c.SetNodeToOnline(); err != nil {
+		// This should not happen as StartingToOnline is a valid transition
+		// But handle it anyway
+		c.Health.Stop()
+		c.Discovery.Stop()
+		return fmt.Errorf("failed to transition to online status: %w", err)
+	}
 	
 	return nil
 }
 
 // Stop halts all cluster mode components
 func (c *ClusterMode) Stop() error {
-	// Update node status to stopping
-	c.localNodeInfo.Status = NodeStatusStopping
-	c.Discovery.UpdateLocalNodeInfo(c.localNodeInfo)
+	// Update node status to stopping using the status controller
+	if err := c.UpdateNodeStatus(NodeStatusStopping); err != nil {
+		// Log the error but continue with shutdown
+		fmt.Printf("Warning: Failed to transition to stopping status: %v\n", err)
+	}
 	
 	// Stop discovery service
 	if err := c.Discovery.Stop(); err != nil {
@@ -253,4 +343,68 @@ func (c *ClusterMode) GetDiscovery() *DiscoveryService {
 // GetHealth returns the health monitoring system
 func (c *ClusterMode) GetHealth() *HealthMonitor {
 	return c.Health
+}
+
+// GetStatusController returns the node status controller
+func (c *ClusterMode) GetStatusController() *NodeStatusController {
+	return c.StatusController
+}
+
+// UpdateNodeStatus safely updates the status of the local node using the status controller
+func (c *ClusterMode) UpdateNodeStatus(newStatus NodeStatus) error {
+	currentStatus := c.localNodeInfo.Status
+	
+	// Validate the transition
+	status, err := c.StatusController.TransitionStatus(currentStatus, newStatus)
+	if err != nil {
+		return fmt.Errorf("invalid node status transition: %w", err)
+	}
+	
+	// Update the status and notify the cluster
+	c.localNodeInfo.Status = status
+	
+	// If discovery service is initialized, notify it of the change
+	if c.Discovery != nil {
+		c.Discovery.UpdateLocalNodeInfo(c.localNodeInfo)
+	}
+	
+	// Log the transition
+	fmt.Printf("Node status changed from %s to %s\n", currentStatus, status)
+	
+	return nil
+}
+
+// SetNodeToOnline transitions the node to Online state
+func (c *ClusterMode) SetNodeToOnline() error {
+	return c.UpdateNodeStatus(NodeStatusOnline)
+}
+
+// SetNodeToBusy transitions the node to Busy state
+func (c *ClusterMode) SetNodeToBusy() error {
+	return c.UpdateNodeStatus(NodeStatusBusy)
+}
+
+// SetNodeToMaintenance transitions the node to Maintenance state
+func (c *ClusterMode) SetNodeToMaintenance() error {
+	return c.UpdateNodeStatus(NodeStatusMaintenance)
+}
+
+// SetNodeToOffline transitions the node to Offline state
+// This is typically called when detecting connection issues
+func (c *ClusterMode) SetNodeToOffline() error {
+	return c.UpdateNodeStatus(NodeStatusOffline)
+}
+
+// SetNodeToFailed transitions the node to Failed state
+// This represents a critical error condition
+func (c *ClusterMode) SetNodeToFailed(reason string) error {
+	err := c.UpdateNodeStatus(NodeStatusFailed)
+	if err != nil {
+		return err
+	}
+	
+	// Log the failure reason
+	fmt.Printf("Node marked as failed: %s\n", reason)
+	
+	return nil
 }

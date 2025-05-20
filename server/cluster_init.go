@@ -5,12 +5,36 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/ollama/ollama/cluster"
 	"log/slog"
 )
+
+// IsClusterModeEnabledFromEnv checks both environment variables to determine if cluster mode is enabled.
+// It returns true if either OLLAMA_CLUSTER_MODE (preferred) or OLLAMA_CLUSTER_ENABLED (deprecated) is set to "true".
+// It logs which variable was used and issues a deprecation warning if OLLAMA_CLUSTER_ENABLED is used.
+func IsClusterModeEnabledFromEnv() bool {
+	clusterMode := strings.ToLower(os.Getenv("OLLAMA_CLUSTER_MODE"))
+	clusterEnabled := strings.ToLower(os.Getenv("OLLAMA_CLUSTER_ENABLED"))
+	
+	// Check OLLAMA_CLUSTER_MODE first (preferred)
+	if clusterMode == "true" {
+		slog.Info("Cluster mode enabled via OLLAMA_CLUSTER_MODE environment variable")
+		return true
+	}
+	
+	// Fall back to OLLAMA_CLUSTER_ENABLED with deprecation warning
+	if clusterEnabled == "true" {
+		slog.Warn("Cluster mode enabled via deprecated OLLAMA_CLUSTER_ENABLED environment variable",
+			"deprecation_notice", "OLLAMA_CLUSTER_ENABLED is deprecated, please use OLLAMA_CLUSTER_MODE instead")
+		return true
+	}
+	
+	return false
+}
 
 var (
 	// Global cluster mode variables
@@ -31,8 +55,14 @@ type ClusterMode struct {
 // InitializeClusterMode2 initializes the cluster mode components.
 // If no config is provided, it will use zero-configuration defaults.
 func InitializeClusterMode2(config *cluster.ClusterConfig) error {
-	// Log the state of both implementations before initialization
-	slog.Info("Before InitializeClusterMode2",
+	// Get environment variable status using the helper function
+	envEnabled := IsClusterModeEnabledFromEnv()
+	
+	// Enhanced logging to track initialization state
+	slog.Info("InitializeClusterMode2 called",
+		"env_cluster_enabled", envEnabled,
+		"OLLAMA_CLUSTER_MODE", os.Getenv("OLLAMA_CLUSTER_MODE"),
+		"OLLAMA_CLUSTER_ENABLED", os.Getenv("OLLAMA_CLUSTER_ENABLED"),
 		"clusterEnabled", clusterEnabled,
 		"clusterEnabled2", clusterEnabled2,
 		"clusterMode", clusterMode != nil,
@@ -42,6 +72,7 @@ func InitializeClusterMode2(config *cluster.ClusterConfig) error {
 	defer clusterModeLock2.Unlock()
 
 	if clusterEnabled2 {
+		slog.Warn("Cluster mode is already initialized - will exit initialization")
 		return fmt.Errorf("cluster mode is already initialized")
 	}
 
@@ -54,7 +85,8 @@ func InitializeClusterMode2(config *cluster.ClusterConfig) error {
 	slog.Info("Initializing zero-configuration cluster mode",
 		"node_name", config.NodeName,
 		"node_role", config.NodeRole,
-		"discovery", config.Discovery.Method)
+		"discovery", config.Discovery.Method,
+		"config", fmt.Sprintf("%+v", config))
 
 	// Create node registry
 	registry := cluster.NewNodeRegistry(
@@ -69,11 +101,25 @@ func InitializeClusterMode2(config *cluster.ClusterConfig) error {
 		config.Health.NodeTimeoutThreshold,
 	)
 
-	// Get local node info - simplified to avoid missing dependencies
+	// Get local node info with proper address initialization
+	// Parse the IP address from the configuration
+	ipAddr := net.ParseIP(config.APIHost)
+	if ipAddr == nil {
+		slog.Error("Failed to parse API host as IP address",
+			"host", config.APIHost)
+		// Use a fallback address if parsing fails
+		ipAddr = net.ParseIP("127.0.0.1")
+	}
+	
 	localNode := &cluster.NodeInfo{
-		ID:   config.GetNodeID(),
-		Name: config.NodeName,
-		Role: config.NodeRole,
+		ID:          config.GetNodeID(),
+		Name:        config.NodeName,
+		Role:        config.NodeRole,
+		Status:      cluster.NodeStatusOffline, // Start as offline until health check confirms
+		Addr:        ipAddr,
+		ApiPort:     config.APIPort,
+		ClusterPort: config.ClusterPort,
+		LastHeartbeat: time.Now(),
 	}
 
 	// Register the local node
@@ -111,8 +157,33 @@ func InitializeClusterMode2(config *cluster.ClusterConfig) error {
 	// Synchronize state with original implementation
 	clusterModeLock.Lock()
 	clusterEnabled = true
-	clusterMode = nil // Use nil for the original pointer
+	
+	// Create an adapter to bridge the two implementations
+	// This ensures both implementations are enabled consistently
+	if clusterMode == nil {
+		// Note: We can't directly assign clusterMode2 to clusterMode because they're different types
+		// Instead, initialize the original cluster mode implementation
+		config := clusterMode2.Config
+		var err error
+		clusterMode, err = cluster.NewClusterMode(config)
+		if err != nil {
+			slog.Error("Failed to initialize original cluster mode", "error", err)
+		} else {
+			// Start the original implementation
+			err = clusterMode.Start()
+			if err != nil {
+				slog.Error("Failed to start original cluster mode", "error", err)
+				clusterMode = nil
+			} else {
+				slog.Info("Successfully initialized and synchronized both cluster implementations")
+			}
+		}
+	}
 	clusterModeLock.Unlock()
+	
+	slog.Info("Synchronized cluster state variables",
+		"clusterEnabled after sync", clusterEnabled,
+		"clusterEnabled2 after sync", clusterEnabled2)
 	
 	slog.Info("Cluster mode initialized successfully",
 		"node_id", localNode.ID,
@@ -231,6 +302,14 @@ func (cm *ClusterMode) GetRegistry() *cluster.NodeRegistry {
 	return cm.Registry
 }
 
+// GetNodes returns all nodes in the cluster
+func (cm *ClusterMode) GetNodes() []cluster.NodeInfo {
+	if cm.Registry == nil {
+		return []cluster.NodeInfo{}
+	}
+	return cm.Registry.GetAllNodes()
+}
+
 // GetClusterHealth returns whether the cluster is healthy
 func (cm *ClusterMode) GetClusterHealth() bool {
 	return statusMonitor.IsClusterHealthy()
@@ -320,12 +399,19 @@ func DisableAutoInitializeCluster() {
 
 // CheckAutoInitialize checks if auto-initialization is enabled and performs it
 func CheckAutoInitialize() error {
+	slog.Info("CheckAutoInitialize called",
+		"IsClusterModeEnabled2", IsClusterModeEnabled2(),
+		"autoInitializeCluster", autoInitializeCluster,
+		"OLLAMA_CLUSTER_MODE", os.Getenv("OLLAMA_CLUSTER_MODE"),
+		"OLLAMA_CLUSTER_ENABLED", os.Getenv("OLLAMA_CLUSTER_ENABLED"))
+		
 	// If cluster mode is already enabled, nothing to do
 	if IsClusterModeEnabled2() {
+		slog.Info("Cluster mode already enabled, skipping auto-initialization")
 		return nil
 	}
 	
-	if autoInitializeCluster {
+	if autoInitializeCluster || IsClusterModeEnabledFromEnv() {
 		slog.Info("Auto-initializing zero-configuration cluster mode with in-memory defaults")
 		
 		// Create default configuration directly in memory
@@ -333,7 +419,13 @@ func CheckAutoInitialize() error {
 		
 		// Initialize with the in-memory config
 		// No need to save it to disk - we operate in-memory only
-		return InitializeClusterMode2(config)
+		err := InitializeClusterMode2(config)
+		if err != nil {
+			slog.Error("Failed to auto-initialize cluster mode", "error", err)
+		} else {
+			slog.Info("Successfully auto-initialized cluster mode")
+		}
+		return err
 	}
 	
 	return nil

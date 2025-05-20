@@ -1,38 +1,115 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/ollama/ollama/cluster"
 	"github.com/spf13/cobra"
 )
 
-// Stub implementation of Client for compilation
-type Client struct{}
+// Real implementation of Client for API requests
+type Client struct {
+	baseURL string
+}
 
 // NewClient creates a new client instance
 func NewClient() *Client {
-	return &Client{}
+	// Default to localhost:11434 if not specified
+	baseURL := "http://localhost:11434"
+
+	// Check if OLLAMA_HOST environment variable is set
+	if host := os.Getenv("OLLAMA_HOST"); host != "" {
+		fmt.Printf("OLLAMA_HOST environment variable is set to: %s\n", host)
+		
+		// Replace 0.0.0.0 with localhost - 0.0.0.0 is a binding address for servers
+		// but invalid for client connections
+		if strings.Contains(host, "0.0.0.0") {
+			originalHost := host
+			host = strings.Replace(host, "0.0.0.0", "localhost", 1)
+			fmt.Printf("Replaced 0.0.0.0 with localhost: %s -> %s\n", originalHost, host)
+		}
+		
+		baseURL = host
+		
+		// If no scheme provided, default to http://
+		if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
+			originalURL := baseURL
+			baseURL = "http://" + baseURL
+			fmt.Printf("Added http:// scheme: %s -> %s\n", originalURL, baseURL)
+		}
+		
+		// Ensure port is specified (default to 11434 if not)
+		hostURL, err := url.Parse(baseURL)
+		if err == nil && hostURL.Port() == "" {
+			originalURL := baseURL
+			hostURL.Host = hostURL.Host + ":11434"
+			baseURL = hostURL.String()
+			fmt.Printf("Added default port 11434: %s -> %s\n", originalURL, baseURL)
+		}
+	}
+
+	fmt.Printf("Using API base URL: %s\n", baseURL)
+	return &Client{
+		baseURL: baseURL,
+	}
 }
 
-// Get sends a GET request
+// Get sends a GET request to the Ollama API
 func (c *Client) Get(path string) (*http.Response, error) {
-	// This is a stub implementation that will never be called in our test
-	fmt.Printf("Stub GET request to %s\n", path)
-	return &http.Response{Body: io.NopCloser(bytes.NewReader([]byte("{}")))}, nil
+	// Log the actual request being made
+	fmt.Printf("Making GET request to %s%s\n", c.baseURL, path)
+	
+	// Create request
+	req, err := http.NewRequest("GET", c.baseURL+path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	// Set headers
+	req.Header.Set("Content-Type", "application/json")
+	
+	// Execute request
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	
+	return resp, nil
 }
 
-// Post sends a POST request
+// Post sends a POST request to the Ollama API
 func (c *Client) Post(path, contentType string, body io.Reader) (*http.Response, error) {
-	// This is a stub implementation that will never be called in our test
-	fmt.Printf("Stub POST request to %s\n", path)
-	return &http.Response{Body: io.NopCloser(bytes.NewReader([]byte("{\"success\": true}")))}, nil
+	// Log the actual request being made
+	fmt.Printf("Making POST request to %s%s\n", c.baseURL, path)
+	
+	// Create request
+	req, err := http.NewRequest("POST", c.baseURL+path, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	// Set headers
+	req.Header.Set("Content-Type", contentType)
+	
+	// Execute request
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute request: %w", err)
+	}
+	
+	return resp, nil
 }
 
 // Default config file path
@@ -284,47 +361,125 @@ func ClusterLeaveHandler(cmd *cobra.Command, _ []string) error {
 func ClusterNodesHandler(cmd *cobra.Command, _ []string) error {
 	// Make API call to get nodes
 	client := NewClient()
+	fmt.Println("Fetching cluster nodes from Ollama server...")
+	
 	resp, err := client.Get("/api/cluster/nodes")
 	if err != nil {
 		return fmt.Errorf("failed to fetch cluster nodes: %w", err)
 	}
 	defer resp.Body.Close()
-
-	// Parse response
+	
+	// Read the response body for debugging
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+	
+	// Create a new reader with the same bytes for JSON decoding
+	resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+	
+	// Log response for debugging
+	fmt.Printf("Response status code: %d\n", resp.StatusCode)
+	fmt.Printf("Response body: %s\n", string(bodyBytes))
+	
+	// Try to parse response in different formats
 	var result map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("failed to parse response: %w", err)
+		fmt.Printf("Warning: Failed to parse response as JSON object: %v\n", err)
+		
+		// Try parsing as array directly
+		resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+		var arrayResult []interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&arrayResult); err != nil {
+			return fmt.Errorf("failed to parse response in any format: %w", err)
+		}
+		
+		// Handle array response
+		fmt.Println("Response parsed as array format")
+		nodes := arrayResult
+		fmt.Println("Cluster Nodes:")
+		displayNodes(nodes)
+		return nil
 	}
-
-	// Check for error
+	
+	// Check for error in response
 	if errMsg, ok := result["error"].(string); ok {
 		return fmt.Errorf("API error: %s", errMsg)
 	}
-
-	// Extract nodes
-	nodes, ok := result["nodes"].([]interface{})
-	if !ok {
-		return fmt.Errorf("unexpected response format")
+	
+	// Extract nodes with more robust handling
+	var nodes []interface{}
+	var ok bool
+	
+	// Try different possible formats the server might return
+	if nodes, ok = result["nodes"].([]interface{}); !ok {
+		// If the response itself is an array, try using that
+		var arrayResult []interface{}
+		if err := json.Unmarshal(bodyBytes, &arrayResult); err == nil && len(arrayResult) > 0 {
+			nodes = arrayResult
+			fmt.Println("Using array response format")
+		} else if len(result) > 0 {
+			// If no "nodes" field but we have other fields, the response itself might be a single node
+			// Convert the single node to an array for consistent handling
+			fmt.Println("Response might be a single node, converting to array")
+			nodes = []interface{}{result}
+		} else {
+			return fmt.Errorf("unexpected response format: no 'nodes' field found in response")
+		}
 	}
-
+	
 	// Display nodes
 	fmt.Println("Cluster Nodes:")
+	displayNodes(nodes)
+	
+	return nil
+}
+
+// displayNodes handles the display of node information consistently
+func displayNodes(nodes []interface{}) {
+	if len(nodes) == 0 {
+		fmt.Println("  No nodes found in cluster")
+		return
+	}
+
 	for _, n := range nodes {
 		node, ok := n.(map[string]interface{})
 		if !ok {
+			fmt.Printf("  Warning: Received unexpected node format: %T\n", n)
 			continue
 		}
 
-		id := node["id"].(string)
-		name := node["name"].(string)
-		role := node["role"].(string)
-		status := node["status"].(string)
-		address := node["address"].(string)
+		// Extract fields with type safety
+		id, _ := node["id"].(string)
+		name, _ := node["name"].(string)
+		role, _ := node["role"].(string)
+		status, _ := node["status"].(string)
+		address, _ := node["address"].(string)
+
+		// If id is empty, try alternatives
+		if id == "" {
+			if tempID, ok := node["node_id"].(string); ok {
+				id = tempID
+			} else {
+				id = "unknown"
+			}
+		}
+
+		// If name is empty, use a default
+		if name == "" {
+			name = "unnamed-node"
+		}
 
 		fmt.Printf("  %s (%s)\n", name, id)
-		fmt.Printf("    Role: %s\n", role)
-		fmt.Printf("    Status: %s\n", status)
-		fmt.Printf("    Address: %s\n", address)
+		if role != "" {
+			fmt.Printf("    Role: %s\n", role)
+		}
+		if status != "" {
+			fmt.Printf("    Status: %s\n", status)
+		}
+		if address != "" {
+			fmt.Printf("    Address: %s\n", address)
+		}
 		
 		// Display models if available
 		if models, ok := node["models"].([]interface{}); ok && len(models) > 0 {
@@ -333,15 +488,13 @@ func ClusterNodesHandler(cmd *cobra.Command, _ []string) error {
 				if i > 0 {
 					fmt.Printf(", ")
 				}
-				fmt.Printf("%s", m.(string))
+				fmt.Printf("%s", m)
 			}
 			fmt.Println()
 		}
 		
 		fmt.Println()
 	}
-
-	return nil
 }
 
 // ClusterModelLoadHandler loads a model in cluster mode
@@ -431,6 +584,104 @@ func ClusterModelLoadHandler(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// ClusterRunHandler runs a model in the cluster
+func ClusterRunHandler(cmd *cobra.Command, args []string) error {
+	// Get required parameters
+	model, _ := cmd.Flags().GetString("model")
+	if model == "" {
+		return fmt.Errorf("model name is required")
+	}
+	
+	// Get optional parameters
+	systemPrompt, _ := cmd.Flags().GetString("system")
+	temperature, _ := cmd.Flags().GetFloat32("temperature")
+	format, _ := cmd.Flags().GetString("format")
+	
+	// Prepare request body
+	reqBody := map[string]interface{}{
+		"model": model,
+		"stream": true,
+	}
+	
+	if temperature != 0 {
+		reqBody["temperature"] = temperature
+	}
+	
+	if format != "" {
+		reqBody["format"] = format
+	}
+	
+	// If args were provided, use them as the prompt
+	if len(args) > 0 {
+		prompt := strings.Join(args, " ")
+		reqBody["prompt"] = prompt
+	} else {
+		// No prompt provided, check for system prompt only
+		if systemPrompt == "" {
+			return fmt.Errorf("either prompt text or --system prompt is required")
+		}
+	}
+	
+	// Add system prompt if provided
+	if systemPrompt != "" {
+		reqBody["system"] = systemPrompt
+	}
+	
+	// Convert to JSON
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to encode request: %w", err)
+	}
+	
+	fmt.Printf("Running model '%s' in cluster mode...\n", model)
+	
+	// Make API call to run the model
+	client := NewClient()
+	resp, err := client.Post("/api/cluster/generate", "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return fmt.Errorf("failed to run model in cluster: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	// For streaming responses, we need to read line by line
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+		
+		// Parse each line as JSON
+		var streamResp map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &streamResp); err != nil {
+			fmt.Printf("Error parsing response: %v\n", err)
+			continue
+		}
+		
+		// Check for error
+		if errMsg, ok := streamResp["error"].(string); ok {
+			return fmt.Errorf("API error: %s", errMsg)
+		}
+		
+		// Print generated text
+		if response, ok := streamResp["response"].(string); ok {
+			fmt.Print(response)
+		}
+		
+		// Check for done flag
+		if done, ok := streamResp["done"].(bool); ok && done {
+			fmt.Println() // Add a newline at the end
+			break
+		}
+	}
+	
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("error reading response: %w", err)
+	}
+	
+	return nil
+}
+
 // Update the RegisterClusterCommands function to add the new commands
 func RegisterClusterCommands(root *cobra.Command) {
 	clusterCmd := &cobra.Command{
@@ -473,6 +724,13 @@ func RegisterClusterCommands(root *cobra.Command) {
 		Short: "Load a model in cluster mode",
 		RunE:  ClusterModelLoadHandler,
 	}
+	
+	runCmd := &cobra.Command{
+		Use:   "run [prompt]",
+		Short: "Run a model in cluster mode directly from terminal",
+		Args:  cobra.ArbitraryArgs,
+		RunE:  ClusterRunHandler,
+	}
 
 	// Configure flags for the start command
 	startCmd.Flags().String("config", "", "Path to cluster configuration file")
@@ -511,7 +769,14 @@ func RegisterClusterCommands(root *cobra.Command) {
 	modelLoadCmd.Flags().String("strategy", "auto", "Distribution strategy (auto, memory-optimized, speed-optimized)")
 	modelLoadCmd.Flags().StringSlice("node-ids", []string{}, "Specific nodes to load the model on")
 	modelLoadCmd.MarkFlagRequired("model")
+	
+	// Configure flags for the run command
+	runCmd.Flags().String("model", "", "Model to run")
+	runCmd.Flags().String("system", "", "System prompt to use")
+	runCmd.Flags().Float32("temperature", 0.7, "Temperature for sampling (0.0 to 1.0)")
+	runCmd.Flags().String("format", "json", "Response format (json or text)")
+	runCmd.MarkFlagRequired("model")
 
-	clusterCmd.AddCommand(startCmd, statusCmd, joinCmd, leaveCmd, nodesCmd, modelLoadCmd)
+	clusterCmd.AddCommand(startCmd, statusCmd, joinCmd, leaveCmd, nodesCmd, modelLoadCmd, runCmd)
 	root.AddCommand(clusterCmd)
 }

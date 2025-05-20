@@ -1197,8 +1197,22 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 		return rs, nil
 	}
 
-	// Initialize cluster mode if enabled
-	if strings.ToLower(os.Getenv("OLLAMA_CLUSTER_MODE")) == "true" {
+	// Enhanced logging for cluster-related environment variables
+	slog.Info("Checking cluster mode environment variables",
+		"OLLAMA_CLUSTER_MODE", os.Getenv("OLLAMA_CLUSTER_MODE"),
+		"OLLAMA_CLUSTER_ENABLED", os.Getenv("OLLAMA_CLUSTER_ENABLED"))
+		
+	clusterModeEnv := strings.ToLower(os.Getenv("OLLAMA_CLUSTER_MODE"))
+	clusterEnabledEnv := strings.ToLower(os.Getenv("OLLAMA_CLUSTER_ENABLED"))
+	
+	slog.Info("Normalized cluster mode environment variables",
+		"clusterModeEnv", clusterModeEnv,
+		"clusterEnabledEnv", clusterEnabledEnv)
+
+	// Initialize cluster mode if either variable is set to true
+	if clusterModeEnv == "true" || clusterEnabledEnv == "true" {
+		slog.Info("Attempting to initialize cluster mode")
+		
 		// Create a basic config
 		// Create a simplified config struct to match our ClusterMode implementation
 		type configStruct struct {
@@ -1232,20 +1246,62 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 		// In a real implementation, we would load more config from the environment
 		slog.Info("Using basic cluster configuration")
 		
+		// Initialize before state logging
+		slog.Info("Cluster mode state before initialization",
+			"clusterEnabled", clusterEnabled,
+			"clusterEnabled2", clusterEnabled2,
+			"clusterMode", clusterMode != nil,
+			"clusterMode2", clusterMode2 != nil)
+		
 		// Pass our config directly
 		if err := InitializeClusterMode2(nil); err != nil {
-			slog.Error("Failed to initialize cluster mode", "error", err)
+			slog.Error("Failed to initialize cluster mode",
+				"error", err,
+				"errorType", fmt.Sprintf("%T", err))
 		} else {
 			slog.Info("Cluster mode initialized successfully",
 				"clusterEnabled", clusterEnabled,
-				"clusterEnabled2", clusterEnabled2)
+				"clusterEnabled2", clusterEnabled2,
+				"clusterMode", clusterMode != nil,
+				"clusterMode2", clusterMode2 != nil)
 			
 			// Add cluster endpoints
-			r.GET("/api/cluster/status", s.ClusterStatusHandler)
-			r.GET("/api/cluster/nodes", s.ClusterNodesHandler)
-			r.POST("/api/cluster/join", s.ClusterJoinHandler)
-			r.POST("/api/cluster/leave", s.ClusterLeaveHandler)
-			r.POST("/api/cluster/model/load", s.ClusterModelLoadHandler)
+			// Create a custom unified middleware that checks both implementations
+			unifiedClusterMiddleware := func(c *gin.Context) {
+				clusterModeLock.RLock()
+				clusterModeLock2.RLock()
+				originalEnabled := clusterEnabled
+				newEnabled := clusterEnabled2
+				clusterModeLock.RUnlock()
+				clusterModeLock2.RUnlock()
+				
+				// Log the entire state for debugging
+				slog.Info("Unified cluster middleware check",
+					"clusterEnabled", originalEnabled,
+					"clusterEnabled2", newEnabled,
+					"clusterMode", clusterMode != nil,
+					"clusterMode2", GetClusterMode2() != nil,
+					"endpoint", c.Request.URL.Path)
+					
+				// Allow request if either implementation is enabled
+				if !originalEnabled && !newEnabled {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "cluster mode is not enabled"})
+					c.Abort()
+					return
+				}
+				
+				c.Next()
+			}
+			
+			// Apply the unified middleware to all cluster endpoints
+			clusterGroup := r.Group("/api/cluster", unifiedClusterMiddleware)
+			{
+				clusterGroup.GET("/status", s.ClusterStatusHandler)
+				clusterGroup.GET("/nodes", s.ClusterNodesHandler)
+				clusterGroup.POST("/join", s.ClusterJoinHandler)
+				clusterGroup.POST("/leave", s.ClusterLeaveHandler)
+				clusterGroup.POST("/model/load", s.ClusterModelLoadHandler)
+			}
 		}
 	}
 	
