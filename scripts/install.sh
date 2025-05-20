@@ -66,6 +66,33 @@ if [ -n "$NEEDS" ]; then
     exit 1
 fi
 
+# Check for mDNS libraries (needed for zero-configuration cluster mode)
+install_mdns_libs() {
+    status "Installing mDNS libraries for cluster mode..."
+    case $1 in
+        apt-get)
+            $SUDO $1 install -y libavahi-compat-libdnssd-dev
+            ;;
+        yum|dnf)
+            $SUDO $1 install -y avahi-compat-libdns_sd-devel
+            ;;
+        apk)
+            $SUDO $1 add avahi-compat-libdns_sd
+            ;;
+        *)
+            warning "Unsupported package manager: $1. Please manually install mDNS libraries."
+            ;;
+    esac
+}
+
+# Check which package manager is available and install mDNS libraries
+for PKG_MGR in apt-get dnf yum apk; do
+    if available $PKG_MGR; then
+        install_mdns_libs $PKG_MGR
+        break
+    fi
+done
+
 for BINDIR in /usr/local/bin /usr/bin /bin; do
     echo $PATH | grep -q $BINDIR && break || continue
 done
@@ -130,11 +157,12 @@ configure_systemd() {
     status "Adding current user to ollama group..."
     $SUDO usermod -a -G ollama $(whoami)
 
-    status "Creating ollama systemd service..."
+    status "Creating ollama systemd service with cluster mode support..."
     cat <<EOF | $SUDO tee /etc/systemd/system/ollama.service >/dev/null
 [Unit]
-Description=Ollama Service
-After=network-online.target
+Description=Ollama Service with Zero-Configuration Cluster Mode
+After=network-online.target avahi-daemon.service
+Wants=avahi-daemon.service
 
 [Service]
 ExecStart=$BINDIR/ollama serve
@@ -143,10 +171,28 @@ Group=ollama
 Restart=always
 RestartSec=3
 Environment="PATH=$PATH"
+# Cluster mode networking requirements
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+IPAddressAllow=any
+# Allow multicast traffic for mDNS discovery
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_RAW CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=default.target
 EOF
+
+    # Make sure avahi-daemon is installed and enabled (required for mDNS discovery)
+    if available apt-get; then
+        $SUDO apt-get update && $SUDO apt-get install -y avahi-daemon
+        $SUDO systemctl enable avahi-daemon
+    elif available dnf; then
+        $SUDO dnf install -y avahi
+        $SUDO systemctl enable avahi-daemon
+    elif available yum; then
+        $SUDO yum install -y avahi
+        $SUDO systemctl enable avahi-daemon
+    fi
     SYSTEMCTL_RUNNING="$(systemctl is-system-running || true)"
     case $SYSTEMCTL_RUNNING in
         running|degraded)
@@ -176,6 +222,32 @@ if [ "$IS_WSL2" = true ]; then
     if available nvidia-smi && [ -n "$(nvidia-smi | grep -o "CUDA Version: [0-9]*\.[0-9]*")" ]; then
         status "Nvidia GPU detected."
     fi
+    
+    # WSL2 requires specific firewall configuration for multicast to work properly
+    status "Configuring WSL2 for cluster mode..."
+    
+    # Create a script that will help users configure Windows Firewall for cluster mode
+    cat <<EOF > ~/configure-ollama-cluster-wsl2.bat
+@echo off
+echo Configuring Windows Firewall for Ollama Cluster Mode...
+echo Administrative privileges required
+
+:: Ollama API port
+netsh advfirewall firewall add rule name="Ollama API" dir=in action=allow protocol=TCP localport=11434
+
+:: Ollama cluster port
+netsh advfirewall firewall add rule name="Ollama Cluster" dir=in action=allow protocol=TCP localport=12094
+
+:: mDNS discovery
+netsh advfirewall firewall add rule name="Ollama mDNS Discovery" dir=in action=allow protocol=UDP localport=5353
+
+echo Configuration complete. Ollama cluster mode should now work across your network.
+pause
+EOF
+    
+    status "Created firewall configuration script at ~/configure-ollama-cluster-wsl2.bat"
+    status "Please run this script as Administrator on Windows to enable cluster mode networking."
+    
     install_success
     exit 0
 fi
@@ -371,4 +443,17 @@ if available nvidia-persistenced; then
 fi
 
 status "NVIDIA GPU ready."
+
+# Configure firewall if firewalld is available
+if available firewall-cmd; then
+    status "Configuring firewall for Ollama cluster mode..."
+    $SUDO firewall-cmd --permanent --add-port=11434/tcp  # API port
+    $SUDO firewall-cmd --permanent --add-port=12094/tcp  # Cluster port
+    $SUDO firewall-cmd --permanent --add-port=5353/udp   # mDNS discovery
+    $SUDO firewall-cmd --reload
+    status "Firewall configured for cluster mode."
+fi
+
+status "Ollama installed with zero-configuration cluster mode enabled."
+status "Cluster mode will automatically discover other Ollama instances on your network."
 install_success

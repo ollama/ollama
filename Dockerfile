@@ -12,14 +12,14 @@ FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCMVERSION}-complete AS base
 RUN yum install -y yum-utils \
     && yum-config-manager --add-repo https://dl.rockylinux.org/vault/rocky/8.5/AppStream/\$basearch/os/ \
     && rpm --import https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-8 \
-    && dnf install -y yum-utils ccache gcc-toolset-10-gcc-10.2.1-8.2.el8 gcc-toolset-10-gcc-c++-10.2.1-8.2.el8 gcc-toolset-10-binutils-2.35-11.el8 \
+    && dnf install -y yum-utils ccache gcc-toolset-10-gcc-10.2.1-8.2.el8 gcc-toolset-10-gcc-c++-10.2.1-8.2.el8 gcc-toolset-10-binutils-2.35-11.el8 avahi-compat-libdns_sd-devel \
     && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
 ENV PATH=/opt/rh/gcc-toolset-10/root/usr/bin:$PATH
 
 FROM --platform=linux/arm64 almalinux:8 AS base-arm64
 # install epel-release for ccache
 RUN yum install -y yum-utils epel-release \
-    && dnf install -y clang ccache \
+    && dnf install -y clang ccache avahi-compat-libdns_sd-devel \
     && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/sbsa/cuda-rhel8.repo
 ENV CC=clang CXX=clang++
 
@@ -65,7 +65,7 @@ RUN --mount=type=cache,target=/root/.ccache \
 
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK5VERSION} AS jetpack-5
 ARG CMAKEVERSION
-RUN apt-get update && apt-get install -y curl ccache \
+RUN apt-get update && apt-get install -y curl ccache libavahi-compat-libdnssd-dev \
     && curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
@@ -76,7 +76,7 @@ RUN --mount=type=cache,target=/root/.ccache \
 
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK6VERSION} AS jetpack-6
 ARG CMAKEVERSION
-RUN apt-get update && apt-get install -y curl ccache \
+RUN apt-get update && apt-get install -y curl ccache libavahi-compat-libdnssd-dev \
     && curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
@@ -93,7 +93,9 @@ ENV PATH=/usr/local/go/bin:$PATH
 RUN go mod download
 COPY . .
 ARG GOFLAGS="'-ldflags=-w -s'"
+ARG OLLAMA_ENABLE_MDNS=true
 ENV CGO_ENABLED=1
+ENV OLLAMA_ENABLE_MDNS=${OLLAMA_ENABLE_MDNS}
 RUN --mount=type=cache,target=/root/.cache/go-build \
     go build -trimpath -buildmode=pie -o /bin/ollama .
 
@@ -116,7 +118,7 @@ COPY --from=build /bin/ollama /bin/ollama
 
 FROM ubuntu:20.04
 RUN apt-get update \
-    && apt-get install -y ca-certificates \
+    && apt-get install -y ca-certificates libavahi-compat-libdnssd-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=archive /bin /usr/bin

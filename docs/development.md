@@ -4,12 +4,15 @@ Install prerequisites:
 
 - [Go](https://go.dev/doc/install)
 - C/C++ Compiler e.g. Clang on macOS, [TDM-GCC](https://github.com/jmeubank/tdm-gcc/releases/latest) (Windows amd64) or [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (Windows arm64), GCC/Clang on Linux.
+- [mDNS libraries](#mdns-libraries) (for zero-configuration cluster mode)
 
 Then build and run Ollama from the root directory of the repository:
 
 ```shell
 go run . serve
 ```
+
+> Note: By default, Ollama runs with zero-configuration cluster mode enabled. To disable cluster mode during development, set the environment variable: `OLLAMA_CLUSTER_ENABLED=false`
 
 ## macOS (Apple Silicon)
 
@@ -157,3 +160,36 @@ Ollama looks for acceleration libraries in the following paths relative to the `
 * `build/lib/ollama` (for development)
 
 If the libraries are not found, Ollama will not run with any acceleration libraries.
+
+## mDNS Libraries
+
+Ollama's zero-configuration cluster mode uses multicast DNS (mDNS) for automatic node discovery. The following platform-specific libraries are required:
+
+### macOS
+mDNS/Bonjour support is built into macOS. No additional libraries are needed.
+
+### Linux
+Install the Avahi mDNS libraries:
+
+```shell
+# Ubuntu/Debian
+sudo apt-get install libavahi-compat-libdnssd-dev
+
+# CentOS/RHEL/Fedora
+sudo dnf install avahi-compat-libdns_sd-devel
+
+# Alpine
+apk add avahi-compat-libdns_sd
+```
+
+### Windows
+mDNS support is included in Windows. No additional libraries are needed.
+
+## Network Requirements for Cluster Mode
+
+For cluster mode to function properly, the following network requirements must be met:
+
+- Allow multicast DNS traffic (UDP port 5353)
+- Allow TCP/UDP traffic on the API port (default: 11434)
+- Allow TCP/UDP traffic on the cluster port (default: 12094)
+- If using a firewall, ensure the above ports are open for both incoming and outgoing connections

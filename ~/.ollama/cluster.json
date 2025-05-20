@@ -1,0 +1,23 @@
+{
+  "enabled": true,
+  "node_name": "Desktop",
+  "node_role": "mixed",
+  "api_host": "0.0.0.0",
+  "api_port": 11434,
+  "cluster_host": "10.0.0.1",
+  "cluster_port": 12094,
+  "discovery": {
+    "method": "mdns",
+    "multicast_address": "239.255.10.10:12095",
+    "node_list": [],
+    "heartbeat_interval": 5000000000,
+    "node_timeout_interval": 15000000000,
+    "service_name": "_ollama._tcp",
+    "discovery_port": 12095
+  },
+  "health": {
+    "check_interval": 10000000000,
+    "node_timeout_threshold": 30000000000,
+    "enable_detailed_metrics": true
+  }
+}
