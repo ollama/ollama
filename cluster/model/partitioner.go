@@ -52,7 +52,7 @@ var DefaultPartitioningOptions = PartitioningOptions{
 	Strategy:            StrategyLayer,
 	MaxPartitionsPerNode: 4,
 	BalanceFactor:       0.5,
-	MinPartitionSize:    1024 * 1024 * 50, // 50MB
+	MinPartitionSize:    1024 * 1024 * 1, // 1MB - lowered to allow distribution of smaller models
 	EnableOverlap:       true,
 	ReplicationFactor:   1, // No replication by default
 }
