@@ -49,6 +49,32 @@ func NewNodeRegistry(healthCheckInterval, nodeTimeoutInterval time.Duration) *No
 	
 	return r
 }
+
+// GetLocalNodeID returns the ID of the local node
+// Currently, this is a placeholder implementation. In a real system,
+// this would refer to a cached local node ID or determine it from environment
+func (r *NodeRegistry) GetLocalNodeID() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	
+	// For now, we'll implement a simple heuristic: the first node registered with role "coordinator" is assumed to be local
+	for id, node := range r.nodes {
+		if node.Role == NodeRoleCoordinator || node.Role == NodeRoleMixed {
+			fmt.Printf("Using node %s as local node (role: %s)\n", id, node.Role)
+			return id
+		}
+	}
+	
+	// If no coordinator is found, return the first node (if any)
+	for id := range r.nodes {
+		fmt.Printf("No coordinator found, using first node %s as local\n", id)
+		return id
+	}
+	
+	// If no nodes are registered yet, use a placeholder
+	fmt.Printf("No nodes registered yet, returning placeholder local ID\n")
+	return "local-node"
+}
 // RegisterNode adds or updates a node in the registry
 func (r *NodeRegistry) RegisterNode(node NodeInfo) {
 	r.mu.Lock()

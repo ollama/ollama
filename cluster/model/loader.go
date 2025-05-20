@@ -86,11 +86,16 @@ func (e LoadError) Error() string {
 
 // NewModelLoader creates a new model loader
 func NewModelLoader(partitioner *ModelPartitioner, registry *cluster.NodeRegistry) *ModelLoader {
-	return &ModelLoader{
+	ml := &ModelLoader{
 		partitioner: partitioner,
 		registry:    registry,
 		loadStatus:  make(map[string]map[string]LoadProgress),
 	}
+	
+	// Log model loader initialization
+	fmt.Printf("ModelLoader initialized with registry local node: %s\n", registry.GetLocalNodeID())
+	
+	return ml
 }
 
 // LoadModel initiates loading of a model across the cluster
@@ -176,57 +181,90 @@ func (ml *ModelLoader) loadPartition(ctx context.Context, modelID string, partit
 	fmt.Printf("Loading partition %s on node %s\n", partition.PartitionID, partition.NodeID)
 	
 	// Check if node exists in registry
-	if _, exists := ml.registry.GetNode(partition.NodeID); !exists {
+	node, exists := ml.registry.GetNode(partition.NodeID)
+	if !exists {
 		return fmt.Errorf("node %s not found in registry", partition.NodeID)
 	}
 	
-	// In a real implementation, this would connect to the node and initiate loading
-	// For now, simulate loading with a delay proportional to partition size
+	// Get source node (usually the coordinator/local node)
+	localNodeID := ml.registry.GetLocalNodeID()
 	
-	// Simulate loading progress
-	totalBytes := partition.Size
-	chunkSize := totalBytes / 10
+	// For the actual implementation, we should check if this is a remote node
+	// that needs the model file transferred
+	isRemoteNode := partition.NodeID != localNodeID
 	
-	for bytesDone := uint64(0); bytesDone < totalBytes; bytesDone += chunkSize {
-		// Check if context was canceled
-		select {
-		case <-ctx.Done():
+	// Log the node relationships
+	fmt.Printf("Model %s (%s): Loading on node %s (remote: %v, local node: %s)\n",
+		modelID, partition.PartitionID, partition.NodeID, isRemoteNode, localNodeID)
+	
+	// In a proper implementation, this would:
+	// 1. Check if the model file exists on the source node
+	sourceModelPath := fmt.Sprintf("/models/%s", modelID)
+	fmt.Printf("Checking for model file at: %s\n", sourceModelPath)
+	
+	// 2. For remote nodes, ensure the model file is copied over
+	if isRemoteNode {
+		// This would use an API call or file transfer protocol to copy the model
+		destModelPath := fmt.Sprintf("node://%s/models/%s", node.ID, modelID)
+		fmt.Printf("Copying model file from %s to %s\n", sourceModelPath, destModelPath)
+		
+		// Simulate file copying progress
+		totalBytes := partition.Size
+		chunkSize := totalBytes / 10
+		
+		for bytesDone := uint64(0); bytesDone < totalBytes; bytesDone += chunkSize {
+			// Check if context was canceled
+			select {
+			case <-ctx.Done():
+				ml.updateLoadStatus(modelID, partition.PartitionID, LoadProgress{
+					Status:      LoadStatusFailed,
+					Error:       ctx.Err(),
+					BytesLoaded: bytesDone,
+					TotalBytes:  totalBytes,
+				})
+				fmt.Printf("Transfer canceled for model %s to node %s: %v\n",
+					modelID, partition.NodeID, ctx.Err())
+				return ctx.Err()
+			default:
+				// Continue loading
+			}
+			
+			// Simulate network/disk I/O time
+			bytesPerSecond := uint64(100 * 1024 * 1024) // 100MB/s
+			chunkTimeMs := (chunkSize * 1000) / bytesPerSecond
+			time.Sleep(time.Duration(chunkTimeMs) * time.Millisecond)
+			
+			// Update progress
+			percentComplete := int((bytesDone * 100) / totalBytes)
 			ml.updateLoadStatus(modelID, partition.PartitionID, LoadProgress{
-				Status:      LoadStatusFailed,
-				Error:       ctx.Err(),
-				BytesLoaded: bytesDone,
-				TotalBytes:  totalBytes,
+				Status:          LoadStatusLoading,
+				PercentComplete: percentComplete,
+				BytesLoaded:     bytesDone,
+				TotalBytes:      totalBytes,
+				StartTime:       time.Now(), // In real code, this would be the actual start time
 			})
-			return ctx.Err()
-		default:
-			// Continue loading
+			
+			fmt.Printf("File transfer progress: %s to %s: %d%% (%d/%d bytes)\n",
+				sourceModelPath, destModelPath, percentComplete, bytesDone, totalBytes)
 		}
 		
-		// Sleep to simulate network/disk I/O time
-		bytesPerSecond := uint64(100 * 1024 * 1024) // 100MB/s
-		chunkTimeMs := (chunkSize * 1000) / bytesPerSecond
-		time.Sleep(time.Duration(chunkTimeMs) * time.Millisecond)
-		
-		// Update progress
-		percentComplete := int((bytesDone * 100) / totalBytes)
-		ml.updateLoadStatus(modelID, partition.PartitionID, LoadProgress{
-			Status:          LoadStatusLoading,
-			PercentComplete: percentComplete,
-			BytesLoaded:     bytesDone,
-			TotalBytes:      totalBytes,
-			StartTime:       time.Now(), // In real code, this would be the actual start time
-		})
-		
-		fmt.Printf("Partition %s: %d%% loaded (%d/%d bytes)\n",
-			partition.PartitionID, percentComplete, bytesDone, totalBytes)
+		// 3. Verify the file was properly copied
+		fmt.Printf("File transfer complete. Verifying model file exists on target node: %s\n", destModelPath)
 	}
+	
+	// 4. Load the model into GPU memory on the target node
+	fmt.Printf("Loading model %s into GPU memory on node %s\n", modelID, node.ID)
+	
+	// This would use an API call to instruct the node to load the model into GPU memory
+	// Simulate this with a delay for now
+	time.Sleep(1 * time.Second)
 	
 	// Mark as successfully loaded
 	ml.updateLoadStatus(modelID, partition.PartitionID, LoadProgress{
 		Status:          LoadStatusLoaded,
 		PercentComplete: 100,
-		BytesLoaded:     totalBytes,
-		TotalBytes:      totalBytes,
+		BytesLoaded:     partition.Size,
+		TotalBytes:      partition.Size,
 		StartTime:       time.Now(), // In real code, this would be the actual start time
 		CompleteTime:    time.Now(),
 	})

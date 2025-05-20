@@ -46,13 +46,15 @@ type ClusterStatusResponse struct {
 
 // ClusterModelResponse represents information about a model distributed in the cluster
 type ClusterModelResponse struct {
-	Name        string    `json:"name"`
-	Size        int64     `json:"size"`
-	Distributed bool      `json:"distributed"`
-	Nodes       []string  `json:"nodes"`
-	Shards      int       `json:"shards"`
-	Status      string    `json:"status"`
-	LoadedAt    time.Time `json:"loaded_at"`
+	Name               string    `json:"name"`
+	Size               int64     `json:"size"`
+	Distributed        bool      `json:"distributed"`
+	Nodes              []string  `json:"nodes"`
+	NodesWithFiles     []string  `json:"nodes_with_files,omitempty"`     // Nodes that have the model file
+	NodesWithGPULoaded []string  `json:"nodes_with_gpu_loaded,omitempty"` // Nodes that have loaded the model into GPU
+	Shards             int       `json:"shards"`
+	Status             string    `json:"status"`
+	LoadedAt           time.Time `json:"loaded_at"`
 }
 
 // ClusterJoinRequest represents a request to join an existing cluster

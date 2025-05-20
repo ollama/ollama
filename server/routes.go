@@ -1184,6 +1184,12 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/v1/embeddings", openai.EmbeddingsMiddleware(), s.EmbedHandler)
 	r.GET("/v1/models", openai.ListMiddleware(), s.ListHandler)
 	r.GET("/v1/models/:model", openai.RetrieveMiddleware(), s.ShowHandler)
+	
+	// Cluster Operations (OpenAI compatibility)
+	r.POST("/v1/cluster/models", openai.ClusterModelLoadMiddleware(), s.ClusterModelLoadHandler)
+	r.GET("/v1/cluster/status", openai.ClusterStatusMiddleware(), s.ClusterStatusHandler)
+	r.GET("/v1/cluster/nodes", openai.ClusterNodesMiddleware(), s.ClusterNodesHandler)
+	r.POST("/v1/cluster/generate", openai.ClusterGenerateMiddleware(), s.ClusterGenerateHandler)
 
 	if rc != nil {
 		// wrap old with new
