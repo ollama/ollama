@@ -10,6 +10,7 @@
 #include <cinttypes>
 #include <fstream>
 #include <mutex>
+#include <regex>
 #include <thread>
 #include <unordered_map>
 
@@ -47,8 +48,14 @@ struct quantize_state_impl {
         {}
 };
 
+// changes to this struct must be replicated in quantize.cpp
+struct tensor_quantization {
+    std::string name;
+    ggml_type quant = GGML_TYPE_COUNT;
+};
+
 static void llama_tensor_dequantize_impl(
-    struct ggml_tensor * tensor, std::vector<no_init<float>> & output, std::vector<std::thread> & workers,
+    ggml_tensor * tensor, std::vector<no_init<float>> & output, std::vector<std::thread> & workers,
     const size_t nelements, const int nthread
 ) {
     if (output.size() < nelements) {
@@ -512,7 +519,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         nthread = std::thread::hardware_concurrency();
     }
 
-    // mmap consistently increases speed Linux, and also increases speed on Windows with
+    // mmap consistently increases speed on Linux, and also increases speed on Windows with
     // hot cache. It may cause a slowdown on macOS, possibly related to free memory.
 #if defined(__linux__) || defined(_WIN32)
     constexpr bool use_mmap = true;
@@ -522,12 +529,12 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
 
     llama_model_kv_override * kv_overrides = nullptr;
     if (params->kv_overrides) {
-        auto v = (std::vector<llama_model_kv_override>*)params->kv_overrides;
+        auto * v = (std::vector<llama_model_kv_override>*)params->kv_overrides;
         kv_overrides = v->data();
     }
 
     std::vector<std::string> splits = {};
-    llama_model_loader ml(fname_inp, splits, use_mmap, /*check_tensors*/ true, kv_overrides);
+    llama_model_loader ml(fname_inp, splits, use_mmap, /*check_tensors*/ true, kv_overrides, nullptr);
     ml.init_mappings(false); // no prefetching
 
     llama_model model(llama_model_default_params());
@@ -536,7 +543,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     model.load_hparams(ml);
     model.load_stats  (ml);
 
-    struct quantize_state_impl qs(model, params);
+    quantize_state_impl qs(model, params);
 
     if (params->only_copy) {
         ftype = ml.ftype;
@@ -632,9 +639,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         if (llama_model_has_encoder(&model)) {
             n_attn_layer *= 3;
         }
-        if (qs.n_attention_wv != n_attn_layer) {
-            LLAMA_LOG_WARN("%s: n_attention_wv is unexpected, expected: %d, found: %d\n", __func__, n_attn_layer, qs.n_attention_wv);
-        }
+        GGML_ASSERT((qs.n_attention_wv == n_attn_layer) && "n_attention_wv is unexpected");
     }
 
     size_t total_size_org = 0;
@@ -663,7 +668,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     // populate the original tensors so we get an initial meta data
     for (const auto * it : tensors) {
         uint16_t i_split = params->keep_split ? it->idx : 0;
-        struct ggml_tensor * tensor = it->tensor;
+        ggml_tensor * tensor = it->tensor;
         if (!ctx_outs[i_split]) {
             ctx_outs[i_split].reset(gguf_init_empty());
         }
@@ -712,7 +717,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
     new_ofstream(0);
     for (const auto * it : tensors) {
         const auto & weight = *it;
-        struct ggml_tensor * tensor = weight.tensor;
+        ggml_tensor * tensor = weight.tensor;
         if (weight.idx != cur_split && params->keep_split) {
             close_ofstream();
             new_ofstream(weight.idx);
@@ -737,10 +742,6 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         // This used to be a regex, but <regex> has an extreme cost to compile times.
         bool quantize = name.rfind("weight") == name.size() - 6; // ends with 'weight'?
 
-        // don't quantize vision stuff
-        quantize &= name.find("v.") == std::string::npos;
-        quantize &= name.find("mm.") == std::string::npos;
-
         // quantize only 2D and 3D tensors (experts)
         quantize &= (ggml_n_dims(tensor) >= 2);
 
@@ -762,10 +763,19 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         // NOTE: can't use LLM_TN here because the layer number is not known
         quantize &= name.find("ssm_conv1d.weight") == std::string::npos;
 
-        // do not quantize RWKV's time_mix_first tensors
+        // do not quantize RWKV's small yet 2D weights
         quantize &= name.find("time_mix_first.weight") == std::string::npos;
+        quantize &= name.find("time_mix_w0.weight") == std::string::npos;
         quantize &= name.find("time_mix_w1.weight") == std::string::npos;
         quantize &= name.find("time_mix_w2.weight") == std::string::npos;
+        quantize &= name.find("time_mix_v0.weight") == std::string::npos;
+        quantize &= name.find("time_mix_v1.weight") == std::string::npos;
+        quantize &= name.find("time_mix_v2.weight") == std::string::npos;
+        quantize &= name.find("time_mix_a0.weight") == std::string::npos;
+        quantize &= name.find("time_mix_a1.weight") == std::string::npos;
+        quantize &= name.find("time_mix_a2.weight") == std::string::npos;
+        quantize &= name.find("time_mix_g1.weight") == std::string::npos;
+        quantize &= name.find("time_mix_g2.weight") == std::string::npos;
         quantize &= name.find("time_mix_decay_w1.weight") == std::string::npos;
         quantize &= name.find("time_mix_decay_w2.weight") == std::string::npos;
         quantize &= name.find("time_mix_lerp_fused.weight") == std::string::npos;
@@ -773,7 +783,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         // do not quantize relative position bias (T5)
         quantize &= name.find("attn_rel_b.weight") == std::string::npos;
 
-        enum ggml_type new_type;
+        ggml_type new_type;
         void * new_data;
         size_t new_size;
 
@@ -783,6 +793,19 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
             // get more optimal quantization type based on the tensor shape, layer, etc.
             if (!params->pure && ggml_is_quantized(default_type)) {
                 new_type = llama_tensor_get_type(qs, new_type, tensor, ftype);
+                // unless the user specifies a type
+                if (params->tensor_types) {
+                    const std::vector<tensor_quantization> & tensor_types = *static_cast<const std::vector<tensor_quantization> *>(params->tensor_types);
+                    for (const auto & [tname, qtype] : tensor_types) {
+                        if (std::regex pattern(tname); std::regex_search(tensor->name, pattern)) {
+                            if (qtype != new_type) {
+                                LLAMA_LOG_DEBUG("(overriding %s -> %s), ", ggml_type_name(new_type), ggml_type_name(qtype));
+                            }
+                            new_type = qtype;
+                            break;
+                        }
+                    }
+                }
             }
             if (params->token_embedding_type < GGML_TYPE_COUNT && strcmp(tensor->name, "token_embd.weight") == 0) {
                 new_type = params->token_embedding_type;
@@ -907,8 +930,8 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
 // interface implementation
 //
 
-struct llama_model_quantize_params llama_model_quantize_default_params() {
-    struct llama_model_quantize_params result = {
+llama_model_quantize_params llama_model_quantize_default_params() {
+    llama_model_quantize_params result = {
         /*.nthread                     =*/ 0,
         /*.ftype                       =*/ LLAMA_FTYPE_MOSTLY_Q5_1,
         /*.output_tensor_type          =*/ GGML_TYPE_COUNT,
@@ -920,6 +943,7 @@ struct llama_model_quantize_params llama_model_quantize_default_params() {
         /*.keep_split                  =*/ false,
         /*.imatrix                     =*/ nullptr,
         /*.kv_overrides                =*/ nullptr,
+        /*.tensor_type                 =*/ nullptr,
     };
 
     return result;

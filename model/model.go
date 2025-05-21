@@ -19,6 +19,7 @@ import (
 	"github.com/ollama/ollama/fs"
 	fsggml "github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/kvcache"
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	_ "github.com/ollama/ollama/ml/backend"
 	"github.com/ollama/ollama/model/input"
@@ -39,12 +40,13 @@ type MultimodalProcessor interface {
 	// EncodeMultimodal processes a single input (such as an image) and
 	// generates an output (typically an embedding) that can be used by the model.
 	//
-	// The return value is most typically an ml.Tensor, however, different
-	// type are possible, such as an object containing a tensor plus
-	// additional metadata, a slice of tensors or even just the original input.
+	// The return value is one or more tensors, each with optional model-specific
+	// opaque metadata. Typically, the tensors might be views into an embedding
+	// with each view representing a chunk of data that can be processed independently
+	// in different batches.
 	//
 	// The result may be cached by the runner.
-	EncodeMultimodal(ml.Context, []byte) (any, error)
+	EncodeMultimodal(ml.Context, []byte) ([]input.Multimodal, error)
 
 	// PostTokenize is called after tokenization to allow the model to edit the
 	// input stream to correctly arrange multimodal elements.
@@ -96,14 +98,8 @@ func Register(name string, f func(fs.Config) (Model, error)) {
 }
 
 // New initializes a new model instance with the provided configuration based on the metadata in the model file
-func New(ctx context.Context, modelPath string, params ml.BackendParams) (Model, error) {
-	r, err := os.Open(modelPath)
-	if err != nil {
-		return nil, err
-	}
-	defer r.Close()
-
-	b, err := ml.NewBackend(ctx, r, params)
+func New(modelPath string, params ml.BackendParams) (Model, error) {
+	b, err := ml.NewBackend(modelPath, params)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +128,7 @@ func NewTextProcessor(s string) (TextProcessor, error) {
 		return nil, err
 	}
 	defer r.Close()
-	meta, _, err := fsggml.Decode(r, -1)
+	meta, err := fsggml.Decode(r, -1)
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +198,7 @@ func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 				names := fn(tagsCopy)
 				for _, name := range names {
 					if tensor := base.Backend().Get(strings.Join(name, ".")); tensor != nil {
-						slog.Debug("found tensor", "", tensor)
+						slog.Log(context.TODO(), logutil.LevelTrace, "found tensor", "", tensor)
 						vv.Set(reflect.ValueOf(tensor))
 						break
 					}
@@ -299,7 +295,7 @@ func Forward(ctx ml.Context, m Model, inputs []int32, batch input.Batch) (ml.Ten
 
 	cache := m.Config().Cache
 	if cache != nil {
-		err := cache.StartForward(ctx, batch)
+		err := cache.StartForward(ctx, batch, false)
 		if err != nil {
 			return nil, err
 		}

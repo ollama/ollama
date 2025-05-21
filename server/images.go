@@ -75,7 +75,7 @@ func (m *Model) Capabilities() []model.Capability {
 	if err == nil {
 		defer r.Close()
 
-		f, _, err := ggml.Decode(r, 0)
+		f, err := ggml.Decode(r, 1024)
 		if err == nil {
 			if _, ok := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]; ok {
 				capabilities = append(capabilities, model.CapabilityEmbedding)
@@ -104,6 +104,11 @@ func (m *Model) Capabilities() []model.Capability {
 	// Check for insert capability
 	if slices.Contains(m.Template.Vars(), "suffix") {
 		capabilities = append(capabilities, model.CapabilityInsert)
+	}
+
+	// Check for vision capability in projector-based models
+	if len(m.ProjectorPaths) > 0 {
+		capabilities = append(capabilities, model.CapabilityVision)
 	}
 
 	return capabilities

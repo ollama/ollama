@@ -44,7 +44,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "Use \"\"\" to begin a multi-line message.")
 
 		if opts.MultiModal {
-			fmt.Fprintf(os.Stderr, "Use %s to include .jpg or .png images.\n", filepath.FromSlash("/path/to/file"))
+			fmt.Fprintf(os.Stderr, "Use %s to include .jpg, .png, or .webp images.\n", filepath.FromSlash("/path/to/file"))
 		}
 
 		fmt.Fprintln(os.Stderr, "")
@@ -503,6 +503,7 @@ func normalizeFilePath(fp string) string {
 		"\\\\", "\\", // Escaped backslash
 		"\\*", "*", // Escaped asterisk
 		"\\?", "?", // Escaped question mark
+		"\\~", "~", // Escaped tilde
 	).Replace(fp)
 }
 
@@ -510,7 +511,7 @@ func extractFileNames(input string) []string {
 	// Regex to match file paths starting with optional drive letter, / ./ \ or .\ and include escaped or unescaped spaces (\ or %20)
 	// and followed by more characters and a file extension
 	// This will capture non filename strings, but we'll check for file existence to remove mismatches
-	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png)\b`
+	regexPattern := `(?:[a-zA-Z]:)?(?:\./|/|\\)[\S\\ ]+?\.(?i:jpg|jpeg|png|webp)\b`
 	re := regexp.MustCompile(regexPattern)
 
 	return re.FindAllString(input, -1)
@@ -530,6 +531,8 @@ func extractFileData(input string) (string, []api.ImageData, error) {
 			return "", imgs, err
 		}
 		fmt.Fprintf(os.Stderr, "Added image '%s'\n", nfp)
+		input = strings.ReplaceAll(input, "'"+nfp+"'", "")
+		input = strings.ReplaceAll(input, "'"+fp+"'", "")
 		input = strings.ReplaceAll(input, fp, "")
 		imgs = append(imgs, data)
 	}
@@ -550,7 +553,7 @@ func getImageData(filePath string) ([]byte, error) {
 	}
 
 	contentType := http.DetectContentType(buf)
-	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png"}
+	allowedTypes := []string{"image/jpeg", "image/jpg", "image/png", "image/webp"}
 	if !slices.Contains(allowedTypes, contentType) {
 		return nil, fmt.Errorf("invalid image type: %s", contentType)
 	}

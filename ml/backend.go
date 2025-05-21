@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"os"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -14,6 +14,7 @@ import (
 )
 
 type Backend interface {
+	Load(ctx context.Context, progress func(float32)) error
 	Config() fs.Config
 	Get(name string) Tensor
 	NewContext() Context
@@ -51,10 +52,6 @@ type CacheConfig struct {
 
 // BackendParams controls how the backend loads and executes models
 type BackendParams struct {
-	// Progress is a callback function that allows reporting percentage completion
-	// of model loading
-	Progress func(float32)
-
 	// NumThreads sets the number of threads to use if running on the CPU
 	NumThreads int
 
@@ -71,9 +68,9 @@ type BackendParams struct {
 	FlashAttention bool
 }
 
-var backends = make(map[string]func(context.Context, *os.File, BackendParams) (Backend, error))
+var backends = make(map[string]func(string, BackendParams) (Backend, error))
 
-func RegisterBackend(name string, f func(context.Context, *os.File, BackendParams) (Backend, error)) {
+func RegisterBackend(name string, f func(string, BackendParams) (Backend, error)) {
 	if _, ok := backends[name]; ok {
 		panic("backend: backend already registered")
 	}
@@ -81,9 +78,9 @@ func RegisterBackend(name string, f func(context.Context, *os.File, BackendParam
 	backends[name] = f
 }
 
-func NewBackend(ctx context.Context, f *os.File, params BackendParams) (Backend, error) {
+func NewBackend(modelPath string, params BackendParams) (Backend, error) {
 	if backend, ok := backends["ggml"]; ok {
-		return backend(ctx, f, params)
+		return backend(modelPath, params)
 	}
 
 	return nil, fmt.Errorf("unsupported backend")
@@ -95,8 +92,18 @@ type Context interface {
 	FromFloatSlice(s []float32, shape ...int) (Tensor, error)
 	FromIntSlice(s []int32, shape ...int) (Tensor, error)
 
+	// Arange creates a 1D tensor with values within an interval (start, stop] increased by step.
+	Arange(start, stop, step float32, dtype DType) Tensor
+
 	Forward(...Tensor) Context
 	Compute(...Tensor)
+
+	// Reserve is analogous to Compute but rather than executing a
+	// graph, simply preallocates memory. Typically called with a
+	// worst case graph to ensure all resources are available for
+	// for future inference.
+	Reserve() error
+
 	MaxGraphNodes() int
 	Close()
 
@@ -121,18 +128,21 @@ type Tensor interface {
 	Neg(ctx Context) Tensor
 	Add(ctx Context, t2 Tensor) Tensor
 	Mul(ctx Context, t2 Tensor) Tensor
+	Div(ctx Context, t2 Tensor) Tensor
+
 	Mulmat(ctx Context, t2 Tensor) Tensor
 	MulmatFullPrec(ctx Context, t2 Tensor) Tensor
+	MulmatID(ctx Context, t2, ids Tensor) Tensor
 
 	Softmax(ctx Context) Tensor
 	LayerNorm(ctx Context, weight, bias Tensor, eps float32) Tensor
 	RMSNorm(ctx Context, weight Tensor, eps float32) Tensor
 	Scale(ctx Context, s float64) Tensor
+	SumRows(ctx Context) Tensor
 
 	AvgPool2D(ctx Context, k, s int, p float32) Tensor
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
-	RoPE(ctx Context, positionIDs, ropeFactors Tensor, dim, ropeType uint32, base, scale float32) Tensor
 	IM2Col(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
 	Sin(ctx Context) Tensor
@@ -140,6 +150,7 @@ type Tensor interface {
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context) Tensor
 	SILU(ctx Context) Tensor
+	Sigmoid(ctx Context) Tensor
 
 	Reshape(ctx Context, shape ...int) Tensor
 	View(ctx Context, offset int, shape ...int) Tensor
@@ -148,7 +159,6 @@ type Tensor interface {
 	Set(ctx Context, t2 Tensor, offset int, strides ...int) Tensor
 
 	Pad(ctx Context, shape ...int) Tensor
-	Unpad(ctx Context, shape ...int) Tensor
 
 	Stack(ctx Context, dim int, s ...Tensor) Tensor
 
@@ -158,6 +168,9 @@ type Tensor interface {
 	Rows(ctx Context, t2 Tensor) Tensor
 	Copy(ctx Context, t2 Tensor) Tensor
 	Duplicate(ctx Context) Tensor
+
+	TopK(ctx Context, k int) Tensor
+	Argsort(ctx Context) Tensor
 }
 
 // ScaledDotProductAttention implements a fused attention
@@ -200,35 +213,58 @@ func mul[T number](s ...T) T {
 	return p
 }
 
-type DumpOptions struct {
-	// Items is the number of elements to print at the beginning and end of each dimension.
-	Items int
+type DumpOptions func(*dumpOptions)
 
-	// Precision is the number of decimal places to print. Applies to float32 and float64.
-	Precision int
+// DumpWithPrecision sets the number of decimal places to print. Applies to float32 and float64.
+func DumpWithPrecision(n int) DumpOptions {
+	return func(opts *dumpOptions) {
+		opts.Precision = n
+	}
 }
 
-func Dump(ctx Context, t Tensor, opts ...DumpOptions) string {
-	if len(opts) < 1 {
-		opts = append(opts, DumpOptions{
-			Items:     3,
-			Precision: 4,
-		})
+// DumpWithThreshold sets the threshold for printing the entire tensor. If the number of elements
+// is less than or equal to this value, the entire tensor will be printed. Otherwise, only the
+// beginning and end of each dimension will be printed.
+func DumpWithThreshold(n int) DumpOptions {
+	return func(opts *dumpOptions) {
+		opts.Threshold = n
+	}
+}
+
+// DumpWithEdgeItems sets the number of elements to print at the beginning and end of each dimension.
+func DumpWithEdgeItems(n int) DumpOptions {
+	return func(opts *dumpOptions) {
+		opts.EdgeItems = n
+	}
+}
+
+type dumpOptions struct {
+	Precision, Threshold, EdgeItems int
+}
+
+func Dump(ctx Context, t Tensor, optsFuncs ...DumpOptions) string {
+	opts := dumpOptions{Precision: 4, Threshold: 1000, EdgeItems: 3}
+	for _, optsFunc := range optsFuncs {
+		optsFunc(&opts)
+	}
+
+	if mul(t.Shape()...) <= opts.Threshold {
+		opts.EdgeItems = math.MaxInt
 	}
 
 	switch t.DType() {
 	case DTypeF32:
-		return dump[[]float32](ctx, t, opts[0].Items, func(f float32) string {
-			return strconv.FormatFloat(float64(f), 'f', opts[0].Precision, 32)
+		return dump[[]float32](ctx, t, opts.EdgeItems, func(f float32) string {
+			return strconv.FormatFloat(float64(f), 'f', opts.Precision, 32)
 		})
 	case DTypeF16, DTypeQ80, DTypeQ40:
 		f32 := ctx.Input().Empty(DTypeF32, t.Shape()...)
 		f32 = t.Copy(ctx, f32)
-		return dump[[]float32](ctx, f32, opts[0].Items, func(f float32) string {
-			return strconv.FormatFloat(float64(f), 'f', opts[0].Precision, 32)
+		return dump[[]float32](ctx, f32, opts.EdgeItems, func(f float32) string {
+			return strconv.FormatFloat(float64(f), 'f', opts.Precision, 32)
 		})
 	case DTypeI32:
-		return dump[[]int32](ctx, t, opts[0].Items, func(i int32) string {
+		return dump[[]int32](ctx, t, opts.EdgeItems, func(i int32) string {
 			return strconv.FormatInt(int64(i), 10)
 		})
 	default:
