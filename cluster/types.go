@@ -224,6 +224,9 @@ type ClusterMode struct {
 	// StatusController manages node status transitions
 	StatusController *NodeStatusController
 	
+	// ModelTransferManager handles transferring model data between nodes
+	ModelTransferManager interface{} // We use interface{} to avoid circular imports
+	
 	// localNodeInfo contains information about this node
 	localNodeInfo NodeInfo
 }
@@ -424,6 +427,33 @@ func (c *ClusterMode) SetNodeToFailed(reason string) error {
 	fmt.Printf("Node marked as failed: %s\n", reason)
 	
 	return nil
+}
+
+// Node represents a node in the cluster
+type Node struct {
+	// ID is the unique identifier for this node
+	ID string
+	
+	// Address is the network address of the node
+	Address string
+}
+
+// Connection defines an interface for network connections
+type Connection interface {
+	// Read reads data from the connection
+	Read(b []byte) (n int, err error)
+	
+	// Write writes data to the connection
+	Write(b []byte) (n int, err error)
+	
+	// Close closes the connection
+	Close() error
+	
+	// SetReadDeadline sets the deadline for future Read calls
+	SetReadDeadline(t time.Time) error
+	
+	// SetWriteDeadline sets the deadline for future Write calls
+	SetWriteDeadline(t time.Time) error
 }
 
 // SetNodeToDegraded transitions the node to Degraded state

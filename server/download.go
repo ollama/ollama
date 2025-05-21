@@ -185,6 +185,14 @@ func (b *blobDownload) Run(ctx context.Context, requestURL *url.URL, opts *regis
 	b.err = b.run(ctx, requestURL, opts)
 }
 
+// minDuration returns the smaller of two time.Duration values
+func minDuration(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func newBackoff(maxBackoff time.Duration) func(ctx context.Context) error {
 	var n int
 	return func(ctx context.Context) error {
@@ -196,7 +204,7 @@ func newBackoff(maxBackoff time.Duration) func(ctx context.Context) error {
 
 		// n^2 backoff timer is a little smoother than the
 		// common choice of 2^n.
-		d := min(time.Duration(n*n)*10*time.Millisecond, maxBackoff)
+		d := minDuration(time.Duration(n*n)*10*time.Millisecond, maxBackoff)
 		// Randomize the delay between 0.5-1.5 x msec, in order
 		// to prevent accidental "thundering herd" problems.
 		d = time.Duration(float64(d) * (rand.Float64() + 0.5))

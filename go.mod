@@ -24,6 +24,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.14
 	github.com/nlpodyssey/gopickle v0.3.0
 	github.com/pdevine/tensor v0.0.0-20240510204454-f88f4562727c
+	github.com/pierrec/lz4/v4 v4.1.8
 	golang.org/x/image v0.22.0
 	golang.org/x/tools v0.30.0
 )

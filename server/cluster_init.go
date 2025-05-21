@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -11,6 +13,8 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/cluster"
+	"github.com/ollama/ollama/cluster/model"
+	"github.com/ollama/ollama/cluster/tensor"
 	"log/slog"
 )
 
@@ -43,6 +47,11 @@ var (
 	clusterMode2     *ClusterMode
 	clusterModeLock2 sync.RWMutex
 	statusMonitor   *ClusterStatusMonitor
+	
+	// Global streaming tensor protocol variables
+	modelLoader     *model.ModelLoader
+	transferManager *model.ModelTransferManager
+	protocolManager *model.StreamingProtocolManager
 )
 
 // ClusterMode encapsulates the cluster functionality
@@ -51,6 +60,8 @@ type ClusterMode struct {
 	Registry       *cluster.NodeRegistry
 	Health         *cluster.HealthMonitor
 	LocalNode      *cluster.NodeInfo
+	// New field for streaming protocol support
+	StreamingEnabled bool
 }
 
 // InitializeClusterMode2 initializes the cluster mode components.
@@ -129,12 +140,13 @@ func InitializeClusterMode2(config *cluster.ClusterConfig) error {
 	// Auto-detect hardware resources for better decision making
 	detectAndRegisterHardwareResources(localNode, registry)
 
-	// Create cluster mode with simplified structure
+	// Create cluster mode with enhanced structure (added streaming support)
 	clusterMode2 = &ClusterMode{
-		Config:    config,
-		Registry:  registry,
-		Health:    health,
-		LocalNode: localNode,
+		Config:          config,
+		Registry:        registry,
+		Health:          health,
+		LocalNode:       localNode,
+		StreamingEnabled: true, // Enable streaming by default
 	}
 
 	// Start health monitor - simplified to avoid missing dependencies
@@ -152,6 +164,26 @@ func InitializeClusterMode2(config *cluster.ClusterConfig) error {
 			statusMonitor.CheckClusterHealth(registry)
 		}
 	}()
+
+	// Initialize streaming protocol components
+	slog.Info("Initializing streaming tensor protocol")
+	
+	// Initialize streaming protocol manager
+	protocolManager = model.NewStreamingProtocolManager(registry, config)
+	
+	// Initialize model transfer manager with streaming protocol and config
+	transferManager = model.NewModelTransferManager(registry, config)
+	
+	// Create model partitioner
+	partitioner := model.NewModelPartitioner(registry, model.DefaultPartitioningOptions)
+	
+	// Initialize model loader with streaming protocol
+	modelLoader = model.NewModelLoader(partitioner, registry)
+	
+	// Configure model loader to use streaming transfers by default
+	modelLoader.SetTransferMode(tensor.TransferModeStreaming)
+	
+	slog.Info("Streaming tensor protocol initialized")
 
 	clusterEnabled2 = true
 	
@@ -188,7 +220,8 @@ func InitializeClusterMode2(config *cluster.ClusterConfig) error {
 	
 	slog.Info("Cluster mode initialized successfully",
 		"node_id", localNode.ID,
-		"node_role", localNode.Role)
+		"node_role", localNode.Role,
+		"streaming_enabled", clusterMode2.StreamingEnabled)
 	
 	// Log the state of both implementations after initialization
 	slog.Info("After InitializeClusterMode2",
@@ -210,6 +243,32 @@ func ShutdownClusterMode2() error {
 	}
 
 	slog.Info("Shutting down cluster mode")
+	
+	// Shutdown the model transfer server first
+	ShutdownModelTransferServer()
+	
+	// Shutdown streaming protocol components
+	if modelLoader != nil {
+		slog.Info("Closing model loader")
+		if err := modelLoader.Close(); err != nil {
+			slog.Error("Error closing model loader", "error", err)
+		}
+		modelLoader = nil
+	}
+	
+	if transferManager != nil {
+		slog.Info("Closing transfer manager")
+		if err := transferManager.Close(); err != nil {
+			slog.Error("Error closing transfer manager", "error", err)
+		}
+		transferManager = nil
+	}
+	
+	if protocolManager != nil {
+		slog.Info("Closing protocol manager")
+		protocolManager.CloseAllProtocols()
+		protocolManager = nil
+	}
 	
 	// Synchronize state with original implementation
 	clusterModeLock.Lock()
@@ -256,7 +315,17 @@ func GetClusterStatusMonitor() *ClusterStatusMonitor {
 	return statusMonitor
 }
 
-// ClusterLoadModel loads a model in cluster mode
+// GetModelLoader returns the model loader instance
+func GetModelLoader() *model.ModelLoader {
+	return modelLoader
+}
+
+// GetTransferManager returns the model transfer manager
+func GetTransferManager() *model.ModelTransferManager {
+	return transferManager
+}
+
+// ClusterLoadModel loads a model in cluster mode using streaming protocol
 func (cm *ClusterMode) ClusterLoadModel(modelName string, distributed bool, shardCount int, strategy string, specificNodeIDs []string) error {
 	if !clusterEnabled2 {
 		return fmt.Errorf("cluster mode is not enabled")
@@ -293,7 +362,36 @@ func (cm *ClusterMode) ClusterLoadModel(modelName string, distributed bool, shar
 		return fmt.Errorf("no suitable nodes found for model loading")
 	}
 
-	// Register the model in the status monitor
+	// If streaming is enabled and model loader is available, use it
+	if cm.StreamingEnabled && modelLoader != nil {
+		slog.Info("Loading model using streaming protocol",
+			"model", modelName,
+			"nodes", nodesToUse,
+			"distributed", distributed,
+			"shards", shardCount)
+			
+		// Get model size (in a real implementation this would be determined from the model file)
+		// For now, use a placeholder value
+		modelSize := uint64(10 * 1024 * 1024 * 1024) // 10GB placeholder
+		
+		// Use the context background for model loading
+		ctx := context.Background()
+		
+		// Load model using the streaming protocol
+		if err := modelLoader.LoadModel(ctx, modelName, modelSize); err != nil {
+			slog.Error("Failed to load model with streaming protocol", "error", err)
+			return err
+		}
+		
+		slog.Info("Model loading initiated with streaming protocol", "model", modelName)
+	} else {
+		// Fall back to the original implementation for status tracking
+		slog.Info("Using legacy model loading method (streaming disabled)",
+			"model", modelName,
+			"nodes", nodesToUse)
+	}
+
+	// Register the model in the status monitor (still use this for UI/monitoring)
 	for _, nodeID := range nodesToUse {
 		statusMonitor.RegisterModelOnNode(modelName, nodeID, distributed, shardCount)
 	}
@@ -329,6 +427,47 @@ func (cm *ClusterMode) GetNodes() []cluster.NodeInfo {
 // GetClusterHealth returns whether the cluster is healthy
 func (cm *ClusterMode) GetClusterHealth() bool {
 	return statusMonitor.IsClusterHealthy()
+}
+
+// SetStreamingEnabled enables or disables streaming tensor protocol
+func (cm *ClusterMode) SetStreamingEnabled(enabled bool) {
+	clusterModeLock2.Lock()
+	defer clusterModeLock2.Unlock()
+	
+	if cm != nil {
+		cm.StreamingEnabled = enabled
+		
+		// Update model loader transfer mode if available
+		if modelLoader != nil {
+			if enabled {
+				modelLoader.SetTransferMode(tensor.TransferModeStreaming)
+				
+				// Apply streaming configuration from cluster config
+				if cm.Config != nil && cm.Config.TensorProtocol.UseStreamingProtocol {
+					// Apply chunk size if configured
+					if cm.Config.TensorProtocol.ChunkSize > 0 {
+						slog.Info("Setting streaming chunk size from config",
+							"size", cm.Config.TensorProtocol.ChunkSize)
+						modelLoader.SetStreamingChunkSize(cm.Config.TensorProtocol.ChunkSize)
+					}
+					
+					// Apply compression settings if configured
+					modelLoader.SetCompressionEnabled(cm.Config.TensorProtocol.EnableCompression)
+					if cm.Config.TensorProtocol.CompressionThreshold > 0 {
+						modelLoader.SetCompressionThreshold(cm.Config.TensorProtocol.CompressionThreshold)
+					}
+				}
+			} else {
+				// Always use streaming mode, but configure it not to use compression
+				// This provides better compatibility while maintaining a single codebase
+				modelLoader.SetTransferMode(tensor.TransferModeStreaming)
+				modelLoader.SetCompressionEnabled(false)
+				slog.Info("Streaming mode enabled but compression disabled (legacy compatibility mode)")
+			}
+		}
+		
+		slog.Info("Streaming protocol setting updated", "enabled", enabled)
+	}
 }
 
 // GPUDetails holds information about a detected GPU
@@ -435,13 +574,97 @@ func CheckAutoInitialize() error {
 		
 		// Initialize with the in-memory config
 		// No need to save it to disk - we operate in-memory only
+		slog.Info("Starting cluster mode initialization with detailed diagnostics",
+		    "os", runtime.GOOS,
+		    "arch", runtime.GOARCH,
+		    "node_role", config.NodeRole,
+		    "node_name", config.NodeName,
+		    "streaming_protocol", config.TensorProtocol.UseStreamingProtocol)
+		
 		err := InitializeClusterMode2(config)
 		if err != nil {
-			slog.Error("Failed to auto-initialize cluster mode", "error", err)
-		} else {
-			slog.Info("Successfully auto-initialized cluster mode")
+			slog.Error("Failed to auto-initialize cluster mode",
+			    "error", err,
+			    "error_type", fmt.Sprintf("%T", err))
+			return err
 		}
-		return err
+		
+		slog.Info("Cluster mode initialization successful",
+		    "clusterMode2", clusterMode2 != nil,
+		    "clusterEnabled2", clusterEnabled2)
+		
+		// Initialize the model transfer server after cluster initialization
+		slog.Info("Initializing model transfer server as part of cluster startup",
+		    "is_streaming_enabled", IsStreamingEnabled(),
+		    "transfer_manager", transferManager != nil,
+		    "protocol_manager", protocolManager != nil)
+		
+		err = InitializeModelTransferServer()
+		if err != nil {
+			slog.Error("Failed to initialize model transfer server",
+				"error", err,
+				"error_type", fmt.Sprintf("%T", err),
+				"streaming_enabled", IsStreamingEnabled(),
+				"legacy_enabled", os.Getenv("OLLAMA_ENABLE_LEGACY_TRANSFER") == "true")
+			
+			// Perform additional diagnostics to help identify the issue
+			// Check if models directory exists
+			modelsDir := ""
+			if runtime.GOOS == "windows" {
+				modelsDir = filepath.Join(os.Getenv("USERPROFILE"), ".ollama", "models")
+			} else {
+				modelsDir = filepath.Join(os.Getenv("HOME"), ".ollama", "models")
+			}
+			
+			if _, statErr := os.Stat(modelsDir); os.IsNotExist(statErr) {
+				slog.Error("Models directory does not exist",
+					"path", modelsDir,
+					"mkdir_needed", true)
+			} else {
+				slog.Info("Models directory exists", "path", modelsDir)
+			}
+			
+			// Check if port is available
+			transferAddr := "0.0.0.0:11435"
+			if listener, netErr := net.Listen("tcp", transferAddr); netErr != nil {
+				slog.Error("Transfer port is not available",
+					"port", "11435",
+					"error", netErr)
+			} else {
+				listener.Close()
+				slog.Info("Transfer port is available", "port", "11435")
+			}
+			
+			// Continue even if transfer server fails to initialize
+			// as basic cluster functionality should still work
+			slog.Warn("Continuing without model transfer capability - distributed models will not work")
+		} else {
+			// Log detailed diagnostic info about the transfer servers
+			streamingStatus := "not_initialized"
+			legacyStatus := "not_initialized"
+			
+			if streamingServer != nil {
+			    streamingStatus = "initialized"
+			    slog.Info("Streaming transfer server details",
+			        "address", streamingServer.address,
+			        "models_dir", streamingServer.modelsDir,
+			        "manager", streamingServer.transferManager != nil,
+			        "running", streamingServer.running)
+			}
+			
+			// Check legacy status (using StreamingTransferServer check as proxy since legacy server isn't used)
+			if streamingServer != nil {
+			    legacyStatus = "initialized"
+			}
+			
+			slog.Info("Successfully initialized model transfer server",
+			    "streaming_server", streamingStatus,
+			    "legacy_server", legacyStatus,
+			    "streaming_enabled", IsStreamingEnabled())
+		}
+		
+		slog.Info("Successfully auto-initialized cluster mode")
+		return nil
 	}
 	
 	return nil

@@ -2,371 +2,348 @@ package tensor
 
 import (
 	"bytes"
-	"compress/gzip"
-	"compress/lzw"
-	"compress/zlib"
+	"compress/flate"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"math"
 	"sync"
+	"time"
+
+	"github.com/pierrec/lz4/v4"
 )
 
-// CompressionType represents the algorithm used for tensor compression
-type CompressionType uint8
+// CompressionConfig defines settings for tensor compression
+type CompressionConfig struct {
+	// DefaultType is the default compression algorithm to use
+	DefaultType CompressionType
 
-const (
-	// CompressionNone indicates no compression
-	CompressionNone CompressionType = iota
-	
-	// CompressionGzip uses gzip compression
-	CompressionGzip
-	
-	// CompressionZlib uses zlib compression
-	CompressionZlib
-	
-	// CompressionLZW uses LZW compression
-	CompressionLZW
-	
-	// CompressionFP16 compresses 32-bit floats to 16-bit (lossy)
-	CompressionFP16
-	
-	// CompressionQuantized uses quantization (lossy)
-	CompressionQuantized
-)
+	// MinSizeForCompression is the minimum tensor size to apply compression
+	MinSizeForCompression uint64
 
-// CompressionLevel defines how aggressively to compress
-type CompressionLevel int
+	// AdaptiveThreshold enables automatic selection of compression algorithm
+	AdaptiveThreshold bool
 
-const (
-	// CompressLevelNone applies no compression
-	CompressLevelNone CompressionLevel = 0
-	
-	// CompressLevelFast prioritizes speed over compression ratio
-	CompressLevelFast CompressionLevel = 1
-	
-	// CompressLevelDefault provides a balance of speed and compression
-	CompressLevelDefault CompressionLevel = 5
-	
-	// CompressLevelMax maximizes compression ratio at the cost of speed
-	CompressLevelMax CompressionLevel = 9
-)
+	// LZ4Level controls the LZ4 compression level (0-9)
+	LZ4Level int
 
-// CompressionOptions configures tensor compression
-type CompressionOptions struct {
-	// Type is the compression algorithm to use
-	Type CompressionType
-	
-	// Level controls the compression-speed tradeoff
-	Level CompressionLevel
-	
-	// ReuseBuffers enables buffer reuse for better performance
-	ReuseBuffers bool
+	// DeflateLevel controls the Deflate compression level (1-9)
+	DeflateLevel int
+
+	// CompressionCache enables caching of compression results
+	CompressionCache bool
+
+	// MaxCacheSize is the maximum number of entries in the compression cache
+	MaxCacheSize int
 }
 
-// DefaultCompressionOptions provides sensible defaults
-var DefaultCompressionOptions = CompressionOptions{
-	Type:         CompressionGzip,
-	Level:        CompressLevelDefault,
-	ReuseBuffers: true,
-}
-
-// Compressor handles tensor compression and decompression
+// Compressor provides methods for compressing and decompressing tensor data
 type Compressor struct {
-	// options stores the current compression settings
-	options CompressionOptions
-	
-	// bufferPool maintains reusable buffers to reduce allocations
-	bufferPool sync.Pool
-}
-// NewCompressor creates a new tensor compressor
-func NewCompressor(options CompressionOptions) *Compressor {
-	compressor := &Compressor{
-		options: options,
-	}
-	
-	if options.ReuseBuffers {
-		compressor.bufferPool = sync.Pool{
-			New: func() interface{} {
-				return new(bytes.Buffer)
-			},
-		}
-	}
-	
-	return compressor
+	// config holds the compression configuration
+	config CompressionConfig
+
+	// cache stores recently compressed/decompressed data
+	cache map[string][]byte
+
+	// cacheMutex protects the cache map
+	cacheMutex sync.RWMutex
 }
 
-// Compress compresses tensor data using the configured algorithm
-func (c *Compressor) Compress(data []byte) ([]byte, error) {
-	if c.options.Type == CompressionNone || len(data) == 0 {
-		return data, nil
+// DefaultCompressionConfig returns a default compression configuration
+func DefaultCompressionConfig() CompressionConfig {
+	return CompressionConfig{
+		DefaultType:           CompressionLZ4,
+		MinSizeForCompression: 4 * 1024, // 4KB
+		AdaptiveThreshold:     true,
+		LZ4Level:              6, // Medium compression
+		DeflateLevel:          6, // Medium compression
+		CompressionCache:      true,
+		MaxCacheSize:          1000,
 	}
-	
-	var buf *bytes.Buffer
-	if c.options.ReuseBuffers {
-		buf = c.bufferPool.Get().(*bytes.Buffer)
-		buf.Reset()
-		defer c.bufferPool.Put(buf)
-	} else {
-		buf = &bytes.Buffer{}
-	}
-	
-	var writer io.WriteCloser
-	var err error
-	
-	switch c.options.Type {
-	case CompressionGzip:
-		writer, err = gzip.NewWriterLevel(buf, int(c.options.Level))
-		if err != nil {
-			return nil, fmt.Errorf("gzip compression error: %w", err)
-		}
-	case CompressionZlib:
-		writer, err = zlib.NewWriterLevel(buf, int(c.options.Level))
-		if err != nil {
-			return nil, fmt.Errorf("zlib compression error: %w", err)
-		}
-	case CompressionLZW:
-		writer = lzw.NewWriter(buf, lzw.MSB, 8)
-	case CompressionFP16:
-		return c.compressFP16(data)
-	case CompressionQuantized:
-		return c.compressQuantized(data)
-	default:
-		return nil, fmt.Errorf("unsupported compression type: %d", c.options.Type)
-	}
-	
-	// Write data and close
-	if _, err := writer.Write(data); err != nil {
-		writer.Close()
-		return nil, fmt.Errorf("compression write error: %w", err)
-	}
-	
-	if err := writer.Close(); err != nil {
-		return nil, fmt.Errorf("compression close error: %w", err)
-	}
-	
-	return buf.Bytes(), nil
 }
 
-// Decompress decompresses tensor data
-func (c *Compressor) Decompress(data []byte, compressionType CompressionType) ([]byte, error) {
-	if compressionType == CompressionNone || len(data) == 0 {
+// NewCompressor creates a new tensor compressor with the given configuration
+func NewCompressor(config CompressionConfig) *Compressor {
+	return &Compressor{
+		config: config,
+		cache:  make(map[string][]byte),
+	}
+}
+
+// Compress compresses the data using the specified compression type
+func (c *Compressor) Compress(data []byte, compressionType CompressionType) ([]byte, error) {
+	// If data is too small, skip compression
+	if uint64(len(data)) < c.config.MinSizeForCompression {
 		return data, nil
 	}
-	
-	var reader io.ReadCloser
-	var err error
-	
-	buf := bytes.NewReader(data)
-	
+
+	// Handle each compression type
 	switch compressionType {
-	case CompressionGzip:
-		reader, err = gzip.NewReader(buf)
-		if err != nil {
-			return nil, fmt.Errorf("gzip decompression error: %w", err)
-		}
-	case CompressionZlib:
-		reader, err = zlib.NewReader(buf)
-		if err != nil {
-			return nil, fmt.Errorf("zlib decompression error: %w", err)
-		}
-	case CompressionLZW:
-		reader = lzw.NewReader(buf, lzw.MSB, 8)
-	case CompressionFP16:
-		return c.decompressFP16(data)
-	case CompressionQuantized:
-		return c.decompressQuantized(data)
+	case CompressionNone:
+		return data, nil
+
+	case CompressionLZ4:
+		return c.compressLZ4(data)
+
+	case CompressionDeflate:
+		return c.compressDeflate(data)
+
 	default:
 		return nil, fmt.Errorf("unsupported compression type: %d", compressionType)
 	}
-	
-	// Read decompressed data and close
-	var result bytes.Buffer
-	if _, err := io.Copy(&result, reader); err != nil {
-		reader.Close()
-		return nil, fmt.Errorf("decompression read error: %w", err)
-	}
-	
-	if err := reader.Close(); err != nil {
-		return nil, fmt.Errorf("decompression close error: %w", err)
-	}
-	
-	return result.Bytes(), nil
 }
 
-// compressFP16 converts float32 tensors to float16 (half precision)
-func (c *Compressor) compressFP16(data []byte) ([]byte, error) {
-	// Simple implementation that assumes data is a slice of float32
-	// In a real implementation, this would use proper float16 conversion
-	if len(data)%4 != 0 {
-		return nil, fmt.Errorf("data length (%d) not divisible by 4, not a valid float32 tensor", len(data))
+// Decompress decompresses the data using the specified compression type
+func (c *Compressor) Decompress(compressed []byte, compressionType CompressionType, originalSize uint64) ([]byte, error) {
+	// If no compression was applied, return the data as-is
+	if compressionType == CompressionNone {
+		return compressed, nil
 	}
+
+	// Handle each compression type
+	switch compressionType {
+	case CompressionLZ4:
+		return c.decompressLZ4(compressed, originalSize)
+
+	case CompressionDeflate:
+		return c.decompressDeflate(compressed, originalSize)
+
+	default:
+		return nil, fmt.Errorf("unsupported compression type: %d", compressionType)
+	}
+}
+
+// compressLZ4 compresses data using LZ4 algorithm
+func (c *Compressor) compressLZ4(data []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	writer := lz4.NewWriter(&buf)
+
+	// Set compression level
+	writer.Apply(lz4.CompressionLevelOption(lz4.CompressionLevel(c.config.LZ4Level)))
+
+	// Write the compressed data
+	if _, err := writer.Write(data); err != nil {
+		return nil, fmt.Errorf("lz4 compression write error: %w", err)
+	}
+
+	// Close the writer to flush any remaining data
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("lz4 compression close error: %w", err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+// decompressLZ4 decompresses LZ4-compressed data
+func (c *Compressor) decompressLZ4(compressed []byte, originalSize uint64) ([]byte, error) {
+	reader := lz4.NewReader(bytes.NewReader(compressed))
 	
-	// Calculate output size (half the input size since float16 is half the size of float32)
-	outputSize := len(data) / 2
-	result := make([]byte, outputSize)
-	
-	// Example implementation (not accurate float16 conversion)
-	// In reality, would use a proper IEEE 754 half-precision implementation
-	for i := 0; i < len(data); i += 4 {
-		// Extract float32 bits (assuming little endian)
-		// Not used in this simplified implementation
-		// uint32(data[i]) | uint32(data[i+1])<<8 | uint32(data[i+2])<<16 | uint32(data[i+3])<<24
-		
-		// Convert to float16 (simplified)
-		// Real implementation would properly handle sign, exponent, and mantissa
-		outIdx := i / 2
-		result[outIdx] = data[i]
-		if outIdx+1 < len(result) {
-			result[outIdx+1] = data[i+1]
+	// If we know the original size, preallocate the buffer
+	var decompressed []byte
+	if originalSize > 0 {
+		decompressed = make([]byte, originalSize)
+		_, err := io.ReadFull(reader, decompressed)
+		if err != nil && err != io.EOF {
+			return nil, fmt.Errorf("lz4 decompression read error: %w", err)
+		}
+	} else {
+		// Otherwise, read until EOF
+		var err error
+		decompressed, err = ioutil.ReadAll(reader)
+		if err != nil {
+			return nil, fmt.Errorf("lz4 decompression read error: %w", err)
 		}
 	}
-	
-	return result, nil
-}
-// decompressFP16 converts float16 tensors back to float32
-func (c *Compressor) decompressFP16(data []byte) ([]byte, error) {
-	// Simple implementation that assumes data is a slice of float16
-	if len(data)%2 != 0 {
-		return nil, fmt.Errorf("data length (%d) not divisible by 2, not a valid float16 tensor", len(data))
-	}
-	
-	// Calculate output size (double the input size since float32 is twice the size of float16)
-	outputSize := len(data) * 2
-	result := make([]byte, outputSize)
-	
-	// Example implementation (not accurate float16 conversion)
-	// In reality, would use a proper IEEE 754 half-precision implementation
-	for i := 0; i < len(data); i += 2 {
-		// Get float16 bits
-		inIdx := i
-		
-		// Convert to float32 (simplified)
-		// Real implementation would properly handle sign, exponent, and mantissa
-		outIdx := i * 2
-		result[outIdx] = data[inIdx]
-		if inIdx+1 < len(data) {
-			result[outIdx+1] = data[inIdx+1]
-		}
-		result[outIdx+2] = 0 // Zero high bits for simplicity
-		result[outIdx+3] = 0 // In a real impl, these would be computed from float16
-	}
-	
-	return result, nil
+
+	return decompressed, nil
 }
 
-// compressQuantized uses quantization to compress floating point tensors
-func (c *Compressor) compressQuantized(data []byte) ([]byte, error) {
-	// Simple implementation that assumes data is a slice of float32
-	// In a real implementation, this would be a proper quantization algorithm
-	// such as 8-bit or 4-bit integer quantization
-
-	if len(data)%4 != 0 {
-		return nil, fmt.Errorf("data length (%d) not divisible by 4, not a valid float32 tensor", len(data))
-	}
-	
-	// For simplicity, we'll implement an 8-bit quantization (4x compression)
-	outputSize := len(data) / 4
-	result := make([]byte, outputSize + 8) // Extra 8 bytes for scale and zero point
-	
-	// Example quantization (simplified)
-	// 1. Find min/max values
-	// 2. Compute scale factor and zero point
-	// 3. Quantize values to 8-bit integers
-	
-	// Dummy implementation for illustration
-	// In reality, we'd calculate proper min/max by iterating over the floats
-	// These values are just for reference but not used in the simplified implementation
-	// float32(0.01)  // Arbitrary scale factor
-	// byte(128)      // Middle of uint8 range
-	
-	// Store scale factor and zero point at the beginning
-	// (simplified - a real implementation would use a proper header)
-	copy(result[:4], []byte{0, 0, 0, 0}) // Placeholder for scale
-	copy(result[4:8], []byte{128, 0, 0, 0}) // Placeholder for zero point (128 is middle of uint8 range)
-	
-	// Perform quantization
-	for i := 0; i < len(data); i += 4 {
-		if i/4 + 8 < len(result) {
-			// Arbitrary quantization value for illustration
-			result[i/4 + 8] = data[i]
-		}
-	}
-	
-	fmt.Printf("Compressed %d bytes to %d bytes using quantization\n", len(data), len(result))
-	
-	return result, nil
-}
-
-// decompressQuantized reverses the quantization process
-func (c *Compressor) decompressQuantized(data []byte) ([]byte, error) {
-	if len(data) < 8 {
-		return nil, fmt.Errorf("invalid quantized data (too short)")
-	}
-	
-	// Extract scale and zero point
-	// (simplified - a real implementation would parse a proper header)
-	// Not used in this simplified implementation
-	// data[4]
-	
-	// Calculate output size
-	outputSize := (len(data) - 8) * 4
-	result := make([]byte, outputSize)
-	
-	// Perform dequantization
-	for i := 8; i < len(data); i++ {
-		outIdx := (i - 8) * 4
-		
-		// Simple dequantization (just copy bytes for illustration)
-		// In a real implementation, we'd compute actual float32 values
-		if outIdx < len(result) {
-			result[outIdx] = data[i]
-			if outIdx+1 < len(result) {
-				result[outIdx+1] = 0
-			}
-			if outIdx+2 < len(result) {
-				result[outIdx+2] = 0
-			}
-			if outIdx+3 < len(result) {
-				result[outIdx+3] = 0
-			}
-		}
-	}
-	
-	return result, nil
-}
-
-// CompressionStats contains statistics about compression
-type CompressionStats struct {
-	OriginalSize      uint64
-	CompressedSize    uint64
-	CompressionRatio  float64
-	Algorithm         CompressionType
-	CompressionTimeMs int64
-}
-
-// EstimateCompressionRatio estimates the compression ratio for a given tensor
-func (c *Compressor) EstimateCompressionRatio(sampleData []byte) (float64, error) {
-	if len(sampleData) == 0 {
-		return 1.0, nil
-	}
-	
-	compressed, err := c.Compress(sampleData)
+// compressDeflate compresses data using Deflate algorithm
+func (c *Compressor) compressDeflate(data []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	writer, err := flate.NewWriter(&buf, c.config.DeflateLevel)
 	if err != nil {
-		return 0, err
+		return nil, fmt.Errorf("deflate compression initialization error: %w", err)
 	}
-	
-	if len(compressed) == 0 {
-		return 1.0, nil
+
+	// Write the compressed data
+	if _, err := writer.Write(data); err != nil {
+		return nil, fmt.Errorf("deflate compression write error: %w", err)
 	}
-	
-	return float64(len(sampleData)) / float64(len(compressed)), nil
+
+	// Close the writer to flush any remaining data
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("deflate compression close error: %w", err)
+	}
+
+	return buf.Bytes(), nil
 }
 
-// SetOptions updates the compressor options
-func (c *Compressor) SetOptions(options CompressionOptions) {
-	c.options = options
+// decompressDeflate decompresses Deflate-compressed data
+func (c *Compressor) decompressDeflate(compressed []byte, originalSize uint64) ([]byte, error) {
+	reader := flate.NewReader(bytes.NewReader(compressed))
+	defer reader.Close()
+
+	// If we know the original size, preallocate the buffer
+	var decompressed []byte
+	if originalSize > 0 {
+		decompressed = make([]byte, originalSize)
+		_, err := io.ReadFull(reader, decompressed)
+		if err != nil && err != io.EOF {
+			return nil, fmt.Errorf("deflate decompression read error: %w", err)
+		}
+	} else {
+		// Otherwise, read until EOF
+		var err error
+		decompressed, err = ioutil.ReadAll(reader)
+		if err != nil {
+			return nil, fmt.Errorf("deflate decompression read error: %w", err)
+		}
+	}
+
+	return decompressed, nil
 }
 
-// GetOptions returns the current compressor options
-func (c *Compressor) GetOptions() CompressionOptions {
-	return c.options
+// SelectBestCompression analyzes the data and selects the best compression algorithm
+func (c *Compressor) SelectBestCompression(data []byte) CompressionType {
+	// If data is too small, don't compress
+	if uint64(len(data)) < c.config.MinSizeForCompression {
+		return CompressionNone
+	}
+
+	// If adaptive threshold is disabled, use the default
+	if !c.config.AdaptiveThreshold {
+		return c.config.DefaultType
+	}
+
+	// Sample the data to determine compressibility
+	sampleSize := 4 * 1024 // 4KB sample
+	if len(data) < sampleSize {
+		sampleSize = len(data)
+	}
+
+	// Take a sample from the beginning of the data
+	sample := data[:sampleSize]
+
+	// Check entropy of the sample
+	entropy := calculateEntropy(sample)
+
+	// High entropy (>7.0) indicates less compressible data
+	// Medium entropy (5.0-7.0) indicates moderately compressible data
+	// Low entropy (<5.0) indicates highly compressible data
+	if entropy > 7.0 {
+		// For high entropy data, LZ4 is usually more efficient
+		return CompressionLZ4
+	} else if entropy < 5.0 {
+		// For low entropy data, Deflate often achieves better compression
+		return CompressionDeflate
+	} else {
+		// For medium entropy, use the default
+		return c.config.DefaultType
+	}
+}
+
+// calculateEntropy calculates Shannon entropy of the data
+func calculateEntropy(data []byte) float64 {
+	if len(data) == 0 {
+		return 0.0
+	}
+
+	// Count frequency of each byte value
+	counts := make(map[byte]int)
+	for _, b := range data {
+		counts[b]++
+	}
+
+	// Calculate entropy
+	entropy := 0.0
+	size := float64(len(data))
+	for _, count := range counts {
+		p := float64(count) / size
+		entropy -= p * math.Log2(p)
+	}
+
+	return entropy
+}
+
+// CompressionRatio returns the ratio of compressed size to original size
+func (c *Compressor) CompressionRatio(original, compressed []byte) float64 {
+	if len(original) == 0 {
+		return 1.0
+	}
+	return float64(len(compressed)) / float64(len(original))
+}
+
+// IsBeneficial determines if compression is beneficial for the given data
+func (c *Compressor) IsBeneficial(original, compressed []byte) bool {
+	// If compression actually increased the size, it's not beneficial
+	return len(compressed) < len(original)
+}
+
+// CompressWithStats compresses data and returns compression statistics
+func (c *Compressor) CompressWithStats(data []byte, compressionType CompressionType) ([]byte, map[string]interface{}, error) {
+	// Start with the requested compression type
+	effectiveType := compressionType
+	
+	// If auto-select is requested, determine the best type
+	if compressionType == CompressionType(255) { // Special value for auto-select
+		effectiveType = c.SelectBestCompression(data)
+	}
+	
+	// Compress the data
+	startTime := time.Now()
+	compressed, err := c.Compress(data, effectiveType)
+	if err != nil {
+		return nil, nil, err
+	}
+	duration := time.Since(startTime)
+	
+	// Check if compression is beneficial
+	isBeneficial := c.IsBeneficial(data, compressed)
+	
+	// If not beneficial, use uncompressed data
+	if !isBeneficial {
+		effectiveType = CompressionNone
+		compressed = data
+	}
+	
+	// Prepare statistics
+	ratio := c.CompressionRatio(data, compressed)
+	stats := map[string]interface{}{
+		"original_size":     len(data),
+		"compressed_size":   len(compressed),
+		"compression_type":  effectiveType,
+		"compression_ratio": ratio,
+		"space_saving":      1.0 - ratio,
+		"beneficial":        isBeneficial,
+		"duration_ms":       duration.Milliseconds(),
+	}
+	
+	return compressed, stats, nil
+}
+
+// ClearCache clears the compression cache
+func (c *Compressor) ClearCache() {
+	c.cacheMutex.Lock()
+	defer c.cacheMutex.Unlock()
+	
+	c.cache = make(map[string][]byte)
+}
+
+// GetCacheStats returns statistics about the compression cache
+func (c *Compressor) GetCacheStats() map[string]interface{} {
+	c.cacheMutex.RLock()
+	defer c.cacheMutex.RUnlock()
+	
+	totalSize := 0
+	for _, data := range c.cache {
+		totalSize += len(data)
+	}
+	
+	return map[string]interface{}{
+		"entries":     len(c.cache),
+		"total_bytes": totalSize,
+		"enabled":     c.config.CompressionCache,
+		"max_entries": c.config.MaxCacheSize,
+	}
 }

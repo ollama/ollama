@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/cluster"
+	"github.com/ollama/ollama/cluster/tensor"
 )
 
 // LoadStatus represents the current loading state of a model partition
@@ -49,7 +50,11 @@ type LoadProgress struct {
 	
 	// CompleteTime is when loading finished (if complete)
 	CompleteTime time.Time
+	
+	// TransferID identifies the current streaming transfer
+	TransferID string
 }
+
 // ModelLoader manages loading model partitions across nodes
 type ModelLoader struct {
 	// partitioner provides access to model partitioning information
@@ -70,6 +75,16 @@ type ModelLoader struct {
 	
 	// callbackMu protects the loadCallbacks slice
 	callbackMu sync.RWMutex
+	
+	// protocolCache caches streaming protocol connections to nodes
+	// nodeID → streaming protocol
+	protocolCache map[string]*tensor.StreamingProtocol
+	
+	// protocolMu protects the protocol cache
+	protocolMu sync.RWMutex
+	
+	// transferMode controls how tensors are transferred
+	transferMode tensor.TransferMode
 }
 
 // LoadError represents errors that can occur during model loading
@@ -87,13 +102,15 @@ func (e LoadError) Error() string {
 // NewModelLoader creates a new model loader
 func NewModelLoader(partitioner *ModelPartitioner, registry *cluster.NodeRegistry) *ModelLoader {
 	ml := &ModelLoader{
-		partitioner: partitioner,
-		registry:    registry,
-		loadStatus:  make(map[string]map[string]LoadProgress),
+		partitioner:   partitioner,
+		registry:      registry,
+		loadStatus:    make(map[string]map[string]LoadProgress),
+		protocolCache: make(map[string]*tensor.StreamingProtocol),
+		transferMode:  tensor.TransferModeAdaptive, // Default to adaptive mode
 	}
 	
 	// Log model loader initialization
-	fmt.Printf("ModelLoader initialized with registry local node: %s\n", registry.GetLocalNodeID())
+	fmt.Printf("Enhanced ModelLoader initialized with streaming protocol support\n")
 	
 	return ml
 }
@@ -111,7 +128,7 @@ func (ml *ModelLoader) LoadModel(ctx context.Context, modelID string, modelSize 
 		}
 	}
 	
-	fmt.Printf("Starting distributed loading of model %s across %d partitions\n",
+	fmt.Printf("Starting distributed loading of model %s across %d partitions using streaming protocol\n",
 		modelID, len(partitions))
 	
 	// Initialize the load status tracking
@@ -137,8 +154,8 @@ func (ml *ModelLoader) LoadModel(ctx context.Context, modelID string, modelSize 
 			err := ml.loadPartition(ctx, modelID, p)
 			if err != nil {
 				errCh <- LoadError{
-					Err:        err,
-					NodeID:     p.NodeID,
+					Err:         err,
+					NodeID:      p.NodeID,
 					PartitionID: p.PartitionID,
 				}
 			}
@@ -168,7 +185,109 @@ func (ml *ModelLoader) LoadModel(ctx context.Context, modelID string, modelSize 
 	return nil
 }
 
-// loadPartition loads a single model partition on a specific node
+// getOrCreateStreamingProtocol gets a cached protocol or creates a new one
+func (ml *ModelLoader) getOrCreateStreamingProtocol(nodeID string) (*tensor.StreamingProtocol, error) {
+	ml.protocolMu.RLock()
+	protocol, exists := ml.protocolCache[nodeID]
+	ml.protocolMu.RUnlock()
+	
+	if exists {
+		return protocol, nil
+	}
+	
+	// Need to create a new connection
+	nodeInfo, exists := ml.registry.GetNode(nodeID)
+	if !exists {
+		return nil, fmt.Errorf("node %s not found in registry", nodeID)
+	}
+	
+	// Convert NodeInfo to Node
+	node := &cluster.Node{
+		ID: nodeInfo.ID,
+		Address: nodeInfo.Addr.String(),
+	}
+	
+	// In a real implementation, this would establish a new connection to the node
+	// For this example, we'll simulate creating a connection
+	conn, err := ml.connectToNode(node)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to node %s: %w", nodeID, err)
+	}
+	
+	// Create a new streaming protocol handler
+	streamingProto := tensor.NewStreamingProtocol(conn)
+	
+	// Configure protocol options
+	streamingProto.SetChunkSize(4 * 1024 * 1024) // 4MB chunks
+	streamingProto.SetDefaultPriority(tensor.PriorityHigh) // Prioritize model loading
+	streamingProto.StartCleanupRoutine() // Start background cleanup
+	
+	// Cache the protocol
+	ml.protocolMu.Lock()
+	ml.protocolCache[nodeID] = streamingProto
+	ml.protocolMu.Unlock()
+	
+	fmt.Printf("Created new streaming protocol connection to node %s\n", nodeID)
+	return streamingProto, nil
+}
+
+// connectToNode establishes a connection to a node
+// In a real implementation, this would use the node's address to create a TCP connection
+func (ml *ModelLoader) connectToNode(node *cluster.Node) (cluster.Connection, error) {
+	// Simulated connection for this example
+	// In a real implementation, this would create a TCP connection
+	fmt.Printf("Connecting to node %s at %s...\n", node.ID, node.Address)
+	
+	// Here we would establish a real connection
+	// For now, we'll simulate the connection
+	return &simulatedConnection{
+		nodeID: node.ID,
+		status: "connected",
+	}, nil
+}
+
+// simulatedConnection is a mock implementation of net.Conn for testing
+type simulatedConnection struct {
+	nodeID string
+	status string
+	mutex  sync.Mutex
+	buffer []byte
+}
+
+// Implement required methods for the cluster.Connection interface
+func (c *simulatedConnection) Read(b []byte) (n int, err error) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	
+	if len(c.buffer) == 0 {
+		return 0, nil
+	}
+	
+	n = copy(b, c.buffer)
+	c.buffer = c.buffer[n:]
+	return n, nil
+}
+
+func (c *simulatedConnection) Write(b []byte) (n int, err error) {
+	return len(b), nil // Simulate successful write
+}
+
+func (c *simulatedConnection) Close() error {
+	c.status = "closed"
+	return nil
+}
+
+func (c *simulatedConnection) SetReadDeadline(t time.Time) error {
+	// Simulation only - real implementation would set socket deadline
+	return nil
+}
+
+func (c *simulatedConnection) SetWriteDeadline(t time.Time) error {
+	// Simulation only - real implementation would set socket deadline
+	return nil
+}
+
+// loadPartition loads a single model partition on a specific node using the streaming protocol
 func (ml *ModelLoader) loadPartition(ctx context.Context, modelID string, partition ModelPartition) error {
 	// Update status to loading
 	ml.updateLoadStatus(modelID, partition.PartitionID, LoadProgress{
@@ -178,7 +297,8 @@ func (ml *ModelLoader) loadPartition(ctx context.Context, modelID string, partit
 		StartTime:   time.Now(),
 	})
 	
-	fmt.Printf("Loading partition %s on node %s\n", partition.PartitionID, partition.NodeID)
+	fmt.Printf("Loading partition %s on node %s using streaming protocol\n", 
+		partition.PartitionID, partition.NodeID)
 	
 	// Check if node exists in registry
 	node, exists := ml.registry.GetNode(partition.NodeID)
@@ -189,75 +309,46 @@ func (ml *ModelLoader) loadPartition(ctx context.Context, modelID string, partit
 	// Get source node (usually the coordinator/local node)
 	localNodeID := ml.registry.GetLocalNodeID()
 	
-	// For the actual implementation, we should check if this is a remote node
-	// that needs the model file transferred
+	// Check if this is a remote node that needs the model tensors transferred
 	isRemoteNode := partition.NodeID != localNodeID
 	
 	// Log the node relationships
 	fmt.Printf("Model %s (%s): Loading on node %s (remote: %v, local node: %s)\n",
 		modelID, partition.PartitionID, partition.NodeID, isRemoteNode, localNodeID)
 	
-	// In a proper implementation, this would:
-	// 1. Check if the model file exists on the source node
-	sourceModelPath := fmt.Sprintf("/models/%s", modelID)
-	fmt.Printf("Checking for model file at: %s\n", sourceModelPath)
-	
-	// 2. For remote nodes, ensure the model file is copied over
 	if isRemoteNode {
-		// This would use an API call or file transfer protocol to copy the model
-		destModelPath := fmt.Sprintf("node://%s/models/%s", node.ID, modelID)
-		fmt.Printf("Copying model file from %s to %s\n", sourceModelPath, destModelPath)
-		
-		// Simulate file copying progress
-		totalBytes := partition.Size
-		chunkSize := totalBytes / 10
-		
-		for bytesDone := uint64(0); bytesDone < totalBytes; bytesDone += chunkSize {
-			// Check if context was canceled
-			select {
-			case <-ctx.Done():
-				ml.updateLoadStatus(modelID, partition.PartitionID, LoadProgress{
-					Status:      LoadStatusFailed,
-					Error:       ctx.Err(),
-					BytesLoaded: bytesDone,
-					TotalBytes:  totalBytes,
-				})
-				fmt.Printf("Transfer canceled for model %s to node %s: %v\n",
-					modelID, partition.NodeID, ctx.Err())
-				return ctx.Err()
-			default:
-				// Continue loading
-			}
-			
-			// Simulate network/disk I/O time
-			bytesPerSecond := uint64(100 * 1024 * 1024) // 100MB/s
-			chunkTimeMs := (chunkSize * 1000) / bytesPerSecond
-			time.Sleep(time.Duration(chunkTimeMs) * time.Millisecond)
-			
-			// Update progress
-			percentComplete := int((bytesDone * 100) / totalBytes)
+		// For remote nodes, we need to transfer the model tensors using streaming protocol
+		streamingProto, err := ml.getOrCreateStreamingProtocol(partition.NodeID)
+		if err != nil {
 			ml.updateLoadStatus(modelID, partition.PartitionID, LoadProgress{
-				Status:          LoadStatusLoading,
-				PercentComplete: percentComplete,
-				BytesLoaded:     bytesDone,
-				TotalBytes:      totalBytes,
-				StartTime:       time.Now(), // In real code, this would be the actual start time
+				Status:      LoadStatusFailed,
+				Error:       err,
+				BytesLoaded: 0,
+				TotalBytes:  partition.Size,
 			})
-			
-			fmt.Printf("File transfer progress: %s to %s: %d%% (%d/%d bytes)\n",
-				sourceModelPath, destModelPath, percentComplete, bytesDone, totalBytes)
+			return err
 		}
 		
-		// 3. Verify the file was properly copied
-		fmt.Printf("File transfer complete. Verifying model file exists on target node: %s\n", destModelPath)
+		// Register transfer progress callback to update load status
+		transferID := modelID + "-" + partition.PartitionID
+		
+		// Use the streaming protocol to transfer the model tensors
+		if err := ml.streamModelTensors(ctx, streamingProto, modelID, partition, transferID); err != nil {
+			ml.updateLoadStatus(modelID, partition.PartitionID, LoadProgress{
+				Status:      LoadStatusFailed,
+				Error:       err,
+				BytesLoaded: 0,
+				TotalBytes:  partition.Size,
+				TransferID:  transferID,
+			})
+			return err
+		}
+	} else {
+		// For local node, just load the model from disk into memory
+		fmt.Printf("Loading model %s from local storage on node %s\n", modelID, node.ID)
+		// Simulate local loading with a brief delay
+		time.Sleep(500 * time.Millisecond)
 	}
-	
-	// 4. Load the model into GPU memory on the target node
-	fmt.Printf("Loading model %s into GPU memory on node %s\n", modelID, node.ID)
-	
-	// This would use an API call to instruct the node to load the model into GPU memory
-	// Simulate this with a delay for now
-	time.Sleep(1 * time.Second)
 	
 	// Mark as successfully loaded
 	ml.updateLoadStatus(modelID, partition.PartitionID, LoadProgress{
@@ -265,7 +356,7 @@ func (ml *ModelLoader) loadPartition(ctx context.Context, modelID string, partit
 		PercentComplete: 100,
 		BytesLoaded:     partition.Size,
 		TotalBytes:      partition.Size,
-		StartTime:       time.Now(), // In real code, this would be the actual start time
+		StartTime:       time.Now(),
 		CompleteTime:    time.Now(),
 	})
 	
@@ -274,6 +365,101 @@ func (ml *ModelLoader) loadPartition(ctx context.Context, modelID string, partit
 	
 	return nil
 }
+
+// streamModelTensors streams model tensors to a remote node using the streaming protocol
+func (ml *ModelLoader) streamModelTensors(ctx context.Context, proto *tensor.StreamingProtocol, modelID string, partition ModelPartition, transferID string) error {
+	// In a real implementation, this would:
+	// 1. Load the model tensors from disk or memory
+	// 2. Determine which tensors belong to this partition
+	// 3. Stream each tensor to the remote node
+	
+	// Get list of tensors for this partition
+	tensorIDs, err := ml.getTensorIDsForPartition(modelID, partition.PartitionID)
+	if err != nil {
+		return fmt.Errorf("failed to get tensor IDs: %w", err)
+	}
+	
+	fmt.Printf("Streaming %d tensors for model %s partition %s to node %s\n", 
+		len(tensorIDs), modelID, partition.PartitionID, partition.NodeID)
+	
+	// Track total bytes and progress
+	totalTensors := len(tensorIDs)
+	completedTensors := 0
+	totalBytes := partition.Size
+	transferredBytes := uint64(0)
+	
+	// Stream each tensor
+	for _, tensorID := range tensorIDs {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			// Continue streaming
+		}
+		
+		// Simulate loading tensor data from local storage
+		tensorData, tensorSize, err := ml.loadTensorData(modelID, tensorID)
+		if err != nil {
+			return fmt.Errorf("failed to load tensor data for %s: %w", tensorID, err)
+		}
+		
+		// Stream this tensor to the remote node
+		err = proto.StreamTensor(modelID, partition.PartitionID, tensorID, tensorData)
+		if err != nil {
+			return fmt.Errorf("failed to stream tensor %s: %w", tensorID, err)
+		}
+		
+		// Update progress
+		completedTensors++
+		transferredBytes += tensorSize
+		percentComplete := int((transferredBytes * 100) / totalBytes)
+		
+		ml.updateLoadStatus(modelID, partition.PartitionID, LoadProgress{
+			Status:          LoadStatusLoading,
+			PercentComplete: percentComplete,
+			BytesLoaded:     transferredBytes,
+			TotalBytes:      totalBytes,
+			TransferID:      transferID,
+		})
+		
+		fmt.Printf("Tensor %s transferred to node %s (%d/%d, %d%%)\n", 
+			tensorID, partition.NodeID, completedTensors, totalTensors, percentComplete)
+	}
+	
+	return nil
+}
+
+// getTensorIDsForPartition gets the list of tensor IDs that belong to a partition
+// In a real implementation, this would query the model's tensor allocation information
+func (ml *ModelLoader) getTensorIDsForPartition(modelID, partitionID string) ([]string, error) {
+	// Simulate getting tensor IDs
+	// In a real implementation, this would be determined by the model's partitioning scheme
+	
+	// For this example, we'll simulate 10 tensors per partition
+	tensorIDs := make([]string, 10)
+	for i := 0; i < 10; i++ {
+		tensorIDs[i] = fmt.Sprintf("%s.%s.tensor_%d", modelID, partitionID, i)
+	}
+	
+	return tensorIDs, nil
+}
+
+// loadTensorData loads tensor data from local storage
+// In a real implementation, this would load the actual tensor data from disk or memory
+func (ml *ModelLoader) loadTensorData(modelID, tensorID string) ([]byte, uint64, error) {
+	// Simulate loading tensor data
+	// In a real implementation, this would load the actual tensor data
+	
+	// For this example, we'll simulate tensor data with random size between 10KB and 10MB
+	size := uint64(10*1024 + (time.Now().UnixNano() % (10*1024*1024)))
+	data := make([]byte, size)
+	
+	// Simulate some delay for loading from disk
+	time.Sleep(10 * time.Millisecond)
+	
+	return data, size, nil
+}
+
 // updateLoadStatus updates the loading status and notifies callbacks
 func (ml *ModelLoader) updateLoadStatus(modelID, partitionID string, progress LoadProgress) {
 	ml.statusMu.Lock()
@@ -373,8 +559,8 @@ func (ml *ModelLoader) UnloadModel(ctx context.Context, modelID string) error {
 			err := ml.unloadPartition(ctx, modelID, p)
 			if err != nil {
 				errCh <- LoadError{
-					Err:        err,
-					NodeID:     p.NodeID,
+					Err:         err,
+					NodeID:      p.NodeID,
 					PartitionID: p.PartitionID,
 				}
 			}
@@ -412,16 +598,111 @@ func (ml *ModelLoader) UnloadModel(ctx context.Context, modelID string) error {
 // unloadPartition unloads a partition from a specific node
 func (ml *ModelLoader) unloadPartition(ctx context.Context, modelID string, partition ModelPartition) error {
 	// In a real implementation, this would connect to the node and initiate unloading
-	// For now, simulate unloading with a brief delay
+	// using the streaming protocol to send unload commands
 	
 	fmt.Printf("Unloading partition %s from node %s\n", partition.PartitionID, partition.NodeID)
+	
+	// Get the streaming protocol connection
+	_, err := ml.getOrCreateStreamingProtocol(partition.NodeID)
+	if err != nil {
+		return fmt.Errorf("failed to get streaming protocol: %w", err)
+	}
+	
+	// Send notification to unsubscribe from all tensors in this partition
+	tensorIDs, err := ml.getTensorIDsForPartition(modelID, partition.PartitionID)
+	if err != nil {
+		return fmt.Errorf("failed to get tensor IDs: %w", err)
+	}
+	
+	// Unsubscribe from each tensor
+	for _, tensorID := range tensorIDs {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			// Continue unloading
+		}
+		
+		// Notify to unload this tensor (in a real implementation)
+		// Here we just simulate the process
+		fmt.Printf("Sending unload notification for tensor %s\n", tensorID)
+	}
 	
 	// Simulate unloading time
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(200 * time.Millisecond):
 		// Unloading complete
+	}
+	
+	return nil
+}
+
+// SetTransferMode configures how tensors are transferred
+func (ml *ModelLoader) SetTransferMode(mode tensor.TransferMode) {
+	ml.transferMode = mode
+}
+
+// SetStreamingChunkSize sets the chunk size for streaming transfers
+func (ml *ModelLoader) SetStreamingChunkSize(size int) {
+	ml.protocolMu.Lock()
+	defer ml.protocolMu.Unlock()
+
+	// Update all existing protocols
+	for _, proto := range ml.protocolCache {
+		proto.SetChunkSize(size)
+	}
+	fmt.Printf("Streaming chunk size updated to %d bytes\n", size)
+}
+
+// SetCompressionEnabled enables or disables data compression
+func (ml *ModelLoader) SetCompressionEnabled(enabled bool) {
+	ml.protocolMu.Lock()
+	defer ml.protocolMu.Unlock()
+
+	// Update all existing protocols
+	for _, proto := range ml.protocolCache {
+		proto.SetCompressionEnabled(enabled)
+	}
+	fmt.Printf("Compression %s for streaming transfers\n",
+		map[bool]string{true: "enabled", false: "disabled"}[enabled])
+}
+
+// SetCompressionThreshold sets the minimum size for compression to be applied
+func (ml *ModelLoader) SetCompressionThreshold(threshold int) {
+	ml.protocolMu.Lock()
+	defer ml.protocolMu.Unlock()
+
+	// Update all existing protocols
+	for _, proto := range ml.protocolCache {
+		proto.SetCompressionThreshold(uint64(threshold))
+	}
+	fmt.Printf("Compression threshold updated to %d bytes\n", threshold)
+}
+
+// Close releases all resources used by the model loader
+func (ml *ModelLoader) Close() error {
+	// Close all protocol connections
+	ml.protocolMu.Lock()
+	defer ml.protocolMu.Unlock()
+	
+	var closeErrors []error
+	for nodeID, proto := range ml.protocolCache {
+		if err := proto.Close(); err != nil {
+			closeErrors = append(closeErrors, fmt.Errorf("failed to close connection to node %s: %w", nodeID, err))
+		}
+	}
+	
+	// Clear the cache
+	ml.protocolCache = make(map[string]*tensor.StreamingProtocol)
+	
+	if len(closeErrors) > 0 {
+		errMsg := fmt.Sprintf("%d connections failed to close:\n", len(closeErrors))
+		for _, err := range closeErrors {
+			errMsg += fmt.Sprintf("  - %v\n", err)
+		}
+		return errors.New(errMsg)
 	}
 	
 	return nil

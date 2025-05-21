@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,42 +26,52 @@ type Client struct {
 }
 
 // NewClient creates a new client instance
+
+// NewClient creates a new client instance
 func NewClient() *Client {
 	// Default to localhost:11434 if not specified
 	baseURL := "http://localhost:11434"
 
-	// Check if OLLAMA_HOST environment variable is set
+	// First priority: Check if OLLAMA_HOST environment variable is set
 	if host := os.Getenv("OLLAMA_HOST"); host != "" {
-		fmt.Printf("OLLAMA_HOST environment variable is set to: %s\n", host)
-		
-		// Replace 0.0.0.0 with localhost - 0.0.0.0 is a binding address for servers
-		// but invalid for client connections
-		if strings.Contains(host, "0.0.0.0") {
-			originalHost := host
-			host = strings.Replace(host, "0.0.0.0", "localhost", 1)
-			fmt.Printf("Replaced 0.0.0.0 with localhost: %s -> %s\n", originalHost, host)
-		}
-		
 		baseURL = host
-		
 		// If no scheme provided, default to http://
 		if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
-			originalURL := baseURL
 			baseURL = "http://" + baseURL
-			fmt.Printf("Added http:// scheme: %s -> %s\n", originalURL, baseURL)
 		}
-		
 		// Ensure port is specified (default to 11434 if not)
 		hostURL, err := url.Parse(baseURL)
 		if err == nil && hostURL.Port() == "" {
-			originalURL := baseURL
 			hostURL.Host = hostURL.Host + ":11434"
 			baseURL = hostURL.String()
-			fmt.Printf("Added default port 11434: %s -> %s\n", originalURL, baseURL)
 		}
 	}
 
-	fmt.Printf("Using API base URL: %s\n", baseURL)
+	// Second priority: Check for active cluster configuration and use first available node
+	// This is critical for distributed operations to use proper node IP
+	if os.Getenv("OLLAMA_CLUSTER_ENABLED") != "" || os.Getenv("OLLAMA_CLUSTER_HOST") != "" {
+		// Try to load cluster configuration - do not fail if unable to
+		home, err := os.UserHomeDir()
+		if err == nil {
+			configPath := filepath.Join(home, ".ollama", "cluster.json")
+			config, err := cluster.LoadClusterConfig(configPath)
+			if err == nil && config.Enabled {
+				// Use the local cluster host if available
+				if config.ClusterHost != "" && config.ClusterHost != "0.0.0.0" && config.ClusterHost != "localhost" {
+					fmt.Printf("Using cluster host IP for API connections: %s\n", config.ClusterHost)
+					baseURL = fmt.Sprintf("http://%s:%d", config.ClusterHost, config.APIPort)
+				}
+			}
+		}
+	}
+
+	// Fix any special addresses for connectivity
+	// 0.0.0.0 is a binding address, not a connection address
+	if strings.Contains(baseURL, "://0.0.0.0:") {
+		baseURL = strings.Replace(baseURL, "://0.0.0.0:", "://127.0.0.1:", 1)
+	}
+
+	fmt.Printf("Using API endpoint: %s\n", baseURL)
 	return &Client{
 		baseURL: baseURL,
 	}
@@ -79,7 +92,36 @@ func (c *Client) Get(path string) (*http.Response, error) {
 	req.Header.Set("Content-Type", "application/json")
 	
 	// Execute request
-	client := &http.Client{Timeout: 30 * time.Second}
+	// Use same improved transport as Post method
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 0, // Disable keep-alive
+		DualStack: false, // Force IPv4 only (avoid IPv6)
+	}
+	
+	transport := &http.Transport{
+		// Enable connection pooling for better stability
+		DisableKeepAlives: false,
+		// Set longer timeouts for better reliability
+		ResponseHeaderTimeout: 5 * time.Minute,
+		ExpectContinueTimeout: 2 * time.Minute,
+		TLSHandshakeTimeout: 30 * time.Second,
+		// Add connection management
+		MaxIdleConns: 10,
+		MaxIdleConnsPerHost: 5,
+		IdleConnTimeout: 10 * time.Minute,
+		// Use IPv4-only dialer
+		DialContext: dialer.DialContext,
+	}
+	
+	client := &http.Client{
+		Timeout: 15 * time.Minute, // Extended timeout for large model operations
+		Transport: transport,
+	}
+	
+	// Log the request details
+	fmt.Printf("Sending GET request with timeout: %v\n", client.Timeout)
+	
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
@@ -102,8 +144,36 @@ func (c *Client) Post(path, contentType string, body io.Reader) (*http.Response,
 	// Set headers
 	req.Header.Set("Content-Type", contentType)
 	
-	// Execute request
-	client := &http.Client{Timeout: 30 * time.Second}
+	// Execute request with improved connection handling
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 0, // Disable keep-alive
+		DualStack: false, // Force IPv4 only (avoid IPv6)
+	}
+	
+	transport := &http.Transport{
+		// Enable connection pooling (changed from DisableKeepAlives: true)
+		DisableKeepAlives: false,
+		// Set longer timeouts for better reliability
+		ResponseHeaderTimeout: 5 * time.Minute,
+		ExpectContinueTimeout: 2 * time.Minute,
+		TLSHandshakeTimeout: 30 * time.Second,
+		// Add connection management
+		MaxIdleConns: 10,
+		MaxIdleConnsPerHost: 5,
+		IdleConnTimeout: 10 * time.Minute,
+		// Use IPv4-only dialer
+		DialContext: dialer.DialContext,
+	}
+	
+	client := &http.Client{
+		Timeout: 15 * time.Minute, // Extended timeout for large model operations
+		Transport: transport,
+	}
+	
+	// Log the request details
+	fmt.Printf("Sending request with timeout: %v\n", client.Timeout)
+	
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
@@ -537,8 +607,133 @@ func ClusterModelLoadHandler(cmd *cobra.Command, _ []string) error {
 
 	// Make API call to load the model
 	client := NewClient()
-	resp, err := client.Post("/api/cluster/model/load", "application/json", bytes.NewBuffer(jsonData))
+	
+	// Before making the request, perform client-side connection diagnostics
+	fmt.Println("Performing client-side connection diagnostics...")
+	
+	// Test the server connection before making the actual request
+	testURL := fmt.Sprintf("%s/api/version", client.baseURL)
+	fmt.Printf("Testing server connection to: %s\n", testURL)
+	
+	// Use the same IPv4-only transport config we'll use for the actual request
+	testDialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 0,
+		DualStack: false, // Force IPv4 only
+	}
+	
+	transport := &http.Transport{
+		DisableKeepAlives: false, // Enable keep-alives for better connection stability
+		ResponseHeaderTimeout: 2 * time.Minute,
+		TLSHandshakeTimeout: 30 * time.Second,
+		MaxIdleConnsPerHost: 5,
+		IdleConnTimeout: 10 * time.Minute,
+		DialContext: testDialer.DialContext,
+	}
+	
+	testClient := &http.Client{Timeout: 10 * time.Second, Transport: transport}
+	
+	testResp, testErr := testClient.Get(testURL)
+	if testErr != nil {
+		fmt.Printf("⚠️ SERVER CONNECTION TEST FAILED: %v\n", testErr)
+	} else {
+		defer testResp.Body.Close()
+		fmt.Printf("✓ Server connection test passed (status: %d)\n", testResp.StatusCode)
+	}
+	
+	// Perform the actual model loading request
+	fmt.Println("Sending model load request...")
+	// Create detailed logging to trace the entire request flow
+	fmt.Println("==================== BEGIN DETAILED DIAGNOSTICS ====================")
+	fmt.Printf("Request details:\n- URL: %s/api/cluster/model/load\n- Content-Type: application/json\n- Body length: %d bytes\n",
+		client.baseURL, len(jsonData))
+	
+	// Create request with context and detailed instrumentation
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	
+	req, err := http.NewRequestWithContext(ctx, "POST", client.baseURL+"/api/cluster/model/load", bytes.NewBuffer(jsonData))
 	if err != nil {
+		fmt.Printf("Error creating request: %T - %v\n", err, err)
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	// Set proper headers
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Connection", "keep-alive")
+	req.Header.Set("User-Agent", "Ollama-Client/Diagnostics")
+	req.Header.Set("X-Debug-Mode", "true")
+	
+	// Log all request headers
+	fmt.Println("Request headers:")
+	for key, values := range req.Header {
+		fmt.Printf("- %s: %v\n", key, values)
+	}
+	
+	// Custom transport with extra logging
+	dialer := &net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+		DualStack: true,
+	}
+	
+	transport = &http.Transport{
+		DisableKeepAlives: false,
+		// Extended timeouts
+		ResponseHeaderTimeout: 5 * time.Minute,
+		ExpectContinueTimeout: 2 * time.Minute,
+		TLSHandshakeTimeout: 30 * time.Second,
+		// Add connection management
+		MaxIdleConns: 10,
+		MaxIdleConnsPerHost: 5,
+		IdleConnTimeout: 10 * time.Minute,
+		// Use instrumented dialer
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			fmt.Printf("Dialing connection to %s (%s)...\n", addr, network)
+			conn, err := dialer.DialContext(ctx, network, addr)
+			if err != nil {
+				fmt.Printf("Connection error: %T - %v\n", err, err)
+				return nil, err
+			}
+			fmt.Printf("Connection established to %s (local=%s, remote=%s)\n",
+				addr, conn.LocalAddr().String(), conn.RemoteAddr().String())
+			
+			// Wrap connection with logging
+			return &loggingConn{Conn: conn, addr: addr}, nil
+		},
+	}
+	
+	client2 := &http.Client{
+		Timeout: 15 * time.Minute,
+		Transport: transport,
+	}
+	
+	// Execute the request with detailed logging
+	fmt.Println("Sending request...")
+	startTime := time.Now()
+	resp, err := client2.Do(req)
+	elapsedTime := time.Since(startTime)
+	
+	if err != nil {
+		fmt.Printf("Error after %v: %T - %v\n", elapsedTime, err, err)
+		
+		// Detailed error analysis
+		var netErr net.Error
+		if errors.As(err, &netErr) {
+			fmt.Printf("Network error detected:\n- Timeout: %v\n- Temporary: %v\n",
+				netErr.Timeout(), netErr.Temporary())
+		}
+		
+		// Check for specific error messages
+		errStr := err.Error()
+		if strings.Contains(errStr, "forcibly closed") {
+			fmt.Println("Connection forcibly closed by remote host - this may indicate:")
+			fmt.Println("1. Server-side timeout or resource constraint")
+			fmt.Println("2. Network/firewall interruption")
+			fmt.Println("3. Server process crash or restart")
+		}
+		
+		fmt.Println("==================== END DETAILED DIAGNOSTICS ====================")
 		return fmt.Errorf("failed to load model in cluster: %w", err)
 	}
 	defer resp.Body.Close()
@@ -781,4 +976,31 @@ func RegisterClusterCommands(root *cobra.Command) {
 
 	clusterCmd.AddCommand(startCmd, statusCmd, joinCmd, leaveCmd, nodesCmd, modelLoadCmd, runCmd)
 	root.AddCommand(clusterCmd)
+}
+
+// loggingConn wraps a net.Conn with logging
+type loggingConn struct {
+	net.Conn
+	addr string
+}
+
+func (c *loggingConn) Read(b []byte) (n int, err error) {
+	n, err = c.Conn.Read(b)
+	if err != nil && err != io.EOF {
+		fmt.Printf("READ ERROR to %s: %v (read %d bytes)\n", c.addr, err, n)
+	}
+	return
+}
+
+func (c *loggingConn) Write(b []byte) (n int, err error) {
+	n, err = c.Conn.Write(b)
+	if err != nil {
+		fmt.Printf("WRITE ERROR to %s: %v (wrote %d bytes)\n", c.addr, err, n)
+	}
+	return
+}
+
+func (c *loggingConn) Close() error {
+	fmt.Printf("Connection to %s being closed\n", c.addr)
+	return c.Conn.Close()
 }

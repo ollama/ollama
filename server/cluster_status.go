@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -20,11 +21,11 @@ const (
 
 // ClusterStatusMonitor tracks and reports on the health and status of the cluster
 type ClusterStatusMonitor struct {
-	mu                 sync.RWMutex
-	modelDistribution  map[string]*DistributedModelInfo
-	nodeModels         map[string][]string
-	clusterHealthy     bool
-	lastHealthyCheck   time.Time
+	mu                  sync.RWMutex
+	modelDistribution   map[string]*DistributedModelInfo
+	nodeModels          map[string][]string
+	clusterHealthy      bool
+	lastHealthyCheck    time.Time
 	healthCheckInterval time.Duration
 }
 
@@ -44,9 +45,9 @@ type DistributedModelInfo struct {
 // NewClusterStatusMonitor creates a new cluster status monitor
 func NewClusterStatusMonitor() *ClusterStatusMonitor {
 	return &ClusterStatusMonitor{
-		modelDistribution:  make(map[string]*DistributedModelInfo),
-		nodeModels:         make(map[string][]string),
-		clusterHealthy:     false,
+		modelDistribution:   make(map[string]*DistributedModelInfo),
+		nodeModels:          make(map[string][]string),
+		clusterHealthy:      false,
 		healthCheckInterval: 30 * time.Second, // Default to checking every 30 seconds
 	}
 }
@@ -227,15 +228,15 @@ func (csm *ClusterStatusMonitor) GetDistributedModels() []api.ClusterModelRespon
 		
 		// Create extended response with detailed file and GPU info
 		result = append(result, api.ClusterModelResponse{
-			Name:              info.Name,
-			Size:              info.Size,
-			Distributed:       info.Distributed,
-			Nodes:             info.Nodes,
-			NodesWithFiles:    nodesWithFiles,     // Add this field to API response
+			Name:               info.Name,
+			Size:               info.Size,
+			Distributed:        info.Distributed,
+			Nodes:              info.Nodes,
+			NodesWithFiles:     nodesWithFiles,     // Add this field to API response
 			NodesWithGPULoaded: nodesWithGPULoaded, // Add this field to API response
-			Shards:            info.Shards,
-			Status:            status,
-			LoadedAt:          info.LoadedAt,
+			Shards:             info.Shards,
+			Status:             status,
+			LoadedAt:           info.LoadedAt,
 		})
 	}
 	
@@ -298,18 +299,229 @@ func (csm *ClusterStatusMonitor) UpdateModelFileStatus(modelName string, nodeID 
 
 // UpdateModelGPUStatus records whether a node has loaded the model into GPU
 func (csm *ClusterStatusMonitor) UpdateModelGPUStatus(modelName string, nodeID string, gpuLoaded bool) {
-	csm.mu.Lock()
-	defer csm.mu.Unlock()
+	// Add panic recovery to prevent connection closure if this method panics
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("PANIC in UpdateModelGPUStatus",
+				"error", fmt.Sprintf("%v", r),
+				"model", modelName,
+				"node", nodeID)
+		}
+	}()
 	
-	if info, exists := csm.modelDistribution[modelName]; exists {
-		info.NodesWithGPULoaded[nodeID] = gpuLoaded
-		slog.Info("Updated model GPU status",
-			"model", modelName,
-			"node", nodeID,
-			"gpu_loaded", gpuLoaded)
-	} else {
-		slog.Warn("Attempted to update GPU status for unknown model",
-			"model", modelName,
-			"node", nodeID)
+	// Safe mutex locking with additional recovery
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("PANIC acquiring lock in UpdateModelGPUStatus",
+					"error", fmt.Sprintf("%v", r))
+			}
+		}()
+		csm.mu.Lock()
+		defer csm.mu.Unlock()
+		
+		// Create modelDistribution map if it's nil
+		if csm.modelDistribution == nil {
+			slog.Warn("modelDistribution map was nil, creating it now")
+			csm.modelDistribution = make(map[string]*DistributedModelInfo)
+		}
+		
+		// Safely handle modelDistribution map
+		if info, exists := csm.modelDistribution[modelName]; exists && info != nil {
+			// Create NodesWithGPULoaded map if it's nil
+			if info.NodesWithGPULoaded == nil {
+				info.NodesWithGPULoaded = make(map[string]bool)
+			}
+			
+			info.NodesWithGPULoaded[nodeID] = gpuLoaded
+			slog.Info("Updated model GPU status",
+				"model", modelName,
+				"node", nodeID,
+				"gpu_loaded", gpuLoaded)
+		} else {
+			// Auto-register the model since it doesn't exist
+			slog.Info("Auto-registering model for GPU status update",
+				"model", modelName,
+				"node", nodeID)
+			
+			newInfo := &DistributedModelInfo{
+				Name:               modelName,
+				Distributed:        false, // Default to non-distributed
+				Nodes:              []string{nodeID},
+				NodesWithFiles:     make(map[string]bool),
+				NodesWithGPULoaded: make(map[string]bool),
+				Status:             "registered",
+				LoadedAt:           time.Now(),
+			}
+			
+			newInfo.NodesWithGPULoaded[nodeID] = gpuLoaded
+			csm.modelDistribution[modelName] = newInfo
+			
+			// Update nodeModels map
+			if csm.nodeModels == nil {
+				csm.nodeModels = make(map[string][]string)
+			}
+			
+			if _, exists := csm.nodeModels[nodeID]; !exists {
+				csm.nodeModels[nodeID] = []string{modelName}
+			} else {
+				csm.nodeModels[nodeID] = append(csm.nodeModels[nodeID], modelName)
+			}
+		}
+	}()
+}
+
+// RegisterModelPartition records information about a specific model partition on a node
+func (csm *ClusterStatusMonitor) RegisterModelPartition(modelName string, nodeID string, partitionID int, totalPartitions int) {
+	// Add panic recovery to prevent connection closure if this method panics
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("PANIC in RegisterModelPartition",
+				"error", fmt.Sprintf("%v", r),
+				"model", modelName,
+				"node", nodeID,
+				"partition", partitionID,
+				"total_partitions", totalPartitions)
+		}
+	}()
+	
+	// Safe mutex locking with additional recovery
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("PANIC acquiring lock in RegisterModelPartition",
+					"error", fmt.Sprintf("%v", r))
+			}
+		}()
+		
+		csm.mu.Lock()
+		defer csm.mu.Unlock()
+		
+		// Create maps if nil to prevent nil pointer panics
+		if csm.modelDistribution == nil {
+			slog.Warn("modelDistribution map was nil, creating it now")
+			csm.modelDistribution = make(map[string]*DistributedModelInfo)
+		}
+		
+		// Ensure the model is registered first
+		if info, exists := csm.modelDistribution[modelName]; exists && info != nil {
+			// Update the shard count if needed
+			if info.Shards != totalPartitions && totalPartitions > 0 {
+				info.Shards = totalPartitions
+			}
+			
+			// Ensure this node is listed as having the model
+			found := false
+			if info.Nodes != nil {
+				for _, n := range info.Nodes {
+					if n == nodeID {
+						found = true
+						break
+					}
+				}
+			} else {
+				// Create Nodes slice if nil
+				info.Nodes = []string{}
+			}
+			
+			if !found {
+				info.Nodes = append(info.Nodes, nodeID)
+			}
+			
+			// Mark the model as distributed since we're tracking partitions
+			if !info.Distributed && totalPartitions > 1 {
+				info.Distributed = true
+			}
+			
+			// Create maps if nil
+			if info.NodesWithFiles == nil {
+				info.NodesWithFiles = make(map[string]bool)
+			}
+			if info.NodesWithGPULoaded == nil {
+				info.NodesWithGPULoaded = make(map[string]bool)
+			}
+			
+			// Update file and GPU status for this node
+			info.NodesWithFiles[nodeID] = true
+			info.NodesWithGPULoaded[nodeID] = true
+			
+			slog.Info("Registered model partition",
+				"model", modelName,
+				"node", nodeID,
+				"partition", partitionID,
+				"total_partitions", totalPartitions)
+		} else {
+			// If the model isn't registered yet, safely register it first
+			// Instead of calling RegisterModelOnNode which could cause another lock,
+			// we'll implement the logic directly here
+			
+			newInfo := &DistributedModelInfo{
+				Name:               modelName,
+				Distributed:        totalPartitions > 1,
+				Nodes:              []string{nodeID},
+				NodesWithFiles:     make(map[string]bool),
+				NodesWithGPULoaded: make(map[string]bool),
+				Shards:             totalPartitions,
+				Status:             "registered",
+				LoadedAt:           time.Now(),
+			}
+			
+			newInfo.NodesWithFiles[nodeID] = true
+			newInfo.NodesWithGPULoaded[nodeID] = true
+			csm.modelDistribution[modelName] = newInfo
+			
+			// Update nodeModels map
+			if csm.nodeModels == nil {
+				csm.nodeModels = make(map[string][]string)
+			}
+			
+			if _, exists := csm.nodeModels[nodeID]; !exists {
+				csm.nodeModels[nodeID] = []string{modelName}
+			} else {
+				csm.nodeModels[nodeID] = append(csm.nodeModels[nodeID], modelName)
+			}
+			
+			// Then try again to update the partition information
+			if info, exists := csm.modelDistribution[modelName]; exists {
+				info.Distributed = totalPartitions > 1
+				info.Shards = totalPartitions
+				info.NodesWithFiles[nodeID] = true
+				info.NodesWithGPULoaded[nodeID] = true
+				
+				slog.Info("Created and registered model partition",
+					"model", modelName,
+					"node", nodeID,
+					"partition", partitionID,
+					"total_partitions", totalPartitions)
+			}
+		}
+	}()
+}
+
+// GetModelPartition retrieves information about a specific model partition
+func (csm *ClusterStatusMonitor) GetModelPartition(modelName string, partitionID int) (string, bool) {
+	csm.mu.RLock()
+	defer csm.mu.RUnlock()
+
+	if info, exists := csm.modelDistribution[modelName]; exists && info.Distributed {
+		// In a real implementation, this would have detailed partition tracking
+		// For simplicity, we'll estimate based on the partition ID and total nodes
+		if partitionID > 0 && partitionID <= len(info.Nodes) {
+			return info.Nodes[partitionID-1], true
+		}
 	}
+
+	return "", false
+}
+
+// GetModelPartitionCount returns the number of partitions for a model
+func (csm *ClusterStatusMonitor) GetModelPartitionCount(modelName string) int {
+	csm.mu.RLock()
+	defer csm.mu.RUnlock()
+
+	if info, exists := csm.modelDistribution[modelName]; exists {
+		return info.Shards
+	}
+
+	return 0
 }

@@ -1274,19 +1274,61 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 			// Add cluster endpoints
 			// Create a custom unified middleware that checks both implementations
 			unifiedClusterMiddleware := func(c *gin.Context) {
-				clusterModeLock.RLock()
-				clusterModeLock2.RLock()
-				originalEnabled := clusterEnabled
-				newEnabled := clusterEnabled2
-				clusterModeLock.RUnlock()
-				clusterModeLock2.RUnlock()
+				// Add panic recovery to prevent connection closure
+				defer func() {
+					if r := recover(); r != nil {
+						slog.Error("Panic in unifiedClusterMiddleware",
+							"error", fmt.Sprintf("%v", r),
+							"path", c.Request.URL.Path)
+						
+						// Return a 500 error instead of abruptly closing the connection
+						c.JSON(http.StatusInternalServerError, gin.H{
+							"error": "Internal server error in cluster middleware",
+							"details": "Server encountered a panic during request processing",
+						})
+						c.Abort()
+						return
+					}
+				}()
 				
-				// Log the entire state for debugging
+				var originalEnabled, newEnabled bool
+				var clusterMode1Available, clusterMode2Available bool
+				
+				// Safely access cluster mode variables
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							slog.Error("Panic accessing cluster mode state", "error", fmt.Sprintf("%v", r))
+						}
+					}()
+					
+					clusterModeLock.RLock()
+					defer clusterModeLock.RUnlock()
+					
+					clusterMode1Available = clusterMode != nil
+					originalEnabled = clusterEnabled
+				}()
+				
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							slog.Error("Panic accessing clusterMode2 state", "error", fmt.Sprintf("%v", r))
+						}
+					}()
+					
+					clusterModeLock2.RLock()
+					defer clusterModeLock2.RUnlock()
+					
+					clusterMode2Available = GetClusterMode2() != nil
+					newEnabled = clusterEnabled2
+				}()
+				
+				// Log the entire state for debugging in a safer way
 				slog.Info("Unified cluster middleware check",
 					"clusterEnabled", originalEnabled,
 					"clusterEnabled2", newEnabled,
-					"clusterMode", clusterMode != nil,
-					"clusterMode2", GetClusterMode2() != nil,
+					"clusterMode", clusterMode1Available,
+					"clusterMode2", clusterMode2Available,
 					"endpoint", c.Request.URL.Path)
 					
 				// Allow request if either implementation is enabled
@@ -1307,6 +1349,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 				clusterGroup.POST("/join", s.ClusterJoinHandler)
 				clusterGroup.POST("/leave", s.ClusterLeaveHandler)
 				clusterGroup.POST("/model/load", s.ClusterModelLoadHandler)
+				clusterGroup.POST("/model/shard", s.HandleModelShardLoad)
 				clusterGroup.POST("/generate", s.ClusterGenerateHandler)
 			}
 		}
@@ -1414,7 +1457,6 @@ func Serve(ln net.Listener) error {
 	<-ctx.Done()
 	return nil
 }
-
 func waitForStream(c *gin.Context, ch chan any) {
 	c.Header("Content-Type", "application/json")
 	var latest api.ProgressResponse

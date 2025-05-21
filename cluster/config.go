@@ -39,6 +39,9 @@ type ClusterConfig struct {
 	
 	// Health contains the health monitoring configuration
 	Health HealthConfig `json:"health"`
+	
+	// TensorProtocol contains tensor communication protocol configuration
+	TensorProtocol TensorProtocolConfig `json:"tensor_protocol"`
 }
 
 // HealthConfig holds configuration for the health monitoring system
@@ -51,6 +54,27 @@ type HealthConfig struct {
 	
 	// EnableDetailedMetrics determines if detailed metrics are collected
 	EnableDetailedMetrics bool `json:"enable_detailed_metrics"`
+}
+
+// TensorProtocolConfig holds configuration for tensor protocol communication
+type TensorProtocolConfig struct {
+	// UseStreamingProtocol determines if streaming protocol is used
+	UseStreamingProtocol bool `json:"use_streaming_protocol"`
+	
+	// ChunkSize is the size of chunks for streaming transfers (in bytes)
+	ChunkSize int `json:"chunk_size"`
+	
+	// EnableCompression enables data compression for large transfers
+	EnableCompression bool `json:"enable_compression"`
+	
+	// CompressionThreshold is the minimum size in bytes before compression is applied
+	CompressionThreshold int `json:"compression_threshold"`
+	
+	// MaxRetries is the maximum number of retries for failed transfers
+	MaxRetries int `json:"max_retries"`
+	
+	// RetryBaseDelay is the base delay before retrying (in milliseconds)
+	RetryBaseDelay int `json:"retry_base_delay"`
 }
 // DefaultClusterConfig returns a default cluster configuration
 func DefaultClusterConfig() *ClusterConfig {
@@ -83,6 +107,14 @@ func DefaultClusterConfig() *ClusterConfig {
 			CheckInterval:         time.Second * 10,
 			NodeTimeoutThreshold:  time.Second * 30,
 			EnableDetailedMetrics: true,
+		},
+		TensorProtocol: TensorProtocolConfig{
+			UseStreamingProtocol: true,        // Enable streaming protocol by default
+			ChunkSize:            1024 * 1024, // 1MB chunks by default
+			EnableCompression:    true,        // Enable compression by default
+			CompressionThreshold: 4 * 1024,    // 4KB compression threshold
+			MaxRetries:           3,           // 3 retries for failed transfers
+			RetryBaseDelay:       500,         // 500ms base retry delay
 		},
 	}
 }
@@ -282,6 +314,39 @@ func (c *ClusterConfig) LoadFromEnvironment() {
 	
 	if nodeList := os.Getenv("OLLAMA_CLUSTER_NODE_LIST"); nodeList != "" {
 		c.Discovery.NodeList = strings.Split(nodeList, ",")
+	}
+	
+	// Tensor Protocol Configuration
+	if useStreaming := os.Getenv("OLLAMA_TENSOR_STREAMING_PROTOCOL"); useStreaming != "" {
+		c.TensorProtocol.UseStreamingProtocol = strings.ToLower(useStreaming) == "true" || useStreaming == "1"
+	}
+	
+	if chunkSize := os.Getenv("OLLAMA_TENSOR_CHUNK_SIZE"); chunkSize != "" {
+		if size, err := strconv.Atoi(chunkSize); err == nil {
+			c.TensorProtocol.ChunkSize = size
+		}
+	}
+	
+	if enableCompression := os.Getenv("OLLAMA_TENSOR_ENABLE_COMPRESSION"); enableCompression != "" {
+		c.TensorProtocol.EnableCompression = strings.ToLower(enableCompression) == "true" || enableCompression == "1"
+	}
+	
+	if compressionThreshold := os.Getenv("OLLAMA_TENSOR_COMPRESSION_THRESHOLD"); compressionThreshold != "" {
+		if threshold, err := strconv.Atoi(compressionThreshold); err == nil {
+			c.TensorProtocol.CompressionThreshold = threshold
+		}
+	}
+	
+	if maxRetries := os.Getenv("OLLAMA_TENSOR_MAX_RETRIES"); maxRetries != "" {
+		if retries, err := strconv.Atoi(maxRetries); err == nil {
+			c.TensorProtocol.MaxRetries = retries
+		}
+	}
+	
+	if retryDelay := os.Getenv("OLLAMA_TENSOR_RETRY_DELAY"); retryDelay != "" {
+		if delay, err := strconv.Atoi(retryDelay); err == nil {
+			c.TensorProtocol.RetryBaseDelay = delay
+		}
 	}
 }
 

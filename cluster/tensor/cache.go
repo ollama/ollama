@@ -126,7 +126,7 @@ func NewTensorCache(options CacheOptions) *TensorCache {
 		options:     options,
 		entries:     make(map[CacheKey]*list.Element),
 		lruList:     list.New(),
-		compressor:  NewCompressor(DefaultCompressionOptions),
+		compressor:  NewCompressor(DefaultCompressionConfig()),
 	}
 	
 	// Start a background goroutine for periodic cleanup
