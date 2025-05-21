@@ -354,6 +354,31 @@ func createModel(r api.CreateRequest, name model.Name, baseLayers []*layerGGML, 
 		layers = append(layers, layer.Layer)
 	}
 
+	if len(r.ControlVectors) > 0 {
+		for _, cv_m := range r.ControlVectors {
+			slog.Debug("control vector", "cv_m", cv_m)
+			switch detectModelTypeFromFiles(cv_m) {
+			case "gguf":
+				if len(cv_m) > 1 {
+					return errors.New("only one gguf file per control vector is supported")
+				}
+				for _, digest := range cv_m {
+					control_layers, err := ggufLayers(digest, fn)
+					if err != nil {
+						slog.Debug("error getting control vector layers", "error", err)
+						return err
+					}
+					for _, control_layer := range control_layers {
+						slog.Debug("control vector layer", "control_layer", control_layer)
+						layers = append(layers, control_layer.Layer)
+					}
+				}
+			default:
+				return errOnlyGGUFSupported
+			}
+		}
+	}
+
 	if r.Template != "" {
 		layers, err = setTemplate(layers, r.Template)
 		if err != nil {
@@ -518,6 +543,8 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 		mediatype := "application/vnd.ollama.image.model"
 		if f.KV().Kind() == "adapter" {
 			mediatype = "application/vnd.ollama.image.adapter"
+		} else if f.KV().Architecture() == "controlvector" {
+			mediatype = "application/vnd.ollama.image.controlvector"
 		} else if _, ok := f.KV()[fmt.Sprintf("%s.vision.block_count", f.KV().Architecture())]; ok || f.KV().Kind() == "projector" {
 			mediatype = "application/vnd.ollama.image.projector"
 		}
