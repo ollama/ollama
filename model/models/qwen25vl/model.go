@@ -121,13 +121,14 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 			patchesPerChunk := inp.Multimodal[0].Tensor.Dim(1)
 
 			// First add the vision start token
-			result = append(result, input.Input{Token: visionStartToken, SameBatch: patchesPerChunk + 1})
+			result = append(result, input.Input{Token: visionStartToken})
 
 			// Add the image token with the multimodal tensor data at the first position
 			result = append(result, input.Input{
 				Token:          imageToken,
 				Multimodal:     inp.Multimodal,
 				MultimodalHash: inp.MultimodalHash,
+				SameBatch:      patchesPerChunk,
 			})
 
 			// Add the placeholder tokens for the remaining positions (tokensPerGrid-1)
