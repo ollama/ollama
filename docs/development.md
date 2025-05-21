@@ -41,19 +41,10 @@ Install prerequisites:
 - [CMake](https://cmake.org/download/)
 - [Visual Studio 2022](https://visualstudio.microsoft.com/downloads/) including the Native Desktop Workload
 - (Optional) AMD GPU support
-    - [ROCm](https://rocm.github.io/install.html)
+    - [ROCm](https://rocm.docs.amd.com/en/latest/)
     - [Ninja](https://github.com/ninja-build/ninja/releases)
 - (Optional) NVIDIA GPU support
     - [CUDA SDK](https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_network)
-
-> [!IMPORTANT]
-> Ensure prerequisites are in `PATH` before running CMake.
-
-> [!IMPORTANT]
-> ROCm is not compatible with Visual Studio CMake generators. Use `-GNinja` when configuring the project.
-
-> [!IMPORTANT]
-> CUDA is only compatible with Visual Studio CMake generators.
 
 Then, configure and build the project:
 
@@ -61,6 +52,14 @@ Then, configure and build the project:
 cmake -B build
 cmake --build build --config Release
 ```
+
+> [!IMPORTANT]
+> Building for ROCm requires additional flags:
+> ```
+> cmake -B build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+> cmake --build build --config Release
+> ```
+
 
 Lastly, run Ollama:
 
@@ -70,7 +69,7 @@ go run . serve
 
 ## Windows (ARM)
 
-Windows ARM does not support additional acceleration libraries at this time.
+Windows ARM does not support additional acceleration libraries at this time.  Do not use cmake, simply `go run` or `go build`.
 
 ## Linux
 
@@ -118,6 +117,35 @@ To run tests, use `go test`:
 ```shell
 go test ./...
 ```
+
+> NOTE: In rare cirumstances, you may nedd to change a package using the new
+> "synctest" package in go1.24.
+>
+> If you do not have the "synctest" package enabled, you will not see build or
+> test failures resulting from your change(s), if any, locally, but CI will
+> break.
+>
+> If you see failures in CI, you can either keep pushing changes to see if the
+> CI build passes, or you can enable the "synctest" package locally to see the
+> failures before pushing.
+>
+> To enable the "synctest" package for testing, run the following command:
+>
+> ```shell
+> GOEXPERIMENT=synctest go test ./...
+> ```
+>
+> If you wish to enable synctest for all go commands, you can set the
+> `GOEXPERIMENT` environment variable in your shell profile or by using:
+>
+> ```shell
+> go env -w GOEXPERIMENT=synctest
+> ```
+>
+> Which will enable the "synctest" package for all go commands without needing
+> to set it for all shell sessions.
+>
+> The synctest package is not required for production builds.
 
 ## Library detection
 

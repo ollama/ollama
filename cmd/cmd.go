@@ -18,6 +18,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -29,17 +31,18 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
-	"github.com/ollama/ollama/llama"
-	"github.com/ollama/ollama/llama/runner"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
+	"github.com/ollama/ollama/runner"
 	"github.com/ollama/ollama/server"
 	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
 )
 
@@ -105,7 +108,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	}
 	spinner.Stop()
 
-	req.Name = args[0]
+	req.Model = args[0]
 	quantize, _ := cmd.Flags().GetString("quantize")
 	if quantize != "" {
 		req.Quantize = quantize
@@ -116,34 +119,54 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if len(req.Files) > 0 {
-		fileMap := map[string]string{}
-		for f, digest := range req.Files {
+	var g errgroup.Group
+	g.SetLimit(max(runtime.GOMAXPROCS(0)-1, 1))
+
+	files := syncmap.NewSyncMap[string, string]()
+	for f, digest := range req.Files {
+		g.Go(func() error {
 			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
 				return err
 			}
-			fileMap[filepath.Base(f)] = digest
-		}
-		req.Files = fileMap
+
+			// TODO: this is incorrect since the file might be in a subdirectory
+			//       instead this should take the path relative to the model directory
+			//       but the current implementation does not allow this
+			files.Store(filepath.Base(f), digest)
+			return nil
+		})
 	}
 
-	if len(req.Adapters) > 0 {
-		fileMap := map[string]string{}
-		for f, digest := range req.Adapters {
+	adapters := syncmap.NewSyncMap[string, string]()
+	for f, digest := range req.Adapters {
+		g.Go(func() error {
 			if _, err := createBlob(cmd, client, f, digest, p); err != nil {
 				return err
 			}
-			fileMap[filepath.Base(f)] = digest
-		}
-		req.Adapters = fileMap
+
+			// TODO: same here
+			adapters.Store(filepath.Base(f), digest)
+			return nil
+		})
 	}
+
+	if err := g.Wait(); err != nil {
+		return err
+	}
+
+	req.Files = files.Items()
+	req.Adapters = adapters.Items()
 
 	bars := make(map[string]*progress.Bar)
 	fn := func(resp api.ProgressResponse) error {
 		if resp.Digest != "" {
 			bar, ok := bars[resp.Digest]
 			if !ok {
-				bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
+				msg := resp.Status
+				if msg == "" {
+					msg = fmt.Sprintf("pulling %s...", resp.Digest[7:19])
+				}
+				bar = progress.NewBar(msg, resp.Total, resp.Completed)
 				bars[resp.Digest] = bar
 				p.Add(resp.Digest, bar)
 			}
@@ -212,7 +235,7 @@ func createBlob(cmd *cobra.Command, client *api.Client, path string, digest stri
 		}
 	}()
 
-	if err = client.CreateBlob(cmd.Context(), digest, io.TeeReader(bin, &pw)); err != nil {
+	if err := client.CreateBlob(cmd.Context(), digest, io.TeeReader(bin, &pw)); err != nil {
 		return "", err
 	}
 	return digest, nil
@@ -256,6 +279,7 @@ func StopHandler(cmd *cobra.Command, args []string) error {
 		if strings.Contains(err.Error(), "not found") {
 			return fmt.Errorf("couldn't find model \"%s\" to stop", args[0])
 		}
+		return err
 	}
 	return nil
 }
@@ -266,7 +290,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	opts := runOptions{
 		Model:    args[0],
 		WordWrap: os.Getenv("TERM") == "xterm-256color",
-		Options:  map[string]interface{}{},
+		Options:  map[string]any{},
 	}
 
 	format, err := cmd.Flags().GetString("format")
@@ -338,7 +362,21 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	opts.MultiModal = len(info.ProjectorInfo) != 0
+	opts.MultiModal = slices.Contains(info.Capabilities, model.CapabilityVision)
+
+	// TODO: remove the projector info and vision info checks below,
+	// these are left in for backwards compatibility with older servers
+	// that don't have the capabilities field in the model info
+	if len(info.ProjectorInfo) != 0 {
+		opts.MultiModal = true
+	}
+	for k := range info.ModelInfo {
+		if strings.Contains(k, ".vision.") {
+			opts.MultiModal = true
+			break
+		}
+	}
+
 	opts.ParentModel = info.Details.ParentModel
 
 	if interactive {
@@ -559,8 +597,9 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 	parameters, errParams := cmd.Flags().GetBool("parameters")
 	system, errSystem := cmd.Flags().GetBool("system")
 	template, errTemplate := cmd.Flags().GetBool("template")
+	verbose, errVerbose := cmd.Flags().GetBool("verbose")
 
-	for _, boolErr := range []error{errLicense, errModelfile, errParams, errSystem, errTemplate} {
+	for _, boolErr := range []error{errLicense, errModelfile, errParams, errSystem, errTemplate, errVerbose} {
 		if boolErr != nil {
 			return errors.New("error retrieving flags")
 		}
@@ -598,7 +637,7 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return errors.New("only one of '--license', '--modelfile', '--parameters', '--system', or '--template' can be specified")
 	}
 
-	req := api.ShowRequest{Name: args[0]}
+	req := api.ShowRequest{Name: args[0], Verbose: verbose}
 	resp, err := client.Show(cmd.Context(), &req)
 	if err != nil {
 		return err
@@ -621,10 +660,10 @@ func ShowHandler(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	return showInfo(resp, os.Stdout)
+	return showInfo(resp, verbose, os.Stdout)
 }
 
-func showInfo(resp *api.ShowResponse, w io.Writer) error {
+func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 	tableRender := func(header string, rows func() [][]string) {
 		fmt.Fprintln(w, " ", header)
 		table := tablewriter.NewWriter(w)
@@ -658,6 +697,15 @@ func showInfo(resp *api.ShowResponse, w io.Writer) error {
 		return
 	})
 
+	if len(resp.Capabilities) > 0 {
+		tableRender("Capabilities", func() (rows [][]string) {
+			for _, capability := range resp.Capabilities {
+				rows = append(rows, []string{"", capability.String()})
+			}
+			return
+		})
+	}
+
 	if resp.ProjectorInfo != nil {
 		tableRender("Projector", func() (rows [][]string) {
 			arch := resp.ProjectorInfo["general.architecture"].(string)
@@ -681,12 +729,89 @@ func showInfo(resp *api.ShowResponse, w io.Writer) error {
 		})
 	}
 
+	if resp.ModelInfo != nil && verbose {
+		tableRender("Metadata", func() (rows [][]string) {
+			keys := make([]string, 0, len(resp.ModelInfo))
+			for k := range resp.ModelInfo {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+
+			for _, k := range keys {
+				var v string
+				switch vData := resp.ModelInfo[k].(type) {
+				case bool:
+					v = fmt.Sprintf("%t", vData)
+				case string:
+					v = vData
+				case float64:
+					v = fmt.Sprintf("%g", vData)
+				case []any:
+					targetWidth := 10 // Small width where we are displaying the data in a column
+
+					var itemsToShow int
+					totalWidth := 1 // Start with 1 for opening bracket
+
+					// Find how many we can fit
+					for i := range vData {
+						itemStr := fmt.Sprintf("%v", vData[i])
+						width := runewidth.StringWidth(itemStr)
+
+						// Add separator width (", ") for all items except the first
+						if i > 0 {
+							width += 2
+						}
+
+						// Check if adding this item would exceed our width limit
+						if totalWidth+width > targetWidth && i > 0 {
+							break
+						}
+
+						totalWidth += width
+						itemsToShow++
+					}
+
+					// Format the output
+					if itemsToShow < len(vData) {
+						v = fmt.Sprintf("%v", vData[:itemsToShow])
+						v = strings.TrimSuffix(v, "]")
+						v += fmt.Sprintf(" ...+%d more]", len(vData)-itemsToShow)
+					} else {
+						v = fmt.Sprintf("%v", vData)
+					}
+				default:
+					v = fmt.Sprintf("%T", vData)
+				}
+				rows = append(rows, []string{"", k, v})
+			}
+			return
+		})
+	}
+
+	if len(resp.Tensors) > 0 && verbose {
+		tableRender("Tensors", func() (rows [][]string) {
+			for _, t := range resp.Tensors {
+				rows = append(rows, []string{"", t.Name, t.Type, fmt.Sprint(t.Shape)})
+			}
+			return
+		})
+	}
+
 	head := func(s string, n int) (rows [][]string) {
 		scanner := bufio.NewScanner(strings.NewReader(s))
-		for scanner.Scan() && (len(rows) < n || n < 0) {
-			if text := scanner.Text(); text != "" {
-				rows = append(rows, []string{"", strings.TrimSpace(text)})
+		count := 0
+		for scanner.Scan() {
+			text := strings.TrimSpace(scanner.Text())
+			if text == "" {
+				continue
 			}
+			count++
+			if n < 0 || count <= n {
+				rows = append(rows, []string{"", text})
+			}
+		}
+		if n >= 0 && count > n {
+			rows = append(rows, []string{"", "..."})
 		}
 		return
 	}
@@ -741,13 +866,38 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 
 	fn := func(resp api.ProgressResponse) error {
 		if resp.Digest != "" {
+			if resp.Completed == 0 {
+				// This is the initial status update for the
+				// layer, which the server sends before
+				// beginning the download, for clients to
+				// compute total size and prepare for
+				// downloads, if needed.
+				//
+				// Skipping this here to avoid showing a 0%
+				// progress bar, which *should* clue the user
+				// into the fact that many things are being
+				// downloaded and that the current active
+				// download is not that last. However, in rare
+				// cases it seems to be triggering to some, and
+				// it isn't worth explaining, so just ignore
+				// and regress to the old UI that keeps giving
+				// you the "But wait, there is more!" after
+				// each "100% done" bar, which is "better."
+				return nil
+			}
+
 			if spinner != nil {
 				spinner.Stop()
 			}
 
 			bar, ok := bars[resp.Digest]
 			if !ok {
-				bar = progress.NewBar(fmt.Sprintf("pulling %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
+				name, isDigest := strings.CutPrefix(resp.Digest, "sha256:")
+				name = strings.TrimSpace(name)
+				if isDigest {
+					name = name[:min(12, len(name))]
+				}
+				bar = progress.NewBar(fmt.Sprintf("pulling %s:", name), resp.Total, resp.Completed)
 				bars[resp.Digest] = bar
 				p.Add(resp.Digest, bar)
 			}
@@ -767,11 +917,7 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	request := api.PullRequest{Name: args[0], Insecure: insecure}
-	if err := client.Pull(cmd.Context(), &request, fn); err != nil {
-		return err
-	}
-
-	return nil
+	return client.Pull(cmd.Context(), &request, fn)
 }
 
 type generateContextKey string
@@ -785,7 +931,7 @@ type runOptions struct {
 	Format      string
 	System      string
 	Images      []api.ImageData
-	Options     map[string]interface{}
+	Options     map[string]any
 	MultiModal  bool
 	KeepAlive   *api.Duration
 }
@@ -1090,11 +1236,11 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if err := client.Heartbeat(cmd.Context()); err != nil {
-		if !strings.Contains(err.Error(), " refused") {
+		if !(strings.Contains(err.Error(), " refused") || strings.Contains(err.Error(), "could not connect")) {
 			return err
 		}
 		if err := startApp(cmd.Context(), client); err != nil {
-			return errors.New("could not connect to ollama app, is it running?")
+			return fmt.Errorf("ollama server not responding - %w", err)
 		}
 	}
 	return nil
@@ -1172,7 +1318,7 @@ func NewCLI() *cobra.Command {
 	}
 
 	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\")")
-	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_0)")
+	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_K_M)")
 
 	showCmd := &cobra.Command{
 		Use:     "show MODEL",
@@ -1187,6 +1333,7 @@ func NewCLI() *cobra.Command {
 	showCmd.Flags().Bool("parameters", false, "Show parameters of a model")
 	showCmd.Flags().Bool("template", false, "Show template of a model")
 	showCmd.Flags().Bool("system", false, "Show system message of a model")
+	showCmd.Flags().BoolP("verbose", "v", false, "Show detailed model information")
 
 	runCmd := &cobra.Command{
 		Use:     "run MODEL [PROMPT]",
@@ -1271,7 +1418,6 @@ func NewCLI() *cobra.Command {
 
 	runnerCmd := &cobra.Command{
 		Use:    "runner",
-		Short:  llama.PrintSystemInfo(),
 		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runner.Execute(os.Args[1:])
@@ -1314,7 +1460,6 @@ func NewCLI() *cobra.Command {
 				envVars["OLLAMA_NOPRUNE"],
 				envVars["OLLAMA_ORIGINS"],
 				envVars["OLLAMA_SCHED_SPREAD"],
-				envVars["OLLAMA_TMPDIR"],
 				envVars["OLLAMA_FLASH_ATTENTION"],
 				envVars["OLLAMA_KV_CACHE_TYPE"],
 				envVars["OLLAMA_LLM_LIBRARY"],

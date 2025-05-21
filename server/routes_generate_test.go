@@ -16,6 +16,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
+	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
 )
 
@@ -45,8 +46,8 @@ func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error
 	return
 }
 
-func newMockServer(mock *mockRunner) func(discover.GpuInfoList, string, *llm.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
-	return func(gpus discover.GpuInfoList, model string, ggml *llm.GGML, projectors, system []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+func newMockServer(mock *mockRunner) func(discover.GpuInfoList, string, *ggml.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
+	return func(_ discover.GpuInfoList, _ string, _ *ggml.GGML, _, _ []string, _ api.Options, _ int) (llm.LlamaServer, error) {
 		return mock, nil
 	}
 }
@@ -57,7 +58,7 @@ func TestGenerateChat(t *testing.T) {
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
 			Done:               true,
-			DoneReason:         "stop",
+			DoneReason:         llm.DoneReasonStop,
 			PromptEvalCount:    1,
 			PromptEvalDuration: 1,
 			EvalCount:          1,
@@ -76,7 +77,7 @@ func TestGenerateChat(t *testing.T) {
 			getGpuFn:      discover.GetGPUInfo,
 			getCpuFn:      discover.GetCPUInfo,
 			reschedDelay:  250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, ggml *llm.GGML, gpus discover.GpuInfoList, numParallel int) {
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ int) {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -86,9 +87,9 @@ func TestGenerateChat(t *testing.T) {
 		},
 	}
 
-	go s.sched.Run(context.TODO())
+	go s.sched.Run(t.Context())
 
-	_, digest := createBinFile(t, llm.KV{
+	_, digest := createBinFile(t, ggml.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -98,7 +99,7 @@ func TestGenerateChat(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []llm.Tensor{
+	}, []*ggml.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -154,10 +155,10 @@ func TestGenerateChat(t *testing.T) {
 	})
 
 	t.Run("missing capabilities chat", func(t *testing.T) {
-		_, digest := createBinFile(t, llm.KV{
+		_, digest := createBinFile(t, ggml.KV{
 			"general.architecture": "bert",
 			"bert.pooling_type":    uint32(0),
-		}, []llm.Tensor{})
+		}, []*ggml.Tensor{})
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Model:  "bert",
 			Files:  map[string]string{"bert.gguf": digest},
@@ -369,27 +370,31 @@ func TestGenerateChat(t *testing.T) {
 					Description: "Get the current weather",
 					Parameters: struct {
 						Type       string   `json:"type"`
+						Defs       any      `json:"$defs,omitempty"`
+						Items      any      `json:"items,omitempty"`
 						Required   []string `json:"required"`
 						Properties map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Items       any              `json:"items,omitempty"`
+							Description string           `json:"description"`
+							Enum        []any            `json:"enum,omitempty"`
 						} `json:"properties"`
 					}{
 						Type:     "object",
 						Required: []string{"location"},
 						Properties: map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Items       any              `json:"items,omitempty"`
+							Description string           `json:"description"`
+							Enum        []any            `json:"enum,omitempty"`
 						}{
 							"location": {
-								Type:        "string",
+								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
 							},
 							"unit": {
-								Type: "string",
-								Enum: []string{"celsius", "fahrenheit"},
+								Type: api.PropertyType{"string"},
+								Enum: []any{"celsius", "fahrenheit"},
 							},
 						},
 					},
@@ -400,7 +405,7 @@ func TestGenerateChat(t *testing.T) {
 		mock.CompletionResponse = llm.CompletionResponse{
 			Content:            `{"name":"get_weather","arguments":{"location":"Seattle, WA","unit":"celsius"}}`,
 			Done:               true,
-			DoneReason:         "done",
+			DoneReason:         llm.DoneReasonStop,
 			PromptEvalCount:    1,
 			PromptEvalDuration: 1,
 			EvalCount:          1,
@@ -466,27 +471,31 @@ func TestGenerateChat(t *testing.T) {
 					Description: "Get the current weather",
 					Parameters: struct {
 						Type       string   `json:"type"`
+						Defs       any      `json:"$defs,omitempty"`
+						Items      any      `json:"items,omitempty"`
 						Required   []string `json:"required"`
 						Properties map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Items       any              `json:"items,omitempty"`
+							Description string           `json:"description"`
+							Enum        []any            `json:"enum,omitempty"`
 						} `json:"properties"`
 					}{
 						Type:     "object",
 						Required: []string{"location"},
 						Properties: map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Items       any              `json:"items,omitempty"`
+							Description string           `json:"description"`
+							Enum        []any            `json:"enum,omitempty"`
 						}{
 							"location": {
-								Type:        "string",
+								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
 							},
 							"unit": {
-								Type: "string",
-								Enum: []string{"celsius", "fahrenheit"},
+								Type: api.PropertyType{"string"},
+								Enum: []any{"celsius", "fahrenheit"},
 							},
 						},
 					},
@@ -518,7 +527,7 @@ func TestGenerateChat(t *testing.T) {
 				{
 					Content:            `, WA","unit":"celsius"}}`,
 					Done:               true,
-					DoneReason:         "tool_call",
+					DoneReason:         llm.DoneReasonStop,
 					PromptEvalCount:    3,
 					PromptEvalDuration: 1,
 				},
@@ -593,7 +602,7 @@ func TestGenerate(t *testing.T) {
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
 			Done:               true,
-			DoneReason:         "stop",
+			DoneReason:         llm.DoneReasonStop,
 			PromptEvalCount:    1,
 			PromptEvalDuration: 1,
 			EvalCount:          1,
@@ -612,7 +621,7 @@ func TestGenerate(t *testing.T) {
 			getGpuFn:      discover.GetGPUInfo,
 			getCpuFn:      discover.GetCPUInfo,
 			reschedDelay:  250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, ggml *llm.GGML, gpus discover.GpuInfoList, numParallel int) {
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ int) {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -622,9 +631,9 @@ func TestGenerate(t *testing.T) {
 		},
 	}
 
-	go s.sched.Run(context.TODO())
+	go s.sched.Run(t.Context())
 
-	_, digest := createBinFile(t, llm.KV{
+	_, digest := createBinFile(t, ggml.KV{
 		"general.architecture":          "llama",
 		"llama.block_count":             uint32(1),
 		"llama.context_length":          uint32(8192),
@@ -634,7 +643,7 @@ func TestGenerate(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []llm.Tensor{
+	}, []*ggml.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -686,10 +695,10 @@ func TestGenerate(t *testing.T) {
 	})
 
 	t.Run("missing capabilities generate", func(t *testing.T) {
-		_, digest := createBinFile(t, llm.KV{
+		_, digest := createBinFile(t, ggml.KV{
 			"general.architecture": "bert",
 			"bert.pooling_type":    uint32(0),
-		}, []llm.Tensor{})
+		}, []*ggml.Tensor{})
 
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Model:  "bert",

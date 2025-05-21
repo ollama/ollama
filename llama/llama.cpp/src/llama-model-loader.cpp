@@ -7,6 +7,10 @@
 #include <cstring>
 #include <future>
 
+static const size_t kiB = 1024;
+static const size_t MiB = 1024*kiB;
+static const size_t GiB = 1024*MiB;
+
 const char * llama_file_version_name(llama_fver version) {
     switch (version) {
         case GGUF_FILE_VERSION_V1: return "GGUF V1 (support until nov 2023)";
@@ -17,8 +21,78 @@ const char * llama_file_version_name(llama_fver version) {
     return "unknown";
 }
 
+static std::string llama_model_ftype_name(llama_ftype ftype) {
+    if (ftype & LLAMA_FTYPE_GUESSED) {
+        return llama_model_ftype_name((enum llama_ftype) (ftype & ~LLAMA_FTYPE_GUESSED)) + " (guessed)";
+    }
+
+    switch (ftype) {
+        case LLAMA_FTYPE_ALL_F32:         return "all F32";
+        case LLAMA_FTYPE_MOSTLY_F16:      return "F16";
+        case LLAMA_FTYPE_MOSTLY_BF16:     return "BF16";
+        case LLAMA_FTYPE_MOSTLY_Q4_0:     return "Q4_0";
+        case LLAMA_FTYPE_MOSTLY_Q4_1:     return "Q4_1";
+        case LLAMA_FTYPE_MOSTLY_Q5_0:     return "Q5_0";
+        case LLAMA_FTYPE_MOSTLY_Q5_1:     return "Q5_1";
+        case LLAMA_FTYPE_MOSTLY_Q8_0:     return "Q8_0";
+        case LLAMA_FTYPE_MOSTLY_Q2_K:     return "Q2_K - Medium";
+        case LLAMA_FTYPE_MOSTLY_Q2_K_S:   return "Q2_K - Small";
+        case LLAMA_FTYPE_MOSTLY_Q3_K_S:   return "Q3_K - Small";
+        case LLAMA_FTYPE_MOSTLY_Q3_K_M:   return "Q3_K - Medium";
+        case LLAMA_FTYPE_MOSTLY_Q3_K_L:   return "Q3_K - Large";
+        case LLAMA_FTYPE_MOSTLY_Q4_K_S:   return "Q4_K - Small";
+        case LLAMA_FTYPE_MOSTLY_Q4_K_M:   return "Q4_K - Medium";
+        case LLAMA_FTYPE_MOSTLY_Q5_K_S:   return "Q5_K - Small";
+        case LLAMA_FTYPE_MOSTLY_Q5_K_M:   return "Q5_K - Medium";
+        case LLAMA_FTYPE_MOSTLY_Q6_K:     return "Q6_K";
+        case LLAMA_FTYPE_MOSTLY_TQ1_0:    return "TQ1_0 - 1.69 bpw ternary";
+        case LLAMA_FTYPE_MOSTLY_TQ2_0:    return "TQ2_0 - 2.06 bpw ternary";
+        case LLAMA_FTYPE_MOSTLY_IQ2_XXS:  return "IQ2_XXS - 2.0625 bpw";
+        case LLAMA_FTYPE_MOSTLY_IQ2_XS:   return "IQ2_XS - 2.3125 bpw";
+        case LLAMA_FTYPE_MOSTLY_IQ2_S:    return "IQ2_S - 2.5 bpw";
+        case LLAMA_FTYPE_MOSTLY_IQ2_M:    return "IQ2_M - 2.7 bpw";
+        case LLAMA_FTYPE_MOSTLY_IQ3_XS:   return "IQ3_XS - 3.3 bpw";
+        case LLAMA_FTYPE_MOSTLY_IQ3_XXS:  return "IQ3_XXS - 3.0625 bpw";
+        case LLAMA_FTYPE_MOSTLY_IQ1_S:    return "IQ1_S - 1.5625 bpw";
+        case LLAMA_FTYPE_MOSTLY_IQ1_M:    return "IQ1_M - 1.75 bpw";
+        case LLAMA_FTYPE_MOSTLY_IQ4_NL:   return "IQ4_NL - 4.5 bpw";
+        case LLAMA_FTYPE_MOSTLY_IQ4_XS:   return "IQ4_XS - 4.25 bpw";
+        case LLAMA_FTYPE_MOSTLY_IQ3_S:    return "IQ3_S - 3.4375 bpw";
+        case LLAMA_FTYPE_MOSTLY_IQ3_M:    return "IQ3_S mix - 3.66 bpw";
+
+        default: return "unknown, may not work";
+    }
+}
+
+// return a list of splits for a given path
+// for example, given "<name>-00002-of-00004.gguf", returns list of all 4 splits
+static std::vector<std::string> llama_get_list_splits(const std::string & path, const int idx, const int n_split) {
+    std::vector<std::string> paths;
+    std::string split_prefix;
+    std::vector<char> buf(llama_path_max(), 0);
+
+    {
+        int ret = llama_split_prefix(buf.data(), buf.size(), path.c_str(), idx, n_split);
+        if (!ret) {
+            throw std::runtime_error(format("invalid split file name: %s", path.c_str()));
+        }
+        split_prefix = std::string(buf.data(), ret);
+    }
+
+    if (split_prefix.empty()) {
+        throw std::runtime_error(format("invalid split file: %s", path.c_str()));
+    }
+
+    for (int idx = 0; idx < n_split; ++idx) {
+        int ret = llama_split_path(buf.data(), buf.size(), split_prefix.c_str(), idx, n_split);
+        paths.push_back(std::string(buf.data(), ret));
+    }
+
+    return paths;
+}
+
 namespace GGUFMeta {
-    template <typename T, gguf_type gt_, T (*gfun)(const gguf_context *, const int)>
+    template <typename T, gguf_type gt_, T (*gfun)(const gguf_context *, const int64_t)>
     struct GKV_Base_Type {
         static constexpr gguf_type gt = gt_;
 
@@ -60,10 +134,11 @@ namespace GGUFMeta {
         public:
         static constexpr gguf_type gt = GGUF_TYPE_ARRAY;
         static ArrayInfo getter(const gguf_context *ctx, const int k) {
+            const enum gguf_type arr_type = gguf_get_arr_type(ctx, k);
             return ArrayInfo {
-                gguf_get_arr_type(ctx, k),
+                arr_type,
                 size_t(gguf_get_arr_n(ctx, k)),
-                gguf_get_arr_data(ctx, k),
+                arr_type == GGUF_TYPE_STRING ? nullptr : gguf_get_arr_data(ctx, k),
             };
         }
     };
@@ -226,12 +301,12 @@ namespace GGUFMeta {
             GGUFMeta::GKV<GGUFMeta::ArrayInfo>::get_kv(meta.get(), kid);
 
         switch (arr_info.gt) {
-            case GGUF_TYPE_FLOAT32: GGML_ASSERT((std::is_same<T, float>::value)); break;
-            case GGUF_TYPE_INT32:   GGML_ASSERT(
-                                            (std::is_same<T,  int32_t>::value) ||
-                                            (std::is_same<T, uint32_t>::value));  break;
+            case GGUF_TYPE_UINT32:
+            case GGUF_TYPE_INT32:   GGML_ASSERT((std::is_same<T,  int32_t>::value) ||
+                                                (std::is_same<T, uint32_t>::value)); break;
+            case GGUF_TYPE_FLOAT32: GGML_ASSERT((std::is_same<T,    float>::value)); break;
             default:
-                throw std::runtime_error(format("%s is not a float32, int32 array", key.c_str()));
+                throw std::runtime_error(format("%s is not a float32/uint32/int32 array", key.c_str()));
         }
 
         result.resize(arr_info.length);
@@ -239,8 +314,6 @@ namespace GGUFMeta {
 
         return true;
     }
-
-    template bool llama_model_loader::get_arr<std::array<unsigned int, 512>>(enum llm_kv kid, std::array<unsigned int, 512>& result, bool required);
 
     template<typename T, size_t N_MAX>
     bool llama_model_loader::get_arr(const std::string & key, std::array<T, N_MAX> & result, bool required) {
@@ -257,12 +330,12 @@ namespace GGUFMeta {
             GGUFMeta::GKV<GGUFMeta::ArrayInfo>::get_kv(meta.get(), kid);
 
         switch (arr_info.gt) {
-            case GGUF_TYPE_FLOAT32: GGML_ASSERT((std::is_same<T, float>::value)); break;
-            case GGUF_TYPE_INT32:   GGML_ASSERT(
-                                            (std::is_same<T,  int32_t>::value) ||
-                                            (std::is_same<T, uint32_t>::value));  break;
+            case GGUF_TYPE_UINT32:
+            case GGUF_TYPE_INT32:   GGML_ASSERT((std::is_same<T,  int32_t>::value) ||
+                                                (std::is_same<T, uint32_t>::value)); break;
+            case GGUF_TYPE_FLOAT32: GGML_ASSERT((std::is_same<T,    float>::value)); break;
             default:
-                throw std::runtime_error(format("%s is not a float32, int32 array", key.c_str()));
+                throw std::runtime_error(format("%s is not a float32/uint32/int32 array", key.c_str()));
         }
 
         if (arr_info.length > N_MAX) {
@@ -368,7 +441,13 @@ namespace GGUFMeta {
     template bool llama_model_loader::get_key_or_arr<std::array<uint32_t, 512>>(enum llm_kv kid, std::array<uint32_t, 512> & result, uint32_t n, bool required);
     template bool llama_model_loader::get_key_or_arr<uint32_t>(const std::string & key, std::array<uint32_t, 512> & result, uint32_t n, bool required);
 
-llama_model_loader::llama_model_loader(const std::string & fname, bool use_mmap, bool check_tensors, const struct llama_model_kv_override * param_overrides_p) {
+llama_model_loader::llama_model_loader(
+        const std::string & fname,
+        std::vector<std::string> & splits,
+        bool use_mmap,
+        bool check_tensors,
+        const llama_model_kv_override * param_overrides_p,
+        const llama_model_tensor_buft_override * param_tensor_buft_overrides_p) {
     int trace = 0;
     if (getenv("LLAMA_TRACE")) {
         trace = atoi(getenv("LLAMA_TRACE"));
@@ -380,6 +459,9 @@ llama_model_loader::llama_model_loader(const std::string & fname, bool use_mmap,
         }
     }
 
+    tensor_buft_overrides = param_tensor_buft_overrides_p;
+
+    // Load the main GGUF
     struct ggml_context * ctx = NULL;
     struct gguf_init_params params = {
         /*.no_alloc = */ true,
@@ -415,35 +497,54 @@ llama_model_loader::llama_model_loader(const std::string & fname, bool use_mmap,
 
     // Load additional GGML contexts
     if (n_split > 1) {
+        // make sure the main file is loaded first
         uint16_t idx = 0;
-        get_key(llm_kv(LLM_KV_SPLIT_NO), idx);
+        const std::string kv_split_no = llm_kv(LLM_KV_SPLIT_NO);
+        get_key(kv_split_no, idx);
         if (idx != 0) {
-            throw std::runtime_error(format("illegal split file: %d, model must be loaded with the first split", idx));
+            throw std::runtime_error(format("illegal split file idx: %d (file: %s), model must be loaded with the first split", idx, fname.c_str()));
         }
 
-        std::vector<char> split_prefix(llama_path_max(), 0);
-        if (!llama_split_prefix(split_prefix.data(), split_prefix.size(), fname.c_str(), idx, n_split)) {
-            throw std::runtime_error(format("invalid split file: %s", fname.c_str()));
+        // generate list of splits if needed
+        if (splits.empty()) {
+            splits = llama_get_list_splits(fname, idx, n_split);
+        }
+
+        // in case user give a custom list of splits, check if it matches the expected number
+        if (n_split != (uint16_t)splits.size()) {
+            throw std::runtime_error(format("invalid split count, given: %zu splits, but expected %d", splits.size(), n_split));
         }
 
         if (trace > 0) {
             LLAMA_LOG_INFO("%s: loading additional %d GGUFs\n", __func__, n_split);
         }
 
-        std::vector<char> split_path(llama_path_max(), 0);
+        // load other splits
         for (idx = 1; idx < n_split; idx++) {
-            llama_split_path(split_path.data(), split_path.size(), split_prefix.data(), idx, n_split);
+            const char * fname_split = splits[idx].c_str();
 
             struct gguf_init_params split_params = {
                 /*.no_alloc = */ true,
                 /*.ctx      = */ &ctx,
             };
-            gguf_context_ptr ctx_gguf { gguf_init_from_file(split_path.data(), split_params) };
+            gguf_context_ptr ctx_gguf { gguf_init_from_file(fname_split, split_params) };
             if (!ctx_gguf) {
-                throw std::runtime_error(format("%s: failed to load GGUF split from %s\n", __func__, split_path.data()));
+                throw std::runtime_error(format("%s: failed to load GGUF split from %s\n", __func__, fname_split));
             }
 
-            files.emplace_back(new llama_file(split_path.data(), "rb"));
+            // check idx
+            {
+                const int kid = gguf_find_key(ctx_gguf.get(), kv_split_no.c_str());
+                if (kid < 0) {
+                    throw std::runtime_error(format("missing key %s in GGUF split %s", kv_split_no.c_str(), fname_split));
+                }
+                int idx_gguf = gguf_get_val_u16(ctx_gguf.get(), kid);
+                if (idx_gguf != idx) {
+                    throw std::runtime_error(format("invalid split file idx: %d (file: %s), expected %d", idx_gguf, fname_split, idx));
+                }
+            }
+
+            files.emplace_back(new llama_file(fname_split, "rb"));
             contexts.emplace_back(ctx);
 
             // Save tensors data offset info of the shard.
@@ -503,7 +604,9 @@ llama_model_loader::llama_model_loader(const std::string & fname, bool use_mmap,
 
             if (trace > 0) {
                 const uint16_t sid = w.idx;
-                LLAMA_LOG_INFO("%s: - tensor split %2d: %32s %-8s [ %s ]\n", __func__, sid, ggml_get_name(tensor), ggml_type_name(type), llama_format_tensor_shape(tensor).c_str());
+                LLAMA_LOG_INFO("%s: - tensor split %2d: %32s %-8s [ %s ] %8.2f MiB\n", __func__,
+                        sid, ggml_get_name(tensor), ggml_type_name(type), llama_format_tensor_shape(tensor).c_str(),
+                        ggml_nbytes(tensor)/1024.0f/1024.0f);
             }
         }
 
@@ -543,9 +646,9 @@ llama_model_loader::llama_model_loader(const std::string & fname, bool use_mmap,
         ftype = (llama_ftype) (ftype | LLAMA_FTYPE_GUESSED);
 
         {
-            const int kid = gguf_find_key(meta.get(), "general.file_type"); // TODO: use LLM_KV
-            if (kid >= 0) {
-                ftype = (llama_ftype) gguf_get_val_u32(meta.get(), kid);
+            uint32_t ftype_val = 0;
+            if (get_key(LLM_KV_GENERAL_FILE_TYPE, ftype_val, false)) {
+                ftype = (llama_ftype) ftype_val;
             }
         }
 
@@ -556,7 +659,7 @@ llama_model_loader::llama_model_loader(const std::string & fname, bool use_mmap,
             const enum gguf_type type   = gguf_get_kv_type(meta.get(), i);
             const std::string type_name =
                 type == GGUF_TYPE_ARRAY
-                ? format("%s[%s,%d]", gguf_type_name(type), gguf_type_name(gguf_get_arr_type(meta.get(), i)), gguf_get_arr_n(meta.get(), i))
+                ? format("%s[%s,%zu]", gguf_type_name(type), gguf_type_name(gguf_get_arr_type(meta.get(), i)), gguf_get_arr_n(meta.get(), i))
                 : gguf_type_name(type);
 
             std::string value          = gguf_kv_to_str(meta.get(), i);
@@ -721,8 +824,12 @@ void llama_model_loader::init_mappings(bool prefetch, llama_mlocks * mlock_mmaps
         mmaps_used.reserve(files.size());
         for (const auto & file : files) {
             auto * reg = ggml_backend_dev_backend_reg(ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU));
+            if (!reg) {
+                throw std::runtime_error(format("%s: no CPU backend found", __func__));
+            }
+
             auto * is_numa_fn = (decltype(ggml_is_numa) *) ggml_backend_reg_get_proc_address(reg, "ggml_backend_cpu_is_numa");
-            std::unique_ptr<llama_mmap> mapping(new llama_mmap(file.get(), prefetch ? -1 : 0, is_numa_fn()));
+            std::unique_ptr<llama_mmap> mapping = std::make_unique<llama_mmap>(file.get(), prefetch ? -1 : 0, is_numa_fn());
             mmaps_used.emplace_back(mapping->size(), 0);
             if (mlock_mmaps) {
                 std::unique_ptr<llama_mlock> mlock_mmap(new llama_mlock());
@@ -1010,4 +1117,18 @@ bool llama_model_loader::load_all_data(
     }
 
     return true;
+}
+
+std::string llama_model_loader::ftype_name() const {
+    return llama_model_ftype_name(ftype);
+}
+
+void llama_model_loader::print_info() const {
+    LLAMA_LOG_INFO("%s: file format = %s\n", __func__, llama_file_version_name(fver));
+    LLAMA_LOG_INFO("%s: file type   = %s\n", __func__, llama_model_ftype_name(ftype).c_str());
+    if (n_bytes < GiB) {
+        LLAMA_LOG_INFO("%s: file size   = %.2f MiB (%.2f BPW) \n", __func__, n_bytes/1024.0/1024.0,        n_bytes*8.0/n_elements);
+    } else {
+        LLAMA_LOG_INFO("%s: file size   = %.2f GiB (%.2f BPW) \n", __func__, n_bytes/1024.0/1024.0/1024.0, n_bytes*8.0/n_elements);
+    }
 }

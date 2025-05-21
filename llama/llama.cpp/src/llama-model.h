@@ -2,84 +2,102 @@
 
 #include "llama.h"
 #include "llama-arch.h"
+#include "llama-graph.h"
 #include "llama-hparams.h"
+#include "llama-memory.h"
 #include "llama-vocab.h"
-#include "llama-mmap.h"
 
-#include "ggml-cpp.h"
-
+#include <memory>
+#include <string>
+#include <unordered_map>
 #include <vector>
-#include <stdexcept>
+
+struct llama_cparams;
+struct llama_ubatch;
+struct llama_model_loader;
 
 // available models
-// TODO: this enum does not follow the enum naming convention
 enum llm_type {
-    MODEL_UNKNOWN,
-    MODEL_14M,
-    MODEL_17M,
-    MODEL_22M,
-    MODEL_33M,
-    MODEL_60M,
-    MODEL_70M,
-    MODEL_80M,
-    MODEL_109M,
-    MODEL_137M,
-    MODEL_160M,
-    MODEL_220M,
-    MODEL_250M,
-    MODEL_270M,
-    MODEL_335M,
-    MODEL_410M,
-    MODEL_450M,
-    MODEL_770M,
-    MODEL_780M,
-    MODEL_0_5B,
-    MODEL_1B,
-    MODEL_1_3B,
-    MODEL_1_4B,
-    MODEL_1_5B,
-    MODEL_1_6B,
-    MODEL_2B,
-    MODEL_2_8B,
-    MODEL_3B,
-    MODEL_4B,
-    MODEL_6B,
-    MODEL_6_9B,
-    MODEL_7B,
-    MODEL_8B,
-    MODEL_9B,
-    MODEL_11B,
-    MODEL_12B,
-    MODEL_13B,
-    MODEL_14B,
-    MODEL_15B,
-    MODEL_16B,
-    MODEL_20B,
-    MODEL_22B,
-    MODEL_30B,
-    MODEL_32B,
-    MODEL_34B,
-    MODEL_35B,
-    MODEL_40B,
-    MODEL_65B,
-    MODEL_70B,
-    MODEL_90B,
-    MODEL_236B,
-    MODEL_314B,
-    MODEL_671B,
-    MODEL_SMALL,
-    MODEL_MEDIUM,
-    MODEL_LARGE,
-    MODEL_XL,
-    MODEL_A1_7B,
-    MODEL_A2_7B,
-    MODEL_8x7B,
-    MODEL_8x22B,
-    MODEL_16x12B,
-    MODEL_10B_128x3_66B,
-    MODEL_57B_A14B,
-    MODEL_27B,
+    LLM_TYPE_UNKNOWN,
+    LLM_TYPE_14M,
+    LLM_TYPE_17M,
+    LLM_TYPE_22M,
+    LLM_TYPE_33M,
+    LLM_TYPE_60M,
+    LLM_TYPE_70M,
+    LLM_TYPE_80M,
+    LLM_TYPE_109M,
+    LLM_TYPE_137M,
+    LLM_TYPE_160M,
+    LLM_TYPE_190M,
+    LLM_TYPE_220M,
+    LLM_TYPE_250M,
+    LLM_TYPE_270M,
+    LLM_TYPE_335M,
+    LLM_TYPE_410M,
+    LLM_TYPE_450M,
+    LLM_TYPE_475M,
+    LLM_TYPE_770M,
+    LLM_TYPE_780M,
+    LLM_TYPE_0_5B,
+    LLM_TYPE_0_6B,
+    LLM_TYPE_1B,
+    LLM_TYPE_1_3B,
+    LLM_TYPE_1_4B,
+    LLM_TYPE_1_5B,
+    LLM_TYPE_1_6B,
+    LLM_TYPE_1_7B,
+    LLM_TYPE_1_8B,
+    LLM_TYPE_2B,
+    LLM_TYPE_2_8B,
+    LLM_TYPE_2_9B,
+    LLM_TYPE_3B,
+    LLM_TYPE_4B,
+    LLM_TYPE_6B,
+    LLM_TYPE_6_9B,
+    LLM_TYPE_7B,
+    LLM_TYPE_8B,
+    LLM_TYPE_9B,
+    LLM_TYPE_11B,
+    LLM_TYPE_12B,
+    LLM_TYPE_13B,
+    LLM_TYPE_14B,
+    LLM_TYPE_15B,
+    LLM_TYPE_16B,
+    LLM_TYPE_20B,
+    LLM_TYPE_22B,
+    LLM_TYPE_27B,
+    LLM_TYPE_30B,
+    LLM_TYPE_32B,
+    LLM_TYPE_34B,
+    LLM_TYPE_35B,
+    LLM_TYPE_40B,
+    LLM_TYPE_65B,
+    LLM_TYPE_70B,
+    LLM_TYPE_236B,
+    LLM_TYPE_290B,
+    LLM_TYPE_314B,
+    LLM_TYPE_405B,
+    LLM_TYPE_671B,
+    LLM_TYPE_SMALL,
+    LLM_TYPE_MEDIUM,
+    LLM_TYPE_LARGE,
+    LLM_TYPE_XL,
+    LLM_TYPE_A1_7B,
+    LLM_TYPE_A2_7B,
+    LLM_TYPE_8x7B,
+    LLM_TYPE_8x22B,
+    LLM_TYPE_16x12B,
+    LLM_TYPE_16x3_8B,
+    LLM_TYPE_10B_128x3_66B,
+    LLM_TYPE_57B_A14B,
+    LLM_TYPE_17B_16E, // llama4 Scout
+    LLM_TYPE_17B_128E, // llama4 Maverick
+    LLM_TYPE_30B_A3B,
+    LLM_TYPE_235B_A22B,
 };
+
+std::string llama_rope_scaling_type_name(llama_rope_scaling_type rope_scaling_type);
 
 struct llama_layer_posnet {
     // resnet
@@ -162,6 +180,8 @@ struct llama_layer {
     struct ggml_tensor * wq_b      = nullptr;
     struct ggml_tensor * wkv_a_mqa = nullptr;
     struct ggml_tensor * wkv_b     = nullptr;
+    struct ggml_tensor * wk_b      = nullptr;
+    struct ggml_tensor * wv_b      = nullptr;
     struct ggml_tensor * wq_cross  = nullptr;
     struct ggml_tensor * wk_cross  = nullptr;
     struct ggml_tensor * wv_cross  = nullptr;
@@ -243,15 +263,33 @@ struct llama_layer {
     struct ggml_tensor * time_mix_lerp_v     = nullptr;
     struct ggml_tensor * time_mix_lerp_r     = nullptr;
     struct ggml_tensor * time_mix_lerp_g     = nullptr;
+    struct ggml_tensor * time_mix_lerp_fused = nullptr;
 
-    struct ggml_tensor * time_mix_first      = nullptr;
-    struct ggml_tensor * time_mix_decay      = nullptr;
-    struct ggml_tensor * time_mix_decay_w1   = nullptr;
-    struct ggml_tensor * time_mix_decay_w2   = nullptr;
-    struct ggml_tensor * time_mix_key        = nullptr;
-    struct ggml_tensor * time_mix_value      = nullptr;
-    struct ggml_tensor * time_mix_receptance = nullptr;
-    struct ggml_tensor * time_mix_gate       = nullptr;
+    struct ggml_tensor * time_mix_first        = nullptr;
+    struct ggml_tensor * time_mix_decay        = nullptr;
+    struct ggml_tensor * time_mix_decay_w1     = nullptr;
+    struct ggml_tensor * time_mix_decay_w2     = nullptr;
+    struct ggml_tensor * time_mix_key          = nullptr;
+    struct ggml_tensor * time_mix_key_b        = nullptr;
+    struct ggml_tensor * time_mix_value        = nullptr;
+    struct ggml_tensor * time_mix_value_b      = nullptr;
+    struct ggml_tensor * time_mix_receptance   = nullptr;
+    struct ggml_tensor * time_mix_receptance_b = nullptr;
+    struct ggml_tensor * time_mix_gate         = nullptr;
+
+    // rwkv7
+    struct ggml_tensor * time_mix_w0         = nullptr;
+    struct ggml_tensor * time_mix_a0         = nullptr;
+    struct ggml_tensor * time_mix_a1         = nullptr;
+    struct ggml_tensor * time_mix_a2         = nullptr;
+    struct ggml_tensor * time_mix_v0         = nullptr;
+    struct ggml_tensor * time_mix_v1         = nullptr;
+    struct ggml_tensor * time_mix_v2         = nullptr;
+    struct ggml_tensor * time_mix_g1         = nullptr;
+    struct ggml_tensor * time_mix_g2         = nullptr;
+    struct ggml_tensor * time_mix_k_k        = nullptr;
+    struct ggml_tensor * time_mix_k_a        = nullptr;
+    struct ggml_tensor * time_mix_r_k        = nullptr;
 
     struct ggml_tensor * time_mix_ln     = nullptr;
     struct ggml_tensor * time_mix_ln_b   = nullptr;
@@ -280,26 +318,14 @@ struct llama_layer {
 
     struct ggml_tensor * bskcn_tv = nullptr;
 
-     // cross attention
-    struct ggml_tensor * cross_attn_k_norm = nullptr;
-    struct ggml_tensor * cross_attn_k_proj = nullptr;
-    struct ggml_tensor * cross_attn_o_proj = nullptr;
-    struct ggml_tensor * cross_attn_q_norm = nullptr;
-    struct ggml_tensor * cross_attn_q_proj = nullptr;
-    struct ggml_tensor * cross_attn_v_proj = nullptr;
-    struct ggml_tensor * cross_attn_attn_gate = nullptr;
-    struct ggml_tensor * cross_attn_mlp_gate = nullptr;
-
     struct llama_layer_posnet posnet;
 
     struct llama_layer_convnext convnext;
 };
 
 struct llama_model {
-    llm_type type = MODEL_UNKNOWN;
+    llm_type type = LLM_TYPE_UNKNOWN;
     llm_arch arch = LLM_ARCH_UNKNOWN;
-
-    llama_ftype ftype = LLAMA_FTYPE_ALL_F32;
 
     std::string name = "n/a";
 
@@ -329,45 +355,13 @@ struct llama_model {
 
     std::vector<llama_layer> layers;
 
+    llama_model_params params;
+
     // gguf metadata
     std::unordered_map<std::string, std::string> gguf_kv;
 
-    llama_split_mode split_mode;
-    int main_gpu;
-    int n_gpu_layers;
-
-    std::vector<std::string> rpc_servers;
-
     // list of devices used in this model
     std::vector<ggml_backend_dev_t> devices;
-
-
-    // lists of buffer types used for each layer
-    using buft_list_t = std::vector<std::pair<ggml_backend_dev_t, ggml_backend_buffer_type_t>>;
-    buft_list_t cpu_buft_list;
-    std::map<ggml_backend_dev_t, buft_list_t> gpu_buft_list;
-
-    struct layer_dev {
-        ggml_backend_dev_t dev;
-        buft_list_t * buft_list;
-    };
-
-    layer_dev dev_input = {};
-    layer_dev dev_output = {};
-    std::vector<layer_dev> dev_layer;
-
-    // contexts where the model tensors metadata is stored
-    std::vector<ggml_context_ptr> ctxs;
-
-    // the model memory buffers for the tensor data
-    std::vector<ggml_backend_buffer_ptr> bufs;
-
-    // model memory mapped files
-    llama_mmaps mappings;
-
-    // objects representing data potentially being locked in memory
-    llama_mlocks mlock_bufs;
-    llama_mlocks mlock_mmaps;
 
     // for quantize-stats only
     std::vector<std::pair<std::string, struct ggml_tensor *>> tensors_by_name;
@@ -375,71 +369,57 @@ struct llama_model {
     int64_t t_load_us  = 0;
     int64_t t_start_us = 0;
 
-    // total number of parameters in the model
-    uint64_t n_elements = 0;
+    explicit llama_model(const struct llama_model_params & params);
+    ~llama_model();
 
-    // total size of all the tensors in the model in bytes
-    size_t  n_bytes     = 0;
+    void load_stats  (llama_model_loader & ml);
+    void load_arch   (llama_model_loader & ml);
+    void load_hparams(llama_model_loader & ml);
+    void load_vocab  (llama_model_loader & ml);
+    bool load_tensors(llama_model_loader & ml); // returns false if cancelled by progress_callback
+
+    std::string arch_name() const;
+    std::string type_name() const;
+
+    std::string desc() const;
+
+    size_t size() const;
+    size_t n_tensors() const;
+    size_t n_devices() const;
+
+    // total number of parameters in the model
+    uint64_t n_elements() const;
+
+    void print_info() const;
+
+    ggml_backend_dev_t dev_layer(int il) const;
+    ggml_backend_dev_t dev_output() const;
+
+    ggml_backend_buffer_type_t select_buft(int il) const;
+
+    bool has_tensor_overrides() const;
+
+    const struct ggml_tensor * get_tensor(const char * name) const;
+
+    ggml_tensor * get_rope_factors(uint32_t n_ctx_per_seq, int il) const;
+
+    // note: can mutate `cparams`
+    // TODO: move this to new llm_arch_model_i interface
+    llama_memory_i * create_memory(const llama_memory_params & params, llama_cparams & cparams) const;
+
+    // TODO: move this to new llm_arch_model_i interface
+    llm_graph_result_ptr build_graph(
+            const llm_graph_params & params,
+                       ggml_cgraph * gf,
+                    llm_graph_type   type) const;
+
+private:
+    struct impl;
+    std::unique_ptr<impl> pimpl;
 };
 
 const char * llm_type_name(llm_type type);
 
-std::string llama_model_arch_name (const llama_model & model);
-std::string llama_model_type_name (const llama_model & model);
-std::string llama_model_ftype_name(const llama_model & model);
-
-template<typename F>
-bool buft_supported(ggml_backend_buffer_type_t buft, ggml_backend_dev_t dev, F & fn) {
-    ggml_init_params params = {
-        /*.mem_size   =*/ ggml_tensor_overhead()*8,
-        /*.mem_buffer =*/ NULL,
-        /*.no_alloc   =*/ true,
-    };
-
-    ggml_context_ptr ctx { ggml_init(params) };
-    if (!ctx) {
-        throw std::runtime_error("failed to create ggml context");
-    }
-
-    ggml_backend_buffer_ptr buf { ggml_backend_buft_alloc_buffer(buft, 0) };
-    ggml_tensor * op_tensor = fn(ctx.get());
-    for (int i = 0; i < GGML_MAX_SRC; i++) {
-        if (op_tensor->src[i] != nullptr) {
-            op_tensor->src[i]->buffer = buf.get();
-        }
-    }
-
-    bool op_supported = ggml_backend_dev_supports_op(dev, op_tensor);
-
-    return op_supported;
-}
-
-template<typename F>
-ggml_backend_buffer_type_t select_buft(const llama_model::buft_list_t & buft_list, const F & fn) {
-    for (const auto & cur : buft_list) {
-        ggml_backend_dev_t cur_dev = cur.first;
-        ggml_backend_buffer_type_t cur_buft = cur.second;
-        if (buft_supported(cur_buft, cur_dev, fn)) {
-            return cur_buft;
-        }
-    }
-
-    throw std::runtime_error("no suitable buffer type found");
-}
-
-// used by llama_adapter_cvec
-ggml_backend_buffer_type_t llama_model_select_buft(const llama_model & model, int il);
-
-// used by llama_adapter_lora
-struct ggml_tensor * llama_model_get_tensor(const struct llama_model & model, const char * name);
-
-size_t llama_model_max_nodes(const llama_model & model);
-
-struct llama_model_loader;
-
-// TODO: become llama_model methods
-void llm_load_stats     (llama_model_loader & ml, llama_model & model);
-void llm_load_arch      (llama_model_loader & ml, llama_model & model);
-void llm_load_hparams   (llama_model_loader & ml, llama_model & model);
-void llm_load_vocab     (llama_model_loader & ml, llama_model & model);
-void llm_load_print_meta(llama_model_loader & ml, llama_model & model);
+// For internal test use
+// TODO: remove
+const std::vector<std::pair<std::string, ggml_tensor *>> & llama_internal_get_tensor_map(const llama_model * model);

@@ -38,7 +38,7 @@ static __global__ void concat_f32_dim1(const float * x, const float * y, float *
         blockIdx.y * ne0 +
         blockIdx.z * ne0 * gridDim.y;
 
-    if (blockIdx.y < ne01) { // src0
+    if (blockIdx.y < (unsigned)ne01) { // src0
         int offset_src =
             nidx +
             blockIdx.y * ne0 +
@@ -64,7 +64,7 @@ static __global__ void concat_f32_dim2(const float * x, const float * y, float *
         blockIdx.y * ne0 +
         blockIdx.z * ne0 * gridDim.y;
 
-    if (blockIdx.z < ne02) { // src0
+    if (blockIdx.z < (unsigned)ne02) { // src0
         int offset_src =
             nidx +
             blockIdx.y * ne0 +
@@ -124,7 +124,7 @@ static __global__ void __launch_bounds__(CUDA_CONCAT_BLOCK_SIZE)
           uint64_t   nb1,
           uint64_t   nb2,
           uint64_t   nb3){
-    static_assert(dim >= 0 && dim <= 3, "dim must be between 0 and 3");
+    static_assert(dim >= 0 && dim <= 3, "dim must be in [0, 3]");
 
     const int64_t i3 = blockIdx.z;
     const int64_t i2 = blockIdx.y;

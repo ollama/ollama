@@ -6,13 +6,13 @@
 #include <vector>
 
 #ifdef __GNUC__
-#ifdef __MINGW32__
-#define LLAMA_ATTRIBUTE_FORMAT(...) __attribute__((format(gnu_printf, __VA_ARGS__)))
+#    if defined(__MINGW32__) && !defined(__clang__)
+#        define LLAMA_ATTRIBUTE_FORMAT(...) __attribute__((format(gnu_printf, __VA_ARGS__)))
+#    else
+#        define LLAMA_ATTRIBUTE_FORMAT(...) __attribute__((format(printf, __VA_ARGS__)))
+#    endif
 #else
-#define LLAMA_ATTRIBUTE_FORMAT(...) __attribute__((format(printf, __VA_ARGS__)))
-#endif
-#else
-#define LLAMA_ATTRIBUTE_FORMAT(...)
+#    define LLAMA_ATTRIBUTE_FORMAT(...)
 #endif
 
 //

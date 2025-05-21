@@ -1,6 +1,6 @@
 package convert
 
-import "github.com/ollama/ollama/llm"
+import "github.com/ollama/ollama/fs/ggml"
 
 type qwen2Model struct {
 	ModelParameters
@@ -15,13 +15,14 @@ type qwen2Model struct {
 		Type                          string     `json:"type"`
 		Factor                        ropeFactor `json:"factor"`
 		OriginalMaxPositionEmbeddings uint32     `json:"original_max_position_embeddings"`
+		MropeSection                  []int32    `json:"mrope_section"`
 	} `json:"rope_scaling"`
 	RMSNormEPS float32 `json:"rms_norm_eps"`
 }
 
 var _ ModelConverter = (*qwen2Model)(nil)
 
-func (q *qwen2Model) KV(t *Tokenizer) llm.KV {
+func (q *qwen2Model) KV(t *Tokenizer) ggml.KV {
 	kv := q.ModelParameters.KV(t)
 	kv["general.architecture"] = "qwen2"
 	kv["qwen2.block_count"] = q.HiddenLayers
@@ -39,16 +40,18 @@ func (q *qwen2Model) KV(t *Tokenizer) llm.KV {
 	case "yarn":
 		kv["qwen2.rope.scaling.type"] = q.RopeScaling.Type
 		kv["qwen2.rope.scaling.factor"] = q.RopeScaling.Factor
+	case "mrope", "default":
+		kv["qwen2.rope.mrope_section"] = q.RopeScaling.MropeSection
 	default:
 		panic("unknown rope scaling type")
 	}
 	return kv
 }
 
-func (q *qwen2Model) Tensors(ts []Tensor) []llm.Tensor {
-	var out []llm.Tensor
+func (q *qwen2Model) Tensors(ts []Tensor) []*ggml.Tensor {
+	var out []*ggml.Tensor
 	for _, t := range ts {
-		out = append(out, llm.Tensor{
+		out = append(out, &ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),

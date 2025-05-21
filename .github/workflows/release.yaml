@@ -111,13 +111,13 @@ jobs:
           - os: windows
             arch: amd64
             preset: 'CUDA 12'
-            install: https://developer.download.nvidia.com/compute/cuda/12.4.0/local_installers/cuda_12.4.0_551.61_windows.exe
-            cuda-version: '12.4'
+            install: https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_571.96_windows.exe
+            cuda-version: '12.8'
           - os: windows
             arch: amd64
             preset: 'ROCm 6'
-            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q3-WinSvr2022-For-HIP.exe
-            rocm-version: '6.1'
+            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
+            rocm-version: '6.2'
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     env:
@@ -160,6 +160,10 @@ jobs:
           echo "$hipPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "CC=$hipPath\bin\clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "CXX=$hipPath\bin\clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - if: matrix.preset == 'CPU'
+        run: |
+          echo "CC=clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "CXX=clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
       - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
@@ -329,7 +333,9 @@ jobs:
           done
         working-directory: dist/${{ matrix.os }}-${{ matrix.arch }}
       - run: |
-          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in; do tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE | pigz -9vc >$(basename ${ARCHIVE//.*/}.tgz); done
+          for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in; do
+            tar c -C dist/${{ matrix.os }}-${{ matrix.arch }} -T $ARCHIVE --owner 0 --group 0 | pigz -9vc >$(basename ${ARCHIVE//.*/}.tgz);
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.target }}
@@ -425,6 +431,22 @@ jobs:
           docker buildx imagetools create $(echo '${{ steps.metadata.outputs.json }}' | jq -cr '.tags | map("-t", .) | join(" ")') $(cat *-${{ matrix.suffix }}.txt | xargs printf 'ollama/ollama@%s ')
           docker buildx imagetools inspect ollama/ollama:${{ steps.metadata.outputs.version }}
         working-directory: ${{ runner.temp }}
+
+  # Trigger downstream release process
+  trigger:
+    runs-on: ubuntu-latest
+    environment: release
+    needs: [darwin-build, windows-build, windows-depends]
+    steps:
+      - name: Trigger downstream release process
+        run: |
+          curl -L \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.RELEASE_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/ollama/${{ vars.RELEASE_REPO }}/dispatches \
+            -d "{\"event_type\": \"trigger-workflow\", \"client_payload\": {\"run_id\": \"${GITHUB_RUN_ID}\", \"version\": \"${GITHUB_REF_NAME#v}\"}}"
 
   # Aggregate all the assets and ship a release
   release:
