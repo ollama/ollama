@@ -75,30 +75,31 @@ type SelfAttention struct {
 	RopeFactors ml.Tensor  `gguf:"rope_freqs.weight"`
 }
 
-func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positionIDs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
+func (sa *SelfAttention) Forward(ctx ml.Context, hiddenState, positions ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
 	batchSize := hiddenState.Dim(1)
 	headDim := cmp.Or(opts.headDim, opts.hiddenSize/opts.numHeads)
+	ropeDim := cmp.Or(opts.ropeDim, headDim)
 
-	q := sa.Query.Forward(ctx, hiddenState)
-	q = q.Reshape(ctx, headDim, opts.numHeads, batchSize)
-	q = fast.RoPE(ctx, q, positionIDs, opts.ropeDim, opts.ropeBase, opts.ropeScale, rope.WithFactors(sa.RopeFactors))
+	query := sa.Query.Forward(ctx, hiddenState)
+	query = query.Reshape(ctx, headDim, opts.numHeads, batchSize)
 
-	k := sa.Key.Forward(ctx, hiddenState)
-	k = k.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
-	k = fast.RoPE(ctx, k, positionIDs, opts.ropeDim, opts.ropeBase, opts.ropeScale, rope.WithFactors(sa.RopeFactors))
+	key := sa.Key.Forward(ctx, hiddenState)
+	key = key.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 
-	v := sa.Value.Forward(ctx, hiddenState)
-	v = v.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
+	value := sa.Value.Forward(ctx, hiddenState)
+	value = value.Reshape(ctx, headDim, opts.numKVHeads, batchSize)
 
-	scaleFactor := 1.0 / math.Sqrt(float64(headDim))
-	kqv := nn.Attention(ctx, q, k, v, scaleFactor, cache)
-	kqv = kqv.Reshape(ctx, headDim*opts.numHeads, batchSize)
+	query = fast.RoPE(ctx, query, positions, ropeDim, opts.ropeBase, opts.ropeScale, rope.WithFactors(sa.RopeFactors))
+	key = fast.RoPE(ctx, key, positions, ropeDim, opts.ropeBase, opts.ropeScale, rope.WithFactors(sa.RopeFactors))
 
-	return sa.Output.Forward(ctx, kqv)
+	attention := nn.Attention(ctx, query, key, value, 1.0/math.Sqrt(float64(headDim)), cache)
+	attention = attention.Reshape(ctx, headDim*opts.numHeads, batchSize)
+	return sa.Output.Forward(ctx, attention)
 }
 
 func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
-	return fast.RoPE(ctx, key, shift, m.ropeDim, m.ropeBase, m.ropeScale, rope.WithFactors(m.Layers[layer].SelfAttention.RopeFactors)), nil
+	ropeDim := cmp.Or(m.ropeDim, m.hiddenSize/m.numHeads)
+	return fast.RoPE(ctx, key, shift, ropeDim, m.ropeBase, m.ropeScale, rope.WithFactors(m.Layers[layer].SelfAttention.RopeFactors)), nil
 }
 
 type MLP struct {
@@ -119,11 +120,11 @@ type Layer struct {
 	MLP           *MLP
 }
 
-func (l *Layer) Forward(ctx ml.Context, hiddenState, positionIDs, outputs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
+func (l *Layer) Forward(ctx ml.Context, hiddenState, positions, outputs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
 	residual := hiddenState
 
 	hiddenState = l.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
-	hiddenState = l.SelfAttention.Forward(ctx, hiddenState, positionIDs, cache, opts)
+	hiddenState = l.SelfAttention.Forward(ctx, hiddenState, positions, cache, opts)
 
 	// In the final layer (outputs != nil), optimize by pruning to just the token positions
 	// we need logits for.
@@ -146,22 +147,20 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 		return nil, err
 	}
 
-	outputs, err := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
-	if err != nil {
-		return nil, err
-	}
-
 	hiddenState := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 
 	for i, layer := range m.Layers {
 		m.Cache.SetLayer(i)
 
-		var lastLayerOutputs ml.Tensor
+		var outputs ml.Tensor
 		if i == len(m.Layers)-1 {
-			lastLayerOutputs = outputs
+			outputs, err = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
+			if err != nil {
+				return nil, err
+			}
 		}
 
-		hiddenState = layer.Forward(ctx, hiddenState, positions, lastLayerOutputs, m.Cache, m.Options)
+		hiddenState = layer.Forward(ctx, hiddenState, positions, outputs, m.Cache, m.Options)
 	}
 
 	hiddenState = m.OutputNorm.Forward(ctx, hiddenState, m.eps)
