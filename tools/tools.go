@@ -1,7 +1,9 @@
 package tools
 
 import (
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	gotmpl "text/template"
 
@@ -16,14 +18,116 @@ var (
 
 type Parser struct {
 	parseLeadingJSON bool
+	prefix           string
 	prefixFound      bool
 	tmpl             gotmpl.Template
 	sb               strings.Builder
-	prefix           string
 	index            int
 	name             string
 	arguments        string
 	done             bool
+}
+
+// parseJSONToolCalls attempts to parse a JSON string into a slice of ToolCalls.
+//
+// Parameters:
+//   - s: The string to parse
+//   - name: The field name from template that identifies the tool call name
+//   - arguments: The field name from template that identifies the tool call arguments
+//
+// Returns:
+//   - []api.ToolCall: The parsed tool calls if successful
+//   - error: ErrAccumulateMore if braces unbalanced, ErrInvalidToolCall if invalid, or nil if successful
+func parseJSONToolCalls(s string, name, arguments string, prefix string) ([]api.ToolCall, error) {
+	// Check for balanced braces before attempting to parse
+	braceCount := 0
+	squareCount := 0
+	startIndex := -1
+	var rawToolCalls []string
+
+	for i, c := range s {
+		switch c {
+		case '{':
+			braceCount++
+			if startIndex == -1 {
+				startIndex = i
+			}
+		case '}':
+			braceCount--
+			if braceCount == 0 {
+				rawToolCalls = append(rawToolCalls, s[startIndex:i+1])
+				startIndex = -1
+			}
+		case '[':
+			// Only track these if we don't have a prefix as it will be cut off from the prefix
+			if prefix == "" || !strings.HasSuffix(prefix, "[") {
+				squareCount++
+			}
+		case ']':
+			// if prefix == "" {
+			if prefix == "" || !strings.HasSuffix(prefix, "[") {
+				squareCount--
+			}
+		}
+
+		// Negative means we have an extra closing brace/bracket
+		if braceCount < 0 || squareCount < 0 {
+			return nil, errInvalidToolCall
+		}
+	}
+
+	// If braces/brackets aren't balanced, need more input
+	if braceCount > 0 || squareCount > 0 {
+		return nil, errAccumulateMore
+	}
+
+	t := strings.TrimSpace(s)
+	if len(t) == 0 {
+		return nil, errAccumulateMore
+	}
+	// If the input is a single square bracket, it's not a valid tool call
+	if t[0] == '[' && len(t) == 1 {
+		return nil, errAccumulateMore
+	}
+
+	// Attempt full unmarshal of the JSON
+	var toolCalls []api.ToolCall
+	for _, rawToolCall := range rawToolCalls {
+		var resp any
+		if err := json.Unmarshal([]byte(rawToolCall), &resp); err != nil {
+			continue
+		}
+
+		// Collect nested objects that could contain tool calls
+		objs := collect(resp)
+		if len(objs) == 0 {
+			continue
+		}
+
+		// Extract tool calls from objects
+		for _, kv := range objs {
+			n, nok := kv[name].(string)
+			a, aok := kv[arguments].(map[string]any)
+			if nok && aok {
+				toolCalls = append(toolCalls, api.ToolCall{
+					Function: api.ToolCallFunction{
+						Name:      n,
+						Arguments: a,
+					},
+				})
+			} else {
+				slog.Debug("No valid tool call found in object.", "object", kv)
+			}
+		}
+	}
+
+	// Valid JSON, no tool calls found
+	if len(toolCalls) == 0 {
+		slog.Debug("No valid tool calls found in any raw tool calls.", "rawToolCalls", rawToolCalls)
+		return nil, errInvalidToolCall
+	}
+
+	return toolCalls, nil
 }
 
 // checkPrefix processes a string to find and handle a prefix pattern.
@@ -34,13 +138,9 @@ type Parser struct {
 func (p *Parser) checkPrefix(s string) (string, error) {
 	original := s
 	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
 
-	if s == "" {
-		return "", nil
-	}
-
-	// If no prefix defined, just return trimmed string
-	if p.prefix == "" {
+	if s == "" || p.prefix == "" {
 		return s, nil
 	}
 
@@ -79,7 +179,7 @@ func (p *Parser) checkPrefix(s string) (string, error) {
 //   - tools: Any parsed tool calls
 //   - content: Non-tool call content
 func (p *Parser) Add(s string) (tools []api.ToolCall, content string) {
-	if s == "" {
+	if strings.TrimSpace(s) == "" {
 		return nil, ""
 	}
 	if p.done {
@@ -106,7 +206,7 @@ func (p *Parser) Add(s string) (tools []api.ToolCall, content string) {
 		return nil, s
 	}
 
-	toolCalls, err := parseJSONToolCalls(s, p.name, p.arguments)
+	toolCalls, err := parseJSONToolCalls(s, p.name, p.arguments, p.prefix)
 	if err != nil {
 		if errors.Is(err, errAccumulateMore) {
 			return nil, ""
@@ -153,6 +253,7 @@ func NewParser(templateToProcess *gotmpl.Template) (*Parser, error) {
 
 	tp := toolPrefix(templateToProcess)
 	tp = strings.ReplaceAll(tp, "\n", " ")
+	tp = strings.ReplaceAll(tp, "\r", " ")
 
 	name, arguments, err := extractToolArgs(tt)
 	if err != nil {

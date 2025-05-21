@@ -1526,7 +1526,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				toolCalls, content := toolParser.Add(r.Content)
 				if len(content) > 0 {
 					res.Message.Content = content
-					slog.Debug("tools: setting content to", "content", content)
 				} else if len(toolCalls) > 0 {
 					res.Message.ToolCalls = toolCalls
 					res.Message.Content = ""

@@ -4,8 +4,6 @@ import (
 	"testing"
 	gotmpl "text/template"
 
-	"github.com/google/go-cmp/cmp"
-	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/template"
 )
 
@@ -81,22 +79,22 @@ func TestToolPrefix(t *testing.T) {
 		{
 			name:     "basic tool call with action prefix",
 			template: "{{if .ToolCalls}}Action: ```json{{end}}",
-			want:     "Action:",
+			want:     "Action: ```json",
 		},
 		{
 			name:     "incomplete functools bracket",
 			template: "{{if .ToolCalls}}functools[{{end}}",
-			want:     "functools",
+			want:     "functools[",
 		},
 		{
 			name:     "tool call with angle brackets",
 			template: "{{if .ToolCalls}}Hello, world! <tool_call>{{end}}",
-			want:     "<tool_call>",
+			want:     "Hello, world! <tool_call>",
 		},
 		{
 			name:     "multiple tool call formats",
 			template: "{{if .ToolCalls}}[tool_call] <tool_call>{{end}}",
-			want:     "[tool_call]",
+			want:     "[tool_call] <tool_call>",
 		},
 		{
 			name:     "single angle bracket tool call",
@@ -106,22 +104,22 @@ func TestToolPrefix(t *testing.T) {
 		{
 			name:     "incomplete angle bracket after tool call",
 			template: "{{if .ToolCalls}}[tool_call] <{{end}}",
-			want:     "[tool_call]",
+			want:     "[tool_call] <",
 		},
 		{
 			name:     "angle bracket prefix with tool call",
 			template: "{{if .ToolCalls}}> <tool_call>{{end}}",
-			want:     "<tool_call>",
+			want:     "> <tool_call>",
 		},
 		{
 			name:     "uppercase tool call with incomplete bracket",
 			template: "{{if .ToolCalls}}[TOOL_CALL] [{{end}}",
-			want:     "[TOOL_CALL]",
+			want:     "[TOOL_CALL] [",
 		},
 		{
 			name:     "uppercase tool call with adjacent bracket",
 			template: "{{if .ToolCalls}}[TOOL_CALL][{{end}}",
-			want:     "[TOOL_CALL]",
+			want:     "[TOOL_CALL][",
 		},
 		{
 			name:     "tool call with pipe delimiters",
@@ -463,179 +461,4 @@ func mapsEqual(m1, m2 map[string]any) bool {
 		}
 	}
 	return true
-}
-
-func TestParseJSONToolCalls(t *testing.T) {
-	tests := []struct {
-		name          string
-		input         string
-		nameField     string
-		argsField     string
-		wantToolCalls []api.ToolCall
-		wantErr       error
-	}{
-		{
-			name:      "valid single tool call",
-			input:     `{"name": "test_tool", "arguments": {"arg1": "value1"}}`,
-			nameField: "name",
-			argsField: "arguments",
-			wantToolCalls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name: "test_tool",
-						Arguments: map[string]any{
-							"arg1": "value1",
-						},
-					},
-				},
-			},
-			wantErr: nil,
-		},
-		{
-			name:          "incomplete JSON",
-			input:         `{"name": "test_tool", "arguments": {"arg1": `,
-			nameField:     "name",
-			argsField:     "arguments",
-			wantToolCalls: nil,
-			wantErr:       errAccumulateMore,
-		},
-		{
-			name:          "invalid JSON",
-			input:         `not json at all`,
-			nameField:     "name",
-			argsField:     "arguments",
-			wantToolCalls: nil,
-			wantErr:       errInvalidToolCall,
-		},
-		{
-			name:          "missing required fields",
-			input:         `{"other": "field"}`,
-			nameField:     "name",
-			argsField:     "arguments",
-			wantToolCalls: nil,
-			wantErr:       errInvalidToolCall,
-		},
-		// Unlikely to hit this case as the parse would have already parsed the first JSON
-		{
-			name: "multiple tool calls in array",
-			input: `[
-				{"name": "tool1", "arguments": {"arg1": 1}},
-				{"name": "tool2", "arguments": {"arg2": "value"}}
-			]`,
-			nameField: "name",
-			argsField: "arguments",
-			wantToolCalls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name: "tool1",
-						Arguments: map[string]any{
-							"arg1": float64(1),
-						},
-					},
-				},
-				{
-					Function: api.ToolCallFunction{
-						Name: "tool2",
-						Arguments: map[string]any{
-							"arg2": "value",
-						},
-					},
-				},
-			},
-			wantErr: nil,
-		},
-		{
-			name: "multiple tool calls without array",
-			input: `
-				{"name": "tool1", "arguments": {"arg1": 1}},
-				{"name": "tool2", "arguments": {"arg2": "value"}}
-			`,
-			nameField: "name",
-			argsField: "arguments",
-			wantToolCalls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name: "tool1",
-						Arguments: map[string]any{
-							"arg1": float64(1),
-						},
-					},
-				},
-				{
-					Function: api.ToolCallFunction{
-						Name: "tool2",
-						Arguments: map[string]any{
-							"arg2": "value",
-						},
-					},
-				},
-			},
-			wantErr: nil,
-		},
-		{
-			name: "multiple tool calls with text after",
-			input: `
-				{"name": "tool1", "arguments": {"arg1": 1}} text
-				{"name": "tool2", "arguments": {"arg2": "value"}} text
-			`,
-			nameField: "name",
-			argsField: "arguments",
-			wantToolCalls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name: "tool1",
-						Arguments: map[string]any{
-							"arg1": float64(1),
-						},
-					},
-				},
-				{
-					Function: api.ToolCallFunction{
-						Name: "tool2",
-						Arguments: map[string]any{
-							"arg2": "value",
-						},
-					},
-				},
-			},
-			wantErr: nil,
-		},
-		{
-			name: "second tool call in array",
-			input: `
-				, {"name": "tool2", "arguments": {"arg2": "value"}}
-			`,
-			nameField: "name",
-			argsField: "arguments",
-			wantToolCalls: []api.ToolCall{
-				{
-					Function: api.ToolCallFunction{
-						Name: "tool2",
-						Arguments: map[string]any{
-							"arg2": "value",
-						},
-					},
-				},
-			},
-			wantErr: nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gotCalls, err := parseJSONToolCalls(tt.input, tt.nameField, tt.argsField)
-
-			if err != tt.wantErr {
-				t.Errorf("parseJSONToolCalls() error = %v, want %v", err, tt.wantErr)
-			}
-
-			if len(gotCalls) != 0 && tt.wantErr != nil {
-				t.Errorf("parseJSONToolCalls() valid = %v, want %v", len(gotCalls) == 0, tt.wantErr == nil)
-			}
-
-			if diff := cmp.Diff(gotCalls, tt.wantToolCalls); diff != "" {
-				t.Errorf("parseJSONToolCalls() tool calls mismatch (-got +want):\n%s", diff)
-			}
-		})
-	}
 }

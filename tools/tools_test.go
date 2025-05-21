@@ -26,6 +26,226 @@ func readFile(t *testing.T, base, name string) *bytes.Buffer {
 	return bytes.NewBuffer(bts)
 }
 
+func TestParseJSONToolCalls(t *testing.T) {
+	tests := []struct {
+		name          string
+		input         string
+		nameField     string
+		argsField     string
+		wantToolCalls []api.ToolCall
+		wantErr       error
+		prefix        string
+	}{
+		{
+			name:      "valid single tool call",
+			input:     `{"name": "test_tool", "arguments": {"arg1": "value1"}}`,
+			nameField: "name",
+			argsField: "arguments",
+			wantToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "test_tool",
+						Arguments: map[string]any{
+							"arg1": "value1",
+						},
+					},
+				},
+			},
+			wantErr: nil,
+			prefix:  "",
+		},
+		{
+			name:          "incomplete JSON",
+			input:         `{"name": "test_tool", "arguments": {"arg1": `,
+			nameField:     "name",
+			argsField:     "arguments",
+			wantToolCalls: nil,
+			wantErr:       errAccumulateMore,
+			prefix:        "",
+		},
+		{
+			name:          "invalid JSON",
+			input:         `not json at all`,
+			nameField:     "name",
+			argsField:     "arguments",
+			wantToolCalls: nil,
+			wantErr:       errInvalidToolCall,
+			prefix:        "",
+		},
+		{
+			name:          "missing required fields",
+			input:         `{"other": "field"}`,
+			nameField:     "name",
+			argsField:     "arguments",
+			wantToolCalls: nil,
+			wantErr:       errInvalidToolCall,
+			prefix:        "",
+		},
+		{
+			name: "multiple tool calls in array",
+			input: `[
+				{"name": "tool1", "arguments": {"arg1": 1}},
+				{"name": "tool2", "arguments": {"arg2": "value"}}
+			]`,
+			nameField: "name",
+			argsField: "arguments",
+			wantToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "tool1",
+						Arguments: map[string]any{
+							"arg1": float64(1),
+						},
+					},
+				},
+				{
+					Function: api.ToolCallFunction{
+						Name: "tool2",
+						Arguments: map[string]any{
+							"arg2": "value",
+						},
+					},
+				},
+			},
+			wantErr: nil,
+			prefix:  "",
+		},
+		{
+			name: "multiple tool calls without array",
+			input: `
+				{"name": "tool1", "arguments": {"arg1": 1}},
+				{"name": "tool2", "arguments": {"arg2": "value"}}
+			`,
+			nameField: "name",
+			argsField: "arguments",
+			wantToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "tool1",
+						Arguments: map[string]any{
+							"arg1": float64(1),
+						},
+					},
+				},
+				{
+					Function: api.ToolCallFunction{
+						Name: "tool2",
+						Arguments: map[string]any{
+							"arg2": "value",
+						},
+					},
+				},
+			},
+			wantErr: nil,
+			prefix:  "",
+		},
+		{
+			name: "multiple tool calls with text after",
+			input: `
+				{"name": "tool1", "arguments": {"arg1": 1}} text
+				{"name": "tool2", "arguments": {"arg2": "value"}} text
+			`,
+			nameField: "name",
+			argsField: "arguments",
+			wantToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "tool1",
+						Arguments: map[string]any{
+							"arg1": float64(1),
+						},
+					},
+				},
+				{
+					Function: api.ToolCallFunction{
+						Name: "tool2",
+						Arguments: map[string]any{
+							"arg2": "value",
+						},
+					},
+				},
+			},
+			wantErr: nil,
+			prefix:  "",
+		},
+		{
+			name: "second tool call in array",
+			input: `
+				, {"name": "tool2", "arguments": {"arg2": "value"}}
+			`,
+			nameField: "name",
+			argsField: "arguments",
+			wantToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "tool2",
+						Arguments: map[string]any{
+							"arg2": "value",
+						},
+					},
+				},
+			},
+			wantErr: nil,
+			prefix:  "",
+		},
+		// a bad JSON would not return any tool calls or content as it would always accumulate more
+		{
+			name:          "unbalanced square brackets",
+			input:         `[{"name": "tool1", "arguments": {"arg1": [1, 2}]`,
+			nameField:     "name",
+			argsField:     "arguments",
+			wantToolCalls: nil,
+			wantErr:       errAccumulateMore,
+			prefix:        "",
+		},
+		{
+			name:          "incomplete square brackets",
+			input:         `[{"name": "tool1", "arguments": {"arg1": [1, 2, 3`,
+			nameField:     "name",
+			argsField:     "arguments",
+			wantToolCalls: nil,
+			wantErr:       errAccumulateMore,
+			prefix:        "",
+		},
+		{
+			name:      "nested arrays in arguments",
+			input:     `{"name": "tool1", "arguments": {"arg1": [1, 2, ["nested", "array"]]}}`,
+			nameField: "name",
+			argsField: "arguments",
+			wantToolCalls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Name: "tool1",
+						Arguments: map[string]any{
+							"arg1": []any{float64(1), float64(2), []any{"nested", "array"}},
+						},
+					},
+				},
+			},
+			wantErr: nil,
+			prefix:  "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotCalls, err := parseJSONToolCalls(tt.input, tt.nameField, tt.argsField, tt.prefix)
+
+			if err != tt.wantErr {
+				t.Errorf("parseJSONToolCalls() error = %v, want %v", err, tt.wantErr)
+			}
+
+			if len(gotCalls) != 0 && tt.wantErr != nil {
+				t.Errorf("parseJSONToolCalls() valid = %v, want %v", len(gotCalls) == 0, tt.wantErr == nil)
+			}
+
+			if diff := cmp.Diff(gotCalls, tt.wantToolCalls); diff != "" {
+				t.Errorf("parseJSONToolCalls() tool calls mismatch (-got +want):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestParseToolCalls(t *testing.T) {
 	p := filepath.Join("testdata")
 	t1 := api.ToolCall{
@@ -162,92 +382,78 @@ func TestParseToolCalls(t *testing.T) {
 			expectedTokens:   "",
 		},
 		{
-			name:             "qwen2.5-coder single tool call with prefix",
-			model:            "qwen2.5-coder",
+			name:             "qwen2.5 single tool call with prefix",
+			model:            "qwen2.5",
 			output:           `<tool_call>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}</tool_call>`,
 			expectedToolCall: []api.ToolCall{t1},
 			expectedTokens:   "",
 		},
 		{
-			name:             "qwen2.5-coder multiple tool calls with and without prefix",
-			model:            "qwen2.5-coder",
+			name:             "qwen2.5 multiple tool calls with and without prefix",
+			model:            "qwen2.5",
 			output:           `{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} <tool_call>{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}</tool_call> <tool_call>{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}</tool_call>`,
 			expectedToolCall: []api.ToolCall{t1, t1, t2},
 			expectedTokens:   "",
 		},
 		{
-			name:             "qwen2.5-coder multiple tool calls without prefix",
-			model:            "qwen2.5-coder",
-			output:           `[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}, {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
-			expectedToolCall: []api.ToolCall{t1, t2},
-			expectedTokens:   "",
-		},
-		{
-			name:             "qwen2.5-coder plain text response no tool calls",
-			model:            "qwen2.5-coder",
+			name:             "qwen2.5 plain text response no tool calls",
+			model:            "qwen2.5",
 			output:           "The weather in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.",
 			expectedToolCall: []api.ToolCall{},
 			expectedTokens:   "The weather in San Francisco, CA is 70°F and in Toronto, Canada is 20°C.",
 		},
 		{
-			name:             "qwen2.5-coder tool calls with trailing text",
-			model:            "qwen2.5-coder",
+			name:             "qwen2.5 tool calls with trailing text",
+			model:            "qwen2.5",
 			output:           `[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}, {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}] some tokens after call`,
 			expectedToolCall: []api.ToolCall{t1, t2},
 			expectedTokens:   "some tokens after call",
 		},
 		{
-			name:             "qwen2.5-coder tool calls with initial text",
-			model:            "qwen2.5-coder",
+			name:             "qwen2.5 tool calls with initial text",
+			model:            "qwen2.5",
 			output:           `some tokens before call [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}, {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
 			expectedToolCall: []api.ToolCall{},
 			expectedTokens:   `some tokens before call [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}, {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
 		},
 		{
 			name:             "qwen2.5 tool calls with prefix and trailing text",
-			model:            "qwen2.5-coder",
+			model:            "qwen2.5",
 			output:           `<tool_call> [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}, {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}] </tool_call> some tokens after call`,
 			expectedToolCall: []api.ToolCall{t1, t2},
 			expectedTokens:   "",
 		},
 		{
 			name:             "qwen2.5 tool calls with prefix and initial text",
-			model:            "qwen2.5-coder",
+			model:            "qwen2.5",
 			output:           `some tokens before call <tool_call> [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}, {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}] </tool_call>`,
 			expectedToolCall: []api.ToolCall{t1, t2},
 			expectedTokens:   "some tokens before call",
 		},
 		{
-			name:             "qwen2.5 tool calls without prefix and valid tool call",
-			model:            "qwen2.5-coder",
-			output:           `[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}}, {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
-			expectedToolCall: []api.ToolCall{t1, t2},
-			expectedTokens:   "",
-		},
-		{
 			name:             "qwen2.5 tool calls without and with prefix",
-			model:            "qwen2.5-coder",
+			model:            "qwen2.5",
 			output:           `{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} <tool_call>{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}</tool_call>`,
 			expectedToolCall: []api.ToolCall{t1, t2},
 			expectedTokens:   "",
 		},
 		{
 			name:             "qwen2.5 tool calls without and with prefix and text between",
-			model:            "qwen2.5-coder",
+			model:            "qwen2.5",
 			output:           `{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} some tokens between <tool_call>{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}</tool_call> some tokens after call`,
 			expectedToolCall: []api.ToolCall{t1, t2},
 			expectedTokens:   "some tokens between",
 		},
 		{
-			name:             "qwen2.5 tool calls without prefix and invalid tool call",
-			model:            "qwen2.5-coder",
-			output:           `[{"options": "foo"}]`,
+			name:             "qwen2.5 tool calls without prefix and invalid tool call with other tokens",
+			model:            "qwen2.5",
+			output:           `hi [{"options": "foo"}]`,
 			expectedToolCall: []api.ToolCall{},
-			expectedTokens:   `[{"options": "foo"}]`,
+			expectedTokens:   `hi [{"options": "foo"}]`,
 		},
 		{
 			name:             "qwen2.5 tool calls with prefix and invalid tool call",
-			model:            "qwen2.5-coder",
+			model:            "qwen2.5",
 			output:           `<tool_call> [{"options": "foo"}] </tool_call> `,
 			expectedToolCall: []api.ToolCall{},
 			expectedTokens:   ``,
@@ -302,54 +508,74 @@ func TestParseToolCalls(t *testing.T) {
 			expectedTokens:   `<think></think><tool_cfakeout {"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} </tool_call>`,
 		},
 		{
-			name:             "llama3.2 valid tool call without prefix",
+			name:             "model with prefix in template, no prefix in output",
+			model:            "qwen2.5",
+			output:           `[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
+			expectedToolCall: []api.ToolCall{t1, t2},
+			expectedTokens:   "",
+		},
+		{
+			name:             "model with prefix in template, prefix in output",
+			model:            "qwen2.5",
+			output:           `<tool_call>[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]</tool_call>`,
+			expectedToolCall: []api.ToolCall{t1, t2},
+			expectedTokens:   "",
+		},
+		{
+			name:             "model without prefix in template, no prefix in output",
+			model:            "llama3.2",
+			output:           `[{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}]`,
+			expectedToolCall: []api.ToolCall{t1, t2},
+			expectedTokens:   "",
+		},
+		{
+			name:             "model without prefix in template, no prefix in output, single tool call",
 			model:            "llama3.2",
 			output:           `{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}}`,
 			expectedToolCall: []api.ToolCall{t1},
 			expectedTokens:   "",
 		},
 		{
-			name:             "llama3.2 incomplete tool call without prefix",
+			name:             "model without prefix in template, prefix in output",
 			model:            "llama3.2",
-			output:           `{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, `,
+			output:           `<tool_call> [{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}]</tool_call>`,
 			expectedToolCall: []api.ToolCall{},
-			expectedTokens:   "",
+			expectedTokens:   `<tool_call> [{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}]</tool_call>`,
 		},
 		{
-			name:             "llama3.2 tool call with leading text",
-			model:            "llama3.2",
-			output:           `some non json text{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}}`,
+			name:             "model with prefix in template, no prefix in output, tokens before",
+			model:            "qwen2.5",
+			output:           `some tokens before [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
 			expectedToolCall: []api.ToolCall{},
-			expectedTokens:   `some non json text{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}}`,
+			expectedTokens:   `some tokens before [{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
 		},
 		{
-			name:             "llama3.2 tool call with invalid tool prefix (no prefix in template)",
-			model:            "llama3.2",
-			output:           `<tool_call> {"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}}`,
-			expectedToolCall: []api.ToolCall{},
-			expectedTokens:   `<tool_call> {"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}}`,
-		},
-		{
-			name:             "llama3.2 tool call with tokens after tool call",
-			model:            "llama3.2",
-			output:           `{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} some tokens after tool call`,
-			expectedToolCall: []api.ToolCall{t1},
-			expectedTokens:   "",
-		},
-		// Only the first tool call is returned
-		{
-			name:             "llama3.2 tool call with multiple tool calls",
-			model:            "llama3.2",
-			output:           `{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}`,
+			name:             "model with prefix in template, prefix in output, tokens after",
+			model:            "qwen2.5",
+			output:           `<tool_call>[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]</tool_call> some tokens after`,
 			expectedToolCall: []api.ToolCall{t1, t2},
 			expectedTokens:   "",
 		},
 		{
-			name:             "llama3.2 tool call with multiple tool calls",
+			name:             "model without prefix in template, no prefix in output, tokens after",
 			model:            "llama3.2",
-			output:           `[{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}]`,
+			output:           `[{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}]</tool_call> some tokens after`,
 			expectedToolCall: []api.ToolCall{t1, t2},
 			expectedTokens:   "",
+		},
+		{
+			name:             "model without prefix in template, no prefix in output, tokens before",
+			model:            "llama3.2",
+			output:           `some tokens before [{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}]`,
+			expectedToolCall: []api.ToolCall{},
+			expectedTokens:   `some tokens before [{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}]`,
+		},
+		{
+			name:             "model without prefix in template, prefix in output, tokens after",
+			model:            "llama3.2",
+			output:           `<tool_call> [{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}]</tool_call> some tokens after`,
+			expectedToolCall: []api.ToolCall{},
+			expectedTokens:   `<tool_call> [{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}]</tool_call> some tokens after`,
 		},
 	}
 
