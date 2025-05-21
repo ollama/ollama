@@ -51,7 +51,7 @@ see if the change were accepted.
 
 The title should look like:
 
-   <package>: <short description>
+    <package>: <short description>
 
 The package is the most affected Go package. If the change does not affect Go
 code, then use the directory name instead. Changes to a single well-known

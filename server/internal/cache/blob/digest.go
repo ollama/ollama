@@ -63,6 +63,10 @@ func (d Digest) Short() string {
 	return fmt.Sprintf("%x", d.sum[:4])
 }
 
+func (d Digest) Sum() [32]byte {
+	return d.sum
+}
+
 func (d Digest) Compare(other Digest) int {
 	return slices.Compare(d.sum[:], other.sum[:])
 }

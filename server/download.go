@@ -29,8 +29,9 @@ import (
 const maxRetries = 6
 
 var (
-	errMaxRetriesExceeded = errors.New("max retries exceeded")
-	errPartStalled        = errors.New("part stalled")
+	errMaxRetriesExceeded   = errors.New("max retries exceeded")
+	errPartStalled          = errors.New("part stalled")
+	errMaxRedirectsExceeded = errors.New("maximum redirects exceeded (10) for directURL")
 )
 
 var blobDownloadManager sync.Map
@@ -236,7 +237,7 @@ func (b *blobDownload) run(ctx context.Context, requestURL *url.URL, opts *regis
 
 			newOpts.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 				if len(via) > 10 {
-					return errors.New("maximum redirects exceeded (10) for directURL")
+					return errMaxRedirectsExceeded
 				}
 
 				// if the hostname is the same, allow the redirect

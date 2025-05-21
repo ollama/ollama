@@ -43,10 +43,10 @@ func (p *commandrModel) KV(t *Tokenizer) ggml.KV {
 	return kv
 }
 
-func (p *commandrModel) Tensors(ts []Tensor) []ggml.Tensor {
-	var out []ggml.Tensor
+func (p *commandrModel) Tensors(ts []Tensor) []*ggml.Tensor {
+	var out []*ggml.Tensor
 	for _, t := range ts {
-		out = append(out, ggml.Tensor{
+		out = append(out, &ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),

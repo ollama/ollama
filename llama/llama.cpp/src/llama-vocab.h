@@ -21,6 +21,9 @@ struct llama_vocab {
 
     void load(llama_model_loader & ml, const LLM_KV & kv);
 
+    std::string get_tokenizer_model() const;
+    std::string get_tokenizer_pre() const;
+
     enum llama_vocab_type     get_type()     const;
     enum llama_vocab_pre_type get_pre_type() const;
 
@@ -80,6 +83,9 @@ struct llama_vocab {
     int max_token_len() const;
 
     int find_bpe_rank(const std::string & token_left, const std::string & token_right) const;
+    std::vector<std::string> get_bpe_merges() const;
+
+    std::vector<char> get_precompiled_charsmap() const;
 
     int32_t tokenize(
                    const char * text,

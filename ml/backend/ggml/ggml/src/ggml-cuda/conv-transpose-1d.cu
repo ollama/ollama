@@ -34,6 +34,10 @@ static  __global__ void conv_transpose_1d_kernel(
         }
     }
     dst[global_index] = accumulator;
+    GGML_UNUSED(p0); GGML_UNUSED(d0); GGML_UNUSED(src0_ne3);
+    GGML_UNUSED(src1_ne3); GGML_UNUSED(dst_ne3);
+    GGML_UNUSED(src1_ne1); GGML_UNUSED(dst_ne1);
+    GGML_UNUSED(src1_ne2); GGML_UNUSED(dst_ne2);
 }
 
 static void conv_transpose_1d_f32_f32_cuda(
@@ -75,8 +79,6 @@ void ggml_cuda_op_conv_transpose_1d(ggml_backend_cuda_context & ctx, ggml_tensor
     const int p0 = 0;//opts[3];
     const int d0 = 1;//opts[4];
 
-    const int64_t kernel_size = ggml_nelements(src0);
-    const int64_t input_size = ggml_nelements(src1);
     const int64_t output_size = ggml_nelements(dst);
 
     conv_transpose_1d_f32_f32_cuda(s0, p0, d0, output_size,

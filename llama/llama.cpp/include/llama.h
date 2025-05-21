@@ -4,6 +4,7 @@
 #include "ggml.h"
 #include "ggml-cpu.h"
 #include "ggml-backend.h"
+#include "ggml-opt.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -60,6 +61,7 @@ extern "C" {
     struct llama_model;
     struct llama_context;
     struct llama_sampler;
+    struct llama_kv_cache;
 
     typedef int32_t llama_pos;
     typedef int32_t llama_token;
@@ -106,6 +108,12 @@ extern "C" {
         LLAMA_VOCAB_PRE_TYPE_MINERVA        = 27,
         LLAMA_VOCAB_PRE_TYPE_DEEPSEEK3_LLM  = 28,
         LLAMA_VOCAB_PRE_TYPE_GPT4O          = 29,
+        LLAMA_VOCAB_PRE_TYPE_SUPERBPE       = 30,
+        LLAMA_VOCAB_PRE_TYPE_TRILLION       = 31,
+        LLAMA_VOCAB_PRE_TYPE_BAILINGMOE     = 32,
+        LLAMA_VOCAB_PRE_TYPE_LLAMA4         = 33,
+        LLAMA_VOCAB_PRE_TYPE_PIXTRAL        = 34,
+        LLAMA_VOCAB_PRE_TYPE_SEED_CODER     = 35,
     };
 
     enum llama_rope_type {
@@ -250,7 +258,6 @@ extern "C" {
 
         llama_token  *  token;
         float        *  embd;
-        int32_t         n_embd;
         llama_pos    *  pos;
         int32_t      *  n_seq_id;
         llama_seq_id ** seq_id;
@@ -277,9 +284,17 @@ extern "C" {
         };
     };
 
+    struct llama_model_tensor_buft_override {
+        const char * pattern;
+        ggml_backend_buffer_type_t buft;
+    };
+
     struct llama_model_params {
         // NULL-terminated list of devices to use for offloading (if NULL, all available devices are used)
         ggml_backend_dev_t * devices;
+
+        // NULL-terminated list of buffer types to use for tensors that match a pattern
+        const struct llama_model_tensor_buft_override * tensor_buft_overrides;
 
         int32_t n_gpu_layers; // number of layers to store in VRAM
         enum llama_split_mode split_mode; // how to split the model across multiple GPUs
@@ -338,35 +353,34 @@ extern "C" {
         enum ggml_type type_k; // data type for K cache [EXPERIMENTAL]
         enum ggml_type type_v; // data type for V cache [EXPERIMENTAL]
 
-        // Keep the booleans together and at the end of the struct to avoid misalignment during copy-by-value.
-        // TODO: move at the end of the struct
-        bool logits_all;  // the llama_decode() call computes all logits, not just the last one (DEPRECATED - set llama_batch.logits instead)
-        bool embeddings;  // if true, extract embeddings (together with logits)
-        bool offload_kqv; // whether to offload the KQV ops (including the KV cache) to GPU
-        bool flash_attn;  // whether to use flash attention [EXPERIMENTAL]
-        bool no_perf;     // whether to measure performance timings
-        bool cross_attn;  // whether to use cross attention
-
         // Abort callback
         // if it returns true, execution of llama_decode() will be aborted
         // currently works only with CPU execution
         ggml_abort_callback abort_callback;
         void *              abort_callback_data;
+
+        // Keep the booleans together and at the end of the struct to avoid misalignment during copy-by-value.
+        bool embeddings;  // if true, extract embeddings (together with logits)
+        bool offload_kqv; // whether to offload the KQV ops (including the KV cache) to GPU
+        bool flash_attn;  // whether to use flash attention [EXPERIMENTAL]
+        bool no_perf;     // whether to measure performance timings
+        bool op_offload;  // whether to offload host tensor operations to device
     };
 
     // model quantization parameters
     typedef struct llama_model_quantize_params {
-        int32_t nthread;                     // number of threads to use for quantizing, if <=0 will use std::thread::hardware_concurrency()
-        enum llama_ftype ftype;              // quantize to this llama_ftype
-        enum ggml_type output_tensor_type;   // output tensor type
-        enum ggml_type token_embedding_type; // token embeddings tensor type
-        bool allow_requantize;               // allow quantizing non-f32/f16 tensors
-        bool quantize_output_tensor;         // quantize output.weight
-        bool only_copy;                      // only copy tensors - ftype, allow_requantize and quantize_output_tensor are ignored
-        bool pure;                           // quantize all tensors to the default type
-        bool keep_split;                     // quantize to the same number of shards
-        void * imatrix;                      // pointer to importance matrix data
-        void * kv_overrides;                 // pointer to vector containing overrides
+        int32_t nthread;                      // number of threads to use for quantizing, if <=0 will use std::thread::hardware_concurrency()
+        enum llama_ftype ftype;               // quantize to this llama_ftype
+        enum ggml_type output_tensor_type;    // output tensor type
+        enum ggml_type token_embedding_type;  // token embeddings tensor type
+        bool allow_requantize;                // allow quantizing non-f32/f16 tensors
+        bool quantize_output_tensor;          // quantize output.weight
+        bool only_copy;                       // only copy tensors - ftype, allow_requantize and quantize_output_tensor are ignored
+        bool pure;                            // quantize all tensors to the default type
+        bool keep_split;                      // quantize to the same number of shards
+        void * imatrix;                       // pointer to importance matrix data
+        void * kv_overrides;                  // pointer to vector containing overrides
+        void * tensor_types;                  // pointer to vector containing tensor types
     } llama_model_quantize_params;
 
     typedef struct llama_logit_bias {
@@ -432,6 +446,10 @@ extern "C" {
                                  size_t    n_paths,
               struct llama_model_params    params);
 
+    LLAMA_API void llama_model_save_to_file(
+            const struct llama_model * model,
+                        const char * path_model);
+
     DEPRECATED(LLAMA_API void llama_free_model(struct llama_model * model),
             "use llama_model_free instead");
 
@@ -445,10 +463,6 @@ extern "C" {
                      struct llama_model * model,
             struct llama_context_params   params),
             "use llama_init_from_model instead");
-
-    // TODO (jmorganca): this should most likely be passed in as part of a batch
-    // and not set on the context for all batches.
-    LLAMA_API void llama_set_cross_attention(struct llama_context * ctx, bool cross_attn_state);
 
     // Frees all allocated memory
     LLAMA_API void llama_free(struct llama_context * ctx);
@@ -475,7 +489,8 @@ extern "C" {
     DEPRECATED(LLAMA_API int32_t llama_n_vocab    (const struct llama_vocab * vocab), "use llama_vocab_n_tokens instead");
 
     LLAMA_API const struct llama_model * llama_get_model   (const struct llama_context * ctx);
-    LLAMA_API enum llama_pooling_type    llama_pooling_type(const struct llama_context * ctx);
+    LLAMA_API    struct llama_kv_cache * llama_get_kv_self (      struct llama_context * ctx);
+    LLAMA_API  enum llama_pooling_type   llama_pooling_type(const struct llama_context * ctx); // TODO: rename to llama_get_pooling_type
 
     LLAMA_API const struct llama_vocab * llama_model_get_vocab(const struct llama_model * model);
     LLAMA_API enum llama_rope_type       llama_model_rope_type(const struct llama_model * model);
@@ -592,7 +607,7 @@ extern "C" {
     // KV cache
     //
 
-    // TODO: remove llama_kv_cache_view_* API
+    // TODO: start using struct llama_kv_cache
 
     // Information associated with an individual cell in the KV cache view.
     struct llama_kv_cache_view_cell {
@@ -647,13 +662,19 @@ extern "C" {
 
     // Returns the number of tokens in the KV cache (slow, use only for debug)
     // If a KV cell has multiple sequences assigned to it, it will be counted multiple times
-    LLAMA_API int32_t llama_get_kv_cache_token_count(const struct llama_context * ctx);
+    LLAMA_API int32_t llama_kv_self_n_tokens(const struct llama_context * ctx);
+
+    DEPRECATED(LLAMA_API int32_t llama_get_kv_cache_token_count(const struct llama_context * ctx),
+            "use llama_kv_self_n_tokens instead");
 
     // Returns the number of used KV cells (i.e. have at least one sequence assigned to them)
-    LLAMA_API int32_t llama_get_kv_cache_used_cells(const struct llama_context * ctx);
+    LLAMA_API int32_t llama_kv_self_used_cells(const struct llama_context * ctx);
+
+    DEPRECATED(LLAMA_API int32_t llama_get_kv_cache_used_cells(const struct llama_context * ctx),
+            "use llama_kv_self_used_cells instead");
 
     // Clear the KV cache - both cell info is erased and KV data is zeroed
-    LLAMA_API void llama_kv_cache_clear(
+    LLAMA_API void llama_kv_self_clear(
             struct llama_context * ctx);
 
     // Removes all tokens that belong to the specified sequence and have positions in [p0, p1)
@@ -661,7 +682,7 @@ extern "C" {
     // seq_id < 0 : match any sequence
     // p0 < 0     : [0,  p1]
     // p1 < 0     : [p0, inf)
-    LLAMA_API bool llama_kv_cache_seq_rm(
+    LLAMA_API bool llama_kv_self_seq_rm(
             struct llama_context * ctx,
                     llama_seq_id   seq_id,
                        llama_pos   p0,
@@ -671,7 +692,7 @@ extern "C" {
     // Note that this does not allocate extra KV cache memory - it simply assigns the tokens to the new sequence
     // p0 < 0 : [0,  p1]
     // p1 < 0 : [p0, inf)
-    LLAMA_API void llama_kv_cache_seq_cp(
+    LLAMA_API void llama_kv_self_seq_cp(
             struct llama_context * ctx,
                     llama_seq_id   seq_id_src,
                     llama_seq_id   seq_id_dst,
@@ -679,17 +700,17 @@ extern "C" {
                        llama_pos   p1);
 
     // Removes all tokens that do not belong to the specified sequence
-    LLAMA_API void llama_kv_cache_seq_keep(
+    LLAMA_API void llama_kv_self_seq_keep(
             struct llama_context * ctx,
                     llama_seq_id   seq_id);
 
     // Adds relative position "delta" to all tokens that belong to the specified sequence and have positions in [p0, p1)
     // If the KV cache is RoPEd, the KV data is updated accordingly:
     //   - lazily on next llama_decode()
-    //   - explicitly with llama_kv_cache_update()
+    //   - explicitly with llama_kv_self_update()
     // p0 < 0 : [0,  p1]
     // p1 < 0 : [p0, inf)
-    LLAMA_API void llama_kv_cache_seq_add(
+    LLAMA_API void llama_kv_self_seq_add(
             struct llama_context * ctx,
                     llama_seq_id   seq_id,
                        llama_pos   p0,
@@ -699,10 +720,10 @@ extern "C" {
     // Integer division of the positions by factor of `d > 1`
     // If the KV cache is RoPEd, the KV data is updated accordingly:
     //   - lazily on next llama_decode()
-    //   - explicitly with llama_kv_cache_update()
+    //   - explicitly with llama_kv_self_update()
     // p0 < 0 : [0,  p1]
     // p1 < 0 : [p0, inf)
-    LLAMA_API void llama_kv_cache_seq_div(
+    LLAMA_API void llama_kv_self_seq_div(
             struct llama_context * ctx,
                     llama_seq_id   seq_id,
                        llama_pos   p0,
@@ -710,24 +731,76 @@ extern "C" {
                              int   d);
 
     // Returns the largest position present in the KV cache for the specified sequence
-    LLAMA_API llama_pos llama_kv_cache_seq_pos_max(
+    LLAMA_API llama_pos llama_kv_self_seq_pos_max(
             struct llama_context * ctx,
-                    llama_seq_id   seq_id);
-
-    // TODO: the llama_kv_cache_defrag and llama_kv_cache_update API tightly couples llama_context with llama_kv_cache
-    //       how to avoid this?
+                     llama_seq_id   seq_id);
 
     // Defragment the KV cache
     // This will be applied:
     //   - lazily on next llama_decode()
-    //   - explicitly with llama_kv_cache_update()
-    LLAMA_API void llama_kv_cache_defrag(struct llama_context * ctx);
-
-    // Apply the KV cache updates (such as K-shifts, defragmentation, etc.)
-    LLAMA_API void llama_kv_cache_update(struct llama_context * ctx);
+    //   - explicitly with llama_kv_self_update()
+    LLAMA_API void llama_kv_self_defrag(struct llama_context * ctx);
 
     // Check if the context supports KV cache shifting
-    LLAMA_API bool llama_kv_cache_can_shift(struct llama_context * ctx);
+    LLAMA_API bool llama_kv_self_can_shift(const struct llama_context * ctx);
+
+    // Apply the KV cache updates (such as K-shifts, defragmentation, etc.)
+    LLAMA_API void llama_kv_self_update(struct llama_context * ctx);
+
+    DEPRECATED(LLAMA_API void llama_kv_cache_clear(
+            struct llama_context * ctx),
+            "use llama_kv_self_clear instead");
+
+    DEPRECATED(LLAMA_API bool llama_kv_cache_seq_rm(
+            struct llama_context * ctx,
+                    llama_seq_id   seq_id,
+                       llama_pos   p0,
+                       llama_pos   p1),
+            "use llama_kv_self_seq_rm instead");
+
+    DEPRECATED(LLAMA_API void llama_kv_cache_seq_cp(
+            struct llama_context * ctx,
+                    llama_seq_id   seq_id_src,
+                    llama_seq_id   seq_id_dst,
+                       llama_pos   p0,
+                       llama_pos   p1),
+            "use llama_kv_self_seq_cp instead");
+
+    DEPRECATED(LLAMA_API void llama_kv_cache_seq_keep(
+            struct llama_context * ctx,
+                    llama_seq_id   seq_id),
+            "use llama_kv_self_seq_keep instead");
+
+    DEPRECATED(LLAMA_API void llama_kv_cache_seq_add(
+            struct llama_context * ctx,
+                    llama_seq_id   seq_id,
+                       llama_pos   p0,
+                       llama_pos   p1,
+                       llama_pos   delta),
+            "use llama_kv_self_seq_add instead");
+
+    DEPRECATED(LLAMA_API void llama_kv_cache_seq_div(
+            struct llama_context * ctx,
+                    llama_seq_id   seq_id,
+                       llama_pos   p0,
+                       llama_pos   p1,
+                             int   d),
+            "use llama_kv_self_seq_div instead");
+
+    DEPRECATED(LLAMA_API llama_pos llama_kv_cache_seq_pos_max(
+            struct llama_context * ctx,
+                    llama_seq_id   seq_id),
+            "use llama_kv_self_seq_pos_max instead");
+
+    DEPRECATED(LLAMA_API void llama_kv_cache_defrag(struct llama_context * ctx),
+            "use llama_kv_self_defrag instead");
+
+    DEPRECATED(LLAMA_API bool llama_kv_cache_can_shift(const struct llama_context * ctx),
+            "use llama_kv_self_can_shift instead");
+
+    DEPRECATED(LLAMA_API void llama_kv_cache_update(struct llama_context * ctx),
+            "use llama_kv_self_update instead");
+
 
     //
     // State / sessions
@@ -856,14 +929,19 @@ extern "C" {
     // Frees a batch of tokens allocated with llama_batch_init()
     LLAMA_API void llama_batch_free(struct llama_batch batch);
 
-    // Processes a batch of tokens with the ecoder part of the encoder-decoder model.
-    // Stores the encoder output internally for later use by the decoder cross-attention layers.
+    // Process a batch of tokens.
+    // In contrast to llama_decode() - this call does not use KV cache.
+    // For encode-decoder contexts, processes the batch using the encoder.
+    // Can store the encoder output internally for later use by the decoder's cross-attention layers.
     //   0 - success
     // < 0 - error. the KV cache state is restored to the state before this call
     LLAMA_API int32_t llama_encode(
             struct llama_context * ctx,
               struct llama_batch   batch);
 
+    // Process a batch of tokens.
+    // Requires KV cache.
+    // For encode-decoder contexts, processes the batch using the decoder.
     // Positive return values does not mean a fatal error, but rather a warning.
     //   0 - success
     //   1 - could not find a KV slot for the batch (try reducing the size of the batch or increase the context)
@@ -890,6 +968,10 @@ extern "C" {
     // Set whether to use causal attention or not
     // If set to true, the model will only attend to the past tokens
     LLAMA_API void llama_set_causal_attn(struct llama_context * ctx, bool causal_attn);
+
+    // Set whether the model is in warmup mode or not
+    // If true, all model tensors are activated during llama_decode() to load and cache their weights.
+    LLAMA_API void llama_set_warmup(struct llama_context * ctx, bool warmup);
 
     // Set abort callback
     LLAMA_API void llama_set_abort_callback(struct llama_context * ctx, ggml_abort_callback abort_callback, void * abort_callback_data);
@@ -1160,6 +1242,7 @@ extern "C" {
         "will be removed in the future (see https://github.com/ggml-org/llama.cpp/pull/9896#discussion_r1800920915)");
 
     /// @details Top-K sampling described in academic paper "The Curious Case of Neural Text Degeneration" https://arxiv.org/abs/1904.09751
+    /// Setting k <= 0 makes this a noop
     LLAMA_API struct llama_sampler * llama_sampler_init_top_k      (int32_t k);
 
     /// @details Nucleus sampling described in academic paper "The Curious Case of Neural Text Degeneration" https://arxiv.org/abs/1904.09751
@@ -1206,22 +1289,38 @@ extern "C" {
                                float   tau,
                                float   eta);
 
+    /// @details Intializes a GBNF grammar, see grammars/README.md for details.
+    /// @param vocab The vocabulary that this grammar will be used with.
+    /// @param grammar_str The production rules for the grammar, encoded as a string. Returns an empty grammar if empty. Returns NULL if parsing of grammar_str fails.
+    /// @param grammar_root The name of the start symbol for the grammar.
     LLAMA_API struct llama_sampler * llama_sampler_init_grammar(
             const struct llama_vocab * vocab,
                           const char * grammar_str,
                           const char * grammar_root);
 
-    /// @details Lazy grammar sampler, introduced in https://github.com/ggml-org/llama.cpp/pull/9639
-    /// @param trigger_words A list of words that will trigger the grammar sampler. This may be updated to a loose regex syntax (w/ ^) in a near future.
-    /// @param trigger_tokens A list of tokens that will trigger the grammar sampler.
-    LLAMA_API struct llama_sampler * llama_sampler_init_grammar_lazy(
+    DEPRECATED(LLAMA_API struct llama_sampler * llama_sampler_init_grammar_lazy(
             const struct llama_vocab * vocab,
                           const char * grammar_str,
                           const char * grammar_root,
                          const char ** trigger_words,
                                 size_t num_trigger_words,
                    const llama_token * trigger_tokens,
-                                size_t num_trigger_tokens);
+                                size_t num_trigger_tokens),
+        "use llama_sampler_init_grammar_lazy_patterns instead");
+
+
+    /// @details Lazy grammar sampler, introduced in https://github.com/ggml-org/llama.cpp/pull/9639
+    /// @param trigger_patterns A list of patterns that will trigger the grammar sampler. Pattern will be matched from the start of the generation output, and grammar sampler will be fed content starting from its first match group.
+    /// @param trigger_tokens A list of tokens that will trigger the grammar sampler. Grammar sampler will be fed content starting from the trigger token included.
+    LLAMA_API struct llama_sampler * llama_sampler_init_grammar_lazy_patterns(
+        const struct llama_vocab * vocab,
+                      const char * grammar_str,
+                      const char * grammar_root,
+                     const char ** trigger_patterns,
+                            size_t num_trigger_patterns,
+               const llama_token * trigger_tokens,
+                            size_t num_trigger_tokens);
+
 
     /// NOTE: Avoid using on the full vocabulary as searching for repeated tokens can become slow. For example, apply top-k or top-p sampling first.
     LLAMA_API struct llama_sampler * llama_sampler_init_penalties(
@@ -1338,6 +1437,37 @@ extern "C" {
     LLAMA_API struct llama_perf_sampler_data llama_perf_sampler      (const struct llama_sampler * chain);
     LLAMA_API void                           llama_perf_sampler_print(const struct llama_sampler * chain);
     LLAMA_API void                           llama_perf_sampler_reset(      struct llama_sampler * chain);
+
+    //
+    // training
+    //
+
+    // function that returns whether or not a given tensor contains trainable parameters
+    typedef bool (*llama_opt_param_filter)(const struct ggml_tensor * tensor, void * userdata);
+
+    // always returns true
+    LLAMA_API bool llama_opt_param_filter_all(const struct ggml_tensor * tensor, void * userdata);
+
+    struct llama_opt_params {
+        uint32_t n_ctx_train; // assumed context size post training, use context size specified in llama_context if 0
+
+        llama_opt_param_filter param_filter; // callback for determining which tensors contain trainable parameters
+        void * param_filter_ud;              // userdata for determining which tensors contain trainable parameters
+
+        ggml_opt_get_optimizer_params get_opt_pars; // callback for calculating optimizer parameters
+        void * get_opt_pars_ud;                     // userdata for calculating optimizer parameters
+    };
+
+    LLAMA_API void llama_opt_init(struct llama_context * lctx, struct llama_model * model, struct llama_opt_params lopt_params);
+
+    LLAMA_API void llama_opt_epoch(
+            struct llama_context    * lctx,
+            ggml_opt_dataset_t        dataset,
+            ggml_opt_result_t         result_train,
+            ggml_opt_result_t         result_eval,
+            int64_t                   idata_split,
+            ggml_opt_epoch_callback   callback_train,
+            ggml_opt_epoch_callback   callback_eval);
 
 #ifdef __cplusplus
 }

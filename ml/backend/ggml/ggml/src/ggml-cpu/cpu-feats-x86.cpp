@@ -263,7 +263,7 @@ void test_x86_is() {
 static int ggml_backend_cpu_x86_score() {
     // FIXME: this does not check for OS support
 
-    int score = 0;
+    int score = 1;
     cpuid_x86 is;
 
 #ifdef GGML_FMA
@@ -277,6 +277,10 @@ static int ggml_backend_cpu_x86_score() {
 #ifdef GGML_SSE42
     if (!is.SSE42()) { return 0; }
     score += 1<<2;
+#endif
+#ifdef GGML_BMI2
+    if (!is.BMI2()) { return 0; }
+    score += 1<<3;
 #endif
 #ifdef GGML_AVX
     if (!is.AVX()) { return 0; }

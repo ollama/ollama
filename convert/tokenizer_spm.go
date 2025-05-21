@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
+	"reflect"
 	"slices"
 
 	"google.golang.org/protobuf/proto"
@@ -15,6 +17,8 @@ import (
 )
 
 func parseSentencePiece(fsys fs.FS) (*Vocabulary, error) {
+	slog.Debug("using spm vocabulary")
+
 	ast, err := parseAdditionalSpecialTokens(fsys)
 	if err != nil {
 		return nil, err
@@ -43,8 +47,17 @@ func parseSentencePiece(fsys fs.FS) (*Vocabulary, error) {
 			v.Types = append(v.Types, int32(t))
 		default:
 			tt := int32(sentencepiece.ModelProto_SentencePiece_NORMAL)
-			if slices.Contains(ast, piece.GetPiece()) {
+
+			// temporary fix to handle gemma3 broken configs
+			if slices.Contains([]string{"<end_of_turn>", "<start_of_turn>"}, piece.GetPiece()) {
 				tt = int32(sentencepiece.ModelProto_SentencePiece_CONTROL)
+			}
+
+			for _, t := range ast {
+				if t.Content == piece.GetPiece() {
+					tt = int32(sentencepiece.ModelProto_SentencePiece_CONTROL)
+					break
+				}
 			}
 
 			v.Types = append(v.Types, tt)
@@ -78,10 +91,16 @@ func parseSentencePiece(fsys fs.FS) (*Vocabulary, error) {
 		return cmp.Compare(i.id, j.id)
 	})
 
-	n := len(v.Tokens)
-	for i, t := range ts {
-		if t.id != i+n {
-			return nil, fmt.Errorf("invalid token id: %d", t.id)
+	for _, t := range ts {
+		if t.id < len(v.Tokens) {
+			if v.Tokens[t.id] == t.content {
+				slog.Warn("tokenizer", "duplicate token", t.content, "id", t.id)
+				continue
+			}
+			return nil, fmt.Errorf("token mismatch: %s != %s at pos [%d]", t.content, v.Tokens[t.id], t.id)
+		}
+		if t.id != len(v.Tokens) {
+			return nil, fmt.Errorf("invalid token id: [%d] as pos [%d]", t.id, len(v.Tokens))
 		}
 
 		v.Tokens = append(v.Tokens, t.content)
@@ -92,7 +111,15 @@ func parseSentencePiece(fsys fs.FS) (*Vocabulary, error) {
 	return &v, nil
 }
 
-func parseAdditionalSpecialTokens(fsys fs.FS) ([]string, error) {
+type specialToken struct {
+	Content    string `json:"content"`
+	Lstrip     bool   `json:"lstrip"`
+	Normalized bool   `json:"normalized"`
+	Rstrip     bool   `json:"rstrip"`
+	SingleWord bool   `json:"single_word"`
+}
+
+func parseAdditionalSpecialTokens(fsys fs.FS) ([]specialToken, error) {
 	f, err := fsys.Open("special_tokens_map.json")
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -102,12 +129,43 @@ func parseAdditionalSpecialTokens(fsys fs.FS) ([]string, error) {
 	defer f.Close()
 
 	var m struct {
-		AdditionalSpecialTokens []string `json:"additional_special_tokens"`
+		AdditionalSpecialTokens any `json:"additional_special_tokens"`
 	}
 
 	if err := json.NewDecoder(f).Decode(&m); err != nil {
 		return nil, err
 	}
 
-	return m.AdditionalSpecialTokens, nil
+	var ast []specialToken
+
+	switch st := m.AdditionalSpecialTokens.(type) {
+	case []string:
+		for _, s := range st {
+			ast = append(ast, specialToken{Content: s})
+		}
+	case []any:
+		for _, s := range st {
+			// marshal and unmarshal the object to get the special token
+			tMap := s.(map[string]any)
+			data, err := json.Marshal(tMap)
+			if err != nil {
+				return nil, err
+			}
+
+			var token specialToken
+			err = json.Unmarshal(data, &token)
+			if err != nil {
+				return nil, err
+			}
+
+			ast = append(ast, token)
+		}
+
+	default:
+		slog.Warn("special token", "unknown token", reflect.TypeOf(st))
+	}
+
+	slog.Debug("spm tokenizer", "additional tokens", ast)
+
+	return ast, nil
 }

@@ -21,11 +21,11 @@ func TestMultiModelConcurrency(t *testing.T) {
 	var (
 		req = [2]api.GenerateRequest{
 			{
-				Model:     "orca-mini",
+				Model:     "llama3.2:1b",
 				Prompt:    "why is the ocean blue?",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]interface{}{
+				Options: map[string]any{
 					"seed":        42,
 					"temperature": 0.0,
 				},
@@ -34,7 +34,7 @@ func TestMultiModelConcurrency(t *testing.T) {
 				Prompt:    "what is the origin of the us thanksgiving holiday?",
 				Stream:    &stream,
 				KeepAlive: &api.Duration{Duration: 10 * time.Second},
-				Options: map[string]interface{}{
+				Options: map[string]any{
 					"seed":        42,
 					"temperature": 0.0,
 				},
@@ -67,7 +67,7 @@ func TestMultiModelConcurrency(t *testing.T) {
 	wg.Wait()
 }
 
-func TestIntegrationConcurrentPredictOrcaMini(t *testing.T) {
+func TestIntegrationConcurrentPredict(t *testing.T) {
 	req, resp := GenerateRequests()
 	reqLimit := len(req)
 	iterLimit := 5
@@ -117,6 +117,9 @@ func TestMultiModelStress(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if maxVram < 2*format.GibiByte {
+		t.Skip("VRAM less than 2G, skipping model stress tests")
+	}
 
 	type model struct {
 		name string
@@ -125,8 +128,8 @@ func TestMultiModelStress(t *testing.T) {
 
 	smallModels := []model{
 		{
-			name: "orca-mini",
-			size: 2992 * format.MebiByte,
+			name: "llama3.2:1b",
+			size: 2876 * format.MebiByte,
 		},
 		{
 			name: "phi",

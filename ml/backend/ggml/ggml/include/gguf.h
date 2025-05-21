@@ -114,6 +114,7 @@ extern "C" {
     // get raw pointer to the first element of the array with the given key_id
     // for bool arrays, note that they are always stored as int8 on all platforms (usually this makes no difference)
     GGML_API const void * gguf_get_arr_data(const struct gguf_context * ctx, int64_t key_id);
+    GGML_API size_t       gguf_get_arr_data_n(const struct gguf_context * ctx, int64_t key_id);
 
     // get ith C string from array with given key_id
     GGML_API const char * gguf_get_arr_str (const struct gguf_context * ctx, int64_t key_id, size_t i);

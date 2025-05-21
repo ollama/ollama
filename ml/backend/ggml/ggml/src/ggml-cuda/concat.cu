@@ -38,7 +38,7 @@ static __global__ void concat_f32_dim1(const float * x, const float * y, float *
         blockIdx.y * ne0 +
         blockIdx.z * ne0 * gridDim.y;
 
-    if (blockIdx.y < ne01) { // src0
+    if (blockIdx.y < (unsigned)ne01) { // src0
         int offset_src =
             nidx +
             blockIdx.y * ne0 +
@@ -64,7 +64,7 @@ static __global__ void concat_f32_dim2(const float * x, const float * y, float *
         blockIdx.y * ne0 +
         blockIdx.z * ne0 * gridDim.y;
 
-    if (blockIdx.z < ne02) { // src0
+    if (blockIdx.z < (unsigned)ne02) { // src0
         int offset_src =
             nidx +
             blockIdx.y * ne0 +

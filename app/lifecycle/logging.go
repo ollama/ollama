@@ -4,20 +4,14 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/logutil"
 )
 
 func InitLogging() {
-	level := slog.LevelInfo
-
-	if envconfig.Debug() {
-		level = slog.LevelDebug
-	}
-
 	var logFile *os.File
 	var err error
 	// Detect if we're a GUI app on windows, and if not, send logs to console
@@ -33,20 +27,8 @@ func InitLogging() {
 			return
 		}
 	}
-	handler := slog.NewTextHandler(logFile, &slog.HandlerOptions{
-		Level:     level,
-		AddSource: true,
-		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
-			if attr.Key == slog.SourceKey {
-				source := attr.Value.Any().(*slog.Source)
-				source.File = filepath.Base(source.File)
-			}
-			return attr
-		},
-	})
 
-	slog.SetDefault(slog.New(handler))
-
+	slog.SetDefault(logutil.NewLogger(logFile, envconfig.LogLevel()))
 	slog.Info("ollama app started")
 }
 

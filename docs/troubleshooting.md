@@ -9,7 +9,7 @@ cat ~/.ollama/logs/server.log
 On **Linux** systems with systemd, the logs can be found with this command:
 
 ```shell
-journalctl -u ollama --no-pager
+journalctl -u ollama --no-pager --follow --pager-end 
 ```
 
 When you run Ollama in a **container**, the logs go to stdout/stderr in the container:
@@ -26,7 +26,6 @@ When you run Ollama on **Windows**, there are a few different locations. You can
 - `explorer %LOCALAPPDATA%\Ollama` to view logs.  The most recent server logs will be in `server.log` and older logs will be in `server-#.log` 
 - `explorer %LOCALAPPDATA%\Programs\Ollama` to browse the binaries (The installer adds this to your user PATH)
 - `explorer %HOMEPATH%\.ollama` to browse where models and configuration is stored
-- `explorer %TEMP%` where temporary executable files are stored in one or more `ollama*` directories
 
 To enable additional debug logging to help troubleshoot problems, first **Quit the running app from the tray menu** then in a powershell terminal
 
@@ -68,10 +67,6 @@ If you run into problems on Linux and want to install an older version, or you'd
 ```shell
 curl -fsSL https://ollama.com/install.sh | OLLAMA_VERSION=0.5.7 sh
 ```
-
-## Linux tmp noexec 
-
-If your system is configured with the "noexec" flag where Ollama stores its temporary executable files, you can specify an alternate location by setting OLLAMA_TMPDIR to a location writable by the user ollama runs as. For example OLLAMA_TMPDIR=/usr/share/ollama/
 
 ## Linux docker
 

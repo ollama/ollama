@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func assertEqual(t *testing.T, a interface{}, b interface{}) {
+func assertEqual(t *testing.T, a any, b any) {
 	if a != b {
 		t.Errorf("Assert failed, expected %v, got %v", b, a)
 	}

@@ -12,7 +12,7 @@ A basic Go template consists of three main parts:
 
 Here's an example of a simple chat template:
 
-```gotmpl
+```go
 {{- range .Messages }}
 {{ .Role }}: {{ .Content }}
 {{- end }}
@@ -162,6 +162,6 @@ CodeLlama [7B](https://ollama.com/library/codellama:7b-code) and [13B](https://o
 
 Codestral [22B](https://ollama.com/library/codestral:22b) supports fill-in-middle.
 
-```gotmpl
+```go
 [SUFFIX]{{ .Suffix }}[PREFIX] {{ .Prompt }}
 ```

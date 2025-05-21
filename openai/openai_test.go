@@ -219,7 +219,7 @@ func TestChatMiddleware(t *testing.T) {
 							{
 								Function: api.ToolCallFunction{
 									Name: "get_current_weather",
-									Arguments: map[string]interface{}{
+									Arguments: map[string]any{
 										"location": "Paris, France",
 										"format":   "celsius",
 									},
@@ -281,27 +281,31 @@ func TestChatMiddleware(t *testing.T) {
 							Description: "Get the current weather",
 							Parameters: struct {
 								Type       string   `json:"type"`
+								Defs       any      `json:"$defs,omitempty"`
+								Items      any      `json:"items,omitempty"`
 								Required   []string `json:"required"`
 								Properties map[string]struct {
-									Type        string   `json:"type"`
-									Description string   `json:"description"`
-									Enum        []string `json:"enum,omitempty"`
+									Type        api.PropertyType `json:"type"`
+									Items       any              `json:"items,omitempty"`
+									Description string           `json:"description"`
+									Enum        []any            `json:"enum,omitempty"`
 								} `json:"properties"`
 							}{
 								Type:     "object",
 								Required: []string{"location"},
 								Properties: map[string]struct {
-									Type        string   `json:"type"`
-									Description string   `json:"description"`
-									Enum        []string `json:"enum,omitempty"`
+									Type        api.PropertyType `json:"type"`
+									Items       any              `json:"items,omitempty"`
+									Description string           `json:"description"`
+									Enum        []any            `json:"enum,omitempty"`
 								}{
 									"location": {
-										Type:        "string",
+										Type:        api.PropertyType{"string"},
 										Description: "The city and state",
 									},
 									"unit": {
-										Type: "string",
-										Enum: []string{"celsius", "fahrenheit"},
+										Type: api.PropertyType{"string"},
+										Enum: []any{"celsius", "fahrenheit"},
 									},
 								},
 							},

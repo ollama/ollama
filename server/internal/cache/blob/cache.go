@@ -146,7 +146,7 @@ func debugger(err *error) func(step string) {
 // be in either of the following forms:
 //
 //	@<digest>
-//	<name>
+//	<name>@<digest>
 //	<name>
 //
 // If a digest is provided, it is returned as is and nothing else happens.
@@ -160,8 +160,6 @@ func debugger(err *error) func(step string) {
 // hashed is passed to a PutBytes call to ensure that the manifest is in the
 // blob store. This is done to ensure that future calls to [Get] succeed in
 // these cases.
-//
-// TODO(bmizerany): Move Links/Resolve/etc. out of this package.
 func (c *DiskCache) Resolve(name string) (Digest, error) {
 	name, digest := splitNameDigest(name)
 	if digest != "" {
@@ -279,18 +277,6 @@ func (c *DiskCache) Get(d Digest) (Entry, error) {
 // It returns an error if either the name or digest is invalid, or if link
 // creation encounters any issues.
 func (c *DiskCache) Link(name string, d Digest) error {
-	// TODO(bmizerany): Move link handling from cache to registry.
-	//
-	// We originally placed links in the cache due to its storage
-	// knowledge. However, the registry likely offers better context for
-	// naming concerns, and our API design shouldn't be tightly coupled to
-	// our on-disk format.
-	//
-	// Links work effectively when independent from physical location -
-	// they can reference content with matching SHA regardless of storage
-	// location. In an upcoming change, we plan to shift this
-	// responsibility to the registry where it better aligns with the
-	// system's conceptual model.
 	manifest, err := c.manifestPath(name)
 	if err != nil {
 		return err
@@ -341,7 +327,9 @@ func (c *DiskCache) GetFile(d Digest) string {
 	return absJoin(c.dir, "blobs", filename)
 }
 
-// Links returns a sequence of links in the cache in lexical order.
+// Links returns a sequence of link names. The sequence is in lexical order.
+// Names are converted from their relative path form to their name form but are
+// not guaranteed to be valid. Callers should validate the names before using.
 func (c *DiskCache) Links() iter.Seq2[string, error] {
 	return func(yield func(string, error) bool) {
 		for path, err := range c.links() {
@@ -414,12 +402,14 @@ func (c *DiskCache) links() iter.Seq2[string, error] {
 }
 
 type checkWriter struct {
-	d    Digest
 	size int64
-	n    int64
-	h    hash.Hash
+	d    Digest
 	f    *os.File
-	err  error
+	h    hash.Hash
+
+	w   io.Writer // underlying writer; set by creator
+	n   int64
+	err error
 
 	testHookBeforeFinalWrite func(*os.File)
 }
@@ -435,6 +425,10 @@ func (w *checkWriter) seterr(err error) error {
 // underlying writer is guaranteed to be the last byte of p as verified by the
 // hash.
 func (w *checkWriter) Write(p []byte) (int, error) {
+	if w.err != nil {
+		return 0, w.err
+	}
+
 	_, err := w.h.Write(p)
 	if err != nil {
 		return 0, w.seterr(err)
@@ -453,7 +447,7 @@ func (w *checkWriter) Write(p []byte) (int, error) {
 	if nextSize > w.size {
 		return 0, w.seterr(fmt.Errorf("content exceeds expected size: %d > %d", nextSize, w.size))
 	}
-	n, err := w.f.Write(p)
+	n, err := w.w.Write(p)
 	w.n += int64(n)
 	return n, w.seterr(err)
 }
@@ -493,10 +487,12 @@ func (c *DiskCache) copyNamedFile(name string, file io.Reader, out Digest, size 
 
 	// Copy file to f, but also into h to double-check hash.
 	cw := &checkWriter{
-		d:                        out,
-		size:                     size,
-		h:                        sha256.New(),
-		f:                        f,
+		d:    out,
+		size: size,
+		h:    sha256.New(),
+		f:    f,
+		w:    f,
+
 		testHookBeforeFinalWrite: c.testHookBeforeFinalWrite,
 	}
 	n, err := io.Copy(cw, file)
@@ -532,11 +528,6 @@ func splitNameDigest(s string) (name, digest string) {
 var errInvalidName = errors.New("invalid name")
 
 func nameToPath(name string) (_ string, err error) {
-	if strings.Contains(name, "@") {
-		// TODO(bmizerany): HACK: Fix names.Parse to validate.
-		// TODO(bmizerany): merge with default parts (maybe names.Merge(a, b))
-		return "", errInvalidName
-	}
 	n := names.Parse(name)
 	if !n.IsFullyQualified() {
 		return "", errInvalidName
@@ -547,8 +538,7 @@ func nameToPath(name string) (_ string, err error) {
 func absJoin(pp ...string) string {
 	abs, err := filepath.Abs(filepath.Join(pp...))
 	if err != nil {
-		// Likely a bug bug or a bad OS problem. Just panic.
-		panic(err)
+		panic(err) // this should never happen
 	}
 	return abs
 }

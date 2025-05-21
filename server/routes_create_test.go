@@ -24,7 +24,7 @@ import (
 
 var stream bool = false
 
-func createBinFile(t *testing.T, kv map[string]any, ti []ggml.Tensor) (string, string) {
+func createBinFile(t *testing.T, kv map[string]any, ti []*ggml.Tensor) (string, string) {
 	t.Helper()
 	t.Setenv("OLLAMA_MODELS", cmp.Or(os.Getenv("OLLAMA_MODELS"), t.TempDir()))
 

@@ -777,8 +777,12 @@ enum gguf_type gguf_get_arr_type(const struct gguf_context * ctx, int64_t key_id
 
 const void * gguf_get_arr_data(const struct gguf_context * ctx, int64_t key_id) {
     GGML_ASSERT(key_id >= 0 && key_id < gguf_get_n_kv(ctx));
-    GGML_ASSERT(ctx->kv[key_id].get_type() != GGUF_TYPE_STRING);
     return ctx->kv[key_id].data.data();
+}
+
+size_t gguf_get_arr_data_n(const struct gguf_context * ctx, int64_t key_id) {
+    GGML_ASSERT(key_id >= 0 && key_id < gguf_get_n_kv(ctx));
+    return ctx->kv[key_id].data.size();
 }
 
 const char * gguf_get_arr_str(const struct gguf_context * ctx, int64_t key_id, size_t i) {
@@ -874,7 +878,6 @@ const char * gguf_get_val_str(const struct gguf_context * ctx, int64_t key_id) {
 const void * gguf_get_val_data(const struct gguf_context * ctx, int64_t key_id) {
     GGML_ASSERT(key_id >= 0 && key_id < gguf_get_n_kv(ctx));
     GGML_ASSERT(ctx->kv[key_id].get_ne() == 1);
-    GGML_ASSERT(ctx->kv[key_id].get_type() != GGUF_TYPE_STRING);
     return ctx->kv[key_id].data.data();
 }
 
@@ -932,6 +935,7 @@ static void gguf_check_reserved_keys(const std::string & key, const T val) {
         if constexpr (std::is_same<T, uint32_t>::value) {
             GGML_ASSERT(val > 0 && (val & (val - 1)) == 0 && GGUF_KEY_GENERAL_ALIGNMENT " must be power of 2");
         } else {
+            GGML_UNUSED(val);
             GGML_ABORT(GGUF_KEY_GENERAL_ALIGNMENT " must be type u32");
         }
     }

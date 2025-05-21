@@ -220,7 +220,6 @@ static inline std::wstring unicode_wstring_from_utf8(const std::string & s) {
     free(wbuf);
     return ret;
 #else
-
 #if defined(__clang__)
     // disable C++17 deprecation warning for std::codecvt_utf8
 #    pragma clang diagnostic push

@@ -232,7 +232,7 @@ static void llama_sampler_top_k_impl(llama_token_data_array * cur_p, int32_t k) 
     // }
 
     if (k <= 0) {
-        k = cur_p->size;
+        return;
     }
 
     k = std::min(k, (int) cur_p->size);
@@ -298,6 +298,7 @@ static void llama_sampler_top_k_impl(llama_token_data_array * cur_p, int32_t k) 
         }
         cur_p->sorted = true;
     }
+
     cur_p->size = k;
 }
 
@@ -1449,7 +1450,9 @@ static struct llama_sampler * llama_sampler_init_grammar_impl(
                      const char ** trigger_words,
                             size_t num_trigger_words,
                const llama_token * trigger_tokens,
-                            size_t num_trigger_tokens);
+                            size_t num_trigger_tokens,
+                     const char ** trigger_patterns,
+                            size_t num_trigger_patterns);
 
 static void llama_sampler_grammar_reset(struct llama_sampler * smpl) {
     auto * ctx = (llama_sampler_grammar *) smpl->ctx;
@@ -1457,12 +1460,14 @@ static void llama_sampler_grammar_reset(struct llama_sampler * smpl) {
         return;
     }
 
-    std::vector<const char *>  trigger_words;
-    for (auto & word : ctx->grammar->trigger_words) {
-        trigger_words.push_back(word.c_str());
+    std::vector<const char *>  trigger_patterns_c;
+    trigger_patterns_c.reserve(ctx->grammar->trigger_patterns.size());
+    for (auto & trigger_pattern : ctx->grammar->trigger_patterns) {
+        trigger_patterns_c.push_back(trigger_pattern.pattern.c_str());
     }
-    auto * grammar_new = llama_grammar_init_impl(ctx->grammar->vocab, ctx->grammar_str.c_str(), ctx->grammar_root.c_str(),
-                                                 ctx->grammar->lazy, trigger_words.data(), trigger_words.size(),
+
+    auto * grammar_new = llama_grammar_init_impl(ctx->grammar->vocab, nullptr, ctx->grammar_str.c_str(), ctx->grammar_root.c_str(),
+                                                 ctx->grammar->lazy, trigger_patterns_c.data(), trigger_patterns_c.size(),
                                                  ctx->grammar->trigger_tokens.data(), ctx->grammar->trigger_tokens.size());
 
     llama_grammar_free_impl(ctx->grammar);
@@ -1472,7 +1477,8 @@ static void llama_sampler_grammar_reset(struct llama_sampler * smpl) {
 static struct llama_sampler * llama_sampler_grammar_clone(const struct llama_sampler * smpl) {
     const auto * ctx = (const llama_sampler_grammar *) smpl->ctx;
 
-    auto * result = llama_sampler_init_grammar_impl(ctx->vocab, nullptr, nullptr, false, nullptr, 0, nullptr, 0);
+    auto * result = llama_sampler_init_grammar_impl(ctx->vocab, nullptr, nullptr, false, nullptr, 0, nullptr, 0, nullptr, 0);
+    GGML_ASSERT(result);
 
     // copy the state
     {
@@ -1516,16 +1522,38 @@ static struct llama_sampler * llama_sampler_init_grammar_impl(
                      const char ** trigger_words,
                             size_t num_trigger_words,
                const llama_token * trigger_tokens,
-                            size_t num_trigger_tokens) {
+                            size_t num_trigger_tokens,
+                     const char ** trigger_patterns,
+                            size_t num_trigger_patterns) {
     auto * ctx = new llama_sampler_grammar;
 
     if (grammar_str != nullptr && grammar_str[0] != '\0') {
+        // TODO: remove trigger_words support.
+        if (trigger_words != nullptr && num_trigger_words > 0) {
+            GGML_ASSERT(trigger_patterns == nullptr && num_trigger_patterns == 0);
+            std::string trigger_pattern("[\\s\\S]*?(");
+            for (size_t i = 0; i < num_trigger_words; ++i) {
+                static const std::regex special_chars("[.^$|()*+?\\[\\]{}\\\\]");
+                if (i > 0) {
+                    trigger_pattern += "|";
+                }
+                trigger_pattern += std::regex_replace(trigger_words[i], special_chars, "\\$0");
+            }
+            trigger_pattern += ")[\\s\\S]*";
+            auto trigger_pattern_c = trigger_pattern.c_str();
+            trigger_patterns = &trigger_pattern_c;
+            num_trigger_patterns = 1;
+        }
         *ctx = {
             /* .vocab        = */ vocab,
             /* .grammar_str  = */ grammar_str,
             /* .grammar_root = */ grammar_root,
-            /* .grammar      = */ llama_grammar_init_impl(vocab, grammar_str, grammar_root, lazy, trigger_words, num_trigger_words, trigger_tokens, num_trigger_tokens),
+            /* .grammar      = */ llama_grammar_init_impl(vocab, nullptr, grammar_str, grammar_root, lazy, trigger_patterns, num_trigger_patterns, trigger_tokens, num_trigger_tokens),
         };
+        if (!ctx->grammar) {
+            delete ctx;
+            return nullptr;
+        }
     } else {
         *ctx = {
             /* .vocab        = */ vocab,
@@ -1545,7 +1573,7 @@ struct llama_sampler * llama_sampler_init_grammar(
         const struct llama_vocab * vocab,
                       const char * grammar_str,
                       const char * grammar_root) {
-    return llama_sampler_init_grammar_impl(vocab, grammar_str, grammar_root, /* lazy= */ false, nullptr, 0, nullptr, 0);
+    return llama_sampler_init_grammar_impl(vocab, grammar_str, grammar_root, /* lazy= */ false, nullptr, 0, nullptr, 0, nullptr, 0);
 }
 
 struct llama_sampler * llama_sampler_init_grammar_lazy(
@@ -1556,7 +1584,18 @@ struct llama_sampler * llama_sampler_init_grammar_lazy(
                             size_t num_trigger_words,
                const llama_token * trigger_tokens,
                             size_t num_trigger_tokens) {
-    return llama_sampler_init_grammar_impl(vocab, grammar_str, grammar_root, /* lazy= */ true, trigger_words, num_trigger_words, trigger_tokens, num_trigger_tokens);
+    return llama_sampler_init_grammar_impl(vocab, grammar_str, grammar_root, /* lazy= */ true, trigger_words, num_trigger_words, trigger_tokens, num_trigger_tokens, nullptr, 0);
+}
+
+struct llama_sampler * llama_sampler_init_grammar_lazy_patterns(
+        const struct llama_vocab * vocab,
+                      const char * grammar_str,
+                      const char * grammar_root,
+                     const char ** trigger_patterns,
+                            size_t num_trigger_patterns,
+               const llama_token * trigger_tokens,
+                            size_t num_trigger_tokens) {
+    return llama_sampler_init_grammar_impl(vocab, grammar_str, grammar_root, /* lazy= */ true, nullptr, 0, trigger_tokens, num_trigger_tokens, trigger_patterns, num_trigger_patterns);
 }
 
 // penalties
@@ -1711,23 +1750,35 @@ static const char * llama_sampler_top_n_sigma_name(const struct llama_sampler * 
 static void llama_sampler_top_n_sigma_apply(struct llama_sampler * smpl, llama_token_data_array * cur_p) {
     const auto * ctx = (llama_sampler_top_n_sigma *) smpl->ctx;
 
+    if (ctx->n <= 0.0f || cur_p->size <= 1) {
+        return;
+    }
+
     // find max logit and calculate mean
     float max = cur_p->data[0].logit;
     float logits_sum = 0;
+    size_t valid_count = 0;
     for (size_t i = 0; i < cur_p->size; ++i) {
-        if (cur_p->data[i].logit > max) {
-            max = cur_p->data[i].logit;
+        // Only count non-negative infinity values
+        if (cur_p->data[i].logit != -INFINITY) {
+            if (cur_p->data[i].logit > max) {
+                max = cur_p->data[i].logit;
+            }
+            logits_sum += cur_p->data[i].logit;
+            valid_count++;
         }
-        logits_sum += cur_p->data[i].logit;
     }
-    float mean = logits_sum/cur_p->size;
+    float mean = valid_count > 0 ? logits_sum/valid_count : 0;
 
     // calculate standard deviation
     float acc = 0;
     for (size_t i = 0; i < cur_p->size; ++i) {
-        acc += pow(cur_p->data[i].logit - mean, 2);
+        // Skip -infinity in std calculation
+        if (cur_p->data[i].logit != -INFINITY) {
+            acc += pow(cur_p->data[i].logit - mean, 2);
+        }
     }
-    float std = sqrt(acc/cur_p->size);
+    float std = valid_count > 0 ? sqrt(acc/valid_count) : 0;
 
     //apply mask
     for (size_t i = 0; i < cur_p->size; ++i) {

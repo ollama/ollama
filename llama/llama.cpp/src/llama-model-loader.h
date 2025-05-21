@@ -77,8 +77,9 @@ struct llama_model_loader {
 
     llama_mmaps mappings;
 
-    std::map<std::string, struct llama_tensor_weight, weight_name_comparer> weights_map;
-    std::unordered_map<std::string, struct llama_model_kv_override> kv_overrides;
+    std::map<std::string, llama_tensor_weight, weight_name_comparer> weights_map;
+    std::unordered_map<std::string, llama_model_kv_override> kv_overrides;
+    const llama_model_tensor_buft_override * tensor_buft_overrides;
 
     gguf_context_ptr meta;
     std::vector<ggml_context_ptr> contexts;
@@ -95,7 +96,8 @@ struct llama_model_loader {
         std::vector<std::string> & splits, // optional, only need if the split does not follow naming scheme
         bool use_mmap,
         bool check_tensors,
-        const struct llama_model_kv_override * param_overrides_p);
+        const llama_model_kv_override * param_overrides_p,
+        const llama_model_tensor_buft_override * param_tensor_buft_overrides_p);
 
     template<typename T>
     typename std::enable_if<std::is_integral<T>::value, bool>::type
