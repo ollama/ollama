@@ -16,8 +16,6 @@ type VisionSelfAttention struct {
 	Key    *nn.Linear `gguf:"attn_k"`
 	Value  *nn.Linear `gguf:"attn_v"`
 	Output *nn.Linear `gguf:"attn_output"`
-
-	Gate ml.Tensor `gguf:"attn_gate"`
 }
 
 func (sa *VisionSelfAttention) Forward(ctx ml.Context, hiddenState ml.Tensor, opts *VisionModelOptions) ml.Tensor {
@@ -25,27 +23,16 @@ func (sa *VisionSelfAttention) Forward(ctx ml.Context, hiddenState ml.Tensor, op
 
 	query := sa.Query.Forward(ctx, hiddenState)
 	query = query.Reshape(ctx, headDim, opts.numHeads, query.Dim(1), batchSize)
-	query = query.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 
 	key := sa.Key.Forward(ctx, hiddenState)
 	key = key.Reshape(ctx, headDim, opts.numHeads, key.Dim(1), batchSize)
-	key = key.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
 
 	value := sa.Value.Forward(ctx, hiddenState)
 	value = value.Reshape(ctx, headDim, opts.numHeads, value.Dim(1), batchSize)
-	value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
 
-	scores := key.Mulmat(ctx, query)
-	scores = scores.Scale(ctx, 1.0/math.Sqrt(float64(headDim)))
-	scores = scores.Softmax(ctx)
-
-	attention := value.Mulmat(ctx, scores)
-	attention = attention.Reshape(ctx, headDim, attention.Dim(1), opts.numHeads, batchSize)
-	attention = attention.Permute(ctx, 0, 2, 1, 3).Contiguous(ctx)
+	attention := nn.Attention(ctx, query, key, value, 1./math.Sqrt(float64(headDim)), nil)
 	attention = attention.Reshape(ctx, opts.hiddenSize, attention.Dim(2), batchSize)
-
-	hiddenState = sa.Output.Forward(ctx, attention)
-	return hiddenState
+	return sa.Output.Forward(ctx, attention)
 }
 
 type VisionMLP struct {
@@ -76,21 +63,18 @@ func (e *VisionEncoderLayer) Forward(ctx ml.Context, hiddenState ml.Tensor, opts
 	// self attention
 	hiddenState = e.AttentionNorm.Forward(ctx, hiddenState, opts.eps)
 	hiddenState = e.SelfAttention.Forward(ctx, hiddenState, opts)
-
 	if e.AttentionGate != nil {
 		hiddenState = hiddenState.Mul(ctx, e.AttentionGate)
 	}
 	hiddenState = hiddenState.Add(ctx, residual)
 	residual = hiddenState
 
-	// feed forward
 	hiddenState = e.MLPNorm.Forward(ctx, hiddenState, opts.eps)
 	hiddenState = e.MLP.Forward(ctx, hiddenState, opts)
-	hiddenState = hiddenState.Add(ctx, residual)
 	if e.MLPGate != nil {
 		hiddenState = hiddenState.Mul(ctx, e.MLPGate)
 	}
-
+	hiddenState = hiddenState.Add(ctx, residual)
 	return hiddenState
 }
 
