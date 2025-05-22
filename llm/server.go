@@ -121,7 +121,7 @@ func LoadModel(model string, maxArraySize int) (*ggml.GGML, error) {
 	}
 	defer f.Close()
 
-	ggml, _, err := ggml.Decode(f, maxArraySize)
+	ggml, err := ggml.Decode(f, maxArraySize)
 	return ggml, err
 }
 

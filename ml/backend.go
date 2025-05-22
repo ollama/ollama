@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -15,6 +14,7 @@ import (
 )
 
 type Backend interface {
+	Load(ctx context.Context, progress func(float32)) error
 	Config() fs.Config
 	Get(name string) Tensor
 	NewContext() Context
@@ -52,10 +52,6 @@ type CacheConfig struct {
 
 // BackendParams controls how the backend loads and executes models
 type BackendParams struct {
-	// Progress is a callback function that allows reporting percentage completion
-	// of model loading
-	Progress func(float32)
-
 	// NumThreads sets the number of threads to use if running on the CPU
 	NumThreads int
 
@@ -72,9 +68,9 @@ type BackendParams struct {
 	FlashAttention bool
 }
 
-var backends = make(map[string]func(context.Context, *os.File, BackendParams) (Backend, error))
+var backends = make(map[string]func(string, BackendParams) (Backend, error))
 
-func RegisterBackend(name string, f func(context.Context, *os.File, BackendParams) (Backend, error)) {
+func RegisterBackend(name string, f func(string, BackendParams) (Backend, error)) {
 	if _, ok := backends[name]; ok {
 		panic("backend: backend already registered")
 	}
@@ -82,9 +78,9 @@ func RegisterBackend(name string, f func(context.Context, *os.File, BackendParam
 	backends[name] = f
 }
 
-func NewBackend(ctx context.Context, f *os.File, params BackendParams) (Backend, error) {
+func NewBackend(modelPath string, params BackendParams) (Backend, error) {
 	if backend, ok := backends["ggml"]; ok {
-		return backend(ctx, f, params)
+		return backend(modelPath, params)
 	}
 
 	return nil, fmt.Errorf("unsupported backend")
@@ -119,21 +115,6 @@ type Context interface {
 	Layer(int) Context
 }
 
-// RopeOptions contains optional parameters for RoPE function
-type RopeOptions struct {
-	OriginalContextLen uint32
-}
-
-// RopeOption defines a function that modifies RopeOpts
-type RopeOption func(*RopeOptions)
-
-// WithContextLen sets a custom context length
-func WithContextLen(len uint32) RopeOption {
-	return func(opts *RopeOptions) {
-		opts.OriginalContextLen = len
-	}
-}
-
 type Tensor interface {
 	Dim(n int) int
 	Stride(n int) int
@@ -147,6 +128,8 @@ type Tensor interface {
 	Neg(ctx Context) Tensor
 	Add(ctx Context, t2 Tensor) Tensor
 	Mul(ctx Context, t2 Tensor) Tensor
+	Div(ctx Context, t2 Tensor) Tensor
+
 	Mulmat(ctx Context, t2 Tensor) Tensor
 	MulmatFullPrec(ctx Context, t2 Tensor) Tensor
 	MulmatID(ctx Context, t2, ids Tensor) Tensor
@@ -155,11 +138,11 @@ type Tensor interface {
 	LayerNorm(ctx Context, weight, bias Tensor, eps float32) Tensor
 	RMSNorm(ctx Context, weight Tensor, eps float32) Tensor
 	Scale(ctx Context, s float64) Tensor
+	SumRows(ctx Context) Tensor
 
 	AvgPool2D(ctx Context, k, s int, p float32) Tensor
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
-	RoPE(ctx Context, positionIDs, ropeFactors Tensor, dim, ropeType uint32, base, scale float32, options ...RopeOption) Tensor
 	IM2Col(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
 	Sin(ctx Context) Tensor

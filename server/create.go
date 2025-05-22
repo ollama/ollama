@@ -295,7 +295,7 @@ func convertFromSafetensors(files map[string]string, baseLayers []*layerGGML, is
 	}
 	defer bin.Close()
 
-	f, _, err := ggml.Decode(bin, -1)
+	f, err := ggml.Decode(bin, -1)
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +467,7 @@ func quantizeLayer(layer *layerGGML, quantizeType string, fn func(resp api.Progr
 		return nil, err
 	}
 
-	f, _, err := ggml.Decode(temp, 1024)
+	f, err := ggml.Decode(temp, 1024)
 	if err != nil {
 		slog.Error(fmt.Sprintf("error decoding ggml: %s\n", err))
 		return nil, err
@@ -501,47 +501,26 @@ func ggufLayers(digest string, fn func(resp api.ProgressResponse)) ([]*layerGGML
 		return nil, errOnlyGGUFSupported
 	}
 
-	stat, err := blob.Stat()
+	f, err := ggml.Decode(blob, -1)
 	if err != nil {
 		return nil, err
 	}
 
-	var offset int64
-	for offset < stat.Size() {
-		f, n, err := ggml.Decode(blob, 1024)
-		if errors.Is(err, io.EOF) {
-			break
-		} else if err != nil {
-			return nil, err
-		}
-
-		mediatype := "application/vnd.ollama.image.model"
-		if f.KV().Kind() == "adapter" {
-			mediatype = "application/vnd.ollama.image.adapter"
-		} else if _, ok := f.KV()[fmt.Sprintf("%s.vision.block_count", f.KV().Architecture())]; ok || f.KV().Kind() == "projector" {
-			mediatype = "application/vnd.ollama.image.projector"
-		}
-
-		var layer Layer
-		if digest != "" && n == stat.Size() && offset == 0 {
-			layer, err = NewLayerFromLayer(digest, mediatype, blob.Name())
-			if err != nil {
-				slog.Debug("could not create new layer from layer", "error", err)
-				return nil, err
-			}
-		}
-
-		// Fallback to creating layer from file copy (either NewLayerFromLayer failed, or digest empty/n != stat.Size())
-		if layer.Digest == "" {
-			layer, err = NewLayer(io.NewSectionReader(blob, offset, n), mediatype)
-			if err != nil {
-				return nil, err
-			}
-		}
-
-		layers = append(layers, &layerGGML{layer, f})
-		offset = n
+	mediatype := "application/vnd.ollama.image.model"
+	if f.KV().Kind() == "adapter" {
+		mediatype = "application/vnd.ollama.image.adapter"
+	} else if (f.KV().Uint("block_count") == 0 && f.KV().Uint("vision.block_count") > 0) || f.KV().Kind() == "projector" {
+		// if a model has vision.block_count but not block_count, it is a standalone vision model
+		mediatype = "application/vnd.ollama.image.projector"
 	}
+
+	layer, err := NewLayerFromLayer(digest, mediatype, blob.Name())
+	if err != nil {
+		slog.Debug("could not create new layer from layer", "error", err)
+		return nil, err
+	}
+
+	layers = append(layers, &layerGGML{layer, f})
 
 	return detectChatTemplate(layers)
 }
