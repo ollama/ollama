@@ -17,10 +17,6 @@
 ```shell
 .\ollama-intel-gpu.bat
 ```
-Note:
-OLLAMA_NUM_GPU=64 # 64 is number of layers offload to GPU.
-
-Adjust the number of layers according to the memory capacity of your graphics card.
 
 ## Run client
 
@@ -35,7 +31,7 @@ This document recode process of merge ggml-sycl from [llama.cpp](https://github.
 
 Only tested in windows and intel integrated Graphics Card.
 
-A portable package in https://github.com/chnxq/ollama/releases/tag/chnxq%2Fv0.0.1a
+A portable package in https://github.com/chnxq/ollama/releases
 
 # `develope config`
 
