@@ -93,7 +93,7 @@ func parseJSONToolCalls(s string, name, arguments string, prefix string) ([]api.
 	// Attempt full unmarshal of the JSON
 	var toolCalls []api.ToolCall
 	for _, rawToolCall := range rawToolCalls {
-		var resp any
+		var resp map[string]any
 		if err := json.Unmarshal([]byte(rawToolCall), &resp); err != nil {
 			continue
 		}
@@ -137,7 +137,9 @@ func parseJSONToolCalls(s string, name, arguments string, prefix string) ([]api.
 //   - error: ErrAccumulateMore if prefix is incomplete, or nil if successful
 func (p *Parser) checkPrefix(s string) (string, error) {
 	original := s
-	s = strings.ReplaceAll(s, "\n", " ")
+	if strings.ContainsRune(s, '\n') {
+		s = strings.ReplaceAll(s, "\n", " ")
+	}
 
 	if s == "" || p.prefix == "" {
 		return s, nil
