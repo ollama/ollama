@@ -102,6 +102,9 @@ func toolPrefix(tmpl *gotmpl.Template) string {
 		return ""
 	}
 	tokenText = strings.TrimSpace(tokenText)
+	tokenText = strings.ReplaceAll(tokenText, "\r", "")
+	tokenText = strings.ReplaceAll(tokenText, "\n", " ")
+
 	return tokenText
 }
 

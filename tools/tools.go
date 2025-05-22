@@ -138,7 +138,6 @@ func parseJSONToolCalls(s string, name, arguments string, prefix string) ([]api.
 func (p *Parser) checkPrefix(s string) (string, error) {
 	original := s
 	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "\r", " ")
 
 	if s == "" || p.prefix == "" {
 		return s, nil
@@ -252,8 +251,6 @@ func NewParser(templateToProcess *gotmpl.Template) (*Parser, error) {
 	}
 
 	tp := toolPrefix(templateToProcess)
-	tp = strings.ReplaceAll(tp, "\n", " ")
-	tp = strings.ReplaceAll(tp, "\r", " ")
 
 	name, arguments, err := extractToolArgs(tt)
 	if err != nil {
