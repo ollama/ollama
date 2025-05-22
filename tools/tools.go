@@ -179,7 +179,7 @@ func (p *Parser) checkPrefix(s string) (string, error) {
 //   - content: Non-tool call content
 func (p *Parser) Add(s string) (tools []api.ToolCall, content string) {
 	if strings.TrimSpace(s) == "" {
-		return nil, ""
+		return nil, s
 	}
 	if p.done {
 		if p.index == 0 {

@@ -1530,6 +1530,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					res.Message.ToolCalls = toolCalls
 					res.Message.Content = ""
 				} else {
+					if r.Done {
+						ch <- res
+					}
 					return
 				}
 			}
