@@ -405,7 +405,6 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [AppFlowy](https://github.com/AppFlowy-IO/AppFlowy) (AI collaborative workspace with Ollama, cross-platform and self-hostable)
 - [Lumina](https://github.com/cushydigit/lumina.git) (A lightweight, minimal React.js frontend for interacting with Ollama servers)
 
-
 ### Cloud
 
 - [Google Cloud](https://cloud.google.com/run/docs/tutorials/gpu-gemma2-with-ollama)
