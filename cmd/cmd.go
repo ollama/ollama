@@ -37,6 +37,7 @@ import (
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
+	"github.com/ollama/ollama/licenses"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/progress"
 	"github.com/ollama/ollama/runner"
@@ -1416,6 +1417,14 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	licensesCmd := &cobra.Command{
+		Use:   "licenses",
+		Short: "Show used third-party licenses",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Println(licenses.LicenseText)
+		},
+	}
+
 	runnerCmd := &cobra.Command{
 		Use:    "runner",
 		Hidden: true,
@@ -1483,6 +1492,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		licensesCmd,
 		runnerCmd,
 	)
 
