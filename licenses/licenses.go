@@ -1,7 +1,7 @@
 // Package licenses embeds third-party licenses for release binaries.
 // The licenses can be collected for embedding using
 //
-//	go run github.com/google/go-licenses@v1.6.0 save . --save_path=licenses/content
+//	go run github.com/google/go-licenses@v1.6.0 save . --save_path=licenses/content --force
 package licenses
 
 import (

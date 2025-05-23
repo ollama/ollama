@@ -94,7 +94,7 @@ RUN go mod download
 COPY . .
 ARG GOFLAGS="'-ldflags=-w -s'"
 ENV CGO_ENABLED=1
-RUN go run github.com/google/go-licenses@v1.6.0 save . --save_path=licenses/content
+RUN go run github.com/google/go-licenses@v1.6.0 save . --save_path=licenses/content --force
 RUN --mount=type=cache,target=/root/.cache/go-build \
     go build -trimpath -buildmode=pie -o /bin/ollama .
 
