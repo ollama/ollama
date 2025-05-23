@@ -9,7 +9,7 @@ import (
 	"io/fs"
 )
 
-//go:embed content
+//go:embed all:content
 var licenses embed.FS
 
 // LicenseText is the concatenation of all the third-party licenses used by the app.
