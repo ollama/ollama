@@ -44,7 +44,10 @@ func parseJSONToolCalls(s string, name, arguments string, prefix string) ([]api.
 	squareCount := 0
 	startIndex := -1
 	var rawToolCalls []string
+	s = strings.TrimSpace(s)
 
+	// Only track these if we don't have a prefix as it will be cut off from the prefix. Also track in the parseLeadingJSON case.
+	trackSquareBrackets := prefix == "" || !strings.HasSuffix(prefix, "[") || strings.HasPrefix(s, "[")
 	for i, c := range s {
 		switch c {
 		case '{':
@@ -59,13 +62,11 @@ func parseJSONToolCalls(s string, name, arguments string, prefix string) ([]api.
 				startIndex = -1
 			}
 		case '[':
-			// Only track these if we don't have a prefix as it will be cut off from the prefix
-			if prefix == "" || !strings.HasSuffix(prefix, "[") {
+			if trackSquareBrackets {
 				squareCount++
 			}
 		case ']':
-			// if prefix == "" {
-			if prefix == "" || !strings.HasSuffix(prefix, "[") {
+			if trackSquareBrackets {
 				squareCount--
 			}
 		}

@@ -284,7 +284,7 @@ func TestParseToolCalls(t *testing.T) {
 		{
 			name:             "mistral multiple tool calls without prefix",
 			model:            "mistral",
-			output:           `[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}}]`,
+			output:           `[{"name": "get_current_weather", "arguments": {"format":"fahrenheit","location":"San Francisco, CA"}},{"name": "get_current_weather", "arguments": {"format":"celsius","location":"Toronto, Canada"}} ]`,
 			expectedToolCall: []api.ToolCall{t1, t2},
 			expectedTokens:   "",
 		},
