@@ -38,7 +38,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: |
-          go run github.com/google/go-licenses@v1.6.0 save . --save_path=licenses/content --force
+          go run github.com/google/go-licenses@v1.6.0 save . --save_path=licenses/root/content
       - run: |
           go build -o dist/ .
         env:
@@ -231,7 +231,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: |
-          go run github.com/google/go-licenses@v1.6.0 save . --save_path=licenses/content --force
+          go run github.com/google/go-licenses@v1.6.0 save . --save_path=licenses/root/content
       - run: |
           go build -o dist/${{ matrix.os }}-${{ matrix.arch }}/ .
       - if: matrix.arch == 'arm64'

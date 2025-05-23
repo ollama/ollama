@@ -1,15 +1,16 @@
 // Package licenses embeds third-party licenses for release binaries.
 // The licenses can be collected for embedding using
 //
-//	go run github.com/google/go-licenses@v1.6.0 save . --save_path=licenses/content --force
+//	go run github.com/google/go-licenses@v1.6.0 save . --save_path=licenses/root/content
 package licenses
 
 import (
 	"embed"
 	"io/fs"
+	"strings"
 )
 
-//go:embed all:content
+//go:embed all:root
 var licenses embed.FS
 
 // LicenseText is the concatenation of all the third-party licenses used by the app.
@@ -21,6 +22,9 @@ func init() {
 			return err
 		}
 		if d.IsDir() {
+			return nil
+		}
+		if !strings.HasPrefix(path, "root/content") {
 			return nil
 		}
 		content, err := fs.ReadFile(licenses, path)

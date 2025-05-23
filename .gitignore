@@ -14,5 +14,4 @@ __debug_bin*
 llama/build
 llama/vendor
 /ollama
-/licenses/content/
-!/licenses/content/.keep
+/licenses/root/content

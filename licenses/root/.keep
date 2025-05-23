@@ -1,0 +1,3 @@
+go-licenses always replaces the folder it saves to. Keep a root directory with a file to
+allow embedding without licenses, and a subdirectory that can be populated by go-licenses
+without clobbering anything.
