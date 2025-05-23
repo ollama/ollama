@@ -18,7 +18,7 @@ func TestWriteGGUF(t *testing.T) {
 
 	if err := WriteGGUF(w, KV{
 		"general.alignment": uint32(16),
-	}, []Tensor{
+	}, []*Tensor{
 		{Name: "test.0", Shape: []uint64{2, 3}, WriterTo: bytes.NewBuffer(slices.Repeat([]byte{0}, 2*3*4))},
 		{Name: "test.1", Shape: []uint64{2, 3}, WriterTo: bytes.NewBuffer(slices.Repeat([]byte{0}, 2*3*4))},
 		{Name: "test.2", Shape: []uint64{2, 3}, WriterTo: bytes.NewBuffer(slices.Repeat([]byte{0}, 2*3*4))},
@@ -35,7 +35,7 @@ func TestWriteGGUF(t *testing.T) {
 	}
 	defer r.Close()
 
-	ff, _, err := Decode(r, 0)
+	ff, err := Decode(r, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

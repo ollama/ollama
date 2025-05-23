@@ -19,9 +19,6 @@ struct common_sampler *common_sampler_cinit(const struct llama_model *model, str
         sparams.penalty_repeat = params->penalty_repeat;
         sparams.penalty_freq = params->penalty_freq;
         sparams.penalty_present = params->penalty_present;
-        sparams.mirostat = params->mirostat;
-        sparams.mirostat_tau = params->mirostat_tau;
-        sparams.mirostat_eta = params->mirostat_eta;
         sparams.seed = params->seed;
         sparams.grammar = params->grammar;
         sparams.xtc_probability = 0.0;
@@ -116,6 +113,9 @@ void grammar_free(struct llama_grammar *g) {
     if (g != nullptr) {
         if (g->vocab != nullptr) {
             delete g->vocab;
+        }
+        if (g->o_vocab != nullptr) {
+                delete g->o_vocab;
         }
         llama_grammar_free_impl(g);
     }
