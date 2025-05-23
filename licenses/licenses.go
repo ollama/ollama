@@ -12,6 +12,7 @@ import (
 //go:embed content
 var licenses embed.FS
 
+// LicenseText is the concatenation of all the third-party licenses used by the app.
 var LicenseText string
 
 func init() {
