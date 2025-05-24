@@ -9,6 +9,7 @@ package llama
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/tools/mtmd
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/src
 #cgo CPPFLAGS: -I${SRCDIR}/../ml/backend/ggml/ggml/include
+#cgo CPPFLAGS: -I${SRCDIR}/../ml/backend/ggml/
 
 #include <stdlib.h>
 #include "ggml.h"
@@ -18,6 +19,7 @@ package llama
 #include "gguf.h"
 
 #include "sampling_ext.h"
+#include "utils.h"
 
 extern bool llamaProgressCallback(float progress, void *user_data);
 extern void llamaLog(int level, char* text, void* user_data);
@@ -201,6 +203,7 @@ type ModelParams struct {
 	TensorSplit  []float32
 	Progress     func(float32)
 	VocabOnly    bool
+	RPCServers   string
 }
 
 //export llamaProgressCallback
@@ -212,6 +215,14 @@ func llamaProgressCallback(progress C.float, userData unsafe.Pointer) C.bool {
 }
 
 func LoadModelFromFile(modelPath string, params ModelParams) (*Model, error) {
+	if params.RPCServers != "" {
+		// Adding RPC servers to devices
+		rpcServers := C.CString(params.RPCServers)
+		C.add_rpc_devices(rpcServers)
+		C.free(unsafe.Pointer(rpcServers))
+	}
+
+	// Setting model parameters
 	cparams := C.llama_model_default_params()
 	cparams.n_gpu_layers = C.int(params.NumGpuLayers)
 	cparams.main_gpu = C.int32_t(params.MainGpu)

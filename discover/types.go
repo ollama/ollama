@@ -69,6 +69,15 @@ type CPU struct {
 	ThreadCount         int
 }
 
+// RPCServerMemoryResult represents the return value of the RPCServerMemory
+// function.
+type RPCServerMemoryResult struct {
+	// The amount of free memory in bytes available in the RPC endpoint.
+	FreeMem uint64
+	// The total memory available in bytes on the RPC endpoint.
+	TotalMem uint64
+}
+
 type CudaGPUInfo struct {
 	GpuInfo
 	OSOverhead   uint64 // Memory overhead between the driver library and management library
