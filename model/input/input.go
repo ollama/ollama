@@ -2,16 +2,30 @@ package input
 
 import "github.com/ollama/ollama/ml"
 
+// Multimodal is a multimodal embedding or a component of one.
+// For example, it could be a row of an image that can be processed
+// independently.
+type Multimodal struct {
+	// Tensor is the embedding data. Implementations may chose what to
+	// store here or it may be nil if not needed. However, any ml.Tensor
+	// objects must be stored here and not in Data.
+	Tensor ml.Tensor
+
+	// Data is implementation-specific opaque data, such as metadata on how
+	// to layout Tensor. It may be nil if not needed. It may also store larger
+	// objects such as complete images if they are to be processed later.
+	Data any
+}
+
 // Input represents one token in the input stream
 type Input struct {
 	// Token is a single element of text.
 	Token int32
 
-	// Multimodal is opaque data representing a non-text
-	// element such as an image (or part of one if the image
-	// can be processed in pieces). It may be either together
-	// with Token or on its own.
-	Multimodal any
+	// Multimodal is represents a non-text element such as an
+	// image (or part of one if the image can be processed in pieces).
+	// It may be used either together with Token or on its own.
+	Multimodal []Multimodal
 
 	// MultimodalHash is a unique representation of the data
 	// stored in Multimodal, used for caching and comparing
@@ -32,7 +46,7 @@ type Input struct {
 // Positions slice.
 type MultimodalIndex struct {
 	Index      int
-	Multimodal any
+	Multimodal []Multimodal
 }
 
 // Batch contains the inputs for a model forward pass

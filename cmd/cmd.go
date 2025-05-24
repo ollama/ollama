@@ -747,11 +747,38 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 				case float64:
 					v = fmt.Sprintf("%g", vData)
 				case []any:
-					n := 3
-					if len(vData) < n {
-						n = len(vData)
+					targetWidth := 10 // Small width where we are displaying the data in a column
+
+					var itemsToShow int
+					totalWidth := 1 // Start with 1 for opening bracket
+
+					// Find how many we can fit
+					for i := range vData {
+						itemStr := fmt.Sprintf("%v", vData[i])
+						width := runewidth.StringWidth(itemStr)
+
+						// Add separator width (", ") for all items except the first
+						if i > 0 {
+							width += 2
+						}
+
+						// Check if adding this item would exceed our width limit
+						if totalWidth+width > targetWidth && i > 0 {
+							break
+						}
+
+						totalWidth += width
+						itemsToShow++
 					}
-					v = fmt.Sprintf("%v", vData[:n])
+
+					// Format the output
+					if itemsToShow < len(vData) {
+						v = fmt.Sprintf("%v", vData[:itemsToShow])
+						v = strings.TrimSuffix(v, "]")
+						v += fmt.Sprintf(" ...+%d more]", len(vData)-itemsToShow)
+					} else {
+						v = fmt.Sprintf("%v", vData)
+					}
 				default:
 					v = fmt.Sprintf("%T", vData)
 				}
@@ -772,10 +799,19 @@ func showInfo(resp *api.ShowResponse, verbose bool, w io.Writer) error {
 
 	head := func(s string, n int) (rows [][]string) {
 		scanner := bufio.NewScanner(strings.NewReader(s))
-		for scanner.Scan() && (len(rows) < n || n < 0) {
-			if text := scanner.Text(); text != "" {
-				rows = append(rows, []string{"", strings.TrimSpace(text)})
+		count := 0
+		for scanner.Scan() {
+			text := strings.TrimSpace(scanner.Text())
+			if text == "" {
+				continue
 			}
+			count++
+			if n < 0 || count <= n {
+				rows = append(rows, []string{"", text})
+			}
+		}
+		if n >= 0 && count > n {
+			rows = append(rows, []string{"", "..."})
 		}
 		return
 	}
@@ -1200,11 +1236,11 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if err := client.Heartbeat(cmd.Context()); err != nil {
-		if !strings.Contains(err.Error(), " refused") {
+		if !(strings.Contains(err.Error(), " refused") || strings.Contains(err.Error(), "could not connect")) {
 			return err
 		}
 		if err := startApp(cmd.Context(), client); err != nil {
-			return errors.New("could not connect to ollama app, is it running?")
+			return fmt.Errorf("ollama server not responding - %w", err)
 		}
 	}
 	return nil
@@ -1282,7 +1318,7 @@ func NewCLI() *cobra.Command {
 	}
 
 	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\"")
-	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_0)")
+	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_K_M)")
 
 	showCmd := &cobra.Command{
 		Use:     "show MODEL",

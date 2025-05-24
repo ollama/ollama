@@ -15,6 +15,7 @@ import (
 type GGML struct {
 	container
 	model
+	Length int64
 }
 
 type model interface {
@@ -125,6 +126,8 @@ func (kv KV) OllamaEngineRequired() bool {
 		"gemma3",
 		"mistral3",
 		"llama4",
+		"mllama",
+		"qwen25vl",
 	}, kv.Architecture())
 }
 
@@ -384,12 +387,12 @@ func DetectContentType(b []byte) string {
 //
 // It collects array values for arrays with a size less than or equal to
 // maxArraySize. If the maxArraySize is negative, all arrays are collected.
-func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
+func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, error) {
 	rs = bufioutil.NewBufferedSeeker(rs, 32<<10)
 
 	var magic uint32
 	if err := binary.Read(rs, binary.LittleEndian, &magic); err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 
 	var c container
@@ -399,24 +402,25 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
 	case FILE_MAGIC_GGUF_BE:
 		c = &containerGGUF{ByteOrder: binary.BigEndian, maxArraySize: maxArraySize}
 	default:
-		return nil, 0, errors.New("invalid file magic")
+		return nil, errors.New("invalid file magic")
 	}
 
 	model, err := c.Decode(rs)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 
 	offset, err := rs.Seek(0, io.SeekCurrent)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 
 	// final model type
 	return &GGML{
 		container: c,
 		model:     model,
-	}, offset, nil
+		Length:    offset,
+	}, nil
 }
 
 func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType string) (kv []uint64, partialOffload, fullOffload uint64) {
@@ -648,6 +652,20 @@ func (llm GGML) VisionGraphSize() (weights, graphSize uint64) {
 		graphSize = 4 * (imageSize*imageSize*numChannels +
 			embeddingLength*patchSize +
 			numPatches*numPatches*headCount)
+	case "qwen25vl":
+		maxPixels := uint64(llm.KV().Uint("vision.max_pixels", 28*28*1280))
+
+		numPatches := maxPixels / (patchSize * patchSize)
+
+		graphSize = 4 * (maxPixels*numChannels + // Original image storage
+			// Normalized pixels
+			maxPixels*numChannels +
+			// Patches storage (numPatches * channels * patchSize^2)
+			numPatches*numChannels*patchSize*patchSize +
+			// Self-attention calculations
+			numPatches*numPatches*headCount +
+			// Additional buffer for processing
+			embeddingLength*numPatches)
 	case "llama4":
 		// vision graph is computed independently in the same schedule
 		// and is negligible compared to the worst case text graph

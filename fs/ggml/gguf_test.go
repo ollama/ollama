@@ -35,7 +35,7 @@ func TestWriteGGUF(t *testing.T) {
 	}
 	defer r.Close()
 
-	ff, _, err := Decode(r, 0)
+	ff, err := Decode(r, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
