@@ -126,6 +126,7 @@ ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV OLLAMA_HOST=0.0.0.0:11434
+LABEL org.opencontainers.image.source="https://github.com/ollama/ollama"
 EXPOSE 11434
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
