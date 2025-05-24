@@ -118,7 +118,7 @@ To run tests, use `go test`:
 go test ./...
 ```
 
-> NOTE: In rare cirumstances, you may nedd to change a package using the new
+> NOTE: In rare circumstances, you may need to change a package using the new
 > "synctest" package in go1.24.
 >
 > If you do not have the "synctest" package enabled, you will not see build or
