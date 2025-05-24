@@ -555,7 +555,7 @@ func NewSamplingContext(model *Model, params SamplingParams) (*SamplingContext, 
 	cparams.penalty_last_n = C.int32_t(params.RepeatLastN)
 	cparams.penalty_repeat = C.float(params.PenaltyRepeat)
 	cparams.penalty_freq = C.float(params.PenaltyFreq)
-	cparams.penalty_present = C.float(params.PenaltyFreq)
+	cparams.penalty_present = C.float(params.PenaltyPresent)
 	cparams.seed = C.uint32_t(params.Seed)
 
 	grammar := C.CString(params.Grammar)
@@ -591,7 +591,7 @@ func SchemaToGrammar(schema []byte) []byte {
 	defer C.free(unsafe.Pointer(cStr))
 
 	// Allocate buffer for grammar based on schema length but with upper bound
-	maxLen := min(1024*1024, len(schema)*4)
+	maxLen := max(32768, min(1024*1024, len(schema)*4))
 	buf := make([]byte, maxLen)
 
 	// Call C function to convert schema to grammar

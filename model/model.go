@@ -98,14 +98,8 @@ func Register(name string, f func(fs.Config) (Model, error)) {
 }
 
 // New initializes a new model instance with the provided configuration based on the metadata in the model file
-func New(ctx context.Context, modelPath string, params ml.BackendParams) (Model, error) {
-	r, err := os.Open(modelPath)
-	if err != nil {
-		return nil, err
-	}
-	defer r.Close()
-
-	b, err := ml.NewBackend(ctx, r, params)
+func New(modelPath string, params ml.BackendParams) (Model, error) {
+	b, err := ml.NewBackend(modelPath, params)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +128,7 @@ func NewTextProcessor(s string) (TextProcessor, error) {
 		return nil, err
 	}
 	defer r.Close()
-	meta, _, err := fsggml.Decode(r, -1)
+	meta, err := fsggml.Decode(r, -1)
 	if err != nil {
 		return nil, err
 	}
@@ -293,11 +287,7 @@ func Forward(ctx ml.Context, m Model, inputs []int32, batch input.Batch) (ml.Ten
 		return nil, errors.New("batch size cannot be less than 1")
 	}
 
-	var err error
-	batch.Inputs, err = ctx.Input().FromIntSlice(inputs, len(inputs))
-	if err != nil {
-		return nil, err
-	}
+	batch.Inputs = ctx.Input().FromIntSlice(inputs, len(inputs))
 
 	cache := m.Config().Cache
 	if cache != nil {
