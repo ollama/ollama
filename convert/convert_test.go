@@ -47,7 +47,7 @@ func convertFull(t *testing.T, fsys fs.FS) (*os.File, ggml.KV, ggml.Tensors) {
 	}
 	t.Cleanup(func() { r.Close() })
 
-	m, _, err := ggml.Decode(r, -1)
+	m, err := ggml.Decode(r, -1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,6 +130,7 @@ func TestConvertModel(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer expectFile.Close()
 
 			var expect map[string]string
 			if err := json.NewDecoder(expectFile).Decode(&expect); err != nil {
@@ -331,7 +332,7 @@ func TestConvertAdapter(t *testing.T) {
 			}
 			defer r.Close()
 
-			m, _, err := ggml.Decode(r, -1)
+			m, err := ggml.Decode(r, -1)
 			if err != nil {
 				t.Fatal(err)
 			}
