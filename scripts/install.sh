@@ -45,8 +45,6 @@ case "$KERN" in
     *) ;;
 esac
 
-VER_PARAM="${OLLAMA_VERSION:+?version=$OLLAMA_VERSION}"
-
 SUDO=
 if [ "$(id -u)" -ne 0 ]; then
     # Running as root, no need for sudo
@@ -65,6 +63,38 @@ if [ -n "$NEEDS" ]; then
     done
     exit 1
 fi
+
+# By default (no flag) and if Ollama is installed, we check if the installed
+# version matches the desired or latest version, and skip the installation if yes.
+if [ $# -eq 0 ] && available ollama; then
+    CURRENT_VERSION=$(ollama --version | awk '{print $4}')
+
+    OLLAMA_VERSION=${OLLAMA_VERSION:-}
+    # If no version is specified, we use the latest version on GitHub.
+    if [ -z "$OLLAMA_VERSION" ]; then
+        status "Determining the latest Ollama version on GitHub..."
+        # See docs: https://docs.github.com/en/rest/releases/releases?apiVersion=2022-11-28#get-the-latest-release
+        LATEST_VERSION=$(curl --fail --show-error --location --silent \
+            --header "Accept: application/vnd.github+json" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/ollama/ollama/releases/latest" | \
+            awk -F'"' '/tag_name/ {gsub(/^v/, "", $4); print $4}')
+        if [ -z "$LATEST_VERSION" ]; then
+            error "Failed to determine the latest Ollama version on GitHub."
+        fi
+        OLLAMA_VERSION="$LATEST_VERSION"
+    fi
+
+    if [ "$CURRENT_VERSION" = "$OLLAMA_VERSION" ]; then
+        status "Ollama version $OLLAMA_VERSION is already installed."
+        exit 0
+    fi
+elif [ $# -ne 1 ] || [ "$1" != "--force" ]; then
+    error "Usage: $0 [--force]"
+# else: Script was called with 1 flag and that's "--force".
+fi
+
+VER_PARAM="${OLLAMA_VERSION:+?version=$OLLAMA_VERSION}"
 
 for BINDIR in /usr/local/bin /usr/bin /bin; do
     echo $PATH | grep -q $BINDIR && break || continue
