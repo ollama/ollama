@@ -239,6 +239,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 	}
 
 	// mmap has issues with partial offloading on metal
+	// rpc does not support mmap
 	for _, g := range gpus {
 		if g.Library == "rpc" {
 			opts.UseMMap = new(bool)
