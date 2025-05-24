@@ -132,7 +132,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				slog.Debug("pending request cancelled or timed out, skipping scheduling")
 				continue
 			}
-			numParallel := int(envconfig.NumParallel())
+			numParallel := pending.opts.NumParallel
 			// `mllama` is a snowflake and uses an encoder cache which cannot be used with num_parallel > 1
 			// ref: https://github.com/ollama/ollama/issues/4165
 			if slices.Contains(pending.model.Config.ModelFamilies, "mllama") && numParallel != 1 {
