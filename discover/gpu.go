@@ -48,7 +48,6 @@ var (
 	bootstrapped  bool
 	cpus          []CPUInfo
 	cudaGPUs      []CudaGPUInfo
-	rpcServers    []RPCServerInfo
 	nvcudaLibPath string
 	cudartLibPath string
 	oneapiLibPath string
@@ -251,10 +250,6 @@ func GetGPUInfo() GpuInfoList {
 		// Load ALL libraries
 		cHandles = initCudaHandles()
 
-		// RPC Servers
-		rpcServersENV := envconfig.RPCServers()
-		rpcServers = CheckRPCServers(rpcServersENV)
-
 		// NVIDIA
 		for i := range cHandles.deviceCount {
 			if cHandles.cudart != nil || cHandles.nvcuda != nil {
@@ -411,10 +406,6 @@ func GetGPUInfo() GpuInfoList {
 			cpus[0].FreeSwap = mem.FreeSwap
 		}
 
-		// RPC Servers
-		rpcServersENV := envconfig.RPCServers()
-		rpcServers = CheckRPCServers(rpcServersENV)
-
 		// CUDA GPU
 		var memInfo C.mem_info_t
 		if cHandles == nil && len(cudaGPUs) > 0 {
@@ -490,9 +481,6 @@ func GetGPUInfo() GpuInfoList {
 	}
 
 	resp := []GpuInfo{}
-	for _, gpu := range rpcServers {
-		resp = append(resp, gpu.GpuInfo)
-	}
 	for _, gpu := range cudaGPUs {
 		resp = append(resp, gpu.GpuInfo)
 	}
