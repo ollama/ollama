@@ -406,6 +406,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [AppFlowy](https://github.com/AppFlowy-IO/AppFlowy) (AI collaborative workspace with Ollama, cross-platform and self-hostable)
 - [Lumina](https://github.com/cushydigit/lumina.git) (A lightweight, minimal React.js frontend for interacting with Ollama servers)
 - [Tiny Notepad](https://pypi.org/project/tiny-notepad) (A lightweight, notepad-like interface to chat with ollama available on PyPI)
+- [OllamaChat](https://github.com/rijieli/OllamaChat) (A lightweight, open-source native app for Ollama on macOS)
 
 ### Cloud
 
