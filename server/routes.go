@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -17,7 +17,6 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -26,6 +25,7 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/image/webp"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
@@ -33,11 +33,12 @@ import (
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
-	"github.com/ollama/ollama/model/models/mllama"
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/server/internal/registry"
 	"github.com/ollama/ollama/template"
+	"github.com/ollama/ollama/tools"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -96,6 +97,10 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	model, err := GetModel(name)
 	if err != nil {
 		return nil, nil, nil, err
+	}
+
+	if slices.Contains(model.Config.ModelFamilies, "mllama") && len(model.ProjectorPaths) > 0 {
+		return nil, nil, nil, fmt.Errorf("'llama3.2-vision' is no longer compatible with your version of Ollama and has been replaced by a newer version. To re-download, run 'ollama pull llama3.2-vision'")
 	}
 
 	if err := model.CheckCapabilities(caps...); err != nil {
@@ -204,38 +209,14 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		return
 	}
 
-	isMllama := checkMllamaModelFamily(m)
-	if isMllama && len(req.Images) > 1 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "this model only supports one image: more than one image sent"})
+	if slices.Contains(m.Config.ModelFamilies, "mllama") && len(req.Images) > 1 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "this model only supports one image while more than one image requested"})
 		return
 	}
 
 	images := make([]llm.ImageData, len(req.Images))
 	for i := range req.Images {
-		if isMllama && len(m.ProjectorPaths) > 0 {
-			data, opts, err := mllama.Preprocess(bytes.NewReader(req.Images[i]))
-			if err != nil {
-				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error processing image"})
-				return
-			}
-
-			ar, ok := opts["aspectRatioIndex"].(int)
-			if !ok {
-				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error processing image"})
-				return
-			}
-
-			buf := new(bytes.Buffer)
-			err = binary.Write(buf, binary.LittleEndian, data)
-			if err != nil {
-				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "error processing image"})
-				return
-			}
-
-			images[i] = llm.ImageData{ID: i, Data: buf.Bytes(), AspectRatioID: ar}
-		} else {
-			images[i] = llm.ImageData{ID: i, Data: req.Images[i]}
-		}
+		images[i] = llm.ImageData{ID: i, Data: req.Images[i]}
 	}
 
 	prompt := req.Prompt
@@ -267,9 +248,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 			for _, i := range images {
 				imgPrompt := ""
-				if isMllama {
-					imgPrompt = "<|image|>"
-				}
 				msgs = append(msgs, api.Message{Role: "user", Content: fmt.Sprintf("[img-%d]"+imgPrompt, i.ID)})
 			}
 
@@ -294,8 +272,6 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 		prompt = b.String()
 	}
-
-	slog.Debug("generate request", "images", len(images), "prompt", prompt)
 
 	ch := make(chan any)
 	go func() {
@@ -1226,26 +1202,8 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 }
 
 func Serve(ln net.Listener) error {
-	level := slog.LevelInfo
-	if envconfig.Debug() {
-		level = slog.LevelDebug
-	}
-
+	slog.SetDefault(logutil.NewLogger(os.Stderr, envconfig.LogLevel()))
 	slog.Info("server config", "env", envconfig.Values())
-	handler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level:     level,
-		AddSource: true,
-		ReplaceAttr: func(_ []string, attr slog.Attr) slog.Attr {
-			if attr.Key == slog.SourceKey {
-				source := attr.Value.Any().(*slog.Source)
-				source.File = filepath.Base(source.File)
-			}
-
-			return attr
-		},
-	})
-
-	slog.SetDefault(slog.New(handler))
 
 	blobsDir, err := GetBlobsPath("")
 	if err != nil {
@@ -1323,6 +1281,10 @@ func Serve(ln net.Listener) error {
 	}()
 
 	s.sched.Run(schedCtx)
+
+	// register the experimental webp decoder
+	// so webp images can be used in multimodal inputs
+	image.RegisterFormat("webp", "RIFF????WEBP", webp.Decode, webp.DecodeConfig)
 
 	// At startup we retrieve GPU information so we can get log messages before loading a model
 	// This will log warnings to the log in case we have problems with detected GPUs
@@ -1521,13 +1483,20 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	slog.Debug("chat request", "images", len(images), "prompt", prompt)
+	var toolParser *tools.Parser
+	if len(req.Tools) > 0 {
+		toolParser, err = tools.NewParser(m.Template.Template)
+		if err != nil {
+			slog.Error("failed to create tool parser", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	}
 
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
-		var sb strings.Builder
-		var toolCallIndex int = 0
+
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
@@ -1553,37 +1522,21 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
 
-			// TODO: tool call checking and filtering should be moved outside of this callback once streaming
-			// however this was a simple change for now without reworking streaming logic of this (and other)
-			// handlers
-			if req.Stream != nil && !*req.Stream || len(req.Tools) == 0 {
-				ch <- res
-				return
-			}
-
-			// Streaming tool calls:
-			// If tools are recognized, use a flag to track the sending of a tool downstream
-			// This ensures that content is cleared from the message on the last chunk sent
-			sb.WriteString(r.Content)
-			if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
-				res.Message.ToolCalls = toolCalls
-				for i := range toolCalls {
-					toolCalls[i].Function.Index = toolCallIndex
-					toolCallIndex++
+			if len(req.Tools) > 0 {
+				toolCalls, content := toolParser.Add(r.Content)
+				if len(content) > 0 {
+					res.Message.Content = content
+				} else if len(toolCalls) > 0 {
+					res.Message.ToolCalls = toolCalls
+					res.Message.Content = ""
+				} else {
+					if r.Done {
+						ch <- res
+					}
+					return
 				}
-				res.Message.Content = ""
-				sb.Reset()
-				ch <- res
-				return
 			}
-
-			if r.Done {
-				// Send any remaining content if no tool calls were detected
-				if toolCallIndex == 0 {
-					res.Message.Content = sb.String()
-				}
-				ch <- res
-			}
+			ch <- res
 		}); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
@@ -1592,11 +1545,15 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if req.Stream != nil && !*req.Stream {
 		var resp api.ChatResponse
 		var sb strings.Builder
+		var toolCalls []api.ToolCall
 		for rr := range ch {
 			switch t := rr.(type) {
 			case api.ChatResponse:
 				sb.WriteString(t.Message.Content)
 				resp = t
+				if len(req.Tools) > 0 {
+					toolCalls = append(toolCalls, t.Message.ToolCalls...)
+				}
 			case gin.H:
 				msg, ok := t["error"].(string)
 				if !ok {
@@ -1612,12 +1569,8 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 
 		resp.Message.Content = sb.String()
-
-		if len(req.Tools) > 0 {
-			if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
-				resp.Message.ToolCalls = toolCalls
-				resp.Message.Content = ""
-			}
+		if len(toolCalls) > 0 {
+			resp.Message.ToolCalls = toolCalls
 		}
 
 		c.JSON(http.StatusOK, resp)

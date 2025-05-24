@@ -1,11 +1,13 @@
 package envconfig
 
 import (
+	"log/slog"
 	"math"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/ollama/ollama/logutil"
 )
 
 func TestHost(t *testing.T) {
@@ -287,6 +289,37 @@ func TestContextLength(t *testing.T) {
 		t.Run(k, func(t *testing.T) {
 			t.Setenv("OLLAMA_CONTEXT_LENGTH", k)
 			if i := ContextLength(); i != v {
+				t.Errorf("%s: expected %d, got %d", k, v, i)
+			}
+		})
+	}
+}
+
+func TestLogLevel(t *testing.T) {
+	cases := map[string]slog.Level{
+		// Default to INFO
+		"":      slog.LevelInfo,
+		"false": slog.LevelInfo,
+		"f":     slog.LevelInfo,
+		"0":     slog.LevelInfo,
+
+		// True values enable Debug
+		"true": slog.LevelDebug,
+		"t":    slog.LevelDebug,
+
+		// Positive values increase verbosity
+		"1": slog.LevelDebug,
+		"2": logutil.LevelTrace,
+
+		// Negative values decrease verbosity
+		"-1": slog.LevelWarn,
+		"-2": slog.LevelError,
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			t.Setenv("OLLAMA_DEBUG", k)
+			if i := LogLevel(); i != v {
 				t.Errorf("%s: expected %d, got %d", k, v, i)
 			}
 		})

@@ -19,12 +19,6 @@
 #define GROUP_MAX_EPS_IQ1_M 1e-7f
 #define GROUP_MAX_EPS_IQ1_S 1e-12f
 
-#if defined(_MSC_VER)
-// disable "possible loss of data" to avoid warnings for hundreds of casts
-// we should just be careful :)
-#pragma warning(disable: 4244 4267)
-#endif
-
 #define UNUSED GGML_UNUSED
 
 // reference implementation for deterministic creation of model files
