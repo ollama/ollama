@@ -39,7 +39,7 @@ jobs:
           echo changed=$(changed 'llama/llama.cpp/**' 'ml/backend/ggml/ggml/**') | tee -a $GITHUB_OUTPUT
 
   linux:
-    needs: [changes]
+    needs: [ changes ]
     if: needs.changes.outputs.changed == 'True'
     strategy:
       matrix:
@@ -71,7 +71,7 @@ jobs:
           cmake --build --preset ${{ matrix.preset }} --parallel
 
   windows:
-    needs: [changes]
+    needs: [ changes ]
     if: needs.changes.outputs.changed == 'True'
     strategy:
       matrix:
@@ -150,7 +150,7 @@ jobs:
   test:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
     runs-on: ${{ matrix.os }}
     env:
       CGO_ENABLED: '1'
@@ -239,3 +239,23 @@ jobs:
         run: |
           make -f Makefile.sync clean checkout apply-patches sync
           git diff --compact-summary --exit-code
+
+  docs:
+    runs-on: ubuntu-latest
+    name: Test build of docs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.10
+      - name: Install dependencies
+        run: |
+          python -m pip install uv
+          uv pip install -r docs/requirements.txt
+      - name: Build docs
+        run: |
+          cd docs
+          make html -j 4
