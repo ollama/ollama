@@ -1,175 +1,159 @@
 # Development
 
-Install required tools:
+Install prerequisites:
 
-- go version 1.22 or higher
-- gcc version 11.4.0 or higher
+- [Go](https://go.dev/doc/install)
+- C/C++ Compiler e.g. Clang on macOS, [TDM-GCC](https://github.com/jmeubank/tdm-gcc/releases/latest) (Windows amd64) or [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) (Windows arm64), GCC/Clang on Linux.
 
+Then build and run Ollama from the root directory of the repository:
 
-### MacOS
-
-[Download Go](https://go.dev/dl/)
-
-Optionally enable debugging and more verbose logging:
-
-```bash
-# At build time
-export CGO_CFLAGS="-g"
-
-# At runtime
-export OLLAMA_DEBUG=1
+```shell
+go run . serve
 ```
 
-Get the required libraries and build the native LLM code:  (Adjust the job count based on your number of processors for a faster build)
+## macOS (Apple Silicon)
 
-```bash
-make -j 5
+macOS Apple Silicon supports Metal which is built-in to the Ollama binary. No additional steps are required.
+
+## macOS (Intel)
+
+Install prerequisites:
+
+- [CMake](https://cmake.org/download/) or `brew install cmake`
+
+Then, configure and build the project:
+
+```shell
+cmake -B build
+cmake --build build
 ```
 
-Then build ollama:
+Lastly, run Ollama:
 
-```bash
-go build .
+```shell
+go run . serve
 ```
 
-Now you can run `ollama`:
+## Windows
 
-```bash
-./ollama
+Install prerequisites:
+
+- [CMake](https://cmake.org/download/)
+- [Visual Studio 2022](https://visualstudio.microsoft.com/downloads/) including the Native Desktop Workload
+- (Optional) AMD GPU support
+    - [ROCm](https://rocm.docs.amd.com/en/latest/)
+    - [Ninja](https://github.com/ninja-build/ninja/releases)
+- (Optional) NVIDIA GPU support
+    - [CUDA SDK](https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_network)
+
+Then, configure and build the project:
+
+```shell
+cmake -B build
+cmake --build build --config Release
 ```
 
-#### Xcode 15 warnings
+> [!IMPORTANT]
+> Building for ROCm requires additional flags:
+> ```
+> cmake -B build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+> cmake --build build --config Release
+> ```
 
-If you are using Xcode newer than version 14, you may see a warning during `go build` about `ld: warning: ignoring duplicate libraries: '-lobjc'` due to Golang issue https://github.com/golang/go/issues/67799 which can be safely ignored.  You can suppress the warning with `export CGO_LDFLAGS="-Wl,-no_warn_duplicate_libraries"`
 
-### Linux
+Lastly, run Ollama:
 
-#### Linux CUDA (NVIDIA)
-
-_Your operating system distribution may already have packages for NVIDIA CUDA. Distro packages are often preferable, but instructions are distro-specific. Please consult distro-specific docs for dependencies if available!_
-
-Install `make`, `gcc` and `golang` as well as [NVIDIA CUDA](https://developer.nvidia.com/cuda-downloads)
-development and runtime packages.
-
-Typically the build scripts will auto-detect CUDA, however, if your Linux distro
-or installation approach uses unusual paths, you can specify the location by
-specifying an environment variable `CUDA_LIB_DIR` to the location of the shared
-libraries, and `CUDACXX` to the location of the nvcc compiler. You can customize
-a set of target CUDA architectures by setting `CMAKE_CUDA_ARCHITECTURES` (e.g. "50;60;70")
-
-Then generate dependencies:  (Adjust the job count based on your number of processors for a faster build)
-
-```
-make -j 5
+```shell
+go run . serve
 ```
 
-Then build the binary:
+## Windows (ARM)
 
-```
-go build .
-```
+Windows ARM does not support additional acceleration libraries at this time.  Do not use cmake, simply `go run` or `go build`.
 
-#### Linux ROCm (AMD)
+## Linux
 
-_Your operating system distribution may already have packages for AMD ROCm and CLBlast. Distro packages are often preferable, but instructions are distro-specific. Please consult distro-specific docs for dependencies if available!_
+Install prerequisites:
 
-Install [CLBlast](https://github.com/CNugteren/CLBlast/blob/master/doc/installation.md) and [ROCm](https://rocm.docs.amd.com/en/latest/) development packages first, as well as `make`, `gcc`, and `golang`.
+- [CMake](https://cmake.org/download/) or `sudo apt install cmake` or `sudo dnf install cmake`
+- (Optional) AMD GPU support
+    - [ROCm](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html)
+- (Optional) NVIDIA GPU support
+    - [CUDA SDK](https://developer.nvidia.com/cuda-downloads)
 
-Typically the build scripts will auto-detect ROCm, however, if your Linux distro
-or installation approach uses unusual paths, you can specify the location by
-specifying an environment variable `ROCM_PATH` to the location of the ROCm
-install (typically `/opt/rocm`), and `CLBlast_DIR` to the location of the
-CLBlast install (typically `/usr/lib/cmake/CLBlast`). You can also customize
-the AMD GPU targets by setting AMDGPU_TARGETS (e.g. `AMDGPU_TARGETS="gfx1101;gfx1102"`)
+> [!IMPORTANT]
+> Ensure prerequisites are in `PATH` before running CMake.
 
-Then generate dependencies:  (Adjust the job count based on your number of processors for a faster build)
 
-```
-make -j 5
-```
+Then, configure and build the project:
 
-Then build the binary:
-
-```
-go build .
+```shell
+cmake -B build
+cmake --build build
 ```
 
-ROCm requires elevated privileges to access the GPU at runtime. On most distros you can add your user account to the `render` group, or run as root.
+Lastly, run Ollama:
 
-#### Advanced CPU Settings
-
-By default, running `make` will compile a few different variations
-of the LLM library based on common CPU families and vector math capabilities,
-including a lowest-common-denominator which should run on almost any 64 bit CPU
-somewhat slowly. At runtime, Ollama will auto-detect the optimal variation to
-load. 
-
-Custom CPU settings are not currently supported in the new Go server build but will be added back after we complete the transition.
-
-#### Containerized Linux Build
-
-If you have Docker available, you can build linux binaries with `./scripts/build_linux.sh` which has the CUDA and ROCm dependencies included. The resulting binary is placed in `./dist`
-
-### Windows
-
-The following tools are required as a minimal development environment to build CPU inference support.
-
-- Go version 1.22 or higher
-  - https://go.dev/dl/
-- Git
-  - https://git-scm.com/download/win
-- clang with gcc compat and Make.  There are multiple options on how to go about installing these tools on Windows.  We have verified the following, but others may work as well:  
-  - [MSYS2](https://www.msys2.org/)
-    - After installing, from an MSYS2 terminal, run `pacman -S mingw-w64-clang-x86_64-gcc-compat mingw-w64-clang-x86_64-clang make` to install the required tools
-  - Assuming you used the default install prefix for msys2 above, add `C:\msys64\clang64\bin` and `c:\msys64\usr\bin` to your environment variable `PATH` where you will perform the build steps below (e.g. system-wide, account-level, powershell, cmd, etc.)
-
-> [!NOTE]  
-> Due to bugs in the GCC C++ library for unicode support, Ollama should be built with clang on windows.
-
-Then, build the `ollama` binary:
-
-```powershell
-$env:CGO_ENABLED="1"
-make -j 8
-go build .
+```shell
+go run . serve
 ```
 
-#### GPU Support
+## Docker
 
-The GPU tools require the Microsoft native build tools.  To build either CUDA or ROCm, you must first install MSVC via Visual Studio:
-
-- Make sure to select `Desktop development with C++` as a Workload during the Visual Studio install
-- You must complete the Visual Studio install and run it once **BEFORE** installing CUDA or ROCm for the tools to properly register
-- Add the location of the **64 bit (x64)** compiler (`cl.exe`) to your `PATH`
-- Note: the default Developer Shell may configure the 32 bit (x86) compiler which will lead to build failures.  Ollama requires a 64 bit toolchain.
-
-#### Windows CUDA (NVIDIA)
-
-In addition to the common Windows development tools and MSVC described above:
-
-- [NVIDIA CUDA](https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html)
-
-#### Windows ROCm (AMD Radeon)
-
-In addition to the common Windows development tools and MSVC described above:
-
-- [AMD HIP](https://www.amd.com/en/developer/resources/rocm-hub/hip-sdk.html)
-
-#### Windows arm64
-
-The default `Developer PowerShell for VS 2022` may default to x86 which is not what you want.  To ensure you get an arm64 development environment, start a plain PowerShell terminal and run:
-
-```powershell
-import-module 'C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\Common7\\Tools\\Microsoft.VisualStudio.DevShell.dll'
-Enter-VsDevShell -Arch arm64 -vsinstallpath 'C:\\Program Files\\Microsoft Visual Studio\\2022\\Community' -skipautomaticlocation
+```shell
+docker build .
 ```
 
-You can confirm with `write-host $env:VSCMD_ARG_TGT_ARCH`
+### ROCm
 
-Follow the instructions at https://www.msys2.org/wiki/arm64/ to set up an arm64 msys2 environment.  Ollama requires gcc and mingw32-make to compile, which is not currently available on Windows arm64, but a gcc compatibility adapter is available via `mingw-w64-clang-aarch64-gcc-compat`. At a minimum you will need to install the following:
-
-```
-pacman -S mingw-w64-clang-aarch64-clang mingw-w64-clang-aarch64-gcc-compat mingw-w64-clang-aarch64-make make
+```shell
+docker build --build-arg FLAVOR=rocm .
 ```
 
-You will need to ensure your PATH includes go, cmake, gcc and clang mingw32-make to build ollama from source. (typically `C:\msys64\clangarm64\bin\`)
+## Running tests
+
+To run tests, use `go test`:
+
+```shell
+go test ./...
+```
+
+> NOTE: In rare cirumstances, you may nedd to change a package using the new
+> "synctest" package in go1.24.
+>
+> If you do not have the "synctest" package enabled, you will not see build or
+> test failures resulting from your change(s), if any, locally, but CI will
+> break.
+>
+> If you see failures in CI, you can either keep pushing changes to see if the
+> CI build passes, or you can enable the "synctest" package locally to see the
+> failures before pushing.
+>
+> To enable the "synctest" package for testing, run the following command:
+>
+> ```shell
+> GOEXPERIMENT=synctest go test ./...
+> ```
+>
+> If you wish to enable synctest for all go commands, you can set the
+> `GOEXPERIMENT` environment variable in your shell profile or by using:
+>
+> ```shell
+> go env -w GOEXPERIMENT=synctest
+> ```
+>
+> Which will enable the "synctest" package for all go commands without needing
+> to set it for all shell sessions.
+>
+> The synctest package is not required for production builds.
+
+## Library detection
+
+Ollama looks for acceleration libraries in the following paths relative to the `ollama` executable:
+
+* `./lib/ollama` (Windows)
+* `../lib/ollama` (Linux)
+* `.` (macOS)
+* `build/lib/ollama` (for development)
+
+If the libraries are not found, Ollama will not run with any acceleration libraries.

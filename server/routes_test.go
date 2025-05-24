@@ -15,21 +15,29 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
 	"unicode"
 
+	"github.com/gin-gonic/gin"
+	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/openai"
-	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
 
-func createTestFile(t *testing.T, name string) string {
+func createTestFile(t *testing.T, name string) (string, string) {
 	t.Helper()
+
+	modelDir := os.Getenv("OLLAMA_MODELS")
+	if modelDir == "" {
+		t.Fatalf("OLLAMA_MODELS not specified")
+	}
 
 	f, err := os.CreateTemp(t.TempDir(), name)
 	if err != nil {
@@ -57,7 +65,21 @@ func createTestFile(t *testing.T, name string) string {
 		t.Fatalf("failed to write to file: %v", err)
 	}
 
-	return f.Name()
+	// Calculate sha256 sum of file
+	if _, err := f.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	digest, _ := GetSHA256Digest(f)
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := createLink(f.Name(), filepath.Join(modelDir, "blobs", fmt.Sprintf("sha256-%s", strings.TrimPrefix(digest, "sha256:")))); err != nil {
+		t.Fatal(err)
+	}
+
+	return f.Name(), digest
 }
 
 // equalStringSlices checks if two slices of strings are equal.
@@ -73,7 +95,15 @@ func equalStringSlices(a, b []string) bool {
 	return true
 }
 
-func Test_Routes(t *testing.T) {
+type panicTransport struct{}
+
+func (t *panicTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	panic("unexpected RoundTrip call")
+}
+
+var panicOnRoundTrip = &http.Client{Transport: &panicTransport{}}
+
+func TestRoutes(t *testing.T) {
 	type testCase struct {
 		Name     string
 		Method   string
@@ -85,19 +115,31 @@ func Test_Routes(t *testing.T) {
 	createTestModel := func(t *testing.T, name string) {
 		t.Helper()
 
-		fname := createTestFile(t, "ollama-model")
+		_, digest := createTestFile(t, "ollama-model")
 
-		r := strings.NewReader(fmt.Sprintf("FROM %s\nPARAMETER seed 42\nPARAMETER top_p 0.9\nPARAMETER stop foo\nPARAMETER stop bar", fname))
-		modelfile, err := parser.ParseFile(r)
-		if err != nil {
-			t.Fatalf("failed to parse file: %v", err)
-		}
 		fn := func(resp api.ProgressResponse) {
 			t.Logf("Status: %s", resp.Status)
 		}
-		err = CreateModel(context.TODO(), model.ParseName(name), "", "", modelfile, fn)
+
+		r := api.CreateRequest{
+			Name:  name,
+			Files: map[string]string{"test.gguf": digest},
+			Parameters: map[string]any{
+				"seed":  42,
+				"top_p": 0.9,
+				"stop":  []string{"foo", "bar"},
+			},
+		}
+
+		modelName := model.ParseName(name)
+
+		baseLayers, err := ggufLayers(digest, fn)
 		if err != nil {
 			t.Fatalf("failed to create model: %v", err)
+		}
+
+		if err := createModel(r, modelName, baseLayers, fn); err != nil {
+			t.Fatal(err)
 		}
 	}
 
@@ -211,10 +253,10 @@ func Test_Routes(t *testing.T) {
 			Method: http.MethodDelete,
 			Path:   "/api/delete",
 			Setup: func(t *testing.T, req *http.Request) {
-				createTestModel(t, "model-to-delete")
+				createTestModel(t, "model_to_delete")
 
 				deleteReq := api.DeleteRequest{
-					Name: "model-to-delete",
+					Name: "model_to_delete",
 				}
 				jsonData, err := json.Marshal(deleteReq)
 				if err != nil {
@@ -241,7 +283,7 @@ func Test_Routes(t *testing.T) {
 			Path:   "/api/delete",
 			Setup: func(t *testing.T, req *http.Request) {
 				deleteReq := api.DeleteRequest{
-					Name: "non-existent-model",
+					Name: "non_existent_model",
 				}
 				jsonData, err := json.Marshal(deleteReq)
 				if err != nil {
@@ -301,13 +343,12 @@ func Test_Routes(t *testing.T) {
 			Method: http.MethodPost,
 			Path:   "/api/create",
 			Setup: func(t *testing.T, req *http.Request) {
-				fname := createTestFile(t, "ollama-model")
-
+				_, digest := createTestFile(t, "ollama-model")
 				stream := false
 				createReq := api.CreateRequest{
-					Name:      "t-bone",
-					Modelfile: fmt.Sprintf("FROM %s", fname),
-					Stream:    &stream,
+					Name:   "t-bone",
+					Files:  map[string]string{"test.gguf": digest},
+					Stream: &stream,
 				}
 				jsonData, err := json.Marshal(createReq)
 				if err != nil {
@@ -419,7 +460,10 @@ func Test_Routes(t *testing.T) {
 			},
 		},
 		{
-			Name:   "openai retrieve model handler",
+			Name: "openai retrieve model handler",
+			Setup: func(t *testing.T, req *http.Request) {
+				createTestModel(t, "show-model")
+			},
 			Method: http.MethodGet,
 			Path:   "/v1/models/show-model",
 			Expected: func(t *testing.T, resp *http.Response) {
@@ -432,23 +476,52 @@ func Test_Routes(t *testing.T) {
 					t.Fatalf("failed to read response body: %v", err)
 				}
 
-				var retrieveResp api.RetrieveModelResponse
-				err = json.Unmarshal(body, &retrieveResp)
+				var m openai.Model
+				err = json.Unmarshal(body, &m)
 				if err != nil {
 					t.Fatalf("failed to unmarshal response body: %v", err)
 				}
 
-				if retrieveResp.Id != "show-model" || retrieveResp.OwnedBy != "library" {
-					t.Errorf("expected model 'show-model' owned by 'library', got %v", retrieveResp)
+				if m.Id != "show-model" || m.OwnedBy != "library" {
+					t.Errorf("expected model 'show-model' owned by 'library', got %v", m)
+				}
+			},
+		},
+		{
+			Name:   "Method Not Allowed",
+			Method: http.MethodGet,
+			Path:   "/api/show",
+			Expected: func(t *testing.T, resp *http.Response) {
+				if resp.StatusCode != 405 {
+					t.Errorf("expected status code 405, got %d", resp.StatusCode)
 				}
 			},
 		},
 	}
 
-	t.Setenv("OLLAMA_MODELS", t.TempDir())
+	modelsDir := t.TempDir()
+	t.Setenv("OLLAMA_MODELS", modelsDir)
+
+	rc := &ollama.Registry{
+		// This is a temporary measure to allow us to move forward,
+		// surfacing any code contacting ollama.com we do not intended
+		// to.
+		//
+		// Currently, this only handles DELETE /api/delete, which
+		// should not make any contact with the ollama.com registry, so
+		// be clear about that.
+		//
+		// Tests that do need to contact the registry here, will be
+		// consumed into our new server/api code packages and removed
+		// from here.
+		HTTPClient: panicOnRoundTrip,
+	}
 
 	s := &Server{}
-	router := s.GenerateRoutes()
+	router, err := s.GenerateRoutes(rc)
+	if err != nil {
+		t.Fatalf("failed to generate routes: %v", err)
+	}
 
 	httpSrv := httptest.NewServer(router)
 	t.Cleanup(httpSrv.Close)
@@ -456,7 +529,7 @@ func Test_Routes(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
 			u := httpSrv.URL + tc.Path
-			req, err := http.NewRequestWithContext(context.TODO(), tc.Method, u, nil)
+			req, err := http.NewRequestWithContext(t.Context(), tc.Method, u, nil)
 			if err != nil {
 				t.Fatalf("failed to create request: %v", err)
 			}
@@ -514,6 +587,8 @@ func TestManifestCaseSensitivity(t *testing.T) {
 
 	wantStableName := name()
 
+	t.Logf("stable name: %s", wantStableName)
+
 	// checkManifestList tests that there is strictly one manifest in the
 	// models directory, and that the manifest is for the model under test.
 	checkManifestList := func() {
@@ -569,21 +644,21 @@ func TestManifestCaseSensitivity(t *testing.T) {
 	t.Cleanup(func() { testMakeRequestDialContext = nil })
 
 	t.Logf("creating")
+	_, digest := createBinFile(t, nil, nil)
 	checkOK(createRequest(t, s.CreateHandler, api.CreateRequest{
 		// Start with the stable name, and later use a case-shuffled
 		// version.
-		Name: wantStableName,
-
-		Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
-		Stream:    &stream,
+		Name:   wantStableName,
+		Files:  map[string]string{"test.gguf": digest},
+		Stream: &stream,
 	}))
 	checkManifestList()
 
 	t.Logf("creating (again)")
 	checkOK(createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name:      name(),
-		Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, nil, nil)),
-		Stream:    &stream,
+		Name:   name(),
+		Files:  map[string]string{"test.gguf": digest},
+		Stream: &stream,
 	}))
 	checkManifestList()
 
@@ -601,6 +676,18 @@ func TestManifestCaseSensitivity(t *testing.T) {
 		Destination: name(),
 	}))
 	checkManifestList()
+
+	t.Logf("pushing")
+	rr := createRequest(t, s.PushHandler, api.PushRequest{
+		Model:    name(),
+		Insecure: true,
+		Username: "alice",
+		Password: "x",
+	})
+	checkOK(rr)
+	if !strings.Contains(rr.Body.String(), `"status":"success"`) {
+		t.Errorf("got = %q, want success", rr.Body.String())
+	}
 }
 
 func TestShow(t *testing.T) {
@@ -608,13 +695,12 @@ func TestShow(t *testing.T) {
 
 	var s Server
 
+	_, digest1 := createBinFile(t, ggml.KV{"general.architecture": "test"}, nil)
+	_, digest2 := createBinFile(t, ggml.KV{"general.type": "projector", "general.architecture": "clip"}, nil)
+
 	createRequest(t, s.CreateHandler, api.CreateRequest{
-		Name: "show-model",
-		Modelfile: fmt.Sprintf(
-			"FROM %s\nFROM %s",
-			createBinFile(t, llm.KV{"general.architecture": "test"}, nil),
-			createBinFile(t, llm.KV{"general.type": "projector", "general.architecture": "clip"}, nil),
-		),
+		Name:  "show-model",
+		Files: map[string]string{"model.gguf": digest1, "projector.gguf": digest2},
 	})
 
 	w := createRequest(t, s.ShowHandler, api.ShowRequest{
@@ -669,6 +755,215 @@ func TestNormalize(t *testing.T) {
 			normalized := normalize(tc.input)
 			if !isNormalized(normalized) {
 				t.Errorf("Vector %v is not normalized", tc.input)
+			}
+		})
+	}
+}
+
+func TestFilterThinkTags(t *testing.T) {
+	type testCase struct {
+		msgs  []api.Message
+		want  []api.Message
+		model *Model
+	}
+	testCases := []testCase{
+		{
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "<think>Thinking... about the answer</think>abc"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			want: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "abc"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			model: &Model{
+				Config: ConfigV2{
+					ModelFamily: "qwen3",
+				},
+			},
+		},
+		// with newlines inside the think tag aned newlines after
+		{
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "<think>Thinking... \n\nabout \nthe answer</think>\n\nabc\ndef"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			want: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "abc\ndef"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			model: &Model{
+				Config: ConfigV2{
+					ModelFamily: "qwen3",
+				},
+			},
+		},
+		// should leave thinking tags if it's after the last user message
+		{
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "<think>Thinking...</think>after"},
+				{Role: "user", Content: "What is the answer?"},
+				{Role: "assistant", Content: "<think>thinking again</think>hjk"},
+				{Role: "assistant", Content: "<think>thinking yet again</think>hjk"},
+			},
+			want: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "after"},
+				{Role: "user", Content: "What is the answer?"},
+				{Role: "assistant", Content: "<think>thinking again</think>hjk"},
+				{Role: "assistant", Content: "<think>thinking yet again</think>hjk"},
+			},
+			model: &Model{
+				Config: ConfigV2{
+					ModelFamily: "qwen3",
+				},
+			},
+		},
+		{
+			// shouldn't strip anything because the model family isn't one of the hardcoded ones
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "<think>Thinking... about the answer</think>abc"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			want: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "<think>Thinking... about the answer</think>abc"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			model: &Model{
+				Config: ConfigV2{
+					ModelFamily: "llama3",
+				},
+			},
+		},
+		{
+			// deepseek-r1:-prefixed model
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "<think>Thinking... about the answer</think>abc"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			want: []api.Message{
+				{Role: "user", Content: "Hello, world!"},
+				{Role: "assistant", Content: "abc"},
+				{Role: "user", Content: "What is the answer?"},
+			},
+			model: &Model{
+				Name:      "registry.ollama.ai/library/deepseek-r1:latest",
+				ShortName: "deepseek-r1:7b",
+				Config:    ConfigV2{},
+			},
+		},
+	}
+
+	for i, tc := range testCases {
+		filtered := filterThinkTags(tc.msgs, tc.model)
+
+		if !reflect.DeepEqual(filtered, tc.want) {
+			t.Errorf("messages differ for case %d:", i)
+			for i := range tc.want {
+				if i >= len(filtered) {
+					t.Errorf("  missing message %d: %+v", i, tc.want[i])
+					continue
+				}
+				if !reflect.DeepEqual(filtered[i], tc.want[i]) {
+					t.Errorf("  message %d:\n    want: %+v\n    got:  %+v", i, tc.want[i], filtered[i])
+				}
+			}
+			if len(filtered) > len(tc.want) {
+				for i := len(tc.want); i < len(filtered); i++ {
+					t.Errorf("  extra message %d: %+v", i, filtered[i])
+				}
+			}
+		}
+	}
+}
+
+func TestWaitForStream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cases := []struct {
+		name       string
+		messages   []any
+		expectCode int
+		expectBody string
+	}{
+		{
+			name: "error",
+			messages: []any{
+				gin.H{"error": "internal server error"},
+			},
+			expectCode: http.StatusInternalServerError,
+			expectBody: `{"error":"internal server error"}`,
+		},
+		{
+			name: "error status",
+			messages: []any{
+				gin.H{"status": http.StatusNotFound, "error": "not found"},
+			},
+			expectCode: http.StatusNotFound,
+			expectBody: `{"error":"not found"}`,
+		},
+		{
+			name: "unknown error",
+			messages: []any{
+				gin.H{"msg": "something else"},
+			},
+			expectCode: http.StatusInternalServerError,
+			expectBody: `{"error":"unknown error"}`,
+		},
+		{
+			name: "unknown type",
+			messages: []any{
+				struct{}{},
+			},
+			expectCode: http.StatusInternalServerError,
+			expectBody: `{"error":"unknown message type"}`,
+		},
+		{
+			name: "progress success",
+			messages: []any{
+				api.ProgressResponse{Status: "success"},
+			},
+			expectCode: http.StatusOK,
+			expectBody: `{"status":"success"}`,
+		},
+		{
+			name: "progress more than success",
+			messages: []any{
+				api.ProgressResponse{Status: "success"},
+				api.ProgressResponse{Status: "one more thing"},
+			},
+			expectCode: http.StatusOK,
+			expectBody: `{"status":"one more thing"}`,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+
+			ch := make(chan any, len(tt.messages))
+			for _, msg := range tt.messages {
+				ch <- msg
+			}
+			close(ch)
+
+			waitForStream(c, ch)
+
+			if w.Code != tt.expectCode {
+				t.Errorf("expected status %d, got %d", tt.expectCode, w.Code)
+			}
+
+			if diff := cmp.Diff(w.Body.String(), tt.expectBody); diff != "" {
+				t.Errorf("body mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}

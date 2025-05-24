@@ -1,69 +1,104 @@
 package llama
 
 import (
+	"bufio"
+	"bytes"
 	"strings"
 	"testing"
-
-	"github.com/google/go-cmp/cmp"
 )
 
-func TestJsonSchema(t *testing.T) {
-	testCases := []struct {
-		name     string
-		schema   JsonSchema
-		expected string
-	}{
-		{
-			name: "empty schema",
-			schema: JsonSchema{
-				Type: "object",
-			},
-			expected: `array ::= "[" space ( value ("," space value)* )? "]" space
-boolean ::= ("true" | "false") space
-char ::= [^"\\\x7F\x00-\x1F] | [\\] (["\\bfnrt] | "u" [0-9a-fA-F]{4})
-decimal-part ::= [0-9]{1,16}
-integral-part ::= [0] | [1-9] [0-9]{0,15}
-null ::= "null" space
-number ::= ("-"? integral-part) ("." decimal-part)? ([eE] [-+]? integral-part)? space
-object ::= "{" space ( string ":" space value ("," space string ":" space value)* )? "}" space
-root ::= object
-space ::= | " " | "\n" [ \t]{0,20}
-string ::= "\"" char* "\"" space
-value ::= object | array | string | number | boolean | null`,
-		},
-		{
-			name: "invalid schema with circular reference",
-			schema: JsonSchema{
-				Type: "object",
-				Properties: map[string]any{
-					"self": map[string]any{
-						"$ref": "#", // Self reference
-					},
-				},
-			},
-			expected: "", // Should return empty string for invalid schema
-		},
-		{
-			name: "schema with invalid type",
-			schema: JsonSchema{
-				Type: "invalid_type", // Invalid type
-				Properties: map[string]any{
-					"foo": map[string]any{
-						"type": "string",
-					},
-				},
-			},
-			expected: "", // Should return empty string for invalid schema
-		},
+// https://github.com/ollama/ollama/issues/7978
+const issue7978JSONSchema = `{
+  "type": "object",
+  "properties": {
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "explanation": { "type": "string" },
+          "output": { "type": "string" },
+          "nested": {
+            "type": "object",
+            "properties": {
+              "deep": { "type": "string" }
+            }
+          }
+        },
+        "required": ["explanation", "output"],
+        "additionalProperties": false
+      }
+    },
+    "final_answer": { "type": "string" },
+    "01_numbered_key": { "type": "string" },
+    "numbers": {
+      "type": "array",
+      "items": { "type": "number" }
+    },
+    "booleans": {
+      "type": "array", 
+      "items": { "type": "boolean" }
+    },
+    "mixed": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          { "type": "string" },
+          { "type": "number" },
+          { "type": "boolean" }
+        ]
+      }
+    }
+  },
+  "required": ["steps", "final_answer"],
+  "additionalProperties": false
+}`
+
+func TestIssue7978(t *testing.T) {
+	g := SchemaToGrammar([]byte(issue7978JSONSchema))
+	if g == nil {
+		t.Fatal("failed to convert JSON schema to grammar")
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			result := tc.schema.AsGrammar()
-			if !strings.EqualFold(strings.TrimSpace(result), strings.TrimSpace(tc.expected)) {
-				if diff := cmp.Diff(tc.expected, result); diff != "" {
-					t.Fatalf("grammar mismatch (-want +got):\n%s", diff)
-				}
+	t.Logf("grammar:\n%s", g)
+	t.Log()
+
+	var got string
+	s := bufio.NewScanner(bytes.NewReader(g))
+	for s.Scan() {
+		line := strings.TrimSpace(s.Text())
+		step, _, _ := strings.Cut(line, " ::= ")
+		step = strings.TrimSpace(step)
+		if step == "root" {
+			got = line
+		}
+	}
+
+	want := `root ::= "{" space steps-kv "," space final-answer-kv ( "," space ( 01-numbered-key-kv 01-numbered-key-rest | numbers-kv numbers-rest | booleans-kv booleans-rest | mixed-kv ) )? "}" space`
+	if got != want {
+		t.Errorf("root =\n%qwant:\n%q", got, want)
+	}
+}
+
+func TestSchemaToGrammer(t *testing.T) {
+	cases := []struct {
+		schema string
+		prefix []byte // nil is check as nil
+	}{
+		{`invalid`, nil},
+
+		// Simple heuristic/smoke test
+		{`{"type":"object"}`, []byte("root ::= object")},
+	}
+
+	for _, c := range cases {
+		t.Run("x", func(t *testing.T) {
+			g := SchemaToGrammar([]byte(c.schema))
+			if c.prefix == nil && g != nil {
+				t.Fatalf("grammar = %v, want nil", g)
+			}
+			if !bytes.HasPrefix(g, c.prefix) {
+				t.Errorf("grammar = %q, want %q", g, c.prefix)
 			}
 		})
 	}

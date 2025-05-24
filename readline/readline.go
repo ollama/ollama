@@ -116,19 +116,9 @@ func (i *Instance) Readline() (string, error) {
 
 			switch r {
 			case KeyUp:
-				if i.History.Pos > 0 {
-					if i.History.Pos == i.History.Size() {
-						currentLineBuf = []rune(buf.String())
-					}
-					buf.Replace(i.History.Prev())
-				}
+				i.historyPrev(buf, &currentLineBuf)
 			case KeyDown:
-				if i.History.Pos < i.History.Size() {
-					buf.Replace(i.History.Next())
-					if i.History.Pos == i.History.Size() {
-						buf.Replace(currentLineBuf)
-					}
-				}
+				i.historyNext(buf, &currentLineBuf)
 			case KeyLeft:
 				buf.MoveLeft()
 			case KeyRight:
@@ -185,6 +175,10 @@ func (i *Instance) Readline() (string, error) {
 			esc = true
 		case CharInterrupt:
 			return "", ErrInterrupt
+		case CharPrev:
+			i.historyPrev(buf, &currentLineBuf)
+		case CharNext:
+			i.historyNext(buf, &currentLineBuf)
 		case CharLineStart:
 			buf.MoveToStart()
 		case CharLineEnd:
@@ -220,7 +214,7 @@ func (i *Instance) Readline() (string, error) {
 		case CharEnter, CharCtrlJ:
 			output := buf.String()
 			if output != "" {
-				i.History.Add([]rune(output))
+				i.History.Add(output)
 			}
 			buf.MoveToEnd()
 			fmt.Println()
@@ -244,6 +238,24 @@ func (i *Instance) HistoryEnable() {
 
 func (i *Instance) HistoryDisable() {
 	i.History.Enabled = false
+}
+
+func (i *Instance) historyPrev(buf *Buffer, currentLineBuf *[]rune) {
+	if i.History.Pos > 0 {
+		if i.History.Pos == i.History.Size() {
+			*currentLineBuf = []rune(buf.String())
+		}
+		buf.Replace([]rune(i.History.Prev()))
+	}
+}
+
+func (i *Instance) historyNext(buf *Buffer, currentLineBuf *[]rune) {
+	if i.History.Pos < i.History.Size() {
+		buf.Replace([]rune(i.History.Next()))
+		if i.History.Pos == i.History.Size() {
+			buf.Replace(*currentLineBuf)
+		}
+	}
 }
 
 func NewTerminal() (*Terminal, error) {

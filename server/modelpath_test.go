@@ -1,8 +1,6 @@
 package server
 
 import (
-	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -12,9 +10,7 @@ import (
 
 func TestGetBlobsPath(t *testing.T) {
 	// GetBlobsPath expects an actual directory to exist
-	dir, err := os.MkdirTemp("", "ollama-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(dir)
+	tempDir := t.TempDir()
 
 	tests := []struct {
 		name     string
@@ -25,19 +21,19 @@ func TestGetBlobsPath(t *testing.T) {
 		{
 			"empty digest",
 			"",
-			filepath.Join(dir, "blobs"),
+			filepath.Join(tempDir, "blobs"),
 			nil,
 		},
 		{
 			"valid with colon",
 			"sha256:456402914e838a953e0cf80caa6adbe75383d9e63584a964f504a7bbb8f7aad9",
-			filepath.Join(dir, "blobs", "sha256-456402914e838a953e0cf80caa6adbe75383d9e63584a964f504a7bbb8f7aad9"),
+			filepath.Join(tempDir, "blobs", "sha256-456402914e838a953e0cf80caa6adbe75383d9e63584a964f504a7bbb8f7aad9"),
 			nil,
 		},
 		{
 			"valid with dash",
 			"sha256-456402914e838a953e0cf80caa6adbe75383d9e63584a964f504a7bbb8f7aad9",
-			filepath.Join(dir, "blobs", "sha256-456402914e838a953e0cf80caa6adbe75383d9e63584a964f504a7bbb8f7aad9"),
+			filepath.Join(tempDir, "blobs", "sha256-456402914e838a953e0cf80caa6adbe75383d9e63584a964f504a7bbb8f7aad9"),
 			nil,
 		},
 		{
@@ -61,7 +57,7 @@ func TestGetBlobsPath(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("OLLAMA_MODELS", dir)
+			t.Setenv("OLLAMA_MODELS", tempDir)
 
 			got, err := GetBlobsPath(tc.digest)
 
@@ -153,12 +149,5 @@ func TestParseModelPath(t *testing.T) {
 				t.Errorf("got: %q want: %q", got, tc.want)
 			}
 		})
-	}
-}
-
-func TestInsecureModelpath(t *testing.T) {
-	mp := ParseModelPath("../../..:something")
-	if _, err := mp.GetManifestPath(); !errors.Is(err, errModelPathInvalid) {
-		t.Errorf("expected error: %v", err)
 	}
 }

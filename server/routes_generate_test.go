@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/discover"
+	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llm"
 )
 
@@ -46,8 +46,8 @@ func (mockRunner) Tokenize(_ context.Context, s string) (tokens []int, err error
 	return
 }
 
-func newMockServer(mock *mockRunner) func(discover.GpuInfoList, string, *llm.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
-	return func(gpus discover.GpuInfoList, model string, ggml *llm.GGML, projectors, system []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
+func newMockServer(mock *mockRunner) func(discover.GpuInfoList, string, *ggml.GGML, []string, []string, api.Options, int) (llm.LlamaServer, error) {
+	return func(_ discover.GpuInfoList, _ string, _ *ggml.GGML, _, _ []string, _ api.Options, _ int) (llm.LlamaServer, error) {
 		return mock, nil
 	}
 }
@@ -58,7 +58,7 @@ func TestGenerateChat(t *testing.T) {
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
 			Done:               true,
-			DoneReason:         "stop",
+			DoneReason:         llm.DoneReasonStop,
 			PromptEvalCount:    1,
 			PromptEvalDuration: 1,
 			EvalCount:          1,
@@ -77,7 +77,7 @@ func TestGenerateChat(t *testing.T) {
 			getGpuFn:      discover.GetGPUInfo,
 			getCpuFn:      discover.GetCPUInfo,
 			reschedDelay:  250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, ggml *llm.GGML, gpus discover.GpuInfoList, numParallel int) {
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ int) {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -87,12 +87,36 @@ func TestGenerateChat(t *testing.T) {
 		},
 	}
 
-	go s.sched.Run(context.TODO())
+	go s.sched.Run(t.Context())
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
 
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model: "test",
-		Modelfile: fmt.Sprintf(`FROM %s
-		TEMPLATE """
+		Files: map[string]string{"file.gguf": digest},
+		Template: `
 {{- if .Tools }}
 {{ .Tools }}
 {{ end }}
@@ -100,30 +124,7 @@ func TestGenerateChat(t *testing.T) {
 {{- .Role }}: {{ .Content }}
 {{- range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
 {{- end }}
-{{ end }}"""
-`, createBinFile(t, llm.KV{
-			"general.architecture":          "llama",
-			"llama.block_count":             uint32(1),
-			"llama.context_length":          uint32(8192),
-			"llama.embedding_length":        uint32(4096),
-			"llama.attention.head_count":    uint32(32),
-			"llama.attention.head_count_kv": uint32(8),
-			"tokenizer.ggml.tokens":         []string{""},
-			"tokenizer.ggml.scores":         []float32{0},
-			"tokenizer.ggml.token_type":     []int32{0},
-		}, []llm.Tensor{
-			{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-		})),
+{{ end }}`,
 		Stream: &stream,
 	})
 
@@ -154,12 +155,13 @@ func TestGenerateChat(t *testing.T) {
 	})
 
 	t.Run("missing capabilities chat", func(t *testing.T) {
+		_, digest := createBinFile(t, ggml.KV{
+			"general.architecture": "bert",
+			"bert.pooling_type":    uint32(0),
+		}, []*ggml.Tensor{})
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Model: "bert",
-			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, llm.KV{
-				"general.architecture": "bert",
-				"bert.pooling_type":    uint32(0),
-			}, []llm.Tensor{})),
+			Model:  "bert",
+			Files:  map[string]string{"bert.gguf": digest},
 			Stream: &stream,
 		})
 
@@ -281,8 +283,9 @@ func TestGenerateChat(t *testing.T) {
 	})
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
-		Model:     "test-system",
-		Modelfile: "FROM test\nSYSTEM You are a helpful assistant.",
+		Model:  "test-system",
+		From:   "test",
+		System: "You are a helpful assistant.",
 	})
 
 	if w.Code != http.StatusOK {
@@ -367,27 +370,31 @@ func TestGenerateChat(t *testing.T) {
 					Description: "Get the current weather",
 					Parameters: struct {
 						Type       string   `json:"type"`
+						Defs       any      `json:"$defs,omitempty"`
+						Items      any      `json:"items,omitempty"`
 						Required   []string `json:"required"`
 						Properties map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Items       any              `json:"items,omitempty"`
+							Description string           `json:"description"`
+							Enum        []any            `json:"enum,omitempty"`
 						} `json:"properties"`
 					}{
 						Type:     "object",
 						Required: []string{"location"},
 						Properties: map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Items       any              `json:"items,omitempty"`
+							Description string           `json:"description"`
+							Enum        []any            `json:"enum,omitempty"`
 						}{
 							"location": {
-								Type:        "string",
+								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
 							},
 							"unit": {
-								Type: "string",
-								Enum: []string{"celsius", "fahrenheit"},
+								Type: api.PropertyType{"string"},
+								Enum: []any{"celsius", "fahrenheit"},
 							},
 						},
 					},
@@ -398,7 +405,7 @@ func TestGenerateChat(t *testing.T) {
 		mock.CompletionResponse = llm.CompletionResponse{
 			Content:            `{"name":"get_weather","arguments":{"location":"Seattle, WA","unit":"celsius"}}`,
 			Done:               true,
-			DoneReason:         "done",
+			DoneReason:         llm.DoneReasonStop,
 			PromptEvalCount:    1,
 			PromptEvalDuration: 1,
 			EvalCount:          1,
@@ -464,27 +471,31 @@ func TestGenerateChat(t *testing.T) {
 					Description: "Get the current weather",
 					Parameters: struct {
 						Type       string   `json:"type"`
+						Defs       any      `json:"$defs,omitempty"`
+						Items      any      `json:"items,omitempty"`
 						Required   []string `json:"required"`
 						Properties map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Items       any              `json:"items,omitempty"`
+							Description string           `json:"description"`
+							Enum        []any            `json:"enum,omitempty"`
 						} `json:"properties"`
 					}{
 						Type:     "object",
 						Required: []string{"location"},
 						Properties: map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Items       any              `json:"items,omitempty"`
+							Description string           `json:"description"`
+							Enum        []any            `json:"enum,omitempty"`
 						}{
 							"location": {
-								Type:        "string",
+								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
 							},
 							"unit": {
-								Type: "string",
-								Enum: []string{"celsius", "fahrenheit"},
+								Type: api.PropertyType{"string"},
+								Enum: []any{"celsius", "fahrenheit"},
 							},
 						},
 					},
@@ -516,7 +527,7 @@ func TestGenerateChat(t *testing.T) {
 				{
 					Content:            `, WA","unit":"celsius"}}`,
 					Done:               true,
-					DoneReason:         "tool_call",
+					DoneReason:         llm.DoneReasonStop,
 					PromptEvalCount:    3,
 					PromptEvalDuration: 1,
 				},
@@ -591,7 +602,7 @@ func TestGenerate(t *testing.T) {
 	mock := mockRunner{
 		CompletionResponse: llm.CompletionResponse{
 			Done:               true,
-			DoneReason:         "stop",
+			DoneReason:         llm.DoneReasonStop,
 			PromptEvalCount:    1,
 			PromptEvalDuration: 1,
 			EvalCount:          1,
@@ -610,7 +621,7 @@ func TestGenerate(t *testing.T) {
 			getGpuFn:      discover.GetGPUInfo,
 			getCpuFn:      discover.GetCPUInfo,
 			reschedDelay:  250 * time.Millisecond,
-			loadFn: func(req *LlmRequest, ggml *llm.GGML, gpus discover.GpuInfoList, numParallel int) {
+			loadFn: func(req *LlmRequest, _ *ggml.GGML, _ discover.GpuInfoList, _ int) {
 				// add small delay to simulate loading
 				time.Sleep(time.Millisecond)
 				req.successCh <- &runnerRef{
@@ -620,38 +631,40 @@ func TestGenerate(t *testing.T) {
 		},
 	}
 
-	go s.sched.Run(context.TODO())
+	go s.sched.Run(t.Context())
+
+	_, digest := createBinFile(t, ggml.KV{
+		"general.architecture":          "llama",
+		"llama.block_count":             uint32(1),
+		"llama.context_length":          uint32(8192),
+		"llama.embedding_length":        uint32(4096),
+		"llama.attention.head_count":    uint32(32),
+		"llama.attention.head_count_kv": uint32(8),
+		"tokenizer.ggml.tokens":         []string{""},
+		"tokenizer.ggml.scores":         []float32{0},
+		"tokenizer.ggml.token_type":     []int32{0},
+	}, []*ggml.Tensor{
+		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+		{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
+	})
 
 	w := createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model: "test",
-		Modelfile: fmt.Sprintf(`FROM %s
-		TEMPLATE """
+		Files: map[string]string{"file.gguf": digest},
+		Template: `
 {{- if .System }}System: {{ .System }} {{ end }}
 {{- if .Prompt }}User: {{ .Prompt }} {{ end }}
-{{- if .Response }}Assistant: {{ .Response }} {{ end }}"""
-`, createBinFile(t, llm.KV{
-			"general.architecture":          "llama",
-			"llama.block_count":             uint32(1),
-			"llama.context_length":          uint32(8192),
-			"llama.embedding_length":        uint32(4096),
-			"llama.attention.head_count":    uint32(32),
-			"llama.attention.head_count_kv": uint32(8),
-			"tokenizer.ggml.tokens":         []string{""},
-			"tokenizer.ggml.scores":         []float32{0},
-			"tokenizer.ggml.token_type":     []int32{0},
-		}, []llm.Tensor{
-			{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_gate.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_up.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.ffn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_k.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_q.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "blk.0.attn_v.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-			{Name: "output.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
-		})),
+{{- if .Response }}Assistant: {{ .Response }} {{ end }}
+`,
 		Stream: &stream,
 	})
 
@@ -682,12 +695,14 @@ func TestGenerate(t *testing.T) {
 	})
 
 	t.Run("missing capabilities generate", func(t *testing.T) {
+		_, digest := createBinFile(t, ggml.KV{
+			"general.architecture": "bert",
+			"bert.pooling_type":    uint32(0),
+		}, []*ggml.Tensor{})
+
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
-			Model: "bert",
-			Modelfile: fmt.Sprintf("FROM %s", createBinFile(t, llm.KV{
-				"general.architecture": "bert",
-				"bert.pooling_type":    uint32(0),
-			}, []llm.Tensor{})),
+			Model:  "bert",
+			Files:  map[string]string{"file.gguf": digest},
 			Stream: &stream,
 		})
 
@@ -719,7 +734,7 @@ func TestGenerate(t *testing.T) {
 			t.Errorf("expected status 400, got %d", w.Code)
 		}
 
-		if diff := cmp.Diff(w.Body.String(), `{"error":"test does not support insert"}`); diff != "" {
+		if diff := cmp.Diff(w.Body.String(), `{"error":"registry.ollama.ai/library/test:latest does not support insert"}`); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})
@@ -824,8 +839,9 @@ func TestGenerate(t *testing.T) {
 	})
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
-		Model:     "test-system",
-		Modelfile: "FROM test\nSYSTEM You are a helpful assistant.",
+		Model:  "test-system",
+		From:   "test",
+		System: "You are a helpful assistant.",
 	})
 
 	if w.Code != http.StatusOK {
@@ -894,10 +910,10 @@ func TestGenerate(t *testing.T) {
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model: "test-suffix",
-		Modelfile: `FROM test
-TEMPLATE """{{- if .Suffix }}<PRE> {{ .Prompt }} <SUF>{{ .Suffix }} <MID>
+		Template: `{{- if .Suffix }}<PRE> {{ .Prompt }} <SUF>{{ .Suffix }} <MID>
 {{- else }}{{ .Prompt }}
-{{- end }}"""`,
+{{- end }}`,
+		From: "test",
 	})
 
 	if w.Code != http.StatusOK {

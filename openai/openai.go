@@ -20,11 +20,13 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
+var finishReasonToolCalls = "tool_calls"
+
 type Error struct {
-	Message string      `json:"message"`
-	Type    string      `json:"type"`
-	Param   interface{} `json:"param"`
-	Code    *string     `json:"code"`
+	Message string  `json:"message"`
+	Type    string  `json:"type"`
+	Param   any     `json:"param"`
+	Code    *string `json:"code"`
 }
 
 type ErrorResponse struct {
@@ -67,7 +69,7 @@ type ResponseFormat struct {
 }
 
 type JsonSchema struct {
-	Schema map[string]any `json:"schema"`
+	Schema json.RawMessage `json:"schema"`
 }
 
 type EmbedRequest struct {
@@ -75,10 +77,15 @@ type EmbedRequest struct {
 	Model string `json:"model"`
 }
 
+type StreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
+}
+
 type ChatCompletionRequest struct {
 	Model            string          `json:"model"`
 	Messages         []Message       `json:"messages"`
 	Stream           bool            `json:"stream"`
+	StreamOptions    *StreamOptions  `json:"stream_options"`
 	MaxTokens        *int            `json:"max_tokens"`
 	Seed             *int            `json:"seed"`
 	Stop             any             `json:"stop"`
@@ -107,21 +114,23 @@ type ChatCompletionChunk struct {
 	Model             string        `json:"model"`
 	SystemFingerprint string        `json:"system_fingerprint"`
 	Choices           []ChunkChoice `json:"choices"`
+	Usage             *Usage        `json:"usage,omitempty"`
 }
 
 // TODO (https://github.com/ollama/ollama/issues/5259): support []string, []int and [][]int
 type CompletionRequest struct {
-	Model            string   `json:"model"`
-	Prompt           string   `json:"prompt"`
-	FrequencyPenalty float32  `json:"frequency_penalty"`
-	MaxTokens        *int     `json:"max_tokens"`
-	PresencePenalty  float32  `json:"presence_penalty"`
-	Seed             *int     `json:"seed"`
-	Stop             any      `json:"stop"`
-	Stream           bool     `json:"stream"`
-	Temperature      *float32 `json:"temperature"`
-	TopP             float32  `json:"top_p"`
-	Suffix           string   `json:"suffix"`
+	Model            string         `json:"model"`
+	Prompt           string         `json:"prompt"`
+	FrequencyPenalty float32        `json:"frequency_penalty"`
+	MaxTokens        *int           `json:"max_tokens"`
+	PresencePenalty  float32        `json:"presence_penalty"`
+	Seed             *int           `json:"seed"`
+	Stop             any            `json:"stop"`
+	Stream           bool           `json:"stream"`
+	StreamOptions    *StreamOptions `json:"stream_options"`
+	Temperature      *float32       `json:"temperature"`
+	TopP             float32        `json:"top_p"`
+	Suffix           string         `json:"suffix"`
 }
 
 type Completion struct {
@@ -141,6 +150,7 @@ type CompletionChunk struct {
 	Choices           []CompleteChunkChoice `json:"choices"`
 	Model             string                `json:"model"`
 	SystemFingerprint string                `json:"system_fingerprint"`
+	Usage             *Usage                `json:"usage,omitempty"`
 }
 
 type ToolCall struct {
@@ -197,6 +207,14 @@ func NewError(code int, message string) ErrorResponse {
 	return ErrorResponse{Error{Type: etype, Message: message}}
 }
 
+func toUsage(r api.ChatResponse) Usage {
+	return Usage{
+		PromptTokens:     r.PromptEvalCount,
+		CompletionTokens: r.EvalCount,
+		TotalTokens:      r.PromptEvalCount + r.EvalCount,
+	}
+}
+
 func toolCallId() string {
 	const letterBytes = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, 8)
@@ -246,15 +264,11 @@ func toChatCompletion(id string, r api.ChatResponse) ChatCompletion {
 				return nil
 			}(r.DoneReason),
 		}},
-		Usage: Usage{
-			PromptTokens:     r.PromptEvalCount,
-			CompletionTokens: r.EvalCount,
-			TotalTokens:      r.PromptEvalCount + r.EvalCount,
-		},
+		Usage: toUsage(r),
 	}
 }
 
-func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
+func toChunk(id string, r api.ChatResponse, toolCallSent bool) ChatCompletionChunk {
 	toolCalls := toToolCalls(r.Message.ToolCalls)
 	return ChatCompletionChunk{
 		Id:                id,
@@ -267,11 +281,22 @@ func toChunk(id string, r api.ChatResponse) ChatCompletionChunk {
 			Delta: Message{Role: "assistant", Content: r.Message.Content, ToolCalls: toolCalls},
 			FinishReason: func(reason string) *string {
 				if len(reason) > 0 {
+					if toolCallSent {
+						return &finishReasonToolCalls
+					}
 					return &reason
 				}
 				return nil
 			}(r.DoneReason),
 		}},
+	}
+}
+
+func toUsageGenerate(r api.GenerateResponse) Usage {
+	return Usage{
+		PromptTokens:     r.PromptEvalCount,
+		CompletionTokens: r.EvalCount,
+		TotalTokens:      r.PromptEvalCount + r.EvalCount,
 	}
 }
 
@@ -292,11 +317,7 @@ func toCompletion(id string, r api.GenerateResponse) Completion {
 				return nil
 			}(r.DoneReason),
 		}},
-		Usage: Usage{
-			PromptTokens:     r.PromptEvalCount,
-			CompletionTokens: r.EvalCount,
-			TotalTokens:      r.PromptEvalCount + r.EvalCount,
-		},
+		Usage: toUsageGenerate(r),
 	}
 }
 
@@ -444,7 +465,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		}
 	}
 
-	options := make(map[string]interface{})
+	options := make(map[string]any)
 
 	switch stop := r.Stop.(type) {
 	case string:
@@ -495,11 +516,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 			format = json.RawMessage(`"json"`)
 		case "json_schema":
 			if r.ResponseFormat.JsonSchema != nil {
-				schema, err := json.Marshal(r.ResponseFormat.JsonSchema.Schema)
-				if err != nil {
-					return nil, fmt.Errorf("failed to marshal json schema: %w", err)
-				}
-				format = schema
+				format = r.ResponseFormat.JsonSchema.Schema
 			}
 		}
 	}
@@ -570,14 +587,17 @@ type BaseWriter struct {
 }
 
 type ChatWriter struct {
-	stream bool
-	id     string
+	stream        bool
+	streamOptions *StreamOptions
+	id            string
+	toolCallSent  bool
 	BaseWriter
 }
 
 type CompleteWriter struct {
-	stream bool
-	id     string
+	stream        bool
+	streamOptions *StreamOptions
+	id            string
 	BaseWriter
 }
 
@@ -620,9 +640,13 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 
 	// chat chunk
 	if w.stream {
-		d, err := json.Marshal(toChunk(w.id, chatResponse))
+		c := toChunk(w.id, chatResponse, w.toolCallSent)
+		d, err := json.Marshal(c)
 		if err != nil {
 			return 0, err
+		}
+		if !w.toolCallSent && len(c.Choices) > 0 && len(c.Choices[0].Delta.ToolCalls) > 0 {
+			w.toolCallSent = true
 		}
 
 		w.ResponseWriter.Header().Set("Content-Type", "text/event-stream")
@@ -632,6 +656,19 @@ func (w *ChatWriter) writeResponse(data []byte) (int, error) {
 		}
 
 		if chatResponse.Done {
+			if w.streamOptions != nil && w.streamOptions.IncludeUsage {
+				u := toUsage(chatResponse)
+				c.Usage = &u
+				c.Choices = []ChunkChoice{}
+				d, err := json.Marshal(c)
+				if err != nil {
+					return 0, err
+				}
+				_, err = w.ResponseWriter.Write([]byte(fmt.Sprintf("data: %s\n\n", d)))
+				if err != nil {
+					return 0, err
+				}
+			}
 			_, err = w.ResponseWriter.Write([]byte("data: [DONE]\n\n"))
 			if err != nil {
 				return 0, err
@@ -669,7 +706,11 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 
 	// completion chunk
 	if w.stream {
-		d, err := json.Marshal(toCompleteChunk(w.id, generateResponse))
+		c := toCompleteChunk(w.id, generateResponse)
+		if w.streamOptions != nil && w.streamOptions.IncludeUsage {
+			c.Usage = &Usage{}
+		}
+		d, err := json.Marshal(c)
 		if err != nil {
 			return 0, err
 		}
@@ -681,6 +722,19 @@ func (w *CompleteWriter) writeResponse(data []byte) (int, error) {
 		}
 
 		if generateResponse.Done {
+			if w.streamOptions != nil && w.streamOptions.IncludeUsage {
+				u := toUsageGenerate(generateResponse)
+				c.Usage = &u
+				c.Choices = []CompleteChunkChoice{}
+				d, err := json.Marshal(c)
+				if err != nil {
+					return 0, err
+				}
+				_, err = w.ResponseWriter.Write([]byte(fmt.Sprintf("data: %s\n\n", d)))
+				if err != nil {
+					return 0, err
+				}
+			}
 			_, err = w.ResponseWriter.Write([]byte("data: [DONE]\n\n"))
 			if err != nil {
 				return 0, err
@@ -843,9 +897,10 @@ func CompletionsMiddleware() gin.HandlerFunc {
 		c.Request.Body = io.NopCloser(&b)
 
 		w := &CompleteWriter{
-			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
-			stream:     req.Stream,
-			id:         fmt.Sprintf("cmpl-%d", rand.Intn(999)),
+			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
+			stream:        req.Stream,
+			id:            fmt.Sprintf("cmpl-%d", rand.Intn(999)),
+			streamOptions: req.StreamOptions,
 		}
 
 		c.Writer = w
@@ -925,9 +980,10 @@ func ChatMiddleware() gin.HandlerFunc {
 		c.Request.Body = io.NopCloser(&b)
 
 		w := &ChatWriter{
-			BaseWriter: BaseWriter{ResponseWriter: c.Writer},
-			stream:     req.Stream,
-			id:         fmt.Sprintf("chatcmpl-%d", rand.Intn(999)),
+			BaseWriter:    BaseWriter{ResponseWriter: c.Writer},
+			stream:        req.Stream,
+			id:            fmt.Sprintf("chatcmpl-%d", rand.Intn(999)),
+			streamOptions: req.StreamOptions,
 		}
 
 		c.Writer = w

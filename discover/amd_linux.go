@@ -77,7 +77,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 
 	gfxOverride := envconfig.HsaOverrideGfxVersion()
 	var supported []string
-	libDir := ""
+	var libDir string
 
 	// The amdgpu driver always exposes the host CPU(s) first, but we have to skip them and subtract
 	// from the other IDs to get alignment with the HIP libraries expectations (zero is the first GPU, not the CPU)
@@ -300,8 +300,11 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 			})
 			continue
 		}
-
-		if int(major) < RocmComputeMin {
+		minVer, err := strconv.Atoi(RocmComputeMajorMin)
+		if err != nil {
+			slog.Error("invalid RocmComputeMajorMin setting", "value", RocmComputeMajorMin, "error", err)
+		}
+		if int(major) < minVer {
 			reason := fmt.Sprintf("amdgpu too old gfx%d%x%x", major, minor, patch)
 			slog.Warn(reason, "gpu", gpuID)
 			unsupportedGPUs = append(unsupportedGPUs, UnsupportedGPUInfo{
