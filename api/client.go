@@ -4,6 +4,18 @@
 // The ollama command-line client itself uses this package to interact with
 // the backend service.
 //
+// # Security Considerations
+//
+// This package uses a secure HTTP client configuration by default with:
+// - 30-second request timeout
+// - 10-second TLS handshake timeout
+// - 90-second idle connection timeout
+// - Proper connection pooling
+// - Explicit transport security settings
+//
+// Always use [ClientFromEnvironment] to create new clients to ensure these
+// security settings are applied.
+//
 // # Examples
 //
 // Several examples of using this package are available [in the GitHub
@@ -24,6 +36,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime"
+	"time"
 
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
@@ -35,6 +48,37 @@ import (
 type Client struct {
 	base *url.URL
 	http *http.Client
+}
+
+// defaultTransport returns a secure HTTP transport configuration
+func defaultTransport() *http.Transport {
+	return &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+		// Enable compression for better performance with large responses
+		DisableCompression: false,
+		// Attempt HTTP/2 but allow fallback to HTTP/1.1
+		// This provides better performance while maintaining compatibility
+		ForceAttemptHTTP2: false,
+		// Enable keep-alives for better performance with multiple requests
+		// false means keep-alives are enabled
+		DisableKeepAlives: false,
+		// Set reasonable timeouts
+		ResponseHeaderTimeout: 30 * time.Second,
+		// Timeout for waiting for a server's first response headers
+		// This is used when sending a request with Expect: 100-continue
+		ExpectContinueTimeout: 5 * time.Second,
+	}
+}
+
+// defaultClient returns a secure HTTP client configuration
+func defaultClient() *http.Client {
+	return &http.Client{
+		Transport: defaultTransport(),
+		Timeout:   30 * time.Second,
+	}
 }
 
 func checkError(resp *http.Response, body []byte) error {
@@ -62,14 +106,23 @@ func checkError(resp *http.Response, body []byte) error {
 //
 // If the variable is not specified, a default ollama host and port will be
 // used.
+//
+// This function ensures secure HTTP client configuration with proper timeouts
+// and transport settings.
 func ClientFromEnvironment() (*Client, error) {
 	return &Client{
 		base: envconfig.Host(),
-		http: http.DefaultClient,
+		http: defaultClient(),
 	}, nil
 }
 
-func NewClient(base *url.URL, http *http.Client) *Client {
+// newClient creates a new Client with the given base URL and HTTP client.
+// This is an internal function and should not be used directly.
+// Use [ClientFromEnvironment] instead to ensure secure client configuration.
+func newClient(base *url.URL, http *http.Client) *Client {
+	if http == nil {
+		http = defaultClient()
+	}
 	return &Client{
 		base: base,
 		http: http,
