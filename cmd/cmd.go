@@ -472,22 +472,92 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+type ModelListElement struct {
+	Name         string `json:"name"`
+	ID           string `json:"id"`
+	Size         int64  `json:"size"`
+	ModifiedTime int64  `json:"modified"`
+}
+type RunningListElement struct {
+	Name      string `json:"name"`
+	ID        string `json:"id"`
+	Size      int64  `json:"size"`
+	Processor string `json:"processor"`
+	Until     int64  `json:"until"`
+}
+
 func ListHandler(cmd *cobra.Command, args []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	models, err := client.List(cmd.Context())
+	listResponse, err := client.List(cmd.Context())
 	if err != nil {
 		return err
 	}
 
-	var data [][]string
+	models := listResponse.Models
 
-	for _, m := range models.Models {
+	sortBy, _ := cmd.Flags().GetString("sortby")
+	switch sortBy {
+	case "name":
+		slices.SortFunc(models, func(a, b api.ListModelResponse) int {
+			// alphabetical
+			return strings.Compare(a.Name, b.Name)
+		})
+	case "size":
+		slices.SortFunc(models, func(a, b api.ListModelResponse) int {
+			// larger goes first
+			if a.Size > b.Size {
+				return -1
+			} else if a.Size < b.Size {
+				return 1
+			}
+			return 0
+		})
+	case "time":
+		slices.SortFunc(models, func(a, b api.ListModelResponse) int {
+			// earlier goes first
+			return -a.ModifiedAt.Compare(b.ModifiedAt)
+		})
+	case "":
+		break
+	default:
+		return fmt.Errorf("invalid sort option: %s", sortBy)
+	}
+
+	if useJSON, _ := cmd.Flags().GetBool("json"); useJSON {
+		var data []ModelListElement
+		for _, m := range models {
+			if len(args) == 0 || strings.HasPrefix(strings.ToLower(m.Name), strings.ToLower(args[0])) {
+				data = append(data, ModelListElement{
+					Name:         m.Name,
+					ID:           m.Digest[:12],
+					Size:         m.Size,
+					ModifiedTime: m.ModifiedAt.Unix(),
+				})
+			}
+		}
+
+		dataJSON, err := json.Marshal(data)
+		if err != nil {
+			return err
+		}
+
+		fmt.Println(string(dataJSON))
+		return nil
+	}
+
+	var data [][]string
+	for _, m := range models {
 		if len(args) == 0 || strings.HasPrefix(strings.ToLower(m.Name), strings.ToLower(args[0])) {
-			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), format.HumanTime(m.ModifiedAt, "Never")})
+			data = append(data, []string{
+				m.Name,
+				m.Digest[:12],
+				format.HumanBytes(m.Size),
+				format.HumanTime(m.ModifiedAt, "Never"),
+			})
 		}
 	}
 
@@ -505,35 +575,96 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func formatProcStr(m api.ProcessModelResponse) string {
+	switch {
+	case m.SizeVRAM == 0:
+		return "100% CPU"
+	case m.SizeVRAM == m.Size:
+		return "100% GPU"
+	case m.SizeVRAM > m.Size || m.Size == 0:
+		return "Unknown"
+	default:
+		sizeCPU := m.Size - m.SizeVRAM
+		cpuPercent := math.Round(float64(sizeCPU) / float64(m.Size) * 100)
+		return fmt.Sprintf("%d%%/%d%% CPU/GPU", int(cpuPercent), int(100-cpuPercent))
+	}
+}
 func ListRunningHandler(cmd *cobra.Command, args []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
-	models, err := client.ListRunning(cmd.Context())
+	runningResponse, err := client.ListRunning(cmd.Context())
 	if err != nil {
 		return err
 	}
 
+	models := runningResponse.Models
+
+	sortBy, _ := cmd.Flags().GetString("sortby")
+	switch sortBy {
+	case "name":
+		slices.SortFunc(models, func(a, b api.ProcessModelResponse) int {
+			// alphabetical
+			return strings.Compare(a.Name, b.Name)
+		})
+	case "size":
+		slices.SortFunc(models, func(a, b api.ProcessModelResponse) int {
+			// larger goes first
+			if a.Size > b.Size {
+				return -1
+			} else if a.Size < b.Size {
+				return 1
+			}
+			return 0
+		})
+	case "processor":
+		slices.SortFunc(models, func(a, b api.ProcessModelResponse) int {
+			// highest goes first
+			if a.SizeVRAM < b.SizeVRAM {
+				return 1
+			} else if a.SizeVRAM > b.SizeVRAM {
+				return -1
+			} else {
+				return 0
+			}
+		})
+	case "until":
+		slices.SortFunc(models, func(a, b api.ProcessModelResponse) int {
+			// expires soonest is first
+			return a.ExpiresAt.Compare(b.ExpiresAt)
+		})
+	default:
+		return fmt.Errorf("invalid sort option: %s", sortBy)
+	}
+
+	if useJSON, _ := cmd.Flags().GetBool("json"); useJSON {
+		var data []RunningListElement
+
+		for _, m := range models {
+			data = append(data, RunningListElement{
+				Name:      m.Name,
+				ID:        m.Digest[:12],
+				Size:      m.Size,
+				Processor: formatProcStr(m),
+				Until:     m.ExpiresAt.Unix(),
+			})
+		}
+
+		dataJSON, err := json.Marshal(data)
+		if err != nil {
+			return err
+		}
+
+		fmt.Println(string(dataJSON))
+		return nil
+	}
+
 	var data [][]string
 
-	for _, m := range models.Models {
+	for _, m := range models {
 		if len(args) == 0 || strings.HasPrefix(m.Name, args[0]) {
-			var procStr string
-			switch {
-			case m.SizeVRAM == 0:
-				procStr = "100% CPU"
-			case m.SizeVRAM == m.Size:
-				procStr = "100% GPU"
-			case m.SizeVRAM > m.Size || m.Size == 0:
-				procStr = "Unknown"
-			default:
-				sizeCPU := m.Size - m.SizeVRAM
-				cpuPercent := math.Round(float64(sizeCPU) / float64(m.Size) * 100)
-				procStr = fmt.Sprintf("%d%%/%d%% CPU/GPU", int(cpuPercent), int(100-cpuPercent))
-			}
-
 			var until string
 			delta := time.Since(m.ExpiresAt)
 			if delta > 0 {
@@ -541,7 +672,16 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 			} else {
 				until = format.HumanTime(m.ExpiresAt, "Never")
 			}
-			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), procStr, until})
+
+			data = append(
+				data,
+				[]string{m.Name,
+					m.Digest[:12],
+					format.HumanBytes(m.Size),
+					formatProcStr(m),
+					until,
+				},
+			)
 		}
 	}
 
@@ -1393,12 +1533,18 @@ func NewCLI() *cobra.Command {
 		RunE:    ListHandler,
 	}
 
+	listCmd.Flags().Bool("json", false, "Output non human-readable JSON")
+	listCmd.Flags().String("sortby", "name", "Value to sort by (name, size, time)")
+
 	psCmd := &cobra.Command{
 		Use:     "ps",
 		Short:   "List running models",
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListRunningHandler,
 	}
+
+	psCmd.Flags().Bool("json", false, "Output non human-readable JSON")
+	psCmd.Flags().String("sortby", "name", "Value to sort by (name, size, processor, until)")
 
 	copyCmd := &cobra.Command{
 		Use:     "cp SOURCE DESTINATION",
