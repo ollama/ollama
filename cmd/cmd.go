@@ -472,6 +472,49 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func createListTable(headers []string, data [][]string) string {
+	var output strings.Builder
+	table := tablewriter.NewWriter(&output)
+	table.SetHeader(headers)
+	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+	table.SetHeaderLine(false)
+	table.SetBorder(false)
+	table.SetNoWhiteSpace(true)
+	table.SetTablePadding("    ")
+	table.AppendBulk(data)
+	table.Render()
+	return output.String()
+}
+
+func createListCSV(headers []string, data [][]string) string {
+	var output strings.Builder
+
+	for i, cell := range headers {
+		if strings.ContainsAny(cell, ",") {
+			headers[i] = fmt.Sprintf("\"%s\"", cell)
+		}
+	}
+	header := strings.Join(headers, ", ")
+	header = strings.TrimSuffix(header, ", ")
+	output.WriteString(header)
+	output.WriteRune('\n')
+
+	for _, rowArray := range data {
+		for i, cell := range rowArray {
+			if strings.ContainsAny(cell, ",") {
+				rowArray[i] = fmt.Sprintf("\"%s\"", cell)
+			}
+		}
+		row := strings.Join(rowArray, ", ")
+		row = strings.TrimSuffix(row, ", ")
+		output.WriteString(row)
+		output.WriteRune('\n')
+	}
+
+	return output.String()
+}
+
 func ListHandler(cmd *cobra.Command, args []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -483,6 +526,7 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	var headers []string = []string{"NAME", "ID", "SIZE", "MODIFIED"}
 	var data [][]string
 
 	for _, m := range models.Models {
@@ -491,17 +535,31 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"NAME", "ID", "SIZE", "MODIFIED"})
-	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
-	table.SetAlignment(tablewriter.ALIGN_LEFT)
-	table.SetHeaderLine(false)
-	table.SetBorder(false)
-	table.SetNoWhiteSpace(true)
-	table.SetTablePadding("    ")
-	table.AppendBulk(data)
-	table.Render()
+	var output string
 
+	format, err := cmd.Flags().GetString("format")
+	if err == nil && format != "" {
+		fmt.Println(format)
+		switch format {
+		case "csv", "CSV":
+			output = createListCSV(headers, data)
+		case "json", "JSON":
+			buf, err := json.Marshal(models)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "%s", err.Error())
+				break
+			}
+			output = string(buf)
+		case "table", "TABLE":
+			fallthrough
+		default:
+			output = createListTable(headers, data)
+		}
+	} else {
+		output = createListTable(headers, data)
+	}
+
+	fmt.Fprintf(os.Stdout, "%s", output)
 	return nil
 }
 
@@ -516,6 +574,7 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	var headers []string = []string{"NAME", "ID", "SIZE", "PROCESSOR", "UNTIL"}
 	var data [][]string
 
 	for _, m := range models.Models {
@@ -544,17 +603,31 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), procStr, until})
 		}
 	}
+	var output string
 
-	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"NAME", "ID", "SIZE", "PROCESSOR", "UNTIL"})
-	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
-	table.SetAlignment(tablewriter.ALIGN_LEFT)
-	table.SetHeaderLine(false)
-	table.SetBorder(false)
-	table.SetNoWhiteSpace(true)
-	table.SetTablePadding("    ")
-	table.AppendBulk(data)
-	table.Render()
+	format, err := cmd.Flags().GetString("format")
+	if err == nil && format != "" {
+		fmt.Println(format)
+		switch format {
+		case "csv", "CSV":
+			output = createListCSV(headers, data)
+		case "json", "JSON":
+			buf, err := json.Marshal(models)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "%s", err.Error())
+				break
+			}
+			output = string(buf)
+		case "table", "TABLE":
+			fallthrough
+		default:
+			output = createListTable(headers, data)
+		}
+	} else {
+		output = createListTable(headers, data)
+	}
+
+	fmt.Fprintf(os.Stdout, "%s", output)
 
 	return nil
 }
@@ -1389,16 +1462,22 @@ func NewCLI() *cobra.Command {
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List models",
+		Args:    cobra.MaximumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListHandler,
 	}
 
+	listCmd.Flags().StringP("format", "f", "table", "specify output format")
+
 	psCmd := &cobra.Command{
 		Use:     "ps",
 		Short:   "List running models",
+		Args:    cobra.MaximumNArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListRunningHandler,
 	}
+
+	psCmd.Flags().StringP("format", "f", "table", "specify output format")
 
 	copyCmd := &cobra.Command{
 		Use:     "cp SOURCE DESTINATION",
