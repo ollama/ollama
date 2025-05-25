@@ -1033,12 +1033,24 @@ func displayResponse(content string, wordWrap bool, state *displayResponseState)
 	}
 }
 
-func thinkingOutputOpeningText() string {
-	return readline.ColorGrey + readline.ColorBold + "Thinking...\n" + readline.ColorDefault + readline.ColorGrey
+func thinkingOutputOpeningText(plainText bool) string {
+	text := "Thinking...\n"
+
+	if plainText {
+		return text
+	}
+
+	return readline.ColorGrey + readline.ColorBold + text + readline.ColorDefault + readline.ColorGrey
 }
 
-func thinkingOutputClosingText() string {
-	return readline.ColorGrey + readline.ColorBold + "...done thinking." + readline.ColorDefault + "\n\n"
+func thinkingOutputClosingText(plainText bool) string {
+	text := "...done thinking.\n\n"
+
+	if plainText {
+		return text
+	}
+
+	return readline.ColorGrey + readline.ColorBold + text + readline.ColorDefault
 }
 
 func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
@@ -1081,7 +1093,7 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		role = response.Message.Role
 		if response.Message.Thinking != "" && !opts.HideThinking {
 			if !thinkTagOpened {
-				fmt.Print(thinkingOutputOpeningText())
+				fmt.Print(thinkingOutputOpeningText(false))
 				thinkTagOpened = true
 			}
 			displayResponse(response.Message.Thinking, opts.WordWrap, state)
@@ -1089,7 +1101,7 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 
 		content := response.Message.Content
 		if thinkTagOpened && !thinkTagClosed && content != "" {
-			fmt.Print(thinkingOutputClosingText())
+			fmt.Print(thinkingOutputClosingText(false))
 			thinkTagClosed = true
 		}
 		// purposefully not putting thinking blocks in the response, which would
@@ -1177,6 +1189,8 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 	var thinkTagOpened bool = false
 	var thinkTagClosed bool = false
 
+	plainText := !term.IsTerminal(int(os.Stdout.Fd()))
+
 	fn := func(response api.GenerateResponse) error {
 		latest = response
 		content := response.Response
@@ -1187,14 +1201,14 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 
 		if response.Thinking != "" && !opts.HideThinking {
 			if !thinkTagOpened {
-				fmt.Print(thinkingOutputOpeningText())
+				fmt.Print(thinkingOutputOpeningText(plainText))
 				thinkTagOpened = true
 			}
 			displayResponse(response.Thinking, opts.WordWrap, state)
 		}
 
 		if thinkTagOpened && !thinkTagClosed && content != "" {
-			fmt.Print(thinkingOutputClosingText())
+			fmt.Print(thinkingOutputClosingText(plainText))
 			thinkTagClosed = true
 		}
 
