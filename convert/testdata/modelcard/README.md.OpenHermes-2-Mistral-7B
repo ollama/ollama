@@ -1,0 +1,23 @@
+---
+base_model: mistralai/Mistral-7B-v0.1
+tags:
+- mistral
+- instruct
+- finetune
+- chatml
+- gpt4
+- synthetic data
+- distillation
+model-index:
+- name: OpenHermes-2-Mistral-7B
+  results: []
+license: apache-2.0
+language:
+- en
+datasets:
+- teknium/OpenHermes-2.5
+---
+
+# OpenHermes 2.5 - Mistral 7B
+
+YAML from full README.md at: https://huggingface.co/teknium/OpenHermes-2.5-Mistral-7B
