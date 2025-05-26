@@ -19,6 +19,16 @@ docker buildx build \
     ${LOAD_OR_PUSH} \
     --platform=${PLATFORM} \
     ${OLLAMA_COMMON_BUILD_ARGS} \
+    --build-arg FLAVOR=cann \
+    --target cann \
+    -f Dockerfile \
+    -t ${FINAL_IMAGE_REPO}:$VERSION-cann \
+    .
+
+docker buildx build \
+    ${LOAD_OR_PUSH} \
+    --platform=${PLATFORM} \
+    ${OLLAMA_COMMON_BUILD_ARGS} \
     -f Dockerfile \
     -t ${FINAL_IMAGE_REPO}:$VERSION \
     .
