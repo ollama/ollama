@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"log/slog"
 	"math"
 	"slices"
 	"strconv"
@@ -133,6 +134,27 @@ type DeviceMemory struct {
 	Graph Memory
 }
 
+func memoryPresent(mem []Memory) bool {
+	return slices.ContainsFunc(mem, func(m Memory) bool { return m.Size != 0 })
+}
+
+func (m DeviceMemory) LogValue() slog.Value {
+	var attrs []slog.Attr
+	if memoryPresent(m.Weights) {
+		attrs = append(attrs, slog.Any("Weights", m.Weights))
+	}
+
+	if memoryPresent(m.Cache) {
+		attrs = append(attrs, slog.Any("Cache", m.Cache))
+	}
+
+	if m.Graph.Size != 0 {
+		attrs = append(attrs, slog.Any("Graph", m.Graph))
+	}
+
+	return slog.GroupValue(attrs...)
+}
+
 // BackendMemory provides the amount of memory required to load the model
 // per device based on the BackendParams. In some cases, not all required
 // allocations will be known at this point. However, the size of the most recent
@@ -148,6 +170,20 @@ type BackendMemory struct {
 
 	// GPU model components are located on one or more GPUs.
 	GPUs []DeviceMemory
+}
+
+func (m BackendMemory) LogValue() slog.Value {
+	var attrs []slog.Attr
+	if m.InputWeights.Size != 0 {
+		attrs = append(attrs, slog.Any("InputWeights", m.InputWeights))
+	}
+
+	attrs = append(attrs, slog.Any(m.CPU.Name, m.CPU))
+	for _, g := range m.GPUs {
+		attrs = append(attrs, slog.Any(g.Name, g))
+	}
+
+	return slog.GroupValue(attrs...)
 }
 
 var backends = make(map[string]func(string, BackendParams) (Backend, error))
