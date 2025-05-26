@@ -23,12 +23,6 @@ std::vector<std::string> string_split(const std::string & input, char separator)
 }
 
 void add_rpc_devices(const char* const input_servers) {
-    // auto reg = ggml_backend_rpc_reg();
-    // char buff[100];
-    // snprintf(buff, sizeof(buff), "REG is: %p", reg);
-    // std::string buffAsStdStr = buff;
-    // throw std::invalid_argument(buff);
-
     std::string servers = input_servers;
     auto rpc_servers = string_split(servers, ',');
     if (rpc_servers.empty()) {
