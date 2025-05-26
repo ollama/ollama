@@ -31,7 +31,7 @@ func rpcServerRun(cmd *cobra.Command, args []string) error {
 		C.run_rpc_server(C.CString(rpcHost), C.int(rpcPort), C.CString(device))
 	}()
 
-	log.Printf("RPC server started with Metal backend on %s. Press Ctrl+C to exit.", endpoint)
+	log.Printf("RPC server started on %s. Press Ctrl+C to exit.", endpoint)
 
 	// Wait for an interrupt signal
 	sigChan := make(chan os.Signal, 1)
