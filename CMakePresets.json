@@ -66,7 +66,7 @@
       "inherits": [ "Default" ]
     },
     {
-      "name": "MUSA 3",
+      "name": "MUSA 4",
       "inherits": [ "MUSA" ],
       "cacheVariables": {
         "MUSA_ARCHITECTURES": "21;22;31"
@@ -125,9 +125,9 @@
       "targets": [ "ggml-musa" ]
     },
     {
-      "name": "MUSA 3",
+      "name": "MUSA 4",
       "inherits": [ "MUSA" ],
-      "configurePreset": "MUSA 3"
+      "configurePreset": "MUSA 4"
     }
   ]
 }
