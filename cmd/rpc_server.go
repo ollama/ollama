@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	ggml "github.com/ollama/ollama/ml/backend/ggml/ggml/src"
 	"github.com/spf13/cobra"
 )
 
@@ -23,6 +24,8 @@ func rpcServerRun(cmd *cobra.Command, args []string) error {
 
 	endpoint := fmt.Sprintf("%s:%d", rpcHost, rpcPort)
 	log.Printf("Starting RPC server on %s", endpoint)
+
+	ggml.OnceLoad()
 
 	// Run ggml_backend_rpc_start_server in a goroutine
 	// so we can handle signals and potentially stop it later if needed.
