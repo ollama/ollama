@@ -120,7 +120,7 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 		}
 
 		q := requestURL.Query()
-		q.Set("ts", string(now))
+		q.Set("ts", now)
 		requestURL.RawQuery = q.Encode()
 	}
 
@@ -186,7 +186,7 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 		}
 
 		q := requestURL.Query()
-		q.Set("ts", string(now))
+		q.Set("ts", now)
 		requestURL.RawQuery = q.Encode()
 	}
 
