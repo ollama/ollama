@@ -14,11 +14,23 @@ set -eu
 
 mkdir -p dist
 
-docker buildx build \
+docker buildx build --progress=plain \
         --output type=local,dest=./dist/ \
-        --platform=${PLATFORM} \
+        --platform=linux/arm64 \
         ${OLLAMA_COMMON_BUILD_ARGS} \
-        --target archive-cann \
+        --build-arg ASCEND_VERSION="8.1.rc1-910b-openeuler22.03-py3.10" \
+        --build-arg ASCEND_PRODUCT_NAME="CANN Atlas 800 A2" \
+        --target archive-cann-atlas-a2 \
+        -f Dockerfile \
+        .
+
+docker buildx build --progress=plain \
+        --output type=local,dest=./dist/ \
+        --platform=linux/arm64 \
+        ${OLLAMA_COMMON_BUILD_ARGS} \
+        --build-arg ASCEND_VERSION="8.1.rc1-310p-openeuler22.03-py3.10" \
+        --build-arg ASCEND_PRODUCT_NAME="CANN Atlas 300I Duo" \
+        --target archive-cann-300i-duo \
         -f Dockerfile \
         .
 
@@ -51,15 +63,16 @@ if echo $PLATFORM | grep "," > /dev/null ; then
         tar c -C ./dist/linux_arm64 --exclude cuda_jetpack5 --exclude cuda_jetpack6 . | pigz -9vc >./dist/ollama-linux-arm64.tgz
         tar c -C ./dist/linux_arm64 ./lib/ollama/cuda_jetpack5  | pigz -9vc >./dist/ollama-linux-arm64-jetpack5.tgz
         tar c -C ./dist/linux_arm64 ./lib/ollama/cuda_jetpack6  | pigz -9vc >./dist/ollama-linux-arm64-jetpack6.tgz
-        tar c -C ./dist/linux_arm64 ./lib/ollama/cann  | pigz -9vc >./dist/ollama-linux-arm64-cann.tgz
+        tar c -C ./dist ./lib/ollama/cann/atlas_a2 | pigz -9vc >./dist/ollama-linux-arm64-cann-atlas-a2.tgz
+        tar c -C ./dist ./lib/ollama/cann/300i_duo | pigz -9vc >./dist/ollama-linux-arm64-cann-300i-duo.tgz
         tar c -C ./dist/linux_amd64 --exclude rocm . | pigz -9vc >./dist/ollama-linux-amd64.tgz
         tar c -C ./dist/linux_amd64 ./lib/ollama/rocm  | pigz -9vc >./dist/ollama-linux-amd64-rocm.tgz
-        tar c -C ./dist/linux_amd64 ./lib/ollama/cann  | pigz -9vc >./dist/ollama-linux-amd64-cann.tgz
 elif echo $PLATFORM | grep "arm64" > /dev/null ; then
         tar c -C ./dist/ --exclude cuda_jetpack5 --exclude cuda_jetpack6 bin lib | pigz -9vc >./dist/ollama-linux-arm64.tgz
         tar c -C ./dist/ ./lib/ollama/cuda_jetpack5  | pigz -9vc >./dist/ollama-linux-arm64-jetpack5.tgz
         tar c -C ./dist/ ./lib/ollama/cuda_jetpack6  | pigz -9vc >./dist/ollama-linux-arm64-jetpack6.tgz
-        tar c -C ./dist/ ./lib/ollama/cann  | pigz -9vc >./dist/ollama-linux-arm64-cann.tgz
+        tar c -C ./dist ./lib/ollama/cann/atlas_a2 | pigz -9vc >./dist/ollama-linux-arm64-cann-atlas-a2.tgz
+        tar c -C ./dist ./lib/ollama/cann/300i_duo | pigz -9vc >./dist/ollama-linux-arm64-cann-300i-duo.tgz
 elif echo $PLATFORM | grep "amd64" > /dev/null ; then
         tar c -C ./dist/ --exclude rocm bin lib | pigz -9vc >./dist/ollama-linux-amd64.tgz
         tar c -C ./dist/ ./lib/ollama/rocm  | pigz -9vc >./dist/ollama-linux-amd64-rocm.tgz

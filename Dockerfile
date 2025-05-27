@@ -5,8 +5,10 @@ ARG FLAVOR=${TARGETARCH}
 ARG ROCMVERSION=6.3.3
 ARG JETPACK5VERSION=r35.4.1
 ARG JETPACK6VERSION=r36.4.0
-ARG ASCEND_VERSION=8.0.0-910b-openeuler22.03-py3.10
 ARG CMAKEVERSION=3.31.2
+
+ARG ASCEND_VERSION=8.1.rc1-910b-openeuler22.03-py3.10
+ARG ASCEND_PRODUCT_NAME=CANN Atlas 800 A2
 
 # CUDA v11 requires gcc v10.  v10.3 has regressions, so the rockylinux 8.5 AppStream has the latest compatible version
 FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCMVERSION}-complete AS base-amd64
@@ -108,6 +110,7 @@ ENTRYPOINT [ "zsh" ]
 
 FROM cann-builder AS cann-build
 ARG OLLAMA_FAST_BUILD=1
+ARG ASCEND_PRODUCT_NAME
 ARG VERSION
 COPY CMakeLists.txt CMakePresets.json .
 COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
@@ -124,8 +127,8 @@ RUN --mount=type=cache,target=/root/.ccache \
         echo "No Ascend Toolkit found"; \
         exit 1; \
     fi && \
-    cmake --preset 'CANN Atlas 800 A2' \
-        && cmake --build --parallel --preset 'CANN Atlas 800 A2' \
+    cmake --preset "${ASCEND_PRODUCT_NAME}" \
+        && cmake --build --parallel --preset "${ASCEND_PRODUCT_NAME}" \
         && cmake --install build --component CANN
 
 FROM base AS build
@@ -157,10 +160,17 @@ FROM ${FLAVOR} AS archive
 COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
 
+# As release package compress operation is at the end of build linux, for cann different product need in different directory in dist 
 FROM scratch AS archive-cann
 COPY --from=cann-build dist/lib/ollama/cann /lib/ollama/cann
 COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
+
+FROM scratch AS archive-cann-atlas-a2
+COPY --from=cann-build dist/lib/ollama/cann /lib/ollama/cann/atlas_a2
+
+FROM scratch AS archive-cann-300i-duo
+COPY --from=cann-build dist/lib/ollama/cann /lib/ollama/cann/300i_duo
 
 FROM quay.io/ascend/cann:${ASCEND_VERSION} AS cann
 COPY --from=archive-cann /lib/ollama /usr/lib/ollama

@@ -66,6 +66,13 @@
       "inherits": [ "Default" ]
     },
     {
+      "name": "CANN Atlas 300I Duo",
+      "inherits": [ "CANN" ],
+      "cacheVariables": {
+        "SOC_TYPE": "Ascend310P3"
+      }
+    },
+    {
       "name": "CANN Atlas 800 A2",
       "inherits": [ "CANN" ],
       "cacheVariables": {
@@ -123,6 +130,11 @@
       "name": "CANN",
       "configurePreset": "CANN",
       "targets": [ "ggml-cann" ]
+    },
+    {
+      "name": "CANN Atlas 300I Duo",
+      "inherits": [ "CANN" ],
+      "configurePreset": "CANN Atlas 300I Duo"
     },
     {
       "name": "CANN Atlas 800 A2",
