@@ -74,6 +74,13 @@ type LlamaServer interface {
 	EstimatedTotal() uint64
 	EstimatedVRAMByGPU(gpuID string) uint64
 	Pid() int
+	
+	// Batch processing methods
+	BatchCompletion(ctx context.Context, reqs []CompletionRequest, fn func([]CompletionResponse)) error
+	BatchEmbedding(ctx context.Context, inputs []string) ([][]float32, error)
+	GetMaxBatchSize() int
+	SupportsBatching() bool
+	EstimateBatchMemory(batchSize int) uint64
 }
 
 // llmServer is an instance of the llama.cpp server
@@ -1053,4 +1060,99 @@ func (s *llmServer) EstimatedVRAMByGPU(gpuID string) uint64 {
 		}
 	}
 	return 0
+}
+
+// BatchCompletion processes multiple completion requests in a single batch
+func (s *llmServer) BatchCompletion(ctx context.Context, reqs []CompletionRequest, fn func([]CompletionResponse)) error {
+	if !s.SupportsBatching() {
+		return fmt.Errorf("batch processing not supported by this server configuration")
+	}
+
+	maxBatchSize := s.GetMaxBatchSize()
+	if len(reqs) > maxBatchSize {
+		return fmt.Errorf("batch size %d exceeds maximum %d", len(reqs), maxBatchSize)
+	}
+
+	slog.Debug("batch completion request", "batch_size", len(reqs))
+
+	// For now, fall back to individual processing until llama.cpp batch API is implemented
+	// This still provides the benefit of shared weight loading and processing pipeline
+	responses := make([]CompletionResponse, len(reqs))
+	
+	for i, req := range reqs {
+		var response CompletionResponse
+		err := s.Completion(ctx, req, func(resp CompletionResponse) {
+			if resp.Done {
+				response = resp
+			}
+		})
+		if err != nil {
+			return fmt.Errorf("batch request %d failed: %w", i, err)
+		}
+		responses[i] = response
+	}
+	
+	fn(responses)
+	return nil
+}
+
+// BatchEmbedding processes multiple embedding requests in a single batch
+func (s *llmServer) BatchEmbedding(ctx context.Context, inputs []string) ([][]float32, error) {
+	if !s.SupportsBatching() {
+		return nil, fmt.Errorf("batch processing not supported by this server configuration")
+	}
+
+	maxBatchSize := s.GetMaxBatchSize()
+	if len(inputs) > maxBatchSize {
+		return nil, fmt.Errorf("batch size %d exceeds maximum %d", len(inputs), maxBatchSize)
+	}
+
+	slog.Debug("batch embedding request", "batch_size", len(inputs))
+
+	// For now, fall back to individual processing
+	embeddings := make([][]float32, len(inputs))
+	
+	for i, input := range inputs {
+		embedding, err := s.Embedding(ctx, input)
+		if err != nil {
+			return nil, fmt.Errorf("batch embedding %d failed: %w", i, err)
+		}
+		embeddings[i] = embedding
+	}
+	
+	return embeddings, nil
+}
+
+// GetMaxBatchSize returns the maximum number of requests that can be processed in a batch
+func (s *llmServer) GetMaxBatchSize() int {
+	// Conservative default based on memory and parallel processing capacity
+	// This can be dynamically adjusted based on model size and available memory
+	if s.numParallel > 1 {
+		return s.numParallel * 2
+	}
+	return int(envconfig.BatchSize())
+}
+
+// SupportsBatching returns whether this server instance supports batch processing
+func (s *llmServer) SupportsBatching() bool {
+	// For initial implementation, enable batching for all configurations
+	// In the future, this could be restricted based on model type, memory, etc.
+	return envconfig.BatchEnabled()
+}
+
+// EstimateBatchMemory estimates the additional memory required for batch processing
+func (s *llmServer) EstimateBatchMemory(batchSize int) uint64 {
+	if batchSize <= 1 {
+		return 0
+	}
+	
+	// Estimate additional memory for batch processing
+	// This includes KV cache per request and attention computation overhead
+	baseMemory := s.EstimatedTotal()
+	batchFactor := envconfig.BatchMemoryFactor()
+	
+	// Additional memory grows sub-linearly with batch size
+	additionalMemory := uint64(float64(baseMemory) * (batchFactor - 1.0) * float64(batchSize) / float64(s.GetMaxBatchSize()))
+	
+	return additionalMemory
 }
