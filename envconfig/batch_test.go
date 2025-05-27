@@ -41,10 +41,10 @@ func TestBatchTimeout(t *testing.T) {
 		envValue string
 		expected time.Duration
 	}{
-		{"default", "", 500 * time.Millisecond},
+		{"default", "", 50 * time.Millisecond},
 		{"valid_ms", "100ms", 100 * time.Millisecond},
 		{"valid_s", "2s", 2 * time.Second},
-		{"invalid", "invalid", 500 * time.Millisecond},
+		{"invalid", "invalid", 50 * time.Millisecond},
 	}
 
 	for _, tt := range tests {

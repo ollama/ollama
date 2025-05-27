@@ -37,7 +37,7 @@ var (
 	BatchEnabled = Bool("OLLAMA_BATCH_ENABLED")
 	
 	// BatchTimeout sets the maximum time to wait for accumulating requests into a batch
-	BatchTimeout = Duration("OLLAMA_BATCH_TIMEOUT", 500*time.Millisecond)
+	BatchTimeout = Duration("OLLAMA_BATCH_TIMEOUT", 50*time.Millisecond)
 	
 	// BatchSize sets the maximum number of requests to process in a single batch
 	BatchSize = Uint("OLLAMA_BATCH_SIZE", 8)
