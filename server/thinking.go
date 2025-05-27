@@ -7,39 +7,39 @@ import (
 	"unicode"
 )
 
-type thinkingParseState int
+type thinkingState int
 
 const (
 	// We're looking for the opening tag, but we haven't seen any non-whitespace
 	// characters yet
-	thinkingParseState_LookingForOpening thinkingParseState = iota
+	thinkingState_LookingForOpening thinkingState = iota
 	// We've seen the opening tag, but we haven't seen any non-whitespace
 	// characters yet (we want to eat any whitespace between the opening tag and
 	// the thinking content)
-	thinkingParseState_ThinkingStartedEatingWhitespace
+	thinkingState_ThinkingStartedEatingWhitespace
 	// We've seen non-whitespace characters after the opening tag, but we haven't
 	// seen the closing tag yet
-	thinkingParseState_Thinking
+	thinkingState_Thinking
 	// We've seen the closing tag, but we haven't seen any non-whitespace
 	// characters after the closing tag yet (we want to eat any whitespace between
 	// the closing tag and the content)
-	thinkingParseState_ThinkingDoneEatingWhitespace
+	thinkingState_ThinkingDoneEatingWhitespace
 	// We've seen the closing tag and seen at least one non-whitespace character
 	// after it
-	thinkingParseState_ThinkingDone
+	thinkingState_ThinkingDone
 )
 
-func (s thinkingParseState) String() string {
+func (s thinkingState) String() string {
 	switch s {
-	case thinkingParseState_LookingForOpening:
+	case thinkingState_LookingForOpening:
 		return "LookingForOpening"
-	case thinkingParseState_ThinkingStartedEatingWhitespace:
+	case thinkingState_ThinkingStartedEatingWhitespace:
 		return "ThinkingStartedEatingWhitespace"
-	case thinkingParseState_Thinking:
+	case thinkingState_Thinking:
 		return "Thinking"
-	case thinkingParseState_ThinkingDoneEatingWhitespace:
+	case thinkingState_ThinkingDoneEatingWhitespace:
 		return "ThinkingDoneEatingWhitespace"
-	case thinkingParseState_ThinkingDone:
+	case thinkingState_ThinkingDone:
 		return "ThinkingDone"
 	default:
 		return "Unknown"
@@ -47,7 +47,7 @@ func (s thinkingParseState) String() string {
 }
 
 type thinkingParser struct {
-	state      thinkingParseState
+	state      thinkingState
 	openingTag string
 	closingTag string
 	acc        strings.Builder
@@ -78,7 +78,7 @@ func (s *thinkingParser) addContent(content string) (string, string) {
 // the additional bool return is true iff we should continue eating
 func eat(s *thinkingParser) (string, string, bool) {
 	switch s.state {
-	case thinkingParseState_LookingForOpening:
+	case thinkingState_LookingForOpening:
 		trimmed := strings.TrimLeftFunc(s.acc.String(), unicode.IsSpace)
 		if strings.HasPrefix(trimmed, s.openingTag) {
 			after := strings.Join(strings.Split(trimmed, s.openingTag)[1:], s.openingTag)
@@ -88,9 +88,9 @@ func eat(s *thinkingParser) (string, string, bool) {
 			s.acc.Reset()
 			s.acc.WriteString(after)
 			if after == "" {
-				s.state = thinkingParseState_ThinkingStartedEatingWhitespace
+				s.state = thinkingState_ThinkingStartedEatingWhitespace
 			} else {
-				s.state = thinkingParseState_Thinking
+				s.state = thinkingState_Thinking
 			}
 			return "", "", true
 		} else if strings.HasPrefix(s.openingTag, trimmed) {
@@ -101,23 +101,23 @@ func eat(s *thinkingParser) (string, string, bool) {
 			return "", "", false
 		} else {
 			// didn't see an opening tag, but we have content, so thinking was skipped
-			s.state = thinkingParseState_ThinkingDone
+			s.state = thinkingState_ThinkingDone
 			// note that we use the original content, not the trimmed one because we
 			// don't want to eat any whitespace in the real content if there were no
 			// thinking tags
 			return "", s.acc.String(), false
 		}
-	case thinkingParseState_ThinkingStartedEatingWhitespace:
+	case thinkingState_ThinkingStartedEatingWhitespace:
 		trimmed := strings.TrimLeftFunc(s.acc.String(), unicode.IsSpace)
 		s.acc.Reset()
 		if trimmed == "" {
 			return "", "", false
 		} else {
-			s.state = thinkingParseState_Thinking
+			s.state = thinkingState_Thinking
 			s.acc.WriteString(trimmed)
 			return "", "", true
 		}
-	case thinkingParseState_Thinking:
+	case thinkingState_Thinking:
 		acc := s.acc.String()
 		if strings.Contains(acc, s.closingTag) {
 			split := strings.Split(acc, s.closingTag)
@@ -126,9 +126,9 @@ func eat(s *thinkingParser) (string, string, bool) {
 			remaining = strings.TrimLeftFunc(remaining, unicode.IsSpace)
 			s.acc.Reset()
 			if remaining == "" {
-				s.state = thinkingParseState_ThinkingDoneEatingWhitespace
+				s.state = thinkingState_ThinkingDoneEatingWhitespace
 			} else {
-				s.state = thinkingParseState_ThinkingDone
+				s.state = thinkingState_ThinkingDone
 			}
 			return thinking, remaining, false
 		} else if overlapLen := overlap(acc, s.closingTag); overlapLen > 0 {
@@ -144,15 +144,15 @@ func eat(s *thinkingParser) (string, string, bool) {
 			s.acc.Reset()
 			return acc, "", false
 		}
-	case thinkingParseState_ThinkingDoneEatingWhitespace:
+	case thinkingState_ThinkingDoneEatingWhitespace:
 		trimmed := strings.TrimLeftFunc(s.acc.String(), unicode.IsSpace)
 		s.acc.Reset()
 		// if we see non-whitespace, we're done eating the leading whitespace of the content
 		if trimmed != "" {
-			s.state = thinkingParseState_ThinkingDone
+			s.state = thinkingState_ThinkingDone
 		}
 		return "", trimmed, false
-	case thinkingParseState_ThinkingDone:
+	case thinkingState_ThinkingDone:
 		acc := s.acc.String()
 		s.acc.Reset()
 		return "", acc, false
