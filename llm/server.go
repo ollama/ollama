@@ -94,6 +94,10 @@ type llmServer struct {
 	// textProcessor handles text encoding/decoding for the model in the Ollama engine
 	// nil if this server is running the llama.cpp based engine
 	textProcessor model.TextProcessor
+	
+	// modelPreloader handles keeping the CPU model in memory to prevent page faults
+	modelPreloader *ModelPreloader
+	isCPUMode      bool
 
 	estimate    MemoryEstimate
 	totalLayers uint64
@@ -232,15 +236,19 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		}
 	}
 
+	// Determine if we're in CPU mode for preloading later
+	cpuMode := gpus[0].Library == "cpu"
+
 	// Windows CUDA should not use mmap for best performance
-	// Linux  with a model larger than free space, mmap leads to thrashing
-	// For CPU loads we want the memory to be allocated, not FS cache
+	// Linux with a model larger than free space, mmap leads to thrashing
 	if (runtime.GOOS == "windows" && gpus[0].Library == "cuda" && opts.UseMMap == nil) ||
-		(runtime.GOOS == "linux" && systemFreeMemory < estimate.TotalSize && opts.UseMMap == nil) ||
-		(gpus[0].Library == "cpu" && opts.UseMMap == nil) ||
+		(runtime.GOOS == "linux" && systemFreeMemory < estimate.TotalSize && !cpuMode && opts.UseMMap == nil) ||
 		(opts.UseMMap != nil && !*opts.UseMMap) {
 		params = append(params, "--no-mmap")
 	}
+
+	// For CPU mode, we use mmap by default but will preload the model into memory
+	// to avoid the high latency for first tokens
 
 	// TODO - NUMA support currently doesn't work properly
 
@@ -372,21 +380,33 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		// finally, add the root library path
 		libraryPaths = append(libraryPaths, discover.LibOllamaPath)
 
-		s := &llmServer{
-			port:          port,
-			cmd:           exec.Command(exe, finalParams...),
-			status:        NewStatusWriter(os.Stderr),
-			options:       opts,
-			modelPath:     modelPath,
-			llamaModel:    llamaModel,
-			textProcessor: textProcessor,
-			estimate:      estimate,
-			numParallel:   numParallel,
-			sem:           semaphore.NewWeighted(int64(numParallel)),
-			totalLayers:   f.KV().BlockCount() + 1,
-			gpus:          gpus,
-			done:          make(chan error, 1),
-		}
+	// Create server instance
+	s := &llmServer{
+		port:          port,
+		cmd:           exec.Command(exe, finalParams...),
+		status:        NewStatusWriter(os.Stderr),
+		options:       opts,
+		modelPath:     modelPath,
+		llamaModel:    llamaModel,
+		textProcessor: textProcessor,
+		estimate:      estimate,
+		numParallel:   numParallel,
+		sem:           semaphore.NewWeighted(int64(numParallel)),
+		totalLayers:   f.KV().BlockCount() + 1,
+		gpus:          gpus,
+		done:          make(chan error, 1),
+		isCPUMode:     cpuMode,
+	}
+	
+	// Initialize model preloader for CPU mode if enabled
+	if cpuMode && envconfig.PreloadCPUModel() {
+		s.modelPreloader = NewModelPreloader(modelPath, estimate.TotalSize)
+		slog.Info("CPU model preloading enabled - will preload model to improve first token latency")
+	} else if cpuMode {
+		slog.Debug("CPU model preloading disabled - set OLLAMA_PRELOAD_CPU_MODEL=1 to enable")
+		s.modelPreloader = NewModelPreloader(modelPath, estimate.TotalSize)
+		slog.Info("CPU mode detected - will preload model to improve first token latency")
+	}
 
 		s.cmd.Env = os.Environ()
 		s.cmd.Stdout = os.Stdout
@@ -628,6 +648,13 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 		case ServerStatusReady:
 			s.loadDuration = time.Since(start)
 			slog.Info(fmt.Sprintf("llama runner started in %0.2f seconds", s.loadDuration.Seconds()))
+			
+			// For CPU mode, after the model is loaded, start the preloader to keep model in memory
+			if s.isCPUMode && s.modelPreloader != nil {
+				// Start preloading the model to avoid high latency on first tokens
+				go s.startModelPreloading(ctx)
+			}
+			
 			return nil
 		default:
 			lastStatus = status
@@ -651,6 +678,75 @@ func (s *llmServer) Pid() int {
 		return s.cmd.Process.Pid
 	}
 	return -1
+}
+
+// startModelPreloading starts the model preloading process to keep it in memory
+// and prevent page faults that cause high latency on first tokens
+func (s *llmServer) startModelPreloading(ctx context.Context) {
+	// Skip if not in CPU mode or preloader not initialized
+	if !s.isCPUMode || s.modelPreloader == nil {
+		return
+	}
+	
+	slog.Info("starting model preloading process for CPU mode", "model", s.modelPath)
+	
+	// Open the model file
+	file, err := os.Open(s.modelPath)
+	if err != nil {
+		slog.Error("failed to open model file for preloading", "error", err)
+		return
+	}
+	defer file.Close()
+	
+	// Get file info to determine size
+	fileInfo, err := file.Stat()
+	if err != nil {
+		slog.Error("failed to get model file stats", "error", err)
+		return
+	}
+	
+	// Map the file into memory
+	fileSize := fileInfo.Size()
+	slog.Info("preparing to preload model into memory", 
+		"model", s.modelPath, 
+		"size", format.HumanBytes2(uint64(fileSize)))
+		
+	// Read the entire file into memory
+	buffer := make([]byte, fileSize)
+	_, err = io.ReadFull(file, buffer)
+	if err != nil {
+		slog.Error("failed to read model into memory", "error", err)
+		return
+	}
+	
+	// Start the preloader to keep model in memory
+	s.modelPreloader.StartPreloading(buffer)
+	
+	// Update last access time when processing completions
+	if s.modelPreloader != nil {
+		go func() {
+			ticker := time.NewTicker(10 * time.Second)
+			defer ticker.Stop()
+			
+			for {
+				select {
+				case <-ctx.Done():
+					if s.modelPreloader != nil {
+						s.modelPreloader.StopPreloading()
+					}
+					return
+				case <-ticker.C:
+					// Periodically check server status and update last access if ready
+					status, err := s.getServerStatus(ctx)
+					if err == nil && status == ServerStatusReady {
+						if s.modelPreloader != nil {
+							s.modelPreloader.UpdateLastAccess()
+						}
+					}
+				}
+			}
+		}()
+	}
 }
 
 var grammarJSON = `
@@ -726,6 +822,11 @@ type CompletionResponse struct {
 }
 
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
+	// Update last access time for CPU model preloader to keep model in memory
+	if s.isCPUMode && s.modelPreloader != nil {
+		s.modelPreloader.UpdateLastAccess()
+	}
+	
 	slog.Debug("completion request", "images", len(req.Images), "prompt", len(req.Prompt), "format", string(req.Format))
 	slog.Log(ctx, logutil.LevelTrace, "completion request", "prompt", req.Prompt)
 
@@ -1012,6 +1113,13 @@ func (s *llmServer) Detokenize(ctx context.Context, tokens []int) (string, error
 }
 
 func (s *llmServer) Close() error {
+	// Stop model preloader if active
+	if s.isCPUMode && s.modelPreloader != nil {
+		slog.Debug("stopping model preloader")
+		s.modelPreloader.StopPreloading()
+		s.modelPreloader = nil
+	}
+
 	s.llamaModelLock.Lock()
 	if s.llamaModel != nil {
 		llama.FreeModel(s.llamaModel)
