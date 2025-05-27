@@ -35,6 +35,7 @@ import (
 type Client struct {
 	base *url.URL
 	http *http.Client
+	Hook RequestHookFunc
 }
 
 func checkError(resp *http.Response, body []byte) error {
@@ -106,6 +107,10 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
 
+	if c.Hook != nil {
+		c.Hook(request)
+	}
+
 	respObj, err := c.http.Do(request)
 	if err != nil {
 		return err
@@ -152,6 +157,10 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 	request.Header.Set("Accept", "application/x-ndjson")
 	request.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
 
+	if c.Hook != nil {
+		c.Hook(request)
+	}
+
 	response, err := c.http.Do(request)
 	if err != nil {
 		return err
@@ -191,6 +200,11 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 
 	return nil
 }
+
+// RequestHookFunc is a function that may modify HTTP requests before they
+// are sent to the service. Useful to inject custom headers in the request,
+// for instance.
+type RequestHookFunc func(*http.Request)
 
 // GenerateResponseFunc is a function that [Client.Generate] invokes every time
 // a response is received from the service. If this function returns an error,
