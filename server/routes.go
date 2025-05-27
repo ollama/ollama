@@ -1560,7 +1560,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 			if thinkingState != nil {
 				thinkingContent, remainingContent := thinkingState.addContent(res.Message.Content)
-				fmt.Println("thinkingContent", thinkingContent)
 				if thinkingContent == "" && remainingContent == "" && !r.Done {
 					// need to accumulate more to decide what to send
 					return
@@ -1591,8 +1590,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					return
 				}
 			}
-
-			fmt.Println("res", res)
 
 			ch <- res
 		}); err != nil {

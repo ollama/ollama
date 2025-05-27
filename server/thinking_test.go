@@ -74,7 +74,6 @@ func TestThinkingStreaming(t *testing.T) {
 		},
 		{
 			desc: "building up a thinking tag partially",
-			// skip: true,
 			steps: []step{
 				{
 					input:          "  <th",

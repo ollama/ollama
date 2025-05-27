@@ -53,13 +53,13 @@ type thinkingParser struct {
 	acc        strings.Builder
 }
 
-// returns the thinking content and the normal content that should be
-// immediately sent to the user. It will internally buffer if it needs to see
-// more content to disambiguate
+// addContent returns the thinking content and the non-thinking content that
+// should be immediately sent to the user. It will internally buffer if it needs
+// to see more raw content to disambiguate
 func (s *thinkingParser) addContent(content string) (string, string) {
 	s.acc.WriteString(content)
 
-	var thinkingAcc, remainingAcc strings.Builder
+	var thinkingSb, remainingSb strings.Builder
 
 	var thinking, remaining string
 	keepLooping := true
@@ -68,11 +68,11 @@ func (s *thinkingParser) addContent(content string) (string, string) {
 	// data that's already unambiguous
 	for keepLooping {
 		thinking, remaining, keepLooping = eat(s)
-		thinkingAcc.WriteString(thinking)
-		remainingAcc.WriteString(remaining)
+		thinkingSb.WriteString(thinking)
+		remainingSb.WriteString(remaining)
 	}
 
-	return thinkingAcc.String(), remainingAcc.String()
+	return thinkingSb.String(), remainingSb.String()
 }
 
 // the additional bool return is true iff we should continue eating
