@@ -111,12 +111,11 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 
 	var token string
 	if envconfig.UseAuth() || c.base.Hostname() == "ollama.com" {
-		var tokErr error
 		now := strconv.FormatInt(time.Now().Unix(), 10)
 		chal := fmt.Sprintf("%s,%s?ts=%s", method, path, now)
-		token, tokErr = getAuthorizationToken(ctx, chal)
-		if tokErr != nil {
-			return tokErr
+		token, err = getAuthorizationToken(ctx, chal)
+		if err != nil {
+			return err
 		}
 
 		q := requestURL.Query()
@@ -177,12 +176,12 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 
 	var token string
 	if envconfig.UseAuth() || c.base.Hostname() == "ollama.com" {
-		var tokErr error
+		var err error
 		now := strconv.FormatInt(time.Now().Unix(), 10)
 		chal := fmt.Sprintf("%s,%s?ts=%s", method, path, now)
-		token, tokErr = getAuthorizationToken(ctx, chal)
-		if tokErr != nil {
-			return tokErr
+		token, err = getAuthorizationToken(ctx, chal)
+		if err != nil {
+			return err
 		}
 
 		q := requestURL.Query()
