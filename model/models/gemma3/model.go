@@ -101,14 +101,11 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input
 		return nil, err
 	}
 
-	pixelValues, err := ctx.Input().FromFloatSlice(f32s,
+	pixelValues := ctx.Input().FromFloatSlice(f32s,
 		m.ImageProcessor.imageSize,
 		m.ImageProcessor.imageSize,
 		m.ImageProcessor.numChannels,
 	)
-	if err != nil {
-		return nil, err
-	}
 
 	visionOutputs := m.VisionModel.Forward(ctx, pixelValues)
 	visionOutputs = m.MultiModalProjector.Forward(ctx, visionOutputs, m.imageSize, m.patchSize, m.VisionModel.eps)
@@ -144,15 +141,8 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	positions, err := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
-	if err != nil {
-		return nil, err
-	}
-
-	outputs, err := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
-	if err != nil {
-		return nil, err
-	}
+	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
+	outputs := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
 
 	return m.TextModel.Forward(ctx, batch.Inputs, positions, outputs, batch, m.Cache), nil
 }

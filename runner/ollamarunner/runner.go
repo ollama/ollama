@@ -808,10 +808,7 @@ func (s *Server) reserveWorstCaseGraph() error {
 		batch.Outputs[i] = int32(i)
 	}
 
-	batch.Inputs, err = ctx.Input().FromIntSlice(batchInputs, len(batchInputs))
-	if err != nil {
-		return err
-	}
+	batch.Inputs = ctx.Input().FromIntSlice(batchInputs, len(batchInputs))
 
 	cache := s.model.Config().Cache
 	if cache != nil {
@@ -826,16 +823,12 @@ func (s *Server) reserveWorstCaseGraph() error {
 		return err
 	}
 
-	err = ctx.Forward(t).Reserve()
-	if err != nil {
-		return err
-	}
+	ctx.Forward(t).Reserve()
 
 	return nil
 }
 
-func (s *Server) loadModel(
-	ctx context.Context,
+func (s *Server) initModel(
 	mpath string,
 	params ml.BackendParams,
 	lpath multiLPath,
@@ -843,21 +836,21 @@ func (s *Server) loadModel(
 	kvCacheType string,
 	kvSize int,
 	multiUserCache bool,
-) {
+) error {
 	var err error
-	s.model, err = model.New(ctx, mpath, params)
+	s.model, err = model.New(mpath, params)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	// TODO(jessegross): LoRA loading
 	if lpath.String() != "" {
-		panic("loras are not yet implemented")
+		return errors.New("loras are not yet implemented")
 	}
 
 	s.cache, err = NewInputCache(s.model, kvCacheType, int32(kvSize), parallel, s.batchSize, multiUserCache)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	if !s.cache.enabled && parallel > 1 {
@@ -869,7 +862,30 @@ func (s *Server) loadModel(
 	s.seqs = make([]*Sequence, s.parallel)
 	s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
 
-	err = s.reserveWorstCaseGraph()
+	return s.reserveWorstCaseGraph()
+}
+
+func (s *Server) load(
+	ctx context.Context,
+	mpath string,
+	params ml.BackendParams,
+	lpath multiLPath,
+	parallel int,
+	kvCacheType string,
+	kvSize int,
+	multiUserCache bool,
+) {
+	err := s.initModel(mpath, params, lpath, parallel, kvCacheType, kvSize, multiUserCache)
+	if err != nil {
+		panic(err)
+	}
+
+	slog.Debug("memory", "allocated", s.model.Backend().BackendMemory())
+
+	err = s.model.Backend().Load(ctx,
+		func(progress float32) {
+			s.progress = progress
+		})
 	if err != nil {
 		panic(err)
 	}
@@ -913,9 +929,14 @@ func Execute(args []string) error {
 		status:    llm.ServerStatusLoadingModel,
 	}
 
+	server.cond = sync.NewCond(&server.mu)
+	server.ready.Add(1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// TODO(jessegross): Parameters that need to be implemented:
 	//	no-mmap
-	//	mlock
 
 	var tensorSplitFloats []float32
 	if *tensorSplit != "" {
@@ -928,9 +949,6 @@ func Execute(args []string) error {
 	}
 
 	params := ml.BackendParams{
-		Progress: func(progress float32) {
-			server.progress = progress
-		},
 		NumThreads:     *threads,
 		NumGPULayers:   *numGPULayers,
 		MainGPU:        *mainGPU,
@@ -938,14 +956,7 @@ func Execute(args []string) error {
 		FlashAttention: *flashAttention,
 	}
 
-	server.ready.Add(1)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go server.loadModel(ctx, *mpath, params, lpaths, *parallel, *kvCacheType, *kvSize, *multiUserCache)
-
-	server.cond = sync.NewCond(&server.mu)
-
+	go server.load(ctx, *mpath, params, lpaths, *parallel, *kvCacheType, *kvSize, *multiUserCache)
 	go server.run(ctx)
 
 	addr := "127.0.0.1:" + strconv.Itoa(*port)

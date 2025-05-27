@@ -5,8 +5,8 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"log/slog"
 	"math"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -15,6 +15,11 @@ import (
 )
 
 type Backend interface {
+	Load(ctx context.Context, progress func(float32)) error
+
+	// BackendMemory returns the memory allocations that were made for this model
+	BackendMemory() BackendMemory
+
 	Config() fs.Config
 	Get(name string) Tensor
 	NewContext() Context
@@ -52,10 +57,6 @@ type CacheConfig struct {
 
 // BackendParams controls how the backend loads and executes models
 type BackendParams struct {
-	// Progress is a callback function that allows reporting percentage completion
-	// of model loading
-	Progress func(float32)
-
 	// NumThreads sets the number of threads to use if running on the CPU
 	NumThreads int
 
@@ -72,9 +73,122 @@ type BackendParams struct {
 	FlashAttention bool
 }
 
-var backends = make(map[string]func(context.Context, *os.File, BackendParams) (Backend, error))
+// ErrNoMem is returned when panicing due to insufficient memory. It includes
+// the attempted memory allocation.
+type ErrNoMem struct {
+	BackendMemory
+}
 
-func RegisterBackend(name string, f func(context.Context, *os.File, BackendParams) (Backend, error)) {
+func (e ErrNoMem) Error() string {
+	return fmt.Sprintf("insufficient memory - required allocations: %+v", e.BackendMemory)
+}
+
+type AllocationStatus int
+
+const (
+	// Unallocated memory - have not yet attempted to allocate
+	Unallocated AllocationStatus = iota
+
+	// Failed memory - tried to allocate the memory and did not succeed
+	Failed
+
+	// Allocated memory = tried and succeeded to allocate memory
+	Allocated
+)
+
+// Memory is the size of an allocation and whether it was successful.
+type Memory struct {
+	Size   uint64
+	Status AllocationStatus
+}
+
+func (m Memory) String() string {
+	s := fmt.Sprint(m.Size)
+
+	switch m.Status {
+	case Unallocated:
+		s += "U"
+	case Failed:
+		s += "F"
+	case Allocated:
+		s += "A"
+	}
+
+	return s
+}
+
+// DeviceMemory provides a breakdown of the memory needed
+// per device, such as a CPU or GPU.
+type DeviceMemory struct {
+	// Name is the name of the device as labeled by the backend. It
+	// may not be persistent across instances of the runner.
+	Name string
+
+	// Weights is the per-layer memory needed for the model weights.
+	Weights []Memory
+
+	// Cache is the per-layer memory needed for the KV cache.
+	Cache []Memory
+
+	// Graph is the size of the compute graph. It is not per-layer.
+	Graph Memory
+}
+
+func memoryPresent(mem []Memory) bool {
+	return slices.ContainsFunc(mem, func(m Memory) bool { return m.Size != 0 })
+}
+
+func (m DeviceMemory) LogValue() slog.Value {
+	var attrs []slog.Attr
+	if memoryPresent(m.Weights) {
+		attrs = append(attrs, slog.Any("Weights", m.Weights))
+	}
+
+	if memoryPresent(m.Cache) {
+		attrs = append(attrs, slog.Any("Cache", m.Cache))
+	}
+
+	if m.Graph.Size != 0 {
+		attrs = append(attrs, slog.Any("Graph", m.Graph))
+	}
+
+	return slog.GroupValue(attrs...)
+}
+
+// BackendMemory provides the amount of memory required to load the model
+// per device based on the BackendParams. In some cases, not all required
+// allocations will be known at this point. However, the size of the most recent
+// allocation is guaranteed to be provided so that if it failed, the caller can
+// accommodate that to make forward progress.
+type BackendMemory struct {
+	// InputsWeights are always located on the CPU and cannot be moved
+	InputWeights Memory
+
+	// CPU model components are located in system memory. This does not
+	// include unified memory allocated through the GPU.
+	CPU DeviceMemory
+
+	// GPU model components are located on one or more GPUs.
+	GPUs []DeviceMemory
+}
+
+func (m BackendMemory) LogValue() slog.Value {
+	var attrs []slog.Attr
+	if m.InputWeights.Size != 0 {
+		attrs = append(attrs, slog.Any("InputWeights", m.InputWeights))
+	}
+
+	attrs = append(attrs, slog.Any(m.CPU.Name, m.CPU))
+	for _, g := range m.GPUs {
+		attrs = append(attrs, slog.Any(g.Name, g))
+	}
+
+	return slog.GroupValue(attrs...)
+}
+
+var backends = make(map[string]func(string, BackendParams) (Backend, error))
+
+func RegisterBackend(name string, f func(string, BackendParams) (Backend, error)) {
 	if _, ok := backends[name]; ok {
 		panic("backend: backend already registered")
 	}
@@ -82,9 +196,9 @@ func RegisterBackend(name string, f func(context.Context, *os.File, BackendParam
 	backends[name] = f
 }
 
-func NewBackend(ctx context.Context, f *os.File, params BackendParams) (Backend, error) {
+func NewBackend(modelPath string, params BackendParams) (Backend, error) {
 	if backend, ok := backends["ggml"]; ok {
-		return backend(ctx, f, params)
+		return backend(modelPath, params)
 	}
 
 	return nil, fmt.Errorf("unsupported backend")
@@ -93,8 +207,8 @@ func NewBackend(ctx context.Context, f *os.File, params BackendParams) (Backend,
 type Context interface {
 	Empty(dtype DType, shape ...int) Tensor
 	Zeros(dtype DType, shape ...int) Tensor
-	FromFloatSlice(s []float32, shape ...int) (Tensor, error)
-	FromIntSlice(s []int32, shape ...int) (Tensor, error)
+	FromFloatSlice(s []float32, shape ...int) Tensor
+	FromIntSlice(s []int32, shape ...int) Tensor
 
 	// Arange creates a 1D tensor with values within an interval (start, stop] increased by step.
 	Arange(start, stop, step float32, dtype DType) Tensor
@@ -106,7 +220,7 @@ type Context interface {
 	// graph, simply preallocates memory. Typically called with a
 	// worst case graph to ensure all resources are available for
 	// for future inference.
-	Reserve() error
+	Reserve()
 
 	MaxGraphNodes() int
 	Close()
@@ -117,21 +231,6 @@ type Context interface {
 
 	// Layer returns a context appropriate for creating intermediate tensors
 	Layer(int) Context
-}
-
-// RopeOptions contains optional parameters for RoPE function
-type RopeOptions struct {
-	OriginalContextLen uint32
-}
-
-// RopeOption defines a function that modifies RopeOpts
-type RopeOption func(*RopeOptions)
-
-// WithContextLen sets a custom context length
-func WithContextLen(len uint32) RopeOption {
-	return func(opts *RopeOptions) {
-		opts.OriginalContextLen = len
-	}
 }
 
 type Tensor interface {
@@ -147,6 +246,8 @@ type Tensor interface {
 	Neg(ctx Context) Tensor
 	Add(ctx Context, t2 Tensor) Tensor
 	Mul(ctx Context, t2 Tensor) Tensor
+	Div(ctx Context, t2 Tensor) Tensor
+
 	Mulmat(ctx Context, t2 Tensor) Tensor
 	MulmatFullPrec(ctx Context, t2 Tensor) Tensor
 	MulmatID(ctx Context, t2, ids Tensor) Tensor
@@ -155,11 +256,11 @@ type Tensor interface {
 	LayerNorm(ctx Context, weight, bias Tensor, eps float32) Tensor
 	RMSNorm(ctx Context, weight Tensor, eps float32) Tensor
 	Scale(ctx Context, s float64) Tensor
+	SumRows(ctx Context) Tensor
 
 	AvgPool2D(ctx Context, k, s int, p float32) Tensor
 	Conv2D(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
-	RoPE(ctx Context, positionIDs, ropeFactors Tensor, dim, ropeType uint32, base, scale float32, options ...RopeOption) Tensor
 	IM2Col(ctx Context, weight Tensor, s0, s1, p0, p1, d0, d1 int) Tensor
 
 	Sin(ctx Context) Tensor
