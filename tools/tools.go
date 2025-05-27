@@ -17,15 +17,14 @@ var (
 )
 
 type Parser struct {
-	parseLeadingJSON bool
-	prefix           string
-	prefixFound      bool
-	tmpl             gotmpl.Template
-	sb               strings.Builder
-	index            int
-	name             string
-	arguments        string
-	done             bool
+	greedyParseJSON bool
+	prefix          string
+	prefixFound     bool
+	tmpl            gotmpl.Template
+	sb              strings.Builder
+	index           int
+	name            string
+	arguments       string
 }
 
 // parseJSONToolCalls attempts to parse a JSON string into a slice of ToolCalls.
@@ -176,14 +175,6 @@ func (p *Parser) checkPrefix(s string) (string, error) {
 //   - tools: Any parsed tool calls
 //   - content: Non-tool call content
 func (p *Parser) Add(s string) (tools []api.ToolCall, content string) {
-	if p.done {
-		if p.index == 0 {
-			// Return original string if no tool calls found at start
-			return nil, s
-		}
-		// Return empty if no tool calls found after start
-		return nil, ""
-	}
 	p.sb.WriteString(s)
 	s = p.sb.String()
 
@@ -195,7 +186,7 @@ func (p *Parser) Add(s string) (tools []api.ToolCall, content string) {
 	}
 
 	// Exit if prefix exists in template, greedy parsing is off, and prefix not found
-	if !p.parseLeadingJSON && !p.prefixFound {
+	if !p.greedyParseJSON && !p.prefixFound {
 		p.sb.Reset()
 		return nil, s
 	}
@@ -206,10 +197,9 @@ func (p *Parser) Add(s string) (tools []api.ToolCall, content string) {
 			return nil, ""
 		}
 		p.sb.Reset()
-		// Do not try parsing leading JSON if JSON not found
-		p.parseLeadingJSON = false
-		if p.prefix == "" {
-			p.done = true
+		// Only do greedy JSON parsing if there is no prefix from template
+		if p.prefix != "" {
+			p.greedyParseJSON = false
 		}
 		if p.index != 0 && p.prefix == "" {
 			return nil, ""
@@ -253,11 +243,11 @@ func NewParser(templateToProcess *gotmpl.Template) (*Parser, error) {
 	}
 
 	return &Parser{
-		tmpl:             *tt,
-		sb:               strings.Builder{},
-		prefix:           tp,
-		parseLeadingJSON: true,
-		name:             name,
-		arguments:        arguments,
+		tmpl:            *tt,
+		sb:              strings.Builder{},
+		prefix:          tp,
+		greedyParseJSON: true,
+		name:            name,
+		arguments:       arguments,
 	}, nil
 }
