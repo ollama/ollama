@@ -536,11 +536,18 @@ func TestParseToolCalls(t *testing.T) {
 			expectedTokens:   "",
 		},
 		{
-			name:             "model without prefix in template, prefix in output",
+			name:             "model without prefix in template, prefix in output, multiple tool calls in list",
 			model:            "llama3.2",
 			output:           `<tool_call> [{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}]</tool_call>`,
-			expectedToolCall: []api.ToolCall{},
-			expectedTokens:   `<tool_call> [{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}]</tool_call>`,
+			expectedToolCall: []api.ToolCall{t1, t2},
+			expectedTokens:   `<tool_call>`,
+		},
+		{
+			name:             "model without prefix in template, prefix in output, individual tool calls",
+			model:            "llama3.2",
+			output:           `<tool_call> {"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}`,
+			expectedToolCall: []api.ToolCall{t1, t2},
+			expectedTokens:   `<tool_call>`,
 		},
 		{
 			name:             "model with prefix in template, no prefix in output, tokens before",
@@ -567,15 +574,23 @@ func TestParseToolCalls(t *testing.T) {
 			name:             "model without prefix in template, no prefix in output, tokens before",
 			model:            "llama3.2",
 			output:           `some tokens before [{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}]`,
-			expectedToolCall: []api.ToolCall{},
-			expectedTokens:   `some tokens before [{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}]`,
+			expectedToolCall: []api.ToolCall{t1, t2},
+			expectedTokens:   `some tokens before`,
 		},
 		{
-			name:             "model without prefix in template, prefix in output, tokens after",
+			name:  "model without prefix in template, prefix in output, tokens after",
+			model: "llama3.2",
+			output: `<tool_call> 
+			[{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}]</tool_call> some tokens after`,
+			expectedToolCall: []api.ToolCall{t1, t2},
+			expectedTokens:   `<tool_call>`,
+		},
+		{
+			name:             "model without without prefix, match all jsons",
 			model:            "llama3.2",
-			output:           `<tool_call> [{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}]</tool_call> some tokens after`,
-			expectedToolCall: []api.ToolCall{},
-			expectedTokens:   `<tool_call> [{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}]</tool_call> some tokens after`,
+			output:           `model outputs some text [{"name": "get_current_weather", "parameters": {"format":"fahrenheit","location":"San Francisco, CA"}} {"name": "get_current_weather", "parameters": {"format":"celsius","location":"Toronto, Canada"}}]</tool_call> some tokens after`,
+			expectedToolCall: []api.ToolCall{t1, t2},
+			expectedTokens:   "model outputs some text",
 		},
 	}
 
