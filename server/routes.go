@@ -1514,8 +1514,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	slog.Debug("chat request", "images", len(images), "prompt", prompt)
-
 	var thinkingState *thinkingParser
 	openingTag, closingTag := inferThinkingTags(m.Template.Template)
 	if req.Think != nil && *req.Think && openingTag != "" && closingTag != "" {
