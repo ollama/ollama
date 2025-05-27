@@ -592,6 +592,20 @@ func TestParseToolCalls(t *testing.T) {
 			expectedToolCall: []api.ToolCall{t1, t2},
 			expectedTokens:   "model outputs some text",
 		},
+		{
+			name:             "model flushes tokens if tool call doesn't match",
+			model:            "llama3.2",
+			output:           `{ "user": {"id": 12345, "name": "Alice", "preferences": {"theme": "dark", "notifications": true}, "stats": {"points": 987, "level": 42}}}`,
+			expectedToolCall: []api.ToolCall{},
+			expectedTokens:   `{ "user": {"id": 12345, "name": "Alice", "preferences": {"theme": "dark", "notifications": true}, "stats": {"points": 987, "level": 42}}}`,
+		},
+		{
+			name:             "model flushes tokens if tool call doesn't match array",
+			model:            "llama3.2",
+			output:           `[ { "user": {"id": 12345, "name": "Alice", "preferences": {"theme": "dark", "notifications": true}, "stats": {"points": 987, "level": 42}}}]`,
+			expectedToolCall: []api.ToolCall{},
+			expectedTokens:   `[ { "user": {"id": 12345, "name": "Alice", "preferences": {"theme": "dark", "notifications": true}, "stats": {"points": 987, "level": 42}}}]`,
+		},
 	}
 
 	var tools []api.Tool
