@@ -137,11 +137,6 @@ func parseJSONToolCalls(s string, name, arguments string, prefix string) ([]api.
 //   - The processed string with prefix removed if found
 //   - error: ErrAccumulateMore if prefix is incomplete, or nil if successful
 func (p *Parser) checkPrefix(s string) (string, error) {
-	original := s
-	if strings.ContainsRune(s, '\n') {
-		s = strings.ReplaceAll(s, "\n", " ")
-	}
-
 	if s == "" || p.prefix == "" {
 		return s, nil
 	}
@@ -158,7 +153,7 @@ func (p *Parser) checkPrefix(s string) (string, error) {
 		// Return everything except overlapping portion
 		p.sb.Reset()
 		p.sb.WriteString(s[idx:])
-		return original[:idx], errAccumulateMore
+		return s[:idx], errAccumulateMore
 	}
 
 	// Check if prefix appears in middle of string
@@ -167,7 +162,7 @@ func (p *Parser) checkPrefix(s string) (string, error) {
 		p.sb.Reset()
 		p.sb.WriteString(strings.TrimSpace(s[idx:]))
 		// Return everything before prefix
-		return original[:idx], errAccumulateMore
+		return s[:idx], errAccumulateMore
 	}
 
 	// No partial prefix found
@@ -181,9 +176,6 @@ func (p *Parser) checkPrefix(s string) (string, error) {
 //   - tools: Any parsed tool calls
 //   - content: Non-tool call content
 func (p *Parser) Add(s string) (tools []api.ToolCall, content string) {
-	if strings.TrimSpace(s) == "" {
-		return nil, s
-	}
 	if p.done {
 		if p.index == 0 {
 			// Return original string if no tool calls found at start
