@@ -198,7 +198,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			opts.Model = args[1]
 			opts.Messages = []api.Message{}
 			fmt.Printf("Loading model '%s'\n", opts.Model)
-			err, opts.Think = inferThinkingOption(nil, &opts, thinkExplicitlySet)
+			opts.Think, err = inferThinkingOption(nil, &opts, thinkExplicitlySet)
 			if err != nil {
 				return err
 			}

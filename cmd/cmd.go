@@ -399,7 +399,7 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	err, opts.Think = inferThinkingOption(&info.Capabilities, &opts, thinkFlag.Changed)
+	opts.Think, err = inferThinkingOption(&info.Capabilities, &opts, thinkFlag.Changed)
 	if err != nil {
 		return err
 	}
@@ -1603,21 +1603,21 @@ func NewCLI() *cobra.Command {
 // to false).
 //
 // If capabilities are not provided, we fetch them from the server.
-func inferThinkingOption(caps *[]model.Capability, runOpts *runOptions, explicitlySetByUser bool) (error, *bool) {
+func inferThinkingOption(caps *[]model.Capability, runOpts *runOptions, explicitlySetByUser bool) (*bool, error) {
 	if explicitlySetByUser {
-		return nil, runOpts.Think
+		return runOpts.Think, nil
 	}
 
 	if caps == nil {
 		client, err := api.ClientFromEnvironment()
 		if err != nil {
-			return err, nil
+			return nil, err
 		}
 		ret, err := client.Show(context.Background(), &api.ShowRequest{
 			Model: runOpts.Model,
 		})
 		if err != nil {
-			return err, nil
+			return nil, err
 		}
 		caps = &ret.Capabilities
 	}
@@ -1631,7 +1631,7 @@ func inferThinkingOption(caps *[]model.Capability, runOpts *runOptions, explicit
 
 	if thinkingSupported {
 		thinking := true
-		return nil, &thinking
+		return &thinking, nil
 	}
 
 	return nil, nil
