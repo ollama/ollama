@@ -167,10 +167,10 @@ COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
 
 FROM scratch AS archive-cann-atlas-a2
-COPY --from=cann-build dist/lib/ollama/cann /lib/ollama/cann/atlas_a2
+COPY --from=cann-build dist/lib/ollama/cann /lib/ollama/cann_atlas_a2
 
 FROM scratch AS archive-cann-300i-duo
-COPY --from=cann-build dist/lib/ollama/cann /lib/ollama/cann/300i_duo
+COPY --from=cann-build dist/lib/ollama/cann /lib/ollama/cann_300i_duo
 
 FROM quay.io/ascend/cann:${ASCEND_VERSION} AS cann
 COPY --from=archive-cann /lib/ollama /usr/lib/ollama

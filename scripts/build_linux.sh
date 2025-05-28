@@ -63,18 +63,17 @@ if echo $PLATFORM | grep "," > /dev/null ; then
         tar c -C ./dist/linux_arm64 --exclude cuda_jetpack5 --exclude cuda_jetpack6 . | pigz -9vc >./dist/ollama-linux-arm64.tgz
         tar c -C ./dist/linux_arm64 ./lib/ollama/cuda_jetpack5  | pigz -9vc >./dist/ollama-linux-arm64-jetpack5.tgz
         tar c -C ./dist/linux_arm64 ./lib/ollama/cuda_jetpack6  | pigz -9vc >./dist/ollama-linux-arm64-jetpack6.tgz
-        tar c -C ./dist ./lib/ollama/cann/atlas_a2 | pigz -9vc >./dist/ollama-linux-arm64-cann-atlas-a2.tgz
-        tar c -C ./dist ./lib/ollama/cann/300i_duo | pigz -9vc >./dist/ollama-linux-arm64-cann-300i-duo.tgz
+        tar c -C ./dist ./lib/ollama/cann_atlas_a2 | pigz -9vc >./dist/ollama-linux-arm64-cann-atlas-a2.tgz
+        tar c -C ./dist ./lib/ollama/cann_300i_duo | pigz -9vc >./dist/ollama-linux-arm64-cann-300i-duo.tgz
         tar c -C ./dist/linux_amd64 --exclude rocm . | pigz -9vc >./dist/ollama-linux-amd64.tgz
         tar c -C ./dist/linux_amd64 ./lib/ollama/rocm  | pigz -9vc >./dist/ollama-linux-amd64-rocm.tgz
 elif echo $PLATFORM | grep "arm64" > /dev/null ; then
         tar c -C ./dist/ --exclude cuda_jetpack5 --exclude cuda_jetpack6 bin lib | pigz -9vc >./dist/ollama-linux-arm64.tgz
         tar c -C ./dist/ ./lib/ollama/cuda_jetpack5  | pigz -9vc >./dist/ollama-linux-arm64-jetpack5.tgz
         tar c -C ./dist/ ./lib/ollama/cuda_jetpack6  | pigz -9vc >./dist/ollama-linux-arm64-jetpack6.tgz
-        tar c -C ./dist ./lib/ollama/cann/atlas_a2 | pigz -9vc >./dist/ollama-linux-arm64-cann-atlas-a2.tgz
-        tar c -C ./dist ./lib/ollama/cann/300i_duo | pigz -9vc >./dist/ollama-linux-arm64-cann-300i-duo.tgz
+        tar c -C ./dist ./lib/ollama/cann_atlas_a2 | pigz -9vc >./dist/ollama-linux-arm64-cann-atlas-a2.tgz
+        tar c -C ./dist ./lib/ollama/cann_300i_duo | pigz -9vc >./dist/ollama-linux-arm64-cann-300i-duo.tgz
 elif echo $PLATFORM | grep "amd64" > /dev/null ; then
         tar c -C ./dist/ --exclude rocm bin lib | pigz -9vc >./dist/ollama-linux-amd64.tgz
         tar c -C ./dist/ ./lib/ollama/rocm  | pigz -9vc >./dist/ollama-linux-amd64-rocm.tgz
-        tar c -C ./dist/ ./lib/ollama/cann  | pigz -9vc >./dist/ollama-linux-amd64-cann.tgz
 fi

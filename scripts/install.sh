@@ -294,6 +294,20 @@ install_ascend_cann() {
     rm -rf ./Ascend-cann-kernels-$1_${ASCEND_CANN_VERSION}_linux.run
 }
 
+install_ggml_cann() {
+    status 'Installing ggml-cann: soc type=$1'
+    local package_name
+    case $1 in
+        910b) package_name="ollama-linux-${ARCH}-cann-atlas-a2" ;;
+        310p) package_name="ollama-linux-${ARCH}-cann-300i-duo" ;;
+        *) exit ;;
+    esac
+    status "Downloading ${package_name} components"
+    curl --fail --show-error --location --progress-bar \
+        "https://ollama.com/download/${package_name}.tgz${VER_PARAM}" | \
+        $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+}
+
 # use env val: ASCEND_DRIVER_VERSION ASCEND_FIRMWARE_VERSIO and ASCEND_CANN_VERSION to get version 
 # ref:https://ascend.github.io/docs/sources/ascend/quick_install.html
 if check_gpu lspci ascend || check_gpu lshw ascend; then
@@ -342,6 +356,8 @@ if check_gpu lspci ascend || check_gpu lshw ascend; then
     install_ascend_cann $type
     echo "source ~/Ascend/ascend-toolkit/set_env.sh" >> ~/.bashrc
     source ~/.bashrc
+
+    install_ggml_cann $type
 fi
 
 # NVIDIA
