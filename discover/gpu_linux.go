@@ -47,11 +47,16 @@ var OneapiGlobs = []string{
 	"/usr/lib*/libze_intel_gpu.so*",
 }
 
+var SyclGlobs = []string{
+	"TODO: Add SYCL library paths here",
+}
+
 var (
 	CudartMgmtName = "libcudart.so*"
 	NvcudaMgmtName = "libcuda.so*"
 	NvmlMgmtName   = "" // not currently wired on linux
 	OneapiMgmtName = "libze_intel_gpu.so*"
+	SyclMgmtName   = "libsycl.so*" // Assuming a common SYCL library name, adjust if needed
 )
 
 func GetCPUMem() (memInfo, error) {
