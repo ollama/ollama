@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -893,11 +894,26 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	parallel, err := cmd.Flags().GetBool("parallel")
+	if err != nil {
+		return err
+	}
+
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
 	}
 
+	if parallel {
+		// Parallel downloads
+		return pullModelsParallel(cmd, client, args, insecure)
+	} else {
+		// Sequential downloads (existing behavior)
+		return pullModelsSequential(cmd, client, args, insecure)
+	}
+}
+
+func pullModelsSequential(cmd *cobra.Command, client *api.Client, args []string, insecure bool) error {
 	// Process each model sequentially
 	for i, modelName := range args {
 		if i > 0 {
@@ -975,6 +991,111 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		fmt.Printf("success\n")
 	}
 
+	return nil
+}
+
+func pullModelsParallel(cmd *cobra.Command, client *api.Client, args []string, insecure bool) error {
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	errChan := make(chan error, len(args))
+	
+	fmt.Printf("pulling %d models in parallel...\n", len(args))
+	
+	// Create a single shared progress instance for all models
+	p := progress.NewProgress(os.Stderr)
+	defer p.Stop()
+	
+	// Start a goroutine for each model
+	for _, modelName := range args {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			
+			bars := make(map[string]*progress.Bar)
+			var status string
+			var spinner *progress.Spinner
+			
+			fn := func(resp api.ProgressResponse) error {
+				// Lock to prevent progress output collision
+				mu.Lock()
+				defer mu.Unlock()
+				
+				if resp.Digest != "" {
+					if resp.Completed == 0 {
+						return nil
+					}
+
+					if spinner != nil {
+						spinner.Stop()
+						spinner = nil
+					}
+
+					// Use model name + digest as unique key to avoid conflicts
+					barKey := fmt.Sprintf("%s-%s", name, resp.Digest)
+					bar, ok := bars[resp.Digest]
+					if !ok {
+						digestName, isDigest := strings.CutPrefix(resp.Digest, "sha256:")
+						digestName = strings.TrimSpace(digestName)
+						if isDigest {
+							digestName = digestName[:min(12, len(digestName))]
+						}
+						bar = progress.NewBar(fmt.Sprintf("[%s] pulling %s:", name, digestName), resp.Total, resp.Completed)
+						bars[resp.Digest] = bar
+						p.Add(barKey, bar)
+					}
+
+					bar.Set(resp.Completed)
+				} else if status != resp.Status {
+					if spinner != nil {
+						spinner.Stop()
+					}
+
+					status = resp.Status
+					spinnerKey := fmt.Sprintf("%s-status", name)
+					spinner = progress.NewSpinner(fmt.Sprintf("[%s] %s", name, status))
+					p.Add(spinnerKey, spinner)
+				}
+
+				return nil
+			}
+			
+			mu.Lock()
+			fmt.Printf("starting download: %s\n", name)
+			mu.Unlock()
+			
+			request := api.PullRequest{Name: name, Insecure: insecure}
+			err := client.Pull(cmd.Context(), &request, fn)
+			
+			if err != nil {
+				errChan <- fmt.Errorf("failed to pull %s: %w", name, err)
+				return
+			}
+			
+			mu.Lock()
+			fmt.Printf("completed: %s\n", name)
+			mu.Unlock()
+		}(modelName)
+	}
+	
+	// Wait for all downloads to complete
+	wg.Wait()
+	close(errChan)
+	
+	// Check for errors
+	var errors []error
+	for err := range errChan {
+		errors = append(errors, err)
+	}
+	
+	if len(errors) > 0 {
+		fmt.Printf("\nErrors occurred during parallel downloads:\n")
+		for _, err := range errors {
+			fmt.Printf("  - %v\n", err)
+		}
+		return fmt.Errorf("%d model(s) failed to download", len(errors))
+	}
+	
+	fmt.Printf("\nAll models downloaded successfully!\n")
 	return nil
 }
 
@@ -1497,6 +1618,7 @@ func NewCLI() *cobra.Command {
 	}
 
 	pullCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	pullCmd.Flags().Bool("parallel", false, "Download models in parallel")
 
 	pushCmd := &cobra.Command{
 		Use:     "push MODEL",
