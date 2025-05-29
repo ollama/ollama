@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -98,6 +99,7 @@ func isToolCallsNode(n *parse.IfNode) bool {
 
 func toolPrefix(tmpl *gotmpl.Template) string {
 	tokenText, ok := extractToolCallsFormat(tmpl)
+	fmt.Println("tokenText", tokenText)
 	if !ok {
 		return ""
 	}

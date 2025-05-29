@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	gotmpl "text/template"
@@ -15,6 +16,11 @@ var (
 	errInvalidToolCall = errors.New("invalid tool call format")
 	errAccumulateMore  = errors.New("need to accumulate more content")
 )
+
+type ToolParser interface {
+	Add(s string) (tools []api.ToolCall, content string)
+	NewParser(templateToProcess *gotmpl.Template) (ToolParser, error)
+}
 
 type Parser struct {
 	greedyParseJSON bool
@@ -104,6 +110,9 @@ func parseJSONToolCalls(s string, name, arguments string, prefix string) ([]api.
 			continue
 		}
 
+		fmt.Println("name", name)
+		fmt.Println("arguments", arguments)
+		fmt.Println("parseJSONToolCalls: Objects:", objs)
 		// Extract tool calls from objects
 		for _, kv := range objs {
 			n, nok := kv[name].(string)
@@ -123,7 +132,6 @@ func parseJSONToolCalls(s string, name, arguments string, prefix string) ([]api.
 
 	// Valid JSON, no tool calls found
 	if len(toolCalls) == 0 {
-		slog.Debug("No valid tool calls found in any raw tool calls.", "rawToolCalls", rawToolCalls)
 		return nil, errInvalidToolCall
 	}
 
@@ -177,6 +185,7 @@ func (p *Parser) checkPrefix(s string) (string, error) {
 func (p *Parser) Add(s string) (tools []api.ToolCall, content string) {
 	p.sb.WriteString(s)
 	s = p.sb.String()
+	fmt.Println("Add: Starting with input:", s)
 
 	// Check for prefix pattern in input
 	s, err := p.checkPrefix(s)
@@ -225,23 +234,37 @@ func (p *Parser) Add(s string) (tools []api.ToolCall, content string) {
 //
 // Returns an error if the template does not contain valid tool call formatting.
 func NewParser(templateToProcess *gotmpl.Template) (*Parser, error) {
+	fmt.Println("Checkpoint 1: Starting NewParser")
 	parsed, err := template.Parse(templateToProcess.Root.String())
 	if err != nil {
+		fmt.Println("Checkpoint 2: Error parsing template:", err)
 		return nil, err
 	}
 
+	fmt.Println("Checkpoint 3: Getting tool template")
 	tt, err := toolTemplate(parsed)
+	fmt.Println("Checkpoint 4: Tool template:", tt.Root.String())
 	if err != nil {
+		fmt.Println("Checkpoint 5: Error getting tool template:", err)
 		return nil, err
 	}
 
+	fmt.Println("Checkpoint 6: Getting tool prefix")
 	tp := toolPrefix(templateToProcess)
+	fmt.Println("Checkpoint 7: Tool prefix:", tp)
 
+	fmt.Println("Checkpoint 8: Extracting tool args")
 	name, arguments, err := extractToolArgs(tt)
 	if err != nil {
+		fmt.Println("Checkpoint 9: Error extracting tool args:", err)
 		return nil, err
 	}
+	// name := "temp1"
+	// args := "temp2"
 
+	fmt.Println("Checkpoint 10: Tool name:", name, "arguments:", arguments)
+
+	fmt.Println("Checkpoint 11: Creating parser")
 	return &Parser{
 		tmpl:            *tt,
 		sb:              strings.Builder{},
@@ -250,4 +273,9 @@ func NewParser(templateToProcess *gotmpl.Template) (*Parser, error) {
 		name:            name,
 		arguments:       arguments,
 	}, nil
+}
+
+// NewParser implements the ToolParser interface
+func (p *Parser) NewParser(templateToProcess *gotmpl.Template) (ToolParser, error) {
+	return NewParser(templateToProcess)
 }

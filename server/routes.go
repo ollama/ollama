@@ -1523,8 +1523,20 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		}
 	}
 
-	var toolParser *tools.Parser
-	if len(req.Tools) > 0 {
+	var toolParser tools.ToolParser
+
+	fmt.Println("m.Config.ModelFamily", m.Config.ModelFamily)
+	if m.Config.ModelFamily == "qwen" {
+		slog.Info("using deepseek tool parser")
+		fmt.Println("m.Template.Template", m.Template.Template)
+		toolParser, err = tools.NewDeepSeekToolParser(m.Template.Template)
+		if err != nil {
+			slog.Error("failed to create tool parser", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	} else if len(req.Tools) > 0 {
+		slog.Info("using default tool parser")
 		toolParser, err = tools.NewParser(m.Template.Template)
 		if err != nil {
 			slog.Error("failed to create tool parser", "error", err)
