@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"hash/maphash"
 	"log/slog"
 	"math"
 	"slices"
@@ -58,19 +59,72 @@ type CacheConfig struct {
 	MaskBatchPadding int
 }
 
+// GPULayers is a set of layers to be allocated on a single GPU
+type GPULayers struct {
+	// ID is the identifier of the GPU, as reported in DeviceMemory
+	ID string
+
+	// Layers is a set of layer indicies to load
+	Layers []int
+}
+
+func (g GPULayers) String() string {
+	if len(g.Layers) == 0 {
+		return ""
+	}
+
+	slices.Sort(g.Layers)
+
+	contiguous := true
+	base := g.Layers[0]
+	for i := range g.Layers {
+		if g.Layers[i] != base+i {
+			contiguous = false
+			break
+		}
+	}
+
+	if contiguous {
+		return fmt.Sprintf("ID:%v Layers:%v(%v..%v)", g.ID, len(g.Layers), g.Layers[0], g.Layers[len(g.Layers)-1])
+	} else {
+		return fmt.Sprintf("ID:%v Layers:%v%v", g.ID, len(g.Layers), g.Layers)
+	}
+}
+
+// GPULayersList is a set of layer allocations across multiple GPUs
+type GPULayersList []GPULayers
+
+func (l GPULayersList) Sum() int {
+	var sum int
+
+	for _, g := range l {
+		sum += len(g.Layers)
+	}
+
+	return sum
+}
+
+var h maphash.Hash
+
+func (l GPULayersList) Hash() uint64 {
+	h.Reset()
+	for _, g := range l {
+		h.WriteString(g.ID)
+		for _, l := range g.Layers {
+			binary.Write(&h, binary.NativeEndian, int64(l))
+		}
+	}
+
+	return h.Sum64()
+}
+
 // BackendParams controls how the backend loads and executes models
 type BackendParams struct {
 	// NumThreads sets the number of threads to use if running on the CPU
 	NumThreads int
 
-	// MainGPU is the index of the primary GPU to use
-	MainGPU int
-
-	// NumGPULayers is the number of layers to offload to GPUs
-	NumGPULayers int
-
-	// TensorSplit is the fraction of the model to offload to each GPU
-	TensorSplit []float32
+	// GPULayers is the set of layers to offload to GPUs
+	GPULayers GPULayersList
 
 	// FlashAttention indicates that we should use a fused flash attention kernel
 	FlashAttention bool
@@ -139,6 +193,26 @@ type DeviceMemory struct {
 
 	// Graph is the size of the compute graph. It is not per-layer.
 	Graph Memory
+}
+
+func (m DeviceMemory) SumAllocated() uint64 {
+	var mem uint64
+
+	for _, w := range m.Weights {
+		if w.Status == Allocated {
+			mem += w.Size
+		}
+	}
+	for _, c := range m.Cache {
+		if c.Status == Allocated {
+			mem += c.Size
+		}
+	}
+	if m.Graph.Status == Allocated {
+		mem += m.Graph.Size
+	}
+
+	return mem
 }
 
 func memoryPresent(mem []Memory) bool {
