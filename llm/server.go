@@ -10,12 +10,14 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"math"
 	"math/rand"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"strconv"
@@ -32,6 +34,7 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/llama"
 	"github.com/ollama/ollama/logutil"
+	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model"
 )
 
@@ -103,6 +106,8 @@ type llmServer struct {
 	loadProgress float32
 
 	sem *semaphore.Weighted
+
+	mem ml.BackendMemory
 }
 
 // LoadModel will load a model from disk. The model must be in the GGML format.
@@ -167,7 +172,8 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 
 	slog.Info("offload", "", estimate)
 
-	params := []string{
+	var params []string
+	/*params := []string{
 		"--model", modelPath,
 		"--ctx-size", strconv.Itoa(opts.NumCtx),
 		"--batch-size", strconv.Itoa(opts.NumBatch),
@@ -252,7 +258,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 
 	if envconfig.MultiUserCache() {
 		params = append(params, "--multiuser-cache")
-	}
+	}*/
 
 	libs := make(map[string]string)
 	if entries, err := os.ReadDir(discover.LibOllamaPath); err == nil {
@@ -399,20 +405,20 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		for _, gpu := range gpus {
 			envWorkarounds = append(envWorkarounds, gpu.EnvWorkarounds...)
 		}
-		visibleDevicesEnv, visibleDevicesEnvVal := gpus.GetVisibleDevicesEnv()
+		//visibleDevicesEnv, visibleDevicesEnvVal := gpus.GetVisibleDevicesEnv()
 		pathEnvVal := strings.Join(libraryPaths, string(filepath.ListSeparator))
 
 		// Update or add the path and visible devices variable with our adjusted version
 		pathNeeded := true
-		devicesNeeded := visibleDevicesEnv != ""
+		//devicesNeeded := visibleDevicesEnv != ""
 		for i := range s.cmd.Env {
 			cmp := strings.SplitN(s.cmd.Env[i], "=", 2)
 			if strings.EqualFold(cmp[0], pathEnv) {
 				s.cmd.Env[i] = pathEnv + "=" + pathEnvVal
 				pathNeeded = false
-			} else if devicesNeeded && strings.EqualFold(cmp[0], visibleDevicesEnv) {
-				s.cmd.Env[i] = visibleDevicesEnv + "=" + visibleDevicesEnvVal
-				devicesNeeded = false
+				//} else if devicesNeeded && strings.EqualFold(cmp[0], visibleDevicesEnv) {
+				//	s.cmd.Env[i] = visibleDevicesEnv + "=" + visibleDevicesEnvVal
+				//	devicesNeeded = false
 			} else if len(envWorkarounds) != 0 {
 				for _, kv := range envWorkarounds {
 					if strings.EqualFold(cmp[0], kv[0]) {
@@ -424,9 +430,9 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		if pathNeeded {
 			s.cmd.Env = append(s.cmd.Env, pathEnv+"="+pathEnvVal)
 		}
-		if devicesNeeded {
+		/*if devicesNeeded {
 			s.cmd.Env = append(s.cmd.Env, visibleDevicesEnv+"="+visibleDevicesEnvVal)
-		}
+		}*/
 
 		slog.Info("starting llama server", "cmd", s.cmd)
 		slog.Debug("subprocess", "", filteredEnv(s.cmd.Env))
@@ -449,6 +455,13 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			continue
 		}
 
+		err := s.setMemory(adapters)
+		if err != nil {
+			s.cmd.Process.Kill()
+			s.cmd.Wait()
+			return nil, err
+		}
+
 		// reap subprocess when it exits
 		go func() {
 			err := s.cmd.Wait()
@@ -466,6 +479,227 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 
 		return s, nil
 	}
+}
+
+func (s *llmServer) setMemory(adapters []string) error {
+	for {
+		_, err := s.getServerStatus(context.TODO())
+		if err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	defaultThreads := discover.GetSystemInfo().GetOptimalThreadCount()
+	var threads int
+	if s.options.NumThread > 0 {
+		threads = s.options.NumThread
+	} else if defaultThreads > 0 {
+		threads = defaultThreads
+	}
+
+	req := LoadRequest{ModelPath: s.modelPath, LoraPath: adapters, KvSize: s.options.NumCtx, BatchSize: s.options.NumBatch,
+		NumThreads: threads, Parallel: s.numParallel, FlashAttention: envconfig.FlashAttention()}
+
+	req = s.fitGPU(nil, req)
+
+	for {
+		resp, err := s.initModel(req, false)
+		if err != nil {
+			return err
+		}
+
+		slog.Debug("memory", "required", resp.Memory)
+
+		newReq := s.fitGPU(&resp.Memory, req)
+
+		if reflect.DeepEqual(req, newReq) {
+			// TODO: We should react to this somehow since the free VRAM may not be 100% accurate (either it changed
+			// or between query and allocation or the driver reports the wrong value)
+			if !resp.Succeeded {
+				return errors.New("memory layout cannot be allocated")
+			}
+			s.mem = resp.Memory
+			break
+		}
+
+		req = newReq
+	}
+
+	_, err := s.initModel(req, true)
+
+	return err
+}
+
+func fit(layers []uint64, gpuFreeSpace []uint64, capacity float32) (numGPU int, gpuLayers []float32) {
+	gpuLayers = make([]float32, len(gpuFreeSpace))
+	device := len(gpuFreeSpace) - 1
+	freeSpace := float32(gpuFreeSpace[device]) * capacity
+	for i := len(layers) - 1; i >= 0; i-- {
+		for {
+			if float32(layers[i]) <= freeSpace {
+				gpuLayers[device]++
+				freeSpace -= float32(layers[i])
+				break
+			}
+
+			device--
+			if device < 0 {
+				goto out
+			}
+			freeSpace = float32(gpuFreeSpace[device]) * capacity
+		}
+	}
+
+out:
+	for _, l := range gpuLayers {
+		numGPU += int(l)
+	}
+
+	return numGPU, gpuLayers
+}
+
+func distributeGPU(layers []uint64, gpuFreeSpace []uint64) (numGPU int, gpuLayers []float32) {
+	var high float32 = 1
+	var low float32 = 0
+
+	maxNumGPU, bestAssignemnts := fit(layers, gpuFreeSpace, high)
+	if maxNumGPU == 0 {
+		return maxNumGPU, bestAssignemnts
+	}
+
+	for high-low > 1e-6 {
+		mid := (low + high) / 2
+		numGPU, assignemnts := fit(layers, gpuFreeSpace, mid)
+		if numGPU == maxNumGPU {
+			high = mid
+			bestAssignemnts = assignemnts
+		} else {
+			low = mid
+		}
+	}
+
+	return maxNumGPU, bestAssignemnts
+}
+
+func (s *llmServer) fitGPU(memory *ml.BackendMemory, req LoadRequest) LoadRequest {
+	// TODO: We need to ensure that we have a stable output and not cycling between a few states without converging
+
+	fullOffload := req
+	fullOffload.NumGPULayers = math.MaxInt
+	fullOffload.TensorSplit = []float32{1}
+
+	if memory == nil || len(memory.CPU.Weights) == 0 {
+		return fullOffload
+	}
+
+	layers := make([]uint64, len(memory.CPU.Weights))
+	var maxGpuGraph uint64
+	for i := range layers {
+		for j := range memory.GPUs {
+			layers[i] += memory.GPUs[j].Weights[i].Size
+			layers[i] += memory.GPUs[j].Cache[i].Size
+			maxGpuGraph = max(maxGpuGraph, memory.GPUs[j].Graph.Size)
+		}
+		layers[i] += memory.CPU.Weights[i].Size
+		layers[i] += memory.CPU.Cache[i].Size
+	}
+
+	// TODO: Sort GPUs by free memory
+	gpuFreeSpace := make([]uint64, len(memory.GPUs))
+	for i := range gpuFreeSpace {
+		gpuGraph := memory.GPUs[i].Graph.Size
+		if gpuGraph == 0 {
+			gpuGraph = maxGpuGraph
+		}
+
+		var freeMemory uint64
+		var totalMemory uint64
+		for _, g := range discover.GetGPUInfo() {
+			if g.ID == memory.GPUs[i].UUID {
+				freeMemory = g.FreeMemory
+				totalMemory = g.TotalMemory
+			}
+		}
+
+		gpuFreeSpace[i] = freeMemory - uint64(float32(totalMemory)*0.05) - gpuGraph
+
+		for j := range memory.GPUs[i].Weights {
+			if memory.GPUs[i].Weights[j].Status == ml.Allocated {
+				gpuFreeSpace[i] += memory.GPUs[i].Weights[j].Size
+			}
+			if memory.GPUs[i].Cache[j].Status == ml.Allocated {
+				gpuFreeSpace[i] += memory.GPUs[i].Cache[j].Size
+			}
+		}
+
+		slog.Info("gpu", "id", memory.GPUs[i].UUID, "freeMemory", freeMemory, "totalMemory", totalMemory)
+	}
+
+	var numGPU int
+	var gpuLayers []float32
+	for i := range gpuFreeSpace {
+		// Try to pack things into as few GPUs as possible
+		numGPU, gpuLayers = distributeGPU(layers, gpuFreeSpace[:i+1])
+		if numGPU == len(layers) {
+			break
+		}
+	}
+	if numGPU < len(layers) {
+		// If we can't fit everything then prefer offloading layers other than the output layer
+		numGPU, gpuLayers = distributeGPU(layers[:len(layers)-1], gpuFreeSpace)
+	}
+
+	if len(layers) == int(gpuLayers[0]) {
+		return fullOffload
+	}
+
+	result := req
+	result.NumGPULayers = numGPU
+	result.TensorSplit = gpuLayers
+	return result
+}
+
+func (s *llmServer) initModel(req LoadRequest, commit bool) (*LoadResponse, error) {
+	req.Commit = commit
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling load data: %w", err)
+	}
+
+	r, err := http.NewRequestWithContext(context.TODO(), http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/load", s.port), bytes.NewBuffer(data))
+	if err != nil {
+		return nil, fmt.Errorf("error creating load request: %w", err)
+	}
+	r.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(r)
+	if err != nil {
+		return nil, fmt.Errorf("do load request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if commit {
+		return nil, nil
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read load request: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		log.Printf("llm load error: %s", body)
+		return nil, fmt.Errorf("%s", body)
+	}
+
+	var llmResp LoadResponse
+	if err := json.Unmarshal(body, &llmResp); err != nil {
+		return nil, fmt.Errorf("health unmarshal load response: %w", err)
+	}
+
+	return &llmResp, nil
 }
 
 type ServerStatus int
@@ -690,6 +924,28 @@ type CompletionRequest struct {
 	Options *api.Options
 
 	Grammar string // set before sending the request to the subprocess
+}
+
+type LoadRequest struct {
+	Commit bool
+
+	ModelPath      string
+	LoraPath       []string
+	Parallel       int
+	BatchSize      int
+	NumGPULayers   int
+	MainGPU        int
+	FlashAttention bool
+	KvSize         int
+	KvCacheType    string
+	NumThreads     int
+	TensorSplit    []float32
+	MultiUserCache bool
+}
+
+type LoadResponse struct {
+	Succeeded bool
+	Memory    ml.BackendMemory
 }
 
 // DoneReason represents the reason why a completion response is done
@@ -1038,20 +1294,44 @@ func (s *llmServer) Close() error {
 }
 
 func (s *llmServer) EstimatedVRAM() uint64 {
-	return s.estimate.VRAMSize
+	var mem uint64
+
+	for _, g := range s.mem.GPUs {
+		for i := range g.Weights {
+			mem += g.Weights[i].Size
+			mem += g.Cache[i].Size
+		}
+		mem += g.Graph.Size
+	}
+
+	return mem
 }
 
 func (s *llmServer) EstimatedTotal() uint64 {
-	return s.estimate.TotalSize
+	mem := s.EstimatedVRAM()
+
+	mem += s.mem.InputWeights.Size
+	for i := range s.mem.CPU.Weights {
+		mem += s.mem.CPU.Weights[i].Size
+		mem += s.mem.CPU.Weights[i].Size
+	}
+	mem += s.mem.CPU.Graph.Size
+
+	return mem
 }
 
 func (s *llmServer) EstimatedVRAMByGPU(gpuID string) uint64 {
-	for i, gpu := range s.gpus {
-		if gpu.ID == gpuID {
-			if i < len(s.estimate.GPUSizes) {
-				return s.estimate.GPUSizes[i]
+	var mem uint64
+
+	for _, g := range s.mem.GPUs {
+		if g.UUID == gpuID {
+			for i := range g.Weights {
+				mem += g.Weights[i].Size
+				mem += g.Cache[i].Size
 			}
+			mem += g.Graph.Size
 		}
 	}
-	return 0
+
+	return mem
 }
