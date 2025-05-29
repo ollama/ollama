@@ -69,7 +69,7 @@ func NewLayerFromLayer(digest, mediatype, from string) (Layer, error) {
 		return Layer{}, errors.New("creating new layer from layer with empty digest")
 	}
 
-	blob, err := GetBlobsPath(digest)
+	blob, err := FindBlobPath(digest)
 	if err != nil {
 		return Layer{}, err
 	}
@@ -93,7 +93,7 @@ func (l *Layer) Open() (io.ReadSeekCloser, error) {
 		return nil, errors.New("opening layer with empty digest")
 	}
 
-	blob, err := GetBlobsPath(l.Digest)
+	blob, err := FindBlobPath(l.Digest)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +121,8 @@ func (l *Layer) Remove() error {
 		}
 	}
 
-	blob, err := GetBlobsPath(l.Digest)
+	// Try to find and remove the blob from any location
+	blob, err := FindBlobPath(l.Digest)
 	if err != nil {
 		return err
 	}

@@ -332,7 +332,7 @@ func GetModel(name string) (*Model, error) {
 	}
 
 	if manifest.Config.Digest != "" {
-		filename, err := GetBlobsPath(manifest.Config.Digest)
+		filename, err := FindBlobPath(manifest.Config.Digest)
 		if err != nil {
 			return nil, err
 		}
@@ -349,7 +349,7 @@ func GetModel(name string) (*Model, error) {
 	}
 
 	for _, layer := range manifest.Layers {
-		filename, err := GetBlobsPath(layer.Digest)
+		filename, err := FindBlobPath(layer.Digest)
 		if err != nil {
 			return nil, err
 		}
