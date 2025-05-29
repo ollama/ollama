@@ -480,6 +480,8 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, error) {
 }
 
 func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType string) (kv []uint64, partialOffload, fullOffload uint64) {
+	context *= uint64(numParallel)
+
 	embedding := f.KV().EmbeddingLength()
 	heads := f.KV().HeadCountMax()
 	headsKV := f.KV().HeadCountKVMax()
