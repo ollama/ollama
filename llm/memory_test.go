@@ -114,7 +114,7 @@ func TestEstimateGPULayers(t *testing.T) {
 			gpus[1].FreeMemory += max(graphFullOffload, graphPartialOffload)
 			estimate := EstimateGPULayers(gpus, ggml, projectors, opts, 1)
 			assert.Equal(t, int(s.expect0+s.expect1), estimate.Layers, "scenario %d: %v", i, s)
-			assert.Equal(t, fmt.Sprintf("%d,%d", s.expect0, s.expect1), estimate.TensorSplit, "scenario %d: %v", i, s)
+			assert.Equal(t, fmt.Sprintf("%d,%d", s.expect0, s.expect1), estimate.GPULayers, "scenario %d: %v", i, s)
 			var layerSums uint64
 			for _, b := range estimate.GPUSizes {
 				layerSums += b

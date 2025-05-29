@@ -164,56 +164,25 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		requiredMemory.GPUs[i].Cache = make([]ml.Memory, blocks+1)
 	}
 
-	useDefaultSplit := true
-	for _, s := range params.TensorSplit {
-		if s != 0 {
-			useDefaultSplit = false
-			break
-		}
-	}
-
-	// calculate splits
-	splits := make([]float32, len(gpus))
-	if useDefaultSplit {
-		// default: split on free memory
-		for i := range splits {
-			var free, total C.size_t
-			C.ggml_backend_dev_memory(gpus[i], &free, &total)
-			splits[i] = float32(free)
-		}
-	} else {
-		splits = params.TensorSplit
-	}
-
-	var sum float32
-	// cumulative sum of all splits
-	for i := range splits {
-		sum += splits[i]
-		splits[i] = sum
-	}
-
-	// normalize splits
-	for i := range splits {
-		splits[i] /= sum
-	}
-
 	// inputs always use cpu
 	input := cpuDeviceBufferType
 
-	// define a range of gpu layers. anything outside of this range is assigned to the cpu
-	gpuRangeStart := max(0, blocks-params.NumGPULayers)
-	gpuRangeStop := min(gpuRangeStart+params.NumGPULayers, blocks+1)
-	assignLayer := func(i int) deviceBufferType {
-		if i < gpuRangeStart || i >= gpuRangeStop {
-			return cpuDeviceBufferType
+	assignLayer := func(layer int) deviceBufferType {
+		for _, p := range params.GPULayers {
+			for _, l := range p.Layers {
+				if l == layer {
+					for i := range requiredMemory.GPUs {
+						if requiredMemory.GPUs[i].UUID == p.UUID {
+							return gpuDeviceBufferTypes[i]
+						}
+					}
+
+					return cpuDeviceBufferType
+				}
+			}
 		}
 
-		index := slices.IndexFunc(splits, func(f float32) bool { return float32(i-gpuRangeStart)/float32(gpuRangeStop-gpuRangeStart) < f })
-		if index < 0 || index >= len(gpuDeviceBufferTypes) {
-			return cpuDeviceBufferType
-		}
-
-		return gpuDeviceBufferTypes[index]
+		return cpuDeviceBufferType
 	}
 
 	// repeating layers are assigned based on their index in reverse order, e.g. i / (block_count + 1)

@@ -52,7 +52,7 @@ func TestLoad(t *testing.T) {
 		return nil, errors.New("something failed to load model blah")
 	}
 	gpus := discover.GpuInfoList{}
-	s.load(req, f, gpus, 0)
+	s.load(req, f, gpus, 0, true)
 	require.Empty(t, req.successCh)
 	require.Len(t, req.errCh, 1)
 	s.loadedMu.Lock()
@@ -65,7 +65,7 @@ func TestLoad(t *testing.T) {
 	s.newServerFn = func(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 		return server, nil
 	}
-	s.load(req, f, gpus, 0)
+	s.load(req, f, gpus, 0, true)
 	select {
 	case err := <-req.errCh:
 		require.NoError(t, err)
@@ -79,7 +79,7 @@ func TestLoad(t *testing.T) {
 
 	req.model.ModelPath = "dummy_model_path"
 	server.waitResp = errors.New("wait failure")
-	s.load(req, f, gpus, 0)
+	s.load(req, f, gpus, 0, true)
 	select {
 	case err := <-req.errCh:
 		require.Contains(t, err.Error(), "wait failure")
@@ -426,7 +426,7 @@ func TestExpireRunner(t *testing.T) {
 	s.newServerFn = func(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 		return server, nil
 	}
-	s.load(req, f, gpus, 0)
+	s.load(req, f, gpus, 0, true)
 
 	select {
 	case err := <-req.errCh:
@@ -767,6 +767,9 @@ type mockLlm struct {
 	estimatedVRAMByGPU map[string]uint64
 }
 
+func (s *mockLlm) Load(ctx context.Context, gpus discover.GpuInfoList, requireFull bool) error {
+	return nil
+}
 func (s *mockLlm) Ping(ctx context.Context) error             { return s.pingResp }
 func (s *mockLlm) WaitUntilRunning(ctx context.Context) error { return s.waitResp }
 func (s *mockLlm) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
