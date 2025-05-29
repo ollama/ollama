@@ -62,6 +62,8 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 		fmt.Fprintln(os.Stderr, "  /set noformat          Disable formatting")
 		fmt.Fprintln(os.Stderr, "  /set verbose           Show LLM stats")
 		fmt.Fprintln(os.Stderr, "  /set quiet             Disable LLM stats")
+		fmt.Fprintln(os.Stderr, "  /set think             Enable thinking")
+		fmt.Fprintln(os.Stderr, "  /set nothink           Disable thinking")
 		fmt.Fprintln(os.Stderr, "")
 	}
 
@@ -128,6 +130,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 	var sb strings.Builder
 	var multiline MultilineState
+	var thinkExplicitlySet bool = opts.Think != nil
 
 	for {
 		line, err := scanner.Readline()
@@ -195,8 +198,16 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 			opts.Model = args[1]
 			opts.Messages = []api.Message{}
 			fmt.Printf("Loading model '%s'\n", opts.Model)
+			opts.Think, err = inferThinkingOption(nil, &opts, thinkExplicitlySet)
+			if err != nil {
+				return err
+			}
 			if err := loadOrUnloadModel(cmd, &opts); err != nil {
 				if strings.Contains(err.Error(), "not found") {
+					fmt.Printf("error: %v\n", err)
+					continue
+				}
+				if strings.Contains(err.Error(), "does not support thinking") {
 					fmt.Printf("error: %v\n", err)
 					continue
 				}
@@ -260,6 +271,22 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						return err
 					}
 					fmt.Println("Set 'quiet' mode.")
+				case "think":
+					think := true
+					opts.Think = &think
+					thinkExplicitlySet = true
+					if client, err := api.ClientFromEnvironment(); err == nil {
+						ensureThinkingSupport(cmd.Context(), client, opts.Model)
+					}
+					fmt.Println("Set 'think' mode.")
+				case "nothink":
+					think := false
+					opts.Think = &think
+					thinkExplicitlySet = true
+					if client, err := api.ClientFromEnvironment(); err == nil {
+						ensureThinkingSupport(cmd.Context(), client, opts.Model)
+					}
+					fmt.Println("Set 'nothink' mode.")
 				case "format":
 					if len(args) < 3 || args[2] != "json" {
 						fmt.Println("Invalid or missing format. For 'json' mode use '/set format json'")
@@ -448,6 +475,11 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 
 			assistant, err := chat(cmd, opts)
 			if err != nil {
+				if strings.Contains(err.Error(), "does not support thinking") {
+					fmt.Printf("error: %v\n", err)
+					sb.Reset()
+					continue
+				}
 				return err
 			}
 			if assistant != nil {

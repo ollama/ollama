@@ -61,6 +61,8 @@ const (
 	ColorGrey    = Esc + "[38;5;245m"
 	ColorDefault = Esc + "[0m"
 
+	ColorBold = Esc + "[1m"
+
 	StartBracketedPaste = Esc + "[?2004h"
 	EndBracketedPaste   = Esc + "[?2004l"
 )

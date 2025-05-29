@@ -3,6 +3,7 @@ package model
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"iter"
 	"log/slog"
 	"strings"
@@ -210,6 +211,14 @@ func (bpe BytePairEncoding) Encode(s string, addSpecial bool) ([]int32, error) {
 	return ids, nil
 }
 
+type lazyIdsString struct {
+	ids []int32
+}
+
+func (l lazyIdsString) LogValue() slog.Value {
+	return slog.AnyValue(fmt.Sprint(l.ids))
+}
+
 func (bpe BytePairEncoding) Decode(ids []int32) (string, error) {
 	var sb strings.Builder
 	for _, id := range ids {
@@ -234,6 +243,6 @@ func (bpe BytePairEncoding) Decode(ids []int32) (string, error) {
 		}
 	}
 
-	slog.Log(context.TODO(), logutil.LevelTrace, "decoded", "ids", ids, "string", sb.String())
+	slog.Log(context.TODO(), logutil.LevelTrace, "decoded", "string", sb.String(), "from", lazyIdsString{ids: ids})
 	return sb.String(), nil
 }
