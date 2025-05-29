@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"hash/maphash"
 	"log/slog"
 	"math"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/fs"
 )
 
@@ -58,19 +60,89 @@ type CacheConfig struct {
 	MaskBatchPadding int
 }
 
+// GPULayers is a set of layers to be allocated on a single GPU
+type GPULayers struct {
+	// ID is the identifier of the GPU, as reported in DeviceMemory
+	ID string
+
+	// Layers is a set of layer indicies to load
+	Layers []int
+}
+
+func (g GPULayers) String() string {
+	if len(g.Layers) == 0 {
+		return ""
+	}
+
+	slices.Sort(g.Layers)
+
+	contiguous := true
+	base := g.Layers[0]
+	for i := range g.Layers {
+		if g.Layers[i] != base+i {
+			contiguous = false
+			break
+		}
+	}
+
+	if contiguous {
+		return fmt.Sprintf("ID:%v Layers:%v(%v..%v)", g.ID, len(g.Layers), g.Layers[0], g.Layers[len(g.Layers)-1])
+	} else {
+		return fmt.Sprintf("ID:%v Layers:%v%v", g.ID, len(g.Layers), g.Layers)
+	}
+}
+
+// GPULayersList is a set of layer allocations across multiple GPUs
+type GPULayersList []GPULayers
+
+func (l GPULayersList) String() string {
+	if l.Sum() > 0 {
+		return fmt.Sprintf("%v%v", l.Sum(), []GPULayers(l))
+	} else {
+		return fmt.Sprintf("%v", []GPULayers(l))
+	}
+}
+
+// Sum is the total number of layers assigned across all GPUs
+func (l GPULayersList) Sum() int {
+	var sum int
+
+	for _, g := range l {
+		sum += len(g.Layers)
+	}
+
+	return sum
+}
+
+var h maphash.Hash
+
+// Hash is an identifier of this layer assignment
+func (l GPULayersList) Hash() uint64 {
+	h.Reset()
+	for _, g := range l {
+		if len(g.Layers) > 0 {
+			h.WriteString(g.ID)
+			for _, l := range g.Layers {
+				binary.Write(&h, binary.NativeEndian, int64(l))
+			}
+		}
+	}
+
+	return h.Sum64()
+}
+
 // BackendParams controls how the backend loads and executes models
 type BackendParams struct {
+	// AllocMemory causes the backend to allocate memory for the model. If
+	// false, this is only being used for discovering the required amount of
+	// memory and cannot load the model for running.
+	AllocMemory bool
+
 	// NumThreads sets the number of threads to use if running on the CPU
 	NumThreads int
 
-	// MainGPU is the index of the primary GPU to use
-	MainGPU int
-
-	// NumGPULayers is the number of layers to offload to GPUs
-	NumGPULayers int
-
-	// TensorSplit is the fraction of the model to offload to each GPU
-	TensorSplit []float32
+	// GPULayers is the set of layers to offload to GPUs
+	GPULayers GPULayersList
 
 	// FlashAttention indicates that we should use a fused flash attention kernel
 	FlashAttention bool
@@ -141,6 +213,28 @@ type DeviceMemory struct {
 	Graph Memory
 }
 
+// Allocated returns the total size of the memory that has been successfully
+// allocated on this device
+func (m DeviceMemory) Allocated() uint64 {
+	var mem uint64
+
+	for _, w := range m.Weights {
+		if w.Status == Allocated {
+			mem += w.Size
+		}
+	}
+	for _, c := range m.Cache {
+		if c.Status == Allocated {
+			mem += c.Size
+		}
+	}
+	if m.Graph.Status == Allocated {
+		mem += m.Graph.Size
+	}
+
+	return mem
+}
+
 func memoryPresent(mem []Memory) bool {
 	return slices.ContainsFunc(mem, func(m Memory) bool { return m.Size != 0 })
 }
@@ -195,6 +289,58 @@ func (m BackendMemory) LogValue() slog.Value {
 	}
 
 	return slog.GroupValue(attrs...)
+}
+
+func sumMemory(mem []Memory) uint64 {
+	var sum uint64
+
+	for _, m := range mem {
+		sum += m.Size
+	}
+
+	return sum
+}
+
+// Log prints a high level summary of the memory (allocated or not)
+func (m BackendMemory) Log(level slog.Level) {
+	var total uint64
+
+	for _, gpu := range m.GPUs {
+		if sum := sumMemory(gpu.Weights); sum > 0 {
+			slog.Log(context.TODO(), level, "model weights", "device", gpu.Name, "size", format.HumanBytes2(sum))
+			total += sum
+		}
+	}
+	if sum := m.InputWeights.Size + sumMemory(m.CPU.Weights); sum > 0 {
+		slog.Log(context.TODO(), level, "model weights", "device", m.CPU.Name, "size", format.HumanBytes2(sum))
+		total += sum
+	}
+
+	for _, gpu := range m.GPUs {
+		if sum := sumMemory(gpu.Cache); sum > 0 {
+			slog.Log(context.TODO(), level, "kv cache", "device", gpu.Name, "size", format.HumanBytes2(sum))
+			total += sum
+		}
+	}
+	if sum := sumMemory(m.CPU.Cache); sum > 0 {
+		slog.Log(context.TODO(), level, "kv cache", "device", m.CPU.Name, "size", format.HumanBytes2(sum))
+		total += sum
+	}
+
+	for _, gpu := range m.GPUs {
+		if sum := gpu.Graph.Size; sum > 0 {
+			slog.Log(context.TODO(), level, "compute graph", "device", gpu.Name, "size", format.HumanBytes2(sum))
+			total += sum
+		}
+	}
+	if sum := m.CPU.Graph.Size; sum > 0 {
+		slog.Log(context.TODO(), level, "compute graph", "device", m.CPU.Name, "size", format.HumanBytes2(sum))
+		total += sum
+	}
+
+	if total > 0 {
+		slog.Log(context.TODO(), level, "total memory", "size", format.HumanBytes2(total))
+	}
 }
 
 var backends = make(map[string]func(string, BackendParams) (Backend, error))
