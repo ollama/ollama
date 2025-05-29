@@ -10,6 +10,7 @@ import "C"
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -62,11 +63,20 @@ var initDevices = sync.OnceFunc(func() {
 	}
 })
 
+type layerDevice struct {
+	d  C.ggml_backend_dev_t
+	bt C.ggml_backend_buffer_type_t
+}
+
 type Backend struct {
 	// modelPath is the location of the model data
 	modelPath string
 
 	meta *fsggml.GGML
+
+	// allocMemory means that memory should be allocated for tensors and not
+	// just a dry run
+	allocMemory bool
 
 	// tensorLoadTargets maps from the name of the tensor in the file
 	// to the name that is used by the model definition
@@ -78,11 +88,14 @@ type Backend struct {
 
 	tensors map[string]*C.struct_ggml_tensor
 
-	// input is the backend used for inputs
+	// input is the backend buffer type used for inputs
 	input C.ggml_backend_buffer_type_t
 
+	// output is the backend device used for outputs
+	output C.ggml_backend_dev_t
+
 	// layers is the backend used for repeating layers
-	layers map[int]C.ggml_backend_buffer_type_t
+	layers map[int]layerDevice
 
 	// requiredMemory is the cumulative memory allocations needed by the backend
 	requiredMemory *ml.BackendMemory
@@ -99,6 +112,8 @@ type Backend struct {
 	weightBuffers map[*C.struct_ggml_context]C.ggml_backend_buffer_t
 }
 
+var once sync.Once
+
 func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	r, err := os.Open(modelPath)
 	if err != nil {
@@ -111,15 +126,17 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		return nil, err
 	}
 
-	slog.Info(
-		"",
-		"architecture", meta.KV().Architecture(),
-		"file_type", meta.KV().FileType(),
-		"name", meta.KV().String("general.name"),
-		"description", meta.KV().String("general.description"),
-		"num_tensors", len(meta.Tensors().Items()),
-		"num_key_values", len(meta.KV()),
-	)
+	once.Do(func() {
+		slog.Info(
+			"",
+			"architecture", meta.KV().Architecture(),
+			"file_type", meta.KV().FileType(),
+			"name", meta.KV().String("general.name"),
+			"description", meta.KV().String("general.description"),
+			"num_tensors", len(meta.Tensors().Items()),
+			"num_key_values", len(meta.KV()),
+		)
+	})
 
 	initDevices()
 
@@ -139,7 +156,10 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		switch C.ggml_backend_dev_type(d) {
 		case C.GGML_BACKEND_DEVICE_TYPE_CPU,
 			C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
-			cpuDeviceBufferType.bts = append(cpuDeviceBufferType.bts, C.ggml_backend_dev_buffer_type(d))
+			bt := C.ggml_backend_dev_buffer_type(d)
+			cpuDeviceBufferType.bts = append(cpuDeviceBufferType.bts, bt)
+			C.ggml_backend_buft_set_alloc(bt, C.bool(params.AllocMemory))
+
 			btDeviceMemory[C.ggml_backend_dev_buffer_type(d)] = &requiredMemory.CPU
 		}
 	}
@@ -160,6 +180,8 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			d:   d,
 			bts: append([]C.ggml_backend_buffer_type_t{bt}, cpuDeviceBufferType.bts...),
 		})
+		C.ggml_backend_buft_set_alloc(bt, C.bool(params.AllocMemory))
+
 		btDeviceMemory[bt] = &requiredMemory.GPUs[i]
 		requiredMemory.GPUs[i].Name = C.GoString(C.ggml_backend_dev_name(d))
 		var props C.struct_ggml_backend_dev_props
@@ -169,56 +191,25 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		requiredMemory.GPUs[i].Cache = make([]ml.Memory, blocks+1)
 	}
 
-	useDefaultSplit := true
-	for _, s := range params.TensorSplit {
-		if s != 0 {
-			useDefaultSplit = false
-			break
-		}
-	}
-
-	// calculate splits
-	splits := make([]float32, len(gpus))
-	if useDefaultSplit {
-		// default: split on free memory
-		for i := range splits {
-			var free, total C.size_t
-			C.ggml_backend_dev_memory(gpus[i], &free, &total)
-			splits[i] = float32(free)
-		}
-	} else {
-		splits = params.TensorSplit
-	}
-
-	var sum float32
-	// cumulative sum of all splits
-	for i := range splits {
-		sum += splits[i]
-		splits[i] = sum
-	}
-
-	// normalize splits
-	for i := range splits {
-		splits[i] /= sum
-	}
-
 	// inputs always use cpu
 	input := cpuDeviceBufferType
 
-	// define a range of gpu layers. anything outside of this range is assigned to the cpu
-	gpuRangeStart := max(0, blocks-params.NumGPULayers)
-	gpuRangeStop := min(gpuRangeStart+params.NumGPULayers, blocks+1)
-	assignLayer := func(i int) deviceBufferType {
-		if i < gpuRangeStart || i >= gpuRangeStop {
-			return cpuDeviceBufferType
+	assignLayer := func(layer int) deviceBufferType {
+		for _, p := range params.GPULayers {
+			for _, l := range p.Layers {
+				if l == layer {
+					for i := range requiredMemory.GPUs {
+						if requiredMemory.GPUs[i].ID == p.ID {
+							return gpuDeviceBufferTypes[i]
+						}
+					}
+
+					return cpuDeviceBufferType
+				}
+			}
 		}
 
-		index := slices.IndexFunc(splits, func(f float32) bool { return float32(i-gpuRangeStart)/float32(gpuRangeStop-gpuRangeStart) < f })
-		if index < 0 || index >= len(gpuDeviceBufferTypes) {
-			return cpuDeviceBufferType
-		}
-
-		return gpuDeviceBufferTypes[index]
+		return cpuDeviceBufferType
 	}
 
 	// repeating layers are assigned based on their index in reverse order, e.g. i / (block_count + 1)
@@ -284,7 +275,9 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			size := pad(C.ggml_backend_buft_get_alloc_size(bt, tt), C.ggml_backend_buft_get_alignment(bt))
 			if layer == -1 {
 				// Assume that InputWeights can be allocated - they're always in system memory and can't be moved in any case
-				requiredMemory.InputWeights.Status = ml.Allocated
+				if params.AllocMemory {
+					requiredMemory.InputWeights.Status = ml.Allocated
+				}
 				requiredMemory.InputWeights.Size += uint64(size)
 			} else {
 				btDeviceMemory[bt].Weights[layer].Size += uint64(size)
@@ -355,12 +348,14 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		}
 
 		b := C.ggml_backend_alloc_ctx_tensors_from_buft(c, bt)
-		for i := range btDeviceMemory[bt].Weights {
-			if btDeviceMemory[bt].Weights[i].Size != 0 {
-				if b != nil {
-					btDeviceMemory[bt].Weights[i].Status = ml.Allocated
-				} else {
-					btDeviceMemory[bt].Weights[i].Status = ml.Failed
+		if params.AllocMemory {
+			for i := range btDeviceMemory[bt].Weights {
+				if btDeviceMemory[bt].Weights[i].Size != 0 {
+					if b != nil {
+						btDeviceMemory[bt].Weights[i].Status = ml.Allocated
+					} else {
+						btDeviceMemory[bt].Weights[i].Status = ml.Failed
+					}
 				}
 			}
 		}
@@ -381,28 +376,9 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		bbs[c] = b
 	}
 
-	// Mimic llama runner logs summarizing layers and memory
-	gpuLayers := 0
-	for _, layer := range layers {
-		if C.ggml_backend_dev_type(layer.d) == C.GGML_BACKEND_DEVICE_TYPE_GPU {
-			gpuLayers++
-		}
-	}
-	slog.Info(fmt.Sprintf("offloading %d repeating layers to GPU", gpuLayers))
-
-	switch C.ggml_backend_dev_type(output.d) {
-	case C.GGML_BACKEND_DEVICE_TYPE_CPU:
-		slog.Info("offloading output layer to CPU")
-	case C.GGML_BACKEND_DEVICE_TYPE_GPU:
-		slog.Info("offloading output layer to GPU")
-		gpuLayers++
-	case C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
-		slog.Info("offloading output layer to ACCEL")
-	}
-	slog.Info(fmt.Sprintf("offloaded %d/%d layers to GPU", gpuLayers, len(layers)+1))
-
 	for bs := range maps.Values(bbs) {
-		slog.Info("model weights", "buffer", C.GoString(C.ggml_backend_buffer_name(bs)), "size", format.HumanBytes2(uint64(C.ggml_backend_buffer_get_size(bs))))
+		slog.Log(context.TODO(), logutil.LevelTrace, "model weights", "buffer", C.GoString(C.ggml_backend_buffer_name(bs)),
+			"size", format.HumanBytes2(uint64(C.ggml_backend_buffer_get_size(bs))))
 	}
 
 	// map tensor names to tensors for easy lookup later
@@ -423,6 +399,13 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		b := backends[d]
 		bt := C.ggml_backend_get_default_buffer_type(b)
 
+		// Always include CPU as a fallback but otherwise, just use the devices where we assigned layers
+		if !slices.Contains(cpuDeviceBufferType.bts, bt) {
+			if c, ok := ctxs[bt]; !ok || C.ggml_get_first_tensor(c) == nil {
+				continue
+			}
+		}
+
 		deviceBufferTypes[d] = bt
 
 		schedBackends = append(schedBackends, b)
@@ -437,6 +420,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	maxGraphNodes := max(8192, len(meta.Tensors().Items())*5)
 	return &Backend{
 		modelPath:         modelPath,
+		allocMemory:       params.AllocMemory,
 		flashAttention:    params.FlashAttention,
 		meta:              meta,
 		tensorLoadTargets: targets,
@@ -452,10 +436,14 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		schedBackends: schedBackends,
 		schedBufts:    schedBufts,
 		input:         deviceBufferTypes[input.d],
-		layers: func() map[int]C.ggml_backend_buffer_type_t {
-			m := make(map[int]C.ggml_backend_buffer_type_t)
+		output:        output.d,
+		layers: func() map[int]layerDevice {
+			m := make(map[int]layerDevice)
 			for i, layer := range layers {
-				m[i] = deviceBufferTypes[layer.d]
+				m[i] = layerDevice{
+					d:  layer.d,
+					bt: deviceBufferTypes[layer.d],
+				}
 			}
 			return m
 		}(),
@@ -484,6 +472,30 @@ func (b *Backend) Close() {
 }
 
 func (b *Backend) Load(ctx context.Context, progress func(float32)) error {
+	if !b.allocMemory {
+		return errors.New("cannot load model without memory allocation")
+	}
+
+	// Mimic llama runner logs summarizing layers and memory
+	gpuLayers := 0
+	for layer := range maps.Values(b.layers) {
+		if C.ggml_backend_dev_type(layer.d) == C.GGML_BACKEND_DEVICE_TYPE_GPU {
+			gpuLayers++
+		}
+	}
+	slog.Info(fmt.Sprintf("offloading %d repeating layers to GPU", gpuLayers))
+
+	switch C.ggml_backend_dev_type(b.output) {
+	case C.GGML_BACKEND_DEVICE_TYPE_CPU:
+		slog.Info("offloading output layer to CPU")
+	case C.GGML_BACKEND_DEVICE_TYPE_GPU:
+		slog.Info("offloading output layer to GPU")
+		gpuLayers++
+	case C.GGML_BACKEND_DEVICE_TYPE_ACCEL:
+		slog.Info("offloading output layer to ACCEL")
+	}
+	slog.Info(fmt.Sprintf("offloaded %d/%d layers to GPU", gpuLayers, len(b.layers)+1))
+
 	var doneBytes atomic.Uint64
 	totalBytes := uint64(b.meta.Length) - b.meta.Tensors().Offset
 
@@ -730,11 +742,11 @@ func (c *Context) Input() ml.Context {
 }
 
 func (c *Context) Layer(i int) ml.Context {
-	if buft, ok := c.b.layers[i]; ok {
+	if layer, ok := c.b.layers[i]; ok {
 		return &Context{
 			b:                c.b,
 			ctx:              c.ctx,
-			buft:             buft,
+			buft:             layer.bt,
 			allocatedBuffers: c.allocatedBuffers,
 			maxGraphNodes:    c.maxGraphNodes,
 			layer:            i,
@@ -792,14 +804,16 @@ func (c *Context) Reserve() {
 
 		graph := &c.b.btDeviceMemory[c.b.schedBufts[i]].Graph
 		graph.Size += uint64(bufferStatus.size)
-		if bufferStatus.allocated && graph.Status != ml.Failed {
-			graph.Status = ml.Allocated
-		} else {
-			graph.Status = ml.Failed
+		if c.b.allocMemory {
+			if bufferStatus.allocated && graph.Status != ml.Failed {
+				graph.Status = ml.Allocated
+			} else {
+				graph.Status = ml.Failed
+			}
 		}
 
-		slog.Info("compute graph", "backend", C.GoString(C.ggml_backend_name(c.b.schedBackends[i])), "buffer_type", C.GoString(C.ggml_backend_buft_name(c.b.schedBufts[i])),
-			"size", format.HumanBytes2(uint64(bufferStatus.size)))
+		slog.Log(context.TODO(), logutil.LevelTrace, "compute graph", "backend", C.GoString(C.ggml_backend_name(c.b.schedBackends[i])),
+			"buffer_type", C.GoString(C.ggml_backend_buft_name(c.b.schedBufts[i])), "size", format.HumanBytes2(uint64(bufferStatus.size)))
 	}
 
 	if !reserved {
@@ -868,10 +882,12 @@ func (c *Context) newTensor(dtype ml.DType, shape []int) ml.Tensor {
 		cache := &c.b.btDeviceMemory[c.buft].Cache[c.layer]
 
 		cache.Size += uint64(size)
-		if b != nil {
-			cache.Status = ml.Allocated
-		} else {
-			cache.Status = ml.Failed
+		if c.b.allocMemory {
+			if b != nil {
+				cache.Status = ml.Allocated
+			} else {
+				cache.Status = ml.Failed
+			}
 		}
 	}
 
@@ -890,7 +906,9 @@ func (c *Context) Empty(dtype ml.DType, shape ...int) ml.Tensor {
 
 func (c *Context) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
 	t := c.newTensor(dtype, shape)
-	C.ggml_set_zero(t.(*Tensor).t)
+	if c.b.allocMemory {
+		C.ggml_set_zero(t.(*Tensor).t)
+	}
 	return t
 }
 
@@ -915,7 +933,7 @@ func (c *Context) FromFloatSlice(s []float32, shape ...int) ml.Tensor {
 
 	t := c.newTensor(ml.DTypeF32, shape)
 
-	if len(s) > 0 {
+	if c.b.allocMemory && len(s) > 0 {
 		C.ggml_backend_tensor_set(t.(*Tensor).t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
 	}
 
@@ -927,7 +945,7 @@ func (c *Context) FromIntSlice(s []int32, shape ...int) ml.Tensor {
 
 	t := c.newTensor(ml.DTypeI32, shape)
 
-	if len(s) > 0 {
+	if c.b.allocMemory && len(s) > 0 {
 		C.ggml_backend_tensor_set(t.(*Tensor).t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
 	}
 
@@ -1550,7 +1568,7 @@ func (t *Tensor) Clamp(ctx ml.Context, min, max float32) ml.Tensor {
 func (c Context) FromBytes(dtype ml.DType, s []uint8, shape ...int) ml.Tensor {
 	// Unchecked to handle quantized types
 	t := c.newTensor(dtype, shape)
-	if len(s) > 0 {
+	if c.b.allocMemory && len(s) > 0 {
 		C.ggml_backend_tensor_set(t.(*Tensor).t, unsafe.Pointer(&s[0]), 0, C.ggml_nbytes(t.(*Tensor).t))
 	}
 
