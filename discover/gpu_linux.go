@@ -48,7 +48,13 @@ var OneapiGlobs = []string{
 }
 
 var SyclGlobs = []string{
-	"TODO: Add SYCL library paths here",
+	"/usr/lib/x86_64-linux-gnu/libsycl_wrapper.so*",
+	"/usr/local/lib/libsycl_wrapper.so*",
+	"/usr/lib/libsycl_wrapper.so*",
+	"/usr/local/lib64/libsycl_wrapper.so*",
+	"/usr/lib64/libsycl_wrapper.so*",
+	"/opt/intel/oneapi/compiler/latest/lib/libsycl_wrapper.so*",
+	"/opt/intel/oneapi/compiler/*/lib/libsycl_wrapper.so*",
 }
 
 var (
@@ -56,7 +62,7 @@ var (
 	NvcudaMgmtName = "libcuda.so*"
 	NvmlMgmtName   = "" // not currently wired on linux
 	OneapiMgmtName = "libze_intel_gpu.so*"
-	SyclMgmtName   = "libsycl.so*" // Assuming a common SYCL library name, adjust if needed
+	SyclMgmtName   = "libsycl_wrapper.so*"
 )
 
 func GetCPUMem() (memInfo, error) {

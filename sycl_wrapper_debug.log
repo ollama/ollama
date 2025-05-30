@@ -1,0 +1,62 @@
+2025-05-30 16:55:49.758 [SYCL] Calling sycl_get_platform_count()
+2025-05-30 16:55:49.793 [SYCL] Found 3 SYCL platforms
+2025-05-30 16:55:49.793 [SYCL] Calling sycl_get_device_count()
+2025-05-30 16:55:49.794 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 16:55:49.794 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 16:55:49.795 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 16:55:49.795 [SYCL] Total device count: 3
+2025-05-30 16:55:49.795 [SYCL] Calling sycl_get_device_count()
+2025-05-30 16:55:49.796 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 16:55:49.796 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 16:55:49.796 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 16:55:49.796 [SYCL] Total device count: 3
+2025-05-30 16:55:49.796 [SYCL] Calling sycl_get_device_count()
+2025-05-30 16:55:49.797 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 16:55:49.797 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 16:55:49.798 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 16:55:49.798 [SYCL] Total device count: 3
+2025-05-30 16:55:49.798 [SYCL] Calling sycl_get_device_count()
+2025-05-30 16:55:49.799 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 16:55:49.799 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 16:55:49.799 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 16:55:49.799 [SYCL] Total device count: 3
+2025-05-30 16:55:49.799 [SYCL] Calling sycl_is_gpu(index=0)
+2025-05-30 16:55:49.799 [SYCL] Getting device by index: 0
+2025-05-30 16:55:49.800 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 16:55:49.800 [SYCL] Device is GPU: true
+2025-05-30 16:55:49.800 [SYCL] Calling sycl_get_device_memory(index=0)
+2025-05-30 16:55:49.800 [SYCL] Getting device by index: 0
+2025-05-30 16:55:49.801 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 16:55:49.801 [SYCL] Total memory: 30792978432 bytes
+2025-05-30 16:55:49.801 [SYCL] Free memory (estimated): 24634382745 bytes
+2025-05-30 16:55:49.801 [SYCL] Calling sycl_get_device_name(index=0, name_size=96)
+2025-05-30 16:55:49.801 [SYCL] Getting device by index: 0
+2025-05-30 16:55:49.802 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 16:55:49.802 [SYCL] Device name: Intel(R) UHD Graphics
+2025-05-30 16:55:49.802 [SYCL] Calling sycl_get_device_count()
+2025-05-30 16:55:49.803 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 16:55:49.804 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 16:55:49.804 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 16:55:49.804 [SYCL] Total device count: 3
+2025-05-30 16:55:49.804 [SYCL] Calling sycl_is_gpu(index=1)
+2025-05-30 16:55:49.804 [SYCL] Getting device by index: 1
+2025-05-30 16:55:49.805 [SYCL] Found device at index 1: 11th Gen Intel(R) Core(TM) i7-11700B @ 3.20GHz
+2025-05-30 16:55:49.805 [SYCL] Device is GPU: false
+2025-05-30 16:55:49.805 [SYCL] Calling sycl_get_device_count()
+2025-05-30 16:55:49.807 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 16:55:49.807 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 16:55:49.807 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 16:55:49.807 [SYCL] Total device count: 3
+2025-05-30 16:55:49.807 [SYCL] Calling sycl_is_gpu(index=2)
+2025-05-30 16:55:49.807 [SYCL] Getting device by index: 2
+2025-05-30 16:55:49.809 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 16:55:49.809 [SYCL] Device is GPU: true
+2025-05-30 16:55:49.809 [SYCL] Calling sycl_get_device_memory(index=2)
+2025-05-30 16:55:49.809 [SYCL] Getting device by index: 2
+2025-05-30 16:55:49.810 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 16:55:49.810 [SYCL] Total memory: 30792978432 bytes
+2025-05-30 16:55:49.810 [SYCL] Free memory (estimated): 24634382745 bytes
+2025-05-30 16:55:49.810 [SYCL] Calling sycl_get_device_name(index=2, name_size=96)
+2025-05-30 16:55:49.810 [SYCL] Getting device by index: 2
+2025-05-30 16:55:49.812 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 16:55:49.812 [SYCL] Device name: Intel(R) UHD Graphics

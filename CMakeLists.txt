@@ -52,6 +52,11 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cp
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cpu/amx)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-sycl)
 
+# Add SYCL wrapper if SYCL is enabled
+if (GGML_SYCL)
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/discover/sycl_wrapper)
+endif()
+
 add_compile_definitions(NDEBUG)
 
 set(GGML_CPU ON)
