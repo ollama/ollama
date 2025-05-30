@@ -166,31 +166,26 @@ func extractToolArgs(tmpl *gotmpl.Template) (name, arguments string, err error) 
 		return "", "", err
 	}
 
-	var obj any
-	err = json.Unmarshal(b.Bytes(), &obj)
-	if err != nil {
+	// Extract JSON object between curly braces
+	// JSON arrays are also valid as they will not be repeated in the template
+	output := b.String()
+	start := strings.Index(output, "{")
+	end := strings.LastIndex(output, "}")
+	if start == -1 || end == -1 || start > end {
+		return "", "", errors.New("no valid JSON object found in template output")
+	}
+	jsonStr := output[start : end+1]
+
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(jsonStr), &obj); err != nil {
 		return "", "", err
 	}
 
-	var objs []map[string]any
-	switch v := obj.(type) {
-	case map[string]any:
-		objs = []map[string]any{v}
-	case []map[string]any:
-		objs = v
-	case []any:
-		objs = collect(v)
-	}
-	if len(objs) == 0 {
-		return "", "", errors.New("no template objects found")
-	}
-
-	// find the keys that correspond to the name and arguments fields
-	for k, v := range objs[0] {
-		switch v.(type) {
-		case string:
+	// Find name and arguments fields
+	for k, v := range obj {
+		if str, ok := v.(string); ok && str == "@@name@@" {
 			name = k
-		case map[string]any:
+		} else if _, ok := v.(map[string]any); ok {
 			arguments = k
 		}
 	}
