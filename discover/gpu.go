@@ -408,7 +408,7 @@ func GetGPUInfo() GpuInfoList {
 				sHandles = initSyclHandles()
 				if sHandles != nil && sHandles.sycl != nil {
 					devCount := C.sycl_get_device_count(*sHandles.sycl)
-					for i := range devCount { //for i := range oHandles.deviceCount {
+					for i := range devCount {
 						gpuInfo := SyclGPUInfo{
 							GpuInfo: GpuInfo{
 								Library: "sycl",
@@ -418,7 +418,23 @@ func GetGPUInfo() GpuInfoList {
 
 						C.sycl_check_vram(*sHandles.sycl, i, &memInfo)
 
-						var totalFreeMem float64 = float64(memInfo.free) * 0.90 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
+						slog.Info("SYCL memory info",
+							"device", i,
+							"total", format.HumanBytes2(uint64(memInfo.total)),
+							"free", format.HumanBytes2(uint64(memInfo.free)),
+							"used", format.HumanBytes2(uint64(memInfo.used)))
+
+						// Check if free memory equals total memory
+						// This is a heuristic to detect when ext_intel_free_memory is not supported
+						// The C code prints a warning but doesn't return an error
+						if memInfo.free == memInfo.total {
+							slog.Warn("SYCL free memory reporting may be unreliable",
+								"device", i,
+								"hint", "export ZES_ENABLE_SYSMAN=1 for better memory reporting")
+							gpuInfo.UnreliableFreeMemory = true
+						}
+
+						var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
 						memInfo.free = C.uint64_t(totalFreeMem)
 						gpuInfo.TotalMemory = uint64(memInfo.total)
 						gpuInfo.FreeMemory = uint64(memInfo.free)
@@ -543,7 +559,23 @@ func GetGPUInfo() GpuInfoList {
 		for i, gpu := range syclGPUs {
 			if sHandles != nil && sHandles.sycl != nil {
 				C.sycl_check_vram(*sHandles.sycl, C.int(gpu.index), &memInfo)
-				// TODO - convert this to MinimumMemory based on testing...
+
+				slog.Info("SYCL memory info",
+					"device", gpu.index,
+					"total", format.HumanBytes2(uint64(memInfo.total)),
+					"free", format.HumanBytes2(uint64(memInfo.free)),
+					"used", format.HumanBytes2(uint64(memInfo.used)))
+
+				// Check if free memory equals total memory
+				// This is a heuristic to detect when ext_intel_free_memory is not supported
+				// The C code prints a warning but doesn't return an error
+				if memInfo.free == memInfo.total {
+					slog.Warn("SYCL free memory reporting may be unreliable",
+						"device", gpu.index,
+						"hint", "export ZES_ENABLE_SYSMAN=1 for better memory reporting")
+					syclGPUs[i].UnreliableFreeMemory = true
+				}
+
 				var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
 				memInfo.free = C.uint64_t(totalFreeMem)
 				syclGPUs[i].FreeMemory = uint64(memInfo.free)

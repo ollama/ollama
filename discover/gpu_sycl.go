@@ -17,6 +17,5 @@ func syclGetVisibleDevicesEnv(gpuInfo []GpuInfo) (string, string) {
 		}
 		ids = append(ids, info.ID)
 	}
-	// SYCL uses the same env var as oneAPI but with different format
-	return "SYCL_DEVICE_FILTER", strings.Join(ids, ",")
+	return "ONEAPI_DEVICE_SELECTOR", "level_zero:" + strings.Join(ids, ",")
 }

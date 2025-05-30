@@ -48,13 +48,6 @@ var OneapiGlobs = []string{
 }
 
 var SyclGlobs = []string{
-	// "/usr/lib/x86_64-linux-gnu/libsycl_wrapper.so*",
-	// "/usr/local/lib/libsycl_wrapper.so*",
-	// "/usr/lib/libsycl_wrapper.so*",
-	// "/usr/local/lib64/libsycl_wrapper.so*",
-	// "/usr/lib64/libsycl_wrapper.so*",
-	// "/opt/intel/oneapi/compiler/latest/lib/libsycl_wrapper.so*",
-	// "/opt/intel/oneapi/compiler/*/lib/libsycl_wrapper.so*",
 	"/usr/lib/x86_64-linux-gnu/libggml-sycl.so*",
 	"/usr/local/lib/libggml-sycl.so*",
 	"/usr/lib/libggml-sycl.so*",
