@@ -39,14 +39,3 @@ set_target_properties(sycl_wrapper PROPERTIES
         LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR}
         RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR}
     )
-
-# Add test executable (can be built without SYCL)
-add_executable(test_sycl_wrapper test_sycl_wrapper.cpp)
-
-# Set the output directory for the test executable to the same as the library
-set_target_properties(test_sycl_wrapper PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}
-)
-
-# Link against dl library for dlopen/dlsym functions
-target_link_libraries(test_sycl_wrapper dl stdc++) 
