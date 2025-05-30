@@ -6,6 +6,7 @@
 #include <fstream>
 #include <chrono>
 #include <iomanip>
+#include <sstream>
 
 // Debug logging control
 #define SYCL_WRAPPER_DEBUG 1  // Set to 0 to disable debug output
@@ -29,6 +30,75 @@ static void debug_log(const std::string& message) {
     
     // Also print to stderr for immediate visibility
     std::cerr << "[SYCL] " << message << std::endl;
+#endif
+}
+
+// Helper functions for device type and backend information
+inline std::string get_device_type_name(const cl::sycl::device &Device) {
+    auto DeviceType = Device.get_info<cl::sycl::info::device::device_type>();
+    switch (DeviceType) {
+    case cl::sycl::info::device_type::cpu:
+        return "cpu";
+    case cl::sycl::info::device_type::gpu:
+        return "gpu";
+    case cl::sycl::info::device_type::host:
+        return "host";
+    case cl::sycl::info::device_type::accelerator:
+        return "acc";
+    default:
+        return "unknown";
+    }
+}
+
+inline std::string get_device_backend_and_type(const cl::sycl::device &device) {
+    std::stringstream device_type;
+    cl::sycl::backend backend = device.get_backend();
+    device_type << backend << ":" << get_device_type_name(device);
+    return device_type.str();
+}
+
+// Helper function to log backend information for a device
+static void log_backend_info(const cl::sycl::device& device) {
+#if SYCL_WRAPPER_DEBUG
+    try {
+        std::stringstream ss;
+        ss << "Backend info for device: " << device.get_info<cl::sycl::info::device::name>() << std::endl;
+        
+        // Use the provided helper functions
+        ss << "  Device Type: " << get_device_type_name(device) << std::endl;
+        ss << "  Backend and Type: " << get_device_backend_and_type(device) << std::endl;
+        
+        // Standard device info that works across all SYCL implementations
+        ss << "  Device Vendor: " << device.get_info<cl::sycl::info::device::vendor>() << std::endl;
+        ss << "  Device Version: " << device.get_info<cl::sycl::info::device::version>() << std::endl;
+        ss << "  Driver Version: " << device.get_info<cl::sycl::info::device::driver_version>() << std::endl;
+        ss << "  Global Mem Size: " << device.get_info<cl::sycl::info::device::global_mem_size>() << " bytes" << std::endl;
+        ss << "  Local Mem Size: " << device.get_info<cl::sycl::info::device::local_mem_size>() << " bytes" << std::endl;
+        ss << "  Max Compute Units: " << device.get_info<cl::sycl::info::device::max_compute_units>() << std::endl;
+        ss << "  Max Work Group Size: " << device.get_info<cl::sycl::info::device::max_work_group_size>() << std::endl;
+        
+        // Platform info
+        auto platform = device.get_platform();
+        ss << "  Platform Name: " << platform.get_info<cl::sycl::info::platform::name>() << std::endl;
+        ss << "  Platform Vendor: " << platform.get_info<cl::sycl::info::platform::vendor>() << std::endl;
+        ss << "  Platform Version: " << platform.get_info<cl::sycl::info::platform::version>() << std::endl;
+        
+#ifdef DPCT_COMPATIBILITY_TEMP
+        // Try Intel-specific extensions if available
+        try {
+            // This is a safer approach that doesn't rely on specific backend types
+            ss << "  Intel DPC++ compatibility is enabled" << std::endl;
+        } catch (...) {
+            ss << "  Failed to use Intel extensions" << std::endl;
+        }
+#endif
+        
+        debug_log(ss.str());
+    } catch (const std::exception& e) {
+        debug_log("Error in log_backend_info: " + std::string(e.what()));
+    } catch (...) {
+        debug_log("Unknown error in log_backend_info");
+    }
 #endif
 }
 
@@ -137,6 +207,7 @@ cl::sycl::device get_device_by_index(int device_index) {
             if (current_index == device_index) {
                 debug_log("Found device at index " + std::to_string(device_index) + 
                           ": " + device.get_info<cl::sycl::info::device::name>());
+                log_backend_info(device);
                 return device;
             }
             current_index++;
@@ -225,7 +296,7 @@ void sycl_get_device_memory(int device_index, size_t* free, size_t* total) {
         } catch (...) {
             // If the extension fails, fall back to estimation
             *free = *total * 0.8;  // Assume 80% is free
-            debug_log("Free memory (estimated): " + std::to_string(*free) + " bytes");
+            debug_log("Free memory (estimated from catch): " + std::to_string(*free) + " bytes");
         }
 #else
         // SYCL doesn't provide a direct way to get free memory

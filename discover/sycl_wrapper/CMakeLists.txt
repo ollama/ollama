@@ -26,7 +26,7 @@ target_link_options(sycl_wrapper PRIVATE "-fsycl")
 
 # Optional: Enable DPC++ compatibility if needed
 # Uncomment to enable Intel DPC++ compatibility headers
-# target_compile_definitions(sycl_wrapper PRIVATE DPCT_COMPATIBILITY_TEMP)
+target_compile_definitions(sycl_wrapper PRIVATE DPCT_COMPATIBILITY_TEMP)
 
 # Set output name
 set_target_properties(sycl_wrapper PROPERTIES

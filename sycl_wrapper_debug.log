@@ -60,3 +60,785 @@
 2025-05-30 16:55:49.810 [SYCL] Getting device by index: 2
 2025-05-30 16:55:49.812 [SYCL] Found device at index 2: Intel(R) UHD Graphics
 2025-05-30 16:55:49.812 [SYCL] Device name: Intel(R) UHD Graphics
+2025-05-30 17:07:26.144 [SYCL] Calling sycl_get_platform_count()
+2025-05-30 17:07:26.179 [SYCL] Found 3 SYCL platforms
+2025-05-30 17:07:26.179 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:07:26.180 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:07:26.180 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:07:26.180 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:07:26.180 [SYCL] Total device count: 3
+2025-05-30 17:07:26.180 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:07:26.181 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:07:26.182 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:07:26.182 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:07:26.182 [SYCL] Total device count: 3
+2025-05-30 17:07:26.182 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:07:26.183 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:07:26.184 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:07:26.184 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:07:26.184 [SYCL] Total device count: 3
+2025-05-30 17:07:26.184 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:07:26.185 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:07:26.185 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:07:26.186 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:07:26.186 [SYCL] Total device count: 3
+2025-05-30 17:07:26.186 [SYCL] Calling sycl_is_gpu(index=0)
+2025-05-30 17:07:26.186 [SYCL] Getting device by index: 0
+2025-05-30 17:07:26.187 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 17:07:26.187 [SYCL] Device is GPU: true
+2025-05-30 17:07:26.187 [SYCL] Calling sycl_get_device_memory(index=0)
+2025-05-30 17:07:26.187 [SYCL] Getting device by index: 0
+2025-05-30 17:07:26.188 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 17:07:26.188 [SYCL] Total memory: 30792978432 bytes
+2025-05-30 17:07:26.188 [SYCL] Free memory (estimated): 24634382745 bytes
+2025-05-30 17:07:26.188 [SYCL] Calling sycl_get_device_name(index=0, name_size=96)
+2025-05-30 17:07:26.188 [SYCL] Getting device by index: 0
+2025-05-30 17:07:26.189 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 17:07:26.189 [SYCL] Device name: Intel(R) UHD Graphics
+2025-05-30 17:07:26.189 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:07:26.190 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:07:26.190 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:07:26.190 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:07:26.190 [SYCL] Total device count: 3
+2025-05-30 17:07:26.190 [SYCL] Calling sycl_is_gpu(index=1)
+2025-05-30 17:07:26.190 [SYCL] Getting device by index: 1
+2025-05-30 17:07:26.191 [SYCL] Found device at index 1: 11th Gen Intel(R) Core(TM) i7-11700B @ 3.20GHz
+2025-05-30 17:07:26.191 [SYCL] Device is GPU: false
+2025-05-30 17:07:26.191 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:07:26.192 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:07:26.193 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:07:26.193 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:07:26.193 [SYCL] Total device count: 3
+2025-05-30 17:07:26.193 [SYCL] Calling sycl_is_gpu(index=2)
+2025-05-30 17:07:26.193 [SYCL] Getting device by index: 2
+2025-05-30 17:07:26.195 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 17:07:26.195 [SYCL] Device is GPU: true
+2025-05-30 17:07:26.195 [SYCL] Calling sycl_get_device_memory(index=2)
+2025-05-30 17:07:26.195 [SYCL] Getting device by index: 2
+2025-05-30 17:07:26.196 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 17:07:26.196 [SYCL] Total memory: 30792978432 bytes
+2025-05-30 17:07:26.196 [SYCL] Free memory (estimated): 24634382745 bytes
+2025-05-30 17:07:26.196 [SYCL] Calling sycl_get_device_name(index=2, name_size=96)
+2025-05-30 17:07:26.196 [SYCL] Getting device by index: 2
+2025-05-30 17:07:26.198 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 17:07:26.198 [SYCL] Device name: Intel(R) UHD Graphics
+2025-05-30 17:12:47.896 [SYCL] Calling sycl_get_platform_count()
+2025-05-30 17:12:47.931 [SYCL] Found 3 SYCL platforms
+2025-05-30 17:12:47.931 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:12:47.932 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:12:47.932 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:12:47.932 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:12:47.932 [SYCL] Total device count: 3
+2025-05-30 17:12:47.932 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:12:47.933 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:12:47.933 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:12:47.934 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:12:47.934 [SYCL] Total device count: 3
+2025-05-30 17:12:47.934 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:12:47.935 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:12:47.935 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:12:47.935 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:12:47.935 [SYCL] Total device count: 3
+2025-05-30 17:12:47.935 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:12:47.936 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:12:47.937 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:12:47.937 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:12:47.937 [SYCL] Total device count: 3
+2025-05-30 17:12:47.937 [SYCL] Calling sycl_is_gpu(index=0)
+2025-05-30 17:12:47.937 [SYCL] Getting device by index: 0
+2025-05-30 17:12:47.938 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 17:12:47.938 [SYCL] Device is GPU: true
+2025-05-30 17:12:47.938 [SYCL] Calling sycl_get_device_memory(index=0)
+2025-05-30 17:12:47.938 [SYCL] Getting device by index: 0
+2025-05-30 17:12:47.939 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 17:12:47.939 [SYCL] Total memory: 30792978432 bytes
+2025-05-30 17:12:47.964 [SYCL] Free memory (from extension): 0 bytes
+2025-05-30 17:12:47.965 [SYCL] Calling sycl_get_device_name(index=0, name_size=96)
+2025-05-30 17:12:47.965 [SYCL] Getting device by index: 0
+2025-05-30 17:12:47.966 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 17:12:47.966 [SYCL] Device name: Intel(R) UHD Graphics
+2025-05-30 17:12:47.966 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:12:47.967 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:12:47.967 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:12:47.967 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:12:47.967 [SYCL] Total device count: 3
+2025-05-30 17:12:47.967 [SYCL] Calling sycl_is_gpu(index=1)
+2025-05-30 17:12:47.967 [SYCL] Getting device by index: 1
+2025-05-30 17:12:47.969 [SYCL] Found device at index 1: 11th Gen Intel(R) Core(TM) i7-11700B @ 3.20GHz
+2025-05-30 17:12:47.969 [SYCL] Device is GPU: false
+2025-05-30 17:12:47.969 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:12:47.970 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:12:47.970 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:12:47.970 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:12:47.970 [SYCL] Total device count: 3
+2025-05-30 17:12:47.970 [SYCL] Calling sycl_is_gpu(index=2)
+2025-05-30 17:12:47.970 [SYCL] Getting device by index: 2
+2025-05-30 17:12:47.972 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 17:12:47.972 [SYCL] Device is GPU: true
+2025-05-30 17:12:47.972 [SYCL] Calling sycl_get_device_memory(index=2)
+2025-05-30 17:12:47.972 [SYCL] Getting device by index: 2
+2025-05-30 17:12:47.973 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 17:12:47.973 [SYCL] Total memory: 30792978432 bytes
+2025-05-30 17:12:47.974 [SYCL] Free memory (from extension): 0 bytes
+2025-05-30 17:12:47.974 [SYCL] Calling sycl_get_device_name(index=2, name_size=96)
+2025-05-30 17:12:47.974 [SYCL] Getting device by index: 2
+2025-05-30 17:12:47.975 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 17:12:47.975 [SYCL] Device name: Intel(R) UHD Graphics
+2025-05-30 17:46:30.864 [SYCL] Calling sycl_get_platform_count()
+2025-05-30 17:46:30.899 [SYCL] Found 3 SYCL platforms
+2025-05-30 17:46:30.899 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:46:30.900 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:46:30.900 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:46:30.900 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:46:30.900 [SYCL] Total device count: 3
+2025-05-30 17:46:30.900 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:46:30.901 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:46:30.902 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:46:30.902 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:46:30.902 [SYCL] Total device count: 3
+2025-05-30 17:46:30.902 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:46:30.903 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:46:30.903 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:46:30.904 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:46:30.904 [SYCL] Total device count: 3
+2025-05-30 17:46:30.904 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:46:30.905 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:46:30.905 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:46:30.905 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:46:30.905 [SYCL] Total device count: 3
+2025-05-30 17:46:30.905 [SYCL] Calling sycl_is_gpu(index=0)
+2025-05-30 17:46:30.905 [SYCL] Getting device by index: 0
+2025-05-30 17:46:30.906 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 17:46:30.906 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: ext_oneapi_level_zero:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: 12.0.0
+  Driver Version: 1.3.27642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) oneAPI Unified Runtime over Level-Zero
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: 1.3
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:46:30.906 [SYCL] Device is GPU: true
+2025-05-30 17:46:30.906 [SYCL] Calling sycl_get_device_memory(index=0)
+2025-05-30 17:46:30.906 [SYCL] Getting device by index: 0
+2025-05-30 17:46:30.907 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 17:46:30.907 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: ext_oneapi_level_zero:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: 12.0.0
+  Driver Version: 1.3.27642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) oneAPI Unified Runtime over Level-Zero
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: 1.3
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:46:30.907 [SYCL] Total memory: 30792978432 bytes
+2025-05-30 17:46:30.918 [SYCL] Free memory (from extension): 0 bytes
+2025-05-30 17:46:30.918 [SYCL] Calling sycl_get_device_name(index=0, name_size=96)
+2025-05-30 17:46:30.918 [SYCL] Getting device by index: 0
+2025-05-30 17:46:30.920 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 17:46:30.920 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: ext_oneapi_level_zero:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: 12.0.0
+  Driver Version: 1.3.27642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) oneAPI Unified Runtime over Level-Zero
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: 1.3
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:46:30.920 [SYCL] Device name: Intel(R) UHD Graphics
+2025-05-30 17:46:30.920 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:46:30.921 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:46:30.921 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:46:30.922 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:46:30.922 [SYCL] Total device count: 3
+2025-05-30 17:46:30.922 [SYCL] Calling sycl_is_gpu(index=1)
+2025-05-30 17:46:30.922 [SYCL] Getting device by index: 1
+2025-05-30 17:46:30.923 [SYCL] Found device at index 1: 11th Gen Intel(R) Core(TM) i7-11700B @ 3.20GHz
+2025-05-30 17:46:30.923 [SYCL] Backend info for device: 11th Gen Intel(R) Core(TM) i7-11700B @ 3.20GHz
+  Device Type: cpu
+  Backend and Type: opencl:cpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: OpenCL 3.0 (Build 0)
+  Driver Version: 2025.19.4.0.18_160000.xmain-hotfix
+  Global Mem Size: 33260466176 bytes
+  Local Mem Size: 262144 bytes
+  Max Compute Units: 16
+  Max Work Group Size: 8192
+  Platform Name: Intel(R) OpenCL
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: OpenCL 3.0 LINUX
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:46:30.923 [SYCL] Device is GPU: false
+2025-05-30 17:46:30.923 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:46:30.924 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:46:30.924 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:46:30.925 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:46:30.925 [SYCL] Total device count: 3
+2025-05-30 17:46:30.925 [SYCL] Calling sycl_is_gpu(index=2)
+2025-05-30 17:46:30.925 [SYCL] Getting device by index: 2
+2025-05-30 17:46:30.926 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 17:46:30.926 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: opencl:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: OpenCL 3.0 NEO 
+  Driver Version: 23.43.027642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) OpenCL Graphics
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: OpenCL 3.0 
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:46:30.926 [SYCL] Device is GPU: true
+2025-05-30 17:46:30.926 [SYCL] Calling sycl_get_device_memory(index=2)
+2025-05-30 17:46:30.926 [SYCL] Getting device by index: 2
+2025-05-30 17:46:30.928 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 17:46:30.928 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: opencl:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: OpenCL 3.0 NEO 
+  Driver Version: 23.43.027642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) OpenCL Graphics
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: OpenCL 3.0 
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:46:30.928 [SYCL] Total memory: 30792978432 bytes
+2025-05-30 17:46:30.928 [SYCL] Free memory (from extension): 0 bytes
+2025-05-30 17:46:30.928 [SYCL] Calling sycl_get_device_name(index=2, name_size=96)
+2025-05-30 17:46:30.928 [SYCL] Getting device by index: 2
+2025-05-30 17:46:30.929 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 17:46:30.929 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: opencl:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: OpenCL 3.0 NEO 
+  Driver Version: 23.43.027642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) OpenCL Graphics
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: OpenCL 3.0 
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:46:30.929 [SYCL] Device name: Intel(R) UHD Graphics
+2025-05-30 17:49:41.958 [SYCL] Calling sycl_get_platform_count()
+2025-05-30 17:49:42.001 [SYCL] Found 3 SYCL platforms
+2025-05-30 17:49:42.001 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:49:42.002 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:49:42.002 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:49:42.002 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:49:42.002 [SYCL] Total device count: 3
+2025-05-30 17:49:42.002 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:49:42.003 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:49:42.004 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:49:42.004 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:49:42.004 [SYCL] Total device count: 3
+2025-05-30 17:49:42.004 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:49:42.005 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:49:42.005 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:49:42.006 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:49:42.006 [SYCL] Total device count: 3
+2025-05-30 17:49:42.006 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:49:42.007 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:49:42.007 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:49:42.007 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:49:42.007 [SYCL] Total device count: 3
+2025-05-30 17:49:42.007 [SYCL] Calling sycl_is_gpu(index=0)
+2025-05-30 17:49:42.007 [SYCL] Getting device by index: 0
+2025-05-30 17:49:42.008 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 17:49:42.008 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: ext_oneapi_level_zero:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: 12.0.0
+  Driver Version: 1.3.27642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) oneAPI Unified Runtime over Level-Zero
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: 1.3
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:49:42.008 [SYCL] Device is GPU: true
+2025-05-30 17:49:42.008 [SYCL] Calling sycl_get_device_memory(index=0)
+2025-05-30 17:49:42.008 [SYCL] Getting device by index: 0
+2025-05-30 17:49:42.009 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 17:49:42.009 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: ext_oneapi_level_zero:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: 12.0.0
+  Driver Version: 1.3.27642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) oneAPI Unified Runtime over Level-Zero
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: 1.3
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:49:42.009 [SYCL] Total memory: 30792978432 bytes
+2025-05-30 17:49:42.021 [SYCL] Free memory (from extension): 0 bytes
+2025-05-30 17:49:42.021 [SYCL] Calling sycl_get_device_name(index=0, name_size=96)
+2025-05-30 17:49:42.021 [SYCL] Getting device by index: 0
+2025-05-30 17:49:42.022 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 17:49:42.022 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: ext_oneapi_level_zero:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: 12.0.0
+  Driver Version: 1.3.27642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) oneAPI Unified Runtime over Level-Zero
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: 1.3
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:49:42.022 [SYCL] Device name: Intel(R) UHD Graphics
+2025-05-30 17:49:42.022 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:49:42.023 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:49:42.024 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:49:42.024 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:49:42.024 [SYCL] Total device count: 3
+2025-05-30 17:49:42.024 [SYCL] Calling sycl_is_gpu(index=1)
+2025-05-30 17:49:42.024 [SYCL] Getting device by index: 1
+2025-05-30 17:49:42.025 [SYCL] Found device at index 1: 11th Gen Intel(R) Core(TM) i7-11700B @ 3.20GHz
+2025-05-30 17:49:42.025 [SYCL] Backend info for device: 11th Gen Intel(R) Core(TM) i7-11700B @ 3.20GHz
+  Device Type: cpu
+  Backend and Type: opencl:cpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: OpenCL 3.0 (Build 0)
+  Driver Version: 2025.19.4.0.18_160000.xmain-hotfix
+  Global Mem Size: 33260466176 bytes
+  Local Mem Size: 262144 bytes
+  Max Compute Units: 16
+  Max Work Group Size: 8192
+  Platform Name: Intel(R) OpenCL
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: OpenCL 3.0 LINUX
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:49:42.025 [SYCL] Device is GPU: false
+2025-05-30 17:49:42.025 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:49:42.026 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:49:42.027 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:49:42.027 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:49:42.027 [SYCL] Total device count: 3
+2025-05-30 17:49:42.027 [SYCL] Calling sycl_is_gpu(index=2)
+2025-05-30 17:49:42.027 [SYCL] Getting device by index: 2
+2025-05-30 17:49:42.029 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 17:49:42.029 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: opencl:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: OpenCL 3.0 NEO 
+  Driver Version: 23.43.027642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) OpenCL Graphics
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: OpenCL 3.0 
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:49:42.029 [SYCL] Device is GPU: true
+2025-05-30 17:49:42.029 [SYCL] Calling sycl_get_device_memory(index=2)
+2025-05-30 17:49:42.029 [SYCL] Getting device by index: 2
+2025-05-30 17:49:42.030 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 17:49:42.030 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: opencl:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: OpenCL 3.0 NEO 
+  Driver Version: 23.43.027642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) OpenCL Graphics
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: OpenCL 3.0 
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:49:42.030 [SYCL] Total memory: 30792978432 bytes
+2025-05-30 17:49:42.030 [SYCL] Free memory (from extension): 0 bytes
+2025-05-30 17:49:42.030 [SYCL] Calling sycl_get_device_name(index=2, name_size=96)
+2025-05-30 17:49:42.030 [SYCL] Getting device by index: 2
+2025-05-30 17:49:42.032 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 17:49:42.032 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: opencl:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: OpenCL 3.0 NEO 
+  Driver Version: 23.43.027642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) OpenCL Graphics
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: OpenCL 3.0 
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:49:42.032 [SYCL] Device name: Intel(R) UHD Graphics
+2025-05-30 17:55:53.052 [SYCL] Calling sycl_get_platform_count()
+2025-05-30 17:55:53.053 [SYCL] Found 3 SYCL platforms
+2025-05-30 17:55:53.053 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:55:53.054 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:55:53.054 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:55:53.054 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:55:53.054 [SYCL] Total device count: 3
+2025-05-30 17:55:53.054 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:55:53.055 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:55:53.055 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:55:53.056 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:55:53.056 [SYCL] Total device count: 3
+2025-05-30 17:55:53.056 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:55:53.057 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:55:53.057 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:55:53.057 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:55:53.057 [SYCL] Total device count: 3
+2025-05-30 17:55:53.057 [SYCL] Calling sycl_is_gpu(index=0)
+2025-05-30 17:55:53.057 [SYCL] Getting device by index: 0
+2025-05-30 17:55:53.058 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 17:55:53.058 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: ext_oneapi_level_zero:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: 12.0.0
+  Driver Version: 1.3.27642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) oneAPI Unified Runtime over Level-Zero
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: 1.3
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:55:53.058 [SYCL] Device is GPU: true
+2025-05-30 17:55:53.058 [SYCL] Calling sycl_get_device_memory(index=0)
+2025-05-30 17:55:53.058 [SYCL] Getting device by index: 0
+2025-05-30 17:55:53.059 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 17:55:53.059 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: ext_oneapi_level_zero:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: 12.0.0
+  Driver Version: 1.3.27642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) oneAPI Unified Runtime over Level-Zero
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: 1.3
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:55:53.059 [SYCL] Total memory: 30792978432 bytes
+2025-05-30 17:55:53.063 [SYCL] Free memory (from extension): 0 bytes
+2025-05-30 17:55:53.063 [SYCL] Calling sycl_get_device_name(index=0, name_size=96)
+2025-05-30 17:55:53.063 [SYCL] Getting device by index: 0
+2025-05-30 17:55:53.064 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 17:55:53.064 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: ext_oneapi_level_zero:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: 12.0.0
+  Driver Version: 1.3.27642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) oneAPI Unified Runtime over Level-Zero
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: 1.3
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:55:53.064 [SYCL] Device name: Intel(R) UHD Graphics
+2025-05-30 17:55:53.064 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:55:53.065 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:55:53.065 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:55:53.065 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:55:53.065 [SYCL] Total device count: 3
+2025-05-30 17:55:53.065 [SYCL] Calling sycl_is_gpu(index=1)
+2025-05-30 17:55:53.065 [SYCL] Getting device by index: 1
+2025-05-30 17:55:53.066 [SYCL] Found device at index 1: 11th Gen Intel(R) Core(TM) i7-11700B @ 3.20GHz
+2025-05-30 17:55:53.067 [SYCL] Backend info for device: 11th Gen Intel(R) Core(TM) i7-11700B @ 3.20GHz
+  Device Type: cpu
+  Backend and Type: opencl:cpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: OpenCL 3.0 (Build 0)
+  Driver Version: 2025.19.4.0.18_160000.xmain-hotfix
+  Global Mem Size: 33260466176 bytes
+  Local Mem Size: 262144 bytes
+  Max Compute Units: 16
+  Max Work Group Size: 8192
+  Platform Name: Intel(R) OpenCL
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: OpenCL 3.0 LINUX
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:55:53.067 [SYCL] Device is GPU: false
+2025-05-30 17:55:53.067 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:55:53.067 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:55:53.068 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:55:53.068 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:55:53.068 [SYCL] Total device count: 3
+2025-05-30 17:55:53.068 [SYCL] Calling sycl_is_gpu(index=2)
+2025-05-30 17:55:53.068 [SYCL] Getting device by index: 2
+2025-05-30 17:55:53.070 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 17:55:53.070 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: opencl:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: OpenCL 3.0 NEO 
+  Driver Version: 23.43.027642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) OpenCL Graphics
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: OpenCL 3.0 
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:55:53.070 [SYCL] Device is GPU: true
+2025-05-30 17:55:53.070 [SYCL] Calling sycl_get_device_memory(index=2)
+2025-05-30 17:55:53.070 [SYCL] Getting device by index: 2
+2025-05-30 17:55:53.071 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 17:55:53.071 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: opencl:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: OpenCL 3.0 NEO 
+  Driver Version: 23.43.027642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) OpenCL Graphics
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: OpenCL 3.0 
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:55:53.071 [SYCL] Total memory: 30792978432 bytes
+2025-05-30 17:55:53.071 [SYCL] Free memory (from extension): 0 bytes
+2025-05-30 17:55:53.071 [SYCL] Calling sycl_get_device_name(index=2, name_size=96)
+2025-05-30 17:55:53.071 [SYCL] Getting device by index: 2
+2025-05-30 17:55:53.073 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 17:55:53.073 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: opencl:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: OpenCL 3.0 NEO 
+  Driver Version: 23.43.027642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) OpenCL Graphics
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: OpenCL 3.0 
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:55:53.073 [SYCL] Device name: Intel(R) UHD Graphics
+2025-05-30 17:55:53.134 [SYCL] Calling sycl_get_platform_count()
+2025-05-30 17:55:53.135 [SYCL] Found 3 SYCL platforms
+2025-05-30 17:55:53.135 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:55:53.136 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:55:53.136 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:55:53.137 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:55:53.137 [SYCL] Total device count: 3
+2025-05-30 17:55:53.137 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:55:53.138 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:55:53.138 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:55:53.138 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:55:53.138 [SYCL] Total device count: 3
+2025-05-30 17:55:53.138 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:55:53.139 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:55:53.140 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:55:53.140 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:55:53.140 [SYCL] Total device count: 3
+2025-05-30 17:55:53.140 [SYCL] Calling sycl_is_gpu(index=0)
+2025-05-30 17:55:53.140 [SYCL] Getting device by index: 0
+2025-05-30 17:55:53.141 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 17:55:53.141 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: ext_oneapi_level_zero:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: 12.0.0
+  Driver Version: 1.3.27642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) oneAPI Unified Runtime over Level-Zero
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: 1.3
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:55:53.141 [SYCL] Device is GPU: true
+2025-05-30 17:55:53.141 [SYCL] Calling sycl_get_device_memory(index=0)
+2025-05-30 17:55:53.141 [SYCL] Getting device by index: 0
+2025-05-30 17:55:53.142 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 17:55:53.142 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: ext_oneapi_level_zero:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: 12.0.0
+  Driver Version: 1.3.27642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) oneAPI Unified Runtime over Level-Zero
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: 1.3
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:55:53.142 [SYCL] Total memory: 30792978432 bytes
+2025-05-30 17:55:53.146 [SYCL] Free memory (from extension): 0 bytes
+2025-05-30 17:55:53.146 [SYCL] Calling sycl_get_device_name(index=0, name_size=96)
+2025-05-30 17:55:53.146 [SYCL] Getting device by index: 0
+2025-05-30 17:55:53.147 [SYCL] Found device at index 0: Intel(R) UHD Graphics
+2025-05-30 17:55:53.147 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: ext_oneapi_level_zero:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: 12.0.0
+  Driver Version: 1.3.27642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) oneAPI Unified Runtime over Level-Zero
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: 1.3
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:55:53.147 [SYCL] Device name: Intel(R) UHD Graphics
+2025-05-30 17:55:53.147 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:55:53.147 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:55:53.148 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:55:53.148 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:55:53.148 [SYCL] Total device count: 3
+2025-05-30 17:55:53.148 [SYCL] Calling sycl_is_gpu(index=1)
+2025-05-30 17:55:53.148 [SYCL] Getting device by index: 1
+2025-05-30 17:55:53.149 [SYCL] Found device at index 1: 11th Gen Intel(R) Core(TM) i7-11700B @ 3.20GHz
+2025-05-30 17:55:53.149 [SYCL] Backend info for device: 11th Gen Intel(R) Core(TM) i7-11700B @ 3.20GHz
+  Device Type: cpu
+  Backend and Type: opencl:cpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: OpenCL 3.0 (Build 0)
+  Driver Version: 2025.19.4.0.18_160000.xmain-hotfix
+  Global Mem Size: 33260466176 bytes
+  Local Mem Size: 262144 bytes
+  Max Compute Units: 16
+  Max Work Group Size: 8192
+  Platform Name: Intel(R) OpenCL
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: OpenCL 3.0 LINUX
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:55:53.149 [SYCL] Device is GPU: false
+2025-05-30 17:55:53.149 [SYCL] Calling sycl_get_device_count()
+2025-05-30 17:55:53.150 [SYCL] Platform: Intel(R) oneAPI Unified Runtime over Level-Zero has 1 devices
+2025-05-30 17:55:53.150 [SYCL] Platform: Intel(R) OpenCL has 1 devices
+2025-05-30 17:55:53.151 [SYCL] Platform: Intel(R) OpenCL Graphics has 1 devices
+2025-05-30 17:55:53.151 [SYCL] Total device count: 3
+2025-05-30 17:55:53.151 [SYCL] Calling sycl_is_gpu(index=2)
+2025-05-30 17:55:53.151 [SYCL] Getting device by index: 2
+2025-05-30 17:55:53.152 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 17:55:53.152 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: opencl:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: OpenCL 3.0 NEO 
+  Driver Version: 23.43.027642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) OpenCL Graphics
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: OpenCL 3.0 
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:55:53.152 [SYCL] Device is GPU: true
+2025-05-30 17:55:53.152 [SYCL] Calling sycl_get_device_memory(index=2)
+2025-05-30 17:55:53.152 [SYCL] Getting device by index: 2
+2025-05-30 17:55:53.154 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 17:55:53.154 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: opencl:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: OpenCL 3.0 NEO 
+  Driver Version: 23.43.027642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) OpenCL Graphics
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: OpenCL 3.0 
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:55:53.154 [SYCL] Total memory: 30792978432 bytes
+2025-05-30 17:55:53.154 [SYCL] Free memory (from extension): 0 bytes
+2025-05-30 17:55:53.154 [SYCL] Calling sycl_get_device_name(index=2, name_size=96)
+2025-05-30 17:55:53.154 [SYCL] Getting device by index: 2
+2025-05-30 17:55:53.155 [SYCL] Found device at index 2: Intel(R) UHD Graphics
+2025-05-30 17:55:53.155 [SYCL] Backend info for device: Intel(R) UHD Graphics
+  Device Type: gpu
+  Backend and Type: opencl:gpu
+  Device Vendor: Intel(R) Corporation
+  Device Version: OpenCL 3.0 NEO 
+  Driver Version: 23.43.027642
+  Global Mem Size: 30792978432 bytes
+  Local Mem Size: 65536 bytes
+  Max Compute Units: 32
+  Max Work Group Size: 512
+  Platform Name: Intel(R) OpenCL Graphics
+  Platform Vendor: Intel(R) Corporation
+  Platform Version: OpenCL 3.0 
+  Intel DPC++ compatibility is enabled
+
+2025-05-30 17:55:53.155 [SYCL] Device name: Intel(R) UHD Graphics
