@@ -2,6 +2,8 @@ package common
 
 import (
 	"strings"
+
+	"github.com/ollama/ollama/llm"
 )
 
 func FindStop(sequence string, stops []string) (bool, string) {
@@ -29,40 +31,43 @@ func ContainsStopSuffix(sequence string, stops []string) bool {
 // truncateStop removes the provided stop string from pieces,
 // returning the partial pieces with stop removed, including truncating
 // the last piece if required (and signalling if this was the case)
-func TruncateStop(pieces []string, stop string) ([]string, bool) {
-	joined := strings.Join(pieces, "")
-
-	index := strings.Index(joined, stop)
-	if index == -1 {
-		return pieces, false
+func TruncateStop(resps []llm.CompletionResponse, stop string) ([]llm.CompletionResponse, bool) {
+	var sequence string
+	for _, resp := range resps {
+		sequence += resp.Content
 	}
 
-	joined = joined[:index]
-
-	// Split truncated string back into pieces of original lengths
-	lengths := make([]int, len(pieces))
-	for i, piece := range pieces {
-		lengths[i] = len(piece)
+	idx := strings.Index(sequence, stop)
+	if idx < 0 {
+		return resps, false
 	}
 
-	var result []string
-	tokenTruncated := false
-	start := 0
-	for _, length := range lengths {
-		if start >= len(joined) {
+	truncated := sequence[:idx]
+	if len(truncated) == 0 {
+		return nil, true
+	}
+
+	result := make([]llm.CompletionResponse, 0, len(resps))
+
+	// Track position in truncated sequence
+	pos := 0
+	truncationHappened := false
+	for _, resp := range resps {
+		if pos >= len(truncated) {
 			break
 		}
 
-		end := start + length
-		if end > len(joined) {
-			end = len(joined)
-			tokenTruncated = true
+		chunk := truncated[pos:min(pos+len(resp.Content), len(truncated))]
+		if len(chunk) < len(resp.Content) {
+			truncationHappened = true
 		}
-		result = append(result, joined[start:end])
-		start = end
+		if len(chunk) > 0 {
+			result = append(result, llm.CompletionResponse{Content: chunk})
+		}
+		pos += len(resp.Content)
 	}
 
-	return result, tokenTruncated
+	return result, truncationHappened
 }
 
 func IncompleteUnicode(token string) bool {
