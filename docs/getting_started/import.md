@@ -1,17 +1,20 @@
 # Importing a model
 
+This guide explains how to import models into Ollama from different sources and formats.
+
 ## Table of Contents
 
-  * [Importing a Safetensors adapter](#Importing-a-fine-tuned-adapter-from-Safetensors-weights)
-  * [Importing a Safetensors model](#Importing-a-model-from-Safetensors-weights)
-  * [Importing a GGUF file](#Importing-a-GGUF-based-model-or-adapter)
-  * [Sharing models on ollama.com](#Sharing-your-model-on-ollamacom)
+* [Importing a Safetensors adapter](#importing-a-fine-tuned-adapter-from-safetensors-weights)
+* [Importing a Safetensors model](#importing-a-model-from-safetensors-weights)
+* [Importing a GGUF file](#importing-a-gguf-based-model-or-adapter)
+* [Quantizing a Model](#quantizing-a-model)
+* [Sharing models on ollama.com](#sharing-your-model-on-ollamacom)
 
 ## Importing a fine tuned adapter from Safetensors weights
 
 First, create a `Modelfile` with a `FROM` command pointing at the base model you used for fine tuning, and an `ADAPTER` command which points to the directory with your Safetensors adapter:
 
-```dockerfile
+```
 FROM <base model name>
 ADAPTER /path/to/safetensors/adapter/directory
 ```
@@ -32,22 +35,21 @@ ollama run my-model
 
 Ollama supports importing adapters based on several different model architectures including:
 
-  * Llama (including Llama 2, Llama 3, Llama 3.1, and Llama 3.2);
-  * Mistral (including Mistral 1, Mistral 2, and Mixtral); and
-  * Gemma (including Gemma 1 and Gemma 2)
+* Llama (including Llama 2, Llama 3, Llama 3.1, and Llama 3.2);
+* Mistral (including Mistral 1, Mistral 2, and Mixtral); and
+* Gemma (including Gemma 1 and Gemma 2)
 
 You can create the adapter using a fine tuning framework or tool which can output adapters in the Safetensors format, such as:
 
-  * Hugging Face [fine tuning framework](https://huggingface.co/docs/transformers/en/training)
-  * [Unsloth](https://github.com/unslothai/unsloth)
-  * [MLX](https://github.com/ml-explore/mlx)
-
+* Hugging Face [fine tuning framework](https://huggingface.co/docs/transformers/en/training)
+* [Unsloth](https://github.com/unslothai/unsloth)
+* [MLX](https://github.com/ml-explore/mlx)
 
 ## Importing a model from Safetensors weights
 
 First, create a `Modelfile` with a `FROM` command which points to the directory containing your Safetensors weights:
 
-```dockerfile
+```
 FROM /path/to/safetensors/directory
 ```
 
@@ -67,38 +69,39 @@ ollama run my-model
 
 Ollama supports importing models for several different architectures including:
 
-  * Llama (including Llama 2, Llama 3, Llama 3.1, and Llama 3.2);
-  * Mistral (including Mistral 1, Mistral 2, and Mixtral);
-  * Gemma (including Gemma 1 and Gemma 2); and
-  * Phi3
+* Llama (including Llama 2, Llama 3, Llama 3.1, and Llama 3.2);
+* Mistral (including Mistral 1, Mistral 2, and Mixtral);
+* Gemma (including Gemma 1 and Gemma 2); and
+* Phi3
 
 This includes importing foundation models as well as any fine tuned models which have been _fused_ with a foundation model.
+
 ## Importing a GGUF based model or adapter
 
 If you have a GGUF based model or adapter it is possible to import it into Ollama. You can obtain a GGUF model or adapter by:
 
-  * converting a Safetensors model with the `convert_hf_to_gguf.py` from Llama.cpp; 
-  * converting a Safetensors adapter with the `convert_lora_to_gguf.py` from Llama.cpp; or
-  * downloading a model or adapter from a place such as HuggingFace
+* converting a Safetensors model with the `convert_hf_to_gguf.py` from Llama.cpp; 
+* converting a Safetensors adapter with the `convert_lora_to_gguf.py` from Llama.cpp; or
+* downloading a model or adapter from a place such as HuggingFace
 
 To import a GGUF model, create a `Modelfile` containing:
 
-```dockerfile
+```
 FROM /path/to/file.gguf
 ```
 
 For a GGUF adapter, create the `Modelfile` with:
 
-```dockerfile
+```
 FROM <model name>
 ADAPTER /path/to/file.gguf
 ```
 
 When importing a GGUF adapter, it's important to use the same base model as the base model that the adapter was created with. You can use:
 
- * a model from Ollama
- * a GGUF file
- * a Safetensors based model 
+* a model from Ollama
+* a GGUF file
+* a Safetensors based model 
 
 Once you have created your `Modelfile`, use the `ollama create` command to build the model.
 
@@ -114,7 +117,7 @@ Ollama can quantize FP16 and FP32 based models into different quantization level
 
 First, create a Modelfile with the FP16 or FP32 based model you wish to quantize.
 
-```dockerfile
+```
 FROM /path/to/my/gemma/f16/model
 ```
 
@@ -139,22 +142,17 @@ success
 - `q4_K_S`
 - `q4_K_M`
 
-
 ## Sharing your model on ollama.com
 
 You can share any model you have created by pushing it to [ollama.com](https://ollama.com) so that other users can try it out.
 
 First, use your browser to go to the [Ollama Sign-Up](https://ollama.com/signup) page. If you already have an account, you can skip this step.
 
-<img src="images/signup.png" alt="Sign-Up" width="40%">
-
 The `Username` field will be used as part of your model's name (e.g. `jmorganca/mymodel`), so make sure you are comfortable with the username that you have selected.
 
 Now that you have created an account and are signed-in, go to the [Ollama Keys Settings](https://ollama.com/settings/keys) page.
 
 Follow the directions on the page to determine where your Ollama Public Key is located.
-
-<img src="images/ollama-keys.png" alt="Ollama Keys" width="80%">
 
 Click on the `Add Ollama Public Key` button, and copy and paste the contents of your Ollama Public Key into the text field.
 
@@ -171,4 +169,3 @@ Once your model has been pushed, other users can pull and run it by using the co
 ```shell
 ollama run myuser/mymodel
 ```
-
