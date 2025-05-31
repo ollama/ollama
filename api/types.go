@@ -83,6 +83,12 @@ type GenerateRequest struct {
 	// Options lists model-specific options. For example, temperature can be
 	// set through this field, if the model supports it.
 	Options map[string]any `json:"options"`
+
+	// Think controls whether thinking/reasoning models will think before
+	// responding. Needs to be a pointer so we can distinguish between false
+	// (request that thinking _not_ be used) and unset (use the old behavior
+	// before this option was introduced)
+	Think *bool `json:"think,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
@@ -108,6 +114,10 @@ type ChatRequest struct {
 
 	// Options lists model-specific options.
 	Options map[string]any `json:"options"`
+
+	// Think controls whether thinking/reasoning models will think before
+	// responding
+	Think *bool `json:"think,omitempty"`
 }
 
 type Tools []Tool
@@ -126,8 +136,11 @@ func (t Tool) String() string {
 // role ("system", "user", or "assistant"), the content and an optional list
 // of images.
 type Message struct {
-	Role      string      `json:"role"`
-	Content   string      `json:"content"`
+	Role    string `json:"role"`
+	Content string `json:"content"`
+	// Thinking contains the text that was inside thinking tags in the
+	// original model output when ChatRequest.Think is enabled.
+	Thinking  string      `json:"thinking,omitempty"`
 	Images    []ImageData `json:"images,omitempty"`
 	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
 }
@@ -271,9 +284,6 @@ type Options struct {
 	RepeatPenalty    float32  `json:"repeat_penalty,omitempty"`
 	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
 	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
-	Mirostat         int      `json:"mirostat,omitempty"`
-	MirostatTau      float32  `json:"mirostat_tau,omitempty"`
-	MirostatEta      float32  `json:"mirostat_eta,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
 }
 
@@ -481,6 +491,10 @@ type GenerateResponse struct {
 	// Response is the textual response itself.
 	Response string `json:"response"`
 
+	// Thinking contains the text that was inside thinking tags in the
+	// original model output when ChatRequest.Think is enabled.
+	Thinking string `json:"thinking,omitempty"`
+
 	// Done specifies if the response is complete.
 	Done bool `json:"done"`
 
@@ -648,9 +662,6 @@ func DefaultOptions() Options {
 		RepeatPenalty:    1.1,
 		PresencePenalty:  0.0,
 		FrequencyPenalty: 0.0,
-		Mirostat:         0,
-		MirostatTau:      5.0,
-		MirostatEta:      0.1,
 		Seed:             -1,
 
 		Runner: Runner{

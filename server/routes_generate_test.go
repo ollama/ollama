@@ -87,7 +87,7 @@ func TestGenerateChat(t *testing.T) {
 		},
 	}
 
-	go s.sched.Run(context.TODO())
+	go s.sched.Run(t.Context())
 
 	_, digest := createBinFile(t, ggml.KV{
 		"general.architecture":          "llama",
@@ -139,6 +139,25 @@ func TestGenerateChat(t *testing.T) {
 		}
 
 		if diff := cmp.Diff(w.Body.String(), `{"error":"model is required"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("missing thinking capability", func(t *testing.T) {
+		think := true
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test",
+			Messages: []api.Message{
+				{Role: "user", Content: "Hello!"},
+			},
+			Think: &think,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"registry.ollama.ai/library/test:latest does not support thinking"}`); diff != "" {
 			t.Errorf("mismatch (-got +want):\n%s", diff)
 		}
 	})
@@ -631,7 +650,7 @@ func TestGenerate(t *testing.T) {
 		},
 	}
 
-	go s.sched.Run(context.TODO())
+	go s.sched.Run(t.Context())
 
 	_, digest := createBinFile(t, ggml.KV{
 		"general.architecture":          "llama",
