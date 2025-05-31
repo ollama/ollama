@@ -406,6 +406,7 @@ func GetGPUInfo() GpuInfoList {
 			cpus[0].FreeSwap = mem.FreeSwap
 		}
 
+		// CUDA GPU
 		var memInfo C.mem_info_t
 		if cHandles == nil && len(cudaGPUs) > 0 {
 			cHandles = initCudaHandles()

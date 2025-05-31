@@ -403,7 +403,8 @@ curl http://localhost:11434/api/generate -d '{
     "num_gpu": 1,
     "main_gpu": 0,
     "use_mmap": true,
-    "num_thread": 8
+    "num_thread": 8,
+    "rpc_servers": "127.0.0.1:50052"
   }
 }'
 ```
