@@ -1,21 +1,25 @@
 name: test
 
-concurrency:
-  # For PRs, later CI runs preempt previous ones. e.g. a force push on a PR
-  # cancels running CI jobs and starts all new ones.
-  #
-  # For non-PR pushes, concurrency.group needs to be unique for every distinct
-  # CI run we want to have happen. Use run_id, which in practice means all
-  # non-PR CI runs will be allowed to run without preempting each other.
-  group: ${{ github.workflow }}-$${{ github.pull_request.number || github.run_id }}
-  cancel-in-progress: true
+# concurrency:
+#   # For PRs, later CI runs preempt previous ones. e.g. a force push on a PR
+#   # cancels running CI jobs and starts all new ones.
+#   #
+#   # For non-PR pushes, concurrency.group needs to be unique for every distinct
+#   # CI run we want to have happen. Use run_id, which in practice means all
+#   # non-PR CI runs will be allowed to run without preempting each other.
+#   group: ${{ github.workflow }}-$${{ github.pull_request.number || github.run_id }}
+#   cancel-in-progress: true
 
+# on:
+#   pull_request:
+#     paths:
+#       - '**/*'
+#       - '!docs/**'
+#       - '!README.md'
 on:
-  pull_request:
-    paths:
-      - '**/*'
-      - '!docs/**'
-      - '!README.md'
+  push:
+    branches:
+      - '*'
 
 jobs:
   changes:
@@ -52,6 +56,16 @@ jobs:
             container: rocm/dev-ubuntu-22.04:6.1.2
             extra-packages: rocm-libs
             flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
+          - preset: SYCL
+            container: intel/oneapi-basekit:2025.1.3-0-devel-ubuntu24.04 
+            # extra-packages: gpg-agent wget
+            # setup: |
+            #   wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+            #   echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | tee /etc/apt/sources.list.d/oneAPI.list
+            #   apt-get update
+            #   apt-get install -y intel-oneapi-base-toolkit
+            #   source /opt/intel/oneapi/setvars.sh
+            flags: '-DGGML_SYCL=ON -DGGML_SYCL_TARGET=INTEL -DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icx'
     runs-on: linux
     container: ${{ matrix.container }}
     steps:

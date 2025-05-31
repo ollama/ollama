@@ -52,11 +52,6 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cp
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cpu/amx)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-sycl)
 
-# Add SYCL wrapper if SYCL is enabled
-if (GGML_SYCL)
-  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/discover/sycl_wrapper)
-endif()
-
 add_compile_definitions(NDEBUG)
 
 set(GGML_CPU ON)
@@ -137,5 +132,49 @@ if(CMAKE_HIP_COMPILER)
                 break()
             endif()
         endforeach()
+    endif()
+endif()
+
+# SYCL support
+if(GGML_SYCL)
+    # Find OneAPI packages
+    if(GGML_SYCL_TARGET STREQUAL "INTEL")
+        # Find Intel OneAPI packages
+        if(DEFINED ENV{ONEAPI_ROOT})
+            set(ONEAPI_ROOT $ENV{ONEAPI_ROOT})
+        else()
+            if(WIN32)
+                set(ONEAPI_ROOT "C:/Program Files (x86)/Intel/oneAPI")
+            else()
+                set(ONEAPI_ROOT "/opt/intel/oneapi")
+            endif()
+        endif()
+        
+        if(EXISTS "${ONEAPI_ROOT}")
+            set(DPCPP_ROOT "${ONEAPI_ROOT}/compiler/latest")
+            set(MKL_ROOT "${ONEAPI_ROOT}/mkl/latest")
+            
+            if(EXISTS "${DPCPP_ROOT}" AND EXISTS "${MKL_ROOT}")
+                message(STATUS "Found Intel OneAPI at ${ONEAPI_ROOT}")
+                
+                # Add SYCL libraries
+                add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-sycl)
+                
+                # Set installation directory for SYCL components
+                set(OLLAMA_SYCL_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/sycl)
+                install(TARGETS ggml-sycl
+                    RUNTIME_DEPENDENCIES
+                        DIRECTORIES "${DPCPP_ROOT}/lib" "${DPCPP_ROOT}/bin" "${MKL_ROOT}/lib" "${MKL_ROOT}/bin"
+                        PRE_INCLUDE_REGEXES sycl mkl
+                        PRE_EXCLUDE_REGEXES ".*"
+                    RUNTIME DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
+                    LIBRARY DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
+                )
+            else()
+                message(WARNING "Intel OneAPI components not found at ${ONEAPI_ROOT}")
+            endif()
+        else()
+            message(WARNING "Intel OneAPI not found at ${ONEAPI_ROOT}")
+        endif()
     endif()
 endif()

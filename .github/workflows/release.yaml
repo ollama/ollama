@@ -2,8 +2,8 @@ name: release
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - '*'
 
 env:
   CGO_CFLAGS: '-O3'
@@ -299,6 +299,9 @@ jobs:
           - os: linux
             arch: arm64
             target: archive
+          - os: linux
+            arch: amd64
+            target: sycl
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     needs: setup-environment
@@ -329,6 +332,7 @@ jobs:
               lib/ollama/cuda_jetpack5) echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack5.tar.in ;;
               lib/ollama/cuda_jetpack6) echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack6.tar.in ;;
               lib/ollama/rocm)          echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
+              lib/ollama/sycl)          echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-sycl.tar.in ;;
             esac
           done
         working-directory: dist/${{ matrix.os }}-${{ matrix.arch }}
@@ -367,6 +371,14 @@ jobs:
               CGO_CXXFLAGS
               GOFLAGS
               FLAVOR=rocm
+          - os: linux
+            arch: amd64
+            suffix: '-sycl'
+            build-args: |
+              CGO_CFLAGS
+              CGO_CXXFLAGS
+              GOFLAGS
+              FLAVOR=sycl
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     needs: setup-environment
@@ -402,7 +414,7 @@ jobs:
   docker-merge-push:
     strategy:
       matrix:
-        suffix: ['', '-rocm']
+        suffix: ['', '-rocm', '-sycl']
     runs-on: linux
     environment: release
     needs: [docker-build-push]
