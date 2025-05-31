@@ -372,7 +372,7 @@ func GetGPUInfo() GpuInfoList {
 		// Intel
 		if envconfig.IntelGPU() {
 			var discoverInterface string = envconfig.String("OLLAMA_INTEL_IF_TYPE")()
-			if discoverInterface == "ONEAPI" {
+			if discoverInterface == "oneapi" {
 				oHandles = initOneAPIHandles()
 				if oHandles != nil && oHandles.oneapi != nil {
 					for d := range oHandles.oneapi.num_drivers {
@@ -404,7 +404,8 @@ func GetGPUInfo() GpuInfoList {
 						}
 					}
 				}
-			} else if discoverInterface == "SYCL" {
+			} else {
+				// else use SYCL
 				sHandles = initSyclHandles()
 				if sHandles != nil && sHandles.sycl != nil {
 					devCount := C.sycl_get_device_count(*sHandles.sycl)
@@ -442,7 +443,7 @@ func GetGPUInfo() GpuInfoList {
 						gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
 						gpuInfo.DependencyPath = []string{LibOllamaPath}
 						syclGPUs = append(syclGPUs, gpuInfo)
-						slog.Info("SYCL GPU", "GPU Info", gpuInfo)
+						slog.Debug("SYCL GPU", "GPU Info", gpuInfo)
 					}
 				}
 			}
