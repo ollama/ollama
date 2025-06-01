@@ -787,7 +787,6 @@ func loadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string, e
 
 func loadSyclMgmt(oneapiLibPaths []string) (int, *C.sycl_handle_t, string, error) {
 	var resp C.sycl_init_resp_t
-	num_devices := 0
 	resp.oh.verbose = getVerboseState()
 	var err error
 	for _, libPath := range oneapiLibPaths {
@@ -799,10 +798,9 @@ func loadSyclMgmt(oneapiLibPaths []string) (int, *C.sycl_handle_t, string, error
 			slog.Error(err.Error())
 			C.free(unsafe.Pointer(resp.err))
 		} else {
-			num_devices = int(C.sycl_get_device_count(resp.oh))
 			err = nil
 			C.sycl_print_sycl_devices(resp.oh)
-			return num_devices, &resp.oh, libPath, err
+			return int(C.sycl_get_device_count(resp.oh)), &resp.oh, libPath, err
 		}
 	}
 	return 0, nil, "", err
