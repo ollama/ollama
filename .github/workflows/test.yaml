@@ -44,8 +44,8 @@ jobs:
           echo changed=$(changed 'llama/llama.cpp/**' 'ml/backend/ggml/ggml/**') | tee -a $GITHUB_OUTPUT
 
   linux:
-    needs: [changes]
-    if: needs.changes.outputs.changed == 'True'
+    # needs: [changes]
+    # if: needs.changes.outputs.changed == 'True'
     strategy:
       matrix:
         include:
@@ -66,7 +66,6 @@ jobs:
             #   apt-get update
             #   apt-get install -y intel-oneapi-base-toolkit
             #   source /opt/intel/oneapi/setvars.sh
-            flags: '-DGGML_SYCL=ON -DGGML_SYCL_TARGET=INTEL -DGGML_CPU_ALL_VARIANTS=ON -DGGML_BACKEND_DL=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icx'
     runs-on: linux
     container: ${{ matrix.container }}
     steps:
@@ -86,8 +85,8 @@ jobs:
           cmake --build --preset ${{ matrix.preset }} --parallel
 
   windows:
-    needs: [changes]
-    if: needs.changes.outputs.changed == 'True'
+    # needs: [changes]
+    # if: needs.changes.outputs.changed == 'True'
     strategy:
       matrix:
         include:
