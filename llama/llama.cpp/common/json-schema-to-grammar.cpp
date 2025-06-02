@@ -290,12 +290,28 @@ std::unordered_map<std::string, BuiltinRule> PRIMITIVE_RULES = {
 };
 
 std::unordered_map<std::string, BuiltinRule> STRING_FORMAT_RULES = {
+    // Basic date/time components
     {"date", {"[0-9]{4} \"-\" ( \"0\" [1-9] | \"1\" [0-2] ) \"-\" ( \"0\" [1-9] | [1-2] [0-9] | \"3\" [0-1] )", {}}},
     {"time", {"([01] [0-9] | \"2\" [0-3]) \":\" [0-5] [0-9] \":\" [0-5] [0-9] ( \".\" [0-9]{3} )? ( \"Z\" | ( \"+\" | \"-\" ) ( [01] [0-9] | \"2\" [0-3] ) \":\" [0-5] [0-9] )", {}}},
     {"date-time", {"date \"T\" time", {"date", "time"}}},
+
+    // String-wrapped versions
     {"date-string", {"\"\\\"\" date \"\\\"\" space", {"date"}}},
     {"time-string", {"\"\\\"\" time \"\\\"\" space", {"time"}}},
-    {"date-time-string", {"\"\\\"\" date-time \"\\\"\" space", {"date-time"}}}
+    {"date-time-string", {"\"\\\"\" date-time \"\\\"\" space", {"date-time"}}},
+
+    // Strict ISO 8601 date-time components for format enforcement
+    {"iso-year", {"[0-9]{4}", {}}},
+    {"iso-month", {"( \"0\" [1-9] | \"1\" [0-2] )", {}}},
+    {"iso-day", {"( \"0\" [1-9] | [1-2] [0-9] | \"3\" [0-1] )", {}}},
+    {"iso-hour", {"([01] [0-9] | \"2\" [0-3])", {}}},
+    {"iso-minute", {"[0-5] [0-9]", {}}},
+    {"iso-second", {"[0-5] [0-9]", {}}},
+    {"iso-millisecond", {"( \".\" [0-9]{3} )?", {}}},
+    {"iso-timezone", {"( \"Z\" | ( \"+\" | \"-\" ) ( [01] [0-9] | \"2\" [0-3] ) \":\" [0-5] [0-9] )", {}}},
+    {"iso-date-part", {"iso-year \"-\" iso-month \"-\" iso-day", {"iso-year", "iso-month", "iso-day"}}},
+    {"iso-time-part", {"iso-hour \":\" iso-minute \":\" iso-second iso-millisecond iso-timezone", {"iso-hour", "iso-minute", "iso-second", "iso-millisecond", "iso-timezone"}}},
+    {"strict-date-time", {"\"\\\"\" iso-date-part \"T\" iso-time-part \"\\\"\" space", {"iso-date-part", "iso-time-part"}}}
 };
 
 static bool is_reserved_name(const std::string & name) {
@@ -939,6 +955,11 @@ public:
             return _add_primitive(rule_name == "root" ? "root" : schema_format, PRIMITIVE_RULES.at("uuid"));
         } else if ((schema_type.is_null() || schema_type == "string") && STRING_FORMAT_RULES.find(schema_format + "-string") != STRING_FORMAT_RULES.end()) {
             auto prim_name = schema_format + "-string";
+            // For date-time format, ensure strict ISO 8601 compliance
+            if (schema_format == "date-time") {
+                // Use stricter date-time rule that enforces proper format
+                return _add_rule(rule_name, _add_primitive("strict-date-time", STRING_FORMAT_RULES.at("strict-date-time")));
+            }
             return _add_rule(rule_name, _add_primitive(prim_name, STRING_FORMAT_RULES.at(prim_name)));
         } else if (schema_type == "string" && (schema.contains("minLength") || schema.contains("maxLength"))) {
             std::string char_rule = _add_primitive("char", PRIMITIVE_RULES.at("char"));
