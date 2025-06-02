@@ -94,7 +94,9 @@ func (m *mllamaModel) Tensors(ts []Tensor) []*ggml.Tensor {
 	var out []*ggml.Tensor
 	var text []Tensor
 	for _, t := range ts {
-		if t.Name() == "v.position_embd.gate" {
+		if !strings.HasPrefix(t.Name(), "v.") && !strings.HasPrefix(t.Name(), "mm.") {
+			text = append(text, t)
+		} else if t.Name() == "v.position_embd.gate" {
 			for _, name := range []string{"v.position_embd.gate", "v.tile_position_embd.gate"} {
 				tt := t.Clone()
 				tt.SetRepacker(m.repack(name))
@@ -105,23 +107,21 @@ func (m *mllamaModel) Tensors(ts []Tensor) []*ggml.Tensor {
 					WriterTo: tt,
 				})
 			}
-		} else if t.Name() == "v.pre_tile_position_embd.gate" || t.Name() == "v.post_tile_position_embd.gate" {
-			t.SetRepacker(m.repack(t.Name()))
-			out = append(out, &ggml.Tensor{
-				Name:     t.Name(),
-				Kind:     t.Kind(),
-				Shape:    t.Shape(),
-				WriterTo: t,
-			})
-		} else if strings.HasPrefix(t.Name(), "v.") || strings.HasPrefix(t.Name(), "mm.") {
-			out = append(out, &ggml.Tensor{
-				Name:     t.Name(),
-				Kind:     t.Kind(),
-				Shape:    t.Shape(),
-				WriterTo: t,
-			})
 		} else {
-			text = append(text, t)
+			if t.Name() == "v.pre_tile_position_embd.gate" || t.Name() == "v.post_tile_position_embd.gate" {
+				t.SetRepacker(m.repack(t.Name()))
+			} else if strings.HasSuffix(t.Name(), "attn_q.weight") || strings.HasSuffix(t.Name(), "attn_k.weight") {
+				t.SetRepacker(m.repack(t.Name()))
+			} else if strings.HasSuffix(t.Name(), "attn_gate") || strings.HasSuffix(t.Name(), "ffn_gate") {
+				t.SetRepacker(m.repack(t.Name()))
+			}
+
+			out = append(out, &ggml.Tensor{
+				Name:     t.Name(),
+				Kind:     t.Kind(),
+				Shape:    t.Shape(),
+				WriterTo: t,
+			})
 		}
 	}
 
@@ -137,15 +137,34 @@ func (m *mllamaModel) repack(name string) Repacker {
 
 		var t tensor.Tensor = tensor.New(tensor.WithShape(dims...), tensor.WithBacking(data))
 
-		t, err = tensor.Tanh(t)
-		if err != nil {
-			return nil, err
-		}
+		if strings.HasSuffix(name, "attn_q.weight") || strings.HasSuffix(name, "attn_k.weight") {
+			heads := m.VisionModel.AttentionHeads
+			if err := t.Reshape(append([]int{int(heads), 2, dims[0] / int(heads) / 2}, dims[1:]...)...); err != nil {
+				return nil, err
+			}
 
-		if name == "v.position_embd.gate" {
-			t, err = tensor.Sub(float32(1), t)
+			if err := t.T(0, 2, 1, 3); err != nil {
+				return nil, err
+			}
+
+			if err := t.Reshape(dims...); err != nil {
+				return nil, err
+			}
+
+			if err := t.Transpose(); err != nil {
+				return nil, err
+			}
+		} else {
+			t, err = tensor.Tanh(t)
 			if err != nil {
 				return nil, err
+			}
+
+			if name == "v.position_embd.gate" {
+				t, err = tensor.Sub(float32(1), t)
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 

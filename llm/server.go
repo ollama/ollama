@@ -121,7 +121,7 @@ func LoadModel(model string, maxArraySize int) (*ggml.GGML, error) {
 	}
 	defer f.Close()
 
-	ggml, _, err := ggml.Decode(f, maxArraySize)
+	ggml, err := ggml.Decode(f, maxArraySize)
 	return ggml, err
 }
 
@@ -797,7 +797,8 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 
 	res, err := http.DefaultClient.Do(serverReq)
 	if err != nil {
-		return fmt.Errorf("POST predict: %v", err)
+		slog.Error("post predict", "error", err)
+		return errors.New("model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check ollama server logs for details")
 	}
 	defer res.Body.Close()
 
