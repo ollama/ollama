@@ -1030,6 +1030,17 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Check if parallel flag exists before accessing it
+	// This is needed because PullHandler can be called from RunHandler
+	// which doesn't have the parallel flag defined
+	parallel := false
+	if cmd.Flags().Lookup("parallel") != nil {
+		parallel, err = cmd.Flags().GetBool("parallel")
+		if err != nil {
+			return err
+		}
+	}
+
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
