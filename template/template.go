@@ -167,6 +167,10 @@ type Values struct {
 	api.Tools
 	Prompt string
 	Suffix string
+	Think  bool
+	// whether or not the user explicitly set the thinking flag (vs. it being
+	// implicitly false). Templates can't see whether `Think` is nil
+	IsThinkSet bool
 
 	// forceLegacy is a flag used to test compatibility with legacy templates
 	forceLegacy bool
@@ -222,16 +226,20 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 	system, messages := collate(v.Messages)
 	if v.Prompt != "" && v.Suffix != "" {
 		return t.Template.Execute(w, map[string]any{
-			"Prompt":   v.Prompt,
-			"Suffix":   v.Suffix,
-			"Response": "",
+			"Prompt":     v.Prompt,
+			"Suffix":     v.Suffix,
+			"Response":   "",
+			"Think":      v.Think,
+			"IsThinkSet": v.IsThinkSet,
 		})
 	} else if !v.forceLegacy && slices.Contains(t.Vars(), "messages") {
 		return t.Template.Execute(w, map[string]any{
-			"System":   system,
-			"Messages": messages,
-			"Tools":    v.Tools,
-			"Response": "",
+			"System":     system,
+			"Messages":   messages,
+			"Tools":      v.Tools,
+			"Response":   "",
+			"Think":      v.Think,
+			"IsThinkSet": v.IsThinkSet,
 		})
 	}
 
@@ -241,9 +249,11 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 	for _, m := range messages {
 		execute := func() error {
 			if err := t.Template.Execute(&b, map[string]any{
-				"System":   system,
-				"Prompt":   prompt,
-				"Response": response,
+				"System":     system,
+				"Prompt":     prompt,
+				"Response":   response,
+				"Think":      v.Think,
+				"IsThinkSet": v.IsThinkSet,
 			}); err != nil {
 				return err
 			}
@@ -286,9 +296,11 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 
 	tree := parse.Tree{Root: nodes.(*parse.ListNode)}
 	if err := template.Must(template.New("").AddParseTree("", &tree)).Execute(&b, map[string]any{
-		"System":   system,
-		"Prompt":   prompt,
-		"Response": response,
+		"System":     system,
+		"Prompt":     prompt,
+		"Response":   response,
+		"Think":      v.Think,
+		"IsThinkSet": v.IsThinkSet,
 	}); err != nil {
 		return err
 	}
