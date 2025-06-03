@@ -136,33 +136,11 @@ endif()
 
 find_package(IntelSYCL)
 if (IntelSYCL_FOUND)
-    
-    # Set compilers for SYCL build - icx for C and icpx for C++
+    set(GGML_SYCL_TARGET "INTEL")
     set(CMAKE_C_COMPILER icx)
     set(CMAKE_CXX_COMPILER icpx)
-    # message(STATUS "Setting C compiler to icx and C++ compiler to icpx for SYCL support")
-    
-    message(STATUS "Detected Intel oneAPI SYCL implementation")
-    set(GGML_SYCL_TARGET "INTEL")
-    
-    # # Find Intel OneAPI packages
-    # if(DEFINED ENV{ONEAPI_ROOT})
-    #     set(ONEAPI_ROOT $ENV{ONEAPI_ROOT})
-    # else()
-    #     if(WIN32)
-    #         set(ONEAPI_ROOT "C:/Program Files (x86)/Intel/oneAPI")
-    #     else()
-    #         set(ONEAPI_ROOT "/opt/intel/oneapi")
-    #     endif()
-    # endif()
-    
-    # if(EXISTS "${ONEAPI_ROOT}")
-    #     set(DPCPP_ROOT "${ONEAPI_ROOT}/compiler/latest")
-    #     set(MKL_ROOT "${ONEAPI_ROOT}/mkl/latest")
+    message(STATUS "Setting C compiler to icx and C++ compiler to icpx for SYCL support")
         
-    #     if(EXISTS "${DPCPP_ROOT}" AND EXISTS "${MKL_ROOT}")
-    #         message(STATUS "Found Intel OneAPI at ${ONEAPI_ROOT}")
-            
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-sycl)
             
     set(OLLAMA_SYCL_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/sycl)
@@ -174,62 +152,6 @@ if (IntelSYCL_FOUND)
         RUNTIME DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
         LIBRARY DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
     )
-    #     else()
-    #         message(WARNING "Intel OneAPI components not found at ${ONEAPI_ROOT}")
-    #     endif()
-    # else()
-    #     message(WARNING "Intel OneAPI not found at ${ONEAPI_ROOT}")
-    # endif()
 else()
     message(STATUS "SYCL compiler not found, SYCL support will be disabled")
 endif()
-
-# find_package(IntelSYCL)
-# if (IntelSYCL_FOUND)
-    
-#     # Set compilers for SYCL build - icx for C and icpx for C++
-#     # set(CMAKE_C_COMPILER icx)
-#     # set(CMAKE_CXX_COMPILER icpx)
-#     # message(STATUS "Setting C compiler to icx and C++ compiler to icpx for SYCL support")
-    
-#     message(STATUS "Detected Intel oneAPI SYCL implementation")
-#     set(GGML_SYCL_TARGET "INTEL")
-    
-#     # Find Intel OneAPI packages
-#     if(DEFINED ENV{ONEAPI_ROOT})
-#         set(ONEAPI_ROOT $ENV{ONEAPI_ROOT})
-#     else()
-#         if(WIN32)
-#             set(ONEAPI_ROOT "C:/Program Files (x86)/Intel/oneAPI")
-#         else()
-#             set(ONEAPI_ROOT "/opt/intel/oneapi")
-#         endif()
-#     endif()
-    
-#     if(EXISTS "${ONEAPI_ROOT}")
-#         set(DPCPP_ROOT "${ONEAPI_ROOT}/compiler/latest")
-#         set(MKL_ROOT "${ONEAPI_ROOT}/mkl/latest")
-        
-#         if(EXISTS "${DPCPP_ROOT}" AND EXISTS "${MKL_ROOT}")
-#             message(STATUS "Found Intel OneAPI at ${ONEAPI_ROOT}")
-            
-#             add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-sycl)
-            
-#             set(OLLAMA_SYCL_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/sycl)
-#             install(TARGETS ggml-sycl
-#                 RUNTIME_DEPENDENCIES
-#                     DIRECTORIES "${DPCPP_ROOT}/lib" "${DPCPP_ROOT}/bin" "${MKL_ROOT}/lib" "${MKL_ROOT}/bin"
-#                     PRE_INCLUDE_REGEXES sycl mkl
-#                     PRE_EXCLUDE_REGEXES ".*"
-#                 RUNTIME DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
-#                 LIBRARY DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
-#             )
-#         else()
-#             message(WARNING "Intel OneAPI components not found at ${ONEAPI_ROOT}")
-#         endif()
-#     else()
-#         message(WARNING "Intel OneAPI not found at ${ONEAPI_ROOT}")
-#     endif()
-# else()
-#     message(STATUS "SYCL compiler not found, SYCL support will be disabled")
-# endif()
