@@ -64,7 +64,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
-          [ -n "${{ matrix.container }}" ] || sudo=sudo
+          # [ -n "${{ matrix.container }}" ] || sudo=sudo
           $sudo apt-get update
           $sudo apt-get install -y cmake ccache ${{ matrix.extra-packages }}
         env:
