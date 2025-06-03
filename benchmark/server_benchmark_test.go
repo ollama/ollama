@@ -78,7 +78,7 @@ func BenchmarkColdStart(b *testing.B) {
 
 	for _, tt := range tests {
 		b.Run(fmt.Sprintf("%s/cold/%s", m, tt.name), func(b *testing.B) {
-			ctx := context.Background()
+			ctx := b.Context()
 
 			// Set number of tokens as our throughput metric
 			b.SetBytes(int64(tt.maxTokens))
@@ -92,7 +92,7 @@ func BenchmarkColdStart(b *testing.B) {
 				req := &api.GenerateRequest{
 					Model:   m,
 					Prompt:  tt.prompt,
-					Options: map[string]interface{}{"num_predict": tt.maxTokens, "temperature": 0.1},
+					Options: map[string]any{"num_predict": tt.maxTokens, "temperature": 0.1},
 				}
 
 				runGenerateBenchmark(b, ctx, client, req)
@@ -113,7 +113,7 @@ func BenchmarkWarmStart(b *testing.B) {
 
 	for _, tt := range tests {
 		b.Run(fmt.Sprintf("%s/warm/%s", m, tt.name), func(b *testing.B) {
-			ctx := context.Background()
+			ctx := b.Context()
 
 			// Pre-warm the model
 			warmup(client, m, tt.prompt, b)
@@ -140,7 +140,7 @@ func setup(b *testing.B) *api.Client {
 	if err != nil {
 		b.Fatal(err)
 	}
-	if _, err := client.Show(context.Background(), &api.ShowRequest{Model: modelName(b)}); err != nil {
+	if _, err := client.Show(b.Context(), &api.ShowRequest{Model: modelName(b)}); err != nil {
 		b.Fatalf("Model unavailable: %v", err)
 	}
 
@@ -155,7 +155,7 @@ func warmup(client *api.Client, model string, prompt string, b *testing.B) {
 			&api.GenerateRequest{
 				Model:   model,
 				Prompt:  prompt,
-				Options: map[string]interface{}{"num_predict": 50, "temperature": 0.1},
+				Options: map[string]any{"num_predict": 50, "temperature": 0.1},
 			},
 			func(api.GenerateResponse) error { return nil },
 		)

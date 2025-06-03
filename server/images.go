@@ -35,15 +35,10 @@ var (
 	errCapabilityCompletion = errors.New("completion")
 	errCapabilityTools      = errors.New("tools")
 	errCapabilityInsert     = errors.New("insert")
+	errCapabilityVision     = errors.New("vision")
+	errCapabilityEmbedding  = errors.New("embedding")
+	errCapabilityThinking   = errors.New("thinking")
 	errInsecureProtocol     = errors.New("insecure protocol http")
-)
-
-type Capability string
-
-const (
-	CapabilityCompletion = Capability("completion")
-	CapabilityTools      = Capability("tools")
-	CapabilityInsert     = Capability("insert")
 )
 
 type registryOptions struct {
@@ -66,56 +61,107 @@ type Model struct {
 	System         string
 	License        []string
 	Digest         string
-	Options        map[string]interface{}
+	Options        map[string]any
 	Messages       []api.Message
 
 	Template *template.Template
 }
 
+// Capabilities returns the capabilities that the model supports
+func (m *Model) Capabilities() []model.Capability {
+	capabilities := []model.Capability{}
+
+	// Check for completion capability
+	r, err := os.Open(m.ModelPath)
+	if err == nil {
+		defer r.Close()
+
+		f, err := ggml.Decode(r, 1024)
+		if err == nil {
+			if _, ok := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]; ok {
+				capabilities = append(capabilities, model.CapabilityEmbedding)
+			} else {
+				capabilities = append(capabilities, model.CapabilityCompletion)
+			}
+			if _, ok := f.KV()[fmt.Sprintf("%s.vision.block_count", f.KV().Architecture())]; ok {
+				capabilities = append(capabilities, model.CapabilityVision)
+			}
+		} else {
+			slog.Error("couldn't decode ggml", "error", err)
+		}
+	} else {
+		slog.Error("couldn't open model file", "error", err)
+	}
+
+	if m.Template == nil {
+		return capabilities
+	}
+
+	// Check for tools capability
+	if slices.Contains(m.Template.Vars(), "tools") {
+		capabilities = append(capabilities, model.CapabilityTools)
+	}
+
+	// Check for insert capability
+	if slices.Contains(m.Template.Vars(), "suffix") {
+		capabilities = append(capabilities, model.CapabilityInsert)
+	}
+
+	// Check for vision capability in projector-based models
+	if len(m.ProjectorPaths) > 0 {
+		capabilities = append(capabilities, model.CapabilityVision)
+	}
+
+	// Check for thinking capability
+	openingTag, closingTag := inferThinkingTags(m.Template.Template)
+	if openingTag != "" && closingTag != "" {
+		capabilities = append(capabilities, model.CapabilityThinking)
+	}
+
+	return capabilities
+}
+
 // CheckCapabilities checks if the model has the specified capabilities returning an error describing
 // any missing or unknown capabilities
-func (m *Model) CheckCapabilities(caps ...Capability) error {
+func (m *Model) CheckCapabilities(want ...model.Capability) error {
+	available := m.Capabilities()
 	var errs []error
-	for _, cap := range caps {
-		switch cap {
-		case CapabilityCompletion:
-			r, err := os.Open(m.ModelPath)
-			if err != nil {
-				slog.Error("couldn't open model file", "error", err)
-				continue
-			}
-			defer r.Close()
 
-			// TODO(mxyng): decode the GGML into model to avoid doing this multiple times
-			f, _, err := ggml.Decode(r, 0)
-			if err != nil {
-				slog.Error("couldn't decode ggml", "error", err)
-				continue
-			}
+	// Map capabilities to their corresponding error
+	capToErr := map[model.Capability]error{
+		model.CapabilityCompletion: errCapabilityCompletion,
+		model.CapabilityTools:      errCapabilityTools,
+		model.CapabilityInsert:     errCapabilityInsert,
+		model.CapabilityVision:     errCapabilityVision,
+		model.CapabilityEmbedding:  errCapabilityEmbedding,
+		model.CapabilityThinking:   errCapabilityThinking,
+	}
 
-			if _, ok := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]; ok {
-				errs = append(errs, errCapabilityCompletion)
-			}
-		case CapabilityTools:
-			if !slices.Contains(m.Template.Vars(), "tools") {
-				errs = append(errs, errCapabilityTools)
-			}
-		case CapabilityInsert:
-			vars := m.Template.Vars()
-			if !slices.Contains(vars, "suffix") {
-				errs = append(errs, errCapabilityInsert)
-			}
-		default:
+	for _, cap := range want {
+		err, ok := capToErr[cap]
+		if !ok {
 			slog.Error("unknown capability", "capability", cap)
 			return fmt.Errorf("unknown capability: %s", cap)
 		}
+
+		if !slices.Contains(available, cap) {
+			errs = append(errs, err)
+		}
 	}
 
-	if err := errors.Join(errs...); err != nil {
-		return fmt.Errorf("%w %w", errCapabilities, errors.Join(errs...))
+	var err error
+	if len(errs) > 0 {
+		err = fmt.Errorf("%w %w", errCapabilities, errors.Join(errs...))
 	}
 
-	return nil
+	if slices.Contains(errs, errCapabilityThinking) {
+		if m.Config.ModelFamily == "qwen3" || model.ParseName(m.Name).Model == "deepseek-r1" {
+			// append a message to the existing error
+			return fmt.Errorf("%w. Pull the model again to get the latest version with full thinking support", err)
+		}
+	}
+
+	return err
 }
 
 func (m *Model) String() string {

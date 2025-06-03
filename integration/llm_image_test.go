@@ -12,61 +12,55 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIntegrationLlava(t *testing.T) {
-	image, err := base64.StdEncoding.DecodeString(imageEncoding)
-	require.NoError(t, err)
-	req := api.GenerateRequest{
-		Model:  "llava:7b",
-		Prompt: "what does the text in this image say?",
-		Stream: &stream,
-		Options: map[string]interface{}{
-			"seed":        42,
-			"temperature": 0.0,
+func TestVisionModels(t *testing.T) {
+	skipUnderMinVRAM(t, 6)
+	type testCase struct {
+		model string
+	}
+	testCases := []testCase{
+		{
+			model: "qwen2.5vl",
 		},
-		Images: []api.ImageData{
-			image,
+		{
+			model: "llama3.2-vision",
+		},
+		{
+			model: "gemma3",
 		},
 	}
 
-	// Note: sometimes it returns "the ollamas" sometimes "the ollams"
-	resp := "the ollam"
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-	client, _, cleanup := InitServerConnection(ctx, t)
-	defer cleanup()
-	require.NoError(t, PullIfMissing(ctx, client, req.Model))
-	// llava models on CPU can be quite slow to start,
-	DoGenerate(ctx, t, client, req, []string{resp}, 120*time.Second, 30*time.Second)
-}
+	for _, v := range testCases {
+		t.Run(v.model, func(t *testing.T) {
+			image, err := base64.StdEncoding.DecodeString(imageEncoding)
+			require.NoError(t, err)
+			req := api.GenerateRequest{
+				Model:  v.model,
+				Prompt: "what does the text in this image say?",
+				Stream: &stream,
+				Options: map[string]any{
+					"seed":        42,
+					"temperature": 0.0,
+				},
+				Images: []api.ImageData{
+					image,
+				},
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			client, _, cleanup := InitServerConnection(ctx, t)
 
-func TestIntegrationMllama(t *testing.T) {
-	image, err := base64.StdEncoding.DecodeString(imageEncoding)
-	require.NoError(t, err)
-	req := api.GenerateRequest{
-		// TODO fix up once we publish the final image
-		Model:  "x/llama3.2-vision",
-		Prompt: "what does the text in this image say?",
-		Stream: &stream,
-		Options: map[string]interface{}{
-			"seed":        42,
-			"temperature": 0.0,
-		},
-		Images: []api.ImageData{
-			image,
-		},
+			// Note: sometimes it returns "the ollamas" sometimes "the ollams"
+			resp := "the ollam"
+			defer cleanup()
+			require.NoError(t, PullIfMissing(ctx, client, req.Model))
+			// llava models on CPU can be quite slow to start
+			DoGenerate(ctx, t, client, req, []string{resp}, 240*time.Second, 30*time.Second)
+		})
 	}
-
-	resp := "the ollamas"
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	client, _, cleanup := InitServerConnection(ctx, t)
-	defer cleanup()
-	require.NoError(t, PullIfMissing(ctx, client, req.Model))
-	// mllama models on CPU can be quite slow to start,
-	DoGenerate(ctx, t, client, req, []string{resp}, 240*time.Second, 30*time.Second)
 }
 
 func TestIntegrationSplitBatch(t *testing.T) {
+	skipUnderMinVRAM(t, 6)
 	image, err := base64.StdEncoding.DecodeString(imageEncoding)
 	require.NoError(t, err)
 	req := api.GenerateRequest{
@@ -75,7 +69,7 @@ func TestIntegrationSplitBatch(t *testing.T) {
 		System: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed aliquet, justo in malesuada lobortis, odio ligula volutpat quam, quis faucibus ipsum magna quis sapien. Aliquam in venenatis diam, eu viverra magna. Phasellus imperdiet hendrerit volutpat. Vivamus sem ex, facilisis placerat felis non, dictum elementum est. Phasellus aliquam imperdiet lacus, eget placerat ligula sodales vel. Pellentesque nec auctor mi. Curabitur arcu nisi, faucibus eget nunc id, viverra interdum mi. Curabitur ornare ipsum ex, ac euismod ex aliquam in. Vestibulum id magna at purus accumsan fermentum. Proin scelerisque posuere nunc quis interdum. Maecenas sed mollis nisl. Etiam vitae ipsum interdum, placerat est quis, tincidunt velit. Nullam tempor nibh non lorem volutpat efficitur. Cras laoreet diam imperdiet ipsum auctor bibendum. Suspendisse ultrices urna sed metus sagittis suscipit. Quisque ullamcorper aliquam nibh ut mollis. Aenean dapibus mauris pharetra, venenatis elit ac, hendrerit odio. Cras vestibulum erat tempor, lobortis justo eu, lobortis ipsum. Nam laoreet dapibus sem. Proin vel diam ultrices, elementum ante et, ornare lectus. Proin eu accumsan nisl. Praesent ac ex vitae ipsum vulputate tristique facilisis sit amet lacus. Nullam faucibus magna a pellentesque pretium. Nunc lacinia ullamcorper sollicitudin. Donec vitae accumsan turpis, sed porttitor est. Donec porttitor mi vitae augue faucibus, vel mollis diam tincidunt.",
 		Prompt: "what does the text in this image say?",
 		Stream: &stream,
-		Options: map[string]interface{}{
+		Options: map[string]any{
 			"seed":        42,
 			"temperature": 0.0,
 		},
