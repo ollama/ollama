@@ -63,13 +63,7 @@
     },
     {
       "name": "SYCL",
-      "inherits": [ "Default" ],
-      "cacheVariables": {
-        "GGML_SYCL": "ON",
-        "GGML_SYCL_TARGET": "INTEL",
-        "CMAKE_C_COMPILER": "icx",
-        "CMAKE_CXX_COMPILER": "icx"
-      }
+      "inherits": [ "Default" ]
     }
   ],
   "buildPresets": [
