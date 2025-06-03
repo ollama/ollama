@@ -958,10 +958,35 @@ func (t *Tensor) Concat(ctx ml.Context, t2 ml.Tensor, dim int) ml.Tensor {
 	}
 }
 
-func (t *Tensor) Contiguous(ctx ml.Context) ml.Tensor {
-	return &Tensor{
-		b: t.b,
-		t: C.ggml_cont(ctx.(*Context).ctx, t.t),
+func (t *Tensor) Contiguous(ctx ml.Context, shape ...int) ml.Tensor {
+	switch len(shape) {
+	case 0:
+		return &Tensor{
+			b: t.b,
+			t: C.ggml_cont(ctx.(*Context).ctx, t.t),
+		}
+	case 1:
+		return &Tensor{
+			b: t.b,
+			t: C.ggml_cont_1d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0])),
+		}
+	case 2:
+		return &Tensor{
+			b: t.b,
+			t: C.ggml_cont_2d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0]), C.int64_t(shape[1])),
+		}
+	case 3:
+		return &Tensor{
+			b: t.b,
+			t: C.ggml_cont_3d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0]), C.int64_t(shape[1]), C.int64_t(shape[2])),
+		}
+	case 4:
+		return &Tensor{
+			b: t.b,
+			t: C.ggml_cont_4d(ctx.(*Context).ctx, t.t, C.int64_t(shape[0]), C.int64_t(shape[1]), C.int64_t(shape[2]), C.int64_t(shape[3])),
+		}
+	default:
+		panic("unsupported number of dimensions")
 	}
 }
 
@@ -1176,11 +1201,18 @@ func (t *Tensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 
 func (t *Tensor) RoPE(ctx ml.Context, positions ml.Tensor, ropeDim int, ropeBase, ropeScale float32, options ...func(*rope.Options)) ml.Tensor {
 	// Default options
-	opts := &rope.Options{OriginalContextLength: 131072, Factors: &Tensor{}}
+	opts := rope.Options{
+		Factors:               &Tensor{},
+		OriginalContextLength: 131072,
+		ExtrapolationFactor:   0.,
+		AttentionFactor:       1.,
+		BetaFast:              32.,
+		BetaSlow:              1.,
+	}
 
 	// Apply any provided options
 	for _, option := range options {
-		option(opts)
+		option(&opts)
 	}
 
 	dequant := t.t
@@ -1200,10 +1232,10 @@ func (t *Tensor) RoPE(ctx ml.Context, positions ml.Tensor, ropeDim int, ropeBase
 			C.int(opts.OriginalContextLength),
 			C.float(ropeBase),
 			C.float(ropeScale),
-			C.float(0.0),
-			C.float(1.0),
-			C.float(32.0),
-			C.float(1.0),
+			C.float(opts.ExtrapolationFactor),
+			C.float(opts.AttentionFactor),
+			C.float(opts.BetaFast),
+			C.float(opts.BetaSlow),
 		),
 	}
 }
@@ -1219,6 +1251,13 @@ func (t *Tensor) GELU(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_gelu_inplace(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) QuickGELU(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_gelu_quick_inplace(ctx.(*Context).ctx, t.t),
 	}
 }
 
