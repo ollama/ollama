@@ -138,8 +138,8 @@ find_package(IntelSYCL)
 if (IntelSYCL_FOUND)
     
     # Set compilers for SYCL build - icx for C and icpx for C++
-    # set(CMAKE_C_COMPILER icx)
-    # set(CMAKE_CXX_COMPILER icpx)
+    set(CMAKE_C_COMPILER icx)
+    set(CMAKE_CXX_COMPILER icpx)
     # message(STATUS "Setting C compiler to icx and C++ compiler to icpx for SYCL support")
     
     message(STATUS "Detected Intel oneAPI SYCL implementation")
