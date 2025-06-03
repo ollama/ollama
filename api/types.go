@@ -653,7 +653,7 @@ func DefaultOptions() Options {
 			NumBatch:  512,
 			NumGPU:    -1, // -1 here indicates that NumGPU should be set dynamically
 			NumThread: 0,  // let the runtime decide
-			UseMMap:   nil,
+			UseMMap:   envconfig.UseMMap(),
 		},
 	}
 }
