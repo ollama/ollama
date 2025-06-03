@@ -32,4 +32,13 @@ if echo $PLATFORM | grep "amd64" > /dev/null; then
         -f Dockerfile \
         -t ${FINAL_IMAGE_REPO}:$VERSION-rocm \
         .
+        
+    docker buildx build \
+        ${LOAD_OR_PUSH} \
+        --platform=linux/amd64 \
+        ${OLLAMA_COMMON_BUILD_ARGS} \
+        --build-arg FLAVOR=sycl \
+        -f Dockerfile \
+        -t ${FINAL_IMAGE_REPO}:$VERSION-sycl \
+        .
 fi
