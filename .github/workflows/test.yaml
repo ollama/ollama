@@ -59,7 +59,7 @@ jobs:
             flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
           - preset: SYCL
             container: intel/oneapi-basekit:2025.1.3-0-devel-ubuntu24.04
-    runs-on: ubuntu-24.04
+    runs-on: linux
     container: ${{ matrix.container }}
     steps:
       - uses: actions/checkout@v4
