@@ -133,17 +133,20 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 		}
 
 		// Strip off Target Features when comparing
-		if !slices.Contains[[]string, string](supported, strings.Split(gfx, ":")[0]) {
-			reason := fmt.Sprintf("amdgpu is not supported (supported types:%s)", supported)
-			slog.Warn(reason, "gpu_type", gfx, "gpu", gpuInfo.ID, "library", libDir)
-			unsupportedGPUs = append(unsupportedGPUs, UnsupportedGPUInfo{
-				GpuInfo: gpuInfo.GpuInfo,
-				Reason:  reason,
-			})
-			// HSA_OVERRIDE_GFX_VERSION not supported on windows
-			continue
-		} else {
-			slog.Debug("amdgpu is supported", "gpu", i, "gpu_type", gfx)
+		// If HSA_OVERRIDE_GFX_VERSION is set, skip check
+		if gfxOverride == "" {
+			if !slices.Contains[[]string, string](supported, strings.Split(gfx, ":")[0]) {
+				reason := fmt.Sprintf("amdgpu is not supported (supported types:%s)", supported)
+				slog.Warn(reason, "gpu_type", gfx, "gpu", gpuInfo.ID, "library", libDir)
+				unsupportedGPUs = append(unsupportedGPUs, UnsupportedGPUInfo{
+					GpuInfo: gpuInfo.GpuInfo,
+					Reason:  reason,
+				})
+				// HSA_OVERRIDE_GFX_VERSION not supported on windows
+				continue
+			} else {
+				slog.Debug("amdgpu is supported", "gpu", i, "gpu_type", gfx)
+			}
 		}
 
 		slog.Debug("amdgpu memory", "gpu", i, "total", format.HumanBytes2(totalMemory))
