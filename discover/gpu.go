@@ -785,11 +785,11 @@ func loadOneapiMgmt(oneapiLibPaths []string) (int, *C.oneapi_handle_t, string, e
 	return 0, nil, "", err
 }
 
-func loadSyclMgmt(oneapiLibPaths []string) (int, *C.sycl_handle_t, string, error) {
+func loadSyclMgmt(syclLibPaths []string) (int, *C.sycl_handle_t, string, error) {
 	var resp C.sycl_init_resp_t
 	resp.oh.verbose = getVerboseState()
 	var err error
-	for _, libPath := range oneapiLibPaths {
+	for _, libPath := range syclLibPaths {
 		lib := C.CString(libPath)
 		defer C.free(unsafe.Pointer(lib))
 		C.sycl_init(lib, &resp)
