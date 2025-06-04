@@ -143,7 +143,7 @@ ollama run mario
 Hello! It's your friend Mario.
 ```
 
-For more information on working with a Modelfile, see the [Modelfile](docs/modelfile.md) documentation.
+For more information on working with a Modelfile, see the [Modelfile](docs/getting_started/modelfile.md) documentation.
 
 ## CLI Reference
 
@@ -272,7 +272,7 @@ curl http://localhost:11434/api/chat -d '{
 }'
 ```
 
-See the [API documentation](./docs/api.md) for all endpoints.
+See the [API documentation](docs/api.md) for all endpoints.
 
 ## Community Integrations
 
