@@ -140,6 +140,8 @@ if (IntelSYCL_FOUND)
     set(CMAKE_C_COMPILER icx)
     set(CMAKE_CXX_COMPILER icpx)
     message(STATUS "Setting C compiler to icx and C++ compiler to icpx for SYCL support")
+    
+    set(GGML_SYCL_DNN ON)
         
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-sycl)
             
