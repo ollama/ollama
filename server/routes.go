@@ -284,10 +284,16 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	var thinkingState *thinkingParser
 	openingTag, closingTag := inferThinkingTags(m.Template.Template)
-	if req.Think != nil && *req.Think && openingTag != "" && closingTag != "" {
+	if openingTag != "" && closingTag != "" {
+		// Always create thinking parser when template has thinking tags
+		// to filter unwanted thinking content even when think=false
 		thinkingState = &thinkingParser{
 			openingTag: openingTag,
 			closingTag: closingTag,
+		}
+		// Only expose thinking content to user when think=true
+		if req.Think == nil || !*req.Think {
+			thinkingState.suppressThinking = true
 		}
 	}
 
@@ -315,13 +321,17 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				},
 			}
 
+			var contentForContext string
 			if thinkingState != nil {
 				thinking, content := thinkingState.addContent(cr.Content)
 				res.Thinking = thinking
 				res.Response = content
+				contentForContext = content
+			} else {
+				contentForContext = cr.Content
 			}
 
-			if _, err := sb.WriteString(cr.Content); err != nil {
+			if _, err := sb.WriteString(contentForContext); err != nil {
 				ch <- gin.H{"error": err.Error()}
 			}
 
@@ -1516,10 +1526,16 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	var thinkingState *thinkingParser
 	openingTag, closingTag := inferThinkingTags(m.Template.Template)
-	if req.Think != nil && *req.Think && openingTag != "" && closingTag != "" {
+	if openingTag != "" && closingTag != "" {
+		// Always create thinking parser when template has thinking tags
+		// to filter unwanted thinking content even when think=false
 		thinkingState = &thinkingParser{
 			openingTag: openingTag,
 			closingTag: closingTag,
+		}
+		// Only expose thinking content to user when think=true
+		if req.Think == nil || !*req.Think {
+			thinkingState.suppressThinking = true
 		}
 	}
 

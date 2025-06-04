@@ -730,24 +730,30 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 	slog.Log(ctx, logutil.LevelTrace, "completion request", "prompt", req.Prompt)
 
 	if len(req.Format) > 0 {
+		thinkingEnabled := strings.Contains(req.Prompt, "/think") || strings.Contains(req.Prompt, "<think>") || strings.Contains(req.Prompt, "Thinking")
+		
 		switch string(req.Format) {
 		case `null`, `""`:
 			// Field was set, but "missing" a value. We accept
 			// these as "not set".
 			break
 		case `"json"`:
-			req.Grammar = grammarJSON
+			if !thinkingEnabled {
+				req.Grammar = grammarJSON
+			}
 		default:
 			if req.Format[0] != '{' {
 				return fmt.Errorf("invalid format: %q; expected \"json\" or a valid JSON Schema object", req.Format)
 			}
 
 			// User provided a JSON schema
-			g := llama.SchemaToGrammar(req.Format)
-			if g == nil {
-				return fmt.Errorf("invalid JSON schema in format")
+			if !thinkingEnabled {
+				g := llama.SchemaToGrammar(req.Format)
+				if g == nil {
+					return fmt.Errorf("invalid JSON schema in format")
+				}
+				req.Grammar = string(g)
 			}
-			req.Grammar = string(g)
 		}
 	}
 
