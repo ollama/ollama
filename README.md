@@ -403,10 +403,12 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [screenpipe](https://github.com/mediar-ai/screenpipe) Build agents powered by your screen history
 - [Ollamb](https://github.com/hengkysteen/ollamb) (Simple yet rich in features, cross-platform built with Flutter and designed for Ollama. Try the [web demo](https://hengkysteen.github.io/demo/ollamb/).)
 - [Writeopia](https://github.com/Writeopia/Writeopia) (Text editor with integration with Ollama)
+- [lrc-ai-assistant](https://blog.fokuspunk.de/lrc-ai-assistant/) (Lightroom classic plugin with integration of Ollama)
 - [AppFlowy](https://github.com/AppFlowy-IO/AppFlowy) (AI collaborative workspace with Ollama, cross-platform and self-hostable)
 - [Lumina](https://github.com/cushydigit/lumina.git) (A lightweight, minimal React.js frontend for interacting with Ollama servers)
 - [Tiny Notepad](https://pypi.org/project/tiny-notepad) (A lightweight, notepad-like interface to chat with ollama available on PyPI)
 - [macLlama (macOS native)](https://github.com/hellotunamayo/macLlama) (A native macOS GUI application for interacting with Ollama models, featuring a chat interface.) 
+
 
 ### Cloud
 
