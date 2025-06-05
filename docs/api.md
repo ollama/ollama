@@ -1157,11 +1157,15 @@ A single JSON object will be returned.
 {
   "models": [
     {
-      "name": "deepseek-r1:latest",
-      "model": "deepseek-r1:latest",
-      "modified_at": "2025-05-10T08:06:48.639712648-07:00",
-      "size": 4683075271,
-      "digest": "0a8c266910232fd3291e71e5ba1e058cc5af9d411192cf88b6d30e92b6e73163",
+
+      "model": "codellama:13b",
+      "modified_at": "2023-11-04T14:56:49.277302595-07:00",
+      "size": 7365960935,
+      "digest": "9f438cb9cd581fc025612d27f7c1a6669ff83a8bb0ed86c94fcf4c5440555697",
+      "capabilities": [
+        "completion"
+      ],
+
       "details": {
         "parent_model": "",
         "format": "gguf",
@@ -1174,11 +1178,16 @@ A single JSON object will be returned.
       }
     },
     {
-      "name": "llama3.2:latest",
-      "model": "llama3.2:latest",
-      "modified_at": "2025-05-04T17:37:44.706015396-07:00",
-      "size": 2019393189,
-      "digest": "a80c4f17acd55265feec403c7aef86be0c25983ab279d83f3bcd3abbcb5b8b72",
+
+      "model": "llama4:latest",
+      "modified_at": "2023-12-07T09:32:18.757212583-08:00",
+      "size": 3825819519,
+      "digest": "fe938a131f40e6f6d40083c9f0f430a515233eb2edaa6d72eb85c50d64f2300e",
+      "capabilities": [
+        "completion",
+        "vision"
+      ],
+
       "details": {
         "parent_model": "",
         "format": "gguf",

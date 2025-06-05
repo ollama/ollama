@@ -500,6 +500,7 @@ type ListModelResponse struct {
 	ModifiedAt time.Time    `json:"modified_at" example:"2023-01-01T00:00:00Z"`
 	Size       int64        `json:"size" example:"1024"`
 	Digest     string       `json:"digest" example:"sha256:abcd1234"`
+  Capabilities []model.Capability `json:"capabilities,omitempty"`
 	Details    ModelDetails `json:"details,omitempty"`
 }
 
