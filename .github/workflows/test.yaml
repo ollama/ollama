@@ -230,7 +230,7 @@ jobs:
             $value = $_.Value -replace "`n", " " -replace "`r", ""
             Write-Output "$name=$value"
           }
-          cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }}
+          cmake --trace-expand --preset "${{ matrix.preset }}" ${{ matrix.flags }}
           cmake --build --parallel --preset "${{ matrix.preset }}"
         env:
           CMAKE_GENERATOR: Ninja
