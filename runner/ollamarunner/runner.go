@@ -1,12 +1,14 @@
 package ollamarunner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"hash/maphash"
+	"image"
 	"log"
 	"log/slog"
 	"net"
@@ -20,6 +22,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"golang.org/x/image/bmp"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/ollama/ollama/api"
@@ -39,6 +42,9 @@ type Sequence struct {
 	// ctxs are used for allocating tensors that last the lifetime of the sequence, such as
 	// multimodal embeddings
 	ctxs []ml.Context
+
+	// mmStore holds multimodal embeddings to mange memory and enable splitting across batches
+	mmStore multimodalStore
 
 	// batch index
 	iBatch int
@@ -101,7 +107,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 
 	startTime := time.Now()
 
-	inputs, ctxs, err := s.inputs(prompt, images)
+	inputs, ctxs, mmStore, err := s.inputs(prompt, images)
 	if err != nil {
 		return nil, fmt.Errorf("failed to process inputs: %w", err)
 	} else if len(inputs) == 0 {
@@ -156,6 +162,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 
 	return &Sequence{
 		ctxs:                ctxs,
+		mmStore:             mmStore,
 		inputs:              inputs,
 		numPromptInputs:     len(inputs),
 		startProcessingTime: startTime,
@@ -174,9 +181,10 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 // inputs processes the prompt and images into a list of inputs
 // by splitting the prompt on [img-<n>] tags, tokenizing text and
 // decoding images
-func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, []ml.Context, error) {
+func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, []ml.Context, multimodalStore, error) {
 	var inputs []input.Input
 	var ctxs []ml.Context
+	var mmStore multimodalStore
 
 	var parts []string
 	var matches [][]string
@@ -187,6 +195,7 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, [
 		re := regexp.MustCompile(`\[img-(\d+)\]`)
 		parts = re.Split(prompt, -1)
 		matches = re.FindAllStringSubmatch(prompt, -1)
+		mmStore = newMultimodalStore()
 	} else {
 		parts = []string{prompt}
 	}
@@ -196,7 +205,7 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, [
 		// text - tokenize
 		tokens, err := s.model.(model.TextProcessor).Encode(part, i == 0)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 
 		for _, t := range tokens {
@@ -216,7 +225,7 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, [
 			}
 
 			if imageIndex < 0 {
-				return nil, nil, fmt.Errorf("invalid image index: %d", n)
+				return nil, nil, nil, fmt.Errorf("invalid image index: %d", n)
 			}
 
 			ctx := s.model.Backend().NewContext()
@@ -224,12 +233,14 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, [
 			ctxs = append(ctxs, ctx)
 			imageEmbeddings, err := multimodalProcessor.EncodeMultimodal(ctx, images[imageIndex].Data)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 
 			s.multimodalHash.Reset()
 			_, _ = s.multimodalHash.Write(images[imageIndex].Data)
 			imageHash := s.multimodalHash.Sum64()
+
+			mmStore.addMultimodal(imageEmbeddings)
 
 			inputs = append(inputs, input.Input{Multimodal: imageEmbeddings, MultimodalHash: imageHash})
 			postTokenize = true
@@ -240,11 +251,11 @@ func (s *Server) inputs(prompt string, images []llm.ImageData) ([]input.Input, [
 		var err error
 		inputs, err = multimodalProcessor.PostTokenize(inputs)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
 
-	return inputs, ctxs, nil
+	return inputs, ctxs, mmStore, nil
 }
 
 type Server struct {
@@ -363,6 +374,9 @@ func (s *Server) processBatch() error {
 	}
 	defer s.mu.Unlock()
 
+	ctx := s.model.Backend().NewContext()
+	defer ctx.Close()
+
 	var batchInputs []int32
 	var batch input.Batch
 
@@ -433,7 +447,11 @@ func (s *Server) processBatch() error {
 
 			batchInputs = append(batchInputs, inp.Token)
 			if inp.Multimodal != nil {
-				batch.Multimodal = append(batch.Multimodal, input.MultimodalIndex{Index: len(batchInputs) - 1, Multimodal: inp.Multimodal})
+				mm, err := seq.mmStore.getMultimodal(s.model.Backend(), ctx, inp.Multimodal, false)
+				if err != nil {
+					return err
+				}
+				batch.Multimodal = append(batch.Multimodal, input.MultimodalIndex{Index: len(batchInputs) - 1, Multimodal: mm})
 			}
 
 			batch.Positions = append(batch.Positions, int32(len(seq.cache.Inputs)+len(seq.pendingInputs)))
@@ -458,9 +476,6 @@ func (s *Server) processBatch() error {
 	if len(batchInputs) == 0 {
 		return nil
 	}
-
-	ctx := s.model.Backend().NewContext()
-	defer ctx.Close()
 
 	modelOutput, err := model.Forward(ctx, s.model, batchInputs, batch)
 	if err != nil {
@@ -720,12 +735,71 @@ func (s *Server) reserveWorstCaseGraph() error {
 	ctx := s.model.Backend().NewContext()
 	defer ctx.Close()
 
+	var err error
+	inputs := make([]input.Input, s.batchSize)
+	mmStore := newMultimodalStore()
+
+	// Multimodal strategy:
+	// - Encode a 2048x2048 image. This assumes that a single image of this
+	//   size is sufficient to trigger the worst case. This is currently true
+	//   because for existing models, only a single image fits in a batch.
+	// - Add the embedding to a full batch of tokens - this is necessary because
+	//   the model may be looking for non-image data, such as <image> tags.
+	// - Run PostTokenize to execute any transformations between generated
+	//   embeddings and what the forward pass expects.
+	// - The result may now be larger than a batch (images may not fit in a
+	//   single batch), so trim based on what will fit and must be grouped together.
+	// - Fill out the rest of the space with text tokens.
+	if multimodalProcessor, ok := s.model.(model.MultimodalProcessor); ok {
+		mmCtx := s.model.Backend().NewContext()
+		defer mmCtx.Close()
+
+		img := image.NewGray(image.Rect(0, 0, 2048, 2048))
+		var buf bytes.Buffer
+		bmp.Encode(&buf, img)
+
+		if inputs[0].Multimodal, err = multimodalProcessor.EncodeMultimodal(mmCtx, buf.Bytes()); err == nil {
+			mmStore.addMultimodal(inputs[0].Multimodal)
+
+			inputs, err = multimodalProcessor.PostTokenize(inputs)
+			if err != nil {
+				return err
+			}
+
+			for i, inp := range inputs {
+				minBatch := 1 + inp.SameBatch
+				if minBatch > s.batchSize {
+					inputs = inputs[i:min(i+minBatch, len(inputs))]
+					break
+				} else if i+minBatch > s.batchSize {
+					inputs = inputs[:i]
+					break
+				}
+			}
+
+			if len(inputs) < s.batchSize {
+				newInputs := make([]input.Input, s.batchSize)
+				copy(newInputs, inputs)
+				inputs = newInputs
+			}
+		}
+	}
+
 	var batch input.Batch
 
-	inputs := make([]int32, s.batchSize)
+	batchInputs := make([]int32, len(inputs))
 	batch.Positions = make([]int32, len(inputs))
 	batch.Sequences = make([]int, len(inputs))
-	for i := range inputs {
+	for i, inp := range inputs {
+		batchInputs[i] = inp.Token
+		if inp.Multimodal != nil {
+			mm, err := mmStore.getMultimodal(s.model.Backend(), ctx, inp.Multimodal, true)
+			if err != nil {
+				return err
+			}
+			batch.Multimodal = append(batch.Multimodal, input.MultimodalIndex{Index: i, Multimodal: mm})
+		}
+
 		batch.Positions[i] = int32(i)
 	}
 
@@ -734,11 +808,7 @@ func (s *Server) reserveWorstCaseGraph() error {
 		batch.Outputs[i] = int32(i)
 	}
 
-	var err error
-	batch.Inputs, err = ctx.Input().FromIntSlice(inputs, len(inputs))
-	if err != nil {
-		return err
-	}
+	batch.Inputs = ctx.Input().FromIntSlice(batchInputs, len(batchInputs))
 
 	cache := s.model.Config().Cache
 	if cache != nil {
@@ -753,16 +823,12 @@ func (s *Server) reserveWorstCaseGraph() error {
 		return err
 	}
 
-	err = ctx.Forward(t).Reserve()
-	if err != nil {
-		return err
-	}
+	ctx.Forward(t).Reserve()
 
 	return nil
 }
 
-func (s *Server) loadModel(
-	ctx context.Context,
+func (s *Server) initModel(
 	mpath string,
 	params ml.BackendParams,
 	lpath multiLPath,
@@ -770,21 +836,21 @@ func (s *Server) loadModel(
 	kvCacheType string,
 	kvSize int,
 	multiUserCache bool,
-) {
+) error {
 	var err error
-	s.model, err = model.New(ctx, mpath, params)
+	s.model, err = model.New(mpath, params)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	// TODO(jessegross): LoRA loading
 	if lpath.String() != "" {
-		panic("loras are not yet implemented")
+		return errors.New("loras are not yet implemented")
 	}
 
 	s.cache, err = NewInputCache(s.model, kvCacheType, int32(kvSize), parallel, s.batchSize, multiUserCache)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	if !s.cache.enabled && parallel > 1 {
@@ -796,7 +862,30 @@ func (s *Server) loadModel(
 	s.seqs = make([]*Sequence, s.parallel)
 	s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
 
-	err = s.reserveWorstCaseGraph()
+	return s.reserveWorstCaseGraph()
+}
+
+func (s *Server) load(
+	ctx context.Context,
+	mpath string,
+	params ml.BackendParams,
+	lpath multiLPath,
+	parallel int,
+	kvCacheType string,
+	kvSize int,
+	multiUserCache bool,
+) {
+	err := s.initModel(mpath, params, lpath, parallel, kvCacheType, kvSize, multiUserCache)
+	if err != nil {
+		panic(err)
+	}
+
+	slog.Debug("memory", "allocated", s.model.Backend().BackendMemory())
+
+	err = s.model.Backend().Load(ctx,
+		func(progress float32) {
+			s.progress = progress
+		})
 	if err != nil {
 		panic(err)
 	}
@@ -840,9 +929,14 @@ func Execute(args []string) error {
 		status:    llm.ServerStatusLoadingModel,
 	}
 
+	server.cond = sync.NewCond(&server.mu)
+	server.ready.Add(1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// TODO(jessegross): Parameters that need to be implemented:
 	//	no-mmap
-	//	mlock
 
 	var tensorSplitFloats []float32
 	if *tensorSplit != "" {
@@ -855,9 +949,6 @@ func Execute(args []string) error {
 	}
 
 	params := ml.BackendParams{
-		Progress: func(progress float32) {
-			server.progress = progress
-		},
 		NumThreads:     *threads,
 		NumGPULayers:   *numGPULayers,
 		MainGPU:        *mainGPU,
@@ -865,14 +956,7 @@ func Execute(args []string) error {
 		FlashAttention: *flashAttention,
 	}
 
-	server.ready.Add(1)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go server.loadModel(ctx, *mpath, params, lpaths, *parallel, *kvCacheType, *kvSize, *multiUserCache)
-
-	server.cond = sync.NewCond(&server.mu)
-
+	go server.load(ctx, *mpath, params, lpaths, *parallel, *kvCacheType, *kvSize, *multiUserCache)
 	go server.run(ctx)
 
 	addr := "127.0.0.1:" + strconv.Itoa(*port)

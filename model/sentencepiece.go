@@ -182,27 +182,12 @@ func (spm SentencePieceModel) Encode(s string, addSpecial bool) ([]int32, error)
 		}
 	}
 
+	slog.Log(context.TODO(), logutil.LevelTrace, "encoded", "string", s, "ids", ids)
+
 	if addSpecial && len(ids) > 0 {
-		if spm.vocab.AddBOS {
-			if ids[0] == spm.vocab.BOS {
-				slog.Warn("adding bos token to prompt which already has it", "id", spm.vocab.BOS)
-			}
-
-			slog.Debug("adding bos token to prompt", "id", spm.vocab.BOS)
-			ids = append([]int32{spm.vocab.BOS}, ids...)
-		}
-
-		if spm.vocab.AddEOS {
-			if ids[len(ids)-1] == spm.vocab.EOS {
-				slog.Warn("adding eos token to prompt which already has it", "id", spm.vocab.EOS)
-			}
-
-			slog.Debug("adding eos token to prompt", "id", spm.vocab.EOS)
-			ids = append(ids, spm.vocab.EOS)
-		}
+		ids = spm.vocab.addSpecials(ids)
 	}
 
-	slog.Log(context.TODO(), logutil.LevelTrace, "encoded", "ids", ids)
 	return ids, nil
 }
 
@@ -261,6 +246,6 @@ func (spm SentencePieceModel) Decode(ids []int32) (string, error) {
 		}
 	}
 
-	slog.Log(context.TODO(), logutil.LevelTrace, "decoded", "string", sb.String())
+	slog.Log(context.TODO(), logutil.LevelTrace, "decoded", "ids", ids, "string", sb.String())
 	return sb.String(), nil
 }

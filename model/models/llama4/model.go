@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"image"
 	"slices"
-	"sync"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -41,13 +40,13 @@ func New(c fs.Config) (model.Model, error) {
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
 				Merges: c.Strings("tokenizer.ggml.merges"),
-				BOS:    int32(c.Uint("tokenizer.ggml.bos_token_id")),
 				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
-				EOS:    int32(c.Uint("tokenizer.ggml.eos_token_id")),
+				BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
 				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
-				// TODO: set EOT to EOS otherwise 0 will stop generation
-				EOT:    int32(c.Uint("tokenizer.ggml.eos_token_id")),
-				AddEOT: c.Bool("tokenizer.ggml.add_eos_token", false),
+				EOS: append(
+					[]int32{int32(c.Uint("tokenizer.ggml.eos_token_id"))},
+					c.Ints("tokenizer.ggml.eos_token_ids")...,
+				),
 			},
 		),
 		ImageProcessor: newImageProcessor(c),
@@ -63,7 +62,7 @@ func New(c fs.Config) (model.Model, error) {
 	return &m, nil
 }
 
-func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, error) {
+func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input.Multimodal, error) {
 	if len(m.VisionModel.Layers) < 1 {
 		return nil, model.ErrNoVisionModel
 	}
@@ -78,10 +77,7 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 		return nil, err
 	}
 
-	tilesLocal, err := ctx.Input().FromFloatSlice(pixelsLocal, size.X, size.Y, m.numChannels)
-	if err != nil {
-		return nil, err
-	}
+	tilesLocal := ctx.Input().FromFloatSlice(pixelsLocal, size.X, size.Y, m.numChannels)
 
 	ratioW, ratioH := size.X/m.imageSize, size.Y/m.imageSize
 
@@ -92,80 +88,85 @@ func (m *Model) EncodeMultimodal(ctx ml.Context, multimodalData []byte) (any, er
 	pixelValues := tilesLocal
 
 	if len(pixelsGlobal) > 0 {
-		tilesGlobal, err := ctx.Input().FromFloatSlice(pixelsGlobal, m.imageSize, m.imageSize, m.numChannels)
-		if err != nil {
-			return nil, err
-		}
-
+		tilesGlobal := ctx.Input().FromFloatSlice(pixelsGlobal, m.imageSize, m.imageSize, m.numChannels)
 		pixelValues = pixelValues.Concat(ctx, tilesGlobal, 3)
 	}
 
 	visionOutputs := m.VisionModel.Forward(ctx, pixelValues)
 	visionOutputs = visionOutputs.Reshape(ctx, visionOutputs.Dim(0), visionOutputs.Dim(1)*visionOutputs.Dim(2)*visionOutputs.Dim(3))
 	projectedOutputs := m.Projector.Forward(ctx, visionOutputs)
-	return &chunks{Model: m, Tensor: projectedOutputs, aspectRatio: image.Point{ratioW, ratioH}}, nil
+
+	var multimodal []input.Multimodal
+	aspectRatio := image.Point{ratioW, ratioH}
+
+	var offset int
+	patchesPerChunk := projectedOutputs.Dim(1)
+	if aspectRatio.Y*aspectRatio.X > 1 {
+		patchesPerChunk = projectedOutputs.Dim(1) / (aspectRatio.X*aspectRatio.Y + 1)
+
+		for range aspectRatio.Y {
+			for x := range aspectRatio.X {
+				view := projectedOutputs.View(ctx, projectedOutputs.Stride(1)*offset,
+					projectedOutputs.Dim(0), projectedOutputs.Stride(1),
+					patchesPerChunk)
+				var separator separator
+				if x < aspectRatio.X-1 {
+					separator.x = true // <|tile_x_separator|>
+				} else {
+					separator.y = true // <|tile_y_separator|>
+				}
+				multimodal = append(multimodal, input.Multimodal{Tensor: view, Data: &separator})
+				offset += patchesPerChunk
+			}
+		}
+	}
+
+	view := projectedOutputs.View(ctx, projectedOutputs.Stride(1)*offset,
+		projectedOutputs.Dim(0), projectedOutputs.Stride(1),
+		patchesPerChunk)
+	multimodal = append(multimodal, input.Multimodal{Tensor: view, Data: &separator{}})
+
+	return multimodal, nil
 }
 
-type chunks struct {
-	*Model
-	ml.Tensor
-	aspectRatio image.Point
-
-	dataOnce sync.Once
-	data     []float32
-}
-
-type chunk struct {
-	*chunks
-	s, n int
-}
-
-func (r *chunk) floats() []float32 {
-	r.dataOnce.Do(func() {
-		temp := r.Backend().NewContext()
-		defer temp.Close()
-		temp.Forward(r.Tensor).Compute(r.Tensor)
-		r.data = r.Floats()
-	})
-
-	return r.data[r.s*r.Dim(0) : (r.s+r.n)*r.Dim(0)]
+type separator struct {
+	x bool
+	y bool
 }
 
 func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 	var result []input.Input
 	for _, inp := range inputs {
-		if inp.Multimodal == nil {
+		if len(inp.Multimodal) == 0 {
 			result = append(result, inp)
 			continue
 		}
 
-		t := inp.Multimodal.(*chunks)
 		var imageInputs []input.Input
 		imageInputs = append(imageInputs, input.Input{Token: 200080}) // <|image_start|>
 
-		var offset int
-		patchesPerChunk := t.Dim(1)
-		if t.aspectRatio.Y*t.aspectRatio.X > 1 {
-			patchesPerChunk = t.Dim(1) / (t.aspectRatio.X*t.aspectRatio.Y + 1)
+		for i, mm := range inp.Multimodal {
+			patchesPerChunk := mm.Tensor.Dim(1)
 
-			for range t.aspectRatio.Y {
-				for x := range t.aspectRatio.X {
-					imageInputs = append(imageInputs, input.Input{Token: 200092, Multimodal: &chunk{t, offset, patchesPerChunk}, MultimodalHash: inp.MultimodalHash, SameBatch: patchesPerChunk}) // <|patch|>
-					imageInputs = append(imageInputs, slices.Repeat([]input.Input{{Token: 200092}}, patchesPerChunk-1)...)
-					if x < t.aspectRatio.X-1 {
-						imageInputs = append(imageInputs, input.Input{Token: 200084}) // <|tile_x_separator|>
-					}
-					offset += patchesPerChunk
+			if i < len(inp.Multimodal)-1 {
+				separator := mm.Data.(*separator)
+
+				imageInputs = append(imageInputs, input.Input{Token: 200092, Multimodal: []input.Multimodal{{Tensor: mm.Tensor}}, MultimodalHash: inp.MultimodalHash, SameBatch: patchesPerChunk}) // <|patch|>
+				imageInputs = append(imageInputs, slices.Repeat([]input.Input{{Token: 200092}}, patchesPerChunk-1)...)
+
+				if separator.x {
+					imageInputs = append(imageInputs, input.Input{Token: 200084}) // <|tile_x_separator|>
 				}
-
-				imageInputs = append(imageInputs, input.Input{Token: 200085}) // <|tile_y_separator|>
+				if separator.y {
+					imageInputs = append(imageInputs, input.Input{Token: 200085}) // <|tile_y_separator|>
+				}
+			} else {
+				imageInputs = append(imageInputs, input.Input{Token: 200090})                                                                                                                      // <|image|>
+				imageInputs = append(imageInputs, input.Input{Token: 200092, Multimodal: []input.Multimodal{{Tensor: mm.Tensor}}, MultimodalHash: inp.MultimodalHash, SameBatch: patchesPerChunk}) // <|patch|>
+				imageInputs = append(imageInputs, slices.Repeat([]input.Input{{Token: 200092}}, patchesPerChunk-1)...)
+				imageInputs = append(imageInputs, input.Input{Token: 200080}) // <|image_end|>
 			}
 		}
-
-		imageInputs = append(imageInputs, input.Input{Token: 200090})                                                                                                                 // <|image|>
-		imageInputs = append(imageInputs, input.Input{Token: 200092, Multimodal: &chunk{t, offset, patchesPerChunk}, MultimodalHash: inp.MultimodalHash, SameBatch: patchesPerChunk}) // <|patch|>
-		imageInputs = append(imageInputs, slices.Repeat([]input.Input{{Token: 200092}}, patchesPerChunk-1)...)
-		imageInputs = append(imageInputs, input.Input{Token: 200080}) // <|image_end|>
 
 		result = append(result, imageInputs...)
 	}
@@ -174,15 +175,8 @@ func (m *Model) PostTokenize(inputs []input.Input) ([]input.Input, error) {
 }
 
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	positions, err := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
-	if err != nil {
-		return nil, err
-	}
-
-	outputs, err := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
-	if err != nil {
-		return nil, err
-	}
+	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
+	outputs := ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
 
 	return m.TextModel.Forward(ctx, batch.Inputs, positions, outputs, batch, m.Cache), nil
 }

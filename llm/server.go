@@ -121,7 +121,7 @@ func LoadModel(model string, maxArraySize int) (*ggml.GGML, error) {
 	}
 	defer f.Close()
 
-	ggml, _, err := ggml.Decode(f, maxArraySize)
+	ggml, err := ggml.Decode(f, maxArraySize)
 	return ggml, err
 }
 
@@ -311,7 +311,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		params = append(params, "--mmproj", projectors[0])
 	}
 
-	// iterate through compatible GPU libraries such as 'cuda_v12', 'rocm', etc.
+	// iterate through compatible GPU libraries such as 'cuda_v12', 'cuda_v11', 'rocm', etc.
 	// adding each library's respective path to the LD_LIBRARY_PATH, until finally running
 	// without any LD_LIBRARY_PATH flags
 	for {
@@ -679,9 +679,8 @@ ws ::= ([ \t\n] ws)?
 const maxBufferSize = 512 * format.KiloByte
 
 type ImageData struct {
-	Data          []byte `json:"data"`
-	ID            int    `json:"id"`
-	AspectRatioID int    `json:"aspect_ratio_id"`
+	Data []byte `json:"data"`
+	ID   int    `json:"id"`
 }
 
 type CompletionRequest struct {
@@ -798,7 +797,8 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 
 	res, err := http.DefaultClient.Do(serverReq)
 	if err != nil {
-		return fmt.Errorf("POST predict: %v", err)
+		slog.Error("post predict", "error", err)
+		return errors.New("model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check ollama server logs for details")
 	}
 	defer res.Body.Close()
 
