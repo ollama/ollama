@@ -97,6 +97,8 @@ jobs:
       - run: |
           choco install -y --no-progress ccache ninja
           ccache -o cache_dir=${{ github.workspace }}\.ccache
+          echo "env:PATH"
+          echo "$env:PATH"
       - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm' || matrix.preset == 'SYCL'
         id: cache-install
         uses: actions/cache/restore@v4
@@ -215,6 +217,8 @@ jobs:
           echo "VTUNE_PROFILER_DIR=$oneapiPath\vtune\latest\" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "PATH"
           echo "$PATH"
+          echo "env:PATH"
+          echo "$env:PATH"
       - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
