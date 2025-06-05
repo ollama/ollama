@@ -251,7 +251,12 @@ jobs:
           Import-Module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
           Enter-VsDevShell -VsInstallPath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
           echo "PATH"
-          echo "$PATH"
+          echo "$env:PATH"
+          Get-ChildItem Env: | ForEach-Object {
+            $name = $_.Name
+            $value = $_.Value -replace "`n", " " -replace "`r", ""
+            Write-Output "$name=$value"
+          }
           cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }}
           cmake --build --parallel --preset "${{ matrix.preset }}"
         env:
