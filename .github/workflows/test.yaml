@@ -213,6 +213,8 @@ jobs:
           echo "UMF_ROOT=$oneapiPath\umf\latest" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "VTUNE_PROFILER_2025_DIR=$oneapiPath\vtune\latest\" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "VTUNE_PROFILER_DIR=$oneapiPath\vtune\latest\" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "PATH"
+          echo "$PATH"
       - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
@@ -229,6 +231,8 @@ jobs:
       - run: |
           Import-Module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
           Enter-VsDevShell -VsInstallPath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
+          echo "PATH"
+          echo "$PATH"
           cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }}
           cmake --build --parallel --preset "${{ matrix.preset }}"
         env:
