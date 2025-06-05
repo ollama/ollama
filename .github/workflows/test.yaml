@@ -104,15 +104,15 @@ jobs:
             $value = $_.Value -replace "`n", " " -replace "`r", ""
             Write-Output "$name=$value"
           }
-      - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm' || matrix.preset == 'SYCL'
-        id: cache-install
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
-            C:\Program Files\AMD\ROCm
-            C:\Program Files (x86)\Intel\oneAPI
-          key: ${{ matrix.install }}
+      # - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm' || matrix.preset == 'SYCL'
+      #   id: cache-install
+      #   uses: actions/cache/restore@v4
+      #   with:
+      #     path: |
+      #       C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
+      #       C:\Program Files\AMD\ROCm
+      #       C:\Program Files (x86)\Intel\oneAPI
+      #     key: ${{ matrix.install }}
       - if: matrix.preset == 'CUDA'
         name: Install CUDA ${{ matrix.cuda-version }}
         run: |
