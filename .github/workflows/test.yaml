@@ -50,13 +50,13 @@ jobs:
       matrix:
         include:
           - preset: CPU
-          # - preset: CUDA
-          #   container: nvidia/cuda:11.8.0-devel-ubuntu22.04
-          #   flags: '-DCMAKE_CUDA_ARCHITECTURES=87'
-          # - preset: ROCm
-          #   container: rocm/dev-ubuntu-22.04:6.1.2
-          #   extra-packages: rocm-libs
-          #   flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
+          - preset: CUDA
+            container: nvidia/cuda:11.8.0-devel-ubuntu22.04
+            flags: '-DCMAKE_CUDA_ARCHITECTURES=87'
+          - preset: ROCm
+            container: rocm/dev-ubuntu-22.04:6.1.2
+            extra-packages: rocm-libs
+            flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_PREFIX_PATH=/opt/rocm'
           - preset: SYCL
             container: intel/oneapi-basekit:2025.1.3-0-devel-ubuntu24.04
     runs-on: linux
@@ -90,8 +90,8 @@ jobs:
           # - preset: ROCm
           #   install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
           #   flags: '-DAMDGPU_TARGETS=gfx1010'
-          # - preset: SYCL
-          #   install: https://registrationcenter-download.intel.com/akdlm/IRC_NAS/e5785fb3-b5a7-4b97-89bc-918adab1f77d/intel-oneapi-base-toolkit-2025.1.3.8_offline.exe
+          - preset: SYCL
+            install: https://registrationcenter-download.intel.com/akdlm/IRC_NAS/e5785fb3-b5a7-4b97-89bc-918adab1f77d/intel-oneapi-base-toolkit-2025.1.3.8_offline.exe
     runs-on: windows
     steps:
       - run: |
@@ -170,14 +170,7 @@ jobs:
           echo "ADVISOR_2025_DIR=$oneapiPath\advisor\latest" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "APM=C:\Program Files (x86)\Intel\oneAPI\advisor\latest\perfmodels" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "CLASSPATH=C:\Program Files (x86)\Intel\oneAPI\dal\latest\share\java\onedal.jar;" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "CMAKE_PREFIX_PATH=$oneapiPath\tbb\latest\env\..;` 
-          $oneapiPath\pti\latest\env\..\lib\cmake\pti;` 
-          $oneapiPath\mkl\latest\lib\cmake;` 
-          $oneapiPath\ipp\latest\lib\cmake\ipp;` 
-          $oneapiPath\dpl\latest\lib\cmake\oneDPL;` 
-          $oneapiPath\dnnl\latest\env\..\lib\cmake;` 
-          $oneapiPath\dal\latest;` 
-          $oneapiPath\compiler\latest;" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "CMAKE_PREFIX_PATH=$oneapiPath\tbb\latest\env\..;$oneapiPath\pti\latest\env\..\lib\cmake\pti;$oneapiPath\mkl\latest\lib\cmake;$oneapiPath\ipp\latest\lib\cmake\ipp;$oneapiPath\dpl\latest\lib\cmake\oneDPL;$oneapiPath\dnnl\latest\env\..\lib\cmake;$oneapiPath\dal\latest;$oneapiPath\compiler\latest;" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "CMPLR_ROOT=$oneapiPath\compiler\latest" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "CPATH=$oneapiPath\tbb\latest\env\..\include;$oneapiPath\pti\latest\env\..\include;$oneapiPath\ocloc\latest\include;$oneapiPath\mkl\latest\include;$oneapiPath\ippcp\latest\include;$oneapiPath\ipp\latest\include;$oneapiPath\dpl\latest\include;` $oneapiPath\dpcpp-ct\latest\env\..\include;$oneapiPath\dev-utilities\latest\include;$oneapiPath\dal\latest\include;$oneapiPath\dal\latest\include\dal;$oneapiPath\compiler\latest\include;$oneapiPath\umf\latest\include" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "DALROOT=$oneapiPath\dal\latest" | Out-File -FilePath $env:GITHUB_ENV -Append
