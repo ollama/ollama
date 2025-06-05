@@ -99,6 +99,7 @@ jobs:
           ccache -o cache_dir=${{ github.workspace }}\.ccache
           echo "env:PATH"
           echo "$env:PATH"
+          Get-ChildItem Env:
       - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm' || matrix.preset == 'SYCL'
         id: cache-install
         uses: actions/cache/restore@v4
