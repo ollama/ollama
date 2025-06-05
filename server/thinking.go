@@ -46,17 +46,17 @@ func (s thinkingState) String() string {
 	}
 }
 
-type thinkingParser struct {
+type ThinkingParser struct {
 	state      thinkingState
-	openingTag string
-	closingTag string
+	OpeningTag string
+	ClosingTag string
 	acc        strings.Builder
 }
 
-// addContent returns the thinking content and the non-thinking content that
+// AddContent returns the thinking content and the non-thinking content that
 // should be immediately sent to the user. It will internally buffer if it needs
 // to see more raw content to disambiguate
-func (s *thinkingParser) addContent(content string) (string, string) {
+func (s *ThinkingParser) AddContent(content string) (string, string) {
 	s.acc.WriteString(content)
 
 	var thinkingSb, remainingSb strings.Builder
@@ -76,12 +76,12 @@ func (s *thinkingParser) addContent(content string) (string, string) {
 }
 
 // the additional bool return is true iff we should continue eating
-func eat(s *thinkingParser) (string, string, bool) {
+func eat(s *ThinkingParser) (string, string, bool) {
 	switch s.state {
 	case thinkingState_LookingForOpening:
 		trimmed := strings.TrimLeftFunc(s.acc.String(), unicode.IsSpace)
-		if strings.HasPrefix(trimmed, s.openingTag) {
-			after := strings.Join(strings.Split(trimmed, s.openingTag)[1:], s.openingTag)
+		if strings.HasPrefix(trimmed, s.OpeningTag) {
+			after := strings.Join(strings.Split(trimmed, s.OpeningTag)[1:], s.OpeningTag)
 			after = strings.TrimLeftFunc(after, unicode.IsSpace)
 			// after might contain more than just thinking tokens, so we continue
 			// parsing instead of returning it as thinking tokens here
@@ -93,7 +93,7 @@ func eat(s *thinkingParser) (string, string, bool) {
 				s.state = thinkingState_Thinking
 			}
 			return "", "", true
-		} else if strings.HasPrefix(s.openingTag, trimmed) {
+		} else if strings.HasPrefix(s.OpeningTag, trimmed) {
 			// partial opening seen, so let's keep accumulating
 			return "", "", false
 		} else if trimmed == "" {
@@ -119,10 +119,10 @@ func eat(s *thinkingParser) (string, string, bool) {
 		}
 	case thinkingState_Thinking:
 		acc := s.acc.String()
-		if strings.Contains(acc, s.closingTag) {
-			split := strings.Split(acc, s.closingTag)
+		if strings.Contains(acc, s.ClosingTag) {
+			split := strings.Split(acc, s.ClosingTag)
 			thinking := split[0]
-			remaining := strings.Join(split[1:], s.closingTag)
+			remaining := strings.Join(split[1:], s.ClosingTag)
 			remaining = strings.TrimLeftFunc(remaining, unicode.IsSpace)
 			s.acc.Reset()
 			if remaining == "" {
@@ -131,7 +131,7 @@ func eat(s *thinkingParser) (string, string, bool) {
 				s.state = thinkingState_ThinkingDone
 			}
 			return thinking, remaining, false
-		} else if overlapLen := overlap(acc, s.closingTag); overlapLen > 0 {
+		} else if overlapLen := overlap(acc, s.ClosingTag); overlapLen > 0 {
 			thinking := acc[:len(acc)-overlapLen]
 			remaining := acc[len(acc)-overlapLen:]
 			s.acc.Reset()
