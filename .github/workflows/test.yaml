@@ -134,10 +134,10 @@ jobs:
         name: Install Intel oneAPI Base Toolkit
         run: |
           $ErrorActionPreference = "Stop"
-          if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
-            Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
-            Start-Process -FilePath .\install.exe -ArgumentList "-a", "--silent", "--eula", "accept" -NoNewWindow -Wait
-          }
+          # if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
+          #   Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
+          #   Start-Process -FilePath .\install.exe -ArgumentList "-a", "--silent", "--eula", "accept" -NoNewWindow -Wait
+          # }
 
           $oneapiPath = "C:\Program Files (x86)\Intel\oneAPI"
           echo "$oneapiPath\advisor\2025.1\bin64" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
