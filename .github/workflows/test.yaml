@@ -99,7 +99,11 @@ jobs:
           ccache -o cache_dir=${{ github.workspace }}\.ccache
           echo "env:PATH"
           echo "$env:PATH"
-          Get-ChildItem Env:
+          Get-ChildItem Env: | ForEach-Object {
+            $name = $_.Name
+            $value = $_.Value -replace "`n", " " -replace "`r", ""
+            Write-Output "$name=$value"
+          }
       - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm' || matrix.preset == 'SYCL'
         id: cache-install
         uses: actions/cache/restore@v4
@@ -137,6 +141,11 @@ jobs:
         name: Install Intel oneAPI Base Toolkit
         run: |
           $ErrorActionPreference = "Stop"
+          Get-ChildItem Env: | ForEach-Object {
+            $name = $_.Name
+            $value = $_.Value -replace "`n", " " -replace "`r", ""
+            Write-Output "$name=$value"
+          }
           # if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
           #   Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
           #   Start-Process -FilePath .\install.exe -ArgumentList "-a", "--silent", "--eula", "accept" -NoNewWindow -Wait
@@ -220,6 +229,11 @@ jobs:
           echo "$PATH"
           echo "env:PATH"
           echo "$env:PATH"
+          Get-ChildItem Env: | ForEach-Object {
+            $name = $_.Name
+            $value = $_.Value -replace "`n", " " -replace "`r", ""
+            Write-Output "$name=$value"
+          }
       - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
