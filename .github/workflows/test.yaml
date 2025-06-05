@@ -83,7 +83,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - preset: CPU
+          # - preset: CPU
           # - preset: CUDA
           #   install: https://developer.download.nvidia.com/compute/cuda/11.3.1/local_installers/cuda_11.3.1_465.89_win10.exe
           #   flags: '-DCMAKE_CUDA_ARCHITECTURES=80'
@@ -207,19 +207,19 @@ jobs:
             $value = $_.Value -replace "`n", " " -replace "`r", ""
             Write-Output "$name=$value"
           }
-      - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
-            C:\Program Files\AMD\ROCm
-            C:\Program Files (x86)\Intel\oneAPI
-          key: ${{ matrix.install }}
+      # - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
+      #   uses: actions/cache/save@v4
+      #   with:
+      #     path: |
+      #       C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
+      #       C:\Program Files\AMD\ROCm
+      #       C:\Program Files (x86)\Intel\oneAPI
+      #     key: ${{ matrix.install }}
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}\.ccache
-          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}
+      # - uses: actions/cache@v4
+      #   with:
+      #     path: ${{ github.workspace }}\.ccache
+      #     key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}
       - run: |
           Import-Module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
           Enter-VsDevShell -VsInstallPath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
