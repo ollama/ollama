@@ -207,8 +207,6 @@ jobs:
           echo "UMF_ROOT=$oneapiPath\umf\latest" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "VTUNE_PROFILER_2025_DIR=$oneapiPath\vtune\latest\" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "VTUNE_PROFILER_DIR=$oneapiPath\vtune\latest\" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "PATH"
-          echo "$PATH"
           echo "env:PATH"
           echo "$env:PATH"
           Get-ChildItem Env: | ForEach-Object {

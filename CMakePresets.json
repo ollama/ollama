@@ -63,7 +63,10 @@
     },
     {
       "name": "SYCL",
-      "inherits": [ "Default" ]
+      "inherits": [ "Default" ],
+      "cacheVariables": {
+        "ENABLE_SYCL": "ON"
+      }
     }
   ],
   "buildPresets": [
