@@ -141,6 +141,15 @@ jobs:
         name: Install Intel oneAPI Base Toolkit
         run: |
           $ErrorActionPreference = "Stop"
+          
+          # Print the initial contents of GITHUB_PATH
+          Write-Host "DEBUG: Initial contents of GITHUB_PATH:"
+          if (Test-Path -Path $env:GITHUB_PATH) {
+            Get-Content -Path $env:GITHUB_PATH | ForEach-Object { Write-Host "  $_" }
+          } else {
+            Write-Host "  GITHUB_PATH file does not exist yet"
+          }
+          
           Get-ChildItem Env: | ForEach-Object {
             $name = $_.Name
             $value = $_.Value -replace "`n", " " -replace "`r", ""
@@ -174,16 +183,13 @@ jobs:
                 Write-Host "DEBUG: Current PATH contents:"
                 $currentPath.Split(';') | ForEach-Object { Write-Host "  $_" }
                 
-                $newPaths = ($value -split ";") | Where-Object { $_ -ne "" -and -not $currentPath.Contains($_) }
-                Write-Host "DEBUG: Found $($newPaths.Count) new PATH entries to add"
+                Write-Host "DEBUG: Setting PATH to the new value directly instead of appending individual entries"
                 Write-Host "DEBUG: New PATH entries from setvars.bat:"
                 $value.Split(';') | ForEach-Object { Write-Host "  $_" }
                 
-                $newPaths | ForEach-Object {
-                  Write-Host "DEBUG: Adding PATH entry: $_"
-                  echo "$_" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-                  $pathsAdded++
-                }
+                # Write the entire PATH value to GITHUB_PATH
+                echo $value | Out-File -FilePath $env:GITHUB_PATH
+                $pathsAdded = $value.Split(';').Count
               }
               
               # Add all variables (except PATH) to GITHUB_ENV
