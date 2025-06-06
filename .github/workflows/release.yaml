@@ -2,9 +2,8 @@ name: release
 
 on:
   push:
-    branches:
-      - '*'
-  workflow_dispatch:
+    tags:
+      - 'v*'
 
 env:
   CGO_CFLAGS: '-O3'
