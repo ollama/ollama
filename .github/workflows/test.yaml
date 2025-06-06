@@ -276,7 +276,7 @@ jobs:
           }
           Get-Command cmake | Format-List Name, Source
           cmake --version
-          cmake --trace-expand --preset "${{ matrix.preset }}" ${{ matrix.flags }}
+          cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }}
           cmake --build --parallel --preset "${{ matrix.preset }}"
         env:
           CMAKE_GENERATOR: Ninja
