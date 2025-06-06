@@ -152,25 +152,49 @@ jobs:
           # }
 
           # Run setvars.bat to capture environment variables without affecting current shell
+          Write-Host "DEBUG: Running setvars.bat and capturing environment variables..."
           $setvarsOutput = cmd.exe /C "`"C:\Program Files (x86)\Intel\oneAPI\setvars.bat`" && set"
+          Write-Host "DEBUG: setvars.bat execution completed"
+          Write-Host "DEBUG: First 5 lines of output: $($setvarsOutput | Select-Object -First 5 | Out-String)"
+          Write-Host "DEBUG: Total lines captured: $($setvarsOutput.Count)"
+          
+          $envVarsAdded = 0
+          $pathsAdded = 0
+          
           $setvarsOutput | ForEach-Object {
             if ($_ -match '(.+?)=(.*)') {
               $name = $matches[1]
               $value = $matches[2]
               
               if ($name -eq "Path") {
+                Write-Host "DEBUG: Processing PATH variable"
                 # Extract and add new path entries to GITHUB_PATH
                 $currentPath = [Environment]::GetEnvironmentVariable("Path")
+                Write-Host "DEBUG: Current PATH has $($currentPath.Split(';').Count) entries"
+                Write-Host "DEBUG: Current PATH contents:"
+                $currentPath.Split(';') | ForEach-Object { Write-Host "  $_" }
+                
                 $newPaths = ($value -split ";") | Where-Object { $_ -ne "" -and -not $currentPath.Contains($_) }
+                Write-Host "DEBUG: Found $($newPaths.Count) new PATH entries to add"
+                Write-Host "DEBUG: New PATH entries from setvars.bat:"
+                $value.Split(';') | ForEach-Object { Write-Host "  $_" }
+                
                 $newPaths | ForEach-Object {
+                  Write-Host "DEBUG: Adding PATH entry: $_"
                   echo "$_" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+                  $pathsAdded++
                 }
               }
               
               # Add all variables to GITHUB_ENV
+              Write-Host "DEBUG: Adding environment variable: $name"
               echo "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Append
+              $envVarsAdded++
             }
           }
+          
+          Write-Host "DEBUG: Added $envVarsAdded environment variables to GITHUB_ENV"
+          Write-Host "DEBUG: Added $pathsAdded PATH entries to GITHUB_PATH"
 
           # $oneapiPath = "C:\Program Files (x86)\Intel\oneAPI"
           # echo "$oneapiPath\advisor\2025.1\bin64" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
