@@ -187,7 +187,7 @@ jobs:
               }
               
               # Add all variables to GITHUB_ENV
-              Write-Host "DEBUG: Adding environment variable: $name"
+              Write-Host "DEBUG: Adding environment variable: $name = $value"
               echo "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Append
               $envVarsAdded++
             }
@@ -275,6 +275,8 @@ jobs:
             $value = $_.Value -replace "`n", " " -replace "`r", ""
             Write-Output "$name=$value"
           }
+          Get-Command cmake | Format-List Name, Source
+          cmake --version
           cmake --trace-expand --preset "${{ matrix.preset }}" ${{ matrix.flags }}
           cmake --build --parallel --preset "${{ matrix.preset }}"
         env:
