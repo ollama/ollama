@@ -200,11 +200,13 @@ check_gpu() {
             case $2 in
                 nvidia) available lspci && lspci -d '10de:' | grep -q 'NVIDIA' || return 1 ;;
                 amdgpu) available lspci && lspci -d '1002:' | grep -q 'AMD' || return 1 ;;
+                intelgpu) available lspci && lspci -d '8086:' | grep -q 'Intel.*Graphics' || return 1 ;;
             esac ;;
         lshw)
             case $2 in
                 nvidia) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
                 amdgpu) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[1002\]' || return 1 ;;
+                intelgpu) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[8086\]' || return 1 ;;
             esac ;;
         nvidia-smi) available nvidia-smi || return 1 ;;
     esac
@@ -215,9 +217,20 @@ if check_gpu nvidia-smi; then
     exit 0
 fi
 
-if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu; then
+if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu && ! check_gpu lspci intelgpu && ! check_gpu lshw intelgpu; then
     install_success
-    warning "No NVIDIA/AMD GPU detected. Ollama will run in CPU-only mode."
+    warning "No NVIDIA/AMD/Intel GPU detected. Ollama will run in CPU-only mode."
+    exit 0
+fi
+
+if check_gpu lspci intelgpu || check_gpu lshw intelgpu; then
+    status "Downloading Linux SYCL ${ARCH} bundle"
+    curl --fail --show-error --location --progress-bar \
+        "https://ollama.com/download/ollama-linux-${ARCH}-sycl.tgz${VER_PARAM}" | \
+        $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+
+    install_success
+    status "Intel GPU with SYCL ready."
     exit 0
 fi
 
