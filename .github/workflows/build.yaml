@@ -64,7 +64,7 @@ jobs:
             }
 
   build-linux:
-    runs-on: ubuntu
+    runs-on: linux
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
