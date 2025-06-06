@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"slices"
 	"testing"
@@ -62,5 +63,67 @@ func TestList(t *testing.T) {
 
 	if !slices.Equal(actualNames, expectNames) {
 		t.Fatalf("expected slices to be equal %v", actualNames)
+	}
+}
+
+func BenchmarkListHandler(b *testing.B) {
+	gin.SetMode(gin.TestMode)
+
+	// Test with higher model counts to simulate real-world scenarios
+	modelCounts := []int{50, 100, 250, 500, 1000, 2000}
+
+	for _, count := range modelCounts {
+		b.Run(fmt.Sprintf("models_%d", count), func(b *testing.B) {
+			benchmarkListWithModelCount(b, count)
+		})
+	}
+}
+
+func benchmarkListWithModelCount(b *testing.B, modelCount int) {
+	// Setup
+	tempDir := b.TempDir()
+	b.Setenv("OLLAMA_MODELS", tempDir)
+
+	var s Server
+
+	// Create the specified number of models
+	b.Logf("Creating %d models for benchmark...", modelCount)
+	for i := range modelCount {
+		modelName := fmt.Sprintf("testmodel%d:latest", i)
+		_, digest := createBinFile(b, nil, nil)
+
+		createRequest(b, s.CreateHandler, api.CreateRequest{
+			Name:  modelName,
+			Files: map[string]string{"test.gguf": digest},
+		})
+
+		// Log progress for large numbers
+		if modelCount >= 500 && i%100 == 0 {
+			b.Logf("Created %d/%d models", i, modelCount)
+		}
+	}
+
+	b.Logf("Setup complete, starting benchmark with %d models", modelCount)
+
+	// Reset timer to exclude setup time
+	b.ResetTimer()
+
+	// Run the actual benchmark
+	for i := 0; i < b.N; i++ {
+		w := createRequest(b, s.ListHandler, nil)
+		if w.Code != http.StatusOK {
+			b.Fatalf("expected status code 200, actual %d", w.Code)
+		}
+
+		// Optional: Verify we got the expected number of models
+		if i == 0 { // Only check on first iteration to avoid overhead
+			var resp api.ListResponse
+			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+				b.Fatal(err)
+			}
+			if len(resp.Models) != modelCount {
+				b.Fatalf("expected %d models, got %d", modelCount, len(resp.Models))
+			}
+		}
 	}
 }

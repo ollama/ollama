@@ -24,7 +24,7 @@ import (
 
 var stream bool = false
 
-func createBinFile(t *testing.T, kv map[string]any, ti []*ggml.Tensor) (string, string) {
+func createBinFile(t testing.TB, kv map[string]any, ti []*ggml.Tensor) (string, string) {
 	t.Helper()
 	t.Setenv("OLLAMA_MODELS", cmp.Or(os.Getenv("OLLAMA_MODELS"), t.TempDir()))
 
@@ -71,7 +71,7 @@ func (t *responseRecorder) CloseNotify() <-chan bool {
 	return make(chan bool)
 }
 
-func createRequest(t *testing.T, fn func(*gin.Context), body any) *httptest.ResponseRecorder {
+func createRequest(t testing.TB, fn func(*gin.Context), body any) *httptest.ResponseRecorder {
 	t.Helper()
 	// if OLLAMA_MODELS is not set, set it to the temp directory
 	t.Setenv("OLLAMA_MODELS", cmp.Or(os.Getenv("OLLAMA_MODELS"), t.TempDir()))
