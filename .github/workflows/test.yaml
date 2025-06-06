@@ -83,13 +83,13 @@ jobs:
     strategy:
       matrix:
         include:
-          - preset: CPU
-          - preset: CUDA
-            install: https://developer.download.nvidia.com/compute/cuda/11.3.1/local_installers/cuda_11.3.1_465.89_win10.exe
-            flags: '-DCMAKE_CUDA_ARCHITECTURES=80'
-          - preset: ROCm
-            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
-            flags: '-DAMDGPU_TARGETS=gfx1010'
+          # - preset: CPU
+          # - preset: CUDA
+          #   install: https://developer.download.nvidia.com/compute/cuda/11.3.1/local_installers/cuda_11.3.1_465.89_win10.exe
+          #   flags: '-DCMAKE_CUDA_ARCHITECTURES=80'
+          # - preset: ROCm
+          #   install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
+          #   flags: '-DAMDGPU_TARGETS=gfx1010'
           - preset: SYCL
             install: https://registrationcenter-download.intel.com/akdlm/IRC_NAS/e5785fb3-b5a7-4b97-89bc-918adab1f77d/intel-oneapi-base-toolkit-2025.1.3.8_offline.exe
     runs-on: windows
@@ -97,15 +97,15 @@ jobs:
       - run: |
           choco install -y --no-progress ccache ninja
           ccache -o cache_dir=${{ github.workspace }}\.ccache
-      - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm' || matrix.preset == 'SYCL'
-        id: cache-install
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
-            C:\Program Files\AMD\ROCm
-            C:\Program Files (x86)\Intel\oneAPI
-          key: ${{ matrix.install }}
+      # - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm' || matrix.preset == 'SYCL'
+      #   id: cache-install
+      #   uses: actions/cache/restore@v4
+      #   with:
+      #     path: |
+      #       C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
+      #       C:\Program Files\AMD\ROCm
+      #       C:\Program Files (x86)\Intel\oneAPI
+      #     key: ${{ matrix.install }}
       - if: matrix.preset == 'CUDA'
         name: Install CUDA ${{ matrix.cuda-version }}
         run: |
@@ -158,19 +158,19 @@ jobs:
               }
             }
           }
-      - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
-            C:\Program Files\AMD\ROCm
-            C:\Program Files (x86)\Intel\oneAPI
-          key: ${{ matrix.install }}
+      # - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
+      #   uses: actions/cache/save@v4
+      #   with:
+      #     path: |
+      #       C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
+      #       C:\Program Files\AMD\ROCm
+      #       C:\Program Files (x86)\Intel\oneAPI
+      #     key: ${{ matrix.install }}
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: ${{ github.workspace }}\.ccache
-          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}
+      # - uses: actions/cache@v4
+      #   with:
+      #     path: ${{ github.workspace }}\.ccache
+      #     key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}
       - run: |
           Import-Module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
           Enter-VsDevShell -VsInstallPath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
