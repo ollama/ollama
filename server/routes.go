@@ -282,12 +282,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		prompt = b.String()
 	}
 
-	var thinkingState *thinkingParser
+	var thinkingState *ThinkingParser
 	openingTag, closingTag := inferThinkingTags(m.Template.Template)
 	if req.Think != nil && *req.Think && openingTag != "" && closingTag != "" {
-		thinkingState = &thinkingParser{
-			openingTag: openingTag,
-			closingTag: closingTag,
+		thinkingState = &ThinkingParser{
+			OpeningTag: openingTag,
+			ClosingTag: closingTag,
 		}
 	}
 
@@ -316,7 +316,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 
 			if thinkingState != nil {
-				thinking, content := thinkingState.addContent(cr.Content)
+				thinking, content := thinkingState.AddContent(cr.Content)
 				res.Thinking = thinking
 				res.Response = content
 			}
@@ -928,8 +928,7 @@ func (s *Server) ListHandler(c *gin.Context) {
 			}
 		}
 
-		// tag should never be masked
-		models = append(models, api.ListModelResponse{
+		r := api.ListModelResponse{
 			Model:      n.DisplayShortest(),
 			Name:       n.DisplayShortest(),
 			Size:       m.Size(),
@@ -942,7 +941,16 @@ func (s *Server) ListHandler(c *gin.Context) {
 				ParameterSize:     cf.ModelType,
 				QuantizationLevel: cf.FileType,
 			},
-		})
+		}
+
+		model, err := GetModel(n.String())
+		if err != nil {
+			slog.Warn("bad model details", "name", n, "error", err)
+		} else {
+			r.Capabilities = model.Capabilities()
+		}
+
+		models = append(models, r)
 	}
 
 	slices.SortStableFunc(models, func(i, j api.ListModelResponse) int {
@@ -1514,12 +1522,12 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	var thinkingState *thinkingParser
+	var thinkingState *ThinkingParser
 	openingTag, closingTag := inferThinkingTags(m.Template.Template)
 	if req.Think != nil && *req.Think && openingTag != "" && closingTag != "" {
-		thinkingState = &thinkingParser{
-			openingTag: openingTag,
-			closingTag: closingTag,
+		thinkingState = &ThinkingParser{
+			OpeningTag: openingTag,
+			ClosingTag: closingTag,
 		}
 	}
 
@@ -1557,7 +1565,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 
 			if thinkingState != nil {
-				thinkingContent, remainingContent := thinkingState.addContent(res.Message.Content)
+				thinkingContent, remainingContent := thinkingState.AddContent(res.Message.Content)
 				if thinkingContent == "" && remainingContent == "" && !r.Done {
 					// need to accumulate more to decide what to send
 					return
@@ -1668,11 +1676,11 @@ func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
 				// change the user output), we should probably perform this filtering
 				// for all thinking models (not just qwen3 & deepseek-r1) since it tends
 				// to save tokens and improve quality.
-				thinkingState := &thinkingParser{
-					openingTag: "<think>",
-					closingTag: "</think>",
+				thinkingState := &ThinkingParser{
+					OpeningTag: "<think>",
+					ClosingTag: "</think>",
 				}
-				_, content := thinkingState.addContent(msg.Content)
+				_, content := thinkingState.AddContent(msg.Content)
 				msgs[i].Content = content
 			}
 		}

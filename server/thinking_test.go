@@ -26,11 +26,11 @@ func TestExtractThinking(t *testing.T) {
 		},
 	}
 	for i, tt := range tests {
-		parser := thinkingParser{
-			openingTag: "<think>",
-			closingTag: "</think>",
+		parser := ThinkingParser{
+			OpeningTag: "<think>",
+			ClosingTag: "</think>",
 		}
-		gotThinking, gotContent := parser.addContent(tt.in)
+		gotThinking, gotContent := parser.AddContent(tt.in)
 		if gotContent != tt.wantContent || gotThinking != tt.wantThink {
 			t.Errorf("case %d: got (%q,%q), want (%q,%q)", i, gotThinking, gotContent, tt.wantThink, tt.wantContent)
 		}
@@ -259,15 +259,15 @@ func TestThinkingStreaming(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		parser := thinkingParser{
-			openingTag: "<think>",
-			closingTag: "</think>",
+		parser := ThinkingParser{
+			OpeningTag: "<think>",
+			ClosingTag: "</think>",
 		}
 		if c.skip {
 			continue
 		}
 		for i, step := range c.steps {
-			thinking, content := parser.addContent(step.input)
+			thinking, content := parser.AddContent(step.input)
 			if content != step.wantContent || thinking != step.wantThinking {
 				t.Errorf("case %q (step %d): got (%q,%q), want (%q,%q)", c.desc, i, content, thinking, step.wantContent, step.wantThinking)
 			}
