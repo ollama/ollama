@@ -23,7 +23,7 @@ func startApp(ctx context.Context, client *api.Client) error {
 		return errors.New("could not find ollama app")
 	}
 	path := strings.Split(link, "Ollama.app")
-	if err := exec.Command("/usr/bin/open", "-a", path[0]+"Ollama.app").Run(); err != nil {
+	if err := exec.Command("/usr/bin/open", "-j", "-a", path[0]+"Ollama.app").Run(); err != nil {
 		return err
 	}
 	return waitForServer(ctx, client)
