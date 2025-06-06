@@ -1,0 +1,191 @@
+name: build
+
+concurrency:
+  # For PRs, later CI runs preempt previous ones. e.g. a force push on a PR
+  # cancels running CI jobs and starts all new ones.
+  #
+  # For non-PR pushes, concurrency.group needs to be unique for every distinct
+  # CI run we want to have happen. Use run_id, which in practice means all
+  # non-PR CI runs will be allowed to run without preempting each other.
+  group: ${{ github.workflow }}-$${{ github.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+on:
+  push:
+  pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+    inputs:
+      cleanup_artifacts:
+        description: 'Cleanup old artifacts'
+        type: boolean
+        default: false
+
+jobs:
+  # Optional job to clean up old artifacts
+  cleanup-artifacts:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.cleanup_artifacts == 'true'
+    steps:
+      - name: Delete old artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            
+            // Delete artifacts older than 7 days, except those from tagged releases
+            const currentTime = new Date();
+            const retentionDays = 7;
+            const msPerDay = 86400000;
+            
+            for (const artifact of artifacts.data.artifacts) {
+              const createdAt = new Date(artifact.created_at);
+              const ageInDays = (currentTime - createdAt) / msPerDay;
+              
+              // Skip artifacts from tag runs (likely releases)
+              if (artifact.workflow_run && artifact.workflow_run.head_branch && artifact.workflow_run.head_branch.startsWith('refs/tags/')) {
+                console.log(`Keeping release artifact: ${artifact.name}`);
+                continue;
+              }
+              
+              if (ageInDays > retentionDays) {
+                console.log(`Deleting artifact: ${artifact.name}, age: ${ageInDays.toFixed(1)} days`);
+                await github.rest.actions.deleteArtifact({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  artifact_id: artifact.id,
+                });
+              }
+            }
+
+  build-linux:
+    runs-on: ubuntu
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Linux binaries
+        run: |
+          chmod +x ./scripts/build_linux.sh
+          PLATFORM=linux/amd64,linux/arm64 ./scripts/build_linux.sh
+        env:
+          DOCKER_BUILDKIT: 1
+
+      - name: Upload Linux AMD64 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ollama-linux-amd64-${{ github.sha }}
+          path: |
+            dist/ollama-linux-amd64.tgz
+            dist/ollama-linux-amd64-rocm.tgz
+            dist/ollama-linux-amd64-sycl.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload Linux ARM64 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ollama-linux-arm64-${{ github.sha }}
+          path: |
+            dist/ollama-linux-arm64.tgz
+            dist/ollama-linux-arm64-jetpack5.tgz
+            dist/ollama-linux-arm64-jetpack6.tgz
+          if-no-files-found: error
+          retention-days: 1
+
+  build-windows:
+    runs-on: windows
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+          
+      - name: Install Inno Setup
+        run: |
+          choco install -y --no-progress innosetup ninja ccache
+
+      - name: Setup Visual Studio Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+
+      - name: Build Windows binaries (AMD64)
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1
+        env:
+          ARCH: amd64
+
+      - name: Upload Windows AMD64 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ollama-windows-amd64-${{ github.sha }}
+          path: |
+            dist/ollama-windows-amd64.zip
+            dist/ollama-windows-amd64-rocm.zip
+            dist/ollama-windows-amd64-sycl.zip
+            dist/Ollama-*.exe
+          if-no-files-found: warn
+          retention-days: 1
+
+      - name: Build Windows binaries (ARM64)
+        run: |
+          powershell -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1
+        env:
+          ARCH: arm64
+
+      - name: Upload Windows ARM64 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ollama-windows-arm64-${{ github.sha }}
+          path: |
+            dist/ollama-windows-arm64.zip
+            dist/Ollama-*-arm64.exe
+          if-no-files-found: warn
+          retention-days: 1
+
+  release:
+    needs: [build-linux, build-windows]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/ollama-linux-amd64-${{ github.sha }}/ollama-linux-amd64.tgz
+            artifacts/ollama-linux-amd64-${{ github.sha }}/ollama-linux-amd64-rocm.tgz
+            artifacts/ollama-linux-amd64-${{ github.sha }}/ollama-linux-amd64-sycl.tgz
+            artifacts/ollama-linux-arm64-${{ github.sha }}/ollama-linux-arm64.tgz
+            artifacts/ollama-linux-arm64-${{ github.sha }}/ollama-linux-arm64-jetpack5.tgz
+            artifacts/ollama-linux-arm64-${{ github.sha }}/ollama-linux-arm64-jetpack6.tgz
+            artifacts/ollama-windows-amd64-${{ github.sha }}/ollama-windows-amd64.zip
+            artifacts/ollama-windows-amd64-${{ github.sha }}/ollama-windows-amd64-rocm.zip
+            artifacts/ollama-windows-amd64-${{ github.sha }}/ollama-windows-amd64-sycl.zip
+            artifacts/ollama-windows-amd64-${{ github.sha }}/Ollama-*.exe
+            artifacts/ollama-windows-arm64-${{ github.sha }}/ollama-windows-arm64.zip
+            artifacts/ollama-windows-arm64-${{ github.sha }}/Ollama-*-arm64.exe
+          generate_release_notes: true 
