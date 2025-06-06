@@ -140,6 +140,7 @@ if (ENABLE_SYCL)
   if (IntelSYCL_FOUND)
       set(GGML_SYCL_TARGET "INTEL")
       set(GGML_SYCL_DNN ON)
+      
       if(WIN32)
         set(CMAKE_C_COMPILER icx)
         set(CMAKE_CXX_COMPILER icx)

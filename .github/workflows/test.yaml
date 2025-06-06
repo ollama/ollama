@@ -83,13 +83,13 @@ jobs:
     strategy:
       matrix:
         include:
-          # - preset: CPU
-          # - preset: CUDA
-          #   install: https://developer.download.nvidia.com/compute/cuda/11.3.1/local_installers/cuda_11.3.1_465.89_win10.exe
-          #   flags: '-DCMAKE_CUDA_ARCHITECTURES=80'
-          # - preset: ROCm
-          #   install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
-          #   flags: '-DAMDGPU_TARGETS=gfx1010'
+          - preset: CPU
+          - preset: CUDA
+            install: https://developer.download.nvidia.com/compute/cuda/11.3.1/local_installers/cuda_11.3.1_465.89_win10.exe
+            flags: '-DCMAKE_CUDA_ARCHITECTURES=80'
+          - preset: ROCm
+            install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
+            flags: '-DAMDGPU_TARGETS=gfx1010'
           - preset: SYCL
             install: https://registrationcenter-download.intel.com/akdlm/IRC_NAS/e5785fb3-b5a7-4b97-89bc-918adab1f77d/intel-oneapi-base-toolkit-2025.1.3.8_offline.exe
     runs-on: windows
@@ -97,22 +97,15 @@ jobs:
       - run: |
           choco install -y --no-progress ccache ninja
           ccache -o cache_dir=${{ github.workspace }}\.ccache
-          echo "env:PATH"
-          echo "$env:PATH"
-          Get-ChildItem Env: | ForEach-Object {
-            $name = $_.Name
-            $value = $_.Value -replace "`n", " " -replace "`r", ""
-            Write-Output "$name=$value"
-          }
-      # - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm' || matrix.preset == 'SYCL'
-      #   id: cache-install
-      #   uses: actions/cache/restore@v4
-      #   with:
-      #     path: |
-      #       C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
-      #       C:\Program Files\AMD\ROCm
-      #       C:\Program Files (x86)\Intel\oneAPI
-      #     key: ${{ matrix.install }}
+      - if: matrix.preset == 'CUDA' || matrix.preset == 'ROCm' || matrix.preset == 'SYCL'
+        id: cache-install
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
+            C:\Program Files\AMD\ROCm
+            C:\Program Files (x86)\Intel\oneAPI
+          key: ${{ matrix.install }}
       - if: matrix.preset == 'CUDA'
         name: Install CUDA ${{ matrix.cuda-version }}
         run: |
@@ -141,43 +134,19 @@ jobs:
         name: Install Intel oneAPI Base Toolkit
         run: |
           $ErrorActionPreference = "Stop"
-          Get-ChildItem Env: | ForEach-Object {
-            $name = $_.Name
-            $value = $_.Value -replace "`n", " " -replace "`r", ""
-            Write-Output "$name=$value"
-          }
           # if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
           #   Invoke-WebRequest -Uri "${{ matrix.install }}" -OutFile "install.exe"
           #   Start-Process -FilePath .\install.exe -ArgumentList "-a", "--silent", "--eula", "accept" -NoNewWindow -Wait
           # }
 
-          # Run setvars.bat to capture environment variables without affecting current shell
           Write-Host "DEBUG: Running setvars.bat and capturing environment variables..."
           $setvarsOutput = cmd.exe /C "`"C:\Program Files (x86)\Intel\oneAPI\setvars.bat`" && set"
-          Write-Host "DEBUG: setvars.bat execution completed"
-          Write-Host "DEBUG: First 5 lines of output: $($setvarsOutput | Select-Object -First 5 | Out-String)"
-          Write-Host "DEBUG: Total lines captured: $($setvarsOutput.Count)"
-          
-          $envVarsAdded = 0
-          $pathsAdded = 0
-          
           $setvarsOutput | ForEach-Object {
             if ($_ -match '(.+?)=(.*)') {
               $name = $matches[1]
               $value = $matches[2]
               
-              if ($name -eq "Path") {
-                Write-Host "DEBUG: Processing PATH variable"
-                # Extract and add new path entries to GITHUB_PATH
-                $currentPath = "$env:Path"
-                Write-Host "DEBUG: Current PATH has $($currentPath.Split(';').Count) entries"
-                Write-Host "DEBUG: Current PATH contents:"
-                $currentPath.Split(';') | ForEach-Object { Write-Host "  $_" }
-                
-                Write-Host "DEBUG: Setting PATH to the new value directly instead of appending individual entries"
-                Write-Host "DEBUG: New PATH entries from setvars.bat:"
-                $value.Split(';') | ForEach-Object { Write-Host "  $_" }
-                
+              if ($name -eq "Path") {              
                 # Write the entire PATH value to GITHUB_PATH
                 echo $value | Out-File -FilePath $env:GITHUB_PATH
                 $pathsAdded = $value.Split(';').Count
@@ -185,97 +154,26 @@ jobs:
               
               # Add all variables (except PATH) to GITHUB_ENV
               if ($name -ne "Path") {
-                Write-Host "DEBUG: Adding environment variable: $name = $value"
                 echo "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Append
-                $envVarsAdded++
               }
             }
           }
-          
-          Write-Host "DEBUG: Added $envVarsAdded environment variables to GITHUB_ENV"
-          Write-Host "DEBUG: Added $pathsAdded PATH entries to GITHUB_PATH"
-
-          # $oneapiPath = "C:\Program Files (x86)\Intel\oneAPI"
-          # echo "$oneapiPath\advisor\2025.1\bin64" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          # echo "$oneapiPath\compiler\latest\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          # echo "$oneapiPath\compiler\latest\lib\ocloc" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          # echo "$oneapiPath\dal\latest\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          # echo "$oneapiPath\debugger\latest\opt\debugger\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          # echo "$oneapiPath\dev-utilities\latest\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          # echo "$oneapiPath\dnnl\latest\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          # echo "$oneapiPath\dpcpp-ct\latest\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          # echo "$oneapiPath\ipp\latest\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          # echo "$oneapiPath\ippcp\latest\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          # echo "$oneapiPath\mkl\latest\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          # echo "$oneapiPath\ocloc\latest\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          # echo "$oneapiPath\pti\latest\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          # echo "$oneapiPath\tbb\latest\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          # echo "$oneapiPath\vtune\latest\bin64" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          # echo "ADVISOR_2025_DIR=$oneapiPath\advisor\latest" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "APM=C:\Program Files (x86)\Intel\oneAPI\advisor\latest\perfmodels" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "CLASSPATH=C:\Program Files (x86)\Intel\oneAPI\dal\latest\share\java\onedal.jar;" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "CMAKE_PREFIX_PATH=$oneapiPath\tbb\latest\env\..;$oneapiPath\pti\latest\env\..\lib\cmake\pti;$oneapiPath\mkl\latest\lib\cmake;$oneapiPath\ipp\latest\lib\cmake\ipp;$oneapiPath\dpl\latest\lib\cmake\oneDPL;$oneapiPath\dnnl\latest\env\..\lib\cmake;$oneapiPath\dal\latest;$oneapiPath\compiler\latest;" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "CMPLR_ROOT=$oneapiPath\compiler\latest" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "CPATH=$oneapiPath\tbb\latest\env\..\include;$oneapiPath\pti\latest\env\..\include;$oneapiPath\ocloc\latest\include;$oneapiPath\mkl\latest\include;$oneapiPath\ippcp\latest\include;$oneapiPath\ipp\latest\include;$oneapiPath\dpl\latest\include;` $oneapiPath\dpcpp-ct\latest\env\..\include;$oneapiPath\dev-utilities\latest\include;$oneapiPath\dal\latest\include;$oneapiPath\dal\latest\include\dal;$oneapiPath\compiler\latest\include;$oneapiPath\umf\latest\include" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "DALROOT=$oneapiPath\dal\latest" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "DNNLROOT=$oneapiPath\dnnl\latest\env\.." | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "DPL_ROOT=$oneapiPath\dpl\latest" | Out-File -FilePath $env:GITHUB_ENV-Append
-          # echo "INTELGTDEBUGGERROOT=$oneapiPath\debugger\latest\env\.." | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "INTEL_PYTHONPATH=$oneapiPath\advisor\2025.1\pythonapi" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "INTEL_TARGET_ARCH=intel64" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "IPPCP_TARGET_ARCH=intel64" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "IPPCP_TARGET_BIN_ARCH=bin" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "IPPCP_TARGET_LIB_ARCH=lib" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "IPPCRYPTOROOT=$oneapiPath\ippcp\latest" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "IPPROOT=$oneapiPath\ipp\latest" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "IPP_TARGET_ARCH=intel64" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "LIBRARY_PATH=$oneapiPath\pti\latest\lib;$oneapiPath\ippcp\latest\lib;$oneapiPath\ipp\latest\lib" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "MKLROOT=$oneapiPath\mkl\latest" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "OCLOC_ROOT=$oneapiPath\ocloc\latest" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "ONEAPI_ROOT=$oneapiPath" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "PKG_CONFIG_PATH=$oneapiPath\tbb\latest\lib\pkgconfig;$oneapiPath\mkl\latest\lib\pkgconfig;$oneapiPath\ippcp\latest\lib\pkgconfig;$oneapiPath\dpl\latest\lib\pkgconfig;$oneapiPath\dnnl\latest\lib\pkgconfig;$oneapiPath\dal\latest\lib\pkgconfig;$oneapiPath\compiler\latest\lib\pkgconfig" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "PYTHONPATH=$oneapiPath\advisor\2025.1\pythonapi" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "TBBROOT=$oneapiPath\tbb\latest" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "TBB_BIN_DIR=$oneapiPath\tbb\latest\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "TBB_DLL_PATH=$oneapiPath\tbb\latest\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "TBB_SCRIPT_DIR=$oneapiPath\tbb\latest\env" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "TBB_TARGET_ARCH=intel64" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "TCM_ROOT=$oneapiPath\tcm\latest" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "UMF_ROOT=$oneapiPath\umf\latest" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "VTUNE_PROFILER_2025_DIR=$oneapiPath\vtune\latest\" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # echo "VTUNE_PROFILER_DIR=$oneapiPath\vtune\latest\" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "env:PATH"
-          echo "$env:Path"
-          Get-ChildItem Env: | ForEach-Object {
-            $name = $_.Name
-            $value = $_.Value -replace "`n", " " -replace "`r", ""
-            Write-Output "$name=$value"
-          }
-      # - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
-      #   uses: actions/cache/save@v4
-      #   with:
-      #     path: |
-      #       C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
-      #       C:\Program Files\AMD\ROCm
-      #       C:\Program Files (x86)\Intel\oneAPI
-      #     key: ${{ matrix.install }}
+      - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA
+            C:\Program Files\AMD\ROCm
+            C:\Program Files (x86)\Intel\oneAPI
+          key: ${{ matrix.install }}
       - uses: actions/checkout@v4
-      # - uses: actions/cache@v4
-      #   with:
-      #     path: ${{ github.workspace }}\.ccache
-      #     key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\.ccache
+          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.preset }}
       - run: |
           Import-Module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
           Enter-VsDevShell -VsInstallPath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
-          echo "PATH"
-          echo "$env:PATH"
-          Get-ChildItem Env: | ForEach-Object {
-            $name = $_.Name
-            $value = $_.Value -replace "`n", " " -replace "`r", ""
-            Write-Output "$name=$value"
-          }
-          Get-Command cmake | Format-List Name, Source
-          cmake --version
           cmake --preset "${{ matrix.preset }}" ${{ matrix.flags }}
           cmake --build --parallel --preset "${{ matrix.preset }}"
         env:
@@ -288,89 +186,89 @@ jobs:
       - name: check that 'go mod tidy' is clean
         run: go mod tidy --diff || (echo "Please run 'go mod tidy'." && exit 1)
 
-  # test:
-  #   strategy:
-  #     matrix:
-  #       os: [ubuntu-latest, macos-latest, windows-latest]
-  #   runs-on: ${{ matrix.os }}
-  #   env:
-  #     CGO_ENABLED: '1'
-  #     GOEXPERIMENT: 'synctest'
-  #   steps:
-  #     - name: checkout
-  #       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CGO_ENABLED: '1'
+      GOEXPERIMENT: 'synctest'
+    steps:
+      - name: checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
 
-  #     - name: cache restore
-  #       uses: actions/cache/restore@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
-  #       with:
-  #         # Note: unlike the other setups, this is only grabbing the mod download
-  #         # cache, rather than the whole mod directory, as the download cache
-  #         # contains zips that can be unpacked in parallel faster than they can be
-  #         # fetched and extracted by tar
-  #         path: |
-  #           ~/.cache/go-build
-  #           ~/go/pkg/mod/cache
-  #           ~\AppData\Local\go-build
-  #         # NOTE: The -3- here should be incremented when the scheme of data to be
-  #         # cached changes (e.g. path above changes).
-  #         key: ${{ github.job }}-${{ runner.os }}-${{ matrix.goarch }}-${{ matrix.buildflags }}-go-3-${{ hashFiles('**/go.sum') }}-${{ github.run_id }}
-  #         restore-keys: |
-  #           ${{ github.job }}-${{ runner.os }}-${{ matrix.goarch }}-${{ matrix.buildflags }}-go-3-${{ hashFiles('**/go.sum') }}
-  #           ${{ github.job }}-${{ runner.os }}-${{ matrix.goarch }}-${{ matrix.buildflags }}-go-3-
+      - name: cache restore
+        uses: actions/cache/restore@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          # Note: unlike the other setups, this is only grabbing the mod download
+          # cache, rather than the whole mod directory, as the download cache
+          # contains zips that can be unpacked in parallel faster than they can be
+          # fetched and extracted by tar
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod/cache
+            ~\AppData\Local\go-build
+          # NOTE: The -3- here should be incremented when the scheme of data to be
+          # cached changes (e.g. path above changes).
+          key: ${{ github.job }}-${{ runner.os }}-${{ matrix.goarch }}-${{ matrix.buildflags }}-go-3-${{ hashFiles('**/go.sum') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ github.job }}-${{ runner.os }}-${{ matrix.goarch }}-${{ matrix.buildflags }}-go-3-${{ hashFiles('**/go.sum') }}
+            ${{ github.job }}-${{ runner.os }}-${{ matrix.goarch }}-${{ matrix.buildflags }}-go-3-
 
-  #     - name: Setup Go
-  #       uses: actions/setup-go@v5
-  #       with:
-  #         # The caching strategy of setup-go is less than ideal, and wastes
-  #         # time by not saving artifacts due to small failures like the linter
-  #         # complaining, etc. This means subsequent have to rebuild their world
-  #         # again until all checks pass. For instance, if you mispell a word,
-  #         # you're punished until you fix it. This is more hostile than
-  #         # helpful.
-  #         cache: false
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          # The caching strategy of setup-go is less than ideal, and wastes
+          # time by not saving artifacts due to small failures like the linter
+          # complaining, etc. This means subsequent have to rebuild their world
+          # again until all checks pass. For instance, if you mispell a word,
+          # you're punished until you fix it. This is more hostile than
+          # helpful.
+          cache: false
 
-  #         go-version-file: go.mod
+          go-version-file: go.mod
 
-  #     # It is tempting to run this in a platform independent way, but the past
-  #     # shows this codebase will see introductions of platform specific code
-  #     # generation, and so we need to check this per platform to ensure we
-  #     # don't abuse go generate on specific platforms.
-  #     - name: check that 'go generate' is clean
-  #       if: always()
-  #       run: |
-  #         go generate ./...
-  #         git diff --name-only --exit-code || (echo "Please run 'go generate ./...'." && exit 1)
+      # It is tempting to run this in a platform independent way, but the past
+      # shows this codebase will see introductions of platform specific code
+      # generation, and so we need to check this per platform to ensure we
+      # don't abuse go generate on specific platforms.
+      - name: check that 'go generate' is clean
+        if: always()
+        run: |
+          go generate ./...
+          git diff --name-only --exit-code || (echo "Please run 'go generate ./...'." && exit 1)
 
-  #     - name: go test
-  #       if: always()
-  #       run: go test -count=1 -benchtime=1x ./...
+      - name: go test
+        if: always()
+        run: go test -count=1 -benchtime=1x ./...
 
-  #     # TODO(bmizerany): replace this heavy tool with just the
-  #     # tools/checks/binaries we want and then make them all run in parallel
-  #     # across jobs, not on a single tiny vm on Github Actions.
-  #     - uses: golangci/golangci-lint-action@v6
-  #       with:
-  #         args: --timeout 10m0s -v
+      # TODO(bmizerany): replace this heavy tool with just the
+      # tools/checks/binaries we want and then make them all run in parallel
+      # across jobs, not on a single tiny vm on Github Actions.
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          args: --timeout 10m0s -v
 
-  #     - name: cache save
-  #       # Always save the cache, even if the job fails. The artifacts produced
-  #       # during the building of test binaries are not all for naught. They can
-  #       # be used to speed up subsequent runs.
-  #       if: always()
+      - name: cache save
+        # Always save the cache, even if the job fails. The artifacts produced
+        # during the building of test binaries are not all for naught. They can
+        # be used to speed up subsequent runs.
+        if: always()
 
-  #       uses: actions/cache/save@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
-  #       with:
-  #         # Note: unlike the other setups, this is only grabbing the mod download
-  #         # cache, rather than the whole mod directory, as the download cache
-  #         # contains zips that can be unpacked in parallel faster than they can be
-  #         # fetched and extracted by tar
-  #         path: |
-  #           ~/.cache/go-build
-  #           ~/go/pkg/mod/cache
-  #           ~\AppData\Local\go-build
-  #         # NOTE: The -3- here should be incremented when the scheme of data to be
-  #         # cached changes (e.g. path above changes).
-  #         key: ${{ github.job }}-${{ runner.os }}-${{ matrix.goarch }}-${{ matrix.buildflags }}-go-3-${{ hashFiles('**/go.sum') }}-${{ github.run_id }}
+        uses: actions/cache/save@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          # Note: unlike the other setups, this is only grabbing the mod download
+          # cache, rather than the whole mod directory, as the download cache
+          # contains zips that can be unpacked in parallel faster than they can be
+          # fetched and extracted by tar
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod/cache
+            ~\AppData\Local\go-build
+          # NOTE: The -3- here should be incremented when the scheme of data to be
+          # cached changes (e.g. path above changes).
+          key: ${{ github.job }}-${{ runner.os }}-${{ matrix.goarch }}-${{ matrix.buildflags }}-go-3-${{ hashFiles('**/go.sum') }}-${{ github.run_id }}
 
   patches:
     runs-on: ubuntu-latest
