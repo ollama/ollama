@@ -38,6 +38,12 @@ function checkEnv() {
         $script:CUDA_DIRS=$cudaList
     }
     
+    # Check for oneAPI/SYCL installation
+    $oneapiDir=(get-item "C:\Program Files (x86)\Intel\oneAPI\" -ea 'silentlycontinue')
+    if ($oneapiDir.length -gt 0) {
+        $script:ONEAPI_DIR=$oneapiDir
+    }
+    
     $inoSetup=(get-item "C:\Program Files*\Inno Setup*\")
     if ($inoSetup.length -gt 0) {
         $script:INNO_SETUP_DIR=$inoSetup[0]
@@ -137,6 +143,36 @@ function buildOllama() {
             & cmake --install build --component "HIP" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
+        if ($script:ONEAPI_DIR -or $env:ONEAPI_ROOT) {
+            write-host "Building SYCL backend libraries"
+            if (-Not (get-command -ErrorAction silent ninja)) {
+                $NINJA_DIR=(gci -path (Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation -r -fi ninja.exe).Directory.FullName
+                $env:PATH="$NINJA_DIR;$env:PATH"
+            }
+            
+            # Setup oneAPI environment if needed
+            if (-not $env:ONEAPI_ROOT -and $script:ONEAPI_DIR) {
+                $setvarsOutput = cmd.exe /C "`"C:\Program Files (x86)\Intel\oneAPI\setvars.bat`" && set"
+                $setvarsOutput | ForEach-Object {
+                    if ($_ -match '(.+?)=(.*)') {
+                        $name = $matches[1]
+                        $value = $matches[2]
+                        if ($name -ne "Path") {
+                            Set-Item -Path "env:$name" -Value $value
+                        } else {
+                            $env:PATH = $value
+                        }
+                    }
+                }
+            }
+            
+            & cmake --fresh --preset "SYCL" -G Ninja --install-prefix $script:DIST_DIR
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --build --preset "SYCL" --config Release --parallel $script:JOBS
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --install build --component "SYCL" --strip
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        }
     }
     write-host "Building ollama CLI"
     & go build -trimpath -ldflags "-s -w -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" .
@@ -228,11 +264,24 @@ function distZip() {
             Move-Item -path "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\rocm" -destination "${script:SRC_DIR}\dist\windows-amd64-rocm\lib\ollama"
             Compress-Archive -CompressionLevel Optimal -Path "${script:SRC_DIR}\dist\windows-amd64-rocm\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-amd64-rocm.zip" -Force
         }
+        
+        if (Test-Path -Path "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\sycl") {
+            write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-amd64-sycl.zip"
+            # Temporarily adjust paths so we can retain the same directory structure
+            Remove-Item -ea 0 -r "${script:SRC_DIR}\dist\windows-amd64-sycl"
+            mkdir -Force -path "${script:SRC_DIR}\dist\windows-amd64-sycl\lib\ollama"
+            Write-Output "Extract this SYCL zip file to the same location where you extracted ollama-windows-amd64.zip" > "${script:SRC_DIR}\dist\windows-amd64-sycl\README.txt"
+            Move-Item -path "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\sycl" -destination "${script:SRC_DIR}\dist\windows-amd64-sycl\lib\ollama"
+            Compress-Archive -CompressionLevel Optimal -Path "${script:SRC_DIR}\dist\windows-amd64-sycl\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-amd64-sycl.zip" -Force
+        }
 
         write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-amd64.zip"
         Compress-Archive -CompressionLevel Optimal -Path "${script:SRC_DIR}\dist\windows-amd64\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-amd64.zip" -Force
         if (Test-Path -Path "${script:SRC_DIR}\dist\windows-amd64-rocm") {
             Move-Item -destination "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\rocm" -path "${script:SRC_DIR}\dist\windows-amd64-rocm\lib\ollama"
+        }
+        if (Test-Path -Path "${script:SRC_DIR}\dist\windows-amd64-sycl") {
+            Move-Item -destination "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\sycl" -path "${script:SRC_DIR}\dist\windows-amd64-sycl\lib\ollama"
         }
     }
 
