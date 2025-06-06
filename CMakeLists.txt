@@ -136,42 +136,23 @@ endif()
 
 option(ENABLE_SYCL "Enable SYCL support" OFF)
 if (ENABLE_SYCL)
-  find_package(IntelSYCL)
-  if (IntelSYCL_FOUND)
-      set(GGML_SYCL_TARGET "INTEL")
-      set(GGML_SYCL_DNN ON)
-      set(CMAKE_C_COMPILER icx)
-      set(CMAKE_CXX_COMPILER icpx)
-      message(STATUS "Setting C compiler to icx and C++ compiler to icpx for SYCL support")
-      
-      # For Windows with Ninja generator, ensure GNU-style command line options
-      if (WIN32 AND CMAKE_GENERATOR MATCHES "Ninja")
-          message(STATUS "Windows with Ninja generator detected for SYCL, ensuring GNU-style compiler flags")
-          # Force compiler identification to happen again with the right settings
-          set(CMAKE_C_COMPILER_FORCED TRUE)
-          set(CMAKE_CXX_COMPILER_FORCED TRUE)
-          # Add -fms-extensions for compatibility
-          set(CMAKE_CXX_FLAGS_INIT "-fms-extensions")
-          set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fms-extensions")
-          # Tell CMake to use Intel not IntelLLVM with MSVC-like command-line
-          set(CMAKE_CXX_COMPILER_ID "Intel")
-          set(CMAKE_C_COMPILER_ID "Intel")
-      endif()
-          
-      add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-sycl)
-              
-      set(OLLAMA_SYCL_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/sycl)
-      install(TARGETS ggml-sycl
-          RUNTIME_DEPENDENCIES
-              DIRECTORIES "${DPCPP_ROOT}/lib" "${DPCPP_ROOT}/bin" "${MKL_ROOT}/lib" "${MKL_ROOT}/bin"
-              PRE_INCLUDE_REGEXES sycl mkl
-              PRE_EXCLUDE_REGEXES ".*"
-          RUNTIME DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
-          LIBRARY DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
-      )
-  else()
-      message(STATUS "SYCL compiler not found, SYCL support will be disabled")
-  endif()
+    set(GGML_SYCL_TARGET "INTEL")
+    set(GGML_SYCL_DNN ON)
+    set(CMAKE_C_COMPILER icx)
+    set(CMAKE_CXX_COMPILER icpx)
+    message(STATUS "Setting C compiler to icx and C++ compiler to icpx for SYCL support")
+
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-sycl)
+            
+    set(OLLAMA_SYCL_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/sycl)
+    install(TARGETS ggml-sycl
+        RUNTIME_DEPENDENCIES
+            DIRECTORIES "${DPCPP_ROOT}/lib" "${DPCPP_ROOT}/bin" "${MKL_ROOT}/lib" "${MKL_ROOT}/bin"
+            PRE_INCLUDE_REGEXES sycl mkl
+            PRE_EXCLUDE_REGEXES ".*"
+        RUNTIME DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
+        LIBRARY DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
+    )
 else()
   message(STATUS "SYCL support disabled")
 endif()
