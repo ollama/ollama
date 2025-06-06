@@ -74,7 +74,16 @@ func isProcRunning(procName string) []uint32 {
 		slog.Debug("failed to check for running installers", "error", err)
 		return nil
 	}
-	pids = pids[:ret]
+	if ret > uint32(len(pids)) {
+		pids = make([]uint32, ret+10)
+		if err := windows.EnumProcesses(pids, &ret); err != nil || ret == 0 {
+			slog.Debug("failed to check for running installers", "error", err)
+			return nil
+		}
+	}
+	if ret < uint32(len(pids)) {
+		pids = pids[:ret]
+	}
 	var matches []uint32
 	for _, pid := range pids {
 		if pid == 0 {
