@@ -1,10 +1,15 @@
 message(STATUS  "GGML_SYCL_TARGET=${GGML_SYCL_TARGET}")
+message(STATUS  "CMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}")
+message(STATUS  "CMAKE_CXX_COMPILER_ID=${CMAKE_CXX_COMPILER_ID}")
+message(STATUS  "CMAKE_CXX_COMPILER_VERSION=${CMAKE_CXX_COMPILER_VERSION}")
 
 if (NOT GGML_SYCL_TARGET MATCHES "^(INTEL|NVIDIA|AMD)$")
     message(FATAL_ERROR "Invalid backend chosen, supported options are INTEL, NVIDIA, or AMD")
 endif()
 
 check_cxx_compiler_flag("-fsycl" SUPPORTS_SYCL)
+message(STATUS "CXX compiler: ${CMAKE_CXX_COMPILER} (${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION})")
+message(STATUS "SUPPORTS_SYCL: ${SUPPORTS_SYCL}")
 
 if (DEFINED ENV{ONEAPI_ROOT})
     message(STATUS "Using oneAPI Release SYCL compiler (icpx).")
