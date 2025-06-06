@@ -258,7 +258,7 @@ func writeKeyValue(file *os.File, key string, value any) error {
 		if err := binary.Write(file, binary.LittleEndian, uint32(typeArray)); err != nil {
 			return err
 		}
-		if err := binary.Write(file, binary.LittleEndian, uint32(typeInt64)); err != nil {
+		if err := binary.Write(file, binary.LittleEndian, typeInt64); err != nil {
 			return err
 		}
 		if err := binary.Write(file, binary.LittleEndian, uint64(len(v))); err != nil {
@@ -271,10 +271,10 @@ func writeKeyValue(file *os.File, key string, value any) error {
 		}
 		return nil
 	case []float64:
-		if err := binary.Write(file, binary.LittleEndian, uint32(typeArray)); err != nil {
+		if err := binary.Write(file, binary.LittleEndian, typeArray); err != nil {
 			return err
 		}
-		if err := binary.Write(file, binary.LittleEndian, uint32(typeFloat64)); err != nil {
+		if err := binary.Write(file, binary.LittleEndian, typeFloat64); err != nil {
 			return err
 		}
 		if err := binary.Write(file, binary.LittleEndian, uint64(len(v))); err != nil {
