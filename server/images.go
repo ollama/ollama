@@ -23,7 +23,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/thinking"
@@ -73,22 +73,20 @@ func (m *Model) Capabilities() []model.Capability {
 	capabilities := []model.Capability{}
 
 	// Check for completion capability
-	r, err := os.Open(m.ModelPath)
+	f, err := gguf.Open(m.ModelPath)
 	if err == nil {
-		defer r.Close()
+		defer f.Close()
 
-		f, err := ggml.Decode(r, 1024)
-		if err == nil {
-			if _, ok := f.KV()[fmt.Sprintf("%s.pooling_type", f.KV().Architecture())]; ok {
-				capabilities = append(capabilities, model.CapabilityEmbedding)
-			} else {
-				capabilities = append(capabilities, model.CapabilityCompletion)
-			}
-			if _, ok := f.KV()[fmt.Sprintf("%s.vision.block_count", f.KV().Architecture())]; ok {
-				capabilities = append(capabilities, model.CapabilityVision)
-			}
+		embedding := f.KeyValue("pooling_type")
+		if !embedding.Value.IsNil() {
+			capabilities = append(capabilities, model.CapabilityEmbedding)
 		} else {
-			slog.Error("couldn't decode ggml", "error", err)
+			// If no embedding is specified, we assume the model supports completion
+			capabilities = append(capabilities, model.CapabilityCompletion)
+		}
+		vision := f.KeyValue("vision.block_count")
+		if !vision.Value.IsNil() {
+			capabilities = append(capabilities, model.CapabilityVision)
 		}
 	} else {
 		slog.Error("couldn't open model file", "error", err)
