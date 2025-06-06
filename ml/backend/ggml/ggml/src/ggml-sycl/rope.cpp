@@ -355,7 +355,8 @@ inline void ggml_sycl_op_rope(ggml_backend_sycl_context & ctx, ggml_tensor *dst)
 }
 
 void ggml_sycl_rope(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
-    scope_op_debug_print scope_dbg_print(__func__, dst, /*num_src=*/3);
+    GGML_SYCL_DEBUG("call %s\n", __func__);
     ggml_sycl_op_rope(ctx, dst);
+    GGML_SYCL_DEBUG("call %s done\n", __func__);
 }
 

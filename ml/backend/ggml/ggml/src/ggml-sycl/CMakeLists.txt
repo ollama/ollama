@@ -49,38 +49,34 @@ endif()
 target_compile_options(ggml-sycl PRIVATE "-Wno-narrowing")
 
 # Link against oneDNN
+find_package(DNNL)
 set(GGML_SYCL_DNNL 0)
-if(GGML_SYCL_DNN)
-    find_package(DNNL)
-    if(DNNL_FOUND)
-        if (NOT DEFINED DNNL_GPU_VENDOR)
-            # default to intel target
-            set(DNNL_GPU_VENDOR "INTEL")
-            if(NOT "${GGML_SYCL_TARGET}" STREQUAL "INTEL")
-                message(WARNING "oneDNN builds bundled with oneapi release only support INTEL target")
-            endif()
+if(DNNL_FOUND)
+    if (NOT DEFINED DNNL_GPU_VENDOR)
+        # default to intel target
+        set(DNNL_GPU_VENDOR "INTEL")
+        if(NOT "${GGML_SYCL_TARGET}" STREQUAL "INTEL")
+            message(WARNING "oneDNN builds bundled with oneapi release only support INTEL target")
         endif()
+    endif()
 
-        # Verify oneDNN was compiled for the same target as llama
-        if("${GGML_SYCL_TARGET}" STREQUAL "${DNNL_GPU_VENDOR}")
-            target_link_libraries(ggml-sycl PRIVATE DNNL::dnnl)
-            set(GGML_SYCL_DNNL 1)
-            get_target_property(CONFIGS DNNL::dnnl IMPORTED_CONFIGURATIONS)
-            foreach(CONFIG ${CONFIGS})
-                get_target_property(DNNL_LIB DNNL::dnnl IMPORTED_LOCATION_${CONFIG})
-                message(STATUS "Found oneDNN: ${DNNL_LIB}")
-            endforeach()
-        else()
-            message(WARNING
-                "oneDNN must be compiled for the same target as llama.cpp.
-                 llama.cpp: ${GGML_SYCL_TARGET}, oneDNN: ${DNNL_GPU_VENDOR}.
-                 Disabling oneDNN support.")
-        endif()
+    # Verify oneDNN was compiled for the same target as llama
+    if("${GGML_SYCL_TARGET}" STREQUAL "${DNNL_GPU_VENDOR}")
+        target_link_libraries(ggml-sycl PRIVATE DNNL::dnnl)
+        set(GGML_SYCL_DNNL 1)
+        get_target_property(CONFIGS DNNL::dnnl IMPORTED_CONFIGURATIONS)
+        foreach(CONFIG ${CONFIGS})
+            get_target_property(DNNL_LIB DNNL::dnnl IMPORTED_LOCATION_${CONFIG})
+            message(STATUS "Found oneDNN: ${DNNL_LIB}")
+        endforeach()
     else()
-        message(STATUS "oneDNN not found, disabling oneDNN support")
+        message(WARNING
+            "oneDNN must be compiled for the same target as llama.cpp.
+             llama.cpp: ${GGML_SYCL_TARGET}, oneDNN: ${DNNL_GPU_VENDOR}.
+             Disabling oneDNN support.")
     endif()
 else()
-    message(STATUS "oneDNN support disabled by the user")
+    message(STATUS "oneDNN not found, disabling oneDNN support")
 endif()
 target_compile_definitions(ggml-sycl PRIVATE GGML_SYCL_DNNL=${GGML_SYCL_DNNL})
 

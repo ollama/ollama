@@ -13,10 +13,8 @@
 #ifndef GGML_SYCL_COMMON_HPP
 #define GGML_SYCL_COMMON_HPP
 
-#include <cstddef>
 #include <fstream>
 #include <iostream>
-#include <string>
 
 #include "dpct/helper.hpp"
 #include "ggml-sycl.h"
@@ -46,20 +44,11 @@ extern int g_ggml_sycl_debug;
 extern int g_ggml_sycl_disable_optimize;
 extern int g_ggml_sycl_prioritize_dmmv;
 
-#if defined(__clang__) && __has_builtin(__builtin_expect)
-// Hint the optimizer to pipeline the more likely following instruction in branches
-#    define LIKELY(expr)   __builtin_expect(expr, true)
-#    define UNLIKELY(expr) __builtin_expect(expr, false)
-#else
-#    define LIKELY(expr)   (expr)
-#    define UNLIKELY(expr) (expr)
-#endif
-
-#define GGML_SYCL_DEBUG(...)              \
-    do {                                  \
-        if (UNLIKELY(g_ggml_sycl_debug))  \
-            fprintf(stderr, __VA_ARGS__); \
-    } while (0)
+#define GGML_SYCL_DEBUG(...)        \
+  do {                              \
+    if (g_ggml_sycl_debug)          \
+      fprintf(stderr, __VA_ARGS__); \
+  } while (0)
 
 #define CHECK_TRY_ERROR(expr)                                            \
   [&]() {                                                                \
@@ -482,19 +471,6 @@ static __dpct_inline__ float warp_reduce_max(float x,
     return x;
 }
 
-/* Helper for Computing the linear offset of a ggml_tensor given
-per-dimension sizes, strides, and indices */
-template<int N>
-__dpct_inline__ size_t calculate_offset(const std::array<int, N> & strides, const std::array<int, N> & indices) {
-    size_t offset = 0;
-#pragma unroll
-    for (int i = 0; i < N; i++) {
-        auto index_i = indices[i];
-        offset += strides[i] * index_i;
-    }
-    return offset;
-}
-
 // Helper for vec loading aligned data
 template <typename Tp, int n>
 inline sycl::vec<Tp, n> vec_aligned_load(const Tp* aligned_ptr) {
@@ -514,76 +490,4 @@ constexpr size_t ceil_div(const size_t m, const size_t n) {
 }
 
 bool gpu_has_xmx(sycl::device &dev);
-
-template <int N, class T> void debug_print_array(const std::string & prefix, const T array[N]) {
-    if (LIKELY(!g_ggml_sycl_debug)) {
-        return;
-    }
-    std::stringstream ss;
-    ss << prefix << "=[";
-    for (std::size_t i = 0; i < N - 1; ++i) {
-        ss << array[i] << ", ";
-    }
-    if constexpr (N > 0) {
-        ss << array[N - 1];
-    }
-    ss << "]";
-    GGML_SYCL_DEBUG("%s", ss.str().c_str());
-}
-
-inline void debug_print_tensor(const std::string & prefix, const ggml_tensor * tensor,
-                               const std::string & suffix = "") {
-    if (LIKELY(!g_ggml_sycl_debug)) {
-        return;
-    }
-    GGML_SYCL_DEBUG("%s=", prefix.c_str());
-    if (tensor) {
-        GGML_SYCL_DEBUG("'%s':type=%s", tensor->name, ggml_type_name(tensor->type));
-        debug_print_array<GGML_MAX_DIMS>(";ne", tensor->ne);
-        debug_print_array<GGML_MAX_DIMS>(";nb", tensor->nb);
-        if (!ggml_is_contiguous(tensor)) {
-            GGML_SYCL_DEBUG(";strided");
-        }
-        if (ggml_is_permuted(tensor)) {
-            GGML_SYCL_DEBUG(";permuted");
-        }
-    } else {
-        GGML_SYCL_DEBUG("nullptr");
-    }
-    GGML_SYCL_DEBUG("%s", suffix.c_str());
-}
-
-// Use scope_op_debug_print to log operations coming from running a model
-struct scope_op_debug_print {
-    // Use string_views to avoid the cost of creating a string and concatenating them
-    // string_views must be alive for as long as the object is alive
-    // scope_op_debug_print are used with string literals in practice which are stored in constant space so always accessible
-    scope_op_debug_print(const std::string_view & func, const std::string_view & func_suffix, const ggml_tensor * dst,
-                         std::size_t num_src, const std::string_view & suffix = "") :
-        func(func),
-        func_suffix(func_suffix) {
-        if (LIKELY(!g_ggml_sycl_debug)) {
-            return;
-        }
-        GGML_SYCL_DEBUG("[SYCL][OP] call %s%s:", func.data(), func_suffix.data());
-        debug_print_tensor(" dst", dst);
-        if (dst) {
-            for (std::size_t i = 0; i < num_src; ++i) {
-                debug_print_tensor("\tsrc" + std::to_string(i), dst->src[i]);
-            }
-        }
-        GGML_SYCL_DEBUG("%s\n", suffix.data());
-    }
-
-    scope_op_debug_print(const std::string_view & func, const ggml_tensor * dst, std::size_t num_src,
-                         const std::string_view & suffix = "") :
-        scope_op_debug_print(func, "", dst, num_src, suffix) {}
-
-    ~scope_op_debug_print() { GGML_SYCL_DEBUG("[SYCL][OP] call %s%s done\n", func.data(), func_suffix.data()); }
-
-  private:
-    std::string_view func;
-    std::string_view func_suffix;
-};
-
 #endif // GGML_SYCL_COMMON_HPP

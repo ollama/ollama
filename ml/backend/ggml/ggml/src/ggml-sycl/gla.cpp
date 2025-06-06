@@ -76,7 +76,6 @@ static void gated_linear_attn_f32_kernel(const dpct::queue_ptr stream, u_int B, 
 }
 
 void ggml_sycl_op_gated_linear_attn(ggml_backend_sycl_context & ctx, ggml_tensor * dst) {
-    scope_op_debug_print scope_dbg_print(__func__, dst, /*num_src=*/5);
     const float * k_d  = static_cast<const float *>(dst->src[0]->data);
     const float * v_d  = static_cast<const float *>(dst->src[1]->data);
     const float * r_d  = static_cast<const float *>(dst->src[2]->data);
