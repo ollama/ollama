@@ -186,10 +186,12 @@ jobs:
                 }
               }
               
-              # Add all variables to GITHUB_ENV
-              Write-Host "DEBUG: Adding environment variable: $name = $value"
-              echo "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Append
-              $envVarsAdded++
+              # Add all variables (except PATH) to GITHUB_ENV
+              if ($name -ne "Path") {
+                Write-Host "DEBUG: Adding environment variable: $name = $value"
+                echo "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Append
+                $envVarsAdded++
+              }
             }
           }
           
