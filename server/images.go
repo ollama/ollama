@@ -37,6 +37,7 @@ var (
 	errCapabilityInsert     = errors.New("insert")
 	errCapabilityVision     = errors.New("vision")
 	errCapabilityEmbedding  = errors.New("embedding")
+	errCapabilityThinking   = errors.New("thinking")
 	errInsecureProtocol     = errors.New("insecure protocol http")
 )
 
@@ -111,6 +112,12 @@ func (m *Model) Capabilities() []model.Capability {
 		capabilities = append(capabilities, model.CapabilityVision)
 	}
 
+	// Check for thinking capability
+	openingTag, closingTag := inferThinkingTags(m.Template.Template)
+	if openingTag != "" && closingTag != "" {
+		capabilities = append(capabilities, model.CapabilityThinking)
+	}
+
 	return capabilities
 }
 
@@ -127,6 +134,7 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 		model.CapabilityInsert:     errCapabilityInsert,
 		model.CapabilityVision:     errCapabilityVision,
 		model.CapabilityEmbedding:  errCapabilityEmbedding,
+		model.CapabilityThinking:   errCapabilityThinking,
 	}
 
 	for _, cap := range want {
@@ -141,11 +149,19 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 		}
 	}
 
+	var err error
 	if len(errs) > 0 {
-		return fmt.Errorf("%w %w", errCapabilities, errors.Join(errs...))
+		err = fmt.Errorf("%w %w", errCapabilities, errors.Join(errs...))
 	}
 
-	return nil
+	if slices.Contains(errs, errCapabilityThinking) {
+		if m.Config.ModelFamily == "qwen3" || model.ParseName(m.Name).Model == "deepseek-r1" {
+			// append a message to the existing error
+			return fmt.Errorf("%w. Pull the model again to get the latest version with full thinking support", err)
+		}
+	}
+
+	return err
 }
 
 func (m *Model) String() string {
