@@ -166,6 +166,9 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						gpus = s.getCpuFn()
 					} else {
 						gpus = s.getGpuFn()
+						if rpcServers := envconfig.RPCServers(); rpcServers != "" {
+							gpus = append(gpus, discover.GetRPCServers(rpcServers)...)
+						}
 					}
 
 					if envconfig.MaxRunners() <= 0 {
@@ -229,9 +232,6 @@ func (s *Scheduler) processPending(ctx context.Context) {
 						g := pickBestFullFitByLibrary(pending, ggml, gpus, &numParallel)
 						if g != nil {
 							gpus = g
-						} else {
-							// Only allow partial loads when this is the first model
-							gpus = pickBestPartialFitByLibrary(pending, ggml, gpus, &numParallel)
 						}
 						s.loadFn(pending, ggml, gpus, numParallel)
 						break
@@ -638,9 +638,21 @@ func (runner *runnerRef) needsReload(ctx context.Context, req *LlmRequest) bool 
 
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+
+	if !reflect.DeepEqual(runner.Options.RPCServers, req.opts.RPCServers) {
+		slog.Info(
+			"RPC servers changed",
+			"model", runner.model.Name,
+			"new", req.opts.RPCServers,
+			"previous", runner.Options.RPCServers,
+		)
+		return true
+	}
+
 	if !reflect.DeepEqual(runner.model.AdapterPaths, req.model.AdapterPaths) || // have the adapters changed?
 		!reflect.DeepEqual(runner.model.ProjectorPaths, req.model.ProjectorPaths) || // have the projectors changed?
 		!reflect.DeepEqual(optsExisting, optsNew) || // have the runner options changed?
+
 		runner.llama.Ping(ctx) != nil {
 		return true
 	}

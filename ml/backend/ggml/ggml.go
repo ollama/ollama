@@ -6,6 +6,7 @@ package ggml
 // #include "ggml.h"
 // #include "ggml-cpu.h"
 // #include "ggml-backend.h"
+// #include "utils.h"
 import "C"
 
 import (
@@ -83,6 +84,13 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		return nil, err
 	}
 	defer r.Close()
+
+	// Add RPC servers to devices
+	if params.RPCServers != "" {
+		rpcServers := C.CString(params.RPCServers)
+		C.add_rpc_devices(rpcServers)
+		C.free(unsafe.Pointer(rpcServers))
+	}
 
 	meta, err := fsggml.Decode(r, -1)
 	if err != nil {
