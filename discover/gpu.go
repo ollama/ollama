@@ -716,3 +716,18 @@ func GetSystemInfo() SystemInfo {
 		DiscoveryErrors: discoveryErrors,
 	}
 }
+
+func LogSystemInfo() {
+	systemInfo := GetSystemInfo()
+
+	for _, c := range systemInfo.System.CPUs {
+		slog.Info("system info",
+			"id", c.ID,
+			"vendor", c.VendorID,
+			"model", c.ModelName,
+			"cores", c.CoreCount,
+			"efficiency", c.EfficiencyCoreCount,
+			"threads", c.ThreadCount,
+		)
+	}
+}
