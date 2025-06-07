@@ -637,7 +637,7 @@ func TestParseToolCalls(t *testing.T) {
 			})
 
 			t.Run("parse", func(t *testing.T) {
-				tp, err := NewParser(tmpl.Template)
+				tp, err := NewParser(tmpl, tools)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -668,6 +668,270 @@ func TestParseToolCalls(t *testing.T) {
 					t.Errorf("tokens mismatch (-got +want):\n%s", diff)
 				}
 			})
+		})
+	}
+}
+
+func TestParsePrefix(t *testing.T) {
+	cases := []struct {
+		name     string
+		template string
+		want     string
+	}{
+		{
+			name:     "empty",
+			template: "",
+			want:     "",
+		},
+		{
+			name:     "no prefix",
+			template: "{{if .ToolCalls}}{{end}}",
+			want:     "",
+		},
+		{
+			name:     "no prefix with range",
+			template: "{{if .ToolCalls}}{{range .ToolCalls}}{{ . }}{{end}}{{end}}",
+			want:     "",
+		},
+		{
+			name:     "tool call with json format",
+			template: "{{if .ToolCalls}}```json\n{{end}}",
+			want:     "```json",
+		},
+		{
+			name:     "square brackets",
+			template: "{{if .ToolCalls}}[{{range .ToolCalls}}{{ . }}{{end}}]{{end}}",
+			want:     "[",
+		},
+		{
+			name:     "square brackets with whitespace",
+			template: "{{if .ToolCalls}}\n [ {{range .ToolCalls}}{{ . }}{{end}}]{{end}}",
+			want:     "[",
+		},
+		{
+			name:     "whitespace only",
+			template: "{{if .ToolCalls}} {{range .ToolCalls}}{{ . }}{{end}}{{end}}",
+			want:     "",
+		},
+		{
+			name:     "whitespace only in range",
+			template: "{{if .ToolCalls}}{{range .ToolCalls}}\n{{ . }}\n{{end}}{{end}}",
+			want:     "",
+		},
+		{
+
+			name:     "before and after range",
+			template: "{{if .ToolCalls}}<|tool▁calls▁begin|>{{range .ToolCalls}}<|tool▁call▁begin|>functionget_current_weather\n```json\n{\"location\": \"Tokyo\"}\n```<|tool▁call▁end|>\n{{end}}<|tool▁calls▁end|>{{end}}",
+			want:     "<|tool▁calls▁begin|>",
+		},
+		{
+			name:     "after range",
+			template: "{{if .ToolCalls}}{{range .ToolCalls}}<tool_call>{{.}}<tool_call>{{end}}{{end}}",
+			want:     "<tool_call>",
+		},
+		{
+			name:     "tool call in range with {",
+			template: `{{if .ToolCalls}}{{range .ToolCalls}}<tool_call>{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}<tool_call>{{end}}{{end}}`,
+			want:     "<tool_call>",
+		},
+		{
+			name:     "tool call with multiple text nodes",
+			template: "{{if .ToolCalls}}First text{{if .Something}}inner{{end}}Second text{{end}}",
+			want:     "First text",
+		},
+		{
+			name:     "nested if",
+			template: "{{if .Something}}{{if .OtherThing}}text{{end}}{{end}}",
+			want:     "",
+		},
+		{
+			name:     "action prefix",
+			template: "{{if .ToolCalls}}Action: ```json{{end}}",
+			want:     "Action: ```json",
+		},
+		{
+			name:     "incomplete functools bracket",
+			template: "{{if .ToolCalls}}functools[{{end}}",
+			want:     "functools[",
+		},
+		{
+			name:     "tool call with angle brackets",
+			template: "{{if .ToolCalls}}Hello, world! <tool_call>{{end}}",
+			want:     "Hello, world! <tool_call>",
+		},
+		{
+			name:     "single angle bracket tool call",
+			template: "{{if .ToolCalls}}<tool_call>{{end}}",
+			want:     "<tool_call>",
+		},
+		{
+			name:     "uppercase tool call with incomplete bracket",
+			template: "{{if .ToolCalls}}[TOOL_CALL] [{{end}}",
+			want:     "[TOOL_CALL] [",
+		},
+		{
+			name:     "uppercase tool call with adjacent bracket",
+			template: "{{if .ToolCalls}}[TOOL_CALL][{{end}}",
+			want:     "[TOOL_CALL][",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpl, err := template.Parse(tc.template)
+			if err != nil && tc.template != "" {
+				t.Fatalf("failed to parse template: %v", err)
+			}
+
+			got := parsePrefix(tmpl.Template)
+			if got != tc.want {
+				t.Errorf("got text %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSuffixOverlap(t *testing.T) {
+	cases := []struct {
+		name string
+		s    string
+		d    string
+		want int
+	}{
+		{
+			name: "no overlap",
+			s:    "hello world",
+			d:    "<tool_call>",
+			want: -1,
+		},
+		{
+			name: "full overlap",
+			s:    "<tool_call>",
+			d:    "<tool_call>",
+			want: 0,
+		},
+		{
+			name: "partial overlap",
+			s:    "text <tool_call>",
+			d:    "<tool_call>",
+			want: 5,
+		},
+		{
+			name: "delimiter longer than string",
+			s:    "<tool>",
+			d:    "<tool_call>",
+			want: -1,
+		},
+		{
+			name: "empty string",
+			s:    "",
+			d:    "<tool_call>",
+			want: -1,
+		},
+		{
+			name: "empty delimiter",
+			s:    "<tool_call>",
+			d:    "",
+			want: -1,
+		},
+		{
+			name: "single char overlap",
+			s:    "test<",
+			d:    "<tool_call>",
+			want: 4,
+		},
+		{
+			name: "partial tool call",
+			s:    "hello <tool_",
+			d:    "<tool_call>",
+			want: 6,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got := suffixOverlap(tt.s, tt.d)
+			if got != tt.want {
+				t.Errorf("suffixOverlap(%q, %q) = %d; want %d", tt.s, tt.d, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCollect(t *testing.T) {
+	cases := []struct {
+		name string
+		obj  any
+		want []map[string]any
+	}{
+		{
+			name: "simple map",
+			obj: map[string]any{
+				"key": "value",
+			},
+			want: []map[string]any{
+				{"key": "value"},
+			},
+		},
+		{
+			name: "nested map",
+			obj: map[string]any{
+				"outer": map[string]any{
+					"inner": "value",
+				},
+			},
+			want: []map[string]any{
+				{"outer": map[string]any{"inner": "value"}},
+				{"inner": "value"},
+			},
+		},
+		{
+			name: "array of maps",
+			obj: []any{
+				map[string]any{"key1": "val1"},
+				map[string]any{"key2": "val2"},
+			},
+			want: []map[string]any{
+				{"key1": "val1"},
+				{"key2": "val2"},
+			},
+		},
+		{
+			name: "deeply nested",
+			obj: map[string]any{
+				"l1": map[string]any{
+					"l2": map[string]any{
+						"l3": "value",
+					},
+				},
+			},
+			want: []map[string]any{
+				{"l1": map[string]any{"l2": map[string]any{"l3": "value"}}},
+				{"l2": map[string]any{"l3": "value"}},
+				{"l3": "value"},
+			},
+		},
+		{
+			name: "non-map value",
+			obj:  "string",
+			want: nil,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got := collect(tt.obj)
+			if len(got) != len(tt.want) {
+				t.Errorf("collect() got %d maps, want %d", len(got), len(tt.want))
+				return
+			}
+
+			// Compare each map in the result
+			for i := range tt.want {
+				if !cmp.Equal(got[i], tt.want[i]) {
+					t.Errorf("collect() map[%d] = %v, want %v", i, got[i], tt.want[i])
+				}
+			}
 		})
 	}
 }
