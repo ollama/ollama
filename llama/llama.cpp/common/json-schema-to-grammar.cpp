@@ -1,8 +1,9 @@
 #include "json-schema-to-grammar.h"
 #include "common.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
-#include <fstream>
 #include <map>
 #include <regex>
 #include <sstream>

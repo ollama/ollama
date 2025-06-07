@@ -536,6 +536,7 @@ extern "C" {
         GGML_UNARY_OP_HARDSWISH,
         GGML_UNARY_OP_HARDSIGMOID,
         GGML_UNARY_OP_EXP,
+        GGML_UNARY_OP_GELU_ERF,
 
         GGML_UNARY_OP_COUNT,
     };
@@ -934,6 +935,15 @@ extern "C" {
             struct ggml_tensor  * a,
             struct ggml_tensor  * b);
 
+    // repeat a to the specified shape
+    GGML_API struct ggml_tensor * ggml_repeat_4d(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a,
+                       int64_t    ne0,
+                       int64_t    ne1,
+                       int64_t    ne2,
+                       int64_t    ne3);
+
     // sums repetitions in a into shape of b
     GGML_API struct ggml_tensor * ggml_repeat_back(
             struct ggml_context * ctx,
@@ -1021,6 +1031,16 @@ extern "C" {
             struct ggml_tensor  * a);
 
     GGML_API struct ggml_tensor * ggml_gelu_inplace(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a);
+
+    // GELU using erf (error function) when possible
+    // some backends may fallback to approximation based on Abramowitz and Stegun formula
+    GGML_API struct ggml_tensor * ggml_gelu_erf(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a);
+
+    GGML_API struct ggml_tensor * ggml_gelu_erf_inplace(
             struct ggml_context * ctx,
             struct ggml_tensor  * a);
 
@@ -2075,9 +2095,6 @@ extern "C" {
     GGML_API struct ggml_tensor * ggml_graph_get_grad    (const struct ggml_cgraph * cgraph, const struct ggml_tensor * node);
     GGML_API struct ggml_tensor * ggml_graph_get_grad_acc(const struct ggml_cgraph * cgraph, const struct ggml_tensor * node);
 
-    GGML_API void                 ggml_graph_export(const struct ggml_cgraph * cgraph, const char * fname);
-    GGML_API struct ggml_cgraph * ggml_graph_import(const char * fname, struct ggml_context ** ctx_data, struct ggml_context ** ctx_eval);
-
     // print info and performance information for the graph
     GGML_API void ggml_graph_print(const struct ggml_cgraph * cgraph);
 
@@ -2161,6 +2178,7 @@ extern "C" {
 
     // scheduling priorities
     enum ggml_sched_priority {
+        GGML_SCHED_PRIO_LOW = -1,
         GGML_SCHED_PRIO_NORMAL,
         GGML_SCHED_PRIO_MEDIUM,
         GGML_SCHED_PRIO_HIGH,

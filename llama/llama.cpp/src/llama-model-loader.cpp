@@ -470,7 +470,7 @@ llama_model_loader::llama_model_loader(
 
     meta.reset(gguf_init_from_file(fname.c_str(), params));
     if (!meta) {
-        throw std::runtime_error(format("%s: failed to load model from %s\n", __func__, fname.c_str()));
+        throw std::runtime_error(format("%s: failed to load model from %s", __func__, fname.c_str()));
     }
 
     get_key(llm_kv(LLM_KV_GENERAL_ARCHITECTURE), arch_name, false);
@@ -529,7 +529,7 @@ llama_model_loader::llama_model_loader(
             };
             gguf_context_ptr ctx_gguf { gguf_init_from_file(fname_split, split_params) };
             if (!ctx_gguf) {
-                throw std::runtime_error(format("%s: failed to load GGUF split from %s\n", __func__, fname_split));
+                throw std::runtime_error(format("%s: failed to load GGUF split from %s", __func__, fname_split));
             }
 
             // check idx
@@ -823,13 +823,18 @@ void llama_model_loader::init_mappings(bool prefetch, llama_mlocks * mlock_mmaps
         mappings.reserve(files.size());
         mmaps_used.reserve(files.size());
         for (const auto & file : files) {
-            auto * reg = ggml_backend_dev_backend_reg(ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU));
-            if (!reg) {
-                throw std::runtime_error(format("%s: no CPU backend found", __func__));
+            bool is_numa = false;
+
+            auto * dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+            if (dev) {
+                auto * reg = ggml_backend_dev_backend_reg(dev);
+                auto * is_numa_fn = (decltype(ggml_is_numa) *) ggml_backend_reg_get_proc_address(reg, "ggml_backend_cpu_is_numa");
+                if (is_numa_fn) {
+                    is_numa = is_numa_fn();
+                }
             }
 
-            auto * is_numa_fn = (decltype(ggml_is_numa) *) ggml_backend_reg_get_proc_address(reg, "ggml_backend_cpu_is_numa");
-            std::unique_ptr<llama_mmap> mapping = std::make_unique<llama_mmap>(file.get(), prefetch ? -1 : 0, is_numa_fn());
+            std::unique_ptr<llama_mmap> mapping = std::make_unique<llama_mmap>(file.get(), prefetch ? -1 : 0, is_numa);
             mmaps_used.emplace_back(mapping->size(), 0);
             if (mlock_mmaps) {
                 std::unique_ptr<llama_mlock> mlock_mmap(new llama_mlock());

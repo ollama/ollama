@@ -1,5 +1,6 @@
 #include "llama-batch.h"
 
+#include <cassert>
 #include <cstring>
 #include <algorithm>
 
@@ -14,24 +15,31 @@ llama_ubatch llama_sbatch::reserve_ubatch(size_t n_ubatch, bool has_embd) {
             break;
         }
     }
-    ubatch_token.resize(!has_embd ? n_ubatch : 0);
-    ubatch_embd.resize(has_embd ? n_embd * n_ubatch : 0);
-    ubatch_pos.resize(n_ubatch);
-    ubatch_n_seq_id.resize(n_ubatch);
-    ubatch_seq_id.resize(n_ubatch);
-    ubatch_output.resize(n_ubatch);
+
+    udatas.push_back({});
+
+    auto & udata = udatas.back();
+
+    udata.token.resize(!has_embd ? n_ubatch : 0);
+    udata.embd.resize(has_embd ? n_embd * n_ubatch : 0);
+    udata.pos.resize(n_ubatch);
+    udata.n_seq_id.resize(n_ubatch);
+    udata.seq_id.resize(n_ubatch);
+    udata.output.resize(n_ubatch);
+
     llama_ubatch ubatch = {
         /*equal_seqs   =*/ true,
         /*n_tokens     =*/ 0,
         /*n_seq_tokens =*/ 0,
         /*n_seqs       =*/ 0,
-        /*token        =*/ !has_embd ? ubatch_token.data() : nullptr,
-        /*embd         =*/ has_embd  ? ubatch_embd.data()  : nullptr,
-        /*pos          =*/ ubatch_pos.data(),
-        /*n_seq_id     =*/ ubatch_n_seq_id.data(),
-        /*seq_id       =*/ ubatch_seq_id.data(),
-        /*output       =*/ ubatch_output.data(),
+        /*token        =*/ !has_embd ? udata.token.data() : nullptr,
+        /*embd         =*/ has_embd  ? udata.embd.data()  : nullptr,
+        /*pos          =*/ udata.pos.data(),
+        /*n_seq_id     =*/ udata.n_seq_id.data(),
+        /*seq_id       =*/ udata.seq_id.data(),
+        /*output       =*/ udata.output.data(),
     };
+
     return ubatch;
 }
 
@@ -281,9 +289,10 @@ llama_batch_allocr::llama_batch_allocr(struct llama_batch in_batch, llama_pos p0
     batch = in_batch;
     GGML_ASSERT(batch.n_tokens > 0);
     if (!batch.pos) {
+        assert(p0 >= 0);
         pos.resize(batch.n_tokens);
         for (int32_t i = 0; i < batch.n_tokens; i++) {
-            pos[i] = i + p0;
+            pos[i] = p0 + i;
         }
         batch.pos = pos.data();
     }

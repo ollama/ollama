@@ -32,6 +32,8 @@
 extern "C" {
 #endif
 
+void ggml_print_backtrace(void);
+
 #ifndef MIN
 #    define MIN(a, b) ((a) < (b) ? (a) : (b))
 #endif
@@ -386,7 +388,7 @@ GGML_API void ggml_aligned_free(void * ptr, size_t size);
         return r;
     }
 
-#elif defined(__riscv) && defined(GGML_RV_ZFH)
+#elif defined(__riscv) && defined(__riscv_zfhmin)
 
     static inline float ggml_compute_fp16_to_fp32(ggml_fp16_t h) {
         float f;

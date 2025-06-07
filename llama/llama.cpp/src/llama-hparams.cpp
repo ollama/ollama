@@ -2,6 +2,22 @@
 
 #include "ggml.h"
 
+void llama_hparams::set_swa_pattern(uint32_t n_pattern) {
+    for (uint32_t il = 0; il < n_layer; ++il) {
+        swa_layers[il] = n_pattern == 0 || (il % n_pattern < (n_pattern - 1));
+    }
+}
+
+bool llama_hparams::is_swa_any() const {
+    for (uint32_t il = 0; il < n_layer; ++il) {
+        if (swa_layers[il]) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 uint32_t llama_hparams::n_head(uint32_t il) const {
     if (il < n_layer) {
         return n_head_arr[il];
@@ -80,7 +96,7 @@ bool llama_hparams::n_bskcn(uint32_t n, uint32_t il) const {
 
 bool llama_hparams::is_swa(uint32_t il) const {
     if (il < n_layer) {
-        return n_swa > 0 && n_swa_pattern > 0 && il % n_swa_pattern < (n_swa_pattern - 1);
+        return swa_layers[il];
     }
 
     GGML_ABORT("fatal error");
