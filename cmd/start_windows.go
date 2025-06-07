@@ -47,7 +47,7 @@ func startApp(ctx context.Context, client *api.Client) error {
 	}
 
 	cmd_path := "c:\\Windows\\system32\\cmd.exe"
-	cmd := exec.Command(cmd_path, "/c", appExe, "hidden")
+	cmd := exec.Command(cmd_path, "/c", appExe, "--hide", "--fast-startup")
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000, HideWindow: true}
 
 	cmd.Stdin = strings.NewReader("")
