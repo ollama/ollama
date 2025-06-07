@@ -10,7 +10,7 @@ Subject: [PATCH] add ollama vocab for grammar support
  3 files changed, 58 insertions(+), 9 deletions(-)
 
 diff --git a/src/llama-grammar.cpp b/src/llama-grammar.cpp
-index 973b47ae..60d58236 100644
+index bed706bb..b51cee09 100644
 --- a/src/llama-grammar.cpp
 +++ b/src/llama-grammar.cpp
 @@ -907,6 +907,7 @@ llama_grammar_candidates llama_grammar_reject_candidates_for_stack(
@@ -90,7 +90,7 @@ index 973b47ae..60d58236 100644
  
      if (grammar.awaiting_trigger) {
          if (std::find(grammar.trigger_tokens.begin(), grammar.trigger_tokens.end(), token) != grammar.trigger_tokens.end()) {
-@@ -1191,13 +1200,14 @@ void llama_grammar_accept_impl(struct llama_grammar & grammar, llama_token token
+@@ -1201,13 +1210,14 @@ void llama_grammar_accept_impl(struct llama_grammar & grammar, llama_token token
          }
      }
  
@@ -107,7 +107,7 @@ index 973b47ae..60d58236 100644
      }
  
      llama_grammar_accept_str(grammar, piece);
-@@ -1217,3 +1227,28 @@ void llama_grammar_accept_str(struct llama_grammar & grammar, const std::string
+@@ -1227,3 +1237,28 @@ void llama_grammar_accept_str(struct llama_grammar & grammar, const std::string
          throw std::runtime_error("Unexpected empty grammar stack after accepting piece: " + piece);
      }
  }
@@ -184,7 +184,7 @@ index f8c291de..2a3a62db 100644
                        const char * grammar_root,
                                bool lazy,
 diff --git a/src/llama-sampling.cpp b/src/llama-sampling.cpp
-index 804b11e0..15a10ca8 100644
+index bfbf5fa2..11f93f42 100644
 --- a/src/llama-sampling.cpp
 +++ b/src/llama-sampling.cpp
 @@ -1466,7 +1466,7 @@ static void llama_sampler_grammar_reset(struct llama_sampler * smpl) {

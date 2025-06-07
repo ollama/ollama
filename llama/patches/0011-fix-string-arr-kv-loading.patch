@@ -25,10 +25,10 @@ index 79ee2020..3efb22f0 100644
      // get ith C string from array with given key_id
      GGML_API const char * gguf_get_arr_str (const struct gguf_context * ctx, int64_t key_id, size_t i);
 diff --git a/ggml/src/gguf.cpp b/ggml/src/gguf.cpp
-index 381a9c7d..e45b453d 100644
+index a0a318a2..b3326b94 100644
 --- a/ggml/src/gguf.cpp
 +++ b/ggml/src/gguf.cpp
-@@ -777,10 +777,14 @@ enum gguf_type gguf_get_arr_type(const struct gguf_context * ctx, int64_t key_id
+@@ -794,10 +794,14 @@ enum gguf_type gguf_get_arr_type(const struct gguf_context * ctx, int64_t key_id
  
  const void * gguf_get_arr_data(const struct gguf_context * ctx, int64_t key_id) {
      GGML_ASSERT(key_id >= 0 && key_id < gguf_get_n_kv(ctx));
@@ -44,7 +44,7 @@ index 381a9c7d..e45b453d 100644
  const char * gguf_get_arr_str(const struct gguf_context * ctx, int64_t key_id, size_t i) {
      GGML_ASSERT(key_id >= 0 && key_id < gguf_get_n_kv(ctx));
      GGML_ASSERT(ctx->kv[key_id].get_type() == GGUF_TYPE_STRING);
-@@ -874,7 +878,6 @@ const char * gguf_get_val_str(const struct gguf_context * ctx, int64_t key_id) {
+@@ -891,7 +895,6 @@ const char * gguf_get_val_str(const struct gguf_context * ctx, int64_t key_id) {
  const void * gguf_get_val_data(const struct gguf_context * ctx, int64_t key_id) {
      GGML_ASSERT(key_id >= 0 && key_id < gguf_get_n_kv(ctx));
      GGML_ASSERT(ctx->kv[key_id].get_ne() == 1);
@@ -53,7 +53,7 @@ index 381a9c7d..e45b453d 100644
  }
  
 diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
-index 10f34d33..9f5fd57b 100644
+index d007039f..4a6c3ad6 100644
 --- a/src/llama-vocab.cpp
 +++ b/src/llama-vocab.cpp
 @@ -1469,9 +1469,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {

@@ -10,7 +10,7 @@ logs instead of throwing an error
  1 file changed, 3 insertions(+), 11 deletions(-)
 
 diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
-index 9389ca80..806c1b3d 100644
+index ba2e1864..0d7ad157 100644
 --- a/src/llama-vocab.cpp
 +++ b/src/llama-vocab.cpp
 @@ -1503,16 +1503,7 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {

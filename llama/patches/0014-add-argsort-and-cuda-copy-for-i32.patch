@@ -10,10 +10,10 @@ Subject: [PATCH] add argsort and cuda copy for i32
  3 files changed, 192 insertions(+), 2 deletions(-)
 
 diff --git a/ggml/src/ggml-cpu/ops.cpp b/ggml/src/ggml-cpu/ops.cpp
-index becdae07..7a44b6cf 100644
+index 08facb6d..aa5cf56b 100644
 --- a/ggml/src/ggml-cpu/ops.cpp
 +++ b/ggml/src/ggml-cpu/ops.cpp
-@@ -6890,6 +6890,45 @@ static void ggml_compute_forward_argsort_f32(
+@@ -6925,6 +6925,45 @@ static void ggml_compute_forward_argsort_f32(
      }
  }
  
@@ -59,7 +59,7 @@ index becdae07..7a44b6cf 100644
  void ggml_compute_forward_argsort(
      const ggml_compute_params * params,
      ggml_tensor * dst) {
-@@ -6901,6 +6940,10 @@ void ggml_compute_forward_argsort(
+@@ -6936,6 +6975,10 @@ void ggml_compute_forward_argsort(
              {
                  ggml_compute_forward_argsort_f32(params, dst);
              } break;
@@ -195,10 +195,10 @@ index 607ded85..53b02634 100644
 +    }
  }
 diff --git a/ggml/src/ggml-cuda/cpy.cu b/ggml/src/ggml-cuda/cpy.cu
-index 2d46176e..47383486 100644
+index 2c55d214..90d95d32 100644
 --- a/ggml/src/ggml-cuda/cpy.cu
 +++ b/ggml/src/ggml-cuda/cpy.cu
-@@ -38,6 +38,13 @@ static __device__ void cpy_1_f16_f32(const char * cxi, char * cdsti) {
+@@ -41,6 +41,13 @@ static __device__ void cpy_1_f16_f32(const char * cxi, char * cdsti) {
      *dsti = *xi;
  }
  
@@ -212,7 +212,7 @@ index 2d46176e..47383486 100644
  template <cpy_kernel_t cpy_1>
  static __global__ void cpy_f32_f16(const char * cx, char * cdst_direct, const int ne,
                                     const int ne00, const int ne01, const int ne02, const int nb00, const int nb01, const int nb02,
-@@ -68,6 +75,44 @@ static __global__ void cpy_f32_f16(const char * cx, char * cdst_direct, const in
+@@ -71,6 +78,44 @@ static __global__ void cpy_f32_f16(const char * cx, char * cdst_direct, const in
      cpy_1(cx + x_offset, cdst + dst_offset);
  }
  
@@ -257,7 +257,7 @@ index 2d46176e..47383486 100644
  static __device__ void cpy_blck_f32_q8_0(const char * cxi, char * cdsti) {
      const float * xi = (const float *) cxi;
      block_q8_0 * dsti = (block_q8_0 *) cdsti;
-@@ -631,6 +676,8 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
+@@ -643,6 +688,8 @@ void ggml_cuda_cpy(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, gg
          ggml_cpy_f16_f16_cuda (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream, dest_ptrs_d, graph_cpynode_index);
      } else if (src0->type == GGML_TYPE_F16 && src1->type == GGML_TYPE_F32) {
          ggml_cpy_f16_f32_cuda (src0_ddc, src1_ddc, ne, ne00, ne01, ne02, nb00, nb01, nb02, nb03, ne10, ne11, ne12, nb10, nb11, nb12, nb13, main_stream, dest_ptrs_d, graph_cpynode_index);
@@ -266,7 +266,7 @@ index 2d46176e..47383486 100644
      } else {
          GGML_ABORT("%s: unsupported type combination (%s to %s)\n", __func__,
                  ggml_type_name(src0->type), ggml_type_name(src1->type));
-@@ -686,6 +733,8 @@ void* ggml_cuda_cpy_fn(const ggml_tensor * src0, ggml_tensor * src1) {
+@@ -698,6 +745,8 @@ void* ggml_cuda_cpy_fn(const ggml_tensor * src0, ggml_tensor * src1) {
          return (void*) cpy_f32_f16<cpy_1_f32_f16>;
      } else if (src0->type == GGML_TYPE_F16 && src1->type == GGML_TYPE_F32) {
          return (void*) cpy_f32_f16<cpy_1_f16_f32>;
