@@ -62,7 +62,16 @@ jobs:
                 });
               }
             }
-
+  
+  patches:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify patches apply cleanly and do not change files
+        run: |
+          make -f Makefile.sync clean checkout apply-patches sync
+          git diff --compact-summary --exit-code
+  
   build-linux:
     runs-on: linux
     steps:
@@ -74,32 +83,28 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Linux binaries
+      - name: Build Linux SYCL binaries
         run: |
-          chmod +x ./scripts/build_linux.sh
-          PLATFORM=linux/amd64,linux/arm64 ./scripts/build_linux.sh
+          . ./scripts/env.sh
+          mkdir -p dist
+          docker buildx build \
+            --output type=local,dest=./dist \
+            --platform=linux/amd64 \
+            ${OLLAMA_COMMON_BUILD_ARGS} \
+            --build-arg FLAVOR=sycl \
+            --target archive \
+            -f Dockerfile \
+            .
+          tar c -C ./dist/ ./lib/ollama/sycl | pigz -9vc >./dist/ollama-linux-amd64-sycl.tgz
         env:
           DOCKER_BUILDKIT: 1
 
-      - name: Upload Linux AMD64 artifacts
+      - name: Upload Linux SYCL artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ollama-linux-amd64-${{ github.sha }}
           path: |
-            dist/ollama-linux-amd64.tgz
-            dist/ollama-linux-amd64-rocm.tgz
             dist/ollama-linux-amd64-sycl.tgz
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Upload Linux ARM64 artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ollama-linux-arm64-${{ github.sha }}
-          path: |
-            dist/ollama-linux-arm64.tgz
-            dist/ollama-linux-arm64-jetpack5.tgz
-            dist/ollama-linux-arm64-jetpack6.tgz
           if-no-files-found: error
           retention-days: 1
 
@@ -176,12 +181,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            artifacts/ollama-linux-amd64-${{ github.sha }}/ollama-linux-amd64.tgz
-            artifacts/ollama-linux-amd64-${{ github.sha }}/ollama-linux-amd64-rocm.tgz
             artifacts/ollama-linux-amd64-${{ github.sha }}/ollama-linux-amd64-sycl.tgz
-            artifacts/ollama-linux-arm64-${{ github.sha }}/ollama-linux-arm64.tgz
-            artifacts/ollama-linux-arm64-${{ github.sha }}/ollama-linux-arm64-jetpack5.tgz
-            artifacts/ollama-linux-arm64-${{ github.sha }}/ollama-linux-arm64-jetpack6.tgz
             artifacts/ollama-windows-amd64-${{ github.sha }}/ollama-windows-amd64.zip
             artifacts/ollama-windows-amd64-${{ github.sha }}/ollama-windows-amd64-rocm.zip
             artifacts/ollama-windows-amd64-${{ github.sha }}/ollama-windows-amd64-sycl.zip
