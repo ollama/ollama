@@ -1526,12 +1526,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	var toolParser *tools.Parser
 	if len(req.Tools) > 0 {
-		toolParser, err = tools.NewParser(m.Template.Template)
-		if err != nil {
-			slog.Error("failed to create tool parser", "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
+		toolParser = tools.NewParser(m.Template.Template, req.Tools)
 	}
 
 	ch := make(chan any)
@@ -1584,6 +1579,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					// don't return
 				} else {
 					if r.Done {
+						res.Message.Content = toolParser.Content()
 						ch <- res
 					}
 					return
