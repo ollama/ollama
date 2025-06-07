@@ -320,6 +320,7 @@ ggml_backend_sycl_buffer_free_buffer(ggml_backend_buffer_t buffer) try {
     ggml_sycl_set_device(ctx->device);
 
     delete ctx;
+    delete buffer;
 }
 catch (sycl::exception const &exc) {
   std::cerr << exc.what() << "Exception caught at file:" << __FILE__
@@ -765,6 +766,7 @@ struct ggml_backend_sycl_split_buffer_context {
 static void ggml_backend_sycl_split_buffer_free_buffer(ggml_backend_buffer_t buffer) {
     ggml_backend_sycl_split_buffer_context * ctx = (ggml_backend_sycl_split_buffer_context *)buffer->context;
     delete ctx;
+    delete buffer;
 }
 
 static void * ggml_backend_sycl_split_buffer_get_base(ggml_backend_buffer_t buffer) {
@@ -1099,6 +1101,7 @@ static const char * ggml_backend_sycl_host_buffer_type_name(ggml_backend_buffer_
 
 static void ggml_backend_sycl_host_buffer_free_buffer(ggml_backend_buffer_t buffer) {
     ggml_sycl_host_free(buffer->context);
+    delete buffer;
 }
 
 static ggml_backend_buffer_t ggml_backend_sycl_host_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
