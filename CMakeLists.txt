@@ -155,10 +155,16 @@ if (ENABLE_SYCL)
       add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-sycl)
               
       set(OLLAMA_SYCL_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/sycl)
+
+      get_cmake_property(_variableNames VARIABLES)
+        list(SORT _variableNames)
+        foreach(_variableName ${_variableNames})
+            message(STATUS "${_variableName}=${${_variableName}}")
+        endforeach()
       install(TARGETS ggml-sycl
           RUNTIME_DEPENDENCIES
-              DIRECTORIES "${DPCPP_ROOT}/lib" "${DPCPP_ROOT}/bin" "${MKL_ROOT}/lib" "${MKL_ROOT}/bin"
-              PRE_INCLUDE_REGEXES sycl mkl
+              DIRECTORIES "/opt/intel/oneapi/compiler/2025.1/lib" "/opt/intel/oneapi/mkl/2025.1/lib" "/opt/intel/oneapi/tbb/2022.1/env/../lib/intel64/gcc4.8"
+              PRE_INCLUDE_REGEXES sycl mkl tbb
               PRE_EXCLUDE_REGEXES ".*"
           RUNTIME DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
           LIBRARY DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
