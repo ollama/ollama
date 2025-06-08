@@ -53,6 +53,15 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cp
 
 add_compile_definitions(NDEBUG)
 
+# Debug: Print all variables at this point (uncomment to enable)
+# get_cmake_property(_allVars VARIABLES)
+# list(SORT _allVars)
+# message(STATUS "=== ALL VARIABLES AT THIS POINT ===")
+# foreach(_var ${_allVars})
+#   message(STATUS "${_var}=${${_var}}")
+# endforeach()
+# message(STATUS "=== END VARIABLES ===")
+
 set(GGML_CPU ON)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src)
 set_property(TARGET ggml PROPERTY EXCLUDE_FROM_ALL TRUE)
@@ -155,17 +164,12 @@ if (ENABLE_SYCL)
       add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-sycl)
               
       set(OLLAMA_SYCL_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/sycl)
-
-      get_cmake_property(_variableNames VARIABLES)
-        list(SORT _variableNames)
-        foreach(_variableName ${_variableNames})
-            message(STATUS "${_variableName}=${${_variableName}}")
-        endforeach()
       install(TARGETS ggml-sycl
           RUNTIME_DEPENDENCIES
-              DIRECTORIES "/opt/intel/oneapi/compiler/2025.1/lib" "/opt/intel/oneapi/mkl/2025.1/lib" "/opt/intel/oneapi/tbb/2022.1/env/../lib/intel64/gcc4.8"
-              PRE_INCLUDE_REGEXES sycl mkl tbb
+              DIRECTORIES "$ENV{CMPLR_ROOT}/lib" "$ENV{DNNLROOT}/lib" "$ENV{TBBROOT}/lib" "$ENV{MKLROOT}/lib"
+              PRE_INCLUDE_REGEXES libsycl libOpenCL libimf libsvml libirng libintlc libur_loader libdnnl libtbb libmkl_sycl_blas libmkl_intel_ilp64 libmkl_tbb_thread libmkl_core
               PRE_EXCLUDE_REGEXES ".*"
+              POST_EXCLUDE_REGEXES "system32"
           RUNTIME DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
           LIBRARY DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
       )
