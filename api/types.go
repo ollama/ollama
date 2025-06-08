@@ -222,21 +222,25 @@ func (pt PropertyType) String() string {
 	return fmt.Sprintf("%v", []string(pt))
 }
 
+type ToolFunctionProperty struct {
+	Type        PropertyType `json:"type"`
+	Items       any          `json:"items,omitempty"`
+	Description string       `json:"description"`
+	Enum        []any        `json:"enum,omitempty"`
+}
+
+type ToolFunctionParameters struct {
+	Type       string                          `json:"type"`
+	Defs       any                             `json:"$defs,omitempty"`
+	Items      any                             `json:"items,omitempty"`
+	Required   []string                        `json:"required"`
+	Properties map[string]ToolFunctionProperty `json:"properties"`
+}
+
 type ToolFunction struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Parameters  struct {
-		Type       string   `json:"type"`
-		Defs       any      `json:"$defs,omitempty"`
-		Items      any      `json:"items,omitempty"`
-		Required   []string `json:"required"`
-		Properties map[string]struct {
-			Type        PropertyType `json:"type"`
-			Items       any          `json:"items,omitempty"`
-			Description string       `json:"description"`
-			Enum        []any        `json:"enum,omitempty"`
-		} `json:"properties"`
-	} `json:"parameters"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Parameters  ToolFunctionParameters `json:"parameters"`
 }
 
 func (t *ToolFunction) String() string {
