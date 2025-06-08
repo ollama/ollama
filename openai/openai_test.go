@@ -279,26 +279,10 @@ func TestChatMiddleware(t *testing.T) {
 						Function: api.ToolFunction{
 							Name:        "get_weather",
 							Description: "Get the current weather",
-							Parameters: struct {
-								Type       string   `json:"type"`
-								Defs       any      `json:"$defs,omitempty"`
-								Items      any      `json:"items,omitempty"`
-								Required   []string `json:"required"`
-								Properties map[string]struct {
-									Type        api.PropertyType `json:"type"`
-									Items       any              `json:"items,omitempty"`
-									Description string           `json:"description"`
-									Enum        []any            `json:"enum,omitempty"`
-								} `json:"properties"`
-							}{
+							Parameters: api.ToolFunctionParameters{
 								Type:     "object",
 								Required: []string{"location"},
-								Properties: map[string]struct {
-									Type        api.PropertyType `json:"type"`
-									Items       any              `json:"items,omitempty"`
-									Description string           `json:"description"`
-									Enum        []any            `json:"enum,omitempty"`
-								}{
+								Properties: map[string]api.ToolFunctionProperty{
 									"location": {
 										Type:        api.PropertyType{"string"},
 										Description: "The city and state",
