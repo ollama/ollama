@@ -126,6 +126,13 @@ jobs:
         run: |
           choco install -y --no-progress innosetup ninja ccache
 
+      - name: Install AMD64 system dependencies
+        run: |
+          $ErrorActionPreference = "Stop"
+          Start-Process "C:\msys64\usr\bin\pacman.exe" -ArgumentList @("-S", "--noconfirm", "mingw-w64-clang-x86_64-gcc-compat", "mingw-w64-clang-x86_64-clang") -NoNewWindow -Wait
+          echo "C:\msys64\usr\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "C:\msys64\clang64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        
       - name: Setup Visual Studio Developer Command Prompt
         uses: ilammy/msvc-dev-cmd@v1
         with:

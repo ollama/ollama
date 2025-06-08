@@ -53,15 +53,6 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cp
 
 add_compile_definitions(NDEBUG)
 
-# Debug: Print all variables at this point (uncomment to enable)
-# get_cmake_property(_allVars VARIABLES)
-# list(SORT _allVars)
-# message(STATUS "=== ALL VARIABLES AT THIS POINT ===")
-# foreach(_var ${_allVars})
-#   message(STATUS "${_var}=${${_var}}")
-# endforeach()
-# message(STATUS "=== END VARIABLES ===")
-
 set(GGML_CPU ON)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src)
 set_property(TARGET ggml PROPERTY EXCLUDE_FROM_ALL TRUE)
