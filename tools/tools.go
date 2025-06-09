@@ -134,14 +134,15 @@ func indexOverlap(s, substr string) int {
 func (p *Parser) findToolCall() (*api.ToolCall, int) {
 	var name string
 	var args map[string]any
-	var nameEnd, argsEnd int = len(p.buffer), len(p.buffer)
+	var end int = len(p.buffer)
 
 	// find name
+	var i int
 	for _, n := range p.names {
-		if i := strings.Index(p.buffer, n); i != -1 {
-			if i+len(n) < nameEnd {
+		if i = strings.Index(p.buffer, n); i != -1 {
+			if i+len(n) < end {
 				name = n
-				nameEnd = i + len(n)
+				end = i + len(n)
 			}
 		}
 	}
@@ -151,8 +152,12 @@ func (p *Parser) findToolCall() (*api.ToolCall, int) {
 	}
 
 	// find arguments
-	if args, argsEnd = p.findArguments(p.buffer); args == nil {
+	if args, i = p.findArguments(p.buffer); args == nil {
 		return nil, -1
+	}
+
+	if i > end {
+		end = i
 	}
 
 	tc := &api.ToolCall{
@@ -162,7 +167,7 @@ func (p *Parser) findToolCall() (*api.ToolCall, int) {
 		},
 	}
 
-	return tc, max(nameEnd, argsEnd)
+	return tc, end
 }
 
 // findArguments returns the first object that appears to be
