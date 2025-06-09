@@ -1,4 +1,4 @@
-name: build
+name: build-sycl-amd64
 
 concurrency:
   # For PRs, later CI runs preempt previous ones. e.g. a force push on a PR
@@ -22,6 +22,18 @@ on:
         description: 'Cleanup old artifacts'
         type: boolean
         default: false
+      create_release:
+        description: 'Create a new GitHub release'
+        type: boolean
+        default: false
+      release_tag:
+        description: 'Release tag (e.g., v1.0.0)'
+        type: string
+        required: false
+      release_name:
+        description: 'Release name (optional, defaults to tag)'
+        type: string
+        required: false
 
 jobs:
   # Optional job to clean up old artifacts
@@ -150,35 +162,22 @@ jobs:
           name: ollama-windows-amd64-${{ github.sha }}
           path: |
             dist/ollama-windows-amd64.zip
-            dist/ollama-windows-amd64-rocm.zip
             dist/ollama-windows-amd64-sycl.zip
             dist/Ollama-*.exe
           if-no-files-found: warn
           retention-days: 1
 
-      - name: Build Windows binaries (ARM64)
-        run: |
-          powershell -ExecutionPolicy Bypass -File .\scripts\build_windows.ps1
-        env:
-          ARCH: arm64
-
-      - name: Upload Windows ARM64 artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: ollama-windows-arm64-${{ github.sha }}
-          path: |
-            dist/ollama-windows-arm64.zip
-            dist/Ollama-*-arm64.exe
-          if-no-files-found: warn
-          retention-days: 1
-
   release:
     needs: [build-linux, build-windows]
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        if: github.event_name == 'workflow_dispatch'
+        
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -187,12 +186,13 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
+          tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
+          name: ${{ github.event.inputs.release_name || github.event.inputs.release_tag || github.ref_name }}
           files: |
             artifacts/ollama-linux-amd64-${{ github.sha }}/ollama-linux-amd64-sycl.tgz
             artifacts/ollama-windows-amd64-${{ github.sha }}/ollama-windows-amd64.zip
-            artifacts/ollama-windows-amd64-${{ github.sha }}/ollama-windows-amd64-rocm.zip
             artifacts/ollama-windows-amd64-${{ github.sha }}/ollama-windows-amd64-sycl.zip
             artifacts/ollama-windows-amd64-${{ github.sha }}/Ollama-*.exe
-            artifacts/ollama-windows-arm64-${{ github.sha }}/ollama-windows-arm64.zip
-            artifacts/ollama-windows-arm64-${{ github.sha }}/Ollama-*-arm64.exe
-          generate_release_notes: true 
+          generate_release_notes: true
+          draft: false
+          prerelease: false 
