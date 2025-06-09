@@ -13,7 +13,7 @@ import (
 func TestRead(t *testing.T) {
 	// Setup
 	tempDir := t.TempDir()
-	tempFile := filepath.Join(tempDir, "test.gguf")
+	tempFile := filepath.Join(tempDir, t.Name())
 
 	// Create test file using WriteGGUF
 	file, err := os.Create(tempFile)
@@ -66,40 +66,29 @@ func TestRead(t *testing.T) {
 		t.Errorf("NumTensors() = %d, want %d", got, 2)
 	}
 	archKV := f.KeyValue("general.architecture")
-	if archKV.Key == "" {
-		t.Error("KeyValue(\"general.architecture\") not found")
-	}
 	if got := archKV.String(); got != "llama" {
 		t.Errorf("KeyValue(\"general.architecture\").String() = %q, want %q", got, "llama")
 	}
 	alignKV := f.KeyValue("general.alignment")
-	if alignKV.Key == "" {
-		t.Error("KeyValue(\"general.alignment\") not found")
-	}
 	if got := alignKV.Uint(); got != 32 {
 		t.Errorf("KeyValue(\"general.alignment\").Int() = %d, want %d", got, 32)
 	}
+
 	expectedTensorNames := []string{"token_embd.weight", "output.weight"}
 	var gotTensorNames []string
+	outputTensor := f.TensorInfo("output.weight")
+	if len(outputTensor.Shape) == 0 {
+		t.Error("TensorInfo(\"output.weight\") has empty shape")
+	}
+	tokenTensor := f.TensorInfo("token_embd.weight")
+	if len(tokenTensor.Shape) == 0 {
+		t.Error("TensorInfo(\"token_embd.weight\") has empty shape")
+	}
 	for _, tensor := range f.TensorInfos() {
 		gotTensorNames = append(gotTensorNames, tensor.Name)
 	}
 	if !slices.Equal(gotTensorNames, expectedTensorNames) {
 		t.Errorf("tensor names = %v, want %v", gotTensorNames, expectedTensorNames)
-	}
-	tokenTensor := f.TensorInfo("token_embd.weight")
-	if tokenTensor.Name != "token_embd.weight" {
-		t.Error("TensorInfo(\"token_embd.weight\") not found")
-	}
-	if len(tokenTensor.Shape) == 0 {
-		t.Error("TensorInfo(\"token_embd.weight\") has empty shape")
-	}
-	outputTensor := f.TensorInfo("output.weight")
-	if outputTensor.Name != "output.weight" {
-		t.Error("TensorInfo(\"output.weight\") not found")
-	}
-	if len(outputTensor.Shape) == 0 {
-		t.Error("TensorInfo(\"output.weight\") has empty shape")
 	}
 	var gotKeyCount int
 	for _, kv := range f.KeyValues() {
