@@ -519,11 +519,11 @@ func WriteGGUF(f *os.File, kv KV, ts []*Tensor) error {
 		return err
 	}
 
-	if err := binary.Write(f, binary.LittleEndian, uint64(len(kv))); err != nil {
+	if err := binary.Write(f, binary.LittleEndian, uint64(len(ts))); err != nil {
 		return err
 	}
 
-	if err := binary.Write(f, binary.LittleEndian, uint64(len(ts))); err != nil {
+	if err := binary.Write(f, binary.LittleEndian, uint64(len(kv))); err != nil {
 		return err
 	}
 
