@@ -40,10 +40,10 @@ The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `olla
 
 ## Quickstart
 
-To run and chat with [Llama 3.2](https://ollama.com/library/llama3.2):
+To run and chat with [Llama 3.2](https://ollama.com/library/gemma3):
 
 ```shell
-ollama run llama3.2
+ollama run gemma3
 ```
 
 ## Model library
