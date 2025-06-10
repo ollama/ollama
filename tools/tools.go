@@ -252,7 +252,7 @@ func (p *Parser) findArguments(s string) (map[string]any, int) {
 // Content returns any remaining content that should be sent
 // back to the user. If tools were called, an empty string
 // is returned. Otherwise, content up until the tag is returned
-// unless the tag is { or [ in which case it could be regular content
+// unless the tag is { or [ in which case the entire buffer is returned
 func (p *Parser) Content() string {
 	if p.n > 0 {
 		return ""
@@ -261,7 +261,7 @@ func (p *Parser) Content() string {
 	i := strings.Index(p.buffer, p.tag)
 	if i > 0 {
 		if p.tag == "{" || p.tag == "[" {
-			return p.buffer[:i+1]
+			return p.buffer
 		}
 		return p.buffer[:i]
 	}

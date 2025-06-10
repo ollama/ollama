@@ -24,10 +24,10 @@ func TestParser(t *testing.T) {
 		t.Fatalf("Failed to parse template: %v", err)
 	}
 
-	// list, err := template.New("list").Parse(`{{if .ToolCalls}}[{{range .ToolCalls}}{"name": "{{.Function.Name}}", "arguments": {{.Function.Arguments}}}{{end}}]{{end}}`)
-	// if err != nil {
-	// 	t.Fatalf("Failed to parse template: %v", err)
-	// }
+	list, err := template.New("list").Parse(`{{if .ToolCalls}}[{{range .ToolCalls}}{"name": "{{.Function.Name}}", "arguments": {{.Function.Arguments}}}{{end}}]{{end}}`)
+	if err != nil {
+		t.Fatalf("Failed to parse template: %v", err)
+	}
 
 	tools := []api.Tool{
 		{
@@ -256,10 +256,10 @@ func TestParser(t *testing.T) {
 			},
 		},
 		{
-			name: "json",
+			name: "json maybe a tool call",
 			inputs: []string{
 				"{",
-				"\"name\": \"search\",",
+				"\"name\": \"get_temperature\",",
 				"\"arguments\": {",
 			},
 			content: "",
@@ -267,7 +267,7 @@ func TestParser(t *testing.T) {
 			calls:   nil,
 		},
 		{
-			name: "json",
+			name: "json not a tool call",
 			inputs: []string{
 				"{",
 				"\"name\": \"search\", ",
@@ -278,6 +278,72 @@ func TestParser(t *testing.T) {
 			},
 			content: "{\"name\": \"search\", \"arguments\": {\"query\": \"What is the capital of Canada?\"}}",
 			tmpl:    json,
+			calls:   nil,
+		},
+		{
+			name: "list multiple",
+			inputs: []string{
+				"[",
+				"{",
+				"\"name\": \"get_temperature\", ",
+				"\"arguments\": {",
+				"\"city\": \"London\"",
+				"}",
+				"},",
+				"{",
+				"\"name\": \"get_conditions\", ",
+				"\"arguments\": {",
+				"\"location\": \"Tokyo\"",
+				"}",
+				"}]",
+			},
+			content: "",
+			tmpl:    list,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_temperature",
+						Arguments: api.ToolCallFunctionArguments{
+							"city": "London",
+						},
+					},
+				},
+				{
+					Function: api.ToolCallFunction{
+						Index: 1,
+						Name:  "get_conditions",
+						Arguments: api.ToolCallFunctionArguments{
+							"location": "Tokyo",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "list partial",
+			inputs: []string{
+				"[",
+				"{",
+				"\"name\": \"search\", ",
+				"\"arguments\": {",
+				"\"query\": \"What is the capital of Canada?\"",
+				"}",
+				"}",
+			},
+			content: "",
+			tmpl:    list,
+			calls:   nil,
+		},
+		{
+			name: "list not a tool call",
+			inputs: []string{
+				"[special",
+				" del",
+				"ivery]",
+			},
+			content: "[special delivery]",
+			tmpl:    list,
 			calls:   nil,
 		},
 	}
@@ -306,6 +372,78 @@ func TestParser(t *testing.T) {
 				if diff := cmp.Diff(calls[i], want); diff != "" {
 					t.Errorf("Tool call %d mismatch (-got +want):\n%s", i, diff)
 				}
+			}
+		})
+	}
+}
+
+func TestContent(t *testing.T) {
+	tests := []struct {
+		name   string
+		parser *Parser
+		want   string
+	}{
+		{
+			name: "empty",
+			parser: &Parser{
+				tag:    "<tool_call>",
+				buffer: "",
+				n:      0,
+			},
+			want: "",
+		},
+		{
+			name: "regular content",
+			parser: &Parser{
+				tag:    "<tool_call>",
+				buffer: "Here is some regular content:",
+				n:      0,
+			},
+			want: "Here is some regular content:",
+		},
+		{
+			name: "tools called",
+			parser: &Parser{
+				tag:    "<tool_call>",
+				buffer: "I will call some tools. <tool_call>",
+				n:      1,
+			},
+			want: "",
+		},
+		{
+			name: "no tools called but tag found",
+			parser: &Parser{
+				tag:    "<tool_call>",
+				buffer: "I will call some tools. <tool_call>{\"name\": \"get_temperature\"",
+				n:      0,
+			},
+			want: "I will call some tools. ",
+		},
+		{
+			name: "{ tag  with no tools",
+			parser: &Parser{
+				tag:    "{",
+				buffer: "Here is an example json object: {\"name\": \"bob\"",
+				n:      0,
+			},
+			want: "Here is an example json object: {\"name\": \"bob\"",
+		},
+		{
+			name: "[ tag with no tools",
+			parser: &Parser{
+				tag:    "[",
+				buffer: "Here is an example list of json objects: [{\"name\": \"bob\"",
+				n:      0,
+			},	
+			want: "Here is an example list of json objects: [{\"name\": \"bob\"",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.parser.Content()
+			if got != tt.want {
+				t.Errorf("Content() = %q, want %q", got, tt.want)
 			}
 		})
 	}
