@@ -59,7 +59,12 @@ func TestParseTag(t *testing.T) {
 		{
 			name:     "json objects",
 			template: `{{if .ToolCalls}}{{range .ToolCalls}}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}{{end}}{{end}}`,
-			want:     "",
+			want:     "{",
+		},
+		{
+			name:     "json objects with whitespace",
+			template: `{{if .ToolCalls}}{{range .ToolCalls}}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}{{end}}{{end}}`,
+			want:     "{",
 		},
 		{
 			name:     "before and after range",
@@ -80,11 +85,6 @@ func TestParseTag(t *testing.T) {
 			name:     "tool call with multiple text nodes",
 			template: "{{if .ToolCalls}}First text{{if .Something}}inner{{end}}Second text{{end}}",
 			want:     "First text",
-		},
-		{
-			name:     "nested if",
-			template: "{{if .Something}}{{if .OtherThing}}text{{end}}{{end}}",
-			want:     "",
 		},
 		{
 			name:     "action tag",

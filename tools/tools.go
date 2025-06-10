@@ -21,11 +21,7 @@ type Parser struct {
 // NewParser creates a new tool call parser from a model's chat
 // template and a list of provided tools.
 func NewParser(tmpl *template.Template, tools []api.Tool) *Parser {
-	tag := parseTag(tmpl)
-	if tag == "" {
-		tag = "{"
-	}
-	return NewParserWithTag(tools, tag)
+	return NewParserWithTag(tools, parseTag(tmpl))
 }
 
 func NewParserWithTag(tools []api.Tool, tag string) *Parser {

@@ -28,10 +28,18 @@ func parseTag(tmpl *template.Template) string {
 	}
 
 	tag := string(tn.Text)
-	tag = strings.TrimSpace(tag)
 	tag = strings.ReplaceAll(tag, "\r\n", "\n")
-	tag = strings.Split(tag, "{")[0]
-	return tag
+
+	// avoid parsing { onwards as this may be a tool call
+	// however keep '{' as a prefix if there is no tag
+	// so that all json objects will be attempted to
+	// be parsed as tool calls
+	tag, _, _ = strings.Cut(tag, "{")
+	if tag == "" {
+		return "{"
+	}
+
+	return strings.TrimSpace(tag)
 }
 
 // findToolCallNode searches for and returns an IfNode with .ToolCalls
