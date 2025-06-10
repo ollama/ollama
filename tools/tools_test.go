@@ -24,6 +24,11 @@ func TestParser(t *testing.T) {
 		t.Fatalf("Failed to parse template: %v", err)
 	}
 
+	mistral, err := template.New("mistral").Parse(`{{if .ToolCalls}}[TOOL_CALLS] [{{range .ToolCalls}}{"name": "{{.Function.Name}}", "arguments": {{.Function.Arguments}}}{{end}}][/TOOL_CALLS]{{end}}`)
+	if err != nil {
+		t.Fatalf("Failed to parse template: %v", err)
+	}
+
 	list, err := template.New("list").Parse(`{{if .ToolCalls}}[{{range .ToolCalls}}{"name": "{{.Function.Name}}", "arguments": {{.Function.Arguments}}}{{end}}]{{end}}`)
 	if err != nil {
 		t.Fatalf("Failed to parse template: %v", err)
@@ -151,6 +156,33 @@ func TestParser(t *testing.T) {
 						Name:  "get_temperature",
 						Arguments: api.ToolCallFunctionArguments{
 							"city": "New York",
+						},
+					},
+				},
+			},
+		},
+		{
+			name:    "two tool calls in a list",
+			inputs:  []string{`[TOOL_CALLS] [{"name": "get_temperature", "arguments": {"city": "London", "format": "fahrenheit"}}, {"name": "get_conditions", "arguments": {"location": "Tokyo"}}][/TOOL_CALLS]`},
+			content: "",
+			tmpl:    mistral,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_temperature",
+						Arguments: api.ToolCallFunctionArguments{
+							"city":   "London",
+							"format": "fahrenheit",
+						},
+					},
+				},
+				{
+					Function: api.ToolCallFunction{
+						Index: 1,
+						Name:  "get_conditions",
+						Arguments: api.ToolCallFunctionArguments{
+							"location": "Tokyo",
 						},
 					},
 				},
@@ -387,7 +419,7 @@ func TestContent(t *testing.T) {
 			name: "empty",
 			parser: &Parser{
 				tag:    "<tool_call>",
-				buffer: "",
+				buffer: []byte{},
 				n:      0,
 			},
 			want: "",
@@ -396,7 +428,7 @@ func TestContent(t *testing.T) {
 			name: "regular content",
 			parser: &Parser{
 				tag:    "<tool_call>",
-				buffer: "Here is some regular content:",
+				buffer: []byte("Here is some regular content:"),
 				n:      0,
 			},
 			want: "Here is some regular content:",
@@ -405,7 +437,7 @@ func TestContent(t *testing.T) {
 			name: "tools called",
 			parser: &Parser{
 				tag:    "<tool_call>",
-				buffer: "I will call some tools. <tool_call>",
+				buffer: []byte("I will call some tools. <tool_call>"),
 				n:      1,
 			},
 			want: "",
@@ -414,7 +446,7 @@ func TestContent(t *testing.T) {
 			name: "no tools called but tag found",
 			parser: &Parser{
 				tag:    "<tool_call>",
-				buffer: "I will call some tools. <tool_call>{\"name\": \"get_temperature\"",
+				buffer: []byte("I will call some tools. <tool_call>{\"name\": \"get_temperature\""),
 				n:      0,
 			},
 			want: "I will call some tools. ",
@@ -423,7 +455,7 @@ func TestContent(t *testing.T) {
 			name: "{ tag  with no tools",
 			parser: &Parser{
 				tag:    "{",
-				buffer: "Here is an example json object: {\"name\": \"bob\"",
+				buffer: []byte("Here is an example json object: {\"name\": \"bob\""),
 				n:      0,
 			},
 			want: "Here is an example json object: {\"name\": \"bob\"",
@@ -432,7 +464,7 @@ func TestContent(t *testing.T) {
 			name: "[ tag with no tools",
 			parser: &Parser{
 				tag:    "[",
-				buffer: "Here is an example list of json objects: [{\"name\": \"bob\"",
+				buffer: []byte("Here is an example list of json objects: [{\"name\": \"bob\""),
 				n:      0,
 			},
 			want: "Here is an example list of json objects: [{\"name\": \"bob\"",
@@ -452,63 +484,87 @@ func TestContent(t *testing.T) {
 func TestFindTag(t *testing.T) {
 	cases := []struct {
 		name   string
-		buffer string
+		buffer []byte
 		tag    string
 		want   int
 	}{
 		{
 			name:   "no overlap",
-			buffer: "hello world",
+			buffer: []byte("hello world"),
 			tag:    "<tool_call>",
 			want:   -1,
 		},
 		{
 			name:   "full overlap",
-			buffer: "<tool_call>",
+			buffer: []byte("<tool_call>"),
 			tag:    "<tool_call>",
 			want:   0,
 		},
 		{
+			name:   "whitespace",
+			buffer: []byte("    <tool_call>\n {\"name\": \"bob\"}"),
+			tag:    "<tool_call>",
+			want:   4,
+		},
+		{
 			name:   "over",
-			buffer: "<tool_call>{\"name\"",
+			buffer: []byte("<tool_call>{\"name\""),
 			tag:    "<tool_call>",
 			want:   0,
 		},
 		{
 			name:   "partial overlap",
-			buffer: "text <tool_call>",
+			buffer: []byte("text <tool_call>"),
 			tag:    "<tool_call>",
 			want:   5,
 		},
 		{
 			name:   "overlap with extra",
-			buffer: "<tool_calls><tool_call>",
+			buffer: []byte("<tool_calls><tool_call>"),
 			tag:    "<tool_calls>",
 			want:   0,
 		},
 		{
 			name:   "delimiter longer than string",
-			buffer: "<tool>",
+			buffer: []byte("<tool>"),
 			tag:    "<tool_call>",
 			want:   -1,
 		},
 		{
 			name:   "empty string",
-			buffer: "",
+			buffer: []byte{},
 			tag:    "<tool_call>",
 			want:   -1,
 		},
 		{
 			name:   "single char overlap",
-			buffer: "test<",
+			buffer: []byte("test<"),
 			tag:    "<tool_call>",
 			want:   4,
 		},
 		{
 			name:   "partial tool call",
-			buffer: "hello <tool_",
+			buffer: []byte("hello <tool_"),
 			tag:    "<tool_call>",
 			want:   6,
+		},
+		{
+			name:   "square bracket",
+			buffer: []byte("calling tools: ["),
+			tag:    "[",
+			want:   15,
+		},
+		{
+			name:   "bracket",
+			buffer: []byte("{\"name\": \"bob\""),
+			tag:    "{",
+			want:   0,
+		},
+		{
+			name:   "bracket with whitespace",
+			buffer: []byte("\n\n{\n\"name\": \"bob\""),
+			tag:    "{",
+			want:   2,
 		},
 	}
 
@@ -516,7 +572,7 @@ func TestFindTag(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			parser := &Parser{
 				tag:    tt.tag,
-				buffer: tt.buffer,
+				buffer: []byte(tt.buffer),
 				n:      0,
 			}
 			got := parser.findTag()
@@ -528,84 +584,88 @@ func TestFindTag(t *testing.T) {
 }
 
 func TestFindArguments(t *testing.T) {
-	parser := &Parser{
-		properties: []string{"format", "location"},
-	}
-
 	tests := []struct {
-		name  string
-		input string
-		want  map[string]any
+		name   string
+		buffer []byte
+		want   map[string]any
 	}{
 		{
-			name:  "empty string",
-			input: "",
-			want:  nil,
+			name:   "empty string",
+			buffer: []byte{},
+			want:   nil,
 		},
 		{
-			name:  "whitespace only",
-			input: "   \n\t  ",
-			want:  nil,
+			name:   "whitespace only",
+			buffer: []byte("   \n\t  "),
+			want:   nil,
 		},
 		{
-			name:  "unbalanced braces - missing closing",
-			input: `{"format": "fahrenheit", "location": "San Francisco"`,
-			want:  nil,
+			name:   "unbalanced braces - missing closing",
+			buffer: []byte(`{"format": "fahrenheit", "location": "San Francisco"`),
+			want:   nil,
 		},
 		{
-			name:  "unbalanced braces - extra closing",
-			input: `{"format": "fahrenheit"}}`,
+			name:   "unbalanced braces - extra closing",
+			buffer: []byte(`{"format": "fahrenheit"}}`),
 			want: map[string]any{
 				"format": "fahrenheit",
 			},
 		},
 		{
-			name:  "invalid JSON",
-			input: `{format: fahrenheit, location: "San Francisco"}`,
-			want:  nil,
+			name:   "invalid JSON",
+			buffer: []byte(`{format: fahrenheit, location: "San Francisco"}`),
+			want:   nil,
 		},
 		{
-			name:  "valid arguments field",
-			input: `{"name": "get_temperature", "arguments": {"format": "fahrenheit", "location": "San Francisco, CA"}}`,
+			name:   "valid json",
+			buffer: []byte(`{"name": "get_temperature", "arguments": {"format": "fahrenheit", "location": "San Francisco, CA"}}`),
 			want: map[string]any{
 				"format":   "fahrenheit",
 				"location": "San Francisco, CA",
 			},
 		},
 		{
-			name:  "valid arguments field",
-			input: `[tool]get_temperature[args]{"format": "fahrenheit", "location": "San Francisco, CA"}[end]`,
+			name:   "valid arguments with special tokens",
+			buffer: []byte(`[tool]get_temperature[args]{"format": "fahrenheit", "location": "San Francisco, CA"}[end]`),
 			want: map[string]any{
 				"format":   "fahrenheit",
 				"location": "San Francisco, CA",
 			},
 		},
 		{
-			name:  "valid arguments field in array",
-			input: `[{"arguments": {"format": "fahrenheit", "location": "San Francisco, CA"}}`,
+			name:   "valid arguments in array",
+			buffer: []byte(`[{"arguments": {"format": "fahrenheit", "location": "San Francisco, CA"}}`),
 			want: map[string]any{
 				"format":   "fahrenheit",
 				"location": "San Francisco, CA",
 			},
 		},
 		{
-			name:  "nested deep",
-			input: `{"function": {"name": "get_temperature", "arguments": {"format": "fahrenheit", "location": "San Francisco, CA"}}}`,
+			name:   "nested deep",
+			buffer: []byte(`{"function": {"name": "get_temperature", "arguments": {"format": "fahrenheit", "location": "San Francisco, CA"}}}`),
 			want: map[string]any{
 				"format":   "fahrenheit",
 				"location": "San Francisco, CA",
 			},
 		},
 		{
-			name:  "one arg",
-			input: `get_weather({"location": "San Francisco, CA"})`,
+			name:   "one arg",
+			buffer: []byte(`get_weather({"location": "San Francisco, CA"})`),
 			want: map[string]any{
 				"location": "San Francisco, CA",
 			},
 		},
 		{
-			name:  "deepseek",
-			input: "<|tool▁calls▁begin|><|tool▁call▁begin|>function<|tool▁sep|>get_current_weather\n```json\n{\"location\": \"Tokyo\"}\n```<|tool▁call▁end|><|tool▁calls▁end|><|end▁of▁sentence|>",
+			name:   "two args",
+			buffer: []byte(`[{"name": "get_weather", "arguments": {"location": "San Francisco, CA", "format": "fahrenheit"}}, {"name": "get_weather", "arguments": {"location": "San Francisco, CA", "format": "fahrenheit"}}]`),
+			want: map[string]any{
+				"location": "San Francisco, CA",
+				"format":   "fahrenheit",
+			},
+		},
+		{
+			name:   "deepseek",
+			buffer: []byte("<|tool▁calls▁begin|><|tool▁call▁begin|>function<|tool▁sep|>get_current_weather\n```json\n{\"location\": \"Tokyo\"}\n```<|tool▁call▁end|><|tool▁calls▁end|><|end▁of▁sentence|>"),
 			want: map[string]any{
 				"location": "Tokyo",
 			},
@@ -613,8 +673,13 @@ func TestFindArguments(t *testing.T) {
 	}
 
 	for _, tt := range tests {
+		parser := &Parser{
+			buffer:     tt.buffer,
+			properties: []string{"format", "location"},
+		}
+
 		t.Run(tt.name, func(t *testing.T) {
-			got, _ := parser.findArguments(tt.input)
+			got, _ := parser.findArguments()
 
 			if diff := cmp.Diff(got, tt.want); diff != "" {
 				t.Errorf("scanArguments() args mismatch (-got +want):\n%s", diff)

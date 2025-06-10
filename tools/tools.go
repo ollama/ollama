@@ -1,8 +1,8 @@
 package tools
 
 import (
+	"bytes"
 	"encoding/json"
-	"strings"
 	"text/template"
 
 	"github.com/ollama/ollama/api"
@@ -14,7 +14,7 @@ type Parser struct {
 	properties []string
 
 	parsing bool
-	buffer  string
+	buffer  []byte
 	n       int
 }
 
@@ -48,21 +48,21 @@ func NewParserWithTag(tools []api.Tool, tag string) *Parser {
 //   - tools: Any parsed tool calls
 //   - content: Non-tool call content
 func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
-	p.buffer += s
+	p.buffer = append(p.buffer, s...)
 
 	if !p.parsing {
 		i := p.findTag()
 		if i == -1 {
 			p.parsing = false
-			content = p.buffer
-			p.buffer = ""
+			content = string(p.buffer)
+			p.buffer = []byte{}
 			return
 		}
 
-		content = p.buffer[:i]
+		content = string(p.buffer[:i])
 		p.buffer = p.buffer[i:]
 
-		if strings.Contains(p.buffer, p.tag) {
+		if bytes.Contains(p.buffer, []byte(p.tag)) {
 			p.parsing = true
 		} else {
 			return
@@ -80,7 +80,7 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 		calls = append(calls, *call)
 
 		p.buffer = p.buffer[end:]
-		if p.buffer == "" {
+		if len(p.buffer) == 0 {
 			break
 		}
 	}
@@ -92,8 +92,8 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 	// check if we should stop parsing and flush the content
 	// e.g. tag is { or [ and a matching } or ] is found
 	if p.shouldFlush() {
-		content = p.buffer
-		p.buffer = ""
+		content = string(p.buffer)
+		p.buffer = []byte{}
 		return nil, content
 	}
 
@@ -105,14 +105,14 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 // a string content signaling any content that should be sent back to the user
 func (p *Parser) findTag() int {
 	// First check for complete substring anywhere in s
-	if i := strings.Index(p.buffer, p.tag); i > -1 {
+	if i := bytes.Index(p.buffer, []byte(p.tag)); i > -1 {
 		return i
 	}
 
 	// Then check for partial suffix overlap
 	max := min(len(p.buffer), len(p.tag))
 	for i := max; i > 0; i-- {
-		if strings.HasSuffix(p.buffer, p.tag[:i]) {
+		if bytes.HasSuffix(p.buffer, []byte(p.tag[:i])) {
 			return len(p.buffer) - i
 		}
 	}
@@ -129,7 +129,7 @@ func (p *Parser) findToolCall() (*api.ToolCall, int) {
 	// find name
 	var i int
 	for _, n := range p.names {
-		if i = strings.Index(p.buffer, n); i != -1 {
+		if i = bytes.Index(p.buffer, []byte(n)); i != -1 {
 			if i+len(n) < end {
 				name = n
 				end = i + len(n)
@@ -141,7 +141,7 @@ func (p *Parser) findToolCall() (*api.ToolCall, int) {
 		return nil, -1
 	}
 
-	if args, i = p.findArguments(p.buffer); args == nil {
+	if args, i = p.findArguments(); args == nil {
 		return nil, -1
 	}
 
@@ -162,19 +162,18 @@ func (p *Parser) findToolCall() (*api.ToolCall, int) {
 // findArguments returns the first object that appears to be
 // arguments and the position where the arguments end, returning nil and 0 if
 // an invalid JSON object or non-arguments object is found first
-func (p *Parser) findArguments(s string) (map[string]any, int) {
-	s = strings.TrimSpace(s)
-	if len(s) == 0 {
+func (p *Parser) findArguments() (map[string]any, int) {
+	if len(p.buffer) == 0 {
 		return nil, 0
 	}
 
 	var braces int
 	var start int = -1
 	var end int
-	var object string
+	var object []byte
 
 	// find any outer json object
-	for i, c := range s {
+	for i, c := range p.buffer {
 		if c == '{' {
 			braces++
 			if start == -1 {
@@ -186,7 +185,7 @@ func (p *Parser) findArguments(s string) (map[string]any, int) {
 			braces--
 			if braces == 0 && start != -1 {
 				end = i + 1
-				object = s[start:end]
+				object = p.buffer[start:end]
 				break
 			}
 		}
@@ -199,7 +198,7 @@ func (p *Parser) findArguments(s string) (map[string]any, int) {
 	var data map[string]any
 
 	// not valid json
-	if err := json.Unmarshal([]byte(object), &data); err != nil {
+	if err := json.Unmarshal(object, &data); err != nil {
 		return nil, 0
 	}
 
@@ -249,20 +248,20 @@ func (p *Parser) Content() string {
 		return ""
 	}
 
-	i := strings.Index(p.buffer, p.tag)
+	i := bytes.Index(p.buffer, []byte(p.tag))
 	if i > 0 {
 		if p.tag == "{" || p.tag == "[" {
-			return p.buffer
+			return string(p.buffer)
 		}
-		return p.buffer[:i]
+		return string(p.buffer[:i])
 	}
-	return p.buffer
+	return string(p.buffer)
 }
 
 // shouldFlush checks if the parser should stop parsing and flush the content
 // e.g. tag is { and if matching } is found or tag is [ and if matching ] is found
 func (p *Parser) shouldFlush() bool {
-	if p.tag == "" || p.buffer == "" {
+	if p.tag == "" || len(p.buffer) == 0 {
 		return false
 	}
 
@@ -278,9 +277,9 @@ func (p *Parser) shouldFlush() bool {
 
 	var count int
 	for _, c := range p.buffer {
-		if c == open {
+		if c == byte(open) {
 			count++
-		} else if c == close {
+		} else if c == byte(close) {
 			count--
 			if count == 0 {
 				return true
