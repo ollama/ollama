@@ -193,7 +193,12 @@ func initSyclHandles() *syclHandles {
 		return sHandles
 	}
 
-	syclLibPaths := FindGPULibs(SyclMgmtName, SyclGlobs)
+	// Installer payload location if we're running the installed binary
+	syclTargetDir := filepath.Join(LibOllamaPath, "sycl")
+	syclMgmtPatterns := []string{filepath.Join(syclTargetDir, SyclMgmtName)}
+	syclMgmtPatterns = append(syclMgmtPatterns, SyclGlobs...)
+
+	syclLibPaths := FindGPULibs(SyclMgmtName, syclMgmtPatterns)
 	if len(syclLibPaths) > 0 {
 		var err error
 		sHandles.deviceCount, sHandles.sycl, syclLibPath, err = loadSyclMgmt(syclLibPaths)
@@ -441,7 +446,11 @@ func GetGPUInfo() GpuInfoList {
 						gpuInfo.FreeMemory = uint64(memInfo.free)
 						gpuInfo.ID = strconv.Itoa(int(i))
 						gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
-						gpuInfo.DependencyPath = []string{LibOllamaPath}
+						if syclLibPath != "" {
+							gpuInfo.DependencyPath = []string{filepath.Dir(syclLibPath)}
+						} else {
+							gpuInfo.DependencyPath = []string{LibOllamaPath}
+						}
 						syclGPUs = append(syclGPUs, gpuInfo)
 						slog.Debug("SYCL GPU", "GPU Info", gpuInfo)
 					}
