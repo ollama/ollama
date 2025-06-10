@@ -1412,7 +1412,7 @@ func NewCLI() *cobra.Command {
 		},
 	}
 
-	//added custom help flag to capitalize Ollama
+	// Added custom help flag to capitalize "Ollama"
 	rootCmd.PersistentFlags().BoolP("help", "h", false, "Help for Ollama")
 
 	rootCmd.Flags().BoolP("version", "v", false, "Show version information")
@@ -1467,7 +1467,7 @@ func NewCLI() *cobra.Command {
 		RunE:    StopHandler,
 	}
 
-	// updated Short to capitalize "Ollama"
+	// updated Short description to capitalize "Ollama" 
 	serveCmd := &cobra.Command{
 		Use:     "serve",
 		Aliases: []string{"start"},
