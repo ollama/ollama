@@ -434,7 +434,7 @@ func TestContent(t *testing.T) {
 				tag:    "[",
 				buffer: "Here is an example list of json objects: [{\"name\": \"bob\"",
 				n:      0,
-			},	
+			},
 			want: "Here is an example list of json objects: [{\"name\": \"bob\"",
 		},
 	}
