@@ -449,74 +449,79 @@ func TestContent(t *testing.T) {
 	}
 }
 
-func TestIndexOverlap(t *testing.T) {
+func TestFindTag(t *testing.T) {
 	cases := []struct {
 		name   string
-		s      string
-		prefix string
+		buffer string
+		tag    string
 		want   int
 	}{
 		{
 			name:   "no overlap",
-			s:      "hello world",
-			prefix: "<tool_call>",
+			buffer: "hello world",
+			tag:    "<tool_call>",
 			want:   -1,
 		},
 		{
 			name:   "full overlap",
-			s:      "<tool_call>",
-			prefix: "<tool_call>",
+			buffer: "<tool_call>",
+			tag:    "<tool_call>",
 			want:   0,
 		},
 		{
 			name:   "over",
-			s:      "<tool_call>{\"name\"",
-			prefix: "<tool_call>",
-			want:   -1,
+			buffer: "<tool_call>{\"name\"",
+			tag:    "<tool_call>",
+			want:   0,
 		},
 		{
 			name:   "partial overlap",
-			s:      "text <tool_call>",
-			prefix: "<tool_call>",
+			buffer: "text <tool_call>",
+			tag:    "<tool_call>",
 			want:   5,
 		},
 		{
+			name:   "overlap with extra",
+			buffer: "<tool_calls><tool_call>",
+			tag:    "<tool_calls>",
+			want:   0,
+		},
+		{
 			name:   "delimiter longer than string",
-			s:      "<tool>",
-			prefix: "<tool_call>",
+			buffer: "<tool>",
+			tag:    "<tool_call>",
 			want:   -1,
 		},
 		{
 			name:   "empty string",
-			s:      "",
-			prefix: "<tool_call>",
-			want:   -1,
-		},
-		{
-			name:   "empty delimiter",
-			s:      "<tool_call>",
-			prefix: "",
+			buffer: "",
+			tag:    "<tool_call>",
 			want:   -1,
 		},
 		{
 			name:   "single char overlap",
-			s:      "test<",
-			prefix: "<tool_call>",
+			buffer: "test<",
+			tag:    "<tool_call>",
 			want:   4,
 		},
 		{
 			name:   "partial tool call",
-			s:      "hello <tool_",
-			prefix: "<tool_call>",
+			buffer: "hello <tool_",
+			tag:    "<tool_call>",
 			want:   6,
 		},
 	}
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			got := indexOverlap(tt.s, tt.prefix)
+			parser := &Parser{
+				tag:    tt.tag,
+				buffer: tt.buffer,
+				n:      0,
+			}
+			got := parser.findTag()
 			if got != tt.want {
-				t.Errorf("indexOverlap(%q, %q) = %d; want %d", tt.s, tt.prefix, got, tt.want)
+				t.Errorf("findTag(%q, %q) = %d; want %d", tt.buffer, tt.tag, got, tt.want)
 			}
 		})
 	}

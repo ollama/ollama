@@ -104,24 +104,16 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 // returning true if the tag was found and false otherwise, and
 // a string content signaling any content that should be sent back to the user
 func (p *Parser) findTag() int {
-	if i := indexOverlap(p.buffer, p.tag); i > -1 {
-		return i
-	}
-
+	// First check for complete substring anywhere in s
 	if i := strings.Index(p.buffer, p.tag); i > -1 {
 		return i
 	}
 
-	return -1
-}
-
-// indexOverlap returns the index in s where the longest
-// suffix overlap with substr begins
-func indexOverlap(s, substr string) int {
-	max := min(len(substr), len(s))
+	// Then check for partial suffix overlap
+	max := min(len(p.buffer), len(p.tag))
 	for i := max; i > 0; i-- {
-		if strings.HasSuffix(s, substr[:i]) {
-			return len(s) - i
+		if strings.HasSuffix(p.buffer, p.tag[:i]) {
+			return len(p.buffer) - i
 		}
 	}
 	return -1
@@ -149,7 +141,6 @@ func (p *Parser) findToolCall() (*api.ToolCall, int) {
 		return nil, -1
 	}
 
-	// find arguments
 	if args, i = p.findArguments(p.buffer); args == nil {
 		return nil, -1
 	}
