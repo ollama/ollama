@@ -206,7 +206,7 @@ func TestParser(t *testing.T) {
 				"<think>Wait",
 				", I need",
 				" to call",
-				"a tool</think><|too",
+				" a tool</think><|too",
 				"l▁calls▁begin",
 				"|>",
 				"<|tool▁call▁begin|>function<|tool▁sep|>get_temperature\n",
