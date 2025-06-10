@@ -14,10 +14,10 @@ func TestParser(t *testing.T) {
 		t.Fatalf("Failed to parse template: %v", err)
 	}
 
-	// deepseek, err := template.New("deepseek").Parse("{{if .ToolCalls}}<|tool▁calls▁begin|>{{range .ToolCalls}}<|tool▁call▁begin|>function<|tool▁sep|>get_current_weather\n```json\n{\"location\": \"Tokyo\"}\n```<|tool▁call▁end|>{{end}}<|tool▁calls▁end|><|end▁of▁sentence|>{{end}}")
-	// if err != nil {
-	// 	t.Fatalf("Failed to parse template: %v", err)
-	// }
+	deepseek, err := template.New("deepseek").Parse("{{if .ToolCalls}}<|tool▁calls▁begin|>{{range .ToolCalls}}<|tool▁call▁begin|>function<|tool▁sep|>get_current_weather\n```json\n{\"location\": \"Tokyo\"}\n```<|tool▁call▁end|>{{end}}<|tool▁calls▁end|><|end▁of▁sentence|>{{end}}")
+	if err != nil {
+		t.Fatalf("Failed to parse template: %v", err)
+	}
 
 	// json, err := template.New("json").Parse(`{{if .ToolCalls}}{{range .ToolCalls}}{"name": "{{.Function.Name}}", "arguments": {{.Function.Arguments}}}{{end}}{{end}}`)
 	// if err != nil {
@@ -103,28 +103,28 @@ func TestParser(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		input   string
+		inputs  []string
 		tmpl    *template.Template
 		content string
 		calls   []api.ToolCall
 	}{
 		{
 			name:    "no tool calls - just text",
-			input:   "Hello, how can I help you today?",
+			inputs:  []string{"Hello, how can I help you today?"},
 			content: "Hello, how can I help you today?",
 			tmpl:    qwen,
 			calls:   nil,
 		},
 		{
 			name:    "empty input",
-			input:   "",
+			inputs:  []string{""},
 			content: "",
 			tmpl:    qwen,
 			calls:   nil,
 		},
 		{
 			name:    "tool call",
-			input:   `<tool_call>{"name": "get_conditions", "arguments": {"location": "San Francisco"}}</tool_call>`,
+			inputs:  []string{`<tool_call>{"name": "get_conditions", "arguments": {"location": "San Francisco"}}</tool_call>`},
 			content: "",
 			tmpl:    qwen,
 			calls: []api.ToolCall{
@@ -141,7 +141,7 @@ func TestParser(t *testing.T) {
 		},
 		{
 			name:    "text before tool call",
-			input:   `Let me check the weather. <tool_call>{"name": "get_temperature", "arguments": {"city": "New York"}}</tool_call>`,
+			inputs:  []string{`Let me check the weather. <tool_call>{"name": "get_temperature", "arguments": {"city": "New York"}}</tool_call>`},
 			content: "Let me check the weather. ",
 			tmpl:    qwen,
 			calls: []api.ToolCall{
@@ -158,7 +158,7 @@ func TestParser(t *testing.T) {
 		},
 		{
 			name:    "two tool calls",
-			input:   `Okay, let's call both tools! <tool_call>{"name": "get_temperature", "arguments": {"city": "London", "format": "fahrenheit"}}</tool_call><tool_call>{"name": "get_conditions", "arguments": {"location": "Tokyo"}}</tool_call>`,
+			inputs:  []string{`Okay, let's call both tools! <tool_call>{"name": "get_temperature", "arguments": {"city": "London", "format": "fahrenheit"}}</tool_call><tool_call>{"name": "get_conditions", "arguments": {"location": "Tokyo"}}</tool_call>`},
 			content: "Okay, let's call both tools! ",
 			tmpl:    qwen,
 			calls: []api.ToolCall{
@@ -183,92 +183,78 @@ func TestParser(t *testing.T) {
 				},
 			},
 		},
-		// {
-		// 	name:            "text with two tool calls",
-		// 	input:           `I'll check both cities. <tool_call>{"name": "get_weather", "arguments": {"location": "Paris"}}</tool_call> and also <tool_call>{"name": "get_weather", "arguments": {"location": "Berlin"}}</tool_call>`,
-		// 	expectedContent: "I'll check both cities. ",
-		// 	expectedCalls: []api.ToolCall{
-		// 		{
-		// 			Function: api.ToolCallFunction{
-		// 				Index: 0,
-		// 				Name:  "get_weather",
-		// 				Arguments: api.ToolCallFunctionArguments{
-		// 					"location": "Paris",
-		// 				},
-		// 			},
-		// 		},
-		// 		{
-		// 			Function: api.ToolCallFunction{
-		// 				Index: 1,
-		// 				Name:  "get_weather",
-		// 				Arguments: api.ToolCallFunctionArguments{
-		// 					"location": "Berlin",
-		// 				},
-		// 			},
-		// 		},
-		// 	},
-		// },
-		// {
-		// 	name:            "three tool calls with text",
-		// 	input:           `Weather check: <tool_call>{"name": "get_weather", "arguments": {"location": "Miami"}}</tool_call><tool_call>{"name": "get_weather", "arguments": {"location": "Seattle"}}</tool_call>, and <tool_call>{"name": "get_weather", "arguments": {"location": "Denver"}}</tool_call>`,
-		// 	expectedContent: "Weather check: ",
-		// 	expectedCalls: []api.ToolCall{
-		// 		{
-		// 			Function: api.ToolCallFunction{
-		// 				Index: 0,
-		// 				Name:  "get_weather",
-		// 				Arguments: api.ToolCallFunctionArguments{
-		// 					"location": "Miami",
-		// 				},
-		// 			},
-		// 		},
-		// 		{
-		// 			Function: api.ToolCallFunction{
-		// 				Index: 1,
-		// 				Name:  "get_weather",
-		// 				Arguments: api.ToolCallFunctionArguments{
-		// 					"location": "Seattle",
-		// 				},
-		// 			},
-		// 		},
-		// 		{
-		// 			Function: api.ToolCallFunction{
-		// 				Index: 2,
-		// 				Name:  "get_weather",
-		// 				Arguments: api.ToolCallFunctionArguments{
-		// 					"location": "Denver",
-		// 				},
-		// 			},
-		// 		},
-		// 	},
-		// },
-		// {
-		// 	name:            "invalid tool call - unknown function",
-		// 	input:           `<tool_call>{"name": "unknown_function", "arguments": {"param": "value"}}</tool_call>`,
-		// 	expectedContent: "",
-		// 	expectedCalls:   nil,
-		// },
+		{
+			name:    "deepseek",
+			inputs:  []string{"<think>Wait, I need to call a tool</think><|tool▁calls▁begin|><|tool▁call▁begin|>function<|tool▁sep|>get_temperature\n```json\n{\"city\": \"Tokyo\"}\n```<|tool▁call▁end|><|tool▁calls▁end|><|end▁of▁sentence|>"},
+			content: "<think>Wait, I need to call a tool</think>",
+			tmpl:    deepseek,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_temperature",
+						Arguments: api.ToolCallFunctionArguments{
+							"city": "Tokyo",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "deepseek incremental",
+			inputs: []string{
+				"<think>Wait",
+				", I need",
+				" to call",
+				"a tool</think><|too",
+				"l▁calls▁begin",
+				"|>",
+				"<|tool▁call▁begin|>function<|tool▁sep|>get_temperature\n",
+				"```json\n",
+				"{\"city\": \"Tokyo\"}\n",
+				"```",
+				"<|tool▁c", "all▁end|>",
+				"<|tool▁calls▁end|>",
+				"<|end▁of▁sentence|>",
+			},
+			content: "<think>Wait, I need to call a tool</think>",
+			tmpl:    deepseek,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_temperature",
+						Arguments: api.ToolCallFunctionArguments{
+							"city": "Tokyo",
+						},
+					},
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create a fresh parser for each test
 			parser := NewParser(tt.tmpl, tools)
 
-			calls, content := parser.Add(tt.input)
+			var calls []api.ToolCall
+			var content string
+			for _, input := range tt.inputs {
+				tcs, c := parser.Add(input)
+				calls = append(calls, tcs...)
+				content += c
+			}
 
-			// Verify content
 			if content != tt.content {
 				t.Errorf("Expected content %q, got %q", tt.content, content)
 			}
 
-			// Verify tool calls
 			if len(calls) != len(tt.calls) {
 				t.Fatalf("Expected %d tool calls, got %d", len(tt.calls), len(calls))
 			}
 
-			for i, expectedCall := range tt.calls {
-				if diff := cmp.Diff(calls[i], expectedCall); diff != "" {
+			for i, want := range tt.calls {
+				if diff := cmp.Diff(calls[i], want); diff != "" {
 					t.Errorf("Tool call %d mismatch (-got +want):\n%s", i, diff)
 				}
 			}

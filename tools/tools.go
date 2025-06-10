@@ -61,6 +61,7 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 		}
 
 		content = p.buffer[:i]
+		p.buffer = p.buffer[i:]
 
 		if strings.Contains(p.buffer, p.tag) {
 			p.parsing = true
