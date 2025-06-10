@@ -572,7 +572,7 @@ func TestFindTag(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			parser := &Parser{
 				tag:    tt.tag,
-				buffer: []byte(tt.buffer),
+				buffer: tt.buffer,
 				n:      0,
 			}
 			got := parser.findTag()
