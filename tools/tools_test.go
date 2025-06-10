@@ -19,10 +19,10 @@ func TestParser(t *testing.T) {
 		t.Fatalf("Failed to parse template: %v", err)
 	}
 
-	// json, err := template.New("json").Parse(`{{if .ToolCalls}}{{range .ToolCalls}}{"name": "{{.Function.Name}}", "arguments": {{.Function.Arguments}}}{{end}}{{end}}`)
-	// if err != nil {
-	// 	t.Fatalf("Failed to parse template: %v", err)
-	// }
+	json, err := template.New("json").Parse(`{{if .ToolCalls}}{{range .ToolCalls}}{"name": "{{.Function.Name}}", "arguments": {{.Function.Arguments}}}{{end}}{{end}}`)
+	if err != nil {
+		t.Fatalf("Failed to parse template: %v", err)
+	}
 
 	// list, err := template.New("list").Parse(`{{if .ToolCalls}}[{{range .ToolCalls}}{"name": "{{.Function.Name}}", "arguments": {{.Function.Arguments}}}{{end}}]{{end}}`)
 	// if err != nil {
@@ -230,6 +230,55 @@ func TestParser(t *testing.T) {
 					},
 				},
 			},
+		},
+		{
+			name: "json",
+			inputs: []string{
+				"{",
+				"\"name\": \"get_temperature\",",
+				"\"arguments\": {",
+				"\"city\": \"Tokyo\"",
+				"}",
+				"}",
+			},
+			content: "",
+			tmpl:    json,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_temperature",
+						Arguments: api.ToolCallFunctionArguments{
+							"city": "Tokyo",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "json",
+			inputs: []string{
+				"{",
+				"\"name\": \"search\",",
+				"\"arguments\": {",
+			},
+			content: "",
+			tmpl:    json,
+			calls:   nil,
+		},
+		{
+			name: "json",
+			inputs: []string{
+				"{",
+				"\"name\": \"search\", ",
+				"\"arguments\": {",
+				"\"query\": \"What is the capital of Canada?\"",
+				"}",
+				"}",
+			},
+			content: "{\"name\": \"search\", \"arguments\": {\"query\": \"What is the capital of Canada?\"}}",
+			tmpl:    json,
+			calls:   nil,
 		},
 	}
 

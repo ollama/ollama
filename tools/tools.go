@@ -2,7 +2,6 @@ package tools
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 	"text/template"
 
@@ -75,8 +74,6 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 		if call == nil {
 			break
 		}
-
-		fmt.Println("found tool call", call, end)
 
 		call.Function.Index = p.n
 		p.n++
