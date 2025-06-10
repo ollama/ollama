@@ -153,6 +153,57 @@ if (ENABLE_SYCL)
       endif()
       
       add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-sycl)
+      
+      # Configure RPATH for runtime library discovery
+      if(WIN32)
+          # On Windows, set the runtime search path for DLLs
+          set_target_properties(ggml-sycl PROPERTIES
+              BUILD_WITH_INSTALL_RPATH TRUE
+              VS_DEBUGGER_ENVIRONMENT "PATH=$<TARGET_FILE_DIR:ggml-sycl>;$<TARGET_FILE_DIR:ggml-sycl>/..;$ENV{PATH}"
+          )
+      else()
+          # On Linux, set RPATH to look for dependencies in same and parent directory
+          set_target_properties(ggml-sycl PROPERTIES
+              BUILD_WITH_INSTALL_RPATH TRUE
+              INSTALL_RPATH "$ORIGIN:$ORIGIN/.."
+          )
+          
+          # Add Intel OneAPI library paths to RPATH if they exist
+          if (DEFINED ENV{ONEAPI_ROOT})
+              set_property(TARGET ggml-sycl APPEND PROPERTY 
+                  INSTALL_RPATH "$ENV{ONEAPI_ROOT}/lib:$ENV{ONEAPI_ROOT}/lib64"
+              )
+          endif()
+          
+          # Add environment-based paths for Intel libraries
+          foreach(ENV_VAR CMPLR_ROOT DNNLROOT TBBROOT MKLROOT)
+              if (DEFINED ENV{${ENV_VAR}})
+                  set_property(TARGET ggml-sycl APPEND PROPERTY 
+                      INSTALL_RPATH "$ENV{${ENV_VAR}}/lib:$ENV{${ENV_VAR}}/lib64"
+                  )
+              endif()
+          endforeach()
+          
+          # Add common Intel library installation paths
+          set(INTEL_LIB_PATHS
+              "/opt/intel/oneapi/lib"
+              "/opt/intel/oneapi/lib64"
+              "/opt/intel/oneapi/compiler/latest/lib"
+              "/opt/intel/oneapi/compiler/latest/lib64"
+              "/opt/intel/oneapi/mkl/latest/lib"
+              "/opt/intel/oneapi/mkl/latest/lib64"
+              "/opt/intel/oneapi/tbb/latest/lib"
+              "/opt/intel/oneapi/tbb/latest/lib64"
+              "/opt/intel/oneapi/dnnl/latest/lib"
+              "/opt/intel/oneapi/dnnl/latest/lib64"
+          )
+          
+          foreach(INTEL_PATH ${INTEL_LIB_PATHS})
+              if(EXISTS ${INTEL_PATH})
+                  set_property(TARGET ggml-sycl APPEND PROPERTY INSTALL_RPATH ${INTEL_PATH})
+              endif()
+          endforeach()
+      endif()
               
       set(OLLAMA_SYCL_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/sycl)
       install(TARGETS ggml-sycl
@@ -164,6 +215,20 @@ if (ENABLE_SYCL)
           RUNTIME DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
           LIBRARY DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
       )
+      
+      # Fix library path resolution for Intel SYCL libraries on Linux only
+      if(NOT WIN32)
+          # Create lib subdirectory and symlink to help libsycl.so.8 find libur_loader.so.0
+          install(CODE "
+              file(MAKE_DIRECTORY \"\${CMAKE_INSTALL_PREFIX}/lib/ollama/lib\")
+              if(EXISTS \"\${CMAKE_INSTALL_PREFIX}/lib/ollama/sycl/libur_loader.so.0\")
+                  execute_process(COMMAND \${CMAKE_COMMAND} -E create_symlink 
+                      \"../sycl/libur_loader.so.0\" 
+                      \"\${CMAKE_INSTALL_PREFIX}/lib/ollama/lib/libur_loader.so.0\")
+                  message(STATUS \"Created symlink for libur_loader.so.0\")
+              endif()
+          " COMPONENT SYCL)
+      endif()
   else()
       message(STATUS "SYCL compiler not found, SYCL support will be disabled")
   endif()
