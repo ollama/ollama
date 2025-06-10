@@ -798,7 +798,46 @@ func loadSyclMgmt(syclLibPaths []string) (int, *C.sycl_handle_t, string, error) 
 	var resp C.sycl_init_resp_t
 	resp.oh.verbose = getVerboseState()
 	var err error
+
+	// Save current LD_LIBRARY_PATH once, outside the loop
+	var pathEnv string
+	switch runtime.GOOS {
+	case "windows":
+		pathEnv = "PATH"
+	case "darwin":
+		pathEnv = "DYLD_LIBRARY_PATH"
+	default:
+		pathEnv = "LD_LIBRARY_PATH"
+	}
+
+	originalPath := os.Getenv(pathEnv)
+
+	// Restore original path when function exits
+	defer func() {
+		if originalPath != "" {
+			os.Setenv(pathEnv, originalPath)
+		} else {
+			os.Unsetenv(pathEnv)
+		}
+	}()
+
 	for _, libPath := range syclLibPaths {
+		// Create new library path that includes the directory containing the SYCL library
+		libDir := filepath.Dir(libPath)
+		var newPath string
+		if originalPath != "" {
+			newPath = libDir + string(os.PathListSeparator) + originalPath
+		} else {
+			newPath = libDir
+		}
+
+		// Also include LibOllamaPath in case libggml-base.so is there
+		newPath = LibOllamaPath + string(os.PathListSeparator) + newPath
+
+		// Set the library path for this attempt
+		os.Setenv(pathEnv, newPath)
+		slog.Debug("temporarily setting library path for SYCL loading", "path", newPath, "library", libPath)
+
 		lib := C.CString(libPath)
 		defer C.free(unsafe.Pointer(lib))
 		C.sycl_init(lib, &resp)
