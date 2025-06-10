@@ -33,6 +33,10 @@ type AdapterParameters struct {
 	} `json:"lora_parameters"`
 }
 
+type WriteOptions struct {
+	KVGeneralMetadata ModelCardMetadata
+}
+
 func (ModelParameters) KV(t *Tokenizer) ggml.KV {
 	kv := ggml.KV{
 		"general.file_type":            uint32(1),
@@ -116,6 +120,13 @@ type AdapterConverter interface {
 }
 
 func ConvertAdapter(fsys fs.FS, f *os.File, baseKV ggml.KV) error {
+	// Attempt to process model metadata if it exists
+	var writeOptions WriteOptions
+	err := parseModelCardMetadata(fsys, "README.md", &writeOptions.KVGeneralMetadata)
+	if err != nil {
+		return err
+	}
+
 	bts, err := fs.ReadFile(fsys, "adapter_config.json")
 	if err != nil {
 		return err
@@ -150,7 +161,7 @@ func ConvertAdapter(fsys fs.FS, f *os.File, baseKV ggml.KV) error {
 		return err
 	}
 
-	return writeFile(f, conv.KV(baseKV), conv.Tensors(ts))
+	return writeFile(f, conv.KV(baseKV), conv.Tensors(ts), writeOptions)
 }
 
 // Convert writes an Ollama compatible model to the provided io.WriteSeeker based on configurations
@@ -158,6 +169,13 @@ func ConvertAdapter(fsys fs.FS, f *os.File, baseKV ggml.KV) error {
 // Supported input model formats include safetensors.
 // Supported input tokenizers files include tokenizer.json (preferred) and tokenizer.model.
 func ConvertModel(fsys fs.FS, f *os.File) error {
+	// Attempt to process model metadata if it exists
+	var writeOptions WriteOptions
+	err := parseModelCardMetadata(fsys, "README.md", &writeOptions.KVGeneralMetadata)
+	if err != nil {
+		return err
+	}
+
 	bts, err := fs.ReadFile(fsys, "config.json")
 	if err != nil {
 		return err
@@ -244,13 +262,15 @@ func ConvertModel(fsys fs.FS, f *os.File) error {
 		return err
 	}
 
-	return writeFile(f, conv.KV(t), conv.Tensors(ts))
+	return writeFile(f, conv.KV(t), conv.Tensors(ts), writeOptions)
 }
 
-func writeFile(f *os.File, kv ggml.KV, ts []*ggml.Tensor) error {
+func writeFile(f *os.File, kv ggml.KV, ts []*ggml.Tensor, options WriteOptions) error {
 	for i := range ts {
 		ts[i].Shape = slices.Clone(ts[i].Shape)
 		slices.Reverse(ts[i].Shape)
 	}
+	// Append model card KV values
+	kv.Append(options.KVGeneralMetadata.KV())
 	return ggml.WriteGGUF(f, kv, ts)
 }

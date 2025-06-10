@@ -25,6 +25,12 @@ type model interface {
 
 type KV map[string]any
 
+func (kv KV) Append(mapAdd map[string]any) {
+	for k, v := range mapAdd {
+		kv[k] = v
+	}
+}
+
 func (kv KV) Architecture() string {
 	return kv.String("general.architecture", "unknown")
 }
