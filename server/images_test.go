@@ -1,9 +1,8 @@
 package server
 
 import (
-	"bytes"
 	"encoding/binary"
-	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,81 +12,200 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
-// Constants for GGUF magic bytes and version
-var (
-	ggufMagic = []byte{0x47, 0x47, 0x55, 0x46} // "GGUF"
-	ggufVer   = uint32(3)                      // Version 3
+// GGUF type constants (matching gguf package)
+const (
+	typeUint8   = uint32(0)
+	typeInt8    = uint32(1)
+	typeUint16  = uint32(2)
+	typeInt16   = uint32(3)
+	typeUint32  = uint32(4)
+	typeInt32   = uint32(5)
+	typeFloat32 = uint32(6)
+	typeBool    = uint32(7)
+	typeString  = uint32(8)
+	typeArray   = uint32(9)
+	typeUint64  = uint32(10)
+	typeInt64   = uint32(11)
+	typeFloat64 = uint32(12)
 )
 
-// Helper function to create mock GGUF data
-func createMockGGUFData(architecture string, vision bool) []byte {
-	var buf bytes.Buffer
+type testTensorInfo struct {
+	Name  string
+	Shape []uint64
+	Type  uint32
+}
 
-	// Write GGUF header
-	buf.Write(ggufMagic)
-	binary.Write(&buf, binary.LittleEndian, ggufVer)
-
-	// Write tensor count (0 for our test)
-	var numTensors uint64 = 0
-	binary.Write(&buf, binary.LittleEndian, numTensors)
-
-	// Calculate number of metadata entries
-	numMetaEntries := uint64(1) // architecture entry
-	if vision {
-		numMetaEntries++
+// Helper function to create test GGUF files (matching gguf package approach)
+func createTestGGUFFile(path string, keyValues map[string]any, tensors []testTensorInfo) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return err
 	}
-	// Add embedding entry if architecture is "bert"
-	if architecture == "bert" {
-		numMetaEntries++
-	}
-	binary.Write(&buf, binary.LittleEndian, numMetaEntries)
+	defer file.Close()
 
-	// Write architecture metadata
-	archKey := "general.architecture"
-	keyLen := uint64(len(archKey))
-	binary.Write(&buf, binary.LittleEndian, keyLen)
-	buf.WriteString(archKey)
-
-	// String type (8)
-	var strType uint32 = 8
-	binary.Write(&buf, binary.LittleEndian, strType)
-
-	// String length
-	strLen := uint64(len(architecture))
-	binary.Write(&buf, binary.LittleEndian, strLen)
-	buf.WriteString(architecture)
-
-	if vision {
-		visionKey := architecture + ".vision.block_count"
-		keyLen = uint64(len(visionKey))
-		binary.Write(&buf, binary.LittleEndian, keyLen)
-		buf.WriteString(visionKey)
-
-		// uint32 type (4)
-		var uint32Type uint32 = 4
-		binary.Write(&buf, binary.LittleEndian, uint32Type)
-
-		// uint32 value (1)
-		var countVal uint32 = 1
-		binary.Write(&buf, binary.LittleEndian, countVal)
-	}
-	// Write embedding metadata if architecture is "bert"
-	if architecture == "bert" {
-		poolKey := architecture + ".pooling_type"
-		keyLen = uint64(len(poolKey))
-		binary.Write(&buf, binary.LittleEndian, keyLen)
-		buf.WriteString(poolKey)
-
-		// uint32 type (4)
-		var uint32Type uint32 = 4
-		binary.Write(&buf, binary.LittleEndian, uint32Type)
-
-		// uint32 value (1)
-		var poolingVal uint32 = 1
-		binary.Write(&buf, binary.LittleEndian, poolingVal)
+	// Write GGUF magic
+	if _, err := file.Write([]byte("GGUF")); err != nil {
+		return err
 	}
 
-	return buf.Bytes()
+	// Write version
+	if err := binary.Write(file, binary.LittleEndian, uint32(3)); err != nil {
+		return err
+	}
+
+	// Write tensor count
+	if err := binary.Write(file, binary.LittleEndian, uint64(len(tensors))); err != nil {
+		return err
+	}
+
+	// Write metadata count
+	if err := binary.Write(file, binary.LittleEndian, uint64(len(keyValues))); err != nil {
+		return err
+	}
+
+	// Write metadata
+	for key, value := range keyValues {
+		if err := writeKeyValue(file, key, value); err != nil {
+			return err
+		}
+	}
+
+	// Write tensor info
+	for _, tensor := range tensors {
+		if err := writeTensorInfo(file, tensor); err != nil {
+			return err
+		}
+	}
+
+	// Write some dummy tensor data
+	dummyData := make([]byte, 1024)
+	file.Write(dummyData)
+
+	return nil
+}
+
+func writeKeyValue(file *os.File, key string, value any) error {
+	// Write key length and key
+	if err := binary.Write(file, binary.LittleEndian, uint64(len(key))); err != nil {
+		return err
+	}
+	if _, err := file.Write([]byte(key)); err != nil {
+		return err
+	}
+
+	// Write value based on type
+	switch v := value.(type) {
+	case string:
+		if err := binary.Write(file, binary.LittleEndian, uint32(typeString)); err != nil {
+			return err
+		}
+		if err := binary.Write(file, binary.LittleEndian, uint64(len(v))); err != nil {
+			return err
+		}
+		_, err := file.Write([]byte(v))
+		return err
+	case int64:
+		if err := binary.Write(file, binary.LittleEndian, typeInt64); err != nil {
+			return err
+		}
+		return binary.Write(file, binary.LittleEndian, v)
+	case uint32:
+		if err := binary.Write(file, binary.LittleEndian, typeUint32); err != nil {
+			return err
+		}
+		return binary.Write(file, binary.LittleEndian, v)
+	case bool:
+		if err := binary.Write(file, binary.LittleEndian, typeBool); err != nil {
+			return err
+		}
+		return binary.Write(file, binary.LittleEndian, v)
+	case float64:
+		if err := binary.Write(file, binary.LittleEndian, uint32(typeFloat64)); err != nil {
+			return err
+		}
+		return binary.Write(file, binary.LittleEndian, v)
+	case []string:
+		if err := binary.Write(file, binary.LittleEndian, uint32(typeArray)); err != nil {
+			return err
+		}
+		if err := binary.Write(file, binary.LittleEndian, typeString); err != nil {
+			return err
+		}
+		if err := binary.Write(file, binary.LittleEndian, uint64(len(v))); err != nil {
+			return err
+		}
+		for _, s := range v {
+			if err := binary.Write(file, binary.LittleEndian, uint64(len(s))); err != nil {
+				return err
+			}
+			if _, err := file.Write([]byte(s)); err != nil {
+				return err
+			}
+		}
+		return nil
+	case []int64:
+		if err := binary.Write(file, binary.LittleEndian, uint32(typeArray)); err != nil {
+			return err
+		}
+		if err := binary.Write(file, binary.LittleEndian, typeInt64); err != nil {
+			return err
+		}
+		if err := binary.Write(file, binary.LittleEndian, uint64(len(v))); err != nil {
+			return err
+		}
+		for _, i := range v {
+			if err := binary.Write(file, binary.LittleEndian, i); err != nil {
+				return err
+			}
+		}
+		return nil
+	case []float64:
+		if err := binary.Write(file, binary.LittleEndian, typeArray); err != nil {
+			return err
+		}
+		if err := binary.Write(file, binary.LittleEndian, typeFloat64); err != nil {
+			return err
+		}
+		if err := binary.Write(file, binary.LittleEndian, uint64(len(v))); err != nil {
+			return err
+		}
+		for _, f := range v {
+			if err := binary.Write(file, binary.LittleEndian, f); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported value type: %T", value)
+	}
+}
+
+func writeTensorInfo(file *os.File, tensor testTensorInfo) error {
+	// Write tensor name
+	if err := binary.Write(file, binary.LittleEndian, uint64(len(tensor.Name))); err != nil {
+		return err
+	}
+	if _, err := file.Write([]byte(tensor.Name)); err != nil {
+		return err
+	}
+
+	// Write dimensions
+	if err := binary.Write(file, binary.LittleEndian, uint32(len(tensor.Shape))); err != nil {
+		return err
+	}
+	for _, dim := range tensor.Shape {
+		if err := binary.Write(file, binary.LittleEndian, dim); err != nil {
+			return err
+		}
+	}
+
+	// Write type
+	if err := binary.Write(file, binary.LittleEndian, tensor.Type); err != nil {
+		return err
+	}
+
+	// Write offset (dummy value)
+	return binary.Write(file, binary.LittleEndian, uint64(0))
 }
 
 func TestModelCapabilities(t *testing.T) {
@@ -101,13 +219,38 @@ func TestModelCapabilities(t *testing.T) {
 	// Create a simple model file for tests that don't depend on GGUF content
 	simpleModelPath := filepath.Join(tempDir, "simple_model.bin")
 
-	if err := errors.Join(
-		os.WriteFile(completionModelPath, createMockGGUFData("llama", false), 0o644),
-		os.WriteFile(visionModelPath, createMockGGUFData("llama", true), 0o644),
-		os.WriteFile(embeddingModelPath, createMockGGUFData("bert", false), 0o644),
-		os.WriteFile(simpleModelPath, []byte("dummy model data"), 0o644),
-	); err != nil {
-		t.Fatalf("Failed to create model files: %v", err)
+	// Create completion model (llama architecture without vision)
+	if err := createTestGGUFFile(completionModelPath, map[string]any{
+		"general.architecture": "llama",
+	}, []testTensorInfo{
+		{Name: "token_embd.weight", Shape: []uint64{1000, 512}, Type: 1}, // F16
+	}); err != nil {
+		t.Fatalf("Failed to create completion model file: %v", err)
+	}
+
+	// Create vision model (llama architecture with vision block count)
+	if err := createTestGGUFFile(visionModelPath, map[string]any{
+		"general.architecture":     "llama",
+		"llama.vision.block_count": uint32(1),
+	}, []testTensorInfo{
+		{Name: "token_embd.weight", Shape: []uint64{1000, 512}, Type: 1}, // F16
+	}); err != nil {
+		t.Fatalf("Failed to create vision model file: %v", err)
+	}
+
+	// Create embedding model (bert architecture with pooling type)
+	if err := createTestGGUFFile(embeddingModelPath, map[string]any{
+		"general.architecture": "bert",
+		"bert.pooling_type":    uint32(1),
+	}, []testTensorInfo{
+		{Name: "token_embd.weight", Shape: []uint64{1000, 512}, Type: 1}, // F16
+	}); err != nil {
+		t.Fatalf("Failed to create embedding model file: %v", err)
+	}
+
+	// Create simple model file for tests that don't depend on GGUF content
+	if err := os.WriteFile(simpleModelPath, []byte("dummy model data"), 0o644); err != nil {
+		t.Fatalf("Failed to create simple model file: %v", err)
 	}
 
 	toolsInsertTemplate, err := template.Parse("{{ .prompt }}{{ if .tools }}{{ .tools }}{{ end }}{{ if .suffix }}{{ .suffix }}{{ end }}")
@@ -231,12 +374,29 @@ func TestModelCheckCapabilities(t *testing.T) {
 	simpleModelPath := filepath.Join(tempDir, "model.bin")
 	embeddingModelPath := filepath.Join(tempDir, "embedding_model.bin")
 
-	if err := errors.Join(
-		os.WriteFile(simpleModelPath, []byte("dummy model data"), 0o644),
-		os.WriteFile(visionModelPath, createMockGGUFData("llama", true), 0o644),
-		os.WriteFile(embeddingModelPath, createMockGGUFData("bert", false), 0o644),
-	); err != nil {
-		t.Fatalf("Failed to create model files: %v", err)
+	// Create vision model (llama architecture with vision block count)
+	if err := createTestGGUFFile(visionModelPath, map[string]any{
+		"general.architecture":     "llama",
+		"llama.vision.block_count": uint32(1),
+	}, []testTensorInfo{
+		{Name: "token_embd.weight", Shape: []uint64{1000, 512}, Type: 1}, // F16
+	}); err != nil {
+		t.Fatalf("Failed to create vision model file: %v", err)
+	}
+
+	// Create embedding model (bert architecture with pooling type)
+	if err := createTestGGUFFile(embeddingModelPath, map[string]any{
+		"general.architecture": "bert",
+		"bert.pooling_type":    uint32(1),
+	}, []testTensorInfo{
+		{Name: "token_embd.weight", Shape: []uint64{1000, 512}, Type: 1}, // F16
+	}); err != nil {
+		t.Fatalf("Failed to create embedding model file: %v", err)
+	}
+
+	// Create simple model file for tests that don't depend on GGUF content
+	if err := os.WriteFile(simpleModelPath, []byte("dummy model data"), 0o644); err != nil {
+		t.Fatalf("Failed to create simple model file: %v", err)
 	}
 
 	toolsInsertTemplate, err := template.Parse("{{ .prompt }}{{ if .tools }}{{ .tools }}{{ end }}{{ if .suffix }}{{ .suffix }}{{ end }}")

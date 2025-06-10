@@ -84,3 +84,20 @@ func (v Value) String() string {
 func (v Value) Strings() (strings []string) {
 	return values[string](v, reflect.String)
 }
+
+// IsNil checks if the Value is nil. It returns true if the value is nil or if it is a nil pointer, interface, slice, map, channel, or function.
+func (v Value) IsNil() bool {
+	if v.value == nil {
+
+		return true
+	}
+
+	// Check for nil pointers, interfaces, slices, maps, channels, and functions
+	rv := reflect.ValueOf(v.value)
+	switch rv.Kind() {
+	case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map, reflect.Chan, reflect.Func:
+		return rv.IsNil()
+	}
+
+	return false
+}
