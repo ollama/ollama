@@ -43,7 +43,7 @@ var OneapiGlobs = []string{
 }
 
 var SyclGlobs = []string{
-	".\\lib\\ollama\\sycl\\ggml-sycl.dll",
+	".\\lib\\ollama\\sycl*\\ggml-sycl.dll",
 	".\\ggml-sycl.dll",
 	".\\lib\\ggml-sycl.dll",
 	".\\build\\lib\\ollama\\ggml-sycl.dll",
