@@ -48,6 +48,9 @@ var OneapiGlobs = []string{
 }
 
 var SyclGlobs = []string{
+	"/usr/local/lib/ollama/sycl*/libggml-sycl.so*",
+	"/usr/lib/ollama/sycl*/libggml-sycl.so*",
+	"/lib/ollama/sycl*/libggml-sycl.so*",
 	"/usr/lib/x86_64-linux-gnu/libggml-sycl.so*",
 	"/usr/local/lib/libggml-sycl.so*",
 	"/usr/lib/libggml-sycl.so*",
