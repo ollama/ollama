@@ -153,6 +153,8 @@ Group=ollama
 Restart=always
 RestartSec=3
 Environment="PATH=$PATH"
+Environment="OLLAMA_INTEL_GPU=1"
+Environment="OLLAMA_DEBUG=1"
 
 [Install]
 WantedBy=default.target

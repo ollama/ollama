@@ -53,8 +53,6 @@ var SyclGlobs = []string{
 	"/usr/lib/libggml-sycl.so*",
 	"/usr/local/lib64/libggml-sycl.so*",
 	"/usr/lib64/libggml-sycl.so*",
-	"/opt/intel/oneapi/compiler/latest/lib/libggml-sycl.so*",
-	"/opt/intel/oneapi/compiler/*/lib/libggml-sycl.so*",
 }
 
 var (
