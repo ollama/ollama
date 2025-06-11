@@ -77,15 +77,13 @@ func (m *Model) Capabilities() []model.Capability {
 	if err == nil {
 		defer f.Close()
 
-		embedding := f.KeyValue("pooling_type")
-		if !embedding.Value.IsNil() {
+		if f.KeyValue("pooling_type").Valid() {
 			capabilities = append(capabilities, model.CapabilityEmbedding)
 		} else {
 			// If no embedding is specified, we assume the model supports completion
 			capabilities = append(capabilities, model.CapabilityCompletion)
 		}
-		vision := f.KeyValue("vision.block_count")
-		if !vision.Value.IsNil() {
+		if f.KeyValue("vision.block_count").Valid() {
 			capabilities = append(capabilities, model.CapabilityVision)
 		}
 	} else {

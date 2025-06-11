@@ -12,27 +12,31 @@ type TensorInfo struct {
 	Type   TensorType
 }
 
-func (t TensorInfo) NumValues() int64 {
+func (ti TensorInfo) Valid() bool {
+	return ti.Name != "" && ti.NumBytes() > 0
+}
+
+func (ti TensorInfo) NumValues() int64 {
 	var numItems int64 = 1
-	for _, dim := range t.Shape {
+	for _, dim := range ti.Shape {
 		numItems *= int64(dim)
 	}
 	return numItems
 }
 
 // NumBytes returns the number of bytes in the tensor.
-func (t TensorInfo) NumBytes() int64 {
-	return int64(float64(t.NumValues()) * t.Type.NumBytes())
+func (ti TensorInfo) NumBytes() int64 {
+	return int64(float64(ti.NumValues()) * ti.Type.NumBytes())
 }
 
-func (t TensorInfo) LogValue() slog.Value {
+func (ti TensorInfo) LogValue() slog.Value {
 	return slog.GroupValue(
-		slog.String("name", t.Name),
-		slog.Int64("offset", int64(t.Offset)),
-		slog.Any("shape", t.Shape),
-		slog.Int64("num_values", t.NumValues()),
-		slog.Int64("num_bytes", t.NumBytes()),
-		slog.Any("type", t.Type),
+		slog.String("name", ti.Name),
+		slog.Int64("offset", int64(ti.Offset)),
+		slog.Any("shape", ti.Shape),
+		slog.Int64("num_values", ti.NumValues()),
+		slog.Int64("num_bytes", ti.NumBytes()),
+		slog.Any("type", ti.Type),
 	)
 }
 
@@ -95,56 +99,56 @@ const (
 	tensorTypeIQ4_NL_8_8
 )
 
-func (t TensorType) NumBytes() float64 {
-	return float64(t.typeSize()) / float64(t.blockSize())
+func (tt TensorType) NumBytes() float64 {
+	return float64(tt.typeSize()) / float64(tt.blockSize())
 }
 
-func (t TensorType) typeSize() int64 {
-	switch t {
+func (tt TensorType) typeSize() int64 {
+	switch tt {
 	case TensorTypeF32:
 		return 4
 	case TensorTypeF16:
 		return 2
 	case TensorTypeQ4_0:
-		return 2 + t.blockSize()/2
+		return 2 + tt.blockSize()/2
 	case TensorTypeQ4_1:
-		return 2 + 2 + t.blockSize()/2
+		return 2 + 2 + tt.blockSize()/2
 	case TensorTypeQ5_0:
-		return 2 + 4 + t.blockSize()/2
+		return 2 + 4 + tt.blockSize()/2
 	case TensorTypeQ5_1:
-		return 2 + 2 + 4 + t.blockSize()/2
+		return 2 + 2 + 4 + tt.blockSize()/2
 	case TensorTypeQ8_0:
-		return 2 + t.blockSize()
+		return 2 + tt.blockSize()
 	case TensorTypeQ8_1:
-		return 2 + 2 + t.blockSize()
+		return 2 + 2 + tt.blockSize()
 	case TensorTypeQ2_K:
-		return t.blockSize()/16 + t.blockSize()/4 + 2 + 2
+		return tt.blockSize()/16 + tt.blockSize()/4 + 2 + 2
 	case TensorTypeQ3_K:
-		return t.blockSize()/8 + t.blockSize()/4 + 12 + 2
+		return tt.blockSize()/8 + tt.blockSize()/4 + 12 + 2
 	case TensorTypeQ4_K:
-		return 2 + 2 + 12 + t.blockSize()/2
+		return 2 + 2 + 12 + tt.blockSize()/2
 	case TensorTypeQ5_K:
-		return 2 + 2 + 12 + t.blockSize()/8 + t.blockSize()/2
+		return 2 + 2 + 12 + tt.blockSize()/8 + tt.blockSize()/2
 	case TensorTypeQ6_K:
-		return t.blockSize()/2 + t.blockSize()/4 + t.blockSize()/16 + 2
+		return tt.blockSize()/2 + tt.blockSize()/4 + tt.blockSize()/16 + 2
 	case TensorTypeQ8_K:
-		return 4 + t.blockSize() + 2*t.blockSize()/16
+		return 4 + tt.blockSize() + 2*tt.blockSize()/16
 	case tensorTypeIQ2_XXS:
-		return 2 + 2*t.blockSize()/8
+		return 2 + 2*tt.blockSize()/8
 	case tensorTypeIQ2_XS:
-		return 2 + 2*t.blockSize()/8 + t.blockSize()/32
+		return 2 + 2*tt.blockSize()/8 + tt.blockSize()/32
 	case tensorTypeIQ3_XXS:
-		return 2 + t.blockSize()/4 + t.blockSize()/8
+		return 2 + tt.blockSize()/4 + tt.blockSize()/8
 	case tensorTypeIQ1_S:
-		return 2 + t.blockSize()/8 + t.blockSize()/16
+		return 2 + tt.blockSize()/8 + tt.blockSize()/16
 	case tensorTypeIQ4_NL:
-		return 2 + t.blockSize()/2
+		return 2 + tt.blockSize()/2
 	case tensorTypeIQ3_S:
-		return 2 + t.blockSize()/4 + t.blockSize()/8 + t.blockSize()/32 + 4
+		return 2 + tt.blockSize()/4 + tt.blockSize()/8 + tt.blockSize()/32 + 4
 	case tensorTypeIQ2_S:
-		return 2 + t.blockSize()/4 + t.blockSize()/16
+		return 2 + tt.blockSize()/4 + tt.blockSize()/16
 	case tensorTypeIQ4_XS:
-		return 2 + 2 + t.blockSize()/2 + t.blockSize()/64
+		return 2 + 2 + tt.blockSize()/2 + tt.blockSize()/64
 	case TensorTypeI8:
 		return 1
 	case TensorTypeI16:
@@ -156,7 +160,7 @@ func (t TensorType) typeSize() int64 {
 	case TensorTypeF64:
 		return 8
 	case tensorTypeIQ1_M:
-		return t.blockSize()/8 + t.blockSize()/16 + t.blockSize()/32
+		return tt.blockSize()/8 + tt.blockSize()/16 + tt.blockSize()/32
 	case TensorTypeBF16:
 		return 2
 	default:
@@ -164,8 +168,8 @@ func (t TensorType) typeSize() int64 {
 	}
 }
 
-func (t TensorType) blockSize() int64 {
-	switch t {
+func (tt TensorType) blockSize() int64 {
+	switch tt {
 	case TensorTypeF32,
 		TensorTypeF16,
 		TensorTypeI8,
@@ -188,8 +192,8 @@ func (t TensorType) blockSize() int64 {
 	}
 }
 
-func (t TensorType) String() string {
-	switch t {
+func (tt TensorType) String() string {
+	switch tt {
 	case TensorTypeF32:
 		return "f32"
 	case TensorTypeF16:
@@ -273,12 +277,12 @@ func (t TensorType) String() string {
 	}
 }
 
-func (t TensorType) LogValue() slog.Value {
+func (tt TensorType) LogValue() slog.Value {
 	return slog.GroupValue(
-		slog.Uint64("value", uint64(t)),
-		slog.String("name", strings.ToUpper(t.String())),
-		slog.Int64("size", t.typeSize()),
-		slog.Int64("block_size", t.blockSize()),
-		slog.Float64("num_bytes", t.NumBytes()),
+		slog.Uint64("value", uint64(tt)),
+		slog.String("name", strings.ToUpper(tt.String())),
+		slog.Int64("size", tt.typeSize()),
+		slog.Int64("block_size", tt.blockSize()),
+		slog.Float64("num_bytes", tt.NumBytes()),
 	)
 }

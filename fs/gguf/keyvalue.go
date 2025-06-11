@@ -10,6 +10,10 @@ type KeyValue struct {
 	Value
 }
 
+func (kv KeyValue) Valid() bool {
+	return kv.Key != "" && kv.Value.value != nil
+}
+
 type Value struct {
 	value any
 }
@@ -83,21 +87,4 @@ func (v Value) String() string {
 // Strings returns Value as a string slice. If it is not a string slice, it returns nil.
 func (v Value) Strings() (strings []string) {
 	return values[string](v, reflect.String)
-}
-
-// IsNil checks if the Value is nil. It returns true if the value is nil or if it is a nil pointer, interface, slice, map, channel, or function.
-func (v Value) IsNil() bool {
-	if v.value == nil {
-
-		return true
-	}
-
-	// Check for nil pointers, interfaces, slices, maps, channels, and functions
-	rv := reflect.ValueOf(v.value)
-	switch rv.Kind() {
-	case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map, reflect.Chan, reflect.Func:
-		return rv.IsNil()
-	}
-
-	return false
 }
