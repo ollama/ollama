@@ -34,6 +34,7 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/openai"
+	"github.com/ollama/ollama/server/cache"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/server/internal/registry"
 	"github.com/ollama/ollama/template"
@@ -819,13 +820,17 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	}
 
 	resp := &api.ShowResponse{
-		License:      strings.Join(m.License, "\n"),
-		System:       m.System,
-		Template:     m.Template.String(),
-		Details:      modelDetails,
-		Messages:     msgs,
-		Capabilities: m.Capabilities(),
-		ModifiedAt:   manifest.fi.ModTime(),
+		License:  strings.Join(m.License, "\n"),
+		System:   m.System,
+		Template: m.Template.String(),
+		Details:  modelDetails,
+		Messages: msgs,
+		Capabilities: cache.Capabilities(cache.ModelInfo{
+			ModelPath:      m.ModelPath,
+			Template:       m.Template,
+			ProjectorPaths: m.ProjectorPaths,
+		}),
+		ModifiedAt: manifest.fi.ModTime(),
 	}
 
 	var params []string
