@@ -164,6 +164,12 @@ function buildOllama() {
                         }
                     }
                 }
+                
+                # Print all environment variables in plain text
+                write-host "Environment variables after oneAPI setup:"
+                Get-ChildItem env: | Sort-Object Name | ForEach-Object {
+                    write-host "$($_.Name)=$($_.Value)"
+                }
             }
             
             & cmake --fresh --preset "SYCL" -G Ninja --install-prefix $script:DIST_DIR
