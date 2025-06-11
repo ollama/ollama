@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"log/slog"
 	"slices"
 	"strings"
@@ -11,20 +12,22 @@ import (
 // parseTag finds the tool calling tag from a Go template
 // often <tool_call> [TOOL_CALL] or similar by finding the
 // first text node after .ToolCalls and returning the content
+// if no tag is found, return "{" to indicate that json objects
+// should be attempted to be parsed as tool calls
 func parseTag(tmpl *template.Template) string {
 	if tmpl == nil || tmpl.Tree == nil {
 		slog.Debug("template or tree is nil")
-		return ""
+		return "{"
 	}
 
 	tc := findToolCallNode(tmpl.Tree.Root.Nodes)
 	if tc == nil {
-		return ""
+		return "{"
 	}
 
 	tn := findTextNode(tc.List.Nodes)
 	if tn == nil {
-		return ""
+		return "{"
 	}
 
 	tag := string(tn.Text)
@@ -35,11 +38,12 @@ func parseTag(tmpl *template.Template) string {
 	// so that all json objects will be attempted to
 	// be parsed as tool calls
 	tag, _, _ = strings.Cut(tag, "{")
+	tag = strings.TrimSpace(tag)
 	if tag == "" {
-		return "{"
+		tag = "{"
 	}
 
-	return strings.TrimSpace(tag)
+	return tag
 }
 
 // findToolCallNode searches for and returns an IfNode with .ToolCalls
@@ -105,6 +109,10 @@ func findTextNode(nodes []parse.Node) *parse.TextNode {
 	for _, node := range nodes {
 		switch n := node.(type) {
 		case *parse.TextNode:
+			// skip whitespace-only text nodes
+			if len(bytes.TrimSpace(n.Text)) == 0 {
+				continue
+			}
 			return n
 		case *parse.IfNode:
 			if text := findTextNode(n.List.Nodes); text != nil {

@@ -14,17 +14,17 @@ func TestParseTag(t *testing.T) {
 		{
 			name:     "empty",
 			template: "",
-			want:     "",
+			want:     "{",
 		},
 		{
 			name:     "no tag",
 			template: "{{if .ToolCalls}}{{end}}",
-			want:     "",
+			want:     "{",
 		},
 		{
 			name:     "no tag with range",
 			template: "{{if .ToolCalls}}{{range .ToolCalls}}{{ . }}{{end}}{{end}}",
-			want:     "",
+			want:     "{",
 		},
 		{
 			name:     "tool call with json format",
@@ -44,17 +44,17 @@ func TestParseTag(t *testing.T) {
 		{
 			name:     "tailing ]",
 			template: "{{if .ToolCalls}}{{range .ToolCalls}}{{ . }}{{end}}]{{end}}",
-			want:     "",
+			want:     "{",
 		},
 		{
 			name:     "whitespace only",
 			template: "{{if .ToolCalls}} {{range .ToolCalls}}{{ . }}{{end}}{{end}}",
-			want:     "",
+			want:     "{",
 		},
 		{
 			name:     "whitespace only in range",
 			template: "{{if .ToolCalls}}{{range .ToolCalls}}\n{{ . }}\n{{end}}{{end}}",
-			want:     "",
+			want:     "{",
 		},
 		{
 			name:     "json objects",
@@ -63,7 +63,17 @@ func TestParseTag(t *testing.T) {
 		},
 		{
 			name:     "json objects with whitespace",
-			template: `{{if .ToolCalls}}{{range .ToolCalls}}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}{{end}}{{end}}`,
+			template: "{{if .ToolCalls}}{{range .ToolCalls}}\n{\"name\": \"{{ .Function.Name }}\", \"arguments\": {{ .Function.Arguments }}}{{end}}{{end}}",
+			want:     "{",
+		},
+		{
+			name:     "json objects with CRLF",
+			template: "{{if .ToolCalls}}{{range .ToolCalls}}\r\n{\"name\": \"{{ .Function.Name }}\", \"arguments\": {{ .Function.Arguments }}}{{end}}{{end}}",
+			want:     "{",
+		},
+		{
+			name:     "json objects with whitespace before and after range",
+			template: "{{if .ToolCalls}}\n{{range .ToolCalls}}\n{\"name\": \"{{ .Function.Name }}\", \"arguments\": {{ .Function.Arguments }}}\r\n{{end}}\r\n{{end}}",
 			want:     "{",
 		},
 		{
@@ -73,7 +83,12 @@ func TestParseTag(t *testing.T) {
 		},
 		{
 			name:     "after range",
-			template: "{{if .ToolCalls}}{{range .ToolCalls}}<tool_call>{{.}}</tool_call>{{end}}{{end}}",
+			template: "{{if .ToolCalls}}{{range .ToolCalls}}<tool_call>{\"name\": \"{{ .Function.Name }}\", \"arguments\": {{ .Function.Arguments }}}</tool_call>{{end}}{{end}}",
+			want:     "<tool_call>",
+		},
+		{
+			name:     "after range with leading whitespace before range",
+			template: "{{if .ToolCalls}}\n{{range .ToolCalls}}<tool_call>{\"name\": \"{{ .Function.Name }}\", \"arguments\": {{ .Function.Arguments }}}</tool_call>{{end}}{{end}}",
 			want:     "<tool_call>",
 		},
 		{
