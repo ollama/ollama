@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ollama/ollama/server/cache"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/types/model"
 )
@@ -215,7 +216,10 @@ func TestModelCapabilities(t *testing.T) {
 	for _, tt := range testModels {
 		t.Run(tt.name, func(t *testing.T) {
 			// Test Capabilities method
-			caps := tt.model.Capabilities()
+			caps := cache.Capabilities(cache.ModelInfo{
+				ModelPath: tt.model.ModelPath,
+				Template:  tt.model.Template,
+			})
 			if !compareCapabilities(caps, tt.expectedCaps) {
 				t.Errorf("Expected capabilities %v, got %v", tt.expectedCaps, caps)
 			}
