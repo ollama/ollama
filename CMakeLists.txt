@@ -136,7 +136,6 @@ endif()
 
 option(ENABLE_SYCL "Enable SYCL support" OFF)
 if (ENABLE_SYCL)
-  message(STATUS "SYCL support is enabled - checking for Intel SYCL compiler")
   find_package(IntelSYCL)
   if (IntelSYCL_FOUND)
       set(GGML_SYCL_TARGET "INTEL")
@@ -165,7 +164,7 @@ if (ENABLE_SYCL)
           RUNTIME DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
           LIBRARY DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
       )
-
+      
     foreach(SYCL_LIB_DIR IN ITEMS "$ENV{CMPLR_ROOT}/lib" "$ENV{DNNLROOT}/lib" "$ENV{TBBROOT}/lib" "$ENV{MKLROOT}/lib" "$ENV{TCM_ROOT}/lib" "$ENV{UMF_ROOT}/lib")
         if(EXISTS ${SYCL_LIB_DIR})
             file(GLOB SYCL_SO_FILES "${SYCL_LIB_DIR}/*.so*")
@@ -176,50 +175,65 @@ if (ENABLE_SYCL)
         endif()
     endforeach()
 
-      
-      # Copy all .so libraries from SYCL-related directories
-    #   message(STATUS "Starting SYCL library copy process")
-    #   foreach(SYCL_LIB_DIR IN ITEMS "$ENV{CMPLR_ROOT}/lib" "$ENV{DNNLROOT}/lib" "$ENV{TBBROOT}/lib" "$ENV{MKLROOT}/lib")
-    #       if(EXISTS ${SYCL_LIB_DIR})
-    #           # Install command to copy all .so files
-    #           message(STATUS "Preparing to copy SYCL libraries from ${SYCL_LIB_DIR}")
-    #           install(CODE "
-    #               message(STATUS \"==== SYCL Library Copy Debug ====\")
-    #               message(STATUS \"Looking for .so files in: ${SYCL_LIB_DIR}\")
-    #               file(GLOB SO_FILES \"${SYCL_LIB_DIR}/*.so*\")
-                  
-    #               if(SO_FILES)
-    #                   message(STATUS \"Found the following SYCL libraries to copy:\")
-    #                   foreach(SO_FILE ${SO_FILES})
-    #                       message(STATUS \"  - ${SO_FILE}\")
-    #                   endforeach()
-                      
-    #                   foreach(SO_FILE ${SO_FILES})
-    #                       file(INSTALL ${SO_FILE} DESTINATION ${OLLAMA_SYCL_INSTALL_DIR})
-    #                       message(STATUS \"SYCL: Copied ${SO_FILE} to ${OLLAMA_SYCL_INSTALL_DIR}\")
-    #                   endforeach()
-    #                   message(STATUS \"Successfully copied all SYCL libraries from ${SYCL_LIB_DIR} to ${OLLAMA_SYCL_INSTALL_DIR}\")
-    #               else()
-    #                   message(WARNING \"No .so files found in ${SYCL_LIB_DIR}\")
-    #               endif()
-    #               message(STATUS \"==== End SYCL Library Copy ====\")
-    #           " COMPONENT SYCL)
-    #       endif()
-    #   endforeach()
-      
-    #   # Fix library path resolution for Intel SYCL libraries on Linux only
-    #   if(NOT WIN32)
-    #       # Create lib subdirectory and symlink to help libsycl.so.8 find libur_loader.so.0
-    #       install(CODE "
-    #           file(MAKE_DIRECTORY \"\${CMAKE_INSTALL_PREFIX}/lib/ollama/lib\")
-    #           if(EXISTS \"\${CMAKE_INSTALL_PREFIX}/lib/ollama/sycl/libur_loader.so.0\")
-    #               execute_process(COMMAND \${CMAKE_COMMAND} -E create_symlink 
-    #                   \"../sycl/libur_loader.so.0\" 
-    #                   \"\${CMAKE_INSTALL_PREFIX}/lib/ollama/lib/libur_loader.so.0\")
-    #               message(STATUS \"Created symlink for libur_loader.so.0\")
-    #           endif()
-    #       " COMPONENT SYCL)
-    #   endif()
+      # Modify RUNPATH/RPATH of installed SYCL libraries (Linux/Unix only)
+      if(NOT WIN32)
+          find_program(PATCHELF_EXECUTABLE patchelf)
+          if(PATCHELF_EXECUTABLE)
+              install(CODE "
+                  file(GLOB SYCL_LIBS \"${OLLAMA_SYCL_INSTALL_DIR}/*.so*\")
+                  foreach(LIB_FILE \${SYCL_LIBS})
+                      if(EXISTS \${LIB_FILE} AND NOT IS_SYMLINK \${LIB_FILE})
+                          message(STATUS \"Modifying RUNPATH for: \${LIB_FILE}\")
+                          # Get current RUNPATH
+                          execute_process(
+                              COMMAND ${PATCHELF_EXECUTABLE} --print-rpath \${LIB_FILE}
+                              OUTPUT_VARIABLE CURRENT_RPATH
+                              OUTPUT_STRIP_TRAILING_WHITESPACE
+                              ERROR_QUIET
+                          )
+                          # Prepend new paths to existing RUNPATH
+                          message(STATUS \"Current RPATH: '\${CURRENT_RPATH}'\")
+                          message(STATUS \"CURRENT_RPATH length: \${CURRENT_RPATH}\")
+                          string(LENGTH \"\${CURRENT_RPATH}\" RPATH_LENGTH)
+                          message(STATUS \"CURRENT_RPATH length: \${RPATH_LENGTH}\")
+                          if(CURRENT_RPATH AND NOT CURRENT_RPATH STREQUAL \"\")
+                              set(NEW_RPATH \"\$ORIGIN:\$ORIGIN/..:\${CURRENT_RPATH}\")
+                              message(STATUS \"Setting NEW_RPATH with existing: '\${NEW_RPATH}'\")
+                          else()
+                              set(NEW_RPATH \"\$ORIGIN:\$ORIGIN/..\")
+                              message(STATUS \"Setting NEW_RPATH without existing: '\${NEW_RPATH}'\")
+                          endif()
+                          execute_process(
+                              COMMAND ${PATCHELF_EXECUTABLE} --set-rpath \"\${NEW_RPATH}\" \${LIB_FILE}
+                              RESULT_VARIABLE PATCHELF_RESULT
+                              OUTPUT_VARIABLE PATCHELF_OUTPUT
+                              ERROR_VARIABLE PATCHELF_ERROR
+                          )
+                          if(NOT PATCHELF_RESULT EQUAL 0)
+                              message(WARNING \"Failed to modify RUNPATH for \${LIB_FILE}: \${PATCHELF_ERROR}\")
+                          else()
+                              message(STATUS \"Successfully prepended RUNPATH with \$ORIGIN:\$ORIGIN/.. for \${LIB_FILE}\")
+                          endif()
+                      endif()
+                  endforeach()
+              " COMPONENT SYCL)
+          else()
+              message(FATAL_ERROR "patchelf not found. RUNPATH of SYCL libraries cannot be modified.")
+          endif()
+      else()
+          message(STATUS "Windows detected: DLL search path modification not needed (uses current directory and PATH)")
+      endif()
+
+    # foreach(SYCL_LIB_DIR IN ITEMS "$ENV{CMPLR_ROOT}/lib" "$ENV{DNNLROOT}/lib" "$ENV{TBBROOT}/lib" "$ENV{MKLROOT}/lib" "$ENV{TCM_ROOT}/lib" "$ENV{UMF_ROOT}/lib")
+    #     if(EXISTS ${SYCL_LIB_DIR})
+    #         file(GLOB SYCL_SO_FILES "${SYCL_LIB_DIR}/*.so*")
+    #         if(SYCL_SO_FILES)
+    #             message(STATUS "Installing SYCL .so files from: ${SYCL_LIB_DIR}")
+    #             install(FILES ${SYCL_SO_FILES} DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL)
+    #         endif()
+    #     endif()
+    # endforeach()
+
   else()
       message(STATUS "SYCL compiler not found, SYCL support will be disabled")
   endif()
