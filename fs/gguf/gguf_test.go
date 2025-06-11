@@ -115,6 +115,10 @@ func TestRead(t *testing.T) {
 		t.Errorf("KeyValue(\"tokenizer.ggml.tokens\").Strings() mismatch (-got +want):\n%s", diff)
 	}
 
+	if diff := cmp.Diff(f.KeyValue("tokenizer.ggml.scores").Floats(), []float64{0, 1}); diff != "" {
+		t.Errorf("KeyValue(\"tokenizer.ggml.scores\").Ints() mismatch (-got +want):\n%s", diff)
+	}
+
 	var kvs []string
 	for _, kv := range f.KeyValues() {
 		if !kv.Valid() {
