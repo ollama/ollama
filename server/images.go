@@ -65,12 +65,11 @@ type Model struct {
 	Options        map[string]any
 	Messages       []api.Message
 
-	Capabilities []model.Capability
-	Template     *template.Template
+	Template *template.Template
 }
 
 // Capabilities returns the capabilities that the model supports
-func Capabilities(m *Model) []model.Capability {
+func (m *Model) Capabilities() []model.Capability {
 	capabilities := []model.Capability{}
 
 	// Check for completion capability
@@ -122,6 +121,7 @@ func Capabilities(m *Model) []model.Capability {
 // CheckCapabilities checks if the model has the specified capabilities returning an error describing
 // any missing or unknown capabilities
 func (m *Model) CheckCapabilities(want ...model.Capability) error {
+	available := m.Capabilities()
 	var errs []error
 
 	// Map capabilities to their corresponding error
@@ -141,7 +141,7 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 			return fmt.Errorf("unknown capability: %s", cap)
 		}
 
-		if !slices.Contains(m.Capabilities, cap) {
+		if !slices.Contains(available, cap) {
 			errs = append(errs, err)
 		}
 	}
@@ -272,12 +272,6 @@ func GetManifest(mp ModelPath) (*Manifest, string, error) {
 }
 
 func GetModel(name string) (*Model, error) {
-	// Try cache first
-	if model, hit := modelCache.get(name); hit {
-		return model, nil
-	}
-
-	// Cache miss, load the model from disk
 	mp := ParseModelPath(name)
 	manifest, digest, err := GetManifest(mp)
 	if err != nil {
@@ -373,10 +367,6 @@ func GetModel(name string) (*Model, error) {
 			model.License = append(model.License, string(bts))
 		}
 	}
-
-	model.Capabilities = Capabilities(model)
-
-	modelCache.set(name, model)
 
 	return model, nil
 }

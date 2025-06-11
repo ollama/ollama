@@ -824,7 +824,7 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 		Template:     m.Template.String(),
 		Details:      modelDetails,
 		Messages:     msgs,
-		Capabilities: m.Capabilities,
+		Capabilities: m.Capabilities(),
 		ModifiedAt:   manifest.fi.ModTime(),
 	}
 
