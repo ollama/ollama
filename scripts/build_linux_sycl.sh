@@ -37,6 +37,7 @@ if echo $PLATFORM | grep "amd64" > /dev/null; then
 #         .
         
     docker buildx build \
+        --progress=plain \
         --output type=local,dest=${outDir} \
         --platform=linux/amd64 \
         ${OLLAMA_COMMON_BUILD_ARGS} \

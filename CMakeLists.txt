@@ -136,6 +136,7 @@ endif()
 
 option(ENABLE_SYCL "Enable SYCL support" OFF)
 if (ENABLE_SYCL)
+  message(STATUS "SYCL support is enabled - checking for Intel SYCL compiler")
   find_package(IntelSYCL)
   if (IntelSYCL_FOUND)
       set(GGML_SYCL_TARGET "INTEL")
@@ -153,58 +154,7 @@ if (ENABLE_SYCL)
       endif()
       
       add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-sycl)
-      
-      # Configure RPATH for runtime library discovery
-      if(WIN32)
-          # On Windows, set the runtime search path for DLLs
-          set_target_properties(ggml-sycl PROPERTIES
-              BUILD_WITH_INSTALL_RPATH TRUE
-              VS_DEBUGGER_ENVIRONMENT "PATH=$<TARGET_FILE_DIR:ggml-sycl>;$<TARGET_FILE_DIR:ggml-sycl>/..;$ENV{PATH}"
-          )
-      else()
-          # On Linux, set RPATH to look for dependencies in same and parent directory
-          set_target_properties(ggml-sycl PROPERTIES
-              BUILD_WITH_INSTALL_RPATH TRUE
-              INSTALL_RPATH "$ORIGIN:$ORIGIN/.."
-          )
-          
-          # Add Intel OneAPI library paths to RPATH if they exist
-          if (DEFINED ENV{ONEAPI_ROOT})
-              set_property(TARGET ggml-sycl APPEND PROPERTY 
-                  INSTALL_RPATH "$ENV{ONEAPI_ROOT}/lib:$ENV{ONEAPI_ROOT}/lib64"
-              )
-          endif()
-          
-          # Add environment-based paths for Intel libraries
-          foreach(ENV_VAR CMPLR_ROOT DNNLROOT TBBROOT MKLROOT)
-              if (DEFINED ENV{${ENV_VAR}})
-                  set_property(TARGET ggml-sycl APPEND PROPERTY 
-                      INSTALL_RPATH "$ENV{${ENV_VAR}}/lib:$ENV{${ENV_VAR}}/lib64"
-                  )
-              endif()
-          endforeach()
-          
-          # Add common Intel library installation paths
-          set(INTEL_LIB_PATHS
-              "/opt/intel/oneapi/lib"
-              "/opt/intel/oneapi/lib64"
-              "/opt/intel/oneapi/compiler/latest/lib"
-              "/opt/intel/oneapi/compiler/latest/lib64"
-              "/opt/intel/oneapi/mkl/latest/lib"
-              "/opt/intel/oneapi/mkl/latest/lib64"
-              "/opt/intel/oneapi/tbb/latest/lib"
-              "/opt/intel/oneapi/tbb/latest/lib64"
-              "/opt/intel/oneapi/dnnl/latest/lib"
-              "/opt/intel/oneapi/dnnl/latest/lib64"
-          )
-          
-          foreach(INTEL_PATH ${INTEL_LIB_PATHS})
-              if(EXISTS ${INTEL_PATH})
-                  set_property(TARGET ggml-sycl APPEND PROPERTY INSTALL_RPATH ${INTEL_PATH})
-              endif()
-          endforeach()
-      endif()
-              
+        
       set(OLLAMA_SYCL_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/sycl)
       install(TARGETS ggml-sycl
           RUNTIME_DEPENDENCIES
@@ -215,20 +165,61 @@ if (ENABLE_SYCL)
           RUNTIME DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
           LIBRARY DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
       )
+
+    foreach(SYCL_LIB_DIR IN ITEMS "$ENV{CMPLR_ROOT}/lib" "$ENV{DNNLROOT}/lib" "$ENV{TBBROOT}/lib" "$ENV{MKLROOT}/lib" "$ENV{TCM_ROOT}/lib" "$ENV{UMF_ROOT}/lib")
+        if(EXISTS ${SYCL_LIB_DIR})
+            file(GLOB SYCL_SO_FILES "${SYCL_LIB_DIR}/*.so*")
+            if(SYCL_SO_FILES)
+                message(STATUS "Installing SYCL .so files from: ${SYCL_LIB_DIR}")
+                install(FILES ${SYCL_SO_FILES} DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL)
+            endif()
+        endif()
+    endforeach()
+
       
-      # Fix library path resolution for Intel SYCL libraries on Linux only
-      if(NOT WIN32)
-          # Create lib subdirectory and symlink to help libsycl.so.8 find libur_loader.so.0
-          install(CODE "
-              file(MAKE_DIRECTORY \"\${CMAKE_INSTALL_PREFIX}/lib/ollama/lib\")
-              if(EXISTS \"\${CMAKE_INSTALL_PREFIX}/lib/ollama/sycl/libur_loader.so.0\")
-                  execute_process(COMMAND \${CMAKE_COMMAND} -E create_symlink 
-                      \"../sycl/libur_loader.so.0\" 
-                      \"\${CMAKE_INSTALL_PREFIX}/lib/ollama/lib/libur_loader.so.0\")
-                  message(STATUS \"Created symlink for libur_loader.so.0\")
-              endif()
-          " COMPONENT SYCL)
-      endif()
+      # Copy all .so libraries from SYCL-related directories
+    #   message(STATUS "Starting SYCL library copy process")
+    #   foreach(SYCL_LIB_DIR IN ITEMS "$ENV{CMPLR_ROOT}/lib" "$ENV{DNNLROOT}/lib" "$ENV{TBBROOT}/lib" "$ENV{MKLROOT}/lib")
+    #       if(EXISTS ${SYCL_LIB_DIR})
+    #           # Install command to copy all .so files
+    #           message(STATUS "Preparing to copy SYCL libraries from ${SYCL_LIB_DIR}")
+    #           install(CODE "
+    #               message(STATUS \"==== SYCL Library Copy Debug ====\")
+    #               message(STATUS \"Looking for .so files in: ${SYCL_LIB_DIR}\")
+    #               file(GLOB SO_FILES \"${SYCL_LIB_DIR}/*.so*\")
+                  
+    #               if(SO_FILES)
+    #                   message(STATUS \"Found the following SYCL libraries to copy:\")
+    #                   foreach(SO_FILE ${SO_FILES})
+    #                       message(STATUS \"  - ${SO_FILE}\")
+    #                   endforeach()
+                      
+    #                   foreach(SO_FILE ${SO_FILES})
+    #                       file(INSTALL ${SO_FILE} DESTINATION ${OLLAMA_SYCL_INSTALL_DIR})
+    #                       message(STATUS \"SYCL: Copied ${SO_FILE} to ${OLLAMA_SYCL_INSTALL_DIR}\")
+    #                   endforeach()
+    #                   message(STATUS \"Successfully copied all SYCL libraries from ${SYCL_LIB_DIR} to ${OLLAMA_SYCL_INSTALL_DIR}\")
+    #               else()
+    #                   message(WARNING \"No .so files found in ${SYCL_LIB_DIR}\")
+    #               endif()
+    #               message(STATUS \"==== End SYCL Library Copy ====\")
+    #           " COMPONENT SYCL)
+    #       endif()
+    #   endforeach()
+      
+    #   # Fix library path resolution for Intel SYCL libraries on Linux only
+    #   if(NOT WIN32)
+    #       # Create lib subdirectory and symlink to help libsycl.so.8 find libur_loader.so.0
+    #       install(CODE "
+    #           file(MAKE_DIRECTORY \"\${CMAKE_INSTALL_PREFIX}/lib/ollama/lib\")
+    #           if(EXISTS \"\${CMAKE_INSTALL_PREFIX}/lib/ollama/sycl/libur_loader.so.0\")
+    #               execute_process(COMMAND \${CMAKE_COMMAND} -E create_symlink 
+    #                   \"../sycl/libur_loader.so.0\" 
+    #                   \"\${CMAKE_INSTALL_PREFIX}/lib/ollama/lib/libur_loader.so.0\")
+    #               message(STATUS \"Created symlink for libur_loader.so.0\")
+    #           endif()
+    #       " COMPONENT SYCL)
+    #   endif()
   else()
       message(STATUS "SYCL compiler not found, SYCL support will be disabled")
   endif()

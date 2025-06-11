@@ -153,6 +153,7 @@ Group=ollama
 Restart=always
 RestartSec=3
 Environment="PATH=$PATH"
+Environment="LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}:${OLLAMA_INSTALL_DIR}/lib/ollama:${OLLAMA_INSTALL_DIR}/lib/ollama/sycl"
 Environment="OLLAMA_INTEL_GPU=1"
 Environment="OLLAMA_DEBUG=1"
 
