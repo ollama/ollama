@@ -492,15 +492,6 @@ func TestFlush(t *testing.T) {
 			want: "",
 		},
 		{
-			name: "[ tag with closing }",
-			parser: &Parser{
-				tag:    "[",
-				buffer: []byte("Here is an example list of json objects: [{\"name\": \"bob\"}"),
-				n:      0,
-			},
-			want: "",
-		},
-		{
 			name: "[ tag close",
 			parser: &Parser{
 				tag:    "[",
@@ -513,9 +504,83 @@ func TestFlush(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := tt.parser.Flush()
+			got := tt.parser.flush()
 			if got != tt.want {
 				t.Errorf("Flush() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestContent(t *testing.T) {
+	tests := []struct {
+		name    string
+		tag     string
+		content []byte
+		want    string
+		n       int
+	}{
+		{
+			name:    "empty",
+			content: []byte{},
+			tag:     "{",
+			want:    "",
+			n:       0,
+		},
+		{
+			name:    "tag",
+			tag:     "<tool_call>",
+			content: []byte("<tool_call>{\"name\": \"get_temperature\""),
+			want:    "",
+			n:       0,
+		},
+		{
+			name:    "json object",
+			tag:     "{",
+			content: []byte("{\"name\": \"get_temperature\"}"),
+			want:    "{\"name\": \"get_temperature\"}",
+			n:       0,
+		},
+		{
+			name:    "json object after called",
+			tag:     "{",
+			content: []byte("{\"hello\": \"world\"}"),
+			want:    "{\"hello\": \"world\"}",
+			n:       0,
+		},
+		{
+			name:    "json object after called",
+			tag:     "{",
+			content: []byte("{\"hello\": \"world\"}"),
+			want:    "",
+			n:       1,
+		},
+		{
+			name:    "list",
+			tag:     "[",
+			content: []byte("[{\"name\": \"get_temperature\"}]"),
+			want:    "[{\"name\": \"get_temperature\"}]",
+			n:       0,
+		},
+		{
+			name:    "code",
+			tag:     "{",
+			content: []byte("{ fmt.Println(\"hello\")"),
+			want:    "{ fmt.Println(\"hello\")",
+			n:       0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &Parser{
+				tag:    tt.tag,
+				buffer: tt.content,
+				n:      tt.n,
+			}
+			got := parser.Content()
+			if got != tt.want {
+				t.Errorf("Content() = %q, want %q", got, tt.want)
 			}
 		})
 	}

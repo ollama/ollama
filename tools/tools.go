@@ -85,7 +85,7 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 		return calls, content
 	}
 
-	return nil, p.Flush()
+	return nil, p.flush()
 }
 
 // findTag processes a string to find and handle a tag pattern
@@ -227,10 +227,12 @@ func (p *Parser) findArguments() (map[string]any, int) {
 	return nil, 0
 }
 
-// Flush flushes any remaining content, specifically in the case
-// where the tag is { or [ and a matching } or ] is found
-func (p *Parser) Flush() string {
-	if p.tag == "" || len(p.buffer) == 0 {
+// Flush flushes any remaining content that should be sent
+// back to the user even after attempting to parse a tool call
+// this only happens if the tag is { or [ and a tool call was not
+// yet found
+func (p *Parser) flush() string {
+	if p.n > 0 {
 		return ""
 	}
 
@@ -259,5 +261,20 @@ func (p *Parser) Flush() string {
 			}
 		}
 	}
+	return ""
+}
+
+// Content returns any remaining content that
+// should be sent to the user. This should be the empty string
+// unless the tag is { or [ and a tool call was not found
+func (p *Parser) Content() string {
+	if p.n > 0 {
+		return ""
+	}
+
+	if p.tag == "{" || p.tag == "[" {
+		return string(p.buffer)
+	}
+
 	return ""
 }
