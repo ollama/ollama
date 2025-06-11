@@ -1579,7 +1579,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					// don't return
 				} else {
 					if r.Done {
-						res.Message.Content = toolParser.Content()
+						res.Message.Content = toolParser.Flush()
 						ch <- res
 					}
 					return

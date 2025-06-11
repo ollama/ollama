@@ -85,15 +85,7 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 		return calls, content
 	}
 
-	// check if we should stop parsing and flush the content
-	// e.g. tag is { or [ and a matching } or ] is found
-	if p.shouldFlush() {
-		content = string(p.buffer)
-		p.buffer = []byte{}
-		return nil, content
-	}
-
-	return nil, content
+	return nil, p.Flush()
 }
 
 // findTag processes a string to find and handle a tag pattern
@@ -235,30 +227,11 @@ func (p *Parser) findArguments() (map[string]any, int) {
 	return nil, 0
 }
 
-// Content returns any remaining content that should be sent
-// back to the user. If tools were called, an empty string
-// is returned. Otherwise, content up until the tag is returned
-// unless the tag is { or [ in which case the entire buffer is returned
-func (p *Parser) Content() string {
-	if p.n > 0 {
-		return ""
-	}
-
-	i := bytes.Index(p.buffer, []byte(p.tag))
-	if i > 0 {
-		if p.tag == "{" || p.tag == "[" {
-			return string(p.buffer)
-		}
-		return string(p.buffer[:i])
-	}
-	return string(p.buffer)
-}
-
-// shouldFlush checks if the parser should stop parsing and flush the content
-// e.g. tag is { and if matching } is found or tag is [ and if matching ] is found
-func (p *Parser) shouldFlush() bool {
+// Flush flushes any remaining content, specifically in the case
+// where the tag is { or [ and a matching } or ] is found
+func (p *Parser) Flush() string {
 	if p.tag == "" || len(p.buffer) == 0 {
-		return false
+		return ""
 	}
 
 	var open, close rune
@@ -268,19 +241,23 @@ func (p *Parser) shouldFlush() bool {
 	case "[":
 		open, close = '[', ']'
 	default:
-		return false
+		return ""
 	}
 
 	var count int
-	for _, c := range p.buffer {
+	for i, c := range p.buffer {
 		if c == byte(open) {
 			count++
 		} else if c == byte(close) {
 			count--
 			if count == 0 {
-				return true
+				// Extract content up to and including the closing character
+				content := string(p.buffer[:i+1])
+				// Update buffer to remove the flushed content
+				p.buffer = p.buffer[i+1:]
+				return content
 			}
 		}
 	}
-	return false
+	return ""
 }

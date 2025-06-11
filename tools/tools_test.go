@@ -313,6 +313,46 @@ func TestParser(t *testing.T) {
 			calls:   nil,
 		},
 		{
+			name: "json object followed by tool call",
+			inputs: []string{
+				"{\"name\": \"jeff\"}",
+				"{\"name\": \"get_conditions\", \"arguments\": {\"location\": \"San Francisco\"}}",
+			},
+			content: "{\"name\": \"jeff\"}",
+			tmpl:    json,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_conditions",
+						Arguments: api.ToolCallFunctionArguments{
+							"location": "San Francisco",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "json object followed by tool call split",
+			inputs: []string{
+				"{\"name\": \"jeff\"} {",
+				"\"name\": \"get_conditions\", \"arguments\": {\"location\": \"San Francisco\"}}",
+			},
+			content: "{\"name\": \"jeff\"}",
+			tmpl:    json,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_conditions",
+						Arguments: api.ToolCallFunctionArguments{
+							"location": "San Francisco",
+						},
+					},
+				},
+			},
+		},
+		{
 			name: "list multiple",
 			inputs: []string{
 				"[",
@@ -409,7 +449,7 @@ func TestParser(t *testing.T) {
 	}
 }
 
-func TestContent(t *testing.T) {
+func TestFlush(t *testing.T) {
 	tests := []struct {
 		name   string
 		parser *Parser
@@ -425,57 +465,57 @@ func TestContent(t *testing.T) {
 			want: "",
 		},
 		{
-			name: "regular content",
+			name: "partial json object",
 			parser: &Parser{
-				tag:    "<tool_call>",
-				buffer: []byte("Here is some regular content:"),
+				tag:    "{",
+				buffer: []byte("Here is an example json object: {\"name\": \"get_weather\""),
 				n:      0,
-			},
-			want: "Here is some regular content:",
-		},
-		{
-			name: "tools called",
-			parser: &Parser{
-				tag:    "<tool_call>",
-				buffer: []byte("I will call some tools. <tool_call>"),
-				n:      1,
 			},
 			want: "",
 		},
 		{
-			name: "no tools called but tag found",
-			parser: &Parser{
-				tag:    "<tool_call>",
-				buffer: []byte("I will call some tools. <tool_call>{\"name\": \"get_temperature\""),
-				n:      0,
-			},
-			want: "I will call some tools. ",
-		},
-		{
-			name: "{ tag  with no tools",
+			name: "complete json object",
 			parser: &Parser{
 				tag:    "{",
-				buffer: []byte("Here is an example json object: {\"name\": \"bob\""),
+				buffer: []byte("Here is an example json object: {\"name\": \"bob\"}"),
 				n:      0,
 			},
-			want: "Here is an example json object: {\"name\": \"bob\"",
+			want: "Here is an example json object: {\"name\": \"bob\"}",
 		},
 		{
-			name: "[ tag with no tools",
+			name: "[ tag open",
 			parser: &Parser{
 				tag:    "[",
 				buffer: []byte("Here is an example list of json objects: [{\"name\": \"bob\""),
 				n:      0,
 			},
-			want: "Here is an example list of json objects: [{\"name\": \"bob\"",
+			want: "",
+		},
+		{
+			name: "[ tag with closing }",
+			parser: &Parser{
+				tag:    "[",
+				buffer: []byte("Here is an example list of json objects: [{\"name\": \"bob\"}"),
+				n:      0,
+			},
+			want: "",
+		},
+		{
+			name: "[ tag close",
+			parser: &Parser{
+				tag:    "[",
+				buffer: []byte("Here is an example list of json objects: [{\"name\": \"bob\"}]"),
+				n:      0,
+			},
+			want: "Here is an example list of json objects: [{\"name\": \"bob\"}]",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := tt.parser.Content()
+			got := tt.parser.Flush()
 			if got != tt.want {
-				t.Errorf("Content() = %q, want %q", got, tt.want)
+				t.Errorf("Flush() = %q, want %q", got, tt.want)
 			}
 		})
 	}
