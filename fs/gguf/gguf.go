@@ -40,7 +40,7 @@ type File struct {
 	offset    int64
 
 	file   *os.File
-	reader *readSeeker
+	reader *bufferedReader
 	bts    []byte
 }
 
@@ -51,7 +51,7 @@ func Open(path string) (f *File, err error) {
 		return nil, err
 	}
 
-	f.reader = newReadSeeker(f.file, 32<<10)
+	f.reader = newBufferedReader(f.file, 32<<10)
 
 	if err := binary.Read(f.reader, binary.LittleEndian, &f.Magic); err != nil {
 		return nil, err
@@ -75,10 +75,7 @@ func Open(path string) (f *File, err error) {
 	}
 
 	f.tensors.successFunc = func() error {
-		offset, err := f.reader.Seek(0, io.SeekCurrent)
-		if err != nil {
-			return err
-		}
+		offset := f.reader.offset
 
 		alignment := cmp.Or(f.KeyValue("general.alignment").Int(), 32)
 		f.offset = offset + (alignment-offset%alignment)%alignment

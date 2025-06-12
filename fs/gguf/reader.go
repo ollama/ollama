@@ -5,30 +5,19 @@ import (
 	"io"
 )
 
-type readSeeker struct {
-	rs io.ReadSeeker
-	br *bufio.Reader
+type bufferedReader struct {
+	offset int64
+	*bufio.Reader
 }
 
-func newReadSeeker(rs io.ReadSeeker, size int) *readSeeker {
-	return &readSeeker{
-		rs: rs,
-		br: bufio.NewReaderSize(rs, size),
+func newBufferedReader(rs io.ReadSeeker, size int) *bufferedReader {
+	return &bufferedReader{
+		Reader: bufio.NewReaderSize(rs, size),
 	}
 }
 
-func (b *readSeeker) Read(p []byte) (int, error) {
-	return b.br.Read(p)
-}
-
-func (b *readSeeker) Seek(offset int64, whence int) (int64, error) {
-	if whence == io.SeekCurrent {
-		offset -= int64(b.br.Buffered())
-	}
-	n, err := b.rs.Seek(offset, whence)
-	if err != nil {
-		return 0, err
-	}
-	b.br.Reset(b.rs)
-	return n, nil
+func (rs *bufferedReader) Read(p []byte) (n int, err error) {
+	n, err = rs.Reader.Read(p)
+	rs.offset += int64(n)
+	return n, err
 }
