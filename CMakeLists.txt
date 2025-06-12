@@ -31,7 +31,7 @@ if((CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
     set(GGML_CPU_ALL_VARIANTS ON)
 endif()
 
-if (CMAKE_OSX_ARCHITECTURES MATCHES "x86_64")
+if(CMAKE_OSX_ARCHITECTURES MATCHES "x86_64")
     set(CMAKE_BUILD_RPATH "@loader_path")
     set(CMAKE_INSTALL_RPATH "@loader_path")
 endif()
@@ -39,11 +39,11 @@ endif()
 set(OLLAMA_BUILD_DIR ${CMAKE_BINARY_DIR}/lib/ollama)
 set(OLLAMA_INSTALL_DIR ${CMAKE_INSTALL_PREFIX}/lib/ollama)
 
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY         ${OLLAMA_BUILD_DIR})
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG   ${OLLAMA_BUILD_DIR})
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${OLLAMA_BUILD_DIR})
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_DEBUG ${OLLAMA_BUILD_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE ${OLLAMA_BUILD_DIR})
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY         ${OLLAMA_BUILD_DIR})
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_DEBUG   ${OLLAMA_BUILD_DIR})
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${OLLAMA_BUILD_DIR})
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_DEBUG ${OLLAMA_BUILD_DIR})
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE ${OLLAMA_BUILD_DIR})
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src)
@@ -64,7 +64,7 @@ endif()
 
 install(TARGETS ggml-base ${CPU_VARIANTS}
     RUNTIME_DEPENDENCIES
-        PRE_EXCLUDE_REGEXES ".*"
+    PRE_EXCLUDE_REGEXES ".*"
     RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT CPU
     LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT CPU
     FRAMEWORK DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT CPU
@@ -81,9 +81,9 @@ if(CMAKE_CUDA_COMPILER)
     set(OLLAMA_CUDA_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/cuda_v${CUDAToolkit_VERSION_MAJOR})
     install(TARGETS ggml-cuda
         RUNTIME_DEPENDENCIES
-            DIRECTORIES ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_LIBRARY_DIR}
-            PRE_INCLUDE_REGEXES cublas cublasLt cudart
-            PRE_EXCLUDE_REGEXES ".*"
+        DIRECTORIES ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_LIBRARY_DIR}
+        PRE_INCLUDE_REGEXES cublas cublasLt cudart
+        PRE_EXCLUDE_REGEXES ".*"
         RUNTIME DESTINATION ${OLLAMA_CUDA_INSTALL_DIR} COMPONENT CUDA
         LIBRARY DESTINATION ${OLLAMA_CUDA_INSTALL_DIR} COMPONENT CUDA
     )
@@ -108,7 +108,7 @@ if(CMAKE_HIP_COMPILER)
     if(AMDGPU_TARGETS)
         add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-hip)
 
-        if (WIN32)
+        if(WIN32)
             target_compile_definitions(ggml-hip PRIVATE GGML_CUDA_NO_PEER_COPY)
         endif()
 
@@ -117,10 +117,10 @@ if(CMAKE_HIP_COMPILER)
         set(OLLAMA_HIP_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/rocm)
         install(TARGETS ggml-hip
             RUNTIME_DEPENDENCIES
-                DIRECTORIES ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR}
-                PRE_INCLUDE_REGEXES hipblas rocblas amdhip64 rocsolver amd_comgr hsa-runtime64 rocsparse tinfo rocprofiler-register drm drm_amdgpu numa elf
-                PRE_EXCLUDE_REGEXES ".*"
-                POST_EXCLUDE_REGEXES "system32"
+            DIRECTORIES ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR}
+            PRE_INCLUDE_REGEXES hipblas rocblas amdhip64 rocsolver amd_comgr hsa-runtime64 rocsparse tinfo rocprofiler-register drm drm_amdgpu numa elf
+            PRE_EXCLUDE_REGEXES ".*"
+            POST_EXCLUDE_REGEXES "system32"
             RUNTIME DESTINATION ${OLLAMA_HIP_INSTALL_DIR} COMPONENT HIP
             LIBRARY DESTINATION ${OLLAMA_HIP_INSTALL_DIR} COMPONENT HIP
         )
@@ -135,51 +135,77 @@ if(CMAKE_HIP_COMPILER)
 endif()
 
 option(ENABLE_SYCL "Enable SYCL support" OFF)
-if (ENABLE_SYCL)
-  find_package(IntelSYCL)
-  if (IntelSYCL_FOUND)
-      set(GGML_SYCL_TARGET "INTEL")
-      set(GGML_SYCL_DNN ON)
-      
-      if(WIN32)
-        set(CMAKE_C_COMPILER icx)
-        set(CMAKE_CXX_COMPILER icx)
-        set(CMAKE_CXX_COMPILER_ID "IntelLLVM")
-        message(STATUS "Setting C and C++ compiler to icx for Windows SYCL support")
-      else()
-        set(CMAKE_C_COMPILER icx)
-        set(CMAKE_CXX_COMPILER icpx)
-        message(STATUS "Setting C compiler to icx and C++ compiler to icpx for Linux SYCL support")
-      endif()
-      
-      add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-sycl)
-        
-      set(OLLAMA_SYCL_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/sycl)
-      install(TARGETS ggml-sycl
-          RUNTIME_DEPENDENCIES
-              DIRECTORIES "$ENV{CMPLR_ROOT}/lib" "$ENV{DNNLROOT}/lib" "$ENV{TBBROOT}/lib" "$ENV{MKLROOT}/lib"
-              PRE_INCLUDE_REGEXES libsycl libOpenCL libimf libsvml libirng libintlc libur_loader libdnnl libtbb libmkl_sycl_blas libmkl_intel_ilp64 libmkl_tbb_thread libmkl_core
-              PRE_EXCLUDE_REGEXES ".*"
-              POST_EXCLUDE_REGEXES "system32"
-          RUNTIME DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
-          LIBRARY DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
-      )
-      
-    foreach(SYCL_LIB_DIR IN ITEMS "$ENV{CMPLR_ROOT}/lib" "$ENV{DNNLROOT}/lib" "$ENV{TBBROOT}/lib" "$ENV{MKLROOT}/lib" "$ENV{TCM_ROOT}/lib" "$ENV{UMF_ROOT}/lib")
-        if(EXISTS ${SYCL_LIB_DIR})
-            file(GLOB SYCL_SO_FILES "${SYCL_LIB_DIR}/*.so*")
-            if(SYCL_SO_FILES)
-                message(STATUS "Installing SYCL .so files from: ${SYCL_LIB_DIR}")
-                install(FILES ${SYCL_SO_FILES} DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL)
-            endif()
-        endif()
-    endforeach()
+if(ENABLE_SYCL)
+    find_package(IntelSYCL)
+    if(IntelSYCL_FOUND)
+        set(GGML_SYCL_TARGET "INTEL")
+        set(GGML_SYCL_DNN ON)
 
-      # Modify RUNPATH/RPATH of installed SYCL libraries (Linux/Unix only)
-      if(NOT WIN32)
-          find_program(PATCHELF_EXECUTABLE patchelf)
-          if(PATCHELF_EXECUTABLE)
-              install(CODE "
+        if(WIN32)
+            set(CMAKE_C_COMPILER icx)
+            set(CMAKE_CXX_COMPILER icx)
+            set(CMAKE_CXX_COMPILER_ID "IntelLLVM")
+            message(STATUS "Setting C and C++ compiler to icx for Windows SYCL support")
+        else()
+            set(CMAKE_C_COMPILER icx)
+            set(CMAKE_CXX_COMPILER icpx)
+            message(STATUS "Setting C compiler to icx and C++ compiler to icpx for Linux SYCL support")
+        endif()
+
+        add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-sycl)
+
+        # Extract oneAPI version using multiple methods for reliable path construction
+        set(ONEAPI_VERSION "")
+        set(ONEAPI_ROOT_PATH "")
+        
+        # Method 1: Use ONEAPI_ROOT and find latest version
+        file(GLOB ONEAPI_VERSION_DIRS "$ENV{ONEAPI_ROOT}/[0-9]*.[0-9]*")
+        if(ONEAPI_VERSION_DIRS)
+            # Sort versions and get the latest
+            list(SORT ONEAPI_VERSION_DIRS)
+            list(REVERSE ONEAPI_VERSION_DIRS)
+            list(GET ONEAPI_VERSION_DIRS 0 LATEST_VERSION_DIR)
+            get_filename_component(ONEAPI_VERSION "${LATEST_VERSION_DIR}" NAME)
+            set(ONEAPI_ROOT_PATH "$ENV{ONEAPI_ROOT}/${ONEAPI_VERSION}")
+            message(STATUS "Method 1: Found oneAPI version via ONEAPI_ROOT: ${ONEAPI_VERSION}")
+            message(STATUS "Using oneAPI base path: ${ONEAPI_ROOT_PATH}")
+        else()
+            # Method 2: Fallback to CMPLR_ROOT
+            get_filename_component(ONEAPI_VERSION "$ENV{CMPLR_ROOT}" NAME)
+            set(ONEAPI_ROOT_PATH "$ENV{ONEAPI_ROOT}/${ONEAPI_VERSION}")
+            message(STATUS "Method 2: Detected oneAPI version via CMPLR_ROOT: ${ONEAPI_VERSION}")
+            message(STATUS "Using oneAPI base path: ${ONEAPI_ROOT_PATH}")
+        endif()
+
+        file(TO_CMAKE_PATH "${ONEAPI_ROOT_PATH}/bin" ONEAPI_BIN_INSTALL_DIR)
+        file(TO_CMAKE_PATH "${ONEAPI_ROOT_PATH}/lib" ONEAPI_LIB_INSTALL_DIR)
+
+        set(OLLAMA_SYCL_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/sycl)
+        install(TARGETS ggml-sycl
+            RUNTIME_DEPENDENCIES
+            DIRECTORIES ${ONEAPI_BIN_INSTALL_DIR} ${ONEAPI_LIB_INSTALL_DIR}
+            PRE_INCLUDE_REGEXES sycl OpenCL svml irng intlc ur_loader dnnl tbb mkl_sycl_blas mkl_intel_ilp64 mkl_tbb_thread mkl_core
+            PRE_EXCLUDE_REGEXES ".*"
+            POST_EXCLUDE_REGEXES "system32"
+            RUNTIME DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
+            LIBRARY DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
+        )
+
+        foreach(SYCL_LIB_DIR IN ITEMS ${ONEAPI_BIN_INSTALL_DIR} ${ONEAPI_LIB_INSTALL_DIR})
+            if(EXISTS ${SYCL_LIB_DIR})
+                file(GLOB SYCL_SO_FILES "${SYCL_LIB_DIR}/*.so*")
+                if(SYCL_SO_FILES)
+                    message(STATUS "Installing SYCL .so files from: ${SYCL_LIB_DIR}")
+                    install(FILES ${SYCL_SO_FILES} DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL)
+                endif()
+            endif()
+        endforeach()
+
+        # Modify RUNPATH/RPATH of installed SYCL libraries (Linux/Unix only)
+        if(NOT WIN32)
+            find_program(PATCHELF_EXECUTABLE patchelf)
+            if(PATCHELF_EXECUTABLE)
+                install(CODE "
                   file(GLOB SYCL_LIBS \"${OLLAMA_SYCL_INSTALL_DIR}/*.so*\")
                   foreach(LIB_FILE \${SYCL_LIBS})
                       if(EXISTS \${LIB_FILE} AND NOT IS_SYMLINK \${LIB_FILE})
@@ -216,16 +242,16 @@ if (ENABLE_SYCL)
                           endif()
                       endif()
                   endforeach()
-              " COMPONENT SYCL)
-          else()
-              message(FATAL_ERROR "patchelf not found. RUNPATH of SYCL libraries cannot be modified.")
-          endif()
-      else()
-          message(STATUS "Windows detected: DLL search path modification not needed (uses current directory and PATH)")
-      endif()
-  else()
-      message(STATUS "SYCL compiler not found, SYCL support will be disabled")
-  endif()
+              "                    COMPONENT SYCL)
+            else()
+                message(FATAL_ERROR "patchelf not found. RUNPATH of SYCL libraries cannot be modified.")
+            endif()
+        else()
+            message(STATUS "Windows detected: DLL search path modification not needed (uses current directory and PATH)")
+        endif()
+    else()
+        message(STATUS "SYCL compiler not found, SYCL support will be disabled")
+    endif()
 else()
-  message(STATUS "SYCL support disabled")
+    message(STATUS "SYCL support disabled")
 endif()

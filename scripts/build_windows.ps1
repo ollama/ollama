@@ -38,7 +38,6 @@ function checkEnv() {
         $script:CUDA_DIRS=$cudaList
     }
     
-    # Check for oneAPI/SYCL installation
     $oneapiDir=(get-item "C:\Program Files (x86)\Intel\oneAPI\" -ea 'silentlycontinue')
     if ($oneapiDir.length -gt 0) {
         $script:ONEAPI_DIR=$oneapiDir
