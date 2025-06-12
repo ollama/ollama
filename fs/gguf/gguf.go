@@ -74,7 +74,7 @@ func Open(path string) (f *File, err error) {
 		return nil, err
 	}
 
-	f.tensors.doneFunc = func() error {
+	f.tensors.successFunc = func() error {
 		offset, err := f.reader.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err

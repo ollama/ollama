@@ -12,7 +12,8 @@ type lazy[T any] struct {
 	stop   func()
 	values []T
 
-	doneFunc func() error
+	// successFunc is called when all values have been successfully read.
+	successFunc func() error
 }
 
 func newLazy[T any](f *File, fn func() (T, error)) (*lazy[T], error) {
@@ -36,8 +37,8 @@ func newLazy[T any](f *File, fn func() (T, error)) (*lazy[T], error) {
 			}
 		}
 
-		if it.doneFunc != nil {
-			it.doneFunc()
+		if it.successFunc != nil {
+			it.successFunc()
 		}
 	})
 
