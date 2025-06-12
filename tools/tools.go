@@ -99,7 +99,7 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 	return calls, content
 }
 
-// findTag processes a string to find and handle a tag pattern
+// findTag searches the buffer to find and handle a tool calling tag
 // returning true if the tag was found and false otherwise, and
 // a string content signaling any content that should be sent back to the user
 func (p *Parser) findTag() (int, bool) {
