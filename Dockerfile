@@ -64,7 +64,7 @@ RUN --mount=type=cache,target=/root/.ccache \
         && cmake --build --parallel --preset 'ROCm 6' \
         && cmake --install build --component HIP --strip --parallel 8
 
-FROM --platform=linux/amd64 intel/oneapi-basekit:${SYCLVERSION}-devel-ubuntu24.04 AS oneapi-basekit-2025.1
+FROM --platform=linux/amd64 intel/oneapi-basekit:${SYCLVERSION}-devel-ubuntu22.04 AS oneapi-basekit-2025.1
 ARG CMAKEVERSION
 RUN apt-get update && apt-get install -y curl ccache patchelf \
     && curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
