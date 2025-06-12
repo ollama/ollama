@@ -45,12 +45,8 @@ func NewParserWithTag(tools []api.Tool, tag string) *Parser {
 	return &p
 }
 
-// Add processes a string input to parse tool calls and content.
-// It handles prefix detection and JSON parsing to extract tool calls.
-//
-// Returns:
-//   - tools: Any parsed tool calls
-//   - content: Non-tool call content
+// Add processes a string input to parse tool calls and content that
+// should be sent back to the user.
 func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 	if p.state == toolsState_Done {
 		return nil, s
