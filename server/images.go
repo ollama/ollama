@@ -674,7 +674,18 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 
 	fn(api.ProgressResponse{Status: "success"})
 
+	// Only flag/report download after full success
+	reportModelDownload(name)
+
 	return nil
+}
+
+// reportModelDownload is a placeholder for logic to flag or report a model as downloaded.
+// This should only be called after all blobs are fully downloaded and verified.
+func reportModelDownload(name string) {
+	// TODO: Implement logic to flag/report the download (e.g., update stats, call API, etc.)
+	// This is a placeholder for demonstration.
+	log.Printf("Model '%s' fully downloaded and verified.", name)
 }
 
 func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptions) (*Manifest, error) {
