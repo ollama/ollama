@@ -3,9 +3,18 @@ package tools
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"text/template"
 
 	"github.com/ollama/ollama/api"
+)
+
+type toolsState int
+
+const (
+	toolsState_LookingForTag toolsState = iota
+	toolsState_ToolCalling
+	toolsState_Done
 )
 
 type Parser struct {
@@ -13,9 +22,9 @@ type Parser struct {
 	names      []string
 	properties []string
 
-	parsing bool
-	buffer  []byte
-	n       int
+	state  toolsState
+	buffer []byte
+	n      int
 }
 
 // NewParser creates a new tool call parser from a model's chat
@@ -33,7 +42,6 @@ func NewParserWithTag(tools []api.Tool, tag string) *Parser {
 		}
 	}
 	p.tag = tag
-
 	return &p
 }
 
@@ -44,25 +52,34 @@ func NewParserWithTag(tools []api.Tool, tag string) *Parser {
 //   - tools: Any parsed tool calls
 //   - content: Non-tool call content
 func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
+	if p.state == toolsState_Done {
+		return nil, s
+	}
+
 	p.buffer = append(p.buffer, s...)
 
-	if !p.parsing {
+	if p.state == toolsState_LookingForTag {
 		i := p.findTag()
 		if i == -1 {
-			p.parsing = false
 			content = string(p.buffer)
 			p.buffer = []byte{}
-			return
-		}
-
-		content = string(p.buffer[:i])
-		p.buffer = p.buffer[i:]
-
-		if bytes.Contains(p.buffer, []byte(p.tag)) {
-			p.parsing = true
 		} else {
-			return
+			content = string(p.buffer[:i])
+			p.buffer = p.buffer[i:]
 		}
+
+		if p.tag == "{" || p.tag == "[" {
+			if strings.TrimSpace(content) != "" {
+				p.state = toolsState_Done
+				return nil, content + string(p.buffer)
+			}
+		}
+
+		if !bytes.Contains(p.buffer, []byte(p.tag)) {
+			return nil, content
+		}
+
+		p.state = toolsState_ToolCalling
 	}
 
 	for {
@@ -81,11 +98,13 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 		}
 	}
 
-	if len(calls) > 0 {
-		return calls, content
+	if p.done() {
+		p.state = toolsState_Done
+		content = string(p.buffer)
+		p.buffer = []byte{}
 	}
 
-	return nil, p.flush()
+	return calls, content
 }
 
 // findTag processes a string to find and handle a tag pattern
@@ -227,15 +246,11 @@ func (p *Parser) findArguments() (map[string]any, int) {
 	return nil, 0
 }
 
-// Flush flushes any remaining content that should be sent
-// back to the user even after attempting to parse a tool call
-// this only happens if the tag is { or [ and a tool call was not
-// yet found
-func (p *Parser) flush() string {
-	if p.n > 0 {
-		return ""
-	}
-
+// done checks if the parser is done parsing by looking
+// for closing tag. currently only } and ] are supported
+// for closing tags as {} or [] pairs may not always
+// represent tool calls and we need to send the content back
+func (p *Parser) done() bool {
 	var open, close rune
 	switch p.tag {
 	case "{":
@@ -243,30 +258,27 @@ func (p *Parser) flush() string {
 	case "[":
 		open, close = '[', ']'
 	default:
-		return ""
+		return false
 	}
 
 	var count int
-	for i, c := range p.buffer {
+	for _, c := range p.buffer {
 		if c == byte(open) {
 			count++
 		} else if c == byte(close) {
 			count--
 			if count == 0 {
-				// Extract content up to and including the closing character
-				content := string(p.buffer[:i+1])
-				// Update buffer to remove the flushed content
-				p.buffer = p.buffer[i+1:]
-				return content
+				return true
 			}
 		}
 	}
-	return ""
+
+	return false
 }
 
 // Content returns any remaining content that
 // should be sent to the user. This should be the empty string
-// unless the tag is { or [ and a tool call was not found
+// string unless the tag is { or [ and a tool call was not found
 func (p *Parser) Content() string {
 	if p.n > 0 {
 		return ""
