@@ -125,7 +125,7 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 	var args map[string]any
 	var end int = len(p.buffer)
 
-	// find name
+	// find tool name
 	var i int
 	for _, n := range p.names {
 		if i = bytes.Index(p.buffer, []byte(n)); i != -1 {
