@@ -86,19 +86,12 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 	}
 
 	for {
-		call, end := p.findToolCall()
+		call := p.parseToolCall()
 		if call == nil {
 			break
 		}
 
-		call.Function.Index = p.n
-		p.n++
 		calls = append(calls, *call)
-
-		p.buffer = p.buffer[end:]
-		if len(p.buffer) == 0 {
-			break
-		}
 	}
 
 	if p.done() {
@@ -129,9 +122,9 @@ func (p *Parser) findTag() (int, bool) {
 	return -1, false
 }
 
-// findToolCall finds the next complete tool call in the given string
-// Returns the tool call, the number of characters consumed, and whether a tool call was found
-func (p *Parser) findToolCall() (*api.ToolCall, int) {
+// parseToolCall finds the next complete tool call in the buffer
+// incrementing n and advancing the buffer.
+func (p *Parser) parseToolCall() *api.ToolCall {
 	var name string
 	var args map[string]any
 	var end int = len(p.buffer)
@@ -148,11 +141,11 @@ func (p *Parser) findToolCall() (*api.ToolCall, int) {
 	}
 
 	if name == "" {
-		return nil, -1
+		return nil
 	}
 
 	if args, i = p.findArguments(); args == nil {
-		return nil, -1
+		return nil
 	}
 
 	if i > end {
@@ -163,10 +156,13 @@ func (p *Parser) findToolCall() (*api.ToolCall, int) {
 		Function: api.ToolCallFunction{
 			Name:      name,
 			Arguments: args,
+			Index:     p.n,
 		},
 	}
 
-	return tc, end
+	p.n++
+	p.buffer = p.buffer[end:]
+	return tc
 }
 
 // findArguments returns the first object that appears to be
