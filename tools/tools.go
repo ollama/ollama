@@ -68,6 +68,9 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 			p.buffer = p.buffer[i:]
 		}
 
+		// for models where { or [ are used as tool calling
+		// tags, we only support parsing tools if the first non-
+		// whitespace character is { or [
 		if p.tag == "{" || p.tag == "[" {
 			if strings.TrimSpace(content) != "" {
 				p.state = toolsState_Done
