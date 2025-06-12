@@ -59,7 +59,7 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 	p.buffer = append(p.buffer, s...)
 
 	if p.state == toolsState_LookingForTag {
-		i := p.findTag()
+		i, found := p.findTag()
 		if i == -1 {
 			content = string(p.buffer)
 			p.buffer = []byte{}
@@ -78,7 +78,7 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 			}
 		}
 
-		if !bytes.Contains(p.buffer, []byte(p.tag)) {
+		if !found {
 			return nil, content
 		}
 
@@ -113,20 +113,20 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 // findTag processes a string to find and handle a tag pattern
 // returning true if the tag was found and false otherwise, and
 // a string content signaling any content that should be sent back to the user
-func (p *Parser) findTag() int {
+func (p *Parser) findTag() (int, bool) {
 	// First check for complete substring anywhere in s
 	if i := bytes.Index(p.buffer, []byte(p.tag)); i > -1 {
-		return i
+		return i, true
 	}
 
 	// Then check for partial suffix overlap
 	max := min(len(p.buffer), len(p.tag))
 	for i := max; i > 0; i-- {
 		if bytes.HasSuffix(p.buffer, []byte(p.tag[:i])) {
-			return len(p.buffer) - i
+			return len(p.buffer) - i, false
 		}
 	}
-	return -1
+	return -1, false
 }
 
 // findToolCall finds the next complete tool call in the given string

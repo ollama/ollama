@@ -585,85 +585,99 @@ func TestFindTag(t *testing.T) {
 		name   string
 		buffer []byte
 		tag    string
-		want   int
+		i      int
+		found  bool
 	}{
 		{
 			name:   "no overlap",
 			buffer: []byte("hello world"),
 			tag:    "<tool_call>",
-			want:   -1,
+			i:      -1,
+			found:  false,
 		},
 		{
 			name:   "full overlap",
 			buffer: []byte("<tool_call>"),
 			tag:    "<tool_call>",
-			want:   0,
+			i:      0,
+			found:  true,
 		},
 		{
 			name:   "whitespace",
 			buffer: []byte("    <tool_call>\n {\"name\": \"bob\"}"),
 			tag:    "<tool_call>",
-			want:   4,
+			i:      4,
+			found:  true,
 		},
 		{
 			name:   "over",
 			buffer: []byte("<tool_call>{\"name\""),
 			tag:    "<tool_call>",
-			want:   0,
+			i:      0,
+			found:  true,
 		},
 		{
 			name:   "partial overlap",
 			buffer: []byte("text <tool_call>"),
 			tag:    "<tool_call>",
-			want:   5,
+			i:      5,
+			found:  true,
 		},
 		{
 			name:   "overlap with extra",
 			buffer: []byte("<tool_calls><tool_call>"),
 			tag:    "<tool_calls>",
-			want:   0,
+			i:      0,
+			found:  true,
 		},
 		{
 			name:   "delimiter longer than string",
 			buffer: []byte("<tool>"),
 			tag:    "<tool_call>",
-			want:   -1,
+			i:      -1,
+			found:  false,
 		},
 		{
 			name:   "empty string",
 			buffer: []byte{},
 			tag:    "<tool_call>",
-			want:   -1,
+			i:      -1,
+			found:  false,
 		},
 		{
 			name:   "single char overlap",
 			buffer: []byte("test<"),
 			tag:    "<tool_call>",
-			want:   4,
+			i:      4,
+			found:  false,
 		},
 		{
 			name:   "partial tool call",
 			buffer: []byte("hello <tool_"),
 			tag:    "<tool_call>",
-			want:   6,
+			i:      6,
+			found:  false,
 		},
 		{
 			name:   "square bracket",
 			buffer: []byte("calling tools: ["),
 			tag:    "[",
-			want:   15,
+			i:      15,
+			found:  true,
 		},
 		{
 			name:   "bracket",
 			buffer: []byte("{\"name\": \"bob\""),
 			tag:    "{",
-			want:   0,
+			i:      0,
+			found:  true,
 		},
 		{
 			name:   "bracket with whitespace",
 			buffer: []byte("\n\n{\n\"name\": \"bob\""),
 			tag:    "{",
-			want:   2,
+			i:      2,
+			found:  true,
 		},
 	}
 
@@ -674,9 +688,12 @@ func TestFindTag(t *testing.T) {
 				buffer: tt.buffer,
 				n:      0,
 			}
-			got := parser.findTag()
-			if got != tt.want {
-				t.Errorf("findTag(%q, %q) = %d; want %d", tt.buffer, tt.tag, got, tt.want)
+			i, found := parser.findTag()
+			if i != tt.i {
+				t.Errorf("findTag(%q, %q) = %d; want %d", tt.buffer, tt.tag, i, tt.i)
+			}
+			if found != tt.found {
+				t.Errorf("findTag(%q, %q) = %t; want %t", tt.buffer, tt.tag, found, tt.found)
 			}
 		})
 	}
