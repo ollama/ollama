@@ -1557,7 +1557,8 @@ A single JSON object will be returned.
         "quantization_level": "Q4_0"
       },
       "expires_at": "2024-06-04T14:38:31.83753-07:00",
-      "size_vram": 5137025024
+      "size_vram": 5137025024,
+      "active": true
     }
   ]
 }
