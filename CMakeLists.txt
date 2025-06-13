@@ -165,7 +165,7 @@ if(ENABLE_SYCL)
             LIBRARY DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
         )
 
-        foreach(SYCL_LIB_DIR IN ITEMS "$ENV{CMPLR_ROOT}/lib" "$ENV{DNNLROOT}/lib" "$ENV{TBBROOT}/lib" "$ENV{MKLROOT}/lib" "$ENV{TCM_ROOT}/lib" "$ENV{UMF_ROOT}/lib")
+        foreach(SYCL_LIB_DIR IN ITEMS "$ENV{UMF_ROOT}/lib")
             if(EXISTS ${SYCL_LIB_DIR})
                 file(GLOB SYCL_SO_FILES "${SYCL_LIB_DIR}/*.so*")
                 if(SYCL_SO_FILES)
@@ -216,7 +216,8 @@ if(ENABLE_SYCL)
                           endif()
                       endif()
                   endforeach()
-              "                    COMPONENT SYCL)
+              "   
+              COMPONENT SYCL)
             else()
                 message(FATAL_ERROR "patchelf not found. RUNPATH of SYCL libraries cannot be modified.")
             endif()
