@@ -138,7 +138,9 @@ Update Ollama by running the install script again:
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-Or by re-downloading Ollama:
+It will detect existing installations and skip the installation if the latest Ollama version is already installed. If you want to enforce the reinstallation you can download the script and run it with the `--force` flag.
+
+Or for a manual update re-downloading Ollama:
 
 ```shell
 curl -L https://ollama.com/download/ollama-linux-amd64.tgz -o ollama-linux-amd64.tgz
