@@ -154,36 +154,10 @@ if(ENABLE_SYCL)
 
         add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-sycl)
 
-        # Extract oneAPI version using multiple methods for reliable path construction
-        set(ONEAPI_VERSION "")
-        set(ONEAPI_ROOT_PATH "")
-        
-        # Method 1: Use ONEAPI_ROOT and find latest version
-        file(GLOB ONEAPI_VERSION_DIRS "$ENV{ONEAPI_ROOT}/[0-9]*.[0-9]*")
-        if(ONEAPI_VERSION_DIRS)
-            # Sort versions and get the latest
-            list(SORT ONEAPI_VERSION_DIRS)
-            list(REVERSE ONEAPI_VERSION_DIRS)
-            list(GET ONEAPI_VERSION_DIRS 0 LATEST_VERSION_DIR)
-            get_filename_component(ONEAPI_VERSION "${LATEST_VERSION_DIR}" NAME)
-            set(ONEAPI_ROOT_PATH "$ENV{ONEAPI_ROOT}/${ONEAPI_VERSION}")
-            message(STATUS "Method 1: Found oneAPI version via ONEAPI_ROOT: ${ONEAPI_VERSION}")
-            message(STATUS "Using oneAPI base path: ${ONEAPI_ROOT_PATH}")
-        else()
-            # Method 2: Fallback to CMPLR_ROOT
-            get_filename_component(ONEAPI_VERSION "$ENV{CMPLR_ROOT}" NAME)
-            set(ONEAPI_ROOT_PATH "$ENV{ONEAPI_ROOT}/${ONEAPI_VERSION}")
-            message(STATUS "Method 2: Detected oneAPI version via CMPLR_ROOT: ${ONEAPI_VERSION}")
-            message(STATUS "Using oneAPI base path: ${ONEAPI_ROOT_PATH}")
-        endif()
-
-        file(TO_CMAKE_PATH "${ONEAPI_ROOT_PATH}/bin" ONEAPI_BIN_INSTALL_DIR)
-        file(TO_CMAKE_PATH "${ONEAPI_ROOT_PATH}/lib" ONEAPI_LIB_INSTALL_DIR)
-
         set(OLLAMA_SYCL_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/sycl)
         install(TARGETS ggml-sycl
             RUNTIME_DEPENDENCIES
-            DIRECTORIES ${ONEAPI_BIN_INSTALL_DIR} ${ONEAPI_LIB_INSTALL_DIR}
+            DIRECTORIES "$ENV{CMPLR_ROOT}/bin" "$ENV{DNNLROOT}/bin" "$ENV{TBBROOT}/bin" "$ENV{MKLROOT}/bin" "$ENV{CMPLR_ROOT}/lib" "$ENV{DNNLROOT}/lib" "$ENV{TBBROOT}/lib" "$ENV{MKLROOT}/lib"
             PRE_INCLUDE_REGEXES sycl OpenCL svml irng intlc ur_loader dnnl tbb mkl_sycl_blas mkl_intel_ilp64 mkl_tbb_thread mkl_core
             PRE_EXCLUDE_REGEXES ".*"
             POST_EXCLUDE_REGEXES "system32"
@@ -191,7 +165,7 @@ if(ENABLE_SYCL)
             LIBRARY DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
         )
 
-        foreach(SYCL_LIB_DIR IN ITEMS ${ONEAPI_BIN_INSTALL_DIR} ${ONEAPI_LIB_INSTALL_DIR})
+        foreach(SYCL_LIB_DIR IN ITEMS "$ENV{CMPLR_ROOT}/lib" "$ENV{DNNLROOT}/lib" "$ENV{TBBROOT}/lib" "$ENV{MKLROOT}/lib" "$ENV{TCM_ROOT}/lib" "$ENV{UMF_ROOT}/lib")
             if(EXISTS ${SYCL_LIB_DIR})
                 file(GLOB SYCL_SO_FILES "${SYCL_LIB_DIR}/*.so*")
                 if(SYCL_SO_FILES)
