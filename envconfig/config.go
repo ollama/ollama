@@ -134,6 +134,16 @@ func LoadTimeout() (loadTimeout time.Duration) {
 	return loadTimeout
 }
 
+func NumPullParts() int {
+	defaultNumPullParts := 16
+	if s := Var("OLLAMA_NUM_PULL_PARTS"); s != "" {
+		if num, err := strconv.Atoi(s); err == nil {
+			return num
+		}
+	}
+	return defaultNumPullParts
+}
+
 func Bool(k string) func() bool {
 	return func() bool {
 		if s := Var(k); s != "" {
@@ -270,6 +280,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_MULTIUSER_CACHE":   {"OLLAMA_MULTIUSER_CACHE", MultiUserCache(), "Optimize prompt caching for multi-user scenarios"},
 		"OLLAMA_CONTEXT_LENGTH":    {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4096)"},
 		"OLLAMA_NEW_ENGINE":        {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
+		"OLLAMA_NUM_PULL_PARTS":    {"OLLAMA_NUM_PULL_PARTS", NumPullParts(), "Number of pull parts"},
 
 		// Informational
 		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},
