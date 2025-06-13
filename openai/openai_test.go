@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -668,14 +669,16 @@ func TestListMiddleware(t *testing.T) {
 
 func TestRetrieveMiddleware(t *testing.T) {
 	type testCase struct {
-		name     string
-		endpoint func(c *gin.Context)
-		resp     string
+		name      string
+		modelName string
+		endpoint  func(c *gin.Context)
+		resp      string
 	}
 
 	testCases := []testCase{
 		{
-			name: "retrieve handler",
+			name:      "retrieve handler",
+			modelName: "test-model",
 			endpoint: func(c *gin.Context) {
 				c.JSON(http.StatusOK, api.ShowResponse{
 					ModifiedAt: time.Unix(int64(1686935002), 0).UTC(),
@@ -689,7 +692,23 @@ func TestRetrieveMiddleware(t *testing.T) {
 			`,
 		},
 		{
-			name: "retrieve handler error forwarding",
+			name:      "retrieve handler with model with slashes",
+			modelName: "test%2Ftest-model",
+			endpoint: func(c *gin.Context) {
+				c.JSON(http.StatusOK, api.ShowResponse{
+					ModifiedAt: time.Unix(int64(1686935002), 0).UTC(),
+				})
+			},
+			resp: `{
+				"id":"test/test-model",
+				"object":"model",
+				"created":1686935002,
+				"owned_by":"test"}
+			`,
+		},
+		{
+			name:      "retrieve handler error forwarding",
+			modelName: "test-model",
 			endpoint: func(c *gin.Context) {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "model not found"})
 			},
@@ -708,9 +727,13 @@ func TestRetrieveMiddleware(t *testing.T) {
 
 	for _, tc := range testCases {
 		router := gin.New()
+		router.UseRawPath = true
 		router.Use(RetrieveMiddleware())
 		router.Handle(http.MethodGet, "/api/show/:model", tc.endpoint)
-		req, _ := http.NewRequest(http.MethodGet, "/api/show/test-model", nil)
+
+		baseURL := "/api/show/"
+		urlPath := fmt.Sprintf("%s%s", baseURL, tc.modelName)
+		req, _ := http.NewRequest(http.MethodGet, urlPath, nil)
 
 		resp := httptest.NewRecorder()
 		router.ServeHTTP(resp, req)
