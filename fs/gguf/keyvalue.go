@@ -1,6 +1,8 @@
 package gguf
 
 import (
+	"iter"
+	"log/slog"
 	"reflect"
 	"slices"
 )
@@ -28,6 +30,25 @@ func value[T any](v Value, kinds ...reflect.Kind) (t T) {
 
 func values[T any](v Value, kinds ...reflect.Kind) (ts []T) {
 	switch vv := reflect.ValueOf(v.value); vv.Kind() {
+	case reflect.Ptr:
+		for _, out := range vv.MethodByName("Values").Call(nil) {
+			next, stop := iter.Pull(out.Seq())
+			defer stop()
+
+			ts = make([]T, vv.Elem().FieldByName("count").Uint())
+			for i := range ts {
+				t, ok := next()
+				if !ok {
+					slog.Error("error reading value", "index", i)
+					return nil
+				}
+
+				ts[i] = t.Convert(reflect.TypeOf(ts[i])).Interface().(T)
+			}
+
+			return ts
+		}
+
 	case reflect.Slice:
 		if slices.Contains(kinds, vv.Type().Elem().Kind()) {
 			ts = make([]T, vv.Len())
@@ -37,6 +58,10 @@ func values[T any](v Value, kinds ...reflect.Kind) (ts []T) {
 		}
 	}
 	return
+}
+
+func (v Value) Any() any {
+	return v.value
 }
 
 // Int returns Value as a signed integer. If it is not a signed integer, it returns 0.
