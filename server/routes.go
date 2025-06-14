@@ -1318,6 +1318,9 @@ func Serve(ln net.Listener) error {
 	// At startup we retrieve GPU information so we can get log messages before loading a model
 	// This will log warnings to the log in case we have problems with detected GPUs
 	gpus := discover.GetGPUInfo()
+	if rpcServers := envconfig.RPCServers(); rpcServers != "" {
+		gpus = append(gpus, discover.GetRPCServers(rpcServers)...)
+	}
 	gpus.LogDetails()
 
 	err = srvr.Serve(ln)
