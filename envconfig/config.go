@@ -149,6 +149,21 @@ func Bool(k string) func() bool {
 	}
 }
 
+func BoolPtr(k string) func() *bool {
+	return func() *bool {
+		if s := Var(k); s != "" {
+			b, err := strconv.ParseBool(s)
+			if err != nil {
+				return nil
+			}
+
+			return &b
+		}
+
+		return nil
+	}
+}
+
 // LogLevel returns the log level for the application.
 // Values are 0 or false INFO (Default), 1 or true DEBUG, 2 TRACE
 func LogLevel() slog.Level {
@@ -185,6 +200,8 @@ var (
 	ContextLength = Uint("OLLAMA_CONTEXT_LENGTH", 4096)
 	// Auth enables authentication between the Ollama client and server
 	UseAuth = Bool("OLLAMA_AUTH")
+	// Set default value for UseMMap
+	UseMMap = BoolPtr("OLLAMA_USE_MMAP")
 )
 
 func String(s string) func() string {
@@ -270,6 +287,7 @@ func AsMap() map[string]EnvVar {
 		"OLLAMA_MULTIUSER_CACHE":   {"OLLAMA_MULTIUSER_CACHE", MultiUserCache(), "Optimize prompt caching for multi-user scenarios"},
 		"OLLAMA_CONTEXT_LENGTH":    {"OLLAMA_CONTEXT_LENGTH", ContextLength(), "Context length to use unless otherwise specified (default: 4096)"},
 		"OLLAMA_NEW_ENGINE":        {"OLLAMA_NEW_ENGINE", NewEngine(), "Enable the new Ollama engine"},
+		"OLLAMA_USE_MMAP":          {"OLLAMA_USE_MMAP", UseMMap(), "Set default value for use_mmap"},
 
 		// Informational
 		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},
@@ -299,7 +317,15 @@ func AsMap() map[string]EnvVar {
 func Values() map[string]string {
 	vals := make(map[string]string)
 	for k, v := range AsMap() {
-		vals[k] = fmt.Sprintf("%v", v.Value)
+		value := v.Value
+		if p, ok := value.(*bool); ok {
+			if p == nil {
+				value = ""
+			} else {
+				value = *p
+			}
+		}
+		vals[k] = fmt.Sprintf("%v", value)
 	}
 	return vals
 }
