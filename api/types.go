@@ -226,12 +226,14 @@ type ToolFunction struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Parameters  struct {
-		Type       string   `json:"type"`
+		Type       string   `json:"type,omitempty"`
+		Ref        any      `json:"$ref,omitempty"`
 		Defs       any      `json:"$defs,omitempty"`
 		Items      any      `json:"items,omitempty"`
 		Required   []string `json:"required"`
 		Properties map[string]struct {
-			Type        PropertyType `json:"type"`
+			Type        PropertyType `json:"type,omitempty"`
+			Ref         any          `json:"$ref,omitempty"`
 			Items       any          `json:"items,omitempty"`
 			Description string       `json:"description"`
 			Enum        []any        `json:"enum,omitempty"`
