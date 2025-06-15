@@ -149,6 +149,21 @@ Root: HKCU; Subkey: "Environment"; \
     ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; \
     Check: NeedsAddPath('{app}')
 
+Root: HKCU; Subkey: "Environment"; \
+    ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}\lib\ollama"; \
+    Check: NeedsAddPath('{app}\lib\ollama')
+
+Root: HKCU; Subkey: "Environment"; \
+    ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}\lib\ollama\sycl"; \
+    Check: NeedsAddPath('{app}\lib\ollama\sycl')
+
+; Ollama environment variables
+Root: HKCU; Subkey: "Environment"; \
+    ValueType: string; ValueName: "OLLAMA_DEBUG"; ValueData: "true"
+
+Root: HKCU; Subkey: "Environment"; \
+    ValueType: string; ValueName: "OLLAMA_INTEL_GPU"; ValueData: "true"
+
 [Code]
 
 function NeedsAddPath(Param: string): boolean;

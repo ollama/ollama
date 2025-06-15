@@ -148,29 +148,6 @@ function buildOllama() {
                 $NINJA_DIR=(gci -path (Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation -r -fi ninja.exe).Directory.FullName
                 $env:PATH="$NINJA_DIR;$env:PATH"
             }
-            
-            # Setup oneAPI environment if needed
-            if (-not $env:ONEAPI_ROOT -and $script:ONEAPI_DIR) {
-                $setvarsOutput = cmd.exe /C "`"C:\Program Files (x86)\Intel\oneAPI\setvars.bat`" && set"
-                $setvarsOutput | ForEach-Object {
-                    if ($_ -match '(.+?)=(.*)') {
-                        $name = $matches[1]
-                        $value = $matches[2]
-                        if ($name -ne "Path") {
-                            Set-Item -Path "env:$name" -Value $value
-                        } else {
-                            $env:PATH = $value
-                        }
-                    }
-                }
-                
-                # Print all environment variables in plain text
-                write-host "Environment variables after oneAPI setup:"
-                Get-ChildItem env: | Sort-Object Name | ForEach-Object {
-                    write-host "$($_.Name)=$($_.Value)"
-                }
-            }
-            
             & cmake --fresh --preset "SYCL" -G Ninja --install-prefix $script:DIST_DIR
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             & cmake --build --preset "SYCL" --config Release --parallel $script:JOBS
