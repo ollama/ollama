@@ -3,6 +3,7 @@ module github.com/ollama/ollama
 go 1.24.0
 
 require (
+	github.com/BurntSushi/toml v1.3.2
 	github.com/containerd/console v1.0.3
 	github.com/gin-gonic/gin v1.10.0
 	github.com/golang/protobuf v1.5.4 // indirect

@@ -1,5 +1,5 @@
 <div align="center">
-  <a href="https://ollama.com">
+  <a href="https://ollama.com">
     <img alt="ollama" height="200px" src="https://github.com/ollama/ollama/assets/3325447/0d0b44e2-8f4a-4e99-9b52-a5c1c741c8f7">
   </a>
 </div>
@@ -48,7 +48,7 @@ ollama run gemma3
 
 ## Model library
 
-Ollama supports a list of models available on [ollama.com/library](https://ollama.com/library 'ollama model library')
+Ollama supports a list of models available on [ollama.com/library](https://ollama.com/library "ollama model library")
 
 Here are some example models that can be downloaded:
 
@@ -79,7 +79,7 @@ Here are some example models that can be downloaded:
 | Code Llama         | 7B         | 3.8GB | `ollama run codellama`           |
 | Llama 2 Uncensored | 7B         | 3.8GB | `ollama run llama2-uncensored`   |
 | LLaVA              | 7B         | 4.5GB | `ollama run llava`               |
-| Granite-3.3         | 8B         | 4.9GB | `ollama run granite3.3`          |
+| Granite-3.3        | 8B         | 4.9GB | `ollama run granite3.3`          |
 
 > [!NOTE]
 > You should have at least 8 GB of RAM available to run the 7B models, 16 GB to run the 13B models, and 32 GB to run the 33B models.
@@ -406,7 +406,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [AppFlowy](https://github.com/AppFlowy-IO/AppFlowy) (AI collaborative workspace with Ollama, cross-platform and self-hostable)
 - [Lumina](https://github.com/cushydigit/lumina.git) (A lightweight, minimal React.js frontend for interacting with Ollama servers)
 - [Tiny Notepad](https://pypi.org/project/tiny-notepad) (A lightweight, notepad-like interface to chat with ollama available on PyPI)
-- [macLlama (macOS native)](https://github.com/hellotunamayo/macLlama) (A native macOS GUI application for interacting with Ollama models, featuring a chat interface.) 
+- [macLlama (macOS native)](https://github.com/hellotunamayo/macLlama) (A native macOS GUI application for interacting with Ollama models, featuring a chat interface.)
 - [GPTranslate](https://github.com/philberndt/GPTranslate) (A fast and lightweight, AI powered desktop translation application written with Rust and Tauri. Features real-time translation with OpenAI/Azure/Ollama.)
 
 ### Cloud
@@ -462,7 +462,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ### Database
 
 - [pgai](https://github.com/timescale/pgai) - PostgreSQL as a vector database (Create and search embeddings from Ollama models using pgvector)
-   - [Get started guide](https://github.com/timescale/pgai/blob/main/docs/vectorizer-quick-start.md)
+  - [Get started guide](https://github.com/timescale/pgai/blob/main/docs/vectorizer-quick-start.md)
 - [MindsDB](https://github.com/mindsdb/mindsdb/blob/staging/mindsdb/integrations/handlers/ollama_handler/README.md) (Connects Ollama models with nearly 200 data platforms and apps)
 - [chromem-go](https://github.com/philippgille/chromem-go/blob/v0.5.0/embed_ollama.go) with [example](https://github.com/philippgille/chromem-go/tree/v0.5.0/examples/rag-wikipedia-ollama)
 - [Kangaroo](https://github.com/dbkangaroo/kangaroo) (AI-powered SQL client and admin tool for popular databases)
@@ -597,9 +597,66 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [llama.cpp](https://github.com/ggerganov/llama.cpp) project founded by Georgi Gerganov.
 
 ### Observability
+
 - [Opik](https://www.comet.com/docs/opik/cookbook/ollama) is an open-source platform to debug, evaluate, and monitor your LLM applications, RAG systems, and agentic workflows with comprehensive tracing, automated evaluations, and production-ready dashboards. Opik supports native intergration to Ollama.
 - [Lunary](https://lunary.ai/docs/integrations/ollama) is the leading open-source LLM observability platform. It provides a variety of enterprise-grade features such as real-time analytics, prompt templates management, PII masking, and comprehensive agent tracing.
 - [OpenLIT](https://github.com/openlit/openlit) is an OpenTelemetry-native tool for monitoring Ollama Applications & GPUs using traces and metrics.
 - [HoneyHive](https://docs.honeyhive.ai/integrations/ollama) is an AI observability and evaluation platform for AI agents. Use HoneyHive to evaluate agent performance, interrogate failures, and monitor quality in production.
 - [Langfuse](https://langfuse.com/docs/integrations/ollama) is an open source LLM observability platform that enables teams to collaboratively monitor, evaluate and debug AI applications.
 - [MLflow Tracing](https://mlflow.org/docs/latest/llms/tracing/index.html#automatic-tracing) is an open source LLM observability tool with a convenient API to log and visualize traces, making it easy to debug and evaluate GenAI applications.
+
+## Configuration
+
+Ollama can be configured using a TOML configuration file located at `~/.ollama/config.toml`. Here's an example configuration:
+
+```toml
+# Ollama Configuration File
+
+[server]
+# Network binding address (default: "127.0.0.1:11434")
+host = "0.0.0.0:11434"
+# Allowed CORS origins (comma-separated)
+origins = ["http://localhost:3000", "http://0.0.0.0:3000", "http://localhost:*", "http://0.0.0.0:*", "http://127.0.0.1:*", "https://localhost:*", "https://0.0.0.0:*", "https://127.0.0.1:*"]
+
+[models]
+# Custom models directory path
+path = "~/.ollama/models"
+# How long to keep models loaded in memory (default: "5m")
+keep_alive = "5m"
+# Maximum number of models to keep loaded (default: 0 = unlimited)
+max_loaded_models = 3
+# Maximum number of queued requests (default: 512)
+max_queue = 512
+
+[performance]
+# Number of parallel model requests (default: 0 = auto)
+num_parallel = 4
+# GPU memory overhead in bytes (default: 0)
+gpu_overhead = 0
+# Enable flash attention (default: false)
+flash_attention = false
+# KV cache type: "f16" or "q4_0" (default: "f16")
+kv_cache_type = "f16"
+
+[logging]
+# Enable debug logging (default: false)
+debug = false
+```
+
+### Network Access
+
+To allow Ollama to be accessed from other devices on your network:
+
+1. Set the `host` in the server section to `0.0.0.0:11434`
+2. Configure the `origins` to include the necessary network addresses
+3. Restart Ollama after making changes
+
+The server will then be accessible at `http://<your-ip-address>:11434` from any device on your network.
+
+### Configuration Locations
+
+The configuration file is located at:
+
+- macOS: `~/.ollama/config.toml`
+- Linux: `~/.ollama/config.toml`
+- Windows: `C:\Users\<username>\.ollama\config.toml`

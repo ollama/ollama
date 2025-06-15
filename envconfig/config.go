@@ -304,7 +304,18 @@ func Values() map[string]string {
 	return vals
 }
 
-// Var returns an environment variable stripped of leading and trailing quotes or spaces
+// Var returns the value of the environment variable. If the environment variable is not set,
+// it checks the configuration file. If neither is set, returns an empty string.
 func Var(key string) string {
-	return strings.Trim(strings.TrimSpace(os.Getenv(key)), "\"'")
+	// Check environment variable first (highest priority)
+	if env := os.Getenv(key); env != "" {
+		return env
+	}
+	
+	// Then check config file
+	if configValue := GetConfigValue(key); configValue != "" {
+		return configValue
+	}
+	
+	return ""
 }

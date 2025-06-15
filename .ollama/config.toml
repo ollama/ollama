@@ -1,0 +1,31 @@
+# Ollama Configuration File
+
+[server]
+# Network binding address (default: "127.0.0.1:11434")
+host = "0.0.0.0:11434"
+# Allowed CORS origins (comma-separated)
+origins = ["http://localhost:3000", "http://0.0.0.0:3000", "http://localhost:*", "http://0.0.0.0:*"]
+
+[models]
+# Custom models directory path
+path = "C:\\Users\\ondro\\.ollama\\models"
+# How long to keep models loaded in memory (default: "5m")
+keep_alive = "5m"
+# Maximum number of models to keep loaded (default: 0 = unlimited)
+max_loaded_models = 3
+# Maximum number of queued requests (default: 512)
+max_queue = 512
+
+[performance]
+# Number of parallel model requests (default: 0 = auto)
+num_parallel = 4
+# GPU memory overhead in bytes (default: 0)
+gpu_overhead = 0
+# Enable flash attention (default: false)
+flash_attention = false
+# KV cache type: "f16" or "q4_0" (default: "f16")
+kv_cache_type = "f16"
+
+[logging]
+# Enable debug logging (default: false)
+debug = false 

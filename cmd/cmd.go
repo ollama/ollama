@@ -1589,6 +1589,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		ConfigCommand(),
 		runnerCmd,
 	)
 
