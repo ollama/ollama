@@ -230,7 +230,7 @@ type ToolFunction struct {
 		Ref        any      `json:"$ref,omitempty"`
 		Defs       any      `json:"$defs,omitempty"`
 		Items      any      `json:"items,omitempty"`
-		Required   []string `json:"required"`
+		Required   []string `json:"required,omitempty"`
 		Properties map[string]struct {
 			Type        PropertyType `json:"type,omitempty"`
 			Ref         any          `json:"$ref,omitempty"`
