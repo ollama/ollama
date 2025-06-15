@@ -20,6 +20,8 @@ func Host() *url.URL {
 	defaultPort := "11434"
 
 	s := strings.TrimSpace(Var("OLLAMA_HOST"))
+	// Remove quotes if present
+	s = strings.Trim(s, `"'`)
 	scheme, hostport, ok := strings.Cut(s, "://")
 	switch {
 	case !ok:
@@ -59,22 +61,33 @@ func AllowedOrigins() (origins []string) {
 		origins = strings.Split(s, ",")
 	}
 
-	for _, origin := range []string{"localhost", "127.0.0.1", "0.0.0.0"} {
-		origins = append(origins,
-			fmt.Sprintf("http://%s", origin),
-			fmt.Sprintf("https://%s", origin),
-			fmt.Sprintf("http://%s", net.JoinHostPort(origin, "*")),
-			fmt.Sprintf("https://%s", net.JoinHostPort(origin, "*")),
-		)
-	}
-
-	origins = append(origins,
+	// Add default origins
+	defaultOrigins := []string{
+		"http://localhost",
+		"https://localhost",
+		"http://127.0.0.1",
+		"https://127.0.0.1",
+		"http://0.0.0.0",
+		"https://0.0.0.0",
+		"http://localhost:*",
+		"https://localhost:*",
+		"http://127.0.0.1:*",
+		"https://127.0.0.1:*",
+		"http://0.0.0.0:*",
+		"https://0.0.0.0:*",
 		"app://*",
 		"file://*",
 		"tauri://*",
 		"vscode-webview://*",
 		"vscode-file://*",
-	)
+	}
+
+	// Add custom origins if any
+	if len(origins) > 0 {
+		origins = append(origins, defaultOrigins...)
+	} else {
+		origins = defaultOrigins
+	}
 
 	return origins
 }
@@ -304,18 +317,10 @@ func Values() map[string]string {
 	return vals
 }
 
-// Var returns the value of the environment variable. If the environment variable is not set,
-// it checks the configuration file. If neither is set, returns an empty string.
+// Var returns the value of the environment variable. The value is trimmed of whitespace and quotes.
 func Var(key string) string {
-	// Check environment variable first (highest priority)
-	if env := os.Getenv(key); env != "" {
-		return env
-	}
-	
-	// Then check config file
-	if configValue := GetConfigValue(key); configValue != "" {
-		return configValue
-	}
-	
-	return ""
+	s := strings.TrimSpace(os.Getenv(key))
+	// Remove quotes if present
+	s = strings.Trim(s, `"'`)
+	return s
 }
