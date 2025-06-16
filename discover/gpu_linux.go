@@ -47,11 +47,34 @@ var OneapiGlobs = []string{
 	"/usr/lib*/libze_intel_gpu.so*",
 }
 
+var MusartGlobs = []string{
+	"/usr/lib/*-linux-gnu/libmusart.so*",
+	"/opt/musa/lib*/libmusart.so*",
+	"/usr/local/musa/lib*/libmusart.so*",
+	"/usr/lib*/libmusart.so*",
+	"/usr/local/lib*/libmusart.so*",
+}
+
+var MtmlGlobs = []string{
+	"/lib/libmtml.so*",
+}
+
+var MtmusaGlobs = []string{
+	"/usr/lib/*-linux-gnu/libmusa.so*",
+	"/opt/musa/lib*/libmusa.so*",
+	"/usr/local/musa/lib*/libmusa.so*",
+	"/usr/lib*/libmusa.so*",
+	"/usr/local/lib*/libmusa.so*",
+}
+
 var (
 	CudartMgmtName = "libcudart.so*"
 	NvcudaMgmtName = "libcuda.so*"
 	NvmlMgmtName   = "" // not currently wired on linux
 	OneapiMgmtName = "libze_intel_gpu.so*"
+	MusartMgmtName = "libmusart.so*"
+	MtmusaMgmtName = "libmusa.so*"
+	MtmlMgmtName   = "libmtml.so*"
 )
 
 func GetCPUMem() (memInfo, error) {
