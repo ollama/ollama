@@ -991,3 +991,179 @@ func ChatMiddleware() gin.HandlerFunc {
 		c.Next()
 	}
 }
+// ResponseCreateRequest defines the parameters for the OpenAI-compatible responses endpoint.
+type ResponseCreateRequest struct {
+   Input           any      `json:"input"`
+   Model           string   `json:"model"`
+   Stream          bool     `json:"stream"`
+   MaxOutputTokens *int     `json:"max_output_tokens"`
+   Temperature     *float64 `json:"temperature"`
+   TopP            *float64 `json:"top_p"`
+}
+
+// fromResponseRequest converts a ResponseCreateRequest into an internal GenerateRequest.
+func fromResponseRequest(r ResponseCreateRequest) (api.GenerateRequest, error) {
+   options := make(map[string]any)
+   if r.MaxOutputTokens != nil {
+       options["num_predict"] = *r.MaxOutputTokens
+   }
+   if r.Temperature != nil {
+       options["temperature"] = *r.Temperature
+   }
+   if r.TopP != nil {
+       options["top_p"] = *r.TopP
+   }
+   // Support simple string input or list of messages with roles for multi-turn chat
+   var (
+       prompt   string
+       systemMsg string
+       systemSet bool
+   )
+   switch inp := r.Input.(type) {
+   case string:
+       prompt = inp
+   case []any:
+       var sb strings.Builder
+       for _, m := range inp {
+           msgMap, ok := m.(map[string]any)
+           if !ok {
+               return api.GenerateRequest{}, fmt.Errorf("invalid message type in responses.create input: %T", m)
+           }
+           // Extract role
+           roleVal, ok := msgMap["role"]
+           if !ok {
+               return api.GenerateRequest{}, fmt.Errorf("missing role in responses.create message")
+           }
+           role, ok := roleVal.(string)
+           if !ok {
+               return api.GenerateRequest{}, fmt.Errorf("invalid role type in responses.create message: %T", roleVal)
+           }
+           // Extract content list
+           contentVal, ok := msgMap["content"]
+           if !ok {
+               return api.GenerateRequest{}, fmt.Errorf("missing content in responses.create message")
+           }
+           contentList, ok := contentVal.([]any)
+           if !ok {
+               return api.GenerateRequest{}, fmt.Errorf("invalid content type for role %s: %T", role, contentVal)
+           }
+           // Process content items
+           for _, item := range contentList {
+               itemMap, ok := item.(map[string]any)
+               if !ok {
+                   return api.GenerateRequest{}, fmt.Errorf("invalid content item in responses.create message: %T", item)
+               }
+               typVal, ok := itemMap["type"].(string)
+               if !ok {
+                   return api.GenerateRequest{}, fmt.Errorf("missing type in content item")
+               }
+               if typVal == "input_text" {
+                   textVal, ok := itemMap["text"].(string)
+                   if !ok {
+                       return api.GenerateRequest{}, fmt.Errorf("invalid text in content item: %T", itemMap["text"])
+                   }
+                   if role == "system" {
+                       if systemSet {
+                           return api.GenerateRequest{}, fmt.Errorf("multiple system messages in responses.create input")
+                       }
+                       systemMsg = textVal
+                       systemSet = true
+                   } else {
+                       // Append user/developer/assistant messages with role prefix
+                       sb.WriteString(role)
+                       sb.WriteString(": ")
+                       sb.WriteString(textVal)
+                       sb.WriteString("\n\n")
+                   }
+               }
+           }
+       }
+       prompt = sb.String()
+   default:
+       return api.GenerateRequest{}, fmt.Errorf("invalid input type for responses.create: %T", r.Input)
+   }
+   genReq := api.GenerateRequest{
+       Model:   r.Model,
+       Prompt:  prompt,
+       Options: options,
+       Stream:  &r.Stream,
+   }
+   if systemSet {
+       genReq.System = systemMsg
+   }
+   return genReq, nil
+}
+
+// ResponseWriter adapts internal generate responses to OpenAI-compatible JSON.
+type ResponseWriter struct {
+   BaseWriter
+   id     string
+   stream bool
+}
+
+// Write implements gin.ResponseWriter for the responses endpoint.
+func (w *ResponseWriter) Write(data []byte) (int, error) {
+   code := w.ResponseWriter.Status()
+   if code != http.StatusOK {
+       return w.writeError(data)
+   }
+   var gen api.GenerateResponse
+   if err := json.Unmarshal(data, &gen); err != nil {
+       return 0, err
+   }
+   // Build minimal OpenAI-compatible response
+   out := []map[string]any{{
+       "type": "output_text",
+       "text": gen.Response,
+   }}
+   resp := map[string]any{
+       "id":             w.id,
+       "created_at":     float64(gen.CreatedAt.Unix()),
+       "model":          gen.Model,
+       "object":         "response",
+       "output":         out,
+       "status":         func() string { if gen.Done { return "completed" }; return "in_progress" }(),
+       "input_tokens":   gen.PromptEvalCount,
+       "output_tokens":  gen.EvalCount,
+       "total_tokens":   gen.PromptEvalCount + gen.EvalCount,
+   }
+   w.ResponseWriter.Header().Set("Content-Type", "application/json")
+   b, err := json.Marshal(resp)
+   if err != nil {
+       return 0, err
+   }
+   _, err = w.ResponseWriter.Write(b)
+   if err != nil {
+       return 0, err
+   }
+   return len(data), nil
+}
+
+// ResponsesMiddleware handles OpenAI-compatible /v1/responses requests.
+func ResponsesMiddleware() gin.HandlerFunc {
+   return func(c *gin.Context) {
+       var req ResponseCreateRequest
+       if err := c.ShouldBindJSON(&req); err != nil {
+           c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, err.Error()))
+           return
+       }
+       genReq, err := fromResponseRequest(req)
+       if err != nil {
+           c.AbortWithStatusJSON(http.StatusBadRequest, NewError(http.StatusBadRequest, err.Error()))
+           return
+       }
+       var buf bytes.Buffer
+       if err := json.NewEncoder(&buf).Encode(genReq); err != nil {
+           c.AbortWithStatusJSON(http.StatusInternalServerError, NewError(http.StatusInternalServerError, err.Error()))
+           return
+       }
+       c.Request.Body = io.NopCloser(&buf)
+       w := &ResponseWriter{
+           BaseWriter: BaseWriter{ResponseWriter: c.Writer},
+           id:         fmt.Sprintf("resp-%d", rand.Intn(999)),
+           stream:     req.Stream,
+       }
+       c.Writer = w
+       c.Next()
+   }
+}
