@@ -9,7 +9,6 @@ import (
 	"github.com/ollama/ollama/types/model"
 )
 
-
 func TestModelCheckCapabilities(t *testing.T) {
 	// Create simple model file for tests that don't depend on GGUF content
 	completionModelPath, _ := createBinFile(t, ggml.KV{
