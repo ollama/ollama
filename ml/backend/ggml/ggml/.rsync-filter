@@ -20,6 +20,7 @@ include /src/ggml-cuda/vendors/
 include /src/ggml-cuda/template-instances/
 include /src/ggml-hip/
 include /src/ggml-metal/
+include src/ggml-musa/
 include CMakeLists.txt
 include *.[chm]
 include *.cpp

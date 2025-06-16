@@ -54,6 +54,17 @@
         "CMAKE_HIP_FLAGS": "-parallel-jobs=4",
         "AMDGPU_TARGETS": "gfx900;gfx940;gfx941;gfx942;gfx1010;gfx1012;gfx1030;gfx1100;gfx1101;gfx1102;gfx1151;gfx1200;gfx1201;gfx906:xnack-;gfx908:xnack-;gfx90a:xnack+;gfx90a:xnack-"
       }
+    },
+    {
+      "name": "MUSA",
+      "inherits": [ "Default" ]
+    },
+    {
+      "name": "MUSA 4",
+      "inherits": [ "MUSA" ],
+      "cacheVariables": {
+        "MUSA_ARCHITECTURES": "21;22;31"
+      }
     }
   ],
   "buildPresets": [
@@ -96,6 +107,16 @@
       "name": "ROCm 6",
       "inherits": [ "ROCm" ],
       "configurePreset": "ROCm 6"
+    },
+    {
+      "name": "MUSA",
+      "configurePreset": "MUSA",
+      "targets": [ "ggml-musa" ]
+    },
+    {
+      "name": "MUSA 4",
+      "inherits": [ "MUSA" ],
+      "configurePreset": "MUSA 4"
     }
   ]
 }
