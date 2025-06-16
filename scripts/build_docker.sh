@@ -15,16 +15,21 @@ else
     LOAD_OR_PUSH="--push"
 fi
 
-docker buildx build \
-    ${LOAD_OR_PUSH} \
-    --platform=${PLATFORM} \
-    ${OLLAMA_COMMON_BUILD_ARGS} \
-    -f Dockerfile \
-    -t ${FINAL_IMAGE_REPO}:$VERSION \
-    .
+FLAVORS="musa"
+if [ "${DOCKER_ORG}" != "mthreads" ]; then
+    docker buildx build \
+        ${LOAD_OR_PUSH} \
+        --platform=${PLATFORM} \
+        ${OLLAMA_COMMON_BUILD_ARGS} \
+        -f Dockerfile \
+        -t ${FINAL_IMAGE_REPO}:$VERSION \
+        .
+    FLAVORS="rocm musa"
+fi
+
 
 if echo $PLATFORM | grep "amd64" > /dev/null; then
-    for FLAVOR in "rocm" "musa"; do
+    for FLAVOR in $FLAVORS; do
         docker buildx build \
             ${LOAD_OR_PUSH} \
             --platform=linux/amd64 \
