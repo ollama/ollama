@@ -6,12 +6,19 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/template"
 	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/types/model"
 )
+
+// cacheEntry stores capabilities and the modification time of the model file
+type cacheEntry struct {
+	capabilities []model.Capability
+	modTime      time.Time
+}
 
 // ggufCapabilities is a cache for gguf model capabilities
 var ggufCapabilities = &sync.Map{}
@@ -59,12 +66,23 @@ func Capabilities(info ModelInfo) []model.Capability {
 }
 
 func ggufCapabilties(modelPath string) ([]model.Capability, error) {
-	if ggufCapabilities, ok := ggufCapabilities.Load(modelPath); ok {
-		capabilities := ggufCapabilities.([]model.Capability)
-		return capabilities, nil
+	// Get file info to check modification time
+	fileInfo, err := os.Stat(modelPath)
+	if err != nil {
+		return nil, err
+	}
+	currentModTime := fileInfo.ModTime()
+
+	// Check if we have a cached entry
+	if cached, ok := ggufCapabilities.Load(modelPath); ok {
+		entry := cached.(cacheEntry)
+		// If the file hasn't been modified since we cached it, return the cached capabilities
+		if entry.modTime.Equal(currentModTime) {
+			return entry.capabilities, nil
+		}
 	}
 
-	// If not cached, read the model file to determine capabilities
+	// If not cached or file was modified, read the model file to determine capabilities
 	capabilities := []model.Capability{}
 
 	r, err := os.Open(modelPath)
@@ -87,8 +105,11 @@ func ggufCapabilties(modelPath string) ([]model.Capability, error) {
 		capabilities = append(capabilities, model.CapabilityVision)
 	}
 
-	// Cache the capabilities for future use
-	ggufCapabilities.Store(modelPath, capabilities)
+	// Cache the capabilities with the modification time
+	ggufCapabilities.Store(modelPath, cacheEntry{
+		capabilities: capabilities,
+		modTime:      currentModTime,
+	})
 
 	return capabilities, nil
 }
