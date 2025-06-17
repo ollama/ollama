@@ -18,9 +18,8 @@ const (
 )
 
 type Parser struct {
-	tag        string
-	names      []string
-	properties []string
+	tag   string
+	tools []api.Tool
 
 	state  toolsState
 	buffer []byte
@@ -34,15 +33,10 @@ func NewParser(tmpl *template.Template, tools []api.Tool) *Parser {
 }
 
 func NewParserWithTag(tools []api.Tool, tag string) *Parser {
-	var p Parser
-	for _, t := range tools {
-		p.names = append(p.names, t.Function.Name)
-		for r := range t.Function.Parameters.Properties {
-			p.properties = append(p.properties, r)
-		}
+	return &Parser{
+		tag:   tag,
+		tools: tools,
 	}
-	p.tag = tag
-	return &p
 }
 
 // Add processes a string input to parse tool calls and content that
@@ -121,36 +115,40 @@ func (p *Parser) findTag() (int, bool) {
 // parseToolCall finds the next complete tool call in the buffer
 // incrementing n and advancing the buffer.
 func (p *Parser) parseToolCall() *api.ToolCall {
-	var name string
 	var args map[string]any
+	var tool *api.Tool
 	var end int = len(p.buffer)
 
-	// find tool name
 	var i int
-	for _, n := range p.names {
+	// find tool name
+	for _, t := range p.tools {
+		n := t.Function.Name
 		if i = bytes.Index(p.buffer, []byte(n)); i != -1 {
 			if i+len(n) < end {
-				name = n
+				tool = &t
 				end = i + len(n)
 			}
 		}
 	}
 
-	if name == "" {
+	if tool == nil {
 		return nil
 	}
 
-	if args, i = p.findArguments(); args == nil {
-		return nil
-	}
+	// only look for arguments if the tool has parameters
+	if len(tool.Function.Parameters.Properties) > 0 {
+		if args, i = p.findArguments(); args == nil {
+			return nil
+		}
 
-	if i > end {
-		end = i
+		if i > end {
+			end = i
+		}
 	}
 
 	tc := &api.ToolCall{
 		Function: api.ToolCallFunction{
-			Name:      name,
+			Name:      tool.Function.Name,
 			Arguments: args,
 			Index:     p.n,
 		},
@@ -211,9 +209,11 @@ func (p *Parser) findArguments() (map[string]any, int) {
 			// check if the object keys are valid tool properties
 			// TODO (jmorganca): check only sets of properties that
 			// go together instead of the entire set
-			for _, prop := range p.properties {
-				if _, exists := v[prop]; exists {
-					return v
+			for _, t := range p.tools {
+				for p := range t.Function.Parameters.Properties {
+					if _, exists := v[p]; exists {
+						return v
+					}
 				}
 			}
 

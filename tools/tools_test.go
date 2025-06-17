@@ -104,6 +104,13 @@ func TestParser(t *testing.T) {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "hello",
+				Description: "Say hello",
+			},
+		},
 	}
 
 	tests := []struct {
@@ -157,6 +164,20 @@ func TestParser(t *testing.T) {
 						Arguments: api.ToolCallFunctionArguments{
 							"city": "New York",
 						},
+					},
+				},
+			},
+		},
+		{
+			name:    "qwen no args tool call",
+			inputs:  []string{`Let me check the weather. <tool_call>{"name": "hello"}</tool_call>`},
+			content: "Let me check the weather. ",
+			tmpl:    qwen,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "hello",
 					},
 				},
 			},
@@ -403,6 +424,25 @@ func TestParser(t *testing.T) {
 			content: "[special delivery]",
 			tmpl:    list,
 			calls:   nil,
+		},
+		{
+			name: "list with no arguments",
+			inputs: []string{
+				"[",
+				"{",
+				"\"name\": \"hello\"",
+				"}",
+			},
+			content: "",
+			tmpl:    list,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "hello",
+					},
+				},
+			},
 		},
 	}
 
@@ -766,14 +806,14 @@ func TestFindArguments(t *testing.T) {
 		},
 		{
 			name:   "one arg",
-			buffer: []byte(`get_weather({"location": "San Francisco, CA"})`),
+			buffer: []byte(`get_temperature({"location": "San Francisco, CA"})`),
 			want: map[string]any{
 				"location": "San Francisco, CA",
 			},
 		},
 		{
 			name:   "two args",
-			buffer: []byte(`[{"name": "get_weather", "arguments": {"location": "San Francisco, CA", "format": "fahrenheit"}}, {"name": "get_weather", "arguments": {"location": "San Francisco, CA", "format": "fahrenheit"}}]`),
+			buffer: []byte(`[{"name": "get_temperature", "arguments": {"location": "San Francisco, CA", "format": "fahrenheit"}}, {"name": "get_weather", "arguments": {"location": "San Francisco, CA", "format": "fahrenheit"}}]`),
 			want: map[string]any{
 				"location": "San Francisco, CA",
 				"format":   "fahrenheit",
@@ -781,7 +821,7 @@ func TestFindArguments(t *testing.T) {
 		},
 		{
 			name:   "deepseek",
-			buffer: []byte("<|tool▁calls▁begin|><|tool▁call▁begin|>function<|tool▁sep|>get_current_weather\n```json\n{\"location\": \"Tokyo\"}\n```<|tool▁call▁end|><|tool▁calls▁end|><|end▁of▁sentence|>"),
+			buffer: []byte("<|tool▁calls▁begin|><|tool▁call▁begin|>function<|tool▁sep|>get_temperature\n```json\n{\"location\": \"Tokyo\"}\n```<|tool▁call▁end|><|tool▁calls▁end|><|end▁of▁sentence|>"),
 			want: map[string]any{
 				"location": "Tokyo",
 			},
@@ -790,8 +830,46 @@ func TestFindArguments(t *testing.T) {
 
 	for _, tt := range tests {
 		parser := &Parser{
-			buffer:     tt.buffer,
-			properties: []string{"format", "location"},
+			buffer: tt.buffer,
+			tools: []api.Tool{
+				{
+					Type: "function",
+					Function: api.ToolFunction{
+						Name:        "get_temperature",
+						Description: "Retrieve the temperature for a given location",
+						Parameters: struct {
+							Type       string   `json:"type"`
+							Defs       any      `json:"$defs,omitempty"`
+							Items      any      `json:"items,omitempty"`
+							Required   []string `json:"required"`
+							Properties map[string]struct {
+								Type        api.PropertyType `json:"type"`
+								Items       any              `json:"items,omitempty"`
+								Description string           `json:"description"`
+								Enum        []any            `json:"enum,omitempty"`
+							} `json:"properties"`
+						}{
+							Type: "object",
+							Properties: map[string]struct {
+								Type        api.PropertyType `json:"type"`
+								Items       any              `json:"items,omitempty"`
+								Description string           `json:"description"`
+								Enum        []any            `json:"enum,omitempty"`
+							}{
+								"format": {
+									Type:        api.PropertyType{"string"},
+									Description: "The format to return the temperature in",
+									Enum:        []any{"fahrenheit", "celsius"},
+								},
+								"location": {
+									Type:        api.PropertyType{"string"},
+									Description: "The location to get the temperature for",
+								},
+							},
+						},
+					},
+				},
+			},
 		}
 
 		t.Run(tt.name, func(t *testing.T) {
