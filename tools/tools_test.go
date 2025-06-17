@@ -184,8 +184,8 @@ func TestParser(t *testing.T) {
 		},
 		{
 			name:    "qwen no args tool call",
-			inputs:  []string{`Let me check the weather. <tool_call>{"name": "say_hello"}</tool_call>`},
-			content: "Let me check the weather. ",
+			inputs:  []string{`Let me say hello to the user. I'll use the say_hello tool <tool_call>{"name": "say_hello"}</tool_call>`},
+			content: "Let me say hello to the user. I'll use the say_hello tool ",
 			tmpl:    qwen,
 			calls: []api.ToolCall{
 				{
