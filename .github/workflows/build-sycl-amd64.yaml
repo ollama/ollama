@@ -107,6 +107,7 @@ jobs:
             --target archive \
             -f Dockerfile \
             .
+          tar c -C ./dist/linux_amd64 --exclude rocm --exclude sycl . | pigz -9vc >./dist/ollama-linux-amd64.tgz
           tar c -C ./dist/ ./lib/ollama/sycl | pigz -9vc >./dist/ollama-linux-amd64-sycl.tgz
         env:
           DOCKER_BUILDKIT: 1

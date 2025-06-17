@@ -141,6 +141,17 @@ configure_systemd() {
     $SUDO usermod -a -G ollama $(whoami)
 
     status "Creating ollama systemd service..."
+    
+    # # Check if Intel GPU is present to conditionally add Intel-specific environment variables
+    # INTEL_GPU_ENVS=""
+    # if check_gpu lspci intelgpu || check_gpu lshw intelgpu; then
+    #     INTEL_GPU_ENVS='
+    #     Environment="LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}:${OLLAMA_INSTALL_DIR}/lib/ollama:${OLLAMA_INSTALL_DIR}/lib/ollama/sycl"
+    #     Environment="OLLAMA_INTEL_GPU=1"
+    #     Environment="OLLAMA_DEBUG=1"
+    #     '
+    # fi
+    
     cat <<EOF | $SUDO tee /etc/systemd/system/ollama.service >/dev/null
 [Unit]
 Description=Ollama Service
@@ -153,6 +164,7 @@ Group=ollama
 Restart=always
 RestartSec=3
 Environment="PATH=$PATH"
+Environment="ZES_ENABLE_SYSMAN=1"
 Environment="OLLAMA_INTEL_GPU=1"
 Environment="OLLAMA_DEBUG=1"
 

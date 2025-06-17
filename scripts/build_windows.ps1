@@ -38,7 +38,6 @@ function checkEnv() {
         $script:CUDA_DIRS=$cudaList
     }
     
-    # Check for oneAPI/SYCL installation
     $oneapiDir=(get-item "C:\Program Files (x86)\Intel\oneAPI\" -ea 'silentlycontinue')
     if ($oneapiDir.length -gt 0) {
         $script:ONEAPI_DIR=$oneapiDir
@@ -149,23 +148,6 @@ function buildOllama() {
                 $NINJA_DIR=(gci -path (Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation -r -fi ninja.exe).Directory.FullName
                 $env:PATH="$NINJA_DIR;$env:PATH"
             }
-            
-            # Setup oneAPI environment if needed
-            if (-not $env:ONEAPI_ROOT -and $script:ONEAPI_DIR) {
-                $setvarsOutput = cmd.exe /C "`"C:\Program Files (x86)\Intel\oneAPI\setvars.bat`" && set"
-                $setvarsOutput | ForEach-Object {
-                    if ($_ -match '(.+?)=(.*)') {
-                        $name = $matches[1]
-                        $value = $matches[2]
-                        if ($name -ne "Path") {
-                            Set-Item -Path "env:$name" -Value $value
-                        } else {
-                            $env:PATH = $value
-                        }
-                    }
-                }
-            }
-            
             & cmake --fresh --preset "SYCL" -G Ninja --install-prefix $script:DIST_DIR
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             & cmake --build --preset "SYCL" --config Release --parallel $script:JOBS
