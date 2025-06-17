@@ -404,6 +404,31 @@ func TestParser(t *testing.T) {
 			tmpl:    json,
 		},
 		{
+			name: "json no args tool call",
+			inputs: []string{
+				"{\"name\": \"say_hello\"}",
+			},
+			content: "",
+			tmpl:    json,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "say_hello",
+					},
+				},
+			},
+		},
+		{
+			name: "json no args no tool call",
+			inputs: []string{
+				"I'll use the say_hello tool to say hello to the user.",
+			},
+			content: "I'll use the say_hello tool to say hello to the user.",
+			tmpl:    json,
+			calls:   nil,
+		},
+		{
 			name: "list multiple",
 			inputs: []string{
 				"[",
