@@ -428,6 +428,25 @@ func TestParser(t *testing.T) {
 			tmpl:    json,
 			calls:   nil,
 		},
+
+		// TODO (jmorganca): this is a false positive, we should
+		// not be parsing this as a tool call
+		{
+			name: "json no args false positive",
+			inputs: []string{
+				`{say_hello!!!}`,
+			},
+			content: "",
+			tmpl:    json,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "say_hello",
+					},
+				},
+			},
+		},
 		{
 			name: "list multiple",
 			inputs: []string{
