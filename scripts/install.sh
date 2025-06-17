@@ -47,6 +47,43 @@ esac
 
 VER_PARAM="${OLLAMA_VERSION:+?version=$OLLAMA_VERSION}"
 
+# GitHub repository for MooreThreads Ollama MUSA
+GITHUB_REPO="MooreThreads/ollama-musa"
+GITHUB_API_URL="https://api.github.com/repos/${GITHUB_REPO}"
+
+# Function to get the latest release version
+get_latest_version() {
+    if [ -n "${OLLAMA_VERSION:-}" ]; then
+        echo "${OLLAMA_VERSION}"
+    else
+        # Try to fetch the latest release from GitHub API
+        status "Fetching latest release from GitHub..."
+        LATEST_VERSION=$(curl -s --fail "${GITHUB_API_URL}/releases/latest" 2>/dev/null | grep '"tag_name":' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/' | head -1)
+        if [ -n "$LATEST_VERSION" ] && [ "$LATEST_VERSION" != "null" ]; then
+            echo "$LATEST_VERSION"
+        else
+            # Fallback: try to get the latest tag
+            status "Falling back to latest tag..."
+            LATEST_VERSION=$(curl -s --fail "${GITHUB_API_URL}/tags" 2>/dev/null | grep '"name":' | head -1 | sed 's/.*"name": *"\([^"]*\)".*/\1/')
+            if [ -n "$LATEST_VERSION" ] && [ "$LATEST_VERSION" != "null" ]; then
+                echo "$LATEST_VERSION"
+            else
+                error "Failed to fetch latest version from GitHub API. Please set OLLAMA_VERSION environment variable."
+            fi
+        fi
+    fi
+}
+
+# Get the version to download
+VERSION=$(get_latest_version)
+status "Using version: $VERSION"
+
+# Function to construct GitHub release download URL
+get_download_url() {
+    local filename="$1"
+    echo "https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/${filename}"
+}
+
 SUDO=
 if [ "$(id -u)" -ne 0 ]; then
     # Running as root, no need for sudo
@@ -78,9 +115,11 @@ fi
 status "Installing ollama to $OLLAMA_INSTALL_DIR"
 $SUDO install -o0 -g0 -m755 -d $BINDIR
 $SUDO install -o0 -g0 -m755 -d "$OLLAMA_INSTALL_DIR/lib/ollama"
-status "Downloading Linux ${ARCH} bundle"
+status "Downloading Linux ${ARCH} MUSA bundle"
+DOWNLOAD_URL=$(get_download_url "ollama-linux-${ARCH}.tgz${VER_PARAM}")
+status "Download URL: $DOWNLOAD_URL"
 curl --fail --show-error --location --progress-bar \
-    "https://ollama.com/download/ollama-linux-${ARCH}.tgz${VER_PARAM}" | \
+    "$DOWNLOAD_URL" | \
     $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
 
 if [ "$OLLAMA_INSTALL_DIR/bin/ollama" != "$BINDIR/ollama" ] ; then
@@ -189,12 +228,12 @@ fi
 
 # Install GPU dependencies on Linux
 if ! available lspci && ! available lshw; then
-    warning "Unable to detect NVIDIA/AMD GPU. Install lspci or lshw to automatically detect and install GPU dependencies."
+    warning "Unable to detect NVIDIA/AMD/MTHREADS GPU. Install lspci or lshw to automatically detect and install GPU dependencies."
     exit 0
 fi
 
 check_gpu() {
-    # Look for devices based on vendor ID for NVIDIA and AMD
+    # Look for devices based on vendor ID for NVIDIA, AMD and MTHREADS
     case $1 in
         lspci)
             case $2 in
@@ -205,8 +244,10 @@ check_gpu() {
             case $2 in
                 nvidia) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
                 amdgpu) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[1002\]' || return 1 ;;
+                mtgpu)  available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[1ED5\]' || return 1 ;;
             esac ;;
         nvidia-smi) available nvidia-smi || return 1 ;;
+        mthreads-gmi) available mthreads-gmi || return 1 ;;
     esac
 }
 
@@ -215,9 +256,14 @@ if check_gpu nvidia-smi; then
     exit 0
 fi
 
-if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu; then
+if check_gpu mthreads-gmi; then
+    status "MTHREADS GPU installed."
+    exit 0
+fi
+
+if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu && ! check_gpu lshw mtgpu; then
     install_success
-    warning "No NVIDIA/AMD GPU detected. Ollama will run in CPU-only mode."
+    warning "No NVIDIA/AMD/MTHREADS GPU detected. Ollama will run in CPU-only mode."
     exit 0
 fi
 
@@ -239,7 +285,7 @@ CUDA_REPO_ERR_MSG="NVIDIA GPU detected, but your OS and Architecture are not sup
 # ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#fedora
 install_cuda_driver_yum() {
     status 'Installing NVIDIA repository...'
-    
+
     case $PACKAGE_MANAGER in
         yum)
             $SUDO $PACKAGE_MANAGER -y install yum-utils
