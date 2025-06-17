@@ -245,7 +245,7 @@ func TestParser(t *testing.T) {
 		},
 		{
 			name:    "qwen two tool calls one with no args",
-			inputs:  []string{`Let me check the weather. <tool_call>{"name": "hello"}</tool_call><tool_call>{"name": "get_conditions", "arguments": {"location": "Tokyo"}}</tool_call>`},
+			inputs:  []string{`Let me check the weather. <tool_call>{"name": "hello"}</tool_call><tool_call>{"name": "get_conditions", "arguments": {"location": "Tokyo"}}`},
 			content: "Let me check the weather. ",
 			tmpl:    qwen,
 			calls: []api.ToolCall{
