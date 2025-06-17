@@ -745,6 +745,737 @@ std::unique_ptr<ggml_cann_pool> ggml_backend_cann_context::new_pool_for_device(
     return std::unique_ptr<ggml_cann_pool>(new ggml_cann_pool_buf(device));
 }
 
+// cann buffer
+/**
+ * @brief Context for managing a CANN buffer associated with a specific device.
+ *
+ * This structure holds information about a CANN buffer, including the device
+ * ID, device pointer, and a name derived from GGML_CANN_NAME and the device ID.
+ */
+struct ggml_backend_cann_buffer_context {
+    int32_t device;  ///< The device ID associated with this buffer context.
+    void* dev_ptr =
+        nullptr;  ///< Pointer to the device memory allocated for the buffer.
+
+    /**
+     * @brief Constructor to initialize the CANN buffer context.
+     *
+     * @param device The device ID associated with this buffer context.
+     * @param dev_ptr Pointer to the device memory allocated for the buffer.
+     */
+    ggml_backend_cann_buffer_context(int32_t device, void* dev_ptr)
+        : device(device),
+          dev_ptr(dev_ptr) {}
+
+    /**
+     * @brief Destructor to free the device memory allocated for the buffer.
+     */
+    ~ggml_backend_cann_buffer_context() { ACL_CHECK(aclrtFree(dev_ptr)); }
+};
+
+/**
+ * @brief Check if a buffer is a CANN buffer.
+ *
+ * This function checks if a given buffer is a CANN buffer by comparing its
+ * `get_name` function pointer to `ggml_backend_cann_buffer_get_name`.
+ *
+ * @param buffer The buffer to check.
+ * @return true if the buffer is a CANN buffer, false otherwise.
+ */
+static bool ggml_backend_buft_is_cann(ggml_backend_buffer_type_t buft);
+static bool ggml_backend_buffer_is_cann(
+    ggml_backend_buffer_t buffer) {
+    return ggml_backend_buft_is_cann(buffer->buft);
+}
+
+/**
+ * @brief Free resources associated with a CANN buffer.
+ *
+ * This function frees the resources associated with a CANN buffer, including
+ * its context.
+ *
+ * @param buffer The CANN buffer to free.
+ */
+static void ggml_backend_cann_buffer_free_buffer(
+    ggml_backend_buffer_t buffer) {
+    ggml_backend_cann_buffer_context* ctx =
+        (ggml_backend_cann_buffer_context*)buffer->context;
+    delete ctx;
+}
+
+/**
+ * @brief Retrieve the base pointer of a CANN buffer.
+ *
+ * This function returns the base pointer of a CANN buffer, which points to the
+ * device memory allocated for the buffer.
+ *
+ * @param buffer The CANN buffer whose base pointer is to be retrieved.
+ * @return A pointer to the base of the device memory allocated for the buffer.
+ */
+static void* ggml_backend_cann_buffer_get_base(
+    ggml_backend_buffer_t buffer) {
+    ggml_backend_cann_buffer_context* ctx =
+        (ggml_backend_cann_buffer_context*)buffer->context;
+    return ctx->dev_ptr;
+}
+
+/**
+ * @brief Transform quantized Q4.0 tensor data into a format suitable for CANN
+ * processing.
+ *
+ * This function transforms quantized Q4.0 tensor data into a format suitable
+ * for CANN processing. It extracts quantization values and scales from the
+ * source data and prepares them in a format expected by CANN operations.
+ *
+ * @param tensor Pointer to the tensor information.
+ * @param src Pointer to the source data in Q4.0 format.
+ * @param dst Pointer to the destination buffer where transformed data will be
+ * stored.
+ */
+static void ggml_backend_cann_transform_q4_0(ggml_tensor* tensor,
+                                             const void* src,
+                                             void* dst) {
+
+    int64_t n_elems = ggml_nelements(tensor);
+    int64_t groups = n_elems / QK4_0;
+    size_t quant_bytes = n_elems * sizeof(uint8_t) / 2;
+
+    uint8_t* quant_offset = (uint8_t*)dst;
+    uint16_t* scale_offset = (uint16_t*)((char*)dst + quant_bytes);
+
+    for (int i = 0; i < groups; i++) {
+        const block_q4_0* group =
+            (const block_q4_0*)((const char*)src + i * sizeof(block_q4_0));
+        *scale_offset = group->d;
+        scale_offset++;
+
+        // 0-15
+        for (int j = 0; j < QK4_0 / 2; j += 2) {
+            (*quant_offset) = (group->qs[j] & 0x0F);
+            (*quant_offset) |= ((group->qs[j + 1] << 4));
+            quant_offset++;
+        }
+
+        // 16-31
+        for (int j = 0; j < QK4_0 / 2; j += 2) {
+            (*quant_offset) = (group->qs[j] >> 4);
+            (*quant_offset) |= (group->qs[j + 1] & 0xF0);
+            quant_offset++;
+        }
+    }
+
+    // put (uint4b_t -8) into int4b_t
+    for (quant_offset = (uint8_t*)dst;
+         quant_offset < (uint8_t*)dst + quant_bytes; quant_offset++) {
+        (*quant_offset) ^= 0x88;
+    }
+}
+
+/**
+ * @brief Transform CANN processed data back into quantized Q4.0 format.
+ *
+ * This function transforms CANN processed data back into quantized Q4.0 format.
+ * It reverses the transformation performed by
+ * ggml_backend_cann_transform_q4_0(), converting the data back into its
+ * original quantized form.
+ *
+ * @param tensor Pointer to the tensor information.
+ * @param src Pointer to the source buffer containing transformed data.
+ * @param dst Pointer to the destination buffer where the Q4.0 formatted data
+ * will be stored.
+ */
+static void ggml_backend_cann_transform_back_q4_0(
+    const ggml_tensor* tensor, void* src, void* dst) {
+
+    int64_t n_elems = ggml_nelements(tensor);
+    int64_t groups = n_elems / QK4_0;
+    size_t quant_bytes = n_elems * sizeof(uint8_t) / 2;
+
+    uint8_t* quant_offset = (uint8_t*)src;
+    uint16_t* scale_offset = (uint16_t*)((char*)src + quant_bytes);
+
+    for (; quant_offset < (uint8_t*)src + quant_bytes; quant_offset++) {
+        (*quant_offset) ^= 0x88;
+    }
+    quant_offset = (uint8_t*)src;
+
+    for (int i = 0; i < groups; i++) {
+        block_q4_0* group = (block_q4_0*)((char*)dst + i * sizeof(block_q4_0));
+        group->d = *scale_offset;
+        scale_offset++;
+
+        // 0-15
+        for (int j = 0; j < QK4_0 / 2; j += 2) {
+            group->qs[j] = ((*quant_offset) & 0x0F);
+            group->qs[j + 1] = ((*quant_offset) >> 4);
+            quant_offset++;
+        }
+
+        // 16-31
+        for (int j = 0; j < QK4_0 / 2; j += 2) {
+            group->qs[j] |= ((*quant_offset) << 4);
+            group->qs[j + 1] |= ((*quant_offset) & 0xF0);
+            quant_offset++;
+        }
+    }
+}
+
+/**
+ * @brief Transform quantized Q8.0 tensor data into a format suitable for CANN
+ * processing.
+ *
+ * This function transforms quantized Q8.0 tensor data into a format suitable
+ * for CANN processing. It extracts quantization values and scales from the
+ * source data and prepares them in a format expected by CANN operations.
+ *
+ * @param tensor Pointer to the tensor information.
+ * @param src Pointer to the source data in Q8.0 format.
+ * @param dst Pointer to the destination buffer where transformed data will be
+ * stored.
+ */
+static void ggml_backend_cann_transform_q8_0(ggml_tensor* tensor,
+                                             const void* src,
+                                             void* dst) {
+    int64_t n_elems = ggml_nelements(tensor);
+    int64_t groups = n_elems / QK8_0;
+    size_t quant_bytes = n_elems * sizeof(uint8_t);
+
+    uint8_t* quant_offset = (uint8_t*)dst;
+    uint16_t* scale_offset = (uint16_t*)((char*)dst + quant_bytes);
+
+    for (int i = 0; i < groups; i++) {
+        const block_q8_0* group =
+            (const block_q8_0*)((const char*)src + i * sizeof(block_q8_0));
+        *scale_offset = group->d;
+        scale_offset++;
+        size_t group_quant_size = QK8_0 * sizeof(uint8_t);
+        memcpy(quant_offset, group->qs, group_quant_size);
+        quant_offset += group_quant_size;
+    }
+}
+
+/**
+ * @brief Transform CANN processed data back into quantized Q8.0 format.
+ *
+ * This function transforms CANN processed data back into quantized Q8.0 format.
+ * It reverses the transformation performed by
+ * ggml_backend_cann_transform_q8_0(), converting the data back into its
+ * original quantized form.
+ *
+ * @param tensor Pointer to the tensor information.
+ * @param src Pointer to the source buffer containing transformed data.
+ * @param dst Pointer to the destination buffer where the Q8.0 formatted data
+ * will be stored.
+ */
+static void ggml_backend_cann_transform_back_q8_0(
+    const ggml_tensor* tensor, const void* src, void* dst) {
+    int64_t n_elems = ggml_nelements(tensor);
+    int64_t groups = n_elems / QK8_0;
+    size_t quant_bytes = n_elems * sizeof(uint8_t);
+
+    const uint8_t* quant_offset = (const uint8_t*)src;
+    const uint16_t* scale_offset =
+        (const uint16_t*)((const char*)src + quant_bytes);
+
+    for (int i = 0; i < groups; i++) {
+        block_q8_0* group = (block_q8_0*)((char*)dst + i * sizeof(block_q8_0));
+        group->d = *scale_offset;
+        scale_offset++;
+        size_t group_quant_size = QK8_0 * sizeof(uint8_t);
+        memcpy(group->qs, quant_offset, group_quant_size);
+        quant_offset += group_quant_size;
+    }
+}
+
+/**
+ * @brief Transform tensor data based on its type for CANN processing.
+ *
+ * This function transforms tensor data based on its quantization type for CANN
+ * processing. It dispatches the transformation based on the tensor's type to
+ * specialized functions handling Q4.0 and Q8.0 formats.
+ *
+ * @param tensor Pointer to the tensor information.
+ * @param src Pointer to the source data to be transformed.
+ * @param dst Pointer to the destination buffer where transformed data will be
+ * stored.
+ */
+static void ggml_backend_cann_transform(ggml_tensor* tensor,
+                                        const void* src, void* dst) {
+    switch (tensor->type) {
+        case GGML_TYPE_Q4_0:
+            ggml_backend_cann_transform_q4_0(tensor, src, dst);
+            break;
+        case GGML_TYPE_Q8_0:
+            ggml_backend_cann_transform_q8_0(tensor, src, dst);
+            break;
+        default:
+            break;
+    }
+}
+
+/**
+ * @brief Transform CANN processed data back into tensor data based on its type.
+ *
+ * This function transforms CANN processed data back into tensor data based on
+ * its quantization type for Q4.0 and Q8.0 formats. It dispatches the
+ * transformation based on the tensor's type to specialized functions.
+ *
+ * @param tensor Pointer to the tensor information.
+ * @param src Pointer to the source data containing CANN processed data.
+ * @param dst Pointer to the destination buffer where transformed tensor data
+ * will be stored.
+ */
+static void ggml_backend_cann_transform_back(
+    const ggml_tensor* tensor, void* src, void* dst) {
+    switch (tensor->type) {
+        case GGML_TYPE_Q4_0:
+            ggml_backend_cann_transform_back_q4_0(tensor, src, dst);
+            break;
+        case GGML_TYPE_Q8_0:
+            ggml_backend_cann_transform_back_q8_0(tensor, src, dst);
+            break;
+        default:
+            break;
+    }
+}
+
+/**
+ * @brief Check if transformation is needed for a given tensor type.
+ *
+ * This function checks if transformation is needed for a given tensor type
+ * to prepare data for CANN processing.
+ *
+ * @param type The tensor type to check.
+ * @return true if transformation is needed, false otherwise.
+ */
+static bool need_transform(ggml_type type) {
+    switch (type) {
+        case GGML_TYPE_Q4_0:
+        case GGML_TYPE_Q8_0:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/**
+ * @brief Initialize a tensor using data from a CANN buffer.
+ *
+ * This function initializes a tensor using data from a CANN buffer.
+ * It handles special cases such as views and quantization.
+ *
+ * @param buffer The CANN buffer from which to initialize the tensor.
+ * @param tensor Pointer to the tensor to be initialized.
+ */
+static enum ggml_status ggml_backend_cann_buffer_init_tensor(
+    ggml_backend_buffer_t buffer, ggml_tensor* tensor) {
+    if (tensor->view_src != NULL && tensor->view_offs == 0) {
+        GGML_ASSERT(tensor->view_src->buffer->buft == buffer->buft);
+        return GGML_STATUS_SUCCESS;
+    }
+
+    // TODO: cann backend doesn't support quantized yet. Just leave the code
+    // here.
+    if (ggml_is_quantized(tensor->type)) {
+        // Initialize padding to 0 to avoid possible NaN values
+        size_t original_size = ggml_nbytes(tensor);
+        size_t padded_size =
+            ggml_backend_buft_get_alloc_size(buffer->buft, tensor);
+
+        if (padded_size > original_size && tensor->view_src == nullptr) {
+            size_t memset_size = padded_size - original_size;
+            ACL_CHECK(aclrtMemset((char*)tensor->data + original_size,
+                                  memset_size, 0, memset_size));
+        }
+    }
+    return GGML_STATUS_SUCCESS;
+}
+
+// TODO: need handle tensor which has paddings.
+/**
+ * @brief Set tensor data in a CANN buffer.
+ *
+ * This function sets tensor data in a CANN buffer, handling transformations
+ * if needed based on the tensor's type.
+ *
+ * @param buffer The CANN buffer where the tensor data will be set.
+ * @param tensor Pointer to the tensor whose data will be set.
+ * @param data Pointer to the source data to be copied into the tensor.
+ * @param offset Offset in the source data from where to start copying.
+ * @param size Size of the data to be copied, in bytes.
+ */
+static void ggml_backend_cann_buffer_set_tensor(
+    ggml_backend_buffer_t buffer, ggml_tensor *tensor, const void *data,
+    size_t offset, size_t size) {
+    ggml_backend_cann_buffer_context *ctx =
+        (ggml_backend_cann_buffer_context *)buffer->context;
+
+    ggml_cann_set_device(ctx->device);
+    // TODO: refer to cann(#6017), it use thread's default stream.
+    // For acl, synchronous functions use this default stream.
+    // Why aclrtSynchronizeDevice?
+
+    if (!need_transform(tensor->type)) {
+        ACL_CHECK(aclrtMemcpy((char *)tensor->data + offset, size, data, size,
+                              ACL_MEMCPY_HOST_TO_DEVICE));
+    } else {
+        void *transform_buffer = malloc(size);
+        ggml_backend_cann_transform(tensor, data, transform_buffer);
+
+        ACL_CHECK(aclrtMemcpy((char *)tensor->data + offset, size,
+                              transform_buffer, size,
+                              ACL_MEMCPY_HOST_TO_DEVICE));
+        free(transform_buffer);
+    }
+}
+
+/**
+ * @brief Get tensor data from a CANN buffer.
+ *
+ * This function retrieves tensor data from a CANN buffer, handling
+ * transformations if needed based on the tensor's type.
+ *
+ * @param buffer The CANN buffer from which to retrieve tensor data.
+ * @param tensor Pointer to the tensor whose data will be retrieved.
+ * @param data Pointer to the destination buffer where the tensor data will be
+ * copied.
+ * @param offset Offset in the destination buffer where to start copying.
+ * @param size Size of the data to be copied, in bytes.
+ */
+static void ggml_backend_cann_buffer_get_tensor(
+    ggml_backend_buffer_t buffer, const ggml_tensor* tensor, void* data,
+    size_t offset, size_t size) {
+    ggml_backend_cann_buffer_context* ctx =
+        (ggml_backend_cann_buffer_context*)buffer->context;
+
+    ggml_cann_set_device(ctx->device);
+
+    if (!need_transform(tensor->type)) {
+        ACL_CHECK(aclrtMemcpy(data, size, (char*)tensor->data + offset, size,
+                              ACL_MEMCPY_DEVICE_TO_HOST));
+    } else {
+        void* transform_buffer = malloc(size);
+        ACL_CHECK(aclrtMemcpy(transform_buffer, size,
+                              (char*)tensor->data + offset, size,
+                              ACL_MEMCPY_DEVICE_TO_HOST));
+        ggml_backend_cann_transform_back(tensor, transform_buffer, data);
+        free(transform_buffer);
+    }
+}
+
+/**
+ * @brief Copy tensor data between CANN buffers if possible.
+ *
+ * This function copies tensor data between CANN buffers if the source and
+ * destination buffers are CANN buffers and they meet the necessary conditions
+ * (same device or devices can access each other).
+ *
+ * @param buffer The destination CANN buffer where the tensor data will be
+ * copied.
+ * @param src Pointer to the source tensor whose data will be copied.
+ * @param dst Pointer to the destination tensor where the data will be copied.
+ * @return true if the copy operation succeeded, false otherwise.
+ */
+static bool ggml_backend_cann_buffer_cpy_tensor(
+    ggml_backend_buffer_t buffer, const ggml_tensor* src, ggml_tensor* dst) {
+    if (ggml_backend_buffer_is_cann(src->buffer)) {
+        ggml_backend_cann_buffer_context* src_ctx =
+            (ggml_backend_cann_buffer_context*)src->buffer->context;
+        ggml_backend_cann_buffer_context* dst_ctx =
+            (ggml_backend_cann_buffer_context*)buffer->context;
+
+        size_t memcpy_size = ggml_nbytes(src);
+        // Same device.
+        if (src_ctx->device == dst_ctx->device) {
+            ACL_CHECK(aclrtMemcpy((char*)dst->data, memcpy_size,
+                                  (const char*)src->data, memcpy_size,
+                                  ACL_MEMCPY_DEVICE_TO_DEVICE));
+            return true;
+        } else {
+            // Different device but can access by peer.
+            int32_t canAccessPeer = 0;
+            ACL_CHECK(aclrtDeviceCanAccessPeer(&canAccessPeer, src_ctx->device,
+                                               dst_ctx->device));
+            if (canAccessPeer) {
+                ggml_cann_set_device(src_ctx->device);
+                ACL_CHECK(aclrtDeviceEnablePeerAccess(dst_ctx->device, 0));
+                ACL_CHECK(aclrtMemcpy((char*)dst->data, memcpy_size,
+                                      (const char*)src->data, memcpy_size,
+                                      ACL_MEMCPY_DEVICE_TO_DEVICE));
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief Clear a CANN buffer by setting all its memory to a specified value.
+ *
+ * This function clears a CANN buffer by setting all its memory to a specified
+ * value.
+ *
+ * @param buffer The CANN buffer to be cleared.
+ * @param value The value to which each byte in the buffer will be set.
+ */
+static void ggml_backend_cann_buffer_clear(
+    ggml_backend_buffer_t buffer, uint8_t value) {
+    ggml_backend_cann_buffer_context* ctx =
+        (ggml_backend_cann_buffer_context*)buffer->context;
+
+    ggml_cann_set_device(ctx->device);
+    ACL_CHECK(aclrtMemset(ctx->dev_ptr, buffer->size, value, buffer->size));
+}
+
+/**
+ * @brief Interface for a CANN buffer in the backend.
+ *
+ * This structure defines function pointers to operations that can be performed
+ * on a CANN buffer within the backend.
+ */
+static const ggml_backend_buffer_i ggml_backend_cann_buffer_interface = {
+    /* .free_buffer     = */ ggml_backend_cann_buffer_free_buffer,
+    /* .get_base        = */ ggml_backend_cann_buffer_get_base,
+    /* .init_tensor     = */ ggml_backend_cann_buffer_init_tensor,
+    /* .memset_tensor   = */ NULL,
+    /* .set_tensor      = */ ggml_backend_cann_buffer_set_tensor,
+    /* .get_tensor      = */ ggml_backend_cann_buffer_get_tensor,
+    /* .cpy_tensor      = */ ggml_backend_cann_buffer_cpy_tensor,
+    /* .clear           = */ ggml_backend_cann_buffer_clear,
+    /* .reset           = */ NULL,
+};
+
+// cann buffer type
+/**
+ * @brief Structure representing context information for a specific backend
+ * buffer type.
+ */
+struct ggml_backend_cann_buffer_type_context {
+    int32_t
+        device; /**< Device identifier associated with the buffer context. */
+    std::string name; /**< Name associated with the buffer context. */
+};
+
+/**
+ * @brief Retrieves the name associated with a CANN buffer type.
+ *
+ * This function returns the descriptive name associated with the specified
+ * CANN buffer type context.
+ *
+ * @param buft Pointer to the buffer type context.
+ * @return Const pointer to the C-style string containing the name.
+ */
+static const char* ggml_backend_cann_buffer_type_name(
+    ggml_backend_buffer_type_t buft) {
+    ggml_backend_cann_buffer_type_context* buft_ctx =
+        (ggml_backend_cann_buffer_type_context*)buft->context;
+
+    return buft_ctx->name.c_str();
+}
+
+/**
+ * @brief Allocates a new CANN buffer of the specified type and size.
+ *
+ * This function allocates a new CANN buffer on the specified device with the
+ * given size.
+ *
+ * @param buft Pointer to the buffer type context.
+ * @param size Size in bytes of the buffer to allocate.
+ * @return Pointer to the allocated buffer, or nullptr if allocation fails.
+ */
+static ggml_backend_buffer_t
+ggml_backend_cann_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft,
+                                           size_t size) {
+    ggml_backend_cann_buffer_type_context* buft_ctx =
+        (ggml_backend_cann_buffer_type_context*)buft->context;
+
+    ggml_cann_set_device(buft_ctx->device);
+
+    const size_t alignment = 128;
+    size = GGML_PAD(size, alignment);
+    if (size == 0) {
+        size = alignment;
+    }
+    void* dev_ptr;
+    aclError err = aclrtMalloc(&dev_ptr, size, ACL_MEM_MALLOC_HUGE_FIRST);
+    if (err != ACL_SUCCESS) {
+        GGML_LOG_ERROR(
+            "%s: allocating %.2f MiB on device %d: aclrtMalloc failed: %s\n",
+            __func__, size / 1024.0 / 1024.0, buft_ctx->device,
+            aclGetRecentErrMsg());
+        return nullptr;
+    }
+
+    ggml_backend_cann_buffer_context* ctx =
+        new ggml_backend_cann_buffer_context(buft_ctx->device, dev_ptr);
+
+    return ggml_backend_buffer_init(buft, ggml_backend_cann_buffer_interface,
+                                    ctx, size);
+}
+
+/**
+ * @brief Retrieves the memory alignment requirement for CANN buffers of this
+ * type.
+ *
+ * This function returns the alignment requirement in bytes for memory allocated
+ * by the CANN buffer type.
+ *
+ * @param buft Pointer to the buffer type context (unused in this
+ * implementation).
+ * @return The alignment requirement in bytes (fixed at 128 bytes for CANN
+ * buffers).
+ */
+static size_t ggml_backend_cann_buffer_type_get_alignment(
+    ggml_backend_buffer_type_t buft) {
+    return 128;
+
+    GGML_UNUSED(buft);
+}
+
+/**
+ * @brief Calculates the allocation size required for a tensor in a CANN buffer.
+ *
+ * Computes the total allocation size needed for storing the tensor's data in a
+ * CANN buffer, considering any necessary padding or adjustments for quantized
+ * types.
+ *
+ * @param buft Pointer to the buffer type context (unused in this
+ * implementation).
+ * @param tensor Pointer to the tensor for which the allocation size is
+ * calculated.
+ * @return The total allocation size in bytes required for the tensor in the
+ * CANN buffer.
+ */
+static size_t ggml_backend_cann_buffer_type_get_alloc_size(
+    ggml_backend_buffer_type_t buft, const ggml_tensor* tensor) {
+    size_t size = ggml_nbytes(tensor);
+    int64_t ne0 = tensor->ne[0];
+
+    // last line must bigger than 32, because every single op deal at
+    // least 32 bytes.
+    // TODO: quantized type?
+    // int64_t line_size = ne0 * ggml_element_size(tensor);
+    // int64_t line_size_align_32 = (line_size + 31) & ~31;
+    // size += (line_size_align_32 - line_size);
+
+    // TODO: not support quantized yet.
+    // TODO: consider un-continue tensor.
+    if (ggml_is_quantized(tensor->type)) {
+        if (ne0 % MATRIX_ROW_PADDING != 0) {
+            size += ggml_row_size(
+                tensor->type, MATRIX_ROW_PADDING - ne0 % MATRIX_ROW_PADDING);
+        }
+    }
+
+    return size;
+
+    GGML_UNUSED(buft);
+}
+
+static bool ggml_backend_cann_buffer_type_is_host(ggml_backend_buffer_type_t buft) {
+    return false;
+
+    GGML_UNUSED(buft);
+}
+
+/**
+ * @brief Interface for managing CANN buffer types in the GGML backend.
+ *
+ * Provides function pointers for allocating, querying properties, and managing
+ * memory for CANN buffer types in the GGML backend.
+ */
+static const ggml_backend_buffer_type_i ggml_backend_cann_buffer_type_interface = {
+    /* .get_name         = */ ggml_backend_cann_buffer_type_name,
+    /* .alloc_buffer     = */ ggml_backend_cann_buffer_type_alloc_buffer,
+    /* .get_alignment    = */ ggml_backend_cann_buffer_type_get_alignment,
+    /* .get_max_size     = */ NULL,  // defaults to SIZE_MAX
+    /* .get_alloc_size   = */ ggml_backend_cann_buffer_type_get_alloc_size,
+    /* .is_host          = */ ggml_backend_cann_buffer_type_is_host,
+};
+
+/**
+ * @brief Retrieves the CANN buffer type for a specified device.
+ *
+ * This function initializes and returns the buffer type interface associated
+ * with the given device. It ensures thread-safe access using a mutex.
+ *
+ * @param device The device index for which to retrieve the buffer type.
+ * @return A pointer to the buffer type interface for the specified device, or
+ * nullptr if the device index is out of range.
+ */
+ggml_backend_buffer_type_t
+ggml_backend_cann_buffer_type(int32_t device) {
+    static std::mutex mutex;
+    std::lock_guard<std::mutex> lock(mutex);
+
+    if (device >= ggml_backend_cann_get_device_count()) {
+        return nullptr;
+    }
+
+    static ggml_backend_buffer_type
+        ggml_backend_cann_buffer_types[GGML_CANN_MAX_DEVICES];
+
+    static bool ggml_backend_cann_buffer_type_initialized = false;
+
+    if (!ggml_backend_cann_buffer_type_initialized) {
+        for (int32_t i = 0; i < ggml_cann_info().device_count; i++) {
+            ggml_backend_cann_buffer_types[i] = {
+                /* .iface    = */ ggml_backend_cann_buffer_type_interface,
+                /* .device    = */ ggml_backend_reg_dev_get(ggml_backend_cann_reg(), i),
+                /* .context  = */
+                 new ggml_backend_cann_buffer_type_context{
+                    i, "CANN" + std::to_string(i)},
+            };
+        }
+        ggml_backend_cann_buffer_type_initialized = true;
+    }
+
+    return &ggml_backend_cann_buffer_types[device];
+}
+
+/**
+ * @brief Retrieves the name associated with a CANN host buffer type.
+ *
+ * This function returns the descriptive name associated with the specified
+ * CANN host buffer type context.
+ *
+ * @param buft Pointer to the host buffer type context.
+ * @return Const pointer to the C-style string containing the name.
+ */
+static const char * ggml_backend_cann_host_buffer_type_name(ggml_backend_buffer_type_t buft) {
+    return "CANN_Host";
+
+    GGML_UNUSED(buft);
+}
+
+/**
+ * @brief Retrieves the name associated with a CANN host buffer.
+ *
+ * This function returns the descriptive name associated with the specified
+ * CANN host buffer context.
+ *
+ * @param buft Pointer to the host buffer context.
+ * @return Const pointer to the C-style string containing the name.
+ */
+static const char * ggml_backend_cann_host_buffer_name(ggml_backend_buffer_t buffer) {
+    return "CANN_Host";
+
+    GGML_UNUSED(buffer);
+}
+
+/**
+ * @brief Free resources associated with a CANN host buffer.
+ *
+ * This function frees the resources associated with a CANN host buffer, including
+ * its context.
+ *
+ * @param buffer The CANN host buffer to free.
+ */
+static void ggml_backend_cann_host_buffer_free(ggml_backend_buffer_t buffer) {
+    ACL_CHECK(aclrtFreeHost(buffer->context));
+    delete buffer;
+}
+
 /**
  * @brief Allocates a new CANN host buffer of the specified size.
  *
@@ -1062,6 +1793,266 @@ static void ggml_backend_cann_free(ggml_backend_t backend) {
 
     delete cann_ctx;
     delete backend;
+}
+
+
+/**
+ * @brief Sets tensor data asynchronously in the CANN backend.
+ *
+ * This function asynchronously sets tensor data in the CANN backend.
+ *
+ * @param backend Pointer to the CANN backend structure.
+ * @param tensor Pointer to the tensor structure to set data for.
+ * @param data Pointer to the host data to copy to the tensor.
+ * @param offset Offset in bytes within the host data.
+ * @param size Size of the data to copy in bytes.
+ */
+static void ggml_backend_cann_set_tensor_async(ggml_backend_t backend,
+                                               ggml_tensor *tensor,
+                                               const void *data,
+                                               size_t offset,
+                                               size_t size) {
+    ggml_backend_cann_context *cann_ctx =
+        (ggml_backend_cann_context *)backend->context;
+    ggml_backend_buffer_t buf =
+        tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
+
+    GGML_ASSERT(buf->buft == ggml_backend_cann_buffer_type(cann_ctx->device) &&
+        "unsupported buffer type");
+    GGML_ASSERT(!ggml_is_quantized(tensor->type));
+
+    ggml_cann_async_memcpy(cann_ctx, (char *)tensor->data + offset, data, size,
+        ACL_MEMCPY_HOST_TO_DEVICE);
+}
+
+/**
+ * @brief Gets tensor data asynchronously in the CANN backend.
+ *
+ * This function asynchronously gets tensor data in the CANN backend.
+ *
+ * @param backend Pointer to the CANN backend structure.
+ * @param tensor Pointer to the tensor structure to get data from.
+ * @param data Pointer to the host data to copy from the tensor.
+ * @param offset Offset in bytes within the host data.
+ * @param size Size of the data to copy in bytes.
+ */
+static void ggml_backend_cann_get_tensor_async(
+    ggml_backend_t backend, const ggml_tensor *tensor, void *data,
+    size_t offset, size_t size) {
+    ggml_backend_cann_context *cann_ctx =
+        (ggml_backend_cann_context *)backend->context;
+    ggml_backend_buffer_t buf =
+        tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
+
+    GGML_ASSERT(buf->buft == ggml_backend_cann_buffer_type(cann_ctx->device) &&
+                "unsupported buffer type");
+    GGML_ASSERT(!ggml_is_quantized(tensor->type));
+
+    ggml_cann_async_memcpy(cann_ctx, data, (char *)tensor->data + offset, size,
+        ACL_MEMCPY_DEVICE_TO_HOST);
+
+}
+
+/**
+ * @brief Asynchronously copies tensor data between CANN backends.
+ *
+ * This function copies tensor data asynchronously between two CANN backends. It
+ * checks if both tensors reside in CANN buffers and whether the devices support
+ * peer-to-peer access for direct copying. If not, it returns false.
+ *
+ * @param backend_src Pointer to the source CANN backend structure.
+ * @param backend_dst Pointer to the destination CANN backend structure.
+ * @param src Pointer to the source tensor to copy data from.
+ * @param dst Pointer to the destination tensor to copy data to.
+ * @return true if the copy operation succeeds, false otherwise.
+ */
+static bool ggml_backend_cann_cpy_tensor_async(
+    ggml_backend_t backend_src, ggml_backend_t backend_dst,
+    const ggml_tensor* src, ggml_tensor* dst) {
+    GGML_ASSERT(ggml_backend_is_cann(backend_src) ||
+                ggml_backend_is_cann(backend_dst));
+
+    if (!ggml_backend_buffer_is_cann(src->buffer) ||
+        !ggml_backend_buffer_is_cann(dst->buffer)) {
+        return false;
+    }
+
+    ggml_backend_buffer_t buf_src =
+        src->view_src ? src->view_src->buffer : src->buffer;
+    ggml_backend_buffer_t buf_dst =
+        dst->view_src ? dst->view_src->buffer : dst->buffer;
+
+    ggml_backend_cann_context* cann_ctx_src =
+        (ggml_backend_cann_context*)backend_src->context;
+    ggml_backend_cann_context* cann_ctx_dst =
+        (ggml_backend_cann_context*)backend_dst->context;
+
+    size_t copy_size = ggml_nbytes(dst);
+    if (backend_src != backend_dst) {
+        ggml_backend_cann_buffer_context* buf_ctx_src =
+            (ggml_backend_cann_buffer_context*)buf_src->context;
+        ggml_backend_cann_buffer_context* buf_ctx_dst =
+            (ggml_backend_cann_buffer_context*)buf_dst->context;
+
+        GGML_ASSERT(cann_ctx_src->device == buf_ctx_src->device);
+        GGML_ASSERT(cann_ctx_dst->device == buf_ctx_dst->device);
+
+        int32_t canAccessPeer = 0;
+        ACL_CHECK(aclrtDeviceCanAccessPeer(&canAccessPeer, cann_ctx_src->device,
+                                           cann_ctx_dst->device));
+        if (!canAccessPeer) {
+            return false;
+        }
+
+        // need open both directions for memcpyasync between devices.
+        ggml_cann_set_device(cann_ctx_dst->device);
+        ACL_CHECK(aclrtDeviceEnablePeerAccess(cann_ctx_src->device, 0));
+        ggml_cann_set_device(cann_ctx_src->device);
+        ACL_CHECK(aclrtDeviceEnablePeerAccess(cann_ctx_dst->device, 0));
+
+        // wait for task_queue empty to keep task order.
+        cann_ctx_src->task_queue.wait();
+        ACL_CHECK(aclrtMemcpyAsync(dst->data, copy_size, src->data, copy_size,
+                                   ACL_MEMCPY_DEVICE_TO_DEVICE,
+                                   cann_ctx_src->stream()));
+
+        //TODO: workaround for Event didn`t work here.
+        aclrtSynchronizeStream(cann_ctx_src->stream());
+    } else {
+        // src and dst are on the same backend
+        ACL_CHECK(aclrtMemcpyAsync(dst->data, copy_size, src->data, copy_size,
+                                   ACL_MEMCPY_DEVICE_TO_DEVICE,
+                                   cann_ctx_dst->stream()));
+    }
+
+    return true;
+}
+
+/**
+ * @brief Synchronizes a CANN backend.
+ *
+ * This function synchronizes the specified CANN backend by waiting for all
+ * operations in its associated stream to complete.
+ *
+ * @param backend Pointer to the CANN backend structure to synchronize.
+ */
+static void ggml_backend_cann_synchronize(ggml_backend_t backend) {
+    ggml_backend_cann_context* cann_ctx =
+        (ggml_backend_cann_context*)backend->context;
+    cann_ctx->task_queue.wait();
+    ggml_cann_set_device(cann_ctx->device);
+    ACL_CHECK(aclrtSynchronizeStream(cann_ctx->stream()));
+}
+
+/**
+ * @brief Computes a computational graph using a CANN backend.
+ *
+ * This function computes the operations defined in the computational graph
+ * using the specified CANN backend.
+ *
+ * @param backend Pointer to the CANN backend structure to use for computation.
+ * @param cgraph Pointer to the computational graph structure containing nodes
+ *               representing operations to be computed.
+ * @return enum ggml_status Returns GGML_STATUS_SUCCESS if computation
+ *         completes successfully, otherwise an appropriate error status.
+ */
+static enum ggml_status ggml_backend_cann_graph_compute(
+    ggml_backend_t backend, ggml_cgraph* cgraph) {
+    ggml_backend_cann_context* cann_ctx =
+        (ggml_backend_cann_context*)backend->context;
+
+    ggml_cann_set_device(cann_ctx->device);
+
+    for (int i = 0; i < cgraph->n_nodes; i++) {
+        ggml_tensor* node = cgraph->nodes[i];
+
+        if (ggml_is_empty(node) || node->op == GGML_OP_NONE) {
+            continue;
+        }
+
+        bool ok = ggml_cann_compute_forward(*cann_ctx, node);
+
+        if (!ok) {
+            GGML_LOG_ERROR("%s: error: op not supported %s (%s)\n", __func__,
+                    node->name, ggml_op_name(node->op));
+        }
+        GGML_ASSERT(ok);
+    }
+
+    return GGML_STATUS_SUCCESS;
+}
+
+/**
+ * @brief Checks if the backend buffer type is associated with the CANN backend.
+ *
+ * This function checks whether the provided backend buffer type is associated
+ * with the CANN backend based on the comparison of its name retrieval function
+ * pointer.
+ *
+ * @param buft Pointer to the backend buffer type to check.
+ * @return bool Returns true if the buffer type is associated with the CANN
+ * backend, otherwise false.
+ */
+static bool ggml_backend_buft_is_cann(ggml_backend_buffer_type_t buft) {
+    return buft->iface.get_name == ggml_backend_cann_buffer_type_name;
+}
+
+/**
+ * @brief Determines if a tensor operation should be offloaded to the CANN
+ * backend.
+ *
+ * This function checks if a given tensor operation should be offloaded to the
+ * CANN backend based on the operation type and the size of the tensor. It
+ * returns true if the second dimension (ne[1]) of the tensor is greater than or
+ * equal to the minimum batch size and the operation is not GGML_OP_GET_ROWS.
+ *
+ * @param backend Pointer to the CANN backend.
+ * @param op Pointer to the tensor operation to check.
+ * @return bool Returns true if the operation should be offloaded, otherwise
+ * false.
+ */
+static bool ggml_backend_cann_offload_op(ggml_backend_dev_t dev,
+                                                   const ggml_tensor* op) {
+    const int min_batch_size = 32;
+    GGML_UNUSED(dev);
+
+    return op->ne[1] >= min_batch_size && op->op != GGML_OP_GET_ROWS;
+}
+
+/**
+ * @brief Records an event on the CANN backend stream.
+ *
+ * This function records the given event on the ACL runtime stream associated
+ * with the backend context.
+ *
+ * @param event Pointer to the event structure to be recorded.
+ */
+static void ggml_backend_cann_event_record(ggml_backend_t backend, ggml_backend_event_t event) {
+    ggml_backend_cann_context* cann_ctx =
+        (ggml_backend_cann_context*)backend->context;
+    ACL_CHECK(aclrtRecordEvent((aclrtEvent)event->context, cann_ctx->stream()));
+}
+
+/**
+ * @brief Waits for a recorded event to complete on the CANN backend stream.
+ *
+ * This function makes the given backend wait for the event to complete on its
+ * ACL runtime stream.
+ *
+ * @param backend Pointer to the backend structure.
+ * @param event Pointer to the event structure that the backend needs to wait
+ * for.
+ */
+static void ggml_backend_cann_event_wait(ggml_backend_t backend,
+                                         ggml_backend_event_t event) {
+    ggml_backend_cann_context* cann_ctx =
+        (ggml_backend_cann_context*)backend->context;
+    if (ggml_backend_is_cann(backend)) {
+        ACL_CHECK(aclrtStreamWaitEvent(cann_ctx->stream(),
+                                       (aclrtEvent)event->context));
+    } else {
+        GGML_ABORT("fatal error");
+    }
 }
 
 /**
