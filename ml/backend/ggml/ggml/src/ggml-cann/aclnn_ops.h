@@ -945,3 +945,181 @@ void ggml_cann_release_resources(ggml_backend_cann_context & ctx, Args &&... arg
         ctx.task_queue.submit_task(std::move(task));
     }
 }
+
+/**
+ * @brief Performs an asynchronous memory copy operation, optionally deferred via task submission.
+ *
+ * @param ctx Backend context containing stream and async configuration.
+ * @param dst Destination memory address.
+ * @param src Source memory address.
+ * @param len Size of memory to copy (in bytes).
+ * @param kind Type of memory copy (host-to-device, device-to-host, etc).
+ */
+inline void ggml_cann_async_memcpy(ggml_backend_cann_context & ctx, void * dst,
+                                   const void * src, size_t len, aclrtMemcpyKind kind) {
+    if (ctx.async_mode) {
+        auto task = std::make_unique<async_memcpy_task>(dst, const_cast<void *>(src), len, kind, ctx.stream());
+        ctx.task_queue.submit_task(std::move(task));
+    } else {
+        ACL_CHECK(aclrtMemcpyAsync(dst, len, src, len, kind, ctx.stream()));
+    }
+}
+
+inline void ggml_cann_async_memcpy(ggml_backend_cann_context * ctx, void * dst,
+                                   const void * src, size_t len, aclrtMemcpyKind kind) {
+    if (ctx->async_mode) {
+        auto task = std::make_unique<async_memcpy_task>(dst, const_cast<void *>(src), len, kind, ctx->stream());
+        ctx->task_queue.submit_task(std::move(task));
+    } else {
+        ACL_CHECK(aclrtMemcpyAsync(dst, len, src, len, kind, ctx->stream()));
+    }
+}
+
+/**
+ * @brief Performs an asynchronous memory set operation, optionally deferred via task submission.
+ *
+ * @param ctx Backend context containing stream and async configuration.
+ * @param buffer Memory buffer to be set.
+ * @param size Size of the memory buffer (in bytes).
+ * @param value Value to set in the buffer.
+ */
+inline void ggml_cann_async_memset(ggml_backend_cann_context & ctx, void * buffer,
+                                   size_t size, int value) {
+    if (ctx.async_mode) {
+        auto task = std::make_unique<async_memset_task>(buffer, size, value, ctx.stream());
+        ctx.task_queue.submit_task(std::move(task));
+    } else {
+        ACL_CHECK(aclrtMemsetAsync(buffer, size, value, size, ctx.stream()));
+    }
+}
+
+/**
+ * @brief   Performs sparse expert-based matrix multiplication using the CANN backend.
+ *
+ * @details This function implements a MoE-style batched matrix multiplication, where each input token
+ *          is routed to one or more experts, and each expert corresponds to a specific [D, M] weight matrix
+ *          in the source tensor `src0`. The routing indices are provided via the `ids` tensor.
+ *
+ *          For each token (from `src1`), the function selects the corresponding expert(s) as specified by `ids`,
+ *          performs the matrix multiplication with the selected expert's weight submatrix (from `src0`),
+ *          and stores the results in `dst`. This operation is optimized and executed on the CANN backend.
+ *
+ *          Dimensions:
+ *              - src0: [D, M, A, 1], where A is the number of experts
+ *              - src1: [D, B, N, 1], where N is batch size and B is the slot count per sample
+ *              - ids : [K, N],       where K is the number of experts each token is routed to
+ *              - dst : [M, K, N, 1], output tensor storing the result of expert × token multiplication
+ *
+ *          The function handles two main modes:
+ *              - If `ne12 == 1`, a simpler per-token loop is used.
+ *              - TODO: If `ne12 > 1`, grouped multiplication and memory copying is used for efficiency.
+ *
+ * @param ctx The CANN context used for operations.
+ * @param dst The destination tensor where the expert-weighted token outputs are stored.
+ *            Expected to be of shape [M, K, N, 1].
+ */
+void ggml_cann_mul_mat_id(ggml_backend_cann_context& ctx, ggml_tensor* dst);
+
+/**
+ * @brief Applies a element-wise operation to two input tensors using the CANN
+ * backend.
+ *
+ * This templated function takes a binary operator and applies it to two source
+ * tensors
+ * associated with the destination tensor. The function handles broadcasting as
+ * needed.
+ *
+ * @tparam binary_op A callable object (e.g., lambda or function pointer) representing
+ *         the binary operation to be performed. It must take three arguments:
+ *         (ggml_backend_cann_context&, aclTensor*, aclTensor*, aclTensor*).
+ *
+ * @param ctx The CANN backend context used to manage execution and resources.
+ * @param dst The destination tensor.
+ */
+template <auto binary_op>
+void ggml_cann_binary_op(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    ggml_tensor* src0 = dst->src[0];
+    ggml_tensor* src1 = dst->src[1];
+
+    aclTensor* acl_src0;
+    aclTensor* acl_src1;
+    aclTensor* acl_dst;
+
+    // Need bcast
+    bcast_shape(src0, src1, dst, &acl_src0, &acl_src1, &acl_dst);
+    binary_op(ctx, acl_src0, acl_src1, acl_dst);
+
+    ggml_cann_release_resources(ctx, acl_src0, acl_src1, acl_dst);
+}
+
+
+/**
+ * @brief Applies a unary operation to an input tensor using the CANN backend.
+ *
+ * This templated function applies a unary operator to the source tensor of `dst`
+ * and stores the result in the destination tensor.
+ *
+ * @tparam unary_op A callable with the signature:
+ *         void(ggml_backend_cann_context&, aclTensor*, aclTensor*)
+ *         where the first aclTensor is the source and the second is the destination.
+ * @param ctx The CANN backend context for managing resources and execution.
+ * @param dst The destination tensor. Its src[0] is treated as the input tensor.
+ */
+template <void unary_op(ggml_backend_cann_context&, aclTensor*, aclTensor*)>
+    void ggml_cann_unary_op(ggml_backend_cann_context& ctx, ggml_tensor* dst) {
+    ggml_tensor* src = dst->src[0];
+
+    aclTensor* acl_src = ggml_cann_create_tensor(src);
+    aclTensor* acl_dst = ggml_cann_create_tensor(dst);
+
+    unary_op(ctx, acl_src, acl_dst);
+    ggml_cann_release_resources(ctx, acl_src, acl_dst);
+}
+
+/**
+ * @brief   Applies a unary operation to a ggml tensor using the CANN backend.
+ *
+ * @details This function performs a unary operation on the input tensor using
+ * a user-provided lambda or callable object `unary_op`, which accepts the CANN
+ * context and two ACL tensors (source and destination). Internally, this function
+ * creates ACL representations of the ggml tensors and invokes the unary operation.
+ * The result is stored in the destination tensor `dst`. This utility abstracts the
+ * common boilerplate of tensor conversion and cleanup when implementing unary ops.
+ *
+ * @param unary_op A callable that performs the unary operation using CANN APIs.
+ * @param ctx The CANN context used for operations.
+ * @param dst The destination tensor where the result will be stored.
+ *            The source tensor is retrieved from `dst->src[0]`.
+ */
+void ggml_cann_unary_op(
+    std::function<void(ggml_backend_cann_context&, aclTensor*, aclTensor*)> unary_op,
+    ggml_backend_cann_context& ctx, ggml_tensor* dst);
+
+/**
+ * @brief Helper macro to invoke a unary ACL operation using ggml_cann_unary_op.
+ *
+ * This macro defines an inline lambda wrapping a specific ACL operation name,
+ * and passes it to the templated ggml_cann_unary_op function. It simplifies
+ * calling unary ops by hiding the lambda boilerplate.
+ *
+ * Internally, the lambda will call:
+ * @code
+ * GGML_CANN_CALL_ACLNN_OP(ctx, OP_NAME, acl_src, acl_dst);
+ * @endcode
+ *
+ * @param OP_NAME The name of the ACL unary operator to invoke via GGML_CANN_CALL_ACLNN_OP.
+ *
+ * @see ggml_cann_unary_op
+ * @see GGML_CANN_CALL_ACLNN_OP
+ */
+#define GGML_CANN_CALL_UNARY_OP(OP_NAME)                              \
+    do {                                                              \
+        auto lambda = [](ggml_backend_cann_context& ctx,              \
+            aclTensor* acl_src,                                       \
+            aclTensor* acl_dst) {                                     \
+            GGML_CANN_CALL_ACLNN_OP(ctx, OP_NAME, acl_src, acl_dst);  \
+        };                                                            \
+        ggml_cann_unary_op(lambda, ctx, dst);                         \
+    }                                                                 \
+    while (0)
+#endif  // CANN_ACLNN_OPS
