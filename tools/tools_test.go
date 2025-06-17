@@ -152,6 +152,13 @@ func TestParser(t *testing.T) {
 			},
 		},
 		{
+			name:    "missing args",
+			inputs:  []string{`<tool_call>{"name": "get_conditions"}</tool_call>`},
+			content: "",
+			tmpl:    qwen,
+			calls:   nil,
+		},
+		{
 			name:    "text before tool call",
 			inputs:  []string{`Let me check the weather. <tool_call>{"name": "get_temperature", "arguments": {"city": "New York"}}</tool_call>`},
 			content: "Let me check the weather. ",
