@@ -929,21 +929,25 @@ func TestFindArguments(t *testing.T) {
 		name   string
 		buffer []byte
 		want   map[string]any
+		tool   api.Tool
 	}{
 		{
 			name:   "empty string",
 			buffer: []byte{},
 			want:   nil,
+			tool:   tool,
 		},
 		{
 			name:   "whitespace only",
 			buffer: []byte("   \n\t  "),
 			want:   nil,
+			tool:   tool,
 		},
 		{
 			name:   "unbalanced braces - missing closing",
 			buffer: []byte(`{"format": "fahrenheit", "location": "San Francisco"`),
 			want:   nil,
+			tool:   tool,
 		},
 		{
 			name:   "unbalanced braces - extra closing",
@@ -951,11 +955,13 @@ func TestFindArguments(t *testing.T) {
 			want: map[string]any{
 				"format": "fahrenheit",
 			},
+			tool: tool,
 		},
 		{
 			name:   "invalid JSON",
 			buffer: []byte(`{format: fahrenheit, location: "San Francisco"}`),
 			want:   nil,
+			tool:   tool,
 		},
 		{
 			name:   "valid json",
@@ -964,6 +970,7 @@ func TestFindArguments(t *testing.T) {
 				"format":   "fahrenheit",
 				"location": "San Francisco, CA",
 			},
+			tool: tool,
 		},
 		{
 			name:   "valid arguments with special tokens",
@@ -972,6 +979,7 @@ func TestFindArguments(t *testing.T) {
 				"format":   "fahrenheit",
 				"location": "San Francisco, CA",
 			},
+			tool: tool,
 		},
 		{
 			name:   "valid arguments in array",
@@ -980,6 +988,7 @@ func TestFindArguments(t *testing.T) {
 				"format":   "fahrenheit",
 				"location": "San Francisco, CA",
 			},
+			tool: tool,
 		},
 		{
 			name:   "nested deep",
@@ -988,6 +997,7 @@ func TestFindArguments(t *testing.T) {
 				"format":   "fahrenheit",
 				"location": "San Francisco, CA",
 			},
+			tool: tool,
 		},
 		{
 			name:   "one arg",
@@ -995,6 +1005,7 @@ func TestFindArguments(t *testing.T) {
 			want: map[string]any{
 				"location": "San Francisco, CA",
 			},
+			tool: tool,
 		},
 		{
 			name:   "two args",
@@ -1003,11 +1014,13 @@ func TestFindArguments(t *testing.T) {
 				"location": "San Francisco, CA",
 				"format":   "fahrenheit",
 			},
+			tool: tool,
 		},
 		{
 			name:   "no args",
 			buffer: []byte(`{"name": "say_hello"}`),
 			want:   nil,
+			tool:   tool2,
 		},
 		{
 			name:   "deepseek",
@@ -1015,6 +1028,7 @@ func TestFindArguments(t *testing.T) {
 			want: map[string]any{
 				"location": "Tokyo",
 			},
+			tool: tool,
 		},
 	}
 
