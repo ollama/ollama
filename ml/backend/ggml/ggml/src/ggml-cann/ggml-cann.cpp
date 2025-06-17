@@ -1983,6 +1983,245 @@ static enum ggml_status ggml_backend_cann_graph_compute(
 }
 
 /**
+ * @brief Checks if the CANN backend supports a specific operation.
+ *
+ * This function checks whether the specified operation is supported by the
+ * CANN backend.
+ *
+ * @param backend Pointer to the CANN backend structure to check support for
+ *                the operation.
+ * @param op Pointer to the tensor representing the operation to check.
+ * @return bool Returns true if the operation is supported by the backend,
+ *              otherwise false.
+ */
+static bool ggml_backend_cann_supports_op(ggml_backend_dev_t dev,
+                                                    const ggml_tensor* op) {
+    switch (op->op) {
+        case GGML_OP_UNARY:
+            switch (ggml_get_unary_op(op)) {
+                case GGML_UNARY_OP_ABS:
+                case GGML_UNARY_OP_NEG:
+                case GGML_UNARY_OP_GELU:
+                case GGML_UNARY_OP_SILU:
+                case GGML_UNARY_OP_RELU:
+                case GGML_UNARY_OP_SIGMOID:
+                case GGML_UNARY_OP_HARDSIGMOID:
+                case GGML_UNARY_OP_HARDSWISH:
+                case GGML_UNARY_OP_GELU_QUICK:
+                case GGML_UNARY_OP_TANH:
+                case GGML_UNARY_OP_EXP:
+                case GGML_UNARY_OP_ELU:
+                case GGML_UNARY_OP_SGN:
+                case GGML_UNARY_OP_STEP:
+                    return true;
+                default:
+                    return false;
+            }
+        case GGML_OP_MUL_MAT: {
+            switch (op->src[0]->type) {
+                case GGML_TYPE_F16:
+                case GGML_TYPE_F32:
+                    return true;
+                case GGML_TYPE_Q8_0:
+                case GGML_TYPE_Q4_0:
+#ifdef ASCEND_310P
+                    // Q4 && Q8 per group is not suppor on 310p device
+                    return false;
+#endif
+                    // only support contiguous for quantized types.
+                    return ggml_is_contiguous(op->src[0]) &&
+                            ggml_is_contiguous(op->src[1]);
+                default:
+                    return false;
+            }
+        }
+        case GGML_OP_MUL_MAT_ID:
+            switch (op->src[0]->type) {
+                case GGML_TYPE_F16:
+                case GGML_TYPE_F32:
+                    return true;
+                case GGML_TYPE_Q8_0:
+                case GGML_TYPE_Q4_0:
+#ifdef ASCEND_310P
+                    // Q4 && Q8 per group is not suppor on 310p device
+                    return false;
+#endif
+                    // only support contiguous for quantized types.
+                    return ggml_is_contiguous(op->src[0]) &&
+                            ggml_is_contiguous(op->src[1]);
+                default:
+                    return false;
+            }
+        // embedding
+        case GGML_OP_GET_ROWS: {
+            switch (op->src[0]->type) {
+                case GGML_TYPE_F32:
+                case GGML_TYPE_F16:
+                case GGML_TYPE_Q8_0:
+                    return true;
+                default:
+                    return false;
+            }
+        } break;
+        case GGML_OP_CPY: {
+            ggml_tensor *src = op->src[0];
+            if ((op->type != GGML_TYPE_F32 && op->type != GGML_TYPE_F16) ||
+                  (src->type != GGML_TYPE_F32 &&
+                    src->type != GGML_TYPE_F16)) {
+                // only support F32 and F16.
+                return false;
+            }
+
+            if (!ggml_are_same_shape(op, src) && !ggml_is_contiguous(op)) {
+                // unsupport dst is not contiguous.
+                return false;
+            }
+
+            return true;
+        } break;
+        case GGML_OP_CONT: {
+            // TODO: support GGML_TYPE_BF16
+            switch (op->src[0]->type) {
+                case GGML_TYPE_F32:
+                case GGML_TYPE_F16:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+        case GGML_OP_ROPE: {
+            // TODO: with ops-test v == 1
+            float ext_factor = 0.0f;
+            memcpy(&ext_factor, (const float *) op->op_params + 7, sizeof(float));
+            // TODO: n_dims <= ne0
+            if (op->src[0]->ne[0] != op->op_params[1]) {
+                return false;
+            }
+            // TODO: ext_factor != 0
+            if (ext_factor != 0) {
+                return false;
+            }
+
+            const int mode = ((const int32_t *) op->op_params)[2];
+            if (mode & GGML_ROPE_TYPE_MROPE) {
+                return false;
+            }
+            if (mode & GGML_ROPE_TYPE_VISION) {
+                return false;
+            }
+
+            if(!ggml_is_contiguous(op->src[0])){
+                return false;
+            }
+            return true;
+        }
+        case GGML_OP_UPSCALE: {
+            // aclnnUpsampleNearest2dGetWorkspaceSize not support
+            // selfDimN[2]/outDimN[2] or selfDimC[3]/outDimC[3] not equal
+            if (op->src[0]->ne[2] * op->ne[3] != op->src[0]->ne[3] * op->ne[2]) {
+                return false;
+            }
+            if (op->op_params[0] != GGML_SCALE_MODE_NEAREST) {
+                return false;
+            }
+            return true;
+        }
+        case GGML_OP_POOL_2D: {
+            const int32_t * opts = (const int32_t *) op->op_params;
+#ifdef ASCEND_310P
+            enum ggml_op_pool opt = static_cast<ggml_op_pool>(opts[0]);
+            if(opt == GGML_OP_POOL_MAX){
+                return false;
+            }
+#endif
+            const int       k0   = opts[1];
+            const int       k1   = opts[2];
+            const int       p0   = opts[5];
+            const int       p1   = opts[6];
+            // value of paddingH should be at most half of kernelH
+            // value of paddingW should be at most half of kernelW
+            return (p0 <= (k0 / 2)) && (p1 <= (k1 / 2));
+        }
+        case GGML_OP_SUM:
+        case GGML_OP_DUP:
+        case GGML_OP_IM2COL:
+        case GGML_OP_CONCAT:
+        case GGML_OP_REPEAT:
+        case GGML_OP_NONE:
+        case GGML_OP_RESHAPE:
+        case GGML_OP_VIEW:
+        case GGML_OP_PERMUTE:
+        case GGML_OP_TRANSPOSE:
+        case GGML_OP_NORM:
+        case GGML_OP_ADD:
+        case GGML_OP_ADD1:
+        case GGML_OP_SUB:
+        case GGML_OP_MUL:
+        case GGML_OP_DIV:
+        case GGML_OP_RMS_NORM:
+        case GGML_OP_SCALE:
+        case GGML_OP_SQR:
+        case GGML_OP_SQRT:
+        case GGML_OP_CLAMP:
+        case GGML_OP_DIAG_MASK_INF:
+        case GGML_OP_SOFT_MAX:
+        case GGML_OP_SUM_ROWS:
+        case GGML_OP_ARGSORT:
+        case GGML_OP_ACC:
+        case GGML_OP_GROUP_NORM:
+        case GGML_OP_PAD:
+        case GGML_OP_ARANGE:
+        case GGML_OP_TIMESTEP_EMBEDDING:
+        case GGML_OP_LEAKY_RELU:
+        case GGML_OP_ARGMAX:
+        case GGML_OP_COS:
+        case GGML_OP_SIN:
+        case GGML_OP_CONV_TRANSPOSE_1D:
+        case GGML_OP_LOG:
+        case GGML_OP_MEAN:
+        case GGML_OP_PAD_REFLECT_1D:
+        case GGML_OP_COUNT_EQUAL:
+            return true;
+        case GGML_OP_FLASH_ATTN_EXT:{
+            // derived from [ggml-cuda.cu]
+            if(op->src[1]->type != GGML_TYPE_F16 || op->src[2]->type != GGML_TYPE_F16){
+                return false;
+            }
+            if(op->src[1]->type != GGML_TYPE_F16 && op->src[1]->type != GGML_TYPE_F32 && op->src[1]->type != GGML_TYPE_BF16){
+                return false;
+            }
+            if(op->type != GGML_TYPE_F16 && op->type != GGML_TYPE_F32 && op->type != GGML_TYPE_BF16){
+                return false;
+            }
+            if (op->src[1]->ne[0] != op->src[2]->ne[0]) {
+                // different head sizes of K and V are not supported yet
+                return false;
+            }
+            if (op->src[0]->ne[0] == 192) {
+                return false;
+            }
+            if (op->src[0]->ne[0] == 576) {
+                // DeepSeek MLA
+                return false;
+            }
+            if (op->src[0]->ne[3] != 1) {
+                return false;
+            }
+            float logitSoftcap = 0.0f;
+            memcpy(&logitSoftcap,  (float*)op->op_params + 2, sizeof(float));
+            if(logitSoftcap != 0.0f) {
+                return false;
+            }
+            return true;
+        }
+        default:
+            return false;
+    }
+
+    GGML_UNUSED(dev);
+}
+
+/**
  * @brief Checks if the backend buffer type is associated with the CANN backend.
  *
  * This function checks whether the provided backend buffer type is associated
