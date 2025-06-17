@@ -182,11 +182,13 @@ func (p *Parser) findArguments() (map[string]any, int) {
 		}
 
 		if c == '}' {
-			braces--
-			if braces == 0 && start != -1 {
-				end = i + 1
-				object = p.buffer[start:end]
-				break
+			if start != -1 {
+				braces--
+				if braces == 0 {
+					end = i + 1
+					object = p.buffer[start:end]
+					break
+				}
 			}
 		}
 	}

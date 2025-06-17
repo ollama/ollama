@@ -217,7 +217,7 @@ func TestParser(t *testing.T) {
 			},
 		},
 		{
-			name:    "two tool calls",
+			name:    "qwen two tool calls",
 			inputs:  []string{`Okay, let's call both tools! <tool_call>{"name": "get_temperature", "arguments": {"city": "London", "format": "fahrenheit"}}</tool_call><tool_call>{"name": "get_conditions", "arguments": {"location": "Tokyo"}}</tool_call>`},
 			content: "Okay, let's call both tools! ",
 			tmpl:    qwen,
@@ -230,6 +230,29 @@ func TestParser(t *testing.T) {
 							"city":   "London",
 							"format": "fahrenheit",
 						},
+					},
+				},
+				{
+					Function: api.ToolCallFunction{
+						Index: 1,
+						Name:  "get_conditions",
+						Arguments: api.ToolCallFunctionArguments{
+							"location": "Tokyo",
+						},
+					},
+				},
+			},
+		},
+		{
+			name:    "qwen two tool calls one with no args",
+			inputs:  []string{`Let me check the weather. <tool_call>{"name": "hello"}</tool_call><tool_call>{"name": "get_conditions", "arguments": {"location": "Tokyo"}}</tool_call>`},
+			content: "Let me check the weather. ",
+			tmpl:    qwen,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "hello",
 					},
 				},
 				{
@@ -411,6 +434,31 @@ func TestParser(t *testing.T) {
 			inputs: []string{
 				"[",
 				"{",
+				"\"name\": \"get_conditions\", ",
+				"\"arguments\": {",
+				"\"location\": \"Tokyo\"",
+				"}",
+				"}",
+			},
+			content: "",
+			tmpl:    list,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_conditions",
+						Arguments: api.ToolCallFunctionArguments{
+							"location": "Tokyo",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "list invalid",
+			inputs: []string{
+				"[",
+				"{",
 				"\"name\": \"search\", ",
 				"\"arguments\": {",
 				"\"query\": \"What is the capital of Canada?\"",
@@ -420,6 +468,33 @@ func TestParser(t *testing.T) {
 			content: "",
 			tmpl:    list,
 			calls:   nil,
+		},
+		{
+			name: "list trailing ]",
+			inputs: []string{
+				"[",
+				"{",
+				"\"name\": \"get_conditions\", ",
+				"\"arguments\": {",
+				"\"location\": \"Tokyo\"",
+				"}",
+				"}",
+				"]",
+				"]",
+			},
+			content: "",
+			tmpl:    list,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_conditions",
+						Arguments: api.ToolCallFunctionArguments{
+							"location": "Tokyo",
+						},
+					},
+				},
+			},
 		},
 		{
 			name: "list not a tool call",
