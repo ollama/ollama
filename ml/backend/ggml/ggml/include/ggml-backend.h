@@ -152,6 +152,7 @@ extern "C" {
     struct ggml_backend_dev_props {
         const char * name;
         const char * description;
+        const char * uuid;
         size_t memory_free;
         size_t memory_total;
         enum ggml_backend_dev_type type;
@@ -303,6 +304,12 @@ extern "C" {
     GGML_API int                  ggml_backend_sched_get_n_copies(ggml_backend_sched_t sched);
 
     GGML_API size_t               ggml_backend_sched_get_buffer_size(ggml_backend_sched_t sched, ggml_backend_t backend);
+
+    struct ggml_backend_buffer_status {
+        size_t size;
+        bool allocated;
+    };
+    GGML_API struct ggml_backend_buffer_status ggml_backend_sched_get_attempted_buffer_size(ggml_backend_sched_t sched, ggml_backend_t backend);
 
     GGML_API void                 ggml_backend_sched_set_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node, ggml_backend_t backend);
     GGML_API ggml_backend_t       ggml_backend_sched_get_tensor_backend(ggml_backend_sched_t sched, struct ggml_tensor * node);

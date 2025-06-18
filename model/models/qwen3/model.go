@@ -66,9 +66,9 @@ type MLP interface {
 
 type sparse struct {
 	Router *nn.Linear `gguf:"ffn_gate_inp"`
-	Gate   ml.Tensor  `gguf:"ffn_gate_exps.weight"`
-	Up     ml.Tensor  `gguf:"ffn_up_exps.weight"`
-	Down   ml.Tensor  `gguf:"ffn_down_exps.weight"`
+	Gate   *nn.Linear `gguf:"ffn_gate_exps"`
+	Up     *nn.Linear `gguf:"ffn_up_exps"`
+	Down   *nn.Linear `gguf:"ffn_down_exps"`
 }
 
 func (mlp *sparse) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options) ml.Tensor {
@@ -87,13 +87,13 @@ func (mlp *sparse) Forward(ctx ml.Context, hiddenStates ml.Tensor, opts *Options
 
 	hiddenStates = hiddenStates.Reshape(ctx, hiddenStates.Dim(0), 1, hiddenStates.Dim(1))
 
-	upStates := mlp.Up.MulmatID(ctx, hiddenStates, selectedExperts)
+	upStates := mlp.Up.Weight.MulmatID(ctx, hiddenStates, selectedExperts)
 
-	hiddenStates = mlp.Gate.MulmatID(ctx, hiddenStates, selectedExperts)
+	hiddenStates = mlp.Gate.Weight.MulmatID(ctx, hiddenStates, selectedExperts)
 	hiddenStates = hiddenStates.SILU(ctx)
 	hiddenStates = hiddenStates.Mul(ctx, upStates)
 
-	experts := mlp.Down.MulmatID(ctx, hiddenStates, selectedExperts)
+	experts := mlp.Down.Weight.MulmatID(ctx, hiddenStates, selectedExperts)
 	experts = experts.Mul(ctx, routingWeights)
 
 	nextStates := experts.View(ctx, 0, experts.Dim(0), experts.Stride(2), experts.Dim(2))
@@ -156,10 +156,7 @@ type Model struct {
 
 // Forward implements model.Model.
 func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
-	positions, err := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
-	if err != nil {
-		return nil, err
-	}
+	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
 
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
 
@@ -168,10 +165,7 @@ func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 
 		var outputs ml.Tensor
 		if i == len(m.Layers)-1 {
-			outputs, err = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
-			if err != nil {
-				return nil, err
-			}
+			outputs = ctx.Input().FromIntSlice(batch.Outputs, len(batch.Outputs))
 		}
 
 		hiddenStates = layer.Forward(ctx, hiddenStates, positions, outputs, m.Cache, m.Options)
