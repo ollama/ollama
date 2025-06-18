@@ -57,9 +57,8 @@ type Scheduler struct {
 var defaultModelsPerGPU = 3
 
 // Default automatic value for parallel setting
-// Model will still need to fit in VRAM.  If this setting won't fit
-// we'll back off down to 1 to try to get it to fit
-var defaultParallel = 2
+// Model will still need to fit in VRAM.
+var defaultParallel = 1
 
 var ErrMaxQueue = errors.New("server busy, please try again.  maximum pending requests exceeded")
 

@@ -20,12 +20,12 @@ Please refer to the [GPU docs](./gpu.md).
 
 ## How can I specify the context window size?
 
-By default, Ollama uses a context window size of 4096 tokens. 
+By default, Ollama uses a context window size of 8192 tokens. 
 
-This can be overridden with the `OLLAMA_CONTEXT_LENGTH` environment variable. For example, to set the default context window to 8K, use: 
+This can be overridden with the `OLLAMA_CONTEXT_LENGTH` environment variable. For example, to set the default context window to 4K, use: 
 
 ```shell
-OLLAMA_CONTEXT_LENGTH=8192 ollama serve
+OLLAMA_CONTEXT_LENGTH=4096 ollama serve
 ```
 
 To change this when using `ollama run`, use `/set parameter`:
@@ -301,7 +301,7 @@ Parallel request processing for a given model results in increasing the context 
 The following server settings may be used to adjust how Ollama handles concurrent requests on most platforms:
 
 - `OLLAMA_MAX_LOADED_MODELS` - The maximum number of models that can be loaded concurrently provided they fit in available memory.  The default is 3 * the number of GPUs or 3 for CPU inference.
-- `OLLAMA_NUM_PARALLEL` - The maximum number of parallel requests each model will process at the same time.  The default will auto-select either 4 or 1 based on available memory.
+- `OLLAMA_NUM_PARALLEL` - The maximum number of parallel requests each model will process at the same time.  The default is 1.
 - `OLLAMA_MAX_QUEUE` - The maximum number of requests Ollama will queue when busy before rejecting additional requests. The default is 512
 
 Note: Windows with Radeon GPUs currently default to 1 model maximum due to limitations in ROCm v5.7 for available VRAM reporting.  Once ROCm v6.2 is available, Windows Radeon will follow the defaults above.  You may enable concurrent model loads on Radeon on Windows, but ensure you don't load more models than will fit into your GPUs VRAM.
@@ -333,3 +333,7 @@ The currently available K/V cache quantization types are:
 How much the cache quantization impacts the model's response quality will depend on the model and the task.  Models that have a high GQA count (e.g. Qwen2) may see a larger impact on precision from quantization than models with a low GQA count.
 
 You may need to experiment with different quantization types to find the best balance between memory usage and quality.
+
+## Why did Ollama get much slower on my small GPU
+
+Ollama has increased the default context size to 8192, which can result in fewer layers loading on small VRAM GPUs.  If `ollama ps` shows a model no longer fits fully on your GPU, use `OLLAMA_CONTEXT_LENGTH` set to a lower value.
