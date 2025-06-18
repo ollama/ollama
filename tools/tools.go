@@ -18,9 +18,8 @@ const (
 )
 
 type Parser struct {
-	tag        string
-	names      []string
-	properties []string
+	tag   string
+	tools []api.Tool
 
 	state  toolsState
 	buffer []byte
@@ -34,15 +33,10 @@ func NewParser(tmpl *template.Template, tools []api.Tool) *Parser {
 }
 
 func NewParserWithTag(tools []api.Tool, tag string) *Parser {
-	var p Parser
-	for _, t := range tools {
-		p.names = append(p.names, t.Function.Name)
-		for r := range t.Function.Parameters.Properties {
-			p.properties = append(p.properties, r)
-		}
+	return &Parser{
+		tag:   tag,
+		tools: tools,
 	}
-	p.tag = tag
-	return &p
 }
 
 // Add processes a string input to parse tool calls and content that
@@ -121,36 +115,40 @@ func (p *Parser) findTag() (int, bool) {
 // parseToolCall finds the next complete tool call in the buffer
 // incrementing n and advancing the buffer.
 func (p *Parser) parseToolCall() *api.ToolCall {
-	var name string
-	var args map[string]any
+	var tool *api.Tool
 	var end int = len(p.buffer)
+	var i int
 
 	// find tool name
-	var i int
-	for _, n := range p.names {
+	for _, t := range p.tools {
+		n := t.Function.Name
 		if i = bytes.Index(p.buffer, []byte(n)); i != -1 {
 			if i+len(n) < end {
-				name = n
+				tool = &t
 				end = i + len(n)
 			}
 		}
 	}
 
-	if name == "" {
+	if tool == nil {
 		return nil
 	}
 
-	if args, i = p.findArguments(); args == nil {
-		return nil
-	}
+	// only look for arguments if the tool has parameters
+	args := map[string]any{}
+	if len(tool.Function.Parameters.Properties) > 0 {
+		if args, i = p.findArguments(*tool); args == nil {
+			return nil
+		}
 
-	if i > end {
-		end = i
+		if i > end {
+			end = i
+		}
 	}
 
 	tc := &api.ToolCall{
 		Function: api.ToolCallFunction{
-			Name:      name,
+			Name:      tool.Function.Name,
 			Arguments: args,
 			Index:     p.n,
 		},
@@ -162,10 +160,14 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 }
 
 // findArguments returns the first object that appears to be
-// arguments and the position where the arguments end, returning nil and 0 if
-// an invalid JSON object or non-arguments object is found first
-func (p *Parser) findArguments() (map[string]any, int) {
+// arguments for the provided tool, returning nil
+func (p *Parser) findArguments(tool api.Tool) (map[string]any, int) {
 	if len(p.buffer) == 0 {
+		return nil, 0
+	}
+
+	// no arguments to parse
+	if len(tool.Function.Parameters.Properties) == 0 {
 		return nil, 0
 	}
 
@@ -184,11 +186,13 @@ func (p *Parser) findArguments() (map[string]any, int) {
 		}
 
 		if c == '}' {
-			braces--
-			if braces == 0 && start != -1 {
-				end = i + 1
-				object = p.buffer[start:end]
-				break
+			if start != -1 {
+				braces--
+				if braces == 0 {
+					end = i + 1
+					object = p.buffer[start:end]
+					break
+				}
 			}
 		}
 	}
@@ -206,24 +210,27 @@ func (p *Parser) findArguments() (map[string]any, int) {
 
 	var find func(obj any) map[string]any
 	find = func(obj any) map[string]any {
-		switch v := obj.(type) {
+		switch obj := obj.(type) {
 		case map[string]any:
-			// check if the object keys are valid tool properties
-			// TODO (jmorganca): check only sets of properties that
-			// go together instead of the entire set
-			for _, prop := range p.properties {
-				if _, exists := v[prop]; exists {
-					return v
+			found := true
+			for key := range obj {
+				if _, exists := tool.Function.Parameters.Properties[key]; !exists {
+					found = false
+					break
 				}
 			}
 
-			for _, value := range v {
+			if found {
+				return obj
+			}
+
+			for _, value := range obj {
 				if result := find(value); result != nil {
 					return result
 				}
 			}
 		case []any:
-			for _, item := range v {
+			for _, item := range obj {
 				if result := find(item); result != nil {
 					return result
 				}
