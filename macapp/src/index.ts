@@ -7,6 +7,7 @@ import * as path from 'path'
 
 import { v4 as uuidv4 } from 'uuid'
 import { installed } from './install'
+import { APP_DISPLAY_NAME } from './utils'
 
 require('@electron/remote/main').initialize()
 
@@ -123,7 +124,7 @@ function updateTray() {
     tray = new Tray(trayIconPath())
   }
 
-  tray.setToolTip(updateAvailable ? 'An update is available' : 'Ollama')
+  tray.setToolTip(updateAvailable ? 'An update is available' : APP_DISPLAY_NAME)
   tray.setContextMenu(menu)
   tray.setImage(trayIconPath())
 
@@ -223,7 +224,7 @@ function init() {
         const chosen = dialog.showMessageBoxSync({
           type: 'question',
           buttons: ['Move to Applications', 'Do Not Move'],
-          message: 'Ollama works best when run from the Applications directory.',
+          message: `${APP_DISPLAY_NAME} works best when run from the Applications directory.`,
           defaultId: 0,
           cancelId: 1,
         })
@@ -236,8 +237,7 @@ function init() {
                   dialog.showMessageBoxSync({
                     type: 'info',
                     message: 'Cannot move to Applications directory',
-                    detail:
-                      'Another version of Ollama is currently running from your Applications directory. Close it first and try again.',
+                    detail: `Another version of ${APP_DISPLAY_NAME} is currently running from your Applications directory. Close it first and try again.`,
                   })
                 }
                 return true
