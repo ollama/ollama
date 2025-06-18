@@ -112,7 +112,11 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 	b.ctx, b.ctxDone = context.WithCancel(ctx)
 	t.Helper()
 
-	p, _ := createBinFile(t, ggml.KV{
+	f, err := os.CreateTemp(t.TempDir(), modelName)
+	require.NoError(t, err)
+	defer f.Close()
+
+	require.NoError(t, ggml.WriteGGUF(f, ggml.KV{
 		"general.architecture":          "llama",
 		"llama.context_length":          uint32(32),
 		"llama.embedding_length":        uint32(4096),
@@ -125,14 +129,14 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 	}, []*ggml.Tensor{
 		{Name: "blk.0.attn.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
 		{Name: "output.weight", Kind: uint32(0), Offset: uint64(0), Shape: []uint64{1, 1, 1, 1}, WriterTo: bytes.NewReader(make([]byte, 32))},
-	})
+	}))
+	require.NoError(t, err)
 
-	model := &Model{Name: modelName, ModelPath: p}
-	f, err := llm.LoadModel(model.ModelPath, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b.f = f
+	fname := f.Name()
+	model := &Model{Name: modelName, ModelPath: fname}
+	b.f, err = llm.LoadModel(model.ModelPath, 0)
+	require.NoError(t, err)
+
 	if duration == nil {
 		duration = &api.Duration{Duration: 5 * time.Millisecond}
 	}
