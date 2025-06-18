@@ -16,11 +16,11 @@ import (
 
 // Host returns the scheme and host. Host can be configured via the OLLAMA_HOST environment variable.
 // Default is scheme "http" and host "127.0.0.1:11434"
-// Default port can be configured via the OLLAMA_PORT environment variable.
+// Default port can be configured via the PORT environment variable.
 func Host() *url.URL {	
 	defaultPort :=  "11434"
 	
-	portFromEnv := Var("OLLAMA_PORT")
+	portFromEnv := strings.TrimSpace(Var("PORT"))
 	if portFromEnv != "" {
 		defaultPort =  portFromEnv
 	}
