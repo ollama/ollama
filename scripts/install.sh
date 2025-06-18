@@ -246,8 +246,12 @@ check_gpu() {
                 amdgpu) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[1002\]' || return 1 ;;
                 mtgpu)  available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[1ED5\]' || return 1 ;;
             esac ;;
+        dmidecode)
+            case $2 in
+                mtgpu)  available dmidecode && $SUDO dmidecode | grep -iE 'AB100|M1000' || return 1 ;;
+            esac ;;
         nvidia-smi) available nvidia-smi || return 1 ;;
-        mthreads-gmi) available mthreads-gmi || return 1 ;;
+        mthreads-*) available $1 || return 1 ;;
     esac
 }
 
@@ -256,12 +260,14 @@ if check_gpu nvidia-smi; then
     exit 0
 fi
 
-if check_gpu mthreads-gmi; then
+if check_gpu mthreads-gmi || check_gpu mthreads-smi; then
     status "MTHREADS GPU installed."
     exit 0
 fi
 
-if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu && ! check_gpu lshw mtgpu; then
+if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && \
+    ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu && \
+    ! check_gpu lshw mtgpu && ! check_gpu dmidecode mtgpu; then
     install_success
     warning "No NVIDIA/AMD/MTHREADS GPU detected. Ollama will run in CPU-only mode."
     exit 0
