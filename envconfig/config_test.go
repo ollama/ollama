@@ -49,6 +49,13 @@ func TestHost(t *testing.T) {
 	}
 }
 
+func TestPortFromVar(t *testing.T) {
+	t.Setenv("OLLAMA_PORT", "8080")
+	if host := Host(); host.String() != "http://127.0.0.1:8081" {
+		t.Errorf("Expected %s, got %s", "http://127.0.0.1:8080", host.String())
+	}
+}
+
 func TestOrigins(t *testing.T) {
 	cases := []struct {
 		value  string
