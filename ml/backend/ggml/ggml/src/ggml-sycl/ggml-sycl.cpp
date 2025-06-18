@@ -54,9 +54,23 @@ int g_ggml_sycl_prioritize_dmmv = 0;
 static ggml_sycl_device_info ggml_sycl_init() {
     ggml_sycl_device_info info = {};
 
-    info.device_count = dpct::dev_mgr::instance().device_count();
-    if (info.device_count == 0) {
-        GGML_LOG_ERROR("%s: failed to initialize: %s\n", GGML_SYCL_NAME, __func__);
+    try {
+        info.device_count = dpct::dev_mgr::instance().device_count();
+        if (info.device_count == 0) {
+            GGML_LOG_ERROR("%s: failed to initialize: %s (%s:%d)\n", GGML_SYCL_NAME, __func__, __FILE__, __LINE__);
+            return info;
+        }
+    } catch (const sycl::exception &e) {
+        GGML_LOG_ERROR("%s: SYCL exception caught during initialization: %s (%s:%d)\n", GGML_SYCL_NAME, e.what(), __FILE__, __LINE__);
+        info.device_count = 0;
+        return info;
+    } catch (const std::exception &e) {
+        GGML_LOG_ERROR("%s: exception caught during initialization: %s (%s:%d)\n", GGML_SYCL_NAME, e.what(), __FILE__, __LINE__);
+        info.device_count = 0;
+        return info;
+    } catch (...) {
+        GGML_LOG_ERROR("%s: unknown exception caught during initialization (%s:%d)\n", GGML_SYCL_NAME, __FILE__, __LINE__);
+        info.device_count = 0;
         return info;
     }
 
@@ -3808,7 +3822,7 @@ bool ggml_backend_is_sycl(ggml_backend_t backend) {
     return backend != NULL && ggml_guid_matches(backend->guid, ggml_backend_sycl_guid());
 }
 
-int ggml_backend_sycl_get_device_count() {
+int ggml_backend_sycl_get_device_count()  {
     return ggml_sycl_info().device_count;
 }
 

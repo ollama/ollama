@@ -808,9 +808,18 @@ func loadSyclMgmt(syclLibPaths []string) (int, *C.sycl_handle_t, string, error) 
 			C.free(unsafe.Pointer(resp.err))
 		} else {
 			err = nil
-			C.sycl_print_sycl_devices(resp.oh)
-			return int(C.sycl_get_device_count(resp.oh)), &resp.oh, libPath, err
+			// Get device count first to check if any devices are available
+			deviceCount := int(C.sycl_get_device_count(resp.oh))
+			if deviceCount > 0 {
+				C.sycl_print_sycl_devices(resp.oh)
+				return deviceCount, &resp.oh, libPath, err
+			}
+			err = fmt.Errorf("No SYCL devices found with library %s", libPath)
+			slog.Debug(err.Error())
 		}
+	}
+	if err == nil {
+		err = fmt.Errorf("No SYCL devices found or libraries available")
 	}
 	return 0, nil, "", err
 }
