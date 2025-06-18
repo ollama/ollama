@@ -46,6 +46,7 @@ type syclHandles struct {
 const (
 	cudaMinimumMemory = 457 * format.MebiByte
 	rocmMinimumMemory = 457 * format.MebiByte
+	syclMinimumMemory = 457 * format.MebiByte
 	// TODO OneAPI minimum memory
 )
 
@@ -444,6 +445,7 @@ func GetGPUInfo() GpuInfoList {
 						memInfo.free = C.uint64_t(totalFreeMem)
 						gpuInfo.TotalMemory = uint64(memInfo.total)
 						gpuInfo.FreeMemory = uint64(memInfo.free)
+						gpuInfo.MinimumMemory = syclMinimumMemory
 						gpuInfo.ID = strconv.Itoa(int(i))
 						gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
 						if syclLibPath != "" {
