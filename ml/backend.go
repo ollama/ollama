@@ -124,10 +124,6 @@ type DeviceMemory struct {
 	// may not be persistent across instances of the runner.
 	Name string
 
-	// UUID is a unique persistent identifier for the device for matching
-	// with system management libraries
-	UUID string
-
 	// Weights is the per-layer memory needed for the model weights.
 	Weights []Memory
 
@@ -154,10 +150,6 @@ func (m DeviceMemory) LogValue() slog.Value {
 
 	if m.Graph.Size != 0 {
 		attrs = append(attrs, slog.Any("Graph", m.Graph))
-	}
-
-	if len(attrs) > 0 && m.UUID != "" {
-		attrs = append([]slog.Attr{slog.String("UUID", m.UUID)}, attrs...)
 	}
 
 	return slog.GroupValue(attrs...)
