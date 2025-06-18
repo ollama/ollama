@@ -190,8 +190,9 @@ func TestParser(t *testing.T) {
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "say_hello",
+						Index:     0,
+						Name:      "say_hello",
+						Arguments: api.ToolCallFunctionArguments{},
 					},
 				},
 			},
@@ -265,8 +266,9 @@ func TestParser(t *testing.T) {
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "say_hello",
+						Index:     0,
+						Name:      "say_hello",
+						Arguments: api.ToolCallFunctionArguments{},
 					},
 				},
 				{
@@ -413,8 +415,9 @@ func TestParser(t *testing.T) {
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "say_hello",
+						Index:     0,
+						Name:      "say_hello",
+						Arguments: api.ToolCallFunctionArguments{},
 					},
 				},
 			},
@@ -441,8 +444,9 @@ func TestParser(t *testing.T) {
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "say_hello",
+						Index:     0,
+						Name:      "say_hello",
+						Arguments: api.ToolCallFunctionArguments{},
 					},
 				},
 			},
@@ -577,8 +581,9 @@ func TestParser(t *testing.T) {
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
-						Index: 0,
-						Name:  "say_hello",
+						Index:     0,
+						Name:      "say_hello",
+						Arguments: api.ToolCallFunctionArguments{},
 					},
 				},
 			},
