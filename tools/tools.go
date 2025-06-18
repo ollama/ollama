@@ -115,11 +115,10 @@ func (p *Parser) findTag() (int, bool) {
 // parseToolCall finds the next complete tool call in the buffer
 // incrementing n and advancing the buffer.
 func (p *Parser) parseToolCall() *api.ToolCall {
-	var args map[string]any
 	var tool *api.Tool
 	var end int = len(p.buffer)
-
 	var i int
+
 	// find tool name
 	for _, t := range p.tools {
 		n := t.Function.Name
@@ -136,6 +135,7 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 	}
 
 	// only look for arguments if the tool has parameters
+	args := map[string]any{}
 	if len(tool.Function.Parameters.Properties) > 0 {
 		if args, i = p.findArguments(*tool); args == nil {
 			return nil
