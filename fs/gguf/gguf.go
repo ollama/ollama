@@ -65,7 +65,7 @@ func Open(path string) (f *File, err error) {
 		return nil, err
 	}
 
-	if f.Version != 3 {
+	if f.Version < 2 {
 		return nil, fmt.Errorf("%w version %v", ErrUnsupported, f.Version)
 	}
 
