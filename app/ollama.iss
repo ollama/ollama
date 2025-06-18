@@ -111,7 +111,7 @@ Name: "{userprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFile
 #if DirExists("..\dist\windows-arm64")
 Filename: "{tmp}\vc_redist.arm64.exe"; Parameters: "/install /passive /norestart"; Check: IsArm64() and vc_redist_needed(); StatusMsg: "Installing VC++ Redistributables..."; Flags: waituntilterminated
 #endif
-Filename: "{cmd}"; Parameters: "/C set PATH={app};{app}\lib\ollama;{app}\lib\ollama\sycl;%PATH% & set OLLAMA_DEBUG=true & set OLLAMA_INTEL_GPU=true & ""{app}\{#MyAppExeName}"""; Flags: postinstall nowait runhidden
+Filename: "{cmd}"; Parameters: "/C set PATH={app};{app}\lib\ollama;{app}\lib\ollama\sycl;%PATH% & set OLLAMA_DEBUG=true & set OLLAMA_INTEL_GPU=true & set ZES_ENABLE_SYSMAN=1 & ""{app}\{#MyAppExeName}"""; Flags: postinstall nowait runhidden
 
 [UninstallRun]
 ; Filename: "{cmd}"; Parameters: "/C ""taskkill /im ''{#MyAppExeName}'' /f /t"; Flags: runhidden
@@ -163,6 +163,9 @@ Root: HKCU; Subkey: "Environment"; \
 
 Root: HKCU; Subkey: "Environment"; \
     ValueType: string; ValueName: "OLLAMA_INTEL_GPU"; ValueData: "true"
+
+Root: HKCU; Subkey: "Environment"; \
+    ValueType: string; ValueName: "ZES_ENABLE_SYSMAN"; ValueData: "1"
 
 [Code]
 
