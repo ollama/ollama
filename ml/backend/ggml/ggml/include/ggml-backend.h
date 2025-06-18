@@ -152,7 +152,6 @@ extern "C" {
     struct ggml_backend_dev_props {
         const char * name;
         const char * description;
-        const char * uuid;
         size_t memory_free;
         size_t memory_total;
         enum ggml_backend_dev_type type;
