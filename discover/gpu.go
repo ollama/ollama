@@ -376,86 +376,76 @@ func GetGPUInfo() GpuInfoList {
 		}
 
 		// Intel
-		if envconfig.IntelGPU() {
-			var discoverInterface string = envconfig.String("OLLAMA_INTEL_IF_TYPE")()
-			if discoverInterface == "oneapi" {
-				oHandles = initOneAPIHandles()
-				if oHandles != nil && oHandles.oneapi != nil {
-					for d := range oHandles.oneapi.num_drivers {
-						if oHandles.oneapi == nil {
-							// shouldn't happen
-							slog.Warn("nil oneapi handle with driver count", "count", int(oHandles.oneapi.num_drivers))
-							continue
-						}
-						devCount := C.oneapi_get_device_count(*oHandles.oneapi, C.int(d))
-						for i := range devCount {
-							gpuInfo := OneapiGPUInfo{
-								GpuInfo: GpuInfo{
-									Library: "oneapi",
-								},
-								driverIndex: int(d),
-								gpuIndex:    int(i),
-							}
-							// TODO - split bootstrapping from updating free memory
-							C.oneapi_check_vram(*oHandles.oneapi, C.int(d), i, &memInfo)
-							// TODO - convert this to MinimumMemory based on testing...
-							var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
-							memInfo.free = C.uint64_t(totalFreeMem)
-							gpuInfo.TotalMemory = uint64(memInfo.total)
-							gpuInfo.FreeMemory = uint64(memInfo.free)
-							gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
-							gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
-							gpuInfo.DependencyPath = []string{LibOllamaPath}
-							oneapiGPUs = append(oneapiGPUs, gpuInfo)
-						}
+		if envconfig.IntelGPUInterface() == "oneapi" {
+			oHandles = initOneAPIHandles()
+			if oHandles != nil && oHandles.oneapi != nil {
+				for d := range oHandles.oneapi.num_drivers {
+					if oHandles.oneapi == nil {
+						// shouldn't happen
+						slog.Warn("nil oneapi handle with driver count", "count", int(oHandles.oneapi.num_drivers))
+						continue
 					}
-				}
-			} else {
-				// else use SYCL
-				sHandles = initSyclHandles()
-				if sHandles != nil && sHandles.sycl != nil {
-					devCount := C.sycl_get_device_count(*sHandles.sycl)
+					devCount := C.oneapi_get_device_count(*oHandles.oneapi, C.int(d))
 					for i := range devCount {
-						gpuInfo := SyclGPUInfo{
+						gpuInfo := OneapiGPUInfo{
 							GpuInfo: GpuInfo{
-								Library: "sycl",
+								Library: "oneapi",
 							},
-							index: int(i),
+							driverIndex: int(d),
+							gpuIndex:    int(i),
 						}
-
-						C.sycl_check_vram(*sHandles.sycl, i, &memInfo)
-
-						slog.Info("SYCL memory info",
-							"device", i,
-							"total", format.HumanBytes2(uint64(memInfo.total)),
-							"free", format.HumanBytes2(uint64(memInfo.free)),
-							"used", format.HumanBytes2(uint64(memInfo.used)))
-
-						// Check if free memory equals total memory
-						// This is a heuristic to detect when ext_intel_free_memory is not supported
-						// The C code prints a warning but doesn't return an error
-						if memInfo.free == memInfo.total {
-							slog.Warn("SYCL free memory reporting may be unreliable",
-								"device", i,
-								"hint", "export ZES_ENABLE_SYSMAN=1 for better memory reporting")
-							gpuInfo.UnreliableFreeMemory = true
-						}
-
+						// TODO - split bootstrapping from updating free memory
+						C.oneapi_check_vram(*oHandles.oneapi, C.int(d), i, &memInfo)
+						// TODO - convert this to MinimumMemory based on testing...
 						var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
 						memInfo.free = C.uint64_t(totalFreeMem)
 						gpuInfo.TotalMemory = uint64(memInfo.total)
 						gpuInfo.FreeMemory = uint64(memInfo.free)
-						gpuInfo.MinimumMemory = syclMinimumMemory
-						gpuInfo.ID = strconv.Itoa(int(i))
+						gpuInfo.ID = C.GoString(&memInfo.gpu_id[0])
 						gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
-						if syclLibPath != "" {
-							gpuInfo.DependencyPath = []string{filepath.Dir(syclLibPath)}
-						} else {
-							gpuInfo.DependencyPath = []string{LibOllamaPath}
-						}
-						syclGPUs = append(syclGPUs, gpuInfo)
-						slog.Debug("SYCL GPU", "GPU Info", gpuInfo)
+						gpuInfo.DependencyPath = []string{LibOllamaPath}
+						oneapiGPUs = append(oneapiGPUs, gpuInfo)
 					}
+				}
+			}
+		} else {
+			// else use SYCL
+			sHandles = initSyclHandles()
+			if sHandles != nil && sHandles.sycl != nil {
+				devCount := C.sycl_get_device_count(*sHandles.sycl)
+				for i := range devCount {
+					gpuInfo := SyclGPUInfo{
+						GpuInfo: GpuInfo{
+							Library: "sycl",
+						},
+						index: int(i),
+					}
+
+					C.sycl_check_vram(*sHandles.sycl, i, &memInfo)
+					// Check if free memory equals total memory
+					// This is a heuristic to detect when ext_intel_free_memory is not supported
+					// The C code prints a warning but doesn't return an error
+					if memInfo.free == memInfo.total {
+						slog.Warn("SYCL free memory reporting may be unreliable",
+							"device", i,
+							"hint", "export ZES_ENABLE_SYSMAN=1 for better memory reporting")
+						gpuInfo.UnreliableFreeMemory = true
+					}
+
+					var totalFreeMem float64 = float64(memInfo.free) * 0.95 // work-around: leave some reserve vram for mkl lib used in ggml-sycl backend.
+					memInfo.free = C.uint64_t(totalFreeMem)
+					gpuInfo.TotalMemory = uint64(memInfo.total)
+					gpuInfo.FreeMemory = uint64(memInfo.free)
+					gpuInfo.MinimumMemory = syclMinimumMemory
+					gpuInfo.ID = strconv.Itoa(int(i))
+					gpuInfo.Name = C.GoString(&memInfo.gpu_name[0])
+					if syclLibPath != "" {
+						gpuInfo.DependencyPath = []string{filepath.Dir(syclLibPath)}
+					} else {
+						gpuInfo.DependencyPath = []string{LibOllamaPath}
+					}
+					syclGPUs = append(syclGPUs, gpuInfo)
+					slog.Debug("SYCL GPU", "GPU Info", gpuInfo)
 				}
 			}
 		}
@@ -571,13 +561,6 @@ func GetGPUInfo() GpuInfoList {
 		for i, gpu := range syclGPUs {
 			if sHandles != nil && sHandles.sycl != nil {
 				C.sycl_check_vram(*sHandles.sycl, C.int(gpu.index), &memInfo)
-
-				slog.Info("SYCL memory info",
-					"device", gpu.index,
-					"total", format.HumanBytes2(uint64(memInfo.total)),
-					"free", format.HumanBytes2(uint64(memInfo.free)),
-					"used", format.HumanBytes2(uint64(memInfo.used)))
-
 				// Check if free memory equals total memory
 				// This is a heuristic to detect when ext_intel_free_memory is not supported
 				// The C code prints a warning but doesn't return an error

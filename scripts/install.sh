@@ -143,6 +143,7 @@ Group=ollama
 Restart=always
 RestartSec=3
 Environment="PATH=$PATH"
+Environment="ZES_ENABLE_SYSMAN=1"
 
 [Install]
 WantedBy=default.target
