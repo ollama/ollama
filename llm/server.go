@@ -428,6 +428,29 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 			s.cmd.Env = append(s.cmd.Env, visibleDevicesEnv+"="+visibleDevicesEnvVal)
 		}
 
+		// ensure no mixed vendor setups
+		filterEnv := ""
+		switch visibleDevicesEnv {
+		case "CUDA_VISIBLE_DEVICES":
+			filterEnv = "HIP_VISIBLE_DEVICES"
+		case "HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES":
+			filterEnv = "CUDA_VISIBLE_DEVICES"
+		}
+		if filterEnv != "" {
+			filtered := false
+			for i := range s.cmd.Env {
+				cmp := strings.SplitN(s.cmd.Env[i], "=", 2)
+				if cmp[0] == filterEnv {
+					s.cmd.Env[i] = filterEnv + "=-1"
+					filtered = true
+					break
+				}
+			}
+			if !filtered {
+				s.cmd.Env = append(s.cmd.Env, filterEnv+"=-1")
+			}
+		}
+
 		slog.Info("starting llama server", "cmd", s.cmd)
 		slog.Debug("subprocess", "", filteredEnv(s.cmd.Env))
 

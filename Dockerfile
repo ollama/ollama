@@ -90,15 +90,15 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     go build -trimpath -buildmode=pie -o /bin/ollama .
 
 FROM --platform=linux/amd64 scratch AS amd64
-COPY --from=cuda-12 dist/lib/ollama/cuda_v12 /lib/ollama/cuda_v12
+COPY --from=cuda-12 dist/lib/ollama /lib/ollama
 
 FROM --platform=linux/arm64 scratch AS arm64
-COPY --from=cuda-12 dist/lib/ollama/cuda_v12 /lib/ollama/cuda_v12
-COPY --from=jetpack-5 dist/lib/ollama/cuda_v11 /lib/ollama/cuda_jetpack5
-COPY --from=jetpack-6 dist/lib/ollama/cuda_v12 /lib/ollama/cuda_jetpack6
+COPY --from=cuda-12 dist/lib/ollama /lib/ollama
+COPY --from=jetpack-5 dist/lib/ollama /lib/ollama/cuda_jetpack5
+COPY --from=jetpack-6 dist/lib/ollama /lib/ollama/cuda_jetpack6
 
 FROM scratch AS rocm
-COPY --from=rocm-6 dist/lib/ollama/rocm /lib/ollama/rocm
+COPY --from=rocm-6 dist/lib/ollama /lib/ollama
 
 FROM ${FLAVOR} AS archive
 COPY --from=cpu dist/lib/ollama /lib/ollama
