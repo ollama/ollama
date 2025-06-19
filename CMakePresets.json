@@ -65,7 +65,8 @@
       "name": "SYCL",
       "inherits": [ "Default" ],
       "cacheVariables": {
-        "ENABLE_SYCL": "ON"
+        "ENABLE_SYCL": "ON",
+        "CMAKE_INSTALL_RPATH": "$ORIGIN;$ORIGIN/.."
       }
     }
   ],

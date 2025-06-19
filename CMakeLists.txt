@@ -141,17 +141,6 @@ if(ENABLE_SYCL)
         set(GGML_SYCL_TARGET "INTEL")
         set(GGML_SYCL_DNN ON)
 
-        if(WIN32)
-            set(CMAKE_C_COMPILER icx)
-            set(CMAKE_CXX_COMPILER icx)
-            set(CMAKE_CXX_COMPILER_ID "IntelLLVM")
-            message(STATUS "Setting C and C++ compiler to icx for Windows SYCL support")
-        else()
-            set(CMAKE_C_COMPILER icx)
-            set(CMAKE_CXX_COMPILER icpx)
-            message(STATUS "Setting C compiler to icx and C++ compiler to icpx for Linux SYCL support")
-        endif()
-
         add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-sycl)
 
         set(OLLAMA_SYCL_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/sycl)
