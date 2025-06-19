@@ -454,6 +454,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [GGUF-to-Ollama](https://github.com/jonathanhecl/gguf-to-ollama) - Importing GGUF to Ollama made easy (multiplatform)
 - [AWS-Strands-With-Ollama](https://github.com/rapidarchitect/ollama_strands) - AWS Strands Agents with Ollama Examples
 - [ollama-multirun](https://github.com/attogram/ollama-multirun) - A bash shell script to run a single prompt against any or all of your locally installed ollama models, saving the output and performance statistics as easily navigable web pages. ([Demo](https://attogram.github.io/ai_test_zone/))
+- [MCP Client for Ollama](https://github.com/jonigl/mcp-client-for-ollama) Python client for connecting Ollama to Model Context Protocol servers, enabling local LLMs to use tools
 
 ### Apple Vision Pro
 
