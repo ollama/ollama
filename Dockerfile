@@ -105,7 +105,7 @@ FROM scratch AS rocm
 COPY --from=rocm-6 dist/lib/ollama /lib/ollama
 
 # Moore Threads (MUSA) build stages
-FROM --platform=linux/amd64 mthreads/musa:${MUSAVERSION}-mudnn-devel-ubuntu22.04 AS musa-4
+FROM mthreads/musa:${MUSAVERSION}-mudnn-devel-ubuntu22.04 AS musa-4
 RUN apt-get update \
     && apt-get install -y curl \
     && apt-get clean \
