@@ -602,7 +602,9 @@ func (c *Context) Forward(tensors ...ml.Tensor) ml.Context {
 }
 
 func (c *Context) Compute(tensors ...ml.Tensor) {
-	C.ggml_backend_sched_graph_compute_async(c.b.sched, c.graph)
+	if status := C.ggml_backend_sched_graph_compute_async(c.b.sched, c.graph); status != C.GGML_STATUS_SUCCESS {
+		panic(fmt.Errorf("error computing ggml graph: %v", status))
+	}
 	C.ggml_backend_sched_reset(c.b.sched)
 
 	needSync := true
