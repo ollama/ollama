@@ -142,7 +142,7 @@ function buildOllama() {
             & cmake --install build --component "HIP" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
-        if ($script:ONEAPI_DIR -or $env:ONEAPI_ROOT) {
+        if ($env:ONEAPI_ROOT) {
             write-host "Building SYCL backend libraries"
             if (-Not (get-command -ErrorAction silent ninja)) {
                 $NINJA_DIR=(gci -path (Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation -r -fi ninja.exe).Directory.FullName
