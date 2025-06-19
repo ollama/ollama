@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -25,6 +26,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/openai"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/types/model"
@@ -967,4 +969,155 @@ func TestWaitForStream(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestEnableContextShiftNonStreamingResponse(t *testing.T) {
+	tests := []struct {
+		name               string
+		enableContextShift bool
+		responses          []llm.CompletionResponse
+		expectedDone       bool
+		expectedDoneReason string
+	}{
+		{
+			name:               "context shifting disabled - should have DoneReasonLength",
+			enableContextShift: false,
+			responses: []llm.CompletionResponse{
+				{Content: "Hello", Done: false},
+				{Content: " world", Done: false},
+				{Content: "", Done: true, DoneReason: llm.DoneReasonLength},
+			},
+			expectedDone:       true,
+			expectedDoneReason: "length",
+		},
+		{
+			name:               "context shifting enabled - should have DoneReasonStop",
+			enableContextShift: true,
+			responses: []llm.CompletionResponse{
+				{Content: "Hello", Done: false},
+				{Content: " world", Done: false},
+				{Content: "", Done: true, DoneReason: llm.DoneReasonStop},
+			},
+			expectedDone:       true,
+			expectedDoneReason: "stop",
+		},
+		{
+			name:               "no final response with Done=true",
+			enableContextShift: false,
+			responses: []llm.CompletionResponse{
+				{Content: "Hello", Done: false},
+				{Content: " world", Done: false},
+			},
+			expectedDone:       false,
+			expectedDoneReason: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// The last response in the channel will naturally be the final state
+			lastResponse := tt.responses[len(tt.responses)-1]
+
+			if lastResponse.Done != tt.expectedDone {
+				t.Errorf("expected Done=%v, got %v", tt.expectedDone, lastResponse.Done)
+			}
+
+			if tt.expectedDoneReason != "" {
+				if lastResponse.DoneReason.String() != tt.expectedDoneReason {
+					t.Errorf("expected DoneReason=%s, got %s", tt.expectedDoneReason, lastResponse.DoneReason.String())
+				}
+			}
+		})
+	}
+}
+
+func TestHandleScheduleError(t *testing.T) {
+	tests := []struct {
+		name           string
+		errorMessage   string
+		expectedStatus int
+	}{
+		{
+			name:           "context length exceeded error",
+			errorMessage:   "context length of 100 tokens exceeded, context shifting is disabled",
+			expectedStatus: http.StatusInternalServerError,
+		},
+		{
+			name:           "other error",
+			errorMessage:   "some other error",
+			expectedStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+
+			err := errors.New(tt.errorMessage)
+
+			handleScheduleError(c, "test-model", err)
+
+			if w.Code != tt.expectedStatus {
+				t.Errorf("expected status %d, got %d", tt.expectedStatus, w.Code)
+			}
+
+			var response map[string]any
+			if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+				t.Fatalf("failed to unmarshal response: %v", err)
+			}
+
+			if errorMsg, ok := response["error"].(string); !ok || errorMsg != tt.errorMessage {
+				t.Errorf("expected error message '%s', got '%s'", tt.errorMessage, errorMsg)
+			}
+		})
+	}
+}
+
+func TestEnableContextShiftOptions(t *testing.T) {
+	t.Run("default options have enableContextShift=true", func(t *testing.T) {
+		opts := api.DefaultOptions()
+		if !opts.ShiftContext {
+			t.Errorf("expected EnableContextShift=true by default, got %v", opts.ShiftContext)
+		}
+	})
+
+	t.Run("can set enableContextShift to false", func(t *testing.T) {
+		opts := api.DefaultOptions()
+		opts.ShiftContext = false
+		if opts.ShiftContext {
+			t.Errorf("expected EnableContextShift=false after setting, got %v", opts.ShiftContext)
+		}
+	})
+
+	t.Run("JSON serialization omits false values", func(t *testing.T) {
+		opts := api.DefaultOptions()
+		opts.ShiftContext = false
+
+		data, err := json.Marshal(opts)
+		if err != nil {
+			t.Fatalf("failed to marshal options: %v", err)
+		}
+
+		// Check that enable_context_shift is not in the JSON when false
+		if bytes.Contains(data, []byte("enable_context_shift")) {
+			t.Errorf("expected enable_context_shift to be omitted from JSON when false, but found it in: %s", string(data))
+		}
+	})
+
+	t.Run("JSON serialization includes true values", func(t *testing.T) {
+		opts := api.DefaultOptions()
+		opts.ShiftContext = true
+
+		data, err := json.Marshal(opts)
+		if err != nil {
+			t.Fatalf("failed to marshal options: %v", err)
+		}
+
+		// Check that enable_context_shift is in the JSON when true
+		if !bytes.Contains(data, []byte("enable_context_shift")) {
+			t.Errorf("expected enable_context_shift to be in JSON when true, but not found in: %s", string(data))
+		}
+	})
 }

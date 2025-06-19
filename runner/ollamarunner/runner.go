@@ -85,6 +85,9 @@ type Sequence struct {
 	// true if an embedding are to be returned instead of text generation
 	embeddingOnly bool
 
+	// true if context shifting should be enabled
+	shiftContext bool
+
 	doneReason llm.DoneReason
 
 	// Metrics
@@ -95,11 +98,12 @@ type Sequence struct {
 }
 
 type NewSequenceParams struct {
-	numPredict int
-	stop       []string
-	numKeep    int32
-	sampler    sample.Sampler
-	embedding  bool
+	numPredict         int
+	stop               []string
+	numKeep            int32
+	sampler            sample.Sampler
+	embedding          bool
+	enableContextShift bool
 }
 
 func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSequenceParams) (*Sequence, error) {
@@ -121,7 +125,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 	// Ensure that at least 1 input can be discarded during shift
 	params.numKeep = min(params.numKeep, s.cache.numCtx-1)
 
-	if int32(len(inputs)) > s.cache.numCtx {
+	if int32(len(inputs)) > s.cache.numCtx && params.enableContextShift {
 		discard := int32(len(inputs)) - s.cache.numCtx
 		promptStart := params.numKeep + discard
 
@@ -175,6 +179,7 @@ func (s *Server) NewSequence(prompt string, images []llm.ImageData, params NewSe
 		embeddingOnly:       params.embedding,
 		stop:                params.stop,
 		numKeep:             params.numKeep,
+		shiftContext:        params.enableContextShift,
 	}, nil
 }
 
@@ -341,13 +346,25 @@ func flushPending(seq *Sequence) bool {
 
 func (s *Server) removeSequence(seqIndex int, reason llm.DoneReason) {
 	seq := s.seqs[seqIndex]
+	if seq == nil {
+		return
+	}
 
-	flushPending(seq)
+	// Mark the sequence as being removed to prevent further processing
+	s.seqs[seqIndex] = nil
+
+	if seq.cache != nil {
+		seq.cache.InUse = false
+	}
+
+	if len(seq.pendingResponses) > 0 {
+		flushPending(seq)
+	}
+
 	seq.doneReason = reason
+
 	close(seq.responses)
 	close(seq.embedding)
-	seq.cache.InUse = false
-	s.seqs[seqIndex] = nil
 	s.seqsSem.Release(1)
 }
 
@@ -429,6 +446,11 @@ func (s *Server) processBatch() error {
 			if int32(len(seq.cache.Inputs)+len(seq.pendingInputs)+minBatch) > s.cache.numCtx {
 				if len(seq.pendingInputs) != 0 {
 					break
+				}
+
+				if !seq.shiftContext {
+					s.removeSequence(seqIdx, llm.DoneReasonContextShift)
+					continue
 				}
 
 				err := s.cache.ShiftCacheSlot(seq.cache, seq.numKeep)
@@ -629,11 +651,12 @@ func (s *Server) completion(w http.ResponseWriter, r *http.Request) {
 	)
 
 	seq, err := s.NewSequence(req.Prompt, req.Images, NewSequenceParams{
-		numPredict: req.Options.NumPredict,
-		stop:       req.Options.Stop,
-		numKeep:    int32(req.Options.NumKeep),
-		sampler:    sampler,
-		embedding:  false,
+		numPredict:         req.Options.NumPredict,
+		stop:               req.Options.Stop,
+		numKeep:            int32(req.Options.NumKeep),
+		sampler:            sampler,
+		embedding:          false,
+		enableContextShift: req.Options.ShiftContext,
 	})
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)

@@ -700,6 +700,8 @@ const (
 	DoneReasonStop DoneReason = iota
 	// DoneReasonLength indicates the completion stopped due to length limits
 	DoneReasonLength
+	// DoneReasonContextShift indicates the completion stopped due to context shift
+	DoneReasonContextShift
 	// DoneReasonConnectionClosed indicates the completion stopped due to the connection being closed
 	DoneReasonConnectionClosed
 )
@@ -710,6 +712,8 @@ func (d DoneReason) String() string {
 		return "length"
 	case DoneReasonStop:
 		return "stop"
+	case DoneReasonContextShift:
+		return "context_limit_reached"
 	default:
 		return "" // closed
 	}
