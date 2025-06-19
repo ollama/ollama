@@ -180,7 +180,7 @@ jobs:
         run: |
           Import-Module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
           Enter-VsDevShell -VsInstallPath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
-          cmake --preset "${{ matrix.preset }}"
+          cmake --preset "${{ matrix.preset }}" ${{ startsWith(matrix.preset, 'CUDA ') && '-DCMAKE_CUDA_FLAGS="-t 4"' || startsWith(matrix.preset, 'ROCm') && '-DCMAKE_HIP_FLAGS="-parallel-jobs=4" -DCMAKE_HIPCC_FLAGS="-parallel-jobs=4"' }}
           cmake --build --parallel --preset "${{ matrix.preset }}"
           cmake --install build --component "${{ startsWith(matrix.preset, 'CUDA ') && 'CUDA' || startsWith(matrix.preset, 'ROCm ') && 'HIP' || 'CPU' }}" --strip --parallel 8
         env:

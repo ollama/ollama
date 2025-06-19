@@ -100,7 +100,7 @@ function buildOllama() {
             write-host "Building CUDA v11 backend libraries"
             # Note: cuda v11 requires msvc 2019 so force the older generator
             # to avoid 2022 (or newer) from being used as the default
-            & cmake --fresh --preset "CUDA 11" -G "Visual Studio 16 2019" --install-prefix $script:DIST_DIR
+            & cmake --fresh --preset "CUDA 11" -G "Visual Studio 16 2019" -DCMAKE_CUDA_FLAGS="-t 4" --install-prefix $script:DIST_DIR
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             & cmake --build --preset "CUDA 11"  --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
@@ -111,7 +111,7 @@ function buildOllama() {
             $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V12")) { $v12="$_" }}
             $env:CUDAToolkit_ROOT=$hashEnv[$v12]
             write-host "Building CUDA v12 backend libraries"
-            & cmake --fresh --preset "CUDA 12" --install-prefix $script:DIST_DIR
+            & cmake --fresh --preset "CUDA 12" -DCMAKE_CUDA_FLAGS="-t 4" --install-prefix $script:DIST_DIR
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             & cmake --build --preset "CUDA 12"  --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
@@ -127,7 +127,7 @@ function buildOllama() {
             $env:HIPCXX="${env:HIP_PATH}\bin\clang++.exe"
             $env:HIP_PLATFORM="amd"
             $env:CMAKE_PREFIX_PATH="${env:HIP_PATH}"
-            & cmake --fresh --preset "ROCm 6" -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ --install-prefix $script:DIST_DIR
+            & cmake --fresh --preset "ROCm 6" -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_HIP_FLAGS="-parallel-jobs=4" -DCMAKE_HIPCC_FLAGS="-parallel-jobs=4" --install-prefix $script:DIST_DIR
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             $env:HIPCXX=""
             $env:HIP_PLATFORM=""

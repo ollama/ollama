@@ -43,7 +43,7 @@ ARG CUDA11VERSION=11.3
 RUN dnf install -y cuda-toolkit-${CUDA11VERSION//./-}
 ENV PATH=/usr/local/cuda-11/bin:$PATH
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'CUDA 11' \
+    cmake --preset 'CUDA 11' -DCMAKE_CUDA_FLAGS="-t 2" \
         && cmake --build --parallel --preset 'CUDA 11' \
         && cmake --install build --component CUDA --strip --parallel 8
 
@@ -52,14 +52,14 @@ ARG CUDA12VERSION=12.8
 RUN dnf install -y cuda-toolkit-${CUDA12VERSION//./-}
 ENV PATH=/usr/local/cuda-12/bin:$PATH
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'CUDA 12' \
+    cmake --preset 'CUDA 12' -DCMAKE_CUDA_FLAGS="-t 2" \
         && cmake --build --parallel --preset 'CUDA 12' \
         && cmake --install build --component CUDA --strip --parallel 8
 
 FROM base AS rocm-6
 ENV PATH=/opt/rocm/hcc/bin:/opt/rocm/hip/bin:/opt/rocm/bin:/opt/rocm/hcc/bin:$PATH
 RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'ROCm 6' \
+    cmake --preset 'ROCm 6' -DCMAKE_HIP_FLAGS="-parallel-jobs=4" -DCMAKE_HIPCC_FLAGS="-parallel-jobs=4" \
         && cmake --build --parallel --preset 'ROCm 6' \
         && cmake --install build --component HIP --strip --parallel 8
 
