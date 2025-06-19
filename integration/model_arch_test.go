@@ -45,6 +45,8 @@ var (
 		"qwen2.5-coder:latest",
 		"qwen:latest",
 		"solar-pro:latest",
+		"codellama:latest",
+		"nous-hermes:latest",
 	}
 )
 
