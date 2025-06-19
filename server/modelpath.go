@@ -115,7 +115,7 @@ func (mp ModelPath) BaseURL() *url.URL {
 
 func GetManifestPath() (string, error) {
 	path := filepath.Join(envconfig.Models(), "manifests")
-	if err := os.MkdirAll(path, 0o755); err != nil {
+	if err := os.MkdirAll(path, 0o777); err != nil {
 		return "", fmt.Errorf("%w: ensure path elements are traversable", err)
 	}
 
@@ -138,7 +138,7 @@ func GetBlobsPath(digest string) (string, error) {
 		dirPath = path
 	}
 
-	if err := os.MkdirAll(dirPath, 0o755); err != nil {
+	if err := os.MkdirAll(dirPath, 0o777); err != nil {
 		return "", fmt.Errorf("%w: ensure path elements are traversable", err)
 	}
 

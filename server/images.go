@@ -393,7 +393,7 @@ func CopyModel(src, dst model.Name) error {
 	}
 
 	dstpath := filepath.Join(manifests, dst.Filepath())
-	if err := os.MkdirAll(filepath.Dir(dstpath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dstpath), 0o777); err != nil {
 		return err
 	}
 
@@ -655,11 +655,11 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(fp), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(fp), 0o777); err != nil {
 		return err
 	}
 
-	err = os.WriteFile(fp, manifestJSON, 0o644)
+	err = os.WriteFile(fp, manifestJSON, 0o666)
 	if err != nil {
 		slog.Info(fmt.Sprintf("couldn't write to %s", fp))
 		return err

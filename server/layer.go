@@ -5,7 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
+	"path/filepath"
+	"strconv"
 )
 
 type Layer struct {
@@ -22,8 +25,17 @@ func NewLayer(r io.Reader, mediatype string) (Layer, error) {
 		return Layer{}, err
 	}
 
-	temp, err := os.CreateTemp(blobs, "sha256-")
-	if err != nil {
+	var temp *os.File
+
+	for range 10000 {
+		tempPath := filepath.Join(blobs, "sha256-"+strconv.Itoa(int(rand.Int31())))
+		temp, err = os.OpenFile(tempPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o666)
+		if err == nil {
+			break
+		}
+		if os.IsExist(err) {
+			continue
+		}
 		return Layer{}, err
 	}
 	defer temp.Close()
@@ -49,9 +61,6 @@ func NewLayer(r io.Reader, mediatype string) (Layer, error) {
 	if _, err := os.Stat(blob); err != nil {
 		status = "creating new layer"
 		if err := os.Rename(temp.Name(), blob); err != nil {
-			return Layer{}, err
-		}
-		if err := os.Chmod(blob, 0o644); err != nil {
 			return Layer{}, err
 		}
 	}
