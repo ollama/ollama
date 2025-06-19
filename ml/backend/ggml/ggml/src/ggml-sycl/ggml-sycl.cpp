@@ -3822,7 +3822,7 @@ bool ggml_backend_is_sycl(ggml_backend_t backend) {
     return backend != NULL && ggml_guid_matches(backend->guid, ggml_backend_sycl_guid());
 }
 
-int ggml_backend_sycl_get_device_count()  {
+int ggml_backend_sycl_get_device_count() {
     return ggml_sycl_info().device_count;
 }
 
