@@ -1,5 +1,20 @@
 cmake_minimum_required(VERSION 3.21)
 
+# Check for SYCL support and set compilers before project() call
+option(ENABLE_SYCL "Enable SYCL support" OFF)
+if(ENABLE_SYCL)
+    if(WIN32)
+        set(CMAKE_C_COMPILER icx)
+        set(CMAKE_CXX_COMPILER icx)
+        set(CMAKE_CXX_COMPILER_ID "IntelLLVM")
+        message(STATUS "Setting C and C++ compiler to icx for Windows SYCL support (before project)")
+    else()
+        set(CMAKE_C_COMPILER icx)
+        set(CMAKE_CXX_COMPILER icpx)
+        message(STATUS "Setting C compiler to icx and C++ compiler to icpx for Linux SYCL support (before project)")
+    endif()
+endif()
+
 project(Ollama C CXX)
 
 include(CheckLanguage)
@@ -138,7 +153,6 @@ option(ENABLE_SYCL "Enable SYCL support" OFF)
 if(ENABLE_SYCL)
     find_package(IntelSYCL)
     if(IntelSYCL_FOUND)
-        set(GGML_SYCL_TARGET "INTEL")
         set(GGML_SYCL_DNN ON)
 
         add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-sycl)

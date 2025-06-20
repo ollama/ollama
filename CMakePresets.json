@@ -66,8 +66,7 @@
       "inherits": [ "Default" ],
       "cacheVariables": {
         "ENABLE_SYCL": "ON",
-        "CMAKE_C_COMPILER": "icx",
-        "CMAKE_CXX_COMPILER": "icpx"
+        "GGML_SYCL_TARGET": "INTEL"
       }
     }
   ],
