@@ -26,6 +26,7 @@ import (
 	"github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/parser"
 	"github.com/ollama/ollama/template"
+	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
@@ -113,7 +114,7 @@ func (m *Model) Capabilities() []model.Capability {
 	}
 
 	// Check for thinking capability
-	openingTag, closingTag := inferThinkingTags(m.Template.Template)
+	openingTag, closingTag := thinking.InferTags(m.Template.Template)
 	if openingTag != "" && closingTag != "" {
 		capabilities = append(capabilities, model.CapabilityThinking)
 	}
