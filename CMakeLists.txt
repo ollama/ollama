@@ -1,6 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
 
-# Check for SYCL support and set compilers before project() call
 option(ENABLE_SYCL "Enable SYCL support" OFF)
 if(ENABLE_SYCL)
     if(WIN32)
