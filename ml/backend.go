@@ -71,6 +71,9 @@ type BackendParams struct {
 
 	// FlashAttention indicates that we should use a fused flash attention kernel
 	FlashAttention bool
+
+	// RPCServers is a list of RPC servers available
+	RPCServers string
 }
 
 // ErrNoMem is returned when panicing due to insufficient memory. It includes

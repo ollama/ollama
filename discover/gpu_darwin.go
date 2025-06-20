@@ -39,8 +39,8 @@ func GetGPUInfo() GpuInfoList {
 
 	// TODO is there a way to gather actual allocated video memory? (currentAllocatedSize doesn't work)
 	info.FreeMemory = info.TotalMemory
-
 	info.MinimumMemory = metalMinimumMemory
+
 	return []GpuInfo{info}
 }
 

@@ -139,10 +139,22 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		gpus = discover.GetCPUInfo()
 	}
 
+	rpcServers := ""
+	for _, gpu := range gpus {
+		if gpu.Library != "rpc" {
+			continue
+		}
+
+		if rpcServers != "" {
+			rpcServers += ","
+		}
+		rpcServers += gpu.ID
+	}
+
 	estimate := EstimateGPULayers(gpus, f, projectors, opts, numParallel)
 	if len(gpus) > 1 || gpus[0].Library != "cpu" {
 		switch {
-		case gpus[0].Library == "metal" && estimate.VRAMSize > systemTotalMemory:
+		case gpus[0].Library == "metal" && estimate.VRAMSize > systemTotalMemory && rpcServers == "":
 			// disable partial offloading when model is greater than total system memory as this
 			// can lead to locking up the system
 			opts.NumGPU = 0
@@ -175,6 +187,10 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 
 	if opts.NumGPU >= 0 {
 		params = append(params, "--n-gpu-layers", strconv.Itoa(opts.NumGPU))
+	}
+
+	if rpcServers != "" {
+		params = append(params, "--rpc", rpcServers)
 	}
 
 	if opts.MainGPU > 0 {
@@ -223,8 +239,13 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 	}
 
 	// mmap has issues with partial offloading on metal
+	// rpc does not support mmap
 	for _, g := range gpus {
-		if g.Library == "metal" &&
+		if g.Library == "rpc" {
+			opts.UseMMap = new(bool)
+			*opts.UseMMap = false
+		}
+		if (g.Library == "metal") &&
 			uint64(opts.NumGPU) > 0 &&
 			uint64(opts.NumGPU) < f.KV().BlockCount()+1 {
 			opts.UseMMap = new(bool)

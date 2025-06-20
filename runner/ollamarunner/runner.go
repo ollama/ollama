@@ -910,6 +910,7 @@ func Execute(args []string) error {
 	_ = fs.Bool("no-mmap", false, "do not memory-map model (slower load but may reduce pageouts if not using mlock)")
 	tensorSplit := fs.String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
 	multiUserCache := fs.Bool("multiuser-cache", false, "optimize input cache algorithm for multiple users")
+	rpcServers := fs.String("rpc", "", "comma separated list of RPC servers")
 
 	var lpaths multiLPath
 	fs.Var(&lpaths, "lora", "Path to lora layer file (can be specified multiple times)")
@@ -954,6 +955,7 @@ func Execute(args []string) error {
 		MainGPU:        *mainGPU,
 		TensorSplit:    tensorSplitFloats,
 		FlashAttention: *flashAttention,
+		RPCServers:     *rpcServers,
 	}
 
 	go server.load(ctx, *mpath, params, lpaths, *parallel, *kvCacheType, *kvSize, *multiUserCache)
