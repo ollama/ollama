@@ -66,7 +66,8 @@
       "inherits": [ "Default" ],
       "cacheVariables": {
         "ENABLE_SYCL": "ON",
-        "CMAKE_INSTALL_RPATH": "$ORIGIN;$ORIGIN/.."
+        "CMAKE_C_COMPILER": "icx",
+        "CMAKE_CXX_COMPILER": "icpx"
       }
     }
   ],
