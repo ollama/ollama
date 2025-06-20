@@ -56,6 +56,7 @@ func cudaVariant(gpuInfo CudaGPUInfo) string {
 				}
 			}
 		}
+		return "sbsa"
 	}
 
 	// driver 12.0 has problems with the cuda v12 library, so run v11 on those older drivers

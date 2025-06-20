@@ -93,7 +93,7 @@ FROM --platform=linux/amd64 scratch AS amd64
 COPY --from=cuda-12 dist/lib/ollama /lib/ollama
 
 FROM --platform=linux/arm64 scratch AS arm64
-COPY --from=cuda-12 dist/lib/ollama /lib/ollama
+COPY --from=cuda-12 dist/lib/ollama /lib/ollama/cuda_sbsa
 COPY --from=jetpack-5 dist/lib/ollama /lib/ollama/cuda_jetpack5
 COPY --from=jetpack-6 dist/lib/ollama /lib/ollama/cuda_jetpack6
 
