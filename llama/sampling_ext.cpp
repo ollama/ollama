@@ -1,4 +1,5 @@
 // TODO: this is a temporary wrapper to allow calling C++ code from CGo
+#include <nlohmann/json.hpp>
 #include "sampling.h"
 #include "sampling_ext.h"
 #include "json-schema-to-grammar.h"

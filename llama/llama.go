@@ -7,6 +7,7 @@ package llama
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/include
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/common
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/tools/mtmd
+#cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/vendor
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/src
 #cgo CPPFLAGS: -I${SRCDIR}/../ml/backend/ggml/ggml/include
 
@@ -14,7 +15,6 @@ package llama
 #include "ggml.h"
 #include "llama.h"
 #include "clip.h"
-#include "llava.h"
 #include "gguf.h"
 
 #include "sampling_ext.h"
@@ -157,14 +157,6 @@ func (c *Context) KvCacheSeqRm(seqId int, p0 int, p1 int) bool {
 
 func (c *Context) KvCacheSeqCp(srcSeqId int, dstSeqId int, p0 int, p1 int) {
 	C.llama_kv_self_seq_cp(c.c, C.int(srcSeqId), C.int(dstSeqId), C.int(p0), C.int(p1))
-}
-
-func (c *Context) KvCacheClear() {
-	C.llama_kv_self_clear(c.c)
-}
-
-func (c *Context) KvCacheDefrag() {
-	C.llama_kv_self_defrag(c.c)
 }
 
 func (c *Context) KvCacheCanShift() bool {
@@ -467,18 +459,36 @@ type ClipContext struct {
 func NewClipContext(llamaContext *Context, modelPath string) (*ClipContext, error) {
 	mp := C.CString(modelPath)
 	defer C.free(unsafe.Pointer(mp))
-	c := C.clip_model_load(mp, 1)
-	if c == nil {
-		return nil, fmt.Errorf("unable to load clip model: %v", modelPath)
+
+	// Set up clip context parameters
+	params := C.struct_clip_context_params{
+		use_gpu:   true,
+		verbosity: C.GGML_LOG_LEVEL_INFO,
 	}
 
-	projEmbedSize := int(C.clip_n_mmproj_embd(c))
+	// Initialize clip contexts (returns both vision and audio)
+	result := C.clip_init(mp, params)
+	if result.ctx_v == nil {
+		if result.ctx_a != nil {
+			C.clip_free(result.ctx_a)
+		}
+		return nil, fmt.Errorf("unable to load vision model: %v", modelPath)
+	}
+
+	// Free audio context if we don't need it
+	if result.ctx_a != nil {
+		C.clip_free(result.ctx_a)
+	}
+
+	// Validate embedding sizes
+	projEmbedSize := int(C.clip_n_mmproj_embd(result.ctx_v))
 	modelEmbedSize := llamaContext.Model().NEmbd()
 	if projEmbedSize != modelEmbedSize {
+		C.clip_free(result.ctx_v)
 		return nil, fmt.Errorf("projector embedding size (%d) does not match model (%d)", projEmbedSize, modelEmbedSize)
 	}
 
-	return &ClipContext{c: c}, nil
+	return &ClipContext{c: result.ctx_v}, nil
 }
 
 func (c *ClipContext) Free() {
@@ -486,25 +496,66 @@ func (c *ClipContext) Free() {
 }
 
 func (c *ClipContext) NewEmbed(llamaContext *Context, data []byte) ([][]float32, error) {
-	l := C.llava_image_embed_make_with_bytes(c.c, C.int(llamaContext.numThreads), (*C.uchar)(unsafe.Pointer(&data[0])), C.int(len(data)))
-	if l == nil {
-		return nil, errors.New("unable to make llava embedding from image")
+	// Step 1: Load image from bytes (same as before)
+	img := C.clip_image_u8_init()
+	if img == nil {
+		return nil, errors.New("failed to initialize image")
+	}
+	defer C.clip_image_u8_free(img)
+
+	ok := C.clip_image_load_from_bytes(
+		(*C.uchar)(unsafe.Pointer(&data[0])),
+		C.size_t(len(data)),
+		img,
+	)
+	if !ok {
+		return nil, errors.New("failed to load image from bytes")
 	}
 
-	numTokens := int(l.n_image_pos)
+	// Step 2: Preprocess image
+	batch := C.clip_image_f32_batch_init()
+	if batch == nil {
+		return nil, errors.New("failed to initialize image batch")
+	}
+	defer C.clip_image_f32_batch_free(batch)
+
+	ok = C.clip_image_preprocess(c.c, img, batch)
+	if !ok {
+		return nil, errors.New("failed to preprocess image")
+	}
+
+	// Step 3: Calculate total tokens and allocate memory
+	nImages := C.clip_image_f32_batch_n_images(batch)
+	totalTokens := 0
+	for i := C.size_t(0); i < nImages; i++ {
+		imgF32 := C.clip_image_f32_get_img(batch, C.int(i))
+		tokens := int(C.clip_n_output_tokens(c.c, imgF32))
+		totalTokens += tokens
+	}
+
+	if totalTokens == 0 {
+		return nil, errors.New("no tokens generated from image")
+	}
+
 	numEmbed := llamaContext.Model().NEmbd()
+	imageEmbd := make([]float32, totalTokens*numEmbed)
 
-	s := unsafe.Slice((*float32)(l.embed), numEmbed*numTokens)
-
-	embed := make([][]float32, numTokens)
-	rows := make([]float32, len(s))
-	copy(rows, s)
-
-	for i := range embed {
-		embed[i] = rows[i*numEmbed : (i+1)*numEmbed]
+	// Step 4: Encode the image batch
+	ok = C.clip_image_batch_encode(
+		c.c,
+		C.int(llamaContext.numThreads),
+		batch,
+		(*C.float)(unsafe.Pointer(&imageEmbd[0])),
+	)
+	if !ok {
+		return nil, errors.New("failed to encode image")
 	}
 
-	C.llava_image_embed_free(l)
+	// Step 5: Convert to slice of slices format
+	embed := make([][]float32, totalTokens)
+	for i := range embed {
+		embed[i] = imageEmbd[i*numEmbed : (i+1)*numEmbed]
+	}
 
 	return embed, nil
 }

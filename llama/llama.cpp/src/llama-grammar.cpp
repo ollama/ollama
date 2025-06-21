@@ -1186,8 +1186,18 @@ void llama_grammar_accept_impl(struct llama_grammar & grammar, llama_token token
             for (const auto & trigger_pattern : grammar.trigger_patterns) {
                 if (std::regex_match(grammar.trigger_buffer, match, trigger_pattern.regex)) {
                     grammar.awaiting_trigger = false;
-                    // get from the first match to the end of the string
-                    auto constrained_str = grammar.trigger_buffer.substr(match.position(1));
+                    // get from the first matched capturing group to the end of the string
+                    size_t start = std::string::npos;
+                    for (auto i = 1u; i < match.size(); i++) {
+                        if (match.length(i) > 0) {
+                            start = match.position(i);
+                            break;
+                        }
+                    }
+                    if (start == std::string::npos) {
+                        start = match.position(0);
+                    }
+                    auto constrained_str = grammar.trigger_buffer.substr(start);
                     // std::string constrained_str(match[1].first, grammar.trigger_buffer.end());
                     grammar.trigger_buffer.clear();
                     llama_grammar_accept_str(grammar, constrained_str);
