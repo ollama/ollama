@@ -5,7 +5,6 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"math"
 	"slices"
@@ -168,6 +167,10 @@ type Values struct {
 	api.Tools
 	Prompt string
 	Suffix string
+	Think  bool
+	// whether or not the user explicitly set the thinking flag (vs. it being
+	// implicitly false). Templates can't see whether `Think` is nil
+	IsThinkSet bool
 
 	// forceLegacy is a flag used to test compatibility with legacy templates
 	forceLegacy bool
@@ -223,16 +226,20 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 	system, messages := collate(v.Messages)
 	if v.Prompt != "" && v.Suffix != "" {
 		return t.Template.Execute(w, map[string]any{
-			"Prompt":   v.Prompt,
-			"Suffix":   v.Suffix,
-			"Response": "",
+			"Prompt":     v.Prompt,
+			"Suffix":     v.Suffix,
+			"Response":   "",
+			"Think":      v.Think,
+			"IsThinkSet": v.IsThinkSet,
 		})
 	} else if !v.forceLegacy && slices.Contains(t.Vars(), "messages") {
 		return t.Template.Execute(w, map[string]any{
-			"System":   system,
-			"Messages": messages,
-			"Tools":    v.Tools,
-			"Response": "",
+			"System":     system,
+			"Messages":   messages,
+			"Tools":      v.Tools,
+			"Response":   "",
+			"Think":      v.Think,
+			"IsThinkSet": v.IsThinkSet,
 		})
 	}
 
@@ -242,9 +249,11 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 	for _, m := range messages {
 		execute := func() error {
 			if err := t.Template.Execute(&b, map[string]any{
-				"System":   system,
-				"Prompt":   prompt,
-				"Response": response,
+				"System":     system,
+				"Prompt":     prompt,
+				"Response":   response,
+				"Think":      v.Think,
+				"IsThinkSet": v.IsThinkSet,
 			}); err != nil {
 				return err
 			}
@@ -287,9 +296,11 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 
 	tree := parse.Tree{Root: nodes.(*parse.ListNode)}
 	if err := template.Must(template.New("").AddParseTree("", &tree)).Execute(&b, map[string]any{
-		"System":   system,
-		"Prompt":   prompt,
-		"Response": response,
+		"System":     system,
+		"Prompt":     prompt,
+		"Response":   response,
+		"Think":      v.Think,
+		"IsThinkSet": v.IsThinkSet,
 	}); err != nil {
 		return err
 	}
@@ -302,22 +313,10 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 // into a single message. collate also collects and returns all system messages.
 // collate mutates message content adding image tags ([img-%d]) as needed
 func collate(msgs []api.Message) (string, []*api.Message) {
-	var n int
-
 	var system []string
 	var collated []*api.Message
 	for i := range msgs {
 		msg := msgs[i]
-		for range msg.Images {
-			imageTag := fmt.Sprintf("[img-%d]", n)
-			if !strings.Contains(msg.Content, "[img]") {
-				msg.Content = strings.TrimSpace("[img] " + msg.Content)
-			}
-
-			msg.Content = strings.Replace(msg.Content, "[img]", imageTag, 1)
-			n++
-		}
-
 		if msg.Role == "system" {
 			system = append(system, msg.Content)
 		}

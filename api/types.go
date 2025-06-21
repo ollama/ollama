@@ -10,9 +10,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/types/model"
 )
 
-// StatusError is an error with and HTTP status code.
+// StatusError is an error with an HTTP status code and message.
 type StatusError struct {
 	StatusCode   int
 	Status       string
@@ -57,7 +60,7 @@ type GenerateRequest struct {
 	Template string `json:"template"`
 
 	// Context is the context parameter returned from a previous call to
-	// Generate call. It can be used to keep a short conversational memory.
+	// [Client.Generate]. It can be used to keep a short conversational memory.
 	Context []int `json:"context,omitempty"`
 
 	// Stream specifies whether the response is streaming; it is true by default.
@@ -67,19 +70,25 @@ type GenerateRequest struct {
 	Raw bool `json:"raw,omitempty"`
 
 	// Format specifies the format to return a response in.
-	Format string `json:"format"`
+	Format json.RawMessage `json:"format,omitempty"`
 
 	// KeepAlive controls how long the model will stay loaded in memory following
 	// this request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
-	// Images is an optional list of base64-encoded images accompanying this
+	// Images is an optional list of raw image bytes accompanying this
 	// request, for multimodal models.
 	Images []ImageData `json:"images,omitempty"`
 
 	// Options lists model-specific options. For example, temperature can be
 	// set through this field, if the model supports it.
-	Options map[string]interface{} `json:"options"`
+	Options map[string]any `json:"options"`
+
+	// Think controls whether thinking/reasoning models will think before
+	// responding. Needs to be a pointer so we can distinguish between false
+	// (request that thinking _not_ be used) and unset (use the old behavior
+	// before this option was introduced)
+	Think *bool `json:"think,omitempty"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
@@ -90,21 +99,25 @@ type ChatRequest struct {
 	// Messages is the messages of the chat - can be used to keep a chat memory.
 	Messages []Message `json:"messages"`
 
-	// Stream enable streaming of returned response; true by default.
+	// Stream enables streaming of returned responses; true by default.
 	Stream *bool `json:"stream,omitempty"`
 
 	// Format is the format to return the response in (e.g. "json").
-	Format string `json:"format"`
+	Format json.RawMessage `json:"format,omitempty"`
 
 	// KeepAlive controls how long the model will stay loaded into memory
-	// followin the request.
+	// following the request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
 	// Tools is an optional list of tools the model has access to.
 	Tools `json:"tools,omitempty"`
 
 	// Options lists model-specific options.
-	Options map[string]interface{} `json:"options"`
+	Options map[string]any `json:"options"`
+
+	// Think controls whether thinking/reasoning models will think before
+	// responding
+	Think *bool `json:"think,omitempty"`
 }
 
 type Tools []Tool
@@ -123,8 +136,11 @@ func (t Tool) String() string {
 // role ("system", "user", or "assistant"), the content and an optional list
 // of images.
 type Message struct {
-	Role      string      `json:"role"`
-	Content   string      `json:"content"`
+	Role    string `json:"role"`
+	Content string `json:"content"`
+	// Thinking contains the text that was inside thinking tags in the
+	// original model output when ChatRequest.Think is enabled.
+	Thinking  string      `json:"thinking,omitempty"`
 	Images    []ImageData `json:"images,omitempty"`
 	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
 }
@@ -146,6 +162,7 @@ type ToolCall struct {
 }
 
 type ToolCallFunction struct {
+	Index     int                       `json:"index,omitempty"`
 	Name      string                    `json:"name"`
 	Arguments ToolCallFunctionArguments `json:"arguments"`
 }
@@ -159,7 +176,50 @@ func (t *ToolCallFunctionArguments) String() string {
 
 type Tool struct {
 	Type     string       `json:"type"`
+	Items    any          `json:"items,omitempty"`
 	Function ToolFunction `json:"function"`
+}
+
+// PropertyType can be either a string or an array of strings
+type PropertyType []string
+
+// UnmarshalJSON implements the json.Unmarshaler interface
+func (pt *PropertyType) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal as a string first
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*pt = []string{s}
+		return nil
+	}
+
+	// If that fails, try to unmarshal as an array of strings
+	var a []string
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*pt = a
+	return nil
+}
+
+// MarshalJSON implements the json.Marshaler interface
+func (pt PropertyType) MarshalJSON() ([]byte, error) {
+	if len(pt) == 1 {
+		// If there's only one type, marshal as a string
+		return json.Marshal(pt[0])
+	}
+	// Otherwise marshal as an array
+	return json.Marshal([]string(pt))
+}
+
+// String returns a string representation of the PropertyType
+func (pt PropertyType) String() string {
+	if len(pt) == 0 {
+		return ""
+	}
+	if len(pt) == 1 {
+		return pt[0]
+	}
+	return fmt.Sprintf("%v", []string(pt))
 }
 
 type ToolFunction struct {
@@ -167,11 +227,14 @@ type ToolFunction struct {
 	Description string `json:"description"`
 	Parameters  struct {
 		Type       string   `json:"type"`
+		Defs       any      `json:"$defs,omitempty"`
+		Items      any      `json:"items,omitempty"`
 		Required   []string `json:"required"`
 		Properties map[string]struct {
-			Type        string   `json:"type"`
-			Description string   `json:"description"`
-			Enum        []string `json:"enum,omitempty"`
+			Type        PropertyType `json:"type"`
+			Items       any          `json:"items,omitempty"`
+			Description string       `json:"description"`
+			Enum        []any        `json:"enum,omitempty"`
 		} `json:"properties"`
 	} `json:"parameters"`
 }
@@ -203,8 +266,8 @@ type Metrics struct {
 	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
 }
 
-// Options specified in [GenerateRequest], if you add a new option here add it
-// to the API docs also.
+// Options specified in [GenerateRequest].  If you add a new option here, also
+// add it to the API docs.
 type Options struct {
 	Runner
 
@@ -215,17 +278,12 @@ type Options struct {
 	TopK             int      `json:"top_k,omitempty"`
 	TopP             float32  `json:"top_p,omitempty"`
 	MinP             float32  `json:"min_p,omitempty"`
-	TFSZ             float32  `json:"tfs_z,omitempty"`
 	TypicalP         float32  `json:"typical_p,omitempty"`
 	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
 	Temperature      float32  `json:"temperature,omitempty"`
 	RepeatPenalty    float32  `json:"repeat_penalty,omitempty"`
 	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
 	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
-	Mirostat         int      `json:"mirostat,omitempty"`
-	MirostatTau      float32  `json:"mirostat_tau,omitempty"`
-	MirostatEta      float32  `json:"mirostat_eta,omitempty"`
-	PenalizeNewline  bool     `json:"penalize_newline,omitempty"`
 	Stop             []string `json:"stop,omitempty"`
 }
 
@@ -235,12 +293,7 @@ type Runner struct {
 	NumBatch  int   `json:"num_batch,omitempty"`
 	NumGPU    int   `json:"num_gpu,omitempty"`
 	MainGPU   int   `json:"main_gpu,omitempty"`
-	LowVRAM   bool  `json:"low_vram,omitempty"`
-	F16KV     bool  `json:"f16_kv,omitempty"`
-	LogitsAll bool  `json:"logits_all,omitempty"`
-	VocabOnly bool  `json:"vocab_only,omitempty"`
 	UseMMap   *bool `json:"use_mmap,omitempty"`
-	UseMLock  bool  `json:"use_mlock,omitempty"`
 	NumThread int   `json:"num_thread,omitempty"`
 }
 
@@ -259,7 +312,7 @@ type EmbedRequest struct {
 	Truncate *bool `json:"truncate,omitempty"`
 
 	// Options lists model-specific options.
-	Options map[string]interface{} `json:"options"`
+	Options map[string]any `json:"options"`
 }
 
 // EmbedResponse is the response from [Client.Embed].
@@ -285,7 +338,7 @@ type EmbeddingRequest struct {
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
 	// Options lists model-specific options.
-	Options map[string]interface{} `json:"options"`
+	Options map[string]any `json:"options"`
 }
 
 // EmbeddingResponse is the response from [Client.Embeddings].
@@ -295,17 +348,21 @@ type EmbeddingResponse struct {
 
 // CreateRequest is the request passed to [Client.Create].
 type CreateRequest struct {
-	Model     string `json:"model"`
-	Modelfile string `json:"modelfile"`
-	Stream    *bool  `json:"stream,omitempty"`
-	Quantize  string `json:"quantize,omitempty"`
+	Model    string `json:"model"`
+	Stream   *bool  `json:"stream,omitempty"`
+	Quantize string `json:"quantize,omitempty"`
+
+	From       string            `json:"from,omitempty"`
+	Files      map[string]string `json:"files,omitempty"`
+	Adapters   map[string]string `json:"adapters,omitempty"`
+	Template   string            `json:"template,omitempty"`
+	License    any               `json:"license,omitempty"`
+	System     string            `json:"system,omitempty"`
+	Parameters map[string]any    `json:"parameters,omitempty"`
+	Messages   []Message         `json:"messages,omitempty"`
 
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
-
-	// Deprecated: set the file content with Modelfile instead
-	Path string `json:"path"`
-
 	// Deprecated: use Quantize instead
 	Quantization string `json:"quantization,omitempty"`
 }
@@ -327,7 +384,7 @@ type ShowRequest struct {
 	Template string `json:"template"`
 	Verbose  bool   `json:"verbose"`
 
-	Options map[string]interface{} `json:"options"`
+	Options map[string]any `json:"options"`
 
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
@@ -335,16 +392,18 @@ type ShowRequest struct {
 
 // ShowResponse is the response returned from [Client.Show].
 type ShowResponse struct {
-	License       string         `json:"license,omitempty"`
-	Modelfile     string         `json:"modelfile,omitempty"`
-	Parameters    string         `json:"parameters,omitempty"`
-	Template      string         `json:"template,omitempty"`
-	System        string         `json:"system,omitempty"`
-	Details       ModelDetails   `json:"details,omitempty"`
-	Messages      []Message      `json:"messages,omitempty"`
-	ModelInfo     map[string]any `json:"model_info,omitempty"`
-	ProjectorInfo map[string]any `json:"projector_info,omitempty"`
-	ModifiedAt    time.Time      `json:"modified_at,omitempty"`
+	License       string             `json:"license,omitempty"`
+	Modelfile     string             `json:"modelfile,omitempty"`
+	Parameters    string             `json:"parameters,omitempty"`
+	Template      string             `json:"template,omitempty"`
+	System        string             `json:"system,omitempty"`
+	Details       ModelDetails       `json:"details,omitempty"`
+	Messages      []Message          `json:"messages,omitempty"`
+	ModelInfo     map[string]any     `json:"model_info,omitempty"`
+	ProjectorInfo map[string]any     `json:"projector_info,omitempty"`
+	Tensors       []Tensor           `json:"tensors,omitempty"`
+	Capabilities  []model.Capability `json:"capabilities,omitempty"`
+	ModifiedAt    time.Time          `json:"modified_at,omitempty"`
 }
 
 // CopyRequest is the request passed to [Client.Copy].
@@ -356,9 +415,9 @@ type CopyRequest struct {
 // PullRequest is the request passed to [Client.Pull].
 type PullRequest struct {
 	Model    string `json:"model"`
-	Insecure bool   `json:"insecure,omitempty"`
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Insecure bool   `json:"insecure,omitempty"` // Deprecated: ignored
+	Username string `json:"username"`           // Deprecated: ignored
+	Password string `json:"password"`           // Deprecated: ignored
 	Stream   *bool  `json:"stream,omitempty"`
 
 	// Deprecated: set the model name with Model instead
@@ -417,13 +476,6 @@ type ProcessModelResponse struct {
 	SizeVRAM  int64        `json:"size_vram"`
 }
 
-type RetrieveModelResponse struct {
-	Id      string `json:"id"`
-	Object  string `json:"object"`
-	Created int64  `json:"created"`
-	OwnedBy string `json:"owned_by"`
-}
-
 type TokenResponse struct {
 	Token string `json:"token"`
 }
@@ -438,6 +490,10 @@ type GenerateResponse struct {
 
 	// Response is the textual response itself.
 	Response string `json:"response"`
+
+	// Thinking contains the text that was inside thinking tags in the
+	// original model output when ChatRequest.Think is enabled.
+	Thinking string `json:"thinking,omitempty"`
 
 	// Done specifies if the response is complete.
 	Done bool `json:"done"`
@@ -460,6 +516,13 @@ type ModelDetails struct {
 	Families          []string `json:"families"`
 	ParameterSize     string   `json:"parameter_size"`
 	QuantizationLevel string   `json:"quantization_level"`
+}
+
+// Tensor describes the metadata for a given tensor.
+type Tensor struct {
+	Name  string   `json:"name"`
+	Type  string   `json:"type"`
+	Shape []uint64 `json:"shape"`
 }
 
 func (m *Metrics) Summary() {
@@ -490,7 +553,7 @@ func (m *Metrics) Summary() {
 	}
 }
 
-func (opts *Options) FromMap(m map[string]interface{}) error {
+func (opts *Options) FromMap(m map[string]any) error {
 	valueOpts := reflect.ValueOf(opts).Elem() // names of the fields in the options struct
 	typeOpts := reflect.TypeOf(opts).Elem()   // types of the fields in the options struct
 
@@ -547,12 +610,12 @@ func (opts *Options) FromMap(m map[string]interface{}) error {
 				}
 				field.SetString(val)
 			case reflect.Slice:
-				// JSON unmarshals to []interface{}, not []string
-				val, ok := val.([]interface{})
+				// JSON unmarshals to []any, not []string
+				val, ok := val.([]any)
 				if !ok {
 					return fmt.Errorf("option %q must be of type array", key)
 				}
-				// convert []interface{} to []string
+				// convert []any to []string
 				slice := make([]string, len(val))
 				for i, item := range val {
 					str, ok := item.(string)
@@ -594,27 +657,19 @@ func DefaultOptions() Options {
 		Temperature:      0.8,
 		TopK:             40,
 		TopP:             0.9,
-		TFSZ:             1.0,
 		TypicalP:         1.0,
 		RepeatLastN:      64,
 		RepeatPenalty:    1.1,
 		PresencePenalty:  0.0,
 		FrequencyPenalty: 0.0,
-		Mirostat:         0,
-		MirostatTau:      5.0,
-		MirostatEta:      0.1,
-		PenalizeNewline:  true,
 		Seed:             -1,
 
 		Runner: Runner{
 			// options set when the model is loaded
-			NumCtx:    2048,
+			NumCtx:    int(envconfig.ContextLength()),
 			NumBatch:  512,
 			NumGPU:    -1, // -1 here indicates that NumGPU should be set dynamically
 			NumThread: 0,  // let the runtime decide
-			LowVRAM:   false,
-			F16KV:     true,
-			UseMLock:  false,
 			UseMMap:   nil,
 		},
 	}
@@ -662,7 +717,7 @@ func (d *Duration) UnmarshalJSON(b []byte) (err error) {
 }
 
 // FormatParams converts specified parameter options to their correct types
-func FormatParams(params map[string][]string) (map[string]interface{}, error) {
+func FormatParams(params map[string][]string) (map[string]any, error) {
 	opts := Options{}
 	valueOpts := reflect.ValueOf(&opts).Elem() // names of the fields in the options struct
 	typeOpts := reflect.TypeOf(opts)           // types of the fields in the options struct
@@ -676,7 +731,7 @@ func FormatParams(params map[string][]string) (map[string]interface{}, error) {
 		}
 	}
 
-	out := make(map[string]interface{})
+	out := make(map[string]any)
 	// iterate params and set values based on json struct tags
 	for key, vals := range params {
 		if opt, ok := jsonOpts[key]; !ok {

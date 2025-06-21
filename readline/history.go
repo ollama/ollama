@@ -3,16 +3,17 @@ package readline
 import (
 	"bufio"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/emirpasic/gods/lists/arraylist"
+	"github.com/emirpasic/gods/v2/lists/arraylist"
 )
 
 type History struct {
-	Buf      *arraylist.List
+	Buf      *arraylist.List[string]
 	Autosave bool
 	Pos      int
 	Limit    int
@@ -22,7 +23,7 @@ type History struct {
 
 func NewHistory() (*History, error) {
 	h := &History{
-		Buf:      arraylist.New(),
+		Buf:      arraylist.New[string](),
 		Limit:    100, // resizeme
 		Autosave: true,
 		Enabled:  true,
@@ -73,14 +74,14 @@ func (h *History) Init() error {
 			continue
 		}
 
-		h.Add([]rune(line))
+		h.Add(line)
 	}
 
 	return nil
 }
 
-func (h *History) Add(l []rune) {
-	h.Buf.Add(l)
+func (h *History) Add(s string) {
+	h.Buf.Add(s)
 	h.Compact()
 	h.Pos = h.Size()
 	if h.Autosave {
@@ -101,22 +102,18 @@ func (h *History) Clear() {
 	h.Buf.Clear()
 }
 
-func (h *History) Prev() []rune {
-	var line []rune
+func (h *History) Prev() (line string) {
 	if h.Pos > 0 {
 		h.Pos -= 1
 	}
-	v, _ := h.Buf.Get(h.Pos)
-	line, _ = v.([]rune)
+	line, _ = h.Buf.Get(h.Pos)
 	return line
 }
 
-func (h *History) Next() []rune {
-	var line []rune
+func (h *History) Next() (line string) {
 	if h.Pos < h.Buf.Size() {
 		h.Pos += 1
-		v, _ := h.Buf.Get(h.Pos)
-		line, _ = v.([]rune)
+		line, _ = h.Buf.Get(h.Pos)
 	}
 	return line
 }
@@ -140,11 +137,8 @@ func (h *History) Save() error {
 
 	buf := bufio.NewWriter(f)
 	for cnt := range h.Size() {
-		v, _ := h.Buf.Get(cnt)
-		line, _ := v.([]rune)
-		if _, err := buf.WriteString(string(line) + "\n"); err != nil {
-			return err
-		}
+		line, _ := h.Buf.Get(cnt)
+		fmt.Fprintln(buf, line)
 	}
 	buf.Flush()
 	f.Close()

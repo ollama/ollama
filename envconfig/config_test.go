@@ -1,11 +1,13 @@
 package envconfig
 
 import (
+	"log/slog"
 	"math"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/ollama/ollama/logutil"
 )
 
 func TestHost(t *testing.T) {
@@ -68,6 +70,8 @@ func TestOrigins(t *testing.T) {
 			"app://*",
 			"file://*",
 			"tauri://*",
+			"vscode-webview://*",
+			"vscode-file://*",
 		}},
 		{"http://10.0.0.1", []string{
 			"http://10.0.0.1",
@@ -86,6 +90,8 @@ func TestOrigins(t *testing.T) {
 			"app://*",
 			"file://*",
 			"tauri://*",
+			"vscode-webview://*",
+			"vscode-file://*",
 		}},
 		{"http://172.16.0.1,https://192.168.0.1", []string{
 			"http://172.16.0.1",
@@ -105,6 +111,8 @@ func TestOrigins(t *testing.T) {
 			"app://*",
 			"file://*",
 			"tauri://*",
+			"vscode-webview://*",
+			"vscode-file://*",
 		}},
 		{"http://totally.safe,http://definitely.legit", []string{
 			"http://totally.safe",
@@ -124,13 +132,15 @@ func TestOrigins(t *testing.T) {
 			"app://*",
 			"file://*",
 			"tauri://*",
+			"vscode-webview://*",
+			"vscode-file://*",
 		}},
 	}
 	for _, tt := range cases {
 		t.Run(tt.value, func(t *testing.T) {
 			t.Setenv("OLLAMA_ORIGINS", tt.value)
 
-			if diff := cmp.Diff(Origins(), tt.expect); diff != "" {
+			if diff := cmp.Diff(AllowedOrigins(), tt.expect); diff != "" {
 				t.Errorf("%s: mismatch (-want +got):\n%s", tt.value, diff)
 			}
 		})
@@ -264,6 +274,53 @@ func TestVar(t *testing.T) {
 			t.Setenv("OLLAMA_VAR", k)
 			if s := Var("OLLAMA_VAR"); s != v {
 				t.Errorf("%s: expected %q, got %q", k, v, s)
+			}
+		})
+	}
+}
+
+func TestContextLength(t *testing.T) {
+	cases := map[string]uint{
+		"":     4096,
+		"2048": 2048,
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			t.Setenv("OLLAMA_CONTEXT_LENGTH", k)
+			if i := ContextLength(); i != v {
+				t.Errorf("%s: expected %d, got %d", k, v, i)
+			}
+		})
+	}
+}
+
+func TestLogLevel(t *testing.T) {
+	cases := map[string]slog.Level{
+		// Default to INFO
+		"":      slog.LevelInfo,
+		"false": slog.LevelInfo,
+		"f":     slog.LevelInfo,
+		"0":     slog.LevelInfo,
+
+		// True values enable Debug
+		"true": slog.LevelDebug,
+		"t":    slog.LevelDebug,
+
+		// Positive values increase verbosity
+		"1": slog.LevelDebug,
+		"2": logutil.LevelTrace,
+
+		// Negative values decrease verbosity
+		"-1": slog.LevelWarn,
+		"-2": slog.LevelError,
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			t.Setenv("OLLAMA_DEBUG", k)
+			if i := LogLevel(); i != v {
+				t.Errorf("%s: expected %d, got %d", k, v, i)
 			}
 		})
 	}

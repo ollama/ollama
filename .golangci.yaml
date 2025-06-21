@@ -6,10 +6,6 @@ linters:
     - bidichk
     - bodyclose
     - containedctx
-    - contextcheck
-    - errcheck
-    - exportloopref
-    - gci
     - gocheckcompilerdirectives
     - gofmt
     - gofumpt
@@ -23,15 +19,14 @@ linters:
     - nolintlint
     - nosprintfhostport
     - staticcheck
-    - tenv
     - unconvert
-    - unused
-    - usestdlibvars
+    - usetesting
     - wastedassign
     - whitespace
+  disable:
+    - usestdlibvars
+    - errcheck
 linters-settings:
-  gci:
-    sections: [standard, default, localmodule]
   staticcheck:
     checks:
       - all
@@ -43,5 +38,4 @@ severity:
         - gofmt
         - goimports
         - intrange
-        - usestdlibvars
       severity: info

@@ -75,72 +75,73 @@ function checkEnv() {
     } else {
         write-host "Code signing disabled - please set KEY_CONTAINERS to sign and copy ollama_inc.crt to the top of the source tree"
     }
-
+    $script:JOBS=((Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors)
 }
 
 
 function buildOllama() {
-    if ($null -eq ${env:OLLAMA_SKIP_GENERATE}) {
-        write-host "Building ollama runners"
+    mkdir -Force -path "${script:DIST_DIR}\"
+    if ($script:ARCH -ne "arm64") {
         Remove-Item -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}"
-        if ($null -eq ${env:OLLAMA_NEW_RUNNERS}) {
-            # Start by skipping CUDA to build everything else
-            write-host "Building ollama runners"
-            powershell -Command { $env:OLLAMA_SKIP_CUDA_GENERATE="1"; & go generate ./... }
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}    
+        New-Item "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\" -ItemType Directory -ea 0
 
-            # Then skip everyhting else and build all the CUDA variants
-            foreach ($env:CUDA_LIB_DIR in $script:CUDA_DIRS) {
-                write-host "Building CUDA ${env:CUDA_LIB_DIR} runner"
+        & cmake --fresh --preset CPU --install-prefix $script:DIST_DIR
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        & cmake --build --preset CPU  --config Release --parallel $script:JOBS
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        & cmake --install build --component CPU --strip
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 
-                if ($env:CUDA_LIB_DIR.Contains("v12")) {
-                    powershell -Command {
-                        $env:OLLAMA_SKIP_CUDA_GENERATE=""
-                        $env:OLLAMA_SKIP_STATIC_GENERATE="1"
-                        $env:OLLAMA_SKIP_CPU_GENERATE="1"
-                        $env:OLLAMA_SKIP_ONEAPI_GENERATE="1"
-                        $env:OLLAMA_SKIP_ROCM_GENERATE="1"
-                        $env:CMAKE_CUDA_ARCHITECTURES="60;61;62;70;72;75;80;86;87;89;90;90a"
-                        $env:OLLAMA_CUSTOM_CUDA_DEFS="-DGGML_CUDA_USE_GRAPHS=on"
-                        $env:CUDA_PATH=split-path -path $env:CUDA_LIB_DIR -parent
-                        $env:PATH="$envs:CUDA_LIB_DIR;$env:PATH"
-                        & go generate ./...
-                    }
-                } else {
-                    powershell -Command {
-                        $env:OLLAMA_SKIP_CUDA_GENERATE=""
-                        $env:OLLAMA_SKIP_STATIC_GENERATE="1"
-                        $env:OLLAMA_SKIP_CPU_GENERATE="1"
-                        $env:OLLAMA_SKIP_ONEAPI_GENERATE="1"
-                        $env:OLLAMA_SKIP_ROCM_GENERATE="1"
-                        $env:CMAKE_CUDA_ARCHITECTURES="50;52;53;60;61;62;70;72;75;80;86"
-                        $env:OLLAMA_CUSTOM_CUDA_DEFS=""
-                        $env:CUDA_PATH=split-path -path $env:CUDA_LIB_DIR -parent
-                        $env:PATH="$envs:CUDA_LIB_DIR;$env:PATH"
-                        & go generate ./...
-                    }
-                }
-                if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            }
-        } else {
-            & make -C llama -j 12
+        $hashEnv = @{}
+        Get-ChildItem env: | foreach { $hashEnv[$_.Name] = $_.Value }
+        if ("$script:CUDA_DIRS".Contains("v11")) {
+            $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V11")) { $v11="$_" }}
+            $env:CUDAToolkit_ROOT=$hashEnv[$v11]
+            write-host "Building CUDA v11 backend libraries"
+            # Note: cuda v11 requires msvc 2019 so force the older generator
+            # to avoid 2022 (or newer) from being used as the default
+            & cmake --fresh --preset "CUDA 11" -G "Visual Studio 16 2019" --install-prefix $script:DIST_DIR
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --build --preset "CUDA 11"  --config Release --parallel $script:JOBS
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --install build --component "CUDA" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
-        
-        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}    
-    } else {
-        write-host "Skipping generate step with OLLAMA_SKIP_GENERATE set"
+        if ("$script:CUDA_DIRS".Contains("v12")) {
+            $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V12")) { $v12="$_" }}
+            $env:CUDAToolkit_ROOT=$hashEnv[$v12]
+            write-host "Building CUDA v12 backend libraries"
+            & cmake --fresh --preset "CUDA 12" --install-prefix $script:DIST_DIR
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --build --preset "CUDA 12"  --config Release --parallel $script:JOBS
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --install build --component "CUDA" --strip
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        }
+        if ($env:HIP_PATH) {
+            write-host "Building ROCm backend libraries"
+            if (-Not (get-command -ErrorAction silent ninja)) {
+                $NINJA_DIR=(gci -path (Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation -r -fi ninja.exe).Directory.FullName
+                $env:PATH="$NINJA_DIR;$env:PATH"
+            }
+            $env:HIPCXX="${env:HIP_PATH}\bin\clang++.exe"
+            $env:HIP_PLATFORM="amd"
+            $env:CMAKE_PREFIX_PATH="${env:HIP_PATH}"
+            & cmake --fresh --preset "ROCm 6" -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ --install-prefix $script:DIST_DIR
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            $env:HIPCXX=""
+            $env:HIP_PLATFORM=""
+            $env:CMAKE_PREFIX_PATH=""
+            & cmake --build --preset "ROCm"  --config Release --parallel $script:JOBS
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+            & cmake --install build --component "HIP" --strip
+            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+        }
     }
     write-host "Building ollama CLI"
     & go build -trimpath -ldflags "-s -w -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    if ("${env:KEY_CONTAINER}") {
-        & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
-            /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} ollama.exe
-        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    }
-    New-Item -ItemType Directory -Path .\dist\windows-${script:TARGET_ARCH}\ -Force
-    cp .\ollama.exe .\dist\windows-${script:TARGET_ARCH}\
+    cp .\ollama.exe "${script:DIST_DIR}\"
 }
 
 function buildApp() {
@@ -149,11 +150,6 @@ function buildApp() {
     & windres -l 0 -o ollama.syso ollama.rc
     & go build -trimpath -ldflags "-s -w -H windowsgui -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" -o "${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}-app.exe" .
     if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    if ("${env:KEY_CONTAINER}") {
-        & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
-            /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} "${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}-app.exe"
-        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-    }
 }
 
 function gatherDependencies() {
@@ -172,9 +168,12 @@ function gatherDependencies() {
     } else {
         $depArch=$script:TARGET_ARCH
     }
-    if ($depArch -eq "amd64") {
+    if ($depArch -eq "x64") {
+        write-host "cp ${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\msvcp140*.dll ${script:DIST_DIR}\lib\ollama\"
         cp "${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\msvcp140*.dll" "${script:DIST_DIR}\lib\ollama\"
+        write-host "cp ${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\vcruntime140.dll ${script:DIST_DIR}\lib\ollama\"
         cp "${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\vcruntime140.dll" "${script:DIST_DIR}\lib\ollama\"
+        write-host "cp ${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\vcruntime140_1.dll ${script:DIST_DIR}\lib\ollama\"
         cp "${env:VCToolsRedistDir}\${depArch}\Microsoft.VC*.CRT\vcruntime140_1.dll" "${script:DIST_DIR}\lib\ollama\"
         $llvmCrtDir="$env:VCToolsRedistDir\..\..\..\Tools\Llvm\${depArch}\bin"
         foreach ($part in $("runtime", "stdio", "filesystem", "math", "convert", "heap", "string", "time", "locale", "environment")) {
@@ -186,16 +185,19 @@ function gatherDependencies() {
         copy-item -path "${env:VCToolsRedistDir}\vc_redist.arm64.exe" -destination "${script:DIST_DIR}" -verbose
     }
 
-
     cp "${script:SRC_DIR}\app\ollama_welcome.ps1" "${script:SRC_DIR}\dist\"
+}
+
+function sign() {
     if ("${env:KEY_CONTAINER}") {
-        write-host "about to sign"
-        foreach ($file in (get-childitem "${script:DIST_DIR}\lib\ollama\cu*.dll") + @("${script:SRC_DIR}\dist\ollama_welcome.ps1")){
-            write-host "signing $file"
-            & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
-                /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} $file
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        }
+        write-host "Signing Ollama executables, scripts and libraries"
+        & "${script:SignTool}" sign /v /fd sha256 /t http://timestamp.digicert.com /f "${script:OLLAMA_CERT}" `
+            /csp "Google Cloud KMS Provider" /kc ${env:KEY_CONTAINER} `
+            $(get-childitem -path "${script:SRC_DIR}\dist" -r -include @('ollama_welcome.ps1')) `
+            $(get-childitem -path "${script:SRC_DIR}\dist\windows-*" -r -include @('*.exe', '*.dll'))
+        if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
+    } else {
+        write-host "Signing not enabled"
     }
 }
 
@@ -216,8 +218,28 @@ function buildInstaller() {
 }
 
 function distZip() {
-    write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-${script:TARGET_ARCH}.zip"
-    Compress-Archive -Path "${script:SRC_DIR}\dist\windows-${script:TARGET_ARCH}\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-${script:TARGET_ARCH}.zip" -Force
+    if (Test-Path -Path "${script:SRC_DIR}\dist\windows-amd64") {
+        if (Test-Path -Path "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\rocm") {
+            write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-amd64-rocm.zip"
+            # Temporarily adjust paths so we can retain the same directory structure
+            Remove-Item -ea 0 -r "${script:SRC_DIR}\dist\windows-amd64-rocm"
+            mkdir -Force -path "${script:SRC_DIR}\dist\windows-amd64-rocm\lib\ollama"
+            Write-Output "Extract this ROCm zip file to the same location where you extracted ollama-windows-amd64.zip" > "${script:SRC_DIR}\dist\windows-amd64-rocm\README.txt"
+            Move-Item -path "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\rocm" -destination "${script:SRC_DIR}\dist\windows-amd64-rocm\lib\ollama"
+            Compress-Archive -CompressionLevel Optimal -Path "${script:SRC_DIR}\dist\windows-amd64-rocm\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-amd64-rocm.zip" -Force
+        }
+
+        write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-amd64.zip"
+        Compress-Archive -CompressionLevel Optimal -Path "${script:SRC_DIR}\dist\windows-amd64\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-amd64.zip" -Force
+        if (Test-Path -Path "${script:SRC_DIR}\dist\windows-amd64-rocm") {
+            Move-Item -destination "${script:SRC_DIR}\dist\windows-amd64\lib\ollama\rocm" -path "${script:SRC_DIR}\dist\windows-amd64-rocm\lib\ollama"
+        }
+    }
+
+    if (Test-Path -Path "${script:SRC_DIR}\dist\windows-arm64") {
+        write-host "Generating stand-alone distribution zip file ${script:SRC_DIR}\dist\ollama-windows-arm64.zip"
+        Compress-Archive -CompressionLevel Optimal -Path "${script:SRC_DIR}\dist\windows-arm64\*" -DestinationPath "${script:SRC_DIR}\dist\ollama-windows-arm64.zip" -Force
+    }
 }
 
 checkEnv
@@ -226,6 +248,7 @@ try {
         buildOllama
         buildApp
         gatherDependencies
+        sign
         buildInstaller
         distZip
     } else {

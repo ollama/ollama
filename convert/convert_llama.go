@@ -9,7 +9,7 @@ import (
 	"github.com/pdevine/tensor"
 	"github.com/pdevine/tensor/native"
 
-	"github.com/ollama/ollama/llm"
+	"github.com/ollama/ollama/fs/ggml"
 )
 
 type llamaModel struct {
@@ -28,12 +28,12 @@ type llamaModel struct {
 	NumKeyValueHeads      uint32  `json:"num_key_value_heads"`
 	RopeTheta             float32 `json:"rope_theta"`
 	RopeScaling           struct {
-		Type                            string  `json:"type"`
-		RopeType                        string  `json:"rope_type"`
-		Factor                          float32 `json:"factor"`
-		LowFrequencyFactor              float32 `json:"low_freq_factor"`
-		HighFrequencyFactor             float32 `json:"high_freq_factor"`
-		OriginalMaxPositionalEmbeddings uint32  `json:"original_max_positional_embeddings"`
+		Type                          string  `json:"type"`
+		RopeType                      string  `json:"rope_type"`
+		Factor                        float32 `json:"factor"`
+		LowFrequencyFactor            float32 `json:"low_freq_factor"`
+		HighFrequencyFactor           float32 `json:"high_freq_factor"`
+		OriginalMaxPositionEmbeddings uint32  `json:"original_max_position_embeddings"`
 
 		factors ropeFactor
 	} `json:"rope_scaling"`
@@ -42,11 +42,13 @@ type llamaModel struct {
 	LayerNormEpsilon float32 `json:"layer_norm_epsilon"`
 	NormEpsilon      float32 `json:"norm_epsilon"`
 	HeadDim          uint32  `json:"head_dim"`
+
+	skipRepack bool
 }
 
 var _ ModelConverter = (*llamaModel)(nil)
 
-func (p *llamaModel) KV(t *Tokenizer) llm.KV {
+func (p *llamaModel) KV(t *Tokenizer) ggml.KV {
 	kv := p.ModelParameters.KV(t)
 	kv["general.architecture"] = "llama"
 	kv["llama.vocab_size"] = p.VocabSize
@@ -70,6 +72,10 @@ func (p *llamaModel) KV(t *Tokenizer) llm.KV {
 		kv["llama.rope.dimension_count"] = p.HiddenSize / headCount
 	}
 
+	if p.HeadDim > 0 {
+		kv["llama.attention.head_dim"] = p.HeadDim
+	}
+
 	if p.RopeTheta > 0 {
 		kv["llama.rope.freq_base"] = p.RopeTheta
 	}
@@ -84,7 +90,7 @@ func (p *llamaModel) KV(t *Tokenizer) llm.KV {
 			factorLow := cmp.Or(p.RopeScaling.LowFrequencyFactor, 1.0)
 			factorHigh := cmp.Or(p.RopeScaling.HighFrequencyFactor, 4.0)
 
-			original := cmp.Or(p.RopeScaling.OriginalMaxPositionalEmbeddings, 8192)
+			original := cmp.Or(p.RopeScaling.OriginalMaxPositionEmbeddings, 8192)
 			lambdaLow := float32(original) / factorLow
 			lambdaHigh := float32(original) / factorHigh
 
@@ -120,11 +126,11 @@ func (p *llamaModel) KV(t *Tokenizer) llm.KV {
 	return kv
 }
 
-func (p *llamaModel) Tensors(ts []Tensor) []llm.Tensor {
-	var out []llm.Tensor
+func (p *llamaModel) Tensors(ts []Tensor) []*ggml.Tensor {
+	var out []*ggml.Tensor
 
 	if p.RopeScaling.factors != nil {
-		out = append(out, llm.Tensor{
+		out = append(out, &ggml.Tensor{
 			Name:     "rope_freqs.weight",
 			Kind:     0,
 			Shape:    []uint64{uint64(len(p.RopeScaling.factors))},
@@ -133,12 +139,14 @@ func (p *llamaModel) Tensors(ts []Tensor) []llm.Tensor {
 	}
 
 	for _, t := range ts {
-		if strings.HasSuffix(t.Name(), "attn_q.weight") ||
-			strings.HasSuffix(t.Name(), "attn_k.weight") {
-			t.SetRepacker(p.repack)
+		if strings.HasSuffix(t.Name(), "attn_q.weight") || strings.HasSuffix(t.Name(), "attn_k.weight") ||
+			strings.HasSuffix(t.Name(), "attn_q_proj.weight") || strings.HasSuffix(t.Name(), "attn_k_proj.weight") {
+			if !p.skipRepack {
+				t.SetRepacker(p.repack)
+			}
 		}
 
-		out = append(out, llm.Tensor{
+		out = append(out, &ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),
@@ -174,9 +182,9 @@ func (p *llamaModel) repack(name string, data []float32, shape []uint64) ([]floa
 	}
 
 	var heads uint32
-	if strings.HasSuffix(name, "attn_q.weight") {
+	if strings.HasSuffix(name, "attn_q.weight") || strings.HasSuffix(name, "attn_q_proj.weight") {
 		heads = p.NumAttentionHeads
-	} else if strings.HasSuffix(name, "attn_k.weight") {
+	} else if strings.HasSuffix(name, "attn_k.weight") || strings.HasSuffix(name, "attn_k_proj.weight") {
 		heads = cmp.Or(p.NumKeyValueHeads, p.NumAttentionHeads)
 	} else {
 		return nil, fmt.Errorf("unknown tensor for repack: %s", name)

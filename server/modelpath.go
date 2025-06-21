@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/types/model"
 )
 
 type ModelPath struct {
@@ -29,9 +31,10 @@ const (
 
 var (
 	ErrInvalidImageFormat  = errors.New("invalid image format")
+	ErrInvalidDigestFormat = errors.New("invalid digest format")
 	ErrInvalidProtocol     = errors.New("invalid protocol scheme")
 	ErrInsecureProtocol    = errors.New("insecure protocol http")
-	ErrInvalidDigestFormat = errors.New("invalid digest format")
+	ErrModelPathInvalid    = errors.New("invalid model path")
 )
 
 func ParseModelPath(name string) ModelPath {
@@ -71,8 +74,6 @@ func ParseModelPath(name string) ModelPath {
 	return mp
 }
 
-var errModelPathInvalid = errors.New("invalid model path")
-
 func (mp ModelPath) GetNamespaceRepository() string {
 	return fmt.Sprintf("%s/%s", mp.Namespace, mp.Repository)
 }
@@ -93,11 +94,16 @@ func (mp ModelPath) GetShortTagname() string {
 
 // GetManifestPath returns the path to the manifest file for the given model path, it is up to the caller to create the directory if it does not exist.
 func (mp ModelPath) GetManifestPath() (string, error) {
-	if p := filepath.Join(mp.Registry, mp.Namespace, mp.Repository, mp.Tag); filepath.IsLocal(p) {
-		return filepath.Join(envconfig.Models(), "manifests", p), nil
+	name := model.Name{
+		Host:      mp.Registry,
+		Namespace: mp.Namespace,
+		Model:     mp.Repository,
+		Tag:       mp.Tag,
 	}
-
-	return "", errModelPathInvalid
+	if !name.IsValid() {
+		return "", fs.ErrNotExist
+	}
+	return filepath.Join(envconfig.Models(), "manifests", name.Filepath()), nil
 }
 
 func (mp ModelPath) BaseURL() *url.URL {
@@ -110,7 +116,7 @@ func (mp ModelPath) BaseURL() *url.URL {
 func GetManifestPath() (string, error) {
 	path := filepath.Join(envconfig.Models(), "manifests")
 	if err := os.MkdirAll(path, 0o755); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: ensure path elements are traversable", err)
 	}
 
 	return path, nil
@@ -133,7 +139,7 @@ func GetBlobsPath(digest string) (string, error) {
 	}
 
 	if err := os.MkdirAll(dirPath, 0o755); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: ensure path elements are traversable", err)
 	}
 
 	return path, nil
