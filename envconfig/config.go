@@ -185,6 +185,8 @@ var (
 	ContextLength = Uint("OLLAMA_CONTEXT_LENGTH", 4096)
 	// Auth enables authentication between the Ollama client and server
 	UseAuth = Bool("OLLAMA_AUTH")
+	// NoTray disables app tray display
+	NoTray = Bool("OLLAMA_APP_NOTRAY")
 )
 
 func String(s string) func() string {
@@ -275,6 +277,9 @@ func AsMap() map[string]EnvVar {
 		"HTTP_PROXY":  {"HTTP_PROXY", String("HTTP_PROXY")(), "HTTP proxy"},
 		"HTTPS_PROXY": {"HTTPS_PROXY", String("HTTPS_PROXY")(), "HTTPS proxy"},
 		"NO_PROXY":    {"NO_PROXY", String("NO_PROXY")(), "No proxy"},
+
+		// App
+		"OLLAMA_APP_NOTRAY": {"OLLAMA_APP_NOTRAY", NoTray(), "Disable app tray display"},
 	}
 
 	if runtime.GOOS != "windows" {
