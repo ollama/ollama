@@ -31,6 +31,10 @@ func (r registryChallenge) URL() (*url.URL, error) {
 		return nil, err
 	}
 
+	if r.Service != "" && !strings.HasSuffix(redirectURL.Host, r.Service) && !strings.HasSuffix(r.Service, redirectURL.Host) {
+		return nil, fmt.Errorf("realm domain %q does not match service domain %q", redirectURL.Host, r.Service)
+	}
+
 	values := redirectURL.Query()
 	values.Add("service", r.Service)
 	for _, s := range strings.Split(r.Scope, " ") {
