@@ -172,6 +172,8 @@ PARAMETER <parameter> <parametervalue>
 | `{{ .System }}`   | The system message used to specify custom behavior.                                           |
 | `{{ .Prompt }}`   | The user prompt message.                                                                      |
 | `{{ .Response }}` | The response from the model. When generating a response, text after this variable is omitted. |
+| `{{ .Query }}`     | The user query message(for rerank usage).                                                    | 
+| `{{ .Document }}` | The user provided documents(for rerank usage).                                               |
 
 ```
 TEMPLATE """{{ if .System }}<|im_start|>system
@@ -180,6 +182,10 @@ TEMPLATE """{{ if .System }}<|im_start|>system
 {{ .Prompt }}<|im_end|>
 {{ end }}<|im_start|>assistant
 """
+```
+
+```
+TEMPLATE """[BOS]{{ .Query }}[EOS][SEP]{{ .Document }}[EOS]"""
 ```
 
 ### SYSTEM
