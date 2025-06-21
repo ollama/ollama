@@ -973,6 +973,11 @@ func Execute(args []string) error {
 		http.Error(w, "this model does not support embeddings", http.StatusNotImplemented)
 	})
 
+	// TODO: support rerank
+	mux.HandleFunc("POST /rerank", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "this model does not support rerank", http.StatusNotImplemented)
+	})
+
 	mux.HandleFunc("POST /completion", server.completion)
 	mux.HandleFunc("GET /health", server.health)
 
