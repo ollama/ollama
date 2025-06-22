@@ -137,6 +137,7 @@ FROM ./ollama-model.gguf
 
 The GGUF file location should be specified as an absolute path or relative to the `Modelfile` location.
 
+Note: When creating a vision model that comprises of both a main model GGUF and a `mmproj` (projector) GGUF - place both files in the same directory and provide the directory path in the `FROM` instruction.
 
 ### PARAMETER
 
