@@ -962,6 +962,125 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	return client.Pull(cmd.Context(), &request, fn)
 }
 
+func ExportHandler(cmd *cobra.Command, args []string) error {
+	compress, err := cmd.Flags().GetBool("compress")
+	if err != nil {
+		return err
+	}
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	p := progress.NewProgress(os.Stderr)
+	defer p.Stop()
+
+	bars := make(map[string]*progress.Bar)
+	var status string
+	var spinner *progress.Spinner
+
+	fn := func(resp api.ProgressResponse) {
+		if resp.Digest != "" {
+			if spinner != nil {
+				spinner.Stop()
+			}
+
+			bar, ok := bars[resp.Digest]
+			if !ok {
+				bar = progress.NewBar(fmt.Sprintf("exporting %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
+				bars[resp.Digest] = bar
+				p.Add(resp.Digest, bar)
+			}
+
+			bar.Set(resp.Completed)
+		} else if status != resp.Status {
+			if spinner != nil {
+				spinner.Stop()
+			}
+
+			status = resp.Status
+			spinner = progress.NewSpinner(status)
+			p.Add(status, spinner)
+		}
+	}
+
+	format := ""
+	if compress {
+		format = "tar.gz"
+	}
+
+	request := api.ExportRequest{
+		Model:    args[0],
+		Path:     args[1],
+		Compress: compress,
+		Format:   format,
+	}
+
+	return client.Export(cmd.Context(), &request, fn)
+}
+
+func ImportHandler(cmd *cobra.Command, args []string) error {
+	force, err := cmd.Flags().GetBool("force")
+	if err != nil {
+		return err
+	}
+
+	insecure, err := cmd.Flags().GetBool("insecure")
+	if err != nil {
+		return err
+	}
+
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return err
+	}
+
+	p := progress.NewProgress(os.Stderr)
+	defer p.Stop()
+
+	bars := make(map[string]*progress.Bar)
+	var status string
+	var spinner *progress.Spinner
+
+	fn := func(resp api.ProgressResponse) {
+		if resp.Digest != "" {
+			if spinner != nil {
+				spinner.Stop()
+			}
+
+			bar, ok := bars[resp.Digest]
+			if !ok {
+				bar = progress.NewBar(fmt.Sprintf("importing %s...", resp.Digest[7:19]), resp.Total, resp.Completed)
+				bars[resp.Digest] = bar
+				p.Add(resp.Digest, bar)
+			}
+
+			bar.Set(resp.Completed)
+		} else if status != resp.Status {
+			if spinner != nil {
+				spinner.Stop()
+			}
+
+			status = resp.Status
+			spinner = progress.NewSpinner(status)
+			p.Add(status, spinner)
+		}
+	}
+
+	request := api.ImportRequest{
+		Path:     args[0],
+		Force:    force,
+		Insecure: insecure,
+	}
+
+	if len(args) > 1 {
+		request.Model = args[1]
+	}
+
+	return client.Import(cmd.Context(), &request, fn)
+}
+
 type generateContextKey string
 
 type runOptions struct {
@@ -1522,6 +1641,30 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	exportCmd := &cobra.Command{
+		Use:     "export MODEL DESTINATION",
+		Short:   "Export a model to a file or directory",
+		Long:    `Export a model to a file or directory for sharing or backup purposes.
+
+By default, exports as an uncompressed tar file (.tar) using parallel processing
+for optimal performance. Use --compress to create a compressed tar.gz file.`,
+		Args:    cobra.ExactArgs(2),
+		PreRunE: checkServerHeartbeat,
+		RunE:    ExportHandler,
+	}
+	exportCmd.Flags().Bool("compress", false, "Compress the export as tar.gz (slower but smaller file size)")
+
+	importCmd := &cobra.Command{
+		Use:     "import SOURCE [MODEL_NAME]",
+		Short:   "Import a model from a file or directory",
+		Long:    `Import a model from a previously exported file or directory.`,
+		Args:    cobra.RangeArgs(1, 2),
+		PreRunE: checkServerHeartbeat,
+		RunE:    ImportHandler,
+	}
+	importCmd.Flags().Bool("force", false, "Overwrite existing model")
+	importCmd.Flags().Bool("insecure", false, "Skip checksum verification")
+
 	runnerCmd := &cobra.Command{
 		Use:    "runner",
 		Hidden: true,
@@ -1589,6 +1732,8 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		exportCmd,
+		importCmd,
 		runnerCmd,
 	)
 

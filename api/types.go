@@ -445,6 +445,22 @@ type PushRequest struct {
 	Name string `json:"name"`
 }
 
+// ExportRequest describes a request to export a model to a file or directory.
+type ExportRequest struct {
+	Model    string `json:"model"`              // Model name to export
+	Path     string `json:"path"`               // Destination path
+	Compress bool   `json:"compress,omitempty"` // Enable compression
+	Format   string `json:"format,omitempty"`   // Export format (dir, tar, tar.gz)
+}
+
+// ImportRequest describes a request to import a model from a file or directory.
+type ImportRequest struct {
+	Path     string `json:"path"`               // Source path
+	Model    string `json:"model,omitempty"`    // Optional new model name
+	Force    bool   `json:"force,omitempty"`    // Overwrite existing model
+	Insecure bool   `json:"insecure,omitempty"` // Skip verification
+}
+
 // ListResponse is the response from [Client.List].
 type ListResponse struct {
 	Models []ListModelResponse `json:"models"`
