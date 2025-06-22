@@ -20,6 +20,7 @@ const (
 )
 
 type Metrics struct {
+	Start              metric.Int64Gauge
 	Requests           metric.Int64Counter
 	TotalDuration      metric.Float64Counter
 	LoadDuration       metric.Float64Counter
@@ -30,6 +31,12 @@ type Metrics struct {
 }
 
 func NewMetrics(meter metric.Meter) *Metrics {
+	build, _ := meter.Int64Gauge(
+		"ollama_build_info",
+		metric.WithDescription("Ollama start date (as Unixtime) and build version."),
+		metric.WithUnit("seconds"),
+	)
+
 	req, _ := meter.Int64Counter(
 		"http_requests_total",
 		metric.WithDescription("The total number of requests on the endpoints."),
@@ -73,6 +80,7 @@ func NewMetrics(meter metric.Meter) *Metrics {
 	)
 
 	return &Metrics{
+		Start:              build,
 		Requests:           req,
 		TotalDuration:      totalDuration,
 		LoadDuration:       loadDuration,

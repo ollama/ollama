@@ -1194,6 +1194,9 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 		slog.Warn(fmt.Sprintf("Metrics initialization failed with %s", err))
 	}
 	s.metrics = m
+	s.metrics.Start.Record(nil, time.Now().UnixMicro()/1e6, metric.WithAttributes(
+		attribute.String("version", version.Version),
+	))
 
 	r := gin.Default()
 	r.HandleMethodNotAllowed = true
