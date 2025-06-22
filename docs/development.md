@@ -45,6 +45,8 @@ Install prerequisites:
     - [Ninja](https://github.com/ninja-build/ninja/releases)
 - (Optional) NVIDIA GPU support
     - [CUDA SDK](https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_network)
+- (Optional) Intel GPU support
+    - [Intel Arc & Iris Xe Graphics Driver with oneAPI Level Zero](https://www.intel.com/content/www/us/en/download/785597/intel-arc-iris-xe-graphics-windows.html)
 
 Then, configure and build the project:
 
@@ -80,6 +82,8 @@ Install prerequisites:
     - [ROCm](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html)
 - (Optional) NVIDIA GPU support
     - [CUDA SDK](https://developer.nvidia.com/cuda-downloads)
+- (Optional) Intel GPU support
+    - [Intel GPU Driver](https://dgpu-docs.intel.com/driver/overview/overview.html)
 
 > [!IMPORTANT]
 > Ensure prerequisites are in `PATH` before running CMake.
