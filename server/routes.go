@@ -516,6 +516,15 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		LoadDuration:    checkpointLoaded.Sub(checkpointStart),
 		PromptEvalCount: count,
 	}
+
+	attrs := metric.WithAttributes(
+		attribute.String("model", req.Model),
+	)
+	s.metrics.TotalDuration.Add(c.Request.Context(), resp.TotalDuration.Seconds(), attrs)
+	s.metrics.LoadDuration.Add(c.Request.Context(), resp.LoadDuration.Seconds(), attrs)
+	s.metrics.PromptEvalCount.Add(c.Request.Context(), int64(resp.PromptEvalCount), attrs)
+	s.metrics.PromptEvalDuration.Add(c.Request.Context(), resp.TotalDuration.Seconds(), attrs)
+
 	c.JSON(http.StatusOK, resp)
 }
 
