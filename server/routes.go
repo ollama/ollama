@@ -335,6 +335,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				res.DoneReason = cr.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+
 				attrs := metric.WithAttributes(
 					attribute.String("model", req.Model),
 					attribute.String("reason", res.DoneReason),
@@ -1593,6 +1594,17 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				res.DoneReason = r.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+
+				attrs := metric.WithAttributes(
+					attribute.String("model", req.Model),
+					attribute.String("reason", res.DoneReason),
+				)
+				s.metrics.TotalDuration.Add(c.Request.Context(), res.TotalDuration.Seconds(), attrs)
+				s.metrics.LoadDuration.Add(c.Request.Context(), res.LoadDuration.Seconds(), attrs)
+				s.metrics.PromptEvalCount.Add(c.Request.Context(), int64(r.PromptEvalCount), attrs)
+				s.metrics.PromptEvalDuration.Add(c.Request.Context(), r.PromptEvalDuration.Seconds(), attrs)
+				s.metrics.EvalCount.Add(c.Request.Context(), int64(r.EvalCount), attrs)
+				s.metrics.EvalDuration.Add(c.Request.Context(), r.EvalDuration.Seconds(), attrs)
 			}
 
 			if len(req.Tools) > 0 {
