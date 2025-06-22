@@ -20,7 +20,13 @@ const (
 )
 
 type Metrics struct {
-	Requests metric.Int64Counter
+	Requests           metric.Int64Counter
+	TotalDuration      metric.Float64Counter
+	LoadDuration       metric.Float64Counter
+	PromptEvalCount    metric.Int64Counter
+	PromptEvalDuration metric.Float64Counter
+	EvalCount          metric.Int64Counter
+	EvalDuration       metric.Float64Counter
 }
 
 func NewMetrics(meter metric.Meter) *Metrics {
@@ -30,8 +36,50 @@ func NewMetrics(meter metric.Meter) *Metrics {
 		metric.WithUnit("requests"),
 	)
 
+	totalDuration, _ := meter.Float64Counter(
+		"ollama_total_duration_seconds",
+		metric.WithDescription("The request total duration in seconds."),
+		metric.WithUnit("seconds"),
+	)
+
+	loadDuration, _ := meter.Float64Counter(
+		"ollama_load_duration_seconds",
+		metric.WithDescription("The request load duration in seconds."),
+		metric.WithUnit("seconds"),
+	)
+
+	promptEvalCount, _ := meter.Int64Counter(
+		"ollama_prompt_eval_total",
+		metric.WithDescription("The number of prompt token evaluated."),
+		metric.WithUnit("tokens"),
+	)
+
+	promptEvalDuration, _ := meter.Float64Counter(
+		"ollama_prompt_eval_duration_seconds",
+		metric.WithDescription("The prompt evaluation duration in seconds."),
+		metric.WithUnit("seconds"),
+	)
+
+	evalCount, _ := meter.Int64Counter(
+		"ollama_eval_total",
+		metric.WithDescription("The number of token evaluated."),
+		metric.WithUnit("tokens"),
+	)
+
+	evalDuration, _ := meter.Float64Counter(
+		"ollama_eval_duration_seconds",
+		metric.WithDescription("The prompt evaluation duration in seconds."),
+		metric.WithUnit("seconds"),
+	)
+
 	return &Metrics{
-		Requests: req,
+		Requests:           req,
+		TotalDuration:      totalDuration,
+		LoadDuration:       loadDuration,
+		PromptEvalCount:    promptEvalCount,
+		PromptEvalDuration: promptEvalDuration,
+		EvalCount:          evalCount,
+		EvalDuration:       evalDuration,
 	}
 }
 

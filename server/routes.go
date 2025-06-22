@@ -24,6 +24,8 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"golang.org/x/image/webp"
 	"golang.org/x/sync/errgroup"
 
@@ -55,8 +57,9 @@ var useClient2 = experimentEnabled("client2")
 var mode string = gin.DebugMode
 
 type Server struct {
-	addr  net.Addr
-	sched *Scheduler
+	addr    net.Addr
+	sched   *Scheduler
+	metrics *telemetry.Metrics
 }
 
 func init() {
@@ -332,6 +335,16 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				res.DoneReason = cr.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
+				attrs := metric.WithAttributes(
+					attribute.String("model", req.Model),
+					attribute.String("reason", res.DoneReason),
+				)
+				s.metrics.TotalDuration.Add(c.Request.Context(), res.TotalDuration.Seconds(), attrs)
+				s.metrics.LoadDuration.Add(c.Request.Context(), res.LoadDuration.Seconds(), attrs)
+				s.metrics.PromptEvalCount.Add(c.Request.Context(), int64(cr.PromptEvalCount), attrs)
+				s.metrics.PromptEvalDuration.Add(c.Request.Context(), cr.PromptEvalDuration.Seconds(), attrs)
+				s.metrics.EvalCount.Add(c.Request.Context(), int64(cr.EvalCount), attrs)
+				s.metrics.EvalDuration.Add(c.Request.Context(), cr.EvalDuration.Seconds(), attrs)
 
 				if !req.Raw {
 					tokens, err := r.Tokenize(c.Request.Context(), prompt+sb.String())
@@ -1180,13 +1193,14 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	if err != nil {
 		slog.Warn(fmt.Sprintf("Metrics initialization failed with %s", err))
 	}
+	s.metrics = m
 
 	r := gin.Default()
 	r.HandleMethodNotAllowed = true
 	r.Use(
 		cors.New(corsConfig),
 		allowedHostsMiddleware(s.addr),
-		prometheusMetricsMiddleware(m),
+		prometheusMetricsMiddleware(s.metrics),
 	)
 
 	// General
