@@ -20,11 +20,21 @@ let welcomeWindow: BrowserWindow | null = null
 
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string
 
+const logsPath = () => {
+  const stateDir = process.env.XDG_STATE_HOME
+
+  if (stateDir && stateDir != "") {
+    return path.join(stateDir, 'ollama', 'logs')  
+  }
+
+  return path.join(app.getPath('home'), '.ollama', 'logs')
+}
+
 const logger = winston.createLogger({
   transports: [
     new winston.transports.Console(),
     new winston.transports.File({
-      filename: path.join(app.getPath('home'), '.ollama', 'logs', 'server.log'),
+      filename: path.join(logsPath(), 'server.log'),
       maxsize: 1024 * 1024 * 20,
       maxFiles: 5,
     }),
