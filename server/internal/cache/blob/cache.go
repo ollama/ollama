@@ -59,7 +59,7 @@ type DiskCache struct {
 	testHookBeforeFinalWrite func(f *os.File)
 }
 
-// PutString is a convenience function for c.Put(d, strings.NewReader(s), int64(len(s))).
+// PutBytes is a convenience function for c.Put(d, strings.NewReader(s), int64(len(s))).
 func PutBytes[S string | []byte](c *DiskCache, d Digest, data S) error {
 	return c.Put(d, bytes.NewReader([]byte(data)), int64(len(data)))
 }

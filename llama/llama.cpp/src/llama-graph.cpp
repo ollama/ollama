@@ -284,24 +284,7 @@ void llm_graph_input_s_copy::set_input(const llama_ubatch * ubatch) {
 
         // assuming copy destinations ALWAYS happen ONLY on the cells between head and head+n
         for (uint32_t i = 0; i < n_kv; ++i) {
-            const uint32_t  cell_id = i + kv_self->head;
-
-            //////////////////////////////////////////////
-            // TODO: this should not mutate the KV cache !
-            llama_kv_cell & kv_cell = const_cast<class llama_kv_cache_unified *>(kv_self)->cells[i];
-
-            // prevent out-of-bound sources
-            if (kv_cell.src < 0 || (uint32_t) kv_cell.src >= kv_self->size) {
-                kv_cell.src = cell_id;
-            }
-
-            data[i] = kv_cell.src;
-
-            // TODO: do not mutate the KV cache
-            // ensure copy only happens once
-            if (kv_cell.src != (int32_t) cell_id) {
-                kv_cell.src = cell_id;
-            }
+            data[i] = kv_self->s_copy(i);
         }
     }
 }
@@ -317,18 +300,7 @@ void llm_graph_input_s_mask::set_input(const llama_ubatch * ubatch) {
 
         // clear unused states
         for (int i = 0; i < n_kv; ++i) {
-            const uint32_t  cell_id = i + kv_self->head;
-
-            //////////////////////////////////////////////
-            // TODO: this should not mutate the KV cache !
-            llama_kv_cell & kv_cell = const_cast<class llama_kv_cache_unified *>(kv_self)->cells[i];
-
-            data[i] = (float) (kv_cell.src >= 0);
-
-            // only clear once
-            if (kv_cell.src < 0) {
-                kv_cell.src = cell_id;
-            }
+            data[i] = kv_self->s_mask(i);
         }
     }
 }
@@ -557,12 +529,6 @@ void llm_graph_input_attn_cross::set_input(const llama_ubatch * ubatch) {
                 }
             }
         }
-    }
-}
-
-void llm_graph_input_cross_attn_state::set_input(const llama_ubatch * ubatch) {
-    if (ubatch->embd) {
-        ggml_backend_tensor_set(cross_attn_state, ubatch->embd, 0, ggml_nbytes(cross_attn_state));
     }
 }
 
@@ -816,7 +782,7 @@ ggml_tensor * llm_graph_context::build_ffn(
             } break;
     }
 
-    if (type_gate == LLM_FFN_PAR) {
+    if (gate && type_gate == LLM_FFN_PAR) {
         cur = ggml_mul(ctx0, cur, tmp);
         cb(cur, "ffn_gate_par", il);
     }
@@ -1005,6 +971,7 @@ ggml_tensor * llm_graph_context::build_inp_embd(ggml_tensor * tok_embd) const {
         inp->tokens = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, ubatch.n_tokens);
         //cb(inp->tokens, "inp_tokens", -1);
         ggml_set_input(inp->tokens);
+        res->t_tokens = inp->tokens;
 
         cur = ggml_get_rows(ctx0, tok_embd, inp->tokens);
 
@@ -1111,7 +1078,7 @@ ggml_tensor * llm_graph_context::build_inp_cls() const {
 }
 
 ggml_tensor * llm_graph_context::build_inp_s_copy() const {
-    const llama_kv_cache_unified * kv_self = static_cast<const llama_kv_cache_unified *>(memory);
+    const llama_kv_cache_recurrent * kv_self = static_cast<const llama_kv_cache_recurrent *>(memory);
 
     auto inp = std::make_unique<llm_graph_input_s_copy>(kv_self);
 
@@ -1128,7 +1095,7 @@ ggml_tensor * llm_graph_context::build_inp_s_copy() const {
 }
 
 ggml_tensor * llm_graph_context::build_inp_s_mask() const {
-    const llama_kv_cache_unified * kv_self = static_cast<const llama_kv_cache_unified *>(memory);
+    const llama_kv_cache_recurrent * kv_self = static_cast<const llama_kv_cache_recurrent *>(memory);
 
     auto inp = std::make_unique<llm_graph_input_s_mask>(kv_self);
 
@@ -1261,8 +1228,19 @@ ggml_tensor * llm_graph_context::build_attn_mha(
         ggml_flash_attn_ext_set_prec(cur, GGML_PREC_F32);
 
         if (v_mla) {
+#if 0
+            // v_mla can be applied as a matrix-vector multiplication with broadcasting across dimension 3 == n_tokens.
+            // However, the code is optimized for dimensions 0 and 1 being large, so this is ineffient.
             cur = ggml_reshape_4d(ctx0, cur, v_mla->ne[0], 1, n_head, n_tokens);
             cur = ggml_mul_mat(ctx0, v_mla, cur);
+#else
+            // It's preferable to do the calculation as a matrix-matrix multiplication with n_tokens in dimension 1.
+            // The permutations are noops and only change how the tensor data is interpreted.
+            cur = ggml_permute(ctx0, cur, 0, 2, 1, 3);
+            cur = ggml_mul_mat(ctx0, v_mla, cur);
+            cur = ggml_permute(ctx0, cur, 0, 2, 1, 3);
+            cur = ggml_cont(ctx0, cur); // Needed because ggml_reshape_2d expects contiguous inputs.
+#endif
         }
 
         cur = ggml_reshape_2d(ctx0, cur, cur->ne[0]*n_head, n_tokens);
@@ -1442,8 +1420,6 @@ ggml_tensor * llm_graph_context::build_attn(
 
     // store to KV cache
     {
-        GGML_ASSERT(!kv_self->recurrent);
-
         const auto kv_head = kv_self->head;
 
         GGML_ASSERT(kv_self->size == n_ctx);
@@ -1538,25 +1514,6 @@ llm_graph_input_attn_cross * llm_graph_context::build_attn_inp_cross() const {
     return (llm_graph_input_attn_cross *) res->add_input(std::move(inp));
 }
 
-ggml_tensor * llm_graph_context::build_inp_cross_attn_state() const {
-    const int64_t n_embd = hparams.n_embd;
-
-    auto inp = std::make_unique<llm_graph_input_cross_attn_state>();
-
-    ggml_tensor * cur = nullptr;
-
-    inp->cross_attn_state = ggml_new_tensor_3d(ctx0, GGML_TYPE_F32, n_embd, 1601, 4);
-    ggml_set_input(inp->cross_attn_state);
-
-    cur = inp->cross_attn_state;
-
-    cb(cur, "inp_cross_attn_state", -1);
-
-    res->add_input(std::move(inp));
-
-    return cur;
-}
-
 ggml_tensor * llm_graph_context::build_attn(
         llm_graph_input_attn_cross * inp,
         ggml_cgraph * gf,
@@ -1612,7 +1569,7 @@ ggml_tensor * llm_graph_context::build_copy_mask_state(
          ggml_tensor * state_mask,
              int32_t   n_state,
              int32_t   n_seqs) const {
-    const llama_kv_cache_unified * kv_self = static_cast<const llama_kv_cache_unified *>(memory);
+    const llama_kv_cache_recurrent * kv_self = static_cast<const llama_kv_cache_recurrent *>(memory);
 
     const auto n_kv    = kv_self->n;
     const auto kv_head = kv_self->head;
@@ -1644,7 +1601,7 @@ ggml_tensor * llm_graph_context::build_rwkv_token_shift_load(
          ggml_tensor * state_mask,
   const llama_ubatch & ubatch,
                  int   il) const {
-    const llama_kv_cache_unified * kv_self = static_cast<const llama_kv_cache_unified *>(memory);
+    const llama_kv_cache_recurrent * kv_self = static_cast<const llama_kv_cache_recurrent *>(memory);
 
     const auto token_shift_count = hparams.token_shift_count;
 
@@ -1665,7 +1622,7 @@ ggml_tensor * llm_graph_context::build_rwkv_token_shift_store(
          ggml_tensor * token_shift,
   const llama_ubatch & ubatch,
                  int   il) const {
-    const llama_kv_cache_unified * kv_self = static_cast<const llama_kv_cache_unified *>(memory);
+    const llama_kv_cache_recurrent * kv_self = static_cast<const llama_kv_cache_recurrent *>(memory);
 
     const auto token_shift_count = hparams.token_shift_count;
     const auto n_embd = hparams.n_embd;

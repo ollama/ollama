@@ -8,6 +8,7 @@ import (
 	"os"
 	"reflect"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -132,11 +133,11 @@ func (s *Scheduler) processPending(ctx context.Context) {
 				continue
 			}
 			numParallel := int(envconfig.NumParallel())
-			// TODO (jmorganca): mllama doesn't support parallel yet
-			// see https://github.com/ollama/ollama/issues/4165
-			if checkMllamaModelFamily(pending.model) && numParallel != 1 {
+			// `mllama` is a snowflake and uses an encoder cache which cannot be used with num_parallel > 1
+			// ref: https://github.com/ollama/ollama/issues/4165
+			if slices.Contains(pending.model.Config.ModelFamilies, "mllama") && numParallel != 1 {
 				numParallel = 1
-				slog.Warn("mllama doesn't support parallel requests yet")
+				slog.Warn("mllama does not currently support parallel requests")
 			}
 
 			for {
@@ -386,6 +387,17 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 				s.loadedMu.Unlock()
 				runner.refMu.Unlock()
 				slog.Debug("duplicate expired event, ignoring", "runner", runner)
+			} else if runner.pid != runnerToUnload.pid {
+				// If the pids do not match, we likely had multiple load
+				// failures for the same model in quick succession due to
+				// request context canceled and are draining the queue of
+				// events. Ensure the orphaned runner is properly shut down, but
+				// do not delete the mismatched loaded runner, or wait for VRAM
+				// convergence.
+				slog.Debug("orphaned runner shutting down", "orphan", runner, "loaded", runnerToUnload)
+				runner.unload()
+				s.loadedMu.Unlock()
+				runner.refMu.Unlock()
 			} else {
 				slog.Debug("starting background wait for VRAM recovery", "runner", runner)
 				finished := runner.waitForVRAMRecovery()

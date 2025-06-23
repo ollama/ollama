@@ -82,8 +82,11 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	var graphOffload uint64
 
 	// Projectors loaded into GPU0 only
-	var projectorWeights uint64
-	var projectorGraph uint64
+	var llamaEngineProjectorWeights uint64
+
+	// Projectors loaded with output layer
+	var ollamaEngineProjectorWeights uint64
+	var ollamaEngineProjectorGraph uint64
 
 	// Conditional output size on GPU 0
 	var memoryLayerOutput uint64
@@ -108,15 +111,14 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	slog.Debug("evaluating", "library", gpus[0].Library, "gpu_count", len(gpus), "available", availableList)
 
 	for _, projector := range projectors {
-		weight, graph := projectorMemoryRequirements(projector)
-		projectorWeights += weight
-		projectorGraph += graph
+		llamaEngineProjectorWeights += projectorMemoryRequirements(projector)
 
 		// multimodal models require at least 2048 context
 		opts.NumCtx = max(opts.NumCtx, 2048)
 	}
-	if projectorWeights == 0 && projectorGraph == 0 {
-		projectorWeights, projectorGraph = f.VisionGraphSize()
+	if llamaEngineProjectorWeights == 0 {
+		ollamaEngineProjectorWeights, ollamaEngineProjectorGraph = f.VisionGraphSize()
+		opts.NumCtx = max(opts.NumCtx, 2048)
 	}
 
 	layers := f.Tensors().GroupLayers()
@@ -168,6 +170,7 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 		graphFullOffload = graphPartialOffload
 	}
 
+	// Output layer handled at the end if we have space
 	if layer, ok := layers["output_norm"]; ok {
 		memoryLayerOutput += layer.Size()
 	}
@@ -177,8 +180,7 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 		memoryLayerOutput += layer.Size()
 	}
 
-	// Output layer handled at the end if we have space
-	gpuZeroOverhead := projectorWeights + projectorGraph
+	gpuZeroOverhead := llamaEngineProjectorWeights
 
 	// Reduce set of GPUs to only those that have sufficient space to fit overhead and at least one layer
 	var layerCount int
@@ -221,10 +223,12 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 	if len(gpusWithSpace) > 0 {
 		gpuZeroID = gpusWithSpace[0].i
 		gpuAllocations[gpuZeroID] += gpuZeroOverhead
+	} else {
+		overflow += gpuZeroOverhead
 	}
 
 	// For all the layers, find where they can fit on the GPU(s)
-	for i := range int(f.KV().BlockCount()) {
+	for i := int(f.KV().BlockCount()) - 1; i >= 0; i-- {
 		// Some models have inconsistent layer sizes
 		if blk, ok := layers[fmt.Sprintf("blk.%d", i)]; ok {
 			layerSize = blk.Size()
@@ -234,6 +238,7 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 
 		if opts.NumGPU >= 0 && layerCount >= opts.NumGPU {
 			// Stop allocating on GPU(s) once we hit the users target NumGPU
+			overflow += layerSize
 			continue
 		}
 
@@ -250,31 +255,34 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 				gpusWithSpace = append(gpusWithSpace[:i%j], gpusWithSpace[i%j+1:]...)
 			}
 		}
-	}
-	if layerCount >= int(f.KV().BlockCount()) {
-		fullyLoaded = true
-	} else {
-		for i := layerCount; i < int(f.KV().BlockCount()); i++ {
+
+		if len(gpusWithSpace) == 0 {
 			overflow += layerSize
 		}
 	}
+	if layerCount >= int(f.KV().BlockCount()) {
+		fullyLoaded = true
+	}
 
 	// Determine if we need to consider output then find where it fits
-	if memoryLayerOutput > 0 && (opts.NumGPU < 0 || layerCount < opts.NumGPU) {
-		for j := len(gpusWithSpace); j > 0; j-- {
-			g := gpusWithSpace[layerCount%j]
-			used := gpuAllocations[g.i] + max(graphPartialOffload, graphFullOffload)
-			if g.g.FreeMemory > overhead+used+memoryLayerOutput {
-				gpuAllocations[g.i] += memoryLayerOutput
-				layerCounts[g.i]++
-				layerCount++
-				break
+	memoryLastLayer := memoryLayerOutput + ollamaEngineProjectorWeights + ollamaEngineProjectorGraph
+	if memoryLastLayer > 0 {
+		if opts.NumGPU < 0 || layerCount < opts.NumGPU {
+			for j := len(gpusWithSpace); j > 0; j-- {
+				g := gpusWithSpace[layerCount%j]
+				used := gpuAllocations[g.i] + max(graphPartialOffload, graphFullOffload)
+				if g.g.FreeMemory > overhead+used+memoryLastLayer {
+					gpuAllocations[g.i] += memoryLastLayer
+					layerCounts[g.i]++
+					layerCount++
+					break
+				}
 			}
 		}
 
 		if layerCount < int(f.KV().BlockCount())+1 {
 			fullyLoaded = false
-			overflow += memoryLayerOutput
+			overflow += memoryLastLayer
 		}
 	}
 
@@ -332,8 +340,8 @@ func EstimateGPULayers(gpus []discover.GpuInfo, f *ggml.GGML, projectors []strin
 		memoryLayerOutput:   memoryLayerOutput,
 		graphFullOffload:    graphFullOffload,
 		graphPartialOffload: graphPartialOffload,
-		projectorWeights:    projectorWeights,
-		projectorGraph:      projectorGraph,
+		projectorWeights:    llamaEngineProjectorWeights + ollamaEngineProjectorWeights,
+		projectorGraph:      ollamaEngineProjectorGraph,
 	}
 
 	if gpus[0].Library == "cpu" {
@@ -412,51 +420,21 @@ func (m MemoryEstimate) LogValue() slog.Value {
 	return slog.GroupValue(attrs...)
 }
 
-func projectorMemoryRequirements(filename string) (weights, graphSize uint64) {
+func projectorMemoryRequirements(filename string) (weights uint64) {
 	file, err := os.Open(filename)
 	if err != nil {
-		return 0, 0
+		return 0
 	}
 	defer file.Close()
 
-	ggml, _, err := ggml.Decode(file, 1024)
+	ggml, err := ggml.Decode(file, 1024)
 	if err != nil {
-		return 0, 0
+		return 0
 	}
 
 	for _, layer := range ggml.Tensors().GroupLayers() {
 		weights += layer.Size()
 	}
 
-	switch arch := ggml.KV().Architecture(); arch {
-	case "mllama":
-		kv := func(n string) uint64 {
-			if v, ok := ggml.KV()[arch+".vision."+n].(uint32); ok {
-				return uint64(v)
-			}
-
-			return 0
-		}
-
-		imageSize := kv("image_size")
-
-		maxNumTiles := kv("max_num_tiles")
-		embeddingLength := kv("embedding_length")
-		headCount := kv("attention.head_count")
-
-		numPatches := (imageSize / kv("patch_size")) * (imageSize / kv("patch_size"))
-		if _, ok := ggml.Tensors().GroupLayers()["v"]["class_embd"]; ok {
-			numPatches++
-		}
-
-		numPaddedPatches := numPatches + 8 - (numPatches%8)%8
-
-		graphSize = 4 * (8 +
-			imageSize*imageSize*kv("num_channels")*maxNumTiles +
-			embeddingLength*numPatches*maxNumTiles +
-			9*embeddingLength*numPaddedPatches*maxNumTiles +
-			numPaddedPatches*maxNumTiles*numPaddedPatches*maxNumTiles*headCount)
-	}
-
-	return weights, graphSize
+	return weights
 }

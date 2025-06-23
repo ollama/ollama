@@ -372,3 +372,50 @@ func TestPropertyType_MarshalJSON(t *testing.T) {
 		})
 	}
 }
+
+func TestThinking_UnmarshalJSON(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	tests := []struct {
+		name             string
+		input            string
+		expectedThinking *bool
+		expectedError    bool
+	}{
+		{
+			name:             "true",
+			input:            `{ "think": true }`,
+			expectedThinking: &trueVal,
+		},
+		{
+			name:             "false",
+			input:            `{ "think": false }`,
+			expectedThinking: &falseVal,
+		},
+		{
+			name:             "unset",
+			input:            `{ }`,
+			expectedThinking: nil,
+		},
+		{
+			name:             "invalid",
+			input:            `{ "think": "true" }`,
+			expectedThinking: nil,
+			expectedError:    true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var req GenerateRequest
+			err := json.Unmarshal([]byte(test.input), &req)
+			if test.expectedError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, test.expectedThinking, req.Think)
+			}
+		})
+	}
+}

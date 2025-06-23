@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"hash/maphash"
 	"log/slog"
-	"slices"
 	"sync"
 	"time"
 
@@ -18,8 +17,7 @@ type ImageContext struct {
 	// mu is required to be held when generating embeddings or accessing the cache
 	mu sync.Mutex
 
-	clip   *llama.ClipContext
-	mllama *llama.MllamaContext
+	clip *llama.ClipContext
 
 	// cache of images to embeddings
 	images    []imageCache
@@ -35,8 +33,6 @@ func NewImageContext(llamaContext *llama.Context, modelPath string) (*ImageConte
 	var c ImageContext
 	if arch == "clip" {
 		c.clip, err = llama.NewClipContext(llamaContext, modelPath)
-	} else if arch == "mllama" {
-		c.mllama, err = llama.NewMllamaContext(llamaContext, modelPath)
 	} else {
 		return nil, fmt.Errorf("unknown vision model architecture: %s", arch)
 	}
@@ -58,12 +54,9 @@ func (c *ImageContext) Free(modelPath string) {
 	if c.clip != nil {
 		c.clip.Free()
 	}
-	if c.mllama != nil {
-		c.mllama.Free()
-	}
 }
 
-func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte, aspectRatioId int) ([][]float32, error) {
+func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte) ([][]float32, error) {
 	if c == nil {
 		return nil, nil
 	}
@@ -79,12 +72,7 @@ func (c *ImageContext) NewEmbed(llamaContext *llama.Context, data []byte, aspect
 
 	embed, err := c.findImage(hash)
 	if err != nil {
-		if c.mllama != nil {
-			embed, err = c.mllama.NewEmbed(llamaContext, data, aspectRatioId)
-			if err != nil {
-				return nil, err
-			}
-		} else if c.clip != nil {
+		if c.clip != nil {
 			embed, err = c.clip.NewEmbed(llamaContext, data)
 			if err != nil {
 				return nil, err
@@ -105,33 +93,11 @@ func (c *ImageContext) BatchSize(configuredBatchSize int) int {
 		return 0
 	}
 
-	// Mllama maps an image to 1 embedding token (llava creates many tokens)
-	// and doesn't support more than a single image per request.
-	// The embeddings are large (100 MB), so allocating a big batch can fail
-	// on some systems
-	if c.mllama != nil {
-		return 1
-	}
-
 	return configuredBatchSize
 }
 
 func (c *ImageContext) EmbedSize(llamaContext *llama.Context) int {
-	if c != nil && c.mllama != nil {
-		return c.mllama.EmbedSize(llamaContext)
-	} else {
-		return llamaContext.Model().NEmbd()
-	}
-}
-
-func (c *ImageContext) NeedCrossAttention(inputs ...input) bool {
-	if c == nil || c.mllama == nil {
-		return false
-	}
-
-	return slices.ContainsFunc(inputs, func(input input) bool {
-		return input.embed != nil
-	})
+	return llamaContext.Model().NEmbd()
 }
 
 type imageCache struct {

@@ -70,23 +70,7 @@ func getTensorNewType(kv fsggml.KV, qs *quantizeState, newType fsggml.TensorType
 			newType = fsggml.TensorTypeQ6_K
 		}
 	} else if strings.Contains(name, "attn_v.weight") {
-		if ftype == fsggml.FileTypeQ2_K {
-			if kv.GQA() >= 4 {
-				newType = fsggml.TensorTypeQ4_K
-			} else {
-				newType = fsggml.TensorTypeQ3_K
-			}
-		} else if ftype == fsggml.FileTypeQ2_K_S && kv.GQA() >= 4 {
-			newType = fsggml.TensorTypeQ4_K
-		} else if ftype == fsggml.FileTypeQ3_K_M {
-			if qs.iAttnV < 2 {
-				newType = fsggml.TensorTypeQ5_K
-			} else {
-				newType = fsggml.TensorTypeQ4_K
-			}
-		} else if ftype == fsggml.FileTypeQ3_K_L {
-			newType = fsggml.TensorTypeQ5_K
-		} else if (ftype == fsggml.FileTypeQ4_K_M || ftype == fsggml.FileTypeQ5_K_M) &&
+		if (ftype == fsggml.FileTypeQ4_K_M) &&
 			useMoreBits(qs.iAttnV, qs.nAttnV) {
 			newType = fsggml.TensorTypeQ6_K
 		} else if ftype == fsggml.FileTypeQ4_K_S && qs.iAttnV < 4 {
@@ -114,67 +98,52 @@ func getTensorNewType(kv fsggml.KV, qs *quantizeState, newType fsggml.TensorType
 	} else if strings.Contains(name, "ffn_down") {
 		iLayer := qs.iFfnDown
 		n_layer := qs.nFfnDown
-		if ftype == fsggml.FileTypeQ2_K {
-			newType = fsggml.TensorTypeQ3_K
-		} else if ftype == fsggml.FileTypeQ2_K_S {
-			if iLayer < n_layer/8 {
-				newType = fsggml.TensorTypeQ4_K
-			}
-		} else if ftype == fsggml.FileTypeQ3_K_M {
-			if iLayer < n_layer/16 {
-				newType = fsggml.TensorTypeQ5_K
-			} else if useMoreBits(iLayer, n_layer) {
-				newType = fsggml.TensorTypeQ4_K
-			} else {
-				newType = fsggml.TensorTypeQ3_K
-			}
-		} else if ftype == fsggml.FileTypeQ3_K_L {
-			newType = fsggml.TensorTypeQ5_K
-		} else if ftype == fsggml.FileTypeQ4_K_M {
+		if ftype == fsggml.FileTypeQ4_K_M {
 			if useMoreBits(iLayer, n_layer) {
 				newType = fsggml.TensorTypeQ6_K
 			}
-		} else if ftype == fsggml.FileTypeQ5_K_M && useMoreBits(iLayer, n_layer) {
-			newType = fsggml.TensorTypeQ6_K
 		} else if ftype == fsggml.FileTypeQ4_K_S && iLayer < n_layer/8 {
 			newType = fsggml.TensorTypeQ5_K
 		}
 		qs.iFfnDown++
 	} else if strings.Contains(name, "attn_output.weight") {
 		if nExperts == 8 {
-			if ftype == fsggml.FileTypeQ2_K || ftype == fsggml.FileTypeQ3_K_S || ftype == fsggml.FileTypeQ3_K_M ||
-				ftype == fsggml.FileTypeQ4_K_S || ftype == fsggml.FileTypeQ4_K_M {
-				newType = fsggml.TensorTypeQ5_K
-			}
-		} else {
-			if ftype == fsggml.FileTypeQ2_K {
-				newType = fsggml.TensorTypeQ3_K
-			} else if ftype == fsggml.FileTypeQ3_K_M {
-				newType = fsggml.TensorTypeQ4_K
-			} else if ftype == fsggml.FileTypeQ3_K_L {
+			if ftype == fsggml.FileTypeQ4_K_S || ftype == fsggml.FileTypeQ4_K_M {
 				newType = fsggml.TensorTypeQ5_K
 			}
 		}
 	} else if strings.Contains(name, "attn_qkv.weight") {
-		if ftype == fsggml.FileTypeQ3_K_M || ftype == fsggml.FileTypeQ3_K_L {
-			newType = fsggml.TensorTypeQ4_K
-		} else if ftype == fsggml.FileTypeQ4_K_M {
+		if ftype == fsggml.FileTypeQ4_K_M {
 			newType = fsggml.TensorTypeQ5_K
-		} else if ftype == fsggml.FileTypeQ5_K_M {
-			newType = fsggml.TensorTypeQ6_K
 		}
 	}
 
 	if newType.IsQuantized() {
 		nx := shape[0]
-		ny := uint64(1)
-		if len(shape) > 1 {
-			ny = shape[1]
-		}
 		qk_k := newType.BlockSize()
+
+		// Check if first dimension is divisible by block size
 		if nx%qk_k != 0 {
-			slog.Warn(fmt.Sprintf("tensor cols %d x %d are not divisible by %d, required for %s.  Falling back to quantization %s", nx, ny, qk_k, newType.String(), fsggml.TensorTypeF16.String()))
-			newType = fsggml.TensorTypeF16
+			// Store the original type for logging
+			originalType := newType
+
+			// Select appropriate fallback based on original type
+			switch newType {
+			case fsggml.TensorTypeQ4_K:
+				newType = fsggml.TensorTypeQ5_0
+			case fsggml.TensorTypeQ5_K:
+				newType = fsggml.TensorTypeQ5_1
+			case fsggml.TensorTypeQ6_K:
+				newType = fsggml.TensorTypeQ8_0
+			}
+
+			// Final check - if still incompatible, fall back to F16
+			if nx%newType.BlockSize() != 0 {
+				newType = fsggml.TensorTypeF16
+			}
+
+			slog.Warn(fmt.Sprintf("tensor cols %d are not divisible by %d, required for %s - using fallback quantization %s",
+				nx, qk_k, originalType.String(), newType.String()))
 		}
 	}
 	return newType

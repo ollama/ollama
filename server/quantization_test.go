@@ -43,71 +43,6 @@ func TestGetTensorNewType(t *testing.T) {
 			expected:    fsggml.TensorTypeQ6_K,
 		},
 		{
-			name: "attn_v.weight_q4_k",
-			kv: map[string]any{
-				"general.architecture":        "foo",
-				"foo.attention.head_count":    uint32(4),
-				"foo.attention.head_count_kv": uint32(1),
-			},
-			newType:     fsggml.TensorTypeQ4_0,
-			tensor_name: "blk.0.attn_v.weight",
-			shape:       []uint64{256},
-			ftype:       fsggml.FileTypeQ2_K,
-			expected:    fsggml.TensorTypeQ4_K,
-		},
-		{
-			name:        "attn_v.weight_q3_k",
-			kv:          map[string]any{},
-			newType:     fsggml.TensorTypeQ4_0,
-			tensor_name: "blk.0.attn_v.weight",
-			shape:       []uint64{256},
-			ftype:       fsggml.FileTypeQ2_K,
-			expected:    fsggml.TensorTypeQ3_K,
-		},
-		{
-			name: "attn_v.weight_q2_k_s_q4_k",
-			kv: map[string]any{
-				"general.architecture":        "foo",
-				"foo.attention.head_count":    uint32(4),
-				"foo.attention.head_count_kv": uint32(1),
-			},
-			newType:     fsggml.TensorTypeQ4_0,
-			tensor_name: "blk.0.attn_v.weight",
-			shape:       []uint64{256},
-			ftype:       fsggml.FileTypeQ2_K_S,
-			expected:    fsggml.TensorTypeQ4_K,
-		},
-		{
-			name:        "attn_v.weight_q3_k_m",
-			kv:          map[string]any{},
-			newType:     fsggml.TensorTypeQ4_0,
-			tensor_name: "blk.0.attn_v.weight",
-			shape:       []uint64{256},
-			ftype:       fsggml.FileTypeQ3_K_M,
-			expected:    fsggml.TensorTypeQ5_K,
-		},
-		{
-			name: "attn_v.weight_q3_k_m_i",
-			qs: quantizeState{
-				iAttnV: 2,
-			},
-			kv:          map[string]any{},
-			newType:     fsggml.TensorTypeQ4_0,
-			tensor_name: "blk.0.attn_v.weight",
-			shape:       []uint64{256},
-			ftype:       fsggml.FileTypeQ3_K_M,
-			expected:    fsggml.TensorTypeQ4_K,
-		},
-		{
-			name:        "attn_v.weight_q3_k_l",
-			kv:          map[string]any{},
-			newType:     fsggml.TensorTypeQ4_0,
-			tensor_name: "blk.0.attn_v.weight",
-			shape:       []uint64{256},
-			ftype:       fsggml.FileTypeQ3_K_L,
-			expected:    fsggml.TensorTypeQ5_K,
-		},
-		{
 			name: "attn_v.weight_q4_k_m",
 			qs: quantizeState{
 				iAttnV: 2,
@@ -157,88 +92,6 @@ func TestGetTensorNewType(t *testing.T) {
 			expected:    fsggml.TensorTypeQ8_0,
 		},
 		{
-			name:        "ffn_down_q2_k",
-			qs:          quantizeState{},
-			kv:          map[string]any{},
-			newType:     fsggml.TensorTypeQ4_0,
-			tensor_name: "ffn_down",
-			shape:       []uint64{256},
-			ftype:       fsggml.FileTypeQ2_K,
-			expected:    fsggml.TensorTypeQ3_K,
-		},
-		{
-			name:        "ffn_down_q2_k_s",
-			qs:          quantizeState{},
-			kv:          map[string]any{},
-			newType:     fsggml.TensorTypeQ4_0,
-			tensor_name: "ffn_down",
-			shape:       []uint64{256},
-			ftype:       fsggml.FileTypeQ2_K_S,
-			expected:    fsggml.TensorTypeQ4_0,
-		},
-		{
-			name: "ffn_down_q2_k_s_layers",
-			qs: quantizeState{
-				iFfnDown: 2,
-				nFfnDown: 3 * 8,
-			},
-			kv:          map[string]any{},
-			newType:     fsggml.TensorTypeQ4_0,
-			tensor_name: "ffn_down",
-			shape:       []uint64{256},
-			ftype:       fsggml.FileTypeQ2_K_S,
-			expected:    fsggml.TensorTypeQ4_K,
-		},
-		{
-			name: "ffn_down_q3_k_m_base",
-			qs: quantizeState{
-				iFfnDown: 1,
-				nFfnDown: 8,
-			},
-			kv:          map[string]any{},
-			newType:     fsggml.TensorTypeQ4_0,
-			tensor_name: "ffn_down",
-			shape:       []uint64{256},
-			ftype:       fsggml.FileTypeQ3_K_M,
-			expected:    fsggml.TensorTypeQ3_K,
-		},
-		{
-			name: "ffn_down_q3_k_m_16",
-			qs: quantizeState{
-				iFfnDown: 2,
-				nFfnDown: 3 * 16,
-			},
-			kv:          map[string]any{},
-			newType:     fsggml.TensorTypeQ4_0,
-			tensor_name: "ffn_down",
-			shape:       []uint64{256},
-			ftype:       fsggml.FileTypeQ3_K_M,
-			expected:    fsggml.TensorTypeQ5_K,
-		},
-		{
-			name: "ffn_down_q3_k_m_8",
-			qs: quantizeState{
-				iFfnDown: 2,
-				nFfnDown: 3 * 8,
-			},
-			kv:          map[string]any{},
-			newType:     fsggml.TensorTypeQ4_0,
-			tensor_name: "ffn_down",
-			shape:       []uint64{256},
-			ftype:       fsggml.FileTypeQ3_K_M,
-			expected:    fsggml.TensorTypeQ4_K,
-		},
-		{
-			name:        "ffn_down_q3_k_l",
-			qs:          quantizeState{},
-			kv:          map[string]any{},
-			newType:     fsggml.TensorTypeQ4_0,
-			tensor_name: "ffn_down",
-			shape:       []uint64{256},
-			ftype:       fsggml.FileTypeQ3_K_L,
-			expected:    fsggml.TensorTypeQ5_K,
-		},
-		{
 			name: "ffn_down_q4_k_m",
 			qs: quantizeState{
 				iFfnDown: 1,
@@ -265,19 +118,6 @@ func TestGetTensorNewType(t *testing.T) {
 			expected:    fsggml.TensorTypeQ6_K,
 		},
 		{
-			name: "ffn_down_q5_k_m",
-			qs: quantizeState{
-				iFfnDown: 2,
-				nFfnDown: 3 * 8,
-			},
-			kv:          map[string]any{},
-			newType:     fsggml.TensorTypeQ4_0,
-			tensor_name: "ffn_down",
-			shape:       []uint64{256},
-			ftype:       fsggml.FileTypeQ5_K_M,
-			expected:    fsggml.TensorTypeQ6_K,
-		},
-		{
 			name: "ffn_down_q4_k_s",
 			qs: quantizeState{
 				iFfnDown: 2,
@@ -291,59 +131,6 @@ func TestGetTensorNewType(t *testing.T) {
 			expected:    fsggml.TensorTypeQ5_K,
 		},
 		{
-			name: "attn_output.weight_8_expert",
-			qs:   quantizeState{},
-			kv: map[string]any{
-				"general.architecture": "foo",
-				"foo.expert_count":     uint32(8),
-			},
-			newType:     fsggml.TensorTypeQ4_0,
-			tensor_name: "blk.0.attn_output.weight",
-			shape:       []uint64{256},
-			ftype:       fsggml.FileTypeQ2_K,
-			expected:    fsggml.TensorTypeQ5_K,
-		},
-		{
-			name:        "attn_output.weight_q2",
-			qs:          quantizeState{},
-			kv:          map[string]any{},
-			newType:     fsggml.TensorTypeQ4_0,
-			tensor_name: "blk.0.attn_output.weight",
-			shape:       []uint64{256},
-			ftype:       fsggml.FileTypeQ2_K,
-			expected:    fsggml.TensorTypeQ3_K,
-		},
-		{
-			name:        "attn_output.weight_q3_k_m",
-			qs:          quantizeState{},
-			kv:          map[string]any{},
-			newType:     fsggml.TensorTypeQ4_0,
-			tensor_name: "blk.0.attn_output.weight",
-			shape:       []uint64{256},
-			ftype:       fsggml.FileTypeQ3_K_M,
-			expected:    fsggml.TensorTypeQ4_K,
-		},
-		{
-			name:        "attn_output.weight_q3_k_l",
-			qs:          quantizeState{},
-			kv:          map[string]any{},
-			newType:     fsggml.TensorTypeQ4_0,
-			tensor_name: "blk.0.attn_output.weight",
-			shape:       []uint64{256},
-			ftype:       fsggml.FileTypeQ3_K_L,
-			expected:    fsggml.TensorTypeQ5_K,
-		},
-		{
-			name:        "attn_qkv.weight_q3_k_m",
-			qs:          quantizeState{},
-			kv:          map[string]any{},
-			newType:     fsggml.TensorTypeQ4_0,
-			tensor_name: "blk.0.attn_qkv.weight",
-			shape:       []uint64{256},
-			ftype:       fsggml.FileTypeQ3_K_M,
-			expected:    fsggml.TensorTypeQ4_K,
-		},
-		{
 			name:        "attn_qkv.weight_q4_k_m",
 			qs:          quantizeState{},
 			kv:          map[string]any{},
@@ -352,16 +139,6 @@ func TestGetTensorNewType(t *testing.T) {
 			shape:       []uint64{256},
 			ftype:       fsggml.FileTypeQ4_K_M,
 			expected:    fsggml.TensorTypeQ5_K,
-		},
-		{
-			name:        "attn_qkv.weight_q5_k_m",
-			qs:          quantizeState{},
-			kv:          map[string]any{},
-			newType:     fsggml.TensorTypeQ4_0,
-			tensor_name: "blk.0.attn_qkv.weight",
-			shape:       []uint64{256},
-			ftype:       fsggml.FileTypeQ5_K_M,
-			expected:    fsggml.TensorTypeQ6_K,
 		},
 	}
 	for _, tt := range cases {
@@ -480,21 +257,13 @@ func TestQuantizeModel(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			f, err := os.CreateTemp(t.TempDir(), tt.name)
-			if err != nil {
-				t.Fatal(err.Error())
-			}
-			defer f.Close()
-			err = fsggml.WriteGGUF(f, tt.kv, tt.tensors)
-			if err != nil {
-				t.Fatalf("failed to create initial model: %s", err)
-			}
-			fp, err := os.Open(f.Name())
+			p, _ := createBinFile(t, tt.kv, tt.tensors)
+			fp, err := os.Open(p)
 			if err != nil {
 				t.Fatal(err.Error())
 			}
 			defer fp.Close()
-			meta, _, err := fsggml.Decode(fp, -1)
+			meta, err := fsggml.Decode(fp, -1)
 			if err != nil {
 				t.Fatal(err.Error())
 			}
@@ -526,7 +295,7 @@ func TestQuantizeModel(t *testing.T) {
 				t.Fatalf("failed to load the quantized model %s: %s", tmp.Name(), err)
 			}
 			defer fpNew.Close()
-			newMeta, _, err := fsggml.Decode(fpNew, -1)
+			newMeta, err := fsggml.Decode(fpNew, -1)
 			if err != nil {
 				t.Fatalf("failed to load the quantized model %s: %s", tmp.Name(), err)
 			}
