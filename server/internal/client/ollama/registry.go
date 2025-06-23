@@ -255,9 +255,9 @@ func (r *Registry) parseName(name string) (names.Name, error) {
 	return n, nil
 }
 
-// DefaultRegistry returns a new Registry configured from the environment. The
-// key is read from $HOME/.ollama/id_ed25519, MaxStreams is set to the
-// value of OLLAMA_REGISTRY_MAXSTREAMS, and ReadTimeout is set to 30 seconds.
+// DefaultRegistry returns a new Registry configured from the environment.
+// MaxStreams is set to the value of OLLAMA_REGISTRY_MAXSTREAMS
+// and ReadTimeout is set to 30 seconds.
 //
 // It returns an error if any configuration in the environment is invalid.
 func DefaultRegistry() (*Registry, error) {

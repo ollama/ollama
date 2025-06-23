@@ -102,8 +102,8 @@ func StateDir() string {
 	return DefaultConfigDir()
 }
 
-// Models returns the path to the models directory. Models directory can be configured via the OLLAMA_MODELS environment variable.
-// Default is $HOME/.ollama/models
+// Models returns the path to the models directory.
+// Models directory can be configured via the OLLAMA_MODELS environment variable.
 func Models() string {
 	if s := Var("OLLAMA_MODELS"); s != "" {
 		return s
