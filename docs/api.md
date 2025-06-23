@@ -1353,7 +1353,7 @@ Then there is a series of downloading responses. Until any of the download is co
 
 ```json
 {
-  "status": "downloading digestname",
+  "status": "pulling digestname",
   "digest": "digestname",
   "total": 2142590208,
   "completed": 241970
