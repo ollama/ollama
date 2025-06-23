@@ -79,13 +79,20 @@ func AllowedOrigins() (origins []string) {
 	return origins
 }
 
-func ConfigDir() string {
+func DefaultConfigDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		panic(err)
 	}
 
 	return filepath.Join(home, ".ollama")
+}
+
+func ConfigDir() string {
+	if dir := Var("XDG_CONFIG_HOME"); dir != "" {
+		return filepath.Join(dir, "ollama")
+	}
+	return DefaultConfigDir()
 }
 
 // Models returns the path to the models directory. Models directory can be configured via the OLLAMA_MODELS environment variable.
