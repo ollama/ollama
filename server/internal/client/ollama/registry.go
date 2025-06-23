@@ -261,11 +261,7 @@ func (r *Registry) parseName(name string) (names.Name, error) {
 //
 // It returns an error if any configuration in the environment is invalid.
 func DefaultRegistry() (*Registry, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-	keyPEM, err := os.ReadFile(filepath.Join(home, ".ollama/id_ed25519"))
+	keyPEM, err := os.ReadFile(filepath.Join(envconfig.KeyPath(), "id_ed25519"))
 	if err != nil && errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
