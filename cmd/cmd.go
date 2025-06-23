@@ -1290,15 +1290,11 @@ func RunServer(_ *cobra.Command, _ []string) error {
 }
 
 func initializeKeypair() error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
+	keyPathRoot := envconfig.KeyPath()
+	privKeyPath := filepath.Join(keyPathRoot, "id_ed25519")
+	pubKeyPath := filepath.Join(keyPathRoot, "id_ed25519.pub")
 
-	privKeyPath := filepath.Join(home, ".ollama", "id_ed25519")
-	pubKeyPath := filepath.Join(home, ".ollama", "id_ed25519.pub")
-
-	_, err = os.Stat(privKeyPath)
+	_fileInfo, err := os.Stat(privKeyPath)
 	if os.IsNotExist(err) {
 		fmt.Printf("Couldn't find '%s'. Generating new private key.\n", privKeyPath)
 		cryptoPublicKey, cryptoPrivateKey, err := ed25519.GenerateKey(rand.Reader)
