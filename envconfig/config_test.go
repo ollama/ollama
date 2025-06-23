@@ -328,6 +328,25 @@ func TestLogLevel(t *testing.T) {
 	}
 }
 
+func TestConfigDir(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+
+	cases := map[string]string{
+		"default": filepath.Join(home, ".ollama"),
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			if dir := ConfigDir(); dir != v {
+				t.Errorf("%s: expected %s, got %s", k, v, dir)
+			}
+		})
+	}
+}
+
 func TestModels(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {

@@ -79,22 +79,7 @@ func AllowedOrigins() (origins []string) {
 	return origins
 }
 
-// Models returns the path to the models directory. Models directory can be configured via the OLLAMA_MODELS environment variable.
-// Default is $HOME/.ollama/models
-func Models() string {
-	if s := Var("OLLAMA_MODELS"); s != "" {
-		return s
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		panic(err)
-	}
-
-	return filepath.Join(home, ".ollama", "models")
-}
-
-func KeyPath() string {
+func ConfigDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		panic(err)
@@ -103,13 +88,22 @@ func KeyPath() string {
 	return filepath.Join(home, ".ollama")
 }
 
-func History() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		panic(err)
+// Models returns the path to the models directory. Models directory can be configured via the OLLAMA_MODELS environment variable.
+// Default is $HOME/.ollama/models
+func Models() string {
+	if s := Var("OLLAMA_MODELS"); s != "" {
+		return s
 	}
 
-	return filepath.Join(home, ".ollama", "history")
+	return filepath.Join(ConfigDir(), "models")
+}
+
+func KeyPath() string {
+	return ConfigDir()
+}
+
+func History() string {
+	return filepath.Join(ConfigDir(), "history")
 }
 
 // KeepAlive returns the duration that models stay loaded in memory. KeepAlive can be configured via the OLLAMA_KEEP_ALIVE environment variable.
