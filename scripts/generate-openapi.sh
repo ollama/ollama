@@ -62,4 +62,4 @@ echo ""
 echo "🌐 To view the documentation:"
 echo "   - Online: Upload docs/swagger.json to https://editor.swagger.io/"
 echo "   - VS Code: Install 'Swagger Viewer' extension and open docs/swagger.yaml"
-echo "   - Local server: docker run -p 8080:8080 -v $PROJECT_ROOT/docs:/usr/share/nginx/html swaggerapi/swagger-ui"
+echo '   - Local server: docker run --rm -p 8080:8080 -e SWAGGER_JSON=/oas/swagger.json -v ${PWD}/docs:/oas swaggerapi/swagger-ui'
