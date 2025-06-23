@@ -160,7 +160,7 @@ if(ENABLE_SYCL)
         install(TARGETS ggml-sycl
             RUNTIME_DEPENDENCIES
             DIRECTORIES "$ENV{CMPLR_ROOT}/bin" "$ENV{DNNLROOT}/bin" "$ENV{TBBROOT}/bin" "$ENV{MKLROOT}/bin" "$ENV{CMPLR_ROOT}/lib" "$ENV{DNNLROOT}/lib" "$ENV{TBBROOT}/lib" "$ENV{MKLROOT}/lib"
-            PRE_INCLUDE_REGEXES sycl OpenCL svml irng intlc ur_loader dnnl tbb mkl_sycl_blas mkl_intel_ilp64 mkl_tbb_thread mkl_core
+            PRE_INCLUDE_REGEXES sycl OpenCL svml irng intlc adapter ur_loader dnnl tbb mkl_sycl_blas mkl_intel_ilp64 mkl_tbb_thread mkl_core
             PRE_EXCLUDE_REGEXES ".*"
             POST_EXCLUDE_REGEXES "system32"
             RUNTIME DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL
@@ -191,7 +191,7 @@ if(ENABLE_SYCL)
                 endif()
             endforeach()
         else()
-            foreach(SYCL_LIB_DIR IN ITEMS "$ENV{UMF_ROOT}/lib")
+            foreach(SYCL_LIB_DIR IN ITEMS "$ENV{CMPLR_ROOT}/lib" "$ENV{DNNLROOT}/lib" "$ENV{UMF_ROOT}/lib")
                 if(EXISTS ${SYCL_LIB_DIR})
                     file(GLOB SYCL_SO_FILES "${SYCL_LIB_DIR}/*.so*")
                     if(SYCL_SO_FILES)
