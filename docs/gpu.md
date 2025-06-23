@@ -1,6 +1,6 @@
 # GPU
 ## Nvidia
-Ollama supports Nvidia GPUs with compute capability 5.0+.
+Ollama supports Nvidia GPUs with compute capability 5.0+ and driver version 531 and newer.
 
 Check your compute compatibility to see if your card is supported:
 [https://developer.nvidia.com/cuda-gpus](https://developer.nvidia.com/cuda-gpus)
