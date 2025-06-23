@@ -351,3 +351,22 @@ func TestModels(t *testing.T) {
 		})
 	}
 }
+
+func TestKeyPath(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+
+	cases := map[string]string{
+		"KeyPath": filepath.Join(home, ".ollama"),
+	}
+
+	for k,v := range cases {
+		t.Run(k, func(t *testing.T){
+			if dir := KeyPath(); dir != v {
+				t.Errorf("%s: expected %s, got %s", k, v, dir)
+			}
+		})
+	}
+}
