@@ -1,6 +1,8 @@
 # How to troubleshoot issues
 
-Sometimes Ollama may not perform as expected. One of the best ways to figure out what happened is to take a look at the logs. Find the logs on **Mac** by running the command:
+Sometimes Ollama may not perform as expected. One of the best ways to figure out what happened is to take a look at the logs.
+
+Find the logs on **Mac** by running the command:
 
 ```shell
 cat ~/.ollama/logs/server.log
@@ -10,6 +12,12 @@ On **Linux** systems with systemd, the logs can be found with this command:
 
 ```shell
 journalctl -u ollama --no-pager --follow --pager-end 
+```
+
+On a system using the XDG Spec, the logs can be found with this command:
+
+```shell
+cat $XDG_STATE_HOME/logs/server.log
 ```
 
 When you run Ollama in a **container**, the logs go to stdout/stderr in the container:
