@@ -95,6 +95,13 @@ func ConfigDir() string {
 	return DefaultConfigDir()
 }
 
+func StateDir() string {
+	if dir := Var("XDG_STATE_HOME"); dir != "" {
+		return filepath.Join(dir, "ollama")
+	}
+	return DefaultConfigDir()
+}
+
 // Models returns the path to the models directory. Models directory can be configured via the OLLAMA_MODELS environment variable.
 // Default is $HOME/.ollama/models
 func Models() string {
@@ -102,7 +109,7 @@ func Models() string {
 		return s
 	}
 
-	return filepath.Join(ConfigDir(), "models")
+	return filepath.Join(StateDir(), "models")
 }
 
 func KeyPath() string {
@@ -110,7 +117,7 @@ func KeyPath() string {
 }
 
 func History() string {
-	return filepath.Join(ConfigDir(), "history")
+	return filepath.Join(StateDir(), "history")
 }
 
 // KeepAlive returns the duration that models stay loaded in memory. KeepAlive can be configured via the OLLAMA_KEEP_ALIVE environment variable.

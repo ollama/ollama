@@ -362,7 +362,7 @@ func TestModels(t *testing.T) {
 
 	cases := map[string]string{
 		"default":  filepath.Join(home, ".ollama", "models"),
-		"xdg_spec": filepath.Join(home, ".config", "ollama", "models"),
+		"xdg_spec": filepath.Join(home, ".local", "state", "ollama", "models"),
 		"manual":   "/path/for/models",
 	}
 
@@ -372,9 +372,9 @@ func TestModels(t *testing.T) {
 			case "manual":
 				t.Setenv("OLLAMA_MODELS", v)
 			case "xdg_spec":
-				t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+				t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
 			default:
-				t.Setenv("XDG_CONFIG_HOME", "")
+				t.Setenv("XDG_STATE_HOME", "")
 			}
 
 			if dir := Models(); dir != v {
@@ -418,15 +418,15 @@ func TestHistory(t *testing.T) {
 
 	cases := map[string]string{
 		"default":  filepath.Join(home, ".ollama", "history"),
-		"xdg_spec": filepath.Join(home, ".config", "ollama", "history"),
+		"xdg_spec": filepath.Join(home, ".local", "state", "ollama", "history"),
 	}
 
 	for k, v := range cases {
 		t.Run(k, func(t *testing.T) {
 			if k == "xdg_spec" {
-				t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+				t.Setenv("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
 			} else {
-				t.Setenv("XDG_CONFIG_HOME", "")
+				t.Setenv("XDG_STATE_HOME", "")
 			}
 
 			if dir := History(); dir != v {
