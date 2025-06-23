@@ -38,6 +38,17 @@ var (
 	errFilePath                = errors.New("file path must be relative")
 )
 
+// CreateHandler creates a new model from a Modelfile
+// @Summary      Create a model
+// @Description  Create a new model from a Modelfile, existing model, or imported files
+// @Tags         Models
+// @Accept       json
+// @Produce      json
+// @Param        request body api.CreateRequest true "Create request"
+// @Success      200 {object} api.ProgressResponse "Successful create response"
+// @Failure      400 {object} map[string]string "Bad request"
+// @Failure      500 {object} map[string]string "Internal server error"
+// @Router       /api/create [post]
 func (s *Server) CreateHandler(c *gin.Context) {
 	var r api.CreateRequest
 	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {

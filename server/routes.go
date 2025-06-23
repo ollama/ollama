@@ -1,3 +1,23 @@
+// Package server implements the Ollama HTTP API server
+//
+// @title           Ollama API
+// @version         1.0
+// @description     API for running and managing large language models locally
+// @termsOfService  https://ollama.com/terms
+//
+// @contact.name   Ollama Support
+// @contact.url    https://ollama.com/support
+// @contact.email  support@ollama.com
+//
+// @license.name  MIT
+// @license.url   https://github.com/ollama/ollama/blob/main/LICENSE
+//
+// @host      localhost:11434
+// @BasePath  /
+//
+// @securityDefinitions.apikey ApiKeyAuth
+// @in header
+// @name Authorization
 package server
 
 import (
@@ -123,6 +143,20 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	return runner.llama, model, &opts, nil
 }
 
+// GenerateHandler generates text completions for a given prompt
+// @Summary      Generate a completion
+// @Description  Generate a text response for a given prompt with extensive options for controlling output format, thinking process, and model parameters
+// @Tags         Generation
+// @Accept       json
+// @Produce      json
+// @Param        request body api.GenerateRequest true "Generate request with prompt, model name, and generation options"
+// @Success      200 {object} api.GenerateResponse "Successful generation response with completion text and metadata"
+// @Success      200 {string} string "Model unloaded successfully (when prompt is empty and keep_alive=0)"
+// @Failure      400 {object} map[string]string "Bad request - invalid parameters, incompatible options, or parsing errors"
+// @Failure      404 {object} map[string]string "Model not found - specified model doesn't exist or isn't available"
+// @Failure      500 {object} map[string]string "Internal server error - model loading failure or generation error"
+// @Router       /api/generate [post]
+// @Router       /v1/completions [post]
 func (s *Server) GenerateHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 	var req api.GenerateRequest
@@ -381,6 +415,19 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
+// EmbedHandler generates embeddings for the provided input
+// @Summary      Generate embeddings
+// @Description  Generate embeddings for given text input using a specified model
+// @Tags         Embeddings
+// @Accept       json
+// @Produce      json
+// @Param        request body api.EmbedRequest true "Embed request"
+// @Success      200 {object} api.EmbedResponse "Successful embedding response"
+// @Failure      400 {object} map[string]string "Bad request"
+// @Failure      404 {object} map[string]string "Model not found"
+// @Failure      500 {object} map[string]string "Internal server error"
+// @Router       /api/embed [post]
+// @Router       /v1/embeddings [post]
 func (s *Server) EmbedHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 	var req api.EmbedRequest
@@ -520,6 +567,16 @@ func normalize(vec []float32) []float32 {
 	return vec
 }
 
+// EmbeddingsHandler is a compatibility endpoint for generating embeddings
+// @Summary      Generate embeddings (compatibility)
+// @Description  Generate embeddings for a prompt (compatibility endpoint)
+// @Tags         Embeddings
+// @Accept       json
+// @Produce      json
+// @Param        request body api.EmbeddingRequest true "Embedding request"
+// @Success      200 {object} api.EmbeddingResponse "Successful embedding response"
+// @Failure      400 {object} map[string]string "Bad request"
+// @Router       /api/embeddings [post]
 func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	var req api.EmbeddingRequest
 	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
@@ -565,6 +622,17 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// PullHandler downloads a model from the Ollama library
+// @Summary      Pull a model
+// @Description  Download a model from the Ollama library to use locally
+// @Tags         Models
+// @Accept       json
+// @Produce      json
+// @Param        request body api.PullRequest true "Pull request"
+// @Success      200 {object} api.ProgressResponse "Successful pull response"
+// @Failure      400 {object} map[string]string "Bad request"
+// @Failure      500 {object} map[string]string "Internal server error"
+// @Router       /api/pull [post]
 func (s *Server) PullHandler(c *gin.Context) {
 	var req api.PullRequest
 	err := c.ShouldBindJSON(&req)
@@ -616,6 +684,17 @@ func (s *Server) PullHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
+// PushHandler uploads a model to a registry
+// @Summary      Push a model
+// @Description  Upload a local model to a registry
+// @Tags         Models
+// @Accept       json
+// @Produce      json
+// @Param        request body api.PushRequest true "Push request"
+// @Success      200 {object} api.ProgressResponse "Successful push response"
+// @Failure      400 {object} map[string]string "Bad request"
+// @Failure      500 {object} map[string]string "Internal server error"
+// @Router       /api/push [post]
 func (s *Server) PushHandler(c *gin.Context) {
 	var req api.PushRequest
 	err := c.ShouldBindJSON(&req)
@@ -699,6 +778,18 @@ func getExistingName(n model.Name) (model.Name, error) {
 	return n, nil
 }
 
+// DeleteHandler removes a model from the local store
+// @Summary      Delete a model
+// @Description  Remove a model and its associated files from local storage
+// @Tags         Models
+// @Accept       json
+// @Produce      json
+// @Param        request body api.DeleteRequest true "Delete request"
+// @Success      200 {string} string "Model deleted successfully"
+// @Failure      400 {object} map[string]string "Bad request"
+// @Failure      404 {object} map[string]string "Model not found"
+// @Failure      500 {object} map[string]string "Internal server error"
+// @Router       /api/delete [delete]
 func (s *Server) DeleteHandler(c *gin.Context) {
 	var r api.DeleteRequest
 	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
@@ -743,6 +834,20 @@ func (s *Server) DeleteHandler(c *gin.Context) {
 	}
 }
 
+// ShowHandler returns information about a specific model
+// @Summary      Show model information
+// @Description  Get detailed information about a specific model including parameters and metadata
+// @Tags         Models
+// @Accept       json
+// @Produce      json
+// @Param        request body api.ShowRequest true "Show request"
+// @Param        model path string true "Model name (for OpenAI compatibility routes)"
+// @Success      200 {object} api.ShowResponse "Model information"
+// @Failure      400 {object} map[string]string "Bad request"
+// @Failure      404 {object} map[string]string "Model not found"
+// @Failure      500 {object} map[string]string "Internal server error"
+// @Router       /api/show [post]
+// @Router       /v1/models/{model} [get]
 func (s *Server) ShowHandler(c *gin.Context) {
 	var req api.ShowRequest
 	err := c.ShouldBindJSON(&req)
@@ -904,6 +1009,16 @@ func getModelData(digest string, verbose bool) (ggml.KV, ggml.Tensors, error) {
 	return kv, data.Tensors(), nil
 }
 
+// ListHandler returns a list of available models
+// @Summary      List models
+// @Description  Get a list of all available models in the local store
+// @Tags         Models
+// @Accept       json
+// @Produce      json
+// @Success      200 {object} api.ListResponse "List of models"
+// @Failure      500 {object} map[string]string "Internal server error"
+// @Router       /api/tags [get]
+// @Router       /v1/models [get]
 func (s *Server) ListHandler(c *gin.Context) {
 	ms, err := Manifests(true)
 	if err != nil {
@@ -954,6 +1069,18 @@ func (s *Server) ListHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, api.ListResponse{Models: models})
 }
 
+// CopyHandler creates a copy of a model with a new name
+// @Summary      Copy a model
+// @Description  Create a copy of an existing model with a new name
+// @Tags         Models
+// @Accept       json
+// @Produce      json
+// @Param        request body api.CopyRequest true "Copy request"
+// @Success      200 {string} string "Model copied successfully"
+// @Failure      400 {object} map[string]string "Bad request"
+// @Failure      404 {object} map[string]string "Source model not found"
+// @Failure      500 {object} map[string]string "Internal server error"
+// @Router       /api/copy [post]
 func (s *Server) CopyHandler(c *gin.Context) {
 	var r api.CopyRequest
 	if err := c.ShouldBindJSON(&r); errors.Is(err, io.EOF) {
@@ -993,6 +1120,15 @@ func (s *Server) CopyHandler(c *gin.Context) {
 	}
 }
 
+// HeadBlobHandler checks if a blob exists
+// @Summary      Check blob existence
+// @Description  Check if a blob with the given digest exists in the blob store
+// @Tags         Blobs
+// @Param        digest path string true "Blob digest (sha256)"
+// @Success      200 {string} string "Blob exists"
+// @Failure      400 {object} map[string]string "Bad request"
+// @Failure      404 {object} map[string]string "Blob not found"
+// @Router       /api/blobs/{digest} [head]
 func (s *Server) HeadBlobHandler(c *gin.Context) {
 	path, err := GetBlobsPath(c.Param("digest"))
 	if err != nil {
@@ -1008,6 +1144,18 @@ func (s *Server) HeadBlobHandler(c *gin.Context) {
 	c.Status(http.StatusOK)
 }
 
+// CreateBlobHandler creates or stores a blob
+// @Summary      Create a blob
+// @Description  Upload and store a blob in the blob store with the given digest
+// @Tags         Blobs
+// @Accept       application/octet-stream
+// @Param        digest path string true "Blob digest (sha256)"
+// @Param        blob body string true "Blob data"
+// @Success      200 {string} string "Blob already exists"
+// @Success      201 {string} string "Blob created successfully"
+// @Failure      400 {object} map[string]string "Bad request"
+// @Failure      500 {object} map[string]string "Internal server error"
+// @Router       /api/blobs/{digest} [post]
 func (s *Server) CreateBlobHandler(c *gin.Context) {
 	if ib, ok := intermediateBlobs[c.Param("digest")]; ok {
 		p, err := GetBlobsPath(ib)
@@ -1182,10 +1330,10 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	)
 
 	// General
-	r.HEAD("/", func(c *gin.Context) { c.String(http.StatusOK, "Ollama is running") })
-	r.GET("/", func(c *gin.Context) { c.String(http.StatusOK, "Ollama is running") })
-	r.HEAD("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
-	r.GET("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
+	r.HEAD("/", s.HealthHandler)
+	r.GET("/", s.HealthHandler)
+	r.HEAD("/api/version", s.VersionHandler)
+	r.GET("/api/version", s.VersionHandler)
 
 	// Local model cache management (new implementation is at end of function)
 	r.POST("/api/pull", s.PullHandler)
@@ -1228,6 +1376,30 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	}
 
 	return r, nil
+}
+
+// HealthHandler returns the health status of the Ollama server
+// @Summary      Health check
+// @Description  Check if the Ollama server is running and healthy
+// @Tags         System
+// @Produce      plain
+// @Success      200 {string} string "Ollama is running"
+// @Router       / [get]
+// @Router       / [head]
+func (s *Server) HealthHandler(c *gin.Context) {
+	c.String(http.StatusOK, "Ollama is running")
+}
+
+// VersionHandler returns the version information
+// @Summary      Get version
+// @Description  Get the version of the Ollama server
+// @Tags         System
+// @Produce      json
+// @Success      200 {object} map[string]string "Version information"
+// @Router       /api/version [get]
+// @Router       /api/version [head]
+func (s *Server) VersionHandler(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"version": version.Version})
 }
 
 func Serve(ln net.Listener) error {
@@ -1382,6 +1554,15 @@ func streamResponse(c *gin.Context, ch chan any) {
 	})
 }
 
+// PsHandler returns a list of running models and their status
+// @Summary      List running models
+// @Description  Get a list of models that are currently loaded in memory
+// @Tags         Models
+// @Accept       json
+// @Produce      json
+// @Success      200 {object} api.ProcessResponse "List of running models"
+// @Failure      500 {object} map[string]string "Internal server error"
+// @Router       /api/ps [get]
 func (s *Server) PsHandler(c *gin.Context) {
 	models := []api.ProcessModelResponse{}
 
@@ -1423,6 +1604,19 @@ func (s *Server) PsHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, api.ProcessResponse{Models: models})
 }
 
+// ChatHandler handles chat completions with conversational context
+// @Summary      Generate a chat completion
+// @Description  Generate a response for a chat conversation with message history and optional tools
+// @Tags         Chat
+// @Accept       json
+// @Produce      json
+// @Param        request body api.ChatRequest true "Chat request"
+// @Success      200 {object} api.ChatResponse "Successful chat response"
+// @Failure      400 {object} map[string]string "Bad request"
+// @Failure      404 {object} map[string]string "Model not found"
+// @Failure      500 {object} map[string]string "Internal server error"
+// @Router       /api/chat [post]
+// @Router       /v1/chat/completions [post]
 func (s *Server) ChatHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 
