@@ -36,6 +36,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/server/internal/cache/blob"
 	"github.com/ollama/ollama/server/internal/internal/names"
 
@@ -74,12 +75,7 @@ const (
 )
 
 var defaultCache = sync.OnceValues(func() (*blob.DiskCache, error) {
-	dir := os.Getenv("OLLAMA_MODELS")
-	if dir == "" {
-		home, _ := os.UserHomeDir()
-		home = cmp.Or(home, ".")
-		dir = filepath.Join(home, ".ollama", "models")
-	}
+	dir := envconfig.Models()
 	return blob.Open(dir)
 })
 
