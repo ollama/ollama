@@ -27,6 +27,7 @@ const logsPath = () => {
     return path.join(stateDir, 'ollama', 'logs')  
   }
 
+  // TODO: this should probably point to ~/Library/Application Support/ollama/logs
   return path.join(app.getPath('home'), '.ollama', 'logs')
 }
 
