@@ -159,7 +159,7 @@ if(ENABLE_SYCL)
         set(OLLAMA_SYCL_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/sycl)
         install(TARGETS ggml-sycl
             RUNTIME_DEPENDENCIES
-            DIRECTORIES "$ENV{CMPLR_ROOT}/bin" "$ENV{DNNLROOT}/bin" "$ENV{TBBROOT}/bin" "$ENV{MKLROOT}/bin" "$ENV{CMPLR_ROOT}/lib" "$ENV{DNNLROOT}/lib" "$ENV{TBBROOT}/lib" "$ENV{MKLROOT}/lib"
+            DIRECTORIES "$ENV{CMPLR_ROOT}/bin" "$ENV{DNNLROOT}/bin" "$ENV{MKLROOT}/bin" "$ENV{TBBROOT}/bin" "$ENV{CMPLR_ROOT}/lib" "$ENV{DNNLROOT}/lib" "$ENV{MKLROOT}/lib" "$ENV{TBBROOT}/lib"
             PRE_INCLUDE_REGEXES sycl OpenCL svml irng intlc adapter ur_loader dnnl tbb mkl_sycl_blas mkl_intel_ilp64 mkl_tbb_thread mkl_core
             PRE_EXCLUDE_REGEXES ".*"
             POST_EXCLUDE_REGEXES "system32"
@@ -170,11 +170,12 @@ if(ENABLE_SYCL)
         if(WIN32)
             file(TO_CMAKE_PATH "$ENV{CMPLR_ROOT}/bin" CMPLR_BIN_DIR)
             file(TO_CMAKE_PATH "$ENV{DNNLROOT}/bin" DNNL_BIN_DIR)
-            file(TO_CMAKE_PATH "$ENV{UMF_ROOT}/bin" UMF_BIN_DIR)
-            file(TO_CMAKE_PATH "$ENV{MKLROOT}/bin" MKL_BIN_DIR)
             file(TO_CMAKE_PATH "$ENV{TBBROOT}/bin" TBB_BIN_DIR)
-            
-            foreach(SYCL_BIN_DIR IN ITEMS "${CMPLR_BIN_DIR}" "${DNNL_BIN_DIR}" "${UMF_BIN_DIR}" "${MKL_BIN_DIR}" "${TBB_BIN_DIR}")
+            file(TO_CMAKE_PATH "$ENV{TCM_ROOT}/bin" TCM_BIN_DIR)
+            file(TO_CMAKE_PATH "$ENV{MKLROOT}/bin" MKL_BIN_DIR)
+            file(TO_CMAKE_PATH "$ENV{UMF_ROOT}/bin" UMF_BIN_DIR)
+
+            foreach(SYCL_BIN_DIR IN ITEMS "${CMPLR_BIN_DIR}" "${DNNL_BIN_DIR}" "${TBB_BIN_DIR}" "${TCM_BIN_DIR}" "${MKL_BIN_DIR}" "${UMF_BIN_DIR}")
                 message(STATUS "Checking SYCL bin path: ${SYCL_BIN_DIR}")
                 if(EXISTS ${SYCL_BIN_DIR})
                     message(STATUS "  Path exists, searching for DLL files...")
@@ -191,21 +192,24 @@ if(ENABLE_SYCL)
                 endif()
             endforeach()
         else()
-            foreach(SYCL_LIB_DIR IN ITEMS "$ENV{CMPLR_ROOT}/lib" "$ENV{DNNLROOT}/lib" "$ENV{UMF_ROOT}/lib")
+            foreach(SYCL_LIB_DIR IN ITEMS "$ENV{CMPLR_ROOT}/lib" "$ENV{DNNLROOT}/lib" "$ENV{TCM_ROOT}/lib" "$ENV{UMF_ROOT}/lib")
                 if(EXISTS ${SYCL_LIB_DIR})
                     file(GLOB SYCL_SO_CANDIDATES "${SYCL_LIB_DIR}/*.so*")
                     set(SYCL_SO_FILES "")
                     
                     foreach(SO_FILE ${SYCL_SO_CANDIDATES})
                         if(NOT SO_FILE MATCHES "\\.py$")
-                            message(STATUS "Appending library: ${SO_FILE}")
                             list(APPEND SYCL_SO_FILES "${SO_FILE}")
                         endif()
                     endforeach()
                     
                     if(SYCL_SO_FILES)
-                        message(STATUS "Installing filtered SYCL .so files from: ${SYCL_LIB_DIR}")
                         install(FILES ${SYCL_SO_FILES} DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL)
+                    endif()
+                    
+                    file(GLOB SYCL_SPV_FILES "${SYCL_LIB_DIR}/*.spv")
+                    if(SYCL_SPV_FILES)
+                        install(FILES ${SYCL_SPV_FILES} DESTINATION ${OLLAMA_SYCL_INSTALL_DIR} COMPONENT SYCL)
                     endif()
                 endif()
             endforeach()
