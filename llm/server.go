@@ -139,6 +139,13 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		gpus = discover.GetCPUInfo()
 	}
 
+	// Verify the requested context size is <= the model training size
+	trainCtx := f.KV().ContextLength()
+	if opts.NumCtx/numParallel > int(trainCtx) && trainCtx > 0 {
+		slog.Warn("requested context size too large for model", "num_ctx", opts.NumCtx, "num_parallel", numParallel, "n_ctx_train", trainCtx)
+		opts.NumCtx = int(trainCtx) * numParallel
+	}
+
 	estimate := EstimateGPULayers(gpus, f, projectors, opts, numParallel)
 	if len(gpus) > 1 || gpus[0].Library != "cpu" {
 		switch {
