@@ -3,6 +3,8 @@ package envconfig
 import (
 	"log/slog"
 	"math"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -321,6 +323,30 @@ func TestLogLevel(t *testing.T) {
 			t.Setenv("OLLAMA_DEBUG", k)
 			if i := LogLevel(); i != v {
 				t.Errorf("%s: expected %d, got %d", k, v, i)
+			}
+		})
+	}
+}
+
+func TestModels(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+
+	cases := map[string]string{
+		"default": filepath.Join(home, ".ollama", "models"),
+		"manual": "/path/for/models",
+	}
+
+	for k,v := range cases {
+		t.Run(k, func(t *testing.T){
+			if k == "manual" {
+				t.Setenv("OLLAMA_MODELS", v)
+			}
+
+			if dir := Models(); dir != v {
+				t.Errorf("%s: expected %s, got %s", k, v, dir)
 			}
 		})
 	}
