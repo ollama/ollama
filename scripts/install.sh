@@ -200,13 +200,16 @@ check_gpu() {
             case $2 in
                 nvidia) available lspci && lspci -d '10de:' | grep -q 'NVIDIA' || return 1 ;;
                 amdgpu) available lspci && lspci -d '1002:' | grep -q 'AMD' || return 1 ;;
+                ascend) available lspci && lspci -d '19e5:' | grep -q 'Processing accelerators: Huawei' || return 1 ;;
             esac ;;
         lshw)
             case $2 in
                 nvidia) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[10DE\]' || return 1 ;;
                 amdgpu) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[1002\]' || return 1 ;;
+                ascend) available lshw && $SUDO lshw -c display -numeric -disable network | grep -q 'vendor: .* \[19E5\]' || return 1 ;;
             esac ;;
         nvidia-smi) available nvidia-smi || return 1 ;;
+        npu-smi) available npu-smi || return 1 ;;
     esac
 }
 
@@ -215,9 +218,14 @@ if check_gpu nvidia-smi; then
     exit 0
 fi
 
-if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu; then
+if check_gpu npu-smi; then
+    status "ASCEND GPU installed."
+    exit 0
+fi
+
+if ! check_gpu lspci nvidia && ! check_gpu lshw nvidia && ! check_gpu lspci amdgpu && ! check_gpu lshw amdgpu && ! check_gpu lspci ascend && ! check_gpu lshw ascend; then
     install_success
-    warning "No NVIDIA/AMD GPU detected. Ollama will run in CPU-only mode."
+    warning "No NVIDIA/AMD/Ascend GPU detected. Ollama will run in CPU-only mode."
     exit 0
 fi
 
@@ -232,6 +240,127 @@ if check_gpu lspci amdgpu || check_gpu lshw amdgpu; then
     exit 0
 fi
 
+# Ascend
+install_ascend_driver_yum() {
+    status 'Installing ASCNED driver version: $ASCEND_DRIVER_VERSION ,firmware version: $ASCEND_FIRMWARE_VERSION...'
+    $SUDO $PACKAGE_MANAGER -y install gcc gcc-c++ make cmake unzip zlib-devel libffi-devel openssl-devel pciutils net-tools sqlite-devel lapack-devel gcc-gfortran python3-devel
+    $SUDO groupadd -g HwHiAiUser
+    $SUDO useradd -g HwHiAiUser -d /home/HwHiAiUser -m HwHiAiUser -s /bin/bash
+    $SUDO usermod -aG HwHiAiUser $USER
+
+    # driver version, mabey get from it
+    # npu-smi info
+    # +------------------------------------------------------------------------------------------------+
+    # | npu-smi 24.1.rc1.b060            Version: 24.1.rc1.b060                                        |
+    wget '--header=Referer: https://www.hiascend.com/' "https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/Ascend HDK/Ascend HDK $ASCEND_DRIVER_VERSION/Ascend-hdk-$1-npu-driver_$(echo "$ASCEND_DRIVER_VERSION" | tr '[:upper:]' '[:lower:]')_linux-$(uname -m).run"
+    $SUDO sh Ascend-hdk-$1-npu-driver_$(echo "$ASCEND_DRIVER_VERSION" | tr '[:upper:]' '[:lower:]')_linux-$(uname -m).run --full --install-for-all
+    rm -rf ./Ascend-hdk-$1-npu-driver_$(echo "$ASCEND_DRIVER_VERSION" | tr '[:upper:]' '[:lower:]')_linux-$(uname -m).run
+
+    wget '--header=Referer: https://www.hiascend.com/' "https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/Ascend HDK/Ascend HDK $ASCEND_DRIVER_VERSION/Ascend-hdk-$1-npu-firmware_$ASCEND_FIRMWARE_VERSION.231.run"
+    $SUDO sh Ascend-hdk-$1-npu-firmware_$ASCEND_FIRMWARE_VERSION.231.run --full
+    rm -rf ./Ascend-hdk-$1-npu-firmware_$ASCEND_FIRMWARE_VERSION.231.run
+}
+
+install_ascend_driver_apt() {
+    status 'Installing ASCNED driver version: $ASCEND_DRIVER_VERSION ,firmware version: $ASCEND_FIRMWARE_VERSION...'
+    apt-get -y install gcc g++ make cmake zlib1g zlib1g-dev openssl libsqlite3-dev libssl-dev libffi-dev unzip pciutils net-tools libblas-dev gfortran libblas3 python3-dev
+    groupadd -g HwHiAiUser
+    useradd -g HwHiAiUser -d /home/HwHiAiUser -m HwHiAiUser -s /bin/bash
+    usermod -aG HwHiAiUser $USER
+
+    # driver version,mabey get from it
+    # npu-smi info
+    # +------------------------------------------------------------------------------------------------+
+    # | npu-smi 24.1.rc1.b060            Version: 24.1.rc1.b060                                        |
+    wget '--header=Referer: https://www.hiascend.com/' "https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/Ascend HDK/Ascend HDK $ASCEND_DRIVER_VERSION/Ascend-hdk-$1-npu-driver_$(echo "$ASCEND_DRIVER_VERSION" | tr '[:upper:]' '[:lower:]')_linux-$(uname -m).run"
+    sh Ascend-hdk-$1-npu-driver_$(echo "$ASCEND_DRIVER_VERSION" | tr '[:upper:]' '[:lower:]')_linux-$(uname -m).run --full --install-for-all
+    rm -rf ./Ascend-hdk-$1-npu-driver_$(echo "$ASCEND_DRIVER_VERSION" | tr '[:upper:]' '[:lower:]')_linux-$(uname -m).run
+
+    wget '--header=Referer: https://www.hiascend.com/' "https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/Ascend HDK/Ascend HDK $ASCEND_DRIVER_VERSION/Ascend-hdk-$1-npu-firmware_$ASCEND_FIRMWARE_VERSION.231.run"
+    $SUDO sh Ascend-hdk-$1-npu-firmware_$ASCEND_FIRMWARE_VERSION.231.run --full
+    rm -rf ./Ascend-hdk-$1-npu-firmware_$ASCEND_FIRMWARE_VERSION.231.run
+}
+
+install_ascend_cann() {
+    status 'Installing ASCNED CANN version: $ASCEND_CANN_VERSION...'
+    echo "ASCEND_CANN_VERSION=$ASCEND_CANN_VERSION, 1st paramenter=$1"
+    pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple attrs numpy==1.24.0 decorator sympy cffi pyyaml pathlib2 psutil protobuf scipy requests absl-py wheel typing_extensions
+    wget '--header=Referer: https://www.hiascend.com/' "https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/CANN/CANN $ASCEND_CANN_VERSION/Ascend-cann-toolkit_${ASCEND_CANN_VERSION}_linux-$(uname -m).run"
+    bash Ascend-cann-toolkit_${ASCEND_CANN_VERSION}_linux-$(uname -m).run --install
+    rm -rf ./Ascend-cann-toolkit_${ASCEND_CANN_VERSION}_linux-$(uname -m).run
+
+    wget '--header=Referer: https://www.hiascend.com/' "https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/CANN/CANN $ASCEND_CANN_VERSION/Ascend-cann-kernels-$1_${ASCEND_CANN_VERSION}_linux-$(uname -m).run"
+    bash Ascend-cann-kernels-$1_${ASCEND_CANN_VERSION}_linux-$(uname -m).run --install
+    rm -rf ./Ascend-cann-kernels-$1_${ASCEND_CANN_VERSION}_linux.run
+}
+
+install_ggml_cann() {
+    status 'Installing ggml-cann: soc type=$1'
+    local package_name
+    case $1 in
+        910b) package_name="ollama-linux-${ARCH}-cann-atlas-a2" ;;
+        310p) package_name="ollama-linux-${ARCH}-cann-300i-duo" ;;
+        *) exit ;;
+    esac
+    status "Downloading ${package_name} components"
+    curl --fail --show-error --location --progress-bar \
+        "https://ollama.com/download/${package_name}.tgz${VER_PARAM}" | \
+        $SUDO tar -xzf - -C "$OLLAMA_INSTALL_DIR"
+}
+
+# use env val: ASCEND_DRIVER_VERSION ASCEND_FIRMWARE_VERSIO and ASCEND_CANN_VERSION to get version 
+# ref:https://ascend.github.io/docs/sources/ascend/quick_install.html
+if check_gpu lspci ascend || check_gpu lshw ascend; then
+    if [ -z "$ASCEND_DRIVER_VERSION" ]; then
+        ASCEND_DRIVER_VERSION="25.0.RC1.1"
+    fi
+    if [ -z "$ASCEND_FIRMWARE_VERSION" ]; then
+        ASCEND_FIRMWARE_VERSION="7.7.0.1"
+    fi
+    if [ -z "$ASCEND_CANN_VERSION" ]; then
+        ASCEND_CANN_VERSION="8.1.RC1"
+    fi
+    echo "after set ASCEND_DRIVER_VERSION=${ASCEND_DRIVER_VERSION}";
+
+    type=910b
+    if available npu-smi; then
+        type=$(npu-smi info -m | grep 'Ascend' | awk '{print $5}' | head -n 1 | tr '[:upper:]' '[:lower:]'|sed 's/[0-9]$//')
+    else
+        if ! available lspci; then
+            case $OS_NAME in
+                openeuler) yum install pciutils ;;
+                ubuntu) apt install pciutils ;;
+                *) exit ;;
+            esac
+        fi
+        if lspci -n -D | grep -q d802; then
+            echo "Ascend device is atlas 800 A2, soc type ${type}"
+        elif lspci -n -D | grep -q d500; then
+            type=310p
+            echo "Ascend device is atlas 300, soc type ${type}"
+        else
+            echo "Auto-detect ascend device id failed, please first install pciutils."
+        fi
+    fi
+
+    if ! available npu-smi; then
+        case $OS_NAME in
+            openeuler) install_ascend_driver_yum $type ;;
+            ubuntu) install_ascend_driver_apt $type ;;
+            *) exit ;;
+        esac
+    else
+        echo "Ascend driver has been installed. Please confirm that the version is [23.0.X -> 25.0.X]. If it is not, please uninstall it manually and then reinstall ollama."
+    fi
+
+    install_ascend_cann $type
+    echo "source ~/Ascend/ascend-toolkit/set_env.sh" >> ~/.bashrc
+    source ~/.bashrc
+
+    install_ggml_cann $type
+fi
+
+# NVIDIA
 CUDA_REPO_ERR_MSG="NVIDIA GPU detected, but your OS and Architecture are not supported by NVIDIA.  Please install the CUDA driver manually https://docs.nvidia.com/cuda/cuda-installation-guide-linux/"
 # ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#rhel-7-centos-7
 # ref: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html#rhel-8-rocky-8
@@ -370,5 +499,5 @@ if available nvidia-persistenced; then
     done
 fi
 
-status "NVIDIA GPU ready."
+status "GPU ready."
 install_success

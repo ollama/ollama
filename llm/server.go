@@ -49,6 +49,8 @@ func (e filteredEnv) LogValue() slog.Value {
 				strings.HasPrefix(key, "HIP_"),
 				strings.HasPrefix(key, "GPU_"),
 				strings.HasPrefix(key, "HSA_"),
+				strings.HasPrefix(key, "ASCEND_"),
+				strings.HasPrefix(key, "CANN_"),
 				strings.HasPrefix(key, "GGML_"),
 				slices.Contains([]string{
 					"PATH",
