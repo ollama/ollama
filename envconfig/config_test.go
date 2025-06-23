@@ -336,11 +336,11 @@ func TestModels(t *testing.T) {
 
 	cases := map[string]string{
 		"default": filepath.Join(home, ".ollama", "models"),
-		"manual": "/path/for/models",
+		"manual":  "/path/for/models",
 	}
 
-	for k,v := range cases {
-		t.Run(k, func(t *testing.T){
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
 			if k == "manual" {
 				t.Setenv("OLLAMA_MODELS", v)
 			}
@@ -362,9 +362,28 @@ func TestKeyPath(t *testing.T) {
 		"KeyPath": filepath.Join(home, ".ollama"),
 	}
 
-	for k,v := range cases {
-		t.Run(k, func(t *testing.T){
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
 			if dir := KeyPath(); dir != v {
+				t.Errorf("%s: expected %s, got %s", k, v, dir)
+			}
+		})
+	}
+}
+
+func TestHistory(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		panic(err)
+	}
+
+	cases := map[string]string{
+		"History": filepath.Join(home, ".ollama", "history"),
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			if dir := History(); dir != v {
 				t.Errorf("%s: expected %s, got %s", k, v, dir)
 			}
 		})
