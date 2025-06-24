@@ -5,6 +5,7 @@ ARG FLAVOR=${TARGETARCH}
 ARG ROCMVERSION=6.3.3
 ARG JETPACK5VERSION=r35.4.1
 ARG JETPACK6VERSION=r36.4.0
+ARG SYCLVERSION=2025.1.3-0
 ARG CMAKEVERSION=3.31.2
 
 # We require gcc v10 minimum.  v10.3 has regressions, so the rockylinux 8.5 AppStream has the latest compatible version
@@ -55,6 +56,17 @@ RUN --mount=type=cache,target=/root/.ccache \
         && cmake --build --parallel --preset 'ROCm 6' \
         && cmake --install build --component HIP --strip --parallel 8
 
+FROM --platform=linux/amd64 intel/oneapi-basekit:${SYCLVERSION}-devel-ubuntu22.04 AS oneapi-basekit-2025.1
+ARG CMAKEVERSION
+RUN apt-get update && apt-get install -y curl ccache patchelf \
+    && curl -fsSL https://github.com/Kitware/CMake/releases/download/v${CMAKEVERSION}/cmake-${CMAKEVERSION}-linux-$(uname -m).tar.gz | tar xz -C /usr/local --strip-components 1
+COPY CMakeLists.txt CMakePresets.json .
+COPY ml/backend/ggml/ggml ml/backend/ggml/ggml
+RUN --mount=type=cache,target=/root/.ccache \
+    cmake --preset 'SYCL' \
+        && cmake --build --parallel --preset 'SYCL' \
+        && cmake --install build --component SYCL --strip --parallel 8
+
 FROM --platform=linux/arm64 nvcr.io/nvidia/l4t-jetpack:${JETPACK5VERSION} AS jetpack-5
 ARG CMAKEVERSION
 RUN apt-get update && apt-get install -y curl ccache \
@@ -99,6 +111,9 @@ COPY --from=jetpack-6 dist/lib/ollama /lib/ollama/cuda_jetpack6
 
 FROM scratch AS rocm
 COPY --from=rocm-6 dist/lib/ollama /lib/ollama
+
+FROM scratch AS sycl
+COPY --from=oneapi-basekit-2025.1 dist/lib/ollama /lib/ollama
 
 FROM ${FLAVOR} AS archive
 COPY --from=cpu dist/lib/ollama /lib/ollama

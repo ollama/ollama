@@ -47,11 +47,20 @@ var OneapiGlobs = []string{
 	"/usr/lib*/libze_intel_gpu.so*",
 }
 
+var SyclGlobs = []string{
+	"/usr/lib/x86_64-linux-gnu/libggml-sycl.so*",
+	"/usr/local/lib/libggml-sycl.so*",
+	"/usr/lib/libggml-sycl.so*",
+	"/usr/local/lib64/libggml-sycl.so*",
+	"/usr/lib64/libggml-sycl.so*",
+}
+
 var (
 	CudartMgmtName = "libcudart.so*"
 	NvcudaMgmtName = "libcuda.so*"
 	NvmlMgmtName   = "" // not currently wired on linux
 	OneapiMgmtName = "libze_intel_gpu.so*"
+	SyclMgmtName   = "libggml-sycl.so*"
 )
 
 func GetCPUMem() (memInfo, error) {

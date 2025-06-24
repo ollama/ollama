@@ -11,3 +11,5 @@ echo "Updating ${FINAL_IMAGE_REPO}:latest -> ${FINAL_IMAGE_REPO}:${VERSION}"
 docker buildx imagetools create -t ${FINAL_IMAGE_REPO}:latest ${FINAL_IMAGE_REPO}:${VERSION}
 echo "Updating ${FINAL_IMAGE_REPO}:rocm -> ${FINAL_IMAGE_REPO}:${VERSION}-rocm"
 docker buildx imagetools create -t ${FINAL_IMAGE_REPO}:rocm ${FINAL_IMAGE_REPO}:${VERSION}-rocm
+echo "Updating ${FINAL_IMAGE_REPO}:sycl -> ${FINAL_IMAGE_REPO}:${VERSION}-sycl"
+docker buildx imagetools create -t ${FINAL_IMAGE_REPO}:sycl ${FINAL_IMAGE_REPO}:${VERSION}-sycl
