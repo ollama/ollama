@@ -20,6 +20,7 @@ require (
 	github.com/dlclark/regexp2 v1.11.4
 	github.com/emirpasic/gods/v2 v2.0.0-alpha
 	github.com/google/go-cmp v0.7.0
+	github.com/klauspost/compress v1.17.9
 	github.com/mattn/go-runewidth v0.0.14
 	github.com/nlpodyssey/gopickle v0.3.0
 	github.com/pdevine/tensor v0.0.0-20240510204454-f88f4562727c

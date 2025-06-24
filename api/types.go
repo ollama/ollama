@@ -447,10 +447,12 @@ type PushRequest struct {
 
 // ExportRequest describes a request to export a model to a file or directory.
 type ExportRequest struct {
-	Model    string `json:"model"`              // Model name to export
-	Path     string `json:"path"`               // Destination path
-	Compress bool   `json:"compress,omitempty"` // Enable compression
-	Format   string `json:"format,omitempty"`   // Export format (dir, tar, tar.gz)
+	Model            string `json:"model"`                       // Model name to export
+	Path             string `json:"path"`                        // Destination path
+	Compress         string `json:"compress,omitempty"`          // Compression type: "zstd" (default), "gzip", or ""
+	CompressionLevel int    `json:"compression_level,omitempty"` // Compression level for zstd (1-19, default 3)
+	SingleThread     bool   `json:"single_thread,omitempty"`     // Force single-threaded compression
+	Format           string `json:"format,omitempty"`            // Export format (dir, tar, tar.gz, tar.zst)
 }
 
 // ImportRequest describes a request to import a model from a file or directory.

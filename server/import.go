@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/types/model"
@@ -31,6 +32,8 @@ func ImportModel(req *api.ImportRequest, fn func(api.ProgressResponse)) error {
 		format = "dir"
 	} else if strings.HasSuffix(req.Path, ".tar.gz") || strings.HasSuffix(req.Path, ".tgz") {
 		format = "tar.gz"
+	} else if strings.HasSuffix(req.Path, ".tar.zst") || strings.HasSuffix(req.Path, ".tzst") {
+		format = "tar.zst"
 	} else if strings.HasSuffix(req.Path, ".tar") {
 		format = "tar"
 	} else {
@@ -45,8 +48,12 @@ func ImportModel(req *api.ImportRequest, fn func(api.ProgressResponse)) error {
 	switch format {
 	case "dir":
 		return importFromDirectory(req, fn)
-	case "tar", "tar.gz":
-		return importFromTar(req, fn, format == "tar.gz")
+	case "tar":
+		return importFromTar(req, fn, "")
+	case "tar.gz":
+		return importFromTar(req, fn, "gzip")
+	case "tar.zst":
+		return importFromTar(req, fn, "zstd")
 	default:
 		return fmt.Errorf("unsupported import format: %s", format)
 	}
@@ -138,7 +145,7 @@ func importFromDirectory(req *api.ImportRequest, fn func(api.ProgressResponse)) 
 	return nil
 }
 
-func importFromTar(req *api.ImportRequest, fn func(api.ProgressResponse), compressed bool) error {
+func importFromTar(req *api.ImportRequest, fn func(api.ProgressResponse), compressionType string) error {
 	file, err := os.Open(req.Path)
 	if err != nil {
 		return fmt.Errorf("failed to open import file: %w", err)
@@ -146,13 +153,21 @@ func importFromTar(req *api.ImportRequest, fn func(api.ProgressResponse), compre
 	defer file.Close()
 
 	var reader io.Reader = file
-	if compressed {
+	switch compressionType {
+	case "gzip":
 		gzReader, err := gzip.NewReader(file)
 		if err != nil {
 			return fmt.Errorf("failed to create gzip reader: %w", err)
 		}
 		defer gzReader.Close()
 		reader = gzReader
+	case "zstd":
+		zstdReader, err := zstd.NewReader(file)
+		if err != nil {
+			return fmt.Errorf("failed to create zstd reader: %w", err)
+		}
+		defer zstdReader.Close()
+		reader = zstdReader
 	}
 
 	tarReader := tar.NewReader(reader)

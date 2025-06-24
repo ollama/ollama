@@ -963,7 +963,17 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 }
 
 func ExportHandler(cmd *cobra.Command, args []string) error {
-	compress, err := cmd.Flags().GetBool("compress")
+	compress, err := cmd.Flags().GetString("compress")
+	if err != nil {
+		return err
+	}
+
+	compressionLevel, err := cmd.Flags().GetInt("compression-level")
+	if err != nil {
+		return err
+	}
+
+	singleThread, err := cmd.Flags().GetBool("single-thread")
 	if err != nil {
 		return err
 	}
@@ -1005,16 +1015,26 @@ func ExportHandler(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Determine format based on compression type
 	format := ""
-	if compress {
-		format = "tar.gz"
+	if compress != "" {
+		// Default to zstd if user just specifies --compress without a value
+		if compress == "gzip" {
+			format = "tar.gz"
+		} else {
+			// This covers both "zstd" and any other value (treating as zstd default)
+			format = "tar.zst"
+			compress = "zstd"
+		}
 	}
 
 	request := api.ExportRequest{
-		Model:    args[0],
-		Path:     args[1],
-		Compress: compress,
-		Format:   format,
+		Model:            args[0],
+		Path:             args[1],
+		Compress:         compress,
+		CompressionLevel: compressionLevel,
+		SingleThread:     singleThread,
+		Format:           format,
 	}
 
 	return client.Export(cmd.Context(), &request, fn)
@@ -1647,12 +1667,15 @@ func NewCLI() *cobra.Command {
 		Long:    `Export a model to a file or directory for sharing or backup purposes.
 
 By default, exports as an uncompressed tar file (.tar) using parallel processing
-for optimal performance. Use --compress to create a compressed tar.gz file.`,
+for optimal performance. Use --compress to create a compressed file (zstd by default).`,
 		Args:    cobra.ExactArgs(2),
 		PreRunE: checkServerHeartbeat,
 		RunE:    ExportHandler,
 	}
-	exportCmd.Flags().Bool("compress", false, "Compress the export as tar.gz (slower but smaller file size)")
+	exportCmd.Flags().String("compress", "", "Compression type: 'zstd' (default), 'gzip', or leave flag off for none")
+	exportCmd.Flags().Lookup("compress").NoOptDefVal = "zstd"
+	exportCmd.Flags().Int("compression-level", 3, "Compression level for zstd (1-19, default 3)")
+	exportCmd.Flags().Bool("single-thread", false, "Force single-threaded compression")
 
 	importCmd := &cobra.Command{
 		Use:     "import SOURCE [MODEL_NAME]",

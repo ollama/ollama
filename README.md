@@ -175,6 +175,50 @@ ollama rm llama3.2
 ollama cp llama3.2 my-model
 ```
 
+### Export a model
+
+Export models to share with others or for backup purposes. Models can be exported uncompressed as either a directory or a .tar file, or with compression in .tar.gz, .tgz, or .zst formats. .zst is default for performance reasons.
+
+```shell
+# Export as uncompressed directory
+ollama export llama4 ~/my-models/llama4-model-backup
+
+# Export with default zstd compression (--compress adds .zst file extension if not defined in the command)
+ollama export llama4 llama4-model-backup --compress
+
+# Export with gzip compression
+ollama export llama4 llama4-model-backup.tar.gz --compress gzip
+
+# Export uncompressed
+ollama export llama4 llama4-model-backup.tar
+
+# Export with higher compression ratio
+ollama export llama4 llama4-model-backup.tar.zst --compress --compression-level 9
+```
+
+> Zstandard (zstd) compression is 3-5x faster than gzip with better compression ratios. The default compression level is 3 and supports values from 1 (lowest enctryption, quickest) to 19 (highest encryption, longest)
+
+### Import a model
+
+Import previously exported models or models shared by others.
+
+```shell
+# Import a model directory
+ollama import /~/my-models/llama4-model-backup
+
+# Import a .zst model
+ollama import model-backup.tar.zst
+
+# Import with a custom name
+ollama import model-backup.tar.gz my-imported-model
+
+# Import and overwrite existing model
+ollama import model-backup.tar --force
+
+# Import model and skip the verification check
+ollama import model-backup.tar --skip-verification
+```
+
 ### Multiline input
 
 For multiline input, you can wrap text with `"""`:
