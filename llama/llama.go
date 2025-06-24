@@ -13,8 +13,7 @@ package llama
 #include <stdlib.h>
 #include "ggml.h"
 #include "llama.h"
-#include "clip.h"
-#include "llava.h"
+#include "mtmd.h"
 #include "gguf.h"
 
 #include "sampling_ext.h"
@@ -148,27 +147,23 @@ func (c *Context) Model() *Model {
 }
 
 func (c *Context) KvCacheSeqAdd(seqId int, p0 int, p1 int, delta int) {
-	C.llama_kv_self_seq_add(c.c, C.int(seqId), C.int(p0), C.int(p1), C.int(delta))
+	C.llama_memory_seq_add(C.llama_get_memory(c.c), C.int(seqId), C.int(p0), C.int(p1), C.int(delta))
 }
 
 func (c *Context) KvCacheSeqRm(seqId int, p0 int, p1 int) bool {
-	return bool(C.llama_kv_self_seq_rm(c.c, C.int(seqId), C.int(p0), C.int(p1)))
+	return bool(C.llama_memory_seq_rm(C.llama_get_memory(c.c), C.int(seqId), C.int(p0), C.int(p1)))
 }
 
 func (c *Context) KvCacheSeqCp(srcSeqId int, dstSeqId int, p0 int, p1 int) {
-	C.llama_kv_self_seq_cp(c.c, C.int(srcSeqId), C.int(dstSeqId), C.int(p0), C.int(p1))
+	C.llama_memory_seq_cp(C.llama_get_memory(c.c), C.int(srcSeqId), C.int(dstSeqId), C.int(p0), C.int(p1))
 }
 
 func (c *Context) KvCacheClear() {
-	C.llama_kv_self_clear(c.c)
-}
-
-func (c *Context) KvCacheDefrag() {
-	C.llama_kv_self_defrag(c.c)
+	C.llama_memory_clear(C.llama_get_memory(c.c), true)
 }
 
 func (c *Context) KvCacheCanShift() bool {
-	return bool(C.llama_kv_self_can_shift(c.c))
+	return bool(C.llama_memory_can_shift(C.llama_get_memory(c.c)))
 }
 
 // Get the embeddings for a sequence id
@@ -460,51 +455,70 @@ func (m *Model) NEmbd() int {
 }
 
 // vision processing
-type ClipContext struct {
-	c *C.struct_clip_ctx
+type MtmdContext struct {
+	c *C.struct_mtmd_context
 }
 
-func NewClipContext(llamaContext *Context, modelPath string) (*ClipContext, error) {
+func NewMtmdContext(llamaContext *Context, modelPath string) (*MtmdContext, error) {
 	mp := C.CString(modelPath)
 	defer C.free(unsafe.Pointer(mp))
-	c := C.clip_model_load(mp, 1)
+	// TODO: Support non-default params
+	cp := C.mtmd_context_params_default()
+
+	// NOTE: The model and projector embedding lengths are checked during init
+	c := C.mtmd_init_from_file(mp, C.llama_get_model(llamaContext.c), cp)
 	if c == nil {
-		return nil, fmt.Errorf("unable to load clip model: %v", modelPath)
+		return nil, fmt.Errorf("unable to load mmtd model: %v", modelPath)
 	}
 
-	projEmbedSize := int(C.clip_n_mmproj_embd(c))
-	modelEmbedSize := llamaContext.Model().NEmbd()
-	if projEmbedSize != modelEmbedSize {
-		return nil, fmt.Errorf("projector embedding size (%d) does not match model (%d)", projEmbedSize, modelEmbedSize)
-	}
-
-	return &ClipContext{c: c}, nil
+	return &MtmdContext{c: c}, nil
 }
 
-func (c *ClipContext) Free() {
-	C.clip_free(c.c)
+func (c *MtmdContext) Free() {
+	C.mtmd_free(c.c)
 }
 
-func (c *ClipContext) NewEmbed(llamaContext *Context, data []byte) ([][]float32, error) {
-	l := C.llava_image_embed_make_with_bytes(c.c, C.int(llamaContext.numThreads), (*C.uchar)(unsafe.Pointer(&data[0])), C.int(len(data)))
-	if l == nil {
-		return nil, errors.New("unable to make llava embedding from image")
+func (c *MtmdContext) NewEmbed(llamaContext *Context, data []byte) ([][]float32, error) {
+	// Initialize the input chunks pointer
+	ic := C.mtmd_input_chunks_init()
+	defer C.mtmd_input_chunks_free(ic)
+
+	// Initialize an empty text prompt so we can tokenize
+	it := C.mtmd_input_text_init(C.mtmd_default_marker(), true, true)
+	defer C.mtmd_input_text_free(it)
+
+	// Initialize a bitmap with the image data
+	bm := C.mtmd_bitmap_init(C.uint32_t(len(data)/3), C.uint32_t(1), (*C.uchar)(unsafe.Pointer(&data[0])))
+	defer C.mtmd_bitmap_free(bm)
+
+	// Tokenize the image
+	if C.int32_t(0) != C.mtmd_tokenize(c.c, ic, it, &bm, 1) {
+		return nil, errors.New("unable to tokenize mtmd embedding from image")
+	}
+	nChunks := C.mtmd_input_chunks_size(ic)
+	if nChunks != 1 {
+		return nil, errors.New("image-only mtmd input tokenized to multiple chunks!")
+	}
+	chunk := C.mtmd_input_chunks_get(ic, 0)
+
+	// Encode the chunk
+	if C.int32_t(0) != C.mtmd_encode_chunk(c.c, chunk) {
+		return nil, errors.New("unable to encode mtmd image chunk")
 	}
 
-	numTokens := int(l.n_image_pos)
+	// Get the embedding
+	embd := C.mtmd_get_output_embd(c.c)
+
+	// Copy embeddings over to go slice
+	numTokens := int(C.mtmd_input_chunk_get_n_tokens(chunk))
 	numEmbed := llamaContext.Model().NEmbd()
-
-	s := unsafe.Slice((*float32)(l.embed), numEmbed*numTokens)
-
+	s := unsafe.Slice((*float32)(embd), numEmbed*numTokens)
 	embed := make([][]float32, numTokens)
 	rows := make([]float32, len(s))
 	copy(rows, s)
-
 	for i := range embed {
 		embed[i] = rows[i*numEmbed : (i+1)*numEmbed]
 	}
-
-	C.llava_image_embed_free(l)
 
 	return embed, nil
 }
