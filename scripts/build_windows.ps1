@@ -27,7 +27,6 @@ function checkEnv() {
         $env:VCToolsRedistDir=(get-item "${MSVC_INSTALL}\VC\Redist\MSVC\*")[0]
     }
     # Locate CUDA versions
-    # Note: this assumes every version found will be built
     $cudaList=(get-item "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v*\bin\" -ea 'silentlycontinue')
     if ($cudaList.length -eq 0) {
         $d=(get-command -ea 'silentlycontinue' nvcc).path
@@ -99,19 +98,6 @@ function buildOllama() {
 
         $hashEnv = @{}
         Get-ChildItem env: | foreach { $hashEnv[$_.Name] = $_.Value }
-        if ("$script:CUDA_DIRS".Contains("v11")) {
-            $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V11")) { $v11="$_" }}
-            $env:CUDAToolkit_ROOT=$hashEnv[$v11]
-            write-host "Building CUDA v11 backend libraries"
-            # Note: cuda v11 requires msvc 2019 so force the older generator
-            # to avoid 2022 (or newer) from being used as the default
-            & cmake --fresh --preset "CUDA 11" -G "Visual Studio 16 2019" --install-prefix $script:DIST_DIR
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --build --preset "CUDA 11"  --config Release --parallel $script:JOBS
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --install build --component "CUDA" --strip
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        }
         if ("$script:CUDA_DIRS".Contains("v12")) {
             $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V12")) { $v12="$_" }}
             $env:CUDAToolkit_ROOT=$hashEnv[$v12]

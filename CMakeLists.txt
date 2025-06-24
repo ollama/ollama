@@ -92,14 +92,13 @@ if(CMAKE_CUDA_COMPILER)
 
     find_package(CUDAToolkit)
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/ml/backend/ggml/ggml/src/ggml-cuda)
-    set(OLLAMA_CUDA_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/cuda_v${CUDAToolkit_VERSION_MAJOR})
     install(TARGETS ggml-cuda
         RUNTIME_DEPENDENCIES
-        DIRECTORIES ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_LIBRARY_DIR}
-        PRE_INCLUDE_REGEXES cublas cublasLt cudart
-        PRE_EXCLUDE_REGEXES ".*"
-        RUNTIME DESTINATION ${OLLAMA_CUDA_INSTALL_DIR} COMPONENT CUDA
-        LIBRARY DESTINATION ${OLLAMA_CUDA_INSTALL_DIR} COMPONENT CUDA
+            DIRECTORIES ${CUDAToolkit_BIN_DIR} ${CUDAToolkit_LIBRARY_DIR}
+            PRE_INCLUDE_REGEXES cublas cublasLt cudart
+            PRE_EXCLUDE_REGEXES ".*"
+        RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT CUDA
+        LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT CUDA
     )
 endif()
 
@@ -130,11 +129,15 @@ if(CMAKE_HIP_COMPILER)
 
         set(OLLAMA_HIP_INSTALL_DIR ${OLLAMA_INSTALL_DIR}/rocm)
         install(TARGETS ggml-hip
-            RUNTIME_DEPENDENCIES
-            DIRECTORIES ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR}
-            PRE_INCLUDE_REGEXES hipblas rocblas amdhip64 rocsolver amd_comgr hsa-runtime64 rocsparse tinfo rocprofiler-register drm drm_amdgpu numa elf
-            PRE_EXCLUDE_REGEXES ".*"
-            POST_EXCLUDE_REGEXES "system32"
+            RUNTIME_DEPENDENCY_SET rocm
+            RUNTIME DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT HIP
+            LIBRARY DESTINATION ${OLLAMA_INSTALL_DIR} COMPONENT HIP
+        )
+        install(RUNTIME_DEPENDENCY_SET rocm
+                DIRECTORIES ${HIP_BIN_INSTALL_DIR} ${HIP_LIB_INSTALL_DIR}
+                PRE_INCLUDE_REGEXES hipblas rocblas amdhip64 rocsolver amd_comgr hsa-runtime64 rocsparse tinfo rocprofiler-register drm drm_amdgpu numa elf
+                PRE_EXCLUDE_REGEXES ".*"
+                POST_EXCLUDE_REGEXES "system32"
             RUNTIME DESTINATION ${OLLAMA_HIP_INSTALL_DIR} COMPONENT HIP
             LIBRARY DESTINATION ${OLLAMA_HIP_INSTALL_DIR} COMPONENT HIP
         )
