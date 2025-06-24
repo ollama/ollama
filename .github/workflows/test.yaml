@@ -82,7 +82,7 @@ jobs:
             flags: '-DCMAKE_CUDA_ARCHITECTURES=80'
           - preset: ROCm
             install: https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-24.Q4-WinSvr2022-For-HIP.exe
-            flags: '-DAMDGPU_TARGETS=gfx1010'
+            flags: '-DAMDGPU_TARGETS=gfx1010 -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma"'
     runs-on: windows
     steps:
       - run: |
