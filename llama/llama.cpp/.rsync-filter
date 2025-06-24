@@ -19,7 +19,10 @@ include include/llama-*.*
 include tools/
 include tools/mtmd/
 include tools/mtmd/*.h
-include tools/mtmd/*.cpp
+include tools/mtmd/clip.cpp
+include tools/mtmd/mtmd.cpp
+include tools/mtmd/mtmd-audio.cpp
+include tools/mtmd/mtmd-helper.cpp
 include src/
 include src/llama.*
 include src/llama-*.*
