@@ -113,7 +113,7 @@ FROM scratch AS rocm
 COPY --from=rocm-6 dist/lib/ollama /lib/ollama
 
 FROM scratch AS sycl
-COPY --from=oneapi-basekit-2025.1 dist/lib/ollama/sycl /lib/ollama/sycl
+COPY --from=oneapi-basekit-2025.1 dist/lib/ollama /lib/ollama
 
 FROM ${FLAVOR} AS archive
 COPY --from=cpu dist/lib/ollama /lib/ollama
