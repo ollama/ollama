@@ -155,6 +155,9 @@ jobs:
           echo "$hipPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "CC=$hipPath\bin\clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "CXX=$hipPath\bin\clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "HIPCXX=$hipPath\bin\clang++.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "HIP_PLATFORM=amd" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "CMAKE_PREFIX_PATH=$hipPath" | Out-File -FilePath $env:GITHUB_ENV -Append
       - if: matrix.preset == 'CPU'
         run: |
           echo "CC=clang.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
@@ -173,8 +176,8 @@ jobs:
           key: ccache-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.preset }}
       - name: Build target "${{ matrix.preset }}"
         run: |
-          Import-Module 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
-          Enter-VsDevShell -VsInstallPath 'C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
+          Import-Module 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
+          Enter-VsDevShell -VsInstallPath 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise' -SkipAutomaticLocation  -DevCmdArguments '-arch=x64 -no_logo'
           cmake --preset "${{ matrix.preset }}"
           cmake --build --parallel --preset "${{ matrix.preset }}"
           cmake --install build --component "${{ startsWith(matrix.preset, 'CUDA ') && 'CUDA' || startsWith(matrix.preset, 'ROCm ') && 'HIP' || 'CPU' }}" --strip --parallel 8
@@ -241,7 +244,7 @@ jobs:
             dist\${{ matrix.os }}-${{ matrix.arch }}-app.exe
 
   windows-sign:
-    runs-on: windows-2022
+    runs-on: windows
     environment: release
     needs: [windows-depends, windows-build]
     steps:
