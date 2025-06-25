@@ -204,7 +204,7 @@ Import previously exported models or models shared by others.
 
 ```shell
 # Import a model directory
-ollama import /~/my-models/llama4-model-backup
+ollama import ~/my-models/llama4-model-backup
 
 # Import a .zst model
 ollama import model-backup.tar.zst
