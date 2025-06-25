@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - 'v*'
+  schedule:
+    - cron:  '0 7 * * *'
 
 env:
   CGO_CFLAGS: '-O3'
@@ -16,15 +18,28 @@ jobs:
     outputs:
       GOFLAGS: ${{ steps.goflags.outputs.GOFLAGS }}
       VERSION: ${{ steps.goflags.outputs.VERSION }}
+      CONTINUE: ${{ steps.goflags.outputs.CONTINUE }}
     steps:
       - uses: actions/checkout@v4
       - name: Set environment
         id: goflags
         run: |
-          echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${GITHUB_REF_NAME#v}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" >>$GITHUB_OUTPUT
-          echo VERSION="${GITHUB_REF_NAME#v}" >>$GITHUB_OUTPUT
+          if [ "${{ github.event_name }}" = "push"] ; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            echo CONTINUE="1" >>$GITHUB_OUTPUT
+          else
+            VERSION="$(git describe --tags --first-parent --abbrev=7 --long --dirty --always | sed -e "s/^v//g")+$(date +%Y%m%d)"
+            if [ $(( $(date +%s) - $(git show -s --format=%ct HEAD) )) -lt 86400 ] ; then
+              echo CONTINUE="1" >>$GITHUB_OUTPUT
+            else
+              echo CONTINUE="0" >>$GITHUB_OUTPUT
+            fi
+          fi
+          echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${VERSION}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" >>$GITHUB_OUTPUT
+          echo VERSION="${VERSION}" >>$GITHUB_OUTPUT
 
   darwin-build:
+    if: ${{ needs.setup-environment.outputs.CONTINUE == '1' }}
     runs-on: macos-14-xlarge
     environment: release
     needs: setup-environment
@@ -67,6 +82,8 @@ jobs:
             dist/*.dmg
 
   windows-depends:
+    if: ${{ needs.setup-environment.outputs.CONTINUE == '1' }}
+    needs: setup-environment
     strategy:
       matrix:
         os: [windows]
@@ -205,6 +222,7 @@ jobs:
           path: dist\*
 
   windows-build:
+    if: ${{ needs.setup-environment.outputs.CONTINUE == '1' }}
     strategy:
       matrix:
         os: [windows]
@@ -276,9 +294,10 @@ jobs:
             dist\*
 
   windows-app:
+    if: ${{ needs.setup-environment.outputs.CONTINUE == '1' }}
     runs-on: windows
     environment: release
-    needs: [windows-build, windows-depends]
+    needs: [windows-build, windows-depends, setup-environment]
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
       VERSION: ${{ needs.setup-environment.outputs.VERSION }}
@@ -328,6 +347,7 @@ jobs:
             dist/OllamaSetup.exe
 
   linux-build:
+    if: ${{ needs.setup-environment.outputs.CONTINUE == '1' }}
     strategy:
       matrix:
         include:
@@ -390,6 +410,7 @@ jobs:
 
   # Build each Docker variant (OS, arch, and flavor) separately. Using QEMU is unreliable and slower.
   docker-build-push:
+    if: ${{ needs.setup-environment.outputs.CONTINUE == '1' }}
     strategy:
       matrix:
         include:
@@ -446,12 +467,13 @@ jobs:
 
   # Merge Docker images for the same flavor into a single multi-arch manifest
   docker-merge-push:
+    if: ${{ needs.setup-environment.outputs.CONTINUE == '1' }}
     strategy:
       matrix:
         suffix: ['', '-rocm']
     runs-on: linux
     environment: release
-    needs: [docker-build-push]
+    needs: [docker-build-push, setup-environment]
     steps:
       - uses: docker/login-action@v3
         with:
@@ -480,12 +502,14 @@ jobs:
 
   # Final release process
   release:
+    if: ${{ github.event_name == 'push' }}
     runs-on: ubuntu-latest
     environment: release
     needs: [darwin-build, windows-app, linux-build]
     permissions:
       contents: write
     env:
+      VERSION: ${{ needs.setup-environment.outputs.VERSION }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
@@ -502,15 +526,15 @@ jobs:
         working-directory: dist
       - name: Create or update Release for tag
         run: |
-          RELEASE_VERSION="$(echo ${GITHUB_REF_NAME} | cut -f1 -d-)"
+          RELEASE_VERSION="$(echo v${VERSION} | cut -f1 -d-)"
           echo "Looking for existing release for ${RELEASE_VERSION}"
           OLD_TAG=$(gh release ls --json name,tagName | jq -r ".[] | select(.name == \"${RELEASE_VERSION}\") | .tagName")
           if [ -n "$OLD_TAG" ]; then
-            echo "Updating release ${RELEASE_VERSION} to point to new tag ${GITHUB_REF_NAME}"
-            gh release edit ${OLD_TAG} --tag ${GITHUB_REF_NAME}
+            echo "Updating release ${RELEASE_VERSION} to point to new tag v${VERSION}"
+            gh release edit ${OLD_TAG} --tag v${VERSION}
           else
-            echo "Creating new release ${RELEASE_VERSION} pointing to tag ${GITHUB_REF_NAME}"
-            gh release create ${GITHUB_REF_NAME} \
+            echo "Creating new release ${RELEASE_VERSION} pointing to tag v${VERSION}"
+            gh release create v${VERSION} \
               --title ${RELEASE_VERSION} \
               --draft \
               --generate-notes \
@@ -521,7 +545,7 @@ jobs:
           pids=()
           for payload in dist/*.txt dist/*.zip dist/*.tgz dist/*.exe dist/*.dmg ; do
             echo "Uploading $payload"
-            gh release upload ${GITHUB_REF_NAME} $payload --clobber &
+            gh release upload v${VERSION} $payload --clobber &
             pids[$!]=$!
             sleep 1
           done
