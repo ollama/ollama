@@ -14,6 +14,12 @@ enum llama_expert_gating_func_type {
     LLAMA_EXPERT_GATING_FUNC_TYPE_SIGMOID = 2,
 };
 
+enum llama_swa_type {
+    LLAMA_SWA_TYPE_NONE     = 0,
+    LLAMA_SWA_TYPE_STANDARD = 1,
+    LLAMA_SWA_TYPE_CHUNKED  = 2,
+};
+
 struct llama_hparams_posnet {
     uint32_t n_embd;
     uint32_t n_layer;
@@ -35,8 +41,6 @@ struct llama_hparams {
     uint32_t n_embd_features = 0;
     uint32_t n_layer;
     uint32_t n_rot;
-    uint32_t n_swa = 0; // sliding window attention (SWA)
-    uint32_t n_swa_pattern = 1; // by default, all layers use non-sliding-window attention
     uint32_t n_embd_head_k; // dimension of keys (d_k). d_q is assumed to be the same, but there are n_head q heads, and only n_head_kv k-v heads
     uint32_t n_embd_head_v; // dimension of values (d_v) aka n_embd_head
     uint32_t n_expert = 0;
@@ -98,6 +102,15 @@ struct llama_hparams {
 
     std::array<int, 4> rope_sections;
 
+    // Sliding Window Attention (SWA)
+    llama_swa_type swa_type = LLAMA_SWA_TYPE_NONE;
+    // the size of the sliding window (0 - no SWA)
+    uint32_t n_swa = 0;
+    // if swa_layers[il] == true, then layer il is SWA
+    // if swa_layers[il] == false, then layer il is dense (i.e. non-SWA)
+    // by default, all layers are dense
+    std::array<bool, LLAMA_MAX_LAYERS> swa_layers;
+
     // for State Space Models
     uint32_t ssm_d_conv  = 0;
     uint32_t ssm_d_inner = 0;
@@ -118,11 +131,13 @@ struct llama_hparams {
     bool causal_attn   = true;
     bool use_alibi     = false;
     bool attn_soft_cap = false;
+    bool use_kq_norm   = true;
 
+    // for Classifiers
+    uint32_t n_cls_out = 1;
+
+    // llama4
     uint32_t n_moe_layer_step        = 0;
-    bool     use_kq_norm             = true;
-    uint32_t n_attn_chunk            = 0;
-    // values below seems to be fixed on llama4
     uint32_t n_no_rope_layer_step    = 4;
     uint32_t n_attn_temp_floor_scale = 8192;
     float    f_attn_temp_scale       = 0.1;
@@ -134,6 +149,23 @@ struct llama_hparams {
     enum llama_pooling_type      pooling_type            = LLAMA_POOLING_TYPE_NONE;
     enum llama_rope_type         rope_type               = LLAMA_ROPE_TYPE_NONE;
     enum llama_rope_scaling_type rope_scaling_type_train = LLAMA_ROPE_SCALING_TYPE_NONE;
+
+    // this value n_pattern means that every nth layer is dense (i.e. non-SWA)
+    // note that if n_pattern == 0, all layers are SWA
+    //           if n_pattern == 1, all layers are dense
+    // example: n_pattern = 3
+    //   il == 0: swa
+    //   il == 1: swa
+    //   il == 2: dense
+    //   il == 3: swa
+    //   il == 4: swa
+    //   il == 5: dense
+    //   il == 6: swa
+    //   etc ...
+    void set_swa_pattern(uint32_t n_pattern);
+
+    // return true if one of the layers is SWA
+    bool is_swa_any() const;
 
     uint32_t n_head(uint32_t il = 0) const;
 

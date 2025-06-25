@@ -4,6 +4,7 @@
 
 #include <climits>
 #include <cstdarg>
+#include <cinttypes>
 #include <string>
 #include <map>
 #include <sstream>
@@ -15,22 +16,26 @@
 #define KEY_FTYPE               "general.file_type"
 #define KEY_NAME                "general.name"
 #define KEY_DESCRIPTION         "general.description"
-#define KEY_MINICPMV_VERSION    "clip.minicpmv_version"
+#define KEY_PROJ_TYPE           "clip.projector_type"
+#define KEY_HAS_AUDIO_ENC       "clip.has_audio_encoder"
+#define KEY_HAS_VISION_ENC      "clip.has_vision_encoder"
 #define KEY_USE_GELU            "clip.use_gelu"
 #define KEY_USE_SILU            "clip.use_silu"
-#define KEY_N_EMBD              "clip.vision.embedding_length"
-#define KEY_N_FF                "clip.vision.feed_forward_length"
-#define KEY_N_BLOCK             "clip.vision.block_count"
-#define KEY_N_HEAD              "clip.vision.attention.head_count"
-#define KEY_LAYER_NORM_EPS      "clip.vision.attention.layer_norm_epsilon"
-#define KEY_PROJ_DIM            "clip.vision.projection_dim"
+
+#define KEY_N_EMBD              "clip.%s.embedding_length"
+#define KEY_N_FF                "clip.%s.feed_forward_length"
+#define KEY_N_BLOCK             "clip.%s.block_count"
+#define KEY_PROJ_DIM            "clip.%s.projection_dim"
+#define KEY_N_HEAD              "clip.%s.attention.head_count"
+#define KEY_LAYER_NORM_EPS      "clip.%s.attention.layer_norm_epsilon"
+
+// vision-specific
 #define KEY_IMAGE_SIZE          "clip.vision.image_size"
 #define KEY_PATCH_SIZE          "clip.vision.patch_size"
 #define KEY_IMAGE_MEAN          "clip.vision.image_mean"
 #define KEY_IMAGE_STD           "clip.vision.image_std"
 #define KEY_FEATURE_LAYER       "clip.vision.feature_layer"
 #define KEY_PROJ_SCALE_FACTOR   "clip.vision.projector.scale_factor"
-#define KEY_PROJ_TYPE           "clip.projector_type"
 #define KEY_SPATIAL_MERGE_SIZE  "clip.vision.spatial_merge_size"
 
 #define KEY_MM_PATCH_MERGE_TYPE   "clip.vision.mm_patch_merge_type"
@@ -38,6 +43,11 @@
 #define KEY_IMAGE_CROP_RESOLUTION "clip.vision.image_crop_resolution"
 #define KEY_WIN_ATTN_PATTERN      "clip.vision.n_wa_pattern"
 #define KEY_ATTN_WINDOW_SIZE      "clip.vision.window_size"
+#define KEY_MINICPMV_VERSION      "clip.minicpmv_version"
+
+// audio-specific
+#define KEY_A_NUM_MEL_BINS      "clip.audio.num_mel_bins"
+#define KEY_A_PROJ_STACK_FACTOR "clip.audio.projector.stack_factor"
 
 
 //
@@ -94,6 +104,13 @@
 #define TN_GLM_ADAPTER_GATE     "adapter.linear.gate.%s"
 #define TN_GLM_ADAPTER_D_4H_2_H "adapter.linear.dense_4h_to_h.%s"
 
+// ultravox
+#define TN_CONV1D       "a.conv1d.%d.%s"
+#define TN_MM_AUDIO_MLP "mm.a.mlp.%d.%s"
+#define TN_MM_AUDIO_FC  "mm.a.fc.%s" // fully connected layer
+#define TN_MM_NORM_PRE  "mm.a.norm_pre.%s"
+#define TN_MM_NORM_MID  "mm.a.norm_mid.%s"
+
 // align x to upper multiple of n
 #define CLIP_ALIGN(x, n) ((((x) + (n) - 1) / (n)) * (n))
 
@@ -109,7 +126,11 @@ enum projector_type {
     PROJECTOR_TYPE_IDEFICS3,
     PROJECTOR_TYPE_PIXTRAL,
     PROJECTOR_TYPE_QWEN25VL,
+    PROJECTOR_TYPE_ULTRAVOX,
     PROJECTOR_TYPE_INTERNVL,
+    PROJECTOR_TYPE_LLAMA4,
+    PROJECTOR_TYPE_QWEN2A,
+    PROJECTOR_TYPE_QWEN25O, // will be replaced by QWEN2A or QWEN25VL depending on clip_ctx
     PROJECTOR_TYPE_UNKNOWN,
 };
 
@@ -124,7 +145,11 @@ static std::map<projector_type, std::string> PROJECTOR_TYPE_NAMES = {
     { PROJECTOR_TYPE_GEMMA3,    "gemma3"},
     { PROJECTOR_TYPE_IDEFICS3,  "idefics3"},
     { PROJECTOR_TYPE_PIXTRAL,   "pixtral"},
+    { PROJECTOR_TYPE_ULTRAVOX,  "ultravox"},
     { PROJECTOR_TYPE_INTERNVL,  "internvl"},
+    { PROJECTOR_TYPE_LLAMA4,    "llama4"},
+    { PROJECTOR_TYPE_QWEN2A,    "qwen2a"},
+    { PROJECTOR_TYPE_QWEN25O,   "qwen2.5o"},
 };
 
 static projector_type clip_projector_type_from_string(const std::string & str) {
@@ -144,8 +169,10 @@ struct clip_image_u8 {
     std::vector<uint8_t> buf;
 };
 
-// RGB float32 image (NHWC)
-// Memory layout: RGBRGBRGB...
+// For images, buf.size() == nx*ny*3
+//     Memory layout: RGBRGBRGB...
+// For audio, only one channel is used, buf.size() == nx*ny
+//     nx will be n_frames and ny will be n_mel
 struct clip_image_f32 {
     int nx;
     int ny;
@@ -239,9 +266,20 @@ struct clip_image_u8_batch {
 
 struct clip_image_f32_batch {
     std::vector<clip_image_f32_ptr> entries;
+    bool is_audio = false;
+
+    // for llava-uhd style models, we need to know the grid size
+    // note: entries.size() == grid_x * grid_y + 1 (one overview image)
+    int grid_x = 0;
+    int grid_y = 0;
 
     clip_image_f32_batch clone() const {
-        clip_image_f32_batch new_batch;
+        clip_image_f32_batch new_batch{
+            /* entries  */ {},
+            /* is_audio */ is_audio,
+            /* grid_x   */ grid_x,
+            /* grid_y   */ grid_y,
+        };
         new_batch.entries.reserve(entries.size());
         for (const auto & entry : entries) {
             new_batch.entries.emplace_back(new clip_image_f32(*entry));
@@ -355,6 +393,70 @@ static std::string gguf_kv_to_str(const struct gguf_context * ctx_gguf, int i) {
             }
         default:
             return gguf_data_to_str(type, gguf_get_val_data(ctx_gguf, i), 0);
+    }
+}
+
+//
+// debugging
+//
+
+static void print_tensor_shape(ggml_tensor * t) {
+    printf("%s.shape = [", t->name);
+    for (int i = 0; i < ggml_n_dims(t); ++i) {
+        printf("%" PRId64, t->ne[i]);
+        if (i < ggml_n_dims(t) - 1) {
+            printf(", ");
+        }
+    }
+    printf("]\n");
+}
+
+static void print_tensor_data(ggml_tensor * t, uint8_t * data, int64_t n) {
+    ggml_type type = t->type;
+    int64_t * ne = t->ne;
+    size_t * nb = t->nb;
+    for (int64_t i3 = 0; i3 < ne[3]; i3++) {
+        printf("%s.data: [\n", t->name);
+        for (int64_t i2 = 0; i2 < ne[2]; i2++) {
+            if (i2 == n && ne[2] > 2*n) {
+                printf("     ..., \n");
+                i2 = ne[2] - n;
+            }
+            printf("     [\n");
+            for (int64_t i1 = 0; i1 < ne[1]; i1++) {
+                if (i1 == n && ne[1] > 2*n) {
+                    printf("      ..., \n");
+                    i1 = ne[1] - n;
+                }
+                printf("      [");
+                for (int64_t i0 = 0; i0 < ne[0]; i0++) {
+                    if (i0 == n && ne[0] > 2*n) {
+                        printf("..., ");
+                        i0 = ne[0] - n;
+                    }
+                    size_t i = i3 * nb[3] + i2 * nb[2] + i1 * nb[1] + i0 * nb[0];
+                    float v;
+                    if (type == GGML_TYPE_F16) {
+                        v = ggml_fp16_to_fp32(*(ggml_fp16_t *) &data[i]);
+                    } else if (type == GGML_TYPE_F32) {
+                        v = *(float *) &data[i];
+                    } else if (type == GGML_TYPE_I32) {
+                        v = (float) *(int32_t *) &data[i];
+                    } else if (type == GGML_TYPE_I16) {
+                        v = (float) *(int16_t *) &data[i];
+                    } else if (type == GGML_TYPE_I8) {
+                        v = (float) *(int8_t *) &data[i];
+                    } else {
+                        GGML_ABORT("fatal error");
+                    }
+                    printf("%8.4f", v);
+                    if (i0 < ne[0] - 1) printf(", ");
+                }
+                printf("],\n");
+            }
+            printf("     ],\n");
+        }
+        printf("    ]\n");
     }
 }
 
