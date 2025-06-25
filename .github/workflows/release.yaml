@@ -468,8 +468,18 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: dist-linux-*
-          path: dist
-          merge-multiple: true
+          path: stage
+          merge-multiple: false
+      - name: Merge linux amd64 payload
+        working-directory: stage/dist-linux-amd64-archive
+        run: |
+          tar zxf ollama-linux-amd64.tgz
+          tar zxf ../dist-linux-amd64-rocm/ollama-linux-amd64.tgz
+          rm -f ollama-linux-amd64.tgz ../dist-linux-amd64-rocm/ollama-linux-amd64.tgz
+          tar -c -f- --owner 0 --group 0 . | pigz -9vc > ../ollama-linux-amd64.tgz
+      - name: Cleanup linux payloads
+        run: |
+          find stage -name ollama-linux\*.tgz -exec mv {} dist/ \;
       - run: find . -type f -not -name 'sha256sum.txt' | xargs sha256sum | tee sha256sum.txt
         working-directory: dist
       - name: Create or update Release
