@@ -54,48 +54,6 @@ jobs:
           name: build-${{ matrix.os }}-${{ matrix.arch }}
           path: dist/*
 
-  darwin-sign:
-    runs-on: macos-13
-    environment: release
-    needs: darwin-build
-    steps:
-      - uses: actions/checkout@v4
-      - run: |
-          echo $MACOS_SIGNING_KEY | base64 --decode > certificate.p12
-          security create-keychain -p password build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p password build.keychain
-          security import certificate.p12 -k build.keychain -P $MACOS_SIGNING_KEY_PASSWORD -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k password build.keychain
-          security set-keychain-settings -lut 3600 build.keychain
-        env:
-          MACOS_SIGNING_KEY: ${{ secrets.MACOS_SIGNING_KEY }}
-          MACOS_SIGNING_KEY_PASSWORD: ${{ secrets.MACOS_SIGNING_KEY_PASSWORD }}
-      - uses: actions/download-artifact@v4
-        with:
-          name: build-darwin-amd64
-          path: dist/darwin-amd64
-      - uses: actions/download-artifact@v4
-        with:
-          name: build-darwin-arm64
-          path: dist/darwin-arm64
-      - run: |
-          export VERSION=${GITHUB_REF_NAME#v}
-          ./scripts/build_darwin.sh sign macapp
-        env:
-          APPLE_IDENTITY: ${{ secrets.APPLE_IDENTITY }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
-          APPLE_ID: ${{ vars.APPLE_ID }}
-          SDKROOT: /Applications/Xcode_14.1.0.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk
-          DEVELOPER_DIR: /Applications/Xcode_14.1.0.app/Contents/Developer
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist-darwin
-          path: |
-            dist/Ollama-darwin.zip
-            dist/ollama-darwin.tgz
-
   windows-depends:
     strategy:
       matrix:
@@ -230,61 +188,11 @@ jobs:
           go-version-file: go.mod
       - run: |
           go build -o dist/${{ matrix.os }}-${{ matrix.arch }}/ .
-      - if: matrix.arch == 'arm64'
-        run: |
-          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.arm64.exe" -OutFile "dist\windows-arm64\vc_redist.arm64.exe"
-      - run: |
-          $env:VERSION='${{ github.ref_name }}' -Replace "v(.*)", '$1'
-          & .\scripts\build_windows.ps1 buildApp
-        env:
-          VCToolsRedistDir: stub
       - uses: actions/upload-artifact@v4
         with:
           name: build-${{ matrix.os }}-${{ matrix.arch }}
           path: |
             dist\${{ matrix.os }}-${{ matrix.arch }}\*.exe
-            dist\${{ matrix.os }}-${{ matrix.arch }}-app.exe
-
-  windows-sign:
-    runs-on: windows
-    environment: release
-    needs: [windows-depends, windows-build]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: google-github-actions/auth@v2
-        with:
-          project_id: ollama
-          credentials_json: ${{ secrets.GOOGLE_SIGNING_CREDENTIALS }}
-      - run: |
-          $ErrorActionPreference = "Stop"
-          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=323507" -OutFile "${{ runner.temp }}\sdksetup.exe"
-          Start-Process "${{ runner.temp }}\sdksetup.exe" -ArgumentList @("/q") -NoNewWindow -Wait
-
-          Invoke-WebRequest -Uri "https://github.com/GoogleCloudPlatform/kms-integrations/releases/download/cng-v1.0/kmscng-1.0-windows-amd64.zip" -OutFile "${{ runner.temp }}\plugin.zip"
-          Expand-Archive -Path "${{ runner.temp }}\plugin.zip" -DestinationPath "${{ runner.temp }}\plugin\"
-          & "${{ runner.temp }}\plugin\*\kmscng.msi" /quiet
-
-          echo "${{ vars.OLLAMA_CERT }}" >ollama_inc.crt
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: build-windows-*
-          path: dist\
-          merge-multiple: true
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: depends-windows-amd64-*
-          path: dist\windows-amd64\
-          merge-multiple: true
-      - run: |
-          & .\scripts\build_windows.ps1 gatherDependencies sign buildInstaller distZip
-        env:
-          KEY_CONTAINER: ${{ vars.KEY_CONTAINER }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist-windows
-          path: |
-            dist\OllamaSetup.exe
-            dist\ollama-windows-*.zip
 
   linux-build:
     strategy:
@@ -441,58 +349,16 @@ jobs:
   trigger:
     runs-on: ubuntu-latest
     environment: release
-    needs: [darwin-build, windows-build, windows-depends]
-    steps:
-      - name: Trigger downstream release process
-        run: |
-          curl -L \
-            -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.RELEASE_TOKEN }}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            https://api.github.com/repos/ollama/${{ vars.RELEASE_REPO }}/dispatches \
-            -d "{\"event_type\": \"trigger-workflow\", \"client_payload\": {\"run_id\": \"${GITHUB_RUN_ID}\", \"version\": \"${GITHUB_REF_NAME#v}\"}}"
-
-  # Aggregate all the assets and ship a release
-  release:
-    needs: [darwin-sign, windows-sign, linux-build]
-    runs-on: linux
-    environment: release
+    needs: [darwin-build, windows-build, windows-depends, linux-build]
     permissions:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist-darwin
-          path: dist
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist-windows
-          path: dist
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: dist-linux-*
-          path: stage
-          merge-multiple: false
-      - name: Merge linux amd64 payload
-        working-directory: stage/dist-linux-amd64-archive
-        run: |
-          tar zxf ollama-linux-amd64.tgz
-          tar zxf ../dist-linux-amd64-rocm/ollama-linux-amd64.tgz
-          rm -f ollama-linux-amd64.tgz ../dist-linux-amd64-rocm/ollama-linux-amd64.tgz
-          tar -c -f- --owner 0 --group 0 . | pigz -9vc > ../ollama-linux-amd64.tgz
-      - name: Cleanup linux payloads
-        run: |
-          find stage -name ollama-linux\*.tgz -exec mv {} dist/ \;
-      - run: find . -type f -not -name 'sha256sum.txt' | xargs sha256sum | tee sha256sum.txt
-        working-directory: dist
-      - name: Create or update Release
+      - name: Create or update Release for tag
         run: |
           RELEASE_VERSION="$(echo ${GITHUB_REF_NAME} | cut -f1 -d-)"
-
           echo "Looking for existing release for ${RELEASE_VERSION}"
           OLD_TAG=$(gh release ls --json name,tagName | jq -r ".[] | select(.name == \"${RELEASE_VERSION}\") | .tagName")
           if [ -n "$OLD_TAG" ]; then
@@ -506,5 +372,12 @@ jobs:
               --generate-notes \
               --prerelease
           fi
-          echo "Uploading artifacts for tag ${GITHUB_REF_NAME}"
-          gh release upload ${GITHUB_REF_NAME} dist/* --clobber
+      - name: Trigger downstream release process
+        run: |
+          curl -L \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ secrets.RELEASE_TOKEN }}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            https://api.github.com/repos/ollama/${{ vars.RELEASE_REPO }}/dispatches \
+            -d "{\"event_type\": \"trigger-workflow\", \"client_payload\": {\"run_id\": \"${GITHUB_RUN_ID}\", \"version\": \"${GITHUB_REF_NAME#v}\", \"publish\": \"1\"}}"
