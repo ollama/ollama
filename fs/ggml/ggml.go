@@ -554,7 +554,7 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 			// vocab graph
 			4*batch*(embedding+vocab)+embedding*vocab*105/128,
 		)
-	case "gemma", "gemma2", "gemma3":
+	case "gemma", "gemma2", "gemma3", "gemma3n":
 		fullOffload = max(
 			4*batch*(embedding+vocab),
 			4*batch*(2+context+context*heads+2*embedding+2*embeddingHeadsK*heads),
@@ -566,6 +566,11 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 				4*embeddingHeadsK*context*8+
 				embedding*embeddingHeadsK*heads*9/16,
 		)
+
+		if f.KV().Architecture() == "gemma3n" {
+			fullOffload *= 4
+			partialOffload *= 4
+		}
 
 		// Gemma2 also has sliding window attention but we only have an optimized implementation in the Ollama
 		// engine. Gemma3 always uses the Ollama engine.
