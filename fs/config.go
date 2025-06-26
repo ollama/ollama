@@ -10,4 +10,5 @@ type Config interface {
 	Strings(string, ...[]string) []string
 	Ints(string, ...[]int32) []int32
 	Floats(string, ...[]float32) []float32
+	Bools(string, ...[]bool) []bool
 }

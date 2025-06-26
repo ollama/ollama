@@ -22,10 +22,10 @@ multiple batches of processing until everything is complete.
  4 files changed, 59 insertions(+), 79 deletions(-)
 
 diff --git a/src/llama-context.cpp b/src/llama-context.cpp
-index c22687e4..c5948e8f 100644
+index dca22d8b..1f3a3956 100644
 --- a/src/llama-context.cpp
 +++ b/src/llama-context.cpp
-@@ -950,9 +950,12 @@ int llama_context::decode(llama_batch & inp_batch) {
+@@ -947,9 +947,12 @@ int llama_context::decode(llama_batch & inp_batch) {
  
          // find KV slot
          if (!kv_self->find_slot(ubatch)) {
@@ -41,7 +41,7 @@ index c22687e4..c5948e8f 100644
          }
  
          ggml_backend_sched_reset(sched.get());
-@@ -1967,9 +1970,12 @@ void llama_context::opt_epoch_iter(
+@@ -1965,9 +1968,12 @@ void llama_context::opt_epoch_iter(
  
              // TODO: not sure if this is needed
              if (!kv_self->find_slot(ubatch)) {

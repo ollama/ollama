@@ -3434,30 +3434,60 @@ kernel void kernel_neg(
     dst[tpig] = -src0[tpig];
 }
 
+template <bool norm>
 kernel void kernel_sum_rows(
+        constant ggml_metal_kargs_sum_rows & args,
         device const float * src0,
         device       float * dst,
-        constant ggml_metal_kargs_sum_rows & args,
-        uint3 tpig[[thread_position_in_grid]]) {
-    int64_t i3 = tpig.z;
-    int64_t i2 = tpig.y;
-    int64_t i1 = tpig.x;
+        threadgroup  float * shmem_f32 [[threadgroup(0)]],
+        uint3   tgpig[[threadgroup_position_in_grid]],
+        ushort3 tpitg[[thread_position_in_threadgroup]],
+        ushort  sgitg[[simdgroup_index_in_threadgroup]],
+        ushort  tiisg[[thread_index_in_simdgroup]],
+        ushort3   ntg[[threads_per_threadgroup]]) {
+    int64_t i3 = tgpig.z;
+    int64_t i2 = tgpig.y;
+    int64_t i1 = tgpig.x;
 
     if (i3 >= args.ne03 || i2 >= args.ne02 || i1 >= args.ne01) {
         return;
     }
 
+    if (sgitg == 0) {
+        shmem_f32[tiisg] = 0.0f;
+    }
+
     device const float * src_row = (device const float *) ((device const char *) src0 + i1*args.nb01 + i2*args.nb02 + i3*args.nb03);
     device       float * dst_row = (device       float *) ((device       char *) dst  + i1*args.nb1  + i2*args.nb2  + i3*args.nb3);
 
-    float row_sum = 0;
+    float sumf = 0;
 
-    for (int64_t i0 = 0; i0 < args.ne00; i0++) {
-        row_sum += src_row[i0];
+    for (int64_t i0 = tpitg.x; i0 < args.ne00; i0 += ntg.x) {
+        sumf += src_row[i0];
     }
 
-    dst_row[0] = row_sum;
+    sumf = simd_sum(sumf);
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (tiisg == 0) {
+        shmem_f32[sgitg] = sumf;
+    }
+
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    sumf = shmem_f32[tiisg];
+    sumf = simd_sum(sumf);
+
+    if (tpitg.x == 0) {
+        dst_row[0] = norm ? sumf / args.ne00 : sumf;
+    }
 }
+
+typedef decltype(kernel_sum_rows<false>) kernel_sum_rows_t;
+
+template [[host_name("kernel_sum_rows")]] kernel kernel_sum_rows_t kernel_sum_rows<false>;
+template [[host_name("kernel_mean")]]     kernel kernel_sum_rows_t kernel_sum_rows<true>;
 
 template<typename T>
 kernel void kernel_soft_max(
