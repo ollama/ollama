@@ -14,6 +14,7 @@ package llama
 #include "ggml.h"
 #include "llama.h"
 #include "mtmd.h"
+#include "mtmd-helper.h"
 #include "gguf.h"
 
 #include "sampling_ext.h"
@@ -488,7 +489,7 @@ func (c *MtmdContext) NewEmbed(llamaContext *Context, data []byte) ([][]float32,
 	defer C.mtmd_input_text_free(it)
 
 	// Initialize a bitmap with the image data
-	bm := C.mtmd_bitmap_init(C.uint32_t(len(data)/3), C.uint32_t(1), (*C.uchar)(unsafe.Pointer(&data[0])))
+	bm := C.mtmd_helper_bitmap_init_from_buf(c.c, (*C.uchar)(unsafe.Pointer(&data[0])), C.size_t(len(data)))
 	defer C.mtmd_bitmap_free(bm)
 
 	// Tokenize the image
