@@ -174,6 +174,7 @@ func (kv KV) Bools(key string, defaultValue ...[]bool) []bool {
 func (kv KV) OllamaEngineRequired() bool {
 	return slices.Contains([]string{
 		"gemma3",
+		"gemma3n",
 		"mistral3",
 		"llama4",
 		"mllama",
