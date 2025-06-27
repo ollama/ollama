@@ -79,6 +79,16 @@ enum mtmd_slice_tmpl {
     // TODO @ngxson : add support for idefics (SmolVLM)
 };
 
+mtmd_input_text* mtmd_input_text_init(const char * text, bool add_special, bool parse_special) {
+    return new mtmd_input_text{text, add_special, parse_special};
+}
+
+void mtmd_input_text_free(mtmd_input_text* input_text) {
+    if (input_text) {
+        delete input_text;
+    }
+}
+
 const char * mtmd_default_marker() {
     return "<__media__>";
 }
