@@ -49,6 +49,24 @@ func TestHost(t *testing.T) {
 	}
 }
 
+func TestPortFromVar(t *testing.T) {
+	cases := map[string]struct {
+		value  string
+		expect string
+	}{
+		"only address":        {"8080", "http://127.0.0.1:8080"},
+		"space around":        {" 8080 ", "http://127.0.0.1:8080"},
+	}
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("PORT", tt.value)
+			if host := Host(); host.String() != tt.expect {
+				t.Errorf("%s: expected %s, got %s", name, tt.expect, host.String())
+			}
+		})
+	}
+}
+
 func TestOrigins(t *testing.T) {
 	cases := []struct {
 		value  string
