@@ -297,7 +297,9 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			if _, ok := meta.Tensors().GroupLayers()["output"]; !ok && t.Name == "token_embd.weight" {
 				createTensor(tensor{source: t, target: "output.weight"}, output.bts, blocks)
 			}
-		case contains(t.Name, "cls", "output", "output_norm"):
+		case contains(t.Name, "cls", "output", "output_norm",
+			"altup_proj", "altup_unembd_proj",
+			"per_layer_token_embd", "per_layer_model_proj", "per_layer_proj_norm"):
 			createTensor(tensor{source: t}, output.bts, blocks)
 		case strings.HasPrefix(t.Name, "v.") || strings.HasPrefix(t.Name, "mm."):
 			// TODO: assign vision tensors to the gpu if possible
@@ -602,7 +604,9 @@ func (c *Context) Forward(tensors ...ml.Tensor) ml.Context {
 }
 
 func (c *Context) Compute(tensors ...ml.Tensor) {
-	C.ggml_backend_sched_graph_compute_async(c.b.sched, c.graph)
+	if status := C.ggml_backend_sched_graph_compute_async(c.b.sched, c.graph); status != C.GGML_STATUS_SUCCESS {
+		panic(fmt.Errorf("error computing ggml graph: %v", status))
+	}
 	C.ggml_backend_sched_reset(c.b.sched)
 
 	needSync := true
@@ -888,6 +892,13 @@ func (t *Tensor) Add(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_add(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
+	}
+}
+
+func (t *Tensor) Sub(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_sub(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
 	}
 }
 
@@ -1198,6 +1209,13 @@ func (t *Tensor) SILU(ctx ml.Context) ml.Tensor {
 	}
 }
 
+func (t *Tensor) RELU(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_relu_inplace(ctx.(*Context).ctx, t.t),
+	}
+}
+
 func (t *Tensor) Conv2D(ctx ml.Context, t2 ml.Tensor, s0, s1, p0, p1, d0, d1 int) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -1271,5 +1289,44 @@ func (t *Tensor) Argsort(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_argsort(ctx.(*Context).ctx, t.t, C.GGML_SORT_ORDER_ASC),
+	}
+}
+
+func (t *Tensor) Mean(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_mean(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Variance(ctx ml.Context) ml.Tensor {
+	return t.Add(ctx, t.Mean(ctx).Scale(ctx, -1)).
+		Sqr(ctx).
+		SumRows(ctx).
+		Scale(ctx, 1/float64(t.Dim(0)))
+}
+
+func (t *Tensor) Stddev(ctx ml.Context) ml.Tensor {
+	return t.Variance(ctx).Sqrt(ctx)
+}
+
+func (t *Tensor) Sqr(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_sqr(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Sqrt(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_sqrt(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Clamp(ctx ml.Context, min, max float32) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_clamp(ctx.(*Context).ctx, t.t, C.float(min), C.float(max)),
 	}
 }
