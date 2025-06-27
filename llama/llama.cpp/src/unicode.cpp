@@ -224,12 +224,17 @@ static inline std::wstring unicode_wstring_from_utf8(const std::string & s) {
     // disable C++17 deprecation warning for std::codecvt_utf8
 #    pragma clang diagnostic push
 #    pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#elif defined(__GNUC__)
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #endif
 
     std::wstring_convert<std::codecvt_utf8<wchar_t>> conv;
 
 #if defined(__clang__)
 #    pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#    pragma GCC diagnostic pop
 #endif
 
     return conv.from_bytes(s);
