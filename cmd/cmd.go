@@ -33,6 +33,8 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"
+	"github.com/kluctl/go-embed-python/python"
+	"github.com/ollama/ollama/bitnet"
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
@@ -1351,6 +1353,26 @@ func checkServerHeartbeat(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+func RunBitnet(cmd *cobra.Command, args []string) error {
+	ep, err := python.NewEmbeddedPython("bitnet")
+	if err != nil {
+		return err
+	}
+	defer ep.Close()
+
+	if err := ep.AddPythonPathFromFS(bitnet.Packages, "packages"); err != nil {
+		return err
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+
+	workDir := filepath.Join(filepath.Dir(exe), "bitnet")
+	return bitnet.Run(ep, workDir, args)
+}
+
 func versionHandler(cmd *cobra.Command, _ []string) {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -1522,6 +1544,14 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	bitnetCmd := &cobra.Command{
+		Use:                "bitnet [command]",
+		Short:              "Run bitnet commands",
+		RunE:               RunBitnet,
+		DisableFlagParsing: true,
+		Hidden:             true, // Hiding from help menu as it's a special command
+	}
+
 	runnerCmd := &cobra.Command{
 		Use:    "runner",
 		Hidden: true,
@@ -1589,6 +1619,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		bitnetCmd,
 		runnerCmd,
 	)
 
