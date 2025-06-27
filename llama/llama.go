@@ -6,6 +6,7 @@ package llama
 #cgo CXXFLAGS: -std=c++17
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/include
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/common
+#cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/vendor
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/tools/mtmd
 #cgo CPPFLAGS: -I${SRCDIR}/llama.cpp/src
 #cgo CPPFLAGS: -I${SRCDIR}/../ml/backend/ggml/ggml/include
