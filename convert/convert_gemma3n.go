@@ -24,7 +24,6 @@ type gemma3nModel struct {
 		HiddenSize                uint32    `json:"hidden_size"`
 		HiddenSizePerLayerInput   uint32    `json:"hidden_size_per_layer_input"`
 		IntermediateSize          uint32    `json:"intermediate_size"`
-		LaurelRank                uint32    `json:"laurel_rank"`
 		MaxPositionEmbeddings     uint32    `json:"max_position_embeddings"`
 		NumAttentionHeads         uint32    `json:"num_attention_heads"`
 		NumHiddenLayers           uint32    `json:"num_hidden_layers"`
@@ -72,8 +71,6 @@ func (m *gemma3nModel) KV(t *Tokenizer) ggml.KV {
 	kv["gemma3n.embedding_length"] = m.TextModel.HiddenSize
 	kv["gemma3n.feed_forward_length"] = m.TextModel.IntermediateSize
 	kv["gemma3n.head_dim"] = m.TextModel.HeadDim
-	kv["gemma3n.laurel_rank"] = m.TextModel.LaurelRank
-	kv["gemma3n.num_kv_shared_layers"] = m.TextModel.NumKVSharedLayers
 	kv["gemma3n.rope.freq_base_local"] = m.TextModel.RopeLocalBaseFreq
 	kv["gemma3n.rope.freq_base"] = m.TextModel.RopeTheta
 	return kv
