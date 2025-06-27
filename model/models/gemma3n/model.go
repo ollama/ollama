@@ -39,7 +39,6 @@ func New(c fs.Config) (model.Model, error) {
 		),
 	}
 
-	// TODO: setup hybrid (local sliding window + global) cache
 	m.Cache = kvcache.NewWrapperCache(
 		kvcache.NewCausalCache(m.Shift),
 		kvcache.NewSWACache(int32(c.Uint("attention.sliding_window")), m.Shift),
