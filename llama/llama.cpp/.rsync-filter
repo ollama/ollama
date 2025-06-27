@@ -35,4 +35,6 @@ include vendor/minja/
 include vendor/minja/*.hpp
 include vendor/nlohmann/
 include vendor/nlohmann/*.hpp
+include vendor/stb/
+include vendor/stb/*.h
 exclude *
