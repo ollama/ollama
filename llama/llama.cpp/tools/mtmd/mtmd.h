@@ -75,6 +75,9 @@ typedef struct mtmd_input_chunk  mtmd_input_chunk;
 typedef struct mtmd_input_chunks mtmd_input_chunks;
 typedef struct mtmd_input_text   mtmd_input_text;
 
+MTMD_API mtmd_input_text* mtmd_input_text_init(const char * text, bool add_special, bool parse_special);
+MTMD_API void mtmd_input_text_free(mtmd_input_text* input_text);
+
 struct mtmd_context_params {
     bool use_gpu;
     bool print_timings;
