@@ -12,7 +12,7 @@ regex
  2 files changed, 22 insertions(+), 1 deletion(-)
 
 diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
-index 806c1b3d..10f34d33 100644
+index f8c7f70a..96109f04 100644
 --- a/src/llama-vocab.cpp
 +++ b/src/llama-vocab.cpp
 @@ -298,7 +298,7 @@ struct llm_tokenizer_bpe : llm_tokenizer {
@@ -25,7 +25,7 @@ index 806c1b3d..10f34d33 100644
                      "\\s+$",
                      "[一-龥ࠀ-一가-퟿]+",
 diff --git a/src/unicode.cpp b/src/unicode.cpp
-index e63bb4ab..73cb2b1a 100644
+index 43a4581b..4da581c5 100644
 --- a/src/unicode.cpp
 +++ b/src/unicode.cpp
 @@ -2,6 +2,11 @@
@@ -62,7 +62,7 @@ index e63bb4ab..73cb2b1a 100644
  #if defined(__clang__)
      // disable C++17 deprecation warning for std::codecvt_utf8
  #    pragma clang diagnostic push
-@@ -213,6 +233,7 @@ static inline std::wstring unicode_wstring_from_utf8(const std::string & s) {
+@@ -218,6 +238,7 @@ static inline std::wstring unicode_wstring_from_utf8(const std::string & s) {
  #endif
  
      return conv.from_bytes(s);
