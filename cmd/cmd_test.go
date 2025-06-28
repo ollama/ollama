@@ -574,6 +574,7 @@ func TestListHandler(t *testing.T) {
 	tests := []struct {
 		name           string
 		args           []string
+		noHeaders      bool
 		serverResponse []api.ListModelResponse
 		expectedError  string
 		expectedOutput string
@@ -598,6 +599,17 @@ func TestListHandler(t *testing.T) {
 			},
 			expectedOutput: "NAME      ID              SIZE      MODIFIED     \n" +
 				"model1    sha256:abc12    1.0 KB    24 hours ago    \n",
+		},
+		{
+			name:      "list all models without headers",
+			args:      []string{},
+			noHeaders: true,
+			serverResponse: []api.ListModelResponse{
+				{Name: "model1", Digest: "sha256:abc123", Size: 1024, ModifiedAt: time.Now().Add(-24 * time.Hour)},
+				{Name: "model2", Digest: "sha256:def456", Size: 2048, ModifiedAt: time.Now().Add(-48 * time.Hour)},
+			},
+			expectedOutput: "model1    sha256:abc12    1.0 KB    24 hours ago    \n" +
+				"model2    sha256:def45    2.0 KB    2 days ago      \n",
 		},
 		{
 			name:          "server error",
@@ -630,6 +642,10 @@ func TestListHandler(t *testing.T) {
 			t.Setenv("OLLAMA_HOST", mockServer.URL)
 
 			cmd := &cobra.Command{}
+			cmd.Flags().Bool("no-headers", false, "Don't print column headers")
+			if tt.noHeaders {
+				cmd.Flags().Set("no-headers", "true")
+			}
 			cmd.SetContext(t.Context())
 
 			// Capture stdout
