@@ -183,6 +183,8 @@ llm_chat_template llm_chat_detect_template(const std::string & tmpl) {
         return LLM_CHAT_TEMPLATE_BAILING;
     } else if (tmpl_contains("<|header_start|>") && tmpl_contains("<|header_end|>")) {
         return LLM_CHAT_TEMPLATE_LLAMA4;
+    } else if (tmpl_contains("<|endofuserprompt|>")) {
+        return LLM_CHAT_TEMPLATE_DOTS1;
     }
     return LLM_CHAT_TEMPLATE_UNKNOWN;
 }
@@ -331,7 +333,7 @@ int32_t llm_chat_apply_template(
             std::string role(message->role);
             if (role == "system") {
                 // there is no system message for gemma, but we will merge it with user prompt, so nothing is broken
-                system_prompt = trim(message->content);
+                system_prompt += trim(message->content);
                 continue;
             }
             // in gemma, "assistant" is "model"
@@ -353,7 +355,7 @@ int32_t llm_chat_apply_template(
             std::string role(message->role);
             if (role == "system") {
                 // there is no system message support, we will merge it with user prompt
-                system_prompt = message->content;
+                system_prompt += message->content;
                 continue;
             } else if (role == "user") {
                 ss << "Human: ";
@@ -526,12 +528,17 @@ int32_t llm_chat_apply_template(
         }
     } else if (tmpl == LLM_CHAT_TEMPLATE_RWKV_WORLD) {
         // this template requires the model to have "\n\n" as EOT token
-        for (auto message : chat) {
-            std::string role(message->role);
-            if (role == "user") {
-                ss << "User: " << message->content << "\n\nAssistant:";
-            } else {
-                ss << message->content << "\n\n";
+        for (size_t i = 0; i < chat.size(); i++) {
+            std::string role(chat[i]->role);
+            if (role == "system") {
+                ss << "System: " << trim(chat[i]->content) << "\n\n";
+            } else if (role == "user") {
+                ss << "User: " << trim(chat[i]->content) << "\n\n";
+                if (i == chat.size() - 1) {
+                    ss << "Assistant:";
+                }
+            } else if (role == "assistant") {
+                ss << "Assistant: " << trim(chat[i]->content) << "\n\n";
             }
         }
     } else if (tmpl == LLM_CHAT_TEMPLATE_GRANITE) {
@@ -642,6 +649,21 @@ int32_t llm_chat_apply_template(
         }
         if (add_ass) {
             ss << "Assistant:";
+        }
+    } else if (tmpl == LLM_CHAT_TEMPLATE_DOTS1) {
+        // dots.llm1.inst (DOTS1)
+        for (auto message : chat) {
+            std::string role(message->role);
+            if (role == "system") {
+                ss << "<|system|>" << message->content << "<|endofsystem|>";
+            } else if (role == "user") {
+                ss << "<|userprompt|>" << message->content << "<|endofuserprompt|>";
+            } else {
+                ss << "<|response|>" << message->content << "<|endofresponse|>";
+            }
+        }
+        if (add_ass) {
+            ss << "<|response|>";
         }
     } else {
         // template not supported

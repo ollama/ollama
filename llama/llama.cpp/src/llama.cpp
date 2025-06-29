@@ -140,6 +140,11 @@ static struct llama_model * llama_model_load_from_file_impl(
         struct llama_model_params params) {
     ggml_time_init();
 
+    if (!params.vocab_only && ggml_backend_reg_count() == 0) {
+        LLAMA_LOG_ERROR("%s: no backends are loaded. hint: use ggml_backend_load() or ggml_backend_load_all() to load a backend before calling this function\n", __func__);
+        return nullptr;
+    }
+
     unsigned cur_percentage = 0;
     if (params.progress_callback == NULL) {
         params.progress_callback_user_data = &cur_percentage;
@@ -193,14 +198,18 @@ static struct llama_model * llama_model_load_from_file_impl(
 
     // if using single GPU mode, remove all except the main GPU
     if (params.split_mode == LLAMA_SPLIT_MODE_NONE) {
-        if (params.main_gpu < 0 || params.main_gpu >= (int)model->devices.size()) {
-            LLAMA_LOG_ERROR("%s: invalid value for main_gpu: %d (available devices: %d)\n", __func__, params.main_gpu, (int)model->devices.size());
-            llama_model_free(model);
-            return nullptr;
+        if (params.main_gpu < 0) {
+            model->devices.clear();
+        } else {
+            if (params.main_gpu >= (int)model->devices.size()) {
+                LLAMA_LOG_ERROR("%s: invalid value for main_gpu: %d (available devices: %zu)\n", __func__, params.main_gpu, model->devices.size());
+                llama_model_free(model);
+                return nullptr;
+            }
+            ggml_backend_dev_t main_gpu = model->devices[params.main_gpu];
+            model->devices.clear();
+            model->devices.push_back(main_gpu);
         }
-        ggml_backend_dev_t main_gpu = model->devices[params.main_gpu];
-        model->devices.clear();
-        model->devices.push_back(main_gpu);
     }
 
     for (auto * dev : model->devices) {

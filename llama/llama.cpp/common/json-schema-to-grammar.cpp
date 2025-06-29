@@ -1,8 +1,9 @@
 #include "json-schema-to-grammar.h"
 #include "common.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
-#include <fstream>
 #include <map>
 #include <regex>
 #include <sstream>
@@ -40,49 +41,6 @@ static std::string build_repetition(const std::string & item_rule, int min_items
     return result;
 }
 
-/* Minimalistic replacement for std::string_view, which is only available from C++17 onwards */
-class string_view {
-    const std::string & _str;
-    const size_t _start;
-    const size_t _end;
-public:
-    string_view(const std::string & str, size_t start = 0, size_t end  = std::string::npos) : _str(str), _start(start), _end(end == std::string::npos ? str.length() : end) {}
-
-    size_t size() const {
-        return _end - _start;
-    }
-
-    size_t length() const {
-        return size();
-    }
-
-    operator std::string() const {
-        return str();
-    }
-
-    std::string str() const {
-        return _str.substr(_start, _end - _start);
-    }
-
-    string_view substr(size_t pos, size_t len = std::string::npos) const {
-        return string_view(_str, _start + pos, len == std::string::npos ? _end : _start + pos + len);
-    }
-
-    char operator[](size_t pos) const {
-        auto index = _start + pos;
-        if (index >= _end) {
-            throw std::out_of_range("string_view index out of range");
-        }
-        return _str[_start + pos];
-    }
-
-    bool operator==(const string_view & other) const {
-        std::string this_str = *this;
-        std::string other_str = other;
-        return this_str == other_str;
-    }
-};
-
 static void _build_min_max_int(int min_value, int max_value, std::stringstream & out, int decimals_left = 16, bool top_level = true) {
     auto has_min = min_value != std::numeric_limits<int>::min();
     auto has_max = max_value != std::numeric_limits<int>::max();
@@ -111,14 +69,14 @@ static void _build_min_max_int(int min_value, int max_value, std::stringstream &
         }
         out << "}";
     };
-    std::function<void(const string_view &, const string_view &)> uniform_range =
-        [&](const string_view & from, const string_view & to) {
+    std::function<void(const std::string_view &, const std::string_view &)> uniform_range =
+        [&](const std::string_view & from, const std::string_view & to) {
             size_t i = 0;
             while (i < from.length() && i < to.length() && from[i] == to[i]) {
                 i++;
             }
             if (i > 0) {
-                out << "\"" << from.substr(0, i).str() << "\"";
+                out << "\"" << from.substr(0, i) << "\"";
             }
             if (i < from.length() && i < to.length()) {
                 if (i > 0) {

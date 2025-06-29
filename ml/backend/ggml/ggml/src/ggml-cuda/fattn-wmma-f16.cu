@@ -9,7 +9,11 @@
 #ifdef FP16_MMA_AVAILABLE
 #if !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
 #include <mma.h>
+#ifdef GGML_USE_MUSA
+namespace wmma = mtmusa::wmma;
+#else // GGML_USE_MUSA
 namespace wmma = nvcuda::wmma;
+#endif // GGML_USE_MUSA
 #elif defined(GGML_HIP_ROCWMMA_FATTN) && defined(FP16_MMA_AVAILABLE)
 #undef HIP_ENABLE_WARP_SYNC_BUILTINS // conflicts with rocWMMA headers
 #include <rocwmma/rocwmma.hpp>
