@@ -580,6 +580,10 @@ void ggml_backend_load_all_from_path(const char * dir_path) {
     if (!hip_devices && !rocr_devices) {
         ggml_backend_load_best("cuda", silent, dir_path);
     } else {
+        if (!silent) {
+            GGML_LOG_DEBUG("%s: skipping CUDA backend due to HIP_VISIBLE_DEVICES='%s' or ROCR_VISIBLE_DEVICES='%s' being set\n",
+                           __func__, hip_devices ? hip_devices : "nullptr", rocr_devices ? rocr_devices : "nullptr");
+        }
         ggml_backend_load_best("hip", silent, dir_path);
     }
     
