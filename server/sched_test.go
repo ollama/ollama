@@ -43,6 +43,7 @@ func TestLoad(t *testing.T) {
 		ctx:             ctx,
 		model:           &Model{ModelPath: "foo"},
 		opts:            api.DefaultOptions(),
+		origNumCtx:      api.DefaultOptions().NumCtx,
 		successCh:       make(chan *runnerRef, 1),
 		errCh:           make(chan error, 1),
 		sessionDuration: &api.Duration{Duration: 2 * time.Second},
@@ -52,7 +53,7 @@ func TestLoad(t *testing.T) {
 		return nil, errors.New("something failed to load model blah")
 	}
 	gpus := discover.GpuInfoList{}
-	s.load(req, f, gpus, 0)
+	s.load(req, f, gpus, 0, false)
 	require.Empty(t, req.successCh)
 	require.Len(t, req.errCh, 1)
 	s.loadedMu.Lock()
@@ -65,7 +66,7 @@ func TestLoad(t *testing.T) {
 	s.newServerFn = func(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 		return server, nil
 	}
-	s.load(req, f, gpus, 0)
+	s.load(req, f, gpus, 0, false)
 	select {
 	case err := <-req.errCh:
 		require.NoError(t, err)
@@ -79,7 +80,7 @@ func TestLoad(t *testing.T) {
 
 	req.model.ModelPath = "dummy_model_path"
 	server.waitResp = errors.New("wait failure")
-	s.load(req, f, gpus, 0)
+	s.load(req, f, gpus, 0, false)
 	select {
 	case err := <-req.errCh:
 		require.Contains(t, err.Error(), "wait failure")
@@ -140,6 +141,7 @@ func newScenarioRequest(t *testing.T, ctx context.Context, modelName string, est
 		ctx:             b.ctx,
 		model:           model,
 		opts:            api.DefaultOptions(),
+		origNumCtx:      api.DefaultOptions().NumCtx,
 		sessionDuration: duration,
 		successCh:       make(chan *runnerRef, 1),
 		errCh:           make(chan error, 1),
@@ -262,10 +264,10 @@ func TestRequestsMultipleLoadedModels(t *testing.T) {
 
 	// Multiple loaded models
 	a := newScenarioRequest(t, ctx, "ollama-model-3a", 1*format.GigaByte, nil)
-	b := newScenarioRequest(t, ctx, "ollama-model-3b", 24*format.GigaByte, nil)
-	c := newScenarioRequest(t, ctx, "ollama-model-4a", 30, nil)
-	c.req.opts.NumGPU = 0                                       // CPU load, will be allowed
-	d := newScenarioRequest(t, ctx, "ollama-model-3c", 30, nil) // Needs prior unloaded
+	b := newScenarioRequest(t, ctx, "ollama-model-3b", 10*format.GigaByte, nil)
+	c := newScenarioRequest(t, ctx, "ollama-model-4a", 10*format.GigaByte, nil)
+	c.req.opts.NumGPU = 0                                                       // CPU load, will be allowed
+	d := newScenarioRequest(t, ctx, "ollama-model-3c", 10*format.GigaByte, nil) // Needs prior unloaded
 
 	t.Setenv("OLLAMA_MAX_LOADED_MODELS", "1")
 	s.newServerFn = a.newServer
@@ -422,7 +424,7 @@ func TestExpireRunner(t *testing.T) {
 	s.newServerFn = func(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
 		return server, nil
 	}
-	s.load(req, f, gpus, 0)
+	s.load(req, f, gpus, 0, false)
 
 	select {
 	case err := <-req.errCh:
@@ -557,40 +559,6 @@ func TestUpdateFreeSpace(t *testing.T) {
 	require.Equal(t, uint64(2000-50-75), gpus[1].FreeMemory)
 }
 
-func TestFilterGPUsWithoutLoadingModels(t *testing.T) {
-	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
-	defer done()
-	gpus := discover.GpuInfoList{
-		{
-			Library: "cuda",
-			ID:      "0",
-		},
-		{
-			Library: "cuda",
-			ID:      "1",
-		},
-	}
-	r1 := &runnerRef{gpus: discover.GpuInfoList{gpus[0]}, loading: true}
-
-	s := InitScheduler(ctx)
-	s.loadedMu.Lock()
-	s.loaded["a"] = r1
-	s.loadedMu.Unlock()
-
-	tmp := s.filterGPUsWithoutLoadingModels(gpus)
-	require.Len(t, tmp, 1)
-	require.Equal(t, "1", tmp[0].ID)
-
-	r1.gpus = discover.GpuInfoList{gpus[1]}
-	tmp = s.filterGPUsWithoutLoadingModels(gpus)
-	require.Len(t, tmp, 1)
-	require.Equal(t, "0", tmp[0].ID)
-
-	r1.gpus = discover.GpuInfoList{}
-	tmp = s.filterGPUsWithoutLoadingModels(gpus)
-	require.Len(t, tmp, 2)
-}
-
 func TestFindRunnerToUnload(t *testing.T) {
 	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer done()
@@ -707,45 +675,6 @@ func TestAlreadyCanceled(t *testing.T) {
 	require.Empty(t, scenario1a.req.successCh)
 }
 
-func TestHomogeneousGPUs(t *testing.T) {
-	ctx, done := context.WithTimeout(t.Context(), 100*time.Millisecond)
-	defer done()
-	s := InitScheduler(ctx)
-
-	s.getGpuFn = func() discover.GpuInfoList {
-		// Set memory values to require the model to be spread
-		gpus := []discover.GpuInfo{
-			{Library: "cuda"},
-			{Library: "rocm"},
-		}
-		gpus[0].TotalMemory = 1 * format.GibiByte
-		gpus[0].FreeMemory = 256 * format.MebiByte
-		gpus[1].TotalMemory = 1 * format.GibiByte
-		gpus[1].FreeMemory = 256 * format.MebiByte
-		return gpus
-	}
-	s.getCpuFn = getCpuFn
-	a := newScenarioRequest(t, ctx, "ollama-model-1", 10, &api.Duration{Duration: 5 * time.Millisecond})
-	s.newServerFn = func(gpus discover.GpuInfoList, model string, f *ggml.GGML, adapters []string, projectors []string, opts api.Options, numParallel int) (llm.LlamaServer, error) {
-		require.Len(t, gpus, 1)
-		return a.newServer(gpus, model, f, adapters, projectors, opts, numParallel)
-	}
-	slog.Info("a")
-	s.pendingReqCh <- a.req
-	require.Len(t, s.pendingReqCh, 1)
-	s.Run(ctx)
-	select {
-	case resp := <-a.req.successCh:
-		require.Equal(t, resp.llama, a.srv)
-		require.Empty(t, s.pendingReqCh)
-		require.Empty(t, a.req.errCh)
-	case err := <-a.req.errCh:
-		t.Fatal(err.Error())
-	case <-ctx.Done():
-		t.Fatal("timeout")
-	}
-}
-
 type mockLlm struct {
 	pingResp           error
 	waitResp           error
@@ -763,6 +692,18 @@ type mockLlm struct {
 	estimatedVRAMByGPU map[string]uint64
 }
 
+func (s *mockLlm) Load(ctx context.Context, gpus discover.GpuInfoList, requireFull bool) error {
+	if requireFull {
+		for _, g := range gpus {
+			if g.FreeMemory >= s.estimatedVRAM {
+				return nil
+			}
+		}
+
+		return llm.ErrRequiredFull
+	}
+	return nil
+}
 func (s *mockLlm) Ping(ctx context.Context) error             { return s.pingResp }
 func (s *mockLlm) WaitUntilRunning(ctx context.Context) error { return s.waitResp }
 func (s *mockLlm) Completion(ctx context.Context, req llm.CompletionRequest, fn func(llm.CompletionResponse)) error {
