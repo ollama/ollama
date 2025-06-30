@@ -52,7 +52,8 @@ func TestParser(t *testing.T) {
 						Enum        []any            `json:"enum,omitempty"`
 					} `json:"properties"`
 				}{
-					Type: "object",
+					Type:     "object",
+					Required: []string{"city"},
 					Properties: map[string]struct {
 						Type        api.PropertyType `json:"type"`
 						Items       any              `json:"items,omitempty"`
@@ -159,8 +160,23 @@ func TestParser(t *testing.T) {
 			calls:   nil,
 		},
 		{
-			name:    "missing args",
-			inputs:  []string{`<tool_call>{"name": "get_conditions"}</tool_call>`},
+			name:    "empty args",
+			inputs:  []string{`<tool_call>{"name": "get_conditions", "arguments": {}}</tool_call>`},
+			content: "",
+			tmpl:    qwen,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index:     0,
+						Name:      "get_conditions",
+						Arguments: api.ToolCallFunctionArguments{},
+					},
+				},
+			},
+		},
+		{
+			name:    "missing required args",
+			inputs:  []string{`<tool_call>{"name": "get_temperature", "arguments": {}}</tool_call>`},
 			content: "",
 			tmpl:    qwen,
 			calls:   nil,
@@ -259,15 +275,40 @@ func TestParser(t *testing.T) {
 			},
 		},
 		{
-			name:    "qwen two tool calls one with no args",
-			inputs:  []string{`Let me check the weather. <tool_call>{"name": "say_hello"}</tool_call><tool_call>{"name": "get_conditions", "arguments": {"location": "Tokyo"}}`},
-			content: "Let me check the weather. ",
+			name:    "empty args followed by args",
+			inputs:  []string{`Let me say hello and check the weather. <tool_call>{"name": "say_hello", "arguments": {}}</tool_call><tool_call>{"name": "get_temperature", "arguments": {"city": "London", "format": "fahrenheit"}}</tool_call>`},
+			content: "Let me say hello and check the weather. ",
 			tmpl:    qwen,
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
 						Index:     0,
 						Name:      "say_hello",
+						Arguments: api.ToolCallFunctionArguments{},
+					},
+				},
+				{
+					Function: api.ToolCallFunction{
+						Index: 1,
+						Name:  "get_temperature",
+						Arguments: api.ToolCallFunctionArguments{
+							"city":   "London",
+							"format": "fahrenheit",
+						},
+					},
+				},
+			},
+		},
+		{
+			name:    "qwen empty followed by args",
+			inputs:  []string{`Let me check the weather. <tool_call>{"name": "get_conditions", "arguments": {}}</tool_call><tool_call>{"name": "get_conditions", "arguments": {"location": "Tokyo"}}`},
+			content: "Let me check the weather. ",
+			tmpl:    qwen,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index:     0,
+						Name:      "get_conditions",
 						Arguments: api.ToolCallFunctionArguments{},
 					},
 				},
@@ -1035,16 +1076,19 @@ func TestFindArguments(t *testing.T) {
 			},
 			tool: tool,
 		},
+		{
+			name:   "deepseek",
+			buffer: []byte(`", "arguments": {"location": "Tokyo"}}</tool_call>`),
+			want: map[string]any{
+				"location": "Tokyo",
+			},
+			tool: tool,
+		},
 	}
 
 	for _, tt := range tests {
-		parser := &Parser{
-			buffer: tt.buffer,
-			tools:  []api.Tool{tool, tool2},
-		}
-
 		t.Run(tt.name, func(t *testing.T) {
-			got, _ := parser.findArguments(tool)
+			got, _ := findArguments(tt.tool, tt.buffer)
 
 			if diff := cmp.Diff(got, tt.want); diff != "" {
 				t.Errorf("scanArguments() args mismatch (-got +want):\n%s", diff)
