@@ -16,10 +16,11 @@ import (
 )
 
 // StatusError is an error with an HTTP status code and message.
+// @Description StatusError represents an HTTP error response with a status code and message
 type StatusError struct {
 	StatusCode   int
 	Status       string
-	ErrorMessage string `json:"error"`
+	ErrorMessage string `json:"error" example:"model not found"`
 }
 
 func (e StatusError) Error() string {
@@ -37,44 +38,46 @@ func (e StatusError) Error() string {
 }
 
 // ImageData represents the raw binary data of an image file.
+// @Description ImageData contains the raw binary data of an image for multimodal models
 type ImageData []byte
 
 // GenerateRequest describes a request sent by [Client.Generate]. While you
 // have to specify the Model and Prompt fields, all the other fields have
 // reasonable defaults for basic uses.
+// @Description GenerateRequest represents a text generation request with various options
 type GenerateRequest struct {
 	// Model is the model name; it should be a name familiar to Ollama from
 	// the library at https://ollama.com/library
-	Model string `json:"model"`
+	Model string `json:"model" example:"llama3.2" binding:"required"`
 
 	// Prompt is the textual prompt to send to the model.
-	Prompt string `json:"prompt"`
+	Prompt string `json:"prompt" example:"Why is the sky blue?"`
 
 	// Suffix is the text that comes after the inserted text.
-	Suffix string `json:"suffix"`
+	Suffix string `json:"suffix" example:""`
 
 	// System overrides the model's default system message/prompt.
-	System string `json:"system"`
+	System string `json:"system" example:"You are a helpful assistant."`
 
 	// Template overrides the model's default prompt template.
-	Template string `json:"template"`
+	Template string `json:"template" example:""`
 
 	// Context is the context parameter returned from a previous call to
 	// [Client.Generate]. It can be used to keep a short conversational memory.
-	Context []int `json:"context,omitempty"`
+	Context []int `json:"context,omitempty" example:[1, 2, 3, 4]`
 
 	// Stream specifies whether the response is streaming; it is true by default.
-	Stream *bool `json:"stream,omitempty"`
+	Stream *bool `json:"stream,omitempty" example:"true"`
 
 	// Raw set to true means that no formatting will be applied to the prompt.
-	Raw bool `json:"raw,omitempty"`
+	Raw bool `json:"raw,omitempty" example:"false"`
 
 	// Format specifies the format to return a response in.
-	Format json.RawMessage `json:"format,omitempty"`
+	Format json.RawMessage `json:"format,omitempty" swaggertype:"string" example:"json"`
 
 	// KeepAlive controls how long the model will stay loaded in memory following
 	// this request.
-	KeepAlive *Duration `json:"keep_alive,omitempty"`
+	KeepAlive *Duration `json:"keep_alive,omitempty" swaggertype:"string" example:"5m"`
 
 	// Images is an optional list of raw image bytes accompanying this
 	// request, for multimodal models.
@@ -88,26 +91,27 @@ type GenerateRequest struct {
 	// responding. Needs to be a pointer so we can distinguish between false
 	// (request that thinking _not_ be used) and unset (use the old behavior
 	// before this option was introduced)
-	Think *bool `json:"think,omitempty"`
+	Think *bool `json:"think,omitempty" example:"false"`
 }
 
 // ChatRequest describes a request sent by [Client.Chat].
+// @Description ChatRequest represents a chat completion request with message history
 type ChatRequest struct {
 	// Model is the model name, as in [GenerateRequest].
-	Model string `json:"model"`
+	Model string `json:"model" example:"llama3.2" binding:"required"`
 
 	// Messages is the messages of the chat - can be used to keep a chat memory.
-	Messages []Message `json:"messages"`
+	Messages []Message `json:"messages" binding:"required"`
 
 	// Stream enables streaming of returned responses; true by default.
-	Stream *bool `json:"stream,omitempty"`
+	Stream *bool `json:"stream,omitempty" example:"true"`
 
 	// Format is the format to return the response in (e.g. "json").
-	Format json.RawMessage `json:"format,omitempty"`
+	Format json.RawMessage `json:"format,omitempty" swaggertype:"string" example:"json"`
 
 	// KeepAlive controls how long the model will stay loaded into memory
 	// following the request.
-	KeepAlive *Duration `json:"keep_alive,omitempty"`
+	KeepAlive *Duration `json:"keep_alive,omitempty" swaggertype:"string" example:"5m"`
 
 	// Tools is an optional list of tools the model has access to.
 	Tools `json:"tools,omitempty"`
@@ -117,9 +121,11 @@ type ChatRequest struct {
 
 	// Think controls whether thinking/reasoning models will think before
 	// responding
-	Think *bool `json:"think,omitempty"`
+	Think *bool `json:"think,omitempty" example:"false"`
 }
 
+// Tools represents a collection of function tools available to the model
+// @Description Tools is a list of function tools that the model can use during conversation
 type Tools []Tool
 
 func (t Tools) String() string {
@@ -135,12 +141,13 @@ func (t Tool) String() string {
 // Message is a single message in a chat sequence. The message contains the
 // role ("system", "user", or "assistant"), the content and an optional list
 // of images.
+// @Description Message represents a single message in a chat sequence
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string `json:"role" example:"user"`
+	Content string `json:"content" example:"Hello, how are you?"`
 	// Thinking contains the text that was inside thinking tags in the
 	// original model output when ChatRequest.Think is enabled.
-	Thinking  string      `json:"thinking,omitempty"`
+	Thinking  string      `json:"thinking,omitempty" example:""`
 	Images    []ImageData `json:"images,omitempty"`
 	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
 }
@@ -157,16 +164,22 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// ToolCall represents a function call requested by the model
+// @Description ToolCall contains information about a function call made by the model
 type ToolCall struct {
 	Function ToolCallFunction `json:"function"`
 }
 
+// ToolCallFunction represents the details of a function call
+// @Description ToolCallFunction contains the name and arguments for a function call
 type ToolCallFunction struct {
-	Index     int                       `json:"index,omitempty"`
-	Name      string                    `json:"name"`
+	Index     int                       `json:"index,omitempty" example:"0"`
+	Name      string                    `json:"name" example:"get_weather"`
 	Arguments ToolCallFunctionArguments `json:"arguments"`
 }
 
+// ToolCallFunctionArguments represents the arguments passed to a function call
+// @Description ToolCallFunctionArguments contains the key-value pairs of function arguments
 type ToolCallFunctionArguments map[string]any
 
 func (t *ToolCallFunctionArguments) String() string {
@@ -174,13 +187,16 @@ func (t *ToolCallFunctionArguments) String() string {
 	return string(bts)
 }
 
+// Tool represents a function tool that can be called by the model
+// @Description Tool defines a function that the model can call during conversation
 type Tool struct {
-	Type     string       `json:"type"`
+	Type     string       `json:"type" example:"function"`
 	Items    any          `json:"items,omitempty"`
 	Function ToolFunction `json:"function"`
 }
 
 // PropertyType can be either a string or an array of strings
+// @Description PropertyType defines the type(s) allowed for a tool function parameter
 type PropertyType []string
 
 // UnmarshalJSON implements the json.Unmarshaler interface
@@ -222,18 +238,20 @@ func (pt PropertyType) String() string {
 	return fmt.Sprintf("%v", []string(pt))
 }
 
+// ToolFunction represents a function that can be called by the model
+// @Description ToolFunction defines the signature and parameters of a callable function
 type ToolFunction struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name        string `json:"name" example:"get_weather"`
+	Description string `json:"description" example:"Get current weather information"`
 	Parameters  struct {
-		Type       string   `json:"type"`
+		Type       string   `json:"type" example:"object"`
 		Defs       any      `json:"$defs,omitempty"`
 		Items      any      `json:"items,omitempty"`
-		Required   []string `json:"required"`
+		Required   []string `json:"required" example:"[\"location\"]"`
 		Properties map[string]struct {
 			Type        PropertyType `json:"type"`
 			Items       any          `json:"items,omitempty"`
-			Description string       `json:"description"`
+			Description string       `json:"description" example:"The location to get weather for"`
 			Enum        []any        `json:"enum,omitempty"`
 		} `json:"properties"`
 	} `json:"parameters"`
@@ -246,78 +264,85 @@ func (t *ToolFunction) String() string {
 
 // ChatResponse is the response returned by [Client.Chat]. Its fields are
 // similar to [GenerateResponse].
+// @Description ChatResponse represents the response from a chat completion request
 type ChatResponse struct {
-	Model      string    `json:"model"`
-	CreatedAt  time.Time `json:"created_at"`
+	Model      string    `json:"model" example:"llama3.2"`
+	CreatedAt  time.Time `json:"created_at" example:"2023-01-01T00:00:00Z"`
 	Message    Message   `json:"message"`
-	DoneReason string    `json:"done_reason,omitempty"`
+	DoneReason string    `json:"done_reason,omitempty" example:"stop"`
 
-	Done bool `json:"done"`
+	Done bool `json:"done" example:"true"`
 
 	Metrics
 }
 
+// Metrics contains performance and timing information for model operations
+// @Description Metrics provides detailed timing and token count information for requests
 type Metrics struct {
-	TotalDuration      time.Duration `json:"total_duration,omitempty"`
-	LoadDuration       time.Duration `json:"load_duration,omitempty"`
-	PromptEvalCount    int           `json:"prompt_eval_count,omitempty"`
-	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty"`
-	EvalCount          int           `json:"eval_count,omitempty"`
-	EvalDuration       time.Duration `json:"eval_duration,omitempty"`
+	TotalDuration      time.Duration `json:"total_duration,omitempty" example:"5183083"`
+	LoadDuration       time.Duration `json:"load_duration,omitempty" example:"5183083"`
+	PromptEvalCount    int           `json:"prompt_eval_count,omitempty" example:"26"`
+	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty" example:"240700000"`
+	EvalCount          int           `json:"eval_count,omitempty" example:"298"`
+	EvalDuration       time.Duration `json:"eval_duration,omitempty" example:"4799921000"`
 }
 
 // Options specified in [GenerateRequest].  If you add a new option here, also
 // add it to the API docs.
+// @Description Options represents model-specific options for text generation
 type Options struct {
 	Runner
 
 	// Predict options used at runtime
-	NumKeep          int      `json:"num_keep,omitempty"`
-	Seed             int      `json:"seed,omitempty"`
-	NumPredict       int      `json:"num_predict,omitempty"`
-	TopK             int      `json:"top_k,omitempty"`
-	TopP             float32  `json:"top_p,omitempty"`
-	MinP             float32  `json:"min_p,omitempty"`
-	TypicalP         float32  `json:"typical_p,omitempty"`
-	RepeatLastN      int      `json:"repeat_last_n,omitempty"`
-	Temperature      float32  `json:"temperature,omitempty"`
-	RepeatPenalty    float32  `json:"repeat_penalty,omitempty"`
-	PresencePenalty  float32  `json:"presence_penalty,omitempty"`
-	FrequencyPenalty float32  `json:"frequency_penalty,omitempty"`
-	Stop             []string `json:"stop,omitempty"`
+	NumKeep          int      `json:"num_keep,omitempty" example:"4"`
+	Seed             int      `json:"seed,omitempty" example:"-1"`
+	NumPredict       int      `json:"num_predict,omitempty" example:"-1"`
+	TopK             int      `json:"top_k,omitempty" example:"40"`
+	TopP             float32  `json:"top_p,omitempty" example:"0.9"`
+	MinP             float32  `json:"min_p,omitempty" example:"0.0"`
+	TypicalP         float32  `json:"typical_p,omitempty" example:"1.0"`
+	RepeatLastN      int      `json:"repeat_last_n,omitempty" example:"64"`
+	Temperature      float32  `json:"temperature,omitempty" example:"0.8"`
+	RepeatPenalty    float32  `json:"repeat_penalty,omitempty" example:"1.1"`
+	PresencePenalty  float32  `json:"presence_penalty,omitempty" example:"0.0"`
+	FrequencyPenalty float32  `json:"frequency_penalty,omitempty" example:"0.0"`
+	Stop             []string `json:"stop,omitempty" example:"[\"\\n\"]"`
 }
 
 // Runner options which must be set when the model is loaded into memory
+// @Description Runner represents options for model execution
 type Runner struct {
-	NumCtx    int   `json:"num_ctx,omitempty"`
-	NumBatch  int   `json:"num_batch,omitempty"`
-	NumGPU    int   `json:"num_gpu,omitempty"`
-	MainGPU   int   `json:"main_gpu,omitempty"`
-	UseMMap   *bool `json:"use_mmap,omitempty"`
-	NumThread int   `json:"num_thread,omitempty"`
+	NumCtx    int   `json:"num_ctx,omitempty" example:"2048"`
+	NumBatch  int   `json:"num_batch,omitempty" example:"512"`
+	NumGPU    int   `json:"num_gpu,omitempty" example:"-1"`
+	MainGPU   int   `json:"main_gpu,omitempty" example:"0"`
+	UseMMap   *bool `json:"use_mmap,omitempty" example:"true"`
+	NumThread int   `json:"num_thread,omitempty" example:"0"`
 }
 
 // EmbedRequest is the request passed to [Client.Embed].
+// @Description EmbedRequest represents a request for embedding input data
 type EmbedRequest struct {
 	// Model is the model name.
-	Model string `json:"model"`
+	Model string `json:"model" example:"llama3.2"`
 
 	// Input is the input to embed.
 	Input any `json:"input"`
 
 	// KeepAlive controls how long the model will stay loaded in memory following
 	// this request.
-	KeepAlive *Duration `json:"keep_alive,omitempty"`
+	KeepAlive *Duration `json:"keep_alive,omitempty" swaggertype:"string" example:"5m"`
 
-	Truncate *bool `json:"truncate,omitempty"`
+	Truncate *bool `json:"truncate,omitempty" example:"false"`
 
 	// Options lists model-specific options.
 	Options map[string]any `json:"options"`
 }
 
 // EmbedResponse is the response from [Client.Embed].
+// @Description EmbedResponse represents the response from an embedding request
 type EmbedResponse struct {
-	Model      string      `json:"model"`
+	Model      string      `json:"model" example:"llama3.2"`
 	Embeddings [][]float32 `json:"embeddings"`
 
 	TotalDuration   time.Duration `json:"total_duration,omitempty"`
@@ -326,38 +351,41 @@ type EmbedResponse struct {
 }
 
 // EmbeddingRequest is the request passed to [Client.Embeddings].
+// @Description EmbeddingRequest represents a request for embedding a textual prompt
 type EmbeddingRequest struct {
 	// Model is the model name.
-	Model string `json:"model"`
+	Model string `json:"model" example:"llama3.2"`
 
 	// Prompt is the textual prompt to embed.
-	Prompt string `json:"prompt"`
+	Prompt string `json:"prompt" example:"What is the meaning of life?"`
 
 	// KeepAlive controls how long the model will stay loaded in memory following
 	// this request.
-	KeepAlive *Duration `json:"keep_alive,omitempty"`
+	KeepAlive *Duration `json:"keep_alive,omitempty" swaggertype:"string" example:"5m"`
 
 	// Options lists model-specific options.
 	Options map[string]any `json:"options"`
 }
 
 // EmbeddingResponse is the response from [Client.Embeddings].
+// @Description EmbeddingResponse represents the response from embedding a textual prompt
 type EmbeddingResponse struct {
 	Embedding []float64 `json:"embedding"`
 }
 
 // CreateRequest is the request passed to [Client.Create].
+// @Description CreateRequest represents a request for creating a new model
 type CreateRequest struct {
-	Model    string `json:"model"`
-	Stream   *bool  `json:"stream,omitempty"`
-	Quantize string `json:"quantize,omitempty"`
+	Model    string `json:"model" example:"new-model"`
+	Stream   *bool  `json:"stream,omitempty" example:"true"`
+	Quantize string `json:"quantize,omitempty" example:"q4_0"`
 
-	From       string            `json:"from,omitempty"`
+	From       string            `json:"from,omitempty" example:"base-model"`
 	Files      map[string]string `json:"files,omitempty"`
 	Adapters   map[string]string `json:"adapters,omitempty"`
-	Template   string            `json:"template,omitempty"`
+	Template   string            `json:"template,omitempty" example:"default-template"`
 	License    any               `json:"license,omitempty"`
-	System     string            `json:"system,omitempty"`
+	System     string            `json:"system,omitempty" example:"You are a helpful assistant."`
 	Parameters map[string]any    `json:"parameters,omitempty"`
 	Messages   []Message         `json:"messages,omitempty"`
 
@@ -368,21 +396,23 @@ type CreateRequest struct {
 }
 
 // DeleteRequest is the request passed to [Client.Delete].
+// @Description DeleteRequest represents a request for deleting a model
 type DeleteRequest struct {
-	Model string `json:"model"`
+	Model string `json:"model" example:"model-to-delete"`
 
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
 // ShowRequest is the request passed to [Client.Show].
+// @Description ShowRequest represents a request for showing model details
 type ShowRequest struct {
-	Model  string `json:"model"`
-	System string `json:"system"`
+	Model  string `json:"model" example:"model-to-show"`
+	System string `json:"system" example:"You are a helpful assistant."`
 
 	// Template is deprecated
-	Template string `json:"template"`
-	Verbose  bool   `json:"verbose"`
+	Template string `json:"template" example:"default-template"`
+	Verbose  bool   `json:"verbose" example:"true"`
 
 	Options map[string]any `json:"options"`
 
@@ -391,6 +421,7 @@ type ShowRequest struct {
 }
 
 // ShowResponse is the response returned from [Client.Show].
+// @Description ShowResponse represents the response from showing model details
 type ShowResponse struct {
 	License       string             `json:"license,omitempty"`
 	Modelfile     string             `json:"modelfile,omitempty"`
@@ -407,18 +438,20 @@ type ShowResponse struct {
 }
 
 // CopyRequest is the request passed to [Client.Copy].
+// @Description CopyRequest represents a request for copying a model
 type CopyRequest struct {
-	Source      string `json:"source"`
-	Destination string `json:"destination"`
+	Source      string `json:"source" example:"source-model"`
+	Destination string `json:"destination" example:"destination-model"`
 }
 
 // PullRequest is the request passed to [Client.Pull].
+// @Description PullRequest represents a request for pulling a model
 type PullRequest struct {
-	Model    string `json:"model"`
+	Model    string `json:"model" example:"model-to-pull"`
 	Insecure bool   `json:"insecure,omitempty"` // Deprecated: ignored
 	Username string `json:"username"`           // Deprecated: ignored
 	Password string `json:"password"`           // Deprecated: ignored
-	Stream   *bool  `json:"stream,omitempty"`
+	Stream   *bool  `json:"stream,omitempty" example:"true"`
 
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
@@ -426,103 +459,114 @@ type PullRequest struct {
 
 // ProgressResponse is the response passed to progress functions like
 // [PullProgressFunc] and [PushProgressFunc].
+// @Description ProgressResponse represents the progress of a model operation
 type ProgressResponse struct {
-	Status    string `json:"status"`
+	Status    string `json:"status" example:"in-progress"`
 	Digest    string `json:"digest,omitempty"`
-	Total     int64  `json:"total,omitempty"`
-	Completed int64  `json:"completed,omitempty"`
+	Total     int64  `json:"total,omitempty" example:"100"`
+	Completed int64  `json:"completed,omitempty" example:"50"`
 }
 
 // PushRequest is the request passed to [Client.Push].
+// @Description PushRequest represents a request for pushing a model
 type PushRequest struct {
-	Model    string `json:"model"`
+	Model    string `json:"model" example:"model-to-push"`
 	Insecure bool   `json:"insecure,omitempty"`
 	Username string `json:"username"`
 	Password string `json:"password"`
-	Stream   *bool  `json:"stream,omitempty"`
+	Stream   *bool  `json:"stream,omitempty" example:"true"`
 
 	// Deprecated: set the model name with Model instead
 	Name string `json:"name"`
 }
 
 // ListResponse is the response from [Client.List].
+// @Description ListResponse represents the response from listing models
 type ListResponse struct {
 	Models []ListModelResponse `json:"models"`
 }
 
 // ProcessResponse is the response from [Client.Process].
+// @Description ProcessResponse represents the response from processing models
 type ProcessResponse struct {
 	Models []ProcessModelResponse `json:"models"`
 }
 
 // ListModelResponse is a single model description in [ListResponse].
+// @Description ListModelResponse represents a single model in the list response
 type ListModelResponse struct {
-	Name       string       `json:"name"`
-	Model      string       `json:"model"`
-	ModifiedAt time.Time    `json:"modified_at"`
-	Size       int64        `json:"size"`
-	Digest     string       `json:"digest"`
+	Name       string       `json:"name" example:"model-name"`
+	Model      string       `json:"model" example:"model-name"`
+	ModifiedAt time.Time    `json:"modified_at" example:"2023-01-01T00:00:00Z"`
+	Size       int64        `json:"size" example:"1024"`
+	Digest     string       `json:"digest" example:"sha256:abcd1234"`
 	Details    ModelDetails `json:"details,omitempty"`
 }
 
 // ProcessModelResponse is a single model description in [ProcessResponse].
+// @Description ProcessModelResponse represents a single model in the process response
 type ProcessModelResponse struct {
-	Name      string       `json:"name"`
-	Model     string       `json:"model"`
-	Size      int64        `json:"size"`
-	Digest    string       `json:"digest"`
+	Name      string       `json:"name" example:"model-name"`
+	Model     string       `json:"model" example:"model-name"`
+	Size      int64        `json:"size" example:"1024"`
+	Digest    string       `json:"digest" example:"sha256:abcd1234"`
 	Details   ModelDetails `json:"details,omitempty"`
-	ExpiresAt time.Time    `json:"expires_at"`
-	SizeVRAM  int64        `json:"size_vram"`
+	ExpiresAt time.Time    `json:"expires_at" example:"2023-01-01T00:00:00Z"`
+	SizeVRAM  int64        `json:"size_vram" example:"512"`
 }
 
+// TokenResponse represents an authentication token response
+// @Description TokenResponse contains an authentication token for API access
 type TokenResponse struct {
-	Token string `json:"token"`
+	Token string `json:"token" example:"abcd1234"`
 }
 
 // GenerateResponse is the response passed into [GenerateResponseFunc].
+// @Description GenerateResponse represents the response from a text generation request
 type GenerateResponse struct {
 	// Model is the model name that generated the response.
-	Model string `json:"model"`
+	Model string `json:"model" example:"llama3.2"`
 
 	// CreatedAt is the timestamp of the response.
-	CreatedAt time.Time `json:"created_at"`
+	CreatedAt time.Time `json:"created_at" example:"2023-01-01T00:00:00Z"`
 
 	// Response is the textual response itself.
-	Response string `json:"response"`
+	Response string `json:"response" example:"The sky is blue because of Rayleigh scattering."`
 
 	// Thinking contains the text that was inside thinking tags in the
 	// original model output when ChatRequest.Think is enabled.
-	Thinking string `json:"thinking,omitempty"`
+	Thinking string `json:"thinking,omitempty" example:""`
 
 	// Done specifies if the response is complete.
-	Done bool `json:"done"`
+	Done bool `json:"done" example:"true"`
 
 	// DoneReason is the reason the model stopped generating text.
-	DoneReason string `json:"done_reason,omitempty"`
+	DoneReason string `json:"done_reason,omitempty" example:"stop"`
 
 	// Context is an encoding of the conversation used in this response; this
 	// can be sent in the next request to keep a conversational memory.
-	Context []int `json:"context,omitempty"`
+	Context []int `json:"context,omitempty" example:[1, 2, 3, 4]`
 
 	Metrics
 }
 
 // ModelDetails provides details about a model.
+// @Description ModelDetails represents detailed information about a model
 type ModelDetails struct {
-	ParentModel       string   `json:"parent_model"`
-	Format            string   `json:"format"`
-	Family            string   `json:"family"`
-	Families          []string `json:"families"`
-	ParameterSize     string   `json:"parameter_size"`
-	QuantizationLevel string   `json:"quantization_level"`
+	ParentModel       string   `json:"parent_model" example:"base-model"`
+	Format            string   `json:"format" example:"binary"`
+	Family            string   `json:"family" example:"llama"`
+	Families          []string `json:"families" example:"[\"llama\", \"alpaca\"]"`
+	ParameterSize     string   `json:"parameter_size" example:"7B"`
+	QuantizationLevel string   `json:"quantization_level" example:"q4_0"`
 }
 
 // Tensor describes the metadata for a given tensor.
+// @Description Tensor represents metadata for a tensor
 type Tensor struct {
-	Name  string   `json:"name"`
-	Type  string   `json:"type"`
-	Shape []uint64 `json:"shape"`
+	Name  string   `json:"name" example:"embedding_tensor"`
+	Type  string   `json:"type" example:"float32"`
+	Shape []uint64 `json:"shape" example:[1024, 768]`
 }
 
 func (m *Metrics) Summary() {
@@ -675,6 +719,8 @@ func DefaultOptions() Options {
 	}
 }
 
+// Duration represents a time duration with custom JSON marshaling
+// @Description Duration wraps time.Duration with custom JSON serialization support
 type Duration struct {
 	time.Duration
 }
