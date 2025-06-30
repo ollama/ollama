@@ -32,6 +32,45 @@ const (
 	smol = "llama3.2:1b"
 )
 
+var (
+	started = time.Now()
+
+	// TODO use an API to sort these by reverse age, to focus on latest models first
+	chatModels = []string{
+		// Note: add newer models at the top of the list
+		"gemma3n:e2b",
+		"mistral:latest",
+		"deepseek-r1:1.5b",
+		"llama3.2-vision:latest",
+		"qwen2.5-coder:latest",
+		"qwen2.5vl:3b",
+		"qwen3:1.7b",
+		"gemma3:1b",
+		"falcon3:latest",
+		"llama3.1:latest",
+		"granite3-moe:latest",
+		"minicpm-v:latest",
+		"command-r:latest",
+		"granite-code:latest",
+		"llama3.2:latest",
+		"nemotron-mini:latest",
+		"phi3.5:latest",
+		"solar-pro:latest",
+		"gemma2:latest",
+		"internlm2:latest",
+		"codellama:latest",
+		"phi3:latest",
+		"falcon2:latest",
+		"gemma:latest",
+		"llama2:latest",
+		"nous-hermes:latest",
+		"orca-mini:latest",
+		"qwen:latest",
+		"stablelm2:latest", // Predictions are off, crashes on small VRAM GPUs
+		"falcon:latest",
+	}
+)
+
 func Init() {
 	lifecycle.InitLogging()
 }
