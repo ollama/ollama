@@ -95,6 +95,7 @@ type ChatCompletionRequest struct {
 	TopP             *float64        `json:"top_p"`
 	ResponseFormat   *ResponseFormat `json:"response_format"`
 	Tools            []api.Tool      `json:"tools"`
+	Options          map[string]any  `json:"options,omitempty"`
 }
 
 type ChatCompletion struct {
@@ -131,6 +132,7 @@ type CompletionRequest struct {
 	Temperature      *float32       `json:"temperature"`
 	TopP             float32        `json:"top_p"`
 	Suffix           string         `json:"suffix"`
+	Options          map[string]any `json:"options,omitempty"`
 }
 
 type Completion struct {
@@ -466,6 +468,11 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	}
 
 	options := make(map[string]any)
+	if r.Options != nil {
+		for k, v := range r.Options {
+			options[k] = v
+		}
+	}
 
 	switch stop := r.Stop.(type) {
 	case string:
@@ -521,18 +528,44 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		}
 	}
 
-	return &api.ChatRequest{
+	chatRequest := &api.ChatRequest{
 		Model:    r.Model,
 		Messages: messages,
 		Format:   format,
 		Options:  options,
 		Stream:   &r.Stream,
 		Tools:    r.Tools,
-	}, nil
+	}
+
+	if r.Options != nil {
+		if think, ok := r.Options["think"].(bool); ok {
+			chatRequest.Think = &think
+			delete(options, "think")
+		}
+		if keepAlive, ok := r.Options["keep_alive"]; ok {
+			var d api.Duration
+			b, err := json.Marshal(keepAlive)
+			if err != nil {
+				return nil, fmt.Errorf("invalid keep_alive format: %w", err)
+			}
+			if err := json.Unmarshal(b, &d); err != nil {
+				return nil, fmt.Errorf("invalid keep_alive duration: %w", err)
+			}
+			chatRequest.KeepAlive = &d
+			delete(options, "keep_alive")
+		}
+	}
+
+	return chatRequest, nil
 }
 
 func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 	options := make(map[string]any)
+	if r.Options != nil {
+		for k, v := range r.Options {
+			options[k] = v
+		}
+	}
 
 	switch stop := r.Stop.(type) {
 	case string:
@@ -573,13 +606,32 @@ func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 		options["top_p"] = 1.0
 	}
 
-	return api.GenerateRequest{
+	generateRequest := api.GenerateRequest{
 		Model:   r.Model,
 		Prompt:  r.Prompt,
 		Options: options,
 		Stream:  &r.Stream,
 		Suffix:  r.Suffix,
-	}, nil
+	}
+
+	if think, ok := options["think"].(bool); ok {
+		generateRequest.Think = &think
+		delete(options, "think")
+	}
+	if keepAlive, ok := options["keep_alive"]; ok {
+		var d api.Duration
+		b, err := json.Marshal(keepAlive)
+		if err != nil {
+			return api.GenerateRequest{}, fmt.Errorf("invalid keep_alive format: %w", err)
+		}
+		if err := json.Unmarshal(b, &d); err != nil {
+			return api.GenerateRequest{}, fmt.Errorf("invalid keep_alive duration: %w", err)
+		}
+		generateRequest.KeepAlive = &d
+		delete(options, "keep_alive")
+	}
+
+	return generateRequest, nil
 }
 
 type BaseWriter struct {

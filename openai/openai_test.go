@@ -236,6 +236,35 @@ func TestChatMiddleware(t *testing.T) {
 			},
 		},
 		{
+			name: "chat handler with think and keep_alive options",
+			body: `{
+				"model": "test-model",
+				"messages": [
+					{"role": "user", "content": "Hello"}
+				],
+				"options": {
+					"think": true,
+					"keep_alive": "10m"
+				}
+			}`,
+			req: api.ChatRequest{
+				Model: "test-model",
+				Messages: []api.Message{
+					{
+						Role:    "user",
+						Content: "Hello",
+					},
+				},
+				Options: map[string]any{
+					"temperature": 1.0,
+					"top_p":       1.0,
+				},
+				Stream:    &False,
+				Think:     &True,
+				KeepAlive: &api.Duration{Duration: 10 * time.Minute},
+			},
+		},
+		{
 			name: "chat handler with streaming tools",
 			body: `{
 				"model": "test-model",
@@ -453,6 +482,30 @@ func TestCompletionsMiddleware(t *testing.T) {
 				},
 				Suffix: "suffix",
 				Stream: &True,
+			},
+		},
+		{
+			name: "completions handler with think and keep_alive options",
+			body: `{
+				"model": "test-model",
+				"prompt": "Hello",
+				"options": {
+					"think": true,
+					"keep_alive": "10m"
+				}
+			}`,
+			req: api.GenerateRequest{
+				Model:  "test-model",
+				Prompt: "Hello",
+				Options: map[string]any{
+					"frequency_penalty": 0.0,
+					"presence_penalty":  0.0,
+					"temperature":       1.0,
+					"top_p":             1.0,
+				},
+				Stream:    &False,
+				Think:     &True,
+				KeepAlive: &api.Duration{Duration: 10 * time.Minute},
 			},
 		},
 		{

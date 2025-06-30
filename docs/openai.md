@@ -7,6 +7,27 @@ Ollama provides experimental compatibility with parts of the [OpenAI API](https:
 
 ## Usage
 
+### Ollama Native Parameters
+
+While maintaining compatibility with the OpenAI API, Ollama's implementation supports passing native Ollama parameters through the `options` field:
+
+- **`think`** (boolean): Enable thinking/reasoning mode for models that support it. When enabled, the model will show its step-by-step reasoning process.
+- **`keep_alive`** (string or number): Control how long the model stays loaded in memory after the request. Can be specified as a duration string (e.g., "5m", "1h") or as a number of seconds.
+
+Example:
+```json
+{
+  "model": "llama3.2",
+  "messages": [
+    {"role": "user", "content": "What is 25 * 17? Think step by step."}
+  ],
+  "options": {
+    "think": true,
+    "keep_alive": "30m"
+  }
+}
+```
+
 ### OpenAI Python library
 
 ```python
@@ -27,6 +48,23 @@ chat_completion = client.chat.completions.create(
         }
     ],
     model='llama3.2',
+)
+
+# Using Ollama native parameters
+chat_completion_with_options = client.chat.completions.create(
+    messages=[
+        {
+            'role': 'user',
+            'content': 'Explain quantum computing in simple terms',
+        }
+    ],
+    model='llama3.2',
+    extra_body={
+        'options': {
+            'think': True,
+            'keep_alive': '10m'
+        }
+    }
 )
 
 response = client.chat.completions.create(
@@ -114,6 +152,16 @@ const chatCompletion = await openai.chat.completions.create({
     model: 'llama3.2',
 })
 
+// Using Ollama native parameters
+const chatCompletionWithOptions = await openai.chat.completions.create({
+    messages: [{ role: 'user', content: 'Explain quantum computing in simple terms' }],
+    model: 'llama3.2',
+    options: {
+        think: true,
+        keep_alive: '10m'
+    }
+})
+
 const response = await openai.chat.completions.create({
     model: "llava",
     messages: [
@@ -162,6 +210,23 @@ curl http://localhost:11434/v1/chat/completions \
                 "content": "Hello!"
             }
         ]
+    }'
+
+# Using Ollama native parameters
+curl http://localhost:11434/v1/chat/completions \
+    -H "Content-Type: application/json" \
+    -d '{
+        "model": "llama3.2",
+        "messages": [
+            {
+                "role": "user",
+                "content": "What is 25 * 17? Think step by step."
+            }
+        ],
+        "options": {
+            "think": true,
+            "keep_alive": "30m"
+        }
     }'
 
 curl http://localhost:11434/v1/chat/completions \
