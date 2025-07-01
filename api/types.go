@@ -279,12 +279,12 @@ type ChatResponse struct {
 // Metrics contains performance and timing information for model operations
 // @Description Metrics provides detailed timing and token count information for requests
 type Metrics struct {
-	TotalDuration      time.Duration `json:"total_duration,omitempty" example:"5183083"`
-	LoadDuration       time.Duration `json:"load_duration,omitempty" example:"5183083"`
+	TotalDuration      time.Duration `json:"total_duration,omitempty" example:"5183083" swaggertype:"primitive,integer"`
+	LoadDuration       time.Duration `json:"load_duration,omitempty" example:"5183083" swaggertype:"primitive,integer"`
 	PromptEvalCount    int           `json:"prompt_eval_count,omitempty" example:"26"`
-	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty" example:"240700000"`
+	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty" example:"240700000" swaggertype:"primitive,integer"`
 	EvalCount          int           `json:"eval_count,omitempty" example:"298"`
-	EvalDuration       time.Duration `json:"eval_duration,omitempty" example:"4799921000"`
+	EvalDuration       time.Duration `json:"eval_duration,omitempty" example:"4799921000" swaggertype:"primitive,integer"`
 }
 
 // Options specified in [GenerateRequest].  If you add a new option here, also
@@ -345,8 +345,8 @@ type EmbedResponse struct {
 	Model      string      `json:"model" example:"llama3.2"`
 	Embeddings [][]float32 `json:"embeddings"`
 
-	TotalDuration   time.Duration `json:"total_duration,omitempty"`
-	LoadDuration    time.Duration `json:"load_duration,omitempty"`
+	TotalDuration   time.Duration `json:"total_duration,omitempty" swaggertype:"primitive,integer"`
+	LoadDuration    time.Duration `json:"load_duration,omitempty" swaggertype:"primitive,integer"`
 	PromptEvalCount int           `json:"prompt_eval_count,omitempty"`
 }
 

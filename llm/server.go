@@ -720,9 +720,9 @@ type CompletionResponse struct {
 	DoneReason         DoneReason    `json:"done_reason"`
 	Done               bool          `json:"done"`
 	PromptEvalCount    int           `json:"prompt_eval_count"`
-	PromptEvalDuration time.Duration `json:"prompt_eval_duration"`
+	PromptEvalDuration time.Duration `json:"prompt_eval_duration" swaggertype:"primitive,integer"`
 	EvalCount          int           `json:"eval_count"`
-	EvalDuration       time.Duration `json:"eval_duration"`
+	EvalDuration       time.Duration `json:"eval_duration" swaggertype:"primitive,integer"`
 }
 
 func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error {
