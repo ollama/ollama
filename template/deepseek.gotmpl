@@ -1,15 +1,41 @@
 {{- if .System }}{{ .System }}{{ end }}
+{{- if .Tools }}
+# Tools
+
+You may call one or more functions to assist with the user query.
+
+You are provided with function signatures within <tools></tools> XML tags:
+<tools>
+{{- range $i, $_ := .Tools }}
+{{ .Function }}
+{{- end }}
+</tools>
+
+For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags.
+{{- end }}
 {{- range $i, $_ := .Messages }}
   {{- $last := eq (len (slice $.Messages $i)) 1 }}
   {{- if eq .Role "user" -}}
     <｜User｜>{{ .Content }}
   {{- else if eq .Role "assistant" -}}
     <｜Assistant｜>
+    {{- if .ToolCalls -}}
+      {{ "\n" }}<｜tool▁calls▁begin｜>{{ "\n" }}
+      {{- range $i, $_ := .ToolCalls -}}
+        <｜tool▁call▁begin｜>function<｜tool▁sep｜>{{ .Function.Name }}
+```json
+{{ .Function.Arguments }}
+```<｜tool▁call▁end｜>{{ "\n" }}
+      {{- end -}}
+      <｜tool▁calls▁end｜><｜end▁of▁sentence｜>
+    {{- end }}
     {{- if and $.IsThinkSet (and $last .Thinking) -}}
       <think>
         {{ .Thinking }}
       </think>
     {{- end }}{{ .Content }}{{- if not $last }}<｜end▁of▁sentence｜>{{- end }}
+  {{- else if eq .Role "tool" -}}
+    {{ "\n" }}<｜tool▁output▁begin｜>{{ .Content }}<｜tool▁output▁end｜>{{ "\n" }}
   {{- end }}
   {{- if and $last (ne .Role "assistant") -}}
     <｜Assistant｜>

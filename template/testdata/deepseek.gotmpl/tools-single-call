@@ -1,0 +1,7 @@
+<｜Assistant｜>
+<｜tool▁calls▁begin｜>
+<｜tool▁call▁begin｜>function<｜tool▁sep｜>get_weather
+```json
+{"location":"San Francisco, CA"}
+```<｜tool▁call▁end｜>
+<｜tool▁calls▁end｜><｜end▁of▁sentence｜>
