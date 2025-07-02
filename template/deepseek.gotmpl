@@ -1,0 +1,20 @@
+{{- if .System }}{{ .System }}{{ end }}
+{{- range $i, $_ := .Messages }}
+{{- $last := eq (len (slice $.Messages $i)) 1}}
+{{- if eq .Role "user" }}<｜User｜>{{ .Content }}
+{{- else if eq .Role "assistant" }}<｜Assistant｜>
+  {{- if and $.IsThinkSet (and $last .Thinking) -}}
+<think>
+{{ .Thinking }}
+</think>
+{{- end }}{{ .Content }}{{- if not $last }}<｜end▁of▁sentence｜>{{- end }}
+{{- end }}
+{{- if and $last (ne .Role "assistant") }}<｜Assistant｜>
+{{- if and $.IsThinkSet (not $.Think) -}}
+<think>
+
+</think>
+
+{{ end }}
+{{- end -}}
+{{- end }}
