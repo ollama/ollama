@@ -1,0 +1,3 @@
+<|START_OF_TURN_TOKEN|><|SYSTEM_TOKEN|><results>
+console_output: {"temperature": 22, "condition": "Sunny", "humidity": 45, "wind_speed": 10}
+</results><|END_OF_TURN_TOKEN|><|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>

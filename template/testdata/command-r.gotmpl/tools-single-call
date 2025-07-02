@@ -1,0 +1,8 @@
+<|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>
+Action: ```json
+[
+    {
+        "tool_name": "get_weather",
+        "parameters": {"location":"San Francisco, CA"}
+    }
+]```<|END_OF_TURN_TOKEN|><|END_OF_TURN_TOKEN|><|START_OF_TURN_TOKEN|><|CHATBOT_TOKEN|>

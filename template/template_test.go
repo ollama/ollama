@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -59,6 +60,141 @@ func TestNamed(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func mustToolFunction(t *testing.T, input string) api.Tool {
+	fun := api.ToolFunction{}
+	if err := json.Unmarshal([]byte(input), &fun); err != nil {
+		t.Fatal(err)
+	}
+	return api.Tool{
+		Type:     "function",
+		Function: fun,
+	}
+}
+
+func TestTools(t *testing.T) {
+	get_weather := mustToolFunction(t, `
+{
+  "name": "get_weather",
+  "description": "Get current weather information for a location",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "location": {
+        "type": "string",
+        "description": "The city and state, e.g. San Francisco, CA"
+      },
+      "unit": {
+        "type": "string",
+        "enum": [
+          "celsius",
+          "fahrenheit"
+        ],
+        "description": "The unit of temperature to use"
+      }
+    },
+    "required": [
+      "location"
+    ]
+  }
+}
+`)
+	cases := map[string]struct {
+		tools    api.Tools
+		messages []api.Message
+	}{
+		"single": {
+			tools:    []api.Tool{get_weather},
+			messages: []api.Message{},
+		},
+		"single-call": {
+			messages: []api.Message{
+				{Role: "assistant", ToolCalls: []api.ToolCall{
+					{
+						Function: api.ToolCallFunction{
+							Name: "get_weather",
+							Arguments: api.ToolCallFunctionArguments{
+								"location": "San Francisco, CA",
+							},
+						},
+					},
+				}},
+			},
+		},
+		"single-result": {
+			messages: []api.Message{
+				{Role: "tool", Content: `{"temperature": 22, "condition": "Sunny", "humidity": 45, "wind_speed": 10}`},
+			},
+		},
+	}
+
+	templates, err := filepath.Glob("*.gotmpl")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	casenames := make([]string, len(cases))
+	for n := range cases {
+		casenames = append(casenames, n)
+	}
+
+	for _, tplname := range templates {
+		haveTools := false
+		for _, n := range casenames {
+			if _, err := os.Stat(filepath.Join("testdata", tplname, fmt.Sprintf("tools-%v", n))); err == nil {
+				haveTools = true
+				break
+			}
+		}
+		if !haveTools {
+			continue
+		}
+
+		t.Run(tplname, func(t *testing.T) {
+			bts, err := os.ReadFile(tplname)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			tmpl, err := Parse(string(bts))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for n := range cases {
+				tc := cases[n]
+
+				t.Run(n, func(t *testing.T) {
+					expect, err := os.ReadFile(filepath.Join("testdata", tplname, fmt.Sprintf("tools-%v", n)))
+					if err != nil {
+						if os.IsNotExist(err) {
+							t.SkipNow()
+						}
+						t.Fatal(err)
+					}
+
+					var actual bytes.Buffer
+					if err := tmpl.Execute(&actual, Values{Messages: tc.messages, Tools: tc.tools}); err != nil {
+						t.Fatal(err)
+					}
+
+					bts := actual.Bytes()
+
+					if len(expect) == 0 {
+						if err := os.WriteFile(filepath.Join("testdata", tplname, fmt.Sprintf("tools-%v", n)), bts, 0666); err != nil {
+							t.Fatal(err)
+						}
+						return
+					}
+
+					if diff := cmp.Diff(string(bts), string(expect)); diff != "" {
+						t.Errorf("mismatch (-got +want):\n%s", diff)
+					}
+				})
+			}
+		})
 	}
 }
 
@@ -124,7 +260,7 @@ func TestTemplate(t *testing.T) {
 						bts = bts[:len(bts)-1]
 					}
 
-					if diff := cmp.Diff(bts, expect); diff != "" {
+					if diff := cmp.Diff(string(bts), string(expect)); diff != "" {
 						t.Errorf("mismatch (-got +want):\n%s", diff)
 					}
 				})
