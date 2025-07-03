@@ -109,6 +109,9 @@ type ChatRequest struct {
 	// following the request.
 	KeepAlive *Duration `json:"keep_alive,omitempty"`
 
+	// PreserveThinkBlock preserves the <think> block in .content (false by default).
+	PreserveThinkBlock *bool `json:"preserve_think_block,omitempty"`
+
 	// Tools is an optional list of tools the model has access to.
 	Tools `json:"tools,omitempty"`
 

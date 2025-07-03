@@ -1506,7 +1506,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if req.Messages[0].Role != "system" && m.System != "" {
 		msgs = append([]api.Message{{Role: "system", Content: m.System}}, msgs...)
 	}
-	msgs = filterThinkTags(msgs, m)
+	msgs = filterThinkTags(msgs, m, req.PreserveThinkBlock)
 
 	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, req.Tools, req.Think)
 	if err != nil {
@@ -1517,7 +1517,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	var thinkingState *thinking.Parser
 	openingTag, closingTag := thinking.InferTags(m.Template.Template)
-	if req.Think != nil && *req.Think && openingTag != "" && closingTag != "" {
+	if openingTag != "" && closingTag != "" {
 		thinkingState = &thinking.Parser{
 			OpeningTag: openingTag,
 			ClosingTag: closingTag,
@@ -1553,13 +1553,18 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 
 			if thinkingState != nil {
-				thinkingContent, remainingContent := thinkingState.AddContent(res.Message.Content)
-				if thinkingContent == "" && remainingContent == "" && !r.Done {
-					// need to accumulate more to decide what to send
-					return
+				// if we are not preserving the think block, parse it out
+				if req.PreserveThinkBlock == nil || !*req.PreserveThinkBlock {
+					thinkingContent, remainingContent := thinkingState.AddContent(res.Message.Content)
+					if thinkingContent == "" && remainingContent == "" && !r.Done {
+						// need to accumulate more to decide what to send
+						return
+					}
+					res.Message.Content = remainingContent
+					res.Message.Thinking = thinkingContent
 				}
-				res.Message.Content = remainingContent
-				res.Message.Thinking = thinkingContent
+				// if we are preserving the think block, we don't do anything, the full
+				// content will be sent to the user in res.Message.Content
 			}
 
 			if r.Done {
@@ -1649,7 +1654,10 @@ func handleScheduleError(c *gin.Context, name string, err error) {
 	}
 }
 
-func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
+func filterThinkTags(msgs []api.Message, m *Model, preserveThinkBlock *bool) []api.Message {
+	if preserveThinkBlock != nil && *preserveThinkBlock {
+		return msgs
+	}
 	if m.Config.ModelFamily == "qwen3" || model.ParseName(m.Name).Model == "deepseek-r1" {
 		finalUserIndex := -1
 		for i, msg := range msgs {
