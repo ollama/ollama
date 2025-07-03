@@ -551,7 +551,6 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 				return nil, fmt.Errorf("invalid keep_alive duration: %w", err)
 			}
 			chatRequest.KeepAlive = &d
-			delete(options, "keep_alive")
 		}
 	}
 
