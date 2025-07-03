@@ -538,7 +538,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	}
 
 	if r.Options != nil {
-		if think, ok := r.Options["think"].(bool); ok {
+		if think, ok := options["think"].(bool); ok {
 			chatRequest.Think = &think
 			delete(options, "think")
 		}
