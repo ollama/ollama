@@ -82,6 +82,8 @@ If Ollama is run as a macOS application, environment variables should be set usi
 
 2. Restart Ollama application.
 
+This change will not persist when the system is rebooted; you will need to add the `launchctl` command to your `.zshrc` for this to happen.
+
 ### Setting environment variables on Linux
 
 If Ollama is run as a systemd service, environment variables should be set using `systemctl`:
