@@ -34,7 +34,8 @@ func (kv KV) Kind() string {
 }
 
 func (kv KV) ParameterCount() uint64 {
-	return keyValue(kv, "general.parameter_count", uint64(0))
+	val, _ := keyValue(kv, "general.parameter_count", uint64(0))
+	return val
 }
 
 func (kv KV) FileType() FileType {
@@ -53,16 +54,27 @@ func (kv KV) EmbeddingLength() uint64 {
 	return uint64(kv.Uint("embedding_length"))
 }
 
-func (kv KV) HeadCount() uint64 {
-	return uint64(kv.Uint("attention.head_count"))
+func (kv KV) HeadCountMax() uint64 {
+	// TODO(drifkin): using the max value can cause an overestimation. In the
+	// future if array values become more popular, we can adapt the more invasive
+	// <https://github.com/ollama/ollama/pull/10225>
+	return uint64(kv.UintOrMaxArrayValue("attention.head_count", 1))
 }
 
-func (kv KV) HeadCountKV() uint64 {
-	return uint64(kv.Uint("attention.head_count_kv", 1))
+func (kv KV) HeadCountMin() uint64 {
+	return uint64(kv.UintOrMinArrayValue("attention.head_count", 1))
 }
 
-func (kv KV) EmbeddingHeadCount() uint64 {
-	if heads := kv.HeadCount(); heads > 0 {
+func (kv KV) HeadCountKVMax() uint64 {
+	return uint64(kv.UintOrMaxArrayValue("attention.head_count_kv", 1))
+}
+
+func (kv KV) HeadCountKVMin() uint64 {
+	return uint64(kv.UintOrMinArrayValue("attention.head_count_kv", 1))
+}
+
+func (kv KV) EmbeddingHeadCountMax() uint64 {
+	if heads := kv.HeadCountMin(); heads > 0 {
 		return kv.EmbeddingLength() / heads
 	}
 
@@ -70,15 +82,11 @@ func (kv KV) EmbeddingHeadCount() uint64 {
 }
 
 func (kv KV) EmbeddingHeadCountK() uint64 {
-	return uint64(kv.Uint("attention.key_length", uint32(kv.EmbeddingHeadCount())))
+	return uint64(kv.Uint("attention.key_length", uint32(kv.EmbeddingHeadCountMax())))
 }
 
 func (kv KV) EmbeddingHeadCountV() uint64 {
-	return uint64(kv.Uint("attention.value_length", uint32(kv.EmbeddingHeadCount())))
-}
-
-func (kv KV) GQA() uint64 {
-	return kv.HeadCount() / kv.HeadCountKV()
+	return uint64(kv.Uint("attention.value_length", uint32(kv.EmbeddingHeadCountMax())))
 }
 
 func (kv KV) ContextLength() uint64 {
@@ -90,40 +98,83 @@ func (kv KV) ChatTemplate() string {
 }
 
 func (kv KV) String(key string, defaultValue ...string) string {
-	return keyValue(kv, key, append(defaultValue, "")...)
+	val, _ := keyValue(kv, key, append(defaultValue, "")...)
+	return val
 }
 
 func (kv KV) Uint(key string, defaultValue ...uint32) uint32 {
-	return keyValue(kv, key, append(defaultValue, 0)...)
+	val, _ := keyValue(kv, key, append(defaultValue, 0)...)
+	return val
 }
 
 func (kv KV) Float(key string, defaultValue ...float32) float32 {
-	return keyValue(kv, key, append(defaultValue, 0)...)
+	val, _ := keyValue(kv, key, append(defaultValue, 0)...)
+	return val
 }
 
 func (kv KV) Bool(key string, defaultValue ...bool) bool {
-	return keyValue(kv, key, append(defaultValue, false)...)
+	val, _ := keyValue(kv, key, append(defaultValue, false)...)
+	return val
+}
+
+func (kv KV) UintOrMaxArrayValue(key string, defaultValue uint32) uint32 {
+	_, max := kv.UintOrArrayValue(key, defaultValue)
+	return max
+}
+
+func (kv KV) UintOrMinArrayValue(key string, defaultValue uint32) uint32 {
+	min, _ := kv.UintOrArrayValue(key, defaultValue)
+	return min
+}
+
+func (kv KV) UintOrArrayValue(key string, defaultValue uint32) (uint32, uint32) {
+	if u32, ok := keyValue(kv, key, uint32(0)); ok {
+		return u32, u32
+	} else if u32s, ok := keyValue(kv, key, &array[uint32]{}); ok {
+		min := slices.Min(u32s.values)
+		max := slices.Max(u32s.values)
+		return min, max
+	} else if i32s, ok := keyValue(kv, key, &array[int32]{}); ok {
+		min := slices.Min(i32s.values)
+		max := slices.Max(i32s.values)
+		if min < 0 || max < 0 {
+			slog.Warn("array values are unexpectedly negative", "key", key, "min", min, "max", max)
+		}
+		return uint32(min), uint32(max)
+	}
+
+	return defaultValue, defaultValue
 }
 
 func (kv KV) Strings(key string, defaultValue ...[]string) []string {
-	return keyValue(kv, key, &array[string]{values: append(defaultValue, []string(nil))[0]}).values
+	val, _ := keyValue(kv, key, &array[string]{values: append(defaultValue, []string(nil))[0]})
+	return val.values
 }
 
 func (kv KV) Ints(key string, defaultValue ...[]int32) []int32 {
-	return keyValue(kv, key, &array[int32]{values: append(defaultValue, []int32(nil))[0]}).values
+	val, _ := keyValue(kv, key, &array[int32]{values: append(defaultValue, []int32(nil))[0]})
+	return val.values
 }
 
 func (kv KV) Uints(key string, defaultValue ...[]uint32) []uint32 {
-	return keyValue(kv, key, &array[uint32]{values: append(defaultValue, []uint32(nil))[0]}).values
+	val, _ := keyValue(kv, key, &array[uint32]{values: append(defaultValue, []uint32(nil))[0]})
+	return val.values
 }
 
 func (kv KV) Floats(key string, defaultValue ...[]float32) []float32 {
-	return keyValue(kv, key, &array[float32]{values: append(defaultValue, []float32(nil))[0]}).values
+	val, _ := keyValue(kv, key, &array[float32]{values: append(defaultValue, []float32(nil))[0]})
+	return val.values
+}
+
+func (kv KV) Bools(key string, defaultValue ...[]bool) []bool {
+	val, _ := keyValue(kv, key, &array[bool]{values: append(defaultValue, []bool(nil))[0]})
+	return val.values
 }
 
 func (kv KV) OllamaEngineRequired() bool {
 	return slices.Contains([]string{
 		"gemma3",
+		"gemma3n",
 		"mistral3",
 		"llama4",
 		"mllama",
@@ -143,17 +194,17 @@ type arrayValueTypes interface {
 		*array[string] | *array[float32] | *array[float64] | *array[bool]
 }
 
-func keyValue[T valueTypes | arrayValueTypes](kv KV, key string, defaultValue ...T) T {
+func keyValue[T valueTypes | arrayValueTypes](kv KV, key string, defaultValue ...T) (T, bool) {
 	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") {
 		key = kv.Architecture() + "." + key
 	}
 
-	if val, ok := kv[key]; ok {
-		return val.(T)
+	if val, ok := kv[key].(T); ok {
+		return val, true
 	}
 
-	slog.Debug("key not found", "key", key, "default", defaultValue[0])
-	return defaultValue[0]
+	slog.Debug("key with type not found", "key", key, "default", defaultValue[0])
+	return defaultValue[0], false
 }
 
 type Tensors struct {
@@ -425,11 +476,11 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, error) {
 
 func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType string) (kv []uint64, partialOffload, fullOffload uint64) {
 	embedding := f.KV().EmbeddingLength()
-	heads := f.KV().HeadCount()
-	headsKV := f.KV().HeadCountKV()
+	heads := f.KV().HeadCountMax()
+	headsKV := f.KV().HeadCountKVMax()
 	vocab := uint64(f.KV()["tokenizer.ggml.tokens"].(*array[string]).size)
 
-	embeddingHeads := f.KV().EmbeddingHeadCount()
+	embeddingHeads := f.KV().EmbeddingHeadCountMax()
 	embeddingHeadsK := f.KV().EmbeddingHeadCountK()
 	embeddingHeadsV := f.KV().EmbeddingHeadCountV()
 
@@ -504,7 +555,7 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 			// vocab graph
 			4*batch*(embedding+vocab)+embedding*vocab*105/128,
 		)
-	case "gemma", "gemma2", "gemma3":
+	case "gemma", "gemma2", "gemma3", "gemma3n":
 		fullOffload = max(
 			4*batch*(embedding+vocab),
 			4*batch*(2+context+context*heads+2*embedding+2*embeddingHeadsK*heads),
@@ -516,6 +567,11 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 				4*embeddingHeadsK*context*8+
 				embedding*embeddingHeadsK*heads*9/16,
 		)
+
+		if f.KV().Architecture() == "gemma3n" {
+			fullOffload *= 4
+			partialOffload *= 4
+		}
 
 		// Gemma2 also has sliding window attention but we only have an optimized implementation in the Ollama
 		// engine. Gemma3 always uses the Ollama engine.

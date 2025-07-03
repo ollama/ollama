@@ -609,6 +609,10 @@ func ggufWriteKV(ws io.WriteSeeker, k string, v any) error {
 		err = writeGGUFArray(ws, ggufTypeString, v)
 	case *array[string]:
 		err = writeGGUFArray(ws, ggufTypeString, v.values)
+	case []bool:
+		err = writeGGUFArray(ws, ggufTypeBool, v)
+	case *array[bool]:
+		err = writeGGUFArray(ws, ggufTypeBool, v.values)
 	default:
 		return fmt.Errorf("improper type for '%s'", k)
 	}
