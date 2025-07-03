@@ -23,10 +23,9 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/envconfig"
-	"github.com/ollama/ollama/fs/gguf"
 	"github.com/ollama/ollama/parser"
+	"github.com/ollama/ollama/server/cache"
 	"github.com/ollama/ollama/template"
-	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
 )
@@ -68,60 +67,14 @@ type Model struct {
 	Template *template.Template
 }
 
-// Capabilities returns the capabilities that the model supports
-func (m *Model) Capabilities() []model.Capability {
-	capabilities := []model.Capability{}
-
-	// Check for completion capability
-	f, err := gguf.Open(m.ModelPath)
-	if err == nil {
-		defer f.Close()
-
-		if f.KeyValue("pooling_type").Valid() {
-			capabilities = append(capabilities, model.CapabilityEmbedding)
-		} else {
-			// If no embedding is specified, we assume the model supports completion
-			capabilities = append(capabilities, model.CapabilityCompletion)
-		}
-		if f.KeyValue("vision.block_count").Valid() {
-			capabilities = append(capabilities, model.CapabilityVision)
-		}
-	} else {
-		slog.Error("couldn't open model file", "error", err)
-	}
-
-	if m.Template == nil {
-		return capabilities
-	}
-
-	// Check for tools capability
-	if slices.Contains(m.Template.Vars(), "tools") {
-		capabilities = append(capabilities, model.CapabilityTools)
-	}
-
-	// Check for insert capability
-	if slices.Contains(m.Template.Vars(), "suffix") {
-		capabilities = append(capabilities, model.CapabilityInsert)
-	}
-
-	// Check for vision capability in projector-based models
-	if len(m.ProjectorPaths) > 0 {
-		capabilities = append(capabilities, model.CapabilityVision)
-	}
-
-	// Check for thinking capability
-	openingTag, closingTag := thinking.InferTags(m.Template.Template)
-	if openingTag != "" && closingTag != "" {
-		capabilities = append(capabilities, model.CapabilityThinking)
-	}
-
-	return capabilities
-}
-
 // CheckCapabilities checks if the model has the specified capabilities returning an error describing
 // any missing or unknown capabilities
 func (m *Model) CheckCapabilities(want ...model.Capability) error {
-	available := m.Capabilities()
+	available := cache.Capabilities(cache.ModelInfo{
+		ModelPath:      m.ModelPath,
+		ProjectorPaths: m.ProjectorPaths,
+		Template:       m.Template,
+	})
 	var errs []error
 
 	// Map capabilities to their corresponding error
