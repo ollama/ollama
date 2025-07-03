@@ -10,7 +10,7 @@ Get up and running with large language models.
 
 ### macOS
 
-[Download](https://ollama.com/download/Ollama-darwin.zip)
+[Download](https://ollama.com/download/Ollama.dmg)
 
 ### Windows
 
