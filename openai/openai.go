@@ -540,7 +540,6 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 	if r.Options != nil {
 		if think, ok := options["think"].(bool); ok {
 			chatRequest.Think = &think
-			delete(options, "think")
 		}
 		if keepAlive, ok := r.Options["keep_alive"]; ok {
 			var d api.Duration
