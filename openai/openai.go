@@ -541,7 +541,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		if think, ok := options["think"].(bool); ok {
 			chatRequest.Think = &think
 		}
-		if keepAlive, ok := r.Options["keep_alive"]; ok {
+		if keepAlive, ok := options["keep_alive"]; ok {
 			var d api.Duration
 			b, err := json.Marshal(keepAlive)
 			if err != nil {
