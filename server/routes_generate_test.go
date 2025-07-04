@@ -467,6 +467,7 @@ func TestGenerateChat(t *testing.T) {
 		}
 
 		expectedToolCall := api.ToolCall{
+			ID: "get_weather_bac46585",
 			Function: api.ToolCallFunction{
 				Name: "get_weather",
 				Arguments: api.ToolCallFunctionArguments{
@@ -600,6 +601,7 @@ func TestGenerateChat(t *testing.T) {
 		}
 
 		expectedToolCall := api.ToolCall{
+			ID: "get_weather_bac46585",
 			Function: api.ToolCallFunction{
 				Name: "get_weather",
 				Arguments: api.ToolCallFunctionArguments{

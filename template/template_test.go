@@ -163,10 +163,12 @@ func TestParse(t *testing.T) {
 		{"{{ .System }} {{ .Prompt }} {{ .Response }}", []string{"prompt", "response", "system"}},
 		{"{{ with .Tools }}{{ . }}{{ end }} {{ .System }} {{ .Prompt }}", []string{"prompt", "response", "system", "tools"}},
 		{"{{ range .Messages }}{{ .Role }} {{ .Content }}{{ end }}", []string{"content", "messages", "role"}},
+		{"{{ range .Messages }}{{ if eq .Role \"tool\" }}Tool Result: {{ .ToolName }} {{ .Content }}{{ end }}{{ end }}", []string{"content", "messages", "role", "toolname"}},
 		{`{{- range .Messages }}
 {{- if eq .Role "system" }}SYSTEM:
 {{- else if eq .Role "user" }}USER:
 {{- else if eq .Role "assistant" }}ASSISTANT:
+{{- else if eq .Role "tool" }}TOOL: 
 {{- end }} {{ .Content }}
 {{- end }}`, []string{"content", "messages", "role"}},
 		{`{{- if .Messages }}
@@ -372,6 +374,105 @@ func TestExecuteWithSuffix(t *testing.T) {
 
 			if diff := cmp.Diff(b.String(), tt.expect); diff != "" {
 				t.Errorf("mismatch (-got +want):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestCollate(t *testing.T) {
+	cases := []struct {
+		name     string
+		msgs     []api.Message
+		expected []*api.Message
+		system   string
+	}{
+		{
+			name: "consecutive user messages are merged",
+			msgs: []api.Message{
+				{Role: "user", Content: "Hello"},
+				{Role: "user", Content: "How are you?"},
+			},
+			expected: []*api.Message{
+				{Role: "user", Content: "Hello\n\nHow are you?"},
+			},
+			system: "",
+		},
+		{
+			name: "consecutive tool messages are NOT merged",
+			msgs: []api.Message{
+				{Role: "tool", Content: "sunny", ToolResult: api.ToolResult{ToolName: "get_weather"}},
+				{Role: "tool", Content: "72F", ToolResult: api.ToolResult{ToolName: "get_temperature"}},
+			},
+			expected: []*api.Message{
+				{Role: "tool", Content: "sunny", ToolResult: api.ToolResult{ToolName: "get_weather"}},
+				{Role: "tool", Content: "72F", ToolResult: api.ToolResult{ToolName: "get_temperature"}},
+			},
+			system: "",
+		},
+		{
+			name: "tool messages preserve all fields",
+			msgs: []api.Message{
+				{Role: "user", Content: "What's the weather?"},
+				{Role: "tool", Content: "sunny", ToolResult: api.ToolResult{ToolName: "get_conditions", ID: "123"}},
+				{Role: "tool", Content: "72F", ToolResult: api.ToolResult{ToolName: "get_temperature", ID: "456"}},
+			},
+			expected: []*api.Message{
+				{Role: "user", Content: "What's the weather?"},
+				{Role: "tool", Content: "sunny", ToolResult: api.ToolResult{ToolName: "get_conditions", ID: "123"}},
+				{Role: "tool", Content: "72F", ToolResult: api.ToolResult{ToolName: "get_temperature", ID: "456"}},
+			},
+			system: "",
+		},
+		{
+			name: "mixed messages with system",
+			msgs: []api.Message{
+				{Role: "system", Content: "You are helpful"},
+				{Role: "user", Content: "Hello"},
+				{Role: "assistant", Content: "Hi there!"},
+				{Role: "user", Content: "What's the weather?"},
+				{Role: "tool", Content: "sunny", ToolResult: api.ToolResult{ToolName: "get_weather"}},
+				{Role: "tool", Content: "72F", ToolResult: api.ToolResult{ToolName: "get_temperature"}},
+				{Role: "user", Content: "Thanks"},
+			},
+			expected: []*api.Message{
+				{Role: "system", Content: "You are helpful"},
+				{Role: "user", Content: "Hello"},
+				{Role: "assistant", Content: "Hi there!"},
+				{Role: "user", Content: "What's the weather?"},
+				{Role: "tool", Content: "sunny", ToolResult: api.ToolResult{ToolName: "get_weather"}},
+				{Role: "tool", Content: "72F", ToolResult: api.ToolResult{ToolName: "get_temperature"}},
+				{Role: "user", Content: "Thanks"},
+			},
+			system: "You are helpful",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			system, collated := collate(tt.msgs)
+			if diff := cmp.Diff(system, tt.system); diff != "" {
+				t.Errorf("system mismatch (-got +want):\n%s", diff)
+			}
+
+			// Compare the messages
+			if len(collated) != len(tt.expected) {
+				t.Errorf("expected %d messages, got %d", len(tt.expected), len(collated))
+				return
+			}
+
+			for i := range collated {
+				if collated[i].Role != tt.expected[i].Role {
+					t.Errorf("message %d role mismatch: got %q, want %q", i, collated[i].Role, tt.expected[i].Role)
+				}
+				if collated[i].Content != tt.expected[i].Content {
+					t.Errorf("message %d content mismatch: got %q, want %q", i, collated[i].Content, tt.expected[i].Content)
+				}
+				if collated[i].ToolResult.ToolName != tt.expected[i].ToolResult.ToolName {
+					t.Errorf("message %d tool name mismatch: got %q, want %q", i, collated[i].ToolResult.ToolName, tt.expected[i].ToolResult.ToolName)
+				}
+				if collated[i].ToolResult.ID != tt.expected[i].ToolResult.ID {
+					t.Errorf("message %d tool ID mismatch: got %q, want %q", i, collated[i].ToolResult.ID, tt.expected[i].ToolResult.ID)
+				}
 			}
 		})
 	}
