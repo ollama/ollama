@@ -138,7 +138,10 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	requiredMemory.CPU.Name = C.GoString(C.ggml_backend_dev_name(cpuDeviceBufferType.d))
 	var props C.struct_ggml_backend_dev_props
 	C.ggml_backend_dev_get_props(cpuDeviceBufferType.d, &props)
-	requiredMemory.CPU.UUID = C.GoString(props.uuid)
+
+	// Bug #11211: Reporting of UUIDs is temporarily disabled due to causing segfaults
+	// This only affects debug information until the new memory management code is in place
+	// requiredMemory.CPU.UUID = C.GoString(props.uuid)
 	requiredMemory.CPU.Weights = make([]ml.Memory, blocks+1)
 	requiredMemory.CPU.Cache = make([]ml.Memory, blocks+1)
 
@@ -155,7 +158,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		requiredMemory.GPUs[i].Name = C.GoString(C.ggml_backend_dev_name(d))
 		var props C.struct_ggml_backend_dev_props
 		C.ggml_backend_dev_get_props(d, &props)
-		requiredMemory.GPUs[i].UUID = C.GoString(props.uuid)
+		// requiredMemory.GPUs[i].UUID = C.GoString(props.uuid)
 		requiredMemory.GPUs[i].Weights = make([]ml.Memory, blocks+1)
 		requiredMemory.GPUs[i].Cache = make([]ml.Memory, blocks+1)
 	}
@@ -297,7 +300,9 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 			if _, ok := meta.Tensors().GroupLayers()["output"]; !ok && t.Name == "token_embd.weight" {
 				createTensor(tensor{source: t, target: "output.weight"}, output.bts, blocks)
 			}
-		case contains(t.Name, "cls", "output", "output_norm"):
+		case contains(t.Name, "cls", "output", "output_norm",
+			"altup_proj", "altup_unembd_proj",
+			"per_layer_token_embd", "per_layer_model_proj", "per_layer_proj_norm"):
 			createTensor(tensor{source: t}, output.bts, blocks)
 		case strings.HasPrefix(t.Name, "v.") || strings.HasPrefix(t.Name, "mm."):
 			// TODO: assign vision tensors to the gpu if possible
@@ -353,6 +358,24 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		bbs[c] = b
 	}
 
+	// Mimic llama runner logs summarizing layers and memory
+	slog.Info(fmt.Sprintf("offloading %d repeating layers to GPU", max(0, params.NumGPULayers-1)))
+	gpuLayers := 0
+	switch C.ggml_backend_dev_type(output.d) {
+	case 0: // CPU
+		slog.Info("offloading output layer to CPU")
+	case 1: // GPU
+		slog.Info("offloading output layer to GPU")
+		gpuLayers++
+	case 2: // ACCEL
+		slog.Info("offloading output layer to ACCEL")
+	}
+	for _, layer := range layers {
+		if C.ggml_backend_dev_type(layer.d) == 1 {
+			gpuLayers++
+		}
+	}
+	slog.Info(fmt.Sprintf("offloaded %d/%d layers to GPU", gpuLayers, len(layers)+1))
 	for bs := range maps.Values(bbs) {
 		slog.Info("model weights", "buffer", C.GoString(C.ggml_backend_buffer_name(bs)), "size", format.HumanBytes2(uint64(C.ggml_backend_buffer_get_size(bs))))
 	}
@@ -602,7 +625,9 @@ func (c *Context) Forward(tensors ...ml.Tensor) ml.Context {
 }
 
 func (c *Context) Compute(tensors ...ml.Tensor) {
-	C.ggml_backend_sched_graph_compute_async(c.b.sched, c.graph)
+	if status := C.ggml_backend_sched_graph_compute_async(c.b.sched, c.graph); status != C.GGML_STATUS_SUCCESS {
+		panic(fmt.Errorf("error computing ggml graph: %v", status))
+	}
 	C.ggml_backend_sched_reset(c.b.sched)
 
 	needSync := true
@@ -888,6 +913,13 @@ func (t *Tensor) Add(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_add(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
+	}
+}
+
+func (t *Tensor) Sub(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_sub(ctx.(*Context).ctx, t.t, t2.(*Tensor).t),
 	}
 }
 
@@ -1198,6 +1230,13 @@ func (t *Tensor) SILU(ctx ml.Context) ml.Tensor {
 	}
 }
 
+func (t *Tensor) RELU(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_relu_inplace(ctx.(*Context).ctx, t.t),
+	}
+}
+
 func (t *Tensor) Conv2D(ctx ml.Context, t2 ml.Tensor, s0, s1, p0, p1, d0, d1 int) ml.Tensor {
 	return &Tensor{
 		b: t.b,
@@ -1271,5 +1310,44 @@ func (t *Tensor) Argsort(ctx ml.Context) ml.Tensor {
 	return &Tensor{
 		b: t.b,
 		t: C.ggml_argsort(ctx.(*Context).ctx, t.t, C.GGML_SORT_ORDER_ASC),
+	}
+}
+
+func (t *Tensor) Mean(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_mean(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Variance(ctx ml.Context) ml.Tensor {
+	return t.Add(ctx, t.Mean(ctx).Scale(ctx, -1)).
+		Sqr(ctx).
+		SumRows(ctx).
+		Scale(ctx, 1/float64(t.Dim(0)))
+}
+
+func (t *Tensor) Stddev(ctx ml.Context) ml.Tensor {
+	return t.Variance(ctx).Sqrt(ctx)
+}
+
+func (t *Tensor) Sqr(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_sqr(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Sqrt(ctx ml.Context) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_sqrt(ctx.(*Context).ctx, t.t),
+	}
+}
+
+func (t *Tensor) Clamp(ctx ml.Context, min, max float32) ml.Tensor {
+	return &Tensor{
+		b: t.b,
+		t: C.ggml_clamp(ctx.(*Context).ctx, t.t, C.float(min), C.float(max)),
 	}
 }
