@@ -60,11 +60,7 @@ func llama(t testing.TB) BytePairEncoding {
 
 	return NewBytePairEncoding(
 		`(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`,
-		&Vocabulary{
-			Values: tokens,
-			Types:  types,
-			Merges: merges,
-		},
+		NewVocabulary(tokens, types, nil, merges, nil, nil, false, false),
 	)
 }
 

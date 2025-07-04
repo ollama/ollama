@@ -130,18 +130,19 @@ func New(c fs.Config) (model.Model, error) {
 		Layers: make([]DecoderLayer, c.Uint("block_count")),
 		BytePairEncoding: model.NewBytePairEncoding(
 			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
-			&model.Vocabulary{
-				Values: c.Strings("tokenizer.ggml.tokens"),
-				Types:  c.Ints("tokenizer.ggml.token_type"),
-				Merges: c.Strings("tokenizer.ggml.merges"),
-				AddBOS: c.Bool("tokenizer.ggml.add_bos_token", true),
-				BOS:    []int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
-				AddEOS: c.Bool("tokenizer.ggml.add_eos_token", false),
-				EOS: append(
+			model.NewVocabulary(
+				c.Strings("tokenizer.ggml.tokens"),
+				c.Ints("tokenizer.ggml.token_type"),
+				nil,
+				c.Strings("tokenizer.ggml.merges"),
+				[]int32{int32(c.Uint("tokenizer.ggml.bos_token_id"))},
+				append(
 					[]int32{int32(c.Uint("tokenizer.ggml.eos_token_id"))},
 					c.Ints("tokenizer.ggml.eos_token_ids")...,
 				),
-			},
+				c.Bool("tokenizer.ggml.add_bos_token", true),
+				c.Bool("tokenizer.ggml.add_eos_token", false),
+			),
 		),
 		Options: Options{
 			hiddenSize: int(c.Uint("embedding_length")),
