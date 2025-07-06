@@ -143,6 +143,12 @@ type Message struct {
 	Thinking  string      `json:"thinking,omitempty"`
 	Images    []ImageData `json:"images,omitempty"`
 	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
+	ToolResult
+}
+
+type ToolResult struct {
+	ToolName string `json:"tool_name,omitempty"`
+	ID       string `json:"tool_id,omitempty"`
 }
 
 func (m *Message) UnmarshalJSON(b []byte) error {
@@ -159,6 +165,7 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 
 type ToolCall struct {
 	Function ToolCallFunction `json:"function"`
+	ID       string           `json:"id"`
 }
 
 type ToolCallFunction struct {
