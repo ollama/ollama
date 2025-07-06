@@ -64,7 +64,7 @@ func (e filteredEnv) LogValue() slog.Value {
 
 type LlamaServer interface {
 	Ping(ctx context.Context) error
-	WaitUntilRunning(ctx context.Context) error
+	WaitUntilRunning(ctx context.Context, cb func(int)) error
 	Completion(ctx context.Context, req CompletionRequest, fn func(CompletionResponse)) error
 	Embedding(ctx context.Context, input string) ([]float32, error)
 	Tokenize(ctx context.Context, content string) ([]int, error)
@@ -590,7 +590,7 @@ func (s *llmServer) Ping(ctx context.Context) error {
 	return nil
 }
 
-func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
+func (s *llmServer) WaitUntilRunning(ctx context.Context, cb func(int)) error {
 	start := time.Now()
 	stallDuration := envconfig.LoadTimeout()    // If no progress happens
 	stallTimer := time.Now().Add(stallDuration) // give up if we stall
@@ -635,12 +635,18 @@ func (s *llmServer) WaitUntilRunning(ctx context.Context) error {
 		case ServerStatusReady:
 			s.loadDuration = time.Since(start)
 			slog.Info(fmt.Sprintf("llama runner started in %0.2f seconds", s.loadDuration.Seconds()))
+			if cb != nil {
+				cb(100)
+			}
 			return nil
 		default:
 			lastStatus = status
 			// Reset the timer as long as we're making forward progress on the load
 			if priorProgress != s.loadProgress {
 				slog.Debug(fmt.Sprintf("model load progress %0.2f", s.loadProgress))
+				if cb != nil {
+					cb(int(s.loadProgress * 100))
+				}
 				stallTimer = time.Now().Add(stallDuration)
 			} else if !fullyLoaded && int(s.loadProgress*100.0) >= 100 {
 				slog.Debug("model load completed, waiting for server to become available", "status", status)
