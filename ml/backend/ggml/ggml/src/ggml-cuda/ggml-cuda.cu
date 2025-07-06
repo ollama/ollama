@@ -3493,7 +3493,13 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
                   );
                 dev_ctx->uuid = uuid;
                 #else
+                #ifdef _WIN32
+                char uuid[16];
+                snprintf(uuid, sizeof(uuid), "%d", i);
+                dev_ctx->uuid = uuid;
+                #else
                 dev_ctx->uuid = "GPU-" + std::string(prop.uuid.bytes, 16);
+                #endif
                 #endif
 
                 ggml_backend_dev_t dev = new ggml_backend_device {
