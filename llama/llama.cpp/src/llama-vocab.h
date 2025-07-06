@@ -74,6 +74,7 @@ struct llama_vocab {
     bool get_add_space_prefix          () const;
     bool get_add_bos                   () const;
     bool get_add_eos                   () const;
+    bool get_add_sep                   () const;
     bool get_ignore_merges             () const;
     bool get_clean_spaces              () const;
     bool get_remove_extra_whitespaces  () const;
