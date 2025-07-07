@@ -191,7 +191,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					}
 
 					// Load model for fitting
-					ggml, err := llm.LoadModel(pending.model.ModelPath, 0)
+					ggml, err := llm.LoadModel(pending.model.ModelPath, 1024)
 					if err != nil {
 						pending.errCh <- err
 						break
@@ -387,6 +387,17 @@ func (s *Scheduler) processCompleted(ctx context.Context) {
 				s.loadedMu.Unlock()
 				runner.refMu.Unlock()
 				slog.Debug("duplicate expired event, ignoring", "runner", runner)
+			} else if runner.pid != runnerToUnload.pid {
+				// If the pids do not match, we likely had multiple load
+				// failures for the same model in quick succession due to
+				// request context canceled and are draining the queue of
+				// events. Ensure the orphaned runner is properly shut down, but
+				// do not delete the mismatched loaded runner, or wait for VRAM
+				// convergence.
+				slog.Debug("orphaned runner shutting down", "orphan", runner, "loaded", runnerToUnload)
+				runner.unload()
+				s.loadedMu.Unlock()
+				runner.refMu.Unlock()
 			} else {
 				slog.Debug("starting background wait for VRAM recovery", "runner", runner)
 				finished := runner.waitForVRAMRecovery()

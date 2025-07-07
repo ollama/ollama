@@ -143,6 +143,25 @@ func TestGenerateChat(t *testing.T) {
 		}
 	})
 
+	t.Run("missing thinking capability", func(t *testing.T) {
+		think := true
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test",
+			Messages: []api.Message{
+				{Role: "user", Content: "Hello!"},
+			},
+			Think: &think,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"registry.ollama.ai/library/test:latest does not support thinking"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
 	t.Run("missing model", func(t *testing.T) {
 		w := createRequest(t, s.ChatHandler, api.ChatRequest{})
 		if w.Code != http.StatusBadRequest {

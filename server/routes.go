@@ -17,7 +17,6 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
-	"regexp"
 	"slices"
 	"strings"
 	"syscall"
@@ -38,6 +37,8 @@ import (
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/server/internal/registry"
 	"github.com/ollama/ollama/template"
+	"github.com/ollama/ollama/thinking"
+	"github.com/ollama/ollama/tools"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/version"
@@ -216,6 +217,13 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	if req.Suffix != "" {
 		caps = append(caps, model.CapabilityInsert)
 	}
+	if req.Think != nil && *req.Think {
+		caps = append(caps, model.CapabilityThinking)
+		// TODO(drifkin): consider adding a warning if it's false and the model
+		// doesn't support thinking. It's not strictly required, but it can be a
+		// hint that the user is on an older qwen3/r1 model that doesn't have an
+		// updated template supporting thinking
+	}
 
 	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)
 	if errors.Is(err, errCapabilityCompletion) {
@@ -284,6 +292,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			values.Messages = append(msgs, api.Message{Role: "user", Content: req.Prompt})
 		}
 
+		values.Think = req.Think != nil && *req.Think
+		values.IsThinkSet = req.Think != nil
+
 		var b bytes.Buffer
 		if req.Context != nil {
 			slog.Warn("the context field is deprecated and will be removed in a future version of Ollama")
@@ -301,6 +312,15 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		}
 
 		prompt = b.String()
+	}
+
+	var thinkingState *thinking.Parser
+	openingTag, closingTag := thinking.InferTags(m.Template.Template)
+	if req.Think != nil && *req.Think && openingTag != "" && closingTag != "" {
+		thinkingState = &thinking.Parser{
+			OpeningTag: openingTag,
+			ClosingTag: closingTag,
+		}
 	}
 
 	ch := make(chan any)
@@ -325,6 +345,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					EvalCount:          cr.EvalCount,
 					EvalDuration:       cr.EvalDuration,
 				},
+			}
+
+			if thinkingState != nil {
+				thinking, content := thinkingState.AddContent(cr.Content)
+				res.Thinking = thinking
+				res.Response = content
 			}
 
 			if _, err := sb.WriteString(cr.Content); err != nil {
@@ -354,11 +380,13 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	if req.Stream != nil && !*req.Stream {
 		var r api.GenerateResponse
-		var sb strings.Builder
+		var sbThinking strings.Builder
+		var sbContent strings.Builder
 		for rr := range ch {
 			switch t := rr.(type) {
 			case api.GenerateResponse:
-				sb.WriteString(t.Response)
+				sbThinking.WriteString(t.Thinking)
+				sbContent.WriteString(t.Response)
 				r = t
 			case gin.H:
 				msg, ok := t["error"].(string)
@@ -374,7 +402,9 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 		}
 
-		r.Response = sb.String()
+		r.Thinking = sbThinking.String()
+		r.Response = sbContent.String()
+
 		c.JSON(http.StatusOK, r)
 		return
 	}
@@ -1466,6 +1496,9 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	if len(req.Tools) > 0 {
 		caps = append(caps, model.CapabilityTools)
 	}
+	if req.Think != nil && *req.Think {
+		caps = append(caps, model.CapabilityThinking)
+	}
 
 	name := model.ParseName(req.Model)
 	if !name.IsValid() {
@@ -1506,18 +1539,31 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	}
 	msgs = filterThinkTags(msgs, m)
 
-	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, req.Tools)
+	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, req.Tools, req.Think)
 	if err != nil {
 		slog.Error("chat prompt error", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
+	var thinkingState *thinking.Parser
+	openingTag, closingTag := thinking.InferTags(m.Template.Template)
+	if req.Think != nil && *req.Think && openingTag != "" && closingTag != "" {
+		thinkingState = &thinking.Parser{
+			OpeningTag: openingTag,
+			ClosingTag: closingTag,
+		}
+	}
+
+	var toolParser *tools.Parser
+	if len(req.Tools) > 0 {
+		toolParser = tools.NewParser(m.Template.Template, req.Tools)
+	}
+
 	ch := make(chan any)
 	go func() {
 		defer close(ch)
-		var sb strings.Builder
-		var toolCallIndex int = 0
+
 		if err := r.Completion(c.Request.Context(), llm.CompletionRequest{
 			Prompt:  prompt,
 			Images:  images,
@@ -1537,43 +1583,41 @@ func (s *Server) ChatHandler(c *gin.Context) {
 				},
 			}
 
+			if thinkingState != nil {
+				thinkingContent, remainingContent := thinkingState.AddContent(res.Message.Content)
+				if thinkingContent == "" && remainingContent == "" && !r.Done {
+					// need to accumulate more to decide what to send
+					return
+				}
+				res.Message.Content = remainingContent
+				res.Message.Thinking = thinkingContent
+			}
+
 			if r.Done {
 				res.DoneReason = r.DoneReason.String()
 				res.TotalDuration = time.Since(checkpointStart)
 				res.LoadDuration = checkpointLoaded.Sub(checkpointStart)
 			}
 
-			// TODO: tool call checking and filtering should be moved outside of this callback once streaming
-			// however this was a simple change for now without reworking streaming logic of this (and other)
-			// handlers
-			if req.Stream != nil && !*req.Stream || len(req.Tools) == 0 {
-				ch <- res
-				return
+			if len(req.Tools) > 0 {
+				toolCalls, content := toolParser.Add(res.Message.Content)
+				if len(content) > 0 {
+					res.Message.Content = content
+				} else if len(toolCalls) > 0 {
+					res.Message.ToolCalls = toolCalls
+					res.Message.Content = ""
+				} else if res.Message.Thinking != "" {
+					// don't return
+				} else {
+					if r.Done {
+						res.Message.Content = toolParser.Content()
+						ch <- res
+					}
+					return
+				}
 			}
 
-			// Streaming tool calls:
-			// If tools are recognized, use a flag to track the sending of a tool downstream
-			// This ensures that content is cleared from the message on the last chunk sent
-			sb.WriteString(r.Content)
-			if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
-				res.Message.ToolCalls = toolCalls
-				for i := range toolCalls {
-					toolCalls[i].Function.Index = toolCallIndex
-					toolCallIndex++
-				}
-				res.Message.Content = ""
-				sb.Reset()
-				ch <- res
-				return
-			}
-
-			if r.Done {
-				// Send any remaining content if no tool calls were detected
-				if toolCallIndex == 0 {
-					res.Message.Content = sb.String()
-				}
-				ch <- res
-			}
+			ch <- res
 		}); err != nil {
 			ch <- gin.H{"error": err.Error()}
 		}
@@ -1581,12 +1625,18 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 	if req.Stream != nil && !*req.Stream {
 		var resp api.ChatResponse
-		var sb strings.Builder
+		var toolCalls []api.ToolCall
+		var sbThinking strings.Builder
+		var sbContent strings.Builder
 		for rr := range ch {
 			switch t := rr.(type) {
 			case api.ChatResponse:
-				sb.WriteString(t.Message.Content)
+				sbThinking.WriteString(t.Message.Thinking)
+				sbContent.WriteString(t.Message.Content)
 				resp = t
+				if len(req.Tools) > 0 {
+					toolCalls = append(toolCalls, t.Message.ToolCalls...)
+				}
 			case gin.H:
 				msg, ok := t["error"].(string)
 				if !ok {
@@ -1601,13 +1651,11 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 		}
 
-		resp.Message.Content = sb.String()
+		resp.Message.Content = sbContent.String()
+		resp.Message.Thinking = sbThinking.String()
 
-		if len(req.Tools) > 0 {
-			if toolCalls, ok := m.parseToolCalls(sb.String()); ok {
-				resp.Message.ToolCalls = toolCalls
-				resp.Message.Content = ""
-			}
+		if len(toolCalls) > 0 {
+			resp.Message.ToolCalls = toolCalls
 		}
 
 		c.JSON(http.StatusOK, resp)
@@ -1632,8 +1680,6 @@ func handleScheduleError(c *gin.Context, name string, err error) {
 	}
 }
 
-var thinkTagRegexp = regexp.MustCompile(`<think>(?s).*?</think>(\n)*`)
-
 func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
 	if m.Config.ModelFamily == "qwen3" || model.ParseName(m.Name).Model == "deepseek-r1" {
 		finalUserIndex := -1
@@ -1645,7 +1691,17 @@ func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
 
 		for i, msg := range msgs {
 			if msg.Role == "assistant" && i < finalUserIndex {
-				msgs[i].Content = thinkTagRegexp.ReplaceAllString(msg.Content, "")
+				// TODO(drifkin): this is from before we added proper thinking support.
+				// However, even if thinking is not enabled (and therefore we shouldn't
+				// change the user output), we should probably perform this filtering
+				// for all thinking models (not just qwen3 & deepseek-r1) since it tends
+				// to save tokens and improve quality.
+				thinkingState := &thinking.Parser{
+					OpeningTag: "<think>",
+					ClosingTag: "</think>",
+				}
+				_, content := thinkingState.AddContent(msg.Content)
+				msgs[i].Content = content
 			}
 		}
 	}
