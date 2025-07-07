@@ -139,6 +139,13 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		gpus = discover.GetCPUInfo()
 	}
 
+	// Verify the requested context size is <= the model training size
+	trainCtx := f.KV().ContextLength()
+	if opts.NumCtx/numParallel > int(trainCtx) && trainCtx > 0 {
+		slog.Warn("requested context size too large for model", "num_ctx", opts.NumCtx, "num_parallel", numParallel, "n_ctx_train", trainCtx)
+		opts.NumCtx = int(trainCtx) * numParallel
+	}
+
 	estimate := EstimateGPULayers(gpus, f, projectors, opts, numParallel)
 	if len(gpus) > 1 || gpus[0].Library != "cpu" {
 		switch {
@@ -311,7 +318,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		params = append(params, "--mmproj", projectors[0])
 	}
 
-	// iterate through compatible GPU libraries such as 'cuda_v12', 'cuda_v11', 'rocm', etc.
+	// iterate through compatible GPU libraries such as 'cuda_v12', 'rocm', etc.
 	// adding each library's respective path to the LD_LIBRARY_PATH, until finally running
 	// without any LD_LIBRARY_PATH flags
 	for {
@@ -797,7 +804,8 @@ func (s *llmServer) Completion(ctx context.Context, req CompletionRequest, fn fu
 
 	res, err := http.DefaultClient.Do(serverReq)
 	if err != nil {
-		return fmt.Errorf("POST predict: %v", err)
+		slog.Error("post predict", "error", err)
+		return errors.New("model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check ollama server logs for details")
 	}
 	defer res.Body.Close()
 

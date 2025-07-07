@@ -35,6 +35,7 @@
 #include "ggml-cuda/ssm-scan.cuh"
 #include "ggml-cuda/sum.cuh"
 #include "ggml-cuda/sumrows.cuh"
+#include "ggml-cuda/mean.cuh"
 #include "ggml-cuda/tsembd.cuh"
 #include "ggml-cuda/unary.cuh"
 #include "ggml-cuda/upscale.cuh"
@@ -2322,6 +2323,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
         case GGML_OP_SUM_ROWS:
             ggml_cuda_op_sum_rows(ctx, dst);
             break;
+        case GGML_OP_MEAN:
+            ggml_cuda_op_mean(ctx, dst);
+            break;
         case GGML_OP_SSM_CONV:
             ggml_cuda_op_ssm_conv(ctx, dst);
             break;
@@ -2884,6 +2888,7 @@ struct ggml_backend_cuda_device_context {
     int device;
     std::string name;
     std::string description;
+    std::string uuid;
 };
 
 static const char * ggml_backend_cuda_device_get_name(ggml_backend_dev_t dev) {
@@ -2894,6 +2899,11 @@ static const char * ggml_backend_cuda_device_get_name(ggml_backend_dev_t dev) {
 static const char * ggml_backend_cuda_device_get_description(ggml_backend_dev_t dev) {
     ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
     return ctx->description.c_str();
+}
+
+static const char * ggml_backend_cuda_device_get_uuid(ggml_backend_dev_t dev) {
+    ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
+    return ctx->uuid.c_str();
 }
 
 static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total) {
@@ -2910,6 +2920,7 @@ static enum ggml_backend_dev_type ggml_backend_cuda_device_get_type(ggml_backend
 static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
     props->name        = ggml_backend_cuda_device_get_name(dev);
     props->description = ggml_backend_cuda_device_get_description(dev);
+    props->uuid        = ggml_backend_cuda_device_get_uuid(dev);
     props->type        = ggml_backend_cuda_device_get_type(dev);
     ggml_backend_cuda_device_get_memory(dev, &props->memory_free, &props->memory_total);
 
@@ -3204,6 +3215,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
         case GGML_OP_POOL_2D:
         case GGML_OP_SUM:
         case GGML_OP_SUM_ROWS:
+        case GGML_OP_MEAN:
         case GGML_OP_ARGSORT:
         case GGML_OP_ACC:
             return true;
@@ -3457,6 +3469,32 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
                 cudaDeviceProp prop;
                 CUDA_CHECK(cudaGetDeviceProperties(&prop, i));
                 dev_ctx->description = prop.name;
+
+                #if !defined(GGML_USE_HIP)
+                char uuid[64];
+                snprintf(uuid, sizeof(uuid),
+                    "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+                    (unsigned char)prop.uuid.bytes[0],
+                    (unsigned char)prop.uuid.bytes[1],
+                    (unsigned char)prop.uuid.bytes[2],
+                    (unsigned char)prop.uuid.bytes[3],
+                    (unsigned char)prop.uuid.bytes[4],
+                    (unsigned char)prop.uuid.bytes[5],
+                    (unsigned char)prop.uuid.bytes[6],
+                    (unsigned char)prop.uuid.bytes[7],
+                    (unsigned char)prop.uuid.bytes[8],
+                    (unsigned char)prop.uuid.bytes[9],
+                    (unsigned char)prop.uuid.bytes[10],
+                    (unsigned char)prop.uuid.bytes[11],
+                    (unsigned char)prop.uuid.bytes[12],
+                    (unsigned char)prop.uuid.bytes[13],
+                    (unsigned char)prop.uuid.bytes[14],
+                    (unsigned char)prop.uuid.bytes[15]
+                  );
+                dev_ctx->uuid = uuid;
+                #else
+                dev_ctx->uuid = "GPU-" + std::string(prop.uuid.bytes, 16);
+                #endif
 
                 ggml_backend_dev_t dev = new ggml_backend_device {
                     /* .iface   = */ ggml_backend_cuda_device_interface,
