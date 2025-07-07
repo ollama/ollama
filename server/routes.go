@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1575,11 +1574,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					res.Message.Content = content
 				} else if len(toolCalls) > 0 {
 					res.Message.ToolCalls = toolCalls
-					for i := range toolCalls {
-						// Create a hash of the function arguments
-						argHash := sha256.Sum256([]byte(toolCalls[i].Function.Arguments.String()))
-						toolCalls[i].ID = fmt.Sprintf("%s_%x", toolCalls[i].Function.Name, argHash[:4])
-					}
 					res.Message.Content = ""
 				} else if res.Message.Thinking != "" {
 					// don't return

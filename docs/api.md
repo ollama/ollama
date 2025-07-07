@@ -500,7 +500,6 @@ The `message` object has the following fields:
 - `thinking`: (for thinking models) the model's thinking process
 - `images` (optional): a list of images to include in the message (for multimodal models such as `llava`)
 - `tool_calls` (optional): a list of tools in JSON that the model wants to use
-- `tool_call_id` (optional): the ID of the tool call
 
 Advanced parameters (optional):
 
@@ -632,7 +631,6 @@ A stream of JSON objects is returned:
                         "city": "Tokyo"
                     }
                 },
-                "tool_call_id": "get_weather_40ed420b"
             }
         ]
     },
@@ -752,7 +750,6 @@ curl http://localhost:11434/api/chat -d '{
             "city": "Tokyo"
           }
         },
-        "tool_call_id": "get_weather_40ed420b"
       }
     ]
   },
@@ -898,7 +895,6 @@ curl http://localhost:11434/api/chat -d '{
               "city": "Toronto"
             }
           },
-          "tool_call_id": "get_temperature_f5d10bf3"
         }
       ]
     },
@@ -907,7 +903,6 @@ curl http://localhost:11434/api/chat -d '{
       "role": "tool",
       "content": "11 degrees celsius",
       "tool_name": "get_temperature",
-      "tool_call_id": "get_temperature_f5d10bf3"
     }
   ],
   "stream": false,

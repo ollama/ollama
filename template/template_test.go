@@ -400,12 +400,12 @@ func TestCollate(t *testing.T) {
 		{
 			name: "consecutive tool messages are NOT merged",
 			msgs: []api.Message{
-				{Role: "tool", Content: "sunny", ToolResult: api.ToolResult{ToolName: "get_weather"}},
-				{Role: "tool", Content: "72F", ToolResult: api.ToolResult{ToolName: "get_temperature"}},
+				{Role: "tool", Content: "sunny", ToolName: "get_weather"},
+				{Role: "tool", Content: "72F", ToolName: "get_temperature"},
 			},
 			expected: []*api.Message{
-				{Role: "tool", Content: "sunny", ToolResult: api.ToolResult{ToolName: "get_weather"}},
-				{Role: "tool", Content: "72F", ToolResult: api.ToolResult{ToolName: "get_temperature"}},
+				{Role: "tool", Content: "sunny", ToolName: "get_weather"},
+				{Role: "tool", Content: "72F", ToolName: "get_temperature"},
 			},
 			system: "",
 		},
@@ -413,13 +413,13 @@ func TestCollate(t *testing.T) {
 			name: "tool messages preserve all fields",
 			msgs: []api.Message{
 				{Role: "user", Content: "What's the weather?"},
-				{Role: "tool", Content: "sunny", ToolResult: api.ToolResult{ToolName: "get_conditions", ID: "123"}},
-				{Role: "tool", Content: "72F", ToolResult: api.ToolResult{ToolName: "get_temperature", ID: "456"}},
+				{Role: "tool", Content: "sunny", ToolName: "get_conditions"},
+				{Role: "tool", Content: "72F", ToolName: "get_temperature"},
 			},
 			expected: []*api.Message{
 				{Role: "user", Content: "What's the weather?"},
-				{Role: "tool", Content: "sunny", ToolResult: api.ToolResult{ToolName: "get_conditions", ID: "123"}},
-				{Role: "tool", Content: "72F", ToolResult: api.ToolResult{ToolName: "get_temperature", ID: "456"}},
+				{Role: "tool", Content: "sunny", ToolName: "get_conditions"},
+				{Role: "tool", Content: "72F", ToolName: "get_temperature"},
 			},
 			system: "",
 		},
@@ -430,8 +430,8 @@ func TestCollate(t *testing.T) {
 				{Role: "user", Content: "Hello"},
 				{Role: "assistant", Content: "Hi there!"},
 				{Role: "user", Content: "What's the weather?"},
-				{Role: "tool", Content: "sunny", ToolResult: api.ToolResult{ToolName: "get_weather"}},
-				{Role: "tool", Content: "72F", ToolResult: api.ToolResult{ToolName: "get_temperature"}},
+				{Role: "tool", Content: "sunny", ToolName: "get_weather"},
+				{Role: "tool", Content: "72F", ToolName: "get_temperature"},
 				{Role: "user", Content: "Thanks"},
 			},
 			expected: []*api.Message{
@@ -439,8 +439,8 @@ func TestCollate(t *testing.T) {
 				{Role: "user", Content: "Hello"},
 				{Role: "assistant", Content: "Hi there!"},
 				{Role: "user", Content: "What's the weather?"},
-				{Role: "tool", Content: "sunny", ToolResult: api.ToolResult{ToolName: "get_weather"}},
-				{Role: "tool", Content: "72F", ToolResult: api.ToolResult{ToolName: "get_temperature"}},
+				{Role: "tool", Content: "sunny", ToolName: "get_weather"},
+				{Role: "tool", Content: "72F", ToolName: "get_temperature"},
 				{Role: "user", Content: "Thanks"},
 			},
 			system: "You are helpful",
@@ -467,11 +467,8 @@ func TestCollate(t *testing.T) {
 				if collated[i].Content != tt.expected[i].Content {
 					t.Errorf("message %d content mismatch: got %q, want %q", i, collated[i].Content, tt.expected[i].Content)
 				}
-				if collated[i].ToolResult.ToolName != tt.expected[i].ToolResult.ToolName {
-					t.Errorf("message %d tool name mismatch: got %q, want %q", i, collated[i].ToolResult.ToolName, tt.expected[i].ToolResult.ToolName)
-				}
-				if collated[i].ToolResult.ID != tt.expected[i].ToolResult.ID {
-					t.Errorf("message %d tool ID mismatch: got %q, want %q", i, collated[i].ToolResult.ID, tt.expected[i].ToolResult.ID)
+				if collated[i].ToolName != tt.expected[i].ToolName {
+					t.Errorf("message %d tool name mismatch: got %q, want %q", i, collated[i].ToolName, tt.expected[i].ToolName)
 				}
 			}
 		})
