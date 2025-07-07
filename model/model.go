@@ -76,17 +76,17 @@ type MultimodalProcessor interface {
 	// Returns: encoded multimodal data and any error
 	EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input.Multimodal, error)
 
-	// EncodeMultimodal encodes multimodal input for model consumption
+	// LegacyEncodeMultimodal encodes multimodal input for model consumption
 	// Deprecated: Use EncodeMultimodal(ctx, data) instead
-	EncodeMultimodal(input any) ([]int, error)
+	LegacyEncodeMultimodal(input any) ([]int, error)
 
 	// PostTokenize performs post-processing on tokenized inputs
 	// Returns: processed inputs and any error
 	PostTokenize(inputs []input.Input) ([]input.Input, error)
 
-	// PostTokenize performs post-processing on tokenized inputs
+	// LegacyPostTokenize performs post-processing on tokenized inputs
 	// Deprecated: Use PostTokenize([]input.Input) instead
-	PostTokenize(tokens []int) ([]int, error)
+	LegacyPostTokenize(tokens []int) ([]int, error)
 }
 
 // ModelName returns the default model name

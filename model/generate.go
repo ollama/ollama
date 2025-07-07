@@ -21,6 +21,5 @@ func Generate(ctx context.Context, m Model, prompt, suffix, format string, optio
 		return "", err
 	}
 
-	// ...existing code...
 	return "", nil // placeholder, replace with actual implementation
 }
