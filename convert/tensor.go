@@ -2,7 +2,9 @@ package convert
 
 import (
 	"cmp"
+	"io"
 	"iter"
+	"path"
 	"slices"
 	"strings"
 
@@ -73,4 +75,55 @@ func splitDim(t Tensor, dim int, splits ...split) iter.Seq[*ggml.Tensor] {
 			}
 		}
 	}
+}
+
+type merge struct {
+	pattern, name string
+}
+
+// mergeTensors merges tensors that match a given pattern into a single tensor.
+func mergeTensors(unmatched []Tensor, merges ...merge) (out []*ggml.Tensor, _ []Tensor) {
+	var matched []Tensor
+	for i := range merges {
+		matched, unmatched = slicesSplitFunc(unmatched, func(t Tensor) bool {
+			matched, _ := path.Match(merges[i].pattern, t.Name())
+			return matched
+		})
+
+		if len(matched) > 0 {
+			out = append(out, &ggml.Tensor{
+				Name:     merges[i].name,
+				Kind:     matched[0].Kind(),
+				Shape:    append([]uint64{uint64(len(matched))}, matched[0].Shape()...),
+				WriterTo: mergeGroup(matched),
+			})
+		}
+	}
+
+	return out, unmatched
+}
+
+// slicesSplitFunc splits a slice into two slices based on a predicate function.
+func slicesSplitFunc[S ~[]E, E comparable](s S, fn func(e E) bool) (matched, unmatched S) {
+	for _, e := range s {
+		if fn(e) {
+			matched = append(matched, e)
+		} else {
+			unmatched = append(unmatched, e)
+		}
+	}
+
+	return matched, unmatched
+}
+
+type mergeGroup []Tensor
+
+func (g mergeGroup) WriteTo(w io.Writer) (int64, error) {
+	for _, t := range g {
+		if _, err := t.WriteTo(w); err != nil {
+			return 0, err
+		}
+	}
+
+	return 0, nil
 }
