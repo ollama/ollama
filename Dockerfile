@@ -3,8 +3,8 @@
 ARG FLAVOR=${TARGETARCH}
 
 ARG ROCMVERSION=6.3.3
-ARG JETPACK5VERSION=r35.4.1
-ARG JETPACK6VERSION=r36.4.3
+ARG JETPACK5VERSION=r35.6.2
+ARG JETPACK6VERSION=r36.4.4
 ARG CMAKEVERSION=3.31.2
 
 # We require gcc v10 minimum.  v10.3 has regressions, so the rockylinux 8.5 AppStream has the latest compatible version
