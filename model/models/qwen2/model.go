@@ -14,6 +14,41 @@ import (
 	"github.com/ollama/ollama/model/input"
 )
 
+// DEFAULT_TEMPLATE is the default template for Qwen2 model
+const DEFAULT_TEMPLATE = "<|im_start|>system\n{{ .System }}<|im_end|>\n{{range $message := .Messages}}{{if eq $message.Role \"user\"}}<|im_start|>user\n{{$message.Content}}<|im_end|>{{else if eq $message.Role \"assistant\"}}<|im_start|>assistant\n{{$message.Content}}<|im_end|>{{end}}{{end}}{{if .PreferredGeneration }}<|im_start|>assistant\n{{end}}"
+
+// Qwen2 represents the Qwen2 model
+type Qwen2 struct {
+	model.Base
+}
+
+// Family returns the model family of Qwen2
+func (q *Qwen2) Family() string {
+	return "qwen2"
+}
+
+// Name returns the name of the model
+func (q *Qwen2) Name() string {
+	return "qwen2"
+}
+
+// ModelName returns the full model name
+func (q *Qwen2) ModelName() string {
+	return "qwen2"
+}
+
+// Forward implements the Model interface
+func (q *Qwen2) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
+	// This is a placeholder implementation
+	// Replace with actual implementation
+	return nil, nil
+}
+
+// SetBiasAdapters implements the Model interface
+func (q *Qwen2) SetBiasAdapters(options map[string]interface{}) error {
+	return nil // Default implementation
+}
+
 type Options struct {
 	hiddenSize, numHeads, numKVHeads int
 	headDim, ropeDim                 int
@@ -27,7 +62,7 @@ type Attention struct {
 	Output *nn.Linear `gguf:"attn_output"`
 }
 
-func (attn Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
+func (attn *Attention) Forward(ctx ml.Context, hiddenStates, positions ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
 	batchSize := hiddenStates.Dim(1)
 	headDim := cmp.Or(opts.headDim, opts.hiddenSize/opts.numHeads)
 	ropeDim := cmp.Or(opts.ropeDim, headDim)
@@ -56,7 +91,7 @@ type MLP struct {
 	Down *nn.Linear `gguf:"ffn_down"`
 }
 
-func (mlp MLP) Forward(ctx ml.Context, hiddenStates ml.Tensor) ml.Tensor {
+func (mlp *MLP) Forward(ctx ml.Context, hiddenStates ml.Tensor) ml.Tensor {
 	hiddenStates = mlp.Gate.Forward(ctx, hiddenStates).SILU(ctx).Mul(ctx, mlp.Up.Forward(ctx, hiddenStates))
 	return mlp.Down.Forward(ctx, hiddenStates)
 }
@@ -68,7 +103,7 @@ type DecoderLayer struct {
 	MLP           *MLP
 }
 
-func (d DecoderLayer) Forward(ctx ml.Context, hiddenStates, positions, outputs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
+func (d *DecoderLayer) Forward(ctx ml.Context, hiddenStates, positions, outputs ml.Tensor, cache kvcache.Cache, opts *Options) ml.Tensor {
 	residual := hiddenStates
 
 	hiddenStates = d.AttentionNorm.Forward(ctx, hiddenStates, opts.eps)
@@ -99,7 +134,7 @@ type Model struct {
 }
 
 // Forward implements model.Model.
-func (m Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
+func (m *Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	positions := ctx.Input().FromIntSlice(batch.Positions, len(batch.Positions))
 
 	hiddenStates := m.TokenEmbedding.Forward(ctx, batch.Inputs)
@@ -120,7 +155,7 @@ func (m Model) Forward(ctx ml.Context, batch input.Batch) (ml.Tensor, error) {
 	return hiddenStates, nil
 }
 
-func (m Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
+func (m *Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor, error) {
 	ropeDim := cmp.Or(m.ropeDim, m.hiddenSize/m.numHeads)
 	return fast.RoPE(ctx, key, shift, ropeDim, m.ropeBase, m.ropeScale, rope.WithTypeNeoX()), nil
 }

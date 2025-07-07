@@ -1,5 +1,12 @@
+package model
+
+import (
+	"context"
+	"strings"
+)
+
 // Process a prompt along with optional suffix for FIM and format type.
-func (m *Model) Generate(ctx context.Context, prompt, suffix, format string, options map[string]interface{}) (string, error) {
+func Generate(ctx context.Context, m Model, prompt, suffix, format string, options map[string]interface{}) (string, error) {
 	if prompt == "" {
 		return "", nil
 	}
@@ -10,6 +17,10 @@ func (m *Model) Generate(ctx context.Context, prompt, suffix, format string, opt
 	}
 
 	// Apply bias adapters
-	if err := m.setBiasAdapters(options); err != nil {
+	if err := m.SetBiasAdapters(options); err != nil {
 		return "", err
 	}
+
+	// ...existing code...
+	return "", nil // placeholder, replace with actual implementation
+}

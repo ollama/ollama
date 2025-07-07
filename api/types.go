@@ -379,6 +379,7 @@ type DeleteRequest struct {
 type ShowRequest struct {
 	Model  string `json:"model"`
 	System string `json:"system"`
+	Suffix string `json:"suffix"`
 
 	// Template is deprecated
 	Template string `json:"template"`

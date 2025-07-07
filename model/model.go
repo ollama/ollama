@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
 	_ "image/jpeg"
 	_ "image/png"
 	"log/slog"
@@ -30,41 +31,20 @@ var ErrNoVisionModel = errors.New("this model is missing data required for image
 // Model implements a specific model architecture, defining the forward pass and any model-specific configuration
 type Model interface {
 	Forward(ml.Context, input.Batch) (ml.Tensor, error)
-
 	Backend() ml.Backend
 	Config() config
-}
 
-// MultimodalProcessor must be implemented by multimodal models.
-type MultimodalProcessor interface {
-	// EncodeMultimodal processes a single input (such as an image) and
-	// generates an output (typically an embedding) that can be used by the model.
-	//
-	// The return value is one or more tensors, each with optional model-specific
-	// opaque metadata. Typically, the tensors might be views into an embedding
-	// with each view representing a chunk of data that can be processed independently
-	// in different batches.
-	//
-	// The result may be cached by the runner.
-	EncodeMultimodal(ml.Context, []byte) ([]input.Multimodal, error)
+	// ModelName returns the name of the model
+	ModelName() string
 
-	// PostTokenize is called after tokenization to allow the model to edit the
-	// input stream to correctly arrange multimodal elements.
-	//
-	// The input is a slice of tokens with the results of EncodeMultimodal interleaved
-	// in the order that the user provided them. Each element of the slice will be
-	// either a single token or single multimodal object.
-	//
-	// The model must ensure that inputs are stored according to how they will be
-	// processed and stored in the cache. For example, Llava-style models should insert
-	// placeholder tokens equal to the feature size of the corresponding image with
-	// the image itself attached to and split across these tokens. When Forward is called
-	// a partial subset of these tokens may be submitted according to the batch size.
-	//
-	// This function is also responsible for updating MultimodalHash for any Multimodal
-	// that is modified to ensure that there is a unique hash value that accurately
-	// represents the contents.
-	PostTokenize([]input.Input) ([]input.Input, error)
+	// SetBiasAdapters applies bias adapters from options
+	SetBiasAdapters(options map[string]interface{}) error
+
+	// Family returns the model family
+	Family() string
+
+	// Name returns the specific model name
+	Name() string
 }
 
 // Base implements the common fields and methods for all models
@@ -84,6 +64,50 @@ func (m *Base) Backend() ml.Backend {
 
 func (m *Base) Config() config {
 	return m.config
+}
+
+// MultimodalProcessor represents a processor for multimodal inputs
+type MultimodalProcessor interface {
+	// ProcessImage processes an image for model consumption
+	// Returns: normalized image data, image dimensions, and any error
+	ProcessImage(image []byte) ([]float32, image.Point, error)
+
+	// EncodeMultimodal encodes image data for model consumption
+	// Returns: encoded multimodal data and any error
+	EncodeMultimodal(ctx ml.Context, multimodalData []byte) ([]input.Multimodal, error)
+
+	// EncodeMultimodal encodes multimodal input for model consumption
+	// Deprecated: Use EncodeMultimodal(ctx, data) instead
+	EncodeMultimodal(input any) ([]int, error)
+
+	// PostTokenize performs post-processing on tokenized inputs
+	// Returns: processed inputs and any error
+	PostTokenize(inputs []input.Input) ([]input.Input, error)
+
+	// PostTokenize performs post-processing on tokenized inputs
+	// Deprecated: Use PostTokenize([]input.Input) instead
+	PostTokenize(tokens []int) ([]int, error)
+}
+
+// ModelName returns the default model name
+func (m *Base) ModelName() string {
+	return "base"
+}
+
+// SetBiasAdapters is a default implementation that does nothing
+func (m *Base) SetBiasAdapters(options map[string]interface{}) error {
+	// Default implementation does nothing
+	return nil
+}
+
+// Family returns the default family name
+func (m *Base) Family() string {
+	return "base"
+}
+
+// Name returns the default name
+func (m *Base) Name() string {
+	return "base"
 }
 
 var models = make(map[string]func(fs.Config) (Model, error))
