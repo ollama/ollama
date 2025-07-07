@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/fs"
 	"net"
@@ -79,7 +78,12 @@ func newTestServer(t *testing.T, upstreamRegistry http.HandlerFunc) *Local {
 
 func (s *Local) send(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
+	ctx := ollama.WithTrace(t.Context(), &ollama.Trace{
+		Update: func(l *ollama.Layer, n int64, err error) {
+			t.Logf("update: %s %d %v", l.Digest, n, err)
+		},
+	})
+	req := httptest.NewRequestWithContext(ctx, method, path, strings.NewReader(body))
 	return s.sendRequest(t, req)
 }
 
@@ -160,7 +164,6 @@ var registryFS = sync.OnceValue(func() fs.FS {
 	// to \n when parsing the txtar on Windows.
 	data := bytes.ReplaceAll(registryTXT, []byte("\r\n"), []byte("\n"))
 	a := txtar.Parse(data)
-	fmt.Printf("%q\n", a.Comment)
 	fsys, err := txtar.FS(a)
 	if err != nil {
 		panic(err)
@@ -179,54 +182,46 @@ func TestServerPull(t *testing.T) {
 			w.WriteHeader(404)
 			io.WriteString(w, `{"errors": [{"code": "MANIFEST_UNKNOWN", "message": "manifest unknown"}]}`)
 		default:
-			t.Logf("serving file: %s", r.URL.Path)
+			t.Logf("serving blob: %s", r.URL.Path)
 			modelsHandler.ServeHTTP(w, r)
 		}
 	})
 
 	checkResponse := func(got *httptest.ResponseRecorder, wantlines string) {
 		t.Helper()
-
 		if got.Code != 200 {
-			t.Fatalf("Code = %d; want 200", got.Code)
+			t.Errorf("Code = %d; want 200", got.Code)
 		}
 		gotlines := got.Body.String()
+		if strings.TrimSpace(gotlines) == "" {
+			gotlines = "<empty>"
+		}
 		t.Logf("got:\n%s", gotlines)
 		for want := range strings.Lines(wantlines) {
 			want = strings.TrimSpace(want)
 			want, unwanted := strings.CutPrefix(want, "!")
 			want = strings.TrimSpace(want)
 			if !unwanted && !strings.Contains(gotlines, want) {
-				t.Fatalf("! missing %q in body", want)
+				t.Errorf("\t! missing %q in body", want)
 			}
 			if unwanted && strings.Contains(gotlines, want) {
-				t.Fatalf("! unexpected %q in body", want)
+				t.Errorf("\t! unexpected %q in body", want)
 			}
 		}
 	}
 
-	got := s.send(t, "POST", "/api/pull", `{"model": "BOOM"}`)
+	got := s.send(t, "POST", "/api/pull", `{"model": "smol"}`)
 	checkResponse(got, `
 		{"status":"pulling manifest"}
-		{"status":"error: request error https://example.com/v2/library/BOOM/manifests/latest: registry responded with status 999: boom"}
-	`)
-
-	got = s.send(t, "POST", "/api/pull", `{"model": "smol"}`)
-	checkResponse(got, `
-		{"status":"pulling manifest"}
-		{"status":"pulling","digest":"sha256:68e0ec597aee59d35f8dc44942d7b17d471ade10d3aca07a5bb7177713950312","total":5}
-		{"status":"pulling","digest":"sha256:ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356","total":3}
-		{"status":"pulling","digest":"sha256:68e0ec597aee59d35f8dc44942d7b17d471ade10d3aca07a5bb7177713950312","total":5,"completed":5}
-		{"status":"pulling","digest":"sha256:ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356","total":3,"completed":3}
-		{"status":"verifying layers"}
+		{"digest":"sha256:68e0ec597aee59d35f8dc44942d7b17d471ade10d3aca07a5bb7177713950312","total":5,"completed":5}
+		{"status":"verifying sha256 digest"}
 		{"status":"writing manifest"}
 		{"status":"success"}
 	`)
 
 	got = s.send(t, "POST", "/api/pull", `{"model": "unknown"}`)
 	checkResponse(got, `
-		{"status":"pulling manifest"}
-		{"status":"error: model \"unknown\" not found"}
+		{"code":"not_found","error":"model \"unknown\" not found"}
 	`)
 
 	got = s.send(t, "DELETE", "/api/pull", `{"model": "smol"}`)
@@ -240,19 +235,39 @@ func TestServerPull(t *testing.T) {
 
 	got = s.send(t, "POST", "/api/pull", `{"model": "://"}`)
 	checkResponse(got, `
-		{"status":"pulling manifest"}
-		{"status":"error: invalid or missing name: \"\""}
-
-		!verifying
-		!writing
-		!success
+		{"code":"bad_request","error":"invalid or missing name: \"\""}
 	`)
+
+	// Non-streaming pulls
+	got = s.send(t, "POST", "/api/pull", `{"model": "://", "stream": false}`)
+	checkErrorResponse(t, got, 400, "bad_request", "invalid or missing name")
+	got = s.send(t, "POST", "/api/pull", `{"model": "smol", "stream": false}`)
+	checkResponse(got, `
+		{"status":"success"}
+		!digest
+		!total
+		!completed
+	`)
+	got = s.send(t, "POST", "/api/pull", `{"model": "unknown", "stream": false}`)
+	checkErrorResponse(t, got, 404, "not_found", "model not found")
 }
 
 func TestServerUnknownPath(t *testing.T) {
 	s := newTestServer(t, nil)
 	got := s.send(t, "DELETE", "/api/unknown", `{}`)
 	checkErrorResponse(t, got, 404, "not_found", "not found")
+
+	var fellback bool
+	s.Fallback = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fellback = true
+	})
+	got = s.send(t, "DELETE", "/api/unknown", `{}`)
+	if !fellback {
+		t.Fatal("expected Fallback to be called")
+	}
+	if got.Code != 200 {
+		t.Fatalf("Code = %d; want 200", got.Code)
+	}
 }
 
 func checkErrorResponse(t *testing.T, got *httptest.ResponseRecorder, status int, code, msg string) {

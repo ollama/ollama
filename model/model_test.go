@@ -7,7 +7,8 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	fs "github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs"
+	fsggml "github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/ml/backend/ggml"
 	"github.com/ollama/ollama/ml/nn"
@@ -139,7 +140,7 @@ func TestPopulateFieldsAlternateName(t *testing.T) {
 }
 
 func TestGetTextProcessor(t *testing.T) {
-	tp, err := getTextProcessor(fs.KV{})
+	tp, err := getTextProcessor(fsggml.KV{})
 	if err == nil {
 		t.Error("expected error")
 	} else if !strings.Contains(err.Error(), "unsupported model architecture") {
@@ -148,10 +149,10 @@ func TestGetTextProcessor(t *testing.T) {
 		t.Error("expected nil tp")
 	}
 
-	models["dummy"] = func(ml.Config) (Model, error) {
+	models["dummy"] = func(fs.Config) (Model, error) {
 		return notTextProcessorModel{}, nil
 	}
-	tp, err = getTextProcessor(fs.KV{"general.architecture": "dummy"})
+	tp, err = getTextProcessor(fsggml.KV{"general.architecture": "dummy"})
 	if err == nil {
 		t.Error("expected error")
 	} else if !strings.Contains(err.Error(), "not a TextProcessor") {
@@ -163,7 +164,7 @@ func TestGetTextProcessor(t *testing.T) {
 
 type notTextProcessorModel struct{}
 
-func (notTextProcessorModel) Forward(ml.Context, input.Options) (ml.Tensor, error) {
+func (notTextProcessorModel) Forward(ml.Context, input.Batch) (ml.Tensor, error) {
 	panic("unimplemented")
 }
 

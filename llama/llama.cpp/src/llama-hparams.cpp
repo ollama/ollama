@@ -2,8 +2,6 @@
 
 #include "ggml.h"
 
-#include <algorithm>
-
 uint32_t llama_hparams::n_head(uint32_t il) const {
     if (il < n_layer) {
         return n_head_arr[il];
@@ -80,6 +78,10 @@ bool llama_hparams::n_bskcn(uint32_t n, uint32_t il) const {
     GGML_ABORT("fatal error");
 }
 
-bool llama_hparams::cross_attention_layers(uint32_t il) const {
-    return std::find(cross_attn_layers.begin(), cross_attn_layers.end(), il) != cross_attn_layers.end();
+bool llama_hparams::is_swa(uint32_t il) const {
+    if (il < n_layer) {
+        return n_swa > 0 && n_swa_pattern > 0 && il % n_swa_pattern < (n_swa_pattern - 1);
+    }
+
+    GGML_ABORT("fatal error");
 }

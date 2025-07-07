@@ -55,6 +55,7 @@
 
 #include <atomic>
 #include <array>
+#include <type_traits>
 
 #ifdef _MSC_VER
 #define NOINLINE __declspec(noinline)
@@ -1054,6 +1055,493 @@ class tinyBLAS_Q0_AVX {
    } \
 
 template <typename TA, typename TB, typename TC>
+class tinyBLAS_BF16_PPC {
+  public:
+    tinyBLAS_BF16_PPC(int64_t k,
+                const TA *A, int64_t lda,
+                const TB *B, int64_t ldb,
+                TC *C, int64_t ldc,
+                int ith, int nth)
+        : A(A), B(B), C(C), k(k), lda(lda), ldb(ldb), ldc(ldc), ith(ith), nth(nth) {
+    }
+
+    void matmul(int64_t m, int64_t n) {
+        mnpack(0, m, 0, n);
+    }
+
+  private:
+    void vector_permute_store(vec_t *c, int numVec, unsigned char *vecOffset) {
+        vec_t t[8], s[8];
+        vec_t swiz1 = {0, 1, 2, 3, 16, 17, 18, 19, 4, 5, 6, 7, 20, 21, 22, 23};
+        vec_t swiz2 = {8, 9, 10, 11, 24, 25, 26, 27, 12, 13, 14, 15, 28, 29, 30, 31};
+        vec_t swiz3 = {0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23};
+        vec_t swiz4 = {8, 9, 10, 11, 12, 13, 14, 15, 24, 25, 26, 27, 28, 29, 30, 31};
+
+        if (numVec == 2) {
+            t[0] = vec_perm(c[0], c[1], swiz1);
+            t[1] = vec_perm(c[2], c[3], swiz1);
+            s[0] = vec_perm(t[0], t[1], swiz3);
+            s[1] = vec_perm(t[0], t[1], swiz4);
+            vec_xst(s[0], 0, (vec_t*)vecOffset);
+            vec_xst(s[1], 0, (vec_t*)(vecOffset + 16));
+        } else if (numVec == 4) {
+            t[0] = vec_perm(c[0], c[1], swiz1);
+            t[1] = vec_perm(c[0], c[1], swiz2);
+            t[2] = vec_perm(c[2], c[3], swiz1);
+            t[3] = vec_perm(c[2], c[3], swiz2);
+            s[0] = vec_perm(t[0], t[2], swiz3);
+            s[1] = vec_perm(t[0], t[2], swiz4);
+            s[2] = vec_perm(t[1], t[3], swiz3);
+            s[3] = vec_perm(t[1], t[3], swiz4);
+            for (int i = 0; i < 4; ++i)
+                vec_xst(s[i], 0, (vec_t*)(vecOffset + i * 16));
+        } else if (numVec == 8) {
+            for (int i = 0; i < 4; i += 2) {
+                t[i+0] = vec_perm(c[i+0], c[i+1], swiz1);
+                t[i+1] = vec_perm(c[i+0], c[i+1], swiz2);
+            }
+            for (int i = 4; i < 8; i += 2) {
+                t[i+0] = vec_perm(c[i+0], c[i+1], swiz1);
+                t[i+1] = vec_perm(c[i+0], c[i+1], swiz2);
+            }
+            s[0] = vec_perm(t[0], t[2], swiz3);
+            s[1] = vec_perm(t[0], t[2], swiz4);
+            s[2] = vec_perm(t[1], t[3], swiz3);
+            s[3] = vec_perm(t[1], t[3], swiz4);
+            s[4] = vec_perm(t[4], t[6], swiz3);
+            s[5] = vec_perm(t[4], t[6], swiz4);
+            s[6] = vec_perm(t[5], t[7], swiz3);
+            s[7] = vec_perm(t[5], t[7], swiz4);
+            for (int i = 0; i < 8; ++i)
+                vec_xst(s[i], 0, (vec_t*)(vecOffset + i * 16));
+        }
+    }
+
+    void packNormal(const TA* a, int64_t lda, int rows, int cols, unsigned char* vec) {
+        int64_t i, j;
+        TA *aoffset = NULL;
+        unsigned char *vecOffset = NULL;
+        TA * aoffsets[8];
+        vector unsigned char c_arr[8];
+        aoffset = const_cast<TA*>(a);
+        vecOffset = vec;
+        j = (rows >> 3);
+        if (j > 0) {
+            do {
+                if (cols == 4) {
+                    aoffsets[0] = aoffset;
+                    for (int it = 1; it < 4; ++it)
+                        aoffsets[it] = aoffsets[it-1] + lda;
+                    aoffset += 4 * lda;
+                    for (int i = 0; i < 4; ++i)
+                        c_arr[i] = vec_xl(0, (vector unsigned char*)aoffsets[i]);
+                    vector_permute_store(c_arr, 4, vecOffset);
+                    for (int i = 0; i<4; i++)
+                        aoffsets[i] = aoffsets[i]+lda;
+                    vecOffset +=64;
+                }
+                i = (cols >> 3);
+                if (i > 0) {
+                    aoffsets[0] = aoffset;
+                    for (int it = 1; it < 8; ++it) {
+                        aoffsets[it] = aoffsets[it-1] + lda;
+                    }
+                    aoffset += 8 * lda;
+                    do {
+                        for (int it = 0; it < 8; ++it)
+                            c_arr[it] = vec_xl(0, (vector unsigned char*)aoffsets[it]);
+                        vector_permute_store(c_arr, 8, vecOffset);
+                        for (int it = 0; it < 8; ++it)
+                            aoffsets[it] = aoffsets[it] + 8*lda;
+                        vecOffset += 128;
+                        i--;
+                    } while(i > 0);
+                }
+                j--;
+            } while(j > 0);
+        }
+        if (rows & 4) {
+            aoffsets[0] = aoffset;
+            for (int it = 1; it < 4; ++it)
+                aoffsets[it] = aoffsets[it-1] + lda;
+            aoffset += 4 * lda;
+            if (cols == 4) {
+                for (int it = 0; it < 4; ++it)
+                    c_arr[it] = vec_xl(0, (vector unsigned char*)aoffsets[it]);
+                vector_permute_store(c_arr, 2, vecOffset);
+                for (int it = 0; it< 4; it++)
+                    aoffsets[it] = aoffsets[it] + lda;
+                vecOffset += 32;
+            }
+            i = (cols >> 3);
+            if (i > 0) {
+                do {
+                    for (int it = 0; it < 4; ++it)
+                        c_arr[it] = vec_xl(0, (vector unsigned char*)aoffsets[it]);
+                    vector_permute_store(c_arr, 4, vecOffset);
+                    for (int it = 0; it< 4; it++)
+                        aoffsets[it] = aoffsets[it] + 8*lda;
+                    vecOffset += 64;
+                    i--;
+                } while(i > 0);
+            }
+        }
+        if (rows & 3) {
+            aoffsets[0] = aoffset;
+            for (int it = 1; it < 4; ++it)
+                aoffsets[it] = aoffsets[it-1] + lda;
+            if (cols == 4) {
+                switch(rows) {
+                    case 3: c_arr[2] = vec_xl(0, (vector unsigned char*)aoffsets[2]);
+                    case 2: c_arr[1] = vec_xl(0, (vector unsigned char*)aoffsets[1]);
+                    case 1: c_arr[0] = vec_xl(0, (vector unsigned char*)aoffsets[0]);
+                        break;
+                }
+                vector_permute_store(c_arr, 2, vecOffset);
+                for (int it = 0; it< 4; it++)
+                     aoffsets[it] = aoffsets[it] + lda;
+                vecOffset += 32;
+            }
+            i = (cols >> 3);
+            if (i > 0) {
+                do {
+                    switch(rows) {
+                        case 3: c_arr[2] = vec_xl(0, (vector unsigned char*)aoffsets[2]);
+                        case 2: c_arr[1] = vec_xl(0, (vector unsigned char*)aoffsets[1]);
+                        case 1: c_arr[0] = vec_xl(0, (vector unsigned char*)aoffsets[0]);
+                            break;
+                    }
+                    vector_permute_store(c_arr, 4, vecOffset);
+                    for (int it = 0; it <4; it++)
+                         aoffsets[it] = aoffsets[it] + 8* lda;
+                    vecOffset += 64;
+                    i--;
+                } while(i > 0);
+            }
+        }
+    }
+
+    void mnpack(int64_t m0, int64_t m, int64_t n0, int64_t n) {
+        int64_t mc, nc, mp, np;
+        int m_rem = MIN(m - m0, 8);
+        int n_rem = MIN(n - n0, 8);
+
+        if (m_rem >= 8 && n_rem >= 8) {
+            mc = 8;
+            nc = 8;
+            gemm<8,8>(m0, m, n0, n);
+        } else if (m_rem >= 4 && n_rem >= 8) {
+            mc = 4;
+            nc = 8;
+            gemm<4,8>(m0, m, n0, n);
+        } else if (m_rem >=8 && n_rem >=4){
+                mc = 8;
+                nc = 4;
+                gemm<8,4>(m0, m, n0, n);
+        } else if ((m_rem < 4) && (n_rem >= 8)) {
+            nc = 8;
+            switch(m_rem) {
+                case 1:
+                    mc = 1;
+                    gemm_Mx8<1>(m0, m, n0, n);
+                    break;
+                case 2:
+                    mc = 2;
+                    gemm_Mx8<2>(m0, m, n0, n);
+                    break;
+                case 3:
+                    mc = 3;
+                    gemm_Mx8<3>(m0, m, n0, n);
+                    break;
+                default:
+                    return;
+            }
+        } else if (m_rem >= 4 && n_rem >= 4) {
+            mc = 4;
+            nc = 4;
+            gemm_small<4, 4>(m0, m, n0, n);
+        } else if ((m_rem > 4) && (n_rem < 4)) {
+            mc = 4;
+            switch(n_rem) {
+                case 1:
+                    nc = 1;
+                    gemm_small<4, 1>(m0, m, n0, n);
+                    break;
+                case 2:
+                    nc = 2;
+                    gemm_small<4, 2>(m0, m, n0, n);
+                    break;
+                case 3:
+                    nc = 3;
+                    gemm_small<4, 3>(m0, m, n0, n);
+                    break;
+
+                default:
+                    return;
+            }
+        } else {
+            switch((m_rem << 4) | n_rem) {
+                case 0x43:
+                    mc = 4;
+                    nc = 3;
+                    gemm_small<4, 3>(m0, m, n0, n);
+                    break;
+                case 0x42:
+                    mc = 4;
+                    nc = 2;
+                    gemm_small<4, 2>(m0, m, n0, n);
+                    break;
+                case 0x41:
+                    mc = 4;
+                    nc = 1;
+                    gemm_small<4, 1>(m0, m, n0, n);
+                    break;
+                case 0x34:
+                    mc = 3;
+                    nc = 4;
+                    gemm_small<3, 4>(m0, m, n0, n);
+                    break;
+                case 0x33:
+                    mc = 3;
+                    nc = 3;
+                    gemm_small<3, 3>(m0, m, n0, n);
+                    break;
+                case 0x32:
+                    mc = 3;
+                    nc = 2;
+                    gemm_small<3, 2>(m0, m, n0, n);
+                    break;
+                case 0x31:
+                    mc = 3;
+                    nc = 1;
+                    gemm_small<3, 1>(m0, m, n0, n);
+                    break;
+                case 0x24:
+                    mc = 2;
+                    nc = 4;
+                    gemm_small<2,4>(m0, m, n0, n);
+                    break;
+                case 0x23:
+                    mc = 2;
+                    nc = 3;
+                    gemm_small<2, 3>(m0, m, n0, n);
+                    break;
+                case 0x22:
+                    mc = 2;
+                    nc = 2;
+                    gemm_small<2, 2>(m0, m, n0, n);
+                    break;
+                case 0x21:
+                    mc = 2;
+                    nc = 1;
+                    gemm_small<2, 1>(m0, m, n0, n);
+                    break;
+                case 0x14:
+                    mc = 1;
+                    nc = 4;
+                    gemm_small<1, 4>(m0, m, n0, n);
+                    break;
+                case 0x13:
+                    mc = 1;
+                    nc = 3;
+                    gemm_small<1, 3>(m0, m, n0, n);
+                    break;
+                case 0x12:
+                    mc = 1;
+                    nc = 2;
+                    gemm_small<1, 2>(m0, m, n0, n);
+                    break;
+                case 0x11:
+                    mc = 1;
+                    nc = 1;
+                    gemm_small<1, 1>(m0, m, n0, n);
+                    break;
+                default:
+                    return;
+            }
+        }
+        mp = m0 + (m - m0) / mc * mc;
+        np = n0 + (n - n0) / nc * nc;
+        mnpack(mp, m, n0, np);
+        mnpack(m0, m, np, n);
+    }
+
+    void KERNEL_4x8(int64_t ii, int64_t jj) {
+        vec_t vec_A[4], vec_B[8] , vec_C[4];
+        acc_t acc_0, acc_1;
+        __builtin_mma_xxsetaccz(&acc_0);
+        __builtin_mma_xxsetaccz(&acc_1);
+        for (int l = 0; l < k; l+=8) {
+            packNormal((A+(ii*lda)+l), lda, 4, 8, (uint8_t*)vec_A);
+            packNormal((B+(jj*ldb)+l), ldb, 8, 8, (uint8_t*)vec_B);
+            for (int x = 0; x < 4; x++) {
+                __builtin_mma_xvbf16ger2pp(&acc_0, vec_A[x], vec_B[x]);
+                __builtin_mma_xvbf16ger2pp(&acc_1, vec_A[x], vec_B[x+4]);
+            }
+        }
+        SAVE_ACC(&acc_0, ii, jj);
+        SAVE_ACC(&acc_1, ii, jj+4);
+    }
+
+    void KERNEL_8x4(int64_t ii, int64_t jj) {
+        vec_t vec_A[8], vec_B[4] , vec_C[4];
+        acc_t acc_0, acc_1;
+        __builtin_mma_xxsetaccz(&acc_0);
+        __builtin_mma_xxsetaccz(&acc_1);
+        for (int l = 0; l < k; l+=8) {
+            packNormal((A+(ii*lda)+l), lda, 8, 8, (uint8_t*)vec_A);
+            packNormal((B+(jj*ldb)+l), ldb, 8, 4, (uint8_t*)vec_B);
+            for (int x = 0; x < 4; x++) {
+                __builtin_mma_xvbf16ger2pp(&acc_0, vec_A[x], vec_B[x]);
+                __builtin_mma_xvbf16ger2pp(&acc_1, vec_A[x+4], vec_B[x]);
+            }
+        }
+        SAVE_ACC(&acc_0, ii, jj);
+        SAVE_ACC(&acc_1, ii+4, jj);
+    }
+
+
+    void KERNEL_8x8(int64_t ii, int64_t jj) {
+        vec_t vec_A[8], vec_B[8], vec_C[4];
+        acc_t acc_0, acc_1, acc_2, acc_3;
+        __builtin_mma_xxsetaccz(&acc_0);
+        __builtin_mma_xxsetaccz(&acc_1);
+        __builtin_mma_xxsetaccz(&acc_2);
+        __builtin_mma_xxsetaccz(&acc_3);
+        for (int l = 0; l < k; l+=8) {
+            packNormal(A+(ii*lda)+l, lda, 8, 8, (uint8_t*)vec_A);
+            packNormal(B+(jj*ldb)+l, ldb, 8, 8, (uint8_t*)vec_B);
+            for (int x = 0; x < 4; x++) {
+                __builtin_mma_xvbf16ger2pp(&acc_0, vec_A[x], vec_B[x]);
+                __builtin_mma_xvbf16ger2pp(&acc_1, (vec_t)vec_A[x], (vec_t)vec_B[x+4]);
+                __builtin_mma_xvbf16ger2pp(&acc_2, (vec_t)vec_A[x+4], (vec_t)vec_B[x]);
+                __builtin_mma_xvbf16ger2pp(&acc_3, (vec_t)vec_A[x+4], (vec_t)vec_B[x+4]);
+            }
+        }
+
+        SAVE_ACC(&acc_0, ii, jj);
+        SAVE_ACC(&acc_1, ii, jj+4);
+        SAVE_ACC(&acc_2, ii+4, jj);
+        SAVE_ACC(&acc_3, ii+4, jj+4);
+    }
+
+    template<int RM, int RN>
+    void gemm_small(int64_t m0, int64_t m, int64_t n0, int64_t n) {
+        int64_t ytiles = (m - m0) / RM;
+        int64_t xtiles = (n - n0) / RN;
+        int64_t tiles = xtiles * ytiles;
+        int64_t duty = (tiles + nth - 1) / nth;
+        int64_t start = duty * ith;
+        int64_t end = start + duty;
+        if (end > tiles)
+            end = tiles;
+        for (int64_t job = start; job < end; ++job) {
+            int64_t ii = m0 + job / xtiles * RM;
+            int64_t jj = n0 + job % xtiles * RN;
+            vec_t vec_C[4];
+            acc_t acc_0;
+            __builtin_mma_xxsetaccz(&acc_0);
+            vec_t vec_A[2], vec_B[2];
+            for (int l=0; l<k; l+=4) {
+                packNormal(A+(ii*lda)+l, lda, RM, 4, (uint8_t*)vec_A);
+                packNormal(B+(jj*ldb)+l, ldb, RN, 4, (uint8_t*)vec_B);
+                for (int x = 0; x<2; x++) {
+                    __builtin_mma_xvbf16ger2pp(&acc_0, vec_A[x], vec_B[x]);
+                }
+            }
+            __builtin_mma_disassemble_acc(vec_C, &acc_0);
+            for (int I = 0; I < RM; I++) {
+                for (int J = 0; J < RN; J++) {
+                    *((TC*)(C+ii+((jj+J)*ldc)+I)) = *((TC*)&vec_C[I]+J);
+                }
+            }
+        }
+    }
+
+    template<int RM>
+    void gemm_Mx8(int64_t m0, int64_t m, int64_t n0, int64_t n) {
+        int RN = 8;
+        int64_t ytiles = (m - m0) / RM;
+        int64_t xtiles = (n - n0) / RN;
+        int64_t tiles = xtiles * ytiles;
+        int64_t duty = (tiles + nth - 1) / nth;
+        int64_t start = duty * ith;
+        int64_t end = start + duty;
+        if (end > tiles)
+            end = tiles;
+        for (int64_t job = start; job < end; ++job) {
+            int64_t ii = m0 + job / xtiles * RM;
+            int64_t jj = n0 + job % xtiles * RN;
+            vec_t vec_C[4];
+            acc_t acc_0, acc_1;
+            __builtin_mma_xxsetaccz(&acc_0);
+            __builtin_mma_xxsetaccz(&acc_1);
+            vec_t vec_A[4], vec_B[8];
+            for (int l=0; l<k; l+=8) {
+                packNormal(A+(ii*lda)+l, lda, RM, 8, (uint8_t*)vec_A);
+                packNormal(B+(jj*ldb)+l, ldb, RN, 8, (uint8_t*)vec_B);
+                for (int x = 0; x<4; x++) {
+                    __builtin_mma_xvbf16ger2pp(&acc_0, vec_A[x], vec_B[x]);
+                    __builtin_mma_xvbf16ger2pp(&acc_1, vec_A[x], vec_B[x+4]);
+                }
+            }
+            __builtin_mma_disassemble_acc(vec_C, &acc_0);
+            for (int I = 0; I < RM; I++) {
+                for (int J = 0; J < 4; J++) {
+                    *((TC*)(C+ii+((jj+J)*ldc)+I)) = *((TC*)&vec_C[I]+J);
+                }
+            }
+            __builtin_mma_disassemble_acc(vec_C, &acc_1);
+            for (int I = 0; I < RM; I++) {
+                for (int J = 0; J < 4; J++) {
+                    *((TC*)(C+ii+((jj+4+J)*ldc)+I)) = *((TC*)&vec_C[I]+J);
+                }
+            }
+        }
+    }
+
+    template<int RM, int RN>
+    inline void kernel(int64_t ii, int64_t jj) {
+       if constexpr(RM == 4 && RN == 8) {
+          KERNEL_4x8(ii,jj);
+       } else if constexpr(RM == 8 && RN == 8) {
+          KERNEL_8x8(ii,jj);
+       } else if constexpr(RM == 8 && RN == 4) {
+          KERNEL_8x4(ii,jj);
+       } else {
+          static_assert(false, "RN/RM values not supported");
+       }
+    }
+
+    template <int RM, int RN>
+    NOINLINE void gemm(int64_t m0, int64_t m, int64_t n0, int64_t n) {
+        int64_t ytiles = (m - m0) / RM;
+        int64_t xtiles = (n - n0) / RN;
+        int64_t tiles = xtiles * ytiles;
+        int64_t duty = (tiles + nth - 1) / nth;
+        int64_t start = duty * ith;
+        int64_t end = start + duty;
+        if (end > tiles)
+            end = tiles;
+        for (int64_t job = start; job < end; ++job) {
+            int64_t ii = m0 + job / xtiles * RM;
+            int64_t jj = n0 + job % xtiles * RN;
+            kernel<RM, RN>(ii, jj);
+        }
+    }
+
+    const TA *const A;
+    const TB *const B;
+    TC *C;
+    const int64_t k;
+    const int64_t lda;
+    const int64_t ldb;
+    const int64_t ldc;
+    const int ith;
+    const int nth;
+};
+
+template <typename TA, typename TB, typename TC>
 class tinyBLAS_Q0_PPC {
   public:
     tinyBLAS_Q0_PPC(int64_t k,
@@ -1092,13 +1580,403 @@ class tinyBLAS_Q0_PPC {
        }
     }
 
-    template<typename VA, typename VB>
-    void packNormal(const TA* a, int64_t lda, int rows, int cols, VA* vec, bool flip) {
+    template<typename VA, typename VB, int size>
+    void packNormalInt4(const TA* a, int64_t lda, int rows, int cols, VA* vec, std::array<int, size>& comparray) {
         int64_t i, j;
         TA *aoffset = NULL;
         VA *vecOffset = NULL;
         TA *aoffset1 = NULL, *aoffset2 = NULL, *aoffset3 = NULL, *aoffset4 = NULL;
         TA *aoffset5 = NULL, *aoffset6 = NULL, *aoffset7 = NULL, *aoffset8 = NULL;
+        VB c1[2] = {0}, c2[2] = {0}, c3[2] = {0}, c4[2] = {0};
+        VB c5[2] = {0}, c6[2] = {0}, c7[2] = {0}, c8[2] = {0};
+        VB t1, t2, t3, t4, t5, t6, t7, t8;
+        const vector signed char lowMask = vec_splats((signed char)0xF);
+        const vector unsigned char v4 = vec_splats((unsigned char)0x4);
+        const vector signed char v8 = vec_splats((signed char)0x8);
+        aoffset = const_cast<TA*>(a);
+        vecOffset = vec;
+        vector unsigned char swiz1 = {0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23};
+        vector unsigned char swiz2 = {8, 9, 10, 11, 12, 13, 14, 15, 24, 25, 26, 27, 28, 29, 30, 31};
+        vector unsigned char swiz3 = {0, 1, 2, 3, 8, 9, 10, 11, 16, 17, 18, 19, 24, 25, 26, 27};
+        vector unsigned char swiz4 = {4, 5, 6, 7, 12, 13, 14, 15, 20, 21, 22, 23, 28, 29, 30, 31};
+        vector signed int vsum = {0};
+        vector signed int vsum2 = {0};
+
+        j = (rows >> 3);
+        if (j > 0) {
+            do {
+                aoffset1 = aoffset;
+                aoffset2 = aoffset1 + lda;
+                aoffset3 = aoffset2 + lda;
+                aoffset4 = aoffset3 + lda;
+                aoffset5 = aoffset4 + lda;
+                aoffset6 = aoffset5 + lda;
+                aoffset7 = aoffset6 + lda;
+                aoffset8 = aoffset7 + lda;
+                aoffset += 8 * lda;
+
+                i = (cols >> 2);
+                if (i > 0) {
+                    do {
+                        c1[1] = reinterpret_cast<VB>(vec_xl(0, aoffset1->qs));
+                        c2[1] = reinterpret_cast<VB>(vec_xl(0, aoffset2->qs));
+                        c3[1] = reinterpret_cast<VB>(vec_xl(0, aoffset3->qs));
+                        c4[1] = reinterpret_cast<VB>(vec_xl(0, aoffset4->qs));
+                        c5[1] = reinterpret_cast<VB>(vec_xl(0, aoffset5->qs));
+                        c6[1] = reinterpret_cast<VB>(vec_xl(0, aoffset6->qs));
+                        c7[1] = reinterpret_cast<VB>(vec_xl(0, aoffset7->qs));
+                        c8[1] = reinterpret_cast<VB>(vec_xl(0, aoffset8->qs));
+
+                        c1[0] = vec_and(c1[1], lowMask);
+                        c1[1] = vec_sr(c1[1], v4);
+                        c1[0] = vec_sub(c1[0], v8);
+                        c1[1] = vec_sub(c1[1], v8);
+                        vsum = vec_sum4s(c1[0], vsum);
+                        vsum2 = vec_sum4s(c1[1], vsum2);
+                        vsum = vec_add(vsum, vsum2);
+                        comparray[0] = vsum[0] + vsum[1] + vsum[2] + vsum[3];
+                        vsum = vec_splats(0);
+                        vsum2 = vec_splats(0);
+
+                        c2[0] = vec_and(c2[1], lowMask);
+                        c2[1] = vec_sr(c2[1], v4);
+                        c2[0] = vec_sub(c2[0], v8);
+                        c2[1] = vec_sub(c2[1], v8);
+                        vsum = vec_sum4s(c2[0], vsum);
+                        vsum2 = vec_sum4s(c2[1], vsum2);
+                        vsum = vec_add(vsum, vsum2);
+                        comparray[1] = vsum[0] + vsum[1] + vsum[2] + vsum[3];
+                        vsum = vec_splats(0);
+                        vsum2 = vec_splats(0);
+
+                        c3[0] = vec_and(c3[1], lowMask);
+                        c3[1] = vec_sr(c3[1], v4);
+                        c3[0] = vec_sub(c3[0], v8);
+                        c3[1] = vec_sub(c3[1], v8);
+                        vsum = vec_sum4s(c3[0], vsum);
+                        vsum2 = vec_sum4s(c3[1], vsum2);
+                        vsum = vec_add(vsum, vsum2);
+                        comparray[2] = vsum[0] + vsum[1] + vsum[2] + vsum[3];
+                        vsum = vec_splats(0);
+                        vsum2 = vec_splats(0);
+
+                        c4[0] = vec_and(c4[1], lowMask);
+                        c4[1] = vec_sr(c4[1], v4);
+                        c4[0] = vec_sub(c4[0], v8);
+                        c4[1] = vec_sub(c4[1], v8);
+                        vsum = vec_sum4s(c4[0], vsum);
+                        vsum2 = vec_sum4s(c4[1], vsum2);
+                        vsum = vec_add(vsum, vsum2);
+                        comparray[3] = vsum[0] + vsum[1] + vsum[2] + vsum[3];
+                        vsum = vec_splats(0);
+                        vsum2 = vec_splats(0);
+
+                        c5[0] = vec_and(c5[1], lowMask);
+                        c5[1] = vec_sr(c5[1], v4);
+                        c5[0] = vec_sub(c5[0], v8);
+                        c5[1] = vec_sub(c5[1], v8);
+                        vsum = vec_sum4s(c5[0], vsum);
+                        vsum2 = vec_sum4s(c5[1], vsum2);
+                        vsum = vec_add(vsum, vsum2);
+                        comparray[4] = vsum[0] + vsum[1] + vsum[2] + vsum[3];
+                        vsum = vec_splats(0);
+                        vsum2 = vec_splats(0);
+
+                        c6[0] = vec_and(c6[1], lowMask);
+                        c6[1] = vec_sr(c6[1], v4);
+                        c6[0] = vec_sub(c6[0], v8);
+                        c6[1] = vec_sub(c6[1], v8);
+                        vsum = vec_sum4s(c6[0], vsum);
+                        vsum2 = vec_sum4s(c6[1], vsum2);
+                        vsum = vec_add(vsum, vsum2);
+                        comparray[5] = vsum[0] + vsum[1] + vsum[2] + vsum[3];
+                        vsum = vec_splats(0);
+                        vsum2 = vec_splats(0);
+
+                        c7[0] = vec_and(c7[1], lowMask);
+                        c7[1] = vec_sr(c7[1], v4);
+                        c7[0] = vec_sub(c7[0], v8);
+                        c7[1] = vec_sub(c7[1], v8);
+                        vsum = vec_sum4s(c7[0], vsum);
+                        vsum2 = vec_sum4s(c7[1], vsum2);
+                        vsum = vec_add(vsum, vsum2);
+                        comparray[6] = vsum[0] + vsum[1] + vsum[2] + vsum[3];
+                        vsum = vec_splats(0);
+                        vsum2 = vec_splats(0);
+
+                        c8[0] = vec_and(c8[1], lowMask);
+                        c8[1] = vec_sr(c8[1], v4);
+                        c8[0] = vec_sub(c8[0], v8);
+                        c8[1] = vec_sub(c8[1], v8);
+                        vsum = vec_sum4s(c8[0], vsum);
+                        vsum2 = vec_sum4s(c8[1], vsum2);
+                        vsum = vec_add(vsum, vsum2);
+                        comparray[7] = vsum[0] + vsum[1] + vsum[2] + vsum[3];
+                        vsum = vec_splats(0);
+                        vsum2 = vec_splats(0);
+
+                        t1 = vec_perm(c1[0], c2[0], swiz1);
+                        t2 = vec_perm(c1[0], c2[0], swiz2);
+                        t3 = vec_perm(c3[0], c4[0], swiz1);
+                        t4 = vec_perm(c3[0], c4[0], swiz2);
+                        t5 = vec_perm(t1, t3, swiz3);
+                        t6 = vec_perm(t1, t3, swiz4);
+                        t7 = vec_perm(t2, t4, swiz3);
+                        t8 = vec_perm(t2, t4, swiz4);
+                        vec_xst(t5, 0, vecOffset);
+                        vec_xst(t6, 0, vecOffset+16);
+                        vec_xst(t7, 0, vecOffset+32);
+                        vec_xst(t8, 0, vecOffset+48);
+
+                        t1 = vec_perm(c1[1], c2[1], swiz1);
+                        t2 = vec_perm(c1[1], c2[1], swiz2);
+                        t3 = vec_perm(c3[1], c4[1], swiz1);
+                        t4 = vec_perm(c3[1], c4[1], swiz2);
+                        t5 = vec_perm(t1, t3, swiz3);
+                        t6 = vec_perm(t1, t3, swiz4);
+                        t7 = vec_perm(t2, t4, swiz3);
+                        t8 = vec_perm(t2, t4, swiz4);
+                        vec_xst(t5, 0, vecOffset+64);
+                        vec_xst(t6, 0, vecOffset+80);
+                        vec_xst(t7, 0, vecOffset+96);
+                        vec_xst(t8, 0, vecOffset+112);
+
+                        t1 = vec_perm(c5[0], c6[0], swiz1);
+                        t2 = vec_perm(c5[0], c6[0], swiz2);
+                        t3 = vec_perm(c7[0], c8[0], swiz1);
+                        t4 = vec_perm(c7[0], c8[0], swiz2);
+                        t5 = vec_perm(t1, t3, swiz3);
+                        t6 = vec_perm(t1, t3, swiz4);
+                        t7 = vec_perm(t2, t4, swiz3);
+                        t8 = vec_perm(t2, t4, swiz4);
+                        vec_xst(t5, 0, vecOffset+128);
+                        vec_xst(t6, 0, vecOffset+144);
+                        vec_xst(t7, 0, vecOffset+160);
+                        vec_xst(t8, 0, vecOffset+176);
+
+                        t1 = vec_perm(c5[1], c6[1], swiz1);
+                        t2 = vec_perm(c5[1], c6[1], swiz2);
+                        t3 = vec_perm(c7[1], c8[1], swiz1);
+                        t4 = vec_perm(c7[1], c8[1], swiz2);
+                        t5 = vec_perm(t1, t3, swiz3);
+                        t6 = vec_perm(t1, t3, swiz4);
+                        t7 = vec_perm(t2, t4, swiz3);
+                        t8 = vec_perm(t2, t4, swiz4);
+                        vec_xst(t5, 0, vecOffset+192);
+                        vec_xst(t6, 0, vecOffset+208);
+                        vec_xst(t7, 0, vecOffset+224);
+                        vec_xst(t8, 0, vecOffset+240);
+
+                        aoffset1 += lda;
+                        aoffset2 += lda;
+                        aoffset3 += lda;
+                        aoffset4 += lda;
+                        aoffset5 += lda;
+                        aoffset6 += lda;
+                        aoffset7 += lda;
+                        aoffset8 += lda;
+                        vecOffset += 256;
+                        i--;
+                    } while (i > 0);
+                }
+                j--;
+            } while (j > 0);
+        }
+
+        if (rows & 4) {
+            aoffset1 = aoffset;
+            aoffset2 = aoffset1 + lda;
+            aoffset3 = aoffset2 + lda;
+            aoffset4 = aoffset3 + lda;
+            aoffset += 4 * lda;
+
+            i = (cols >> 2);
+            if (i > 0) {
+                do {
+                    c1[1] = reinterpret_cast<VB>(vec_xl(0, aoffset1->qs));
+                    c2[1] = reinterpret_cast<VB>(vec_xl(0, aoffset2->qs));
+                    c3[1] = reinterpret_cast<VB>(vec_xl(0, aoffset3->qs));
+                    c4[1] = reinterpret_cast<VB>(vec_xl(0, aoffset4->qs));
+
+                    c1[0] = vec_and(c1[1], lowMask);
+                    c1[1] = vec_sr(c1[1], v4);
+                    c1[0] = vec_sub(c1[0], v8);
+                    c1[1] = vec_sub(c1[1], v8);
+                    vsum = vec_sum4s(c1[0], vsum);
+                    vsum2 = vec_sum4s(c1[1], vsum2);
+                    vsum = vec_add(vsum, vsum2);
+                    comparray[0] = vsum[0] + vsum[1] + vsum[2] + vsum[3];
+                    vsum = vec_splats(0);
+                    vsum2 = vec_splats(0);
+
+                    c2[0] = vec_and(c2[1], lowMask);
+                    c2[1] = vec_sr(c2[1], v4);
+                    c2[0] = vec_sub(c2[0], v8);
+                    c2[1] = vec_sub(c2[1], v8);
+                    vsum = vec_sum4s(c2[0], vsum);
+                    vsum2 = vec_sum4s(c2[1], vsum2);
+                    vsum = vec_add(vsum, vsum2);
+                    comparray[1] = vsum[0] + vsum[1] + vsum[2] + vsum[3];
+                    vsum = vec_splats(0);
+                    vsum2 = vec_splats(0);
+
+                    c3[0] = vec_and(c3[1], lowMask);
+                    c3[1] = vec_sr(c3[1], v4);
+                    c3[0] = vec_sub(c3[0], v8);
+                    c3[1] = vec_sub(c3[1], v8);
+                    vsum = vec_sum4s(c3[0], vsum);
+                    vsum2 = vec_sum4s(c3[1], vsum2);
+                    vsum = vec_add(vsum, vsum2);
+                    comparray[2] = vsum[0] + vsum[1] + vsum[2] + vsum[3];
+                    vsum = vec_splats(0);
+                    vsum2 = vec_splats(0);
+
+                    c4[0] = vec_and(c4[1], lowMask);
+                    c4[1] = vec_sr(c4[1], v4);
+                    c4[0] = vec_sub(c4[0], v8);
+                    c4[1] = vec_sub(c4[1], v8);
+                    vsum = vec_sum4s(c4[0], vsum);
+                    vsum2 = vec_sum4s(c4[1], vsum2);
+                    vsum = vec_add(vsum, vsum2);
+                    comparray[3] = vsum[0] + vsum[1] + vsum[2] + vsum[3];
+                    vsum = vec_splats(0);
+                    vsum2 = vec_splats( 0);
+
+                    t1 = vec_perm(c1[0], c2[0], swiz1);
+                    t2 = vec_perm(c1[0], c2[0], swiz2);
+                    t3 = vec_perm(c3[0], c4[0], swiz1);
+                    t4 = vec_perm(c3[0], c4[0], swiz2);
+                    t5 = vec_perm(t1, t3, swiz3);
+                    t6 = vec_perm(t1, t3, swiz4);
+                    t7 = vec_perm(t2, t4, swiz3);
+                    t8 = vec_perm(t2, t4, swiz4);
+                    vec_xst(t5, 0, vecOffset);
+                    vec_xst(t6, 0, vecOffset+16);
+                    vec_xst(t7, 0, vecOffset+32);
+                    vec_xst(t8, 0, vecOffset+48);
+
+                    t1 = vec_perm(c1[1], c2[1], swiz1);
+                    t2 = vec_perm(c1[1], c2[1], swiz2);
+                    t3 = vec_perm(c3[1], c4[1], swiz1);
+                    t4 = vec_perm(c3[1], c4[1], swiz2);
+                    t5 = vec_perm(t1, t3, swiz3);
+                    t6 = vec_perm(t1, t3, swiz4);
+                    t7 = vec_perm(t2, t4, swiz3);
+                    t8 = vec_perm(t2, t4, swiz4);
+                    vec_xst(t5, 0, vecOffset+64);
+                    vec_xst(t6, 0, vecOffset+80);
+                    vec_xst(t7, 0, vecOffset+96);
+                    vec_xst(t8, 0, vecOffset+112);
+
+                    aoffset1 += lda;
+                    aoffset2 += lda;
+                    aoffset3 += lda;
+                    aoffset4 += lda;
+                    vecOffset += 128;
+                    i--;
+                } while (i > 0);
+            }
+        }
+
+        if (rows & 3) {
+            aoffset1 = aoffset;
+            aoffset2 = aoffset1 + lda;
+            aoffset3 = aoffset2 + lda;
+            i = (cols >> 2);
+            if (i > 0) {
+                do {
+                    switch(rows) {
+                        case 3: c3[1] = reinterpret_cast<VB>(vec_xl(0, aoffset3->qs));
+                        case 2: c2[1] = reinterpret_cast<VB>(vec_xl(0, aoffset2->qs));
+                        case 1: c1[1] = reinterpret_cast<VB>(vec_xl(0, aoffset1->qs));
+                            break;
+                    }
+                    c1[0] = vec_and(c1[1], lowMask);
+                    c1[1] = vec_sr(c1[1], v4);
+                    c1[0] = vec_sub(c1[0], v8);
+                    c1[1] = vec_sub(c1[1], v8);
+                    vsum = vec_sum4s(c1[0], vsum);
+                    vsum2 = vec_sum4s(c1[1], vsum2);
+                    vsum = vec_add(vsum, vsum2);
+                    comparray[0] = vsum[0] + vsum[1] + vsum[2] + vsum[3];
+                    vsum = vec_splats(0);
+                    vsum2 = vec_splats(0);
+
+                    c2[0] = vec_and(c2[1], lowMask);
+                    c2[1] = vec_sr(c2[1], v4);
+                    c2[0] = vec_sub(c2[0], v8);
+                    c2[1] = vec_sub(c2[1], v8);
+                    vsum = vec_sum4s(c2[0], vsum);
+                    vsum2 = vec_sum4s(c2[1], vsum2);
+                    vsum = vec_add(vsum, vsum2);
+                    comparray[1] = vsum[0] + vsum[1] + vsum[2] + vsum[3];
+                    vsum = vec_splats(0);
+                    vsum2 = vec_splats(0);
+
+                    c3[0] = vec_and(c3[1], lowMask);
+                    c3[1] = vec_sr(c3[1], v4);
+                    c3[0] = vec_sub(c3[0], v8);
+                    c3[1] = vec_sub(c3[1], v8);
+                    vsum = vec_sum4s(c3[0], vsum);
+                    vsum2 = vec_sum4s(c3[1], vsum2);
+                    vsum = vec_add(vsum, vsum2);
+                    comparray[2] = vsum[0] + vsum[1] + vsum[2] + vsum[3];
+                    vsum = vec_splats(0);
+                    vsum2 = vec_splats(0);
+
+                    c4[0] = vec_and(c4[1], lowMask);
+                    c4[1] = vec_sr(c4[1], v4);
+                    c4[0] = vec_sub(c4[0], v8);
+                    c4[1] = vec_sub(c4[1], v8);
+                    vsum = vec_sum4s(c4[0], vsum);
+                    vsum2 = vec_sum4s(c4[1], vsum2);
+                    vsum = vec_add(vsum, vsum2);
+                    comparray[3] = vsum[0] + vsum[1] + vsum[2] + vsum[3];
+                    vsum = vec_splats(0);
+                    vsum2 = vec_splats(0);
+
+                    t1 = vec_perm(c1[0], c2[0], swiz1);
+                    t2 = vec_perm(c1[0], c2[0], swiz2);
+                    t3 = vec_perm(c3[0], c4[0], swiz1);
+                    t4 = vec_perm(c3[0], c4[0], swiz2);
+                    t5 = vec_perm(t1, t3, swiz3);
+                    t6 = vec_perm(t1, t3, swiz4);
+                    t7 = vec_perm(t2, t4, swiz3);
+                    t8 = vec_perm(t2, t4, swiz4);
+                    vec_xst(t5, 0, vecOffset);
+                    vec_xst(t6, 0, vecOffset+16);
+                    vec_xst(t7, 0, vecOffset+32);
+                    vec_xst(t8, 0, vecOffset+48);
+
+                    t1 = vec_perm(c1[1], c2[1], swiz1);
+                    t2 = vec_perm(c1[1], c2[1], swiz2);
+                    t3 = vec_perm(c3[1], c4[1], swiz1);
+                    t4 = vec_perm(c3[1], c4[1], swiz2);
+                    t5 = vec_perm(t1, t3, swiz3);
+                    t6 = vec_perm(t1, t3, swiz4);
+                    t7 = vec_perm(t2, t4, swiz3);
+                    t8 = vec_perm(t2, t4, swiz4);
+                    vec_xst(t5, 0, vecOffset+64);
+                    vec_xst(t6, 0, vecOffset+80);
+                    vec_xst(t7, 0, vecOffset+96);
+                    vec_xst(t8, 0, vecOffset+112);
+                    aoffset1 += lda;
+                    aoffset2 += lda;
+                    aoffset3 += lda;
+                    vecOffset += 128;
+                    i--;
+                } while(i > 0);
+            }
+        }
+    }
+
+    template<typename VA, typename VB>
+    void packNormal(const TB* a, int64_t lda, int rows, int cols, VA* vec, bool flip) {
+        int64_t i, j;
+        TB *aoffset = NULL;
+        VA *vecOffset = NULL;
+        TB *aoffset1 = NULL, *aoffset2 = NULL, *aoffset3 = NULL, *aoffset4 = NULL;
+        TB *aoffset5 = NULL, *aoffset6 = NULL, *aoffset7 = NULL, *aoffset8 = NULL;
         __vector_pair C1, C2, C3, C4, C5, C6, C7, C8;
         VB c1[2] = {0}, c2[2] = {0}, c3[2] = {0}, c4[2]={0};
         VB c5[2] = {0}, c6[2] = {0}, c7[2] = {0}, c8[2]={0};
@@ -1111,24 +1989,24 @@ class tinyBLAS_Q0_PPC {
         vector unsigned char swiz3 = {0, 1, 2, 3, 8, 9, 10, 11, 16, 17, 18, 19, 24, 25, 26, 27};
         vector unsigned char swiz4 = {4, 5, 6, 7, 12, 13, 14, 15, 20, 21, 22, 23, 28, 29, 30, 31};
 
-        aoffset = const_cast<TA*>(a);
+        aoffset = const_cast<TB*>(a);
         vecOffset = vec;
         j = (rows >> 3);
         if (j > 0) {
             do {
-            aoffset1 = aoffset;
-            aoffset2 = aoffset1 + lda;
-            aoffset3 = aoffset2 + lda;
-            aoffset4 = aoffset3 + lda;
-            aoffset5 = aoffset4 + lda;
-            aoffset6 = aoffset5 + lda;
-            aoffset7 = aoffset6 + lda;
-            aoffset8 = aoffset7 + lda;
-            aoffset += 8 * lda;
+                aoffset1 = aoffset;
+                aoffset2 = aoffset1 + lda;
+                aoffset3 = aoffset2 + lda;
+                aoffset4 = aoffset3 + lda;
+                aoffset5 = aoffset4 + lda;
+                aoffset6 = aoffset5 + lda;
+                aoffset7 = aoffset6 + lda;
+                aoffset8 = aoffset7 + lda;
+                aoffset += 8 * lda;
 
-            i = (cols >> 3);
-            if (i > 0) {
-               do {
+                i = (cols >> 3);
+                if (i > 0) {
+                do {
                     C1 = __builtin_vsx_lxvp(0, (__vector_pair*)aoffset1->qs);
                     C2 = __builtin_vsx_lxvp(0, (__vector_pair*)aoffset2->qs);
                     C3 = __builtin_vsx_lxvp(0, (__vector_pair*)aoffset3->qs);
@@ -1156,10 +2034,10 @@ class tinyBLAS_Q0_PPC {
                     t7 = vec_perm(t2, t4, swiz3);
                     t8 = vec_perm(t2, t4, swiz4);
                     if (flip == true) {
-                       t5 = vec_xor(t5, xor_vector);
-                       t6 = vec_xor(t6, xor_vector);
-                       t7 = vec_xor(t7, xor_vector);
-                       t8 = vec_xor(t8, xor_vector);
+                        t5 = vec_xor(t5, xor_vector);
+                        t6 = vec_xor(t6, xor_vector);
+                        t7 = vec_xor(t7, xor_vector);
+                        t8 = vec_xor(t8, xor_vector);
                     }
                     vec_xst(t5, 0, vecOffset);
                     vec_xst(t6, 0, vecOffset+16);
@@ -1175,10 +2053,10 @@ class tinyBLAS_Q0_PPC {
                     t7 = vec_perm(t2, t4, swiz3);
                     t8 = vec_perm(t2, t4, swiz4);
                     if (flip == true) {
-                       t5 = vec_xor(t5, xor_vector);
-                       t6 = vec_xor(t6, xor_vector);
-                       t7 = vec_xor(t7, xor_vector);
-                       t8 = vec_xor(t8, xor_vector);
+                        t5 = vec_xor(t5, xor_vector);
+                        t6 = vec_xor(t6, xor_vector);
+                        t7 = vec_xor(t7, xor_vector);
+                        t8 = vec_xor(t8, xor_vector);
                     }
                     vec_xst(t5, 0, vecOffset+64);
                     vec_xst(t6, 0, vecOffset+80);
@@ -1194,10 +2072,10 @@ class tinyBLAS_Q0_PPC {
                     t7 = vec_perm(t2, t4, swiz3);
                     t8 = vec_perm(t2, t4, swiz4);
                     if (flip == true) {
-                       t5 = vec_xor(t5, xor_vector);
-                       t6 = vec_xor(t6, xor_vector);
-                       t7 = vec_xor(t7, xor_vector);
-                       t8 = vec_xor(t8, xor_vector);
+                        t5 = vec_xor(t5, xor_vector);
+                        t6 = vec_xor(t6, xor_vector);
+                        t7 = vec_xor(t7, xor_vector);
+                        t8 = vec_xor(t8, xor_vector);
                     }
                     vec_xst(t5, 0, vecOffset+128);
                     vec_xst(t6, 0, vecOffset+144);
@@ -1213,10 +2091,10 @@ class tinyBLAS_Q0_PPC {
                     t7 = vec_perm(t2, t4, swiz3);
                     t8 = vec_perm(t2, t4, swiz4);
                     if (flip == true) {
-                       t5 = vec_xor(t5, xor_vector);
-                       t6 = vec_xor(t6, xor_vector);
-                       t7 = vec_xor(t7, xor_vector);
-                       t8 = vec_xor(t8, xor_vector);
+                        t5 = vec_xor(t5, xor_vector);
+                        t6 = vec_xor(t6, xor_vector);
+                        t7 = vec_xor(t7, xor_vector);
+                        t8 = vec_xor(t8, xor_vector);
                     }
                     vec_xst(t5, 0, vecOffset+192);
                     vec_xst(t6, 0, vecOffset+208);
@@ -1240,11 +2118,11 @@ class tinyBLAS_Q0_PPC {
     }
 
     if (rows & 4) {
-            aoffset1 = aoffset;
-            aoffset2 = aoffset1 + lda;
-            aoffset3 = aoffset2 + lda;
-            aoffset4 = aoffset3 + lda;
-            aoffset += 4 * lda;
+        aoffset1 = aoffset;
+        aoffset2 = aoffset1 + lda;
+        aoffset3 = aoffset2 + lda;
+        aoffset4 = aoffset3 + lda;
+        aoffset += 4 * lda;
 
         i = (cols >> 3);
             if (i > 0) {
@@ -1311,7 +2189,7 @@ class tinyBLAS_Q0_PPC {
             aoffset2 = aoffset1 + lda;
             aoffset3 = aoffset2 + lda;
             i = (cols >> 3);
-        if (i > 0) {
+            if (i > 0) {
                 do {
                     switch(rows) {
                         case 3: C3 = __builtin_vsx_lxvp(0, (__vector_pair*)aoffset3->qs);
@@ -1527,13 +2405,18 @@ class tinyBLAS_Q0_PPC {
     void KERNEL_4x8(int64_t ii, int64_t jj) {
         vec_t vec_A[8], vec_B[16] = {0};
         acc_t acc_0, acc_1;
-        std::array<int, 4> comparray;
+        std::array<int, 4> comparray {};
         vector float fin_res[8] = {0};
         vector float vs[8] = {0};
+        bool isAblock_q4 = std::is_same_v<TA, block_q4_0>;
         for (int l = 0; l < k; l++) {
             __builtin_mma_xxsetaccz(&acc_0);
             __builtin_mma_xxsetaccz(&acc_1);
-            packNormal<int8_t, vector signed char>((A+(ii*lda)+l), lda, 4, 8, (int8_t*)vec_A, false);
+            if (std::is_same_v<TA, block_q4_0>) {
+               packNormalInt4<int8_t, vector signed char, 4>((A+(ii*lda)+l), lda, 4, 4, (int8_t*)vec_A, comparray);
+            } else {
+               packNormal<int8_t, vector signed char>((const TB*)(A+(ii*lda)+l), lda, 4, 8, (int8_t*)vec_A, false);
+            }
             packNormal<uint8_t, vector unsigned char>((B+(jj*ldb)+l), ldb, 8, 8, (uint8_t*)vec_B, true);
             for(int x = 0; x < 8; x++) {
                 __builtin_mma_xvi8ger4pp(&acc_0, vec_A[x], vec_B[x]);
@@ -1545,15 +2428,17 @@ class tinyBLAS_Q0_PPC {
                     *((float*)&vs[I+4]+J) = (unhalf((A+((ii+I)*lda)+l)->d) * unhalf((B+((jj+J+4)*ldb)+l)->d));
                 }
             }
-            auto aoffset = A+(ii*lda)+l;
-            for (int i = 0; i < 4; i++) {
-                comparray[i] = 0;
-                int ca = 0;
-                const int8_t *at = aoffset->qs;
-                for (int j = 0; j < 32; j++)
-                    ca += (int)*at++;
-                comparray[i] = ca;
-                aoffset += lda;
+            if (!isAblock_q4) {
+                auto aoffset = A+(ii*lda)+l;
+                for (int i = 0; i < 4; i++) {
+                    comparray[i] = 0;
+                    int ca = 0;
+                    auto *at = aoffset->qs;
+                    for (int j = 0; j < 32; j++)
+                        ca += (int)*at++;
+                    comparray[i] = ca;
+                    aoffset += lda;
+                }
             }
             compute<4>(&acc_0, 0, 0, comparray, vs, fin_res);
             compute<4>(&acc_1, 0, 4, comparray, vs, fin_res);
@@ -1565,13 +2450,18 @@ class tinyBLAS_Q0_PPC {
     void KERNEL_8x4(int64_t ii, int64_t jj) {
         vec_t vec_A[16], vec_B[8] = {0};
         acc_t acc_0, acc_1;
-        std::array<int, 8> comparray;
+        std::array<int, 8> comparray {};
         vector float fin_res[8] = {0};
         vector float vs[8] = {0};
+        bool isAblock_q4 = std::is_same_v<TA, block_q4_0>;
         for (int l = 0; l < k; l++) {
             __builtin_mma_xxsetaccz(&acc_0);
             __builtin_mma_xxsetaccz(&acc_1);
-            packNormal<int8_t, vector signed char>((A+(ii*lda)+l), lda, 8, 8, (int8_t*)vec_A, false);
+            if (std::is_same_v<TA, block_q4_0>) {
+               packNormalInt4<int8_t, vector signed char, 8>((A+(ii*lda)+l), lda, 8, 4, (int8_t*)vec_A, comparray);
+            } else {
+               packNormal<int8_t, vector signed char>((const TB*)(A+(ii*lda)+l), lda, 8, 8, (int8_t*)vec_A, false);
+            }
             packNormal<uint8_t, vector unsigned char>((B+(jj*ldb)+l), ldb, 4, 8, (uint8_t*)vec_B, true);
             for(int x = 0; x < 8; x++) {
                 __builtin_mma_xvi8ger4pp(&acc_0, vec_A[x], vec_B[x]);
@@ -1582,15 +2472,17 @@ class tinyBLAS_Q0_PPC {
                     *((float*)&vs[I]+J) = (unhalf((A+((ii+I)*lda)+l)->d) * unhalf((B+((jj+J)*ldb)+l)->d));
                 }
             }
-            auto aoffset = A+(ii*lda)+l;
-            for (int i = 0; i < 8; i++) {
-                comparray[i] = 0;
-                int ca = 0;
-                const int8_t *at = aoffset->qs;
-                for (int j = 0; j < 32; j++)
-                    ca += (int)*at++;
-                comparray[i] = ca;
-                aoffset += lda;
+            if (!isAblock_q4) {
+                auto aoffset = A+(ii*lda)+l;
+                for (int i = 0; i < 8; i++) {
+                    comparray[i] = 0;
+                    int ca = 0;
+                    auto *at = aoffset->qs;
+                    for (int j = 0; j < 32; j++)
+                        ca += (int)*at++;
+                    comparray[i] = ca;
+                    aoffset += lda;
+                }
             }
             compute<8>(&acc_0, 0, 0, comparray, vs, fin_res);
             compute<8>(&acc_1, 4, 4, comparray, vs, fin_res);
@@ -1602,15 +2494,20 @@ class tinyBLAS_Q0_PPC {
     void KERNEL_8x8(int64_t ii, int64_t jj) {
         vec_t vec_A[16], vec_B[16] = {0};
         acc_t acc_0, acc_1, acc_2, acc_3;
-        std::array<int, 8> comparray;
+        std::array<int, 8> comparray {};
         vector float fin_res[16] = {0};
         vector float vs[16] = {0};
+        bool isAblock_q4 = std::is_same_v<TA, block_q4_0>;
         for (int l = 0; l < k; l++) {
             __builtin_mma_xxsetaccz(&acc_0);
             __builtin_mma_xxsetaccz(&acc_1);
             __builtin_mma_xxsetaccz(&acc_2);
             __builtin_mma_xxsetaccz(&acc_3);
-            packNormal<int8_t, vector signed char>((A+(ii*lda)+l), lda, 8, 8, (int8_t*)vec_A, false);
+            if (std::is_same_v<TA, block_q4_0>) {
+               packNormalInt4<int8_t, vector signed char, 8>((A+(ii*lda)+l), lda, 8, 4, (int8_t*)vec_A, comparray);
+            } else {
+               packNormal<int8_t, vector signed char>((const TB*)(A+(ii*lda)+l), lda, 8, 8, (int8_t*)vec_A, false);
+            }
             packNormal<uint8_t, vector unsigned char>((B+(jj*ldb)+l), ldb, 8, 8, (uint8_t*)vec_B, true);
             for(int x = 0; x < 8; x++) {
                 __builtin_mma_xvi8ger4pp(&acc_0, vec_A[x], vec_B[x]);
@@ -1624,15 +2521,17 @@ class tinyBLAS_Q0_PPC {
                     *((float*)&vs[I+8]+J) = (unhalf((A+((ii+I)*lda)+l)->d) * unhalf((B+((jj+J+4)*ldb)+l)->d));
                 }
             }
-            auto aoffset = A+(ii*lda)+l;
-            for (int i = 0; i < 8; i++) {
-                comparray[i] = 0;
-                int ca = 0;
-                const int8_t *at = aoffset->qs;
-                for (int j = 0; j < 32; j++)
-                    ca += (int)*at++;
-                comparray[i] = ca;
-                aoffset += lda;
+            if (!isAblock_q4) {
+                auto aoffset = A+(ii*lda)+l;
+                for (int i = 0; i < 8; i++) {
+                    comparray[i] = 0;
+                    int ca = 0;
+                    auto *at = aoffset->qs;
+                    for (int j = 0; j < 32; j++)
+                        ca += (int)*at++;
+                    comparray[i] = ca;
+                    aoffset += lda;
+                }
             }
             compute<8>(&acc_0, 0, 0, comparray, vs, fin_res);
             compute<8>(&acc_1, 4, 4, comparray, vs, fin_res);
@@ -1653,16 +2552,17 @@ class tinyBLAS_Q0_PPC {
         int64_t duty = (tiles + nth - 1) / nth;
         int64_t start = duty * ith;
         int64_t end = start + duty;
-        vec_t vec_A[8], vec_B[8] = {0};
+        vec_t vec_A[8] = {0}, vec_B[8] = {0};
         vector signed int vec_C[4];
         acc_t acc_0;
+        bool isAblock_q4 = std::is_same_v<TA, block_q4_0>;
 
         if (end > tiles)
             end = tiles;
         for (int64_t job = start; job < end; ++job) {
             int64_t ii = m0 + job / xtiles * RM;
             int64_t jj = n0 + job % xtiles * RN;
-            std::array<int, RM> comparray;
+            std::array<int, 4> comparray{};
             vector float res[4] = {0};
             vector float fin_res[4] = {0};
             vector float vs[4] = {0};
@@ -1673,7 +2573,11 @@ class tinyBLAS_Q0_PPC {
                 __builtin_prefetch((A+(ii*lda)+(l+1))->qs, 0, 1); // prefetch one loop ahead
                 __builtin_prefetch((B+(jj*ldb)+(l+1))->qs, 0, 1); // prefetch one loop ahead
                 __builtin_mma_xxsetaccz(&acc_0);
-                packNormal<int8_t, vector signed char>((A+(ii*lda)+l), lda, RM, 8, (int8_t*)vec_A, false);
+                if (isAblock_q4) {
+                   packNormalInt4<int8_t, vector signed char, 4>((A+(ii*lda)+l), lda, RM, 4, (int8_t*)vec_A, comparray);
+                } else {
+                   packNormal<int8_t, vector signed char>((const TB*)(A+(ii*lda)+l), lda, RM, 8, (int8_t*)vec_A, false);
+                }
                 packNormal<uint8_t, vector unsigned char>((B+(jj*ldb)+l), ldb, RN, 8, (uint8_t*)vec_B, true);
                 for(int x = 0; x < 8; x+=4) {
                     __builtin_mma_xvi8ger4pp(&acc_0, vec_A[x], vec_B[x]);
@@ -1687,17 +2591,18 @@ class tinyBLAS_Q0_PPC {
                     }
                 }
                 __builtin_mma_disassemble_acc(vec_C, &acc_0);
-                auto aoffset = A+(ii*lda)+l;
-                for (int i = 0; i < RM; i++) {
-                    comparray[i] = 0;
-                    int ca = 0;
-                    const int8_t *at = aoffset->qs;
-                    for (int j = 0; j < 32; j++)
-                        ca += (int)*at++;
-                    comparray[i] = ca;
-                    aoffset += lda;
+                if (!isAblock_q4) {
+                    auto aoffset = A+(ii*lda)+l;
+                    for (int i = 0; i < RM; i++) {
+                        comparray[i] = 0;
+                        int ca = 0;
+                        auto *at = aoffset->qs;
+                        for (int j = 0; j < 32; j++)
+                            ca += (int)*at++;
+                        comparray[i] = ca;
+                        aoffset += lda;
+                    }
                 }
-
                 for (int i = 0; i < RM; i++) {
                     CA[i] = vec_splats((float)(((double)comparray[i]) * -128.0));
                     res[i] = vec_add(vec_ctf(vec_C[i], 0), CA[i]);
@@ -1784,6 +2689,7 @@ class tinyBLAS_PPC {
         boffset = vec;
         j = (rows >> 3);
         if (j > 0) {
+
             do {
                 aoffset1 = aoffset;
                 aoffset2 = aoffset1 + lda;
@@ -2013,6 +2919,7 @@ class tinyBLAS_PPC {
             }
         }
     }
+
     void KERNEL_4x4(int64_t ii, int64_t jj) {
         vec_t vec_A[4], vec_B[4], vec_C[4];
         acc_t acc_0;
@@ -2259,15 +3166,27 @@ class tinyBLAS_PPC {
             vec_t vec_C[4];
             acc_t acc_0;
             __builtin_mma_xxsetaccz(&acc_0);
-            vec_t vec_A[4], vec_B[4];
+            vec_t vec_A[4] {0}, vec_B[4] = {0};
             for (int l=0; l<k; l+=4) {
-                if (RN >= 4 && RM == 1) {
+                /* 'GEMV Forwarding' concept is used in first two conditional loops.
+                 * when one of the matrix has a single row/column, the elements are
+                 * broadcasted, instead of using packing routine to prepack the
+                 * matrix elements.
+                 */
+                if (RM == 1) {
                     TA* a = const_cast<TA*>(A+(ii)*lda+l);
-                    packTranspose<vector float>(B+(jj*ldb)+l, ldb, 4, 4, (TA*)vec_B);
+                    packTranspose<vector float>(B+(jj*ldb)+l, ldb, RN, 4, (TA*)vec_B);
                     vec_A[0] = (vec_t)vec_xl(0,a);
                     vec_A[1] = (vec_t)vec_splats(*((TA*)&vec_A+1));
                     vec_A[2] = (vec_t)vec_splats(*((TA*)&vec_A+2));
                     vec_A[3] = (vec_t)vec_splats(*((TA*)&vec_A+3));
+                } else if (RN == 1) {
+                    packTranspose<vector float>(A+(ii*lda)+l, lda, RM, 4, (TA*)vec_A);
+                    TB* b = const_cast<TB*>(B+(jj)*ldb+l);
+                    vec_B[0] = (vec_t)vec_xl(0,b);
+                    vec_B[1] = (vec_t)vec_splats(*((TB*)&vec_B+1));
+                    vec_B[2] = (vec_t)vec_splats(*((TB*)&vec_B+2));
+                    vec_B[3] = (vec_t)vec_splats(*((TB*)&vec_B+3));
                 } else {
                     packTranspose<vector float>(A+(ii*lda)+l, lda, RM, 4, (TA*)vec_A);
                     packTranspose<vector float>(B+(jj*ldb)+l, ldb, RN, 4, (TA*)vec_B);
@@ -2371,8 +3290,10 @@ bool llamafile_sgemm(const struct ggml_compute_params * params, int64_t m, int64
     assert(params->ith < params->nth);
 
     // only enable sgemm for prompt processing
+#if !defined(__MMA__)
     if (n < 2)
         return false;
+#endif
 
     if (Ctype != GGML_TYPE_F32)
         return false;
@@ -2442,9 +3363,22 @@ bool llamafile_sgemm(const struct ggml_compute_params * params, int64_t m, int64
                 (float *)C, ldc};
             return tb.matmul(m, n);
         }
+#elif defined(__MMA__)
+        if ((k % 8))
+                return false;
+        if(Btype == GGML_TYPE_BF16) {
+           tinyBLAS_BF16_PPC<ggml_bf16_t, ggml_bf16_t, float> tb{ k,
+            (const ggml_bf16_t *)A, lda,
+            (const ggml_bf16_t *)B, ldb,
+            (float *)C, ldc,
+            params->ith, params->nth};
+        tb.matmul(m, n);
+        return true;
+        }
 #endif
         return false;
     }
+
     case GGML_TYPE_F16: {
 #if defined(__AVX512F__)
         if (Btype == GGML_TYPE_F16) {
@@ -2503,8 +3437,8 @@ bool llamafile_sgemm(const struct ggml_compute_params * params, int64_t m, int64
             params->ith, params->nth};
         tb.matmul(m, n);
         return true;
-
 #elif defined(__MMA__)
+    //TO-DO: Remove this condition once gemv forwarding is enabled.
         if (n < 8 && n != 4)
            return false;
         if (m < 8 && m != 4)
@@ -2516,7 +3450,6 @@ bool llamafile_sgemm(const struct ggml_compute_params * params, int64_t m, int64
             params->ith, params->nth};
         tb.matmul(m, n);
         return true;
-
 #else
         return false;
 #endif
@@ -2535,6 +3468,19 @@ bool llamafile_sgemm(const struct ggml_compute_params * params, int64_t m, int64
         return true;
 #elif defined(__ARM_FEATURE_DOTPROD)
         tinyBLAS_Q0_ARM<block_q4_0> tb{
+            k, (const block_q4_0 *)A, lda,
+            (const block_q8_0 *)B, ldb,
+            (float *)C, ldc,
+            params->ith, params->nth};
+        tb.matmul(m, n);
+        return true;
+#elif defined(__MMA__)
+    //TO-DO: Remove this condition once gemv forwarding is enabled.
+        if (n < 8 && n != 4)
+           return false;
+        if (m < 8 && m != 4)
+           return false;
+        tinyBLAS_Q0_PPC<block_q4_0, block_q8_0, float> tb{
             k, (const block_q4_0 *)A, lda,
             (const block_q8_0 *)B, ldb,
             (float *)C, ldc,

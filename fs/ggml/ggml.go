@@ -15,6 +15,7 @@ import (
 type GGML struct {
 	container
 	model
+	Length int64
 }
 
 type model interface {
@@ -33,15 +34,16 @@ func (kv KV) Kind() string {
 }
 
 func (kv KV) ParameterCount() uint64 {
-	return keyValue[uint64](kv, "general.parameter_count")
+	val, _ := keyValue(kv, "general.parameter_count", uint64(0))
+	return val
 }
 
-func (kv KV) FileType() fileType {
+func (kv KV) FileType() FileType {
 	if t := kv.Uint("general.file_type"); t > 0 {
-		return fileType(t)
+		return FileType(t)
 	}
 
-	return fileTypeUnknown
+	return FileTypeUnknown
 }
 
 func (kv KV) BlockCount() uint64 {
@@ -52,16 +54,27 @@ func (kv KV) EmbeddingLength() uint64 {
 	return uint64(kv.Uint("embedding_length"))
 }
 
-func (kv KV) HeadCount() uint64 {
-	return uint64(kv.Uint("attention.head_count"))
+func (kv KV) HeadCountMax() uint64 {
+	// TODO(drifkin): using the max value can cause an overestimation. In the
+	// future if array values become more popular, we can adapt the more invasive
+	// <https://github.com/ollama/ollama/pull/10225>
+	return uint64(kv.UintOrMaxArrayValue("attention.head_count", 1))
 }
 
-func (kv KV) HeadCountKV() uint64 {
-	return uint64(kv.Uint("attention.head_count_kv", 1))
+func (kv KV) HeadCountMin() uint64 {
+	return uint64(kv.UintOrMinArrayValue("attention.head_count", 1))
 }
 
-func (kv KV) EmbeddingHeadCount() uint64 {
-	if heads := kv.HeadCount(); heads > 0 {
+func (kv KV) HeadCountKVMax() uint64 {
+	return uint64(kv.UintOrMaxArrayValue("attention.head_count_kv", 1))
+}
+
+func (kv KV) HeadCountKVMin() uint64 {
+	return uint64(kv.UintOrMinArrayValue("attention.head_count_kv", 1))
+}
+
+func (kv KV) EmbeddingHeadCountMax() uint64 {
+	if heads := kv.HeadCountMin(); heads > 0 {
 		return kv.EmbeddingLength() / heads
 	}
 
@@ -69,15 +82,11 @@ func (kv KV) EmbeddingHeadCount() uint64 {
 }
 
 func (kv KV) EmbeddingHeadCountK() uint64 {
-	return uint64(kv.Uint("attention.key_length", uint32(kv.EmbeddingHeadCount())))
+	return uint64(kv.Uint("attention.key_length", uint32(kv.EmbeddingHeadCountMax())))
 }
 
 func (kv KV) EmbeddingHeadCountV() uint64 {
-	return uint64(kv.Uint("attention.value_length", uint32(kv.EmbeddingHeadCount())))
-}
-
-func (kv KV) GQA() uint64 {
-	return kv.HeadCount() / kv.HeadCountKV()
+	return uint64(kv.Uint("attention.value_length", uint32(kv.EmbeddingHeadCountMax())))
 }
 
 func (kv KV) ContextLength() uint64 {
@@ -89,52 +98,113 @@ func (kv KV) ChatTemplate() string {
 }
 
 func (kv KV) String(key string, defaultValue ...string) string {
-	return keyValue(kv, key, append(defaultValue, "")...)
+	val, _ := keyValue(kv, key, append(defaultValue, "")...)
+	return val
 }
 
 func (kv KV) Uint(key string, defaultValue ...uint32) uint32 {
-	return keyValue(kv, key, append(defaultValue, 0)...)
+	val, _ := keyValue(kv, key, append(defaultValue, 0)...)
+	return val
 }
 
 func (kv KV) Float(key string, defaultValue ...float32) float32 {
-	return keyValue(kv, key, append(defaultValue, 0)...)
+	val, _ := keyValue(kv, key, append(defaultValue, 0)...)
+	return val
 }
 
 func (kv KV) Bool(key string, defaultValue ...bool) bool {
-	return keyValue(kv, key, append(defaultValue, false)...)
+	val, _ := keyValue(kv, key, append(defaultValue, false)...)
+	return val
+}
+
+func (kv KV) UintOrMaxArrayValue(key string, defaultValue uint32) uint32 {
+	_, max := kv.UintOrArrayValue(key, defaultValue)
+	return max
+}
+
+func (kv KV) UintOrMinArrayValue(key string, defaultValue uint32) uint32 {
+	min, _ := kv.UintOrArrayValue(key, defaultValue)
+	return min
+}
+
+func (kv KV) UintOrArrayValue(key string, defaultValue uint32) (uint32, uint32) {
+	if u32, ok := keyValue(kv, key, uint32(0)); ok {
+		return u32, u32
+	} else if u32s, ok := keyValue(kv, key, &array[uint32]{}); ok {
+		min := slices.Min(u32s.values)
+		max := slices.Max(u32s.values)
+		return min, max
+	} else if i32s, ok := keyValue(kv, key, &array[int32]{}); ok {
+		min := slices.Min(i32s.values)
+		max := slices.Max(i32s.values)
+		if min < 0 || max < 0 {
+			slog.Warn("array values are unexpectedly negative", "key", key, "min", min, "max", max)
+		}
+		return uint32(min), uint32(max)
+	}
+
+	return defaultValue, defaultValue
 }
 
 func (kv KV) Strings(key string, defaultValue ...[]string) []string {
-	r := keyValue(kv, key, &array{})
-	s := make([]string, r.size)
-	for i := range r.size {
-		s[i] = r.values[i].(string)
-	}
+	val, _ := keyValue(kv, key, &array[string]{values: append(defaultValue, []string(nil))[0]})
+	return val.values
+}
 
-	return s
+func (kv KV) Ints(key string, defaultValue ...[]int32) []int32 {
+	val, _ := keyValue(kv, key, &array[int32]{values: append(defaultValue, []int32(nil))[0]})
+	return val.values
 }
 
 func (kv KV) Uints(key string, defaultValue ...[]uint32) []uint32 {
-	r := keyValue(kv, key, &array{})
-	s := make([]uint32, r.size)
-	for i := range r.size {
-		s[i] = uint32(r.values[i].(int32))
-	}
-
-	return s
+	val, _ := keyValue(kv, key, &array[uint32]{values: append(defaultValue, []uint32(nil))[0]})
+	return val.values
 }
 
-func keyValue[T string | uint32 | uint64 | float32 | *array | bool](kv KV, key string, defaultValue ...T) T {
+func (kv KV) Floats(key string, defaultValue ...[]float32) []float32 {
+	val, _ := keyValue(kv, key, &array[float32]{values: append(defaultValue, []float32(nil))[0]})
+	return val.values
+}
+
+func (kv KV) Bools(key string, defaultValue ...[]bool) []bool {
+	val, _ := keyValue(kv, key, &array[bool]{values: append(defaultValue, []bool(nil))[0]})
+	return val.values
+}
+
+func (kv KV) OllamaEngineRequired() bool {
+	return slices.Contains([]string{
+		"gemma3",
+		"gemma3n",
+		"mistral3",
+		"llama4",
+		"mllama",
+		"qwen25vl",
+	}, kv.Architecture())
+}
+
+type valueTypes interface {
+	uint8 | int8 | uint16 | int16 |
+		uint32 | int32 | uint64 | int64 |
+		string | float32 | float64 | bool
+}
+
+type arrayValueTypes interface {
+	*array[uint8] | *array[int8] | *array[uint16] | *array[int16] |
+		*array[uint32] | *array[int32] | *array[uint64] | *array[int64] |
+		*array[string] | *array[float32] | *array[float64] | *array[bool]
+}
+
+func keyValue[T valueTypes | arrayValueTypes](kv KV, key string, defaultValue ...T) (T, bool) {
 	if !strings.HasPrefix(key, "tokenizer.") && !strings.HasPrefix(key, "general.") {
 		key = kv.Architecture() + "." + key
 	}
 
-	if val, ok := kv[key]; ok {
-		return val.(T)
+	if val, ok := kv[key].(T); ok {
+		return val, true
 	}
 
-	slog.Warn("key not found", "key", key, "default", defaultValue[0])
-	return defaultValue[0]
+	slog.Debug("key with type not found", "key", key, "default", defaultValue[0])
+	return defaultValue[0], false
 }
 
 type Tensors struct {
@@ -210,7 +280,11 @@ func (t Tensor) block() (n int) {
 }
 
 func (t Tensor) blockSize() uint64 {
-	switch t.Kind {
+	return (TensorType)(t.Kind).BlockSize()
+}
+
+func (t TensorType) BlockSize() uint64 {
+	switch t {
 	case
 		0,  // F32
 		1,  // F16
@@ -236,73 +310,77 @@ func (t Tensor) blockSize() uint64 {
 }
 
 func (t Tensor) typeSize() uint64 {
-	blockSize := t.blockSize()
+	return TensorType(t.Kind).TypeSize()
+}
 
-	switch t.Kind {
-	case 0: // FP32
+func (t TensorType) TypeSize() uint64 {
+	blockSize := t.BlockSize()
+
+	switch t {
+	case TensorTypeF32:
 		return 4
-	case 1: // FP16
+	case TensorTypeF16:
 		return 2
-	case 2: // Q4_0
+	case TensorTypeQ4_0:
 		return 2 + blockSize/2
-	case 3: // Q4_1
+	case TensorTypeQ4_1:
 		return 2 + 2 + blockSize/2
-	case 6: // Q5_0
+	case TensorTypeQ5_0:
 		return 2 + 4 + blockSize/2
-	case 7: // Q5_1
+	case TensorTypeQ5_1:
 		return 2 + 2 + 4 + blockSize/2
-	case 8: // Q8_0
+	case TensorTypeQ8_0:
 		return 2 + blockSize
-	case 9: // Q8_1
+	case TensorTypeQ8_1:
 		return 2 + 2 + blockSize
-	case 10: // Q2_K
+	case TensorTypeQ2_K:
 		return blockSize/16 + blockSize/4 + 2 + 2
-	case 11: // Q3_K
+	case TensorTypeQ3_K:
 		return blockSize/8 + blockSize/4 + 12 + 2
-	case 12: // Q4_K
+	case TensorTypeQ4_K:
 		return 2 + 2 + 12 + blockSize/2
-	case 13: // Q5_K
+	case TensorTypeQ5_K:
 		return 2 + 2 + 12 + blockSize/8 + blockSize/2
-	case 14: // Q6_K
+	case TensorTypeQ6_K:
 		return blockSize/2 + blockSize/4 + blockSize/16 + 2
-	case 15: // Q8_K
+	case TensorTypeQ8_K:
 		return 4 + blockSize + 2*blockSize/16
-	case 16: // IQ2_XXS
+	case tensorTypeIQ2_XXS:
 		return 2 + 2*blockSize/8
-	case 17: // IQ2_XS
+	case tensorTypeIQ2_XS:
 		return 2 + 2*blockSize/8 + blockSize/32
-	case 18: // IQ3_XXS
+	case tensorTypeIQ3_XXS:
 		return 2 + blockSize/4 + blockSize/8
-	case 19: // IQ1_S
+	case tensorTypeIQ1_S:
 		return 2 + blockSize/8 + blockSize/16
-	case 20: // IQ4_NL
+	case tensorTypeIQ4_NL:
 		return 2 + blockSize/2
-	case 21: // IQ3_S
+	case tensorTypeIQ3_S:
 		return 2 + blockSize/4 + blockSize/8 + blockSize/32 + 4
-	case 22: // IQ2_S
+	case tensorTypeIQ2_S:
 		return 2 + blockSize/4 + blockSize/16
-	case 23: // IQ4_XS
+	case tensorTypeIQ4_XS:
 		return 2 + 2 + blockSize/2 + blockSize/64
-	case 24: // I8
+	case TensorTypeI8:
 		return 1
-	case 25: // I16
+	case TensorTypeI16:
 		return 2
-	case 26: // I32
+	case TensorTypeI32:
 		return 4
-	case 27: // I64
+	case TensorTypeI64:
 		return 8
-	case 28: // F64
+	case TensorTypeF64:
 		return 8
-	case 29: // IQ1_M
+	case tensorTypeIQ1_M:
 		return blockSize/8 + blockSize/16 + blockSize/32
-	case 30: // BF16
+	case TensorTypeBF16:
 		return 2
 	default:
 		return 0
 	}
 }
 
-func (t Tensor) parameters() uint64 {
+func (t Tensor) Elements() uint64 {
 	var count uint64 = 1
 	for _, n := range t.Shape {
 		count *= n
@@ -311,7 +389,11 @@ func (t Tensor) parameters() uint64 {
 }
 
 func (t Tensor) Size() uint64 {
-	return t.parameters() * t.typeSize() / t.blockSize()
+	return t.Elements() * t.typeSize() / t.blockSize()
+}
+
+func (t Tensor) Type() string {
+	return TensorType(t.Kind).String()
 }
 
 type container interface {
@@ -355,18 +437,13 @@ func DetectContentType(b []byte) string {
 // Decode decodes a GGML model from the given reader.
 //
 // It collects array values for arrays with a size less than or equal to
-// maxArraySize. If maxArraySize is 0, the default value of 1024 is used. If
-// the maxArraySize is negative, all arrays are collected.
-func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
-	if maxArraySize == 0 {
-		maxArraySize = 1024
-	}
-
+// maxArraySize. If the maxArraySize is negative, all arrays are collected.
+func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, error) {
 	rs = bufioutil.NewBufferedSeeker(rs, 32<<10)
 
 	var magic uint32
 	if err := binary.Read(rs, binary.LittleEndian, &magic); err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 
 	var c container
@@ -376,43 +453,47 @@ func Decode(rs io.ReadSeeker, maxArraySize int) (*GGML, int64, error) {
 	case FILE_MAGIC_GGUF_BE:
 		c = &containerGGUF{ByteOrder: binary.BigEndian, maxArraySize: maxArraySize}
 	default:
-		return nil, 0, errors.New("invalid file magic")
+		return nil, errors.New("invalid file magic")
 	}
 
 	model, err := c.Decode(rs)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 
 	offset, err := rs.Seek(0, io.SeekCurrent)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 
 	// final model type
 	return &GGML{
 		container: c,
 		model:     model,
-	}, offset, nil
+		Length:    offset,
+	}, nil
 }
 
-func (f GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialOffload, fullOffload uint64) {
+func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType string) (kv []uint64, partialOffload, fullOffload uint64) {
 	embedding := f.KV().EmbeddingLength()
-	heads := f.KV().HeadCount()
-	headsKV := f.KV().HeadCountKV()
-	vocab := uint64(f.KV()["tokenizer.ggml.tokens"].(*array).size)
+	heads := f.KV().HeadCountMax()
+	headsKV := f.KV().HeadCountKVMax()
+	vocab := uint64(f.KV()["tokenizer.ggml.tokens"].(*array[string]).size)
 
-	embeddingHeads := f.KV().EmbeddingHeadCount()
+	embeddingHeads := f.KV().EmbeddingHeadCountMax()
 	embeddingHeadsK := f.KV().EmbeddingHeadCountK()
 	embeddingHeadsV := f.KV().EmbeddingHeadCountV()
 
 	layers := f.Tensors().GroupLayers()
 
 	bytesPerElement := kvCacheBytesPerElement(kvCacheType)
-	kv = uint64(float64(context*f.KV().BlockCount()*(embeddingHeadsK+embeddingHeadsV)*headsKV) * bytesPerElement)
+	kv = make([]uint64, f.KV().BlockCount())
+	for i := range kv {
+		kv[i] = uint64(float64(context*(embeddingHeadsK+embeddingHeadsV)*headsKV) * bytesPerElement)
+	}
 
 	switch f.KV().Architecture() {
-	case "llama":
+	case "llama", "llama4":
 		fullOffload = max(
 			4*batch*(1+4*embedding+context*(1+heads)),
 			4*batch*(embedding+vocab),
@@ -426,7 +507,7 @@ func (f GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialO
 
 		if ffnGateExpsWeight, ok := layers["blk.0"]["ffn_gate_exps.weight"]; ok {
 			// mixtral 8x22b
-			ff := uint64(f.KV()["llama.feed_forward_length"].(uint32))
+			ff := uint64(f.KV().Uint("feed_forward_length"))
 			partialOffload = max(
 				3*ffnGateExpsWeight.Size()+4*batch*(2*ff+headsKV+embedding+context+embeddingHeads*headsKV),
 				4*(context*batch*heads+context*embeddingHeads*headsKV+batch*1024+embeddingHeads*headsKV*batch),
@@ -443,16 +524,14 @@ func (f GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialO
 	case "mllama":
 		var visionTokens, tiles uint64 = 1601, 4
 
-		if crossAttentionLayers, ok := f.KV()["mllama.attention.cross_attention_layers"].(*array); ok {
-			kv = headsKV *
-				(embeddingHeadsK + embeddingHeadsV) * // one for K, one for V
-				(2* // sizeof(float16)
-					(f.KV().BlockCount()-uint64(crossAttentionLayers.size))* // num non-cross attention layers
-					context +
-					4* // sizeof(float32)
-						uint64(crossAttentionLayers.size)* // num cross attention layers
-						visionTokens*
-						tiles)
+		crossAttentionLayers := f.KV().Ints("attention.cross_attention_layers")
+		for i := range kv {
+			if slices.Contains(crossAttentionLayers, int32(i)) {
+				kv[i] = headsKV * (embeddingHeadsK + embeddingHeadsV) *
+					4 * // sizeof(float32)
+					visionTokens *
+					tiles
+			}
 		}
 
 		fullOffload = max(
@@ -464,7 +543,7 @@ func (f GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialO
 		var ropeFreqsCount uint64
 		if ropeFreqs, ok := f.Tensors().GroupLayers()["rope_freqs"]; ok {
 			if ropeFreqsWeights, ok := ropeFreqs["weights"]; ok {
-				ropeFreqsCount = ropeFreqsWeights.parameters()
+				ropeFreqsCount = ropeFreqsWeights.Elements()
 			}
 		}
 
@@ -476,7 +555,7 @@ func (f GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialO
 			// vocab graph
 			4*batch*(embedding+vocab)+embedding*vocab*105/128,
 		)
-	case "gemma", "gemma2":
+	case "gemma", "gemma2", "gemma3", "gemma3n":
 		fullOffload = max(
 			4*batch*(embedding+vocab),
 			4*batch*(2+context+context*heads+2*embedding+2*embeddingHeadsK*heads),
@@ -488,6 +567,25 @@ func (f GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialO
 				4*embeddingHeadsK*context*8+
 				embedding*embeddingHeadsK*heads*9/16,
 		)
+
+		if f.KV().Architecture() == "gemma3n" {
+			fullOffload *= 4
+			partialOffload *= 4
+		}
+
+		// Gemma2 also has sliding window attention but we only have an optimized implementation in the Ollama
+		// engine. Gemma3 always uses the Ollama engine.
+		if f.KV().Architecture() == "gemma3" {
+			const gemma3GlobalCacheCount = 6
+			slidingWindow := (uint64(numParallel) * uint64(f.KV().Uint("attention.sliding_window"))) + batch
+			for i := range kv {
+				// Every 6th layer is a global layer, which is the full context size that has already been set. The other
+				// layers are the smaller local (sliding) layers.
+				if (i+1)%gemma3GlobalCacheCount != 0 {
+					kv[i] = uint64(float64(slidingWindow*(embeddingHeadsK+embeddingHeadsV)*headsKV) * bytesPerElement)
+				}
+			}
+		}
 	case "command-r":
 		fullOffload = max(
 			4*batch*(embedding+vocab),
@@ -566,39 +664,69 @@ func (f GGML) GraphSize(context, batch uint64, kvCacheType string) (kv, partialO
 }
 
 func (llm GGML) VisionGraphSize() (weights, graphSize uint64) {
+	if llm.KV().Uint("vision.block_count") == 0 {
+		return
+	}
+
+	for name, layer := range llm.Tensors().GroupLayers() {
+		if name == "v" || strings.HasPrefix(name, "v.") {
+			for _, tensor := range layer {
+				weights += tensor.Size()
+			}
+		}
+	}
+
+	imageSize := uint64(llm.KV().Uint("vision.image_size"))
+	patchSize := uint64(llm.KV().Uint("vision.patch_size"))
+	if patchSize == 0 {
+		slog.Warn("unknown patch size for vision model")
+		return
+	}
+
+	numChannels := uint64(llm.KV().Uint("vision.num_channels"))
+
+	numPatches := (imageSize / patchSize) * (imageSize / patchSize)
+	if _, ok := llm.Tensors().GroupLayers()["v"]["class_embd"]; ok {
+		numPatches++
+	}
+
+	headCount := uint64(llm.KV().Uint("vision.attention.head_count"))
+	embeddingLength := uint64(llm.KV().Uint("vision.embedding_length"))
+
 	switch llm.KV().Architecture() {
 	case "mllama":
-		for _, layer := range llm.Tensors().GroupLayers()["v"] {
-			weights += layer.Size()
-		}
-
-		kv := func(n string) uint64 {
-			if v, ok := llm.KV()["mllama.vision."+n].(uint32); ok {
-				return uint64(v)
-			}
-
-			return 0
-		}
-
-		imageSize := kv("image_size")
-
-		maxNumTiles := kv("max_num_tiles")
-		embeddingLength := kv("embedding_length")
-		headCount := kv("attention.head_count")
-
-		numPatches := (imageSize / kv("patch_size")) * (imageSize / kv("patch_size"))
-		if _, ok := llm.Tensors().GroupLayers()["v"]["class_embd"]; ok {
-			numPatches++
-		}
-
 		numPaddedPatches := numPatches + 8 - (numPatches%8)%8
 
+		maxNumTiles := uint64(llm.KV().Uint("vision.max_num_tiles"))
+
 		graphSize = 4 * (8 +
-			imageSize*imageSize*kv("num_channels")*maxNumTiles +
+			imageSize*imageSize*numChannels*maxNumTiles +
 			embeddingLength*numPatches*maxNumTiles +
 			9*embeddingLength*numPaddedPatches*maxNumTiles +
 			numPaddedPatches*maxNumTiles*numPaddedPatches*maxNumTiles*headCount)
+	case "gemma3", "mistral3":
+		graphSize = 4 * (imageSize*imageSize*numChannels +
+			embeddingLength*patchSize +
+			numPatches*numPatches*headCount)
+	case "qwen25vl":
+		maxPixels := uint64(llm.KV().Uint("vision.max_pixels", 28*28*1280))
+
+		numPatches := maxPixels / (patchSize * patchSize)
+
+		graphSize = 4 * (maxPixels*numChannels + // Original image storage
+			// Normalized pixels
+			maxPixels*numChannels +
+			// Patches storage (numPatches * channels * patchSize^2)
+			numPatches*numChannels*patchSize*patchSize +
+			// Self-attention calculations
+			numPatches*numPatches*headCount +
+			// Additional buffer for processing
+			embeddingLength*numPatches)
+	case "llama4":
+		// vision graph is computed independently in the same schedule
+		// and is negligible compared to the worst case text graph
 	}
+
 	return weights, graphSize
 }
 

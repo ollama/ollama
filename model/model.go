@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	_ "image/jpeg"
@@ -15,16 +16,20 @@ import (
 	_ "golang.org/x/image/tiff"
 	_ "golang.org/x/image/webp"
 
-	fs "github.com/ollama/ollama/fs/ggml"
+	"github.com/ollama/ollama/fs"
+	fsggml "github.com/ollama/ollama/fs/ggml"
 	"github.com/ollama/ollama/kvcache"
+	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/ml"
 	_ "github.com/ollama/ollama/ml/backend"
 	"github.com/ollama/ollama/model/input"
 )
 
+var ErrNoVisionModel = errors.New("this model is missing data required for image input")
+
 // Model implements a specific model architecture, defining the forward pass and any model-specific configuration
 type Model interface {
-	Forward(ml.Context, input.Options) (ml.Tensor, error)
+	Forward(ml.Context, input.Batch) (ml.Tensor, error)
 
 	Backend() ml.Backend
 	Config() config
@@ -35,12 +40,13 @@ type MultimodalProcessor interface {
 	// EncodeMultimodal processes a single input (such as an image) and
 	// generates an output (typically an embedding) that can be used by the model.
 	//
-	// The return value is most typically an ml.Tensor, however, different
-	// type are possible, such as an object containing a tensor plus
-	// additional metadata, a slice of tensors or even just the original input.
+	// The return value is one or more tensors, each with optional model-specific
+	// opaque metadata. Typically, the tensors might be views into an embedding
+	// with each view representing a chunk of data that can be processed independently
+	// in different batches.
 	//
 	// The result may be cached by the runner.
-	EncodeMultimodal(ml.Context, []byte) (any, error)
+	EncodeMultimodal(ml.Context, []byte) ([]input.Multimodal, error)
 
 	// PostTokenize is called after tokenization to allow the model to edit the
 	// input stream to correctly arrange multimodal elements.
@@ -58,7 +64,7 @@ type MultimodalProcessor interface {
 	// This function is also responsible for updating MultimodalHash for any Multimodal
 	// that is modified to ensure that there is a unique hash value that accurately
 	// represents the contents.
-	PostTokenize(ml.Context, []input.Input) ([]input.Input, error)
+	PostTokenize([]input.Input) ([]input.Input, error)
 }
 
 // Base implements the common fields and methods for all models
@@ -80,10 +86,10 @@ func (m *Base) Config() config {
 	return m.config
 }
 
-var models = make(map[string]func(ml.Config) (Model, error))
+var models = make(map[string]func(fs.Config) (Model, error))
 
 // Register registers a model constructor for the given architecture
-func Register(name string, f func(ml.Config) (Model, error)) {
+func Register(name string, f func(fs.Config) (Model, error)) {
 	if _, ok := models[name]; ok {
 		panic("model: model already registered")
 	}
@@ -93,13 +99,7 @@ func Register(name string, f func(ml.Config) (Model, error)) {
 
 // New initializes a new model instance with the provided configuration based on the metadata in the model file
 func New(modelPath string, params ml.BackendParams) (Model, error) {
-	r, err := os.Open(modelPath)
-	if err != nil {
-		return nil, err
-	}
-	defer r.Close()
-
-	b, err := ml.NewBackend(r, params)
+	b, err := ml.NewBackend(modelPath, params)
 	if err != nil {
 		return nil, err
 	}
@@ -128,14 +128,14 @@ func NewTextProcessor(s string) (TextProcessor, error) {
 		return nil, err
 	}
 	defer r.Close()
-	meta, _, err := fs.Decode(r, -1)
+	meta, err := fsggml.Decode(r, -1)
 	if err != nil {
 		return nil, err
 	}
 	return getTextProcessor(meta.KV())
 }
 
-func getTextProcessor(kv fs.KV) (TextProcessor, error) {
+func getTextProcessor(kv fsggml.KV) (TextProcessor, error) {
 	arch := kv.Architecture()
 	f, ok := models[arch]
 	if !ok {
@@ -198,7 +198,7 @@ func populateFields(base Base, v reflect.Value, tags ...Tag) reflect.Value {
 				names := fn(tagsCopy)
 				for _, name := range names {
 					if tensor := base.Backend().Get(strings.Join(name, ".")); tensor != nil {
-						slog.Debug("found tensor", "", tensor)
+						slog.Log(context.TODO(), logutil.LevelTrace, "found tensor", "", tensor)
 						vv.Set(reflect.ValueOf(tensor))
 						break
 					}
@@ -278,24 +278,26 @@ func canNil(t reflect.Type) bool {
 		t.Kind() == reflect.Slice
 }
 
-func Forward(ctx ml.Context, m Model, opts input.Options) (ml.Tensor, error) {
-	if len(opts.Positions) != len(opts.Sequences) {
-		return nil, fmt.Errorf("length of positions (%v) must match length of seqs (%v)", len(opts.Positions), len(opts.Sequences))
+func Forward(ctx ml.Context, m Model, inputs []int32, batch input.Batch) (ml.Tensor, error) {
+	if len(batch.Positions) != len(batch.Sequences) {
+		return nil, fmt.Errorf("length of positions (%v) must match length of seqs (%v)", len(batch.Positions), len(batch.Sequences))
 	}
 
-	if len(opts.Positions) < 1 {
+	if len(batch.Positions) < 1 {
 		return nil, errors.New("batch size cannot be less than 1")
 	}
 
+	batch.Inputs = ctx.Input().FromIntSlice(inputs, len(inputs))
+
 	cache := m.Config().Cache
 	if cache != nil {
-		err := cache.StartForward(ctx, opts)
+		err := cache.StartForward(ctx, batch, false)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	t, err := m.Forward(ctx, opts)
+	t, err := m.Forward(ctx, batch)
 	if err != nil {
 		return nil, err
 	}

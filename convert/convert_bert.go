@@ -132,8 +132,8 @@ func (p *bertModel) KV(t *Tokenizer) ggml.KV {
 	return kv
 }
 
-func (p *bertModel) Tensors(ts []Tensor) []ggml.Tensor {
-	var out []ggml.Tensor
+func (p *bertModel) Tensors(ts []Tensor) []*ggml.Tensor {
+	var out []*ggml.Tensor
 	for _, t := range ts {
 		if slices.Contains([]string{
 			"embeddings.position_ids",
@@ -143,7 +143,7 @@ func (p *bertModel) Tensors(ts []Tensor) []ggml.Tensor {
 			continue
 		}
 
-		out = append(out, ggml.Tensor{
+		out = append(out, &ggml.Tensor{
 			Name:     t.Name(),
 			Kind:     t.Kind(),
 			Shape:    t.Shape(),
