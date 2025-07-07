@@ -183,6 +183,8 @@ var (
 	NewEngine = Bool("OLLAMA_NEW_ENGINE")
 	// ContextLength sets the default context length
 	ContextLength = Uint("OLLAMA_CONTEXT_LENGTH", 4096)
+	// Auth enables authentication between the Ollama client and server
+	UseAuth = Bool("OLLAMA_AUTH")
 )
 
 func String(s string) func() string {

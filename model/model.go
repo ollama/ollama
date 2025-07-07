@@ -287,11 +287,7 @@ func Forward(ctx ml.Context, m Model, inputs []int32, batch input.Batch) (ml.Ten
 		return nil, errors.New("batch size cannot be less than 1")
 	}
 
-	var err error
-	batch.Inputs, err = ctx.Input().FromIntSlice(inputs, len(inputs))
-	if err != nil {
-		return nil, err
-	}
+	batch.Inputs = ctx.Input().FromIntSlice(inputs, len(inputs))
 
 	cache := m.Config().Cache
 	if cache != nil {

@@ -364,6 +364,7 @@ struct node_alloc {
 struct ggml_gallocr {
     ggml_backend_buffer_type_t * bufts; // [n_buffers]
     ggml_backend_buffer_t * buffers; // [n_buffers]
+    size_t *buffer_sizes; // [n_buffers]
     struct ggml_dyn_tallocr ** buf_tallocs; // [n_buffers]
     int n_buffers;
 
@@ -386,6 +387,9 @@ ggml_gallocr_t ggml_gallocr_new_n(ggml_backend_buffer_type_t * bufts, int n_bufs
 
     galloc->buffers = calloc(n_bufs, sizeof(ggml_backend_buffer_t));
     GGML_ASSERT(galloc->buffers != NULL);
+
+    galloc->buffer_sizes = calloc(n_bufs, sizeof(size_t));
+    GGML_ASSERT(galloc->buffer_sizes != NULL);
 
     galloc->buf_tallocs = calloc(n_bufs, sizeof(struct ggml_dyn_tallocr *));
     GGML_ASSERT(galloc->buf_tallocs != NULL);
@@ -453,6 +457,7 @@ void ggml_gallocr_free(ggml_gallocr_t galloc) {
     ggml_hash_set_free(&galloc->hash_set);
     free(galloc->hash_values);
     free(galloc->bufts);
+    free(galloc->buffer_sizes);
     free(galloc->buffers);
     free(galloc->buf_tallocs);
     free(galloc->node_allocs);
@@ -748,6 +753,8 @@ bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph, c
         }
     }
 
+    bool success = true;
+
     // reallocate buffers if needed
     for (int i = 0; i < galloc->n_buffers; i++) {
         // if the buffer type is used multiple times, we reuse the same buffer
@@ -769,15 +776,20 @@ bool ggml_gallocr_reserve_n(ggml_gallocr_t galloc, struct ggml_cgraph * graph, c
 
             ggml_backend_buffer_free(galloc->buffers[i]);
             galloc->buffers[i] = ggml_backend_buft_alloc_buffer(galloc->bufts[i], new_size);
-            if (galloc->buffers[i] == NULL) {
+            if (galloc->buffers[i]) {
+                galloc->buffer_sizes[i] = ggml_backend_buffer_get_size(galloc->buffers[i]);
+                ggml_backend_buffer_set_usage(galloc->buffers[i], GGML_BACKEND_BUFFER_USAGE_COMPUTE);
+            } else {
                 GGML_LOG_ERROR("%s: failed to allocate %s buffer of size %zu\n", __func__, ggml_backend_buft_name(galloc->bufts[i]), new_size);
-                return false;
+                galloc->buffer_sizes[i] = new_size;
+                success = false;
             }
-            ggml_backend_buffer_set_usage(galloc->buffers[i], GGML_BACKEND_BUFFER_USAGE_COMPUTE);
+        } else {
+            galloc->buffer_sizes[i] = ggml_backend_buffer_get_size(galloc->buffers[i]);
         }
     }
 
-    return true;
+    return success;
 }
 
 bool ggml_gallocr_reserve(ggml_gallocr_t galloc, struct ggml_cgraph *graph) {
@@ -932,6 +944,24 @@ size_t ggml_gallocr_get_buffer_size(ggml_gallocr_t galloc, int buffer_id) {
     }
 
     return ggml_backend_buffer_get_size(galloc->buffers[buffer_id]);
+}
+
+struct ggml_allocr_buffer_status ggml_gallocr_get_attempted_buffer_size(ggml_gallocr_t galloc, int buffer_id) {
+    GGML_ASSERT(buffer_id >= 0 && buffer_id < galloc->n_buffers);
+
+    for (int i = 0; i < buffer_id; i++) {
+        if (galloc->buf_tallocs[i] == galloc->buf_tallocs[buffer_id]) {
+            // This buffer is the same as a previous one due to the same buffer type being used multiple times
+            // (See above.) However, we need a different check because multiple buffers might be NULL in our
+            // case and we still want to know the attempted size.
+
+            struct ggml_allocr_buffer_status status = {0, true};
+            return status;
+        }
+    }
+
+    struct ggml_allocr_buffer_status status = {galloc->buffer_sizes[buffer_id], galloc->buffers[buffer_id] != NULL};
+    return status;
 }
 
 // utils

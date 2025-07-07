@@ -43,6 +43,7 @@ Generate a response for a given prompt with a provided model. This is a streamin
 - `prompt`: the prompt to generate a response for
 - `suffix`: the text after the model response
 - `images`: (optional) a list of base64-encoded images (for multimodal models such as `llava`)
+- `think`: (for thinking models) should the model think before responding?
 
 Advanced parameters (optional):
 
@@ -490,11 +491,13 @@ Generate the next message in a chat with a provided model. This is a streaming e
 - `model`: (required) the [model name](#model-names)
 - `messages`: the messages of the chat, this can be used to keep a chat memory
 - `tools`: list of tools in JSON for the model to use if supported
+- `think`: (for thinking models) should the model think before responding?
 
 The `message` object has the following fields:
 
 - `role`: the role of the message, either `system`, `user`, `assistant`, or `tool`
 - `content`: the content of the message
+- `thinking`: (for thinking models) the model's thinking process
 - `images` (optional): a list of images to include in the message (for multimodal models such as `llava`)
 - `tool_calls` (optional): a list of tools in JSON that the model wants to use
 

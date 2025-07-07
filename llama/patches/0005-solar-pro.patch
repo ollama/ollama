@@ -150,7 +150,7 @@ index 4cce5166..7f6617fa 100644
  llama_model_loader::llama_model_loader(
          const std::string & fname,
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index 3a4e72a3..831b68c0 100644
+index 3a4e72a3..db62973f 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
 @@ -1402,6 +1402,21 @@ void llama_model::load_hparams(llama_model_loader & ml) {
