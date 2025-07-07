@@ -500,6 +500,7 @@ The `message` object has the following fields:
 - `thinking`: (for thinking models) the model's thinking process
 - `images` (optional): a list of images to include in the message (for multimodal models such as `llava`)
 - `tool_calls` (optional): a list of tools in JSON that the model wants to use
+- `tool_name` (optional): add the name of the tool that was executed to inform the model of the result 
 
 Advanced parameters (optional):
 
