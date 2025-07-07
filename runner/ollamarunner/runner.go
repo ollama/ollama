@@ -396,7 +396,7 @@ func (s *Server) processBatch() error {
 			continue
 		}
 		if seq.numPredict == -2 && int32(len(seq.cache.Inputs)) >= s.cache.numCtx {
-			s.removeSequence(seqIdx, "limit")
+			s.removeSequence(seqIdx, llm.DoneReasonLength)
 			continue
 		}
 

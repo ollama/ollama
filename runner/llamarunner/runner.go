@@ -380,7 +380,7 @@ func (s *Server) processBatch(tokenBatch *llama.Batch, embedBatch *llama.Batch) 
 			continue
 		}
 		if seq.numPredict == -2 && len(seq.cache.Inputs) >= s.cache.numCtx {
-			s.removeSequence(seqIdx, "limit")
+			s.removeSequence(seqIdx, llm.DoneReasonLength)
 			continue
 		}
 
