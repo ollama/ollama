@@ -2,15 +2,18 @@
 
 #include "llama.h"
 #include "llama-arch.h"
+#include "llama-graph.h"
 #include "llama-hparams.h"
+#include "llama-memory.h"
 #include "llama-vocab.h"
 
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <stdexcept>
 
+struct llama_cparams;
+struct llama_ubatch;
 struct llama_model_loader;
 
 // available models
@@ -26,22 +29,28 @@ enum llm_type {
     LLM_TYPE_109M,
     LLM_TYPE_137M,
     LLM_TYPE_160M,
+    LLM_TYPE_190M,
     LLM_TYPE_220M,
     LLM_TYPE_250M,
     LLM_TYPE_270M,
     LLM_TYPE_335M,
     LLM_TYPE_410M,
     LLM_TYPE_450M,
+    LLM_TYPE_475M,
     LLM_TYPE_770M,
     LLM_TYPE_780M,
     LLM_TYPE_0_5B,
+    LLM_TYPE_0_6B,
     LLM_TYPE_1B,
     LLM_TYPE_1_3B,
     LLM_TYPE_1_4B,
     LLM_TYPE_1_5B,
     LLM_TYPE_1_6B,
+    LLM_TYPE_1_7B,
+    LLM_TYPE_1_8B,
     LLM_TYPE_2B,
     LLM_TYPE_2_8B,
+    LLM_TYPE_2_9B,
     LLM_TYPE_3B,
     LLM_TYPE_4B,
     LLM_TYPE_6B,
@@ -57,6 +66,7 @@ enum llm_type {
     LLM_TYPE_16B,
     LLM_TYPE_20B,
     LLM_TYPE_22B,
+    LLM_TYPE_27B,
     LLM_TYPE_30B,
     LLM_TYPE_32B,
     LLM_TYPE_34B,
@@ -64,9 +74,10 @@ enum llm_type {
     LLM_TYPE_40B,
     LLM_TYPE_65B,
     LLM_TYPE_70B,
-    LLM_TYPE_90B,
     LLM_TYPE_236B,
+    LLM_TYPE_290B,
     LLM_TYPE_314B,
+    LLM_TYPE_405B,
     LLM_TYPE_671B,
     LLM_TYPE_SMALL,
     LLM_TYPE_MEDIUM,
@@ -80,8 +91,13 @@ enum llm_type {
     LLM_TYPE_16x3_8B,
     LLM_TYPE_10B_128x3_66B,
     LLM_TYPE_57B_A14B,
-    LLM_TYPE_27B,
+    LLM_TYPE_17B_16E, // llama4 Scout
+    LLM_TYPE_17B_128E, // llama4 Maverick
+    LLM_TYPE_30B_A3B,
+    LLM_TYPE_235B_A22B,
 };
+
+std::string llama_rope_scaling_type_name(llama_rope_scaling_type rope_scaling_type);
 
 struct llama_layer_posnet {
     // resnet
@@ -164,6 +180,8 @@ struct llama_layer {
     struct ggml_tensor * wq_b      = nullptr;
     struct ggml_tensor * wkv_a_mqa = nullptr;
     struct ggml_tensor * wkv_b     = nullptr;
+    struct ggml_tensor * wk_b      = nullptr;
+    struct ggml_tensor * wv_b      = nullptr;
     struct ggml_tensor * wq_cross  = nullptr;
     struct ggml_tensor * wk_cross  = nullptr;
     struct ggml_tensor * wv_cross  = nullptr;
@@ -259,6 +277,20 @@ struct llama_layer {
     struct ggml_tensor * time_mix_receptance_b = nullptr;
     struct ggml_tensor * time_mix_gate         = nullptr;
 
+    // rwkv7
+    struct ggml_tensor * time_mix_w0         = nullptr;
+    struct ggml_tensor * time_mix_a0         = nullptr;
+    struct ggml_tensor * time_mix_a1         = nullptr;
+    struct ggml_tensor * time_mix_a2         = nullptr;
+    struct ggml_tensor * time_mix_v0         = nullptr;
+    struct ggml_tensor * time_mix_v1         = nullptr;
+    struct ggml_tensor * time_mix_v2         = nullptr;
+    struct ggml_tensor * time_mix_g1         = nullptr;
+    struct ggml_tensor * time_mix_g2         = nullptr;
+    struct ggml_tensor * time_mix_k_k        = nullptr;
+    struct ggml_tensor * time_mix_k_a        = nullptr;
+    struct ggml_tensor * time_mix_r_k        = nullptr;
+
     struct ggml_tensor * time_mix_ln     = nullptr;
     struct ggml_tensor * time_mix_ln_b   = nullptr;
     struct ggml_tensor * time_mix_output = nullptr;
@@ -285,16 +317,6 @@ struct llama_layer {
     struct ggml_tensor * ffn_down_scale = nullptr;
 
     struct ggml_tensor * bskcn_tv = nullptr;
-
-    // cross attention
-    struct ggml_tensor * cross_attn_k_norm = nullptr;
-    struct ggml_tensor * cross_attn_k_proj = nullptr;
-    struct ggml_tensor * cross_attn_o_proj = nullptr;
-    struct ggml_tensor * cross_attn_q_norm = nullptr;
-    struct ggml_tensor * cross_attn_q_proj = nullptr;
-    struct ggml_tensor * cross_attn_v_proj = nullptr;
-    struct ggml_tensor * cross_attn_attn_gate = nullptr;
-    struct ggml_tensor * cross_attn_mlp_gate = nullptr;
 
     struct llama_layer_posnet posnet;
 
@@ -362,7 +384,7 @@ struct llama_model {
     std::string desc() const;
 
     size_t size() const;
-    size_t max_nodes() const;
+    size_t n_tensors() const;
     size_t n_devices() const;
 
     // total number of parameters in the model
@@ -375,7 +397,21 @@ struct llama_model {
 
     ggml_backend_buffer_type_t select_buft(int il) const;
 
+    bool has_tensor_overrides() const;
+
     const struct ggml_tensor * get_tensor(const char * name) const;
+
+    ggml_tensor * get_rope_factors(uint32_t n_ctx_per_seq, int il) const;
+
+    // note: can mutate `cparams`
+    // TODO: move this to new llm_arch_model_i interface
+    llama_memory_i * create_memory(const llama_memory_params & params, llama_cparams & cparams) const;
+
+    // TODO: move this to new llm_arch_model_i interface
+    llm_graph_result_ptr build_graph(
+            const llm_graph_params & params,
+                       ggml_cgraph * gf,
+                    llm_graph_type   type) const;
 
 private:
     struct impl;
@@ -383,3 +419,7 @@ private:
 };
 
 const char * llm_type_name(llm_type type);
+
+// For internal test use
+// TODO: remove
+const std::vector<std::pair<std::string, ggml_tensor *>> & llama_internal_get_tensor_map(const llama_model * model);

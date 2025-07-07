@@ -1,15 +1,20 @@
 package sample
 
 import (
+	"encoding/json"
 	"math"
 	"math/rand/v2"
+	"os"
+	"path/filepath"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
+	"github.com/ollama/ollama/model"
 )
 
 func TestWeighted(t *testing.T) {
-	got, err := Weighted(nil).Sample([]float32{float32(math.Inf(-1)), 2, float32(math.Inf(-1)), float32(math.Inf(-1))})
+	logits := []float32{-10, 3, -10, -10}
+	sampler := NewSampler(0, 0, 0, 0, 0, nil)
+	got, err := sampler.Sample(logits)
 	if err != nil {
 		t.Error(err)
 		return
@@ -19,207 +24,139 @@ func TestWeighted(t *testing.T) {
 		t.Errorf("index mismatch: want %d, got %d", want, got)
 	}
 
-	got, err = Weighted(nil).Sample([]float32{float32(math.Inf(-1)), float32(math.Inf(-1)), float32(math.Inf(-1))})
+	logits = []float32{-100, -10, 0, 10}
+	sampler = NewSampler(0, 0, 0, 0, 0, nil)
+	got, err = sampler.Sample(logits)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	want = int32(3) // Should pick highest probability with this r value
+	if want != got {
+		t.Errorf("index mismatch: want %d, got %d", want, got)
+	}
+
+	// Test very high p
+	logits = []float32{1.0, 0.9999999999999999, 0.5, 0.1}
+	// Use extremely small topP to filter out all tokens
+	sampler = NewSampler(1.0, 0, 1e-10, 0, 0, nil)
+	got, err = sampler.Sample(logits)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	// Should get the token with the highest logit
+	want = int32(0)
+	if want != got {
+		t.Errorf("index mismatch: want %d, got %d", want, got)
+	}
+
+	logits = []float32{float32(math.NaN()), float32(math.NaN()), float32(math.NaN())}
+	sampler = NewSampler(1, 0, 0.95, 0.05, 0, nil)
+	got, err = sampler.Sample(logits)
 	if err == nil {
-		t.Error("expected error for no valid tokens, got index", got)
-	}
-
-	seed := uint64(42)
-	got, err = Weighted(&seed).Sample([]float32{1, 2, 3, 4})
-	if err != nil {
-		t.Error(err)
+		t.Errorf("expected error, got %d", got)
 		return
 	}
-	// With seed 42, we expect a consistent sample
-	want = int32(3) // This will be deterministic due to the seed
-	if want != got {
-		t.Errorf("index mismatch: want %d, got %d", want, got)
-	}
 }
 
-type testTransform struct {
-	id        int
-	callOrder *[]int
-}
+func modelHelper(t testing.TB) model.BytePairEncoding {
+	t.Helper()
 
-func (ts *testTransform) Apply(logits []float64) []float64 {
-	if ts.callOrder != nil {
-		*ts.callOrder = append(*ts.callOrder, ts.id)
-	}
-	return logits
-}
-
-func TestSample(t *testing.T) {
-	input := []float32{1, 2, 3, 4}
-
-	var callOrder []int
-	mock1 := &testTransform{
-		id:        1,
-		callOrder: &callOrder,
-	}
-	mock2 := &testTransform{
-		id:        2,
-		callOrder: &callOrder,
-	}
-	mock3 := &testTransform{
-		id:        3,
-		callOrder: &callOrder,
-	}
-
-	got, err := Greedy(mock1, mock2, mock3).Sample(input)
+	f, err := os.Open(filepath.Join("..", "model", "testdata", "llama3.2", "encoder.json"))
 	if err != nil {
-		t.Error(err)
-		return
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	vocab := make(map[string]int32)
+	if err := json.NewDecoder(f).Decode(&vocab); err != nil {
+		t.Fatal(err)
 	}
 
-	want := int32(3) // Greedy sampler should pick highest logit
-	if want != got {
-		t.Errorf("index mismatch: want %d, got %d", want, got)
-	}
-	wantOrder := []int{1, 2, 3}
-	if diff := cmp.Diff(wantOrder, callOrder); diff != "" {
-		t.Errorf("call order mismatch (-want +got):\n%s", diff)
+	tokens := make([]string, len(vocab))
+	for token, id := range vocab {
+		tokens[id] = token
 	}
 
-	callOrder = nil
-
-	_, err = Weighted(nil, mock1, mock2, mock3).Sample(input)
-	if err != nil {
-		t.Error(err)
-		return
-	}
-	wantOrder = []int{1, 2, 3}
-	if diff := cmp.Diff(wantOrder, callOrder); diff != "" {
-		t.Errorf("call order mismatch (-want +got):\n%s", diff)
-	}
+	merges := make([]string, 0, 1)
+	// Only need vocab for Grammar Test
+	return model.NewBytePairEncoding(
+		``,
+		&model.Vocabulary{
+			Values: tokens,
+			Types:  make([]int32, len(vocab)),
+			Merges: merges,
+		},
+	)
 }
 
-func TestNewSampler(t *testing.T) {
-	tests := []struct {
-		name        string
-		temperature float32
-		topK        int
-		topP        float32
-		minP        float32
-		seed        int
-		wantErr     bool
-	}{
-		{
-			name:    "no transforms",
-			wantErr: true,
-		},
-		{
-			name:        "temperature",
-			temperature: 0.5,
-			wantErr:     false,
-		},
-		{
-			name:        "invalid temperature negative",
-			temperature: -1,
-			wantErr:     true,
-		},
-		{
-			name:        "invalid temperature too high",
-			temperature: 2.1,
-			wantErr:     true,
-		},
-		{
-			name:    "top k",
-			topK:    10,
-			wantErr: false,
-		},
-		{
-			name:    "invalid top k negative",
-			topK:    -1,
-			wantErr: true,
-		},
-		{
-			name:    "top p",
-			topP:    0.9,
-			wantErr: false,
-		},
-		{
-			name:    "invalid top p negative",
-			topP:    -0.1,
-			wantErr: true,
-		},
-		{
-			name:    "invalid top p one",
-			topP:    1.0,
-			wantErr: true,
-		},
-		{
-			name:    "min p",
-			minP:    0.2,
-			wantErr: false,
-		},
-		{
-			name:    "invalid min p negative",
-			minP:    -0.1,
-			wantErr: true,
-		},
-		{
-			name:    "invalid min p one",
-			minP:    1.0,
-			wantErr: true,
-		},
-		{
-			name:    "seed",
-			seed:    42,
-			wantErr: true, // seed alone is not valid without other transforms
-		},
-		{
-			name:        "default values",
-			temperature: 0.8,
-			topK:        40,
-			topP:        0.9,
-			minP:        0.0,
-			seed:        0,
-			wantErr:     false,
-		},
-		{
-			name:        "all zeroes",
-			temperature: 0.0,
-			topK:        0,
-			topP:        0.0,
-			minP:        0.0,
-			seed:        0,
-			wantErr:     true, // all zeroes means no transforms
-		},
-		{
-			name:        "all transforms",
-			temperature: 0.8,
-			topK:        50,
-			topP:        0.95,
-			minP:        0.1,
-			seed:        42,
-			wantErr:     false,
-		},
+func TestGrammar(t *testing.T) {
+	tokenizer := modelHelper(t)
+
+	grammarJSON := `
+	root   ::= object
+	value  ::= object | array | string | number | ("true" | "false" | "null") ws
+	object ::=
+	"{" ws (
+				string ":" ws value
+		("," ws string ":" ws value)*
+	)? "}" ws
+	array  ::=
+	"[" ws (
+				value
+		("," ws value)*
+	)? "]" ws
+	string ::=
+	"\"" (
+		[^"\\\x7F\x00-\x1F] |
+		"\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) # escapes
+	)* "\"" ws
+	number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)? ws
+	# Optional space: by convention, applied in this grammar after literal chars when allowed
+	ws ::= ([ \t\n] ws)?
+	`
+	grammar, err := NewGrammarSampler(tokenizer, grammarJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer grammar.Free()
+
+	logits := make([]float32, len(tokenizer.Vocabulary().Values))
+	for i := range logits {
+		logits[i] = rand.Float32()
+	}
+	tokens := make([]token, len(logits))
+	for i := range tokens {
+		tokens[i].id = int32(i)
+		tokens[i].value = logits[i]
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := NewSampler(tt.temperature, tt.topK, tt.topP, tt.minP, tt.seed)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("NewSampler() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
+	grammar.Apply(tokens)
+	nonInfCount := 0
+	infCount := 0
+	for _, tok := range tokens {
+		if math.IsInf(float64(tok.value), -1) {
+			infCount++
+		} else {
+			nonInfCount++
+		}
+	}
+	if nonInfCount == 0 {
+		t.Error("expected at least one non -inf token after grammar application, got none")
+	}
+	if infCount == 0 {
+		t.Error("expected some -inf tokens after grammar application, got none")
 	}
 }
 
 func BenchmarkSample(b *testing.B) {
-	transforms := []Transform{
-		Temperature(0.5),
-		TopK(10),
-		TopP(0.9),
-		MinP(0.2),
-	}
-
 	samplers := map[string]Sampler{
-		"Greedy":   Greedy(transforms...),
-		"Weighted": Weighted(nil, transforms...),
+		"Greedy":   NewSampler(0, 0, 0, 0, 0, nil), // Use NewSampler with temp=0 for greedy
+		"Weighted": NewSampler(0.5, 10, 0.9, 0.2, -1, nil),
 	}
 
+	// Generate random logits for benchmarking
 	logits := make([]float32, 1<<16)
 	for i := range logits {
 		logits[i] = rand.Float32()
@@ -228,9 +165,9 @@ func BenchmarkSample(b *testing.B) {
 	for name, s := range samplers {
 		b.Run(name, func(b *testing.B) {
 			b.ResetTimer()
-			for range b.N {
+			for b.Loop() {
 				if _, err := s.Sample(logits); err != nil {
-					b.Error(err)
+					b.Fatalf("error sampling: %v", err)
 				}
 			}
 		})

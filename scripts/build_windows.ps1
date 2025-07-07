@@ -26,11 +26,7 @@ function checkEnv() {
         $MSVC_INSTALL=(Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation
         $env:VCToolsRedistDir=(get-item "${MSVC_INSTALL}\VC\Redist\MSVC\*")[0]
     }
-    if (-Not (get-command -ErrorAction silent ninja)) {
-        $script:NINJA_DIR=(gci -path (Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation -r -fi ninja.exe) | split-path -parent
-    }
     # Locate CUDA versions
-    # Note: this assumes every version found will be built
     $cudaList=(get-item "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v*\bin\" -ea 'silentlycontinue')
     if ($cudaList.length -eq 0) {
         $d=(get-command -ea 'silentlycontinue' nvcc).path
@@ -83,63 +79,55 @@ function checkEnv() {
 
 
 function buildOllama() {
-    if ($null -eq ${env:OLLAMA_SKIP_GENERATE}) {
+    mkdir -Force -path "${script:DIST_DIR}\"
+    if ($script:ARCH -ne "arm64") {
         Remove-Item -ea 0 -recurse -force -path "${script:SRC_DIR}\dist\windows-${script:ARCH}"
         New-Item "${script:SRC_DIR}\dist\windows-${script:ARCH}\lib\ollama\" -ItemType Directory -ea 0
 
         & cmake --fresh --preset CPU --install-prefix $script:DIST_DIR
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        & cmake --build --preset CPU --parallel $script:JOBS
+        & cmake --build --preset CPU  --config Release --parallel $script:JOBS
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         & cmake --install build --component CPU --strip
         if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
 
         $hashEnv = @{}
         Get-ChildItem env: | foreach { $hashEnv[$_.Name] = $_.Value }
-        if ("$script:CUDA_DIRS".Contains("v11")) {
-            $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V11")) { $v11="$_" }}
-            $env:CUDAToolkit_ROOT=$hashEnv[$v11]
-            write-host "Building CUDA v11 backend libraries"
-            # Note: cuda v11 requires msvc 2019 so force the older generator
-            # to avoid 2022 (or newer) from being used as the default
-            & cmake --fresh --preset "CUDA 11" -G "Visual Studio 16 2019" --install-prefix $script:DIST_DIR
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --build --preset "CUDA 11" --parallel $script:JOBS
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --install build --component "CUDA" --strip
-            if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-        }
         if ("$script:CUDA_DIRS".Contains("v12")) {
             $hashEnv.Keys | foreach { if ($_.Contains("CUDA_PATH_V12")) { $v12="$_" }}
             $env:CUDAToolkit_ROOT=$hashEnv[$v12]
             write-host "Building CUDA v12 backend libraries"
             & cmake --fresh --preset "CUDA 12" --install-prefix $script:DIST_DIR
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
-            & cmake --build --preset "CUDA 12" --parallel $script:JOBS
+            & cmake --build --preset "CUDA 12"  --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             & cmake --install build --component "CUDA" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
         if ($env:HIP_PATH) {
             write-host "Building ROCm backend libraries"
-            if ($null -ne $script:NINJA_DIR) {
-                $env:PATH="$script:NINJA_DIR;$env:PATH"
+            if (-Not (get-command -ErrorAction silent ninja)) {
+                $NINJA_DIR=(gci -path (Get-CimInstance MSFT_VSInstance -Namespace root/cimv2/vs)[0].InstallLocation -r -fi ninja.exe).Directory.FullName
+                $env:PATH="$NINJA_DIR;$env:PATH"
             }
             $env:HIPCXX="${env:HIP_PATH}\bin\clang++.exe"
             $env:HIP_PLATFORM="amd"
             $env:CMAKE_PREFIX_PATH="${env:HIP_PATH}"
-            & cmake --fresh --preset "ROCm 6" -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ --install-prefix $script:DIST_DIR
+            & cmake --fresh --preset "ROCm 6" -G Ninja `
+                -DCMAKE_C_COMPILER=clang `
+                -DCMAKE_CXX_COMPILER=clang++ `
+                -DCMAKE_C_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
+                -DCMAKE_CXX_FLAGS="-parallel-jobs=4 -Wno-ignored-attributes -Wno-deprecated-pragma" `
+                --install-prefix $script:DIST_DIR
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             $env:HIPCXX=""
             $env:HIP_PLATFORM=""
             $env:CMAKE_PREFIX_PATH=""
-            & cmake --build --preset "ROCm" --parallel $script:JOBS
+            & cmake --build --preset "ROCm 6" --config Release --parallel $script:JOBS
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
             & cmake --install build --component "HIP" --strip
             if ($LASTEXITCODE -ne 0) { exit($LASTEXITCODE)}
         }
-    } else {
-        write-host "Skipping generate step with OLLAMA_SKIP_GENERATE set"
     }
     write-host "Building ollama CLI"
     & go build -trimpath -ldflags "-s -w -X=github.com/ollama/ollama/version.Version=$script:VERSION -X=github.com/ollama/ollama/server.mode=release" .
