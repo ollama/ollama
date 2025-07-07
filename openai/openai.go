@@ -579,6 +579,7 @@ func fromCompleteRequest(r CompletionRequest) (api.GenerateRequest, error) {
 		Options: options,
 		Stream:  &r.Stream,
 		Suffix:  r.Suffix,
+		Raw:     true,
 	}, nil
 }
 
