@@ -1578,7 +1578,6 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					for i := range toolCalls {
 						// Create a hash of the function arguments
 						argHash := sha256.Sum256([]byte(toolCalls[i].Function.Arguments.String()))
-						// Create a meaningful ID that includes function name and first 8 chars of arg hash
 						toolCalls[i].ID = fmt.Sprintf("%s_%x", toolCalls[i].Function.Name, argHash[:4])
 					}
 					res.Message.Content = ""

@@ -148,7 +148,7 @@ type Message struct {
 
 type ToolResult struct {
 	ToolName string `json:"tool_name,omitempty"`
-	ID       string `json:"tool_id,omitempty"`
+	ID       string `json:"tool_call_id,omitempty"`
 }
 
 func (m *Message) UnmarshalJSON(b []byte) error {
@@ -165,7 +165,7 @@ func (m *Message) UnmarshalJSON(b []byte) error {
 
 type ToolCall struct {
 	Function ToolCallFunction `json:"function"`
-	ID       string           `json:"id"`
+	ID       string           `json:"tool_call_id"`
 }
 
 type ToolCallFunction struct {

@@ -500,6 +500,7 @@ The `message` object has the following fields:
 - `thinking`: (for thinking models) the model's thinking process
 - `images` (optional): a list of images to include in the message (for multimodal models such as `llava`)
 - `tool_calls` (optional): a list of tools in JSON that the model wants to use
+- `tool_call_id` (optional): the ID of the tool call
 
 Advanced parameters (optional):
 
@@ -508,13 +509,21 @@ Advanced parameters (optional):
 - `stream`: if `false` the response will be returned as a single response object, rather than a stream of objects
 - `keep_alive`: controls how long the model will stay loaded into memory following the request (default: `5m`)
 
+### Tool calling
+
+Tool calling is supported by providing a list of tools in the `tools` parameter. The model will generate a response that includes a list of tool calls. See the [Chat request (Streaming with tools)](#chat-request-streaming-with-tools) example below.
+
+Models can also explain the result of the tool call in the response. See the [Chat request (With history, with tools)](#chat-request-with-history-with-tools) example below.
+
+[See models with tool calling capabilities](https://ollama.com/search?c=tool).
+
 ### Structured outputs
 
 Structured outputs are supported by providing a JSON schema in the `format` parameter. The model will generate a response that matches the schema. See the [Chat request (Structured outputs)](#chat-request-structured-outputs) example below.
 
 ### Examples
 
-#### Chat Request (Streaming)
+#### Chat request (Streaming)
 
 ##### Request
 
@@ -569,6 +578,89 @@ Final response:
 }
 ```
 
+#### Chat request (Streaming with tools)
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama3.2",
+  "messages": [
+    {
+      "role": "user",
+      "content": "what is the weather in tokyo?"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get the weather in a given city",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string",
+              "description": "The city to get the weather for"
+            }
+          },
+          "required": ["city"]
+        }
+      }
+    }
+  ],
+  "stream": true
+}'
+```
+
+##### Response
+
+A stream of JSON objects is returned:
+```json
+{
+    "model": "llama3.2",
+    "created_at": "2025-07-07T20:22:19.184789Z",
+    "message": {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "function": {
+                    "name": "get_weather",
+                    "arguments": {
+                        "city": "Tokyo"
+                    }
+                },
+                "tool_call_id": "get_weather_40ed420b"
+            }
+        ]
+    },
+    "done": false
+}
+```
+
+Final response:
+
+```json
+{
+  "model":"llama3.2",
+  "created_at":"2025-07-07T20:22:19.19314Z",
+  "message": {
+    "role": "assistant",
+    "content": ""
+  },
+  "done_reason": "stop",
+  "done": true,
+  "total_duration": 182242375,
+  "load_duration": 41295167,
+  "prompt_eval_count": 169,
+  "prompt_eval_duration": 24573166,
+  "eval_count": 15,
+  "eval_duration": 115959084
+}
+```
+
 #### Chat request (No streaming)
 
 ##### Request
@@ -603,6 +695,75 @@ curl http://localhost:11434/api/chat -d '{
   "prompt_eval_duration": 383809000,
   "eval_count": 298,
   "eval_duration": 4799921000
+}
+```
+
+#### Chat request (No streaming, with tools)
+
+##### Request
+
+
+```shell
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama3.2",
+  "messages": [
+    {
+      "role": "user",
+      "content": "what is the weather in tokyo?"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get the weather in a given city",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string",
+              "description": "The city to get the weather for"
+            }
+          },
+          "required": ["city"]
+        }
+      }
+    }
+  ],
+  "stream": false 
+}'
+```
+
+##### Response
+
+```json
+{
+  "model": "llama3.2",
+  "created_at": "2025-07-07T20:32:53.844124Z",
+  "message": {
+    "role": "assistant",
+    "content": "",
+    "tool_calls": [
+      {
+        "function": {
+          "name": "get_weather",
+          "arguments": {
+            "city": "Tokyo"
+          }
+        },
+        "tool_call_id": "get_weather_40ed420b"
+      }
+    ]
+  },
+  "done_reason": "stop",
+  "done": true,
+  "total_duration": 3244883583,
+  "load_duration": 2969184542,
+  "prompt_eval_count": 169,
+  "prompt_eval_duration": 141656333,
+  "eval_count": 18,
+  "eval_duration": 133293625
 }
 ```
 
@@ -711,6 +872,89 @@ Final response:
   "eval_duration": 7701267000
 }
 ```
+
+
+#### Chat request (With history, with tools)
+
+##### Request
+
+```shell
+curl http://localhost:11434/api/chat -d '{
+  "model": "llama3.2",
+  "messages": [
+    {
+      "role": "user",
+      "content": "what is the weather in Toronto?"
+    },
+    // the message from the model appended to history
+    {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+        {
+          "function": {
+            "name": "get_temperature",
+            "arguments": {
+              "city": "Toronto"
+            }
+          },
+          "tool_call_id": "get_temperature_f5d10bf3"
+        }
+      ]
+    },
+    // the tool call result appended to history
+    {
+      "role": "tool",
+      "content": "11 degrees celsius",
+      "tool_name": "get_temperature",
+      "tool_call_id": "get_temperature_f5d10bf3"
+    }
+  ],
+  "stream": false,
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Get the weather in a given city",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "city": {
+              "type": "string",
+              "description": "The city to get the weather for"
+            }
+          },
+          "required": ["city"]
+        }
+      }
+    }
+  ]
+}'
+```
+
+##### Response
+
+```json
+{
+  "model": "llama3.2",
+  "created_at": "2025-07-07T20:43:37.688511Z",
+  "message": {
+    "role": "assistant",
+    "content": "The current temperature in Toronto is 11°C."
+  },
+  "done_reason": "stop",
+  "done": true,
+  "total_duration": 890771750,
+  "load_duration": 707634750,
+  "prompt_eval_count": 94,
+  "prompt_eval_duration": 91703208,
+  "eval_count": 11,
+  "eval_duration": 90282125
+}
+
+```
+
 
 #### Chat request (with images)
 
