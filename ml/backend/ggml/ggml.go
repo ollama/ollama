@@ -138,10 +138,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 	requiredMemory.CPU.Name = C.GoString(C.ggml_backend_dev_name(cpuDeviceBufferType.d))
 	var props C.struct_ggml_backend_dev_props
 	C.ggml_backend_dev_get_props(cpuDeviceBufferType.d, &props)
-
-	// Bug #11211: Reporting of UUIDs is temporarily disabled due to causing segfaults
-	// This only affects debug information until the new memory management code is in place
-	// requiredMemory.CPU.UUID = C.GoString(props.uuid)
+	requiredMemory.CPU.UUID = C.GoString(props.uuid)
 	requiredMemory.CPU.Weights = make([]ml.Memory, blocks+1)
 	requiredMemory.CPU.Cache = make([]ml.Memory, blocks+1)
 
@@ -158,7 +155,7 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		requiredMemory.GPUs[i].Name = C.GoString(C.ggml_backend_dev_name(d))
 		var props C.struct_ggml_backend_dev_props
 		C.ggml_backend_dev_get_props(d, &props)
-		// requiredMemory.GPUs[i].UUID = C.GoString(props.uuid)
+		requiredMemory.GPUs[i].UUID = C.GoString(props.uuid)
 		requiredMemory.GPUs[i].Weights = make([]ml.Memory, blocks+1)
 		requiredMemory.GPUs[i].Cache = make([]ml.Memory, blocks+1)
 	}
@@ -358,6 +355,24 @@ func New(modelPath string, params ml.BackendParams) (ml.Backend, error) {
 		bbs[c] = b
 	}
 
+	// Mimic llama runner logs summarizing layers and memory
+	slog.Info(fmt.Sprintf("offloading %d repeating layers to GPU", max(0, params.NumGPULayers-1)))
+	gpuLayers := 0
+	switch C.ggml_backend_dev_type(output.d) {
+	case 0: // CPU
+		slog.Info("offloading output layer to CPU")
+	case 1: // GPU
+		slog.Info("offloading output layer to GPU")
+		gpuLayers++
+	case 2: // ACCEL
+		slog.Info("offloading output layer to ACCEL")
+	}
+	for _, layer := range layers {
+		if C.ggml_backend_dev_type(layer.d) == 1 {
+			gpuLayers++
+		}
+	}
+	slog.Info(fmt.Sprintf("offloaded %d/%d layers to GPU", gpuLayers, len(layers)+1))
 	for bs := range maps.Values(bbs) {
 		slog.Info("model weights", "buffer", C.GoString(C.ggml_backend_buffer_name(bs)), "size", format.HumanBytes2(uint64(C.ggml_backend_buffer_get_size(bs))))
 	}
