@@ -302,6 +302,9 @@ type Server struct {
 	// multimodalHash generates hashes for comparing equality
 	// of non-text data
 	multimodalHash maphash.Hash
+
+	// reranking indicates if the loaded model supports reranking.
+	reranking bool
 }
 
 func (s *Server) allNil() bool {
@@ -508,16 +511,28 @@ func (s *Server) processBatch() error {
 			seq.startGenerationTime = time.Now()
 		}
 
+		// sample a token
+		vocabSize := len(logits) / len(batch.Outputs)
+
 		// if done processing the prompt, generate an embedding and return
 		if seq.embeddingOnly {
+			if s.reranking {
+				// For reranking, the "embedding" is the relevance score
+				if len(logits) == 0 {
+					slog.Warn("reranking model returned no logits")
+					s.removeSequence(i, llm.DoneReasonStop)
+					continue
+				}
+				seq.embedding <- []float32{logits[seq.iBatch*vocabSize]}
+				s.removeSequence(i, llm.DoneReasonStop)
+				continue
+			}
+
 			// TODO(jessegross): Embedding support
 			slog.Warn("generation of embedding outputs not yet supported")
 			s.removeSequence(i, llm.DoneReasonStop)
 			continue
 		}
-
-		// sample a token
-		vocabSize := len(logits) / len(batch.Outputs)
 
 		token, err := seq.sampler.Sample(logits[seq.iBatch*vocabSize : (seq.iBatch+1)*vocabSize])
 		if err != nil {
@@ -720,6 +735,131 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+type RerankRequest struct {
+	Model   string   `json:"model"`
+	Prompts []string `json:"prompts"`
+}
+
+type RerankResult struct {
+	Index          int     `json:"index"`
+	RelevanceScore float32 `json:"relevance_score"`
+}
+
+type RerankResponse struct {
+	Results []RerankResult `json:"results"`
+	*api.Usage
+}
+
+func (s *Server) rerank(w http.ResponseWriter, r *http.Request) {
+	if !s.reranking {
+		http.Error(w, "this model does not support reranking", http.StatusNotImplemented)
+		return
+	}
+
+	var req RerankRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("bad rerank request: %s", err), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+
+	textProcessor, ok := s.model.(model.TextProcessor)
+	if !ok {
+		http.Error(w, "model does not support text processing for reranking", http.StatusInternalServerError)
+		return
+	}
+
+	BOSPiece, err := s.model.(model.TextProcessor).Decode([]int32{int32(model.SpecialBOS)})
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to decode BOS token: %v", err), http.StatusInternalServerError)
+		return
+	}
+	EOSPiece, err := s.model.(model.TextProcessor).Decode([]int32{int32(model.SpecialEOS)})
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to decode EOS token: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	parseFn := func(p string) string {
+		// For reranking, we explicitly replace placeholder tags if they exist in the prompt.
+		p = strings.ReplaceAll(p, "[BOS]", BOSPiece)
+		p = strings.ReplaceAll(p, "[EOS]", EOSPiece)
+		return p
+	}
+
+	var totalTokens int
+	for _, p := range req.Prompts {
+		parsedPrompt := parseFn(p)
+		slog.Debug("Processing prompt", "parsed", parsedPrompt)
+		tokens, err := textProcessor.Encode(parsedPrompt, true)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to tokenize prompt: %v", err), http.StatusInternalServerError)
+			return
+		}
+		totalTokens += len(tokens)
+	}
+
+	var rsp RerankResponse
+	rsp.Results = make([]RerankResult, 0, len(req.Prompts))
+	rsp.Usage = &api.Usage{
+		TotalTokens: totalTokens,
+	}
+
+	for i, prompt := range req.Prompts {
+		seq, err := s.NewSequence(parseFn(prompt), nil, NewSequenceParams{embedding: true})
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Ensure there is a place to put the sequence, released when removed from s.seqs
+		if err := s.seqsSem.Acquire(r.Context(), 1); err != nil {
+			if errors.Is(err, context.Canceled) {
+				slog.Info("aborting reranking request due to client closing the connection")
+			} else {
+				slog.Error("Failed to acquire semaphore", "error", err)
+			}
+			return
+		}
+
+		s.mu.Lock()
+		found := false
+		for j, sq := range s.seqs {
+			if sq == nil {
+				seq.cache, seq.inputs, err = s.cache.LoadCacheSlot(seq.inputs)
+				if err != nil {
+					s.mu.Unlock()
+					s.seqsSem.Release(1)
+					http.Error(w, fmt.Sprintf("Failed to load cache: %v", err), http.StatusInternalServerError)
+					return
+				}
+				s.seqs[j] = seq
+				s.cond.Signal()
+				found = true
+				break
+			}
+		}
+		s.mu.Unlock()
+
+		if !found {
+			s.seqsSem.Release(1)
+			http.Error(w, "could not find an available sequence", http.StatusInternalServerError)
+			return
+		}
+
+		score := <-seq.embedding
+
+		rsp.Results = append(rsp.Results, RerankResult{
+			Index:          i,
+			RelevanceScore: score[0], // Assuming the first element of the embedding is the relevance score
+		})
+	}
+
+	if err := json.NewEncoder(w).Encode(&rsp); err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+	}
+}
+
 type multiLPath []string
 
 func (m *multiLPath) Set(value string) error {
@@ -836,6 +976,7 @@ func (s *Server) initModel(
 	kvCacheType string,
 	kvSize int,
 	multiUserCache bool,
+	reranking bool,
 ) error {
 	var err error
 	s.model, err = model.New(mpath, params)
@@ -861,6 +1002,7 @@ func (s *Server) initModel(
 	s.parallel = parallel
 	s.seqs = make([]*Sequence, s.parallel)
 	s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
+	s.reranking = reranking
 
 	return s.reserveWorstCaseGraph()
 }
@@ -874,8 +1016,9 @@ func (s *Server) load(
 	kvCacheType string,
 	kvSize int,
 	multiUserCache bool,
+	reranking bool,
 ) {
-	err := s.initModel(mpath, params, lpath, parallel, kvCacheType, kvSize, multiUserCache)
+	err := s.initModel(mpath, params, lpath, parallel, kvCacheType, kvSize, multiUserCache, reranking)
 	if err != nil {
 		panic(err)
 	}
@@ -910,6 +1053,7 @@ func Execute(args []string) error {
 	_ = fs.Bool("no-mmap", false, "do not memory-map model (slower load but may reduce pageouts if not using mlock)")
 	tensorSplit := fs.String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
 	multiUserCache := fs.Bool("multiuser-cache", false, "optimize input cache algorithm for multiple users")
+	reranking := fs.Bool("reranking", false, "enable reranking")
 
 	var lpaths multiLPath
 	fs.Var(&lpaths, "lora", "Path to lora layer file (can be specified multiple times)")
@@ -956,7 +1100,7 @@ func Execute(args []string) error {
 		FlashAttention: *flashAttention,
 	}
 
-	go server.load(ctx, *mpath, params, lpaths, *parallel, *kvCacheType, *kvSize, *multiUserCache)
+	go server.load(ctx, *mpath, params, lpaths, *parallel, *kvCacheType, *kvSize, *multiUserCache, *reranking) // Pass reranking flag
 	go server.run(ctx)
 
 	addr := "127.0.0.1:" + strconv.Itoa(*port)
@@ -972,6 +1116,8 @@ func Execute(args []string) error {
 	mux.HandleFunc("POST /embedding", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this model does not support embeddings", http.StatusNotImplemented)
 	})
+
+	mux.HandleFunc("POST /rerank", server.rerank) // Add rerank handler
 
 	mux.HandleFunc("POST /completion", server.completion)
 	mux.HandleFunc("GET /health", server.health)
