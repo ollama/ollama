@@ -583,12 +583,13 @@ func ListRunningHandler(cmd *cobra.Command, args []string) error {
 			} else {
 				until = format.HumanTime(m.ExpiresAt, "Never")
 			}
-			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), procStr, until})
+			ctxStr := strconv.Itoa(m.ContextLength)
+			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), procStr, ctxStr, until})
 		}
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"NAME", "ID", "SIZE", "PROCESSOR", "UNTIL"})
+	table.SetHeader([]string{"NAME", "ID", "SIZE", "PROCESSOR", "CONTEXT", "UNTIL"})
 	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
 	table.SetHeaderLine(false)
