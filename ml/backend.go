@@ -253,6 +253,7 @@ type Tensor interface {
 
 	Neg(ctx Context) Tensor
 	Add(ctx Context, t2 Tensor) Tensor
+	Sub(ctx Context, t2 Tensor) Tensor
 	Mul(ctx Context, t2 Tensor) Tensor
 	Div(ctx Context, t2 Tensor) Tensor
 
@@ -276,6 +277,7 @@ type Tensor interface {
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context) Tensor
 	SILU(ctx Context) Tensor
+	RELU(ctx Context) Tensor
 	Sigmoid(ctx Context) Tensor
 
 	Reshape(ctx Context, shape ...int) Tensor
@@ -297,6 +299,12 @@ type Tensor interface {
 
 	TopK(ctx Context, k int) Tensor
 	Argsort(ctx Context) Tensor
+	Mean(ctx Context) Tensor
+	Variance(ctx Context) Tensor
+	Stddev(ctx Context) Tensor
+	Sqr(ctx Context) Tensor
+	Sqrt(ctx Context) Tensor
+	Clamp(ctx Context, min, max float32) Tensor
 }
 
 // ScaledDotProductAttention implements a fused attention

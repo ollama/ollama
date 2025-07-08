@@ -7,12 +7,13 @@ ARG JETPACK5VERSION=r35.4.1
 ARG JETPACK6VERSION=r36.4.0
 ARG CMAKEVERSION=3.31.2
 
-# CUDA v11 requires gcc v10.  v10.3 has regressions, so the rockylinux 8.5 AppStream has the latest compatible version
+# We require gcc v10 minimum.  v10.3 has regressions, so the rockylinux 8.5 AppStream has the latest compatible version
 FROM --platform=linux/amd64 rocm/dev-almalinux-8:${ROCMVERSION}-complete AS base-amd64
 RUN yum install -y yum-utils \
     && yum-config-manager --add-repo https://dl.rockylinux.org/vault/rocky/8.5/AppStream/\$basearch/os/ \
     && rpm --import https://dl.rockylinux.org/pub/rocky/RPM-GPG-KEY-Rocky-8 \
     && dnf install -y yum-utils ccache gcc-toolset-10-gcc-10.2.1-8.2.el8 gcc-toolset-10-gcc-c++-10.2.1-8.2.el8 gcc-toolset-10-binutils-2.35-11.el8 \
+    && dnf install -y ccache \
     && yum-config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
 ENV PATH=/opt/rh/gcc-toolset-10/root/usr/bin:$PATH
 
@@ -37,15 +38,6 @@ RUN --mount=type=cache,target=/root/.ccache \
     cmake --preset 'CPU' \
         && cmake --build --parallel --preset 'CPU' \
         && cmake --install build --component CPU --strip --parallel 8
-
-FROM base AS cuda-11
-ARG CUDA11VERSION=11.3
-RUN dnf install -y cuda-toolkit-${CUDA11VERSION//./-}
-ENV PATH=/usr/local/cuda-11/bin:$PATH
-RUN --mount=type=cache,target=/root/.ccache \
-    cmake --preset 'CUDA 11' \
-        && cmake --build --parallel --preset 'CUDA 11' \
-        && cmake --install build --component CUDA --strip --parallel 8
 
 FROM base AS cuda-12
 ARG CUDA12VERSION=12.8
@@ -98,23 +90,21 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     go build -trimpath -buildmode=pie -o /bin/ollama .
 
 FROM --platform=linux/amd64 scratch AS amd64
-COPY --from=cuda-11 dist/lib/ollama/cuda_v11 /lib/ollama/cuda_v11
-COPY --from=cuda-12 dist/lib/ollama/cuda_v12 /lib/ollama/cuda_v12
+COPY --from=cuda-12 dist/lib/ollama /lib/ollama
 
 FROM --platform=linux/arm64 scratch AS arm64
-COPY --from=cuda-11 dist/lib/ollama/cuda_v11 /lib/ollama/cuda_v11
-COPY --from=cuda-12 dist/lib/ollama/cuda_v12 /lib/ollama/cuda_v12
-COPY --from=jetpack-5 dist/lib/ollama/cuda_v11 /lib/ollama/cuda_jetpack5
-COPY --from=jetpack-6 dist/lib/ollama/cuda_v12 /lib/ollama/cuda_jetpack6
+COPY --from=cuda-12 dist/lib/ollama /lib/ollama/cuda_sbsa
+COPY --from=jetpack-5 dist/lib/ollama /lib/ollama/cuda_jetpack5
+COPY --from=jetpack-6 dist/lib/ollama /lib/ollama/cuda_jetpack6
 
 FROM scratch AS rocm
-COPY --from=rocm-6 dist/lib/ollama/rocm /lib/ollama/rocm
+COPY --from=rocm-6 dist/lib/ollama /lib/ollama
 
 FROM ${FLAVOR} AS archive
 COPY --from=cpu dist/lib/ollama /lib/ollama
 COPY --from=build /bin/ollama /bin/ollama
 
-FROM ubuntu:20.04
+FROM ubuntu:24.04
 RUN apt-get update \
     && apt-get install -y ca-certificates \
     && apt-get clean \
