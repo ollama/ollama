@@ -333,3 +333,16 @@ The currently available K/V cache quantization types are:
 How much the cache quantization impacts the model's response quality will depend on the model and the task.  Models that have a high GQA count (e.g. Qwen2) may see a larger impact on precision from quantization than models with a low GQA count.
 
 You may need to experiment with different quantization types to find the best balance between memory usage and quality.
+
+## How can I stop Ollama from starting when I login to my computer
+
+Ollama for Windows and macOS register as a login item during installation.  You can disable this if you prefer not to have Ollama automatically start.  Ollama will respect this setting across upgrades, unless you uninstall the application.
+
+**Windows**
+- Remove `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Ollama.lnk`
+
+**MacOS Monterey (v12)**
+- Open `Settings` -> `Users & Groups` -> `Login Items` and find the `Ollama` entry, then click the `-` (minus) to remove
+
+**MacOS Ventura (v13) and later**
+- Open `Settings` and search for "Login Items", find the `Ollama` entry under "Allow in the Background`, then click the slider to disable.
