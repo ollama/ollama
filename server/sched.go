@@ -57,9 +57,7 @@ type Scheduler struct {
 var defaultModelsPerGPU = 3
 
 // Default automatic value for parallel setting
-// Model will still need to fit in VRAM.  If this setting won't fit
-// we'll back off down to 1 to try to get it to fit
-var defaultParallel = 2
+var defaultParallel = 1
 
 var ErrMaxQueue = errors.New("server busy, please try again.  maximum pending requests exceeded")
 
@@ -191,7 +189,7 @@ func (s *Scheduler) processPending(ctx context.Context) {
 					}
 
 					// Load model for fitting
-					ggml, err := llm.LoadModel(pending.model.ModelPath, 0)
+					ggml, err := llm.LoadModel(pending.model.ModelPath, 1024)
 					if err != nil {
 						pending.errCh <- err
 						break

@@ -292,13 +292,18 @@ func filesForModel(path string) ([]string, error) {
 	}
 	files = append(files, js...)
 
-	if tks, _ := glob(filepath.Join(path, "tokenizer.model"), "application/octet-stream"); len(tks) > 0 {
-		// add tokenizer.model if it exists, tokenizer.json is automatically picked up by the previous glob
-		// tokenizer.model might be a unresolved git lfs reference; error if it is
-		files = append(files, tks...)
-	} else if tks, _ := glob(filepath.Join(path, "**/tokenizer.model"), "text/plain"); len(tks) > 0 {
-		// some times tokenizer.model is in a subdirectory (e.g. meta-llama/Meta-Llama-3-8B)
-		files = append(files, tks...)
+	// only include tokenizer.model is tokenizer.json is not present
+	if !slices.ContainsFunc(files, func(s string) bool {
+		return slices.Contains(strings.Split(s, string(os.PathSeparator)), "tokenizer.json")
+	}) {
+		if tks, _ := glob(filepath.Join(path, "tokenizer.model"), "application/octet-stream"); len(tks) > 0 {
+			// add tokenizer.model if it exists, tokenizer.json is automatically picked up by the previous glob
+			// tokenizer.model might be a unresolved git lfs reference; error if it is
+			files = append(files, tks...)
+		} else if tks, _ := glob(filepath.Join(path, "**/tokenizer.model"), "text/plain"); len(tks) > 0 {
+			// some times tokenizer.model is in a subdirectory (e.g. meta-llama/Meta-Llama-3-8B)
+			files = append(files, tks...)
+		}
 	}
 
 	return files, nil

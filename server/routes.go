@@ -37,6 +37,7 @@ import (
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/server/internal/registry"
 	"github.com/ollama/ollama/template"
+	"github.com/ollama/ollama/thinking"
 	"github.com/ollama/ollama/tools"
 	"github.com/ollama/ollama/types/errtypes"
 	"github.com/ollama/ollama/types/model"
@@ -282,12 +283,12 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		prompt = b.String()
 	}
 
-	var thinkingState *thinkingParser
-	openingTag, closingTag := inferThinkingTags(m.Template.Template)
+	var thinkingState *thinking.Parser
+	openingTag, closingTag := thinking.InferTags(m.Template.Template)
 	if req.Think != nil && *req.Think && openingTag != "" && closingTag != "" {
-		thinkingState = &thinkingParser{
-			openingTag: openingTag,
-			closingTag: closingTag,
+		thinkingState = &thinking.Parser{
+			OpeningTag: openingTag,
+			ClosingTag: closingTag,
 		}
 	}
 
@@ -316,7 +317,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 
 			if thinkingState != nil {
-				thinking, content := thinkingState.addContent(cr.Content)
+				thinking, content := thinkingState.AddContent(cr.Content)
 				res.Thinking = thinking
 				res.Response = content
 			}
@@ -1403,6 +1404,9 @@ func (s *Server) PsHandler(c *gin.Context) {
 			Details:   modelDetails,
 			ExpiresAt: v.expiresAt,
 		}
+		if v.Options != nil {
+			mr.ContextLength = v.Options.NumCtx / v.numParallel
+		}
 		// The scheduler waits to set expiresAt, so if a model is loading it's
 		// possible that it will be set to the unix epoch. For those cases, just
 		// calculate the time w/ the sessionDuration instead.
@@ -1514,23 +1518,18 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	var thinkingState *thinkingParser
-	openingTag, closingTag := inferThinkingTags(m.Template.Template)
+	var thinkingState *thinking.Parser
+	openingTag, closingTag := thinking.InferTags(m.Template.Template)
 	if req.Think != nil && *req.Think && openingTag != "" && closingTag != "" {
-		thinkingState = &thinkingParser{
-			openingTag: openingTag,
-			closingTag: closingTag,
+		thinkingState = &thinking.Parser{
+			OpeningTag: openingTag,
+			ClosingTag: closingTag,
 		}
 	}
 
 	var toolParser *tools.Parser
 	if len(req.Tools) > 0 {
-		toolParser, err = tools.NewParser(m.Template.Template)
-		if err != nil {
-			slog.Error("failed to create tool parser", "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
+		toolParser = tools.NewParser(m.Template.Template, req.Tools)
 	}
 
 	ch := make(chan any)
@@ -1557,7 +1556,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 			}
 
 			if thinkingState != nil {
-				thinkingContent, remainingContent := thinkingState.addContent(res.Message.Content)
+				thinkingContent, remainingContent := thinkingState.AddContent(res.Message.Content)
 				if thinkingContent == "" && remainingContent == "" && !r.Done {
 					// need to accumulate more to decide what to send
 					return
@@ -1583,6 +1582,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					// don't return
 				} else {
 					if r.Done {
+						res.Message.Content = toolParser.Content()
 						ch <- res
 					}
 					return
@@ -1668,11 +1668,11 @@ func filterThinkTags(msgs []api.Message, m *Model) []api.Message {
 				// change the user output), we should probably perform this filtering
 				// for all thinking models (not just qwen3 & deepseek-r1) since it tends
 				// to save tokens and improve quality.
-				thinkingState := &thinkingParser{
-					openingTag: "<think>",
-					closingTag: "</think>",
+				thinkingState := &thinking.Parser{
+					OpeningTag: "<think>",
+					ClosingTag: "</think>",
 				}
-				_, content := thinkingState.addContent(msg.Content)
+				_, content := thinkingState.AddContent(msg.Content)
 				msgs[i].Content = content
 			}
 		}

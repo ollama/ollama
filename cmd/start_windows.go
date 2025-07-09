@@ -45,14 +45,11 @@ func startApp(ctx context.Context, client *api.Client) error {
 			}
 		}
 	}
-	// log.Printf("XXX attempting to start app %s", appExe)
 
 	cmd_path := "c:\\Windows\\system32\\cmd.exe"
-	cmd := exec.Command(cmd_path, "/c", appExe)
-	// TODO - these hide flags aren't working - still pops up a command window for some reason
+	cmd := exec.Command(cmd_path, "/c", appExe, "--hide", "--fast-startup")
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000, HideWindow: true}
 
-	// TODO this didn't help either...
 	cmd.Stdin = strings.NewReader("")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -74,7 +71,16 @@ func isProcRunning(procName string) []uint32 {
 		slog.Debug("failed to check for running installers", "error", err)
 		return nil
 	}
-	pids = pids[:ret]
+	if ret > uint32(len(pids)) {
+		pids = make([]uint32, ret+10)
+		if err := windows.EnumProcesses(pids, &ret); err != nil || ret == 0 {
+			slog.Debug("failed to check for running installers", "error", err)
+			return nil
+		}
+	}
+	if ret < uint32(len(pids)) {
+		pids = pids[:ret]
+	}
 	var matches []uint32
 	for _, pid := range pids {
 		if pid == 0 {
