@@ -21,3 +21,9 @@ func (rs *bufferedReader) Read(p []byte) (n int, err error) {
 	rs.offset += int64(n)
 	return n, err
 }
+
+func (rs *bufferedReader) Discard(n int) (discarded int, err error) {
+	discarded, err = rs.Reader.Discard(n)
+	rs.offset += int64(discarded)
+	return discarded, err
+}
