@@ -31,8 +31,9 @@ func (t tensorBase) Shape() []uint64 {
 }
 
 const (
-	tensorKindF32 uint32 = iota
-	tensorKindF16
+	tensorKindFP32 uint32 = iota
+	tensorKindFP16
+	tensorKindBF16 = 30
 )
 
 func (t tensorBase) Kind() uint32 {
@@ -43,16 +44,16 @@ func (t tensorBase) Kind() uint32 {
 		t.name == "v.pre_tile_position_embd.weight" ||
 		t.name == "v.post_tile_position_embd.weight" {
 		// these tensors are always F32
-		return 0
+		return tensorKindFP32
 	}
 
 	switch len(t.shape) {
 	case 0:
 		panic("invalid tensor shape")
 	case 1:
-		return tensorKindF32
+		return tensorKindFP32
 	default:
-		return tensorKindF16
+		return tensorKindBF16
 	}
 }
 
