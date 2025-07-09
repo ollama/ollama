@@ -527,23 +527,17 @@ func WriteGGUF(f *os.File, kv KV, ts []*Tensor) error {
 		return err
 	}
 
-	keys := slices.Collect(maps.Keys(kv))
-	slices.Sort(keys)
-
-	for _, key := range keys {
+	for _, key := range slices.Sorted(maps.Keys(kv)) {
 		if err := ggufWriteKV(f, key, kv[key]); err != nil {
 			return err
 		}
 	}
 
 	slices.SortStableFunc(ts, func(a, b *Tensor) int {
-		if i, j := a.block(), b.block(); i < 0 && j > 0 {
-			return 1
-		} else if i > 0 && j < 0 {
-			return -1
-		} else {
+		if i, j := a.block(), b.block(); i > 0 && j > 0 {
 			return cmp.Compare(i, j)
 		}
+		return cmp.Compare(a.Name, b.Name)
 	})
 
 	var s uint64
@@ -615,6 +609,10 @@ func ggufWriteKV(ws io.WriteSeeker, k string, v any) error {
 		err = writeGGUFArray(ws, ggufTypeString, v)
 	case *array[string]:
 		err = writeGGUFArray(ws, ggufTypeString, v.values)
+	case []bool:
+		err = writeGGUFArray(ws, ggufTypeBool, v)
+	case *array[bool]:
+		err = writeGGUFArray(ws, ggufTypeBool, v.values)
 	default:
 		return fmt.Errorf("improper type for '%s'", k)
 	}

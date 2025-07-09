@@ -65,17 +65,17 @@ func (q *qwen25VLModel) Tensors(ts []Tensor) []*ggml.Tensor {
 	for _, t := range ts {
 		if strings.Contains(t.Name(), "patch_embed.proj") {
 			for t := range splitDim(t, 2,
-				strings.NewReplacer("patch_embed.proj", "patch_embd_0"),
-				strings.NewReplacer("patch_embed.proj", "patch_embd_1"),
+				split{Replacer: strings.NewReplacer("patch_embed.proj", "patch_embd_0")},
+				split{Replacer: strings.NewReplacer("patch_embed.proj", "patch_embd_1")},
 			) {
 				t.Shape = slices.DeleteFunc(t.Shape, func(i uint64) bool { return i == 1 })
 				out = append(out, t)
 			}
 		} else if strings.Contains(t.Name(), "attn.qkv") {
 			out = append(out, slices.Collect(splitDim(t, 0,
-				strings.NewReplacer("attn.qkv", "attn_q"),
-				strings.NewReplacer("attn.qkv", "attn_k"),
-				strings.NewReplacer("attn.qkv", "attn_v"),
+				split{Replacer: strings.NewReplacer("attn.qkv", "attn_q")},
+				split{Replacer: strings.NewReplacer("attn.qkv", "attn_k")},
+				split{Replacer: strings.NewReplacer("attn.qkv", "attn_v")},
 			))...)
 		} else {
 			out = append(out, &ggml.Tensor{

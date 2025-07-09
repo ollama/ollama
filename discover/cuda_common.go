@@ -3,6 +3,7 @@
 package discover
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 	"regexp"
@@ -55,10 +56,13 @@ func cudaVariant(gpuInfo CudaGPUInfo) string {
 				}
 			}
 		}
+		return "sbsa"
 	}
 
 	// driver 12.0 has problems with the cuda v12 library, so run v11 on those older drivers
 	if gpuInfo.DriverMajor < 12 || (gpuInfo.DriverMajor == 12 && gpuInfo.DriverMinor == 0) {
+		// The detected driver is older than Feb 2023
+		slog.Warn("old CUDA driver detected - please upgrade to a newer driver", "version", fmt.Sprintf("%d.%d", gpuInfo.DriverMajor, gpuInfo.DriverMinor))
 		return "v11"
 	}
 	return "v12"

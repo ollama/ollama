@@ -231,6 +231,8 @@ func newType(t *fsggml.Tensor, kv fsggml.KV, qs *quantizeState, ftype fsggml.Fil
 	// do not quantize relative position bias (T5)
 	quantize = quantize && !strings.Contains(name, "attn_rel_b.weight")
 
+	quantize = quantize && !strings.Contains(name, "per_layer_token_embd.weight")
+
 	newType := fsggml.TensorType(t.Kind)
 	if quantize {
 		// get more optimal quantization type based on the tensor shape, layer, etc.

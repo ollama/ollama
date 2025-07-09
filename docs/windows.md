@@ -30,20 +30,6 @@ To install the Ollama application in a location different than your home directo
 OllamaSetup.exe /DIR="d:\some\location"
 ```
 
-### Changing Model Location
-
-To change where Ollama stores the downloaded models instead of using your home directory, set the environment variable `OLLAMA_MODELS` in your user account.
-
-1. Start the Settings (Windows 11) or Control Panel (Windows 10) application and search for _environment variables_.
-
-2. Click on _Edit environment variables for your account_.
-
-3. Edit or create a new variable for your user account for `OLLAMA_MODELS` where you want the models stored
-
-4. Click OK/Apply to save.
-
-If Ollama is already running, Quit the tray application and relaunch it from the Start menu, or a new terminal started after you saved the environment variables.
-
 ## API Access
 
 Here's a quick example showing API access from `powershell`

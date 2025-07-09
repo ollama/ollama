@@ -32,6 +32,48 @@ const (
 	smol = "llama3.2:1b"
 )
 
+var (
+	started = time.Now()
+
+	// Note: add newer models at the top of the list to test them first
+	ollamaEngineChatModels = []string{
+		"gemma3n:e2b",
+		"mistral-small3.2:latest",
+		"deepseek-r1:1.5b",
+		"llama3.2-vision:latest",
+		"qwen2.5-coder:latest",
+		"qwen2.5vl:3b",
+		"qwen3:0.6b", // dense
+		"qwen3:30b",  // MOE
+		"gemma3:1b",
+		"llama3.1:latest",
+		"llama3.2:latest",
+		"gemma2:latest",
+		"minicpm-v:latest",    // arch=qwen2
+		"granite-code:latest", // arch=llama
+	}
+	llamaRunnerChatModels = []string{
+		"mistral:latest",
+		"falcon3:latest",
+		"granite3-moe:latest",
+		"command-r:latest",
+		"nemotron-mini:latest",
+		"phi3.5:latest",
+		"solar-pro:latest",
+		"internlm2:latest",
+		"codellama:latest", // arch=llama
+		"phi3:latest",
+		"falcon2:latest",
+		"gemma:latest",
+		"llama2:latest",
+		"nous-hermes:latest",
+		"orca-mini:latest",
+		"qwen:latest",
+		"stablelm2:latest", // Predictions are off, crashes on small VRAM GPUs
+		"falcon:latest",
+	}
+)
+
 func Init() {
 	lifecycle.InitLogging()
 }

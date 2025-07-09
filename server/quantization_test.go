@@ -257,16 +257,8 @@ func TestQuantizeModel(t *testing.T) {
 
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
-			f, err := os.CreateTemp(t.TempDir(), tt.name)
-			if err != nil {
-				t.Fatal(err.Error())
-			}
-			defer f.Close()
-			err = fsggml.WriteGGUF(f, tt.kv, tt.tensors)
-			if err != nil {
-				t.Fatalf("failed to create initial model: %s", err)
-			}
-			fp, err := os.Open(f.Name())
+			p, _ := createBinFile(t, tt.kv, tt.tensors)
+			fp, err := os.Open(p)
 			if err != nil {
 				t.Fatal(err.Error())
 			}
