@@ -769,29 +769,9 @@ func (s *Server) rerank(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	BOSPiece, err := s.model.(model.TextProcessor).Decode([]int32{int32(model.SpecialBOS)})
-	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to decode BOS token: %v", err), http.StatusInternalServerError)
-		return
-	}
-	EOSPiece, err := s.model.(model.TextProcessor).Decode([]int32{int32(model.SpecialEOS)})
-	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to decode EOS token: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	parseFn := func(p string) string {
-		// For reranking, we explicitly replace placeholder tags if they exist in the prompt.
-		p = strings.ReplaceAll(p, "[BOS]", BOSPiece)
-		p = strings.ReplaceAll(p, "[EOS]", EOSPiece)
-		return p
-	}
-
 	var totalTokens int
 	for _, p := range req.Prompts {
-		parsedPrompt := parseFn(p)
-		slog.Debug("Processing prompt", "parsed", parsedPrompt)
-		tokens, err := textProcessor.Encode(parsedPrompt, true)
+		tokens, err := textProcessor.Encode(p, true)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("failed to tokenize prompt: %v", err), http.StatusInternalServerError)
 			return
@@ -806,7 +786,7 @@ func (s *Server) rerank(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for i, prompt := range req.Prompts {
-		seq, err := s.NewSequence(parseFn(prompt), nil, NewSequenceParams{embedding: true})
+		seq, err := s.NewSequence(prompt, nil, NewSequenceParams{embedding: true})
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 			return
