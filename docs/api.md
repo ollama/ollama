@@ -1894,7 +1894,7 @@ Using the Modelfile:
 ```
 FROM fanyx/Qwen3-Reranker-0.6B-Q8_0
 
-TEMPLATE """[BOS]{{ .Query }}[EOS][SEP]{{ .Document }}[EOS]"""
+TEMPLATE """!{{ .Query }}"\""[SEP]{{ .Document }}[EOS]"""
 ```
 
 #### Request
@@ -1921,46 +1921,46 @@ curl http://127.0.0.1:11434/api/rerank \
 
 ```json
 {
-  "model": "reranker-fanyx",
+  "model": "reranker-fanyx-correct",
   "results": [
     {
       "index": 4,
       "document": {
         "text": "Ollama is a machine learning framework"
       },
-      "relevance_score": 8.932385
-    },
-    {
-      "index": 3,
-      "document": {
-        "text": "Spaghetti is a type of italian food"
-      },
-      "relevance_score": 8.688866
-    },
-    {
-      "index": 1,
-      "document": {
-        "text": "Llamas are animals that have a very soft fur"
-      },
-      "relevance_score": 8.252699
+      "relevance_score": 9.151519
     },
     {
       "index": 0,
       "document": {
         "text": "Angela Merkel was the Chancellor of Germany"
       },
-      "relevance_score": 7.8848386
+      "relevance_score": 8.595248
+    },
+    {
+      "index": 3,
+      "document": {
+        "text": "Spaghetti is a type of italian food"
+      },
+      "relevance_score": 7.900294
     },
     {
       "index": 2,
       "document": {
         "text": "Pizza is made of tomatoes and cheese."
       },
-      "relevance_score": 6.823088
+      "relevance_score": 7.504794
+    },
+    {
+      "index": 1,
+      "document": {
+        "text": "Llamas are animals that have a very soft fur"
+      },
+      "relevance_score": 7.247923
     }
   ],
   "usage": {
-    "total_tokens": 132
+    "total_tokens": 147
   }
 }
 ```
