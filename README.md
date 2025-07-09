@@ -410,6 +410,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [GPTranslate](https://github.com/philberndt/GPTranslate) (A fast and lightweight, AI powered desktop translation application written with Rust and Tauri. Features real-time translation with OpenAI/Azure/Ollama.)
 - [ollama launcher](https://github.com/NGC13009/ollama-launcher) (A launcher for Ollama, aiming to provide users with convenient functions such as ollama server launching, management, or configuration.)
 - [ai-hub](https://github.com/Aj-Seven/ai-hub) (AI Hub supports multiple models via API keys and Chat support via Ollama API.)
+- [PrivateGPT](https://github.com/alexup71rus/PrivateGPT) (A versatile web and desktop app built with Electron, supporting SearXNG-powered search, RAG, and folder-based organization.)
 
 ### Cloud
 
