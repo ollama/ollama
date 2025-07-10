@@ -785,54 +785,82 @@ func (s *Server) rerank(w http.ResponseWriter, r *http.Request) {
 		TotalTokens: totalTokens,
 	}
 
-	for i, prompt := range req.Prompts {
-		seq, err := s.NewSequence(prompt, nil, NewSequenceParams{embedding: true})
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
-			return
-		}
+	// Process prompts in batches that fit within parallel capacity
+	batchSize := s.parallel
+	for batchStart := 0; batchStart < len(req.Prompts); batchStart += batchSize {
+		batchEnd := min(batchStart+batchSize, len(req.Prompts))
+		currentBatch := req.Prompts[batchStart:batchEnd]
 
-		// Ensure there is a place to put the sequence, released when removed from s.seqs
-		if err := s.seqsSem.Acquire(r.Context(), 1); err != nil {
-			if errors.Is(err, context.Canceled) {
-				slog.Info("aborting reranking request due to client closing the connection")
-			} else {
-				slog.Error("Failed to acquire semaphore", "error", err)
+		slog.Debug("Processing batch", "start", batchStart, "end", batchEnd, "size", len(currentBatch))
+
+		// Create sequences for current batch
+		sequences := make([]*Sequence, len(currentBatch))
+		for i, prompt := range currentBatch {
+			seq, err := s.NewSequence(prompt, nil, NewSequenceParams{embedding: true})
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
+				return
 			}
-			return
+			sequences[i] = seq
 		}
 
-		s.mu.Lock()
-		found := false
-		for j, sq := range s.seqs {
-			if sq == nil {
-				seq.cache, seq.inputs, err = s.cache.LoadCacheSlot(seq.inputs)
-				if err != nil {
-					s.mu.Unlock()
+		// Acquire semaphores for current batch of sequences
+		for i := range sequences {
+			if err := s.seqsSem.Acquire(r.Context(), 1); err != nil {
+				// In case of an error, release any already acquired semaphores
+				for j := 0; j < i; j++ {
 					s.seqsSem.Release(1)
-					http.Error(w, fmt.Sprintf("Failed to load cache: %v", err), http.StatusInternalServerError)
-					return
 				}
-				s.seqs[j] = seq
-				s.cond.Signal()
-				found = true
-				break
+				if errors.Is(err, context.Canceled) {
+					slog.Info("aborting reranking request due to client closing the connection")
+				} else {
+					slog.Error("Failed to acquire semaphore", "error", err)
+				}
+				return
 			}
 		}
+
+		// Add current batch to processing queue
+		s.mu.Lock()
+		for i, seq := range sequences {
+			found := false
+			for j, sq := range s.seqs {
+				if sq == nil {
+					var err error
+					seq.cache, seq.inputs, err = s.cache.LoadCacheSlot(seq.inputs)
+					if err != nil {
+						s.mu.Unlock()
+						for k := i; k < len(sequences); k++ {
+							s.seqsSem.Release(1)
+						}
+						http.Error(w, fmt.Sprintf("Failed to load cache: %v", err), http.StatusInternalServerError)
+						return
+					}
+					s.seqs[j] = seq
+					found = true
+					break
+				}
+			}
+			if !found {
+				s.mu.Unlock()
+				for k := i; k < len(sequences); k++ {
+					s.seqsSem.Release(1)
+				}
+				http.Error(w, "could not find available sequence slots", http.StatusInternalServerError)
+				return
+			}
+		}
+		s.cond.Signal()
 		s.mu.Unlock()
 
-		if !found {
-			s.seqsSem.Release(1)
-			http.Error(w, "could not find an available sequence", http.StatusInternalServerError)
-			return
+		// Collect results from current batch
+		for i, seq := range sequences {
+			score := <-seq.embedding
+			rsp.Results = append(rsp.Results, RerankResult{
+				Index:          batchStart + i,
+				RelevanceScore: score[0],
+			})
 		}
-
-		score := <-seq.embedding
-
-		rsp.Results = append(rsp.Results, RerankResult{
-			Index:          i,
-			RelevanceScore: score[0], // Assuming the first element of the embedding is the relevance score
-		})
 	}
 
 	if err := json.NewEncoder(w).Encode(&rsp); err != nil {
