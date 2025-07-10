@@ -1,6 +1,6 @@
 UPSTREAM=https://github.com/gabe-l-hart/llama.cpp.git
 WORKDIR=llama/vendor
-FETCH_HEAD=7613fb2f14f6064d585e849ee444fb8c58345862
+FETCH_HEAD=f43a8dc5b78707ec40112466e89f6bf4b81a96fe
 
 .PHONY: help
 help:
