@@ -11,7 +11,8 @@ import (
 	"time"
 
 	"github.com/ollama/ollama/api"
-	"github.com/ollama/ollama/envconfig"
+	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/version"
 )
 
 // ExportMetadata contains metadata about the export
@@ -25,10 +26,13 @@ type ExportMetadata struct {
 
 // ExportModel exports a model to a file or directory
 func ExportModel(req *api.ExportRequest, fn func(api.ProgressResponse)) error {
-	mp := ParseModelPath(req.Model)
+	name := model.ParseName(req.Model)
+	if !name.IsValid() {
+		return fmt.Errorf("invalid model name: %s", req.Model)
+	}
 	
 	// Validate model exists
-	manifest, _, err := GetManifest(mp)
+	manifest, err := ParseNamedManifest(name)
 	if err != nil {
 		return fmt.Errorf("model not found: %w", err)
 	}
@@ -61,11 +65,30 @@ func ExportModel(req *api.ExportRequest, fn func(api.ProgressResponse)) error {
 		}
 	}
 
+	// Check for existing destination (unless forced)
+	if !req.Force {
+		if stat, err := os.Stat(path); err == nil {
+			if format == "dir" {
+				if stat.IsDir() {
+					// Check if directory is not empty
+					if entries, err := os.ReadDir(path); err == nil && len(entries) > 0 {
+						return fmt.Errorf("directory '%s' is not empty, use --force to overwrite", path)
+					}
+				} else {
+					return fmt.Errorf("destination '%s' exists but is not a directory, use --force to overwrite", path)
+				}
+			} else {
+				// File exists
+				return fmt.Errorf("file '%s' already exists, use --force to overwrite", path)
+			}
+		}
+	}
+
 	// Create export metadata
 	metadata := ExportMetadata{
 		Version:       "1.0",
 		ExportedAt:    time.Now(),
-		OllamaVersion: "0.5.0", // TODO: Get from version package
+		OllamaVersion: version.Version,
 		Model:         req.Model,
 		Format:        format,
 	}
@@ -87,26 +110,26 @@ func ExportModel(req *api.ExportRequest, fn func(api.ProgressResponse)) error {
 
 	switch format {
 	case "dir":
-		return exportToDirectory(path, mp, manifest, metadata, fn, totalSize)
+		return exportToDirectory(path, name, manifest, metadata, fn, totalSize)
 	case "tar":
 		// Use streaming export for uncompressed tar to avoid memory issues
-		return exportToTarStreaming(path, mp, manifest, metadata, fn, totalSize)
+		return exportToTarStreaming(path, name, manifest, metadata, fn, totalSize)
 	case "tar.gz":
 		// Use streaming compressed export
-		return exportToTarStreamingCompressed(path, mp, manifest, metadata, fn, totalSize, "gzip", 0)
+		return exportToTarStreamingCompressed(path, name, manifest, metadata, fn, totalSize, "gzip", 0)
 	case "tar.zst":
 		level := req.CompressionLevel
 		if level == 0 {
 			level = 3
 		}
 		// Use streaming compressed export
-		return exportToTarStreamingCompressed(path, mp, manifest, metadata, fn, totalSize, "zstd", level)
+		return exportToTarStreamingCompressed(path, name, manifest, metadata, fn, totalSize, "zstd", level)
 	default:
 		return fmt.Errorf("unsupported export format: %s", format)
 	}
 }
 
-func exportToDirectory(destPath string, mp ModelPath, manifest *Manifest, metadata ExportMetadata, fn func(api.ProgressResponse), totalSize int64) error {
+func exportToDirectory(destPath string, name model.Name, manifest *Manifest, metadata ExportMetadata, fn func(api.ProgressResponse), totalSize int64) error {
 	// Create destination directory
 	if err := os.MkdirAll(destPath, 0755); err != nil {
 		return fmt.Errorf("failed to create export directory: %w", err)
@@ -165,7 +188,10 @@ func exportToDirectory(destPath string, mp ModelPath, manifest *Manifest, metada
 
 func copyBlobToExport(layer Layer, destDir string, fn func(api.ProgressResponse), completed *int64, totalSize int64) error {
 	digest := strings.TrimPrefix(layer.Digest, "sha256:")
-	srcPath := layer.GetBlobsPath(digest)
+	srcPath, err := GetBlobsPath(layer.Digest)
+	if err != nil {
+		return fmt.Errorf("failed to get blob path: %w", err)
+	}
 	destPath := filepath.Join(destDir, fmt.Sprintf("sha256-%s", digest))
 
 	src, err := os.Open(srcPath)
@@ -206,11 +232,6 @@ func copyBlobToExport(layer Layer, destDir string, fn func(api.ProgressResponse)
 	return nil
 }
 
-// GetBlobsPath helper for Layer
-func (l Layer) GetBlobsPath(digest string) string {
-	dir := envconfig.Models()
-	return filepath.Join(dir, "blobs", fmt.Sprintf("sha256-%s", digest))
-}
 
 // Helper function for writing small files to tar
 func writeTarFile(tw *tar.Writer, name string, data []byte) error {

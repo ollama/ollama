@@ -94,8 +94,7 @@ func importFromDirectory(req *api.ImportRequest, fn func(api.ProgressResponse)) 
 
 	// Check if model already exists
 	if !req.Force {
-		mp := ParseModelPath(modelName)
-		if _, _, err := GetManifest(mp); err == nil {
+		if _, err := ParseNamedManifest(name); err == nil {
 			return fmt.Errorf("model %s already exists, use --force to overwrite", modelName)
 		}
 	}
@@ -242,8 +241,7 @@ func importFromTar(req *api.ImportRequest, fn func(api.ProgressResponse), compre
 
 	// Check if model already exists
 	if !req.Force {
-		mp := ParseModelPath(modelName)
-		if _, _, err := GetManifest(mp); err == nil {
+		if _, err := ParseNamedManifest(name); err == nil {
 			return fmt.Errorf("model %s already exists, use --force to overwrite", modelName)
 		}
 	}

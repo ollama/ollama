@@ -453,6 +453,7 @@ type ExportRequest struct {
 	CompressionLevel int    `json:"compression_level,omitempty"` // Compression level for zstd (1-19, default 3)
 	SingleThread     bool   `json:"single_thread,omitempty"`     // Force single-threaded compression
 	Format           string `json:"format,omitempty"`            // Export format (dir, tar, tar.gz, tar.zst)
+	Force            bool   `json:"force,omitempty"`             // Overwrite existing files without prompting
 }
 
 // ImportRequest describes a request to import a model from a file or directory.

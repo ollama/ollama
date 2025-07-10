@@ -1275,14 +1275,14 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.GET("/api/tags", s.ListHandler)
 	r.POST("/api/show", s.ShowHandler)
 	r.DELETE("/api/delete", s.DeleteHandler)
+	r.POST("/api/export", s.ExportHandler)
+	r.POST("/api/import", s.ImportHandler)
 
 	// Create
 	r.POST("/api/create", s.CreateHandler)
 	r.POST("/api/blobs/:digest", s.CreateBlobHandler)
 	r.HEAD("/api/blobs/:digest", s.HeadBlobHandler)
 	r.POST("/api/copy", s.CopyHandler)
-	r.POST("/api/export", s.ExportHandler)
-	r.POST("/api/import", s.ImportHandler)
 
 	// Inference
 	r.GET("/api/ps", s.PsHandler)

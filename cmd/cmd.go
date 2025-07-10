@@ -978,6 +978,11 @@ func ExportHandler(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	force, err := cmd.Flags().GetBool("force")
+	if err != nil {
+		return err
+	}
+
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
 		return err
@@ -1035,6 +1040,7 @@ func ExportHandler(cmd *cobra.Command, args []string) error {
 		CompressionLevel: compressionLevel,
 		SingleThread:     singleThread,
 		Format:           format,
+		Force:            force,
 	}
 
 	return client.Export(cmd.Context(), &request, fn)
@@ -1676,6 +1682,7 @@ for optimal performance. Use --compress to create a compressed file (zstd by def
 	exportCmd.Flags().Lookup("compress").NoOptDefVal = "zstd"
 	exportCmd.Flags().Int("compression-level", 3, "Compression level for zstd (1-19, default 3)")
 	exportCmd.Flags().Bool("single-thread", false, "Force single-threaded compression")
+	exportCmd.Flags().Bool("force", false, "Overwrite existing files without prompting")
 
 	importCmd := &cobra.Command{
 		Use:     "import SOURCE [MODEL_NAME]",

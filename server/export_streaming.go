@@ -13,10 +13,11 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/types/model"
 )
 
 // exportToTarStreaming exports model to tar with optimized streaming (no memory buffering)
-func exportToTarStreaming(destPath string, mp ModelPath, manifest *Manifest, metadata ExportMetadata, fn func(api.ProgressResponse), totalSize int64) error {
+func exportToTarStreaming(destPath string, name model.Name, manifest *Manifest, metadata ExportMetadata, fn func(api.ProgressResponse), totalSize int64) error {
 	// Create output file
 	file, err := os.Create(destPath)
 	if err != nil {
@@ -51,30 +52,23 @@ func exportToTarStreaming(destPath string, mp ModelPath, manifest *Manifest, met
 	// Helper to write blob with optimized I/O
 	writeBlob := func(layer Layer) error {
 		digest := strings.TrimPrefix(layer.Digest, "sha256:")
-		srcPath := layer.GetBlobsPath(digest)
-
-		file, err := os.Open(srcPath)
+		file, err := layer.Open()
 		if err != nil {
 			return fmt.Errorf("failed to open blob: %w", err)
 		}
 		defer file.Close()
 
-		stat, err := file.Stat()
-		if err != nil {
-			return fmt.Errorf("failed to stat blob: %w", err)
-		}
-
 		hdr := &tar.Header{
 			Name: filepath.Join("blobs", fmt.Sprintf("sha256-%s", digest)),
 			Mode: 0644,
-			Size: stat.Size(),
+			Size: layer.Size,
 		}
 		if err := tarWriter.WriteHeader(hdr); err != nil {
 			return err
 		}
 
-		// Use io.CopyBuffer with large buffer for optimal performance
-		buf := make([]byte, 128*1024*1024) // 128MB buffer
+		// Use io.CopyBuffer
+		buf := make([]byte, 4*1024*1024) // 128MB buffer
 		written, err := io.CopyBuffer(tarWriter, file, buf)
 		if err != nil {
 			return fmt.Errorf("failed to write blob to tar: %w", err)
@@ -119,7 +113,7 @@ func exportToTarStreaming(destPath string, mp ModelPath, manifest *Manifest, met
 }
 
 // exportToTarStreamingCompressed exports model to compressed tar with streaming
-func exportToTarStreamingCompressed(destPath string, mp ModelPath, manifest *Manifest, metadata ExportMetadata, fn func(api.ProgressResponse), totalSize int64, compressionType string, compressionLevel int) error {
+func exportToTarStreamingCompressed(destPath string, name model.Name, manifest *Manifest, metadata ExportMetadata, fn func(api.ProgressResponse), totalSize int64, compressionType string, compressionLevel int) error {
 	// Create output file
 	file, err := os.Create(destPath)
 	if err != nil {
@@ -129,13 +123,13 @@ func exportToTarStreamingCompressed(destPath string, mp ModelPath, manifest *Man
 
 	// Set up compression writer
 	var writer io.Writer = file
-	var closeFunc func() error
+	var closer io.Closer
 
 	switch compressionType {
 	case "gzip":
 		gzWriter := gzip.NewWriter(file)
 		writer = gzWriter
-		closeFunc = gzWriter.Close
+		closer = gzWriter
 	case "zstd":
 		level := zstd.SpeedDefault
 		if compressionLevel > 0 {
@@ -146,14 +140,12 @@ func exportToTarStreamingCompressed(destPath string, mp ModelPath, manifest *Man
 			return fmt.Errorf("failed to create zstd writer: %w", err)
 		}
 		writer = zstdWriter
-		closeFunc = zstdWriter.Close
+		closer = zstdWriter
 	default:
 		return fmt.Errorf("unsupported compression type: %s", compressionType)
 	}
 
-	if closeFunc != nil {
-		defer closeFunc()
-	}
+	defer closer.Close()
 
 	tarWriter := tar.NewWriter(writer)
 	defer tarWriter.Close()
@@ -182,23 +174,16 @@ func exportToTarStreamingCompressed(destPath string, mp ModelPath, manifest *Man
 	// Helper to write blob with streaming
 	writeBlob := func(layer Layer) error {
 		digest := strings.TrimPrefix(layer.Digest, "sha256:")
-		srcPath := layer.GetBlobsPath(digest)
-
-		file, err := os.Open(srcPath)
+		file, err := layer.Open()
 		if err != nil {
 			return fmt.Errorf("failed to open blob: %w", err)
 		}
 		defer file.Close()
 
-		stat, err := file.Stat()
-		if err != nil {
-			return fmt.Errorf("failed to stat blob: %w", err)
-		}
-
 		hdr := &tar.Header{
 			Name: filepath.Join("blobs", fmt.Sprintf("sha256-%s", digest)),
 			Mode: 0644,
-			Size: stat.Size(),
+			Size: layer.Size,
 		}
 		if err := tarWriter.WriteHeader(hdr); err != nil {
 			return err
@@ -206,7 +191,7 @@ func exportToTarStreamingCompressed(destPath string, mp ModelPath, manifest *Man
 
 		// Stream directly through compression
 		// Use smaller buffer for compressed streams to balance memory and performance
-		buf := make([]byte, 32*1024*1024) // 32MB buffer for compressed
+		buf := make([]byte, 4*1024*1024) // 32MB buffer for compressed
 		written, err := io.CopyBuffer(tarWriter, file, buf)
 		if err != nil {
 			return fmt.Errorf("failed to write blob to tar: %w", err)
