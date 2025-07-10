@@ -15,7 +15,6 @@ problem.
  ggml/src/ggml-backend.cpp              | 9 +++++++--
  ggml/src/ggml-cann/ggml-cann.cpp       | 2 ++
  ggml/src/ggml-cuda/ggml-cuda.cu        | 3 +++
- ggml/src/ggml-kompute/ggml-kompute.cpp | 1 +
  ggml/src/ggml-metal/ggml-metal.m       | 1 +
  ggml/src/ggml-opencl/ggml-opencl.cpp   | 1 +
  ggml/src/ggml-rpc/ggml-rpc.cpp         | 1 +
@@ -33,18 +32,18 @@ index b1050ad5..e8694e5c 100644
      }
 -    delete buffer;
  }
- 
+
  size_t ggml_backend_buffer_get_size(ggml_backend_buffer_t buffer) {
 @@ -544,6 +543,7 @@ static void ggml_backend_multi_buffer_free_buffer(ggml_backend_buffer_t buffer)
- 
+
      free(ctx->buffers);
      free(ctx);
 +    delete buffer;
  }
- 
+
  static void ggml_backend_multi_buffer_clear(ggml_backend_buffer_t buffer, uint8_t value) {
 @@ -1879,6 +1879,11 @@ static void * ggml_backend_cpu_buffer_get_base(ggml_backend_buffer_t buffer) {
- 
+
  static void ggml_backend_cpu_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_aligned_free(buffer->context, buffer->size);
 +    delete buffer;
@@ -53,11 +52,11 @@ index b1050ad5..e8694e5c 100644
 +static void ggml_backend_cpu_ptr_buffer_free_buffer(ggml_backend_buffer_t buffer) {
 +    delete buffer;
  }
- 
+
  static void ggml_backend_cpu_buffer_memset_tensor(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, uint8_t value, size_t offset, size_t size) {
 @@ -1926,7 +1931,7 @@ static const struct ggml_backend_buffer_i ggml_backend_cpu_buffer_i = {
  };
- 
+
  static const struct ggml_backend_buffer_i ggml_backend_cpu_buffer_from_ptr_i = {
 -    /* .free_buffer     = */ NULL, // ptr is not owned by the buffer, so it does not need to be freed
 +    /* .free_buffer     = */ ggml_backend_cpu_ptr_buffer_free_buffer, // ptr is not owned by the buffer but need to free the buffer itself
@@ -74,7 +73,7 @@ index d1a0ad37..b67a1012 100755
      delete ctx;
 +    delete buffer;
  }
- 
+
  /**
 @@ -1497,6 +1498,7 @@ static const char * ggml_backend_cann_host_buffer_name(ggml_backend_buffer_t buf
   */
@@ -82,7 +81,7 @@ index d1a0ad37..b67a1012 100755
      ACL_CHECK(aclrtFreeHost(buffer->context));
 +    delete buffer;
  }
- 
+
  /**
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
 index d0502018..b6cca93f 100644
@@ -94,7 +93,7 @@ index d0502018..b6cca93f 100644
      delete ctx;
 +    delete buffer;
  }
- 
+
  static bool ggml_backend_buffer_is_cuda(ggml_backend_buffer_t buffer) {
 @@ -816,6 +817,7 @@ struct ggml_backend_cuda_split_buffer_context {
  static void ggml_backend_cuda_split_buffer_free_buffer(ggml_backend_buffer_t buffer) {
@@ -102,39 +101,27 @@ index d0502018..b6cca93f 100644
      delete ctx;
 +    delete buffer;
  }
- 
+
  static void * ggml_backend_cuda_split_buffer_get_base(ggml_backend_buffer_t buffer) {
 @@ -1097,6 +1099,7 @@ static bool ggml_backend_buft_is_cuda_host(ggml_backend_buffer_type_t buft) {
- 
+
  static void ggml_backend_cuda_host_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      CUDA_CHECK(cudaFreeHost(buffer->context));
 +    delete buffer;
  }
- 
+
  static void * ggml_cuda_host_malloc(size_t size) {
-diff --git a/ggml/src/ggml-kompute/ggml-kompute.cpp b/ggml/src/ggml-kompute/ggml-kompute.cpp
-index 50579227..2799a0a5 100644
---- a/ggml/src/ggml-kompute/ggml-kompute.cpp
-+++ b/ggml/src/ggml-kompute/ggml-kompute.cpp
-@@ -1911,6 +1911,7 @@ static void ggml_backend_kompute_buffer_free_buffer(ggml_backend_buffer_t buffer
-         ggml_vk_free_memory(*memory);
-     }
-     delete memory;
-+    delete buffer;
- }
- 
- static void * ggml_backend_kompute_buffer_get_base(ggml_backend_buffer_t buffer) {
 diff --git a/ggml/src/ggml-metal/ggml-metal.m b/ggml/src/ggml-metal/ggml-metal.m
 index 877236a2..74fd6654 100644
 --- a/ggml/src/ggml-metal/ggml-metal.m
 +++ b/ggml/src/ggml-metal/ggml-metal.m
 @@ -5501,6 +5501,7 @@ static void ggml_backend_metal_buffer_free_buffer(ggml_backend_buffer_t buffer)
      }
- 
+
      free(ctx);
 +    free(buffer);
  }
- 
+
  static void * ggml_backend_metal_buffer_get_base(ggml_backend_buffer_t buffer) {
 diff --git a/ggml/src/ggml-opencl/ggml-opencl.cpp b/ggml/src/ggml-opencl/ggml-opencl.cpp
 index 96e8a858..184628e0 100644
@@ -146,7 +133,7 @@ index 96e8a858..184628e0 100644
      delete ctx;
 +    delete buffer;
  }
- 
+
  static void * ggml_backend_opencl_buffer_get_base(ggml_backend_buffer_t buffer) {
 diff --git a/ggml/src/ggml-rpc/ggml-rpc.cpp b/ggml/src/ggml-rpc/ggml-rpc.cpp
 index f468f796..cbc4bf0a 100644
@@ -158,7 +145,7 @@ index f468f796..cbc4bf0a 100644
      delete ctx;
 +    delete buffer;
  }
- 
+
  static void * ggml_backend_rpc_buffer_get_base(ggml_backend_buffer_t buffer) {
 diff --git a/ggml/src/ggml-sycl/ggml-sycl.cpp b/ggml/src/ggml-sycl/ggml-sycl.cpp
 index 9cb36ae9..84c25121 100644
@@ -166,7 +153,7 @@ index 9cb36ae9..84c25121 100644
 +++ b/ggml/src/ggml-sycl/ggml-sycl.cpp
 @@ -329,6 +329,7 @@ ggml_backend_sycl_buffer_free_buffer(ggml_backend_buffer_t buffer) try {
      ggml_sycl_set_device(ctx->device);
- 
+
      delete ctx;
 +    delete buffer;
  }
@@ -178,15 +165,15 @@ index 9cb36ae9..84c25121 100644
      delete ctx;
 +    delete buffer;
  }
- 
+
  static void * ggml_backend_sycl_split_buffer_get_base(ggml_backend_buffer_t buffer) {
 @@ -1132,6 +1134,7 @@ static const char * ggml_backend_sycl_host_buffer_type_name(ggml_backend_buffer_
- 
+
  static void ggml_backend_sycl_host_buffer_free_buffer(ggml_backend_buffer_t buffer) {
      ggml_sycl_host_free(buffer->context);
 +    delete buffer;
  }
- 
+
  static ggml_backend_buffer_t ggml_backend_sycl_host_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
 diff --git a/ggml/src/ggml-vulkan/ggml-vulkan.cpp b/ggml/src/ggml-vulkan/ggml-vulkan.cpp
 index 99be5e45..1527997b 100644
@@ -198,7 +185,7 @@ index 99be5e45..1527997b 100644
      delete ctx;
 +    delete buffer;
  }
- 
+
  static void * ggml_backend_vk_buffer_get_base(ggml_backend_buffer_t buffer) {
 @@ -9498,6 +9499,7 @@ static const char * ggml_backend_vk_host_buffer_name(ggml_backend_buffer_t buffe
  static void ggml_backend_vk_host_buffer_free_buffer(ggml_backend_buffer_t buffer) {
@@ -206,5 +193,5 @@ index 99be5e45..1527997b 100644
      ggml_vk_host_free(vk_instance.devices[0], buffer->context);
 +    delete buffer;
  }
- 
+
  static ggml_backend_buffer_t ggml_backend_vk_host_buffer_type_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {

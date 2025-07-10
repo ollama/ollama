@@ -6,22 +6,48 @@ Subject: [PATCH] ggml: Export GPU UUIDs
 This enables matching up devices and information reported by the backend
 with tools (e.g. nvidia-smi) and system management libraries (e.g. nvml).
 ---
- ggml/src/ggml-cuda/ggml-cuda.cu | 5 +++++
- 1 file changed, 5 insertions(+)
+ ggml/src/ggml-cuda/ggml-cuda.cu | 31 +++++++++++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
 
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 09ce299c..a46dd8be 100644
+index 72406f0a..43497f73 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
-@@ -3565,6 +3565,11 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
-                   );
-                 dev_ctx->uuid = uuid;
-                 #else
+@@ -3627,6 +3627,37 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+                 CUDA_CHECK(cudaGetDeviceProperties(&prop, i));
+                 dev_ctx->description = prop.name;
+ 
++                #if !defined(GGML_USE_HIP)
++                char uuid[64];
++                snprintf(uuid, sizeof(uuid),
++                    "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
++                    (unsigned char)prop.uuid.bytes[0],
++                    (unsigned char)prop.uuid.bytes[1],
++                    (unsigned char)prop.uuid.bytes[2],
++                    (unsigned char)prop.uuid.bytes[3],
++                    (unsigned char)prop.uuid.bytes[4],
++                    (unsigned char)prop.uuid.bytes[5],
++                    (unsigned char)prop.uuid.bytes[6],
++                    (unsigned char)prop.uuid.bytes[7],
++                    (unsigned char)prop.uuid.bytes[8],
++                    (unsigned char)prop.uuid.bytes[9],
++                    (unsigned char)prop.uuid.bytes[10],
++                    (unsigned char)prop.uuid.bytes[11],
++                    (unsigned char)prop.uuid.bytes[12],
++                    (unsigned char)prop.uuid.bytes[13],
++                    (unsigned char)prop.uuid.bytes[14],
++                    (unsigned char)prop.uuid.bytes[15]
++                  );
++                dev_ctx->uuid = uuid;
++                #else
 +                #ifdef _WIN32
 +                char id[16];
 +                snprintf(id, sizeof(id), "%d", i);
 +                dev_ctx->uuid = id;
 +                #else
-                 dev_ctx->uuid = "GPU-" + std::string(prop.uuid.bytes, 16);
-                 #endif
-
++                dev_ctx->uuid = "GPU-" + std::string(prop.uuid.bytes, 16);
++                #endif
++
+                 ggml_backend_dev_t dev = new ggml_backend_device {
+                     /* .iface   = */ ggml_backend_cuda_device_interface,
+                     /* .reg     = */ &reg,
