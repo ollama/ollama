@@ -674,7 +674,7 @@ func createConfigLayer(layers []Layer, config ConfigV2) (*Layer, error) {
 
 func createLink(src, dst string) error {
 	// make any subdirs for dst
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o777); err != nil {
 		return err
 	}
 
