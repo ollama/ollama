@@ -19,37 +19,6 @@ import (
 	"github.com/ollama/ollama/format"
 )
 
-var (
-	started    = time.Now()
-	chatModels = []string{
-		"granite3-moe:latest",
-		"granite-code:latest",
-		"nemotron-mini:latest",
-		"command-r:latest",
-		"gemma2:latest",
-		"gemma:latest",
-		"internlm2:latest",
-		"phi3.5:latest",
-		"phi3:latest",
-		// "phi:latest", // flaky, sometimes generates no response on first query
-		"stablelm2:latest", // Predictions are off, crashes on small VRAM GPUs
-		"falcon:latest",
-		"falcon2:latest",
-		"minicpm-v:latest",
-		"mistral:latest",
-		"orca-mini:latest",
-		"llama2:latest",
-		"llama3.1:latest",
-		"llama3.2:latest",
-		"llama3.2-vision:latest",
-		"qwen2.5-coder:latest",
-		"qwen:latest",
-		"solar-pro:latest",
-		"codellama:latest",
-		"nous-hermes:latest",
-	}
-)
-
 func TestModelsGenerate(t *testing.T) {
 	softTimeout, hardTimeout := getTimeouts(t)
 	slog.Info("Setting timeouts", "soft", softTimeout, "hard", hardTimeout)
@@ -68,6 +37,13 @@ func TestModelsGenerate(t *testing.T) {
 		}
 	} else {
 		slog.Warn("No VRAM info available, testing all models, so larger ones might timeout...")
+	}
+
+	var chatModels []string
+	if s := os.Getenv("OLLAMA_NEW_ENGINE"); s != "" {
+		chatModels = ollamaEngineChatModels
+	} else {
+		chatModels = append(ollamaEngineChatModels, llamaRunnerChatModels...)
 	}
 
 	for _, model := range chatModels {

@@ -2939,7 +2939,7 @@ struct ggml_backend_cuda_device_context {
     int device;
     std::string name;
     std::string description;
-    std::string uuid;
+    std::string id;
 };
 
 static const char * ggml_backend_cuda_device_get_name(ggml_backend_dev_t dev) {
@@ -2952,9 +2952,9 @@ static const char * ggml_backend_cuda_device_get_description(ggml_backend_dev_t 
     return ctx->description.c_str();
 }
 
-static const char * ggml_backend_cuda_device_get_uuid(ggml_backend_dev_t dev) {
+static const char * ggml_backend_cuda_device_get_id(ggml_backend_dev_t dev) {
     ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
-    return ctx->uuid.c_str();
+    return ctx->id.c_str();
 }
 
 static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total) {
@@ -2971,7 +2971,7 @@ static enum ggml_backend_dev_type ggml_backend_cuda_device_get_type(ggml_backend
 static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
     props->name        = ggml_backend_cuda_device_get_name(dev);
     props->description = ggml_backend_cuda_device_get_description(dev);
-    props->uuid        = ggml_backend_cuda_device_get_uuid(dev);
+    props->id          = ggml_backend_cuda_device_get_id(dev);
     props->type        = ggml_backend_cuda_device_get_type(dev);
     ggml_backend_cuda_device_get_memory(dev, &props->memory_free, &props->memory_total);
 
@@ -3543,8 +3543,8 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
                 dev_ctx->description = prop.name;
 
                 #if !defined(GGML_USE_HIP)
-                char uuid[64];
-                snprintf(uuid, sizeof(uuid),
+                char id[64];
+                snprintf(id, sizeof(id),
                     "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
                     (unsigned char)prop.uuid.bytes[0],
                     (unsigned char)prop.uuid.bytes[1],
@@ -3563,9 +3563,15 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
                     (unsigned char)prop.uuid.bytes[14],
                     (unsigned char)prop.uuid.bytes[15]
                   );
-                dev_ctx->uuid = uuid;
+                dev_ctx->id = id;
                 #else
-                dev_ctx->uuid = "GPU-" + std::string(prop.uuid.bytes, 16);
+                #ifdef _WIN32
+                char id[16];
+                snprintf(id, sizeof(id), "%d", i);
+                dev_ctx->id = id;
+                #else
+                dev_ctx->id = "GPU-" + std::string(prop.uuid.bytes, 16);
+                #endif
                 #endif
 
                 ggml_backend_dev_t dev = new ggml_backend_device {
