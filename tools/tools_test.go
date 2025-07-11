@@ -1084,15 +1084,31 @@ func TestFindArguments(t *testing.T) {
 			},
 			tool: tool,
 		},
+		{
+			name:   "non printable characters",
+			buffer: []byte("\xE2\x80\x8B{\"name\":\"get_temperature\",\"arguments\":{\"location\":\"Tokyo\"}}\xE2\x80\x8B"),
+			want: map[string]any{
+				"location": "Tokyo",
+			},
+			tool: tool,
+		},
+		{
+			name:   "non printable characters around json",
+			buffer: []byte("\u200B{\"name\":\"get_temperature\",\"arguments\":{\"location\":\"Berlin\"}}\u200B"),
+			want: map[string]any{
+				"location": "Berlin",
+			},
+			tool: tool,
+		},
+	}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				got, _ := findArguments(tt.tool, tt.buffer)
+
+				if diff := cmp.Diff(got, tt.want); diff != "" {
+					t.Errorf("scanArguments() args mismatch (-got +want):\n%s", diff)
+				}
+			})
+		}
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, _ := findArguments(tt.tool, tt.buffer)
-
-			if diff := cmp.Diff(got, tt.want); diff != "" {
-				t.Errorf("scanArguments() args mismatch (-got +want):\n%s", diff)
-			}
-		})
-	}
-}

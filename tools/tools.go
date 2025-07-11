@@ -39,6 +39,7 @@ func NewParserWithTag(tools []api.Tool, tag string) *Parser {
 	}
 }
 
+
 // Add processes a string input to parse tool calls and content that
 // should be sent back to the user.
 func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
@@ -46,7 +47,20 @@ func (p *Parser) Add(s string) (calls []api.ToolCall, content string) {
 		return nil, s
 	}
 
-	p.buffer = append(p.buffer, s...)
+	// removing the non printable characters from being added to the buffer
+	cleaned := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		b := s[i]
+		// skip the non printable characters
+		if b == 0xE2 && i+2 < len(s) && s[i+1] == 0x80 && s[i+2] == 0x8B {
+			// (U+200B)
+			i += 2
+			continue
+		}
+		cleaned = append(cleaned, b)
+	}
+
+	p.buffer = append(p.buffer, cleaned...)
 
 	if p.state == toolsState_LookingForTag {
 		i, found := p.findTag()
