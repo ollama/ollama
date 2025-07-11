@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -379,6 +380,111 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	streamResponse(c, ch)
+}
+
+func (s *Server) RerankHandler(c *gin.Context) {
+	var req api.RerankRequest
+	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		return
+	} else if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	switch {
+	case len(req.Documents) == 0:
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Document cannot be empty"})
+		return
+	case req.Query == "":
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "Query cannot be empty"})
+		return
+	case req.TopN < 0:
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "TopN cannot be negative"})
+		return
+	}
+	name := model.ParseName(req.Model)
+	if !name.IsValid() {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "model is required"})
+		return
+	}
+	name, err := getExistingName(name)
+	if err != nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+		return
+	}
+	if req.Options == nil {
+		req.Options = make(map[string]any)
+	}
+	req.Options["reranking"] = true
+	r, m, _, err := s.scheduleRunner(c.Request.Context(), req.Model, []model.Capability{}, req.Options, req.KeepAlive)
+	if err != nil {
+		handleScheduleError(c, req.Model, err)
+		return
+	}
+	if m.Template == nil {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("model '%s' missing template", req.Model)})
+		return
+	}
+	var prompts []string
+	for _, doc := range req.Documents {
+		var b bytes.Buffer
+		var values template.Values
+		values.Query = req.Query
+		values.Document = doc
+		if err := m.Template.Execute(&b, values); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		prompts = append(prompts, b.String())
+	}
+	llmreq := llm.RerankRequest{
+		Model:   req.Model,
+		Prompts: prompts,
+	}
+	err = r.Rerank(c.Request.Context(), llmreq, func(rr llm.RerankResponse) {
+		sort.SliceStable(rr.Results, func(i, j int) bool {
+			return rr.Results[i].RelevanceScore > rr.Results[j].RelevanceScore
+		})
+
+		var topn int
+		if req.TopN == 0 {
+			topn = len(rr.Results) // if TopN is unset, return all results
+		} else {
+			topn = min(len(rr.Results), req.TopN)
+		}
+		topResults := rr.Results[:topn]
+
+		rsp := api.RerankResponse{
+			Model: req.Model,
+			Usage: rr.Usage,
+			Results: make([]struct {
+				Index    int `json:"index"`
+				Document *struct {
+					Text string `json:"text"`
+				} `json:"document,omitempty"`
+				RelevanceScore float32 `json:"relevance_score"`
+			}, topn),
+		}
+
+		for i, result := range topResults {
+			rsp.Results[i].Index = result.Index
+			if req.ReturnDocuments {
+				rsp.Results[i].Document = &struct {
+					Text string `json:"text"`
+				}{Text: req.Documents[result.Index]}
+			}
+			rsp.Results[i].RelevanceScore = result.RelevanceScore
+		}
+
+		c.JSON(http.StatusOK, rsp)
+	})
+
+	if err != nil {
+		slog.Info(fmt.Sprintf("rerank failed: %v", err))
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to rerank"})
+		return
+	}
 }
 
 func (s *Server) EmbedHandler(c *gin.Context) {
@@ -1207,6 +1313,9 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/api/chat", s.ChatHandler)
 	r.POST("/api/embed", s.EmbedHandler)
 	r.POST("/api/embeddings", s.EmbeddingsHandler)
+	r.POST("/api/rerank", s.RerankHandler)
+	// jina.ai compatibility
+	r.POST("/v1/rerank", s.RerankHandler)
 
 	// Inference (OpenAI compatibility)
 	r.POST("/v1/chat/completions", openai.ChatMiddleware(), s.ChatHandler)
