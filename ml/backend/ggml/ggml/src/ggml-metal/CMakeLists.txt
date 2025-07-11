@@ -71,7 +71,9 @@ else()
         # note: adding -fno-inline fixes the tests when using MTL_SHADER_VALIDATION=1
         # note: unfortunately, we have to call it default.metallib instead of ggml.metallib
         #       ref: https://github.com/ggerganov/whisper.cpp/issues/1720
-        set(XC_FLAGS -fno-fast-math -fno-inline -g)
+        # note: adding -g causes segmentation fault during compile
+        #set(XC_FLAGS -fno-fast-math -fno-inline -g)
+        set(XC_FLAGS -fno-fast-math -fno-inline)
     else()
         set(XC_FLAGS -O3)
     endif()
@@ -90,7 +92,7 @@ else()
     add_custom_command(
         OUTPUT ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/default.metallib
         COMMAND xcrun -sdk macosx metal ${XC_FLAGS} -c ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/ggml-metal.metal -o - |
-            xcrun -sdk macosx metallib - -o ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/default.metallib
+                xcrun -sdk macosx metallib        - -o ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/default.metallib
         COMMAND rm -f ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/ggml-common.h
         COMMAND rm -f ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/ggml-metal.metal
         DEPENDS ggml-metal.metal ${METALLIB_COMMON}

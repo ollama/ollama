@@ -728,3 +728,25 @@ to_fp16_nc_cuda_t ggml_get_to_fp16_nc_cuda(ggml_type type) {
             return nullptr;
     }
 }
+
+to_bf16_nc_cuda_t ggml_get_to_bf16_nc_cuda(ggml_type type) {
+    switch (type) {
+        case GGML_TYPE_F32:
+            return convert_unary_cuda<float, nv_bfloat16>;
+        case GGML_TYPE_F16:
+            return convert_unary_cuda<half, nv_bfloat16>;
+        default:
+            return nullptr;
+    }
+}
+
+to_fp32_nc_cuda_t ggml_get_to_fp32_nc_cuda(ggml_type type) {
+    switch (type) {
+        case GGML_TYPE_F16:
+            return convert_unary_cuda<half, float>;
+        case GGML_TYPE_BF16:
+            return convert_unary_cuda<nv_bfloat16, float>;
+        default:
+            return nullptr;
+    }
+}

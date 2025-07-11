@@ -631,7 +631,14 @@ struct gguf_context * gguf_init_from_file_impl(FILE * file, struct gguf_init_par
                 gguf_free(ctx);
                 return nullptr;
             }
-            ctx->size += GGML_PAD(ggml_nbytes(&ti.t), ctx->alignment);
+            size_t padded_size = GGML_PAD(ggml_nbytes(&ti.t), ctx->alignment);
+            if (SIZE_MAX - ctx->size < padded_size) {
+                GGML_LOG_ERROR("%s: tensor '%s' size overflow, cannot accumulate size %zu + %zu\n",
+                    __func__, ti.t.name, ctx->size, padded_size);
+                gguf_free(ctx);
+                return nullptr;
+            }
+            ctx->size += padded_size;
         }
     }
 

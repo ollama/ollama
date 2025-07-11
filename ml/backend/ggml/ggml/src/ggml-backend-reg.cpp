@@ -61,10 +61,6 @@
 #include "ggml-cann.h"
 #endif
 
-#ifdef GGML_USE_KOMPUTE
-#include "ggml-kompute.h"
-#endif
-
 // disable C++17 deprecation warning for std::codecvt_utf8
 #if defined(__clang__)
 #    pragma clang diagnostic push
@@ -188,9 +184,6 @@ struct ggml_backend_registry {
 #endif
 #ifdef GGML_USE_RPC
         register_backend(ggml_backend_rpc_reg());
-#endif
-#ifdef GGML_USE_KOMPUTE
-        register_backend(ggml_backend_kompute_reg());
 #endif
 #ifdef GGML_USE_CPU
         register_backend(ggml_backend_cpu_reg());
@@ -581,14 +574,13 @@ void ggml_backend_load_all_from_path(const char * dir_path) {
 
     // Avoid mixed hip+cuda configurations
     const char * hip_devices = std::getenv("HIP_VISIBLE_DEVICES");
-    const char * rocr_devices = std::getenv("ROCR_VISIBLE_DEVICES"); 
+    const char * rocr_devices = std::getenv("ROCR_VISIBLE_DEVICES");
     if (!hip_devices && !rocr_devices) {
         ggml_backend_load_best("cuda", silent, dir_path);
     } else {
         ggml_backend_load_best("hip", silent, dir_path);
     }
-    
-    ggml_backend_load_best("kompute", silent, dir_path);
+
     ggml_backend_load_best("metal", silent, dir_path);
     ggml_backend_load_best("rpc", silent, dir_path);
     ggml_backend_load_best("sycl", silent, dir_path);

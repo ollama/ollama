@@ -8,6 +8,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <map>
 #include <sstream>
 
 #ifdef _WIN32
@@ -369,6 +370,7 @@ struct common_params {
 
     std::string hostname      = "127.0.0.1";
     std::string public_path   = "";                                                                         // NOLINT
+    std::string api_prefix    = "";                                                                         // NOLINT
     std::string chat_template = "";                                                                         // NOLINT
     bool use_jinja = false;                                                                                 // NOLINT
     bool enable_chat_template = true;
@@ -380,6 +382,8 @@ struct common_params {
 
     std::string ssl_file_key  = "";                                                                         // NOLINT
     std::string ssl_file_cert = "";                                                                         // NOLINT
+
+    std::map<std::string, std::string> default_template_kwargs;
 
     // "advanced" endpoints are disabled by default for better security
     bool webui            = true;

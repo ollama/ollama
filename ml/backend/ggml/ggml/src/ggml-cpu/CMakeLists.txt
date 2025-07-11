@@ -5,7 +5,7 @@ function(ggml_add_cpu_backend_features cpu_name arch)
     # build, using set_source_files_properties() to set the arch flags is not possible
     set(GGML_CPU_FEATS_NAME ${cpu_name}-feats)
     add_library(${GGML_CPU_FEATS_NAME} OBJECT ggml-cpu/arch/${arch}/cpu-feats.cpp)
-    target_include_directories(${GGML_CPU_FEATS_NAME} PRIVATE . .. ../include)
+    target_include_directories(${GGML_CPU_FEATS_NAME} PRIVATE . ../include)
     target_compile_definitions(${GGML_CPU_FEATS_NAME} PRIVATE ${ARGN})
     target_compile_definitions(${GGML_CPU_FEATS_NAME} PRIVATE GGML_BACKEND_DL GGML_BACKEND_BUILD GGML_BACKEND_SHARED)
     set_target_properties(${GGML_CPU_FEATS_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -588,5 +588,10 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
 
     if (EMSCRIPTEN)
         set_target_properties(${GGML_CPU_NAME} PROPERTIES COMPILE_FLAGS "-msimd128")
+    endif()
+
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "IntelLLVM")
+        # The compiler automatically enables "-ffast-math" which can cause NaNs in tests due to "-fassociative-math"
+        target_compile_options(${GGML_CPU_NAME} PRIVATE "-fno-associative-math")
     endif()
 endfunction()

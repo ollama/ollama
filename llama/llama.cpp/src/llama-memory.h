@@ -31,6 +31,9 @@ enum llama_memory_status {
 // useful for implementing hybrid memory types (e.g. iSWA)
 llama_memory_status llama_memory_status_combine(llama_memory_status s0, llama_memory_status s1);
 
+// helper function for checking if a memory status indicates a failure
+bool llama_memory_status_is_fail(llama_memory_status status);
+
 // the interface for managing the memory context during batch processing
 // this interface is implemented per memory type. see:
 //   - llama_kv_cache_unified_context
