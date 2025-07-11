@@ -774,25 +774,8 @@ func pickBestFullFitByLibrary(req *LlmRequest, f *ggml.GGML, gpus discover.GpuIn
 		// Note: at present, this will favor more VRAM over faster GPU speed in mixed setups
 		sort.Sort(sort.Reverse(discover.ByFreeMemory(sgl)))
 
-		// Use only one GPU (OLLAMA_SCHED_SPREAD is not set or set to 0)
-		// First attempt to fit the model into a single GPU
-		for _, p := range numParallelToTry {
-			req.opts.NumCtx = req.origNumCtx * p
-			if envconfig.SchedSpread() == 0 {
-				for _, g := range sgl {
-					if ok, _ := llm.PredictServerFit([]discover.GpuInfo{g}, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, p); ok {
-						slog.Debug("new model will fit in available VRAM in single GPU, loading",
-							"model", req.model.ModelPath,
-							"gpu", g.ID,
-							"parallel", p)
-						*numParallel = p
-						return []discover.GpuInfo{g}
-					}
-				}
-			}
-		}
-		// Keep the amount of GPUs to a minimum (OLLAMA_SCHED_SPREAD is set to 2)
-		if envconfig.SchedSpread() == 2 {
+		// Keep using only the minimum number of GPUs needed to fit the model. The GPUs with the largest free memory will be used first
+		if !envconfig.SchedSpread() {
 			for _, p := range numParallelToTry {
 				req.opts.NumCtx = req.origNumCtx * p
 				// First get the estimated VRAM needed
@@ -835,14 +818,10 @@ func pickBestFullFitByLibrary(req *LlmRequest, f *ggml.GGML, gpus discover.GpuIn
 			}
 		}
 
-		// TODO future refinements
-		// - if multiple Libraries, see if any single GPU in any Library will fit
-		// - try subsets of GPUs instead of just falling back to 1 or all in a family
-
-		// Now try all the GPUS evenly (OLLAMA_SCHED_SPREAD is set and does have any kind of value)
+		// Now try all the GPUS (OLLAMA_SCHED_SPREAD is set)
 		for _, p := range numParallelToTry {
 			req.opts.NumCtx = req.origNumCtx * p
-			if envconfig.SchedSpread() != 2 {
+			if envconfig.SchedSpread() {
 				if ok, _ := llm.PredictServerFit(sgl, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, p); ok {
 					slog.Info("new model will fit in available VRAM spread evenly, loading",
 						"model", req.model.ModelPath,

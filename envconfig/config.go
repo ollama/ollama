@@ -173,11 +173,8 @@ var (
 	NoHistory = Bool("OLLAMA_NOHISTORY")
 	// NoPrune disables pruning of model blobs on startup.
 	NoPrune = Bool("OLLAMA_NOPRUNE")
-	// SchedSpread controls how models are scheduled across GPUs:
-	// - Not set or 0: Try to use one GPU only
-	// - 2: Use minimum number of GPUs needed based on VRAM, which benefits condensed GPU usage (lowering power consumption for multi-GPU setups, enhances performance for slow PCIe connection setups)
-	// - 1 or any other value: Spread evenly across all available GPUs (default when OLLAMA_SCHED_SPREAD is set)
-	SchedSpread = Uint("OLLAMA_SCHED_SPREAD", 0)
+	// SchedSpread allows scheduling models across all GPUs.
+	SchedSpread = Bool("OLLAMA_SCHED_SPREAD")
 	// IntelGPU enables experimental Intel GPU detection.
 	IntelGPU = Bool("OLLAMA_INTEL_GPU")
 	// MultiUserCache optimizes prompt caching for multi-user scenarios
