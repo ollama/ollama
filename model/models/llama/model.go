@@ -2,6 +2,7 @@ package llama
 
 import (
 	"cmp"
+	"fmt"
 	"math"
 
 	"github.com/ollama/ollama/fs"
@@ -33,6 +34,14 @@ type Model struct {
 }
 
 func New(c fs.Config) (model.Model, error) {
+	// This model currently only supports the gpt2 tokenizer
+	if c.String("tokenizer.ggml.model") == "llama" {
+		return nil, fmt.Errorf("unsupported tokenizer: llama")
+	}
+	// Best effort detection of library/deepseek-coder model(s) which are incompatible
+	if c.String("general.name") == "deepseek-ai" {
+		return nil, fmt.Errorf("unsupported model: %s", c.String("general.name"))
+	}
 	m := Model{
 		BytePairEncoding: model.NewBytePairEncoding(
 			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
