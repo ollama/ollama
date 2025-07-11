@@ -52,8 +52,8 @@
 #include "ggml-impl.h"
 #include "ggml-cpu-impl.h"
 #include "ggml-quants.h"
+#include "simd-mappings.h"
 
-#include <atomic>
 #include <array>
 #include <type_traits>
 
@@ -63,7 +63,7 @@
 #define NOINLINE __attribute__((__noinline__))
 #endif
 
-#if defined(__ARM_NEON) || defined(__AVX512F__)
+#if defined(__ARM_NEON) || defined(__AVX512F__) || defined(__VXE__) || defined(__VXE2__)
 #define VECTOR_REGISTERS 32
 #else
 #define VECTOR_REGISTERS 16
@@ -74,7 +74,7 @@
 namespace {
 
 inline float unhalf(ggml_fp16_t d) {
-    return GGML_FP16_TO_FP32(d);
+    return GGML_CPU_FP16_TO_FP32(d);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -109,6 +109,12 @@ inline float16x8_t add(float16x8_t x, float16x8_t y) { return vaddq_f16(x, y); }
 inline float16x8_t sub(float16x8_t x, float16x8_t y) { return vsubq_f16(x, y); }
 inline float16x8_t mul(float16x8_t x, float16x8_t y) { return vmulq_f16(x, y); }
 #endif // __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
+
+#if defined(__VXE__) || defined(__VXE2__)
+inline float32x4_t add(float32x4_t x, float32x4_t y) { return vec_add(x, y); }
+inline float32x4_t sub(float32x4_t x, float32x4_t y) { return vec_sub(x, y); }
+inline float32x4_t mul(float32x4_t x, float32x4_t y) { return vec_mul(x, y); }
+#endif
 
 #if defined(__MMA__)
 typedef vector unsigned char vec_t;
@@ -163,6 +169,13 @@ inline float16x8_t madd(float16x8_t a, float16x8_t b, float16x8_t c) {
 #endif
 #endif
 
+#if defined(__VXE__) || defined(__VXE2__)
+template <>
+inline float32x4_t madd(float32x4_t a, float32x4_t b, float32x4_t c) {
+    return vec_madd(a, b, c);
+}
+#endif
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // VECTORIZED HORIZONTAL SUM
 
@@ -178,6 +191,13 @@ inline float hsum(float16x8_t x) {
                                 vcvt_f32_f16(vget_high_f16(x))));
 }
 #endif // __ARM_FEATURE_FP16_VECTOR_ARITHMETIC
+
+#if defined(__VXE__) || defined(__VXE2__)
+inline float hsum(float32x4_t x) {
+    float32x4_t tmp = x + vec_reve(x);
+    return tmp[0] + tmp[1];
+}
+#endif
 
 #if defined(__SSE__) || defined(__AVX__) || defined(__AVX2__) || defined(__AVX512F__)
 inline float hsum(__m128 x) {
@@ -227,6 +247,21 @@ template <> inline float32x4_t load(const ggml_fp16_t *p) {
 }
 #endif // _MSC_VER
 #endif // __ARM_NEON
+
+#if defined(__VXE__) || defined(__VXE2__)
+template <> inline float32x4_t load(const ggml_fp16_t * p) {
+    float tmp[4];
+
+    for (int i = 0; i < 4; i++) {
+        tmp[i] = GGML_CPU_FP16_TO_FP32(p[i]);
+    }
+
+    return vec_xl(0, (const float *)(tmp));
+}
+template <> inline float32x4_t load(const float * p) {
+    return vec_xl(0, p);
+}
+#endif
 
 #if defined(__SSE__) || defined(__AVX__) || defined(__AVX2__) || defined(__AVX512F__)
 template <> inline __m128 load(const float *p) {
@@ -394,8 +429,6 @@ class tinyBLAS {
 
     template <int RM, int RN, int BM>
     NOINLINE void gemm(int64_t m, int64_t n, int64_t BN) {
-        static std::atomic<int64_t> current_chunk;
-
         GGML_ASSERT(m % (RM * BM) == 0);
         const int64_t ytiles = m / (RM * BM);
         const int64_t xtiles = (n + RN -1) / RN;
@@ -410,7 +443,7 @@ class tinyBLAS {
         if (params->ith == 0) {
             GGML_ASSERT( jj_BN * SIZE_BN + (NB_BN - jj_BN) * (SIZE_BN - 1) == xtiles);
             // Every thread starts at ith, so the first unprocessed chunk is nth.  This save a bit of coordination right at the start.
-            std::atomic_store_explicit(&current_chunk, (int64_t)params->nth, std::memory_order_relaxed);
+            ggml_threadpool_chunk_set(params->threadpool, params->nth);
         }
 
         ggml_barrier(params->threadpool);
@@ -439,8 +472,7 @@ class tinyBLAS {
                 GGML_ASSERT(jj == jj2);
             }
 
-            // next step.
-            job = std::atomic_fetch_add_explicit(&current_chunk, (int64_t)1, std::memory_order_relaxed);
+            job = ggml_threadpool_chunk_add(params->threadpool, 1);
         }
 
         ggml_barrier(params->threadpool);
@@ -3323,6 +3355,14 @@ bool llamafile_sgemm(const struct ggml_compute_params * params, int64_t m, int64
             (const float *)B, ldb,
             (float *)C, ldc};
         return tb.matmul(m, n);
+#elif defined(__VXE__) || defined(__VXE2__)
+        if (n < 4)
+            return false;
+        tinyBLAS<4, float32x4_t, float32x4_t, float, float, float> tb{ params,
+            k, (const float *)A, lda,
+            (const float *)B, ldb,
+            (float *)C, ldc};
+        return tb.matmul(m, n);
 #elif defined(__MMA__)
         if (k % 8)
             return false;
@@ -3411,6 +3451,16 @@ bool llamafile_sgemm(const struct ggml_compute_params * params, int64_t m, int64
             tinyBLAS<4, float32x4_t, float32x4_t, ggml_fp16_t, float, float> tb{ params,
                 k, (const ggml_fp16_t *)A, lda,
                 (const float *)B, ldb,
+                (float *)C, ldc};
+            return tb.matmul(m, n);
+        }
+#elif defined(__VXE__) || defined(__VXE2__)
+        if (n < 4)
+            return false;
+        if (Btype == GGML_TYPE_F16) {
+            tinyBLAS<4, float32x4_t, float32x4_t, ggml_fp16_t, ggml_fp16_t, float> tb{ params,
+                k, (const ggml_fp16_t *)A, lda,
+                (const ggml_fp16_t *)B, ldb,
                 (float *)C, ldc};
             return tb.matmul(m, n);
         }

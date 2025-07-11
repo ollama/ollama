@@ -2,9 +2,9 @@
 #include "fattn-common.cuh"
 
 template<int D, int ncols, ggml_type type_K, ggml_type type_V, bool use_logit_softcap> // D == head size
-#if !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
+#ifndef GGML_USE_HIP
 __launch_bounds__(D, 1)
-#endif // !(defined(GGML_USE_HIP) && defined(__HIP_PLATFORM_AMD__))
+#endif // GGML_USE_HIP
 static __global__ void flash_attn_vec_ext_f32(
         const char * __restrict__ Q,
         const char * __restrict__ K,
@@ -27,7 +27,9 @@ static __global__ void flash_attn_vec_ext_f32(
         const int ne12,
         const int ne13,
         const int ne31,
+        const int ne32,
         const int nb31,
+        const int nb32,
         const int nb01,
         const int nb02,
         const int nb03,
@@ -51,8 +53,8 @@ static __global__ void flash_attn_vec_ext_f32(
         GGML_UNUSED(n_head_log2); GGML_UNUSED(logit_softcap);
         GGML_UNUSED(ne00); GGML_UNUSED(ne01); GGML_UNUSED(ne02);
         GGML_UNUSED(ne03); GGML_UNUSED(ne10); GGML_UNUSED(ne11);
-        GGML_UNUSED(ne12); GGML_UNUSED(ne13); GGML_UNUSED(ne31);
-        GGML_UNUSED(nb31); GGML_UNUSED(nb01); GGML_UNUSED(nb02);
+        GGML_UNUSED(ne12); GGML_UNUSED(ne13); GGML_UNUSED(ne31); GGML_UNUSED(ne32);
+        GGML_UNUSED(nb31); GGML_UNUSED(nb32); GGML_UNUSED(nb01); GGML_UNUSED(nb02);
         GGML_UNUSED(nb03); GGML_UNUSED(nb11); GGML_UNUSED(nb12);
         GGML_UNUSED(nb13); GGML_UNUSED(nb21); GGML_UNUSED(nb22);
         GGML_UNUSED(nb23); GGML_UNUSED(ne0); GGML_UNUSED(ne1);
@@ -60,6 +62,12 @@ static __global__ void flash_attn_vec_ext_f32(
         NO_DEVICE_CODE;
         return;
     }
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+    if (ncols > 1) {
+        NO_DEVICE_CODE;
+        return;
+    }
+#endif // !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
 
     //In this kernel Q, K, V are matrices while i, j, k are matrix indices.
 
@@ -73,7 +81,8 @@ static __global__ void flash_attn_vec_ext_f32(
     Q += nb02* blockIdx.z              + nb01*ic0;
     K += nb12*(blockIdx.z / gqa_ratio);
     V += nb22*(blockIdx.z / gqa_ratio); // K and V have same shape
-    const half * maskh = (const half   *)  mask + ne11*ic0;
+
+    const half * maskh = (const half *) (mask + nb32*(blockIdx.z % ne32) + nb31*ic0);
 
     const float slope = get_alibi_slope(max_bias, blockIdx.z, n_head_log2, m0, m1);
 
@@ -104,6 +113,13 @@ static __global__ void flash_attn_vec_ext_f32(
             kqsum_shared[j][threadIdx.x] = 0.0f;
         }
     }
+
+    __shared__ float maskf_shared[ncols*D];
+#pragma unroll
+    for (int j = 0; j < ncols; ++j) {
+        maskf_shared[j*D + tid] = 0.0f;
+    }
+
     __syncthreads();
 
     // Convert Q to float2 (f16 K) or q8_1 (quantized K) and store in registers:
@@ -181,6 +197,35 @@ static __global__ void flash_attn_vec_ext_f32(
     for (int k_VKQ_0 = blockIdx.y*D; k_VKQ_0 < ne11; k_VKQ_0 += gridDim.y*D) {
         // Calculate KQ tile and keep track of new maximum KQ values:
 
+        if (mask) {
+#pragma unroll
+            for (int j = 0; j < ncols; ++j) {
+                maskf_shared[j*D + tid] = slope*__half2float(maskh[j*ne11 + k_VKQ_0 + tid]);
+            }
+
+            __syncthreads();
+
+            // When using multiple parallel sequences in llama.cpp, some KV slices can be fully masked out.
+            // In such cases, skip the KV slice.
+            // On AMD __all_sync would not work correctly because it assumes a warp size of 64.
+#ifndef GGML_USE_HIP
+            bool skip = true;
+#pragma unroll
+            for (int j = 0; j < ncols; ++j) {
+#pragma unroll
+                for (int i0 = 0; i0 < D; i0 += WARP_SIZE) {
+                    const int i = i0 + threadIdx.x;
+
+                    skip = skip && isinf(maskf_shared[j*D + i]);
+                }
+            }
+            if (__all_sync(0xFFFFFFFF, skip)) {
+                __syncthreads();
+                continue;
+            }
+#endif // GGML_USE_HIP
+        }
+
         float kqmax_new_arr[ncols];
 #pragma unroll
         for (int j = 0; j < ncols; ++j) {
@@ -204,7 +249,7 @@ static __global__ void flash_attn_vec_ext_f32(
                     sum = logit_softcap*tanhf(sum);
                 }
 
-                sum += mask ? slope*__half2float(maskh[j*ne11 + k_VKQ_0 + i_KQ]) : 0.0f;
+                sum += maskf_shared[j*D + i_KQ];
 
                 kqmax_new_arr[j] = fmaxf(kqmax_new_arr[j], sum);
 
@@ -292,13 +337,15 @@ static __global__ void flash_attn_vec_ext_f32(
     GGML_UNUSED(Q); GGML_UNUSED(K); GGML_UNUSED(V); GGML_UNUSED(mask);
     GGML_UNUSED(dst); GGML_UNUSED(dst_meta); GGML_UNUSED(scale);
     GGML_UNUSED(max_bias); GGML_UNUSED(m0); GGML_UNUSED(m1);
-    GGML_UNUSED(n_head_log2); GGML_UNUSED(logit_softcap); GGML_UNUSED(ne00);
-    GGML_UNUSED(ne01); GGML_UNUSED(ne02); GGML_UNUSED(ne03); GGML_UNUSED(ne10);
-    GGML_UNUSED(ne11); GGML_UNUSED(ne12); GGML_UNUSED(ne13); GGML_UNUSED(ne31);
-    GGML_UNUSED(nb31); GGML_UNUSED(nb01); GGML_UNUSED(nb02); GGML_UNUSED(nb03);
-    GGML_UNUSED(nb11); GGML_UNUSED(nb12); GGML_UNUSED(nb13); GGML_UNUSED(nb21);
-    GGML_UNUSED(nb22); GGML_UNUSED(nb23); GGML_UNUSED(ne0); GGML_UNUSED(ne1);
-    GGML_UNUSED(ne2); GGML_UNUSED(ne3);
+    GGML_UNUSED(n_head_log2); GGML_UNUSED(logit_softcap);
+    GGML_UNUSED(ne00); GGML_UNUSED(ne01); GGML_UNUSED(ne02); GGML_UNUSED(ne03);
+    GGML_UNUSED(ne10); GGML_UNUSED(ne11); GGML_UNUSED(ne12); GGML_UNUSED(ne13);
+    GGML_UNUSED(ne31); GGML_UNUSED(ne32);
+    GGML_UNUSED(nb31); GGML_UNUSED(nb32);
+    GGML_UNUSED(nb01); GGML_UNUSED(nb02); GGML_UNUSED(nb03);
+    GGML_UNUSED(nb11); GGML_UNUSED(nb12); GGML_UNUSED(nb13);
+    GGML_UNUSED(nb21); GGML_UNUSED(nb22); GGML_UNUSED(nb23);
+    GGML_UNUSED(ne0); GGML_UNUSED(ne1); GGML_UNUSED(ne2); GGML_UNUSED(ne3);
     NO_DEVICE_CODE;
 #endif // FLASH_ATTN_AVAILABLE
 }
@@ -326,7 +373,9 @@ void ggml_cuda_flash_attn_ext_vec_f32_case(ggml_backend_cuda_context & ctx, ggml
     float logit_softcap;
     memcpy(&logit_softcap, (const float *) KQV->op_params + 2, sizeof(float));
 
-    if (Q->ne[1] == 1) {
+    const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+
+    if (Q->ne[1] == 1 || GGML_CUDA_CC_IS_NVIDIA(cc)) {
         constexpr int cols_per_block = 1;
         if (logit_softcap == 0.0f) {
             constexpr bool use_logit_softcap = false;

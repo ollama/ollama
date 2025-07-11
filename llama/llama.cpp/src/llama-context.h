@@ -1,11 +1,9 @@
 #pragma once
 
 #include "llama.h"
-#include "llama-batch.h"
 #include "llama-cparams.h"
 #include "llama-graph.h"
 #include "llama-adapter.h"
-#include "llama-kv-cache.h"
 
 #include "ggml-cpp.h"
 #include "ggml-opt.h"
@@ -14,10 +12,13 @@
 #include <vector>
 
 struct llama_model;
-struct llama_kv_cache;
+class llama_batch_allocr;
 
 class llama_io_read_i;
 class llama_io_write_i;
+
+struct llama_memory_i;
+struct llama_memory_context_i;
 
 struct llama_context {
     // init scheduler and compute buffers, reserve worst-case graphs
@@ -45,10 +46,12 @@ struct llama_context {
     uint32_t n_threads()       const;
     uint32_t n_threads_batch() const;
 
-          llama_kv_cache * get_kv_self();
-    const llama_kv_cache * get_kv_self() const;
+    llama_memory_t get_memory() const;
 
-    void kv_self_update();
+    // return true of the KV cache was updated
+    // TODO: remove
+    bool kv_self_update(bool optimize);
+    void kv_self_defrag_sched();
 
     enum llama_pooling_type pooling_type() const;
 
@@ -89,8 +92,18 @@ struct llama_context {
                 int32_t   il_start,
                 int32_t   il_end);
 
-    int encode(llama_batch & inp_batch);
-    int decode(llama_batch & inp_batch);
+    // process a single ubatch with a specific graph type
+    // if memory_context is provided, it will be applied first to the context's memory
+    // ret contains the status of the graph computation
+    // returns nullptr only if ret != GGML_STATUS_SUCCESS
+    llm_graph_result_ptr process_ubatch(
+                const llama_ubatch & ubatch,
+                    llm_graph_type   gtype,
+            llama_memory_context_i * mctx,
+                       ggml_status & ret);
+
+    int encode(const llama_batch & batch_inp);
+    int decode(const llama_batch & batch_inp);
 
     //
     // state save/load
@@ -168,7 +181,7 @@ private:
 
     // Make sure enough space is available for outputs.
     // Returns max number of outputs for which space was reserved.
-    int32_t output_reserve(int32_t n_outputs);
+    uint32_t output_reserve(int32_t n_outputs);
 
     //
     // graph
@@ -181,16 +194,18 @@ public:
     ggml_cgraph * graph_init();
 
     // returns the result of ggml_backend_sched_graph_compute_async execution
-    ggml_status graph_compute(
-            ggml_cgraph * gf,
-                   bool   batched);
+    ggml_status graph_compute(ggml_cgraph * gf, bool batched);
+
+    // reserve a graph with a dummy ubatch of the specified size
+    ggml_cgraph * graph_reserve(uint32_t n_tokens, uint32_t n_seqs, uint32_t n_outputs, const llama_memory_context_i * mctx);
 
 private:
     llm_graph_result_ptr graph_build(
-            ggml_context * ctx,
-             ggml_cgraph * gf,
-      const llama_ubatch & ubatch,
-          llm_graph_type   gtype);
+                      ggml_context * ctx,
+                       ggml_cgraph * gf,
+                const llama_ubatch & ubatch,
+                    llm_graph_type   gtype,
+      const llama_memory_context_i * mctx);
 
     llm_graph_cb graph_get_cb() const;
 
@@ -215,6 +230,9 @@ private:
 
     std::unique_ptr<llama_memory_i> memory;
 
+    // TODO: temporary, until the llama_kv_self_defrag() API is removed
+    bool memory_force_optimize = false;
+
     // decode output (2-dimensional array: [n_outputs][n_vocab])
     size_t  logits_size = 0; // capacity (of floats) for logits
     float * logits      = nullptr;
@@ -228,8 +246,10 @@ private:
     // populated only when pooling_type != LLAMA_POOLING_TYPE_NONE
     std::map<llama_seq_id, std::vector<float>> embd_seq;
 
-    int32_t n_outputs     = 0; // number of actually-used outputs in the current ubatch or last logical batch
-    int32_t n_outputs_max = 0; // capacity (of tokens positions) for the output buffers
+    // reuse the batch_allocr to avoid unnecessary memory allocations
+    std::unique_ptr<llama_batch_allocr> balloc;
+
+    uint32_t n_outputs = 0; // number of actually-used outputs in the current ubatch or last logical batch
 
     std::vector<int32_t> output_ids; // map batch token positions to ids of the logits and embd buffers
 

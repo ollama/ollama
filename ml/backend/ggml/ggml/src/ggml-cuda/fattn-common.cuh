@@ -32,7 +32,9 @@ typedef void (* fattn_kernel_t)(
         const int ne12,
         const int ne13,
         const int ne31,
+        const int ne32,
         const int nb31,
+        const int nb32,
         const int nb01,
         const int nb02,
         const int nb03,
@@ -623,8 +625,8 @@ static __global__ void flash_attn_combine_results(
     __builtin_assume(tid < D);
 
     extern __shared__ float2 meta[];
-    if (tid < 2*parallel_blocks) {
-        ((float *) meta)[threadIdx.x] = ((const float *)VKQ_meta) [blockIdx.z*(2*parallel_blocks) + tid];
+    for (int i = tid; i < 2*parallel_blocks; i += D) {
+        ((float *) meta)[i] = ((const float *)VKQ_meta) [blockIdx.z*(2*parallel_blocks) + i];
     }
 
     __syncthreads();
@@ -678,9 +680,13 @@ void launch_fattn(
 ) {
     constexpr int ncols = ncols1 * ncols2;
 
+    const bool is_mla = DV == 512; // TODO better parameterization
+
     const ggml_tensor * Q = dst->src[0];
     const ggml_tensor * K = dst->src[1];
     const ggml_tensor * V = dst->src[2];
+
+    GGML_ASSERT(V || is_mla);
 
     const ggml_tensor * mask = dst->src[3];
 
@@ -688,6 +694,10 @@ void launch_fattn(
 
     GGML_ASSERT(Q->type == GGML_TYPE_F32);
     GGML_ASSERT(KQV->type == GGML_TYPE_F32);
+
+    GGML_ASSERT(      Q->nb[0] == ggml_element_size(Q));
+    GGML_ASSERT(      K->nb[0] == ggml_element_size(K));
+    GGML_ASSERT(!V || V->nb[0] == ggml_element_size(V));
 
     GGML_ASSERT(!mask || mask->type == GGML_TYPE_F16);
     GGML_ASSERT(!mask || mask->ne[1] >= GGML_PAD(Q->ne[1], 16) &&
@@ -713,10 +723,10 @@ void launch_fattn(
     size_t nb12 = K->nb[2];
     size_t nb13 = K->nb[3];
 
-    const char * V_data = (const char *) V->data;
-    size_t nb21 = V->nb[1];
-    size_t nb22 = V->nb[2];
-    size_t nb23 = V->nb[3];
+    const char * V_data = V ? (const char *) V->data : nullptr;
+    size_t nb21 = V ? V->nb[1] : nb11;
+    size_t nb22 = V ? V->nb[2] : nb12;
+    size_t nb23 = V ? V->nb[3] : nb13;
 
     if (need_f16_K && K->type != GGML_TYPE_F16) {
         GGML_ASSERT(ggml_is_contiguously_allocated(K));
@@ -733,7 +743,7 @@ void launch_fattn(
         nb13 = nb13*bs*sizeof(half)/ts;
     }
 
-    if (need_f16_V && V->type != GGML_TYPE_F16) {
+    if (V && need_f16_V && V->type != GGML_TYPE_F16) {
         GGML_ASSERT(ggml_is_contiguously_allocated(V));
         V_f16.alloc(ggml_nelements(V));
         to_fp16_cuda_t to_fp16 = ggml_get_to_fp16_cuda(V->type);
@@ -843,7 +853,8 @@ void launch_fattn(
         scale, max_bias, m0, m1, n_head_log2, logit_softcap,
         Q->ne[0], Q->ne[1], Q->ne[2], Q->ne[3],
         K->ne[0], K->ne[1], K->ne[2], K->ne[3],
-        mask ? mask->ne[1] : 0, mask ?  mask->nb[1] : 0,
+        mask ? mask->ne[1] : 0, mask ? mask->ne[2] : 0,
+        mask ? mask->nb[1] : 0, mask ? mask->nb[2] : 0,
         Q->nb[1], Q->nb[2], Q->nb[3],
         nb11, nb12, nb13,
         nb21, nb22, nb23,
