@@ -12,5 +12,7 @@ test_data
 *.crt
 __debug_bin*
 llama/build
+__debug_bin*
+build
 llama/vendor
 /ollama
