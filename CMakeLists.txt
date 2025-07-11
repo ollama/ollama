@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.21)
 project(Ollama C CXX)
 
 include(CheckLanguage)
+include(GNUInstallDirs)
 
 find_package(Threads REQUIRED)
 
