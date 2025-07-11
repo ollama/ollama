@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Gabe Goodhart <ghart@us.ibm.com>
+Date: Fri, 11 Jul 2025 11:12:30 -0600
+Subject: [PATCH] use "undefined" string constants for ggml version and commit
+
+These are normally set via the CMake build system
+---
+ ggml/src/ggml.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/ggml/src/ggml.c b/ggml/src/ggml.c
+index 5ae1c527..fd14cb80 100644
+--- a/ggml/src/ggml.c
++++ b/ggml/src/ggml.c
+@@ -474,11 +474,11 @@ bool ggml_guid_matches(ggml_guid_t guid_a, ggml_guid_t guid_b) {
+ }
+ 
+ const char * ggml_version(void) {
+-    return GGML_VERSION;
++    return "undefined";
+ }
+ 
+ const char * ggml_commit(void) {
+-    return GGML_COMMIT;
++    return "undefined";
+ }
+ 
+ //
