@@ -2400,7 +2400,7 @@ static bool ggml_thread_apply_priority(int32_t prio) {
         // Newer Windows 11 versions aggresively park (offline) CPU cores and often place
         // all our threads onto the first 4 cores which results in terrible performance with
         // n_threads > 4
-        #if _WIN32_WINNT >= 0x0602
+        #if (_WIN32_WINNT >= 0x0602) && !defined(__GNUC__)
         THREAD_POWER_THROTTLING_STATE t;
         ZeroMemory(&t, sizeof(t));
         t.Version     = THREAD_POWER_THROTTLING_CURRENT_VERSION;
