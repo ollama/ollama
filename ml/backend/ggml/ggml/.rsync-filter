@@ -1,6 +1,8 @@
 protect *.go
 protect *-embed.*
 include include/
+include cmake/
+include cmake/common.cmake
 include src/
 include src/CMakeLists.txt
 include src/**/CMakeLists.txt
