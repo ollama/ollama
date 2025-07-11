@@ -1894,7 +1894,18 @@ Using the Modelfile:
 ```
 FROM fanyx/Qwen3-Reranker-0.6B-Q8_0
 
-TEMPLATE """!{{ .Query }}"\""[SEP]{{ .Document }}[EOS]"""
+TEMPLATE """<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the
+Instruct provided. Note that the answer can only be "yes" or
+"no".<|im_end|>
+<|im_start|>user
+<Instruct>: Judge whether the Document meets the requirements based on the Query and the
+Instruct provided. Note that the answer can only be "yes" or
+"no".
+<Query>: {{ .Query }}
+<Document>: {{ .Document }}<|im_end|>
+<|im_start|>assistant
+<think>\n\n</think>\n\n"""
 ```
 
 #### Request
