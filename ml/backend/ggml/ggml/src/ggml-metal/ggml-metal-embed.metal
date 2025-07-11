@@ -2107,7 +2107,11 @@ typedef struct {
     uint64_t nb21;
     uint64_t nb22;
     uint64_t nb23;
+    int32_t  ne32;
+    int32_t  ne33;
     uint64_t nb31;
+    uint64_t nb32;
+    uint64_t nb33;
     int32_t  ne1;
     int32_t  ne2;
     float    scale;
@@ -2300,6 +2304,17 @@ typedef struct {
     int32_t  KHW; // KH * KW, pre-computed on CPU to save GPU resources
 } ggml_metal_kargs_im2col;
 
+typedef struct{
+    int32_t  ne00;
+    uint64_t nb01;
+    int32_t  ne10;
+    uint64_t nb11;
+    int32_t  ne0;
+    uint64_t nb1;
+    int32_t  i00;
+    int32_t  i10;
+} ggml_metal_kargs_glu;
+
 typedef struct {
     int64_t  ne00;
     int64_t  ne01;
@@ -2328,9 +2343,21 @@ typedef struct {
 } ggml_metal_kargs_sum_rows;
 
 typedef struct {
-    int64_t  ne00;
-    int64_t  ne01;
-    int64_t  ne02;
+    int32_t  ne00;
+    int32_t  ne01;
+    int32_t  ne02;
+    uint64_t nb01;
+    uint64_t nb02;
+    uint64_t nb03;
+    int32_t  ne11;
+    int32_t  ne12;
+    int32_t  ne13;
+    uint64_t nb11;
+    uint64_t nb12;
+    uint64_t nb13;
+    uint64_t nb1;
+    uint64_t nb2;
+    uint64_t nb3;
     float    scale;
     float    max_bias;
     float    m0;
@@ -2616,6 +2643,7 @@ void dequantize_q4_0_t4(device const block_q4_0 * xb, short il, thread type4 & r
 }
 
 void quantize_q4_0(device const float * src, device block_q4_0 & dst) {
+#pragma METAL fp math_mode(safe)
     float amax = 0.0f; // absolute max
     float max  = 0.0f;
 
@@ -2645,6 +2673,7 @@ void quantize_q4_0(device const float * src, device block_q4_0 & dst) {
 }
 
 void quantize_q4_1(device const float * src, device block_q4_1 & dst) {
+#pragma METAL fp math_mode(safe)
     float min = FLT_MAX;
     float max = -FLT_MAX;
 
@@ -2673,6 +2702,7 @@ void quantize_q4_1(device const float * src, device block_q4_1 & dst) {
 }
 
 void quantize_q5_0(device const float * src, device block_q5_0 & dst) {
+#pragma METAL fp math_mode(safe)
     float amax = 0.0f; // absolute max
     float max  = 0.0f;
 
@@ -2710,6 +2740,7 @@ void quantize_q5_0(device const float * src, device block_q5_0 & dst) {
 }
 
 void quantize_q5_1(device const float * src, device block_q5_1 & dst) {
+#pragma METAL fp math_mode(safe)
     float max = src[0];
     float min = src[0];
 
@@ -2746,6 +2777,7 @@ void quantize_q5_1(device const float * src, device block_q5_1 & dst) {
 }
 
 void quantize_iq4_nl(device const float * src, device block_iq4_nl & dst) {
+#pragma METAL fp math_mode(safe)
     float amax = 0.0f; // absolute max
     float max  = 0.0f;
 
@@ -2965,6 +2997,7 @@ void dequantize_q8_0_t4(device const block_q8_0 *xb, short il, thread type4 & re
 }
 
 void quantize_q8_0(device const float * src, device block_q8_0 & dst) {
+#pragma METAL fp math_mode(safe)
     float amax = 0.0f; // absolute max
 
     for (int j = 0; j < QK8_0; j++) {
@@ -3515,16 +3548,18 @@ kernel void kernel_scale(
         device const float * src0,
         device       float * dst,
         constant     float & scale,
+        constant     float & bias,
         uint tpig[[thread_position_in_grid]]) {
-    dst[tpig] = src0[tpig] * scale;
+    dst[tpig] = src0[tpig] * scale + bias;
 }
 
 kernel void kernel_scale_4(
         device const float4 * src0,
         device       float4 * dst,
         constant     float  & scale,
+        constant     float  & bias,
         uint tpig[[thread_position_in_grid]]) {
-    dst[tpig] = src0[tpig] * scale;
+    dst[tpig] = src0[tpig] * scale + bias;
 }
 
 kernel void kernel_clamp(
@@ -3698,6 +3733,114 @@ kernel void kernel_neg(
     dst[tpig] = -src0[tpig];
 }
 
+kernel void kernel_reglu(
+        device const char * src0,
+        device const char * src1,
+        device       char * dst,
+        constant ggml_metal_kargs_glu & args,
+        uint tgpig[[threadgroup_position_in_grid]],
+        uint tpitg[[thread_position_in_threadgroup]],
+        uint   ntg[[threads_per_threadgroup]]) {
+    device const float * src0_row = (device const float *) ((device const char *) src0 + tgpig*args.nb01) + args.i00;
+    device const float * src1_row = (device const float *) ((device const char *) src1 + tgpig*args.nb11) + args.i10;
+    device       float * dst_row  = (device       float *) ((device       char *) dst  + tgpig*args.nb1);
+
+    for (int i0 = tpitg; i0 < args.ne0; i0 += ntg) {
+        const float x0 = src0_row[i0];
+        const float x1 = src1_row[i0];
+
+        dst_row[i0] = x0*x1*(x0 > 0.0f);
+    }
+}
+
+kernel void kernel_geglu(
+        device const char * src0,
+        device const char * src1,
+        device       char * dst,
+        constant ggml_metal_kargs_glu & args,
+        uint tgpig[[threadgroup_position_in_grid]],
+        uint tpitg[[thread_position_in_threadgroup]],
+        uint   ntg[[threads_per_threadgroup]]) {
+    device const float * src0_row = (device const float *) ((device const char *) src0 + tgpig*args.nb01) + args.i00;
+    device const float * src1_row = (device const float *) ((device const char *) src1 + tgpig*args.nb11) + args.i10;
+    device       float * dst_row  = (device       float *) ((device       char *) dst  + tgpig*args.nb1);
+
+    for (int i0 = tpitg; i0 < args.ne0; i0 += ntg) {
+        const float x0 = src0_row[i0];
+        const float x1 = src1_row[i0];
+
+        const float gelu = 0.5f*x0*(1.0f + precise::tanh(SQRT_2_OVER_PI*x0*(1.0f + GELU_COEF_A*x0*x0)));
+
+        dst_row[i0] = gelu*x1;
+    }
+}
+
+kernel void kernel_swiglu(
+        device const char * src0,
+        device const char * src1,
+        device       char * dst,
+        constant ggml_metal_kargs_glu & args,
+        uint tgpig[[threadgroup_position_in_grid]],
+        uint tpitg[[thread_position_in_threadgroup]],
+        uint   ntg[[threads_per_threadgroup]]) {
+    device const float * src0_row = (device const float *) ((device const char *) src0 + tgpig*args.nb01) + args.i00;
+    device const float * src1_row = (device const float *) ((device const char *) src1 + tgpig*args.nb11) + args.i10;
+    device       float * dst_row  = (device       float *) ((device       char *) dst  + tgpig*args.nb1);
+
+    for (int i0 = tpitg; i0 < args.ne0; i0 += ntg) {
+        const float x0 = src0_row[i0];
+        const float x1 = src1_row[i0];
+
+        const float silu = x0 / (1.0f + exp(-x0));
+
+        dst_row[i0] = silu*x1;
+    }
+}
+
+kernel void kernel_geglu_erf(
+        device const char * src0,
+        device const char * src1,
+        device       char * dst,
+        constant ggml_metal_kargs_glu & args,
+        uint tgpig[[threadgroup_position_in_grid]],
+        uint tpitg[[thread_position_in_threadgroup]],
+        uint   ntg[[threads_per_threadgroup]]) {
+    device const float * src0_row = (device const float *) ((device const char *) src0 + tgpig*args.nb01) + args.i00;
+    device const float * src1_row = (device const float *) ((device const char *) src1 + tgpig*args.nb11) + args.i10;
+    device       float * dst_row  = (device       float *) ((device       char *) dst  + tgpig*args.nb1);
+
+    for (int i0 = tpitg; i0 < args.ne0; i0 += ntg) {
+        const float x0 = src0_row[i0];
+        const float x1 = src1_row[i0];
+
+        const float gelu_erf = 0.5f*x0*(1.0f+erf_approx<float>(x0*SQRT_2_INV));
+
+        dst_row[i0] = gelu_erf*x1;
+    }
+}
+
+kernel void kernel_geglu_quick(
+        device const char * src0,
+        device const char * src1,
+        device       char * dst,
+        constant ggml_metal_kargs_glu & args,
+        uint tgpig[[threadgroup_position_in_grid]],
+        uint tpitg[[thread_position_in_threadgroup]],
+        uint   ntg[[threads_per_threadgroup]]) {
+    device const float * src0_row = (device const float *) ((device const char *) src0 + tgpig*args.nb01) + args.i00;
+    device const float * src1_row = (device const float *) ((device const char *) src1 + tgpig*args.nb11) + args.i10;
+    device       float * dst_row  = (device       float *) ((device       char *) dst  + tgpig*args.nb1);
+
+    for (int i0 = tpitg; i0 < args.ne0; i0 += ntg) {
+        const float x0 = src0_row[i0];
+        const float x1 = src1_row[i0];
+
+        const float gelu_quick = x0*(1.0f/(1.0f+exp(GELU_QUICK_COEF*x0)));
+
+        dst_row[i0] = gelu_quick*x1;
+    }
+}
+
 template <bool norm>
 kernel void kernel_sum_rows(
         constant ggml_metal_kargs_sum_rows & args,
@@ -3760,24 +3903,28 @@ kernel void kernel_soft_max(
         device        char * dst,
         constant ggml_metal_kargs_soft_max & args,
         threadgroup  float * buf [[threadgroup(0)]],
-        uint  tgpig[[threadgroup_position_in_grid]],
-        uint  tpitg[[thread_position_in_threadgroup]],
+        uint3 tgpig[[threadgroup_position_in_grid]],
+        uint3 tpitg[[thread_position_in_threadgroup]],
         uint  sgitg[[simdgroup_index_in_threadgroup]],
         uint  tiisg[[thread_index_in_simdgroup]],
-        uint    ntg[[threads_per_threadgroup]]) {
-    const int64_t i03 = (tgpig) / (args.ne02*args.ne01);
-    const int64_t i02 = (tgpig - i03*args.ne02*args.ne01) / args.ne01;
-    const int64_t i01 = (tgpig - i03*args.ne02*args.ne01 - i02*args.ne01);
+        uint3  tptg[[threads_per_threadgroup]]) {
+    const int32_t i03 = tgpig.z;
+    const int32_t i02 = tgpig.y;
+    const int32_t i01 = tgpig.x;
 
-    device const float * psrc0 = (device const float *) src0 + (i03*args.ne02*args.ne01*args.ne00 + i02*args.ne01*args.ne00 + i01*args.ne00);
-    device const     T * pmask = src1 != src0 ? (device const    T *) src1         + i01*args.ne00 : nullptr;
-    device       float * pdst  = (device       float *) dst  + (i03*args.ne02*args.ne01*args.ne00 + i02*args.ne01*args.ne00 + i01*args.ne00);
+    const int32_t i13 = i03%args.ne13;
+    const int32_t i12 = i02%args.ne12;
+    const int32_t i11 = i01;
+
+    device const float * psrc0 =                (device const float *) (src0 + i01*args.nb01 + i02*args.nb02 + i03*args.nb03);
+    device const     T * pmask = src1 != src0 ? (device const T *    ) (src1 + i11*args.nb11 + i12*args.nb12 + i13*args.nb13) : nullptr;
+    device       float * pdst  =                (device       float *) (dst  + i01*args.nb1  + i02*args.nb2  + i03*args.nb3);
 
     float slope = 1.0f;
 
     // ALiBi
     if (args.max_bias > 0.0f) {
-        const int64_t h = i02;
+        const int32_t h = i02;
 
         const float base = h < args.n_head_log2 ? args.m0 : args.m1;
         const int   exp  = h < args.n_head_log2 ? h + 1 : 2*(h - args.n_head_log2) + 1;
@@ -3788,13 +3935,13 @@ kernel void kernel_soft_max(
     // parallel max
     float lmax = -INFINITY;
 
-    for (int i00 = tpitg; i00 < args.ne00; i00 += ntg) {
+    for (int i00 = tpitg.x; i00 < args.ne00; i00 += tptg.x) {
         lmax = MAX(lmax, psrc0[i00]*args.scale + (pmask ? slope*pmask[i00] : 0.0f));
     }
 
     // find the max value in the block
     float max_val = simd_max(lmax);
-    if (ntg > N_SIMDWIDTH) {
+    if (tptg.x > N_SIMDWIDTH) {
         if (sgitg == 0) {
             buf[tiisg] = -INFINITY;
         }
@@ -3813,7 +3960,7 @@ kernel void kernel_soft_max(
 
     // parallel sum
     float lsum = 0.0f;
-    for (int i00 = tpitg; i00 < args.ne00; i00 += ntg) {
+    for (int i00 = tpitg.x; i00 < args.ne00; i00 += tptg.x) {
         const float exp_psrc0 = exp((psrc0[i00]*args.scale + (pmask ? slope*pmask[i00] : 0.0f)) - max_val);
         lsum += exp_psrc0;
         pdst[i00] = exp_psrc0;
@@ -3825,7 +3972,7 @@ kernel void kernel_soft_max(
 
     float sum = simd_sum(lsum);
 
-    if (ntg > N_SIMDWIDTH) {
+    if (tptg.x > N_SIMDWIDTH) {
         if (sgitg == 0) {
             buf[tiisg] = 0.0f;
         }
@@ -3844,7 +3991,7 @@ kernel void kernel_soft_max(
 
     const float inv_sum = 1.0f/sum;
 
-    for (int i00 = tpitg; i00 < args.ne00; i00 += ntg) {
+    for (int i00 = tpitg.x; i00 < args.ne00; i00 += tptg.x) {
         pdst[i00] *= inv_sum;
     }
 }
@@ -3856,23 +4003,27 @@ kernel void kernel_soft_max_4(
         device        char * dst,
         constant ggml_metal_kargs_soft_max & args,
         threadgroup  float * buf [[threadgroup(0)]],
-        uint  tgpig[[threadgroup_position_in_grid]],
-        uint  tpitg[[thread_position_in_threadgroup]],
+        uint3 tgpig[[threadgroup_position_in_grid]],
+        uint3 tpitg[[thread_position_in_threadgroup]],
         uint  sgitg[[simdgroup_index_in_threadgroup]],
         uint  tiisg[[thread_index_in_simdgroup]],
-        uint    ntg[[threads_per_threadgroup]]) {
-    const int64_t i03 = (tgpig) / (args.ne02*args.ne01);
-    const int64_t i02 = (tgpig - i03*args.ne02*args.ne01) / args.ne01;
-    const int64_t i01 = (tgpig - i03*args.ne02*args.ne01 - i02*args.ne01);
+        uint3  tptg[[threads_per_threadgroup]]) {
+    const int32_t i03 = tgpig.z;
+    const int32_t i02 = tgpig.y;
+    const int32_t i01 = tgpig.x;
 
-    device const float4 * psrc4 = (device const float4 *) src0 + (i03*args.ne02*args.ne01*args.ne00 + i02*args.ne01*args.ne00 + i01*args.ne00)/4;
-    device const      T * pmask = src1 != src0 ? (device const     T *) src1         + i01*args.ne00/4 : nullptr;
-    device       float4 * pdst4 = (device       float4 *) dst  + (i03*args.ne02*args.ne01*args.ne00 + i02*args.ne01*args.ne00 + i01*args.ne00)/4;
+    const int32_t i13 = i03%args.ne13;
+    const int32_t i12 = i02%args.ne12;
+    const int32_t i11 = i01;
+
+    device const float4 * psrc4 =                (device const float4 *) (src0 + i01*args.nb01 + i02*args.nb02 + i03*args.nb03);
+    device const      T * pmask = src1 != src0 ? (device const T *     ) (src1 + i11*args.nb11 + i12*args.nb12 + i13*args.nb13) : nullptr;
+    device       float4 * pdst4 =                (device       float4 *) (dst  + i01*args.nb1  + i02*args.nb2  + i03*args.nb3);
 
     float slope = 1.0f;
 
     if (args.max_bias > 0.0f) {
-        const int64_t h = i02;
+        const int32_t h = i02;
 
         const float base = h < args.n_head_log2 ? args.m0 : args.m1;
         const int   exp  = h < args.n_head_log2 ? h + 1 : 2*(h - args.n_head_log2) + 1;
@@ -3883,14 +4034,14 @@ kernel void kernel_soft_max_4(
     // parallel max
     float4 lmax4 = -INFINITY;
 
-    for (int i00 = tpitg; i00 < args.ne00/4; i00 += ntg) {
+    for (int i00 = tpitg.x; i00 < args.ne00/4; i00 += tptg.x) {
         lmax4 = fmax(lmax4, psrc4[i00]*args.scale + (float4)((pmask ? slope*pmask[i00] : 0.0f)));
     }
 
     const float lmax = MAX(MAX(lmax4[0], lmax4[1]), MAX(lmax4[2], lmax4[3]));
 
     float max_val = simd_max(lmax);
-    if (ntg > N_SIMDWIDTH) {
+    if (tptg.x > N_SIMDWIDTH) {
         if (sgitg == 0) {
             buf[tiisg] = -INFINITY;
         }
@@ -3909,7 +4060,7 @@ kernel void kernel_soft_max_4(
 
     // parallel sum
     float4 lsum4 = 0.0f;
-    for (int i00 = tpitg; i00 < args.ne00/4; i00 += ntg) {
+    for (int i00 = tpitg.x; i00 < args.ne00/4; i00 += tptg.x) {
         const float4 exp_psrc4 = exp((psrc4[i00]*args.scale + (float4)((pmask ? slope*pmask[i00] : 0.0f))) - max_val);
         lsum4 += exp_psrc4;
         pdst4[i00] = exp_psrc4;
@@ -3923,7 +4074,7 @@ kernel void kernel_soft_max_4(
 
     float sum = simd_sum(lsum);
 
-    if (ntg > N_SIMDWIDTH) {
+    if (tptg.x > N_SIMDWIDTH) {
         if (sgitg == 0) {
             buf[tiisg] = 0.0f;
         }
@@ -3942,7 +4093,7 @@ kernel void kernel_soft_max_4(
 
     const float inv_sum = 1.0f/sum;
 
-    for (int i00 = tpitg; i00 < args.ne00/4; i00 += ntg) {
+    for (int i00 = tpitg.x; i00 < args.ne00/4; i00 += tptg.x) {
         pdst4[i00] *= inv_sum;
     }
 }
@@ -6289,7 +6440,7 @@ kernel void kernel_flash_attn_ext(
                 // load the mask in shared memory
                 #pragma unroll(Q)
                 for (short j = 0; j < Q; ++j) {
-                    device const half * pm = (device const half *) ((device const char *) mask + (iq1 + j)*args.nb31);
+                    device const half * pm = (device const half *) ((device const char *) mask + (iq1 + j)*args.nb31 + (iq2%args.ne32)*args.nb32 + (iq3%args.ne33)*args.nb33);
 
                     const float m = pm[ic + tiisg];
 
@@ -6775,7 +6926,7 @@ kernel void kernel_flash_attn_ext_vec(
         const bool has_mask = mask != q;
 
         // pointer to the mask
-        device const half * pm = (device const half *) (mask + iq1*args.nb31);
+        device const half * pm = (device const half *) (mask + iq1*args.nb31 + (iq2%args.ne32)*args.nb32 + (iq3%args.ne33)*args.nb33);
 
         float slope = 1.0f;
 

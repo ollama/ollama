@@ -232,7 +232,11 @@ typedef struct {
     uint64_t nb21;
     uint64_t nb22;
     uint64_t nb23;
+    int32_t  ne32;
+    int32_t  ne33;
     uint64_t nb31;
+    uint64_t nb32;
+    uint64_t nb33;
     int32_t  ne1;
     int32_t  ne2;
     float    scale;
@@ -425,6 +429,17 @@ typedef struct {
     int32_t  KHW; // KH * KW, pre-computed on CPU to save GPU resources
 } ggml_metal_kargs_im2col;
 
+typedef struct{
+    int32_t  ne00;
+    uint64_t nb01;
+    int32_t  ne10;
+    uint64_t nb11;
+    int32_t  ne0;
+    uint64_t nb1;
+    int32_t  i00;
+    int32_t  i10;
+} ggml_metal_kargs_glu;
+
 typedef struct {
     int64_t  ne00;
     int64_t  ne01;
@@ -453,9 +468,21 @@ typedef struct {
 } ggml_metal_kargs_sum_rows;
 
 typedef struct {
-    int64_t  ne00;
-    int64_t  ne01;
-    int64_t  ne02;
+    int32_t  ne00;
+    int32_t  ne01;
+    int32_t  ne02;
+    uint64_t nb01;
+    uint64_t nb02;
+    uint64_t nb03;
+    int32_t  ne11;
+    int32_t  ne12;
+    int32_t  ne13;
+    uint64_t nb11;
+    uint64_t nb12;
+    uint64_t nb13;
+    uint64_t nb1;
+    uint64_t nb2;
+    uint64_t nb3;
     float    scale;
     float    max_bias;
     float    m0;

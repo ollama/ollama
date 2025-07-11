@@ -32,6 +32,7 @@ enum llm_type {
     LLM_TYPE_190M,
     LLM_TYPE_220M,
     LLM_TYPE_250M,
+    LLM_TYPE_256M,
     LLM_TYPE_270M,
     LLM_TYPE_335M,
     LLM_TYPE_410M,
@@ -39,6 +40,7 @@ enum llm_type {
     LLM_TYPE_475M,
     LLM_TYPE_770M,
     LLM_TYPE_780M,
+    LLM_TYPE_0_3B,
     LLM_TYPE_0_5B,
     LLM_TYPE_0_6B,
     LLM_TYPE_1B,
@@ -94,6 +96,7 @@ enum llm_type {
     LLM_TYPE_57B_A14B,
     LLM_TYPE_17B_16E, // llama4 Scout
     LLM_TYPE_17B_128E, // llama4 Maverick
+    LLM_TYPE_A13B,
     LLM_TYPE_30B_A3B,
     LLM_TYPE_235B_A22B,
     LLM_TYPE_E2B,
@@ -173,6 +176,9 @@ struct llama_layer {
     struct ggml_tensor * attn_norm_cross = nullptr;
     struct ggml_tensor * attn_norm_enc   = nullptr;
     struct ggml_tensor * ssm_norm        = nullptr;
+    struct ggml_tensor * ssm_dt_norm     = nullptr;
+    struct ggml_tensor * ssm_b_norm      = nullptr;
+    struct ggml_tensor * ssm_c_norm      = nullptr;
 
     // attention
     struct ggml_tensor * wq        = nullptr;
@@ -257,7 +263,6 @@ struct llama_layer {
     // mamba bias
     struct ggml_tensor * ssm_conv1d_b = nullptr;
     struct ggml_tensor * ssm_dt_b     = nullptr;
-    struct ggml_tensor * ssm_in_b     = nullptr;
 
     // rwkv
     struct ggml_tensor * time_mix_w1         = nullptr;

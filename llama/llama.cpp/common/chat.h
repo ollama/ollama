@@ -7,6 +7,7 @@
 #include <chrono>
 #include <string>
 #include <vector>
+#include <map>
 
 struct common_chat_templates;
 
@@ -125,6 +126,7 @@ struct common_chat_templates_inputs {
     common_reasoning_format reasoning_format = COMMON_REASONING_FORMAT_NONE;
     bool enable_thinking = true;
     std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
+    std::map<std::string, std::string> chat_template_kwargs;
 };
 
 struct common_chat_params {
