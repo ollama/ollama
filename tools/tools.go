@@ -119,15 +119,25 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 	var end int = len(p.buffer)
 	var i int
 
-	// find tool name
-	longest := 0
+	// find the earliest tool name
+	start := end
 	for _, t := range p.tools {
 		n := t.Function.Name
 		if i = bytes.Index(p.buffer, []byte(n)); i != -1 {
-			if len(n) > longest {
+			if start > i {
+				start = i
+			}
+		}
+	}
+	// find the longest tool name
+	longest := 0
+	for _, t := range p.tools {
+		n := t.Function.Name
+		if bytes.Index(p.buffer[start:], []byte(n)) == 0 {
+			if longest < len(n) {
 				longest = len(n)
 				tool = &t
-				end = i + len(n)
+				end = start + len(n)
 			}
 		}
 	}
