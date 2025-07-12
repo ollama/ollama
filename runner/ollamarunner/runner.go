@@ -517,13 +517,25 @@ func (s *Server) processBatch() error {
 		// if done processing the prompt, generate an embedding and return
 		if seq.embeddingOnly {
 			if s.reranking {
-				// For reranking, the "embedding" is the relevance score
+				// For reranking models with LLAMA_POOLING_TYPE_RANK, the model outputs
+				// a single ranking score per sequence, not vocabulary logits
 				if len(logits) == 0 {
 					slog.Warn("reranking model returned no logits")
 					s.removeSequence(i, llm.DoneReasonStop)
 					continue
 				}
-				seq.embedding <- []float32{logits[seq.iBatch*vocabSize]}
+				
+				// For ranking models, we expect exactly one score per sequence
+				// The model output should have length equal to the number of sequences
+				if len(logits) < seq.iBatch+1 {
+					slog.Error("reranking model output too short", "expected_length", seq.iBatch+1, "actual_length", len(logits))
+					s.removeSequence(i, llm.DoneReasonStop)
+					continue
+				}
+				
+				// Extract the ranking score for this sequence
+				rankingScore := logits[seq.iBatch]
+				seq.embedding <- []float32{rankingScore}
 				s.removeSequence(i, llm.DoneReasonStop)
 				continue
 			}
