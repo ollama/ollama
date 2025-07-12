@@ -106,7 +106,7 @@ COPY --from=build /bin/ollama /bin/ollama
 
 FROM ubuntu:24.04
 RUN apt-get update \
-    && apt-get install -y ca-certificates \
+    && apt-get install -y ca-certificates curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=archive /bin /usr/bin
@@ -117,5 +117,7 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV OLLAMA_HOST=0.0.0.0:11434
 EXPOSE 11434
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl --fail http://localhost:11434/api/tags || exit 1
 ENTRYPOINT ["/bin/ollama"]
 CMD ["serve"]
