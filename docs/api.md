@@ -4,6 +4,7 @@
 
 - [Generate a completion](#generate-a-completion)
 - [Generate a chat completion](#generate-a-chat-completion)
+- [Rerank documents](#rerank-documents)
 - [Create a Model](#create-a-model)
 - [List Local Models](#list-local-models)
 - [Show Model Information](#show-model-information)
@@ -1866,6 +1867,112 @@ curl http://localhost:11434/api/version
 ```json
 {
   "version": "0.5.1"
+}
+```
+
+## Rerank documents
+
+```
+POST /api/rerank
+```
+
+Rerank a list of documents based on a query.
+
+### Parameters
+
+- `model`: (required) the name of the model to use for reranking
+- `query`: (required) the query to use for reranking
+- `documents`: (required) a list of documents to rerank
+- `top_n`: (optional) the number of results to return. Defaults to returning all results.
+- `return_documents`: (optional) if `true`, the documents will be returned in the response. Defaults to `false`.
+
+### Examples
+
+Run ollama with environment variable OLLAMA_NEW_ENGINE=1
+
+Using the Modelfile:
+```
+FROM fanyx/Qwen3-Reranker-0.6B-Q8_0
+
+TEMPLATE """<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the
+Instruct provided. Note that the answer can only be "yes" or
+"no".<|im_end|>
+<|im_start|>user
+<Instruct>: Judge whether the Document meets the requirements based on the Query and the
+Instruct provided. Note that the answer can only be "yes" or
+"no".
+<Query>: {{ .Query }}
+<Document>: {{ .Document }}<|im_end|>
+<|im_start|>assistant
+<think>\n\n</think>\n\n"""
+```
+
+#### Request
+
+```shell
+curl http://127.0.0.1:11434/api/rerank \
+	-H "Content-Type: application/json" \
+	-d '{
+      "model": "reranker-fanyx",
+      "query": "What is Ollama, the framework for machine learning things?",
+      "top_n": 10,
+	    "return_documents": true,
+      "documents": [
+		"Angela Merkel was the Chancellor of Germany",
+		"Llamas are animals that have a very soft fur",
+		"Pizza is made of tomatoes and cheese.",
+		"Spaghetti is a type of italian food",
+		"Ollama is a machine learning framework"
+      ]
+    }' | jq
+```
+
+#### Response
+
+```json
+{
+  "model": "reranker-fanyx-correct",
+  "results": [
+    {
+      "index": 4,
+      "document": {
+        "text": "Ollama is a machine learning framework"
+      },
+      "relevance_score": 9.151519
+    },
+    {
+      "index": 0,
+      "document": {
+        "text": "Angela Merkel was the Chancellor of Germany"
+      },
+      "relevance_score": 8.595248
+    },
+    {
+      "index": 3,
+      "document": {
+        "text": "Spaghetti is a type of italian food"
+      },
+      "relevance_score": 7.900294
+    },
+    {
+      "index": 2,
+      "document": {
+        "text": "Pizza is made of tomatoes and cheese."
+      },
+      "relevance_score": 7.504794
+    },
+    {
+      "index": 1,
+      "document": {
+        "text": "Llamas are animals that have a very soft fur"
+      },
+      "relevance_score": 7.247923
+    }
+  ],
+  "usage": {
+    "total_tokens": 147
+  }
 }
 ```
 
