@@ -123,6 +123,8 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 	return runner.llama, model, &opts, nil
 }
 
+// GenerateHandler handles /api/generate
+// Note that the completion logic appears in llm/server.go:completion
 func (s *Server) GenerateHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 	var req api.GenerateRequest
@@ -144,6 +146,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 	// We cannot currently consolidate this into GetModel because all we'll
 	// induce infinite recursion given the current code structure.
+	// (shall it be something like "model %s not found do you mean %s")
 	name, err := getExistingName(name)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
