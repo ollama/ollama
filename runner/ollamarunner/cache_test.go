@@ -3,7 +3,6 @@ package ollamarunner
 import (
 	"errors"
 	"fmt"
-	"image"
 	"testing"
 	"time"
 
@@ -12,10 +11,6 @@ import (
 )
 
 func TestCountCommon(t *testing.T) {
-	imgA := image.NewRGBA(image.Rect(0, 0, 100, 100))
-	imgB := image.NewRGBA(image.Rect(0, 0, 50, 50))
-	imgC := image.NewRGBA(image.Rect(50, 50, 100, 100))
-
 	tests := []struct {
 		name     string
 		t1       []input.Input
@@ -36,20 +31,20 @@ func TestCountCommon(t *testing.T) {
 		},
 		{
 			name:     "Image Prefix",
-			t1:       []input.Input{{Multimodal: imgA, MultimodalHash: 1}},
-			t2:       []input.Input{{Multimodal: imgA, MultimodalHash: 1}, {Multimodal: imgB, MultimodalHash: 2}, {Multimodal: imgC, MultimodalHash: 3}},
+			t1:       []input.Input{{MultimodalHash: 1}},
+			t2:       []input.Input{{MultimodalHash: 1}, {MultimodalHash: 2}, {MultimodalHash: 3}},
 			expected: 1,
 		},
 		{
 			name:     "Mixed",
-			t1:       []input.Input{{Token: 1}, {Multimodal: imgA, MultimodalHash: 1}},
-			t2:       []input.Input{{Token: 1}, {Multimodal: imgA, MultimodalHash: 1}, {Token: 5}},
+			t1:       []input.Input{{Token: 1}, {MultimodalHash: 1}},
+			t2:       []input.Input{{Token: 1}, {MultimodalHash: 1}, {Token: 5}},
 			expected: 2,
 		},
 		{
 			name:     "Mixed, Same Length",
-			t1:       []input.Input{{Token: 1}, {Multimodal: imgA, MultimodalHash: 1}},
-			t2:       []input.Input{{Token: 1}, {Multimodal: imgB, MultimodalHash: 2}},
+			t1:       []input.Input{{Token: 1}, {MultimodalHash: 1}},
+			t2:       []input.Input{{Token: 1}, {MultimodalHash: 2}},
 			expected: 1,
 		},
 		{
@@ -448,7 +443,7 @@ func (m *mockCache) Get(ctx ml.Context) (ml.Tensor, ml.Tensor, ml.Tensor)       
 func (m *mockCache) Put(ctx ml.Context, key, value ml.Tensor)                                      {}
 func (m *mockCache) Init(backend ml.Backend, dtype ml.DType, maxSequences, capacity, maxBatch int) {}
 func (m *mockCache) Close()                                                                        {}
-func (m *mockCache) StartForward(ctx ml.Context, batch input.Batch) error                          { return nil }
+func (m *mockCache) StartForward(ctx ml.Context, batch input.Batch, reserve bool) error            { return nil }
 func (m *mockCache) CopyPrefix(srcSeq, dstSeq int, len int32)                                      {}
 func (m *mockCache) SetConfig(ml.CacheConfig)                                                      {}
 func (m *mockCache) CanResume(seq int, pos int32) bool                                             { return true }

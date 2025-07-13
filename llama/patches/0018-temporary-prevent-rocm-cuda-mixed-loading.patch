@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Daniel Hiltgen <daniel@ollama.com>
+Date: Sun, 22 Jun 2025 09:22:05 -0700
+Subject: [PATCH] temporary prevent rocm+cuda mixed loading
+
+---
+ ggml/src/ggml-backend-reg.cpp | 12 ++++++++++--
+ 1 file changed, 10 insertions(+), 2 deletions(-)
+
+diff --git a/ggml/src/ggml-backend-reg.cpp b/ggml/src/ggml-backend-reg.cpp
+index 4e67d243..8f49f084 100644
+--- a/ggml/src/ggml-backend-reg.cpp
++++ b/ggml/src/ggml-backend-reg.cpp
+@@ -573,8 +573,16 @@ void ggml_backend_load_all_from_path(const char * dir_path) {
+ 
+     ggml_backend_load_best("blas", silent, dir_path);
+     ggml_backend_load_best("cann", silent, dir_path);
+-    ggml_backend_load_best("cuda", silent, dir_path);
+-    ggml_backend_load_best("hip", silent, dir_path);
++
++    // Avoid mixed hip+cuda configurations
++    const char * hip_devices = std::getenv("HIP_VISIBLE_DEVICES");
++    const char * rocr_devices = std::getenv("ROCR_VISIBLE_DEVICES"); 
++    if (!hip_devices && !rocr_devices) {
++        ggml_backend_load_best("cuda", silent, dir_path);
++    } else {
++        ggml_backend_load_best("hip", silent, dir_path);
++    }
++    
+     ggml_backend_load_best("kompute", silent, dir_path);
+     ggml_backend_load_best("metal", silent, dir_path);
+     ggml_backend_load_best("rpc", silent, dir_path);

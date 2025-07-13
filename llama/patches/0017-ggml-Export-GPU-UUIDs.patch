@@ -1,0 +1,108 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jesse Gross <jesse@ollama.com>
+Date: Thu, 24 Apr 2025 14:48:51 -0700
+Subject: [PATCH] ggml: Export GPU UUIDs
+
+This enables matching up devices and information reported by the backend
+with tools (e.g. nvidia-smi) and system management libraries (e.g. nvml).
+---
+ ggml/include/ggml-backend.h      |  1 +
+ ggml/src/ggml-cuda/ggml-cuda.cu  | 39 ++++++++++++++++++++++++++++++++
+ ggml/src/ggml-metal/ggml-metal.m |  1 +
+ 3 files changed, 41 insertions(+)
+
+diff --git a/ggml/include/ggml-backend.h b/ggml/include/ggml-backend.h
+index 74e46716..48839339 100644
+--- a/ggml/include/ggml-backend.h
++++ b/ggml/include/ggml-backend.h
+@@ -152,6 +152,7 @@ extern "C" {
+     struct ggml_backend_dev_props {
+         const char * name;
+         const char * description;
++        const char * id;
+         size_t memory_free;
+         size_t memory_total;
+         enum ggml_backend_dev_type type;
+diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
+index cb0d8528..d6960174 100644
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -2884,6 +2884,7 @@ struct ggml_backend_cuda_device_context {
+     int device;
+     std::string name;
+     std::string description;
++    std::string id;
+ };
+ 
+ static const char * ggml_backend_cuda_device_get_name(ggml_backend_dev_t dev) {
+@@ -2896,6 +2897,11 @@ static const char * ggml_backend_cuda_device_get_description(ggml_backend_dev_t
+     return ctx->description.c_str();
+ }
+ 
++static const char * ggml_backend_cuda_device_get_id(ggml_backend_dev_t dev) {
++    ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
++    return ctx->id.c_str();
++}
++
+ static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total) {
+     ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
+     ggml_cuda_set_device(ctx->device);
+@@ -2910,6 +2916,7 @@ static enum ggml_backend_dev_type ggml_backend_cuda_device_get_type(ggml_backend
+ static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {
+     props->name        = ggml_backend_cuda_device_get_name(dev);
+     props->description = ggml_backend_cuda_device_get_description(dev);
++    props->id          = ggml_backend_cuda_device_get_id(dev);
+     props->type        = ggml_backend_cuda_device_get_type(dev);
+     ggml_backend_cuda_device_get_memory(dev, &props->memory_free, &props->memory_total);
+ 
+@@ -3458,6 +3465,38 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
+                 CUDA_CHECK(cudaGetDeviceProperties(&prop, i));
+                 dev_ctx->description = prop.name;
+ 
++                #if !defined(GGML_USE_HIP)
++                char id[64];
++                snprintf(id, sizeof(id),
++                    "GPU-%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
++                    (unsigned char)prop.uuid.bytes[0],
++                    (unsigned char)prop.uuid.bytes[1],
++                    (unsigned char)prop.uuid.bytes[2],
++                    (unsigned char)prop.uuid.bytes[3],
++                    (unsigned char)prop.uuid.bytes[4],
++                    (unsigned char)prop.uuid.bytes[5],
++                    (unsigned char)prop.uuid.bytes[6],
++                    (unsigned char)prop.uuid.bytes[7],
++                    (unsigned char)prop.uuid.bytes[8],
++                    (unsigned char)prop.uuid.bytes[9],
++                    (unsigned char)prop.uuid.bytes[10],
++                    (unsigned char)prop.uuid.bytes[11],
++                    (unsigned char)prop.uuid.bytes[12],
++                    (unsigned char)prop.uuid.bytes[13],
++                    (unsigned char)prop.uuid.bytes[14],
++                    (unsigned char)prop.uuid.bytes[15]
++                  );
++                dev_ctx->id = id;
++                #else
++                #ifdef _WIN32
++                char id[16];
++                snprintf(id, sizeof(id), "%d", i);
++                dev_ctx->id = id;
++                #else
++                dev_ctx->id = "GPU-" + std::string(prop.uuid.bytes, 16);
++                #endif
++                #endif
++
+                 ggml_backend_dev_t dev = new ggml_backend_device {
+                     /* .iface   = */ ggml_backend_cuda_device_interface,
+                     /* .reg     = */ &reg,
+diff --git a/ggml/src/ggml-metal/ggml-metal.m b/ggml/src/ggml-metal/ggml-metal.m
+index 1b56f858..a9eeebc6 100644
+--- a/ggml/src/ggml-metal/ggml-metal.m
++++ b/ggml/src/ggml-metal/ggml-metal.m
+@@ -5703,6 +5703,7 @@ static enum ggml_backend_dev_type ggml_backend_metal_device_get_type(ggml_backen
+ static void ggml_backend_metal_device_get_props(ggml_backend_dev_t dev, struct ggml_backend_dev_props * props) {
+     props->name        = ggml_backend_metal_device_get_name(dev);
+     props->description = ggml_backend_metal_device_get_description(dev);
++    props->id          = "0";
+     props->type        = ggml_backend_metal_device_get_type(dev);
+     ggml_backend_metal_device_get_memory(dev, &props->memory_free, &props->memory_total);
+     props->caps = (struct ggml_backend_dev_caps) {

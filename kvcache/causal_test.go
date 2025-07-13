@@ -5,7 +5,6 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/ml"
 	"github.com/ollama/ollama/model/input"
 )
@@ -85,6 +84,64 @@ func TestSWA(t *testing.T) {
 	}
 
 	testCache(t, backend, cache, tests)
+}
+
+func TestChunkedAttention(t *testing.T) {
+	cache := NewChunkedAttentionCache(2, nil)
+	defer cache.Close()
+
+	var b testBackend
+	cache.Init(&b, ml.DTypeF16, 1, 16, 16)
+
+	x := float32(math.Inf(-1))
+
+	testCache(
+		t, &b, cache,
+		[]testCase{
+			{
+				name:          "FirstBatch",
+				in:            []float32{1, 2, 3, 4},
+				inShape:       []int{1, 1, 4},
+				seqs:          []int{0, 0, 0, 0},
+				pos:           []int32{0, 1, 2, 3},
+				expected:      []float32{1, 2, 3, 4},
+				expectedShape: []int{1, 1, 4},
+				expectedMask: []float32{
+					0, x, x, x,
+					0, 0, x, x,
+					x, x, 0, x,
+					x, x, 0, 0,
+				},
+			},
+			{
+				name:          "SecondBatch",
+				in:            []float32{5, 6, 7},
+				inShape:       []int{1, 1, 3},
+				seqs:          []int{0, 0, 0},
+				pos:           []int32{4, 5, 6},
+				expected:      []float32{1, 2, 3, 4, 5, 6, 7},
+				expectedShape: []int{1, 1, 7},
+				expectedMask: []float32{
+					x, x, x, x, 0, x, x,
+					x, x, x, x, 0, 0, x,
+					x, x, x, x, x, x, 0,
+				},
+			},
+			{
+				name:          "ThirdBatch",
+				in:            []float32{8, 9},
+				inShape:       []int{1, 1, 2},
+				seqs:          []int{0, 0},
+				pos:           []int32{7, 8},
+				expected:      []float32{1, 2, 3, 4, 5, 6, 7, 8, 9},
+				expectedShape: []int{1, 1, 9},
+				expectedMask: []float32{
+					x, x, x, x, x, x, 0, 0, x,
+					x, x, x, x, x, x, x, x, 0,
+				},
+			},
+		},
+	)
 }
 
 func TestSequences(t *testing.T) {
@@ -281,21 +338,29 @@ func testCache(t *testing.T, backend ml.Backend, cache Cache, tests []testCase) 
 			context := backend.NewContext()
 			defer context.Close()
 
-			err := cache.StartForward(context, input.Batch{Positions: test.pos, Sequences: test.seqs})
+			err := cache.StartForward(context, input.Batch{Positions: test.pos, Sequences: test.seqs}, false)
 			if err != nil {
 				panic(err)
 			}
 
 			cache.SetLayer(0)
-			tensor, _ := context.FromFloatSlice(test.in, test.inShape...)
+			tensor := context.FromFloatSlice(test.in, test.inShape...)
 			cache.Put(context, tensor, tensor)
 
 			out, _, mask := cache.Get(context)
 
 			context.Forward(out, mask).Compute(out, mask)
 
-			if !slices.Equal(out.Floats(), test.expected) || !slices.Equal(out.Shape(), test.expectedShape) || !slices.Equal(mask.Floats(), test.expectedMask) {
-				t.Errorf("TestCache: have %v (shape %v); want %v (shape %v); mask: have %v (shape %v) want %v", out.Floats(), out.Shape(), test.expected, test.expectedShape, mask.Floats(), mask.Shape(), test.expectedMask)
+			if !slices.Equal(out.Floats(), test.expected) {
+				t.Errorf("TestCache: have %v; want %v", out.Floats(), test.expected)
+			}
+
+			if !slices.Equal(out.Shape(), test.expectedShape) {
+				t.Errorf("TestCache: has shape %v; want %v", out.Shape(), test.expectedShape)
+			}
+
+			if !slices.Equal(mask.Floats(), test.expectedMask) {
+				t.Errorf("TestCache: have mask: have %v want %v", mask.Floats(), test.expectedMask)
 			}
 		})
 	}
@@ -315,13 +380,13 @@ func TestCanResume(t *testing.T) {
 	err := cache.StartForward(context, input.Batch{
 		Positions: []int32{0, 1, 2, 3},
 		Sequences: []int{0, 0, 0, 0},
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("StartForward failed: %v", err)
 	}
 
 	cache.SetLayer(0)
-	tensor, _ := context.FromFloatSlice([]float32{1, 2, 3, 4}, 1, 1, 4)
+	tensor := context.FromFloatSlice([]float32{1, 2, 3, 4}, 1, 1, 4)
 	cache.Put(context, tensor, tensor)
 
 	// with window size 4, nothing has slid out of the window yet
@@ -342,13 +407,13 @@ func TestCanResume(t *testing.T) {
 	err = cache.StartForward(context, input.Batch{
 		Positions: []int32{4, 5},
 		Sequences: []int{0, 0},
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("StartForward failed: %v", err)
 	}
 
 	cache.SetLayer(0)
-	tensor, _ = context.FromFloatSlice([]float32{5, 6}, 1, 1, 2)
+	tensor = context.FromFloatSlice([]float32{5, 6}, 1, 1, 2)
 	cache.Put(context, tensor, tensor)
 
 	// only the latest position has overlapping windows
@@ -372,14 +437,8 @@ func TestCanResume(t *testing.T) {
 	}
 }
 
-type testBackend struct{}
-
-func (b *testBackend) Config() fs.Config {
-	panic("not implemented")
-}
-
-func (b *testBackend) Get(name string) ml.Tensor {
-	panic("not implemented")
+type testBackend struct {
+	ml.Backend
 }
 
 func (b *testBackend) NewContext() ml.Context {
@@ -390,11 +449,9 @@ func (b *testBackend) NewContextSize(int) ml.Context {
 	return &testContext{}
 }
 
-func (b *testBackend) SystemInfo() string {
-	return "not implemented"
+type testContext struct {
+	ml.Context
 }
-
-type testContext struct{}
 
 func (c *testContext) Empty(dtype ml.DType, shape ...int) ml.Tensor {
 	total := 0
@@ -413,24 +470,35 @@ func (c *testContext) Zeros(dtype ml.DType, shape ...int) ml.Tensor {
 	return c.Empty(dtype, shape...)
 }
 
-func (c *testContext) FromFloatSlice(s []float32, shape ...int) (ml.Tensor, error) {
+func (c *testContext) FromFloatSlice(s []float32, shape ...int) ml.Tensor {
 	t := c.Empty(ml.DTypeF32, shape...).(*testTensor)
 
 	copy(t.data, s)
 
-	return t, nil
+	return t
 }
 
-func (c *testContext) FromIntSlice(s []int32, shape ...int) (ml.Tensor, error) {
+func (c *testContext) FromIntSlice(s []int32, shape ...int) ml.Tensor {
 	f := make([]float32, len(s))
 	for i := range f {
 		f[i] = float32(s[i])
 	}
 
-	out, _ := c.FromFloatSlice(f, shape...)
+	out := c.FromFloatSlice(f, shape...)
 	out.(*testTensor).dtype = ml.DTypeI32
 
-	return out, nil
+	return out
+}
+
+func (c *testContext) Arange(start, stop, step float32, dtype ml.DType) ml.Tensor {
+	s := make([]float32, 0, int((stop-start)/step))
+	for i := start; i < stop; i += step {
+		s = append(s, i)
+	}
+
+	out := c.FromFloatSlice(s, len(s))
+	out.(*testTensor).dtype = dtype
+	return out
 }
 
 func (c *testContext) Input() ml.Context    { return c }
@@ -440,6 +508,8 @@ func (c *testContext) Forward(...ml.Tensor) ml.Context { return c }
 
 func (c *testContext) Compute(...ml.Tensor) {}
 
+func (c *testContext) Reserve() {}
+
 func (c *testContext) MaxGraphNodes() int {
 	return 10
 }
@@ -447,6 +517,8 @@ func (c *testContext) MaxGraphNodes() int {
 func (c *testContext) Close() {}
 
 type testTensor struct {
+	ml.Tensor
+
 	dtype       ml.DType
 	elementSize int
 	data        []float32
@@ -474,10 +546,6 @@ func (t *testTensor) DType() ml.DType {
 	return t.dtype
 }
 
-func (t *testTensor) Bytes() []byte {
-	panic("not implemented")
-}
-
 func (t *testTensor) Floats() []float32 {
 	out := make([]float32, len(t.data))
 	copy(out, t.data)
@@ -502,64 +570,6 @@ func (t *testTensor) Add(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	return out
 }
 
-func (t *testTensor) Mul(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Mulmat(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) MulmatFullPrec(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Softmax(ctx ml.Context) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) LayerNorm(ctx ml.Context, weight, bias ml.Tensor, eps float32) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) RMSNorm(ctx ml.Context, weight ml.Tensor, eps float32) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Scale(ctx ml.Context, s float64) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) AvgPool1D(ctx ml.Context, k, s, p int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) AvgPool2D(ctx ml.Context, k, s int, p float32) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Conv2D(ctx ml.Context, weight ml.Tensor, s0, s1, p0, p1, d0, d1 int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) RoPE(ctx ml.Context, positionIDs, ropeFactors ml.Tensor, dim, ropeType uint32, base, scale float32) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) IM2Col(ctx ml.Context, weight ml.Tensor, s0, s1, p0, p1, d0, d1 int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Cos(ctx ml.Context) ml.Tensor  { panic("not implemented") }
-func (t *testTensor) Sin(ctx ml.Context) ml.Tensor  { panic("not implemented") }
-func (t *testTensor) Tanh(ctx ml.Context) ml.Tensor { panic("not implemented") }
-func (t *testTensor) GELU(ctx ml.Context) ml.Tensor { panic("not implemented") }
-func (t *testTensor) SILU(ctx ml.Context) ml.Tensor { panic("not implemented") }
-
-func (t *testTensor) Reshape(ctx ml.Context, shape ...int) ml.Tensor {
-	panic("not implemented")
-}
-
 func (t *testTensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	offset /= t.elementSize
 
@@ -582,43 +592,7 @@ func (t *testTensor) View(ctx ml.Context, offset int, shape ...int) ml.Tensor {
 	return view
 }
 
-func (t *testTensor) Permute(ctx ml.Context, shape ...int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Contiguous(ctx ml.Context) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Set(ctx ml.Context, t2 ml.Tensor, offset int, strides ...int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Pad(ctx ml.Context, shape ...int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Unpad(ctx ml.Context, shape ...int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Stack(ctx ml.Context, dim int, s ...ml.Tensor) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Repeat(ctx ml.Context, dim, n int) ml.Tensor { panic("not implemented") }
-
-func (t *testTensor) Concat(ctx ml.Context, t2 ml.Tensor, dim int) ml.Tensor {
-	panic("not implemented")
-}
-
-func (t *testTensor) Rows(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
-	panic("not implemented")
-}
-
 func (t *testTensor) Copy(ctx ml.Context, t2 ml.Tensor) ml.Tensor {
 	copy(t2.(*testTensor).data, t.data)
 	return nil
 }
-
-func (t *testTensor) Duplicate(ctx ml.Context) ml.Tensor { panic("not implemented") }

@@ -8,6 +8,7 @@ type Config interface {
 	Bool(string, ...bool) bool
 
 	Strings(string, ...[]string) []string
-	Uints(string, ...[]uint32) []uint32
+	Ints(string, ...[]int32) []int32
 	Floats(string, ...[]float32) []float32
+	Bools(string, ...[]bool) []bool
 }

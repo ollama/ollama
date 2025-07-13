@@ -87,7 +87,7 @@ func TestGenerateChat(t *testing.T) {
 		},
 	}
 
-	go s.sched.Run(context.TODO())
+	go s.sched.Run(t.Context())
 
 	_, digest := createBinFile(t, ggml.KV{
 		"general.architecture":          "llama",
@@ -99,7 +99,7 @@ func TestGenerateChat(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []ggml.Tensor{
+	}, []*ggml.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -143,6 +143,25 @@ func TestGenerateChat(t *testing.T) {
 		}
 	})
 
+	t.Run("missing thinking capability", func(t *testing.T) {
+		think := true
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "test",
+			Messages: []api.Message{
+				{Role: "user", Content: "Hello!"},
+			},
+			Think: &think,
+		})
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected status 400, got %d", w.Code)
+		}
+
+		if diff := cmp.Diff(w.Body.String(), `{"error":"registry.ollama.ai/library/test:latest does not support thinking"}`); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
 	t.Run("missing model", func(t *testing.T) {
 		w := createRequest(t, s.ChatHandler, api.ChatRequest{})
 		if w.Code != http.StatusBadRequest {
@@ -158,7 +177,7 @@ func TestGenerateChat(t *testing.T) {
 		_, digest := createBinFile(t, ggml.KV{
 			"general.architecture": "bert",
 			"bert.pooling_type":    uint32(0),
-		}, []ggml.Tensor{})
+		}, []*ggml.Tensor{})
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Model:  "bert",
 			Files:  map[string]string{"bert.gguf": digest},
@@ -370,27 +389,31 @@ func TestGenerateChat(t *testing.T) {
 					Description: "Get the current weather",
 					Parameters: struct {
 						Type       string   `json:"type"`
+						Defs       any      `json:"$defs,omitempty"`
+						Items      any      `json:"items,omitempty"`
 						Required   []string `json:"required"`
 						Properties map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Items       any              `json:"items,omitempty"`
+							Description string           `json:"description"`
+							Enum        []any            `json:"enum,omitempty"`
 						} `json:"properties"`
 					}{
 						Type:     "object",
 						Required: []string{"location"},
 						Properties: map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Items       any              `json:"items,omitempty"`
+							Description string           `json:"description"`
+							Enum        []any            `json:"enum,omitempty"`
 						}{
 							"location": {
-								Type:        "string",
+								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
 							},
 							"unit": {
-								Type: "string",
-								Enum: []string{"celsius", "fahrenheit"},
+								Type: api.PropertyType{"string"},
+								Enum: []any{"celsius", "fahrenheit"},
 							},
 						},
 					},
@@ -467,27 +490,31 @@ func TestGenerateChat(t *testing.T) {
 					Description: "Get the current weather",
 					Parameters: struct {
 						Type       string   `json:"type"`
+						Defs       any      `json:"$defs,omitempty"`
+						Items      any      `json:"items,omitempty"`
 						Required   []string `json:"required"`
 						Properties map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Items       any              `json:"items,omitempty"`
+							Description string           `json:"description"`
+							Enum        []any            `json:"enum,omitempty"`
 						} `json:"properties"`
 					}{
 						Type:     "object",
 						Required: []string{"location"},
 						Properties: map[string]struct {
-							Type        string   `json:"type"`
-							Description string   `json:"description"`
-							Enum        []string `json:"enum,omitempty"`
+							Type        api.PropertyType `json:"type"`
+							Items       any              `json:"items,omitempty"`
+							Description string           `json:"description"`
+							Enum        []any            `json:"enum,omitempty"`
 						}{
 							"location": {
-								Type:        "string",
+								Type:        api.PropertyType{"string"},
 								Description: "The city and state",
 							},
 							"unit": {
-								Type: "string",
-								Enum: []string{"celsius", "fahrenheit"},
+								Type: api.PropertyType{"string"},
+								Enum: []any{"celsius", "fahrenheit"},
 							},
 						},
 					},
@@ -623,7 +650,7 @@ func TestGenerate(t *testing.T) {
 		},
 	}
 
-	go s.sched.Run(context.TODO())
+	go s.sched.Run(t.Context())
 
 	_, digest := createBinFile(t, ggml.KV{
 		"general.architecture":          "llama",
@@ -635,7 +662,7 @@ func TestGenerate(t *testing.T) {
 		"tokenizer.ggml.tokens":         []string{""},
 		"tokenizer.ggml.scores":         []float32{0},
 		"tokenizer.ggml.token_type":     []int32{0},
-	}, []ggml.Tensor{
+	}, []*ggml.Tensor{
 		{Name: "token_embd.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.attn_norm.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
 		{Name: "blk.0.ffn_down.weight", Shape: []uint64{1}, WriterTo: bytes.NewReader(make([]byte, 4))},
@@ -690,7 +717,7 @@ func TestGenerate(t *testing.T) {
 		_, digest := createBinFile(t, ggml.KV{
 			"general.architecture": "bert",
 			"bert.pooling_type":    uint32(0),
-		}, []ggml.Tensor{})
+		}, []*ggml.Tensor{})
 
 		w := createRequest(t, s.CreateHandler, api.CreateRequest{
 			Model:  "bert",
