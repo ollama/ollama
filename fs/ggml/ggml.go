@@ -179,6 +179,7 @@ func (kv KV) OllamaEngineRequired() bool {
 		"llama4",
 		"mllama",
 		"qwen25vl",
+		"gptoss",
 	}, kv.Architecture())
 }
 
