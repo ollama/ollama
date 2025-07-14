@@ -5,7 +5,9 @@
   * [Importing a Safetensors adapter](#Importing-a-fine-tuned-adapter-from-Safetensors-weights)
   * [Importing a Safetensors model](#Importing-a-model-from-Safetensors-weights)
   * [Importing a GGUF file](#Importing-a-GGUF-based-model-or-adapter)
+  * [Importing from a repository](#Importing-from-a-repository)
   * [Sharing models on ollama.com](#Sharing-your-model-on-ollamacom)
+  * [Imported models and templates](#Imported-models-and-templates)
 
 ## Importing a fine tuned adapter from Safetensors weights
 
@@ -140,6 +142,17 @@ success
 - `q4_K_M`
 
 
+## Importing from a repository
+
+Ollama can import GGUF models from a repository by specifiying the full path to a model:
+
+```shell
+ollama pull ollama run hf.co/bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M
+```
+
+HuggingFace will often have a `Use this model` button on a model page which gives the required ollama command.
+
+
 ## Sharing your model on ollama.com
 
 You can share any model you have created by pushing it to [ollama.com](https://ollama.com) so that other users can try it out.
@@ -172,3 +185,6 @@ Once your model has been pushed, other users can pull and run it by using the co
 ollama run myuser/mymodel
 ```
 
+## Imported models and templates
+
+A model requires a template in order to function correctly.  Ollama can recognize some models and automatically configure a template when importing.  Where this is not the case, a default template will be created.  For best results, a [`TEMPLATE`](./template.md) should be created in the Modelfile.  This is particulalry important for models that have extra features, for example thinking or reasoning models.  In many cases, the template from a model that has a similar architecture in the ollama library can provide a starting point.
