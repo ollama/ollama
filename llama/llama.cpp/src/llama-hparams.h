@@ -6,7 +6,7 @@
 
 // bump if necessary
 #define LLAMA_MAX_LAYERS  512
-#define LLAMA_MAX_EXPERTS 256  // DeepSeekV3
+#define LLAMA_MAX_EXPERTS 384  // Kimi-K2
 
 enum llama_expert_gating_func_type {
     LLAMA_EXPERT_GATING_FUNC_TYPE_NONE    = 0,
@@ -54,6 +54,8 @@ struct llama_hparams {
     // for WavTokenizer
     struct llama_hparams_posnet   posnet;
     struct llama_hparams_convnext convnext;
+
+    uint32_t n_shortconv_l_cache  = 0;
 
     std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_arr;
     std::array<uint32_t, LLAMA_MAX_LAYERS> n_head_kv_arr;

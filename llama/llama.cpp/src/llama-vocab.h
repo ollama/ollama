@@ -45,6 +45,7 @@ enum llama_vocab_pre_type {
     LLAMA_VOCAB_PRE_TYPE_PIXTRAL        = 34,
     LLAMA_VOCAB_PRE_TYPE_SEED_CODER     = 35,
     LLAMA_VOCAB_PRE_TYPE_HUNYUAN        = 36,
+    LLAMA_VOCAB_PRE_TYPE_KIMI_K2        = 37,
 };
 
 struct LLM_KV;

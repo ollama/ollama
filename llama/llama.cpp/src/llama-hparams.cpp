@@ -71,6 +71,11 @@ uint32_t llama_hparams::n_embd_r() const {
         return token_shift_count * n_embd;
     }
 
+    if (n_shortconv_l_cache != 0) {
+        // for LFM2 models
+        return n_embd * (n_shortconv_l_cache - 1);
+    }
+
     // TODO: maybe support other convolution strides than 1
     // NOTE: since the first column of the conv_state is shifted out each time, it's not actually needed
     // Corresponds to Mamba's conv_states size
