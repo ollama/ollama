@@ -65,6 +65,7 @@ static const std::map<std::string, llm_chat_template> LLM_CHAT_TEMPLATES = {
     { "llama4",            LLM_CHAT_TEMPLATE_LLAMA4            },
     { "smolvlm",           LLM_CHAT_TEMPLATE_SMOLVLM           },
     { "hunyuan-moe",       LLM_CHAT_TEMPLATE_HUNYUAN_MOE       },
+    { "kimi-k2",           LLM_CHAT_TEMPLATE_KIMI_K2           },
 };
 
 llm_chat_template llm_chat_template_from_str(const std::string & name) {
@@ -170,7 +171,7 @@ llm_chat_template llm_chat_detect_template(const std::string & tmpl) {
         // ref: https://huggingface.co/LGAI-EXAONE/EXAONE-3.0-7.8B-Instruct/discussions/8#66bae61b1893d14ee8ed85bb
         // EXAONE-3.0-7.8B-Instruct
         return LLM_CHAT_TEMPLATE_EXAONE_3;
-    } else if (tmpl_contains("rwkv-world")) {
+    } else if (tmpl_contains("rwkv-world") || tmpl_contains("{{- 'User: ' + message['content']|trim + '\\n\\n' -}}")) {
         return LLM_CHAT_TEMPLATE_RWKV_WORLD;
     } else if (tmpl_contains("<|start_of_role|>")) {
         return LLM_CHAT_TEMPLATE_GRANITE;
@@ -188,6 +189,8 @@ llm_chat_template llm_chat_detect_template(const std::string & tmpl) {
         return LLM_CHAT_TEMPLATE_DOTS1;
     } else if (tmpl_contains("<|startoftext|>") && tmpl_contains("<|extra_4|>")) {
         return LLM_CHAT_TEMPLATE_HUNYUAN_MOE;
+    } else if (tmpl_contains("<|im_assistant|>assistant<|im_middle|>")) {
+        return LLM_CHAT_TEMPLATE_KIMI_K2;
     }
     return LLM_CHAT_TEMPLATE_UNKNOWN;
 }
@@ -678,6 +681,26 @@ int32_t llm_chat_apply_template(
                 ss << "<|startoftext|>" << message->content << "<|eos|>";
             } else {
                 ss << "<|startoftext|>" << message->content << "<|extra_0|>";
+            }
+        }
+    } else if (tmpl == LLM_CHAT_TEMPLATE_KIMI_K2) {
+        // moonshotai/Kimi-K2-Instruct
+        for (auto message : chat) {
+            std::string role(message->role);
+            if (role == "system") {
+                ss << "<|im_system|>system<|im_middle|>";
+            } else if (role == "user") {
+                ss << "<|im_user|>user<|im_middle|>";
+            } else if (role == "assistant") {
+                ss << "<|im_assistant|>assistant<|im_middle|>";
+            } else if (role == "tool") {
+                ss << "<|im_system|>tool<|im_middle|>";
+            }
+
+            ss << message->content << "<|im_end|>";
+
+            if (add_ass) {
+                ss << "<|im_assistant|>assistant<|im_middle|>";
             }
         }
     } else {

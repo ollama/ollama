@@ -844,6 +844,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
         // do not quantize Mamba's small yet 2D weights
         // NOTE: can't use LLM_TN here because the layer number is not known
         quantize &= name.find("ssm_conv1d.weight") == std::string::npos;
+        quantize &= name.find("shortconv.conv.weight") == std::string::npos;
 
         // do not quantize RWKV's small yet 2D weights
         quantize &= name.find("time_mix_first.weight") == std::string::npos;
@@ -883,8 +884,7 @@ static void llama_model_quantize_impl(const std::string & fname_inp, const std::
                         if (std::regex pattern(tname); std::regex_search(tensor_name, pattern)) {
                             if  (qtype != new_type) {
                                 LLAMA_LOG_DEBUG("(overriding %s) ", ggml_type_name(new_type));
-                                new_type = qtype;
-                                break; // if two or more types are specified for the tensor, first match wins
+                                new_type = qtype; // if two or more types are specified for the same tensor, the last match wins
                             }
                         }
                     }
