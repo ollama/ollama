@@ -11,9 +11,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/d4l3k/go-bfloat16"
 	"github.com/x448/float16"
 	"golang.org/x/exp/maps"
+
+	"github.com/ollama/ollama/types/bfloat16"
 )
 
 type safetensorMetadata struct {
