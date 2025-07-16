@@ -22,7 +22,7 @@ To install the Ollama application somewhere other than `Applications`, place the
 Ollama on MacOS stores files in a few different locations.
 - `~/.ollama` contains models and configuration
 - `~/.ollama/logs` contains logs
-    - *app.log* contains most resent logs from the GUI application
+    - *app.log* contains most recent logs from the GUI application
     - *server.log* contains the most recent server logs
 - `<install location>/Ollama.app/Contents/Resources/ollama` the CLI binary
 
