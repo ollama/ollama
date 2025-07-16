@@ -571,6 +571,82 @@ static void dequantize_row_iq4_xs_cuda(const void * vx, dst_t * y, const int64_t
     dequantize_block_iq4_xs<<<nb, 32, 0, stream>>>(vx, y);
 }
 
+// MXFP4 dequantize derived from dequantize_block_q4_0
+template<typename dst_t>
+static __global__ void dequantize_block_mxfp4(const void * __restrict__ vx, dst_t * __restrict__ yy, int nb32) {
+    const uint16_t dst_bias = 15;
+    const uint16_t dst_0p5 = 0x3800;
+    const uint16_t dst_m_bits = 10;
+    const int64_t i = blockIdx.x;
+
+    // assume 32 threads
+    const int64_t tid = threadIdx.x;
+    const int64_t il  = tid/8;
+    const int64_t ir  = tid%8;
+    const int64_t ib = 8*i + ir;
+    if (ib >= nb32) {
+        return;
+    }
+
+    const uint64_t offset = 256*i + MXFP4*ir + 8*il;
+    dst_t * y = yy + offset;
+
+    const block_mxfp4 * x = (const block_mxfp4 *)vx + ib;
+    union {
+        uint32_t as_bits;
+        float as_value;
+    } scale;
+    scale.as_bits = (((uint32_t)x->d) << 23);
+
+    // offset within the block 1/4 chunks (8 items)
+    const uint8_t * q = x->qs + 4*il;
+
+    for (int l = 0; l < 4; ++l) {
+        uint16_t em0 = q[l] & 0x07;
+        uint16_t em1 = q[l] & 0x70;
+        // float16 values
+        iq1m_scale_t x0;
+        iq1m_scale_t x1;
+
+        x0.u16 = (em0 << (dst_m_bits - 1)) | ((q[l] & 0x08) << 12);
+        x1.u16 = (em1 << (dst_m_bits - 5)) | ((q[l] & 0x80) << 8);
+
+        // Three cases:
+        // x is normal and non-zero: Correct bias
+        if ((em0 & 0x06) != 0) {
+            x0.u16 = x0.u16 + ((dst_bias - 1) << dst_m_bits);
+        }
+        if ((em1 & 0x60) != 0) {
+            x1.u16 = x1.u16 + ((dst_bias - 1) << dst_m_bits);
+        }
+        // x is subnormal (x == 0bs001 where s is the sign): Map to +-0.5 in the dst type
+        if (em0 == 0x01) {
+            x0.u16 = dst_0p5 | (x0.u16 & 0x8000);
+        }
+        if (em1 == 0x10) {
+            x1.u16 = dst_0p5 | (x1.u16 & 0x8000);
+        }
+        // x is zero, do nothing
+
+        // XXX it looks correct here - but mulmat still gives bad results...
+        // printf("i:%lld ir:%lld il:%lld l:%d y_offset:[%3lld +%d] = %f \n",
+        //     i, ir, il, l, 256*i + 32*ir + 4*il, l*2+ 0, scale * float(x0.f16));
+        // printf("i:%lld ir:%lld il:%lld l:%d y_offset:[%3lld +%d] = %f \n",
+        //     i, ir, il, l, 256*i + 32*ir + 4*il, l*2+ 1, scale * float(x1.f16));
+
+        y[l*2] = scale.as_value * float(x0.f16);
+        y[l*2+1] = scale.as_value * float(x1.f16);
+    }
+}
+
+// derived from dequantize_row_q4_0_cuda
+template<typename dst_t>
+static void dequantize_row_mxfp4_cuda(const void * vx, dst_t * y, const int64_t k, cudaStream_t stream) {
+    const int nb32 = k / 32;
+    const int nb = (k + 255) / 256;
+    dequantize_block_mxfp4<<<nb, 32, 0, stream>>>(vx, y, nb32);
+}
+
 template <typename src_t, typename dst_t>
 static __global__ void convert_unary(
         const void * __restrict__ vx, dst_t * __restrict__ y, const int64_t ne00, const int64_t ne01, const int64_t ne02,
@@ -664,6 +740,8 @@ to_fp16_cuda_t ggml_get_to_fp16_cuda(ggml_type type) {
             return convert_unary_cont_cuda<float>;
         case GGML_TYPE_BF16:
             return convert_unary_cont_cuda<nv_bfloat16>;
+        case GGML_TYPE_MXFP4:
+            return dequantize_row_mxfp4_cuda;
         default:
             return nullptr;
     }
@@ -713,6 +791,8 @@ to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type) {
             return convert_unary_cont_cuda<half>;
         case GGML_TYPE_BF16:
             return convert_unary_cont_cuda<nv_bfloat16>;
+        case GGML_TYPE_MXFP4:
+            return dequantize_row_mxfp4_cuda;
         default:
             return nullptr;
     }
