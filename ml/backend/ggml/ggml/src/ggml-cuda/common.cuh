@@ -645,6 +645,18 @@ struct ggml_cuda_type_traits<GGML_TYPE_IQ3_S> {
     static constexpr int qi = QI3_S;
 };
 
+// TODO not sure which pattern will be correct...
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_MXFP4> {
+    // FP16 pattern
+    // static constexpr int qk = 1;
+    // static constexpr int qr = 1;
+    // Q4_0 pattern
+    static constexpr int qk = QK4_0;
+    static constexpr int qr = QR4_0;
+    static constexpr int qi = QI4_0;
+};
+
 //////////////////////
 
 struct ggml_cuda_device_info {

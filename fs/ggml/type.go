@@ -222,6 +222,7 @@ const (
 	tensorTypeIQ4_NL_4_4 // unused by GGML
 	tensorTypeIQ4_NL_4_8 // unused by GGML
 	tensorTypeIQ4_NL_8_8 // unused by GGML
+	TensorTypeMXFP4
 )
 
 // ParseFileType parses the provided GGUF file type
@@ -260,6 +261,8 @@ func ParseTensorType(s string) (TensorType, error) {
 		return TensorTypeF64, nil
 	case "BF16":
 		return TensorTypeBF16, nil
+	case "MXFP4":
+		return TensorTypeMXFP4, nil
 	default:
 		return 0, fmt.Errorf("unsupported quantization type %s", s)
 	}
@@ -312,6 +315,8 @@ func (t TensorType) String() string {
 		return "F64"
 	case TensorTypeBF16:
 		return "BF16"
+	case TensorTypeMXFP4:
+		return "MXFP4"
 	default:
 		return "unknown"
 	}

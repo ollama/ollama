@@ -708,6 +708,8 @@ func (c *Context) newTensor(dtype ml.DType, shape []int) ml.Tensor {
 		cdtype = C.GGML_TYPE_Q4_0
 	case ml.DTypeI32:
 		cdtype = C.GGML_TYPE_I32
+	case ml.DTypeMXFP4:
+		cdtype = C.GGML_TYPE_MXFP4
 	default:
 		panic("unsupported dtype")
 	}
@@ -896,6 +898,8 @@ func (t *Tensor) DType() ml.DType {
 		return ml.DTypeQ40
 	case C.GGML_TYPE_I32:
 		return ml.DTypeI32
+	case C.GGML_TYPE_MXFP4:
+		return ml.DTypeMXFP4
 	default:
 		return ml.DTypeOther
 	}
