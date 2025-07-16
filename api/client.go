@@ -222,16 +222,16 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 			return fmt.Errorf("unmarshal: %w", err)
 		}
 
-		if errorResponse.Error != "" {
-			return errors.New(errorResponse.Error)
-		}
-
 		if response.StatusCode >= http.StatusBadRequest {
 			return StatusError{
 				StatusCode:   response.StatusCode,
 				Status:       response.Status,
 				ErrorMessage: errorResponse.Error,
 			}
+		}
+
+		if errorResponse.Error != "" {
+			return errors.New(errorResponse.Error)
 		}
 
 		if err := fn(bts); err != nil {
