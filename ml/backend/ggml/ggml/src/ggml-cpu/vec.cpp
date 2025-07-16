@@ -250,3 +250,72 @@ ggml_float ggml_vec_log_soft_max_f32(const int n, float * y, const float * x, fl
     }
     return sum = (ggml_float)logf(sum);
 }
+
+#define MXFP4 32
+typedef struct {
+    uint8_t d;              // scale E8M0 float 
+    uint8_t qs[MXFP4 / 2];  // (32) 4 bit elements E2M1 float
+} block_mxfp4;
+static_assert(sizeof(block_mxfp4) == sizeof(uint8_t) + MXFP4/2, "wrong mxfp4 block size/padding");
+
+void ggml_vec_dot_mxfp4(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const float * GGML_RESTRICT y, size_t by, int nrc) {
+    assert(nrc == 1);
+    GGML_UNUSED(nrc);
+    GGML_UNUSED(bx);
+    GGML_UNUSED(by);
+    GGML_UNUSED(bs);
+
+    const int nb = n / MXFP4;
+    assert(n % MXFP4 == 0);
+
+    int yi = 0;
+
+    const block_mxfp4 * GGML_RESTRICT xx = (const block_mxfp4 *) vx;
+
+    const uint16_t dst_bias = 15;
+    const uint16_t dst_0p5 = 0x3800;
+    const uint16_t dst_m_bits = 10;
+    ggml_float sumf = 0.0;
+
+    for (int ib = 0; ib < nb; ++ib) {
+        const block_mxfp4 * GGML_RESTRICT x = &xx[ib + 0];
+        union {
+            uint32_t as_bits;
+            float as_value;
+        } scale;
+        scale.as_bits = (((uint32_t)x->d) << 23);
+        for (int i = 0; i < MXFP4/2; ++i) {
+            uint16_t em0 = x->qs[i] & 0x07;
+            uint16_t em1 = x->qs[i] & 0x70;
+            // float16 values
+            uint16_t x0 = (em0 << (dst_m_bits - 1)) | ((x->qs[i] & 0x08) << 12);
+            uint16_t x1 = (em1 << (dst_m_bits - 5)) | ((x->qs[i] & 0x80) << 8);
+
+            // Three cases:
+            // x is normal and non-zero: Correct bias
+            if ((em0 & 0x06) != 0) {
+                x0 = x0 + ((dst_bias - 1) << dst_m_bits);
+            }
+            if ((em1 & 0x60) != 0) {
+                x1 = x1 + ((dst_bias - 1) << dst_m_bits);
+            }
+            // x is subnormal (x == 0bs001 where s is the sign): Map to +-0.5 in the dst type
+            if (em0 == 0x01) {
+                x0 = dst_0p5 | (x0 & 0x8000);
+            }
+            if (em1 == 0x10) {
+                x1 = dst_0p5 | (x1 & 0x8000);
+            }
+            // x is zero, do nothing
+
+            if (isnan(scale.as_value)) {
+                sumf = (ggml_float)scale.as_value;
+                break;
+            }
+            sumf += (ggml_float)(GGML_FP16_TO_FP32(x0)*scale.as_value*y[ib*MXFP4 + i*2]);
+            sumf += (ggml_float)(GGML_FP16_TO_FP32(x1)*scale.as_value*y[ib*MXFP4 + i*2+1]);
+        }
+    }
+
+    *s = sumf;
+}

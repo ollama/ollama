@@ -468,4 +468,5 @@ const (
 	DTypeQ80
 	DTypeQ40
 	DTypeI32
+	DTypeMXFP4
 )

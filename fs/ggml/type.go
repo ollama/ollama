@@ -187,8 +187,8 @@ const (
 	TensorTypeF16
 	TensorTypeQ4_0
 	TensorTypeQ4_1
-	tensorTypeQ4_2 // unused by GGML
-	tensorTypeQ4_3 // unused by GGML
+	TensorTypeMXFP4 // Formerly unused tensorTypeQ4_2
+	tensorTypeQ4_3  // unused by GGML
 	TensorTypeQ5_0
 	TensorTypeQ5_1
 	TensorTypeQ8_0
@@ -260,6 +260,8 @@ func ParseTensorType(s string) (TensorType, error) {
 		return TensorTypeF64, nil
 	case "BF16":
 		return TensorTypeBF16, nil
+	case "MXFP4":
+		return TensorTypeMXFP4, nil
 	default:
 		return 0, fmt.Errorf("unsupported quantization type %s", s)
 	}
@@ -312,6 +314,8 @@ func (t TensorType) String() string {
 		return "F64"
 	case TensorTypeBF16:
 		return "BF16"
+	case TensorTypeMXFP4:
+		return "MXFP4"
 	default:
 		return "unknown"
 	}
