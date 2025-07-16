@@ -136,7 +136,7 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 
 	// only look for arguments if the tool has parameters
 	args := map[string]any{}
-	if len(tool.Function.Parameters.Properties) > 0 {
+	if getProperties(tool.Function.Parameters) != nil {
 		if args, i = p.findArguments(*tool); args == nil {
 			return nil
 		}
@@ -167,7 +167,7 @@ func (p *Parser) findArguments(tool api.Tool) (map[string]any, int) {
 	}
 
 	// no arguments to parse
-	if len(tool.Function.Parameters.Properties) == 0 {
+	if getProperties(tool.Function.Parameters) == nil {
 		return nil, 0
 	}
 
@@ -212,9 +212,14 @@ func (p *Parser) findArguments(tool api.Tool) (map[string]any, int) {
 	find = func(obj any) map[string]any {
 		switch obj := obj.(type) {
 		case map[string]any:
+			properties := getProperties(tool.Function.Parameters)
+			if properties == nil {
+				return nil
+			}
+			
 			found := true
 			for key := range obj {
-				if _, exists := tool.Function.Parameters.Properties[key]; !exists {
+				if _, exists := properties[key]; !exists {
 					found = false
 					break
 				}
@@ -291,4 +296,29 @@ func (p *Parser) Content() string {
 	}
 
 	return ""
+}
+
+// getProperties safely extracts the properties map from the parameters
+// Returns nil if no properties exist or if parameters are invalid
+func getProperties(params json.RawMessage) map[string]interface{} {
+	if len(params) == 0 {
+		return nil
+	}
+	
+	var paramsMap map[string]interface{}
+	if err := json.Unmarshal(params, &paramsMap); err != nil {
+		return nil
+	}
+	
+	properties, ok := paramsMap["properties"]
+	if !ok {
+		return nil
+	}
+	
+	propsMap, ok := properties.(map[string]interface{})
+	if !ok || len(propsMap) == 0 {
+		return nil
+	}
+	
+	return propsMap
 }

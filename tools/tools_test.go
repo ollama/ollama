@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"testing"
 	"text/template"
 
@@ -19,7 +20,7 @@ func TestParser(t *testing.T) {
 		t.Fatalf("Failed to parse template: %v", err)
 	}
 
-	json, err := template.New("json").Parse(`{{if .ToolCalls}}{{range .ToolCalls}}{"name": "{{.Function.Name}}", "arguments": {{.Function.Arguments}}}{{end}}{{end}}`)
+	jsonTmpl, err := template.New("json").Parse(`{{if .ToolCalls}}{{range .ToolCalls}}{"name": "{{.Function.Name}}", "arguments": {{.Function.Arguments}}}{{end}}{{end}}`)
 	if err != nil {
 		t.Fatalf("Failed to parse template: %v", err)
 	}
@@ -34,42 +35,38 @@ func TestParser(t *testing.T) {
 		t.Fatalf("Failed to parse template: %v", err)
 	}
 
+	// Create JSON strings as variables to avoid parsing issues
+	tempParamsJSON := `{
+		"type": "object",
+		"properties": {
+			"format": {
+				"type": "string",
+				"description": "The format to return the temperature in",
+				"enum": ["fahrenheit", "celsius"]
+			},
+			"city": {
+				"type": "string",
+				"description": "The city to get the temperature for"
+			}
+		}
+	}`
+	conditionsParamsJSON := `{
+		"type": "object",
+		"properties": {
+			"location": {
+				"type": "string",
+				"description": "The location to get the weather conditions for"
+			}
+		}
+	}`
+
 	tools := []api.Tool{
 		{
 			Type: "function",
 			Function: api.ToolFunction{
 				Name:        "get_temperature",
 				Description: "Retrieve the temperature for a given location",
-				Parameters: struct {
-					Type       string   `json:"type"`
-					Defs       any      `json:"$defs,omitempty"`
-					Items      any      `json:"items,omitempty"`
-					Required   []string `json:"required"`
-					Properties map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					} `json:"properties"`
-				}{
-					Type: "object",
-					Properties: map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					}{
-						"format": {
-							Type:        api.PropertyType{"string"},
-							Description: "The format to return the temperature in",
-							Enum:        []any{"fahrenheit", "celsius"},
-						},
-						"city": {
-							Type:        api.PropertyType{"string"},
-							Description: "The city to get the temperature for",
-						},
-					},
-				},
+				Parameters:  json.RawMessage(tempParamsJSON),
 			},
 		},
 		{
@@ -77,31 +74,7 @@ func TestParser(t *testing.T) {
 			Function: api.ToolFunction{
 				Name:        "get_conditions",
 				Description: "Retrieve the current weather conditions for a given location",
-				Parameters: struct {
-					Type       string   `json:"type"`
-					Defs       any      `json:"$defs,omitempty"`
-					Items      any      `json:"items,omitempty"`
-					Required   []string `json:"required"`
-					Properties map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					} `json:"properties"`
-				}{
-					Type: "object",
-					Properties: map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					}{
-						"location": {
-							Type:        api.PropertyType{"string"},
-							Description: "The location to get the weather conditions for",
-						},
-					},
-				},
+				Parameters:  json.RawMessage(conditionsParamsJSON),
 			},
 		},
 		{
@@ -341,7 +314,7 @@ func TestParser(t *testing.T) {
 				"}",
 			},
 			content: "",
-			tmpl:    json,
+			tmpl:    jsonTmpl,
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
@@ -362,7 +335,7 @@ func TestParser(t *testing.T) {
 				"\"arguments\": {",
 			},
 			content: "",
-			tmpl:    json,
+			tmpl:    jsonTmpl,
 			calls:   nil,
 		},
 		{
@@ -376,7 +349,7 @@ func TestParser(t *testing.T) {
 				"}",
 			},
 			content: "{\"name\": \"search\", \"arguments\": {\"query\": \"What is the capital of Canada?\"}}",
-			tmpl:    json,
+			tmpl:    jsonTmpl,
 			calls:   nil,
 		},
 		{
@@ -386,7 +359,7 @@ func TestParser(t *testing.T) {
 				"{\"name\": \"get_conditions\", \"arguments\": {\"location\": \"San Francisco\"}}",
 			},
 			content: "{\"name\": \"jeff\"}{\"name\": \"get_conditions\", \"arguments\": {\"location\": \"San Francisco\"}}",
-			tmpl:    json,
+			tmpl:    jsonTmpl,
 		},
 		{
 			name: "json object followed by tool call split",
@@ -395,7 +368,7 @@ func TestParser(t *testing.T) {
 				"\"name\": \"get_conditions\", \"arguments\": {\"location\": \"San Francisco\"}}",
 			},
 			content: "{\"name\": \"jeff\"} {\"name\": \"get_conditions\", \"arguments\": {\"location\": \"San Francisco\"}}",
-			tmpl:    json,
+			tmpl:    jsonTmpl,
 		},
 		{
 			name: "json code",
@@ -403,7 +376,7 @@ func TestParser(t *testing.T) {
 				"for { fmt.Println(\"hello\") }",
 			},
 			content: "for { fmt.Println(\"hello\") }",
-			tmpl:    json,
+			tmpl:    jsonTmpl,
 		},
 		{
 			name: "json no args tool call",
@@ -411,7 +384,7 @@ func TestParser(t *testing.T) {
 				"{\"name\": \"say_hello\"}",
 			},
 			content: "",
-			tmpl:    json,
+			tmpl:    jsonTmpl,
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
@@ -428,7 +401,7 @@ func TestParser(t *testing.T) {
 				"I'll use the say_hello tool to say hello to the user.",
 			},
 			content: "I'll use the say_hello tool to say hello to the user.",
-			tmpl:    json,
+			tmpl:    jsonTmpl,
 			calls:   nil,
 		},
 
@@ -440,7 +413,7 @@ func TestParser(t *testing.T) {
 				`{say_hello!!!}`,
 			},
 			content: "",
-			tmpl:    json,
+			tmpl:    jsonTmpl,
 			calls: []api.ToolCall{
 				{
 					Function: api.ToolCallFunction{
@@ -884,41 +857,27 @@ func TestFindTag(t *testing.T) {
 }
 
 func TestFindArguments(t *testing.T) {
+	tempParamsJSON := `{
+		"type": "object",
+		"properties": {
+			"format": {
+				"type": "string",
+				"description": "The format to return the temperature in",
+				"enum": ["fahrenheit", "celsius"]
+			},
+			"location": {
+				"type": "string",
+				"description": "The location to get the temperature for"
+			}
+		}
+	}`
+
 	tool := api.Tool{
 		Type: "function",
 		Function: api.ToolFunction{
 			Name:        "get_temperature",
 			Description: "Retrieve the temperature for a given location",
-			Parameters: struct {
-				Type       string   `json:"type"`
-				Defs       any      `json:"$defs,omitempty"`
-				Items      any      `json:"items,omitempty"`
-				Required   []string `json:"required"`
-				Properties map[string]struct {
-					Type        api.PropertyType `json:"type"`
-					Items       any              `json:"items,omitempty"`
-					Description string           `json:"description"`
-					Enum        []any            `json:"enum,omitempty"`
-				} `json:"properties"`
-			}{
-				Type: "object",
-				Properties: map[string]struct {
-					Type        api.PropertyType `json:"type"`
-					Items       any              `json:"items,omitempty"`
-					Description string           `json:"description"`
-					Enum        []any            `json:"enum,omitempty"`
-				}{
-					"format": {
-						Type:        api.PropertyType{"string"},
-						Description: "The format to return the temperature in",
-						Enum:        []any{"fahrenheit", "celsius"},
-					},
-					"location": {
-						Type:        api.PropertyType{"string"},
-						Description: "The location to get the temperature for",
-					},
-				},
-			},
+			Parameters:  json.RawMessage(tempParamsJSON),
 		},
 	}
 
