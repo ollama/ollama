@@ -842,6 +842,10 @@ func GetModelInfo(req api.ShowRequest) (*api.ShowResponse, error) {
 	}
 	resp.Parameters = strings.Join(params, "\n")
 
+	if m.Options == nil {
+		m.Options = make(map[string]any)
+	}
+
 	for k, v := range req.Options {
 		if _, ok := req.Options[k]; ok {
 			m.Options[k] = v
