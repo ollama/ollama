@@ -1080,9 +1080,10 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 	var state *displayResponseState = &displayResponseState{}
 	var latest api.ChatResponse
 	var fullResponse strings.Builder
-	var role string
 	var thinkTagOpened bool = false
 	var thinkTagClosed bool = false
+
+	role := "assistant"
 
 	fn := func(response api.ChatResponse) error {
 		if response.Message.Content != "" || !opts.HideThinking {
