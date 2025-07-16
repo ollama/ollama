@@ -279,36 +279,7 @@ func TestChatMiddleware(t *testing.T) {
 						Function: api.ToolFunction{
 							Name:        "get_weather",
 							Description: "Get the current weather",
-							Parameters: struct {
-								Type       string   `json:"type"`
-								Defs       any      `json:"$defs,omitempty"`
-								Items      any      `json:"items,omitempty"`
-								Required   []string `json:"required"`
-								Properties map[string]struct {
-									Type        api.PropertyType `json:"type"`
-									Items       any              `json:"items,omitempty"`
-									Description string           `json:"description"`
-									Enum        []any            `json:"enum,omitempty"`
-								} `json:"properties"`
-							}{
-								Type:     "object",
-								Required: []string{"location"},
-								Properties: map[string]struct {
-									Type        api.PropertyType `json:"type"`
-									Items       any              `json:"items,omitempty"`
-									Description string           `json:"description"`
-									Enum        []any            `json:"enum,omitempty"`
-								}{
-									"location": {
-										Type:        api.PropertyType{"string"},
-										Description: "The city and state",
-									},
-									"unit": {
-										Type: api.PropertyType{"string"},
-										Enum: []any{"celsius", "fahrenheit"},
-									},
-								},
-							},
+							Parameters:  json.RawMessage(`{"type":"object","required":["location"],"properties":{"location":{"type":"string","description":"The city and state"},"unit":{"type":"string","enum":["celsius","fahrenheit"]}}}`),
 						},
 					},
 				},

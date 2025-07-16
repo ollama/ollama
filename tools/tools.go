@@ -138,7 +138,8 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 	// TODO (jmorganca): while probably uncommon, this doesn't support
 	// parsing arguments before the tool name, which may be needed in the future
 	args := map[string]any{}
-	if len(tool.Function.Parameters.Properties) > 0 {
+	properties := getProperties(tool.Function.Parameters)
+	if len(properties) > 0 {
 		if args, i = findArguments(*tool, p.buffer[end:]); args == nil {
 			return nil
 		}
@@ -211,9 +212,14 @@ func findArguments(tool api.Tool, buffer []byte) (map[string]any, int) {
 		switch obj := obj.(type) {
 		case map[string]any:
 			valid := true
+			properties := getProperties(tool.Function.Parameters)
+			if properties == nil {
+				return nil
+			}
+
 			// check if all keys in the object exist in the tool's parameters
 			for key := range obj {
-				if _, exists := tool.Function.Parameters.Properties[key]; !exists {
+				if _, exists := properties[key]; !exists {
 					valid = false
 					break
 				}
@@ -222,8 +228,9 @@ func findArguments(tool api.Tool, buffer []byte) (map[string]any, int) {
 			// check for required parameters
 			// TODO (jmorganca): this should error instead of silently failing
 			if valid {
-				for _, required := range tool.Function.Parameters.Required {
-					if _, exists := obj[required]; !exists {
+				required := getRequired(tool.Function.Parameters)
+				for _, requiredField := range required {
+					if _, exists := obj[requiredField]; !exists {
 						valid = false
 						break
 					}
@@ -301,4 +308,61 @@ func (p *Parser) Content() string {
 	}
 
 	return ""
+}
+
+// getProperties safely extracts the properties map from the parameters
+// Returns nil if no properties exist or if parameters are invalid
+func getProperties(params json.RawMessage) map[string]interface{} {
+	if len(params) == 0 {
+		return nil
+	}
+
+	var paramsMap map[string]interface{}
+	if err := json.Unmarshal(params, &paramsMap); err != nil {
+		return nil
+	}
+
+	properties, ok := paramsMap["properties"]
+	if !ok {
+		return nil
+	}
+
+	propsMap, ok := properties.(map[string]interface{})
+	if !ok || len(propsMap) == 0 {
+		return nil
+	}
+
+	return propsMap
+}
+
+// getRequired safely extracts the required fields array from the parameters
+// Returns nil if no required fields exist or if parameters are invalid
+func getRequired(params json.RawMessage) []string {
+	if len(params) == 0 {
+		return nil
+	}
+
+	var paramsMap map[string]interface{}
+	if err := json.Unmarshal(params, &paramsMap); err != nil {
+		return nil
+	}
+
+	required, ok := paramsMap["required"]
+	if !ok {
+		return nil
+	}
+
+	requiredSlice, ok := required.([]interface{})
+	if !ok {
+		return nil
+	}
+
+	var result []string
+	for _, item := range requiredSlice {
+		if str, ok := item.(string); ok {
+			result = append(result, str)
+		}
+	}
+
+	return result
 }
