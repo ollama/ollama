@@ -1,6 +1,7 @@
 package envconfig
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"math"
@@ -307,4 +308,27 @@ func Values() map[string]string {
 // Var returns an environment variable stripped of leading and trailing quotes or spaces
 func Var(key string) string {
 	return strings.Trim(strings.TrimSpace(os.Getenv(key)), "\"'")
+}
+
+func username() string {
+	if s := Var("OLLAMA_USERNAME"); s != "" {
+		return s
+	}
+
+	return ""
+}
+
+func password() string {
+	if s := Var("OLLAMA_PASSWORD"); s != "" {
+		return s
+	}
+
+	return ""
+}
+
+func AuthHeader() string {
+	if username() != "" && password() != "" {
+		return "Basic " + base64.StdEncoding.EncodeToString([]byte(username()+":"+password()))
+	}
+	return ""
 }
