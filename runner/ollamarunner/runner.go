@@ -938,6 +938,11 @@ func Execute(args []string) error {
 	// TODO(jessegross): Parameters that need to be implemented:
 	//	no-mmap
 
+	// Check for OLLAMA_RUNNER_THREADS environment variable to override thread count
+	if runnerThreads := envconfig.RunnerThreads(); runnerThreads > 0 {
+		*threads = int(runnerThreads)
+	}
+
 	var tensorSplitFloats []float32
 	if *tensorSplit != "" {
 		splits := strings.Split(*tensorSplit, ",")
