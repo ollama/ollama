@@ -23,7 +23,7 @@ jobs:
           echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${GITHUB_REF_NAME#v}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" >>$GITHUB_OUTPUT
 
   darwin-build:
-    runs-on: macos-13
+    runs-on: macos-13-xlarge
     environment: release
     needs: setup-environment
     strategy:
