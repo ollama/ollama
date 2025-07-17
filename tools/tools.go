@@ -115,21 +115,7 @@ func (p *Parser) findTag() (int, bool) {
 // parseToolCall finds the next complete tool call in the buffer
 // incrementing n and advancing the buffer.
 func (p *Parser) parseToolCall() *api.ToolCall {
-	var tool *api.Tool
-	var end int = len(p.buffer)
-	var i int
-
-	// find tool name
-	for _, t := range p.tools {
-		n := t.Function.Name
-		if i = bytes.Index(p.buffer, []byte(n)); i != -1 {
-			if i+len(n) < end {
-				tool = &t
-				end = i + len(n)
-			}
-		}
-	}
-
+	tool, end := findTool(p.tools, p.buffer)
 	if tool == nil {
 		return nil
 	}
@@ -139,10 +125,10 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 	// parsing arguments before the tool name, which may be needed in the future
 	args := map[string]any{}
 	if len(tool.Function.Parameters.Properties) > 0 {
+		var i int
 		if args, i = findArguments(*tool, p.buffer[end:]); args == nil {
 			return nil
 		}
-
 		end += i
 	}
 
@@ -159,9 +145,74 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 	return tc
 }
 
+// findTool finds the first tool name in the list that matches the
+// beginning of the buffer, returning nil if no tool is found
+// or if the buffer ends with a partial tool name since we need
+// to wait for more data to disambiguate.
+// The second return value is the end position of the tool name
+// if one is found, otherwise 0.
+func findTool(tools []api.Tool, buf []byte) (*api.Tool, int) {
+	if len(buf) == 0 {
+		return nil, 0
+	}
+
+	// check if buffer ends with a partial tool name
+	// this prevents matching "get" when seeing "get_weather"
+	var longest string
+	for _, t := range tools {
+		if len(t.Function.Name) > len(longest) {
+			longest = t.Function.Name
+		}
+	}
+
+	// Only check up to longest characters from the end
+	for i := 1; i <= min(len(buf), len(longest)); i++ {
+		tail := buf[len(buf)-i:]
+		for _, t := range tools {
+			name := []byte(t.Function.Name)
+			if len(tail) < len(name) && bytes.HasPrefix(name, tail) {
+				return nil, 0
+			}
+		}
+	}
+
+	// find first occurrence of the longest tool name
+	var found *api.Tool
+	start := -1
+	end := -1
+
+	for i := range tools {
+		name := []byte(tools[i].Function.Name)
+		pos := bytes.Index(buf, name)
+		if pos == -1 {
+			continue
+		}
+
+		// Skip if we have a better match already
+		if start != -1 {
+			if pos > start {
+				continue
+			}
+			if pos == start && len(name) <= len(found.Function.Name) {
+				continue
+			}
+		}
+
+		found = &tools[i]
+		start = pos
+		end = pos + len(name)
+	}
+
+	if found != nil {
+		return found, end
+	}
+
+	return nil, 0
+}
+
 // findArguments returns the first object that appears to be
 // arguments for the provided tool in the provided buffer,
-// returning nil if no arguments are found.
+// returning nil if no arguments are found and the end position
 // TODO (jmorganca): this does not support parsing omitted arguments
 // objects for functions that have all-optional parameters
 // e.g. `{"name": "get_conditions", "arguments": {}}` will work but
