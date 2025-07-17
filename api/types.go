@@ -304,7 +304,8 @@ type EmbedRequest struct {
 	Model string `json:"model"`
 
 	// Input is the input to embed.
-	Input any `json:"input"`
+	Input  any         `json:"input"`
+	Images []ImageData `json:"images,omitempty"`
 
 	// KeepAlive controls how long the model will stay loaded in memory following
 	// this request.
@@ -332,7 +333,8 @@ type EmbeddingRequest struct {
 	Model string `json:"model"`
 
 	// Prompt is the textual prompt to embed.
-	Prompt string `json:"prompt"`
+	Prompt string    `json:"prompt"`
+	Image  ImageData `json:"image,omitempty"`
 
 	// KeepAlive controls how long the model will stay loaded in memory following
 	// this request.
