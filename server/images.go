@@ -42,7 +42,7 @@ var (
 	errInsecureProtocol     = errors.New("insecure protocol http")
 )
 
-type registryOptions struct {
+type RegistryOptions struct {
 	Insecure bool
 	Username string
 	Password string
@@ -518,7 +518,7 @@ func PruneDirectory(path string) error {
 	return nil
 }
 
-func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+func PushModel(ctx context.Context, name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 	fn(api.ProgressResponse{Status: "retrieving manifest"})
 
@@ -567,7 +567,7 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	return nil
 }
 
-func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn func(api.ProgressResponse)) error {
+func PullModel(ctx context.Context, name string, regOpts *RegistryOptions, fn func(api.ProgressResponse)) error {
 	mp := ParseModelPath(name)
 
 	// build deleteMap to prune unused layers
@@ -673,7 +673,7 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 	return nil
 }
 
-func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *registryOptions) (*Manifest, error) {
+func pullModelManifest(ctx context.Context, mp ModelPath, regOpts *RegistryOptions) (*Manifest, error) {
 	requestURL := mp.BaseURL().JoinPath("v2", mp.GetNamespaceRepository(), "manifests", mp.Tag)
 
 	headers := make(http.Header)
@@ -705,7 +705,7 @@ func GetSHA256Digest(r io.Reader) (string, int64) {
 
 var errUnauthorized = errors.New("unauthorized: access denied")
 
-func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *registryOptions) (*http.Response, error) {
+func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.ReadSeeker, regOpts *RegistryOptions) (*http.Response, error) {
 	for range 2 {
 		resp, err := makeRequest(ctx, method, requestURL, headers, body, regOpts)
 		if err != nil {
@@ -766,7 +766,7 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 // structured in a way that makes this easy, so this will have to do for now.
 var testMakeRequestDialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 
-func makeRequest(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.Reader, regOpts *registryOptions) (*http.Response, error) {
+func makeRequest(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.Reader, regOpts *RegistryOptions) (*http.Response, error) {
 	if requestURL.Scheme != "http" && regOpts != nil && regOpts.Insecure {
 		requestURL.Scheme = "http"
 	}
