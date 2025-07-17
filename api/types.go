@@ -255,12 +255,15 @@ type ChatResponse struct {
 
 	Done bool `json:"done"`
 
+	Error string `json:"error,omitempty"`
+
 	Metrics
 }
 
 type Metrics struct {
 	TotalDuration      time.Duration `json:"total_duration,omitempty"`
 	LoadDuration       time.Duration `json:"load_duration,omitempty"`
+	LoadProgress       int           `json:"load_progress,omitempty"`
 	PromptEvalCount    int           `json:"prompt_eval_count,omitempty"`
 	PromptEvalDuration time.Duration `json:"prompt_eval_duration,omitempty"`
 	EvalCount          int           `json:"eval_count,omitempty"`
@@ -506,6 +509,10 @@ type GenerateResponse struct {
 	// Context is an encoding of the conversation used in this response; this
 	// can be sent in the next request to keep a conversational memory.
 	Context []int `json:"context,omitempty"`
+
+	// Error will contain an error message if the request could not
+	// be completed due to an error
+	Error string `json:"error,omitempty"`
 
 	Metrics
 }

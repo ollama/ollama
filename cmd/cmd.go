@@ -1086,6 +1086,10 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 	role := "assistant"
 
 	fn := func(response api.ChatResponse) error {
+		if response.Error != "" {
+			return fmt.Errorf("error: %s", response.Error)
+		}
+
 		if response.Message.Content != "" || !opts.HideThinking {
 			p.StopAndClear()
 		}
@@ -1194,6 +1198,9 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 	plainText := !term.IsTerminal(int(os.Stdout.Fd()))
 
 	fn := func(response api.GenerateResponse) error {
+		if response.Error != "" {
+			return fmt.Errorf("error: %s", response.Error)
+		}
 		latest = response
 		content := response.Response
 
