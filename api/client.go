@@ -37,7 +37,9 @@ import (
 // service. Use [ClientFromEnvironment] to create new Clients.
 type Client struct {
 	base *url.URL
+	authHeader string 
 	http *http.Client
+
 }
 
 func checkError(resp *http.Response, body []byte) error {
@@ -68,13 +70,15 @@ func checkError(resp *http.Response, body []byte) error {
 func ClientFromEnvironment() (*Client, error) {
 	return &Client{
 		base: envconfig.Host(),
+		authHeader: envconfig.AuthHeader(),
 		http: http.DefaultClient,
 	}, nil
 }
 
-func NewClient(base *url.URL, http *http.Client) *Client {
+func NewClient(base *url.URL, http *http.Client, authHeader string) *Client {
 	return &Client{
 		base: base,
+		authHeader: authHeader,
 		http: http,
 	}
 }
@@ -127,14 +131,16 @@ func (c *Client) do(ctx context.Context, method, path string, reqData, respData 
 	if err != nil {
 		return err
 	}
+	if c.authHeader != "" {
+		request.Header.Set("Authorization", c.authHeader)
+	}
+	else if token != "" {
+		request.Header.Set("Authorization", token)
 
+	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", fmt.Sprintf("ollama/%s (%s %s) Go/%s", version.Version, runtime.GOARCH, runtime.GOOS, runtime.Version()))
-
-	if token != "" {
-		request.Header.Set("Authorization", token)
-	}
 
 	respObj, err := c.http.Do(request)
 	if err != nil {
