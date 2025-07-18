@@ -737,7 +737,7 @@ type RerankRequest struct {
 
 type RerankResult struct {
 	Index          int     `json:"index"`
-	RelevanceScore float32 `json:"relevance_score"`
+	RelevanceScore float64 `json:"relevance_score"`
 }
 
 type RerankResponse struct {
@@ -782,10 +782,12 @@ func (s *Server) rerank(w http.ResponseWriter, r *http.Request) {
 
 		slog.Debug("Processing batch", "start", batchStart, "end", batchEnd, "size", len(currentBatch))
 
-		// Create sequences for current batch
+		// Create sequences for current batch - use embedding mode for reranking
 		sequences := make([]*Sequence, len(currentBatch))
 		for i, prompt := range currentBatch {
-			seq, err := s.NewSequence(prompt, nil, NewSequenceParams{embedding: true})
+			seq, err := s.NewSequence(prompt, nil, NewSequenceParams{
+				embedding: true,  // Use embedding mode for reranking
+			})
 			if err != nil {
 				http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
 				return
@@ -847,7 +849,7 @@ func (s *Server) rerank(w http.ResponseWriter, r *http.Request) {
 			score := <-seq.embedding
 			rsp.Results = append(rsp.Results, RerankResult{
 				Index:          batchStart + i,
-				RelevanceScore: score[0],
+				RelevanceScore: float64(score[0]),
 			})
 		}
 	}
