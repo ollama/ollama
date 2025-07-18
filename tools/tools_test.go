@@ -112,6 +112,81 @@ func TestParser(t *testing.T) {
 				Description: "Say hello",
 			},
 		},
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "say_hello_world",
+				Description: "Say hello world",
+			},
+		},
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "get_address",
+				Description: "Get the address of a given location",
+				Parameters: struct {
+					Type       string   `json:"type"`
+					Defs       any      `json:"$defs,omitempty"`
+					Items      any      `json:"items,omitempty"`
+					Required   []string `json:"required"`
+					Properties map[string]struct {
+						Type        api.PropertyType `json:"type"`
+						Items       any              `json:"items,omitempty"`
+						Description string           `json:"description"`
+						Enum        []any            `json:"enum,omitempty"`
+					} `json:"properties"`
+				}{
+					Type: "object",
+					Properties: map[string]struct {
+						Type        api.PropertyType `json:"type"`
+						Items       any              `json:"items,omitempty"`
+						Description string           `json:"description"`
+						Enum        []any            `json:"enum,omitempty"`
+					}{
+						"location": {
+							Type:        api.PropertyType{"string"},
+							Description: "The location to get the address for",
+						},
+					},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: api.ToolFunction{
+				Name:        "add",
+				Description: "Add two numbers",
+				Parameters: struct {
+					Type       string   `json:"type"`
+					Defs       any      `json:"$defs,omitempty"`
+					Items      any      `json:"items,omitempty"`
+					Required   []string `json:"required"`
+					Properties map[string]struct {
+						Type        api.PropertyType `json:"type"`
+						Items       any              `json:"items,omitempty"`
+						Description string           `json:"description"`
+						Enum        []any            `json:"enum,omitempty"`
+					} `json:"properties"`
+				}{
+					Type: "object",
+					Properties: map[string]struct {
+						Type        api.PropertyType `json:"type"`
+						Items       any              `json:"items,omitempty"`
+						Description string           `json:"description"`
+						Enum        []any            `json:"enum,omitempty"`
+					}{
+						"a": {
+							Type:        api.PropertyType{"string"},
+							Description: "The first number to add",
+						},
+						"b": {
+							Type:        api.PropertyType{"string"},
+							Description: "The second number to add",
+						},
+					},
+				},
+			},
+		},
 	}
 
 	tests := []struct {
@@ -625,6 +700,173 @@ func TestParser(t *testing.T) {
 						Index:     0,
 						Name:      "say_hello",
 						Arguments: api.ToolCallFunctionArguments{},
+					},
+				},
+			},
+		},
+		{
+			name: "tool name with collision",
+			inputs: []string{
+				"<tool_call>",
+				"{",
+				"\"name\": \"say_hello",
+				"_world\",",
+				"}",
+				"}",
+			},
+			content: "",
+			tmpl:    qwen,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index:     0,
+						Name:      "say_hello_world",
+						Arguments: api.ToolCallFunctionArguments{},
+					},
+				},
+			},
+		},
+		{
+			name: "tool name with collision multiple",
+			inputs: []string{
+				"<tool_call>",
+				"{",
+				"\"name\": \"say_hello",
+				"_world\",",
+				"}",
+				"</tool_call>",
+				"<tool_call>",
+				"{",
+				"\"name\": \"say_hello",
+				"\",",
+				"}",
+				"</tool_call>",
+			},
+			content: "",
+			tmpl:    qwen,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index:     0,
+						Name:      "say_hello_world",
+						Arguments: api.ToolCallFunctionArguments{},
+					},
+				},
+				{
+					Function: api.ToolCallFunction{
+						Index:     1,
+						Name:      "say_hello",
+						Arguments: api.ToolCallFunctionArguments{},
+					},
+				},
+			},
+		},
+		{
+			name: "tool name with collision non streaming",
+			inputs: []string{
+				`<tool_call>{"name": "say_hello`,
+			},
+			content: "",
+			tmpl:    qwen,
+			calls:   nil,
+		},
+		{
+			name: "tool name with collision non streaming multiple",
+			inputs: []string{
+				`<tool_call>{"name": "say_hello"}</tool_call><tool_call>{"name": "say_hello_world"}`,
+			},
+			content: "",
+			tmpl:    qwen,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index:     0,
+						Name:      "say_hello",
+						Arguments: api.ToolCallFunctionArguments{},
+					},
+				},
+				{
+					Function: api.ToolCallFunction{
+						Index:     1,
+						Name:      "say_hello_world",
+						Arguments: api.ToolCallFunctionArguments{},
+					},
+				},
+			},
+		},
+		{
+			name: "tool name with collision non streaming shorter",
+			inputs: []string{
+				`<tool_call>{"name": "say_hello"}</tool_call>`,
+			},
+			content: "",
+			tmpl:    qwen,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index:     0,
+						Name:      "say_hello",
+						Arguments: api.ToolCallFunctionArguments{},
+					},
+				},
+			},
+		},
+		{
+			name: "tool name with collision non streaming longer",
+			inputs: []string{
+				`<tool_call>{"name": "say_hello_world"}</tool_call>`,
+			},
+			content: "",
+			tmpl:    qwen,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index:     0,
+						Name:      "say_hello_world",
+						Arguments: api.ToolCallFunctionArguments{},
+					},
+				},
+			},
+		},
+		{
+			name: "tool name with substring of another",
+			inputs: []string{
+				"{",
+				"\"name\": \"get_address\",",
+				"\"arguments\": {",
+				"\"location\": \"London\"",
+				"}",
+				"}",
+			},
+			content: "",
+			tmpl:    json,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_address",
+						Arguments: api.ToolCallFunctionArguments{
+							"location": "London",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "tool name with substring of another",
+			inputs: []string{
+				`<tool_call>{"name": "get_address", "arguments": {"location": "London"}}</tool_call>`,
+			},
+			content: "",
+			tmpl:    qwen,
+			calls: []api.ToolCall{
+				{
+					Function: api.ToolCallFunction{
+						Index: 0,
+						Name:  "get_address",
+						Arguments: api.ToolCallFunctionArguments{
+							"location": "London",
+						},
 					},
 				},
 			},
