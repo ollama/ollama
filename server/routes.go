@@ -113,6 +113,14 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, err
 	}
 
+	// Set reranking flag if the capability is requested
+	for _, cap := range caps {
+		if string(cap) == "reranking" {
+			opts.Reranking = true
+			break
+		}
+	}
+
 	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive)
 	var runner *runnerRef
 	select {
@@ -416,8 +424,9 @@ func (s *Server) RerankHandler(c *gin.Context) {
 	if req.Options == nil {
 		req.Options = make(map[string]any)
 	}
+	// Enable reranking for this request
 	req.Options["reranking"] = true
-	r, m, _, err := s.scheduleRunner(c.Request.Context(), req.Model, []model.Capability{}, req.Options, req.KeepAlive)
+	r, m, _, err := s.scheduleRunner(c.Request.Context(), req.Model, []model.Capability{model.CapabilityReranking}, req.Options, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -456,24 +465,13 @@ func (s *Server) RerankHandler(c *gin.Context) {
 		topResults := rr.Results[:topn]
 
 		rsp := api.RerankResponse{
-			Model: req.Model,
-			Usage: rr.Usage,
-			Results: make([]struct {
-				Index    int `json:"index"`
-				Document *struct {
-					Text string `json:"text"`
-				} `json:"document,omitempty"`
-				RelevanceScore float32 `json:"relevance_score"`
-			}, topn),
+			Model:   req.Model,
+			Results: make([]api.RerankResponseItem, topn),
 		}
 
 		for i, result := range topResults {
 			rsp.Results[i].Index = result.Index
-			if req.ReturnDocuments {
-				rsp.Results[i].Document = &struct {
-					Text string `json:"text"`
-				}{Text: req.Documents[result.Index]}
-			}
+			rsp.Results[i].Document = req.Documents[result.Index]
 			rsp.Results[i].RelevanceScore = result.RelevanceScore
 		}
 

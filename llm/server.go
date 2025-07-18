@@ -181,6 +181,7 @@ func NewLlamaServer(gpus discover.GpuInfoList, modelPath string, f *ggml.GGML, a
 		"--batch-size", strconv.Itoa(opts.NumBatch),
 	}
 
+	// Add reranking flag if needed
 	if opts.Reranking {
 		params = append(params, "--reranking")
 	}
@@ -969,7 +970,6 @@ type RerankResponse struct {
 		Index          int     `json:"index"`
 		RelevanceScore float32 `json:"relevance_score"`
 	} `json:"results"`
-	api.Usage
 }
 
 func (s *llmServer) Rerank(ctx context.Context, req RerankRequest, fn func(RerankResponse)) error {

@@ -759,15 +759,12 @@ type RerankResult struct {
 
 type RerankResponse struct {
 	Results []RerankResult `json:"results"`
-	*api.Usage
 }
 
 func (s *Server) rerank(w http.ResponseWriter, r *http.Request) {
-	if !s.reranking {
-		http.Error(w, "this model does not support reranking", http.StatusNotImplemented)
-		return
-	}
-
+	// Instead of checking s.reranking flag, allow reranking if model supports text processing
+	// This makes reranking available for any model with proper template variables
+	
 	var req RerankRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf("bad rerank request: %s", err), http.StatusBadRequest)
@@ -793,9 +790,6 @@ func (s *Server) rerank(w http.ResponseWriter, r *http.Request) {
 
 	var rsp RerankResponse
 	rsp.Results = make([]RerankResult, 0, len(req.Prompts))
-	rsp.Usage = &api.Usage{
-		TotalTokens: totalTokens,
-	}
 
 	// Process prompts in batches that fit within parallel capacity
 	batchSize := s.parallel

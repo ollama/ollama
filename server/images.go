@@ -39,6 +39,7 @@ var (
 	errCapabilityVision     = errors.New("vision")
 	errCapabilityEmbedding  = errors.New("embedding")
 	errCapabilityThinking   = errors.New("thinking")
+	errCapabilityReranking  = errors.New("reranking")
 	errInsecureProtocol     = errors.New("insecure protocol http")
 )
 
@@ -115,6 +116,12 @@ func (m *Model) Capabilities() []model.Capability {
 		capabilities = append(capabilities, model.CapabilityThinking)
 	}
 
+	// Check for reranking capability
+	vars := m.Template.Vars()
+	if slices.Contains(vars, "Query") && slices.Contains(vars, "Document") {
+		capabilities = append(capabilities, model.CapabilityReranking)
+	}
+
 	return capabilities
 }
 
@@ -132,6 +139,7 @@ func (m *Model) CheckCapabilities(want ...model.Capability) error {
 		model.CapabilityVision:     errCapabilityVision,
 		model.CapabilityEmbedding:  errCapabilityEmbedding,
 		model.CapabilityThinking:   errCapabilityThinking,
+		model.CapabilityReranking:  errCapabilityReranking,
 	}
 
 	for _, cap := range want {
