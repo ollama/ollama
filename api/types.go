@@ -669,7 +669,7 @@ func DefaultOptions() Options {
 		Runner: Runner{
 			// options set when the model is loaded
 			NumCtx:    int(envconfig.ContextLength()),
-			NumBatch:  512,
+			NumBatch:  int(envconfig.BatchSize()),
 			NumGPU:    -1, // -1 here indicates that NumGPU should be set dynamically
 			NumThread: 0,  // let the runtime decide
 			UseMMap:   nil,

@@ -295,6 +295,22 @@ func TestContextLength(t *testing.T) {
 	}
 }
 
+func TestBatchSize(t *testing.T) {
+	cases := map[string]uint{
+		"":    512,
+		"128": 128,
+	}
+
+	for k, v := range cases {
+		t.Run(k, func(t *testing.T) {
+			t.Setenv("OLLAMA_BATCH_SIZE", k)
+			if i := BatchSize(); i != v {
+				t.Errorf("%s: expected %d, got %d", k, v, i)
+			}
+		})
+	}
+}
+
 func TestLogLevel(t *testing.T) {
 	cases := map[string]slog.Level{
 		// Default to INFO
