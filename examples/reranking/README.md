@@ -28,15 +28,27 @@ The Qwen3-Reranker is a binary classification model that determines relevance be
 
 ## 🔍 Current State
 
-The reranking implementation is **architecturally correct** and uses the proper binary classification approach with logit extraction. However, current GGUF model conversions may not preserve the full quality of the original Transformers model.
+The reranking implementation is **architecturally correct** and uses the proper binary classification approach with logit extraction. However, **testing reveals a significant issue with current GGUF model conversions**.
 
-**Testing shows**:
-- ✅ API endpoints work correctly
-- ✅ Template processing is accurate  
-- ✅ Binary classification extraction functions
-- ⚠️ GGUF model quality affects final ranking accuracy
+**Validation Results**:
+- ✅ API endpoints work correctly  
+- ✅ Template processing is accurate
+- ✅ Binary classification extraction functions  
+- ❌ **GGUF model gives inverted rankings** vs original Transformers model
 
-For production use, ensure you're using high-quality GGUF conversions of reranking models.
+**Example Issue**:
+```
+Query: "What is the capital of China?"
+Real Transformers: Beijing (0.9995) > China general (0.0035) > Paris (0.0001) ✅
+Current GGUF:      Paris (8.637) > China general (8.291) > Beijing (7.855) ❌
+```
+
+For production use, this suggests either:
+1. **Current GGUF conversion has quality issues** - try different conversions
+2. **Model inference method needs adjustment** - may need different approach for GGUF
+3. **Template/tokenization differences** - GGUF may have different token mappings
+
+The implementation is ready but requires higher quality GGUF models or further investigation into the conversion process.
 
 2. **Create the model**:
    ```bash
