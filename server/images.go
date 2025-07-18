@@ -118,7 +118,7 @@ func (m *Model) Capabilities() []model.Capability {
 
 	// Check for reranking capability
 	vars := m.Template.Vars()
-	if slices.Contains(vars, "Query") && slices.Contains(vars, "Document") {
+	if slices.Contains(vars, "query") && slices.Contains(vars, "document") {
 		capabilities = append(capabilities, model.CapabilityReranking)
 	}
 

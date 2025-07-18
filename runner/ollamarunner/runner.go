@@ -513,6 +513,20 @@ func (s *Server) processBatch() error {
 
 		// if done processing the prompt, generate an embedding and return
 		if seq.embeddingOnly {
+			// For reranking models, extract the relevance score directly from logits
+			// Reranking models return one score per sequence, not vocabulary logits
+			if len(logits) == len(batch.Outputs) {
+				// This is a reranking model - extract score directly
+				score := logits[seq.iBatch]
+				seq.embedding <- []float32{score}
+			} else {
+				// This is an embedding model - extract embedding from vocabulary logits
+				vocabSize := len(logits) / len(batch.Outputs)
+				embedding := logits[seq.iBatch*vocabSize : (seq.iBatch+1)*vocabSize]
+				seq.embedding <- embedding
+			}
+			s.removeSequence(i, llm.DoneReasonStop)
+			continue
 		}
 
 		token, err := seq.sampler.Sample(logits[seq.iBatch*vocabSize : (seq.iBatch+1)*vocabSize])
