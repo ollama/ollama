@@ -1883,6 +1883,7 @@ Rerank a list of documents based on a query.
 - `model`: (required) the name of the model to use for reranking
 - `query`: (required) the query to use for reranking
 - `documents`: (required) a list of documents to rerank
+- `instruction`: (optional) the instruction for the reranking model. Defaults to "Please judge relevance."
 - `top_n`: (optional) the number of results to return. Defaults to returning all results.
 - `return_documents`: (optional) if `true`, the documents will be returned in the response. Defaults to `false`.
 
@@ -1899,9 +1900,7 @@ Judge whether the Document meets the requirements based on the Query and the
 Instruct provided. Note that the answer can only be "yes" or
 "no".<|im_end|>
 <|im_start|>user
-<Instruct>: Judge whether the Document meets the requirements based on the Query and the
-Instruct provided. Note that the answer can only be "yes" or
-"no".
+<Instruct>: {{ .Instruction }}
 <Query>: {{ .Query }}
 <Document>: {{ .Document }}<|im_end|>
 <|im_start|>assistant
@@ -1916,6 +1915,7 @@ curl http://127.0.0.1:11434/api/rerank \
 	-d '{
       "model": "reranker-fanyx",
       "query": "What is Ollama, the framework for machine learning things?",
+      "instruction": "Judge technical relevance for machine learning frameworks",
       "top_n": 10,
 	    "return_documents": true,
       "documents": [

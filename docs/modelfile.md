@@ -172,8 +172,9 @@ PARAMETER <parameter> <parametervalue>
 | `{{ .System }}`   | The system message used to specify custom behavior.                                           |
 | `{{ .Prompt }}`   | The user prompt message.                                                                      |
 | `{{ .Response }}` | The response from the model. When generating a response, text after this variable is omitted. |
-| `{{ .Query }}`     | The user query message(for rerank usage).                                                    | 
-| `{{ .Document }}` | The user provided documents(for rerank usage).                                               |
+| `{{ .Query }}`     | The user query message (for rerank usage).                                                    | 
+| `{{ .Document }}` | The user provided documents (for rerank usage).                                               |
+| `{{ .Instruction }}` | The instruction for reranking judgment (for rerank usage). Optional, defaults to "Please judge relevance." |
 
 ```
 TEMPLATE """{{ if .System }}<|im_start|>system
@@ -185,7 +186,20 @@ TEMPLATE """{{ if .System }}<|im_start|>system
 ```
 
 ```
-TEMPLATE """[BOS]{{ .Query }}[EOS][SEP]{{ .Document }}[EOS]"""
+TEMPLATE """<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the
+Instruct provided. Note that the answer can only be "yes" or
+"no".<|im_end|>
+<|im_start|>user
+<Instruct>: {{ .Instruction }}
+<Query>: {{ .Query }}
+<Document>: {{ .Document }}<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+"""
 ```
 
 ### SYSTEM
