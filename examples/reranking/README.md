@@ -2,6 +2,13 @@
 
 This directory contains examples and documentation for using reranking models with Ollama.
 
+## 🎯 Implementation Status
+
+✅ **Architecture Complete**: Binary classification approach with logit extraction  
+✅ **API Ready**: Full `/api/rerank` and `/v1/rerank` endpoints  
+✅ **Template Support**: Proper variable detection and formatting  
+⚠️ **Model Quality**: Current GGUF models may need better conversion for optimal results
+
 ## Qwen3-Reranker Model
 
 The Qwen3-Reranker is a binary classification model that determines relevance between a query and documents.
@@ -18,6 +25,18 @@ The Qwen3-Reranker is a binary classification model that determines relevance be
    ```bash
    curl -L -o Qwen3-Reranker-0.6B.f16.gguf https://huggingface.co/mradermacher/Qwen3-Reranker-0.6B-GGUF/resolve/main/Qwen3-Reranker-0.6B.f16.gguf
    ```
+
+## 🔍 Current State
+
+The reranking implementation is **architecturally correct** and uses the proper binary classification approach with logit extraction. However, current GGUF model conversions may not preserve the full quality of the original Transformers model.
+
+**Testing shows**:
+- ✅ API endpoints work correctly
+- ✅ Template processing is accurate  
+- ✅ Binary classification extraction functions
+- ⚠️ GGUF model quality affects final ranking accuracy
+
+For production use, ensure you're using high-quality GGUF conversions of reranking models.
 
 2. **Create the model**:
    ```bash
