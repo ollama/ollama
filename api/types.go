@@ -296,7 +296,6 @@ type Runner struct {
 	MainGPU   int   `json:"main_gpu,omitempty"`
 	UseMMap   *bool `json:"use_mmap,omitempty"`
 	NumThread int   `json:"num_thread,omitempty"`
-	Reranking bool  `json:"reranking,omitempty"`
 }
 
 // EmbedRequest is the request passed to [Client.Embed].
@@ -358,6 +357,10 @@ type RerankRequest struct {
 
 	// Documents is the list of documents to rerank.
 	Documents []string `json:"documents"`
+
+	// Instruction specifies the reranking instruction.
+	// If not provided, defaults to "Please judge relevance."
+	Instruction string `json:"instruction,omitempty"`
 
 	// TopN specifies the number of most relevant documents to return.
 	// If not specified, all documents are returned.

@@ -165,11 +165,12 @@ func (t *Template) Vars() []string {
 type Values struct {
 	Messages []api.Message
 	api.Tools
-	Prompt   string
-	Suffix   string
-	Query    string
-	Document string
-	Think    bool
+	Prompt      string
+	Suffix      string
+	Query       string
+	Document    string
+	Instruction string
+	Think       bool
 	// whether or not the user explicitly set the thinking flag (vs. it being
 	// implicitly false). Templates can't see whether `Think` is nil
 	IsThinkSet bool
@@ -237,14 +238,15 @@ func (t *Template) Execute(w io.Writer, v Values) error {
 	} else if !v.forceLegacy && (slices.Contains(t.Vars(), "messages") ||
 		slices.Contains(t.Vars(), "document")) {
 		return t.Template.Execute(w, map[string]any{
-			"System":     system,
-			"Messages":   messages,
-			"Tools":      v.Tools,
-			"Response":   "",
-			"Think":      v.Think,
-			"IsThinkSet": v.IsThinkSet,
-			"Query":      v.Query,
-			"Document":   v.Document,
+			"System":      system,
+			"Messages":    messages,
+			"Tools":       v.Tools,
+			"Response":    "",
+			"Think":       v.Think,
+			"IsThinkSet":  v.IsThinkSet,
+			"Query":       v.Query,
+			"Document":    v.Document,
+			"Instruction": v.Instruction,
 		})
 	}
 

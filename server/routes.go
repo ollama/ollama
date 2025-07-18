@@ -113,14 +113,6 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, err
 	}
 
-	// Set reranking flag if the capability is requested
-	for _, cap := range caps {
-		if string(cap) == "reranking" {
-			opts.Reranking = true
-			break
-		}
-	}
-
 	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive)
 	var runner *runnerRef
 	select {
@@ -424,8 +416,6 @@ func (s *Server) RerankHandler(c *gin.Context) {
 	if req.Options == nil {
 		req.Options = make(map[string]any)
 	}
-	// Enable reranking for this request
-	req.Options["reranking"] = true
 	r, m, _, err := s.scheduleRunner(c.Request.Context(), req.Model, []model.Capability{model.CapabilityReranking}, req.Options, req.KeepAlive)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
@@ -441,6 +431,12 @@ func (s *Server) RerankHandler(c *gin.Context) {
 		var values template.Values
 		values.Query = req.Query
 		values.Document = doc
+		// Set default instruction if not provided
+		if req.Instruction != "" {
+			values.Instruction = req.Instruction
+		} else {
+			values.Instruction = "Please judge relevance."
+		}
 		if err := m.Template.Execute(&b, values); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return

@@ -302,9 +302,6 @@ type Server struct {
 	// multimodalHash generates hashes for comparing equality
 	// of non-text data
 	multimodalHash maphash.Hash
-
-	// reranking indicates if the loaded model supports reranking.
-	reranking bool
 }
 
 func (s *Server) allNil() bool {
@@ -516,34 +513,6 @@ func (s *Server) processBatch() error {
 
 		// if done processing the prompt, generate an embedding and return
 		if seq.embeddingOnly {
-			if s.reranking {
-				// For reranking models with LLAMA_POOLING_TYPE_RANK, the model outputs
-				// a single ranking score per sequence, not vocabulary logits
-				if len(logits) == 0 {
-					slog.Warn("reranking model returned no logits")
-					s.removeSequence(i, llm.DoneReasonStop)
-					continue
-				}
-				
-				// For ranking models, we expect exactly one score per sequence
-				// The model output should have length equal to the number of sequences
-				if len(logits) < seq.iBatch+1 {
-					slog.Error("reranking model output too short", "expected_length", seq.iBatch+1, "actual_length", len(logits))
-					s.removeSequence(i, llm.DoneReasonStop)
-					continue
-				}
-				
-				// Extract the ranking score for this sequence
-				rankingScore := logits[seq.iBatch]
-				seq.embedding <- []float32{rankingScore}
-				s.removeSequence(i, llm.DoneReasonStop)
-				continue
-			}
-
-			// TODO(jessegross): Embedding support
-			slog.Warn("generation of embedding outputs not yet supported")
-			s.removeSequence(i, llm.DoneReasonStop)
-			continue
 		}
 
 		token, err := seq.sampler.Sample(logits[seq.iBatch*vocabSize : (seq.iBatch+1)*vocabSize])
@@ -990,7 +959,6 @@ func (s *Server) initModel(
 	kvCacheType string,
 	kvSize int,
 	multiUserCache bool,
-	reranking bool,
 ) error {
 	var err error
 	s.model, err = model.New(mpath, params)
@@ -1016,7 +984,6 @@ func (s *Server) initModel(
 	s.parallel = parallel
 	s.seqs = make([]*Sequence, s.parallel)
 	s.seqsSem = semaphore.NewWeighted(int64(s.parallel))
-	s.reranking = reranking
 
 	return s.reserveWorstCaseGraph()
 }
@@ -1030,9 +997,8 @@ func (s *Server) load(
 	kvCacheType string,
 	kvSize int,
 	multiUserCache bool,
-	reranking bool,
 ) {
-	err := s.initModel(mpath, params, lpath, parallel, kvCacheType, kvSize, multiUserCache, reranking)
+	err := s.initModel(mpath, params, lpath, parallel, kvCacheType, kvSize, multiUserCache)
 	if err != nil {
 		panic(err)
 	}
@@ -1067,7 +1033,6 @@ func Execute(args []string) error {
 	_ = fs.Bool("no-mmap", false, "do not memory-map model (slower load but may reduce pageouts if not using mlock)")
 	tensorSplit := fs.String("tensor-split", "", "fraction of the model to offload to each GPU, comma-separated list of proportions")
 	multiUserCache := fs.Bool("multiuser-cache", false, "optimize input cache algorithm for multiple users")
-	reranking := fs.Bool("reranking", false, "enable reranking")
 
 	var lpaths multiLPath
 	fs.Var(&lpaths, "lora", "Path to lora layer file (can be specified multiple times)")
@@ -1114,7 +1079,7 @@ func Execute(args []string) error {
 		FlashAttention: *flashAttention,
 	}
 
-	go server.load(ctx, *mpath, params, lpaths, *parallel, *kvCacheType, *kvSize, *multiUserCache, *reranking) // Pass reranking flag
+	go server.load(ctx, *mpath, params, lpaths, *parallel, *kvCacheType, *kvSize, *multiUserCache)
 	go server.run(ctx)
 
 	addr := "127.0.0.1:" + strconv.Itoa(*port)
