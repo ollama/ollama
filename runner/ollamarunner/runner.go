@@ -11,6 +11,7 @@ import (
 	"image"
 	"log"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -513,16 +514,62 @@ func (s *Server) processBatch() error {
 
 		// if done processing the prompt, generate an embedding and return
 		if seq.embeddingOnly {
-			// For reranking models, extract the relevance score directly from logits
-			// Reranking models return one score per sequence, not vocabulary logits
+			// For reranking models, extract the relevance score from binary classification logits
+			// Qwen3-Reranker uses yes/no classification, so we need to extract those specific logits
+			vocabSize := len(logits) / len(batch.Outputs)
+			lastTokenLogits := logits[seq.iBatch*vocabSize : (seq.iBatch+1)*vocabSize]
+			
+			// Check if this is a reranking model by looking for yes/no tokens
+			// For Qwen3-Reranker, we need to find the token IDs for "yes" and "no"
+			textProcessor, ok := s.model.(model.TextProcessor)
+			if ok {
+				// Try to find yes/no tokens
+				yesToken, err := textProcessor.Encode("yes", false)
+				noToken, err2 := textProcessor.Encode("no", false)
+				if err != nil || err2 != nil {
+					slog.Debug("Failed to encode yes/no tokens", "yes_err", err, "no_err", err2)
+					// Fall back to original approach
+					goto fallback
+				}
+				
+				slog.Debug("Found yes/no tokens", "yes_token", yesToken, "no_token", noToken)
+				
+				if len(yesToken) > 0 && len(noToken) > 0 {
+					yesID := yesToken[0]
+					noID := noToken[0]
+					
+					// Extract logits for yes and no tokens
+					if int(yesID) < len(lastTokenLogits) && int(noID) < len(lastTokenLogits) {
+						yesLogit := lastTokenLogits[yesID]
+						noLogit := lastTokenLogits[noID]
+						
+						slog.Debug("Extracted logits", "yes_logit", yesLogit, "no_logit", noLogit)
+						
+						// Compute softmax probability for "yes" (relevance score)
+						maxLogit := max(yesLogit, noLogit)
+						yesProb := float32(math.Exp(float64(yesLogit-maxLogit))) / 
+							float32(math.Exp(float64(yesLogit-maxLogit))+math.Exp(float64(noLogit-maxLogit)))
+						
+						slog.Debug("Computed probability", "yes_prob", yesProb)
+						
+						seq.embedding <- []float32{yesProb}
+						s.removeSequence(i, llm.DoneReasonStop)
+						continue
+					} else {
+						slog.Debug("Token IDs out of range", "yes_id", yesID, "no_id", noID, "vocab_size", len(lastTokenLogits))
+					}
+				}
+			}
+			
+		fallback:
+			// Fallback: if we can't find yes/no tokens, use the original approach
 			if len(logits) == len(batch.Outputs) {
 				// This is a reranking model - extract score directly
 				score := logits[seq.iBatch]
 				seq.embedding <- []float32{score}
 			} else {
 				// This is an embedding model - extract embedding from vocabulary logits
-				vocabSize := len(logits) / len(batch.Outputs)
-				embedding := logits[seq.iBatch*vocabSize : (seq.iBatch+1)*vocabSize]
+				embedding := lastTokenLogits
 				seq.embedding <- embedding
 			}
 			s.removeSequence(i, llm.DoneReasonStop)
