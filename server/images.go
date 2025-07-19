@@ -283,6 +283,7 @@ func GetModel(name string) (*Model, error) {
 		ShortName: mp.GetShortTagname(),
 		Digest:    digest,
 		Template:  template.DefaultTemplate,
+		Options:   make(map[string]any),
 	}
 
 	if manifest.Config.Digest != "" {
