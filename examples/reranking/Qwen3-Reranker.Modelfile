@@ -1,0 +1,26 @@
+# Qwen3-Reranker Modelfile - Corrected Format
+# This Modelfile shows the correct template format for the Qwen3-Reranker model
+# Based on the official Qwen3-Reranker implementation
+
+FROM ./Qwen3-Reranker-0.6B.f16.gguf
+
+# Correct template format matching the official implementation
+# Uses system/user/assistant format with binary yes/no classification
+TEMPLATE """<|im_start|>system
+Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be "yes" or "no".<|im_end|>
+<|im_start|>user
+<Instruct>: {{ .Instruction }}
+<Query>: {{ .Query }}
+<Document>: {{ .Document }}<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
+"""
+
+# Deterministic parameters for consistent scoring
+PARAMETER temperature 0.0
+PARAMETER top_k 1
+PARAMETER top_p 1.0
+PARAMETER repeat_penalty 1.0
