@@ -1,6 +1,7 @@
 package tools
 
 import (
+	stdjson "encoding/json"
 	"testing"
 	"text/template"
 
@@ -40,37 +41,21 @@ func TestParser(t *testing.T) {
 			Function: api.ToolFunction{
 				Name:        "get_temperature",
 				Description: "Retrieve the temperature for a given location",
-				Parameters: struct {
-					Type       string   `json:"type"`
-					Defs       any      `json:"$defs,omitempty"`
-					Items      any      `json:"items,omitempty"`
-					Required   []string `json:"required"`
-					Properties map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					} `json:"properties"`
-				}{
-					Type:     "object",
-					Required: []string{"city"},
-					Properties: map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					}{
+				Parameters: stdjson.RawMessage(`{
+					"type": "object",
+					"required": ["city"],
+					"properties": {
 						"format": {
-							Type:        api.PropertyType{"string"},
-							Description: "The format to return the temperature in",
-							Enum:        []any{"fahrenheit", "celsius"},
+							"type": "string",
+							"description": "The format to return the temperature in",
+							"enum": ["fahrenheit", "celsius"]
 						},
 						"city": {
-							Type:        api.PropertyType{"string"},
-							Description: "The city to get the temperature for",
-						},
-					},
-				},
+							"type": "string",
+							"description": "The city to get the temperature for"
+						}
+					}
+				}`),
 			},
 		},
 		{
@@ -78,31 +63,15 @@ func TestParser(t *testing.T) {
 			Function: api.ToolFunction{
 				Name:        "get_conditions",
 				Description: "Retrieve the current weather conditions for a given location",
-				Parameters: struct {
-					Type       string   `json:"type"`
-					Defs       any      `json:"$defs,omitempty"`
-					Items      any      `json:"items,omitempty"`
-					Required   []string `json:"required"`
-					Properties map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					} `json:"properties"`
-				}{
-					Type: "object",
-					Properties: map[string]struct {
-						Type        api.PropertyType `json:"type"`
-						Items       any              `json:"items,omitempty"`
-						Description string           `json:"description"`
-						Enum        []any            `json:"enum,omitempty"`
-					}{
+				Parameters: stdjson.RawMessage(`{
+					"type": "object",
+					"properties": {
 						"location": {
-							Type:        api.PropertyType{"string"},
-							Description: "The location to get the weather conditions for",
-						},
-					},
-				},
+							"type": "string",
+							"description": "The location to get the weather conditions for"
+						}
+					}
+				}`),
 			},
 		},
 		{
@@ -110,6 +79,7 @@ func TestParser(t *testing.T) {
 			Function: api.ToolFunction{
 				Name:        "say_hello",
 				Description: "Say hello",
+				Parameters:  stdjson.RawMessage(`{}`),
 			},
 		},
 	}
@@ -930,36 +900,20 @@ func TestFindArguments(t *testing.T) {
 		Function: api.ToolFunction{
 			Name:        "get_temperature",
 			Description: "Retrieve the temperature for a given location",
-			Parameters: struct {
-				Type       string   `json:"type"`
-				Defs       any      `json:"$defs,omitempty"`
-				Items      any      `json:"items,omitempty"`
-				Required   []string `json:"required"`
-				Properties map[string]struct {
-					Type        api.PropertyType `json:"type"`
-					Items       any              `json:"items,omitempty"`
-					Description string           `json:"description"`
-					Enum        []any            `json:"enum,omitempty"`
-				} `json:"properties"`
-			}{
-				Type: "object",
-				Properties: map[string]struct {
-					Type        api.PropertyType `json:"type"`
-					Items       any              `json:"items,omitempty"`
-					Description string           `json:"description"`
-					Enum        []any            `json:"enum,omitempty"`
-				}{
+			Parameters: stdjson.RawMessage(`{
+				"type": "object",
+				"properties": {
 					"format": {
-						Type:        api.PropertyType{"string"},
-						Description: "The format to return the temperature in",
-						Enum:        []any{"fahrenheit", "celsius"},
+						"type": "string",
+						"description": "The format to return the temperature in",
+						"enum": ["fahrenheit", "celsius"]
 					},
 					"location": {
-						Type:        api.PropertyType{"string"},
-						Description: "The location to get the temperature for",
-					},
-				},
-			},
+						"type": "string",
+						"description": "The location to get the temperature for"
+					}
+				}
+			}`),
 		},
 	}
 
