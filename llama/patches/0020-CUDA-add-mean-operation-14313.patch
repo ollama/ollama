@@ -52,7 +52,7 @@ index 64fb4ff4..5b9a0fe3 100644
  static __device__ __forceinline__ float warp_reduce_max(float x) {
  #pragma unroll
 diff --git a/ggml/src/ggml-cuda/ggml-cuda.cu b/ggml/src/ggml-cuda/ggml-cuda.cu
-index 4c829153..9e64e5ae 100644
+index d6960174..2b9fabf4 100644
 --- a/ggml/src/ggml-cuda/ggml-cuda.cu
 +++ b/ggml/src/ggml-cuda/ggml-cuda.cu
 @@ -35,6 +35,7 @@
