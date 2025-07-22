@@ -394,7 +394,7 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 						}
 					}
 					fmt.Println()
-					if opts.Options != nil && len(opts.Options) > 0 {
+					if len(opts.Options) > 0 {
 						fmt.Println("User defined parameters:")
 						for k, v := range opts.Options {
 							fmt.Printf("  %-*s %v\n", 30, k, v)
