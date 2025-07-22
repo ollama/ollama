@@ -208,6 +208,13 @@ func (c *Client) stream(ctx context.Context, method, path string, data any, fn f
 	}
 	defer response.Body.Close()
 
+	if response.StatusCode >= http.StatusBadRequest {
+		return StatusError{
+			StatusCode: response.StatusCode,
+			Status:     response.Status,
+		}
+	}
+
 	scanner := bufio.NewScanner(response.Body)
 	// increase the buffer size to avoid running out of space
 	scanBuf := make([]byte, 0, maxBufferSize)
