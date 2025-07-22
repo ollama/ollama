@@ -1,6 +1,7 @@
 package ggml
 
 import (
+	"cmp"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -488,9 +489,11 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 	layers := f.Tensors().GroupLayers()
 
 	bytesPerElement := kvCacheBytesPerElement(kvCacheType)
+	var kvTotal uint64
 	kv = make([]uint64, f.KV().BlockCount())
 	for i := range kv {
 		kv[i] = uint64(float64(context*(embeddingHeadsK+embeddingHeadsV)*headsKV) * bytesPerElement)
+		kvTotal += kv[i]
 	}
 
 	switch f.KV().Architecture() {
@@ -659,6 +662,18 @@ func (f GGML) GraphSize(context, batch uint64, numParallel int, kvCacheType stri
 					4*qkvBias.Shape[0],
 			)
 		}
+	case "gptoss":
+		kv = make([]uint64, f.KV().BlockCount())
+		for i := range kv {
+			kv[i] = uint64(float64((embeddingHeadsK+embeddingHeadsV)*headsKV) * bytesPerElement)
+			if i%2 == 0 {
+				kv[i] *= (4096 + batch)
+			} else {
+				kv[i] *= context
+			}
+		}
+		fullOffload = 4 * f.KV().HeadCountMax() / cmp.Or(f.KV().HeadCountKVMin(), 1) * kvTotal / 6
+		partialOffload = 2 * fullOffload
 	}
 
 	return
