@@ -68,7 +68,12 @@ The `Processor` column will show which memory the model was loaded in to:
 
 ## How do I configure Ollama server?
 
-Ollama server can be configured with environment variables.
+Ollama server can be configured with environment variables or by setting the environment variable in `~/.ollama/config.env`. Environment variables will take precedence over the config file.
+
+```bash
+# ~/.ollama/config.env
+OLLAMA_HOST="0.0.0.0:11434"
+```
 
 ### Setting environment variables on Mac
 
