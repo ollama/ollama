@@ -282,7 +282,7 @@ func (t Tensor) block() (n int) {
 }
 
 func (t Tensor) blockSize() uint64 {
-	return (TensorType)(t.Kind).BlockSize()
+	return TensorType(t.Kind).BlockSize()
 }
 
 func (t TensorType) BlockSize() uint64 {
@@ -300,6 +300,7 @@ func (t TensorType) BlockSize() uint64 {
 	case
 		2,  // Q4_0
 		3,  // Q4_1
+		4,  // MXFP4
 		6,  // Q5_0
 		7,  // Q5_1
 		8,  // Q8_0
@@ -327,6 +328,8 @@ func (t TensorType) TypeSize() uint64 {
 		return 2 + blockSize/2
 	case TensorTypeQ4_1:
 		return 2 + 2 + blockSize/2
+	case TensorTypeMXFP4:
+		return 1 + blockSize/2
 	case TensorTypeQ5_0:
 		return 2 + 4 + blockSize/2
 	case TensorTypeQ5_1:

@@ -1,9 +1,16 @@
 package convert
 
 import (
+	"bytes"
 	"cmp"
+	"encoding/binary"
+	"io"
+	"slices"
+	"strings"
 
 	"github.com/ollama/ollama/fs/ggml"
+	"github.com/pdevine/tensor"
+	"github.com/pdevine/tensor/native"
 )
 
 type gptossModel struct {
@@ -58,12 +65,39 @@ func (m *gptossModel) KV(t *Tokenizer) ggml.KV {
 
 func (m *gptossModel) Tensors(ts []Tensor) []*ggml.Tensor {
 	var out []*ggml.Tensor
+	mxfp4s := make(map[string]*mxfp4)
 	for _, t := range ts {
+		if strings.HasSuffix(t.Name(), ".blocks") || strings.HasSuffix(t.Name(), ".scales") {
+			dot := strings.LastIndex(t.Name(), ".")
+			name, suffix := t.Name()[:dot], t.Name()[dot+1:]
+			if _, ok := mxfp4s[name]; !ok {
+				mxfp4s[name] = &mxfp4{}
+			}
+
+			switch suffix {
+			case "blocks":
+				mxfp4s[name].blocks = t
+			case "scales":
+				mxfp4s[name].scales = t
+			}
+
+		} else {
+			out = append(out, &ggml.Tensor{
+				Name:     t.Name(),
+				Kind:     t.Kind(),
+				Shape:    t.Shape(),
+				WriterTo: t,
+			})
+		}
+	}
+
+	for name, mxfp4 := range mxfp4s {
+		dims := mxfp4.blocks.Shape()
 		out = append(out, &ggml.Tensor{
-			Name:     t.Name(),
-			Kind:     t.Kind(),
-			Shape:    t.Shape(),
-			WriterTo: t,
+			Name:     name,
+			Kind:     uint32(ggml.TensorTypeMXFP4),
+			Shape:    []uint64{dims[0], dims[1], dims[2] * dims[3] * 2},
+			WriterTo: mxfp4,
 		})
 	}
 
@@ -72,6 +106,10 @@ func (m *gptossModel) Tensors(ts []Tensor) []*ggml.Tensor {
 
 func (m *gptossModel) Replacements() []string {
 	return []string{
+		// noop replacements so other replacements will not be applied
+		".blocks", ".blocks",
+		".scales", ".scales",
+		// real replacements
 		"block", "blk",
 		"attn.norm", "attn_norm",
 		"attn.qkv", "attn_qkv",
@@ -86,4 +124,56 @@ func (m *gptossModel) Replacements() []string {
 		"unembedding", "output",
 		"scale", "weight",
 	}
+}
+
+type mxfp4 struct {
+	blocks, scales Tensor
+}
+
+func (m *mxfp4) WriteTo(w io.Writer) (int64, error) {
+	var b bytes.Buffer
+	if _, err := m.blocks.WriteTo(&b); err != nil {
+		return 0, err
+	}
+
+	blocksDims := make([]int, len(m.blocks.Shape()))
+	for i, d := range m.blocks.Shape() {
+		blocksDims[i] = int(d)
+	}
+
+	var blocks tensor.Tensor = tensor.New(tensor.WithShape(blocksDims...), tensor.WithBacking(b.Bytes()))
+
+	var s bytes.Buffer
+	if _, err := m.scales.WriteTo(&s); err != nil {
+		return 0, err
+	}
+
+	scalesDims := slices.Repeat([]int{1}, len(m.blocks.Shape()))
+	for i, d := range m.scales.Shape() {
+		scalesDims[i] = int(d)
+	}
+
+	var scales tensor.Tensor = tensor.New(tensor.WithShape(scalesDims...), tensor.WithBacking(s.Bytes()))
+
+	out, err := tensor.Concat(3, scales, blocks)
+	if err != nil {
+		return 0, err
+	}
+
+	out = tensor.Materialize(out)
+
+	if err := out.Reshape(out.Shape().TotalSize()); err != nil {
+		return 0, err
+	}
+
+	u8s, err := native.VectorU8(out.(*tensor.Dense))
+	if err != nil {
+		return 0, err
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, u8s); err != nil {
+		return 0, err
+	}
+
+	return 0, nil
 }

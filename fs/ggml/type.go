@@ -14,9 +14,9 @@ const (
 	FileTypeF16
 	fileTypeQ4_0
 	fileTypeQ4_1
-	fileTypeQ4_1_F16 // unused by GGML
-	fileTypeQ4_2     // unused by GGML
-	fileTypeQ4_3     // unused by GGML
+	fileTypeMXFP4 // originally fileTypeQ4_1_F16 // unused by GGML
+	fileTypeQ4_2  // unused by GGML
+	fileTypeQ4_3  // unused by GGML
 	FileTypeQ8_0
 	fileTypeQ5_0
 	fileTypeQ5_1
@@ -97,6 +97,8 @@ func (t FileType) String() string {
 		return "Q4_0"
 	case fileTypeQ4_1:
 		return "Q4_1"
+	case fileTypeMXFP4:
+		return "MXFP4"
 	case FileTypeQ8_0:
 		return "Q8_0"
 	case fileTypeQ5_0:
@@ -144,6 +146,8 @@ func (ftype FileType) ToTensorType() TensorType {
 		return TensorTypeQ4_0
 	case fileTypeQ4_1:
 		return TensorTypeQ4_1
+	case fileTypeMXFP4:
+		return TensorTypeMXFP4 // Formerly unused tensorTypeQ4_2
 	case FileTypeQ8_0:
 		return TensorTypeQ8_0
 	case fileTypeQ5_0:
