@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -14,7 +15,6 @@ import (
 	"text/template/parse"
 
 	"github.com/agnivade/levenshtein"
-	"golang.org/x/exp/maps"
 
 	"github.com/ollama/ollama/api"
 )
@@ -157,9 +157,7 @@ func (t *Template) Vars() []string {
 		set[strings.ToLower(n)] = struct{}{}
 	}
 
-	vars = maps.Keys(set)
-	slices.Sort(vars)
-	return vars
+	return slices.Sorted(maps.Keys(set))
 }
 
 type Values struct {
