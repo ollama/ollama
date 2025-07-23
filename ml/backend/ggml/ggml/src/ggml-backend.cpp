@@ -35,10 +35,20 @@ const char * ggml_backend_buft_name(ggml_backend_buffer_type_t buft) {
     return buft->iface.get_name(buft);
 }
 
+void ggml_backend_buft_set_alloc(ggml_backend_buffer_type_t buft, bool alloc) {
+    buft->no_alloc = !alloc;
+}
+
 ggml_backend_buffer_t ggml_backend_buft_alloc_buffer(ggml_backend_buffer_type_t buft, size_t size) {
     if (size == 0) {
         // return a dummy buffer for zero-sized allocations
         return ggml_backend_buffer_init(buft, {}, NULL, 0);
+    }
+
+    if (buft->no_alloc) {
+        ggml_backend_buffer_t buf = ggml_backend_buffer_init(buft, {}, NULL, size);
+        buf->no_alloc = true;
+        return buf;
     }
 
     return buft->iface.alloc_buffer(buft, size);
@@ -89,7 +99,8 @@ ggml_backend_buffer_t ggml_backend_buffer_init(
         /* .buft      = */ buft,
         /* .context   = */ context,
         /* .size      = */ size,
-        /* .usage     = */ GGML_BACKEND_BUFFER_USAGE_ANY
+        /* .usage     = */ GGML_BACKEND_BUFFER_USAGE_ANY,
+        /* .no_alloc  = */ false
     };
 
     return buffer;
@@ -117,6 +128,12 @@ void * ggml_backend_buffer_get_base(ggml_backend_buffer_t buffer) {
     // get_base is optional if the buffer is zero-sized
     if (buffer->size == 0) {
         return NULL;
+    }
+
+    // If we aren't allocating memory, return a placeholder non-NULL pointer
+    // that meets alignment requirements
+    if (buffer->no_alloc) {
+        return (void *)ggml_backend_buffer_get_alignment(buffer);
     }
 
     void * base = buffer->iface.get_base(buffer);

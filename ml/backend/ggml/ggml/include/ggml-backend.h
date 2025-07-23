@@ -35,6 +35,7 @@ extern "C" {
     //
 
     GGML_API const char *          ggml_backend_buft_name          (ggml_backend_buffer_type_t buft);
+    GGML_API void                  ggml_backend_buft_set_alloc     (ggml_backend_buffer_type_t buft, bool alloc);
     GGML_API ggml_backend_buffer_t ggml_backend_buft_alloc_buffer  (ggml_backend_buffer_type_t buft, size_t size);
     GGML_API size_t                ggml_backend_buft_get_alignment (ggml_backend_buffer_type_t buft);
     GGML_API size_t                ggml_backend_buft_get_max_size  (ggml_backend_buffer_type_t buft);
