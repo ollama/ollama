@@ -21,6 +21,10 @@ type SentencePieceModel struct {
 var _ TextProcessor = (*SentencePieceModel)(nil)
 
 func (spm SentencePieceModel) Vocabulary() *Vocabulary {
+	// Ensure the Scores field is initialized if needed
+	if spm.vocab.Scores == nil && len(spm.vocab.Values) > 0 {
+		spm.vocab.Scores = make([]float32, len(spm.vocab.Values))
+	}
 	return spm.vocab
 }
 
