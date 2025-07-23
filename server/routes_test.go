@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -80,19 +81,6 @@ func createTestFile(t *testing.T, name string) (string, string) {
 	}
 
 	return f.Name(), digest
-}
-
-// equalStringSlices checks if two slices of strings are equal.
-func equalStringSlices(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 type panicTransport struct{}
@@ -447,7 +435,7 @@ func TestRoutes(t *testing.T) {
 					"stop \"foo\"",
 					"top_p 0.9",
 				}
-				if !equalStringSlices(params, expectedParams) {
+				if !slices.Equal(params, expectedParams) {
 					t.Errorf("expected parameters %v, got %v", expectedParams, params)
 				}
 				paramCount, ok := showResp.ModelInfo["general.parameter_count"].(float64)
