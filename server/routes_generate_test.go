@@ -302,6 +302,57 @@ func TestGenerateChat(t *testing.T) {
 	})
 
 	w = createRequest(t, s.CreateHandler, api.CreateRequest{
+		Model: "deepseek-r1",
+		From:  "test",
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	t.Run("filter think tags", func(t *testing.T) {
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "deepseek-r1",
+			Messages: []api.Message{
+				{Role: "assistant", Content: "Here is my thought process <think>I should think about this</think> and here is the result."},
+				{Role: "user", Content: "What was the result?"},
+			},
+			Stream: &stream,
+		})
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", w.Code)
+		}
+
+		expectedPrompt := "assistant: Here is my thought process  and here is the result.\nuser: What was the result?\n"
+		if diff := cmp.Diff(mock.CompletionRequest.Prompt, expectedPrompt); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	t.Run("preserve think tags", func(t *testing.T) {
+		preserve := true
+		w := createRequest(t, s.ChatHandler, api.ChatRequest{
+			Model: "deepseek-r1",
+			Messages: []api.Message{
+				{Role: "assistant", Content: "Here is my thought process <think>I should think about this</think> and here is the result."},
+				{Role: "user", Content: "What was the result?"},
+			},
+			Stream:             &stream,
+			PreserveThinkBlock: &preserve,
+		})
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected status 200, got %d", w.Code)
+		}
+
+		expectedPrompt := "assistant: Here is my thought process <think>I should think about this</think> and here is the result.\nuser: What was the result?\n"
+		if diff := cmp.Diff(mock.CompletionRequest.Prompt, expectedPrompt); diff != "" {
+			t.Errorf("mismatch (-got +want):\n%s", diff)
+		}
+	})
+
+	w = createRequest(t, s.CreateHandler, api.CreateRequest{
 		Model:  "test-system",
 		From:   "test",
 		System: "You are a helpful assistant.",
