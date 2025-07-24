@@ -1137,6 +1137,14 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 		if errors.Is(err, context.Canceled) {
 			return nil, nil
 		}
+
+		// this error should ideally be wrapped properly by the client
+		if strings.Contains(err.Error(), "upstream error") {
+			p.StopAndClear()
+			fmt.Println("An error occurred while processing your message. Please try again.")
+			fmt.Println()
+			return nil, nil
+		}
 		return nil, err
 	}
 
