@@ -34,6 +34,7 @@ import (
 	"github.com/ollama/ollama/llm"
 	"github.com/ollama/ollama/logutil"
 	"github.com/ollama/ollama/openai"
+	"github.com/ollama/ollama/anthropic"
 	"github.com/ollama/ollama/server/internal/client/ollama"
 	"github.com/ollama/ollama/server/internal/registry"
 	"github.com/ollama/ollama/template"
@@ -1171,6 +1172,14 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 		"x-stainless-runtime",
 		"x-stainless-runtime-version",
 		"x-stainless-timeout",
+
+		// Anthropic compatibility headers
+		"anthropic-version",
+		"anthropic-beta",
+
+		// Claude compatibility headers
+		"claude-version",
+		"x-claude-client",
 	}
 	corsConfig.AllowOrigins = envconfig.AllowedOrigins()
 
@@ -1214,6 +1223,9 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.POST("/v1/embeddings", openai.EmbeddingsMiddleware(), s.EmbedHandler)
 	r.GET("/v1/models", openai.ListMiddleware(), s.ListHandler)
 	r.GET("/v1/models/:model", openai.RetrieveMiddleware(), s.ShowHandler)
+
+	// Unified Claude/Anthropic API compatibility - drop-in replacement
+	r.POST("/v1/messages", anthropic.MessagesMiddleware(), s.ChatHandler)
 
 	if rc != nil {
 		// wrap old with new
