@@ -1177,12 +1177,23 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	}
 	corsConfig.AllowOrigins = envconfig.AllowedOrigins()
 
-	r := gin.Default()
+	r := gin.New()
 	r.HandleMethodNotAllowed = true
-	r.Use(
-		cors.New(corsConfig),
-		allowedHostsMiddleware(s.addr),
-	)
+
+	if envconfig.GinDisableLogRequest() {
+		r.Use(
+			gin.Recovery(),
+			cors.New(corsConfig),
+			allowedHostsMiddleware(s.addr),
+		)
+	} else {
+		r.Use(
+			gin.Logger(),
+			gin.Recovery(),
+			cors.New(corsConfig),
+			allowedHostsMiddleware(s.addr),
+		)
+	}
 
 	// General
 	r.HEAD("/", func(c *gin.Context) { c.String(http.StatusOK, "Ollama is running") })
