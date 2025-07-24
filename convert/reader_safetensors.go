@@ -150,6 +150,9 @@ func (st safetensor) WriteTo(w io.Writer) (int64, error) {
 		}
 
 		f32s = bfloat16.DecodeFloat32(u8s)
+	case "U8":
+		// U8 tensors do not support repacking or type conversion.
+		return io.CopyN(w, f, st.size)
 	default:
 		return 0, fmt.Errorf("unknown data type: %s", st.dtype)
 	}
