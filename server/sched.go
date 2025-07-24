@@ -33,6 +33,7 @@ type LlmRequest struct {
 	successCh       chan *runnerRef
 	errCh           chan error
 	schedAttempts   uint
+	progressCb      func(progress int) // if non-nil, report progress while loading periodically
 }
 
 type Scheduler struct {
@@ -79,7 +80,7 @@ func InitScheduler(ctx context.Context) *Scheduler {
 }
 
 // context must be canceled to decrement ref count and release the runner
-func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options, sessionDuration *api.Duration) (chan *runnerRef, chan error) {
+func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options, sessionDuration *api.Duration, cb func(int)) (chan *runnerRef, chan error) {
 	if opts.NumCtx < 4 {
 		opts.NumCtx = 4
 	}
@@ -91,6 +92,7 @@ func (s *Scheduler) GetRunner(c context.Context, model *Model, opts api.Options,
 		sessionDuration: sessionDuration,
 		successCh:       make(chan *runnerRef),
 		errCh:           make(chan error, 1),
+		progressCb:      cb,
 	}
 
 	select {
@@ -483,7 +485,7 @@ func (s *Scheduler) load(req *LlmRequest, f *ggml.GGML, gpus discover.GpuInfoLis
 
 	go func() {
 		defer runner.refMu.Unlock()
-		if err = llama.WaitUntilRunning(req.ctx); err != nil {
+		if err = llama.WaitUntilRunning(req.ctx, req.progressCb); err != nil {
 			slog.Error("error loading llama server", "error", err)
 			req.errCh <- err
 			slog.Debug("triggering expiration for failed load", "runner", runner)

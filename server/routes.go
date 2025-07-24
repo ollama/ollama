@@ -89,7 +89,7 @@ func modelOptions(model *Model, requestOpts map[string]any) (api.Options, error)
 
 // scheduleRunner schedules a runner after validating inputs such as capabilities and model options.
 // It returns the allocated runner, model instance, and consolidated options if successful and error otherwise.
-func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration) (llm.LlamaServer, *Model, *api.Options, error) {
+func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.Capability, requestOpts map[string]any, keepAlive *api.Duration, cb func(int)) (llm.LlamaServer, *Model, *api.Options, error) {
 	if name == "" {
 		return nil, nil, nil, fmt.Errorf("model %w", errRequired)
 	}
@@ -112,7 +112,7 @@ func (s *Server) scheduleRunner(ctx context.Context, name string, caps []model.C
 		return nil, nil, nil, err
 	}
 
-	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive)
+	runnerCh, errCh := s.sched.GetRunner(ctx, model, opts, keepAlive, cb)
 	var runner *runnerRef
 	select {
 	case runner = <-runnerCh:
@@ -127,10 +127,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	checkpointStart := time.Now()
 	var req api.GenerateRequest
 	if err := c.ShouldBindJSON(&req); errors.Is(err, io.EOF) {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "missing request body"})
+		c.AbortWithStatusJSON(http.StatusBadRequest, api.GenerateResponse{Done: true, Error: "missing request body"})
 		return
 	} else if err != nil {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.AbortWithStatusJSON(http.StatusBadRequest, api.GenerateResponse{Done: true, Error: err.Error()})
 		return
 	}
 
@@ -138,7 +138,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	if !name.IsValid() {
 		// Ideally this is "invalid model name" but we're keeping with
 		// what the API currently returns until we can change it.
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+		c.JSON(http.StatusNotFound, api.GenerateResponse{Done: true, Error: fmt.Sprintf("model '%s' not found", req.Model)})
 		return
 	}
 
@@ -146,7 +146,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	// induce infinite recursion given the current code structure.
 	name, err := getExistingName(name)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+		c.JSON(http.StatusNotFound, api.GenerateResponse{Done: true, Error: fmt.Sprintf("model '%s' not found", req.Model)})
 		return
 	}
 
@@ -154,11 +154,11 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
-			c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("model '%s' not found", req.Model)})
+			c.JSON(http.StatusNotFound, api.GenerateResponse{Done: true, Error: fmt.Sprintf("model '%s' not found", req.Model)})
 		case err.Error() == errtypes.InvalidModelNameErrMsg:
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, api.GenerateResponse{Done: true, Error: err.Error()})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, api.GenerateResponse{Done: true, Error: err.Error()})
 		}
 		return
 	}
@@ -178,7 +178,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	if req.Raw && (req.Template != "" || req.System != "" || len(req.Context) > 0) {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "raw mode does not support template, system, or context"})
+		c.AbortWithStatusJSON(http.StatusBadRequest, api.GenerateResponse{Done: true, Error: "raw mode does not support template, system, or context"})
 		return
 	}
 
@@ -194,12 +194,48 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		// updated template supporting thinking
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)
+	streamStarted := false
+	cb := func(progress int) {
+		if req.Stream == nil || *req.Stream {
+			res := api.GenerateResponse{
+				Model:     req.Model,
+				CreatedAt: time.Now().UTC(),
+				Metrics: api.Metrics{
+					LoadProgress: progress,
+				},
+			}
+			if !streamStarted {
+				c.Header("Content-Type", "application/x-ndjson")
+				streamStarted = true
+			}
+			bts, err := json.Marshal(res)
+			if err != nil {
+				slog.Info(fmt.Sprintf("streamResponse: json.Marshal failed with %s", err))
+				return
+			}
+			bts = append(bts, '\n')
+			w := c.Writer
+			clientGone := w.CloseNotify()
+			select {
+			case <-clientGone:
+				return
+			default:
+				if _, err := w.Write(bts); err != nil {
+					slog.Info(fmt.Sprintf("streamResponse: w.Write failed with %s", err))
+					return
+				}
+				w.Flush()
+			}
+		}
+	}
+
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive, cb)
 	if errors.Is(err, errCapabilityCompletion) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support generate", req.Model)})
+		c.JSON(http.StatusBadRequest, api.GenerateResponse{Done: true, Error: fmt.Sprintf("%q does not support generate", req.Model)})
 		return
 	} else if err != nil {
-		handleScheduleError(c, req.Model, err)
+		code, msg := scheduleError(err)
+		c.JSON(code, api.GenerateResponse{Done: true, Error: msg})
 		return
 	}
 
@@ -217,7 +253,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 	}
 
 	if slices.Contains(m.Config.ModelFamilies, "mllama") && len(req.Images) > 1 {
-		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": "this model only supports one image while more than one image requested"})
+		c.AbortWithStatusJSON(http.StatusBadRequest, api.GenerateResponse{Done: true, Error: "this model only supports one image while more than one image requested"})
 		return
 	}
 
@@ -232,7 +268,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 		if req.Template != "" {
 			tmpl, err = template.Parse(req.Template)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				c.JSON(http.StatusInternalServerError, api.GenerateResponse{Done: true, Error: err.Error()})
 				return
 			}
 		}
@@ -269,14 +305,14 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			slog.Warn("the context field is deprecated and will be removed in a future version of Ollama")
 			s, err := r.Detokenize(c.Request.Context(), req.Context)
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				c.JSON(http.StatusInternalServerError, api.GenerateResponse{Done: true, Error: err.Error()})
 				return
 			}
 			b.WriteString(s)
 		}
 
 		if err := tmpl.Execute(&b, values); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, api.GenerateResponse{Done: true, Error: err.Error()})
 			return
 		}
 
@@ -323,7 +359,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 			}
 
 			if _, err := sb.WriteString(cr.Content); err != nil {
-				ch <- gin.H{"error": err.Error()}
+				ch <- api.GenerateResponse{Done: true, Error: err.Error()}
 			}
 
 			if cr.Done {
@@ -334,7 +370,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 				if !req.Raw {
 					tokens, err := r.Tokenize(c.Request.Context(), prompt+sb.String())
 					if err != nil {
-						ch <- gin.H{"error": err.Error()}
+						ch <- api.GenerateResponse{Done: true, Error: err.Error()}
 						return
 					}
 					res.Context = tokens
@@ -343,7 +379,7 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 
 			ch <- res
 		}); err != nil {
-			ch <- gin.H{"error": err.Error()}
+			ch <- api.GenerateResponse{Done: true, Error: err.Error()}
 		}
 	}()
 
@@ -363,10 +399,10 @@ func (s *Server) GenerateHandler(c *gin.Context) {
 					msg = "unexpected error format in response"
 				}
 
-				c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
+				c.JSON(http.StatusInternalServerError, api.GenerateResponse{Done: true, Error: msg})
 				return
 			default:
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected response"})
+				c.JSON(http.StatusInternalServerError, api.GenerateResponse{Done: true, Error: "unexpected response"})
 				return
 			}
 		}
@@ -428,7 +464,7 @@ func (s *Server) EmbedHandler(c *gin.Context) {
 		return
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive, nil)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -536,7 +572,7 @@ func (s *Server) EmbeddingsHandler(c *gin.Context) {
 		return
 	}
 
-	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive)
+	r, _, _, err := s.scheduleRunner(c.Request.Context(), name.String(), []model.Capability{}, req.Options, req.KeepAlive, nil)
 	if err != nil {
 		handleScheduleError(c, req.Model, err)
 		return
@@ -1486,12 +1522,47 @@ func (s *Server) ChatHandler(c *gin.Context) {
 		return
 	}
 
-	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive)
+	streamStarted := false
+	cb := func(progress int) {
+		if req.Stream == nil || *req.Stream {
+			res := api.ChatResponse{
+				Model:     req.Model,
+				CreatedAt: time.Now().UTC(),
+				Metrics: api.Metrics{
+					LoadProgress: progress,
+				},
+			}
+			if !streamStarted {
+				c.Header("Content-Type", "application/x-ndjson")
+				streamStarted = true
+			}
+			bts, err := json.Marshal(res)
+			if err != nil {
+				slog.Info(fmt.Sprintf("streamResponse: json.Marshal failed with %s", err))
+				return
+			}
+			bts = append(bts, '\n')
+			w := c.Writer
+			clientGone := w.CloseNotify()
+			select {
+			case <-clientGone:
+				return
+			default:
+				if _, err := w.Write(bts); err != nil {
+					slog.Info(fmt.Sprintf("streamResponse: w.Write failed with %s", err))
+					return
+				}
+				w.Flush()
+			}
+		}
+	}
+	r, m, opts, err := s.scheduleRunner(c.Request.Context(), name.String(), caps, req.Options, req.KeepAlive, cb)
 	if errors.Is(err, errCapabilityCompletion) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("%q does not support chat", req.Model)})
+		c.JSON(http.StatusBadRequest, api.ChatResponse{Done: true, Error: fmt.Sprintf("%q does not support chat", req.Model)})
 		return
 	} else if err != nil {
-		handleScheduleError(c, req.Model, err)
+		code, msg := scheduleError(err)
+		c.JSON(code, api.ChatResponse{Done: true, Error: msg})
 		return
 	}
 
@@ -1517,7 +1588,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	prompt, images, err := chatPrompt(c.Request.Context(), m, r.Tokenize, opts, msgs, req.Tools, req.Think)
 	if err != nil {
 		slog.Error("chat prompt error", "error", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, api.ChatResponse{Done: true, Error: err.Error()})
 		return
 	}
 
@@ -1594,7 +1665,7 @@ func (s *Server) ChatHandler(c *gin.Context) {
 
 			ch <- res
 		}); err != nil {
-			ch <- gin.H{"error": err.Error()}
+			ch <- api.ChatResponse{Done: true, Error: err.Error()}
 		}
 	}()
 
@@ -1618,10 +1689,10 @@ func (s *Server) ChatHandler(c *gin.Context) {
 					msg = "unexpected error format in response"
 				}
 
-				c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
+				c.JSON(http.StatusInternalServerError, api.ChatResponse{Done: true, Error: msg})
 				return
 			default:
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "unexpected response"})
+				c.JSON(http.StatusInternalServerError, api.ChatResponse{Done: true, Error: "unexpected response"})
 				return
 			}
 		}
@@ -1640,6 +1711,22 @@ func (s *Server) ChatHandler(c *gin.Context) {
 	streamResponse(c, ch)
 }
 
+func scheduleError(err error) (int, string) {
+	switch {
+	case errors.Is(err, errCapabilities), errors.Is(err, errRequired):
+		return http.StatusBadRequest, err.Error()
+	case errors.Is(err, context.Canceled):
+		return 499, "request canceled"
+	case errors.Is(err, ErrMaxQueue):
+		return http.StatusServiceUnavailable, err.Error()
+	case errors.Is(err, os.ErrNotExist):
+		return http.StatusNotFound, "model not found, try pulling it first"
+	default:
+		return http.StatusInternalServerError, err.Error()
+	}
+}
+
+// TODO remove once no longer used
 func handleScheduleError(c *gin.Context, name string, err error) {
 	switch {
 	case errors.Is(err, errCapabilities), errors.Is(err, errRequired):
