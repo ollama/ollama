@@ -124,9 +124,9 @@ type DeviceMemory struct {
 	// may not be persistent across instances of the runner.
 	Name string
 
-	// UUID is a unique persistent identifier for the device for matching
-	// with system management libraries
-	UUID string
+	// ID is an identifier for the device for matching with system
+	// management libraries.
+	ID string
 
 	// Weights is the per-layer memory needed for the model weights.
 	Weights []Memory
@@ -156,8 +156,8 @@ func (m DeviceMemory) LogValue() slog.Value {
 		attrs = append(attrs, slog.Any("Graph", m.Graph))
 	}
 
-	if len(attrs) > 0 && m.UUID != "" {
-		attrs = append([]slog.Attr{slog.String("UUID", m.UUID)}, attrs...)
+	if len(attrs) > 0 && m.ID != "" {
+		attrs = append([]slog.Attr{slog.String("ID", m.ID)}, attrs...)
 	}
 
 	return slog.GroupValue(attrs...)
@@ -253,6 +253,7 @@ type Tensor interface {
 
 	Neg(ctx Context) Tensor
 	Add(ctx Context, t2 Tensor) Tensor
+	Sub(ctx Context, t2 Tensor) Tensor
 	Mul(ctx Context, t2 Tensor) Tensor
 	Div(ctx Context, t2 Tensor) Tensor
 
@@ -276,6 +277,7 @@ type Tensor interface {
 	Tanh(ctx Context) Tensor
 	GELU(ctx Context) Tensor
 	SILU(ctx Context) Tensor
+	RELU(ctx Context) Tensor
 	Sigmoid(ctx Context) Tensor
 
 	Reshape(ctx Context, shape ...int) Tensor
@@ -297,6 +299,12 @@ type Tensor interface {
 
 	TopK(ctx Context, k int) Tensor
 	Argsort(ctx Context) Tensor
+	Mean(ctx Context) Tensor
+	Variance(ctx Context) Tensor
+	Stddev(ctx Context) Tensor
+	Sqr(ctx Context) Tensor
+	Sqrt(ctx Context) Tensor
+	Clamp(ctx Context, min, max float32) Tensor
 }
 
 // ScaledDotProductAttention implements a fused attention

@@ -115,35 +115,21 @@ func (p *Parser) findTag() (int, bool) {
 // parseToolCall finds the next complete tool call in the buffer
 // incrementing n and advancing the buffer.
 func (p *Parser) parseToolCall() *api.ToolCall {
-	var tool *api.Tool
-	var end int = len(p.buffer)
-	var i int
-
-	// find tool name
-	for _, t := range p.tools {
-		n := t.Function.Name
-		if i = bytes.Index(p.buffer, []byte(n)); i != -1 {
-			if i+len(n) < end {
-				tool = &t
-				end = i + len(n)
-			}
-		}
-	}
-
+	tool, end := findTool(p.tools, p.buffer)
 	if tool == nil {
 		return nil
 	}
 
-	// only look for arguments if the tool has parameters
+	// only look for arguments after the tool name if the tool has parameters
+	// TODO (jmorganca): while probably uncommon, this doesn't support
+	// parsing arguments before the tool name, which may be needed in the future
 	args := map[string]any{}
 	if len(tool.Function.Parameters.Properties) > 0 {
-		if args, i = p.findArguments(*tool); args == nil {
+		var i int
+		if args, i = findArguments(*tool, p.buffer[end:]); args == nil {
 			return nil
 		}
-
-		if i > end {
-			end = i
-		}
+		end += i
 	}
 
 	tc := &api.ToolCall{
@@ -159,15 +145,80 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 	return tc
 }
 
-// findArguments returns the first object that appears to be
-// arguments for the provided tool, returning nil
-func (p *Parser) findArguments(tool api.Tool) (map[string]any, int) {
-	if len(p.buffer) == 0 {
+// findTool finds the first tool name in the list that matches the
+// beginning of the buffer, returning nil if no tool is found
+// or if the buffer ends with a partial tool name since we need
+// to wait for more data to disambiguate.
+// The second return value is the end position of the tool name
+// if one is found, otherwise 0.
+func findTool(tools []api.Tool, buf []byte) (*api.Tool, int) {
+	if len(buf) == 0 {
 		return nil, 0
 	}
 
-	// no arguments to parse
-	if len(tool.Function.Parameters.Properties) == 0 {
+	// check if buffer ends with a partial tool name
+	// this prevents matching "get" when seeing "get_weather"
+	var longest string
+	for _, t := range tools {
+		if len(t.Function.Name) > len(longest) {
+			longest = t.Function.Name
+		}
+	}
+
+	// Only check up to longest characters from the end
+	for i := 1; i <= min(len(buf), len(longest)); i++ {
+		tail := buf[len(buf)-i:]
+		for _, t := range tools {
+			name := []byte(t.Function.Name)
+			if len(tail) < len(name) && bytes.HasPrefix(name, tail) {
+				return nil, 0
+			}
+		}
+	}
+
+	// find first occurrence of the longest tool name
+	var found *api.Tool
+	start := -1
+	end := -1
+
+	for i := range tools {
+		name := []byte(tools[i].Function.Name)
+		pos := bytes.Index(buf, name)
+		if pos == -1 {
+			continue
+		}
+
+		// Skip if we have a better match already
+		if start != -1 {
+			if pos > start {
+				continue
+			}
+			if pos == start && len(name) <= len(found.Function.Name) {
+				continue
+			}
+		}
+
+		found = &tools[i]
+		start = pos
+		end = pos + len(name)
+	}
+
+	if found != nil {
+		return found, end
+	}
+
+	return nil, 0
+}
+
+// findArguments returns the first object that appears to be
+// arguments for the provided tool in the provided buffer,
+// returning nil if no arguments are found and the end position
+// TODO (jmorganca): this does not support parsing omitted arguments
+// objects for functions that have all-optional parameters
+// e.g. `{"name": "get_conditions", "arguments": {}}` will work but
+// `{"name": "get_conditions"}` will not currently work
+func findArguments(tool api.Tool, buffer []byte) (map[string]any, int) {
+	if len(buffer) == 0 {
 		return nil, 0
 	}
 
@@ -177,7 +228,7 @@ func (p *Parser) findArguments(tool api.Tool) (map[string]any, int) {
 	var object []byte
 
 	// find any outer json object
-	for i, c := range p.buffer {
+	for i, c := range buffer {
 		if c == '{' {
 			braces++
 			if start == -1 {
@@ -190,7 +241,7 @@ func (p *Parser) findArguments(tool api.Tool) (map[string]any, int) {
 				braces--
 				if braces == 0 {
 					end = i + 1
-					object = p.buffer[start:end]
+					object = buffer[start:end]
 					break
 				}
 			}
@@ -202,8 +253,6 @@ func (p *Parser) findArguments(tool api.Tool) (map[string]any, int) {
 	}
 
 	var data map[string]any
-
-	// not valid json
 	if err := json.Unmarshal(object, &data); err != nil {
 		return nil, 0
 	}
@@ -212,15 +261,27 @@ func (p *Parser) findArguments(tool api.Tool) (map[string]any, int) {
 	find = func(obj any) map[string]any {
 		switch obj := obj.(type) {
 		case map[string]any:
-			found := true
+			valid := true
+			// check if all keys in the object exist in the tool's parameters
 			for key := range obj {
 				if _, exists := tool.Function.Parameters.Properties[key]; !exists {
-					found = false
+					valid = false
 					break
 				}
 			}
 
-			if found {
+			// check for required parameters
+			// TODO (jmorganca): this should error instead of silently failing
+			if valid {
+				for _, required := range tool.Function.Parameters.Required {
+					if _, exists := obj[required]; !exists {
+						valid = false
+						break
+					}
+				}
+			}
+
+			if valid {
 				return obj
 			}
 
