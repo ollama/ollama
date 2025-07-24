@@ -34,8 +34,12 @@ if (MUSAToolkit_FOUND)
     list(APPEND GGML_SOURCES_MUSA ${SRCS})
     file(GLOB   SRCS "../ggml-cuda/template-instances/mmq*.cu")
     list(APPEND GGML_SOURCES_MUSA ${SRCS})
-    file(GLOB   SRCS "../ggml-musa/*.cu")
-    list(APPEND GGML_SOURCES_MUSA ${SRCS})
+
+    if (GGML_MUSA_MUDNN_COPY)
+        file(GLOB   SRCS "../ggml-musa/*.cu")
+        list(APPEND GGML_SOURCES_MUSA ${SRCS})
+        add_compile_definitions(GGML_MUSA_MUDNN_COPY)
+    endif()
 
     if (GGML_CUDA_FA_ALL_QUANTS)
         file(GLOB   SRCS "../ggml-cuda/template-instances/fattn-vec*.cu")
@@ -97,10 +101,16 @@ if (MUSAToolkit_FOUND)
     endif()
 
     if (GGML_STATIC)
-        # TODO: mudnn has not provided static libraries yet
         target_link_libraries(ggml-musa PRIVATE MUSA::musart_static MUSA::mublas_static)
+        # TODO: mudnn has not provided static libraries yet
+        # if (GGML_MUSA_MUDNN_COPY)
+        #     target_link_libraries(ggml-musa PRIVATE mudnn_static)
+        # endif()
     else()
-        target_link_libraries(ggml-musa PRIVATE MUSA::musart MUSA::mublas mudnn)
+        target_link_libraries(ggml-musa PRIVATE MUSA::musart MUSA::mublas)
+        if (GGML_MUSA_MUDNN_COPY)
+            target_link_libraries(ggml-musa PRIVATE mudnn)
+        endif()
     endif()
 
     if (GGML_CUDA_NO_VMM)

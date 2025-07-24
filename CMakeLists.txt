@@ -160,7 +160,7 @@ if(MUSAToolkit_FOUND)
         install(TARGETS ggml-musa
             RUNTIME_DEPENDENCIES
                 DIRECTORIES ${MUSAToolkit_BIN_DIR} ${MUSAToolkit_LIBRARY_DIR}
-                PRE_INCLUDE_REGEXES mudnn mublas musart musa
+                PRE_INCLUDE_REGEXES mublas musart musa
                 PRE_EXCLUDE_REGEXES ".*"
             RUNTIME DESTINATION ${OLLAMA_MUSA_INSTALL_DIR} COMPONENT MUSA
             LIBRARY DESTINATION ${OLLAMA_MUSA_INSTALL_DIR} COMPONENT MUSA
