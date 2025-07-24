@@ -4,6 +4,42 @@
   </a>
 </div>
 
+# Ollama MUSA (ollama-musa)
+
+[![Latest Release](https://img.shields.io/github/v/release/MooreThreads/ollama-musa?style=flat-square&color=orange)](https://github.com/MooreThreads/ollama-musa/releases/latest)
+[![Docker Pulls](https://img.shields.io/docker/pulls/mthreads/ollama?style=flat-square&color=orange)](https://hub.docker.com/r/mthreads/ollama)
+[![GitHub License](https://img.shields.io/badge/License-Modified_MIT-orange.svg?style=flat-square)](https://github.com/MooreThreads/ollama-musa/blob/main/LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/MooreThreads/ollama-musa?style=social)](https://github.com/MooreThreads/ollama-musa)
+
+
+**Ollama MUSA** 是 [Ollama](https://github.com/ollama/ollama) 的一个分支版本，旨在支持在 [摩尔线程](https://www.mthreads.com/) GPU 上运行大语言模型（LLM）。
+该项目基于 MUSA（**M**eta-computing **U**nified **S**ystem **A**rchitecture，统一元计算系统架构）平台，提升推理性能。
+
+**Ollama MUSA** is a fork of [Ollama](https://github.com/ollama/ollama) that enables support for running large language models (LLMs) on [Moore Threads](https://www.mthreads.com/) GPUs.
+It leverages the **MUSA** (**M**eta-computing **U**nified **S**ystem **A**rchitecture) platform to accelerate inference workloads.
+
+## 安装说明 / Installation
+
+请先下载安装 [MUSA SDK](https://developer.mthreads.com/sdk/download/musa?equipment=&os=&driverVersion=&version=4.2.0) 中对应的 MTGPU 驱动。
+
+First, download the [MUSA SDK](https://developer.mthreads.com/sdk/download/musa?equipment=&os=&driverVersion=&version=4.2.0) and install the appropriate MTGPU driver.
+
+### 方式一：使用在线安装脚本 / Option 1: Install via Online Script
+
+```shell
+curl -fsSL https://raw.githubusercontent.com/MooreThreads/ollama-musa/refs/heads/main/scripts/install.sh | sh
+```
+
+### 方式二：使用 Docker 运行 / Option 2: Run with Docker
+
+请安装 [MT Container Toolkit](https://developer.mthreads.com/sdk/download/CloudNative?equipment=&os=&driverVersion=&version=)（推荐版本：v2.0.0），并将默认容器运行时设置为 `mthreads`。
+
+Install the [MT Container Toolkit](https://developer.mthreads.com/sdk/download/CloudNative?equipment=&os=&driverVersion=&version=) (v2.0.0), and set the default runtime to `mthreads`.
+
+```bash
+docker run -d -v ollama:/root/.ollama -p 11434:11434 --name ollama mthreads/ollama:0.9.6-musa-rc4.2.0
+```
+
 # Ollama
 
 Get up and running with large language models.
@@ -406,7 +442,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [AppFlowy](https://github.com/AppFlowy-IO/AppFlowy) (AI collaborative workspace with Ollama, cross-platform and self-hostable)
 - [Lumina](https://github.com/cushydigit/lumina.git) (A lightweight, minimal React.js frontend for interacting with Ollama servers)
 - [Tiny Notepad](https://pypi.org/project/tiny-notepad) (A lightweight, notepad-like interface to chat with ollama available on PyPI)
-- [macLlama (macOS native)](https://github.com/hellotunamayo/macLlama) (A native macOS GUI application for interacting with Ollama models, featuring a chat interface.) 
+- [macLlama (macOS native)](https://github.com/hellotunamayo/macLlama) (A native macOS GUI application for interacting with Ollama models, featuring a chat interface.)
 - [GPTranslate](https://github.com/philberndt/GPTranslate) (A fast and lightweight, AI powered desktop translation application written with Rust and Tauri. Features real-time translation with OpenAI/Azure/Ollama.)
 - [ollama launcher](https://github.com/NGC13009/ollama-launcher) (A launcher for Ollama, aiming to provide users with convenient functions such as ollama server launching, management, or configuration.)
 - [ai-hub](https://github.com/Aj-Seven/ai-hub) (AI Hub supports multiple models via API keys and Chat support via Ollama API.)
