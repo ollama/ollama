@@ -120,16 +120,14 @@ func (p *Parser) parseToolCall() *api.ToolCall {
 		return nil
 	}
 
-	// only look for arguments after the tool name if the tool has parameters
-	// TODO (jmorganca): while probably uncommon, this doesn't support
-	// parsing arguments before the tool name, which may be needed in the future
-	args := map[string]any{}
-	if len(tool.Function.Parameters.Properties) > 0 {
-		var i int
-		if args, i = findArguments(*tool, p.buffer[end:]); args == nil {
-			return nil
+	var args map[string]any
+	if found, i := findArguments(p.buffer); found == nil {
+		return nil
+	} else {
+		args = found
+		if i > end {
+			end = i
 		}
-		end += i
 	}
 
 	tc := &api.ToolCall{
@@ -217,93 +215,70 @@ func findTool(tools []api.Tool, buf []byte) (*api.Tool, int) {
 // objects for functions that have all-optional parameters
 // e.g. `{"name": "get_conditions", "arguments": {}}` will work but
 // `{"name": "get_conditions"}` will not currently work
-func findArguments(tool api.Tool, buffer []byte) (map[string]any, int) {
+func findArguments(buffer []byte) (map[string]any, int) {
 	if len(buffer) == 0 {
 		return nil, 0
 	}
 
 	var braces int
 	var start int = -1
-	var end int
-	var object []byte
 
-	// find any outer json object
 	for i, c := range buffer {
 		if c == '{' {
-			braces++
-			if start == -1 {
+			if braces == 0 {
 				start = i
 			}
-		}
+			braces++
+		} else if c == '}' && braces > 0 {
+			braces--
+			if braces == 0 && start != -1 {
+				object := buffer[start : i+1]
 
-		if c == '}' {
-			if start != -1 {
-				braces--
-				if braces == 0 {
-					end = i + 1
-					object = buffer[start:end]
-					break
+				var data map[string]any
+				if err := json.Unmarshal(object, &data); err != nil {
+					start = -1
+					continue
 				}
-			}
-		}
-	}
 
-	if braces > 0 {
-		return nil, 0
-	}
-
-	var data map[string]any
-	if err := json.Unmarshal(object, &data); err != nil {
-		return nil, 0
-	}
-
-	var find func(obj any) map[string]any
-	find = func(obj any) map[string]any {
-		switch obj := obj.(type) {
-		case map[string]any:
-			valid := true
-			// check if all keys in the object exist in the tool's parameters
-			for key := range obj {
-				if _, exists := tool.Function.Parameters.Properties[key]; !exists {
-					valid = false
-					break
-				}
-			}
-
-			// check for required parameters
-			// TODO (jmorganca): this should error instead of silently failing
-			if valid {
-				for _, required := range tool.Function.Parameters.Required {
-					if _, exists := obj[required]; !exists {
-						valid = false
-						break
+				var findObject func(obj map[string]any) (map[string]any, bool)
+				findObject = func(obj map[string]any) (map[string]any, bool) {
+					if _, hasName := obj["name"]; hasName {
+						if args, ok := obj["arguments"].(map[string]any); ok {
+							return args, true
+						}
+						if args, ok := obj["parameters"].(map[string]any); ok {
+							return args, true
+						}
+						return nil, true
 					}
-				}
-			}
 
-			if valid {
-				return obj
-			}
+					for _, v := range obj {
+						switch child := v.(type) {
+						case map[string]any:
+							if result, found := findObject(child); found {
+								return result, true
+							}
+						case []any:
+							for _, item := range child {
+								if childObj, ok := item.(map[string]any); ok {
+									if result, found := findObject(childObj); found {
+										return result, true
+									}
+								}
+							}
+						}
+					}
 
-			for _, value := range obj {
-				if result := find(value); result != nil {
-					return result
+					return nil, false
 				}
-			}
-		case []any:
-			for _, item := range obj {
-				if result := find(item); result != nil {
-					return result
+
+				if args, found := findObject(data); found {
+					return args, i
 				}
+
+				return data, i
 			}
 		}
-
-		return nil
-	}
-
-	result := find(data)
-	if result != nil {
-		return result, end
 	}
 
 	return nil, 0
