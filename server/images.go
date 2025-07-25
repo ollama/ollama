@@ -640,6 +640,30 @@ func PullModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		}
 	}
 
+	// Verify signatures if present
+	if manifest.HasSignature() {
+		fn(api.ProgressResponse{Status: "verifying signature"})
+		verifier := NewSignatureVerifier()
+		result, err := verifier.VerifyManifest(manifest)
+		if err != nil {
+			slog.Warn("signature verification failed during pull", "error", err)
+			fn(api.ProgressResponse{Status: "signature verification failed - model downloaded but not verified"})
+		} else if result.Valid {
+			fn(api.ProgressResponse{Status: "signature verified"})
+			// Update signature verification status
+			if manifest.Signature != nil {
+				manifest.Signature.Verified = true
+			}
+		} else {
+			slog.Warn("invalid signature detected during pull", "reason", result.ErrorMessage)
+			fn(api.ProgressResponse{Status: "signature invalid - model downloaded but signature verification failed"})
+			// Update signature verification status
+			if manifest.Signature != nil {
+				manifest.Signature.Verified = false
+			}
+		}
+	}
+
 	fn(api.ProgressResponse{Status: "writing manifest"})
 
 	manifestJSON, err := json.Marshal(manifest)
