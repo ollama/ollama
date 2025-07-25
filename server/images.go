@@ -532,6 +532,24 @@ func PushModel(ctx context.Context, name string, regOpts *registryOptions, fn fu
 		return err
 	}
 
+	// Check for signature information and provide feedback
+	if manifest.HasSignature() {
+		fn(api.ProgressResponse{Status: "verifying signature before push"})
+		verifier := NewSignatureVerifier()
+		result, err := verifier.VerifyManifest(manifest)
+		if err != nil {
+			slog.Warn("signature verification failed during push", "error", err)
+			fn(api.ProgressResponse{Status: "signature verification failed - pushing unsigned model"})
+		} else if result.Valid {
+			fn(api.ProgressResponse{Status: "signature verified - pushing signed model"})
+		} else {
+			slog.Warn("invalid signature detected during push", "reason", result.ErrorMessage)
+			fn(api.ProgressResponse{Status: "signature invalid - pushing model with invalid signature"})
+		}
+	} else {
+		fn(api.ProgressResponse{Status: "pushing unsigned model"})
+	}
+
 	var layers []Layer
 	layers = append(layers, manifest.Layers...)
 	if manifest.Config.Digest != "" {

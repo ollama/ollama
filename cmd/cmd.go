@@ -444,6 +444,51 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	return generate(cmd, opts)
 }
 
+// showPushSignatureSummary displays post-push signature verification information
+func showPushSignatureSummary(modelName model.Name) error {
+	sigInfo, err := server.GetSignatureInfo(modelName)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println() // Add spacing after push progress
+
+	if sigInfo == nil {
+		// Model is unsigned
+		fmt.Printf("📤 Pushed unsigned model %s\n", modelName.DisplayShortest())
+		fmt.Printf("   Consider signing the model to ensure authenticity for users\n")
+		fmt.Printf("   Use 'ollama sign %s' to add a signature\n", modelName.DisplayShortest())
+		return nil
+	}
+
+	// Model has signature information
+	fmt.Printf("🔐 Pushed signed model %s\n", modelName.DisplayShortest())
+	
+	// Perform verification to get current status
+	verifier := server.NewSignatureVerifier()
+	result, err := verifier.VerifyModel(modelName)
+	if err != nil {
+		fmt.Printf("   ❌ Signature verification failed: %v\n", err)
+		fmt.Printf("   Users may see signature verification warnings\n")
+		return nil
+	}
+
+	if result.Valid {
+		fmt.Printf("   ✅ Signature verified successfully\n")
+		fmt.Printf("   Users will see verified signature when downloading\n")
+		fmt.Printf("   Signer: %s\n", sigInfo.Signer)
+		fmt.Printf("   Signed at: %s\n", sigInfo.SignedAt.Format("2006-01-02 15:04:05"))
+	} else {
+		fmt.Printf("   ❌ Signature verification failed\n")
+		if result.ErrorMessage != "" {
+			fmt.Printf("   Reason: %s\n", result.ErrorMessage)
+		}
+		fmt.Printf("   Users will see signature verification warnings\n")
+	}
+
+	return nil
+}
+
 func PushHandler(cmd *cobra.Command, args []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -504,6 +549,12 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 
 	p.Stop()
 	spinner.Stop()
+
+	// Show signature verification summary after push completes
+	if err := showPushSignatureSummary(n); err != nil {
+		// Don't fail the push if we can't show signature info
+		slog.Debug("failed to show push signature summary", "error", err)
+	}
 
 	destination := n.String()
 	if strings.HasSuffix(n.Host, ".ollama.ai") || strings.HasSuffix(n.Host, ".ollama.com") {
