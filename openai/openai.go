@@ -434,13 +434,29 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 						}
 					}
 
-					if !valid {
-						return nil, errors.New("invalid image input")
-					}
-
-					img, err := base64.StdEncoding.DecodeString(url)
-					if err != nil {
-						return nil, errors.New("invalid message format")
+					var img []byte
+					if valid {
+						// base64 already, decode
+						var err error
+						img, err = base64.StdEncoding.DecodeString(url)
+						if err != nil {
+							return nil, errors.New("invalid message format")
+						}
+					} else {
+						// treat as url, fetch and convert to base64
+						resp, err := http.Get(url)
+						if err != nil {
+							return nil, errors.New("failed to fetch image from url")
+						}
+						defer resp.Body.Close()
+						if resp.StatusCode != http.StatusOK {
+							return nil, errors.New("failed to fetch image from url")
+						}
+						imgData, err := io.ReadAll(resp.Body)
+						if err != nil {
+							return nil, errors.New("failed to read image from url")
+						}
+						img = imgData
 					}
 
 					messages = append(messages, api.Message{Role: msg.Role, Images: []api.ImageData{img}})
