@@ -1455,6 +1455,87 @@ func SignHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func VerifyHandler(cmd *cobra.Command, args []string) error {
+	if len(args) != 1 {
+		return errors.New("verify requires exactly one model name")
+	}
+
+	modelName := args[0]
+	name := model.ParseName(modelName)
+	if !name.IsValid() {
+		return fmt.Errorf("invalid model name: %s", modelName)
+	}
+
+	// Get signature information
+	sigInfo, err := server.GetSignatureInfo(name)
+	if err != nil {
+		return fmt.Errorf("failed to get signature info: %w", err)
+	}
+
+	// Check if model is signed
+	if sigInfo == nil {
+		fmt.Printf("Model %s is not signed\n", modelName)
+		fmt.Printf("  Use 'ollama sign %s' to sign this model\n", modelName)
+		return nil
+	}
+
+	fmt.Printf("Model %s signature information:\n", modelName)
+	fmt.Printf("  Signer: %s\n", sigInfo.Signer)
+	fmt.Printf("  Format: %s\n", sigInfo.Format)
+	fmt.Printf("  Signed at: %s\n", sigInfo.SignedAt.Format(time.RFC3339))
+	fmt.Printf("  Signature URI: %s\n", sigInfo.SignatureURI)
+
+	// Perform verification using our signature verifier
+	verifier := server.NewSignatureVerifier()
+	result, err := verifier.VerifyModel(name)
+	if err != nil {
+		fmt.Printf("  Status: ❌ Verification failed\n")
+		fmt.Printf("  Error: %v\n", err)
+		return nil // Don't return error for verification failures
+	}
+
+	if result.Valid {
+		fmt.Printf("  Status: ✅ Signature verified\n")
+		if result.ErrorMessage != "" {
+			fmt.Printf("  Note: %s\n", result.ErrorMessage)
+		}
+	} else {
+		fmt.Printf("  Status: ❌ Signature invalid\n")
+		if result.ErrorMessage != "" {
+			fmt.Printf("  Reason: %s\n", result.ErrorMessage)
+		}
+	}
+
+	// Show additional verification details if verbose flag is set
+	verbose, _ := cmd.Flags().GetBool("verbose")
+	if verbose {
+		fmt.Printf("\nDetailed verification information:\n")
+		fmt.Printf("  Verification format: %s\n", result.Format)
+		if result.Signer != "" {
+			fmt.Printf("  Verified signer: %s\n", result.Signer)
+		}
+		if !result.SignedAt.IsZero() {
+			fmt.Printf("  Verified signing time: %s\n", result.SignedAt.Format(time.RFC3339))
+		}
+		
+		// Show manifest info
+		manifest, err := server.ParseNamedManifest(name)
+		if err == nil {
+			fmt.Printf("  Model layers: %d\n", len(manifest.Layers))
+			fmt.Printf("  Model size: %s\n", format.HumanBytes(manifest.Size()))
+			fmt.Printf("  Manifest digest: %s\n", manifest.Digest()[:12])
+			
+			sigLayer := manifest.GetSignatureLayer()
+			if sigLayer != nil {
+				fmt.Printf("  Signature layer digest: %s\n", sigLayer.Digest[:12])
+				fmt.Printf("  Signature layer size: %s\n", format.HumanBytes(sigLayer.Size))
+			}
+		}
+	}
+
+	return nil
+}
+
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
@@ -1582,6 +1663,16 @@ func NewCLI() *cobra.Command {
 	signCmd.Flags().String("identity", "", "Identity to use for Sigstore signing")
 	signCmd.Flags().Bool("overwrite", false, "Overwrite existing signature")
 
+	verifyCmd := &cobra.Command{
+		Use:     "verify MODEL",
+		Short:   "Verify the signature of a model",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: checkServerHeartbeat,
+		RunE:    VerifyHandler,
+	}
+
+	verifyCmd.Flags().BoolP("verbose", "v", false, "Show detailed verification information")
+
 	psCmd := &cobra.Command{
 		Use:     "ps",
 		Short:   "List running models",
@@ -1669,6 +1760,7 @@ func NewCLI() *cobra.Command {
 		pushCmd,
 		listCmd,
 		signCmd,
+		verifyCmd,
 		psCmd,
 		copyCmd,
 		deleteCmd,
