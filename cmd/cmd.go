@@ -514,6 +514,19 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// formatSignatureStatus converts signature status to a display string
+func formatSignatureStatus(sig *api.SignatureStatus) string {
+	if sig == nil || !sig.Signed {
+		return "Unsigned"
+	}
+	
+	if sig.Verified {
+		return "✅ Verified"
+	}
+	
+	return "❌ Invalid"
+}
+
 func ListHandler(cmd *cobra.Command, args []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -529,12 +542,13 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 
 	for _, m := range models.Models {
 		if len(args) == 0 || strings.HasPrefix(strings.ToLower(m.Name), strings.ToLower(args[0])) {
-			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), format.HumanTime(m.ModifiedAt, "Never")})
+			sigStatus := formatSignatureStatus(m.Signature)
+			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), format.HumanTime(m.ModifiedAt, "Never"), sigStatus})
 		}
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"NAME", "ID", "SIZE", "MODIFIED"})
+	table.SetHeader([]string{"NAME", "ID", "SIZE", "MODIFIED", "SIGNATURE"})
 	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
 	table.SetHeaderLine(false)
