@@ -489,6 +489,56 @@ func showPushSignatureSummary(modelName model.Name) error {
 	return nil
 }
 
+// performPrePushSignatureChecks validates signature requirements before pushing
+func performPrePushSignatureChecks(modelName model.Name, requireSig, verifySig bool) error {
+	sigInfo, err := server.GetSignatureInfo(modelName)
+	if err != nil {
+		return fmt.Errorf("failed to get signature information: %w", err)
+	}
+
+	// Check if signature is required but model is unsigned
+	if requireSig && sigInfo == nil {
+		fmt.Printf("❌ Push failed: Model %s is unsigned\n", modelName.DisplayShortest())
+		fmt.Printf("   Use --require-signature=false to push unsigned models\n")
+		fmt.Printf("   Or sign the model first: ollama sign %s\n", modelName.DisplayShortest())
+		return errors.New("signature required but model is unsigned")
+	}
+
+	// If model has signature and verification is enabled, verify it
+	if sigInfo != nil && verifySig {
+		fmt.Printf("🔍 Verifying signature before push...\n")
+		verifier := server.NewSignatureVerifier()
+		result, err := verifier.VerifyModel(modelName)
+		if err != nil {
+			fmt.Printf("❌ Signature verification failed: %v\n", err)
+			fmt.Printf("   Use --verify-signature=false to skip verification\n")
+			fmt.Printf("   Or fix signature issues first\n")
+			return fmt.Errorf("signature verification failed: %w", err)
+		}
+
+		if !result.Valid {
+			fmt.Printf("❌ Signature is invalid: %s\n", result.ErrorMessage)
+			fmt.Printf("   Use --verify-signature=false to push with invalid signature\n")
+			fmt.Printf("   Or re-sign the model: ollama sign %s\n", modelName.DisplayShortest())
+			return errors.New("signature is invalid")
+		}
+
+		fmt.Printf("✅ Signature verified successfully\n")
+		fmt.Printf("   Signer: %s\n", sigInfo.Signer)
+		fmt.Printf("   Signed: %s\n", sigInfo.SignedAt.Format("2006-01-02 15:04:05"))
+	}
+
+	// Show what will be pushed
+	if sigInfo != nil {
+		fmt.Printf("📦 Ready to push signed model %s\n", modelName.DisplayShortest())
+	} else {
+		fmt.Printf("📦 Ready to push unsigned model %s\n", modelName.DisplayShortest())
+		fmt.Printf("   Consider signing for better security: ollama sign %s\n", modelName.DisplayShortest())
+	}
+
+	return nil
+}
+
 func PushHandler(cmd *cobra.Command, args []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -497,6 +547,22 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 
 	insecure, err := cmd.Flags().GetBool("insecure")
 	if err != nil {
+		return err
+	}
+
+	requireSig, err := cmd.Flags().GetBool("require-signature")
+	if err != nil {
+		return err
+	}
+
+	verifySig, err := cmd.Flags().GetBool("verify-signature")
+	if err != nil {
+		return err
+	}
+
+	// Pre-push signature verification and validation
+	modelName := model.ParseName(args[0])
+	if err := performPrePushSignatureChecks(modelName, requireSig, verifySig); err != nil {
 		return err
 	}
 
@@ -1765,6 +1831,8 @@ func NewCLI() *cobra.Command {
 	}
 
 	pushCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	pushCmd.Flags().Bool("require-signature", false, "Require model to be signed before pushing")
+	pushCmd.Flags().Bool("verify-signature", true, "Verify signature integrity before pushing")
 
 	listCmd := &cobra.Command{
 		Use:     "list",
