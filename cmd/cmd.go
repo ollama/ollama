@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"math"
 	"net"
 	"net/http"
@@ -902,6 +903,50 @@ func CopyHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// showSignatureVerificationSummary displays post-pull signature verification information and warnings
+func showSignatureVerificationSummary(modelName model.Name) error {
+	sigInfo, err := server.GetSignatureInfo(modelName)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println() // Add spacing after pull progress
+
+	if sigInfo == nil {
+		// Model is unsigned
+		fmt.Printf("⚠️  Model %s is unsigned\n", modelName.DisplayShortest())
+		fmt.Printf("   Consider verifying the model source and authenticity\n")
+		fmt.Printf("   Use 'ollama verify %s' to check signature status\n", modelName.DisplayShortest())
+		return nil
+	}
+
+	// Model has signature information
+	fmt.Printf("🔐 Model %s has signature information\n", modelName.DisplayShortest())
+	
+	// Perform verification to get current status
+	verifier := server.NewSignatureVerifier()
+	result, err := verifier.VerifyModel(modelName)
+	if err != nil {
+		fmt.Printf("   ❌ Signature verification failed: %v\n", err)
+		fmt.Printf("   Use 'ollama verify %s -v' for detailed information\n", modelName.DisplayShortest())
+		return nil
+	}
+
+	if result.Valid {
+		fmt.Printf("   ✅ Signature verified successfully\n")
+		fmt.Printf("   Signer: %s\n", sigInfo.Signer)
+		fmt.Printf("   Signed at: %s\n", sigInfo.SignedAt.Format("2006-01-02 15:04:05"))
+	} else {
+		fmt.Printf("   ❌ Signature verification failed\n")
+		if result.ErrorMessage != "" {
+			fmt.Printf("   Reason: %s\n", result.ErrorMessage)
+		}
+		fmt.Printf("   Use 'ollama verify %s -v' for detailed information\n", modelName.DisplayShortest())
+	}
+
+	return nil
+}
+
 func PullHandler(cmd *cobra.Command, args []string) error {
 	insecure, err := cmd.Flags().GetBool("insecure")
 	if err != nil {
@@ -974,7 +1019,21 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	request := api.PullRequest{Name: args[0], Insecure: insecure}
-	return client.Pull(cmd.Context(), &request, fn)
+	err = client.Pull(cmd.Context(), &request, fn)
+	if err != nil {
+		return err
+	}
+
+	// Show signature verification summary after pull completes
+	modelName := model.ParseName(args[0])
+	if modelName.IsValid() {
+		if err := showSignatureVerificationSummary(modelName); err != nil {
+			// Don't fail the pull if we can't show signature info
+			slog.Debug("failed to show signature verification summary", "error", err)
+		}
+	}
+
+	return nil
 }
 
 type generateContextKey string
