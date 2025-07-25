@@ -107,6 +107,20 @@ func ParseNamedManifest(n model.Name) (*Manifest, error) {
 	m.fi = fi
 	m.digest = hex.EncodeToString(sha256sum.Sum(nil))
 
+	// Update signature verification status if model has signature metadata
+	if m.Signature != nil {
+		verifier := NewSignatureVerifier()
+		result, err := verifier.VerifyManifest(&m)
+		if err == nil && result != nil {
+			// Update the verified status based on verification result
+			m.Signature.Verified = result.Valid
+		} else {
+			// If verification fails, mark as unverified but don't fail the manifest loading
+			m.Signature.Verified = false
+			slog.Debug("signature verification failed", "model", n.String(), "error", err)
+		}
+	}
+
 	return &m, nil
 }
 
