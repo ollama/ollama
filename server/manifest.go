@@ -47,6 +47,11 @@ func (m *Manifest) Size() (size int64) {
 	return
 }
 
+// Digest returns the SHA-256 digest of this manifest
+func (m *Manifest) Digest() string {
+	return m.digest
+}
+
 func (m *Manifest) Remove() error {
 	if err := os.Remove(m.filepath); err != nil {
 		return err

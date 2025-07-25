@@ -1388,6 +1388,73 @@ Environment Variables:
 	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
 }
 
+func SignHandler(cmd *cobra.Command, args []string) error {
+	if len(args) != 1 {
+		return errors.New("sign requires exactly one model name")
+	}
+
+	modelName := args[0]
+	name := model.ParseName(modelName)
+	if !name.IsValid() {
+		return fmt.Errorf("invalid model name: %s", modelName)
+	}
+
+	// Validate the model exists by attempting to parse its manifest
+	manifest, err := server.ParseNamedManifest(name)
+	if err != nil {
+		return fmt.Errorf("model not found: %w", err)
+	}
+
+	// Check if model is already signed
+	if manifest.Signature != nil {
+		fmt.Printf("Model %s is already signed\n", modelName)
+		fmt.Printf("  Signer: %s\n", manifest.Signature.Signer)
+		fmt.Printf("  Signed at: %s\n", manifest.Signature.SignedAt.Format(time.RFC3339))
+		fmt.Printf("  Format: %s\n", manifest.Signature.Format)
+		fmt.Printf("  Verified: %v\n", manifest.Signature.Verified)
+		
+		overwrite, _ := cmd.Flags().GetBool("overwrite")
+		if !overwrite {
+			fmt.Printf("\nUse --overwrite to replace the existing signature\n")
+			return nil
+		}
+		fmt.Printf("\nOverwriting existing signature...\n")
+	}
+
+	// Display what would be signed
+	fmt.Printf("Model %s found and ready to sign\n", modelName)
+	fmt.Printf("  Layers: %d\n", len(manifest.Layers))
+	fmt.Printf("  Total size: %s\n", format.HumanBytes(manifest.Size()))
+	fmt.Printf("  Digest: %s\n", manifest.Digest()[:12])
+
+	// Check for key/signer options
+	keyPath, _ := cmd.Flags().GetString("key")
+	sigstoreMode, _ := cmd.Flags().GetBool("sigstore")
+	identity, _ := cmd.Flags().GetString("identity")
+
+	if keyPath != "" {
+		fmt.Printf("  Signing method: Private key (%s)\n", keyPath)
+		fmt.Printf("  NOTE: Key-based signing not yet implemented\n")
+	} else if sigstoreMode {
+		if identity == "" {
+			fmt.Printf("  Signing method: Sigstore (keyless)\n")
+			fmt.Printf("  NOTE: Will use OIDC identity from environment\n")
+		} else {
+			fmt.Printf("  Signing method: Sigstore with identity %s\n", identity)
+		}
+		fmt.Printf("  NOTE: Sigstore signing not yet implemented\n")
+	} else {
+		fmt.Printf("  ERROR: No signing method specified\n")
+		fmt.Printf("  Use --key <path> for key-based signing or --sigstore for keyless signing\n")
+		return errors.New("no signing method specified")
+	}
+
+	fmt.Printf("\nSigning functionality will be implemented in a future commit.\n")
+	fmt.Printf("This command currently validates models and shows what would be signed.\n")
+
+	return nil
+}
+
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
@@ -1502,6 +1569,19 @@ func NewCLI() *cobra.Command {
 		RunE:    ListHandler,
 	}
 
+	signCmd := &cobra.Command{
+		Use:     "sign MODEL",
+		Short:   "Sign a model for integrity verification",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: checkServerHeartbeat,
+		RunE:    SignHandler,
+	}
+
+	signCmd.Flags().String("key", "", "Path to private key file for signing")
+	signCmd.Flags().Bool("sigstore", false, "Use Sigstore for keyless signing")
+	signCmd.Flags().String("identity", "", "Identity to use for Sigstore signing")
+	signCmd.Flags().Bool("overwrite", false, "Overwrite existing signature")
+
 	psCmd := &cobra.Command{
 		Use:     "ps",
 		Short:   "List running models",
@@ -1588,6 +1668,7 @@ func NewCLI() *cobra.Command {
 		pullCmd,
 		pushCmd,
 		listCmd,
+		signCmd,
 		psCmd,
 		copyCmd,
 		deleteCmd,
