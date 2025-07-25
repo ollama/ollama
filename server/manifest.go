@@ -190,3 +190,32 @@ func Manifests(continueOnError bool) (map[model.Name]*Manifest, error) {
 
 	return ms, nil
 }
+
+// GetSignatureLayer returns the first signature layer found in this manifest, or nil if none exists
+func (m *Manifest) GetSignatureLayer() *Layer {
+	for i := range m.Layers {
+		if m.Layers[i].IsSignature() {
+			return &m.Layers[i]
+		}
+	}
+	return nil
+}
+
+// HasSignature returns true if this manifest contains a signature layer
+func (m *Manifest) HasSignature() bool {
+	return m.GetSignatureLayer() != nil
+}
+
+// AddSignatureLayer adds a signature layer to this manifest
+func (m *Manifest) AddSignatureLayer(sigLayer Layer) {
+	// Remove any existing signature layers first
+	layers := make([]Layer, 0, len(m.Layers))
+	for _, layer := range m.Layers {
+		if !layer.IsSignature() {
+			layers = append(layers, layer)
+		}
+	}
+	
+	// Add the new signature layer
+	m.Layers = append(layers, sigLayer)
+}
