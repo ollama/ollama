@@ -88,15 +88,12 @@ func (sv *SignatureVerifier) VerifyManifest(manifest *Manifest) (*SignatureVerif
 	}
 
 	// TODO: Implement actual signature verification using model-transparency library
-	// For now, we'll do basic file existence checks and return a placeholder result
-	return sv.verifySignatureFile(sigFilePath, manifest.Signature)
+	// Perform cryptographic verification with manifest context
+	return sv.verifySignatureFileWithManifest(sigFilePath, manifest.Signature, manifest)
 }
 
-// verifySignatureFile performs the actual signature verification (placeholder implementation)
-func (sv *SignatureVerifier) verifySignatureFile(sigFilePath string, sigInfo *SignatureInfo) (*SignatureVerificationResult, error) {
-	// Placeholder implementation - just check that signature file exists
-	// In a future commit, this will be replaced with actual verification using model-transparency
-
+// verifySignatureFileWithManifest performs the actual signature verification using cryptographic methods
+func (sv *SignatureVerifier) verifySignatureFileWithManifest(sigFilePath string, sigInfo *SignatureInfo, manifest *Manifest) (*SignatureVerificationResult, error) {
 	// Check file exists
 	if _, err := filepath.Abs(sigFilePath); err != nil {
 		return &SignatureVerificationResult{
@@ -105,30 +102,18 @@ func (sv *SignatureVerifier) verifySignatureFile(sigFilePath string, sigInfo *Si
 		}, ErrSignatureInvalid
 	}
 
-	// TODO: Replace this placeholder with actual verification:
-	// 1. Load signature file and parse OMS format
-	// 2. Extract public key or certificate from signature
-	// 3. Verify signature against model files using model-transparency library
-	// 4. Validate signature chain and trust roots
-	// 5. Return detailed verification results
-
-	// For now, return a successful verification if signature metadata exists
-	result := &SignatureVerificationResult{
-		Valid:        true, // PLACEHOLDER: Always succeed for now
-		Signer:       sigInfo.Signer,
-		SignedAt:     sigInfo.SignedAt,
-		Format:       sigInfo.Format,
-		ErrorMessage: "placeholder verification - not yet fully implemented",
+	// Compute model digest for verification
+	modelDigest, err := ComputeModelDigest(manifest)
+	if err != nil {
+		return &SignatureVerificationResult{
+			Valid:        false,
+			ErrorMessage: fmt.Sprintf("failed to compute model digest: %v", err),
+		}, err
 	}
 
-	// Apply policy-based validation using configuration
-	if policyValid, policyError := sv.config.IsSignatureValid(result, sigInfo.Signer); !policyValid {
-		result.Valid = false
-		result.ErrorMessage = policyError
-		return result, ErrSignatureInvalid
-	}
-
-	return result, nil
+	// Use cryptographic verifier for real verification
+	cryptoVerifier := NewCryptoSignatureVerifier(sv.config)
+	return cryptoVerifier.VerifySignatureFile(sigFilePath, sigInfo, modelDigest)
 }
 
 // HasValidSignature is a convenience function to check if a model has a valid signature

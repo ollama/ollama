@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -1595,6 +1596,9 @@ func SignHandler(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("model not found: %w", err)
 	}
 
+	// Get overwrite flag
+	overwrite, _ := cmd.Flags().GetBool("overwrite")
+
 	// Check if model is already signed
 	if manifest.Signature != nil {
 		fmt.Printf("Model %s is already signed\n", modelName)
@@ -1603,7 +1607,6 @@ func SignHandler(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  Format: %s\n", manifest.Signature.Format)
 		fmt.Printf("  Verified: %v\n", manifest.Signature.Verified)
 		
-		overwrite, _ := cmd.Flags().GetBool("overwrite")
 		if !overwrite {
 			fmt.Printf("\nUse --overwrite to replace the existing signature\n")
 			return nil
@@ -1624,7 +1627,7 @@ func SignHandler(cmd *cobra.Command, args []string) error {
 
 	if keyPath != "" {
 		fmt.Printf("  Signing method: Private key (%s)\n", keyPath)
-		fmt.Printf("  NOTE: Key-based signing not yet implemented\n")
+		return handleKeyBasedSigning(modelName, manifest, keyPath, overwrite)
 	} else if sigstoreMode {
 		if identity == "" {
 			fmt.Printf("  Signing method: Sigstore (keyless)\n")
@@ -1632,15 +1635,165 @@ func SignHandler(cmd *cobra.Command, args []string) error {
 		} else {
 			fmt.Printf("  Signing method: Sigstore with identity %s\n", identity)
 		}
-		fmt.Printf("  NOTE: Sigstore signing not yet implemented\n")
+		fmt.Printf("  NOTE: Sigstore signing will be implemented in a future commit\n")
+		fmt.Printf("  Use --key option for basic ed25519 signing\n")
+		return nil
 	} else {
-		fmt.Printf("  ERROR: No signing method specified\n")
-		fmt.Printf("  Use --key <path> for key-based signing or --sigstore for keyless signing\n")
-		return errors.New("no signing method specified")
+		fmt.Printf("  No signing method specified - generating test signature\n")
+		return handleTestSigning(modelName, manifest, overwrite)
 	}
 
-	fmt.Printf("\nSigning functionality will be implemented in a future commit.\n")
-	fmt.Printf("This command currently validates models and shows what would be signed.\n")
+	return nil
+}
+
+// handleKeyBasedSigning handles signing with a provided private key file
+func handleKeyBasedSigning(modelName string, manifest *server.Manifest, keyPath string, overwrite bool) error {
+	// Check if key file exists
+	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+		return fmt.Errorf("private key file not found: %s", keyPath)
+	}
+
+	// Read private key file (assuming ed25519 private key in base64)
+	keyData, err := os.ReadFile(keyPath)
+	if err != nil {
+		return fmt.Errorf("failed to read private key: %w", err)
+	}
+
+	privateKeyB64 := strings.TrimSpace(string(keyData))
+
+	// Compute model digest
+	modelDigest, err := server.ComputeModelDigest(manifest)
+	if err != nil {
+		return fmt.Errorf("failed to compute model digest: %w", err)
+	}
+
+	// Create signature
+	signer := "user@localhost" // Default signer
+	oms, err := server.CreateTestSignature(privateKeyB64, modelDigest, signer)
+	if err != nil {
+		return fmt.Errorf("failed to create signature: %w", err)
+	}
+
+	// Save signature and update manifest
+	if err := saveSignatureToModel(modelName, manifest, oms, overwrite); err != nil {
+		return fmt.Errorf("failed to save signature: %w", err)
+	}
+
+	fmt.Printf("✅ Successfully signed model %s\n", modelName)
+	fmt.Printf("   Signer: %s\n", signer)
+	fmt.Printf("   Algorithm: %s\n", oms.Algorithm)
+	fmt.Printf("   Timestamp: %s\n", oms.Timestamp.Format("2006-01-02 15:04:05"))
+
+	return nil
+}
+
+// handleTestSigning generates a test key pair and signs the model
+func handleTestSigning(modelName string, manifest *server.Manifest, overwrite bool) error {
+	fmt.Printf("  Generating test ed25519 key pair...\n")
+
+	// Generate test key pair
+	publicKey, privateKey, err := server.GenerateKeyPair()
+	if err != nil {
+		return fmt.Errorf("failed to generate key pair: %w", err)
+	}
+
+	// Compute model digest
+	modelDigest, err := server.ComputeModelDigest(manifest)
+	if err != nil {
+		return fmt.Errorf("failed to compute model digest: %w", err)
+	}
+
+	// Create test signature
+	signer := "test-signer@localhost"
+	oms, err := server.CreateTestSignature(privateKey, modelDigest, signer)
+	if err != nil {
+		return fmt.Errorf("failed to create test signature: %w", err)
+	}
+
+	// Save signature and update manifest
+	if err := saveSignatureToModel(modelName, manifest, oms, overwrite); err != nil {
+		return fmt.Errorf("failed to save signature: %w", err)
+	}
+
+	fmt.Printf("✅ Successfully signed model %s with test signature\n", modelName)
+	fmt.Printf("   Signer: %s\n", signer)
+	fmt.Printf("   Algorithm: %s\n", oms.Algorithm)
+	fmt.Printf("   Public Key: %s...\n", publicKey[:32])
+	fmt.Printf("   Timestamp: %s\n", oms.Timestamp.Format("2006-01-02 15:04:05"))
+	fmt.Printf("   NOTE: This is a test signature for development purposes\n")
+
+	return nil
+}
+
+// saveSignatureToModel saves the signature to blob storage and updates the manifest
+func saveSignatureToModel(modelName string, manifest *server.Manifest, oms *server.OMSSignature, overwrite bool) error {
+	// Marshal signature to JSON
+	sigData, err := json.MarshalIndent(oms, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal signature: %w", err)
+	}
+
+	// Compute signature digest
+	sigDigest := "sha256:" + fmt.Sprintf("%x", sha256.Sum256(sigData))
+
+	// Save signature to blob storage
+	sigPath, err := server.GetBlobsPath(sigDigest)
+	if err != nil {
+		return fmt.Errorf("failed to get signature blob path: %w", err)
+	}
+
+	if err := os.WriteFile(sigPath, sigData, 0o644); err != nil {
+		return fmt.Errorf("failed to write signature blob: %w", err)
+	}
+
+	// Create signature layer
+	sigLayer := server.Layer{
+		MediaType: server.MediaTypeModelSignature,
+		Digest:    sigDigest,
+		Size:      int64(len(sigData)),
+	}
+
+	// Update manifest with signature information
+	manifest.AddSignatureLayer(sigLayer)
+	manifest.Signature = &server.SignatureInfo{
+		Format:       oms.Version,
+		SignatureURI: sigDigest,
+		Verified:     false, // Will be verified later
+		Signer:       oms.Signer,
+		SignedAt:     oms.Timestamp,
+	}
+
+	// Save updated manifest
+	return saveUpdatedManifest(modelName, manifest)
+}
+
+// saveUpdatedManifest saves the updated manifest back to disk
+func saveUpdatedManifest(modelName string, manifest *server.Manifest) error {
+	// Parse model name to get manifest path
+	modelPath := model.ParseName(modelName)
+	if !modelPath.IsValid() {
+		return fmt.Errorf("invalid model name: %s", modelName)
+	}
+
+	// Get manifest directory
+	manifestsDir, err := server.GetManifestPath()
+	if err != nil {
+		return fmt.Errorf("failed to get manifest path: %w", err)
+	}
+
+	// Construct manifest file path
+	manifestPath := filepath.Join(manifestsDir, modelPath.Filepath())
+
+	// Marshal manifest
+	manifestData, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal manifest: %w", err)
+	}
+
+	// Write manifest
+	if err := os.WriteFile(manifestPath, manifestData, 0o644); err != nil {
+		return fmt.Errorf("failed to write manifest: %w", err)
+	}
 
 	return nil
 }
