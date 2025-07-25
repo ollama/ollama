@@ -121,15 +121,32 @@ COPY --from=build /bin/ollama /bin/ollama
 
 FROM ubuntu:24.04
 RUN apt-get update \
-    && apt-get install -y ca-certificates \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y --no-install-recommends ca-certificates wget ocl-icd-libopencl1 \
+    && mkdir -p /tmp/neo \
+    && cd /tmp/neo \
+    && wget https://github.com/intel/intel-graphics-compiler/releases/download/v2.12.5/intel-igc-core-2_2.12.5+19302_amd64.deb \
+    && wget https://github.com/intel/intel-graphics-compiler/releases/download/v2.12.5/intel-igc-opencl-2_2.12.5+19302_amd64.deb \
+    && wget https://github.com/intel/compute-runtime/releases/download/25.22.33944.8/intel-ocloc_25.22.33944.8-0_amd64.deb \
+    && wget https://github.com/intel/compute-runtime/releases/download/25.22.33944.8/intel-opencl-icd_25.22.33944.8-0_amd64.deb \
+    && wget https://github.com/intel/compute-runtime/releases/download/25.22.33944.8/libigdgmm12_22.7.0_amd64.deb \
+    && wget https://github.com/intel/compute-runtime/releases/download/25.22.33944.8/libze-intel-gpu1_25.22.33944.8-0_amd64.deb \
+    && wget https://github.com/intel/compute-runtime/releases/download/25.22.33944.8/ww22.sum \
+    && wget https://github.com/oneapi-src/level-zero/releases/download/v1.21.9/level-zero_1.21.9+u24.04_amd64.deb \
+    && sha256sum --ignore-missing -c ww22.sum \
+    && dpkg -i *.deb \
+    && cd / \ 
+    && rm -rf /tmp/neo \
+    && apt-get remove -y wget \
+    && apt-get autoremove -y \
+    && apt-get autoclean \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* /tmp/* /var/tmp/*
 COPY --from=archive /bin /usr/bin
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 COPY --from=archive /lib/ollama /usr/lib/ollama
 ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 ENV NVIDIA_VISIBLE_DEVICES=all
+ENV ZES_ENABLE_SYSMAN=1
 ENV OLLAMA_HOST=0.0.0.0:11434
 EXPOSE 11434
 ENTRYPOINT ["/bin/ollama"]
