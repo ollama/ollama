@@ -1645,6 +1645,187 @@ func SignHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// ConfigSignatureHandler manages signature configuration settings
+func ConfigSignatureHandler(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		// Show current configuration
+		config, err := server.LoadSignatureConfig()
+		if err != nil {
+			return fmt.Errorf("failed to load signature configuration: %w", err)
+		}
+
+		fmt.Printf("Current signature configuration:\n\n")
+		fmt.Printf("  Policy: %s\n", config.Policy)
+		fmt.Printf("  Verify on pull: %t\n", config.VerifyOnPull)
+		fmt.Printf("  Verify on push: %t\n", config.VerifyOnPush)
+		fmt.Printf("  Require trusted signers: %t\n", config.RequireTrustedSigners)
+		fmt.Printf("  Max signature age: %d days\n", config.MaxSignatureAge)
+		fmt.Printf("  Check revocation: %t\n", config.CheckRevocation)
+		fmt.Printf("  Trusted signers: %d\n", len(config.TrustedSigners))
+
+		if len(config.TrustedSigners) > 0 {
+			fmt.Printf("\nTrusted signers:\n")
+			for _, signer := range config.TrustedSigners {
+				fmt.Printf("  - %s (%s)\n", signer.Name, signer.Email)
+				if signer.Description != "" {
+					fmt.Printf("    %s\n", signer.Description)
+				}
+			}
+		}
+
+		fmt.Printf("\nLast updated: %s\n", config.UpdatedAt.Format("2006-01-02 15:04:05"))
+		
+		fmt.Printf("\nAvailable policies:\n")
+		fmt.Printf("  permissive - Allow unsigned models (default)\n")
+		fmt.Printf("  warn       - Warn about unsigned models but allow them\n")
+		fmt.Printf("  strict     - Require valid signatures for all models\n")
+
+		return nil
+	}
+
+	// Handle configuration commands
+	subcommand := args[0]
+	switch subcommand {
+	case "set":
+		return handleConfigSet(cmd, args[1:])
+	case "add-signer":
+		return handleAddSigner(cmd, args[1:])
+	case "remove-signer":
+		return handleRemoveSigner(cmd, args[1:])
+	case "reset":
+		return handleConfigReset(cmd)
+	default:
+		return fmt.Errorf("unknown config subcommand: %s", subcommand)
+	}
+}
+
+func handleConfigSet(cmd *cobra.Command, args []string) error {
+	if len(args) != 2 {
+		return errors.New("usage: config set <key> <value>")
+	}
+
+	key, value := args[0], args[1]
+	config, err := server.LoadSignatureConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	switch key {
+	case "policy":
+		switch server.SignaturePolicy(value) {
+		case server.PolicyPermissive, server.PolicyWarn, server.PolicyStrict:
+			config.Policy = server.SignaturePolicy(value)
+		default:
+			return fmt.Errorf("invalid policy: %s (must be permissive, warn, or strict)", value)
+		}
+	case "verify-on-pull":
+		config.VerifyOnPull = value == "true"
+	case "verify-on-push":
+		config.VerifyOnPush = value == "true"
+	case "require-trusted-signers":
+		config.RequireTrustedSigners = value == "true"
+	case "check-revocation":
+		config.CheckRevocation = value == "true"
+	default:
+		return fmt.Errorf("unknown configuration key: %s", key)
+	}
+
+	if err := server.SaveSignatureConfig(config); err != nil {
+		return fmt.Errorf("failed to save configuration: %w", err)
+	}
+
+	fmt.Printf("✅ Configuration updated: %s = %s\n", key, value)
+	return nil
+}
+
+func handleAddSigner(cmd *cobra.Command, args []string) error {
+	if len(args) < 2 {
+		return errors.New("usage: config add-signer <name> <email> [public-key] [description]")
+	}
+
+	name := args[0]
+	email := args[1]
+	publicKey := ""
+	description := ""
+
+	if len(args) > 2 {
+		publicKey = args[2]
+	}
+	if len(args) > 3 {
+		description = args[3]
+	}
+
+	config, err := server.LoadSignatureConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	signer := server.TrustedSigner{
+		ID:          fmt.Sprintf("signer-%d", time.Now().Unix()),
+		Name:        name,
+		Email:       email,
+		PublicKey:   publicKey,
+		Description: description,
+	}
+
+	if err := config.AddTrustedSigner(signer); err != nil {
+		return fmt.Errorf("failed to add signer: %w", err)
+	}
+
+	if err := server.SaveSignatureConfig(config); err != nil {
+		return fmt.Errorf("failed to save configuration: %w", err)
+	}
+
+	fmt.Printf("✅ Added trusted signer: %s (%s)\n", name, email)
+	return nil
+}
+
+func handleRemoveSigner(cmd *cobra.Command, args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: config remove-signer <email>")
+	}
+
+	email := args[0]
+	config, err := server.LoadSignatureConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	// Find signer by email
+	var signerID string
+	for _, signer := range config.TrustedSigners {
+		if signer.Email == email {
+			signerID = signer.ID
+			break
+		}
+	}
+
+	if signerID == "" {
+		return fmt.Errorf("signer not found: %s", email)
+	}
+
+	if err := config.RemoveTrustedSigner(signerID); err != nil {
+		return fmt.Errorf("failed to remove signer: %w", err)
+	}
+
+	if err := server.SaveSignatureConfig(config); err != nil {
+		return fmt.Errorf("failed to save configuration: %w", err)
+	}
+
+	fmt.Printf("✅ Removed trusted signer: %s\n", email)
+	return nil
+}
+
+func handleConfigReset(cmd *cobra.Command) error {
+	config := server.DefaultSignatureConfig()
+	if err := server.SaveSignatureConfig(config); err != nil {
+		return fmt.Errorf("failed to reset configuration: %w", err)
+	}
+
+	fmt.Printf("✅ Configuration reset to defaults\n")
+	return nil
+}
+
 func VerifyHandler(cmd *cobra.Command, args []string) error {
 	if len(args) != 1 {
 		return errors.New("verify requires exactly one model name")
@@ -1865,6 +2046,14 @@ func NewCLI() *cobra.Command {
 
 	verifyCmd.Flags().BoolP("verbose", "v", false, "Show detailed verification information")
 
+	configCmd := &cobra.Command{
+		Use:   "config [SUBCOMMAND]",
+		Short: "Manage signature verification configuration",
+		Long:  "Manage signature verification policies, trusted signers, and verification settings",
+		Args:  cobra.ArbitraryArgs,
+		RunE:  ConfigSignatureHandler,
+	}
+
 	psCmd := &cobra.Command{
 		Use:     "ps",
 		Short:   "List running models",
@@ -1953,6 +2142,7 @@ func NewCLI() *cobra.Command {
 		listCmd,
 		signCmd,
 		verifyCmd,
+		configCmd,
 		psCmd,
 		copyCmd,
 		deleteCmd,

@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"time"
 
@@ -29,15 +30,23 @@ type SignatureVerificationResult struct {
 
 // SignatureVerifier handles model signature verification
 type SignatureVerifier struct {
-	// Future: Will contain configuration for different verification methods
-	// - Public keys for key-based verification
-	// - Trust roots for certificate-based verification  
-	// - Sigstore configuration for keyless verification
+	config *SignatureConfig
 }
 
-// NewSignatureVerifier creates a new signature verifier with default configuration
+// NewSignatureVerifier creates a new signature verifier with loaded configuration
 func NewSignatureVerifier() *SignatureVerifier {
-	return &SignatureVerifier{}
+	config, err := LoadSignatureConfig()
+	if err != nil {
+		// Log error but use default config to avoid breaking functionality
+		slog.Warn("failed to load signature config, using defaults", "error", err)
+		config = DefaultSignatureConfig()
+	}
+	return &SignatureVerifier{config: config}
+}
+
+// NewSignatureVerifierWithConfig creates a new signature verifier with specific configuration
+func NewSignatureVerifierWithConfig(config *SignatureConfig) *SignatureVerifier {
+	return &SignatureVerifier{config: config}
 }
 
 // VerifyModel verifies the signature of a model by name
@@ -104,13 +113,22 @@ func (sv *SignatureVerifier) verifySignatureFile(sigFilePath string, sigInfo *Si
 	// 5. Return detailed verification results
 
 	// For now, return a successful verification if signature metadata exists
-	return &SignatureVerificationResult{
+	result := &SignatureVerificationResult{
 		Valid:        true, // PLACEHOLDER: Always succeed for now
 		Signer:       sigInfo.Signer,
 		SignedAt:     sigInfo.SignedAt,
 		Format:       sigInfo.Format,
 		ErrorMessage: "placeholder verification - not yet fully implemented",
-	}, nil
+	}
+
+	// Apply policy-based validation using configuration
+	if policyValid, policyError := sv.config.IsSignatureValid(result, sigInfo.Signer); !policyValid {
+		result.Valid = false
+		result.ErrorMessage = policyError
+		return result, ErrSignatureInvalid
+	}
+
+	return result, nil
 }
 
 // HasValidSignature is a convenience function to check if a model has a valid signature
