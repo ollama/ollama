@@ -542,3 +542,23 @@ func absJoin(pp ...string) string {
 	}
 	return abs
 }
+
+// GetSignatureFile returns the path where a signature file would be stored for the given model digest
+func (c *DiskCache) GetSignatureFile(modelDigest Digest) string {
+	filename := fmt.Sprintf("sha256-%x.sig", modelDigest.sum)
+	return absJoin(c.dir, "blobs", filename)
+}
+
+// HasSignature returns true if a signature file exists for the given model digest
+func (c *DiskCache) HasSignature(modelDigest Digest) bool {
+	sigPath := c.GetSignatureFile(modelDigest)
+	_, err := os.Stat(sigPath)
+	return err == nil
+}
+
+// GetSignatureDigest returns the digest of the signature file for a given model digest
+func (c *DiskCache) GetSignatureDigest(modelDigest Digest) (Digest, error) {
+	sigPath := c.GetSignatureFile(modelDigest)
+	_, d, err := readAndSum(sigPath, 1<<20) // 1MB limit for signature files
+	return d, err
+}
