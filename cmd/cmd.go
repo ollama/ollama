@@ -1080,9 +1080,10 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 	var state *displayResponseState = &displayResponseState{}
 	var latest api.ChatResponse
 	var fullResponse strings.Builder
-	var role string
 	var thinkTagOpened bool = false
 	var thinkTagClosed bool = false
+
+	role := "assistant"
 
 	fn := func(response api.ChatResponse) error {
 		if response.Message.Content != "" || !opts.HideThinking {
@@ -1134,6 +1135,14 @@ func chat(cmd *cobra.Command, opts runOptions) (*api.Message, error) {
 
 	if err := client.Chat(cancelCtx, req, fn); err != nil {
 		if errors.Is(err, context.Canceled) {
+			return nil, nil
+		}
+
+		// this error should ideally be wrapped properly by the client
+		if strings.Contains(err.Error(), "upstream error") {
+			p.StopAndClear()
+			fmt.Println("An error occurred while processing your message. Please try again.")
+			fmt.Println()
 			return nil, nil
 		}
 		return nil, err
@@ -1417,13 +1426,13 @@ func NewCLI() *cobra.Command {
 
 	createCmd := &cobra.Command{
 		Use:     "create MODEL",
-		Short:   "Create a model from a Modelfile",
+		Short:   "Create a model",
 		Args:    cobra.ExactArgs(1),
 		PreRunE: checkServerHeartbeat,
 		RunE:    CreateHandler,
 	}
 
-	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\"")
+	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\")")
 	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_K_M)")
 
 	showCmd := &cobra.Command{
