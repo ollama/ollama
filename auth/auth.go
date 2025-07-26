@@ -14,26 +14,18 @@ import (
 	"strings"
 
 	"golang.org/x/crypto/ssh"
+
+	"github.com/ollama/ollama/envconfig"
 )
 
 const defaultPrivateKey = "id_ed25519"
 
-func keyPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-
-	return filepath.Join(home, ".ollama", defaultPrivateKey), nil
+func keyPath() string {
+	return filepath.Join(envconfig.KeyPath(), defaultPrivateKey)
 }
 
 func GetPublicKey() (string, error) {
-	keyPath, err := keyPath()
-	if err != nil {
-		return "", err
-	}
-
-	privateKeyFile, err := os.ReadFile(keyPath)
+	privateKeyFile, err := os.ReadFile(keyPath())
 	if err != nil {
 		slog.Info(fmt.Sprintf("Failed to load private key: %v", err))
 		return "", err
@@ -59,12 +51,8 @@ func NewNonce(r io.Reader, length int) (string, error) {
 }
 
 func Sign(ctx context.Context, bts []byte) (string, error) {
-	keyPath, err := keyPath()
-	if err != nil {
-		return "", err
-	}
 
-	privateKeyFile, err := os.ReadFile(keyPath)
+	privateKeyFile, err := os.ReadFile(keyPath())
 	if err != nil {
 		slog.Info(fmt.Sprintf("Failed to load private key: %v", err))
 		return "", err
