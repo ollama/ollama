@@ -574,6 +574,7 @@ func TestListHandler(t *testing.T) {
 	tests := []struct {
 		name           string
 		args           []string
+		flags          map[string]string // Add flags support
 		serverResponse []api.ListModelResponse
 		expectedError  string
 		expectedOutput string
@@ -600,8 +601,54 @@ func TestListHandler(t *testing.T) {
 				"model1    sha256:abc12    1.0 KB    24 hours ago    \n",
 		},
 		{
+			name:  "list all models names only",
+			args:  []string{},
+			flags: map[string]string{"names-only": "true"},
+			serverResponse: []api.ListModelResponse{
+				{Name: "model1", Digest: "sha256:abc123", Size: 1024, ModifiedAt: time.Now().Add(-24 * time.Hour)},
+				{Name: "model2", Digest: "sha256:def456", Size: 2048, ModifiedAt: time.Now().Add(-48 * time.Hour)},
+			},
+			expectedOutput: "model1\nmodel2\n",
+		},
+		{
+			name:  "filter models by prefix names only",
+			args:  []string{"model1"},
+			flags: map[string]string{"names-only": "true"},
+			serverResponse: []api.ListModelResponse{
+				{Name: "model1", Digest: "sha256:abc123", Size: 1024, ModifiedAt: time.Now().Add(-24 * time.Hour)},
+				{Name: "model2", Digest: "sha256:def456", Size: 2048, ModifiedAt: time.Now().Add(-24 * time.Hour)},
+			},
+			expectedOutput: "model1\n",
+		},
+		{
+			name:  "case insensitive filter names only",
+			args:  []string{"MODEL1"},
+			flags: map[string]string{"names-only": "true"},
+			serverResponse: []api.ListModelResponse{
+				{Name: "model1", Digest: "sha256:abc123", Size: 1024, ModifiedAt: time.Now().Add(-24 * time.Hour)},
+				{Name: "model2", Digest: "sha256:def456", Size: 2048, ModifiedAt: time.Now().Add(-24 * time.Hour)},
+			},
+			expectedOutput: "model1\n",
+		},
+		{
+			name:  "no matching models names only",
+			args:  []string{"nonexistent"},
+			flags: map[string]string{"names-only": "true"},
+			serverResponse: []api.ListModelResponse{
+				{Name: "model1", Digest: "sha256:abc123", Size: 1024, ModifiedAt: time.Now().Add(-24 * time.Hour)},
+				{Name: "model2", Digest: "sha256:def456", Size: 2048, ModifiedAt: time.Now().Add(-24 * time.Hour)},
+			},
+			expectedOutput: "",
+		},
+		{
 			name:          "server error",
 			args:          []string{},
+			expectedError: "server error",
+		},
+		{
+			name:          "server error with names only flag",
+			args:          []string{},
+			flags:         map[string]string{"names-only": "true"},
 			expectedError: "server error",
 		},
 	}
@@ -632,6 +679,16 @@ func TestListHandler(t *testing.T) {
 			cmd := &cobra.Command{}
 			cmd.SetContext(t.Context())
 
+			// Add flags support
+			cmd.Flags().Bool("names-only", false, "Only show model names")
+
+			// Set flags if provided
+			for flagName, flagValue := range tt.flags {
+				if err := cmd.Flags().Set(flagName, flagValue); err != nil {
+					t.Fatalf("failed to set flag %s=%s: %v", flagName, flagValue, err)
+				}
+			}
+
 			// Capture stdout
 			oldStdout := os.Stdout
 			r, w, _ := os.Pipe()
@@ -649,7 +706,7 @@ func TestListHandler(t *testing.T) {
 					t.Errorf("expected no error, got %v", err)
 				}
 				if got := string(output); got != tt.expectedOutput {
-					t.Errorf("expected output:\n%s\ngot:\n%s", tt.expectedOutput, got)
+					t.Errorf("expected output:\n%q\ngot:\n%q", tt.expectedOutput, got)
 				}
 			} else {
 				if err == nil || !strings.Contains(err.Error(), tt.expectedError) {
