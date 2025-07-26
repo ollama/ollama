@@ -521,6 +521,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs)
 
 #### Ruby
+- [Async::Ollama](https://github.com/socketry/async-ollama) - Streaming, asynchronous Ruby bindings for Ollama, supporting both chat and generate endpoints.
 - [Ollama for Ruby](https://github.com/gbaptista/ollama-ai)
 
 #### C++
