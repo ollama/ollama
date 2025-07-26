@@ -51,6 +51,93 @@ void ggml_vec_dot_f32(int n, float * GGML_RESTRICT s, size_t bs, const float * G
     *s = sumf;
 }
 
+// void ggml_vec_dot_q4_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
+#define MXFP4 32
+typedef struct {
+    uint8_t d;
+    uint8_t qs[MXFP4 / 2];
+} block_mxfp4;
+
+void ggml_vec_dot_mxfp4(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const float * GGML_RESTRICT y, size_t by, int nrc) {
+    assert(nrc == 1);
+    GGML_UNUSED(nrc);
+    GGML_UNUSED(bx);
+    GGML_UNUSED(by);
+    GGML_UNUSED(bs);
+
+    // const int qk = MXFP4;
+    const int nb = n / MXFP4;
+    assert(n % MXFP4 == 0);
+
+    int yi = 0;
+
+    const block_mxfp4 * GGML_RESTRICT xx = (const block_mxfp4 *) vx;
+
+    const uint16_t dst_bias = 15;
+    const uint16_t dst_0p5 = 0x3800;
+    const uint16_t dst_m_bits = 10;
+    // GGML_LOG_DEBUG("%s: n=%d nb=%d qk=%d bs=%lld bx=%lld nrc=%d\n", __func__, n, nb, qk, bs, bx, nrc);
+// ggml_vec_dot_mxfp4: n=64 nb=2 qk=32 bs=0 bx=0 nrc=1
+
+    ggml_float sumf = 0.0;
+    for (int ib = 0; ib < nb; ++ib) {
+        const block_mxfp4 * GGML_RESTRICT x = &xx[ib + 0];
+        float scale = 0.0f;
+        uint32_t d = (((uint32_t)x->d) << 23);
+        memcpy(&scale, &d, sizeof(float));
+        // GGML_LOG_DEBUG("%s: n=%d block %d of %d scale=%f (0x%x) vals %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n",
+        //     __func__, n, ib, nb, scale, x->d,
+        //     x->qs[0], x->qs[1], x->qs[2], x->qs[3],
+        //     x->qs[4], x->qs[5], x->qs[6], x->qs[7],
+        //     x->qs[8], x->qs[9], x->qs[10], x->qs[11],
+        //     x->qs[12], x->qs[13], x->qs[14], x->qs[15]
+        // );
+
+        // TODO better variable names
+        for (int i = 0; i < MXFP4/2; ++i) {
+            uint16_t em0 = x->qs[i] & 0x07;
+            uint16_t em1 = x->qs[i] & 0x70;
+            // float16 values
+            uint16_t x0 = (em0 << (dst_m_bits - 1)) | ((x->qs[i] & 0x08) << 12);
+            uint16_t x1 = (em1 << (dst_m_bits - 5)) | ((x->qs[i] & 0x80) << 8);
+
+            // Three cases:
+            // x is normal and non-zero: Correct bias
+            if ((em0 & 0x06) != 0) {
+                x0 = x0 + ((dst_bias - 1) << dst_m_bits);
+            }
+            if ((em1 & 0x60) != 0) {
+                x1 = x1 + ((dst_bias - 1) << dst_m_bits);
+            }
+            // x is subnormal (x == 0bs001 where s is the sign): Map to +-0.5 in the dst type
+            if (em0 == 0x01) {
+                x0 = dst_0p5 | (x0 & 0x8000);
+            }
+            if (em1 == 0x10) {
+                x1 = dst_0p5 | (x1 & 0x8000);
+            }
+            // x is zero, do nothing
+
+            // TODO NaN handling?
+            // if (n < 128) {
+            //     GGML_LOG_DEBUG("XXX %d] s:%f * e:%f * y:%f = %f\n", 
+            //         ib*MXFP4 + i*2, scale, GGML_FP16_TO_FP32(x0), 
+            //         y[ib*MXFP4 + i*2], (ggml_float)(GGML_FP16_TO_FP32(x0)*scale*y[ib*MXFP4 + i*2]));
+            // }
+            // GGML_LOG_DEBUG("n=%d ib=%d i=%d scale=%0.2f x0=%0.2f x1=%0.2f yi=%d y[yi]=%0.2f y[yi+1]=%0.2f -- MXFP4\n", n, ib, i, scale, GGML_FP16_TO_FP32(x0), GGML_FP16_TO_FP32(x1), yi, y[yi], y[yi+1]);
+            // GGML_LOG_DEBUG("%0.2f %0.2f ", GGML_FP16_TO_FP32(x0), GGML_FP16_TO_FP32(x1));
+            sumf += (ggml_float)(GGML_FP16_TO_FP32(x0)*scale*y[ib*MXFP4 + i*2]);
+            sumf += (ggml_float)(GGML_FP16_TO_FP32(x1)*scale*y[ib*MXFP4 + i*2+1]);
+        }
+        // GGML_LOG_DEBUG("\n");
+    }
+// #endif
+    // XXX these values seem plausible, so it seems the bug lurks in a higher level calling this routine
+    // GGML_LOG_DEBUG("%s: XXX n=%d final sum %f\n", __func__, n, sumf);
+
+    *s = sumf;
+}
+
 void ggml_vec_dot_bf16(int n, float * GGML_RESTRICT s, size_t bs, ggml_bf16_t * GGML_RESTRICT x, size_t bx, ggml_bf16_t * GGML_RESTRICT y, size_t by, int nrc) {
     assert(nrc == 1);
     GGML_UNUSED(nrc);

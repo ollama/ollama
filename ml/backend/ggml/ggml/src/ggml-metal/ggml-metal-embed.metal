@@ -421,6 +421,13 @@ typedef struct {
 } block_iq4_xs;
 static_assert(sizeof(block_iq4_xs) == sizeof(ggml_half) + sizeof(uint16_t) + QK_K/64 + QK_K/2, "wrong iq4_xs block size/padding");
 
+#define MXFP4 32
+typedef struct {
+    uint8_t d;
+    uint8_t qs[MXFP4 / 2];
+} block_mxfp4;
+static_assert(sizeof(block_mxfp4) == sizeof(uint8_t) + MXFP4/2, "wrong mxfp4 block size/padding");
+
 #endif // GGML_COMMON_DECL
 #endif // GGML_COMMON_DECL
 
@@ -1929,6 +1936,9 @@ GGML_TABLE_END()
 #define N_R0_IQ4_XS 2
 #define N_SG_IQ4_XS 2
 
+#define N_R0_MXFP4 4
+#define N_SG_MXFP4 2
+
 // kernel argument structs
 //
 // - element counters (e.g. ne00) typically use int32_t to reduce register usage
@@ -2486,8 +2496,10 @@ typedef struct {
 #endif // GGML_METAL_IMPL
 
 #include <metal_stdlib>
+// #include <metal_logging>
 
 using namespace metal;
+// constant os_log custom_log("com.ollama", "testing");
 
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
@@ -2540,6 +2552,50 @@ void dequantize_bf16_t4(device const bfloat4 * src, short il, thread type4 & reg
     reg = (type4)(*(src));
 }
 #endif
+
+template <typename type4x4>
+void dequantize_mxfp4(device const block_mxfp4 * xb, short il, thread type4x4 & reg) {
+    float4x4 reg_f;
+    const ushort dst_bias = 15;
+    const ushort dst_0p5 = 0x3800;
+    const ushort dst_m_bits = 10;
+    const half scale = (half)(as_type<float>(((uint32_t)xb->d) << 23));
+
+    for (int i = 0; i < 8; i++) {
+        ushort em0 = xb->qs[i] & 0x07;
+        ushort em1 = xb->qs[i] & 0x70;
+        // float16 values
+        ushort x0 = (em0 << (dst_m_bits - 1)) | ((xb->qs[i] & 0x08) << 12);
+        ushort x1 = (em1 << (dst_m_bits - 5)) | ((xb->qs[i] & 0x80) << 8);
+
+        // Three cases:
+        // x is normal and non-zero: Correct bias
+        if ((em0 & 0x06) != 0) {
+            x0 = x0 + ((dst_bias - 1) << dst_m_bits);
+        }
+        if ((em1 & 0x60) != 0) {
+            x1 = x1 + ((dst_bias - 1) << dst_m_bits);
+        }
+        // x is subnormal (x == 0bs001 where s is the sign): Map to +-0.5 in the dst type
+        if (em0 == 0x01) {
+            x0 = dst_0p5 | (x0 & 0x8000);
+        }
+        if (em1 == 0x10) {
+            x1 = dst_0p5 | (x1 & 0x8000);
+        }
+        // x is zero, do nothing
+
+        if (isnan(scale)) {
+            reg_f[i/2][2*(i%2) + 1] = scale;
+            reg_f[i/2][2*(i%2) + 1] = scale;
+        } else {
+            reg_f[i/2][2*(i%2) + 1] = scale * as_type<half>(x0);
+            reg_f[i/2][2*(i%2) + 0] = scale * as_type<half>(x1);
+        }
+    }
+
+    reg = (type4x4) reg_f;
+}
 
 template <typename type4x4>
 void dequantize_q4_0(device const block_q4_0 * xb, short il, thread type4x4 & reg) {
@@ -4373,9 +4429,76 @@ inline float block_q_n_dot_y(device const block_q5_1 * qb_curr, float sumy, thre
     return d * (acc[0] + acc[1] + acc[2] + acc[3]) + sumy * m;
 }
 
-template<typename block_q_type, int nr0, int nsg, int nw, typename args_t>
-void mul_vec_q_n_f32_impl(
-        args_t args,
+// function for calculate inner product between half a mxfp4 block and 16 floats (yl), sumy is SUM(yl[i])
+// il indicates where the mxfp quants begin (0 or MXFP4/4)
+// we assume that the yl's have been multiplied with the appropriate scale factor
+// that corresponds to the missing bit shifts (1, 1/16, 1/256, 1/4096) 
+// TODO refine comment on this one...
+inline float block_mxfp4_n_dot_y(device const block_mxfp4 * qb_curr, float sumy, thread float * yl, int il) {
+    float d = as_type<float>(((uint32_t)qb_curr->d) << 23);
+
+    float acc[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    const ushort dst_bias = 15;
+    const ushort dst_0p5 = 0x3800;
+    const ushort dst_m_bits = 10;
+
+    device const uint8_t *qs = ((device const uint8_t *) qb_curr + 1 + il);
+
+    for (int i = 0; i < 8; i += 2) {
+        ushort em0 = qs[i] & 0x07;
+        ushort em1 = qs[i] & 0x70;
+        ushort em2 = qs[i+1] & 0x07;
+        ushort em3 = qs[i+1] & 0x70;
+        ushort x0 = (em0 << (dst_m_bits - 1)) | ((qs[i] & 0x08) << 12);
+        ushort x1 = (em1 << (dst_m_bits - 5)) | ((qs[i] & 0x80) << 8);
+        ushort x2 = (em2 << (dst_m_bits - 1)) | ((qs[i+1] & 0x08) << 12);
+        ushort x3 = (em3 << (dst_m_bits - 5)) | ((qs[i+1] & 0x80) << 8);
+        // Three cases:
+        // x is normal and non-zero: Correct bias
+        if ((em0 & 0x06) != 0) {
+            x0 = x0 + ((dst_bias - 1) << dst_m_bits);
+        }
+        if ((em1 & 0x60) != 0) {
+            x1 = x1 + ((dst_bias - 1) << dst_m_bits);
+        }
+        if ((em2 & 0x06) != 0) {
+            x2 = x2 + ((dst_bias - 1) << dst_m_bits);
+        }
+        if ((em3 & 0x60) != 0) {
+            x3 = x3 + ((dst_bias - 1) << dst_m_bits);
+        }
+        // x is subnormal (x == 0bs001 where s is the sign): Map to +-0.5 in the dst type
+        if (em0 == 0x01) {
+            x0 = dst_0p5 | (x0 & 0x8000);
+        }
+        if (em1 == 0x10) {
+            x1 = dst_0p5 | (x1 & 0x8000);
+        }
+        if (em2 == 0x01) {
+            x2 = dst_0p5 | (x2 & 0x8000);
+        }
+        if (em3 == 0x10) {
+            x3 = dst_0p5 | (x3 & 0x8000);
+        }
+        // x is zero, do nothing
+        if (!isnan(d)) {
+            acc[0] += yl[i + 0] * as_type<half>(x0);
+            acc[1] += yl[i + 1] * as_type<half>(x1);
+            acc[2] += yl[i + 8] * as_type<half>(x2);
+            acc[3] += yl[i + 9] * as_type<half>(x3);
+        } else {
+            acc[0] = d;
+            acc[1] = d;
+            acc[2] = d;
+            acc[3] = d;
+        }
+    }
+
+    return d * (sumy + acc[0] + acc[1] + acc[2] + acc[3]);
+}
+
+void mul_mv_mxfp4_f32_impl(
+        ggml_metal_kargs_mul_mv args,
         device const char * src0,
         device const char * src1,
         device       char * dst,
@@ -4383,13 +4506,160 @@ void mul_vec_q_n_f32_impl(
         uint3  tgpig,
         ushort tiisg,
         ushort sgitg) {
-    const int nb = args.ne00/QK4_0;
+    const ushort dst_bias = 15;
+    const ushort dst_0p5 = 0x3800;
+    const ushort dst_m_bits = 10;
+    const int nr0 = N_R0_MXFP4;
+    const int nsg = N_SG_MXFP4;
+    const int nw = N_SIMDWIDTH;
+    const int nb = args.ne00/MXFP4;
 
     const int r0 = tgpig.x;
     const int r1 = tgpig.y;
     const int im = tgpig.z;
 
     const int first_row = (r0 * nsg + sgitg) * nr0;
+
+    const uint i12 = im%args.ne12;
+    const uint i13 = im/args.ne12;
+
+  //const uint64_t offset0 = first_row*args.nb01 + (i12/args.r2)*args.nb02 + (i13/args.r3)*args.nb03;
+    const uint64_t offset1 =        r1*args.nb11 + (i12        )*args.nb12 + (i13        )*args.nb13;
+
+  //device const block_mxfp4 * x = (device const block_mxfp4 *) (src0 + offset0);
+    device const float       * y = (device const float       *) (src1 + offset1);
+
+    // pointers to src0 rows
+    device const block_mxfp4 * ax[nr0];
+    for (int row = 0; row < nr0; ++row) {
+        const uint64_t offset0 = (first_row + row)*args.nb01 + (i12/args.r2)*args.nb02 + (i13/args.r3)*args.nb03;
+
+        ax[row] = (device const block_mxfp4 *) ((device char *) src0 + offset0);
+    }
+
+    float yl[16]; // src1 vector cache
+    float sumf[nr0] = {0.f};
+
+    const short ix = (tiisg/2);
+    const short il = (tiisg%2)*16;
+
+    device const float * yb = y + ix*MXFP4 + il;
+
+    // each thread in a SIMD group deals with half a block.
+    for (int ib = ix; ib < nb; ib += nw/2) {
+
+#pragma unroll
+        for (short row = 0; row < nr0; row++) {
+            // float y_vals[16] = {0.f};
+            // float x_vals[16] = {0.f};
+            // int debug_i = 0;
+
+            // Processes 16 items
+            device const block_mxfp4 * qb_curr = ax[row] + ib;
+            float d = as_type<float>(((uint32_t)(ax[row] + ib)->d) << 23);
+            // il = 0 or 16
+            device const uint8_t *qs = ((device const uint8_t *) qb_curr + 1 + il/2);
+            for (int i = 0; i < 8; ++i) {
+                ushort em0 = qs[i] & 0x07;
+                ushort em1 = qs[i] & 0x70;
+                ushort x0 = (em0 << (dst_m_bits - 1)) | ((qs[i] & 0x08) << 12);
+                ushort x1 = (em1 << (dst_m_bits - 5)) | ((qs[i] & 0x80) << 8);
+                // Three cases:
+                // x is normal and non-zero: Correct bias
+                if ((em0 & 0x06) != 0) {
+                    x0 = x0 + ((dst_bias - 1) << dst_m_bits);
+                }
+                if ((em1 & 0x60) != 0) {
+                    x1 = x1 + ((dst_bias - 1) << dst_m_bits);
+                }
+                // x is subnormal (x == 0bs001 where s is the sign): Map to +-0.5 in the dst type
+                if (em0 == 0x01) {
+                    x0 = dst_0p5 | (x0 & 0x8000);
+                }
+                if (em1 == 0x10) {
+                    x1 = dst_0p5 | (x1 & 0x8000);
+                }
+                // x is zero, do nothing
+                if (!isnan(d)) {
+                    sumf[row] += yb[i*2] * as_type<half>(x0) * d
+                        + yb[i*2+1] * as_type<half>(x1) * d;
+                    // DEBUGGING
+                    // x_vals[debug_i] = as_type<half>(x0) * d;
+                    // y_vals[debug_i] = yb[i*2];
+                    // debug_i++;
+                    // x_vals[debug_i] = as_type<half>(x1) * d;
+                    // y_vals[debug_i] = yb[i*2+1];
+                    // debug_i++;
+                } else {
+                    sumf[row] = d;
+                    // debug_i += 2;
+                }
+                // custom_log.log("XXX i:%d x0:%f x1:%f y0:%f y1:%f", debug_i-2, x_vals[debug_i-2], x_vals[debug_i-1], y_vals[debug_i-2], y_vals[debug_i-1]);
+            }
+            // custom_log.log("XXX [%d:%d:%d] %d:%d row:%d il:%d ib:%d x_vals[%f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f] y_vals[%f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f]",
+            //     tgpig.x, tgpig.y, tgpig.z, tiisg, sgitg, row, il, ib,
+            //     x_vals[0], x_vals[1], x_vals[2], x_vals[3], x_vals[4], x_vals[5], x_vals[6], x_vals[7],
+            //     x_vals[8], x_vals[9], x_vals[10], x_vals[11], x_vals[12], x_vals[13], x_vals[14], x_vals[15],
+            //     y_vals[0], y_vals[1], y_vals[2], y_vals[3], y_vals[4], y_vals[5], y_vals[6], y_vals[7],
+            //     y_vals[8], y_vals[9], y_vals[10], y_vals[11], y_vals[12], y_vals[13], y_vals[14], y_vals[15]
+            // );
+        }
+
+        yb += MXFP4 * 16;
+
+        // custom_log.log("mul_mv_mxfp4_f32_impl [%d:%d:%d] %d:%d ib:%d nb:%d ix:%d ax: [%p %p %p %p] y:%p y_offset:%d offset1:%lu sums: [%f %f %f %f] dst:%p dst_offset:%lu x_vals[%f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f] y_vals[%f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f]",
+        //     tgpig.x, tgpig.y, tgpig.z, tiisg, sgitg,
+        //     ib, nb, ix, ax[0], ax[1], ax[2], ax[3], y, ix*MXFP4 + il, offset1, sumf[0], sumf[1], sumf[2], sumf[3], dst, (uint64_t)im*args.ne0*args.ne1 +r1*args.ne0,
+        //     x_vals[0], x_vals[1], x_vals[2], x_vals[3], x_vals[4], x_vals[5], x_vals[6], x_vals[7],
+        //     x_vals[8], x_vals[9], x_vals[10], x_vals[11], x_vals[12], x_vals[13], x_vals[14], x_vals[15],
+        //     y_vals[0], y_vals[1], y_vals[2], y_vals[3], y_vals[4], y_vals[5], y_vals[6], y_vals[7],
+        //     y_vals[8], y_vals[9], y_vals[10], y_vals[11], y_vals[12], y_vals[13], y_vals[14], y_vals[15]
+        // );
+    }
+
+    device float * dst_f32 = (device float *) dst + im*args.ne0*args.ne1 + r1*args.ne0;
+
+    for (int row = 0; row < nr0; ++row) {
+        const float tot = simd_sum(sumf[row]);
+
+        if (tiisg == 0 && first_row + row < args.ne01) {
+            dst_f32[first_row + row] = tot;
+        }
+    }
+}
+
+[[host_name("kernel_mul_mv_mxfp4_f32")]]
+kernel void kernel_mul_mv_mxfp4_f32(
+        constant ggml_metal_kargs_mul_mv & args,
+        device const char * src0,
+        device const char * src1,
+        device       char * dst,
+        threadgroup  char * shmem [[threadgroup(0)]],
+        uint3  tgpig[[threadgroup_position_in_grid]],
+        ushort tiisg[[thread_index_in_simdgroup]],
+        ushort sgitg[[simdgroup_index_in_threadgroup]]) {
+
+    mul_mv_mxfp4_f32_impl(args, src0, src1, dst, shmem, tgpig, tiisg, sgitg);
+}
+
+
+template<typename block_q_type, int nr0, int nsg, int nw, typename args_t>
+void mul_vec_q_n_f32_impl(
+        args_t args,
+        device const char * src0,
+        device const char * src1,
+        device       char * dst,
+        threadgroup  char * shmem,
+        uint3  tgpig, // Threadgroup Position in Grid
+        ushort tiisg, // Thread Index in SIMD Group
+        ushort sgitg) { // SIMD Group Index in ThreadGroup
+    const int nb = args.ne00/QK4_0; // src0->ne[0] / 32
+
+    const int r0 = tgpig.x;
+    const int r1 = tgpig.y;
+    const int im = tgpig.z;
+
+    const int first_row = (r0 * nsg + sgitg) * nr0; // nsg=2 nr0=4
 
     const uint i12 = im%args.ne12;
     const uint i13 = im/args.ne12;
@@ -9289,6 +9559,8 @@ template [[host_name("kernel_mul_mm_iq1_m_f32")]]   kernel mul_mm_t kernel_mul_m
 template [[host_name("kernel_mul_mm_iq4_nl_f32")]]  kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   block_iq4_nl,  2,     dequantize_iq4_nl>;
 template [[host_name("kernel_mul_mm_iq4_xs_f32")]]  kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   block_iq4_xs,  QK_NL, dequantize_iq4_xs>;
 
+template [[host_name("kernel_mul_mm_mxfp4_f32")]]   kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   block_mxfp4,   2,     dequantize_mxfp4>;
+
 //
 // indirect matrix-matrix multiplication
 //
@@ -9319,6 +9591,8 @@ template [[host_name("kernel_mul_mm_id_iq1_s_f16")]]   kernel mul_mm_id kernel_m
 template [[host_name("kernel_mul_mm_id_iq1_m_f16")]]   kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   block_iq1_m,   QK_NL, dequantize_iq1_m>;
 template [[host_name("kernel_mul_mm_id_iq4_nl_f16")]]  kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   block_iq4_nl,  2,     dequantize_iq4_nl>;
 template [[host_name("kernel_mul_mm_id_iq4_xs_f16")]]  kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   block_iq4_xs,  QK_NL, dequantize_iq4_xs>;
+
+template [[host_name("kernel_mul_mm_id_mxfp4_f16")]]   kernel mul_mm_id kernel_mul_mm_id<half,   half4x4,   simdgroup_half8x8,   block_mxfp4,    2,    dequantize_mxfp4>;
 
 
 //
@@ -9464,6 +9738,8 @@ template [[host_name("kernel_mul_mv_id_iq3_s_f32")]]   kernel kernel_mul_mv_id_t
 template [[host_name("kernel_mul_mv_id_iq2_s_f32")]]   kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_iq2_s_f32_impl  <N_R0_IQ2_S,   N_SG_IQ2_S,   N_SIMDWIDTH>>>;
 template [[host_name("kernel_mul_mv_id_iq4_nl_f32")]]  kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_iq4_nl_f32_impl <N_R0_IQ4_NL,  N_SG_IQ4_NL,  N_SIMDWIDTH>>>;
 template [[host_name("kernel_mul_mv_id_iq4_xs_f32")]]  kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<kernel_mul_mv_iq4_xs_f32_impl <N_R0_IQ4_XS,  N_SG_IQ4_XS,  N_SIMDWIDTH>>>;
+
+template [[host_name("kernel_mul_mv_id_mxfp4_f32")]]    kernel kernel_mul_mv_id_t kernel_mul_mv_id<mmv_fn<mul_mv_mxfp4_f32_impl>>;
 
 kernel void kernel_pool_2d_max_f32(
         device  const float * src0,

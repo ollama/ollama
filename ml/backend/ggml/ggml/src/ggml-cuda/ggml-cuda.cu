@@ -1202,7 +1202,7 @@ static void ggml_cuda_op_mul_mat_cublas(
 
     const int cc = ggml_cuda_info().devices[id].cc;
 
-    const bool use_fp16 = (src0->type == GGML_TYPE_F16 || ggml_is_quantized(src0->type)) && ggml_is_contiguous(src0) && row_diff == src0->ne[1] && dst->op_params[0] == GGML_PREC_DEFAULT;
+    const bool use_fp16 = (src0->type == GGML_TYPE_F16 || ggml_is_quantized(src0->type)) && ggml_is_contiguous(src0) && row_diff == src0->ne[1] && dst->op_params[0] == GGML_PREC_DEFAULT && src0->type != GGML_TYPE_MXFP4;
 
     if (src0->type == GGML_TYPE_BF16 && ggml_is_contiguous(src0) && row_diff == src0->ne[1]) {
         ggml_cuda_pool_alloc<nv_bfloat16> src1_as_bf16(ctx.pool(id));
@@ -1924,7 +1924,8 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
         && src0->ne[0] % 2 == 0 && src1->ne[1] == 1;
     bool use_mul_mat_vec_q = ggml_is_quantized(src0->type) && !bad_padding_clear
         && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32
-        && src1->ne[1] <= MMVQ_MAX_BATCH_SIZE;
+        && src1->ne[1] <= MMVQ_MAX_BATCH_SIZE
+        && src0->type != GGML_TYPE_MXFP4;
     bool use_mul_mat_q     = ggml_is_quantized(src0->type) && !bad_padding_clear
         && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
 
@@ -1997,7 +1998,7 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
 
     if (src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32) {
-        if (ne2 == 1) {
+        if (ne2 == 1 && src0->type != GGML_TYPE_MXFP4) {
             if (ggml_is_quantized(src0->type)) {
                 ggml_cuda_mul_mat_vec_q(ctx, src0, src1, ids, dst);
             } else {
@@ -2008,6 +2009,35 @@ static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * 
 
         if (ggml_cuda_should_use_mmq(src0->type, cc, ne12)) {
             ggml_cuda_mul_mat_q(ctx, src0, src1, ids, dst);
+            return;
+        }
+        if (ne2 == 1 && src0->type == GGML_TYPE_MXFP4) {
+            // Derived from ggml_cuda_op_mul_mat -> ggml_cuda_op_mul_mat_cublas
+            // GGML_LOG_DEBUG("%s XXX converting MXFP4 -> FP32\n", __func__);
+            GGML_ASSERT(ggml_is_contiguous(src0) && "MXFP4 tensor must be contiguous");
+            GGML_ASSERT(!ggml_backend_buft_is_cuda_split(src0->buffer->buft) && "MXFP4 tensor must not be split");
+            ggml_backend_cuda_buffer_context * src0_ctx = (ggml_backend_cuda_buffer_context *) src0->buffer->context;
+            int id = src0_ctx->device;
+            cudaStream_t stream = ctx.stream(id, 0);
+            ggml_cuda_pool_alloc<float> src0_ddq_as_f32(ctx.pool(id));
+            src0_ddq_as_f32.alloc(ggml_nelements(src0));
+            char * src0_dd = (char *) src0->data;
+            const to_fp32_cuda_t to_fp32_cuda = ggml_get_to_fp32_cuda(src0->type);
+            GGML_ASSERT(to_fp32_cuda != nullptr);
+            // GGML_LOG_DEBUG("%s XXX calling convert\n", __func__);
+            to_fp32_cuda(src0_dd, src0_ddq_as_f32.get(), ggml_nelements(src0), stream);
+            // TODO is there a better way to do this?
+            // GGML_LOG_DEBUG("%s XXX setting up tmp tensor\n", __func__);
+            ggml_tensor src0fp32;
+            memcpy(&src0fp32, src0, sizeof(src0fp32));
+            src0fp32.type = GGML_TYPE_F32;
+            src0fp32.nb[0] = ggml_type_size(GGML_TYPE_F32);
+            src0fp32.nb[1] =  src0fp32.nb[0]   * (src0fp32.ne[0] / ggml_blck_size(GGML_TYPE_F32)) /* + padding*/;
+            src0fp32.nb[2] = src0fp32.nb[1] * src0fp32.ne[1];
+            src0fp32.nb[3] = src0fp32.nb[2] * src0fp32.ne[2];
+            src0fp32.data = src0_ddq_as_f32.get();
+            // GGML_LOG_DEBUG("%s XXX calling ggml_cuda_mul_mat_vec\n", __func__);
+            ggml_cuda_mul_mat_vec(ctx, &src0fp32, src1, ids, dst);
             return;
         }
     }
@@ -3048,6 +3078,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                     case GGML_TYPE_IQ4_NL:
                     case GGML_TYPE_IQ4_XS:
                     case GGML_TYPE_BF16:
+                    case GGML_TYPE_MXFP4:
 #ifdef GGML_USE_MUSA
                         if (a->type == GGML_TYPE_Q3_K) {
                             return false;
@@ -3071,6 +3102,8 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
                     case GGML_TYPE_Q5_1:
                     case GGML_TYPE_Q8_0:
                         return true;
+                    case GGML_TYPE_MXFP4:
+                        GGML_ABORT("MXFP4 not supported by get rows");
                     default:
                         return false;
                 }

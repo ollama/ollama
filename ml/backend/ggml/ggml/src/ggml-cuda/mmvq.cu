@@ -27,6 +27,7 @@ static constexpr __device__ vec_dot_q_cuda_t get_vec_dot_q_cuda(ggml_type type) 
         case GGML_TYPE_IQ4_NL:  return vec_dot_iq4_nl_q8_1;
         case GGML_TYPE_IQ4_XS:  return vec_dot_iq4_xs_q8_1;
         case GGML_TYPE_IQ3_S:   return vec_dot_iq3_s_q8_1;
+        case GGML_TYPE_MXFP4: GGML_ABORT("MXFP4 not supported by get_vec_dot_q_cuda");
         default:                return nullptr;
     }
 }
@@ -50,6 +51,7 @@ static constexpr __device__ int get_vdr_mmvq(ggml_type type) {
         case GGML_TYPE_IQ3_S:   return VDR_IQ3_S_Q8_1_MMVQ;
         case GGML_TYPE_IQ4_NL:  return VDR_IQ4_NL_Q8_1_MMVQ;
         case GGML_TYPE_IQ4_XS:  return VDR_IQ4_XS_Q8_1_MMVQ;
+        case GGML_TYPE_MXFP4: GGML_ABORT("MXFP4 not supported by get_vdr_mmvq");
         default:                return 1;
     }
 }
@@ -482,6 +484,7 @@ static void mul_mat_vec_q_switch_type(
                  nsamples_x, nsamples_dst, stride_sample_x, stride_sample_y, stride_sample_dst,
                  stream);
             break;
+        case GGML_TYPE_MXFP4: GGML_ABORT("MXFP4 not supported by mul_mat_vec_q_switch_type");
         default:
             GGML_ABORT("fatal error");
             break;

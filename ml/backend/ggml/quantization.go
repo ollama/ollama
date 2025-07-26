@@ -44,6 +44,8 @@ func ConvertToF32(data []byte, dtype uint32, nelements uint64) []float32 {
 		C.dequantize_row_q6_K((*C.block_q6_K)(unsafe.Pointer(&data[0])), (*C.float)(&f32s[0]), elems)
 	case C.GGML_TYPE_BF16:
 		C.ggml_bf16_to_fp32_row((*C.ggml_bf16_t)(unsafe.Pointer(&data[0])), (*C.float)(&f32s[0]), elems)
+	case C.GGML_TYPE_MXFP4:
+		C.dequantize_row_mxfp4((*C.block_mxfp4)(unsafe.Pointer(&data[0])), (*C.float)(&f32s[0]), elems)
 	default:
 		panic("unsupported quantization format")
 	}
