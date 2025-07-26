@@ -64,54 +64,37 @@ func ensureThinkingSupport(ctx context.Context, client *api.Client, name string)
 	fmt.Fprintf(os.Stderr, "warning: model %q does not support thinking output\n", name)
 }
 
-var errModelfileNotFound = errors.New("specified Modelfile wasn't found")
-
-func getModelfileName(cmd *cobra.Command) (string, error) {
-	filename, _ := cmd.Flags().GetString("file")
-
-	if filename == "" {
-		filename = "Modelfile"
-	}
-
-	absName, err := filepath.Abs(filename)
-	if err != nil {
-		return "", err
-	}
-
-	_, err = os.Stat(absName)
-	if err != nil {
-		return "", err
-	}
-
-	return absName, nil
-}
-
 func CreateHandler(cmd *cobra.Command, args []string) error {
 	p := progress.NewProgress(os.Stderr)
 	defer p.Stop()
 
-	var reader io.Reader
-
-	filename, err := getModelfileName(cmd)
-	if os.IsNotExist(err) {
-		if filename == "" {
-			reader = strings.NewReader("FROM .\n")
-		} else {
-			return errModelfileNotFound
-		}
-	} else if err != nil {
-		return err
-	} else {
-		f, err := os.Open(filename)
-		if err != nil {
-			return err
-		}
-
-		reader = f
-		defer f.Close()
+	filename, err := cmd.Flags().GetString("file")
+	if err != nil {
+		return fmt.Errorf("error retrieving file flag: %w", err)
 	}
 
-	modelfile, err := parser.ParseFile(reader)
+	var r, fallback io.Reader
+	switch filename {
+	case "-":
+		r = os.Stdin
+	case "":
+		filename = "Modelfile"
+		fallback = strings.NewReader("FROM .")
+		fallthrough
+	default:
+		r, err = os.Open(filename)
+		if errors.Is(err, os.ErrNotExist) && fallback != nil {
+			r = fallback
+		} else if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("%w: Modelfile %q does not exist, please create it or use --file to specify a different file", err, filename)
+		} else if err != nil {
+			return err
+		} else {
+			defer r.(*os.File).Close()
+		}
+	}
+
+	modelfile, err := parser.ParseFile(r)
 	if err != nil {
 		return err
 	}
@@ -127,10 +110,7 @@ func CreateHandler(cmd *cobra.Command, args []string) error {
 	spinner.Stop()
 
 	req.Model = args[0]
-	quantize, _ := cmd.Flags().GetString("quantize")
-	if quantize != "" {
-		req.Quantize = quantize
-	}
+	req.Quantize, _ = cmd.Flags().GetString("quantize")
 
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
