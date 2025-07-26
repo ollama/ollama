@@ -3,6 +3,7 @@ package gptoss
 import (
 	"cmp"
 	"math"
+	"strings"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -216,7 +217,17 @@ func New(c fs.Config) (model.Model, error) {
 	m := Transformer{
 		TransformerBlocks: make([]TransformerBlock, c.Uint("block_count")),
 		BytePairEncoding: model.NewBytePairEncoding(
-			c.String("tokenizer.ggml.pretokenizer", `(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+`),
+			c.String("tokenizer.ggml.pretokenizer",
+				strings.Join([]string{
+					`[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?`,
+					`[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?`,
+					`\p{N}{1,3}`,
+					` ?[^\s\p{L}\p{N}]+[\r\n/]*`,
+					`\s*[\r\n]+`,
+					`\s+(?!\S)`,
+					`\s+`,
+				}, "|"),
+			),
 			&model.Vocabulary{
 				Values: c.Strings("tokenizer.ggml.tokens"),
 				Types:  c.Ints("tokenizer.ggml.token_type"),
