@@ -1,6 +1,14 @@
 # Template
 
-Ollama provides a powerful templating engine backed by Go's built-in templating engine to construct prompts for your large language model. This feature is a valuable tool to get the most out of your models.
+The purpose of a template is to provide the large language model more contextual information to work with.
+
+By default the user input is sent verbatim to the LLM, and when asked "are you sure?" the model has no recollection of what you're referring to.
+
+A template takes all the preceding messages in the conversation into account and formats them to more precisely guide the model, explaining global instructions (system prompt), letting know what tools are available, previous messages, including calls to tools and corresponding responses.
+
+A good template can get the most out of your models.
+
+Ollama provides a powerful templating engine backed by Go's built-in templating engine to construct prompts for your large language model.
 
 ## Basic Template Structure
 
@@ -23,6 +31,8 @@ In this example, we have:
 * A basic messages structure (layout)
 * Three variables: `Messages`, `Role`, and `Content` (variables)
 * A custom function (action) that iterates over an array of items (`range .Messages`) and displays each item
+
+For more details see [text/template documentation](https://pkg.go.dev/text/template)
 
 ## Adding templates to your model
 
@@ -94,6 +104,66 @@ TEMPLATE """{{- if .System }}<|start_header_id|>system<|end_header_id|>
 `Tools[].Function.Parameters.Properties[].Description` (string): property description
 
 `Tools[].Function.Parameters.Properties[].Enum` (list): list of valid values
+
+## Tools
+
+### Describing tools, calls made, and results to the model
+
+When adding support for tools remember the two sides of the conversation, the model and Ollama:
+1. use the tokens the model was trained on in the messages sent by `system`, `user`, or `tool`, listing the available tools and the responses from tool calls
+2. use the tokens the model was trained on when reflecting back the messages sent by `assistant` making the tool calls
+3. explain the format Ollama expects in the instructions to how to make tool calls
+
+For example, letting the model know about available tools (`{{ if .Tools }}`), maybe including instructions for how to format the calls to be made.
+* Mistral: `[AVAILABLE_TOOLS]{{ json .Tools }}[/AVAILABLE_TOOLS]`
+* Deepseek: `<tools>{{ range $t := .Tools }}{json $t.Function}}{{end}}</tools>`
+
+Letting the model know what tool calls were made (`{{ if .ToolCalls }})`:
+* Mistral:
+    ```
+    [TOOL_CALLS]
+    {{ range .ToolCalls }}
+      {"name": "{{ .Function.Name }}", "arguments": {{ json .Function.Arguments }}}
+    {{ end }}
+    [/TOOL_CALLS]
+    ```
+* Deepseek:
+    ````
+    <｜tool▁calls▁begin｜>
+    {{- range $_ := .ToolCalls -}}
+      <｜tool▁call▁begin｜>function<｜tool▁sep｜>{{ .Function.Name }}
+    ```json
+    {{ .Function.Arguments }}
+    ```
+    <｜tool▁call▁end｜>{{ "\n" }}
+    {{- end -}}
+    <｜tool▁calls▁end｜>
+    ````
+
+Similarly for tool call results (`{{ if eq .Role "tool "}}`):
+* Mistral: `[TOOL_RESULTS] {"content": {{ .Content }}}[/TOOL_RESULTS]`
+* Deepseek: `<｜tool▁output▁begin｜>{{ .Content }}<｜tool▁output▁end｜>`
+
+### What is expected from the model
+
+Ollama recognizes a few different conventions for calling tools and the model should be instructed to format the calls it wants to make in one of these formats.
+
+Mistral style:
+```
+[TOOL_CALLS]
+{"name": "get_weather", arguments: {"city": "London"}}
+[/TOOL_CALLS]
+```
+
+Deepseek style:
+
+`For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags.`
+```
+<tool_call>
+{"name": "get_weather", arguments: {"city": "London"}}
+</tool_call>
+```
+
 
 ## Tips and Best Practices
 
