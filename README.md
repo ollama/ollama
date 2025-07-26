@@ -482,6 +482,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Libraries
 
+- [Async::Ollama](https://github.com/socketry/async-ollama) - Streaming, asynchronous Ruby bindings for Ollama, supporting both chat and generate endpoints.
 - [LangChain](https://python.langchain.com/docs/integrations/chat/ollama/) and [LangChain.js](https://js.langchain.com/docs/integrations/chat/ollama/) with [example](https://js.langchain.com/docs/tutorials/local_rag/)
 - [Firebase Genkit](https://firebase.google.com/docs/genkit/plugins/ollama)
 - [crewAI](https://github.com/crewAIInc/crewAI)
