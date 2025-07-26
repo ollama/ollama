@@ -230,6 +230,17 @@ ollama stop llama3.2
 
 `ollama serve` is used when you want to start ollama without running the desktop application.
 
+### Shell completion
+
+Ollama supports shell completion for bash, zsh, fish, and PowerShell with context-aware suggestions.
+
+```shell
+# Enable completion for your shell (bash, zsh, fish, powershell)
+source <(ollama completion bash)
+```
+
+Tab completion automatically suggests available models for `run`, `show`, `rm`, etc., and only running models for `stop`.
+
 ## Building
 
 See the [developer guide](https://github.com/ollama/ollama/blob/main/docs/development.md)

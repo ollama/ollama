@@ -1381,6 +1381,81 @@ func versionHandler(cmd *cobra.Command, _ []string) {
 	}
 }
 
+// getAvailableModels returns a list of available models for completion
+func getAvailableModels() []string {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	models, err := client.List(ctx)
+	if err != nil {
+		return nil
+	}
+
+	var names []string
+	for _, model := range models.Models {
+		names = append(names, model.Name)
+	}
+	return names
+}
+
+// getRunningModels returns a list of currently running models for completion
+func getRunningModels() []string {
+	client, err := api.ClientFromEnvironment()
+	if err != nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	models, err := client.ListRunning(ctx)
+	if err != nil {
+		return nil
+	}
+
+	var names []string
+	for _, model := range models.Models {
+		names = append(names, model.Name)
+	}
+	return names
+}
+
+// modelCompletionFunc provides completion for commands that take model names
+func modelCompletionFunc(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return getAvailableModels(), cobra.ShellCompDirectiveNoFileComp
+}
+
+// runningModelCompletionFunc provides completion for commands that take running model names
+func runningModelCompletionFunc(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return getRunningModels(), cobra.ShellCompDirectiveNoFileComp
+}
+
+// stopCompletionFunc provides completion for the stop command
+func stopCompletionFunc(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) == 0 {
+		return getRunningModels(), cobra.ShellCompDirectiveNoFileComp
+	}
+	return nil, cobra.ShellCompDirectiveNoFileComp
+}
+
+// deleteCompletionFunc provides completion for the rm command (supports multiple models)
+func deleteCompletionFunc(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	return getAvailableModels(), cobra.ShellCompDirectiveNoFileComp
+}
+
+// copyCompletionFunc provides completion for the cp command
+func copyCompletionFunc(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	if len(args) < 2 {
+		return getAvailableModels(), cobra.ShellCompDirectiveNoFileComp
+	}
+	return nil, cobra.ShellCompDirectiveNoFileComp
+}
+
 func appendEnvDocs(cmd *cobra.Command, envs []envconfig.EnvVar) {
 	if len(envs) == 0 {
 		return
@@ -1410,7 +1485,7 @@ func NewCLI() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		CompletionOptions: cobra.CompletionOptions{
-			DisableDefaultCmd: true,
+			DisableDefaultCmd: false,
 		},
 		Run: func(cmd *cobra.Command, args []string) {
 			if version, _ := cmd.Flags().GetBool("version"); version {
@@ -1434,6 +1509,7 @@ func NewCLI() *cobra.Command {
 
 	createCmd.Flags().StringP("file", "f", "", "Name of the Modelfile (default \"Modelfile\")")
 	createCmd.Flags().StringP("quantize", "q", "", "Quantize model to this level (e.g. q4_K_M)")
+	createCmd.ValidArgsFunction = cobra.NoFileCompletions
 
 	showCmd := &cobra.Command{
 		Use:     "show MODEL",
@@ -1449,6 +1525,7 @@ func NewCLI() *cobra.Command {
 	showCmd.Flags().Bool("template", false, "Show template of a model")
 	showCmd.Flags().Bool("system", false, "Show system message of a model")
 	showCmd.Flags().BoolP("verbose", "v", false, "Show detailed model information")
+	showCmd.ValidArgsFunction = modelCompletionFunc
 
 	runCmd := &cobra.Command{
 		Use:     "run MODEL [PROMPT]",
@@ -1465,6 +1542,7 @@ func NewCLI() *cobra.Command {
 	runCmd.Flags().String("format", "", "Response format (e.g. json)")
 	runCmd.Flags().Bool("think", false, "Whether to use thinking mode for supported models")
 	runCmd.Flags().Bool("hidethinking", false, "Hide thinking output (if provided)")
+	runCmd.ValidArgsFunction = modelCompletionFunc
 
 	stopCmd := &cobra.Command{
 		Use:     "stop MODEL",
@@ -1473,6 +1551,7 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    StopHandler,
 	}
+	stopCmd.ValidArgsFunction = stopCompletionFunc
 
 	serveCmd := &cobra.Command{
 		Use:     "serve",
@@ -1491,6 +1570,7 @@ func NewCLI() *cobra.Command {
 	}
 
 	pullCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	pullCmd.ValidArgsFunction = cobra.NoFileCompletions
 
 	pushCmd := &cobra.Command{
 		Use:     "push MODEL",
@@ -1501,6 +1581,7 @@ func NewCLI() *cobra.Command {
 	}
 
 	pushCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	pushCmd.ValidArgsFunction = modelCompletionFunc
 
 	listCmd := &cobra.Command{
 		Use:     "list",
@@ -1523,6 +1604,7 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    CopyHandler,
 	}
+	copyCmd.ValidArgsFunction = copyCompletionFunc
 
 	deleteCmd := &cobra.Command{
 		Use:     "rm MODEL [MODEL...]",
@@ -1531,6 +1613,7 @@ func NewCLI() *cobra.Command {
 		PreRunE: checkServerHeartbeat,
 		RunE:    DeleteHandler,
 	}
+	deleteCmd.ValidArgsFunction = deleteCompletionFunc
 
 	runnerCmd := &cobra.Command{
 		Use:    "runner",
