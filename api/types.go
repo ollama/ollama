@@ -120,6 +120,9 @@ type ChatRequest struct {
 	// responding. Can be a boolean (true/false) or a string ("high", "medium", "low")
 	// for supported models.
 	Think *ThinkValue `json:"think,omitempty"`
+
+	// Template overrides the model's default prompt template.
+	Template string `json:"template"`
 }
 
 type Tools []Tool
