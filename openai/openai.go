@@ -103,6 +103,7 @@ type ChatCompletionRequest struct {
 	ResponseFormat   *ResponseFormat `json:"response_format"`
 	Tools            []api.Tool      `json:"tools"`
 	Reasoning        *Reasoning      `json:"reasoning,omitempty"`
+	Template         string          `json:"template"`
 }
 
 type ChatCompletion struct {
@@ -573,6 +574,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 		Stream:   &r.Stream,
 		Tools:    r.Tools,
 		Think:    think,
+		Template: r.Template,
 	}, nil
 }
 
