@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,7 +15,6 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/spf13/cobra"
 
 	"github.com/ollama/ollama/api"
@@ -596,7 +596,7 @@ func TestCreateHandler(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				if _, err := w.WriteString("FROM stdin"); err != nil {
+				if _, err := w.WriteString("FROM test"); err != nil {
 					t.Fatal(err)
 				}
 
@@ -611,21 +611,20 @@ func TestCreateHandler(t *testing.T) {
 			},
 			wantRequest: api.CreateRequest{
 				Model: "stdin",
-				From:  "stdin",
+				From:  "test",
 			},
 		},
 		{
 			name: "default",
 			filename: func(t *testing.T) string {
 				t.Chdir(t.TempDir())
-
 				f, err := os.Create("Modelfile")
 				if err != nil {
 					t.Fatal(err)
 				}
 				defer f.Close()
 
-				if _, err := f.WriteString("FROM default"); err != nil {
+				if _, err := f.WriteString("FROM test"); err != nil {
 					t.Fatal(err)
 				}
 
@@ -633,27 +632,7 @@ func TestCreateHandler(t *testing.T) {
 			},
 			wantRequest: api.CreateRequest{
 				Model: "default",
-				From:  "default",
-			},
-		},
-		{
-			name: "file flag",
-			filename: func(t *testing.T) string {
-				f, err := os.CreateTemp(t.TempDir(), filepath.Base(t.Name()))
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer f.Close()
-
-				if _, err := f.WriteString("FROM file:flag"); err != nil {
-					t.Fatal(err)
-				}
-
-				return f.Name()
-			},
-			wantRequest: api.CreateRequest{
-				Model: "file_flag",
-				From:  "file:flag",
+				From:  "test",
 			},
 		},
 		{
@@ -674,6 +653,29 @@ func TestCreateHandler(t *testing.T) {
 			},
 			wantRequest: api.CreateRequest{
 				Model: "default_safetensors",
+				Files: map[string]string{
+					"model.safetensors": "sha256:6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+				},
+			},
+		},
+		{
+			name: "file flag",
+			filename: func(t *testing.T) string {
+				f, err := os.CreateTemp(t.TempDir(), filepath.Base(t.Name()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer f.Close()
+
+				if _, err := f.WriteString("FROM test"); err != nil {
+					t.Fatal(err)
+				}
+
+				return f.Name()
+			},
+			wantRequest: api.CreateRequest{
+				Model: "file_flag",
+				From:  "test",
 			},
 		},
 		{
@@ -686,6 +688,7 @@ func TestCreateHandler(t *testing.T) {
 
 				return ""
 			},
+			wantErr: fmt.Errorf("openat %s: path escapes from parent", "model.safetensors"),
 		},
 	}
 
@@ -708,7 +711,7 @@ func TestCreateHandler(t *testing.T) {
 						return
 					}
 
-					if diff := cmp.Diff(tt.wantRequest, req, cmpopts.IgnoreFields(api.CreateRequest{}, "Files")); diff != "" {
+					if diff := cmp.Diff(tt.wantRequest, req); diff != "" {
 						t.Errorf("Create request mismatch (-want +got):\n%s", diff)
 					}
 				} else if strings.HasPrefix(r.URL.Path, "/api/blobs/") {
@@ -727,7 +730,9 @@ func TestCreateHandler(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if err := CreateHandler(&cmd, []string{filepath.Base(t.Name())}); !errors.Is(err, tt.wantErr) {
+			if err := CreateHandler(&cmd, []string{filepath.Base(t.Name())}); err != tt.wantErr &&
+				err.Error() != tt.wantErr.Error() &&
+				!errors.Is(err, tt.wantErr) {
 				t.Fatal(err)
 			}
 		})
