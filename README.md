@@ -482,60 +482,101 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 ### Libraries
 
-- [LangChain](https://python.langchain.com/docs/integrations/chat/ollama/) and [LangChain.js](https://js.langchain.com/docs/integrations/chat/ollama/) with [example](https://js.langchain.com/docs/tutorials/local_rag/)
-- [Firebase Genkit](https://firebase.google.com/docs/genkit/plugins/ollama)
-- [crewAI](https://github.com/crewAIInc/crewAI)
-- [Yacana](https://remembersoftwares.github.io/yacana/) (User-friendly multi-agent framework for brainstorming and executing predetermined flows with built-in tool integration)
-- [Spring AI](https://github.com/spring-projects/spring-ai) with [reference](https://docs.spring.io/spring-ai/reference/api/chat/ollama-chat.html) and [example](https://github.com/tzolov/ollama-tools)
-- [LangChainGo](https://github.com/tmc/langchaingo/) with [example](https://github.com/tmc/langchaingo/tree/main/examples/ollama-completion-example)
-- [LangChain4j](https://github.com/langchain4j/langchain4j) with [example](https://github.com/langchain4j/langchain4j-examples/tree/main/ollama-examples/src/main/java)
-- [LangChainRust](https://github.com/Abraxas-365/langchain-rust) with [example](https://github.com/Abraxas-365/langchain-rust/blob/main/examples/llm_ollama.rs)
-- [LangChain for .NET](https://github.com/tryAGI/LangChain) with [example](https://github.com/tryAGI/LangChain/blob/main/examples/LangChain.Samples.OpenAI/Program.cs)
-- [LLPhant](https://github.com/theodo-group/LLPhant?tab=readme-ov-file#ollama)
-- [LlamaIndex](https://docs.llamaindex.ai/en/stable/examples/llm/ollama/) and [LlamaIndexTS](https://ts.llamaindex.ai/modules/llms/available_llms/ollama)
-- [LiteLLM](https://github.com/BerriAI/litellm)
-- [OllamaFarm for Go](https://github.com/presbrey/ollamafarm)
-- [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
-- [Ollama for Ruby](https://github.com/gbaptista/ollama-ai)
-- [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs)
-- [Ollama-hpp for C++](https://github.com/jmont-dev/ollama-hpp)
-- [Ollama4j for Java](https://github.com/ollama4j/ollama4j)
-- [ModelFusion Typescript Library](https://modelfusion.dev/integration/model-provider/ollama)
-- [OllamaKit for Swift](https://github.com/kevinhermawan/OllamaKit)
-- [Ollama for Dart](https://github.com/breitburg/dart-ollama)
-- [Ollama for Laravel](https://github.com/cloudstudio/ollama-laravel)
-- [LangChainDart](https://github.com/davidmigloz/langchain_dart)
+#### Python
+- [LangChain](https://python.langchain.com/docs/integrations/chat/ollama/)
 - [Semantic Kernel - Python](https://github.com/microsoft/semantic-kernel/tree/main/python/semantic_kernel/connectors/ai/ollama)
 - [Haystack](https://github.com/deepset-ai/haystack-integrations/blob/main/integrations/ollama.md)
-- [Elixir LangChain](https://github.com/brainlid/langchain)
-- [Ollama for R - rollama](https://github.com/JBGruber/rollama)
-- [Ollama for R - ollama-r](https://github.com/hauselin/ollama-r)
-- [Ollama-ex for Elixir](https://github.com/lebrunel/ollama-ex)
-- [Ollama Connector for SAP ABAP](https://github.com/b-tocs/abap_btocs_ollama)
-- [Testcontainers](https://testcontainers.com/modules/ollama/)
-- [Portkey](https://portkey.ai/docs/welcome/integration-guides/ollama)
-- [PromptingTools.jl](https://github.com/svilupp/PromptingTools.jl) with an [example](https://svilupp.github.io/PromptingTools.jl/dev/examples/working_with_ollama)
-- [LlamaScript](https://github.com/Project-Llama/llamascript)
 - [llm-axe](https://github.com/emirsahin1/llm-axe) (Python Toolkit for Building LLM Powered Apps)
-- [Gollm](https://docs.gollm.co/examples/ollama-example)
+- [Nichey](https://github.com/goodreasonai/nichey) is a Python package for generating custom wikis for your research topic
+
+#### JavaScript / TypeScript
+- [LangChain.js](https://js.langchain.com/docs/integrations/chat/ollama/) with [example](https://js.langchain.com/docs/tutorials/local_rag/)
+- [LlamaIndexTS](https://ts.llamaindex.ai/modules/llms/available_llms/ollama)
+- [ModelFusion Typescript Library](https://modelfusion.dev/integration/model-provider/ollama)
+- [multi-llm-ts](https://github.com/nbonamy/multi-llm-ts) (A Typescript/JavaScript library allowing access to different LLM in a unified API)
+- [Abso](https://github.com/lunary-ai/abso) (OpenAI-compatible TypeScript SDK for any LLM provider)
+
+#### Go
+- [LangChainGo](https://github.com/tmc/langchaingo/) with [example](https://github.com/tmc/langchaingo/tree/main/examples/ollama-completion-example)
+- [OllamaFarm for Go](https://github.com/presbrey/ollamafarm)
 - [Gollama for Golang](https://github.com/jonathanhecl/gollama)
 - [Ollamaclient for Golang](https://github.com/xyproto/ollamaclient)
 - [High-level function abstraction in Go](https://gitlab.com/tozd/go/fun)
-- [Ollama PHP](https://github.com/ArdaGnsrn/ollama-php)
-- [Agents-Flex for Java](https://github.com/agents-flex/agents-flex) with [example](https://github.com/agents-flex/agents-flex/tree/main/agents-flex-llm/agents-flex-llm-ollama/src/test/java/com/agentsflex/llm/ollama)
 - [Parakeet](https://github.com/parakeet-nest/parakeet) is a GoLang library, made to simplify the development of small generative AI applications with Ollama.
-- [Haverscript](https://github.com/andygill/haverscript) with [examples](https://github.com/andygill/haverscript/tree/main/examples)
+- [GoLamify](https://github.com/prasad89/golamify)
+
+#### Java
+- [Spring AI](https://github.com/spring-projects/spring-ai) with [reference](https://docs.spring.io/spring-ai/reference/api/chat/ollama-chat.html) and [example](https://github.com/tzolov/ollama-tools)
+- [LangChain4j](https://github.com/langchain4j/langchain4j) with [example](https://github.com/langchain4j/langchain4j-examples/tree/main/ollama-examples/src/main/java)
+- [Ollama4j for Java](https://github.com/ollama4j/ollama4j)
+- [Agents-Flex for Java](https://github.com/agents-flex/agents-flex) with [example](https://github.com/agents-flex/agents-flex/tree/main/agents-flex-llm/agents-flex-llm-ollama/src/test/java/com/agentsflex/llm/ollama)
+
+#### .NET / C#
+- [LangChain for .NET](https://github.com/tryAGI/LangChain) with [example](https://github.com/tryAGI/LangChain/blob/main/examples/LangChain.Samples.OpenAI/Program.cs)
+- [OllamaSharp for .NET](https://github.com/awaescher/OllamaSharp)
+- [LlmTornado](https://github.com/lofcz/llmtornado) (C# library providing a unified interface for major FOSS & Commercial inference APIs)
+
+#### Rust
+- [LangChainRust](https://github.com/Abraxas-365/langchain-rust) with [example](https://github.com/Abraxas-365/langchain-rust/blob/main/examples/llm_ollama.rs)
+- [Ollama-rs for Rust](https://github.com/pepperoni21/ollama-rs)
+
+#### Ruby
+- [Ollama for Ruby](https://github.com/gbaptista/ollama-ai)
+
+#### C++
+- [Ollama-hpp for C++](https://github.com/jmont-dev/ollama-hpp)
+- [OllamaPlusPlus](https://github.com/HardCodeDev777/OllamaPlusPlus) (Very simple C++ library for Ollama)
+
+#### Swift
+- [OllamaKit for Swift](https://github.com/kevinhermawan/OllamaKit)
 - [Ollama for Swift](https://github.com/mattt/ollama-swift)
 - [Swollama for Swift](https://github.com/marcusziade/Swollama) with [DocC](https://marcusziade.github.io/Swollama/documentation/swollama/)
-- [GoLamify](https://github.com/prasad89/golamify)
+
+#### Dart
+- [Ollama for Dart](https://github.com/breitburg/dart-ollama)
+- [LangChainDart](https://github.com/davidmigloz/langchain_dart)
+
+#### Laravel
+- [Ollama for Laravel](https://github.com/cloudstudio/ollama-laravel)
+
+#### Elixir
+- [Elixir LangChain](https://github.com/brainlid/langchain)
+- [Ollama-ex for Elixir](https://github.com/lebrunel/ollama-ex)
+
+#### R
+- [Ollama for R - rollama](https://github.com/JBGruber/rollama)
+- [Ollama for R - ollama-r](https://github.com/hauselin/ollama-r)
+
+#### SAP ABAP
+- [Ollama Connector for SAP ABAP](https://github.com/b-tocs/abap_btocs_ollama)
+
+#### PHP
+- [Ollama PHP](https://github.com/ArdaGnsrn/ollama-php)
+
+#### Julia
+- [PromptingTools.jl](https://github.com/svilupp/PromptingTools.jl) with an [example](https://svilupp.github.io/PromptingTools.jl/dev/examples/working_with_ollama)
+
+#### Haskell
 - [Ollama for Haskell](https://github.com/tusharad/ollama-haskell)
-- [multi-llm-ts](https://github.com/nbonamy/multi-llm-ts) (A Typescript/JavaScript library allowing access to different LLM in a unified API)
-- [LlmTornado](https://github.com/lofcz/llmtornado) (C# library providing a unified interface for major FOSS & Commercial inference APIs)
+
+#### Zig
 - [Ollama for Zig](https://github.com/dravenk/ollama-zig)
-- [Abso](https://github.com/lunary-ai/abso) (OpenAI-compatible TypeScript SDK for any LLM provider)
-- [Nichey](https://github.com/goodreasonai/nichey) is a Python package for generating custom wikis for your research topic
+
+#### D
 - [Ollama for D](https://github.com/kassane/ollama-d)
-- [OllamaPlusPlus](https://github.com/HardCodeDev777/OllamaPlusPlus) (Very simple C++ library for Ollama)
+
+#### Other / Multi-language / Frameworks
+- [Firebase Genkit](https://firebase.google.com/docs/genkit/plugins/ollama)
+- [crewAI](https://github.com/crewAIInc/crewAI)
+- [Yacana](https://remembersoftwares.github.io/yacana/) (User-friendly multi-agent framework for brainstorming and executing predetermined flows with built-in tool integration)
+- [LLPhant](https://github.com/theodo-group/LLPhant?tab=readme-ov-file#ollama)
+- [LlamaIndex](https://docs.llamaindex.ai/en/stable/examples/llm/ollama/)
+- [LiteLLM](https://github.com/BerriAI/litellm)
+- [Testcontainers](https://testcontainers.com/modules/ollama/)
+- [Portkey](https://portkey.ai/docs/welcome/integration-guides/ollama)
+- [LlamaScript](https://github.com/Project-Llama/llamascript)
+- [Gollm](https://docs.gollm.co/examples/ollama-example)
+- [Haverscript](https://github.com/andygill/haverscript) with [examples](https://github.com/andygill/haverscript/tree/main/examples)
 
 ### Mobile
 
