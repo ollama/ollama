@@ -552,6 +552,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 
 #### PHP
 - [Ollama PHP](https://github.com/ArdaGnsrn/ollama-php)
+- [LLPhant](https://github.com/theodo-group/LLPhant?tab=readme-ov-file#ollama)
 
 #### Julia
 - [PromptingTools.jl](https://github.com/svilupp/PromptingTools.jl) with an [example](https://svilupp.github.io/PromptingTools.jl/dev/examples/working_with_ollama)
@@ -569,7 +570,6 @@ See the [API documentation](./docs/api.md) for all endpoints.
 - [Firebase Genkit](https://firebase.google.com/docs/genkit/plugins/ollama)
 - [crewAI](https://github.com/crewAIInc/crewAI)
 - [Yacana](https://remembersoftwares.github.io/yacana/) (User-friendly multi-agent framework for brainstorming and executing predetermined flows with built-in tool integration)
-- [LLPhant](https://github.com/theodo-group/LLPhant?tab=readme-ov-file#ollama)
 - [LlamaIndex](https://docs.llamaindex.ai/en/stable/examples/llm/ollama/)
 - [LiteLLM](https://github.com/BerriAI/litellm)
 - [Testcontainers](https://testcontainers.com/modules/ollama/)
