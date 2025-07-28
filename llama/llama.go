@@ -579,17 +579,19 @@ func SchemaToGrammar(schema []byte) []byte {
 	cStr := C.CString(string(schema))
 	defer C.free(unsafe.Pointer(cStr))
 
-	// Allocate buffer for grammar based on schema length but with upper bound
-	maxLen := max(32768, min(1024*1024, len(schema)*4))
-	buf := make([]byte, maxLen)
-
 	// Call C function to convert schema to grammar
-	n := C.schema_to_grammar(cStr, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(maxLen))
-	if n == 0 {
-		// preserve nil
+	result := C.schema_to_grammar(cStr)
+	defer C.free(unsafe.Pointer(result))
+
+	if int(result.length) == 0 {
+		// Preserve nil when we get an empty string back
 		return nil
 	}
-	return buf[:n]
+	
+	// Copy the string to a Go version and free the char*
+	str := C.GoStringN(result.grammar, C.int(result.length))
+	C.free(unsafe.Pointer(result.grammar))
+	return []byte(str)
 }
 
 type TokenData struct {
