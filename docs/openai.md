@@ -72,7 +72,7 @@ client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
 # Define the schema for the response
 class FriendInfo(BaseModel):
     name: str
-    age: int 
+    age: int
     is_available: bool
 
 class FriendList(BaseModel):
