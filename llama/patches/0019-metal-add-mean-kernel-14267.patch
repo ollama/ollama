@@ -16,7 +16,7 @@ ggml-ci
  2 files changed, 67 insertions(+), 14 deletions(-)
 
 diff --git a/ggml/src/ggml-metal/ggml-metal.m b/ggml/src/ggml-metal/ggml-metal.m
-index ee4f2dcb..f20f5615 100644
+index a9eeebc6..110c9ece 100644
 --- a/ggml/src/ggml-metal/ggml-metal.m
 +++ b/ggml/src/ggml-metal/ggml-metal.m
 @@ -489,6 +489,7 @@ enum ggml_metal_kernel_type {
