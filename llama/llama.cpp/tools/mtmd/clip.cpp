@@ -846,6 +846,8 @@ struct clip_graph {
                 num_query = 64;
             } else if (ctx->minicpmv_version == 5) {
                 num_query = 64;
+            } else if (ctx->minicpmv_version == 6) {
+                num_query = 64;
             }
 
             ggml_tensor * Q = ggml_add(ctx0,
@@ -3181,6 +3183,9 @@ int clip_n_output_tokens(const struct clip_ctx * ctx, struct clip_image_f32 * im
         else if (ctx->minicpmv_version == 5) {
             n_patches = 64;
         }
+        else if (ctx->minicpmv_version == 6) {
+            n_patches = 64;
+        }
         else {
             GGML_ABORT("Unknown minicpmv version");
         }
@@ -3785,7 +3790,9 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx) {
                 return 3584;
             } else if (ctx->minicpmv_version == 5) {
                 return 2560;
-            } 
+            } else if (ctx->minicpmv_version == 6) {
+                return 2560;
+            }
             GGML_ABORT("Unknown minicpmv version");
         case PROJECTOR_TYPE_GLM_EDGE:
             return ctx->vision_model.mm_model_mlp_3_w->ne[1];
