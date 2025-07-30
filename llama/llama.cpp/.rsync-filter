@@ -1,16 +1,10 @@
 protect **/*.go
 include common/
-include common/arg.*
 include common/base64.*
-include common/chat.*
-include common/chat-parser.*
 include common/common.*
-include common/console.*
 include common/json-schema-to-grammar.*
 include common/json.*
-include common/json-partial.*
 include common/log.*
-include common/regex-partial.*
 include common/sampling.*
 include common/stb_image.*
 include include/
@@ -31,8 +25,6 @@ include src/unicode.*
 include vendor/
 include vendor/miniaudio/
 include vendor/miniaudio/*.h
-include vendor/minja/
-include vendor/minja/*.hpp
 include vendor/nlohmann/
 include vendor/nlohmann/*.hpp
 include vendor/stb/
