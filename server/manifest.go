@@ -10,15 +10,29 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/ollama/ollama/types/model"
 )
+
+// SignatureInfo contains metadata about a model signature
+type SignatureInfo struct {
+	Format       string    `json:"format"`           // Signature format version (e.g., "oms-v1.0")
+	SignatureURI string    `json:"signatureUri"`     // URI to signature file
+	Verified     bool      `json:"verified"`         // Whether signature has been verified
+	Signer       string    `json:"signer,omitempty"` // Identity of the signer
+	SignedAt     time.Time `json:"signedAt,omitempty"` // When the model was signed
+}
 
 type Manifest struct {
 	SchemaVersion int     `json:"schemaVersion"`
 	MediaType     string  `json:"mediaType"`
 	Config        Layer   `json:"config"`
 	Layers        []Layer `json:"layers"`
+
+	// Signature contains cryptographic signature information for this model
+	// This field is optional to maintain backward compatibility with unsigned models
+	Signature *SignatureInfo `json:"signature,omitempty"`
 
 	filepath string
 	fi       os.FileInfo
