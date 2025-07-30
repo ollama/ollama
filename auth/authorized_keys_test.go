@@ -18,7 +18,7 @@ func TestParse(t *testing.T) {
 			name: "two fields only defaults",
 			file: "ssh-ed25519 " + validB64 + "\n",
 			want: map[string]*KeyPermission{
-				validB64: &KeyPermission{
+				validB64: {
 					Name:      "default",
 					Endpoints: []string{"*"},
 				},
@@ -28,7 +28,7 @@ func TestParse(t *testing.T) {
 			name: "extra whitespace collapsed and default endpoints",
 			file: "ssh-ed25519  " + validB64 + "   alice\n",
 			want: map[string]*KeyPermission{
-				validB64: &KeyPermission{
+				validB64: {
 					Name:      "alice",
 					Endpoints: []string{"*"},
 				},
@@ -38,7 +38,7 @@ func TestParse(t *testing.T) {
 			name: "four fields full",
 			file: "ssh-ed25519 " + validB64 + " bob /api/foo,/api/bar\n",
 			want: map[string]*KeyPermission{
-				validB64: &KeyPermission{
+				validB64: {
 					Name:      "bob",
 					Endpoints: []string{"/api/foo", "/api/bar"},
 				},
@@ -48,7 +48,7 @@ func TestParse(t *testing.T) {
 			name: "comment lines ignored and multiple entries",
 			file: "# header\n\nssh-ed25519 " + validB64 + " user1\nssh-ed25519 " + validB64 + "  user2  /api/x\n",
 			want: map[string]*KeyPermission{
-				validB64: &KeyPermission{
+				validB64: {
 					Name:      "user1",
 					Endpoints: []string{"*"},
 				},
@@ -58,7 +58,7 @@ func TestParse(t *testing.T) {
 			name: "three entries variety",
 			file: "ssh-ed25519 " + validB64 + "\nssh-ed25519 " + validB64 + " alice /api/a,/api/b\nssh-ed25519 " + validB64 + " bob /api/c\n",
 			want: map[string]*KeyPermission{
-				validB64: &KeyPermission{
+				validB64: {
 					Name:      "alice",
 					Endpoints: []string{"*"},
 				},
@@ -68,11 +68,11 @@ func TestParse(t *testing.T) {
 			name: "two entries w/ wildcard",
 			file: "ssh-ed25519 " + validB64 + " alice /api/a\n* * * /api/b\n",
 			want: map[string]*KeyPermission{
-				validB64: &KeyPermission{
+				validB64: {
 					Name:      "alice",
 					Endpoints: []string{"/api/a"},
 				},
-				"*": &KeyPermission{
+				"*": {
 					Name:      "default",
 					Endpoints: []string{"/api/b"},
 				},
@@ -82,7 +82,7 @@ func TestParse(t *testing.T) {
 			name: "tags for everyone",
 			file: "* * * /api/tags",
 			want: map[string]*KeyPermission{
-				"*": &KeyPermission{
+				"*": {
 					Name:      "default",
 					Endpoints: []string{"/api/tags"},
 				},
@@ -92,7 +92,7 @@ func TestParse(t *testing.T) {
 			name: "default name",
 			file: "* * somename",
 			want: map[string]*KeyPermission{
-				"*": &KeyPermission{
+				"*": {
 					Name:      "somename",
 					Endpoints: []string{"*"},
 				},
