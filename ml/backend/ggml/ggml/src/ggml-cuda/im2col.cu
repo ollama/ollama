@@ -10,7 +10,7 @@ static  __global__ void im2col_kernel(
         return;
     }
 
-    const int64_t  ksize = OW * (KH > 1 ? KW : 1);
+    const int64_t  ksize = OW * KH;
     const int64_t  kx = i / ksize;
     const int64_t  kd = kx * ksize;
     const int64_t  ky = (i - kd) / OW;

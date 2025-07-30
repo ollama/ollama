@@ -101,6 +101,7 @@ struct llama_vocab {
     llama_token token_sep() const;
     llama_token token_nl () const;
     llama_token token_pad() const;
+    llama_token token_mask() const;
 
     llama_token token_prefix() const;
     llama_token token_middle() const;

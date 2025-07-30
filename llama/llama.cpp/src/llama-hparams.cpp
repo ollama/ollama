@@ -2,9 +2,15 @@
 
 #include "ggml.h"
 
-void llama_hparams::set_swa_pattern(uint32_t n_pattern) {
-    for (uint32_t il = 0; il < n_layer; ++il) {
-        swa_layers[il] = n_pattern == 0 || (il % n_pattern < (n_pattern - 1));
+void llama_hparams::set_swa_pattern(uint32_t n_pattern, bool dense_first) {
+    if (dense_first) {
+        for (uint32_t il = 0; il < n_layer; ++il) {
+            swa_layers[il] = n_pattern == 0 || (il % n_pattern != 0);
+        }
+    } else {
+        for (uint32_t il = 0; il < n_layer; ++il) {
+            swa_layers[il] = n_pattern == 0 || (il % n_pattern < (n_pattern - 1));
+        }
     }
 }
 
@@ -63,6 +69,46 @@ uint32_t llama_hparams::n_embd_v_gqa(uint32_t il) const {
     const uint32_t n_head_kv = this->n_head_kv(il);
 
     return n_embd_head_v * n_head_kv;
+}
+
+bool llama_hparams::is_n_embd_k_gqa_variable() const {
+    const uint32_t val = n_embd_k_gqa();
+    for (uint32_t il = 0; il < n_layer; ++il) {
+        if (val != n_embd_k_gqa(il)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool llama_hparams::is_n_embd_v_gqa_variable() const {
+    const uint32_t val = n_embd_v_gqa();
+    for (uint32_t il = 0; il < n_layer; ++il) {
+        if (val != n_embd_v_gqa(il)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+uint32_t llama_hparams::n_embd_k_gqa_max() const {
+    uint32_t val = n_embd_k_gqa();
+    for (uint32_t il = 0; il < n_layer; ++il) {
+        val = std::max(val, n_embd_k_gqa(il));
+    }
+
+    return val;
+}
+
+uint32_t llama_hparams::n_embd_v_gqa_max() const {
+    uint32_t val = n_embd_v_gqa();
+    for (uint32_t il = 0; il < n_layer; ++il) {
+        val = std::max(val, n_embd_v_gqa(il));
+    }
+
+    return val;
 }
 
 uint32_t llama_hparams::n_embd_r() const {

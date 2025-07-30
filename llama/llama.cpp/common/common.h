@@ -81,6 +81,7 @@ enum llama_example {
     LLAMA_EXAMPLE_LOOKUP,
     LLAMA_EXAMPLE_PARALLEL,
     LLAMA_EXAMPLE_TTS,
+    LLAMA_EXAMPLE_DIFFUSION,
 
     LLAMA_EXAMPLE_COUNT,
 };
@@ -177,7 +178,8 @@ struct common_params_sampling {
     std::vector<common_grammar_trigger> grammar_triggers; // optional triggers (for lazy grammars)
     std::set<llama_token>               preserved_tokens;
 
-    std::vector<llama_logit_bias> logit_bias; // logit biases to apply
+    std::vector<llama_logit_bias> logit_bias;     // logit biases to apply
+    std::vector<llama_logit_bias> logit_bias_eog; // pre-calculated logit biases for EOG tokens
 
     // print the parameters into a string
     std::string print() const;
@@ -215,6 +217,14 @@ struct common_params_vocoder {
     std::string speaker_file = ""; // speaker file path                                      // NOLINT
 
     bool use_guide_tokens = false; // enable guide tokens to improve TTS accuracy            // NOLINT
+};
+
+struct common_params_diffusion {
+    int32_t steps       = 64;     // number of diffusion steps
+    float   eps         = 1e-3f;  // epsilon for timesteps
+    int32_t algorithm   = 0;      // diffusion algorithm (0=ORIGIN, 1=MASKGIT_PLUS, 2=TOPK_MARGIN, 3=ENTROPY)
+    float   alg_temp    = 0.0f;   // algorithm temperature
+    bool    visual_mode = false;  // show progressive diffusion on screen
 };
 
 enum common_reasoning_format {
@@ -268,6 +278,7 @@ struct common_params {
     struct common_params_sampling    sampling;
     struct common_params_speculative speculative;
     struct common_params_vocoder     vocoder;
+    struct common_params_diffusion   diffusion;
 
     struct common_params_model model;
 
@@ -330,6 +341,7 @@ struct common_params {
     bool no_perf           = false; // disable performance metrics
     bool ctx_shift         = true;  // context shift on inifinite text generation
     bool swa_full          = false; // use full-size SWA cache (https://github.com/ggml-org/llama.cpp/pull/13194#issuecomment-2868343055)
+    bool kv_unified        = false; // enable unified KV cache
 
     bool input_prefix_bos  = false; // prefix BOS to user inputs, preceding input_prefix
     bool use_mmap          = true;  // use mmap for faster loads
@@ -420,9 +432,10 @@ struct common_params {
     int32_t n_save_freq =  0; // save the imatrix every n_save_freq iterations
     int32_t i_chunk     =  0; // start processing from this chunk
 
-    bool process_output = false; // collect data for the output tensor
-    bool compute_ppl    = true;  // whether to compute perplexity
-    bool parse_special  = false; // whether to parse special tokens during imatrix tokenization
+    bool process_output  = false; // collect data for the output tensor
+    bool compute_ppl     = true;  // whether to compute perplexity
+    bool show_statistics = false; // show imatrix statistics per tensor
+    bool parse_special   = false; // whether to parse special tokens during imatrix tokenization
 
     // cvector-generator params
     int n_pca_batch = 100;
@@ -522,6 +535,7 @@ static bool string_starts_with(const std::string & str,
 
 // While we wait for C++20's std::string::ends_with...
 bool string_ends_with(const std::string_view & str, const std::string_view & suffix);
+bool string_remove_suffix(std::string & str, const std::string_view & suffix);
 size_t string_find_partial_stop(const std::string_view & str, const std::string_view & stop);
 
 bool string_parse_kv_override(const char * data, std::vector<llama_model_kv_override> & overrides);

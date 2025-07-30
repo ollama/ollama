@@ -56,6 +56,7 @@ static const std::map<std::string, llm_chat_template> LLM_CHAT_TEMPLATES = {
     { "glmedge",           LLM_CHAT_TEMPLATE_GLMEDGE           },
     { "minicpm",           LLM_CHAT_TEMPLATE_MINICPM           },
     { "exaone3",           LLM_CHAT_TEMPLATE_EXAONE_3          },
+    { "exaone4",           LLM_CHAT_TEMPLATE_EXAONE_4          },
     { "rwkv-world",        LLM_CHAT_TEMPLATE_RWKV_WORLD        },
     { "granite",           LLM_CHAT_TEMPLATE_GRANITE           },
     { "gigachat",          LLM_CHAT_TEMPLATE_GIGACHAT          },
@@ -168,6 +169,9 @@ llm_chat_template llm_chat_detect_template(const std::string & tmpl) {
     } else if (tmpl_contains(LU8("<｜Assistant｜>")) && tmpl_contains(LU8("<｜User｜>")) && tmpl_contains(LU8("<｜end▁of▁sentence｜>"))) {
         return LLM_CHAT_TEMPLATE_DEEPSEEK_3;
     } else if (tmpl_contains("[|system|]") && tmpl_contains("[|assistant|]") && tmpl_contains("[|endofturn|]")) {
+        if (tmpl_contains("[|tool|]")) {
+            return LLM_CHAT_TEMPLATE_EXAONE_4;
+        }
         // ref: https://huggingface.co/LGAI-EXAONE/EXAONE-3.0-7.8B-Instruct/discussions/8#66bae61b1893d14ee8ed85bb
         // EXAONE-3.0-7.8B-Instruct
         return LLM_CHAT_TEMPLATE_EXAONE_3;
@@ -532,6 +536,22 @@ int32_t llm_chat_apply_template(
         if (add_ass) {
             ss << "[|assistant|]";
         }
+    } else if (tmpl == LLM_CHAT_TEMPLATE_EXAONE_4) {
+        for (auto message : chat) {
+            std::string role(message->role);
+            if (role == "system") {
+                ss << "[|system|]" << trim(message->content) << "[|endofturn|]\n";
+            } else if (role == "user") {
+                ss << "[|user|]" << trim(message->content) << "\n";
+            } else if (role == "assistant") {
+                ss << "[|assistant|]" << trim(message->content) << "[|endofturn|]\n";
+            } else if (role == "tool") {
+                ss << "[|tool|]" << trim(message->content) << "[|endofturn|]\n";
+            }
+        }
+        if (add_ass) {
+            ss << "[|assistant|]";
+        }
     } else if (tmpl == LLM_CHAT_TEMPLATE_RWKV_WORLD) {
         // this template requires the model to have "\n\n" as EOT token
         for (size_t i = 0; i < chat.size(); i++) {
@@ -698,10 +718,9 @@ int32_t llm_chat_apply_template(
             }
 
             ss << message->content << "<|im_end|>";
-
-            if (add_ass) {
-                ss << "<|im_assistant|>assistant<|im_middle|>";
-            }
+        }
+        if (add_ass) {
+            ss << "<|im_assistant|>assistant<|im_middle|>";
         }
     } else {
         // template not supported
