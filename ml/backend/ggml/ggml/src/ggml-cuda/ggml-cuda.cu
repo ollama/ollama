@@ -2610,8 +2610,17 @@ static bool check_node_graph_compatibility_and_refresh_copy_ops(ggml_backend_cud
     // Loop over nodes in GGML graph to obtain info needed for CUDA graph
     cuda_ctx->cuda_graph->cpy_dest_ptrs.clear();
 
+    // This fix was added in llama.cpp and Ollama in parallel, but with
+    // different tensor names.
+    // llama.cpp: https://github.com/ggml-org/llama.cpp/pull/14741
+    // ollama: https://github.com/ollama/ollama/pull/11525
+
+    const std::string gemma3n_per_layer_proj_src1_name_ollama = " (reshaped)";
+    const std::string gemma3n_node_name_ollama                = "node_";
+
     const std::string gemma3n_per_layer_proj_src0_name = "inp_per_layer_selected";
     const std::string gemma3n_per_layer_proj_src1_name = "per_layer_proj";
+
 
     for (int i = 0; i < cgraph->n_nodes; i++) {
         ggml_tensor * node = cgraph->nodes[i];
