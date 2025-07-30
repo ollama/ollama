@@ -63,6 +63,9 @@ func chatPrompt(ctx context.Context, m *Model, tokenize tokenizeFunc, opts *api.
 		}
 
 		if ctxLen > opts.NumCtx {
+			if !opts.ShiftContext {
+				return "", nil, fmt.Errorf("context length of %d tokens exceeded, context shifting is disabled", opts.NumCtx)
+			}
 			slog.Debug("truncating input messages which exceed context length", "truncated", len(msgs[i:]))
 			break
 		} else {
