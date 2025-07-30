@@ -28,6 +28,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/auth"
 	"github.com/ollama/ollama/discover"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/fs/ggml"
@@ -55,6 +56,8 @@ var mode string = gin.DebugMode
 type Server struct {
 	addr  net.Addr
 	sched *Scheduler
+
+	perms *auth.APIPermissions
 }
 
 func init() {
@@ -67,6 +70,38 @@ func init() {
 	}
 
 	gin.SetMode(mode)
+}
+
+func loggedFormatter(param gin.LogFormatterParams) string {
+	var statusColor, methodColor, resetColor string
+	if param.IsOutputColor() {
+		statusColor = param.StatusCodeColor()
+		methodColor = param.MethodColor()
+		resetColor = param.ResetColor()
+	}
+
+	if param.Latency > time.Minute {
+		param.Latency = param.Latency.Truncate(time.Second)
+	}
+
+	username := "default"
+	if userVal, exists := param.Keys["username"]; exists {
+		if name, ok := userVal.(string); ok {
+			username = name
+		}
+	}
+
+	return fmt.Sprintf(
+		"[Ollama] %s |%s %3d %s| %13v | %15s | %-20s |%s %-7s %s %#v\n%s",
+		param.TimeStamp.Format("2006/01/02 - 15:04:05"),
+		statusColor, param.StatusCode, resetColor,
+		param.Latency,
+		param.ClientIP,
+		username,
+		methodColor, param.Method, resetColor,
+		param.Path,
+		param.ErrorMessage,
+	)
 }
 
 var (
@@ -1111,6 +1146,44 @@ func allowedHost(host string) bool {
 	return false
 }
 
+func allowedEndpointsMiddleware(perms *auth.APIPermissions) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !envconfig.UseAuth() || (c.Request.Method == "HEAD" && c.Request.URL.Path == "/") {
+			c.Next()
+			return
+		}
+
+		token := strings.TrimPrefix(c.Request.Header.Get("Authorization"), "Bearer ")
+		if token == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			return
+		}
+
+		pubKey, err := auth.Authenticate(token, fmt.Sprintf("%s,%s", c.Request.Method, c.Request.RequestURI))
+		if err != nil {
+			slog.Error("authentication error", "error", err)
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			return
+		}
+
+		authorized, name, err := perms.Authorize(pubKey, c.Request.URL.Path)
+		c.Set("username", name)
+		if err != nil {
+			slog.Error("authorization error", "error", err)
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			return
+		}
+
+		if !authorized {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			return
+		}
+
+		c.Next()
+		return
+	}
+}
+
 func allowedHostsMiddleware(addr net.Addr) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if addr == nil {
@@ -1177,10 +1250,13 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	}
 	corsConfig.AllowOrigins = envconfig.AllowedOrigins()
 
-	r := gin.Default()
+	r := gin.New()
 	r.HandleMethodNotAllowed = true
 	r.Use(
+		gin.LoggerWithFormatter(loggedFormatter),
+		gin.Recovery(),
 		cors.New(corsConfig),
+		allowedEndpointsMiddleware(s.perms),
 		allowedHostsMiddleware(s.addr),
 	)
 
@@ -1190,7 +1266,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 	r.HEAD("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
 	r.GET("/api/version", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"version": version.Version}) })
 
-	// Local model cache management (new implementation is at end of function)
+	// Local model cache management
 	r.POST("/api/pull", s.PullHandler)
 	r.POST("/api/push", s.PushHandler)
 	r.HEAD("/api/tags", s.ListHandler)
@@ -1222,7 +1298,7 @@ func (s *Server) GenerateRoutes(rc *ollama.Registry) (http.Handler, error) {
 		// wrap old with new
 		rs := &registry.Local{
 			Client:   rc,
-			Logger:   slog.Default(), // TODO(bmizerany): Take a logger, do not use slog.Default()
+			Logger:   slog.Default(),
 			Fallback: r,
 
 			Prune: PruneLayers,
@@ -1266,6 +1342,12 @@ func Serve(ln net.Listener) error {
 	}
 
 	s := &Server{addr: ln.Addr()}
+
+	if envconfig.UseAuth() {
+		perms := auth.NewAPIPermissions()
+		perms.ReloadIfNeeded()
+		s.perms = perms
+	}
 
 	var rc *ollama.Registry
 	if useClient2 {
