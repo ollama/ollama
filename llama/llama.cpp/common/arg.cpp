@@ -1465,6 +1465,14 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_env("LLAMA_ARG_SWA_FULL"));
     add_opt(common_arg(
+        {"--kv-unified", "-kvu"},
+        string_format("use single unified KV buffer for the KV cache of all sequences (default: %s)\n"
+            "[(more info)](https://github.com/ggml-org/llama.cpp/pull/14363)", params.kv_unified ? "true" : "false"),
+        [](common_params & params) {
+            params.kv_unified = true;
+        }
+    ).set_env("LLAMA_ARG_KV_SPLIT"));
+    add_opt(common_arg(
         {"--no-context-shift"},
         string_format("disables context shift on infinite text generation (default: %s)", params.ctx_shift ? "disabled" : "enabled"),
         [](common_params & params) {
@@ -1604,7 +1612,7 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         [](common_params & params, const std::string & value) {
             params.antiprompt.emplace_back(value);
         }
-    ).set_examples({LLAMA_EXAMPLE_MAIN}));
+    ).set_examples({LLAMA_EXAMPLE_MAIN, LLAMA_EXAMPLE_SERVER}));
     add_opt(common_arg(
         {"-sp", "--special"},
         string_format("special tokens output enabled (default: %s)", params.special ? "true" : "false"),
@@ -2648,6 +2656,13 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
     add_opt(common_arg(
+        {"--show-statistics"},
+        string_format("show imatrix statistics and then exit (default: %s)", params.show_statistics ? "true" : "false"),
+        [](common_params & params) {
+            params.show_statistics = true;
+        }
+    ).set_examples({LLAMA_EXAMPLE_IMATRIX}));
+    add_opt(common_arg(
         {"--parse-special"},
         string_format("prase special tokens (chat, tool, etc) (default: %s)", params.parse_special ? "true" : "false"),
         [](common_params & params) {
@@ -3422,6 +3437,35 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.n_cache_reuse = 256;
         }
     ).set_examples({LLAMA_EXAMPLE_SERVER}));
+
+    // diffusion parameters
+    add_opt(common_arg(
+        { "--diffusion-steps" }, "N",
+        string_format("number of diffusion steps (default: %d)", params.diffusion.steps),
+        [](common_params & params, int value) { params.diffusion.steps = value; }
+    ).set_examples({ LLAMA_EXAMPLE_DIFFUSION }));
+    add_opt(common_arg(
+        { "--diffusion-eps" }, "F",
+        string_format("epsilon for timesteps (default: %.6f)", (double) params.diffusion.eps),
+        [](common_params & params, const std::string & value) { params.diffusion.eps = std::stof(value); }
+    ).set_examples({ LLAMA_EXAMPLE_DIFFUSION }));
+    add_opt(common_arg(
+        { "--diffusion-algorithm" }, "N",
+        string_format("diffusion algorithm: 0=ORIGIN, 1=MASKGIT_PLUS, 2=TOPK_MARGIN, 3=ENTROPY (default: %d)",
+                      params.diffusion.algorithm),
+        [](common_params & params, int value) { params.diffusion.algorithm = value; }
+    ).set_examples({ LLAMA_EXAMPLE_DIFFUSION }));
+    add_opt(common_arg(
+        { "--diffusion-alg-temp" }, "F",
+        string_format("algorithm temperature (default: %.3f)", (double) params.diffusion.alg_temp),
+        [](common_params & params, const std::string & value) { params.diffusion.alg_temp = std::stof(value); }
+    ).set_examples({ LLAMA_EXAMPLE_DIFFUSION }));
+    add_opt(common_arg(
+        { "--diffusion-visual" },
+        string_format("enable visual diffusion mode (show progressive generation) (default: %s)",
+                      params.diffusion.visual_mode ? "true" : "false"),
+        [](common_params & params) { params.diffusion.visual_mode = true; }
+    ).set_examples({ LLAMA_EXAMPLE_DIFFUSION }));
 
     return ctx_arg;
 }

@@ -100,8 +100,10 @@ enum llm_type {
     LLM_TYPE_17B_16E, // llama4 Scout
     LLM_TYPE_17B_128E, // llama4 Maverick
     LLM_TYPE_A13B,
+    LLM_TYPE_21B_A3B, // Ernie MoE small
     LLM_TYPE_30B_A3B,
     LLM_TYPE_235B_A22B,
+    LLM_TYPE_300B_A47B, // Ernie MoE big
     LLM_TYPE_E2B,
     LLM_TYPE_E4B,
 };
@@ -455,10 +457,7 @@ struct llama_model {
     llama_memory_i * create_memory(const llama_memory_params & params, llama_cparams & cparams) const;
 
     // TODO: move this to new llm_arch_model_i interface
-    llm_graph_result_ptr build_graph(
-            const llm_graph_params & params,
-                       ggml_cgraph * gf,
-                    llm_graph_type   type) const;
+    ggml_cgraph * build_graph(const llm_graph_params & params) const;
 
 private:
     struct impl;

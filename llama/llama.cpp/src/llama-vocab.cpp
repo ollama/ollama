@@ -1915,6 +1915,9 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
                 tokenizer_pre == "exaone") {
                 pre_type = LLAMA_VOCAB_PRE_TYPE_EXAONE;
             } else if (
+                tokenizer_pre == "exaone4") {
+                pre_type = LLAMA_VOCAB_PRE_TYPE_GPT2;
+            } else if (
                 tokenizer_pre == "chameleon") {
                 pre_type = LLAMA_VOCAB_PRE_TYPE_CHAMELEON;
                 add_bos = true;
@@ -3344,6 +3347,10 @@ llama_token llama_vocab::token_fim_sep() const {
     return pimpl->special_fim_sep_id;
 }
 
+llama_token llama_vocab::token_mask() const {
+    return pimpl->special_mask_id;
+}
+
 bool llama_vocab::get_add_space_prefix() const {
     return pimpl->add_space_prefix;
 }
@@ -3582,6 +3589,10 @@ llama_token llama_vocab_fim_rep(const struct llama_vocab * vocab) {
 
 llama_token llama_vocab_fim_sep(const struct llama_vocab * vocab) {
     return vocab->token_fim_sep();
+}
+
+llama_token llama_vocab_mask(const struct llama_vocab* vocab) {
+    return vocab->token_mask();
 }
 
 // deprecated

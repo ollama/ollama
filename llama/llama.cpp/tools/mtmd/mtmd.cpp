@@ -299,6 +299,10 @@ struct mtmd_context {
             aud_beg = "<|audio_bos|>";
             aud_end = "<|audio_eos|>";
 
+        } else if (proj == PROJECTOR_TYPE_ULTRAVOX) {
+            // [BEGIN_AUDIO] ... (embeddings) ...
+            aud_beg = "[BEGIN_AUDIO]";
+
         }
     }
 

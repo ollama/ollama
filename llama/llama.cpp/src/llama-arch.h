@@ -72,6 +72,7 @@ enum llm_arch {
     LLM_ARCH_JAIS,
     LLM_ARCH_NEMOTRON,
     LLM_ARCH_EXAONE,
+    LLM_ARCH_EXAONE4,
     LLM_ARCH_RWKV6,
     LLM_ARCH_RWKV6QWEN2,
     LLM_ARCH_RWKV7,
@@ -87,9 +88,12 @@ enum llm_arch {
     LLM_ARCH_DOTS1,
     LLM_ARCH_ARCEE,
     LLM_ARCH_ERNIE4_5,
+    LLM_ARCH_ERNIE4_5_MOE,
     LLM_ARCH_HUNYUAN_MOE,
     LLM_ARCH_SMOLLM3,
     LLM_ARCH_LFM2,
+    LLM_ARCH_DREAM,
+    LLM_ARCH_SMALLTHINKER,
     LLM_ARCH_UNKNOWN,
 };
 
@@ -482,3 +486,4 @@ const llm_tensor_info & llm_tensor_info_for(llm_tensor tensor);
 
 bool llm_arch_is_recurrent(const llm_arch & arch);
 bool llm_arch_is_hybrid   (const llm_arch & arch);
+bool llm_arch_is_diffusion(const llm_arch & arch);

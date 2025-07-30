@@ -20,6 +20,7 @@ public:
                          bool   v_trans,
                          bool   offload,
                          bool   swa_full,
+                         bool   unified,
                      uint32_t   kv_size,
                      uint32_t   n_seq_max,
                      uint32_t   n_ubatch,
@@ -67,6 +68,8 @@ public:
 
 private:
     const llama_hparams & hparams;
+
+    const bool unified;
 
     std::unique_ptr<llama_kv_cache_unified> kv_base;
     std::unique_ptr<llama_kv_cache_unified> kv_swa;

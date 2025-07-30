@@ -6640,20 +6640,18 @@ static struct ggml_tensor * ggml_graph_get_parent(const struct ggml_cgraph * cgr
 static void ggml_graph_dump_dot_node_edge(FILE * fp, const struct ggml_cgraph * gb, struct ggml_tensor * node, struct ggml_tensor * parent, const char * label)  {
     struct ggml_tensor * gparent = ggml_graph_get_parent(gb, node);
     struct ggml_tensor * gparent0 = ggml_graph_get_parent(gb, parent);
-    fprintf(fp, "  \"%p\":%s -> \"%p\":%s [ arrowhead = %s; style = %s; label = \"%s\"; ]\n",
+    fprintf(fp, "  \"%p\" -> \"%p\" [ arrowhead = %s; style = %s; label = \"%s\"; ]\n",
             gparent0 ? (void *) gparent0 : (void *) parent,
-            gparent0 ? "g" : "x",
             gparent ? (void *) gparent : (void *) node,
-            gparent ? "g" : "x",
             gparent ? "empty" : "vee",
             gparent ? "dashed" : "solid",
             label);
 }
 
 static void ggml_graph_dump_dot_leaf_edge(FILE * fp, struct ggml_tensor * node, struct ggml_tensor * parent, const char * label)  {
-    fprintf(fp, "  \"%p\":%s -> \"%p\":%s [ label = \"%s\"; ]\n",
-            (void *) parent, "x",
-            (void *) node, "x",
+    fprintf(fp, "  \"%p\" -> \"%p\" [ label = \"%s\"; ]\n",
+            (void *) parent,
+            (void *) node,
             label);
 }
 
