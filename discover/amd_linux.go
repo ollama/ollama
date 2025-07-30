@@ -58,7 +58,7 @@ func AMDGetGPUInfo() ([]RocmGPUInfo, error) {
 	driverMajor, driverMinor, err := AMDDriverVersion()
 	if err != nil {
 		// TODO - if we see users crash and burn with the upstreamed kernel this can be adjusted to hard-fail rocm support and fallback to CPU
-		slog.Warn("ollama recommends running the https://www.amd.com/en/support/linux-drivers", "error", err)
+		slog.Warn("ollama recommends running the https://www.amd.com/en/support/download/linux-drivers.html", "error", err)
 	}
 
 	// Determine if the user has already pre-selected which GPUs to look at, then ignore the others
