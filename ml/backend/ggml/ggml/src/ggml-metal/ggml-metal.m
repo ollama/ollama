@@ -99,7 +99,11 @@ static id<MTLDevice> ggml_backend_metal_device_acq(struct ggml_backend_metal_dev
         ctx->has_bfloat |= [ctx->mtl_device supportsFamily:MTLGPUFamilyApple6];
 
 #if defined(GGML_METAL_USE_BF16)
-        ctx->use_bfloat = ctx->has_bfloat;
+        if (@available(macOS 14.0, *)) {
+            ctx->use_bfloat = ctx->has_bfloat;
+        } else {
+            ctx->use_bfloat = false;
+        }
 #else
         ctx->use_bfloat = false;
 #endif
