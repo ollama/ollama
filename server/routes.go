@@ -1180,7 +1180,6 @@ func allowedEndpointsMiddleware(perms *auth.APIPermissions) gin.HandlerFunc {
 		}
 
 		c.Next()
-		return
 	}
 }
 

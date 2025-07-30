@@ -2,18 +2,11 @@ package auth
 
 import (
 	"bytes"
-	"encoding/base64"
 	"reflect"
 	"testing"
 )
 
 const validB64 = "AAAAC3NzaC1lZDI1NTE5AAAAICy1v/Sn0kGhu1LXzCsnx3wlk5ESdncS66JWo13yeJod"
-
-var (
-	validKeyBlob, _ = base64.StdEncoding.DecodeString(validB64)
-	//validPub, _     = ssh.ParsePublicKey(validKeyBlob)
-	validPub = validB64
-)
 
 func TestParse(t *testing.T) {
 	tests := []struct {
@@ -25,7 +18,7 @@ func TestParse(t *testing.T) {
 			name: "two fields only defaults",
 			file: "ssh-ed25519 " + validB64 + "\n",
 			want: map[string]*KeyPermission{
-				validPub: &KeyPermission{
+				validB64: &KeyPermission{
 					Name:      "default",
 					Endpoints: []string{"*"},
 				},
@@ -35,7 +28,7 @@ func TestParse(t *testing.T) {
 			name: "extra whitespace collapsed and default endpoints",
 			file: "ssh-ed25519  " + validB64 + "   alice\n",
 			want: map[string]*KeyPermission{
-				validPub: &KeyPermission{
+				validB64: &KeyPermission{
 					Name:      "alice",
 					Endpoints: []string{"*"},
 				},
@@ -45,7 +38,7 @@ func TestParse(t *testing.T) {
 			name: "four fields full",
 			file: "ssh-ed25519 " + validB64 + " bob /api/foo,/api/bar\n",
 			want: map[string]*KeyPermission{
-				validPub: &KeyPermission{
+				validB64: &KeyPermission{
 					Name:      "bob",
 					Endpoints: []string{"/api/foo", "/api/bar"},
 				},
@@ -55,7 +48,7 @@ func TestParse(t *testing.T) {
 			name: "comment lines ignored and multiple entries",
 			file: "# header\n\nssh-ed25519 " + validB64 + " user1\nssh-ed25519 " + validB64 + "  user2  /api/x\n",
 			want: map[string]*KeyPermission{
-				validPub: &KeyPermission{
+				validB64: &KeyPermission{
 					Name:      "user1",
 					Endpoints: []string{"*"},
 				},
@@ -65,7 +58,7 @@ func TestParse(t *testing.T) {
 			name: "three entries variety",
 			file: "ssh-ed25519 " + validB64 + "\nssh-ed25519 " + validB64 + " alice /api/a,/api/b\nssh-ed25519 " + validB64 + " bob /api/c\n",
 			want: map[string]*KeyPermission{
-				validPub: &KeyPermission{
+				validB64: &KeyPermission{
 					Name:      "alice",
 					Endpoints: []string{"*"},
 				},
@@ -75,7 +68,7 @@ func TestParse(t *testing.T) {
 			name: "two entries w/ wildcard",
 			file: "ssh-ed25519 " + validB64 + " alice /api/a\n* * * /api/b\n",
 			want: map[string]*KeyPermission{
-				validPub: &KeyPermission{
+				validB64: &KeyPermission{
 					Name:      "alice",
 					Endpoints: []string{"/api/a"},
 				},
