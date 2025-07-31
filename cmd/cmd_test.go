@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/ollama/ollama/api"
 	"github.com/ollama/ollama/types/model"
+	"github.com/ollama/ollama/app/lifecycle"
 )
 
 func TestShowInfo(t *testing.T) {
@@ -914,4 +916,163 @@ func TestNewCreateRequest(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestShowLogs(t *testing.T) {
+	tests := []struct {
+		name           string
+		logContent     string
+		tail           int
+		expectedOutput string
+	}{
+		{
+			name:           "show all logs",
+			logContent:     "log line 1\nlog line 2\nlog line 3\n",
+			tail:           0,
+			expectedOutput: "log line 1\nlog line 2\nlog line 3\n",
+		},
+		{
+			name:           "show last 2 lines with tail",
+			logContent:     "log line 1\nlog line 2\nlog line 3\nlog line 4\n",
+			tail:           2,
+			expectedOutput: "log line 3\nlog line 4\n",
+		},
+		{
+			name:           "show last 1 line with tail",
+			logContent:     "log line 1\nlog line 2\nlog line 3\n",
+			tail:           1,
+			expectedOutput: "log line 3\n",
+		},
+		{
+			name:           "tail larger than file",
+			logContent:     "line 1\nline 2\n",
+			tail:           10,
+			expectedOutput: "line 1\nline 2\n",
+		},
+		{
+			name:           "empty log file",
+			logContent:     "",
+			tail:           0,
+			expectedOutput: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temporary log file
+			tempFile, err := os.CreateTemp(t.TempDir(), "ollama-test-*.log")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer tempFile.Close()
+
+			if _, err := tempFile.WriteString(tt.logContent); err != nil {
+				t.Fatal(err)
+			}
+
+			// Capture stdout
+			oldStdout := os.Stdout
+			r, w, _ := os.Pipe()
+			os.Stdout = w
+
+			err = showLogs(tempFile.Name(), tt.tail)
+
+			// Restore stdout and get output
+			w.Close()
+			os.Stdout = oldStdout
+			output, _ := io.ReadAll(r)
+
+			if err != nil {
+				t.Errorf("expected no error, got %v", err)
+			}
+			if got := string(output); got != tt.expectedOutput {
+				t.Errorf("expected output:\n%q\ngot:\n%q", tt.expectedOutput, got)
+			}
+		})
+	}
+}
+
+func TestShowLogsError(t *testing.T) {
+	err := showLogs("/nonexistent/path/ollama.log", 0)
+	if err == nil {
+		t.Error("expected error for nonexistent file, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to open log file") {
+		t.Errorf("expected error about opening file, got %v", err)
+	}
+}
+
+// TestFollowLogsCapturesNewLines verifies that followLogs streams
+// new lines appended to a log file in real-time. It focuses on
+// observable behaviour (output) rather than the implementation
+// details of followLogs.
+func TestFollowLogsCapturesNewLines(t *testing.T) {
+    tmp, err := os.CreateTemp(t.TempDir(), "ollama-follow-*.log")
+    if err != nil {
+        t.Fatalf("failed to create temp file: %v", err)
+    }
+    // write an initial line so tail logic has something to read
+    _, _ = tmp.WriteString("initial\n")
+
+    // Capture Stdout so we can assert on the output produced by followLogs
+    origStdout := os.Stdout
+    r, w, _ := os.Pipe()
+    os.Stdout = w
+
+    ctx, cancel := context.WithCancel(context.Background())
+
+    // run followLogs in a goroutine
+    done := make(chan error, 1)
+    go func() {
+        // tail=1 so only the last line should be emitted initially
+        done <- followLogs(ctx, tmp.Name(), 1)
+    }()
+
+    // Give the goroutine a moment to read existing lines
+    time.Sleep(50 * time.Millisecond)
+
+    // Append a new line – followLogs should emit it almost instantly
+    const newLine = "second line"
+    _, _ = tmp.WriteString(newLine + "\n")
+
+    // Allow time for followLogs to pick the change, then cancel
+    time.Sleep(200 * time.Millisecond)
+    cancel()
+
+    // Wait for followLogs to exit
+    if err := <-done; err != nil {
+        t.Fatalf("followLogs returned error: %v", err)
+    }
+
+    // Restore Stdout and collect output
+    w.Close()
+    os.Stdout = origStdout
+    out, _ := io.ReadAll(r)
+
+    // We expect the output to contain the appended line
+    if !strings.Contains(string(out), newLine) {
+        t.Fatalf("expected output to contain %q, got %q", newLine, string(out))
+    }
+}
+
+// TestGetLogFilePaths verifies that the lifecycle package exposes non-empty paths for the
+// server and app logs. Detailed path validation is handled in platform-specific tests
+// closer to the logging implementation.
+func TestGetLogFilePaths(t *testing.T) {
+    if lifecycle.ServerLogFile == "" {
+        t.Fatalf("lifecycle.ServerLogFile should not be empty")
+    }
+
+    if lifecycle.AppLogFile == "" {
+        t.Fatalf("lifecycle.AppLogFile should not be empty")
+    }
+
+    // Basic sanity checks to ensure the file names are correct.
+    if !strings.HasSuffix(lifecycle.ServerLogFile, "server.log") {
+        t.Errorf("expected server log to end with server.log, got %s", lifecycle.ServerLogFile)
+    }
+
+    if !strings.HasSuffix(lifecycle.AppLogFile, "app.log") {
+        t.Errorf("expected app log to end with app.log, got %s", lifecycle.AppLogFile)
+    }
 }

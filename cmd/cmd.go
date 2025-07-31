@@ -35,6 +35,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/ollama/ollama/api"
+	"github.com/ollama/ollama/app/lifecycle"
 	"github.com/ollama/ollama/envconfig"
 	"github.com/ollama/ollama/format"
 	"github.com/ollama/ollama/parser"
@@ -45,6 +46,7 @@ import (
 	"github.com/ollama/ollama/types/model"
 	"github.com/ollama/ollama/types/syncmap"
 	"github.com/ollama/ollama/version"
+	"github.com/gin-gonic/gin"
 )
 
 // ensureThinkingSupport emits a warning if the model does not advertise thinking support
@@ -1282,6 +1284,11 @@ func generate(cmd *cobra.Command, opts runOptions) error {
 }
 
 func RunServer(_ *cobra.Command, _ []string) error {
+	// Set up file-based logging like the app lifecycle does
+	if err := setupServerLogging(); err != nil {
+		return fmt.Errorf("failed to setup server logging: %w", err)
+	}
+
 	if err := initializeKeypair(); err != nil {
 		return err
 	}
@@ -1297,6 +1304,90 @@ func RunServer(_ *cobra.Command, _ []string) error {
 	}
 
 	return err
+}
+
+// setupServerLogging configures logging to write to the server log file
+func setupServerLogging() error {
+	logDir := filepath.Dir(lifecycle.ServerLogFile)
+	
+	// Create log directory if it doesn't exist
+	if _, err := os.Stat(logDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(logDir, 0o755); err != nil {
+			return fmt.Errorf("create ollama server log dir %s: %v", logDir, err)
+		}
+	}
+
+	// Rotate existing logs
+	rotateLogs(lifecycle.ServerLogFile)
+
+	// Open log file for writing
+	logFile, err := os.OpenFile(lifecycle.ServerLogFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o755)
+	if err != nil {
+		return fmt.Errorf("failed to create server log: %w", err)
+	}
+
+	originalStderr := os.Stderr
+	originalStdout := os.Stdout
+	
+	// Create pipes to capture both stdout and stderr
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stderr pipe: %w", err)
+	}
+	
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		return fmt.Errorf("failed to create stdout pipe: %w", err)
+	}
+	
+	// Replace stdout and stderr with the write ends of the pipes
+	os.Stderr = stderrW
+	os.Stdout = stdoutW
+	
+	// Start goroutines to copy from the pipes to both original streams and log file
+	go func() {
+		defer stderrR.Close()
+		teeWriter := io.MultiWriter(originalStderr, logFile)
+		io.Copy(teeWriter, stderrR)
+	}()
+	
+	go func() {
+		defer stdoutR.Close()
+		teeWriter := io.MultiWriter(originalStdout, logFile)
+		io.Copy(teeWriter, stdoutR)
+	}()
+	
+	return nil
+}
+
+// rotateLogs rotates log files similar to app/lifecycle/logging.go
+func rotateLogs(logFile string) {
+	if _, err := os.Stat(logFile); os.IsNotExist(err) {
+		return
+	}
+	index := strings.LastIndex(logFile, ".")
+	pre := logFile[:index]
+	post := "." + logFile[index+1:]
+	for i := lifecycle.LogRotationCount; i > 0; i-- {
+		older := pre + "-" + strconv.Itoa(i) + post
+		newer := pre + "-" + strconv.Itoa(i-1) + post
+		if i == 1 {
+			newer = pre + post
+		}
+		if _, err := os.Stat(newer); err == nil {
+			if _, err := os.Stat(older); err == nil {
+				err := os.Remove(older)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Failed to remove older log %s: %v\n", older, err)
+					continue
+				}
+			}
+			err := os.Rename(newer, older)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to rotate log %s to %s: %v\n", newer, older, err)
+			}
+		}
+	}
 }
 
 func initializeKeypair() error {
@@ -1532,6 +1623,18 @@ func NewCLI() *cobra.Command {
 		RunE:    DeleteHandler,
 	}
 
+	logsCmd := &cobra.Command{
+		Use:   "logs",
+		Short: "Show ollama logs",
+		Args:  cobra.ExactArgs(0),
+		RunE:  LogsHandler,
+	}
+
+	logsCmd.Flags().BoolP("follow", "f", false, "Follow log output")
+	logsCmd.Flags().IntP("tail", "n", 0, "Number of lines to show from the end of the logs (0 = all)")
+	logsCmd.Flags().Bool("server", false, "Show server logs")
+	logsCmd.Flags().Bool("app", false, "Show application logs")
+
 	runnerCmd := &cobra.Command{
 		Use:    "runner",
 		Hidden: true,
@@ -1559,6 +1662,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		logsCmd,
 		serveCmd,
 	} {
 		switch cmd {
@@ -1599,6 +1703,7 @@ func NewCLI() *cobra.Command {
 		psCmd,
 		copyCmd,
 		deleteCmd,
+		logsCmd,
 		runnerCmd,
 	)
 
