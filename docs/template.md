@@ -57,6 +57,10 @@ TEMPLATE """{{- if .System }}<|start_header_id|>system<|end_header_id|>
 
 `Suffix` (string): text inserted after the assistant's response
 
+`Query` (string): rerank prompt
+
+`Document` (string): rerank document text
+
 `Messages` (list): list of messages
 
 `Messages[].Role` (string): role which can be one of `system`, `user`, `assistant`, or `tool`
