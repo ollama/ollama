@@ -146,7 +146,6 @@ func (attn *AttentionBlock) Forward(ctx ml.Context, hiddenStates, positions ml.T
 
 	query = query.Permute(ctx, 0, 2, 1, 3)
 	key = key.Permute(ctx, 0, 2, 1, 3)
-	value = value.Permute(ctx, 1, 2, 0, 3).Contiguous(ctx)
 
 	scores := key.MulmatFullPrec(ctx, query)
 	scores = scores.Scale(ctx, 1./math.Sqrt(float64(opts.headDim())))
@@ -257,10 +256,10 @@ func New(c fs.Config) (model.Model, error) {
 	}
 
 	m.Cache = kvcache.NewWrapperCache(
-		kvcache.NewSWACache(int32(c.Uint("attention.sliding_window")), m.Shift),
+		kvcache.NewSWAMemCache(int32(c.Uint("attention.sliding_window")), 4096, m.Shift),
 		kvcache.NewCausalCache(m.Shift),
 	)
-	m.Cache.SetConfig(ml.CacheConfig{})
+	m.Cache.SetConfig(ml.CacheConfig{CachePadding: 32, PermutedV: true})
 	return &m, nil
 }
 
