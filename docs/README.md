@@ -4,6 +4,7 @@
 * [Quickstart](../README.md#quickstart)
 * [Examples](./examples.md)
 * [Importing models](./import.md)
+* [MacOS Documentation](./macos.md)
 * [Linux Documentation](./linux.md)
 * [Windows Documentation](./windows.md)
 * [Docker Documentation](./docker.md)

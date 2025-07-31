@@ -2,7 +2,9 @@ package qwen2
 
 import (
 	"cmp"
+	"fmt"
 	"math"
+	"strings"
 
 	"github.com/ollama/ollama/fs"
 	"github.com/ollama/ollama/kvcache"
@@ -126,6 +128,14 @@ func (m Model) Shift(ctx ml.Context, layer int, key, shift ml.Tensor) (ml.Tensor
 }
 
 func New(c fs.Config) (model.Model, error) {
+	// This model currently only supports the gpt2 tokenizer
+	if c.String("tokenizer.ggml.model") == "llama" {
+		return nil, fmt.Errorf("unsupported tokenizer: llama")
+	}
+	// detect library/qwen model(s) which are incompatible
+	if strings.HasPrefix(c.String("general.name"), "Qwen2-beta") {
+		return nil, fmt.Errorf("unsupported model: %s", c.String("general.name"))
+	}
 	m := Model{
 		Layers: make([]DecoderLayer, c.Uint("block_count")),
 		BytePairEncoding: model.NewBytePairEncoding(

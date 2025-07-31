@@ -423,7 +423,7 @@ func fromChatRequest(r ChatCompletionRequest) (*api.ChatRequest, error) {
 						}
 					}
 
-					types := []string{"jpeg", "jpg", "png"}
+					types := []string{"jpeg", "jpg", "png", "webp"}
 					valid := false
 					for _, t := range types {
 						prefix := "data:image/" + t + ";base64,"

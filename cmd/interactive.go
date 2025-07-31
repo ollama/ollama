@@ -385,18 +385,21 @@ func generateInteractive(cmd *cobra.Command, opts runOptions) error {
 				case "modelfile":
 					fmt.Println(resp.Modelfile)
 				case "parameters":
+					fmt.Println("Model defined parameters:")
 					if resp.Parameters == "" {
-						fmt.Println("No parameters were specified for this model.")
+						fmt.Println("  No additional parameters were specified for this model.")
 					} else {
-						if len(opts.Options) > 0 {
-							fmt.Println("User defined parameters:")
-							for k, v := range opts.Options {
-								fmt.Printf("%-*s %v\n", 30, k, v)
-							}
-							fmt.Println()
+						for _, l := range strings.Split(resp.Parameters, "\n") {
+							fmt.Printf("  %s\n", l)
 						}
-						fmt.Println("Model defined parameters:")
-						fmt.Println(resp.Parameters)
+					}
+					fmt.Println()
+					if len(opts.Options) > 0 {
+						fmt.Println("User defined parameters:")
+						for k, v := range opts.Options {
+							fmt.Printf("  %-*s %v\n", 30, k, v)
+						}
+						fmt.Println()
 					}
 				case "system":
 					switch {

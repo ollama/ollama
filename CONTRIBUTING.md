@@ -65,7 +65,7 @@ continuation of the sentence:
 Examples:
 
       llm/backend/mlx: support the llama architecture
-      CONTRIBUTING: provide clairity on good commit messages, and bad
+      CONTRIBUTING: provide clarity on good commit messages, and bad
 
 Bad Examples:
 

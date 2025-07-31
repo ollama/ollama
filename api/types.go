@@ -143,6 +143,7 @@ type Message struct {
 	Thinking  string      `json:"thinking,omitempty"`
 	Images    []ImageData `json:"images,omitempty"`
 	ToolCalls []ToolCall  `json:"tool_calls,omitempty"`
+	ToolName  string      `json:"tool_name,omitempty"`
 }
 
 func (m *Message) UnmarshalJSON(b []byte) error {
@@ -467,13 +468,14 @@ type ListModelResponse struct {
 
 // ProcessModelResponse is a single model description in [ProcessResponse].
 type ProcessModelResponse struct {
-	Name      string       `json:"name"`
-	Model     string       `json:"model"`
-	Size      int64        `json:"size"`
-	Digest    string       `json:"digest"`
-	Details   ModelDetails `json:"details,omitempty"`
-	ExpiresAt time.Time    `json:"expires_at"`
-	SizeVRAM  int64        `json:"size_vram"`
+	Name          string       `json:"name"`
+	Model         string       `json:"model"`
+	Size          int64        `json:"size"`
+	Digest        string       `json:"digest"`
+	Details       ModelDetails `json:"details,omitempty"`
+	ExpiresAt     time.Time    `json:"expires_at"`
+	SizeVRAM      int64        `json:"size_vram"`
+	ContextLength int          `json:"context_length"`
 }
 
 type TokenResponse struct {

@@ -8,12 +8,12 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"slices"
 	"strings"
 
 	"github.com/d4l3k/go-bfloat16"
 	"github.com/x448/float16"
-	"golang.org/x/exp/maps"
 )
 
 type safetensorMetadata struct {
@@ -46,8 +46,7 @@ func parseSafetensors(fsys fs.FS, replacer *strings.Replacer, ps ...string) ([]T
 			return nil, err
 		}
 
-		keys := maps.Keys(headers)
-		slices.Sort(keys)
+		keys := slices.Sorted(maps.Keys(headers))
 
 		names := make(map[string]struct{}, len(keys))
 
