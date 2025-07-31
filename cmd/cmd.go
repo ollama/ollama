@@ -5,12 +5,14 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"math"
 	"net"
 	"net/http"
@@ -443,6 +445,101 @@ func RunHandler(cmd *cobra.Command, args []string) error {
 	return generate(cmd, opts)
 }
 
+// showPushSignatureSummary displays post-push signature verification information
+func showPushSignatureSummary(modelName model.Name) error {
+	sigInfo, err := server.GetSignatureInfo(modelName)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println() // Add spacing after push progress
+
+	if sigInfo == nil {
+		// Model is unsigned
+		fmt.Printf("📤 Pushed unsigned model %s\n", modelName.DisplayShortest())
+		fmt.Printf("   Consider signing the model to ensure authenticity for users\n")
+		fmt.Printf("   Use 'ollama sign %s' to add a signature\n", modelName.DisplayShortest())
+		return nil
+	}
+
+	// Model has signature information
+	fmt.Printf("🔐 Pushed signed model %s\n", modelName.DisplayShortest())
+	
+	// Perform verification to get current status
+	verifier := server.NewSignatureVerifier()
+	result, err := verifier.VerifyModel(modelName)
+	if err != nil {
+		fmt.Printf("   ❌ Signature verification failed: %v\n", err)
+		fmt.Printf("   Users may see signature verification warnings\n")
+		return nil
+	}
+
+	if result.Valid {
+		fmt.Printf("   ✅ Signature verified successfully\n")
+		fmt.Printf("   Users will see verified signature when downloading\n")
+		fmt.Printf("   Signer: %s\n", sigInfo.Signer)
+		fmt.Printf("   Signed at: %s\n", sigInfo.SignedAt.Format("2006-01-02 15:04:05"))
+	} else {
+		fmt.Printf("   ❌ Signature verification failed\n")
+		if result.ErrorMessage != "" {
+			fmt.Printf("   Reason: %s\n", result.ErrorMessage)
+		}
+		fmt.Printf("   Users will see signature verification warnings\n")
+	}
+
+	return nil
+}
+
+// performPrePushSignatureChecks validates signature requirements before pushing
+func performPrePushSignatureChecks(modelName model.Name, requireSig, verifySig bool) error {
+	sigInfo, err := server.GetSignatureInfo(modelName)
+	if err != nil {
+		return fmt.Errorf("failed to get signature information: %w", err)
+	}
+
+	// Check if signature is required but model is unsigned
+	if requireSig && sigInfo == nil {
+		fmt.Printf("❌ Push failed: Model %s is unsigned\n", modelName.DisplayShortest())
+		fmt.Printf("   Use --require-signature=false to push unsigned models\n")
+		fmt.Printf("   Or sign the model first: ollama sign %s\n", modelName.DisplayShortest())
+		return errors.New("signature required but model is unsigned")
+	}
+
+	// If model has signature and verification is enabled, verify it
+	if sigInfo != nil && verifySig {
+		fmt.Printf("🔍 Verifying signature before push...\n")
+		verifier := server.NewSignatureVerifier()
+		result, err := verifier.VerifyModel(modelName)
+		if err != nil {
+			fmt.Printf("❌ Signature verification failed: %v\n", err)
+			fmt.Printf("   Use --verify-signature=false to skip verification\n")
+			fmt.Printf("   Or fix signature issues first\n")
+			return fmt.Errorf("signature verification failed: %w", err)
+		}
+
+		if !result.Valid {
+			fmt.Printf("❌ Signature is invalid: %s\n", result.ErrorMessage)
+			fmt.Printf("   Use --verify-signature=false to push with invalid signature\n")
+			fmt.Printf("   Or re-sign the model: ollama sign %s\n", modelName.DisplayShortest())
+			return errors.New("signature is invalid")
+		}
+
+		fmt.Printf("✅ Signature verified successfully\n")
+		fmt.Printf("   Signer: %s\n", sigInfo.Signer)
+		fmt.Printf("   Signed: %s\n", sigInfo.SignedAt.Format("2006-01-02 15:04:05"))
+	}
+
+	// Show what will be pushed
+	if sigInfo != nil {
+		fmt.Printf("📦 Ready to push signed model %s\n", modelName.DisplayShortest())
+	} else {
+		fmt.Printf("📦 Ready to push unsigned model %s\n", modelName.DisplayShortest())
+		fmt.Printf("   Consider signing for better security: ollama sign %s\n", modelName.DisplayShortest())
+	}
+
+	return nil
+}
+
 func PushHandler(cmd *cobra.Command, args []string) error {
 	client, err := api.ClientFromEnvironment()
 	if err != nil {
@@ -451,6 +548,22 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 
 	insecure, err := cmd.Flags().GetBool("insecure")
 	if err != nil {
+		return err
+	}
+
+	requireSig, err := cmd.Flags().GetBool("require-signature")
+	if err != nil {
+		return err
+	}
+
+	verifySig, err := cmd.Flags().GetBool("verify-signature")
+	if err != nil {
+		return err
+	}
+
+	// Pre-push signature verification and validation
+	modelName := model.ParseName(args[0])
+	if err := performPrePushSignatureChecks(modelName, requireSig, verifySig); err != nil {
 		return err
 	}
 
@@ -504,6 +617,12 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 	p.Stop()
 	spinner.Stop()
 
+	// Show signature verification summary after push completes
+	if err := showPushSignatureSummary(n); err != nil {
+		// Don't fail the push if we can't show signature info
+		slog.Debug("failed to show push signature summary", "error", err)
+	}
+
 	destination := n.String()
 	if strings.HasSuffix(n.Host, ".ollama.ai") || strings.HasSuffix(n.Host, ".ollama.com") {
 		destination = "https://ollama.com/" + strings.TrimSuffix(n.DisplayShortest(), ":latest")
@@ -512,6 +631,19 @@ func PushHandler(cmd *cobra.Command, args []string) error {
 	fmt.Printf("\t%s\n", destination)
 
 	return nil
+}
+
+// formatSignatureStatus converts signature status to a display string
+func formatSignatureStatus(sig *api.SignatureStatus) string {
+	if sig == nil || !sig.Signed {
+		return "Unsigned"
+	}
+	
+	if sig.Verified {
+		return "✅ Verified"
+	}
+	
+	return "❌ Invalid"
 }
 
 func ListHandler(cmd *cobra.Command, args []string) error {
@@ -529,12 +661,13 @@ func ListHandler(cmd *cobra.Command, args []string) error {
 
 	for _, m := range models.Models {
 		if len(args) == 0 || strings.HasPrefix(strings.ToLower(m.Name), strings.ToLower(args[0])) {
-			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), format.HumanTime(m.ModifiedAt, "Never")})
+			sigStatus := formatSignatureStatus(m.Signature)
+			data = append(data, []string{m.Name, m.Digest[:12], format.HumanBytes(m.Size), format.HumanTime(m.ModifiedAt, "Never"), sigStatus})
 		}
 	}
 
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"NAME", "ID", "SIZE", "MODIFIED"})
+	table.SetHeader([]string{"NAME", "ID", "SIZE", "MODIFIED", "SIGNATURE"})
 	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
 	table.SetAlignment(tablewriter.ALIGN_LEFT)
 	table.SetHeaderLine(false)
@@ -888,6 +1021,50 @@ func CopyHandler(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// showSignatureVerificationSummary displays post-pull signature verification information and warnings
+func showSignatureVerificationSummary(modelName model.Name) error {
+	sigInfo, err := server.GetSignatureInfo(modelName)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println() // Add spacing after pull progress
+
+	if sigInfo == nil {
+		// Model is unsigned
+		fmt.Printf("⚠️  Model %s is unsigned\n", modelName.DisplayShortest())
+		fmt.Printf("   Consider verifying the model source and authenticity\n")
+		fmt.Printf("   Use 'ollama verify %s' to check signature status\n", modelName.DisplayShortest())
+		return nil
+	}
+
+	// Model has signature information
+	fmt.Printf("🔐 Model %s has signature information\n", modelName.DisplayShortest())
+	
+	// Perform verification to get current status
+	verifier := server.NewSignatureVerifier()
+	result, err := verifier.VerifyModel(modelName)
+	if err != nil {
+		fmt.Printf("   ❌ Signature verification failed: %v\n", err)
+		fmt.Printf("   Use 'ollama verify %s -v' for detailed information\n", modelName.DisplayShortest())
+		return nil
+	}
+
+	if result.Valid {
+		fmt.Printf("   ✅ Signature verified successfully\n")
+		fmt.Printf("   Signer: %s\n", sigInfo.Signer)
+		fmt.Printf("   Signed at: %s\n", sigInfo.SignedAt.Format("2006-01-02 15:04:05"))
+	} else {
+		fmt.Printf("   ❌ Signature verification failed\n")
+		if result.ErrorMessage != "" {
+			fmt.Printf("   Reason: %s\n", result.ErrorMessage)
+		}
+		fmt.Printf("   Use 'ollama verify %s -v' for detailed information\n", modelName.DisplayShortest())
+	}
+
+	return nil
+}
+
 func PullHandler(cmd *cobra.Command, args []string) error {
 	insecure, err := cmd.Flags().GetBool("insecure")
 	if err != nil {
@@ -960,7 +1137,21 @@ func PullHandler(cmd *cobra.Command, args []string) error {
 	}
 
 	request := api.PullRequest{Name: args[0], Insecure: insecure}
-	return client.Pull(cmd.Context(), &request, fn)
+	err = client.Pull(cmd.Context(), &request, fn)
+	if err != nil {
+		return err
+	}
+
+	// Show signature verification summary after pull completes
+	modelName := model.ParseName(args[0])
+	if modelName.IsValid() {
+		if err := showSignatureVerificationSummary(modelName); err != nil {
+			// Don't fail the pull if we can't show signature info
+			slog.Debug("failed to show signature verification summary", "error", err)
+		}
+	}
+
+	return nil
 }
 
 type generateContextKey string
@@ -1396,6 +1587,487 @@ Environment Variables:
 	cmd.SetUsageTemplate(cmd.UsageTemplate() + envUsage)
 }
 
+func SignHandler(cmd *cobra.Command, args []string) error {
+	if len(args) != 1 {
+		return errors.New("sign requires exactly one model name")
+	}
+
+	modelName := args[0]
+	name := model.ParseName(modelName)
+	if !name.IsValid() {
+		return fmt.Errorf("invalid model name: %s", modelName)
+	}
+
+	// Validate the model exists by attempting to parse its manifest
+	manifest, err := server.ParseNamedManifest(name)
+	if err != nil {
+		return fmt.Errorf("model not found: %w", err)
+	}
+
+	// Get overwrite flag
+	overwrite, _ := cmd.Flags().GetBool("overwrite")
+
+	// Check if model is already signed
+	if manifest.Signature != nil {
+		fmt.Printf("Model %s is already signed\n", modelName)
+		fmt.Printf("  Signer: %s\n", manifest.Signature.Signer)
+		fmt.Printf("  Signed at: %s\n", manifest.Signature.SignedAt.Format(time.RFC3339))
+		fmt.Printf("  Format: %s\n", manifest.Signature.Format)
+		fmt.Printf("  Verified: %v\n", manifest.Signature.Verified)
+		
+		if !overwrite {
+			fmt.Printf("\nUse --overwrite to replace the existing signature\n")
+			return nil
+		}
+		fmt.Printf("\nOverwriting existing signature...\n")
+	}
+
+	// Display what would be signed
+	fmt.Printf("Model %s found and ready to sign\n", modelName)
+	fmt.Printf("  Layers: %d\n", len(manifest.Layers))
+	fmt.Printf("  Total size: %s\n", format.HumanBytes(manifest.Size()))
+	fmt.Printf("  Digest: %s\n", manifest.Digest()[:12])
+
+	// Check for key/signer options
+	keyPath, _ := cmd.Flags().GetString("key")
+	sigstoreMode, _ := cmd.Flags().GetBool("sigstore")
+	identity, _ := cmd.Flags().GetString("identity")
+
+	if keyPath != "" {
+		fmt.Printf("  Signing method: Private key (%s)\n", keyPath)
+		return handleKeyBasedSigning(modelName, manifest, keyPath, overwrite)
+	} else if sigstoreMode {
+		if identity == "" {
+			fmt.Printf("  Signing method: Sigstore (keyless)\n")
+			fmt.Printf("  NOTE: Will use OIDC identity from environment\n")
+		} else {
+			fmt.Printf("  Signing method: Sigstore with identity %s\n", identity)
+		}
+		fmt.Printf("  NOTE: Sigstore signing will be implemented in a future commit\n")
+		fmt.Printf("  Use --key option for basic ed25519 signing\n")
+		return nil
+	} else {
+		fmt.Printf("  No signing method specified - generating test signature\n")
+		return handleTestSigning(modelName, manifest, overwrite)
+	}
+
+	return nil
+}
+
+// handleKeyBasedSigning handles signing with a provided private key file
+func handleKeyBasedSigning(modelName string, manifest *server.Manifest, keyPath string, overwrite bool) error {
+	// Check if key file exists
+	if _, err := os.Stat(keyPath); os.IsNotExist(err) {
+		return fmt.Errorf("private key file not found: %s", keyPath)
+	}
+
+	// Read private key file (assuming ed25519 private key in base64)
+	keyData, err := os.ReadFile(keyPath)
+	if err != nil {
+		return fmt.Errorf("failed to read private key: %w", err)
+	}
+
+	privateKeyB64 := strings.TrimSpace(string(keyData))
+
+	// Compute model digest
+	modelDigest, err := server.ComputeModelDigest(manifest)
+	if err != nil {
+		return fmt.Errorf("failed to compute model digest: %w", err)
+	}
+
+	// Create signature
+	signer := "user@localhost" // Default signer
+	oms, err := server.CreateTestSignature(privateKeyB64, modelDigest, signer)
+	if err != nil {
+		return fmt.Errorf("failed to create signature: %w", err)
+	}
+
+	// Save signature and update manifest
+	if err := saveSignatureToModel(modelName, manifest, oms, overwrite); err != nil {
+		return fmt.Errorf("failed to save signature: %w", err)
+	}
+
+	fmt.Printf("✅ Successfully signed model %s\n", modelName)
+	fmt.Printf("   Signer: %s\n", signer)
+	fmt.Printf("   Algorithm: %s\n", oms.Algorithm)
+	fmt.Printf("   Timestamp: %s\n", oms.Timestamp.Format("2006-01-02 15:04:05"))
+
+	return nil
+}
+
+// handleTestSigning generates a test key pair and signs the model
+func handleTestSigning(modelName string, manifest *server.Manifest, overwrite bool) error {
+	fmt.Printf("  Generating test ed25519 key pair...\n")
+
+	// Generate test key pair
+	publicKey, privateKey, err := server.GenerateKeyPair()
+	if err != nil {
+		return fmt.Errorf("failed to generate key pair: %w", err)
+	}
+
+	// Compute model digest
+	modelDigest, err := server.ComputeModelDigest(manifest)
+	if err != nil {
+		return fmt.Errorf("failed to compute model digest: %w", err)
+	}
+
+	// Create test signature
+	signer := "test-signer@localhost"
+	oms, err := server.CreateTestSignature(privateKey, modelDigest, signer)
+	if err != nil {
+		return fmt.Errorf("failed to create test signature: %w", err)
+	}
+
+	// Save signature and update manifest
+	if err := saveSignatureToModel(modelName, manifest, oms, overwrite); err != nil {
+		return fmt.Errorf("failed to save signature: %w", err)
+	}
+
+	fmt.Printf("✅ Successfully signed model %s with test signature\n", modelName)
+	fmt.Printf("   Signer: %s\n", signer)
+	fmt.Printf("   Algorithm: %s\n", oms.Algorithm)
+	fmt.Printf("   Public Key: %s...\n", publicKey[:32])
+	fmt.Printf("   Timestamp: %s\n", oms.Timestamp.Format("2006-01-02 15:04:05"))
+	fmt.Printf("   NOTE: This is a test signature for development purposes\n")
+
+	return nil
+}
+
+// saveSignatureToModel saves the signature to blob storage and updates the manifest
+func saveSignatureToModel(modelName string, manifest *server.Manifest, oms *server.OMSSignature, overwrite bool) error {
+	// Marshal signature to JSON
+	sigData, err := json.MarshalIndent(oms, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal signature: %w", err)
+	}
+
+	// Compute signature digest
+	sigDigest := "sha256:" + fmt.Sprintf("%x", sha256.Sum256(sigData))
+
+	// Save signature to blob storage
+	sigPath, err := server.GetBlobsPath(sigDigest)
+	if err != nil {
+		return fmt.Errorf("failed to get signature blob path: %w", err)
+	}
+
+	if err := os.WriteFile(sigPath, sigData, 0o644); err != nil {
+		return fmt.Errorf("failed to write signature blob: %w", err)
+	}
+
+	// Create signature layer
+	sigLayer := server.Layer{
+		MediaType: server.MediaTypeModelSignature,
+		Digest:    sigDigest,
+		Size:      int64(len(sigData)),
+	}
+
+	// Update manifest with signature information
+	manifest.AddSignatureLayer(sigLayer)
+	manifest.Signature = &server.SignatureInfo{
+		Format:       oms.Version,
+		SignatureURI: sigDigest,
+		Verified:     false, // Will be verified later
+		Signer:       oms.Signer,
+		SignedAt:     oms.Timestamp,
+	}
+
+	// Save updated manifest
+	return saveUpdatedManifest(modelName, manifest)
+}
+
+// saveUpdatedManifest saves the updated manifest back to disk
+func saveUpdatedManifest(modelName string, manifest *server.Manifest) error {
+	// Parse model name to get manifest path
+	modelPath := model.ParseName(modelName)
+	if !modelPath.IsValid() {
+		return fmt.Errorf("invalid model name: %s", modelName)
+	}
+
+	// Get manifest directory
+	manifestsDir, err := server.GetManifestPath()
+	if err != nil {
+		return fmt.Errorf("failed to get manifest path: %w", err)
+	}
+
+	// Construct manifest file path
+	manifestPath := filepath.Join(manifestsDir, modelPath.Filepath())
+
+	// Marshal manifest
+	manifestData, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal manifest: %w", err)
+	}
+
+	// Write manifest
+	if err := os.WriteFile(manifestPath, manifestData, 0o644); err != nil {
+		return fmt.Errorf("failed to write manifest: %w", err)
+	}
+
+	return nil
+}
+
+// ConfigSignatureHandler manages signature configuration settings
+func ConfigSignatureHandler(cmd *cobra.Command, args []string) error {
+	if len(args) == 0 {
+		// Show current configuration
+		config, err := server.LoadSignatureConfig()
+		if err != nil {
+			return fmt.Errorf("failed to load signature configuration: %w", err)
+		}
+
+		fmt.Printf("Current signature configuration:\n\n")
+		fmt.Printf("  Policy: %s\n", config.Policy)
+		fmt.Printf("  Verify on pull: %t\n", config.VerifyOnPull)
+		fmt.Printf("  Verify on push: %t\n", config.VerifyOnPush)
+		fmt.Printf("  Require trusted signers: %t\n", config.RequireTrustedSigners)
+		fmt.Printf("  Max signature age: %d days\n", config.MaxSignatureAge)
+		fmt.Printf("  Check revocation: %t\n", config.CheckRevocation)
+		fmt.Printf("  Trusted signers: %d\n", len(config.TrustedSigners))
+
+		if len(config.TrustedSigners) > 0 {
+			fmt.Printf("\nTrusted signers:\n")
+			for _, signer := range config.TrustedSigners {
+				fmt.Printf("  - %s (%s)\n", signer.Name, signer.Email)
+				if signer.Description != "" {
+					fmt.Printf("    %s\n", signer.Description)
+				}
+			}
+		}
+
+		fmt.Printf("\nLast updated: %s\n", config.UpdatedAt.Format("2006-01-02 15:04:05"))
+		
+		fmt.Printf("\nAvailable policies:\n")
+		fmt.Printf("  permissive - Allow unsigned models (default)\n")
+		fmt.Printf("  warn       - Warn about unsigned models but allow them\n")
+		fmt.Printf("  strict     - Require valid signatures for all models\n")
+
+		return nil
+	}
+
+	// Handle configuration commands
+	subcommand := args[0]
+	switch subcommand {
+	case "set":
+		return handleConfigSet(cmd, args[1:])
+	case "add-signer":
+		return handleAddSigner(cmd, args[1:])
+	case "remove-signer":
+		return handleRemoveSigner(cmd, args[1:])
+	case "reset":
+		return handleConfigReset(cmd)
+	default:
+		return fmt.Errorf("unknown config subcommand: %s", subcommand)
+	}
+}
+
+func handleConfigSet(cmd *cobra.Command, args []string) error {
+	if len(args) != 2 {
+		return errors.New("usage: config set <key> <value>")
+	}
+
+	key, value := args[0], args[1]
+	config, err := server.LoadSignatureConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	switch key {
+	case "policy":
+		switch server.SignaturePolicy(value) {
+		case server.PolicyPermissive, server.PolicyWarn, server.PolicyStrict:
+			config.Policy = server.SignaturePolicy(value)
+		default:
+			return fmt.Errorf("invalid policy: %s (must be permissive, warn, or strict)", value)
+		}
+	case "verify-on-pull":
+		config.VerifyOnPull = value == "true"
+	case "verify-on-push":
+		config.VerifyOnPush = value == "true"
+	case "require-trusted-signers":
+		config.RequireTrustedSigners = value == "true"
+	case "check-revocation":
+		config.CheckRevocation = value == "true"
+	default:
+		return fmt.Errorf("unknown configuration key: %s", key)
+	}
+
+	if err := server.SaveSignatureConfig(config); err != nil {
+		return fmt.Errorf("failed to save configuration: %w", err)
+	}
+
+	fmt.Printf("✅ Configuration updated: %s = %s\n", key, value)
+	return nil
+}
+
+func handleAddSigner(cmd *cobra.Command, args []string) error {
+	if len(args) < 2 {
+		return errors.New("usage: config add-signer <name> <email> [public-key] [description]")
+	}
+
+	name := args[0]
+	email := args[1]
+	publicKey := ""
+	description := ""
+
+	if len(args) > 2 {
+		publicKey = args[2]
+	}
+	if len(args) > 3 {
+		description = args[3]
+	}
+
+	config, err := server.LoadSignatureConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	signer := server.TrustedSigner{
+		ID:          fmt.Sprintf("signer-%d", time.Now().Unix()),
+		Name:        name,
+		Email:       email,
+		PublicKey:   publicKey,
+		Description: description,
+	}
+
+	if err := config.AddTrustedSigner(signer); err != nil {
+		return fmt.Errorf("failed to add signer: %w", err)
+	}
+
+	if err := server.SaveSignatureConfig(config); err != nil {
+		return fmt.Errorf("failed to save configuration: %w", err)
+	}
+
+	fmt.Printf("✅ Added trusted signer: %s (%s)\n", name, email)
+	return nil
+}
+
+func handleRemoveSigner(cmd *cobra.Command, args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: config remove-signer <email>")
+	}
+
+	email := args[0]
+	config, err := server.LoadSignatureConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	// Find signer by email
+	var signerID string
+	for _, signer := range config.TrustedSigners {
+		if signer.Email == email {
+			signerID = signer.ID
+			break
+		}
+	}
+
+	if signerID == "" {
+		return fmt.Errorf("signer not found: %s", email)
+	}
+
+	if err := config.RemoveTrustedSigner(signerID); err != nil {
+		return fmt.Errorf("failed to remove signer: %w", err)
+	}
+
+	if err := server.SaveSignatureConfig(config); err != nil {
+		return fmt.Errorf("failed to save configuration: %w", err)
+	}
+
+	fmt.Printf("✅ Removed trusted signer: %s\n", email)
+	return nil
+}
+
+func handleConfigReset(cmd *cobra.Command) error {
+	config := server.DefaultSignatureConfig()
+	if err := server.SaveSignatureConfig(config); err != nil {
+		return fmt.Errorf("failed to reset configuration: %w", err)
+	}
+
+	fmt.Printf("✅ Configuration reset to defaults\n")
+	return nil
+}
+
+func VerifyHandler(cmd *cobra.Command, args []string) error {
+	if len(args) != 1 {
+		return errors.New("verify requires exactly one model name")
+	}
+
+	modelName := args[0]
+	name := model.ParseName(modelName)
+	if !name.IsValid() {
+		return fmt.Errorf("invalid model name: %s", modelName)
+	}
+
+	// Get signature information
+	sigInfo, err := server.GetSignatureInfo(name)
+	if err != nil {
+		return fmt.Errorf("failed to get signature info: %w", err)
+	}
+
+	// Check if model is signed
+	if sigInfo == nil {
+		fmt.Printf("Model %s is not signed\n", modelName)
+		fmt.Printf("  Use 'ollama sign %s' to sign this model\n", modelName)
+		return nil
+	}
+
+	fmt.Printf("Model %s signature information:\n", modelName)
+	fmt.Printf("  Signer: %s\n", sigInfo.Signer)
+	fmt.Printf("  Format: %s\n", sigInfo.Format)
+	fmt.Printf("  Signed at: %s\n", sigInfo.SignedAt.Format(time.RFC3339))
+	fmt.Printf("  Signature URI: %s\n", sigInfo.SignatureURI)
+
+	// Perform verification using our signature verifier
+	verifier := server.NewSignatureVerifier()
+	result, err := verifier.VerifyModel(name)
+	if err != nil {
+		fmt.Printf("  Status: ❌ Verification failed\n")
+		fmt.Printf("  Error: %v\n", err)
+		return nil // Don't return error for verification failures
+	}
+
+	if result.Valid {
+		fmt.Printf("  Status: ✅ Signature verified\n")
+		if result.ErrorMessage != "" {
+			fmt.Printf("  Note: %s\n", result.ErrorMessage)
+		}
+	} else {
+		fmt.Printf("  Status: ❌ Signature invalid\n")
+		if result.ErrorMessage != "" {
+			fmt.Printf("  Reason: %s\n", result.ErrorMessage)
+		}
+	}
+
+	// Show additional verification details if verbose flag is set
+	verbose, _ := cmd.Flags().GetBool("verbose")
+	if verbose {
+		fmt.Printf("\nDetailed verification information:\n")
+		fmt.Printf("  Verification format: %s\n", result.Format)
+		if result.Signer != "" {
+			fmt.Printf("  Verified signer: %s\n", result.Signer)
+		}
+		if !result.SignedAt.IsZero() {
+			fmt.Printf("  Verified signing time: %s\n", result.SignedAt.Format(time.RFC3339))
+		}
+		
+		// Show manifest info
+		manifest, err := server.ParseNamedManifest(name)
+		if err == nil {
+			fmt.Printf("  Model layers: %d\n", len(manifest.Layers))
+			fmt.Printf("  Model size: %s\n", format.HumanBytes(manifest.Size()))
+			fmt.Printf("  Manifest digest: %s\n", manifest.Digest()[:12])
+			
+			sigLayer := manifest.GetSignatureLayer()
+			if sigLayer != nil {
+				fmt.Printf("  Signature layer digest: %s\n", sigLayer.Digest[:12])
+				fmt.Printf("  Signature layer size: %s\n", format.HumanBytes(sigLayer.Size))
+			}
+		}
+	}
+
+	return nil
+}
+
 func NewCLI() *cobra.Command {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	cobra.EnableCommandSorting = false
@@ -1501,6 +2173,8 @@ func NewCLI() *cobra.Command {
 	}
 
 	pushCmd.Flags().Bool("insecure", false, "Use an insecure registry")
+	pushCmd.Flags().Bool("require-signature", false, "Require model to be signed before pushing")
+	pushCmd.Flags().Bool("verify-signature", true, "Verify signature integrity before pushing")
 
 	listCmd := &cobra.Command{
 		Use:     "list",
@@ -1508,6 +2182,37 @@ func NewCLI() *cobra.Command {
 		Short:   "List models",
 		PreRunE: checkServerHeartbeat,
 		RunE:    ListHandler,
+	}
+
+	signCmd := &cobra.Command{
+		Use:     "sign MODEL",
+		Short:   "Sign a model for integrity verification",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: checkServerHeartbeat,
+		RunE:    SignHandler,
+	}
+
+	signCmd.Flags().String("key", "", "Path to private key file for signing")
+	signCmd.Flags().Bool("sigstore", false, "Use Sigstore for keyless signing")
+	signCmd.Flags().String("identity", "", "Identity to use for Sigstore signing")
+	signCmd.Flags().Bool("overwrite", false, "Overwrite existing signature")
+
+	verifyCmd := &cobra.Command{
+		Use:     "verify MODEL",
+		Short:   "Verify the signature of a model",
+		Args:    cobra.ExactArgs(1),
+		PreRunE: checkServerHeartbeat,
+		RunE:    VerifyHandler,
+	}
+
+	verifyCmd.Flags().BoolP("verbose", "v", false, "Show detailed verification information")
+
+	configCmd := &cobra.Command{
+		Use:   "config [SUBCOMMAND]",
+		Short: "Manage signature verification configuration",
+		Long:  "Manage signature verification policies, trusted signers, and verification settings",
+		Args:  cobra.ArbitraryArgs,
+		RunE:  ConfigSignatureHandler,
 	}
 
 	psCmd := &cobra.Command{
@@ -1596,6 +2301,9 @@ func NewCLI() *cobra.Command {
 		pullCmd,
 		pushCmd,
 		listCmd,
+		signCmd,
+		verifyCmd,
+		configCmd,
 		psCmd,
 		copyCmd,
 		deleteCmd,
