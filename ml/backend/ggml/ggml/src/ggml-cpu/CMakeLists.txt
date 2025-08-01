@@ -1,3 +1,17 @@
+function(ggml_add_cpu_backend_features cpu_name arch)
+    # The feature detection code is compiled as a separate target so that
+    # it can be built without the architecture flags
+    # Since multiple variants of the CPU backend may be included in the same
+    # build, using set_source_files_properties() to set the arch flags is not possible
+    set(GGML_CPU_FEATS_NAME ${cpu_name}-feats)
+    add_library(${GGML_CPU_FEATS_NAME} OBJECT ggml-cpu/arch/${arch}/cpu-feats.cpp)
+    target_include_directories(${GGML_CPU_FEATS_NAME} PRIVATE . ../include)
+    target_compile_definitions(${GGML_CPU_FEATS_NAME} PRIVATE ${ARGN})
+    target_compile_definitions(${GGML_CPU_FEATS_NAME} PRIVATE GGML_BACKEND_DL GGML_BACKEND_BUILD GGML_BACKEND_SHARED)
+    set_target_properties(${GGML_CPU_FEATS_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    target_link_libraries(${cpu_name} PRIVATE ${GGML_CPU_FEATS_NAME})
+endfunction()
+
 function(ggml_add_cpu_backend_variant_impl tag_name)
     if (tag_name)
         set(GGML_CPU_NAME ggml-cpu-${tag_name})
@@ -10,14 +24,14 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
     list (APPEND GGML_CPU_SOURCES
         ggml-cpu/ggml-cpu.c
         ggml-cpu/ggml-cpu.cpp
-        ggml-cpu/ggml-cpu-aarch64.cpp
-        ggml-cpu/ggml-cpu-aarch64.h
-        ggml-cpu/ggml-cpu-hbm.cpp
-        ggml-cpu/ggml-cpu-hbm.h
-        ggml-cpu/ggml-cpu-quants.c
-        ggml-cpu/ggml-cpu-quants.h
-        ggml-cpu/ggml-cpu-traits.cpp
-        ggml-cpu/ggml-cpu-traits.h
+        ggml-cpu/repack.cpp
+        ggml-cpu/repack.h
+        ggml-cpu/hbm.cpp
+        ggml-cpu/hbm.h
+        ggml-cpu/quants.c
+        ggml-cpu/quants.h
+        ggml-cpu/traits.cpp
+        ggml-cpu/traits.h
         ggml-cpu/amx/amx.cpp
         ggml-cpu/amx/amx.h
         ggml-cpu/amx/mmq.cpp
@@ -56,10 +70,12 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
     if (GGML_OPENMP)
         find_package(OpenMP)
         if (OpenMP_FOUND)
+            set(GGML_OPENMP_ENABLED "ON" CACHE INTERNAL "")
             target_compile_definitions(${GGML_CPU_NAME} PRIVATE GGML_USE_OPENMP)
 
             target_link_libraries(${GGML_CPU_NAME} PRIVATE OpenMP::OpenMP_C OpenMP::OpenMP_CXX)
         else()
+            set(GGML_OPENMP_ENABLED "OFF" CACHE INTERNAL "")
             message(WARNING "OpenMP not found")
         endif()
     endif()
@@ -82,12 +98,12 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
         target_link_libraries(${GGML_CPU_NAME} PUBLIC memkind)
     endif()
 
-    if (CMAKE_OSX_ARCHITECTURES      STREQUAL "arm64" OR
-        CMAKE_GENERATOR_PLATFORM_LWR STREQUAL "arm64" OR
-        (NOT CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_GENERATOR_PLATFORM_LWR AND
-            CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm.*|ARM64)$"))
-
+    if (GGML_SYSTEM_ARCH STREQUAL "ARM")
         message(STATUS "ARM detected")
+        list(APPEND GGML_CPU_SOURCES
+            ggml-cpu/arch/arm/quants.c
+            ggml-cpu/arch/arm/repack.cpp
+            )
 
         if (MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
             message(FATAL_ERROR "MSVC is not supported for ARM, use clang")
@@ -143,6 +159,49 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
             else()
                 if (GGML_CPU_ARM_ARCH)
                     list(APPEND ARCH_FLAGS -march=${GGML_CPU_ARM_ARCH})
+                elseif(GGML_CPU_ALL_VARIANTS)
+                    # Begin with the lowest baseline
+                    set(ARM_MCPU "armv8-a")
+                    set(ARCH_TAGS "")
+                    set(ARCH_DEFINITIONS "")
+
+                    # When a feature is selected, bump the MCPU to the first
+                    # version that supported it
+                    if (GGML_INTERNAL_DOTPROD)
+                        set(ARM_MCPU "armv8.2-a")
+                        set(ARCH_TAGS "${ARCH_TAGS}+dotprod")
+                        list(APPEND ARCH_DEFINITIONS GGML_USE_DOTPROD)
+                    endif()
+                    if (GGML_INTERNAL_FP16_VECTOR_ARITHMETIC)
+                        set(ARM_MCPU "armv8.2-a")
+                        set(ARCH_TAGS "${ARCH_TAGS}+fp16")
+                        list(APPEND ARCH_DEFINITIONS GGML_USE_FP16_VECTOR_ARITHMETIC)
+                    endif()
+                    if (GGML_INTERNAL_SVE)
+                        set(ARM_MCPU "armv8.2-a")
+                        set(ARCH_TAGS "${ARCH_TAGS}+sve")
+                        list(APPEND ARCH_DEFINITIONS GGML_USE_SVE)
+                    endif()
+                    if (GGML_INTERNAL_MATMUL_INT8)
+                        set(ARM_MCPU "armv8.6-a")
+                        set(ARCH_TAGS "${ARCH_TAGS}+i8mm")
+                        list(APPEND ARCH_DEFINITIONS GGML_USE_MATMUL_INT8)
+                    endif()
+                    if (GGML_INTERNAL_SVE2)
+                        set(ARM_MCPU "armv8.6-a")
+                        set(ARCH_TAGS "${ARCH_TAGS}+sve2")
+                        list(APPEND ARCH_DEFINITIONS GGML_USE_SVE2)
+                    endif()
+                    if (GGML_INTERNAL_NOSVE)
+                        set(ARCH_TAGS "${ARCH_TAGS}+nosve")
+                    endif()
+                    if (GGML_INTERNAL_SME)
+                        set(ARM_MCPU "armv9.2-a")
+                        set(ARCH_TAGS "${ARCH_TAGS}+sme")
+                        list(APPEND ARCH_DEFINITIONS GGML_USE_SME)
+                    endif()
+                    list(APPEND ARCH_FLAGS "-march=${ARM_MCPU}${ARCH_TAGS}")
+                    ggml_add_cpu_backend_features(${GGML_CPU_NAME} arm ${ARCH_DEFINITIONS})
                 endif()
             endif()
 
@@ -170,11 +229,12 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
                 endforeach()
             endif()
         endif()
-    elseif (CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64" OR CMAKE_GENERATOR_PLATFORM_LWR MATCHES "^(x86_64|i686|amd64|x64|win32)$" OR
-            (NOT CMAKE_OSX_ARCHITECTURES AND NOT CMAKE_GENERATOR_PLATFORM_LWR AND
-            CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|i686|AMD64|amd64)$"))
-
+    elseif (GGML_SYSTEM_ARCH STREQUAL "x86")
         message(STATUS "x86 detected")
+        list(APPEND GGML_CPU_SOURCES
+            ggml-cpu/arch/x86/quants.c
+            ggml-cpu/arch/x86/repack.cpp
+            )
 
         if (MSVC)
             # instruction set detection for MSVC only
@@ -299,8 +359,17 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
                 endif()
             endif()
         endif()
-    elseif ("${CMAKE_SYSTEM_PROCESSOR} " STREQUAL "ppc64le " OR "${CMAKE_SYSTEM_PROCESSOR} " STREQUAL "powerpc ")
+
+        if (GGML_BACKEND_DL)
+            if (GGML_NATIVE)
+                # the feature check relies on ARCH_DEFINITIONS, but it is not set with GGML_NATIVE
+                message(FATAL_ERROR "GGML_NATIVE is not compatible with GGML_BACKEND_DL, consider using GGML_CPU_ALL_VARIANTS")
+            endif()
+            ggml_add_cpu_backend_features(${GGML_CPU_NAME} x86 ${ARCH_DEFINITIONS})
+        endif()
+    elseif (GGML_SYSTEM_ARCH STREQUAL "PowerPC")
         message(STATUS "PowerPC detected")
+        list(APPEND GGML_CPU_SOURCES ggml-cpu/arch/powerpc/quants.c)
         if (GGML_NATIVE)
             if (${CMAKE_SYSTEM_PROCESSOR} MATCHES "ppc64")
                 file(READ "/proc/cpuinfo" POWER10_M)
@@ -308,7 +377,8 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
                 execute_process(COMMAND bash -c "prtconf |grep 'Implementation' | head -n 1" OUTPUT_VARIABLE POWER10_M)
             endif()
 
-            string(REGEX MATCHALL "POWER *([0-9]+)" MATCHED_STRING "${POWER10_M}")
+            string(TOUPPER "${POWER10_M}" POWER10_M_UPPER)
+            string(REGEX MATCHALL "POWER *([0-9]+)" MATCHED_STRING "${POWER10_M_UPPER}")
             string(REGEX REPLACE "POWER *([0-9]+)" "\\1" EXTRACTED_NUMBER "${MATCHED_STRING}")
 
             if (EXTRACTED_NUMBER GREATER_EQUAL 10)
@@ -320,13 +390,35 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
             else()
                 list(APPEND ARCH_FLAGS -mcpu=native -mtune=native -mpowerpc64)
             endif()
+        elseif(GGML_CPU_ALL_VARIANTS)
+            # Begin with the lowest baseline
+            set(ARCH_DEFINITIONS "")
+
+            # When a feature is selected, bump the MCPU to the first
+            # version that supported it
+            foreach(PVER RANGE 7 11)
+                if(DEFINED GGML_INTERNAL_POWER${PVER})
+                    set(POWERPC_MCPU "power${PVER}")
+                    list(APPEND ARCH_DEFINITIONS GGML_USE_POWER${PVER})
+                endif()
+            endforeach()
+            if (GGML_INTERNAL_VSX)
+                list(APPEND ARCH_DEFINITIONS GGML_USE_VSX)
+                list(APPEND ARCH_FLAGS -mvsx)
+            endif()
+
+            if (DEFINED POWERPC_MCPU)
+                list(APPEND ARCH_FLAGS -mcpu=${POWERPC_MCPU})
+            endif()
+            ggml_add_cpu_backend_features(${GGML_CPU_NAME} powerpc ${ARCH_DEFINITIONS})
         else()
             if (GGML_CPU_POWERPC_CPUTYPE)
                 list(APPEND ARCH_FLAGS -mcpu=${GGML_CPU_POWERPC_CPUTYPE})
             endif()
         endif()
-    elseif (${CMAKE_SYSTEM_PROCESSOR} MATCHES "loongarch64")
+    elseif (GGML_SYSTEM_ARCH STREQUAL "loongarch64")
         message(STATUS "loongarch64 detected")
+        list(APPEND GGML_CPU_SOURCES ggml-cpu/arch/loongarch/quants.c)
 
         list(APPEND ARCH_FLAGS -march=loongarch64)
         if (GGML_LASX)
@@ -335,22 +427,30 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
         if (GGML_LSX)
             list(APPEND ARCH_FLAGS -mlsx)
         endif()
-    elseif (${CMAKE_SYSTEM_PROCESSOR} MATCHES "riscv64")
-        message(STATUS "RISC-V detected")
+    elseif (GGML_SYSTEM_ARCH STREQUAL "riscv64")
+        message(STATUS "riscv64 detected")
+        list(APPEND GGML_CPU_SOURCES
+            ggml-cpu/arch/riscv/quants.c
+            ggml-cpu/arch/riscv/repack.cpp
+            )
         if (GGML_RVV)
-            if (GGML_RV_ZFH)
-                list(APPEND ARCH_FLAGS -march=rv64gcv_zfhmin -DGGML_RV_ZFH -mabi=lp64d)
+            if (GGML_XTHEADVECTOR)
+                list(APPEND ARCH_FLAGS -march=rv64gc_xtheadvector -mabi=lp64d)
+            elseif (GGML_RV_ZFH)
+                list(APPEND ARCH_FLAGS -march=rv64gcv_zfhmin -mabi=lp64d)
             else()
                 list(APPEND ARCH_FLAGS -march=rv64gcv -mabi=lp64d)
             endif()
         endif()
-    elseif (${CMAKE_SYSTEM_PROCESSOR} MATCHES "s390x")
+    elseif (GGML_SYSTEM_ARCH STREQUAL "s390x")
         message(STATUS "s390x detected")
+        list(APPEND GGML_CPU_SOURCES ggml-cpu/arch/s390/quants.c)
         file(READ "/proc/cpuinfo" CPUINFO_CONTENTS)
         string(REGEX REPLACE "machine[ \t\r\n]*=[ \t\r\n]*([0-9]+)" "\\1" S390X_M ${CPUINFO_CONTENTS})
 
         # TODO: Separation to determine activation of VX/VXE/VXE2
         if (${S390X_M} MATCHES "8561|8562")
+            set(GGML_NNPA OFF)
             message(STATUS "z15 target")
             list(APPEND ARCH_FLAGS -march=z15)
         elseif (${S390X_M} MATCHES "3931")
@@ -358,6 +458,7 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
             list(APPEND ARCH_FLAGS -march=z16)
         elseif (${S390X_M} MATCHES "9175|9176")
             # NOTE: Only available from GCC 15.1.0 onwards. Any z17 machine with compile issues must first verify their GCC version.
+            #       binutils must also be updated to the latest for the -march=z17 flag to work. Otherwise, use -march=arch15.
             message(STATUS "z17 target")
             list(APPEND ARCH_FLAGS -march=z17)
         else()
@@ -367,14 +468,25 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
         endif()
 
         if (GGML_VXE)
+            message(STATUS "VX/VXE/VXE2 enabled")
             list(APPEND ARCH_FLAGS -mvx -mzvector)
+            list(APPEND ARCH_DEFINITIONS GGML_VXE)
         endif()
+
+        if (GGML_NNPA)
+            message(STATUS "NNPA enabled")
+            list(APPEND ARCH_DEFINITIONS GGML_NNPA)
+        endif()
+    elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "wasm")
+        message(STATUS "Wasm detected")
+        list (APPEND GGML_CPU_SOURCES ggml-cpu/arch/wasm/quants.c)
     else()
-        message(STATUS "Unknown architecture")
+        message(WARNING "Unknown CPU architecture. Falling back to generic implementations.")
+        list(APPEND ARCH_FLAGS -DGGML_CPU_GENERIC)
     endif()
 
-    if (GGML_CPU_AARCH64)
-        target_compile_definitions(${GGML_CPU_NAME} PRIVATE GGML_USE_CPU_AARCH64)
+    if (GGML_CPU_REPACK)
+        target_compile_definitions(${GGML_CPU_NAME} PRIVATE GGML_USE_CPU_REPACK)
     endif()
 
     if (GGML_CPU_KLEIDIAI)
@@ -385,9 +497,9 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
 
         # Fetch KleidiAI sources:
         include(FetchContent)
-        set(KLEIDIAI_COMMIT_TAG "v1.5.0")
+        set(KLEIDIAI_COMMIT_TAG "v1.11.0")
         set(KLEIDIAI_DOWNLOAD_URL "https://github.com/ARM-software/kleidiai/archive/refs/tags/${KLEIDIAI_COMMIT_TAG}.tar.gz")
-        set(KLEIDIAI_ARCHIVE_MD5  "ea22e1aefb800e9bc8c74d91633cc58e")
+        set(KLEIDIAI_ARCHIVE_MD5  "3fe9e5ab964c375c53839296eb71eaa2")
 
         if (POLICY CMP0135)
             cmake_policy(SET CMP0135 NEW)
@@ -477,26 +589,12 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
     target_compile_options(${GGML_CPU_NAME} PRIVATE ${ARCH_FLAGS})
     target_compile_definitions(${GGML_CPU_NAME} PRIVATE ${ARCH_DEFINITIONS})
 
-    if (GGML_BACKEND_DL)
-        if (GGML_NATIVE)
-            # the feature check relies on ARCH_DEFINITIONS, but it is not set with GGML_NATIVE
-            message(FATAL_ERROR "GGML_NATIVE is not compatible with GGML_BACKEND_DL, consider using GGML_CPU_ALL_VARIANTS")
-        endif()
-
-        # The feature detection code is compiled as a separate target so that
-        # it can be built without the architecture flags
-        # Since multiple variants of the CPU backend may be included in the same
-        # build, using set_source_files_properties() to set the arch flags is not possible
-        set(GGML_CPU_FEATS_NAME ${GGML_CPU_NAME}-feats)
-        add_library(${GGML_CPU_FEATS_NAME} OBJECT ggml-cpu/cpu-feats-x86.cpp)
-        target_include_directories(${GGML_CPU_FEATS_NAME} PRIVATE . .. ../include)
-        target_compile_definitions(${GGML_CPU_FEATS_NAME} PRIVATE ${ARCH_DEFINITIONS})
-        target_compile_definitions(${GGML_CPU_FEATS_NAME} PRIVATE GGML_BACKEND_DL GGML_BACKEND_BUILD GGML_BACKEND_SHARED)
-        set_target_properties(${GGML_CPU_FEATS_NAME} PROPERTIES POSITION_INDEPENDENT_CODE ON)
-        target_link_libraries(${GGML_CPU_NAME} PRIVATE ${GGML_CPU_FEATS_NAME})
-    endif()
-
     if (EMSCRIPTEN)
         set_target_properties(${GGML_CPU_NAME} PROPERTIES COMPILE_FLAGS "-msimd128")
+    endif()
+
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "IntelLLVM")
+        # The compiler automatically enables "-ffast-math" which can cause NaNs in tests due to "-fassociative-math"
+        target_compile_options(${GGML_CPU_NAME} PRIVATE "-fno-associative-math")
     endif()
 endfunction()
