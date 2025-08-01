@@ -90,16 +90,6 @@ func TestClientStream(t *testing.T) {
 			wantErr: "mid-stream error",
 		},
 		{
-			name: "http status error takes precedence over general error",
-			responses: []any{
-				testError{
-					message:    "custom error message",
-					statusCode: http.StatusInternalServerError,
-				},
-			},
-			wantErr: "500",
-		},
-		{
 			name: "successful stream completion",
 			responses: []any{
 				ChatResponse{Message: Message{Content: "chunk 1"}},

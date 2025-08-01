@@ -18,6 +18,8 @@ import (
 
 const defaultPrivateKey = "id_ed25519"
 
+var ErrInvalidToken = errors.New("invalid token")
+
 func keyPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -25,6 +27,39 @@ func keyPath() (string, error) {
 	}
 
 	return filepath.Join(home, ".ollama", defaultPrivateKey), nil
+}
+
+func parseToken(token string) (key, sig []byte, _ error) {
+	keyData, sigData, ok := strings.Cut(token, ":")
+	if !ok {
+		return nil, nil, fmt.Errorf("identity: parseToken: %w", ErrInvalidToken)
+	}
+	sig, err := base64.StdEncoding.DecodeString(sigData)
+	if err != nil {
+		return nil, nil, fmt.Errorf("identity: parseToken: base64 decoding signature: %w", err)
+	}
+	return []byte(keyData), sig, nil
+}
+
+func Authenticate(token, checkData string) (ssh.PublicKey, error) {
+	keyShort, sigBytes, err := parseToken(token)
+	if err != nil {
+		return nil, err
+	}
+	keyLong := append([]byte("ssh-ed25519 "), keyShort...)
+	pub, _, _, _, err := ssh.ParseAuthorizedKey(keyLong)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := pub.Verify([]byte(checkData), &ssh.Signature{
+		Format: pub.Type(),
+		Blob:   sigBytes,
+	}); err != nil {
+		return nil, err
+	}
+
+	return pub, nil
 }
 
 func GetPublicKey() (string, error) {
