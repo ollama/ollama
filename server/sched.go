@@ -780,29 +780,39 @@ func pickBestFullFitByLibrary(req *LlmRequest, f *ggml.GGML, gpus discover.GpuIn
 				// Try to pack into as few GPUs as possible, starting from 1 GPU
 				for numGPUs := 1; numGPUs <= len(sgl); numGPUs++ {
 					gpuSubset := sgl[:numGPUs]
-					ok, _ := llm.PredictServerFit(gpuSubset, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, p)
+					ok, estimatedVRAM := llm.PredictServerFit(gpuSubset, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, p)
 
 					if ok {
 						var totalFreeMemory uint64
 						for _, g := range gpuSubset {
 							totalFreeMemory += g.FreeMemory
 						}
+						slog.Info("new model will fit in available VRAM across minimum required GPUs, loading",
+							"model", req.model.ModelPath,
+							"library", sgl[0].Library,
+							"parallel", p,
+							"required", format.HumanBytes2(estimatedVRAM),
+							"gpus", gpuSubset)
 						*numParallel = p
 						return gpuSubset
 					}
 				}
 			}
-		}
+		} else {
+			// TODO future refinements
+			// - if multiple Libraries, see if any single GPU in any Library will fit
+			// - try subsets of GPUs instead of just falling back to 1 or all in a family
 
-		// TODO future refinements
-		// - if multiple Libraries, see if any single GPU in any Library will fit
-		// - try subsets of GPUs instead of just falling back to 1 or all in a family
-
-		// Now try all the GPUS (OLLAMA_SCHED_SPREAD is set)
-		for _, p := range numParallelToTry {
-			req.opts.NumCtx = req.origNumCtx * p
-			if envconfig.SchedSpread() {
-				if ok, _ := llm.PredictServerFit(sgl, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, p); ok {
+			// Now try all the GPUS (OLLAMA_SCHED_SPREAD is set)
+			for _, p := range numParallelToTry {
+				req.opts.NumCtx = req.origNumCtx * p
+				if ok, estimatedVRAM := llm.PredictServerFit(sgl, f, req.model.AdapterPaths, req.model.ProjectorPaths, req.opts, p); ok {
+					slog.Info("new model will fit in available VRAM, loading",
+						"model", req.model.ModelPath,
+						"library", sgl[0].Library,
+						"parallel", p,
+						"required", format.HumanBytes2(estimatedVRAM),
+						"gpus", sgl)
 					*numParallel = p
 					return sgl
 				}
