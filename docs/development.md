@@ -45,6 +45,10 @@ Install prerequisites:
     - [Ninja](https://github.com/ninja-build/ninja/releases)
 - (Optional) NVIDIA GPU support
     - [CUDA SDK](https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_network)
+- (Optional) Intel GPU support
+    - [Intel Arc & Iris Xe Graphics Driver with oneAPI Level Zero](https://www.intel.com/content/www/us/en/download/785597/intel-arc-iris-xe-graphics-windows.html)
+    - [Intel oneAPI Base Toolkit](https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html)
+    - [Ninja](https://github.com/ninja-build/ninja/releases)
 
 Then, configure and build the project:
 
@@ -58,6 +62,12 @@ cmake --build build --config Release
 > ```
 > cmake -B build -G Ninja -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 > cmake --build build --config Release
+> ```
+>
+> Building for SYCL requires additional flags:
+> ```
+> cmake --fresh --preset "SYCL" -G Ninja
+> cmake --build --preset "SYCL"
 > ```
 
 
@@ -80,6 +90,9 @@ Install prerequisites:
     - [ROCm](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/quick-start.html)
 - (Optional) NVIDIA GPU support
     - [CUDA SDK](https://developer.nvidia.com/cuda-downloads)
+- (Optional) Intel GPU support
+    - [Intel GPU Driver](https://dgpu-docs.intel.com/driver/client/overview.html)
+    - [Intel oneAPI Base Toolkit](https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html)
 
 > [!IMPORTANT]
 > Ensure prerequisites are in `PATH` before running CMake.
@@ -108,6 +121,12 @@ docker build .
 
 ```shell
 docker build --build-arg FLAVOR=rocm .
+```
+
+### SYCL
+
+```shell
+docker build --build-arg FLAVOR=sycl .
 ```
 
 ## Running tests
