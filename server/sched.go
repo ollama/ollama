@@ -792,7 +792,7 @@ func pickBestFullFitByLibrary(req *LlmRequest, f *ggml.GGML, gpus discover.GpuIn
 							"library", sgl[0].Library,
 							"parallel", p,
 							"required", format.HumanBytes2(estimatedVRAM),
-							"gpus", gpuSubset)
+							"gpus", numGPUs)
 						*numParallel = p
 						return gpuSubset
 					}
@@ -812,7 +812,7 @@ func pickBestFullFitByLibrary(req *LlmRequest, f *ggml.GGML, gpus discover.GpuIn
 						"library", sgl[0].Library,
 						"parallel", p,
 						"required", format.HumanBytes2(estimatedVRAM),
-						"gpus", sgl)
+						"gpus", len(sgl))
 					*numParallel = p
 					return sgl
 				}
