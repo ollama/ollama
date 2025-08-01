@@ -474,7 +474,7 @@ See the [API documentation](./docs/api.md) for all endpoints.
 ### Package managers
 
 - [Pacman](https://archlinux.org/packages/extra/x86_64/ollama/)
-- [Gentoo](https://github.com/gentoo/guru/tree/master/app-misc/ollama)
+- [Gentoo](https://github.com/gentoo/guru/tree/master/sci-ml/ollama)
 - [Homebrew](https://formulae.brew.sh/formula/ollama)
 - [Helm Chart](https://artifacthub.io/packages/helm/ollama-helm/ollama)
 - [Guix channel](https://codeberg.org/tusharhero/ollama-guix)
