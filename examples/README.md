@@ -1,14 +1,15 @@
 # Examples
 
-This directory contains different examples of using Ollama.
+This directory contains different examples of using Ollama
 
-## Python examples
-Ollama Python examples at [ollama-python/examples](https://github.com/ollama/ollama-python/tree/main/examples)
+To create a model:
 
+```
+ollama create example -f <example file>
+```
 
-## JavaScript examples
-Ollama JavaScript examples at [ollama-js/examples](https://github.com/ollama/ollama-js/tree/main/examples)
+To run a model:
 
-
-## OpenAI compatibility examples
-Ollama OpenAI compatibility examples at [ollama/examples/openai](../docs/openai.md)
+```
+ollama run example
+```

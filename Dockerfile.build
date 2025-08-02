@@ -1,0 +1,32 @@
+
+# centos7 amd64 dependencies
+FROM --platform=linux/amd64 nvidia/cuda:11.8.0-devel-centos7 AS base-amd64
+RUN yum install -y https://repo.ius.io/ius-release-el7.rpm centos-release-scl && \
+    yum update -y && \
+    yum install -y devtoolset-10-gcc devtoolset-10-gcc-c++ git236 wget
+RUN wget "https://github.com/Kitware/CMake/releases/download/v3.27.6/cmake-3.27.6-linux-x86_64.sh" -O cmake-installer.sh && chmod +x cmake-installer.sh && ./cmake-installer.sh --skip-license --prefix=/usr/local
+ENV PATH /opt/rh/devtoolset-10/root/usr/bin:$PATH
+
+# centos8 arm64 dependencies
+FROM --platform=linux/arm64 nvidia/cuda:11.4.3-devel-centos8 AS base-arm64
+RUN sed -i -e 's/mirrorlist/#mirrorlist/g' -e 's|#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*
+RUN yum install -y git cmake
+
+FROM base-${TARGETARCH}
+ARG TARGETARCH
+
+# install go
+ADD https://dl.google.com/go/go1.21.1.linux-$TARGETARCH.tar.gz /tmp/go1.21.1.tar.gz
+RUN mkdir -p /usr/local && tar xz -C /usr/local </tmp/go1.21.1.tar.gz
+
+# build the final binary
+WORKDIR /go/src/github.com/jmorganca/ollama
+COPY . .
+ENV GOOS=linux
+ENV GOARCH=$TARGETARCH
+
+ARG VERSION=0.0.0
+ARG GOFLAGS="'-ldflags -w -s'"
+
+RUN /usr/local/go/bin/go generate ./... && \
+    /usr/local/go/bin/go build .

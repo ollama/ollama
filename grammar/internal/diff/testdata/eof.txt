@@ -1,9 +1,0 @@
--- old --
-a
-b
-c^D
--- new --
-a
-b
-c^D
--- diff --

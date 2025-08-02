@@ -1,8 +1,0 @@
-{
-  "stop": [
-    "<start_system>",
-    "<end_message>",
-    "<start_user>",
-    "<start_assistant>"
-  ]
-}

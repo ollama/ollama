@@ -1,9 +1,8 @@
 .vscode
 ollama
 app
-macapp
 dist
+scripts
+llm/llama.cpp/ggml
+llm/llama.cpp/gguf
 .env
-.cache
-test_data
-llama/build

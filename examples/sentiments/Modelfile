@@ -1,0 +1,28 @@
+# Modelfile for creating a sentiment analyzer. 
+# Run `ollama create sentiments -f pathtofile` and then `ollama run sentiments` and enter a topic
+
+FROM orca
+TEMPLATE """
+{{- if .First }}
+### System:
+{{ .System }}
+{{- end }}
+### User: 
+I hate it when my phone dies
+### Response: 
+NEGATIVE
+### User: 
+He is awesome
+### Response: 
+POSITIVE
+### User: 
+This is the link to the article
+### Response: 
+NEUTRAL
+### User:
+{{ .Prompt }}
+
+### Response:
+"""
+
+SYSTEM """You are a sentiment analyzer. You will receive text and output only one word, either POSITIVE or NEGATIVE or NEUTRAL, depending on the sentiment of the text."""

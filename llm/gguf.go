@@ -2,21 +2,13 @@ package llm
 
 import (
 	"bytes"
-	"cmp"
 	"encoding/binary"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"log/slog"
-	"slices"
-	"strings"
-
-	"golang.org/x/exp/maps"
 )
 
 type containerGGUF struct {
-	ByteOrder binary.ByteOrder
-
 	Version uint32
 
 	V1 struct {
@@ -28,43 +20,26 @@ type containerGGUF struct {
 		NumTensor uint64
 		NumKV     uint64
 	}
-
-	V3 struct {
-		NumTensor uint64
-		NumKV     uint64
-	}
-
-	maxArraySize int
-}
-
-func (c *containerGGUF) canCollectArray(size int) bool {
-	return c.maxArraySize < 0 || size <= c.maxArraySize
 }
 
 func (c *containerGGUF) Name() string {
 	return "gguf"
 }
 
-func (c *containerGGUF) Decode(rs io.ReadSeeker) (model, error) {
-	if err := binary.Read(rs, c.ByteOrder, &c.Version); err != nil {
-		return nil, err
-	}
+func (c *containerGGUF) Decode(r io.Reader) (model, error) {
+	binary.Read(r, binary.LittleEndian, &c.Version)
 
-	var err error
 	switch c.Version {
 	case 1:
-		err = binary.Read(rs, c.ByteOrder, &c.V1)
+		binary.Read(r, binary.LittleEndian, &c.V1)
 	case 2:
-		err = binary.Read(rs, c.ByteOrder, &c.V2)
+		binary.Read(r, binary.LittleEndian, &c.V2)
 	default:
-		err = binary.Read(rs, c.ByteOrder, &c.V3)
-	}
-	if err != nil {
-		return nil, err
+		return nil, errors.New("invalid version")
 	}
 
-	model := newGGUF(c)
-	if err := model.Decode(rs); err != nil {
+	model := newGGUFModel(c)
+	if err := model.Decode(r); err != nil {
 		return nil, err
 	}
 
@@ -87,209 +62,221 @@ const (
 	ggufTypeFloat64
 )
 
-type gguf struct {
+type kv map[string]any
+
+type ggufModel struct {
 	*containerGGUF
-
-	kv      KV
-	tensors []*Tensor
-
-	parameters   uint64
-	tensorOffset uint64
-
-	scratch [16 << 10]byte
+	kv
 }
 
-func newGGUF(container *containerGGUF) *gguf {
-	return &gguf{
+func newGGUFModel(container *containerGGUF) *ggufModel {
+	return &ggufModel{
 		containerGGUF: container,
-		kv:            make(KV),
+		kv:            make(kv),
 	}
 }
 
-func (llm *gguf) KV() KV {
-	return llm.kv
-}
-
-func (llm *gguf) Tensors() *Tensors {
-	return &Tensors{
-		Items:  llm.tensors,
-		Offset: llm.tensorOffset,
-	}
-}
-
-func (llm *gguf) numTensor() uint64 {
-	switch llm.Version {
-	case 1:
-		return uint64(llm.V1.NumTensor)
-	case 2:
-		return llm.V2.NumTensor
-	default:
-		return llm.V3.NumTensor
-	}
-}
-
-func (llm *gguf) numKV() uint64 {
-	switch llm.Version {
-	case 1:
+func (llm *ggufModel) NumKV() uint64 {
+	if llm.Version == 1 {
 		return uint64(llm.V1.NumKV)
-	case 2:
-		return llm.V2.NumKV
-	default:
-		return llm.V3.NumKV
 	}
+
+	return llm.V2.NumKV
 }
 
-func (llm *gguf) Decode(rs io.ReadSeeker) error {
-	// decode key-values
-	for i := 0; uint64(i) < llm.numKV(); i++ {
-		k, err := readGGUFString(llm, rs)
+func (llm *ggufModel) ModelFamily() string {
+	t, ok := llm.kv["general.architecture"].(string)
+	if ok {
+		return t
+	}
+
+	return "unknown"
+}
+
+func (llm *ggufModel) ModelType() string {
+	switch llm.ModelFamily() {
+	case "llama":
+		if blocks, ok := llm.kv["llama.block_count"].(uint32); ok {
+			heads, headsOK := llm.kv["llama.head_count"].(uint32)
+			headKVs, headsKVsOK := llm.kv["llama.head_count_kv"].(uint32)
+			if headsOK && headsKVsOK && heads/headKVs == 8 {
+				return "70B"
+			}
+
+			return llamaModelType(blocks)
+		}
+	case "falcon":
+		if blocks, ok := llm.kv["falcon.block_count"].(uint32); ok {
+			return falconModelType(blocks)
+		}
+	}
+
+	return "Unknown"
+}
+
+func (llm *ggufModel) FileType() string {
+	t, ok := llm.kv["general.file_type"].(uint32)
+	if ok {
+		return fileType(t)
+	}
+
+	return "Unknown"
+}
+
+func (llm *ggufModel) Decode(r io.Reader) error {
+	read := llm.readString
+	if llm.Version == 1 {
+		read = llm.readStringV1
+	}
+
+	for i := 0; uint64(i) < llm.NumKV(); i++ {
+		k, err := read(r)
 		if err != nil {
 			return err
 		}
 
-		t, err := readGGUF[uint32](llm, rs)
-		if err != nil {
-			return err
-		}
+		vtype := llm.readU32(r)
 
 		var v any
-		switch t {
+		switch vtype {
 		case ggufTypeUint8:
-			v, err = readGGUF[uint8](llm, rs)
+			v = llm.readU8(r)
 		case ggufTypeInt8:
-			v, err = readGGUF[int8](llm, rs)
+			v = llm.readI8(r)
 		case ggufTypeUint16:
-			v, err = readGGUF[uint16](llm, rs)
+			v = llm.readU16(r)
 		case ggufTypeInt16:
-			v, err = readGGUF[int16](llm, rs)
+			v = llm.readI16(r)
 		case ggufTypeUint32:
-			v, err = readGGUF[uint32](llm, rs)
+			v = llm.readU32(r)
 		case ggufTypeInt32:
-			v, err = readGGUF[int32](llm, rs)
+			v = llm.readI32(r)
 		case ggufTypeUint64:
-			v, err = readGGUF[uint64](llm, rs)
+			v = llm.readU64(r)
 		case ggufTypeInt64:
-			v, err = readGGUF[int64](llm, rs)
+			v = llm.readI64(r)
 		case ggufTypeFloat32:
-			v, err = readGGUF[float32](llm, rs)
+			v = llm.readF32(r)
 		case ggufTypeFloat64:
-			v, err = readGGUF[float64](llm, rs)
+			v = llm.readF64(r)
 		case ggufTypeBool:
-			v, err = readGGUF[bool](llm, rs)
+			v = llm.readBool(r)
 		case ggufTypeString:
-			v, err = readGGUFString(llm, rs)
-		case ggufTypeArray:
-			v, err = readGGUFArray(llm, rs)
-		default:
-			return fmt.Errorf("invalid type: %d", t)
-		}
+			fn := llm.readString
+			if llm.Version == 1 {
+				fn = llm.readStringV1
+			}
 
-		if err != nil {
-			return err
+			s, err := fn(r)
+			if err != nil {
+				return err
+			}
+
+			v = s
+		case ggufTypeArray:
+			fn := llm.readArray
+			if llm.Version == 1 {
+				fn = llm.readArrayV1
+			}
+
+			a, err := fn(r)
+			if err != nil {
+				return err
+			}
+
+			v = a
+		default:
+			return fmt.Errorf("invalid type: %d", vtype)
 		}
 
 		llm.kv[k] = v
 	}
 
-	// decode tensors
-	for range llm.numTensor() {
-		name, err := readGGUFString(llm, rs)
-		if err != nil {
-			return fmt.Errorf("failed to read tensor name: %w", err)
-		}
-
-		// dims is the number of dimensions in the tensor
-		dims, err := readGGUF[uint32](llm, rs)
-		if err != nil {
-			return fmt.Errorf("failed to read tensor dimensions: %w", err)
-		}
-
-		shape := make([]uint64, dims)
-		for i := 0; uint32(i) < dims; i++ {
-			shape[i], err = readGGUF[uint64](llm, rs)
-			if err != nil {
-				return fmt.Errorf("failed to read tensor shape: %w", err)
-			}
-		}
-
-		kind, err := readGGUF[uint32](llm, rs)
-		if err != nil {
-			return fmt.Errorf("failed to read tensor kind: %w", err)
-		}
-
-		offset, err := readGGUF[uint64](llm, rs)
-		if err != nil {
-			return fmt.Errorf("failed to read tensor offset: %w", err)
-		}
-
-		tensor := Tensor{
-			Name:   name,
-			Kind:   kind,
-			Offset: offset,
-			Shape:  shape[:],
-		}
-
-		llm.tensors = append(llm.tensors, &tensor)
-		llm.parameters += tensor.parameters()
-	}
-
-	// patch KV with parameter count
-	llm.kv["general.parameter_count"] = llm.parameters
-
-	alignment, ok := llm.kv["general.alignment"].(uint32)
-	if !ok {
-		alignment = 32
-	}
-
-	offset, err := rs.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return err
-	}
-
-	padding := ggufPadding(offset, int64(alignment))
-	llm.tensorOffset = uint64(offset + padding)
-
-	for _, tensor := range llm.tensors {
-		offset, err := rs.Seek(0, io.SeekCurrent)
-		if err != nil {
-			return fmt.Errorf("failed to get current offset: %w", err)
-		}
-
-		padding := ggufPadding(offset, int64(alignment))
-		if _, err := rs.Seek(padding, io.SeekCurrent); err != nil {
-			return fmt.Errorf("failed to seek to init padding: %w", err)
-		}
-
-		if _, err := rs.Seek(int64(tensor.Size()), io.SeekCurrent); err != nil {
-			return fmt.Errorf("failed to seek to tensor: %w", err)
-		}
-	}
-
 	return nil
 }
 
-func readGGUF[T any](llm *gguf, r io.Reader) (T, error) {
-	var t T
-	err := binary.Read(r, llm.ByteOrder, &t)
-	return t, err
-}
-
-func writeGGUF[V any](w io.Writer, t uint32, v V) error {
-	if err := binary.Write(w, binary.LittleEndian, t); err != nil {
-		return err
+func (llm *ggufModel) NumLayers() int64 {
+	value, exists := llm.kv[fmt.Sprintf("%s.block_count", llm.ModelFamily())]
+	if !exists {
+		return 0
 	}
 
-	return binary.Write(w, binary.LittleEndian, v)
+	v := value.(uint32)
+	return int64(v)
 }
 
-func readGGUFV1String(llm *gguf, r io.Reader) (string, error) {
-	var length uint64
-	if err := binary.Read(r, llm.ByteOrder, &length); err != nil {
-		return "", err
-	}
+func (ggufModel) readU8(r io.Reader) uint8 {
+	var u8 uint8
+	binary.Read(r, binary.LittleEndian, &u8)
+	return u8
+}
+
+func (ggufModel) readI8(r io.Reader) int8 {
+	var i8 int8
+	binary.Read(r, binary.LittleEndian, &i8)
+	return i8
+}
+
+func (ggufModel) readU16(r io.Reader) uint16 {
+	var u16 uint16
+	binary.Read(r, binary.LittleEndian, &u16)
+	return u16
+}
+
+func (ggufModel) readI16(r io.Reader) int16 {
+	var i16 int16
+	binary.Read(r, binary.LittleEndian, &i16)
+	return i16
+}
+
+func (ggufModel) readU32(r io.Reader) uint32 {
+	var u32 uint32
+	binary.Read(r, binary.LittleEndian, &u32)
+	return u32
+}
+
+func (ggufModel) readI32(r io.Reader) int32 {
+	var i32 int32
+	binary.Read(r, binary.LittleEndian, &i32)
+	return i32
+}
+
+func (ggufModel) readU64(r io.Reader) uint64 {
+	var u64 uint64
+	binary.Read(r, binary.LittleEndian, &u64)
+	return u64
+}
+
+func (ggufModel) readI64(r io.Reader) int64 {
+	var i64 int64
+	binary.Read(r, binary.LittleEndian, &i64)
+	return i64
+}
+
+func (ggufModel) readF32(r io.Reader) float32 {
+	var f32 float32
+	binary.Read(r, binary.LittleEndian, &f32)
+	return f32
+}
+
+func (ggufModel) readF64(r io.Reader) float64 {
+	var f64 float64
+	binary.Read(r, binary.LittleEndian, &f64)
+	return f64
+}
+
+func (ggufModel) readBool(r io.Reader) bool {
+	var b bool
+	binary.Read(r, binary.LittleEndian, &b)
+	return b
+}
+
+func (ggufModel) readStringV1(r io.Reader) (string, error) {
+	var nameLength uint32
+	binary.Read(r, binary.LittleEndian, &nameLength)
 
 	var b bytes.Buffer
-	if _, err := io.CopyN(&b, r, int64(length)); err != nil {
+	if _, err := io.CopyN(&b, r, int64(nameLength)); err != nil {
 		return "", err
 	}
 
@@ -299,364 +286,94 @@ func readGGUFV1String(llm *gguf, r io.Reader) (string, error) {
 	return b.String(), nil
 }
 
-func discardGGUFString(llm *gguf, r io.Reader) error {
-	buf := llm.scratch[:8]
-	_, err := io.ReadFull(r, buf)
-	if err != nil {
-		return err
-	}
+func (llm ggufModel) readString(r io.Reader) (string, error) {
+	var nameLength uint64
+	binary.Read(r, binary.LittleEndian, &nameLength)
 
-	size := int(llm.ByteOrder.Uint64(buf))
-	for size > 0 {
-		n, err := r.Read(llm.scratch[:min(size, cap(llm.scratch))])
-		if err != nil {
-			return err
-		}
-		size -= n
-	}
-	return nil
-}
-
-func readGGUFString(llm *gguf, r io.Reader) (string, error) {
-	if llm.Version == 1 {
-		return readGGUFV1String(llm, r)
-	}
-
-	buf := llm.scratch[:8]
-	_, err := io.ReadFull(r, buf)
-	if err != nil {
+	var b bytes.Buffer
+	if _, err := io.CopyN(&b, r, int64(nameLength)); err != nil {
 		return "", err
 	}
 
-	length := int(llm.ByteOrder.Uint64(buf))
-	if length > len(llm.scratch) {
-		buf = make([]byte, length)
-	} else {
-		buf = llm.scratch[:length]
-	}
-	clear(buf)
-
-	_, err = io.ReadFull(r, buf)
-	if err != nil {
-		return "", err
-	}
-	return string(buf), nil
+	return b.String(), nil
 }
 
-func writeGGUFString(w io.Writer, s string) error {
-	if err := binary.Write(w, binary.LittleEndian, ggufTypeString); err != nil {
-		return err
-	}
+func (llm *ggufModel) readArrayV1(r io.Reader) (arr []any, err error) {
+	atype := llm.readU32(r)
+	n := llm.readU32(r)
 
-	if err := binary.Write(w, binary.LittleEndian, uint64(len(s))); err != nil {
-		return err
-	}
-
-	_, err := io.Copy(w, strings.NewReader(s))
-	return err
-}
-
-type array struct {
-	size   int
-	values []any
-}
-
-func (a *array) MarshalJSON() ([]byte, error) {
-	return json.Marshal(a.values)
-}
-
-func readGGUFV1Array(llm *gguf, r io.Reader) (*array, error) {
-	t, err := readGGUF[uint32](llm, r)
-	if err != nil {
-		return nil, err
-	}
-
-	n, err := readGGUF[uint32](llm, r)
-	if err != nil {
-		return nil, err
-	}
-
-	a := &array{size: int(n)}
-	if llm.canCollectArray(int(n)) {
-		a.values = make([]any, 0, int(n))
-	}
-
-	for i := range n {
-		var e any
-		switch t {
+	for i := 0; uint32(i) < n; i++ {
+		switch atype {
 		case ggufTypeUint8:
-			e, err = readGGUF[uint8](llm, r)
+			arr = append(arr, llm.readU8(r))
 		case ggufTypeInt8:
-			e, err = readGGUF[int8](llm, r)
+			arr = append(arr, llm.readU8(r))
 		case ggufTypeUint16:
-			e, err = readGGUF[uint16](llm, r)
+			arr = append(arr, llm.readU16(r))
 		case ggufTypeInt16:
-			e, err = readGGUF[int16](llm, r)
+			arr = append(arr, llm.readI16(r))
 		case ggufTypeUint32:
-			e, err = readGGUF[uint32](llm, r)
+			arr = append(arr, llm.readU32(r))
 		case ggufTypeInt32:
-			e, err = readGGUF[int32](llm, r)
-		case ggufTypeUint64:
-			e, err = readGGUF[uint64](llm, r)
-		case ggufTypeInt64:
-			e, err = readGGUF[int64](llm, r)
+			arr = append(arr, llm.readI32(r))
 		case ggufTypeFloat32:
-			e, err = readGGUF[float32](llm, r)
-		case ggufTypeFloat64:
-			e, err = readGGUF[float64](llm, r)
+			arr = append(arr, llm.readF32(r))
 		case ggufTypeBool:
-			e, err = readGGUF[bool](llm, r)
+			arr = append(arr, llm.readBool(r))
 		case ggufTypeString:
-			e, err = readGGUFV1String(llm, r)
-		default:
-			return nil, fmt.Errorf("invalid array type: %d", t)
-		}
-		if err != nil {
-			return nil, err
-		}
+			s, err := llm.readStringV1(r)
+			if err != nil {
+				return nil, err
+			}
 
-		if a.values != nil {
-			a.values[i] = e
+			arr = append(arr, s)
+		default:
+			return nil, fmt.Errorf("invalid array type: %d", atype)
 		}
 	}
 
-	return a, nil
+	return
 }
 
-func readGGUFArray(llm *gguf, r io.Reader) (*array, error) {
-	if llm.Version == 1 {
-		return readGGUFV1Array(llm, r)
-	}
+func (llm *ggufModel) readArray(r io.Reader) (arr []any, err error) {
+	atype := llm.readU32(r)
+	n := llm.readU64(r)
 
-	t, err := readGGUF[uint32](llm, r)
-	if err != nil {
-		return nil, err
-	}
-
-	n, err := readGGUF[uint64](llm, r)
-	if err != nil {
-		return nil, err
-	}
-
-	a := &array{size: int(n)}
-	if llm.canCollectArray(int(n)) {
-		a.values = make([]any, int(n))
-	}
-
-	for i := range n {
-		var e any
-		switch t {
+	for i := 0; uint64(i) < n; i++ {
+		switch atype {
 		case ggufTypeUint8:
-			e, err = readGGUF[uint8](llm, r)
+			arr = append(arr, llm.readU8(r))
 		case ggufTypeInt8:
-			e, err = readGGUF[int8](llm, r)
+			arr = append(arr, llm.readU8(r))
 		case ggufTypeUint16:
-			e, err = readGGUF[uint16](llm, r)
+			arr = append(arr, llm.readU16(r))
 		case ggufTypeInt16:
-			e, err = readGGUF[int16](llm, r)
+			arr = append(arr, llm.readI16(r))
 		case ggufTypeUint32:
-			e, err = readGGUF[uint32](llm, r)
+			arr = append(arr, llm.readU32(r))
 		case ggufTypeInt32:
-			e, err = readGGUF[int32](llm, r)
+			arr = append(arr, llm.readI32(r))
 		case ggufTypeUint64:
-			e, err = readGGUF[uint64](llm, r)
+			arr = append(arr, llm.readU64(r))
 		case ggufTypeInt64:
-			e, err = readGGUF[int64](llm, r)
+			arr = append(arr, llm.readI64(r))
 		case ggufTypeFloat32:
-			e, err = readGGUF[float32](llm, r)
+			arr = append(arr, llm.readF32(r))
 		case ggufTypeFloat64:
-			e, err = readGGUF[float64](llm, r)
+			arr = append(arr, llm.readF64(r))
 		case ggufTypeBool:
-			e, err = readGGUF[bool](llm, r)
+			arr = append(arr, llm.readBool(r))
 		case ggufTypeString:
-			if a.values != nil {
-				e, err = readGGUFString(llm, r)
-			} else {
-				err = discardGGUFString(llm, r)
+			s, err := llm.readString(r)
+			if err != nil {
+				return nil, err
 			}
+
+			arr = append(arr, s)
 		default:
-			return nil, fmt.Errorf("invalid array type: %d", t)
-		}
-		if err != nil {
-			return nil, err
-		}
-
-		if a.values != nil {
-			a.values[i] = e
+			return nil, fmt.Errorf("invalid array type: %d", atype)
 		}
 	}
 
-	return a, nil
-}
-
-// writeGGUFArray writes a slice s of type E to the write with a gguf type of t
-func writeGGUFArray[S ~[]E, E any](w io.Writer, t uint32, s S) error {
-	if err := binary.Write(w, binary.LittleEndian, ggufTypeArray); err != nil {
-		return err
-	}
-
-	if err := binary.Write(w, binary.LittleEndian, t); err != nil {
-		return err
-	}
-
-	if err := binary.Write(w, binary.LittleEndian, uint64(len(s))); err != nil {
-		return err
-	}
-
-	return binary.Write(w, binary.LittleEndian, s)
-}
-
-func WriteGGUF(ws io.WriteSeeker, kv KV, ts []Tensor) error {
-	if err := binary.Write(ws, binary.LittleEndian, []byte("GGUF")); err != nil {
-		return err
-	}
-
-	if err := binary.Write(ws, binary.LittleEndian, uint32(3)); err != nil {
-		return err
-	}
-
-	if err := binary.Write(ws, binary.LittleEndian, uint64(len(ts))); err != nil {
-		return err
-	}
-
-	if err := binary.Write(ws, binary.LittleEndian, uint64(len(kv))); err != nil {
-		return err
-	}
-
-	keys := maps.Keys(kv)
-	slices.Sort(keys)
-
-	for _, key := range keys {
-		if err := ggufWriteKV(ws, key, kv[key]); err != nil {
-			return err
-		}
-	}
-
-	slices.SortStableFunc(ts, func(a, b Tensor) int {
-		if i, j := a.block(), b.block(); i < 0 && j > 0 {
-			return 1
-		} else if i > 0 && j < 0 {
-			return -1
-		} else {
-			return cmp.Compare(i, j)
-		}
-	})
-
-	var s uint64
-	for _, t := range ts {
-		t.Offset = s
-		if err := ggufWriteTensorInfo(ws, t); err != nil {
-			return err
-		}
-		s += t.Size()
-	}
-
-	var alignment int64 = 32
-	for _, t := range ts {
-		if err := ggufWriteTensor(ws, t, alignment); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func ggufWriteKV(ws io.WriteSeeker, k string, v any) error {
-	slog.Debug(k, "type", fmt.Sprintf("%T", v))
-	if err := binary.Write(ws, binary.LittleEndian, uint64(len(k))); err != nil {
-		return err
-	}
-
-	if err := binary.Write(ws, binary.LittleEndian, []byte(k)); err != nil {
-		return err
-	}
-
-	var err error
-	switch v := v.(type) {
-	case uint32:
-		err = writeGGUF(ws, ggufTypeUint32, v)
-	case float32:
-		err = writeGGUF(ws, ggufTypeFloat32, v)
-	case bool:
-		err = writeGGUF(ws, ggufTypeBool, v)
-	case string:
-		err = writeGGUFString(ws, v)
-	case []int32:
-		err = writeGGUFArray(ws, ggufTypeInt32, v)
-	case []uint32:
-		err = writeGGUFArray(ws, ggufTypeUint32, v)
-	case []float32:
-		err = writeGGUFArray(ws, ggufTypeFloat32, v)
-	case []string:
-		if err := binary.Write(ws, binary.LittleEndian, ggufTypeArray); err != nil {
-			return err
-		}
-
-		if err := binary.Write(ws, binary.LittleEndian, ggufTypeString); err != nil {
-			return err
-		}
-
-		if err := binary.Write(ws, binary.LittleEndian, uint64(len(v))); err != nil {
-			return err
-		}
-
-		for _, e := range v {
-			if err := binary.Write(ws, binary.LittleEndian, uint64(len(e))); err != nil {
-				return err
-			}
-
-			if err := binary.Write(ws, binary.LittleEndian, []byte(e)); err != nil {
-				return err
-			}
-		}
-	default:
-		return fmt.Errorf("improper type for '%s'", k)
-	}
-
-	return err
-}
-
-func ggufWriteTensorInfo(ws io.WriteSeeker, t Tensor) error {
-	slog.Debug(t.Name, "kind", t.Kind, "shape", t.Shape, "offset", t.Offset)
-	if err := binary.Write(ws, binary.LittleEndian, uint64(len(t.Name))); err != nil {
-		return err
-	}
-
-	if err := binary.Write(ws, binary.LittleEndian, []byte(t.Name)); err != nil {
-		return err
-	}
-
-	if err := binary.Write(ws, binary.LittleEndian, uint32(len(t.Shape))); err != nil {
-		return err
-	}
-
-	for i := range len(t.Shape) {
-		if err := binary.Write(ws, binary.LittleEndian, t.Shape[len(t.Shape)-i-1]); err != nil {
-			return err
-		}
-	}
-
-	if err := binary.Write(ws, binary.LittleEndian, t.Kind); err != nil {
-		return err
-	}
-
-	return binary.Write(ws, binary.LittleEndian, t.Offset)
-}
-
-func ggufWriteTensor(ws io.WriteSeeker, t Tensor, alignment int64) error {
-	offset, err := ws.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return err
-	}
-
-	if err := binary.Write(ws, binary.LittleEndian, bytes.Repeat([]byte{0}, int(ggufPadding(offset, alignment)))); err != nil {
-		return err
-	}
-
-	_, err = t.WriteTo(ws)
-	return err
-}
-
-func ggufPadding(offset, align int64) int64 {
-	return (align - offset%align) % align
+	return
 }

@@ -7,14 +7,26 @@ import (
 	"time"
 )
 
-// humanDuration returns a human-readable approximation of a
-// duration (eg. "About a minute", "4 hours ago", etc.).
-func humanDuration(d time.Duration) string {
+// HumanDuration returns a human-readable approximation of a duration
+// (eg. "About a minute", "4 hours ago", etc.).
+// Modified version of github.com/docker/go-units.HumanDuration
+func HumanDuration(d time.Duration) string {
+	return HumanDurationWithCase(d, true)
+}
+
+// HumanDurationWithCase returns a human-readable approximation of a
+// duration (eg. "About a minute", "4 hours ago", etc.). but allows
+// you to specify whether the first word should be capitalized
+// (eg. "About" vs. "about")
+func HumanDurationWithCase(d time.Duration, useCaps bool) string {
 	seconds := int(d.Seconds())
 
 	switch {
 	case seconds < 1:
-		return "Less than a second"
+		if useCaps {
+			return "Less than a second"
+		}
+		return "less than a second"
 	case seconds == 1:
 		return "1 second"
 	case seconds < 60:
@@ -24,7 +36,10 @@ func humanDuration(d time.Duration) string {
 	minutes := int(d.Minutes())
 	switch {
 	case minutes == 1:
-		return "About a minute"
+		if useCaps {
+			return "About a minute"
+		}
+		return "about a minute"
 	case minutes < 60:
 		return fmt.Sprintf("%d minutes", minutes)
 	}
@@ -32,7 +47,10 @@ func humanDuration(d time.Duration) string {
 	hours := int(math.Round(d.Hours()))
 	switch {
 	case hours == 1:
-		return "About an hour"
+		if useCaps {
+			return "About an hour"
+		}
+		return "about an hour"
 	case hours < 48:
 		return fmt.Sprintf("%d hours", hours)
 	case hours < 24*7*2:
@@ -47,24 +65,77 @@ func humanDuration(d time.Duration) string {
 }
 
 func HumanTime(t time.Time, zeroValue string) string {
-	return humanTime(t, zeroValue)
+	return humanTimeWithCase(t, zeroValue, true)
 }
 
 func HumanTimeLower(t time.Time, zeroValue string) string {
-	return strings.ToLower(humanTime(t, zeroValue))
+	return humanTimeWithCase(t, zeroValue, false)
 }
 
-func humanTime(t time.Time, zeroValue string) string {
+func humanTimeWithCase(t time.Time, zeroValue string, useCaps bool) string {
 	if t.IsZero() {
 		return zeroValue
 	}
 
 	delta := time.Since(t)
-	if int(delta.Hours())/24/365 < -20 {
-		return "Forever"
-	} else if delta < 0 {
-		return humanDuration(-delta) + " from now"
+	if delta < 0 {
+		return HumanDurationWithCase(-delta, useCaps) + " from now"
+	}
+	return HumanDurationWithCase(delta, useCaps) + " ago"
+}
+
+// ExcatDuration returns a human readable hours/minutes/seconds or milliseconds format of a duration
+// the most precise level of duration is milliseconds
+func ExactDuration(d time.Duration) string {
+	if d.Seconds() < 1 {
+		if d.Milliseconds() == 1 {
+			return fmt.Sprintf("%d millisecond", d.Milliseconds())
+		}
+		return fmt.Sprintf("%d milliseconds", d.Milliseconds())
 	}
 
-	return humanDuration(delta) + " ago"
+	var readableDur strings.Builder
+
+	dur := d.String()
+
+	// split the default duration string format of 0h0m0s into something nicer to read
+	h := strings.Split(dur, "h")
+	if len(h) > 1 {
+		hours := h[0]
+		if hours == "1" {
+			readableDur.WriteString(fmt.Sprintf("%s hour ", hours))
+		} else {
+			readableDur.WriteString(fmt.Sprintf("%s hours ", hours))
+		}
+		dur = h[1]
+	}
+
+	m := strings.Split(dur, "m")
+	if len(m) > 1 {
+		mins := m[0]
+		switch mins {
+		case "0":
+			// skip
+		case "1":
+			readableDur.WriteString(fmt.Sprintf("%s minute ", mins))
+		default:
+			readableDur.WriteString(fmt.Sprintf("%s minutes ", mins))
+		}
+		dur = m[1]
+	}
+
+	s := strings.Split(dur, "s")
+	if len(s) > 0 {
+		sec := s[0]
+		switch sec {
+		case "0":
+			// skip
+		case "1":
+			readableDur.WriteString(fmt.Sprintf("%s second ", sec))
+		default:
+			readableDur.WriteString(fmt.Sprintf("%s seconds ", sec))
+		}
+	}
+
+	return strings.TrimSpace(readableDur.String())
 }
