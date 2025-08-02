@@ -162,6 +162,55 @@ func (t *Template) Vars() []string {
 	return vars
 }
 
+// AnalyzeCapabilities analyzes template variables to determine model capabilities
+func (t *Template) AnalyzeCapabilities() map[string]bool {
+	capabilities := map[string]bool{
+		"reranking":      false,
+		"embedding":      false,
+		"chat":          false,
+		"completion":    false,
+		"text_generation": false,
+	}
+	
+	// Check for reranking capability
+	if t.hasVariable("query") && t.hasVariable("document") {
+		capabilities["reranking"] = true
+	}
+	
+	// Check for embedding capability  
+	if t.hasVariable("prompt") || t.hasVariable("query") {
+		capabilities["embedding"] = true
+	}
+	
+	// Check for chat capability
+	if t.hasVariable("messages") {
+		capabilities["chat"] = true
+	}
+	
+	// Check for completion capability
+	if t.hasVariable("prompt") && !t.hasVariable("messages") {
+		capabilities["completion"] = true
+	}
+	
+	// Check for text generation (chat or completion with response variable)
+	if (capabilities["chat"] || capabilities["completion"]) && t.hasVariable("response") {
+		capabilities["text_generation"] = true
+	}
+	
+	return capabilities
+}
+
+// hasVariable checks if a template contains a specific variable
+func (t *Template) hasVariable(varName string) bool {
+	vars := t.Vars()
+	return slices.Contains(vars, strings.ToLower(varName))
+}
+
+// hasTextGeneration checks if template supports text generation
+func (t *Template) hasTextGeneration() bool {
+	return t.hasVariable("response") || t.hasVariable("messages")
+}
+
 type Values struct {
 	Messages []api.Message
 	api.Tools
