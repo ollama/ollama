@@ -347,6 +347,46 @@ type EmbeddingResponse struct {
 	Embedding []float64 `json:"embedding"`
 }
 
+// RerankRequest is the request passed to [Client.Rerank].
+type RerankRequest struct {
+	// Model is the model name.
+	Model string `json:"model"`
+
+	// Query is the search query.
+	Query string `json:"query"`
+
+	// Documents is the list of documents to rerank.
+	Documents []string `json:"documents"`
+
+	// Instruction specifies the reranking instruction.
+	// If not provided, defaults to "Please judge relevance."
+	Instruction string `json:"instruction,omitempty"`
+
+	// TopN specifies the number of most relevant documents to return.
+	// If not specified, all documents are returned.
+	TopN int `json:"top_n,omitempty"`
+
+	// KeepAlive controls how long the model will stay loaded in memory following
+	// this request.
+	KeepAlive *Duration `json:"keep_alive,omitempty"`
+
+	// Options lists model-specific options.
+	Options map[string]any `json:"options,omitempty"`
+}
+
+// RerankResponse is the response from [Client.Rerank].
+type RerankResponse struct {
+	Model   string                `json:"model"`
+	Results []RerankResponseItem  `json:"results"`
+}
+
+// RerankResponseItem represents a single ranked document.
+type RerankResponseItem struct {
+	Index          int     `json:"index"`
+	Document       string  `json:"document"`
+	RelevanceScore float32 `json:"relevance_score"`
+}
+
 // CreateRequest is the request passed to [Client.Create].
 type CreateRequest struct {
 	Model    string `json:"model"`

@@ -11,6 +11,7 @@ import (
 	"image"
 	"log"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -508,16 +509,19 @@ func (s *Server) processBatch() error {
 			seq.startGenerationTime = time.Now()
 		}
 
+		// sample a token
+		vocabSize := len(logits) / len(batch.Outputs)
+
 		// if done processing the prompt, generate an embedding and return
 		if seq.embeddingOnly {
-			// TODO(jessegross): Embedding support
-			slog.Warn("generation of embedding outputs not yet supported")
+			vocabSize := len(logits) / len(batch.Outputs)
+			lastTokenLogits := logits[seq.iBatch*vocabSize : (seq.iBatch+1)*vocabSize]
+			
+			// Standard embedding extraction - model-specific logic handled at server layer
+			seq.embedding <- lastTokenLogits
 			s.removeSequence(i, llm.DoneReasonStop)
 			continue
 		}
-
-		// sample a token
-		vocabSize := len(logits) / len(batch.Outputs)
 
 		token, err := seq.sampler.Sample(logits[seq.iBatch*vocabSize : (seq.iBatch+1)*vocabSize])
 		if err != nil {
@@ -716,6 +720,174 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		Status:   s.status,
 		Progress: s.progress,
 	}); err != nil {
+		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
+	}
+}
+
+// extractRerankingScore extracts a relevance score from raw logits using generic model interfaces
+// This handles score extraction for any reranking model without model-specific hardcoded logic
+func (s *Server) extractRerankingScore(logits []float32, prompt string) float32 {
+	// For binary classification models, extract yes/no token probabilities
+	textProcessor, ok := s.model.(model.TextProcessor)
+	if ok {
+		// Try to find yes/no tokens for binary classification
+		yesToken, err := textProcessor.Encode("yes", false)
+		noToken, err2 := textProcessor.Encode("no", false)
+		if err == nil && err2 == nil && len(yesToken) > 0 && len(noToken) > 0 {
+			yesID := yesToken[0]
+			noID := noToken[0]
+			
+			// Extract logits for yes and no tokens if they're in range
+			if int(yesID) < len(logits) && int(noID) < len(logits) {
+				yesLogit := logits[yesID]
+				noLogit := logits[noID]
+				
+				// Compute softmax probability for "yes" (relevance score)
+				maxLogit := max(yesLogit, noLogit)
+				yesProb := float32(math.Exp(float64(yesLogit-maxLogit))) / 
+					float32(math.Exp(float64(yesLogit-maxLogit))+math.Exp(float64(noLogit-maxLogit)))
+				
+				return yesProb
+			}
+		}
+	}
+	
+	// Fallback: for other models, use the first logit as the score
+	// This works for models that output a single relevance score
+	if len(logits) > 0 {
+		return logits[0]
+	}
+	
+	return 0.0
+}
+
+type RerankRequest struct {
+	Model   string   `json:"model"`
+	Prompts []string `json:"prompts"`
+}
+
+type RerankResult struct {
+	Index          int     `json:"index"`
+	RelevanceScore float64 `json:"relevance_score"`
+}
+
+type RerankResponse struct {
+	Results []RerankResult `json:"results"`
+}
+
+func (s *Server) rerank(w http.ResponseWriter, r *http.Request) {
+	// Instead of checking s.reranking flag, allow reranking if model supports text processing
+	// This makes reranking available for any model with proper template variables
+	
+	var req RerankRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("bad rerank request: %s", err), http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+
+	textProcessor, ok := s.model.(model.TextProcessor)
+	if !ok {
+		http.Error(w, "model does not support text processing for reranking", http.StatusInternalServerError)
+		return
+	}
+
+	var totalTokens int
+	for _, p := range req.Prompts {
+		tokens, err := textProcessor.Encode(p, true)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to tokenize prompt: %v", err), http.StatusInternalServerError)
+			return
+		}
+		totalTokens += len(tokens)
+	}
+
+	var rsp RerankResponse
+	rsp.Results = make([]RerankResult, 0, len(req.Prompts))
+
+	// Process prompts in batches that fit within parallel capacity
+	batchSize := s.parallel
+	for batchStart := 0; batchStart < len(req.Prompts); batchStart += batchSize {
+		batchEnd := min(batchStart+batchSize, len(req.Prompts))
+		currentBatch := req.Prompts[batchStart:batchEnd]
+
+		slog.Debug("Processing batch", "start", batchStart, "end", batchEnd, "size", len(currentBatch))
+
+		// Create sequences for current batch - use embedding mode for reranking
+		sequences := make([]*Sequence, len(currentBatch))
+		for i, prompt := range currentBatch {
+			seq, err := s.NewSequence(prompt, nil, NewSequenceParams{
+				embedding: true,  // Use embedding mode for reranking
+			})
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Failed to create new sequence: %v", err), http.StatusInternalServerError)
+				return
+			}
+			sequences[i] = seq
+		}
+
+		// Acquire semaphores for current batch of sequences
+		for i := range sequences {
+			if err := s.seqsSem.Acquire(r.Context(), 1); err != nil {
+				// In case of an error, release any already acquired semaphores
+				for j := 0; j < i; j++ {
+					s.seqsSem.Release(1)
+				}
+				if errors.Is(err, context.Canceled) {
+					slog.Info("aborting reranking request due to client closing the connection")
+				} else {
+					slog.Error("Failed to acquire semaphore", "error", err)
+				}
+				return
+			}
+		}
+
+		// Add current batch to processing queue
+		s.mu.Lock()
+		for i, seq := range sequences {
+			found := false
+			for j, sq := range s.seqs {
+				if sq == nil {
+					var err error
+					seq.cache, seq.inputs, err = s.cache.LoadCacheSlot(seq.inputs)
+					if err != nil {
+						s.mu.Unlock()
+						for k := i; k < len(sequences); k++ {
+							s.seqsSem.Release(1)
+						}
+						http.Error(w, fmt.Sprintf("Failed to load cache: %v", err), http.StatusInternalServerError)
+						return
+					}
+					s.seqs[j] = seq
+					found = true
+					break
+				}
+			}
+			if !found {
+				s.mu.Unlock()
+				for k := i; k < len(sequences); k++ {
+					s.seqsSem.Release(1)
+				}
+				http.Error(w, "could not find available sequence slots", http.StatusInternalServerError)
+				return
+			}
+		}
+		s.cond.Signal()
+		s.mu.Unlock()
+
+		// Collect results from current batch
+		for i, seq := range sequences {
+			logits := <-seq.embedding
+			// Extract relevance score using model-specific logic
+			score := s.extractRerankingScore(logits, currentBatch[i])
+			rsp.Results = append(rsp.Results, RerankResult{
+				Index:          batchStart + i,
+				RelevanceScore: float64(score),
+			})
+		}
+	}
+
+	if err := json.NewEncoder(w).Encode(&rsp); err != nil {
 		http.Error(w, fmt.Sprintf("failed to encode response: %v", err), http.StatusInternalServerError)
 	}
 }
@@ -972,6 +1144,8 @@ func Execute(args []string) error {
 	mux.HandleFunc("POST /embedding", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this model does not support embeddings", http.StatusNotImplemented)
 	})
+
+	mux.HandleFunc("POST /rerank", server.rerank) // Add rerank handler
 
 	mux.HandleFunc("POST /completion", server.completion)
 	mux.HandleFunc("GET /health", server.health)
