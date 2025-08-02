@@ -3,7 +3,7 @@
 ### CPU only
 
 ```shell
-docker run -d -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama
+docker run -d -v ollama:/root/.ollama -p 127.0.0.1:11434:11434 --name ollama ollama/ollama
 ```
 
 ### Nvidia GPU
@@ -51,7 +51,7 @@ sudo systemctl restart docker
 #### Start the container
 
 ```shell
-docker run -d --gpus=all -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama
+docker run -d --gpus=all -v ollama:/root/.ollama -p 127.0.0.1:11434:11434 --name ollama ollama/ollama
 ```
 
 > [!NOTE]  
@@ -62,7 +62,7 @@ docker run -d --gpus=all -v ollama:/root/.ollama -p 11434:11434 --name ollama ol
 To run Ollama using Docker with AMD GPUs, use the `rocm` tag and the following command:
 
 ```shell
-docker run -d --device /dev/kfd --device /dev/dri -v ollama:/root/.ollama -p 11434:11434 --name ollama ollama/ollama:rocm
+docker run -d --device /dev/kfd --device /dev/dri -v ollama:/root/.ollama -p 127.0.0.1:11434:11434 --name ollama ollama/ollama:rocm
 ```
 
 ### Run model locally
@@ -76,3 +76,40 @@ docker exec -it ollama ollama run llama3.2
 ### Try different models
 
 More models can be found on the [Ollama library](https://ollama.com/library).
+
+## Advanced container setup
+
+The following steps allow running ollama in a more restricted context, without exposing the API on the network.
+
+### Set up network with no Inter-Container Communication (ICC)
+
+```shell
+docker network create --opt com.docker.network.bridge.enable_icc=false --driver bridge isolated-bridge
+```
+
+### Setup a volume for the non-root user
+
+```shell
+docker run --rm -v ollama:/home/ubuntu/.ollama ubuntu:24.04 \
+	/bin/sh -c 'chown ubuntu:ubuntu /home/ubuntu/.ollama'
+```
+
+### Run the container with additional restrictions (on CPU)
+
+```shell
+docker run -d --cap-drop all --security-opt=no-new-privileges --network isolated-bridge \
+	--read-only --tmpfs /tmp:nosuid,nodev,noexec \
+	-v ollama:/home/ubuntu/.ollama --user ubuntu:ubuntu --name ollama \
+	ollama/ollama
+```
+### Run the container with additional restrictions (on AMD GPU)
+
+```shell
+docker run -d --cap-drop all --security-opt=no-new-privileges --network isolated-bridge \
+	--device /dev/kfd --device /dev/dri \
+	--read-only --tmpfs /tmp:nosuid,nodev,noexec \
+	-v ollama:/home/ubuntu/.ollama \
+	--user ubuntu:ubuntu --group-add=`getent group render | cut -d: -f3` \
+	--name ollama ollama/ollama:rocm
+```
+
